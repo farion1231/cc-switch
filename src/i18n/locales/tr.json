@@ -877,6 +877,17 @@
     "skipClaudeOnboarding": "Claude Code ilk çalıştırma onayını atla",
     "skipClaudeOnboardingDescription": "İlk başlatmada Claude Code, bir tema seçmenizi ve bir Anthropic hesabında oturum açmanızı isteyen bir katılım akışı çalıştırır. Üçüncü taraf bir sağlayıcı kullanıyorsanız bu oturum açma işlemine ihtiyacınız yoktur; bu nedenle, bunu açmak doğrudan atlar. ~/.claude.json'a hasCompletedOnboarding: true yazılarak çalışır; kapatıldığında bu alan kaldırılır ve bir sonraki başlatmada katılım yeniden görünür.",
     "codexAuth": "Codex Uygulama Geliştirmeleri",
+    "codexQuotaProtection": {
+      "title": "Resmî kota koruması",
+      "help": "Kullanım eşiklerinden birine ulaşıldığında yeni resmî istekleri durdurur; üçüncü taraf modeller kullanılabilir kalır. Yalnızca CC Switch yerel yönlendirmesinden geçen Codex resmî isteklerini kapsar. Kullanım, resmî yanıtların zaten taşıdığı kota bilgisinden okunur; normal kullanımda ek istek gönderilmez. Yalnızca ilk istekte veya yaklaşık 5 dakikalık boşta kalmanın ardından ayrı bir kota sorgusu yapılır. Kullanım belirlenemezse (ağ sorunu, oturumun süresinin dolması vb.) istekler engellenmez, normal şekilde geçer. Önceden kabul edilmiş istekler ve diğer uygulamalar kullanımı eşiğin üzerine çıkarabilir; duraklatma sırasında normal kotanın tükenmesi Luna Reserve'i etkinleştirmez.",
+      "thresholds": "Resmî istekler için kullanım eşikleri",
+      "fiveHour": "5 saatlik kullanım (%)",
+      "weekly": "Haftalık kullanım (%)",
+      "save": "Eşikleri kaydet",
+      "reset": "Varsayılanları geri yükle",
+      "hint": "Eşiklerden birinde duraklatır. Varsayılanlar: %95 / %98. Kaydedilen değişiklikler yeni isteklere hemen uygulanır.",
+      "invalid": "1 ile 99 arasında tam sayılar girin."
+    },
     "preserveCodexOfficialAuthOnSwitch": "Doğrudan geçişler için resmi giriş bilgilerini koruyun",
     "preserveCodexOfficialAuthOnSwitchDescription": "Yerel yönlendirme kapalıyken üçüncü taraf anahtarları kontrol eder. Devralma yönlendirmesi her zaman Codex resmi giriş bilgilerini korur.",
     "unifyCodexSessionHistory": "Birleşik Codex oturum geçmişi",
@@ -1662,7 +1673,6 @@
       "alltokens_si": "AllTokens SI, istikrar ve güvenilirliği temel alan kurumsal bir yapay zekâ token aktarım ve ekip iş birliği platformudur. Üyeler, anahtarlar, kullanım ve bakiye tek bir şirket konsolunda yönetilir; açık izinler ve harcama sınırları ekip kullanımının izlenebilir ve denetimli olmasını sağlar.",
       "openmodel": "OpenModel, desteklenen modellerde Codex için %90'a, Claude Code için %60'a varan uygulamaya özel indirimler sunar. Bu bağlantıyla kaydolup \"cc-switch\" promosyon kodunu kullanan CC Switch kullanıcıları ilk yüklemelerinde %10 indirim kazanır!",
       "grooroute": "GrooRoute Pro; kullandıkça öde ve abonelik planlarıyla OpenAI, Claude, DeepSeek ve diğer yaygın modellere erişim sağlayan güvenilir bir yapay zekâ API aktarım hizmetidir. Bu bağlantı üzerinden kaydolan CC Switch kullanıcıları ¥5 deneme bakiyesi kazanır!",
-      "dit": "Aynı modeller, çoğu zaman çok daha düşük bir fatura. OpenAI uyumlu tek bir API ile GPT, Claude, Gemini ve daha fazlası dahil 50'den fazla modele erişin; istekler 160'tan fazla sağlayıcı arasında en iyi fiyat-kalite seçeneğine yönlendirilir ve fiyatlar genellikle resmî liste fiyatlarından %30–70 daha düşüktür. Base URL'nizi ve API anahtarınızı değiştirin, mevcut yığınınızı koruyun ve hemen çağırmaya başlayın. CC Switch kullanıcıları bu bağlantıdan kaydolup \"cc-switch\" koduyla hoş geldin yüklemesinde %30 indirim kazanır!",
       "buytoken": "BuyToken; Claude Code, Codex, DeepSeek ve daha fazlası için kurumsal düzeyde eşzamanlılık ve hızlı faturalandırma sunan, uzun süreli ve istikrarlı kullanım için tasarlanmış bir yönlendirme hizmetidir. CC Switch kullanıcıları bu bağlantı üzerinden kaydolduklarında 3 ¥ deneme kredisi ve ilk yüklemelerinde %10 indirim kazanır.",
       "vapi": "V-API, bireyler, geliştiriciler ve işletmeler için kararlı, hızlı ve güvenli, yüksek kaliteli LLM API hizmetleri sunan üç yıllık bir markadır. Resmî sözleşmelerin yanı sıra genel ve özel KDV faturaları sağlar. Bu bağlantıdan kaydolan CC Switch kullanıcıları 2 ¥ indirim ve ilk siparişlerinde %10 indirim kazanır!"
     },

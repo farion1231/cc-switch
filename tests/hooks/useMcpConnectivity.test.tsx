@@ -127,13 +127,51 @@ describe("page-local MCP connectivity", () => {
     expect(result.current.states.example).toBe("disconnected");
   });
 
-  it("lets a newer single-server check win over an older batch", () => {
+  it("does not start a second check for a server already being checked", () => {
     const { result } = renderHook(() => useMcpConnectivity(servers()));
     act(() => result.current.checkAll());
     act(() => result.current.checkServer("example"));
+    expect(mcpApi.startConnectivityChecks).toHaveBeenCalledTimes(1);
+    act(() => delivery()({ serverId: "example", connected: true }));
+    expect(result.current.states.example).toBe("connected");
+    act(() => result.current.checkServer("example"));
+    expect(mcpApi.startConnectivityChecks).toHaveBeenCalledTimes(2);
+  });
+
+  it("lets a check of an edited config win over the older running one", () => {
+    const { result, rerender } = renderHook(
+      ({ data }) => useMcpConnectivity(data),
+      { initialProps: { data: servers() } },
+    );
+    act(() => result.current.checkAll());
+    rerender({ data: servers(true, "changed") });
+    act(() => result.current.checkServer("example"));
+    expect(mcpApi.startConnectivityChecks).toHaveBeenCalledTimes(2);
     act(() => delivery(1)({ serverId: "example", connected: true }));
     act(() => delivery(0)({ serverId: "example", connected: false }));
     expect(result.current.states.example).toBe("connected");
+  });
+
+  it("does not leave a replaced check stuck when its server was disabled", () => {
+    const other = { ...servers().example, id: "other" };
+    const { result, rerender } = renderHook(
+      ({ data }) => useMcpConnectivity(data),
+      { initialProps: { data: { ...servers(), other } } },
+    );
+    act(() => result.current.checkAll());
+    rerender({ data: { ...servers(false), other } });
+    act(() => result.current.checkAll());
+    expect(vi.mocked(mcpApi.startConnectivityChecks).mock.calls[1][0]).toEqual([
+      "other",
+    ]);
+    rerender({ data: { ...servers(), other } });
+    expect(result.current.states.example).toBe("unchecked");
+    act(() => delivery(0)({ serverId: "example", connected: true }));
+    act(() => delivery(1)({ serverId: "other", connected: true }));
+    expect(result.current.states.example).toBe("unchecked");
+    expect(result.current.checking).toBe(false);
+    act(() => result.current.checkServer("example"));
+    expect(result.current.states.example).toBe("checking");
   });
 
   it("cancels running checks when leaving, even before the backend registers them", async () => {

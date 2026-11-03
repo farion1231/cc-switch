@@ -10,6 +10,7 @@ use axum::{
     Json, Router,
 };
 use serde_json::{json, Value};
+use serial_test::serial;
 use std::{
     convert::Infallible,
     path::{Path, PathBuf},
@@ -208,6 +209,7 @@ async fn wait_until(mut condition: impl FnMut() -> bool) {
 }
 
 #[tokio::test]
+#[serial(mcp_check_permits)]
 async fn batches_skip_empty_selections_limit_concurrency_and_cancel_queued_checks() {
     let state = MockServer {
         hang: true,
@@ -227,6 +229,32 @@ async fn batches_skip_empty_selections_limit_concurrency_and_cancel_queued_check
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(state.started.load(Ordering::SeqCst), MAX_CONCURRENT_CHECKS);
     assert!(!BATCHES.lock().unwrap().contains_key(&batch));
+    task.abort();
+}
+
+#[tokio::test]
+#[serial(mcp_check_permits)]
+async fn concurrency_limit_spans_batches_and_passes_to_queued_checks() {
+    let state = MockServer {
+        hang: true,
+        ..Default::default()
+    };
+    let (url, task) = mock_http(state.clone()).await;
+    let spec = http_spec(&format!("{url}/mcp"), "http");
+    let batch = |ids: std::ops::Range<usize>| {
+        start_checks(
+            ids.map(|id| server(id, spec.clone(), true)).collect(),
+            |_| true,
+        )
+    };
+    let first = batch(0..MAX_CONCURRENT_CHECKS);
+    wait_until(|| state.started.load(Ordering::SeqCst) == MAX_CONCURRENT_CHECKS).await;
+    let second = batch(0..1);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(state.started.load(Ordering::SeqCst), MAX_CONCURRENT_CHECKS);
+    cancel_checks(&first);
+    wait_until(|| state.started.load(Ordering::SeqCst) == MAX_CONCURRENT_CHECKS + 1).await;
+    cancel_checks(&second);
     task.abort();
 }
 
@@ -275,6 +303,7 @@ async fn stdio_honors_args_env_cwd_and_releases_the_process() {
 }
 
 #[tokio::test]
+#[serial(mcp_check_permits)]
 async fn batches_allow_stdio_cold_starts_longer_than_ten_seconds() {
     let dir = tempfile::tempdir().unwrap();
     let marker = dir.path().join("slow-start");
@@ -308,6 +337,7 @@ async fn batches_allow_stdio_cold_starts_longer_than_ten_seconds() {
 }
 
 #[tokio::test]
+#[serial(mcp_check_permits)]
 async fn cancellation_and_timeout_release_stdio_descendants() {
     for cancel in [false, true] {
         let dir = tempfile::tempdir().unwrap();
@@ -338,7 +368,13 @@ async fn cancellation_and_timeout_release_stdio_descendants() {
 async fn stdio_login_path_finds_bare_launchers_and_configured_path_wins() {
     let dir = tempfile::tempdir().unwrap();
     let launcher = dir.path().join("mcp-path-fixture");
-    std::fs::copy("/usr/bin/env", &launcher).unwrap();
+    // A wrapper script rather than a copy of /usr/bin/env: newer macOS kills
+    // relocated copies of platform binaries (SIGKILL on exec).
+    std::fs::write(&launcher, "#!/bin/sh\nexec /usr/bin/env \"$@\"\n").unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
     let login_path = format!("{}:/usr/bin:/bin", dir.path().display());
     for configured_path in [None, Some("/explicit/server/bin:/usr/bin")] {
         let mut command = Command::new("mcp-path-fixture");

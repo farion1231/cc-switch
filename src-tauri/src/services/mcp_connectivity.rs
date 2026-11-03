@@ -23,6 +23,9 @@ use crate::app_config::McpServer;
 // Package launchers such as npx/uvx may need time to prepare a cold start.
 const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_CONCURRENT_CHECKS: usize = 3;
+// Shared across batches: rows can be tested while another batch is still running.
+static CHECK_PERMITS: tokio::sync::Semaphore =
+    tokio::sync::Semaphore::const_new(MAX_CONCURRENT_CHECKS);
 static BATCHES: Lazy<std::sync::Mutex<HashMap<String, AbortHandle>>> = Lazy::new(Default::default);
 // GUI launches can inherit only launchd's minimal PATH. Resolve the user's shell
 // once, off the async executor, and share it across all page visits and probes.
@@ -69,6 +72,8 @@ pub fn start_checks(
     tauri::async_runtime::spawn(async move {
         let checks = async move {
             let mut results = stream::iter(servers.into_iter().map(|server| async move {
+                // Queueing here keeps the wait out of the per-server CHECK_TIMEOUT.
+                let _permit = CHECK_PERMITS.acquire().await;
                 ConnectivityResult {
                     server_id: server.id,
                     connected: check_server(server.server, CHECK_TIMEOUT).await,
