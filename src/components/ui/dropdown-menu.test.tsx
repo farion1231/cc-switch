@@ -52,6 +52,12 @@ describe("DropdownMenu animation guard", () => {
     // Radix registers its document-level outside-pointer listener after mount.
     await act(() => new Promise((resolve) => window.setTimeout(resolve, 0)));
 
+    // A modal menu sets body to pointer-events: none. The open-state override
+    // is what keeps a real mouse hit on the trigger; jsdom does not perform hit
+    // testing, so firing pointerDown at the trigger alone cannot prove this.
+    expect(document.body).toHaveStyle({ pointerEvents: "none" });
+    expect(trigger).toHaveClass("data-[state=open]:pointer-events-auto");
+
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
     expect(trigger).toHaveAttribute("aria-expanded", "true");
 
