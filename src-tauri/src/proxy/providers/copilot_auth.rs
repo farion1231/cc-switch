@@ -252,6 +252,10 @@ pub struct QuotaDetail {
     pub percent_remaining: f64,
     /// 是否无限
     pub unlimited: bool,
+    /// 当前计划是否含这一项：Free 的 premium_interactions 是 false（总额 0，不是用完了）；
+    /// 旧响应没有这个字段
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_quota: Option<bool>,
 }
 
 /// Copilot 可用模型
