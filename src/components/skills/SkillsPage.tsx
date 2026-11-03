@@ -11,12 +11,16 @@ import {
 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { settingsApi } from "@/lib/api";
-import * as PopoverPrimitive from "@radix-ui/react-popover";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
 import { Notice } from "@/components/ui/notice";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { HoverTip } from "@/components/ui/hover-tip";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import {
   useAddSkillRepo,
@@ -62,7 +66,7 @@ type InstallRunner = <T extends { id: string }>(
 
 const SKILLSSH_PAGE_SIZE = 20;
 const POPOVER_CLASS =
-  "z-[110] rounded-panel border border-border bg-surface p-1 text-fg-1 shadow-v7-md outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2";
+  "z-[110] rounded-panel border border-border bg-surface p-1 text-fg-1 shadow-v7-md outline-none";
 
 /** 仓库的增删和停用（发现段的「仓库」弹层和仓库管理抽屉共用） */
 export function useSkillRepoActions() {
@@ -889,8 +893,8 @@ function InstallToPopover({
   const { t } = useTranslation();
   const apps = SKILLS_APP_IDS.filter((app) => visibleAppIds.includes(app));
   return (
-    <PopoverPrimitive.Root>
-      <PopoverPrimitive.Trigger asChild>
+    <Popover>
+      <PopoverTrigger asChild>
         <Button
           type="button"
           variant="neutral"
@@ -904,51 +908,49 @@ function InstallToPopover({
           </span>
           <ChevronDown className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />
         </Button>
-      </PopoverPrimitive.Trigger>
-      <PopoverPrimitive.Portal>
-        <PopoverPrimitive.Content
-          align="end"
-          sideOffset={6}
-          collisionPadding={8}
-          className={cn(POPOVER_CLASS, "flex w-[280px] flex-col gap-2.5 p-3")}
-        >
-          <div className="flex items-center gap-0.5">
-            <h3 className="m-0 text-caption font-semibold text-fg-2">
-              {t("skillsPage.installTo.title")}
-            </h3>
-            <HelpTip title={t("skillsPage.installTo.helpTitle")}>
-              {t("skillsPage.installTo.help")}
-            </HelpTip>
-          </div>
-          <div className="grid grid-cols-2 gap-x-3 gap-y-2">
-            {apps.map((app) => {
-              const checked = targets.includes(app);
-              return (
-                <label
-                  key={app}
-                  className="flex h-6 cursor-pointer items-center gap-2 text-body"
-                >
-                  <input
-                    type="checkbox"
-                    className={CHECKBOX_CLASS}
-                    checked={checked}
-                    onChange={(event) => {
-                      const next = event.target.checked
-                        ? [...targets, app]
-                        : targets.filter((item) => item !== app);
-                      // 至少留一个：后端安装必须落到某个应用
-                      if (next.length) onChange(next);
-                    }}
-                  />
-                  <AppGlyph app={app} size={16} badgeClassName="bg-surface" />
-                  <span className="truncate">{APP_DISPLAY_NAME[app]}</span>
-                </label>
-              );
-            })}
-          </div>
-        </PopoverPrimitive.Content>
-      </PopoverPrimitive.Portal>
-    </PopoverPrimitive.Root>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        sideOffset={6}
+        collisionPadding={8}
+        className={cn(POPOVER_CLASS, "flex w-[280px] flex-col gap-2.5 p-3")}
+      >
+        <div className="flex items-center gap-0.5">
+          <h3 className="m-0 text-caption font-semibold text-fg-2">
+            {t("skillsPage.installTo.title")}
+          </h3>
+          <HelpTip title={t("skillsPage.installTo.helpTitle")}>
+            {t("skillsPage.installTo.help")}
+          </HelpTip>
+        </div>
+        <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+          {apps.map((app) => {
+            const checked = targets.includes(app);
+            return (
+              <label
+                key={app}
+                className="flex h-6 cursor-pointer items-center gap-2 text-body"
+              >
+                <input
+                  type="checkbox"
+                  className={CHECKBOX_CLASS}
+                  checked={checked}
+                  onChange={(event) => {
+                    const next = event.target.checked
+                      ? [...targets, app]
+                      : targets.filter((item) => item !== app);
+                    // 至少留一个：后端安装必须落到某个应用
+                    if (next.length) onChange(next);
+                  }}
+                />
+                <AppGlyph app={app} size={16} badgeClassName="bg-surface" />
+                <span className="truncate">{APP_DISPLAY_NAME[app]}</span>
+              </label>
+            );
+          })}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -980,8 +982,8 @@ function RepoPopover({
           total: repos.length,
         });
   return (
-    <PopoverPrimitive.Root open={open} onOpenChange={setOpen}>
-      <PopoverPrimitive.Trigger asChild>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
         <Button
           type="button"
           variant="quiet"
@@ -991,72 +993,70 @@ function RepoPopover({
           {label}
           <ChevronDown className="h-3.5 w-3.5" strokeWidth={2} />
         </Button>
-      </PopoverPrimitive.Trigger>
-      <PopoverPrimitive.Portal>
-        <PopoverPrimitive.Content
-          align="start"
-          sideOffset={6}
-          collisionPadding={8}
-          aria-label={t("skillsPage.repos.popoverAria")}
-          className={cn(POPOVER_CLASS, "flex w-[300px] flex-col")}
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        sideOffset={6}
+        collisionPadding={8}
+        aria-label={t("skillsPage.repos.popoverAria")}
+        className={cn(POPOVER_CLASS, "flex w-[300px] flex-col")}
+      >
+        <div className="flex max-h-[280px] flex-col overflow-y-auto">
+          {repos.map((repo) => {
+            const id = `${repo.owner}/${repo.name}`;
+            const failure = repo.enabled
+              ? failureByRepo.get(repoFailureKey(repo))
+              : undefined;
+            return (
+              <label
+                key={id}
+                className="flex min-h-8 cursor-pointer items-center gap-2 rounded-control px-2 py-1 transition-colors hover:bg-subtle"
+              >
+                <input
+                  type="checkbox"
+                  className={CHECKBOX_CLASS}
+                  checked={repo.enabled}
+                  aria-label={t("skillsPage.repos.enableAria", { repo: id })}
+                  onChange={(event) =>
+                    void onToggle(repo, event.target.checked)
+                  }
+                />
+                <span className="min-w-0 flex-1 truncate font-mono text-caption">
+                  {id}
+                </span>
+                <span className="shrink-0 text-caption text-fg-3">
+                  {repo.branch || "main"}
+                </span>
+                {failure ? (
+                  <span
+                    className="shrink-0 text-right text-caption text-warning-text"
+                    title={skillErrorReason(failure.error, t)}
+                  >
+                    {t("skillsPage.repos.readFailed")}
+                  </span>
+                ) : (
+                  <span className="w-12 shrink-0 text-right text-caption tabular-nums text-fg-2">
+                    {repo.enabled
+                      ? countRepoSkills(discoverable, repo)
+                      : t("skillsPage.repos.disabledShort")}
+                  </span>
+                )}
+              </label>
+            );
+          })}
+        </div>
+        <div aria-hidden="true" className="mx-1.5 my-1 h-px bg-border" />
+        <button
+          type="button"
+          onClick={() => {
+            setOpen(false);
+            onManage();
+          }}
+          className="flex h-8 items-center rounded-control px-2.5 text-left text-body transition-colors hover:bg-subtle"
         >
-          <div className="flex max-h-[280px] flex-col overflow-y-auto">
-            {repos.map((repo) => {
-              const id = `${repo.owner}/${repo.name}`;
-              const failure = repo.enabled
-                ? failureByRepo.get(repoFailureKey(repo))
-                : undefined;
-              return (
-                <label
-                  key={id}
-                  className="flex min-h-8 cursor-pointer items-center gap-2 rounded-control px-2 py-1 transition-colors hover:bg-subtle"
-                >
-                  <input
-                    type="checkbox"
-                    className={CHECKBOX_CLASS}
-                    checked={repo.enabled}
-                    aria-label={t("skillsPage.repos.enableAria", { repo: id })}
-                    onChange={(event) =>
-                      void onToggle(repo, event.target.checked)
-                    }
-                  />
-                  <span className="min-w-0 flex-1 truncate font-mono text-caption">
-                    {id}
-                  </span>
-                  <span className="shrink-0 text-caption text-fg-3">
-                    {repo.branch || "main"}
-                  </span>
-                  {failure ? (
-                    <span
-                      className="shrink-0 text-right text-caption text-warning-text"
-                      title={skillErrorReason(failure.error, t)}
-                    >
-                      {t("skillsPage.repos.readFailed")}
-                    </span>
-                  ) : (
-                    <span className="w-12 shrink-0 text-right text-caption tabular-nums text-fg-2">
-                      {repo.enabled
-                        ? countRepoSkills(discoverable, repo)
-                        : t("skillsPage.repos.disabledShort")}
-                    </span>
-                  )}
-                </label>
-              );
-            })}
-          </div>
-          <div aria-hidden="true" className="mx-1.5 my-1 h-px bg-border" />
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(false);
-              onManage();
-            }}
-            className="flex h-8 items-center rounded-control px-2.5 text-left text-body transition-colors hover:bg-subtle"
-          >
-            {t("skillsPage.repos.manage")}
-          </button>
-        </PopoverPrimitive.Content>
-      </PopoverPrimitive.Portal>
-    </PopoverPrimitive.Root>
+          {t("skillsPage.repos.manage")}
+        </button>
+      </PopoverContent>
+    </Popover>
   );
 }
