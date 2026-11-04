@@ -169,13 +169,6 @@
     "removeFromClaudePlugin": "从 Claude 插件移除",
     "dragToReorder": "拖拽以重新排序",
     "dragHandle": "拖拽排序",
-    "searchPlaceholder": "按名称/备注/网址搜索供应商...",
-    "searchAriaLabel": "搜索供应商",
-    "searchScopeHint": "根据名称、备注、官网和请求地址匹配结果。",
-    "searchButtonTip": "搜索供应商（{{shortcut}}）",
-    "searchCloseHint": "按 Esc 关闭",
-    "searchCloseAriaLabel": "关闭供应商搜索",
-    "noSearchResults": "没有符合搜索条件的供应商。",
     "duplicate": "复制",
     "sortUpdateFailed": "排序更新失败",
     "configureUsage": "配置用量查询",
@@ -926,9 +919,7 @@
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI",
       "showProfileSwitcher": "显示项目切换",
-      "showProfileSwitcherDescription": "在主页面顶部显示项目切换入口",
-      "showProviderSearch": "显示供应商搜索",
-      "showProviderSearchDescription": "在供应商页顶部显示搜索按钮，可按名称、备注、官网和请求地址查找。关掉后仍可用 ⌘F / Ctrl+F 打开搜索"
+      "showProfileSwitcherDescription": "在主页面顶部显示项目切换入口"
     },
     "terminal": {
       "title": "首选终端",
@@ -5182,5 +5173,25 @@
       "managedHint": "账号在授权中心管理：退出登录后这张卡会自动消失。"
     },
     "deleteSessionHint": "请在 DeepSeek Harness 中删除此会话，以保持原生历史记录一致。"
+  },
+  "globalSearch": {
+    "title": "全局搜索",
+    "trigger": "搜索",
+    "triggerTip": "全局搜索（{{shortcut}}）",
+    "placeholder": "搜索页面、设置、供应商、MCP、Skills、提示词…",
+    "loading": "正在读取…",
+    "empty": "没有匹配“{{query}}”的结果",
+    "more": "还有 {{count}} 项，继续输入以缩小范围",
+    "hintMove": "选择",
+    "hintOpen": "打开",
+    "hintClose": "关闭",
+    "groups": {
+      "pages": "页面",
+      "settings": "设置项",
+      "providers": "供应商",
+      "mcp": "MCP",
+      "skills": "Skills",
+      "prompts": "提示词"
+    }
   }
 }

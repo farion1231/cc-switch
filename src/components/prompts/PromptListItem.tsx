@@ -13,6 +13,7 @@ import { HoverTip } from "@/components/ui/hover-tip";
 import type { Prompt } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { promptMenuContentClass, promptMenuItemClass } from "./PromptPageFrame";
+import { searchAnchor } from "@/lib/searchReveal";
 
 interface PromptListItemProps {
   id: string;
@@ -52,6 +53,7 @@ const PromptListItem: React.FC<PromptListItemProps> = ({
   return (
     <li
       data-testid={`prompt-row-${id}`}
+      {...searchAnchor(`prompt:${id}`)}
       onClick={(event) => {
         if (disabled) return;
         const target = event.target as HTMLElement;

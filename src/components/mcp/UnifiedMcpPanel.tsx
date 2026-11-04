@@ -46,6 +46,8 @@ import {
   translateMcpBackendError,
 } from "@/utils/errorUtils";
 import { cn } from "@/lib/utils";
+import { searchAnchor, useRevealRequest } from "@/lib/searchReveal";
+import { mcpSearchDetails } from "@/components/search/searchIndex";
 import McpFormModal from "./McpFormModal";
 import {
   MatrixCell,
@@ -61,27 +63,9 @@ import { DisclosureButton, V7ConfirmDialog, V7Dialog } from "./formBits";
 import { summaryOf } from "./mcpDraft";
 import { useVisibleAppIds } from "./useVisibleAppIds";
 
+/** 页内搜索和全局搜索共用同一份字段白名单（env、headers 可能含凭据，不可搜）。 */
 function getMcpSearchText(id: string, server: McpServer): string {
-  const spec = server.server ?? {};
-  const values: unknown[] = [
-    id,
-    server.id,
-    server.name,
-    server.description,
-    ...(Array.isArray(server.tags) ? server.tags : []),
-    spec.type,
-    spec.command,
-    ...(Array.isArray(spec.args) ? spec.args : []),
-    spec.cwd,
-    spec.url,
-    server.homepage,
-    server.docs,
-    server.source,
-  ];
-
-  // Keep this an explicit allow-list. In particular, env and headers may
-  // contain credentials and must never become part of the searchable text.
-  return values
+  return [server.name, ...mcpSearchDetails(id, server)]
     .filter((value): value is string => typeof value === "string")
     .join("\n")
     .toLowerCase();
@@ -153,6 +137,14 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   const [importReport, setImportReport] = useState<ImportReport | null>(null);
   const [importFilesOpen, setImportFilesOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  // 全局搜索跳到某个服务器时，它要是被页内搜索词滤掉了，就先清掉搜索词
+  useRevealRequest("mcp:", (id) => {
+    const query = searchQuery.trim().toLowerCase();
+    const server = serversMapRef.current?.[id];
+    if (query && (!server || !getMcpSearchText(id, server).includes(query))) {
+      setSearchQuery("");
+    }
+  });
   const [fails, setFails] = useState<Record<string, WriteFailure>>({});
   /** 整个应用重新同步失败（「重新同步到各应用」或通知条「重试」），不对应某一行 */
   const [appFails, setAppFails] = useState<Partial<Record<McpAppId, string>>>(
@@ -168,6 +160,8 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
     error: loadError,
     refetch,
   } = useAllMcpServers();
+  const serversMapRef = useRef(serversMap);
+  serversMapRef.current = serversMap;
   const connectivity = useMcpConnectivity(isError ? undefined : serversMap);
   const toggleAppMutation = useToggleMcpApp();
   const bulkToggleAppMutation = useBulkToggleMcpApp();
@@ -888,6 +882,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                         return (
                           <li
                             key={id}
+                            {...searchAnchor(`mcp:${id}`)}
                             onClick={() => openEdit(id)}
                             className={cn(
                               "flex h-14 cursor-pointer items-center pe-2 ps-4 transition-colors duration-150 hover:bg-subtle",

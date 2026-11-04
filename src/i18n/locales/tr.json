@@ -167,13 +167,6 @@
     "removeFromClaudePlugin": "Claude eklentisinden kaldır",
     "dragToReorder": "Yeniden sıralamak için sürükleyin",
     "dragHandle": "Yeniden sıralamak için sürükleyin",
-    "searchPlaceholder": "Adı, notları veya URL'yi arayın...",
-    "searchAriaLabel": "Sağlayıcılarda ara",
-    "searchScopeHint": "Sağlayıcının adı, notları, web sitesi ve API adresiyle eşleşir.",
-    "searchButtonTip": "Sağlayıcılarda ara ({{shortcut}})",
-    "searchCloseHint": "Kapatmak için Esc tuşuna basın",
-    "searchCloseAriaLabel": "Sağlayıcı aramasını kapat",
-    "noSearchResults": "Aramanızla eşleşen sağlayıcı yok.",
     "duplicate": "Çoğalt",
     "sortUpdateFailed": "Sıralama düzeni güncellenemedi",
     "configureUsage": "Kullanım sorgusunu yapılandırma",
@@ -911,9 +904,7 @@
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI",
       "showProfileSwitcher": "Proje değiştiriciyi göster",
-      "showProfileSwitcherDescription": "Proje değiştiriciyi ana sayfa başlığında göster",
-      "showProviderSearch": "Sağlayıcı aramasını göster",
-      "showProviderSearchDescription": "Sağlayıcıları ada, notlara, web sitesine veya API adresine göre bulmak için sağlayıcı sayfasının üst kısmında bir arama düğmesi gösterin. Gizlendiğinde, ⌘F / Ctrl+F yine de aramayı açar"
+      "showProfileSwitcherDescription": "Proje değiştiriciyi ana sayfa başlığında göster"
     },
     "terminal": {
       "title": "Tercih edilen terminal",
@@ -5130,5 +5121,25 @@
       "managedHint": "Hesap Yetkilendirme Merkezi'nde yönetilir; oturumu kapatınca bu kart kendiliğinden kaybolur."
     },
     "deleteSessionHint": "Geçmişin tutarlı kalması için bu oturumu DeepSeek Harness içinde silin."
+  },
+  "globalSearch": {
+    "title": "Genel arama",
+    "trigger": "Ara",
+    "triggerTip": "Genel arama ({{shortcut}})",
+    "placeholder": "Sayfa, ayar, sağlayıcı, MCP, Skills, istem ara…",
+    "loading": "Yükleniyor…",
+    "empty": "\"{{query}}\" için sonuç yok",
+    "more": "{{count}} sonuç daha — daraltmak için yazmaya devam edin",
+    "hintMove": "Seç",
+    "hintOpen": "Aç",
+    "hintClose": "Kapat",
+    "groups": {
+      "pages": "Sayfalar",
+      "settings": "Ayarlar",
+      "providers": "Sağlayıcılar",
+      "mcp": "MCP",
+      "skills": "Skills",
+      "prompts": "İstemler"
+    }
   }
 }

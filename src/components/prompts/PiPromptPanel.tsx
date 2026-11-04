@@ -33,6 +33,7 @@ import {
   utf8Bytes,
 } from "./promptUtils";
 import { toast } from "@/lib/toast";
+import { useRevealRequest } from "@/lib/searchReveal";
 
 export type PiPromptTab = "global" | "system" | "templates";
 
@@ -161,6 +162,18 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
   };
 
   const promptEntries = useMemo(() => Object.entries(prompts), [prompts]);
+  // 全局搜索跳到某条提示词：切回「全局」页签；被页内搜索词滤掉了就先清掉搜索词
+  useRevealRequest("prompt:", (id) => {
+    setActiveTab("global");
+    if (
+      searchQuery.trim() &&
+      !filterPromptEntries(promptEntries, searchQuery).some(
+        ([entryId]) => entryId === id,
+      )
+    ) {
+      setSearchQuery("");
+    }
+  });
   const activePrompt = promptEntries.find(([, prompt]) => prompt.enabled);
   const fileText = currentFileContent ?? null;
   const fileHasContent = Boolean(fileText?.trim());

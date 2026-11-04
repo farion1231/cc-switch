@@ -169,13 +169,6 @@
     "removeFromClaudePlugin": "Claude プラグインから解除",
     "dragToReorder": "ドラッグで並べ替え",
     "dragHandle": "ドラッグで並べ替え",
-    "searchPlaceholder": "名前・メモ・URLで検索...",
-    "searchAriaLabel": "プロバイダーを検索",
-    "searchScopeHint": "名前・メモ・公式サイト・API アドレスを対象に検索します。",
-    "searchButtonTip": "プロバイダーを検索（{{shortcut}}）",
-    "searchCloseHint": "Esc で閉じる",
-    "searchCloseAriaLabel": "検索を閉じる",
-    "noSearchResults": "一致するプロバイダーがありません。",
     "duplicate": "複製",
     "sortUpdateFailed": "並び順の更新に失敗しました",
     "configureUsage": "利用状況を設定",
@@ -926,9 +919,7 @@
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI",
       "showProfileSwitcher": "プロジェクト切り替えを表示",
-      "showProfileSwitcherDescription": "メイン画面上部にプロジェクト切り替えを表示します",
-      "showProviderSearch": "プロバイダー検索を表示",
-      "showProviderSearchDescription": "プロバイダー画面の上部に検索ボタンを表示し、名前・メモ・公式サイト・API アドレスで検索できます。非表示にしても ⌘F / Ctrl+F で検索を開けます"
+      "showProfileSwitcherDescription": "メイン画面上部にプロジェクト切り替えを表示します"
     },
     "terminal": {
       "title": "優先ターミナル",
@@ -5182,5 +5173,25 @@
       "managedHint": "アカウントは認証センターで管理します。ログアウトするとこのカードは自動で消えます。"
     },
     "deleteSessionHint": "履歴の整合性を保つため、DeepSeek Harness でこのセッションを削除してください。"
+  },
+  "globalSearch": {
+    "title": "グローバル検索",
+    "trigger": "検索",
+    "triggerTip": "グローバル検索（{{shortcut}}）",
+    "placeholder": "ページ、設定、プロバイダー、MCP、Skills、プロンプトを検索…",
+    "loading": "読み込み中…",
+    "empty": "「{{query}}」に一致する結果はありません",
+    "more": "ほか {{count}} 件 — 入力を続けて絞り込み",
+    "hintMove": "選択",
+    "hintOpen": "開く",
+    "hintClose": "閉じる",
+    "groups": {
+      "pages": "ページ",
+      "settings": "設定項目",
+      "providers": "プロバイダー",
+      "mcp": "MCP",
+      "skills": "Skills",
+      "prompts": "プロンプト"
+    }
   }
 }
