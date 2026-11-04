@@ -19,7 +19,7 @@ pub(crate) fn validate_prompt_content(app: &AppType, content: &str) -> Result<()
 
 /// 返回指定应用所使用的提示词文件路径。
 pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
-    if matches!(app, AppType::ClaudeDesktop) {
+    if matches!(app, AppType::ClaudeDesktop | AppType::Cursor) {
         return Err(AppError::localized(
             "app.prompts_unsupported",
             "当前应用暂不支持 Prompts",

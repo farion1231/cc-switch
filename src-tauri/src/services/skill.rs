@@ -677,7 +677,11 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
-            AppType::ClaudeDesktop | AppType::Mcode | AppType::Kimi | AppType::Dsh => {}
+            AppType::ClaudeDesktop
+            | AppType::Cursor
+            | AppType::Mcode
+            | AppType::Kimi
+            | AppType::Dsh => {}
             AppType::Codex => {
                 if let Some(custom) = crate::settings::get_codex_override_dir() {
                     return Ok(custom.join("skills"));
@@ -742,6 +746,7 @@ impl SkillService {
             AppType::Pi => crate::pi_config::get_pi_agent_dir()?.join("skills"),
             AppType::Omp => crate::omp_config::get_omp_agent_dir()?.join("skills"),
             AppType::Agy => home.join(".gemini").join("config").join("skills"),
+            AppType::Cursor => home.join(".cursor").join("skills"),
         })
     }
 

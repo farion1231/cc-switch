@@ -263,6 +263,14 @@ fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result
         }
     }
 
+    if matches!(app_type, AppType::Cursor) {
+        state.db.ensure_official_seed_by_id(
+            crate::database::CURSOR_OFFICIAL_PROVIDER_ID,
+            AppType::Cursor,
+        )?;
+        return Ok(true);
+    }
+
     let imported = ProviderService::import_default_config(state, app_type.clone())?;
 
     if imported {
@@ -399,6 +407,17 @@ pub fn ensure_grokbuild_official_provider(state: State<'_, AppState>) -> Result<
         .ensure_official_seed_by_id(
             crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID,
             AppType::GrokBuild,
+        )
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn ensure_cursor_official_provider(state: State<'_, AppState>) -> Result<bool, String> {
+    state
+        .db
+        .ensure_official_seed_by_id(
+            crate::database::CURSOR_OFFICIAL_PROVIDER_ID,
+            AppType::Cursor,
         )
         .map_err(|e| e.to_string())
 }

@@ -14,6 +14,7 @@ use crate::app_config::AppType;
 pub(crate) const CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID: &str = "claude-desktop-official";
 pub(crate) const CODEX_OFFICIAL_PROVIDER_ID: &str = "codex-official";
 pub(crate) const GROKBUILD_OFFICIAL_PROVIDER_ID: &str = "grokbuild-official";
+pub(crate) const CURSOR_OFFICIAL_PROVIDER_ID: &str = "cursor-official";
 
 /// 单条官方供应商种子定义。
 pub(crate) struct OfficialProviderSeed {
@@ -81,6 +82,15 @@ pub(crate) const OFFICIAL_SEEDS: &[OfficialProviderSeed] = &[
         // 空 config = 不写自定义模型表，Grok CLI 回落到自带的 xAI OAuth 登录
         settings_config_json: r#"{"config":""}"#,
     },
+    OfficialProviderSeed {
+        id: CURSOR_OFFICIAL_PROVIDER_ID,
+        app_type: AppType::Cursor,
+        name: "Cursor Official",
+        website_url: "https://cursor.com",
+        icon: "cursor",
+        icon_color: "currentColor",
+        settings_config_json: r#"{"config":""}"#,
+    },
 ];
 
 /// 判断给定的 provider id 是否属于内置官方种子。
@@ -115,6 +125,18 @@ mod tests {
         assert_eq!(seed.app_type, AppType::GrokBuild);
         assert!(is_official_seed_id(GROKBUILD_OFFICIAL_PROVIDER_ID));
         // 空 config = 官方登录态：切换时不注入自定义模型表
+        assert_eq!(seed.settings_config_json, r#"{"config":""}"#);
+    }
+
+    #[test]
+    fn official_seeds_include_cursor() {
+        let seed = OFFICIAL_SEEDS
+            .iter()
+            .find(|seed| seed.id == CURSOR_OFFICIAL_PROVIDER_ID)
+            .expect("cursor official seed");
+
+        assert_eq!(seed.app_type, AppType::Cursor);
+        assert!(is_official_seed_id(CURSOR_OFFICIAL_PROVIDER_ID));
         assert_eq!(seed.settings_config_json, r#"{"config":""}"#);
     }
 }

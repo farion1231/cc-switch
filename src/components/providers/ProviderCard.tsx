@@ -267,7 +267,7 @@ export function ProviderCard({
     (isBoundCodexOfficial || Boolean(claudeBoundAccountId));
   const supportsOfficialSubscription =
     isOfficial &&
-    ["claude", "codex", "gemini", "grokbuild", "agy"].includes(appId);
+    ["claude", "codex", "gemini", "grokbuild", "agy", "cursor"].includes(appId);
   const isOfficialSubscriptionUsage =
     provider.meta?.usage_script?.templateType ===
     TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;

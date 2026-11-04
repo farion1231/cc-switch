@@ -192,6 +192,11 @@ impl StreamCheckService {
                     .filter(|url| !url.trim().is_empty())
                     .unwrap_or_else(|| DEFAULT_GEMINI_BASE_URL.to_string()))
             }
+            AppType::Cursor => {
+                return Err(AppError::Message(
+                    "Cursor providers do not expose a reachability-check target".to_string(),
+                ));
+            }
             _ => get_adapter(app_type)
                 .ok_or_else(|| {
                     AppError::InvalidInput(format!(

@@ -177,6 +177,19 @@ pub async fn get_config_status(
                 path: dir.to_string_lossy().into_owned(),
             })
         }
+        AppType::Cursor => {
+            let path = crate::services::subscription_cursor::get_cursor_dir();
+            let exists = crate::services::subscription_cursor::cursor_auth_db_candidates()
+                .iter()
+                .any(|p| p.exists())
+                || crate::services::subscription_cursor::cursor_auth_json_candidates()
+                    .iter()
+                    .any(|p| p.exists());
+            Ok(ConfigStatus {
+                exists,
+                path: path.to_string_lossy().into_owned(),
+            })
+        }
         AppType::Omp => {
             let config_path =
                 crate::omp_config::get_omp_models_path().map_err(|e| e.to_string())?;
@@ -219,6 +232,7 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
             .unwrap()
             .to_path_buf(),
         AppType::Agy => crate::agy_config::agy_dir(),
+        AppType::Cursor => crate::services::subscription_cursor::get_cursor_dir(),
     };
 
     Ok(dir.to_string_lossy().to_string())
@@ -246,6 +260,7 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
             .unwrap()
             .to_path_buf(),
         AppType::Agy => crate::agy_config::agy_dir(),
+        AppType::Cursor => crate::services::subscription_cursor::get_cursor_dir(),
     };
 
     if !config_dir.exists() {

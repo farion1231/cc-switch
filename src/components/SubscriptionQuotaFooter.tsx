@@ -70,6 +70,8 @@ export const TIER_I18N_KEYS: Record<string, string> = {
   credits: "subscription.credits",
   // GitHub Copilot
   premium: "subscription.copilotPremium",
+  // Cursor
+  fast_requests: "subscription.fastRequests",
 };
 
 /** 卡片上不显示的档（展开时仍列出） */

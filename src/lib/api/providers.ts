@@ -176,6 +176,10 @@ export const providersApi = {
     return await invoke("ensure_grokbuild_official_provider");
   },
 
+  async ensureCursorOfficialProvider(): Promise<boolean> {
+    return await invoke("ensure_cursor_official_provider");
+  },
+
   async getClaudeDesktopStatus(): Promise<ClaudeDesktopStatus> {
     return await invoke("get_claude_desktop_status");
   },

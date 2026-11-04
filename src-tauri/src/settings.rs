@@ -61,6 +61,8 @@ pub struct VisibleApps {
     pub dsh: bool,
     #[serde(default = "default_true")]
     pub agy: bool,
+    #[serde(default = "default_true")]
+    pub cursor: bool,
 }
 
 impl Default for VisibleApps {
@@ -79,6 +81,7 @@ impl Default for VisibleApps {
             kimi: true,
             dsh: true,
             agy: true,
+            cursor: true,
             omp: true,
         }
     }
@@ -101,6 +104,7 @@ impl VisibleApps {
             AppType::Kimi => self.kimi,
             AppType::Dsh => self.dsh,
             AppType::Agy => self.agy,
+            AppType::Cursor => self.cursor,
             AppType::Omp => self.omp,
         }
     }
@@ -633,6 +637,9 @@ pub struct AppSettings {
     /// 当前 Antigravity CLI 供应商 ID
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_agy: Option<String>,
+    /// 当前 Cursor 供应商 ID
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_cursor: Option<String>,
 
     // ===== 本地路由（设备级）=====
     /// 写给客户端的代理主机（IP 或主机名），空/未设时按监听地址推（`0.0.0.0` → `127.0.0.1`）。
@@ -752,6 +759,7 @@ impl Default for AppSettings {
             current_provider_openclaw: None,
             current_provider_hermes: None,
             current_provider_agy: None,
+            current_provider_cursor: None,
             proxy_client_host: None,
             skill_sync_method: SyncMethod::default(),
             skill_storage_location: SkillStorageLocation::default(),
@@ -1434,6 +1442,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
         AppType::Hermes => settings.current_provider_hermes.clone(),
         AppType::Agy => settings.current_provider_agy.clone(),
+        AppType::Cursor => settings.current_provider_cursor.clone(),
         AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp => None,
     }
 }
@@ -1454,6 +1463,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
         AppType::Agy => settings.current_provider_agy = id_owned.clone(),
+        AppType::Cursor => settings.current_provider_cursor = id_owned.clone(),
         AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp => {}
     })
 }

@@ -19,7 +19,10 @@ import { usageKeys } from "@/lib/query/usage";
 import { sessionKeys } from "@/lib/query/sessions";
 import { invalidatePiProviderCaches } from "@/lib/query/pi";
 import { isPiFamilyApp } from "@/config/appConfig";
-import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
+import {
+  CURSOR_OFFICIAL_PROVIDER_ID,
+  GROKBUILD_OFFICIAL_PROVIDER_ID,
+} from "@/utils/providerCapabilities";
 
 export const useAddProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
@@ -32,6 +35,7 @@ export const useAddProviderMutation = (appId: AppId) => {
         addToLive?: boolean;
         ensureClaudeDesktopOfficialSeed?: boolean;
         ensureGrokBuildOfficialSeed?: boolean;
+        ensureCursorOfficialSeed?: boolean;
         editorSave?: ProviderEditorSave;
       },
     ) => {
@@ -40,6 +44,7 @@ export const useAddProviderMutation = (appId: AppId) => {
         addToLive,
         ensureClaudeDesktopOfficialSeed,
         ensureGrokBuildOfficialSeed,
+        ensureCursorOfficialSeed,
         editorSave,
         ...rest
       } = providerInput;
@@ -60,6 +65,16 @@ export const useAddProviderMutation = (appId: AppId) => {
         const officialProvider = providers[GROKBUILD_OFFICIAL_PROVIDER_ID];
         if (!officialProvider) {
           throw new Error("Grok Build official provider was not created");
+        }
+        return officialProvider;
+      }
+
+      if (appId === "cursor" && ensureCursorOfficialSeed) {
+        await providersApi.ensureCursorOfficialProvider();
+        const providers = await providersApi.getAll(appId);
+        const officialProvider = providers[CURSOR_OFFICIAL_PROVIDER_ID];
+        if (!officialProvider) {
+          throw new Error("Cursor official provider was not created");
         }
         return officialProvider;
       }

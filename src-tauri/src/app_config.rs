@@ -49,7 +49,7 @@ impl McpApps {
             AppType::Dsh => self.dsh,
             AppType::Pi => self.pi,
             AppType::Omp => self.omp,
-            AppType::ClaudeDesktop => false,
+            AppType::ClaudeDesktop | AppType::Cursor => false,
             AppType::Agy => self.agy,
         }
     }
@@ -68,7 +68,7 @@ impl McpApps {
             AppType::Kimi => self.kimi = enabled,
             AppType::Dsh => self.dsh = enabled,
             AppType::Pi => self.pi = enabled,
-            AppType::ClaudeDesktop => {}
+            AppType::ClaudeDesktop | AppType::Cursor => {}
             AppType::Agy => self.agy = enabled,
             AppType::Omp => self.omp = enabled,
         }
@@ -179,7 +179,7 @@ impl SkillApps {
             AppType::OpenClaw => false,
             AppType::Agy => self.agy,
             AppType::Omp => self.omp,
-            AppType::ClaudeDesktop => false,
+            AppType::ClaudeDesktop | AppType::Cursor => false,
         }
     }
 
@@ -199,7 +199,7 @@ impl SkillApps {
             AppType::OpenClaw => {}
             AppType::Agy => self.agy = enabled,
             AppType::Omp => self.omp = enabled,
-            AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
+            AppType::ClaudeDesktop | AppType::Cursor => {} // Claude Desktop 3P profiles and Cursor don't use CC Switch skill sync
         }
     }
 
@@ -482,6 +482,7 @@ pub enum AppType {
     Kimi,
     Dsh,
     Agy,
+    Cursor,
     Omp,
 }
 
@@ -501,6 +502,7 @@ impl AppType {
             AppType::Kimi => "kimi",
             AppType::Dsh => "dsh",
             AppType::Agy => "agy",
+            AppType::Cursor => "cursor",
             AppType::Omp => "omp",
         }
     }
@@ -554,6 +556,7 @@ impl AppType {
             AppType::Kimi,
             AppType::Dsh,
             AppType::Agy,
+            AppType::Cursor,
             AppType::Omp,
         ]
         .into_iter()
@@ -579,11 +582,12 @@ impl FromStr for AppType {
             "kimi" | "kimi-code" => Ok(AppType::Kimi),
             "dsh" | "deepseek-harness" => Ok(AppType::Dsh),
             "agy" | "antigravity" | "antigravity-cli" => Ok(AppType::Agy),
+            "cursor" => Ok(AppType::Cursor),
             "omp" | "oh-my-pi" | "oh_my_pi" | "ohmypi" => Ok(AppType::Omp),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, cursor, omp。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, cursor, omp."),
             )),
         }
     }
@@ -628,7 +632,8 @@ impl CommonConfigSnippets {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Omp
-            | AppType::Agy => None,
+            | AppType::Agy
+            | AppType::Cursor => None,
         }
     }
 
@@ -648,7 +653,8 @@ impl CommonConfigSnippets {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Omp
-            | AppType::Agy => {}
+            | AppType::Agy
+            | AppType::Cursor => {}
         }
     }
 }
@@ -980,7 +986,8 @@ impl MultiAppConfig {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Omp
-            | AppType::Agy => return Ok(false),
+            | AppType::Agy
+            | AppType::Cursor => return Ok(false),
         };
 
         prompts.insert(id, prompt);
@@ -1029,7 +1036,8 @@ impl MultiAppConfig {
                 | AppType::Kimi
                 | AppType::Dsh
                 | AppType::Omp
-                | AppType::Agy => continue, // Pi didn't exist in v3.6.x, skip
+                | AppType::Agy
+                | AppType::Cursor => continue, // Pi didn't exist in v3.6.x, skip
             };
 
             for (id, entry) in old_servers {

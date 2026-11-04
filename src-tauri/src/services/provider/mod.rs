@@ -5767,8 +5767,8 @@ impl ProviderService {
                     gemini_direct::switch_to(state.db.as_ref(), &provider)?;
                     return Ok(true);
                 }
-                // Antigravity 的卡只用来打开终端，添加不写任何文件。
-                AppType::Agy => return Ok(true),
+                // Antigravity 的卡只用来打开终端，Cursor 卡主要用于额度追踪，添加不写任何文件。
+                AppType::Agy | AppType::Cursor => return Ok(true),
                 AppType::GrokBuild => {
                     grok_direct::switch_to(state.db.as_ref(), None, &provider)?;
                     return Ok(true);
@@ -5919,6 +5919,7 @@ impl ProviderService {
             AppType::Codex => codex_direct::is_official(&row),
             AppType::Gemini => gemini_direct::is_official(&row),
             AppType::Agy => agy_direct::is_official(&row),
+            AppType::Cursor => row.id == crate::database::CURSOR_OFFICIAL_PROVIDER_ID,
             _ => false,
         };
         Ok(if official {
@@ -6647,8 +6648,8 @@ impl ProviderService {
         }
 
         // For other apps: 本地记录、DB、代理路由任何一处指着它都不能删。Antigravity 没有
-        // 「启用」，旧版留下的直连指针不拦删除。
-        if app_type != AppType::Agy
+        // 「启用」，旧版留下的直连指针不拦删除。Cursor 卡主要用于额度追踪。
+        if !matches!(app_type, AppType::Agy | AppType::Cursor)
             && crate::mode::current::is_referenced(&state.db, &app_type, id)?
         {
             return Err(AppError::Message(
@@ -6865,6 +6866,14 @@ impl ProviderService {
                 "agy.switch.unsupported",
                 "Antigravity 的卡片不需要启用，用「打开终端」启动即可",
                 "Antigravity cards are not enabled; use Open terminal to start one",
+            ));
+        }
+
+        if app_type == AppType::Cursor {
+            return Err(AppError::localized(
+                "cursor.switch.unsupported",
+                "Cursor 的卡片主要用于额度追踪，不支持切换",
+                "Cursor cards are primarily for quota tracking and do not support switching",
             ));
         }
 
@@ -7337,7 +7346,8 @@ impl ProviderService {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Omp
-            | AppType::Agy => Ok(String::new()),
+            | AppType::Agy
+            | AppType::Cursor => Ok(String::new()),
         }
     }
 
@@ -7360,7 +7370,8 @@ impl ProviderService {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Omp
-            | AppType::Agy => Ok(String::new()),
+            | AppType::Agy
+            | AppType::Cursor => Ok(String::new()),
         }
     }
 
@@ -8054,6 +8065,15 @@ impl ProviderService {
                 use crate::gemini_config::validate_gemini_settings;
                 validate_gemini_settings(&provider.settings_config)?
             }
+            AppType::Cursor => {
+                if !provider.settings_config.is_object() {
+                    return Err(AppError::localized(
+                        "provider.cursor.settings.not_object",
+                        "Cursor 配置必须是 JSON 对象",
+                        "Cursor configuration must be a JSON object",
+                    ));
+                }
+            }
             AppType::GrokBuild => {
                 let settings = provider.settings_config.as_object().ok_or_else(|| {
                     AppError::localized(
@@ -8389,6 +8409,7 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
+            AppType::Cursor => Ok((String::new(), "https://cursor.com".to_string())),
         }
     }
 }

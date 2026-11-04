@@ -1136,7 +1136,8 @@
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
-    "omp": "Oh My Pi"
+    "omp": "Oh My Pi",
+    "cursor": "Cursor"
   },
   "mcode": {
     "empty": {
@@ -4162,7 +4163,8 @@
       "agyThirdPartyWeekly": "Claude haftalık",
       "monthly": "Ay",
       "credits": "Kredi",
-      "copilotPremium": "Premium"
+      "copilotPremium": "Premium",
+      "fastRequests": "Hızlı"
     },
     "fiveHour": "5 saat",
     "sevenDay": "Haftalık",
@@ -4183,6 +4185,7 @@
     "monthly": "Aylık",
     "credits": "Kredi",
     "copilotPremium": "Premium",
+    "fastRequests": "Hızlı İstekler",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}} sonra sıfırlanır",
     "extraUsage": "Ekstra Kullanım",

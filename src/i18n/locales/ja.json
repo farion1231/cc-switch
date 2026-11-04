@@ -1151,7 +1151,8 @@
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
-    "omp": "Oh My Pi"
+    "omp": "Oh My Pi",
+    "cursor": "Cursor"
   },
   "mcode": {
     "empty": {
@@ -4204,7 +4205,8 @@
       "agyThirdPartyWeekly": "Claude 週",
       "monthly": "月",
       "credits": "クレジット",
-      "copilotPremium": "プレミアム"
+      "copilotPremium": "プレミアム",
+      "fastRequests": "高速"
     },
     "fiveHour": "5時間",
     "sevenDay": "週間",
@@ -4225,6 +4227,7 @@
     "monthly": "月間",
     "credits": "クレジット",
     "copilotPremium": "プレミアム",
+    "fastRequests": "高速リクエスト",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}}後にリセット",
     "extraUsage": "超過使用量",
