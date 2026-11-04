@@ -232,3 +232,35 @@ describe("Kimi API 预设的 1M 窗口声明", () => {
     });
   }
 });
+
+describe("1M 模型预设的窗口声明", () => {
+  const cases: Array<[string, string]> = [
+    ["Volcengine Doubao", "doubao-seed-2-1-pro-260915[1M]"],
+    ["Gemini Native", "gemini-3.8-flash[1M]"],
+    ["StepFun", "step-5-preview[1M]"],
+    ["Novita AI", "zai-org/glm-5.3[1M]"],
+  ];
+
+  for (const [name, model] of cases) {
+    it(`${name} 的四档模型都带 [1M]`, () => {
+      const preset = providerPresets.find((p) => p.name === name);
+      const env = (preset!.settingsConfig as any).env;
+      expect(env).toMatchObject({
+        ANTHROPIC_MODEL: model,
+        ANTHROPIC_DEFAULT_SONNET_MODEL: model,
+        ANTHROPIC_DEFAULT_OPUS_MODEL: model,
+      });
+      // Haiku 档也指向同一 1M 模型（Novita 的 Haiku 是 1M 的 glm-5.3-flash）
+      expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toMatch(/\[1M\]$/);
+    });
+  }
+
+  it("AtlasCloud 用环境变量钉 1M（平台要求禁用 beta）", () => {
+    const preset = providerPresets.find((p) => p.name === "AtlasCloud");
+    const env = (preset!.settingsConfig as any).env;
+    expect(env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS).toBe("1");
+    expect(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe("1000000");
+    expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("1000000");
+    expect(env.ANTHROPIC_MODEL).toBe("zai-org/glm-5.3");
+  });
+});
