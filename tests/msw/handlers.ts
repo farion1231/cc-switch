@@ -580,6 +580,12 @@ export const handlers = [
       gatewayTokenConfigured: false,
     }),
   ),
+  http.post(`${TAURI_ENDPOINT}/get_config_status`, () =>
+    success({
+      exists: true,
+      path: "/home/test/.cursor",
+    }),
+  ),
   http.post(`${TAURI_ENDPOINT}/get_hermes_memory`, async ({ request }) => {
     const { kind } = await withJson<{ kind: string }>(request);
     return success(kind === "user" ? "user profile" : "agent notes");
