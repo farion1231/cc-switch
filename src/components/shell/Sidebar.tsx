@@ -16,6 +16,7 @@ import {
   KeyRound,
   Layers,
   LayoutGrid,
+  Puzzle,
   Route,
   Server,
   Settings,
@@ -275,6 +276,7 @@ function MainDirectory({
   }[] = [
     { page: "mcp", label: "MCP", icon: Server },
     { page: "skills", label: "Skills", icon: SkillsIcon },
+    { page: "plugins", label: t("nav.plugins"), icon: Puzzle },
     { page: "prompts", label: t("nav.prompts"), icon: BookOpen },
     { page: "sessions", label: t("nav.sessions"), icon: History },
     {
