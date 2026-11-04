@@ -61,7 +61,9 @@
   "apiKeyInput": {
     "placeholder": "請輸入 API Key",
     "show": "顯示 API Key",
-    "hide": "隱藏 API Key"
+    "hide": "隱藏 API Key",
+    "copied": "API Key 已複製",
+    "copyFailed": "API Key 複製失敗"
   },
   "jsonEditor": {
     "mustBeObject": "設定必須是 JSON 物件，不能是陣列或其他類型",
