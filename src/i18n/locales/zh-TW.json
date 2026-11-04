@@ -5103,6 +5103,7 @@
     "removeMarketplace": "移除",
     "confirmUninstallTitle": "解除安裝 {{name}}？",
     "confirmUninstallBody": "從 {{app}} 移除這個外掛和它的快取檔案。之後可以在「探索」裡重新安裝。",
+    "confirmUninstallClaudeBody": "從 {{app}} 解除安裝外掛並保留其資料目錄。若這是最後一份安裝，儲存的選項和憑證會被刪除，重新安裝無法復原。",
     "confirmInstallTitle": "安裝 {{name}}？",
     "confirmInstallBody": "外掛以你的權限執行：{{app}} 會載入它的技能、掛鉤和 MCP 伺服器，並授予它宣告的能力。只安裝來源可信的外掛。",
     "confirmRemoveMarketTitle": "移除市集 {{name}}？",

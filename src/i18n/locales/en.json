@@ -5103,6 +5103,7 @@
     "removeMarketplace": "Remove",
     "confirmUninstallTitle": "Uninstall {{name}}?",
     "confirmUninstallBody": "Removes the plugin and its cached files from {{app}}. You can install it again from Discover.",
+    "confirmUninstallClaudeBody": "Uninstalls the plugin from {{app}} and keeps its data directory. If this is the last installation, saved options and credentials will be deleted and won't be restored by reinstalling.",
     "confirmInstallTitle": "Install {{name}}?",
     "confirmInstallBody": "Plugins run with your permissions: {{app}} will load its skills, hooks and MCP servers and grant the capabilities it declares. Only install plugins from sources you trust.",
     "confirmRemoveMarketTitle": "Remove marketplace {{name}}?",
