@@ -4964,7 +4964,6 @@
     "count": "{{count}} plugins",
     "countFiltered": "{{shown}} of {{count}}",
     "noMatches": "No plugins match “{{query}}”",
-    "truncated": "Showing the first {{shown}} of {{count}}. Search to narrow the list.",
     "loading": "Reading {{app}} plugins…",
     "loadFailed": "Couldn't read {{app}} plugins",
     "catalogLoadFailed": "Couldn't read the marketplace catalog",

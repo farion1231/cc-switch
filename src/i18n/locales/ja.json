@@ -4964,7 +4964,6 @@
     "count": "{{count}} 個のプラグイン",
     "countFiltered": "{{shown}} / {{count}}",
     "noMatches": "「{{query}}」に一致するプラグインはありません",
-    "truncated": "全 {{count}} 件のうち先頭 {{shown}} 件を表示しています。検索で絞り込んでください。",
     "loading": "{{app}} のプラグインを読み込み中…",
     "loadFailed": "{{app}} のプラグインを読み込めませんでした",
     "catalogLoadFailed": "マーケットプレイスのカタログを読み込めませんでした",

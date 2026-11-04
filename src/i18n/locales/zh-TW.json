@@ -4965,7 +4965,6 @@
     "count": "{{count}} 個外掛",
     "countFiltered": "{{shown}} / {{count}}",
     "noMatches": "沒有符合「{{query}}」的外掛",
-    "truncated": "只顯示前 {{shown}} 個（共 {{count}} 個），輸入關鍵字縮小範圍。",
     "loading": "正在讀取 {{app}} 的外掛…",
     "loadFailed": "讀取 {{app}} 的外掛失敗",
     "catalogLoadFailed": "讀取市集目錄失敗",
