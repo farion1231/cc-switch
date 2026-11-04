@@ -5064,7 +5064,6 @@
     "count": "{{count}} 个插件",
     "countFiltered": "{{shown}} / {{count}}",
     "noMatches": "没有匹配「{{query}}」的插件",
-    "truncated": "只显示前 {{shown}} 个（共 {{count}} 个），输入关键词缩小范围。",
     "loading": "正在读取 {{app}} 的插件…",
     "loadFailed": "读取 {{app}} 的插件失败",
     "catalogLoadFailed": "读取市场目录失败",

@@ -5064,7 +5064,6 @@
     "count": "{{count}} eklenti",
     "countFiltered": "{{shown}} / {{count}}",
     "noMatches": "“{{query}}” ile eşleşen eklenti yok",
-    "truncated": "{{count}} sonuçtan ilk {{shown}} tanesi gösteriliyor. Listeyi daraltmak için arayın.",
     "loading": "{{app}} eklentileri okunuyor…",
     "loadFailed": "{{app}} eklentileri okunamadı",
     "catalogLoadFailed": "Pazar yeri kataloğu okunamadı",
