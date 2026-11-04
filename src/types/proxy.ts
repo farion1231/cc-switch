@@ -252,4 +252,6 @@ export interface AppProxyConfig {
   circuitTimeoutSeconds: number;
   circuitErrorRateThreshold: number;
   circuitMinRequests: number;
+  /** 响应模型与请求模型不一致时计入熔断器失败（默认关闭：只告警不熔断） */
+  modelMismatchBreaker: boolean;
 }
