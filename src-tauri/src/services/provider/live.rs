@@ -312,7 +312,8 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Dsh
         | AppType::Agy
         | AppType::Omp
-        | AppType::ClaudeDesktop => false,
+        | AppType::ClaudeDesktop
+        | AppType::CopilotByok => false,
     }
 }
 
@@ -392,7 +393,8 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Dsh
         | AppType::ClaudeDesktop
         | AppType::Agy
-        | AppType::Omp => Ok(settings.clone()),
+        | AppType::Omp
+        | AppType::CopilotByok => Ok(settings.clone()),
     }
 }
 
@@ -715,6 +717,11 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         }
         AppType::Mcode => {
             crate::mcode_config::set_provider(&provider.id, provider.settings_config.clone())?
+        }
+        AppType::CopilotByok => {
+            return Err(AppError::InvalidInput(
+                "Use the Copilot BYOK catalog to update profiles".into(),
+            ))
         }
         AppType::Pi => {
             return Err(AppError::InvalidInput(
@@ -1053,6 +1060,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         AppType::Dsh => {
             Ok(json!(crate::dsh_config::get_providers()?))
         }
+        AppType::CopilotByok => Err(AppError::InvalidInput("Use the Copilot BYOK catalog to read profiles".into())),
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
         )),
@@ -1181,7 +1189,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         | AppType::Mcode
         | AppType::Kimi
         | AppType::Dsh
-        | AppType::Omp => {
+        | AppType::Omp
+        | AppType::CopilotByok => {
             unreachable!("additive mode apps are handled by early return")
         }
     };

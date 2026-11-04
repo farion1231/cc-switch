@@ -28,6 +28,12 @@ fn default_true() -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VisibleApps {
+    #[serde(
+        rename = "copilot-byok",
+        alias = "copilotByok",
+        default = "default_true"
+    )]
+    pub copilot_byok: bool,
     #[serde(default = "default_true")]
     pub claude: bool,
     #[serde(
@@ -66,6 +72,7 @@ pub struct VisibleApps {
 impl Default for VisibleApps {
     fn default() -> Self {
         Self {
+            copilot_byok: true,
             claude: true,
             claude_desktop: true,
             codex: true,
@@ -94,6 +101,7 @@ impl VisibleApps {
             AppType::Gemini => self.gemini,
             AppType::GrokBuild => self.grokbuild,
             AppType::OpenCode => self.opencode,
+            AppType::CopilotByok => self.copilot_byok,
             AppType::OpenClaw => self.openclaw,
             AppType::Hermes => self.hermes,
             AppType::Pi => self.pi,
@@ -1434,7 +1442,12 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
         AppType::Hermes => settings.current_provider_hermes.clone(),
         AppType::Agy => settings.current_provider_agy.clone(),
-        AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp => None,
+        AppType::Pi
+        | AppType::Mcode
+        | AppType::Kimi
+        | AppType::Dsh
+        | AppType::Omp
+        | AppType::CopilotByok => None,
     }
 }
 
@@ -1454,7 +1467,12 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
         AppType::Agy => settings.current_provider_agy = id_owned.clone(),
-        AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp => {}
+        AppType::Pi
+        | AppType::Mcode
+        | AppType::Kimi
+        | AppType::Dsh
+        | AppType::Omp
+        | AppType::CopilotByok => {}
     })
 }
 

@@ -332,6 +332,11 @@ pub(crate) fn build_provider_from_request(
     let api_format = link_api_format(app_type, request)?;
     check_link_values(app_type, request)?;
     let settings_config = match app_type {
+        AppType::CopilotByok => {
+            return Err(AppError::InvalidInput(
+                "Add VS Code Copilot providers from the Copilot page".into(),
+            ))
+        }
         AppType::Claude | AppType::ClaudeDesktop => build_claude_settings(request),
         AppType::Codex => build_codex_settings(request)?,
         AppType::Gemini => build_gemini_settings(request),

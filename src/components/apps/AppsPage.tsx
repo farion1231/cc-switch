@@ -44,6 +44,7 @@ import {
 } from "lucide-react";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
+import { copilotByokApi } from "@/lib/api/copilotByok";
 import type { ToolInstallationReport } from "@/lib/api/settings";
 import type { VisibleApps } from "@/types";
 import { DEFAULT_VISIBLE_APPS, orderAppIds } from "@/config/appConfig";
@@ -107,17 +108,25 @@ const SOURCE_LABEL: Record<string, string> = {
   pip: "pip",
 };
 
-type Row = { kind: "tool"; tool: ToolName } | { kind: "desktop" };
+type Row =
+  | { kind: "tool"; tool: ToolName }
+  | { kind: "desktop" }
+  | { kind: "copilot" };
 
 const ROW_BY_APP = Object.fromEntries([
   ["claude-desktop", { kind: "desktop" }],
+  ["copilot-byok", { kind: "copilot" }],
   ...TOOL_NAMES.map((tool) => [TOOL_APP_IDS[tool], { kind: "tool", tool }]),
 ]) as Record<AppId, Row>;
 
 type RowSection = { key: string; title: string; rows: Row[] };
 
 const rowKey = (row: Row): AppId =>
-  row.kind === "desktop" ? "claude-desktop" : TOOL_APP_IDS[row.tool];
+  row.kind === "desktop"
+    ? "claude-desktop"
+    : row.kind === "copilot"
+      ? "copilot-byok"
+      : TOOL_APP_IDS[row.tool];
 
 // 只上下拖，且停在本组的列表框里：列表框裁掉超出的部分，拖出去整行会看不见
 const verticalDragModifiers: Modifier[] = [
@@ -182,12 +191,27 @@ export function AppsPage() {
     queryFn: () => providersApi.getClaudeDesktopStatus(),
     staleTime: 30_000,
   });
+  const { data: copilotState, isPending: isCopilotStatePending } = useQuery({
+    queryKey: ["copilot-byok", "state"],
+    queryFn: copilotByokApi.getState,
+    staleTime: 30_000,
+    retry: false,
+  });
 
   // 按「已安装 / 未安装」分两组。Claude Desktop 没有命令可探，用后端按数据目录 / 应用包推断的结果。
   // 首次探测还没出结果时不分组，免得各行探完一个跳一个；之后重新检查时沿用上次结果，位置不动。
   const rowInstalled = (row: Row): boolean | null => {
     if (row.kind === "desktop") {
       return isDesktopStatusPending ? null : Boolean(desktopStatus?.installed);
+    }
+    if (row.kind === "copilot") {
+      return isCopilotStatePending
+        ? null
+        : Boolean(
+            copilotState?.targets.some(
+              (target) => target.source === "detected" || target.configExists,
+            ),
+          );
     }
     const info = tools.toolVersionByName.get(row.tool);
     if (!info && tools.isLoadingTools) return null;
@@ -356,6 +380,15 @@ export function AppsPage() {
           </span>
         }
         visibility={visibilitySwitch("claude-desktop")}
+      />
+    ) : row.kind === "copilot" ? (
+      <AppRow
+        key="copilot-byok"
+        app="copilot-byok"
+        name={
+          <span className="truncate">{APP_DISPLAY_NAME["copilot-byok"]}</span>
+        }
+        visibility={visibilitySwitch("copilot-byok")}
       />
     ) : (
       <ToolRow

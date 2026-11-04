@@ -4,8 +4,21 @@ import { describe, expect, it } from "vitest";
 import { ProviderIconBox } from "@/components/ProviderIconBox";
 import { hasIcon, isTileIcon } from "@/icons/extracted";
 import { iconMetadata } from "@/icons/extracted/metadata";
+import { pngDataUri } from "../fixtures/customIcon";
 
 describe("ProviderIconBox", () => {
+  it("fills the tile for custom PNGs whose spacing is encoded in the image", () => {
+    const { container } = render(
+      <ProviderIconBox icon={pngDataUri(96, 96)} name="Custom" />,
+    );
+    const box = container.firstElementChild as HTMLElement;
+    const img = box.querySelector("img") as HTMLImageElement;
+    expect(img.style.width).toBe("32px");
+    expect(img.className).toContain("object-cover");
+    expect(img.className).not.toContain("object-contain");
+    expect(box.className).not.toContain("border-border");
+  });
+
   it("lets icons with their own solid background fill the box", () => {
     const { container } = render(<ProviderIconBox icon="88api" name="88API" />);
     const box = container.firstElementChild as HTMLElement;

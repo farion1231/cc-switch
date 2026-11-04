@@ -176,6 +176,18 @@ impl Provider {
         }
 
         let (base_url, api_key) = match app_type {
+            AppType::CopilotByok => (
+                settings
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                settings
+                    .get("apiKey")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            ),
             // Codex keeps its key in `auth.OPENAI_API_KEY` and its base URL
             // inside a TOML `config` string, not in an `env` map.
             AppType::Codex => {

@@ -94,6 +94,42 @@ vi.mock("@/components/providers/ProviderList", () => ({
   ),
 }));
 
+vi.mock("@/components/settings/CopilotByokSettings", async () => {
+  const { forwardRef, useImperativeHandle, useState } = await import("react");
+  return {
+    CopilotByokSettings: forwardRef<
+      { openAdd: () => void },
+      {
+        mode?: "catalog" | "targets";
+        onOpenTargets?: () => void;
+        searchOpen?: boolean;
+        onSearchOpenChange?: (open: boolean) => void;
+      }
+    >(function MockCopilotByokSettings(
+      { mode = "catalog", onOpenTargets, searchOpen, onSearchOpenChange },
+      ref,
+    ) {
+      const [adding, setAdding] = useState(false);
+      useImperativeHandle(ref, () => ({ openAdd: () => setAdding(true) }));
+      return (
+        <div data-testid={`copilot-byok-${mode}`}>
+          {mode === "catalog" && (
+            <>
+              <button onClick={onOpenTargets}>open-byok-targets</button>
+              {searchOpen && (
+                <button onClick={() => onSearchOpenChange?.(false)}>
+                  close-byok-search
+                </button>
+              )}
+              {adding && <div data-testid="copilot-byok-add" />}
+            </>
+          )}
+        </div>
+      );
+    }),
+  };
+});
+
 vi.mock("@/components/providers/AddProviderDialog", () => ({
   AddProviderDialog: ({ open, onOpenChange, onSubmit, appId }: any) =>
     open ? (
@@ -247,6 +283,66 @@ describe("App integration with MSW", () => {
     windowMocks.onScaleChanged.mockImplementation(listen);
     localStorage.removeItem("cc-switch-last-view");
     localStorage.removeItem("cc-switch-last-app");
+  });
+
+  it("wires the header search to the BYOK catalog", async () => {
+    setSettings({
+      firstRunNoticeConfirmed: true,
+      newLayoutNoticeConfirmed: true,
+    });
+    localStorage.setItem("cc-switch-last-app", "copilot-byok");
+    const { default: App } = await import("@/App");
+    renderApp(App);
+    await screen.findByTestId("copilot-byok-catalog");
+    expect(screen.queryByTestId("provider-list")).toBeNull();
+    const search = screen.getByRole("button", {
+      name: "provider.searchAriaLabel",
+    });
+    expect(search).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(search);
+    expect(search).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "close-byok-search" }));
+    expect(search).toHaveAttribute("aria-pressed", "false");
+  }, 15000);
+
+  it("opens BYOK targets from the notice callback and retains page tabs", async () => {
+    setSettings({
+      firstRunNoticeConfirmed: true,
+      newLayoutNoticeConfirmed: true,
+    });
+    localStorage.setItem("cc-switch-last-app", "copilot-byok");
+    const { default: App } = await import("@/App");
+    renderApp(App);
+    await screen.findByTestId("copilot-byok-catalog");
+    fireEvent.click(screen.getByRole("button", { name: "open-byok-targets" }));
+    await screen.findByTestId("copilot-byok-targets");
+    expect(
+      screen.getByRole("tab", { name: "copilotByok.targets" }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(
+      screen.queryByRole("button", { name: "provider.searchAriaLabel" }),
+    ).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: "appPage.providers" }));
+    await screen.findByTestId("copilot-byok-catalog");
+    expect(
+      screen.getByRole("button", { name: "provider.searchAriaLabel" }),
+    ).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("continues adding BYOK providers through the dedicated core editor", async () => {
+    setSettings({
+      firstRunNoticeConfirmed: true,
+      newLayoutNoticeConfirmed: true,
+    });
+    localStorage.setItem("cc-switch-last-app", "copilot-byok");
+    const { default: App } = await import("@/App");
+    renderApp(App);
+    await screen.findByTestId("copilot-byok-catalog");
+    fireEvent.click(
+      screen.getByRole("button", { name: "provider.addProvider" }),
+    );
+    await screen.findByTestId("copilot-byok-add");
+    expect(screen.queryByTestId("add-provider-dialog")).toBeNull();
   });
 
   it("covers basic provider flows via real hooks", async () => {

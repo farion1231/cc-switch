@@ -672,6 +672,11 @@ impl SkillService {
     pub fn get_app_skills_dir(app: &AppType) -> Result<PathBuf> {
         // 目录覆盖：优先使用用户在 settings.json 中配置的 override 目录
         match app {
+            AppType::CopilotByok => {
+                return Err(anyhow::anyhow!(
+                    "VS Code Copilot Skill synchronization is not supported yet"
+                ))
+            }
             AppType::Claude => {
                 if let Some(custom) = crate::settings::get_claude_override_dir() {
                     return Ok(custom.join("skills"));
@@ -728,6 +733,11 @@ impl SkillService {
         let home = crate::config::get_home_dir();
 
         Ok(match app {
+            AppType::CopilotByok => {
+                return Err(anyhow::anyhow!(
+                    "VS Code Copilot Skill synchronization is not supported yet"
+                ))
+            }
             AppType::Mcode => crate::mcode_config::data_dir().join("skills"),
             AppType::Dsh => crate::dsh_config::data_dir().join("skills"),
             AppType::Kimi => crate::kimi_config::data_dir().join("skills"),
@@ -799,7 +809,7 @@ impl SkillService {
 
     fn validate_skill_storage_destination(ssot_dir: &Path) -> Result<()> {
         for app in AppType::all() {
-            if matches!(app, AppType::ClaudeDesktop) {
+            if matches!(app, AppType::ClaudeDesktop | AppType::CopilotByok) {
                 continue;
             }
             let app_dir = Self::get_app_skills_dir(&app)?;
@@ -3005,19 +3015,23 @@ impl SkillService {
         Self::sync_to_app_unlocked(db, app).map(|_| ())
     }
 
-    /// Skills 不由 `sync_to_app` 投影的应用：Claude Desktop、OpenClaw 不支持 Skills，
+    /// Skills 不由 `sync_to_app` 投影的应用：Claude Desktop、VS Code Copilot、OpenClaw 不支持 Skills，
     /// Pi 没有数据库列、按目录是否存在现算。这些应用的 skills 目录不归 CC Switch 管，
     /// 同步时一个字节都不能碰——OpenClaw 自己的 `~/.openclaw/skills` 里和受管
     /// Skill 同名的真实目录，否则会被当成「已关掉的投影」删掉。
     fn is_sync_managed_app(app: &AppType) -> bool {
         !matches!(
             app,
-            AppType::ClaudeDesktop | AppType::OpenClaw | AppType::Pi | AppType::Omp
+            AppType::ClaudeDesktop
+                | AppType::CopilotByok
+                | AppType::OpenClaw
+                | AppType::Pi
+                | AppType::Omp
         )
     }
 
     /// 「立即重新同步」：按数据库里的开关和当前同步方式，把 Skill 重新投影到各应用目录，
-    /// 逐应用报告结果（Claude Desktop、OpenClaw、Pi、Omp 不由这里同步，不在结果里）。
+    /// 逐应用报告结果（Claude Desktop、VS Code Copilot、OpenClaw、Pi、Omp 不由这里同步，不在结果里）。
     pub fn resync_all_apps(db: &Arc<Database>) -> Vec<SkillAppSyncOutcome> {
         let _state_guard = skill_state_read_guard();
         AppType::all()
@@ -8197,6 +8211,55 @@ mod tests {
         assert!(result.installed.is_empty());
         assert_eq!(result.skipped.len(), 1);
         assert_eq!(result.skipped[0].existing_id, "local:fresh");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn copilot_byok_is_excluded_from_skill_sync() {
+        let home = tempdir().expect("home");
+        let _home = TestHomeGuard::set(home.path());
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let mut skill = poisoned_skill("owner/repo:byok-filter", "byok-filter");
+        skill.apps = SkillApps::only(&AppType::Claude);
+        db.save_skill(&skill).expect("seed skill");
+        let source = SkillService::get_ssot_dir()
+            .expect("ssot dir")
+            .join(&skill.directory);
+        write_skill(&source, "managed");
+        let original = fs::read(source.join("SKILL.md")).expect("read source");
+
+        assert!(!SkillService::is_sync_managed_app(&AppType::CopilotByok));
+        assert!(SkillService::get_app_skills_dir(&AppType::CopilotByok).is_err());
+        SkillService::sync_to_app(&db, &AppType::CopilotByok)
+            .expect("unsupported app synchronization is a no-op");
+        assert_eq!(fs::read(source.join("SKILL.md")).unwrap(), original);
+
+        let outcomes = SkillService::resync_all_apps(&db);
+        assert!(outcomes.iter().all(|outcome| outcome.app != "copilot-byok"));
+        assert!(outcomes.iter().all(|outcome| outcome.ok), "{outcomes:?}");
+        assert!(SkillService::get_app_skills_dir(&AppType::Claude)
+            .expect("Claude skills dir")
+            .join(&skill.directory)
+            .join("SKILL.md")
+            .exists());
+        assert_eq!(fs::read(source.join("SKILL.md")).unwrap(), original);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn skill_storage_validation_skips_copilot_byok_but_keeps_alias_checks() {
+        let home = tempdir().expect("home");
+        let _home = TestHomeGuard::set(home.path());
+        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+        let destination = home.path().join("new-skill-storage");
+        fs::create_dir_all(&destination).expect("create destination");
+
+        SkillService::validate_skill_storage_destination(&destination)
+            .expect("unsupported BYOK target must not block storage validation");
+
+        let pi_dir = SkillService::get_app_skills_dir(&AppType::Pi).expect("Pi skills dir");
+        assert!(SkillService::validate_skill_storage_destination(&pi_dir).is_err());
     }
 
     #[test]

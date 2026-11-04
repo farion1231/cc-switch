@@ -1893,6 +1893,12 @@ fn resync_targets_default_to_managed_apps_and_reject_unsupported() {
         vec![AppType::Pi]
     );
     assert!(McpService::resync_targets(Some(&["openclaw".to_string()])).is_err());
+    for unsupported in ["copilot-byok", "copilotbyok", "vscode-copilot"] {
+        assert!(
+            McpService::resync_targets(Some(&[unsupported.to_string()])).is_err(),
+            "unsupported BYOK target must be rejected: {unsupported}"
+        );
+    }
     assert!(McpService::resync_targets(Some(&["not-an-app".to_string()])).is_err());
 }
 

@@ -13,10 +13,12 @@ mod codex_rollout_file;
 mod codex_state_db;
 mod commands;
 mod config;
+mod copilot_byok;
 mod database;
 mod deeplink;
 mod dsh_config;
 mod error;
+mod file_transaction;
 mod gemini_config;
 mod gemini_mcp;
 mod grok_config;
@@ -1042,6 +1044,10 @@ pub fn run() {
                 Err(e) => log::warn!("✗ Failed to import Oh My Pi providers: {e}"),
             }
 
+            if let Err(error) = crate::copilot_byok::sync_if_configured(app_state.db.as_ref()) {
+                log::warn!("Failed to synchronize Copilot BYOK profiles: {error}");
+            }
+
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
             {
                 let has_omo = app_state
@@ -1973,6 +1979,15 @@ pub fn run() {
             commands::copilot_get_models_for_account,
             commands::copilot_get_usage,
             commands::copilot_get_usage_for_account,
+            commands::copilot_byok_get_state,
+            commands::copilot_byok_set_targets,
+            commands::copilot_byok_add_custom_target,
+            commands::copilot_byok_remove_custom_target,
+            commands::copilot_byok_upsert_group,
+            commands::copilot_byok_delete_group,
+            commands::copilot_byok_reorder_groups,
+            commands::copilot_byok_sync,
+            commands::copilot_byok_restore_backup,
             // OMO commands
             commands::read_omo_local_file,
             commands::get_current_omo_provider_id,

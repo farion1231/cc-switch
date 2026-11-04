@@ -310,6 +310,7 @@ describe("SessionManagerPage", () => {
   it("only offers apps that are shown in the sidebar", async () => {
     setSettings({
       visibleApps: {
+        "copilot-byok": false,
         claude: true,
         "claude-desktop": true,
         codex: true,

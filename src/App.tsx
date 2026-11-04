@@ -89,6 +89,10 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { OpenTerminalDialog } from "@/components/providers/OpenTerminalDialog";
 import { discardUnsavedChanges, hasUnsavedChanges } from "@/lib/unsavedChanges";
 import { SettingsPage } from "@/components/settings/SettingsPage";
+import {
+  CopilotByokSettings,
+  type CopilotByokSettingsHandle,
+} from "@/components/settings/CopilotByokSettings";
 import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
 import { RefreshAllQuotaButton } from "@/components/settings/auth/RefreshAllQuotaButton";
 import { AppsPage } from "@/components/apps/AppsPage";
@@ -166,6 +170,14 @@ function App() {
   const { hasUpdate } = useUpdate();
 
   const [activeApp, setActiveApp] = useState<AppId>(getInitialApp);
+  const copilotByokRef = useRef<CopilotByokSettingsHandle>(null);
+  const [pendingCopilotAdd, setPendingCopilotAdd] = useState(false);
+  useEffect(() => {
+    if (pendingCopilotAdd && activeApp === "copilot-byok") {
+      copilotByokRef.current?.openAdd();
+      setPendingCopilotAdd(false);
+    }
+  }, [pendingCopilotAdd, activeApp]);
   const sharedFeatureApp = sharedFeatureAppOf(activeApp);
   const [currentView, setCurrentView] = useState<View>(readStoredView);
   const [settingsSection, setSettingsSection] =
@@ -242,7 +254,7 @@ function App() {
     if (!settingsData || providersPrefetchedRef.current) return;
     providersPrefetchedRef.current = true;
     for (const app of APP_IDS) {
-      if (app !== activeApp && visibleApps[app]) {
+      if (app !== activeApp && app !== "copilot-byok" && visibleApps[app]) {
         void queryClient.prefetchQuery(providersQueryOptions(app));
       }
     }
@@ -318,6 +330,10 @@ function App() {
   const currentModeView =
     providerModeView?.app === activeApp ? providerModeView.view : undefined;
   const openAddProvider = (modeView: AppMode | undefined) => {
+    if (activeApp === "copilot-byok") {
+      copilotByokRef.current?.openAdd();
+      return;
+    }
     setFormModeView(modeView);
     setIsAddOpen(true);
   };
@@ -327,6 +343,7 @@ function App() {
     : false;
 
   const { data, isLoading, refetch } = useProvidersQuery(activeApp, {
+    enabled: activeApp !== "copilot-byok",
     isProxyRunning: currentAppUsesProxy && isProxyRunning,
   });
   const { data: piCurrentState } = usePiCurrentState(activeApp === "pi");
@@ -783,6 +800,7 @@ function App() {
       try {
         if (
           activeApp === "mcode" ||
+          activeApp === "copilot-byok" ||
           activeApp === "dsh" ||
           activeApp === "kimi" ||
           activeApp === "agy"
@@ -902,7 +920,10 @@ function App() {
       if (!navigation.app) return;
       selectApp(navigation.app);
       // 托盘先换应用：新应用那格还没报上来，按它实际生效的模式
-      if (navigation.intent === "add") openAddProvider(undefined);
+      if (navigation.intent === "add") {
+        if (navigation.app === "copilot-byok") setPendingCopilotAdd(true);
+        else openAddProvider(undefined);
+      }
       if (navigation.intent === "needsRoute" && navigation.providerId) {
         setTrayNeedsRoute({
           app: navigation.app,
@@ -1327,9 +1348,11 @@ function App() {
         </DropdownMenuTrigger>
       </HoverTip>
       <DropdownMenuContent align="end" className="min-w-[180px]">
-        <DropdownMenuItem onSelect={() => openPage("sessions")}>
-          {t("appPage.viewSessions")}
-        </DropdownMenuItem>
+        {activeApp !== "copilot-byok" && (
+          <DropdownMenuItem onSelect={() => openPage("sessions")}>
+            {t("appPage.viewSessions")}
+          </DropdownMenuItem>
+        )}
         {activeUsageApp && (
           <DropdownMenuItem
             onSelect={() => {
@@ -1340,8 +1363,18 @@ function App() {
             {t("appPage.viewUsage")}
           </DropdownMenuItem>
         )}
-        <DropdownMenuItem onSelect={() => openSettings("appConfig", activeApp)}>
-          {t("appPage.configDirectory")}
+        <DropdownMenuItem
+          onSelect={() =>
+            activeApp === "copilot-byok"
+              ? setCurrentView("copilotTargets")
+              : openSettings("appConfig", activeApp)
+          }
+        >
+          {t(
+            activeApp === "copilot-byok"
+              ? "copilotByok.targets"
+              : "appPage.configDirectory",
+          )}
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => openPage("apps")}>
           {t("appPage.installAndUpgrade")}
@@ -1362,9 +1395,11 @@ function App() {
       ? t("appPage.workspace")
       : currentView === "openclawConfig"
         ? t("appPage.openclawConfig")
-        : currentView === "hermesMemory"
-          ? t("appPage.memory")
-          : undefined;
+        : currentView === "copilotTargets"
+          ? t("copilotByok.targets")
+          : currentView === "hermesMemory"
+            ? t("appPage.memory")
+            : undefined;
 
   const renderAppPageHeader = () => (
     <AppPageHeader
@@ -1393,6 +1428,7 @@ function App() {
             activeApp !== "mcode" &&
             activeApp !== "dsh" &&
             activeApp !== "kimi" &&
+            activeApp !== "copilot-byok" &&
             (settingsData?.showProfileSwitcher ?? false) && (
               <ProfileSwitcher activeApp={activeApp} />
             )}
@@ -1445,6 +1481,22 @@ function App() {
   // OpenClaw / Hermes 没有模式 tab，那一行放它们自己的页面导航。
   // 换整块内容的是页面导航，用下划线页签；分段控件只留给模式和页内筛选。
   const renderAppSegments = () => {
+    if (activeApp === "copilot-byok") {
+      return (
+        <div className="shrink-0 px-6 pt-2">
+          <PageTabs
+            aria-label={APP_DISPLAY_NAME[activeApp]}
+            idPrefix="copilot-page"
+            value={currentView}
+            onValueChange={(view) => setCurrentView(view)}
+            items={[
+              { value: "providers", label: t("appPage.providers") },
+              { value: "copilotTargets", label: t("copilotByok.targets") },
+            ]}
+          />
+        </div>
+      );
+    }
     if (activeApp === "openclaw") {
       return (
         <div className="shrink-0 px-6 pt-2">
@@ -1501,6 +1553,22 @@ function App() {
   };
 
   const renderProviderList = () => {
+    if (activeApp === "copilot-byok") {
+      return (
+        <div
+          id="main-content"
+          className="min-h-0 flex-1 overflow-y-auto scroll-stable overflow-x-hidden px-6 pb-12 pt-4"
+        >
+          <CopilotByokSettings
+            ref={copilotByokRef}
+            onOpenWebsite={handleOpenWebsite}
+            onOpenTargets={() => setCurrentView("copilotTargets")}
+            searchOpen={providerSearchOpen}
+            onSearchOpenChange={setProviderSearchOpen}
+          />
+        </div>
+      );
+    }
     if (modeAppId) {
       const startupFailure = startupFailures.find(
         (failure) => failure.appType === modeAppId,
@@ -1587,6 +1655,15 @@ function App() {
   const renderAppPage = () => {
     const body = (() => {
       switch (currentView) {
+        case "copilotTargets":
+          return (
+            <div
+              id="main-content"
+              className="min-h-0 flex-1 overflow-y-auto scroll-stable overflow-x-hidden px-6 pb-12 pt-4"
+            >
+              <CopilotByokSettings mode="targets" />
+            </div>
+          );
         case "workspace":
           return <WorkspaceFilesPanel />;
         case "openclawConfig":

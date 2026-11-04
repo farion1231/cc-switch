@@ -310,6 +310,7 @@ export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
 
 // 主页面显示的应用配置
 export interface VisibleApps {
+  "copilot-byok": boolean;
   claude: boolean;
   "claude-desktop": boolean;
   codex: boolean;

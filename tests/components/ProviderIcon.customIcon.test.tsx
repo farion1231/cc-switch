@@ -9,16 +9,20 @@ describe("ProviderIcon custom icons", () => {
     expect(screen.getByRole("img")).toHaveAttribute("src", pngDataUri(96, 96));
   });
 
-  it("falls back to initials for icons that fail the render-time checks", () => {
+  it("uses initials instead of loading unsupported or oversized icons", () => {
     render(<ProviderIcon icon={pngDataUri(50000, 50000)} name="Acme Relay" />);
-    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.queryByRole("img")).toBeNull();
     expect(screen.getByText("AR")).toBeInTheDocument();
   });
 
-  it("falls back to initials when the image cannot be decoded", () => {
-    render(<ProviderIcon icon={pngDataUri(96, 96)} name="Acme Relay" />);
+  it("falls back on decoding errors and can render a subsequent icon", () => {
+    const { rerender } = render(
+      <ProviderIcon icon={pngDataUri(96, 96)} name="Acme Relay" />,
+    );
     fireEvent.error(screen.getByRole("img"));
-    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.queryByRole("img")).toBeNull();
     expect(screen.getByText("AR")).toBeInTheDocument();
+    rerender(<ProviderIcon icon={pngDataUri(64, 64)} name="Acme Relay" />);
+    expect(screen.getByRole("img")).toHaveAttribute("src", pngDataUri(64, 64));
   });
 });

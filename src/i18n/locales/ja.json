@@ -1,4 +1,51 @@
 {
+  "copilotByok": {
+    "description": "VS Code Copilot Chat のカスタムエンドポイントを管理します。GitHub アカウントやインライン補完は変更しません。",
+    "modelCount": "{{count}} 個のモデルが有効",
+    "sync": "選択したプロファイルに適用",
+    "noTargets": "VS Code プロファイルが選択されていません。設定先を選択するまでプロバイダーはローカルにのみ保存されます。",
+    "addedProvidersHelp": "追加済みプロバイダーで有効なモデルは、選択したプロファイルに同期されます。同期先を選択していない場合は CC Switch 内にのみ保存されます。",
+    "empty": "カスタムエンドポイントはまだありません。プロバイダーを追加してください。",
+    "saved": "保存しました",
+    "targets": "設定先",
+    "targetsDescription": "プロバイダーを保存すると選択したプロファイルが更新されます。CC Switch が管理していないプロバイダーは保持されます。",
+    "defaultProfile": "既定のプロファイル",
+    "customTarget": "カスタム設定先",
+    "customPath": "chatLanguageModels.json の絶対パス",
+    "addTarget": "設定先を追加",
+    "removeTarget": "設定先を削除",
+    "removeTargetMessage": "この設定先の管理を停止し、CC Switch が管理するモデルグループのみを削除します。他のプロバイダーは保持されます。",
+    "restore": "バックアップを復元",
+    "restoreMessage": "モデル設定を元のバックアップで置き換え、この設定先の管理を停止します。その後の手動変更は置き換えられます。",
+    "deleteTitle": "カスタムエンドポイントを削除しますか？",
+    "deleteMessage": "{{name}} を削除し、選択したプロファイルから管理対象モデルを削除しますか？",
+    "editorTitle": "カスタムエンドポイント",
+    "name": "プロバイダー名",
+    "url": "ベース URL",
+    "apiKey": "API キー",
+    "protocol": "API プロトコル",
+    "enabled": "有効",
+    "modelId": "モデル ID",
+    "modelName": "表示名",
+    "contextWindow": "コンテキストウィンドウ",
+    "maxOutputTokens": "最大出力トークン数",
+    "toolCalling": "ツール呼び出し",
+    "vision": "画像入力",
+    "removeModel": "モデルを削除",
+    "addModel": "モデルを追加",
+    "errors": {
+      "load": "Copilot BYOK 設定を読み込めませんでした",
+      "save": "Copilot BYOK 設定を保存できませんでした",
+      "targets": "設定先を更新できませんでした",
+      "addTarget": "設定先を追加できませんでした",
+      "sync": "Copilot BYOK 設定を適用できませんでした"
+    },
+    "protocols": {
+      "chat-completions": "OpenAI Chat Completions",
+      "responses": "OpenAI Responses",
+      "messages": "Anthropic Messages"
+    }
+  },
   "app": {
     "title": "CC Switch",
     "description": "Claude Code・Codex・Gemini CLI のためのオールインワンアシスタント"

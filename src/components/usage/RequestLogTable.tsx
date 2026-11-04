@@ -111,6 +111,7 @@ export function appDisplayName(appType: string): string {
  * 列里只留最短能认出的名字，把宽度让给供应商列。全名在悬停提示里。
  */
 const APP_SHORT_NAME: Record<AppId, string> = {
+  "copilot-byok": "VS Code Copilot",
   claude: "Claude",
   "claude-desktop": "Desktop",
   codex: "Codex",

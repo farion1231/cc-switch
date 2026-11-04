@@ -1,4 +1,51 @@
 {
+  "copilotByok": {
+    "description": "Manage custom endpoints for VS Code Copilot Chat. This does not change your GitHub account or inline completions.",
+    "modelCount": "{{count}} enabled models",
+    "sync": "Apply to selected profiles",
+    "noTargets": "No VS Code profile selected. Providers are saved locally until you choose configuration targets.",
+    "addedProvidersHelp": "Enabled models from added providers sync to the selected profiles. Without a sync target, they are saved only in CC Switch.",
+    "empty": "No custom endpoints yet. Add a provider to get started.",
+    "saved": "Saved successfully",
+    "targets": "Configuration targets",
+    "targetsDescription": "Saving a provider updates the selected profiles. Existing providers not managed by CC Switch are preserved.",
+    "defaultProfile": "Default profile",
+    "customTarget": "Custom target",
+    "customPath": "Full path to chatLanguageModels.json",
+    "addTarget": "Add target",
+    "removeTarget": "Remove target",
+    "removeTargetMessage": "Stop managing this target and remove only CC Switch-managed model groups. Other providers are preserved.",
+    "restore": "Restore backup",
+    "restoreMessage": "Replace this profile's model configuration with its original backup and stop managing this target. Later manual edits will be replaced.",
+    "deleteTitle": "Delete custom endpoint?",
+    "deleteMessage": "Delete {{name}} and remove its managed models from the selected profiles?",
+    "editorTitle": "Custom endpoint",
+    "name": "Provider name",
+    "url": "Base URL",
+    "apiKey": "API key",
+    "protocol": "API protocol",
+    "enabled": "Enabled",
+    "modelId": "Model ID",
+    "modelName": "Display name",
+    "contextWindow": "Context window",
+    "maxOutputTokens": "Maximum output tokens",
+    "toolCalling": "Tool calling",
+    "vision": "Vision",
+    "removeModel": "Remove model",
+    "addModel": "Add model",
+    "errors": {
+      "load": "Could not load Copilot BYOK configuration",
+      "save": "Could not save Copilot BYOK configuration",
+      "targets": "Could not update configuration targets",
+      "addTarget": "Could not add configuration target",
+      "sync": "Could not apply Copilot BYOK configuration"
+    },
+    "protocols": {
+      "chat-completions": "OpenAI Chat Completions",
+      "responses": "OpenAI Responses",
+      "messages": "Anthropic Messages"
+    }
+  },
   "app": {
     "title": "CC Switch",
     "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI"

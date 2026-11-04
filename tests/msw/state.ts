@@ -17,6 +17,7 @@ type LiveProviderIdsByApp = Record<
 >;
 
 const createDefaultProviders = (): ProvidersByApp => ({
+  "copilot-byok": {},
   claude: {
     "claude-1": {
       id: "claude-1",
@@ -82,6 +83,7 @@ const createDefaultProviders = (): ProvidersByApp => ({
 });
 
 const createDefaultCurrent = (): CurrentProviderState => ({
+  "copilot-byok": "",
   claude: "claude-1",
   "claude-desktop": "",
   codex: "codex-1",
@@ -165,6 +167,7 @@ const createDefaultSessionMessages = (): Record<string, SessionMessage[]> => ({
 let sessionsState = createDefaultSessions();
 let sessionMessagesState = createDefaultSessionMessages();
 let mcpConfigs: McpConfigState = {
+  "copilot-byok": {},
   claude: {
     sample: {
       id: "sample",
@@ -296,6 +299,7 @@ export const resetProviderState = () => {
   };
   appConfigDirOverride = null;
   mcpConfigs = {
+    "copilot-byok": {},
     claude: {
       sample: {
         id: "sample",

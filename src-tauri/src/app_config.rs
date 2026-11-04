@@ -49,7 +49,7 @@ impl McpApps {
             AppType::Dsh => self.dsh,
             AppType::Pi => self.pi,
             AppType::Omp => self.omp,
-            AppType::ClaudeDesktop => false,
+            AppType::ClaudeDesktop | AppType::CopilotByok => false,
             AppType::Agy => self.agy,
         }
     }
@@ -68,7 +68,7 @@ impl McpApps {
             AppType::Kimi => self.kimi = enabled,
             AppType::Dsh => self.dsh = enabled,
             AppType::Pi => self.pi = enabled,
-            AppType::ClaudeDesktop => {}
+            AppType::ClaudeDesktop | AppType::CopilotByok => {}
             AppType::Agy => self.agy = enabled,
             AppType::Omp => self.omp = enabled,
         }
@@ -179,7 +179,7 @@ impl SkillApps {
             AppType::OpenClaw => false,
             AppType::Agy => self.agy,
             AppType::Omp => self.omp,
-            AppType::ClaudeDesktop => false,
+            AppType::ClaudeDesktop | AppType::CopilotByok => false,
         }
     }
 
@@ -199,7 +199,7 @@ impl SkillApps {
             AppType::OpenClaw => {}
             AppType::Agy => self.agy = enabled,
             AppType::Omp => self.omp = enabled,
-            AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
+            AppType::ClaudeDesktop | AppType::CopilotByok => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
         }
     }
 
@@ -475,6 +475,12 @@ pub enum AppType {
     Gemini,
     GrokBuild,
     OpenCode,
+    #[serde(
+        rename = "copilot-byok",
+        alias = "copilotByok",
+        alias = "vscode-copilot"
+    )]
+    CopilotByok,
     OpenClaw,
     Hermes,
     Pi,
@@ -494,6 +500,7 @@ impl AppType {
             AppType::Gemini => "gemini",
             AppType::GrokBuild => "grokbuild",
             AppType::OpenCode => "opencode",
+            AppType::CopilotByok => "copilot-byok",
             AppType::OpenClaw => "openclaw",
             AppType::Hermes => "hermes",
             AppType::Pi => "pi",
@@ -513,7 +520,8 @@ impl AppType {
     pub fn is_additive_mode(&self) -> bool {
         matches!(
             self,
-            AppType::OpenCode
+            AppType::CopilotByok
+                | AppType::OpenCode
                 | AppType::OpenClaw
                 | AppType::Hermes
                 | AppType::Pi
@@ -547,6 +555,7 @@ impl AppType {
             AppType::Gemini,
             AppType::GrokBuild,
             AppType::OpenCode,
+            AppType::CopilotByok,
             AppType::OpenClaw,
             AppType::Hermes,
             AppType::Pi,
@@ -572,6 +581,7 @@ impl FromStr for AppType {
             "gemini" => Ok(AppType::Gemini),
             "grokbuild" | "grok-build" | "grok_build" | "grok" => Ok(AppType::GrokBuild),
             "opencode" => Ok(AppType::OpenCode),
+            "copilot-byok" | "copilotbyok" | "vscode-copilot" => Ok(AppType::CopilotByok),
             "openclaw" => Ok(AppType::OpenClaw),
             "hermes" => Ok(AppType::Hermes),
             "pi" => Ok(AppType::Pi),
@@ -628,7 +638,8 @@ impl CommonConfigSnippets {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Omp
-            | AppType::Agy => None,
+            | AppType::Agy
+            | AppType::CopilotByok => None,
         }
     }
 
@@ -648,7 +659,8 @@ impl CommonConfigSnippets {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Omp
-            | AppType::Agy => {}
+            | AppType::Agy
+            | AppType::CopilotByok => {}
         }
     }
 }
@@ -980,7 +992,8 @@ impl MultiAppConfig {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Omp
-            | AppType::Agy => return Ok(false),
+            | AppType::Agy
+            | AppType::CopilotByok => return Ok(false),
         };
 
         prompts.insert(id, prompt);
@@ -1029,7 +1042,8 @@ impl MultiAppConfig {
                 | AppType::Kimi
                 | AppType::Dsh
                 | AppType::Omp
-                | AppType::Agy => continue, // Pi didn't exist in v3.6.x, skip
+                | AppType::Agy
+                | AppType::CopilotByok => continue, // Pi didn't exist in v3.6.x, skip
             };
 
             for (id, entry) in old_servers {
