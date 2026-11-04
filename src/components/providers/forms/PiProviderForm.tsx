@@ -73,7 +73,6 @@ import {
 } from "@/config/piProviderPresets";
 import {
   isPiThinkingLevelMap,
-  PI_THINKING_LEVELS,
   type PiThinkingLevel,
   type PiThinkingLevelMap,
 } from "@/config/piThinkingProfiles";
@@ -2023,9 +2022,18 @@ export function PiProviderForm({
                                         .length === 0;
                                     const genericFourLevels: readonly PiThinkingLevel[] =
                                       ["low", "medium", "high", "xhigh"];
+                                    const ALL_THINKING_LEVELS: readonly PiThinkingLevel[] =
+                                      [
+                                        "low",
+                                        "medium",
+                                        "high",
+                                        "xhigh",
+                                        "max",
+                                        "ultra",
+                                      ];
                                     const supportedLevels = isUnconfigured
                                       ? genericFourLevels
-                                      : PI_THINKING_LEVELS.filter(
+                                      : ALL_THINKING_LEVELS.filter(
                                           (level) =>
                                             thinkingLevelMode(
                                               editableThinkingLevelMap,
@@ -2034,12 +2042,12 @@ export function PiProviderForm({
                                         );
                                     const hasUnsupported =
                                       supportedLevels.length <
-                                        PI_THINKING_LEVELS.length &&
+                                        ALL_THINKING_LEVELS.length &&
                                       supportedLevels.length > 0;
                                     const levelsToRender =
                                       !showAll && hasUnsupported
                                         ? supportedLevels
-                                        : PI_THINKING_LEVELS;
+                                        : ALL_THINKING_LEVELS;
 
                                     return (
                                       <div className="overflow-hidden rounded-lg border border-border/70 bg-surface">

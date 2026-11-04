@@ -37,10 +37,7 @@ import {
   type OpenCodeModelDialect,
 } from "./helpers/opencodeFormUtils";
 import { StructuredOptionsEditor } from "./StructuredOptionsEditor";
-import {
-  PI_THINKING_LEVELS,
-  type PiThinkingLevel,
-} from "@/config/piThinkingProfiles";
+import { type PiThinkingLevel } from "@/config/piThinkingProfiles";
 import { RequestHeadersEditor } from "./RequestHeadersEditor";
 import {
   findRequestHeaderValue,
@@ -199,6 +196,14 @@ function ReasoningEffortsField({
   const [showAll, setShowAll] = useState(false);
   const offeredCount = Object.keys(efforts).length;
   const isUnconfigured = offeredCount === 0;
+  const ALL_THINKING_LEVELS: readonly PiThinkingLevel[] = [
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+    "ultra",
+  ];
   const genericFourLevels: readonly PiThinkingLevel[] = [
     "low",
     "medium",
@@ -207,20 +212,18 @@ function ReasoningEffortsField({
   ];
   const offeredLevels = isUnconfigured
     ? genericFourLevels
-    : PI_THINKING_LEVELS.filter((level) => level in efforts);
+    : ALL_THINKING_LEVELS.filter((level) => level in efforts);
   const hasUnsupported =
-    offeredLevels.length < PI_THINKING_LEVELS.length &&
+    offeredLevels.length < ALL_THINKING_LEVELS.length &&
     offeredLevels.length > 0;
   const levelsToRender =
-    !showAll && hasUnsupported ? offeredLevels : PI_THINKING_LEVELS;
+    !showAll && hasUnsupported ? offeredLevels : ALL_THINKING_LEVELS;
 
   const toggle = (level: string, offered: boolean) => {
     const next: Record<string, string | null> = {};
-    for (const known of PI_THINKING_LEVELS) {
+    for (const known of ALL_THINKING_LEVELS) {
       if (known === level) {
-        if (offered)
-          next[known] =
-            known in efforts ? efforts[known] : known === "off" ? null : known;
+        if (offered) next[known] = known in efforts ? efforts[known] : known;
       } else if (known in efforts) {
         next[known] = efforts[known];
       }
