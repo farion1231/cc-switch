@@ -842,7 +842,12 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
         title={t("pluginsPage.confirmUninstallTitle", {
           name: uninstallTarget ? pluginLabel(uninstallTarget) : "",
         })}
-        body={t("pluginsPage.confirmUninstallBody", { app: appName })}
+        body={t(
+          app === "claude"
+            ? "pluginsPage.confirmUninstallClaudeBody"
+            : "pluginsPage.confirmUninstallBody",
+          { app: appName },
+        )}
         confirmLabel={t("pluginsPage.uninstall")}
         onCancel={() => setUninstallTarget(null)}
         onConfirm={() => {

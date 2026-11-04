@@ -18,7 +18,6 @@ mod mcode;
 mod openclaw;
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -54,22 +53,6 @@ impl PluginApp {
             PluginApp::Grok => "grok",
             PluginApp::Mcode => "mcode",
             PluginApp::Openclaw => "openclaw",
-        }
-    }
-
-    /// 同一个应用的写操作排队执行：两个 CLI 进程同时改同一份配置会互相覆盖。
-    fn write_lock(self) -> &'static Mutex<()> {
-        static CLAUDE: Mutex<()> = Mutex::new(());
-        static CODEX: Mutex<()> = Mutex::new(());
-        static GROK: Mutex<()> = Mutex::new(());
-        static MCODE: Mutex<()> = Mutex::new(());
-        static OPENCLAW: Mutex<()> = Mutex::new(());
-        match self {
-            PluginApp::Claude => &CLAUDE,
-            PluginApp::Codex => &CODEX,
-            PluginApp::Grok => &GROK,
-            PluginApp::Mcode => &MCODE,
-            PluginApp::Openclaw => &OPENCLAW,
         }
     }
 }
@@ -597,6 +580,18 @@ fn codex_configured_marketplaces(config_text: &str) -> toml_edit::DocumentMut {
     config_text.parse().unwrap_or_default()
 }
 
+fn codex_marketplace_needs_upgrade(config_text: &str, name: &str) -> Result<bool, String> {
+    let doc = config_text
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| format!("Failed to parse config.toml: {e}"))?;
+    Ok(doc
+        .get("marketplaces")
+        .and_then(|markets| markets.get(name))
+        .and_then(|market| market.get("source_type"))
+        .and_then(toml_edit::Item::as_str)
+        == Some("git"))
+}
+
 fn parse_codex_marketplaces(value: &Value, config_text: &str) -> Vec<PluginMarketplace> {
     let doc = codex_configured_marketplaces(config_text);
     let configured = doc.get("marketplaces").and_then(|m| m.as_table_like());
@@ -773,10 +768,12 @@ fn ok_outcome(value: &Value) -> PluginActionOutcome {
 }
 
 fn locked<T>(app: PluginApp, f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
-    let _guard = app
-        .write_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // 和供应商切换、编辑器共用写锁，避免整份配置读改写时互相覆盖。
+    let app_id = match app {
+        PluginApp::Grok => "grokbuild",
+        _ => app.tool(),
+    };
+    let _guard = crate::live::engine::lock_app(app_id);
     f()
 }
 
@@ -832,7 +829,15 @@ pub fn uninstall_plugin(app: PluginApp, id: &str) -> Result<PluginActionOutcome,
     locked(app, || match app {
         PluginApp::Claude => run_cli(
             app,
-            &["plugin", "uninstall", id, "--scope", "user", "--json"],
+            &[
+                "plugin",
+                "uninstall",
+                id,
+                "--scope",
+                "user",
+                "--keep-data",
+                "--json",
+            ],
             TOGGLE_TIMEOUT,
         )
         .and_then(|out| claude_action_result(&out))
@@ -917,17 +922,19 @@ pub fn update_plugin(app: PluginApp, id: &str) -> Result<PluginActionOutcome, St
         }
         PluginApp::Codex => {
             let (_, market) = split_id(id);
-            // 本地市场没有快照可刷，upgrade 会报错；忽略它，照样按当前市场内容重装。
-            let _ = run_cli(
-                app,
-                &["plugin", "marketplace", "upgrade", &market, "--json"],
-                NETWORK_TIMEOUT,
-            );
+            let config =
+                crate::codex_config::read_codex_config_text().map_err(|e| e.to_string())?;
+            // upgrade 只适用于配置的 Git 市场；本地和内置/托管市场直接交给 add。
+            if codex_marketplace_needs_upgrade(&config, &market)? {
+                let out = run_cli(
+                    app,
+                    &["plugin", "marketplace", "upgrade", &market, "--json"],
+                    NETWORK_TIMEOUT,
+                )?;
+                codex_action_result(&out)?;
+            }
             // `plugin add` 会把开关写回 enabled = true；用户停用过的，装完再停用回去。
-            let was_disabled = crate::codex_config::read_codex_config_text()
-                .ok()
-                .and_then(|text| codex_plugin_enabled_in_text(&text, id))
-                == Some(false);
+            let was_disabled = codex_plugin_enabled_in_text(&config, id) == Some(false);
             let outcome = run_cli(app, &["plugin", "add", id, "--json"], NETWORK_TIMEOUT)
                 .and_then(|out| codex_action_result(&out))
                 .map(|v| ok_outcome(&v))?;
@@ -1326,6 +1333,24 @@ mod tests {
         assert!(!markets[0].removable);
         assert!(markets[1].removable);
         assert_eq!(markets[1].source.as_deref(), Some(r"C:\mkt"));
+    }
+
+    #[test]
+    fn codex_marketplace_upgrade_only_applies_to_configured_git_sources() {
+        let config = r#"
+[marketplaces.team]
+source_type = "git"
+source = "https://github.com/team/plugins.git"
+
+[marketplaces.local]
+source_type = "local"
+source = "/plugins"
+"#;
+        assert!(codex_marketplace_needs_upgrade(config, "team").unwrap());
+        assert!(!codex_marketplace_needs_upgrade(config, "local").unwrap());
+        assert!(!codex_marketplace_needs_upgrade(config, "openai-api-curated").unwrap());
+        assert!(!codex_marketplace_needs_upgrade("", "openai-global").unwrap());
+        assert!(codex_marketplace_needs_upgrade("not = [valid", "team").is_err());
     }
 
     #[test]
