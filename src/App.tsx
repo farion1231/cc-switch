@@ -98,7 +98,7 @@ import { SwitchModePanel } from "@/components/providers/mode/SwitchModePanel";
 import { proxyApi } from "@/lib/api/proxy";
 import type { AppMode, StartupAttachFailure } from "@/types/proxy";
 import { PROMPT_APP_IDS } from "@/lib/query/prompts";
-import { PLUGIN_APPS } from "@/lib/api/plugins";
+import { PLUGIN_APPS, isPluginApp } from "@/lib/api/plugins";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
 import { WhatsNewNotice } from "@/components/WhatsNewDialog";
@@ -1783,7 +1783,7 @@ function App() {
         return (
           <PluginsPage
             apps={PLUGIN_APPS.filter((app) => visibleApps[app])}
-            initialApp={activeApp === "codex" ? "codex" : "claude"}
+            initialApp={isPluginApp(activeApp) ? activeApp : "claude"}
           />
         );
       case "prompts":

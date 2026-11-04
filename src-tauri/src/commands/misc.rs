@@ -4737,7 +4737,12 @@ fn build_wsl_env_argv(extra_env: &[(&str, String)]) -> Result<Vec<String>, Strin
         // 换不了（不是 WSL 路径）就不传，让工具用它自己的默认目录。
         let linux_value = if matches!(
             *key,
-            "OPENCODE_CONFIG_DIR" | "CODEX_HOME" | "CLAUDE_CONFIG_DIR"
+            "OPENCODE_CONFIG_DIR"
+                | "CODEX_HOME"
+                | "CLAUDE_CONFIG_DIR"
+                | "GROK_HOME"
+                | "OPENCLAW_STATE_DIR"
+                | "OPENCLAW_CONFIG_PATH"
         ) {
             let Some(value) = wsl_unc_path_to_linux(Path::new(value)) else {
                 continue;
@@ -7409,6 +7414,26 @@ mod tests {
 
         let host_only = [("CODEX_HOME", r"C:\Users\jane\.codex".to_string())];
         assert!(build_wsl_env_argv(&host_only).unwrap().is_empty());
+
+        let plugin_dirs = [
+            ("GROK_HOME", r"\\wsl$\Ubuntu\home\jane\.grok".to_string()),
+            (
+                "OPENCLAW_STATE_DIR",
+                r"\\wsl$\Ubuntu\home\jane\.openclaw".to_string(),
+            ),
+            (
+                "OPENCLAW_CONFIG_PATH",
+                r"\\wsl$\Ubuntu\home\jane\.openclaw\openclaw.json".to_string(),
+            ),
+        ];
+        assert_eq!(
+            build_wsl_env_argv(&plugin_dirs).unwrap(),
+            vec![
+                "GROK_HOME=/home/jane/.grok".to_string(),
+                "OPENCLAW_STATE_DIR=/home/jane/.openclaw".to_string(),
+                "OPENCLAW_CONFIG_PATH=/home/jane/.openclaw/openclaw.json".to_string(),
+            ]
+        );
     }
 
     #[test]

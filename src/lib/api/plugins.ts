@@ -1,17 +1,82 @@
 import { invoke } from "@tauri-apps/api/core";
 
-/** 支持插件的应用：Claude Code 和 Codex 各自有插件市场。 */
-export type PluginApp = "claude" | "codex";
+/** 支持插件的应用（值和 `AppId` 一致）。 */
+export type PluginApp = "claude" | "codex" | "grokbuild" | "mcode" | "openclaw";
 
-export const PLUGIN_APPS: PluginApp[] = ["claude", "codex"];
+export const PLUGIN_APPS: PluginApp[] = [
+  "claude",
+  "codex",
+  "grokbuild",
+  "mcode",
+  "openclaw",
+];
+
+export const isPluginApp = (app: string): app is PluginApp =>
+  (PLUGIN_APPS as string[]).includes(app);
+
+/** 各应用的 CLI 支持哪些操作；不支持的入口不显示。 */
+export interface PluginAppFeatures {
+  /** 有「市场」页：能添加、移除市场 */
+  marketplaces: boolean;
+  /** 能从来源刷新市场目录 */
+  refresh: boolean;
+  /** 能更新已装的插件 */
+  update: boolean;
+  /** CLI 要求显式确认信任才肯安装，安装前先让用户确认 */
+  confirmInstall: boolean;
+  /** 改动什么时候生效 */
+  restartNote: "session" | "gateway";
+}
+
+export const PLUGIN_APP_FEATURES: Record<PluginApp, PluginAppFeatures> = {
+  claude: {
+    marketplaces: true,
+    refresh: true,
+    update: true,
+    confirmInstall: false,
+    restartNote: "session",
+  },
+  codex: {
+    marketplaces: true,
+    refresh: true,
+    update: true,
+    confirmInstall: false,
+    restartNote: "session",
+  },
+  // `grok plugin install` 不带 --trust 不装
+  grokbuild: {
+    marketplaces: true,
+    refresh: true,
+    update: true,
+    confirmInstall: true,
+    restartNote: "session",
+  },
+  // 没有更新命令；正式版只有官方市场
+  mcode: {
+    marketplaces: false,
+    refresh: false,
+    update: false,
+    confirmInstall: false,
+    restartNote: "session",
+  },
+  // 目录是 ClawHub 托管的，不能增删市场；安装要确认插件声明的权限
+  openclaw: {
+    marketplaces: false,
+    refresh: true,
+    update: true,
+    confirmInstall: true,
+    restartNote: "gateway",
+  },
+};
 
 /** 工具没装时后端返回的错误码。 */
 export const PLUGIN_CLI_NOT_INSTALLED = "PLUGIN_CLI_NOT_INSTALLED";
 
 export interface PluginEntry {
-  /** `name@marketplace` */
+  /** 交给 CLI 的 id：多数应用是 `name@marketplace`，Grok Build 是插件名，OpenClaw 是插件 id 或 ClawHub 包名 */
   id: string;
   name: string;
+  /** 来自哪个市场；没有市场概念的为空串 */
   marketplace: string;
   displayName?: string | null;
   version?: string | null;
@@ -21,10 +86,14 @@ export interface PluginEntry {
   enabled: boolean;
   /** Claude Code 的安装范围（user / project / local / managed） */
   scope?: string | null;
-  /** CC Switch 能否启停、卸载（Claude Code 只管 user 范围） */
+  /** CC Switch 能否启停（Claude Code 只管 user 范围） */
   manageable: boolean;
+  /** 能否卸载、更新（OpenClaw 自带的插件只能开关）；旧缓存里没有这个字段时按 manageable 算 */
+  removable?: boolean;
   /** 市场是否允许安装 */
   installable: boolean;
+  /** 目录条目装好后在已安装列表里的 id（和 id 不同时才有，OpenClaw 用） */
+  installedId?: string | null;
   installPath?: string | null;
   updatedAt?: string | null;
 }

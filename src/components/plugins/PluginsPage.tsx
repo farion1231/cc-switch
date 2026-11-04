@@ -8,6 +8,8 @@ import {
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Check,
+  ChevronDown,
   Download,
   Loader2,
   MoreHorizontal,
@@ -25,6 +27,11 @@ import { HoverTip } from "@/components/ui/hover-tip";
 import { PageTabs } from "@/components/ui/page-tabs";
 import { SearchField } from "@/components/ui/search-field";
 import { SegmentedControl } from "@/components/ui/segmented-control";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import {
   DropdownMenu,
@@ -42,13 +49,17 @@ import {
 } from "@/components/mcp/formBits";
 import {
   installedFromCatalog,
+  installedIdOf,
   installedPluginsQuery,
+  isRemovable,
   pluginCatalogQuery,
   pluginMarketplacesQuery,
   pluginPatches,
+  prefetchInstalledOnce,
   usePluginWrites,
 } from "@/hooks/usePlugins";
 import {
+  PLUGIN_APP_FEATURES,
   PLUGIN_APPS,
   PLUGIN_CLI_NOT_INSTALLED,
   pluginsApi,
@@ -87,7 +98,7 @@ export function withCatalogDetails(
   catalog: PluginEntry[] | undefined,
 ): PluginEntry[] {
   if (!catalog?.length) return installed;
-  const byId = new Map(catalog.map((entry) => [entry.id, entry]));
+  const byId = new Map(catalog.map((entry) => [installedIdOf(entry), entry]));
   return installed.map((entry) => {
     const item = byId.get(entry.id);
     if (!item || (entry.description && entry.displayName)) return entry;
@@ -106,15 +117,18 @@ export function availableFromCatalog(
   installed: PluginEntry[],
 ): PluginEntry[] {
   const ids = new Set(installed.map((entry) => entry.id));
-  return catalog.filter((entry) => !ids.has(entry.id));
+  return catalog.filter((entry) => !ids.has(installedIdOf(entry)));
 }
+
+/** 应用多于这个数时，分段控件放不下，改用下拉选择。 */
+const SEGMENTED_APP_LIMIT = 3;
 
 function pluginLabel(entry: PluginEntry) {
   return entry.displayName || entry.name;
 }
 
 export interface PluginsPageProps {
-  /** 分段控件里的应用（只列「应用」页里设为显示的）；为空时两个都列 */
+  /** 可选的应用（只列「应用」页里设为显示的）；为空时全部列出 */
   apps?: PluginApp[];
   initialApp?: PluginApp;
 }
@@ -139,27 +153,42 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
   const [uninstallTarget, setUninstallTarget] = useState<PluginEntry | null>(
     null,
   );
+  const [installTarget, setInstallTarget] = useState<PluginEntry | null>(null);
   const [removeMarketTarget, setRemoveMarketTarget] =
     useState<PluginMarketplace | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [source, setSource] = useState("");
 
   const appName = APP_DISPLAY_NAME[app];
+  const features = PLUGIN_APP_FEATURES[app];
+  const restartNote = t(
+    features.restartNote === "gateway"
+      ? "pluginsPage.restartNoteGateway"
+      : "pluginsPage.restartNote",
+    { app: appName },
+  );
+
+  const switchApp = (next: PluginApp) => {
+    setApp(next);
+    setSearch("");
+    // 新应用没有市场页时回到已安装
+    if (!PLUGIN_APP_FEATURES[next].marketplaces && view === "marketplaces") {
+      setView("installed");
+    }
+  };
 
   // 已安装和目录同时起：已安装那条便宜，先回来先显示
   const installedQuery = useQuery(installedPluginsQuery(app));
   const catalogQuery = useQuery(pluginCatalogQuery(app));
   const marketplaces = useQuery({
     ...pluginMarketplacesQuery(app),
-    enabled: view === "marketplaces" || addOpen,
+    enabled: features.marketplaces && (view === "marketplaces" || addOpen),
   });
 
   // 其它应用的已安装列表先在后台读好，切过去不用等
   useEffect(() => {
     for (const other of appChoicesKey.split(",") as PluginApp[]) {
-      if (other !== app) {
-        void queryClient.prefetchQuery(installedPluginsQuery(other));
-      }
+      if (other !== app) prefetchInstalledOnce(queryClient, other);
     }
   }, [app, appChoicesKey, queryClient]);
 
@@ -194,7 +223,7 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
     const result = await runWrite(write);
     if (result.ok && result.outcome) {
       toast.success(messages.success(result.outcome), {
-        description: t("pluginsPage.restartNote", { app: appName }),
+        description: restartNote,
         closeButton: true,
       });
     } else {
@@ -204,6 +233,12 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
       });
     }
     return result.ok;
+  };
+
+  /** CLI 要求确认信任的应用先弹确认框，其余直接装。 */
+  const requestInstall = (entry: PluginEntry) => {
+    if (features.confirmInstall) setInstallTarget(entry);
+    else void install(entry);
   };
 
   const install = (entry: PluginEntry) =>
@@ -370,31 +405,41 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
         </HelpTip>
       }
       actions={
-        <>
-          <Button
-            type="button"
-            variant="quiet"
-            size="regular"
-            disabled={!loaded || anyBusy}
-            onClick={() => void refreshMarketplaces()}
-          >
-            <RefreshCw
-              className={cn("h-4 w-4", busy["market:*"] && "animate-spin")}
-              strokeWidth={2}
-            />
-            {t("pluginsPage.refreshMarketplaces")}
-          </Button>
-          <Button
-            type="button"
-            variant="solid"
-            size="regular"
-            disabled={!loaded}
-            onClick={() => setAddOpen(true)}
-          >
-            <Plus className="h-4 w-4" strokeWidth={2} />
-            {t("pluginsPage.addMarketplace")}
-          </Button>
-        </>
+        features.refresh || features.marketplaces ? (
+          <>
+            {features.refresh && (
+              <Button
+                type="button"
+                variant="quiet"
+                size="regular"
+                disabled={!loaded || anyBusy}
+                onClick={() => void refreshMarketplaces()}
+              >
+                <RefreshCw
+                  className={cn("h-4 w-4", busy["market:*"] && "animate-spin")}
+                  strokeWidth={2}
+                />
+                {t(
+                  features.marketplaces
+                    ? "pluginsPage.refreshMarketplaces"
+                    : "pluginsPage.refreshCatalog",
+                )}
+              </Button>
+            )}
+            {features.marketplaces && (
+              <Button
+                type="button"
+                variant="solid"
+                size="regular"
+                disabled={!loaded}
+                onClick={() => setAddOpen(true)}
+              >
+                <Plus className="h-4 w-4" strokeWidth={2} />
+                {t("pluginsPage.addMarketplace")}
+              </Button>
+            )}
+          </>
+        ) : undefined
       }
     />
   );
@@ -424,18 +469,24 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
                 })
               : t("pluginsPage.viewDiscover"),
         },
-        { value: "marketplaces", label: t("pluginsPage.viewMarketplaces") },
+        ...(features.marketplaces
+          ? [
+              {
+                value: "marketplaces" as const,
+                label: t("pluginsPage.viewMarketplaces"),
+              },
+            ]
+          : []),
       ]}
       trailing={
-        appChoices.length > 1 ? (
+        appChoices.length > SEGMENTED_APP_LIMIT ? (
+          <AppPicker apps={appChoices} value={app} onChange={switchApp} />
+        ) : appChoices.length > 1 ? (
           <SegmentedControl<PluginApp>
             size="sm"
             aria-label={t("pluginsPage.appAria")}
             value={app}
-            onValueChange={(next) => {
-              setApp(next);
-              setSearch("");
-            }}
+            onValueChange={switchApp}
             items={appChoices.map((choice) => ({
               value: choice,
               label: (
@@ -542,7 +593,11 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
       ) : (
         <CenteredState
           title={t("pluginsPage.emptyDiscoverTitle")}
-          body={t("pluginsPage.emptyDiscoverBody")}
+          body={t(
+            features.marketplaces
+              ? "pluginsPage.emptyDiscoverBody"
+              : "pluginsPage.emptyCatalogBody",
+          )}
         />
       );
     }
@@ -581,7 +636,7 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
             </HoverTip>
           )}
           <span className="ms-auto min-w-0 truncate text-caption text-fg-2">
-            {t("pluginsPage.restartNote", { app: appName })}
+            {restartNote}
           </span>
         </div>
         {rows.length === 0 ? (
@@ -601,7 +656,8 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
                 entry={entry}
                 isLast={index === shown.length - 1}
                 busyAction={busy[entry.id]}
-                onInstall={() => void install(entry)}
+                canUpdate={features.update}
+                onInstall={() => requestInstall(entry)}
                 onToggle={(enabled) => void toggle(entry, enabled)}
                 onUpdate={() => void update(entry)}
                 onUninstall={() => setUninstallTarget(entry)}
@@ -748,6 +804,29 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
       />
 
       <V7ConfirmDialog
+        open={installTarget !== null}
+        title={t("pluginsPage.confirmInstallTitle", {
+          name: installTarget ? pluginLabel(installTarget) : "",
+        })}
+        body={t("pluginsPage.confirmInstallBody", { app: appName })}
+        details={
+          installTarget && (
+            <code className="rounded-[8px] bg-subtle px-3 py-2 font-mono text-caption text-fg-2 [overflow-wrap:anywhere]">
+              {installTarget.id}
+            </code>
+          )
+        }
+        confirmLabel={t("pluginsPage.install")}
+        danger={false}
+        onCancel={() => setInstallTarget(null)}
+        onConfirm={() => {
+          const target = installTarget;
+          setInstallTarget(null);
+          if (target) void install(target);
+        }}
+      />
+
+      <V7ConfirmDialog
         open={removeMarketTarget !== null}
         title={t("pluginsPage.confirmRemoveMarketTitle", {
           name: removeMarketTarget?.name ?? "",
@@ -832,6 +911,77 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
   );
 }
 
+/** 应用多时的选择器：按钮显示当前应用，点开是列表（同提示词页）。 */
+function AppPicker({
+  apps,
+  value,
+  onChange,
+}: {
+  apps: PluginApp[];
+  value: PluginApp;
+  onChange: (app: PluginApp) => void;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="neutral"
+          size="compact"
+          aria-label={t("pluginsPage.appAria")}
+          className="shrink-0 gap-1.5 pe-1.5 ps-2"
+        >
+          <AppGlyph app={value} size={14} />
+          <span>{APP_DISPLAY_NAME[value]}</span>
+          <ChevronDown
+            aria-hidden="true"
+            className="h-3.5 w-3.5 shrink-0 text-fg-2"
+          />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        aria-label={t("pluginsPage.appAria")}
+        className="flex w-[240px] flex-col rounded-panel border-border bg-surface p-1 shadow-v7-md"
+      >
+        {apps.map((id) => {
+          const selected = id === value;
+          return (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={selected}
+              onClick={() => {
+                setOpen(false);
+                if (!selected) onChange(id);
+              }}
+              className={cn(
+                "flex min-h-8 w-full items-center gap-2 rounded-control pe-2 ps-2.5 text-left text-body text-fg-1 transition-colors hover:bg-subtle",
+                selected ? "font-medium" : "font-normal",
+              )}
+            >
+              <AppGlyph app={id} size={16} badgeClassName="bg-surface" />
+              <span className="min-w-0 flex-1 truncate">
+                {APP_DISPLAY_NAME[id]}
+              </span>
+              <Check
+                aria-hidden="true"
+                strokeWidth={1.5}
+                className={cn(
+                  "h-3.5 w-3.5 shrink-0",
+                  selected ? "visible" : "invisible",
+                )}
+              />
+            </button>
+          );
+        })}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function CenteredState({
   title,
   body,
@@ -861,6 +1011,7 @@ function PluginRow({
   entry,
   isLast,
   busyAction,
+  canUpdate,
   onInstall,
   onToggle,
   onUpdate,
@@ -869,6 +1020,8 @@ function PluginRow({
   entry: PluginEntry;
   isLast: boolean;
   busyAction?: string;
+  /** 这个应用的 CLI 有更新命令 */
+  canUpdate: boolean;
   onInstall: () => void;
   onToggle: (enabled: boolean) => void;
   onUpdate: () => void;
@@ -878,6 +1031,9 @@ function PluginRow({
   const label = pluginLabel(entry);
   const busy = Boolean(busyAction);
   const readOnlyScope = entry.installed && !entry.manageable;
+  // 随应用自带、只能开关的插件（OpenClaw 的 bundled）
+  const builtIn = entry.installed && entry.manageable && !isRemovable(entry);
+  const showMenu = entry.installed && !builtIn;
 
   return (
     <div
@@ -891,13 +1047,25 @@ function PluginRow({
           <span className="truncate text-body font-medium text-fg-1">
             {label}
           </span>
-          <span className="shrink-0 truncate font-mono text-caption text-fg-3">
-            @{entry.marketplace}
-          </span>
+          {entry.marketplace && (
+            <span className="shrink-0 truncate font-mono text-caption text-fg-3">
+              @{entry.marketplace}
+            </span>
+          )}
           {entry.version && (
             <span className="shrink-0 font-mono text-caption tabular-nums text-fg-3">
               {entry.version}
             </span>
+          )}
+          {builtIn && (
+            <HoverTip content={t("pluginsPage.builtInPlugin")}>
+              <span
+                tabIndex={0}
+                className="shrink-0 rounded-[4px] bg-subtle px-1.5 text-caption text-fg-2"
+              >
+                {t("pluginsPage.builtIn")}
+              </span>
+            </HoverTip>
           )}
           {entry.scope && entry.scope !== "user" && (
             <HoverTip
@@ -938,32 +1106,39 @@ function PluginRow({
             aria-label={t("pluginsPage.enableAria", { name: label })}
             onCheckedChange={onToggle}
           />
-          <DropdownMenu>
-            <HoverTip content={t("common.more")}>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  variant="quiet"
-                  size="icon-compact"
-                  disabled={busy || readOnlyScope}
-                  aria-label={t("pluginsPage.moreActions", { name: label })}
+          {showMenu ? (
+            <DropdownMenu>
+              <HoverTip content={t("common.more")}>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="quiet"
+                    size="icon-compact"
+                    disabled={busy || readOnlyScope}
+                    aria-label={t("pluginsPage.moreActions", { name: label })}
+                  >
+                    <MoreHorizontal className="h-4 w-4" strokeWidth={1.5} />
+                  </Button>
+                </DropdownMenuTrigger>
+              </HoverTip>
+              <DropdownMenuContent align="end" className="min-w-[180px]">
+                {canUpdate && (
+                  <DropdownMenuItem onSelect={onUpdate}>
+                    {t("pluginsPage.update")}
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem
+                  className="text-danger-text focus:text-danger-text"
+                  onSelect={onUninstall}
                 >
-                  <MoreHorizontal className="h-4 w-4" strokeWidth={1.5} />
-                </Button>
-              </DropdownMenuTrigger>
-            </HoverTip>
-            <DropdownMenuContent align="end" className="min-w-[180px]">
-              <DropdownMenuItem onSelect={onUpdate}>
-                {t("pluginsPage.update")}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                className="text-danger-text focus:text-danger-text"
-                onSelect={onUninstall}
-              >
-                {t("pluginsPage.uninstall")}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+                  {t("pluginsPage.uninstall")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : (
+            // 占住菜单按钮的位置，开关和其它行对齐
+            <span aria-hidden="true" className="size-7 shrink-0" />
+          )}
         </>
       ) : entry.installable ? (
         <Button
