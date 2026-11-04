@@ -236,7 +236,7 @@ describe("useSettingsForm Hook", () => {
       isLoading: false,
     });
 
-    const { result, rerender } = renderHook(() => useSettingsForm());
+    const { result } = renderHook(() => useSettingsForm());
 
     await waitFor(() => {
       expect(result.current.settings?.closeWindowAction).toBe(
@@ -247,6 +247,7 @@ describe("useSettingsForm Hook", () => {
     // 2. Legacy minimizeToTrayOnClose: false maps to "exit"
     act(() => {
       result.current.resetSettings({
+        showInTray: true,
         minimizeToTrayOnClose: false,
       });
     });
@@ -255,6 +256,7 @@ describe("useSettingsForm Hook", () => {
     // 3. Legacy minimizeToTrayOnClose: true maps to "minimize_to_tray"
     act(() => {
       result.current.resetSettings({
+        showInTray: true,
         minimizeToTrayOnClose: true,
       });
     });
