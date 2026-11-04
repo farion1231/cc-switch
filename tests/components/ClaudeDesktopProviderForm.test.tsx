@@ -1,10 +1,4 @@
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClientProvider } from "@tanstack/react-query";
 import type { ComponentProps } from "react";
@@ -20,7 +14,6 @@ const toastMocks = vi.hoisted(() => ({
 }));
 const modelFetchMocks = vi.hoisted(() => ({
   fetchCodexOauthModels: vi.fn(),
-  fetchModelsForConfig: vi.fn(),
 }));
 
 vi.mock("@/lib/api/model-fetch", async (importOriginal) => {
@@ -28,7 +21,6 @@ vi.mock("@/lib/api/model-fetch", async (importOriginal) => {
   return {
     ...actual,
     fetchCodexOauthModels: modelFetchMocks.fetchCodexOauthModels,
-    fetchModelsForConfig: modelFetchMocks.fetchModelsForConfig,
   };
 });
 
@@ -104,159 +96,10 @@ function renderForm(
 }
 
 describe("ClaudeDesktopProviderForm", () => {
-  it("恢复已有备用模型，统一保存到各实际模型，并在关闭后清除配置", async () => {
-    const { onSubmit } = renderForm({
-      name: "Fallback provider",
-      settingsConfig: {
-        env: {
-          ANTHROPIC_BASE_URL: "https://api.example.com",
-          ANTHROPIC_AUTH_TOKEN: "test-token",
-        },
-      },
-      meta: {
-        claudeDesktopMode: "proxy",
-        apiFormat: "anthropic",
-        claudeDesktopModelRoutes: {
-          "claude-sonnet-5": { model: "main-model" },
-          "claude-opus-5": { model: "classifier-model" },
-        },
-        claudeDesktopModelFallbacks: {
-          "classifier-model": "old-backup",
-          "removed-model": "stale-backup",
-        },
-      },
-    });
-    expect(screen.getByRole("checkbox", { name: "备用模型" })).toBeChecked();
-    const fallback = screen.getByDisplayValue("old-backup");
-    expect(screen.getAllByRole("textbox", { name: "备用模型" })).toHaveLength(
-      1,
-    );
-    fireEvent.change(fallback, { target: { value: " backup-model " } });
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-    expect(onSubmit.mock.calls[0][0].meta.claudeDesktopModelFallbacks).toEqual({
-      "main-model": "backup-model",
-      "classifier-model": "backup-model",
-    });
-    fireEvent.click(screen.getByRole("checkbox", { name: "备用模型" }));
-    expect(
-      screen.queryByRole("textbox", { name: "备用模型" }),
-    ).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
-    expect(
-      onSubmit.mock.calls[1][0].meta.claudeDesktopModelFallbacks,
-    ).toBeUndefined();
-  });
-
-  const fallbackProvider = {
-    name: "Fallback provider",
-    settingsConfig: {
-      env: {
-        ANTHROPIC_BASE_URL: "https://api.example.com",
-        ANTHROPIC_AUTH_TOKEN: "test-token",
-      },
-    },
-    meta: {
-      claudeDesktopMode: "proxy" as const,
-      apiFormat: "anthropic" as const,
-      claudeDesktopModelRoutes: {
-        "claude-sonnet-5": { model: "main-model" },
-        "claude-opus-5": { model: "main-model" },
-        "claude-haiku-5": { model: "backup-model" },
-      },
-    },
-  };
-
-  it("备用模型默认关闭，启用后必须填写模型，保存时避免回退到自身", async () => {
-    const { onSubmit } = renderForm(fallbackProvider);
-    const toggle = screen.getByRole("checkbox", { name: "备用模型" });
-    expect(toggle).not.toBeChecked();
-    expect(
-      screen.queryByRole("textbox", { name: "备用模型" }),
-    ).not.toBeInTheDocument();
-    fireEvent.click(toggle);
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
-    await waitFor(() =>
-      expect(toastMocks.error).toHaveBeenCalledWith("请选择或输入备用模型"),
-    );
-    expect(onSubmit).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByRole("textbox", { name: "备用模型" }), {
-      target: { value: " backup-model " },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-    expect(onSubmit.mock.calls[0][0].meta.claudeDesktopModelFallbacks).toEqual({
-      "main-model": "backup-model",
-    });
-  });
-
-  it("备用模型可从上方获取的列表选择，收起再展开保留当前选择", async () => {
-    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
-      configurable: true,
-      value: vi.fn(),
-    });
-    const user = userEvent.setup();
-    modelFetchMocks.fetchModelsForConfig.mockResolvedValue([
-      { id: "backup-model", ownedBy: "demo" },
-      { id: "other-model", ownedBy: "demo" },
-    ]);
-    const { onSubmit } = renderForm(fallbackProvider);
-    await user.click(screen.getByRole("button", { name: /获取模型/ }));
-    await waitFor(() =>
-      expect(modelFetchMocks.fetchModelsForConfig).toHaveBeenCalled(),
-    );
-    await user.click(screen.getByRole("checkbox", { name: "备用模型" }));
-    const field = screen.getByRole("textbox", { name: "备用模型" });
-    const picker = within(field.parentElement!).getByRole("button", {
-      name: "Select model",
-    });
-    await user.click(picker);
-    await user.click(
-      await screen.findByRole("option", { name: "other-model" }),
-    );
-    expect(field).toHaveValue("other-model");
-    await user.click(screen.getByRole("checkbox", { name: "备用模型" }));
-    await user.click(screen.getByRole("checkbox", { name: "备用模型" }));
-    expect(screen.getByRole("textbox", { name: "备用模型" })).toHaveValue(
-      "other-model",
-    );
-    await user.click(screen.getByRole("button", { name: "保存" }));
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-    expect(onSubmit.mock.calls[0][0].meta.claudeDesktopModelFallbacks).toEqual({
-      "main-model": "other-model",
-      "backup-model": "other-model",
-    });
-  });
-
-  it("所有角色使用同一模型时不能把它本身设为备用模型", async () => {
-    const { onSubmit } = renderForm({
-      ...fallbackProvider,
-      meta: {
-        ...fallbackProvider.meta,
-        claudeDesktopModelRoutes: {
-          "claude-sonnet-5": { model: "main-model" },
-        },
-      },
-    });
-    fireEvent.click(screen.getByRole("checkbox", { name: "备用模型" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "备用模型" }), {
-      target: { value: "main-model" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
-    await waitFor(() =>
-      expect(toastMocks.error).toHaveBeenCalledWith(
-        "请选择与实际请求模型不同的备用模型",
-      ),
-    );
-    expect(onSubmit).not.toHaveBeenCalled();
-  });
-
   beforeEach(() => {
     authState.codexReauthRequired = false;
     toastMocks.error.mockReset();
     modelFetchMocks.fetchCodexOauthModels.mockReset();
-    modelFetchMocks.fetchModelsForConfig.mockReset();
   });
 
   it("托管 OAuth 供应商也能获取模型并在映射行里选择（#8426）", async () => {

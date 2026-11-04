@@ -269,17 +269,9 @@ impl RequestContext {
                 (0, 0, 0)
             };
 
+        // 故障转移关闭时强制 max_retries=0（仅尝试 1 个 provider），与「不超时 + 不切换」语义一致。
         let max_retries = if self.app_config.auto_failover_enabled {
             self.app_config.max_retries
-        } else if !self.is_stack
-            && matches!(self.app_type, AppType::ClaudeDesktop)
-            && self
-                .provider
-                .meta
-                .as_ref()
-                .is_some_and(|meta| !meta.claude_desktop_model_fallbacks.is_empty())
-        {
-            1
         } else {
             0
         };

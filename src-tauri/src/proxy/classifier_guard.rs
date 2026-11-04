@@ -1,8 +1,6 @@
-use super::ProxyError;
-use crate::provider::Provider;
 use serde_json::Value;
 
-pub(super) const CLASSIFIER_LOOP_MESSAGE: &str = "CC Switch stopped this request after three consecutive tool-result turns reported an unavailable auto-mode safety classifier. No upstream request was sent. Fix the classifier model mapping, balance or configured fallback, then send a new user message to resume. Tool permission checks remain required.";
+pub(super) const CLASSIFIER_LOOP_MESSAGE: &str = "CC Switch stopped this request after three consecutive tool-result turns reported an unavailable auto-mode safety classifier. No upstream request was sent. Fix the classifier model mapping or balance, then send a new user message to resume. Tool permission checks remain required.";
 
 pub(super) fn classifier_retry_loop(body: &Value) -> bool {
     if body
@@ -63,43 +61,6 @@ fn unavailable_classifier_result(block: &Value) -> bool {
         }),
         _ => false,
     }
-}
-
-pub(super) fn desktop_fallback_provider(
-    provider: &Provider,
-    body: &Value,
-    error: &ProxyError,
-) -> Option<Provider> {
-    if !matches!(
-        error,
-        ProxyError::UpstreamError {
-            status: 402 | 404 | 429 | 500 | 502..=504,
-            ..
-        }
-    ) {
-        return None;
-    }
-    let meta = provider.meta.as_ref()?;
-    if meta.claude_desktop_model_fallbacks.is_empty() {
-        return None;
-    }
-    let mapped =
-        crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider).ok()?;
-    let primary = mapped.get("model")?.as_str()?;
-    let fallback = meta.claude_desktop_model_fallbacks.get(primary)?.trim();
-    if fallback.is_empty() || fallback == primary {
-        return None;
-    }
-    let mut result = provider.clone();
-    let meta = result.meta.as_mut()?;
-    for route in meta.claude_desktop_model_routes.values_mut() {
-        if route.model.trim() == primary {
-            route.model = fallback.to_string();
-        }
-    }
-    let mapped =
-        crate::claude_desktop_config::map_proxy_request_model(body.clone(), &result).ok()?;
-    (mapped.get("model")?.as_str()? == fallback).then_some(result)
 }
 
 #[cfg(test)]

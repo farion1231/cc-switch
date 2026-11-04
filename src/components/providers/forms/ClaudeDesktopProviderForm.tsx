@@ -325,22 +325,6 @@ export function ClaudeDesktopProviderForm({
       Object.keys(initialData?.meta?.claudeDesktopModelRoutes ?? {}).length > 0,
   );
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
-  // Keep the existing per-upstream storage format; the form now configures one
-  // shared fallback for all mapped models. Ignore stale, unused legacy entries.
-  const initialFallbackModel =
-    Object.values(initialData?.meta?.claudeDesktopModelRoutes ?? {})
-      .map(({ model }) => {
-        const fallback =
-          initialData?.meta?.claudeDesktopModelFallbacks?.[
-            model.trim()
-          ]?.trim();
-        return fallback !== model.trim() ? fallback : undefined;
-      })
-      .find(Boolean) ?? "";
-  const [fallbackEnabled, setFallbackEnabled] = useState(
-    Boolean(initialFallbackModel),
-  );
-  const [fallbackModel, setFallbackModel] = useState(initialFallbackModel);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const { data: defaultRoutes = [] } = useQuery({
     queryKey: ["claudeDesktopDefaultRoutes"],
@@ -455,8 +439,6 @@ export function ClaudeDesktopProviderForm({
   });
 
   const applyDesktopPreset = (preset: ClaudeDesktopProviderPreset) => {
-    setFallbackEnabled(false);
-    setFallbackModel("");
     form.setValue("name", preset.nameKey ? t(preset.nameKey) : preset.name);
     form.setValue("websiteUrl", preset.websiteUrl);
     form.setValue("notes", "");
@@ -510,8 +492,6 @@ export function ClaudeDesktopProviderForm({
     setSelectedPresetId(value);
 
     if (value === "custom") {
-      setFallbackEnabled(false);
-      setFallbackModel("");
       setActivePreset(null);
       form.reset(defaultValues);
       setBaseUrl("");
@@ -724,7 +704,6 @@ export function ClaudeDesktopProviderForm({
       const meta: ProviderMeta = { ...(initialData?.meta ?? {}) };
       delete meta.claudeDesktopMode;
       delete meta.claudeDesktopModelRoutes;
-      delete meta.claudeDesktopModelFallbacks;
       delete meta.apiFormat;
       delete meta.claudeReasoningEffort;
       delete meta.endpointAutoSelect;
@@ -932,39 +911,6 @@ export function ClaudeDesktopProviderForm({
     };
 
     meta.claudeDesktopModelRoutes = routeMap;
-    const fallback = fallbackModel.trim();
-    if (effectiveMode === "proxy" && fallbackEnabled && !fallback) {
-      toast.error(
-        t("claudeDesktop.modelFallbackRequired", {
-          defaultValue: "请选择或输入备用模型",
-        }),
-      );
-      return;
-    }
-    if (
-      effectiveMode === "proxy" &&
-      fallbackEnabled &&
-      Object.values(routeMap).every(({ model }) => model === fallback)
-    ) {
-      toast.error(
-        t("claudeDesktop.modelFallbackSameModel", {
-          defaultValue: "请选择与实际请求模型不同的备用模型",
-        }),
-      );
-      return;
-    }
-    const savedFallbacks = Object.fromEntries(
-      Object.values(routeMap).flatMap(({ model }) => {
-        return fallbackEnabled && fallback && fallback !== model
-          ? [[model, fallback]]
-          : [];
-      }),
-    );
-    if (effectiveMode === "proxy" && Object.keys(savedFallbacks).length > 0) {
-      meta.claudeDesktopModelFallbacks = savedFallbacks;
-    } else {
-      delete meta.claudeDesktopModelFallbacks;
-    }
     if (
       effectiveMode === "proxy" &&
       (meta.apiFormat === "openai_chat" ||
@@ -1305,7 +1251,7 @@ export function ClaudeDesktopProviderForm({
                       </p>
                     </div>
 
-                    <div className="hidden grid-cols-[140px_minmax(0,1fr)_minmax(0,1fr)_116px] gap-2 px-1 text-xs font-medium text-fg-2 md:grid">
+                    <div className="hidden grid-cols-[140px_1fr_1fr_116px] gap-2 px-1 text-xs font-medium text-fg-2 md:grid">
                       <span>
                         {t("claudeDesktop.routeModelLabel", {
                           defaultValue: "模型角色",
@@ -1357,13 +1303,12 @@ export function ClaudeDesktopProviderForm({
                       return (
                         <div
                           key={route.rowId}
-                          className="grid grid-cols-1 gap-2 md:grid-cols-[140px_minmax(0,1fr)_minmax(0,1fr)_116px]"
+                          className="grid grid-cols-1 gap-2 md:grid-cols-[140px_1fr_1fr_116px]"
                         >
                           <div className="flex h-9 items-center rounded-md border border-input bg-subtle px-3 text-sm font-medium text-fg-2">
                             {roleLabel}
                           </div>
                           <Input
-                            className="min-w-0"
                             value={route.labelOverride}
                             onChange={(event) =>
                               updateRoute(index, {
@@ -1372,7 +1317,7 @@ export function ClaudeDesktopProviderForm({
                             }
                             placeholder={labelPlaceholder}
                           />
-                          <div className="flex min-w-0 gap-1">
+                          <div className="flex gap-1">
                             <Input
                               value={route.model}
                               onChange={(event) =>
@@ -1381,7 +1326,7 @@ export function ClaudeDesktopProviderForm({
                                 })
                               }
                               placeholder={modelPlaceholder}
-                              className="min-w-0 flex-1"
+                              className="flex-1"
                             />
                             {fetchedModels.length > 0 && (
                               <ModelDropdown
@@ -1411,62 +1356,6 @@ export function ClaudeDesktopProviderForm({
                         </div>
                       );
                     })}
-                  </div>
-
-                  <div className="space-y-3 border-t border-border pt-4">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <Label htmlFor="claude-desktop-fallback-enabled">
-                          {t("claudeDesktop.modelFallbackLabel", {
-                            defaultValue: "备用模型",
-                          })}
-                        </Label>
-                        <Checkbox
-                          id="claude-desktop-fallback-enabled"
-                          checked={fallbackEnabled}
-                          onCheckedChange={setFallbackEnabled}
-                          aria-describedby="claude-desktop-fallback-hint"
-                          aria-controls="claude-desktop-fallback-model"
-                        />
-                      </div>
-                      <p
-                        id="claude-desktop-fallback-hint"
-                        className="text-xs leading-relaxed text-fg-2"
-                      >
-                        {t("claudeDesktop.modelFallbackHint", {
-                          defaultValue:
-                            "当模型请求失败时，自动切换备用模型重试。",
-                        })}
-                      </p>
-                    </div>
-                    {fallbackEnabled && (
-                      <div className="flex min-w-0 gap-1">
-                        <Input
-                          id="claude-desktop-fallback-model"
-                          aria-label={t("claudeDesktop.modelFallbackLabel", {
-                            defaultValue: "备用模型",
-                          })}
-                          aria-describedby="claude-desktop-fallback-hint"
-                          value={fallbackModel}
-                          onChange={(event) =>
-                            setFallbackModel(event.target.value)
-                          }
-                          placeholder={t(
-                            "claudeDesktop.modelFallbackPlaceholder",
-                            {
-                              defaultValue: "选择或输入备用模型",
-                            },
-                          )}
-                          className="min-w-0 flex-1"
-                        />
-                        {fetchedModels.length > 0 && (
-                          <ModelDropdown
-                            models={fetchedModels}
-                            onSelect={setFallbackModel}
-                          />
-                        )}
-                      </div>
-                    )}
                   </div>
                 </div>
               )}
