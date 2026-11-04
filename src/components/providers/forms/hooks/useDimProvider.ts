@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { AppId } from "@/lib/api";
 import type { ProviderMeta } from "@/types";
 import type { DimModel } from "@/lib/api/dim-oauth";
@@ -30,6 +30,15 @@ export function useDimProvider({
   );
   const [effort, setEffort] = useState(initialMeta?.dimOauthEffort ?? "");
   const [valid, setValid] = useState(false);
+  // A different preset replaces the native configuration. Its old Dim model
+  // cannot remain selected when the user returns to the account preset.
+  useEffect(() => {
+    if (!enabled) {
+      setModel("");
+      setEffort("");
+      setValid(false);
+    }
+  }, [enabled]);
   const account = auth.accounts.find(
     (item) => item.id === accountId && !item.requires_reauth,
   );

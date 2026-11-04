@@ -629,6 +629,39 @@ describe("DimAgent native sign-in user flow", () => {
     },
   );
 
+  it("clears a MiniMax Dim selection when another preset replaces its native configuration", async () => {
+    const user = userEvent.setup();
+    const submit = vi.fn();
+    renderWithQueryClient(
+      <ProviderForm
+        appId="mcode"
+        onSubmit={submit}
+        onCancel={vi.fn()}
+        submitLabel="save-returned-dim"
+      />,
+    );
+    await user.click(await screen.findByRole("button", { name: /^DimAgent$/ }));
+    await user.click(await screen.findByLabelText("dimOauth.account"));
+    await user.click(
+      await screen.findByRole("option", { name: /user@example.test/ }),
+    );
+    const picker = await screen.findByLabelText("dimOauth.model");
+    await waitFor(() => expect(picker).not.toBeDisabled());
+    await user.click(picker);
+    await user.click(
+      await screen.findByRole("option", { name: /vendor\/full-model-id/ }),
+    );
+    await user.click(screen.getByRole("button", { name: /^OpenAI API$/ }));
+    await user.click(screen.getByRole("button", { name: /^DimAgent$/ }));
+    expect(await screen.findByLabelText("dimOauth.model")).toHaveTextContent(
+      "dimOauth.selectModel",
+    );
+    expect(
+      screen.getByRole("button", { name: "save-returned-dim" }),
+    ).toBeDisabled();
+    expect(submit).not.toHaveBeenCalled();
+  });
+
   it("excludes Kimi models without an explicit positive context window", async () => {
     vi.mocked(dimOAuthApi.models).mockResolvedValue([
       { ...model, context_window: null },
