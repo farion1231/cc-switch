@@ -506,7 +506,7 @@ describe("DimAgent native sign-in user flow", () => {
         expect(Object.values(config.models)[0]).toMatchObject({
           model: model.id,
           max_context_size: 65536,
-          provider: "dimagent",
+          provider: "cc-switch-dimagent",
         });
       if (appId === "pi" || appId === "omp")
         expect(config.models[0]).toMatchObject({

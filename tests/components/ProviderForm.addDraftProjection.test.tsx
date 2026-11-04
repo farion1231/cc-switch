@@ -198,7 +198,9 @@ describe("新增对话框的草稿投影", () => {
     renderForm("grokbuild", bases);
     await nextBase(bases, 0);
 
-    const preset = grokBuildProviderPresets[0];
+    const preset = grokBuildProviderPresets.find(
+      (item) => item.providerType !== "dim_oauth",
+    )!;
     const seen = bases.length;
     clickPreset(preset.nameKey ?? preset.name);
     const base = await nextBase(bases, seen);

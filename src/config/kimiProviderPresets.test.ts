@@ -52,7 +52,7 @@ describe("kimiProviderPresets", () => {
       compatible.map((preset) => preset.name),
     );
     expect(new Set(kimiProviderPresets.map(presetGroup))).toEqual(
-      new Set(["vendor", "thirdparty", "cloud", "local"]),
+      new Set(["login", "vendor", "thirdparty", "cloud", "local"]),
     );
     for (const name of [
       "88API",

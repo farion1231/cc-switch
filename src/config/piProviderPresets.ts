@@ -103,6 +103,7 @@ const KIMI_K3_COMPAT = {
 const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     ...dimOAuthPreset,
+    providerKey: "cc-switch-dimagent",
     settingsConfig: {
       name: "DimAgent",
       baseUrl: "https://dimagent.com/v1",

@@ -4233,7 +4233,6 @@ mod tests {
             AppType::ClaudeDesktop,
             AppType::Codex,
             AppType::GrokBuild,
-            AppType::Gemini,
         ] {
             let mut dim = provider(
                 serde_json::json!({"providerType":"dim_oauth", "apiFormat":"anthropic"}),
@@ -4245,6 +4244,14 @@ mod tests {
             assert!(provider_needs_routing(&app, &dim));
             assert!(!is_official_account(&app, &dim));
             assert!(!blocked_from_routing(&app, &dim));
+        }
+
+        let dim = provider(
+            serde_json::json!({"providerType":"dim_oauth"}),
+            serde_json::json!({}),
+        );
+        for app in [AppType::Gemini, AppType::Agy] {
+            assert!(!provider_needs_routing(&app, &dim));
         }
 
         let openai_chat = provider(

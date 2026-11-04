@@ -34,6 +34,10 @@ vi.mock("@/components/providers/forms/ClaudeOfficialSection", () => ({
   ClaudeOfficialSection: () => <div />,
 }));
 
+vi.mock("@/components/providers/forms/DimOAuthSection", () => ({
+  DimOAuthSection: () => <div />,
+}));
+
 vi.mock("@/components/providers/forms/XaiOAuthSection", () => ({
   XaiOAuthSection: () => <div />,
 }));
