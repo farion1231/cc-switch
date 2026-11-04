@@ -6,7 +6,10 @@ import { ProviderForm } from "@/components/providers/forms/ProviderForm";
 import { DimOAuthFields } from "@/components/providers/forms/DimOAuthFields";
 import { DimOAuthSection } from "@/components/providers/forms/DimOAuthSection";
 import { providerPresets } from "@/config/claudeProviderPresets";
-import { codexProviderPresets } from "@/config/codexProviderPresets";
+import {
+  codexProviderPresets,
+  generateThirdPartyConfig,
+} from "@/config/codexProviderPresets";
 import { presetGroup } from "@/components/providers/forms/presetGroups";
 import { providerNeedsRouting } from "@/utils/providerCapabilities";
 import { dimOAuthApi, type DimAccount } from "@/lib/api/dim-oauth";
@@ -156,6 +159,69 @@ describe("DimAgent native sign-in user flow", () => {
     );
     expect(payload.settingsConfig).not.toContain("access_token");
   });
+
+  it.each(["claude", "codex"] as const)(
+    "preserves the %s DimAgent protocol and model when imported with an official category",
+    async (appId) => {
+      const submit = vi.fn();
+      const catalog = [
+        {
+          model: model.id,
+          displayName: model.name,
+          reasoningLevels: model.efforts,
+        },
+      ];
+      renderWithQueryClient(
+        <ProviderForm
+          appId={appId}
+          onSubmit={submit}
+          onCancel={vi.fn()}
+          submitLabel="save-provider"
+          initialData={{
+            name: "DimAgent",
+            category: "official",
+            settingsConfig:
+              appId === "claude"
+                ? { env: { ANTHROPIC_MODEL: model.id } }
+                : {
+                    auth: { OPENAI_API_KEY: "" },
+                    config: generateThirdPartyConfig(
+                      "dimagent",
+                      "https://dimagent.cn/v1",
+                      model.id,
+                      { requiresOpenAiAuth: false },
+                    ),
+                    modelCatalog: { models: catalog },
+                  },
+            meta: {
+              providerType: "dim_oauth",
+              apiFormat: "anthropic",
+              dimOauthEffort: "high",
+              authBinding: {
+                source: "managed_account",
+                authProvider: "dim_oauth",
+                accountId: account.id,
+              },
+            },
+          }}
+        />,
+      );
+      await screen.findByLabelText("dimOauth.effort");
+      fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
+      await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+      const payload = submit.mock.calls[0][0];
+      expect(payload.presetCategory).toBe("third_party");
+      expect(payload.meta).toMatchObject({
+        providerType: "dim_oauth",
+        apiFormat: "anthropic",
+        dimOauthEffort: "high",
+      });
+      const settings = JSON.parse(payload.settingsConfig);
+      if (appId === "codex")
+        expect(settings.modelCatalog.models).toEqual(catalog);
+      else expect(settings.env.ANTHROPIC_MODEL).toBe(model.id);
+    },
+  );
 
   it.each(["claude", "codex"] as const)(
     "adds a %s provider from the DimAgent sign-in preset",

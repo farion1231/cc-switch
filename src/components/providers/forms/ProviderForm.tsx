@@ -427,8 +427,10 @@ function ProviderFormFull({
     selectedPresetId,
     isEditMode,
     initialCategory:
-      initialData?.category ??
-      (hasExistingCodexOfficialIdentity ? "official" : undefined),
+      initialData?.meta?.providerType === "dim_oauth"
+        ? "third_party"
+        : (initialData?.category ??
+          (hasExistingCodexOfficialIdentity ? "official" : undefined)),
   });
   const isOmoCategory = appId === "opencode" && category === "omo";
   const isOmoSlimCategory = appId === "opencode" && category === "omo-slim";
@@ -1896,6 +1898,8 @@ function ProviderFormFull({
       websiteUrl: values.websiteUrl?.trim() ?? "",
       settingsConfig,
     };
+
+    if (isDimOauthProvider) payload.presetCategory = "third_party";
 
     if (isCodexOfficialProvider) {
       payload.presetCategory = "official";
