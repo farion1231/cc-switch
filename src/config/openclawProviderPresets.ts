@@ -123,6 +123,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         {
           id: "kimi-k3.1-pro",
           name: "Kimi K3.1 Pro",
+          reasoning: true,
+          input: ["text", "image"],
           contextWindow: 1048576,
           cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2 },
         },
@@ -200,6 +202,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         {
           id: "kimi-k3.1-pro",
           name: "Kimi K3.1 Pro",
+          reasoning: true,
+          input: ["text", "image"],
           contextWindow: 1048576,
           cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2 },
         },
