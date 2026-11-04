@@ -2204,7 +2204,8 @@
       "chatgpt": "Sign in with a ChatGPT account",
       "github": "Sign in with a GitHub account",
       "xai": "Sign in with an xAI account",
-      "google": "Sign in with a Google account"
+      "google": "Sign in with a Google account",
+      "dimagent": "Sign in with a DimAgent account"
     },
     "versionCount": "{{domain}} · {{n}} versions",
     "matchedVersion": "Matches {{name}}",

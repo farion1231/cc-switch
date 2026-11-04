@@ -2204,7 +2204,8 @@
       "chatgpt": "ChatGPT アカウントでログイン",
       "github": "GitHub アカウントでログイン",
       "xai": "xAI アカウントでログイン",
-      "google": "Google アカウントでログイン"
+      "google": "Google アカウントでログイン",
+      "dimagent": "DimAgent アカウントでログイン"
     },
     "versionCount": "{{domain}} · {{n}} バージョン",
     "matchedVersion": "一致：{{name}}",

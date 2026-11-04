@@ -1,5 +1,11 @@
 import i18n from "i18next";
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ProviderForm } from "@/components/providers/forms/ProviderForm";
@@ -91,6 +97,12 @@ function renderForm(accountId = account.id, effort = "high") {
 
 beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
+  i18n.addResource(
+    "zh",
+    "translation",
+    "providerPreset.loginWith.dimagent",
+    "使用 DimAgent 账号登录",
+  );
   vi.mocked(dimOAuthApi.status).mockResolvedValue({
     accounts: [account],
     default_account_id: account.id,
@@ -236,7 +248,11 @@ describe("DimAgent native sign-in user flow", () => {
           submitLabel="save-provider"
         />,
       );
-      await user.click(screen.getByRole("button", { name: /DimAgent/ }));
+      const tile = screen.getByRole("button", { name: /DimAgent/ });
+      expect(
+        within(tile).getByText("使用 DimAgent 账号登录"),
+      ).toBeInTheDocument();
+      await user.click(tile);
       await user.click(await screen.findByLabelText("dimOauth.account"));
       await user.click(
         await screen.findByRole("option", { name: /user@example.test/ }),

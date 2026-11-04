@@ -2204,7 +2204,8 @@
       "chatgpt": "用 ChatGPT 账号登录",
       "github": "用 GitHub 账号登录",
       "xai": "用 xAI 账号登录",
-      "google": "用 Google 账号登录"
+      "google": "用 Google 账号登录",
+      "dimagent": "使用 DimAgent 账号登录"
     },
     "versionCount": "{{domain}} · {{n}} 个版本",
     "matchedVersion": "匹配：{{name}}",

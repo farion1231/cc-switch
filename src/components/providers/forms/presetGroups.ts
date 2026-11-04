@@ -464,6 +464,7 @@ export function loginAccountKey(
   if (type === "github_copilot") return "github";
   if (type === "codex_oauth") return "chatgpt";
   if (type === "xai_oauth") return "xai";
+  if (type === "dim_oauth") return "dimagent";
   switch (appId) {
     case "codex":
       return "chatgpt";

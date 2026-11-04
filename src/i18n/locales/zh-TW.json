@@ -2205,7 +2205,8 @@
       "chatgpt": "用 ChatGPT 帳號登入",
       "github": "用 GitHub 帳號登入",
       "xai": "用 xAI 帳號登入",
-      "google": "用 Google 帳號登入"
+      "google": "用 Google 帳號登入",
+      "dimagent": "使用 DimAgent 帳號登入"
     },
     "versionCount": "{{domain}} · {{n}} 個版本",
     "matchedVersion": "符合：{{name}}",
