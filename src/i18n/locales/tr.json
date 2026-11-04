@@ -4416,6 +4416,7 @@
       "models": "{{count}} model",
       "noModels": "Model yok",
       "direct": "Doğrudan",
+      "accountUnavailable": "Hesap kullanılamıyor",
       "hermesManaged": "Hermes tarafından yönetilmektedir",
       "defaultModel": "Varsayılan model {{model}}"
     },

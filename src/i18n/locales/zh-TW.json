@@ -4460,6 +4460,7 @@
       "models": "{{count}} 個模型",
       "noModels": "沒有模型",
       "direct": "直連",
+      "accountUnavailable": "帳號不可用",
       "hermesManaged": "Hermes 託管",
       "defaultModel": "預設模型 {{model}}"
     },

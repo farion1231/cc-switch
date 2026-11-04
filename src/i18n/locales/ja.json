@@ -4459,6 +4459,7 @@
       "models": "{{count}} モデル",
       "noModels": "モデルなし",
       "direct": "直接接続",
+      "accountUnavailable": "アカウント利用不可",
       "hermesManaged": "Hermes 管理",
       "defaultModel": "既定モデル {{model}}"
     },
