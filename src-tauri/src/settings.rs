@@ -460,6 +460,7 @@ pub enum CloseWindowAction {
     Exit,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for CloseWindowAction {
     fn default() -> Self {
         #[cfg(target_os = "linux")]
