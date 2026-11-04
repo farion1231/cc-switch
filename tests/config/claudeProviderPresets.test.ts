@@ -260,3 +260,21 @@ describe("Genesis Claude Code preset", () => {
     }
   });
 });
+
+describe("Kimi API 预设的 1M 窗口声明", () => {
+  // Claude Code 对非 claude- 前缀 id 默认按 200K 自动压缩，K3.1 Pro 是 1M
+  // 模型，四档 id 必须带 [1M] 标记（上游 31038e68 的约定）
+  for (const name of ["Kimi", "Kimi Global"]) {
+    it(`${name} 的四档模型都带 [1M]`, () => {
+      const preset = providerPresets.find((p) => p.name === name);
+      expect(preset).toBeDefined();
+      const env = (preset!.settingsConfig as any).env;
+      expect(env).toMatchObject({
+        ANTHROPIC_MODEL: "kimi-k3.1-pro[1M]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-k3.1-pro[1M]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k3.1-pro[1M]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k3.1-pro[1M]",
+      });
+    });
+  }
+});
