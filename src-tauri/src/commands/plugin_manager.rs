@@ -1,4 +1,4 @@
-//! Claude Code / Codex 插件管理命令（逻辑见 `services::plugin_manager`）。
+//! 插件管理命令（逻辑见 `services::plugin_manager`）。
 //!
 //! 每条命令都会起一次 CLI 子进程，放到阻塞线程池里跑，不占 async 运行时。
 

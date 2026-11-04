@@ -147,6 +147,39 @@ describe("plugin list helpers", () => {
     expect(filled.displayName).toBe("FD");
     expect(filled.enabled).toBe(true);
   });
+
+  it("matches catalog packages to the id they get once installed", () => {
+    // OpenClaw：目录给 ClawHub 包名，装好后的插件 id 是最后一段
+    const installed = [
+      plugin({
+        id: "memory-lancedb",
+        name: "memory-lancedb",
+        marketplace: "",
+        description: null,
+      }),
+    ];
+    const catalog = [
+      catalogItem({
+        id: "@openclaw/memory-lancedb",
+        name: "@openclaw/memory-lancedb",
+        installedId: "memory-lancedb",
+        description: "LanceDB memory",
+        marketplace: "clawhub",
+      }),
+      catalogItem({
+        id: "@x/other",
+        name: "@x/other",
+        installedId: "other",
+        marketplace: "clawhub",
+      }),
+    ];
+    expect(availableFromCatalog(catalog, installed).map((e) => e.id)).toEqual([
+      "@x/other",
+    ]);
+    expect(withCatalogDetails(installed, catalog)[0].description).toBe(
+      "LanceDB memory",
+    );
+  });
 });
 
 describe("PluginsPage", () => {
@@ -393,6 +426,20 @@ describe("PluginsPage", () => {
     expect(codexCalls()).toBe(before);
   });
 
+  it("prefetches each other app only once per run", async () => {
+    const first = renderPage({ apps: ["claude", "codex"] });
+    await screen.findByText("frontend-design");
+    await waitFor(() => expect(m.listInstalled).toHaveBeenCalledWith("codex"));
+    first.unmount();
+    const codexCalls = () =>
+      m.listInstalled.mock.calls.filter(([app]) => app === "codex").length;
+    const before = codexCalls();
+    renderPage({ apps: ["claude", "codex"] });
+    await screen.findByText("frontend-design");
+    await waitFor(() => expect(claudeListCalls()).toBe(2));
+    expect(codexCalls()).toBe(before);
+  });
+
   it("hides the app switch when only one app is visible", async () => {
     renderPage({ apps: ["codex"] });
     await screen.findByText("frontend-design");
@@ -472,5 +519,180 @@ describe("PluginsPage", () => {
     await waitFor(() =>
       expect(m.removeMarketplace).toHaveBeenCalledWith("claude", "mine"),
     );
+  });
+
+  it("asks before installing for apps whose CLI needs explicit trust", async () => {
+    m.listInstalled.mockResolvedValue([]);
+    m.listCatalog.mockResolvedValue([
+      catalogItem({ id: "hello", name: "hello", marketplace: "mkt" }),
+    ]);
+    renderPage({ apps: ["grokbuild"] });
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "pluginsPage.viewDiscoverCount" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "pluginsPage.install" }),
+    );
+    // 先确认，不直接装
+    expect(m.install).not.toHaveBeenCalled();
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("hello")).toBeInTheDocument();
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "pluginsPage.install" }),
+    );
+    await waitFor(() =>
+      expect(m.install).toHaveBeenCalledWith("grokbuild", "hello"),
+    );
+  });
+
+  it("keeps bundled OpenClaw plugins toggle-only and hides marketplace management", async () => {
+    m.listInstalled.mockResolvedValue([
+      plugin({
+        id: "a2a",
+        name: "a2a",
+        displayName: "A2A",
+        marketplace: "",
+        scope: null,
+        removable: false,
+      }),
+    ]);
+    renderPage({ apps: ["openclaw"] });
+    const toggle = await enableSwitch();
+    expect(toggle).toBeEnabled();
+    expect(screen.getByText("pluginsPage.builtIn")).toBeInTheDocument();
+    expect(screen.queryByText("@")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "pluginsPage.moreActions" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: "pluginsPage.viewMarketplaces" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "pluginsPage.addMarketplace" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "pluginsPage.refreshCatalog" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByText("pluginsPage.restartNoteGateway").length,
+    ).toBeGreaterThan(0);
+
+    await userEvent.click(toggle);
+    await waitFor(() =>
+      expect(m.setEnabled).toHaveBeenCalledWith("openclaw", "a2a", false),
+    );
+  });
+
+  it("installs an OpenClaw package under its plugin id after confirming", async () => {
+    m.listInstalled.mockResolvedValue([]);
+    m.listCatalog.mockResolvedValue([
+      catalogItem({
+        id: "@openclaw/memory-lancedb",
+        name: "@openclaw/memory-lancedb",
+        displayName: "Memory LanceDB",
+        marketplace: "clawhub",
+        installedId: "memory-lancedb",
+      }),
+    ]);
+    renderPage({ apps: ["openclaw"] });
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "pluginsPage.viewDiscoverCount" }),
+    );
+    const reconcile = deferred<PluginEntry[]>();
+    m.listInstalled.mockReturnValue(reconcile.promise);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "pluginsPage.install" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "pluginsPage.install" }),
+    );
+    await waitFor(() =>
+      expect(m.install).toHaveBeenCalledWith(
+        "openclaw",
+        "@openclaw/memory-lancedb",
+      ),
+    );
+    // 装好立即挪到已安装：用插件 id，可以卸载
+    await waitFor(() =>
+      expect(screen.queryByText("Memory LanceDB")).not.toBeInTheDocument(),
+    );
+    await userEvent.click(
+      screen.getByRole("tab", { name: "pluginsPage.viewInstalledCount" }),
+    );
+    expect(screen.getByText("Memory LanceDB")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "pluginsPage.moreActions" }),
+    ).toBeInTheDocument();
+    await act(async () =>
+      reconcile.resolve([
+        plugin({
+          id: "memory-lancedb",
+          name: "memory-lancedb",
+          marketplace: "",
+        }),
+      ]),
+    );
+  });
+
+  it("offers no update for apps without an update command", async () => {
+    m.listInstalled.mockResolvedValue([
+      plugin({
+        id: "computer-use@official",
+        name: "computer-use",
+        scope: null,
+      }),
+    ]);
+    renderPage({ apps: ["mcode"] });
+    await screen.findByText("computer-use");
+    await userEvent.click(
+      screen.getByRole("button", { name: "pluginsPage.moreActions" }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "pluginsPage.uninstall" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: "pluginsPage.update" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "pluginsPage.refreshMarketplaces" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("switches apps from a list when many apps are visible", async () => {
+    renderPage({
+      apps: ["claude", "codex", "grokbuild", "mcode", "openclaw"],
+    });
+    await screen.findByText("frontend-design");
+    await userEvent.click(
+      screen.getByRole("button", { name: "pluginsPage.appAria" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: /OpenClaw/ }),
+    );
+    await waitFor(() =>
+      expect(m.listInstalled).toHaveBeenCalledWith("openclaw"),
+    );
+    // OpenClaw 没有市场页
+    expect(
+      screen.queryByRole("tab", { name: "pluginsPage.viewMarketplaces" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("returns to Installed when switching to an app without marketplaces", async () => {
+    renderPage({ apps: ["claude", "mcode"] });
+    await screen.findByText("frontend-design");
+    await userEvent.click(
+      screen.getByRole("tab", { name: "pluginsPage.viewMarketplaces" }),
+    );
+    await screen.findByText("pluginsPage.emptyMarketsTitle");
+    await userEvent.click(screen.getByRole("button", { name: /MiniMax Code/ }));
+    expect(
+      await screen.findByRole("tab", {
+        name: "pluginsPage.viewInstalledCount",
+        selected: true,
+      }),
+    ).toBeInTheDocument();
+    expect(m.listMarketplaces).not.toHaveBeenCalledWith("mcode");
   });
 });

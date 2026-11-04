@@ -34,10 +34,14 @@ const reconcileTargets = new Map<PluginApp, Set<ReconcileTarget>>();
 export const hasPendingPluginWrites = (app: PluginApp) =>
   (pending.get(app) ?? 0) > 0;
 
+/** 本次运行里已经在后台预读过已安装列表的应用。 */
+const prefetched = new Set<PluginApp>();
+
 /** 只给测试用：用例之间清掉模块级状态。 */
 export function resetPluginWriteState() {
   pending.clear();
   reconcileTargets.clear();
+  prefetched.clear();
 }
 
 /** 有写操作在跑时不自动刷新：刷新读到的是操作前的状态，会把乐观结果盖回去。 */
@@ -61,6 +65,19 @@ export const installedPluginsQuery = (app: PluginApp) => ({
   // 用户可能在终端里用 CLI 改过：切回窗口时重读（便宜的那条）
   refetchOnWindowFocus: idleOnly(app),
 });
+
+/**
+ * 在后台读好另一个应用的已安装列表，切过去不用等。每个应用一次运行只预读一次：应用多了以后
+ * 每次打开页面都给每个应用起一个 CLI 太重，之后切过去时本地缓存先显示、再在后台刷新。
+ */
+export function prefetchInstalledOnce(
+  queryClient: QueryClient,
+  app: PluginApp,
+) {
+  if (prefetched.has(app)) return;
+  prefetched.add(app);
+  void queryClient.prefetchQuery(installedPluginsQuery(app));
+}
 
 export const pluginCatalogQuery = (app: PluginApp) => ({
   queryKey: pluginKeys.catalog(app),
@@ -105,16 +122,31 @@ export const pluginPatches = {
     },
 };
 
+/** 目录条目装好后在已安装列表里的 id（OpenClaw 的目录给的是包名）。 */
+export const installedIdOf = (entry: PluginEntry) =>
+  entry.installedId || entry.id;
+
+/** 能否卸载、更新；旧缓存里的条目没有 removable，按 manageable 算。 */
+export const isRemovable = (entry: PluginEntry) =>
+  entry.removable ?? entry.manageable;
+
 /** 装好后先放进已安装的那一项；版本、路径等后台对账时补齐。 */
 export function installedFromCatalog(
   app: PluginApp,
   entry: PluginEntry,
 ): PluginEntry {
+  const id = installedIdOf(entry);
   return {
     ...entry,
+    id,
+    name: id === entry.id ? entry.name : id,
+    // 没有市场概念的应用（OpenClaw）已装条目不显示来源
+    marketplace: app === "openclaw" ? "" : entry.marketplace,
+    installedId: null,
     installed: true,
     enabled: true,
     manageable: true,
+    removable: true,
     scope: app === "claude" ? "user" : null,
   };
 }
