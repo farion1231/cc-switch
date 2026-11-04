@@ -913,4 +913,101 @@ mod tests {
             StatusCode::UNAUTHORIZED
         );
     }
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn dim_gateway_live_membership_and_port_restart_preserve_canonical_rows() {
+        use crate::services::ProviderService;
+        let _pi = crate::pi_config::test_support::TestAgentDir::new();
+        let _omp = crate::omp_config::test_support::TestAgentDir::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let state = AppState::new(db.clone());
+        let mut config = db.get_proxy_config().await.unwrap();
+        config.listen_address = "127.0.0.1".into();
+        config.listen_port = 0;
+        db.update_proxy_config(config).await.unwrap();
+        let first = state.proxy_service.start().await.unwrap();
+        for app in [AppType::Pi, AppType::Omp] {
+            let mut p = provider("dim-live-fixture", "openai_chat");
+            p.settings_config = json!({
+                "name":"DimAgent", "baseUrl":"https://dimagent.com/v1", "apiKey":"PROXY_MANAGED",
+                "api":"openai-completions", "models":[{"id":"vendor/full-id"}]
+            });
+            ProviderService::add(&state, app.clone(), p, false).unwrap();
+            assert!(!client_exists(&app, "dim-live-fixture").unwrap());
+            assert!(!has_clients(&db).unwrap());
+        }
+        let canonical: Vec<_> = [AppType::Pi, AppType::Omp]
+            .iter()
+            .map(|app| {
+                db.get_provider_by_id("dim-live-fixture", app.as_str())
+                    .unwrap()
+                    .unwrap()
+            })
+            .collect();
+        for app in [AppType::Pi, AppType::Omp] {
+            ProviderService::switch(&state, app.clone(), "dim-live-fixture").unwrap();
+            ProviderService::list(&state, app.clone()).unwrap();
+        }
+        assert!(has_clients(&db).unwrap());
+        let native = || {
+            [
+                crate::pi_config::read_pi_native_provider("dim-live-fixture")
+                    .unwrap()
+                    .unwrap(),
+                crate::omp_config::get_providers().unwrap()["dim-live-fixture"].clone(),
+            ]
+        };
+        for row in native() {
+            assert!(row["baseUrl"]
+                .as_str()
+                .unwrap()
+                .contains(&format!(":{}/managed/dim/", first.port)));
+            assert!(row["apiKey"].as_str().unwrap().starts_with("ccs-dim-"));
+        }
+        let mut changed = db.get_proxy_config().await.unwrap();
+        let available = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        changed.listen_port = available.local_addr().unwrap().port();
+        drop(available);
+        assert!(state.proxy_service.update_config(&changed).await.unwrap());
+        for row in native() {
+            assert!(row["baseUrl"]
+                .as_str()
+                .unwrap()
+                .contains(&format!(":{}/managed/dim/", changed.listen_port)));
+        }
+        let before_failure = native();
+        let occupied = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut rejected = changed.clone();
+        rejected.listen_port = occupied.local_addr().unwrap().port();
+        assert!(state.proxy_service.update_config(&rejected).await.is_err());
+        assert_eq!(native(), before_failure);
+        assert_eq!(
+            db.get_proxy_config().await.unwrap().listen_port,
+            changed.listen_port
+        );
+        for (app, expected) in [AppType::Pi, AppType::Omp].into_iter().zip(canonical) {
+            ProviderService::remove_from_live_config(&state, app.clone(), "dim-live-fixture")
+                .unwrap();
+            let saved = db
+                .get_provider_by_id("dim-live-fixture", app.as_str())
+                .unwrap()
+                .unwrap();
+            assert_eq!(saved.settings_config, expected.settings_config);
+            assert_eq!(
+                serde_json::to_value(saved.meta).unwrap(),
+                serde_json::to_value(expected.meta).unwrap()
+            );
+            ProviderService::switch(&state, app.clone(), "dim-live-fixture").unwrap();
+            ProviderService::list(&state, app.clone()).unwrap();
+            let saved = db
+                .get_provider_by_id("dim-live-fixture", app.as_str())
+                .unwrap()
+                .unwrap();
+            assert_eq!(saved.settings_config, expected.settings_config);
+            ProviderService::remove_from_live_config(&state, app.clone(), "dim-live-fixture")
+                .unwrap();
+        }
+        assert!(!has_clients(&db).unwrap());
+        state.proxy_service.stop().await.unwrap();
+    }
 }
