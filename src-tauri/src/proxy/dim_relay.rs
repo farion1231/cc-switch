@@ -31,7 +31,7 @@ static KEY_CREATION: Mutex<()> = Mutex::new(());
 const MAX_BODY: usize = 200 * 1024 * 1024;
 
 pub(crate) fn is_relay_client(app: &AppType) -> bool {
-    app.is_additive_mode() || *app == AppType::Agy
+    app.is_additive_mode()
 }
 
 fn api_format<'a>(app: &AppType, provider: &'a Provider) -> Result<&'a str, AppError> {
@@ -44,7 +44,6 @@ fn api_format<'a>(app: &AppType, provider: &'a Provider) -> Result<&'a str, AppE
         AppType::Mcode | AppType::Dsh | AppType::Hermes => {
             matches!(format, "openai_chat" | "openai_responses" | "anthropic")
         }
-        AppType::Agy => format == "gemini_native",
         _ => matches!(
             format,
             "openai_chat" | "openai_responses" | "anthropic" | "gemini_native"
@@ -165,7 +164,7 @@ pub(crate) fn project_provider(
     let suffix = match format {
         "openai_chat" | "openai_responses" => "/v1",
         "anthropic" if *app == AppType::OpenCode => "/v1",
-        "gemini_native" if !matches!(app, AppType::Agy | AppType::Kimi) => "/v1beta",
+        "gemini_native" if *app != AppType::Kimi => "/v1beta",
         _ => "",
     };
     let base = format!(
@@ -203,10 +202,6 @@ pub(crate) fn project_provider(
             value["provider"]["base_url"] = json!(base);
             value["provider"]["api_key"] = json!(key);
         }
-        AppType::Agy => {
-            value["env"]["GOOGLE_GEMINI_BASE_URL"] = json!(base);
-            value["env"]["GEMINI_API_KEY"] = json!(key);
-        }
         _ => unreachable!("relay client was checked"),
     }
     Ok(projected)
@@ -241,7 +236,6 @@ pub(crate) fn client_exists(app: &AppType, id: &str) -> Result<bool, AppError> {
         AppType::Mcode => crate::mcode_config::get_providers()?.contains_key(id),
         AppType::Dsh => crate::dsh_config::get_providers()?.contains_key(id),
         AppType::Kimi => crate::kimi_config::get_providers()?.contains_key(id),
-        AppType::Agy => crate::agy_config::key_profile_dir(id).exists(),
         _ => false,
     })
 }
@@ -273,9 +267,7 @@ pub(crate) fn refresh_clients(db: &Database) -> Result<(), AppError> {
         {
             if client_exists(&app, &provider.id)? {
                 let projected = project_provider(db, &app, &provider)?;
-                if app != AppType::Agy {
-                    clients.push((app.clone(), projected));
-                }
+                clients.push((app.clone(), projected));
             }
         }
     }
@@ -429,8 +421,7 @@ fn authorize_request(
             "DimAgent gateway only accepts loopback clients",
         ));
     }
-    let app =
-        AppType::from_str(&app).map_err(|_| error(StatusCode::NOT_FOUND, "Unknown client"))?;
+    let app = AppType::from_str(app).map_err(|_| error(StatusCode::NOT_FOUND, "Unknown client"))?;
     if !is_relay_client(&app) {
         return Err(error(
             StatusCode::NOT_FOUND,
@@ -438,7 +429,7 @@ fn authorize_request(
         ));
     }
     let provider = db
-        .get_provider_by_id(&id, app.as_str())
+        .get_provider_by_id(id, app.as_str())
         .map_err(|_| {
             error(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -447,7 +438,7 @@ fn authorize_request(
         })?
         .filter(Provider::is_dim_oauth)
         .ok_or_else(|| error(StatusCode::NOT_FOUND, "DimAgent provider was removed"))?;
-    let key = gateway_key(db, &app, &id).map_err(|_| {
+    let key = gateway_key(db, &app, id).map_err(|_| {
         error(
             StatusCode::SERVICE_UNAVAILABLE,
             "DimAgent gateway key is unavailable",

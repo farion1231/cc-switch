@@ -9,9 +9,6 @@ use crate::error::AppError;
 use crate::provider::Provider;
 
 pub(crate) fn is_official(provider: &Provider) -> bool {
-    if provider.is_dim_oauth() {
-        return false;
-    }
     // Provider names are user editable and must never silently select OAuth.
     provider.category.as_deref() == Some("official")
         || provider

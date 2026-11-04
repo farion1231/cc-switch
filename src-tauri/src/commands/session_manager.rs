@@ -169,18 +169,6 @@ pub async fn launch_session_terminal(
         crate::services::provider::agy_direct::key_resume_target(&state.db, &command)
             .map_err(|e| e.to_string())?
     {
-        crate::proxy::dim_relay::ensure_started(
-            state.inner(),
-            &crate::app_config::AppType::Agy,
-            &provider,
-        )
-        .await?;
-        let provider = crate::proxy::dim_relay::project_provider(
-            &state.db,
-            &crate::app_config::AppType::Agy,
-            &provider,
-        )
-        .map_err(|e| e.to_string())?;
         crate::commands::misc::open_agy_resume_terminal(&provider, &conversation, cwd)?;
         return Ok(true);
     }

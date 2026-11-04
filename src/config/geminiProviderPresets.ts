@@ -1,4 +1,3 @@
-import { dimOAuthPreset } from "@/lib/dimProviderConfig";
 import type { ProviderCategory } from "@/types";
 import type { PresetFamilyFields } from "./presetFamilies";
 
@@ -35,16 +34,6 @@ export interface GeminiProviderPreset extends PresetFamilyFields {
 }
 
 export const geminiProviderPresets: GeminiProviderPreset[] = [
-  {
-    ...dimOAuthPreset,
-    settingsConfig: {
-      env: {
-        GOOGLE_GEMINI_BASE_URL: "https://dimagent.com",
-        GEMINI_API_KEY: "PROXY_MANAGED",
-        GEMINI_MODEL: "",
-      },
-    },
-  },
   {
     name: "Google Official",
     websiteUrl: "https://ai.google.dev/",

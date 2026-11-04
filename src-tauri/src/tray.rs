@@ -1122,7 +1122,6 @@ pub(crate) fn provider_needs_routing(app: &AppType, provider: &Provider) -> bool
                     .and_then(codex_wire_api)
                     .is_some_and(|wire_api| is_chat_or_anthropic_wire_api(&wire_api))
         }
-        AppType::Gemini => provider.is_dim_oauth(),
         _ => false,
     }
 }

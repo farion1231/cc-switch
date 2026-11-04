@@ -25,8 +25,7 @@ export function useDimProvider({
   );
   const [model, setModel] = useState<string | null>(null);
   const [apiFormat, setApiFormat] = useState<DimApiFormat>(
-    initialMeta?.apiFormat ??
-      (appId === "gemini" || appId === "agy" ? "gemini_native" : "openai_chat"),
+    initialMeta?.apiFormat ?? "openai_chat",
   );
   const [effort, setEffort] = useState(initialMeta?.dimOauthEffort ?? "");
   const [valid, setValid] = useState(false);

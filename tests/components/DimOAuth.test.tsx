@@ -12,6 +12,8 @@ import type { AppId } from "@/lib/api";
 import { ProviderForm } from "@/components/providers/forms/ProviderForm";
 import { DimOAuthFields } from "@/components/providers/forms/DimOAuthFields";
 import { DimOAuthSection } from "@/components/providers/forms/DimOAuthSection";
+import { geminiProviderPresets } from "@/config/geminiProviderPresets";
+import { dimFormatsForApp } from "@/lib/dimProviderConfig";
 import { providerPresets } from "@/config/claudeProviderPresets";
 import {
   codexProviderPresets,
@@ -414,11 +416,20 @@ describe("DimAgent native sign-in user flow", () => {
     );
   });
 
+  it("does not offer DimAgent for Gemini CLI or Antigravity", () => {
+    expect(
+      geminiProviderPresets.some(
+        (preset) => preset.providerType === "dim_oauth",
+      ),
+    ).toBe(false);
+    expect(dimFormatsForApp("gemini")).toEqual([]);
+    expect(dimFormatsForApp("agy")).toEqual([]);
+  });
+
   it.each([
     "claude",
     "codex",
     "claude-desktop",
-    "gemini",
     "grokbuild",
     "mcode",
     "dsh",
@@ -428,20 +439,12 @@ describe("DimAgent native sign-in user flow", () => {
     "opencode",
     "openclaw",
     "hermes",
-    "agy",
   ] as AppId[])(
     "saves a real managed %s client from its native preset flow",
     async (appId) => {
       const user = userEvent.setup();
       const submit = vi.fn();
-      const compatible = {
-        ...model,
-        api_formats:
-          appId === "gemini" || appId === "agy"
-            ? ["gemini_native" as const]
-            : model.api_formats,
-      };
-      vi.mocked(dimOAuthApi.models).mockResolvedValue([compatible]);
+      vi.mocked(dimOAuthApi.models).mockResolvedValue([model]);
       renderWithQueryClient(
         <ProviderForm
           appId={appId}
@@ -523,7 +526,6 @@ describe("DimAgent native sign-in user flow", () => {
           "opencode",
           "openclaw",
           "hermes",
-          "agy",
         ].includes(appId)
       )
         expect(

@@ -20,13 +20,13 @@ export const dimOAuthPreset = {
   iconColor: "#64C878",
 };
 export function dimFormatsForApp(appId: AppId): readonly DimApiFormat[] {
-  if (appId === "gemini" || appId === "agy") return ["gemini_native"];
+  if (appId === "gemini" || appId === "agy") return [];
   if (["codex", "grokbuild", "mcode", "dsh", "hermes"].includes(appId))
     return ["openai_chat", "openai_responses", "anthropic"];
   return ["openai_chat", "openai_responses", "anthropic", "gemini_native"];
 }
 export const dimNativeRouting = (appId: AppId) =>
-  ["claude", "claude-desktop", "codex", "gemini", "grokbuild"].includes(appId);
+  ["claude", "claude-desktop", "codex", "grokbuild"].includes(appId);
 export const dimBaseUrl = (issuer: string, format: DimApiFormat) =>
   issuer +
   (format === "gemini_native"
