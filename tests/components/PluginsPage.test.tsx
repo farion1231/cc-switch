@@ -46,7 +46,7 @@ vi.mock("@/lib/api/plugins", async (importOriginal) => ({
 }));
 
 import {
-  DISCOVER_RENDER_LIMIT,
+  DEFAULT_PLUGIN_PAGE_SIZE,
   PluginsPage,
   availableFromCatalog,
   filterPlugins,
@@ -347,21 +347,42 @@ describe("PluginsPage", () => {
     );
   });
 
-  it("filters Discover with search and caps long lists", async () => {
-    const many = Array.from({ length: DISCOVER_RENDER_LIMIT + 5 }, (_, i) =>
-      catalogItem({ id: `p${i}@m`, name: `p${i}` }),
+  it("loads the whole catalog and pages through Discover", async () => {
+    const total = DEFAULT_PLUGIN_PAGE_SIZE * 2 + 5;
+    m.listCatalog.mockResolvedValue(
+      Array.from({ length: total }, (_, i) =>
+        catalogItem({ id: `p${i}@m`, name: `p${i}` }),
+      ),
     );
-    m.listCatalog.mockResolvedValue(many);
     renderPage();
     await screen.findByText("frontend-design");
     await userEvent.click(
       await screen.findByRole("tab", { name: "pluginsPage.viewDiscoverCount" }),
     );
     const list = await screen.findByTestId("plugins-discover");
+    const installButtons = () =>
+      within(list).getAllByRole("button", { name: "pluginsPage.install" });
+    // 只挂当前页的行
+    expect(installButtons()).toHaveLength(DEFAULT_PLUGIN_PAGE_SIZE);
+    expect(within(list).getByText("p0")).toBeInTheDocument();
+    expect(within(list).queryByText(`p${total - 1}`)).not.toBeInTheDocument();
+
+    const next = () => screen.getByRole("button", { name: "usage.nextPage" });
+    await userEvent.click(next());
+    await userEvent.click(next());
+    expect(installButtons()).toHaveLength(5);
+    expect(within(list).getByText(`p${total - 1}`)).toBeInTheDocument();
+    expect(next()).toBeDisabled();
+
+    // 换关键词回到第一页；p1、p10–p19、p100–p104 一共 16 个，一页放得下就不画翻页条
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "pluginsPage.searchAria" }),
+      "p1",
+    );
+    await waitFor(() => expect(installButtons()).toHaveLength(16));
     expect(
-      within(list).getAllByRole("button", { name: "pluginsPage.install" }),
-    ).toHaveLength(DISCOVER_RENDER_LIMIT);
-    expect(screen.getByText("pluginsPage.truncated")).toBeInTheDocument();
+      screen.queryByRole("button", { name: "usage.nextPage" }),
+    ).not.toBeInTheDocument();
 
     await userEvent.type(
       screen.getByRole("textbox", { name: "pluginsPage.searchAria" }),
@@ -370,6 +391,44 @@ describe("PluginsPage", () => {
     expect(
       await screen.findByText("pluginsPage.noMatches"),
     ).toBeInTheDocument();
+  });
+
+  it("stays on the current page when an install shrinks Discover", async () => {
+    const total = DEFAULT_PLUGIN_PAGE_SIZE + 1;
+    m.listCatalog.mockResolvedValue(
+      Array.from({ length: total }, (_, i) =>
+        catalogItem({ id: `p${i}@m`, name: `p${i}` }),
+      ),
+    );
+    m.install.mockResolvedValue({ changed: true });
+    renderPage();
+    await screen.findByText("frontend-design");
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "pluginsPage.viewDiscoverCount" }),
+    );
+    const list = await screen.findByTestId("plugins-discover");
+    await userEvent.click(
+      screen.getByRole("button", { name: "usage.nextPage" }),
+    );
+    expect(within(list).getByText(`p${total - 1}`)).toBeInTheDocument();
+    // 装掉第二页唯一的一项：页数变成 1，收回到第一页，不留空页
+    m.listInstalled.mockResolvedValue([
+      plugin(),
+      plugin({
+        id: `p${total - 1}@m`,
+        name: `p${total - 1}`,
+        marketplace: "m",
+      }),
+    ]);
+    await userEvent.click(
+      within(list).getByRole("button", { name: "pluginsPage.install" }),
+    );
+    await waitFor(() =>
+      expect(
+        within(list).getAllByRole("button", { name: "pluginsPage.install" }),
+      ).toHaveLength(DEFAULT_PLUGIN_PAGE_SIZE),
+    );
+    expect(within(list).getByText("p0")).toBeInTheDocument();
   });
 
   it("removes the row while uninstalling and restores it on failure", async () => {
@@ -519,6 +578,33 @@ describe("PluginsPage", () => {
     await waitFor(() =>
       expect(m.removeMarketplace).toHaveBeenCalledWith("claude", "mine"),
     );
+  });
+
+  it("pages through a long marketplace list", async () => {
+    const total = DEFAULT_PLUGIN_PAGE_SIZE + 3;
+    m.listMarketplaces.mockResolvedValue(
+      Array.from({ length: total }, (_, i) => ({
+        name: `market-${i}`,
+        source: `me/market-${i}`,
+        removable: true,
+      })),
+    );
+    renderPage();
+    await screen.findByText("frontend-design");
+    await userEvent.click(
+      screen.getByRole("tab", { name: "pluginsPage.viewMarketplaces" }),
+    );
+    const list = await screen.findByTestId("plugins-marketplaces");
+    const removeButtons = () =>
+      within(list).getAllByRole("button", {
+        name: "pluginsPage.removeMarketplace",
+      });
+    expect(removeButtons()).toHaveLength(DEFAULT_PLUGIN_PAGE_SIZE);
+    await userEvent.click(
+      screen.getByRole("button", { name: "usage.nextPage" }),
+    );
+    expect(removeButtons()).toHaveLength(3);
+    expect(within(list).getByText(`market-${total - 1}`)).toBeInTheDocument();
   });
 
   it("asks before installing for apps whose CLI needs explicit trust", async () => {

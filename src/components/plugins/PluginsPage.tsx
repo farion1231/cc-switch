@@ -2,6 +2,7 @@ import {
   useDeferredValue,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -40,6 +41,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
+import {
+  TablePagination,
+  useClientPagination,
+} from "@/components/usage/TablePagination";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import {
   FIELD_CLASS,
@@ -71,8 +76,14 @@ import {
 
 type PluginsView = "installed" | "discover" | "marketplaces";
 
-/** 发现页一次最多画这么多行（Claude Code 的官方目录有几千个插件），其余靠搜索缩小。 */
-export const DISCOVER_RENDER_LIMIT = 200;
+/**
+ * 发现页、市场页每页条数的选项。目录整份读进来（Claude Code 的官方目录有几千个插件），
+ * 但只挂当前这一页的行，翻页、搜索时才换。
+ */
+export const PLUGIN_PAGE_SIZES = [20, 50, 100] as const;
+export const DEFAULT_PLUGIN_PAGE_SIZE = 50;
+
+const NO_MARKETPLACES: PluginMarketplace[] = [];
 
 /** 名字、显示名、市场、描述、分类里任一包含关键词（不分大小写）。 */
 export function filterPlugins(
@@ -158,6 +169,8 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
     useState<PluginMarketplace | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [source, setSource] = useState("");
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PLUGIN_PAGE_SIZE);
+  const listScrollRef = useRef<HTMLDivElement>(null);
 
   const appName = APP_DISPLAY_NAME[app];
   const features = PLUGIN_APP_FEATURES[app];
@@ -207,10 +220,29 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
     () => filterPlugins(installedAll, deferredSearch),
     [installedAll, deferredSearch],
   );
+  // 几千项的目录只在发现页里搜；停在别的页签时不算
   const available = useMemo(
-    () => filterPlugins(availableAll, deferredSearch),
-    [availableAll, deferredSearch],
+    () =>
+      view === "discover" ? filterPlugins(availableAll, deferredSearch) : [],
+    [view, availableAll, deferredSearch],
   );
+
+  // 换应用、换关键词、改每页条数回到第一页；装、卸只改列表，停在当前页（变少时收回到最后一页）
+  const discoverPager = useClientPagination(
+    available,
+    JSON.stringify([app, deferredSearch.trim(), pageSize]),
+    pageSize,
+  );
+  const marketPager = useClientPagination(
+    marketplaces.data ?? NO_MARKETPLACES,
+    JSON.stringify([app, pageSize]),
+    pageSize,
+  );
+
+  // 翻页后从这一页的第一行看起
+  useEffect(() => {
+    if (listScrollRef.current) listScrollRef.current.scrollTop = 0;
+  }, [discoverPager.page, marketPager.page]);
 
   const { busy, run: runWrite } = usePluginWrites(app);
 
@@ -502,6 +534,23 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
     />
   );
 
+  /** 翻页条放在列表面板底部；只有一页且条数不多时不画。 */
+  const renderPager = (
+    pager: typeof discoverPager | typeof marketPager,
+  ): ReactNode => (
+    <div className="shrink-0">
+      <TablePagination
+        page={pager.page}
+        totalPages={pager.totalPages}
+        total={pager.total}
+        onPageChange={pager.setPage}
+        pageSize={pageSize}
+        pageSizeOptions={PLUGIN_PAGE_SIZES}
+        onPageSizeChange={setPageSize}
+      />
+    </div>
+  );
+
   const renderBody = () => {
     if (installedQuery.isPending) {
       return (
@@ -602,8 +651,7 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
       );
     }
 
-    const shown =
-      view === "discover" ? rows.slice(0, DISCOVER_RENDER_LIMIT) : rows;
+    const shown = view === "discover" ? discoverPager.pageRows : rows;
     return (
       <>
         <div className="flex h-14 shrink-0 items-center gap-3">
@@ -646,31 +694,27 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
             })}
           />
         ) : (
-          <div
-            data-testid={`plugins-${view}`}
-            className="min-h-0 overflow-auto scroll-stable rounded-panel border border-border bg-surface"
-          >
-            {shown.map((entry, index) => (
-              <PluginRow
-                key={`${entry.id}:${entry.scope ?? ""}`}
-                entry={entry}
-                isLast={index === shown.length - 1}
-                busyAction={busy[entry.id]}
-                canUpdate={features.update}
-                onInstall={() => requestInstall(entry)}
-                onToggle={(enabled) => void toggle(entry, enabled)}
-                onUpdate={() => void update(entry)}
-                onUninstall={() => setUninstallTarget(entry)}
-              />
-            ))}
-            {shown.length < rows.length && (
-              <p className="m-0 border-t border-border px-4 py-2.5 text-caption text-fg-2">
-                {t("pluginsPage.truncated", {
-                  shown: shown.length,
-                  count: rows.length,
-                })}
-              </p>
-            )}
+          <div className="flex min-h-0 flex-col overflow-hidden rounded-panel border border-border bg-surface">
+            <div
+              ref={listScrollRef}
+              data-testid={`plugins-${view}`}
+              className="min-h-0 overflow-auto scroll-stable"
+            >
+              {shown.map((entry, index) => (
+                <PluginRow
+                  key={`${entry.id}:${entry.scope ?? ""}`}
+                  entry={entry}
+                  isLast={index === shown.length - 1}
+                  busyAction={busy[entry.id]}
+                  canUpdate={features.update}
+                  onInstall={() => requestInstall(entry)}
+                  onToggle={(enabled) => void toggle(entry, enabled)}
+                  onUpdate={() => void update(entry)}
+                  onUninstall={() => setUninstallTarget(entry)}
+                />
+              ))}
+            </div>
+            {view === "discover" && renderPager(discoverPager)}
           </div>
         )}
       </>
@@ -707,8 +751,7 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
         />
       );
     }
-    const markets = marketplaces.data ?? [];
-    if (markets.length === 0) {
+    if (marketPager.total === 0) {
       return (
         <CenteredState
           title={t("pluginsPage.emptyMarketsTitle")}
@@ -728,52 +771,58 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
       );
     }
     return (
-      <div
-        data-testid="plugins-marketplaces"
-        className="mt-3 min-h-0 overflow-auto scroll-stable rounded-panel border border-border bg-surface"
-      >
-        {markets.map((market, index) => {
-          const removing = Boolean(busy[`market:${market.name}`]);
-          return (
-            <div
-              key={market.name}
-              className={cn(
-                "flex items-center gap-3 px-4 py-2.5",
-                index < markets.length - 1 && "border-b border-border",
-              )}
-            >
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="truncate text-body font-medium text-fg-1">
-                    {market.name}
-                  </span>
-                  {!market.removable && (
-                    <span className="shrink-0 rounded-[4px] bg-subtle px-1.5 text-caption text-fg-2">
-                      {t("pluginsPage.builtIn")}
+      <div className="mt-3 flex min-h-0 flex-col overflow-hidden rounded-panel border border-border bg-surface">
+        <div
+          ref={listScrollRef}
+          data-testid="plugins-marketplaces"
+          className="min-h-0 overflow-auto scroll-stable"
+        >
+          {marketPager.pageRows.map((market, index, markets) => {
+            const removing = Boolean(busy[`market:${market.name}`]);
+            return (
+              <div
+                key={market.name}
+                className={cn(
+                  "flex items-center gap-3 px-4 py-2.5",
+                  index < markets.length - 1 && "border-b border-border",
+                )}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-body font-medium text-fg-1">
+                      {market.name}
                     </span>
+                    {!market.removable && (
+                      <span className="shrink-0 rounded-[4px] bg-subtle px-1.5 text-caption text-fg-2">
+                        {t("pluginsPage.builtIn")}
+                      </span>
+                    )}
+                  </div>
+                  {(market.source || market.location) && (
+                    <div className="truncate font-mono text-caption text-fg-3">
+                      {market.source || market.location}
+                    </div>
                   )}
                 </div>
-                {(market.source || market.location) && (
-                  <div className="truncate font-mono text-caption text-fg-3">
-                    {market.source || market.location}
-                  </div>
+                {market.removable && (
+                  <Button
+                    type="button"
+                    variant="neutral"
+                    size="compact"
+                    disabled={removing || anyBusy}
+                    onClick={() => setRemoveMarketTarget(market)}
+                  >
+                    {removing && (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    )}
+                    {t("pluginsPage.removeMarketplace")}
+                  </Button>
                 )}
               </div>
-              {market.removable && (
-                <Button
-                  type="button"
-                  variant="neutral"
-                  size="compact"
-                  disabled={removing || anyBusy}
-                  onClick={() => setRemoveMarketTarget(market)}
-                >
-                  {removing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  {t("pluginsPage.removeMarketplace")}
-                </Button>
-              )}
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
+        {renderPager(marketPager)}
       </div>
     );
   };
