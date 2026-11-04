@@ -2,29 +2,20 @@ import * as React from "react";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
 import { cn } from "@/lib/utils";
 import {
-  finishOverlayAnimation,
   OVERLAY_MOTION_CLASS,
   type OverlayAnimationGuard,
   useOverlayAnimationGuard,
-  useOverlayAnimationRef,
 } from "./overlay-animation-guard";
 
 const PopoverAnimationContext = React.createContext<
   OverlayAnimationGuard | undefined
 >(undefined);
 
-export interface PopoverProps
-  extends React.ComponentPropsWithoutRef<typeof PopoverPrimitive.Root> {
-  /** Overrides the OS preference when the app exposes its own motion setting. */
-  reducedMotion?: boolean;
-}
-
 function Popover({
-  reducedMotion: reducedMotionOverride,
   onOpenChange,
   ...props
-}: PopoverProps) {
-  const animation = useOverlayAnimationGuard(reducedMotionOverride);
+}: React.ComponentPropsWithoutRef<typeof PopoverPrimitive.Root>) {
+  const animation = useOverlayAnimationGuard();
 
   const handleOpenChange = React.useCallback(
     (open: boolean) => {
@@ -54,7 +45,7 @@ const PopoverTrigger = React.forwardRef<
       onClick={(event) => {
         onClick?.(event);
         if (!event.defaultPrevented && animation?.isTransitioning()) {
-          // Radix skips its toggle handler when the user handler prevents it.
+          // 用户处理函数阻止默认行为后，Radix 不会执行切换操作。
           event.preventDefault();
         }
       }}
@@ -68,35 +59,23 @@ const PopoverAnchor = PopoverPrimitive.Anchor;
 const PopoverContent = React.forwardRef<
   React.ComponentRef<typeof PopoverPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof PopoverPrimitive.Content>
->(
-  (
-    { className, align = "start", sideOffset = 4, onAnimationEnd, ...props },
-    forwardedRef,
-  ) => {
-    const animation = React.useContext(PopoverAnimationContext);
-    const setRefs = useOverlayAnimationRef(animation, forwardedRef);
-
-    return (
-      <PopoverPrimitive.Portal>
-        <PopoverPrimitive.Content
-          ref={setRefs}
-          align={align}
-          sideOffset={sideOffset}
-          className={cn(
-            "z-[100] rounded-md border bg-popover text-popover-foreground shadow-md outline-none",
-            !animation?.reducedMotion && OVERLAY_MOTION_CLASS,
-            className,
-          )}
-          onAnimationEnd={(event) => {
-            onAnimationEnd?.(event);
-            finishOverlayAnimation(animation, event);
-          }}
-          {...props}
-        />
-      </PopoverPrimitive.Portal>
-    );
-  },
-);
+>(({ className, align = "start", sideOffset = 4, ...props }, forwardedRef) => {
+  return (
+    <PopoverPrimitive.Portal>
+      <PopoverPrimitive.Content
+        ref={forwardedRef}
+        align={align}
+        sideOffset={sideOffset}
+        className={cn(
+          "z-[100] rounded-md border bg-popover text-popover-foreground shadow-md outline-none",
+          OVERLAY_MOTION_CLASS,
+          className,
+        )}
+        {...props}
+      />
+    </PopoverPrimitive.Portal>
+  );
+});
 PopoverContent.displayName = PopoverPrimitive.Content.displayName;
 
 export { Popover, PopoverTrigger, PopoverContent, PopoverAnchor };
