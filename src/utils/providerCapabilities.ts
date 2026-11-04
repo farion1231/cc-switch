@@ -47,7 +47,8 @@ export function resolveCodexOfficialIdentity(
   appId: AppId,
   provider: Pick<Provider, "id" | "category" | "meta" | "settingsConfig">,
 ): CodexOfficialIdentity | null {
-  if (appId !== "codex") return null;
+  if (appId !== "codex" || provider.meta?.providerType === "dim_oauth")
+    return null;
 
   const managedAccountId = resolveManagedAccountId(
     provider.meta,
@@ -93,6 +94,7 @@ export function isOfficialAccount(
   appId: AppId,
   provider: Pick<Provider, "id" | "category" | "meta" | "settingsConfig">,
 ): boolean {
+  if (provider.meta?.providerType === "dim_oauth") return false;
   if (appId === "kimi") {
     const config = provider.settingsConfig.provider as
       | { type?: string; oauth?: { key?: unknown } }
