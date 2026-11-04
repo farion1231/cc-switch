@@ -177,11 +177,13 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "proxy",
     apiFormat: "anthropic",
     // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
-    // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文）
+    // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文，supports1m 必开，
+    // 否则 Desktop 按 200K 攒上下文）
     modelRoutes: brandedRoutes(
       "kimi-k3.1-pro",
       "kimi-k3.1-pro",
       "kimi-k3.1-pro",
+      true,
     ),
     partnerPromotionKey: "kimi",
     icon: "kimi",
@@ -200,11 +202,13 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "proxy",
     apiFormat: "anthropic",
     // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
-    // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文）
+    // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文，supports1m 必开，
+    // 否则 Desktop 按 200K 攒上下文）
     modelRoutes: brandedRoutes(
       "kimi-k3.1-pro",
       "kimi-k3.1-pro",
       "kimi-k3.1-pro",
+      true,
     ),
     partnerPromotionKey: "kimi",
     icon: "kimi",

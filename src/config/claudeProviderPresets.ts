@@ -106,10 +106,13 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_AUTH_TOKEN: "",
         // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
         // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文，thinking 强制开启）
-        ANTHROPIC_MODEL: "kimi-k3.1-pro",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-k3.1-pro",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k3.1-pro",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k3.1-pro",
+        // [1M] 标记必带：Claude Code 对非 claude- 前缀 id 默认按 200K 窗口
+        // 自动压缩，只有 id 带 [1M]（或钉 CLAUDE_CODE_MAX_CONTEXT_TOKENS）
+        // 才按 1M 处理，见上游 31038e68
+        ANTHROPIC_MODEL: "kimi-k3.1-pro[1M]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-k3.1-pro[1M]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k3.1-pro[1M]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k3.1-pro[1M]",
       },
     },
     category: "cn_official",
@@ -131,10 +134,13 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_AUTH_TOKEN: "",
         // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
         // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文，thinking 强制开启）
-        ANTHROPIC_MODEL: "kimi-k3.1-pro",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-k3.1-pro",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k3.1-pro",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k3.1-pro",
+        // [1M] 标记必带：Claude Code 对非 claude- 前缀 id 默认按 200K 窗口
+        // 自动压缩，只有 id 带 [1M]（或钉 CLAUDE_CODE_MAX_CONTEXT_TOKENS）
+        // 才按 1M 处理，见上游 31038e68
+        ANTHROPIC_MODEL: "kimi-k3.1-pro[1M]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-k3.1-pro[1M]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k3.1-pro[1M]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k3.1-pro[1M]",
       },
     },
     category: "cn_official",
