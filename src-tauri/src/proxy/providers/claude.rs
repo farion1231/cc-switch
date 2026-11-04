@@ -1605,6 +1605,11 @@ mod tests {
             }
             assert!(provider.uses_managed_account_auth());
             assert!(provider.uses_proxy_injected_oauth());
+            let mut edited = provider.clone();
+            edited.category = Some("official".into());
+            edited.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.into();
+            edited.settings_config = json!({"auth": {}});
+            assert!(!super::super::is_codex_official_provider(&edited));
         }
     }
 
