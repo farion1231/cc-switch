@@ -60,14 +60,22 @@ use subtle::ConstantTimeEq;
 // ============================================================================
 
 /// 健康检查
-pub async fn health_check() -> (StatusCode, Json<Value>) {
-    (
+pub async fn health_check(headers: axum::http::HeaderMap) -> axum::response::Response {
+    let mut response = (
         StatusCode::OK,
         Json(json!({
             "status": "healthy",
             "timestamp": chrono::Utc::now().to_rfc3339(),
         })),
     )
+        .into_response();
+    // 环回自检带的随机值原样写回，证明请求回到了本地路由（见 loopback_probe）
+    if let Some(nonce) = headers.get(super::loopback_probe::PROBE_HEADER) {
+        response
+            .headers_mut()
+            .insert(super::loopback_probe::PROBE_HEADER, nonce.clone());
+    }
+    response
 }
 
 /// 获取服务状态
