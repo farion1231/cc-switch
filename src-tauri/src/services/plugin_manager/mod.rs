@@ -1,15 +1,21 @@
-//! Claude Code / Codex 插件管理。
+//! 各应用的插件管理。
 //!
-//! 两边的插件状态（已装列表、启用开关、市场、缓存目录）都归 CLI 自己管，格式随版本变，
-//! 这里不去碰它们的私有文件，而是调官方 CLI 的 `--json` 输出：
+//! 插件状态（已装列表、启用开关、市场、缓存目录）都归应用自己的 CLI 管，格式随版本变，
+//! 这里尽量不碰它们的私有文件，而是调官方 CLI 的 `--json` 输出：
 //!
 //! - Claude Code：`claude plugin list|install|uninstall|enable|disable|update` 和
 //!   `claude plugin marketplace list|add|remove|update`。
 //! - Codex：`codex plugin list|add|remove` 和 `codex plugin marketplace list|add|remove|upgrade`。
 //!   Codex 没有启用 / 停用命令，开关就是 `config.toml` 的 `[plugins."<id>"] enabled`，
 //!   用 `toml_edit` 原位改这一个键。
+//! - Grok Build、MiniMax Code、OpenClaw：见各自的子模块。
 //!
-//! 设置里覆盖了配置目录时，用 `CLAUDE_CONFIG_DIR` / `CODEX_HOME` 让 CLI 读同一份目录。
+//! CLI 读的配置目录和 CC Switch 读的必须是同一份：设置里覆盖了目录时，用各应用的环境变量
+//! （`CLAUDE_CONFIG_DIR`、`CODEX_HOME`、`GROK_HOME`……）告诉 CLI。
+
+mod grok;
+mod mcode;
+mod openclaw;
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -28,11 +34,16 @@ const NETWORK_TIMEOUT: Duration = Duration::from_secs(300);
 
 const MAX_SOURCE_LEN: usize = 512;
 
+/// 序列化名和前端的应用 id（`AppId`）一致。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PluginApp {
     Claude,
     Codex,
+    #[serde(rename = "grokbuild")]
+    Grok,
+    Mcode,
+    Openclaw,
 }
 
 impl PluginApp {
@@ -40,6 +51,9 @@ impl PluginApp {
         match self {
             PluginApp::Claude => "claude",
             PluginApp::Codex => "codex",
+            PluginApp::Grok => "grok",
+            PluginApp::Mcode => "mcode",
+            PluginApp::Openclaw => "openclaw",
         }
     }
 
@@ -47,9 +61,15 @@ impl PluginApp {
     fn write_lock(self) -> &'static Mutex<()> {
         static CLAUDE: Mutex<()> = Mutex::new(());
         static CODEX: Mutex<()> = Mutex::new(());
+        static GROK: Mutex<()> = Mutex::new(());
+        static MCODE: Mutex<()> = Mutex::new(());
+        static OPENCLAW: Mutex<()> = Mutex::new(());
         match self {
             PluginApp::Claude => &CLAUDE,
             PluginApp::Codex => &CODEX,
+            PluginApp::Grok => &GROK,
+            PluginApp::Mcode => &MCODE,
+            PluginApp::Openclaw => &OPENCLAW,
         }
     }
 }
@@ -57,9 +77,11 @@ impl PluginApp {
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginEntry {
-    /// `name@marketplace`
+    /// 交给 CLI 的插件 id：Claude Code / Codex / MiniMax Code 是 `name@marketplace`，
+    /// Grok Build 是插件名，OpenClaw 是插件 id（目录里是 ClawHub 包名）。
     pub id: String,
     pub name: String,
+    /// 来自哪个市场；没有市场概念的（OpenClaw 已装的）为空。
     pub marketplace: String,
     pub display_name: Option<String>,
     pub version: Option<String>,
@@ -67,12 +89,17 @@ pub struct PluginEntry {
     pub category: Option<String>,
     pub installed: bool,
     pub enabled: bool,
-    /// Claude Code 的安装范围（user / project / local / managed）；Codex 没有。
+    /// Claude Code 的安装范围（user / project / local / managed）；其它应用没有。
     pub scope: Option<String>,
-    /// CC Switch 能不能启停、卸载它：Claude Code 只管 user 范围（项目范围的跟着项目目录走）。
+    /// CC Switch 能不能启停它：Claude Code 只管 user 范围（项目范围的跟着项目目录走）。
     pub manageable: bool,
+    /// 能不能卸载、更新：OpenClaw 随程序自带的插件只能开关。
+    pub removable: bool,
     /// 市场允许安装（Codex 的 `installPolicy` 不是 `NOT_AVAILABLE`）。
     pub installable: bool,
+    /// 目录条目装好后在已安装列表里的 id，和 `id` 不同时才有：OpenClaw 目录给的是 ClawHub
+    /// 包名（`@openclaw/memory-lancedb`），装好后的插件 id 是 `memory-lancedb`。
+    pub installed_id: Option<String>,
     pub install_path: Option<String>,
     pub updated_at: Option<String>,
 }
@@ -118,6 +145,38 @@ pub fn validate_plugin_id(id: &str) -> Result<(), String> {
         Some((name, market)) if is_name_segment(name) && is_name_segment(market) => Ok(()),
         _ => Err(format!("Invalid plugin id: {id}")),
     }
+}
+
+/// npm 风格的包名：`name` 或 `@scope/name`（OpenClaw 的插件 id 和 ClawHub 包名都是这样）。
+fn is_package_name(id: &str) -> bool {
+    match id.strip_prefix('@') {
+        Some(rest) => matches!(
+            rest.split_once('/'),
+            Some((scope, name)) if is_name_segment(scope) && is_name_segment(name)
+        ),
+        None => is_name_segment(id),
+    }
+}
+
+/// 按应用校验交给 CLI 的插件 id。
+fn validate_app_plugin_id(app: PluginApp, id: &str) -> Result<(), String> {
+    let ok = match app {
+        PluginApp::Claude | PluginApp::Codex | PluginApp::Mcode => {
+            return validate_plugin_id(id);
+        }
+        PluginApp::Grok => is_name_segment(id),
+        PluginApp::Openclaw => is_package_name(id),
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err(format!("Invalid plugin id: {id}"))
+    }
+}
+
+/// 这个应用的 CLI 没有对应命令（前端本该隐藏入口）。
+fn unsupported(app: PluginApp, what: &str) -> String {
+    format!("{} does not support {what}", app.tool())
 }
 
 pub fn validate_marketplace_name(name: &str) -> Result<(), String> {
@@ -180,6 +239,30 @@ fn cli_context(app: PluginApp) -> (Vec<(&'static str, String)>, PathBuf) {
             // 否则 GUI 进程继承来的 CODEX_HOME 会让两边各改各的。`~/.codex` 本就是 Codex 的默认值。
             let dir = crate::codex_config::get_codex_config_dir();
             let env = vec![("CODEX_HOME", dir.to_string_lossy().into_owned())];
+            (dir, env)
+        }
+        // 下面几个同理总是显式传，CLI 和 CC Switch 用同一个目录（Grok Build 的启停状态由
+        // CC Switch 直接读 `<GROK_HOME>/config.toml`）。
+        PluginApp::Grok => {
+            let dir = crate::grok_config::get_grok_config_dir();
+            let env = vec![("GROK_HOME", dir.to_string_lossy().into_owned())];
+            (dir, env)
+        }
+        PluginApp::Mcode => {
+            let dir = crate::mcode_config::data_dir();
+            let env = vec![("MINIMAX_DATA_DIR", dir.to_string_lossy().into_owned())];
+            (dir, env)
+        }
+        PluginApp::Openclaw => {
+            let dir = crate::openclaw_config::get_openclaw_dir();
+            let config = crate::openclaw_config::get_openclaw_config_path();
+            let env = vec![
+                ("OPENCLAW_STATE_DIR", dir.to_string_lossy().into_owned()),
+                (
+                    "OPENCLAW_CONFIG_PATH",
+                    config.to_string_lossy().into_owned(),
+                ),
+            ];
             (dir, env)
         }
     };
@@ -322,21 +405,28 @@ struct ManifestInfo {
     category: Option<String>,
 }
 
+/// 依次找 `<dir>/<manifest_dir>/plugin.json`（空串表示插件根目录），用第一个读得到的。
+fn read_manifest_any(dir: &Path, manifest_dirs: &[&str]) -> ManifestInfo {
+    manifest_dirs
+        .iter()
+        .find_map(|manifest_dir| read_manifest_file(&dir.join(manifest_dir).join("plugin.json")))
+        .unwrap_or_default()
+}
+
 fn read_manifest(dir: &Path, manifest_dir: &str) -> ManifestInfo {
-    let path = dir.join(manifest_dir).join("plugin.json");
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return ManifestInfo::default();
-    };
-    let Ok(value) = serde_json::from_str::<Value>(&text) else {
-        return ManifestInfo::default();
-    };
+    read_manifest_file(&dir.join(manifest_dir).join("plugin.json")).unwrap_or_default()
+}
+
+fn read_manifest_file(path: &Path) -> Option<ManifestInfo> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let value = serde_json::from_str::<Value>(&text).ok()?;
     let interface = value.get("interface").cloned().unwrap_or(Value::Null);
-    ManifestInfo {
+    Some(ManifestInfo {
         display_name: str_field(&interface, "displayName"),
         description: str_field(&interface, "shortDescription")
             .or_else(|| str_field(&value, "description")),
         category: str_field(&interface, "category"),
-    }
+    })
 }
 
 // ───────────────────────────── Claude Code ─────────────────────────────
@@ -404,7 +494,9 @@ fn parse_claude_listing(value: &Value) -> PluginListing {
                     .and_then(Value::as_bool)
                     .unwrap_or(false),
                 manageable: scope.as_deref().is_none_or(|s| s == "user"),
+                removable: scope.as_deref().is_none_or(|s| s == "user"),
                 installable: true,
+                installed_id: None,
                 scope,
                 install_path,
                 updated_at: str_field(item, "lastUpdated")
@@ -474,7 +566,9 @@ fn parse_codex_entry(item: &Value) -> Option<PluginEntry> {
             .and_then(Value::as_bool)
             .unwrap_or(false),
         manageable: true,
+        removable: true,
         installable: str_field(item, "installPolicy").as_deref() != Some("NOT_AVAILABLE"),
+        installed_id: None,
         install_path: None,
         updated_at: None,
         scope: None,
@@ -575,34 +669,50 @@ fn set_codex_plugin_enabled_in_text(text: &str, id: &str, enabled: bool) -> Resu
 
 // ───────────────────────────── 对外接口 ─────────────────────────────
 
+/// 跑一条输出 JSON 的命令，失败时返回 CLI 的报错。
+fn run_json(app: PluginApp, args: &[&str], timeout: Duration) -> Result<Value, String> {
+    let out = run_cli(app, args, timeout)?;
+    if !out.success {
+        return Err(failure_detail(&out));
+    }
+    parse_json_payload(&out.stdout)
+        .ok_or_else(|| format!("Unexpected output from `{} {}`", app.tool(), args.join(" ")))
+}
+
+/// `plugin list [--available] --json`（Claude Code、Codex、MiniMax Code、Grok Build 都是这条）。
 fn run_list(app: PluginApp, with_catalog: bool) -> Result<PluginListing, String> {
     let args: &[&str] = if with_catalog {
         &["plugin", "list", "--available", "--json"]
     } else {
         &["plugin", "list", "--json"]
     };
-    let out = run_cli(app, args, LIST_TIMEOUT)?;
-    if !out.success {
-        return Err(failure_detail(&out));
-    }
-    let value = parse_json_payload(&out.stdout)
-        .ok_or_else(|| format!("Unexpected output from `{} plugin list`", app.tool()))?;
+    let value = run_json(app, args, LIST_TIMEOUT)?;
     Ok(match app {
         PluginApp::Claude => parse_claude_listing(&value),
         PluginApp::Codex => parse_codex_listing(&value),
+        PluginApp::Mcode => mcode::parse_listing(&value),
+        PluginApp::Grok => grok::parse_listing(&value, &grok::read_config_text()),
+        // OpenClaw 的列表命令不同，不走这里
+        PluginApp::Openclaw => return Err(unsupported(app, "plugin list --available")),
     })
 }
 
 /// 已安装的插件。不带 `--available`，CLI 不用展开整份市场目录（Claude Code 的官方目录有
 /// 几千项），每次启停、安装后的刷新都走这条便宜的路。
 pub fn list_installed(app: PluginApp) -> Result<Vec<PluginEntry>, String> {
-    run_list(app, false).map(|listing| listing.installed)
+    match app {
+        PluginApp::Openclaw => openclaw::list_installed(),
+        _ => run_list(app, false).map(|listing| listing.installed),
+    }
 }
 
 /// 所有市场里的插件（含已安装的，那几项按目录条目给出：未安装、未启用）。
 /// 目录只在市场增删、刷新时变，前端用「目录 − 已安装」得到「发现」，装、卸都不用重读它。
 pub fn list_catalog(app: PluginApp) -> Result<Vec<PluginEntry>, String> {
-    run_list(app, true).map(catalog_from_listing)
+    match app {
+        PluginApp::Openclaw => openclaw::list_catalog(),
+        _ => run_list(app, true).map(catalog_from_listing),
+    }
 }
 
 fn catalog_from_listing(listing: PluginListing) -> Vec<PluginEntry> {
@@ -620,6 +730,7 @@ fn catalog_from_listing(listing: PluginListing) -> Vec<PluginEntry> {
                 enabled: false,
                 scope: None,
                 manageable: true,
+                removable: true,
                 install_path: None,
                 updated_at: None,
                 ..entry
@@ -630,6 +741,10 @@ fn catalog_from_listing(listing: PluginListing) -> Vec<PluginEntry> {
 }
 
 pub fn list_marketplaces(app: PluginApp) -> Result<Vec<PluginMarketplace>, String> {
+    // MiniMax Code 正式版禁用了市场管理；OpenClaw 没有可增删的市场。
+    if matches!(app, PluginApp::Mcode | PluginApp::Openclaw) {
+        return Err(unsupported(app, "marketplace management"));
+    }
     let out = run_cli(
         app,
         &["plugin", "marketplace", "list", "--json"],
@@ -645,6 +760,8 @@ pub fn list_marketplaces(app: PluginApp) -> Result<Vec<PluginMarketplace>, Strin
             let config = crate::codex_config::read_codex_config_text().unwrap_or_default();
             parse_codex_marketplaces(&value, &config)
         }
+        PluginApp::Grok => grok::parse_marketplaces(&value),
+        PluginApp::Mcode | PluginApp::Openclaw => Vec::new(),
     })
 }
 
@@ -663,8 +780,26 @@ fn locked<T>(app: PluginApp, f: impl FnOnce() -> Result<T, String>) -> Result<T,
     f()
 }
 
+/// 只看退出码的写操作（Grok Build、OpenClaw 成功时只打印一句话）。
+fn run_action(
+    app: PluginApp,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<PluginActionOutcome, String> {
+    let out = run_cli(app, args, timeout)?;
+    if !out.success {
+        return Err(failure_detail(&out));
+    }
+    Ok(PluginActionOutcome {
+        changed: true,
+        message: None,
+    })
+}
+
+/// 安装。Grok Build 和 OpenClaw 的 CLI 要求显式确认信任（`--trust` / `--accept-capabilities`）
+/// 才肯装：前端对这两个应用先弹确认框，用户确认后才会调到这里。
 pub fn install_plugin(app: PluginApp, id: &str) -> Result<PluginActionOutcome, String> {
-    validate_plugin_id(id)?;
+    validate_app_plugin_id(app, id)?;
     locked(app, || match app {
         // 不传 -y：市场声明了安装命令的插件要用户在终端里亲自确认，CC Switch 不代为同意。
         PluginApp::Claude => run_cli(
@@ -674,14 +809,26 @@ pub fn install_plugin(app: PluginApp, id: &str) -> Result<PluginActionOutcome, S
         )
         .and_then(|out| claude_action_result(&out))
         .map(|v| ok_outcome(&v)),
-        PluginApp::Codex => run_cli(app, &["plugin", "add", id, "--json"], NETWORK_TIMEOUT)
-            .and_then(|out| codex_action_result(&out))
-            .map(|v| ok_outcome(&v)),
+        // Codex 和 MiniMax Code 都是 `plugin add <name@marketplace> --json`
+        PluginApp::Codex | PluginApp::Mcode => {
+            run_cli(app, &["plugin", "add", id, "--json"], NETWORK_TIMEOUT)
+                .and_then(|out| codex_action_result(&out))
+                .map(|v| ok_outcome(&v))
+        }
+        PluginApp::Grok => run_action(app, &["plugin", "install", id, "--trust"], NETWORK_TIMEOUT),
+        PluginApp::Openclaw => {
+            let spec = openclaw::install_spec(id);
+            run_action(
+                app,
+                &["plugins", "install", &spec, "--accept-capabilities"],
+                NETWORK_TIMEOUT,
+            )
+        }
     })
 }
 
 pub fn uninstall_plugin(app: PluginApp, id: &str) -> Result<PluginActionOutcome, String> {
-    validate_plugin_id(id)?;
+    validate_app_plugin_id(app, id)?;
     locked(app, || match app {
         PluginApp::Claude => run_cli(
             app,
@@ -690,9 +837,22 @@ pub fn uninstall_plugin(app: PluginApp, id: &str) -> Result<PluginActionOutcome,
         )
         .and_then(|out| claude_action_result(&out))
         .map(|v| ok_outcome(&v)),
-        PluginApp::Codex => run_cli(app, &["plugin", "remove", id, "--json"], TOGGLE_TIMEOUT)
-            .and_then(|out| codex_action_result(&out))
-            .map(|v| ok_outcome(&v)),
+        PluginApp::Codex | PluginApp::Mcode => {
+            run_cli(app, &["plugin", "remove", id, "--json"], TOGGLE_TIMEOUT)
+                .and_then(|out| codex_action_result(&out))
+                .map(|v| ok_outcome(&v))
+        }
+        // 不加 `--confirm` / `--force` 时 CLI 会在终端里等确认；前端已经弹过确认框
+        PluginApp::Grok => run_action(
+            app,
+            &["plugin", "uninstall", id, "--confirm"],
+            TOGGLE_TIMEOUT,
+        ),
+        PluginApp::Openclaw => run_action(
+            app,
+            &["plugins", "uninstall", id, "--force"],
+            TOGGLE_TIMEOUT,
+        ),
     })
 }
 
@@ -701,24 +861,28 @@ pub fn set_plugin_enabled(
     id: &str,
     enabled: bool,
 ) -> Result<PluginActionOutcome, String> {
-    validate_plugin_id(id)?;
+    validate_app_plugin_id(app, id)?;
+    let verb = if enabled { "enable" } else { "disable" };
     locked(app, || match app {
-        PluginApp::Claude => {
-            let verb = if enabled { "enable" } else { "disable" };
-            run_cli(
-                app,
-                &["plugin", verb, id, "--scope", "user", "--json"],
-                TOGGLE_TIMEOUT,
-            )
-            .and_then(|out| claude_action_result(&out))
-            .map(|v| ok_outcome(&v))
-        }
+        PluginApp::Claude => run_cli(
+            app,
+            &["plugin", verb, id, "--scope", "user", "--json"],
+            TOGGLE_TIMEOUT,
+        )
+        .and_then(|out| claude_action_result(&out))
+        .map(|v| ok_outcome(&v)),
         PluginApp::Codex => {
             write_codex_plugin_enabled(id, enabled).map(|changed| PluginActionOutcome {
                 changed,
                 message: None,
             })
         }
+        PluginApp::Mcode => run_cli(app, &["plugin", verb, id, "--json"], TOGGLE_TIMEOUT)
+            .and_then(|out| codex_action_result(&out))
+            .map(|v| ok_outcome(&v)),
+        PluginApp::Grok => run_action(app, &["plugin", verb, id], TOGGLE_TIMEOUT),
+        // 不代传 `--accept-capabilities`：要权限确认的插件，CLI 会报错让用户去终端里确认
+        PluginApp::Openclaw => run_action(app, &["plugins", verb, id], TOGGLE_TIMEOUT),
     })
 }
 
@@ -734,9 +898,10 @@ fn write_codex_plugin_enabled(id: &str, enabled: bool) -> Result<bool, String> {
     Ok(true)
 }
 
-/// 更新到市场里的最新版。只有 Claude Code 有这个命令；Codex 先刷新市场再重新安装。
+/// 更新到市场里的最新版。Claude Code、Grok Build、OpenClaw 有这个命令；Codex 先刷新市场再
+/// 重新安装；MiniMax Code 的 CLI 没有更新命令。
 pub fn update_plugin(app: PluginApp, id: &str) -> Result<PluginActionOutcome, String> {
-    validate_plugin_id(id)?;
+    validate_app_plugin_id(app, id)?;
     locked(app, || match app {
         PluginApp::Claude => {
             let out = run_cli(
@@ -771,38 +936,105 @@ pub fn update_plugin(app: PluginApp, id: &str) -> Result<PluginActionOutcome, St
             }
             Ok(outcome)
         }
+        PluginApp::Grok => {
+            let out = run_cli(app, &["plugin", "update", id], NETWORK_TIMEOUT)?;
+            if !out.success {
+                return Err(failure_detail(&out));
+            }
+            Ok(PluginActionOutcome {
+                changed: grok::update_changed(&out.stdout),
+                message: None,
+            })
+        }
+        PluginApp::Openclaw => {
+            let out = run_cli(app, &["plugins", "update", id], NETWORK_TIMEOUT)?;
+            if !out.success {
+                return Err(failure_detail(&out));
+            }
+            Ok(PluginActionOutcome {
+                changed: openclaw::update_changed(&out.stdout),
+                message: None,
+            })
+        }
+        PluginApp::Mcode => Err(unsupported(app, "plugin update")),
     })
 }
 
 pub fn add_marketplace(app: PluginApp, source: &str) -> Result<PluginActionOutcome, String> {
     let source = validate_marketplace_source(source)?;
-    locked(app, || {
-        let out = run_cli(
-            app,
-            &["plugin", "marketplace", "add", &source, "--json"],
-            NETWORK_TIMEOUT,
-        )?;
-        match app {
-            PluginApp::Claude => claude_action_result(&out).map(|v| ok_outcome(&v)),
-            PluginApp::Codex => codex_action_result(&out).map(|v| PluginActionOutcome {
-                changed: v.get("alreadyAdded").and_then(Value::as_bool) != Some(true),
-                message: str_field(&v, "marketplaceName"),
-            }),
+    locked(app, || match app {
+        PluginApp::Claude | PluginApp::Codex => {
+            let out = run_cli(
+                app,
+                &["plugin", "marketplace", "add", &source, "--json"],
+                NETWORK_TIMEOUT,
+            )?;
+            if app == PluginApp::Claude {
+                claude_action_result(&out).map(|v| ok_outcome(&v))
+            } else {
+                codex_action_result(&out).map(|v| PluginActionOutcome {
+                    changed: v.get("alreadyAdded").and_then(Value::as_bool) != Some(true),
+                    message: str_field(&v, "marketplaceName"),
+                })
+            }
         }
+        // Grok Build 的 `marketplace add` 不认 `--json`
+        PluginApp::Grok => run_action(
+            app,
+            &["plugin", "marketplace", "add", &source],
+            NETWORK_TIMEOUT,
+        ),
+        PluginApp::Mcode | PluginApp::Openclaw => Err(unsupported(app, "marketplace management")),
     })
 }
 
 pub fn remove_marketplace(app: PluginApp, name: &str) -> Result<PluginActionOutcome, String> {
     validate_marketplace_name(name)?;
-    locked(app, || {
-        let out = run_cli(
+    locked(app, || match app {
+        PluginApp::Claude | PluginApp::Codex => {
+            let out = run_cli(
+                app,
+                &["plugin", "marketplace", "remove", name, "--json"],
+                TOGGLE_TIMEOUT,
+            )?;
+            if app == PluginApp::Claude {
+                claude_action_result(&out).map(|v| ok_outcome(&v))
+            } else {
+                codex_action_result(&out).map(|v| ok_outcome(&v))
+            }
+        }
+        // 连带卸掉从这个市场装的插件（CLI 自己的行为，前端确认框里写明了）
+        PluginApp::Grok => run_action(
             app,
-            &["plugin", "marketplace", "remove", name, "--json"],
+            &["plugin", "marketplace", "remove", name],
             TOGGLE_TIMEOUT,
-        )?;
-        match app {
-            PluginApp::Claude => claude_action_result(&out).map(|v| ok_outcome(&v)),
-            PluginApp::Codex => codex_action_result(&out).map(|v| ok_outcome(&v)),
+        ),
+        PluginApp::Mcode | PluginApp::Openclaw => Err(unsupported(app, "marketplace management")),
+    })
+}
+
+/// 逐个刷新有名字的市场；一个失败不挡其余的。
+fn refresh_each(
+    app: PluginApp,
+    refresh: impl Fn(&str) -> Result<(), String>,
+) -> Result<PluginActionOutcome, String> {
+    let markets = list_marketplaces(app)?;
+    locked(app, || {
+        let failures: Vec<String> = markets
+            .iter()
+            .filter_map(|market| {
+                refresh(&market.name)
+                    .err()
+                    .map(|e| format!("{}: {e}", market.name))
+            })
+            .collect();
+        if failures.is_empty() {
+            Ok(PluginActionOutcome {
+                changed: !markets.is_empty(),
+                message: None,
+            })
+        } else {
+            Err(failures.join("\n"))
         }
     })
 }
@@ -810,32 +1042,25 @@ pub fn remove_marketplace(app: PluginApp, name: &str) -> Result<PluginActionOutc
 /// 从来源重新拉取所有市场的目录。
 pub fn refresh_marketplaces(app: PluginApp) -> Result<PluginActionOutcome, String> {
     match app {
-        // `claude plugin marketplace update --json` 必须点名，逐个刷新；一个失败不挡其余的。
-        PluginApp::Claude => {
-            let markets = list_marketplaces(app)?;
-            locked(app, || {
-                let mut failures = Vec::new();
-                for market in &markets {
-                    let result = run_cli(
-                        app,
-                        &["plugin", "marketplace", "update", &market.name, "--json"],
-                        NETWORK_TIMEOUT,
-                    )
-                    .and_then(|out| claude_action_result(&out));
-                    if let Err(e) = result {
-                        failures.push(format!("{}: {e}", market.name));
-                    }
-                }
-                if failures.is_empty() {
-                    Ok(PluginActionOutcome {
-                        changed: !markets.is_empty(),
-                        message: None,
-                    })
-                } else {
-                    Err(failures.join("\n"))
-                }
-            })
-        }
+        // `claude plugin marketplace update --json` 必须点名
+        PluginApp::Claude => refresh_each(app, |name| {
+            run_cli(
+                app,
+                &["plugin", "marketplace", "update", name, "--json"],
+                NETWORK_TIMEOUT,
+            )
+            .and_then(|out| claude_action_result(&out))
+            .map(|_| ())
+        }),
+        // 不点名时 Grok Build 只看 config.toml 里声明的来源，命令行加的不刷
+        PluginApp::Grok => refresh_each(app, |name| {
+            run_action(
+                app,
+                &["plugin", "marketplace", "update", name],
+                NETWORK_TIMEOUT,
+            )
+            .map(|_| ())
+        }),
         PluginApp::Codex => locked(app, || {
             let out = run_cli(
                 app,
@@ -844,6 +1069,16 @@ pub fn refresh_marketplaces(app: PluginApp) -> Result<PluginActionOutcome, Strin
             )?;
             codex_action_result(&out).map(|v| ok_outcome(&v))
         }),
+        // ClawHub 托管的目录
+        PluginApp::Openclaw => locked(app, || {
+            run_json(
+                app,
+                &["plugins", "marketplace", "refresh", "--json"],
+                NETWORK_TIMEOUT,
+            )
+            .map(|v| ok_outcome(&v))
+        }),
+        PluginApp::Mcode => Err(unsupported(app, "marketplace refresh")),
     }
 }
 
@@ -867,6 +1102,53 @@ mod tests {
             "--scope@user",
         ] {
             assert!(validate_plugin_id(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn app_ids_match_the_frontend() {
+        for (app, id) in [
+            (PluginApp::Claude, "claude"),
+            (PluginApp::Codex, "codex"),
+            (PluginApp::Grok, "grokbuild"),
+            (PluginApp::Mcode, "mcode"),
+            (PluginApp::Openclaw, "openclaw"),
+        ] {
+            assert_eq!(serde_json::to_value(app).unwrap(), json!(id));
+            assert_eq!(serde_json::from_value::<PluginApp>(json!(id)).unwrap(), app);
+        }
+    }
+
+    #[test]
+    fn plugin_ids_are_validated_per_app() {
+        assert!(validate_app_plugin_id(PluginApp::Mcode, "computer-use@official").is_ok());
+        assert!(validate_app_plugin_id(PluginApp::Mcode, "computer-use").is_err());
+        assert!(validate_app_plugin_id(PluginApp::Grok, "hello").is_ok());
+        assert!(validate_app_plugin_id(PluginApp::Grok, "hello@mkt").is_err());
+        for ok in ["memory-lancedb", "@openclaw/memory-lancedb", "a2a"] {
+            assert!(
+                validate_app_plugin_id(PluginApp::Openclaw, ok).is_ok(),
+                "{ok}"
+            );
+        }
+        for bad in [
+            "@scope",
+            "@/x",
+            "@a/b/c",
+            "a/b",
+            "--force",
+            "clawhub:x",
+            "x y",
+            "",
+        ] {
+            assert!(
+                validate_app_plugin_id(PluginApp::Openclaw, bad).is_err(),
+                "{bad}"
+            );
+            assert!(
+                validate_app_plugin_id(PluginApp::Grok, bad).is_err(),
+                "{bad}"
+            );
         }
     }
 
