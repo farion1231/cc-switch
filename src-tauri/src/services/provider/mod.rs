@@ -5520,7 +5520,7 @@ impl ProviderService {
                 }
             }
             for (id, provider) in &mut saved {
-                if let Some(config) = native.get(id) {
+                if let Some(config) = native.get(id).filter(|_| !provider.is_dim_oauth()) {
                     if let Some(name) = config.get("name").and_then(Value::as_str) {
                         provider.name = name.into();
                     }
@@ -5571,11 +5571,12 @@ impl ProviderService {
         write_live: bool,
         create: bool,
     ) -> Result<bool, AppError> {
+        let projected = crate::proxy::dim_relay::project_provider(&state.db, app_type, provider)?;
         if matches!(app_type, AppType::Dsh) {
             return if write_live {
                 crate::dsh_config::save_and_commit(
                     &provider.id,
-                    Some(provider.settings_config.clone()),
+                    Some(projected.settings_config.clone()),
                     create,
                     || {
                         state.db.save_provider(app_type.as_str(), provider)?;
@@ -5591,7 +5592,7 @@ impl ProviderService {
             return if write_live {
                 crate::kimi_config::save_and_commit(
                     &provider.id,
-                    Some(provider.settings_config.clone()),
+                    Some(projected.settings_config.clone()),
                     create,
                     || {
                         state.db.save_provider("kimi", provider)?;
@@ -5606,7 +5607,7 @@ impl ProviderService {
         let previous = state.db.get_provider_by_id(&provider.id, "mcode")?;
         state.db.save_provider("mcode", provider)?;
         if write_live {
-            let config = provider.settings_config.clone();
+            let config = projected.settings_config.clone();
             let written = if create {
                 crate::mcode_config::add_provider(&provider.id, config)
             } else {
@@ -6689,7 +6690,8 @@ impl ProviderService {
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
         crate::services::kimi_oauth::ensure_profile_signed_in(&provider.settings_config)?;
         Self::set_provider_live_config_managed(&mut provider, true);
-        crate::kimi_config::add_and_commit(id, provider.settings_config.clone(), || {
+        let projected = crate::proxy::dim_relay::project_provider(&state.db, &app_type, &provider)?;
+        crate::kimi_config::add_and_commit(id, projected.settings_config, || {
             state.db.save_provider("kimi", &provider)
         })
     }

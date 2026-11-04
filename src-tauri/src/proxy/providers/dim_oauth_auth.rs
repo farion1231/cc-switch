@@ -840,22 +840,32 @@ fn optional_limit(value: Option<&Value>) -> Result<Option<u64>> {
 }
 
 /// Apply an explicitly selected directory effort after protocol conversion.
-pub(crate) fn apply_dim_effort(body: &mut Value, format: &str, effort: Option<&str>) {
+pub(crate) fn apply_dim_effort(
+    body: &mut serde_json::Map<String, Value>,
+    format: &str,
+    effort: Option<&str>,
+) {
     let Some(effort) = effort else {
         return;
     };
     match format {
-        "openai_chat" => body["reasoning_effort"] = Value::from(effort),
+        "openai_chat" => {
+            body.insert("reasoning_effort".into(), Value::from(effort));
+        }
         "openai_responses" | "anthropic" => {
             let field = if format == "anthropic" {
                 "output_config"
             } else {
                 "reasoning"
             };
-            if !body[field].is_object() {
-                body[field] = serde_json::json!({});
+            let config = body.entry(field).or_insert_with(|| serde_json::json!({}));
+            if !config.is_object() {
+                *config = serde_json::json!({});
             }
-            body[field]["effort"] = Value::from(effort);
+            config
+                .as_object_mut()
+                .expect("effort configuration is an object")
+                .insert("effort".into(), Value::from(effort));
         }
         _ => {}
     }
@@ -927,6 +937,12 @@ fn parse_models(payload: &Value) -> Result<Vec<DimModel>> {
             .map(|v| nonempty(v, "model name"))
             .transpose()?
             .unwrap_or_else(|| id.clone());
+        if config
+            .get("limit")
+            .is_some_and(|value| !value.is_null() && !value.is_object())
+        {
+            return Err("Invalid Dim model limits".into());
+        }
         let reasoning = config
             .get("extra_capabilities")
             .and_then(|v| v.get("reasoning"))

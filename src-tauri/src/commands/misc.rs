@@ -5227,6 +5227,10 @@ pub async fn open_provider_terminal(
         .get(&providerId)
         .ok_or_else(|| format!("提供商 {providerId} 不存在"))?;
 
+    crate::proxy::dim_relay::ensure_started(state.inner(), &app_type, provider).await?;
+    let projected = crate::proxy::dim_relay::project_provider(&state.db, &app_type, provider)
+        .map_err(|e| e.to_string())?;
+    let provider = &projected;
     let mut launch = match app_type {
         AppType::Agy => {
             switch_agy_to_bound_account(&agy_accounts.0, provider).await?;

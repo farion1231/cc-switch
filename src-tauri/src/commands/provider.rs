@@ -60,6 +60,14 @@ pub async fn add_provider(
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     let add_to_live = addToLive.unwrap_or(true);
+    if add_to_live {
+        crate::proxy::dim_relay::ensure_started(
+            app_handle.state::<AppState>().inner(),
+            &app_type,
+            &provider,
+        )
+        .await?;
+    }
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_handle
             .try_state::<AppState>()
@@ -80,6 +88,12 @@ pub async fn update_provider(
     #[allow(non_snake_case)] editorSave: Option<EditorSave>,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    crate::proxy::dim_relay::ensure_started(
+        app_handle.state::<AppState>().inner(),
+        &app_type,
+        &provider,
+    )
+    .await?;
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_handle
             .try_state::<AppState>()
@@ -160,6 +174,13 @@ pub async fn add_provider_to_live_config(
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     let state = state.inner().clone();
+    if let Some(provider) = state
+        .db
+        .get_provider_by_id(&id, app_type.as_str())
+        .map_err(|e| e.to_string())?
+    {
+        crate::proxy::dim_relay::ensure_started(&state, &app_type, &provider).await?;
+    }
     tauri::async_runtime::spawn_blocking(move || {
         ProviderService::add_to_live_config(&state, app_type, &id)
             .map(|_| true)
@@ -210,6 +231,14 @@ pub async fn switch_provider(
     id: String,
 ) -> Result<SwitchResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    let state = app_handle.state::<AppState>();
+    if let Some(provider) = state
+        .db
+        .get_provider_by_id(&id, app_type.as_str())
+        .map_err(|e| e.to_string())?
+    {
+        crate::proxy::dim_relay::ensure_started(state.inner(), &app_type, &provider).await?;
+    }
     let handle = app_handle.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let state = handle

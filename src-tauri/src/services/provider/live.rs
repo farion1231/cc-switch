@@ -446,7 +446,8 @@ pub(crate) fn write_live_for_state(
         return Ok(());
     }
 
-    write_live_snapshot(app_type, provider)
+    let projected = crate::proxy::dim_relay::project_provider(db, app_type, provider)?;
+    write_live_snapshot(app_type, &projected)
 }
 
 /// 构建写入托管 Codex `auth.json` 的完整可刷新 auth（含 refresh_token + last_refresh）。
@@ -863,8 +864,11 @@ pub(crate) fn initialize_dsh_profiles(state: &AppState) -> Result<(), AppError> 
                 .and_then(|meta| meta.live_config_managed)
                 == Some(true)
         })
-        .map(|(id, provider)| (id, provider.settings_config))
-        .collect();
+        .map(|(id, provider)| {
+            crate::proxy::dim_relay::project_provider(&state.db, &AppType::Dsh, &provider)
+                .map(|projected| (id, projected.settings_config))
+        })
+        .collect::<Result<_, AppError>>()?;
     let servers = state
         .db
         .get_all_mcp_servers()?
@@ -1324,6 +1328,9 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
         if existing_ids.contains(&id) {
             match state.db.get_provider_by_id(&id, "opencode") {
                 Ok(Some(existing)) => {
+                    if existing.is_dim_oauth() {
+                        continue;
+                    }
                     let display_name = name.clone().unwrap_or_else(|| existing.name.clone());
                     if existing.settings_config != settings_config
                         || existing.name != display_name
@@ -1416,6 +1423,9 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
         if existing_ids.contains(&id) {
             match state.db.get_provider_by_id(&id, "openclaw") {
                 Ok(Some(existing)) => {
+                    if existing.is_dim_oauth() {
+                        continue;
+                    }
                     if existing.settings_config != settings_config {
                         let mut provider = existing;
                         provider.settings_config = settings_config;
@@ -1491,6 +1501,9 @@ pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppE
         if existing_ids.contains(&name) {
             match state.db.get_provider_by_id(&name, "hermes") {
                 Ok(Some(existing)) => {
+                    if existing.is_dim_oauth() {
+                        continue;
+                    }
                     if existing.settings_config != config {
                         let mut provider = existing;
                         provider.settings_config = config;
