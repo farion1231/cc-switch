@@ -88,12 +88,21 @@ pub async fn update_provider(
     #[allow(non_snake_case)] editorSave: Option<EditorSave>,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    crate::proxy::dim_relay::ensure_started(
-        app_handle.state::<AppState>().inner(),
-        &app_type,
-        &provider,
-    )
-    .await?;
+    if provider.is_dim_oauth()
+        && crate::proxy::dim_relay::is_relay_client(&app_type)
+        && crate::proxy::dim_relay::client_exists(
+            &app_type,
+            originalId.as_deref().unwrap_or(&provider.id),
+        )
+        .map_err(|e| e.to_string())?
+    {
+        crate::proxy::dim_relay::ensure_started(
+            app_handle.state::<AppState>().inner(),
+            &app_type,
+            &provider,
+        )
+        .await?;
+    }
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_handle
             .try_state::<AppState>()

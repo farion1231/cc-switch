@@ -184,7 +184,7 @@ pub struct DimOAuthManager {
     mutation: AsyncMutex<()>,
     start: AsyncMutex<()>,
     #[cfg(test)]
-    registration: Option<(String, String)>,
+    pub(crate) registration: Option<(String, String)>,
 }
 
 fn now() -> u64 {

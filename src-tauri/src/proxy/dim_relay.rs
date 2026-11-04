@@ -164,6 +164,7 @@ pub(crate) fn project_provider(
         .replace('+', "%20");
     let suffix = match format {
         "openai_chat" | "openai_responses" => "/v1",
+        "anthropic" if *app == AppType::OpenCode => "/v1",
         "gemini_native" if !matches!(app, AppType::Agy | AppType::Kimi) => "/v1beta",
         _ => "",
     };
@@ -230,7 +231,7 @@ pub(crate) async fn ensure_started(
     Ok(())
 }
 
-fn client_exists(app: &AppType, id: &str) -> Result<bool, AppError> {
+pub(crate) fn client_exists(app: &AppType, id: &str) -> Result<bool, AppError> {
     Ok(match app {
         AppType::OpenCode => crate::opencode_config::get_providers()?.contains_key(id),
         AppType::OpenClaw => crate::openclaw_config::get_providers()?.contains_key(id),
@@ -317,7 +318,6 @@ pub(crate) fn refresh_clients(db: &Database) -> Result<(), AppError> {
 pub(crate) async fn restore_clients(state: &AppState) -> Result<(), String> {
     if has_clients(&state.db).map_err(|e| e.to_string())? {
         state.proxy_service.start().await?;
-        refresh_clients(&state.db).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -391,6 +391,32 @@ pub(crate) async fn handle(
     Path((app, id, _tail)): Path<(String, String, String)>,
     request: Request,
 ) -> Result<Response, RelayError> {
+    let (app, provider) = authorize_request(&state.db, &app, &id, &request)?;
+    let handle = state.app_handle.as_ref().ok_or_else(|| {
+        error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "DimAgent account manager is unavailable",
+        )
+    })?;
+    let auth = handle.state::<crate::commands::DimOAuthState>();
+    let manager = auth
+        .manager()
+        .map_err(|_| {
+            error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "DimAgent account storage is unavailable",
+            )
+        })?
+        .clone();
+    relay(&manager, &app, &provider, request).await
+}
+
+fn authorize_request(
+    db: &Database,
+    app: &str,
+    id: &str,
+    request: &Request,
+) -> Result<(AppType, Provider), RelayError> {
     let Some(peer) = request.extensions().get::<ConnectInfo<SocketAddr>>() else {
         return Err(error(
             StatusCode::FORBIDDEN,
@@ -411,8 +437,7 @@ pub(crate) async fn handle(
             "Client does not use this gateway",
         ));
     }
-    let provider = state
-        .db
+    let provider = db
         .get_provider_by_id(&id, app.as_str())
         .map_err(|_| {
             error(
@@ -422,7 +447,7 @@ pub(crate) async fn handle(
         })?
         .filter(Provider::is_dim_oauth)
         .ok_or_else(|| error(StatusCode::NOT_FOUND, "DimAgent provider was removed"))?;
-    let key = gateway_key(&state.db, &app, &id).map_err(|_| {
+    let key = gateway_key(db, &app, &id).map_err(|_| {
         error(
             StatusCode::SERVICE_UNAVAILABLE,
             "DimAgent gateway key is unavailable",
@@ -434,23 +459,7 @@ pub(crate) async fn handle(
             "Invalid DimAgent local gateway credential",
         ));
     }
-    let handle = state.app_handle.as_ref().ok_or_else(|| {
-        error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "DimAgent account manager is unavailable",
-        )
-    })?;
-    let auth = handle.state::<crate::commands::DimOAuthState>();
-    let manager = auth
-        .manager()
-        .map_err(|_| {
-            error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "DimAgent account storage is unavailable",
-            )
-        })?
-        .clone();
-    relay(&manager, &app, &provider, request).await
+    Ok((app, provider))
 }
 
 async fn relay(
@@ -610,4 +619,298 @@ async fn relay(
     *result.status_mut() = status;
     *result.headers_mut() = headers;
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{response::IntoResponse, routing::any, Router};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    fn provider(id: &str, format: &str) -> Provider {
+        let mut p = Provider::with_id(
+            id.into(),
+            "DimAgent".into(),
+            json!({"options":{"baseURL":"https://dimagent.com/v1","apiKey":"PROXY_MANAGED"}}),
+            None,
+        );
+        p.meta = Some(serde_json::from_value(json!({
+            "providerType":"dim_oauth", "apiFormat":format, "dimOauthEffort":"high",
+            "authBinding":{"source":"managed_account","authProvider":"dim_oauth","accountId":"fixture"}
+        })).unwrap());
+        p
+    }
+
+    struct Server(tokio::task::JoinHandle<()>);
+    impl Drop for Server {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+    async fn serve(router: Router) -> (String, Server) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                router.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+            .unwrap();
+        });
+        (url, Server(task))
+    }
+
+    #[tokio::test]
+    async fn dim_gateway_client_projection_authentication_and_streaming_flow() {
+        let db = Arc::new(Database::memory().unwrap());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let released = Arc::new(tokio::sync::Notify::new());
+        let captured = Arc::new(Mutex::new(Vec::<(String, HeaderMap, Value)>::new()));
+        let (upstream, _upstream) = serve(Router::new().fallback(any({
+            let calls = calls.clone();
+            let captured = captured.clone();
+            let released = released.clone();
+            move |request: Request| {
+                let calls = calls.clone();
+                let captured = captured.clone();
+                let released = released.clone();
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    let uri = request.uri().to_string();
+                    let headers = request.headers().clone();
+                    let body: Value = serde_json::from_slice(
+                        &to_bytes(request.into_body(), MAX_BODY).await.unwrap(),
+                    )
+                    .unwrap_or(Value::Null);
+                    captured.lock().unwrap().push((uri, headers, body.clone()));
+                    if body["redirect"] == true {
+                        return (
+                            StatusCode::TEMPORARY_REDIRECT,
+                            [("location", "http://127.0.0.1:1/should-never-follow")],
+                        )
+                            .into_response();
+                    }
+                    if body["stream"] == true {
+                        let stream = futures::stream::unfold(0, move |step| {
+                            let released = released.clone();
+                            async move {
+                                match step {
+                                    0 => Some((Ok::<_, std::io::Error>("data: first\n\n"), 1)),
+                                    1 => {
+                                        released.notified().await;
+                                        Some((Ok("data: [DONE]\n\n"), 2))
+                                    }
+                                    _ => None,
+                                }
+                            }
+                        });
+                        return Response::new(Body::from_stream(stream));
+                    }
+                    Json(json!({"ok":true})).into_response()
+                }
+            }
+        })))
+        .await;
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("dim_oauth_auth.json"), serde_json::to_vec(&json!({
+            "accounts":{"fixture":{"account":{"id":"fixture","site":"global","login":"fixture","authenticated_at":1,"requires_reauth":false},"access_token":"private-fixture-token","refresh_token":"private-fixture-refresh","expires_at":u64::MAX}},
+            "default_account_id":"fixture"
+        })).unwrap()).unwrap();
+        let mut manager = DimOAuthManager::new(directory.path().to_path_buf()).unwrap();
+        manager.registration = Some((upstream, "http://127.0.0.1:1/oauth/callback".into()));
+        let manager = Arc::new(manager);
+        let (gateway, _gateway) = serve(Router::new().route(
+            "/managed/dim/:app/:provider/*tail",
+            any({
+                let db = db.clone();
+                let manager = manager.clone();
+                move |Path((app, id, _)): Path<(String, String, String)>, request: Request| {
+                    let db = db.clone();
+                    let manager = manager.clone();
+                    async move {
+                        match authorize_request(&db, &app, &id, &request) {
+                            Ok((app, provider)) => relay(&manager, &app, &provider, request)
+                                .await
+                                .into_response(),
+                            Err(error) => error.into_response(),
+                        }
+                    }
+                }
+            }),
+        ))
+        .await;
+        let client = reqwest::Client::new();
+        let cases = [
+            (
+                AppType::Mcode,
+                "openai_chat",
+                "options",
+                "baseURL",
+                "/chat/completions",
+                "/v1/chat/completions",
+            ),
+            (
+                AppType::OpenCode,
+                "anthropic",
+                "options",
+                "baseURL",
+                "/messages",
+                "/v1/messages",
+            ),
+            (
+                AppType::Pi,
+                "gemini_native",
+                "",
+                "baseUrl",
+                "/models/vendor%2Ffull-id:generateContent",
+                "/v1beta/models/vendor%2Ffull-id:generateContent",
+            ),
+            (
+                AppType::Kimi,
+                "gemini_native",
+                "provider",
+                "base_url",
+                "/v1beta/models/vendor%2Ffull-id:generateContent",
+                "/v1beta/models/vendor%2Ffull-id:generateContent",
+            ),
+            (
+                AppType::Hermes,
+                "openai_responses",
+                "",
+                "base_url",
+                "/responses",
+                "/v1/responses",
+            ),
+        ];
+        for (index, (app, format, container, field, endpoint, expected)) in
+            cases.into_iter().enumerate()
+        {
+            let p = provider(&format!("fixture-{index}"), format);
+            db.save_provider(app.as_str(), &p).unwrap();
+            let projected = project_provider(&db, &app, &p).unwrap();
+            let config = if container.is_empty() {
+                &projected.settings_config
+            } else {
+                &projected.settings_config[container]
+            };
+            let base = config[field].as_str().unwrap();
+            let path = Url::parse(base).unwrap().path().to_string();
+            let key = gateway_key(&db, &app, &p.id).unwrap();
+            let response = client
+                .post(format!(
+                    "{gateway}{path}{endpoint}?key={key}&API_KEY=do-not-forward&alt=sse"
+                ))
+                .header("x-api-key", &key)
+                .json(&json!({"model":"vendor/full-id","messages":[]}))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::OK,
+                "{app:?}: {}",
+                response.text().await.unwrap()
+            );
+            let capture = captured.lock().unwrap();
+            let (uri, headers, body) = capture.last().unwrap();
+            assert_eq!(uri, &format!("{expected}?alt=sse"));
+            assert_eq!(headers["authorization"], "Bearer private-fixture-token");
+            assert!(!headers.contains_key("x-api-key"));
+            assert_eq!(body["model"], "vendor/full-id");
+            assert_eq!(
+                db.get_provider_by_id(&p.id, app.as_str())
+                    .unwrap()
+                    .unwrap()
+                    .settings_config,
+                p.settings_config
+            );
+        }
+        let p = provider("stream", "openai_chat");
+        db.save_provider("mcode", &p).unwrap();
+        let key = gateway_key(&db, &AppType::Mcode, &p.id).unwrap();
+        let url = format!("{gateway}/managed/dim/mcode/stream/v1/chat/completions");
+        let before = calls.load(Ordering::SeqCst);
+        for body in [json!([]), json!(42)] {
+            assert_eq!(
+                client
+                    .post(&url)
+                    .bearer_auth(&key)
+                    .json(&body)
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::BAD_REQUEST
+            );
+        }
+        assert_eq!(
+            client
+                .post(&url)
+                .bearer_auth("wrong")
+                .json(&json!({}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            client
+                .post(url.replace("/v1/chat/completions", "/api/me/usage"))
+                .bearer_auth(&key)
+                .json(&json!({}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), before);
+        assert_eq!(
+            client
+                .post(&url)
+                .bearer_auth(&key)
+                .json(&json!({"redirect":true}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::BAD_GATEWAY
+        );
+        let mut response = client
+            .post(&url)
+            .bearer_auth(&key)
+            .json(&json!({"stream":true}))
+            .send()
+            .await
+            .unwrap();
+        let first = tokio::time::timeout(Duration::from_secs(3), response.chunk())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(first, "data: first\n\n");
+        released.notify_one();
+        assert_eq!(response.chunk().await.unwrap().unwrap(), "data: [DONE]\n\n");
+        assert_eq!(
+            captured.lock().unwrap().last().unwrap().2["reasoning_effort"],
+            "high"
+        );
+        manager.remove_account("fixture").await.unwrap();
+        assert_eq!(
+            client
+                .post(&url)
+                .bearer_auth(&key)
+                .json(&json!({}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
 }
