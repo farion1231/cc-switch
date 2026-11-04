@@ -80,11 +80,19 @@ fn filter_recursive_with_whitelist(
     match value {
         Value::Object(map) => {
             let is_schema_name_map = path.last().is_some_and(|key| matches_schema_name_map(key));
+            // Anthropic tool_use.input is opaque user-defined tool data.
+            // Its keys may legally start with underscores; filtering them corrupts calls.
+            let is_anthropic_tool_use = path.len() == 2
+                && path[0] == "messages"
+                && path[1] == "content"
+                && map.get("type").and_then(Value::as_str) == Some("tool_use");
             let filtered: serde_json::Map<String, Value> = map
                 .into_iter()
                 .filter_map(|(key, val)| {
-                    // 以 _ 开头且不在白名单中的字段被过滤
-                    if key.starts_with('_')
+                    // Preserve argument JSON only for a real Anthropic tool_use block.
+                    if is_anthropic_tool_use && key == "input" {
+                        Some((key, val))
+                    } else if key.starts_with('_')
                         && !whitelist.contains(key.as_str())
                         && !is_schema_name_map
                     {
@@ -322,6 +330,53 @@ mod tests {
         assert!(schema["properties"].get("_meta").is_some());
         assert!(schema["properties"]["_id"].get("_internal_note").is_none());
         assert!(schema.get("_private_schema_note").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_tool_use_preserves_arbitrary_argument_keys() {
+        let input = json!({
+            "model": "claude-sonnet",
+            "_internal_trace": "do-not-forward",
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_1",
+                        "name": "lookup",
+                        "input": {
+                            "cc_switch_args": {
+                                "_external_id": "external-42",
+                                "nested": {"__lookup_key": "item-7"}
+                            },
+                            "_tool_argument": true
+                        }
+                    },
+                    {
+                        "type": "text",
+                        "text": "done",
+                        "_internal_note": "do-not-forward"
+                    }
+                ]
+            }]
+        });
+
+        let output = filter_private_params_with_whitelist(input, &[]);
+        assert_eq!(
+            output["messages"][0]["content"][0]["input"],
+            json!({
+                "cc_switch_args": {
+                    "_external_id": "external-42",
+                    "nested": {"__lookup_key": "item-7"}
+                },
+                "_tool_argument": true
+            }),
+            "tool_use.input is user-defined JSON and must not be recursively filtered"
+        );
+        assert!(output.get("_internal_trace").is_none());
+        assert!(output["messages"][0]["content"][1]
+            .get("_internal_note")
+            .is_none());
     }
 
     #[test]
