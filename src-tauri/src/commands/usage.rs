@@ -313,6 +313,12 @@ pub async fn record_models_dev_sync_result(
     .await
 }
 
+/// 拉取 models.dev 数据，走后端代理感知 HTTP 客户端，避免 WebView 直连在代理环境下超时
+#[tauri::command]
+pub async fn fetch_models_dev() -> Result<String, String> {
+    crate::services::model_pricing::fetch_models_dev().await
+}
+
 /// 检查 Provider 使用限额
 #[tauri::command]
 pub async fn check_provider_limits(
@@ -402,6 +408,14 @@ pub async fn get_usage_data_sources(
         crate::services::session_usage::get_data_source_breakdown,
     )
     .await
+}
+
+/// 取 USD 对各显示币种的汇率：主源 open.er-api.com，失败退 floatrates.com。
+/// 只用于金额换算显示；失败时前端保留上次缓存或手填的汇率。
+#[tauri::command]
+pub async fn fetch_exchange_rates(
+) -> Result<crate::services::exchange_rates::FetchedExchangeRates, AppError> {
+    crate::services::exchange_rates::fetch_usd_rates().await
 }
 
 #[cfg(test)]

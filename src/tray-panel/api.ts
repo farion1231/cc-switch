@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { AppId } from "@/lib/api/types";
 import type { AppMode } from "@/types/proxy";
 
-/** 托盘面板的数据（后端 `tray_panel::TrayPanelState`）。 */
+/** 面板文案（后端 `tray_panel::PanelTexts`），随方位一起下发。 */
 export interface PanelTexts {
   switchProvider: string;
   searchPlaceholder: string;
@@ -80,8 +80,8 @@ export interface PanelApp {
   rows: PanelRow[];
 }
 
+/** 托盘面板的数据（后端 `tray::PanelModel`）。 */
 export interface TrayPanelState {
-  texts: PanelTexts;
   problems: PanelLink[];
   feedback: string | null;
   apps: PanelApp[];
@@ -89,7 +89,7 @@ export interface TrayPanelState {
   quitHint: string | null;
 }
 
-/** 这次弹出的方位（后端 `tray_panel::PanelPlacement`），坐标为逻辑像素。 */
+/** 这次弹出的方位和文案（后端 `tray_panel::PanelPlacement`），坐标为逻辑像素。 */
 export interface PanelPlacement {
   seq: number;
   platform: string;
@@ -105,6 +105,7 @@ export interface PanelPlacement {
   radius: number;
   layout: "floating" | "joined";
   glass: "native" | "frosted";
+  texts: PanelTexts;
 }
 
 export interface CardRect {
