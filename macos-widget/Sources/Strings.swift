@@ -35,6 +35,9 @@ struct Strings {
     let moreTiers: String
     /// 新版主程序刚启动、账号还没读到
     let loadingAccounts: String
+    /// 翻页按钮（读屏用）
+    let previousPage: String
+    let nextPage: String
 
     /// 「N 个账号」；英文只有 1 个时用单数
     func accounts(_ count: Int) -> String {
@@ -46,37 +49,39 @@ struct Strings {
         let lang = Locale.preferredLanguages.first?.lowercased() ?? "en"
         if lang.hasPrefix("zh-hant") || lang.hasPrefix("zh-tw") || lang.hasPrefix("zh-hk") {
             return Strings(
-                quotaTitle: "額度", quotaGallery: "各應用使用中的供應商與額度。",
-                accountsTitle: "授權中心", accountsGallery: "授權中心所有帳號的額度，快用完和需要重新登入的排在前面。",
-                usageTitle: "用量", usageGallery: "花費、Token 與請求數；時間範圍與樣式可在「編輯小工具」裡選。",
+                quotaTitle: "額度", quotaGallery: "各應用使用中的供應商與額度，可翻頁。",
+                accountsTitle: "授權中心", accountsGallery: "授權中心所有帳號的額度，快用完和需要重新登入的排在前面，可翻頁。",
+                usageTitle: "用量", usageGallery: "花費、Token 與請求數；翻頁切換時間範圍。",
                 off: "在 CC Switch 設定裡開啟「桌面小工具」", outdated: "請更新 CC Switch",
                 noQuota: "沒有額度資料", noAccounts: "授權中心還沒有帳號",
                 inUse: "使用中", reauth: "需重新登入",
                 today: "今天", last7Days: "近 7 天", last30Days: "近 30 天",
                 tokens: "Token", requests: "請求", cacheHit: "快取命中",
                 accountCount: "%d 個帳號", more: "還有 %d 個", needAction: "%d 個待處理",
-                stale: "資料已過時", cost: "花費", noUsage: "這段時間沒有用量", moreTiers: "還有 %d 檔", loadingAccounts: "正在讀取帳號…"
+                stale: "資料已過時", cost: "花費", noUsage: "這段時間沒有用量", moreTiers: "還有 %d 檔", loadingAccounts: "正在讀取帳號…",
+                previousPage: "上一頁", nextPage: "下一頁"
             )
         }
         if lang.hasPrefix("zh") {
             return Strings(
-                quotaTitle: "额度", quotaGallery: "各应用在用的供应商和额度。",
-                accountsTitle: "授权中心", accountsGallery: "授权中心全部账号的额度，快用完和要重新登录的排在前面。",
-                usageTitle: "用量", usageGallery: "花费、Token 和请求数；时间范围和样式可在「编辑小组件」里选。",
+                quotaTitle: "额度", quotaGallery: "各应用在用的供应商和额度，可翻页。",
+                accountsTitle: "授权中心", accountsGallery: "授权中心全部账号的额度，快用完和要重新登录的排在前面，可翻页。",
+                usageTitle: "用量", usageGallery: "花费、Token 和请求数；翻页切换时间范围。",
                 off: "在 CC Switch 设置里打开「桌面小组件」", outdated: "请更新 CC Switch",
                 noQuota: "没有额度数据", noAccounts: "授权中心还没有账号",
                 inUse: "在用", reauth: "要重新登录",
                 today: "今天", last7Days: "近 7 天", last30Days: "近 30 天",
                 tokens: "Token", requests: "请求", cacheHit: "缓存命中",
                 accountCount: "%d 个账号", more: "还有 %d 个", needAction: "%d 个要处理",
-                stale: "数据已过时", cost: "花费", noUsage: "这段时间没有用量", moreTiers: "还有 %d 档", loadingAccounts: "正在读取账号…"
+                stale: "数据已过时", cost: "花费", noUsage: "这段时间没有用量", moreTiers: "还有 %d 档", loadingAccounts: "正在读取账号…",
+                previousPage: "上一页", nextPage: "下一页"
             )
         }
         if lang.hasPrefix("tr") {
             return Strings(
-                quotaTitle: "Kota", quotaGallery: "Her uygulamanın etkin sağlayıcısı ve kotası.",
-                accountsTitle: "Hesaplar", accountsGallery: "Tüm hesapların kotası; azalanlar ve yeniden giriş gerekenler önce gösterilir.",
-                usageTitle: "Kullanım", usageGallery: "Maliyet, token ve istekler. Zaman aralığını ve stili Widget'ı Düzenle'den seçin.",
+                quotaTitle: "Kota", quotaGallery: "Her uygulamanın etkin sağlayıcısı ve kotası; sayfalar arasında geçiş yapın.",
+                accountsTitle: "Hesaplar", accountsGallery: "Tüm hesapların kotası; azalanlar ve yeniden giriş gerekenler önce gösterilir. Sayfalar arasında geçiş yapın.",
+                usageTitle: "Kullanım", usageGallery: "Maliyet, token ve istekler. Zaman aralığını sayfa çevirerek değiştirin.",
                 off: "CC Switch ayarlarından Masaüstü widget'ını açın", outdated: "CC Switch'i güncelleyin",
                 noQuota: "Kota bilgisi yok", noAccounts: "Henüz hesap yok",
                 inUse: "Kullanımda", reauth: "Yeniden giriş yapın",
@@ -84,34 +89,37 @@ struct Strings {
                 tokens: "Token", requests: "İstek", cacheHit: "Önbellek isabeti",
                 accountCount: "%d hesap", more: "%d tane daha", needAction: "%d tanesi ilgi bekliyor",
                 stale: "Veriler eski", cost: "Maliyet", noUsage: "Bu aralıkta kullanım yok", moreTiers: "%d tane daha",
-                loadingAccounts: "Hesaplar yükleniyor…"
+                loadingAccounts: "Hesaplar yükleniyor…",
+                previousPage: "Önceki sayfa", nextPage: "Sonraki sayfa"
             )
         }
         if lang.hasPrefix("ja") {
             return Strings(
-                quotaTitle: "クォータ", quotaGallery: "各アプリで使用中のプロバイダーとクォータ。",
-                accountsTitle: "認証センター", accountsGallery: "認証センターの全アカウントのクォータ。残りわずか・再ログインが必要なものを先に表示します。",
-                usageTitle: "使用量", usageGallery: "費用、トークン、リクエスト数。期間とスタイルは「ウィジェットを編集」で選べます。",
+                quotaTitle: "クォータ", quotaGallery: "各アプリで使用中のプロバイダーとクォータ。ページを切り替えられます。",
+                accountsTitle: "認証センター", accountsGallery: "認証センターの全アカウントのクォータ。残りわずか・再ログインが必要なものを先に表示し、ページを切り替えられます。",
+                usageTitle: "使用量", usageGallery: "費用、トークン、リクエスト数。ページを切り替えて期間を変更します。",
                 off: "CC Switch の設定で「デスクトップウィジェット」をオンにしてください", outdated: "CC Switch を更新してください",
                 noQuota: "クォータ情報なし", noAccounts: "認証センターにアカウントがありません",
                 inUse: "使用中", reauth: "再ログインが必要",
                 today: "今日", last7Days: "過去 7 日", last30Days: "過去 30 日",
                 tokens: "トークン", requests: "リクエスト", cacheHit: "キャッシュヒット",
                 accountCount: "%d 件のアカウント", more: "ほか %d 件", needAction: "%d 件要対応",
-                stale: "データが古い", cost: "費用", noUsage: "この期間の使用量はありません", moreTiers: "ほか %d 件", loadingAccounts: "アカウントを読み込み中…"
+                stale: "データが古い", cost: "費用", noUsage: "この期間の使用量はありません", moreTiers: "ほか %d 件", loadingAccounts: "アカウントを読み込み中…",
+                previousPage: "前のページ", nextPage: "次のページ"
             )
         }
         return Strings(
-            quotaTitle: "Quota", quotaGallery: "Each app's in-use provider and quota.",
-            accountsTitle: "Auth Center", accountsGallery: "Quota for every Auth Center account, with low and signed-out ones first.",
-            usageTitle: "Usage", usageGallery: "Cost, tokens and requests. Pick the time range and style in Edit Widget.",
+            quotaTitle: "Quota", quotaGallery: "Each app's in-use provider and quota, page by page.",
+            accountsTitle: "Auth Center", accountsGallery: "Quota for every Auth Center account, with low and signed-out ones first, page by page.",
+            usageTitle: "Usage", usageGallery: "Cost, tokens and requests. Turn the page to change the time range.",
             off: "Turn on Desktop widget in CC Switch settings", outdated: "Update CC Switch",
             noQuota: "No quota data", noAccounts: "No Auth Center accounts yet",
             inUse: "In use", reauth: "Sign in again",
             today: "Today", last7Days: "Last 7 days", last30Days: "Last 30 days",
             tokens: "Tokens", requests: "Requests", cacheHit: "Cache hits",
             accountCount: "%d accounts", more: "%d more", needAction: "%d need attention",
-            stale: "Outdated", cost: "Cost", noUsage: "No usage in this range", moreTiers: "%d more", loadingAccounts: "Loading accounts…"
+            stale: "Outdated", cost: "Cost", noUsage: "No usage in this range", moreTiers: "%d more", loadingAccounts: "Loading accounts…",
+            previousPage: "Previous page", nextPage: "Next page"
         )
     }()
 }

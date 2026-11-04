@@ -1,12 +1,34 @@
-// 「用量」：用量统计页同一份数据。时间范围和样式由用户在「编辑小组件」里选（UsageIntent.swift）：
-// - 概览：大数字花费 + 明细 + 趋势；大尺寸再加按应用拆分（默认）
-// - 趋势：以趋势图为主
-// - 按应用：各应用花费排行
-// - 指标：花费 / Token / 请求 / 缓存命中四个数
+// 「用量」：用量统计页同一份数据。按时间范围翻页（当天 / 近 24 小时 / 近 7、14、30 天 / 全部，
+// 和用量页的六个按钮同名同口径），底栏左边写现在是哪个范围。四种尺寸各一种排法：
+// - 小：大数字花费 + Token / 请求 + 迷你柱状图
+// - 中：左边花费和三个数，右边趋势图
+// - 大：再加按应用拆分
+// - 特大：左边花费 + 趋势图，右边三个数 + 按应用排行
 
 import Charts
 import SwiftUI
 import WidgetKit
+
+enum UsageRangeOption: String, CaseIterable {
+    case today
+    case last24h = "1d"
+    case last7d = "7d"
+    case last14d = "14d"
+    case last30d = "30d"
+    case all
+
+    /// 底栏里写的范围名（Localizable.strings）
+    var title: String {
+        switch self {
+        case .today: return widgetString("usage.range.today", "Today")
+        case .last24h: return widgetString("usage.range.1d", "Last 24 hours")
+        case .last7d: return widgetString("usage.range.7d", "Last 7 days")
+        case .last14d: return widgetString("usage.range.14d", "Last 14 days")
+        case .last30d: return widgetString("usage.range.30d", "Last 30 days")
+        case .all: return widgetString("usage.range.all", "All")
+        }
+    }
+}
 
 func compactNumber(_ value: Int) -> String {
     let v = Double(value)
@@ -167,8 +189,6 @@ struct AppShareRow: View {
 
 struct UsageWidgetView: View {
     let entry: SnapshotEntry
-    var range: UsageRangeOption = .today
-    var style: UsageStyleOption = .overview
     /// 预览程序用：环境里的 widgetFamily 只读，没法从外面设。
     var familyOverride: WidgetFamily? = nil
     @Environment(\.widgetFamily) private var environmentFamily
@@ -177,22 +197,32 @@ struct UsageWidgetView: View {
     var body: some View {
         Group {
             if let snapshot = entry.snapshot {
-                if let data = snapshot.usage?.ranges?[range.rawValue] {
-                    content(data, snapshot: snapshot)
-                } else {
+                let ranges = UsageRangeOption.allCases.compactMap { range in
+                    snapshot.usage?.ranges?[range.rawValue].map { (range, $0) }
+                }
+                if ranges.isEmpty {
                     // 旧版主程序（快照版本 1）没有时间范围；新版是用量统计读失败了
-                    message(snapshot.version >= 2 ? Strings.current.noUsage : Strings.current.outdated)
+                    WidgetMessage(text: snapshot.version >= 2 ? Strings.current.noUsage : Strings.current.outdated)
+                } else {
+                    let paging = Paging(kind: WidgetKind.usage, family: family, pages: ranges.map { [$0.0.rawValue] })
+                    let (range, data) = ranges[paging.current]
+                    VStack(alignment: .leading, spacing: 0) {
+                        content(data)
+                            .frame(maxHeight: .infinity, alignment: .topLeading)
+                        WidgetFooter(paging: paging) {
+                            HStack(spacing: 6) {
+                                Text(range.title).foregroundStyle(.secondary)
+                                UpdatedTime(snapshot: snapshot, now: entry.date, compact: family != .systemLarge && family != .systemExtraLarge)
+                            }
+                        }
+                        .padding(.top, 6)
+                    }
                 }
             } else {
-                message(Strings.current.off)
+                WidgetMessage(text: Strings.current.off)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .staleCorner(entry.snapshot, now: entry.date)
-    }
-
-    private func message(_ text: String) -> some View {
-        WidgetMessage(text: text)
     }
 
     private func bigCost(_ text: String, size: CGFloat) -> some View {
@@ -220,26 +250,13 @@ struct UsageWidgetView: View {
     }
 
     @ViewBuilder
-    private func content(_ data: UsageRange, snapshot: WidgetSnapshot) -> some View {
-        switch style {
-        case .overview: overview(data, snapshot: snapshot)
-        case .trend: trend(data, snapshot: snapshot)
-        case .apps: apps(data, snapshot: snapshot)
-        case .metrics: metricsStyle(data, snapshot: snapshot)
-        }
-    }
-
-    // 概览
-    @ViewBuilder
-    private func overview(_ data: UsageRange, snapshot: WidgetSnapshot) -> some View {
+    private func content(_ data: UsageRange) -> some View {
         switch family {
         case .systemSmall:
             VStack(alignment: .leading, spacing: 2) {
-                Spacer(minLength: 2)
-                bigCost(data.totals.cost, size: 30)
+                bigCost(data.totals.cost, size: 28)
                 tokensLine(data.totals)
                 UsageChart(points: data.series, granularity: data.granularity)
-                    .frame(height: 34)
                     .padding(.top, 6)
             }
         case .systemLarge:
@@ -249,15 +266,30 @@ struct UsageWidgetView: View {
                     ForEach(Array(metrics(data.totals).dropFirst().enumerated()), id: \.offset) { $0.element }
                 }
                 UsageChart(points: data.series, granularity: data.granularity, showAxis: true)
-                    .frame(height: 110)
+                    .frame(height: 104)
                 Divider().opacity(0.5)
                 appList(data, limit: 4)
-                Spacer(minLength: 0)
+            }
+        case .systemExtraLarge:
+            HStack(alignment: .top, spacing: 28) {
+                VStack(alignment: .leading, spacing: 8) {
+                    bigCost(data.totals.cost, size: 38)
+                    UsageChart(points: data.series, granularity: data.granularity, kind: .area, showAxis: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(alignment: .top, spacing: 24) {
+                        ForEach(Array(metrics(data.totals, size: 17).dropFirst().enumerated()), id: \.offset) { $0.element }
+                    }
+                    Divider().opacity(0.5)
+                    appList(data, limit: 8)
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         default:
             HStack(alignment: .top, spacing: 16) {
                 VStack(alignment: .leading, spacing: 6) {
-                    bigCost(data.totals.cost, size: 30)
+                    bigCost(data.totals.cost, size: 28)
                     Spacer(minLength: 0)
                     // 三个数字（英文「Cache hits」等较长）：给足宽度、可缩小，别和右边图表的坐标轴挤在一起
                     HStack(spacing: 10) {
@@ -273,78 +305,17 @@ struct UsageWidgetView: View {
         }
     }
 
-    // 趋势
     @ViewBuilder
-    private func trend(_ data: UsageRange, snapshot: WidgetSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: family == .systemSmall ? 4 : 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                bigCost(data.totals.cost, size: family == .systemSmall ? 20 : 24)
-                if family != .systemSmall {
-                    tokensLine(data.totals)
-                }
-            }
-            UsageChart(points: data.series, granularity: data.granularity, kind: .area, showAxis: family != .systemSmall)
-        }
-    }
-
-    // 按应用
-    @ViewBuilder
-    private func apps(_ data: UsageRange, snapshot: WidgetSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                bigCost(data.totals.cost, size: family == .systemSmall ? 18 : 22)
-                Spacer()
-            }
-            if data.byApp.isEmpty {
-                WidgetMessage(text: Strings.current.noUsage)
-            } else if family == .systemSmall {
-                let top = Array(data.byApp.prefix(3))
-                VStack(alignment: .leading, spacing: 5) {
-                    ForEach(top) { app in
-                        HStack {
-                            Text(app.name).font(.system(size: 10, weight: .medium)).lineLimit(1)
-                            Spacer(minLength: 4)
-                            Text(app.cost).font(.system(size: 10).monospacedDigit()).foregroundStyle(.secondary)
-                                .lineLimit(1).fixedSize().layoutPriority(1)
-                        }
-                    }
-                }
-                Spacer(minLength: 0)
-            } else {
-                appList(data, limit: family == .systemLarge ? 9 : 3)
-                Spacer(minLength: 0)
-            }
-        }
-    }
-
     private func appList(_ data: UsageRange, limit: Int) -> some View {
-        let maxCost = data.byApp.map(\.costValue).max() ?? 1
-        return VStack(spacing: 7) {
-            ForEach(data.byApp.prefix(limit)) { app in
-                AppShareRow(app: app, maxCost: maxCost)
-            }
-        }
-    }
-
-    // 指标
-    @ViewBuilder
-    private func metricsStyle(_ data: UsageRange, snapshot: WidgetSnapshot) -> some View {
-        let items = metrics(data.totals, size: family == .systemSmall ? 15 : 18)
-        VStack(alignment: .leading, spacing: 10) {
-            if family == .systemMedium {
-                HStack(alignment: .top, spacing: 18) {
-                    ForEach(Array(items.enumerated()), id: \.offset) { $0.element }
-                }
-                UsageChart(points: data.series, granularity: data.granularity, kind: .area)
-            } else {
-                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 12) {
-                    GridRow { items[0]; items[1] }
-                    GridRow { items[2]; items[3] }
-                }
-                if family == .systemLarge {
-                    UsageChart(points: data.series, granularity: data.granularity, kind: .area, showAxis: true)
-                } else {
-                    Spacer(minLength: 0)
+        if data.byApp.isEmpty {
+            Text(Strings.current.noUsage)
+                .font(.system(size: 11))
+                .foregroundStyle(.tertiary)
+        } else {
+            let maxCost = data.byApp.map(\.costValue).max() ?? 1
+            VStack(spacing: 7) {
+                ForEach(data.byApp.prefix(limit)) { app in
+                    AppShareRow(app: app, maxCost: maxCost)
                 }
             }
         }
@@ -352,20 +323,14 @@ struct UsageWidgetView: View {
 }
 
 struct UsageWidget: Widget {
-    let kind = "com.ccswitch.desktop.widget.usage"
-
     var body: some WidgetConfiguration {
-        AppIntentConfiguration(kind: kind, intent: UsageWidgetIntent.self, provider: UsageIntentProvider()) { entry in
-            UsageWidgetView(
-                entry: SnapshotEntry(date: entry.date, snapshot: entry.snapshot),
-                range: entry.range,
-                style: entry.style
-            )
-            .widgetGlassContent(.panel)
-            .containerBackground(for: .widget) { WidgetGlassBackground(style: .panel) }
+        StaticConfiguration(kind: WidgetKind.usage, provider: SnapshotProvider()) { entry in
+            UsageWidgetView(entry: entry)
+                .widgetGlassContent(.panel)
+                .containerBackground(for: .widget) { WidgetGlassBackground(style: .panel) }
         }
         .configurationDisplayName(widgetDisplayName(Strings.current.usageTitle))
         .description(Strings.current.usageGallery)
-        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge, .systemExtraLarge])
     }
 }

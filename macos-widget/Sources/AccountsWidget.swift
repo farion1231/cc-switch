@@ -3,8 +3,9 @@
 // 「N 个供应商在用」），右边 / 下面是额度：每档一行（档名、条、剩余、倒计时），ChatGPT 再加
 // 重置次数和 Credits，查询失败写原因，Kimi 没订阅写「未订阅」。
 //
-// 账号多时按 `prioritized` 排序——要处理的、额度最紧的先上；放不下的折成「还有 N 个」。
-// 中尺寸放不下整块额度：每个号一行，只画最紧的两档；要处理的账号合成一行提醒。
+// 账号按 `prioritized` 排序——要处理的、额度最紧的先上，翻页看后面的：
+// 小尺寸一页一个号（最紧的三档竖着排）；中尺寸每个号一行，只画最紧的两档；
+// 大 / 特大按整块的真实高度装满一页（特大两列），底栏写账号数和要处理的数。
 
 import SwiftUI
 import WidgetKit
@@ -51,9 +52,6 @@ enum AuthLayout {
     static let innerGap: CGFloat = 3
     static let blockSpacing: CGFloat = 12
     static let indent: CGFloat = 24
-    static let headerHeight: CGFloat = 16
-    static let footerHeight: CGFloat = 14
-    static let sectionSpacing: CGFloat = 10
     /// 中尺寸一行
     static let compactRowHeight: CGFloat = 30
     static let compactSpacing: CGFloat = 9
@@ -351,27 +349,84 @@ extension QuotaTone {
     }
 }
 
-/// 中尺寸里把要处理的账号合成一行：「⚠ 3 个要处理 · side@gmail.com、old-pro@…」。
-struct PendingAlert: View {
-    let accounts: [WidgetAccount]
+/// 小尺寸一页一个号：渠道、账号名、标签，下面最紧的三档（或余额 / 状态）。
+struct SmallAccountCard: View {
+    let account: WidgetAccount
+    let displayUsed: Bool
+    let now: Date
 
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "exclamationmark.triangle.fill")
-            Text(String(format: Strings.current.needAction, accounts.count))
-                .fontWeight(.semibold)
-            Text(accounts.map(\.login).joined(separator: ", "))
-                .foregroundStyle(.orange.opacity(0.8))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .privacySensitive()
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                ServiceMark(service: account.service, size: 20)
+                Text(account.serviceName)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            // 标签放账号名下面：和渠道名挤一行时会被截断
+            VStack(alignment: .leading, spacing: 3) {
+                Text(account.displayLogin)
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .privacySensitive()
+                if account.needsReauth {
+                    Pill(text: T("authCenter.needsReauth"), color: .red)
+                } else if account.inUse {
+                    Pill(text: Strings.current.inUse, color: .green)
+                }
+            }
+            quota
         }
-        .font(.system(size: 10))
-        .foregroundStyle(.orange)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.orange.opacity(0.14), in: .rect(cornerRadius: 8))
+    }
+
+    @ViewBuilder
+    private var quota: some View {
+        switch account.quota {
+        case let .rows(tiers, resetCredits, credits, _):
+            let rows = authQuotaRows(
+                tiers: tiers, resetCredits: resetCredits, creditsBalance: credits,
+                displayUsed: displayUsed, now: now
+            )
+            let bars = tightestRows(rows.filter { $0.bar != nil }, limit: 3)
+            VStack(alignment: .leading, spacing: 5) {
+                ForEach(bars) { CompactQuotaBars(rows: [$0]) }
+                // 没有条的（重置次数、Credits）写一行字
+                if bars.isEmpty, let first = rows.first {
+                    Text("\(first.label) \(first.value)")
+                        .font(.system(size: 10).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+        case let .balance(wallets, bonus):
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(Array(dshBalanceLines(wallets: wallets, bonus: bonus).enumerated()), id: \.offset) { index, line in
+                    Text(line)
+                        .font(.system(size: 10).monospacedDigit())
+                        .foregroundStyle(index == 0 ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                        .lineLimit(2)
+                }
+            }
+        case let .failed(kind, message):
+            Text("\(T("quota.failed")) · \(quotaFailureText(kind: kind, message: message))")
+                .font(.system(size: 10))
+                .foregroundStyle(.red)
+                .lineLimit(3)
+        case let .note(note):
+            Text(note == "noSubscription" ? T("kimi.oauth.noSubscription") : note)
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .lineLimit(3)
+        case .none:
+            Text(accountDetailsLine(account, now: now))
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .lineLimit(3)
+        }
     }
 }
 
@@ -383,10 +438,14 @@ struct AccountsWidgetView: View {
     private var family: WidgetFamily { familyOverride ?? environmentFamily }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AuthLayout.sectionSpacing) {
+        Group {
             if let snapshot = entry.snapshot {
                 if let accounts = snapshot.accounts {
-                    content(prioritized(accounts), snapshot: snapshot)
+                    if accounts.isEmpty {
+                        WidgetMessage(text: Strings.current.noAccounts)
+                    } else {
+                        content(prioritized(accounts), snapshot: snapshot)
+                    }
                 } else {
                     // 旧版主程序（快照版本 1）不写账号段；新版只是刚启动还没读到
                     WidgetMessage(text: snapshot.version >= 2 ? Strings.current.loadingAccounts : Strings.current.outdated)
@@ -396,120 +455,128 @@ struct AccountsWidgetView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        // 中尺寸没有底栏：过时只能看右上角
-        .staleCorner(family == .systemMedium ? entry.snapshot : nil, now: entry.date)
     }
 
+    private var maxRows: Int { family == .systemExtraLarge ? 4 : 2 }
+
+    /// 按真实可用高度分页：一页装得下几个放几个，一页里分几列（特大两列）。
     @ViewBuilder
     private func content(_ accounts: [WidgetAccount], snapshot: WidgetSnapshot) -> some View {
         let displayUsed = snapshot.quotaDisplay == "used"
-        if accounts.isEmpty {
-            WidgetMessage(text: Strings.current.noAccounts)
-        } else if family == .systemMedium {
-            medium(accounts, snapshot: snapshot, displayUsed: displayUsed)
-        } else {
-            let columns = family == .systemExtraLarge ? 2 : 1
-            let maxRows = family == .systemExtraLarge ? 4 : 2
-            // 按真实可用高度装：放得下几个放几个，剩下的写进底栏
-            GeometryReader { geo in
-                let packed = pack(accounts, columns: columns, maxRows: maxRows, displayUsed: displayUsed, height: geo.size.height)
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack(alignment: .top, spacing: 20) {
-                        ForEach(Array(packed.columns.enumerated()), id: \.offset) { _, column in
-                            VStack(alignment: .leading, spacing: AuthLayout.blockSpacing) {
-                                ForEach(column, id: \.uid) { account in
-                                    AccountBlock(account: account, displayUsed: displayUsed, now: entry.date, maxRows: maxRows)
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .topLeading)
+        GeometryReader { geo in
+            let budget = geo.size.height - WidgetFooter<EmptyView>.height - 6
+            let pages = paginate(accounts, displayUsed: displayUsed, budget: budget)
+            let paging = Paging(kind: WidgetKind.accounts, family: family, pages: pages.map { $0.flatMap { $0 }.map(\.uid) })
+            VStack(alignment: .leading, spacing: 0) {
+                page(pages[paging.current], displayUsed: displayUsed)
+                    .frame(maxHeight: budget, alignment: .topLeading)
+                    .clipped()
+                Spacer(minLength: 0)
+                footer(accounts, paging: paging, snapshot: snapshot)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func page(_ columns: [[WidgetAccount]], displayUsed: Bool) -> some View {
+        switch family {
+        case .systemSmall:
+            if let account = columns.first?.first {
+                SmallAccountCard(account: account, displayUsed: displayUsed, now: entry.date)
+            }
+        case .systemMedium:
+            VStack(alignment: .leading, spacing: AuthLayout.compactSpacing) {
+                ForEach(columns.first ?? [], id: \.uid) {
+                    CompactAccountRow(account: $0, displayUsed: displayUsed, now: entry.date)
+                }
+            }
+        default:
+            HStack(alignment: .top, spacing: 20) {
+                ForEach(Array(columns.enumerated()), id: \.offset) { _, column in
+                    VStack(alignment: .leading, spacing: AuthLayout.blockSpacing) {
+                        ForEach(column, id: \.uid) { account in
+                            AccountBlock(account: account, displayUsed: displayUsed, now: entry.date, maxRows: maxRows)
                         }
                     }
-                    Spacer(minLength: 0)
-                    footer(accounts, hidden: accounts.count - packed.shown, snapshot: snapshot)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
             }
         }
     }
 
-    /// 按各块的真实高度把账号依次装进各列，装不下的不放。
+    /// 分页：每页是几列账号。小尺寸一页一个，中尺寸按行高算一页几行，大 / 特大按各块真实高度装。
+    private func paginate(_ accounts: [WidgetAccount], displayUsed: Bool, budget: CGFloat) -> [[[WidgetAccount]]] {
+        switch family {
+        case .systemSmall:
+            return accounts.map { [[$0]] }
+        case .systemMedium:
+            let step = AuthLayout.compactRowHeight + AuthLayout.compactSpacing
+            let fit = max(1, Int((budget + AuthLayout.compactSpacing) / step))
+            return chunked(accounts, size: fit).map { [$0] }
+        default:
+            let columns = family == .systemExtraLarge ? 2 : 1
+            var pages: [[[WidgetAccount]]] = []
+            var rest = accounts[...]
+            while !rest.isEmpty {
+                let packed = pack(rest, columns: columns, displayUsed: displayUsed, budget: budget)
+                pages.append(packed.columns)
+                rest = rest.dropFirst(packed.shown)
+            }
+            return pages
+        }
+    }
+
+    /// 从头按各块的真实高度把账号依次装进各列；一列里第一个总放得进去（太高就裁掉底下），保证每页至少一个。
     private func pack(
-        _ accounts: [WidgetAccount], columns: Int, maxRows: Int, displayUsed: Bool, height: CGFloat
+        _ accounts: ArraySlice<WidgetAccount>, columns: Int, displayUsed: Bool, budget: CGFloat
     ) -> (columns: [[WidgetAccount]], shown: Int) {
-        let budget = height - AuthLayout.footerHeight - AuthLayout.sectionSpacing
         var result = Array(repeating: [WidgetAccount](), count: columns)
         var column = 0
         var used: CGFloat = 0
         var shown = 0
         for account in accounts {
             let block = AccountBlock(account: account, displayUsed: displayUsed, now: entry.date, maxRows: maxRows).height
-            let needed = (result[column].isEmpty ? 0 : AuthLayout.blockSpacing) + block
-            if used + needed > budget {
+            if !result[column].isEmpty, used + AuthLayout.blockSpacing + block > budget {
                 column += 1
                 if column >= columns { break }
                 used = 0
-                if block > budget { break }
-                result[column].append(account)
-                used = block
-            } else {
-                result[column].append(account)
-                used += needed
             }
+            used += (result[column].isEmpty ? 0 : AuthLayout.blockSpacing) + block
+            result[column].append(account)
             shown += 1
         }
-        return (result, shown)
+        return (result.filter { !$0.isEmpty }, shown)
     }
 
-    @ViewBuilder
-    private func medium(_ accounts: [WidgetAccount], snapshot: WidgetSnapshot, displayUsed: Bool) -> some View {
-        let pending = accounts.filter(\.needsAction)
-        let rest = pending.isEmpty ? accounts : accounts.filter { !$0.needsAction }
-        if !pending.isEmpty {
-            PendingAlert(accounts: pending)
-        }
-        // 按真实可用高度放：系统给中尺寸的内容区比预想的矮时少放一行，不会把最后一行裁掉一半
-        GeometryReader { geo in
-            let step = AuthLayout.compactRowHeight + AuthLayout.compactSpacing
-            let fit = max(0, Int((geo.size.height + AuthLayout.compactSpacing) / step))
-            VStack(alignment: .leading, spacing: AuthLayout.compactSpacing) {
-                ForEach(Array(rest.prefix(fit)), id: \.uid) {
-                    CompactAccountRow(account: $0, displayUsed: displayUsed, now: entry.date)
+    /// 底栏：账号数、要处理的数（小尺寸只写时间），右边翻页。
+    private func footer(_ accounts: [WidgetAccount], paging: Paging, snapshot: WidgetSnapshot) -> some View {
+        let pending = accounts.filter(\.needsAction).count
+        return WidgetFooter(paging: paging) {
+            if family == .systemSmall {
+                UpdatedTime(snapshot: snapshot, now: entry.date, compact: true)
+            } else {
+                HStack(spacing: 8) {
+                    Text(Strings.current.accounts(accounts.count))
+                    if pending > 0 {
+                        Text(String(format: Strings.current.needAction, pending))
+                            .foregroundStyle(.orange)
+                    }
+                    UpdatedTime(snapshot: snapshot, now: entry.date, compact: family == .systemMedium)
                 }
             }
         }
     }
-
-    /// 底栏：账号数、要处理的数、放不下的数，右边写快照时间（过时标橙）。小组件不画标题行，这些放这里。
-    private func footer(_ accounts: [WidgetAccount], hidden: Int, snapshot: WidgetSnapshot) -> some View {
-        let pending = accounts.filter(\.needsAction).count
-        return HStack(spacing: 8) {
-            Text(Strings.current.accounts(accounts.count))
-            if pending > 0 {
-                Text(String(format: Strings.current.needAction, pending))
-                    .foregroundStyle(.orange)
-            }
-            if hidden > 0 {
-                Text(String(format: Strings.current.more, hidden))
-            }
-            Spacer()
-            UpdatedTime(snapshot: snapshot, now: entry.date)
-        }
-        .font(.system(size: 10).monospacedDigit())
-        .foregroundStyle(.tertiary)
-        .frame(height: AuthLayout.footerHeight)
-    }
 }
 
 struct AccountsWidget: Widget {
-    let kind = "com.ccswitch.desktop.widget.accounts"
-
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: kind, provider: SnapshotProvider()) { entry in
+        StaticConfiguration(kind: WidgetKind.accounts, provider: SnapshotProvider()) { entry in
             AccountsWidgetView(entry: entry)
                 .widgetGlassContent(.panel)
                 .containerBackground(for: .widget) { WidgetGlassBackground(style: .panel) }
         }
         .configurationDisplayName(widgetDisplayName(Strings.current.accountsTitle))
         .description(Strings.current.accountsGallery)
-        .supportedFamilies([.systemMedium, .systemLarge, .systemExtraLarge])
+        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge, .systemExtraLarge])
     }
 }

@@ -133,41 +133,14 @@ struct GalleryView: View {
                 .background(.regularMaterial, in: .capsule)
                 }
 
+                section("额度 · Quota") {
+                    tiles { QuotaWidgetView(entry: entry, familyOverride: $0) }
+                }
                 section("授权中心 · Auth Center") {
-                    HStack(alignment: .top, spacing: 24) {
-                        PreviewTile(family: .systemMedium, label: "Medium", look: look) {
-                            AccountsWidgetView(entry: entry, familyOverride: .systemMedium)
-                        }
-                        PreviewTile(family: .systemLarge, label: "Large", look: look) {
-                            AccountsWidgetView(entry: entry, familyOverride: .systemLarge)
-                        }
-                    }
-                    PreviewTile(family: .systemExtraLarge, label: "Extra Large", look: look) {
-                        AccountsWidgetView(entry: entry, familyOverride: .systemExtraLarge)
-                    }
+                    tiles { AccountsWidgetView(entry: entry, familyOverride: $0) }
                 }
                 section("用量 · Usage") {
-                    HStack(alignment: .top, spacing: 24) {
-                        PreviewTile(family: .systemSmall, label: "Small", look: look) {
-                            UsageWidgetView(entry: entry, familyOverride: .systemSmall)
-                        }
-                        PreviewTile(family: .systemMedium, label: "Medium", look: look) {
-                            UsageWidgetView(entry: entry, familyOverride: .systemMedium)
-                        }
-                        PreviewTile(family: .systemLarge, label: "Large", look: look) {
-                            UsageWidgetView(entry: entry, familyOverride: .systemLarge)
-                        }
-                    }
-                }
-                section("额度 · In-use quota") {
-                    HStack(alignment: .top, spacing: 24) {
-                        PreviewTile(family: .systemMedium, label: "Medium", look: look) {
-                            QuotaWidgetView(entry: entry, familyOverride: .systemMedium)
-                        }
-                        PreviewTile(family: .systemLarge, label: "Large", look: look) {
-                            QuotaWidgetView(entry: entry, familyOverride: .systemLarge)
-                        }
-                    }
+                    tiles { UsageWidgetView(entry: entry, familyOverride: $0) }
                 }
             }
             .padding(32)
@@ -179,7 +152,7 @@ struct GalleryView: View {
                 LinearGradient(colors: [.indigo, .pink, .orange], startPoint: .topLeading, endPoint: .bottomTrailing)
             }
         }
-        .frame(minWidth: 1220, minHeight: 860)
+        .frame(minWidth: 1820, minHeight: 1400)
     }
 
     private var sourceLabel: String {
@@ -187,6 +160,16 @@ struct GalleryView: View {
         let time = Date(timeIntervalSince1970: data.snapshot.generatedAt)
             .formatted(date: .abbreviated, time: .shortened)
         return "真实快照 · \(time) · \(source)"
+    }
+
+    /// 一种小组件的四个尺寸排一行
+    private func tiles<C: View>(@ViewBuilder _ content: @escaping (WidgetFamily) -> C) -> some View {
+        HStack(alignment: .top, spacing: 24) {
+            PreviewTile(family: .systemSmall, label: "Small", look: look) { content(.systemSmall) }
+            PreviewTile(family: .systemMedium, label: "Medium", look: look) { content(.systemMedium) }
+            PreviewTile(family: .systemLarge, label: "Large", look: look) { content(.systemLarge) }
+            PreviewTile(family: .systemExtraLarge, label: "Extra Large", look: look) { content(.systemExtraLarge) }
+        }
     }
 
     private func section<C: View>(_ title: String, @ViewBuilder content: () -> C) -> some View {
@@ -229,7 +212,7 @@ final class PreviewDelegate: NSObject, NSApplicationDelegate {
             .flatMap { NSImage(contentsOf: $0) }
         let hosting = NSHostingView(rootView: GalleryView(data: data, wallpaper: wallpaper))
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1220, height: 860),
+            contentRect: NSRect(x: 0, y: 0, width: 1860, height: 1100),
             styleMask: [.titled, .closable, .resizable, .miniaturizable],
             backing: .buffered, defer: false
         )
@@ -243,7 +226,7 @@ final class PreviewDelegate: NSObject, NSApplicationDelegate {
         // CCSW_CAPTURE=<png>：等玻璃合成完，截自己的窗口存下来就退出（截自己的窗口不需要录屏权限）。
         if let out = ProcessInfo.processInfo.environment["CCSW_CAPTURE"] {
             // 截图时拉高窗口，一张图把三个小组件都装下
-            window.setContentSize(NSSize(width: 1220, height: 1960))
+            window.setContentSize(NSSize(width: 1860, height: 1500))
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
                 captureOwnWindow(window, to: URL(fileURLWithPath: out))
                 NSApp.terminate(nil)

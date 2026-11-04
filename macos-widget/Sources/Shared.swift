@@ -1,4 +1,4 @@
-// 三个小组件共用：时间线、玻璃底板、额度条、标题行、状态占位。
+// 三个小组件共用：时间线、玻璃底板、额度条、状态占位、更新时间。
 
 import SwiftUI
 import WidgetKit
@@ -144,24 +144,6 @@ struct QuotaBar: View {
     }
 }
 
-/// 标题行：左边小组件名，右边附加信息（时间 / 账号数）。
-struct WidgetHeader<Trailing: View>: View {
-    let title: String
-    @ViewBuilder var trailing: Trailing
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
-            Spacer(minLength: 4)
-            trailing
-                .font(.system(size: 10).monospacedDigit())
-                .foregroundStyle(.tertiary)
-        }
-    }
-}
-
 /// 没开小组件 / 主程序太旧 / 没数据时的居中提示。
 struct WidgetMessage: View {
     let text: String
@@ -188,43 +170,20 @@ let staleAfter: TimeInterval = 30 * 60
 struct UpdatedTime: View {
     let snapshot: WidgetSnapshot
     let now: Date
+    /// 小尺寸放不下「数据已过时」几个字：只留图标和时间
+    var compact = false
 
     var body: some View {
         let time = generatedTime(snapshot)
         if now.timeIntervalSince(time) >= staleAfter {
             HStack(spacing: 3) {
                 Image(systemName: "clock.badge.exclamationmark")
-                Text(Strings.current.stale)
+                if !compact { Text(Strings.current.stale) }
                 Text(time, style: .time)
             }
             .foregroundStyle(.orange)
         } else {
             Text(time, style: .time)
-        }
-    }
-}
-
-/// 放不下时间的地方（用量小 / 中尺寸）：只在过时时出一个橙色时钟。
-struct StaleBadge: View {
-    let snapshot: WidgetSnapshot
-    let now: Date
-
-    var body: some View {
-        if now.timeIntervalSince(generatedTime(snapshot)) >= staleAfter {
-            Image(systemName: "clock.badge.exclamationmark")
-                .foregroundStyle(.orange)
-        }
-    }
-}
-
-extension View {
-    /// 小组件不画标题行：数据过时时在右上角挂一个橙色时钟，平时什么都不画。
-    func staleCorner(_ snapshot: WidgetSnapshot?, now: Date) -> some View {
-        overlay(alignment: .topTrailing) {
-            if let snapshot {
-                StaleBadge(snapshot: snapshot, now: now)
-                    .font(.system(size: 11))
-            }
         }
     }
 }

@@ -44,24 +44,14 @@ func render(_ name: String, _ family: WidgetFamily, _ scheme: ColorScheme, @View
     print(url.path)
 }
 
+let families: [(String, WidgetFamily)] = [("small", .systemSmall), ("medium", .systemMedium), ("large", .systemLarge), ("xl", .systemExtraLarge)]
+
 try MainActor.assumeIsolated {
     for scheme in [ColorScheme.light, .dark] {
-        try render("quota-medium", .systemMedium, scheme) { QuotaWidgetView(entry: entry) }
-        try render("quota-large", .systemLarge, scheme) { QuotaWidgetView(entry: entry, familyOverride: .systemLarge) }
-        try render("accounts-medium", .systemMedium, scheme) { AccountsWidgetView(entry: many, familyOverride: .systemMedium) }
-        try render("accounts-large", .systemLarge, scheme) { AccountsWidgetView(entry: many, familyOverride: .systemLarge) }
-        try render("accounts-xl", .systemExtraLarge, scheme) { AccountsWidgetView(entry: many, familyOverride: .systemExtraLarge) }
-        try render("usage-small", .systemSmall, scheme) { UsageWidgetView(entry: entry, familyOverride: .systemSmall) }
-        try render("usage-medium", .systemMedium, scheme) { UsageWidgetView(entry: entry, familyOverride: .systemMedium) }
-        try render("usage-large", .systemLarge, scheme) { UsageWidgetView(entry: entry, familyOverride: .systemLarge) }
-    }
-    // 用量的四种样式 × 三个尺寸（环境变量 CCSW_RANGE 选范围，默认近 7 天）
-    let range = UsageRangeOption(rawValue: ProcessInfo.processInfo.environment["CCSW_RANGE"] ?? "") ?? .last7d
-    for style in [UsageStyleOption.overview, .trend, .apps, .metrics] {
-        for (name, family) in [("s", WidgetFamily.systemSmall), ("m", .systemMedium), ("l", .systemLarge)] {
-            try render("usage-\(style.rawValue)-\(name)", family, .light) {
-                UsageWidgetView(entry: entry, range: range, style: style, familyOverride: family)
-            }
+        for (name, family) in families {
+            try render("quota-\(name)", family, scheme) { QuotaWidgetView(entry: entry, familyOverride: family) }
+            try render("accounts-\(name)", family, scheme) { AccountsWidgetView(entry: many, familyOverride: family) }
+            try render("usage-\(name)", family, scheme) { UsageWidgetView(entry: entry, familyOverride: family) }
         }
     }
 }
