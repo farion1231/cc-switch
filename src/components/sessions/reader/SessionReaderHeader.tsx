@@ -524,7 +524,7 @@ function SessionUsageSummary({ session }: { session: SessionMeta }) {
   const tokens = (value: number) => formatTokensCompact(value, locale);
   return (
     <span
-      className="inline-flex flex-wrap items-center gap-x-3 gap-y-1"
+      className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1"
       title={rt("usage.detail", {
         requests: fmtInt(data.totalRequests, locale),
         input: tokens(data.totalInputTokens),
@@ -796,7 +796,7 @@ export const SessionReaderToolbar = memo(function SessionReaderToolbar({
         )}
         {!failed && !progress && messageCount > 0 && (
           <span
-            className="inline-flex flex-wrap items-center gap-x-3 gap-y-1"
+            className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1"
             title={rt("turnsCount", {
               turns: turnIndex.length,
               messages: messageCount,
@@ -813,9 +813,7 @@ export const SessionReaderToolbar = memo(function SessionReaderToolbar({
           </span>
         )}
         {model && (
-          <span className="min-w-0 [overflow-wrap:anywhere]" title={model}>
-            {model}
-          </span>
+          <span className="min-w-0 [overflow-wrap:anywhere]">{model}</span>
         )}
         <SessionUsageSummary session={session} />
       </div>
