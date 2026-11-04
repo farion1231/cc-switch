@@ -547,22 +547,34 @@ pub fn run() {
 
                 let settings = crate::settings::get_settings();
 
-                if settings.minimize_to_tray_on_close {
-                    api.prevent_close();
-                    let _ = window.hide();
-                    log::info!("关闭请求已处理：最小化到托盘");
-                    #[cfg(target_os = "windows")]
-                    {
-                        let _ = window.set_skip_taskbar(true);
+                match settings.effective_close_window_action() {
+                    crate::settings::CloseWindowAction::MinimizeToTaskbar => {
+                        api.prevent_close();
+                        #[cfg(target_os = "windows")]
+                        {
+                            let _ = window.set_skip_taskbar(false);
+                        }
+                        let _ = window.minimize();
+                        log::info!("关闭请求已处理：最小化到任务栏");
                     }
-                    #[cfg(target_os = "macos")]
-                    {
-                        tray::apply_tray_policy(window.app_handle(), false);
+                    crate::settings::CloseWindowAction::MinimizeToTray => {
+                        api.prevent_close();
+                        let _ = window.hide();
+                        log::info!("关闭请求已处理：最小化到托盘");
+                        #[cfg(target_os = "windows")]
+                        {
+                            let _ = window.set_skip_taskbar(true);
+                        }
+                        #[cfg(target_os = "macos")]
+                        {
+                            tray::apply_tray_policy(window.app_handle(), false);
+                        }
                     }
-                } else {
-                    api.prevent_close();
-                    log::info!("关闭请求已处理：退出应用");
-                    window.app_handle().exit(0);
+                    crate::settings::CloseWindowAction::Exit => {
+                        api.prevent_close();
+                        log::info!("关闭请求已处理：退出应用");
+                        window.app_handle().exit(0);
+                    }
                 }
             }
         })

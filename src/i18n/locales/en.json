@@ -451,6 +451,7 @@
       "trayStyleMenu": "Menu",
       "trayStyleHelp": "What opens when you click the tray icon (on Windows, left-click always opens the main window and right-click opens the selected style). Panel: each app's in-use provider, quota and usage, with search and switching. Menu: the system's native menu. Takes effect right away.",
       "minimizeToTrayHelp": "When on, the close button only hides the window and CC Switch keeps running in the system tray (lightweight mode is in the tray menu). When off, the close button quits.",
+      "closeWindowActionHelp": "Action when clicking the window close button. Minimize to taskbar: folds window into taskbar/dock and keeps it easily restorable (recommended on Linux/GNOME); Minimize to system tray: hides window and keeps CC Switch running in background tray; Exit application: quits the process completely.",
       "terminalHelp": "The terminal used by “Open terminal” on provider cards. If it isn't available, the system default terminal is used."
     },
     "tabGeneral": "General",
@@ -883,6 +884,10 @@
     "silentStartup": "Silent Startup",
     "silentStartupDescription": "Start in background mode without showing main window",
     "autoLaunchFailed": "Failed to set auto-launch",
+    "closeWindowAction": "Close window action",
+    "closeWindowActionMinimizeToTaskbar": "Minimize to taskbar",
+    "closeWindowActionMinimizeToTray": "Minimize to system tray",
+    "closeWindowActionExit": "Exit application",
     "minimizeToTray": "Minimize to tray on close",
     "minimizeToTrayDescription": "When checked, clicking the close button will hide to system tray, otherwise the app will exit directly.",
     "useAppWindowControls": "Enable app-level window controls",

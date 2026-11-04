@@ -451,6 +451,7 @@
       "trayStyleMenu": "メニュー",
       "trayStyleHelp": "トレイアイコンをクリックしたときに開くものです（Windows では左クリックで常にメイン画面を開き、右クリックで選択した表示を開きます）。パネル：各アプリの使用中のプロバイダー、クォータ、使用量を表示し、検索して切り替えられます。メニュー：システム標準のメニュー。すぐに反映されます。",
       "minimizeToTrayHelp": "オンのときは閉じるボタンでウィンドウを隠すだけで、CC Switch はシステムトレイで動き続けます（軽量モードはトレイメニューにあります）。オフのときは閉じるボタンで終了します。",
+      "closeWindowActionHelp": "ウィンドウの閉じるボタンをクリックした時の動作。タスクバーに最小化：ウィンドウをタスクバーに折りたたみ、いつでも再表示できます（Linux/GNOME 環境推奨）；システムトレイに最小化：ウィンドウを非表示にしてトレイでバックグラウンド実行；アプリケーションを終了：プロセスを完全に終了します。",
       "terminalHelp": "プロバイダーカードの「ターミナルを開く」で使うターミナルです。使えない場合はシステムの既定のターミナルを使います。"
     },
     "tabGeneral": "一般",
@@ -883,6 +884,10 @@
     "silentStartup": "サイレント起動",
     "silentStartupDescription": "起動時にメインウィンドウを表示せず、トレイのみで起動",
     "autoLaunchFailed": "自動起動の設定に失敗しました",
+    "closeWindowAction": "ウィンドウを閉じる時の動作",
+    "closeWindowActionMinimizeToTaskbar": "タスクバーに最小化",
+    "closeWindowActionMinimizeToTray": "システムトレイに最小化",
+    "closeWindowActionExit": "アプリケーションを終了",
     "minimizeToTray": "閉じるときトレイへ最小化",
     "minimizeToTrayDescription": "チェックすると閉じるボタンでトレイに隠し、オフならアプリを終了します。",
     "useAppWindowControls": "アプリ内ウィンドウボタンを有効化",

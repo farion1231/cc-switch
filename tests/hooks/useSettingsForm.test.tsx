@@ -226,4 +226,50 @@ describe("useSettingsForm Hook", () => {
 
     expect(changeLanguageSpy).not.toHaveBeenCalled();
   });
+
+  it("should normalize closeWindowAction with backward compatibility for legacy minimizeToTrayOnClose", async () => {
+    // 1. Explicit closeWindowAction should be preserved
+    useSettingsQueryMock.mockReturnValue({
+      data: {
+        closeWindowAction: "minimize_to_taskbar",
+      },
+      isLoading: false,
+    });
+
+    const { result, rerender } = renderHook(() => useSettingsForm());
+
+    await waitFor(() => {
+      expect(result.current.settings?.closeWindowAction).toBe(
+        "minimize_to_taskbar",
+      );
+    });
+
+    // 2. Legacy minimizeToTrayOnClose: false maps to "exit"
+    act(() => {
+      result.current.resetSettings({
+        minimizeToTrayOnClose: false,
+      });
+    });
+    expect(result.current.settings?.closeWindowAction).toBe("exit");
+
+    // 3. Legacy minimizeToTrayOnClose: true maps to "minimize_to_tray"
+    act(() => {
+      result.current.resetSettings({
+        minimizeToTrayOnClose: true,
+      });
+    });
+    expect(result.current.settings?.closeWindowAction).toBe("minimize_to_tray");
+
+    // 4. Updating closeWindowAction directly
+    act(() => {
+      result.current.updateSettings({
+        closeWindowAction: "minimize_to_taskbar",
+        minimizeToTrayOnClose: false,
+      });
+    });
+    expect(result.current.settings?.closeWindowAction).toBe(
+      "minimize_to_taskbar",
+    );
+    expect(result.current.settings?.minimizeToTrayOnClose).toBe(false);
+  });
 });
