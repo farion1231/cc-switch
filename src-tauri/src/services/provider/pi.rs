@@ -217,13 +217,16 @@ pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppErro
         .get_provider_by_id(id, app_type.as_str())?
         .ok_or_else(|| AppError::InvalidInput(format!("Pi provider '{id}' not found")))?;
 
+    let native_config =
+        crate::proxy::dim_relay::project_provider(&state.db, &app_type, &provider)?.settings_config;
     if let Some(native) = crate::pi_config::read_pi_native_provider(id)? {
+        if provider.is_dim_oauth() {
+            crate::pi_config::replace_pi_provider_if_present(id, &native_config)?;
+            return Ok(SwitchResult::default());
+        }
         let mut synced = provider;
         merge_native_config(&mut synced, native);
         state.db.save_provider(app_type.as_str(), &synced)?;
-        if provider.is_dim_oauth() {
-            crate::pi_config::replace_pi_provider_if_present(id, &native_config)?;
-        }
         return Ok(SwitchResult::default());
     }
 

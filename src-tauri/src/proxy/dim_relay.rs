@@ -9,7 +9,7 @@ use crate::{
 use axum::{
     body::{to_bytes, Body},
     extract::{ConnectInfo, Path, Request, State},
-    http::{header, HeaderMap, Method, StatusCode},
+    http::{HeaderMap, Method, StatusCode},
     response::Response,
     Json,
 };
@@ -589,6 +589,12 @@ async fn relay(
         .await
         .map_err(|_| error(StatusCode::BAD_GATEWAY, "DimAgent upstream request failed"))?;
     let status = response.status();
+    if status.is_redirection() {
+        return Err(error(
+            StatusCode::BAD_GATEWAY,
+            "DimAgent upstream redirects are not permitted",
+        ));
+    }
     let mut headers = response.headers().clone();
     for name in [
         "connection",
