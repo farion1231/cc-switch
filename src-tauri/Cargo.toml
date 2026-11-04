@@ -50,6 +50,7 @@ futures = "0.3"
 rmcp = { version = "0.8.5", features = ["client", "transport-async-rw", "transport-sse-client-reqwest", "transport-streamable-http-client-reqwest"] }
 process-wrap = { version = "8.2", features = ["tokio1"] }
 async-stream = "0.3"
+async-compression = { version = "0.4", default-features = false, features = ["futures-io", "gzip", "zlib", "deflate", "brotli", "zstd"] }
 bytes = "1.5"
 prost = "0.14"
 axum = "0.7"
