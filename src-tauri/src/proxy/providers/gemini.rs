@@ -163,6 +163,9 @@ impl ProviderAdapter for GeminiAdapter {
     }
 
     fn extract_base_url(&self, provider: &Provider) -> Result<String, ProxyError> {
+        if provider.is_dim_oauth() {
+            return Ok("https://dimagent.cn".into());
+        }
         // 从 env 中获取
         if let Some(env) = provider.settings_config.get("env") {
             if let Some(url) = env.get("GOOGLE_GEMINI_BASE_URL").and_then(|v| v.as_str()) {
@@ -193,6 +196,12 @@ impl ProviderAdapter for GeminiAdapter {
     }
 
     fn extract_auth(&self, provider: &Provider) -> Option<AuthInfo> {
+        if provider.is_dim_oauth() {
+            return Some(AuthInfo::new(
+                "dim_oauth_placeholder".into(),
+                AuthStrategy::DimOAuth,
+            ));
+        }
         let key = self.extract_key_raw(provider)?;
         let strategy = self.detect_auth_type(provider);
 
@@ -235,6 +244,10 @@ impl ProviderAdapter for GeminiAdapter {
         use super::adapter::auth_header_value as hv;
         use http::{HeaderName, HeaderValue};
         Ok(match auth.strategy {
+            AuthStrategy::DimOAuth => vec![(
+                HeaderName::from_static("authorization"),
+                hv(&format!("Bearer {}", auth.api_key))?,
+            )],
             AuthStrategy::GoogleOAuth => {
                 let token = auth.access_token.as_ref().unwrap_or(&auth.api_key);
                 vec![
@@ -260,6 +273,32 @@ impl ProviderAdapter for GeminiAdapter {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn dim_oauth_gemini_uses_bound_account_bearer_instead_of_client_keys() {
+        let adapter = GeminiAdapter::new();
+        let mut provider = create_provider(
+            json!({"env":{"GOOGLE_GEMINI_BASE_URL":"https://attacker.example", "GEMINI_API_KEY":"client-key"}}),
+        );
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("dim_oauth".into()),
+            api_format: Some("gemini_native".into()),
+            ..Default::default()
+        });
+        assert_eq!(
+            adapter.extract_base_url(&provider).unwrap(),
+            "https://dimagent.cn"
+        );
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.strategy, AuthStrategy::DimOAuth);
+        assert_ne!(auth.api_key, "client-key");
+        let headers = adapter
+            .get_auth_headers(&AuthInfo::new("account-token".into(), auth.strategy))
+            .unwrap();
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0].0, http::header::AUTHORIZATION);
+        assert_eq!(headers[0].1, "Bearer account-token");
+    }
 
     fn create_provider(config: serde_json::Value) -> Provider {
         Provider {

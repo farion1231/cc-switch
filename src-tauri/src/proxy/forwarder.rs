@@ -47,6 +47,36 @@ use tokio::sync::RwLock;
 
 const PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
 
+/// Bind the request target and remove credentials supplied for the local hop.
+/// The issuer is the manager's canonical registration origin, never provider input.
+fn bind_dim_request_url(target: &str, issuer: &str) -> Result<String, ProxyError> {
+    let mut target = url::Url::parse(target)
+        .map_err(|_| ProxyError::AuthError("Invalid DimAgent request URL".into()))?;
+    if target.origin().ascii_serialization() != issuer
+        || !target.username().is_empty()
+        || target.password().is_some()
+    {
+        return Err(ProxyError::AuthError(
+            "DimAgent requests must use the bound account issuer".into(),
+        ));
+    }
+    let query: Vec<_> = target
+        .query_pairs()
+        .filter(|(key, _)| {
+            !matches!(
+                key.to_ascii_lowercase().as_str(),
+                "key" | "api_key" | "access_token" | "token"
+            )
+        })
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect();
+    target.set_query(None);
+    if !query.is_empty() {
+        target.query_pairs_mut().extend_pairs(query);
+    }
+    Ok(target.into())
+}
+
 /// Whether the upstream belongs to the OpenCode gateway (`opencode.ai`).
 ///
 /// That gateway (<https://opencode.ai/docs/go/>) expects clients to identify
@@ -1847,7 +1877,7 @@ impl RequestForwarder {
                 "/chat/completions" | "/responses" | "/responses/compact"
             );
 
-        let url = if matches!(resolved_claude_api_format.as_deref(), Some("gemini_native")) {
+        let mut url = if matches!(resolved_claude_api_format.as_deref(), Some("gemini_native")) {
             super::gemini_url::resolve_gemini_native_url(
                 &base_url,
                 &effective_endpoint,
@@ -1879,18 +1909,7 @@ impl RequestForwarder {
         };
 
         if let Some(auth) = dim_auth.as_ref() {
-            let target = url::Url::parse(&url)
-                .map_err(|_| ProxyError::AuthError("Invalid DimAgent request URL".into()))?;
-            let issuer = url::Url::parse(&auth.issuer)
-                .map_err(|_| ProxyError::AuthError("Invalid DimAgent issuer".into()))?;
-            if target.origin() != issuer.origin()
-                || !target.username().is_empty()
-                || target.password().is_some()
-            {
-                return Err(ProxyError::AuthError(
-                    "DimAgent requests must use the bound account issuer".into(),
-                ));
-            }
+            url = bind_dim_request_url(&url, &auth.issuer)?;
         }
 
         let (listen_address, listen_port) = {
@@ -2170,36 +2189,35 @@ impl RequestForwarder {
                     filtered_body["model"] = model;
                 }
             }
-            if let Some(effort) = provider
-                .meta
-                .as_ref()
-                .and_then(|meta| meta.dim_oauth_effort.as_deref())
-            {
-                let format = resolved_claude_api_format.as_deref().unwrap_or_else(|| {
+            let format = resolved_claude_api_format.as_deref().unwrap_or_else(|| {
+                provider
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.api_format.as_deref())
+                    .unwrap_or("openai_chat")
+            });
+            if matches!(
+                effective_endpoint.split('?').next(),
+                Some(
+                    "/v1/messages"
+                        | "/messages"
+                        | "/v1/chat/completions"
+                        | "/chat/completions"
+                        | "/v1/responses"
+                        | "/responses"
+                )
+            ) {
+                let object = filtered_body.as_object_mut().ok_or_else(|| {
+                    ProxyError::InvalidRequest("DimAgent inference requires a JSON object".into())
+                })?;
+                super::providers::dim_oauth_auth::apply_dim_effort(
+                    object,
+                    format,
                     provider
                         .meta
                         .as_ref()
-                        .and_then(|meta| meta.api_format.as_deref())
-                        .unwrap_or("openai_chat")
-                });
-                match format {
-                    "openai_chat" => {
-                        filtered_body["reasoning_effort"] = Value::from(effort);
-                    }
-                    "openai_responses" => {
-                        if !filtered_body["reasoning"].is_object() {
-                            filtered_body["reasoning"] = serde_json::json!({});
-                        }
-                        filtered_body["reasoning"]["effort"] = Value::from(effort);
-                    }
-                    "anthropic" => {
-                        if !filtered_body["output_config"].is_object() {
-                            filtered_body["output_config"] = serde_json::json!({});
-                        }
-                        filtered_body["output_config"]["effort"] = Value::from(effort);
-                    }
-                    _ => {}
-                }
+                        .and_then(|meta| meta.dim_oauth_effort.as_deref()),
+                );
             }
         }
         // 出站 body 定稿后刷新真值（覆盖 Codex chat 上游模型覆写、转换层模型改写）
@@ -4957,6 +4975,25 @@ mod tests {
             streaming_first_byte_timeout,
             max_attempts: 1,
             stack_request: false,
+        }
+    }
+
+    #[test]
+    fn dim_request_target_keeps_protocol_query_without_local_credentials() {
+        let url = bind_dim_request_url("https://dimagent.cn/v1beta/models/vendor%2Fmodel:streamGenerateContent?alt=sse&key=local-key&API_KEY=other&access_token=local-token&token=another", "https://dimagent.cn").unwrap();
+        assert_eq!(
+            url,
+            "https://dimagent.cn/v1beta/models/vendor%2Fmodel:streamGenerateContent?alt=sse"
+        );
+        for target in [
+            "https://attacker.example/v1/messages",
+            "http://dimagent.cn/v1/messages",
+            "https://user:password@dimagent.cn/v1/messages",
+        ] {
+            assert!(matches!(
+                bind_dim_request_url(target, "https://dimagent.cn"),
+                Err(ProxyError::AuthError(_))
+            ));
         }
     }
 

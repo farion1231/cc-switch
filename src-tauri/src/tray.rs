@@ -1122,6 +1122,7 @@ pub(crate) fn provider_needs_routing(app: &AppType, provider: &Provider) -> bool
                     .and_then(codex_wire_api)
                     .is_some_and(|wire_api| is_chat_or_anthropic_wire_api(&wire_api))
         }
+        AppType::Gemini => provider.is_dim_oauth(),
         _ => false,
     }
 }
@@ -4228,7 +4229,13 @@ mod tests {
         }
         assert!(!provider_needs_routing(&AppType::Gemini, &copilot));
 
-        for app in [AppType::Claude, AppType::Codex] {
+        for app in [
+            AppType::Claude,
+            AppType::ClaudeDesktop,
+            AppType::Codex,
+            AppType::GrokBuild,
+            AppType::Gemini,
+        ] {
             let mut dim = provider(
                 serde_json::json!({"providerType":"dim_oauth", "apiFormat":"anthropic"}),
                 serde_json::json!({}),
