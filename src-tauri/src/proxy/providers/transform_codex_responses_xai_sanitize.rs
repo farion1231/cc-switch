@@ -1195,6 +1195,41 @@ mod tests {
     use serde_json::json;
     use std::collections::HashSet;
 
+    #[tokio::test]
+    async fn namespace_stream_preserves_fragmented_utf8_crlf_and_tail() {
+        use futures::StreamExt;
+        let request = json!({"tools":[{"type":"namespace","name":"image_gen","tools":[{"type":"function","name":"imagegen","parameters":{}}]}]});
+        let map =
+            super::super::transform_codex_responses_namespace::namespace_restore_map(&request);
+        let event = json!({"type":"response.output_item.done","item":{"type":"function_call","name":"image_gen__imagegen","arguments":"{\"label\":\"图片\",\"scale\":1.0}","call_id":"call_1"}});
+        let input =
+            format!("event: response.output_item.done\r\ndata: {event}\r\n\r\ndata: [DONE]");
+        let chunks: Vec<Result<Bytes, std::io::Error>> = input
+            .as_bytes()
+            .iter()
+            .map(|byte| Ok(Bytes::from(vec![*byte])))
+            .collect();
+        let output =
+            create_namespace_responses_sse_stream(futures::stream::iter(chunks), map, false)
+                .collect::<Vec<_>>()
+                .await;
+        let joined: Vec<u8> = output
+            .into_iter()
+            .flat_map(|part| part.unwrap().to_vec())
+            .collect();
+        let text = std::str::from_utf8(&joined).unwrap();
+        let restored: Value = serde_json::from_str(
+            text.lines()
+                .find_map(|line| line.strip_prefix("data: "))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(restored["item"]["namespace"], "image_gen");
+        assert_eq!(restored["item"]["name"], "imagegen");
+        assert_eq!(restored["item"]["arguments"], event["item"]["arguments"]);
+        assert!(text.ends_with("data: [DONE]\n\n"));
+    }
+
     #[test]
     fn namespace_sse_restores_names_without_rewriting_numeric_arguments() {
         let request = json!({"tools":[{"type":"namespace","name":"image_gen","tools":[{"type":"function","name":"imagegen","parameters":{}}]}]});
