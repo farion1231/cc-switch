@@ -6920,10 +6920,10 @@ mod tests {
                 &AppType::Codex,
                 http::Method::POST,
                 "/v1/responses",
-                codex_body,
+                &codex_body,
                 HeaderMap::new(),
                 Extensions::new(),
-                vec![codex_copilot],
+                &[codex_copilot],
             )
             .await
             .map_err(|e| e.error)
@@ -6964,7 +6964,7 @@ mod tests {
                             &AppType::Codex,
                             http::Method::POST,
                             if stack { "/responses" } else { "/v1/responses" },
-                            json!({
+                            &json!({
                                 "model": model, "input": "hello", "stream": stack,
                                 "tools": [{
                                     "type": "function", "name": "mcp__codex_app__automation_update",
@@ -6983,7 +6983,7 @@ mod tests {
                             }),
                             HeaderMap::new(),
                             Extensions::new(),
-                            vec![provider],
+                            &[provider],
                         )
                         .await;
                     if matches!(format, CodexCopilotApiFormat::OpenaiResponses) {
@@ -7025,7 +7025,7 @@ mod tests {
                 &AppType::ClaudeDesktop,
                 http::Method::POST,
                 "/v1/messages",
-                json!({
+                &json!({
                     "model": "claude-sonnet-5",
                     "messages": [{"role": "user", "content": "hello"}],
                     "tools": [{"name": "lookup", "input_schema": {"oneOf": [
@@ -7037,7 +7037,7 @@ mod tests {
                 }),
                 HeaderMap::new(),
                 Extensions::new(),
-                vec![desktop_copilot],
+                &[desktop_copilot],
             )
             .await
             .map_err(|e| e.error)
@@ -7166,7 +7166,7 @@ mod tests {
                     &AppType::Claude,
                     http::Method::POST,
                     "/v1/messages",
-                    json!({
+                    &json!({
                         "model": client_model,
                         "messages": [{"role": "user", "content": "hello"}],
                         "max_tokens": 100,
@@ -7174,7 +7174,7 @@ mod tests {
                     }),
                     headers,
                     Extensions::new(),
-                    vec![provider],
+                    &[provider],
                 )
                 .await
                 .map_err(|e| e.error)
@@ -7209,14 +7209,14 @@ mod tests {
                     &AppType::Claude,
                     http::Method::POST,
                     "/v1/messages",
-                    json!({
+                    &json!({
                         "model": "copilot-auto",
                         "messages": [{"role": "user", "content": "hello"}],
                         "max_tokens": 100, "stream": false
                     }),
                     HeaderMap::new(),
                     Extensions::new(),
-                    vec![provider],
+                    &[provider],
                 )
                 .await;
             if full_path == "/chat/completions" {
