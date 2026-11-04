@@ -2,11 +2,9 @@ import * as React from "react";
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
 import { cn } from "@/lib/utils";
 import {
-  finishOverlayAnimation,
   OVERLAY_MOTION_CLASS,
   type OverlayAnimationGuard,
   useOverlayAnimationGuard,
-  useOverlayAnimationRef,
 } from "./overlay-animation-guard";
 
 interface DropdownMenuAnimationContextValue extends OverlayAnimationGuard {
@@ -18,35 +16,23 @@ const DropdownMenuAnimationContext = React.createContext<
   DropdownMenuAnimationContextValue | undefined
 >(undefined);
 
-interface DropdownMenuProps
-  extends React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Root> {
-  /** Overrides the OS preference when the app exposes its own motion setting. */
-  reducedMotion?: boolean;
-}
-
 function DropdownMenu({
-  reducedMotion: reducedMotionOverride,
   onOpenChange,
   ...props
-}: DropdownMenuProps) {
-  const animation = useOverlayAnimationGuard(reducedMotionOverride);
-  const triggerChangeRef = React.useRef(false);
+}: React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Root>) {
+  const animation = useOverlayAnimationGuard();
   const triggerRef = React.useRef<HTMLButtonElement | null>(null);
   const context = React.useMemo<DropdownMenuAnimationContextValue>(
     () => ({
       ...animation,
       triggerRef,
-      beginTriggerTransition: () => {
-        triggerChangeRef.current = true;
-        animation.beginTransition();
-      },
+      beginTriggerTransition: animation.beginTransition,
     }),
     [animation],
   );
   const handleOpenChange = React.useCallback(
     (open: boolean) => {
-      if (triggerChangeRef.current) triggerChangeRef.current = false;
-      else animation.endTransition();
+      animation.beginTransition();
       onOpenChange?.(open);
     },
     [animation, onOpenChange],
@@ -79,9 +65,8 @@ const DropdownMenuTrigger = React.forwardRef<
     return (
       <DropdownMenuPrimitive.Trigger
         {...props}
-        // Modal menus disable pointer events on body while open. Opt the trigger
-        // back in so a real second click still targets it (rather than <html>)
-        // and can be rejected by the animation guard below.
+        // 模态菜单打开时会禁用 body 的指针事件；让触发器继续接收点击，
+        // 才能在动画保护期间拦截第二次点击。
         className={cn("data-[state=open]:pointer-events-auto", className)}
         disabled={disabled}
         ref={setRefs}
@@ -147,13 +132,12 @@ const DropdownMenuSubContent = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.SubContent>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.SubContent>
 >(({ className, ...props }, ref) => {
-  const animation = React.useContext(DropdownMenuAnimationContext);
   return (
     <DropdownMenuPrimitive.SubContent
       ref={ref}
       className={cn(
         "z-[100] min-w-[8rem] rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md",
-        !animation?.reducedMotion && OVERLAY_MOTION_CLASS,
+        OVERLAY_MOTION_CLASS,
         className,
       )}
       {...props}
@@ -168,31 +152,20 @@ const DropdownMenuContent = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Content>
 >(
   (
-    {
-      className,
-      sideOffset = 4,
-      onAnimationEnd,
-      onPointerDownOutside,
-      ...props
-    },
+    { className, sideOffset = 4, onPointerDownOutside, ...props },
     forwardedRef,
   ) => {
     const animation = React.useContext(DropdownMenuAnimationContext);
-    const setRefs = useOverlayAnimationRef(animation, forwardedRef);
     return (
       <DropdownMenuPrimitive.Portal>
         <DropdownMenuPrimitive.Content
-          ref={setRefs}
+          ref={forwardedRef}
           sideOffset={sideOffset}
           className={cn(
             "z-[100] min-w-[8rem] overflow-hidden rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md",
-            !animation?.reducedMotion && OVERLAY_MOTION_CLASS,
+            OVERLAY_MOTION_CLASS,
             className,
           )}
-          onAnimationEnd={(event) => {
-            onAnimationEnd?.(event);
-            finishOverlayAnimation(animation, event);
-          }}
           onPointerDownOutside={(event) => {
             onPointerDownOutside?.(event);
             const target = event.target;
@@ -202,9 +175,8 @@ const DropdownMenuContent = React.forwardRef<
               target instanceof Node &&
               animation.triggerRef.current?.contains(target)
             ) {
-              // DismissableLayer observes pointerdown at document level after
-              // the trigger handler, so the trigger's preventDefault alone
-              // cannot stop this outside-dismiss path.
+              // DismissableLayer 在文档层处理指针按下事件，
+              // 仅在触发器上阻止默认行为仍可能触发外部点击关闭。
               event.preventDefault();
             }
           }}
