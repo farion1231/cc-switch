@@ -893,6 +893,17 @@
     "skipClaudeOnboarding": "Claude Code 첫 실행 확인 건너뛰기",
     "skipClaudeOnboardingDescription": "처음 실행 시 Claude Code는 테마를 선택하고 Anthropic 계정에 로그인하라는 온보딩 흐름을 실행합니다. 타사 공급자를 사용하는 경우 해당 로그인이 필요하지 않으므로 이 기능을 켜면 바로 건너뜁니다. hasCompletedOnboarding: true를 ~/.claude.json에 작성하여 작동합니다. 끄면 해당 필드가 제거되고 다음 실행 시 온보딩이 다시 나타납니다.",
     "codexAuth": "Codex 앱 개선",
+    "codexQuotaProtection": {
+      "title": "공식 할당량 보호",
+      "help": "두 사용률 중 하나라도 임계값에 도달하면 새로운 공식 요청을 일시 중지하며, 타사 모델은 계속 사용할 수 있습니다. CC Switch의 로컬 라우팅을 거치는 Codex 공식 요청에만 적용됩니다. 사용률은 공식 응답에 포함된 할당량 정보에서 읽으므로 일반적인 사용 중에는 추가 요청이 발생하지 않습니다. 처음 사용하거나 약 5분 동안 사용하지 않은 뒤에는 할당량을 먼저 별도로 조회합니다. 네트워크 문제나 로그인 만료 등으로 할당량을 확인할 수 없으면 요청을 차단하지 않고 평소대로 허용합니다. 이미 허용된 요청이나 다른 앱의 사용으로 인해 임계값을 초과할 수 있습니다. 요청이 일시 중지된 동안에는 일반 할당량이 소진되어도 Luna Reserve가 활성화되지 않습니다.",
+      "thresholds": "공식 요청을 일시 중지할 사용률 기준",
+      "fiveHour": "5시간 사용률 (%)",
+      "weekly": "주간 사용률 (%)",
+      "save": "임계값 저장",
+      "reset": "기본값 복원",
+      "hint": "두 사용률 중 하나라도 임계값에 도달하면 요청을 일시 중지합니다. 기본값은 95% / 98%이며, 저장하면 새 요청에 즉시 적용됩니다.",
+      "invalid": "1~99 사이의 정수를 입력하세요."
+    },
     "preserveCodexOfficialAuthOnSwitch": "직접 연결 전환 시 공식 로그인 유지",
     "preserveCodexOfficialAuthOnSwitchDescription": "라우팅이 앱 설정을 관리하지 않는 상태에서 타사 공급자로 전환할 때 Codex 공식 로그인을 유지할지 정합니다. 라우팅이 앱 설정을 관리하는 동안에는 항상 공식 로그인을 유지합니다.",
     "unifyCodexSessionHistory": "Codex 세션 기록 통합",
@@ -1685,7 +1696,6 @@
       "alltokens_si": "AllTokens SI는 안정성과 정직성을 바탕으로 구축되었으며 기업용 AI 토큰 릴레이 및 팀 협업 플랫폼입니다. 구성원, 키, 사용량 및 잔액은 모두 하나의 회사 콘솔에 있으며 명확한 권한과 지출 한도를 통해 팀 사용량을 추적하고 제어할 수 있습니다.",
       "openmodel": "OpenModel은 지원되는 모델 전반에 걸쳐 Codex의 경우 최대 90%, Claude Code의 경우 최대 60%의 클라이언트별 할인을 제공합니다. 이 링크를 통해 등록하고 프로모션 코드 \"cc-switch\"를 사용하는 CC Switch 사용자는 첫 충전 시 10% 할인을 받습니다!",
       "grooroute": "GrooRoute Pro는 OpenAI, Claude, DeepSeek 등 주요 모델을 지원하는 안정적인 AI API 중계 플랫폼으로, 종량제와 구독 요금제를 제공합니다. CC Switch 사용자는 이 링크로 가입하면 체험 크레딧 5위안을 무료로 받을 수 있습니다!",
-      "dit": "같은 모델을 더 저렴하게 이용하세요. OpenAI 호환 API 하나로 GPT, Claude, Gemini 등 50개 이상의 모델을 호출하고, 160개 이상의 공급자 중 가격 대비 성능이 가장 좋은 곳으로 요청을 보냅니다. 요금은 일반적으로 공식 가격보다 30~70% 저렴합니다. Base URL과 API Key만 바꾸면 기존 기술 스택을 그대로 유지하면서 사용할 수 있습니다. CC Switch 사용자는 이 링크로 가입하고 프로모션 코드 \"cc-switch\"를 사용하면 신규 가입 후 첫 충전 시 30% 할인을 받을 수 있습니다!",
       "buytoken": "BuyToken은 Claude Code, Codex, DeepSeek 등의 중계 서비스를 제공하며 기업용 동시 처리와 빠른 세금계산서 발행을 지원합니다. 안정적이고 장기적인 서비스 운영을 지향합니다. CC Switch 사용자는 이 링크로 가입하면 체험 크레딧 3위안과 첫 충전 10% 할인을 받을 수 있습니다!",
       "vapi": "V-API는 3년간 운영해 온 브랜드로, 개인·개발자·기업에 안정적이고 빠르며 안전한 LLM API 서비스를 제공합니다. 계약 체결과 중국의 정식 세금계산서 발행(일반/전용 부가가치세)을 지원합니다. CC Switch 사용자는 이 링크로 가입하면 첫 주문에서 2위안 즉시 할인과 10% 할인을 받을 수 있습니다!",
       "ospreyai": "ACS OspreyAI는 개발자와 기업을 위한 통합 멀티 모델 API 서비스 플랫폼입니다. API 키 하나로 Claude, Gemini, GPT, GLM, Kimi, Qwen, DeepSeek, Tencent Hunyuan 등 중국과 그 밖의 국가에서 제공하는 주요 모델을 사용할 수 있습니다. OpenAI, Anthropic 등 주요 API 프로토콜과 호환되며, Claude Code, Codex, OpenCode, Pi, Hermes 등 널리 쓰이는 AI 도구에서도 사용할 수 있습니다. 공식 가격 대비 중국 외 국가의 모델은 20~40%, 중국 모델은 30~50% 저렴하게 이용할 수 있습니다. 충전과 청구를 통합 관리하고, 사용량을 조회하며, 모델을 유연하게 전환할 수 있어 AI 앱 개발, 콘텐츠 제작 및 워크플로 자동화에 적합합니다. 이 링크로 계정을 만들면 할인 혜택을 받고 중국과 그 밖의 국가에서 제공하는 주요 모델을 빠르게 이용할 수 있습니다."
@@ -2046,6 +2056,10 @@
     "subagentReasoningEffortDefault": "기본 수준",
     "subagentModelHint": "Codex 서브에이전트가 기본으로 사용할 모델과 추론 수준입니다. 비워 두면 주 에이전트의 설정을 따르며, 모델만 입력하면 해당 모델의 기본 추론 수준을 사용합니다. 통합 모드에서는 적용되지 않고 통합 탭 설정의 서브에이전트 모델을 사용합니다.",
     "subagentModelNotInCatalog": "이 모델은 모델 목록에 없습니다. Codex는 컨텍스트 창을 가져올 수 없으며 라우팅이 요청을 Chat 또는 Anthropic 프로토콜로 변환할 때 기본 모델로 대체됩니다.",
+    "agentMaxThreadsLabel": "서브에이전트 동시 실행 한도",
+    "agentMaxThreadsHint": "하나의 Codex 세션에서 동시에 실행할 수 있는 서브에이전트의 최대 수입니다. 주 에이전트는 포함하지 않으며, 공급자를 전환해도 유지됩니다. 비워 두면 Codex 기본값을 사용합니다(기존 서브에이전트 도구는 6개, 새 도구는 3개). 최솟값은 1이며 무제한으로 설정할 수 없습니다. 새 대화부터 적용됩니다.",
+    "agentMaxThreadsPlaceholder": "비워 두면 Codex 기본값 사용",
+    "agentMaxThreadsV2Override": "config.toml의 [features.multi_agent_v2]에 주 에이전트를 포함한 총수가 {{total}}개로 설정되어 있습니다. 새 서브에이전트 도구를 사용할 때는 이 값이 적용됩니다.",
     "autoReviewModelLabel": "자동 승인 모델",
     "autoReviewModelHint": "자동 승인(Approve for me)이 켜져 있을 때 작업 허용 여부를 판단하는 모델입니다. 승인 요청도 주 대화와 같은 공급자로 보내므로 이 카드의 모델 목록에서만 선택할 수 있습니다. 통합 모드에서는 적용되지 않고 통합 탭 설정의 자동 승인 모델을 사용합니다. 변경 후 Codex를 다시 시작하세요.",
     "autoReviewModelCodexDefault": "Codex 기본값(codex-auto-review)",
@@ -2185,6 +2199,7 @@
     "universalDetail": "Claude Code, Codex, Gemini CLI에 동기화됨",
     "manageUniversal": "기존 범용 공급자 관리 ›",
     "loginWith": {
+      "deepseek": "DeepSeek 계정으로 로그인",
       "kimi": "Kimi 계정으로 로그인",
       "claude": "Claude 계정으로 로그인",
       "chatgpt": "ChatGPT 계정으로 로그인",
@@ -2459,6 +2474,17 @@
       "title": "표시",
       "currency": "통화",
       "rate": "환율",
+      "rateSource": "환율 출처",
+      "rateSources": {
+        "auto": "자동 (매일)",
+        "manual": "수동 입력"
+      },
+      "rateAutoHint": "하루에 한 번 자동으로 가져오며, 표시 금액을 환산하는 데만 사용합니다. 비용은 계속 USD로 기록됩니다.",
+      "rateAutoUpdated": "마지막 업데이트: {{time}}",
+      "rateAutoNever": "아직 환율을 가져오지 않았습니다",
+      "rateAutoFailed": "새 환율을 가져오지 못해 이전 환율을 사용합니다.",
+      "rateAttribution": "환율 제공: {{provider}}",
+      "rateRefresh": "지금 업데이트",
       "rateHint": "표시에 사용할 환율을 직접 입력하세요. 비용은 계속 USD로 기록됩니다.",
       "rateInvalid": "0보다 큰 숫자를 입력하세요.",
       "approxNote": "변환된 금액에 마우스를 올리면 USD 가치를 확인할 수 있습니다.",
@@ -2865,6 +2891,9 @@
       "tomlInvalid": "잘못된 TOML 형식",
       "commandRequired": "명령어를 입력해 주세요.",
       "singleServerObjectRequired": "단일 MCP 서버 객체를 붙여 넣으세요(최상위 mcpServers는 제외).",
+      "piSseUnsupported": "Pi는 SSE 방식의 MCP 서버를 지원하지 않습니다. 대신 HTTP(Streamable HTTP)를 사용하세요.",
+      "piInvalidName": "Pi MCP 서버 이름에는 영문자, 숫자, _ 및 -만 사용할 수 있습니다: {{id}}",
+      "piNameConflict": "Pi는 -와 _만 다른 서버 이름을 같은 이름으로 처리합니다. {{id}}이(가) 기존 {{other}}와(과) 충돌합니다.",
       "saveFailed": "저장 실패",
       "deleteFailed": "삭제 실패"
     },
@@ -4575,6 +4604,15 @@
     }
   },
   "mcpPage": {
+    "checkConnectivity": "연결 상태 확인",
+    "testConnection": "연결 테스트",
+    "connection": {
+      "unchecked": "확인하지 않음",
+      "connected": "연결 성공",
+      "disconnected": "연결 실패",
+      "checking": "연결 확인 중",
+      "disabled": "활성화되지 않음"
+    },
     "noun": "MCP 서버",
     "listSeparator": ", ",
     "helpTitle": "MCP의 동기화 방법",
@@ -4599,7 +4637,7 @@
     "noMatch": "이름, 명령 또는 URL이 검색어와 일치하는 MCP 서버가 없습니다: \"{{query}}\"",
     "clearSearch": "검색 지우기",
     "listLabel": "MCP 서버 목록",
-    "notEnabled": "꺼짐",
+    "notEnabled": "활성화되지 않음",
     "rowFail": "{{apps}}에 저장 실패",
     "rowRetryAria": "{{id}}을(를) {{apps}}에 다시 저장",
     "editAria": "{{id}} 편집",
@@ -4841,7 +4879,7 @@
       "help": "예. 마지막 선택이 기본값으로 저장됩니다. 설치됨 화면에서 언제든지 바꿀 수 있습니다. ZIP에서 설치하거나 백업에서 복원할 때도 이 선택을 사용합니다."
     },
     "discover": {
-      "searchPlaceholder": "스킬 또는 저장소 검색",
+      "searchPlaceholder": "이름, 설명 또는 저장소 검색",
       "searchAria": "탐색에서 스킬 검색",
       "skillsShPlaceholder": "2자 이상 입력한 후 Enter를 누르세요",
       "skillsShAria": "skills.sh 검색",
@@ -4849,7 +4887,7 @@
       "skillsShNone": "skills.sh에서 “{{query}}”에 대한 결과가 없습니다",
       "sourceAria": "탐색 출처",
       "sourceRepos": "저장소 · {{count}}개",
-      "reload": "저장소 다시 불러오기",
+      "reload": "저장소 새로 고침",
       "listLabel": "설치 가능한 스킬",
       "installed": "설치됨",
       "installedAria": "{{name}}이(가) 앱 {{count}}개에 설치되어 있습니다. 설치됨 화면에서 확인하세요",
@@ -4868,8 +4906,8 @@
       "onlyUninstalled": "미설치 항목만"
     },
     "repos": {
-      "buttonAll": "저장소: 전체",
-      "buttonSome": "저장소: {{total}}개 중 {{count}}개",
+      "buttonAll": "출처: 전체",
+      "buttonSome": "출처: {{total}}개 중 {{count}}개",
       "popoverAria": "탐색에 사용하는 저장소",
       "enableAria": "탐색에서 {{repo}} 사용",
       "disabledShort": "꺼짐",
@@ -4970,7 +5008,11 @@
       "open": "인증 페이지 열기",
       "note": "브라우저에 인증 페이지가 열렸습니다. 완료하면 자동으로 업데이트됩니다. {{service}}의 이용 약관을 확인하세요.",
       "browserNote": "브라우저에 {{service}} 로그인 페이지가 열렸습니다. 로그인 후 접근을 허용하면 자동으로 업데이트됩니다.",
-      "reopen": "로그인 페이지 다시 열기"
+      "reopen": "로그인 페이지 다시 열기",
+      "copyLink": "로그인 링크 복사",
+      "linkCopied": "로그인 링크를 복사했습니다.",
+      "linkNote": "로그인 링크를 복사했습니다. 원하는 브라우저에서 링크를 열고 로그인 후 접근을 허용하면 이 화면이 자동으로 업데이트됩니다.",
+      "linkCodeNote": "로그인 링크를 복사했습니다. 원하는 브라우저에서 링크를 열고 인증 코드를 입력하세요. 완료하면 이 화면이 자동으로 업데이트됩니다. {{service}}의 이용 약관을 확인하세요."
     },
     "toast": {
       "added": "{{service}} 계정을 추가했습니다.",
@@ -5008,6 +5050,10 @@
       "empty": "아직 추가된 Claude 계정이 없습니다. 여러 구독 계정 간에 전환하려면 여기에서 로그인하세요.",
       "removeNote": "CC Switch에 저장된 이 계정의 로그인 정보만 삭제합니다. 다른 곳에서는 로그아웃되지 않으며, Claude Code의 현재 로그인 상태(~/.claude)에도 영향을 주지 않습니다. 이 계정에 연결된 카드는 Claude Code에 현재 로그인된 계정을 사용하도록 변경됩니다.",
       "wslUnsupported": "Claude 설정 디렉터리가 WSL에 있으면 아직 Claude 계정을 추가하거나 전환할 수 없습니다."
+    },
+    "openBrowser": {
+      "title": "로그인 시 브라우저 자동 열기",
+      "description": "이 옵션을 끄면 로그인 링크만 복사되며, 원하는 브라우저에서 직접 열 수 있습니다. 별도의 브라우저 프로필로 여러 계정을 관리할 때 유용합니다."
     }
   },
   "kimi": {
@@ -5059,7 +5105,6 @@
       "title": "Kimi Code 공급자 추가",
       "description": "엔드포인트, API 키 및 모델을 설정합니다. 기존 Kimi 설정은 자동으로 가져옵니다."
     },
-    "deleteSessionHint": "색인과 기록을 함께 업데이트하려면 Kimi Code에서 이 세션을 삭제하세요.",
     "error": {
       "defaultModelInUse": "Kimi Code가 이 공급자의 모델을 사용 중입니다. 먼저 Kimi Code에서 /model로 다른 모델로 전환하세요.",
       "secondaryModelInUse": "Kimi Code의 서브에이전트가 이 공급자의 모델을 사용 중입니다. 먼저 Kimi Code에서 /secondary-model로 변경하세요."
