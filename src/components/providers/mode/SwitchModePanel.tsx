@@ -65,8 +65,6 @@ type ListCallbacks = Pick<
   | "onOpenWebsite"
   | "onOpenTerminal"
   | "onCreate"
-  | "searchOpen"
-  | "onSearchOpenChange"
 >;
 
 interface SwitchModePanelProps extends ListCallbacks {
@@ -127,7 +125,6 @@ export function SwitchModePanel({
 
   // 离开页面再回来、或生效的模式变了，一律落在生效的那格（「查看中」不持久化）
   const [view, setView] = useState<AppMode>(active);
-  const [searchSlot, setSearchSlot] = useState<HTMLDivElement | null>(null);
   useEffect(() => {
     setView(active);
   }, [app, active]);
@@ -603,7 +600,6 @@ export function SwitchModePanel({
             ? () => setStackSettingsOpen(true)
             : undefined
         }
-        searchSlotRef={setSearchSlot}
       />
       <div
         ref={scrollRef}
@@ -623,7 +619,6 @@ export function SwitchModePanel({
           isLoading={isLoading}
           onSwitch={(provider) => void onSwitch(provider)}
           switchMode={switchMode}
-          searchSlot={searchSlot}
         />
       </div>
 

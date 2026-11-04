@@ -5182,5 +5182,25 @@
       "managedHint": "账号在授权中心管理：退出登录后这张卡会自动消失。"
     },
     "deleteSessionHint": "请在 DeepSeek Harness 中删除此会话，以保持原生历史记录一致。"
+  },
+  "globalSearch": {
+    "title": "全局搜索",
+    "trigger": "搜索",
+    "triggerTip": "全局搜索（{{shortcut}}）",
+    "placeholder": "搜索页面、设置、供应商、MCP、Skills、提示词…",
+    "loading": "正在读取…",
+    "empty": "没有匹配“{{query}}”的结果",
+    "more": "还有 {{count}} 项，继续输入以缩小范围",
+    "hintMove": "选择",
+    "hintOpen": "打开",
+    "hintClose": "关闭",
+    "groups": {
+      "pages": "页面",
+      "settings": "设置项",
+      "providers": "供应商",
+      "mcp": "MCP",
+      "skills": "Skills",
+      "prompts": "提示词"
+    }
   }
 }

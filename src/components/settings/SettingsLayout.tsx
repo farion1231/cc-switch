@@ -2,6 +2,14 @@ import type { ReactNode } from "react";
 import { Switch } from "@/components/ui/switch";
 import { HelpTip } from "@/components/ui/help-tip";
 import { cn } from "@/lib/utils";
+import { searchAnchor } from "@/lib/searchReveal";
+
+/** 全局搜索按名称定位设置项：名称是纯文字时自动挂上 `setting:<名称>`。 */
+function settingAnchor(label: ReactNode) {
+  return typeof label === "string" && label
+    ? searchAnchor(`setting:${label}`)
+    : undefined;
+}
 
 /**
  * 设置页的版式（v7）：分节标题 15/600 → 带边框的卡片 → 一行一项，左边名称、右边控件。
@@ -24,7 +32,11 @@ export function SettingsBlock({
   className?: string;
 }) {
   return (
-    <section id={id} className={cn("space-y-3", className)}>
+    <section
+      id={id}
+      className={cn("space-y-3", className)}
+      {...settingAnchor(title)}
+    >
       {(title || actions) && (
         <div className="flex min-h-7 items-center gap-2">
           {title && <h2 className="m-0 text-section text-fg-1">{title}</h2>}
@@ -80,7 +92,7 @@ export function SettingsRow({
 }) {
   const Label = htmlFor ? "label" : "div";
   return (
-    <div className={cn("px-4 py-3", className)}>
+    <div className={cn("px-4 py-3", className)} {...settingAnchor(label)}>
       <div className="flex min-h-[28px] items-center gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1">

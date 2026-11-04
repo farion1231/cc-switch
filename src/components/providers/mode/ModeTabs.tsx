@@ -51,8 +51,6 @@ interface ModeTabsProps {
   onOpenRouteSettings?: () => void;
   /** Codex 聚合页签上的「聚合设置」（子代理模型、经典子代理） */
   onOpenStackSettings?: () => void;
-  /** 供应商搜索框挂在状态行右侧（由列表通过 portal 渲染进来） */
-  searchSlotRef?: (node: HTMLDivElement | null) => void;
 }
 
 /**
@@ -68,7 +66,6 @@ export function ModeTabs({
   failover,
   onOpenRouteSettings,
   onOpenStackSettings,
-  searchSlotRef,
 }: ModeTabsProps) {
   const { t } = useTranslation();
   const indicator = useSlidingIndicator<HTMLDivElement>(
@@ -138,12 +135,6 @@ export function ModeTabs({
       </HelpTip>
 
       <div className="flex-1" />
-      {searchSlotRef && (
-        <div
-          ref={searchSlotRef}
-          className="flex min-w-0 shrink items-center empty:hidden"
-        />
-      )}
 
       {failover && (
         <HoverTip content={t("mode.failover")}>

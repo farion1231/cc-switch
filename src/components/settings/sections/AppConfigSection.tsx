@@ -43,7 +43,7 @@ const DIRECTORY_PLACEHOLDER: Record<DirectoryAppId, string> = {
   omp: "settings.browsePlaceholderOmp",
 };
 
-const DIRECTORY_APPS: DirectoryAppId[] = [
+export const DIRECTORY_APPS: DirectoryAppId[] = [
   "claude",
   "codex",
   "gemini",

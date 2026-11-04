@@ -46,12 +46,12 @@ import {
   translateMcpBackendError,
 } from "@/utils/errorUtils";
 import { cn } from "@/lib/utils";
+import { searchAnchor } from "@/lib/searchReveal";
 import McpFormModal from "./McpFormModal";
 import {
   MatrixCell,
   MatrixColumnHeader,
   MatrixColumnHighlight,
-  MatrixSearch,
   NeutralBadge,
   ompDiscoveryColumnNote,
   resolveBulkScope,
@@ -60,32 +60,6 @@ import {
 import { DisclosureButton, V7ConfirmDialog, V7Dialog } from "./formBits";
 import { summaryOf } from "./mcpDraft";
 import { useVisibleAppIds } from "./useVisibleAppIds";
-
-function getMcpSearchText(id: string, server: McpServer): string {
-  const spec = server.server ?? {};
-  const values: unknown[] = [
-    id,
-    server.id,
-    server.name,
-    server.description,
-    ...(Array.isArray(server.tags) ? server.tags : []),
-    spec.type,
-    spec.command,
-    ...(Array.isArray(spec.args) ? spec.args : []),
-    spec.cwd,
-    spec.url,
-    server.homepage,
-    server.docs,
-    server.source,
-  ];
-
-  // Keep this an explicit allow-list. In particular, env and headers may
-  // contain credentials and must never become part of the searchable text.
-  return values
-    .filter((value): value is string => typeof value === "string")
-    .join("\n")
-    .toLowerCase();
-}
 
 /** 导入时各应用读的用户级配置文件（只用于「读取了哪些文件」的说明） */
 const IMPORT_SOURCE_FILES: Record<
@@ -152,7 +126,6 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [importReport, setImportReport] = useState<ImportReport | null>(null);
   const [importFilesOpen, setImportFilesOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
   const [fails, setFails] = useState<Record<string, WriteFailure>>({});
   /** 整个应用重新同步失败（「重新同步到各应用」或通知条「重试」），不对应某一行 */
   const [appFails, setAppFails] = useState<Partial<Record<McpAppId, string>>>(
@@ -231,19 +204,8 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
     return Object.entries(serversMap);
   }, [serversMap]);
 
-  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
-  const filteredServerEntries = useMemo(() => {
-    if (!normalizedSearchQuery) return serverEntries;
-    return serverEntries.filter(([id, server]) =>
-      getMcpSearchText(id, server).includes(normalizedSearchQuery),
-    );
-  }, [normalizedSearchQuery, serverEntries]);
-
-  const scope = resolveBulkScope(
-    serverEntries,
-    filteredServerEntries,
-    normalizedSearchQuery ? "search" : null,
-  );
+  // 找某一个服务器走全局搜索（⌘K）：列表不再自带搜索框，列头批量总是作用于全部
+  const scope = resolveBulkScope(serverEntries, serverEntries, null);
 
   const noun = t("mcpPage.noun");
 
@@ -688,27 +650,8 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
       <div id="main-content" className="flex min-h-0 flex-1 flex-col">
         {showList && (
           <div className="flex h-14 shrink-0 items-center gap-3 px-6">
-            <MatrixSearch
-              className="w-[320px] min-w-[180px] shrink"
-              value={searchQuery}
-              onValueChange={setSearchQuery}
-              placeholder={t("mcpPage.searchPlaceholder")}
-              ariaLabel={t("mcp.unifiedPanel.searchAriaLabel")}
-              status={
-                normalizedSearchQuery
-                  ? t("appMatrix.found", {
-                      count: filteredServerEntries.length,
-                    })
-                  : ""
-              }
-            />
             <span className="shrink-0 whitespace-nowrap text-caption tabular-nums text-fg-2">
-              {normalizedSearchQuery
-                ? t("mcpPage.countFiltered", {
-                    shown: filteredServerEntries.length,
-                    count: serverEntries.length,
-                  })
-                : t("mcpPage.count", { count: serverEntries.length })}
+              {t("mcpPage.count", { count: serverEntries.length })}
             </span>
             <span className="ms-auto min-w-0 truncate text-caption text-fg-2">
               {t("mcpPage.overwriteNote")}
@@ -843,257 +786,242 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                     <span aria-hidden="true" className="w-16 shrink-0" />
                   </div>
 
-                  {filteredServerEntries.length === 0 ? (
-                    <div className="flex flex-col items-center gap-3 px-6 py-8 text-center">
-                      <span className="text-body text-fg-2">
-                        {t("mcpPage.noMatch", { query: searchQuery.trim() })}
-                      </span>
-                      <Button
-                        type="button"
-                        variant="neutral"
-                        size="regular"
-                        onClick={() => setSearchQuery("")}
-                      >
-                        {t("mcpPage.clearSearch")}
-                      </Button>
-                    </div>
-                  ) : (
-                    <ul
-                      aria-label={t("mcpPage.listLabel")}
-                      className="m-0 list-none p-0"
-                    >
-                      {filteredServerEntries.map(([id, server], index) => {
-                        const enabled = MCP_APP_IDS.some(
-                          (app) => server.apps[app],
-                        );
-                        const connection = enabled
-                          ? (connectivity.states[id] ?? "unchecked")
-                          : "disabled";
-                        const rowFailedApps = appIds.filter(
-                          (app) => fails[failKey(id, app)],
-                        );
-                        const summary = summaryOf(server.server);
-                        const failedNames = rowFailedApps
-                          .map((app) => APP_DISPLAY_NAME[app])
-                          .join(listSeparator);
-                        const hasDocs = Boolean(
-                          server.docs ||
-                            server.homepage ||
-                            mcpPresets.find((item) => item.id === id)?.docs,
-                        );
-                        const displayName = server.name?.trim() || id;
-                        const hasCustomName = Boolean(
-                          server.name?.trim() && server.name.trim() !== id,
-                        );
-                        return (
-                          <li
-                            key={id}
-                            onClick={() => openEdit(id)}
-                            className={cn(
-                              "flex h-14 cursor-pointer items-center pe-2 ps-4 transition-colors duration-150 hover:bg-subtle",
-                              index > 0 && "border-t border-border",
-                            )}
-                          >
-                            <div className="flex min-w-0 flex-1 flex-col pe-3">
-                              <div className="flex min-w-0 items-center gap-1.5">
-                                <span
-                                  role="img"
-                                  aria-label={t(
-                                    `mcpPage.connection.${connection}`,
-                                  )}
-                                  title={t(`mcpPage.connection.${connection}`)}
-                                  className={cn(
-                                    "h-2 w-2 shrink-0 rounded-full",
-                                    connection === "connected"
-                                      ? "bg-success"
-                                      : connection === "disconnected"
-                                        ? "bg-danger"
-                                        : connection === "checking"
-                                          ? "animate-pulse bg-fg-3"
-                                          : "bg-fg-3",
-                                  )}
-                                />
-                                <span
-                                  title={displayName}
-                                  className="min-w-0 truncate text-body font-medium"
-                                >
-                                  {displayName}
-                                </span>
-                                {hasCustomName && (
-                                  <span
-                                    title={id}
-                                    className="min-w-0 shrink truncate font-mono text-caption text-fg-3"
-                                  >
-                                    {id}
-                                  </span>
+                  <ul
+                    aria-label={t("mcpPage.listLabel")}
+                    className="m-0 list-none p-0"
+                  >
+                    {serverEntries.map(([id, server], index) => {
+                      const enabled = MCP_APP_IDS.some(
+                        (app) => server.apps[app],
+                      );
+                      const connection = enabled
+                        ? (connectivity.states[id] ?? "unchecked")
+                        : "disabled";
+                      const rowFailedApps = appIds.filter(
+                        (app) => fails[failKey(id, app)],
+                      );
+                      const summary = summaryOf(server.server);
+                      const failedNames = rowFailedApps
+                        .map((app) => APP_DISPLAY_NAME[app])
+                        .join(listSeparator);
+                      const hasDocs = Boolean(
+                        server.docs ||
+                          server.homepage ||
+                          mcpPresets.find((item) => item.id === id)?.docs,
+                      );
+                      const displayName = server.name?.trim() || id;
+                      const hasCustomName = Boolean(
+                        server.name?.trim() && server.name.trim() !== id,
+                      );
+                      return (
+                        <li
+                          key={id}
+                          {...searchAnchor(`mcp:${id}`)}
+                          onClick={() => openEdit(id)}
+                          className={cn(
+                            "flex h-14 cursor-pointer items-center pe-2 ps-4 transition-colors duration-150 hover:bg-subtle",
+                            index > 0 && "border-t border-border",
+                          )}
+                        >
+                          <div className="flex min-w-0 flex-1 flex-col pe-3">
+                            <div className="flex min-w-0 items-center gap-1.5">
+                              <span
+                                role="img"
+                                aria-label={t(
+                                  `mcpPage.connection.${connection}`,
                                 )}
-                                {!enabled && (
-                                  <NeutralBadge>
-                                    {t("mcpPage.notEnabled")}
-                                  </NeutralBadge>
+                                title={t(`mcpPage.connection.${connection}`)}
+                                className={cn(
+                                  "h-2 w-2 shrink-0 rounded-full",
+                                  connection === "connected"
+                                    ? "bg-success"
+                                    : connection === "disconnected"
+                                      ? "bg-danger"
+                                      : connection === "checking"
+                                        ? "animate-pulse bg-fg-3"
+                                        : "bg-fg-3",
                                 )}
-                              </div>
-                              <div className="flex min-w-0 items-center text-caption text-fg-2">
+                              />
+                              <span
+                                title={displayName}
+                                className="min-w-0 truncate text-body font-medium"
+                              >
+                                {displayName}
+                              </span>
+                              {hasCustomName && (
                                 <span
-                                  title={summary}
-                                  className="min-w-0 truncate font-mono"
+                                  title={id}
+                                  className="min-w-0 shrink truncate font-mono text-caption text-fg-3"
                                 >
-                                  {summary}
+                                  {id}
                                 </span>
-                                {rowFailedApps.length > 0 && (
-                                  <span className="ms-2.5 shrink-0 whitespace-nowrap text-warning-text">
-                                    {t("mcpPage.rowFail", {
+                              )}
+                              {!enabled && (
+                                <NeutralBadge>
+                                  {t("mcpPage.notEnabled")}
+                                </NeutralBadge>
+                              )}
+                            </div>
+                            <div className="flex min-w-0 items-center text-caption text-fg-2">
+                              <span
+                                title={summary}
+                                className="min-w-0 truncate font-mono"
+                              >
+                                {summary}
+                              </span>
+                              {rowFailedApps.length > 0 && (
+                                <span className="ms-2.5 shrink-0 whitespace-nowrap text-warning-text">
+                                  {t("mcpPage.rowFail", {
+                                    apps: failedNames,
+                                  })}
+                                  {" · "}
+                                  <button
+                                    type="button"
+                                    className="font-medium underline underline-offset-[3px]"
+                                    aria-label={t("mcpPage.rowRetryAria", {
+                                      id,
                                       apps: failedNames,
                                     })}
-                                    {" · "}
-                                    <button
-                                      type="button"
-                                      className="font-medium underline underline-offset-[3px]"
-                                      aria-label={t("mcpPage.rowRetryAria", {
-                                        id,
-                                        apps: failedNames,
-                                      })}
-                                      disabled={controlsDisabled}
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        const app = rowFailedApps[0];
-                                        void writeOne(
-                                          id,
-                                          app,
-                                          fails[failKey(id, app)].desired,
-                                        );
-                                      }}
-                                    >
-                                      {t("common.retry")}
-                                    </button>
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                            <div className="flex shrink-0">
-                              {appIds.map((app) => {
-                                const failure = fails[failKey(id, app)];
-                                const on = Boolean(server.apps[app]);
-                                const state = failure
-                                  ? "fail"
-                                  : on
-                                    ? "on"
-                                    : "off";
-                                return (
-                                  <MatrixCell
-                                    key={app}
-                                    app={app}
-                                    state={state}
                                     disabled={controlsDisabled}
-                                    label={t(`appMatrix.cell.${state}`, {
-                                      name: id,
-                                      app: APP_DISPLAY_NAME[app],
-                                    })}
-                                    onClick={() =>
-                                      handleCellClick(id, server, app)
-                                    }
-                                  />
-                                );
-                              })}
-                            </div>
-                            <div
-                              className="flex w-16 shrink-0 justify-end gap-1"
-                              onClick={(event) => event.stopPropagation()}
-                            >
-                              <HoverTip content={t("common.edit")}>
-                                <Button
-                                  type="button"
-                                  variant="quiet"
-                                  size="icon-compact"
-                                  aria-label={t("mcpPage.editAria", { id })}
-                                  disabled={controlsDisabled}
-                                  onClick={() => openEdit(id)}
-                                >
-                                  <Pencil
-                                    className="h-[15px] w-[15px]"
-                                    strokeWidth={1.5}
-                                  />
-                                </Button>
-                              </HoverTip>
-                              <DropdownMenu>
-                                <HoverTip content={t("common.more")}>
-                                  <DropdownMenuTrigger asChild>
-                                    <Button
-                                      type="button"
-                                      variant="quiet"
-                                      size="icon-compact"
-                                      aria-label={t("mcpPage.rowMoreAria", {
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      const app = rowFailedApps[0];
+                                      void writeOne(
                                         id,
-                                      })}
-                                      disabled={controlsDisabled}
-                                    >
-                                      <MoreHorizontal
-                                        className="h-[15px] w-[15px]"
-                                        strokeWidth={1.5}
-                                      />
-                                    </Button>
-                                  </DropdownMenuTrigger>
-                                </HoverTip>
-                                <DropdownMenuContent
-                                  align="end"
-                                  className="min-w-[200px]"
-                                >
-                                  {enabled && (
-                                    <DropdownMenuItem
-                                      disabled={connection === "checking"}
-                                      onSelect={() =>
-                                        connectivity.checkServer(id)
-                                      }
-                                    >
-                                      {t("mcpPage.testConnection")}
-                                    </DropdownMenuItem>
-                                  )}
-                                  <DropdownMenuItem
-                                    onSelect={() =>
-                                      void copyJson(
-                                        { [id]: server },
-                                        t("mcpPage.toast.copiedOne", { id }),
-                                      )
-                                    }
+                                        app,
+                                        fails[failKey(id, app)].desired,
+                                      );
+                                    }}
                                   >
-                                    {t("mcpPage.copyJson")}
-                                  </DropdownMenuItem>
-                                  {hasDocs && (
-                                    <DropdownMenuItem
-                                      onSelect={() => void openDocs(server, id)}
-                                    >
-                                      {t("mcpPage.openDocs")}
-                                    </DropdownMenuItem>
-                                  )}
-                                  <DropdownMenuItem
-                                    onSelect={() =>
-                                      void handleRowAll(id, server, true)
-                                    }
-                                  >
-                                    {t("mcpPage.enableEverywhere")}
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    onSelect={() =>
-                                      void handleRowAll(id, server, false)
-                                    }
-                                  >
-                                    {t("mcpPage.disableEverywhere")}
-                                  </DropdownMenuItem>
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuItem
-                                    className="text-danger-text focus:text-danger-text"
-                                    onSelect={() => setDeleteId(id)}
-                                  >
-                                    {t("mcpPage.deleteEllipsis")}
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
+                                    {t("common.retry")}
+                                  </button>
+                                </span>
+                              )}
                             </div>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  )}
+                          </div>
+                          <div className="flex shrink-0">
+                            {appIds.map((app) => {
+                              const failure = fails[failKey(id, app)];
+                              const on = Boolean(server.apps[app]);
+                              const state = failure
+                                ? "fail"
+                                : on
+                                  ? "on"
+                                  : "off";
+                              return (
+                                <MatrixCell
+                                  key={app}
+                                  app={app}
+                                  state={state}
+                                  disabled={controlsDisabled}
+                                  label={t(`appMatrix.cell.${state}`, {
+                                    name: id,
+                                    app: APP_DISPLAY_NAME[app],
+                                  })}
+                                  onClick={() =>
+                                    handleCellClick(id, server, app)
+                                  }
+                                />
+                              );
+                            })}
+                          </div>
+                          <div
+                            className="flex w-16 shrink-0 justify-end gap-1"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <HoverTip content={t("common.edit")}>
+                              <Button
+                                type="button"
+                                variant="quiet"
+                                size="icon-compact"
+                                aria-label={t("mcpPage.editAria", { id })}
+                                disabled={controlsDisabled}
+                                onClick={() => openEdit(id)}
+                              >
+                                <Pencil
+                                  className="h-[15px] w-[15px]"
+                                  strokeWidth={1.5}
+                                />
+                              </Button>
+                            </HoverTip>
+                            <DropdownMenu>
+                              <HoverTip content={t("common.more")}>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    type="button"
+                                    variant="quiet"
+                                    size="icon-compact"
+                                    aria-label={t("mcpPage.rowMoreAria", {
+                                      id,
+                                    })}
+                                    disabled={controlsDisabled}
+                                  >
+                                    <MoreHorizontal
+                                      className="h-[15px] w-[15px]"
+                                      strokeWidth={1.5}
+                                    />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                              </HoverTip>
+                              <DropdownMenuContent
+                                align="end"
+                                className="min-w-[200px]"
+                              >
+                                {enabled && (
+                                  <DropdownMenuItem
+                                    disabled={connection === "checking"}
+                                    onSelect={() =>
+                                      connectivity.checkServer(id)
+                                    }
+                                  >
+                                    {t("mcpPage.testConnection")}
+                                  </DropdownMenuItem>
+                                )}
+                                <DropdownMenuItem
+                                  onSelect={() =>
+                                    void copyJson(
+                                      { [id]: server },
+                                      t("mcpPage.toast.copiedOne", { id }),
+                                    )
+                                  }
+                                >
+                                  {t("mcpPage.copyJson")}
+                                </DropdownMenuItem>
+                                {hasDocs && (
+                                  <DropdownMenuItem
+                                    onSelect={() => void openDocs(server, id)}
+                                  >
+                                    {t("mcpPage.openDocs")}
+                                  </DropdownMenuItem>
+                                )}
+                                <DropdownMenuItem
+                                  onSelect={() =>
+                                    void handleRowAll(id, server, true)
+                                  }
+                                >
+                                  {t("mcpPage.enableEverywhere")}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onSelect={() =>
+                                    void handleRowAll(id, server, false)
+                                  }
+                                >
+                                  {t("mcpPage.disableEverywhere")}
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  className="text-danger-text focus:text-danger-text"
+                                  onSelect={() => setDeleteId(id)}
+                                >
+                                  {t("mcpPage.deleteEllipsis")}
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
                 </div>
               </MatrixColumnHighlight>
             </div>

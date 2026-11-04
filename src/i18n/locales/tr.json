@@ -5130,5 +5130,25 @@
       "managedHint": "Hesap Yetkilendirme Merkezi'nde yönetilir; oturumu kapatınca bu kart kendiliğinden kaybolur."
     },
     "deleteSessionHint": "Geçmişin tutarlı kalması için bu oturumu DeepSeek Harness içinde silin."
+  },
+  "globalSearch": {
+    "title": "Genel arama",
+    "trigger": "Ara",
+    "triggerTip": "Genel arama ({{shortcut}})",
+    "placeholder": "Sayfa, ayar, sağlayıcı, MCP, Skills, istem ara…",
+    "loading": "Yükleniyor…",
+    "empty": "\"{{query}}\" için sonuç yok",
+    "more": "{{count}} sonuç daha — daraltmak için yazmaya devam edin",
+    "hintMove": "Seç",
+    "hintOpen": "Aç",
+    "hintClose": "Kapat",
+    "groups": {
+      "pages": "Sayfalar",
+      "settings": "Ayarlar",
+      "providers": "Sağlayıcılar",
+      "mcp": "MCP",
+      "skills": "Skills",
+      "prompts": "İstemler"
+    }
   }
 }

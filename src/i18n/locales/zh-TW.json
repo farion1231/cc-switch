@@ -5183,5 +5183,25 @@
       "managedHint": "帳號在授權中心管理：登出後這張卡會自動消失。"
     },
     "deleteSessionHint": "請在 DeepSeek Harness 中刪除此工作階段，以保持原生歷史記錄一致。"
+  },
+  "globalSearch": {
+    "title": "全域搜尋",
+    "trigger": "搜尋",
+    "triggerTip": "全域搜尋（{{shortcut}}）",
+    "placeholder": "搜尋頁面、設定、供應商、MCP、Skills、提示詞…",
+    "loading": "正在讀取…",
+    "empty": "沒有符合「{{query}}」的結果",
+    "more": "還有 {{count}} 項，繼續輸入以縮小範圍",
+    "hintMove": "選擇",
+    "hintOpen": "開啟",
+    "hintClose": "關閉",
+    "groups": {
+      "pages": "頁面",
+      "settings": "設定項",
+      "providers": "供應商",
+      "mcp": "MCP",
+      "skills": "Skills",
+      "prompts": "提示詞"
+    }
   }
 }
