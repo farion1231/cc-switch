@@ -638,6 +638,24 @@ export const piModelCatalog = {
       maxTokens: 500_000,
     },
   },
+  "xai/grok-4.6": {
+    capabilities: {
+      name: "Grok 4.6",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 500_000,
+      maxTokens: 500_000,
+    },
+  },
+  "xai/grok-4.7": {
+    capabilities: {
+      name: "Grok 4.7",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1_000_000,
+      maxTokens: 500_000,
+    },
+  },
   "xiaomi/mimo-v2.5": {
     capabilities: {
       name: "MiMo-V2.5",
@@ -848,6 +866,15 @@ export const piModelCatalog = {
   "openai/gpt-6-astra": {
     capabilities: {
       name: "GPT-6 Astra",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 272000,
+      maxTokens: 128000,
+    },
+  },
+  "openai/gpt-6.1-terra": {
+    capabilities: {
+      name: "GPT-6.1 Terra",
       reasoning: true,
       input: ["text", "image"],
       contextWindow: 272000,

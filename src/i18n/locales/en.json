@@ -1209,8 +1209,11 @@
         "medium": "Medium",
         "high": "High",
         "xhigh": "Extra high",
-        "max": "Maximum"
+        "max": "Maximum",
+        "ultra": "Ultra"
       },
+      "showAllLevels": "Show all levels",
+      "showPrunedLevels": "Show supported levels only",
       "contextWindow": "Context window",
       "maxTokens": "Max output tokens",
       "compatibility": "Compatibility",

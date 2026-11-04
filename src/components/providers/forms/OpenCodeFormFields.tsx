@@ -193,7 +193,14 @@ function ReasoningEffortsField({
 }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   const offeredCount = Object.keys(efforts).length;
+  const offeredLevels = PI_THINKING_LEVELS.filter((level) => level in efforts);
+  const hasUnsupported =
+    offeredLevels.length < PI_THINKING_LEVELS.length &&
+    offeredLevels.length > 0;
+  const levelsToRender =
+    !showAll && hasUnsupported ? offeredLevels : PI_THINKING_LEVELS;
 
   const toggle = (level: string, offered: boolean) => {
     const next: Record<string, string | null> = {};
@@ -233,7 +240,7 @@ function ReasoningEffortsField({
       </div>
       {expanded && (
         <div className="overflow-hidden rounded-lg border border-border/70 bg-surface">
-          {PI_THINKING_LEVELS.map((level) => {
+          {levelsToRender.map((level) => {
             const offered = level in efforts;
             const value = efforts[level];
             const id = `opencode-${modelKey}-effort-${level}`;
@@ -266,6 +273,21 @@ function ReasoningEffortsField({
               </div>
             );
           })}
+          {hasUnsupported && (
+            <button
+              type="button"
+              onClick={() => setShowAll((prev) => !prev)}
+              className="flex h-8 w-full items-center justify-center border-t border-border/40 text-xs text-fg-3 transition-colors hover:bg-subtle hover:text-fg-1"
+            >
+              {showAll
+                ? t("pi.form.showPrunedLevels", {
+                    defaultValue: "只显示支持档位",
+                  })
+                : t("pi.form.showAllLevels", {
+                    defaultValue: "显示全部档位",
+                  })}
+            </button>
+          )}
         </div>
       )}
     </div>

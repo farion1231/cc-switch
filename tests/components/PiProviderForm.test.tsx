@@ -1674,6 +1674,7 @@ describe("PiProviderForm", () => {
       high: "high",
       xhigh: "xhigh",
       max: null,
+      ultra: null,
     });
   });
 
@@ -2834,6 +2835,7 @@ describe("PiProviderForm", () => {
           high: "high",
           xhigh: null,
           max: null,
+      ultra: null,
         },
       });
       // models.dev 没有这款：留 Pi 默认值，窗口和输出上限由用户自己填。

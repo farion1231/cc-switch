@@ -1210,8 +1210,11 @@
         "medium": "Medium",
         "high": "High",
         "xhigh": "XHigh",
-        "max": "Max"
+        "max": "Max",
+        "ultra": "Ultra"
       },
+      "showAllLevels": "顯示全部檔位",
+      "showPrunedLevels": "只顯示支援檔位",
       "contextWindow": "上下文長度",
       "maxTokens": "最大輸出 Token 數",
       "compatibility": "介面相容性",

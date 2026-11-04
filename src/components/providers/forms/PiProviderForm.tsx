@@ -630,6 +630,9 @@ export function PiProviderForm({
     modelKey: string;
     level: PiThinkingLevel;
   } | null>(null);
+  const [showAllThinkingLevels, setShowAllThinkingLevels] = useState<
+    Record<string, boolean>
+  >({});
   const initialSettingsConfigText = useMemo(
     () =>
       JSON.stringify(
@@ -2011,201 +2014,248 @@ export function PiProviderForm({
                                 </div>
 
                                 {thinkingMapIsExpanded &&
-                                  editableThinkingLevelMap && (
-                                    <div className="overflow-hidden rounded-lg border border-border/70 bg-surface">
-                                      {PI_THINKING_LEVELS.map((level) => {
-                                        const mode = thinkingLevelMode(
-                                          editableThinkingLevelMap,
-                                          level,
-                                        );
-                                        const mappedValue =
-                                          editableThinkingLevelMap[level];
-                                        const popoverOpen =
-                                          editingThinkingLevel?.modelKey ===
-                                            model.key &&
-                                          editingThinkingLevel.level === level;
-                                        return (
-                                          <Popover
-                                            key={level}
-                                            open={popoverOpen}
-                                            onOpenChange={(open) =>
-                                              setEditingThinkingLevel(
-                                                open
-                                                  ? {
-                                                      modelKey: model.key,
-                                                      level,
-                                                    }
-                                                  : null,
-                                              )
-                                            }
-                                          >
-                                            <PopoverTrigger asChild>
-                                              <button
-                                                type="button"
-                                                aria-label={t(
-                                                  "pi.form.editThinkingLevel",
-                                                  {
-                                                    level: t(
-                                                      `pi.form.thinkingLevels.${level}`,
-                                                    ),
-                                                  },
-                                                )}
-                                                className="group flex h-[42px] w-full items-center gap-3 border-b border-border/40 px-4 text-left text-sm transition-colors last:border-b-0 hover:bg-subtle"
-                                              >
-                                                <span className="flex-1">
-                                                  {t(
-                                                    `pi.form.thinkingLevels.${level}`,
-                                                  )}
-                                                </span>
-                                                <span
-                                                  className={
-                                                    mode === "value"
-                                                      ? "max-w-[18rem] truncate text-right font-mono text-xs text-fg-1"
-                                                      : "text-xs text-fg-2"
-                                                  }
-                                                >
-                                                  {mode === "default"
-                                                    ? t(
-                                                        "pi.form.thinkingLevelDefault",
-                                                      )
-                                                    : mode === "unsupported"
-                                                      ? t(
-                                                          "pi.form.thinkingLevelUnsupported",
-                                                        )
-                                                      : mappedValue}
-                                                </span>
-                                                <PopoverAnchor asChild>
-                                                  <span
-                                                    className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-[color,background-color,transform] duration-200 ${
-                                                      popoverOpen
-                                                        ? "translate-x-0.5 bg-primary/10 text-primary"
-                                                        : "text-fg-3 group-hover:translate-x-0.5 group-hover:text-fg-2"
-                                                    }`}
-                                                  >
-                                                    <ChevronRight className="h-3.5 w-3.5" />
-                                                  </span>
-                                                </PopoverAnchor>
-                                              </button>
-                                            </PopoverTrigger>
-                                            <PopoverContent
-                                              side="left"
-                                              align="center"
-                                              sideOffset={10}
-                                              collisionPadding={24}
-                                              sticky="always"
-                                              className="pi-thinking-popover z-[1000] w-72 space-y-3 p-4 shadow-xl"
+                                  editableThinkingLevelMap &&
+                                  (() => {
+                                    const showAll =
+                                      !!showAllThinkingLevels[model.key];
+                                    const supportedLevels =
+                                      PI_THINKING_LEVELS.filter(
+                                        (level) =>
+                                          thinkingLevelMode(
+                                            editableThinkingLevelMap,
+                                            level,
+                                          ) !== "unsupported",
+                                      );
+                                    const hasUnsupported =
+                                      supportedLevels.length <
+                                        PI_THINKING_LEVELS.length &&
+                                      supportedLevels.length > 0;
+                                    const levelsToRender =
+                                      !showAll && hasUnsupported
+                                        ? supportedLevels
+                                        : PI_THINKING_LEVELS;
+
+                                    return (
+                                      <div className="overflow-hidden rounded-lg border border-border/70 bg-surface">
+                                        {levelsToRender.map((level) => {
+                                          const mode = thinkingLevelMode(
+                                            editableThinkingLevelMap,
+                                            level,
+                                          );
+                                          const mappedValue =
+                                            editableThinkingLevelMap[level];
+                                          const popoverOpen =
+                                            editingThinkingLevel?.modelKey ===
+                                              model.key &&
+                                            editingThinkingLevel.level ===
+                                              level;
+                                          return (
+                                            <Popover
+                                              key={level}
+                                              open={popoverOpen}
+                                              onOpenChange={(open) =>
+                                                setEditingThinkingLevel(
+                                                  open
+                                                    ? {
+                                                        modelKey: model.key,
+                                                        level,
+                                                      }
+                                                    : null,
+                                                )
+                                              }
                                             >
-                                              <p className="text-sm font-medium">
-                                                {t(
-                                                  `pi.form.thinkingLevels.${level}`,
-                                                )}
-                                              </p>
-                                              <label className="flex cursor-pointer items-center gap-2.5 text-sm">
-                                                <input
-                                                  type="radio"
-                                                  name={`pi-thinking-level-mode-${model.key}-${level}`}
-                                                  checked={mode === "default"}
-                                                  onChange={() =>
-                                                    updateThinkingLevelMode(
-                                                      model.key,
-                                                      level,
-                                                      "default",
-                                                    )
-                                                  }
-                                                  className="ui-radio"
-                                                />
-                                                {t(
-                                                  "pi.form.thinkingLevelFollowDefault",
-                                                )}
-                                              </label>
-                                              <div className="flex items-center gap-2.5 text-sm">
-                                                <input
-                                                  id={`pi-thinking-level-value-${model.key}-${level}`}
-                                                  type="radio"
-                                                  name={`pi-thinking-level-mode-${model.key}-${level}`}
-                                                  checked={mode === "value"}
+                                              <PopoverTrigger asChild>
+                                                <button
+                                                  type="button"
                                                   aria-label={t(
-                                                    "pi.form.thinkingLevelMapTo",
-                                                  )}
-                                                  onChange={() =>
-                                                    updateThinkingLevelMode(
-                                                      model.key,
-                                                      level,
-                                                      "value",
-                                                    )
-                                                  }
-                                                  className="ui-radio"
-                                                />
-                                                <label
-                                                  htmlFor={`pi-thinking-level-value-${model.key}-${level}`}
-                                                  className="shrink-0 cursor-pointer"
-                                                >
-                                                  {t(
-                                                    "pi.form.thinkingLevelMapTo",
-                                                  )}
-                                                </label>
-                                                <Input
-                                                  value={
-                                                    typeof mappedValue ===
-                                                    "string"
-                                                      ? mappedValue
-                                                      : level
-                                                  }
-                                                  onChange={(event) =>
-                                                    updateThinkingLevelMap(
-                                                      model.key,
-                                                      (map) => ({
-                                                        ...map,
-                                                        [level]:
-                                                          event.target.value,
-                                                      }),
-                                                    )
-                                                  }
-                                                  onFocus={() =>
-                                                    mode !== "value" &&
-                                                    updateThinkingLevelMode(
-                                                      model.key,
-                                                      level,
-                                                      "value",
-                                                    )
-                                                  }
-                                                  aria-label={t(
-                                                    "pi.form.thinkingLevelValue",
+                                                    "pi.form.editThinkingLevel",
                                                     {
                                                       level: t(
                                                         `pi.form.thinkingLevels.${level}`,
                                                       ),
                                                     },
                                                   )}
-                                                  className="h-8 min-w-0 flex-1 font-mono text-xs"
-                                                />
-                                              </div>
-                                              <label className="flex cursor-pointer items-center gap-2.5 text-sm">
-                                                <input
-                                                  type="radio"
-                                                  name={`pi-thinking-level-mode-${model.key}-${level}`}
-                                                  checked={
-                                                    mode === "unsupported"
-                                                  }
-                                                  onChange={() =>
-                                                    updateThinkingLevelMode(
-                                                      model.key,
-                                                      level,
-                                                      "unsupported",
-                                                    )
-                                                  }
-                                                  className="ui-radio"
-                                                />
-                                                {t(
-                                                  "pi.form.thinkingLevelMarkUnavailable",
+                                                  className="group flex h-[42px] w-full items-center gap-3 border-b border-border/40 px-4 text-left text-sm transition-colors last:border-b-0 hover:bg-subtle"
+                                                >
+                                                  <span className="flex-1">
+                                                    {t(
+                                                      `pi.form.thinkingLevels.${level}`,
+                                                    )}
+                                                  </span>
+                                                  <span
+                                                    className={
+                                                      mode === "value"
+                                                        ? "max-w-[18rem] truncate text-right font-mono text-xs text-fg-1"
+                                                        : "text-xs text-fg-2"
+                                                    }
+                                                  >
+                                                    {mode === "default"
+                                                      ? t(
+                                                          "pi.form.thinkingLevelDefault",
+                                                        )
+                                                      : mode === "unsupported"
+                                                        ? t(
+                                                            "pi.form.thinkingLevelUnsupported",
+                                                          )
+                                                        : mappedValue}
+                                                  </span>
+                                                  <PopoverAnchor asChild>
+                                                    <span
+                                                      className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-[color,background-color,transform] duration-200 ${
+                                                        popoverOpen
+                                                          ? "translate-x-0.5 bg-primary/10 text-primary"
+                                                          : "text-fg-3 group-hover:translate-x-0.5 group-hover:text-fg-2"
+                                                      }`}
+                                                    >
+                                                      <ChevronRight className="h-3.5 w-3.5" />
+                                                    </span>
+                                                  </PopoverAnchor>
+                                                </button>
+                                              </PopoverTrigger>
+                                              <PopoverContent
+                                                side="left"
+                                                align="center"
+                                                sideOffset={10}
+                                                collisionPadding={24}
+                                                sticky="always"
+                                                className="pi-thinking-popover z-[1000] w-72 space-y-3 p-4 shadow-xl"
+                                              >
+                                                <p className="text-sm font-medium">
+                                                  {t(
+                                                    `pi.form.thinkingLevels.${level}`,
+                                                  )}
+                                                </p>
+                                                <label className="flex cursor-pointer items-center gap-2.5 text-sm">
+                                                  <input
+                                                    type="radio"
+                                                    name={`pi-thinking-level-mode-${model.key}-${level}`}
+                                                    checked={mode === "default"}
+                                                    onChange={() =>
+                                                      updateThinkingLevelMode(
+                                                        model.key,
+                                                        level,
+                                                        "default",
+                                                      )
+                                                    }
+                                                    className="ui-radio"
+                                                  />
+                                                  {t(
+                                                    "pi.form.thinkingLevelFollowDefault",
+                                                  )}
+                                                </label>
+                                                <div className="flex items-center gap-2.5 text-sm">
+                                                  <input
+                                                    id={`pi-thinking-level-value-${model.key}-${level}`}
+                                                    type="radio"
+                                                    name={`pi-thinking-level-mode-${model.key}-${level}`}
+                                                    checked={mode === "value"}
+                                                    aria-label={t(
+                                                      "pi.form.thinkingLevelMapTo",
+                                                    )}
+                                                    onChange={() =>
+                                                      updateThinkingLevelMode(
+                                                        model.key,
+                                                        level,
+                                                        "value",
+                                                      )
+                                                    }
+                                                    className="ui-radio"
+                                                  />
+                                                  <label
+                                                    htmlFor={`pi-thinking-level-value-${model.key}-${level}`}
+                                                    className="shrink-0 cursor-pointer"
+                                                  >
+                                                    {t(
+                                                      "pi.form.thinkingLevelMapTo",
+                                                    )}
+                                                  </label>
+                                                  <Input
+                                                    value={
+                                                      typeof mappedValue ===
+                                                      "string"
+                                                        ? mappedValue
+                                                        : level
+                                                    }
+                                                    onChange={(event) =>
+                                                      updateThinkingLevelMap(
+                                                        model.key,
+                                                        (map) => ({
+                                                          ...map,
+                                                          [level]:
+                                                            event.target.value,
+                                                        }),
+                                                      )
+                                                    }
+                                                    onFocus={() =>
+                                                      mode !== "value" &&
+                                                      updateThinkingLevelMode(
+                                                        model.key,
+                                                        level,
+                                                        "value",
+                                                      )
+                                                    }
+                                                    aria-label={t(
+                                                      "pi.form.thinkingLevelValue",
+                                                      {
+                                                        level: t(
+                                                          `pi.form.thinkingLevels.${level}`,
+                                                        ),
+                                                      },
+                                                    )}
+                                                    className="h-8 min-w-0 flex-1 font-mono text-xs"
+                                                  />
+                                                </div>
+                                                <label className="flex cursor-pointer items-center gap-2.5 text-sm">
+                                                  <input
+                                                    type="radio"
+                                                    name={`pi-thinking-level-mode-${model.key}-${level}`}
+                                                    checked={
+                                                      mode === "unsupported"
+                                                    }
+                                                    onChange={() =>
+                                                      updateThinkingLevelMode(
+                                                        model.key,
+                                                        level,
+                                                        "unsupported",
+                                                      )
+                                                    }
+                                                    className="ui-radio"
+                                                  />
+                                                  {t(
+                                                    "pi.form.thinkingLevelMarkUnavailable",
+                                                  )}
+                                                </label>
+                                              </PopoverContent>
+                                            </Popover>
+                                          );
+                                        })}
+                                        {hasUnsupported && (
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              setShowAllThinkingLevels(
+                                                (prev) => ({
+                                                  ...prev,
+                                                  [model.key]: !prev[model.key],
+                                                }),
+                                              )
+                                            }
+                                            className="flex h-8 w-full items-center justify-center border-t border-border/40 text-xs text-fg-3 transition-colors hover:bg-subtle hover:text-fg-1"
+                                          >
+                                            {showAll
+                                              ? t(
+                                                  "pi.form.showPrunedLevels",
+                                                  "只显示支持档位",
+                                                )
+                                              : t(
+                                                  "pi.form.showAllLevels",
+                                                  "显示全部档位",
                                                 )}
-                                              </label>
-                                            </PopoverContent>
-                                          </Popover>
-                                        );
-                                      })}
-                                    </div>
-                                  )}
+                                          </button>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
                               </div>
                             )}
                           </div>
