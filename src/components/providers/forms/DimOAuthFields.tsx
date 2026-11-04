@@ -247,7 +247,11 @@ export function DimOAuthFields({
       )}
       {account && models.isSuccess && !available.length && (
         <p role="status" className="text-caption text-fg-2">
-          {t("dimOauth.noCompatibleModels")}
+          {t(
+            appId === "kimi"
+              ? "dimOauth.kimiContextRequired"
+              : "dimOauth.noCompatibleModels",
+          )}
         </p>
       )}
       <p className="text-caption text-fg-2">

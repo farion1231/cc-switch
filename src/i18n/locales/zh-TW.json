@@ -5220,6 +5220,7 @@
     "pricing": "方案價格",
     "manageAccounts": "管理帳號",
     "gateway": "保持 CC Switch 執行。本機託管閘道會自動啟動，無需開啟用戶端路由開關。",
-    "noCompatibleModels": "目前帳號沒有適用於此用戶端的模型。Kimi Code 要求模型明確宣告上下文視窗。"
+    "noCompatibleModels": "目前帳號沒有適用於此用戶端協定的模型。",
+    "kimiContextRequired": "Kimi Code 要求模型同時支援對應協定並明確宣告上下文視窗。"
   }
 }

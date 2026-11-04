@@ -5219,6 +5219,7 @@
     "pricing": "Plan pricing",
     "manageAccounts": "Manage accounts",
     "gateway": "Keep CC Switch running. The managed local gateway starts automatically; no client routing toggle is required.",
-    "noCompatibleModels": "No compatible models are available for this client. Kimi Code requires a declared context window."
+    "noCompatibleModels": "No compatible models are available for this client protocol.",
+    "kimiContextRequired": "Kimi Code requires a compatible model with an explicitly declared context window."
   }
 }

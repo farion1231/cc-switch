@@ -141,6 +141,7 @@ import {
   OPENCODE_DEFAULT_CONFIG,
   OPENCLAW_DEFAULT_CONFIG,
   hasNativeOpencodeDefinition,
+  getOpencodeDeclaredModels,
   isNativeOpencodeConfig,
 } from "./helpers/opencodeFormUtils";
 import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
@@ -1259,7 +1260,10 @@ function ProviderFormFull({
           : usesGeminiStyleForm(appId)
             ? geminiModel
             : appId === "opencode"
-              ? (Object.keys(opencodeForm.opencodeModels)[0] ?? "")
+              ? (getOpencodeDeclaredModels(
+                  providerId ?? opencodeForm.opencodeProviderKey,
+                  initialData?.settingsConfig ?? {},
+                )[0]?.id ?? "")
               : appId === "openclaw"
                 ? (openclawForm.openclawModels[0]?.id ?? "")
                 : (hermesForm.hermesModels[0]?.id ?? ""),
@@ -1296,7 +1300,10 @@ function ProviderFormFull({
         );
       } else if (appId === "opencode") {
         const options = {
-          baseURL: dimBaseUrl(issuer, format),
+          baseURL:
+            format === "anthropic"
+              ? `${issuer}/v1`
+              : dimBaseUrl(issuer, format),
           apiKey: DIM_PLACEHOLDER,
         };
         const models = dimOpenCodeModels(model);

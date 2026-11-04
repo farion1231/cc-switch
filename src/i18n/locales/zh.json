@@ -5219,6 +5219,7 @@
     "pricing": "套餐价格",
     "manageAccounts": "管理账号",
     "gateway": "保持 CC Switch 运行。本地托管网关会自动启动，无需开启客户端路由开关。",
-    "noCompatibleModels": "当前账号没有适用于此客户端的模型。Kimi Code 要求模型明确声明上下文窗口。"
+    "noCompatibleModels": "当前账号没有适用于此客户端协议的模型。",
+    "kimiContextRequired": "Kimi Code 要求模型同时支持对应协议并明确声明上下文窗口。"
   }
 }

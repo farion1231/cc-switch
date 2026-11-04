@@ -580,7 +580,7 @@ describe("DimAgent native sign-in user flow", () => {
     expect(payload.meta.opencodeConfigFormat).toBe("v2");
     expect(JSON.parse(payload.settingsConfig)).toMatchObject({
       package: "@ai-sdk/anthropic",
-      settings: { baseURL: "https://dimagent.cn", apiKey: "PROXY_MANAGED" },
+      settings: { baseURL: "https://dimagent.cn/v1", apiKey: "PROXY_MANAGED" },
       models: { [model.id]: { name: model.name } },
     });
   });
@@ -646,7 +646,7 @@ describe("DimAgent native sign-in user flow", () => {
       />,
     );
     expect(
-      await screen.findByText("dimOauth.noCompatibleModels"),
+      await screen.findByText("dimOauth.kimiContextRequired"),
     ).toBeInTheDocument();
   });
 

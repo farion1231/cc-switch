@@ -5219,6 +5219,7 @@
     "pricing": "プラン料金",
     "manageAccounts": "アカウント管理",
     "gateway": "CC Switch を起動したままにしてください。ローカルゲートウェイは自動的に起動します。クライアントのルーティング切替は不要です。",
-    "noCompatibleModels": "このクライアントに対応するモデルがありません。Kimi Code ではコンテキスト上限の明示が必要です。"
+    "noCompatibleModels": "このクライアントのプロトコルに対応するモデルがありません。",
+    "kimiContextRequired": "Kimi Code には対応プロトコルと明示的なコンテキスト上限を持つモデルが必要です。"
   }
 }
