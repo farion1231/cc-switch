@@ -42,6 +42,8 @@ export interface InstalledSkill {
   name: string;
   description?: string;
   directory: string;
+  /** Present only for device-local linked originals; never stored in cloud metadata. */
+  sourcePath?: string;
   repoOwner?: string;
   repoName?: string;
   repoBranch?: string;
@@ -247,6 +249,19 @@ export const skillsApi = {
     imports: ImportSkillSelection[],
   ): Promise<InstalledSkill[]> {
     return await invoke("import_skills_from_apps", { imports });
+  },
+
+  /** Route an explicitly selected local original, without importing a copy. */
+  async linkSource(
+    path: string,
+    currentApp: AppId,
+    replaceExisting = false,
+  ): Promise<InstalledSkill> {
+    return await invoke("link_skill_source", {
+      path,
+      currentApp,
+      replaceExisting,
+    });
   },
 
   /**

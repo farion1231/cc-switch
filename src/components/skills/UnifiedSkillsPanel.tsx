@@ -1,4 +1,5 @@
 import { createPortal } from "react-dom";
+import { open } from "@tauri-apps/plugin-dialog";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useDelayedFlag } from "@/hooks/useDelayedFlag";
 import { useTranslation } from "react-i18next";
@@ -88,6 +89,7 @@ const failKey = (id: string, app: AppId) => `${id}\u0000${app}`;
 
 type ConfirmState =
   | { kind: "uninstall"; ids: string[] }
+  | { kind: "linkSource"; path: string; name: string }
   | { kind: "updateAll" }
   | { kind: "deleteBackup"; backup: SkillBackupEntry };
 
@@ -573,9 +575,11 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     const options = {
       description:
         piWarning ??
-        (done.length === 1 && backupPath
-          ? t("skills.backup.location", { path: backupPath })
-          : t("skillsPage.toast.backupAt", { path: BACKUP_DIR })),
+        (done.every((skill) => skill.sourcePath)
+          ? t("skillsPage.linkSource.preserved")
+          : done.length === 1 && backupPath
+            ? t("skills.backup.location", { path: backupPath })
+            : t("skillsPage.toast.backupAt", { path: BACKUP_DIR })),
       closeButton: true,
     };
     if (piWarning) toast.warning(text, options);
@@ -697,6 +701,49 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       }),
       { closeButton: true },
     );
+  };
+
+  const handleLinkSource = async (
+    selectedPath?: string,
+    replaceExisting = false,
+  ) => {
+    if (!beginWrite(replaceExisting)) return;
+    try {
+      const path =
+        selectedPath ??
+        (await open({
+          directory: true,
+          multiple: false,
+          title: t("skillsPage.linkSource.select"),
+        }));
+      if (!path) return;
+      const directory = path.split(/[/\\]/).filter(Boolean).pop();
+      const existing = installedSkills.find(
+        (skill) => skill.directory.toLowerCase() === directory?.toLowerCase(),
+      );
+      if (existing && !existing.sourcePath && !replaceExisting) {
+        setConfirm({ kind: "linkSource", path, name: existing.name });
+        return;
+      }
+      setConfirm(null);
+      const { installed, failures } = await installTo(async (firstApp) => [
+        await skillsApi.linkSource(path, firstApp, replaceExisting),
+      ]);
+      await refetch();
+      await scanUnmanaged();
+      if (replaceExisting) await refetchSkillBackups();
+      toast.success(
+        t("skillsPage.linkSource.success", { name: installed[0]?.name }),
+        {
+          closeButton: true,
+        },
+      );
+      reportEnableFailures(failures);
+    } catch (error) {
+      toast.error(t("common.error"), { description: String(error) });
+    } finally {
+      endWrite();
+    }
   };
 
   const handleInstallFromZip = async () => {
@@ -970,6 +1017,9 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => void handleInstallFromZip()}>
                 {t("skillsPage.addMenu.zip")}
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => void handleLinkSource()}>
+                {t("skillsPage.linkSource.menu")}
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => void handleOpenImport()}>
                 <span className="flex-1">{t("skillsPage.addMenu.import")}</span>
@@ -1403,9 +1453,11 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                     fails={fails}
                     disabled={controlsDisabled}
                     sourceText={
-                      skill.repoOwner && skill.repoName
-                        ? `${skill.repoOwner}/${skill.repoName}`
-                        : t("skillsPage.source.local")
+                      skill.sourcePath
+                        ? t("skillsPage.linkSource.label")
+                        : skill.repoOwner && skill.repoName
+                          ? `${skill.repoOwner}/${skill.repoName}`
+                          : t("skillsPage.source.local")
                     }
                     onPick={(checked) =>
                       setSelected((prev) => {
@@ -1636,6 +1688,24 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       </div>
 
       <V7ConfirmDialog
+        open={confirm?.kind === "linkSource"}
+        danger={false}
+        title={t("skillsPage.linkSource.convertTitle", {
+          name: confirm?.kind === "linkSource" ? confirm.name : "",
+        })}
+        body={t("skillsPage.linkSource.convertBody", {
+          path: confirm?.kind === "linkSource" ? confirm.path : "",
+        })}
+        confirmLabel={t("skillsPage.linkSource.convertAction")}
+        pending={writePending}
+        onConfirm={() =>
+          confirm?.kind === "linkSource" &&
+          void handleLinkSource(confirm.path, true)
+        }
+        onCancel={() => setConfirm(null)}
+      />
+
+      <V7ConfirmDialog
         open={confirm?.kind === "uninstall"}
         // 卸载前会备份、能从备份恢复：可恢复操作，不用红色确认键
         danger={false}
@@ -1648,7 +1718,12 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                 count: uninstallTargets.length,
               })
         }
-        body={t("skillsPage.confirm.uninstallBody", { path: BACKUP_DIR })}
+        body={t(
+          uninstallTargets.some((skill) => skill.sourcePath)
+            ? "skillsPage.linkSource.uninstallBody"
+            : "skillsPage.confirm.uninstallBody",
+          { path: BACKUP_DIR },
+        )}
         confirmLabel={
           uninstallTargets.length === 1
             ? t("skills.uninstall")
@@ -1872,7 +1947,10 @@ function InstalledRow({
               {sourceText}
             </button>
           ) : (
-            <span className="shrink-0 text-caption text-fg-3">
+            <span
+              className="shrink-0 text-caption text-fg-3"
+              title={skill.sourcePath}
+            >
               {sourceText}
             </span>
           )}

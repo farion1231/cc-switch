@@ -119,6 +119,16 @@ pub(crate) fn restore_skills_zip(raw: &[u8]) -> Result<(), AppError> {
         let Some(safe_name) = entry.enclosed_name() else {
             continue;
         };
+        // Never materialize a remote copy under a device-local external name.
+        // Its source and host routes are owned outside this archive.
+        if safe_name
+            .components()
+            .next()
+            .and_then(|part| part.as_os_str().to_str())
+            .is_some_and(|name| crate::settings::get_linked_skill_source(name).is_some())
+        {
+            continue;
+        }
         let out_path = extracted.join(safe_name);
         if entry.is_dir() {
             fs::create_dir_all(&out_path).map_err(|e| AppError::io(&out_path, e))?;
@@ -357,6 +367,9 @@ fn zip_dir_recursive(
         let name_str = name.to_string_lossy();
 
         if name_str.starts_with('.') {
+            continue;
+        }
+        if current == root && crate::settings::get_linked_skill_source(&name_str).is_some() {
             continue;
         }
 
