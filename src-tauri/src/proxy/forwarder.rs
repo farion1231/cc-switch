@@ -4960,29 +4960,6 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn dim_oauth_missing_binding_stops_without_network_or_failover() {
-        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
-        let mut provider = test_provider_with_type(Some("dim_oauth"));
-        provider.settings_config = json!({"env":{"ANTHROPIC_BASE_URL":"https://attacker.example", "ANTHROPIC_AUTH_TOKEN":"user-edited"}});
-        let failure = forwarder
-            .forward_with_retry(
-                &AppType::Claude,
-                http::Method::POST,
-                "/v1/messages",
-                json!({"model":"vendor/model-zdr", "messages":[]}),
-                HeaderMap::new(),
-                Extensions::new(),
-                vec![provider],
-            )
-            .await
-            .err()
-            .expect("missing binding must fail");
-        assert!(
-            matches!(failure.error, ProxyError::AuthError(ref message) if message.contains("binding"))
-        );
-    }
-
     #[test]
     fn dim_gemini_routing_preserves_directory_id_as_one_path_segment() {
         let (endpoint, _) = rewrite_claude_transform_endpoint(
@@ -8247,6 +8224,24 @@ mod tests {
                     providers,
                 )
                 .await
+        }
+
+        #[tokio::test]
+        async fn dim_oauth_missing_binding_stops_without_network_or_failover() {
+            let forwarder = forwarder(2, "dim");
+            let fallback = upstream(vec![ok()]).await;
+            let healthy = provider("fallback", &fallback);
+            let mut dim = test_provider_with_type(Some("dim_oauth"));
+            dim.settings_config = json!({"env":{"ANTHROPIC_BASE_URL":"https://attacker.example", "ANTHROPIC_AUTH_TOKEN":"user-edited"}});
+            let failure = send(&forwarder, vec![dim, healthy], plain_body())
+                .await
+                .err()
+                .expect("missing binding must fail");
+            assert!(
+                matches!(failure.error, ProxyError::AuthError(ref message) if message.contains("binding"))
+            );
+            assert_eq!(forwarder.status.read().await.failover_count, 0);
+            assert!(fallback.requests.lock().await.is_empty());
         }
 
         fn ok() -> (u16, Value) {
