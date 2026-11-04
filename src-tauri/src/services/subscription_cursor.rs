@@ -41,6 +41,7 @@ pub struct CursorSession {
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct UsageSummaryResponse {
     billing_cycle_start: Option<serde_json::Value>,
     billing_cycle_end: Option<serde_json::Value>,
@@ -51,6 +52,7 @@ struct UsageSummaryResponse {
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct IndividualUsage {
     plan: Option<PlanUsage>,
     overall: Option<PlanUsage>,
@@ -59,6 +61,7 @@ struct IndividualUsage {
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct TeamUsage {
     pooled: Option<PlanUsage>,
     on_demand: Option<OnDemandUsage>,
@@ -66,6 +69,7 @@ struct TeamUsage {
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct PlanUsage {
     used: Option<f64>,
     limit: Option<f64>,
@@ -76,6 +80,7 @@ struct PlanUsage {
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct OnDemandUsage {
     used: Option<f64>,
     limit: Option<f64>,
@@ -83,6 +88,7 @@ struct OnDemandUsage {
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct RequestUsageResponse {
     #[serde(rename = "gpt-4")]
     gpt_4: Option<Gpt4Usage>,
@@ -91,6 +97,7 @@ struct RequestUsageResponse {
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct Gpt4Usage {
     num_requests: Option<f64>,
     num_requests_total: Option<f64>,
