@@ -44,8 +44,8 @@ impl DimSite {
     }
     fn client_id(self) -> &'static str {
         match self {
-            Self::Cn => "271706aab9b74b15a7140b228a419e4a",
-            Self::Global => "91975f99125f42bc88859100a1769ea4",
+            Self::Cn => "a2503a772c6248418b913c3580ad9e7a",
+            Self::Global => "dee1a0694b4f4335ae15979b37a66d5d",
         }
     }
 }

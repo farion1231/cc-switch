@@ -13,7 +13,7 @@ Add provider -> Account sign-in -> DimAgent
 
 ## Authentication boundary
 
-Two public OAuth clients use S256 PKCE, state, and the registered loopback callback `http://127.0.0.1:54322/oauth/callback`. CN uses `https://dimagent.cn`; Global uses `https://dimagent.com`. The Rust manager owns refresh tokens and private atomic credential storage. IPC returns account summaries only. Cancellation and expiry release the listener. A corrupt credential file reports an actionable initialization error without preventing app startup or overwriting data.
+Two public OAuth clients use S256 PKCE, state, and the registered loopback callback `http://127.0.0.1:54322/oauth/callback`. CN uses `https://dimagent.cn` with client ID `a2503a772c6248418b913c3580ad9e7a`; Global uses `https://dimagent.com` with client ID `dee1a0694b4f4335ae15979b37a66d5d`. The Rust manager owns refresh tokens and private atomic credential storage. IPC returns account summaries only. Cancellation and expiry release the listener. A corrupt credential file reports an actionable initialization error without preventing app startup or overwriting data.
 
 Provider metadata records `providerType: dim_oauth` and `authBinding: { source: managed_account, authProvider: dim_oauth, accountId }`. Every request requires this explicit binding. Removing an account never switches an existing provider to another account. Before URL construction, the proxy resolves the account and pins the upstream origin to its issuer, ignoring editable base URLs and full-URL flags. Live client configurations use proxy placeholders, never managed tokens.
 
