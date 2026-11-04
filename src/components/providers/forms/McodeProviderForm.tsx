@@ -1,3 +1,6 @@
+import { DimOAuthFields } from "./DimOAuthFields";
+import { useDimProvider } from "./hooks/useDimProvider";
+import { dimMcodeConfig } from "@/lib/dimProviderConfig";
 import { useEffect, useState } from "react";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
@@ -139,7 +142,10 @@ export function McodeProviderForm({
     presetId === "custom" || isAccountLogin
       ? undefined
       : presets[Number(presetId)];
-  const category = initialData?.category ?? preset?.category ?? "custom";
+  const category =
+    initialData?.meta?.providerType === "dim_oauth"
+      ? "third_party"
+      : (initialData?.category ?? preset?.category ?? "custom");
   const [extraOptions, setExtraOptions] = useState(
     toOpencodeExtraOptions(config.options ?? {}),
   );
@@ -169,8 +175,19 @@ export function McodeProviderForm({
     },
   });
   const name = form.watch("name");
+  const dim = useDimProvider({
+    appId,
+    enabled:
+      preset?.providerType === "dim_oauth" ||
+      (isEdit && initialData?.meta?.providerType === "dim_oauth"),
+    initialMeta: initialData?.meta,
+    initialModel: Object.keys(config.models ?? {})[0] ?? "",
+    onSelect: (model, format, issuer) =>
+      update(dimMcodeConfig(model, format, issuer)),
+  });
   const ready = Boolean(
     !isAccountLogin &&
+      (!dim.enabled || dim.valid) &&
       jsonValid &&
       name.trim() &&
       (isEdit || (providerKey && !keyInvalid && !keyTaken)) &&
@@ -274,7 +291,7 @@ export function McodeProviderForm({
             await onSubmit({
               ...identity,
               name: identity.name.trim(),
-              meta: initialData?.meta,
+              meta: dim.enabled ? dim.meta : initialData?.meta,
               providerKey: isEdit ? providerId : providerKey,
               presetCategory: category,
               settingsConfig: JSON.stringify({
@@ -344,35 +361,44 @@ export function McodeProviderForm({
               </div>
             }
           />
-          <OpenCodeFormFields
-            modelDialect={appId === "dsh" ? "dsh" : "opencode"}
-            apiFormats={API_FORMATS}
-            presetModelSources={mcodePresetModelSources}
-            npm={config.api ?? "anthropic-messages"}
-            onNpmChange={(api) => update({ ...config, api })}
-            apiKey={config.options?.apiKey ?? ""}
-            onApiKeyChange={(apiKey) => updateOptions({ apiKey })}
-            category={category}
-            shouldShowApiKeyLink={Boolean(preset?.apiKeyUrl)}
-            websiteUrl={preset?.apiKeyUrl ?? ""}
-            isPartner={preset?.isPartner}
-            partnerPromotionKey={preset?.partnerPromotionKey}
-            baseUrl={config.options?.baseURL ?? ""}
-            onBaseUrlChange={(baseURL) => updateOptions({ baseURL })}
-            headers={config.options?.headers ?? {}}
-            onHeadersChange={(headers) => updateOptions({ headers })}
-            models={(config.models ?? {}) as Record<string, OpenCodeModel>}
-            onModelsChange={(models) => update({ ...config, models })}
-            extraOptions={extraOptions}
-            onExtraOptionsChange={(draft) => {
-              setExtraOptions(draft);
-              const options: OpenCodeProviderOptions = {
-                ...(config.options ?? {}),
-              };
-              mergeOpencodeExtraOptionRows(options, draft);
-              update({ ...config, options });
-            }}
-          />
+          {dim.enabled ? (
+            <DimOAuthFields
+              {...dim.fieldsProps}
+              onManageAccounts={() => onManageAuthAccounts?.("dim_oauth")}
+            />
+          ) : (
+            <>
+              <OpenCodeFormFields
+                modelDialect={appId === "dsh" ? "dsh" : "opencode"}
+                apiFormats={API_FORMATS}
+                presetModelSources={mcodePresetModelSources}
+                npm={config.api ?? "anthropic-messages"}
+                onNpmChange={(api) => update({ ...config, api })}
+                apiKey={config.options?.apiKey ?? ""}
+                onApiKeyChange={(apiKey) => updateOptions({ apiKey })}
+                category={category}
+                shouldShowApiKeyLink={Boolean(preset?.apiKeyUrl)}
+                websiteUrl={preset?.apiKeyUrl ?? ""}
+                isPartner={preset?.isPartner}
+                partnerPromotionKey={preset?.partnerPromotionKey}
+                baseUrl={config.options?.baseURL ?? ""}
+                onBaseUrlChange={(baseURL) => updateOptions({ baseURL })}
+                headers={config.options?.headers ?? {}}
+                onHeadersChange={(headers) => updateOptions({ headers })}
+                models={(config.models ?? {}) as Record<string, OpenCodeModel>}
+                onModelsChange={(models) => update({ ...config, models })}
+                extraOptions={extraOptions}
+                onExtraOptionsChange={(draft) => {
+                  setExtraOptions(draft);
+                  const options: OpenCodeProviderOptions = {
+                    ...(config.options ?? {}),
+                  };
+                  mergeOpencodeExtraOptionRows(options, draft);
+                  update({ ...config, options });
+                }}
+              />
+            </>
+          )}
         </fieldset>
         {isNative ? (
           <NativeConfigEditor

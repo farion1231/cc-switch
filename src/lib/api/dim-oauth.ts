@@ -25,6 +25,8 @@ export interface DimModel {
   api_formats: NonNullable<ProviderMeta["apiFormat"]>[];
   efforts: string[];
   zdr: boolean;
+  context_window: number | null;
+  max_output_tokens: number | null;
 }
 export interface DimUsage {
   plan_name: string | null;

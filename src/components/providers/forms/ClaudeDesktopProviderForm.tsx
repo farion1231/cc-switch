@@ -1,3 +1,6 @@
+import { DimOAuthFields } from "./DimOAuthFields";
+import { useDimProvider } from "./hooks/useDimProvider";
+import { DIM_PLACEHOLDER } from "@/lib/dimProviderConfig";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -394,6 +397,28 @@ export function ClaudeDesktopProviderForm({
   );
   const activeProviderType =
     activePreset?.providerType ?? initialData?.meta?.providerType;
+  const dim = useDimProvider({
+    appId: "claude-desktop",
+    enabled: activeProviderType === "dim_oauth",
+    initialMeta: initialData?.meta,
+    initialModel:
+      proxyRoutes[0]?.model ??
+      envString(initialData?.settingsConfig, "ANTHROPIC_MODEL"),
+    onSelect: (model, format, issuer) => {
+      setBaseUrl(issuer);
+      setApiKey(DIM_PLACEHOLDER);
+      setApiFormat(format);
+      setProxyRoutes(
+        normalizeProxyRows(proxyRoutes).map((row) => ({
+          ...row,
+          model: model.id,
+          labelOverride: model.name,
+          supports1m:
+            model.context_window != null && model.context_window >= 1000000,
+        })),
+      );
+    },
+  });
   // Codex/xAI OAuth ignore editable URLs and use fixed backend endpoints.
   const usesAutomaticCopilotFormat =
     activeProviderType === "github_copilot" ||
@@ -412,8 +437,9 @@ export function ClaudeDesktopProviderForm({
     accounts: xaiOauthAccounts,
   } = useXaiOauth();
   const isOfficial =
-    initialData?.category === "official" ||
-    activePreset?.category === "official";
+    !dim.enabled &&
+    (initialData?.category === "official" ||
+      activePreset?.category === "official");
   const usesManagedOAuth =
     activePreset?.requiresOAuth === true ||
     isOAuthProviderType(activeProviderType);
@@ -687,6 +713,10 @@ export function ClaudeDesktopProviderForm({
   };
 
   const handleSubmit = async (values: ProviderFormData) => {
+    if (dim.enabled && !dim.valid) {
+      toast.error(t("dimOauth.selectModel"));
+      return;
+    }
     if (!values.name.trim()) {
       toast.error(
         t("providerForm.fillSupplierName", {
@@ -944,6 +974,11 @@ export function ClaudeDesktopProviderForm({
                 accountId: selectedXaiAccountId ?? undefined,
               }
             : undefined;
+    if (dim.enabled)
+      Object.assign(meta, dim.meta, {
+        claudeDesktopMode: "proxy",
+        claudeDesktopModelRoutes: routeMap,
+      });
     meta.codexFastMode =
       activeProviderType === "codex_oauth" ? codexFastMode : undefined;
 
@@ -958,7 +993,7 @@ export function ClaudeDesktopProviderForm({
       settingsConfig: JSON.stringify(settingsConfig, null, 2),
       meta,
       presetId: activePreset?.id,
-      presetCategory: activePreset?.category,
+      presetCategory: dim.enabled ? "third_party" : activePreset?.category,
       isPartner: activePreset?.isPartner,
       partnerPromotionKey: activePreset?.partnerPromotionKey,
     });
@@ -1022,7 +1057,13 @@ export function ClaudeDesktopProviderForm({
           </div>
         )}
 
-        {!isOfficial && (
+        {dim.enabled && (
+          <DimOAuthFields
+            {...dim.fieldsProps}
+            onManageAccounts={() => onManageAuthAccounts?.("dim_oauth")}
+          />
+        )}
+        {!isOfficial && !dim.enabled && (
           <>
             {usesManagedOAuth ? (
               <div className="rounded-lg border border-border bg-subtle p-3">

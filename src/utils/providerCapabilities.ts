@@ -181,6 +181,7 @@ export function providerNeedsRouting(
     return isManagedOAuth || provider.meta?.claudeDesktopMode === "proxy";
   }
 
+  if (appId === "gemini") return provider.meta?.providerType === "dim_oauth";
   if (appId !== "claude" && appId !== "codex" && appId !== "grokbuild") {
     return false;
   }

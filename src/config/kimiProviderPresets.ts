@@ -152,7 +152,12 @@ export const kimiProviderPresets: KimiProviderPreset[] =
   piProviderPresets.flatMap((preset) => {
     const { settingsConfig: source, ...identity } = preset;
     let type = KIMI_API_FORMATS[source.api];
-    if (!type || source.compat || !source.models.length) return [];
+    if (
+      !type ||
+      source.compat ||
+      (!source.models.length && preset.providerType !== "dim_oauth")
+    )
+      return [];
     let baseUrl = source.baseUrl;
     if (preset.family === "kimi") {
       type = "kimi";

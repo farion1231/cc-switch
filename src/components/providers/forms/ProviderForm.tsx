@@ -145,7 +145,14 @@ import {
 } from "./helpers/opencodeFormUtils";
 import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
 import { DimOAuthFields } from "./DimOAuthFields";
-import { useDimOauth } from "./hooks/useDimOauth";
+import { useDimProvider } from "./hooks/useDimProvider";
+import {
+  dimBaseUrl,
+  dimOpenCodeModels,
+  dimOpenClawConfig,
+  dimSdk,
+  DIM_PLACEHOLDER,
+} from "@/lib/dimProviderConfig";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
 import { useHermesLiveProviderIds } from "@/hooks/useHermes";
@@ -678,14 +685,6 @@ function ProviderFormFull({
     accounts: xaiOauthAccounts,
   } = useXaiOauth();
 
-  const [selectedDimAccountId, setSelectedDimAccountId] = useState<
-    string | null
-  >(() => resolveManagedAccountId(initialData?.meta, "dim_oauth"));
-  const [isDimSelectionValid, setIsDimSelectionValid] = useState(false);
-  const [dimOauthEffort, setDimOauthEffort] = useState(
-    initialData?.meta?.dimOauthEffort ?? "",
-  );
-
   // 选中的 GitHub 账号 ID（多账号支持）
   const [selectedGitHubAccountId, setSelectedGitHubAccountId] = useState<
     string | null
@@ -1022,9 +1021,7 @@ function ProviderFormFull({
     (presetProviderType === "codex_oauth" ||
       initialProviderType === "codex_oauth");
   const isDimOauthProvider =
-    (appId === "claude" || appId === "codex") &&
-    (presetProviderType === "dim_oauth" || initialProviderType === "dim_oauth");
-  const dimOauth = useDimOauth({ enabled: isDimOauthProvider });
+    presetProviderType === "dim_oauth" || initialProviderType === "dim_oauth";
   const isXaiOauthProvider =
     (appId === "claude" || appId === "codex") &&
     (presetProviderType === "xai_oauth" || initialProviderType === "xai_oauth");
@@ -1250,6 +1247,115 @@ function ProviderFormFull({
     onSettingsConfigChange: handleSettingsConfigChange,
     getSettingsConfig,
   });
+  const dim = useDimProvider({
+    appId,
+    enabled: isDimOauthProvider,
+    initialMeta: initialData?.meta,
+    initialModel:
+      appId === "claude"
+        ? claudeModel
+        : appId === "codex"
+          ? codexModel
+          : usesGeminiStyleForm(appId)
+            ? geminiModel
+            : appId === "opencode"
+              ? (Object.keys(opencodeForm.opencodeModels)[0] ?? "")
+              : appId === "openclaw"
+                ? (openclawForm.openclawModels[0]?.id ?? "")
+                : (hermesForm.hermesModels[0]?.id ?? ""),
+    onSelect: (model, format, issuer) => {
+      if (appId === "claude") {
+        handleApiFormatChange(format);
+        for (const key of [
+          "ANTHROPIC_MODEL",
+          "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+          "ANTHROPIC_DEFAULT_SONNET_MODEL",
+          "ANTHROPIC_DEFAULT_OPUS_MODEL",
+          "ANTHROPIC_DEFAULT_FABLE_MODEL",
+        ] as const)
+          handleModelChange(key, model.id);
+      } else if (appId === "codex") {
+        if (format === "gemini_native") return;
+        handleCodexApiFormatChange(format);
+        handleCodexModelChange(model.id);
+        setCodexCatalogModels([
+          {
+            model: model.id,
+            displayName: model.name,
+            reasoningLevels: model.efforts,
+          },
+        ]);
+      } else if (usesGeminiStyleForm(appId)) {
+        resetGeminiConfig(
+          {
+            GOOGLE_GEMINI_BASE_URL: issuer,
+            GEMINI_API_KEY: DIM_PLACEHOLDER,
+            GEMINI_MODEL: model.id,
+          },
+          {},
+        );
+      } else if (appId === "opencode") {
+        const options = {
+          baseURL: dimBaseUrl(issuer, format),
+          apiKey: DIM_PLACEHOLDER,
+        };
+        const models = dimOpenCodeModels(model);
+        if (isNativeOpencode)
+          handleSettingsConfigChange(
+            JSON.stringify({
+              name: "DimAgent",
+              package: dimSdk[format],
+              settings: options,
+              models,
+            }),
+          );
+        else {
+          const config = {
+            name: "DimAgent",
+            npm: dimSdk[format],
+            options,
+            models,
+          };
+          const key = opencodeForm.opencodeProviderKey;
+          opencodeForm.resetOpencodeState(config);
+          opencodeForm.setOpencodeProviderKey(key);
+          handleSettingsConfigChange(JSON.stringify(config));
+        }
+      } else if (appId === "openclaw") {
+        const config = dimOpenClawConfig(model, format, issuer);
+        const key = openclawForm.openclawProviderKey;
+        openclawForm.resetOpenclawState(config);
+        openclawForm.setOpenclawProviderKey(key);
+        handleSettingsConfigChange(JSON.stringify(config));
+      } else if (appId === "hermes" && format !== "gemini_native") {
+        const modes = {
+          openai_chat: "chat_completions",
+          openai_responses: "codex_responses",
+          anthropic: "anthropic_messages",
+        } as const;
+        const config = {
+          name: form.getValues("name"),
+          base_url: dimBaseUrl(issuer, format),
+          api_key: DIM_PLACEHOLDER,
+          api_mode: modes[format],
+          models: [
+            {
+              id: model.id,
+              name: model.name,
+              ...(model.context_window != null
+                ? { context_length: model.context_window }
+                : {}),
+            },
+          ],
+        };
+        hermesForm.resetHermesState(config, hermesForm.hermesProviderKey);
+        handleSettingsConfigChange(JSON.stringify(config));
+      }
+    },
+  });
+  const selectedDimAccountId = dim.fieldsProps.accountId;
+  const isDimSelectionValid = dim.valid;
+  const dimOauthEffort = dim.fieldsProps.effort;
   const {
     data: hermesLiveProviderIds = [],
     isLoading: isHermesLiveProviderIdsLoading,
@@ -1559,13 +1665,7 @@ function ProviderFormFull({
       );
       return;
     }
-    if (
-      isDimOauthProvider &&
-      !dimOauth.accounts.some(
-        (account) =>
-          account.id === selectedDimAccountId && !account.requires_reauth,
-      )
-    ) {
+    if (isDimOauthProvider && !dim.account) {
       toast.error(t("dimOauth.loginRequired"));
       return;
     }
@@ -2201,7 +2301,19 @@ function ProviderFormFull({
       delete nextMeta.githubAccountId;
     }
 
-    payload.meta = nextMeta;
+    payload.meta = isDimOauthProvider
+      ? {
+          ...nextMeta,
+          ...dim.meta,
+          ...(appId === "opencode"
+            ? {
+                opencodeConfigFormat: isNativeOpencode
+                  ? ("v2" as const)
+                  : ("v1" as const),
+              }
+            : {}),
+        }
+      : nextMeta;
 
     await onSubmit(payload);
   };
@@ -2424,6 +2536,8 @@ function ProviderFormFull({
       }
 
       opencodeForm.resetOpencodeState(config);
+      if (preset.providerType === "dim_oauth")
+        opencodeForm.setOpencodeProviderKey("dimagent");
 
       form.reset({
         name: preset.nameKey ? t(preset.nameKey) : preset.name,
@@ -2450,6 +2564,8 @@ function ProviderFormFull({
       });
 
       openclawForm.resetOpenclawState(config);
+      if (preset.providerType === "dim_oauth")
+        openclawForm.setOpenclawProviderKey("dimagent");
 
       // Update form fields
       form.reset({
@@ -2755,48 +2871,10 @@ function ProviderFormFull({
             }
           />
 
-          {isDimOauthProvider && (appId === "claude" || appId === "codex") && (
+          {isDimOauthProvider && (
             <DimOAuthFields
-              appId={appId}
-              accountId={selectedDimAccountId}
-              onAccountChange={(id) => {
-                setSelectedDimAccountId(id);
-                setDimOauthEffort("");
-                setIsDimSelectionValid(false);
-              }}
-              onManageAccounts={
-                onManageAuthAccounts
-                  ? () => onManageAuthAccounts("dim_oauth")
-                  : undefined
-              }
-              model={appId === "claude" ? claudeModel : codexModel}
-              apiFormat={
-                appId === "claude" ? localApiFormat : localCodexApiFormat
-              }
-              effort={dimOauthEffort}
-              onValidityChange={setIsDimSelectionValid}
-              onSelect={(model, format, effort) => {
-                setDimOauthEffort(format === "gemini_native" ? "" : effort);
-                if (appId === "claude") {
-                  handleApiFormatChange(format);
-                  handleModelChange("ANTHROPIC_MODEL", model.id);
-                  handleModelChange("ANTHROPIC_DEFAULT_HAIKU_MODEL", model.id);
-                  handleModelChange("ANTHROPIC_DEFAULT_SONNET_MODEL", model.id);
-                  handleModelChange("ANTHROPIC_DEFAULT_OPUS_MODEL", model.id);
-                  handleModelChange("ANTHROPIC_DEFAULT_FABLE_MODEL", model.id);
-                } else {
-                  if (format === "gemini_native") return;
-                  handleCodexApiFormatChange(format);
-                  handleCodexModelChange(model.id);
-                  setCodexCatalogModels([
-                    {
-                      model: model.id,
-                      displayName: model.name,
-                      reasoningLevels: model.efforts,
-                    },
-                  ]);
-                }
-              }}
+              {...dim.fieldsProps}
+              onManageAccounts={() => onManageAuthAccounts?.("dim_oauth")}
             />
           )}
 
@@ -2991,7 +3069,7 @@ function ProviderFormFull({
             />
           )}
 
-          {usesGeminiStyleForm(appId) && (
+          {usesGeminiStyleForm(appId) && !isDimOauthProvider && (
             <GeminiFormFields
               appId={appId as "gemini" | "agy"}
               providerId={providerId}
@@ -3075,7 +3153,7 @@ function ProviderFormFull({
             )}
 
           {/* OpenClaw 专属字段 */}
-          {appId === "openclaw" && (
+          {appId === "openclaw" && !isDimOauthProvider && (
             <OpenClawFormFields
               baseUrl={openclawForm.openclawBaseUrl}
               onBaseUrlChange={openclawForm.handleOpenclawBaseUrlChange}
@@ -3096,7 +3174,7 @@ function ProviderFormFull({
           )}
 
           {/* Hermes 专属字段 */}
-          {appId === "hermes" && (
+          {appId === "hermes" && !isDimOauthProvider && (
             <HermesFormFields
               baseUrl={hermesForm.hermesBaseUrl}
               onBaseUrlChange={hermesForm.handleHermesBaseUrlChange}
@@ -3119,71 +3197,72 @@ function ProviderFormFull({
           )}
 
           {/* 配置编辑器：Codex、Claude、Gemini 分别使用不同的编辑器 */}
-          {useStackLayout ? (
-            settingsConfigErrorField
-          ) : appId === "codex" ? (
-            <>
-              <CodexConfigEditor
-                authValue={codexAuth}
-                configValue={codexConfig}
-                providerName={form.watch("name")}
-                showRemoteCompaction={category !== "official"}
-                isProxyTakeover={isProxyTakeover}
-                onAuthChange={setCodexAuth}
-                onConfigChange={handleCodexConfigChange}
-                authError={codexAuthError}
-                configError={codexConfigError}
-                inactiveFields={inactiveFields}
-              />
-              {settingsConfigErrorField}
-            </>
-          ) : usesGeminiStyleForm(appId) ? (
-            <>
-              <GeminiConfigEditor
-                isAgy={appId === "agy"}
-                envValue={geminiEnv}
-                configValue={geminiConfig}
-                onEnvChange={handleGeminiEnvChange}
-                onConfigChange={handleGeminiConfigChange}
-                envError={envError}
-                configError={geminiConfigError}
-                inactiveFields={inactiveFields}
-              />
-              {settingsConfigErrorField}
-            </>
-          ) : appId === "opencode" &&
-            (category === "omo" || category === "omo-slim") ? (
-            <div className="space-y-2">
-              <Label>{t("provider.configJson")}</Label>
-              <JsonEditor
-                value={omoDraft.mergedOmoJsonPreview}
-                onChange={() => {}}
-                rows={3}
-                showValidation={false}
-                language="json"
-                darkMode={isDarkMode}
-              />
-            </div>
-          ) : appId === "opencode" &&
-            category !== "omo" &&
-            category !== "omo-slim" ? (
-            <>
+          {!isDimOauthProvider &&
+            (useStackLayout ? (
+              settingsConfigErrorField
+            ) : appId === "codex" ? (
+              <>
+                <CodexConfigEditor
+                  authValue={codexAuth}
+                  configValue={codexConfig}
+                  providerName={form.watch("name")}
+                  showRemoteCompaction={category !== "official"}
+                  isProxyTakeover={isProxyTakeover}
+                  onAuthChange={setCodexAuth}
+                  onConfigChange={handleCodexConfigChange}
+                  authError={codexAuthError}
+                  configError={codexConfigError}
+                  inactiveFields={inactiveFields}
+                />
+                {settingsConfigErrorField}
+              </>
+            ) : usesGeminiStyleForm(appId) ? (
+              <>
+                <GeminiConfigEditor
+                  isAgy={appId === "agy"}
+                  envValue={geminiEnv}
+                  configValue={geminiConfig}
+                  onEnvChange={handleGeminiEnvChange}
+                  onConfigChange={handleGeminiConfigChange}
+                  envError={envError}
+                  configError={geminiConfigError}
+                  inactiveFields={inactiveFields}
+                />
+                {settingsConfigErrorField}
+              </>
+            ) : appId === "opencode" &&
+              (category === "omo" || category === "omo-slim") ? (
               <div className="space-y-2">
-                <Label htmlFor="settingsConfig">
-                  {t("provider.configJson")}
-                </Label>
-                {isNativeOpencode && (
-                  <p className="text-sm text-fg-2">
-                    {t("opencode.nativeConfigHint")}
-                  </p>
-                )}
+                <Label>{t("provider.configJson")}</Label>
                 <JsonEditor
-                  value={form.getValues("settingsConfig")}
-                  onChange={handleSettingsConfigChange}
-                  placeholder={
-                    isNativeOpencode
-                      ? "{}"
-                      : `{
+                  value={omoDraft.mergedOmoJsonPreview}
+                  onChange={() => {}}
+                  rows={3}
+                  showValidation={false}
+                  language="json"
+                  darkMode={isDarkMode}
+                />
+              </div>
+            ) : appId === "opencode" &&
+              category !== "omo" &&
+              category !== "omo-slim" ? (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="settingsConfig">
+                    {t("provider.configJson")}
+                  </Label>
+                  {isNativeOpencode && (
+                    <p className="text-sm text-fg-2">
+                      {t("opencode.nativeConfigHint")}
+                    </p>
+                  )}
+                  <JsonEditor
+                    value={form.getValues("settingsConfig")}
+                    onChange={handleSettingsConfigChange}
+                    placeholder={
+                      isNativeOpencode
+                        ? "{}"
+                        : `{
   "npm": "@ai-sdk/openai-compatible",
   "options": {
     "baseURL": "https://your-api-endpoint.com",
@@ -3191,69 +3270,69 @@ function ProviderFormFull({
   },
   "models": {}
 }`
-                  }
-                  rows={3}
-                  showValidation={true}
-                  language="json"
-                  darkMode={isDarkMode}
-                />
-              </div>
-              {settingsConfigErrorField}
-            </>
-          ) : appId === "openclaw" || appId === "hermes" ? (
-            <>
-              <div className="space-y-2">
-                <Label htmlFor="settingsConfig">
-                  {t("provider.configJson")}
-                </Label>
-                <JsonEditor
-                  value={form.getValues("settingsConfig")}
-                  onChange={(config) => {
-                    handleSettingsConfigChange(config);
-                    if (appId === "openclaw") {
-                      openclawForm.syncOpenclawUserAgentFromConfig(config);
                     }
-                  }}
-                  placeholder={
-                    appId === "hermes"
-                      ? `{
+                    rows={3}
+                    showValidation={true}
+                    language="json"
+                    darkMode={isDarkMode}
+                  />
+                </div>
+                {settingsConfigErrorField}
+              </>
+            ) : appId === "openclaw" || appId === "hermes" ? (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="settingsConfig">
+                    {t("provider.configJson")}
+                  </Label>
+                  <JsonEditor
+                    value={form.getValues("settingsConfig")}
+                    onChange={(config) => {
+                      handleSettingsConfigChange(config);
+                      if (appId === "openclaw") {
+                        openclawForm.syncOpenclawUserAgentFromConfig(config);
+                      }
+                    }}
+                    placeholder={
+                      appId === "hermes"
+                        ? `{
   "name": "my-provider",
   "base_url": "https://api.example.com/v1",
   "api_key": ""
 }`
-                      : `{
+                        : `{
   "baseUrl": "https://api.example.com/v1",
   "apiKey": "your-api-key-here",
   "api": "openai-completions",
   "models": []
 }`
-                  }
-                  rows={3}
-                  showValidation={true}
-                  language="json"
-                  darkMode={isDarkMode}
+                    }
+                    rows={3}
+                    showValidation={true}
+                    language="json"
+                    darkMode={isDarkMode}
+                  />
+                </div>
+                <FormField
+                  control={form.control}
+                  name="settingsConfig"
+                  render={() => (
+                    <FormItem className="space-y-0">
+                      <FormMessage />
+                    </FormItem>
+                  )}
                 />
-              </div>
-              <FormField
-                control={form.control}
-                name="settingsConfig"
-                render={() => (
-                  <FormItem className="space-y-0">
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </>
-          ) : (
-            <>
-              <CommonConfigEditor
-                value={form.getValues("settingsConfig")}
-                onChange={handleSettingsConfigChange}
-                inactiveFields={inactiveFields}
-              />
-              {settingsConfigErrorField}
-            </>
-          )}
+              </>
+            ) : (
+              <>
+                <CommonConfigEditor
+                  value={form.getValues("settingsConfig")}
+                  onChange={handleSettingsConfigChange}
+                  inactiveFields={inactiveFields}
+                />
+                {settingsConfigErrorField}
+              </>
+            ))}
 
           {showButtons && (
             <div className="flex justify-end gap-2">

@@ -132,7 +132,7 @@ export const mcodeProviderPresets: McodeProviderPreset[] =
     const api = MCODE_API_FORMATS.find((format) => format === config.api);
     if (!api || config.compat) return [];
     const models = config.models.filter(isMcodeCompatible);
-    if (models.length === 0) return [];
+    if (models.length === 0 && preset.providerType !== "dim_oauth") return [];
     return [
       {
         ...preset,
@@ -143,7 +143,7 @@ export const mcodeProviderPresets: McodeProviderPreset[] =
           api,
           options: {
             baseURL: config.baseUrl,
-            apiKey: "",
+            apiKey: config.apiKey,
             ...(config.headers ? { headers: config.headers } : {}),
           },
           models: Object.fromEntries(

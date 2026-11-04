@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AppId } from "@/lib/api";
 import { ProviderForm } from "@/components/providers/forms/ProviderForm";
 import { DimOAuthFields } from "@/components/providers/forms/DimOAuthFields";
 import { DimOAuthSection } from "@/components/providers/forms/DimOAuthSection";
@@ -19,6 +20,7 @@ import {
 import { presetGroup } from "@/components/providers/forms/presetGroups";
 import { providerNeedsRouting } from "@/utils/providerCapabilities";
 import { dimOAuthApi, type DimAccount } from "@/lib/api/dim-oauth";
+import { providersApi } from "@/lib/api/providers";
 import { deliverLoginLink } from "@/lib/authLoginLink";
 import { renderWithQueryClient } from "../utils/testQueryClient";
 
@@ -60,6 +62,8 @@ const model = {
   api_formats: ["openai_chat" as const, "anthropic" as const],
   efforts: ["high", "max"],
   zdr: true,
+  context_window: 65536,
+  max_output_tokens: 4096,
 };
 
 function renderForm(accountId = account.id, effort = "high") {
@@ -97,6 +101,7 @@ function renderForm(accountId = account.id, effort = "high") {
 
 beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
+  vi.spyOn(providersApi, "getClaudeDesktopDefaultRoutes").mockResolvedValue([]);
   i18n.addResource(
     "zh",
     "translation",
@@ -353,6 +358,8 @@ describe("DimAgent native sign-in user flow", () => {
         api_formats: ["gemini_native"],
         efforts: [],
         zdr: false,
+        context_window: null,
+        max_output_tokens: null,
       },
     ]);
     const user = userEvent.setup();
@@ -405,6 +412,242 @@ describe("DimAgent native sign-in user flow", () => {
     await waitFor(() =>
       expect(select).toHaveBeenCalledWith(gemini, "gemini_native", ""),
     );
+  });
+
+  it.each([
+    "claude",
+    "codex",
+    "claude-desktop",
+    "gemini",
+    "grokbuild",
+    "mcode",
+    "dsh",
+    "pi",
+    "omp",
+    "kimi",
+    "opencode",
+    "openclaw",
+    "hermes",
+    "agy",
+  ] as AppId[])(
+    "saves a real managed %s client from its native preset flow",
+    async (appId) => {
+      const user = userEvent.setup();
+      const submit = vi.fn();
+      const compatible = {
+        ...model,
+        api_formats:
+          appId === "gemini" || appId === "agy"
+            ? ["gemini_native" as const]
+            : model.api_formats,
+      };
+      vi.mocked(dimOAuthApi.models).mockResolvedValue([compatible]);
+      renderWithQueryClient(
+        <ProviderForm
+          appId={appId}
+          onSubmit={submit}
+          onCancel={vi.fn()}
+          submitLabel="save-expanded-provider"
+        />,
+      );
+      await user.click(
+        await screen.findByRole("button", { name: /^DimAgent$/ }),
+      );
+      await user.click(await screen.findByLabelText("dimOauth.account"));
+      await user.click(
+        await screen.findByRole("option", { name: /user@example.test/ }),
+      );
+      const picker = await screen.findByLabelText("dimOauth.model");
+      await waitFor(() => expect(picker).not.toBeDisabled());
+      await user.click(picker);
+      await user.click(
+        await screen.findByRole("option", { name: /vendor\/full-model-id/ }),
+      );
+      await user.click(
+        screen.getByRole("button", { name: "save-expanded-provider" }),
+      );
+      await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+      const payload = submit.mock.calls[0][0];
+      expect(payload.meta).toMatchObject({
+        providerType: "dim_oauth",
+        authBinding: {
+          source: "managed_account",
+          authProvider: "dim_oauth",
+          accountId: account.id,
+        },
+      });
+      if (appId === "claude-desktop")
+        expect(Object.values(payload.meta.claudeDesktopModelRoutes)).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ model: model.id }),
+          ]),
+        );
+      else expect(payload.settingsConfig).toContain(model.id);
+      expect(payload.settingsConfig).not.toMatch(/access_token|refresh_token/);
+      const config = JSON.parse(payload.settingsConfig);
+      if (appId === "mcode" || appId === "dsh")
+        expect(config).toMatchObject({
+          api: "openai-completions",
+          options: {
+            baseURL: "https://dimagent.cn/v1",
+            apiKey: "PROXY_MANAGED",
+          },
+          models: {
+            [model.id]: {
+              name: model.name,
+              limit: { context: 65536, output: 4096 },
+            },
+          },
+        });
+      if (appId === "kimi")
+        expect(Object.values(config.models)[0]).toMatchObject({
+          model: model.id,
+          max_context_size: 65536,
+          provider: "dimagent",
+        });
+      if (appId === "pi" || appId === "omp")
+        expect(config.models[0]).toMatchObject({
+          id: model.id,
+          contextWindow: 65536,
+          maxTokens: 4096,
+        });
+      if (appId === "claude-desktop")
+        expect(payload.meta.claudeDesktopMode).toBe("proxy");
+      if (
+        [
+          "mcode",
+          "dsh",
+          "pi",
+          "omp",
+          "kimi",
+          "opencode",
+          "openclaw",
+          "hermes",
+          "agy",
+        ].includes(appId)
+      )
+        expect(
+          providerNeedsRouting(appId, {
+            id: "dim",
+            name: "DimAgent",
+            settingsConfig: config,
+            meta: payload.meta,
+          }),
+        ).toBe(false);
+    },
+  );
+
+  it("preserves an imported native OpenCode declaration when changing Dim protocol", async () => {
+    const user = userEvent.setup();
+    const submit = vi.fn();
+    renderWithQueryClient(
+      <ProviderForm
+        appId="opencode"
+        providerId="dim-v2"
+        onSubmit={submit}
+        onCancel={vi.fn()}
+        submitLabel="save-native-dim"
+        initialData={{
+          name: "DimAgent",
+          settingsConfig: {
+            package: "@ai-sdk/openai-compatible",
+            settings: {
+              baseURL: "https://dimagent.cn/v1",
+              apiKey: "PROXY_MANAGED",
+            },
+            models: { [model.id]: { name: model.name } },
+          },
+          meta: {
+            providerType: "dim_oauth",
+            opencodeConfigFormat: "v2",
+            apiFormat: "openai_chat",
+            authBinding: {
+              source: "managed_account",
+              authProvider: "dim_oauth",
+              accountId: account.id,
+            },
+          },
+        }}
+      />,
+    );
+    await user.click(await screen.findByLabelText("dimOauth.format"));
+    await user.click(
+      await screen.findByRole("option", { name: "dimOauth.formats.anthropic" }),
+    );
+    await user.click(screen.getByRole("button", { name: "save-native-dim" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    const payload = submit.mock.calls[0][0];
+    expect(payload.meta.opencodeConfigFormat).toBe("v2");
+    expect(JSON.parse(payload.settingsConfig)).toMatchObject({
+      package: "@ai-sdk/anthropic",
+      settings: { baseURL: "https://dimagent.cn", apiKey: "PROXY_MANAGED" },
+      models: { [model.id]: { name: model.name } },
+    });
+  });
+
+  it.each(["kimi", "pi", "opencode"] as AppId[])(
+    "uses the %s SDK's actual Gemini base convention",
+    async (appId) => {
+      const user = userEvent.setup();
+      const submit = vi.fn();
+      vi.mocked(dimOAuthApi.models).mockResolvedValue([
+        { ...model, api_formats: ["gemini_native"] },
+      ]);
+      renderWithQueryClient(
+        <ProviderForm
+          appId={appId}
+          onSubmit={submit}
+          onCancel={vi.fn()}
+          submitLabel="save-gemini-dim"
+        />,
+      );
+      await user.click(
+        await screen.findByRole("button", { name: /^DimAgent$/ }),
+      );
+      await user.click(await screen.findByLabelText("dimOauth.account"));
+      await user.click(
+        await screen.findByRole("option", { name: /user@example.test/ }),
+      );
+      const picker = await screen.findByLabelText("dimOauth.model");
+      await waitFor(() => expect(picker).not.toBeDisabled());
+      await user.click(picker);
+      await user.click(
+        await screen.findByRole("option", { name: /vendor\/full-model-id/ }),
+      );
+      await user.click(screen.getByRole("button", { name: "save-gemini-dim" }));
+      await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+      const config = JSON.parse(submit.mock.calls[0][0].settingsConfig);
+      expect(
+        appId === "kimi"
+          ? config.provider.base_url
+          : appId === "pi"
+            ? config.baseUrl
+            : config.options.baseURL,
+      ).toBe(
+        appId === "kimi" ? "https://dimagent.cn" : "https://dimagent.cn/v1beta",
+      );
+    },
+  );
+
+  it("excludes Kimi models without an explicit positive context window", async () => {
+    vi.mocked(dimOAuthApi.models).mockResolvedValue([
+      { ...model, context_window: null },
+    ]);
+    renderWithQueryClient(
+      <DimOAuthFields
+        appId="kimi"
+        accountId={account.id}
+        onAccountChange={vi.fn()}
+        model={model.id}
+        apiFormat="openai_chat"
+        effort=""
+        onSelect={vi.fn()}
+        onValidityChange={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByText("dimOauth.noCompatibleModels"),
+    ).toBeInTheDocument();
   });
 
   it("starts browser login, shows the bound site and real usage after completion", async () => {

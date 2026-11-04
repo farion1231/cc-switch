@@ -5192,7 +5192,7 @@
       "cn": "国内站",
       "global": "海外站"
     },
-    "help": "在 Claude Code 或 Codex 使用 DimAgent 账号。登录前选择账号所属站点。供应商明确绑定账号，并通过本地路由使用。",
+    "help": "在 CC Switch 客户端中使用 DimAgent 账号。登录前选择账号站点；每个供应商都明确绑定到所选账号。",
     "empty": "尚无 DimAgent 账号，请添加账号登录。",
     "loginRequired": "请在「管理账号」登录，并选择可用的 DimAgent 账号。",
     "loginExpired": "登录已过期，请重试。",
@@ -5217,6 +5217,8 @@
     "resetsAt": "重置时间：{{time}}",
     "subscription": "管理订阅 / 购买续期",
     "pricing": "套餐价格",
-    "manageAccounts": "管理账号"
+    "manageAccounts": "管理账号",
+    "gateway": "保持 CC Switch 运行。本地托管网关会自动启动，无需开启客户端路由开关。",
+    "noCompatibleModels": "当前账号没有适用于此客户端的模型。Kimi Code 要求模型明确声明上下文窗口。"
   }
 }

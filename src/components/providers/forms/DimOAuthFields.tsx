@@ -2,6 +2,8 @@ import { useEffect, useId, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { dimOAuthApi, type DimModel } from "@/lib/api/dim-oauth";
+import type { AppId } from "@/lib/api";
+import { dimFormatsForApp, dimNativeRouting } from "@/lib/dimProviderConfig";
 import type { ProviderMeta } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -16,7 +18,7 @@ import { useDimOauth } from "./hooks/useDimOauth";
 import { DimAccountUsage } from "./DimOAuthSection";
 
 interface Props {
-  appId: "claude" | "codex";
+  appId: AppId;
   accountId: string | null;
   onAccountChange: (id: string | null) => void;
   onManageAccounts?: () => void;
@@ -57,16 +59,19 @@ export function DimOAuthFields({
     () =>
       (models.data ?? []).filter(
         (item) =>
-          appId !== "codex" ||
-          item.api_formats.some((format) => format !== "gemini_native"),
+          item.api_formats.some((format) =>
+            dimFormatsForApp(appId).includes(format),
+          ) &&
+          (appId !== "kimi" ||
+            (item.context_window != null && item.context_window > 0)),
       ),
     [models.data, appId],
   );
   const selected = available.find((item) => item.id === model);
   const formats = useMemo(
     () =>
-      selected?.api_formats.filter(
-        (format) => appId !== "codex" || format !== "gemini_native",
+      selected?.api_formats.filter((format) =>
+        dimFormatsForApp(appId).includes(format),
       ) ?? [],
     [selected, appId],
   );
@@ -160,8 +165,8 @@ export function DimOAuthFields({
             if (next)
               onSelect(
                 next,
-                next.api_formats.find(
-                  (format) => appId !== "codex" || format !== "gemini_native",
+                next.api_formats.find((format) =>
+                  dimFormatsForApp(appId).includes(format),
                 )!,
                 "",
               );
@@ -240,7 +245,14 @@ export function DimOAuthFields({
           </div>
         </div>
       )}
-      <p className="text-caption text-fg-2">{t("dimOauth.routing")}</p>
+      {account && models.isSuccess && !available.length && (
+        <p role="status" className="text-caption text-fg-2">
+          {t("dimOauth.noCompatibleModels")}
+        </p>
+      )}
+      <p className="text-caption text-fg-2">
+        {t(dimNativeRouting(appId) ? "dimOauth.routing" : "dimOauth.gateway")}
+      </p>
       {account && <DimAccountUsage accountId={account.id} />}
     </div>
   );

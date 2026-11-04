@@ -1,3 +1,4 @@
+import { dimOAuthPreset } from "@/lib/dimProviderConfig";
 import type { ProviderCategory, OpenCodeProviderConfig } from "../types";
 import type { PresetTheme, TemplateValueConfig } from "./claudeProviderPresets";
 import type { PresetFamilyFields } from "./presetFamilies";
@@ -329,6 +330,14 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
 };
 
 export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
+  {
+    ...dimOAuthPreset,
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      options: { baseURL: "https://dimagent.com/v1", apiKey: "PROXY_MANAGED" },
+      models: {},
+    },
+  },
   // ===== 赞助商预设：文件顺序与 README 赞助商表对齐（仅维护约定；应用内一律按显示名排序，不置顶）=====
   {
     name: "Kimi",

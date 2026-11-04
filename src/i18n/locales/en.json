@@ -5192,7 +5192,7 @@
       "cn": "China",
       "global": "Global"
     },
-    "help": "Use a DimAgent account with Claude Code or Codex. Select the account site before signing in. Providers are explicitly bound to an account and use local routing.",
+    "help": "Use a DimAgent account with CC Switch clients. Select the account site before signing in. Every provider is explicitly bound to its selected account.",
     "empty": "No DimAgent accounts. Add an account to sign in.",
     "loginRequired": "Sign in through Manage accounts and select an available DimAgent account.",
     "loginExpired": "Login expired. Please try again.",
@@ -5217,6 +5217,8 @@
     "resetsAt": "Resets at {{time}}",
     "subscription": "Manage subscription / renew",
     "pricing": "Plan pricing",
-    "manageAccounts": "Manage accounts"
+    "manageAccounts": "Manage accounts",
+    "gateway": "Keep CC Switch running. The managed local gateway starts automatically; no client routing toggle is required.",
+    "noCompatibleModels": "No compatible models are available for this client. Kimi Code requires a declared context window."
   }
 }
