@@ -5571,7 +5571,11 @@ impl ProviderService {
         write_live: bool,
         create: bool,
     ) -> Result<bool, AppError> {
-        let projected = crate::proxy::dim_relay::project_provider(&state.db, app_type, provider)?;
+        let projected = if write_live {
+            crate::proxy::dim_relay::project_provider(&state.db, app_type, provider)?
+        } else {
+            provider.clone()
+        };
         if matches!(app_type, AppType::Dsh) {
             return if write_live {
                 crate::dsh_config::save_and_commit(

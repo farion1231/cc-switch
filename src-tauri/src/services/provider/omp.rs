@@ -71,9 +71,12 @@ pub(super) fn add(
     if state.db.get_provider_by_id(&provider.id, "omp")?.is_some() {
         return Err(AppError::Config("omp.errors.duplicateProvider".into()));
     }
-    let native_config =
+    let native_config = if add_to_live {
         crate::proxy::dim_relay::project_provider(&state.db, &AppType::Omp, &provider)?
-            .settings_config;
+            .settings_config
+    } else {
+        provider.settings_config.clone()
+    };
     let commit = |_| {
         state.db.save_provider("omp", &provider)?;
         Ok(true)
@@ -101,9 +104,12 @@ pub(super) fn update(
         .get_provider_by_id(&provider.id, "omp")?
         .ok_or_else(|| AppError::Config("omp.errors.providerMissing".into()))?;
     prepare(&mut provider)?;
-    let native_config =
+    let native_config = if omp_config::get_providers()?.contains_key(&provider.id) {
         crate::proxy::dim_relay::project_provider(&state.db, &AppType::Omp, &provider)?
-            .settings_config;
+            .settings_config
+    } else {
+        provider.settings_config.clone()
+    };
     omp_config::change_and_commit(
         &provider.id,
         Some(&native_config),

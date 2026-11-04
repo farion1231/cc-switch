@@ -975,7 +975,6 @@ mod tests {
         config.listen_address = "127.0.0.1".into();
         config.listen_port = 0;
         db.update_proxy_config(config).await.unwrap();
-        let first = state.proxy_service.start().await.unwrap();
         for app in [AppType::Pi, AppType::Omp] {
             let mut p = provider("dim-live-fixture", "openai_chat");
             p.settings_config = json!({
@@ -986,6 +985,8 @@ mod tests {
             assert!(!client_exists(&app, "dim-live-fixture").unwrap());
             assert!(!has_clients(&db).unwrap());
         }
+        assert!(!state.proxy_service.is_running().await);
+        let first = state.proxy_service.start().await.unwrap();
         let canonical: Vec<_> = [AppType::Pi, AppType::Omp]
             .iter()
             .map(|app| {

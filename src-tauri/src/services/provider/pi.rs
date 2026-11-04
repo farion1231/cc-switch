@@ -60,8 +60,11 @@ pub(super) fn add(
         )));
     }
 
-    let native_config =
-        crate::proxy::dim_relay::project_provider(&state.db, &app_type, &provider)?.settings_config;
+    let native_config = if add_to_live {
+        crate::proxy::dim_relay::project_provider(&state.db, &app_type, &provider)?.settings_config
+    } else {
+        provider.settings_config.clone()
+    };
     let native_inserted = if add_to_live {
         crate::pi_config::insert_pi_provider(&provider.id, &native_config)?
     } else {
@@ -138,8 +141,11 @@ pub(super) fn update(
     ProviderService::validate_provider_settings(&app_type, &provider)?;
     ProviderService::normalize_usage_script_credential_overrides(&app_type, &mut provider);
 
-    let native_config =
-        crate::proxy::dim_relay::project_provider(&state.db, &app_type, &provider)?.settings_config;
+    let native_config = if crate::pi_config::pi_provider_exists(&original_id)? {
+        crate::proxy::dim_relay::project_provider(&state.db, &app_type, &provider)?.settings_config
+    } else {
+        provider.settings_config.clone()
+    };
     let previous_native =
         crate::pi_config::replace_pi_provider_if_present(&original_id, &native_config)?;
     if let Err(error) = state.db.save_provider(app_type.as_str(), &provider) {
