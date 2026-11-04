@@ -82,6 +82,8 @@ pub struct DimModel {
     pub api_formats: Vec<String>,
     pub efforts: Vec<String>,
     pub zdr: bool,
+    pub context_window: Option<u64>,
+    pub max_output_tokens: Option<u64>,
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct DimUsageWindow {
@@ -825,6 +827,40 @@ async fn callback_handler(
     )
 }
 
+// Model limits are optional external directory data, never guessed from model names.
+fn optional_limit(value: Option<&Value>) -> Result<Option<u64>> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => match value.as_u64() {
+            Some(0) => Ok(None),
+            Some(value) => Ok(Some(value)),
+            None => Err("Invalid Dim model limit".into()),
+        },
+    }
+}
+
+/// Apply an explicitly selected directory effort after protocol conversion.
+pub(crate) fn apply_dim_effort(body: &mut Value, format: &str, effort: Option<&str>) {
+    let Some(effort) = effort else {
+        return;
+    };
+    match format {
+        "openai_chat" => body["reasoning_effort"] = Value::from(effort),
+        "openai_responses" | "anthropic" => {
+            let field = if format == "anthropic" {
+                "output_config"
+            } else {
+                "reasoning"
+            };
+            if !body[field].is_object() {
+                body[field] = serde_json::json!({});
+            }
+            body[field]["effort"] = Value::from(effort);
+        }
+        _ => {}
+    }
+}
+
 fn parse_models(payload: &Value) -> Result<Vec<DimModel>> {
     let rows = payload["data"].as_array().ok_or("Invalid Dim model list")?;
     let mut seen = HashSet::new();
@@ -919,6 +955,18 @@ fn parse_models(payload: &Value) -> Result<Vec<DimModel>> {
             api_formats,
             efforts,
             zdr: raw["zdr"] == true,
+            context_window: optional_limit(
+                config
+                    .get("context_window")
+                    .or_else(|| config.get("contextWindow"))
+                    .or_else(|| config.get("limit").and_then(|v| v.get("context"))),
+            )?,
+            max_output_tokens: optional_limit(
+                config
+                    .get("max_output_tokens")
+                    .or_else(|| config.get("maxOutputTokens"))
+                    .or_else(|| config.get("limit").and_then(|v| v.get("output"))),
+            )?,
         });
     }
     Ok(models)
