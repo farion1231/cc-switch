@@ -37,7 +37,10 @@ import {
   type OpenCodeModelDialect,
 } from "./helpers/opencodeFormUtils";
 import { StructuredOptionsEditor } from "./StructuredOptionsEditor";
-import { PI_THINKING_LEVELS } from "@/config/piThinkingProfiles";
+import {
+  PI_THINKING_LEVELS,
+  type PiThinkingLevel,
+} from "@/config/piThinkingProfiles";
 import { RequestHeadersEditor } from "./RequestHeadersEditor";
 import {
   findRequestHeaderValue,
@@ -195,7 +198,16 @@ function ReasoningEffortsField({
   const [expanded, setExpanded] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const offeredCount = Object.keys(efforts).length;
-  const offeredLevels = PI_THINKING_LEVELS.filter((level) => level in efforts);
+  const isUnconfigured = offeredCount === 0;
+  const genericFourLevels: readonly PiThinkingLevel[] = [
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+  ];
+  const offeredLevels = isUnconfigured
+    ? genericFourLevels
+    : PI_THINKING_LEVELS.filter((level) => level in efforts);
   const hasUnsupported =
     offeredLevels.length < PI_THINKING_LEVELS.length &&
     offeredLevels.length > 0;

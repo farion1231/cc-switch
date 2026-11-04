@@ -97,7 +97,7 @@ export const piThinkingProfiles = {
   openaiResponsesGpt5: {
     map: {
       off: null,
-      minimal: "minimal",
+      minimal: null,
       low: "low",
       medium: "medium",
       high: "high",
@@ -107,7 +107,7 @@ export const piThinkingProfiles = {
   },
   openaiResponsesGpt51: {
     map: {
-      off: "none",
+      off: null,
       minimal: null,
       low: "low",
       medium: "medium",
@@ -118,7 +118,7 @@ export const piThinkingProfiles = {
   },
   openaiResponsesGpt52To55: {
     map: {
-      off: "none",
+      off: null,
       minimal: null,
       low: "low",
       medium: "medium",
@@ -140,7 +140,7 @@ export const piThinkingProfiles = {
   },
   openaiResponsesGpt56: {
     map: {
-      off: "none",
+      off: null,
       minimal: null,
       low: "low",
       medium: "medium",
@@ -238,6 +238,28 @@ export const piThinkingProfiles = {
       low: "LOW",
       medium: null,
       high: "HIGH",
+    },
+  },
+  mimo: {
+    map: {
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: null,
+      max: null,
+    },
+  },
+  fourTiers: {
+    map: {
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "xhigh",
+      max: null,
     },
   },
 } as const satisfies Record<string, PiThinkingProfile>;
@@ -454,6 +476,16 @@ export const piThinkingBindings: readonly PiThinkingBinding[] = [
     catalogKey: "xai/grok-4.5",
     api: "openai-responses",
     profileId: "grokReasoning",
+  },
+  {
+    catalogKey: "xiaomi/mimo-v2.6-pro",
+    api: "openai-responses",
+    profileId: "mimo",
+  },
+  {
+    catalogKey: "xiaomi/mimo-v2.6-flash",
+    api: "openai-responses",
+    profileId: "mimo",
   },
 ];
 

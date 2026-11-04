@@ -2018,14 +2018,20 @@ export function PiProviderForm({
                                   (() => {
                                     const showAll =
                                       !!showAllThinkingLevels[model.key];
-                                    const supportedLevels =
-                                      PI_THINKING_LEVELS.filter(
-                                        (level) =>
-                                          thinkingLevelMode(
-                                            editableThinkingLevelMap,
-                                            level,
-                                          ) !== "unsupported",
-                                      );
+                                    const isUnconfigured =
+                                      Object.keys(editableThinkingLevelMap)
+                                        .length === 0;
+                                    const genericFourLevels: readonly PiThinkingLevel[] =
+                                      ["low", "medium", "high", "xhigh"];
+                                    const supportedLevels = isUnconfigured
+                                      ? genericFourLevels
+                                      : PI_THINKING_LEVELS.filter(
+                                          (level) =>
+                                            thinkingLevelMode(
+                                              editableThinkingLevelMap,
+                                              level,
+                                            ) !== "unsupported",
+                                        );
                                     const hasUnsupported =
                                       supportedLevels.length <
                                         PI_THINKING_LEVELS.length &&
