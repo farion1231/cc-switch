@@ -1347,7 +1347,14 @@ mod tests {
         let mut provider = Provider::with_id(
             crate::database::CODEX_OFFICIAL_PROVIDER_ID.into(),
             "DimAgent".into(),
-            json!({"auth":{}, "config":"model_provider = \"dimagent\"\nmodel = \"vendor/model-zdr\"\n[model_providers.dimagent]\nname = \"DimAgent\"\nbase_url = \"https://dimagent.cn/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n"}),
+            json!({"auth":{}, "config": r#"model_provider = "dimagent"
+model = "vendor/model-zdr"
+[model_providers.dimagent]
+name = "DimAgent"
+base_url = "https://dimagent.cn/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#}),
             None,
         );
         provider.category = Some("official".into());
