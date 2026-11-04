@@ -18,6 +18,7 @@ pub mod model_pricing;
 pub mod omo;
 pub mod pi_prompt_files;
 pub(crate) mod pi_state;
+pub mod plugin_manager;
 pub mod profile;
 pub mod prompt;
 pub mod provider;
