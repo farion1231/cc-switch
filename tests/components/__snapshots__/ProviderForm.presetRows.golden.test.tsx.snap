@@ -337,6 +337,22 @@ requires_openai_auth = true",
           },
           {
             "contextWindow": 500000,
+            "displayName": "Grok 4.6",
+            "inputModalities": [
+              "text",
+              "image",
+            ],
+            "model": "grok-4.6",
+            "reasoningLevels": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+            ],
+            "supportsParallelToolCalls": true,
+          },
+          {
+            "contextWindow": 500000,
             "displayName": "Grok 4.5",
             "inputModalities": [
               "text",

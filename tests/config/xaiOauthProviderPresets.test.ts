@@ -79,6 +79,12 @@ describe("xAI OAuth provider presets", () => {
         supportsParallelToolCalls: true,
       }),
       expect.objectContaining({
+        model: "grok-4.6",
+        contextWindow: 500000,
+        inputModalities: ["text", "image"],
+        supportsParallelToolCalls: true,
+      }),
+      expect.objectContaining({
         model: "grok-4.5",
         contextWindow: 500000,
         supportsParallelToolCalls: true,
@@ -108,6 +114,12 @@ describe("xAI OAuth provider presets", () => {
     expect(preset!.modelCatalog).toEqual([
       expect.objectContaining({
         model: "grok-4.7",
+        contextWindow: 500000,
+        supportsParallelToolCalls: true,
+        inputModalities: ["text", "image"],
+      }),
+      expect.objectContaining({
+        model: "grok-4.6",
         contextWindow: 500000,
         supportsParallelToolCalls: true,
         inputModalities: ["text", "image"],
