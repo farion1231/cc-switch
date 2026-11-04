@@ -217,6 +217,18 @@ struct StaleBadge: View {
     }
 }
 
+extension View {
+    /// 小组件不画标题行：数据过时时在右上角挂一个橙色时钟，平时什么都不画。
+    func staleCorner(_ snapshot: WidgetSnapshot?, now: Date) -> some View {
+        overlay(alignment: .topTrailing) {
+            if let snapshot {
+                StaleBadge(snapshot: snapshot, now: now)
+                    .font(.system(size: 11))
+            }
+        }
+    }
+}
+
 func generatedTime(_ snapshot: WidgetSnapshot) -> Date {
     Date(timeIntervalSince1970: snapshot.generatedAt)
 }

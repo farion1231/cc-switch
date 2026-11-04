@@ -388,52 +388,28 @@ struct AccountsWidgetView: View {
                 if let accounts = snapshot.accounts {
                     content(prioritized(accounts), snapshot: snapshot)
                 } else {
-                    header(nil)
                     // 旧版主程序（快照版本 1）不写账号段；新版只是刚启动还没读到
                     WidgetMessage(text: snapshot.version >= 2 ? Strings.current.loadingAccounts : Strings.current.outdated)
                 }
             } else {
-                header(nil)
                 WidgetMessage(text: Strings.current.off)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-    /// 标题行：账号数、要处理的数；中尺寸没有底栏，「还有 N 个」写在这里
-    /// 标题行：账号数、要处理的数；右边再挂过时标记（中尺寸没有底栏，只能看这里）
-    private func header(_ accounts: [WidgetAccount]?, snapshot: WidgetSnapshot? = nil) -> some View {
-        WidgetHeader(title: "CC Switch · \(Strings.current.accountsTitle)") {
-            HStack(spacing: 6) {
-                if let accounts, !accounts.isEmpty {
-                    let pending = accounts.filter(\.needsAction).count
-                    Text(Strings.current.accounts(accounts.count))
-                    // 中尺寸下面有一行提醒，标题里不再重复
-                    if pending > 0, family != .systemMedium {
-                        Text(String(format: Strings.current.needAction, pending))
-                            .foregroundStyle(.orange)
-                    }
-                }
-                if family == .systemMedium, let snapshot {
-                    StaleBadge(snapshot: snapshot, now: entry.date)
-                }
-            }
-        }
-        .frame(height: AuthLayout.headerHeight)
+        // 中尺寸没有底栏：过时只能看右上角
+        .staleCorner(family == .systemMedium ? entry.snapshot : nil, now: entry.date)
     }
 
     @ViewBuilder
     private func content(_ accounts: [WidgetAccount], snapshot: WidgetSnapshot) -> some View {
         let displayUsed = snapshot.quotaDisplay == "used"
         if accounts.isEmpty {
-            header(accounts)
             WidgetMessage(text: Strings.current.noAccounts)
         } else if family == .systemMedium {
             medium(accounts, snapshot: snapshot, displayUsed: displayUsed)
         } else {
             let columns = family == .systemExtraLarge ? 2 : 1
             let maxRows = family == .systemExtraLarge ? 4 : 2
-            header(accounts)
             // 按真实可用高度装：放得下几个放几个，剩下的写进底栏
             GeometryReader { geo in
                 let packed = pack(accounts, columns: columns, maxRows: maxRows, displayUsed: displayUsed, height: geo.size.height)
@@ -449,7 +425,7 @@ struct AccountsWidgetView: View {
                         }
                     }
                     Spacer(minLength: 0)
-                    footer(hidden: accounts.count - packed.shown, snapshot: snapshot)
+                    footer(accounts, hidden: accounts.count - packed.shown, snapshot: snapshot)
                 }
             }
         }
@@ -487,7 +463,6 @@ struct AccountsWidgetView: View {
     private func medium(_ accounts: [WidgetAccount], snapshot: WidgetSnapshot, displayUsed: Bool) -> some View {
         let pending = accounts.filter(\.needsAction)
         let rest = pending.isEmpty ? accounts : accounts.filter { !$0.needsAction }
-        header(accounts, snapshot: snapshot)
         if !pending.isEmpty {
             PendingAlert(accounts: pending)
         }
@@ -503,8 +478,15 @@ struct AccountsWidgetView: View {
         }
     }
 
-    private func footer(hidden: Int, snapshot: WidgetSnapshot) -> some View {
-        HStack {
+    /// 底栏：账号数、要处理的数、放不下的数，右边写快照时间（过时标橙）。小组件不画标题行，这些放这里。
+    private func footer(_ accounts: [WidgetAccount], hidden: Int, snapshot: WidgetSnapshot) -> some View {
+        let pending = accounts.filter(\.needsAction).count
+        return HStack(spacing: 8) {
+            Text(Strings.current.accounts(accounts.count))
+            if pending > 0 {
+                Text(String(format: Strings.current.needAction, pending))
+                    .foregroundStyle(.orange)
+            }
             if hidden > 0 {
                 Text(String(format: Strings.current.more, hidden))
             }

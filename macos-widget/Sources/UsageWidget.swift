@@ -188,24 +188,11 @@ struct UsageWidgetView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .staleCorner(entry.snapshot, now: entry.date)
     }
 
     private func message(_ text: String) -> some View {
-        VStack(alignment: .leading) {
-            WidgetHeader(title: Strings.current.usageTitle) { EmptyView() }
-            WidgetMessage(text: text)
-        }
-    }
-
-    /// 标题：「用量 · 近 7 天」，右边过时标记（大尺寸写时间）。
-    private func header(_ snapshot: WidgetSnapshot) -> some View {
-        WidgetHeader(title: "\(Strings.current.usageTitle) · \(range.title)") {
-            if family == .systemLarge {
-                UpdatedTime(snapshot: snapshot, now: entry.date)
-            } else {
-                StaleBadge(snapshot: snapshot, now: entry.date)
-            }
-        }
+        WidgetMessage(text: text)
     }
 
     private func bigCost(_ text: String, size: CGFloat) -> some View {
@@ -248,7 +235,6 @@ struct UsageWidgetView: View {
         switch family {
         case .systemSmall:
             VStack(alignment: .leading, spacing: 2) {
-                header(snapshot)
                 Spacer(minLength: 2)
                 bigCost(data.totals.cost, size: 30)
                 tokensLine(data.totals)
@@ -258,7 +244,6 @@ struct UsageWidgetView: View {
             }
         case .systemLarge:
             VStack(alignment: .leading, spacing: 10) {
-                header(snapshot)
                 bigCost(data.totals.cost, size: 34)
                 HStack(spacing: 16) {
                     ForEach(Array(metrics(data.totals).dropFirst().enumerated()), id: \.offset) { $0.element }
@@ -272,7 +257,6 @@ struct UsageWidgetView: View {
         default:
             HStack(alignment: .top, spacing: 16) {
                 VStack(alignment: .leading, spacing: 6) {
-                    header(snapshot)
                     bigCost(data.totals.cost, size: 30)
                     Spacer(minLength: 0)
                     // 三个数字（英文「Cache hits」等较长）：给足宽度、可缩小，别和右边图表的坐标轴挤在一起
@@ -293,7 +277,6 @@ struct UsageWidgetView: View {
     @ViewBuilder
     private func trend(_ data: UsageRange, snapshot: WidgetSnapshot) -> some View {
         VStack(alignment: .leading, spacing: family == .systemSmall ? 4 : 8) {
-            header(snapshot)
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 bigCost(data.totals.cost, size: family == .systemSmall ? 20 : 24)
                 if family != .systemSmall {
@@ -308,7 +291,6 @@ struct UsageWidgetView: View {
     @ViewBuilder
     private func apps(_ data: UsageRange, snapshot: WidgetSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            header(snapshot)
             HStack(alignment: .firstTextBaseline) {
                 bigCost(data.totals.cost, size: family == .systemSmall ? 18 : 22)
                 Spacer()
@@ -349,7 +331,6 @@ struct UsageWidgetView: View {
     private func metricsStyle(_ data: UsageRange, snapshot: WidgetSnapshot) -> some View {
         let items = metrics(data.totals, size: family == .systemSmall ? 15 : 18)
         VStack(alignment: .leading, spacing: 10) {
-            header(snapshot)
             if family == .systemMedium {
                 HStack(alignment: .top, spacing: 18) {
                     ForEach(Array(items.enumerated()), id: \.offset) { $0.element }

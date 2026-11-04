@@ -66,11 +66,6 @@ struct QuotaWidgetView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: family == .systemLarge ? 14 : 9) {
-            WidgetHeader(title: "CC Switch · \(Strings.current.quotaTitle)") {
-                if let snapshot = entry.snapshot {
-                    UpdatedTime(snapshot: snapshot, now: entry.date)
-                }
-            }
             if let snapshot = entry.snapshot {
                 let apps = visibleApps(snapshot)
                 if apps.isEmpty {
@@ -84,6 +79,7 @@ struct QuotaWidgetView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .staleCorner(entry.snapshot, now: entry.date)
     }
 }
 
