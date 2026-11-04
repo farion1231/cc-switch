@@ -4961,6 +4961,7 @@
     "removeMarketplace": "Kaldır",
     "confirmUninstallTitle": "{{name}} kaldırılsın mı?",
     "confirmUninstallBody": "Eklentiyi ve önbellek dosyalarını {{app}} uygulamasından kaldırır. Keşfet'ten yeniden yükleyebilirsiniz.",
+    "confirmUninstallClaudeBody": "Eklentiyi {{app}} uygulamasından kaldırır ve veri dizinini korur. Bu son kurulumsa kayıtlı seçenekler ve kimlik bilgileri silinir; yeniden yüklemek bunları geri getirmez.",
     "confirmInstallTitle": "{{name}} yüklensin mi?",
     "confirmInstallBody": "Eklentiler sizin izinlerinizle çalışır: {{app}} eklentinin becerilerini, kancalarını ve MCP sunucularını yükler ve bildirdiği yetenekleri verir. Yalnızca güvendiğiniz kaynaklardan eklenti yükleyin.",
     "confirmRemoveMarketTitle": "{{name}} pazar yeri kaldırılsın mı?",

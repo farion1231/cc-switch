@@ -5003,6 +5003,7 @@
     "removeMarketplace": "削除",
     "confirmUninstallTitle": "{{name}} をアンインストールしますか？",
     "confirmUninstallBody": "{{app}} からプラグインとキャッシュファイルを削除します。「見つける」から再インストールできます。",
+    "confirmUninstallClaudeBody": "{{app}} からプラグインをアンインストールし、データディレクトリを保持します。これが最後のインストールの場合、保存済みのオプションと認証情報は削除され、再インストールしても復元されません。",
     "confirmInstallTitle": "{{name}} をインストールしますか？",
     "confirmInstallBody": "プラグインはあなたの権限で動作します。{{app}} はそのスキル、フック、MCP サーバーを読み込み、宣言された機能を許可します。信頼できる提供元のプラグインだけをインストールしてください。",
     "confirmRemoveMarketTitle": "マーケットプレイス {{name}} を削除しますか？",

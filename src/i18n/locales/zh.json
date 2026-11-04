@@ -5003,6 +5003,7 @@
     "removeMarketplace": "移除",
     "confirmUninstallTitle": "卸载 {{name}}？",
     "confirmUninstallBody": "从 {{app}} 移除这个插件和它的缓存文件。之后可以在「发现」里重新安装。",
+    "confirmUninstallClaudeBody": "从 {{app}} 卸载插件并保留其数据目录。若这是最后一份安装，保存的选项和凭据会被删除，重新安装无法恢复。",
     "confirmInstallTitle": "安装 {{name}}？",
     "confirmInstallBody": "插件以你的权限运行：{{app}} 会加载它的技能、钩子和 MCP 服务器，并授予它声明的能力。只安装来源可信的插件。",
     "confirmRemoveMarketTitle": "移除市场 {{name}}？",
