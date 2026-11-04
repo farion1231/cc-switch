@@ -4816,6 +4816,10 @@
     },
     "bulk": {
       "selected": "{{count}} selected",
+      "enableTo": "Enable in",
+      "enableToAria": "Enable the {{count}} selected Skills in",
+      "disable": "Turn off in",
+      "disableAria": "Turn off the {{count}} selected Skills in",
       "uninstall": "Uninstall"
     },
     "piColumnTitle": "Pi counts a Skill as enabled when its folder exists in ~/.pi/agent/skills",
@@ -4829,9 +4833,10 @@
     "selectAllAria": "Select all shown",
     "rowFail": "Enabling in {{app}} failed: {{error}}",
     "fixSync": "Change sync method",
+    "rowMoreAria": "More actions for {{name}}",
     "rowUpdateAria": "Update {{name}}",
     "openDir": "Open folder",
-    "openDirAria": "Open the folder for {{name}}",
+    "uninstallEllipsis": "Uninstall",
     "listLabel": "Installed Skills",
     "noMatch": "No Skills match “{{query}}”",
     "noFilterMatch": "No Skills match the filters",
@@ -4860,7 +4865,10 @@
       "backupAt": "Backed up to {{path}}",
       "copiedName": "Copied {{name}}",
       "openDirFailed": "Couldn't open the folder",
-      "noUpdatesInSelection": "None of the selected Skills have updates"
+      "noUpdatesInSelection": "None of the selected Skills have updates",
+      "selectionAlreadyOn": "The {{count}} selected Skills are already enabled in {{app}}",
+      "selectionAlreadyOff": "None of the {{count}} selected Skills are enabled in {{app}}",
+      "disabledSelection": "Turned off {{count}} {{noun}} in {{app}}"
     },
     "installTo": {
       "prefix": "Install to: ",

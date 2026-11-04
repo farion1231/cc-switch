@@ -6,7 +6,6 @@ import {
   ArrowUpCircle,
   Check,
   ChevronDown,
-  FolderOpen,
   Loader2,
   MoreHorizontal,
   Plus,
@@ -21,12 +20,13 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
-import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
+import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { SkillsIcon } from "@/components/BrandIcons";
 import {
   type ImportSkillSelection,
@@ -507,6 +507,32 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     void bulkToggle(ids, app, enabled, {
       on: "appMatrix.toast.enabled",
       off: "appMatrix.toast.disabled",
+    });
+  };
+
+  const handleSelectionToggle = (app: AppId, enabled: boolean) => {
+    const chosen = installedSkills.filter((skill) => selected.has(skill.id));
+    const ids = chosen
+      .filter((skill) => Boolean(skill.apps[app]) !== enabled)
+      .map((skill) => skill.id);
+    if (ids.length === 0) {
+      toast.info(
+        enabled
+          ? t("skillsPage.toast.selectionAlreadyOn", {
+              count: chosen.length,
+              app: APP_DISPLAY_NAME[app],
+            })
+          : t("skillsPage.toast.selectionAlreadyOff", {
+              count: chosen.length,
+              app: APP_DISPLAY_NAME[app],
+            }),
+        { closeButton: true },
+      );
+      return;
+    }
+    void bulkToggle(ids, app, enabled, {
+      on: "appMatrix.toast.enabled",
+      off: "skillsPage.toast.disabledSelection",
     });
   };
 
@@ -1262,8 +1288,13 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                     onOpenSource={() => void openDocs(skill)}
                     onFixSync={() => setStorageOpen(true)}
                     onUpdate={() => void updateIds([skill.id])}
+                    onOpenDocs={() => void openDocs(skill)}
                     onCopyName={() => void copyName(skill)}
                     onOpenDir={() => void openDirectory(skill)}
+                    onUninstall={() => {
+                      if (writeLockRef.current || interactionBlocked) return;
+                      setConfirm({ kind: "uninstall", ids: [skill.id] });
+                    }}
                   />
                 ))}
               </ul>
@@ -1341,9 +1372,10 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
             ) : null,
           )}
 
-          {/* 页签下面一行，和「发现」段同高：左边筛选一直在，右边是更新入口；勾选了行就换成批量操作 */}
+          {/* 页签下面一行，和「发现」段同高：左边筛选一直在，右边是更新入口；勾选了行就换成批量操作。
+              窄窗口 + 大缩放时两边放不下就把右边整组折到下一行，不叠在一起 */}
           {showInstalledToolbar && (
-            <div className="flex h-12 shrink-0 items-center gap-2 px-6">
+            <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 px-6 py-2">
               <div className="-ms-2.5 flex min-w-0 items-center gap-0.5">
                 <FilterMenu
                   label={statusLabel(statusFilter)}
@@ -1402,11 +1434,29 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                   })}
                 </Button>
               ) : selectionActive ? (
-                <div className="flex shrink-0 items-center gap-0.5">
+                <div className="flex shrink-0 flex-wrap items-center gap-0.5">
                   <span className="shrink-0 whitespace-nowrap pe-1.5 text-body font-medium tabular-nums">
                     {t("skillsPage.bulk.selected", { count: selected.size })}
                   </span>
-                  {/* 启用 / 停用直接点表格里的格子；这里只放格子做不了的事 */}
+                  {/* 列头的批量只按筛选范围走；挑着勾的几行要一次启用到 / 停用某个应用，走这里 */}
+                  <AppMenuButton
+                    label={t("skillsPage.bulk.enableTo")}
+                    ariaLabel={t("skillsPage.bulk.enableToAria", {
+                      count: selected.size,
+                    })}
+                    apps={appIds}
+                    disabled={controlsDisabled}
+                    onPick={(app) => handleSelectionToggle(app, true)}
+                  />
+                  <AppMenuButton
+                    label={t("skillsPage.bulk.disable")}
+                    ariaLabel={t("skillsPage.bulk.disableAria", {
+                      count: selected.size,
+                    })}
+                    apps={appIds}
+                    disabled={controlsDisabled}
+                    onPick={(app) => handleSelectionToggle(app, false)}
+                  />
                   <Button
                     type="button"
                     variant="quiet"
@@ -1723,8 +1773,10 @@ interface InstalledRowProps {
   onOpenSource: () => void;
   onFixSync: () => void;
   onUpdate: () => void;
+  onOpenDocs: () => void;
   onCopyName: () => void;
   onOpenDir: () => void;
+  onUninstall: () => void;
 }
 
 function InstalledRow({
@@ -1744,8 +1796,10 @@ function InstalledRow({
   onOpenSource,
   onFixSync,
   onUpdate,
+  onOpenDocs,
   onCopyName,
   onOpenDir,
+  onUninstall,
 }: InstalledRowProps) {
   const { t } = useTranslation();
   const enabled = SKILLS_APP_IDS.some((app) => skill.apps[app]);
@@ -1892,19 +1946,43 @@ function InstalledRow({
           );
         })}
       </div>
-      {/* 行尾只留「打开目录」：文档走第一行的来源链接，卸载 / 更新走勾选后的批量操作 */}
+      {/* 行尾「⋯」：更新已经是第一行的「可更新」徽标，这里放打开文档、打开目录和单个卸载 */}
       <div className="flex w-10 shrink-0 justify-end">
-        <HoverTip content={t("skillsPage.openDir")}>
-          <Button
-            type="button"
-            variant="quiet"
-            size="icon-compact"
-            aria-label={t("skillsPage.openDirAria", { name: skill.name })}
-            onClick={onOpenDir}
-          >
-            <FolderOpen className="h-[15px] w-[15px]" strokeWidth={1.5} />
-          </Button>
-        </HoverTip>
+        <DropdownMenu>
+          <HoverTip content={t("common.more")}>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="quiet"
+                size="icon-compact"
+                aria-label={t("skillsPage.rowMoreAria", { name: skill.name })}
+                disabled={disabled}
+              >
+                <MoreHorizontal
+                  className="h-[15px] w-[15px]"
+                  strokeWidth={1.5}
+                />
+              </Button>
+            </DropdownMenuTrigger>
+          </HoverTip>
+          <DropdownMenuContent align="end" className="min-w-[180px]">
+            {(skill.readmeUrl || hasRepo) && (
+              <DropdownMenuItem onSelect={onOpenDocs}>
+                {t("mcpPage.openDocs")}
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onSelect={onOpenDir}>
+              {t("skillsPage.openDir")}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="text-danger-text focus:text-danger-text"
+              onSelect={onUninstall}
+            >
+              {t("skillsPage.uninstallEllipsis")}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </li>
   );
@@ -1967,6 +2045,50 @@ function FilterMenu({
                 {item.count}
               </span>
             )}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+// ─── 多选条的「启用到 / 停用」应用菜单 ────────────────────────────────────
+function AppMenuButton({
+  label,
+  ariaLabel,
+  apps,
+  disabled,
+  onPick,
+}: {
+  label: string;
+  ariaLabel: string;
+  apps: AppId[];
+  disabled: boolean;
+  onPick: (app: AppId) => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="quiet"
+          size="compact"
+          className="shrink-0 pe-1.5 ps-2"
+          disabled={disabled}
+        >
+          {label}
+          <ChevronDown className="h-3.5 w-3.5" strokeWidth={2} />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        aria-label={ariaLabel}
+        className="min-w-[200px]"
+      >
+        {apps.map((app) => (
+          <DropdownMenuItem key={app} onSelect={() => onPick(app)}>
+            <AppGlyph app={app} size={16} badgeClassName="bg-surface" />
+            {APP_DISPLAY_NAME[app]}
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>

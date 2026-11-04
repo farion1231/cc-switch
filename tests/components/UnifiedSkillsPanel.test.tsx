@@ -476,26 +476,56 @@ describe("UnifiedSkillsPanel", () => {
     );
   });
 
-  it("keeps only update and uninstall in the selection bar", async () => {
+  it("enables the selected Skills in one app from the selection bar", async () => {
     m.installed = [
       makeSkill({ id: "a", name: "A" }),
       makeSkill({ id: "b", name: "B" }),
+      makeSkill({ id: "c", name: "C" }),
+    ];
+    renderPanel();
+    const picks = screen.getAllByRole("checkbox", {
+      name: "skillsPage.selectAria",
+    });
+    await userEvent.click(picks[0]);
+    await userEvent.click(picks[2]);
+    expect(screen.getByText("skillsPage.bulk.selected")).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: /skillsPage.bulk.enableTo/ }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: /Codex/ }),
+    );
+    await waitFor(() =>
+      expect(m.bulkToggle).toHaveBeenCalledWith({
+        ids: ["a", "c"],
+        app: "codex",
+        enabled: true,
+      }),
+    );
+  });
+
+  it("turns off only the selected Skills in one app from the selection bar", async () => {
+    m.installed = [
+      makeSkill({ id: "a", name: "A", apps: { codex: true } }),
+      makeSkill({ id: "b", name: "B", apps: { codex: true } }),
     ];
     renderPanel();
     await userEvent.click(
-      screen.getAllByRole("checkbox", { name: "skillsPage.selectAria" })[0],
+      screen.getAllByRole("checkbox", { name: "skillsPage.selectAria" })[1],
     );
-    expect(screen.getByText("skillsPage.bulk.selected")).toBeInTheDocument();
-    // 启用 / 停用直接点矩阵里的格子，批量条不再放应用菜单
-    expect(
-      screen.getByRole("button", { name: "skills.update" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "skillsPage.bulk.uninstall" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /enableTo|bulk\.disable/ }),
-    ).not.toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: /skillsPage.bulk.disable/ }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: /Codex/ }),
+    );
+    await waitFor(() =>
+      expect(m.bulkToggle).toHaveBeenCalledWith({
+        ids: ["b"],
+        app: "codex",
+        enabled: false,
+      }),
+    );
   });
 
   it("selects every listed Skill from the header checkbox", async () => {
@@ -523,18 +553,13 @@ describe("UnifiedSkillsPanel", () => {
     for (const pick of picks) expect(pick).not.toBeChecked();
   });
 
-  it("uninstalls the selected Skill after confirming", async () => {
+  it("uninstalls through the row menu after confirming", async () => {
     m.installed = [makeSkill()];
     m.uninstall.mockResolvedValueOnce({
       preservedPiPath: "/tmp/.pi/agent/skills/alpha-skill",
     });
     renderPanel();
-    await userEvent.click(
-      screen.getByRole("checkbox", { name: "skillsPage.selectAria" }),
-    );
-    await userEvent.click(
-      screen.getByRole("button", { name: "skillsPage.bulk.uninstall" }),
-    );
+    await openMenu("skillsPage.rowMoreAria", "skillsPage.uninstallEllipsis");
     expect(
       screen.getByText("skillsPage.confirm.uninstallBody"),
     ).toBeInTheDocument();
@@ -619,7 +644,7 @@ describe("UnifiedSkillsPanel", () => {
     expect(m.updateSkill).toHaveBeenCalledWith("b");
   });
 
-  it("updates one Skill from its row badge and opens its folder from the row", async () => {
+  it("updates one Skill from its row badge and opens its folder from the row menu", async () => {
     m.installed = [
       makeSkill({ id: "a", name: "A" }),
       makeSkill({ id: "b", name: "B", directory: "b-dir" }),
@@ -632,13 +657,16 @@ describe("UnifiedSkillsPanel", () => {
     await waitFor(() => expect(m.updateSkill).toHaveBeenCalledWith("b"));
     expect(m.updateSkill).toHaveBeenCalledTimes(1);
 
-    // 行尾只有「打开目录」一个按钮，不再是下拉菜单
-    expect(
-      screen.queryByRole("button", { name: "skillsPage.rowMoreAria" }),
-    ).not.toBeInTheDocument();
+    // 更新已经在徽标上，行尾「⋯」里不再重复
     const openDir = vi.spyOn(skillsApi, "openSkillDir").mockResolvedValue();
     await userEvent.click(
-      screen.getAllByRole("button", { name: "skillsPage.openDirAria" })[1],
+      screen.getAllByRole("button", { name: "skillsPage.rowMoreAria" })[1],
+    );
+    expect(
+      screen.queryByRole("menuitem", { name: "skills.update" }),
+    ).not.toBeInTheDocument();
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "skillsPage.openDir" }),
     );
     expect(openDir).toHaveBeenCalledWith("b-dir");
     openDir.mockRestore();
