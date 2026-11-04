@@ -212,7 +212,14 @@ struct UsageWidgetView: View {
                         WidgetFooter(paging: paging) {
                             HStack(spacing: 6) {
                                 Text(range.title).foregroundStyle(.secondary)
-                                UpdatedTime(snapshot: snapshot, now: entry.date, compact: family != .systemLarge && family != .systemExtraLarge)
+                                if family == .systemSmall {
+                                    // 小尺寸放不下范围名加时间：只在过时时挂一个橙色时钟
+                                    if entry.date.timeIntervalSince(generatedTime(snapshot)) >= staleAfter {
+                                        Image(systemName: "clock.badge.exclamationmark").foregroundStyle(.orange)
+                                    }
+                                } else {
+                                    UpdatedTime(snapshot: snapshot, now: entry.date, compact: family == .systemMedium)
+                                }
                             }
                         }
                         .padding(.top, 6)
