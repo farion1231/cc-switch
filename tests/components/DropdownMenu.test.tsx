@@ -33,11 +33,8 @@ describe("DropdownMenu animation guard", () => {
     expect(screen.getByRole("menu")).toBeInTheDocument();
     expect(trigger).toHaveAttribute("aria-expanded", "true");
 
-    // Radix 挂载后才注册文档层的外部指针事件监听。
     await act(() => new Promise((resolve) => window.setTimeout(resolve, 0)));
 
-    // 模态菜单会禁用 body 的指针事件；打开状态的样式让触发器仍能接收点击。
-    // jsdom 不做命中测试，因此只向触发器派发事件无法验证这一点。
     expect(document.body).toHaveStyle({ pointerEvents: "none" });
     expect(trigger).toHaveClass("data-[state=open]:pointer-events-auto");
 

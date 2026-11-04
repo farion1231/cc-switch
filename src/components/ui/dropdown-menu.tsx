@@ -8,9 +8,11 @@ import {
 } from "./overlay-animation-guard";
 
 interface DropdownMenuAnimationContextValue extends OverlayAnimationGuard {
-  beginTriggerTransition: () => void;
   triggerRef: React.MutableRefObject<HTMLButtonElement | null>;
 }
+
+const MENU_CONTENT_CLASS =
+  "z-[100] min-w-[8rem] rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md";
 
 const DropdownMenuAnimationContext = React.createContext<
   DropdownMenuAnimationContextValue | undefined
@@ -23,11 +25,7 @@ function DropdownMenu({
   const animation = useOverlayAnimationGuard();
   const triggerRef = React.useRef<HTMLButtonElement | null>(null);
   const context = React.useMemo<DropdownMenuAnimationContextValue>(
-    () => ({
-      ...animation,
-      triggerRef,
-      beginTriggerTransition: animation.beginTransition,
-    }),
+    () => ({ ...animation, triggerRef }),
     [animation],
   );
   const handleOpenChange = React.useCallback(
@@ -62,38 +60,31 @@ const DropdownMenuTrigger = React.forwardRef<
       },
       [animation, forwardedRef],
     );
+    const handleToggle = (
+      event: React.SyntheticEvent<HTMLButtonElement>,
+      canToggle: boolean,
+    ) => {
+      if (event.defaultPrevented) return;
+      if (animation?.isTransitioning()) {
+        event.preventDefault();
+      } else if (!disabled && canToggle) {
+        animation?.beginTransition();
+      }
+    };
+
     return (
       <DropdownMenuPrimitive.Trigger
         {...props}
-        // 模态菜单打开时会禁用 body 的指针事件；让触发器继续接收点击，
-        // 才能在动画保护期间拦截第二次点击。
         className={cn("data-[state=open]:pointer-events-auto", className)}
         disabled={disabled}
         ref={setRefs}
         onPointerDown={(event) => {
           onPointerDown?.(event);
-          if (!event.defaultPrevented && animation?.isTransitioning()) {
-            event.preventDefault();
-          } else if (
-            !event.defaultPrevented &&
-            !disabled &&
-            event.button === 0 &&
-            event.ctrlKey === false
-          ) {
-            animation?.beginTriggerTransition();
-          }
+          handleToggle(event, event.button === 0 && !event.ctrlKey);
         }}
         onKeyDown={(event) => {
           onKeyDown?.(event);
-          if (!event.defaultPrevented && animation?.isTransitioning()) {
-            event.preventDefault();
-          } else if (
-            !event.defaultPrevented &&
-            !disabled &&
-            ["Enter", " ", "ArrowDown"].includes(event.key)
-          ) {
-            animation?.beginTriggerTransition();
-          }
+          handleToggle(event, ["Enter", " ", "ArrowDown"].includes(event.key));
         }}
       />
     );
@@ -135,11 +126,7 @@ const DropdownMenuSubContent = React.forwardRef<
   return (
     <DropdownMenuPrimitive.SubContent
       ref={ref}
-      className={cn(
-        "z-[100] min-w-[8rem] rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md",
-        OVERLAY_MOTION_CLASS,
-        className,
-      )}
+      className={cn(MENU_CONTENT_CLASS, OVERLAY_MOTION_CLASS, className)}
       {...props}
     />
   );
@@ -162,7 +149,8 @@ const DropdownMenuContent = React.forwardRef<
           ref={forwardedRef}
           sideOffset={sideOffset}
           className={cn(
-            "z-[100] min-w-[8rem] overflow-hidden rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md",
+            MENU_CONTENT_CLASS,
+            "overflow-hidden",
             OVERLAY_MOTION_CLASS,
             className,
           )}
@@ -175,8 +163,6 @@ const DropdownMenuContent = React.forwardRef<
               target instanceof Node &&
               animation.triggerRef.current?.contains(target)
             ) {
-              // DismissableLayer 在文档层处理指针按下事件，
-              // 仅在触发器上阻止默认行为仍可能触发外部点击关闭。
               event.preventDefault();
             }
           }}

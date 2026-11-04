@@ -45,7 +45,6 @@ const PopoverTrigger = React.forwardRef<
       onClick={(event) => {
         onClick?.(event);
         if (!event.defaultPrevented && animation?.isTransitioning()) {
-          // 用户处理函数阻止默认行为后，Radix 不会执行切换操作。
           event.preventDefault();
         }
       }}
