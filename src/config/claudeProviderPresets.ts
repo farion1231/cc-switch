@@ -1528,7 +1528,10 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_BASE_URL: "https://open.bigmodel.cn/api/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
         ANTHROPIC_MODEL: "glm-5.3[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.3[1M]",
+        // Haiku 档跑会话标题、摘要和 Explore 子代理：用 Flash 省约 9 倍价格、
+        // Coding Plan 多 3× 配额；主档保持 5.3（更强，但纯文本——需要贴图时
+        // 把活跃模型切到 glm-5.3-flash）
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.3-flash[1M]",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.3[1M]",
         ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.3[1M]",
       },
@@ -1548,7 +1551,10 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
         ANTHROPIC_MODEL: "glm-5.3[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.3[1M]",
+        // Haiku 档跑会话标题、摘要和 Explore 子代理：用 Flash 省约 9 倍价格、
+        // Coding Plan 多 3× 配额；主档保持 5.3（更强，但纯文本——需要贴图时
+        // 把活跃模型切到 glm-5.3-flash）
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.3-flash[1M]",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.3[1M]",
         ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.3[1M]",
       },

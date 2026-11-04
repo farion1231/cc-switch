@@ -1466,7 +1466,9 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://open.bigmodel.cn/api/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes("glm-5.3", "glm-5.3", "glm-5.3", true),
+    // Haiku 档用 Flash（后台任务足够，价格约 1/9、Coding Plan 3× 配额）；
+    // 主档 5.3 为纯文本，需要贴图时把对应档切到 glm-5.3-flash
+    modelRoutes: brandedRoutes("glm-5.3", "glm-5.3", "glm-5.3-flash", true),
     icon: "zhipu",
     iconColor: "#0F62FE",
   },
@@ -1480,7 +1482,9 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.z.ai/api/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes("glm-5.3", "glm-5.3", "glm-5.3", true),
+    // Haiku 档用 Flash（后台任务足够，价格约 1/9、Coding Plan 3× 配额）；
+    // 主档 5.3 为纯文本，需要贴图时把对应档切到 glm-5.3-flash
+    modelRoutes: brandedRoutes("glm-5.3", "glm-5.3", "glm-5.3-flash", true),
     icon: "zhipu",
     iconColor: "#0F62FE",
   },

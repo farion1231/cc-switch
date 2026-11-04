@@ -264,3 +264,18 @@ describe("1M 模型预设的窗口声明", () => {
     expect(env.ANTHROPIC_MODEL).toBe("zai-org/glm-5.3");
   });
 });
+
+describe("Zhipu GLM 预设的档位分工", () => {
+  for (const name of ["Zhipu GLM", "Zhipu GLM en"]) {
+    it(`${name} 主档用 5.3、Haiku 档用 5.3-Flash`, () => {
+      const preset = providerPresets.find((p) => p.name === name);
+      const env = (preset!.settingsConfig as any).env;
+      expect(env).toMatchObject({
+        ANTHROPIC_MODEL: "glm-5.3[1M]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.3[1M]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.3[1M]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.3-flash[1M]",
+      });
+    });
+  }
+});
