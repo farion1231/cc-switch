@@ -163,7 +163,7 @@ export const piThinkingProfiles = {
   },
   openaiResponsesGpt6Ultra: {
     map: {
-      off: "none",
+      off: null,
       minimal: null,
       low: "low",
       medium: "medium",
@@ -210,7 +210,7 @@ export const piThinkingProfiles = {
   gemini3: {
     map: {
       off: null,
-      minimal: "minimal",
+      minimal: null,
       low: "low",
       medium: "medium",
       high: "high",
