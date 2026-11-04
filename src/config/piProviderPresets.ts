@@ -115,17 +115,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("moonshotai/kimi-k2.7-code", {
-          id: "kimi-k2.7-code",
-          thinkingProfile: "offUnsupported",
-        }),
-        {
-          ...piModel("moonshotai/kimi-k3", {
-            id: "kimi-k3",
-            thinkingProfile: "kimi3",
-          }),
-          compat: { ...KIMI_K3_COMPAT },
-        },
+        // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+        // 退役；K3.1 Pro 为现役旗舰（1M 上下文），置顶为默认
         // 官方文档：K3.1 Pro 同 K3 用顶层 reasoning_effort（low/high/max），
         // HighSpeed 与之能力相同
         {
@@ -142,6 +133,17 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           }),
           compat: { ...KIMI_K3_COMPAT },
         },
+        {
+          ...piModel("moonshotai/kimi-k3", {
+            id: "kimi-k3",
+            thinkingProfile: "kimi3",
+          }),
+          compat: { ...KIMI_K3_COMPAT },
+        },
+        piModel("moonshotai/kimi-k2.7-code", {
+          id: "kimi-k2.7-code",
+          thinkingProfile: "offUnsupported",
+        }),
         piModel("moonshotai/kimi-k2.7-code-highspeed", {
           id: "kimi-k2.7-code-highspeed",
           thinkingProfile: "offUnsupported",
@@ -171,17 +173,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("moonshotai/kimi-k2.7-code", {
-          id: "kimi-k2.7-code",
-          thinkingProfile: "offUnsupported",
-        }),
-        {
-          ...piModel("moonshotai/kimi-k3", {
-            id: "kimi-k3",
-            thinkingProfile: "kimi3",
-          }),
-          compat: { ...KIMI_K3_COMPAT },
-        },
+        // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+        // 退役；K3.1 Pro 为现役旗舰（1M 上下文），置顶为默认
         // 官方文档：K3.1 Pro 同 K3 用顶层 reasoning_effort（low/high/max），
         // HighSpeed 与之能力相同
         {
@@ -198,6 +191,17 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           }),
           compat: { ...KIMI_K3_COMPAT },
         },
+        {
+          ...piModel("moonshotai/kimi-k3", {
+            id: "kimi-k3",
+            thinkingProfile: "kimi3",
+          }),
+          compat: { ...KIMI_K3_COMPAT },
+        },
+        piModel("moonshotai/kimi-k2.7-code", {
+          id: "kimi-k2.7-code",
+          thinkingProfile: "offUnsupported",
+        }),
         piModel("moonshotai/kimi-k2.7-code-highspeed", {
           id: "kimi-k2.7-code-highspeed",
           thinkingProfile: "offUnsupported",

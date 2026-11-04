@@ -117,6 +117,17 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       apiKey: "",
       api: "openai-completions",
       models: [
+        // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+        // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文，官方价 $2/$10，
+        // 缓存读 $0.2、5m 写 $2）
+        {
+          id: "kimi-k3.1-pro",
+          name: "Kimi K3.1 Pro",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2 },
+        },
         {
           id: "kimi-k2.7-code",
           name: "Kimi K2.7 Code",
@@ -167,8 +178,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "kimi/kimi-k2.7-code" },
-      modelCatalog: { "kimi/kimi-k2.7-code": { alias: "Kimi" } },
+      model: { primary: "kimi/kimi-k3.1-pro" },
+      modelCatalog: { "kimi/kimi-k3.1-pro": { alias: "Kimi" } },
     },
   },
   // API 开放平台海外/Global 变体：platform.kimi.ai + api.moonshot.ai 端点
@@ -185,6 +196,17 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       apiKey: "",
       api: "openai-completions",
       models: [
+        // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+        // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文，官方价 $2/$10，
+        // 缓存读 $0.2、5m 写 $2）
+        {
+          id: "kimi-k3.1-pro",
+          name: "Kimi K3.1 Pro",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2 },
+        },
         {
           id: "kimi-k2.7-code",
           name: "Kimi K2.7 Code",
@@ -235,8 +257,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "kimi/kimi-k2.7-code" },
-      modelCatalog: { "kimi/kimi-k2.7-code": { alias: "Kimi" } },
+      model: { primary: "kimi/kimi-k3.1-pro" },
+      modelCatalog: { "kimi/kimi-k3.1-pro": { alias: "Kimi" } },
     },
   },
   {
