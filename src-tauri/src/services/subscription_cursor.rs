@@ -276,13 +276,24 @@ pub fn parse_cookie_session(cookie_str: &str) -> Option<CursorSession> {
         let trimmed = part.trim();
         let (name, value) = trimmed.split_once('=')?;
         if name.trim() == "WorkosCursorSessionToken" {
-            let decoded = urlencoding::decode(value.trim()).ok()?.into_owned();
-            let token = decoded.split("::").last()?.trim();
+            let val = value.trim();
+            let token = if let Some((_, t)) = val.split_once("%3A%3A") {
+                t
+            } else if let Some((_, t)) = val.split_once("::") {
+                t
+            } else {
+                val
+            };
             let (user_id, email, subject, _) = parse_jwt_claims(token).ok()?;
+            let cookie_val = if val.contains("::") {
+                val.replace("::", "%3A%3A")
+            } else {
+                val.to_string()
+            };
             return Some(CursorSession {
                 user_id,
                 access_token: token.to_string(),
-                cookie: format!("WorkosCursorSessionToken={}", value.trim()),
+                cookie: format!("WorkosCursorSessionToken={cookie_val}"),
                 email,
                 subject: Some(subject),
             });
@@ -383,9 +394,27 @@ pub fn read_cursor_credentials() -> (Option<CursorSession>, CredentialStatus, Op
 
 // ── 格式化与解析辅助 ──────────────────────────────────────
 
+/// 标准 URL 编码（RFC 3986）
+fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for byte in s.bytes() {
+        match byte {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char);
+            }
+            _ => {
+                use std::fmt::Write;
+                let _ = write!(out, "%{:02X}", byte);
+            }
+        }
+    }
+    out
+}
+
 /// 格式化 Cursor 套餐名称
 pub fn format_cursor_plan_name(membership_type: Option<&str>) -> String {
-    let name = match membership_type.unwrap_or("").to_lowercase().as_str() {
+    let lowered = membership_type.unwrap_or("").to_lowercase();
+    let name = match lowered.as_str() {
         "enterprise" => "Enterprise",
         "express" => "Start",
         "free" => "Free",
@@ -495,7 +524,7 @@ pub async fn get_cursor_subscription_quota() -> Result<SubscriptionQuota, String
     // 2. 尝试获取 request usage (gpt-4 请求计数与上限)
     let request_url = format!(
         "https://cursor.com/api/usage?user={}",
-        urlencoding::encode(&session.user_id)
+        percent_encode(&session.user_id)
     );
     let request_resp = client
         .get(&request_url)

@@ -1181,6 +1181,13 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             }
             live
         }
+        AppType::Cursor => {
+            state.db.ensure_official_seed_by_id(
+                crate::database::CURSOR_OFFICIAL_PROVIDER_ID,
+                AppType::Cursor,
+            )?;
+            return Ok(true);
+        }
         // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
         AppType::OpenCode
         | AppType::OpenClaw
