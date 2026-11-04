@@ -791,7 +791,7 @@ impl RequestForwarder {
         providers: &[Provider],
     ) -> Result<ForwardResult, ForwardError> {
         if matches!(app_type, AppType::Claude | AppType::ClaudeDesktop)
-            && super::model_fallback::classifier_retry_loop(&body)
+            && super::model_fallback::classifier_retry_loop(body)
         {
             let error = ProxyError::InvalidRequest(
                 super::model_fallback::CLASSIFIER_LOOP_MESSAGE.to_string(),
@@ -919,7 +919,7 @@ impl RequestForwarder {
                         && attempted_providers + fallback_attempts < self.max_attempts
                     {
                         if let Some(fallback_provider) =
-                            super::model_fallback::desktop_fallback_provider(provider, &body, &e)
+                            super::model_fallback::desktop_fallback_provider(provider, body, &e)
                         {
                             fallback_attempts += 1;
                             log::warn!("[{app_type_str}] Trying the configured model fallback once for provider={}", provider.id);
@@ -8410,10 +8410,10 @@ mod tests {
                 &AppType::ClaudeDesktop,
                 http::Method::POST,
                 "/v1/messages",
-                body,
+                &body,
                 HeaderMap::new(),
                 Extensions::new(),
-                vec![p],
+                &[p],
             )
             .await
         }
