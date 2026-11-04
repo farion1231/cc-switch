@@ -1332,6 +1332,13 @@ pub fn run() {
                 log::info!("✓ CodexOAuthManager initialized");
             }
 
+            {
+                use crate::proxy::providers::dim_oauth_auth::DimOAuthManager;
+                app.manage(commands::DimOAuthState(
+                    DimOAuthManager::new(crate::config::get_app_config_dir()).map(Arc::new),
+                ));
+            }
+
             // 初始化 xAI OAuthManager (Grok API 反代)
             {
                 use crate::proxy::providers::xai_oauth_auth::XaiOAuthManager;
@@ -1649,6 +1656,14 @@ pub fn run() {
             commands::get_subscription_quota,
             commands::get_codex_oauth_quota,
             commands::get_codex_oauth_models,
+            commands::start_dim_oauth_login,
+            commands::poll_dim_oauth_login,
+            commands::cancel_dim_oauth_login,
+            commands::get_dim_oauth_status,
+            commands::remove_dim_oauth_account,
+            commands::set_dim_oauth_default_account,
+            commands::get_dim_oauth_models,
+            commands::get_dim_oauth_usage,
             commands::get_xai_oauth_models,
             commands::get_xai_oauth_quota,
             commands::get_coding_plan_quota,

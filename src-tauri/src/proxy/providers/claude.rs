@@ -57,6 +57,10 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
         }
     }
 
+    if provider.is_dim_oauth() {
+        return "openai_chat";
+    }
+
     // 2) Backward compatibility: legacy settings_config.api_format
     if let Some(api_format) = provider
         .settings_config
@@ -528,6 +532,9 @@ impl ClaudeAdapter {
             return ProviderType::CodexOAuth;
         }
 
+        if provider.is_dim_oauth() {
+            return ProviderType::DimOAuth;
+        }
         if self.is_xai_oauth(provider) {
             return ProviderType::XaiOAuth;
         }
@@ -748,6 +755,10 @@ impl ProviderAdapter for ClaudeAdapter {
     }
 
     fn extract_base_url(&self, provider: &Provider) -> Result<String, ProxyError> {
+        // The forwarder replaces this placeholder with the bound account issuer.
+        if provider.is_dim_oauth() {
+            return Ok("https://dimagent.cn/v1".to_string());
+        }
         // Codex OAuth: 强制使用 ChatGPT 后端 API 端点（忽略用户配置的 base_url）
         if self.is_codex_oauth(provider) {
             return Ok(super::CHATGPT_CODEX_BASE_URL.to_string());
@@ -818,6 +829,12 @@ impl ProviderAdapter for ClaudeAdapter {
             ));
         }
 
+        if provider.is_dim_oauth() {
+            return Some(AuthInfo::new(
+                "dim_oauth_placeholder".to_string(),
+                AuthStrategy::DimOAuth,
+            ));
+        }
         if provider_type == ProviderType::XaiOAuth {
             return Some(AuthInfo::new(
                 "xai_oauth_placeholder".to_string(),
@@ -967,7 +984,7 @@ impl ProviderAdapter for ClaudeAdapter {
                     ),
                 ]
             }
-            AuthStrategy::XaiOAuth => {
+            AuthStrategy::XaiOAuth | AuthStrategy::DimOAuth => {
                 vec![(HeaderName::from_static("authorization"), hv(&bearer)?)]
             }
             AuthStrategy::GitHubCopilot => {
@@ -1542,6 +1559,53 @@ mod tests {
         let adapter = ClaudeAdapter::new();
         let url = adapter.build_url("https://api.anthropic.com", "/v1/messages");
         assert_eq!(url, "https://api.anthropic.com/v1/messages");
+    }
+
+    #[test]
+    fn dim_oauth_adapters_use_managed_bearer_and_selected_protocol() {
+        for format in [
+            "openai_chat",
+            "openai_responses",
+            "anthropic",
+            "gemini_native",
+        ] {
+            let provider = create_provider_with_meta(
+                json!({
+                    "env": {"ANTHROPIC_BASE_URL":"https://attacker.example", "ANTHROPIC_API_KEY":"edited-key"},
+                    "base_url":"https://attacker.example", "auth":{"OPENAI_API_KEY":"edited-key"}
+                }),
+                ProviderMeta {
+                    provider_type: Some("dim_oauth".into()),
+                    api_format: Some(format.into()),
+                    is_full_url: Some(true),
+                    ..Default::default()
+                },
+            );
+            assert_eq!(get_claude_api_format(&provider), format);
+            for adapter in [
+                &ClaudeAdapter::new() as &dyn ProviderAdapter,
+                &super::super::CodexAdapter::new(),
+            ] {
+                assert_eq!(
+                    adapter.extract_base_url(&provider).unwrap(),
+                    "https://dimagent.cn/v1"
+                );
+                let auth = adapter.extract_auth(&provider).unwrap();
+                assert_eq!(auth.strategy, AuthStrategy::DimOAuth);
+                assert_ne!(auth.api_key, "edited-key");
+                let headers = adapter
+                    .get_auth_headers(&AuthInfo::new(
+                        "fixture-token".into(),
+                        AuthStrategy::DimOAuth,
+                    ))
+                    .unwrap();
+                assert_eq!(headers.len(), 1);
+                assert_eq!(headers[0].0, http::header::AUTHORIZATION);
+                assert_eq!(headers[0].1, "Bearer fixture-token");
+            }
+            assert!(provider.uses_managed_account_auth());
+            assert!(provider.uses_proxy_injected_oauth());
+        }
     }
 
     #[test]

@@ -71,6 +71,10 @@ impl Provider {
         self.provider_type() == Some("codex_oauth")
     }
 
+    pub fn is_dim_oauth(&self) -> bool {
+        self.provider_type() == Some("dim_oauth")
+    }
+
     pub fn is_xai_oauth(&self) -> bool {
         self.provider_type() == Some("xai_oauth")
     }
@@ -84,6 +88,7 @@ impl Provider {
         self.is_github_copilot()
             || self.is_codex_oauth()
             || self.is_xai_oauth()
+            || self.is_dim_oauth()
             || self.claude_base_url_contains("chatgpt.com/backend-api/codex")
     }
 
@@ -94,7 +99,7 @@ impl Provider {
     /// in auth.json IS its credential, so the `requires_openai_auth = true`
     /// fallback is its correct shape, never a legacy leftover.
     pub fn uses_proxy_injected_oauth(&self) -> bool {
-        self.is_xai_oauth() || self.is_github_copilot()
+        self.is_xai_oauth() || self.is_dim_oauth() || self.is_github_copilot()
     }
 
     /// Whether the provider form's "auth field" was explicitly set to
@@ -580,6 +585,9 @@ pub struct ProviderMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub claude_reasoning_effort: Option<String>,
+    /// Explicit effort selected from the DimAgent model directory.
+    #[serde(rename = "dimOauthEffort", skip_serializing_if = "Option::is_none")]
+    pub dim_oauth_effort: Option<String>,
     /// Codex → Anthropic path: whether to emulate the Claude Code client
     /// (User-Agent / anthropic-beta / x-app + injecting the Claude Code system
     /// prompt first line). Disabled by default; only an explicit `true` enables it.

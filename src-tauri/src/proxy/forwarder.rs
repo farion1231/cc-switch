@@ -26,7 +26,7 @@ use super::{
     types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
     ProxyError,
 };
-use crate::commands::{CodexOAuthState, CopilotAuthState, XaiOAuthState};
+use crate::commands::{CodexOAuthState, CopilotAuthState, DimOAuthState, XaiOAuthState};
 use crate::proxy::providers::copilot_auth::{CopilotAuthError, CopilotAuthManager};
 use crate::proxy::providers::copilot_model_map::{
     CopilotProtocol, CopilotTransport, ResolvedCopilotModel,
@@ -1384,6 +1384,44 @@ impl RequestForwarder {
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
 
+        // Resolve the explicit binding before constructing a URL. Editable provider
+        // URLs must never determine where a managed DimAgent token is sent.
+        let dim_auth = if provider.is_dim_oauth() {
+            let account_id = provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.managed_account_id_for("dim_oauth"))
+                .ok_or_else(|| {
+                    ProxyError::AuthError("DimAgent account binding is required".into())
+                })?;
+            let app = self.app_handle.as_ref().ok_or_else(|| {
+                ProxyError::AuthError("DimAgent authentication is unavailable".into())
+            })?;
+            let state = app.state::<DimOAuthState>();
+            let auth = state
+                .manager()
+                .map_err(ProxyError::AuthError)?
+                .get_request_auth(&account_id)
+                .await
+                .map_err(ProxyError::AuthError)?;
+            let format = if matches!(app_type, AppType::Claude | AppType::ClaudeDesktop) {
+                super::providers::get_claude_api_format(provider)
+            } else {
+                provider
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.api_format.as_deref())
+                    .unwrap_or("openai_chat")
+            };
+            base_url = match format {
+                "anthropic" | "gemini_native" => auth.issuer.clone(),
+                _ => format!("{}/v1", auth.issuer),
+            };
+            Some(auth)
+        } else {
+            None
+        };
+
         let is_full_url = provider
             .meta
             .as_ref()
@@ -1391,6 +1429,7 @@ impl RequestForwarder {
             .unwrap_or(false)
             && !provider.is_codex_oauth()
             && !provider.is_xai_oauth()
+            && !provider.is_dim_oauth()
             && !provider.is_github_copilot();
 
         // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
@@ -1521,6 +1560,17 @@ impl RequestForwarder {
             super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
         }
 
+        if provider.is_dim_oauth()
+            && matches!(app_type, AppType::Codex)
+            && !self.keeps_resolved_model()
+        {
+            super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
+        }
+        let dim_model = provider
+            .is_dim_oauth()
+            .then(|| mapped_body.get("model").cloned())
+            .flatten();
+
         if is_copilot_claude_body {
             mapped_body =
                 super::providers::copilot_model_map::apply_copilot_model_normalization(mapped_body);
@@ -1535,7 +1585,10 @@ impl RequestForwarder {
             // variants pass through unchanged.
             mapped_body =
                 super::model_mapper::strip_one_m_suffix_for_upstream_from_body(mapped_body);
-        } else if !is_copilot_codex_responses && !codex_responses_to_anthropic {
+        } else if !provider.is_dim_oauth()
+            && !is_copilot_codex_responses
+            && !codex_responses_to_anthropic
+        {
             // Skip on the Codex→Anthropic path: stripping [1m] here would break both the
             // model-catalog match (apply_codex_upstream_model) and the transform's own
             // strip+`context-1m` beta detection. The marker is stripped later, on the
@@ -1758,7 +1811,13 @@ impl RequestForwarder {
                 let api_format = resolved_claude_api_format
                     .as_deref()
                     .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
-                rewrite_claude_transform_endpoint(endpoint, api_format, is_copilot, &mapped_body)
+                rewrite_claude_transform_endpoint(
+                    endpoint,
+                    api_format,
+                    is_copilot,
+                    provider.is_dim_oauth(),
+                    &mapped_body,
+                )
             } else {
                 (
                     endpoint.to_string(),
@@ -1818,6 +1877,21 @@ impl RequestForwarder {
         } else {
             adapter.build_url(&base_url, &effective_endpoint)
         };
+
+        if let Some(auth) = dim_auth.as_ref() {
+            let target = url::Url::parse(&url)
+                .map_err(|_| ProxyError::AuthError("Invalid DimAgent request URL".into()))?;
+            let issuer = url::Url::parse(&auth.issuer)
+                .map_err(|_| ProxyError::AuthError("Invalid DimAgent issuer".into()))?;
+            if target.origin() != issuer.origin()
+                || !target.username().is_empty()
+                || target.password().is_some()
+            {
+                return Err(ProxyError::AuthError(
+                    "DimAgent requests must use the bound account issuer".into(),
+                ));
+            }
+        }
 
         let (listen_address, listen_port) = {
             let status = self.status.read().await;
@@ -2089,6 +2163,45 @@ impl RequestForwarder {
                 }
             }
         }
+        if provider.is_dim_oauth() {
+            // Preserve the full directory model ID after generic host conversions.
+            if resolved_claude_api_format.as_deref() != Some("gemini_native") {
+                if let Some(model) = dim_model {
+                    filtered_body["model"] = model;
+                }
+            }
+            if let Some(effort) = provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.dim_oauth_effort.as_deref())
+            {
+                let format = resolved_claude_api_format.as_deref().unwrap_or_else(|| {
+                    provider
+                        .meta
+                        .as_ref()
+                        .and_then(|meta| meta.api_format.as_deref())
+                        .unwrap_or("openai_chat")
+                });
+                match format {
+                    "openai_chat" => {
+                        filtered_body["reasoning_effort"] = Value::from(effort);
+                    }
+                    "openai_responses" => {
+                        if !filtered_body["reasoning"].is_object() {
+                            filtered_body["reasoning"] = serde_json::json!({});
+                        }
+                        filtered_body["reasoning"]["effort"] = Value::from(effort);
+                    }
+                    "anthropic" => {
+                        if !filtered_body["output_config"].is_object() {
+                            filtered_body["output_config"] = serde_json::json!({});
+                        }
+                        filtered_body["output_config"]["effort"] = Value::from(effort);
+                    }
+                    _ => {}
+                }
+            }
+        }
         // 出站 body 定稿后刷新真值（覆盖 Codex chat 上游模型覆写、转换层模型改写）
         if let Some(m) = filtered_body
             .get("model")
@@ -2274,6 +2387,13 @@ impl RequestForwarder {
                         "xAI OAuth 认证不可用（无 AppHandle）".to_string(),
                     ));
                 }
+            }
+
+            if auth.strategy == AuthStrategy::DimOAuth {
+                let resolved = dim_auth.as_ref().ok_or_else(|| {
+                    ProxyError::AuthError("DimAgent account was not resolved".into())
+                })?;
+                auth = AuthInfo::new(resolved.access_token.clone(), AuthStrategy::DimOAuth);
             }
 
             for secret in std::iter::once(&auth.api_key).chain(auth.access_token.iter()) {
@@ -2767,7 +2887,11 @@ impl RequestForwarder {
             log::debug!(
                 "[Forwarder] Using pooled reqwest client (preserve_exact_header_case={preserve_exact_header_case}, socks_proxy={is_socks_proxy})"
             );
-            let client = super::http_client::get_for_url(&url);
+            let client = if provider.is_dim_oauth() {
+                super::http_client::no_redirect().map_err(ProxyError::AuthError)?
+            } else {
+                super::http_client::get_for_url(&url)
+            };
             let mut request = client.request(method.clone(), &url);
             if request_is_streaming {
                 // reqwest 的 timeout 是整请求超时；流式请求交给 response_processor
@@ -3350,7 +3474,9 @@ impl RequestForwarder {
         // AuthError means the managed account needs re-login. Failing over
         // would silently move the conversation off the selected Grok account
         // and poison the provider's health state for an account-level issue.
-        if provider.is_xai_oauth() && matches!(error, ProxyError::AuthError(_)) {
+        if (provider.is_xai_oauth() || provider.is_dim_oauth())
+            && matches!(error, ProxyError::AuthError(_))
+        {
             return ErrorCategory::NonRetryable;
         }
 
@@ -3999,6 +4125,7 @@ fn rewrite_claude_transform_endpoint(
     endpoint: &str,
     api_format: &str,
     is_copilot: bool,
+    preserve_model_id: bool,
     body: &Value,
 ) -> (String, Option<String>) {
     let (path, query) = split_endpoint_and_query(endpoint);
@@ -4018,7 +4145,13 @@ fn rewrite_claude_transform_endpoint(
         // Accept both bare ids (`gemini-2.5-pro`) and the resource-name
         // form (`models/gemini-2.5-pro`) that Gemini SDKs emit. See
         // `normalize_gemini_model_id` for rationale.
-        let model = super::gemini_url::normalize_gemini_model_id(model);
+        let model = if preserve_model_id {
+            url::form_urlencoded::byte_serialize(model.as_bytes())
+                .collect::<String>()
+                .replace('+', "%20")
+        } else {
+            super::gemini_url::normalize_gemini_model_id(model).to_string()
+        };
         let is_stream = body
             .get("stream")
             .and_then(|value| value.as_bool())
@@ -4302,7 +4435,8 @@ fn should_preserve_exact_header_case(
         return false;
     }
 
-    if is_copilot || provider.is_codex_oauth() || provider.is_xai_oauth() {
+    if is_copilot || provider.is_codex_oauth() || provider.is_xai_oauth() || provider.is_dim_oauth()
+    {
         return false;
     }
 
@@ -4827,6 +4961,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dim_oauth_missing_binding_stops_without_network_or_failover() {
+        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let mut provider = test_provider_with_type(Some("dim_oauth"));
+        provider.settings_config = json!({"env":{"ANTHROPIC_BASE_URL":"https://attacker.example", "ANTHROPIC_AUTH_TOKEN":"user-edited"}});
+        let failure = forwarder
+            .forward_with_retry(
+                &AppType::Claude,
+                http::Method::POST,
+                "/v1/messages",
+                json!({"model":"vendor/model-zdr", "messages":[]}),
+                HeaderMap::new(),
+                Extensions::new(),
+                vec![provider],
+            )
+            .await
+            .err()
+            .expect("missing binding must fail");
+        assert!(
+            matches!(failure.error, ProxyError::AuthError(ref message) if message.contains("binding"))
+        );
+    }
+
+    #[test]
+    fn dim_gemini_routing_preserves_directory_id_as_one_path_segment() {
+        let (endpoint, _) = rewrite_claude_transform_endpoint(
+            "/v1/messages?beta=true",
+            "gemini_native",
+            false,
+            true,
+            &json!({"model":"models/vendor/gemini-zdr", "stream":true}),
+        );
+        assert_eq!(
+            endpoint,
+            "/v1beta/models/models%2Fvendor%2Fgemini-zdr:streamGenerateContent?alt=sse"
+        );
+    }
+
+    #[tokio::test]
     async fn copilot_success_bookkeeping_preserves_actual_upstream_format() {
         for format in [
             Some(CodexUpstreamFormat::NativeResponses),
@@ -5339,6 +5511,7 @@ mod tests {
             "/v1/messages?beta=true&foo=bar",
             "openai_chat",
             false,
+            false,
             &json!({ "model": "gpt-5.4" }),
         );
 
@@ -5351,6 +5524,7 @@ mod tests {
         let (endpoint, passthrough_query) = rewrite_claude_transform_endpoint(
             "/claude/v1/messages?beta=true&x-id=1",
             "openai_responses",
+            false,
             false,
             &json!({ "model": "gpt-5.4" }),
         );
@@ -5751,6 +5925,7 @@ mod tests {
             "/v1/messages?beta=true&x-id=1",
             "anthropic",
             true,
+            false,
             &json!({ "model": "claude-sonnet-4-6" }),
         );
 
@@ -5764,6 +5939,7 @@ mod tests {
             "/v1/messages?beta=true&x-id=1",
             "openai_responses",
             true,
+            false,
             &json!({ "model": "gpt-5.4" }),
         );
 
@@ -5776,6 +5952,7 @@ mod tests {
         let (endpoint, passthrough_query) = rewrite_claude_transform_endpoint(
             "/v1/messages?beta=true&x-id=1",
             "gemini_native",
+            false,
             false,
             &json!({ "model": "gemini-2.5-pro" }),
         );
@@ -5796,6 +5973,7 @@ mod tests {
             "/v1/messages",
             "gemini_native",
             false,
+            false,
             &json!({ "model": "models/gemini-2.5-pro" }),
         );
 
@@ -5807,6 +5985,7 @@ mod tests {
         let (endpoint, passthrough_query) = rewrite_claude_transform_endpoint(
             "/v1/messages?beta=true",
             "gemini_native",
+            false,
             false,
             &json!({ "model": "gemini-2.5-flash", "stream": true }),
         );

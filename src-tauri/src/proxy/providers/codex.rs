@@ -1040,6 +1040,9 @@ impl ProviderAdapter for CodexAdapter {
     }
 
     fn extract_base_url(&self, provider: &Provider) -> Result<String, ProxyError> {
+        if provider.is_dim_oauth() {
+            return Ok("https://dimagent.cn/v1".to_string());
+        }
         if is_codex_official_provider(provider) {
             return Ok(super::CHATGPT_CODEX_BASE_URL.to_string());
         }
@@ -1110,6 +1113,12 @@ impl ProviderAdapter for CodexAdapter {
     }
 
     fn extract_auth(&self, provider: &Provider) -> Option<AuthInfo> {
+        if provider.is_dim_oauth() {
+            return Some(AuthInfo::new(
+                "dim_oauth_placeholder".to_string(),
+                AuthStrategy::DimOAuth,
+            ));
+        }
         if provider.is_github_copilot() {
             return Some(AuthInfo::new(
                 "copilot_placeholder".to_string(),
