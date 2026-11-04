@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useRevealRequest } from "@/lib/searchReveal";
 import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
@@ -452,6 +453,17 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
   };
 
   const promptEntries = useMemo(() => Object.entries(prompts), [prompts]);
+  // 全局搜索跳到某条提示词时，它要是被页内搜索词滤掉了，就先清掉搜索词
+  useRevealRequest("prompt:", (id) => {
+    if (
+      searchQuery.trim() &&
+      !filterPromptEntries(promptEntries, searchQuery).some(
+        ([entryId]) => entryId === id,
+      )
+    ) {
+      setSearchQuery("");
+    }
+  });
   const listEmpty = promptEntries.length === 0;
   const fileText = currentFileContent ?? null;
   const fileHasContent = Boolean(fileText?.trim());

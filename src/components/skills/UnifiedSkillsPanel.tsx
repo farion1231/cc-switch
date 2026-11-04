@@ -54,6 +54,7 @@ import { settingsApi, skillsApi } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { cn } from "@/lib/utils";
+import { searchAnchor, useRevealRequest } from "@/lib/searchReveal";
 import {
   MatrixCell,
   MatrixColumnHeader,
@@ -340,6 +341,16 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     normalizedQuery,
     updatesMap,
   ]);
+
+  // 全局搜索跳到某个 Skill：切回「已安装」；被页内搜索或筛选挡住了就先清掉
+  useRevealRequest("skill:", (id) => {
+    setView("installed");
+    if (!filteredSkills.some((skill) => skill.id === id)) {
+      setSearchQuery("");
+      setStatusFilter("all");
+      setSourceFilter("all");
+    }
+  });
 
   // 「可更新」筛选下把最后一个也更新完：回到全部，免得停在空表上
   const nApplicableUpdates = applicableSkillUpdates.length;
@@ -1829,6 +1840,7 @@ function InstalledRow({
   return (
     <li
       id={`sk-row-${skill.id}`}
+      {...searchAnchor(`skill:${skill.id}`)}
       tabIndex={-1}
       className={cn(
         "group relative flex h-14 items-center px-2 outline-none transition-colors duration-150 hover:bg-subtle",
