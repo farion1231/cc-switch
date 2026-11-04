@@ -5182,5 +5182,40 @@
       "managedHint": "This account is managed in the Auth Center; the card disappears after you sign out."
     },
     "deleteSessionHint": "Delete this session in DeepSeek Harness to keep its history consistent."
+  },
+  "dimOauth": {
+    "account": "DimAgent account",
+    "selectAccount": "Select an account",
+    "siteLabel": "Account site",
+    "site": {
+      "cn": "China",
+      "global": "Global"
+    },
+    "help": "Use a DimAgent account with Claude Code or Codex. Select the account site before signing in. Providers are explicitly bound to an account and use local routing.",
+    "empty": "No DimAgent accounts. Add an account to sign in.",
+    "loginRequired": "Sign in through Manage accounts and select an available DimAgent account.",
+    "loginExpired": "Login expired. Please try again.",
+    "reauth": "Sign in again",
+    "model": "Model",
+    "selectModel": "Select a model",
+    "refreshModels": "Refresh models",
+    "noModels": "No models available for this client.",
+    "format": "API format",
+    "formats": {
+      "openai_chat": "OpenAI Chat Completions",
+      "openai_responses": "OpenAI Responses",
+      "anthropic": "Anthropic Messages",
+      "gemini_native": "Gemini Native"
+    },
+    "effort": "Reasoning effort",
+    "defaultEffort": "Use client default",
+    "routing": "Keep local routing enabled. Model IDs, API formats, reasoning efforts and ZDR status come from the DimAgent model catalog.",
+    "usage": "Plan and usage",
+    "usageFailed": "Unable to load usage",
+    "remaining": "Remaining credits: {{amount}} units",
+    "resetsAt": "Resets at {{time}}",
+    "subscription": "Manage subscription / renew",
+    "pricing": "Plan pricing",
+    "manageAccounts": "Manage accounts"
   }
 }

@@ -84,6 +84,44 @@ describe("findManagedAccountUsers", () => {
     ]);
   });
 
+  it("reports only explicitly bound DimAgent providers when removing the default account", () => {
+    const providers = byId(
+      provider("dim-bound", {
+        meta: {
+          providerType: "dim_oauth",
+          authBinding: {
+            source: "managed_account",
+            authProvider: "dim_oauth",
+            accountId: "dim-cn",
+          },
+        },
+      }),
+      provider("dim-unbound", { meta: { providerType: "dim_oauth" } }),
+      provider("dim-other", {
+        meta: {
+          providerType: "dim_oauth",
+          authBinding: {
+            source: "managed_account",
+            authProvider: "dim_oauth",
+            accountId: "dim-global",
+          },
+        },
+      }),
+    );
+    expect(
+      findManagedAccountUsers("dim_oauth", ["dim-cn"], "dim-cn", {
+        claude: providers,
+      }),
+    ).toEqual([
+      {
+        appId: "claude",
+        providerId: "dim-bound",
+        name: "dim-bound",
+        viaDefault: false,
+      },
+    ]);
+  });
+
   it("does not count an unbound Codex official card (it uses Codex's own login)", () => {
     const codex = byId(
       provider(

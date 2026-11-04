@@ -52,6 +52,8 @@ function followsDefaultAccount(
   provider: Provider,
   authProvider: ManagedAuthProvider,
 ): boolean {
+  // DimAgent requires an explicit binding and never falls back to a default account.
+  if (authProvider === "dim_oauth") return false;
   // Codex 官方卡没绑托管账号时用的是 Codex 自己的登录，不碰授权中心的默认账号
   if (
     appId === "codex" &&

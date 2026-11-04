@@ -5183,5 +5183,40 @@
       "managedHint": "帳號在授權中心管理：登出後這張卡會自動消失。"
     },
     "deleteSessionHint": "請在 DeepSeek Harness 中刪除此工作階段，以保持原生歷史記錄一致。"
+  },
+  "dimOauth": {
+    "account": "DimAgent 帳號",
+    "selectAccount": "請選擇帳號",
+    "siteLabel": "帳號站點",
+    "site": {
+      "cn": "中國站",
+      "global": "海外站"
+    },
+    "help": "在 Claude Code 或 Codex 使用 DimAgent 帳號。登入前選擇帳號所屬站點。供應商明確綁定帳號，並透過本機路由使用。",
+    "empty": "尚無 DimAgent 帳號，請新增帳號登入。",
+    "loginRequired": "請在「管理帳號」登入，並選擇可用的 DimAgent 帳號。",
+    "loginExpired": "登入已過期，請重試。",
+    "reauth": "需要重新登入",
+    "model": "模型",
+    "selectModel": "請選擇模型",
+    "refreshModels": "重新整理模型",
+    "noModels": "目前沒有適用此用戶端的模型。",
+    "format": "介面格式",
+    "formats": {
+      "openai_chat": "OpenAI Chat Completions",
+      "openai_responses": "OpenAI Responses",
+      "anthropic": "Anthropic Messages",
+      "gemini_native": "Gemini Native"
+    },
+    "effort": "推理強度",
+    "defaultEffort": "使用用戶端預設值",
+    "routing": "使用時保持本機路由開啟。完整模型 ID、介面、推理強度與 ZDR 狀態均來自 DimAgent 模型目錄。",
+    "usage": "方案與用量",
+    "usageFailed": "無法讀取用量",
+    "remaining": "剩餘額度：{{amount}} 單位",
+    "resetsAt": "重設時間：{{time}}",
+    "subscription": "管理訂閱 / 購買續期",
+    "pricing": "方案價格",
+    "manageAccounts": "管理帳號"
   }
 }

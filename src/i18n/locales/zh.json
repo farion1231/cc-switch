@@ -5182,5 +5182,40 @@
       "managedHint": "账号在授权中心管理：退出登录后这张卡会自动消失。"
     },
     "deleteSessionHint": "请在 DeepSeek Harness 中删除此会话，以保持原生历史记录一致。"
+  },
+  "dimOauth": {
+    "account": "DimAgent 账号",
+    "selectAccount": "请选择账号",
+    "siteLabel": "账号站点",
+    "site": {
+      "cn": "国内站",
+      "global": "海外站"
+    },
+    "help": "在 Claude Code 或 Codex 使用 DimAgent 账号。登录前选择账号所属站点。供应商明确绑定账号，并通过本地路由使用。",
+    "empty": "尚无 DimAgent 账号，请添加账号登录。",
+    "loginRequired": "请在「管理账号」登录，并选择可用的 DimAgent 账号。",
+    "loginExpired": "登录已过期，请重试。",
+    "reauth": "需要重新登录",
+    "model": "模型",
+    "selectModel": "请选择模型",
+    "refreshModels": "刷新模型",
+    "noModels": "暂无适用于此客户端的模型。",
+    "format": "接口格式",
+    "formats": {
+      "openai_chat": "OpenAI Chat Completions",
+      "openai_responses": "OpenAI Responses",
+      "anthropic": "Anthropic Messages",
+      "gemini_native": "Gemini Native"
+    },
+    "effort": "推理强度",
+    "defaultEffort": "使用客户端默认值",
+    "routing": "使用时保持本地路由开启。模型完整 ID、接口、推理强度与 ZDR 状态均来自 DimAgent 模型目录。",
+    "usage": "套餐与用量",
+    "usageFailed": "无法读取用量",
+    "remaining": "剩余额度：{{amount}} 单位",
+    "resetsAt": "重置时间：{{time}}",
+    "subscription": "管理订阅 / 购买续期",
+    "pricing": "套餐价格",
+    "manageAccounts": "管理账号"
   }
 }

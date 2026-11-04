@@ -61,7 +61,7 @@ export interface ProviderPreset extends PresetFamilyFields {
   // 供应商类型标识（用于特殊供应商检测）
   // - "github_copilot": GitHub Copilot 供应商（需要 OAuth 认证）
   // - "codex_oauth": OpenAI Codex via ChatGPT Plus/Pro 反代（需要 OAuth 认证）
-  providerType?: "github_copilot" | "codex_oauth" | "xai_oauth";
+  providerType?: "github_copilot" | "codex_oauth" | "dim_oauth" | "xai_oauth";
 
   // 是否需要 OAuth 认证（而非 API Key）
   requiresOAuth?: boolean;
@@ -2788,6 +2788,19 @@ export const providerPresets: ProviderPreset[] = [
     requiresOAuth: true,
     icon: "openai",
     iconColor: "#000000",
+  },
+  {
+    name: "DimAgent",
+    websiteUrl: "https://dimagent.com",
+    settingsConfig: {
+      env: { ANTHROPIC_BASE_URL: "https://dimagent.com", ANTHROPIC_MODEL: "" },
+    },
+    category: "third_party",
+    apiFormat: "openai_chat",
+    providerType: "dim_oauth",
+    requiresOAuth: true,
+    icon: "dimagent",
+    iconColor: "#64C878",
   },
   {
     name: "xAI (Grok)",

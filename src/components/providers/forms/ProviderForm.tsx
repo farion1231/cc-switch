@@ -144,6 +144,8 @@ import {
   isNativeOpencodeConfig,
 } from "./helpers/opencodeFormUtils";
 import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
+import { DimOAuthFields } from "./DimOAuthFields";
+import { useDimOauth } from "./hooks/useDimOauth";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
 import { useHermesLiveProviderIds } from "@/hooks/useHermes";
@@ -163,11 +165,12 @@ type PresetEntry = {
 
 function getPresetProviderType(
   preset: PresetEntry["preset"] | null | undefined,
-): "github_copilot" | "codex_oauth" | "xai_oauth" | undefined {
+): "github_copilot" | "codex_oauth" | "xai_oauth" | "dim_oauth" | undefined {
   if (!preset || !("providerType" in preset)) return undefined;
   return preset.providerType === "github_copilot" ||
     preset.providerType === "codex_oauth" ||
-    preset.providerType === "xai_oauth"
+    preset.providerType === "xai_oauth" ||
+    preset.providerType === "dim_oauth"
     ? preset.providerType
     : undefined;
 }
@@ -673,6 +676,14 @@ function ProviderFormFull({
     accounts: xaiOauthAccounts,
   } = useXaiOauth();
 
+  const [selectedDimAccountId, setSelectedDimAccountId] = useState<
+    string | null
+  >(() => resolveManagedAccountId(initialData?.meta, "dim_oauth"));
+  const [isDimSelectionValid, setIsDimSelectionValid] = useState(false);
+  const [dimOauthEffort, setDimOauthEffort] = useState(
+    initialData?.meta?.dimOauthEffort ?? "",
+  );
+
   // 选中的 GitHub 账号 ID（多账号支持）
   const [selectedGitHubAccountId, setSelectedGitHubAccountId] = useState<
     string | null
@@ -1008,6 +1019,10 @@ function ProviderFormFull({
     appId === "claude" &&
     (presetProviderType === "codex_oauth" ||
       initialProviderType === "codex_oauth");
+  const isDimOauthProvider =
+    (appId === "claude" || appId === "codex") &&
+    (presetProviderType === "dim_oauth" || initialProviderType === "dim_oauth");
+  const dimOauth = useDimOauth({ enabled: isDimOauthProvider });
   const isXaiOauthProvider =
     (appId === "claude" || appId === "codex") &&
     (presetProviderType === "xai_oauth" || initialProviderType === "xai_oauth");
@@ -1542,6 +1557,20 @@ function ProviderFormFull({
       );
       return;
     }
+    if (
+      isDimOauthProvider &&
+      !dimOauth.accounts.some(
+        (account) =>
+          account.id === selectedDimAccountId && !account.requires_reauth,
+      )
+    ) {
+      toast.error(t("dimOauth.loginRequired"));
+      return;
+    }
+    if (isDimOauthProvider && !isDimSelectionValid) {
+      toast.error(t("dimOauth.selectModel"));
+      return;
+    }
     if (isXaiOauthProvider && !isXaiOauthAuthenticated) {
       toast.error(
         t("xaiOauth.loginRequired", {
@@ -1648,6 +1677,7 @@ function ProviderFormFull({
         if (
           !isClaudeCodexOauthProvider &&
           !isXaiOauthProvider &&
+          !isDimOauthProvider &&
           !submitBaseUrl.trim()
         ) {
           issues.push(
@@ -1660,6 +1690,7 @@ function ProviderFormFull({
           !isCopilotProviderAtSubmit &&
           !isClaudeCodexOauthProvider &&
           !isXaiOauthProvider &&
+          !isDimOauthProvider &&
           !submitApiKey.trim()
         ) {
           issues.push(
@@ -1671,14 +1702,24 @@ function ProviderFormFull({
       } else if (appId === "codex") {
         // 托管 OAuth 预设（Copilot/xAI）：端点由 adapter 硬定向、token 由代理注入，
         // 两项都不需要用户填写
-        if (!isCopilotProvider && !isXaiOauthProvider && !codexBaseUrl.trim()) {
+        if (
+          !isCopilotProvider &&
+          !isXaiOauthProvider &&
+          !isDimOauthProvider &&
+          !codexBaseUrl.trim()
+        ) {
           issues.push(
             t("providerForm.endpointRequired", {
               defaultValue: "非官方供应商请填写 API 端点",
             }),
           );
         }
-        if (!isCopilotProvider && !isXaiOauthProvider && !codexApiKey.trim()) {
+        if (
+          !isCopilotProvider &&
+          !isXaiOauthProvider &&
+          !isDimOauthProvider &&
+          !codexApiKey.trim()
+        ) {
           issues.push(
             t("providerForm.apiKeyRequired", {
               defaultValue: "非官方供应商请填写 API Key",
@@ -1976,9 +2017,11 @@ function ProviderFormFull({
       ? "github_copilot"
       : isClaudeCodexOauthProvider || isCodexOfficialManagedOauthBound
         ? "codex_oauth"
-        : isXaiOauthProvider
-          ? "xai_oauth"
-          : undefined;
+        : isDimOauthProvider
+          ? "dim_oauth"
+          : isXaiOauthProvider
+            ? "xai_oauth"
+            : undefined;
 
     // 动过列表才存；清空了存空列表（什么都不发布），和没配（跟着映射）区分开。
     const stackModels =
@@ -1999,47 +2042,56 @@ function ProviderFormFull({
       claudeDesktopMode: undefined,
       // 保存 providerType（用于识别 Copilot / Codex OAuth 等特殊供应商）
       providerType,
-      authBinding: isCopilotProviderForSubmit
+      dimOauthEffort: isDimOauthProvider
+        ? dimOauthEffort || undefined
+        : undefined,
+      authBinding: isDimOauthProvider
         ? {
             source: "managed_account",
-            authProvider: "github_copilot",
-            accountId: selectedGitHubAccountId ?? undefined,
+            authProvider: "dim_oauth",
+            accountId: selectedDimAccountId!,
           }
-        : isClaudeCodexOauthProvider
+        : isCopilotProviderForSubmit
           ? {
               source: "managed_account",
-              authProvider: "codex_oauth",
-              accountId: selectedCodexAccountId ?? undefined,
+              authProvider: "github_copilot",
+              accountId: selectedGitHubAccountId ?? undefined,
             }
-          : isCodexOfficialManagedOauthBound
+          : isClaudeCodexOauthProvider
             ? {
                 source: "managed_account",
                 authProvider: "codex_oauth",
                 accountId: selectedCodexAccountId ?? undefined,
               }
-            : isXaiOauthProvider
+            : isCodexOfficialManagedOauthBound
               ? {
                   source: "managed_account",
-                  authProvider: "xai_oauth",
-                  accountId: selectedXaiAccountId ?? undefined,
+                  authProvider: "codex_oauth",
+                  accountId: selectedCodexAccountId ?? undefined,
                 }
-              : appId === "agy" &&
-                  category === "official" &&
-                  selectedAgyAccountId
+              : isXaiOauthProvider
                 ? {
                     source: "managed_account",
-                    authProvider: "agy_oauth",
-                    accountId: selectedAgyAccountId,
+                    authProvider: "xai_oauth",
+                    accountId: selectedXaiAccountId ?? undefined,
                   }
-                : appId === "claude" &&
+                : appId === "agy" &&
                     category === "official" &&
-                    selectedClaudeAccountId
+                    selectedAgyAccountId
                   ? {
                       source: "managed_account",
-                      authProvider: "claude_official",
-                      accountId: selectedClaudeAccountId,
+                      authProvider: "agy_oauth",
+                      accountId: selectedAgyAccountId,
                     }
-                  : undefined,
+                  : appId === "claude" &&
+                      category === "official" &&
+                      selectedClaudeAccountId
+                    ? {
+                        source: "managed_account",
+                        authProvider: "claude_official",
+                        accountId: selectedClaudeAccountId,
+                      }
+                    : undefined,
       // GitHub Copilot 多账号：保存关联的账号 ID
       githubAccountId:
         isCopilotProviderForSubmit && selectedGitHubAccountId
@@ -2121,6 +2173,7 @@ function ProviderFormFull({
         category !== "official" &&
         !isCopilotProvider &&
         !isXaiOauthProvider &&
+        !isDimOauthProvider &&
         localIsFullUrl
           ? true
           : undefined,
@@ -2698,7 +2751,52 @@ function ProviderFormFull({
             }
           />
 
-          {appId === "claude" && (
+          {isDimOauthProvider && (appId === "claude" || appId === "codex") && (
+            <DimOAuthFields
+              appId={appId}
+              accountId={selectedDimAccountId}
+              onAccountChange={(id) => {
+                setSelectedDimAccountId(id);
+                setDimOauthEffort("");
+                setIsDimSelectionValid(false);
+              }}
+              onManageAccounts={
+                onManageAuthAccounts
+                  ? () => onManageAuthAccounts("dim_oauth")
+                  : undefined
+              }
+              model={appId === "claude" ? claudeModel : codexModel}
+              apiFormat={
+                appId === "claude" ? localApiFormat : localCodexApiFormat
+              }
+              effort={dimOauthEffort}
+              onValidityChange={setIsDimSelectionValid}
+              onSelect={(model, format, effort) => {
+                setDimOauthEffort(format === "gemini_native" ? "" : effort);
+                if (appId === "claude") {
+                  handleApiFormatChange(format);
+                  handleModelChange("ANTHROPIC_MODEL", model.id);
+                  handleModelChange("ANTHROPIC_DEFAULT_HAIKU_MODEL", model.id);
+                  handleModelChange("ANTHROPIC_DEFAULT_SONNET_MODEL", model.id);
+                  handleModelChange("ANTHROPIC_DEFAULT_OPUS_MODEL", model.id);
+                  handleModelChange("ANTHROPIC_DEFAULT_FABLE_MODEL", model.id);
+                } else {
+                  if (format === "gemini_native") return;
+                  handleCodexApiFormatChange(format);
+                  handleCodexModelChange(model.id);
+                  setCodexCatalogModels([
+                    {
+                      model: model.id,
+                      displayName: model.name,
+                      reasoningLevels: model.efforts,
+                    },
+                  ]);
+                }
+              }}
+            />
+          )}
+
+          {appId === "claude" && !isDimOauthProvider && (
             <ClaudeFormFields
               providerId={providerId}
               shouldShowApiKey={
@@ -2795,7 +2893,7 @@ function ProviderFormFull({
             />
           )}
 
-          {appId === "codex" && (
+          {appId === "codex" && !isDimOauthProvider && (
             <CodexFormFields
               providerId={providerId}
               isCopilotPreset={isCopilotProvider}

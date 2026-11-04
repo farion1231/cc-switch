@@ -4,6 +4,7 @@ export type ManagedAuthProvider =
   | "github_copilot"
   | "codex_oauth"
   | "xai_oauth"
+  | "dim_oauth"
   | "agy_oauth"
   | "claude_official";
 

@@ -11,6 +11,9 @@ vi.mock("@/components/providers/forms/CopilotAuthSection", () => ({
 vi.mock("@/components/providers/forms/CodexOAuthSection", () => ({
   CodexOAuthSection: () => <div data-testid="codex" />,
 }));
+vi.mock("@/components/providers/forms/DimOAuthSection", () => ({
+  DimOAuthSection: () => <div data-testid="dimagent" />,
+}));
 vi.mock("@/components/providers/forms/XaiOAuthSection", () => ({
   XaiOAuthSection: () => <div data-testid="xai" />,
 }));

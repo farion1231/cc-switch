@@ -2,6 +2,7 @@
 export const PROVIDER_TYPES = {
   GITHUB_COPILOT: "github_copilot",
   CODEX_OAUTH: "codex_oauth",
+  DIM_OAUTH: "dim_oauth",
   XAI_OAUTH: "xai_oauth",
 } as const;
 
@@ -12,6 +13,7 @@ export const OAUTH_PROVIDER_TYPES: readonly string[] = [
   PROVIDER_TYPES.GITHUB_COPILOT,
   PROVIDER_TYPES.CODEX_OAUTH,
   PROVIDER_TYPES.XAI_OAUTH,
+  PROVIDER_TYPES.DIM_OAUTH,
 ];
 
 /** 判断某 providerType 是否为托管 OAuth（凭据由代理注入、必须开启路由）。 */
