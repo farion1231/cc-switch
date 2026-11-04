@@ -829,10 +829,60 @@ mod tests {
                 p.settings_config
             );
         }
+        for (format, endpoint) in [
+            ("anthropic", "/v1/messages/count_tokens"),
+            ("openai_responses", "/v1/responses/compact"),
+        ] {
+            let p = provider("auxiliary", format);
+            db.save_provider("mcode", &p).unwrap();
+            let key = gateway_key(&db, &AppType::Mcode, &p.id).unwrap();
+            assert_eq!(
+                client
+                    .post(format!("{gateway}/managed/dim/mcode/auxiliary{endpoint}"))
+                    .bearer_auth(&key)
+                    .json(&json!({"model":"vendor/full-id"}))
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::OK
+            );
+            let captures = captured.lock().unwrap();
+            let body = &captures.last().unwrap().2;
+            assert!(body.get("reasoning").is_none());
+            assert!(body.get("output_config").is_none());
+            assert!(body.get("reasoning_effort").is_none());
+        }
         let p = provider("stream", "openai_chat");
         db.save_provider("mcode", &p).unwrap();
         let key = gateway_key(&db, &AppType::Mcode, &p.id).unwrap();
         let url = format!("{gateway}/managed/dim/mcode/stream/v1/chat/completions");
+        let mut remote_request = Request::builder()
+            .uri("/managed/dim/mcode/stream/v1/chat/completions")
+            .header("authorization", format!("Bearer {key}"))
+            .body(Body::empty())
+            .unwrap();
+        remote_request
+            .extensions_mut()
+            .insert(ConnectInfo("192.0.2.1:1234".parse::<SocketAddr>().unwrap()));
+        assert_eq!(
+            authorize_request(&db, "mcode", "stream", &remote_request)
+                .unwrap_err()
+                .0,
+            StatusCode::FORBIDDEN
+        );
+        let other_key = gateway_key(&db, &AppType::Mcode, "auxiliary").unwrap();
+        assert_eq!(
+            client
+                .post(&url)
+                .bearer_auth(other_key)
+                .json(&json!({}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
         let before = calls.load(Ordering::SeqCst);
         for body in [json!([]), json!(42)] {
             assert_eq!(
