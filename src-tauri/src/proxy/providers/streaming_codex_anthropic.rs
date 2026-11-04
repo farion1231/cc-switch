@@ -63,6 +63,7 @@ struct AnthropicToResponsesState {
     anthropic_usage: Map<String, Value>,
     stop_reason: Option<String>,
     stream_truncated: bool,
+    invalid_tool_arguments: bool,
     tool_context: CodexToolContext,
 }
 
@@ -79,6 +80,7 @@ impl Default for AnthropicToResponsesState {
             anthropic_usage: Map::new(),
             stop_reason: None,
             stream_truncated: false,
+            invalid_tool_arguments: false,
             tool_context: CodexToolContext::default(),
         }
     }
@@ -206,11 +208,11 @@ impl AnthropicToResponsesState {
                 let name = block.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 // Some gateways put the full tool input on content_block_start and emit
                 // no input_json_delta; capture it as a fallback (see close_block).
-                let start_input = block
-                    .get("input")
-                    .filter(|v| v.as_object().map(|o| !o.is_empty()).unwrap_or(false))
-                    .map(|v| v.to_string())
-                    .unwrap_or_default();
+                let start_input = match block.get("input") {
+                    Some(Value::Object(input)) if input.is_empty() => String::new(),
+                    Some(input) => input.to_string(),
+                    None => String::new(),
+                };
                 let item_id =
                     response_tool_call_item_id_from_chat_name(call_id, name, &self.tool_context);
                 let item = response_tool_call_item_from_chat_name(
@@ -374,10 +376,23 @@ impl AnthropicToResponsesState {
                 } else {
                     canonicalize_tool_arguments_str(&raw_input)
                 };
+                let arguments_are_object = serde_json::from_str::<Value>(&arguments)
+                    .map(|value| value.is_object())
+                    .unwrap_or(false);
+                let item_incomplete = self.stream_truncated || !arguments_are_object;
+                if !arguments_are_object {
+                    log::warn!(
+                        "[Codex/Anthropic] Marking tool call incomplete because arguments are not a valid JSON object: name_len={}, call_id_len={}, args_bytes={}",
+                        name.len(),
+                        call_id.len(),
+                        arguments.len()
+                    );
+                    self.invalid_tool_arguments = true;
+                }
                 let is_custom_tool = self.tool_context.is_custom_tool_chat_name(&name);
                 let item = response_tool_call_item_from_chat_name(
                     &item_id,
-                    if self.stream_truncated {
+                    if item_incomplete {
                         "incomplete"
                     } else {
                         "completed"
@@ -389,7 +404,7 @@ impl AnthropicToResponsesState {
                     &self.tool_context,
                 );
                 let mut events = Vec::new();
-                if !self.stream_truncated {
+                if !item_incomplete {
                     if is_custom_tool {
                         let input = item.get("input").and_then(Value::as_str).unwrap_or("");
                         events.push(sse::custom_tool_call_input_done(
@@ -475,8 +490,13 @@ impl AnthropicToResponsesState {
             return self.finish_compaction(events);
         }
 
-        let (status, incomplete_reason) =
-            map_anthropic_stop_reason_to_status(self.stop_reason.as_deref());
+        let (status, incomplete_reason) = if self.stream_truncated {
+            ("incomplete", Some("max_output_tokens"))
+        } else if self.invalid_tool_arguments {
+            ("incomplete", None)
+        } else {
+            map_anthropic_stop_reason_to_status(self.stop_reason.as_deref())
+        };
 
         let mut output = self.output_items.clone();
         output.sort_by_key(|(output_index, _)| *output_index);
@@ -864,6 +884,14 @@ mod tests {
             .collect()
     }
 
+    fn parse_response_events(sse: &str) -> Vec<Value> {
+        sse.lines()
+            .filter_map(|line| strip_sse_field(line, "data"))
+            .filter(|data| *data != "[DONE]")
+            .map(|data| serde_json::from_str(data).unwrap())
+            .collect()
+    }
+
     #[test]
     fn test_json_error_envelope_preserves_upstream_error() {
         let merged = render_message_events(&json!({
@@ -995,6 +1023,192 @@ mod tests {
         assert!(merged.contains("\"status\":\"incomplete\""));
         assert!(!merged.contains("event: response.function_call_arguments.done"));
         assert!(merged.contains("\"reason\":\"max_output_tokens\""));
+    }
+
+    #[tokio::test]
+    async fn test_cleanly_terminated_tool_call_with_invalid_arguments_is_incomplete() {
+        let input = concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_bad_tool\",\"model\":\"claude\"}}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_bad\",\"name\":\"execute_blender_code\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"code\\\":\\\"faces.append((a,b,e\"}}\n\n",
+            "event: content_block_stop\n",
+            "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+            "event: message_delta\n",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"}}\n\n",
+            "event: message_stop\n",
+            "data: {\"type\":\"message_stop\"}\n\n"
+        );
+
+        let merged = run(input).await;
+        assert!(merged.contains("event: response.output_item.done"));
+        assert!(merged.contains("\"status\":\"incomplete\""));
+        assert!(!merged.contains("\"reason\":\"max_output_tokens\""));
+        assert!(!merged.contains("event: response.function_call_arguments.done"));
+    }
+
+    #[test]
+    fn test_start_only_non_object_tool_input_is_incomplete() {
+        let merged = render_message_events(&json!({
+            "id": "msg_bad_start_input",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude",
+            "content": [{
+                "type": "tool_use",
+                "id": "toolu_bad_start",
+                "name": "execute_blender_code",
+                "input": ["faces.append((a,b,e"]
+            }],
+            "stop_reason": "tool_use"
+        }));
+
+        assert!(merged.contains("event: response.output_item.done"));
+        assert!(merged.contains("\"status\":\"incomplete\""));
+        assert!(!merged.contains("\"reason\":\"max_output_tokens\""));
+        assert!(!merged.contains("event: response.function_call_arguments.done"));
+    }
+
+    #[test]
+    fn test_invalid_parallel_tool_does_not_incomplete_valid_sibling() {
+        let merged = render_message_events(&json!({
+            "id": "msg_parallel_bad_tool",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_good",
+                    "name": "read_file",
+                    "input": { "path": "/tmp/a" }
+                },
+                {
+                    "type": "tool_use",
+                    "id": "toolu_bad",
+                    "name": "execute_blender_code",
+                    "input": ["faces.append((a,b,e"]
+                }
+            ],
+            "stop_reason": "tool_use"
+        }));
+
+        assert_eq!(
+            merged
+                .matches("event: response.function_call_arguments.done")
+                .count(),
+            1
+        );
+        assert!(merged.contains("\"status\":\"completed\""));
+        assert!(merged.contains("\"status\":\"incomplete\""));
+        assert!(!merged.contains("\"reason\":\"max_output_tokens\""));
+    }
+
+    #[tokio::test]
+    async fn test_malformed_parallel_stream_keeps_valid_call_on_next_request() {
+        use super::super::transform_codex_anthropic::responses_request_to_anthropic;
+
+        for bad_first in [false, true] {
+            let mut upstream_events = vec![json!({
+                "type": "message_start",
+                "message": {"id": "msg_parallel", "model": "claude"}
+            })];
+            let calls = [
+                ("toolu_good", "read_file", "{\"path\":\"/tmp/中文\"}"),
+                (
+                    "toolu_bad",
+                    "execute_blender_code",
+                    "{\"code\":\"faces.append((a,b,e",
+                ),
+            ];
+            for index in 0..2 {
+                let (id, name, arguments) = calls[if bad_first { 1 - index } else { index }];
+                upstream_events.extend([
+                    json!({"type": "content_block_start", "index": index,
+                        "content_block": {"type": "tool_use", "id": id, "name": name, "input": {}}}),
+                    json!({"type": "content_block_delta", "index": index,
+                        "delta": {"type": "input_json_delta", "partial_json": arguments}}),
+                    json!({"type": "content_block_stop", "index": index}),
+                ]);
+            }
+            upstream_events.extend([
+                json!({"type": "message_delta", "delta": {"stop_reason": "tool_use"}}),
+                json!({"type": "message_stop"}),
+            ]);
+            let upstream_sse = upstream_events
+                .iter()
+                .map(|event| format!("data: {event}\n\n"))
+                .collect::<String>();
+            // Exercise the real SSE converter with split fields and UTF-8 bytes.
+            let chunks = upstream_sse
+                .as_bytes()
+                .chunks(1)
+                .map(|chunk| Ok::<_, std::io::Error>(Bytes::copy_from_slice(chunk)))
+                .collect::<Vec<_>>();
+            let converted = create_responses_sse_stream_from_anthropic(stream::iter(chunks))
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .map(|chunk| String::from_utf8(chunk.unwrap().to_vec()).unwrap())
+                .collect::<String>();
+            let events = parse_response_events(&converted);
+            let completed_arguments = events
+                .iter()
+                .filter(|event| event["type"] == "response.function_call_arguments.done")
+                .collect::<Vec<_>>();
+            assert_eq!(completed_arguments.len(), 1);
+            assert_eq!(
+                serde_json::from_str::<Value>(
+                    completed_arguments[0]["arguments"].as_str().unwrap()
+                )
+                .unwrap(),
+                json!({"path": "/tmp/中文"})
+            );
+            let response = &events.last().unwrap()["response"];
+            assert_eq!(response["status"], "incomplete");
+            let output = response["output"].as_array().unwrap();
+            assert_eq!(output.len(), 2);
+            let good = output
+                .iter()
+                .find(|item| item["call_id"] == "toolu_good")
+                .unwrap();
+            let bad = output
+                .iter()
+                .find(|item| item["call_id"] == "toolu_bad")
+                .unwrap();
+            assert_eq!(good["status"], "completed");
+            assert_eq!(bad["status"], "incomplete");
+            assert_eq!(completed_arguments[0]["item_id"], good["id"]);
+
+            let mut history = vec![json!({"role": "user", "content": "inspect the file"})];
+            history.extend(output.iter().cloned());
+            history.push(json!({"type": "function_call_output", "call_id": "toolu_good", "output": "file contents"}));
+            let request =
+                responses_request_to_anthropic(json!({"model": "claude", "input": history}), 4096)
+                    .unwrap();
+            let blocks = request["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|message| message["content"].as_array().unwrap())
+                .collect::<Vec<_>>();
+            let tool_uses = blocks
+                .iter()
+                .filter(|block| block["type"] == "tool_use")
+                .collect::<Vec<_>>();
+            let tool_results = blocks
+                .iter()
+                .filter(|block| block["type"] == "tool_result")
+                .collect::<Vec<_>>();
+            assert_eq!(tool_uses.len(), 1);
+            assert_eq!(tool_results.len(), 1);
+            assert_eq!(tool_uses[0]["id"], "toolu_good");
+            assert_eq!(tool_uses[0]["input"], json!({"path": "/tmp/中文"}));
+            assert_eq!(tool_results[0]["tool_use_id"], "toolu_good");
+            assert_eq!(tool_results[0]["content"], "file contents");
+        }
     }
 
     #[tokio::test]
