@@ -155,7 +155,7 @@ describe("Pi thinking profiles", () => {
     );
   });
 
-  it("preserves off capability for Sonnet 5.5 and Responses models", () => {
+  it("preserves off capability for Sonnet 5.5, MiMo, and Responses models", () => {
     const sonnetBinding = piThinkingBindings.find(
       (b) => b.catalogKey === "anthropic/claude-sonnet-5.5",
     );
@@ -163,6 +163,9 @@ describe("Pi thinking profiles", () => {
     const sonnetProfile = piThinkingProfiles[sonnetBinding!.profileId];
     const sonnetMap = sonnetProfile.map as PiThinkingLevelMap;
     expect(sonnetMap.off).not.toBeNull();
+
+    const mimoMap = piThinkingProfiles.mimo.map as PiThinkingLevelMap;
+    expect(mimoMap.off).not.toBeNull();
 
     const gpt6SolBinding = piThinkingBindings.find(
       (b) => b.catalogKey === "openai/gpt-6.1-sol",

@@ -237,7 +237,6 @@ export const piThinkingProfiles = {
   },
   mimo: {
     map: {
-      off: null,
       minimal: null,
       low: "low",
       medium: "medium",
