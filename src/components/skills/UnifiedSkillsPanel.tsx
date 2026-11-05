@@ -38,6 +38,8 @@ import {
   useDeleteSkillBackup,
   useDiscoverableSkills,
   useImportSkillsFromApps,
+  useRemoveSkillReconciliationDuplicate,
+  useSkillReconciliationCandidates,
   useInstallSkillsFromZip,
   useInstalledSkills,
   useRestoreSkillBackup,
@@ -70,6 +72,7 @@ import { useVisibleAppIds } from "@/components/mcp/useVisibleAppIds";
 import { SkillsPage, useSkillRepoActions } from "./SkillsPage";
 import { RepoManagerPanel } from "./RepoManagerPanel";
 import { SkillImportDialog } from "./SkillImportDialog";
+import { SkillReconciliationDialog } from "./SkillReconciliationDialog";
 import { SkillRestoreDialog } from "./SkillRestoreDialog";
 import { SkillsStorageSheet } from "./SkillsStorageSheet";
 import { useSkillInstallTargets } from "./useSkillInstallTargets";
@@ -148,6 +151,8 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const [fails, setFails] = useState<Record<string, WriteFailure>>({});
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [reconciliationOpen, setReconciliationOpen] = useState(false);
+  const [reconciliationDismissed, setReconciliationDismissed] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [storageOpen, setStorageOpen] = useState(false);
   const [repoManagerOpen, setRepoManagerOpen] = useState(false);
@@ -190,6 +195,8 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const { data: unmanagedSkills, refetch: scanUnmanaged } =
     useScanUnmanagedSkills({ enabled: true });
   const importMutation = useImportSkillsFromApps();
+  const reconciliationQuery = useSkillReconciliationCandidates();
+  const reconciliationMutation = useRemoveSkillReconciliationDuplicate();
   const installFromZipMutation = useInstallSkillsFromZip();
   const {
     data: updateCheck,
@@ -208,11 +215,16 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     uninstallMutation.isPending ||
     restoreBackupMutation.isPending ||
     importMutation.isPending ||
+    reconciliationMutation.isPending ||
     installFromZipMutation.isPending ||
     updateSkillMutation.isPending ||
     isUpdatingMany;
   const dialogOpen =
-    importOpen || restoreOpen || confirm !== null || repoManagerOpen;
+    importOpen ||
+    reconciliationOpen ||
+    restoreOpen ||
+    confirm !== null ||
+    repoManagerOpen;
   const navigationBlocked = writePending || mutationPending || dialogOpen;
   const interactionBlocked = navigationBlocked || isCheckingUpdates;
   // 外观上的禁用晚 300ms 才出现：点一个格子写得很快时不让整页按钮闪一下变灰。
@@ -226,6 +238,16 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   useEffect(() => {
     onNavigationBlockedChange?.(navigationBlocked);
   }, [navigationBlocked, onNavigationBlockedChange]);
+
+  useEffect(() => {
+    if (
+      !reconciliationDismissed &&
+      !reconciliationOpen &&
+      (reconciliationQuery.data?.length ?? 0) > 0
+    ) {
+      setReconciliationOpen(true);
+    }
+  }, [reconciliationDismissed, reconciliationOpen, reconciliationQuery.data]);
 
   useEffect(
     () => () => {
@@ -699,6 +721,23 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       toast.error(t("common.error"), { description: String(error) });
     } finally {
       endWrite();
+    }
+  };
+
+  const handleReconciliation = async (
+    candidates: Array<{ app: string; directory: string }>,
+  ) => {
+    try {
+      for (const candidate of candidates) {
+        await reconciliationMutation.mutateAsync(candidate);
+      }
+      setReconciliationOpen(false);
+      setReconciliationDismissed(true);
+      toast.success(t("skillsPage.reconciliation.success"), {
+        closeButton: true,
+      });
+    } catch (error) {
+      toast.error(t("common.error"), { description: String(error) });
     }
   };
 
@@ -1741,6 +1780,18 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
           isImporting={importMutation.isPending}
           onImport={(imports) => void handleImport(imports)}
           onClose={() => setImportOpen(false)}
+        />
+      )}
+
+      {reconciliationOpen && reconciliationQuery.data && (
+        <SkillReconciliationDialog
+          candidates={reconciliationQuery.data}
+          isRemoving={reconciliationMutation.isPending}
+          onRemove={(directories) => void handleReconciliation(directories)}
+          onClose={() => {
+            setReconciliationOpen(false);
+            setReconciliationDismissed(true);
+          }}
         />
       )}
 

@@ -70,6 +70,11 @@ vi.mock("@/hooks/useSkills", () => ({
     isError: false,
     refetch: vi.fn(),
   }),
+  useSkillReconciliationCandidates: () => ({ data: [], isLoading: false }),
+  useRemoveSkillReconciliationDuplicate: () => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  }),
   useSkillBackups: () => ({
     data: m.backups,
     refetch: m.refetchBackups,
