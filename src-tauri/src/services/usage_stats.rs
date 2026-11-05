@@ -480,9 +480,7 @@ fn push_provider_model_filters(
 }
 
 fn strip_model_prefix_sql(expr: &str) -> String {
-    format!(
-        "CASE WHEN INSTR(TRIM({expr}), '/') > 0 THEN SUBSTR(TRIM({expr}), INSTR(TRIM({expr}), '/') + 1) ELSE TRIM({expr}) END"
-    )
+    format!("REPLACE(TRIM({expr}), RTRIM(TRIM({expr}), REPLACE(TRIM({expr}), '/', '')), '')")
 }
 
 /// 跨来源去重的模型匹配条件。
@@ -3537,6 +3535,21 @@ mod tests {
         )?;
         assert!(has_matching_proxy_usage_log(&conn, &key)?);
 
+        // 多级前缀（如 cpa/antigravity/gemini-3.8-flash-high）同样与最后一个 '/' 之后的模型对齐
+        conn.execute(
+            "UPDATE proxy_request_logs SET model = ?1, request_model = ?1 WHERE request_id = ?2",
+            params![
+                "cpa/antigravity/gemini-3.8-flash-high",
+                "codex-proxy-prefix"
+            ],
+        )?;
+        assert!(has_matching_proxy_usage_log(&conn, &key)?);
+        assert!(should_skip_session_insert(
+            &conn,
+            "codex-session-prefix",
+            &key
+        )?);
+
         // 模型名不同则不误伤
         let mut different_model = key;
         different_model.model = "gemini-2.5-pro";
@@ -3595,6 +3608,34 @@ mod tests {
         assert_eq!(request_ids, vec!["codex-proxy-prefix".to_string()]);
 
         // range filter (JOIN 路径) 同样正确去重
+        let range_filter = effective_usage_log_filter_for_range(&conn, "l", None, None)?;
+        let range_sql = format!(
+            "SELECT request_id FROM proxy_request_logs l WHERE {range_filter} ORDER BY request_id"
+        );
+        let range_ids = conn
+            .prepare(&range_sql)?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(range_ids, vec!["codex-proxy-prefix".to_string()]);
+
+        // 多级前缀在单行过滤与 range JOIN 中也能正确去重
+        conn.execute(
+            "UPDATE proxy_request_logs SET model = ?1, request_model = ?1 WHERE request_id = ?2",
+            params![
+                "cpa/antigravity/gemini-3.8-flash-high",
+                "codex-proxy-prefix"
+            ],
+        )?;
+        let filter = effective_usage_log_filter("l");
+        let sql = format!(
+            "SELECT request_id FROM proxy_request_logs l WHERE {filter} ORDER BY request_id"
+        );
+        let request_ids = conn
+            .prepare(&sql)?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(request_ids, vec!["codex-proxy-prefix".to_string()]);
+
         let range_filter = effective_usage_log_filter_for_range(&conn, "l", None, None)?;
         let range_sql = format!(
             "SELECT request_id FROM proxy_request_logs l WHERE {range_filter} ORDER BY request_id"
