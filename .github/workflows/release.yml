@@ -207,6 +207,8 @@ jobs:
 
       - name: Build Tauri App (Linux)
         if: runner.os == 'Linux'
+        env:
+          LINUXDEPLOY_EXCLUDED_LIBRARIES: "libwayland-client.so*"
         run: pnpm tauri build --bundles appimage,deb,rpm
 
       - name: Prepare Windows Assets
