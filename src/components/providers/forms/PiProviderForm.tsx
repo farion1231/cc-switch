@@ -2023,14 +2023,7 @@ export function PiProviderForm({
                                     const genericFourLevels: readonly PiThinkingLevel[] =
                                       ["low", "medium", "high", "xhigh"];
                                     const ALL_THINKING_LEVELS: readonly PiThinkingLevel[] =
-                                      [
-                                        "low",
-                                        "medium",
-                                        "high",
-                                        "xhigh",
-                                        "max",
-                                        "ultra",
-                                      ];
+                                      ["low", "medium", "high", "xhigh", "max"];
                                     const supportedLevels = isUnconfigured
                                       ? genericFourLevels
                                       : ALL_THINKING_LEVELS.filter(

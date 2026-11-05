@@ -1209,8 +1209,7 @@
         "medium": "Medium",
         "high": "High",
         "xhigh": "XHigh",
-        "max": "Max",
-        "ultra": "Ultra"
+        "max": "Max"
       },
       "showAllLevels": "显示全部档位",
       "showPrunedLevels": "只显示支持档位",

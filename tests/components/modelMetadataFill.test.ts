@@ -207,7 +207,6 @@ describe("piThinkingLevelMapFromEfforts", () => {
       high: "high",
       xhigh: null,
       max: "max",
-      ultra: null,
     });
     expect(piThinkingLevelMapFromEfforts(["none", "low"])).toMatchObject({
       off: "none",

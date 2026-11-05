@@ -1209,8 +1209,7 @@
         "medium": "Medium",
         "high": "High",
         "xhigh": "Extra high",
-        "max": "Maximum",
-        "ultra": "Ultra"
+        "max": "Maximum"
       },
       "showAllLevels": "Show all levels",
       "showPrunedLevels": "Show supported levels only",

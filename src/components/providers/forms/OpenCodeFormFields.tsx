@@ -200,7 +200,6 @@ function ReasoningEffortsField({
     "high",
     "xhigh",
     "max",
-    "ultra",
   ];
 
   const toggle = (level: string, offered: boolean) => {

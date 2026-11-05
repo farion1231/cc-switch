@@ -9,7 +9,6 @@ export const PI_THINKING_LEVELS = [
   "high",
   "xhigh",
   "max",
-  "ultra",
 ] as const;
 
 export type PiThinkingLevel = (typeof PI_THINKING_LEVELS)[number];
@@ -107,7 +106,7 @@ export const piThinkingProfiles = {
   },
   openaiResponsesGpt51: {
     map: {
-      off: null,
+      off: "none",
       minimal: null,
       low: "low",
       medium: "medium",
@@ -118,7 +117,7 @@ export const piThinkingProfiles = {
   },
   openaiResponsesGpt52To55: {
     map: {
-      off: null,
+      off: "none",
       minimal: null,
       low: "low",
       medium: "medium",
@@ -140,7 +139,7 @@ export const piThinkingProfiles = {
   },
   openaiResponsesGpt56: {
     map: {
-      off: null,
+      off: "none",
       minimal: null,
       low: "low",
       medium: "medium",
@@ -158,10 +157,19 @@ export const piThinkingProfiles = {
       high: "high",
       xhigh: "xhigh",
       max: "max",
-      ultra: "ultra",
     },
   },
-  openaiResponsesGpt6Ultra: {
+  claudeAdaptive: {
+    map: {
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "xhigh",
+      max: "max",
+    },
+  },
+  claudeAdaptiveAlwaysThinking: {
     map: {
       off: null,
       minimal: null,
@@ -170,19 +178,6 @@ export const piThinkingProfiles = {
       high: "high",
       xhigh: "xhigh",
       max: "max",
-      ultra: "ultra",
-    },
-  },
-  claudeAdaptiveUltra: {
-    map: {
-      off: null,
-      minimal: null,
-      low: "low",
-      medium: "medium",
-      high: "high",
-      xhigh: "xhigh",
-      max: "max",
-      ultra: "ultra",
     },
   },
   grokReasoning: {
@@ -286,19 +281,19 @@ export const piThinkingBindings: readonly PiThinkingBinding[] = [
   {
     catalogKey: "anthropic/claude-opus-5.5",
     api: "anthropic-messages",
-    profileId: "claudeAdaptiveUltra",
+    profileId: "claudeAdaptive",
     modelCompat: { forceAdaptiveThinking: true },
   },
   {
     catalogKey: "anthropic/claude-sonnet-5.5",
     api: "anthropic-messages",
-    profileId: "claudeAdaptiveUltra",
+    profileId: "claudeAdaptive",
     modelCompat: { forceAdaptiveThinking: true },
   },
   {
     catalogKey: "anthropic/claude-fable-5.1",
     api: "anthropic-messages",
-    profileId: "claudeAdaptiveUltra",
+    profileId: "claudeAdaptiveAlwaysThinking",
     modelCompat: { forceAdaptiveThinking: true },
   },
   {
@@ -425,31 +420,31 @@ export const piThinkingBindings: readonly PiThinkingBinding[] = [
   {
     catalogKey: "openai/gpt-6.1-sol",
     api: "openai-responses",
-    profileId: "openaiResponsesGpt6Ultra",
+    profileId: "openaiResponsesGpt56",
   },
   {
     catalogKey: "openai/gpt-6-sol",
     api: "openai-responses",
-    profileId: "openaiResponsesGpt6Ultra",
+    profileId: "openaiResponsesGpt56",
   },
   {
     catalogKey: "openai/gpt-6.1-terra",
     api: "openai-responses",
-    profileId: "openaiResponsesGpt6Ultra",
+    profileId: "openaiResponsesGpt56",
   },
   {
     catalogKey: "openai/gpt-6-luna",
     api: "openai-responses",
-    profileId: "openaiResponsesGpt6Ultra",
+    profileId: "openaiResponsesGpt56",
   },
   {
     catalogKey: "qwen/qwen3.8-max",
-    api: "openai-responses",
+    api: "openai-completions",
     profileId: "qwen38",
   },
   {
     catalogKey: "qwen/qwen3.8-flash",
-    api: "openai-responses",
+    api: "openai-completions",
     profileId: "qwen38",
   },
   {
@@ -479,12 +474,17 @@ export const piThinkingBindings: readonly PiThinkingBinding[] = [
   },
   {
     catalogKey: "xiaomi/mimo-v2.6-pro",
-    api: "openai-responses",
+    api: "openai-completions",
     profileId: "mimo",
   },
   {
     catalogKey: "xiaomi/mimo-v2.6-flash",
-    api: "openai-responses",
+    api: "openai-completions",
+    profileId: "mimo",
+  },
+  {
+    catalogKey: "xiaomi/mimo-v2.6-pro-ultraspeed",
+    api: "openai-completions",
     profileId: "mimo",
   },
 ];

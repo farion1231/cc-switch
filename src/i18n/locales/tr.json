@@ -1194,8 +1194,7 @@
         "medium": "Orta",
         "high": "Yüksek",
         "xhigh": "Ekstra yüksek",
-        "max": "Maksimum",
-        "ultra": "Ultra"
+        "max": "Maksimum"
       },
       "showAllLevels": "Tüm seviyeleri göster",
       "showPrunedLevels": "Yalnızca desteklenen seviyeleri göster",

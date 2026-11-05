@@ -1210,8 +1210,7 @@
         "medium": "Medium",
         "high": "High",
         "xhigh": "XHigh",
-        "max": "Max",
-        "ultra": "Ultra"
+        "max": "Max"
       },
       "showAllLevels": "顯示全部檔位",
       "showPrunedLevels": "只顯示支援檔位",

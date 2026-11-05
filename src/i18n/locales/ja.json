@@ -1209,8 +1209,7 @@
         "medium": "中",
         "high": "高",
         "xhigh": "超高",
-        "max": "最大",
-        "ultra": "ウルトラ"
+        "max": "最大"
       },
       "showAllLevels": "すべてのレベルを表示",
       "showPrunedLevels": "サポートされているレベルのみ表示",
