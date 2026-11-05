@@ -247,7 +247,8 @@ export const setApiKeyInConfig = (
 
 // ========== Codex base_url utils ==========
 
-const TOML_SECTION_HEADER_PATTERN = /^\s*\[{1,2}([^\]\r\n]+)\]{1,2}\s*$/;
+const TOML_SECTION_HEADER_PATTERN =
+  /^\s*\[{1,2}([^\]\r\n]+)\]{1,2}\s*(?:#.*)?$/;
 const TOML_BARE_KEY_PATTERN = /^[A-Za-z0-9_-]+$/;
 // 点分键的一段（基本字符串、字面字符串或裸键）及其后的 "." 或结尾
 const TOML_DOTTED_KEY_SEGMENT_PATTERN =
@@ -1504,13 +1505,21 @@ export type CodexAgentsStringKey =
 
 const CODEX_AGENTS_SECTION = "agents";
 
-const tomlStringAssignmentPatterns = (key: string) => ({
-  doubleQuoted: new RegExp(
-    `^\\s*${key}\\s*=\\s*"((?:[^"\\\\\\r\\n]|\\\\.)*)"\\s*(?:#.*)?$`,
-  ),
-  singleQuoted: new RegExp(`^\\s*${key}\\s*=\\s*'([^'\\r\\n]*)'\\s*(?:#.*)?$`),
-  anyValue: new RegExp(`^\\s*${key}\\s*=`),
-});
+// 键的三种等价写法：`key`、`"key"`、`'key'`。
+const tomlKeySource = (key: string): string => `(?:${key}|"${key}"|'${key}')`;
+
+const tomlStringAssignmentPatterns = (key: string) => {
+  const keySource = tomlKeySource(key);
+  return {
+    doubleQuoted: new RegExp(
+      `^\\s*${keySource}\\s*=\\s*"((?:[^"\\\\\\r\\n]|\\\\.)*)"\\s*(?:#.*)?$`,
+    ),
+    singleQuoted: new RegExp(
+      `^\\s*${keySource}\\s*=\\s*'([^'\\r\\n]*)'\\s*(?:#.*)?$`,
+    ),
+    anyValue: new RegExp(`^\\s*${keySource}\\s*=`),
+  };
+};
 
 export const extractCodexAgentsString = (
   configText: string | undefined | null,
@@ -1672,7 +1681,9 @@ export const extractCodexAgentsMaxThreads = (
     CODEX_AGENTS_MAX_THREADS_CANONICAL_KEY,
     CODEX_AGENTS_MAX_THREADS_KEY,
   ]) {
-    const pattern = new RegExp(`^\\s*${key}\\s*=\\s*(\\d+)\\s*(?:#.*)?$`);
+    const pattern = new RegExp(
+      `^\\s*${tomlKeySource(key)}\\s*=\\s*(\\d+)\\s*(?:#.*)?$`,
+    );
     for (let i = range.bodyStartIndex; i < range.bodyEndIndex; i += 1) {
       const match = lines[i].match(pattern);
       if (match) return positiveInteger(Number(match[1]));
