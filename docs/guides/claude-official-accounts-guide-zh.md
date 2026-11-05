@@ -11,7 +11,9 @@
 
 每张绑了账号的卡片还会显示这个号的套餐和剩余额度。
 
-> ⚠️ **只支持 Claude Code CLI 和 IDE 插件（VS Code、JetBrains 等），不支持 Claude Desktop，不支持 WSL 环境（后续会做）。** Claude Desktop 的聊天和 Code 标签页用的是它自己的登录，不读 Claude Code 的凭据。在 CC Switch 里切卡、打开终端，都不会改变 Claude Desktop 登录的账号。后续如果 Anthropic 放松相关限制，CC Switch 会跟进。
+> ⚠️ **只支持 Claude Code CLI 和 IDE 插件（VS Code、JetBrains 等），不支持 Claude Desktop。** Claude Desktop 的聊天和 Code 标签页用的是它自己的登录，不读 Claude Code 的凭据。在 CC Switch 里切卡、打开终端，都不会改变 Claude Desktop 登录的账号。后续如果 Anthropic 放松相关限制，CC Switch 会跟进。
+>
+> **WSL（进行中）**：Claude 配置目录指向 WSL 家目录（`\\wsl.localhost\<发行版>\home\<用户>\.claude` 或 `\\wsl$\...`，也包括 `\root\.claude`）时，可以在授权中心添加账号、重新登录，并从官方卡「打开终端」。登录和终端都在该发行版里运行 `claude`，`CLAUDE_CONFIG_DIR` 指向发行版内的 Linux 路径（`~/.cc-switch/claude-accounts/<id>/config`）。切卡即切号和额度显示还没有接到 WSL 里的 Claude Code，这两项请先用「打开终端」。配置目录在 WSL 里、但不在 `/home/<用户>` 或 `/root` 下时，仍然不能添加账号。Windows 本机、macOS、Linux 的行为不变。
 
 ## 大家最关心的合规问题
 
@@ -76,7 +78,7 @@ Claude Code 里现在登着的号不用专门添加，第一次切换时会自�
 注意：
 
 - 正在运行的会话也会跟着换号，所以切号后正在使用的 Remote Control 会断开，下一条消息要重建提示缓存（会慢一点、多用一点额度）。
-- 仅直连模式；在设置里覆盖了 Claude 配置目录时，切卡不会换号，请用「打开终端」。WSL 环境下两种用法都不支持。
+- 仅直连模式；在设置里覆盖了 Claude 配置目录时，切卡不会换号，请用「打开终端」。Claude 配置目录在 WSL 家目录里时同样请用「打开终端」：添加账号和打开终端已经在发行版里运行，切卡即切号和额度还没有。
 
 ### 4. 几个号同时用：「打开终端」
 

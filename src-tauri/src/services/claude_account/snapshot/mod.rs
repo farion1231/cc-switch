@@ -95,8 +95,8 @@ const COMMIT_DEADLINE: Duration = Duration::from_secs(30);
 static SWITCH: Mutex<()> = Mutex::new(());
 
 /// 切卡时为什么不能切换登录：
-/// - `"wsl"`：Claude 配置目录指向 WSL（Windows）。登录、查额度、打开终端都跑在 Windows 上，
-///   用不到 WSL 里的 Claude Code，账号功能整体不可用。
+/// - `"wsl"`：Claude 配置目录指向 WSL（Windows）。切卡仍不搬登录（凭据还在 Windows 侧读写）。
+///   能推出 Linux 家目录时，添加账号和「打开终端」改在发行版里跑（[`super::run_target::current_wsl`]）。
 /// - `"overrideDir"`：设了别的 Claude 配置目录覆盖（默认槽位不在 `~/.claude`）。这时绑号卡
 ///   只能从卡片「打开终端」使用。
 pub fn blocked_reason() -> Option<&'static str> {

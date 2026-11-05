@@ -15,6 +15,7 @@ pub mod cc_lock;
 pub mod identity;
 pub mod layout;
 pub mod login;
+pub mod run_target;
 pub mod shared;
 pub mod snapshot;
 pub mod usage;
@@ -255,7 +256,7 @@ impl ClaudeAccountManager {
         let home = layout::account_home(&self.data_dir, &local_id);
         let config_dir = layout::config_dir(&self.data_dir, &local_id);
         layout::assert_config_dir(&self.data_dir, &config_dir)?;
-        create_private_dir(&config_dir)?;
+        create_private_dir(&config_dir).map_err(clarify_wsl_dir_error)?;
         {
             // 登录前先接好共享目录，Claude Code 首次启动就写进共享的位置
             let config_dir = config_dir.clone();
@@ -730,6 +731,10 @@ fn delete_keychain_entry(_config_dir: &Path) {}
 /// 在账号目录里跑一次 `claude auth status --json`（只在刚登录完时调用：令牌是新的，
 /// 不会触发刷新）。
 fn auth_status(config_dir: &Path) -> Option<identity::AuthStatus> {
+    #[cfg(windows)]
+    if let Some(wsl) = run_target::current_wsl() {
+        return auth_status_wsl(&wsl, config_dir);
+    }
     let mut cmd = crate::commands::detected_tool_command(
         "claude",
         &["auth", "status", "--json"],
@@ -758,6 +763,38 @@ fn auth_status(config_dir: &Path) -> Option<identity::AuthStatus> {
     }
     let mut output = String::new();
     child.stdout.take()?.read_to_string(&mut output).ok()?;
+    identity::parse_auth_status(&output)
+}
+
+/// 发行版还没起来、或 UNC 写不进去时，把系统错误说成人能看懂的话。
+fn clarify_wsl_dir_error(error: AppError) -> AppError {
+    let Some(wsl) = run_target::current_wsl() else {
+        return error;
+    };
+    AppError::localized(
+        "claude.account.wsl_dir",
+        format!(
+            "无法在 WSL 发行版 {} 里创建账号目录（{error}）。请确认该发行版已安装并能启动（wsl -d {}）。",
+            wsl.distro, wsl.distro
+        ),
+        format!(
+            "Couldn't create the account directory in WSL distro {} ({error}). Make sure that distro is installed and can start (wsl -d {}).",
+            wsl.distro, wsl.distro
+        ),
+    )
+}
+
+#[cfg(windows)]
+fn auth_status_wsl(wsl: &run_target::WslTarget, config_dir: &Path) -> Option<identity::AuthStatus> {
+    let linux_config = run_target::linux_config_dir(config_dir, &wsl.distro)?;
+    let output = login::capture_wsl_claude(
+        &wsl.distro,
+        &wsl.linux_home,
+        &linux_config,
+        &["auth", "status", "--json"],
+        STATUS_TIMEOUT,
+    )
+    .ok()?;
     identity::parse_auth_status(&output)
 }
 
