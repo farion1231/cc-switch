@@ -350,19 +350,29 @@ fn sync_single_grok_file(
             } else {
                 event.prompt_id.clone()
             };
-            let legacy_request_id = if start_byte == 0 && event.prompt_id.is_empty() {
-                Some(format!(
-                    "grok_session:{session_id}:idx{}:{model}",
-                    event_idx - 1
-                ))
-            } else {
-                None
-            };
             let request_id = format!("grok_session:{session_id}:{turn_key}:{model}");
+
+            if start_byte == 0 && event.prompt_id.is_empty() {
+                // 兼容老版本：老版本 start_byte == 0 全量扫描时生成 idx{N} 幂等键。
+                // 当老会话归档到 archived_sessions（游标按路径隔离，归档后触发全量重扫）
+                // 或库中已有历史 idx 记录时，新版本统一使用 off{offset}。
+                // 将既有 idx 行迁移至新的 off 键，避免两行共存导致用量与费用双算；
+                // 若新键行已先一步存在，则清理历史遗留行。
+                let legacy_id = format!("grok_session:{session_id}:idx{}:{model}", event_idx - 1);
+                let conn = lock_conn!(db.conn);
+                let _ = conn.execute(
+                    "UPDATE OR IGNORE proxy_request_logs SET request_id = ?1 WHERE request_id = ?2 AND data_source = 'grok_session'",
+                    rusqlite::params![&request_id, &legacy_id],
+                );
+                let _ = conn.execute(
+                    "DELETE FROM proxy_request_logs WHERE request_id = ?1 AND data_source = 'grok_session'",
+                    rusqlite::params![&legacy_id],
+                );
+            }
+
             match insert_grok_session_entry(
                 db,
                 &request_id,
-                legacy_request_id.as_deref(),
                 turn,
                 event.cost_is_partial || turn.cost_partial,
                 model,
@@ -556,7 +566,6 @@ fn parse_event_timestamp(value: Option<&serde_json::Value>) -> Option<i64> {
 fn insert_grok_session_entry(
     db: &Database,
     request_id: &str,
-    legacy_request_id: Option<&str>,
     turn: &GrokCounters,
     cost_is_partial: bool,
     model: &str,
@@ -564,22 +573,6 @@ fn insert_grok_session_entry(
     created_at: i64,
 ) -> Result<bool, AppError> {
     let conn = lock_conn!(db.conn);
-
-    if let Some(legacy_id) = legacy_request_id {
-        // 兼容老版本：老版本 start_byte == 0 全量扫描时生成 idx{N} 幂等键。
-        // 当老会话归档到 archived_sessions（游标按路径隔离，归档后触发全量重扫）
-        // 或库中已有历史 idx 记录时，新版本统一使用 off{offset}。
-        // 将既有 idx 行迁移至新的 off 键，避免两行共存导致用量与费用双算；
-        // 若新键行已先一步存在，则清理历史遗留行。
-        let _ = conn.execute(
-            "UPDATE OR IGNORE proxy_request_logs SET request_id = ?1 WHERE request_id = ?2 AND data_source = 'grok_session'",
-            rusqlite::params![request_id, legacy_id],
-        );
-        let _ = conn.execute(
-            "DELETE FROM proxy_request_logs WHERE request_id = ?1 AND data_source = 'grok_session'",
-            rusqlite::params![legacy_id],
-        );
-    }
 
     let clamp = |v: u64| v.min(u32::MAX as u64) as u32;
     let usage = TokenUsage {
