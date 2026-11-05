@@ -350,10 +350,19 @@ fn sync_single_grok_file(
             } else {
                 event.prompt_id.clone()
             };
+            let legacy_request_id = if start_byte == 0 && event.prompt_id.is_empty() {
+                Some(format!(
+                    "grok_session:{session_id}:idx{}:{model}",
+                    event_idx - 1
+                ))
+            } else {
+                None
+            };
             let request_id = format!("grok_session:{session_id}:{turn_key}:{model}");
             match insert_grok_session_entry(
                 db,
                 &request_id,
+                legacy_request_id.as_deref(),
                 turn,
                 event.cost_is_partial || turn.cost_partial,
                 model,
@@ -547,6 +556,7 @@ fn parse_event_timestamp(value: Option<&serde_json::Value>) -> Option<i64> {
 fn insert_grok_session_entry(
     db: &Database,
     request_id: &str,
+    legacy_request_id: Option<&str>,
     turn: &GrokCounters,
     cost_is_partial: bool,
     model: &str,
@@ -554,6 +564,22 @@ fn insert_grok_session_entry(
     created_at: i64,
 ) -> Result<bool, AppError> {
     let conn = lock_conn!(db.conn);
+
+    if let Some(legacy_id) = legacy_request_id {
+        // 兼容老版本：老版本 start_byte == 0 全量扫描时生成 idx{N} 幂等键。
+        // 当老会话归档到 archived_sessions（游标按路径隔离，归档后触发全量重扫）
+        // 或库中已有历史 idx 记录时，新版本统一使用 off{offset}。
+        // 将既有 idx 行迁移至新的 off 键，避免两行共存导致用量与费用双算；
+        // 若新键行已先一步存在，则清理历史遗留行。
+        let _ = conn.execute(
+            "UPDATE OR IGNORE proxy_request_logs SET request_id = ?1 WHERE request_id = ?2 AND data_source = 'grok_session'",
+            rusqlite::params![request_id, legacy_id],
+        );
+        let _ = conn.execute(
+            "DELETE FROM proxy_request_logs WHERE request_id = ?1 AND data_source = 'grok_session'",
+            rusqlite::params![legacy_id],
+        );
+    }
 
     let clamp = |v: u64| v.min(u32::MAX as u64) as u32;
     let usage = TokenUsage {
@@ -1424,6 +1450,78 @@ mod tests {
         assert_eq!(res2.imported, 1);
         let rows = query_rows(&db)?;
         assert_eq!(rows.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn upgrade_plus_archive_deduplicates_legacy_index_keys() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().expect("tempdir");
+
+        let session_id = "sess-archived-upgrade";
+        let line1 = usage_event_line(
+            OLD_EPOCH,
+            "",
+            &model_counters("grok-4.5-build", 100, 10, 0, 1),
+        );
+        let line2 = usage_event_line(
+            OLD_EPOCH + 10,
+            "",
+            &model_counters("grok-4.5-build", 200, 20, 0, 1),
+        );
+
+        // 模拟升级前：会话位于 sessions 目录，全量扫描时老版本落库了 idx0 / idx1 键
+        let sessions_dir = temp.path().join("sessions").join("cwd").join(session_id);
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let session_file = sessions_dir.join("updates.jsonl");
+        std::fs::write(&session_file, format!("{line1}\n{line2}\n")).unwrap();
+
+        // 人工插入模拟老版本（PR #9026 以前）全量扫描入库的两条记录
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, input_tokens, output_tokens,
+                    cache_read_tokens, latency_ms, status_code, session_id, created_at, data_source
+                ) VALUES
+                (?1, 'grok', 'grokbuild', 'grok-4.5-build', 100, 10, 0, 1, 200, ?3, ?4, 'grok_session'),
+                (?2, 'grok', 'grokbuild', 'grok-4.5-build', 200, 20, 0, 1, 200, ?3, ?5, 'grok_session')",
+                rusqlite::params![
+                    format!("grok_session:{session_id}:idx0:grok-4.5-build"),
+                    format!("grok_session:{session_id}:idx1:grok-4.5-build"),
+                    session_id,
+                    OLD_EPOCH,
+                    OLD_EPOCH + 10,
+                ],
+            )?;
+        }
+
+        // 模拟 Grok 将会话移动到 archived_sessions 目录（原游标不随路径迁移，触发新路径全量重扫）
+        let archived_dir = temp
+            .path()
+            .join("archived_sessions")
+            .join("cwd")
+            .join(session_id);
+        std::fs::create_dir_all(&archived_dir).unwrap();
+        let archived_file = archived_dir.join("updates.jsonl");
+        std::fs::rename(&session_file, &archived_file).unwrap();
+
+        // 在新代码下对归档文件进行扫描
+        let cursors = std::collections::HashMap::new();
+        let res = sync_single_grok_file(&db, &archived_file, &cursors)?;
+
+        // 应该全部命中旧记录并迁移为 off 键，不应该双算或产生额外导入
+        assert_eq!(res.imported, 0, "旧 idx 记录已存在，不应重复导入");
+        assert_eq!(res.skipped, 2, "2 条记录命中并跳过");
+
+        let rows = query_rows(&db)?;
+        assert_eq!(rows.len(), 2, "总记录数保持 2 条，未产生重复行");
+        assert!(
+            rows.iter().all(|r| r.0.contains(":off")),
+            "既有记录的 request_id 已迁移为 off 偏移键: {:?}",
+            rows
+        );
+
         Ok(())
     }
 
