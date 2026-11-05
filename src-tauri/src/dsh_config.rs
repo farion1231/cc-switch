@@ -13,7 +13,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// DSH home: the directory set in CC Switch settings (e.g. a WSL path, #9239), then
+/// `DSH_HOME`, then `~/.dsh`.
 pub(crate) fn data_dir() -> PathBuf {
+    if let Some(dir) = crate::settings::get_dsh_override_dir() {
+        return dir;
+    }
     std::env::var_os("DSH_HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
