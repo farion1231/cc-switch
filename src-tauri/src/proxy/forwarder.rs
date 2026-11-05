@@ -41,6 +41,7 @@ use futures::StreamExt;
 use http::Extensions;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::borrow::Cow;
 use std::sync::Arc;
 use tauri::Manager;
 use tokio::sync::RwLock;
@@ -299,13 +300,16 @@ pub struct ForwardResult {
 pub struct ForwardError {
     pub error: ProxyError,
     pub provider: Option<Provider>,
+    /// 最后一次尝试发往上游的模型名（映射之后）。错误行记这个，不记客户端别名：
+    /// 路由下 Desktop 的 claude-haiku-* 实际发的是映射后的模型，记别名会被当成调错了模型。
+    pub outbound_model: Option<String>,
 }
 
 /// 活跃连接 RAII guard
 ///
-/// 构造时把 `ProxyStatus.active_connections` +1；Drop 时在 tokio runtime 上调度
-/// 一个异步任务执行 -1，从而支持把 guard move 进流式 body future（stream 自然结束
-/// 时 guard 与 future 一起 drop）。
+/// 构造时记录请求并把 `ProxyStatus.active_connections` +1；Drop 时优先直接 -1，
+/// 锁被占用才调度异步任务，从而支持把 guard move 进流式 body future（stream
+/// 自然结束时 guard 与 future 一起 drop）。
 ///
 /// 设计动机：之前在 `forward_with_retry` 出口处同步 -1，但流式响应的 body 实际
 /// 在 `create_logged_passthrough_stream` 内还会继续 yield 字节流，导致 UI 的
@@ -317,9 +321,12 @@ pub(crate) struct ActiveConnectionGuard {
 
 impl ActiveConnectionGuard {
     pub(crate) async fn acquire(status: Arc<RwLock<ProxyStatus>>) -> Self {
+        let last_request_at = chrono::Utc::now().to_rfc3339();
         {
             let mut s = status.write().await;
             s.active_connections = s.active_connections.saturating_add(1);
+            s.total_requests = s.total_requests.saturating_add(1);
+            s.last_request_at = Some(last_request_at);
         }
         Self { status }
     }
@@ -327,6 +334,10 @@ impl ActiveConnectionGuard {
 
 impl Drop for ActiveConnectionGuard {
     fn drop(&mut self) {
+        if let Ok(mut status) = self.status.try_write() {
+            status.active_connections = status.active_connections.saturating_sub(1);
+            return;
+        }
         // Drop 不能 await：把减量操作调度到 tokio runtime
         let status = self.status.clone();
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
@@ -375,6 +386,9 @@ pub struct RequestForwarder {
     /// Stack 模型的请求（`mode::stack`）：挂在结构体上，整流器重试再次调用 `forward()` 时照样
     /// 生效。见 [`Self::routing_state_enabled`]。
     stack_request: bool,
+    /// 最近一次 `forward()` 定下的出站模型名，失败时随 [`ForwardError`] 交给日志。
+    /// 每次 `forward()` 开头清空，映射失败等没走到出站的尝试留 None（日志回落到请求名）。
+    last_outbound_model: std::sync::Mutex<Option<String>>,
 }
 
 impl RequestForwarder {
@@ -382,26 +396,25 @@ impl RequestForwarder {
     ///
     /// 受 `enabled && request_media_fallback` 管辖；其中"启发式模型名单预测"
     /// 再受 `request_media_heuristic` 单独管辖（显式声明 text-only 始终生效）。
-    /// 返回被替换的图片块数量（0 = 未触发或开关关闭）。
+    /// 返回被替换的媒体块数量（0 = 未触发或开关关闭）。
     fn apply_media_prevention(&self, body: &mut Value, provider: &Provider) -> usize {
         if !(self.rectifier_config.enabled && self.rectifier_config.request_media_fallback) {
             return 0;
         }
-        let replaced_images = super::media_sanitizer::replace_images_for_text_only_model(
+        let replaced_media = super::media_sanitizer::replace_images_for_text_only_model(
             body,
             provider,
             self.rectifier_config.request_media_heuristic,
         );
-        if replaced_images > 0 {
+        if replaced_media > 0 {
             let model = body.get("model").and_then(Value::as_str).unwrap_or("");
             log::info!(
-                "[Media] Replaced {replaced_images} image block(s) with {} for text-only provider={}, model={}",
-                super::media_sanitizer::UNSUPPORTED_IMAGE_MARKER,
+                "[Media] Replaced {replaced_media} unsupported media block(s) for provider={}, model={}",
                 provider.id,
                 model
             );
         }
-        replaced_images
+        replaced_media
     }
 
     /// 反应式 media 重试判定：上游因图片输入报错后，是否应替换图片块并对同一供应商重试一次。
@@ -490,7 +503,21 @@ impl RequestForwarder {
             ),
             max_attempts,
             stack_request: false,
+            last_outbound_model: std::sync::Mutex::new(None),
         }
+    }
+
+    fn set_last_outbound_model(&self, model: Option<String>) {
+        if let Ok(mut slot) = self.last_outbound_model.lock() {
+            *slot = model;
+        }
+    }
+
+    fn last_outbound_model(&self) -> Option<String> {
+        self.last_outbound_model
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone())
     }
 
     /// 标记为 Stack 模型的请求。
@@ -710,6 +737,7 @@ impl RequestForwarder {
         ForwardError {
             error,
             provider: Some(provider.clone()),
+            outbound_model: self.last_outbound_model(),
         }
     }
 
@@ -736,10 +764,10 @@ impl RequestForwarder {
         app_type: &AppType,
         method: http::Method,
         endpoint: &str,
-        body: Value,
+        body: &Value,
         headers: axum::http::HeaderMap,
         extensions: Extensions,
-        providers: Vec<Provider>,
+        providers: &[Provider],
     ) -> Result<ForwardResult, ForwardError> {
         if !self.routing_state_enabled() {
             return self
@@ -749,11 +777,6 @@ impl RequestForwarder {
                 .await;
         }
         let guard = ActiveConnectionGuard::acquire(self.status.clone()).await;
-        {
-            let mut s = self.status.write().await;
-            s.total_requests = s.total_requests.saturating_add(1);
-            s.last_request_at = Some(chrono::Utc::now().to_rfc3339());
-        }
         let result = self
             .forward_with_retry_inner(
                 app_type, method, endpoint, body, headers, extensions, providers,
@@ -783,11 +806,23 @@ impl RequestForwarder {
         app_type: &AppType,
         method: http::Method,
         endpoint: &str,
-        body: Value,
+        body: &Value,
         headers: axum::http::HeaderMap,
         extensions: Extensions,
-        providers: Vec<Provider>,
+        providers: &[Provider],
     ) -> Result<ForwardResult, ForwardError> {
+        if matches!(app_type, AppType::Claude | AppType::ClaudeDesktop)
+            && super::classifier_guard::classifier_retry_loop(body)
+        {
+            let error = ProxyError::InvalidRequest(
+                super::classifier_guard::CLASSIFIER_LOOP_MESSAGE.to_string(),
+            );
+            self.record_failed_request(error.to_string()).await;
+            return Err(ForwardError {
+                error,
+                provider: providers.first().cloned(),
+            });
+        }
         // 获取适配器
         let adapter = get_adapter(app_type).ok_or_else(|| ForwardError {
             error: ProxyError::ConfigError(format!(
@@ -795,6 +830,7 @@ impl RequestForwarder {
                 app_type.as_str()
             )),
             provider: None,
+            outbound_model: None,
         })?;
         let app_type_str = app_type.as_str();
 
@@ -802,6 +838,7 @@ impl RequestForwarder {
             return Err(ForwardError {
                 error: ProxyError::NoAvailableProvider,
                 provider: None,
+                outbound_model: None,
             });
         }
 
@@ -849,20 +886,19 @@ impl RequestForwarder {
             }
 
             // PRE-SEND 优化器：每个 provider 独立决定是否优化
-            // clone body 以避免 Bedrock 优化字段泄漏到非 Bedrock provider（failover 场景）
-            let mut provider_body =
-                if self.optimizer_config.enabled && is_bedrock_provider(provider) {
-                    let mut b = body.clone();
-                    if self.optimizer_config.thinking_optimizer {
-                        super::thinking_optimizer::optimize(&mut b, &self.optimizer_config);
-                    }
-                    if self.optimizer_config.cache_injection {
-                        super::cache_injector::inject(&mut b, &self.optimizer_config);
-                    }
-                    b
-                } else {
-                    body.clone()
-                };
+            // 只有优化器或错误整流要改写时才复制，避免每家额外复制整段会话历史。
+            let mut provider_body = Cow::Borrowed(body);
+            if self.optimizer_config.enabled && is_bedrock_provider(provider) {
+                if self.optimizer_config.thinking_optimizer {
+                    super::thinking_optimizer::optimize(
+                        provider_body.to_mut(),
+                        &self.optimizer_config,
+                    );
+                }
+                if self.optimizer_config.cache_injection {
+                    super::cache_injector::inject(provider_body.to_mut(), &self.optimizer_config);
+                }
+            }
 
             attempted_providers += 1;
 
@@ -913,7 +949,7 @@ impl RequestForwarder {
                         &provider_body,
                         &e,
                     ) {
-                        let mut media_body = provider_body.clone();
+                        let mut media_body = provider_body.as_ref().clone();
                         let replaced_images =
                             super::media_sanitizer::replace_image_blocks_with_marker(
                                 &mut media_body,
@@ -996,7 +1032,7 @@ impl RequestForwarder {
                         // 这一轮是派给子 agent 的加密任务：整流不动它（见
                         // `opaque_state_rectifier`），去掉别家的状态后仍被拒，就是任务本身解不开。
                         let agent_task = carries_encrypted_agent_task(&provider_body);
-                        let mut opaque_body = provider_body.clone();
+                        let mut opaque_body = provider_body.as_ref().clone();
                         let rectified = rectify_opaque_state(&mut opaque_body, rejection);
                         if !rectified.applied && agent_task {
                             log::warn!(
@@ -1108,7 +1144,7 @@ impl RequestForwarder {
                             }
 
                             // 首次触发：整流请求体
-                            let rectified = rectify_anthropic_request(&mut provider_body);
+                            let rectified = rectify_anthropic_request(provider_body.to_mut());
 
                             // 整流未生效：继续尝试 budget 整流路径，避免误判后短路
                             if !rectified.applied {
@@ -1203,7 +1239,7 @@ impl RequestForwarder {
                                     .await);
                             }
 
-                            let budget_rectified = rectify_thinking_budget(&mut provider_body);
+                            let budget_rectified = rectify_thinking_budget(provider_body.to_mut());
                             if !budget_rectified.applied {
                                 log::warn!(
                                     "[{app_type_str}] [RECT-014] budget 整流器触发但无可整流内容，不做无意义重试"
@@ -1343,6 +1379,7 @@ impl RequestForwarder {
             return Err(ForwardError {
                 error: ProxyError::NoAvailableProvider,
                 provider: None,
+                outbound_model: None,
             });
         }
 
@@ -1359,6 +1396,7 @@ impl RequestForwarder {
         Err(ForwardError {
             error: last_error.unwrap_or(ProxyError::MaxRetriesExceeded),
             provider: last_provider,
+            outbound_model: self.last_outbound_model(),
         })
     }
 
@@ -1382,6 +1420,7 @@ impl RequestForwarder {
         codex_upstream_format_out: &mut Option<CodexUpstreamFormat>,
     ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
         *codex_upstream_format_out = None;
+        self.set_last_outbound_model(None);
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
 
@@ -1411,6 +1450,7 @@ impl RequestForwarder {
         let codex_official_auth_passthrough = matches!(app_type, AppType::Codex)
             && super::providers::is_codex_official_provider(provider);
         let codex_stack_request = self.stack_request && matches!(app_type, AppType::Codex);
+        let mut quota_token = None;
 
         if codex_official_auth_passthrough {
             let (expected_chatgpt_account_id, managed_session_matches) = match provider
@@ -1452,6 +1492,15 @@ impl RequestForwarder {
                 expected_chatgpt_account_id.as_deref(),
                 managed_session_matches,
             )?;
+            if method == http::Method::POST {
+                let token = codex_bearer_access_token(headers).ok_or_else(|| {
+                    ProxyError::AuthError(
+                        "Codex official route requires a bearer token".to_string(),
+                    )
+                })?;
+                super::codex_quota_protection::admit(token, headers).await?;
+                quota_token = Some(token);
+            }
         }
 
         // 应用模型映射（独立于格式转换）
@@ -1824,6 +1873,7 @@ impl RequestForwarder {
             .and_then(|m| m.as_str())
             .filter(|m| !m.is_empty())
             .map(str::to_string);
+        self.set_last_outbound_model(outbound_model.clone());
 
         // Codex→Anthropic: when the model name carries the [1m] marker, strip the
         // suffix and add the context-1m beta header.
@@ -1838,7 +1888,11 @@ impl RequestForwarder {
                 .map(ToString::to_string);
             let restored = self
                 .codex_chat_history
-                .enrich_request(&mut mapped_body)
+                .enrich_request(
+                    &mut mapped_body,
+                    self.session_client_provided
+                        .then_some(self.session_id.as_str()),
+                )
                 .await;
             if restored > 0 {
                 log::debug!(
@@ -1938,7 +1992,10 @@ impl RequestForwarder {
                 // 映射后的模型名不再带「省略 thinking 仍默认开思考」的语义（5.x 的
                 // Fable / Mythos / Opus / Sonnet），按客户端原模型补成显式 adaptive，
                 // effort 换算才不会当成关闭。
-                if matches!(api_format, "openai_chat" | "openai_responses") {
+                if matches!(
+                    api_format,
+                    "openai_chat" | "openai_responses" | "gemini_native"
+                ) {
                     super::providers::transform::make_default_adaptive_thinking_explicit(
                         &mut mapped_body,
                         body.get("model").and_then(|m| m.as_str()),
@@ -1987,35 +2044,20 @@ impl RequestForwarder {
             }
         }
 
-        // Native Responses passthrough to a strict third-party gateway (xAI).
+        // Native Responses passthrough to xAI, directly or via Copilot/Grok.
         // One gate so rebase conflicts stay here plus the isolate file, not
         // scattered across sanitizers. Flatten namespaces first; then apply
         // xAI request rewrites (schema, agent_message, unknown models).
         if matches!(app_type, AppType::Codex | AppType::GrokBuild)
             && !codex_responses_to_chat
             && !codex_responses_to_anthropic
-            && super::providers::provider_needs_responses_namespace_flatten(provider)
+            && (!provider.is_github_copilot() || is_copilot_codex_responses)
         {
-            if super::providers::transform_codex_responses_namespace::flatten_request_namespaces(
+            apply_native_responses_request_compat(
+                provider,
                 &mut request_body,
-            )? {
-                log::debug!(
-                    "[Codex] Flattened namespace tools for native Responses upstream (provider={})",
-                    provider.id
-                );
-            }
-            // Stack 请求只做字段兼容。
-            let upstream_model = if self.keeps_resolved_model() {
-                None
-            } else {
-                super::providers::codex_provider_upstream_model(provider)
-            };
-            super::providers::transform_codex_responses_xai_sanitize::apply_xai_native_responses_request_compat(
-                &mut request_body,
-                &provider.id,
-                upstream_model.as_deref(),
-                &provider.settings_config,
-            );
+                self.keeps_resolved_model(),
+            )?;
         }
 
         // Stack 请求发往拒收托管 `web_search` 的原生 Responses 上游：去掉这个工具，和 Chat、
@@ -2085,6 +2127,7 @@ impl RequestForwarder {
         {
             outbound_model = Some(m.to_string());
         }
+        self.set_last_outbound_model(outbound_model.clone());
         log_prompt_cache_trace(
             app_type,
             provider,
@@ -2725,6 +2768,15 @@ impl RequestForwarder {
             short_value_hash(Some(&filtered_body))
         );
 
+        // 序列化后释放工作副本；只有加密子任务的流式判错还需要保留请求体。
+        let encrypted_agent_request = (matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+            && request_is_streaming
+            && self.rectifier_config.enabled
+            && carries_encrypted_agent_task(&filtered_body))
+        .then_some(filtered_body);
+
         // 确定超时
         let timeout = if self.non_streaming_timeout.is_zero() {
             std::time::Duration::from_secs(600) // 默认 600 秒
@@ -2806,6 +2858,12 @@ impl RequestForwarder {
             .await?
         };
 
+        // Official responses (errors included) carry the account's usage headers;
+        // they feed the next request's quota check without an extra lookup.
+        if let Some(token) = quota_token {
+            super::codex_quota_protection::observe_response(token, headers, response.headers());
+        }
+
         // 检查响应状态
         let status = response.status();
 
@@ -2836,16 +2894,12 @@ impl RequestForwarder {
                     // A response.failed/error before output remains failover-safe.
                     response = self.validate_responses_stream_start(response).await?;
                 }
-            } else if matches!(app_type, AppType::Codex | AppType::GrokBuild)
-                && !codex_responses_to_chat
-                && !codex_responses_to_anthropic
-                && request_is_streaming
-                && !response.is_json()
-                && self.rectifier_config.enabled
-                && carries_encrypted_agent_task(&filtered_body)
+            } else if let Some(request) = encrypted_agent_request
+                .as_ref()
+                .filter(|_| !response.is_json())
             {
                 response = self
-                    .hold_encrypted_agent_task_stream(response, &filtered_body)
+                    .hold_encrypted_agent_task_stream(response, request)
                     .await?;
             }
             Ok((response, resolved_claude_api_format, outbound_model))
@@ -2978,8 +3032,7 @@ impl RequestForwarder {
         let headers = response.headers().clone();
         let mut stream = Box::pin(response.bytes_stream());
         let mut replay_chunks: Vec<Bytes> = Vec::new();
-        let mut parse_buffer = String::new();
-        let mut utf8_remainder = Vec::new();
+        let mut sse = crate::proxy::sse::SseBuffer::new();
 
         loop {
             let next = if self.streaming_first_byte_timeout.is_zero() {
@@ -2996,13 +3049,13 @@ impl RequestForwarder {
             };
 
             let Some(chunk) = next else {
-                if let Some(outcome) = inspect_responses_json_document(&parse_buffer) {
+                if let Some(outcome) = inspect_responses_json_document(sse.pending()) {
                     outcome?;
                     let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok));
                     return Ok(ProxyResponse::streamed(status, headers, replay));
                 }
-                if !parse_buffer.trim().is_empty() {
-                    if let Some(outcome) = inspect_responses_start_event(parse_buffer.trim()) {
+                if !sse.pending().trim().is_empty() {
+                    if let Some(outcome) = inspect_responses_start_event(sse.pending().trim()) {
                         outcome?;
                         let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok));
                         return Ok(ProxyResponse::streamed(status, headers, replay));
@@ -3018,21 +3071,21 @@ impl RequestForwarder {
                     "Failed while validating Responses stream start: {error}"
                 ))
             })?;
-            crate::proxy::sse::append_utf8_safe(&mut parse_buffer, &mut utf8_remainder, &chunk);
+            sse.push_bytes(&chunk);
             replay_chunks.push(chunk);
 
             // Some compatible gateways ignore `stream:true` and return a complete
             // Responses JSON document without a JSON content-type. Recognize that
             // shape before looking for SSE delimiters; pretty-printed JSON may itself
             // contain blank lines and must stay intact.
-            if let Some(outcome) = inspect_responses_json_document(&parse_buffer) {
+            if let Some(outcome) = inspect_responses_json_document(sse.pending()) {
                 outcome?;
                 let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok)).chain(stream);
                 return Ok(ProxyResponse::streamed(status, headers, replay));
             }
 
-            while let Some(block) = crate::proxy::sse::take_sse_block(&mut parse_buffer) {
-                if let Some(outcome) = inspect_responses_start_event(&block) {
+            while let Some(block) = sse.next_block() {
+                if let Some(outcome) = inspect_responses_start_event(block) {
                     outcome?;
                     let replay =
                         futures::stream::iter(replay_chunks.into_iter().map(Ok)).chain(stream);
@@ -3077,8 +3130,7 @@ impl RequestForwarder {
         let mut stream = Box::pin(response.bytes_stream());
         let mut replay_chunks: Vec<Bytes> = Vec::new();
         let mut held_bytes = 0usize;
-        let mut parse_buffer = String::new();
-        let mut utf8_remainder = Vec::new();
+        let mut sse = crate::proxy::sse::SseBuffer::new();
 
         'hold: loop {
             let Ok(next) = tokio::time::timeout_at(deadline, stream.next()).await else {
@@ -3090,12 +3142,12 @@ impl RequestForwarder {
             // 还没有交出流，读出错和首包前出错一样回到重试循环。
             let chunk = chunk
                 .map_err(|error| ProxyError::ForwardFailed(format!("读取流式响应失败: {error}")))?;
-            crate::proxy::sse::append_utf8_safe(&mut parse_buffer, &mut utf8_remainder, &chunk);
+            sse.push_bytes(&chunk);
             held_bytes += chunk.len();
             replay_chunks.push(chunk);
 
-            while let Some(block) = crate::proxy::sse::take_sse_block(&mut parse_buffer) {
-                match encrypted_task_stream_start(&block, request) {
+            while let Some(block) = sse.next_block() {
+                match encrypted_task_stream_start(block, request) {
                     StreamStart::Pending => {}
                     StreamStart::Commit => break 'hold,
                     StreamStart::Rejected(error) => return Err(error),
@@ -3368,6 +3420,41 @@ impl RequestForwarder {
             _ => ErrorCategory::NonRetryable,
         }
     }
+}
+
+/// Shared strict-Grok request pipeline, called only after native Responses
+/// transport selection. Keep the model-aware gate alongside its transforms.
+fn apply_native_responses_request_compat(
+    provider: &Provider,
+    body: &mut Value,
+    keep_resolved_model: bool,
+) -> Result<(), ProxyError> {
+    if !super::providers::provider_needs_responses_namespace_flatten(
+        provider,
+        body.get("model").and_then(Value::as_str),
+    ) {
+        return Ok(());
+    }
+    if super::providers::transform_codex_responses_namespace::flatten_request_namespaces(body)? {
+        log::debug!(
+            "[Codex] Flattened namespace tools for native Responses upstream (provider={})",
+            provider.id
+        );
+    }
+    // Copilot already resolved against its live catalog; never replace that
+    // model with the card default. Direct xAI keeps its existing fallback.
+    let upstream_model = if keep_resolved_model || provider.is_github_copilot() {
+        None
+    } else {
+        super::providers::codex_provider_upstream_model(provider)
+    };
+    super::providers::transform_codex_responses_xai_sanitize::apply_xai_native_responses_request_compat(
+        body,
+        &provider.id,
+        upstream_model.as_deref(),
+        &provider.settings_config,
+    );
+    Ok(())
 }
 
 /// 从 ProxyError 中提取错误消息
@@ -4805,6 +4892,7 @@ mod tests {
             streaming_first_byte_timeout,
             max_attempts: 1,
             stack_request: false,
+            last_outbound_model: std::sync::Mutex::new(None),
         }
     }
 
@@ -6501,10 +6589,10 @@ mod tests {
                 &AppType::Codex,
                 http::Method::POST,
                 "/v1/responses",
-                body.clone(),
+                &body,
                 HeaderMap::new(),
                 Extensions::new(),
-                vec![copilot, healthy],
+                &[copilot, healthy],
             )
             .await;
 
@@ -6524,6 +6612,116 @@ mod tests {
         );
         assert_eq!(*captured.lock().await, vec![body]);
         assert_eq!(forwarder.status.read().await.success_requests, 1);
+    }
+
+    #[test]
+    fn copilot_grok_native_request_reuses_xai_compat_without_model_fallback() {
+        let mut copilot = test_provider_with_type(Some("github_copilot"));
+        copilot.settings_config = json!({
+            "config": "model = \"gpt-6.1-sol\"",
+            "modelCatalog": {"models": [{"model": "gpt-6.1-sol"}]}
+        });
+        let mut body = grok_desktop_request("grok-4.7");
+        let reasoning = body["reasoning"].clone();
+        apply_native_responses_request_compat(&copilot, &mut body, false).unwrap();
+
+        assert_eq!(body["model"], "grok-4.7");
+        assert_eq!(body["reasoning"], reasoning);
+        assert!(body.get("safety_identifier").is_none());
+        assert!(body.get("prompt_cache_retention").is_none());
+        assert_eq!(body["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(body["tools"][0]["type"], "function");
+        assert_eq!(body["tools"][0]["name"], "diagnostic__ping");
+        assert_eq!(body["tools"][0]["parameters"]["type"], "object");
+        assert!(body["tools"][0]["parameters"].get("anyOf").is_none());
+        assert!(body["tools"][0].get("external_web_access").is_none());
+        assert_eq!(body["input"][0]["name"], "diagnostic__ping");
+        assert!(body["input"][0].get("namespace").is_none());
+        assert_eq!(body["input"][0]["call_id"], "call_1");
+        assert_eq!(body["input"][1]["output"], "pong");
+        assert_eq!(body["input"][2]["type"], "message");
+        assert_eq!(body["input"][2]["content"][0]["text"], "Continue.");
+
+        let sanitized = body.clone();
+        apply_native_responses_request_compat(&copilot, &mut body, false).unwrap();
+        assert_eq!(body, sanitized);
+    }
+
+    fn grok_desktop_request(model: &str) -> Value {
+        json!({
+            "model": model,
+            "stream": true,
+            "reasoning": {"effort": "high"},
+            "safety_identifier": "diagnostic",
+            "prompt_cache_retention": "24h",
+            "tools": [
+                {"type": "namespace", "name": "diagnostic", "tools": [
+                    {"type": "function", "name": "ping", "external_web_access": false,
+                     "parameters": {"anyOf": [
+                         {"type": "object", "properties": {"count": {"type": "integer"}}},
+                         {"type": "null"}
+                     ]}}
+                ]},
+                {"type": "tool_search"}
+            ],
+            "input": [
+                {"type": "function_call", "namespace": "diagnostic", "name": "ping",
+                 "call_id": "call_1", "arguments": "{\"count\":1}"},
+                {"type": "function_call_output", "call_id": "call_1", "output": "pong"},
+                {"type": "agent_message", "content": [{"type": "input_text", "text": "Continue."}]}
+            ]
+        })
+    }
+
+    #[test]
+    fn native_grok_compat_leaves_other_copilot_models_and_providers_unchanged() {
+        for provider_type in [Some("github_copilot"), None] {
+            let provider = test_provider_with_type(provider_type);
+            for model in ["gpt-6.1-sol", "claude-sonnet-4.6", "grok-4.7"] {
+                if provider_type == Some("github_copilot") && model == "grok-4.7" {
+                    continue;
+                }
+                let original = grok_desktop_request(model);
+                let mut body = original.clone();
+                apply_native_responses_request_compat(&provider, &mut body, false).unwrap();
+                assert_eq!(body, original, "{provider_type:?}: {model}");
+            }
+        }
+    }
+
+    #[test]
+    fn direct_xai_model_fallback_and_stack_preservation_are_unchanged() {
+        let mut xai = test_provider_with_type(Some("xai_oauth"));
+        xai.settings_config = json!({"config": "model = \"grok-4.5\""});
+        for keep_resolved_model in [false, true] {
+            let mut body = grok_desktop_request("gpt-subagent");
+            body["presence_penalty"] = json!(1);
+            apply_native_responses_request_compat(&xai, &mut body, keep_resolved_model).unwrap();
+            assert_eq!(body["tools"][0]["type"], "function");
+            if keep_resolved_model {
+                assert_eq!(body["model"], "gpt-subagent");
+                assert_eq!(body["presence_penalty"], 1);
+            } else {
+                assert_eq!(body["model"], "grok-4.5");
+                assert!(body.get("presence_penalty").is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn copilot_grok_namespace_collisions_keep_the_existing_error() {
+        let copilot = test_provider_with_type(Some("github_copilot"));
+        let mut body = grok_desktop_request("grok-4.7");
+        body["tools"].as_array_mut().unwrap().push(json!({
+            "type": "function", "name": "diagnostic__ping",
+            "parameters": {"type": "object", "properties": {}}
+        }));
+        let original = body.clone();
+        let error = apply_native_responses_request_compat(&copilot, &mut body, false).unwrap_err();
+        assert!(
+            matches!(error, ProxyError::TransformError(message) if message.contains("collides"))
+        );
+        assert_eq!(body, original);
     }
 
     #[test]
@@ -7152,10 +7350,10 @@ mod tests {
                     &AppType::Codex,
                     http::Method::POST,
                     endpoint,
-                    body,
+                    &body,
                     chatgpt_headers(),
                     Extensions::new(),
-                    vec![provider],
+                    &[provider],
                 )
                 .await
                 .map_err(|error| error.error)
@@ -7324,14 +7522,14 @@ mod tests {
                     &AppType::Claude,
                     http::Method::POST,
                     "/v1/messages",
-                    json!({
+                    &json!({
                         "model": "stacked-model",
                         "max_tokens": 16,
                         "messages": [{ "role": "user", "content": "hi" }]
                     }),
                     headers,
                     Extensions::new(),
-                    vec![provider],
+                    &[provider],
                 )
                 .await
                 .map_err(|error| error.error)
@@ -7493,10 +7691,10 @@ mod tests {
                     &AppType::Codex,
                     http::Method::POST,
                     "/responses",
-                    history_with_foreign_reasoning(),
+                    &history_with_foreign_reasoning(),
                     chatgpt_headers(),
                     Extensions::new(),
-                    vec![provider],
+                    &[provider],
                 )
                 .await
         }
@@ -7556,10 +7754,10 @@ mod tests {
                     &AppType::Codex,
                     http::Method::POST,
                     "/responses",
-                    request,
+                    &request,
                     chatgpt_headers(),
                     Extensions::new(),
-                    vec![provider(&upstream, "openai_responses")],
+                    &[provider(&upstream, "openai_responses")],
                 )
                 .await
                 .map_err(|error| error.error)
@@ -7779,10 +7977,10 @@ mod tests {
                     &AppType::Codex,
                     http::Method::POST,
                     "/responses",
-                    request,
+                    &request,
                     chatgpt_headers(),
                     Extensions::new(),
-                    vec![provider(upstream, "openai_responses")],
+                    &[provider(upstream, "openai_responses")],
                 )
                 .await
         }
@@ -7923,10 +8121,10 @@ mod tests {
                     &AppType::Codex,
                     http::Method::POST,
                     "/responses",
-                    sub_agent_request(Vec::new()),
+                    &sub_agent_request(Vec::new()),
                     chatgpt_headers(),
                     Extensions::new(),
-                    vec![provider(&upstream, "openai_responses")],
+                    &[provider(&upstream, "openai_responses")],
                 )
                 .await
                 .map_err(|error| error.error)
@@ -8044,10 +8242,10 @@ mod tests {
                     &AppType::Claude,
                     http::Method::POST,
                     "/v1/messages",
-                    body,
+                    &body,
                     headers,
                     Extensions::new(),
-                    providers,
+                    &providers,
                 )
                 .await
         }
@@ -8251,6 +8449,28 @@ mod tests {
             assert_eq!(breaker(&fwd, "p1").await, None);
         }
 
+        /// 失败时带出映射后的上游模型名，错误日志才不会把客户端别名（claude-haiku-*）
+        /// 记成「调了没配置的模型」。429 走中性失败、500 走全部失败两条出口。
+        #[tokio::test]
+        async fn failed_request_reports_the_mapped_upstream_model() {
+            for status in [429, 500] {
+                let up = upstream(vec![error(status, "upstream failed")]).await;
+                let fwd = forwarder(1, "p1");
+                let mut mapped = provider("p1", &up);
+                mapped.settings_config["env"]["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = json!("grok-4.7");
+                let mut body = plain_body();
+                body["model"] = json!("claude-haiku-4-5-20251001");
+
+                let err = expect_err(send(&fwd, vec![mapped], body).await);
+
+                assert_eq!(
+                    err.outbound_model.as_deref(),
+                    Some("grok-4.7"),
+                    "status {status}"
+                );
+            }
+        }
+
         #[tokio::test]
         async fn every_provider_failing_records_each_failure() {
             let up1 = upstream(vec![error(500, "boom")]).await;
@@ -8282,6 +8502,41 @@ mod tests {
             );
             assert_eq!(breaker(&fwd, "p1").await, Some((1, 1)));
             assert_eq!(breaker(&fwd, "p2").await, Some((1, 1)));
+        }
+
+        #[tokio::test]
+        async fn repeated_classifier_errors_stop_main_requests_before_any_upstream_call() {
+            let up = upstream(vec![ok()]).await;
+            let fwd = forwarder(2, "p1");
+            let mut body = plain_body();
+            body["tools"] = json!([{"name":"Bash","input_schema":{"type":"object"}}]);
+            for n in 0..3 {
+                body["messages"].as_array_mut().unwrap().extend([
+                    json!({"role":"assistant","content":[{"type":"tool_use","id":format!("tool_{n}"),"name":"Bash","input":{}}]}),
+                    json!({"role":"user","content":[{"type":"tool_result","tool_use_id":format!("tool_{n}"),"is_error":true,"content":"claude-opus-5[1m] is temporarily unavailable, so auto mode cannot determine the safety of Bash right now."}]}),
+                ]);
+            }
+            for _ in 0..10 {
+                let err = expect_err(send(&fwd, vec![provider("p1", &up)], body.clone()).await);
+                assert!(matches!(err.error, ProxyError::InvalidRequest(_)));
+            }
+            assert_eq!(up.requests.lock().await.len(), 0);
+            for _ in 0..100 {
+                if fwd.status.read().await.active_connections == 0 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+            assert_eq!(fwd.status.read().await.active_connections, 0);
+            body["messages"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"role":"user","content":"I fixed the mapping; continue."}));
+            send(&fwd, vec![provider("p1", &up)], body)
+                .await
+                .map_err(|e| e.error)
+                .expect("new user turn resumes");
+            assert_eq!(up.requests.lock().await.len(), 1);
         }
 
         #[tokio::test]
@@ -8646,10 +8901,10 @@ mod tests {
                         &AppType::ClaudeDesktop,
                         http::Method::POST,
                         "/v1/messages",
-                        body,
+                        &body,
                         HeaderMap::new(),
                         Extensions::new(),
-                        vec![kimi],
+                        &[kimi],
                     )
                     .await
                     .map_err(|e| e.error)

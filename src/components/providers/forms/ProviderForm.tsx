@@ -85,6 +85,10 @@ import { Label } from "@/components/ui/label";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { BasicFormFields } from "./BasicFormFields";
 import { ClaudeFormFields } from "./ClaudeFormFields";
+import {
+  toClaudeReasoningEffortChoice,
+  type ClaudeReasoningEffortChoice,
+} from "./ClaudeReasoningEffortField";
 import type { DirectModeFormatNotice } from "./shared";
 import {
   claudeStackModelsFromEnv,
@@ -144,6 +148,7 @@ import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
 import { useHermesLiveProviderIds } from "@/hooks/useHermes";
 import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
+import { normalizeEnabledCodexChatEffortParam } from "./helpers/codexChatReasoning";
 
 type PresetEntry = {
   id: string;
@@ -245,7 +250,7 @@ const normalizeCodexChatReasoningForSave = (
       ? (value?.thinkingParam ?? "thinking")
       : "none",
     effortParam: supportsEffort
-      ? (value?.effortParam ?? "reasoning_effort")
+      ? normalizeEnabledCodexChatEffortParam(value?.effortParam)
       : "none",
     effortValueMode: supportsEffort
       ? (value?.effortValueMode ?? "passthrough")
@@ -446,6 +451,9 @@ function ProviderFormFull({
     setHasValidCodexOfficialSelection(true);
     setCodexFastMode(initialData?.meta?.codexFastMode ?? false);
     setCodexChatReasoning(initialData?.meta?.codexChatReasoning ?? {});
+    setClaudeReasoningEffort(
+      toClaudeReasoningEffortChoice(initialData?.meta?.claudeReasoningEffort),
+    );
     setPromptCacheRouting(initialData?.meta?.promptCacheRouting ?? "auto");
     setCustomUserAgent(initialData?.meta?.customUserAgent ?? "");
     setLocalProxyHeadersOverride(
@@ -694,6 +702,10 @@ function ProviderFormFull({
     useState<CodexChatReasoning>(
       () => initialData?.meta?.codexChatReasoning ?? {},
     );
+  const [claudeReasoningEffort, setClaudeReasoningEffort] =
+    useState<ClaudeReasoningEffortChoice>(() =>
+      toClaudeReasoningEffortChoice(initialData?.meta?.claudeReasoningEffort),
+    );
   const [promptCacheRouting, setPromptCacheRouting] =
     useState<PromptCacheRoutingMode>(
       () => initialData?.meta?.promptCacheRouting ?? "auto",
@@ -766,18 +778,23 @@ function ProviderFormFull({
     codexModel,
     codexSubagentModel,
     codexSubagentReasoningEffort,
+    codexAgentMaxThreads,
+    codexMultiAgentV2Total,
     codexCatalogModels,
     codexAutoReviewModel,
+    codexOfficialSpeedTiers,
     codexAuthError,
     setCodexAuth,
     setCodexConfig,
     setCodexCatalogModels,
     setCodexAutoReviewModel,
+    setCodexOfficialSpeedTiers,
     handleCodexApiKeyChange,
     handleCodexBaseUrlChange,
     handleCodexModelChange,
     handleCodexSubagentModelChange,
     handleCodexSubagentReasoningEffortChange,
+    handleCodexAgentMaxThreadsChange,
     handleCodexConfigChange: originalHandleCodexConfigChange,
     resetCodexConfig,
   } = useCodexConfigState({ initialData });
@@ -1775,6 +1792,7 @@ function ProviderFormFull({
           modelCatalog?: {
             models: CodexCatalogModel[];
             autoReviewModel?: string;
+            officialSpeedTiers?: boolean;
           };
         };
         if (normalizedCatalogModels.length > 0) {
@@ -1788,6 +1806,9 @@ function ProviderFormFull({
             )
           ) {
             configObj.modelCatalog.autoReviewModel = autoReviewModel;
+          }
+          if (codexOfficialSpeedTiers) {
+            configObj.modelCatalog.officialSpeedTiers = true;
           }
         }
         settingsConfig = JSON.stringify(configObj);
@@ -2041,6 +2062,14 @@ function ProviderFormFull({
         isCodexChatFormat &&
         promptCacheRouting !== "auto"
           ? promptCacheRouting
+          : undefined,
+      claudeReasoningEffort:
+        appId === "claude" &&
+        category !== "official" &&
+        (localApiFormat === "openai_chat" ||
+          localApiFormat === "openai_responses") &&
+        claudeReasoningEffort !== "auto"
+          ? claudeReasoningEffort
           : undefined,
       customUserAgent:
         (appId === "claude" || appId === "codex") && category !== "official"
@@ -2421,6 +2450,7 @@ function ProviderFormFull({
     } else {
       setLocalApiFormat("anthropic");
     }
+    setClaudeReasoningEffort("auto");
 
     setLocalApiKeyField(preset.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN");
     setLocalIsFullUrl(false);
@@ -2740,6 +2770,8 @@ function ProviderFormFull({
               speedTestEndpoints={speedTestEndpoints}
               apiFormat={localApiFormat}
               onApiFormatChange={handleApiFormatChange}
+              reasoningEffort={claudeReasoningEffort}
+              onReasoningEffortChange={setClaudeReasoningEffort}
               apiKeyField={localApiKeyField}
               onApiKeyFieldChange={handleApiKeyFieldChange}
               isFullUrl={localIsFullUrl}
@@ -2830,6 +2862,9 @@ function ProviderFormFull({
               onSubagentReasoningEffortChange={
                 handleCodexSubagentReasoningEffortChange
               }
+              agentMaxThreads={codexAgentMaxThreads}
+              multiAgentV2Total={codexMultiAgentV2Total}
+              onAgentMaxThreadsChange={handleCodexAgentMaxThreadsChange}
               apiFormat={localCodexApiFormat}
               onApiFormatChange={handleCodexApiFormatChange}
               copilotApiFormat={effectiveCodexCopilotApiFormat}
@@ -2848,6 +2883,8 @@ function ProviderFormFull({
               onCatalogModelsChange={setCodexCatalogModels}
               autoReviewModel={codexAutoReviewModel}
               onAutoReviewModelChange={setCodexAutoReviewModel}
+              officialSpeedTiers={codexOfficialSpeedTiers}
+              onOfficialSpeedTiersChange={setCodexOfficialSpeedTiers}
               speedTestEndpoints={speedTestEndpoints}
               customUserAgent={customUserAgent}
               onCustomUserAgentChange={setCustomUserAgent}

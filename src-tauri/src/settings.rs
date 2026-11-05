@@ -378,8 +378,42 @@ pub struct CodexLegacyOfficialHistoryBucketMigration {
     pub codex_config_dir: Option<String>,
 }
 
+/// Used-percentage cutoffs for the Codex ChatGPT proxy. Independent windows.
+/// Opt-in: unknown usage never blocks, so leaving it off changes nothing.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CodexQuotaProtection {
+    pub enabled: bool,
+    pub five_hour_threshold: u8,
+    pub weekly_threshold: u8,
+}
+
+impl Default for CodexQuotaProtection {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            five_hour_threshold: 95,
+            weekly_threshold: 98,
+        }
+    }
+}
+
+impl CodexQuotaProtection {
+    pub fn validate(&self) -> Result<(), AppError> {
+        if !(1..=99).contains(&self.five_hour_threshold)
+            || !(1..=99).contains(&self.weekly_threshold)
+        {
+            return Err(AppError::Config(
+                "Codex quota protection thresholds must be integers from 1 to 99".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// 用量金额的显示方式。只影响显示：库里的费用一律是美元，按 `exchange_rates`
-/// 换算后显示；值的合法性（认不认得币种、汇率是否为正数）由前端兜底。
+/// （或自动获取到的 `auto_exchange_rates`）换算后显示；值的合法性（认不认得币种、
+/// 汇率是否为正数）由前端兜底。
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageDisplaySettings {
@@ -400,6 +434,18 @@ pub struct UsageDisplaySettings {
     /// 用量趋势图的样式（"bar" / "area"），缺省为柱形图
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trend_chart_type: Option<String>,
+    /// 汇率来源："auto" 自动获取（每日更新）/"manual" 手动填写，缺省按 manual
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_source: Option<String>,
+    /// 自动获取到的汇率，按币种存；和手填的 `exchange_rates` 分开，切回手动不丢手填值
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub auto_exchange_rates: BTreeMap<String, f64>,
+    /// 上次成功取到汇率的时间（毫秒时间戳）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_fetched_at: Option<i64>,
+    /// 上次取到汇率的实际数据源，界面署名用（open.er-api.com / floatrates.com）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_provider: Option<String>,
 }
 
 /// 应用设置结构
@@ -481,6 +527,9 @@ pub struct AppSettings {
     /// Opt-in: defaults to false so third-party switches cleanly overwrite auth.json.
     #[serde(default)]
     pub preserve_codex_official_auth_on_switch: bool,
+    /// Pre-exhaustion protection for ChatGPT requests passing through the Codex proxy.
+    #[serde(default)]
+    pub codex_quota_protection: CodexQuotaProtection,
     /// Run official Codex providers under the shared "custom" model_provider id
     /// so official sessions share one resume-history bucket with third-party
     /// providers. Opt-in: defaults to false.
@@ -559,6 +608,9 @@ pub struct AppSettings {
     pub pi_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub omp_config_dir: Option<String>,
+    /// DeepSeek Harness 主目录（相当于 `DSH_HOME`，优先于环境变量）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dsh_config_dir: Option<String>,
 
     // ===== 当前供应商 ID（设备级）=====
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
@@ -674,6 +726,7 @@ impl Default for AppSettings {
             native_tray_menu: false,
             macos_widget_enabled: false,
             preserve_codex_official_auth_on_switch: false,
+            codex_quota_protection: CodexQuotaProtection::default(),
             unify_codex_session_history: false,
             unify_codex_migrate_existing: None,
             codex_stack_classic_tools: true,
@@ -698,6 +751,7 @@ impl Default for AppSettings {
             hermes_config_dir: None,
             pi_config_dir: None,
             omp_config_dir: None,
+            dsh_config_dir: None,
             current_provider_claude: None,
             current_provider_claude_desktop: None,
             current_provider_codex: None,
@@ -795,6 +849,13 @@ impl AppSettings {
 
         self.omp_config_dir = self
             .omp_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        self.dsh_config_dir = self
+            .dsh_config_dir
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
@@ -1062,6 +1123,7 @@ pub fn get_settings_for_frontend() -> AppSettings {
 }
 
 pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
+    new_settings.codex_quota_protection.validate()?;
     new_settings.normalize_paths();
     save_settings_file(&new_settings)?;
 
@@ -1302,6 +1364,14 @@ pub fn get_omp_override_dir() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
     settings
         .omp_config_dir
+        .as_ref()
+        .map(|path| resolve_override_path(path))
+}
+
+pub fn get_dsh_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .dsh_config_dir
         .as_ref()
         .map(|path| resolve_override_path(path))
 }
@@ -1604,7 +1674,11 @@ mod tests {
                 "exchangeRates": { "CNY": 6.8 },
                 "sidebarTodayItems": ["cost", "requests"],
                 "requestLogColumns": { "statusCode": true, "app": false },
-                "trendChartType": "area"
+                "trendChartType": "area",
+                "rateSource": "auto",
+                "autoExchangeRates": { "CNY": 6.9 },
+                "rateFetchedAt": 1_700_000_000_000i64,
+                "rateProvider": "open.er-api.com"
             }
         }))
         .expect("usage display");
@@ -1617,6 +1691,10 @@ mod tests {
         );
         assert_eq!(display.request_log_columns.get("app"), Some(&false));
         assert_eq!(display.trend_chart_type.as_deref(), Some("area"));
+        assert_eq!(display.rate_source.as_deref(), Some("auto"));
+        assert_eq!(display.auto_exchange_rates.get("CNY"), Some(&6.9));
+        assert_eq!(display.rate_fetched_at, Some(1_700_000_000_000));
+        assert_eq!(display.rate_provider.as_deref(), Some("open.er-api.com"));
         assert_eq!(
             serde_json::to_value(&saved).expect("serialize")["usageDisplay"],
             serde_json::json!({
@@ -1624,7 +1702,11 @@ mod tests {
                 "exchangeRates": { "CNY": 6.8 },
                 "sidebarTodayItems": ["cost", "requests"],
                 "requestLogColumns": { "app": false, "statusCode": true },
-                "trendChartType": "area"
+                "trendChartType": "area",
+                "rateSource": "auto",
+                "autoExchangeRates": { "CNY": 6.9 },
+                "rateFetchedAt": 1_700_000_000_000i64,
+                "rateProvider": "open.er-api.com"
             })
         );
 

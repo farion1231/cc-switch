@@ -599,21 +599,6 @@ requires_openai_auth = true`,
     icon: "grooroute",
   },
   {
-    name: "DIT.ai",
-    websiteUrl: "https://dit.ai",
-    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
-    category: "aggregator",
-    auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig(
-      "dit_ai",
-      "https://api.dit.ai/v1",
-      "gpt-5.6-sol",
-    ),
-    isPartner: true,
-    partnerPromotionKey: "dit",
-    icon: "dit",
-  },
-  {
     name: "BuyToken",
     websiteUrl: "https://buytoken.work",
     apiKeyUrl: "https://buytoken.work/sign-up?aff=cc-switch",
@@ -990,20 +975,17 @@ requires_openai_auth = true`,
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     category: "aggregator",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "teamorouter",
-      "https://api.teamorouter.cn/v1",
+      "https://api.teamorouter.com/v1",
       "gpt-6.1-sol",
     ),
-    endpointCandidates: [
-      "https://api.teamorouter.cn/v1",
-      "https://api.teamorouter.com/v1",
-    ],
+    endpointCandidates: ["https://api.teamorouter.com/v1"],
     isPartner: true,
     partnerPromotionKey: "teamorouter",
     icon: "teamorouter",
@@ -1281,16 +1263,16 @@ requires_openai_auth = true`,
   },
   {
     name: "A6API",
-    websiteUrl: "https://www.a6api.com",
-    apiKeyUrl: "https://a6api.com/register?aff=AqNr",
+    websiteUrl: "https://www.a6api.vip",
+    apiKeyUrl: "https://a6api.vip/register?aff=AqNr",
     category: "aggregator",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "a6api",
-      "https://api.a6api.com/v1",
+      "https://api.a6api.vip/v1",
       "gpt-6.1-sol",
     ),
-    endpointCandidates: ["https://api.a6api.com/v1"],
+    endpointCandidates: ["https://api.a6api.vip/v1"],
     isPartner: true,
     partnerPromotionKey: "a6api",
     icon: "a6api",
@@ -1723,6 +1705,23 @@ requires_openai_auth = true`,
     iconColor: "#0078D4",
   },
   {
+    // OpenAI 平台 API Key 直连（按量计费，和上面的 ChatGPT 登录卡是两套额度）。
+    // api.openai.com 已在原生 Responses 白名单里，GPT 行由后端镜像官方目录，不另写 modelCatalog。
+    name: "OpenAI API",
+    websiteUrl: "https://platform.openai.com",
+    apiKeyUrl: "https://platform.openai.com/api-keys",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "openai",
+      "https://api.openai.com/v1",
+      "gpt-6.1-sol",
+    ),
+    endpointCandidates: ["https://api.openai.com/v1"],
+    category: "cn_official",
+    icon: "openai",
+    iconColor: "#00A67E",
+  },
+  {
     name: "DeepSeek",
     websiteUrl: "https://platform.deepseek.com",
     apiKeyUrl: "https://platform.deepseek.com/api_keys",
@@ -2027,10 +2026,13 @@ requires_openai_auth = true`,
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "qianwenai",
-      "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "https://maas.qianwenaiapi.com/compatible-mode/v1",
       "qwen3.8-max",
     ),
-    endpointCandidates: ["https://dashscope.aliyuncs.com/compatible-mode/v1"],
+    endpointCandidates: [
+      "https://maas.qianwenaiapi.com/compatible-mode/v1",
+      "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    ],
     // DashScope 原生支持 OpenAI Responses API（/compatible-mode/v1/responses，同一 base_url），无需路由接管转换
     apiFormat: "openai_responses",
     // 档位与窗口照抄官方 Codex model-catalog.local.json——该元数据段落不分
@@ -2084,10 +2086,11 @@ requires_openai_auth = true`,
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "qianwenai_token_plan",
-      "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      "https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1",
       "qwen3.8-max",
     ),
     endpointCandidates: [
+      "https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1",
       "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
     ],
     apiFormat: "openai_responses",
@@ -2127,10 +2130,11 @@ requires_openai_auth = true`,
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "qwencloud",
-      "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+      "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1",
       "qwen3.8-max",
     ),
     endpointCandidates: [
+      "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1",
       "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     ],
     apiFormat: "openai_responses",
@@ -2233,10 +2237,11 @@ requires_openai_auth = true`,
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "qwencloud_token_plan",
-      "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+      "https://token-plan.maas.qwencloudapi.com/compatible-mode/v1",
       "qwen3.8-max",
     ),
     endpointCandidates: [
+      "https://token-plan.maas.qwencloudapi.com/compatible-mode/v1",
       "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
     ],
     apiFormat: "openai_responses",
@@ -3488,14 +3493,15 @@ requires_openai_auth = true`,
     websiteUrl: "https://x.ai/api",
     apiKeyUrl: "https://console.x.ai",
     auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig("xai", "https://api.x.ai/v1", "grok-4.5"),
+    config: generateThirdPartyConfig("xai", "https://api.x.ai/v1", "grok-4.7"),
     endpointCandidates: ["https://api.x.ai/v1"],
     // xAI 官方以 /v1/responses 为一等端点（docs.x.ai api-reference）：Codex 硬依赖的
     // store:false / include=["reasoning.encrypted_content"] / reasoning effort 均支持，
     // 原生 Responses，无需路由接管转换
     apiFormat: "openai_responses",
     modelCatalog: modelCatalog([
-      // https://docs.x.ai/developers/models/grok-4.7 (2026-09-23)
+      // https://docs.x.ai/developers/models/grok-4.7（2026-09-23 收录；
+      // 2026-11-03 复核：官方默认 effort=high，子集最高档为 xhigh → 显式声明）
       {
         model: "grok-4.7",
         displayName: "Grok 4.7",
@@ -3503,6 +3509,7 @@ requires_openai_auth = true`,
         supportsParallelToolCalls: true,
         inputModalities: ["text", "image"],
         reasoningLevels: ["low", "medium", "high", "xhigh"],
+        defaultReasoningLevel: "high",
       },
       {
         model: "grok-4.5",
@@ -3531,13 +3538,23 @@ requires_openai_auth = true`,
     // api.x.ai；这里的 base_url / 空 auth 只是配置快照，转发时不生效。
     // requires_openai_auth 必须是 false：keyless + true 会被后端安全闸
     // 拒绝切换（后端写入层对存量卡也会强制归一为 false）。
-    config: generateThirdPartyConfig("xai", "https://api.x.ai/v1", "grok-4.5", {
+    config: generateThirdPartyConfig("xai", "https://api.x.ai/v1", "grok-4.7", {
       requiresOpenAiAuth: false,
     }),
     apiFormat: "openai_responses",
     providerType: "xai_oauth",
     requiresOAuth: true,
     modelCatalog: modelCatalog([
+      // 同 API-key 条目（docs.x.ai 2026-11-03 复核：官方默认 effort=high）
+      {
+        model: "grok-4.7",
+        displayName: "Grok 4.7",
+        contextWindow: 500000,
+        supportsParallelToolCalls: true,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "medium", "high", "xhigh"],
+        defaultReasoningLevel: "high",
+      },
       {
         model: "grok-4.5",
         displayName: "Grok 4.5",

@@ -29,9 +29,9 @@
 <details open>
 <summary>クリックで折りたたむ</summary>
 
-[![Kimi K2.7 Code](https://gcdn.moonshot.cn/growth-cdn/sponsor/kimi-en.png)](https://platform.kimi.ai?track_id=track-674ed6e2af924a5682a87421f7cf753a&aff=cc-switch)
+[![Kimi K3.1 Pro](assets/partners/banners/kimi-banner-en.png)](https://platform.kimi.ai?track_id=track-674ed6e2af924a5682a87421f7cf753a&aff=cc-switch)
 
-Kimi K3 は Moonshot AI がこれまでに開発した中で最も高性能なモデルであり、世界初のオープンソース 3T クラスモデルです。2.8 兆パラメータ、ネイティブな視覚能力、100 万トークンのコンテキストウィンドウを備え、長期にわたるコーディング、ナレッジワーク、推論タスクにおいてフロンティア級の性能を発揮します。CC Switch を使えば、さまざまなエージェントツールで Kimi を手軽に設定・切り替えできます。
+Kimi K3.1 Pro は、Moonshot AI がこれまでに開発した中で最も高性能な 3T クラスのオープンウェイトモデルで、100 万トークンのコンテキストウィンドウに対応しています。Kimi K3 をベースに、より大規模な事後学習の計算資源を投入したことで、コーディング、エージェントワークフロー、3D 制作、推論の各分野で着実に性能が向上しています。CC Switch を使えば、さまざまなエージェントツールで Kimi K3.1 Pro を手軽に設定・切り替えできます。
 
 コーディング作業がメインですか？**Kimi Code プラン**（[中文站](https://www.kimi.com/code?aff=cc-switch) | [Global](https://www.kimi.ai/code?aff=cc-switch)）を試すか、Kimi オープンプラットフォームの **API**（[中文站](https://platform.kimi.com?track_id=track-7cf2b91dcde043eda6ef9a95951a042c&aff=cc-switch) | [Global](https://platform.kimi.ai?track_id=track-674ed6e2af924a5682a87421f7cf753a&aff=cc-switch)）をご利用ください。
 
@@ -79,11 +79,6 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
-<td width="180"><a href="https://dit.ai?utm_source=ccswitch"><img src="assets/partners/logos/dit-banner.png" alt="DIT.ai" width="150"></a></td>
-<td>DIT.ai のご支援に感謝します！同じモデルを、多くの場合はるかに安く。OpenAI 互換の API 1 つで GPT、Claude、Gemini など 50 以上のモデルを利用でき、160 以上のプロバイダーの中から価格と品質のバランスが最も良い選択肢へルーティングされるため、通常は公式価格より 30〜70% 安くなります。Base URL と API キーを変えるだけで、既存のスタックはそのままですぐに呼び出せます。CC Switch ユーザーは<a href="https://dit.ai?utm_source=ccswitch">こちらのリンク</a>から登録し、コード <strong>cc-switch</strong> を使うと初回チャージが 30% オフになります！</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://www.openmodel.ai?ref=cc-switch"><img src="assets/partners/logos/openmodel-banner.jpg" alt="OpenModel" width="150"></a></td>
 <td>本プロジェクトのスポンサーである OpenModel に感謝いたします！OpenModel は Codex と Claude Code 向けにクライアント専用の割引を提供しており、対応モデルを Codex 経由で使うと最大 90% オフ、Claude Code 経由で使うと最大 60% オフになります。開発スタイルを変えることなく API コストを削減できます。OpenModel の API Key を設定するだけで、いつも通り Codex や Claude Code を使い続けられます。対応クライアントは自動で判別され、追加パラメータや手動でのルーティング設定なしに割引ルートが適用されます。さらに API Key ごとにフォールバック動作を設定でき、割引ルートが一時的に利用できない場合に標準価格で続行するか停止するかを選べます。CC Switch ユーザーは<a href="https://www.openmodel.ai?ref=cc-switch">こちらのリンク</a>から登録し、プロモコード <strong>"cc-switch"</strong> を使うと初回チャージが 10% オフになります！</td>
 </tr>
@@ -114,10 +109,10 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
-<td width="180"><a href="https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory"><img src="assets/partners/logos/TeamoRouter-banner.png" alt="TeamoRouter" width="150"></a></td>
+<td width="180"><a href="https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory"><img src="assets/partners/logos/TeamoRouter-banner.png" alt="TeamoRouter" width="150"></a></td>
 <td>このプロジェクトをご支援いただいている TeamoRouter に感謝します！TeamoRouter は、開発者、AI チーム、企業向けに構築されたエンタープライズグレードの Agentic LLM ゲートウェイです。サブスクリプション不要で、単一の統合 API を通じて Claude Code、Codex、Gemini CLI、OpenAI Codex、その他の人気 AI エージェントにアクセスでき、API 料金は最大 90% オフで利用できます。
 一般的な API リレーサービスとは異なり、TeamoRouter は OpenAI、Anthropic、Vertex、Azure、AWS Bedrock など、数百の公式モデルプロバイダーと信頼できるインフラパートナーを集約しています。各プロバイダーは、Agent プロトコルとの 100% 互換性、キャッシュ性能、リクエストの追跡可能性について検証されており、リバースエンジニアリングされたものや品質が薄められたエンドポイントではなく、安定した品質を提供します。プラットフォームは公式に近い TTFT、99.6% の SLA、最大 5,000 QPM のエンタープライズ規模のスループット、そして業界トップクラスのキャッシュヒット率を提供し、長時間稼働するエージェントワークフローのトークンコストを大幅に削減します。
-TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーティング、利用状況分析、動的なプロバイダー最適化、専任サポートなどのエンタープライズ機能も提供しています。さらにシンプルな体験を求める場合は、Teamo Desktop を使うことで、Claude Code、Codex、Gemini CLI、その他の人気 AI エージェントをワンクリックで利用できます。API キー管理や手動のゲートウェイ設定は不要です。新規ユーザーとして<a href="https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory">こちらのリンク</a>から登録すると、初回チャージが 10% オフになります。</td>
+TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーティング、利用状況分析、動的なプロバイダー最適化、専任サポートなどのエンタープライズ機能も提供しています。さらにシンプルな体験を求める場合は、Teamo Desktop を使うことで、Claude Code、Codex、Gemini CLI、その他の人気 AI エージェントをワンクリックで利用できます。API キー管理や手動のゲートウェイ設定は不要です。新規ユーザーとして<a href="https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory">こちらのリンク</a>から登録すると、初回チャージが 10% オフになります。</td>
 </tr>
 
 <tr>
@@ -181,8 +176,8 @@ TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーテ�
 </tr>
 
 <tr>
-<td width="180"><a href="https://a6api.com/register?aff=AqNr"><img src="assets/partners/logos/a6-banner-en.jpg" alt="A6API" width="150"></a></td>
-<td>本プロジェクトをご支援いただいている <a href="https://a6api.com/register?aff=AqNr">A6API</a> に感謝します！A6API は、Claude、GPT、Gemini、Codex などの主要モデルを網羅するワンストップの AI モデル API アグリゲーションプラットフォームです。複数のベンダーが出品でき、同じモデルを複数の上流プロバイダーが競争価格で提供します。スマートルーティングにより、より安定して安価な利用可能ルートを自動で選択し、失敗時には自動で切り替えるため、リクエストの失敗を減らし、コストを抑え、安定性を高められます。個人開発者でも、AI プロダクトチームでも、スタジオでも、統一されたインターフェースからすぐに接続でき、あらゆるフォーマットに対応、移行コストも低く抑えられます。<a href="https://a6api.com/register?aff=AqNr">こちらのリンク</a> から新規登録すると無料の体験クレジットがもらえます。まず試してから、低価格で使い始められます。</td>
+<td width="180"><a href="https://a6api.vip/register?aff=AqNr"><img src="assets/partners/logos/a6-banner-en.jpg" alt="A6API" width="150"></a></td>
+<td>本プロジェクトをご支援いただいている <a href="https://a6api.vip/register?aff=AqNr">A6API</a> に感謝します！A6API は、Claude、GPT、Gemini、Codex などの主要モデルを網羅するワンストップの AI モデル API アグリゲーションプラットフォームです。複数のベンダーが出品でき、同じモデルを複数の上流プロバイダーが競争価格で提供します。スマートルーティングにより、より安定して安価な利用可能ルートを自動で選択し、失敗時には自動で切り替えるため、リクエストの失敗を減らし、コストを抑え、安定性を高められます。個人開発者でも、AI プロダクトチームでも、スタジオでも、統一されたインターフェースからすぐに接続でき、あらゆるフォーマットに対応、移行コストも低く抑えられます。<a href="https://a6api.vip/register?aff=AqNr">こちらのリンク</a> から新規登録すると無料の体験クレジットがもらえます。まず試してから、低価格で使い始められます。</td>
 </tr>
 
 <tr>

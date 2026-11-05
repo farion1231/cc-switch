@@ -13,7 +13,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// DSH home: the directory set in CC Switch settings (e.g. a WSL path, #9239), then
+/// `DSH_HOME`, then `~/.dsh`.
 pub(crate) fn data_dir() -> PathBuf {
+    if let Some(dir) = crate::settings::get_dsh_override_dir() {
+        return dir;
+    }
     std::env::var_os("DSH_HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
@@ -35,14 +40,44 @@ pub(crate) fn profile_path(name: &str) -> PathBuf {
 
 /// Always prepare Web and Desktop: DSH's initProfile preserves an existing patch and supplies
 /// the remaining files on first launch. Optional runtime profiles are only written if present.
+///
+/// A profile directory reached through a link is the same file as its target (symlink, Windows
+/// junction, 8.3 short name or case-only alias). Listing both spellings made
+/// [`edit_files_and_commit`] take the same `<file>.lock` twice, so every provider and MCP write
+/// failed with a bogus concurrency conflict (#9100). One file is listed once.
 pub(crate) fn target_paths() -> Vec<PathBuf> {
+    let mut seen: Vec<PathBuf> = Vec::new();
     TARGET_PROFILES
         .iter()
         .filter_map(|name| {
             let path = profile_path(name);
             (DISPLAY_PROFILES.contains(name) || path.exists()).then_some(path)
         })
+        .filter(|path| {
+            let identity = path_identity(path);
+            if seen.contains(&identity) {
+                return false;
+            }
+            seen.push(identity);
+            true
+        })
         .collect()
+}
+
+/// Stable identity of one native file: its real parent directory plus the file name.
+///
+/// The file itself may not exist yet — the first write to a profile creates `cordis.patch.yml` —
+/// but its parent always does, so resolving the parent is enough. When even the parent cannot be
+/// resolved the path is kept as written: a directory that does not exist cannot be an alias of
+/// another one.
+fn path_identity(path: &Path) -> PathBuf {
+    let Some(name) = path.file_name() else {
+        return path.to_path_buf();
+    };
+    match path.parent().map(fs::canonicalize) {
+        Some(Ok(parent)) => parent.join(name),
+        _ => path.to_path_buf(),
+    }
 }
 
 /// The authoritative profile providers and MCP are read from first: `web`, else `desktop`, else
@@ -774,6 +809,37 @@ fn update_provider(
     replace_entry(text, "llm-pi-ai", Some(entry))
 }
 
+/// The shipped `headless` profile disables the managed credential store and resolves keys only
+/// from the launch environment and `.env` files, so a node whose key lives only in
+/// `.credentials.yaml` fails with `MISSING_CREDENTIAL` there. Restore the store with the row
+/// DSH's headless README documents, unless the profile already decides about `credentials`.
+/// Restoring it makes stored keys outrank exported variables in headless, as in every other
+/// profile.
+fn restore_headless_credentials(
+    path: &Path,
+    text: &str,
+    native: &Value,
+    credentials_text: &str,
+) -> Result<String, AppError> {
+    let stored = native
+        .get("apiKeyEnv")
+        .and_then(Value::as_str)
+        .is_some_and(|reference| {
+            credential_document_from(credentials_text)
+                .is_ok_and(|credentials| credentials["refs"][reference].is_string())
+        });
+    if profile_name(path) != "headless"
+        || !stored
+        || entries(text)?
+            .iter()
+            .any(|entry| entry["id"].as_str() == Some("credentials"))
+    {
+        return Ok(text.to_owned());
+    }
+    let row = serde_yaml::to_value(json!({"id":"credentials","disabled":false})).unwrap();
+    replace_entry(text, "credentials", Some(row))
+}
+
 /// Add, edit or remove one provider in every target profile together with its credential, as
 /// one change ([`edit_files_and_commit`]).
 pub(crate) fn save_and_commit<T>(
@@ -835,10 +901,17 @@ fn save_paths_and_commit<T>(
                 ensure_provider_copies_agree(paths, authoritative, profile_texts, id)?;
             }
             let (credentials, native) = native_provider(id, &config, &texts[0])?;
-            let mut next = vec![credentials];
-            for text in profile_texts {
-                next.push(update_provider(text, id, Some(native.clone()), create)?);
+            let mut next = vec![];
+            for (path, text) in paths.iter().zip(profile_texts) {
+                let text = update_provider(text, id, Some(native.clone()), create)?;
+                next.push(restore_headless_credentials(
+                    path,
+                    &text,
+                    &native,
+                    &credentials,
+                )?);
             }
+            next.insert(0, credentials);
             Ok(next)
         },
         commit,
@@ -931,8 +1004,10 @@ fn initialize_profiles_and_commit<T>(
                                 native
                             }
                         };
+                        let text =
+                            update_provider(&next[index + 1], id, Some(native.clone()), true)?;
                         next[index + 1] =
-                            update_provider(&next[index + 1], id, Some(native), true)?;
+                            restore_headless_credentials(path, &text, &native, &next[0])?;
                     }
                 }
                 if !has_servers {
@@ -1156,10 +1231,22 @@ fn native_provider(
                 }
             }
             model.as_object_mut().unwrap().remove("limit");
-            if let Some(input) = model.pointer("/modalities/input").cloned() {
-                model["input"] = input;
-            }
+            // llm-pi-ai only accepts "text" | "image"; one other value (e.g. the "pdf" models.dev
+            // reports) fails validation of the whole entry and hides every provider (#9116).
+            let input: Vec<Value> = model
+                .pointer("/modalities/input")
+                .or_else(|| model.get("input"))
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter(|value| matches!(value.as_str(), Some("text" | "image")))
+                .cloned()
+                .collect();
             let object = model.as_object_mut().unwrap();
+            object.remove("input");
+            if !input.is_empty() {
+                object.insert("input".into(), Value::Array(input));
+            }
             object.remove("modalities");
             if object.get("reasoning") == Some(&Value::Bool(false)) {
                 object.insert("reasoningEfforts".into(), Value::Bool(false));
@@ -1541,6 +1628,20 @@ mod tests {
         assert_eq!(entries(&text).unwrap().len(), 1);
         assert_eq!(get_providers_from(&path, &credentials).unwrap().len(), 1);
         assert!(!text.lines().any(|line| line.trim() == "[]"));
+    }
+
+    #[test]
+    fn provider_input_keeps_only_modalities_llm_pi_ai_accepts() {
+        let mut config = editor_config();
+        config["models"]["test-model"]["modalities"]["input"] = json!(["text", "image", "pdf"]);
+        config["models"]["pdf-only"] =
+            json!({"name":"Pdf","modalities":{"input":["pdf"],"output":["text"]}});
+        let (_, native) = native_provider("gateway", &config, "").unwrap();
+        let models = native["models"].as_array().unwrap();
+        let model = |id: &str| models.iter().find(|model| model["id"] == id).unwrap();
+        assert_eq!(model("test-model")["input"], json!(["text", "image"]));
+        assert!(model("pdf-only").get("input").is_none());
+        assert!(model("pdf-only").get("modalities").is_none());
     }
 
     #[test]
@@ -1951,6 +2052,31 @@ mod tests {
         fs::read_to_string(home.join("profiles").join(name).join("cordis.patch.yml")).ok()
     }
 
+    /// Makes `link` an alias of the `target` directory. Returns false where the platform refuses
+    /// to create links (Windows without developer mode or elevation), so tests can skip.
+    fn link_dir(link: &Path, target: &Path) -> bool {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link).is_ok()
+        }
+        #[cfg(windows)]
+        {
+            // A junction needs neither elevation nor developer mode, unlike a directory symlink.
+            std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .map(|output| output.status.success())
+                .unwrap_or(false)
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = (link, target);
+            false
+        }
+    }
+
     #[test]
     #[serial_test::serial]
     fn provider_writes_prepare_web_and_desktop_and_keep_optional_profiles_native_owned() {
@@ -1980,6 +2106,69 @@ mod tests {
             assert!(!profile_text(root, name).unwrap().contains("gateway"));
         }
         assert!(root.join("profiles/desktop/cordis.patch.yml").exists());
+    }
+
+    /// `profiles/desktop` pointing at `profiles/web` is one file, not two: it must be locked and
+    /// written once instead of twice (#9100).
+    #[test]
+    #[serial_test::serial]
+    fn target_paths_dedupes_alias_profiles() {
+        let home = DshHome::new();
+        let root = home.dir.path();
+        init_profiles(root, &["web"]);
+        if !link_dir(&root.join("profiles/desktop"), &root.join("profiles/web")) {
+            return;
+        }
+
+        let paths = target_paths();
+        assert_eq!(paths.len(), 1, "alias profile written twice: {paths:?}");
+        assert_eq!(paths[0], profile_path("web"));
+    }
+
+    /// The end-to-end shape of the bug: with `desktop` aliasing `web`, every provider and MCP
+    /// write used to fail with a concurrency conflict, because the second `create_new` on the
+    /// same `<file>.lock` hit `AlreadyExists`.
+    #[test]
+    #[serial_test::serial]
+    fn provider_and_mcp_writes_succeed_when_desktop_aliases_web() {
+        let home = DshHome::new();
+        let root = home.dir.path();
+        init_profiles(root, &["web"]);
+        if !link_dir(&root.join("profiles/desktop"), &root.join("profiles/web")) {
+            return;
+        }
+
+        set_provider("gateway", editor_config()).unwrap();
+        assert!(get_providers().unwrap().contains_key("gateway"));
+        assert!(provider_key_exists("gateway").unwrap());
+
+        let spec = json!({"command":"node","args":["fetch.js"]});
+        sync_mcp_and_commit("fetch", Some(&spec), || Ok(())).unwrap();
+        assert_eq!(mcp_entries().unwrap().len(), 1);
+
+        // The single file really holds both, written once each.
+        let text = profile_text(root, "web").unwrap();
+        assert_eq!(text.matches("apiKeyEnv: CC_SWITCH_DSH_GATEWAY").count(), 1);
+        assert_eq!(text.matches("serverName: fetch").count(), 1);
+        assert!(!root.join("profiles/web/cordis.patch.yml.lock").exists());
+
+        // Removal goes through the same path list.
+        remove_provider("gateway").unwrap();
+        assert!(!get_providers().unwrap().contains_key("gateway"));
+    }
+
+    /// Deduplication must not merge genuinely separate profiles.
+    #[test]
+    #[serial_test::serial]
+    fn target_paths_keeps_independent_profiles_apart() {
+        let home = DshHome::new();
+        let root = home.dir.path();
+        init_profiles(root, &["web", "desktop", "headless"]);
+        let paths = target_paths();
+        assert_eq!(paths.len(), 3, "{paths:?}");
+        assert_eq!(paths[0], profile_path("web"));
+        assert_eq!(paths[1], profile_path("desktop"));
+        assert_eq!(paths[2], profile_path("headless"));
     }
 
     #[test]
@@ -2351,6 +2540,95 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("headless"), "{message}");
         assert_eq!(profile_text(root, "headless").unwrap(), before);
+    }
+
+    fn credentials_rows(text: &str) -> Vec<Yaml> {
+        entries(text)
+            .unwrap()
+            .into_iter()
+            .filter(|entry| entry["id"].as_str() == Some("credentials"))
+            .collect()
+    }
+
+    /// DSH 自带的 headless 关掉了凭据存储，只从环境变量取 Key：存在 .credentials.yaml 里的
+    /// Key 在那里找不到。写进 headless 时补上 DSH 文档给的恢复行，其余 profile 不动。
+    #[test]
+    #[serial_test::serial]
+    fn headless_gets_the_credentials_store_back_for_stored_keys() {
+        let home = DshHome::new();
+        let root = home.dir.path();
+        init_profiles(root, &["web", "headless", "acp"]);
+        set_provider("gateway", editor_config()).unwrap();
+
+        let headless = profile_text(root, "headless").unwrap();
+        let rows = credentials_rows(&headless);
+        assert_eq!(rows.len(), 1, "{headless}");
+        assert_eq!(rows[0]["disabled"], Yaml::Bool(false));
+        for name in ["web", "acp"] {
+            assert!(credentials_rows(&profile_text(root, name).unwrap()).is_empty());
+        }
+
+        // 再改一次 Key 不会重复加行
+        let mut rotated = editor_config();
+        rotated["options"]["apiKey"] = json!("rotated");
+        set_provider("gateway", rotated).unwrap();
+        assert_eq!(
+            credentials_rows(&profile_text(root, "headless").unwrap()).len(),
+            1
+        );
+    }
+
+    /// 用户自己在 headless 里写了 credentials 行（哪怕是显式禁用），就按他的来。
+    #[test]
+    #[serial_test::serial]
+    fn headless_keeps_an_explicit_credentials_choice() {
+        let home = DshHome::new();
+        let root = home.dir.path();
+        init_profiles(root, &["web"]);
+        let explicit = "- id: credentials\n  disabled: true\n";
+        let path = root.join("profiles/headless/cordis.patch.yml");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, explicit).unwrap();
+
+        set_provider("gateway", editor_config()).unwrap();
+        let headless = profile_text(root, "headless").unwrap();
+        assert!(headless.starts_with(explicit), "{headless}");
+        let rows = credentials_rows(&headless);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["disabled"], Yaml::Bool(true));
+    }
+
+    /// Key 走原生环境变量引用、没存进 .credentials.yaml 时，headless 本来就能取到，不加行。
+    #[test]
+    #[serial_test::serial]
+    fn headless_is_untouched_for_providers_without_a_stored_key() {
+        let home = DshHome::new();
+        let root = home.dir.path();
+        init_profiles(root, &["web", "headless"]);
+        let mut env_backed = editor_config();
+        env_backed["options"]
+            .as_object_mut()
+            .unwrap()
+            .remove("apiKey");
+        env_backed["apiKeyEnv"] = json!("CC_SWITCH_TEST_ENV_ONLY_KEY");
+        set_provider("local", env_backed).unwrap();
+        assert!(credentials_rows(&profile_text(root, "headless").unwrap()).is_empty());
+    }
+
+    /// 首次见到 headless 时补写的供应商同样带上恢复行。
+    #[test]
+    #[serial_test::serial]
+    fn seeding_a_new_headless_profile_restores_the_credentials_store() {
+        let home = DshHome::new();
+        let root = home.dir.path();
+        init_profiles(root, &["headless"]);
+        let providers = IndexMap::from([("gateway".into(), editor_config())]);
+        initialize_profiles(&providers, &IndexMap::new()).unwrap();
+        assert_eq!(
+            credentials_rows(&profile_text(root, "headless").unwrap()).len(),
+            1
+        );
+        assert!(credentials_rows(&profile_text(root, "web").unwrap()).is_empty());
     }
 
     /// MCP 同款：别的 profile 里的同名服务器内容不同就拒绝改写。

@@ -529,6 +529,7 @@ fn copilot_quota(
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
+        plan_name: None,
         error: None,
         queried_at: Some(chrono::Utc::now().timestamp_millis()),
     }
@@ -790,6 +791,7 @@ mod tests {
             extra_usage: None,
             reset_credits: None,
             credits_balance: None,
+            plan_name: None,
             error: None,
             queried_at: Some(1),
         }
