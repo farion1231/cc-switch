@@ -642,6 +642,8 @@ const CODEX_HTTP_FIELDS: &[&str] = &[
 /// Codex `[mcp_servers.*.oauth]` 认识的子字段。Gemini CLI 的 `oauth` 同名但字段不同
 /// （`clientId` / `enabled` / `scopes` …），原样写出会让 Codex 拒绝加载。
 const CODEX_OAUTH_FIELDS: &[&str] = &["client_id", "client_secret", "callback_url"];
+/// Codex `auth` 接受的值（codex-cli 0.166 实测）。
+const CODEX_AUTH_VALUES: &[&str] = &["oauth", "chatgpt", "ema_auth"];
 
 /// Codex 专用的 JSON → TOML 转换：在通用转换的基础上只保留 Codex 认识的字段。
 /// Grok Build 复用通用转换，不受影响。
@@ -684,6 +686,16 @@ fn json_server_to_codex_toml_table(spec: &Value) -> Result<toml_edit::Table, App
             }
             None => dropped.push("oauth".into()),
         }
+    }
+    // `auth` 是枚举：值不认识时 Codex 连非严格模式也拒绝加载整份配置。别家同名字段
+    // （比如从 Pi 导入的 `auth`）取值不同，只写 Codex 认识的值。
+    let auth_ok = table
+        .get("auth")
+        .and_then(|item| item.as_str())
+        .is_some_and(|auth| CODEX_AUTH_VALUES.contains(&auth));
+    if table.contains_key("auth") && !auth_ok {
+        table.remove("auth");
+        dropped.push("auth".into());
     }
 
     if !dropped.is_empty() {
@@ -1331,6 +1343,33 @@ mod tests {
         .unwrap();
         assert!(stdio.get("oauth").is_none());
         assert!(stdio.get("auth").is_none());
+    }
+
+    #[test]
+    fn codex_auth_is_written_only_with_a_value_codex_accepts() {
+        // 别家的 `auth`（如从 Pi 导入的 "bearer"）会让 Codex 整份配置加载失败。
+        let auth_of = |auth: Value| {
+            json_server_to_codex_toml_table(&json!({
+                "type": "http",
+                "url": "https://example.com/mcp",
+                "auth": auth,
+            }))
+            .unwrap()
+            .get("auth")
+            .and_then(|item| item.as_str())
+            .map(str::to_string)
+        };
+        for accepted in CODEX_AUTH_VALUES {
+            assert_eq!(auth_of(json!(accepted)).as_deref(), Some(*accepted));
+        }
+        for foreign in [
+            json!("bearer"),
+            json!("OAuth"),
+            json!(true),
+            json!({"type": "oauth"}),
+        ] {
+            assert_eq!(auth_of(foreign.clone()), None, "{foreign} leaked");
+        }
     }
 
     #[test]
