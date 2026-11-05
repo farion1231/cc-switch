@@ -599,9 +599,8 @@ fn compute_quota_tiers_and_plan(
         }
     }
 
-    let reset_time = parse_reset_time(summary.billing_cycle_end.as_ref()).or_else(|| {
-        request_usage.and_then(|r| r.start_of_month.clone())
-    });
+    let reset_time = parse_reset_time(summary.billing_cycle_end.as_ref())
+        .or_else(|| request_usage.and_then(|r| r.start_of_month.clone()));
 
     let plan_name = format_cursor_plan_name(summary.membership_type.as_deref());
 
@@ -799,8 +798,7 @@ mod tests {
             }),
         };
 
-        let (plan_name, tiers, _) =
-            compute_quota_tiers_and_plan(&summary, Some(&request_usage));
+        let (plan_name, tiers, _) = compute_quota_tiers_and_plan(&summary, Some(&request_usage));
         assert_eq!(plan_name, "Cursor Pro");
         assert_eq!(tiers.len(), 1);
         assert_eq!(tiers[0].name, TIER_FAST_REQUESTS);
