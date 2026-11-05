@@ -33,9 +33,9 @@ export interface ManagedAuthAccount {
   reauth_required?: boolean;
   /** xAI-only: the refresh credential is invalid and the account is unusable. */
   requires_reauth: boolean;
-  /** Claude official only: when the sign-in of an account not in Claude Code's default slot expires (ms, as last recorded). */
+  /** Claude official only: when the sign-in of an account not in Claude Code's default slot expires (ms, as last recorded). Codex: `exp` of the persisted id_token (ms), i.e. when the current credential set expires; it moves forward on refresh. */
   login_expires_at?: number | null;
-  /** Claude official only: plan (`pro` / `max` / `team` / `enterprise`) from the account's sign-in. */
+  /** Claude official only: plan (`pro` / `max` / `team` / `enterprise`) from the account's sign-in. Codex: the ChatGPT plan (`plus` / `pro` / `free`…) recorded in the id_token. */
   plan?: string | null;
   /** Claude official only: `rateLimitTier` (e.g. `default_claude_max_20x`), tells Max 5x from 20x. */
   rate_limit_tier?: string | null;
