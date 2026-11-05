@@ -101,9 +101,9 @@ describe("GrokBuildProviderForm", () => {
     const settings = JSON.parse(submitted.settingsConfig);
     const config = parseToml(settings.config) as any;
 
-    expect(config.models.default).toBe("grok-4.5");
-    expect(config.model["grok-4.5"]).toEqual({
-      model: "grok-4.5",
+    expect(config.models.default).toBe("grok-4.7");
+    expect(config.model["grok-4.7"]).toEqual({
+      model: "grok-4.7",
       base_url: "https://relay.example.com/v1",
       name: "Example Relay",
       api_key: "secret-key",
@@ -274,7 +274,7 @@ context_window = 500000
 
     const modelInput =
       container.querySelector<HTMLInputElement>("#codexDefaultModel");
-    expect(modelInput?.placeholder).toBe("例如: grok-4.5");
+    expect(modelInput?.placeholder).toBe("例如: grok-4.7");
     expect(screen.getByText(/Grok Build 默认请求的模型/)).toBeInTheDocument();
     expect(screen.queryByText(/Codex 默认请求的模型/)).toBeNull();
     // Grok 没有模型映射目录，不应出现"映射第一行"条款

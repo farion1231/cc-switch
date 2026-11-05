@@ -1,6 +1,6 @@
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 
-export const GROK_BUILD_DEFAULT_MODEL = "grok-4.5";
+export const GROK_BUILD_DEFAULT_MODEL = "grok-4.7";
 export const GROK_BUILD_DEFAULT_API_BACKEND = "responses";
 export const GROK_BUILD_DEFAULT_CONTEXT_WINDOW = 500000;
 
