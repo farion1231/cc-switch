@@ -1684,11 +1684,11 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     settingsConfig: {
-      baseUrl: "https://api.teamorouter.cn/v1",
+      baseUrl: "https://api.teamorouter.com/v1",
       apiKey: "",
       api: "openai-completions",
       models: [
@@ -1721,11 +1721,11 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "TeamoRouter Claude",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     settingsConfig: {
-      baseUrl: "https://api.teamorouter.cn",
+      baseUrl: "https://api.teamorouter.com",
       apiKey: "",
       api: "anthropic-messages",
       models: [

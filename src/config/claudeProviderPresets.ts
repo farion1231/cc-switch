@@ -641,22 +641,19 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://api.teamorouter.cn",
+        ANTHROPIC_BASE_URL: "https://api.teamorouter.com",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "teamorouter",
-    endpointCandidates: [
-      "https://api.teamorouter.cn",
-      "https://api.teamorouter.com",
-    ],
+    endpointCandidates: ["https://api.teamorouter.com"],
     icon: "teamorouter",
   },
   {

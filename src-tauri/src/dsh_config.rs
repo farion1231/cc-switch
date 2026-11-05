@@ -13,7 +13,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// DSH home: the directory set in CC Switch settings (e.g. a WSL path, #9239), then
+/// `DSH_HOME`, then `~/.dsh`.
 pub(crate) fn data_dir() -> PathBuf {
+    if let Some(dir) = crate::settings::get_dsh_override_dir() {
+        return dir;
+    }
     std::env::var_os("DSH_HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
@@ -804,6 +809,37 @@ fn update_provider(
     replace_entry(text, "llm-pi-ai", Some(entry))
 }
 
+/// The shipped `headless` profile disables the managed credential store and resolves keys only
+/// from the launch environment and `.env` files, so a node whose key lives only in
+/// `.credentials.yaml` fails with `MISSING_CREDENTIAL` there. Restore the store with the row
+/// DSH's headless README documents, unless the profile already decides about `credentials`.
+/// Restoring it makes stored keys outrank exported variables in headless, as in every other
+/// profile.
+fn restore_headless_credentials(
+    path: &Path,
+    text: &str,
+    native: &Value,
+    credentials_text: &str,
+) -> Result<String, AppError> {
+    let stored = native
+        .get("apiKeyEnv")
+        .and_then(Value::as_str)
+        .is_some_and(|reference| {
+            credential_document_from(credentials_text)
+                .is_ok_and(|credentials| credentials["refs"][reference].is_string())
+        });
+    if profile_name(path) != "headless"
+        || !stored
+        || entries(text)?
+            .iter()
+            .any(|entry| entry["id"].as_str() == Some("credentials"))
+    {
+        return Ok(text.to_owned());
+    }
+    let row = serde_yaml::to_value(json!({"id":"credentials","disabled":false})).unwrap();
+    replace_entry(text, "credentials", Some(row))
+}
+
 /// Add, edit or remove one provider in every target profile together with its credential, as
 /// one change ([`edit_files_and_commit`]).
 pub(crate) fn save_and_commit<T>(
@@ -865,10 +901,17 @@ fn save_paths_and_commit<T>(
                 ensure_provider_copies_agree(paths, authoritative, profile_texts, id)?;
             }
             let (credentials, native) = native_provider(id, &config, &texts[0])?;
-            let mut next = vec![credentials];
-            for text in profile_texts {
-                next.push(update_provider(text, id, Some(native.clone()), create)?);
+            let mut next = vec![];
+            for (path, text) in paths.iter().zip(profile_texts) {
+                let text = update_provider(text, id, Some(native.clone()), create)?;
+                next.push(restore_headless_credentials(
+                    path,
+                    &text,
+                    &native,
+                    &credentials,
+                )?);
             }
+            next.insert(0, credentials);
             Ok(next)
         },
         commit,
@@ -961,8 +1004,10 @@ fn initialize_profiles_and_commit<T>(
                                 native
                             }
                         };
+                        let text =
+                            update_provider(&next[index + 1], id, Some(native.clone()), true)?;
                         next[index + 1] =
-                            update_provider(&next[index + 1], id, Some(native), true)?;
+                            restore_headless_credentials(path, &text, &native, &next[0])?;
                     }
                 }
                 if !has_servers {
@@ -2495,6 +2540,95 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("headless"), "{message}");
         assert_eq!(profile_text(root, "headless").unwrap(), before);
+    }
+
+    fn credentials_rows(text: &str) -> Vec<Yaml> {
+        entries(text)
+            .unwrap()
+            .into_iter()
+            .filter(|entry| entry["id"].as_str() == Some("credentials"))
+            .collect()
+    }
+
+    /// DSH 自带的 headless 关掉了凭据存储，只从环境变量取 Key：存在 .credentials.yaml 里的
+    /// Key 在那里找不到。写进 headless 时补上 DSH 文档给的恢复行，其余 profile 不动。
+    #[test]
+    #[serial_test::serial]
+    fn headless_gets_the_credentials_store_back_for_stored_keys() {
+        let home = DshHome::new();
+        let root = home.dir.path();
+        init_profiles(root, &["web", "headless", "acp"]);
+        set_provider("gateway", editor_config()).unwrap();
+
+        let headless = profile_text(root, "headless").unwrap();
+        let rows = credentials_rows(&headless);
+        assert_eq!(rows.len(), 1, "{headless}");
+        assert_eq!(rows[0]["disabled"], Yaml::Bool(false));
+        for name in ["web", "acp"] {
+            assert!(credentials_rows(&profile_text(root, name).unwrap()).is_empty());
+        }
+
+        // 再改一次 Key 不会重复加行
+        let mut rotated = editor_config();
+        rotated["options"]["apiKey"] = json!("rotated");
+        set_provider("gateway", rotated).unwrap();
+        assert_eq!(
+            credentials_rows(&profile_text(root, "headless").unwrap()).len(),
+            1
+        );
+    }
+
+    /// 用户自己在 headless 里写了 credentials 行（哪怕是显式禁用），就按他的来。
+    #[test]
+    #[serial_test::serial]
+    fn headless_keeps_an_explicit_credentials_choice() {
+        let home = DshHome::new();
+        let root = home.dir.path();
+        init_profiles(root, &["web"]);
+        let explicit = "- id: credentials\n  disabled: true\n";
+        let path = root.join("profiles/headless/cordis.patch.yml");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, explicit).unwrap();
+
+        set_provider("gateway", editor_config()).unwrap();
+        let headless = profile_text(root, "headless").unwrap();
+        assert!(headless.starts_with(explicit), "{headless}");
+        let rows = credentials_rows(&headless);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["disabled"], Yaml::Bool(true));
+    }
+
+    /// Key 走原生环境变量引用、没存进 .credentials.yaml 时，headless 本来就能取到，不加行。
+    #[test]
+    #[serial_test::serial]
+    fn headless_is_untouched_for_providers_without_a_stored_key() {
+        let home = DshHome::new();
+        let root = home.dir.path();
+        init_profiles(root, &["web", "headless"]);
+        let mut env_backed = editor_config();
+        env_backed["options"]
+            .as_object_mut()
+            .unwrap()
+            .remove("apiKey");
+        env_backed["apiKeyEnv"] = json!("CC_SWITCH_TEST_ENV_ONLY_KEY");
+        set_provider("local", env_backed).unwrap();
+        assert!(credentials_rows(&profile_text(root, "headless").unwrap()).is_empty());
+    }
+
+    /// 首次见到 headless 时补写的供应商同样带上恢复行。
+    #[test]
+    #[serial_test::serial]
+    fn seeding_a_new_headless_profile_restores_the_credentials_store() {
+        let home = DshHome::new();
+        let root = home.dir.path();
+        init_profiles(root, &["headless"]);
+        let providers = IndexMap::from([("gateway".into(), editor_config())]);
+        initialize_profiles(&providers, &IndexMap::new()).unwrap();
+        assert_eq!(
+            credentials_rows(&profile_text(root, "headless").unwrap()).len(),
+            1
+        );
+        assert!(credentials_rows(&profile_text(root, "web").unwrap()).is_empty());
     }
 
     /// MCP 同款：别的 profile 里的同名服务器内容不同就拒绝改写。

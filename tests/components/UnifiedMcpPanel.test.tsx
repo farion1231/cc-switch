@@ -219,8 +219,10 @@ describe("UnifiedMcpPanel", () => {
       alpha: makeServer("alpha", { apps: { claude: true } }),
       beta: makeServer("beta", { apps: { codex: true } }),
       pending: makeServer("pending", { apps: { claude: true } }),
+      oauth: makeServer("oauth", { apps: { claude: true } }),
       disabled: makeServer("disabled"),
     };
+    mocks.connectivity.states.oauth = "authRequired";
     renderPanel();
     expect(
       screen.getByRole("img", { name: "mcpPage.connection.connected" }),
@@ -228,6 +230,9 @@ describe("UnifiedMcpPanel", () => {
     expect(
       screen.getByRole("img", { name: "mcpPage.connection.disconnected" }),
     ).toHaveClass("bg-danger", "rounded-full");
+    expect(
+      screen.getByRole("img", { name: "mcpPage.connection.authRequired" }),
+    ).toHaveClass("bg-warning", "rounded-full");
     expect(
       screen.getByRole("img", { name: "mcpPage.connection.unchecked" }),
     ).toHaveClass("bg-fg-3");

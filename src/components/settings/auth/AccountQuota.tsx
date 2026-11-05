@@ -21,7 +21,6 @@ import {
   countdownStr,
   formatRelativeTime,
   lineHint,
-  tierLine,
   type QuotaDisplay,
   type QuotaLine,
 } from "@/components/quota/quotaRules";
@@ -31,6 +30,7 @@ import {
 } from "@/components/SubscriptionQuotaFooter";
 import type { SubscriptionQuota } from "@/types/subscription";
 import { useCopilotQuota } from "@/lib/query/copilot";
+import { copilotQuotaRows } from "@/components/CopilotQuotaFooter";
 import {
   useAgyAccountQuota,
   useClaudeAccountQuota,
@@ -297,7 +297,7 @@ export function subscriptionQuotaState(
   return rows.length > 0 ? { kind: "rows", rows } : null;
 }
 
-/** GitHub Copilot 账号的高级请求额度（copilot_get_usage_for_account） */
+/** GitHub Copilot 账号的额度：高级请求，Free 另有代码补全（copilot_get_usage_for_account） */
 export function CopilotAccountQuota({
   accountId,
   login,
@@ -305,22 +305,21 @@ export function CopilotAccountQuota({
   accountId: string;
   login: string;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const display = useQuotaDisplay();
   const query = useCopilotQuota(accountId, { enabled: true, autoQuery: false });
   const { data: quota, isFetching: loading } = query;
 
   let state: AccountQuotaState;
   if (quota?.success) {
-    const label = t("subscription.copilotPremium");
     state =
       quota.tiers.length > 0
         ? {
             kind: "rows",
-            rows: quota.tiers.map((tier) => ({
-              label,
-              line: tierLine(t, tier, label, { display }),
-            })),
+            rows: copilotQuotaRows(t, quota.tiers, {
+              display,
+              locale: i18n.language,
+            }),
           }
         : null;
   } else if (quota) {
