@@ -6,6 +6,7 @@
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -276,38 +277,69 @@ struct Sweep {
     keys: Vec<String>,
 }
 
-#[cfg(not(test))]
+/// 安排下、还没做的删除。到期的后台线程只做还在这里的那一笔；
+/// [`settle_claude_tombstones`] 把它们全部提前做掉，到期的线程就什么都不做。
+static SCHEDULED: Mutex<Vec<(u64, Sweep)>> = Mutex::new(Vec::new());
+static NEXT_SWEEP: AtomicU64 = AtomicU64::new(0);
+
+fn scheduled() -> std::sync::MutexGuard<'static, Vec<(u64, Sweep)>> {
+    SCHEDULED.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// 取走所有安排下的删除（不做）。
+pub(crate) fn take_scheduled() -> Vec<Sweep> {
+    std::mem::take(&mut *scheduled())
+        .into_iter()
+        .map(|(_, sweep)| sweep)
+        .collect()
+}
+
 fn schedule(sweep: Sweep) {
-    let spawned = std::thread::Builder::new()
-        .name("claude-tombstone-sweep".into())
-        .spawn(move || {
-            std::thread::sleep(sweep.due.saturating_duration_since(Instant::now()));
-            if let Err(error) = sweep_tombstones(&sweep) {
-                // 删不掉也无害：Claude Code 读到空串等于没设；记录还在，退出或下次启动时再删
-                log::warn!("[Claude] 删除切换留下的空值失败，稍后再删: {error}");
-            }
-        });
-    if let Err(error) = spawned {
-        log::warn!("[Claude] 无法安排删除切换留下的空值，退出或下次启动时再删: {error}");
+    let id = NEXT_SWEEP.fetch_add(1, Ordering::SeqCst);
+    #[cfg(not(test))]
+    let due = sweep.due;
+    scheduled().push((id, sweep));
+    // 单测里不起后台线程（几秒后它会写到别的测试的临时目录里）：由测试自己调
+    // [`sweep_tombstones`] 或 [`settle_claude_tombstones`]
+    #[cfg(not(test))]
+    {
+        let spawned = std::thread::Builder::new()
+            .name("claude-tombstone-sweep".into())
+            .spawn(move || {
+                std::thread::sleep(due.saturating_duration_since(Instant::now()));
+                let sweep = {
+                    let mut queue = scheduled();
+                    let Some(index) = queue.iter().position(|(queued, _)| *queued == id) else {
+                        return;
+                    };
+                    queue.remove(index).1
+                };
+                if let Err(error) = sweep_tombstones(&sweep) {
+                    // 删不掉也无害：Claude Code 读到空串等于没设；记录还在，退出或下次启动时再删
+                    log::warn!("[Claude] 删除切换留下的空值失败，稍后再删: {error}");
+                }
+            });
+        if let Err(error) = spawned {
+            scheduled().retain(|(queued, _)| *queued != id);
+            log::warn!("[Claude] 无法安排删除切换留下的空值，退出或下次启动时再删: {error}");
+        }
     }
 }
 
-/// 测试里不起后台线程（几秒后它会写到别的测试的临时目录里）：记下来，由测试自己调
-/// [`sweep_tombstones`]。
-#[cfg(test)]
-fn schedule(sweep: Sweep) {
-    tests::SCHEDULED
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .push(sweep);
+/// 不等有效期，把安排下的删除都做完，之后读到的就是落定的 `settings.json`。
+/// 给测试用（集成测试切换后马上读文件）；正常运行时不调。
+#[doc(hidden)]
+pub fn settle_claude_tombstones() -> Result<(), AppError> {
+    for sweep in take_scheduled() {
+        sweep_tombstones(&sweep)?;
+    }
+    Ok(())
 }
 
-/// 测试用：把安排下的删除都做完（相当于等过了墓碑的有效期），之后读到的就是落定的文件。
+/// 单测用：同 [`settle_claude_tombstones`]，失败直接报。
 #[cfg(test)]
 pub(crate) fn settle_tombstones() {
-    for sweep in tests::take_scheduled() {
-        sweep_tombstones(&sweep).expect("sweep tombstones");
-    }
+    settle_claude_tombstones().expect("sweep tombstones");
 }
 
 /// 启动时（补完上次没做完的操作之后）：上次退出或崩溃前没删的墓碑，等到有效期满接着删。
@@ -392,10 +424,6 @@ mod tests {
     use super::*;
     use serde_json::{json, Value};
     use serial_test::serial;
-    use std::sync::Mutex;
-
-    /// 测试里安排下的删除（见 `schedule`）。
-    pub(super) static SCHEDULED: Mutex<Vec<Sweep>> = Mutex::new(Vec::new());
 
     struct TestHome {
         _dir: tempfile::TempDir,
@@ -424,10 +452,6 @@ mod tests {
             }
             let _ = crate::settings::reload_settings();
         }
-    }
-
-    pub(super) fn take_scheduled() -> Vec<Sweep> {
-        std::mem::take(&mut *SCHEDULED.lock().unwrap_or_else(|e| e.into_inner()))
     }
 
     fn write_live(value: &Value) {

@@ -75,6 +75,8 @@ pub use mcp::{
 };
 pub use prompt::Prompt;
 pub use provider::{Provider, ProviderMeta};
+#[doc(hidden)]
+pub use services::provider::claude_direct::settle_claude_tombstones;
 pub use services::{
     profile::{ProfilePayload, ProfileScope, ProfileService, NO_ACTIVE_PROMPT},
     provider::{reapply_current_codex_official_live, EditorSave, EditorView},
