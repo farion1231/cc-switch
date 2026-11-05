@@ -15,9 +15,9 @@ use tokio::sync::{Mutex, RwLock};
 
 use super::copilot_auth::GitHubDeviceCodeResponse;
 
-const XAI_ISSUER: &str = "https://auth.x.ai";
+pub const XAI_ISSUER: &str = "https://auth.x.ai";
 const XAI_DISCOVERY_URL: &str = "https://auth.x.ai/.well-known/openid-configuration";
-const XAI_CLIENT_ID: &str = "b1a00492-073a-47ea-816f-4c329264a828";
+pub const XAI_CLIENT_ID: &str = "b1a00492-073a-47ea-816f-4c329264a828";
 const XAI_SCOPE: &str = "openid profile email offline_access grok-cli:access api:access";
 const XAI_USER_AGENT: &str = "cc-switch-xai-oauth";
 const TOKEN_REFRESH_BUFFER_MS: i64 = 60_000;
@@ -185,6 +185,15 @@ pub struct XaiOAuthStatus {
     pub default_account_id: Option<String>,
     pub authenticated: bool,
     pub username: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GrokOAuthCredentials {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub expires_at: String,
+    pub account_id: String,
+    pub email: Option<String>,
 }
 
 pub struct XaiOAuthManager {
@@ -478,6 +487,96 @@ impl XaiOAuthManager {
         self.refresh_locks.write().await.clear();
         self.pending_device_codes.write().await.clear();
         Ok(())
+    }
+
+    pub async fn get_auth_json_credentials_for_account(
+        &self,
+        account_id: &str,
+    ) -> Result<GrokOAuthCredentials, XaiOAuthError> {
+        let access_token = self.get_valid_token_for_account(account_id).await?;
+        let accounts = self.accounts.read().await;
+        let account = accounts
+            .get(account_id)
+            .ok_or_else(|| XaiOAuthError::AccountNotFound(account_id.to_string()))?;
+        let expires_at_ms = self
+            .access_tokens
+            .read()
+            .await
+            .get(account_id)
+            .map(|c| c.expires_at_ms)
+            .unwrap_or_else(|| chrono::Utc::now().timestamp_millis() + 3600 * 1000);
+        let expires_at = chrono::DateTime::from_timestamp_millis(expires_at_ms)
+            .map(|dt| dt.to_rfc3339())
+            .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+
+        Ok(GrokOAuthCredentials {
+            access_token,
+            refresh_token: account.refresh_token.clone(),
+            expires_at,
+            account_id: account.account_id.clone(),
+            email: account.login.clone(),
+        })
+    }
+
+    pub async fn sync_live_auth_json_refresh(&self, content: &str) -> Result<bool, XaiOAuthError> {
+        let parsed: serde_json::Value = match serde_json::from_str(content) {
+            Ok(v) => v,
+            Err(_) => return Ok(false),
+        };
+        let root = match parsed.as_object() {
+            Some(obj) => obj,
+            None => return Ok(false),
+        };
+        let entry_key = format!("{XAI_ISSUER}::{XAI_CLIENT_ID}");
+        let entry = match root.get(&entry_key).and_then(|v| v.as_object()) {
+            Some(e) => e,
+            None => return Ok(false),
+        };
+        let account_id = match entry.get("user_id").and_then(|v| v.as_str()) {
+            Some(id) if !id.trim().is_empty() => id.trim(),
+            _ => return Ok(false),
+        };
+        let disk_refresh_token = match entry.get("refresh_token").and_then(|v| v.as_str()) {
+            Some(rt) if !rt.trim().is_empty() => rt.trim(),
+            _ => return Ok(false),
+        };
+        let disk_access_token = entry
+            .get("key")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|t| !t.is_empty());
+        let disk_expires_at = entry.get("expires_at").and_then(|v| v.as_str());
+
+        let mut updated = false;
+        {
+            let _mutation_guard = self.mutation_lock.lock().await;
+            let mut accounts = self.accounts.read().await.clone();
+            if let Some(account) = accounts.get_mut(account_id) {
+                if account.refresh_token != disk_refresh_token {
+                    account.refresh_token = disk_refresh_token.to_string();
+                    account.requires_reauth = false;
+                    let default_id = self.default_account_id.read().await.clone();
+                    self.persist_and_commit(accounts, default_id).await?;
+                    updated = true;
+                }
+            }
+        }
+
+        if let Some(token) = disk_access_token {
+            let expires_at_ms = disk_expires_at
+                .and_then(|dt| chrono::DateTime::parse_from_rfc3339(dt).ok())
+                .map(|dt| dt.timestamp_millis())
+                .unwrap_or_else(|| chrono::Utc::now().timestamp_millis() + 3600 * 1000);
+            self.access_tokens.write().await.insert(
+                account_id.to_string(),
+                CachedAccessToken {
+                    token: token.to_string(),
+                    expires_at_ms,
+                },
+            );
+        }
+
+        Ok(updated)
     }
 
     async fn discover_endpoints(&self) -> Result<OAuthEndpoints, XaiOAuthError> {

@@ -478,4 +478,55 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
   );
 };
 
+interface XaiBoundAccountLineProps {
+  accountId: string;
+  providerName: string;
+  note?: string;
+}
+
+export const XaiBoundAccountLine: React.FC<XaiBoundAccountLineProps> = ({
+  accountId,
+  providerName,
+  note,
+}) => {
+  const { t } = useTranslation();
+  const { accounts, isStatusSuccess } = useXaiOauth();
+  const account = accounts.find((a) => a.id === accountId);
+  if (!isStatusSuccess) return null;
+  if (!account) {
+    return (
+      <div className="mt-0.5 flex min-w-0 items-center gap-1 text-caption text-warning-text">
+        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0 truncate">
+          {t("codex.boundAccountUnavailable", {
+            defaultValue: "绑定的账号不可用",
+          })}
+        </span>
+      </div>
+    );
+  }
+  const name = providerName.trim();
+  const label =
+    note ??
+    (name === account.login || name.includes(account.login)
+      ? t("xaiOauth.accounts", { defaultValue: "xAI 账号" })
+      : account.login);
+
+  return (
+    <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
+      <span className="min-w-0 truncate" title={note ?? account.login}>
+        {label}
+      </span>
+      {account.requires_reauth && (
+        <span className="inline-flex shrink-0 items-center gap-1 text-warning-text">
+          <AlertTriangle className="h-3.5 w-3.5" />
+          {t("xaiOauth.reauthRequired", {
+            defaultValue: "需要重新登录",
+          })}
+        </span>
+      )}
+    </div>
+  );
+};
+
 export default XaiOAuthSection;

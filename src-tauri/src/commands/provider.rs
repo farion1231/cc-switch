@@ -841,7 +841,13 @@ async fn query_provider_usage_inner(
         // xAI OAuth 托管供应商的额度属绑定的 SuperGrok 账号，而非所在 app 的
         // CLI 凭据（对 codex/claude 而言 CLI 凭据是 ChatGPT/Claude 订阅，跨了
         // 订阅体系，查出来的数字张冠李戴）。
-        let quota = if provider.map(Provider::is_xai_oauth).unwrap_or(false) {
+        let quota = if provider.map(Provider::is_xai_oauth).unwrap_or(false)
+            || (app_type == AppType::GrokBuild
+                && provider
+                    .and_then(|p| p.meta.as_ref())
+                    .and_then(|m| m.managed_account_id_for("xai_oauth"))
+                    .is_some())
+        {
             let account_id = provider
                 .and_then(|p| p.meta.as_ref())
                 .and_then(|m| m.managed_account_id_for("xai_oauth"));
