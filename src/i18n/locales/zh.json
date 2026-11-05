@@ -3107,22 +3107,15 @@
     "new": "新建",
     "newBlank": "新建空白 subagent",
     "fromTemplate": "从模板新建",
-    "searchPlaceholder": "搜索名称、描述",
-    "searchAria": "搜索 subagent",
     "clearSearch": "清除搜索",
     "noSearchResults": "没有匹配「{{query}}」的 subagent",
     "loadFailed": "读取 subagent 失败",
     "tabs": {
-      "aria": "Subagent 分类",
       "managed": "已管理",
-      "managedCount": "已管理 {{count}}",
       "unmanaged": "未管理",
-      "unmanagedCount": "未管理 {{count}}",
-      "plugins": "插件",
-      "pluginsCount": "插件 {{count}}"
+      "plugins": "插件"
     },
     "empty": {
-      "title": "还没有 subagent",
       "body": "Subagent 是 Claude Code 会按描述自动委派任务的专用助手，各自有独立的上下文、提示词和工具权限。启用后写入 {{path}}，所有项目都能用。",
       "importCount": "导入 {{count}} 个现有文件"
     },
@@ -3320,6 +3313,16 @@
         "title": "文档撰写",
         "summary": "编写或更新 README、API 文档和使用指南"
       }
+    },
+    "section": {
+      "title": "Subagents",
+      "summary": "{{count}} 个",
+      "summaryEmpty": "未添加",
+      "needsAttention": "{{count}} 个需要处理",
+      "sharedHint": "所有 Claude 供应商共用。这里的修改会立即写入文件，不受本页「保存 / 取消」影响。",
+      "overrideWarning": "本供应商填写了 Subagent 模型（{{model}}）：它通过 CLAUDE_CODE_SUBAGENT_MODEL 生效，会覆盖下面各 Subagent 自己设置的 model。",
+      "pluginsToggle": "插件提供的 Subagent {{count}} 个（只读）",
+      "backToList": "返回 Subagent 列表"
     }
   },
   "profiles": {
@@ -4519,7 +4522,6 @@
     "usage": "用量统计",
     "auth": "授权中心",
     "authNeedsReauth": "有账号需要重新登录",
-    "subagents": "Subagents",
     "prompts": "提示词",
     "sessions": "会话",
     "apps": "应用",

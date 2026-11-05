@@ -3037,22 +3037,15 @@
     "new": "Yeni",
     "newBlank": "Boş subagent",
     "fromTemplate": "Şablondan başla",
-    "searchPlaceholder": "Ad veya açıklama ara",
-    "searchAria": "Subagent ara",
     "clearSearch": "Aramayı temizle",
     "noSearchResults": "\"{{query}}\" ile eşleşen subagent yok",
     "loadFailed": "Subagent'lar yüklenemedi",
     "tabs": {
-      "aria": "Subagent kategorileri",
       "managed": "Yönetilen",
-      "managedCount": "Yönetilen {{count}}",
       "unmanaged": "Yönetilmeyen",
-      "unmanagedCount": "Yönetilmeyen {{count}}",
-      "plugins": "Eklentiler",
-      "pluginsCount": "Eklentiler {{count}}"
+      "plugins": "Eklentiler"
     },
     "empty": {
-      "title": "Henüz subagent yok",
       "body": "Subagent'lar, Claude Code'un açıklamalarına göre görev devrettiği özel asistanlardır; her birinin kendi bağlamı, istemi ve araç izinleri vardır. Etkin subagent'lar {{path}} dizinine yazılır ve her projede çalışır.",
       "importCount": "Mevcut {{count}} dosyayı içe aktar"
     },
@@ -3250,6 +3243,16 @@
         "title": "Doküman yazarı",
         "summary": "README, API dokümanları ve kılavuzları yazar veya günceller"
       }
+    },
+    "section": {
+      "title": "Subagents",
+      "summary": "{{count}} adet",
+      "summaryEmpty": "Henüz yok",
+      "needsAttention": "{{count}} tanesi ilgi bekliyor",
+      "sharedHint": "Tüm Claude sağlayıcıları tarafından paylaşılır. Buradaki değişiklikler hemen diske yazılır ve bu sayfanın Kaydet / İptal düğmelerinden etkilenmez.",
+      "overrideWarning": "Bu sağlayıcı bir Subagent modeli ({{model}}) ayarlıyor. CLAUDE_CODE_SUBAGENT_MODEL ile uygulanır ve aşağıdaki her subagent'ın kendi model ayarını geçersiz kılar.",
+      "pluginsToggle": "Eklentilerden {{count}} adet (salt okunur)",
+      "backToList": "Subagent listesine dön"
     }
   },
   "profiles": {
@@ -4444,7 +4447,6 @@
     "usage": "Kullanım",
     "auth": "Hesaplar",
     "authNeedsReauth": "Bir hesapta tekrar oturum açılması gerekiyor",
-    "subagents": "Subagents",
     "prompts": "İstemler",
     "sessions": "Oturumlar",
     "apps": "Uygulamalar",

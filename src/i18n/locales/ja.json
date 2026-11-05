@@ -3107,22 +3107,15 @@
     "new": "新規作成",
     "newBlank": "空の subagent",
     "fromTemplate": "テンプレートから作成",
-    "searchPlaceholder": "名前・説明を検索",
-    "searchAria": "subagent を検索",
     "clearSearch": "検索をクリア",
     "noSearchResults": "「{{query}}」に一致する subagent はありません",
     "loadFailed": "subagent を読み込めませんでした",
     "tabs": {
-      "aria": "Subagent の分類",
       "managed": "管理中",
-      "managedCount": "管理中 {{count}}",
       "unmanaged": "未管理",
-      "unmanagedCount": "未管理 {{count}}",
-      "plugins": "プラグイン",
-      "pluginsCount": "プラグイン {{count}}"
+      "plugins": "プラグイン"
     },
     "empty": {
-      "title": "subagent はまだありません",
       "body": "Subagent は説明に基づいて Claude Code が自動的にタスクを委任する専用アシスタントで、独自のコンテキスト、プロンプト、ツール権限を持ちます。有効にすると {{path}} に書き込まれ、すべてのプロジェクトで使えます。",
       "importCount": "既存の {{count}} 件をインポート"
     },
@@ -3320,6 +3313,16 @@
         "title": "ドキュメント作成",
         "summary": "README、API ドキュメント、ガイドを作成・更新"
       }
+    },
+    "section": {
+      "title": "Subagents",
+      "summary": "{{count}} 件",
+      "summaryEmpty": "未登録",
+      "needsAttention": "{{count}} 件要対応",
+      "sharedHint": "すべての Claude プロバイダーで共有されます。ここでの変更はすぐにファイルへ書き込まれ、このページの「保存 / キャンセル」の影響を受けません。",
+      "overrideWarning": "このプロバイダーには Subagent モデル（{{model}}）が設定されています。CLAUDE_CODE_SUBAGENT_MODEL として適用され、下の各 Subagent が自分で設定した model より優先されます。",
+      "pluginsToggle": "プラグイン提供の Subagent {{count}} 件（読み取り専用）",
+      "backToList": "Subagent 一覧に戻る"
     }
   },
   "profiles": {
@@ -4519,7 +4522,6 @@
     "usage": "使用量",
     "auth": "アカウント",
     "authNeedsReauth": "再ログインが必要なアカウントがあります",
-    "subagents": "Subagents",
     "prompts": "プロンプト",
     "sessions": "セッション",
     "apps": "アプリ",

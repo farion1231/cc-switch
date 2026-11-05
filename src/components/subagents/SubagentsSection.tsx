@@ -1,11 +1,22 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Bot, ChevronDown, Copy, Download, Plus } from "lucide-react";
+import {
+  ArrowLeft,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  Download,
+  Plus,
+} from "lucide-react";
 import { toast } from "@/lib/toast";
 import { copyText } from "@/lib/clipboard";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { AppPageHeader } from "@/components/shell/AppPageHeader";
 import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,8 +27,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { HelpTip } from "@/components/ui/help-tip";
 import { HoverTip } from "@/components/ui/hover-tip";
-import { PageTabs } from "@/components/ui/page-tabs";
-import { SearchField } from "@/components/ui/search-field";
 import { renderSegs } from "@/components/prompts/promptUtils";
 import {
   useDeleteSubagent,
@@ -45,7 +54,6 @@ import SubagentFormPanel, {
 import { SubagentDriftDialog } from "./SubagentDriftDialog";
 import { SubagentListItem } from "./SubagentListItem";
 import {
-  NoSearchResults,
   SubagentPluginList,
   SubagentUnmanagedList,
 } from "./SubagentUnmanagedList";
@@ -59,12 +67,12 @@ import {
   describeSubagentError,
   fieldsOf,
   isForceableConflict,
-  matchesQuery,
   parseSubagentError,
   uniqueCopyName,
 } from "./subagentUtils";
 
-type SubagentsTab = "managed" | "unmanaged" | "plugins";
+/** 区块里的子视图：已管理列表，或导入未管理的文件 */
+type SectionView = "managed" | "unmanaged";
 
 interface EditorState {
   subagent?: Subagent;
@@ -79,20 +87,31 @@ interface ConflictState {
   run: () => Promise<void>;
 }
 
-interface SubagentsPanelProps {
-  /** 写入进行中、确认框打开时锁住侧栏导航（卸载面板会丢掉进行中的状态） */
-  onNavigationBlockedChange?: (blocked: boolean) => void;
+interface SubagentsSectionProps {
+  /**
+   * 正在编辑的供应商表单里「Subagent」一档的值（CLAUDE_CODE_SUBAGENT_MODEL）。
+   * 这家供应商生效时它优先于各子代理文件里的 model，所以在列表上方提示。
+   */
+  subagentModelOverride?: string;
 }
 
 const DEFAULT_DIR = "~/.claude/agents";
 
-/** 全局页「Subagents」：管理 ~/.claude/agents 下的 Claude Code 用户级 subagent。 */
-export default function SubagentsPanel({
-  onNavigationBlockedChange,
-}: SubagentsPanelProps) {
+/**
+ * Claude 供应商编辑页里的「子代理」区块：管理 ~/.claude/agents 下的用户级 subagent。
+ *
+ * 子代理文件是全局的，所有 Claude 供应商共用；这里的增删改即时写盘，不跟着供应商表单的
+ * 保存 / 取消走。区块渲染在供应商的 <form> 里：仓库的 Button 没有默认 type，这里每个按钮
+ * 都必须写 type="button"，否则点一下就提交了供应商表单；也不放会响应回车的输入框
+ * （编辑器、确认框都在 portal 里，不在 form 的 DOM 子树）。
+ */
+export default function SubagentsSection({
+  subagentModelOverride,
+}: SubagentsSectionProps) {
   const { t } = useTranslation();
-  const [tab, setTab] = useState<SubagentsTab>("managed");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [expanded, setExpanded] = useState(false);
+  const [view, setView] = useState<SectionView>("managed");
+  const [pluginsExpanded, setPluginsExpanded] = useState(false);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [driftTarget, setDriftTarget] = useState<Subagent | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Subagent | null>(null);
@@ -126,27 +145,11 @@ export default function SubagentsPanel({
     () => new Set(rows.map((row) => row.fields.name || row.subagent.name)),
     [rows],
   );
-  const filteredRows = rows.filter((row) =>
-    matchesQuery(searchQuery, [
-      row.fields.name,
-      row.subagent.name,
-      row.fields.description ?? row.subagent.description,
-      row.subagent.fileName,
-    ]),
-  );
-
-  const navigationBlocked =
-    writePending ||
-    conflict !== null ||
-    driftTarget !== null ||
-    deleteTarget !== null;
-  useEffect(() => {
-    onNavigationBlockedChange?.(navigationBlocked);
-  }, [navigationBlocked, onNavigationBlockedChange]);
-  useEffect(
-    () => () => onNavigationBlockedChange?.(false),
-    [onNavigationBlockedChange],
-  );
+  // 折叠时也要看得出有没有要处理的：标题行上显示数量
+  const attentionCount = rows.filter(
+    (row) =>
+      row.subagent.status === "drifted" || row.subagent.status === "missing",
+  ).length;
 
   const beginWrite = () => {
     if (writeLockRef.current) return false;
@@ -382,7 +385,7 @@ export default function SubagentsPanel({
           t("subagents.toast.imported", { count: imported.length }),
           { closeButton: true },
         );
-        setTab("managed");
+        setView("managed");
       },
     });
   };
@@ -405,14 +408,14 @@ export default function SubagentsPanel({
       <DropdownMenuTrigger asChild>
         <Button
           type="button"
-          variant="solid"
-          size="regular"
-          className="pe-2.5"
+          variant="neutral"
+          size="compact"
+          className="pe-2"
           disabled={controlsDisabled}
         >
-          <Plus className="h-4 w-4" strokeWidth={2} />
+          <Plus className="h-3.5 w-3.5" strokeWidth={2} />
           {t("subagents.new")}
-          <ChevronDown className="h-3.5 w-3.5" strokeWidth={2} />
+          <ChevronDown className="h-3 w-3" strokeWidth={2} />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-[240px]">
@@ -435,153 +438,101 @@ export default function SubagentsPanel({
     </DropdownMenu>
   );
 
-  const header = (
-    <AppPageHeader
-      icon={<Bot className="h-5 w-5" strokeWidth={1.5} />}
-      title="Subagents"
-      titleExtra={
-        <>
-          <HelpTip title={t("subagents.helpTitle")}>
-            {t("subagents.helpText")}
-          </HelpTip>
-          <HoverTip
-            content={
-              dirQuery.data && !dirQuery.data.exists
-                ? t("subagents.dirNotExists")
-                : t("subagents.copyDir")
-            }
-          >
-            <button
-              type="button"
-              onClick={() =>
-                copyWithToast(
-                  dirQuery.data?.path ?? dirDisplayPath,
-                  t("subagents.toast.dirCopied"),
-                )
-              }
-              aria-label={t("subagents.copyDirAria", { path: dirDisplayPath })}
-              className="ms-2 inline-flex h-6 max-w-[280px] items-center gap-1.5 rounded-full bg-subtle px-2.5 font-mono text-caption text-fg-2 transition-colors hover:bg-selected hover:text-fg-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <span className="truncate">{dirDisplayPath}</span>
-              <Copy
-                aria-hidden="true"
-                className="h-3 w-3 shrink-0"
-                strokeWidth={1.5}
-              />
-            </button>
-          </HoverTip>
-        </>
+  const dirChip = (
+    <HoverTip
+      content={
+        dirQuery.data && !dirQuery.data.exists
+          ? t("subagents.dirNotExists")
+          : t("subagents.copyDir")
       }
-      actions={
-        <>
-          <Button
-            type="button"
-            variant="neutral"
-            size="regular"
-            disabled={controlsDisabled}
-            onClick={() => setTab("unmanaged")}
-          >
-            <Download className="h-4 w-4" strokeWidth={2} />
-            {t("subagents.import")}
-            {unmanaged.length > 0 ? (
-              <span className="text-caption font-normal tabular-nums text-fg-2">
-                {unmanaged.length}
-              </span>
-            ) : null}
-          </Button>
-          {newMenu}
-        </>
-      }
-    />
+    >
+      <button
+        type="button"
+        onClick={() =>
+          copyWithToast(
+            dirQuery.data?.path ?? dirDisplayPath,
+            t("subagents.toast.dirCopied"),
+          )
+        }
+        aria-label={t("subagents.copyDirAria", { path: dirDisplayPath })}
+        className="inline-flex h-6 max-w-[240px] items-center gap-1.5 rounded-full bg-subtle px-2.5 font-mono text-caption text-fg-2 transition-colors hover:bg-selected hover:text-fg-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <span className="truncate">{dirDisplayPath}</span>
+        <Copy
+          aria-hidden="true"
+          className="h-3 w-3 shrink-0"
+          strokeWidth={1.5}
+        />
+      </button>
+    </HoverTip>
   );
 
-  const tabs = (
-    <PageTabs<SubagentsTab>
-      aria-label={t("subagents.tabs.aria")}
-      idPrefix="subagents-tab"
-      controls="subagents-tabpanel"
-      className="h-11"
-      value={tab}
-      onValueChange={setTab}
-      items={[
-        {
-          value: "managed",
-          label: t("subagents.tabs.managedCount", { count: subagents.length }),
-        },
-        {
-          value: "unmanaged",
-          label: t("subagents.tabs.unmanagedCount", {
-            count: unmanaged.length,
-          }),
-        },
-        {
-          value: "plugins",
-          label: t("subagents.tabs.pluginsCount", { count: plugins.length }),
-        },
-      ]}
-      trailing={
-        <SearchField
-          containerClassName="w-[240px]"
-          value={searchQuery}
-          onValueChange={setSearchQuery}
-          clearLabel={t("subagents.clearSearch")}
-          aria-label={t("subagents.searchAria")}
-          placeholder={t("subagents.searchPlaceholder")}
-          autoComplete="off"
-        />
-      }
-    />
+  const toolbar = (
+    <div className="flex flex-wrap items-center gap-2">
+      <p className="m-0 min-w-0 flex-1 text-caption text-fg-2">
+        {t("subagents.section.sharedHint")}
+      </p>
+      {dirChip}
+      <Button
+        type="button"
+        variant="neutral"
+        size="compact"
+        disabled={controlsDisabled}
+        onClick={() => setView("unmanaged")}
+      >
+        <Download className="h-3.5 w-3.5" strokeWidth={2} />
+        {t("subagents.import")}
+        {unmanaged.length > 0 ? (
+          <span className="text-caption font-normal tabular-nums text-fg-2">
+            {unmanaged.length}
+          </span>
+        ) : null}
+      </Button>
+      {newMenu}
+    </div>
   );
+
+  const overrideModel = subagentModelOverride?.trim();
+  const overrideNotice = overrideModel ? (
+    <p className="m-0 text-xs leading-relaxed text-warning-text">
+      {t("subagents.section.overrideWarning", { model: overrideModel })}
+    </p>
+  ) : null;
 
   const renderEmpty = () => (
-    <div className="flex flex-1 flex-col items-center justify-center gap-2 px-10 pb-10 text-center">
-      <h2 className="m-0 text-section text-fg-1">
-        {t("subagents.empty.title")}
-      </h2>
+    <div className="flex flex-col items-center gap-2.5 rounded-panel border border-dashed border-border px-6 py-5 text-center">
       <p className="m-0 max-w-[520px] text-body text-fg-2">
         {renderSegs(t("subagents.empty.body", { path: dirDisplayPath }))}
       </p>
-      <div className="mt-2 flex gap-2">
+      <div className="flex flex-wrap justify-center gap-2">
         {unmanaged.length > 0 ? (
           <Button
+            type="button"
             variant="neutral"
-            size="regular"
+            size="compact"
             disabled={controlsDisabled}
-            onClick={() => setTab("unmanaged")}
+            onClick={() => setView("unmanaged")}
           >
             <Download className="h-3.5 w-3.5" />
             {t("subagents.empty.importCount", { count: unmanaged.length })}
           </Button>
         ) : null}
-        <Button
-          variant="neutral"
-          size="regular"
-          disabled={controlsDisabled}
-          onClick={() => openNew(BLANK_SUBAGENT_CONTENT)}
-        >
-          <Plus className="h-3.5 w-3.5" />
-          {t("subagents.newBlank")}
-        </Button>
-      </div>
-      <p className="m-0 mt-5 text-caption text-fg-2">
-        {t("subagents.fromTemplate")}
-      </p>
-      <div className="grid w-full max-w-[640px] grid-cols-1 gap-2 sm:grid-cols-2">
         {SUBAGENT_TEMPLATES.map((template) => (
-          <button
+          <HoverTip
             key={template.id}
-            type="button"
-            disabled={controlsDisabled}
-            onClick={() => openTemplate(template)}
-            className="flex flex-col items-start gap-0.5 rounded-panel border border-border bg-surface px-3.5 py-3 text-left transition-colors hover:bg-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+            content={t(`subagents.templates.${template.id}.summary`)}
           >
-            <span className="text-body font-medium text-fg-1">
+            <Button
+              type="button"
+              variant="neutral"
+              size="compact"
+              disabled={controlsDisabled}
+              onClick={() => openTemplate(template)}
+            >
+              <Plus className="h-3.5 w-3.5" />
               {t(`subagents.templates.${template.id}.title`)}
-            </span>
-            <span className="text-caption text-fg-2">
-              {t(`subagents.templates.${template.id}.summary`)}
-            </span>
-          </button>
+            </Button>
+          </HoverTip>
         ))}
       </div>
     </div>
@@ -590,23 +541,24 @@ export default function SubagentsPanel({
   const renderManaged = () => {
     if (listQuery.isLoading) {
       return (
-        <div className="py-12 text-center text-body text-fg-2">
+        <div className="py-6 text-center text-body text-fg-2">
           {t("common.loading")}
         </div>
       );
     }
     if (listQuery.isError) {
       return (
-        <div className="flex flex-1 flex-col items-center justify-center gap-2.5 px-10 pb-12 text-center">
-          <h2 className="m-0 text-section">{t("subagents.loadFailed")}</h2>
-          <code className="max-w-[520px] rounded-[8px] bg-subtle px-3 py-2 text-left font-mono text-caption text-fg-2 [overflow-wrap:anywhere]">
+        <div className="flex flex-col items-start gap-2">
+          <p className="m-0 text-body text-danger-text">
+            {t("subagents.loadFailed")}
+          </p>
+          <code className="max-w-full rounded-[8px] bg-subtle px-3 py-2 font-mono text-caption text-fg-2 [overflow-wrap:anywhere]">
             {extractErrorMessage(listQuery.error) || String(listQuery.error)}
           </code>
           <Button
             type="button"
             variant="neutral"
-            size="regular"
-            className="mt-1"
+            size="compact"
             onClick={() => void listQuery.refetch()}
           >
             {t("common.retry")}
@@ -615,20 +567,12 @@ export default function SubagentsPanel({
       );
     }
     if (rows.length === 0) return renderEmpty();
-    if (filteredRows.length === 0) {
-      return (
-        <NoSearchResults
-          query={searchQuery}
-          onClear={() => setSearchQuery("")}
-        />
-      );
-    }
     return (
       <ul
         aria-label={t("subagents.tabs.managed")}
-        className="m-0 min-h-0 shrink list-none overflow-y-auto scroll-stable rounded-panel border border-border bg-surface p-0"
+        className="m-0 list-none rounded-panel border border-border bg-surface p-0"
       >
-        {filteredRows.map(({ subagent, fields }, index) => {
+        {rows.map(({ subagent, fields }, index) => {
           const name = fields.name || subagent.name;
           return (
             <SubagentListItem
@@ -666,6 +610,39 @@ export default function SubagentsPanel({
     );
   };
 
+  // 插件自带的子代理只读，默认收成一行，免得把供应商编辑页拉得太长
+  const pluginsBlock =
+    plugins.length > 0 ? (
+      <div className="space-y-2">
+        <button
+          type="button"
+          aria-expanded={pluginsExpanded}
+          onClick={() => setPluginsExpanded((open) => !open)}
+          className="inline-flex items-center gap-1 rounded text-caption text-fg-2 hover:text-fg-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {pluginsExpanded ? (
+            <ChevronDown className="h-3.5 w-3.5" />
+          ) : (
+            <ChevronRight className="h-3.5 w-3.5" />
+          )}
+          {t("subagents.section.pluginsToggle", { count: plugins.length })}
+        </button>
+        {pluginsExpanded ? (
+          <SubagentPluginList
+            items={plugins}
+            loading={pluginsQuery.isLoading}
+            searchQuery=""
+            onClearSearch={() => undefined}
+          />
+        ) : null}
+      </div>
+    ) : null;
+
+  const summary =
+    rows.length === 0
+      ? t("subagents.section.summaryEmpty")
+      : t("subagents.section.summary", { count: rows.length });
+
   const conflictText = (() => {
     if (!conflict) return { title: "", message: "", confirm: "" };
     if (conflict.code === "SUBAGENT_DRIFTED") {
@@ -687,38 +664,76 @@ export default function SubagentsPanel({
   })();
 
   return (
-    <>
-      {header}
-      <div id="main-content" className="flex min-h-0 flex-1 flex-col">
-        <div className="shrink-0 px-6 pt-1">{tabs}</div>
-        <div
-          id="subagents-tabpanel"
-          role="tabpanel"
-          aria-labelledby={`subagents-tab-${tab}`}
-          className="flex min-h-0 flex-1 flex-col px-6 pb-5 pt-3"
-        >
-          {tab === "managed" ? (
-            renderManaged()
-          ) : tab === "unmanaged" ? (
+    <Collapsible
+      open={expanded}
+      onOpenChange={setExpanded}
+      // 这里的开关、勾选是即时写盘的子代理操作，不是供应商表单的改动；编辑页的未保存跟踪
+      // 按 DOM closest 判断豁免，所以 portal 出去的编辑器另外在 SubagentFormPanel 上标记
+      data-unsaved-ignore=""
+      className="rounded-lg border border-border p-4"
+    >
+      <div className="flex items-center gap-0.5">
+        <CollapsibleTrigger asChild>
+          <Button
+            type="button"
+            variant={null}
+            size="sm"
+            className="h-8 min-w-0 justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70 active:scale-100"
+          >
+            {expanded ? (
+              <ChevronDown className="h-4 w-4" />
+            ) : (
+              <ChevronRight className="h-4 w-4" />
+            )}
+            {t("subagents.section.title")}
+            <span className="text-caption font-normal text-fg-2">
+              {summary}
+            </span>
+            {attentionCount > 0 ? (
+              <span className="text-caption font-normal text-warning-text">
+                {t("subagents.section.needsAttention", {
+                  count: attentionCount,
+                })}
+              </span>
+            ) : null}
+          </Button>
+        </CollapsibleTrigger>
+        <HelpTip title={t("subagents.helpTitle")}>
+          {t("subagents.helpText")}
+        </HelpTip>
+      </div>
+      <CollapsibleContent className="space-y-3 pt-2">
+        {view === "managed" ? (
+          <>
+            {toolbar}
+            {overrideNotice}
+            {renderManaged()}
+            {pluginsBlock}
+          </>
+        ) : (
+          <>
+            <Button
+              type="button"
+              variant="neutral"
+              size="compact"
+              disabled={writePending}
+              onClick={() => setView("managed")}
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              {t("subagents.section.backToList")}
+            </Button>
             <SubagentUnmanagedList
               items={unmanaged}
               loading={unmanagedQuery.isLoading}
-              searchQuery={searchQuery}
+              searchQuery=""
               dirDisplayPath={dirDisplayPath}
               pending={writePending}
-              onClearSearch={() => setSearchQuery("")}
+              onClearSearch={() => undefined}
               onImport={handleImport}
             />
-          ) : (
-            <SubagentPluginList
-              items={plugins}
-              loading={pluginsQuery.isLoading}
-              searchQuery={searchQuery}
-              onClearSearch={() => setSearchQuery("")}
-            />
-          )}
-        </div>
-      </div>
+          </>
+        )}
+      </CollapsibleContent>
 
       {editor ? (
         <SubagentFormPanel
@@ -777,6 +792,6 @@ export default function SubagentsPanel({
         onConfirm={() => void confirmConflict()}
         onCancel={() => setConflict(null)}
       />
-    </>
+    </Collapsible>
   );
 }
