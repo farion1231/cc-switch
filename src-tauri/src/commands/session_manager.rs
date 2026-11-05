@@ -1,6 +1,6 @@
 #![allow(non_snake_case)]
 
-use tauri::ipc::{Channel, Response};
+use tauri::ipc::{Channel, InvokeResponseBody, IpcResponse, Response};
 use tauri::Emitter;
 use tauri_plugin_dialog::DialogExt;
 
@@ -8,6 +8,10 @@ use crate::session_manager;
 use crate::session_manager::cache::chunk_ranges;
 use crate::session_manager::content::{self, BlockContent};
 use crate::session_manager::model::{ContentRef, ImageRef, TranscriptChunk};
+
+#[cfg(test)]
+#[path = "session_manager_tests.rs"]
+mod tests;
 
 #[tauri::command]
 pub async fn list_sessions() -> Result<Vec<session_manager::SessionMeta>, String> {
@@ -60,10 +64,13 @@ pub async fn clear_session_index() -> Result<bool, String> {
 pub async fn get_session_messages(
     providerId: String,
     sourcePath: String,
-) -> Result<Vec<session_manager::SessionMessage>, String> {
+) -> Result<InvokeResponseBody, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        session_manager::load_transcript(&providerId, &sourcePath)
-            .map(|loaded| loaded.transcript.messages.clone())
+        session_manager::load_transcript(&providerId, &sourcePath).and_then(|loaded| {
+            (&loaded.transcript.messages)
+                .body()
+                .map_err(|e| e.to_string())
+        })
     })
     .await
     .map_err(|e| format!("Failed to load session messages: {e}"))?
@@ -76,35 +83,38 @@ pub async fn get_session_messages(
 pub async fn stream_session_messages(
     providerId: String,
     sourcePath: String,
-    onChunk: Channel<TranscriptChunk>,
+    onChunk: Channel,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        // Channel owns the serialized body; the cached messages only need to be
+        // borrowed until serialization completes, not cloned for each IPC chunk.
+        let send = |chunk: TranscriptChunk<'_>| {
+            let body = chunk
+                .body()
+                .map_err(|e| format!("Failed to serialize session chunk: {e}"))?;
+            onChunk
+                .send(body)
+                .map_err(|e| format!("Failed to send session chunk: {e}"))
+        };
         let loaded = match session_manager::load_transcript(&providerId, &sourcePath) {
             Ok(loaded) => loaded,
             Err(message) => {
-                let _ = onChunk.send(TranscriptChunk::Error {
-                    message: message.clone(),
-                });
+                let _ = send(TranscriptChunk::Error { message: &message });
                 return Err(message);
             }
         };
         let transcript = loaded.transcript;
-        let send = |chunk: TranscriptChunk| {
-            onChunk
-                .send(chunk)
-                .map_err(|e| format!("Failed to send session chunk: {e}"))
-        };
 
         send(TranscriptChunk::Header {
             total: transcript.messages.len(),
-            turns: transcript.turns.clone(),
+            turns: &transcript.turns,
             cached: loaded.cached,
             parse_ms: loaded.parse_ms,
         })?;
         for (start, end) in chunk_ranges(&transcript.message_bytes) {
             send(TranscriptChunk::Messages {
                 start,
-                messages: transcript.messages[start..end].to_vec(),
+                messages: &transcript.messages[start..end],
             })?;
         }
         send(TranscriptChunk::Done {

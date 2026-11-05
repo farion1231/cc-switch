@@ -74,8 +74,16 @@ struct SummaryBucket {
 #[serde(rename_all = "camelCase")]
 struct LoadCodeAssistResponse {
     current_tier: Option<Value>,
+    /// 订阅（Google AI Pro / Ultra）在这里；有时 Pro 号也缺，缺了看 currentTier
+    paid_tier: Option<Value>,
     #[serde(default)]
     ineligible_tiers: Vec<IneligibleTier>,
+}
+
+/// 一个账号的额度和套餐
+pub struct AccountQuota {
+    pub tiers: Vec<QuotaTier>,
+    pub plan: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -146,7 +154,16 @@ fn parse_version(stdout: &[u8]) -> Option<String> {
         .map(str::to_string)
 }
 
-pub async fn fetch(access_token: &str) -> Result<Vec<QuotaTier>, QuotaError> {
+/// 额度和套餐一起问（两个请求并行）；套餐问不到只是不显示，不影响额度。
+pub async fn fetch(access_token: &str) -> Result<AccountQuota, QuotaError> {
+    let (tiers, plan) = tokio::join!(fetch_tiers(access_token), fetch_plan(access_token));
+    Ok(AccountQuota {
+        tiers: tiers?,
+        plan,
+    })
+}
+
+async fn fetch_tiers(access_token: &str) -> Result<Vec<QuotaTier>, QuotaError> {
     let (status, body) = post(access_token, "retrieveUserQuotaSummary", json!({})).await?;
     if status == reqwest::StatusCode::UNAUTHORIZED {
         return Err(QuotaError::Unauthorized);
@@ -165,15 +182,28 @@ pub async fn fetch(access_token: &str) -> Result<Vec<QuotaTier>, QuotaError> {
     parse(&body).ok_or(QuotaError::Parse)
 }
 
-/// 账号没有使用资格时返回 Google 给的原因；有资格或问不到时返回 `None`。
-async fn ineligible_reason(access_token: &str) -> Option<String> {
-    let (status, body) = post(
+async fn fetch_plan(access_token: &str) -> Option<String> {
+    let (status, body) = load_code_assist(access_token).await.ok()?;
+    status
+        .is_success()
+        .then(|| code_assist_plan(&body))
+        .flatten()
+}
+
+async fn load_code_assist(
+    access_token: &str,
+) -> Result<(reqwest::StatusCode, bytes::Bytes), QuotaError> {
+    post(
         access_token,
         "loadCodeAssist",
         json!({"metadata": {"ideType": "ANTIGRAVITY"}}),
     )
     .await
-    .ok()?;
+}
+
+/// 账号没有使用资格时返回 Google 给的原因；有资格或问不到时返回 `None`。
+async fn ineligible_reason(access_token: &str) -> Option<String> {
+    let (status, body) = load_code_assist(access_token).await.ok()?;
     status
         .is_success()
         .then(|| parse_ineligible_reason(&body))
@@ -216,6 +246,29 @@ fn parse(body: &[u8]) -> Option<Vec<QuotaTier>> {
                 )
             }),
     )
+}
+
+/// `loadCodeAssist` 响应里的套餐名：先看 `paidTier.name`（「Google AI Pro」），没有时按
+/// `currentTier.id` 写 Free / Paid（gemini-cli 和 CodexBar 都这样取）。Gemini CLI 的额度也用它
+pub(crate) fn code_assist_plan(body: &[u8]) -> Option<String> {
+    let response: LoadCodeAssistResponse = serde_json::from_slice(body).ok()?;
+    let name = |tier: &Option<Value>| {
+        tier.as_ref()?
+            .get("name")?
+            .as_str()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string)
+    };
+    if let Some(name) = name(&response.paid_tier) {
+        return Some(name);
+    }
+    let id = response.current_tier.as_ref()?.get("id")?.as_str()?;
+    match id {
+        "free-tier" => Some("Free".to_string()),
+        "standard-tier" => Some("Paid".to_string()),
+        _ => name(&response.current_tier),
+    }
 }
 
 /// 只有不合格档、没有当前档时才算没资格。
@@ -307,6 +360,30 @@ mod tests {
             br#"{"currentTier":{"id":"free-tier"},"ineligibleTiers":[{"reasonMessage":"x"}]}"#;
         assert_eq!(parse_ineligible_reason(eligible), None);
         assert_eq!(parse_ineligible_reason(b"{}"), None);
+    }
+
+    #[test]
+    fn plan_prefers_the_paid_tier_name() {
+        let plan = |body: &str| code_assist_plan(body.as_bytes());
+        assert_eq!(
+            plan(r#"{"currentTier":{"id":"standard-tier","name":"Gemini Code Assist"},"paidTier":{"id":"g1-pro-tier","name":"Google AI Pro"}}"#)
+                .as_deref(),
+            Some("Google AI Pro")
+        );
+        // paidTier 缺了：按当前档写
+        assert_eq!(
+            plan(r#"{"currentTier":{"id":"standard-tier","name":"Gemini Code Assist"}}"#)
+                .as_deref(),
+            Some("Paid")
+        );
+        assert_eq!(
+            plan(
+                r#"{"currentTier":{"id":"free-tier","name":"Gemini Code Assist for individuals"}}"#
+            )
+            .as_deref(),
+            Some("Free")
+        );
+        assert_eq!(plan(r#"{"ineligibleTiers":[]}"#), None);
     }
 
     #[test]

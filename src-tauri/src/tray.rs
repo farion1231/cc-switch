@@ -29,7 +29,7 @@ use crate::services::usage_cache::UsageCache;
 use crate::store::AppState;
 
 const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str = "official_subscription";
-/// Copilot 用量结果的单位（`commands::provider` 的 `COPILOT_UNIT_PREMIUM`）：高级请求次数。
+/// Copilot 用量结果的单位（`commands::provider` 的 `COPILOT_UNIT_PREMIUM`）：Credits（接口里仍叫 premium_interactions）。
 const COPILOT_UNIT_PREMIUM: &str = "requests";
 
 pub const TRAY_ID: &str = "cc-switch";
@@ -229,7 +229,7 @@ impl TrayTexts {
                 tier_gemini_pro: "Pro",
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
-                tier_premium: "Premium",
+                tier_premium: "Credits",
                 tier_left: "{label} {value}% left",
                 tier_used: "{label} {value}% used",
                 tier_used_up: "{label} used up",
@@ -286,7 +286,6 @@ impl TrayTexts {
                 texts.tier_gemini_pro = "Pro";
                 texts.tier_gemini_flash = "Flash";
                 texts.tier_gemini_flash_lite = "Flash Lite";
-                texts.tier_premium = "Premium";
                 texts.tier_left = "{label} %{value} kaldı";
                 texts.tier_used = "{label} %{value} kullanıldı";
                 texts.tier_used_up = "{label} tükendi";
@@ -342,7 +341,7 @@ impl TrayTexts {
                 tier_gemini_pro: "Pro",
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
-                tier_premium: "プレミアム",
+                tier_premium: "Credits",
                 tier_left: "{label} 残り {value}%",
                 tier_used: "{label} 使用済み {value}%",
                 tier_used_up: "{label} 使い切り",
@@ -396,7 +395,7 @@ impl TrayTexts {
                 tier_gemini_pro: "Pro",
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
-                tier_premium: "進階請求",
+                tier_premium: "Credits",
                 tier_left: "{labelSp}剩餘 {value}%",
                 tier_used: "{labelSp}已用 {value}%",
                 tier_used_up: "{labelSp}已用完",
@@ -450,7 +449,7 @@ impl TrayTexts {
                 tier_gemini_pro: "Pro",
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
-                tier_premium: "高级请求",
+                tier_premium: "Credits",
                 tier_left: "{labelSp}剩余 {value}%",
                 tier_used: "{labelSp}已用 {value}%",
                 tier_used_up: "{labelSp}已用完",
@@ -738,12 +737,15 @@ fn plan_line(texts: &TrayTexts, data: &crate::provider::UsageData) -> Option<Quo
     let unit = data.unit.as_deref();
     let total = data.total.filter(|total| *total != -1.0);
     if unit == Some(COPILOT_UNIT_PREMIUM) {
-        if let (Some(remaining), Some(total)) = (data.remaining, total) {
-            if total > 0.0 {
-                let utilization = (total - remaining) / total * 100.0;
-                return Some(tier_line(texts, texts.tier_premium, utilization, None));
-            }
+        // Free 计划不含 Credits（总额 0）：不显示，别落到下面的余额分支写成「余额 0」
+        let (Some(remaining), Some(total)) = (data.remaining, total) else {
+            return None;
+        };
+        if total <= 0.0 {
+            return None;
         }
+        let utilization = (total - remaining) / total * 100.0;
+        return Some(tier_line(texts, texts.tier_premium, utilization, None));
     }
     if let Some(remaining) = data.remaining {
         // 余额不提示「快用完」，只有用完才算（和卡片 `quotaRules.balanceLine` 一致）；
@@ -1220,7 +1222,12 @@ fn sort_providers(providers: &indexmap::IndexMap<String, Provider>) -> Vec<(&Str
     sorted
 }
 
-fn provider_hint(provider: &Provider) -> Option<String> {
+/// 副标题：备注 > 绑定的 Claude 账号（同主界面卡片） > 官网域名。
+fn provider_hint(
+    app: &AppType,
+    provider: &Provider,
+    claude_accounts: &HashMap<String, String>,
+) -> Option<String> {
     if let Some(notes) = provider
         .notes
         .as_deref()
@@ -1229,6 +1236,11 @@ fn provider_hint(provider: &Provider) -> Option<String> {
         .filter(|notes| !notes.is_empty())
     {
         return Some(truncate_chars(notes, 24));
+    }
+    if let Some(label) =
+        claude_bound_account_id(app, provider).and_then(|id| claude_accounts.get(&id))
+    {
+        return Some(label.clone());
     }
     let url = provider.website_url.as_deref()?.trim();
     let host = url
@@ -1240,11 +1252,15 @@ fn provider_hint(provider: &Provider) -> Option<String> {
     (!host.is_empty()).then(|| host.to_string())
 }
 
-fn provider_entry(app: &AppType, provider: &Provider) -> ProviderEntry {
+fn provider_entry(
+    app: &AppType,
+    provider: &Provider,
+    claude_accounts: &HashMap<String, String>,
+) -> ProviderEntry {
     ProviderEntry {
         id: provider.id.clone(),
         name: provider.name.clone(),
-        hint: provider_hint(provider),
+        hint: provider_hint(app, provider, claude_accounts),
         needs_routing: provider_needs_routing(app, provider),
         official: is_official_account(app, provider),
         blocked_from_routing: blocked_from_routing(app, provider),
@@ -1275,9 +1291,14 @@ fn collect_app_snapshot(
     profiles: &[crate::database::Profile],
 ) -> Result<AppSnapshot, AppError> {
     let rows = app_state.db.get_all_providers(app.as_str())?;
+    let claude_accounts = if *app == AppType::Claude {
+        crate::services::claude_account::labels_on_disk(&crate::config::get_app_config_dir())
+    } else {
+        HashMap::new()
+    };
     let providers: Vec<ProviderEntry> = sort_providers(&rows)
         .into_iter()
-        .map(|(_, provider)| provider_entry(app, provider))
+        .map(|(_, provider)| provider_entry(app, provider, &claude_accounts))
         .collect();
     // 代理模式下是代理路由到的那家（含故障转移切过去的）。
     let current_id = crate::mode::current::provider_for(
@@ -2253,7 +2274,11 @@ fn panel_rows(
                 let source = tray_usage_source(&snapshot.app, provider);
                 Some(PanelProvider {
                     name: provider.name.clone(),
-                    hint: provider_hint(provider),
+                    hint: snapshot
+                        .providers
+                        .iter()
+                        .find(|entry| entry.id == provider_id)
+                        .and_then(|entry| entry.hint.clone()),
                     icon: provider.icon.clone(),
                     icon_color: provider.icon_color.clone(),
                     quota: cached_usage_view(
@@ -2884,19 +2909,24 @@ pub fn handle_profile_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool
             log::error!("未知的项目分组托盘事件: {event_id}");
             return true;
         };
-        if let Some(app_state) = app.try_state::<AppState>() {
-            if let Err(e) = app_state.db.set_current_profile_id(scope.as_str(), None) {
-                log::error!("清除当前项目失败: {e}");
+        // 与窗口里的项目命令同一把锁，否则窗口里 apply 收尾写指针会把这里的清除盖掉。
+        let app_handle = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let _serial = crate::commands::PROFILE_LOCK.blocking_lock();
+            if let Some(app_state) = app_handle.try_state::<AppState>() {
+                if let Err(e) = app_state.db.set_current_profile_id(scope.as_str(), None) {
+                    log::error!("清除当前项目失败: {e}");
+                }
             }
-        }
-        // 通知主窗口刷新（profileId=null 表示该分组已清除当前项目）
-        if let Err(e) = app.emit(
-            "profile-applied",
-            serde_json::json!({ "profileId": null, "scope": scope.as_str() }),
-        ) {
-            log::error!("发射 profile-applied 事件失败: {e}");
-        }
-        refresh_tray_menu(app);
+            // 通知主窗口刷新（profileId=null 表示该分组已清除当前项目）
+            if let Err(e) = app_handle.emit(
+                "profile-applied",
+                serde_json::json!({ "profileId": null, "scope": scope.as_str() }),
+            ) {
+                log::error!("发射 profile-applied 事件失败: {e}");
+            }
+            refresh_tray_menu(&app_handle);
+        });
         return true;
     }
 
@@ -2914,6 +2944,7 @@ pub fn handle_profile_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool
     let app_handle = app.clone();
     let profile_id = profile_id.to_string();
     tauri::async_runtime::spawn_blocking(move || {
+        let _serial = crate::commands::PROFILE_LOCK.blocking_lock();
         let Some(app_state) = app_handle.try_state::<AppState>() else {
             return;
         };
@@ -3508,6 +3539,7 @@ mod tests {
             extra_usage: None,
             reset_credits: None,
             credits_balance: None,
+            plan_name: None,
             error: None,
             queried_at: Some(0),
         }
@@ -3768,19 +3800,27 @@ mod tests {
 
     #[test]
     fn copilot_premium_requests_use_the_card_word() {
-        let data = UsageData {
+        let copilot = |total: f64, remaining: f64| UsageData {
             plan_name: Some("copilot_pro".to_string()),
             extra: Some("Reset: 2026-11-01".to_string()),
             is_valid: Some(true),
             invalid_message: None,
-            total: Some(300.0),
-            used: Some(120.0),
-            remaining: Some(180.0),
+            total: Some(total),
+            used: Some(total - remaining),
+            remaining: Some(remaining),
             unit: Some(COPILOT_UNIT_PREMIUM.to_string()),
         };
         assert_eq!(
-            title(format_script_result(&zh(), &usage_result(true, vec![data]))),
-            Some(("高级请求剩余 60%".to_string(), false))
+            title(format_script_result(
+                &zh(),
+                &usage_result(true, vec![copilot(300.0, 180.0)])
+            )),
+            Some(("Credits 剩余 60%".to_string(), false))
+        );
+        // Free 计划不含 Credits（总额 0）：不显示，不能写成「余额 0」
+        assert_eq!(
+            format_script_result(&zh(), &usage_result(true, vec![copilot(0.0, 0.0)])),
+            None
         );
     }
 
@@ -3939,6 +3979,31 @@ mod tests {
             }
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn claude_bound_card_hint_shows_account_unless_noted() {
+        let accounts = HashMap::from([("acct-1".to_string(), "me@example.com".to_string())]);
+        let mut provider = claude_bound_provider(Some("acct-1"), None);
+        provider.website_url = Some("https://www.anthropic.com".to_string());
+        assert_eq!(
+            provider_hint(&AppType::Claude, &provider, &accounts).as_deref(),
+            Some("me@example.com")
+        );
+
+        provider.notes = Some("Work".to_string());
+        assert_eq!(
+            provider_hint(&AppType::Claude, &provider, &accounts).as_deref(),
+            Some("Work")
+        );
+
+        // 账号不在这台电脑上：退回官网域名
+        let mut missing = claude_bound_provider(Some("acct-2"), None);
+        missing.website_url = Some("https://www.anthropic.com".to_string());
+        assert_eq!(
+            provider_hint(&AppType::Claude, &missing, &accounts).as_deref(),
+            Some("www.anthropic.com")
+        );
     }
 
     #[test]

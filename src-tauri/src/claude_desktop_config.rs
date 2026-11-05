@@ -43,6 +43,10 @@ pub const ONE_M_CONTEXT_MARKER: &str = "[1m]";
 
 const CURRENT_OPUS_ROUTE_ID: &str = "claude-opus-5";
 const LEGACY_OPUS_ROUTE_ID: &str = "claude-opus-4-8";
+/// 映射表 Haiku 档的键（前端 `CLAUDE_DESKTOP_ROLE_ROUTE_IDS.haiku`），目标不是旧 Haiku 时
+/// 发布成 [`CURRENT_HAIKU_ROUTE_ID`]。
+const LEGACY_HAIKU_ROUTE_ID: &str = "claude-haiku-4-5";
+const CURRENT_HAIKU_ROUTE_ID: &str = "claude-haiku-5-5";
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -65,7 +69,7 @@ pub const DEFAULT_PROXY_ROUTES: &[ClaudeDesktopDefaultRoute] = &[
         supports_1m: true,
     },
     ClaudeDesktopDefaultRoute {
-        route_id: "claude-haiku-4-5",
+        route_id: LEGACY_HAIKU_ROUTE_ID,
         env_key: "ANTHROPIC_DEFAULT_HAIKU_MODEL",
         supports_1m: true,
     },
@@ -781,14 +785,34 @@ pub(crate) fn configured_proxy_model_routes(
 /// 和 Claude Code 的路由契约一样换成目录里的 5.5 名字；映射表里的键不变，旧 profile 发来的
 /// 原键仍按键查到目标（见 [`legacy_raw_route_upstream_model`]）。用户自己配了这个名字的路由
 /// 时不换，免得两条撞名。
+///
+/// Haiku 档的键是 `claude-haiku-4-5`，Desktop 把它当旧模型：只有 extended 思考、没有 effort
+/// 档位，和 Claude Code 路由契约早已改用的 `claude-haiku-5-5` 不一致（#8118、#9096）。目标
+/// 不是旧 Haiku（4.x / 3.x）时同样发布 `claude-haiku-5-5`；目标就是旧 Haiku 时照旧，免得
+/// Desktop 按新模型组请求。只换用户自己的键：修复非法 route 时借来的 `claude-haiku-4-5`
+/// 不在 `reserved` 里，换名后下一条还能再借到它，两条会撞名。
 fn published_route_id(
     route_id: String,
     upstream_model: &str,
     reserved: &std::collections::HashSet<String>,
 ) -> String {
     crate::live::project::claude::point_release_client_id(&route_id, upstream_model)
+        .or_else(|| {
+            (route_id == LEGACY_HAIKU_ROUTE_ID
+                && reserved.contains(LEGACY_HAIKU_ROUTE_ID)
+                && !is_pre_5_claude_haiku(upstream_model))
+            .then_some(CURRENT_HAIKU_ROUTE_ID)
+        })
         .filter(|catalog_id| !reserved.contains(*catalog_id))
         .map_or(route_id, str::to_string)
+}
+
+/// 上游是 Haiku 5 之前的 Claude Haiku（`claude-haiku-4-5-20251001`、`claude-3-5-haiku` 等）。
+fn is_pre_5_claude_haiku(upstream_model: &str) -> bool {
+    let id = upstream_model.to_ascii_lowercase();
+    ["haiku-4", "haiku-3", "-3-haiku", "-3-5-haiku", "-3.5-haiku"]
+        .iter()
+        .any(|old| id.contains(old))
 }
 
 fn next_catalog_safe_route_id(
@@ -817,6 +841,24 @@ fn next_catalog_safe_route_id(
     }
 }
 
+/// Desktop 从模型发现接口最多收这么长的说明。
+const MAX_MODEL_DESCRIPTION_CHARS: usize = 100;
+
+/// 本地 `/v1/models` 给 Desktop 的模型说明。没有说明时 Desktop 按 id 里的档位词显示
+/// Anthropic 写死的那句（`claude-fable-*` 一律是 Fable 的），映射到别家模型就名不副实；
+/// 上游就是 Claude 模型也看不出走的是哪家。所以一律写 `<供应商名> · <上游模型名> · <窗口>`。
+pub fn discovered_model_description(
+    provider_name: &str,
+    upstream: &str,
+    supports_1m: bool,
+) -> String {
+    let window = if supports_1m { 1_000_000 } else { 0 };
+    crate::mode::stack::provider_model_description(provider_name, upstream, window)
+        .chars()
+        .take(MAX_MODEL_DESCRIPTION_CHARS)
+        .collect()
+}
+
 pub fn model_list_response(provider: &Provider) -> Result<Value, AppError> {
     let routes = proxy_model_routes(provider)?;
     let data: Vec<Value> = routes
@@ -831,6 +873,11 @@ pub fn model_list_response(provider: &Provider) -> Result<Value, AppError> {
             if route.supports_1m {
                 item["supports1m"] = json!(true);
             }
+            item["description"] = json!(discovered_model_description(
+                &provider.name,
+                &route.upstream_model,
+                route.supports_1m,
+            ));
             item
         })
         .collect();
@@ -1157,7 +1204,11 @@ pub fn gateway_base_url(proxy_url: &str) -> String {
 /// 重启 Desktop。
 ///
 /// 聚合模式下 `stack` 是其他几家发布的模型，排在路由那家后面（第一项是默认模型，仍是路由
-/// 那家的），并关掉模型发现：列表完全由这里决定。Desktop 最多收 200 条，多出的不写。
+/// 那家的）。Desktop 最多收 200 条，多出的不写。
+///
+/// 模型发现显式打开：只要有 `inferenceModels`，Desktop 就只用这份列表，发现到的条目只补
+/// 名字和说明，不会多出模型；不写这个开关时有列表就跳过发现，本地 `/v1/models` 给的说明
+/// 就用不上（见 [`discovered_model_description`]）。
 pub fn route_profile(
     db: &Database,
     route: &Provider,
@@ -1197,9 +1248,7 @@ pub fn route_profile(
         &get_or_create_gateway_token(db)?,
         Some(model_specs.as_slice()),
     );
-    if !stack.is_empty() {
-        profile["modelDiscoveryEnabled"] = json!(false);
-    }
+    profile["modelDiscoveryEnabled"] = json!(true);
     Ok(profile)
 }
 
@@ -1796,7 +1845,7 @@ mod tests {
             CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID.to_string(),
             "Claude Desktop Official".to_string(),
             json!({"env": {}}),
-            Some("https://claude.ai/download".to_string()),
+            Some("https://claude.com/download".to_string()),
         );
         provider.category = Some("official".to_string());
         provider
@@ -2111,6 +2160,11 @@ mod tests {
                 .unwrap()
                 .iter()
                 .all(|model| model.get("supports1m").is_none()));
+            assert_eq!(
+                models["data"][0]["description"],
+                json!(format!("{} · claude-sonnet-5", provider.name))
+            );
+            assert_eq!(profile["modelDiscoveryEnabled"], json!(true));
             assert_eq!(serde_json::to_value(&provider).unwrap(), before);
             assert!(direct_profile(&provider)
                 .expect("direct profile remains valid")
@@ -2253,10 +2307,42 @@ mod tests {
         let models = model_list_response(&provider).expect("model list");
         assert_eq!(models["data"][0]["id"], json!("claude-sonnet-4-6"));
         assert_eq!(models["data"][0]["supports1m"], json!(true));
+        // 不带说明 Desktop 会按 id 里的 sonnet 显示 Anthropic 的那句。
+        assert_eq!(
+            models["data"][0]["description"],
+            json!("Proxy · kimi-k2 · 1M")
+        );
 
         let err = map_proxy_request_model(json!({"model": "claude-opus-4-8"}), &provider)
             .expect_err("unknown route should fail");
         assert!(err.to_string().contains("claude-opus-4-8"));
+    }
+
+    #[test]
+    fn claude_desktop_discovered_description_names_provider_and_upstream() {
+        assert_eq!(
+            discovered_model_description("DeepSeek", "deepseek-v4", false),
+            "DeepSeek · deepseek-v4"
+        );
+        assert_eq!(
+            discovered_model_description("Zhipu", "glm-5.2", true),
+            "Zhipu · glm-5.2 · 1M"
+        );
+        assert_eq!(
+            discovered_model_description(" ", "glm-5.2", false),
+            "glm-5.2"
+        );
+        assert_eq!(
+            discovered_model_description("Relay", "Claude-Opus-5", true),
+            "Relay · Claude-Opus-5 · 1M"
+        );
+        let long = "x".repeat(150);
+        assert_eq!(
+            discovered_model_description("Relay", &long, false)
+                .chars()
+                .count(),
+            MAX_MODEL_DESCRIPTION_CHARS
+        );
     }
 
     #[test]
@@ -2289,10 +2375,16 @@ mod tests {
         };
         assert_eq!(
             names(&provider),
-            ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-4-5"]
+            ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5"]
         );
         let models = model_list_response(&provider).expect("model list");
         assert_eq!(models["data"][1]["id"], json!("claude-opus-5-5"));
+        // 上游就是 Claude 模型的留给 Desktop 自己说明，别家模型换成真正的模型名。
+        assert_eq!(
+            models["data"][1]["description"],
+            json!("Proxy · claude-opus-5.5")
+        );
+        assert_eq!(models["data"][2]["description"], json!("Proxy · glm-5"));
 
         // 新名字、旧 profile 里的原键、带日期的全名都落到同一个目标。
         for (requested, upstream) in [
@@ -2301,6 +2393,7 @@ mod tests {
             ("claude-opus-5-5-20261001[1m]", "claude-opus-5.5"),
             ("claude-sonnet-5-5", "anthropic/claude-sonnet-5-5-20261001"),
             ("claude-sonnet-5", "anthropic/claude-sonnet-5-5-20261001"),
+            ("claude-haiku-5-5", "glm-5"),
             ("claude-haiku-4-5", "glm-5"),
         ] {
             let mapped =
@@ -2324,12 +2417,87 @@ mod tests {
                 "claude-sonnet-5-5",
                 "claude-opus-5",
                 "claude-opus-5-5",
-                "claude-haiku-4-5"
+                "claude-haiku-5-5"
             ]
         );
         let mapped = map_proxy_request_model(json!({ "model": "claude-opus-5" }), &provider)
             .expect("original key");
         assert_eq!(mapped["model"], json!("claude-opus-5.5"));
+    }
+
+    #[test]
+    fn claude_desktop_proxy_publishes_current_haiku_unless_target_is_old_haiku() {
+        let route = |model: &str| ClaudeDesktopModelRoute {
+            model: model.to_string(),
+            label_override: None,
+            supports_1m: None,
+        };
+        let mut provider = proxy_provider("proxy-haiku");
+        let set_haiku = |provider: &mut Provider, upstream: &str| {
+            provider
+                .meta
+                .as_mut()
+                .expect("meta")
+                .claude_desktop_model_routes = std::collections::HashMap::from([
+                ("claude-sonnet-5".to_string(), route("glm-5")),
+                ("claude-haiku-4-5".to_string(), route(upstream)),
+            ]);
+        };
+        let haiku_id = |provider: &Provider| -> String {
+            proxy_model_routes(provider)
+                .expect("routes")
+                .into_iter()
+                .find(|route| route.route_id.contains("haiku"))
+                .expect("haiku route")
+                .route_id
+        };
+
+        for upstream in ["glm-5", "claude-haiku-5-5", "anthropic/claude-haiku-5.5"] {
+            set_haiku(&mut provider, upstream);
+            assert_eq!(haiku_id(&provider), "claude-haiku-5-5", "{upstream}");
+            for requested in [
+                "claude-haiku-5-5",
+                "claude-haiku-4-5",
+                "claude-haiku-4-5-20251001",
+            ] {
+                let mapped = map_proxy_request_model(json!({ "model": requested }), &provider)
+                    .expect(requested);
+                assert_eq!(
+                    mapped["model"],
+                    json!(upstream),
+                    "{upstream} <- {requested}"
+                );
+            }
+        }
+
+        // 目标本身是旧 Haiku：Desktop 按旧模型组请求才对得上。
+        for upstream in [
+            "claude-haiku-4-5",
+            "claude-haiku-4-5-20251001",
+            "anthropic/claude-haiku-4.5",
+            "claude-3-5-haiku-20241022",
+        ] {
+            set_haiku(&mut provider, upstream);
+            assert_eq!(haiku_id(&provider), "claude-haiku-4-5", "{upstream}");
+        }
+
+        // 用户自己配了 claude-haiku-5-5 这条路由时，原键不换名。
+        set_haiku(&mut provider, "glm-5");
+        provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .claude_desktop_model_routes
+            .insert("claude-haiku-5-5".to_string(), route("minimax-m3"));
+        let names: Vec<String> = proxy_model_routes(&provider)
+            .expect("routes")
+            .into_iter()
+            .map(|route| route.route_id)
+            .collect();
+        assert_eq!(
+            names,
+            ["claude-sonnet-5", "claude-haiku-4-5", "claude-haiku-5-5"]
+        );
     }
 
     #[test]

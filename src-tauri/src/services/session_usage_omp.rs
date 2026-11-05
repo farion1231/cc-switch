@@ -30,6 +30,9 @@ pub(crate) const OMP: Flavor = Flavor {
     label: "Oh My Pi",
     model_usage_carrier: true,
     title_slot: true,
+    // Oh My Pi's subagents (its `task` tool) keep their own session files;
+    // Pi's official `subagent` example extension contract is Pi-only.
+    subagent_tool_results: false,
     session_files,
 };
 

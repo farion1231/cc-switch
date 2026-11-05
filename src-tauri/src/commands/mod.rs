@@ -43,6 +43,11 @@ mod usage;
 mod webdav_sync;
 mod workspace;
 
+#[cfg(test)]
+mod provider_concurrency_tests;
+#[cfg(test)]
+mod startup_tests;
+
 pub use agy_account::*;
 pub use auth::*;
 pub use balance::*;
@@ -84,3 +89,23 @@ pub use s3_sync::*;
 pub use usage::*;
 pub use webdav_sync::*;
 pub use workspace::*;
+
+/// 同步命令在 Tauri 2 里跑在主线程上：要等数据库连接锁（或等切换锁，切换时要拿库）的
+/// 命令放到阻塞线程池里跑，否则会话同步占着连接锁时整个窗口和托盘都跟着卡住。
+/// 同 `usage.rs` 的 `run_db_query`，只是闭包拿 `AppState`（服务层大多收它）、错误是 `String`。
+async fn run_db_task<T, F>(
+    state: &tauri::State<'_, crate::store::AppState>,
+    task: F,
+) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&crate::store::AppState) -> Result<T, String> + Send + 'static,
+{
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || task(&state))
+        .await
+        .map_err(|error| format!("数据库任务失败: {error}"))?
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) use misc::{login_shell_path, merge_path_segments, CommandDeadline};
