@@ -1821,7 +1821,11 @@ async fn handle_codex_chat_to_responses_transform(
     if is_stream || response.is_sse() {
         let stream = response.bytes_stream();
         let sse_stream = create_responses_sse_stream_from_chat_with_context(stream, tool_context);
-        let sse_stream = record_responses_sse_stream(sse_stream, state.codex_chat_history.clone());
+        let sse_stream = record_responses_sse_stream(
+            sse_stream,
+            state.codex_chat_history.clone(),
+            ctx.session_client_provided.then(|| ctx.session_id.clone()),
+        );
 
         let usage_collector = if usage_logging_enabled(state) {
             let state = state.clone();
@@ -1957,7 +1961,11 @@ async fn handle_codex_chat_to_responses_transform(
     })?;
     state
         .codex_chat_history
-        .record_response(&responses_response)
+        .record_response(
+            &responses_response,
+            ctx.session_client_provided
+                .then_some(ctx.session_id.as_str()),
+        )
         .await;
 
     // 上游非流式 Chat 省略 usage 时，chat_usage_to_responses_usage 会合成全 0 usage

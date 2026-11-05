@@ -1888,7 +1888,11 @@ impl RequestForwarder {
                 .map(ToString::to_string);
             let restored = self
                 .codex_chat_history
-                .enrich_request(&mut mapped_body)
+                .enrich_request(
+                    &mut mapped_body,
+                    self.session_client_provided
+                        .then_some(self.session_id.as_str()),
+                )
                 .await;
             if restored > 0 {
                 log::debug!(
