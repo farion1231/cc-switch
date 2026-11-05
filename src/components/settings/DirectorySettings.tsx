@@ -10,7 +10,7 @@ import type { ResolvedDirectories } from "@/hooks/useSettings";
 
 export type DirectoryAppId = Exclude<
   AppId,
-  "claude-desktop" | "mcode" | "agy" | "kimi" | "dsh"
+  "claude-desktop" | "mcode" | "agy" | "kimi"
 >;
 
 interface DirectorySettingsProps {
@@ -28,6 +28,7 @@ interface DirectorySettingsProps {
   hermesDir?: string;
   piDir?: string;
   ompDir?: string;
+  dshDir?: string;
   onDirectoryChange: (app: DirectoryAppId, value?: string) => void;
   onBrowseDirectory: (app: DirectoryAppId) => Promise<void>;
   onResetDirectory: (app: DirectoryAppId) => Promise<void>;
@@ -48,6 +49,7 @@ export function DirectorySettings({
   hermesDir,
   piDir,
   ompDir,
+  dshDir,
   onDirectoryChange,
   onBrowseDirectory,
   onResetDirectory,
@@ -205,6 +207,17 @@ export function DirectorySettings({
           onChange={(val) => onDirectoryChange("omp", val)}
           onBrowse={() => onBrowseDirectory("omp")}
           onReset={() => onResetDirectory("omp")}
+        />
+
+        <DirectoryInput
+          label={t("settings.dshConfigDir")}
+          description={undefined}
+          value={dshDir}
+          resolvedValue={resolvedDirs.dsh}
+          placeholder={t("settings.browsePlaceholderDsh")}
+          onChange={(val) => onDirectoryChange("dsh", val)}
+          onBrowse={() => onBrowseDirectory("dsh")}
+          onReset={() => onResetDirectory("dsh")}
         />
       </section>
     </div>

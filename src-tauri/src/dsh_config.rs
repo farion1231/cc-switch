@@ -13,11 +13,28 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// `$DSH_HOME`. Resolution order: the CC Switch `dsh_config_dir` override (e.g. a WSL
+/// `\\wsl$\<distro>\home\<user>\.dsh` path), then the `DSH_HOME` env var, then `~/.dsh`.
 pub(crate) fn data_dir() -> PathBuf {
-    std::env::var_os("DSH_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| get_home_dir().join(".dsh"))
+    resolve_data_dir(
+        crate::settings::get_dsh_override_dir(),
+        std::env::var_os("DSH_HOME"),
+        get_home_dir,
+    )
+}
+
+fn resolve_data_dir(
+    override_dir: Option<PathBuf>,
+    dsh_home: Option<std::ffi::OsString>,
+    home: impl FnOnce() -> PathBuf,
+) -> PathBuf {
+    override_dir
+        .or_else(|| {
+            dsh_home
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+        })
+        .unwrap_or_else(|| home().join(".dsh"))
 }
 
 /// Profiles CC Switch writes, in this order. Web and Desktop are prepared before first launch.
@@ -1561,6 +1578,28 @@ mod tests {
 
     fn editor_config() -> Value {
         json!({"name":"Gateway","api":"openai-responses","options":{"baseURL":"https://gateway.example/v1","apiKey":"test-value","headers":{"X-Client":"cc-switch"}},"models":{"test-model":{"name":"Model","limit":{"context":100000,"output":1000},"modalities":{"input":["text","image"],"output":["text"]},"reasoningEfforts":{"off":null,"high":"high"},"compat":{"supportsStore":false}}}})
+    }
+
+    #[test]
+    fn data_dir_prefers_settings_override_then_dsh_home_then_home() {
+        let home = || PathBuf::from("/home/me");
+        let wsl = PathBuf::from(r"\\wsl$\Ubuntu\home\me\.dsh");
+        assert_eq!(
+            resolve_data_dir(Some(wsl.clone()), Some("/env/dsh".into()), home),
+            wsl
+        );
+        assert_eq!(
+            resolve_data_dir(None, Some("/env/dsh".into()), home),
+            PathBuf::from("/env/dsh")
+        );
+        assert_eq!(
+            resolve_data_dir(None, Some("".into()), home),
+            PathBuf::from("/home/me").join(".dsh")
+        );
+        assert_eq!(
+            resolve_data_dir(None, None, home),
+            PathBuf::from("/home/me").join(".dsh")
+        );
     }
 
     #[test]
