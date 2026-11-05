@@ -35,6 +35,13 @@ const m = vi.hoisted(() => ({
   repoFailures: [] as SkillRepoFailure[],
   checking: false,
   visibleApps: ["claude", "codex", "pi"] as string[],
+  storageLocation: "cc_switch" as "cc_switch" | "unified",
+}));
+
+vi.mock("@/lib/query/queries", () => ({
+  useSettingsQuery: () => ({
+    data: { skillStorageLocation: m.storageLocation },
+  }),
 }));
 
 vi.mock("sonner", () => ({
@@ -172,6 +179,7 @@ describe("UnifiedSkillsPanel", () => {
     m.repoFailures = [];
     m.checking = false;
     m.visibleApps = ["claude", "codex", "pi"];
+    m.storageLocation = "cc_switch";
     m.scanUnmanaged.mockReset().mockResolvedValue({
       data: [
         {
@@ -206,6 +214,22 @@ describe("UnifiedSkillsPanel", () => {
     ]) {
       fn.mockReset();
     }
+  });
+
+  it("locks native scanners when skills use Unified storage", async () => {
+    m.storageLocation = "unified";
+    m.installed = [makeSkill()];
+    renderPanel();
+
+    const lockedLabel = "skillsPage.lockedInUnified";
+    const codexCell = screen.getByRole("button", { name: lockedLabel });
+    expect(codexCell).toHaveAttribute("aria-pressed", "true");
+    expect(codexCell.querySelector("svg.lucide-lock")).not.toBeNull();
+
+    await userEvent.click(codexCell);
+
+    expect(m.toggle).not.toHaveBeenCalled();
+    expect(m.toastInfo).toHaveBeenCalledWith(lockedLabel);
   });
 
   it("always shows the Pi column and toggles it like the other apps", async () => {

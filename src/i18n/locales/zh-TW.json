@@ -4782,6 +4782,7 @@
     "noun": "Skill",
     "helpTitle": "Skills 怎麼同步",
     "help": "主副本放在 CC Switch 的目錄裡，再同步到你勾選的應用。Claude Desktop、OpenClaw 不支援 Skills，所以表格裡沒有這兩欄。",
+    "lockedInUnified": "Unified 儲存模式下，{{app}} 會讀取 ~/.agents/skills 中的所有 Skill，無法單獨切換。",
     "add": "新增 Skill",
     "addMenu": {
       "discover": "在探索裡瀏覽",

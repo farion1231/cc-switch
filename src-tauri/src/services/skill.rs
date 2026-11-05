@@ -2218,6 +2218,13 @@ impl SkillService {
     /// 禁用：从应用目录删除
     pub fn toggle_app(db: &Arc<Database>, id: &str, app: &AppType, enabled: bool) -> Result<()> {
         let _state_guard = skill_state_write_guard();
+        if crate::settings::get_skill_storage_location() == SkillStorageLocation::Unified
+            && app.scans_agents_skills_dir()
+        {
+            return Err(anyhow!(
+                "Cannot change {app:?} Skill state while Unified storage is active"
+            ));
+        }
         // 获取当前 skill
         let mut skill = db
             .get_installed_skill(id)?
