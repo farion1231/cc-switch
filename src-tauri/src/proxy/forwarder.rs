@@ -790,6 +790,18 @@ impl RequestForwarder {
         extensions: Extensions,
         providers: &[Provider],
     ) -> Result<ForwardResult, ForwardError> {
+        if matches!(app_type, AppType::Claude | AppType::ClaudeDesktop)
+            && super::classifier_guard::classifier_retry_loop(body)
+        {
+            let error = ProxyError::InvalidRequest(
+                super::classifier_guard::CLASSIFIER_LOOP_MESSAGE.to_string(),
+            );
+            self.record_failed_request(error.to_string()).await;
+            return Err(ForwardError {
+                error,
+                provider: providers.first().cloned(),
+            });
+        }
         // 获取适配器
         let adapter = get_adapter(app_type).ok_or_else(|| ForwardError {
             error: ProxyError::ConfigError(format!(
@@ -8305,6 +8317,41 @@ mod tests {
             );
             assert_eq!(breaker(&fwd, "p1").await, Some((1, 1)));
             assert_eq!(breaker(&fwd, "p2").await, Some((1, 1)));
+        }
+
+        #[tokio::test]
+        async fn repeated_classifier_errors_stop_main_requests_before_any_upstream_call() {
+            let up = upstream(vec![ok()]).await;
+            let fwd = forwarder(2, "p1");
+            let mut body = plain_body();
+            body["tools"] = json!([{"name":"Bash","input_schema":{"type":"object"}}]);
+            for n in 0..3 {
+                body["messages"].as_array_mut().unwrap().extend([
+                    json!({"role":"assistant","content":[{"type":"tool_use","id":format!("tool_{n}"),"name":"Bash","input":{}}]}),
+                    json!({"role":"user","content":[{"type":"tool_result","tool_use_id":format!("tool_{n}"),"is_error":true,"content":"claude-opus-5[1m] is temporarily unavailable, so auto mode cannot determine the safety of Bash right now."}]}),
+                ]);
+            }
+            for _ in 0..10 {
+                let err = expect_err(send(&fwd, vec![provider("p1", &up)], body.clone()).await);
+                assert!(matches!(err.error, ProxyError::InvalidRequest(_)));
+            }
+            assert_eq!(up.requests.lock().await.len(), 0);
+            for _ in 0..100 {
+                if fwd.status.read().await.active_connections == 0 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+            assert_eq!(fwd.status.read().await.active_connections, 0);
+            body["messages"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"role":"user","content":"I fixed the mapping; continue."}));
+            send(&fwd, vec![provider("p1", &up)], body)
+                .await
+                .map_err(|e| e.error)
+                .expect("new user turn resumes");
+            assert_eq!(up.requests.lock().await.len(), 1);
         }
 
         #[tokio::test]
