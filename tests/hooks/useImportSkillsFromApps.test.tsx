@@ -352,7 +352,7 @@ describe("Skills install and import mutation hooks", () => {
       mutation = result.current.mutateAsync([]);
     });
 
-    await waitFor(() => expect(spy).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(5));
     expect(result.current.isPending).toBe(true);
 
     releaseLocal();
@@ -376,13 +376,14 @@ describe("Skills install and import mutation hooks", () => {
       void mutation.catch(() => undefined);
     });
 
-    await waitFor(() => expect(spy).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(5));
     expect(result.current.isPending).toBe(true);
     for (const queryKey of [
       ["skills", "installed"],
       ["skills", "unmanaged"],
       ["skills", "repos"],
       ["skills", "discoverable"],
+      ["skills", "reconciliation"],
     ]) {
       expect(spy).toHaveBeenCalledWith({ queryKey });
     }

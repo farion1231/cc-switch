@@ -4878,6 +4878,13 @@
     "helpTitle": "스킬 동기화 방식",
     "help": "원본은 CC Switch 폴더에 저장되며 선택한 앱에 동기화됩니다. Claude Desktop과 OpenClaw는 스킬을 지원하지 않아 해당 열이 없습니다.",
     "lockedInUnified": "통합 저장 모드에서 {{app}}은(는) ~/.agents/skills의 모든 Skill을 읽으므로 개별적으로 켜거나 끌 수 없습니다.",
+    "reconciliation": {
+      "title": "중복 Skill 발견",
+      "lead": "관리 중인 Skill이 에이전트 또는 애플리케이션의 Skills 폴더에도 있습니다. 삭제할 복사본을 선택하세요. 선택하지 않은 복사본은 유지됩니다.",
+      "path": "중복 경로: {{path}}",
+      "remove": "선택 항목 삭제 ({{count}})",
+      "success": "선택한 중복 Skill을 삭제했습니다."
+    },
     "add": "스킬 추가",
     "addMenu": {
       "discover": "탐색에서 찾아보기",

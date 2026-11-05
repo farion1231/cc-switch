@@ -72,6 +72,11 @@ vi.mock("@/hooks/useSkills", () => ({
     refetch: vi.fn(),
   }),
   useRefreshLocalSkillMetadata: () => ({}),
+  useSkillReconciliationCandidates: () => ({ data: [], isLoading: false }),
+  useRemoveSkillReconciliationDuplicate: () => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  }),
   useSkillBackups: () => ({
     data: m.backups,
     refetch: m.refetchBackups,

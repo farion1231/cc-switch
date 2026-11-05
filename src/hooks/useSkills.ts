@@ -17,6 +17,7 @@ import {
   type SkillDiscoveryResult,
   type SkillUpdateCheckResult,
   type SkillUpdateInfo,
+  type SkillReconciliationCandidate,
 } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
 import {
@@ -62,6 +63,24 @@ export function useRefreshLocalSkillMetadata() {
     },
     staleTime: Infinity,
     retry: false,
+  });
+}
+
+export function useSkillReconciliationCandidates() {
+  return useQuery<SkillReconciliationCandidate[]>({
+    queryKey: ["skills", "reconciliation"],
+    queryFn: () => skillsApi.getReconciliationCandidates(),
+    staleTime: 0,
+  });
+}
+
+export function useRemoveSkillReconciliationDuplicate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ app, directory }: { app: string; directory: string }) =>
+      skillsApi.removeReconciliationDuplicate(app, directory),
+    onSettled: () =>
+      queryClient.invalidateQueries({ queryKey: ["skills", "reconciliation"] }),
   });
 }
 
@@ -397,6 +416,9 @@ export function useImportSkillsFromApps() {
       discoverGeneration += 1;
       void queryClient.invalidateQueries({
         queryKey: ["skills", "discoverable"],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["skills", "reconciliation"],
       });
       return Promise.all([
         queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
