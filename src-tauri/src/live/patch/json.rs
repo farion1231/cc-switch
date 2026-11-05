@@ -41,6 +41,13 @@ pub struct JsonPatch {
     /// 当前值满足谓词才删除（值的取值无法事先列举时用，比如「CC Switch 写的账号目录」）。
     /// `set` 里有同一路径时跳过。
     pub remove_when: Vec<(KeyPath, ValuePredicate)>,
+    /// `clear` 和 `remove_if` 要删的键里，命中这些作用域、而且当前有值（不是 `null`、
+    /// 不是空白串）的，原位改写成 `""` 而不是删掉。
+    ///
+    /// 给只会增量合并配置的客户端用：正在运行的 Claude Code 把 `settings.json` 的 `env`
+    /// 按 `Object.assign(process.env, env)` 合并进进程，从文件里删掉的键还留在进程里，
+    /// 改成空串（它读这些变量时空串等于没设）才会立刻生效。
+    pub tombstone: Vec<ClearScope>,
 }
 
 impl JsonPatch {
@@ -57,7 +64,7 @@ impl JsonPatch {
                 .cloned()
                 .collect();
             for key in doomed {
-                map.shift_remove(&key);
+                self.remove_or_blank(map, &scope.parent.0, &key);
             }
         }
 
@@ -99,7 +106,7 @@ impl JsonPatch {
                 continue;
             };
             if map.get(key).is_some_and(|current| values.contains(current)) {
-                map.shift_remove(key);
+                self.remove_or_blank(map, parent, key);
             }
         }
 
@@ -117,6 +124,33 @@ impl JsonPatch {
         }
 
         Ok(())
+    }
+}
+
+impl JsonPatch {
+    /// 删掉 `parent` 下的 `key`；命中墓碑作用域、而且有值的改写成 `""`（原位，不挪顺序）。
+    fn remove_or_blank(&self, map: &mut Map<String, Value>, parent: &[String], key: &str) {
+        let blank = self
+            .tombstone
+            .iter()
+            .any(|stone| stone.parent.0 == parent && (stone.is_floor)(key))
+            && map.get(key).is_some_and(has_value);
+        if blank {
+            if let Some(slot) = map.get_mut(key) {
+                *slot = Value::String(String::new());
+            }
+        } else {
+            map.shift_remove(key);
+        }
+    }
+}
+
+/// 墓碑只给真有值的键：`null` 和空白串本来就等于没设，照常删掉。
+fn has_value(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::String(text) => !text.trim().is_empty(),
+        _ => true,
     }
 }
 
@@ -349,6 +383,36 @@ mod tests {
     ]
   }
 }"#;
+
+    #[test]
+    fn tombstones_blank_cleared_keys_in_place_and_skip_targets_and_blanks() {
+        let mut patch = claude_patch(&[("ANTHROPIC_AUTH_TOKEN", json!("sk-b"))]);
+        patch.tombstone.push(ClearScope {
+            parent: KeyPath::new(&["env"]),
+            is_floor: |key| key == "ANTHROPIC_BASE_URL" || key == "ANTHROPIC_MODEL",
+        });
+        let live = r#"{
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://a.example",
+    "ANTHROPIC_MODEL": "  ",
+    "CLAUDE_CODE_USE_POWERSHELL_TOOL": "1",
+    "ANTHROPIC_AUTH_TOKEN": "sk-a",
+    "AWS_REGION": "us-east-1"
+  }
+}"#;
+        // 地址：有值 → 原位写成空串；模型：本来就是空白 → 删；Token：目标要写 → 改值；
+        // AWS_REGION：不在墓碑作用域 → 删
+        assert_eq!(
+            apply(&patch, live),
+            r#"{
+  "env": {
+    "ANTHROPIC_BASE_URL": "",
+    "CLAUDE_CODE_USE_POWERSHELL_TOOL": "1",
+    "ANTHROPIC_AUTH_TOKEN": "sk-b"
+  }
+}"#
+        );
+    }
 
     #[test]
     fn key_fields_are_replaced_in_place_and_the_rest_keeps_its_order() {

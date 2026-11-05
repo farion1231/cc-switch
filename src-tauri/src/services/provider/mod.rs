@@ -1288,6 +1288,10 @@ mod tests {
             .remove("CLAUDE_CODE_DISABLE_ARTIFACT");
         ProviderService::update(&state, AppType::Claude, None, updated).expect("update");
 
+        // 开着的会话先读到空串（撤掉旧值），几秒后再删
+        let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
+        assert_eq!(live["env"]["CLAUDE_CODE_DISABLE_ARTIFACT"], json!(""));
+        claude_direct::settle_tombstones();
         let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
         assert_eq!(
             live,
