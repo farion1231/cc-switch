@@ -54,4 +54,12 @@ try MainActor.assumeIsolated {
             try render("usage-\(name)", family, scheme) { UsageWidgetView(entry: entry, familyOverride: family) }
         }
     }
+    // 用量的另外两种图表样式 × 四个尺寸
+    for chart in [UsageChartOption.line, .area] {
+        for (name, family) in families {
+            try render("usage-\(chart.rawValue)-\(name)", family, .light) {
+                UsageWidgetView(entry: entry, chart: chart.kind, familyOverride: family)
+            }
+        }
+    }
 }

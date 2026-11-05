@@ -51,7 +51,7 @@ struct Strings {
             return Strings(
                 quotaTitle: "額度", quotaGallery: "各應用使用中的供應商與額度，可翻頁。",
                 accountsTitle: "授權中心", accountsGallery: "授權中心所有帳號的額度，快用完和需要重新登入的排在前面，可翻頁。",
-                usageTitle: "用量", usageGallery: "花費、Token 與請求數；翻頁切換時間範圍。",
+                usageTitle: "用量", usageGallery: "花費、Token 與請求數；點小工具上的按鈕切換時間範圍，圖表樣式可在「編輯小工具」裡選。",
                 off: "在 CC Switch 設定裡開啟「桌面小工具」", outdated: "請更新 CC Switch",
                 noQuota: "沒有額度資料", noAccounts: "授權中心還沒有帳號",
                 inUse: "使用中", reauth: "需重新登入",
@@ -66,7 +66,7 @@ struct Strings {
             return Strings(
                 quotaTitle: "额度", quotaGallery: "各应用在用的供应商和额度，可翻页。",
                 accountsTitle: "授权中心", accountsGallery: "授权中心全部账号的额度，快用完和要重新登录的排在前面，可翻页。",
-                usageTitle: "用量", usageGallery: "花费、Token 和请求数；翻页切换时间范围。",
+                usageTitle: "用量", usageGallery: "花费、Token 和请求数；点小组件上的按钮切换时间范围，图表样式可在「编辑小组件」里选。",
                 off: "在 CC Switch 设置里打开「桌面小组件」", outdated: "请更新 CC Switch",
                 noQuota: "没有额度数据", noAccounts: "授权中心还没有账号",
                 inUse: "在用", reauth: "要重新登录",
@@ -81,7 +81,7 @@ struct Strings {
             return Strings(
                 quotaTitle: "Kota", quotaGallery: "Her uygulamanın etkin sağlayıcısı ve kotası; sayfalar arasında geçiş yapın.",
                 accountsTitle: "Hesaplar", accountsGallery: "Tüm hesapların kotası; azalanlar ve yeniden giriş gerekenler önce gösterilir. Sayfalar arasında geçiş yapın.",
-                usageTitle: "Kullanım", usageGallery: "Maliyet, token ve istekler. Zaman aralığını sayfa çevirerek değiştirin.",
+                usageTitle: "Kullanım", usageGallery: "Maliyet, token ve istekler. Zaman aralığını widget üzerindeki düğmelerle, grafik stilini Widget'ı Düzenle'den değiştirin.",
                 off: "CC Switch ayarlarından Masaüstü widget'ını açın", outdated: "CC Switch'i güncelleyin",
                 noQuota: "Kota bilgisi yok", noAccounts: "Henüz hesap yok",
                 inUse: "Kullanımda", reauth: "Yeniden giriş yapın",
@@ -97,7 +97,7 @@ struct Strings {
             return Strings(
                 quotaTitle: "クォータ", quotaGallery: "各アプリで使用中のプロバイダーとクォータ。ページを切り替えられます。",
                 accountsTitle: "認証センター", accountsGallery: "認証センターの全アカウントのクォータ。残りわずか・再ログインが必要なものを先に表示し、ページを切り替えられます。",
-                usageTitle: "使用量", usageGallery: "費用、トークン、リクエスト数。ページを切り替えて期間を変更します。",
+                usageTitle: "使用量", usageGallery: "費用、トークン、リクエスト数。期間はウィジェット上のボタンで、グラフのスタイルは「ウィジェットを編集」で変更できます。",
                 off: "CC Switch の設定で「デスクトップウィジェット」をオンにしてください", outdated: "CC Switch を更新してください",
                 noQuota: "クォータ情報なし", noAccounts: "認証センターにアカウントがありません",
                 inUse: "使用中", reauth: "再ログインが必要",
@@ -111,7 +111,7 @@ struct Strings {
         return Strings(
             quotaTitle: "Quota", quotaGallery: "Each app's in-use provider and quota, page by page.",
             accountsTitle: "Auth Center", accountsGallery: "Quota for every Auth Center account, with low and signed-out ones first, page by page.",
-            usageTitle: "Usage", usageGallery: "Cost, tokens and requests. Turn the page to change the time range.",
+            usageTitle: "Usage", usageGallery: "Cost, tokens and requests. Tap the range buttons to change the time range; pick the chart style in Edit Widget.",
             off: "Turn on Desktop widget in CC Switch settings", outdated: "Update CC Switch",
             noQuota: "No quota data", noAccounts: "No Auth Center accounts yet",
             inUse: "In use", reauth: "Sign in again",

@@ -1,4 +1,4 @@
-/* 小组件自己的文案：「用量」翻页时的时间范围名（和 CC Switch 用量页同名）、翻页意图名（Pager.swift）。 */
+/* 小组件自己的文案：「用量」的时间范围名（和 CC Switch 用量页同名）和图表样式配置项（UsageIntent.swift）、翻页意图名（Pager.swift）。 */
 "usage.range.today" = "Today";
 "usage.range.1d" = "Last 24 hours";
 "usage.range.7d" = "Last 7 days";
@@ -6,3 +6,15 @@
 "usage.range.30d" = "Last 30 days";
 "usage.range.all" = "All";
 "pager.intent.title" = "Turn Page";
+"usage.range.short.today" = "Today";
+"usage.range.short.1d" = "24h";
+"usage.range.short.7d" = "7d";
+"usage.range.short.14d" = "14d";
+"usage.range.short.30d" = "30d";
+"usage.range.short.all" = "All";
+"usage.chart" = "Chart";
+"usage.chart.bars" = "Bar";
+"usage.chart.line" = "Line";
+"usage.chart.area" = "Area";
+"usage.intent.title" = "Usage";
+"usage.intent.description" = "Choose the chart style. Tap the range buttons on the widget to change the time range.";

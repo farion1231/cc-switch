@@ -1,4 +1,4 @@
-/* 小组件自己的文案：「用量」翻页时的时间范围名（和 CC Switch 用量页同名）、翻页意图名（Pager.swift）。 */
+/* 小组件自己的文案：「用量」的时间范围名（和 CC Switch 用量页同名）和图表样式配置项（UsageIntent.swift）、翻页意图名（Pager.swift）。 */
 "usage.range.today" = "Bugün";
 "usage.range.1d" = "Son 24 saat";
 "usage.range.7d" = "Son 7 gün";
@@ -6,3 +6,15 @@
 "usage.range.30d" = "Son 30 gün";
 "usage.range.all" = "Tümü";
 "pager.intent.title" = "Sayfa çevir";
+"usage.range.short.today" = "Bugün";
+"usage.range.short.1d" = "24s";
+"usage.range.short.7d" = "7g";
+"usage.range.short.14d" = "14g";
+"usage.range.short.30d" = "30g";
+"usage.range.short.all" = "Tümü";
+"usage.chart" = "Grafik";
+"usage.chart.bars" = "Çubuk";
+"usage.chart.line" = "Çizgi";
+"usage.chart.area" = "Alan";
+"usage.intent.title" = "Kullanım";
+"usage.intent.description" = "Grafik stilini seçin. Zaman aralığını widget üzerindeki düğmelerle değiştirin.";

@@ -1,4 +1,4 @@
-/* 小组件自己的文案：「用量」翻页时的时间范围名（和 CC Switch 用量页同名）、翻页意图名（Pager.swift）。 */
+/* 小组件自己的文案：「用量」的时间范围名（和 CC Switch 用量页同名）和图表样式配置项（UsageIntent.swift）、翻页意图名（Pager.swift）。 */
 "usage.range.today" = "当日";
 "usage.range.1d" = "過去 24 時間";
 "usage.range.7d" = "過去 7 日間";
@@ -6,3 +6,15 @@
 "usage.range.30d" = "過去 30 日間";
 "usage.range.all" = "すべて";
 "pager.intent.title" = "ページ切り替え";
+"usage.range.short.today" = "今日";
+"usage.range.short.1d" = "24時間";
+"usage.range.short.7d" = "7日";
+"usage.range.short.14d" = "14日";
+"usage.range.short.30d" = "30日";
+"usage.range.short.all" = "すべて";
+"usage.chart" = "グラフ";
+"usage.chart.bars" = "棒グラフ";
+"usage.chart.line" = "折れ線グラフ";
+"usage.chart.area" = "面グラフ";
+"usage.intent.title" = "使用量";
+"usage.intent.description" = "グラフのスタイルを選びます。期間はウィジェット上のボタンで切り替えます。";
