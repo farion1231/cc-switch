@@ -582,22 +582,44 @@ fn zen_effort_rank(effort: &str) -> Option<u8> {
 
 /// MiniMax 严格要求 messages 中只能首条出现 `role=system`，
 /// 否则返回 `invalid params, chat content has invalid message role: system (2013)`。
-/// 把所有 system 消息合并到首位，避免中间 system（如 Codex 的 `developer` 指令）触发该约束；
-/// 该重排对 OpenAI / DeepSeek 等宽松兼容层也是无损的。
+/// 所以 messages 里最多只留首条 system：
+/// - 开头连续的 system（instructions 与首批 developer 指令）合并成首条。
+/// - 会话中途、后面（只隔 system）紧接 user 的 system——Codex 在新回合开头插的
+///   developer 指令（权限、协作模式、模型切换等）——原位改成 user 消息。拼进首条会
+///   改动已经发过的前缀，上游前缀缓存从第一条消息断开，整段对话重算。
+/// - 其余中途 system（夹在工具调用循环里，如图片缩放提示）仍拼进首条：原位插 user
+///   会把一次工具循环拆成两个回合，影响 DeepSeek / Kimi 等的推理连续性。
 fn collapse_system_messages_to_head(messages: Vec<Value>) -> Vec<Value> {
+    // 每条消息之后第一条非 system 消息是否为 user。
+    let mut followed_by_user = vec![false; messages.len()];
+    let mut next_is_user = false;
+    for (idx, msg) in messages.iter().enumerate().rev() {
+        followed_by_user[idx] = next_is_user;
+        if !is_hoistable_system_message(msg) {
+            next_is_user = msg.get("role").and_then(Value::as_str) == Some("user");
+        }
+    }
+
     let mut system_chunks: Vec<String> = Vec::new();
     let mut rest: Vec<Value> = Vec::with_capacity(messages.len());
+    let mut seen_non_system = false;
 
-    for msg in messages {
-        if msg.get("role").and_then(|v| v.as_str()) == Some("system") {
-            if let Some(text) = msg.get("content").and_then(|v| v.as_str()) {
-                let trimmed = text.trim();
-                if !trimmed.is_empty() {
+    for (msg, followed_by_user) in messages.into_iter().zip(followed_by_user) {
+        if is_hoistable_system_message(&msg) {
+            let text = msg
+                .get("content")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if !text.trim().is_empty() {
+                if seen_non_system && followed_by_user {
+                    rest.push(json!({"role": "user", "content": text}));
+                } else {
                     system_chunks.push(text.to_string());
                 }
-                continue;
             }
+            continue;
         }
+        seen_non_system = true;
         rest.push(msg);
     }
 
@@ -4092,7 +4114,7 @@ mod tests {
     }
 
     #[test]
-    fn responses_request_to_chat_merges_mid_stream_system_into_head() {
+    fn responses_request_to_chat_keeps_only_head_system_for_minimax() {
         let input = json!({
             "model": "MiniMax-M2.7",
             "instructions": "You are Codex.",
@@ -4124,7 +4146,44 @@ mod tests {
         let head_content = messages[0]["content"].as_str().unwrap();
         assert!(head_content.contains("You are Codex."));
         assert!(head_content.contains("Permissions block"));
-        assert!(head_content.contains("Collaboration Mode: Default"));
+        // A developer message opening a later turn stays in place as user, so
+        // the head (and the prefix already sent) does not change.
+        assert!(!head_content.contains("Collaboration Mode: Default"));
+        assert_eq!(messages[3]["role"], "user");
+        assert_eq!(messages[3]["content"], "Collaboration Mode: Default");
+    }
+
+    #[test]
+    fn turn_start_developer_message_keeps_previous_request_as_prefix() {
+        let first_turn = vec![
+            json!({"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "Permissions: read-only"}]}),
+            json!({"type": "message", "role": "user", "content": [{"type": "input_text", "text": "list files"}]}),
+            json!({"type": "function_call", "call_id": "call_0", "name": "exec_command", "arguments": "{}"}),
+            json!({"type": "function_call_output", "call_id": "call_0", "output": "a.rs"}),
+            json!({"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Done."}]}),
+        ];
+        let mut second_turn = first_turn.clone();
+        second_turn.extend([
+            json!({"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "Permissions: workspace-write"}]}),
+            json!({"type": "message", "role": "user", "content": [{"type": "input_text", "text": "edit a.rs"}]}),
+        ]);
+
+        let convert = |input: Vec<Value>| {
+            let body = json!({"model": "k3", "instructions": "You are Codex.", "input": input});
+            responses_to_chat_completions(body).unwrap()["messages"]
+                .as_array()
+                .unwrap()
+                .clone()
+        };
+        let first = convert(first_turn);
+        let second = convert(second_turn);
+
+        assert_eq!(&second[..first.len()], &first[..]);
+        assert_eq!(second[first.len()]["role"], "user");
+        assert_eq!(
+            second[first.len()]["content"],
+            "Permissions: workspace-write"
+        );
     }
 
     #[test]
@@ -4259,12 +4318,30 @@ mod tests {
         ];
         let out = collapse_system_messages_to_head(input);
 
-        assert_eq!(out.len(), 4);
+        assert_eq!(out.len(), 5);
         assert_eq!(out[0]["role"], "system");
-        assert_eq!(out[0]["content"], "S1\n\nS2");
+        assert_eq!(out[0]["content"], "S1");
         assert_eq!(out[1]["content"], "U1");
         assert_eq!(out[2]["content"], "A1");
-        assert_eq!(out[3]["content"], "U2");
+        assert_eq!(out[3]["role"], "user");
+        assert_eq!(out[3]["content"], "S2");
+        assert_eq!(out[4]["content"], "U2");
+    }
+
+    #[test]
+    fn collapse_system_messages_hoists_mid_system_not_followed_by_user() {
+        let input = vec![
+            json!({"role": "system", "content": "S1"}),
+            json!({"role": "user", "content": "U1"}),
+            json!({"role": "assistant", "content": null, "tool_calls": [{"id": "c0", "type": "function", "function": {"name": "f", "arguments": "{}"}}]}),
+            json!({"role": "system", "content": "Notice"}),
+            json!({"role": "tool", "tool_call_id": "c0", "content": "ok"}),
+        ];
+        let out = collapse_system_messages_to_head(input);
+
+        let roles: Vec<&str> = out.iter().filter_map(|m| m["role"].as_str()).collect();
+        assert_eq!(roles, vec!["system", "user", "assistant", "tool"]);
+        assert_eq!(out[0]["content"], "S1\n\nNotice");
     }
 
     #[test]
