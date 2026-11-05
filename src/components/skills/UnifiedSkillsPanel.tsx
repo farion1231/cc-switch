@@ -54,6 +54,7 @@ import {
 } from "@/hooks/useSkills";
 import type { AppId } from "@/lib/api/types";
 import { settingsApi, skillsApi } from "@/lib/api";
+import { useSettingsQuery } from "@/lib/query/queries";
 import { copyText } from "@/lib/clipboard";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { cn } from "@/lib/utils";
@@ -135,6 +136,11 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   onNavigationBlockedChange,
 }) => {
   const { t, i18n } = useTranslation();
+  const { data: settings } = useSettingsQuery();
+  const lockedApps: AppId[] =
+    settings?.skillStorageLocation === "unified"
+      ? ["codex", "gemini", "opencode", "openclaw"]
+      : [];
   const appIds = useVisibleAppIds(APP_IDS_WITH.skills);
   const { targets, setTargets, installTo } = useSkillInstallTargets(appIds);
 
@@ -266,6 +272,8 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   };
 
   const listSeparator = t("mcpPage.listSeparator");
+  const lockedMessage = (app: AppId) =>
+    t("skillsPage.lockedInUnified", { app: APP_DISPLAY_NAME[app] });
   const names = (apps: AppId[]) =>
     apps.map((app) => APP_DISPLAY_NAME[app]).join(listSeparator);
   const noun = t("skillsPage.noun");
@@ -432,6 +440,10 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   };
 
   const writeOne = async (id: string, app: AppId, enabled: boolean) => {
+    if (lockedApps.includes(app)) {
+      toast.info(lockedMessage(app));
+      return;
+    }
     if (!beginWrite()) return;
     try {
       await toggleAppMutation.mutateAsync({ id, app, enabled });
@@ -468,6 +480,10 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     enabled: boolean,
     toastKey: { on: string; off: string },
   ) => {
+    if (lockedApps.includes(app)) {
+      toast.info(lockedMessage(app));
+      return;
+    }
     if (!beginWrite()) return;
     try {
       const { succeeded, failed } = await writeMany(ids, app, enabled);
@@ -1293,6 +1309,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                     highlighted={highlightId === skill.id}
                     onHighlightDone={() => setHighlightId(null)}
                     fails={fails}
+                    lockedApps={lockedApps}
                     disabled={controlsDisabled}
                     sourceText={
                       skill.repoOwner && skill.repoName
@@ -1796,6 +1813,7 @@ interface InstalledRowProps {
   /** 闪烁结束后清掉，下次跳到同一行还能再闪 */
   onHighlightDone: () => void;
   fails: Record<string, WriteFailure>;
+  lockedApps: AppId[];
   disabled: boolean;
   sourceText: string;
   onPick: (checked: boolean) => void;
@@ -1819,6 +1837,7 @@ function InstalledRow({
   highlighted,
   onHighlightDone,
   fails,
+  lockedApps,
   disabled,
   sourceText,
   onPick,
@@ -1960,18 +1979,34 @@ function InstalledRow({
         {appIds.map((app) => {
           const fail = fails[failKey(skill.id, app)];
           const on = Boolean(skill.apps[app]);
-          const state = fail ? "fail" : on ? "on" : "off";
+          const locked = lockedApps.includes(app);
+          const state = locked ? "on" : fail ? "fail" : on ? "on" : "off";
           return (
             <MatrixCell
               key={app}
               app={app}
               state={state}
               disabled={disabled}
-              label={t(`appMatrix.cell.${state}`, {
-                name: skill.name,
-                app: APP_DISPLAY_NAME[app],
-              })}
-              onClick={() => onCell(app)}
+              locked={locked}
+              label={
+                locked
+                  ? t("skillsPage.lockedInUnified", {
+                      app: APP_DISPLAY_NAME[app],
+                    })
+                  : t(`appMatrix.cell.${state}`, {
+                      name: skill.name,
+                      app: APP_DISPLAY_NAME[app],
+                    })
+              }
+              onClick={() =>
+                locked
+                  ? toast.info(
+                      t("skillsPage.lockedInUnified", {
+                        app: APP_DISPLAY_NAME[app],
+                      }),
+                    )
+                  : onCell(app)
+              }
             />
           );
         })}

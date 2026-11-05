@@ -4877,6 +4877,7 @@
     "noun": "Skills",
     "helpTitle": "So werden Skills synchronisiert",
     "help": "Die Hauptkopie liegt im Ordner von CC Switch und wird mit den von Ihnen angehakten Apps synchronisiert. Claude Desktop und OpenClaw unterstützen keine Skills und haben daher keine Spalte.",
+    "lockedInUnified": "{{app}} liest im einheitlichen Speichermodus alle Skills aus ~/.agents/skills und kann daher nicht einzeln umgeschaltet werden.",
     "add": "Skill hinzufügen",
     "addMenu": {
       "discover": "In „Entdecken“ durchsuchen",

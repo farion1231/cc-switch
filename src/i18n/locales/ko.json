@@ -4877,6 +4877,7 @@
     "noun": "스킬",
     "helpTitle": "스킬 동기화 방식",
     "help": "원본은 CC Switch 폴더에 저장되며 선택한 앱에 동기화됩니다. Claude Desktop과 OpenClaw는 스킬을 지원하지 않아 해당 열이 없습니다.",
+    "lockedInUnified": "통합 저장 모드에서 {{app}}은(는) ~/.agents/skills의 모든 Skill을 읽으므로 개별적으로 켜거나 끌 수 없습니다.",
     "add": "스킬 추가",
     "addMenu": {
       "discover": "탐색에서 찾아보기",

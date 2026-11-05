@@ -351,6 +351,14 @@ pub struct AppSpec {
 }
 
 impl AppType {
+    /// Whether this agent natively scans `~/.agents/skills/`.
+    pub fn scans_agents_skills_dir(&self) -> bool {
+        matches!(
+            self,
+            Self::Codex | Self::Gemini | Self::OpenCode | Self::OpenClaw
+        )
+    }
+
     /// 这个应用的功能表。不要加 `_ =>` 分支：新增应用必须在这里写全每一项。
     pub const fn spec(&self) -> AppSpec {
         match self {
