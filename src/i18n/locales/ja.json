@@ -390,7 +390,8 @@
     "codexAuthCleanupFailed": "切り替えは成功しましたが、auth.json を削除できませんでした。公式ログイン資格情報がディスクに残っています。完全に削除するには Codex 設定ディレクトリの auth.json を手動で削除してください",
     "windowControlFailed": "ウィンドウ操作に失敗しました: {{error}}",
     "officialBlockedByProxy": "ローカルルーティングモード中は公式プロバイダーに切り替えできません。ルーティング経由で公式 API にアクセスするとアカウントが停止される可能性があります。",
-    "proxyOfficialWarning": "現在のプロバイダー {{name}} は公式です。ローカルルーティングを使用する前にサードパーティプロバイダーに切り替えてください。"
+    "proxyOfficialWarning": "現在のプロバイダー {{name}} は公式です。ローカルルーティングを使用する前にサードパーティプロバイダーに切り替えてください。",
+    "proxyLoopbackHijacked": "{{app}} からローカルルート {{origin}} へのリクエストがシステムプロキシに横取りされるため、{{app}} は 502 エラーになります。プロキシツールでループバックアドレスを直結にしてください（例：Clash のルールの先頭に IP-CIDR,127.0.0.0/8,DIRECT,no-resolve を追加）。変更後は {{app}} を完全に終了してから開き直してください。"
   },
   "confirm": {
     "deleteProvider": "プロバイダーを削除",
@@ -992,6 +993,7 @@
     "browsePlaceholderHermes": "例: /home/<your-username>/.hermes",
     "browsePlaceholderPi": "例: /home/<your-username>/.pi/agent",
     "browsePlaceholderOmp": "例: /home/<your-username>/.omp/agent",
+    "browsePlaceholderDsh": "例: /home/<your-username>/.dsh",
     "browseDirectory": "ディレクトリを選択",
     "resetDefault": "デフォルトに戻す（保存後に反映）",
     "checkForUpdates": "アップデートを確認",
@@ -1051,6 +1053,7 @@
     "toolActionDone": "{{count}} 個のツールの{{action}}が完了しました",
     "toolActionPartial": "{{succeeded}} 個成功、{{failed}} 個失敗（{{action}}）",
     "toolActionFailed": "インストール/更新コマンドの実行に失敗しました",
+    "toolActionBinCollision": "{{path}} に同名のファイルが既にあります（別の方法でインストールされた可能性があります）。npm はこれを上書きしません。中身を確認し、名前を変えてバックアップしてから再試行してください。npm の --force は使わないでください。ファイルがそのまま上書きされます。",
     "toolActionInProgress": "アプリの操作が実行中です",
     "toolActionInProgressDetail": "{{tool}} のインストール、更新、またはアンインストールがバックグラウンドで実行中です。完了するまでお待ちください。",
     "toolNotRunnable": "インストール済みですが実行できません（バージョン未検出）",
@@ -2064,6 +2067,8 @@
     "autoReviewModelCodexDefault": "Codex の既定（codex-auto-review）",
     "autoReviewModelMainDefault": "メインモデル自身が承認（既定）",
     "autoReviewModelNoList": "このカードにはモデル一覧がありません。Codex は公式の codex-auto-review で承認しますが、これを受け付けるのは ChatGPT アカウントへ転送する一部の中継だけで、それ以外では 404 になります。上のモデル一覧にモデルを追加すると選べます。",
+    "officialSpeedTiersLabel": "公式の Fast ティアを残す",
+    "officialSpeedTiersHint": "モデル一覧の GPT モデルに公式の Fast 速度ティアを残します。Codex で Fast を選ぶと service_tier=priority が送られます。受け付けるのは公式 ChatGPT アカウントへ転送する中継（CPA など）だけで、利用枠の消費も速くなります。それ以外の上流ではエラーになったり、より高い料金で課金されたりすることがあります。オンにすると、公式カードで選んだ Fast がこのプロバイダーですぐに有効になります。集約モードでは使われません。変更後は Codex を再起動してください。",
     "modelListHint": "変更後は Codex を再起動してください。",
     "modelListDefaultHelp": "これらのモデルは Codex の /model に表示され、先頭の行がデフォルトモデルです。公式 GPT モデル名の行は公式エントリから生成されるため、表示名・ウィンドウ・思考レベルは反映されません。",
     "addCatalogModel": "手動で追加",
@@ -2668,7 +2673,7 @@
     "officialSubscriptionHint": "ローカル CLI の OAuth 認証情報を読み取り、公式 API でサブスクリプション枠を照会します。既定では無効で、有効化した後のみリクエストします。",
     "officialSubscriptionHintAgy": "agy 組み込みの /usage コマンドを実行して、ログイン中のアカウントの枠を照会します。ログイン認証情報は読み取りません。1 回の照会に約 10 秒かかります。既定では無効で、有効化した後のみ実行します。",
     "resetDate": "リセット日",
-    "premiumRequests": "Premium リクエスト",
+    "premiumRequests": "Credits",
     "credentialsConfig": "認証情報",
     "credentialsHint": "空欄の場合はプロバイダー設定を使用",
     "optional": "オプション",
@@ -4204,7 +4209,7 @@
       "agyThirdPartyWeekly": "Claude 週",
       "monthly": "月",
       "credits": "クレジット",
-      "copilotPremium": "プレミアム"
+      "copilotPremium": "Credits"
     },
     "fiveHour": "5時間",
     "sevenDay": "週間",
@@ -4224,7 +4229,11 @@
     "weeklyLimit": "週間",
     "monthly": "月間",
     "credits": "クレジット",
-    "copilotPremium": "プレミアム",
+    "copilotPremium": "Credits",
+    "copilotCompletions": "コード補完",
+    "copilotChat": "チャット",
+    "copilotCount": "残り {{remaining}} / 合計 {{total}}",
+    "copilotNotIncluded": "現在のプランに含まれません",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}}後にリセット",
     "extraUsage": "超過使用量",
@@ -4608,6 +4617,7 @@
     "connection": {
       "unchecked": "未確認",
       "connected": "接続成功",
+      "authRequired": "サーバーには接続できますが、ログイン認証（OAuth など）が必要です。CC Switch はクライアント自身のログイン情報を使わずに確認します。クライアントでログイン済みならそのまま利用でき、リクエストヘッダーにトークンを設定している場合は有効か確認してください",
       "disconnected": "接続失敗",
       "checking": "接続を確認中",
       "disabled": "無効"

@@ -29,7 +29,7 @@ use crate::services::usage_cache::UsageCache;
 use crate::store::AppState;
 
 const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str = "official_subscription";
-/// Copilot 用量结果的单位（`commands::provider` 的 `COPILOT_UNIT_PREMIUM`）：高级请求次数。
+/// Copilot 用量结果的单位（`commands::provider` 的 `COPILOT_UNIT_PREMIUM`）：Credits（接口里仍叫 premium_interactions）。
 const COPILOT_UNIT_PREMIUM: &str = "requests";
 
 pub const TRAY_ID: &str = "cc-switch";
@@ -229,7 +229,7 @@ impl TrayTexts {
                 tier_gemini_pro: "Pro",
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
-                tier_premium: "Premium",
+                tier_premium: "Credits",
                 tier_left: "{label} {value}% left",
                 tier_used: "{label} {value}% used",
                 tier_used_up: "{label} used up",
@@ -286,7 +286,6 @@ impl TrayTexts {
                 texts.tier_gemini_pro = "Pro";
                 texts.tier_gemini_flash = "Flash";
                 texts.tier_gemini_flash_lite = "Flash Lite";
-                texts.tier_premium = "Premium";
                 texts.tier_left = "{label} %{value} kaldı";
                 texts.tier_used = "{label} %{value} kullanıldı";
                 texts.tier_used_up = "{label} tükendi";
@@ -342,7 +341,7 @@ impl TrayTexts {
                 tier_gemini_pro: "Pro",
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
-                tier_premium: "プレミアム",
+                tier_premium: "Credits",
                 tier_left: "{label} 残り {value}%",
                 tier_used: "{label} 使用済み {value}%",
                 tier_used_up: "{label} 使い切り",
@@ -396,7 +395,7 @@ impl TrayTexts {
                 tier_gemini_pro: "Pro",
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
-                tier_premium: "進階請求",
+                tier_premium: "Credits",
                 tier_left: "{labelSp}剩餘 {value}%",
                 tier_used: "{labelSp}已用 {value}%",
                 tier_used_up: "{labelSp}已用完",
@@ -450,7 +449,7 @@ impl TrayTexts {
                 tier_gemini_pro: "Pro",
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
-                tier_premium: "高级请求",
+                tier_premium: "Credits",
                 tier_left: "{labelSp}剩余 {value}%",
                 tier_used: "{labelSp}已用 {value}%",
                 tier_used_up: "{labelSp}已用完",
@@ -738,12 +737,15 @@ fn plan_line(texts: &TrayTexts, data: &crate::provider::UsageData) -> Option<Quo
     let unit = data.unit.as_deref();
     let total = data.total.filter(|total| *total != -1.0);
     if unit == Some(COPILOT_UNIT_PREMIUM) {
-        if let (Some(remaining), Some(total)) = (data.remaining, total) {
-            if total > 0.0 {
-                let utilization = (total - remaining) / total * 100.0;
-                return Some(tier_line(texts, texts.tier_premium, utilization, None));
-            }
+        // Free 计划不含 Credits（总额 0）：不显示，别落到下面的余额分支写成「余额 0」
+        let (Some(remaining), Some(total)) = (data.remaining, total) else {
+            return None;
+        };
+        if total <= 0.0 {
+            return None;
         }
+        let utilization = (total - remaining) / total * 100.0;
+        return Some(tier_line(texts, texts.tier_premium, utilization, None));
     }
     if let Some(remaining) = data.remaining {
         // 余额不提示「快用完」，只有用完才算（和卡片 `quotaRules.balanceLine` 一致）；
@@ -3537,6 +3539,7 @@ mod tests {
             extra_usage: None,
             reset_credits: None,
             credits_balance: None,
+            plan_name: None,
             error: None,
             queried_at: Some(0),
         }
@@ -3797,19 +3800,27 @@ mod tests {
 
     #[test]
     fn copilot_premium_requests_use_the_card_word() {
-        let data = UsageData {
+        let copilot = |total: f64, remaining: f64| UsageData {
             plan_name: Some("copilot_pro".to_string()),
             extra: Some("Reset: 2026-11-01".to_string()),
             is_valid: Some(true),
             invalid_message: None,
-            total: Some(300.0),
-            used: Some(120.0),
-            remaining: Some(180.0),
+            total: Some(total),
+            used: Some(total - remaining),
+            remaining: Some(remaining),
             unit: Some(COPILOT_UNIT_PREMIUM.to_string()),
         };
         assert_eq!(
-            title(format_script_result(&zh(), &usage_result(true, vec![data]))),
-            Some(("高级请求剩余 60%".to_string(), false))
+            title(format_script_result(
+                &zh(),
+                &usage_result(true, vec![copilot(300.0, 180.0)])
+            )),
+            Some(("Credits 剩余 60%".to_string(), false))
+        );
+        // Free 计划不含 Credits（总额 0）：不显示，不能写成「余额 0」
+        assert_eq!(
+            format_script_result(&zh(), &usage_result(true, vec![copilot(0.0, 0.0)])),
+            None
         );
     }
 
