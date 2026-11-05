@@ -1477,8 +1477,8 @@ mod tests {
                     request_id, provider_id, app_type, model, input_tokens, output_tokens,
                     cache_read_tokens, latency_ms, status_code, session_id, created_at, data_source
                 ) VALUES
-                (?1, 'grok', 'grokbuild', 'grok-4.5-build', 100, 10, 0, 1, 200, ?3, ?4, 'grok_session'),
-                (?2, 'grok', 'grokbuild', 'grok-4.5-build', 200, 20, 0, 1, 200, ?3, ?5, 'grok_session')",
+                (?1, 'grok', 'grokbuild', 'grok-4.5-build', 100, 10, 0, 1000, 200, ?3, ?4, 'grok_session'),
+                (?2, 'grok', 'grokbuild', 'grok-4.5-build', 200, 20, 0, 1000, 200, ?3, ?5, 'grok_session')",
                 rusqlite::params![
                     format!("grok_session:{session_id}:idx0:grok-4.5-build"),
                     format!("grok_session:{session_id}:idx1:grok-4.5-build"),
