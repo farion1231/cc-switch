@@ -4609,6 +4609,7 @@
     "connection": {
       "unchecked": "未檢查",
       "connected": "連線成功",
+      "authRequired": "需要登入授權：伺服器可連通，但要求登入（如 OAuth）。CC Switch 檢測時不帶各用戶端自己的登入憑證，在用戶端登入後即可正常使用",
       "disconnected": "連線失敗",
       "checking": "正在檢查連線",
       "disabled": "未啟用"

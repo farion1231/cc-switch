@@ -4566,6 +4566,7 @@
     "connection": {
       "unchecked": "Kontrol edilmedi",
       "connected": "Bağlantı başarılı",
+      "authRequired": "Oturum açma gerekli: sunucuya erişilebiliyor ancak yetkilendirme (ör. OAuth) istiyor. CC Switch, istemcilerin kendi oturumlarını kullanmadan kontrol eder; istemciden oturum açtığınızda çalışır",
       "disconnected": "Bağlantı başarısız",
       "checking": "Bağlantı kontrol ediliyor",
       "disabled": "Etkin değil"

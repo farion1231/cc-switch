@@ -4608,6 +4608,7 @@
     "connection": {
       "unchecked": "未確認",
       "connected": "接続成功",
+      "authRequired": "認証が必要：サーバーには接続できますが、認証（OAuth など）を求めています。CC Switch はクライアント側のログイン情報を使わずに確認します。クライアントでログインすれば利用できます",
       "disconnected": "接続失敗",
       "checking": "接続を確認中",
       "disabled": "無効"

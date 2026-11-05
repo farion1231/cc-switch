@@ -1510,10 +1510,12 @@ fn mcp_edit(text: &str, id: &str, spec: Option<&Value>) -> Result<String, AppErr
             config.insert("serverName".into(), id.into());
             config.insert(
                 "transport".into(),
-                if spec.get("url").is_some() {
-                    "streamable-http"
-                } else {
+                // Same inference as every other app's projection: a stdio spec that still
+                // carries a stray `url` stays stdio.
+                if crate::mcp::validation::spec_transport_type(spec) == "stdio" {
                     "stdio"
+                } else {
+                    "streamable-http"
                 }
                 .into(),
             );

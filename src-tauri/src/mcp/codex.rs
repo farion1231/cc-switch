@@ -621,20 +621,63 @@ fn json_value_to_toml_item(value: &Value, field_name: &str) -> Option<toml_edit:
     }
 }
 
-/// 共享规范里其他客户端的字段，Codex 的 `[mcp_servers.*]` 不认识：
-/// `timeout`（Gemini CLI / Cline 等，单位各家不同）、`autoApprove`（Cline 等）。
-/// 写进去 Codex 会报 ignored-settings 警告，`--strict-config` 直接拒绝加载。
-/// 只在 Codex 输出里去掉，库里的共享规范不动，其他客户端照常使用。
+/// Codex `[mcp_servers.*]` 认识的字段（按 codex-cli 0.166 `--strict-config` 逐项实测）。
+///
+/// 共享规范里常带着其他客户端的字段：`timeout` / `autoApprove` / `disabled` /
+/// `alwaysAllow`（Cline、Roo）、`trust` / `includeTools` / `description` / `oauth`
+/// （Gemini CLI）、`transport`（Hermes、Kimi）等。Codex 对未知字段报 ignored-settings
+/// 警告，`--strict-config` 直接拒绝加载整份配置。黑名单永远列不全，所以按白名单写出；
+/// 库里的共享规范不动，其他客户端照常使用。
+///
 /// `timeout` 不换算成 `tool_timeout_sec`：各客户端单位不一，猜错会把超时放大或缩小
 /// 一千倍；需要时直接在规范里写 Codex 原生的 `tool_timeout_sec`，会原样写出。
-const NON_CODEX_SERVER_FIELDS: &[&str] = &["timeout", "autoApprove"];
+const CODEX_COMMON_FIELDS: &[&str] = &[
+    "enabled",
+    "required",
+    "startup_timeout_sec",
+    "startup_timeout_ms",
+    "tool_timeout_sec",
+    "enabled_tools",
+    "disabled_tools",
+    "scopes",
+    "tools",
+    "default_tools_approval_mode",
+];
+/// 只属于 stdio 条目：写到 url 条目上 Codex 会拒绝加载。
+const CODEX_STDIO_FIELDS: &[&str] = &["command", "args", "env", "env_vars", "cwd"];
+/// 只属于 url（streamable HTTP）条目。
+const CODEX_HTTP_FIELDS: &[&str] = &[
+    "url",
+    "http_headers",
+    "env_http_headers",
+    "http_headers_helper",
+    "bearer_token_env_var",
+    "oauth_resource",
+];
 
-/// Codex 专用的 JSON → TOML 转换：在通用转换的基础上去掉 Codex 不认的字段。
+/// Codex 专用的 JSON → TOML 转换：在通用转换的基础上只保留 Codex 认识的字段。
 /// Grok Build 复用通用转换，不受影响。
 fn json_server_to_codex_toml_table(spec: &Value) -> Result<toml_edit::Table, AppError> {
     let mut table = json_server_to_toml_table(spec)?;
-    for key in NON_CODEX_SERVER_FIELDS {
+    let transport_fields = if spec_transport_type(spec) == "stdio" {
+        CODEX_STDIO_FIELDS
+    } else {
+        CODEX_HTTP_FIELDS
+    };
+    let dropped: Vec<String> = table
+        .iter()
+        .map(|(key, _)| key.to_string())
+        .filter(|key| {
+            !CODEX_COMMON_FIELDS.contains(&key.as_str())
+                && !transport_fields.contains(&key.as_str())
+        })
+        .collect();
+    for key in &dropped {
         table.remove(key);
+    }
+    if !dropped.is_empty() {
+        // 只记录字段名：值可能含 token。
+        log::debug!("写入 Codex 时跳过 Codex 不认识的字段: {dropped:?}");
     }
     Ok(table)
 }
@@ -1093,6 +1136,82 @@ mod tests {
         let shared = json_server_to_toml_table(&spec).unwrap();
         assert!(shared.get("timeout").is_some());
         assert!(shared.get("autoApprove").is_some());
+    }
+
+    #[test]
+    fn codex_table_keeps_only_fields_codex_accepts() {
+        // 其他客户端写在共享规范里的字段，Codex --strict-config 全部拒绝加载。
+        let foreign = json!({
+            "disabled": false,
+            "alwaysAllow": ["a"],
+            "trust": true,
+            "includeTools": ["a"],
+            "excludeTools": ["b"],
+            "description": "d",
+            "oauth": { "clientId": "x" },
+            "transport": "sse",
+            "debug": true,
+        });
+        let native_common = json!({
+            "enabled": true,
+            "required": false,
+            "startup_timeout_ms": 900,
+            "enabled_tools": ["a"],
+            "disabled_tools": ["b"],
+            "default_tools_approval_mode": "approve",
+        });
+        let mut stdio = json!({
+            "type": "stdio",
+            "command": "node",
+            "args": ["server.js"],
+            "env_vars": ["TOKEN"],
+            "cwd": "/srv",
+        });
+        let mut remote = json!({
+            "type": "http",
+            "url": "https://example.com/mcp",
+            "headers": { "X-Key": "k" },
+            "bearer_token_env_var": "TOKEN",
+            "env_http_headers": { "X-Env": "ENV" },
+            "oauth_resource": "https://example.com",
+        });
+        for spec in [&mut stdio, &mut remote] {
+            for source in [&foreign, &native_common] {
+                for (key, value) in source.as_object().unwrap() {
+                    spec[key] = value.clone();
+                }
+            }
+        }
+
+        for (spec, transport_keys) in [
+            (&stdio, &["command", "args", "env_vars", "cwd"][..]),
+            (
+                &remote,
+                &[
+                    "url",
+                    "http_headers",
+                    "bearer_token_env_var",
+                    "env_http_headers",
+                    "oauth_resource",
+                ][..],
+            ),
+        ] {
+            let table = json_server_to_codex_toml_table(spec).unwrap();
+            for key in foreign.as_object().unwrap().keys() {
+                assert!(table.get(key).is_none(), "foreign field {key} leaked");
+            }
+            for key in native_common
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .chain(transport_keys.iter().copied())
+            {
+                assert!(table.get(key).is_some(), "Codex field {key} was dropped");
+            }
+            assert!(table.get("type").is_none());
+            assert!(table.get("headers").is_none());
+        }
     }
 
     #[test]

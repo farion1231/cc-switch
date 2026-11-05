@@ -1,16 +1,27 @@
 //! Short-lived MCP handshakes requested by the MCP page, never by app startup.
-use std::{collections::HashMap, process::Stdio, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    process::Stdio,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
-use futures::{future::AbortHandle, future::Abortable, stream, StreamExt};
+use futures::{future::AbortHandle, future::Abortable, stream, stream::BoxStream, StreamExt};
 use once_cell::sync::Lazy;
 use process_wrap::tokio::{KillOnDrop, TokioChildWrapper, TokioCommandWrap};
 use rmcp::{
-    model::{ClientInfo, Implementation},
+    model::{ClientInfo, ClientJsonRpcMessage, Implementation},
     transport::{
         async_rw::AsyncRwTransport,
         common::client_side_sse::{BoxedSseResponse, NeverRetry},
         sse_client::{SseClient, SseClientConfig, SseTransportError},
-        streamable_http_client::StreamableHttpClientTransportConfig,
+        streamable_http_client::{
+            SseError, StreamableHttpClient, StreamableHttpClientTransportConfig,
+            StreamableHttpError, StreamableHttpPostResponse,
+        },
         SseClientTransport, StreamableHttpClientTransport, Transport,
     },
     RoleClient, ServiceExt,
@@ -39,17 +50,26 @@ static LOGIN_SHELL_PATH: Lazy<Option<String>> = Lazy::new(|| {
     )))
 });
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ConnectivityStatus {
+    Connected,
+    /// The server answered 401. OAuth servers (Notion, Sentry, ...) reject this
+    /// anonymous probe but work in clients that hold their own login, and CC Switch
+    /// never reads those clients' tokens, so this is not a connection failure.
+    AuthRequired,
+    Disconnected,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectivityResult {
     pub server_id: String,
-    pub connected: bool,
+    pub status: ConnectivityStatus,
 }
 
 #[derive(Deserialize)]
 struct ConnectionSpec {
-    #[serde(rename = "type")]
-    transport: Option<String>,
     command: Option<String>,
     #[serde(default)]
     args: Vec<String>,
@@ -76,7 +96,7 @@ pub fn start_checks(
                 let _permit = CHECK_PERMITS.acquire().await;
                 ConnectivityResult {
                     server_id: server.id,
-                    connected: check_server(server.server, CHECK_TIMEOUT).await,
+                    status: check_server(server.server, CHECK_TIMEOUT).await,
                 }
             }))
             .buffer_unordered(MAX_CONCURRENT_CHECKS);
@@ -98,25 +118,26 @@ pub fn cancel_checks(batch_id: &str) {
     }
 }
 
-async fn check_server(value: serde_json::Value, timeout: Duration) -> bool {
+async fn check_server(value: serde_json::Value, timeout: Duration) -> ConnectivityStatus {
     // Do not return/log transport errors: URLs, headers and process arguments may
-    // contain credentials. The UI only needs a red/green connectivity result.
-    matches!(
-        tokio::time::timeout(timeout, connect(value)).await,
-        Ok(Ok(()))
-    )
+    // contain credentials. The UI only needs the connectivity state.
+    let unauthorized = Arc::new(AtomicBool::new(false));
+    match tokio::time::timeout(timeout, connect(value, unauthorized.clone())).await {
+        Ok(Ok(())) => ConnectivityStatus::Connected,
+        _ if unauthorized.load(Ordering::Relaxed) => ConnectivityStatus::AuthRequired,
+        _ => ConnectivityStatus::Disconnected,
+    }
 }
 
-async fn connect(value: serde_json::Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn connect(
+    value: serde_json::Value,
+    unauthorized: Arc<AtomicBool>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Probe the transport the apps are actually given: every projection uses this
+    // inference (a URL-only spec is HTTP even when mislabelled stdio).
+    let transport = crate::mcp::validation::spec_transport_type(&value).to_string();
     let spec: ConnectionSpec = serde_json::from_value(value)?;
-    let transport = spec.transport.as_deref().unwrap_or_else(|| {
-        if spec.url.is_some() && spec.command.is_none() {
-            "http"
-        } else {
-            "stdio"
-        }
-    });
-    match transport {
+    match transport.as_str() {
         "stdio" => {
             let program = spec
                 .command
@@ -184,6 +205,7 @@ async fn connect(value: serde_json::Value) -> Result<(), Box<dyn std::error::Err
                     SameOriginSseClient {
                         client,
                         origin: url.parse()?,
+                        unauthorized,
                     },
                     SseClientConfig {
                         sse_endpoint: url.into(),
@@ -195,7 +217,10 @@ async fn connect(value: serde_json::Value) -> Result<(), Box<dyn std::error::Err
                 handshake(transport).await
             } else {
                 let transport = StreamableHttpClientTransport::with_client(
-                    client,
+                    AuthProbeClient {
+                        client,
+                        unauthorized,
+                    },
                     StreamableHttpClientTransportConfig {
                         retry_config: Arc::new(NeverRetry),
                         ..StreamableHttpClientTransportConfig::with_uri(url)
@@ -252,11 +277,106 @@ async fn handshake<T: Transport<RoleClient> + 'static>(
     Ok(())
 }
 
+fn is_unauthorized(error: &reqwest::Error) -> bool {
+    error.status() == Some(reqwest::StatusCode::UNAUTHORIZED)
+}
+
+/// Streamable HTTP client that remembers whether the server asked for authorization.
+#[derive(Clone)]
+struct AuthProbeClient {
+    client: reqwest::Client,
+    unauthorized: Arc<AtomicBool>,
+}
+
+impl AuthProbeClient {
+    fn observe<T>(
+        &self,
+        result: Result<T, StreamableHttpError<reqwest::Error>>,
+    ) -> Result<T, StreamableHttpError<reqwest::Error>> {
+        if let Err(error) = &result {
+            let unauthorized = match error {
+                StreamableHttpError::AuthRequired(_) => true,
+                StreamableHttpError::Client(error) => is_unauthorized(error),
+                _ => false,
+            };
+            if unauthorized {
+                self.unauthorized.store(true, Ordering::Relaxed);
+            }
+        }
+        result
+    }
+}
+
+impl StreamableHttpClient for AuthProbeClient {
+    type Error = reqwest::Error;
+
+    async fn post_message(
+        &self,
+        uri: Arc<str>,
+        message: ClientJsonRpcMessage,
+        session_id: Option<Arc<str>>,
+        auth_header: Option<String>,
+    ) -> Result<StreamableHttpPostResponse, StreamableHttpError<Self::Error>> {
+        self.observe(
+            StreamableHttpClient::post_message(&self.client, uri, message, session_id, auth_header)
+                .await,
+        )
+    }
+
+    async fn delete_session(
+        &self,
+        uri: Arc<str>,
+        session_id: Arc<str>,
+        auth_header: Option<String>,
+    ) -> Result<(), StreamableHttpError<Self::Error>> {
+        self.observe(
+            StreamableHttpClient::delete_session(&self.client, uri, session_id, auth_header).await,
+        )
+    }
+
+    async fn get_stream(
+        &self,
+        uri: Arc<str>,
+        session_id: Arc<str>,
+        last_event_id: Option<String>,
+        auth_header: Option<String>,
+    ) -> Result<
+        BoxStream<'static, Result<sse_stream::Sse, SseError>>,
+        StreamableHttpError<Self::Error>,
+    > {
+        self.observe(
+            StreamableHttpClient::get_stream(
+                &self.client,
+                uri,
+                session_id,
+                last_event_id,
+                auth_header,
+            )
+            .await,
+        )
+    }
+}
+
 /// A legacy SSE endpoint must not forward configured credentials to another host.
 #[derive(Clone)]
 struct SameOriginSseClient {
     client: reqwest::Client,
     origin: http::Uri,
+    unauthorized: Arc<AtomicBool>,
+}
+
+impl SameOriginSseClient {
+    fn observe<T>(
+        &self,
+        result: Result<T, SseTransportError<reqwest::Error>>,
+    ) -> Result<T, SseTransportError<reqwest::Error>> {
+        if let Err(SseTransportError::Client(error)) = &result {
+            if is_unauthorized(error) {
+                self.unauthorized.store(true, Ordering::Relaxed);
+            }
+        }
+        result
+    }
 }
 
 impl SseClient for SameOriginSseClient {
@@ -274,7 +394,7 @@ impl SseClient for SameOriginSseClient {
                 "Cross-origin MCP message endpoint",
             )));
         }
-        self.client.post_message(uri, message, auth_token).await
+        self.observe(SseClient::post_message(&self.client, uri, message, auth_token).await)
     }
 
     async fn get_stream(
@@ -283,7 +403,7 @@ impl SseClient for SameOriginSseClient {
         last_event_id: Option<String>,
         auth_token: Option<String>,
     ) -> Result<BoxedSseResponse, SseTransportError<Self::Error>> {
-        self.client.get_stream(uri, last_event_id, auth_token).await
+        self.observe(SseClient::get_stream(&self.client, uri, last_event_id, auth_token).await)
     }
 }
 

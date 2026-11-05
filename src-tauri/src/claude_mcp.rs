@@ -59,6 +59,19 @@ fn wrap_command_for_windows(obj: &mut Map<String, Value>) {
     obj.insert("args".into(), Value::Array(new_args));
 }
 
+/// Claude Code 把没有 `type` 的条目当作 stdio：只有 `url` 的远程服务器因为缺
+/// `command` 被整条忽略（`claude mcp get` 报 "No MCP server named …"），界面却显示
+/// 已同步。写出前按各应用共用的推断补上明确的 `type`。
+fn set_explicit_transport_type(obj: &mut Map<String, Value>) {
+    let spec = Value::Object(std::mem::take(obj));
+    let transport = crate::mcp::validation::spec_transport_type(&spec).to_string();
+    let Value::Object(mut restored) = spec else {
+        unreachable!("constructed as an object above");
+    };
+    restored.insert("type".into(), Value::String(transport));
+    *obj = restored;
+}
+
 /// 非 Windows 平台无需处理
 #[cfg(not(windows))]
 fn wrap_command_for_windows(_obj: &mut Map<String, Value>) {
@@ -360,6 +373,8 @@ pub fn set_mcp_servers_map(
         obj.remove("homepage");
         obj.remove("docs");
 
+        set_explicit_transport_type(&mut obj);
+
         // Windows 平台自动包装 npx/npm 等命令为 cmd /c 格式（WSL 路径除外）
         if !is_wsl_target {
             wrap_command_for_windows(&mut obj);
@@ -383,6 +398,27 @@ pub fn set_mcp_servers_map(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn claude_entries_always_carry_an_explicit_transport_type() {
+        let typed = |spec: Value| {
+            let mut obj = spec.as_object().unwrap().clone();
+            set_explicit_transport_type(&mut obj);
+            obj
+        };
+        // 只有 url：不补 type 的话 Claude Code 会把整条忽略
+        let remote = typed(json!({"url": "https://example.com/mcp"}));
+        assert_eq!(remote["type"], "http");
+        assert_eq!(remote["url"], "https://example.com/mcp");
+        // 标成 stdio 却只有 url 的规范同样按 http 写出
+        assert_eq!(
+            typed(json!({"type": "stdio", "url": "https://example.com/mcp"}))["type"],
+            "http"
+        );
+        assert_eq!(typed(json!({"command": "node"}))["type"], "stdio");
+        let sse = typed(json!({"type": "sse", "url": "https://example.com/sse"}));
+        assert_eq!(sse["type"], "sse");
+    }
 
     /// 测试 Windows 命令包装功能
     /// 由于使用条件编译，在非 Windows 平台上测试的是空函数

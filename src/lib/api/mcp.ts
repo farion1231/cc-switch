@@ -8,9 +8,15 @@ import type {
 } from "@/types";
 import type { AppId } from "./types";
 
+export type McpConnectivityStatus =
+  | "connected"
+  /** The server answered 401: it is reachable but wants the client's own login. */
+  | "authRequired"
+  | "disconnected";
+
 export interface McpConnectivityResult {
   serverId: string;
-  connected: boolean;
+  status: McpConnectivityStatus;
 }
 
 export const mcpApi = {

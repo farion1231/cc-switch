@@ -4,18 +4,20 @@ use serde_json::Value;
 
 use crate::error::AppError;
 
-/// 基础校验：允许 stdio/http/sse；或省略 type（视为 stdio）。对应必填字段存在
+/// 基础校验：允许 stdio/http/sse；或省略 type（只有 url 视为 http，否则 stdio）。
+/// 对应必填字段存在
 pub fn validate_server_spec(spec: &Value) -> Result<(), AppError> {
     if !spec.is_object() {
         return Err(AppError::McpValidation(
             "MCP 服务器连接定义必须为 JSON 对象".into(),
         ));
     }
-    let t_opt = spec.get("type").and_then(|x| x.as_str());
-    // 支持三种：stdio/http/sse；若缺省 type 则按 stdio 处理（与社区常见 .mcp.json 一致）
-    let is_stdio = t_opt.map(|t| t == "stdio").unwrap_or(true);
-    let is_http = t_opt.map(|t| t == "http").unwrap_or(false);
-    let is_sse = t_opt.map(|t| t == "sse").unwrap_or(false);
+    // 与写出侧同一套推断：校验和投影必须对同一份规范得出同一种传输，否则只有 url 的
+    // 规范会在导入时被当成缺 command 的 stdio 拒绝，写出时却按 http 处理。
+    let transport = spec_transport_type(spec);
+    let is_stdio = transport == "stdio";
+    let is_http = transport == "http";
+    let is_sse = transport == "sse";
 
     if !(is_stdio || is_http || is_sse) {
         return Err(AppError::McpValidation(
@@ -85,4 +87,20 @@ pub fn extract_server_spec(entry: &Value) -> Result<Value, AppError> {
     }
 
     Ok(server.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn validation_infers_transport_like_the_projections() {
+        // 只有 url：各应用都按 http 写出，校验也必须接受
+        assert!(validate_server_spec(&json!({"url": "https://example.com/mcp"})).is_ok());
+        assert!(validate_server_spec(&json!({"command": "node"})).is_ok());
+        assert!(validate_server_spec(&json!({})).is_err());
+        assert!(validate_server_spec(&json!({"type": "http"})).is_err());
+        assert!(validate_server_spec(&json!({"type": "ws", "url": "wss://x"})).is_err());
+    }
 }
