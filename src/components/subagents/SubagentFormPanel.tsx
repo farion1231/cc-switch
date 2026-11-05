@@ -459,8 +459,12 @@ export default function SubagentFormPanel({
         ) : null}
 
         {view === "form" ? (
-          <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 overflow-y-auto scroll-stable overscroll-contain px-6 pb-6 pt-5 lg:grid-cols-[minmax(300px,400px)_minmax(0,1fr)] lg:overflow-hidden">
-            <div className="min-w-0 lg:overflow-y-auto lg:pe-1">
+          <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 overflow-y-auto scroll-stable overscroll-contain px-6 pb-6 pt-5 lg:grid-cols-[minmax(300px,400px)_minmax(0,1fr)] lg:grid-rows-[minmax(380px,1fr)]">
+            {/* 宽屏两栏：左栏字段自己滚，右栏编辑器铺满高度。行高至少放得下编辑器，窗口再矮就整块滚动，
+                不再 overflow-hidden 把编辑器底部裁掉 */}
+            {/* 滚动容器会裁掉溢出边框的部分：选中颜色的 ring + offset（4px）、输入框聚焦光晕（3px）。
+                内边距留出这 4px，负外边距抵消，字段仍和右栏对齐；pe-3 让滚动条别贴着输入框 */}
+            <div className="min-w-0 lg:-m-1 lg:overflow-y-auto lg:overscroll-contain lg:p-1 lg:pe-3">
               {fieldsColumn}
             </div>
             <div className="flex min-h-[360px] min-w-0 flex-col gap-1.5">

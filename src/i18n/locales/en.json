@@ -3105,8 +3105,6 @@
     "dirNotExists": "The directory doesn't exist yet. It will be created when you enable your first subagent.",
     "import": "Import",
     "new": "New",
-    "newBlank": "Blank subagent",
-    "fromTemplate": "Start from a template",
     "clearSearch": "Clear search",
     "noSearchResults": "No subagents match \"{{query}}\"",
     "loadFailed": "Couldn't load subagents",
@@ -3295,24 +3293,6 @@
       "orange": "Orange",
       "pink": "Pink",
       "cyan": "Cyan"
-    },
-    "templates": {
-      "code-reviewer": {
-        "title": "Code reviewer",
-        "summary": "Reviews changes for correctness, security and maintainability"
-      },
-      "test-runner": {
-        "title": "Test runner",
-        "summary": "Runs the relevant tests, diagnoses failures and fixes them"
-      },
-      "debugger": {
-        "title": "Debugger",
-        "summary": "Reproduces errors, finds the root cause and applies a minimal fix"
-      },
-      "docs-writer": {
-        "title": "Docs writer",
-        "summary": "Writes or updates READMEs, API docs and guides"
-      }
     },
     "section": {
       "title": "Subagents",

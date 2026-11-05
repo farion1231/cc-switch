@@ -3106,8 +3106,6 @@
     "dirNotExists": "目錄尚不存在，啟用第一個 subagent 時會自動建立",
     "import": "匯入",
     "new": "新增",
-    "newBlank": "新增空白 subagent",
-    "fromTemplate": "從範本新增",
     "clearSearch": "清除搜尋",
     "noSearchResults": "沒有符合「{{query}}」的 subagent",
     "loadFailed": "讀取 subagent 失敗",
@@ -3296,24 +3294,6 @@
       "orange": "橙",
       "pink": "粉",
       "cyan": "青"
-    },
-    "templates": {
-      "code-reviewer": {
-        "title": "程式碼審查",
-        "summary": "修改程式碼後主動審查正確性、安全性和可維護性"
-      },
-      "test-runner": {
-        "title": "測試執行與修復",
-        "summary": "執行相關測試，找出失敗原因並修復"
-      },
-      "debugger": {
-        "title": "除錯排查",
-        "summary": "重現錯誤、找出根因並做最小修復"
-      },
-      "docs-writer": {
-        "title": "文件撰寫",
-        "summary": "撰寫或更新 README、API 文件和使用指南"
-      }
     },
     "section": {
       "title": "Subagents",
