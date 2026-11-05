@@ -530,10 +530,10 @@ export function ProviderList({
   }
 
   // 「当前」只用来决定官方订阅 / OAuth 额度自动刷新：Pi 没有当前项，OMO / Hermes 各看自己的当前项；
-  // Antigravity 没有「启用」，每张卡都随时能打开，额度一律照常显示
+  // Antigravity / Cursor 没有「启用」，每张卡都随时能打开，额度一律照常显示
   const isCurrentFor = (provider: Provider) => {
     if (isPiFamilyApp(appId)) return false;
-    if (appId === "agy") return true;
+    if (appId === "agy" || appId === "cursor") return true;
     if (provider.category === "omo") return provider.id === currentOmoId;
     if (provider.category === "omo-slim")
       return provider.id === currentOmoSlimId;

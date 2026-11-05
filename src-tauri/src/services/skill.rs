@@ -804,7 +804,7 @@ impl SkillService {
 
     fn validate_skill_storage_destination(ssot_dir: &Path) -> Result<()> {
         for app in AppType::all() {
-            if matches!(app, AppType::ClaudeDesktop) {
+            if matches!(app, AppType::ClaudeDesktop | AppType::Cursor) {
                 continue;
             }
             let app_dir = Self::get_app_skills_dir(&app)?;
@@ -2760,7 +2760,7 @@ impl SkillService {
     /// - Symlink: 仅使用 symlink
     /// - Copy: 仅使用文件复制
     pub fn sync_to_app_dir(directory: &str, app: &AppType) -> Result<()> {
-        if matches!(app, AppType::ClaudeDesktop) {
+        if matches!(app, AppType::ClaudeDesktop | AppType::Cursor) {
             return Ok(());
         }
 
@@ -2964,7 +2964,7 @@ impl SkillService {
         app: &AppType,
         preserved_paths: &[PathBuf],
     ) -> Result<()> {
-        if matches!(app, AppType::ClaudeDesktop) {
+        if matches!(app, AppType::ClaudeDesktop | AppType::Cursor) {
             return Ok(());
         }
 
@@ -3010,14 +3010,14 @@ impl SkillService {
         Self::sync_to_app_unlocked(db, app).map(|_| ())
     }
 
-    /// Skills 不由 `sync_to_app` 投影的应用：Claude Desktop、OpenClaw 不支持 Skills，
+    /// Skills 不由 `sync_to_app` 投影的应用：Claude Desktop、Cursor、OpenClaw 不支持 Skills，
     /// Pi 没有数据库列、按目录是否存在现算。这些应用的 skills 目录不归 CC Switch 管，
-    /// 同步时一个字节都不能碰——OpenClaw 自己的 `~/.openclaw/skills` 里和受管
+    /// 同步时一个字节都不能碰——OpenClaw/Cursor 自己的 skills 里和受管
     /// Skill 同名的真实目录，否则会被当成「已关掉的投影」删掉。
     fn is_sync_managed_app(app: &AppType) -> bool {
         !matches!(
             app,
-            AppType::ClaudeDesktop | AppType::OpenClaw | AppType::Pi | AppType::Omp
+            AppType::ClaudeDesktop | AppType::OpenClaw | AppType::Pi | AppType::Omp | AppType::Cursor
         )
     }
 
@@ -8278,5 +8278,12 @@ mod tests {
         // 切换供应商走的同一条同步也不能碰它
         SkillService::sync_to_app(&db, &AppType::OpenClaw).expect("no-op sync");
         assert!(own_skill.exists());
+    }
+
+    #[test]
+    fn cursor_skills_directory_is_excluded_from_sync_and_cleanup() {
+        assert!(!SkillService::is_sync_managed_app(&AppType::Cursor));
+        assert!(SkillService::sync_to_app_dir("dummy", &AppType::Cursor).is_ok());
+        assert!(SkillService::remove_from_app_preserving("dummy", &AppType::Cursor, &[]).is_ok());
     }
 }

@@ -16,7 +16,7 @@
 //! - `GET https://cursor.com/api/usage?user={user_id}`：获取 fast requests (gpt-4) 用量与上限
 
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
 use base64::Engine as _;
@@ -486,17 +486,14 @@ pub async fn get_cursor_subscription_quota() -> Result<SubscriptionQuota, String
         .header("Cookie", &session.cookie)
         .header("Origin", "https://cursor.com")
         .header("User-Agent", "Mozilla/5.0 (compatible; cc-switch)")
+        .timeout(Duration::from_secs(15))
         .send()
         .await;
 
     let summary_resp = match summary_resp {
         Ok(resp) => resp,
         Err(e) => {
-            return Ok(SubscriptionQuota::error(
-                TOOL,
-                CredentialStatus::Valid,
-                format!("Failed to connect to Cursor usage API: {e}"),
-            ));
+            return Err(format!("Failed to connect to Cursor usage API: {e}"));
         }
     };
 
@@ -513,11 +510,7 @@ pub async fn get_cursor_subscription_quota() -> Result<SubscriptionQuota, String
     }
 
     if !http_status.is_success() {
-        return Ok(SubscriptionQuota::error(
-            TOOL,
-            CredentialStatus::Valid,
-            format!("Cursor API returned status code: {http_status}"),
-        ));
+        return Err(format!("API error (HTTP {})", http_status.as_u16()));
     }
 
     let summary_text = summary_resp
@@ -538,6 +531,7 @@ pub async fn get_cursor_subscription_quota() -> Result<SubscriptionQuota, String
         .header("Cookie", &session.cookie)
         .header("Origin", "https://cursor.com")
         .header("User-Agent", "Mozilla/5.0 (compatible; cc-switch)")
+        .timeout(Duration::from_secs(15))
         .send()
         .await;
 
@@ -546,11 +540,36 @@ pub async fn get_cursor_subscription_quota() -> Result<SubscriptionQuota, String
         _ => None,
     };
 
-    // 3. 计算使用率与配额
+    let (plan_name, tiers, extra_usage) =
+        compute_quota_tiers_and_plan(&summary, request_usage.as_ref());
+
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+
+    Ok(SubscriptionQuota {
+        tool: TOOL.to_string(),
+        credential_status: CredentialStatus::Valid,
+        credential_message: Some(plan_name),
+        success: true,
+        tiers,
+        extra_usage,
+        reset_credits: None,
+        credits_balance: None,
+        error: None,
+        queried_at: Some(now_ms),
+    })
+}
+
+fn compute_quota_tiers_and_plan(
+    summary: &UsageSummaryResponse,
+    request_usage: Option<&RequestUsageResponse>,
+) -> (String, Vec<QuotaTier>, Option<ExtraUsage>) {
     let mut utilization: Option<f64> = None;
 
     // 优先：从 /api/usage 提取 gpt-4 fast requests
-    if let Some(req_data) = &request_usage {
+    if let Some(req_data) = request_usage {
         if let Some(gpt4) = &req_data.gpt_4 {
             let used = gpt4.num_requests_total.or(gpt4.num_requests).unwrap_or(0.0);
             if let Some(max) = gpt4.max_request_usage {
@@ -580,22 +599,23 @@ pub async fn get_cursor_subscription_quota() -> Result<SubscriptionQuota, String
         }
     }
 
-    let utilization = utilization.unwrap_or(0.0);
     let reset_time = parse_reset_time(summary.billing_cycle_end.as_ref()).or_else(|| {
-        request_usage
-            .as_ref()
-            .and_then(|r| r.start_of_month.clone())
+        request_usage.and_then(|r| r.start_of_month.clone())
     });
 
     let plan_name = format_cursor_plan_name(summary.membership_type.as_deref());
 
-    let tiers = vec![QuotaTier {
-        name: TIER_FAST_REQUESTS.to_string(),
-        utilization,
-        resets_at: reset_time,
-        used_value_usd: None,
-        max_value_usd: None,
-    }];
+    let tiers = if let Some(util) = utilization {
+        vec![QuotaTier {
+            name: TIER_FAST_REQUESTS.to_string(),
+            utilization: util,
+            resets_at: reset_time,
+            used_value_usd: None,
+            max_value_usd: None,
+        }]
+    } else {
+        vec![]
+    };
 
     // On-demand 按量预算（如果有开启）
     let on_demand_opt = summary
@@ -625,23 +645,7 @@ pub async fn get_cursor_subscription_quota() -> Result<SubscriptionQuota, String
         }
     });
 
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as i64;
-
-    Ok(SubscriptionQuota {
-        tool: TOOL.to_string(),
-        credential_status: CredentialStatus::Valid,
-        credential_message: Some(plan_name),
-        success: true,
-        tiers,
-        extra_usage,
-        reset_credits: None,
-        credits_balance: None,
-        error: None,
-        queried_at: Some(now_ms),
-    })
+    (plan_name, tiers, extra_usage)
 }
 
 // ── 单元测试 ──────────────────────────────────────────────
@@ -759,5 +763,47 @@ mod tests {
         assert_eq!(summary.membership_type.as_deref(), Some("plus"));
         let plan = summary.individual_usage.unwrap().plan.unwrap();
         assert_eq!(plan.total_percent_used, Some(28.4));
+    }
+
+    #[test]
+    fn test_compute_quota_tiers_empty_when_no_utilization() {
+        let summary = UsageSummaryResponse {
+            billing_cycle_start: None,
+            billing_cycle_end: None,
+            membership_type: Some("pro".to_string()),
+            individual_usage: None,
+            team_usage: None,
+        };
+
+        let (plan_name, tiers, extra) = compute_quota_tiers_and_plan(&summary, None);
+        assert_eq!(plan_name, "Cursor Pro");
+        assert!(tiers.is_empty(), "无使用率数据时不应伪造 0.0 使用率");
+        assert!(extra.is_none());
+    }
+
+    #[test]
+    fn test_compute_quota_tiers_from_request_usage() {
+        let summary = UsageSummaryResponse {
+            billing_cycle_start: None,
+            billing_cycle_end: Some(serde_json::json!("2026-12-01T00:00:00Z")),
+            membership_type: Some("pro".to_string()),
+            individual_usage: None,
+            team_usage: None,
+        };
+        let request_usage = RequestUsageResponse {
+            start_of_month: None,
+            gpt_4: Some(RequestUsageGpt4 {
+                num_requests: Some(150.0),
+                num_requests_total: Some(150.0),
+                max_request_usage: Some(500.0),
+            }),
+        };
+
+        let (plan_name, tiers, _) =
+            compute_quota_tiers_and_plan(&summary, Some(&request_usage));
+        assert_eq!(plan_name, "Cursor Pro");
+        assert_eq!(tiers.len(), 1);
+        assert_eq!(tiers[0].name, TIER_FAST_REQUESTS);
+        assert_eq!(tiers[0].utilization, 30.0);
     }
 }

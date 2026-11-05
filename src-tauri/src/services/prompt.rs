@@ -281,7 +281,8 @@ impl PromptService {
     pub fn sync_to_live(state: &AppState, app: AppType) -> Result<(), AppError> {
         // Pi derives activation from its native AGENTS.md; its persisted prompt
         // rows are intentionally disabled and must not drive generic projection.
-        if matches!(app, AppType::ClaudeDesktop | AppType::Pi) {
+        // Claude Desktop and Cursor do not support Prompts.
+        if matches!(app, AppType::ClaudeDesktop | AppType::Pi | AppType::Cursor) {
             return Ok(());
         }
 
@@ -309,7 +310,7 @@ impl PromptService {
     pub fn sync_all_to_live(state: &AppState) -> Result<(), AppError> {
         let mut failures = Vec::new();
         for app in AppType::all() {
-            if matches!(app, AppType::ClaudeDesktop) {
+            if matches!(app, AppType::ClaudeDesktop | AppType::Cursor) {
                 continue;
             }
             if let Err(error) = Self::sync_to_live(state, app.clone()) {
@@ -334,6 +335,10 @@ impl PromptService {
         state: &AppState,
         app: AppType,
     ) -> Result<usize, AppError> {
+        if matches!(app, AppType::ClaudeDesktop | AppType::Cursor) {
+            return Ok(0);
+        }
+
         // 幂等性保护：该应用已有提示词则跳过
         let existing = state.db.get_prompts(app.as_str())?;
         if !existing.is_empty() {
@@ -998,5 +1003,18 @@ mod pi_prompt_tests {
         prompts.insert(second.id.clone(), second);
 
         assert_eq!(unique_pi_backup_id(&prompts, 42), "backup-42-3");
+    }
+
+    #[test]
+    fn cursor_is_excluded_from_prompt_synchronization() {
+        let state = AppState::new(Arc::new(
+            Database::memory().expect("create in-memory database"),
+        ));
+        assert!(PromptService::sync_to_live(&state, AppType::Cursor).is_ok());
+        assert!(PromptService::sync_all_to_live(&state).is_ok());
+        assert_eq!(
+            PromptService::import_from_file_on_first_launch(&state, AppType::Cursor).unwrap(),
+            0
+        );
     }
 }

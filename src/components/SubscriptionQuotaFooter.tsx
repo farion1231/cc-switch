@@ -368,18 +368,19 @@ const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
   autoQueryInterval = 5,
 }) => {
   const display = useQuotaDisplay();
+  const shouldQuery = isCurrent || appId === "cursor";
   const {
     data: quota,
     isFetching: loading,
     refetch,
   } = useSubscriptionQuota(
     appId,
-    isCurrent,
-    isCurrent && autoQueryInterval > 0,
+    shouldQuery,
+    shouldQuery && autoQueryInterval > 0,
     autoQueryInterval,
   );
 
-  if (!isCurrent) return null;
+  if (!shouldQuery) return null;
 
   return (
     <SubscriptionQuotaView
