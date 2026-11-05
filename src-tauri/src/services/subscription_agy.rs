@@ -153,6 +153,7 @@ pub(crate) async fn get_agy_subscription_quota() -> Result<SubscriptionQuota, St
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
+        plan_name: None,
         error: None,
         queried_at: Some(now_millis()),
     })
