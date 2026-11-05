@@ -1,3 +1,4 @@
+import { dimOAuthPreset } from "@/lib/dimProviderConfig";
 /**
  * Hermes Agent provider presets configuration
  * Hermes uses custom_providers array in config.yaml
@@ -142,6 +143,16 @@ export interface HermesProviderSettingsConfig {
 }
 
 export const hermesProviderPresets: HermesProviderPreset[] = [
+  {
+    ...dimOAuthPreset,
+    settingsConfig: {
+      name: "DimAgent",
+      base_url: "https://dimagent.com/v1",
+      api_key: "PROXY_MANAGED",
+      api_mode: "chat_completions",
+      models: [],
+    },
+  },
   // ===== 赞助商预设：文件顺序与 README 赞助商表对齐（仅维护约定；应用内一律按显示名排序，不置顶）=====
   {
     name: "Kimi",

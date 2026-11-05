@@ -60,18 +60,22 @@ pub(super) fn add(
         )));
     }
 
+    let native_config = if add_to_live {
+        crate::proxy::dim_relay::project_provider(&state.db, &app_type, &provider)?.settings_config
+    } else {
+        provider.settings_config.clone()
+    };
     let native_inserted = if add_to_live {
-        crate::pi_config::insert_pi_provider(&provider.id, &provider.settings_config)?
+        crate::pi_config::insert_pi_provider(&provider.id, &native_config)?
     } else {
         false
     };
 
     if let Err(error) = state.db.save_provider(app_type.as_str(), &provider) {
         if native_inserted {
-            if let Err(rollback) = crate::pi_config::remove_pi_provider_if_matches(
-                &provider.id,
-                &provider.settings_config,
-            ) {
+            if let Err(rollback) =
+                crate::pi_config::remove_pi_provider_if_matches(&provider.id, &native_config)
+            {
                 return Err(AppError::Config(format!(
                     "failed to save Pi provider: {error}; native rollback failed: {rollback}"
                 )));
@@ -137,15 +141,18 @@ pub(super) fn update(
     ProviderService::validate_provider_settings(&app_type, &provider)?;
     ProviderService::normalize_usage_script_credential_overrides(&app_type, &mut provider);
 
+    let native_config = if crate::pi_config::pi_provider_exists(&original_id)? {
+        crate::proxy::dim_relay::project_provider(&state.db, &app_type, &provider)?.settings_config
+    } else {
+        provider.settings_config.clone()
+    };
     let previous_native =
-        crate::pi_config::replace_pi_provider_if_present(&original_id, &provider.settings_config)?;
+        crate::pi_config::replace_pi_provider_if_present(&original_id, &native_config)?;
     if let Err(error) = state.db.save_provider(app_type.as_str(), &provider) {
         if let Some(previous_native) = previous_native.as_ref() {
-            if let Err(rollback) = crate::pi_config::replace_pi_provider(
-                &original_id,
-                &provider.settings_config,
-                previous_native,
-            ) {
+            if let Err(rollback) =
+                crate::pi_config::replace_pi_provider(&original_id, &native_config, previous_native)
+            {
                 return Err(AppError::Config(format!(
                     "failed to save Pi provider: {error}; native rollback failed: {rollback}"
                 )));
@@ -193,7 +200,9 @@ pub(super) fn remove(state: &AppState, id: &str) -> Result<(), AppError> {
         return Ok(());
     };
     let mut synced = provider;
-    merge_native_config(&mut synced, removed.clone());
+    if !synced.is_dim_oauth() {
+        merge_native_config(&mut synced, removed.clone());
+    }
     if let Err(error) = state.db.save_provider(app_type.as_str(), &synced) {
         if let Err(rollback) = crate::pi_config::restore_pi_provider_if_missing(id, &removed) {
             return Err(AppError::Config(format!(
@@ -214,7 +223,13 @@ pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppErro
         .get_provider_by_id(id, app_type.as_str())?
         .ok_or_else(|| AppError::InvalidInput(format!("Pi provider '{id}' not found")))?;
 
+    let native_config =
+        crate::proxy::dim_relay::project_provider(&state.db, &app_type, &provider)?.settings_config;
     if let Some(native) = crate::pi_config::read_pi_native_provider(id)? {
+        if provider.is_dim_oauth() {
+            crate::pi_config::replace_pi_provider_if_present(id, &native_config)?;
+            return Ok(SwitchResult::default());
+        }
         let mut synced = provider;
         merge_native_config(&mut synced, native);
         state.db.save_provider(app_type.as_str(), &synced)?;
@@ -222,7 +237,7 @@ pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppErro
     }
 
     ProviderService::validate_provider_settings(&app_type, &provider)?;
-    crate::pi_config::insert_pi_provider(id, &provider.settings_config)?;
+    crate::pi_config::insert_pi_provider(id, &native_config)?;
     Ok(SwitchResult::default())
 }
 
@@ -241,6 +256,9 @@ fn sync_native_locked(
             imported.icon = Some("pi".to_string());
             imported
         });
+        if provider.is_dim_oauth() {
+            continue;
+        }
         let is_new = !saved.contains_key(id);
         let previous_name = provider.name.clone();
         let previous_config = provider.settings_config.clone();
@@ -282,6 +300,9 @@ fn align_native_display_name(provider: &mut Provider) {
 
 fn strip_unsupported_pi_metadata(provider: &mut Provider) {
     provider.in_failover_queue = false;
+    if provider.is_dim_oauth() {
+        return;
+    }
     let Some(meta) = provider.meta.take() else {
         return;
     };

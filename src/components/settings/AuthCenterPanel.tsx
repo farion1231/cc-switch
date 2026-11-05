@@ -2,6 +2,7 @@ import { useEffect, useId, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { CopilotAuthSection } from "@/components/providers/forms/CopilotAuthSection";
 import { CodexOAuthSection } from "@/components/providers/forms/CodexOAuthSection";
+import { DimOAuthSection } from "@/components/providers/forms/DimOAuthSection";
 import { XaiOAuthSection } from "@/components/providers/forms/XaiOAuthSection";
 import { AgyOAuthSection } from "@/components/providers/forms/AgyOAuthSection";
 import { ClaudeOfficialSection } from "@/components/providers/forms/ClaudeOfficialSection";
@@ -85,6 +86,7 @@ export function AuthCenterPanel({
   const claudeOfficialSectionRef = useRef<HTMLDivElement | null>(null);
   const copilotSectionRef = useRef<HTMLDivElement | null>(null);
   const codexOauthSectionRef = useRef<HTMLDivElement | null>(null);
+  const dimOauthSectionRef = useRef<HTMLDivElement | null>(null);
   const xaiOauthSectionRef = useRef<HTMLDivElement | null>(null);
   const agyOauthSectionRef = useRef<HTMLDivElement | null>(null);
   const kimiOauthSectionRef = useRef<HTMLDivElement | null>(null);
@@ -97,19 +99,21 @@ export function AuthCenterPanel({
     if (!root) return;
 
     const sectionRef =
-      authScrollTarget === "kimi_oauth"
-        ? kimiOauthSectionRef
-        : authScrollTarget === "dsh_account"
-          ? dshAccountSectionRef
-          : authScrollTarget === "claude_official"
-            ? claudeOfficialSectionRef
-            : authScrollTarget === "github_copilot"
-              ? copilotSectionRef
-              : authScrollTarget === "codex_oauth"
-                ? codexOauthSectionRef
-                : authScrollTarget === "agy_oauth"
-                  ? agyOauthSectionRef
-                  : xaiOauthSectionRef;
+      authScrollTarget === "dim_oauth"
+        ? dimOauthSectionRef
+        : authScrollTarget === "kimi_oauth"
+          ? kimiOauthSectionRef
+          : authScrollTarget === "dsh_account"
+            ? dshAccountSectionRef
+            : authScrollTarget === "claude_official"
+              ? claudeOfficialSectionRef
+              : authScrollTarget === "github_copilot"
+                ? copilotSectionRef
+                : authScrollTarget === "codex_oauth"
+                  ? codexOauthSectionRef
+                  : authScrollTarget === "agy_oauth"
+                    ? agyOauthSectionRef
+                    : xaiOauthSectionRef;
 
     const target = sectionRef.current;
     const container = findScrollContainer(root);
@@ -198,6 +202,9 @@ export function AuthCenterPanel({
       </div>
       <div ref={codexOauthSectionRef}>
         <CodexOAuthSection showAccountQuota />
+      </div>
+      <div ref={dimOauthSectionRef}>
+        <DimOAuthSection />
       </div>
       <div ref={xaiOauthSectionRef}>
         <XaiOAuthSection mode="manage" helpSide="bottom" />

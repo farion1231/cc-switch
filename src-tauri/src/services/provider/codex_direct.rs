@@ -61,6 +61,9 @@ fn app() -> &'static str {
 /// 官方卡：`category == "official"`，或按 `is_codex_official_provider` 认出来的（早期
 /// 绑定托管账号时没存 category 的卡）。
 pub(crate) fn is_official(provider: &Provider) -> bool {
+    if provider.is_dim_oauth() {
+        return false;
+    }
     provider.category.as_deref() == Some("official")
         || crate::proxy::providers::is_codex_official_provider(provider)
 }
@@ -1337,6 +1340,51 @@ pub(crate) fn preflight(db: &Database, provider: &Provider) -> Result<(), AppErr
 mod tests {
     use super::{is_proxy_base_url, stack_subagent_nested};
     use serde_json::json;
+
+    #[test]
+    fn dim_oauth_projection_and_proxy_plan_never_use_the_official_login() {
+        use super::*;
+        let mut provider = Provider::with_id(
+            crate::database::CODEX_OFFICIAL_PROVIDER_ID.into(),
+            "DimAgent".into(),
+            json!({"auth":{}, "config": r#"model_provider = "dimagent"
+model = "vendor/model-zdr"
+[model_providers.dimagent]
+name = "DimAgent"
+base_url = "https://dimagent.cn/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#}),
+            None,
+        );
+        provider.category = Some("official".into());
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("dim_oauth".into()),
+            ..Default::default()
+        });
+        let projection = project(&provider).unwrap();
+        match projection.route {
+            Route::Custom { table, auth } => {
+                assert_eq!(auth, RouteAuth::None);
+                assert!(table.get("requires_openai_auth").is_none());
+            }
+            _ => panic!("DimAgent must use a custom managed route"),
+        }
+        let db = Database::memory().unwrap();
+        let plan = plan(
+            &db,
+            &Owner::None,
+            &Target::Proxy {
+                route: &provider,
+                base_url: "http://127.0.0.1:15721/v1",
+                stack: &[],
+            },
+            &Prepared::default(),
+        )
+        .unwrap();
+        assert!(matches!(plan.auth, AuthGoal::KeepNative));
+        assert!(matches!(plan.stamp, Some(RouteAuth::Bearer)));
+    }
 
     /// 子代理设置按合并目录校验：不在目录里、或者父 agent 用新版工具时会拒收的
     /// （`multi_agent_version = "disabled"`）都不写；强度不在档位里只写模型。

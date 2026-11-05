@@ -135,6 +135,8 @@ pub enum AuthStrategy {
     ///
     /// access token 由 xAI Device Code 流程获取并由 forwarder 动态注入。
     XaiOAuth,
+    /// DimAgent OAuth Bearer token, resolved only inside the proxy.
+    DimOAuth,
 }
 
 #[cfg(test)]

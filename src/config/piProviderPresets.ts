@@ -1,3 +1,4 @@
+import { dimOAuthPreset } from "@/lib/dimProviderConfig";
 import type { ProviderCategory } from "@/types";
 import type { PresetTheme } from "./claudeProviderPresets";
 import {
@@ -100,6 +101,17 @@ const KIMI_K3_COMPAT = {
  * another application's presets at runtime.
  */
 const piProviderPresetDefinitions: PiProviderPreset[] = [
+  {
+    ...dimOAuthPreset,
+    providerKey: "cc-switch-dimagent",
+    settingsConfig: {
+      name: "DimAgent",
+      baseUrl: "https://dimagent.com/v1",
+      api: "openai-completions",
+      apiKey: "PROXY_MANAGED",
+      models: [],
+    },
+  },
   {
     name: "Kimi",
     family: "kimi",

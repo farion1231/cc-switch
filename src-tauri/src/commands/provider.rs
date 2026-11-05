@@ -61,6 +61,14 @@ pub async fn add_provider(
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     let add_to_live = addToLive.unwrap_or(true);
+    if add_to_live {
+        crate::proxy::dim_relay::ensure_started(
+            app_handle.state::<AppState>().inner(),
+            &app_type,
+            &provider,
+        )
+        .await?;
+    }
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_handle
             .try_state::<AppState>()
@@ -81,6 +89,21 @@ pub async fn update_provider(
     #[allow(non_snake_case)] editorSave: Option<EditorSave>,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    if provider.is_dim_oauth()
+        && crate::proxy::dim_relay::is_relay_client(&app_type)
+        && crate::proxy::dim_relay::client_exists(
+            &app_type,
+            originalId.as_deref().unwrap_or(&provider.id),
+        )
+        .map_err(|e| e.to_string())?
+    {
+        crate::proxy::dim_relay::ensure_started(
+            app_handle.state::<AppState>().inner(),
+            &app_type,
+            &provider,
+        )
+        .await?;
+    }
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_handle
             .try_state::<AppState>()
@@ -161,6 +184,18 @@ pub async fn add_provider_to_live_config(
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     let state = state.inner().clone();
+    let db = state.db.clone();
+    let lookup_app = app_type.clone();
+    let lookup_id = id.clone();
+    let provider = tauri::async_runtime::spawn_blocking(move || {
+        db.get_provider_by_id(&lookup_id, lookup_app.as_str())
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("Provider lookup task failed: {e}"))??;
+    if let Some(provider) = provider {
+        crate::proxy::dim_relay::ensure_started(&state, &app_type, &provider).await?;
+    }
     tauri::async_runtime::spawn_blocking(move || {
         ProviderService::add_to_live_config(&state, app_type, &id)
             .map(|_| true)
@@ -211,6 +246,19 @@ pub async fn switch_provider(
     id: String,
 ) -> Result<SwitchResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    let state = app_handle.state::<AppState>();
+    let db = state.db.clone();
+    let lookup_app = app_type.clone();
+    let lookup_id = id.clone();
+    let provider = tauri::async_runtime::spawn_blocking(move || {
+        db.get_provider_by_id(&lookup_id, lookup_app.as_str())
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("Provider lookup task failed: {e}"))??;
+    if let Some(provider) = provider {
+        crate::proxy::dim_relay::ensure_started(state.inner(), &app_type, &provider).await?;
+    }
     let handle = app_handle.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let state = handle

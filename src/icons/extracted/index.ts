@@ -17,6 +17,7 @@ import _ccsub from "./ccsub.svg?url";
 import _claudecn from "./claudecn.png";
 import _cherryin from "./cherryin.png";
 import _code0 from "./code0.png";
+import _dimagent from "./dimagent.png";
 import _dmxapi from "./dmxapi.png";
 import _eflowcode from "./eflowcode.png";
 import _etok from "./etok.png";
@@ -176,6 +177,7 @@ export const iconUrls: Record<string, string> = {
   cherryin: _cherryin,
   code0: _code0,
   dmxapi: _dmxapi,
+  dimagent: _dimagent,
   eflowcode: _eflowcode,
   etok: _etok,
   everyapi: _everyapi,

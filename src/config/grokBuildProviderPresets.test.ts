@@ -14,7 +14,7 @@ describe("grokBuildProviderPresets", () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
-  it("contains no official, managed-OAuth, or cn_official providers", () => {
+  it("contains no official or cn_official providers", () => {
     for (const preset of grokBuildProviderPresets) {
       expect(preset.category, preset.name).not.toBe("official");
       expect(preset.category, preset.name).not.toBe("cn_official");
@@ -56,12 +56,15 @@ describe("grokBuildProviderPresets", () => {
     }
   });
 
-  it("carries a valid config carrier and empty API key slot", () => {
+  it("carries a valid config carrier and an explicit authentication slot", () => {
     for (const preset of grokBuildProviderPresets) {
       expect(extractCodexBaseUrl(preset.config), preset.name).toMatch(
         /^https:\/\//,
       );
-      expect(preset.auth, preset.name).toEqual({ OPENAI_API_KEY: "" });
+      expect(preset.auth, preset.name).toEqual({
+        OPENAI_API_KEY:
+          preset.providerType === "dim_oauth" ? "PROXY_MANAGED" : "",
+      });
     }
   });
 

@@ -1,3 +1,4 @@
+import { dimOAuthPreset } from "@/lib/dimProviderConfig";
 /**
  * Grok Build (Grok CLI) 预设供应商配置模板
  *
@@ -83,6 +84,12 @@ requires_openai_auth = true`;
 }
 
 export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
+  {
+    ...dimOAuthPreset,
+    auth: { OPENAI_API_KEY: "PROXY_MANAGED" },
+    config: grokPresetConfig("DimAgent", "https://dimagent.com/v1"),
+    apiFormat: "openai_chat",
+  },
   // ===== 赞助商预设：文件顺序与 README 赞助商表对齐（仅维护约定；应用内一律按显示名排序，不置顶）=====
   {
     name: "PackyCode",

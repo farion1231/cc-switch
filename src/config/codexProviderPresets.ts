@@ -40,7 +40,7 @@ export interface CodexProviderPreset extends PresetFamilyFields {
   // Codex API 格式
   apiFormat?: CodexApiFormat;
   // 仅用于区分托管认证来源；各 OAuth provider 的认证流程彼此独立。
-  providerType?: "codex_oauth" | "xai_oauth" | "github_copilot";
+  providerType?: "codex_oauth" | "dim_oauth" | "xai_oauth" | "github_copilot";
   // OAuth 预设：隐藏 API Key 输入，保存前要求已登录托管账号
   requiresOAuth?: boolean;
   // Codex Chat 本地路由模式下的模型目录
@@ -3532,6 +3532,23 @@ requires_openai_auth = true`,
     category: "third_party",
     icon: "xai",
     iconColor: "#000000",
+  },
+  {
+    name: "DimAgent",
+    websiteUrl: "https://dimagent.com",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "dimagent",
+      "https://dimagent.com/v1",
+      "",
+      { requiresOpenAiAuth: false },
+    ),
+    category: "third_party",
+    apiFormat: "openai_chat",
+    providerType: "dim_oauth",
+    requiresOAuth: true,
+    icon: "dimagent",
+    iconColor: "#64C878",
   },
   {
     name: "xAI (Grok) OAuth",

@@ -31,7 +31,7 @@ pub(crate) fn config_file() -> LiveFile {
 
 /// 官方卡：不写模型表，Grok 回落到内置模型和自带的 xAI 登录。
 pub(crate) fn is_official(provider: &Provider) -> bool {
-    provider.category.as_deref() == Some("official")
+    !provider.is_dim_oauth() && provider.category.as_deref() == Some("official")
 }
 
 /// 供应商要写的模型表。写之前校验，校验不过什么都不写。

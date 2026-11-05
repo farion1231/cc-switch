@@ -11,6 +11,9 @@ use indexmap::IndexMap;
 fn prepare(provider: &mut Provider) -> Result<(), AppError> {
     omp_config::validate_provider(&provider.id, &provider.settings_config)?;
     provider.in_failover_queue = false;
+    if provider.is_dim_oauth() {
+        return Ok(());
+    }
     provider.meta = provider.meta.take().map(|meta| ProviderMeta {
         usage_script: meta.usage_script,
         is_partner: meta.is_partner,
@@ -42,6 +45,9 @@ fn sync_native(state: &AppState) -> Result<usize, AppError> {
             provider.icon = Some("omp".into());
             provider
         });
+        if provider.is_dim_oauth() {
+            continue;
+        }
         if saved.contains_key(&id) && provider.settings_config == config {
             continue;
         }
@@ -65,17 +71,18 @@ pub(super) fn add(
     if state.db.get_provider_by_id(&provider.id, "omp")?.is_some() {
         return Err(AppError::Config("omp.errors.duplicateProvider".into()));
     }
+    let native_config = if add_to_live {
+        crate::proxy::dim_relay::project_provider(&state.db, &AppType::Omp, &provider)?
+            .settings_config
+    } else {
+        provider.settings_config.clone()
+    };
     let commit = |_| {
         state.db.save_provider("omp", &provider)?;
         Ok(true)
     };
     if add_to_live {
-        omp_config::change_and_commit(
-            &provider.id,
-            Some(&provider.settings_config),
-            Change::Insert,
-            commit,
-        )
+        omp_config::change_and_commit(&provider.id, Some(&native_config), Change::Insert, commit)
     } else {
         if omp_config::get_providers()?.contains_key(&provider.id) {
             return Err(AppError::Config("omp.errors.duplicateProvider".into()));
@@ -97,9 +104,15 @@ pub(super) fn update(
         .get_provider_by_id(&provider.id, "omp")?
         .ok_or_else(|| AppError::Config("omp.errors.providerMissing".into()))?;
     prepare(&mut provider)?;
+    let native_config = if omp_config::get_providers()?.contains_key(&provider.id) {
+        crate::proxy::dim_relay::project_provider(&state.db, &AppType::Omp, &provider)?
+            .settings_config
+    } else {
+        provider.settings_config.clone()
+    };
     omp_config::change_and_commit(
         &provider.id,
-        Some(&provider.settings_config),
+        Some(&native_config),
         Change::ReplaceIfPresent,
         |_| {
             state.db.save_provider("omp", &provider)?;
@@ -121,7 +134,9 @@ pub(super) fn remove(state: &AppState, id: &str) -> Result<(), AppError> {
         .ok_or_else(|| AppError::Config("omp.errors.providerMissing".into()))?;
     omp_config::change_and_commit(id, None, Change::Remove, |old| {
         if let Some(config) = old {
-            provider.settings_config = config;
+            if !provider.is_dim_oauth() {
+                provider.settings_config = config;
+            }
             state.db.save_provider("omp", &provider)?;
         }
         Ok(())
@@ -133,13 +148,24 @@ pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppErro
         .db
         .get_provider_by_id(id, "omp")?
         .ok_or_else(|| AppError::Config("omp.errors.providerMissing".into()))?;
+    let native_config =
+        crate::proxy::dim_relay::project_provider(&state.db, &AppType::Omp, &provider)?
+            .settings_config;
     if let Some(native) = omp_config::get_providers()?.get(id) {
+        if provider.is_dim_oauth() {
+            return omp_config::change_and_commit(
+                id,
+                Some(&native_config),
+                Change::ReplaceIfPresent,
+                |_| Ok(SwitchResult::default()),
+            );
+        }
         provider.settings_config = native.clone();
         state.db.save_provider("omp", &provider)?;
         return Ok(SwitchResult::default());
     }
     ProviderService::validate_provider_settings(&AppType::Omp, &provider)?;
-    omp_config::change_and_commit(id, Some(&provider.settings_config), Change::Insert, |_| {
+    omp_config::change_and_commit(id, Some(&native_config), Change::Insert, |_| {
         Ok(SwitchResult::default())
     })
 }

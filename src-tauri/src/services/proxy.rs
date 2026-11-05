@@ -124,8 +124,10 @@ impl ProxyService {
             .await
             .map_err(|e| format!("获取代理配置失败: {e}"))?;
 
+        // Serialize check + bind + publish across concurrent managed-client saves.
+        let mut server_slot = self.server.write().await;
         // 3. 若已在运行：确保持久化状态（如需要）并返回当前信息
-        if let Some(server) = self.server.read().await.as_ref() {
+        if let Some(server) = server_slot.as_ref() {
             let status = server.get_status().await;
             return Ok(ProxyServerInfo {
                 address: status.address,
@@ -150,8 +152,12 @@ impl ProxyService {
             return Err(e);
         }
 
+        if let Err(error) = crate::proxy::dim_relay::refresh_clients(&self.db) {
+            let _ = server.stop().await;
+            return Err(format!("Cannot restore DimAgent client endpoints: {error}"));
+        }
         // 5. 保存服务器实例
-        *self.server.write().await = Some(server);
+        *server_slot = Some(server);
 
         log::info!("代理服务器已启动: {}:{}", info.address, info.port);
         Ok(info)
@@ -552,11 +558,17 @@ impl ProxyService {
         }
 
         let error = match self.start_with(&new_config).await {
-            Ok(server) => {
-                *server_guard = Some(server);
-                log::info!("代理配置已更新，服务器已自动重启应用最新配置");
-                return Ok(true);
-            }
+            Ok(server) => match crate::proxy::dim_relay::refresh_clients(&self.db) {
+                Ok(()) => {
+                    *server_guard = Some(server);
+                    log::info!("代理配置已更新，服务器已自动重启应用最新配置");
+                    return Ok(true);
+                }
+                Err(error) => {
+                    let _ = server.stop().await;
+                    format!("Cannot update DimAgent client endpoints: {error}")
+                }
+            },
             Err(error) => format!("重启代理服务器失败: {error}"),
         };
 
@@ -564,7 +576,10 @@ impl ProxyService {
         match self.restore_and_start(previous).await {
             Ok(server) => {
                 *server_guard = Some(server);
-                Err(format!("{error}；已按原配置重新启动"))
+                match crate::proxy::dim_relay::refresh_clients(&self.db) {
+                    Ok(()) => Err(format!("{error}；已按原配置重新启动")),
+                    Err(restore_error) => Err(format!("{error}; restored server but client endpoint recovery failed: {restore_error}")),
+                }
             }
             Err(restore_error) => Err(format!("{error}；恢复原配置也失败: {restore_error}")),
         }

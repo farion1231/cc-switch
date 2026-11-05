@@ -1,3 +1,4 @@
+import { dimOAuthPreset } from "@/lib/dimProviderConfig";
 /**
  * Claude Desktop 预设供应商配置模板
  *
@@ -57,7 +58,7 @@ export interface ClaudeDesktopProviderPreset extends PresetFamilyFields {
   mode: "direct" | "proxy";
   apiFormat?: ClaudeDesktopApiFormat;
   modelRoutes?: ClaudeDesktopRoutePreset[];
-  providerType?: "github_copilot" | "codex_oauth" | "xai_oauth";
+  providerType?: "github_copilot" | "codex_oauth" | "dim_oauth" | "xai_oauth";
   requiresOAuth?: boolean;
   // 是否在 UI 中隐藏该预设（预设仍存在，仅不在列表中显示）
   hidden?: boolean;
@@ -148,6 +149,13 @@ const brandedRoutes = (
 };
 
 export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
+  {
+    ...dimOAuthPreset,
+    baseUrl: "https://dimagent.com",
+    mode: "proxy",
+    apiFormat: "openai_chat",
+    modelRoutes: [],
+  },
   {
     name: "Claude Desktop Official",
     websiteUrl: "https://claude.ai/download",

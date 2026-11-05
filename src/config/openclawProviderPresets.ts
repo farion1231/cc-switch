@@ -1,3 +1,4 @@
+import { dimOAuthPreset } from "@/lib/dimProviderConfig";
 /**
  * OpenClaw provider presets configuration
  * OpenClaw uses models.providers structure with custom provider configs
@@ -102,6 +103,15 @@ export const openclawApiProtocols = [
  * OpenClaw provider presets list
  */
 export const openclawProviderPresets: OpenClawProviderPreset[] = [
+  {
+    ...dimOAuthPreset,
+    settingsConfig: {
+      baseUrl: "https://dimagent.com/v1",
+      apiKey: "PROXY_MANAGED",
+      api: "openai-completions",
+      models: [],
+    },
+  },
   // ===== 赞助商预设：文件顺序与 README 赞助商表对齐（仅维护约定；应用内一律按显示名排序，不置顶）=====
   {
     name: "Kimi",

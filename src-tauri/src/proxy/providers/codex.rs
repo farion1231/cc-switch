@@ -303,6 +303,10 @@ fn has_explicit_codex_third_party_upstream(provider: &Provider) -> bool {
 /// stay on the direct OpenAI API path instead of being sent to the ChatGPT
 /// backend. The fixed legacy card keeps its existing behavior.
 pub fn is_codex_official_provider(provider: &Provider) -> bool {
+    // DimAgent always uses its explicit managed binding, never client ChatGPT auth.
+    if provider.is_dim_oauth() {
+        return false;
+    }
     let is_fixed_official_id = provider.id == crate::database::CODEX_OFFICIAL_PROVIDER_ID;
     if is_fixed_official_id && provider.category.as_deref() == Some("official") {
         return true;
@@ -1040,6 +1044,9 @@ impl ProviderAdapter for CodexAdapter {
     }
 
     fn extract_base_url(&self, provider: &Provider) -> Result<String, ProxyError> {
+        if provider.is_dim_oauth() {
+            return Ok("https://dimagent.cn/v1".to_string());
+        }
         if is_codex_official_provider(provider) {
             return Ok(super::CHATGPT_CODEX_BASE_URL.to_string());
         }
@@ -1110,6 +1117,12 @@ impl ProviderAdapter for CodexAdapter {
     }
 
     fn extract_auth(&self, provider: &Provider) -> Option<AuthInfo> {
+        if provider.is_dim_oauth() {
+            return Some(AuthInfo::new(
+                "dim_oauth_placeholder".to_string(),
+                AuthStrategy::DimOAuth,
+            ));
+        }
         if provider.is_github_copilot() {
             return Some(AuthInfo::new(
                 "copilot_placeholder".to_string(),

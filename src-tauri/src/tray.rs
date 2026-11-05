@@ -1021,10 +1021,14 @@ fn cached_usage_view(
 
 // ─── 「需要路由」判定（镜像前端 `providerNeedsRouting`）──────────────────────────────
 
-const MANAGED_OAUTH_PROVIDER_TYPES: &[&str] = &["github_copilot", "codex_oauth", "xai_oauth"];
+const MANAGED_OAUTH_PROVIDER_TYPES: &[&str] =
+    &["github_copilot", "codex_oauth", "xai_oauth", "dim_oauth"];
 
 /// 官方账号卡（同前端 `isOfficialAccount`）：Codex 早期绑定托管账号的官方卡没有 category，按身份认。
 fn is_official_account(app: &AppType, provider: &Provider) -> bool {
+    if provider.is_dim_oauth() {
+        return false;
+    }
     provider.category.as_deref() == Some("official")
         || (*app == AppType::Codex && crate::proxy::providers::is_codex_official_provider(provider))
 }
@@ -4229,6 +4233,32 @@ mod tests {
             assert!(provider_needs_routing(&app, &copilot), "{app:?}");
         }
         assert!(!provider_needs_routing(&AppType::Gemini, &copilot));
+
+        for app in [
+            AppType::Claude,
+            AppType::ClaudeDesktop,
+            AppType::Codex,
+            AppType::GrokBuild,
+        ] {
+            let mut dim = provider(
+                serde_json::json!({"providerType":"dim_oauth", "apiFormat":"anthropic"}),
+                serde_json::json!({}),
+            );
+            assert!(provider_needs_routing(&app, &dim));
+            dim.category = Some("official".into());
+            dim.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.into();
+            assert!(provider_needs_routing(&app, &dim));
+            assert!(!is_official_account(&app, &dim));
+            assert!(!blocked_from_routing(&app, &dim));
+        }
+
+        let dim = provider(
+            serde_json::json!({"providerType":"dim_oauth"}),
+            serde_json::json!({}),
+        );
+        for app in [AppType::Gemini, AppType::Agy] {
+            assert!(!provider_needs_routing(&app, &dim));
+        }
 
         let openai_chat = provider(
             serde_json::json!({"apiFormat": "openai_chat"}),

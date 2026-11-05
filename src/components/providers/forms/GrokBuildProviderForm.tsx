@@ -1,3 +1,6 @@
+import { DimOAuthFields } from "./DimOAuthFields";
+import { useDimProvider } from "./hooks/useDimProvider";
+import { dimBaseUrl, DIM_PLACEHOLDER } from "@/lib/dimProviderConfig";
 import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -76,6 +79,8 @@ export function GrokBuildProviderForm({
   onSubmit,
   onCancel,
   onSubmittingChange,
+  onSubmitReadyChange,
+  onManageAuthAccounts,
   initialData,
   showButtons = true,
   inactiveFields = [],
@@ -96,7 +101,9 @@ export function GrokBuildProviderForm({
     initialData ? null : "custom",
   );
   const [category, setCategory] = useState<ProviderCategory | undefined>(
-    initialData?.category ?? "custom",
+    initialData?.meta?.providerType === "dim_oauth"
+      ? "third_party"
+      : (initialData?.category ?? "custom"),
   );
   const [isPartner, setIsPartner] = useState(
     initialData?.meta?.isPartner ?? false,
@@ -325,7 +332,47 @@ export function GrokBuildProviderForm({
     if (parsed.name) form.setValue("name", parsed.name);
   };
 
+  const dim = useDimProvider({
+    appId: "grokbuild",
+    enabled:
+      grokPresetEntries.find((item) => item.id === selectedPresetId)?.preset
+        .providerType === "dim_oauth" ||
+      initialData?.meta?.providerType === "dim_oauth",
+    initialMeta: initialData?.meta,
+    initialModel: initialConfig.upstreamModel ?? initialConfig.model,
+    onSelect: (model, format, issuer) => {
+      if (format === "gemini_native") return;
+      const nextBase = dimBaseUrl(issuer, format);
+      setBaseUrl(nextBase);
+      setApiKey(DIM_PLACEHOLDER);
+      setUpstreamModel(model.id);
+      setApiFormat(format);
+      const nextContext =
+        model.context_window ?? Number.parseInt(contextWindow, 10);
+      if (model.context_window != null)
+        setContextWindow(String(model.context_window));
+      setRawConfig(
+        updateGrokBuildConfig(rawConfig, {
+          model: profile,
+          upstreamModel: model.id,
+          baseUrl: nextBase,
+          name: form.getValues("name"),
+          apiKey: DIM_PLACEHOLDER,
+          apiBackend: GROK_BUILD_DEFAULT_API_BACKEND,
+          contextWindow: nextContext,
+        }),
+      );
+    },
+  });
+  useEffect(
+    () => onSubmitReadyChange?.(!dim.enabled || dim.valid),
+    [dim.enabled, dim.valid, onSubmitReadyChange],
+  );
   const handleSubmit = async (values: ProviderFormData) => {
+    if (dim.enabled && !dim.valid) {
+      toast.error(t("dimOauth.selectModel"));
+      return;
+    }
     const name = values.name.trim();
 
     // 官方条目：config 快照原样透传（新增时为空），不做自定义模型字段校验，
@@ -409,9 +456,10 @@ export function GrokBuildProviderForm({
     delete initialMeta.custom_endpoints;
     const meta: ProviderMeta = {
       ...initialMeta,
+      ...(dim.enabled ? dim.meta : {}),
       apiFormat,
       apiKeyField: anthropicAuthField,
-      isFullUrl,
+      isFullUrl: dim.enabled ? undefined : isFullUrl,
       endpointAutoSelect,
       isPartner,
       partnerPromotionKey,
@@ -464,7 +512,13 @@ export function GrokBuildProviderForm({
 
         <BasicFormFields form={form} />
 
-        {category !== "official" && (
+        {dim.enabled && (
+          <DimOAuthFields
+            {...dim.fieldsProps}
+            onManageAccounts={() => onManageAuthAccounts?.("dim_oauth")}
+          />
+        )}
+        {category !== "official" && !dim.enabled && (
           <>
             <CodexFormFields
               appId="grokbuild"

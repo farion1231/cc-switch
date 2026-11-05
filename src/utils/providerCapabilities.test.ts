@@ -72,6 +72,30 @@ const codexConfig = (wireApi: "chat_completions" | "responses") =>
   `model_provider = "custom"\n\n[model_providers.custom]\nname = "X"\nbase_url = "https://x.example/v1"\nwire_api = "${wireApi}"\n`;
 
 describe("providerNeedsRouting", () => {
+  it.each(["claude", "codex"] as const)(
+    "keeps DimAgent on managed routing for %s even with an official category or fixed ID",
+    (appId) => {
+      const provider = mkProvider({
+        id: "codex-official",
+        category: "official",
+        settingsConfig: { auth: {}, config: "" },
+        meta: {
+          providerType: "dim_oauth",
+          apiFormat: "openai_responses",
+          authBinding: {
+            source: "managed_account",
+            authProvider: "dim_oauth",
+            accountId: "dim-cn-account",
+          },
+        },
+      });
+      expect(resolveCodexOfficialIdentity(appId, provider)).toBeNull();
+      expect(isOfficialAccount(appId, provider)).toBe(false);
+      expect(supportsOfficialProxyTakeover(appId, provider)).toBe(false);
+      expect(providerNeedsRouting(appId, provider)).toBe(true);
+    },
+  );
+
   it("allows explicit Codex Official cards during takeover", () => {
     const native = mkProvider({
       id: "codex-official",

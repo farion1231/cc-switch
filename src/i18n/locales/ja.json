@@ -2204,7 +2204,8 @@
       "chatgpt": "ChatGPT アカウントでログイン",
       "github": "GitHub アカウントでログイン",
       "xai": "xAI アカウントでログイン",
-      "google": "Google アカウントでログイン"
+      "google": "Google アカウントでログイン",
+      "dimagent": "DimAgent アカウントでログイン"
     },
     "versionCount": "{{domain}} · {{n}} バージョン",
     "matchedVersion": "一致：{{name}}",
@@ -5182,5 +5183,43 @@
       "managedHint": "アカウントは認証センターで管理します。ログアウトするとこのカードは自動で消えます。"
     },
     "deleteSessionHint": "履歴の整合性を保つため、DeepSeek Harness でこのセッションを削除してください。"
+  },
+  "dimOauth": {
+    "account": "DimAgent アカウント",
+    "selectAccount": "アカウントを選択",
+    "siteLabel": "アカウントのサイト",
+    "site": {
+      "cn": "中国",
+      "global": "グローバル"
+    },
+    "help": "CC Switch のクライアントで DimAgent アカウントを使用します。ログイン前にサイトを選択してください。各プロバイダーは選択したアカウントに明示的に紐付きます。",
+    "empty": "DimAgent アカウントはありません。アカウントを追加してログインしてください。",
+    "loginRequired": "「アカウント管理」でログインし、利用可能な DimAgent アカウントを選択してください。",
+    "loginExpired": "ログインの有効期限が切れました。再試行してください。",
+    "reauth": "再ログインが必要",
+    "model": "モデル",
+    "selectModel": "モデルを選択",
+    "refreshModels": "モデルを更新",
+    "noModels": "このクライアントで利用できるモデルはありません。",
+    "format": "API 形式",
+    "formats": {
+      "openai_chat": "OpenAI Chat Completions",
+      "openai_responses": "OpenAI Responses",
+      "anthropic": "Anthropic Messages",
+      "gemini_native": "Gemini Native"
+    },
+    "effort": "推論強度",
+    "defaultEffort": "クライアントの既定値を使用",
+    "routing": "ローカルルーティングを有効にしてください。モデル ID、API 形式、推論強度、ZDR 状態は DimAgent モデルカタログに従います。",
+    "usage": "プランと使用量",
+    "usageFailed": "使用量を取得できません",
+    "remaining": "残りクレジット：{{amount}} 単位",
+    "resetsAt": "リセット日時：{{time}}",
+    "subscription": "サブスクリプション管理 / 更新",
+    "pricing": "プラン料金",
+    "manageAccounts": "アカウント管理",
+    "gateway": "CC Switch を起動したままにしてください。ローカルゲートウェイは自動的に起動します。クライアントのルーティング切替は不要です。",
+    "noCompatibleModels": "このクライアントのプロトコルに対応するモデルがありません。",
+    "kimiContextRequired": "Kimi Code には対応プロトコルと明示的なコンテキスト上限を持つモデルが必要です。"
   }
 }

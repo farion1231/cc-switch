@@ -10,6 +10,8 @@ mod config;
 mod copilot;
 mod custom_icon;
 mod deeplink;
+mod dim_oauth;
+pub use dim_oauth::*;
 mod dsh;
 mod env;
 mod failover;

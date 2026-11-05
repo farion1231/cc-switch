@@ -962,6 +962,14 @@ fn write_direct_for_exit(
 
 /// 没有应用在代理模式（含 Claude Desktop 的路由模式）时，停掉代理服务。
 async fn stop_server_if_unused(state: &AppState) {
+    match crate::proxy::dim_relay::has_clients(&state.db) {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(error) => {
+            log::warn!("Cannot determine active DimAgent gateways: {error}");
+            return;
+        }
+    }
     if current::proxy_flags(PROXY_APPS).contains(&true) {
         return;
     }

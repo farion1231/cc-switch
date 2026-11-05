@@ -29,6 +29,12 @@ describe("Pi provider presets", () => {
       expect("allowGateway" in preset).toBe(false);
       expect(preset.settingsConfig.baseUrl).toMatch(/^https?:\/\//);
       expect(preset.settingsConfig.api).not.toBe("");
+      if (preset.providerType === "dim_oauth") {
+        expect(preset.requiresOAuth).toBe(true);
+        expect(preset.settingsConfig.apiKey).toBe("PROXY_MANAGED");
+        expect(preset.settingsConfig.models).toEqual([]);
+        continue;
+      }
       expect(preset.settingsConfig.apiKey).toBe("");
       expect(preset.settingsConfig.models.length).toBeGreaterThan(0);
       const modelIds = preset.settingsConfig.models.map((model) => model.id);

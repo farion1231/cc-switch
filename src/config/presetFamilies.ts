@@ -84,6 +84,8 @@ export type PresetRegionKey = (typeof PRESET_REGION_KEYS)[number];
 
 /** 各应用预设接口共用的字段 */
 export interface PresetFamilyFields {
+  providerType?: "github_copilot" | "codex_oauth" | "xai_oauth" | "dim_oauth";
+  requiresOAuth?: boolean;
   /** 厂商（同一家的多个版本合成一行），见 PRESET_FAMILIES */
   family?: PresetFamilyId;
   /** 套餐，见 PRESET_PLAN_KEYS */
