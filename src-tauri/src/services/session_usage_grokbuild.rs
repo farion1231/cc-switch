@@ -1352,7 +1352,7 @@ mod tests {
             "",
             &model_counters("grok-4.5-build", 200, 20, 0, 1),
         );
-        let line2_offset = line1.len() as i64;
+        let line2_offset = (line1.len() + 1) as i64;
         let path = write_session_file(temp.path(), "sess-offset-stability", &[line1, line2]);
 
         // 全量首次同步两行
@@ -1389,7 +1389,7 @@ mod tests {
         let path = temp.path().join("sess-tail").join("updates.jsonl");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
 
-        // 写入一行完整事件加上一行未写完的尾部（缺少换行符）
+        // 写入一行完整事件（带换行符）加上一行未写完的尾部（缺少换行符）
         let full_line = usage_event_line(
             OLD_EPOCH,
             "p1",
@@ -1397,26 +1397,27 @@ mod tests {
         );
         let incomplete_line =
             r#"{"timestamp":"2026-07-20T13:26:24Z","method":"_x.ai/session/update""#;
-        std::fs::write(&path, format!("{full_line}{incomplete_line}")).unwrap();
+        std::fs::write(&path, format!("{full_line}\n{incomplete_line}")).unwrap();
 
         let initial_cursors = std::collections::HashMap::new();
         let res = sync_single_grok_file(&db, &path, &initial_cursors)?;
         assert_eq!(res.imported, 1);
 
         // 验证 session_log_sync 中记录的 last_modified 仍保留 0（未推进到文件的 mtime），
-        // 且 byte offset 正好停在完整行的末尾
+        // 且 byte offset 正好停在第一行末尾（包含换行符）
+        let full_line_len = (full_line.len() + 1) as i64;
         let cursors = crate::services::session_usage::load_sync_cursors(&db).unwrap();
         let cursor = cursors.get(&path.to_string_lossy().to_string()).unwrap();
         assert_eq!(cursor.last_modified, 0, "遇到未写完尾行时保留旧 mtime");
-        assert_eq!(cursor.last_byte_offset, Some(full_line.len() as i64));
+        assert_eq!(cursor.last_byte_offset, Some(full_line_len));
 
-        // 补全第二行
+        // 补全第二行（带换行符）
         let full_line2 = usage_event_line(
             OLD_EPOCH + 10,
             "p2",
             &model_counters("grok-4.5-build", 200, 20, 0, 1),
         );
-        std::fs::write(&path, format!("{full_line}{full_line2}")).unwrap();
+        std::fs::write(&path, format!("{full_line}\n{full_line2}\n")).unwrap();
 
         // 次轮同步能够顺利续读第二行并推进 mtime
         let res2 = sync_single_grok_file(&db, &path, &cursors)?;
