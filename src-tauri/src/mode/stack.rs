@@ -236,19 +236,20 @@ pub fn claude_models(key: &str, provider: &Provider) -> Vec<StackModel> {
     stack_models(key, provider, found)
 }
 
-/// 行里要发布的一个模型（还没加前缀）。
-struct Found {
+/// 行里要发布的一个模型（还没加前缀）。Claude Code 子代理的模型下拉
+/// （`services::subagent_models`）也按它去重，两边口径一致。
+pub(crate) struct Found {
     /// 去掉 1M 标记的模型名。
-    model: String,
+    pub(crate) model: String,
     /// 发往上游的原值（1M 模型带标记）。
-    upstream: String,
-    name: Option<String>,
-    one_m: bool,
+    pub(crate) upstream: String,
+    pub(crate) name: Option<String>,
+    pub(crate) one_m: bool,
 }
 
 /// 按去掉 1M 标记后的名字去重地加入 `found`。同一个模型有一处带 1M 标记就按 1M，发往上游的
 /// 也用带标记的那个写法；显示名取第一个有的。
-fn push_found(found: &mut Vec<Found>, upstream: &str, name: Option<String>) {
+pub(crate) fn push_found(found: &mut Vec<Found>, upstream: &str, name: Option<String>) {
     let model = strip_one_m_suffix_for_upstream(upstream).trim().to_string();
     if model.is_empty() {
         return;
@@ -283,6 +284,12 @@ fn claude_env(provider: &Provider) -> Option<&Map<String, Value>> {
 /// Stack 模型列表（`meta.stackModels`）里的模型。
 fn listed_models(list: &[ClaudeStackModel]) -> Vec<Found> {
     let mut found = Vec::new();
+    push_listed(&mut found, list);
+    found
+}
+
+/// 把 Stack 模型列表里的模型按 [`push_found`] 的口径加入 `found`。
+pub(crate) fn push_listed(found: &mut Vec<Found>, list: &[ClaudeStackModel]) {
     for entry in list {
         let raw = entry.model.trim();
         let model = strip_one_m_suffix_for_upstream(raw).trim();
@@ -297,9 +304,8 @@ fn listed_models(list: &[ClaudeStackModel]) -> Vec<Found> {
             .map(str::trim)
             .filter(|name| !name.is_empty())
             .map(str::to_string);
-        push_found(&mut found, &upstream, name);
+        push_found(found, &upstream, name);
     }
-    found
 }
 
 /// 模型映射里的模型：`ANTHROPIC_MODEL` 和各档 `ANTHROPIC_DEFAULT_*_MODEL`。
