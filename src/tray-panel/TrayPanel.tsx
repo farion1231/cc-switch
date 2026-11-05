@@ -459,6 +459,8 @@ function SubPanel({
               onChange={(event) => onQuery(event.target.value)}
               placeholder={texts.searchPlaceholder}
               className="min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-muted-foreground"
+              autoCorrect="off"
+              autoCapitalize="off"
             />
           </label>
         </div>
