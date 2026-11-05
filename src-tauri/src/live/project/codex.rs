@@ -452,8 +452,6 @@ pub enum RouteWrite {
     /// 官方直连：不写选路。live 里已有 custom 表时改写成休眠形态（本地代理地址加占位
     /// Key）：Codex 按 provider id 给会话分桶，表一删，第三方的旧会话就 resume 不了。
     Official { dormant_base_url: String },
-    /// 官方直连且开了「统一会话历史」：选路写 custom，表是官方镜像（认证走官方登录）。
-    OfficialMirror,
     /// 第三方（直连或代理契约）：选路写 custom。
     Custom(Table),
     /// Codex 内置的其他 provider。
@@ -470,7 +468,7 @@ impl RouteWrite {
     fn selector(&self) -> Option<&str> {
         match self {
             Self::Official { .. } | Self::Default => None,
-            Self::OfficialMirror | Self::Custom(_) => Some(ROUTE_ID),
+            Self::Custom(_) => Some(ROUTE_ID),
             Self::BuiltIn { id, .. } => Some(id),
             Self::OfficialProxy { unified, .. } => unified.then_some(ROUTE_ID),
         }
@@ -768,7 +766,19 @@ impl CodexConfigPatch {
 
         match &self.route {
             RouteWrite::Official { dormant_base_url } => {
-                if providers.contains_key(ROUTE_ID) {
+                if let Some(transport) = providers
+                    .get(ROUTE_ID)
+                    .and_then(|item| official_alias_transport(item, dormant_base_url))
+                {
+                    // Old unified chats still refer to this alias. Keep their
+                    // official connection while new chats use built-in openai.
+                    put_table(
+                        providers,
+                        ROUTE_ID,
+                        official_mirror_table(None, transport),
+                        container_inline,
+                    );
+                } else if providers.contains_key(ROUTE_ID) {
                     let dormant = proxy_route_table(ROUTE_ID, dormant_base_url, false);
                     put_table(providers, ROUTE_ID, dormant, container_inline);
                 }
@@ -788,14 +798,6 @@ impl CodexConfigPatch {
             } => {
                 put_table(providers, id, table.clone(), container_inline);
             }
-            RouteWrite::OfficialMirror => {
-                put_table(
-                    providers,
-                    ROUTE_ID,
-                    official_mirror_table(None, true),
-                    container_inline,
-                );
-            }
             RouteWrite::Custom(table) => {
                 put_table(providers, ROUTE_ID, table.clone(), container_inline);
             }
@@ -804,7 +806,18 @@ impl CodexConfigPatch {
                 unified: false,
             } => {
                 // 之前第三方路由留下的 custom 表改成休眠形态（同样指向本地代理）。
-                if providers.contains_key(ROUTE_ID) {
+                if providers
+                    .get(ROUTE_ID)
+                    .and_then(|item| official_alias_transport(item, base_url))
+                    .is_some()
+                {
+                    put_table(
+                        providers,
+                        ROUTE_ID,
+                        official_mirror_table(Some(base_url), false),
+                        container_inline,
+                    );
+                } else if providers.contains_key(ROUTE_ID) {
                     let dormant = proxy_route_table(ROUTE_ID, base_url, false);
                     put_table(providers, ROUTE_ID, dormant, container_inline);
                 }
@@ -832,7 +845,6 @@ impl CodexConfigPatch {
     fn owned_table(&self) -> Option<(&str, Table)> {
         match &self.route {
             RouteWrite::Custom(table) => Some((ROUTE_ID, table.clone())),
-            RouteWrite::OfficialMirror => Some((ROUTE_ID, official_mirror_table(None, true))),
             RouteWrite::OfficialProxy {
                 base_url,
                 unified: true,
@@ -852,6 +864,29 @@ impl CodexConfigPatch {
         self.retired
             .iter()
             .any(|known| known.id == id && base_url.as_deref() == Some(known.base_url.as_str()))
+    }
+}
+
+/// Recognize only the exact generated official alias. Never infer official
+/// ownership from a display name or forward ChatGPT auth to an arbitrary URL.
+fn official_alias_transport(item: &Item, proxy_base_url: &str) -> Option<bool> {
+    let table = item.as_table_like()?;
+    if table.get("name")?.as_str()? != "OpenAI"
+        || table.get("wire_api")?.as_str()? != "responses"
+        || !table.get("requires_openai_auth")?.as_bool()?
+    {
+        return None;
+    }
+    let transport = table.get("supports_websockets")?.as_bool()?;
+    match table.get("base_url") {
+        None if table.len() == 4 => Some(transport),
+        Some(url)
+            if table.len() == 5
+                && url.as_str()?.trim_end_matches('/') == proxy_base_url.trim_end_matches('/') =>
+        {
+            Some(transport)
+        }
+        _ => None,
     }
 }
 
@@ -1166,6 +1201,53 @@ mod tests {
             assert_eq!(mirror["supports_websockets"].as_bool(), Some(false));
             assert!(mirror.get("experimental_bearer_token").is_none());
         }
+    }
+
+    #[test]
+    fn official_alias_recognition_rejects_unknown_endpoints_and_credentials() {
+        let base = "[t]\nname = \"OpenAI\"\nrequires_openai_auth = true\nsupports_websockets = true\nwire_api = \"responses\"\n";
+        for extra in [
+            "base_url = \"https://third-party.example/v1\"\n",
+            "experimental_bearer_token = \"sk-private\"\n",
+            "env_key = \"PROVIDER_KEY\"\n",
+            "http_headers = { Authorization = \"Bearer private\" }\n",
+        ] {
+            let doc = (base.to_owned() + extra).parse::<DocumentMut>().unwrap();
+            assert!(official_alias_transport(&doc["t"], PROXY).is_none());
+        }
+    }
+
+    #[test]
+    fn builtin_identity_keeps_old_official_context_without_migrating_history() {
+        let live = "model_provider = \"custom\"\n\n[model_providers.custom]\nname = \"OpenAI\"\nrequires_openai_auth = true\nsupports_websockets = false\nwire_api = \"responses\"\n";
+        let direct = RouteWrite::Official {
+            dormant_base_url: PROXY.to_string(),
+        };
+        let first = apply(direct.clone(), live);
+        assert!(first.get("model_provider").is_none());
+        let alias = first["model_providers"][ROUTE_ID].as_table().unwrap();
+        assert!(
+            alias.get("base_url").is_none(),
+            "old official contexts must not be sent to an inactive local proxy: {first}"
+        );
+        assert_eq!(alias["requires_openai_auth"].as_bool(), Some(true));
+        assert_eq!(alias["supports_websockets"].as_bool(), Some(false));
+        assert!(alias.get("experimental_bearer_token").is_none());
+        assert_eq!(
+            apply(direct, &first.to_string()).to_string(),
+            first.to_string()
+        );
+    }
+
+    #[test]
+    fn builtin_identity_keeps_the_old_official_alias_when_entering_routing() {
+        let live = "[model_providers.custom]\nname = \"OpenAI\"\nrequires_openai_auth = true\nsupports_websockets = true\nwire_api = \"responses\"\n";
+        let doc = apply(official_proxy(false), live);
+        assert!(doc.get("model_provider").is_none());
+        let alias = doc["model_providers"][ROUTE_ID].as_table().unwrap();
+        assert_eq!(alias["base_url"].as_str(), Some(PROXY));
+        assert_eq!(alias["requires_openai_auth"].as_bool(), Some(true));
+        assert!(alias.get("experimental_bearer_token").is_none());
     }
 
     #[test]

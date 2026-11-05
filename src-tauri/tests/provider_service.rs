@@ -1504,11 +1504,10 @@ fn reapply_codex_official_live_rewrites_only_the_session_routing() {
     assert!(cc_switch_lib::reapply_current_codex_official_live(&state).expect("reapply"));
     let unified = read_live();
     let doc: toml::Value = toml::from_str(&unified).expect("parse");
-    assert_eq!(doc["model_provider"].as_str(), Some("custom"), "{unified}");
-    assert_eq!(
-        doc["model_providers"]["custom"]["requires_openai_auth"].as_bool(),
-        Some(true),
-        "the unified bucket is the official mirror: {unified}"
+    assert!(doc.get("model_provider").is_none(), "{unified}");
+    assert!(
+        doc.get("openai_base_url").is_none(),
+        "official login stays native: {unified}"
     );
     assert!(
         unified.contains("[mcp_servers.echo-server]") && unified.contains("approval_policy"),
@@ -1699,7 +1698,35 @@ fn provider_service_switch_codex_official_accounts_write_auth_json() {
             "account_id": "acct-a"
         }
     });
-    write_codex_live_atomic(&live_auth_a, Some("")).expect("seed official account A live auth");
+    cc_switch_lib::update_settings(cc_switch_lib::AppSettings {
+        unify_codex_session_history: true,
+        unify_codex_migrate_existing: Some(false),
+        ..Default::default()
+    })
+    .expect("enable unified history without migration");
+    let legacy_alias = "model_provider = \"custom\"\n[model_providers.custom]\nname = \"OpenAI\"\nrequires_openai_auth = true\nsupports_websockets = true\nwire_api = \"responses\"\n";
+    write_codex_live_atomic(&live_auth_a, Some(legacy_alias))
+        .expect("seed official account A live auth");
+    let context = cc_switch_lib::get_codex_config_path()
+        .parent()
+        .unwrap()
+        .join("sessions/legacy-context.jsonl");
+    std::fs::create_dir_all(context.parent().unwrap()).unwrap();
+    let transcript = "{\"type\":\"session_meta\",\"payload\":{\"id\":\"same-context\",\"model_provider\":\"custom\"}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"keep-the-context\"}}\n";
+    std::fs::write(&context, transcript).unwrap();
+    let assert_identity_and_context = || {
+        let config = std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).unwrap();
+        let doc: toml::Value = toml::from_str(&config).unwrap();
+        assert!(
+            doc.get("model_provider").is_none(),
+            "desktop capabilities require built-in openai: {config}"
+        );
+        let alias = &doc["model_providers"]["custom"];
+        assert_eq!(alias["requires_openai_auth"].as_bool(), Some(true));
+        assert!(alias.get("base_url").is_none());
+        assert!(alias.get("experimental_bearer_token").is_none());
+        assert_eq!(std::fs::read_to_string(&context).unwrap(), transcript);
+    };
 
     let mut official_a = Provider::with_id(
         "official-a".to_string(),
@@ -1755,6 +1782,7 @@ fn provider_service_switch_codex_official_accounts_write_auth_json() {
 
     ProviderService::switch(&state, AppType::Codex, "official-b")
         .expect("switch to official account B should write auth.json");
+    assert_identity_and_context();
     let auth_b: serde_json::Value =
         read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth B");
     assert_eq!(
@@ -1767,6 +1795,7 @@ fn provider_service_switch_codex_official_accounts_write_auth_json() {
 
     ProviderService::switch(&state, AppType::Codex, "official-a")
         .expect("switch back to official account A should use backfilled live auth");
+    assert_identity_and_context();
     let auth_a: serde_json::Value =
         read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth A");
     assert_eq!(
