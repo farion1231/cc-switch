@@ -20,7 +20,11 @@ import {
   type GroupAccountRow,
 } from "@/components/settings/auth/ManagedAccountsGroup";
 import { signedInDate } from "@/components/settings/auth/accountDetails";
-import { CodebuddyAccountQuota } from "@/components/settings/auth/AccountQuota";
+import {
+  CodebuddyAccountQuota,
+  codebuddyQuotaLang,
+} from "@/components/settings/auth/AccountQuota";
+import { useQuotaPlansByKey } from "@/lib/query/accountPlans";
 
 /** 账号 id 是 `<uid>@<domain>`。 */
 const uidOf = (id: string) => {
@@ -92,10 +96,24 @@ export const CodebuddyAccountSection: React.FC<
     if (target?.kind === "one") removeAccount(target.accountId);
   };
 
+  // 授权中心第二行的套餐（额度查到才有；企业账号没有套餐名）。查询键带语言，和
+  // `useCodebuddyAccountQuota` 一致
+  const quotaLang = codebuddyQuotaLang(i18n.language);
+  const plans = useQuotaPlansByKey(
+    accounts.map((account) => [
+      account.id,
+      ["codebuddy_oauth", "quota", account.id, quotaLang],
+    ]),
+    (data) => (data as { planName?: string | null }).planName,
+  );
+
   const rows: GroupAccountRow[] = accounts.map((account) => {
     const uid = uidOf(account.id);
     const date = signedInDate(account.authenticated_at, i18n.language);
-    const details: React.ReactNode[] = [regionLabel(account.github_domain)];
+    const details: React.ReactNode[] = [
+      account.requires_reauth ? null : plans[account.id],
+      regionLabel(account.github_domain),
+    ];
     if (account.login !== uid) details.push(`UID ${uid}`);
     if (account.requires_reauth) {
       details.push(

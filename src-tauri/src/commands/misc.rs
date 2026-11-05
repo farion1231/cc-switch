@@ -458,12 +458,52 @@ fn finish_lifecycle_output(output: &std::process::Output) -> Result<(), String> 
     } else {
         stderr.trim()
     };
-    let detail = last_lines(raw, 8);
+    let detail = npm_bin_collision_detail(raw).unwrap_or_else(|| last_lines(raw, 8));
     Err(if detail.is_empty() {
         format!("命令执行失败 (exit code: {:?})", output.status.code())
     } else {
-        detail
+        append_npm_bin_collision_hint(detail, raw)
     })
+}
+
+/// npm 全局安装在链接可执行文件时若目标路径已被其他安装方式留下的启动器
+/// 占用，会以 EEXIST 失败，原始输出只建议 `--force` 覆盖（#9173）。识别这种
+/// bin 路径冲突后在原始输出后追加可执行提示：指出冲突文件、给出安全的
+/// 备份改名/改用原安装方式两条路，并明确提醒不要盲目 `--force`。
+/// 非此类失败原样返回，不改变既有错误文案。
+fn append_npm_bin_collision_hint(detail: String, raw: &str) -> String {
+    let Some(path) = npm_bin_collision_path(raw) else {
+        return detail;
+    };
+    format!(
+        "{detail}\n\nHint: npm could not create the executable because {path} already exists. \
+         If it is a launcher from another installation, back it up or rename it \
+         (for example to {path}.bak) and try again, or update the tool with the \
+         installation method that created it. Do not use npm --force unless you \
+         mean to overwrite the existing file."
+    )
+}
+
+/// 从 npm 输出里提取 bin 冲突路径：要求同时出现 `EEXIST` 与
+/// `File exists: <path>` 行，避免把其他含 EEXIST 字样的失败误判为路径冲突。
+fn npm_bin_collision_path(raw: &str) -> Option<&str> {
+    if !raw.contains("EEXIST") {
+        return None;
+    }
+    raw.lines().find_map(|line| {
+        line.split_once("File exists:")
+            .map(|(_, path)| path.trim())
+            .filter(|path| !path.is_empty())
+    })
+}
+
+/// npm 链接可执行文件撞上不归它管的同名文件时以 EEXIST 退出（#9173）。关键的两行
+/// 可能被尾部的 `--force` 建议、更新通知和日志路径挤出最后 8 行，这里单独保留，
+/// 前端据此换成可操作的提示。
+fn npm_bin_collision_detail(text: &str) -> Option<String> {
+    let code = text.lines().find(|line| line.contains("EEXIST"))?;
+    let exists = text.lines().find(|line| line.contains("File exists:"))?;
+    Some(format!("{}\n{}", code.trim(), exists.trim()))
 }
 
 /// 取文本末尾最多 `n` 行（npm / pip 的关键错误通常出现在输出尾部）。
@@ -5184,6 +5224,7 @@ fn wsl_distro_for_tool(tool: &str) -> Option<String> {
         "hermes" => crate::settings::get_hermes_override_dir(),
         "pi" => crate::settings::get_pi_override_dir(),
         "omp" => crate::settings::get_omp_override_dir(),
+        "dsh" => crate::settings::get_dsh_override_dir(),
         _ => None,
     }?;
 
@@ -7348,6 +7389,66 @@ mod tests {
             finish_lifecycle_output(&output).unwrap_err(),
             "process-npm-failed"
         );
+    }
+
+    /// npm bin 路径冲突（#9173）：EEXIST + File exists 行齐备时，错误详情后
+    /// 追加指出冲突路径与安全处理方式的提示，且不建议盲目 --force。
+    #[test]
+    fn npm_bin_collision_appends_actionable_hint() {
+        let raw = "npm error code EEXIST\n\
+                   npm error path /home/user/.local/bin/pi\n\
+                   npm error EEXIST: file already exists\n\
+                   npm error File exists: /home/user/.local/bin/pi\n\
+                   npm error Remove the existing file and try again, or run npm\n\
+                   npm error with --force to overwrite files recklessly.";
+        let detail = append_npm_bin_collision_hint("npm error code EEXIST".to_string(), raw);
+        assert!(detail.contains("/home/user/.local/bin/pi"));
+        assert!(detail.contains("/home/user/.local/bin/pi.bak"));
+        assert!(detail.contains("Do not use npm --force"));
+    }
+
+    /// Windows 的 npm 输出同样带 `File exists:` 行（含盘符路径），应能提取。
+    #[test]
+    fn npm_bin_collision_extracts_windows_path() {
+        let raw = "npm error code EEXIST\nnpm error File exists: C:\\Users\\me\\AppData\\Roaming\\npm\\pi.cmd";
+        assert_eq!(
+            npm_bin_collision_path(raw),
+            Some("C:\\Users\\me\\AppData\\Roaming\\npm\\pi.cmd")
+        );
+    }
+
+    /// 只有 EEXIST 字样、没有 File exists 行的失败不误判，原样返回。
+    #[test]
+    fn npm_bin_collision_ignores_other_failures() {
+        let raw = "some tool failed with EEXIST while writing its cache";
+        let detail = "cache write failed".to_string();
+        assert_eq!(append_npm_bin_collision_hint(detail.clone(), raw), detail);
+        assert_eq!(npm_bin_collision_path("npm error code E404"), None);
+    }
+
+    #[test]
+    fn npm_bin_collision_detail_survives_trailing_noise() {
+        let raw = [
+            "npm error code EEXIST",
+            "npm error path /home/me/.local/bin/pi",
+            "npm error EEXIST: file already exists",
+            "npm error File exists: /home/me/.local/bin/pi",
+            "npm error Remove the existing file and try again, or run npm",
+            "npm error with --force to overwrite files recklessly.",
+            "npm notice",
+            "npm notice New major version of npm available! 10.9.2 -> 11.6.0",
+            "npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.6.0",
+            "npm notice To update run: npm install -g npm@11.6.0",
+            "npm notice",
+            "npm error A complete log of this run can be found in: /tmp/debug-0.log",
+        ]
+        .join("\n");
+        assert_eq!(
+            npm_bin_collision_detail(&raw).as_deref(),
+            Some("npm error code EEXIST\nnpm error File exists: /home/me/.local/bin/pi")
+        );
+        assert_eq!(npm_bin_collision_detail("npm error code E404"), None);
+        assert_eq!(npm_bin_collision_detail("EEXIST without a path"), None);
     }
 
     /// 探测 helper 正常路径：spawn（含 pre_exec setsid）能启动、输出能捕获。

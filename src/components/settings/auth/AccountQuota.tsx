@@ -21,7 +21,6 @@ import {
   countdownStr,
   formatRelativeTime,
   lineHint,
-  tierLine,
   toneForLeft,
   type QuotaDisplay,
   type QuotaLine,
@@ -33,6 +32,7 @@ import {
 import type { SubscriptionQuota } from "@/types/subscription";
 import type { CodebuddyQuota } from "@/lib/api/auth";
 import { useCopilotQuota } from "@/lib/query/copilot";
+import { copilotQuotaRows } from "@/components/CopilotQuotaFooter";
 import {
   useAgyAccountQuota,
   useCodebuddyAccountQuota,
@@ -300,7 +300,7 @@ export function subscriptionQuotaState(
   return rows.length > 0 ? { kind: "rows", rows } : null;
 }
 
-/** GitHub Copilot 账号的高级请求额度（copilot_get_usage_for_account） */
+/** GitHub Copilot 账号的额度：高级请求，Free 另有代码补全（copilot_get_usage_for_account） */
 export function CopilotAccountQuota({
   accountId,
   login,
@@ -308,22 +308,21 @@ export function CopilotAccountQuota({
   accountId: string;
   login: string;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const display = useQuotaDisplay();
   const query = useCopilotQuota(accountId, { enabled: true, autoQuery: false });
   const { data: quota, isFetching: loading } = query;
 
   let state: AccountQuotaState;
   if (quota?.success) {
-    const label = t("subscription.copilotPremium");
     state =
       quota.tiers.length > 0
         ? {
             kind: "rows",
-            rows: quota.tiers.map((tier) => ({
-              label,
-              line: tierLine(t, tier, label, { display }),
-            })),
+            rows: copilotQuotaRows(t, quota.tiers, {
+              display,
+              locale: i18n.language,
+            }),
           }
         : null;
   } else if (quota) {
@@ -459,12 +458,22 @@ function formatCredits(value: number, locale: string): string {
 }
 
 /** CodebuddyQuota → 额度列状态：一行「套餐名  额度条  剩余积分」，悬停写全总量 / 剩余 / 已用 */
+/** CodeBuddy 额度查询的语言：后端按它给套餐名，只分中文 / 英文 */
+export function codebuddyQuotaLang(language: string | undefined): "zh" | "en" {
+  return language?.toLowerCase().startsWith("zh") ? "zh" : "en";
+}
+
+/**
+ * `planInLabel`：额度行标签用套餐名（供应商卡片）。授权中心的账号行第二行已显示套餐，
+ * 这里传 false，标签只写「积分 / 企业版」。
+ */
 export function codebuddyQuotaState(
   t: TFunction,
   quota: CodebuddyQuota | undefined,
   loading: boolean,
   locale: string,
   display: QuotaDisplay = "left",
+  { planInLabel = true }: { planInLabel?: boolean } = {},
 ): AccountQuotaState {
   if (!quota) return loading ? { kind: "loading" } : null;
   if (
@@ -486,7 +495,7 @@ export function codebuddyQuotaState(
   }
 
   const label =
-    quota.planName ||
+    (planInLabel ? quota.planName : null) ||
     (quota.enterprise
       ? t("authCenter.codebuddy.quota.enterprise", { defaultValue: "企业版" })
       : t("authCenter.codebuddy.quota.credits", { defaultValue: "积分" }));
@@ -562,7 +571,7 @@ export function CodebuddyAccountQuota({
 }) {
   const { t, i18n } = useTranslation();
   const display = useQuotaDisplay();
-  const lang = i18n.language?.toLowerCase().startsWith("zh") ? "zh" : "en";
+  const lang = codebuddyQuotaLang(i18n.language);
   const {
     data: quota,
     isFetching: loading,
@@ -576,7 +585,9 @@ export function CodebuddyAccountQuota({
           kind: "failed",
           reason: extractErrorMessage(error) || t("subscription.queryFailed"),
         }
-      : codebuddyQuotaState(t, quota, loading, i18n.language, display);
+      : codebuddyQuotaState(t, quota, loading, i18n.language, display, {
+          planInLabel: false,
+        });
   return (
     <AccountQuotaColumn
       login={login}

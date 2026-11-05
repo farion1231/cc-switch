@@ -37,6 +37,7 @@ import {
 } from "@/components/settings/auth/ManagedAccountsGroup";
 import { XaiAccountQuota } from "@/components/settings/auth/AccountQuota";
 import { signedInDate } from "@/components/settings/auth/accountDetails";
+import { useAccountQuotaPlans } from "@/lib/query/accountPlans";
 
 interface XaiOAuthSectionProps {
   className?: string;
@@ -138,6 +139,12 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
     />
   );
 
+  // 授权中心第二行的套餐（额度查到才有）
+  const plans = useAccountQuotaPlans(
+    "xai_oauth",
+    accounts.map((account) => account.id),
+  );
+
   if (resolvedMode === "manage") {
     const rows: GroupAccountRow[] = accounts.map((account) => {
       const date = signedInDate(account.authenticated_at, i18n.language);
@@ -151,14 +158,15 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
                 defaultValue: "登录凭据已失效，用到它的供应商无法使用",
               }),
             ]
-          : date
-            ? [
-                t("authCenter.signedInOn", {
-                  defaultValue: "{{date}}登录",
-                  date,
-                }),
-              ]
-            : [],
+          : [
+              plans[account.id],
+              date
+                ? t("authCenter.signedInOn", {
+                    defaultValue: "{{date}}登录",
+                    date,
+                  })
+                : null,
+            ].filter(Boolean),
         isDefault: defaultAccountId === account.id,
         needsReauth,
         users: accountUsers([account.id]),

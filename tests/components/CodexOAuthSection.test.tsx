@@ -11,6 +11,10 @@ const mocks = vi.hoisted(() => ({
   accountUsers: vi.fn(),
 }));
 
+vi.mock("@/lib/query/accountPlans", () => ({
+  useAccountQuotaPlans: () => ({}),
+}));
+
 vi.mock("@/components/providers/forms/hooks/useManagedAccountUsers", () => ({
   useManagedAccountUsers: () => mocks.accountUsers,
 }));

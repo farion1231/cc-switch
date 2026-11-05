@@ -337,10 +337,9 @@ describe("CodebuddyAccountSection", () => {
     );
     render(<CodebuddyAccountSection />);
 
-    expect(await screen.findByText("体验版")).toBeInTheDocument();
-    expect(
-      screen.getByRole("meter", { name: "体验版: 150" }),
-    ).toBeInTheDocument();
+    // 套餐在账号行第二行，额度行标签只写「积分」
+    expect(await screen.findByText(/体验版/)).toBeInTheDocument();
+    expect(screen.getByRole("meter", { name: "积分: 150" })).toBeInTheDocument();
     expect(screen.getByText(/令牌待 CodeBuddy 续期/)).toBeInTheDocument();
     expect(mocks.quota).toHaveBeenCalledWith(
       "100@www.codebuddy.cn",
