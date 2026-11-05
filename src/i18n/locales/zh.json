@@ -3063,8 +3063,6 @@
     "dirNotExists": "目录还不存在，启用第一个 subagent 时会自动创建",
     "import": "导入",
     "new": "新建",
-    "newBlank": "新建空白 subagent",
-    "fromTemplate": "从模板新建",
     "clearSearch": "清除搜索",
     "noSearchResults": "没有匹配「{{query}}」的 subagent",
     "loadFailed": "读取 subagent 失败",
@@ -3253,24 +3251,6 @@
       "orange": "橙",
       "pink": "粉",
       "cyan": "青"
-    },
-    "templates": {
-      "code-reviewer": {
-        "title": "代码审查",
-        "summary": "改完代码后主动审查正确性、安全性和可维护性"
-      },
-      "test-runner": {
-        "title": "测试运行与修复",
-        "summary": "运行相关测试，定位失败原因并修复"
-      },
-      "debugger": {
-        "title": "调试排错",
-        "summary": "复现错误、找到根因并做最小修复"
-      },
-      "docs-writer": {
-        "title": "文档撰写",
-        "summary": "编写或更新 README、API 文档和使用指南"
-      }
     },
     "section": {
       "title": "Subagents",

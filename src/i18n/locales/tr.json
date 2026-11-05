@@ -3021,8 +3021,6 @@
     "dirNotExists": "Dizin henüz yok. İlk subagent'ı etkinleştirdiğinizde oluşturulacak.",
     "import": "İçe aktar",
     "new": "Yeni",
-    "newBlank": "Boş subagent",
-    "fromTemplate": "Şablondan başla",
     "clearSearch": "Aramayı temizle",
     "noSearchResults": "\"{{query}}\" ile eşleşen subagent yok",
     "loadFailed": "Subagent'lar yüklenemedi",
@@ -3211,24 +3209,6 @@
       "orange": "Turuncu",
       "pink": "Pembe",
       "cyan": "Camgöbeği"
-    },
-    "templates": {
-      "code-reviewer": {
-        "title": "Kod inceleme",
-        "summary": "Değişiklikleri doğruluk, güvenlik ve bakım kolaylığı açısından inceler"
-      },
-      "test-runner": {
-        "title": "Test çalıştırıcı",
-        "summary": "İlgili testleri çalıştırır, hataları teşhis eder ve düzeltir"
-      },
-      "debugger": {
-        "title": "Hata ayıklayıcı",
-        "summary": "Hatayı yeniden üretir, kök nedeni bulur ve en küçük düzeltmeyi yapar"
-      },
-      "docs-writer": {
-        "title": "Doküman yazarı",
-        "summary": "README, API dokümanları ve kılavuzları yazar veya günceller"
-      }
     },
     "section": {
       "title": "Subagents",

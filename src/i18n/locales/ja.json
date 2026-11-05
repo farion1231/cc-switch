@@ -3063,8 +3063,6 @@
     "dirNotExists": "ディレクトリはまだありません。最初の subagent を有効にしたときに作成されます",
     "import": "インポート",
     "new": "新規作成",
-    "newBlank": "空の subagent",
-    "fromTemplate": "テンプレートから作成",
     "clearSearch": "検索をクリア",
     "noSearchResults": "「{{query}}」に一致する subagent はありません",
     "loadFailed": "subagent を読み込めませんでした",
@@ -3253,24 +3251,6 @@
       "orange": "オレンジ",
       "pink": "ピンク",
       "cyan": "シアン"
-    },
-    "templates": {
-      "code-reviewer": {
-        "title": "コードレビュー",
-        "summary": "変更後に正確性・安全性・保守性を積極的にレビュー"
-      },
-      "test-runner": {
-        "title": "テストの実行と修正",
-        "summary": "関連テストを実行し、失敗の原因を特定して修正"
-      },
-      "debugger": {
-        "title": "デバッグ",
-        "summary": "エラーを再現し、根本原因を突き止めて最小限の修正"
-      },
-      "docs-writer": {
-        "title": "ドキュメント作成",
-        "summary": "README、API ドキュメント、ガイドを作成・更新"
-      }
     },
     "section": {
       "title": "Subagents",

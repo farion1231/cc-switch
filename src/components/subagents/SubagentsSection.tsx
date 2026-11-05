@@ -17,14 +17,6 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { HelpTip } from "@/components/ui/help-tip";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { renderSegs } from "@/components/prompts/promptUtils";
@@ -47,7 +39,10 @@ import type {
   SubagentInput,
 } from "@/lib/api/subagents";
 import { extractErrorMessage } from "@/utils/errorUtils";
-import { updateSubagentFrontmatter } from "./frontmatter";
+import {
+  buildSubagentMarkdown,
+  updateSubagentFrontmatter,
+} from "./frontmatter";
 import SubagentFormPanel, {
   type SubagentSaveResult,
 } from "./SubagentFormPanel";
@@ -58,18 +53,18 @@ import {
   SubagentUnmanagedList,
 } from "./SubagentUnmanagedList";
 import {
-  BLANK_SUBAGENT_CONTENT,
-  SUBAGENT_TEMPLATES,
-  templateContent,
-  type SubagentTemplate,
-} from "./templates";
-import {
   describeSubagentError,
   fieldsOf,
   isForceableConflict,
   parseSubagentError,
   uniqueCopyName,
 } from "./subagentUtils";
+
+/** 新建：只有必填的两个键，正文留空让用户写 */
+const BLANK_SUBAGENT_CONTENT = buildSubagentMarkdown(
+  { name: "", description: "" },
+  "",
+);
 
 /** 区块里的子视图：已管理列表，或导入未管理的文件 */
 type SectionView = "managed" | "unmanaged";
@@ -223,19 +218,9 @@ export default function SubagentsSection({
   // ─── 操作 ──────────────────────────────────────────────────────────────
   const busy = () => writeLockRef.current || editor !== null;
 
-  const openNew = (content: string) => {
+  const openNew = () => {
     if (busy()) return;
-    setEditor({ content, enabled: true });
-  };
-  const openTemplate = (template: SubagentTemplate) => {
-    const name = template.fields.name ?? template.id;
-    // 模板名已被占用时自动加后缀，免得一保存就撞名
-    const content = allNames.has(name)
-      ? updateSubagentFrontmatter(templateContent(template), {
-          name: uniqueCopyName(name, allNames),
-        })
-      : templateContent(template);
-    openNew(content);
+    setEditor({ content: BLANK_SUBAGENT_CONTENT, enabled: true });
   };
   const openEdit = (subagent: Subagent) => {
     if (busy()) return;
@@ -403,39 +388,17 @@ export default function SubagentsSection({
   // ─── 渲染 ──────────────────────────────────────────────────────────────
   const controlsDisabled = writePending || editor !== null;
 
-  const newMenu = (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          type="button"
-          variant="neutral"
-          size="compact"
-          className="pe-2"
-          disabled={controlsDisabled}
-        >
-          <Plus className="h-3.5 w-3.5" strokeWidth={2} />
-          {t("subagents.new")}
-          <ChevronDown className="h-3 w-3" strokeWidth={2} />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-[240px]">
-        <DropdownMenuItem onSelect={() => openNew(BLANK_SUBAGENT_CONTENT)}>
-          {t("subagents.newBlank")}
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuLabel className="text-caption font-normal text-fg-2">
-          {t("subagents.fromTemplate")}
-        </DropdownMenuLabel>
-        {SUBAGENT_TEMPLATES.map((template) => (
-          <DropdownMenuItem
-            key={template.id}
-            onSelect={() => openTemplate(template)}
-          >
-            {t(`subagents.templates.${template.id}.title`)}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+  const newButton = (
+    <Button
+      type="button"
+      variant="neutral"
+      size="compact"
+      disabled={controlsDisabled}
+      onClick={openNew}
+    >
+      <Plus className="h-3.5 w-3.5" strokeWidth={2} />
+      {t("subagents.new")}
+    </Button>
   );
 
   const dirChip = (
@@ -488,7 +451,7 @@ export default function SubagentsSection({
           </span>
         ) : null}
       </Button>
-      {newMenu}
+      {newButton}
     </div>
   );
 
@@ -504,37 +467,18 @@ export default function SubagentsSection({
       <p className="m-0 max-w-[520px] text-body text-fg-2">
         {renderSegs(t("subagents.empty.body", { path: dirDisplayPath }))}
       </p>
-      <div className="flex flex-wrap justify-center gap-2">
-        {unmanaged.length > 0 ? (
-          <Button
-            type="button"
-            variant="neutral"
-            size="compact"
-            disabled={controlsDisabled}
-            onClick={() => setView("unmanaged")}
-          >
-            <Download className="h-3.5 w-3.5" />
-            {t("subagents.empty.importCount", { count: unmanaged.length })}
-          </Button>
-        ) : null}
-        {SUBAGENT_TEMPLATES.map((template) => (
-          <HoverTip
-            key={template.id}
-            content={t(`subagents.templates.${template.id}.summary`)}
-          >
-            <Button
-              type="button"
-              variant="neutral"
-              size="compact"
-              disabled={controlsDisabled}
-              onClick={() => openTemplate(template)}
-            >
-              <Plus className="h-3.5 w-3.5" />
-              {t(`subagents.templates.${template.id}.title`)}
-            </Button>
-          </HoverTip>
-        ))}
-      </div>
+      {unmanaged.length > 0 ? (
+        <Button
+          type="button"
+          variant="neutral"
+          size="compact"
+          disabled={controlsDisabled}
+          onClick={() => setView("unmanaged")}
+        >
+          <Download className="h-3.5 w-3.5" />
+          {t("subagents.empty.importCount", { count: unmanaged.length })}
+        </Button>
+      ) : null}
     </div>
   );
 
