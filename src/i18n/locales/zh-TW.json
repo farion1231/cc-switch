@@ -2066,6 +2066,8 @@
     "autoReviewModelCodexDefault": "Codex 預設（codex-auto-review）",
     "autoReviewModelMainDefault": "主模型自己審批（預設）",
     "autoReviewModelNoList": "這張卡沒有模型列表：Codex 會用官方的 codex-auto-review 審批，只有部分轉發 ChatGPT 帳號的中轉認得它，不認就會回報 404。在上面的模型列表裡加上模型後就能選。",
+    "officialSpeedTiersLabel": "保留官方 Fast 檔",
+    "officialSpeedTiersHint": "讓模型列表裡的 GPT 模型保留官方的 Fast 速度檔，Codex 選了 Fast 後請求會帶 service_tier=priority。只有轉發官方 ChatGPT 帳號的中轉（如 CPA）才認得，會更快消耗額度；其他上游可能報錯或按更高價計費。開啟後，先前在官方卡下選過的 Fast 會立刻在這家生效。聚合模式下不生效。改完需要重新啟動 Codex。",
     "modelListHint": "修改後需要重新啟動 Codex。",
     "modelListDefaultHelp": "這些模型會出現在 Codex 的 /model 裡，第一行是預設模型。名稱是官方 GPT 模型的行依官方條目產生，行裡的顯示名、視窗和思考等級不生效。",
     "addCatalogModel": "手動新增",

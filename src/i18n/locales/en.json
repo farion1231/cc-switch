@@ -2066,6 +2066,8 @@
     "autoReviewModelCodexDefault": "Codex default (codex-auto-review)",
     "autoReviewModelMainDefault": "Main model reviews itself (default)",
     "autoReviewModelNoList": "This card has no model list: Codex reviews approvals with the official codex-auto-review, which only some relays that forward to ChatGPT accounts accept; the rest return 404. Add models to the list above to pick one.",
+    "officialSpeedTiersLabel": "Keep official Fast tier",
+    "officialSpeedTiersHint": "Keeps the official Fast speed tier on GPT models in the model list, so choosing Fast in Codex sends service_tier=priority. Only relays that forward to official ChatGPT accounts (such as CPA) accept it, and it uses quota faster; other upstreams may reject it or bill it at a higher price. Once on, a Fast choice you made under the official card takes effect on this provider right away. Not used in aggregation mode. Restart Codex after changing it.",
     "modelListHint": "Restart Codex after changes.",
     "modelListDefaultHelp": "These models appear in Codex's /model menu; the first row is the default model. Rows named after an official GPT model use the official entry, so their display name, window and reasoning levels are ignored.",
     "addCatalogModel": "Add manually",

@@ -2066,6 +2066,8 @@
     "autoReviewModelCodexDefault": "Codex の既定（codex-auto-review）",
     "autoReviewModelMainDefault": "メインモデル自身が承認（既定）",
     "autoReviewModelNoList": "このカードにはモデル一覧がありません。Codex は公式の codex-auto-review で承認しますが、これを受け付けるのは ChatGPT アカウントへ転送する一部の中継だけで、それ以外では 404 になります。上のモデル一覧にモデルを追加すると選べます。",
+    "officialSpeedTiersLabel": "公式の Fast ティアを残す",
+    "officialSpeedTiersHint": "モデル一覧の GPT モデルに公式の Fast 速度ティアを残します。Codex で Fast を選ぶと service_tier=priority が送られます。受け付けるのは公式 ChatGPT アカウントへ転送する中継（CPA など）だけで、利用枠の消費も速くなります。それ以外の上流ではエラーになったり、より高い料金で課金されたりすることがあります。オンにすると、公式カードで選んだ Fast がこのプロバイダーですぐに有効になります。集約モードでは使われません。変更後は Codex を再起動してください。",
     "modelListHint": "変更後は Codex を再起動してください。",
     "modelListDefaultHelp": "これらのモデルは Codex の /model に表示され、先頭の行がデフォルトモデルです。公式 GPT モデル名の行は公式エントリから生成されるため、表示名・ウィンドウ・思考レベルは反映されません。",
     "addCatalogModel": "手動で追加",
