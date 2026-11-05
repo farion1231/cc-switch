@@ -133,6 +133,8 @@ export function RepoManagerPanel({
                 aria-describedby={error ? "sk-repo-error" : undefined}
                 autoComplete="off"
                 spellCheck={false}
+                autoCorrect="off"
+                autoCapitalize="off"
                 onChange={(event) => setRepoUrl(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") void handleAdd();
@@ -150,6 +152,8 @@ export function RepoManagerPanel({
                 value={branch}
                 autoComplete="off"
                 spellCheck={false}
+                autoCorrect="off"
+                autoCapitalize="off"
                 onChange={(event) => setBranch(event.target.value)}
               />
             </div>
