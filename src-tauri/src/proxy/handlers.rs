@@ -388,6 +388,7 @@ async fn handle_messages_for_app(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
+            ctx.outbound_model = err.outbound_model.take();
             log_forward_error(&state, &ctx, is_stream, &err.error).await;
             return Err(err.error);
         }
@@ -1033,6 +1034,7 @@ pub async fn handle_chat_completions(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
+            ctx.outbound_model = err.outbound_model.take();
             log_forward_error(&state, &ctx, is_stream, &err.error).await;
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error, is_stream);
         }
@@ -1160,6 +1162,7 @@ async fn handle_responses_for_app(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
+            ctx.outbound_model = err.outbound_model.take();
             log_forward_error(&state, &ctx, is_stream, &err.error).await;
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error, is_stream);
         }
@@ -1416,6 +1419,7 @@ async fn handle_codex_standalone_passthrough(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
+            ctx.outbound_model = err.outbound_model.take();
             log_forward_error(&state, &ctx, false, &err.error).await;
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error, false);
         }
@@ -1515,6 +1519,7 @@ async fn handle_responses_compact_for_app(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
+            ctx.outbound_model = err.outbound_model.take();
             log_forward_error(&state, &ctx, is_stream, &err.error).await;
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error, is_stream);
         }
@@ -2670,6 +2675,7 @@ pub async fn handle_gemini(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
+            ctx.outbound_model = err.outbound_model.take();
             log_forward_error(&state, &ctx, is_stream, &err.error).await;
             return Err(err.error);
         }
@@ -3334,6 +3340,11 @@ async fn log_forward_error(
     let provider_id = ctx.provider.id.clone();
     let app_type = ctx.app_type_str.to_string();
     let request_model = ctx.request_model.clone();
+    // 记实际发往上游的模型名（与成功行同口径），映射前就失败的回落到请求名。
+    let model = ctx
+        .outbound_model
+        .clone()
+        .unwrap_or_else(|| request_model.clone());
     let session_id = ctx.session_id.clone();
     let latency_ms = ctx.latency_ms();
     let write = tokio::task::spawn_blocking(move || {
@@ -3341,6 +3352,7 @@ async fn log_forward_error(
             request_id,
             provider_id,
             app_type,
+            model,
             request_model,
             status_code,
             error_message,

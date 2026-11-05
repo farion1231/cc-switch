@@ -300,6 +300,9 @@ pub struct ForwardResult {
 pub struct ForwardError {
     pub error: ProxyError,
     pub provider: Option<Provider>,
+    /// 最后一次尝试发往上游的模型名（映射之后）。错误行记这个，不记客户端别名：
+    /// 路由下 Desktop 的 claude-haiku-* 实际发的是映射后的模型，记别名会被当成调错了模型。
+    pub outbound_model: Option<String>,
 }
 
 /// 活跃连接 RAII guard
@@ -383,6 +386,9 @@ pub struct RequestForwarder {
     /// Stack 模型的请求（`mode::stack`）：挂在结构体上，整流器重试再次调用 `forward()` 时照样
     /// 生效。见 [`Self::routing_state_enabled`]。
     stack_request: bool,
+    /// 最近一次 `forward()` 定下的出站模型名，失败时随 [`ForwardError`] 交给日志。
+    /// 每次 `forward()` 开头清空，映射失败等没走到出站的尝试留 None（日志回落到请求名）。
+    last_outbound_model: std::sync::Mutex<Option<String>>,
 }
 
 impl RequestForwarder {
@@ -497,7 +503,21 @@ impl RequestForwarder {
             ),
             max_attempts,
             stack_request: false,
+            last_outbound_model: std::sync::Mutex::new(None),
         }
+    }
+
+    fn set_last_outbound_model(&self, model: Option<String>) {
+        if let Ok(mut slot) = self.last_outbound_model.lock() {
+            *slot = model;
+        }
+    }
+
+    fn last_outbound_model(&self) -> Option<String> {
+        self.last_outbound_model
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone())
     }
 
     /// 标记为 Stack 模型的请求。
@@ -717,6 +737,7 @@ impl RequestForwarder {
         ForwardError {
             error,
             provider: Some(provider.clone()),
+            outbound_model: self.last_outbound_model(),
         }
     }
 
@@ -809,6 +830,7 @@ impl RequestForwarder {
                 app_type.as_str()
             )),
             provider: None,
+            outbound_model: None,
         })?;
         let app_type_str = app_type.as_str();
 
@@ -816,6 +838,7 @@ impl RequestForwarder {
             return Err(ForwardError {
                 error: ProxyError::NoAvailableProvider,
                 provider: None,
+                outbound_model: None,
             });
         }
 
@@ -1356,6 +1379,7 @@ impl RequestForwarder {
             return Err(ForwardError {
                 error: ProxyError::NoAvailableProvider,
                 provider: None,
+                outbound_model: None,
             });
         }
 
@@ -1372,6 +1396,7 @@ impl RequestForwarder {
         Err(ForwardError {
             error: last_error.unwrap_or(ProxyError::MaxRetriesExceeded),
             provider: last_provider,
+            outbound_model: self.last_outbound_model(),
         })
     }
 
@@ -1395,6 +1420,7 @@ impl RequestForwarder {
         codex_upstream_format_out: &mut Option<CodexUpstreamFormat>,
     ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
         *codex_upstream_format_out = None;
+        self.set_last_outbound_model(None);
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
 
@@ -1847,6 +1873,7 @@ impl RequestForwarder {
             .and_then(|m| m.as_str())
             .filter(|m| !m.is_empty())
             .map(str::to_string);
+        self.set_last_outbound_model(outbound_model.clone());
 
         // Codex→Anthropic: when the model name carries the [1m] marker, strip the
         // suffix and add the context-1m beta header.
@@ -2096,6 +2123,7 @@ impl RequestForwarder {
         {
             outbound_model = Some(m.to_string());
         }
+        self.set_last_outbound_model(outbound_model.clone());
         log_prompt_cache_trace(
             app_type,
             provider,
@@ -4860,6 +4888,7 @@ mod tests {
             streaming_first_byte_timeout,
             max_attempts: 1,
             stack_request: false,
+            last_outbound_model: std::sync::Mutex::new(None),
         }
     }
 
@@ -8414,6 +8443,28 @@ mod tests {
                 }
             );
             assert_eq!(breaker(&fwd, "p1").await, None);
+        }
+
+        /// 失败时带出映射后的上游模型名，错误日志才不会把客户端别名（claude-haiku-*）
+        /// 记成「调了没配置的模型」。429 走中性失败、500 走全部失败两条出口。
+        #[tokio::test]
+        async fn failed_request_reports_the_mapped_upstream_model() {
+            for status in [429, 500] {
+                let up = upstream(vec![error(status, "upstream failed")]).await;
+                let fwd = forwarder(1, "p1");
+                let mut mapped = provider("p1", &up);
+                mapped.settings_config["env"]["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = json!("grok-4.7");
+                let mut body = plain_body();
+                body["model"] = json!("claude-haiku-4-5-20251001");
+
+                let err = expect_err(send(&fwd, vec![mapped], body).await);
+
+                assert_eq!(
+                    err.outbound_model.as_deref(),
+                    Some("grok-4.7"),
+                    "status {status}"
+                );
+            }
         }
 
         #[tokio::test]
