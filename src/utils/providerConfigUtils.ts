@@ -9,6 +9,31 @@ const isPlainObject = (value: unknown): value is Record<string, any> => {
   return Object.prototype.toString.call(value) === "[object Object]";
 };
 
+// Codex's guided form only owns these three top-level settings. Preserve any
+// other valid settings when the card is saved so advanced proxy options added
+// outside the form are not silently discarded.
+export const mergeCodexSettingsConfigForSave = (
+  initialSettingsConfig: Record<string, unknown> | undefined,
+  auth: unknown,
+  config: string,
+  modelCatalog?: unknown,
+): Record<string, unknown> => {
+  const preserved = isPlainObject(initialSettingsConfig)
+    ? Object.fromEntries(
+        Object.entries(initialSettingsConfig).filter(
+          ([key]) => !["auth", "config", "modelCatalog"].includes(key),
+        ),
+      )
+    : {};
+
+  return {
+    ...preserved,
+    auth,
+    config,
+    ...(modelCatalog === undefined ? {} : { modelCatalog }),
+  };
+};
+
 // 验证JSON配置格式
 export const validateJsonConfig = (
   value: string,
