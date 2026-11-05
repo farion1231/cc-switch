@@ -46,6 +46,39 @@ fn deeplink_import_opencode_generates_editable_ids_and_preserves_display_names()
 }
 
 #[test]
+fn deeplink_import_openclaw_and_hermes_generate_editable_ids() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    // ProviderForm.tsx enforces the same provider key pattern for OpenCode, OpenClaw and Hermes.
+    let key_pattern = regex::Regex::new(r"^[a-z0-9]+(-[a-z0-9]+)*$").unwrap();
+
+    for app in ["openclaw", "hermes"] {
+        reset_test_fs();
+        let _home = ensure_test_home();
+        let db = Arc::new(Database::memory().expect("create memory db"));
+        let state = AppState::new(db.clone());
+        for name in ["智谱 GLM", "Zürich Relay", "My_Relay"] {
+            let mut url = url::Url::parse("ccswitch://v1/import").unwrap();
+            url.query_pairs_mut().extend_pairs([
+                ("resource", "provider"),
+                ("app", app),
+                ("name", name),
+                ("endpoint", "https://relay.example.com/v1"),
+                ("apiKey", "public-test-key"),
+                ("model", "example-model"),
+            ]);
+            let request = parse_deeplink_url(url.as_str()).unwrap();
+            let id = import_provider_from_deeplink(&state, request).unwrap();
+            assert!(
+                key_pattern.is_match(&id),
+                "uneditable {app} provider ID: {id}"
+            );
+            let providers = db.get_all_providers(app).unwrap();
+            assert_eq!(providers.get(&id).unwrap().name, name);
+        }
+    }
+}
+
+#[test]
 fn deeplink_import_claude_provider_persists_to_db() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();

@@ -100,8 +100,12 @@ pub fn import_provider_from_deeplink(
     // Build provider configuration based on app type
     let mut provider = build_provider_from_request(&app_type, &merged_request)?;
 
-    provider.id = if matches!(app_type, AppType::OpenCode) {
-        // Display names may be Unicode, but new OpenCode IDs must pass the editor's slug validation.
+    provider.id = if matches!(
+        app_type,
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes
+    ) {
+        // Display names may be Unicode, but new OpenCode, OpenClaw and Hermes IDs are provider keys
+        // that must pass the editor's slug validation.
         let slug = name
             .split(|c: char| !c.is_ascii_alphanumeric())
             .filter(|part| !part.is_empty())
