@@ -20,7 +20,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
 use base64::Engine as _;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, Utc};
 use serde::Deserialize;
 
 use crate::config::get_home_dir;
@@ -457,6 +457,31 @@ pub fn parse_reset_time(val: Option<&serde_json::Value>) -> Option<String> {
     None
 }
 
+/// 从账期起始时间（如 /api/usage 自报的 start_of_month）推导下一次重置时间。
+/// 若账期起始已在过去，则按月累加推导至未来的下一个重置边界；
+/// 避免直接发布过去的起始时间导致前端倒计时丢弃。
+pub fn derive_next_reset_from_cycle_start(start_str: &str) -> Option<String> {
+    let trimmed = start_str.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut dt = DateTime::parse_from_rfc3339(trimmed)
+        .ok()
+        .map(|d| d.with_timezone(&Utc))
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%dT%H:%M:%S%.fZ")
+                .or_else(|_| chrono::NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M:%S"))
+                .ok()
+                .map(|naive| naive.and_utc())
+        })?;
+
+    let now = Utc::now();
+    while dt <= now {
+        dt = dt.checked_add_months(chrono::Months::new(1))?;
+    }
+    Some(dt.to_rfc3339())
+}
+
 // ── 额度查询入口 ──────────────────────────────────────────
 
 /// 查询 Cursor 订阅额度
@@ -524,8 +549,16 @@ pub async fn get_cursor_subscription_quota() -> Result<SubscriptionQuota, String
         .await
         .map_err(|e| format!("Failed to read Cursor response body: {e}"))?;
 
-    let summary: UsageSummaryResponse = serde_json::from_str(&summary_text)
-        .map_err(|e| format!("Failed to parse Cursor usage-summary JSON: {e}"))?;
+    let summary: UsageSummaryResponse = match serde_json::from_str(&summary_text) {
+        Ok(s) => s,
+        Err(e) => {
+            return Ok(SubscriptionQuota::error(
+                TOOL,
+                CredentialStatus::Valid,
+                format!("Failed to parse Cursor usage-summary JSON: {e}"),
+            ));
+        }
+    };
 
     // 2. 尝试获取 request usage (gpt-4 请求计数与上限)
     let request_url = format!(
@@ -605,8 +638,11 @@ fn compute_quota_tiers_and_plan(
         }
     }
 
-    let reset_time = parse_reset_time(summary.billing_cycle_end.as_ref())
-        .or_else(|| request_usage.and_then(|r| r.start_of_month.clone()));
+    let reset_time = parse_reset_time(summary.billing_cycle_end.as_ref()).or_else(|| {
+        request_usage
+            .and_then(|r| r.start_of_month.as_deref())
+            .and_then(derive_next_reset_from_cycle_start)
+    });
 
     let plan_name = format_cursor_plan_name(summary.membership_type.as_deref());
 
@@ -809,5 +845,54 @@ mod tests {
         assert_eq!(tiers.len(), 1);
         assert_eq!(tiers[0].name, TIER_FAST_REQUESTS);
         assert_eq!(tiers[0].utilization, 30.0);
+    }
+
+    #[test]
+    fn test_derive_next_reset_from_cycle_start() {
+        // 过去的起始时间应推导到未来的下一个账期边界
+        let past_start = "2024-01-01T00:00:00.000Z";
+        let derived = derive_next_reset_from_cycle_start(past_start).expect("derive reset");
+        let dt = DateTime::parse_from_rfc3339(&derived)
+            .unwrap()
+            .with_timezone(&Utc);
+        assert!(dt > Utc::now(), "推导出的重置时间必须在当前时刻之后");
+        assert_eq!(dt.day(), 1, "月账期边界在每月 1 日");
+
+        // 空串或非法时间应返回 None
+        assert!(derive_next_reset_from_cycle_start("").is_none());
+        assert!(derive_next_reset_from_cycle_start("not-a-date").is_none());
+    }
+
+    #[test]
+    fn test_compute_quota_tiers_derives_reset_from_start_of_month() {
+        let summary = UsageSummaryResponse {
+            billing_cycle_start: None,
+            billing_cycle_end: None,
+            membership_type: Some("pro".to_string()),
+            individual_usage: None,
+            team_usage: None,
+        };
+        let request_usage = RequestUsageResponse {
+            start_of_month: Some("2024-01-01T00:00:00.000Z".to_string()),
+            gpt_4: Some(Gpt4Usage {
+                num_requests: Some(100.0),
+                num_requests_total: Some(100.0),
+                max_request_usage: Some(500.0),
+            }),
+        };
+
+        let (_, tiers, _) = compute_quota_tiers_and_plan(&summary, Some(&request_usage));
+        assert_eq!(tiers.len(), 1);
+        let reset_str = tiers[0]
+            .resets_at
+            .as_ref()
+            .expect("resets_at must be populated");
+        let reset_dt = DateTime::parse_from_rfc3339(reset_str)
+            .unwrap()
+            .with_timezone(&Utc);
+        assert!(
+            reset_dt > Utc::now(),
+            "resets_at 不能在过去（不能直接拷贝 start_of_month）"
+        );
     }
 }
