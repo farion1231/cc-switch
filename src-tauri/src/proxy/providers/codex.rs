@@ -221,9 +221,24 @@ pub fn should_convert_codex_responses_to_anthropic(provider: &Provider, endpoint
 /// fires on native Responses passthrough.
 ///
 /// Covers managed xAI OAuth *and* API-key providers whose live upstream is
-/// `api.x.ai` with `wire_api = "responses"`. See farion1231/cc-switch#6815.
-pub fn provider_needs_responses_namespace_flatten(provider: &Provider) -> bool {
-    provider.is_xai_oauth() || provider_is_xai_native_responses(provider)
+/// `api.x.ai` with `wire_api = "responses"`, plus Grok models served by managed
+/// Copilot. Call only on native Responses paths, with the resolved outbound
+/// model: a Copilot card can serve both Grok and non-Grok models.
+/// See farion1231/cc-switch#6815.
+pub fn provider_needs_responses_namespace_flatten(
+    provider: &Provider,
+    outbound_model: Option<&str>,
+) -> bool {
+    provider.is_xai_oauth()
+        || provider_is_xai_native_responses(provider)
+        || (provider.is_github_copilot()
+            && outbound_model.is_some_and(|model| {
+                model
+                    .trim()
+                    .as_bytes()
+                    .get(..5)
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"grok-"))
+            }))
 }
 
 /// True when this Codex provider talks native Responses to first-party xAI
@@ -650,8 +665,15 @@ fn zen_catalog_effort_levels(provider: &Provider, body: &JsonValue) -> Option<Ve
 fn normalize_codex_chat_reasoning_config(
     mut config: CodexChatReasoningConfig,
 ) -> CodexChatReasoningConfig {
-    if config.supports_effort.unwrap_or(false) && config.supports_thinking.is_none() {
-        config.supports_thinking = Some(true);
+    if config.supports_effort.unwrap_or(false) {
+        if config.supports_thinking.is_none() {
+            config.supports_thinking = Some(true);
+        }
+        if config.effort_param.as_deref().is_none_or(|value| {
+            value.trim().is_empty() || value.trim().eq_ignore_ascii_case("none")
+        }) {
+            config.effort_param = Some("reasoning_effort".to_string());
+        }
     }
     config
 }
@@ -2216,6 +2238,49 @@ wire_api = "chat"
         assert_eq!(config.supports_thinking, Some(false));
         assert_eq!(config.supports_effort, Some(false));
         assert_eq!(config.thinking_param.as_deref(), Some("none"));
+        assert_eq!(config.effort_param.as_deref(), Some("none"));
+    }
+
+    #[test]
+    fn test_resolve_codex_chat_reasoning_repairs_enabled_none_effort_param() {
+        let mut provider = create_provider(json!({
+            "config": r#"
+model_provider = "copilot"
+model = "claude-opus-5.5"
+
+[model_providers.copilot]
+name = "GitHub Copilot"
+base_url = "https://api.githubcopilot.com"
+wire_api = "chat"
+"#
+        }));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            codex_chat_reasoning: Some(CodexChatReasoningConfig {
+                supports_thinking: Some(true),
+                supports_effort: Some(true),
+                thinking_param: Some("none".to_string()),
+                effort_param: Some("none".to_string()),
+                effort_value_mode: Some("passthrough".to_string()),
+                output_format: Some("auto".to_string()),
+                effort_levels: None,
+            }),
+            ..Default::default()
+        });
+        let request = json!({
+            "model": "claude-opus-5.5",
+            "input": "hello",
+            "reasoning": { "effort": "max" }
+        });
+
+        let config = resolve_codex_chat_reasoning_config(&provider, &request).unwrap();
+        assert_eq!(config.effort_param.as_deref(), Some("reasoning_effort"));
+
+        let transformed = crate::proxy::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+            request,
+            Some(&config),
+        )
+        .unwrap();
+        assert_eq!(transformed["reasoning_effort"], "max");
     }
 
     #[test]
@@ -2523,7 +2588,7 @@ wire_api = "responses"
             provider_type: Some("xai_oauth".to_string()),
             ..Default::default()
         });
-        assert!(provider_needs_responses_namespace_flatten(&xai));
+        assert!(provider_needs_responses_namespace_flatten(&xai, None));
 
         // API-key Grok cards (no xai_oauth meta) still talk to api.x.ai Responses.
         let grok_key = create_provider(json!({
@@ -2538,7 +2603,7 @@ base_url = "https://api.x.ai/v1"
 wire_api = "responses"
 "#
         }));
-        assert!(provider_needs_responses_namespace_flatten(&grok_key));
+        assert!(provider_needs_responses_namespace_flatten(&grok_key, None));
 
         // A non-xAI Responses provider must not be flattened.
         let other = create_provider(json!({
@@ -2549,6 +2614,42 @@ base_url = "https://api.deepseek.com"
 wire_api = "responses"
 "#
         }));
-        assert!(!provider_needs_responses_namespace_flatten(&other));
+        assert!(!provider_needs_responses_namespace_flatten(&other, None));
+        assert!(!provider_needs_responses_namespace_flatten(
+            &other,
+            Some("grok-4.7")
+        ));
+    }
+
+    #[test]
+    fn copilot_namespace_compat_uses_only_the_outbound_grok_model() {
+        let mut copilot = create_copilot_provider();
+        copilot.settings_config = json!({
+            "config": "model = \"grok-4.7\"",
+            "modelCatalog": {"models": [{"model": "grok-4.7"}, {"model": "gpt-6.1-sol"}]}
+        });
+        for (model, expected) in [
+            (Some("grok-4.7"), true),
+            (Some("grok-4.5"), true),
+            (Some(" GROK-4.7-fast "), true),
+            (Some("gpt-6.1-sol"), false),
+            (Some("claude-sonnet-4.6"), false),
+            (Some("grokker"), false),
+            (Some("模型"), false),
+            (Some(""), false),
+            (None, false),
+        ] {
+            assert_eq!(
+                provider_needs_responses_namespace_flatten(&copilot, model),
+                expected,
+                "{model:?}"
+            );
+        }
+
+        copilot.meta = None;
+        assert!(!provider_needs_responses_namespace_flatten(
+            &copilot,
+            Some("grok-4.7")
+        ));
     }
 }

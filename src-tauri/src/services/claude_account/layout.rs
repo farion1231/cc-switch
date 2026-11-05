@@ -4,6 +4,8 @@
 //!   `.claude.json`、会话缓存……），CC Switch 只建目录、接共享层、删目录。
 //! - `.open-url`（macOS / Linux）是登录时交给 Claude Code 的 `BROWSER`：只把要打开的地址
 //!   写进同目录的 `.opened-url`，由 CC Switch 的窗口显示、打开。
+//! - `.no-browser`（Windows，不存在的文件）是授权中心关了「登录时自动打开浏览器」时交给
+//!   Claude Code 的 `BROWSER`：让它打不开浏览器，只打印链接。
 //!
 //! macOS 上 Claude Code 把登录存在钥匙串 `Claude Code-credentials-<后缀>`，后缀是
 //! `CLAUDE_CONFIG_DIR` 原字符串（NFC）的 sha256 前 8 位。删账号时按同样的算法找到它。
@@ -19,6 +21,8 @@ const CONFIG_DIRNAME: &str = "config";
 #[cfg(unix)]
 pub const OPENER_FILENAME: &str = ".open-url";
 pub const OPENED_URL_FILENAME: &str = ".opened-url";
+/// 不自动打开浏览器时 Windows 上交给 Claude Code 的 `BROWSER`：故意不建这个文件，让它打不开浏览器。
+pub const NO_BROWSER_FILENAME: &str = ".no-browser";
 
 /// 所有账号目录的根。
 pub fn accounts_root(data_dir: &Path) -> PathBuf {

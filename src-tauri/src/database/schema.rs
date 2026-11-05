@@ -1901,6 +1901,10 @@ impl Database {
             // GPT-6.1 Sol: Standard short-context pricing; cached input is 0.05× input.
             // https://developers.openai.com/api/docs/models/gpt-6.1-sol
             ("gpt-6.1-sol", "GPT-6.1 Sol", "2", "10", "0.10", "2.50"),
+            // GPT-6.1 Terra（2026-10-26 发布）：2026-11-02 核对官方模型页 + 价页，取 Standard 短上下文价，
+            // cache write 取 30 分钟档（12 小时档为 2 倍）。
+            // https://developers.openai.com/api/docs/models/gpt-6.1-terra
+            ("gpt-6.1-terra", "GPT-6.1 Terra", "1", "5", "0.05", "1.25"),
             ("gpt-6-sol", "GPT-6 Sol", "2", "10", "0.20", "2.50"),
             ("gpt-6-luna", "GPT-6 Luna", "0.10", "0.50", "0.01", "0.125"),
             // GPT-5.6 系列（Sol / Terra / Luna，2026-06 发布）

@@ -65,55 +65,49 @@ pub fn filter_private_params(body: Value) -> Value {
 /// let output = filter_private_params_with_whitelist(input, &["_metadata"]);
 /// // output 包含 _metadata，不包含 _internal_id
 /// ```
-pub fn filter_private_params_with_whitelist(body: Value, whitelist: &[String]) -> Value {
+pub fn filter_private_params_with_whitelist(mut body: Value, whitelist: &[String]) -> Value {
     let whitelist_set: HashSet<&str> = whitelist.iter().map(|s| s.as_str()).collect();
-    filter_recursive_with_whitelist(body, &mut Vec::new(), &mut Vec::new(), &whitelist_set)
+    let mut removed_keys = Vec::new();
+    filter_recursive_with_whitelist(&mut body, false, &mut removed_keys, &whitelist_set);
+    if !removed_keys.is_empty() {
+        log::debug!("[BodyFilter] 过滤私有参数: {removed_keys:?}");
+    }
+    body
 }
 
 /// 递归过滤实现（支持白名单）
 fn filter_recursive_with_whitelist(
-    value: Value,
-    path: &mut Vec<String>,
+    value: &mut Value,
+    is_schema_name_map: bool,
     removed_keys: &mut Vec<String>,
     whitelist: &HashSet<&str>,
-) -> Value {
+) {
     match value {
         Value::Object(map) => {
-            let is_schema_name_map = path.last().is_some_and(|key| matches_schema_name_map(key));
-            let filtered: serde_json::Map<String, Value> = map
-                .into_iter()
-                .filter_map(|(key, val)| {
-                    // 以 _ 开头且不在白名单中的字段被过滤
-                    if key.starts_with('_')
-                        && !whitelist.contains(key.as_str())
-                        && !is_schema_name_map
-                    {
-                        removed_keys.push(key);
-                        None
-                    } else {
-                        path.push(key.clone());
-                        let filtered_value =
-                            filter_recursive_with_whitelist(val, path, removed_keys, whitelist);
-                        path.pop();
-                        Some((key, filtered_value))
+            map.retain(|key, val| {
+                if key.starts_with('_') && !whitelist.contains(key.as_str()) && !is_schema_name_map
+                {
+                    if log::log_enabled!(log::Level::Debug) {
+                        removed_keys.push(key.clone());
                     }
-                })
-                .collect();
-
-            // 仅在有过滤时记录日志（避免每次请求都打印）
-            if !removed_keys.is_empty() {
-                log::debug!("[BodyFilter] 过滤私有参数: {removed_keys:?}");
-                removed_keys.clear();
-            }
-
-            Value::Object(filtered)
+                    false
+                } else {
+                    filter_recursive_with_whitelist(
+                        val,
+                        matches_schema_name_map(key),
+                        removed_keys,
+                        whitelist,
+                    );
+                    true
+                }
+            });
         }
-        Value::Array(arr) => Value::Array(
-            arr.into_iter()
-                .map(|v| filter_recursive_with_whitelist(v, path, removed_keys, whitelist))
-                .collect(),
-        ),
-        other => other,
+        Value::Array(arr) => {
+            for value in arr {
+                filter_recursive_with_whitelist(value, is_schema_name_map, removed_keys, whitelist);
+            }
+        }
+        _ => {}
     }
 }
 

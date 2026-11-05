@@ -1,5 +1,5 @@
 use super::codex_chat_common::{is_empty_value, response_item_call_id};
-use crate::proxy::sse::{append_utf8_safe, strip_sse_field, take_sse_block};
+use crate::proxy::sse::{strip_sse_field, SseBuffer};
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use serde_json::Value;
@@ -374,8 +374,7 @@ pub fn record_responses_sse_stream(
     history: Arc<CodexChatHistoryStore>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
-        let mut buffer = String::new();
-        let mut utf8_remainder = Vec::new();
+        let mut sse = SseBuffer::new();
         let mut current_response_id: Option<String> = None;
 
         tokio::pin!(stream);
@@ -383,9 +382,9 @@ pub fn record_responses_sse_stream(
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
-                    while let Some(block) = take_sse_block(&mut buffer) {
-                        inspect_sse_block(&block, &mut current_response_id, history.as_ref()).await;
+                    sse.push_bytes(&bytes);
+                    while let Some(block) = sse.next_block() {
+                        inspect_sse_block(block, &mut current_response_id, history.as_ref()).await;
                     }
                     yield Ok(bytes);
                 }
