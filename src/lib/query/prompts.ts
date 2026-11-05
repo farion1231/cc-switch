@@ -19,6 +19,7 @@ export const PROMPT_APP_IDS: AppId[] = [
   "grokbuild",
   "opencode",
   "hermes",
+  "cursor",
   "pi",
   "mcode",
   "kimi",

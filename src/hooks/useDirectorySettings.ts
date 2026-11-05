@@ -17,6 +17,7 @@ type AppDirectoryKey =
   | "opencode"
   | "openclaw"
   | "hermes"
+  | "cursor"
   | "pi"
   | "omp";
 type DirectoryKey = "appConfig" | AppDirectoryKey;
@@ -30,6 +31,7 @@ export interface ResolvedDirectories {
   opencode: string;
   openclaw: string;
   hermes: string;
+  cursor: string;
   pi: string;
   omp: string;
 }
@@ -46,6 +48,7 @@ const APP_DIRECTORY_META: Record<
   opencode: { key: "opencode", defaultFolder: ".config/opencode" },
   openclaw: { key: "openclaw", defaultFolder: ".openclaw" },
   hermes: { key: "hermes", defaultFolder: ".hermes" },
+  cursor: { key: "cursor", defaultFolder: ".cursor" },
   pi: { key: "pi", defaultFolder: ".pi/agent" },
   omp: { key: "omp", defaultFolder: ".omp/agent" },
 };
@@ -61,6 +64,7 @@ const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
   opencode: "opencodeConfigDir",
   openclaw: "openclawConfigDir",
   hermes: "hermesConfigDir",
+  cursor: "cursorConfigDir",
   pi: "piConfigDir",
   omp: "ompConfigDir",
 };
@@ -151,6 +155,7 @@ export function useDirectorySettings({
     opencode: "",
     openclaw: "",
     hermes: "",
+    cursor: "",
     pi: "",
     omp: "",
   });
@@ -165,6 +170,7 @@ export function useDirectorySettings({
     opencode: "",
     openclaw: "",
     hermes: "",
+    cursor: "",
     pi: "",
     omp: "",
   });
@@ -195,6 +201,7 @@ export function useDirectorySettings({
           opencodeDir,
           openclawDir,
           hermesDir,
+          cursorDir,
           piDir,
           ompDir,
           defaultAppConfig,
@@ -205,6 +212,7 @@ export function useDirectorySettings({
           defaultOpencodeDir,
           defaultOpenclawDir,
           defaultHermesDir,
+          defaultCursorDir,
           defaultPiDir,
           defaultOmpDir,
         ] = await Promise.all([
@@ -216,6 +224,7 @@ export function useDirectorySettings({
           settingsApi.getConfigDir("opencode"),
           settingsApi.getConfigDir("openclaw"),
           settingsApi.getConfigDir("hermes"),
+          settingsApi.getConfigDir("cursor"),
           settingsApi.getConfigDir("pi"),
           settingsApi.getConfigDir("omp"),
           computeDefaultAppConfigDir(),
@@ -226,6 +235,7 @@ export function useDirectorySettings({
           computeDefaultConfigDir("opencode"),
           computeDefaultConfigDir("openclaw"),
           computeDefaultConfigDir("hermes"),
+          computeDefaultConfigDir("cursor"),
           computeDefaultConfigDir("pi"),
           computeDefaultConfigDir("omp"),
         ]);
@@ -243,6 +253,7 @@ export function useDirectorySettings({
           opencode: defaultOpencodeDir ?? "",
           openclaw: defaultOpenclawDir ?? "",
           hermes: defaultHermesDir ?? "",
+          cursor: defaultCursorDir ?? "",
           pi: defaultPiDir ?? "",
           omp: defaultOmpDir ?? "",
         };
@@ -259,6 +270,7 @@ export function useDirectorySettings({
           opencode: opencodeDir || defaultsRef.current.opencode,
           openclaw: openclawDir || defaultsRef.current.openclaw,
           hermes: hermesDir || defaultsRef.current.hermes,
+          cursor: cursorDir || defaultsRef.current.cursor,
           pi: piDir || defaultsRef.current.pi,
           omp: ompDir || defaultsRef.current.omp,
         });
@@ -472,6 +484,7 @@ export function useDirectorySettings({
         opencode: overrides?.opencode ?? defaultsRef.current.opencode,
         openclaw: overrides?.openclaw ?? defaultsRef.current.openclaw,
         hermes: overrides?.hermes ?? defaultsRef.current.hermes,
+        cursor: overrides?.cursor ?? defaultsRef.current.cursor,
         pi: overrides?.pi ?? defaultsRef.current.pi,
         omp: overrides?.omp ?? defaultsRef.current.omp,
       });

@@ -14,6 +14,7 @@ export { useOpencodeFormState } from "./useOpencodeFormState";
 export { useOmoDraftState } from "./useOmoDraftState";
 export { useOpenclawFormState } from "./useOpenclawFormState";
 export { useHermesFormState } from "./useHermesFormState";
+export { useCursorFormState } from "./useCursorFormState";
 export { useCopilotAuth } from "./useCopilotAuth";
 export { useCodexOauth } from "./useCodexOauth";
 export { useXaiOauth } from "./useXaiOauth";

@@ -51,7 +51,11 @@ use std::sync::Mutex;
 
 /// 当前 Schema 版本号
 /// 每次修改表结构时递增，并在 schema.rs 中添加相应的迁移逻辑
-pub(crate) const SCHEMA_VERSION: i32 = 24;
+///
+/// 24 = DeepSeek Harness 在 mcp_servers/skills 上的启用列（上游）；
+/// 25 = Cursor 在 mcp_servers/skills 上的启用列；26 = proxy_config 放开 'cursor'。
+/// 上游已占用到 24（agy 21 / kimi 22 / omp 23 / dsh 24），故 cursor 迁移**追加**在链尾，不重排既有迁移号。
+pub(crate) const SCHEMA_VERSION: i32 = 26;
 
 /// 安全地序列化 JSON，避免 unwrap panic
 pub(crate) fn to_json_string<T: Serialize>(value: &T) -> Result<String, AppError> {

@@ -118,6 +118,7 @@ pub struct ProxyTakeoverStatus {
     pub claude_desktop: bool,
     pub opencode: bool,
     pub openclaw: bool,
+    pub cursor: bool,
 }
 
 /// Provider健康状态

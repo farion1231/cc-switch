@@ -50,6 +50,7 @@ export interface ProxyTakeoverStatus {
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
+  cursor: boolean;
 }
 
 /** Applied under the backend switch lock, not inferred from a possibly stale UI mode. */
@@ -236,6 +237,77 @@ export interface GlobalProxyConfig {
   listenAddress: string;
   listenPort: number;
   enableLogging: boolean;
+}
+
+// 公网路由状态（隧道 + 配置，后端 serde camelCase）
+// 隧道是共享基础设施：把本地路由暴露到公网，Cursor 等支持自定义
+// Base URL 的应用都可以接入（当前以 Cursor 为主要消费者）。
+export interface PublicRouteStatus {
+  enabled: boolean;
+  /** 公网路由隧道鉴权密钥（ccsk-*），需填到 Cursor 的 OpenAI API Key 输入框 */
+  apiKey: string | null;
+  tunnelRunning: boolean;
+  publicUrl: string | null;
+  localUrl: string | null;
+  tunnelError: string | null;
+  currentProviderName: string | null;
+  /** 隧道模式："quick"（免账号，URL 每次变化）| "named"（固定域名） */
+  tunnelMode: string;
+  /** 命名隧道名（tunnelMode = named 时） */
+  namedTunnel: string | null;
+  /** 命名隧道域名（tunnelMode = named 时） */
+  namedHostname: string | null;
+}
+
+/** Cursor 本地 BYOK 三字段现状（`cursor_byok_status`）：Cursor 关掉后读，运行中读到的是过期快照。 */
+export interface CursorByokStatus {
+  baseUrl: string | null;
+  useOpenAIKey: boolean;
+  modelCount: number;
+  /**
+   * 已写入 Cursor 的可用模型名列表。换供应商但仍在同一条隧道时 `baseUrl` 不变，
+   * 必须比对这份列表才能判断「目标模型真的已经写进去了」。顺序不保证，比较须与顺序无关。
+   */
+  modelIds: string[];
+}
+
+/**
+ * 可用的 BYOK 回滚点：写 BYOK 前自动落盘的那份原始行快照
+ * （`cursor-appuser-PREWRITE-YYYYMMDD-HHMMSS.json`）。
+ */
+export interface CursorByokBackup {
+  path: string;
+  /** 文件名里的时间戳（`YYYYMMDD-HHMMSS`），供界面说明还原到哪个时间点。 */
+  writtenAt: string;
+}
+
+/** 还原 BYOK 的结果（`cursor_restore_byok`）：把写入前的原始行写回。 */
+export interface CursorRestoreByokResult {
+  ok: boolean;
+  /** 还原后的 Base URL；`null` = 回到官方态。 */
+  restoredBaseUrl: string | null;
+  /** 用掉的那份回滚点。 */
+  backupPath: string;
+}
+
+/** 写 Cursor BYOK 的结果（`cursor_write_byok`）：`backupPath` 是回滚点。 */
+export interface CursorWriteByokResult {
+  ok: boolean;
+  backupPath: string | null;
+  writtenBaseUrl: string | null;
+}
+
+/** 分层测公网路由连通性（`test_public_route_connectivity`）：`status` 为上游返回码。 */
+export interface PublicRouteConnectivityResult {
+  ok: boolean;
+  status: number | null;
+  detail: string;
+}
+
+// 命名隧道信息（cloudflared tunnel list）
+export interface NamedTunnel {
+  id: string;
+  name: string;
 }
 
 // 应用级代理配置（每个 app 独立）
