@@ -84,6 +84,15 @@ describe("Codex preset pre-filled reasoning levels", () => {
     // xAI Reasoning guide 模型级枚举；grok-4.5 不可关思考故无 none
     ["xAI (Grok)", "grok-4.5", ["low", "medium", "high", "xhigh"]],
     ["xAI (Grok) OAuth", "grok-4.5", ["low", "medium", "high", "xhigh"]],
+    // grok-4.7（docs.x.ai，2026-11-03 复核）：官方默认 high ≠ 回落档
+    // （子集最高档 xhigh）→ 显式声明
+    ["xAI (Grok)", "grok-4.7", ["low", "medium", "high", "xhigh"], "high"],
+    [
+      "xAI (Grok) OAuth",
+      "grok-4.7",
+      ["low", "medium", "high", "xhigh"],
+      "high",
+    ],
     // DeepSeek 直连照抄官方 catalog 镜像（Jason 2026-08-15 拍板：表单可见性
     // 优先，接受快照过时风险——官方目录变更时须同步）
     ["DeepSeek", "deepseek-flash", ["low", "high", "max"]],
