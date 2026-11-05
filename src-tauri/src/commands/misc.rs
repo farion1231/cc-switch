@@ -446,7 +446,7 @@ fn finish_lifecycle_output(output: &std::process::Output) -> Result<(), String> 
     } else {
         stderr.trim()
     };
-    let detail = last_lines(raw, 8);
+    let detail = npm_bin_collision_detail(raw).unwrap_or_else(|| last_lines(raw, 8));
     Err(if detail.is_empty() {
         format!("命令执行失败 (exit code: {:?})", output.status.code())
     } else {
@@ -483,6 +483,15 @@ fn npm_bin_collision_path(raw: &str) -> Option<&str> {
             .map(|(_, path)| path.trim())
             .filter(|path| !path.is_empty())
     })
+}
+
+/// npm 链接可执行文件撞上不归它管的同名文件时以 EEXIST 退出（#9173）。关键的两行
+/// 可能被尾部的 `--force` 建议、更新通知和日志路径挤出最后 8 行，这里单独保留，
+/// 前端据此换成可操作的提示。
+fn npm_bin_collision_detail(text: &str) -> Option<String> {
+    let code = text.lines().find(|line| line.contains("EEXIST"))?;
+    let exists = text.lines().find(|line| line.contains("File exists:"))?;
+    Some(format!("{}\n{}", code.trim(), exists.trim()))
 }
 
 /// 取文本末尾最多 `n` 行（npm / pip 的关键错误通常出现在输出尾部）。
@@ -5169,6 +5178,7 @@ fn wsl_distro_for_tool(tool: &str) -> Option<String> {
         "hermes" => crate::settings::get_hermes_override_dir(),
         "pi" => crate::settings::get_pi_override_dir(),
         "omp" => crate::settings::get_omp_override_dir(),
+        "dsh" => crate::settings::get_dsh_override_dir(),
         _ => None,
     }?;
 
@@ -7368,6 +7378,31 @@ mod tests {
         let detail = "cache write failed".to_string();
         assert_eq!(append_npm_bin_collision_hint(detail.clone(), raw), detail);
         assert_eq!(npm_bin_collision_path("npm error code E404"), None);
+    }
+
+    #[test]
+    fn npm_bin_collision_detail_survives_trailing_noise() {
+        let raw = [
+            "npm error code EEXIST",
+            "npm error path /home/me/.local/bin/pi",
+            "npm error EEXIST: file already exists",
+            "npm error File exists: /home/me/.local/bin/pi",
+            "npm error Remove the existing file and try again, or run npm",
+            "npm error with --force to overwrite files recklessly.",
+            "npm notice",
+            "npm notice New major version of npm available! 10.9.2 -> 11.6.0",
+            "npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.6.0",
+            "npm notice To update run: npm install -g npm@11.6.0",
+            "npm notice",
+            "npm error A complete log of this run can be found in: /tmp/debug-0.log",
+        ]
+        .join("\n");
+        assert_eq!(
+            npm_bin_collision_detail(&raw).as_deref(),
+            Some("npm error code EEXIST\nnpm error File exists: /home/me/.local/bin/pi")
+        );
+        assert_eq!(npm_bin_collision_detail("npm error code E404"), None);
+        assert_eq!(npm_bin_collision_detail("EEXIST without a path"), None);
     }
 
     /// 探测 helper 正常路径：spawn（含 pre_exec setsid）能启动、输出能捕获。

@@ -32,6 +32,7 @@ use crate::live::project::claude::{
 use crate::live::project::gemini::GeminiProjection;
 use crate::live::project::grok::GrokProjection;
 use crate::provider::Provider;
+use crate::proxy::loopback_probe;
 use crate::services::provider::codex_client_catalog;
 use crate::services::provider::codex_direct::{self, Owner};
 use crate::services::provider::codex_official_models;
@@ -842,7 +843,44 @@ async fn enter_locked(
     );
     state.proxy_service.set_active_target(app, &route).await;
     warn_if_official_route(state, app, &route).await;
+    spawn_loopback_check(state, app, op_name == op::ENTER);
     Ok(())
+}
+
+/// Codex、Grok Build 跟随系统代理发请求，发往本地路由的请求可能被系统代理接走、客户端只看到
+/// 空正文 502（见 [`loopback_probe`]）。后台自检一次，不拦进入：日志里留一笔；`notify` 时
+/// （用户手动进入）再提示。启动时接上不提示，那时界面多半还没在听事件。
+fn spawn_loopback_check(state: &AppState, app: &AppType, notify: bool) {
+    if !matches!(app, AppType::Codex | AppType::GrokBuild) {
+        return;
+    }
+    let service = state.proxy_service.clone();
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let Ok((origin, _)) = service.build_proxy_urls().await else {
+            return;
+        };
+        // 客户端地址改成别的机器时，CC Switch 这边走一遍代表不了客户端。
+        if !crate::proxy::http_client::is_loopback_url(&origin) {
+            return;
+        }
+        let Some(reason) = loopback_probe::hijack_reason(&origin).await else {
+            return;
+        };
+        log::warn!(
+            "[MODE] {} 的本地路由 {origin} 按系统代理访问回不到 CC Switch（{reason}），\
+             客户端的请求可能被系统代理接走",
+            app.as_str()
+        );
+        if notify {
+            service
+                .emit(
+                    "proxy-loopback-hijacked",
+                    json!({ "appType": app.as_str(), "origin": origin }),
+                )
+                .await;
+        }
+    });
 }
 
 async fn warn_if_official_route(state: &AppState, app: &AppType, route: &Provider) {

@@ -994,12 +994,12 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     settingsConfig: {
       name: "teamorouter",
-      base_url: "https://api.teamorouter.cn/v1",
+      base_url: "https://api.teamorouter.com/v1",
       api_key: "",
       api_mode: "chat_completions",
       models: [
@@ -1018,12 +1018,12 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "TeamoRouter Claude",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     settingsConfig: {
       name: "teamorouter_claude",
-      base_url: "https://api.teamorouter.cn",
+      base_url: "https://api.teamorouter.com",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
