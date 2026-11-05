@@ -146,12 +146,14 @@ impl Database {
         let app_type_owned = app_type.to_string();
         let found = self.config_cache.proxy_config(app_type, || {
             let conn = lock_conn!(self.conn);
-            conn.query_row(
+            let mut stmt = conn.prepare_cached(
                 "SELECT app_type, enabled, auto_failover_enabled,
                         max_retries, streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
                         circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
                         circuit_error_rate_threshold, circuit_min_requests
                  FROM proxy_config WHERE app_type = ?1",
+            ).map_err(|e| AppError::Database(e.to_string()))?;
+            stmt.query_row(
                 [app_type],
                 |row| {
                     Ok(AppProxyConfig {
