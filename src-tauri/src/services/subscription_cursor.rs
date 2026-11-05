@@ -20,7 +20,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
 use base64::Engine as _;
-use chrono::{DateTime, Datelike, Utc};
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 use crate::config::get_home_dir;
@@ -694,6 +694,7 @@ fn compute_quota_tiers_and_plan(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Datelike;
 
     // 辅助生成无签名的测试 JWT（header.payload.signature）
     fn make_test_jwt(sub: &str, exp: i64, email: Option<&str>) -> String {
