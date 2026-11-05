@@ -2125,6 +2125,11 @@ pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
 }
 
 /// 系统终止应用时最多等退出清理这么久：停代理服务自带 5 秒超时，指回直连只是写几个文件。
+///
+/// 删 Claude 空值墓碑前最多等 3 秒（`claude_direct::TOMBSTONE_MIN_VISIBLE`），但这 3 秒从
+/// 切换写入墓碑那一刻算，指回直连、停代理花掉的时间也算在里面，所以不会再叠加 3 秒：最坏
+/// 是两者取大（5 秒）再加写几个文件。只有真写了墓碑、而且是切换后 3 秒内退出才会等。
+/// 超时也不弄坏文件：空值留着（Claude Code 读到等于没设），下次启动接着删。
 const SYSTEM_EXIT_CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
 
 /// 系统直接终止应用时（macOS ⌘Q、Dock「退出」、注销关机）的退出清理。

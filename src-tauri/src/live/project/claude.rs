@@ -196,36 +196,41 @@ pub fn with_tombstones(mut patch: JsonPatch) -> JsonPatch {
     patch
 }
 
-/// 带墓碑的 `patch` 可能写成 `""` 的 `env` 键：目标不写的关键字段，加上要删的独有字段。
-/// `patch` 自己写的键（目标卡把它们设成了 `""`）不在里面。
-pub fn tombstone_keys(patch: &JsonPatch) -> Vec<String> {
+/// 带墓碑的 `patch` 打在 `live` 上，真会写成 `""` 的 `env` 键：写前有值、写后是 `""`。
+/// `patch` 自己写的键（目标卡把它们设成了 `""`）不算。没有墓碑、或 `patch` 打不上（写入
+/// 本身也会失败）时为空。
+///
+/// 只记真写了的：记下的键要排一次删除，退出时还要等开着的会话读到，没写墓碑就不该等。
+pub fn tombstone_keys(patch: &JsonPatch, live: &Value) -> Vec<String> {
     if patch.tombstone.is_empty() {
         return Vec::new();
     }
+    let mut after = live.clone();
+    if patch
+        .apply_to(Path::new("settings.json"), &mut after)
+        .is_err()
+    {
+        return Vec::new();
+    }
+    let (Some(before), Some(after)) = (
+        live.get("env").and_then(Value::as_object),
+        after.get("env").and_then(Value::as_object),
+    ) else {
+        return Vec::new();
+    };
     let env = KeyPath::new(&["env"]);
     let set: std::collections::HashSet<&KeyPath> = patch.set.iter().map(|(path, _)| path).collect();
-    let floor_keys = CLAUDE_HOT_UNSET_ENV
+    before
         .iter()
-        .chain(floor::CLAUDE_PROTOCOL_SELECTORS)
-        .map(|key| key.to_string());
-    let exclusive_keys = patch
-        .remove_if
-        .iter()
-        .filter_map(|(path, _)| match path.0.as_slice() {
-            [parent, key]
-                if parent == "env" && CLAUDE_HOT_UNSET_EXCLUSIVE_ENV.contains(&key.as_str()) =>
-            {
-                Some(key.clone())
-            }
-            _ => None,
-        });
-    let mut keys: Vec<String> = Vec::new();
-    for key in floor_keys.chain(exclusive_keys) {
-        if !set.contains(&env.child(&key)) && !keys.contains(&key) {
-            keys.push(key);
-        }
-    }
-    keys
+        .filter(|(key, value)| {
+            value
+                .as_str()
+                .map_or(!value.is_null(), |text| !text.trim().is_empty())
+                && after.get(key.as_str()) == Some(&Value::String(String::new()))
+                && !set.contains(&env.child(key))
+        })
+        .map(|(key, _)| key.clone())
+        .collect()
 }
 
 /// 删掉墓碑的补丁：`keys` 里值还是 `""` 的删掉，其余的（之后又写回了真值）不动。
@@ -1296,9 +1301,19 @@ mod tests {
         // 编辑器显示、打开终端用的投影：不带墓碑
         let view = project_onto(Path::new("settings.json"), &live, None, &official).unwrap();
         assert_eq!(view["env"], json!({}));
-        assert!(tombstone_keys(&direct_patch(None, &official)).is_empty());
+        assert!(tombstone_keys(&direct_patch(None, &official), &live).is_empty());
 
         let patch = with_tombstones(direct_patch(None, &official));
+        // 只记这次真写成空串的键
+        let keys = tombstone_keys(&patch, &live);
+        assert_eq!(
+            keys,
+            [
+                "ANTHROPIC_BASE_URL",
+                "ANTHROPIC_AUTH_TOKEN",
+                "CLAUDE_CODE_USE_BEDROCK"
+            ]
+        );
         let mut doc = live.clone();
         patch
             .apply_to(Path::new("settings.json"), &mut doc)
@@ -1311,19 +1326,24 @@ mod tests {
                 "CLAUDE_CODE_USE_BEDROCK": ""
             })
         );
-        tombstone_sweep(&tombstone_keys(&patch))
+        tombstone_sweep(&keys)
             .apply_to(Path::new("settings.json"), &mut doc)
             .unwrap();
         assert_eq!(doc, view);
 
+        // 已经是官方（没有要撤的值）：再写一次也不记墓碑
+        assert!(tombstone_keys(&patch, &view).is_empty());
+
         // 目标卡自己把某个键设成空串：删墓碑时不碰它
         let blanked = ClaudeProjection::of(&json!({ "env": { "ANTHROPIC_BASE_URL": "" } }));
         let patch = with_tombstones(direct_patch(None, &blanked));
+        let keys = tombstone_keys(&patch, &live);
+        assert!(!keys.contains(&"ANTHROPIC_BASE_URL".to_string()));
         let mut doc = live;
         patch
             .apply_to(Path::new("settings.json"), &mut doc)
             .unwrap();
-        tombstone_sweep(&tombstone_keys(&patch))
+        tombstone_sweep(&keys)
             .apply_to(Path::new("settings.json"), &mut doc)
             .unwrap();
         assert_eq!(doc["env"], json!({ "ANTHROPIC_BASE_URL": "" }));
@@ -1344,6 +1364,7 @@ mod tests {
         }});
         let official = ClaudeProjection::of(&json!({ "env": {} }));
         let patch = with_tombstones(direct_patch(Some(&prev), &official));
+        let keys = tombstone_keys(&patch, &live);
         let mut doc = live;
         patch
             .apply_to(Path::new("settings.json"), &mut doc)
@@ -1356,8 +1377,7 @@ mod tests {
                 "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "64000"
             })
         );
-        let keys = tombstone_keys(&patch);
-        assert!(keys.contains(&"CLAUDE_CODE_DISABLE_THINKING".to_string()));
+        assert_eq!(keys, ["ANTHROPIC_BASE_URL", "CLAUDE_CODE_DISABLE_THINKING"]);
         tombstone_sweep(&keys)
             .apply_to(Path::new("settings.json"), &mut doc)
             .unwrap();

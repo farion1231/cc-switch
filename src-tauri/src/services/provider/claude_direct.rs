@@ -8,6 +8,8 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use serde_json::Value;
+
 use crate::app_config::AppType;
 use crate::config::get_claude_settings_path;
 use crate::database::Database;
@@ -29,6 +31,16 @@ fn app() -> &'static str {
 /// `settings.json`（旧安装可能是 `claude.json`）。里面有 Key，按 0600 写。
 pub(crate) fn settings_file() -> LiveFile {
     LiveFile::private(get_claude_settings_path())
+}
+
+/// 现在的 `settings.json`。不存在、读不了、解析不了都当空对象（读不了、解析不了的
+/// 写入本身也会失败）。
+fn read_settings() -> Value {
+    let path = get_claude_settings_path();
+    std::fs::read(&path)
+        .ok()
+        .and_then(|bytes| crate::live::patch::json::parse(&path, Some(&bytes)).ok())
+        .map_or_else(|| Value::Object(Default::default()), |(doc, _)| doc)
 }
 
 /// 从 `prev` 切到 `target`：同一个操作里写 live、再把当前供应商改成 `target`。
@@ -180,7 +192,12 @@ pub(crate) fn note_tombstones(
     patch: Option<&JsonPatch>,
 ) -> Option<Vec<String>> {
     let patch = patch?;
-    let fresh = tombstone_keys(patch);
+    let fresh = if patch.tombstone.is_empty() {
+        Vec::new()
+    } else {
+        // 拿着写锁、上一次操作已补完：这就是这次写入的写前内容
+        tombstone_keys(patch, &read_settings())
+    };
     let old = read_marker(store);
     if fresh.is_empty() && old.is_none() {
         return None;
@@ -561,12 +578,12 @@ mod tests {
 
     #[test]
     #[serial]
-    fn switches_that_drop_no_routing_key_schedule_nothing_harmful() {
+    fn switches_that_blank_nothing_record_and_schedule_nothing() {
         let _home = TestHome::new();
         let db = Database::memory().unwrap();
         write_live(&json!({ "env": {} }));
 
-        // 官方 → 第三方：没有要删的连接字段，没有墓碑
+        // 官方 → 第三方：没有要删的连接字段，没有墓碑，也不记、不排删除（退出时不用等）
         switch_to(&db, Some(&official()), &custom()).expect("switch");
         let live = read_live();
         assert!(live["env"]
@@ -574,11 +591,14 @@ mod tests {
             .unwrap()
             .values()
             .all(|value| value != ""));
-        // 安排了删除也只删空串：对这份 live 什么都不改
-        for sweep in take_scheduled() {
-            sweep_tombstones(&sweep).expect("sweep");
-        }
-        assert_eq!(read_live(), live);
+        assert!(marker().is_none());
+        assert!(take_scheduled().is_empty());
+
+        // 已经是官方再切一次官方：没有值可撤，同样什么都不记
+        write_live(&json!({ "env": { "API_TIMEOUT_MS": "300000" } }));
+        switch_to(&db, Some(&official()), &official()).expect("official again");
+        assert!(marker().is_none());
+        assert!(take_scheduled().is_empty());
     }
 
     fn marker() -> Option<TombstoneMarker> {
