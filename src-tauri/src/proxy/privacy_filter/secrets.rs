@@ -442,7 +442,8 @@ impl SecretDetector {
             let cand = m.as_str();
             let strong = has_strong_secret_context(text, s, e);
             // 强上下文（Bearer / token= 等）凌驾于路径检查，避免 Bearer abc/xyz== 被误放
-            if !strong && is_on_path_or_url_boundary(text, s, e) {
+            // 边界从 name= 之前检查，避免将赋值号当成路径；替换范围仍只包含 value。
+            if !strong && is_on_path_or_url_boundary(text, whole.start(), e) {
                 continue;
             }
             if is_template_var(cand)

@@ -138,6 +138,17 @@ fn secrets_basic() {
 }
 
 #[test]
+fn entropy_fallback_preserves_assignment_names() {
+    let value = "V6nQ2rZa8kTm3wBx9cLp5dFj7sHy4uGe";
+    for prefix in ["SESSION_COOKIE=", "GITHUB_PAT=", "x=", "MY_VAR: "] {
+        assert_eq!(
+            redact(&format!("{prefix}{value}")),
+            format!("{prefix}[密钥]")
+        );
+    }
+}
+
+#[test]
 fn entropy_fallback_false_positives() {
     for input in [
         "ls /home/user/AbCdEfGh1234567890XyZ",
@@ -147,6 +158,8 @@ fn entropy_fallback_false_positives() {
         "host=long-subdomain-with-many-chars.example.com",
         "订单编号 aB3xK9pLmN2qR7sT5vW1zY 已记账",
         "api_key.example.com/AbCdEfGh1234567890XyZ",
+        "https://example.com/?sig=V6nQ2rZa8kTm3wBx9cLp5dFj7sHy4uGe",
+        "/var/data/x=V6nQ2rZa8kTm3wBx9cLp5dFj7sHy4uGe",
     ] {
         assert_no_hit(input, "[密钥]");
     }
