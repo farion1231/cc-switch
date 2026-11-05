@@ -71,6 +71,77 @@ pub fn read_mcp_servers_map() -> Result<std::collections::HashMap<String, Value>
     Ok(servers)
 }
 
+/// 统一规范 → Gemini CLI 条目
+fn to_gemini_entry(mut obj: Map<String, Value>) -> Map<String, Value> {
+    // Gemini CLI 格式转换：
+    // - Gemini 不使用 "type" 字段（从字段名推断传输类型）
+    // - HTTP 使用 "httpUrl" 字段，SSE 使用 "url" 字段
+    // 没写 type 的 url 型规范按 http 处理（与其他应用的投影一致），否则写成
+    // `url` 会被 Gemini 当作 SSE 连接 Streamable HTTP 端点。
+    let spec_value = Value::Object(obj.clone());
+    let transport_type = crate::mcp::validation::spec_transport_type(&spec_value);
+    if transport_type == "http" {
+        // HTTP streaming: 将 "url" 重命名为 "httpUrl"
+        if let Some(url_value) = obj.remove("url") {
+            obj.insert("httpUrl".to_string(), url_value);
+        }
+    }
+    // SSE 保持 "url" 字段不变
+
+    // 移除 UI 辅助字段和 type 字段（Gemini 不需要）
+    obj.remove("type");
+    obj.remove("enabled");
+    obj.remove("source");
+    obj.remove("id");
+    obj.remove("name");
+    obj.remove("description");
+    obj.remove("tags");
+    obj.remove("homepage");
+    obj.remove("docs");
+
+    // Timeout 转换：Claude/Codex 使用 startup_timeout_sec/tool_timeout_sec
+    // Gemini CLI 只支持 timeout（单位 ms）
+    // 默认值：startup=10s, tool=60s
+    const DEFAULT_STARTUP_MS: u64 = 10_000;
+    const DEFAULT_TOOL_MS: u64 = 60_000;
+
+    let extract_timeout =
+        |obj: &mut Map<String, Value>, key: &str, multiplier: u64| -> Option<u64> {
+            obj.remove(key).and_then(|val| {
+                val.as_u64()
+                    .map(|n| n * multiplier)
+                    .or_else(|| val.as_f64().map(|f| (f * multiplier as f64) as u64))
+            })
+        };
+
+    // 分别收集 startup 和 tool timeout，未设置时使用默认值
+    let startup_ms = extract_timeout(&mut obj, "startup_timeout_sec", 1000)
+        .or_else(|| extract_timeout(&mut obj, "startup_timeout_ms", 1));
+    let tool_ms = extract_timeout(&mut obj, "tool_timeout_sec", 1000)
+        .or_else(|| extract_timeout(&mut obj, "tool_timeout_ms", 1));
+
+    // 单位明确的 `*_timeout_sec` / `*_timeout_ms` 优先，取最大值作为 Gemini timeout。
+    let final_timeout = if startup_ms.is_some() || tool_ms.is_some() {
+        startup_ms
+            .unwrap_or(DEFAULT_STARTUP_MS)
+            .max(tool_ms.unwrap_or(DEFAULT_TOOL_MS))
+    } else {
+        // 否则沿用规范里的 `timeout`（比如从 Gemini 导入的条目），不能被默认值覆盖。
+        // 共享规范里的 `timeout` 不一定来自 Gemini：别家常写秒数（`timeout: 30`），
+        // 当毫秒用会让每次调用 30ms 就超时。不足 1 秒的值按秒换算。
+        match obj.get("timeout").and_then(Value::as_f64) {
+            Some(t) if t > 0.0 && t < MIN_PLAUSIBLE_MS => (t * 1000.0) as u64,
+            Some(t) if t > 0.0 => t as u64,
+            _ => DEFAULT_STARTUP_MS.max(DEFAULT_TOOL_MS),
+        }
+    };
+    obj.insert("timeout".to_string(), Value::Number(final_timeout.into()));
+    obj
+}
+
+/// Gemini `timeout` 是毫秒；小于它的值几乎不可能是有意配置的毫秒数，按秒处理。
+const MIN_PLAUSIBLE_MS: f64 = 1000.0;
+
 /// 将给定的启用 MCP 服务器映射写入到 Gemini settings.json 的 mcpServers 字段
 /// 仅覆盖 mcpServers，其他字段保持不变
 pub fn set_mcp_servers_map(
@@ -102,57 +173,7 @@ pub fn set_mcp_servers_map(
             obj = server_obj;
         }
 
-        // Gemini CLI 格式转换：
-        // - Gemini 不使用 "type" 字段（从字段名推断传输类型）
-        // - HTTP 使用 "httpUrl" 字段，SSE 使用 "url" 字段
-        let transport_type = obj.get("type").and_then(|v| v.as_str());
-        if transport_type == Some("http") {
-            // HTTP streaming: 将 "url" 重命名为 "httpUrl"
-            if let Some(url_value) = obj.remove("url") {
-                obj.insert("httpUrl".to_string(), url_value);
-            }
-        }
-        // SSE 保持 "url" 字段不变
-
-        // 移除 UI 辅助字段和 type 字段（Gemini 不需要）
-        obj.remove("type");
-        obj.remove("enabled");
-        obj.remove("source");
-        obj.remove("id");
-        obj.remove("name");
-        obj.remove("description");
-        obj.remove("tags");
-        obj.remove("homepage");
-        obj.remove("docs");
-
-        // Timeout 转换：Claude/Codex 使用 startup_timeout_sec/tool_timeout_sec
-        // Gemini CLI 只支持 timeout（单位 ms）
-        // 默认值：startup=10s, tool=60s
-        const DEFAULT_STARTUP_MS: u64 = 10_000;
-        const DEFAULT_TOOL_MS: u64 = 60_000;
-
-        let extract_timeout =
-            |obj: &mut Map<String, Value>, key: &str, multiplier: u64| -> Option<u64> {
-                obj.remove(key).and_then(|val| {
-                    val.as_u64()
-                        .map(|n| n * multiplier)
-                        .or_else(|| val.as_f64().map(|f| (f * multiplier as f64) as u64))
-                })
-            };
-
-        // 分别收集 startup 和 tool timeout，未设置时使用默认值
-        let startup_ms = extract_timeout(&mut obj, "startup_timeout_sec", 1000)
-            .or_else(|| extract_timeout(&mut obj, "startup_timeout_ms", 1))
-            .unwrap_or(DEFAULT_STARTUP_MS);
-        let tool_ms = extract_timeout(&mut obj, "tool_timeout_sec", 1000)
-            .or_else(|| extract_timeout(&mut obj, "tool_timeout_ms", 1))
-            .unwrap_or(DEFAULT_TOOL_MS);
-
-        // 取最大值作为 Gemini timeout
-        let final_timeout = startup_ms.max(tool_ms);
-        obj.insert("timeout".to_string(), Value::Number(final_timeout.into()));
-
-        out.insert(id.clone(), Value::Object(obj));
+        out.insert(id.clone(), Value::Object(to_gemini_entry(obj)));
     }
 
     {
@@ -164,4 +185,54 @@ pub fn set_mcp_servers_map(
 
     write_json_value(&path, &root)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn entry(spec: Value) -> Value {
+        Value::Object(to_gemini_entry(spec.as_object().unwrap().clone()))
+    }
+
+    #[test]
+    fn url_only_spec_is_written_as_streamable_http() {
+        // 不写 type 的 url 规范在其他应用里都按 http 投影；写成 `url` 会被 Gemini 当成 SSE。
+        let out = entry(json!({"url": "https://example.com/mcp"}));
+        assert_eq!(out["httpUrl"], "https://example.com/mcp");
+        assert!(out.get("url").is_none());
+        assert!(out.get("type").is_none());
+
+        let sse = entry(json!({"type": "sse", "url": "https://example.com/sse"}));
+        assert_eq!(sse["url"], "https://example.com/sse");
+        assert!(sse.get("httpUrl").is_none());
+    }
+
+    #[test]
+    fn native_timeout_is_kept_and_codex_timeouts_are_converted() {
+        let native = entry(json!({"command": "node", "timeout": 600000}));
+        assert_eq!(native["timeout"], 600000);
+
+        let converted = entry(json!({"command": "node", "tool_timeout_sec": 120}));
+        assert_eq!(converted["timeout"], 120000);
+        assert!(converted.get("tool_timeout_sec").is_none());
+
+        // 两种都没有：沿用原来的默认值
+        assert_eq!(entry(json!({"command": "node"}))["timeout"], 60000);
+    }
+
+    #[test]
+    fn explicit_unit_timeouts_win_and_second_valued_timeout_is_converted() {
+        // 同时写了 tool_timeout_sec：单位明确的字段优先，不能被 `timeout` 悄悄吃掉
+        let both = entry(json!({"command": "node", "timeout": 30, "tool_timeout_sec": 120}));
+        assert_eq!(both["timeout"], 120000);
+        assert!(both.get("tool_timeout_sec").is_none());
+
+        // 别家写的秒数：不能当 30ms
+        assert_eq!(
+            entry(json!({"command": "node", "timeout": 30}))["timeout"],
+            30000
+        );
+    }
 }

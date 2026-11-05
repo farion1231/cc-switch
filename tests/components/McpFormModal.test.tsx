@@ -335,6 +335,22 @@ describe("McpFormModal (drawer)", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("warns that DeepSeek Harness rejects SSE servers", () => {
+    renderForm({
+      editingId: "remote",
+      visibleAppIds: ["claude", "dsh"],
+      initialData: {
+        id: "remote",
+        name: "remote",
+        server: { type: "sse", url: "http://127.0.0.1:60002/sse" },
+        apps: { claude: true, dsh: true } as McpServer["apps"],
+      },
+    });
+    expect(
+      screen.getByText("mcpPage.drawer.sseRejectedTitle"),
+    ).toBeInTheDocument();
+  });
+
   it("follows the JSON tab when checking for SSE", async () => {
     renderForm({ visibleAppIds: ["claude", "codex"] });
     expect(

@@ -59,6 +59,15 @@ fn wrap_command_for_windows(obj: &mut Map<String, Value>) {
     obj.insert("args".into(), Value::Array(new_args));
 }
 
+/// Claude Code 把没有 `type` 的条目当作 stdio：只有 `url` 的远程服务器因为缺
+/// `command` 被整条忽略（`claude mcp get` 报 "No MCP server named …"），界面却显示
+/// 已同步。写出前按各应用共用的推断补上明确的 `type`。
+fn set_explicit_transport_type(obj: &mut Map<String, Value>) {
+    let transport =
+        crate::mcp::validation::spec_transport_type(&Value::Object(obj.clone())).to_string();
+    obj.insert("type".into(), Value::String(transport));
+}
+
 /// 非 Windows 平台无需处理
 #[cfg(not(windows))]
 fn wrap_command_for_windows(_obj: &mut Map<String, Value>) {
@@ -174,43 +183,12 @@ pub fn upsert_mcp_server(id: &str, spec: Value) -> Result<bool, AppError> {
     if id.trim().is_empty() {
         return Err(AppError::InvalidInput("MCP 服务器 ID 不能为空".into()));
     }
-    // 基础字段校验（尽量宽松）
-    if !spec.is_object() {
-        return Err(AppError::McpValidation(
-            "MCP 服务器定义必须为 JSON 对象".into(),
-        ));
-    }
-    let t_opt = spec.get("type").and_then(|x| x.as_str());
-    let is_stdio = t_opt.map(|t| t == "stdio").unwrap_or(true); // 兼容缺省（按 stdio 处理）
-    let is_http = t_opt.map(|t| t == "http").unwrap_or(false);
-    let is_sse = t_opt.map(|t| t == "sse").unwrap_or(false);
-    if !(is_stdio || is_http || is_sse) {
-        return Err(AppError::McpValidation(
-            "MCP 服务器 type 必须是 'stdio'、'http' 或 'sse'（或省略表示 stdio）".into(),
-        ));
-    }
-
-    // stdio 类型必须有 command
-    if is_stdio {
-        let cmd = spec.get("command").and_then(|x| x.as_str()).unwrap_or("");
-        if cmd.is_empty() {
-            return Err(AppError::McpValidation(
-                "stdio 类型的 MCP 服务器缺少 command 字段".into(),
-            ));
-        }
-    }
-
-    // http/sse 类型必须有 url
-    if is_http || is_sse {
-        let url = spec.get("url").and_then(|x| x.as_str()).unwrap_or("");
-        if url.is_empty() {
-            return Err(AppError::McpValidation(if is_http {
-                "http 类型的 MCP 服务器缺少 url 字段".into()
-            } else {
-                "sse 类型的 MCP 服务器缺少 url 字段".into()
-            }));
-        }
-    }
+    // 与各应用投影共用同一套传输推断：只有 url 的规范按 http 接受，并补上明确的
+    // `type`，否则 Claude Code 会把它当缺 command 的 stdio 条目整条忽略。
+    crate::mcp::validation::validate_server_spec(&spec)?;
+    let mut obj = spec.as_object().cloned().unwrap_or_default();
+    set_explicit_transport_type(&mut obj);
+    let spec = Value::Object(obj);
 
     let path = user_config_path();
     let mut root = if path.exists() {
@@ -360,6 +338,8 @@ pub fn set_mcp_servers_map(
         obj.remove("homepage");
         obj.remove("docs");
 
+        set_explicit_transport_type(&mut obj);
+
         // Windows 平台自动包装 npx/npm 等命令为 cmd /c 格式（WSL 路径除外）
         if !is_wsl_target {
             wrap_command_for_windows(&mut obj);
@@ -383,6 +363,27 @@ pub fn set_mcp_servers_map(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn claude_entries_always_carry_an_explicit_transport_type() {
+        let typed = |spec: Value| {
+            let mut obj = spec.as_object().unwrap().clone();
+            set_explicit_transport_type(&mut obj);
+            obj
+        };
+        // 只有 url：不补 type 的话 Claude Code 会把整条忽略
+        let remote = typed(json!({"url": "https://example.com/mcp"}));
+        assert_eq!(remote["type"], "http");
+        assert_eq!(remote["url"], "https://example.com/mcp");
+        // 标成 stdio 却只有 url 的规范同样按 http 写出
+        assert_eq!(
+            typed(json!({"type": "stdio", "url": "https://example.com/mcp"}))["type"],
+            "http"
+        );
+        assert_eq!(typed(json!({"command": "node"}))["type"], "stdio");
+        let sse = typed(json!({"type": "sse", "url": "https://example.com/sse"}));
+        assert_eq!(sse["type"], "sse");
+    }
 
     /// 测试 Windows 命令包装功能
     /// 由于使用条件编译，在非 Windows 平台上测试的是空函数

@@ -4608,6 +4608,7 @@
     "connection": {
       "unchecked": "Not checked",
       "connected": "Connection successful",
+      "authRequired": "Sign-in required: the server is reachable but asks for authorization (e.g. OAuth). CC Switch checks without each client's own login; it works once you sign in from the client",
       "disconnected": "Connection failed",
       "checking": "Checking connection",
       "disabled": "Not enabled"

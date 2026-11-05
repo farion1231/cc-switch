@@ -1377,7 +1377,7 @@ fn sync_mcp_files_and_commit<T>(
 
 fn validate_mcp_spec(id: &str, spec: &Value) -> Result<(), AppError> {
     crate::mcp::validation::validate_server_spec(spec)?;
-    if spec["type"] == "sse" {
+    if crate::mcp::validation::spec_transport_type(spec) == "sse" {
         return Err(AppError::InvalidInput("DeepSeek Harness supports stdio and Streamable HTTP MCP; use an HTTP endpoint instead of SSE".into()));
     }
     if id.is_empty()
@@ -1502,20 +1502,24 @@ fn mcp_edit(text: &str, id: &str, spec: Option<&Value>) -> Result<String, AppErr
             ] {
                 config.remove(Yaml::from(field));
             }
+            // Same inference as every other app's projection: a stdio spec that still
+            // carries a stray `url` stays stdio. Only the chosen transport's connection
+            // fields are written, so a leftover `url` cannot reach a stdio entry.
+            let is_stdio = crate::mcp::validation::spec_transport_type(spec) == "stdio";
+            let other_transport: &[&str] = if is_stdio {
+                &["url", "headers"]
+            } else {
+                &["command", "args", "env", "cwd"]
+            };
             for (key, value) in spec.as_object().unwrap() {
-                if key != "type" {
+                if key != "type" && !other_transport.contains(&key.as_str()) {
                     config.insert(key.as_str().into(), serde_yaml::to_value(value).unwrap());
                 }
             }
             config.insert("serverName".into(), id.into());
             config.insert(
                 "transport".into(),
-                if spec.get("url").is_some() {
-                    "streamable-http"
-                } else {
-                    "stdio"
-                }
-                .into(),
+                if is_stdio { "stdio" } else { "streamable-http" }.into(),
             );
             Some(entry)
         } else {
