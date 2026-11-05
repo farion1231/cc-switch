@@ -25,6 +25,7 @@ pub fn enter_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
     // else: already in lightweight mode or window not found, just set the flag
 
     LIGHTWEIGHT_MODE.store(true, Ordering::Release);
+    crate::session_manager::cache::global().set_enabled(false);
     persist_lightweight_mode(true);
     // 托盘面板也是一个 WebView：收着的当场释放，开着的（在面板里点的轻量模式）收起时释放。
     crate::tray_panel::release_if_lightweight(app);
@@ -53,6 +54,7 @@ pub fn exit_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
             crate::tray::apply_tray_policy(app, true);
         }
         LIGHTWEIGHT_MODE.store(false, Ordering::Release);
+        crate::session_manager::cache::global().set_enabled(true);
         persist_lightweight_mode(false);
         crate::tray::refresh_tray_menu(app);
         log::info!("退出轻量模式");
@@ -94,6 +96,7 @@ pub fn exit_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
     }
 
     LIGHTWEIGHT_MODE.store(false, Ordering::Release);
+    crate::session_manager::cache::global().set_enabled(true);
     persist_lightweight_mode(false);
     crate::tray::refresh_tray_menu(app);
     log::info!("退出轻量模式");
