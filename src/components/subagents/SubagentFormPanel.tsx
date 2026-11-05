@@ -379,6 +379,8 @@ export default function SubagentFormPanel({
       }}
     >
       <SheetPageContent
+        // 子代理即时写盘，不属于外层供应商表单的改动：别让外层的未保存跟踪把它算进去
+        data-unsaved-ignore=""
         title={title}
         closeLabel={t("common.back")}
         onEscapeKeyDown={(event) => {

@@ -37,7 +37,7 @@ export function NoSearchResults({
       <span className="text-body text-fg-2">
         {t("subagents.noSearchResults", { query: query.trim() })}
       </span>
-      <Button variant="neutral" size="compact" onClick={onClear}>
+      <Button type="button" variant="neutral" size="compact" onClick={onClear}>
         {t("subagents.clearSearch")}
       </Button>
     </div>

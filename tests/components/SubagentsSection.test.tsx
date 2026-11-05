@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import SubagentsPanel from "@/components/subagents/SubagentsPanel";
+import SubagentsSection from "@/components/subagents/SubagentsSection";
 import type { Subagent, UnmanagedSubagent } from "@/lib/api/subagents";
 
 const mocks = vi.hoisted(() => ({
@@ -59,7 +59,7 @@ vi.mock("@/lib/api/subagents", () => ({
 const reviewer: Subagent = {
   id: "a1",
   name: "code-reviewer",
-  fileName: "code-reviewer.md",
+  fileName: "code-reviewer",
   description: "Reviews code",
   content:
     "---\nname: code-reviewer\ndescription: Reviews code\ntools: Read, Grep, Glob, Bash\nmodel: opus\ncolor: blue\n---\n\nReview.\n",
@@ -72,7 +72,7 @@ const reviewer: Subagent = {
 const tester: Subagent = {
   id: "a2",
   name: "tester",
-  fileName: "tester.md",
+  fileName: "tester",
   content: "---\nname: tester\ndescription: Runs tests\n---\n\nTest.\n",
   enabled: false,
   source: "imported",
@@ -96,18 +96,37 @@ const unmanaged: UnmanagedSubagent[] = [
   },
 ];
 
-function renderPanel() {
+const onProviderSubmit = vi.fn((event: { preventDefault: () => void }) =>
+  event.preventDefault(),
+);
+
+/**
+ * 区块实际挂在供应商编辑页的 <form> 里，测试也包一层 form：区块里任何按钮都不该提交它。
+ * 默认折叠，`expand` 为 true 时先点开标题。
+ */
+async function renderSection(
+  props: { subagentModelOverride?: string } = {},
+  { expand = true }: { expand?: boolean } = {},
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
+  const utils = render(
     <QueryClientProvider client={client}>
-      <SubagentsPanel />
+      <form onSubmit={onProviderSubmit}>
+        <SubagentsSection {...props} />
+      </form>
     </QueryClientProvider>,
   );
+  if (expand) {
+    await userEvent.click(
+      screen.getByRole("button", { name: /subagents\.section\.title/ }),
+    );
+  }
+  return utils;
 }
 
-describe("SubagentsPanel", () => {
+describe("SubagentsSection", () => {
   beforeEach(() => {
     mocks.list.mockResolvedValue([reviewer, tester]);
     mocks.getDir.mockResolvedValue({
@@ -117,10 +136,11 @@ describe("SubagentsPanel", () => {
     });
     mocks.scanUnmanaged.mockResolvedValue(unmanaged);
     mocks.listPlugin.mockResolvedValue([]);
+    onProviderSubmit.mockClear();
   });
 
   it("shows model, tools summary and drift status for managed rows", async () => {
-    renderPanel();
+    await renderSection();
     const row = await screen.findByTestId("subagent-row-a1");
     expect(within(row).getByText("opus")).toBeInTheDocument();
     expect(
@@ -145,7 +165,7 @@ describe("SubagentsPanel", () => {
     mocks.toggle
       .mockRejectedValueOnce("SUBAGENT_DRIFTED: code-reviewer.md changed")
       .mockResolvedValueOnce({ ...reviewer, enabled: false });
-    renderPanel();
+    await renderSection();
 
     const row = await screen.findByTestId("subagent-row-a1");
     await user.click(
@@ -170,7 +190,7 @@ describe("SubagentsPanel", () => {
   it("toasts other errors without asking", async () => {
     const user = userEvent.setup();
     mocks.toggle.mockRejectedValueOnce("SUBAGENT_INVALID: missing name");
-    renderPanel();
+    await renderSection();
 
     const row = await screen.findByTestId("subagent-row-a2");
     await user.click(
@@ -190,11 +210,11 @@ describe("SubagentsPanel", () => {
   it("imports only parsable unmanaged files", async () => {
     const user = userEvent.setup();
     mocks.import.mockResolvedValue([{ ...tester, id: "a3", name: "helper" }]);
-    renderPanel();
+    await renderSection();
 
     await screen.findByTestId("subagent-row-a1");
     await user.click(
-      screen.getByRole("tab", { name: /subagents.tabs.unmanagedCount/ }),
+      screen.getByRole("button", { name: /^subagents\.import/ }),
     );
 
     expect(
@@ -216,5 +236,49 @@ describe("SubagentsPanel", () => {
     await waitFor(() =>
       expect(mocks.import).toHaveBeenCalledWith(["helper.md"]),
     );
+  });
+  it("shows the count and pending issues while collapsed", async () => {
+    await renderSection({}, { expand: false });
+    const trigger = screen.getByRole("button", {
+      name: /subagents\.section\.title/,
+    });
+    await waitFor(() =>
+      expect(trigger).toHaveTextContent("subagents.section.needsAttention"),
+    );
+    expect(trigger).toHaveTextContent("subagents.section.summary");
+    expect(screen.queryByTestId("subagent-row-a1")).not.toBeInTheDocument();
+  });
+
+  it("warns when this provider's subagent model overrides agent files", async () => {
+    await renderSection({ subagentModelOverride: "glm-4.7-air" });
+    await screen.findByTestId("subagent-row-a1");
+    expect(
+      screen.getByText("subagents.section.overrideWarning"),
+    ).toBeInTheDocument();
+  });
+
+  it("never submits or dirties the surrounding provider form", async () => {
+    const user = userEvent.setup();
+    mocks.toggle.mockResolvedValue({ ...tester, enabled: true });
+    await renderSection();
+
+    const row = await screen.findByTestId("subagent-row-a2");
+    const toggle = within(row).getByRole("switch", {
+      name: "subagents.actions.enableAria:tester",
+    });
+    // 编辑页的未保存跟踪按 DOM closest 豁免：区块里的即时写盘操作不算供应商表单的改动
+    expect(toggle.closest("[data-unsaved-ignore]")).not.toBeNull();
+    await user.click(toggle);
+    await waitFor(() => expect(mocks.toggle).toHaveBeenCalled());
+
+    await user.click(
+      screen.getByRole("button", { name: /^subagents\.import/ }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "subagents.section.backToList" }),
+    );
+    await user.click(screen.getByRole("button", { name: /subagents\.new/ }));
+
+    expect(onProviderSubmit).not.toHaveBeenCalled();
   });
 });

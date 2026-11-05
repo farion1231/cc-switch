@@ -169,9 +169,6 @@ const PromptPanel = lazy(() => import("@/components/prompts/PromptPanel"));
 const UnifiedSkillsPanel = lazy(
   () => import("@/components/skills/UnifiedSkillsPanel"),
 );
-const SubagentsPanel = lazy(
-  () => import("@/components/subagents/SubagentsPanel"),
-);
 const WorkspaceFilesPanel = lazy(
   () => import("@/components/workspace/WorkspaceFilesPanel"),
 );
@@ -267,7 +264,6 @@ function App() {
   const [mcpManagementBusy, setMcpManagementBusy] = useState(false);
   const [skillsNavigationBusy, setSkillsNavigationBusy] = useState(false);
   const [promptNavigationBusy, setPromptNavigationBusy] = useState(false);
-  const [subagentsNavigationBusy, setSubagentsNavigationBusy] = useState(false);
 
   useEffect(() => {
     storeView(currentView);
@@ -884,10 +880,7 @@ function App() {
 
   const currentViewRef = useRef(currentView);
   const managementBusy =
-    mcpManagementBusy ||
-    skillsNavigationBusy ||
-    promptNavigationBusy ||
-    subagentsNavigationBusy;
+    mcpManagementBusy || skillsNavigationBusy || promptNavigationBusy;
   const managementBusyRef = useRef(false);
   managementBusyRef.current = managementBusy;
 
@@ -1778,12 +1771,6 @@ function App() {
               currentView === "skillsDiscovery" ? "discover" : "installed"
             }
             onNavigationBlockedChange={setSkillsNavigationBusy}
-          />
-        );
-      case "subagents":
-        return (
-          <SubagentsPanel
-            onNavigationBlockedChange={setSubagentsNavigationBusy}
           />
         );
       case "prompts":

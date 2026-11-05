@@ -3065,22 +3065,15 @@
     "new": "New",
     "newBlank": "Blank subagent",
     "fromTemplate": "Start from a template",
-    "searchPlaceholder": "Search name or description",
-    "searchAria": "Search subagents",
     "clearSearch": "Clear search",
     "noSearchResults": "No subagents match \"{{query}}\"",
     "loadFailed": "Couldn't load subagents",
     "tabs": {
-      "aria": "Subagent categories",
       "managed": "Managed",
-      "managedCount": "Managed {{count}}",
       "unmanaged": "Unmanaged",
-      "unmanagedCount": "Unmanaged {{count}}",
-      "plugins": "Plugins",
-      "pluginsCount": "Plugins {{count}}"
+      "plugins": "Plugins"
     },
     "empty": {
-      "title": "No subagents yet",
       "body": "Subagents are specialized assistants that Claude Code delegates to based on their description, each with its own context, prompt and tool permissions. Enabled subagents are written to {{path}} and work in every project.",
       "importCount": "Import {{count}} existing files"
     },
@@ -3278,6 +3271,16 @@
         "title": "Docs writer",
         "summary": "Writes or updates READMEs, API docs and guides"
       }
+    },
+    "section": {
+      "title": "Subagents",
+      "summary": "{{count}} configured",
+      "summaryEmpty": "None yet",
+      "needsAttention": "{{count}} need attention",
+      "sharedHint": "Shared by all Claude providers. Changes here are written to disk immediately and are not affected by this page's Save / Cancel.",
+      "overrideWarning": "This provider sets a Subagent model ({{model}}). It applies through CLAUDE_CODE_SUBAGENT_MODEL and overrides the model each subagent below sets for itself.",
+      "pluginsToggle": "{{count}} from plugins (read-only)",
+      "backToList": "Back to subagents"
     }
   },
   "profiles": {
@@ -4471,7 +4474,6 @@
     "usage": "Usage",
     "auth": "Accounts",
     "authNeedsReauth": "An account needs to sign in again",
-    "subagents": "Subagents",
     "prompts": "Prompts",
     "sessions": "Sessions",
     "apps": "Apps",

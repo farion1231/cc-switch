@@ -3066,22 +3066,15 @@
     "new": "新增",
     "newBlank": "新增空白 subagent",
     "fromTemplate": "從範本新增",
-    "searchPlaceholder": "搜尋名稱、描述",
-    "searchAria": "搜尋 subagent",
     "clearSearch": "清除搜尋",
     "noSearchResults": "沒有符合「{{query}}」的 subagent",
     "loadFailed": "讀取 subagent 失敗",
     "tabs": {
-      "aria": "Subagent 分類",
       "managed": "已管理",
-      "managedCount": "已管理 {{count}}",
       "unmanaged": "未管理",
-      "unmanagedCount": "未管理 {{count}}",
-      "plugins": "外掛",
-      "pluginsCount": "外掛 {{count}}"
+      "plugins": "外掛"
     },
     "empty": {
-      "title": "還沒有 subagent",
       "body": "Subagent 是 Claude Code 會依描述自動委派任務的專用助手，各自擁有獨立的上下文、提示詞和工具權限。啟用後寫入 {{path}}，所有專案都能使用。",
       "importCount": "匯入 {{count}} 個現有檔案"
     },
@@ -3279,6 +3272,16 @@
         "title": "文件撰寫",
         "summary": "撰寫或更新 README、API 文件和使用指南"
       }
+    },
+    "section": {
+      "title": "Subagents",
+      "summary": "{{count}} 個",
+      "summaryEmpty": "尚未新增",
+      "needsAttention": "{{count}} 個需要處理",
+      "sharedHint": "所有 Claude 供應商共用。這裡的修改會立即寫入檔案，不受本頁「儲存 / 取消」影響。",
+      "overrideWarning": "本供應商填寫了 Subagent 模型（{{model}}）：它透過 CLAUDE_CODE_SUBAGENT_MODEL 生效，會覆蓋下方各 Subagent 自己設定的 model。",
+      "pluginsToggle": "外掛提供的 Subagent {{count}} 個（唯讀）",
+      "backToList": "返回 Subagent 清單"
     }
   },
   "profiles": {
@@ -4472,7 +4475,6 @@
     "usage": "用量統計",
     "auth": "授權中心",
     "authNeedsReauth": "有帳號需要重新登入",
-    "subagents": "Subagents",
     "prompts": "提示詞",
     "sessions": "工作階段",
     "apps": "應用",
