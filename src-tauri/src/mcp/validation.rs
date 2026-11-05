@@ -21,7 +21,7 @@ pub fn validate_server_spec(spec: &Value) -> Result<(), AppError> {
 
     if !(is_stdio || is_http || is_sse) {
         return Err(AppError::McpValidation(
-            "MCP 服务器 type 必须是 'stdio'、'http' 或 'sse'（或省略表示 stdio）".into(),
+            "MCP 服务器 type 必须是 'stdio'、'http' 或 'sse'（省略时：只有 url 按 http，否则按 stdio）".into(),
         ));
     }
 

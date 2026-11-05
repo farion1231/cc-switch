@@ -63,13 +63,9 @@ fn wrap_command_for_windows(obj: &mut Map<String, Value>) {
 /// `command` 被整条忽略（`claude mcp get` 报 "No MCP server named …"），界面却显示
 /// 已同步。写出前按各应用共用的推断补上明确的 `type`。
 fn set_explicit_transport_type(obj: &mut Map<String, Value>) {
-    let spec = Value::Object(std::mem::take(obj));
-    let transport = crate::mcp::validation::spec_transport_type(&spec).to_string();
-    let Value::Object(mut restored) = spec else {
-        unreachable!("constructed as an object above");
-    };
-    restored.insert("type".into(), Value::String(transport));
-    *obj = restored;
+    let transport =
+        crate::mcp::validation::spec_transport_type(&Value::Object(obj.clone())).to_string();
+    obj.insert("type".into(), Value::String(transport));
 }
 
 /// 非 Windows 平台无需处理
@@ -187,43 +183,12 @@ pub fn upsert_mcp_server(id: &str, spec: Value) -> Result<bool, AppError> {
     if id.trim().is_empty() {
         return Err(AppError::InvalidInput("MCP 服务器 ID 不能为空".into()));
     }
-    // 基础字段校验（尽量宽松）
-    if !spec.is_object() {
-        return Err(AppError::McpValidation(
-            "MCP 服务器定义必须为 JSON 对象".into(),
-        ));
-    }
-    let t_opt = spec.get("type").and_then(|x| x.as_str());
-    let is_stdio = t_opt.map(|t| t == "stdio").unwrap_or(true); // 兼容缺省（按 stdio 处理）
-    let is_http = t_opt.map(|t| t == "http").unwrap_or(false);
-    let is_sse = t_opt.map(|t| t == "sse").unwrap_or(false);
-    if !(is_stdio || is_http || is_sse) {
-        return Err(AppError::McpValidation(
-            "MCP 服务器 type 必须是 'stdio'、'http' 或 'sse'（或省略表示 stdio）".into(),
-        ));
-    }
-
-    // stdio 类型必须有 command
-    if is_stdio {
-        let cmd = spec.get("command").and_then(|x| x.as_str()).unwrap_or("");
-        if cmd.is_empty() {
-            return Err(AppError::McpValidation(
-                "stdio 类型的 MCP 服务器缺少 command 字段".into(),
-            ));
-        }
-    }
-
-    // http/sse 类型必须有 url
-    if is_http || is_sse {
-        let url = spec.get("url").and_then(|x| x.as_str()).unwrap_or("");
-        if url.is_empty() {
-            return Err(AppError::McpValidation(if is_http {
-                "http 类型的 MCP 服务器缺少 url 字段".into()
-            } else {
-                "sse 类型的 MCP 服务器缺少 url 字段".into()
-            }));
-        }
-    }
+    // 与各应用投影共用同一套传输推断：只有 url 的规范按 http 接受，并补上明确的
+    // `type`，否则 Claude Code 会把它当缺 command 的 stdio 条目整条忽略。
+    crate::mcp::validation::validate_server_spec(&spec)?;
+    let mut obj = spec.as_object().cloned().unwrap_or_default();
+    set_explicit_transport_type(&mut obj);
+    let spec = Value::Object(obj);
 
     let path = user_config_path();
     let mut root = if path.exists() {

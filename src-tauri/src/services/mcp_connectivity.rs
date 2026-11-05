@@ -54,7 +54,8 @@ static LOGIN_SHELL_PATH: Lazy<Option<String>> = Lazy::new(|| {
 #[serde(rename_all = "camelCase")]
 pub enum ConnectivityStatus {
     Connected,
-    /// The server answered 401. OAuth servers (Notion, Sentry, ...) reject this
+    /// The server answered 401 to a probe that carried no credentials (a 401 despite
+    /// configured credentials is `Disconnected`). OAuth servers (Notion, Sentry, ...) reject this
     /// anonymous probe but work in clients that hold their own login, and CC Switch
     /// never reads those clients' tokens, so this is not a connection failure.
     AuthRequired,
@@ -79,6 +80,8 @@ struct ConnectionSpec {
     url: Option<String>,
     #[serde(default)]
     headers: HashMap<String, String>,
+    /// Codex: name of an env var holding a bearer token for the remote server.
+    bearer_token_env_var: Option<String>,
 }
 
 pub fn start_checks(
@@ -194,6 +197,26 @@ async fn connect(
                     reqwest::header::HeaderValue::from_str(value)?,
                 );
             }
+            if !headers.contains_key(reqwest::header::AUTHORIZATION) {
+                if let Some(token) = spec
+                    .bearer_token_env_var
+                    .as_deref()
+                    .and_then(|name| std::env::var(name).ok())
+                    .filter(|token| !token.trim().is_empty())
+                {
+                    headers.insert(
+                        reqwest::header::AUTHORIZATION,
+                        reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))?,
+                    );
+                }
+            }
+            // A 401 only means "sign in" for an anonymous probe. When the configured
+            // credentials were sent, they are wrong or expired: a real failure.
+            let unauthorized = if headers.contains_key(reqwest::header::AUTHORIZATION) {
+                Arc::new(AtomicBool::new(false))
+            } else {
+                unauthorized
+            };
             let client = reqwest::Client::builder()
                 .default_headers(headers)
                 .connect_timeout(CHECK_TIMEOUT)

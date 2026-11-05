@@ -171,6 +171,28 @@ async fn unauthorized_servers_are_reported_as_auth_required() {
 }
 
 #[tokio::test]
+async fn unauthorized_with_configured_credentials_is_a_failure() {
+    // The probe sent the configured Authorization header: a 401 means the
+    // credentials are wrong or expired, not that the user still has to sign in.
+    let (url, task) = mock_unauthorized(true).await;
+    for (path, transport) in [("mcp", "http"), ("sse", "sse")] {
+        for header in ["Authorization", "authorization"] {
+            let spec = json!({
+                "type": transport,
+                "url": format!("{url}/{path}"),
+                "headers": { header: "Bearer expired" },
+            });
+            assert_eq!(
+                check_server(spec, CHECK_TIMEOUT).await,
+                ConnectivityStatus::Disconnected,
+                "{transport}, {header}"
+            );
+        }
+    }
+    task.abort();
+}
+
+#[tokio::test]
 async fn url_only_spec_labelled_stdio_is_probed_over_http_like_the_projections() {
     let state = MockServer::default();
     let (url, task) = mock_http(state).await;
