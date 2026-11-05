@@ -391,7 +391,8 @@
     "codexAuthCleanupFailed": "切換成功，但未能刪除 auth.json，官方登入憑證仍留在磁碟上；如需徹底移除請手動刪除 Codex 設定目錄中的 auth.json",
     "windowControlFailed": "視窗控制失敗：{{error}}",
     "officialBlockedByProxy": "本地路由模式下不能切換至官方供應商，使用路由存取官方 API 可能導致帳號被封鎖",
-    "proxyOfficialWarning": "目前供應商 {{name}} 是官方供應商，建議切換至第三方供應商後再使用本地路由"
+    "proxyOfficialWarning": "目前供應商 {{name}} 是官方供應商，建議切換至第三方供應商後再使用本地路由",
+    "proxyLoopbackHijacked": "{{app}} 發往本地路由 {{origin}} 的請求會被系統代理接走，{{app}} 會回報 502 錯誤。請在代理工具裡讓本機位址直連（例如在 Clash 規則最前面加上 IP-CIDR,127.0.0.0/8,DIRECT,no-resolve），改完後徹底結束 {{app}} 再重新開啟。"
   },
   "confirm": {
     "deleteProvider": "刪除供應商",
@@ -993,6 +994,7 @@
     "browsePlaceholderHermes": "例如：/home/<您的帳號>/.hermes",
     "browsePlaceholderPi": "例如：/home/<您的帳號>/.pi/agent",
     "browsePlaceholderOmp": "例如：/home/<您的帳號>/.omp/agent",
+    "browsePlaceholderDsh": "例如：/home/<您的帳號>/.dsh",
     "browseDirectory": "瀏覽目錄",
     "resetDefault": "還原預設目錄（需儲存後生效）",
     "checkForUpdates": "檢查更新",
@@ -1053,6 +1055,7 @@
     "toolActionDone": "{{count}} 個工具{{action}}完成",
     "toolActionPartial": "{{succeeded}} 個{{action}}成功，{{failed}} 個失敗",
     "toolActionFailed": "安裝/更新指令執行失敗",
+    "toolActionBinCollision": "{{path}} 已經有一個同名檔案，多半來自另一種安裝方式，npm 不會覆寫它。請先確認它是什麼，改名備份後再重試；不要用 npm 的 --force，它會直接覆寫這個檔案。",
     "toolActionInProgress": "應用程式操作仍在進行中",
     "toolActionInProgressDetail": "{{tool}} 已有安裝、升級或解除安裝作業正在背景處理，請等待完成，無需重複操作。",
     "toolNotRunnable": "已安裝但無法執行（未偵測到版本）",
@@ -2081,7 +2084,7 @@
     "subagentModelHint": "Codex 派出的子代理預設使用的模型和推理強度。留空時沿用主代理的；只填模型時使用該模型自己的預設強度。聚合模式下不生效，改用聚合頁籤「聚合設定」裡的子代理模型。",
     "subagentModelNotInCatalog": "該模型不在模型列表中：Codex 取得不到它的上下文視窗；經路由轉成 Chat / Anthropic 協定時會被換成預設模型。",
     "agentMaxThreadsLabel": "子代理並行上限",
-    "agentMaxThreadsHint": "一個 Codex 會話裡最多同時開多少個子代理（不含主代理）。這是 Codex 的全域設定，寫進 config.toml 的 [agents] max_threads，切換供應商時保持不變。留空用 Codex 預設值：經典子 agent 工具 6 個，新版工具 3 個。Codex 不支援不限，最小為 1；開得越多，同時消耗的額度越多。重新開啟 Codex 後生效。",
+    "agentMaxThreadsHint": "一個 Codex 會話裡最多同時開多少個子代理（不含主代理），切換供應商時保持不變。留空用 Codex 預設值（經典子 agent 工具 6 個，新版工具 3 個），最小為 1，不支援不限。新對話生效。",
     "agentMaxThreadsPlaceholder": "留空則用 Codex 預設值",
     "agentMaxThreadsV2Override": "config.toml 的 [features.multi_agent_v2] 寫了總數 {{total}}（含主代理），使用新版子 agent 工具時以它為準。",
     "autoReviewModelLabel": "自動審批模型",
@@ -2089,6 +2092,8 @@
     "autoReviewModelCodexDefault": "Codex 預設（codex-auto-review）",
     "autoReviewModelMainDefault": "主模型自己審批（預設）",
     "autoReviewModelNoList": "這張卡沒有模型列表：Codex 會用官方的 codex-auto-review 審批，只有部分轉發 ChatGPT 帳號的中轉認得它，不認就會回報 404。在上面的模型列表裡加上模型後就能選。",
+    "officialSpeedTiersLabel": "保留官方 Fast 檔",
+    "officialSpeedTiersHint": "讓模型列表裡的 GPT 模型保留官方的 Fast 速度檔，Codex 選了 Fast 後請求會帶 service_tier=priority。只有轉發官方 ChatGPT 帳號的中轉（如 CPA）才認得，會更快消耗額度；其他上游可能報錯或按更高價計費。開啟後，先前在官方卡下選過的 Fast 會立刻在這家生效。聚合模式下不生效。改完需要重新啟動 Codex。",
     "modelListHint": "修改後需要重新啟動 Codex。",
     "modelListDefaultHelp": "這些模型會出現在 Codex 的 /model 裡，第一行是預設模型。名稱是官方 GPT 模型的行依官方條目產生，行裡的顯示名、視窗和思考等級不生效。",
     "addCatalogModel": "手動新增",
@@ -2694,7 +2699,7 @@
     "officialSubscriptionHint": "讀取本機 CLI 的 OAuth 憑證，並呼叫官方介面查詢訂閱額度。預設關閉，只有啟用後才會請求。",
     "officialSubscriptionHintAgy": "執行 agy 內建的 /usage 指令查詢登入帳號的額度，不讀取登入憑證，每次查詢約需 10 秒。預設關閉，只有啟用後才會請求。",
     "resetDate": "重設日期",
-    "premiumRequests": "Premium 請求",
+    "premiumRequests": "Credits",
     "credentialsConfig": "憑證設定",
     "credentialsHint": "留空則自動使用供應商設定",
     "optional": "選填",
@@ -4230,7 +4235,7 @@
       "agyThirdPartyWeekly": "Claude 每週",
       "monthly": "每月",
       "credits": "額度",
-      "copilotPremium": "進階請求"
+      "copilotPremium": "Credits"
     },
     "fiveHour": "5 小時",
     "sevenDay": "每週",
@@ -4250,7 +4255,11 @@
     "weeklyLimit": "每週",
     "monthly": "每月",
     "credits": "額度",
-    "copilotPremium": "進階請求",
+    "copilotPremium": "Credits",
+    "copilotCompletions": "程式碼補全",
+    "copilotChat": "聊天",
+    "copilotCount": "剩餘 {{remaining}} / 共 {{total}}",
+    "copilotNotIncluded": "目前方案不含",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}} 後重設",
     "extraUsage": "超額用量",
@@ -4635,6 +4644,7 @@
     "connection": {
       "unchecked": "未檢查",
       "connected": "連線成功",
+      "authRequired": "伺服器可連線，但需要登入授權（如 OAuth）。CC Switch 檢測時不帶用戶端自己的登入憑證：用戶端裡已登入即可正常使用；如果在請求標頭裡設定了權杖，請確認它仍然有效",
       "disconnected": "連線失敗",
       "checking": "正在檢查連線",
       "disabled": "未啟用"

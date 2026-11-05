@@ -150,7 +150,7 @@ const brandedRoutes = (
 export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   {
     name: "Claude Desktop Official",
-    websiteUrl: "https://claude.ai/download",
+    websiteUrl: "https://claude.com/download",
     category: "official",
     baseUrl: "",
     mode: "direct",
@@ -176,10 +176,12 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.moonshot.cn/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
+    // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+    // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文）
     modelRoutes: brandedRoutes(
-      "kimi-k2.7-code",
-      "kimi-k2.7-code",
-      "kimi-k2.7-code",
+      "kimi-k3.1-pro",
+      "kimi-k3.1-pro",
+      "kimi-k3.1-pro",
     ),
     partnerPromotionKey: "kimi",
     icon: "kimi",
@@ -197,10 +199,12 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.moonshot.ai/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
+    // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+    // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文）
     modelRoutes: brandedRoutes(
-      "kimi-k2.7-code",
-      "kimi-k2.7-code",
-      "kimi-k2.7-code",
+      "kimi-k3.1-pro",
+      "kimi-k3.1-pro",
+      "kimi-k3.1-pro",
     ),
     partnerPromotionKey: "kimi",
     icon: "kimi",
@@ -660,20 +664,17 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     category: "aggregator",
-    baseUrl: "https://api.teamorouter.cn",
+    baseUrl: "https://api.teamorouter.com",
     mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(true),
     isPartner: true,
     partnerPromotionKey: "teamorouter",
-    endpointCandidates: [
-      "https://api.teamorouter.cn",
-      "https://api.teamorouter.com",
-    ],
+    endpointCandidates: ["https://api.teamorouter.com"],
     icon: "teamorouter",
   },
   {

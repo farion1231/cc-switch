@@ -6,7 +6,7 @@ import {
   ChevronUp,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, type QueryKey } from "@tanstack/react-query";
 import type {
   DraggableAttributes,
   DraggableSyntheticListeners,
@@ -27,7 +27,12 @@ import AgyAccountQuotaFooter from "@/components/AgyAccountQuotaFooter";
 import { ClaudeBoundAccountLine } from "@/components/providers/forms/ClaudeOfficialSection";
 import ClaudeAccountQuotaFooter from "@/components/ClaudeAccountQuotaFooter";
 import { claudePlanLabel } from "@/lib/claudePlan";
-import { useClaudeDefaultPlan } from "@/lib/query/subscription";
+import {
+  subscriptionKeys,
+  useClaudeDefaultPlan,
+} from "@/lib/query/subscription";
+import { useQuotaPlan } from "@/lib/query/accountPlans";
+import type { CopilotQuota } from "@/lib/query/copilot";
 import KimiAccountQuotaFooter from "@/components/KimiAccountQuotaFooter";
 import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import {
@@ -49,6 +54,8 @@ import { isProxyAppId } from "@/config/appConfig";
 import { ProviderCardActions } from "./ProviderCardActions";
 import { terminalAvailable, terminalIsIsolated } from "./OpenTerminalDialog";
 import type { CardChip, CardPresentation, CardTone } from "./presentation";
+
+const copilotPlan = (data: unknown) => (data as CopilotQuota).plan;
 
 interface DragHandleProps {
   attributes: DraggableAttributes;
@@ -333,6 +340,49 @@ export function ProviderCard({
     appId === "agy" && isOfficial && isMac()
       ? resolveManagedAccountId(provider.meta, "agy_oauth")?.trim() || null
       : null;
+  // 副标题末尾的套餐：读右边额度那个查询的缓存（键和各额度 footer 一致），额度查到才有。
+  // Claude 官方卡另有写法（claudeDefaultPlanLabel / ClaudeBoundAccountLine）
+  const quotaPlanKey: QueryKey | null = isCopilot
+    ? [
+        "copilot",
+        "quota",
+        resolveManagedAccountId(provider.meta, PROVIDER_TYPES.GITHUB_COPILOT) ??
+          "default",
+      ]
+    : isCodexOauth
+      ? !isBoundCodexOfficial || usageEnabled
+        ? [
+            "codex_oauth",
+            "quota",
+            resolveManagedAccountId(
+              provider.meta,
+              PROVIDER_TYPES.CODEX_OAUTH,
+            ) ?? "default",
+          ]
+        : null
+      : isXaiOauth
+        ? [
+            "xai_oauth",
+            "quota",
+            resolveManagedAccountId(provider.meta, PROVIDER_TYPES.XAI_OAUTH) ??
+              "default",
+          ]
+        : appId === "kimi" && isOfficial
+          ? ["kimi_oauth", "quota", provider.id]
+          : isOfficial && officialSubscriptionEnabled && appId !== "claude"
+            ? agyBoundAccountId
+              ? ["agy_oauth", "quota", agyBoundAccountId]
+              : subscriptionKeys.quota(appId)
+            : null;
+  const quotaPlan = useQuotaPlan(
+    quotaPlanKey,
+    isCopilot ? copilotPlan : undefined,
+  );
+  const subtitlePlan = claudeDefaultPlanLabel ?? quotaPlan;
+  const planSuffix = (className = "-ms-1") =>
+    subtitlePlan ? (
+      <span className={cn("shrink-0", className)}>· {subtitlePlan}</span>
+    ) : null;
   // 获取用量数据以判断是否有多套餐，按用户配置刷新，不依赖供应商启用状态。
   const autoQueryInterval = provider.meta?.usage_script?.autoQueryInterval ?? 0;
 
@@ -438,12 +488,15 @@ export function ProviderCard({
           {codexOfficialIdentity && codexOfficialIdentity !== "api_key" ? (
             <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
               {codexOfficialIdentity === "native_login" ? (
-                <span className="min-w-0 truncate" title={manualNote}>
-                  {manualNote ??
-                    t("codex.followCodexLoginDescription", {
-                      defaultValue: "账号会随 Codex CLI 当前登录变化",
-                    })}
-                </span>
+                <>
+                  <span className="min-w-0 truncate" title={manualNote}>
+                    {manualNote ??
+                      t("codex.followCodexLoginDescription", {
+                        defaultValue: "账号会随 Codex CLI 当前登录变化",
+                      })}
+                  </span>
+                  {planSuffix()}
+                </>
               ) : managedCodexAccount ? (
                 <>
                   <span
@@ -457,6 +510,7 @@ export function ProviderCard({
                           })
                         : managedCodexAccount.login)}
                   </span>
+                  {planSuffix()}
                   {managedCodexAccount.reauth_required && (
                     <span className="inline-flex shrink-0 items-center gap-1 text-warning-text">
                       <AlertTriangle className="h-3.5 w-3.5" />
@@ -513,8 +567,9 @@ export function ProviderCard({
               <span className="min-w-0 truncate" title={agyModel}>
                 {agyModel}
               </span>
+              {planSuffix("-ms-0.5")}
             </div>
-          ) : displayUrl && claudeDefaultPlanLabel ? (
+          ) : displayUrl && subtitlePlan ? (
             <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
               <button
                 type="button"
@@ -530,7 +585,7 @@ export function ProviderCard({
               >
                 <span className="min-w-0 truncate">{displayUrl}</span>
               </button>
-              <span className="-ms-1 shrink-0">· {claudeDefaultPlanLabel}</span>
+              {planSuffix()}
             </div>
           ) : displayUrl ? (
             <button
