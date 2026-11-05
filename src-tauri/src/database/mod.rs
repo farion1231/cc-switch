@@ -40,6 +40,7 @@ pub(crate) use dao::providers_seed::{
 pub(crate) use dao::proxy::{PRICING_SOURCE_REQUEST, PRICING_SOURCE_RESPONSE};
 pub use dao::FailoverQueueItem;
 pub use dao::Profile;
+pub use dao::SubagentRecord;
 
 use crate::config::get_app_config_dir;
 use crate::error::AppError;
