@@ -73,7 +73,7 @@ export const SessionImageLightbox = memo(function SessionImageLightbox({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         zIndex="top"
-        className="w-auto max-w-[min(92vw,1280px)] gap-0 overflow-hidden p-0"
+        className="w-fit max-w-[min(92vw,1280px)] gap-0 overflow-hidden p-0"
         onInteractOutside={() => onOpenChange(false)}
       >
         <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border pe-1.5 ps-4">
