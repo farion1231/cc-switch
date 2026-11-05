@@ -6,8 +6,11 @@ use super::codex_link::{self, CodexLinkConfig};
 use super::grok_link::GrokLinkProfile;
 use super::utils::{decode_base64_param, infer_homepage_from_endpoint};
 use super::DeepLinkImportRequest;
+use crate::claude_desktop_config::{is_claude_safe_model_id, DEFAULT_PROXY_ROUTES};
 use crate::error::AppError;
-use crate::provider::{ClaudeDesktopMode, Provider, ProviderMeta, UsageScript};
+use crate::provider::{
+    ClaudeDesktopMode, ClaudeDesktopModelRoute, Provider, ProviderMeta, UsageScript,
+};
 use crate::services::ProviderService;
 use crate::store::AppState;
 use crate::AppType;
@@ -100,8 +103,12 @@ pub fn import_provider_from_deeplink(
     // Build provider configuration based on app type
     let mut provider = build_provider_from_request(&app_type, &merged_request)?;
 
-    provider.id = if matches!(app_type, AppType::OpenCode) {
-        // Display names may be Unicode, but new OpenCode IDs must pass the editor's slug validation.
+    provider.id = if matches!(
+        app_type,
+        AppType::OpenCode | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp
+    ) {
+        // Display names may be Unicode, but these apps' native keys must pass their slug rules
+        // (DeepSeek Harness only takes lowercase hyphenated ids, MCode ASCII letters and digits).
         let slug = name
             .split(|c: char| !c.is_ascii_alphanumeric())
             .filter(|part| !part.is_empty())
@@ -119,6 +126,10 @@ pub fn import_provider_from_deeplink(
             .to_lowercase();
         format!("{sanitized_name}-{timestamp}")
     };
+
+    if matches!(app_type, AppType::Kimi) {
+        namespace_kimi_models(&mut provider.settings_config, &provider.id);
+    }
 
     let provider_id = provider.id.clone();
 
@@ -199,24 +210,41 @@ impl ApiFormat {
     fn native_value(self, app_type: &AppType) -> Option<&'static str> {
         use ApiFormat::*;
         match (app_type, self) {
-            (AppType::Claude, Anthropic) => Some("anthropic"),
-            (AppType::Claude | AppType::Codex | AppType::GrokBuild, OpenAiChat) => {
-                Some("openai_chat")
-            }
-            (AppType::Claude | AppType::Codex | AppType::GrokBuild, OpenAiResponses) => {
-                Some("openai_responses")
-            }
-            (AppType::Claude, GeminiNative) => Some("gemini_native"),
+            (AppType::Claude | AppType::ClaudeDesktop, Anthropic) => Some("anthropic"),
+            (
+                AppType::Claude | AppType::ClaudeDesktop | AppType::Codex | AppType::GrokBuild,
+                OpenAiChat,
+            ) => Some("openai_chat"),
+            (
+                AppType::Claude | AppType::ClaudeDesktop | AppType::Codex | AppType::GrokBuild,
+                OpenAiResponses,
+            ) => Some("openai_responses"),
+            (AppType::Claude | AppType::ClaudeDesktop, GeminiNative) => Some("gemini_native"),
             (AppType::Codex | AppType::GrokBuild, Anthropic) => Some("anthropic"),
             (AppType::Gemini | AppType::Agy, GeminiNative) => Some("gemini_native"),
             (AppType::OpenCode, Anthropic) => Some("@ai-sdk/anthropic"),
             (AppType::OpenCode, OpenAiChat) => Some("@ai-sdk/openai-compatible"),
             (AppType::OpenCode, OpenAiResponses) => Some("@ai-sdk/openai"),
             (AppType::OpenCode, GeminiNative) => Some("@ai-sdk/google"),
-            (AppType::OpenClaw | AppType::Pi, Anthropic) => Some("anthropic-messages"),
-            (AppType::OpenClaw | AppType::Pi, OpenAiChat) => Some("openai-completions"),
-            (AppType::OpenClaw | AppType::Pi, OpenAiResponses) => Some("openai-responses"),
-            (AppType::OpenClaw | AppType::Pi, GeminiNative) => Some("google-generative-ai"),
+            (
+                AppType::OpenClaw | AppType::Pi | AppType::Omp | AppType::Mcode | AppType::Dsh,
+                Anthropic,
+            ) => Some("anthropic-messages"),
+            (
+                AppType::OpenClaw | AppType::Pi | AppType::Omp | AppType::Mcode | AppType::Dsh,
+                OpenAiChat,
+            ) => Some("openai-completions"),
+            (
+                AppType::OpenClaw | AppType::Pi | AppType::Omp | AppType::Mcode | AppType::Dsh,
+                OpenAiResponses,
+            ) => Some("openai-responses"),
+            (AppType::OpenClaw | AppType::Pi | AppType::Omp, GeminiNative) => {
+                Some("google-generative-ai")
+            }
+            (AppType::Kimi, Anthropic) => Some("anthropic"),
+            (AppType::Kimi, OpenAiChat) => Some("openai"),
+            (AppType::Kimi, OpenAiResponses) => Some("openai_responses"),
+            (AppType::Kimi, GeminiNative) => Some("google-genai"),
             (AppType::Hermes, Anthropic) => Some("anthropic_messages"),
             (AppType::Hermes, OpenAiChat) => Some("chat_completions"),
             (AppType::Hermes, OpenAiResponses) => Some("codex_responses"),
@@ -275,6 +303,8 @@ fn native_protocol(app_type: &AppType, api_format: Option<ApiFormat>) -> &'stati
 /// - Pi：`apiKey` 以 `!` 开头会被当成 shell 命令执行；`$NAME`、`${NAME}` 会换成环境变量。
 /// - OpenCode：`{env:NAME}` 读环境变量，`{file:path}` 读本机文件。
 /// - OpenClaw、Hermes：`${NAME}` 读环境变量。
+/// - Oh My Pi：`apiKey` 以 `!` 开头是 shell 命令；其余值先当环境变量名查（本机环境和 `.env`），
+///   查不到才当字面量。没有 `$` 记号，所以按 omp 自己的解析规则判断。
 ///
 /// 链接是不可信输入：这些写法会让客户端执行链接里的命令，或把本机的密钥、文件内容随请求
 /// 发到链接给的地址。确认框把 Key 打码显示，用户也看不出来，所以在后端拒绝。
@@ -296,7 +326,9 @@ pub(super) fn check_link_values(
     for (field, value) in fields {
         let Some(value) = value else { continue };
         let command = is_pi && field == "apiKey" && value.trim_start().starts_with('!');
-        if command || has_dynamic_reference(value, is_pi) {
+        let omp_reference =
+            matches!(app_type, AppType::Omp) && field == "apiKey" && is_omp_key_reference(value);
+        if command || omp_reference || has_dynamic_reference(value, is_pi) {
             return Err(AppError::InvalidInput(format!(
                 "The link's '{field}' uses syntax that {} would expand into a command, an \
                  environment variable or a local file; it cannot be imported from a link. Add the \
@@ -306,6 +338,22 @@ pub(super) fn check_link_values(
         }
     }
     Ok(())
+}
+
+/// omp 会把这个 `apiKey` 换成别的值：`!` 开头的命令、看起来是环境变量名的值，或本机此刻就能
+/// 按环境变量 / `.env` 解析成别的东西的值（用 omp 自己的解析规则判断）。
+///
+/// 只靠最后一条不够：omp 常在终端里运行，环境和图形界面启动的 CC Switch 不同，`TOKEN` 这种
+/// 名字导入时查不到、运行时却能查到。所以没有小写字母的标识符（`TOKEN`、`GITHUB_TOKEN`）一律
+/// 当变量名拒绝；真实 Key 多带 `-`、`.` 或小写字母，全大写字母数字的 Key 要在编辑器里手动填。
+fn is_omp_key_reference(value: &str) -> bool {
+    let looks_like_env_name = value.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+        && value
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+    value.trim_start().starts_with('!')
+        || looks_like_env_name
+        || crate::omp_config::resolve_usage_api_key(value) != value
 }
 
 /// 值里有没有环境变量或文件引用。`${` 和 OpenCode 的 `{env:` / `{file:` 对所有累加式应用
@@ -340,21 +388,10 @@ pub(crate) fn build_provider_from_request(
         AppType::OpenClaw => build_additive_app_settings(request, api_format),
         AppType::Hermes => build_hermes_settings(request, api_format),
         AppType::Pi => build_pi_settings(request, api_format)?,
-        AppType::Dsh => {
-            return Err(AppError::InvalidInput(
-                "Add DeepSeek Harness providers from the DeepSeek Harness page".into(),
-            ));
+        AppType::Mcode | AppType::Dsh => {
+            build_custom_provider_settings(app_type, request, api_format)?
         }
-        AppType::Kimi => {
-            return Err(AppError::InvalidInput(
-                "Add Kimi Code providers from the Kimi Code page".into(),
-            ))
-        }
-        AppType::Mcode => {
-            return Err(AppError::InvalidInput(
-                "Add MCode providers from the MCode page".into(),
-            ))
-        }
+        AppType::Kimi => build_kimi_settings(request, api_format)?,
         AppType::Agy => {
             let mut settings = build_gemini_settings(request);
             settings["env"]
@@ -366,18 +403,17 @@ pub(crate) fn build_provider_from_request(
             }
             settings
         }
-        AppType::Omp => {
-            return Err(AppError::InvalidInput(
-                "Oh My Pi providers must be added from the Oh My Pi provider page".to_string(),
-            ));
-        }
+        AppType::Omp => build_omp_settings(request, api_format)?,
     };
 
     // Build usage script configuration if provided
     let mut meta = build_provider_meta(app_type, request)?;
     if matches!(app_type, AppType::ClaudeDesktop) {
-        meta.get_or_insert_with(ProviderMeta::default)
-            .claude_desktop_mode = Some(ClaudeDesktopMode::Direct);
+        fill_claude_desktop_card(
+            meta.get_or_insert_with(ProviderMeta::default),
+            request,
+            api_format,
+        )?;
     }
     // Claude Code、Codex、Grok Build 的格式记在 meta 上：非原生格式的卡片会带「需要路由」，
     // 切过去时由本地路由转换。链接没写时不加这个字段，和旧链接导入的行一致。
@@ -616,6 +652,81 @@ fn build_claude_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     }
 
     json!({ "env": env })
+}
+
+/// Claude Desktop 只认 `claude-*` 模型名，按链接里的模型名分成两种卡：Anthropic 格式、模型全是
+/// Claude 名字（或没写模型）的导成直连卡；有别的名字或别的格式的导成模型映射卡，经本地路由转发，
+/// 和在 Desktop 页面手动新建的映射卡一样占满四档，没单独写模型的档用链接的主模型。
+fn fill_claude_desktop_card(
+    meta: &mut ProviderMeta,
+    request: &DeepLinkImportRequest,
+    api_format: Option<ApiFormat>,
+) -> Result<(), AppError> {
+    let trimmed = |value: &Option<String>| {
+        value
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    let format = api_format.unwrap_or(ApiFormat::Anthropic);
+    let models: Vec<String> = [
+        &request.model,
+        &request.sonnet_model,
+        &request.opus_model,
+        &request.haiku_model,
+    ]
+    .into_iter()
+    .filter_map(trimmed)
+    .collect();
+
+    if format == ApiFormat::Anthropic && models.iter().all(|model| is_claude_safe_model_id(model)) {
+        meta.claude_desktop_mode = Some(ClaudeDesktopMode::Direct);
+        meta.api_format = Some("anthropic".to_string());
+        meta.claude_desktop_model_routes = models
+            .into_iter()
+            .map(|model| {
+                let route = ClaudeDesktopModelRoute {
+                    model: model.clone(),
+                    label_override: None,
+                    supports_1m: None,
+                };
+                (model, route)
+            })
+            .collect();
+        return Ok(());
+    }
+
+    let primary = models.first().cloned().ok_or_else(|| {
+        AppError::InvalidInput(
+            "Claude Desktop links that use a non-Anthropic apiFormat need a model; add 'model' \
+             to the link"
+                .to_string(),
+        )
+    })?;
+    meta.claude_desktop_mode = Some(ClaudeDesktopMode::Proxy);
+    meta.api_format = format
+        .native_value(&AppType::ClaudeDesktop)
+        .map(str::to_string);
+    meta.claude_desktop_model_routes = DEFAULT_PROXY_ROUTES
+        .iter()
+        .map(|route| {
+            let tier = match route.env_key {
+                "ANTHROPIC_DEFAULT_SONNET_MODEL" => trimmed(&request.sonnet_model),
+                "ANTHROPIC_DEFAULT_OPUS_MODEL" => trimmed(&request.opus_model),
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL" => trimmed(&request.haiku_model),
+                _ => None,
+            };
+            let upstream = tier.unwrap_or_else(|| primary.clone());
+            let mapped = ClaudeDesktopModelRoute {
+                model: upstream.clone(),
+                label_override: Some(upstream),
+                supports_1m: None,
+            };
+            (route.route_id.to_string(), mapped)
+        })
+        .collect();
+    Ok(())
 }
 
 /// Decode and extract the `env` object from the deeplink's inline config payload.
@@ -910,14 +1021,7 @@ fn build_pi_settings(
     request: &DeepLinkImportRequest,
     api_format: Option<ApiFormat>,
 ) -> Result<serde_json::Value, AppError> {
-    let model = request
-        .model
-        .as_deref()
-        .map(str::trim)
-        .filter(|model| !model.is_empty())
-        .ok_or_else(|| {
-            AppError::InvalidInput("Pi providers need a model; add 'model' to the link".to_string())
-        })?;
+    let model = required_link_model(&AppType::Pi, request)?;
 
     let mut config = serde_json::Map::new();
     if let Some(name) = request.name.as_deref().filter(|name| !name.is_empty()) {
@@ -939,6 +1043,101 @@ fn build_pi_settings(
         json!([{ "id": model, "name": model }]),
     );
     Ok(json!(config))
+}
+
+/// 链接的主模型。Pi 系这几家的节点没有模型就选不到任何模型，解析时已要求链接带上；
+/// 从 `config` 合并来的请求再查一次。
+fn required_link_model<'a>(
+    app_type: &AppType,
+    request: &'a DeepLinkImportRequest,
+) -> Result<&'a str, AppError> {
+    request
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .ok_or_else(|| {
+            AppError::InvalidInput(format!(
+                "{} providers need a model; add 'model' to the link",
+                app_type.as_str()
+            ))
+        })
+}
+
+/// MiniMax Code、DeepSeek Harness 的自定义供应商节点，两家是同一种形状。模型只写名字：
+/// 两家客户端都接受（2026-11 实测 MCode 0.7.2、DSH 0.2.1），上下文窗口等留给用户在编辑器里补。
+fn build_custom_provider_settings(
+    app_type: &AppType,
+    request: &DeepLinkImportRequest,
+    api_format: Option<ApiFormat>,
+) -> Result<serde_json::Value, AppError> {
+    let model = required_link_model(app_type, request)?;
+    Ok(json!({
+        "name": request.name.clone().unwrap_or_default(),
+        "kind": "custom",
+        "enabled": true,
+        "api": native_protocol(app_type, api_format),
+        "options": {
+            "baseURL": get_primary_endpoint(request),
+            "apiKey": request.api_key.clone().unwrap_or_default(),
+        },
+        "models": { model: { "name": model } },
+    }))
+}
+
+/// 链接导入的 Kimi Code 模型的上下文窗口。Kimi 自己要求每个模型都带正数
+/// `max_context_size`（缺了拒绝运行），链接里没有这个字段。取偏小的 128K：Kimi 按它决定何时压缩，
+/// 报大了长会话会被上游拒绝，报小了只是早一点压缩。用户可在编辑器里改。
+const KIMI_LINK_CONTEXT_SIZE: u64 = 131_072;
+
+fn build_kimi_settings(
+    request: &DeepLinkImportRequest,
+    api_format: Option<ApiFormat>,
+) -> Result<serde_json::Value, AppError> {
+    let model = required_link_model(&AppType::Kimi, request)?;
+    // 模型键先用模型名，定下供应商 id 后由 `namespace_kimi_models` 加前缀。
+    Ok(json!({
+        "provider": {
+            "type": native_protocol(&AppType::Kimi, api_format),
+            "base_url": get_primary_endpoint(request),
+            "api_key": request.api_key.clone().unwrap_or_default(),
+        },
+        "models": {
+            model: {
+                "model": model,
+                "max_context_size": KIMI_LINK_CONTEXT_SIZE,
+                "capabilities": ["tool_use"],
+            }
+        },
+    }))
+}
+
+/// Kimi Code 的模型表是全局的，键和别家供应商撞了写入会被拒，所以键写成 `<供应商 id>/<模型>`，
+/// 和预设一致。
+fn namespace_kimi_models(settings: &mut serde_json::Value, id: &str) {
+    if let Some(models) = settings
+        .get_mut("models")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        *models = std::mem::take(models)
+            .into_iter()
+            .map(|(key, model)| (format!("{id}/{key}"), model))
+            .collect();
+    }
+}
+
+/// Oh My Pi 的 models.yml 节点：和 Pi 一样只写一个模型，但没有 `name` 字段（显示名在 CC Switch）。
+fn build_omp_settings(
+    request: &DeepLinkImportRequest,
+    api_format: Option<ApiFormat>,
+) -> Result<serde_json::Value, AppError> {
+    let model = required_link_model(&AppType::Omp, request)?;
+    Ok(json!({
+        "baseUrl": get_primary_endpoint(request),
+        "apiKey": request.api_key.clone().unwrap_or_default(),
+        "api": native_protocol(&AppType::Omp, api_format),
+        "models": [{ "id": model, "name": model }],
+    }))
 }
 
 // =============================================================================
@@ -999,13 +1198,13 @@ pub fn parse_and_merge_config(
     }
 
     match request.app.as_deref().unwrap_or("") {
-        "claude" => merge_claude_config(&mut merged, &config_value)?,
+        "claude" | "claude-desktop" => merge_claude_config(&mut merged, &config_value)?,
         "codex" => merge_codex_config(&mut merged, &config_value)?,
         "gemini" => merge_gemini_config(&mut merged, &config_value)?,
         "agy" => merge_agy_config(&mut merged, &config_value)?,
         "grokbuild" => merge_grokbuild_config(&mut merged, &config_value)?,
         // Additive mode apps use JSON config directly; pass through as-is
-        "openclaw" | "opencode" | "hermes" | "pi" => {
+        "openclaw" | "opencode" | "hermes" | "pi" | "mcode" | "kimi" | "dsh" | "omp" => {
             merge_additive_config(&mut merged, &config_value)?;
             // 从 config 里补来的地址和 Key 同样要查，让确认框当场报错
             if let Ok(app_type) = AppType::from_str(request.app.as_deref().unwrap_or("")) {
@@ -1302,11 +1501,14 @@ fn merge_additive_config(
     request: &mut DeepLinkImportRequest,
     config: &serde_json::Value,
 ) -> Result<(), AppError> {
-    // Extract api_key from config if not provided in URL
+    // Extract api_key from config if not provided in URL. MCode / DeepSeek Harness nodes keep it
+    // under `options`, Kimi Code under `provider`.
     if request.api_key.as_ref().is_none_or(|s| s.is_empty()) {
         if let Some(api_key) = config
             .get("apiKey")
             .or_else(|| config.get("api_key"))
+            .or_else(|| config.pointer("/options/apiKey"))
+            .or_else(|| config.pointer("/provider/api_key"))
             .and_then(|v| v.as_str())
         {
             request.api_key = Some(api_key.to_string());
@@ -1319,6 +1521,7 @@ fn merge_additive_config(
             .get("baseUrl")
             .or_else(|| config.get("base_url"))
             .or_else(|| config.get("options").and_then(|o| o.get("baseURL")))
+            .or_else(|| config.pointer("/provider/base_url"))
             .and_then(|v| v.as_str())
         {
             request.endpoint = Some(base_url.to_string());
