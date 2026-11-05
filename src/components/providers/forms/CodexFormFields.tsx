@@ -2456,7 +2456,8 @@ export function CodexFormFields({
               {t("codexConfig.agentMaxThreadsV2Override", {
                 total: multiAgentV2Total,
                 defaultValue:
-                  "config.toml 的 [features.multi_agent_v2] 写了总数 {{total}}（含主代理），使用新版子 agent 工具时以它为准。",              })}
+                  "config.toml 的 [features.multi_agent_v2] 写了总数 {{total}}（含主代理），使用新版子 agent 工具时以它为准。",
+              })}
             </p>
           )}
         </div>
