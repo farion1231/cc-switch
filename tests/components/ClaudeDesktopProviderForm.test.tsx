@@ -557,7 +557,7 @@ describe("ClaudeDesktopProviderForm", () => {
     expect(screen.queryAllByPlaceholderText("DeepSeek V4 Pro")).toHaveLength(0);
   });
 
-  it("保存模型映射时补齐固定四档并把留空档回填为 Sonnet 模型", async () => {
+  it("保存模型映射时只写填了实际请求模型的档", async () => {
     const onSubmit = vi.fn();
     renderForm(
       {
@@ -584,28 +584,16 @@ describe("ClaudeDesktopProviderForm", () => {
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
     const submitted = onSubmit.mock.calls[0][0];
-    // claude-old 迁移到 Sonnet；留空的 Opus / Fable / Haiku 回填为 Sonnet 的
-    // 上游模型，保证落库四档齐全，子 agent 调用的各档始终可解析。
-    expect(submitted.meta.claudeDesktopModelRoutes).toMatchObject({
+    // 只写填了实际请求模型的档：留空的 Opus / Fable / Haiku 不再回填 Sonnet 的模型。
+    expect(submitted.meta.claudeDesktopModelRoutes).toEqual({
       "claude-sonnet-5": {
         model: "upstream-old",
         labelOverride: "upstream-old",
       },
-      "claude-opus-5": { model: "upstream-old" },
-      "claude-fable-5": { model: "upstream-old" },
-      "claude-haiku-4-5": { model: "upstream-old" },
     });
-    expect(Object.keys(submitted.meta.claudeDesktopModelRoutes).sort()).toEqual(
-      [
-        "claude-fable-5",
-        "claude-haiku-4-5",
-        "claude-opus-5",
-        "claude-sonnet-5",
-      ],
-    );
   });
 
-  it("回填空档时继承 Sonnet 的 1M 声明", async () => {
+  it("四档全留空时保存为空映射，交给直通", async () => {
     const onSubmit = vi.fn();
     renderForm(
       {
@@ -618,9 +606,7 @@ describe("ClaudeDesktopProviderForm", () => {
         },
         meta: {
           claudeDesktopMode: "proxy",
-          claudeDesktopModelRoutes: {
-            "claude-sonnet-4-6": { model: "deepseek-v4-pro", supports1m: true },
-          },
+          claudeDesktopModelRoutes: {},
         },
       },
       onSubmit,
@@ -629,20 +615,8 @@ describe("ClaudeDesktopProviderForm", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
-    const routes = onSubmit.mock.calls[0][0].meta.claudeDesktopModelRoutes;
-    // 留空的 Opus / Haiku 回填同一上游模型，1M 声明应与 Sonnet 一致。
-    expect(routes["claude-sonnet-5"]).toMatchObject({
-      model: "deepseek-v4-pro",
-      supports1m: true,
-    });
-    expect(routes["claude-opus-5"]).toMatchObject({
-      model: "deepseek-v4-pro",
-      supports1m: true,
-    });
-    expect(routes["claude-haiku-4-5"]).toMatchObject({
-      model: "deepseek-v4-pro",
-      supports1m: true,
-    });
+    // 四档都不填就存空映射：后端不再补默认四条，请求按模型名直通。
+    expect(onSubmit.mock.calls[0][0].meta.claudeDesktopModelRoutes).toEqual({});
   });
 
   it("保存直连模型列表时不会保留旧 route 作为隐藏映射目标", async () => {
@@ -740,5 +714,119 @@ describe("ClaudeDesktopProviderForm", () => {
       ),
     );
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+  it("取消勾选的档不写进映射", async () => {
+    const onSubmit = vi.fn();
+    renderForm(
+      {
+        name: "Proxy Provider",
+        settingsConfig: {
+          env: {
+            ANTHROPIC_BASE_URL: "https://api.example.com",
+            ANTHROPIC_AUTH_TOKEN: "sk-test",
+          },
+        },
+        meta: {
+          claudeDesktopMode: "proxy",
+          claudeDesktopModelRoutes: {
+            "claude-sonnet-5": { model: "deepseek-v4-pro" },
+            "claude-opus-5": { model: "deepseek-v4-pro" },
+          },
+        },
+      },
+      onSubmit,
+    );
+
+    // 四行固定按 Sonnet / Opus / Fable / Haiku 排，第二个是 Opus。
+    fireEvent.click(screen.getAllByLabelText("启用")[1]);
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    // 停用的档仍保存在映射里（内容不丢），只是 enabled 为 false，后端不发布它。
+    expect(onSubmit.mock.calls[0][0].meta.claudeDesktopModelRoutes).toEqual({
+      "claude-sonnet-5": {
+        model: "deepseek-v4-pro",
+        labelOverride: "deepseek-v4-pro",
+      },
+      "claude-opus-5": {
+        model: "deepseek-v4-pro",
+        labelOverride: "deepseek-v4-pro",
+        enabled: false,
+      },
+    });
+  });
+
+  it("停用的档重新打开时保持未勾选且内容还在", async () => {
+    const onSubmit = vi.fn();
+    renderForm(
+      {
+        name: "Proxy Provider",
+        settingsConfig: {
+          env: {
+            ANTHROPIC_BASE_URL: "https://api.example.com",
+            ANTHROPIC_AUTH_TOKEN: "sk-test",
+          },
+        },
+        meta: {
+          claudeDesktopMode: "proxy",
+          claudeDesktopModelRoutes: {
+            "claude-opus-5": {
+              model: "grok-4.7",
+              labelOverride: "Opus 5.5",
+              enabled: false,
+            },
+          },
+        },
+      },
+      onSubmit,
+    );
+
+    const enabled = screen.getAllByLabelText("启用");
+    // 没存过的档重新打开是未勾选，不能因为没有记录就默认启用。
+    expect(enabled[0]).not.toBeChecked();
+    expect(enabled[1]).not.toBeChecked();
+    expect(screen.getByDisplayValue("grok-4.7")).toBeDisabled();
+
+    // 重新勾上后保存，enabled 不再落库（缺省即启用）。
+    fireEvent.click(enabled[1]);
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onSubmit.mock.calls[0][0].meta.claudeDesktopModelRoutes).toEqual({
+      "claude-opus-5": { model: "grok-4.7", labelOverride: "Opus 5.5" },
+    });
+  });
+
+  it("填上实际请求模型时默认带上高强度上限", async () => {
+    const onSubmit = vi.fn();
+    renderForm(
+      {
+        name: "Proxy Provider",
+        settingsConfig: {
+          env: {
+            ANTHROPIC_BASE_URL: "https://api.example.com",
+            ANTHROPIC_AUTH_TOKEN: "sk-test",
+          },
+        },
+        meta: {
+          claudeDesktopMode: "proxy",
+          claudeDesktopModelRoutes: { "claude-sonnet-5": { model: "" } },
+        },
+      },
+      onSubmit,
+    );
+
+    fireEvent.change(screen.getAllByPlaceholderText("deepseek-v4-pro")[0], {
+      target: { value: "deepseek-v4-pro" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onSubmit.mock.calls[0][0].meta.claudeDesktopModelRoutes).toEqual({
+      "claude-sonnet-5": {
+        model: "deepseek-v4-pro",
+        labelOverride: "deepseek-v4-pro",
+        maxEffort: "high",
+      },
+    });
   });
 });
