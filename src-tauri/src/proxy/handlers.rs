@@ -4696,9 +4696,8 @@ mod copilot_native_responses_tests {
         assert_eq!(response.status(), StatusCode::OK);
         assert!(response.headers().get("content-length").is_none());
         let body = response.into_body().collect().await.unwrap().to_bytes();
-        let mut buffer = std::str::from_utf8(&body).unwrap().to_string();
         let mut events = Vec::new();
-        while let Some(block) = take_sse_block(&mut buffer) {
+        for block in SseBlocks::new(std::str::from_utf8(&body).unwrap()) {
             let data = block
                 .lines()
                 .filter_map(|line| strip_sse_field(line, "data"))

@@ -2,7 +2,7 @@
 //! Keep the first upstream-issued ID for each output index so Codex can merge
 //! streamed text with its completed item. The original ID remains replayable.
 
-use crate::proxy::sse::{append_utf8_safe, strip_sse_field, take_sse_block};
+use crate::proxy::sse::{strip_sse_field, SseBuffer};
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use serde_json::Value;
@@ -122,26 +122,23 @@ where
     E: std::error::Error + Send + 'static,
 {
     async_stream::try_stream! {
-        let mut buffer = String::new();
-        let mut utf8_remainder = Vec::new();
+        let mut sse = SseBuffer::new();
         let mut ids = ItemIds::default();
         tokio::pin!(stream);
 
         while let Some(chunk) = stream.next().await {
             let bytes = chunk.map_err(|error| io::Error::other(error.to_string()))?;
-            append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
-            while let Some(block) = take_sse_block(&mut buffer) {
+            sse.push_bytes(&bytes);
+            while let Some(block) = sse.next_block() {
                 if !block.trim().is_empty() {
-                    yield ids.rewrite_block(&block)?;
+                    yield ids.rewrite_block(block)?;
                 }
             }
         }
 
-        if !utf8_remainder.is_empty() {
-            buffer.push_str(&String::from_utf8_lossy(&utf8_remainder));
-        }
-        if !buffer.trim().is_empty() {
-            yield ids.rewrite_block(&buffer)?;
+        let tail = sse.take_tail();
+        if !tail.trim().is_empty() {
+            yield ids.rewrite_block(&tail)?;
         }
     }
 }
