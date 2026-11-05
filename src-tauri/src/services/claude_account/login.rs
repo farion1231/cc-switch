@@ -507,17 +507,14 @@ fn spawn_wsl_login(
         .iter()
         .map(|(key, value)| (*key, value.as_str()))
         .collect();
-    let child = spawn_wsl_claude(
+    spawn_wsl_claude(
         &wsl.distro,
         &wsl.linux_home,
         &set_ref,
         CLAUDE_ACCOUNT_UNSET,
         &["auth", "login", "--claudeai"],
-        Stdio::piped(),
-        Stdio::piped(),
-        Stdio::piped(),
-    )?;
-    Ok(child)
+        WslStdio::piped(),
+    )
 }
 
 #[cfg(windows)]
@@ -554,9 +551,11 @@ pub(super) fn capture_wsl_claude(
         &set_ref,
         CLAUDE_ACCOUNT_UNSET,
         args,
-        Stdio::null(),
-        Stdio::piped(),
-        Stdio::null(),
+        WslStdio {
+            stdin: Stdio::null(),
+            stdout: Stdio::piped(),
+            stderr: Stdio::null(),
+        },
     )?;
     let started = Instant::now();
     loop {
@@ -585,15 +584,31 @@ pub(super) fn capture_wsl_claude(
 }
 
 #[cfg(windows)]
+struct WslStdio {
+    stdin: Stdio,
+    stdout: Stdio,
+    stderr: Stdio,
+}
+
+#[cfg(windows)]
+impl WslStdio {
+    fn piped() -> Self {
+        Self {
+            stdin: Stdio::piped(),
+            stdout: Stdio::piped(),
+            stderr: Stdio::piped(),
+        }
+    }
+}
+
+#[cfg(windows)]
 fn spawn_wsl_claude(
     distro: &str,
     linux_cd: &str,
     set: &[(&str, &str)],
     unset: &[&str],
     args: &[&str],
-    stdin: Stdio,
-    stdout: Stdio,
-    stderr: Stdio,
+    stdio: WslStdio,
 ) -> Result<Child, AppError> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -609,9 +624,9 @@ fn spawn_wsl_claude(
     )?;
     let mut cmd = std::process::Command::new("wsl.exe");
     cmd.args(&argv)
-        .stdin(stdin)
-        .stdout(stdout)
-        .stderr(stderr)
+        .stdin(stdio.stdin)
+        .stdout(stdio.stdout)
+        .stderr(stdio.stderr)
         .creation_flags(CREATE_NO_WINDOW);
     cmd.spawn().map_err(|error| {
         AppError::localized(

@@ -42,7 +42,7 @@ fn wsl_accounts_root() -> Option<PathBuf> {
     {
         let dir = crate::settings::get_claude_override_dir()?;
         let unc = super::run_target::account_root_unc(&dir.to_string_lossy())?;
-        return Some(PathBuf::from(unc));
+        Some(PathBuf::from(unc))
     }
     #[cfg(not(windows))]
     {
