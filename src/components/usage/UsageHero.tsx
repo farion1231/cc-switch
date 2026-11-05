@@ -117,8 +117,8 @@ function MetricCell({
           "absolute inset-0 cursor-pointer transition-[background-color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           // 选中 Tab：浅底色浮起 + 底部 2.5px 强调线压住分隔线，明显强化 Tab 激活态
           selected
-            ? "bg-subtle/35 shadow-[inset_0_-2.5px_0_var(--text-1)]"
-            : "hover:bg-subtle/40",
+            ? "bg-selected shadow-[inset_0_-2.5px_0_var(--text-1)]"
+            : "hover:bg-subtle",
         )}
       />
       <div className="pointer-events-none relative flex min-w-0 flex-col gap-0.5">
