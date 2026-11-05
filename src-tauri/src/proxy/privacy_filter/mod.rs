@@ -174,17 +174,19 @@ impl Filter {
     }
 }
 
-/// 丢弃无效与重叠区间：按起点升序、同起点取更长者，贪心保留互不重叠的区间。
+/// 丢弃无效区间并合并相交区间，确保每个命中的字节都被替换。
 fn merge_spans(spans: Vec<Span>) -> Vec<Span> {
     let mut valid: Vec<Span> = spans.into_iter().filter(|s| s.start < s.end).collect();
     valid.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
-    let mut merged = Vec::with_capacity(valid.len());
-    let mut last_end = 0;
+    let mut merged: Vec<Span> = Vec::with_capacity(valid.len());
     for s in valid {
-        if merged.is_empty() || s.start >= last_end {
-            last_end = s.end;
-            merged.push(s);
+        if let Some(last) = merged.last_mut() {
+            if s.start < last.end {
+                last.end = last.end.max(s.end);
+                continue;
+            }
         }
+        merged.push(s);
     }
     merged
 }

@@ -173,8 +173,11 @@ fn post_validators() {
 #[test]
 fn keyword_crossing_candidate_start_does_not_panic() {
     // 关键词 `api key` 跨过了候选串 `key=...` 的起点
-    assert_eq!(redact("api key=AbCdEfGh1234567890XyZ"), "api [密钥]");
-    assert_eq!(redact("access key=AbCdEfGh1234567890XyZ"), "access [密钥]");
+    assert_eq!(redact("api key=AbCdEfGh1234567890XyZ"), "api key=[密钥]");
+    assert_eq!(
+        redact("access key=AbCdEfGh1234567890XyZ"),
+        "access key=[密钥]"
+    );
     assert_hit("my api-key=AbCdEfGh1234567890XyZ", "[密钥]");
     assert_hit("中文 api key=AbCdEfGh1234567890XyZ", "[密钥]");
     // 关键词紧贴候选串、整个落在候选串里，仍按强上下文处理

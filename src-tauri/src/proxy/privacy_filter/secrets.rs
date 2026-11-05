@@ -15,13 +15,15 @@ pub(super) const CONTEXT_LOOKBACK: usize = 30;
 /// 上下文型口令：藏在句子里的密码/token，如「我的密码是 hunter2」「api_key: xxx」
 static RE_CONTEXT_SECRET: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
-        r#"(?i)(密码|口令|密钥|password|passwd|pwd|secret|token|api[_\s-]?key)\s*(?:是|为|:|：|=)\s*['"]?([^\s'"，。；;]{4,})"#,
+        r#"(?i)(密码|口令|密钥|password|passwd|pwd|secret|token|api[_\s-]?key)\s*['"]?\s*(?:是|为|:|：|=)\s*['"]?([^\s'"，。；;]{4,})"#,
     )
     .unwrap()
 });
 
-/// 高熵兜底：抓不匹配任何已知格式的随机串
-static RE_ENTROPY_TOKEN: Lazy<Regex> = Lazy::new(|| Regex::new(r"[A-Za-z0-9+/=_\-]{20,}").unwrap());
+/// 高熵兜底：赋值表达式只捕获 value，避免将字段名一起替换。
+static RE_ENTROPY_TOKEN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?:[A-Za-z_][A-Za-z0-9_-]*=)?([A-Za-z0-9+/_\-]{20,}={0,3})").unwrap()
+});
 
 /// 密钥语义关键词。命中则保留 ENTROPY_MIN，否则收紧到 ENTROPY_MIN_STRICT。
 static RE_SECRET_CONTEXT: Lazy<Regex> = Lazy::new(|| {
@@ -173,6 +175,77 @@ struct SecretRule {
     keywords: Vec<String>,
     entropy: f64,
     secret_group: usize,
+    is_generic: bool,
+    whole_secret: bool,
+    allowlists: Vec<RuleAllowlist>,
+}
+
+struct RuleAllowlist {
+    regexes: Vec<Regex>,
+    regex_target: String,
+    stopwords: Vec<String>,
+    match_all: bool,
+}
+
+impl RuleAllowlist {
+    fn from_toml(allowlist: TomlAllowlist) -> Option<Self> {
+        let match_all = allowlist.condition.eq_ignore_ascii_case("AND");
+        // 请求文本没有文件路径；要求路径同时命中的白名单不能放行。
+        if match_all && !allowlist.paths.is_empty() {
+            return None;
+        }
+        let regexes = allowlist
+            .regexes
+            .iter()
+            .filter_map(|pattern| match Regex::new(pattern) {
+                Ok(re) => Some(re),
+                Err(e) => {
+                    log::warn!("[PrivacyFilter] Skipped incompatible allowlist regex: {e}");
+                    None
+                }
+            })
+            .collect();
+        Some(Self {
+            regexes,
+            regex_target: allowlist.regex_target,
+            stopwords: allowlist
+                .stopwords
+                .iter()
+                .map(|s| s.to_lowercase())
+                .collect(),
+            match_all,
+        })
+    }
+
+    fn allows(&self, text: &str, whole: regex::Match<'_>, secret: regex::Match<'_>) -> bool {
+        let target = match self.regex_target.as_str() {
+            "match" => whole.as_str(),
+            "line" => {
+                let start = text[..secret.start()].rfind('\n').map_or(0, |i| i + 1);
+                let end = text[secret.end()..]
+                    .find('\n')
+                    .map_or(text.len(), |i| secret.end() + i);
+                &text[start..end]
+            }
+            _ => secret.as_str(),
+        };
+        let regex_match = self.regexes.iter().any(|re| re.is_match(target));
+        let stopword_match = if self.stopwords.is_empty() {
+            false
+        } else {
+            let lower = secret.as_str().to_lowercase();
+            self.stopwords
+                .iter()
+                .any(|word| lower.contains(word.as_str()))
+        };
+        if self.match_all {
+            (!self.regexes.is_empty() || !self.stopwords.is_empty())
+                && (self.regexes.is_empty() || regex_match)
+                && (self.stopwords.is_empty() || stopword_match)
+        } else {
+            regex_match || stopword_match
+        }
+    }
 }
 
 pub(super) struct SecretDetector {
@@ -181,7 +254,7 @@ pub(super) struct SecretDetector {
     skipped: usize,
 }
 
-/// gitleaks.toml 的最小结构；未知字段（allowlist 等）忽略
+/// gitleaks.toml 的文本检测配置；不使用文件路径等扫描器专用字段。
 #[derive(Deserialize)]
 struct TomlConfig {
     #[serde(default)]
@@ -192,6 +265,8 @@ struct TomlConfig {
 #[serde(rename_all = "camelCase")]
 struct TomlRule {
     #[serde(default)]
+    id: String,
+    #[serde(default)]
     regex: String,
     #[serde(default)]
     keywords: Vec<String>,
@@ -199,6 +274,18 @@ struct TomlRule {
     entropy: f64,
     #[serde(default)]
     secret_group: usize,
+    #[serde(default)]
+    allowlists: Vec<TomlAllowlist>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct TomlAllowlist {
+    regexes: Vec<String>,
+    regex_target: String,
+    stopwords: Vec<String>,
+    condition: String,
+    paths: Vec<String>,
 }
 
 impl SecretDetector {
@@ -222,6 +309,17 @@ impl SecretDetector {
                         keywords: r.keywords.iter().map(|k| k.to_lowercase()).collect(),
                         entropy: r.entropy,
                         secret_group: r.secret_group,
+                        is_generic: r.id == "generic-api-key",
+                        // 这两条规则的捕获组只是格式分段，整段才是凭证。
+                        whole_secret: matches!(
+                            r.id.as_str(),
+                            "microsoft-teams-webhook" | "jwt-base64"
+                        ),
+                        allowlists: r
+                            .allowlists
+                            .into_iter()
+                            .filter_map(RuleAllowlist::from_toml)
+                            .collect(),
                     });
                 }
             }
@@ -260,6 +358,9 @@ impl SecretDetector {
                 keywords: kws.iter().map(|k| k.to_string()).collect(),
                 entropy: 0.0,
                 secret_group: 0,
+                is_generic: false,
+                whole_secret: false,
+                allowlists: Vec::new(),
             });
         }
     }
@@ -282,28 +383,40 @@ impl SecretDetector {
             }
             for caps in r.re.captures_iter(text) {
                 let whole = caps.get(0).unwrap();
-                let m = if r.secret_group > 0 {
-                    caps.get(r.secret_group).unwrap_or(whole)
-                } else {
+                let m = if r.whole_secret {
                     whole
+                } else if r.secret_group > 0 {
+                    let Some(secret) = caps.get(r.secret_group) else {
+                        continue;
+                    };
+                    secret
+                } else {
+                    caps.iter()
+                        .skip(1)
+                        .flatten()
+                        .find(|m| !m.is_empty())
+                        .unwrap_or(whole)
                 };
                 let (s, e) = (m.start(), m.end());
                 if s >= e {
                     continue;
                 }
                 let cand = m.as_str();
+                if r.allowlists.iter().any(|a| a.allows(text, whole, m)) {
+                    continue;
+                }
                 if r.entropy > 0.0 && shannon_entropy(cand) < r.entropy {
                     continue; // 复刻 gitleaks 的熵阈值
                 }
-                // 不能用 Route 3 的 is_on_path_or_url_boundary：那会误杀 AWS Secret Access Key
-                // 这类合法但含 base64 `/` 的密钥
-                if looks_like_url_match(cand)
+                // 专用规则已识别凭证格式，不能再把 webhook URL、hex 或 UUID 密钥当误报。
+                if (r.is_generic
+                    && (looks_like_url_match(whole.as_str())
+                        || is_hex_hash(cand)
+                        || is_uuid(cand)
+                        || is_business_id_assignment(whole.as_str())
+                        || cand.contains(',')))
                     || is_template_var(cand)
-                    || is_hex_hash(cand)
-                    || is_uuid(cand)
-                    || is_business_id_assignment(cand)
                     || is_likely_placeholder(cand)
-                    || cand.contains(',')
                 {
                     continue;
                 }
@@ -322,7 +435,9 @@ impl SecretDetector {
         }
 
         // Route 3: 高熵兜底
-        for m in RE_ENTROPY_TOKEN.find_iter(text) {
+        for caps in RE_ENTROPY_TOKEN.captures_iter(text) {
+            let whole = caps.get(0).unwrap();
+            let m = caps.get(1).unwrap();
             let (s, e) = (m.start(), m.end());
             let cand = m.as_str();
             let strong = has_strong_secret_context(text, s, e);
@@ -333,7 +448,7 @@ impl SecretDetector {
             if is_template_var(cand)
                 || is_hex_hash(cand)
                 || is_uuid(cand)
-                || is_business_id_assignment(cand)
+                || is_business_id_assignment(whole.as_str())
             {
                 continue;
             }
