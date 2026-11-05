@@ -791,7 +791,7 @@ mod tests {
         };
         let request_usage = RequestUsageResponse {
             start_of_month: None,
-            gpt_4: Some(RequestUsageGpt4 {
+            gpt_4: Some(Gpt4Usage {
                 num_requests: Some(150.0),
                 num_requests_total: Some(150.0),
                 max_request_usage: Some(500.0),
