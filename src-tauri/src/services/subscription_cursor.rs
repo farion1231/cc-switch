@@ -510,7 +510,13 @@ pub async fn get_cursor_subscription_quota() -> Result<SubscriptionQuota, String
     }
 
     if !http_status.is_success() {
-        return Err(format!("API error (HTTP {})", http_status.as_u16()));
+        let body = summary_resp.text().await.unwrap_or_default();
+        let body: String = body.chars().take(400).collect();
+        return Ok(SubscriptionQuota::error(
+            TOOL,
+            CredentialStatus::Valid,
+            format!("API error (HTTP {http_status}): {body}"),
+        ));
     }
 
     let summary_text = summary_resp

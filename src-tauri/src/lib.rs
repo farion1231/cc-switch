@@ -909,11 +909,23 @@ pub fn run() {
                 Err(e) => log::warn!("✗ Failed to seed official providers: {e}"),
             }
 
-            if let Err(e) = app_state.db.ensure_official_seed_by_id(
-                crate::database::CURSOR_OFFICIAL_PROVIDER_ID,
-                crate::app_config::AppType::Cursor,
-            ) {
-                log::debug!("Cursor official seed check: {e}");
+            if !app_state
+                .db
+                .get_bool_flag("cursor_official_provider_seeded")
+                .unwrap_or(false)
+            {
+                if let Err(e) = app_state.db.ensure_official_seed_by_id(
+                    crate::database::CURSOR_OFFICIAL_PROVIDER_ID,
+                    crate::app_config::AppType::Cursor,
+                ) {
+                    log::debug!("Cursor official seed check: {e}");
+                }
+                if let Err(e) = app_state
+                    .db
+                    .set_setting("cursor_official_provider_seeded", "true")
+                {
+                    log::debug!("Cursor official seed flag set failed: {e}");
+                }
             }
 
             {
