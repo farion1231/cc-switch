@@ -588,6 +588,19 @@ type RepoCacheKey = (String, String, String);
 /// 发现缓存的有效期：GitHub 归档本身也有几分钟的 CDN 缓存，再短意义不大
 const DISCOVERY_CACHE_TTL: Duration = Duration::from_secs(10 * 60);
 
+/// 更新时预先加进 omp disabledExtensions 的屏蔽项；没被清空（更新中途失败）就在 drop 时撤掉。
+struct OmpBlockRollback(Option<String>);
+
+impl Drop for OmpBlockRollback {
+    fn drop(&mut self) {
+        if let Some(name) = self.0.take() {
+            if let Err(error) = crate::omp_config::set_skill_disabled(&name, false) {
+                log::warn!("回滚 omp Skill {name} 的屏蔽项失败: {error}");
+            }
+        }
+    }
+}
+
 impl Default for SkillService {
     fn default() -> Self {
         Self::new()
@@ -1080,13 +1093,16 @@ impl SkillService {
             .get_installed_skill(id)?
             .ok_or_else(|| anyhow!("Skill not found: {id}"))?;
 
+        // 只有 CC Switch 部署过的 omp 副本才认领对应的屏蔽项；没部署时同名屏蔽可能是
+        // 用户给别处来源的 Skill 设的。
         let omp_name = Self::require_valid_directory(&skill.directory)
             .ok()
             .and_then(|directory| {
                 let native = Self::get_app_skills_dir(&AppType::Omp)
                     .ok()?
                     .join(&directory);
-                Some((Self::omp_skill_name(&directory), native))
+                (native.exists() || Self::is_symlink(&native))
+                    .then(|| (Self::omp_skill_name(&directory), native))
             });
 
         // DB 行可能被同步导入污染（远端快照 raw SQL 直接灌库，绕过安装期校验），
@@ -1671,12 +1687,14 @@ impl SkillService {
         }
         Self::require_valid_directory(&current_skill.directory)?;
         current_skill.apps.pi = Self::skill_exists_in_app(&current_skill.directory, &AppType::Pi);
+        let omp_disabled = Self::read_omp_disabled_skills();
         current_skill.apps.omp =
-            Self::skill_enabled_in_omp(&current_skill.directory, &Self::read_omp_disabled_skills());
+            Self::skill_enabled_in_omp(&current_skill.directory, &omp_disabled);
         let skill = current_skill;
 
         let dest = ssot_dir.join(&skill.directory);
         let mut deployments = Vec::new();
+        let mut omp_kept_disabled = false;
         for app in [
             AppType::Pi,
             AppType::Mcode,
@@ -1685,24 +1703,50 @@ impl SkillService {
             AppType::Dsh,
             AppType::Omp,
         ] {
-            let is_omp = matches!(app, AppType::Omp);
-            if skill.apps.is_enabled_for(&app) || is_omp {
-                let destination =
-                    Self::get_distinct_app_skills_dir(&ssot_dir, &app)?.join(&skill.directory);
-                let inspected =
-                    Self::inspect_pi_skill_destination(&dest, &destination, &skill.directory);
-                // Omp 关掉后仍保留副本（开关在 disabledExtensions），所以只要副本是 CC Switch
-                // 的部署就刷新，不看开关；对不上的同名目录跳过，和存储迁移一致。
-                let inspected = if is_omp {
-                    inspected.ok().flatten()
-                } else {
-                    inspected?
-                };
-                if let Some(deployment) = inspected {
-                    deployments.push((destination, deployment));
-                }
+            let enabled = skill.apps.is_enabled_for(&app);
+            if !enabled && !matches!(app, AppType::Omp) {
+                continue;
+            }
+            let inspected =
+                Self::get_distinct_app_skills_dir(&ssot_dir, &app).and_then(|app_dir| {
+                    let destination = app_dir.join(&skill.directory);
+                    Ok(
+                        Self::inspect_pi_skill_destination(&dest, &destination, &skill.directory)?
+                            .map(|deployment| (destination, deployment)),
+                    )
+                });
+            // Omp 关掉后仍保留副本（开关在 disabledExtensions），只要副本是 CC Switch 的部署
+            // 就一并刷新。关着时检查失败（目录解析不了、同名目录对不上）只跳过，
+            // 不能拖累没在 omp 启用的 Skill 的更新；开着时和其他应用一样报错。
+            let inspected = if enabled {
+                inspected?
+            } else {
+                inspected.ok().flatten()
+            };
+            if let Some(deployment) = inspected {
+                omp_kept_disabled |= !enabled;
+                deployments.push(deployment);
             }
         }
+
+        // 关着的 omp 副本刷新后若改了 name，屏蔽项要跟到新名字上，否则旧名对不上，
+        // Skill 会在 omp 里悄悄重新生效。新名先屏蔽、写不进去就不更新，成功后再清旧名。
+        let omp_rename = if omp_kept_disabled {
+            let old_name = Self::omp_skill_name(&skill.directory);
+            let new_name = Self::omp_name_from_skill_md(&source.join("SKILL.md"), &skill.directory)
+                .unwrap_or_else(|| skill.directory.clone());
+            (old_name != new_name).then_some((old_name, new_name))
+        } else {
+            None
+        };
+        // 更新中途失败时撤掉刚加的新名屏蔽，免得留下一条不属于任何副本的屏蔽项。
+        let mut omp_block_rollback = OmpBlockRollback(match &omp_rename {
+            Some((_, new_name)) if !omp_disabled.contains(new_name) => {
+                crate::omp_config::set_skill_disabled(new_name, true)?;
+                Some(new_name.clone())
+            }
+            _ => None,
+        });
 
         // 备份旧文件
         let _ = Self::create_uninstall_backup(&skill);
@@ -1780,6 +1824,12 @@ impl SkillService {
                 }
                 Self::persist_updated_skill_metadata(db, &updated_metadata)?
             };
+        omp_block_rollback.0 = None;
+        if let Some((old_name, _)) = &omp_rename {
+            if let Err(error) = crate::omp_config::set_skill_disabled(old_name, false) {
+                log::warn!("清理 omp Skill 旧名 {old_name} 的屏蔽项失败: {error}");
+            }
+        }
         updated_skill.apps.pi = Self::skill_exists_in_app(&updated_skill.directory, &AppType::Pi);
         updated_skill.apps.omp =
             Self::skill_enabled_in_omp(&updated_skill.directory, &Self::read_omp_disabled_skills());
@@ -2226,7 +2276,7 @@ impl SkillService {
         }
 
         if !restored_skill.apps.is_empty() {
-            if let Err(err) = Self::sync_to_app_dir(&restored_skill.directory, current_app) {
+            if let Err(err) = Self::enable_app_skill(&restored_skill.directory, current_app) {
                 let _ = db.delete_skill(&restored_skill.id);
                 let _ = fs::remove_dir_all(&restore_path);
                 return Err(err);
@@ -2637,33 +2687,42 @@ impl SkillService {
         })
     }
 
+    // omp 按原生副本的 frontmatter name 匹配 disabledExtensions，所以先读原生副本；
+    // 还没部署时退回 SSOT，两边都读不出 name 就用目录名。
     fn omp_skill_name(directory: &str) -> String {
         let Ok(directory) = Self::require_valid_directory(directory) else {
             return directory.to_string();
         };
         let roots = [
-            Self::get_ssot_dir(),
             Self::get_app_skills_dir(&AppType::Omp),
+            Self::get_ssot_dir(),
         ];
-        for root in roots.into_iter().flatten() {
-            if let Ok(frontmatter) =
-                Self::parse_skill_frontmatter(&root.join(&directory).join("SKILL.md"))
-            {
-                return frontmatter
-                    .get("name")
-                    .and_then(serde_yaml::Value::as_str)
-                    .map(str::trim)
-                    .filter(|name| !name.is_empty())
-                    .unwrap_or(&directory)
-                    .to_string();
-            }
-        }
-        directory
+        roots
+            .into_iter()
+            .flatten()
+            .find_map(|root| {
+                Self::omp_name_from_skill_md(&root.join(&directory).join("SKILL.md"), &directory)
+            })
+            .unwrap_or(directory)
+    }
+
+    /// SKILL.md 能解析时返回 omp 认的名字（name 不可用就是目录名），否则 None。
+    fn omp_name_from_skill_md(path: &Path, directory: &str) -> Option<String> {
+        let frontmatter = Self::parse_skill_frontmatter(path).ok()?;
+        Some(
+            frontmatter
+                .get("name")
+                .and_then(serde_yaml::Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .unwrap_or(directory)
+                .to_string(),
+        )
     }
 
     fn skill_enabled_in_omp(directory: &str, disabled: &HashSet<String>) -> bool {
         Self::skill_exists_in_app(directory, &AppType::Omp)
-            && !disabled.contains(&Self::omp_skill_name(directory))
+            && (disabled.is_empty() || !disabled.contains(&Self::omp_skill_name(directory)))
     }
 
     // Explicit enable operations also clear omp's source-independent kill switch.
@@ -5987,8 +6046,6 @@ mod tests {
         let native = SkillService::get_app_skills_dir(&AppType::Omp)
             .unwrap()
             .join("test-skill");
-        write_skill(&native, "native-name");
-        assert_eq!(SkillService::omp_skill_name("test-skill"), "native-name");
         for (frontmatter, expected) in [
             ("name: frontmatter-name", "frontmatter-name"),
             ("name: '  trimmed  '", "trimmed"),
@@ -6006,6 +6063,9 @@ mod tests {
             .unwrap();
             assert_eq!(SkillService::omp_skill_name("test-skill"), expected);
         }
+        // omp loads its native copy, so that name wins over the managed one.
+        write_skill(&native, "native-name");
+        assert_eq!(SkillService::omp_skill_name("test-skill"), "native-name");
         fs::remove_dir_all(&source).unwrap();
         fs::remove_dir_all(&native).unwrap();
         assert_eq!(SkillService::omp_skill_name("test-skill"), "test-skill");
@@ -6061,6 +6121,167 @@ mod tests {
         SkillService::uninstall(&db, &installed.id).unwrap();
         assert!(native.is_dir());
         assert_eq!(blocked(), HashSet::from(["omp-skill".into()]));
+    }
+
+    fn remote_skill_fixture(id: &str, directory: &str, apps: SkillApps) -> InstalledSkill {
+        let mut installed = poisoned_skill(id, directory);
+        installed.name = directory.to_string();
+        installed.repo_owner = Some("owner".to_string());
+        installed.repo_name = Some("repo".to_string());
+        installed.repo_branch = Some("main".to_string());
+        installed.readme_url = SkillService::build_skill_doc_url(
+            "owner",
+            "repo",
+            "main",
+            &format!("{directory}/SKILL.md"),
+        );
+        installed.apps = apps;
+        installed
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn omp_block_follows_a_skill_renamed_by_update() {
+        let home = tempdir().unwrap();
+        let config_dir = home.path().join(".cc-switch");
+        fs::create_dir_all(&config_dir).unwrap();
+        fs::File::create(config_dir.join("cc-switch.db")).unwrap();
+        let _home = TestHomeGuard::set(home.path());
+        let _storage = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+        let _omp_dir = crate::omp_config::test_support::TestAgentDir::new();
+        let remote = tempdir().unwrap();
+        let db = Arc::new(Database::memory().unwrap());
+        let service = SkillService {
+            repo_fixture: Some(remote.path().to_path_buf()),
+            ..SkillService::new()
+        };
+        let installed =
+            remote_skill_fixture("owner/repo:omp-skill", "omp-skill", SkillApps::default());
+        db.save_skill(&installed).unwrap();
+        let local = SkillService::get_ssot_dir().unwrap().join("omp-skill");
+        write_skill(&local, "omp-skill");
+        let native = SkillService::get_app_skills_dir(&AppType::Omp)
+            .unwrap()
+            .join("omp-skill");
+        SkillService::copy_dir_recursive(&local, &native).unwrap();
+        crate::omp_config::set_skill_disabled("other", true).unwrap();
+        SkillService::toggle_app(&db, &installed.id, &AppType::Omp, false).unwrap();
+
+        write_skill(&remote.path().join("omp-skill"), "omp-skill-v2");
+        service.update_skill(&db, &installed.id).await.unwrap();
+        assert_eq!(SkillService::omp_skill_name("omp-skill"), "omp-skill-v2");
+        assert_eq!(
+            crate::omp_config::read_disabled_skill_names().unwrap(),
+            HashSet::from(["other".into(), "omp-skill-v2".into()])
+        );
+        assert!(!SkillService::get_all_installed(&db).unwrap()[0].apps.omp);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn update_ignores_an_unresolvable_omp_dir_when_omp_is_unused() {
+        struct ProfileGuard(Option<std::ffi::OsString>);
+        impl Drop for ProfileGuard {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(value) => std::env::set_var("OMP_PROFILE", value),
+                    None => std::env::remove_var("OMP_PROFILE"),
+                }
+            }
+        }
+        let home = tempdir().unwrap();
+        let config_dir = home.path().join(".cc-switch");
+        fs::create_dir_all(&config_dir).unwrap();
+        fs::File::create(config_dir.join("cc-switch.db")).unwrap();
+        let _home = TestHomeGuard::set(home.path());
+        let _storage = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+        let _profile = ProfileGuard(std::env::var_os("OMP_PROFILE"));
+        std::env::set_var("OMP_PROFILE", "Not A Profile");
+        assert!(SkillService::get_app_skills_dir(&AppType::Omp).is_err());
+        let remote = tempdir().unwrap();
+        let db = Arc::new(Database::memory().unwrap());
+        let service = SkillService {
+            repo_fixture: Some(remote.path().to_path_buf()),
+            ..SkillService::new()
+        };
+        let installed = remote_skill_fixture(
+            "owner/repo:claude-skill",
+            "claude-skill",
+            SkillApps::only(&AppType::Claude),
+        );
+        db.save_skill(&installed).unwrap();
+        write_skill(
+            &SkillService::get_ssot_dir().unwrap().join("claude-skill"),
+            "claude-skill",
+        );
+        write_skill(&remote.path().join("claude-skill"), "claude-skill");
+        fs::write(remote.path().join("claude-skill").join("notes.md"), "v2").unwrap();
+
+        service.update_skill(&db, &installed.id).await.unwrap();
+        assert_eq!(
+            fs::read_to_string(
+                SkillService::get_ssot_dir()
+                    .unwrap()
+                    .join("claude-skill")
+                    .join("notes.md")
+            )
+            .unwrap(),
+            "v2"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn omp_uninstall_keeps_blocks_for_skills_it_never_deployed() {
+        let temp = tempdir().unwrap();
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+        let _omp_dir = crate::omp_config::test_support::TestAgentDir::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let mut skill = poisoned_skill("local:test-skill", "test-skill");
+        skill.apps = SkillApps::only(&AppType::Claude);
+        write_skill(
+            &SkillService::get_ssot_dir().unwrap().join("test-skill"),
+            "test-skill",
+        );
+        db.save_skill(&skill).unwrap();
+        // Set by the user for a same-named skill omp discovers elsewhere.
+        crate::omp_config::set_skill_disabled("test-skill", true).unwrap();
+        SkillService::uninstall(&db, &skill.id).unwrap();
+        assert_eq!(
+            crate::omp_config::read_disabled_skill_names().unwrap(),
+            HashSet::from(["test-skill".into()])
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn omp_restore_from_backup_clears_the_block() {
+        let temp = tempdir().unwrap();
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+        let _omp_dir = crate::omp_config::test_support::TestAgentDir::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let backup_id = "20260727_120000_test-skill";
+        let backup_dir = SkillService::get_backup_dir().unwrap().join(backup_id);
+        write_skill(&backup_dir.join("skill"), "omp-name");
+        let metadata = SkillBackupMetadata {
+            skill: poisoned_skill("local:test-skill", "test-skill"),
+            backup_created_at: 0,
+            source_path: "x".to_string(),
+        };
+        fs::write(
+            backup_dir.join("meta.json"),
+            serde_json::to_string_pretty(&metadata).unwrap(),
+        )
+        .unwrap();
+        crate::omp_config::set_skill_disabled("omp-name", true).unwrap();
+
+        SkillService::restore_from_backup(&db, backup_id, &AppType::Omp).unwrap();
+        assert!(crate::omp_config::read_disabled_skill_names()
+            .unwrap()
+            .is_empty());
+        assert!(SkillService::get_all_installed(&db).unwrap()[0].apps.omp);
     }
 
     #[test]

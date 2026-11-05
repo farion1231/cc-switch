@@ -331,6 +331,68 @@ fn emit_disabled_entry(entry: &str) -> Result<String, AppError> {
     Ok(scalar.to_string())
 }
 
+// Flow sequences end at `,` and `]`, so anything beyond a plain name is JSON-quoted there.
+fn emit_flow_entry(entry: &str) -> Result<String, AppError> {
+    if entry
+        .chars()
+        .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | ':' | '/'))
+    {
+        return Ok(entry.to_string());
+    }
+    serde_json::to_string(entry).map_err(|_| manual_edit())
+}
+
+/// Splits a single-line flow sequence (`tail` starts with `[`) at its top-level commas.
+/// Returns the offset of the closing `]` and the trimmed byte range of each item.
+fn flow_sequence_items(tail: &str) -> Result<(usize, Vec<std::ops::Range<usize>>), AppError> {
+    let mut items = Vec::new();
+    let mut start = 1;
+    let mut quote = None;
+    let mut token_start = true;
+    let mut previous_space = false;
+    let mut chars = tail.char_indices().skip(1).peekable();
+    while let Some((i, c)) = chars.next() {
+        if let Some(q) = quote {
+            if q == '"' && c == '\\' {
+                chars.next();
+            } else if c == q {
+                if q == '\'' && chars.peek().is_some_and(|&(_, next)| next == '\'') {
+                    chars.next();
+                } else {
+                    quote = None;
+                }
+            }
+            continue;
+        }
+        match c {
+            '\'' | '"' if token_start => {
+                quote = Some(c);
+                token_start = false;
+            }
+            ',' | ']' => {
+                let item = &tail[start..i];
+                let lead = item.len() - item.trim_start().len();
+                if !item.trim().is_empty() {
+                    items.push(start + lead..start + lead + item.trim().len());
+                }
+                if c == ']' {
+                    return Ok((i, items));
+                }
+                start = i + 1;
+                token_start = true;
+            }
+            // Nested collections are not skill names, and a comment means the sequence
+            // continues on the next line.
+            '[' | '{' => return Err(manual_edit()),
+            '#' if previous_space => return Err(manual_edit()),
+            c if c.is_whitespace() => {}
+            _ => token_start = false,
+        }
+        previous_space = c.is_whitespace();
+    }
+    Err(manual_edit())
+}
+
 fn edit_disabled_skill(text: &str, name: &str, disabled: bool) -> Result<String, AppError> {
     let document = parse(text).map_err(|_| manual_edit())?;
     let entries = disabled_extensions(&document)?;
@@ -372,6 +434,8 @@ fn edit_disabled_skill(text: &str, name: &str, disabled: bool) -> Result<String,
         }
     }
 
+    // Inserted lines follow the file's own line endings.
+    let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
     let mut output = text.to_string();
     if let Some(header) = header {
         let line = lines[header];
@@ -382,32 +446,42 @@ fn edit_disabled_skill(text: &str, name: &str, disabled: bool) -> Result<String,
             return Err(manual_edit());
         }
         if tail.starts_with('[') {
-            // Only a complete, single-line flow sequence can be replaced safely.
-            let close = tail.rfind(']').ok_or_else(manual_edit)?;
+            // Only a complete, single-line flow sequence can be edited safely. Other
+            // entries keep their own bytes, and so does anything after the `]`.
+            let (close, items) = flow_sequence_items(tail)?;
             let suffix = &tail[close + 1..];
             if !suffix.trim().is_empty() && !suffix.trim_start().starts_with('#') {
                 return Err(manual_edit());
             }
             let flow: serde_yaml::Value =
                 serde_yaml::from_str(&tail[..=close]).map_err(|_| manual_edit())?;
-            if flow != serde_yaml::to_value(&entries).map_err(|_| manual_edit())? {
+            if flow != serde_yaml::to_value(&entries).map_err(|_| manual_edit())?
+                || items.len() != entries.len()
+            {
                 return Err(manual_edit());
             }
-            let newline = if line.ends_with("\r\n") {
-                "\r\n"
-            } else if line.ends_with('\n') {
-                "\n"
+            let after_colon = &line[colon + 1..];
+            let tail_start =
+                offsets[header] + colon + 1 + after_colon.len() - after_colon.trim_start().len();
+            if disabled {
+                let emitted = emit_flow_entry(&entry)?;
+                match items.last() {
+                    Some(last) => output.insert_str(tail_start + last.end, &format!(", {emitted}")),
+                    None => output
+                        .replace_range(tail_start..tail_start + close + 1, &format!("[{emitted}]")),
+                }
             } else {
-                ""
-            };
-            let comment = if suffix.trim_start().starts_with('#') {
-                suffix.trim_end()
-            } else {
-                ""
-            };
-            let flow = serde_json::to_string(&intended).map_err(|_| manual_edit())?;
-            let replacement = format!("{}: {flow}{comment}{newline}", &line[..colon]);
-            output.replace_range(offsets[header]..offsets[header + 1], &replacement);
+                let kept: Vec<&str> = items
+                    .iter()
+                    .zip(&entries)
+                    .filter(|(_, value)| *value != &entry)
+                    .map(|(range, _)| &tail[range.clone()])
+                    .collect();
+                output.replace_range(
+                    tail_start..tail_start + close + 1,
+                    &format!("[{}]", kept.join(", ")),
+                );
+            }
         } else {
             if !tail.is_empty() && !tail.starts_with('#') {
                 return Err(manual_edit());
@@ -451,10 +525,10 @@ fn edit_disabled_skill(text: &str, name: &str, disabled: bool) -> Result<String,
                 let prefix = if output[..offsets[insert]].ends_with('\n') {
                     ""
                 } else {
-                    "\n"
+                    newline
                 };
                 let emitted = format!(
-                    "{prefix}{}- {}\n",
+                    "{prefix}{}- {}{newline}",
                     " ".repeat(indent.unwrap_or(2)),
                     emit_disabled_entry(&entry)?
                 );
@@ -472,10 +546,10 @@ fn edit_disabled_skill(text: &str, name: &str, disabled: bool) -> Result<String,
         }
     } else {
         if !output.is_empty() && !output.ends_with('\n') {
-            output.push('\n');
+            output.push_str(newline);
         }
         output.push_str(&format!(
-            "disabledExtensions:\n  - {}\n",
+            "disabledExtensions:{newline}  - {}{newline}",
             emit_disabled_entry(&entry)?
         ));
     }
@@ -1266,17 +1340,32 @@ mod tests {
             (
                 "disabledExtensions: []\n",
                 true,
-                "disabledExtensions: [\"skill:test\"]\n",
+                "disabledExtensions: [skill:test]\n",
             ),
             (
                 "disabledExtensions: [a, \"b\"] # keep\nmodel: foo\n",
                 true,
-                "disabledExtensions: [\"a\",\"b\",\"skill:test\"] # keep\nmodel: foo\n",
+                "disabledExtensions: [a, \"b\", skill:test] # keep\nmodel: foo\n",
+            ),
+            (
+                "disabledExtensions:  [a,b]  # see [1]\n",
+                true,
+                "disabledExtensions:  [a,b, skill:test]  # see [1]\n",
+            ),
+            (
+                "disabledExtensions: ['a, b', \"x]\", skill:test,]\n",
+                false,
+                "disabledExtensions: ['a, b', \"x]\"]\n",
+            ),
+            (
+                "model: foo\r\n",
+                true,
+                "model: foo\r\ndisabledExtensions:\r\n  - skill:test\r\n",
             ),
             (
                 "disabledExtensions: [a, 'skill:test', b]\n",
                 false,
-                "disabledExtensions: [\"a\",\"b\"]\n",
+                "disabledExtensions: [a, b]\n",
             ),
             (
                 "disabledExtensions: [skill:test]\n",
@@ -1321,7 +1410,7 @@ mod tests {
             added,
             before.replace(
                 "    - skill:other\r\n",
-                "    - skill:other\r\n    - skill:test\n"
+                "    - skill:other\r\n    - skill:test\r\n"
             )
         );
         assert_eq!(edit_disabled_skill(&added, "test", false).unwrap(), before);
