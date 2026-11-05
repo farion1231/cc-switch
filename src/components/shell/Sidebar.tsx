@@ -44,6 +44,7 @@ import { useSidebarStatus, type AppNavStatus } from "@/hooks/useSidebarStatus";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { DRAG_REGION_ATTR, DRAG_REGION_STYLE, isMac } from "@/lib/platform";
 import { cn } from "@/lib/utils";
+import type { TourAnchor } from "@/components/OnboardingTour";
 import ccswitchLogo from "@/assets/icons/logo.svg";
 import { APP_DISPLAY_NAME, AppGlyph } from "./AppGlyph";
 
@@ -307,6 +308,7 @@ function MainDirectory({
         <div
           role="group"
           aria-label={t("nav.appsGroup")}
+          data-tour="apps"
           className="flex shrink-0 flex-col"
         >
           {apps.map((app) => (
@@ -340,6 +342,7 @@ function MainDirectory({
             trailing={item.trailing}
             trailingLabel={item.trailingLabel}
             alert={item.alert}
+            tourAnchor={`nav-${item.page}` as TourAnchor}
             onClick={() => onSelectPage(item.page)}
           />
         ))}
@@ -381,6 +384,7 @@ function MainDirectory({
           title={hasUpdate ? t("nav.settingsHasUpdate") : t("nav.settings")}
           dot={hasUpdate}
           dotTone="success"
+          tourAnchor="nav-settings"
           onClick={() => onSelectPage("settings")}
         />
       </div>
@@ -541,6 +545,7 @@ function NavItem({
   dot = false,
   dotTone = "neutral",
   endDot = false,
+  tourAnchor,
   onClick,
 }: {
   collapsed: boolean;
@@ -562,6 +567,8 @@ function NavItem({
   dotTone?: "neutral" | "success";
   /** 圆点放在行尾（设置目录里的「关于」），而不是图标角上 */
   endDot?: boolean;
+  /** 使用教程圈这一项时找它用 */
+  tourAnchor?: TourAnchor;
   onClick: () => void;
 }) {
   const ring = selected ? "border-selected" : "border-sidebar";
@@ -612,6 +619,7 @@ function NavItem({
           onClick={onClick}
           aria-label={title ?? accessibleName}
           aria-current={selected ? "page" : undefined}
+          data-tour={tourAnchor}
           className={cn(
             "mx-auto flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
             selected && "bg-selected hover:bg-selected",
@@ -642,6 +650,7 @@ function NavItem({
         onClick={onClick}
         aria-label={trailingLabel ? accessibleName : undefined}
         aria-current={selected ? "page" : undefined}
+        data-tour={tourAnchor}
         className={cn(
           "flex h-7 shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
           compact ? "min-w-0 flex-1" : "mx-2 w-[184px]",

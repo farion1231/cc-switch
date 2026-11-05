@@ -159,6 +159,29 @@ describe("WhatsNewNotice", () => {
     expect(mocks.save).not.toHaveBeenCalled();
   });
 
+  it("stays hidden for the rest of a first-run session, even if the tutorial did not record a version", async () => {
+    mocks.settings = { firstRunNoticeConfirmed: undefined };
+    const view = renderNotice();
+    await settle();
+
+    // 教程确认了，但当时没读到版本，whatsNewSeenVersion 还是空的
+    mocks.settings = {
+      firstRunNoticeConfirmed: true,
+      newLayoutNoticeConfirmed: true,
+    };
+    view.rerender(
+      <QueryClientProvider client={new QueryClient()}>
+        <WhatsNewNotice />
+      </QueryClientProvider>,
+    );
+    await waitFor(() =>
+      expect(mocks.save).toHaveBeenCalledWith(
+        expect.objectContaining({ whatsNewSeenVersion: "4.0.4" }),
+      ),
+    );
+    expect(title()).not.toBeInTheDocument();
+  });
+
   it("waits while the new layout dialog is showing", async () => {
     mocks.settings = {
       firstRunNoticeConfirmed: true,

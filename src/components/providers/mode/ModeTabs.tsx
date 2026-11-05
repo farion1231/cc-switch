@@ -82,6 +82,7 @@ export function ModeTabs({
         ref={indicator.ref}
         role="group"
         aria-label={t("mode.tabsLabel")}
+        data-tour="mode-tabs"
         className="relative inline-flex h-9 shrink-0 items-center gap-0.5 rounded-[10px] bg-subtle p-[3px]"
       >
         <SegmentThumb
