@@ -25,6 +25,7 @@ import type {
 } from "@/lib/api/settings";
 import type { DndContextProps, DragEndEvent } from "@dnd-kit/core";
 import { APP_IDS } from "@/config/appConfig";
+import { waitForOverlayTransition } from "../utils/overlayTransition";
 
 type ToolVersions = Awaited<ReturnType<typeof settingsApi.getToolVersions>>;
 
@@ -368,6 +369,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     await user.click(dialog.getByRole("button", { name: "common.close" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
+    await waitForOverlayTransition();
     await user.click(
       screen.getByRole("button", { name: "appsPage.moreActions" }),
     );
@@ -998,6 +1000,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
       }),
     );
     expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+    await waitForOverlayTransition();
     await openUninstall("Claude Code");
     fireEvent.click(
       await within(screen.getByRole("dialog")).findByRole("button", {

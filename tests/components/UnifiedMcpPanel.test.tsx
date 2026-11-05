@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
 import { settingsApi } from "@/lib/api";
 import type { McpApps, McpServer, McpServerSpec } from "@/types";
+import { waitForOverlayTransition } from "../utils/overlayTransition";
 
 const mocks = vi.hoisted(() => ({
   serversMap: {} as Record<string, McpServer>,
@@ -641,6 +642,7 @@ describe("UnifiedMcpPanel", () => {
     );
 
     // 再来一次全部成功：通知条消失
+    await waitForOverlayTransition();
     await userEvent.click(
       screen.getByRole("button", { name: "mcpPage.moreActions" }),
     );
