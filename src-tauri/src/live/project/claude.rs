@@ -302,7 +302,7 @@ impl Tier {
     const ENV_ORDER: [Tier; 4] = [Tier::Haiku, Tier::Sonnet, Tier::Opus, Tier::Fable];
 
     /// 档位别名：`--model` 和 `modelPicker` 都认，按 `ANTHROPIC_DEFAULT_*_MODEL` 解析。
-    fn alias(self) -> &'static str {
+    pub(crate) fn alias(self) -> &'static str {
         match self {
             Tier::Opus => "opus",
             Tier::Fable => "fable",
@@ -320,7 +320,7 @@ impl Tier {
         }
     }
 
-    fn model_key(self) -> &'static str {
+    pub(crate) fn model_key(self) -> &'static str {
         match self {
             Tier::Opus => "ANTHROPIC_DEFAULT_OPUS_MODEL",
             Tier::Fable => "ANTHROPIC_DEFAULT_FABLE_MODEL",
@@ -329,7 +329,7 @@ impl Tier {
         }
     }
 
-    fn name_key(self) -> &'static str {
+    pub(crate) fn name_key(self) -> &'static str {
         match self {
             Tier::Opus => "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
             Tier::Fable => "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
@@ -363,16 +363,16 @@ impl Tier {
 }
 
 /// 一个档位实际用的上游模型和显示名。
-struct TierModel<'a> {
-    tier: Tier,
-    upstream: &'a str,
+pub(crate) struct TierModel<'a> {
+    pub(crate) tier: Tier,
+    pub(crate) upstream: &'a str,
     display_name: String,
 }
 
 impl TierModel<'_> {
     /// `/model` 里的说明：`<供应商名> · <上游模型名> · <窗口>`，窗口只在上游标了 1M 时写；
     /// 行里自己写了说明就用它的。
-    fn description(&self, env: &Map<String, Value>, provider_name: &str) -> String {
+    pub(crate) fn description(&self, env: &Map<String, Value>, provider_name: &str) -> String {
         env_string(env, self.tier.description_key())
             .map(str::to_string)
             .unwrap_or_else(|| {
@@ -405,7 +405,11 @@ impl TierModel<'_> {
 }
 
 /// 档位显示名：行里写了 `_MODEL_NAME` 用它的，否则是去掉 1M 标记的上游模型名。
-fn tier_model<'a>(env: &Map<String, Value>, tier: Tier, upstream: &'a str) -> TierModel<'a> {
+pub(crate) fn tier_model<'a>(
+    env: &Map<String, Value>,
+    tier: Tier,
+    upstream: &'a str,
+) -> TierModel<'a> {
     let display_name = env_string(env, tier.name_key())
         .map(str::to_string)
         .unwrap_or_else(|| {
@@ -420,8 +424,9 @@ fn tier_model<'a>(env: &Map<String, Value>, tier: Tier, upstream: &'a str) -> Ti
     }
 }
 
-/// 路由模式下各档位的上游模型，回落顺序见 [`proxy_model_fields`]。
-fn route_roles(env: &Map<String, Value>) -> Vec<TierModel<'_>> {
+/// 路由模式下各档位的上游模型，回落顺序见 [`proxy_model_fields`]。子代理模型下拉
+/// （`services::subagent_models`）按它显示各档别名实际落到哪个模型。
+pub(crate) fn route_roles(env: &Map<String, Value>) -> Vec<TierModel<'_>> {
     let default_model = env_string(env, "ANTHROPIC_MODEL");
     let small_fast_model = env_string(env, "ANTHROPIC_SMALL_FAST_MODEL");
     Tier::ENV_ORDER

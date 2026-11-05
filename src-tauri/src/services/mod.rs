@@ -37,6 +37,7 @@ pub mod speedtest;
 pub mod sql_helpers;
 pub mod stream_check;
 pub mod subagent;
+pub mod subagent_models;
 pub mod subscription;
 pub mod subscription_agy;
 pub mod subscription_grok;

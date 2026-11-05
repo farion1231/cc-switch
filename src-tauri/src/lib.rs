@@ -1912,6 +1912,8 @@ pub fn run() {
             commands::add_custom_icon,
             commands::rename_custom_icon,
             commands::delete_custom_icon,
+            // Claude Code subagent editor
+            commands::get_subagent_model_options,
             // OpenCode specific
             commands::import_opencode_providers_from_live,
             commands::get_opencode_live_provider_ids,
