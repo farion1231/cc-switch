@@ -8,6 +8,11 @@ export type ManagedAuthProvider =
   | "claude_official";
 
 export type CodexLoginMethod = "browser" | "device_code";
+/**
+ * 传给 `auth_start_login` 的登录方式（不传＝各服务的默认方式）。`copy_link` 只给 Claude 官方账号：
+ * 授权中心关了「自动打开浏览器」时，让 Windows 上的 Claude Code 也别自己开浏览器。
+ */
+export type ManagedLoginMethod = CodexLoginMethod | "copy_link";
 export type AuthCenterTarget =
   | ManagedAuthProvider
   | "kimi_oauth"
@@ -59,7 +64,7 @@ export async function authStartLogin(
   authProvider: ManagedAuthProvider,
   githubDomain?: string,
   targetAccountId?: string,
-  loginMethod?: CodexLoginMethod,
+  loginMethod?: ManagedLoginMethod,
 ): Promise<ManagedAuthDeviceCodeResponse> {
   return invoke<ManagedAuthDeviceCodeResponse>("auth_start_login", {
     authProvider,

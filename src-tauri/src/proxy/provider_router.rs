@@ -49,23 +49,6 @@ impl ProviderRouter {
                 .ok()
                 .flatten()
         });
-        self.select_providers_with_current(app_type, current_provider)
-            .await
-    }
-
-    /// 同 [`Self::select_providers`]，正在用的那家由调用方给出：处理请求时上下文已经读过
-    /// 一次（要读 `live-state.json` 和这一行），不用每个请求再读一遍，两处用的也一定是
-    /// 同一家。
-    pub async fn select_providers_with_current(
-        &self,
-        app_type: &str,
-        current_provider: Option<Provider>,
-    ) -> Result<Vec<Provider>, AppError> {
-        let mut result = Vec::new();
-        let mut total_providers = 0usize;
-        let mut circuit_open_count = 0usize;
-
-        // 检查该应用的自动故障转移开关是否开启（从 proxy_config 表读取）
         let auto_failover_enabled = match self.db.get_proxy_config_for_app(app_type).await {
             Ok(config) => config.auto_failover_enabled,
             Err(e) => {
@@ -73,6 +56,22 @@ impl ProviderRouter {
                 false
             }
         };
+        self.select_providers_with_current(app_type, current_provider, auto_failover_enabled)
+            .await
+    }
+
+    /// 同 [`Self::select_providers`]，正在用的那家由调用方给出：处理请求时上下文已经读过
+    /// 一次（要读 `live-state.json` 和这一行），不用每个请求再读一遍，两处用的也一定是
+    /// 同一家。故障转移开关也沿用本次请求已读取的配置。
+    pub async fn select_providers_with_current(
+        &self,
+        app_type: &str,
+        current_provider: Option<Provider>,
+        auto_failover_enabled: bool,
+    ) -> Result<Vec<Provider>, AppError> {
+        let mut result = Vec::new();
+        let mut total_providers = 0usize;
+        let mut circuit_open_count = 0usize;
 
         if auto_failover_enabled
             && current_provider
@@ -86,20 +85,8 @@ impl ProviderRouter {
             result.push(current_provider.expect("checked above"));
         } else if auto_failover_enabled {
             // 故障转移开启：仅按队列顺序依次尝试（P1 → P2 → ...）
-            let all_providers = self.db.get_all_providers(app_type)?;
-
             // 使用 DAO 返回的排序结果，确保和前端展示一致
-            let ordered_ids: Vec<String> = self
-                .db
-                .get_failover_queue(app_type)?
-                .into_iter()
-                .map(|item| item.provider_id)
-                .collect();
-
-            for provider_id in ordered_ids {
-                let Some(provider) = all_providers.get(&provider_id).cloned() else {
-                    continue;
-                };
+            for provider in self.db.get_failover_providers(app_type)? {
                 if !provider_supports_failover(app_type, &provider) {
                     continue;
                 }

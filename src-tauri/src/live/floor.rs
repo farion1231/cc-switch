@@ -191,7 +191,7 @@ pub const DESKTOP_PROFILE_FLOOR: &[&str] = &[
     "inferenceGatewayApiKey",
     "inferenceGatewayAuthScheme",
     "inferenceModels",
-    // 聚合模式写 false（列表完全由 CC Switch 决定），其余模式清掉
+    // 路由 / 聚合模式写 true（只为让本地 /v1/models 补上模型说明），直连模式清掉
     "modelDiscoveryEnabled",
 ];
 

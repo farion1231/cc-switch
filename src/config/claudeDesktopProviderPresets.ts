@@ -176,10 +176,12 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.moonshot.cn/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
+    // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+    // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文）
     modelRoutes: brandedRoutes(
-      "kimi-k2.7-code",
-      "kimi-k2.7-code",
-      "kimi-k2.7-code",
+      "kimi-k3.1-pro",
+      "kimi-k3.1-pro",
+      "kimi-k3.1-pro",
     ),
     partnerPromotionKey: "kimi",
     icon: "kimi",
@@ -197,10 +199,12 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.moonshot.ai/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
+    // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+    // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文）
     modelRoutes: brandedRoutes(
-      "kimi-k2.7-code",
-      "kimi-k2.7-code",
-      "kimi-k2.7-code",
+      "kimi-k3.1-pro",
+      "kimi-k3.1-pro",
+      "kimi-k3.1-pro",
     ),
     partnerPromotionKey: "kimi",
     icon: "kimi",
@@ -380,26 +384,6 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "grooroute",
     icon: "grooroute",
-  },
-  {
-    name: "DIT.ai",
-    websiteUrl: "https://dit.ai",
-    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
-    category: "aggregator",
-    baseUrl: "https://api.dit.ai",
-    mode: "direct",
-    apiFormat: "anthropic",
-    // 网关没有不带日期的 claude-haiku-4-5（dit.ai/models，2026-10-21），透传会让
-    // Haiku 档 404，所以映射到带日期的 ID
-    modelRoutes: mappedRoutes(
-      "claude-sonnet-5-5",
-      "claude-opus-5-5",
-      "claude-haiku-4-5-20251001",
-      true,
-    ),
-    isPartner: true,
-    partnerPromotionKey: "dit",
-    icon: "dit",
   },
   {
     name: "BuyToken",
@@ -861,10 +845,10 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "A6API",
-    websiteUrl: "https://www.a6api.com",
-    apiKeyUrl: "https://a6api.com/register?aff=AqNr",
+    websiteUrl: "https://www.a6api.vip",
+    apiKeyUrl: "https://a6api.vip/register?aff=AqNr",
     category: "aggregator",
-    baseUrl: "https://api.a6api.com",
+    baseUrl: "https://api.a6api.vip",
     mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(true),
@@ -1551,7 +1535,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiKeyUrl:
       "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002972",
     category: "cn_official",
-    baseUrl: "https://dashscope.aliyuncs.com/apps/anthropic",
+    baseUrl: "https://maas.qianwenaiapi.com/apps/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
     modelRoutes: brandedRoutes(
@@ -1560,6 +1544,10 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "qwen3.8-flash",
       true,
     ),
+    endpointCandidates: [
+      "https://maas.qianwenaiapi.com/apps/anthropic",
+      "https://dashscope.aliyuncs.com/apps/anthropic",
+    ],
     icon: "qianwenai",
     iconColor: "#624AFF",
   },
@@ -1585,7 +1573,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiKeyUrl:
       "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002978",
     category: "cn_official",
-    baseUrl: "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+    baseUrl: "https://token-plan.maas.qianwenaiapi.com/apps/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
     modelRoutes: brandedRoutes(
@@ -1594,6 +1582,10 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "qwen3.8-flash",
       true,
     ),
+    endpointCandidates: [
+      "https://token-plan.maas.qianwenaiapi.com/apps/anthropic",
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+    ],
     icon: "qianwenai",
     iconColor: "#624AFF",
   },
@@ -1608,7 +1600,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     websiteUrl: "https://home.qwencloud.com/?utm_content=g_20000002974",
     apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002975",
     category: "cn_official",
-    baseUrl: "https://dashscope-intl.aliyuncs.com/apps/anthropic",
+    baseUrl: "https://ap-southeast-1.maas.qwencloudapi.com/apps/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
     // 不挂 [1m]：qwen3.8 系官方窗口是 983616，不足 1M，
@@ -1619,6 +1611,10 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "qwen3.8-flash",
       true,
     ),
+    endpointCandidates: [
+      "https://ap-southeast-1.maas.qwencloudapi.com/apps/anthropic",
+      "https://dashscope-intl.aliyuncs.com/apps/anthropic",
+    ],
     icon: "qwencloud",
     iconColor: "#6336E7",
   },
@@ -1650,8 +1646,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "https://www.qwencloud.com/pricing/token-plan?utm_content=g_20000002980",
     apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002981",
     category: "cn_official",
-    baseUrl:
-      "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic",
+    baseUrl: "https://token-plan.maas.qwencloudapi.com/apps/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
     // 不挂 [1m]：qwen3.8 系官方窗口是 983616，不足 1M，
@@ -1662,6 +1657,10 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "qwen3.8-flash",
       true,
     ),
+    endpointCandidates: [
+      "https://token-plan.maas.qwencloudapi.com/apps/anthropic",
+      "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic",
+    ],
     icon: "qwencloud",
     iconColor: "#6336E7",
   },
