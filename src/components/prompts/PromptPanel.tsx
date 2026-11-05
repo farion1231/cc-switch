@@ -16,6 +16,10 @@ import {
 import { PromptCopyDialog } from "./PromptCopyDialog";
 import { PromptPageFrame } from "./PromptPageFrame";
 import { toggleEffectText, usePromptPageCommon } from "./usePromptPageCommon";
+import { globalPromptApps, useGlobalPromptLinks } from "./useGlobalPromptLinks";
+import GlobalPromptPanel from "./GlobalPromptPanel";
+import { GLOBAL_PROMPT_SCOPE, type PromptScope } from "@/lib/query/prompts";
+import { extractErrorMessage } from "@/utils/errorUtils";
 import {
   copyText,
   formatSize,
@@ -25,16 +29,19 @@ import {
 } from "./promptUtils";
 
 export interface PromptPanelProps {
-  appId: AppId;
+  /** 当前应用；`"global"` 是全局提示词 */
+  appId: PromptScope;
   /** 应用下拉里的应用（只列「应用」页里设为显示、且支持提示词的） */
   apps: AppId[];
-  onAppChange: (app: AppId) => void;
+  onAppChange: (scope: PromptScope) => void;
   open?: boolean;
   onInteractionBlockedChange?: (blocked: boolean) => void;
   onNavigationBlockedChange?: (blocked: boolean) => void;
 }
 
-const StandardPromptPanel: React.FC<PromptPanelProps> = ({
+type AppPromptPanelProps = Omit<PromptPanelProps, "appId"> & { appId: AppId };
+
+const StandardPromptPanel: React.FC<AppPromptPanelProps> = ({
   open = true,
   appId,
   apps,
@@ -72,6 +79,8 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
   reloadRef.current = reload;
   const { displayPath, location, fileName, invalidate, moreItems } =
     usePromptPageCommon(appId);
+  const globalLinks = useGlobalPromptLinks(appId);
+  const editingGlobal = editingId ? globalLinks.globalOf(editingId) : undefined;
 
   const dialogOpen = copyingId !== null;
   const interactionBlocked =
@@ -315,6 +324,24 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
   const handleSave = async (id: string, prompt: Prompt) => {
     if (!beginWrite()) return false;
     const isNew = !(id in prompts);
+    const linked = isNew ? undefined : globalLinks.globalOf(id);
+    if (linked) {
+      // 全局提示词的关联记录：改的是全局那份，同步到所有使用它的应用
+      try {
+        await globalLinks.saveLinked(linked, prompt);
+        if ((await reload()) === false) {
+          externalReloadQueuedRef.current = true;
+        }
+        return true;
+      } catch (error) {
+        toast.error(t("prompts.saveFailed"), {
+          description: extractErrorMessage(error) || undefined,
+        });
+        return false;
+      } finally {
+        endWrite();
+      }
+    }
     try {
       const refreshed = await savePrompt(id, prompt);
       if (refreshed === false) {
@@ -371,6 +398,35 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
       });
     } catch {
       // Error handled by hook
+    } finally {
+      endWrite();
+    }
+  };
+
+  const handlePromote = async (id: string) => {
+    if (reloadLockRef.current || writeLockRef.current || interactionBlocked) {
+      return;
+    }
+    const prompt = prompts[id];
+    if (!prompt || !beginWrite()) return;
+    try {
+      await globalLinks.promote(id);
+      if ((await reload()) === false) {
+        externalReloadQueuedRef.current = true;
+      }
+      toast.success(t("prompts.global.toast.promoted", { name: prompt.name }), {
+        id: "prompts-result",
+        description: t("prompts.global.toast.promotedSub"),
+        closeButton: true,
+        action: {
+          label: t("prompts.global.open"),
+          onClick: () => onAppChange(GLOBAL_PROMPT_SCOPE),
+        },
+      });
+    } catch (error) {
+      toast.error(t("prompts.global.toast.promoteFailed"), {
+        description: extractErrorMessage(error) || undefined,
+      });
     } finally {
       endWrite();
     }
@@ -550,12 +606,17 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
           onDelete={handleDelete}
           onCopyToApps={apps.length > 1 ? handleOpenCopy : undefined}
           onCopyContent={handleCopyContent}
+          isGlobal={globalLinks.isGlobal}
+          onPromote={(id) => void handlePromote(id)}
         />
       )}
 
       {isFormOpen && (
         <PromptFormPanel
           appId={appId}
+          globalApps={
+            editingGlobal ? globalPromptApps(editingGlobal) : undefined
+          }
           editingId={editingId || undefined}
           initialData={editingId ? prompts[editingId] : undefined}
           onSave={handleSave}
@@ -580,8 +641,19 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
   );
 };
 
-const PromptPanel: React.FC<PromptPanelProps> = (props) => {
-  if (props.appId === "pi") {
+const PromptPanel: React.FC<PromptPanelProps> = ({ appId, ...props }) => {
+  if (appId === GLOBAL_PROMPT_SCOPE) {
+    return (
+      <GlobalPromptPanel
+        open={props.open ?? true}
+        apps={props.apps}
+        onAppChange={props.onAppChange}
+        onNavigationBlockedChange={props.onNavigationBlockedChange}
+      />
+    );
+  }
+
+  if (appId === "pi") {
     return (
       <PiPromptPanel
         open={props.open ?? true}
@@ -593,7 +665,7 @@ const PromptPanel: React.FC<PromptPanelProps> = (props) => {
     );
   }
 
-  return <StandardPromptPanel {...props} />;
+  return <StandardPromptPanel appId={appId} {...props} />;
 };
 
 export default PromptPanel;
