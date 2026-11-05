@@ -828,12 +828,12 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "TeamoRouter",
     providerKey: "cc-switch-teamo-router",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     settingsConfig: {
       name: "TeamoRouter",
-      baseUrl: "https://api.teamorouter.cn/v1",
+      baseUrl: "https://api.teamorouter.com/v1",
       api: "openai-completions",
       apiKey: "",
       models: [
@@ -852,12 +852,12 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "TeamoRouter Claude",
     providerKey: "cc-switch-teamo-router-claude",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     settingsConfig: {
       name: "TeamoRouter Claude",
-      baseUrl: "https://api.teamorouter.cn",
+      baseUrl: "https://api.teamorouter.com",
       api: "anthropic-messages",
       apiKey: "",
       models: [

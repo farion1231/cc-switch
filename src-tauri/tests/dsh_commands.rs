@@ -93,6 +93,29 @@ fn dsh_provider_lifecycle_preserves_native_plugins_and_reusable_profiles() {
 }
 
 #[test]
+fn dsh_directory_setting_takes_precedence_over_dsh_home() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let home = DshHome::new();
+    let configured = home.directory.path().join("configured-dsh");
+    cc_switch_lib::update_settings(cc_switch_lib::AppSettings {
+        dsh_config_dir: Some(configured.to_string_lossy().into_owned()),
+        ..Default::default()
+    })
+    .unwrap();
+    let state = create_test_state().unwrap();
+
+    ProviderService::add(&state, AppType::Dsh, provider("draft"), true).unwrap();
+
+    let written = configured.join("profiles/web/cordis.patch.yml");
+    assert!(fs::read_to_string(&written)
+        .unwrap()
+        .contains("https://example.com/v1"));
+    assert!(!home.config().exists());
+    reset_test_fs();
+}
+
+#[test]
 fn dsh_mcp_failure_leaves_native_file_and_managed_flags_unchanged() {
     let _guard = test_mutex().lock().unwrap();
     reset_test_fs();
