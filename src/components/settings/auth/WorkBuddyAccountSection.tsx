@@ -19,7 +19,10 @@ import { signedInDate } from "@/components/settings/auth/accountDetails";
 import { workbuddyPlanLabel } from "@/components/settings/auth/workbuddyPlan";
 import { useManagedAccountUsers } from "@/components/providers/forms/hooks/useManagedAccountUsers";
 import { WORKBUDDY_LIVE_KEY } from "@/components/providers/workbuddyOfficial";
+import { WORKBUDDY_QUOTA_KEY } from "@/components/providers/workbuddyQuota";
 import { WorkBuddyAccountQuota } from "@/components/settings/auth/AccountQuota";
+import type { WorkBuddyQuota } from "@/lib/api/auth";
+import { useQuotaPlansByKey } from "@/lib/query/accountPlans";
 
 const PROVIDER = "workbuddy_account";
 const LIVE_KEY = WORKBUDDY_LIVE_KEY;
@@ -36,6 +39,10 @@ type AddHint = "already" | "signedOut" | null;
 interface WorkBuddyAccountSectionProps {
   helpSide?: "top" | "bottom";
 }
+
+/** 额度查询带回的套餐名（快照里的 planName） */
+const pickQuotaPlan = (data: unknown) =>
+  (data as WorkBuddyQuota).snapshot?.planName;
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -206,7 +213,21 @@ export function WorkBuddyAccountSection({
     if (target?.kind === "one") removeAccount(target.accountId);
   };
 
+  // 第二行开头的套餐：优先用额度查询带回的（与其他服务一致），没查到时用登录文件里记的版型
+  const quotaPlans = useQuotaPlansByKey(
+    accounts.map((account) => [
+      account.id,
+      [...WORKBUDDY_QUOTA_KEY, account.id],
+    ]),
+    pickQuotaPlan,
+  );
+
   const rows: GroupAccountRow[] = accounts.map((account) => {
+    const plan =
+      quotaPlans[account.id] ??
+      (account.account_kind
+        ? workbuddyPlanLabel(t, account.account_kind)
+        : null);
     const date = signedInDate(account.authenticated_at, i18n.language);
     const details: React.ReactNode[] = account.requires_reauth
       ? [
@@ -216,9 +237,7 @@ export function WorkBuddyAccountSection({
           }),
         ]
       : [
-          ...(account.account_kind
-            ? [workbuddyPlanLabel(t, account.account_kind)]
-            : []),
+          ...(plan ? [plan] : []),
           ...(date
             ? [
                 t("authCenter.workbuddy.addedOn", {
@@ -236,7 +255,11 @@ export function WorkBuddyAccountSection({
       needsReauth: account.requires_reauth,
       users: accountUsers([account.id]),
       quota: (
-        <WorkBuddyAccountQuota accountId={account.id} login={account.login} />
+        <WorkBuddyAccountQuota
+          accountId={account.id}
+          login={account.login}
+          planInLabel={false}
+        />
       ),
     };
   });

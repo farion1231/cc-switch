@@ -135,7 +135,9 @@ describe("WorkBuddyAccountSection", () => {
     );
     renderWithClient(<WorkBuddyAccountSection />);
 
-    const meter = await screen.findByRole("meter", { name: "体验版: 750" });
+    // 套餐在账号第二行（与其他服务一致），额度列只写积分，不重复套餐
+    const meter = await screen.findByRole("meter", { name: "workbuddy.quota.credits: 750" });
+    expect(await screen.findByText(/体验版/)).toBeInTheDocument();
     expect(meter.closest("[title]")?.getAttribute("title")).toContain(
       "workbuddy.quota.staleNotRunning",
     );

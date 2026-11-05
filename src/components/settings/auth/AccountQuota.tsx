@@ -482,6 +482,7 @@ export function workbuddyQuotaState(
   loading: boolean,
   locale: string,
   display: QuotaDisplay = "left",
+  planInLabel = true,
 ): AccountQuotaState {
   if (!quota) return loading ? { kind: "loading" } : null;
   const credits = workbuddyCreditsLine(t, quota, locale, display);
@@ -490,7 +491,9 @@ export function workbuddyQuotaState(
       kind: "rows",
       rows: [
         {
-          label: credits.planName ?? t("workbuddy.quota.credits"),
+          label:
+            (planInLabel ? credits.planName : undefined) ??
+            t("workbuddy.quota.credits"),
           line: credits.line,
         },
       ],
@@ -529,9 +532,12 @@ export function workbuddyQuotaState(
 export function WorkBuddyAccountQuota({
   accountId,
   login,
+  planInLabel = true,
 }: {
   accountId: string;
   login: string;
+  /** 额度行标签用套餐名；授权中心把套餐放在账号第二行，这里就只写「积分」 */
+  planInLabel?: boolean;
 }) {
   const { t, i18n } = useTranslation();
   const display = useQuotaDisplay();
@@ -549,7 +555,14 @@ export function WorkBuddyAccountQuota({
           reason:
             extractErrorMessage(error) || t("workbuddy.quota.unavailable"),
         }
-      : workbuddyQuotaState(t, quota, loading, i18n.language, display);
+      : workbuddyQuotaState(
+          t,
+          quota,
+          loading,
+          i18n.language,
+          display,
+          planInLabel,
+        );
   return (
     <AccountQuotaColumn
       login={login}
