@@ -52,7 +52,7 @@ struct UsageRangeChips: View {
 
     var body: some View {
         HStack(spacing: 2) {
-            ForEach(ranges, id: \.self) { range in
+            ForEach(ranges, id: \.rawValue) { range in
                 let selected = range == current
                 Button(intent: WidgetPageIntent(key: paging.key, kind: paging.kind, anchor: range.rawValue)) {
                     Text(range.shortTitle)
@@ -145,10 +145,11 @@ struct UsageChart: View {
                     y: .value("cost", point.costValue)
                 )
                 .interpolationMethod(.monotone)
+                // 填充要够实：桌面不在前台时系统按单色「鲜明」样式画小组件，太淡的填充会整片消失，只剩一条线
                 .foregroundStyle(
                     fullColor
-                        ? AnyShapeStyle(LinearGradient(colors: [Color.accentColor.opacity(0.45), Color.accentColor.opacity(0.04)], startPoint: .top, endPoint: .bottom))
-                        : AnyShapeStyle(.primary.opacity(0.3))
+                        ? AnyShapeStyle(LinearGradient(colors: [Color.accentColor.opacity(0.6), Color.accentColor.opacity(0.22)], startPoint: .top, endPoint: .bottom))
+                        : AnyShapeStyle(.primary.opacity(0.5))
                 )
                 LineMark(
                     x: .value("time", point.date, unit: unit),
