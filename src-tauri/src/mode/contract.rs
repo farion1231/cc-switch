@@ -98,8 +98,9 @@ mod tests {
     fn contract_for(row: Value, url: &str) -> Contract {
         claude(&proxy_projection(
             &ClaudeProjection::of(&row),
+            "Route",
             url,
-            ProxyAuth::FollowRow,
+            ProxyAuth::AuthToken,
             None,
         ))
     }

@@ -2907,19 +2907,24 @@ pub fn handle_profile_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool
             log::error!("未知的项目分组托盘事件: {event_id}");
             return true;
         };
-        if let Some(app_state) = app.try_state::<AppState>() {
-            if let Err(e) = app_state.db.set_current_profile_id(scope.as_str(), None) {
-                log::error!("清除当前项目失败: {e}");
+        // 与窗口里的项目命令同一把锁，否则窗口里 apply 收尾写指针会把这里的清除盖掉。
+        let app_handle = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let _serial = crate::commands::PROFILE_LOCK.blocking_lock();
+            if let Some(app_state) = app_handle.try_state::<AppState>() {
+                if let Err(e) = app_state.db.set_current_profile_id(scope.as_str(), None) {
+                    log::error!("清除当前项目失败: {e}");
+                }
             }
-        }
-        // 通知主窗口刷新（profileId=null 表示该分组已清除当前项目）
-        if let Err(e) = app.emit(
-            "profile-applied",
-            serde_json::json!({ "profileId": null, "scope": scope.as_str() }),
-        ) {
-            log::error!("发射 profile-applied 事件失败: {e}");
-        }
-        refresh_tray_menu(app);
+            // 通知主窗口刷新（profileId=null 表示该分组已清除当前项目）
+            if let Err(e) = app_handle.emit(
+                "profile-applied",
+                serde_json::json!({ "profileId": null, "scope": scope.as_str() }),
+            ) {
+                log::error!("发射 profile-applied 事件失败: {e}");
+            }
+            refresh_tray_menu(&app_handle);
+        });
         return true;
     }
 
@@ -2937,6 +2942,7 @@ pub fn handle_profile_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool
     let app_handle = app.clone();
     let profile_id = profile_id.to_string();
     tauri::async_runtime::spawn_blocking(move || {
+        let _serial = crate::commands::PROFILE_LOCK.blocking_lock();
         let Some(app_state) = app_handle.try_state::<AppState>() else {
             return;
         };

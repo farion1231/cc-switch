@@ -1186,10 +1186,22 @@ fn native_provider(
                 }
             }
             model.as_object_mut().unwrap().remove("limit");
-            if let Some(input) = model.pointer("/modalities/input").cloned() {
-                model["input"] = input;
-            }
+            // llm-pi-ai only accepts "text" | "image"; one other value (e.g. the "pdf" models.dev
+            // reports) fails validation of the whole entry and hides every provider (#9116).
+            let input: Vec<Value> = model
+                .pointer("/modalities/input")
+                .or_else(|| model.get("input"))
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter(|value| matches!(value.as_str(), Some("text" | "image")))
+                .cloned()
+                .collect();
             let object = model.as_object_mut().unwrap();
+            object.remove("input");
+            if !input.is_empty() {
+                object.insert("input".into(), Value::Array(input));
+            }
             object.remove("modalities");
             if object.get("reasoning") == Some(&Value::Bool(false)) {
                 object.insert("reasoningEfforts".into(), Value::Bool(false));
@@ -1571,6 +1583,20 @@ mod tests {
         assert_eq!(entries(&text).unwrap().len(), 1);
         assert_eq!(get_providers_from(&path, &credentials).unwrap().len(), 1);
         assert!(!text.lines().any(|line| line.trim() == "[]"));
+    }
+
+    #[test]
+    fn provider_input_keeps_only_modalities_llm_pi_ai_accepts() {
+        let mut config = editor_config();
+        config["models"]["test-model"]["modalities"]["input"] = json!(["text", "image", "pdf"]);
+        config["models"]["pdf-only"] =
+            json!({"name":"Pdf","modalities":{"input":["pdf"],"output":["text"]}});
+        let (_, native) = native_provider("gateway", &config, "").unwrap();
+        let models = native["models"].as_array().unwrap();
+        let model = |id: &str| models.iter().find(|model| model["id"] == id).unwrap();
+        assert_eq!(model("test-model")["input"], json!(["text", "image"]));
+        assert!(model("pdf-only").get("input").is_none());
+        assert!(model("pdf-only").get("modalities").is_none());
     }
 
     #[test]

@@ -1,10 +1,13 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import {
+  extractCodexAgentsMaxThreads,
   extractCodexAgentsString,
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
   extractCodexModelName,
   extractCodexProviderId,
+  extractCodexMultiAgentV2Total,
+  setCodexAgentsMaxThreads,
   setCodexBaseUrl as setCodexBaseUrlInConfig,
   setCodexAgentsString,
   setCodexModelName as setCodexModelNameInConfig,
@@ -355,6 +358,27 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     [setCodexConfig],
   );
 
+  // 子代理并发上限（`[agents] max_threads`）：Codex 的全局设置，保存时写进 live，不随供应商切换。
+  // 只收数字，清空或 0 删键，回到 Codex 默认值
+  const codexAgentMaxThreads = useMemo(
+    () => extractCodexAgentsMaxThreads(codexConfig)?.toString() ?? "",
+    [codexConfig],
+  );
+  const codexMultiAgentV2Total = useMemo(
+    () => extractCodexMultiAgentV2Total(codexConfig),
+    [codexConfig],
+  );
+
+  const handleCodexAgentMaxThreadsChange = useCallback(
+    (value: string) => {
+      const digits = value.replace(/\D/g, "").slice(0, 4);
+      setCodexConfig((prev) =>
+        setCodexAgentsMaxThreads(prev, digits ? Number(digits) : undefined),
+      );
+    },
+    [setCodexConfig],
+  );
+
   // 处理 config 变化（同步 Base URL）
   const handleCodexConfigChange = useCallback(
     (value: string) => {
@@ -403,6 +427,8 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     codexProviderIdEdited,
     codexSubagentModel,
     codexSubagentReasoningEffort,
+    codexAgentMaxThreads,
+    codexMultiAgentV2Total,
     codexCatalogModels,
     codexAutoReviewModel,
     codexAuthError,
@@ -416,6 +442,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     handleCodexProviderIdChange,
     handleCodexSubagentModelChange,
     handleCodexSubagentReasoningEffortChange,
+    handleCodexAgentMaxThreadsChange,
     handleCodexConfigChange,
     resetCodexConfig,
     getCodexAuthApiKey,

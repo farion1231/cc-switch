@@ -1,0 +1,33 @@
+{
+  "version": "4.0.24",
+  "items": [
+    {
+      "type": "new",
+      "zh": "授权中心可以关掉自动打开浏览器，登录时只复制链接",
+      "zh-TW": "授權中心可以關閉自動開啟瀏覽器，登入時只複製連結",
+      "en": "Sign in by copying the login link instead of opening the browser",
+      "ja": "ブラウザを開かず、ログインリンクのコピーでサインイン可能に"
+    },
+    {
+      "type": "fix",
+      "zh": "修复经路由用 GPT 6.1 Sol / Terra 时 max 档位被降级",
+      "zh-TW": "修正經路由使用 GPT 6.1 Sol / Terra 時 max 檔位被降級",
+      "en": "Fixed max effort being downgraded for GPT 6.1 Sol / Terra on routes",
+      "ja": "ルート経由の GPT 6.1 Sol / Terra で max が格下げされる問題を修正"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 DeepSeek Harness 第三方供应商不显示",
+      "zh-TW": "修正 DeepSeek Harness 第三方供應商不顯示",
+      "en": "Fixed third-party providers missing in DeepSeek Harness",
+      "ja": "DeepSeek Harness でサードパーティプロバイダーが表示されない問題を修正"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 WSL 上 CC Switch 启动后直接退出",
+      "zh-TW": "修正 WSL 上 CC Switch 啟動後直接退出",
+      "en": "Fixed CC Switch exiting right after launch on WSL",
+      "ja": "WSL で CC Switch が起動直後に終了する問題を修正"
+    }
+  ]
+}

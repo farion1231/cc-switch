@@ -107,6 +107,7 @@ import {
   fillCodexCatalogModel,
   metadataFilledAnything,
 } from "./modelMetadataFill";
+import { normalizeEnabledCodexChatEffortParam } from "./helpers/codexChatReasoning";
 import type {
   ClaudeApiKeyField,
   CodexApiFormat,
@@ -214,6 +215,11 @@ interface CodexFormFieldsProps {
   onSubagentModelChange?: (model: string) => void;
   subagentReasoningEffort?: string;
   onSubagentReasoningEffortChange?: (effort: string) => void;
+  // Sub-agent concurrency limit (config.toml `[agents] max_threads`): a Codex-wide
+  // setting saved into live, shown wherever the config.toml editor is (classic layout).
+  agentMaxThreads?: string;
+  multiAgentV2Total?: number;
+  onAgentMaxThreadsChange?: (value: string) => void;
 
   // API Format
   // Note: wire_api is always "responses" for Codex; apiFormat controls proxy-layer conversion
@@ -681,6 +687,9 @@ export function CodexFormFields({
   onSubagentModelChange,
   subagentReasoningEffort = "",
   onSubagentReasoningEffortChange,
+  agentMaxThreads = "",
+  multiAgentV2Total,
+  onAgentMaxThreadsChange,
   apiFormat,
   onApiFormatChange,
   copilotApiFormat = "auto",
@@ -872,7 +881,7 @@ export function CodexFormFields({
         supportsThinking: checked ? true : codexChatReasoning.supportsThinking,
         supportsEffort: checked,
         effortParam: checked
-          ? (codexChatReasoning.effortParam ?? "reasoning_effort")
+          ? normalizeEnabledCodexChatEffortParam(codexChatReasoning.effortParam)
           : "none",
       });
     },
@@ -2053,7 +2062,7 @@ export function CodexFormFields({
             placeholder={
               isGrokBuild
                 ? t("grokBuild.defaultModelPlaceholder", {
-                    defaultValue: "例如: grok-4.5",
+                    defaultValue: "例如: grok-4.7",
                   })
                 : t("codexConfig.defaultModelPlaceholder", {
                     defaultValue: "例如: gpt-5.6",
@@ -2380,6 +2389,40 @@ export function CodexFormFields({
                 defaultValue:
                   "写入 config.toml 的 model_provider 与提供商表键，和显示名称分开。留空保持默认 custom；修改后 Codex 历史会话按标识分桶，不会自动迁移。本地路由（聚合/代理）模式下仍使用 custom。",
               })}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* 子代理并发上限 —— config.toml 的 [agents] max_threads，Codex 的全局设置（官方供应商也显示），
+          保存时写进 live。留空删键，回到 Codex 默认值。 */}
+      {onAgentMaxThreadsChange && (
+        <div className="space-y-1.5">
+          {labelWithHelp(
+            t("codexConfig.agentMaxThreadsLabel", {
+              defaultValue: "子代理并发上限",
+            }),
+            t("codexConfig.agentMaxThreadsHint", {
+              defaultValue:
+                "一个 Codex 会话里最多同时开多少个子代理（不含主代理），切换供应商时保持不变。留空用 Codex 默认值（经典子 agent 工具 6 个，新版工具 3 个），最小为 1，不支持不限。新对话生效。",
+            }),
+            "codexAgentMaxThreads",
+          )}
+          <Input
+            id="codexAgentMaxThreads"
+            value={agentMaxThreads}
+            inputMode="numeric"
+            onChange={(event) => onAgentMaxThreadsChange(event.target.value)}
+            placeholder={t("codexConfig.agentMaxThreadsPlaceholder", {
+              defaultValue: "留空则用 Codex 默认值",
+            })}
+          />
+          {multiAgentV2Total !== undefined && (
+            <p className="text-xs leading-relaxed text-fg-2">
+              {t("codexConfig.agentMaxThreadsV2Override", {
+                total: multiAgentV2Total,
+                defaultValue:
+                  "config.toml 的 [features.multi_agent_v2] 写了总数 {{total}}（含主代理），使用新版子 agent 工具时以它为准。",              })}
             </p>
           )}
         </div>
