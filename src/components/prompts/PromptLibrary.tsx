@@ -26,6 +26,10 @@ interface PromptLibraryProps {
   onCopyContent?: (id: string) => void;
   /** 删除不能用时的原因；默认启用中的不能删 */
   getDeleteBlockedReason?: (id: string, prompt: Prompt) => string | undefined;
+  /** 这条是不是全局提示词的关联记录 */
+  isGlobal?: (id: string) => boolean;
+  /** 设为全局提示词 */
+  onPromote?: (id: string) => void;
 }
 
 export function filterPromptEntries(
@@ -54,6 +58,8 @@ export function PromptLibrary({
   onCopyToApps,
   onCopyContent,
   getDeleteBlockedReason,
+  isGlobal,
+  onPromote,
 }: PromptLibraryProps) {
   const { t, i18n } = useTranslation();
   const entries = useMemo(() => Object.entries(prompts), [prompts]);
@@ -108,6 +114,8 @@ export function PromptLibrary({
             onDelete={onDelete}
             onCopyToApps={onCopyToApps}
             onCopyContent={onCopyContent}
+            isGlobal={isGlobal?.(id) ?? false}
+            onPromote={onPromote}
             deleteBlockedReason={blocked}
           />
         );

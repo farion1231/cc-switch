@@ -4,7 +4,10 @@ use std::str::FromStr;
 use tauri::State;
 
 use crate::app_config::AppType;
-use crate::prompt::Prompt;
+use crate::prompt::{GlobalPrompt, Prompt};
+use crate::services::global_prompt::{
+    GlobalPromptEntry, GlobalPromptSaveResult, GlobalPromptService,
+};
 use crate::services::pi_prompt_files::{
     PiPromptFileKind, PiPromptFileService, PiPromptFileSnapshot, PiPromptTemplate,
     PiPromptTemplateService,
@@ -83,6 +86,49 @@ pub async fn get_prompt_file_location(app: String) -> Result<PromptFileLocation,
         path: path.to_string_lossy().to_string(),
         display_path: crate::prompt_files::display_path(&path),
     })
+}
+
+// ========== 全局提示词 ==========
+
+#[tauri::command]
+pub async fn get_global_prompts(
+    state: State<'_, AppState>,
+) -> Result<Vec<GlobalPromptEntry>, String> {
+    GlobalPromptService::list(&state).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn upsert_global_prompt(
+    prompt: GlobalPrompt,
+    state: State<'_, AppState>,
+) -> Result<GlobalPromptSaveResult, String> {
+    GlobalPromptService::upsert(&state, prompt).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_global_prompt(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    GlobalPromptService::delete(&state, &id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn set_global_prompt_app(
+    id: String,
+    app: String,
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    GlobalPromptService::set_app_enabled(&state, &id, app_type, enabled).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn promote_prompt_to_global(
+    app: String,
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    GlobalPromptService::promote(&state, app_type, &id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

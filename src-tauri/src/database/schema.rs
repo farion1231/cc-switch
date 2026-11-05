@@ -86,6 +86,18 @@ impl Database {
             PRIMARY KEY (id, app_type)
         )", []).map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 4b. 全局提示词表：一份内容用到多个应用。各应用的启用状态由 prompts 表里
+        // id 为 `global-<id>` 的记录现算，这里不存开关。新增表走 IF NOT EXISTS，
+        // 每次启动都会补建，不需要提升 SCHEMA_VERSION。
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS global_prompts (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, content TEXT NOT NULL,
+            description TEXT, created_at INTEGER, updated_at INTEGER
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 5. Skills 表（v3.10.0+ 统一结构）
         conn.execute(
             "CREATE TABLE IF NOT EXISTS skills (
