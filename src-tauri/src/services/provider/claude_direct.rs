@@ -287,7 +287,7 @@ fn scheduled() -> std::sync::MutexGuard<'static, Vec<(u64, Sweep)>> {
 }
 
 /// 取走所有安排下的删除（不做）。
-pub(crate) fn take_scheduled() -> Vec<Sweep> {
+fn take_scheduled() -> Vec<Sweep> {
     std::mem::take(&mut *scheduled())
         .into_iter()
         .map(|(_, sweep)| sweep)
