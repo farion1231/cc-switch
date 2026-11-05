@@ -150,7 +150,7 @@ const brandedRoutes = (
 export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   {
     name: "Claude Desktop Official",
-    websiteUrl: "https://claude.ai/download",
+    websiteUrl: "https://claude.com/download",
     category: "official",
     baseUrl: "",
     mode: "direct",
@@ -664,20 +664,17 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     category: "aggregator",
-    baseUrl: "https://api.teamorouter.cn",
+    baseUrl: "https://api.teamorouter.com",
     mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(true),
     isPartner: true,
     partnerPromotionKey: "teamorouter",
-    endpointCandidates: [
-      "https://api.teamorouter.cn",
-      "https://api.teamorouter.com",
-    ],
+    endpointCandidates: ["https://api.teamorouter.com"],
     icon: "teamorouter",
   },
   {
