@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { CopilotAuthSection } from "@/components/providers/forms/CopilotAuthSection";
 import { CodexOAuthSection } from "@/components/providers/forms/CodexOAuthSection";
@@ -8,6 +8,8 @@ import { ClaudeOfficialSection } from "@/components/providers/forms/ClaudeOffici
 import { KimiAccountLogin } from "@/components/providers/KimiAccountLogin";
 import { DshAccountLogin } from "@/components/providers/DshAccount";
 import { isMac } from "@/lib/platform";
+import { Switch } from "@/components/ui/switch";
+import { useAuthOpenBrowser, writeAuthOpenBrowser } from "@/lib/authLoginLink";
 import type { AuthCenterTarget } from "@/lib/api";
 
 interface AuthCenterPanelProps {
@@ -17,6 +19,40 @@ interface AuthCenterPanelProps {
    * 侧栏「授权中心」页的页头已经有了，就不再显示。
    */
   showIntro?: boolean;
+}
+
+/**
+ * 「登录时自动打开浏览器」：所有服务的登录共用。关掉后只复制登录链接，用户自己选浏览器打开
+ * （用独立浏览器环境管多个账号时，不让登录混进系统默认浏览器）。
+ */
+function OpenBrowserToggle() {
+  const { t } = useTranslation();
+  const openBrowser = useAuthOpenBrowser();
+  const titleId = useId();
+  const descriptionId = useId();
+  return (
+    <div className="flex shrink-0 items-center gap-4 rounded-panel border border-border bg-surface py-3 pe-4 ps-4">
+      <div className="min-w-0 flex-1 space-y-0.5">
+        <p id={titleId} className="m-0 text-body font-medium text-fg-1">
+          {t("authCenter.openBrowser.title", {
+            defaultValue: "登录时自动打开浏览器",
+          })}
+        </p>
+        <p id={descriptionId} className="m-0 text-caption text-fg-2">
+          {t("authCenter.openBrowser.description", {
+            defaultValue:
+              "关掉后只复制登录链接，由你自己选浏览器打开，适合用独立的浏览器环境管理多个账号。",
+          })}
+        </p>
+      </div>
+      <Switch
+        checked={openBrowser}
+        onCheckedChange={writeAuthOpenBrowser}
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+      />
+    </div>
+  );
 }
 
 /** 定位到某一组时，卡片上沿离正文顶部留的距离 */
@@ -153,6 +189,7 @@ export function AuthCenterPanel({
           {t("settings.authCenter.description")}
         </p>
       )}
+      <OpenBrowserToggle />
       <div ref={claudeOfficialSectionRef}>
         <ClaudeOfficialSection helpSide="bottom" />
       </div>

@@ -7,7 +7,6 @@ import { parse as parseYaml } from "yaml";
 import { http, HttpResponse } from "msw";
 import { server } from "../msw/server";
 import { renderWithQueryClient as render } from "../utils/testQueryClient";
-import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
 import { piThinkingProfiles } from "@/config/piThinkingProfiles";
 import { piProviderPresets } from "@/config/piProviderPresets";
 
@@ -1079,10 +1078,10 @@ describe("PiProviderForm", () => {
     const submitted = onSubmit.mock.calls[0][0];
     const config = JSON.parse(submitted.settingsConfig);
     expect(config.models.map((model: { id: string }) => model.id)).toEqual([
-      "kimi-k2.7-code",
-      "kimi-k3",
       "kimi-k3.1-pro",
       "kimi-k3.1-pro-highspeed",
+      "kimi-k3",
+      "kimi-k2.7-code",
       "kimi-k2.7-code-highspeed",
       "kimi-k2.6",
     ]);
@@ -1092,10 +1091,10 @@ describe("PiProviderForm", () => {
         name: model.name,
       })),
     ).toEqual([
-      { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },
-      { id: "kimi-k3", name: "Kimi K3" },
       { id: "kimi-k3.1-pro", name: "Kimi K3.1 Pro" },
       { id: "kimi-k3.1-pro-highspeed", name: "Kimi K3.1 Pro HighSpeed" },
+      { id: "kimi-k3", name: "Kimi K3" },
+      { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },
       { id: "kimi-k2.7-code-highspeed", name: "Kimi K2.7 Code HighSpeed" },
       { id: "kimi-k2.6", name: "Kimi K2.6" },
     ]);
@@ -1587,25 +1586,27 @@ describe("PiProviderForm", () => {
       http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
         HttpResponse.json([{ id: "gpt-5.6-sol", ownedBy: "proxy" }]),
       ),
-      http.get(MODELS_DEV_API_URL, () =>
-        HttpResponse.json({
-          example: {
-            api: "https://api.example.com/v1",
-            models: {
-              "gpt-5.6-sol": {
-                reasoning: true,
-                reasoning_options: [
-                  {
-                    type: "effort",
-                    values: ["low", "medium", "high", "xhigh"],
-                  },
-                ],
-                modalities: { input: ["text", "image"], output: ["text"] },
-                limit: { context: 400000, output: 128000 },
+      http.post(`${TAURI_ENDPOINT}/fetch_models_dev`, () =>
+        HttpResponse.json(
+          JSON.stringify({
+            example: {
+              api: "https://api.example.com/v1",
+              models: {
+                "gpt-5.6-sol": {
+                  reasoning: true,
+                  reasoning_options: [
+                    {
+                      type: "effort",
+                      values: ["low", "medium", "high", "xhigh"],
+                    },
+                  ],
+                  modalities: { input: ["text", "image"], output: ["text"] },
+                  limit: { context: 400000, output: 128000 },
+                },
               },
             },
-          },
-        }),
+          }),
+        ),
       ),
     );
 
@@ -1682,7 +1683,9 @@ describe("PiProviderForm", () => {
       http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
         HttpResponse.json([{ id: "kimi-k3", ownedBy: "moonshot" }]),
       ),
-      http.get(MODELS_DEV_API_URL, () => HttpResponse.error()),
+      http.post(`${TAURI_ENDPOINT}/fetch_models_dev`, () =>
+        HttpResponse.error(),
+      ),
     );
 
     render(
@@ -1744,6 +1747,12 @@ describe("PiProviderForm", () => {
     ) as HTMLTextAreaElement;
     expect(JSON.parse(configEditor.value).models[0].thinkingLevelMap).toEqual({
       off: null,
+      minimal: null,
+      low: "low",
+      medium: null,
+      high: "high",
+      xhigh: null,
+      max: "max",
     });
 
     await user.click(document.querySelector("#pi-provider-api-select")!);
@@ -1752,6 +1761,12 @@ describe("PiProviderForm", () => {
     );
     expect(JSON.parse(configEditor.value).models[0].thinkingLevelMap).toEqual({
       off: null,
+      minimal: null,
+      low: "low",
+      medium: null,
+      high: "high",
+      xhigh: null,
+      max: "max",
     });
 
     await user.click(document.querySelector("#pi-provider-api-select")!);
@@ -1762,6 +1777,12 @@ describe("PiProviderForm", () => {
     );
     expect(JSON.parse(configEditor.value).models[0].thinkingLevelMap).toEqual({
       off: null,
+      minimal: null,
+      low: "low",
+      medium: null,
+      high: "high",
+      xhigh: null,
+      max: "max",
     });
   });
 
@@ -2709,22 +2730,24 @@ describe("PiProviderForm", () => {
         http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
           HttpResponse.json(ids.map((id) => ({ id, ownedBy: "example" }))),
         ),
-        http.get(MODELS_DEV_API_URL, () =>
-          HttpResponse.json({
-            example: {
-              api: "https://api.example.com/v1",
-              models: {
-                "model-x": {
-                  reasoning: true,
-                  reasoning_options: [
-                    { type: "effort", values: ["low", "medium", "high"] },
-                  ],
-                  modalities: { input: ["text", "image"], output: ["text"] },
-                  limit: { context: 123456, output: 32000 },
+        http.post(`${TAURI_ENDPOINT}/fetch_models_dev`, () =>
+          HttpResponse.json(
+            JSON.stringify({
+              example: {
+                api: "https://api.example.com/v1",
+                models: {
+                  "model-x": {
+                    reasoning: true,
+                    reasoning_options: [
+                      { type: "effort", values: ["low", "medium", "high"] },
+                    ],
+                    modalities: { input: ["text", "image"], output: ["text"] },
+                    limit: { context: 123456, output: 32000 },
+                  },
                 },
               },
-            },
-          }),
+            }),
+          ),
         ),
       );
     }
