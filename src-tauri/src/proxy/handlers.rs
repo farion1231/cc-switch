@@ -1656,9 +1656,9 @@ async fn handle_codex_xai_native_responses_rewrite(
     if response.is_sse() {
         let builder = rewritten_sse_response_builder(status, response.headers());
 
-        let stream = response.bytes_stream();
-        // Keep the existing Copilot late-argument repair before restoring Grok names.
-        // Direct xAI responses retain their original stream pipeline.
+        // Copilot: stabilize item IDs, then repair late tool arguments, then restore
+        // Grok names. Direct xAI responses retain their original stream pipeline.
+        let stream = codex_native_responses_stream(response, ctx);
         let stream: std::pin::Pin<
             Box<dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send>,
         > = if matches!(ctx.app_type, AppType::Codex) && ctx.provider.is_github_copilot() {
@@ -1668,7 +1668,7 @@ async fn handle_codex_xai_native_responses_rewrite(
                 ),
             )
         } else {
-            Box::pin(stream)
+            stream
         };
         let restore_stream =
             transform_codex_responses_xai_sanitize::create_xai_native_responses_sse_stream(
@@ -5138,9 +5138,8 @@ mod copilot_grok_responses_tests {
         assert_eq!(response.status(), StatusCode::OK);
         assert!(response.headers().get("content-length").is_none());
         let body = response.into_body().collect().await.unwrap().to_bytes();
-        let mut buffer = std::str::from_utf8(&body).unwrap().to_string();
         let mut events = Vec::new();
-        while let Some(block) = take_sse_block(&mut buffer) {
+        for block in SseBlocks::new(std::str::from_utf8(&body).unwrap()) {
             let data = block
                 .lines()
                 .filter_map(|line| strip_sse_field(line, "data"))
@@ -5216,6 +5215,61 @@ mod copilot_grok_responses_tests {
             assert_eq!(item["arguments"], "{\"count\":2,\"ratio\":0.5}");
         }
         assert_eq!(events[4]["response"]["usage"]["input_tokens"], 3);
+    }
+
+    #[tokio::test]
+    async fn copilot_grok_rewrite_stabilizes_item_ids_before_restoring_names() {
+        let (state, mut ctx) = context(true).await;
+        ctx.outbound_model = Some("grok-4.7".to_string());
+        let call = |id: &str, arguments: &str| {
+            json!({
+                "type": "function_call", "id": id, "call_id": "call_1",
+                "name": "diagnostic__ping", "arguments": arguments
+            })
+        };
+        // Copilot reissues the item ID on every lifecycle event.
+        let input: String = [
+            json!({"type": "response.output_item.added", "output_index": 0,
+                "item": call("fc_a", "")}),
+            json!({"type": "response.function_call_arguments.delta", "output_index": 0,
+                "item_id": "fc_b", "delta": "{\"count\":2.0}"}),
+            json!({"type": "response.function_call_arguments.done", "output_index": 0,
+                "item_id": "fc_c", "arguments": "{\"count\":2.0}"}),
+            json!({"type": "response.output_item.done", "output_index": 0,
+                "item": call("fc_d", "{\"count\":2.0}")}),
+            json!({"type": "response.completed", "response": {
+                "id": "resp_1", "status": "completed", "model": "grok-4.7",
+                "output": [call("fc_e", "{\"count\":2.0}")],
+                "usage": {"input_tokens": 3, "output_tokens": 1}
+            }}),
+        ]
+        .into_iter()
+        .map(|event| format!("data: {event}\n\n"))
+        .collect();
+        let response = handle_codex_xai_native_responses_rewrite(
+            upstream(&input),
+            &ctx,
+            &state,
+            None,
+            grok_namespace_restore_map(),
+        )
+        .await
+        .unwrap();
+        let (_, events) = body_and_events(response).await;
+
+        assert_eq!(events.len(), 5);
+        assert_eq!(events[1]["item_id"], "fc_a");
+        assert_eq!(events[2]["item_id"], "fc_a");
+        assert_eq!(events[2]["arguments"], "{\"count\":2}");
+        for item in [
+            &events[0]["item"],
+            &events[3]["item"],
+            &events[4]["response"]["output"][0],
+        ] {
+            assert_eq!(item["id"], "fc_a");
+            assert_eq!(item["name"], "ping");
+            assert_eq!(item["namespace"], "diagnostic");
+        }
     }
 
     fn grok_namespace_restore_map(
