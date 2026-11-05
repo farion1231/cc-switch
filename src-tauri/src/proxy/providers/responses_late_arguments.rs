@@ -16,7 +16,7 @@ use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::Value;
 
-use crate::proxy::sse::{append_utf8_safe, strip_sse_field, take_sse_block};
+use crate::proxy::sse::{strip_sse_field, SseBuffer};
 
 /// 一个 SSE 块，解析出的事件（不是 JSON 的块为 None）。
 struct Block {
@@ -199,8 +199,7 @@ where
     E: std::error::Error + Send + 'static,
 {
     async_stream::stream! {
-        let mut buffer = String::new();
-        let mut utf8_remainder: Vec<u8> = Vec::new();
+        let mut sse = SseBuffer::new();
         let mut repair = Repair::default();
 
         tokio::pin!(stream);
@@ -208,12 +207,12 @@ where
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
-                    while let Some(block) = take_sse_block(&mut buffer) {
+                    sse.push_bytes(&bytes);
+                    while let Some(block) = sse.next_block() {
                         if block.trim().is_empty() {
                             continue;
                         }
-                        for out in repair.push(&block) {
+                        for out in repair.push(block) {
                             yield Ok(out);
                         }
                     }
@@ -228,10 +227,7 @@ where
             }
         }
 
-        if !utf8_remainder.is_empty() {
-            buffer.push_str(&String::from_utf8_lossy(&utf8_remainder));
-        }
-        let tail = std::mem::take(&mut buffer);
+        let tail = sse.take_tail();
         if !tail.trim().is_empty() {
             for out in repair.push(&tail) {
                 yield Ok(out);

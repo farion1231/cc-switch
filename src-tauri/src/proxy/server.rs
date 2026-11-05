@@ -9,6 +9,7 @@
 //! a direct (non-proxied) CLI request.
 
 use super::{
+    browser_guard,
     failover_switch::FailoverSwitchManager,
     handlers,
     log_codes::srv as log_srv,
@@ -20,6 +21,7 @@ use super::{
 use crate::database::Database;
 use axum::{
     extract::DefaultBodyLimit,
+    middleware,
     routing::{any, get, post},
     Router,
 };
@@ -421,6 +423,11 @@ impl ProxyServer {
             .route("/gemini/v1/*path", any(handlers::handle_gemini))
             // 提高默认请求体大小限制（避免 413 Payload Too Large）
             .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
+            // 拒绝网页发来的请求（最外层，读请求体之前）：见 browser_guard
+            .layer(middleware::from_fn_with_state(
+                self.state.clone(),
+                browser_guard::reject_browser_requests,
+            ))
             .with_state(self.state.clone())
     }
 
@@ -528,6 +535,67 @@ mod tests {
                 .expect("websocket handshake");
             assert_eq!(response.status(), StatusCode::UPGRADE_REQUIRED, "{path}");
         }
+        proxy.stop().await.expect("stop test proxy");
+    }
+
+    /// 网页发来的请求（no-cors POST、WebSocket、DNS rebinding）在读请求体之前就被拒绝。
+    #[tokio::test]
+    async fn browser_originated_requests_are_rejected() {
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                ..ProxyConfig::default()
+            },
+            db,
+            None,
+        );
+        let info = proxy.start().await.expect("start test proxy");
+        let base = format!("http://127.0.0.1:{}", info.port);
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+
+        let no_cors_post = client
+            .post(format!("{base}/v1/messages"))
+            .header(header::ORIGIN, "https://evil.example")
+            .header(header::CONTENT_TYPE, "text/plain")
+            .body(r#"{"model":"x","max_tokens":1,"messages":[]}"#)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(no_cors_post.status(), StatusCode::FORBIDDEN);
+
+        let websocket = client
+            .get(format!("{base}/v1/responses"))
+            .header(header::ORIGIN, "https://evil.example")
+            .header(header::CONNECTION, "Upgrade")
+            .header(header::UPGRADE, "websocket")
+            .header("sec-websocket-version", "13")
+            .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(websocket.status(), StatusCode::FORBIDDEN);
+
+        let rebinding = client
+            .get(format!("{base}/status"))
+            .header(header::HOST, format!("rebind.evil.example:{}", info.port))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(rebinding.status(), StatusCode::FORBIDDEN);
+
+        let cli = client.get(format!("{base}/health")).send().await.unwrap();
+        assert_eq!(cli.status(), StatusCode::OK);
+
+        // Claude Desktop 由网关 token 把关，带 Origin 也交给它自己的鉴权（401 而非 403）
+        let desktop = client
+            .get(format!("{base}/claude-desktop/v1/models"))
+            .header(header::ORIGIN, "app://claude")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(desktop.status(), StatusCode::UNAUTHORIZED);
+
         proxy.stop().await.expect("stop test proxy");
     }
 

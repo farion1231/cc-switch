@@ -493,6 +493,34 @@ describe("Codex Copilot provider form", () => {
     expect(screen.getByText("模型列表")).toBeVisible();
   });
 
+  it("repairs an enabled reasoning effort configuration whose parameter is none", async () => {
+    const onSubmit = renderForm({
+      providerType: "github_copilot",
+      apiFormat: "openai_chat",
+      codexCopilotApiFormat: "openai_chat",
+      codexChatReasoning: {
+        supportsThinking: true,
+        supportsEffort: true,
+        thinkingParam: "none",
+        effortParam: "none",
+        effortValueMode: "passthrough",
+        outputFormat: "auto",
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "save" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+
+    expect(onSubmit.mock.calls[0][0].meta?.codexChatReasoning).toEqual({
+      supportsThinking: true,
+      supportsEffort: true,
+      thinkingParam: "none",
+      effortParam: "reasoning_effort",
+      effortValueMode: "passthrough",
+      outputFormat: "auto",
+    });
+  });
+
   it("does not offer preset switching while editing an existing Copilot card", () => {
     renderForm({ providerType: "github_copilot", apiFormat: "openai_chat" });
     expect(
