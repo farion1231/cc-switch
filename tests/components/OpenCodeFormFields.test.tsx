@@ -14,7 +14,6 @@ import { OpenCodeFormFields } from "@/components/providers/forms/OpenCodeFormFie
 import { Form } from "@/components/ui/form";
 import { fetchModelsForConfig } from "@/lib/api/model-fetch";
 import type { PresetModelSource } from "@/lib/modelMetadata";
-import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
 import { http, HttpResponse } from "msw";
 import { toast } from "sonner";
 import { server } from "../msw/server";
@@ -108,7 +107,11 @@ describe("OpenCodeFormFields", () => {
   });
 
   it("shows each model's window and capabilities and fills picked models quietly", async () => {
-    server.use(http.get(MODELS_DEV_API_URL, () => HttpResponse.error()));
+    server.use(
+      http.post("http://tauri.local/fetch_models_dev", () =>
+        HttpResponse.error(),
+      ),
+    );
     const toastInfo = vi.spyOn(toast, "info");
     vi.mocked(fetchModelsForConfig).mockResolvedValue([
       { id: "model-a", ownedBy: null },
