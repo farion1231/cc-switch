@@ -7,6 +7,7 @@ mod browser_guard;
 pub mod cache_injector;
 pub mod circuit_breaker;
 pub mod cloudflared;
+mod classifier_guard;
 pub(crate) mod codex_quota_protection;
 pub(crate) mod content_encoding;
 pub mod copilot_optimizer;
