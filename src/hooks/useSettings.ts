@@ -62,6 +62,7 @@ const DIRECTORY_KEYS = [
   "hermesConfigDir",
   "piConfigDir",
   "ompConfigDir",
+  "agyConfigDir",
 ] as const;
 
 const sanitizeDir = (value?: string | null): string | undefined => {
@@ -135,6 +136,7 @@ export function useSettings(): UseSettingsResult {
       hermes: sanitizeDir(data?.hermesConfigDir),
       pi: sanitizeDir(data?.piConfigDir),
       omp: sanitizeDir(data?.ompConfigDir),
+      agy: sanitizeDir(data?.agyConfigDir),
     });
     setRequiresRestart(false);
   }, [
@@ -223,6 +225,7 @@ export function useSettings(): UseSettingsResult {
         );
         const sanitizedPiDir = sanitizeDir(mergedSettings.piConfigDir);
         const sanitizedOmpDir = sanitizeDir(mergedSettings.ompConfigDir);
+        const sanitizedAgyDir = sanitizeDir(mergedSettings.agyConfigDir);
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
@@ -239,6 +242,7 @@ export function useSettings(): UseSettingsResult {
           openclawConfigDir: sanitizedOpenclawDir,
           piConfigDir: sanitizedPiDir,
           ompConfigDir: sanitizedOmpDir,
+          agyConfigDir: sanitizedAgyDir,
           language: mergedSettings.language,
         };
 
@@ -360,6 +364,7 @@ export function useSettings(): UseSettingsResult {
         );
         const sanitizedPiDir = sanitizeDir(mergedSettings.piConfigDir);
         const sanitizedOmpDir = sanitizeDir(mergedSettings.ompConfigDir);
+        const sanitizedAgyDir = sanitizeDir(mergedSettings.agyConfigDir);
         const previousAppDir = initialAppConfigDir;
         const previousClaudeDir = sanitizeDir(data?.claudeConfigDir);
         const previousCodexDir = sanitizeDir(data?.codexConfigDir);
@@ -385,6 +390,7 @@ export function useSettings(): UseSettingsResult {
           openclawConfigDir: sanitizedOpenclawDir,
           piConfigDir: sanitizedPiDir,
           ompConfigDir: sanitizedOmpDir,
+          agyConfigDir: sanitizedAgyDir,
           language: mergedSettings.language,
         };
 
