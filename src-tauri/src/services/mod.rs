@@ -36,6 +36,7 @@ pub mod skill;
 pub mod speedtest;
 pub mod sql_helpers;
 pub mod stream_check;
+pub mod subagent;
 pub mod subscription;
 pub mod subscription_agy;
 pub mod subscription_grok;
@@ -55,6 +56,7 @@ pub use proxy::ProxyService;
 #[allow(unused_imports)]
 pub use skill::{DiscoverableSkill, Skill, SkillRepo, SkillService};
 pub use speedtest::{EndpointLatency, SpeedtestService};
+pub use subagent::SubagentService;
 pub use usage_cache::UsageCache;
 #[allow(unused_imports)]
 pub use usage_stats::{

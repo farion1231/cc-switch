@@ -396,6 +396,30 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 20. Subagents 表（Claude Code 用户级子代理 ~/.claude/agents/*.md）
+        //     content 存完整原始 markdown，是唯一事实源；written_hash 是最近一次
+        //     由 CC Switch 写入的磁盘文件哈希，用来判断磁盘文件是否仍归我们管。
+        //     纯新增表，CREATE IF NOT EXISTS 即可，不需要提升 SCHEMA_VERSION。
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS subagents (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                file_name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                content TEXT NOT NULL,
+                enabled BOOLEAN NOT NULL DEFAULT 1,
+                source TEXT NOT NULL DEFAULT 'local',
+                repo_owner TEXT,
+                repo_name TEXT,
+                repo_path TEXT,
+                written_hash TEXT,
+                created_at INTEGER,
+                updated_at INTEGER
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 修复跑过未发布开发版的库：current 标记曾是全局 key，现按应用分组
         // （随 v12 定稿为 current_profile_id_<scope>，不单独 bump 版本）
         if conn

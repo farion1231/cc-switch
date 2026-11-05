@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
 use crate::error::AppError;
-use crate::services::{model_pricing, PromptService, ProviderService};
+use crate::services::{model_pricing, PromptService, ProviderService, SubagentService};
 use crate::settings;
 use crate::store::AppState;
 
@@ -13,6 +13,12 @@ pub(crate) fn run_post_import_sync(app_state: &AppState) -> Result<(), AppError>
     }
     if let Err(error) = PromptService::sync_all_to_live(app_state) {
         failures.push(format!("prompts: {error}"));
+    }
+    // 恢复的数据库可能带来本机还没有的子代理；只补写缺失文件，已存在的不覆盖
+    if let Err(error) =
+        SubagentService::sync_after_restore(&app_state.db, &SubagentService::agents_dir())
+    {
+        failures.push(format!("subagents: {error}"));
     }
     if let Err(error) = model_pricing::sync_local_model_pricing(&app_state.db) {
         failures.push(format!("model pricing: {error}"));
