@@ -285,6 +285,10 @@ function createCatalogRow(seed?: Partial<CodexCatalogModel>): CodexCatalogRow {
     ...(seed?.defaultReasoningLevel
       ? { defaultReasoningLevel: seed.defaultReasoningLevel }
       : {}),
+    ...(seed?.serviceTiers ? { serviceTiers: seed.serviceTiers } : {}),
+    ...(seed?.defaultServiceTier
+      ? { defaultServiceTier: seed.defaultServiceTier }
+      : {}),
   };
 }
 
@@ -399,7 +403,10 @@ function catalogRowsMatchModels(
       JSON.stringify(row.reasoningLevels ?? []) ===
         JSON.stringify(incoming.reasoningLevels ?? []) &&
       (row.defaultReasoningLevel ?? "") ===
-        (incoming.defaultReasoningLevel ?? "")
+        (incoming.defaultReasoningLevel ?? "") &&
+      JSON.stringify(row.serviceTiers ?? null) ===
+        JSON.stringify(incoming.serviceTiers ?? null) &&
+      (row.defaultServiceTier ?? "") === (incoming.defaultServiceTier ?? "")
     );
   });
 }

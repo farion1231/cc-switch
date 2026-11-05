@@ -3,6 +3,70 @@ import { normalizeCodexCatalogModelsForSave } from "@/components/providers/forms
 import { mapCodexCatalogModelForForm } from "@/components/providers/forms/hooks/useCodexConfigState";
 
 describe("ProviderForm Codex catalog helpers", () => {
+  it("round-trips explicitly declared service tiers in both naming conventions", () => {
+    const priority = {
+      id: "priority",
+      name: "Fast",
+      description: "Priority processing",
+    };
+    const stored = [
+      { model: "gpt-6.1-sol", serviceTiers: [priority] },
+      {
+        model: "relay/gpt-6-sol",
+        service_tiers: [priority],
+        default_service_tier: "priority",
+      },
+      { model: "standard-only", serviceTiers: [] },
+      { model: "unknown-model" },
+    ];
+    expect(
+      normalizeCodexCatalogModelsForSave(
+        stored.map(mapCodexCatalogModelForForm),
+      ),
+    ).toEqual([
+      { model: "gpt-6.1-sol", serviceTiers: [priority] },
+      {
+        model: "relay/gpt-6-sol",
+        serviceTiers: [priority],
+        defaultServiceTier: "priority",
+      },
+      { model: "standard-only", serviceTiers: [] },
+      { model: "unknown-model" },
+    ]);
+  });
+
+  it("normalizes service tiers without retaining unsupported defaults", () => {
+    expect(
+      normalizeCodexCatalogModelsForSave([
+        {
+          model: "relay",
+          serviceTiers: [
+            {
+              id: " priority ",
+              name: " Fast ",
+              description: " Priority processing ",
+            },
+            { id: "priority", name: "Duplicate", description: "" },
+            { id: " ", name: "Invalid", description: "" },
+          ],
+          defaultServiceTier: " priority ",
+        },
+        { model: "unsupported", defaultServiceTier: "priority" },
+        { model: "standard", defaultServiceTier: "default" },
+      ]),
+    ).toEqual([
+      {
+        model: "relay",
+        serviceTiers: [
+          { id: "priority", name: "Fast", description: "Priority processing" },
+        ],
+        defaultServiceTier: "priority",
+      },
+      { model: "unsupported" },
+      { model: "standard", defaultServiceTier: "default" },
+    ]);
+  });
+
   it("normalizes catalog rows and removes empty or duplicate models", () => {
     expect(
       normalizeCodexCatalogModelsForSave([

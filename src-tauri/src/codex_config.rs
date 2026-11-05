@@ -1334,8 +1334,7 @@ fn codex_catalog_model_entry(
     entry_obj.insert("context_window".to_string(), json!(context_window));
     entry_obj.insert("max_context_window".to_string(), json!(context_window));
     entry_obj.insert("priority".to_string(), json!(1000 + priority));
-    entry_obj.insert("additional_speed_tiers".to_string(), json!([]));
-    entry_obj.insert("service_tiers".to_string(), json!([]));
+    apply_codex_catalog_service_tiers(entry_obj, spec);
     entry_obj.insert("availability_nux".to_string(), Value::Null);
     entry_obj.insert("upgrade".to_string(), Value::Null);
 
@@ -1416,6 +1415,77 @@ fn codex_catalog_model_entry(
     entry
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct CodexCatalogServiceTier {
+    id: String,
+    name: String,
+    description: String,
+}
+
+fn codex_catalog_service_tiers(config: &Value) -> Option<Vec<CodexCatalogServiceTier>> {
+    let values = config
+        .get("serviceTiers")
+        .or_else(|| config.get("service_tiers"))?
+        .as_array()?;
+    let mut seen = HashSet::new();
+    Some(
+        values
+            .iter()
+            .filter_map(|tier| {
+                let id = tier.get("id")?.as_str()?.trim();
+                if id.is_empty() || !seen.insert(id.to_string()) {
+                    return None;
+                }
+                Some(CodexCatalogServiceTier {
+                    id: id.to_string(),
+                    name: tier
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|name| !name.is_empty())
+                        .unwrap_or(id)
+                        .to_string(),
+                    description: tier
+                        .get("description")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string(),
+                })
+            })
+            .collect(),
+    )
+}
+
+/// Capability declarations are opt-in: never infer paid tiers from a template
+/// or a GPT-like alias, and never select Fast on the user's behalf.
+fn apply_codex_catalog_service_tiers(
+    entry: &mut serde_json::Map<String, Value>,
+    spec: &CodexCatalogModelSpec,
+) {
+    let tiers = spec.service_tiers.as_deref().unwrap_or_default();
+    entry.insert("service_tiers".to_string(), json!(tiers));
+    let fast = tiers.iter().any(|tier| tier.id == "priority");
+    entry.insert(
+        "additional_speed_tiers".to_string(),
+        if fast { json!(["fast"]) } else { json!([]) },
+    );
+    let default = spec
+        .default_service_tier
+        .as_deref()
+        .filter(|id| *id == "default" || tiers.iter().any(|tier| tier.id == *id));
+    entry.insert("default_service_tier".to_string(), json!(default));
+}
+
+fn restore_codex_catalog_service_tiers(entry: &Value, restored: &mut Value) {
+    if let Some(tiers) = codex_catalog_service_tiers(entry).filter(|tiers| !tiers.is_empty()) {
+        restored["serviceTiers"] = json!(tiers);
+    }
+    if let Some(default) = entry.get("default_service_tier").and_then(Value::as_str) {
+        restored["defaultServiceTier"] = json!(default);
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct CodexCatalogModelSpec {
     model: String,
@@ -1450,6 +1520,10 @@ struct CodexCatalogModelSpec {
     /// template default is kept if it is still in the list, otherwise the last
     /// (highest) declared level wins.
     default_reasoning_level: Option<String>,
+    /// Explicit upstream tier support; an empty list opts out of all tiers.
+    service_tiers: Option<Vec<CodexCatalogServiceTier>>,
+    /// Only accepted when advertised above, or the explicit standard "default".
+    default_service_tier: Option<String>,
 }
 
 fn codex_catalog_model_specs(settings: &Value) -> Vec<CodexCatalogModelSpec> {
@@ -1537,6 +1611,14 @@ fn codex_catalog_model_specs(settings: &Value) -> Vec<CodexCatalogModelSpec> {
             .map(str::trim)
             .filter(|level| !level.is_empty())
             .map(str::to_string);
+        let service_tiers = codex_catalog_service_tiers(model_config);
+        let default_service_tier = model_config
+            .get("defaultServiceTier")
+            .or_else(|| model_config.get("default_service_tier"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|tier| !tier.is_empty())
+            .map(str::to_string);
 
         specs.push(CodexCatalogModelSpec {
             model: model.to_string(),
@@ -1547,6 +1629,8 @@ fn codex_catalog_model_specs(settings: &Value) -> Vec<CodexCatalogModelSpec> {
             base_instructions,
             reasoning_levels,
             default_reasoning_level,
+            service_tiers,
+            default_service_tier,
         });
     }
 
@@ -2109,6 +2193,9 @@ fn codex_vendor_catalog_model_entry(
     // The vendor file is the base (its own levels stay when no override is
     // declared); its default_reasoning_level is the fallback.
     apply_codex_reasoning_level_override(entry_obj, vendor_default.as_deref(), spec);
+    if spec.service_tiers.is_some() || spec.default_service_tier.is_some() {
+        apply_codex_catalog_service_tiers(entry_obj, spec);
+    }
 
     // Defensive: if a future codex parser requires a field the vendor file
     // predates, backfill only whitelisted parser-required keys.
@@ -2320,6 +2407,7 @@ fn codex_official_model_entry(
     // 速度档、升级提示归官方账号。
     obj.insert("service_tiers".to_string(), json!([]));
     obj.insert("additional_speed_tiers".to_string(), json!([]));
+    obj.insert("default_service_tier".to_string(), Value::Null);
     obj.insert("availability_nux".to_string(), Value::Null);
     obj.insert("upgrade".to_string(), Value::Null);
     // 第三方不支持 Responses Lite 协议。
@@ -2427,6 +2515,9 @@ fn codex_catalog_from_specs_for_row(
                     default_context_window,
                 ),
             };
+            if let Some(obj) = entry.as_object_mut() {
+                apply_codex_catalog_service_tiers(obj, spec);
+            }
             // A changed window needs a matching compaction threshold in single-provider
             // catalogs too. Otherwise an official/template threshold can stay at 244800
             // even after the user requests 1M. Keep untouched official defaults intact.
@@ -2942,6 +3033,7 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
                 {
                     restored["contextWindow"] = json!(window);
                 }
+                restore_codex_catalog_service_tiers(entry, &mut restored);
                 entries.push(restored);
                 continue;
             }
@@ -2987,7 +3079,9 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
             }
         }
 
-        entries.push(Value::Object(obj));
+        let mut restored = Value::Object(obj);
+        restore_codex_catalog_service_tiers(entry, &mut restored);
+        entries.push(restored);
     }
 
     if entries.is_empty() {
@@ -3898,6 +3992,8 @@ experimental_bearer_token = "stale-table-key"
             base_instructions: None,
             reasoning_levels: None,
             default_reasoning_level: None,
+            service_tiers: None,
+            default_service_tier: None,
         }];
         let catalog = codex_model_catalog_from_specs(
             &specs,
@@ -4187,6 +4283,31 @@ experimental_bearer_token = "stale-table-key"
     }
 
     #[test]
+    fn vendor_catalog_honors_explicit_service_tiers_without_changing_other_capabilities() {
+        let settings = json!({ "modelCatalog": { "models": [{
+            "model": "deepseek-v4-flash", "serviceTiers": [{
+                "id": "priority", "name": "Fast", "description": "Priority processing"
+            }]
+        }] }});
+        let profile = CodexCatalogToolProfile::NativeResponses;
+        let catalog = codex_model_catalog_from_settings(&settings, DEEPSEEK_NATIVE_CONFIG, profile)
+            .unwrap()
+            .unwrap();
+        let baseline = codex_model_catalog_from_settings(
+            &json!({ "modelCatalog": { "models": [{ "model": "deepseek-v4-flash" }] }}),
+            DEEPSEEK_NATIVE_CONFIG,
+            profile,
+        )
+        .unwrap()
+        .unwrap();
+        let mut expected = baseline["models"][0].clone();
+        expected["service_tiers"] = settings["modelCatalog"]["models"][0]["serviceTiers"].clone();
+        expected["additional_speed_tiers"] = json!(["fast"]);
+        expected["default_service_tier"] = Value::Null;
+        assert_eq!(catalog["models"][0], expected);
+    }
+
+    #[test]
     fn vendor_catalog_honors_per_model_reasoning_levels() {
         // The DeepSeek official catalog declares low/high/max; a per-model
         // override must win over the official entry.
@@ -4419,6 +4540,8 @@ experimental_bearer_token = "stale-table-key"
                 base_instructions: None,
                 reasoning_levels: None,
                 default_reasoning_level: None,
+                service_tiers: None,
+                default_service_tier: None,
             },
             CodexCatalogModelSpec {
                 model: "qwen/qwen3-coder-plus".to_string(),
@@ -4429,6 +4552,8 @@ experimental_bearer_token = "stale-table-key"
                 base_instructions: None,
                 reasoning_levels: None,
                 default_reasoning_level: None,
+                service_tiers: None,
+                default_service_tier: None,
             },
             CodexCatalogModelSpec {
                 model: "deepseek/deepseek-v4-flash-0731".to_string(),
@@ -4449,6 +4574,8 @@ experimental_bearer_token = "stale-table-key"
                 base_instructions: None,
                 reasoning_levels: None,
                 default_reasoning_level: None,
+                service_tiers: None,
+                default_service_tier: None,
             },
             CodexCatalogModelSpec {
                 model: "deepseek-v4-flash".to_string(),
@@ -4459,6 +4586,8 @@ experimental_bearer_token = "stale-table-key"
                 base_instructions: None,
                 reasoning_levels: None,
                 default_reasoning_level: None,
+                service_tiers: None,
+                default_service_tier: None,
             },
             CodexCatalogModelSpec {
                 model: "custom-text-alias".to_string(),
@@ -4469,6 +4598,8 @@ experimental_bearer_token = "stale-table-key"
                 base_instructions: None,
                 reasoning_levels: None,
                 default_reasoning_level: None,
+                service_tiers: None,
+                default_service_tier: None,
             },
         ];
 
@@ -4785,6 +4916,8 @@ wire_api = "responses"
             base_instructions: None,
             reasoning_levels: None,
             default_reasoning_level: None,
+            service_tiers: None,
+            default_service_tier: None,
         }];
         let mut proxy_template = template.clone();
         proxy_template["apply_patch_tool_type"] = json!("freeform");
@@ -5258,6 +5391,81 @@ wire_api = "responses"
         assert!(glm.get("model_messages").is_none());
         assert!(glm.get("apply_patch_tool_type").is_none());
         assert_eq!(glm["shell_type"], "shell_command");
+    }
+
+    #[test]
+    fn explicit_service_tiers_survive_catalog_generation_and_round_trip() {
+        with_official_models(official_gpt_rows(), || {
+            let priority = json!({
+                "id": "priority", "name": "Fast", "description": "Priority processing"
+            });
+            let input = json!([
+                { "model": "gpt-6-sol", "serviceTiers": [priority.clone()] },
+                { "model": "relay/gpt-6-sol", "service_tiers": [priority],
+                  "default_service_tier": "priority" },
+                { "model": "custom-model", "serviceTiers": [
+                    { "id": "flex", "name": "Flex", "description": "Flexible processing" }
+                ] },
+                { "model": "standard-only", "serviceTiers": [], "defaultServiceTier": "default" }
+            ]);
+            for profile in [
+                CodexCatalogToolProfile::NativeResponses,
+                CodexCatalogToolProfile::ProxyChat,
+            ] {
+                let models = catalog_for(input.clone(), "", profile);
+                assert_eq!(models[0]["service_tiers"][0]["id"], "priority");
+                assert_eq!(models[0]["additional_speed_tiers"], json!(["fast"]));
+                assert_eq!(models[0]["default_service_tier"], Value::Null);
+                assert_eq!(models[1]["default_service_tier"], "priority");
+                assert_eq!(models[2]["service_tiers"][0]["id"], "flex");
+                assert_eq!(models[2]["additional_speed_tiers"], json!([]));
+                assert_eq!(models[3]["service_tiers"], json!([]));
+                assert_eq!(models[3]["default_service_tier"], "default");
+                let catalog = json!({ "models": models });
+                let restored =
+                    build_simplified_catalog_from_texts("", &catalog.to_string()).unwrap();
+                let regenerated = codex_model_catalog_from_settings(
+                    &json!({ "modelCatalog": restored }),
+                    "",
+                    profile,
+                )
+                .unwrap()
+                .unwrap();
+                assert_eq!(regenerated, catalog);
+            }
+        });
+    }
+
+    #[test]
+    fn service_tiers_do_not_inherit_template_defaults_or_select_unadvertised_tiers() {
+        let mut official = official_gpt_rows();
+        official[0]["default_service_tier"] = json!("priority");
+        with_official_models(official, || {
+            let models = catalog_for(
+                json!([
+                    { "model": "gpt-6-sol" },
+                    { "model": "gpt-6-sol-alias", "serviceTiers": [], "defaultServiceTier": "priority" },
+                    { "model": "custom-model", "serviceTiers": [null, {},
+                        { "id": " " }, { "id": " priority ", "name": " Fast " },
+                        { "id": "priority", "name": "Duplicate" }
+                    ], "defaultServiceTier": "ultrafast" }
+                ]),
+                "",
+                CodexCatalogToolProfile::NativeResponses,
+            );
+            for model in &models {
+                assert_eq!(model["default_service_tier"], Value::Null);
+            }
+            assert_eq!(models[0]["service_tiers"], json!([]));
+            assert_eq!(models[0]["additional_speed_tiers"], json!([]));
+            assert_eq!(models[1]["service_tiers"], json!([]));
+            assert_eq!(
+                models[2]["service_tiers"],
+                json!([
+                    { "id": "priority", "name": "Fast", "description": "" }
+                ])
+            );
+        });
     }
 
     #[test]
