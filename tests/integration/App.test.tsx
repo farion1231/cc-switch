@@ -1,3 +1,6 @@
+import App from "@/App";
+import "@/components/openclaw/EnvPanel";
+import "@/components/hermes/HermesMemoryPanel";
 import { Suspense, type ComponentType } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -269,7 +272,6 @@ describe("App integration with MSW", () => {
   });
 
   it("covers basic provider flows via real hooks", async () => {
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() =>
@@ -286,12 +288,14 @@ describe("App integration with MSW", () => {
     );
 
     fireEvent.click(screen.getByText("usage"));
-    expect(screen.getByTestId("usage-modal")).toBeInTheDocument();
+    expect(await screen.findByTestId("usage-modal")).toBeInTheDocument();
     fireEvent.click(screen.getByText("save-script"));
     fireEvent.click(screen.getByText("close-usage"));
 
     fireEvent.click(screen.getByText("create"));
-    expect(screen.getByTestId("add-provider-dialog")).toBeInTheDocument();
+    expect(
+      await screen.findByTestId("add-provider-dialog"),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByText("confirm-add"));
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toMatch(
@@ -300,7 +304,9 @@ describe("App integration with MSW", () => {
     );
 
     fireEvent.click(screen.getByText("edit"));
-    expect(screen.getByTestId("edit-provider-dialog")).toBeInTheDocument();
+    expect(
+      await screen.findByTestId("edit-provider-dialog"),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByText("confirm-edit"));
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toMatch(
@@ -342,7 +348,6 @@ describe("App integration with MSW", () => {
       }),
     );
 
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() => expect(modeRequests).toBeGreaterThan(0));
@@ -360,7 +365,6 @@ describe("App integration with MSW", () => {
   });
 
   it("resets provider view scroll when switching apps", async () => {
-    const { default: App } = await import("@/App");
     const { container } = renderApp(App);
 
     await waitFor(() =>
@@ -397,7 +401,6 @@ describe("App integration with MSW", () => {
   }, 10_000);
 
   it("closes provider panels when navigating away from the app page", async () => {
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() =>
@@ -409,7 +412,9 @@ describe("App integration with MSW", () => {
     // 面板只盖住内容区，侧栏还能点：切应用时编辑面板必须关掉，否则 Claude 的
     // 供应商会以 appId=codex 保存进 Codex
     fireEvent.click(screen.getByText("edit"));
-    expect(screen.getByTestId("edit-provider-dialog")).toBeInTheDocument();
+    expect(
+      await screen.findByTestId("edit-provider-dialog"),
+    ).toBeInTheDocument();
     fireEvent.click(sidebarApp("Codex"));
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
@@ -421,7 +426,7 @@ describe("App integration with MSW", () => {
     ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByText("usage"));
-    expect(screen.getByTestId("usage-modal")).toBeInTheDocument();
+    expect(await screen.findByTestId("usage-modal")).toBeInTheDocument();
     fireEvent.click(sidebarApp("nav.usage"));
     await waitFor(() =>
       expect(screen.queryByTestId("usage-modal")).not.toBeInTheDocument(),
@@ -434,7 +439,9 @@ describe("App integration with MSW", () => {
       ),
     );
     fireEvent.click(screen.getByText("create"));
-    expect(screen.getByTestId("add-provider-dialog")).toBeInTheDocument();
+    expect(
+      await screen.findByTestId("add-provider-dialog"),
+    ).toBeInTheDocument();
     fireEvent.keyDown(window, { key: ",", metaKey: true });
     expect(await screen.findByTestId("settings-page")).toBeInTheDocument();
     expect(screen.queryByTestId("add-provider-dialog")).not.toBeInTheDocument();
@@ -445,13 +452,12 @@ describe("App integration with MSW", () => {
       firstRunNoticeConfirmed: true,
       newLayoutNoticeConfirmed: true,
     });
-    const { default: App } = await import("@/App");
     renderApp(App);
     await screen.findByTestId("provider-list");
     fireEvent.click(
       screen.getByRole("button", { name: "provider.bulkImport.title" }),
     );
-    expect(screen.getByTestId("bulk-import-dialog")).toHaveTextContent(
+    expect(await screen.findByTestId("bulk-import-dialog")).toHaveTextContent(
       "claude",
     );
     fireEvent.click(sidebarApp("Codex"));
@@ -463,10 +469,14 @@ describe("App integration with MSW", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "provider.bulkImport.title" }),
     );
-    expect(screen.getByTestId("bulk-import-dialog")).toHaveTextContent("codex");
-    fireEvent.click(screen.getByText("start-import"));
+    expect(await screen.findByTestId("bulk-import-dialog")).toHaveTextContent(
+      "codex",
+    );
+    fireEvent.click(await screen.findByText("start-import"));
     fireEvent.click(sidebarApp("Claude Code"));
-    expect(screen.getByTestId("bulk-import-dialog")).toHaveTextContent("codex");
+    expect(await screen.findByTestId("bulk-import-dialog")).toHaveTextContent(
+      "codex",
+    );
     fireEvent.click(screen.getByText("finish-import"));
     fireEvent.input(screen.getByLabelText("bulk-source"), {
       target: { value: "draft" },
@@ -504,21 +514,20 @@ describe("App integration with MSW", () => {
           return HttpResponse.json(value);
         }),
       );
-      const { default: App } = await import("@/App");
       renderApp(App);
       await screen.findByTestId("provider-list");
       await waitFor(() => expect(takes).toBeGreaterThan(0));
       fireEvent.click(
         screen.getByRole("button", { name: "provider.bulkImport.title" }),
       );
-      fireEvent.click(screen.getByText("start-import"));
+      fireEvent.click(await screen.findByText("start-import"));
       navigation = { app: "codex", intent, providerId: "codex-1" };
       await act(async () => emitTauriEvent("tray-navigate", null));
       await waitFor(() => expect(takes).toBeGreaterThan(1));
       expect(
         screen.queryByTestId("add-provider-dialog"),
       ).not.toBeInTheDocument();
-      expect(screen.getByTestId("bulk-import-dialog")).toHaveTextContent(
+      expect(await screen.findByTestId("bulk-import-dialog")).toHaveTextContent(
         "claude",
       );
       fireEvent.click(screen.getByText("finish-import"));
@@ -529,7 +538,6 @@ describe("App integration with MSW", () => {
   );
 
   it("asks before leaving an editor page with unsaved changes", async () => {
-    const { default: App } = await import("@/App");
     renderApp(App);
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
@@ -558,7 +566,9 @@ describe("App integration with MSW", () => {
       "common.unsavedLeaveMessage",
     );
     fireEvent.click(screen.getByText("cancel-delete"));
-    expect(screen.getByTestId("edit-provider-dialog")).toBeInTheDocument();
+    expect(
+      await screen.findByTestId("edit-provider-dialog"),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("provider-list").textContent).toContain(
       "codex-1",
     );
@@ -576,7 +586,6 @@ describe("App integration with MSW", () => {
   }, 10_000);
 
   it("keeps the unsaved guard when re-clicking the current page", async () => {
-    const { default: App } = await import("@/App");
     renderApp(App);
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
@@ -592,7 +601,7 @@ describe("App integration with MSW", () => {
     // 再点当前页：不离开，所以不问，也不能把未保存登记清掉
     fireEvent.click(sidebarApp("MCP"));
     expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument();
-    expect(screen.getByTestId("mcp-editor")).toBeInTheDocument();
+    expect(await screen.findByTestId("mcp-editor")).toBeInTheDocument();
 
     // 之后真的离开时照样要问
     fireEvent.click(sidebarApp("nav.usage"));
@@ -600,11 +609,10 @@ describe("App integration with MSW", () => {
       "common.unsavedLeaveMessage",
     );
     fireEvent.click(screen.getByText("cancel-delete"));
-    expect(screen.getByTestId("mcp-editor")).toBeInTheDocument();
+    expect(await screen.findByTestId("mcp-editor")).toBeInTheDocument();
   }, 10_000);
 
   it("shows toast when auto sync fails in background", async () => {
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() =>
@@ -664,7 +672,6 @@ describe("App integration with MSW", () => {
     setCurrentProviderId("openclaw", "deepseek");
     setLiveProviderIds("openclaw", ["deepseek-copy"]);
 
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     fireEvent.click(sidebarApp("OpenClaw"));
@@ -710,7 +717,6 @@ describe("App integration with MSW", () => {
       const add = vi.spyOn(providersApi, "add");
       const sort = vi.spyOn(providersApi, "updateSortOrder");
       try {
-        const { default: App } = await import("@/App");
         renderApp(App);
         await waitFor(() =>
           expect(screen.getByTestId("provider-list").textContent).toContain(
@@ -750,7 +756,6 @@ describe("App integration with MSW", () => {
     });
     setCurrentProviderId("opencode", "custom");
     setLiveProviderIds("opencode", ["custom-copy"]);
-    const { default: App } = await import("@/App");
     renderApp(App);
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
@@ -789,7 +794,6 @@ describe("App integration with MSW", () => {
       setLiveProviderIds("opencode", ["native"]);
       const add = vi.spyOn(providersApi, "add");
       try {
-        const { default: App } = await import("@/App");
         renderApp(App);
         await waitFor(() =>
           expect(screen.getByTestId("provider-list").textContent).toContain(
@@ -825,7 +829,6 @@ describe("App integration with MSW", () => {
     });
     setCurrentProviderId("opencode", "native");
     setLiveProviderIds("opencode", ["native-copy"]);
-    const { default: App } = await import("@/App");
     renderApp(App);
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
@@ -857,7 +860,6 @@ describe("App integration with MSW", () => {
     });
     setCurrentProviderId("mcode", "kimi");
 
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() =>
@@ -905,7 +907,6 @@ describe("App integration with MSW", () => {
       ),
     );
 
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() =>
@@ -972,7 +973,6 @@ describe("App integration with MSW", () => {
       ),
     );
 
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() =>
@@ -1026,7 +1026,6 @@ describe("App integration with MSW", () => {
       ),
     );
 
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() =>
@@ -1067,7 +1066,6 @@ describe("App integration with MSW", () => {
       .spyOn(providersApi, "getOpenClawLiveProviderIds")
       .mockRejectedValueOnce(new Error("broken config"));
 
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     fireEvent.click(sidebarApp("OpenClaw"));
@@ -1095,7 +1093,6 @@ describe("App integration with MSW", () => {
 
   it("renders the Skills page with its own header", async () => {
     localStorage.setItem("cc-switch-last-view", "skills");
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     expect(await screen.findByTestId("unified-skills-panel")).toHaveTextContent(
@@ -1104,7 +1101,6 @@ describe("App integration with MSW", () => {
   });
 
   it("navigates OpenClaw and Hermes pages with underline tabs", async () => {
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     fireEvent.click(sidebarApp("OpenClaw"));
@@ -1183,7 +1179,6 @@ describe("App integration with MSW", () => {
 
   it("opens the old skillsDiscovery view as the Discover segment", async () => {
     localStorage.setItem("cc-switch-last-view", "skillsDiscovery");
-    const { default: App } = await import("@/App");
     renderApp(App);
 
     expect(await screen.findByTestId("unified-skills-panel")).toHaveTextContent(
@@ -1194,7 +1189,6 @@ describe("App integration with MSW", () => {
   it("shows all eight native resize cursors and restores existing inline styles", async () => {
     windowMocks.isLinux.mockReturnValue(true);
     setSettings({ useAppWindowControls: true });
-    const { default: App } = await import("@/App");
     const { unmount } = renderApp(App);
     const header = document.querySelector("header")!;
     header.style.setProperty("cursor", "help", "important");
@@ -1250,7 +1244,6 @@ describe("App integration with MSW", () => {
   it("lets the top edge resize before Tauri dragging without blocking inner-header or button events", async () => {
     windowMocks.isLinux.mockReturnValue(true);
     setSettings({ useAppWindowControls: true });
-    const { default: App } = await import("@/App");
     renderApp(App);
     const header = document.querySelector("header")!;
     await waitFor(() => {
@@ -1311,7 +1304,6 @@ describe("App integration with MSW", () => {
   it("clears resize hints and leaves events alone when native resizing is unavailable", async () => {
     windowMocks.isLinux.mockReturnValue(true);
     setSettings({ useAppWindowControls: true });
-    const { default: App } = await import("@/App");
     renderApp(App);
     const header = document.querySelector("header")!;
     const moveToEdge = () =>

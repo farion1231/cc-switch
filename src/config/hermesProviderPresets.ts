@@ -177,7 +177,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "kimi",
     iconColor: "#6366F1",
     suggestedDefaults: {
-      model: { default: "kimi-k2.7-code", provider: "kimi" },
+      // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+      // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文）
+      model: { default: "kimi-k3.1-pro", provider: "kimi" },
     },
   },
   // API 开放平台海外/Global 变体：platform.kimi.ai + api.moonshot.ai 端点
@@ -214,7 +216,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "kimi",
     iconColor: "#6366F1",
     suggestedDefaults: {
-      model: { default: "kimi-k2.7-code", provider: "kimi" },
+      // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+      // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文）
+      model: { default: "kimi-k3.1-pro", provider: "kimi" },
     },
   },
   {
@@ -2396,8 +2400,12 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
+        // 2026-11-03 盘点：qwen3-coder-plus / qwen3-max 已于 2026-10-10 停服
+        // （下线公告含 Coding Plan 支持模型，官方推荐替换 qwen3.7-plus）；
+        // 默认改 qwen3.7-plus，qwen3-coder-plus 行保留给存量用户
+        { id: "qwen3.7-plus", name: "Qwen3.7 Plus", context_length: 1000000 },
+        { id: "qwen3.6-plus", name: "Qwen3.6 Plus", context_length: 1000000 },
         { id: "qwen3-coder-plus", name: "Qwen3 Coder Plus" },
-        { id: "qwen3-max", name: "Qwen3 Max" },
       ],
     },
     category: "cn_official",
@@ -2405,7 +2413,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     iconColor: "#624AFF",
     suggestedDefaults: {
       model: {
-        default: "qwen3-coder-plus",
+        default: "qwen3.7-plus",
         provider: "qianwenai_coding_plan",
       },
     },

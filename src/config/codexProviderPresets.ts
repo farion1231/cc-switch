@@ -3496,14 +3496,15 @@ requires_openai_auth = true`,
     websiteUrl: "https://x.ai/api",
     apiKeyUrl: "https://console.x.ai",
     auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig("xai", "https://api.x.ai/v1", "grok-4.5"),
+    config: generateThirdPartyConfig("xai", "https://api.x.ai/v1", "grok-4.7"),
     endpointCandidates: ["https://api.x.ai/v1"],
     // xAI 官方以 /v1/responses 为一等端点（docs.x.ai api-reference）：Codex 硬依赖的
     // store:false / include=["reasoning.encrypted_content"] / reasoning effort 均支持，
     // 原生 Responses，无需路由接管转换
     apiFormat: "openai_responses",
     modelCatalog: modelCatalog([
-      // https://docs.x.ai/developers/models/grok-4.7 (2026-09-23)
+      // https://docs.x.ai/developers/models/grok-4.7（2026-09-23 收录；
+      // 2026-11-03 复核：官方默认 effort=high，子集最高档为 xhigh → 显式声明）
       {
         model: "grok-4.7",
         displayName: "Grok 4.7",
@@ -3511,6 +3512,7 @@ requires_openai_auth = true`,
         supportsParallelToolCalls: true,
         inputModalities: ["text", "image"],
         reasoningLevels: ["low", "medium", "high", "xhigh"],
+        defaultReasoningLevel: "high",
       },
       {
         model: "grok-4.5",
@@ -3539,13 +3541,23 @@ requires_openai_auth = true`,
     // api.x.ai；这里的 base_url / 空 auth 只是配置快照，转发时不生效。
     // requires_openai_auth 必须是 false：keyless + true 会被后端安全闸
     // 拒绝切换（后端写入层对存量卡也会强制归一为 false）。
-    config: generateThirdPartyConfig("xai", "https://api.x.ai/v1", "grok-4.5", {
+    config: generateThirdPartyConfig("xai", "https://api.x.ai/v1", "grok-4.7", {
       requiresOpenAiAuth: false,
     }),
     apiFormat: "openai_responses",
     providerType: "xai_oauth",
     requiresOAuth: true,
     modelCatalog: modelCatalog([
+      // 同 API-key 条目（docs.x.ai 2026-11-03 复核：官方默认 effort=high）
+      {
+        model: "grok-4.7",
+        displayName: "Grok 4.7",
+        contextWindow: 500000,
+        supportsParallelToolCalls: true,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "medium", "high", "xhigh"],
+        defaultReasoningLevel: "high",
+      },
       {
         model: "grok-4.5",
         displayName: "Grok 4.5",
