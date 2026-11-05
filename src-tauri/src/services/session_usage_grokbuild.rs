@@ -1373,14 +1373,8 @@ mod tests {
         );
 
         // 如果光标原本就停在 line2_offset，续读单跑该行也必须生成完全相同的 request_id
-        let cursors = std::collections::HashMap::from([(
-            path.to_string_lossy().to_string(),
-            crate::services::session_usage::SyncCursor {
-                last_modified: 0,
-                last_line_offset: 0,
-                last_byte_offset: Some(line2_offset),
-            },
-        )]);
+        update_byte_sync_state(&db, &path.to_string_lossy(), 0, line2_offset)?;
+        let cursors = crate::services::session_usage::load_sync_cursors(&db).unwrap();
         let second_sync = sync_single_grok_file(&db, &path, &cursors)?;
         // 因为 key 完全一致，UPSERT 判定为已存在，不会被重复导入
         assert_eq!(second_sync.imported, 0);
