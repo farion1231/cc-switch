@@ -60,14 +60,22 @@ use subtle::ConstantTimeEq;
 // ============================================================================
 
 /// 健康检查
-pub async fn health_check() -> (StatusCode, Json<Value>) {
-    (
+pub async fn health_check(headers: axum::http::HeaderMap) -> axum::response::Response {
+    let mut response = (
         StatusCode::OK,
         Json(json!({
             "status": "healthy",
             "timestamp": chrono::Utc::now().to_rfc3339(),
         })),
     )
+        .into_response();
+    // 环回自检带的随机值原样写回，证明请求回到了本地路由（见 loopback_probe）
+    if let Some(nonce) = headers.get(super::loopback_probe::PROBE_HEADER) {
+        response
+            .headers_mut()
+            .insert(super::loopback_probe::PROBE_HEADER, nonce.clone());
+    }
+    response
 }
 
 /// 获取服务状态
@@ -380,6 +388,7 @@ async fn handle_messages_for_app(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
+            ctx.outbound_model = err.outbound_model.take();
             log_forward_error(&state, &ctx, is_stream, &err.error).await;
             return Err(err.error);
         }
@@ -1025,6 +1034,7 @@ pub async fn handle_chat_completions(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
+            ctx.outbound_model = err.outbound_model.take();
             log_forward_error(&state, &ctx, is_stream, &err.error).await;
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error, is_stream);
         }
@@ -1152,6 +1162,7 @@ async fn handle_responses_for_app(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
+            ctx.outbound_model = err.outbound_model.take();
             log_forward_error(&state, &ctx, is_stream, &err.error).await;
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error, is_stream);
         }
@@ -1408,6 +1419,7 @@ async fn handle_codex_standalone_passthrough(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
+            ctx.outbound_model = err.outbound_model.take();
             log_forward_error(&state, &ctx, false, &err.error).await;
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error, false);
         }
@@ -1507,6 +1519,7 @@ async fn handle_responses_compact_for_app(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
+            ctx.outbound_model = err.outbound_model.take();
             log_forward_error(&state, &ctx, is_stream, &err.error).await;
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error, is_stream);
         }
@@ -1808,7 +1821,11 @@ async fn handle_codex_chat_to_responses_transform(
     if is_stream || response.is_sse() {
         let stream = response.bytes_stream();
         let sse_stream = create_responses_sse_stream_from_chat_with_context(stream, tool_context);
-        let sse_stream = record_responses_sse_stream(sse_stream, state.codex_chat_history.clone());
+        let sse_stream = record_responses_sse_stream(
+            sse_stream,
+            state.codex_chat_history.clone(),
+            ctx.session_client_provided.then(|| ctx.session_id.clone()),
+        );
 
         let usage_collector = if usage_logging_enabled(state) {
             let state = state.clone();
@@ -1944,7 +1961,11 @@ async fn handle_codex_chat_to_responses_transform(
     })?;
     state
         .codex_chat_history
-        .record_response(&responses_response)
+        .record_response(
+            &responses_response,
+            ctx.session_client_provided
+                .then_some(ctx.session_id.as_str()),
+        )
         .await;
 
     // 上游非流式 Chat 省略 usage 时，chat_usage_to_responses_usage 会合成全 0 usage
@@ -2662,6 +2683,7 @@ pub async fn handle_gemini(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
+            ctx.outbound_model = err.outbound_model.take();
             log_forward_error(&state, &ctx, is_stream, &err.error).await;
             return Err(err.error);
         }
@@ -3326,6 +3348,11 @@ async fn log_forward_error(
     let provider_id = ctx.provider.id.clone();
     let app_type = ctx.app_type_str.to_string();
     let request_model = ctx.request_model.clone();
+    // 记实际发往上游的模型名（与成功行同口径），映射前就失败的回落到请求名。
+    let model = ctx
+        .outbound_model
+        .clone()
+        .unwrap_or_else(|| request_model.clone());
     let session_id = ctx.session_id.clone();
     let latency_ms = ctx.latency_ms();
     let write = tokio::task::spawn_blocking(move || {
@@ -3333,6 +3360,7 @@ async fn log_forward_error(
             request_id,
             provider_id,
             app_type,
+            model,
             request_model,
             status_code,
             error_message,

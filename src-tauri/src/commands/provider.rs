@@ -845,7 +845,8 @@ async fn query_provider_usage_inner(
             let account_id = provider
                 .and_then(|p| p.meta.as_ref())
                 .and_then(|m| m.managed_account_id_for("xai_oauth"));
-            crate::commands::xai_oauth::query_xai_oauth_quota_for(xai_state, account_id).await?
+            crate::commands::xai_oauth::query_xai_oauth_quota_for(xai_state, account_id, false)
+                .await?
         } else {
             crate::services::subscription::get_subscription_quota(app_type.as_str())
                 .await
