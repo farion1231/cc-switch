@@ -821,6 +821,7 @@ impl RequestForwarder {
             return Err(ForwardError {
                 error,
                 provider: providers.first().cloned(),
+                outbound_model: None,
             });
         }
         // 获取适配器
