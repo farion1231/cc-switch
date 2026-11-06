@@ -312,6 +312,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Dsh
         | AppType::Agy
         | AppType::Omp
+        | AppType::Copilot
         | AppType::ClaudeDesktop => false,
     }
 }
@@ -392,7 +393,8 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Dsh
         | AppType::ClaudeDesktop
         | AppType::Agy
-        | AppType::Omp => Ok(settings.clone()),
+        | AppType::Omp
+        | AppType::Copilot => Ok(settings.clone()),
     }
 }
 
@@ -431,7 +433,7 @@ pub(crate) fn write_live_for_state(
         super::grok_direct::reapply(db, Some(provider), provider)?;
         return Ok(());
     }
-    if matches!(app_type, AppType::Agy) {
+    if matches!(app_type, AppType::Agy | AppType::Copilot) {
         // 卡片只作用于它打开的终端，全量同步不写真实 settings.json。
         return Ok(());
     }
@@ -729,6 +731,11 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         AppType::Omp => {
             return Err(AppError::InvalidInput(
                 "Oh My Pi providers use the Oh My Pi provider service".to_string(),
+            ));
+        }
+        AppType::Copilot => {
+            return Err(AppError::Config(
+                "GitHub Copilot CLI cards only launch terminals and never write live config".into(),
             ));
         }
     }
@@ -1060,6 +1067,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         AppType::Omp => Err(AppError::InvalidInput(
             "Oh My Pi providers are read from Oh My Pi's native models file".to_string(),
         )),
+        AppType::Copilot => crate::copilot_config::read_live_settings(),
     }
 }
 
@@ -1173,6 +1181,14 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             }
             live
         }
+        AppType::Copilot => {
+            let live = crate::copilot_config::read_live_settings()?;
+            // Copilot 首次启动写出的 settings.json 没有模型，不是用户的供应商，不导入。
+            if !crate::copilot_config::has_managed_content(&live) {
+                return Ok(false);
+            }
+            live
+        }
         // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
         AppType::OpenCode
         | AppType::OpenClaw
@@ -1213,14 +1229,21 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             } else {
                 "custom"
             }
-        } else if matches!(app_type, AppType::Agy) {
-            // Key 只在进程环境里，从不落盘：从 live 导入的一定是 agy 自己的登录。
+        } else if matches!(app_type, AppType::Agy | AppType::Copilot) {
+            // Key 只在进程环境里，从不落盘：从 live 导入的一定是客户端自己的登录。
             "official"
         } else {
             "custom"
         }
         .to_string(),
     );
+
+    if matches!(app_type, AppType::Copilot) {
+        // 导入的是 Copilot 自己的登录：和预设里的官方卡用同一套名称和图标。
+        provider.name = "GitHub Copilot".to_string();
+        provider.icon = Some("githubcopilot".to_string());
+        provider.website_url = Some("https://github.com/features/copilot/cli".to_string());
+    }
 
     state.db.save_provider(app_type.as_str(), &provider)?;
     state

@@ -221,6 +221,7 @@ fn brew_uninstall_command(tool: &str, real: &str) -> Result<Option<String>, Stri
                 "gemini" => &[("/Cellar/", "gemini-cli")],
                 "opencode" => &[("/Cellar/", "opencode")],
                 "agy" => &[("/Caskroom/", "antigravity-cli")],
+                "copilot" => &[("/Caskroom/", "copilot-cli")],
                 _ => &[],
             };
             if !owners.contains(&(marker, token)) {
