@@ -13,7 +13,7 @@ pub mod opencode;
 mod opencode_blocks;
 pub mod pi;
 mod pi_blocks;
-mod utils;
+pub(crate) mod utils;
 
 pub mod kimi;
 pub mod mcode;
