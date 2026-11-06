@@ -5011,6 +5011,7 @@
     "toast": {
       "installed": "{{name}} をインストールしました",
       "installFailed": "{{name}} をインストールできませんでした",
+      "installNeedsTerminal": "このプラグインはインストール時にマーケットプレイスが宣言したコマンドをこのマシンで実行します。CC Switch が代わりに承認することはありません。ターミナルで {{command}} を実行して確認してから、戻って更新してください。",
       "uninstalled": "{{name}} をアンインストールしました",
       "uninstallFailed": "{{name}} をアンインストールできませんでした",
       "enabled": "{{name}} を有効にしました",

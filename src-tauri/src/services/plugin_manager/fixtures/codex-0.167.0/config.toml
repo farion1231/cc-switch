@@ -1,0 +1,6 @@
+[marketplaces.ccs-test]
+source_type = "local"
+source = '\\?\C:\fixture\cmkt'
+
+[plugins."hello@ccs-test"]
+enabled = false

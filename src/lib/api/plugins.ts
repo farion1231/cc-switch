@@ -72,6 +72,9 @@ export const PLUGIN_APP_FEATURES: Record<PluginApp, PluginAppFeatures> = {
 /** 工具没装时后端返回的错误码。 */
 export const PLUGIN_CLI_NOT_INSTALLED = "PLUGIN_CLI_NOT_INSTALLED";
 
+/** Claude Code 要用户在终端里亲自确认市场声明的命令时后端返回的错误码（CC Switch 不代为同意）。 */
+export const PLUGIN_NEEDS_TERMINAL_CONFIRM = "PLUGIN_NEEDS_TERMINAL_CONFIRM";
+
 export interface PluginEntry {
   /** 交给 CLI 的 id：多数应用是 `name@marketplace`，Grok Build 是插件名，OpenClaw 是插件 id 或 ClawHub 包名 */
   id: string;

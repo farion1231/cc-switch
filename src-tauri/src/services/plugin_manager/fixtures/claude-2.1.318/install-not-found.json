@@ -1,0 +1,8 @@
+{
+  "command": "install",
+  "outcome": "failed",
+  "plugin": "nope@ccs-test",
+  "scope": "user",
+  "message": "Plugin \"nope\" not found in marketplace \"ccs-test\". Your local copy may be out of date — try `claude plugin marketplace update ccs-test`.",
+  "failureCode": "not_found"
+}

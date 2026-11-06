@@ -67,6 +67,7 @@ import {
   PLUGIN_APP_FEATURES,
   PLUGIN_APPS,
   PLUGIN_CLI_NOT_INSTALLED,
+  PLUGIN_NEEDS_TERMINAL_CONFIRM,
   pluginsApi,
   type PluginActionOutcome,
   type PluginApp,
@@ -147,6 +148,8 @@ export interface PluginsPageProps {
 type WriteMessages = {
   success: (outcome: PluginActionOutcome) => string;
   failure: string;
+  /** 后端返回已知错误码时换成的说明；没给或不认识时显示原始报错。 */
+  describeError?: (error: string) => string | undefined;
 };
 
 export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
@@ -259,8 +262,9 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
         closeButton: true,
       });
     } else {
+      const error = extractErrorMessage(result.error) || String(result.error);
       toast.error(messages.failure, {
-        description: extractErrorMessage(result.error) || String(result.error),
+        description: messages.describeError?.(error) ?? error,
         closeButton: true,
       });
     }
@@ -289,6 +293,12 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
         failure: t("pluginsPage.toast.installFailed", {
           name: pluginLabel(entry),
         }),
+        describeError: (error) =>
+          error === PLUGIN_NEEDS_TERMINAL_CONFIRM
+            ? t("pluginsPage.toast.installNeedsTerminal", {
+                command: `claude plugin install ${entry.id}`,
+              })
+            : undefined,
       },
     );
 

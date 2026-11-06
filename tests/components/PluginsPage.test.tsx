@@ -347,6 +347,28 @@ describe("PluginsPage", () => {
     );
   });
 
+  it("points to the terminal when Claude Code wants the user to confirm a command", async () => {
+    m.install.mockRejectedValue("PLUGIN_NEEDS_TERMINAL_CONFIRM");
+    renderPage();
+    await screen.findByText("frontend-design");
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "pluginsPage.viewDiscoverCount" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "pluginsPage.install" }),
+    );
+    await waitFor(() =>
+      expect(m.toastError).toHaveBeenCalledWith(
+        "pluginsPage.toast.installFailed",
+        expect.objectContaining({
+          description: "pluginsPage.toast.installNeedsTerminal",
+        }),
+      ),
+    );
+    // 没装上，条目留在「发现」里
+    expect(screen.getByText("superpowers")).toBeInTheDocument();
+  });
+
   it("loads the whole catalog and pages through Discover", async () => {
     const total = DEFAULT_PLUGIN_PAGE_SIZE * 2 + 5;
     m.listCatalog.mockResolvedValue(

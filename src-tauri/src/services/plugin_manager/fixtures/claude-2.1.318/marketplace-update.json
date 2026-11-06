@@ -1,0 +1,6 @@
+{
+  "command": "marketplace-update",
+  "outcome": "ok",
+  "marketplace": "ccs-test",
+  "message": "Validating local marketplace\nSuccessfully updated marketplace: ccs-test"
+}

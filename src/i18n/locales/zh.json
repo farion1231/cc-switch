@@ -5011,6 +5011,7 @@
     "toast": {
       "installed": "已安装 {{name}}",
       "installFailed": "安装 {{name}} 失败",
+      "installNeedsTerminal": "这个插件安装时要在本机运行市场声明的命令，CC Switch 不会替你同意。请在终端里运行 {{command}}，确认后再回来刷新。",
       "uninstalled": "已卸载 {{name}}",
       "uninstallFailed": "卸载 {{name}} 失败",
       "enabled": "已启用 {{name}}",

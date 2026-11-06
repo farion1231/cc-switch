@@ -5011,6 +5011,7 @@
     "toast": {
       "installed": "Installed {{name}}",
       "installFailed": "Couldn't install {{name}}",
+      "installNeedsTerminal": "This plugin runs a marketplace-declared command on your machine during install, and CC Switch won't accept it for you. Run {{command}} in a terminal, confirm there, then come back and refresh.",
       "uninstalled": "Uninstalled {{name}}",
       "uninstallFailed": "Couldn't uninstall {{name}}",
       "enabled": "Enabled {{name}}",

@@ -1,0 +1,58 @@
+{
+  "source": "hosted",
+  "entries": [
+    {
+      "label": "AgentMail",
+      "id": "@agentmail/agentmail",
+      "version": "0.2.3",
+      "install": {
+        "clawhubSpec": "clawhub:@agentmail/agentmail@0.2.3",
+        "defaultChoice": "clawhub",
+        "expectedIntegrity": "sha256-ScZlG9UL0ZU1B6FkFhsFaz5p6vD+QRkf0fNYldXjhCM="
+      }
+    },
+    {
+      "label": "Apify",
+      "id": "@apify/apify-openclaw-plugin",
+      "version": "0.5.3",
+      "install": {
+        "clawhubSpec": "clawhub:@apify/apify-openclaw-plugin@0.5.3",
+        "defaultChoice": "clawhub",
+        "expectedIntegrity": "sha256-GwxY/iSZzKzEnrpRZ1SSmf0rVQFDMEZDNdqXD8qksu0="
+      }
+    },
+    {
+      "label": "AWS Agents Pay",
+      "id": "@aws/aws-agents-pay",
+      "version": "1.0.7",
+      "install": {
+        "clawhubSpec": "clawhub:@aws/aws-agents-pay@1.0.7",
+        "defaultChoice": "clawhub",
+        "expectedIntegrity": "sha256-/WM3gp3JDmVSGQwrPd/n/w9sll/4gb6+zfdv9YRrlRY="
+      }
+    },
+    {
+      "label": "Airtable",
+      "id": "@openclaw/airtable",
+      "version": "1.0.1",
+      "install": {
+        "clawhubSpec": "clawhub:@openclaw/airtable@1.0.1",
+        "defaultChoice": "clawhub",
+        "expectedIntegrity": "sha256-HAuVEPqL5jP02WzMDZdalyagqiV+Pf3PEnkvjbqjrps="
+      }
+    }
+  ],
+  "metadata": {
+    "url": "https://clawhub.ai/v1/feeds/plugins",
+    "status": 200,
+    "etag": "W/\"sha256:a76f852c223d24805ce64d779b2ab32f9dec9475aefb379a5f7d2ffb4a12a3d8-gzip\"",
+    "lastModified": "Fri, 06 Nov 2026 12:25:32 GMT",
+    "checksum": "sha256:a76f852c223d24805ce64d779b2ab32f9dec9475aefb379a5f7d2ffb4a12a3d8"
+  },
+  "feed": {
+    "id": "clawhub-official",
+    "generatedAt": "2026-11-06T12:25:12.208Z",
+    "sequence": 544
+  },
+  "entryCount": 183
+}

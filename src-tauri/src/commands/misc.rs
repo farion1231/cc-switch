@@ -4599,9 +4599,11 @@ pub(crate) fn run_detected_tool_command_with_timeout(
         use std::process::{Command, Stdio};
 
         let mut cmd = Command::new(&tool_path);
+        // stdin 置 null：继承来的终端（`pnpm dev`）会让要确认的 CLI 一直等到超时。
         cmd.args(args)
             .env("PATH", format!("{}:{current_path}", dir.display()))
             .current_dir(working_dir)
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         apply_extra_env(&mut cmd, extra_env);
@@ -4675,6 +4677,7 @@ fn run_windows_tool_command_capture(
     let mut cmd = build_windows_tool_command(tool_path, args, new_path);
     apply_extra_env(&mut cmd, extra_env);
     cmd.current_dir(working_dir)
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let child = cmd
@@ -4818,6 +4821,7 @@ fn run_wsl_tool_command(
     }
     cmd.args(["sh", "-c", &command])
         .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let child = cmd

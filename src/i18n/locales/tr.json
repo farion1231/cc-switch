@@ -4969,6 +4969,7 @@
     "toast": {
       "installed": "{{name}} yüklendi",
       "installFailed": "{{name}} yüklenemedi",
+      "installNeedsTerminal": "Bu eklenti kurulum sırasında pazar yerinin bildirdiği bir komutu bilgisayarınızda çalıştırır ve CC Switch bunu sizin yerinize onaylamaz. Bir terminalde {{command}} komutunu çalıştırıp orada onaylayın, ardından geri dönüp yenileyin.",
       "uninstalled": "{{name}} kaldırıldı",
       "uninstallFailed": "{{name}} kaldırılamadı",
       "enabled": "{{name}} etkinleştirildi",
