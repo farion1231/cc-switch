@@ -153,6 +153,11 @@ pub async fn get_skills_migration_result() -> Result<Option<SkillsMigrationPaylo
     Ok(crate::init_status::take_skills_migration_result())
 }
 
+#[tauri::command]
+pub async fn has_codex_history_migration_error() -> Result<bool, String> {
+    Ok(crate::init_status::has_codex_history_migration_error())
+}
+
 #[derive(serde::Serialize)]
 pub struct ToolVersion {
     name: String,
