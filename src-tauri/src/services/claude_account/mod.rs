@@ -609,6 +609,18 @@ fn create_private_dir(dir: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
+fn adopted_profile_is_written_in_wsl(config_dir: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        crate::config::is_wsl_path(config_dir)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = config_dir;
+        false
+    }
+}
+
 /// 按磁盘上的账号表找账号目录、收录新账号：切换路径上用（拿不到 Tauri 状态）。
 pub struct DiskAccounts {
     pub data_dir: PathBuf,
@@ -637,7 +649,10 @@ impl snapshot::Adopter for DiskAccounts {
         });
         let bytes =
             serde_json::to_vec_pretty(&doc).map_err(|source| AppError::JsonSerialize { source })?;
-        crate::config::atomic_write_private(&config_dir.join(".claude.json"), &bytes)?;
+        // WSL 家目录里的资料由切换脚本在发行版内写入（9P 上改文件不可靠）。
+        if !adopted_profile_is_written_in_wsl(&config_dir) {
+            crate::config::atomic_write_private(&config_dir.join(".claude.json"), &bytes)?;
+        }
         sync_shared(&config_dir);
 
         let _file = store_file_guard();

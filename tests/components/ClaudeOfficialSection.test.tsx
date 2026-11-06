@@ -367,16 +367,17 @@ describe("ClaudeOfficialSection", () => {
     expect(auth.addAccount).not.toHaveBeenCalled();
   });
 
-  it("adds an account inside WSL and points the card at Open Terminal", async () => {
-    mocks.getLoginSwitch.mockResolvedValue(
-      loginSwitch({ blocked: "wsl", wslAccounts: true }),
-    );
+  it("adds an account inside WSL and hides quota while switching works", async () => {
+    mocks.getLoginSwitch.mockResolvedValue(loginSwitch({ wslAccounts: true }));
     const auth = baseAuth();
     auth.accounts = [account("work:org", "work@example.com")];
     mocks.useManagedAuth.mockReturnValue(auth);
     renderSection();
 
-    const add = await screen.findByRole("button", { name: "添加账号" });
+    expect(
+      await screen.findByText(/该发行版里直接运行的 claude 会换成这个号/),
+    ).toBeInTheDocument();
+    const add = screen.getByRole("button", { name: "添加账号" });
     expect(
       screen.queryByText(/暂不支持添加和切换 Claude 账号/),
     ).not.toBeInTheDocument();
@@ -386,15 +387,14 @@ describe("ClaudeOfficialSection", () => {
     expect(screen.queryByTestId("claude-quota")).not.toBeInTheDocument();
   });
 
-  it("points the WSL card form at Open Terminal", async () => {
-    mocks.getLoginSwitch.mockResolvedValue(
-      loginSwitch({ blocked: "wsl", wslAccounts: true }),
-    );
+  it("explains that a WSL card switch changes the distro login", async () => {
+    mocks.getLoginSwitch.mockResolvedValue(loginSwitch({ wslAccounts: true }));
     mocks.useManagedAuth.mockReturnValue(baseAuth());
     renderSelect();
     expect(
-      await screen.findByText(/从卡片「打开终端」会在该发行版里启动/),
+      await screen.findByText(/会把该发行版里的 claude 换成这个号/),
     ).toBeInTheDocument();
+    expect(screen.getByText(/不改发行版里现有的登录/)).toBeInTheDocument();
   });
 
   it("says WSL isn't supported on the card form", async () => {

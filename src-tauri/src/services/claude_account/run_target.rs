@@ -131,6 +131,36 @@ pub fn wsl_claude_argv(
     ])
 }
 
+/// `wsl.exe -d <distro> -u <user> --cd <dir> --exec /bin/sh -c <script>`。
+///
+/// 和 [`wsl_claude_argv`] 一样必须走 `--exec`：`--` 会先交给发行版的登录 shell，
+/// 脚本里的 `$` 会被提前展开。脚本是 `-c` 的一个参数，令牌不要写进这里（走 stdin）。
+pub fn wsl_exec_argv(
+    distro: &str,
+    user: &str,
+    linux_cd: &str,
+    script: &str,
+) -> Result<Vec<String>, String> {
+    validate_distro(distro)?;
+    validate_wsl_user(user)?;
+    validate_linux_abs(linux_cd)?;
+    if script.is_empty() || script.contains('\0') {
+        return Err("空脚本".to_string());
+    }
+    Ok(vec![
+        "-d".to_string(),
+        distro.to_string(),
+        "-u".to_string(),
+        user.to_string(),
+        "--cd".to_string(),
+        linux_cd.to_string(),
+        "--exec".to_string(),
+        "/bin/sh".to_string(),
+        "-c".to_string(),
+        script.to_string(),
+    ])
+}
+
 /// 写进 Windows `.bat` 的一行：`wsl.exe … --exec /bin/sh -c "<script>"`。
 ///
 /// 脚本里的 `"` 写成 cmd 的 `""`，这样 cmd 仍把整段脚本当成 `-c` 的一个参数交给

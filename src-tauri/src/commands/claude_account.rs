@@ -58,11 +58,11 @@ pub async fn get_claude_default_plan(
 pub struct ClaudeLoginSwitchStatus {
     /// 切到绑号卡时会切换登录（没被挡住）
     pub active: bool,
-    /// 不切换登录的原因：`"wsl"`（Claude 配置目录在 WSL 里，切卡仍不搬登录）或
+    /// 不切换登录的原因：`"wsl"`（配置目录在 WSL 里、但不是家目录，不能搬登录）或
     /// `"overrideDir"`（设了别的 Claude 配置目录覆盖）
     pub blocked: Option<String>,
-    /// `blocked == "wsl"` 且能推出发行版里的家目录：可以添加账号、重新登录，
-    /// 「打开终端」在该发行版里跑。切卡和额度仍不走 WSL。
+    /// Claude 配置目录在 WSL 家目录里：添加、重新登录、打开终端、切卡都在该发行版里进行。
+    /// 额度查询仍不走 WSL。
     pub wsl_accounts: bool,
     /// Claude Code 现在登录的账号 key（按 `~/.claude.json` 的资料）
     pub live: Option<String>,
@@ -75,7 +75,7 @@ fn login_switch_status() -> ClaudeLoginSwitchStatus {
         active: blocked.is_none(),
         blocked: blocked.map(str::to_string),
         wsl_accounts: crate::services::claude_account::run_target::current_wsl().is_some(),
-        live: snapshot::default_owner(&snapshot::store::Slot::default_slot()),
+        live: snapshot::live_owner(),
     }
 }
 
