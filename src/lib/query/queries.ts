@@ -6,6 +6,7 @@ import {
   usageApi,
   sessionsApi,
   type AppId,
+  type WindowControlsLayout,
 } from "@/lib/api";
 import type { Provider, Settings, UsageResult, SessionMeta } from "@/types";
 import { usageKeys } from "@/lib/query/usage";
@@ -96,6 +97,22 @@ export const useSettingsQuery = (): UseQueryResult<Settings> => {
     queryFn: async () => settingsApi.get(),
   });
 };
+
+/**
+ * 系统窗口按钮布局。Linux 的左侧 / 右侧和顺序由 GTK 设置决定；其他平台
+ * 后端返回 Windows 式右侧布局。按样式分别缓存，切换时不复用旧图片。
+ * 应用级按钮关闭时不请求；GTK 样式关闭时只读取布局。
+ */
+export const useWindowControlsLayout = (
+  enabled = true,
+  useGtkStyle = true,
+): UseQueryResult<WindowControlsLayout> =>
+  useQuery({
+    queryKey: ["windowControlsLayout", useGtkStyle],
+    queryFn: async () => settingsApi.getWindowControlsLayout(useGtkStyle),
+    staleTime: Infinity,
+    enabled,
+  });
 
 export interface UseUsageQueryOptions {
   enabled?: boolean;

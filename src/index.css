@@ -313,6 +313,81 @@
   transition: none !important;
 }
 
+/* 用遮罩透明度绘制淡入淡出，避免 WebKitGTK 的 opacity 合成动画闪动。
+   遮罩铺满阴影范围；动画不改变元素透明度、位置或尺寸。 */
+@property --cc-overlay-alpha {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
+@keyframes linux-overlay-enter {
+  from {
+    --cc-overlay-alpha: 0;
+  }
+  to {
+    --cc-overlay-alpha: 1;
+  }
+}
+
+@keyframes linux-overlay-exit {
+  from {
+    --cc-overlay-alpha: 1;
+  }
+  to {
+    --cc-overlay-alpha: 0;
+  }
+}
+
+.is-linux
+  :is(
+    [data-radix-popper-content-wrapper] > [data-state],
+    [role="dialog"][data-state],
+    [role="menu"][data-state],
+    [role="listbox"][data-state]
+  ) {
+  mask-image: linear-gradient(
+    rgba(0, 0, 0, var(--cc-overlay-alpha)),
+    rgba(0, 0, 0, var(--cc-overlay-alpha))
+  );
+  mask-clip: no-clip;
+  mask-repeat: repeat;
+  animation: var(--cc-overlay-animation, linux-overlay-enter)
+    var(--cc-overlay-duration, 120ms) ease-out both !important;
+  transition: none !important;
+}
+
+body.is-linux
+  :is(
+    [data-state="open"],
+    [data-state="delayed-open"],
+    [data-state="instant-open"]
+  ) {
+  --cc-overlay-animation: linux-overlay-enter;
+  --cc-overlay-duration: 120ms;
+}
+body.is-linux [data-state="closed"] {
+  --cc-overlay-animation: linux-overlay-exit;
+  --cc-overlay-duration: 80ms;
+}
+
+.is-linux [data-dialog-overlay] {
+  animation: none !important;
+  transition: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .is-linux
+    :is(
+      [data-radix-popper-content-wrapper] > [data-state],
+      [role="dialog"][data-state],
+      [role="menu"][data-state],
+      [role="listbox"][data-state]
+    ) {
+    animation: none !important;
+  }
+}
+
 .glass {
   background: rgba(255, 255, 255, 0.7);
   backdrop-filter: blur(10px);

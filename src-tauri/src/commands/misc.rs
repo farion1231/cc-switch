@@ -57,6 +57,25 @@ pub async fn open_external(app: AppHandle, url: String) -> Result<bool, String> 
     Ok(true)
 }
 
+/// 读取系统窗口按钮布局（左侧 / 右侧与顺序）。
+///
+/// GTK 设置只能在主线程读取，命令线程通过 `run_on_main_thread` 取一次。
+#[tauri::command]
+pub async fn get_window_controls_layout(
+    app: AppHandle,
+    use_gtk_style: Option<bool>,
+) -> Result<crate::window_chrome::WindowControlsLayout, String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(crate::window_chrome::current_layout(
+            use_gtk_style.unwrap_or(true),
+        ));
+    })
+    .map_err(|error| format!("读取窗口按钮布局失败: {error}"))?;
+    rx.await
+        .map_err(|error| format!("读取窗口按钮布局失败: {error}"))
+}
+
 #[tauri::command]
 pub async fn copy_text_to_clipboard(text: String) -> Result<bool, String> {
     // Use spawn_blocking to avoid blocking the async runtime

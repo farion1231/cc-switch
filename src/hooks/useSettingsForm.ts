@@ -115,6 +115,7 @@ export function useSettingsForm(): UseSettingsFormResult {
       showInTray: data.showInTray ?? true,
       minimizeToTrayOnClose: data.minimizeToTrayOnClose ?? true,
       useAppWindowControls: data.useAppWindowControls ?? false,
+      useGtkWindowControls: data.useGtkWindowControls ?? true,
       enableClaudePluginIntegration:
         data.enableClaudePluginIntegration ?? false,
       silentStartup: data.silentStartup ?? false,
@@ -147,6 +148,7 @@ export function useSettingsForm(): UseSettingsFormResult {
             showInTray: true,
             minimizeToTrayOnClose: true,
             useAppWindowControls: false,
+            useGtkWindowControls: true,
             enableClaudePluginIntegration: false,
             skipClaudeOnboarding: false,
             preserveCodexOfficialAuthOnSwitch: false,
@@ -185,6 +187,7 @@ export function useSettingsForm(): UseSettingsFormResult {
         showInTray: serverData.showInTray ?? true,
         minimizeToTrayOnClose: serverData.minimizeToTrayOnClose ?? true,
         useAppWindowControls: serverData.useAppWindowControls ?? false,
+        useGtkWindowControls: serverData.useGtkWindowControls ?? true,
         enableClaudePluginIntegration:
           serverData.enableClaudePluginIntegration ?? false,
         silentStartup: serverData.silentStartup ?? false,

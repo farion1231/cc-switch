@@ -77,3 +77,47 @@ describe("GeneralSection tray style", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("GeneralSection GTK window buttons", () => {
+  beforeEach(() => {
+    platform.linux = true;
+  });
+
+  it("hides the GTK option until app-level controls are enabled", () => {
+    renderSection({ useAppWindowControls: false });
+    expect(
+      screen.queryByRole("switch", { name: "settings.useGtkWindowControls" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps existing GTK styling by default and saves the independent preference", () => {
+    const onAutoSave = renderSection({ useAppWindowControls: true });
+    const toggle = screen.getByRole("switch", {
+      name: "settings.useGtkWindowControls",
+    });
+    expect(toggle).toBeChecked();
+    fireEvent.click(toggle);
+    expect(onAutoSave).toHaveBeenCalledWith({ useGtkWindowControls: false });
+  });
+
+  it("restores a saved disabled GTK preference", () => {
+    const onAutoSave = renderSection({
+      useAppWindowControls: true,
+      useGtkWindowControls: false,
+    });
+    const toggle = screen.getByRole("switch", {
+      name: "settings.useGtkWindowControls",
+    });
+    expect(toggle).not.toBeChecked();
+    fireEvent.click(toggle);
+    expect(onAutoSave).toHaveBeenCalledWith({ useGtkWindowControls: true });
+  });
+
+  it("hides the GTK option on other platforms", () => {
+    platform.linux = false;
+    renderSection({ useAppWindowControls: true });
+    expect(
+      screen.queryByRole("switch", { name: "settings.useGtkWindowControls" }),
+    ).not.toBeInTheDocument();
+  });
+});

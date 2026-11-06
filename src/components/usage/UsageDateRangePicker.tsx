@@ -11,6 +11,14 @@ import { HoverTip } from "@/components/ui/hover-tip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { isLinux } from "@/lib/platform";
+import {
   Popover,
   PopoverContent,
   PopoverTrigger,
@@ -117,6 +125,7 @@ export function UsageDateRangePicker({
   triggerLabel,
 }: UsageDateRangePickerProps) {
   const { t, i18n } = useTranslation();
+  const useAppDateTimeControls = isLinux();
   const [open, setOpen] = useState(false);
   const prevMonthLabel = t("usage.prevMonth", { defaultValue: "上个月" });
   const nextMonthLabel = t("usage.nextMonth", { defaultValue: "下个月" });
@@ -283,44 +292,103 @@ export function UsageDateRangePicker({
           {label}
         </div>
         <div className="flex items-center gap-1.5">
-          <Input
-            type="date"
-            className={cn(
-              "h-7 flex-1 border-0 bg-transparent p-0 text-body shadow-none focus:ring-0 focus-visible:ring-0",
-              isEndLive && "pointer-events-none",
-            )}
-            value={fmtDate(ts)}
-            onChange={(e) => {
-              if (isEndLive) return;
-              const next = parseDateInput(ts, e.target.value);
-              setTs(next);
-              const d = fromTs(next);
-              setDisplayMonth(new Date(d.getFullYear(), d.getMonth(), 1));
-              setError(null);
-            }}
-            onFocus={() => {
-              if (!isEndLive) setActiveField(field);
-            }}
-            readOnly={isEndLive}
-          />
-          <Input
-            type="time"
-            step={60}
-            className={cn(
-              "h-7 w-[90px] flex-none border-0 bg-transparent p-0 text-body shadow-none focus:ring-0 focus-visible:ring-0",
-              isEndLive && "pointer-events-none",
-            )}
-            value={fmtTime(ts)}
-            onChange={(e) => {
-              if (isEndLive) return;
-              setTs(parseTimeInput(ts, e.target.value));
-              setError(null);
-            }}
-            onFocus={() => {
-              if (!isEndLive) setActiveField(field);
-            }}
-            readOnly={isEndLive}
-          />
+          {useAppDateTimeControls ? (
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-7 min-w-0 flex-1 justify-start px-0 text-body tabular-nums"
+              aria-label={`${label}: ${fmtDate(ts)}`}
+              disabled={isEndLive}
+              onClick={() => {
+                setActiveField(field);
+                const d = fromTs(ts);
+                setDisplayMonth(new Date(d.getFullYear(), d.getMonth(), 1));
+              }}
+            >
+              {fmtDate(ts)}
+            </Button>
+          ) : (
+            <Input
+              type="date"
+              className={cn(
+                "h-7 flex-1 border-0 bg-transparent p-0 text-body shadow-none focus:ring-0 focus-visible:ring-0",
+                isEndLive && "pointer-events-none",
+              )}
+              value={fmtDate(ts)}
+              onChange={(e) => {
+                if (isEndLive) return;
+                const next = parseDateInput(ts, e.target.value);
+                setTs(next);
+                const d = fromTs(next);
+                setDisplayMonth(new Date(d.getFullYear(), d.getMonth(), 1));
+                setError(null);
+              }}
+              onFocus={() => {
+                if (!isEndLive) setActiveField(field);
+              }}
+              readOnly={isEndLive}
+            />
+          )}
+          {useAppDateTimeControls ? (
+            <div className="flex shrink-0 items-center gap-0.5">
+              {(["hour", "minute"] as const).map((part, index) => {
+                const date = fromTs(ts);
+                const value =
+                  part === "hour" ? date.getHours() : date.getMinutes();
+                return (
+                  <Select
+                    key={part}
+                    value={String(value)}
+                    disabled={isEndLive}
+                    onValueChange={(next) => {
+                      if (part === "hour") date.setHours(Number(next));
+                      else date.setMinutes(Number(next));
+                      setTs(toTs(date));
+                      setActiveField(field);
+                      setError(null);
+                    }}
+                  >
+                    {index === 1 && <span aria-hidden="true">:</span>}
+                    <SelectTrigger
+                      aria-label={`${label} · ${t(`usage.${part}`)}`}
+                      className="h-7 w-[52px] gap-0 border-0 bg-transparent px-1 shadow-none tabular-nums [&>svg]:h-3 [&>svg]:w-3"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="min-w-[4rem]" position="popper">
+                      {Array.from(
+                        { length: part === "hour" ? 24 : 60 },
+                        (_, n) => (
+                          <SelectItem key={n} value={String(n)}>
+                            {String(n).padStart(2, "0")}
+                          </SelectItem>
+                        ),
+                      )}
+                    </SelectContent>
+                  </Select>
+                );
+              })}
+            </div>
+          ) : (
+            <Input
+              type="time"
+              step={60}
+              className={cn(
+                "h-7 w-[90px] flex-none border-0 bg-transparent p-0 text-body shadow-none focus:ring-0 focus-visible:ring-0",
+                isEndLive && "pointer-events-none",
+              )}
+              value={fmtTime(ts)}
+              onChange={(e) => {
+                if (isEndLive) return;
+                setTs(parseTimeInput(ts, e.target.value));
+                setError(null);
+              }}
+              onFocus={() => {
+                if (!isEndLive) setActiveField(field);
+              }}
+              readOnly={isEndLive}
+            />
+          )}
         </div>
       </div>
     );

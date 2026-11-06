@@ -247,17 +247,32 @@ export function GeneralSection({
             />
           )}
           {isLinux() && (
-            <SettingsSwitchRow
-              label={t("settings.useAppWindowControls")}
-              help={{
-                title: t("settings.useAppWindowControls"),
-                body: t("settings.useAppWindowControlsDescription"),
-              }}
-              checked={!!settings.useAppWindowControls}
-              onCheckedChange={(value) =>
-                void onAutoSave({ useAppWindowControls: value })
-              }
-            />
+            <>
+              <SettingsSwitchRow
+                label={t("settings.useAppWindowControls")}
+                help={{
+                  title: t("settings.useAppWindowControls"),
+                  body: t("settings.useAppWindowControlsDescription"),
+                }}
+                checked={!!settings.useAppWindowControls}
+                onCheckedChange={(value) =>
+                  void onAutoSave({ useAppWindowControls: value })
+                }
+              />
+              {settings.useAppWindowControls && (
+                <SettingsSwitchRow
+                  label={t("settings.useGtkWindowControls")}
+                  help={{
+                    title: t("settings.useGtkWindowControls"),
+                    body: t("settings.useGtkWindowControlsDescription"),
+                  }}
+                  checked={settings.useGtkWindowControls ?? true}
+                  onCheckedChange={(value) =>
+                    void onAutoSave({ useGtkWindowControls: value })
+                  }
+                />
+              )}
+            </>
           )}
           <SettingsRow
             label={t("settings.terminal.title")}

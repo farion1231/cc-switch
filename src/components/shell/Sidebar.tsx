@@ -1,4 +1,4 @@
-import { useRef, type ComponentType } from "react";
+import { useContext, useRef, type ComponentType } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { getVersion } from "@tauri-apps/api/app";
@@ -44,6 +44,8 @@ import { useSidebarStatus, type AppNavStatus } from "@/hooks/useSidebarStatus";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { DRAG_REGION_ATTR, DRAG_REGION_STYLE, isMac } from "@/lib/platform";
 import { cn } from "@/lib/utils";
+import { WindowControlsContext } from "./AppPageHeader";
+import { WindowControls } from "./WindowControls";
 import ccswitchLogo from "@/assets/icons/logo.svg";
 import { APP_DISPLAY_NAME, AppGlyph } from "./AppGlyph";
 
@@ -112,6 +114,7 @@ function SidebarTopBar({
   onToggle: () => void;
 }) {
   const { t } = useTranslation();
+  const windowControls = useContext(WindowControlsContext);
   const tipSide = collapsed ? "right" : "left";
   const label = collapsed ? t("nav.expandSidebar") : t("nav.collapseSidebar");
   const Icon = collapsed ? ChevronsRight : ChevronsLeft;
@@ -172,6 +175,60 @@ function SidebarTopBar({
         <div className="-mt-4 flex h-8 shrink-0 items-center justify-center">
           {toggleButton}
         </div>
+      </>
+    );
+  }
+
+  // Linux 把窗口按钮放在系统设置的一侧。左侧时贴住窗口左边缘，放进侧栏
+  // 顶条；右侧时仍由页头渲染，不在这里出现。
+  if (windowControls?.side === "left") {
+    return (
+      <>
+        <div
+          className={cn(
+            "flex h-11 shrink-0 items-center",
+            collapsed ? "justify-center px-1" : "gap-1 px-2",
+          )}
+          {...DRAG_REGION_ATTR}
+          style={DRAG_REGION_STYLE as React.CSSProperties}
+        >
+          <div className="flex shrink-0 items-center gap-0.5" style={NO_DRAG}>
+            <WindowControls
+              order={windowControls.order}
+              images={windowControls.images}
+              compact={collapsed}
+            />
+          </div>
+          {!collapsed && (
+            <>
+              <div {...DRAG_REGION_ATTR} className="flex-1" />
+              {toggleButton}
+            </>
+          )}
+        </div>
+        {collapsed ? (
+          // 图标轨只有 72px：收起箭头放在按钮下面一行，避免和三个按钮挤在一起。
+          <div className="-mt-2 flex h-8 shrink-0 items-center justify-center">
+            {toggleButton}
+          </div>
+        ) : (
+          // 品牌从顶条挪到第二行；顶条留给窗口按钮，位置和原生标题栏一致。
+          <div
+            className="-mt-2 mb-1 flex h-9 shrink-0 items-center gap-2 pe-2 ps-4"
+            {...DRAG_REGION_ATTR}
+            style={DRAG_REGION_STYLE as React.CSSProperties}
+          >
+            <img
+              src={ccswitchLogo}
+              alt=""
+              draggable={false}
+              className="pointer-events-none h-5 w-5 shrink-0"
+            />
+            <span className="pointer-events-none min-w-0 truncate text-strong font-semibold text-fg-1">
+              CC Switch
+            </span>
+          </div>
+        )}
       </>
     );
   }

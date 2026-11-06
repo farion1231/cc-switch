@@ -28,6 +28,7 @@ import {
 } from "./lib/modelsDevAutoSync";
 import { initializeWindowActivity } from "@/lib/windowActivity";
 import { initializeInputModality } from "@/lib/inputModality";
+import { isLinux } from "@/lib/platform";
 
 installGlobalErrorHandlers();
 
@@ -38,6 +39,9 @@ try {
   const isMac = /mac/i.test(ua) || plat.includes("mac");
   if (isMac) {
     document.body.classList.add("is-mac");
+  }
+  if (isLinux()) {
+    document.body.classList.add("is-linux");
   }
 } catch {
   // 忽略平台检测失败
