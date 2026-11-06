@@ -390,7 +390,8 @@
     "codexAuthCleanupFailed": "전환은 완료되었지만 auth.json을 삭제하지 못해 공식 로그인 자격 증명이 디스크에 남아 있습니다. 완전히 제거하려면 Codex 설정 디렉터리의 auth.json을 직접 삭제하세요.",
     "windowControlFailed": "창 제어 실패: {{error}}",
     "officialBlockedByProxy": "로컬 라우팅이 활성화된 동안에는 공식 공급자로 전환할 수 없습니다. 공식 API와 함께 라우팅을 사용하면 계정이 차단될 수 있습니다.",
-    "proxyOfficialWarning": "현재 선택한 공급자({{name}})는 공식 공급자입니다. 로컬 라우팅을 사용하기 전에 타사 공급자로 전환하는 것을 고려하세요."
+    "proxyOfficialWarning": "현재 선택한 공급자({{name}})는 공식 공급자입니다. 로컬 라우팅을 사용하기 전에 타사 공급자로 전환하는 것을 고려하세요.",
+    "proxyLoopbackHijacked": "{{app}}에서 로컬 라우팅 주소 {{origin}}으로 보내는 요청이 시스템 프록시를 거치게 되어 {{app}}에서 502 오류가 발생합니다. 프록시 도구에서 루프백 주소에 직접 연결하도록 설정하세요(예: Clash 규칙 맨 위에 IP-CIDR,127.0.0.0/8,DIRECT,no-resolve 추가). 설정을 변경한 후 {{app}}을 완전히 종료하고 다시 실행하세요."
   },
   "confirm": {
     "deleteProvider": "공급자 삭제",
@@ -993,6 +994,7 @@
     "browsePlaceholderHermes": "예: /home/<사용자 이름>/.hermes",
     "browsePlaceholderPi": "예: /home/<사용자 이름>/.pi/agent",
     "browsePlaceholderOmp": "예: /home/<사용자 이름>/.omp/agent",
+    "browsePlaceholderDsh": "예: /home/<사용자 이름>/.dsh",
     "browseDirectory": "디렉터리 찾아보기",
     "resetDefault": "기본 디렉터리로 재설정(저장 후 적용)",
     "checkForUpdates": "업데이트 확인",
@@ -1052,6 +1054,7 @@
     "toolActionDone": "도구 {{count}}개 {{action}} 완료",
     "toolActionPartial": "{{action}}: {{succeeded}}개 성공, {{failed}}개 실패",
     "toolActionFailed": "설치/업데이트 명령이 실패했습니다.",
+    "toolActionBinCollision": "{{path}}에 같은 이름의 파일이 이미 있습니다. 다른 방식으로 설치할 때 생성된 파일일 수 있으며, npm은 이 파일을 덮어쓰지 않습니다. 어떤 파일인지 확인한 뒤 이름을 바꿔 백업하고 다시 시도하세요. npm의 --force 옵션은 파일을 바로 덮어쓰므로 사용하지 마세요.",
     "toolActionInProgress": "앱 작업이 아직 실행 중입니다.",
     "toolActionInProgressDetail": "{{tool}}의 설치, 업데이트 또는 제거 작업이 이미 백그라운드에서 실행 중입니다. 완료될 때까지 기다려 주세요.",
     "toolNotRunnable": "설치되었지만 실행할 수 없음(버전이 감지되지 않음)",
@@ -2065,6 +2068,8 @@
     "autoReviewModelCodexDefault": "Codex 기본값(codex-auto-review)",
     "autoReviewModelMainDefault": "주 모델이 직접 승인 (기본값)",
     "autoReviewModelNoList": "이 카드에는 모델 목록이 없습니다. Codex는 공식 codex-auto-review로 승인 여부를 판단하며, ChatGPT 계정으로 전달하는 일부 중계 서비스만 이 모델을 지원합니다. 지원하지 않으면 404 오류가 발생합니다. 위 모델 목록에 모델을 추가하면 선택할 수 있습니다.",
+    "officialSpeedTiersLabel": "공식 Fast 단계 유지",
+    "officialSpeedTiersHint": "모델 목록의 GPT 모델에 공식 Fast 속도 단계를 유지하여 Codex에서 Fast를 선택하면 요청에 service_tier=priority가 포함되도록 합니다. 공식 ChatGPT 계정으로 요청을 전달하는 중계 서비스(예: CPA)만 이를 지원하며, 할당량이 더 빠르게 소모됩니다. 다른 업스트림에서는 오류가 발생하거나 더 높은 요금이 청구될 수 있습니다. 이 옵션을 켜면 이전에 공식 공급자 카드에서 선택한 Fast가 이 공급자에도 즉시 적용됩니다. 통합 모드에서는 적용되지 않습니다. 변경 후 Codex를 다시 시작하세요.",
     "modelListHint": "변경 후 Codex를 다시 시작하세요.",
     "modelListDefaultHelp": "이 모델들은 Codex의 /model 메뉴에 표시됩니다. 첫 번째 모델이 기본 모델입니다. 공식 GPT 모델과 이름이 같으면 공식 모델 정보를 사용하므로 표시 이름, 컨텍스트 창 및 추론 수준 설정은 적용되지 않습니다.",
     "addCatalogModel": "수동으로 추가",
@@ -2669,7 +2674,7 @@
     "officialSubscriptionHint": "로컬 CLI OAuth 자격 증명을 읽고 공식 API를 호출하여 구독 할당량을 조회합니다. 기본적으로 비활성화되어 있으며 활성화한 후에만 요청합니다.",
     "officialSubscriptionHintAgy": "agy의 기본 제공 /usage 명령을 실행하여 로그인된 계정의 할당량을 확인합니다. 로그인 자격 증명은 읽혀지지 않습니다. 각 확인에는 약 10초가 소요됩니다. 기본적으로 비활성화되어 있으며 활성화한 후에만 실행됩니다.",
     "resetDate": "초기화 날짜",
-    "premiumRequests": "프리미엄 요청",
+    "premiumRequests": "크레딧",
     "credentialsConfig": "자격 증명",
     "credentialsHint": "공급자 설정을 사용하려면 비워 두세요.",
     "optional": "선택 사항",
@@ -4205,7 +4210,7 @@
       "agyThirdPartyWeekly": "Claude 주간",
       "monthly": "월",
       "credits": "크레딧",
-      "copilotPremium": "프리미엄 요청"
+      "copilotPremium": "크레딧"
     },
     "fiveHour": "5시간",
     "sevenDay": "주간",
@@ -4225,7 +4230,11 @@
     "weeklyLimit": "주간",
     "monthly": "월간",
     "credits": "크레딧",
-    "copilotPremium": "프리미엄 요청",
+    "copilotPremium": "크레딧",
+    "copilotCompletions": "코드 완성",
+    "copilotChat": "채팅",
+    "copilotCount": "총 {{total}}개 중 {{remaining}}개 남음",
+    "copilotNotIncluded": "현재 요금제에 포함되지 않음",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}} 후 초기화",
     "extraUsage": "추가 사용량",
@@ -4609,6 +4618,7 @@
     "connection": {
       "unchecked": "확인하지 않음",
       "connected": "연결 성공",
+      "authRequired": "서버에 연결할 수 있지만 로그인 인증(예: OAuth)이 필요합니다. CC Switch는 클라이언트 자체의 로그인 자격 증명 없이 연결을 확인합니다. 클라이언트에서 이미 로그인했다면 해당 클라이언트에서는 정상적으로 사용할 수 있습니다. 요청 헤더에 토큰을 설정했다면 아직 유효한지 확인하세요.",
       "disconnected": "연결 실패",
       "checking": "연결 확인 중",
       "disabled": "활성화되지 않음"
