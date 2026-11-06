@@ -63,7 +63,7 @@ mod style {
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 mod style {
     pub const LAYOUT: &str = "joined";
-    /// 没有原生模糊：网页自己画兼容的毛玻璃
+    /// 没有原生模糊；面板用不透明窗口和实色画布（见 tray-panel.css），不画半透明毛玻璃
     pub const GLASS: &str = "frosted";
     pub const CARD_GAP: f64 = 0.0;
     pub const RADIUS: f64 = 12.0;
