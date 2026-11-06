@@ -1930,12 +1930,9 @@ mod tests {
         let target = runner.file(&cred_path(&b_dir)).unwrap();
         assert!(refresh_of(&target).is_none());
         assert_eq!(mcp_of(&target), "mcp-b");
-        let doc: Value = serde_json::from_slice(
-            &runner
-                .file(&format!("{}/.claude.json", home()))
-                .unwrap(),
-        )
-        .unwrap();
+        let doc: Value =
+            serde_json::from_slice(&runner.file(&format!("{}/.claude.json", home())).unwrap())
+                .unwrap();
         assert!(doc.get("cachedUsageUtilization").is_none());
         assert_eq!(doc["mcpServers"]["keep"], true);
         assert_eq!(
