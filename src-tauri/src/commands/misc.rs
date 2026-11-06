@@ -5679,6 +5679,8 @@ fn grok_launch(grok_home: String) -> ProviderLaunch {
         env: vec![("GROK_HOME", Some(grok_home))],
         batch_vars: Vec::new(),
         cleanup: Vec::new(),
+        // Grok 终端仍在本机启动。这个字段只给 Claude 官方账号进 WSL。
+        wsl_account: None,
     }
 }
 
