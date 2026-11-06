@@ -55,16 +55,12 @@ export function GitHubSkillsDialog({
   const installedByDirectory = new Map(
     installed.map((skill) => [skill.directory.toLowerCase(), skill]),
   );
+  const destinationFor = (skill: DiscoverableSkill) =>
+    skill.directory.split(/[/\\]/).pop()!.trim().toLowerCase();
   const existingFor = (skill: DiscoverableSkill) =>
-    installedByDirectory.get(skill.directory.split("/").pop()!.toLowerCase());
-  const isInstalled = (skill: DiscoverableSkill) => {
-    const existing = existingFor(skill);
-    return (
-      completed.has(skill.key) ||
-      (existing?.repoOwner === skill.repoOwner &&
-        existing?.repoName === skill.repoName)
-    );
-  };
+    installedByDirectory.get(destinationFor(skill));
+  const isInstalled = (skill: DiscoverableSkill) =>
+    completed.has(skill.key) || existingFor(skill)?.id === skill.key;
   const unavailable = (skill: DiscoverableSkill) =>
     completed.has(skill.key) || !!existingFor(skill);
   const visible = (skills ?? []).filter((skill) =>
@@ -117,9 +113,20 @@ export function GitHubSkillsDialog({
     setBusy(true);
     setError("");
     const apps = [...targets];
+    const destinations = new Set(installedByDirectory.keys());
     try {
       for (const skill of skills ?? []) {
         if (!selected.has(skill.key) || unavailable(skill)) continue;
+        const destination = destinationFor(skill);
+        if (destinations.has(destination)) {
+          setFailures((previous) => ({
+            ...previous,
+            [skill.key]: t("skills.github.occupied"),
+          }));
+          continue;
+        }
+        // Reserve before awaiting: installation may persist before app sync fails.
+        destinations.add(destination);
         setFailures((previous) => {
           const next = { ...previous };
           delete next[skill.key];
@@ -163,7 +170,8 @@ export function GitHubSkillsDialog({
     const path = skill.directory.split("/").map(encodeURIComponent).join("/");
     try {
       await settingsApi.openExternal(
-        `https://github.com/${encodeURIComponent(skill.repoOwner)}/${encodeURIComponent(skill.repoName)}/tree/${encodeURIComponent(skill.repoBranch)}/${path}`,
+        skill.readmeUrl ||
+          `https://github.com/${encodeURIComponent(skill.repoOwner)}/${encodeURIComponent(skill.repoName)}/tree/${encodeURIComponent(skill.repoBranch)}/${path}`,
       );
     } catch (e) {
       setError(explain(e));
