@@ -214,3 +214,40 @@ describe("Microsoft Foundry Provider Preset", () => {
     expect(env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
   });
 });
+
+describe("MatrixOrigin Token Claude Code preset", () => {
+  const preset = providerPresets.find((p) => p.name === "MatrixOrigin Token");
+
+  it("uses the public Anthropic Messages endpoint with a user-supplied bearer key", () => {
+    expect(preset).toBeDefined();
+    expect(preset!.category).toBe("aggregator");
+    expect(preset!.apiFormat).toBeUndefined();
+    expect(preset!.settingsConfig).toMatchObject({
+      env: {
+        ANTHROPIC_BASE_URL: "https://token.moi.matrixorigin.cn",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    });
+
+    const provider: Provider = {
+      id: "matrixorigin-token",
+      name: preset!.name,
+      category: preset!.category,
+      settingsConfig: preset!.settingsConfig as Record<string, any>,
+      meta: { apiFormat: preset!.apiFormat },
+    };
+    expect(providerNeedsRouting("claude", provider)).toBe(false);
+  });
+
+  it("maps Claude Code's model roles to the verified public model", () => {
+    const env = (preset!.settingsConfig as any).env;
+    for (const key of [
+      "ANTHROPIC_MODEL",
+      "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+      "ANTHROPIC_DEFAULT_SONNET_MODEL",
+      "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    ]) {
+      expect(env[key]).toBe("glm-5.3");
+    }
+  });
+});
