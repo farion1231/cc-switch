@@ -76,7 +76,15 @@ pub(crate) fn sqlite_unsupported_in_temp_dir() -> bool {
 /// 用 `var_os` 而非 `var`：非 Unicode 的取值只应让路径变 lossy，而不该让
 /// “覆盖是否存在”的判断失效、进而退回真实用户目录。
 fn test_home_override() -> Option<PathBuf> {
-    let raw = std::env::var_os("CC_SWITCH_TEST_HOME")?;
+    env_dir_override("CC_SWITCH_TEST_HOME")
+}
+
+/// 读取一个“目录覆盖”型环境变量：未设置或空白（trim 后为空）视为未覆盖。
+///
+/// 用 `var_os` 而非 `var`：非 Unicode 的取值只应让路径变 lossy，而不该让
+/// “覆盖是否存在”的判断失效。
+fn env_dir_override(name: &str) -> Option<PathBuf> {
+    let raw = std::env::var_os(name)?;
     // to_string_lossy 的结果必须先绑住，否则 trim 借的是一个已释放的临时值。
     let lossy = raw.to_string_lossy();
     let trimmed = lossy.trim();
@@ -85,6 +93,35 @@ fn test_home_override() -> Option<PathBuf> {
     } else {
         Some(PathBuf::from(trimmed))
     }
+}
+
+/// `CC_SWITCH_HOME`：显式指定 cc-switch 的数据目录，等价于把 `~/.cc-switch`
+/// 整体搬到该路径（含 `settings.json`、`live-state.json` 等设备本地文件）。
+///
+/// 优先级最高，且不做任何存在性/数据判断——设置它就是明确表态（与
+/// `CC_SWITCH_TEST_HOME` 语义类似，但取代的是 `~/.cc-switch` 本身而不是 home）。
+pub fn cc_switch_home_override() -> Option<PathBuf> {
+    env_dir_override("CC_SWITCH_HOME")
+}
+
+/// `$XDG_CONFIG_HOME/cc-switch`（Linux 且 `XDG_CONFIG_HOME` 非空时）。
+///
+/// 遵循 XDG Base Directory Specification；Windows/macOS 上不参与解析
+/// （Windows 通常不设该变量，行为不变；macOS 维持 `~/.cc-switch` 惯例）。
+#[cfg(target_os = "linux")]
+pub(crate) fn xdg_cc_switch_dir() -> Option<PathBuf> {
+    Some(env_dir_override("XDG_CONFIG_HOME")?.join("cc-switch"))
+}
+
+/// 目录里是否已有 cc-switch 在用的数据（数据库或设备设置文件）。
+///
+/// 用于「不迁移数据」：`XDG_CONFIG_HOME` 只允许改变全新安装的落点，已有数据的
+/// 目录一律沿用，避免升级后用户找不到原有的供应商配置。`settings.json` 也要
+/// 检查——无数据库的旧安装（以及把数据库放在 app_store 覆盖目录的用户）在
+/// 默认位置仍可能有这份设备设置。
+#[cfg(target_os = "linux")]
+fn dir_has_existing_data(dir: &Path) -> bool {
+    dir.join("cc-switch.db").exists() || dir.join("settings.json").exists()
 }
 
 /// 获取 Claude Code 配置目录路径
@@ -309,13 +346,46 @@ pub fn get_claude_settings_path() -> PathBuf {
     settings
 }
 
-/// 获取应用配置目录路径 (~/.cc-switch)
+/// 获取应用配置目录路径
+///
+/// 优先级：
+/// 1. `CC_SWITCH_HOME`（显式整体搬迁，见 [`cc_switch_home_override`]）
+/// 2. Linux 且 `XDG_CONFIG_HOME` 非空时的 `$XDG_CONFIG_HOME/cc-switch`——
+///    仅当没有 app_store 覆盖、且传统默认位置（`~/.cc-switch`）没有数据时生效
+/// 3. app_store 配置目录覆盖（Settings → Data → Location）
+/// 4. `~/.cc-switch`（Windows 上保留 v3.10.3 `HOME` 兼容回退）
 pub fn get_app_config_dir() -> PathBuf {
-    if let Some(custom) = crate::app_store::get_app_config_dir_override() {
-        return custom;
+    if let Some(dir) = cc_switch_home_override() {
+        return dir;
     }
 
     let default_dir = get_home_dir().join(".cc-switch");
+    let override_dir = crate::app_store::get_app_config_dir_override();
+
+    // XDG（Linux）：环境变量代表环境层面的默认落点，只在“没有任何既定目录”时
+    // 生效，绝不迁移数据——
+    // - app_store 覆盖是用户在应用内的显式设置，不让环境变量抢走；
+    // - 传统默认位置已有数据库/设备设置时沿用旧目录；
+    // - `CC_SWITCH_TEST_HOME` 是测试用的显式 home 覆盖，必须在这里短路：否则
+    //   宿主环境的 `XDG_CONFIG_HOME`（Linux CI 上可能存在）会把测试引向真实
+    //   目录，破坏隔离。
+    #[cfg(target_os = "linux")]
+    if override_dir.is_none() && test_home_override().is_none() {
+        if let Some(xdg_dir) = xdg_cc_switch_dir() {
+            if !dir_has_existing_data(&default_dir) {
+                log::info!(
+                    "Using XDG config dir {} instead of {}",
+                    xdg_dir.display(),
+                    default_dir.display()
+                );
+                return xdg_dir;
+            }
+        }
+    }
+
+    if let Some(custom) = override_dir {
+        return custom;
+    }
 
     // 兼容 v3.10.3：当用户环境存在 `HOME` 且与真实用户目录不同，
     // v3.10.3 可能在 `HOME/.cc-switch/` 下创建/使用了数据库。
@@ -349,6 +419,39 @@ pub fn get_app_config_dir() -> PathBuf {
                     }
                 }
             }
+        }
+    }
+
+    default_dir
+}
+
+/// 获取设备本地数据目录（`settings.json`、`live-state.json`、
+/// `codex-login-stash.json`、首写/接管备份等）。
+///
+/// 与 [`get_app_config_dir`] 的区别：**不跟随 app_store 配置目录覆盖**——覆盖
+/// 目录可能指向网盘同步目录，而这些文件描述的是这台设备本身（见
+/// `live::engine` 的 `DeviceStore`）。但目录级别的整体搬迁同样遵循：
+/// - `CC_SWITCH_HOME` 显式指定时直接使用；
+/// - Linux 且 `XDG_CONFIG_HOME` 非空、且传统默认位置没有数据时，使用
+///   `$XDG_CONFIG_HOME/cc-switch`（保证纯 XDG 环境不必创建 `~/.cc-switch`）；
+/// - 其余情况沿用 `~/.cc-switch`。
+pub fn get_device_data_dir() -> PathBuf {
+    if let Some(dir) = cc_switch_home_override() {
+        return dir;
+    }
+
+    let default_dir = get_home_dir().join(".cc-switch");
+
+    // 测试显式覆盖 home 时短路：隔离测试只看这个临时目录，不受宿主环境
+    // XDG 变量的干扰。
+    if test_home_override().is_some() {
+        return default_dir;
+    }
+
+    #[cfg(target_os = "linux")]
+    if let Some(xdg_dir) = xdg_cc_switch_dir() {
+        if !dir_has_existing_data(&default_dir) {
+            return xdg_dir;
         }
     }
 
@@ -693,14 +796,10 @@ pub(crate) fn commit_staged(tmp: &Path, path: &Path) -> Result<(), AppError> {
 mod tests {
     use super::*;
 
-    /// 共享的环境变量互斥锁：改 `HOME` / `CC_SWITCH_TEST_HOME` 这类进程级
-    /// 状态的测试都必须经它（配合 `#[serial_test::serial]`）。锁必须放在
-    /// 函数里经 `OnceLock` 取用——写成某个测试函数体内的 `static` 只对那一个
-    /// 测试可见，等于没有互斥。
-    ///
-    /// 目前唯一使用者是下面的 Windows 回归测试，故同样 cfg 掉，避免在
-    /// Linux/macOS 的 `clippy -D warnings` 里变成 never-used。
-    #[cfg(windows)]
+    /// 共享的环境变量互斥锁：改 `HOME` / `CC_SWITCH_TEST_HOME` /
+    /// `CC_SWITCH_HOME` / `XDG_CONFIG_HOME` 这类进程级状态的测试都必须经它
+    /// （配合 `#[serial_test::serial]`）。锁必须放在函数里经 `OnceLock` 取用——
+    /// 写成某个测试函数体内的 `static` 只对那一个测试可见，等于没有互斥。
     fn env_lock() -> &'static std::sync::Mutex<()> {
         use std::sync::OnceLock;
         static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
@@ -1050,6 +1149,77 @@ mod tests {
             dir, expected,
             "测试 home 优先：不得回退到 HOME 下的旧库目录"
         );
+    }
+
+    /// `CC_SWITCH_HOME` 显式整体搬迁：应用配置目录与设备本地目录都直接落在
+    /// 指定路径——它取代的是 `~/.cc-switch` 本身，不再往下拼 `.cc-switch`——
+    /// 且优先级高于一切既有判断。
+    #[test]
+    #[serial_test::serial]
+    fn cc_switch_home_overrides_app_and_device_dirs() {
+        let _guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
+
+        let home = tempfile::tempdir().expect("tempdir");
+        let saved = std::env::var_os("CC_SWITCH_HOME");
+        std::env::set_var("CC_SWITCH_HOME", home.path());
+
+        let app_dir = get_app_config_dir();
+        let device_dir = get_device_data_dir();
+
+        match saved {
+            Some(value) => std::env::set_var("CC_SWITCH_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_HOME"),
+        }
+
+        assert_eq!(app_dir, home.path());
+        assert_eq!(device_dir, home.path());
+    }
+
+    /// XDG（Linux）：`XDG_CONFIG_HOME` 非空时，全新安装落到
+    /// `$XDG_CONFIG_HOME/cc-switch`；传统默认位置已有数据时沿用旧目录，
+    /// 绝不迁移。设备本地目录与应用配置目录必须一致，避免拆成两处。
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[serial_test::serial]
+    fn xdg_config_home_applies_only_when_default_location_is_fresh() {
+        let _guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
+
+        let home = tempfile::tempdir().expect("tempdir");
+        let xdg_base = tempfile::tempdir().expect("tempdir");
+        let xdg_dir = xdg_base.path().join("cc-switch");
+        let saved_home = std::env::var_os("HOME");
+        let saved_xdg = std::env::var_os("XDG_CONFIG_HOME");
+        let saved_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+
+        std::env::remove_var("CC_SWITCH_TEST_HOME");
+        std::env::set_var("HOME", home.path());
+        std::env::set_var("XDG_CONFIG_HOME", xdg_base.path());
+
+        // 全新安装：默认位置无数据 → 应用配置与设备本地文件都落 XDG 目录，
+        // 且两处必须一致（否则 ~/.cc-switch 仍会被创建）。
+        assert_eq!(get_app_config_dir(), xdg_dir);
+        assert_eq!(get_device_data_dir(), xdg_dir);
+
+        // 既有安装：默认位置已有 db → 沿用旧目录，绝不迁移。
+        let legacy = home.path().join(".cc-switch");
+        std::fs::create_dir_all(&legacy).expect("create legacy dir");
+        std::fs::write(legacy.join("cc-switch.db"), b"db").expect("seed db");
+
+        assert_eq!(get_app_config_dir(), legacy);
+        assert_eq!(get_device_data_dir(), legacy);
+
+        match saved_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+        match saved_xdg {
+            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        match saved_home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
     }
 }
 

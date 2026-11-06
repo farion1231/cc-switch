@@ -539,6 +539,8 @@ By default, everything is stored in the `.cc-switch` folder in your home directo
 
 After you change "CC Switch Configuration Directory" in "Settings → Data → Location", all of the files above except `settings.json`, the device state, and the original config files are stored in the new directory. CC Switch doesn't move existing files automatically, so copy them over manually first. `settings.json`, the device state, and the original config files belong to this computer only: they always stay in the default directory and are not included in cloud sync.
 
+On Linux you can also relocate everything with environment variables: set `CC_SWITCH_HOME` to move the whole `.cc-switch` folder (including the device-local files) to another path, or set `XDG_CONFIG_HOME` to place a fresh install under `$XDG_CONFIG_HOME/cc-switch` following the XDG Base Directory Specification. Existing installs with data in `~/.cc-switch` keep using it; CC Switch never migrates files automatically.
+
 </details>
 
 <details>

@@ -1,6 +1,7 @@
 //! Panic Hook 模块
 //!
-//! 在应用崩溃时捕获 panic 信息并记录到 `<app_config_dir>/crash.log` 文件中（默认 `~/.cc-switch/crash.log`）。
+//! 在应用崩溃时捕获 panic 信息并记录到 `<app_config_dir>/crash.log` 文件中（默认 `~/.cc-switch/crash.log`，
+//! 设置 `CC_SWITCH_HOME` / `XDG_CONFIG_HOME` 时跟随新目录）。
 //! 便于用户和开发者诊断闪退问题。
 
 use std::fs::{self, OpenOptions};
@@ -22,7 +23,19 @@ pub fn init_app_config_dir(dir: PathBuf) {
 }
 
 /// 获取默认应用配置目录（不会 panic）
+///
+/// 刻意保持精简：只读环境变量，不碰文件系统、不取锁、不走
+/// `config::get_app_config_dir()`（那里会碰 app_store 的 RwLock，且 panic 时
+/// 任何阻塞都有风险）。这里只是 `init_app_config_dir` 之前的兜底与测试路径，
+/// 正式目录以启动时写入的值为准（见 `lib.rs`）。
 fn default_app_config_dir() -> PathBuf {
+    if let Some(dir) = crate::config::cc_switch_home_override() {
+        return dir;
+    }
+    #[cfg(target_os = "linux")]
+    if let Some(xdg_dir) = crate::config::xdg_cc_switch_dir() {
+        return xdg_dir;
+    }
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".cc-switch")
@@ -250,7 +263,9 @@ mod tests {
     fn test_crash_log_path() {
         let path = get_crash_log_path();
         assert!(path.ends_with("crash.log"));
-        assert!(path.to_string_lossy().contains(".cc-switch"));
+        // 不带点匹配：目录可能来自 ~/.cc-switch，也可能来自
+        // CC_SWITCH_HOME / XDG_CONFIG_HOME 指定的 cc-switch 目录。
+        assert!(path.to_string_lossy().contains("cc-switch"));
     }
 
     #[test]
