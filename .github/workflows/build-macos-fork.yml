@@ -16,7 +16,7 @@ jobs:
   build:
     name: Test and package macOS arm64
     if: github.repository == 'sxin0/cc-switch'
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 90
     steps:
       - name: Checkout
