@@ -1,8 +1,11 @@
 name: WSL2 Nightly
 
 # Runs the backend library tests with HOME and TEMP on a \\wsl.localhost (9P)
-# share, nightly rather than per PR. The per-PR gate in ci.yml only runs the
-# atomic-write contract test against the same WSL2-backed environment.
+# share. Run it by hand (workflow_dispatch) after WSL-related changes or before
+# a release; it no longer runs on a schedule because it mostly flagged new tests
+# that forgot the WSL skip guard, not product bugs. The per-PR gate in ci.yml
+# only runs the atomic-write contract test against the same WSL2-backed
+# environment.
 #
 # Windows cannot lock SQLite files on a 9P share. The app's database lives in
 # the Windows home unless the user explicitly overrides the app config dir, and
@@ -18,8 +21,6 @@ name: WSL2 Nightly
 # can re-link the crate, and link.exe/mt.exe cannot create manifest temp files
 # there (LNK1327).
 on:
-  schedule:
-    - cron: "23 18 * * *" # 02:23 Beijing time
   workflow_dispatch:
 
 jobs:

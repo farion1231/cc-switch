@@ -1,6 +1,7 @@
 // Hand-curated icon index with optimized SVG content and custom name mappings.
 // Update entries deliberately; automatic regeneration is intentionally unsupported.
 
+import { getIconMetadata, isTileIcon } from "./metadata";
 import _88api from "./88api.png";
 import _alltokens from "./alltokens.png";
 import _alltokensSi from "./alltokens-si.png";
@@ -23,6 +24,7 @@ import _etok from "./etok.png";
 import _everyapi from "./everyapi.svg?url";
 import _fenno from "./fenno-icon.png";
 import _fluxa from "./fluxa.png";
+import _genesis from "./genesis.svg?url";
 import _grooroute from "./grooroute.jpg";
 import _hermes from "./hermes.png";
 import _huoshan from "./huoshan.png";
@@ -30,6 +32,7 @@ import _ikuncode from "./ikuncode.jpg";
 import _modelflare from "./modelflare.jpg";
 import _nekocode from "./nekocode-icon.png";
 import _openmodel from "./openmodel.jpg";
+import _ospreyai from "./ospreyai.png";
 import _pateway from "./pateway.jpg";
 import _pipellm from "./pipellm.png";
 import _qiniu from "./qiniu.png";
@@ -180,6 +183,7 @@ export const iconUrls: Record<string, string> = {
   everyapi: _everyapi,
   fenno: _fenno,
   fluxa: _fluxa,
+  genesis: _genesis,
   grooroute: _grooroute,
   hermes: _hermes,
   huoshan: _huoshan,
@@ -187,6 +191,7 @@ export const iconUrls: Record<string, string> = {
   modelflare: _modelflare,
   nekocode: _nekocode,
   openmodel: _openmodel,
+  ospreyai: _ospreyai,
   pateway: _pateway,
   pipellm: _pipellm,
   qiniu: _qiniu,
@@ -227,8 +232,89 @@ export function hasIcon(name: string): boolean {
   return key in icons || key in iconUrls;
 }
 
+function hexChannels(hex: string): [number, number, number] | null {
+  let h = hex.slice(1);
+  if (h.length === 3 || h.length === 4) {
+    h = [...h.slice(0, 3)].map((c) => c + c).join("");
+  }
+  if (!/^[0-9a-f]{6}([0-9a-f]{2})?$/.test(h)) return null;
+  const n = parseInt(h.slice(0, 6), 16);
+  return [n >> 16, (n >> 8) & 255, n & 255];
+}
+
+/** 近黑色：三个通道都很低（深红、深蓝这类有色的深色不算）。 */
+export function isDarkInk(color?: string): boolean {
+  const c = color?.trim().toLowerCase();
+  if (!c) return false;
+  if (c === "black") return true;
+  if (!c.startsWith("#")) return false;
+  const rgb = hexChannels(c);
+  return rgb !== null && Math.max(...rgb) <= 0x50;
+}
+
+// <defs> / <clipPath> / <mask> 里的颜色是遮罩语义，不是画出来的墨色
+const MASK_BLOCK = /(<(defs|clipPath|mask)\b[\s\S]*?<\/\2>)/g;
+const PAINT_ATTR = /\b(fill|stroke)="([^"]+)"/g;
+
+function paintedColors(svg: string): string[] {
+  return [...svg.replace(MASK_BLOCK, "").matchAll(PAINT_ATTR)].map((m) => m[2]);
+}
+
+const adaptedSvgCache = new Map<string, string>();
+
+/**
+ * 深色模式适配：只处理单墨色图标——画出来的颜色全是近黑色时，换成 currentColor 跟随文字色。
+ * 多色图标里的近黑细节（Hugging Face 的眼睛、LionCC 的线稿）画在彩色形状上，
+ * 换成浅色文字色反而糊掉，保持原样。遮罩里的颜色不参与判断。
+ */
+export function adaptSvgToTheme(svg: string): string {
+  const cached = adaptedSvgCache.get(svg);
+  if (cached !== undefined) return cached;
+  const paints = paintedColors(svg).filter((c) => c.trim() !== "none");
+  const singleInk = paints.length > 0 && paints.every(isDarkInk);
+  const result = !singleInk
+    ? svg
+    : svg
+        .split(MASK_BLOCK)
+        // split 带捕获组：[正文, 整块, 标签名, 正文, ...]，丢掉标签名后只改正文
+        .filter((_, i) => i % 3 !== 2)
+        .map((part, i) =>
+          i % 2 === 0
+            ? part.replace(PAINT_ATTR, (whole, attr, color) =>
+                isDarkInk(color) ? `${attr}="currentColor"` : whole,
+              )
+            : part,
+        )
+        .join("");
+  adaptedSvgCache.set(svg, result);
+  return result;
+}
+
+const lightBackingCache = new Map<string, boolean>();
+
+/**
+ * 深色卡片上需要浅色衬底的图标（tile 图标自带底色，不算）：
+ * - 位图 / 外链图标：可能是透明底上的深色墨；
+ * - 适配后仍带近黑笔画的内联 SVG：多色图标的近黑部分不改色（如 OpenCode 的外框、
+ *   Cubence 的深灰顶面），直接画在透明底上，深色卡片上看不清。
+ * 全是近黑的单色图标已经换成 currentColor 跟随文字色，不需要。
+ */
+export function needsLightBacking(name?: string): boolean {
+  if (!name) return false;
+  const key = name.toLowerCase();
+  if (isTileIcon(key)) return false;
+  if (key in iconUrls) return true;
+  const svg = icons[key];
+  if (!svg) return false;
+  const cached = lightBackingCache.get(key);
+  if (cached !== undefined) return cached;
+  const result = paintedColors(adaptSvgToTheme(svg)).some(isDarkInk);
+  lightBackingCache.set(key, result);
+  return result;
+}
+
 export function isUrlIcon(name: string): boolean {
   return name.toLowerCase() in iconUrls;
 }
 
-export { getIconMetadata, isTileIcon } from "./metadata";
+export { getIconMetadata, isTileIcon };

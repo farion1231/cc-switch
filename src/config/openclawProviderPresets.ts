@@ -117,6 +117,17 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       apiKey: "",
       api: "openai-completions",
       models: [
+        // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+        // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文，官方价 $2/$10，
+        // 缓存读 $0.2、5m 写 $2）
+        {
+          id: "kimi-k3.1-pro",
+          name: "Kimi K3.1 Pro",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2 },
+        },
         {
           id: "kimi-k2.7-code",
           name: "Kimi K2.7 Code",
@@ -167,8 +178,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "kimi/kimi-k2.7-code" },
-      modelCatalog: { "kimi/kimi-k2.7-code": { alias: "Kimi" } },
+      model: { primary: "kimi/kimi-k3.1-pro" },
+      modelCatalog: { "kimi/kimi-k3.1-pro": { alias: "Kimi" } },
     },
   },
   // API 开放平台海外/Global 变体：platform.kimi.ai + api.moonshot.ai 端点
@@ -185,6 +196,17 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       apiKey: "",
       api: "openai-completions",
       models: [
+        // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+        // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文，官方价 $2/$10，
+        // 缓存读 $0.2、5m 写 $2）
+        {
+          id: "kimi-k3.1-pro",
+          name: "Kimi K3.1 Pro",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2 },
+        },
         {
           id: "kimi-k2.7-code",
           name: "Kimi K2.7 Code",
@@ -235,8 +257,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "kimi/kimi-k2.7-code" },
-      modelCatalog: { "kimi/kimi-k2.7-code": { alias: "Kimi" } },
+      model: { primary: "kimi/kimi-k3.1-pro" },
+      modelCatalog: { "kimi/kimi-k3.1-pro": { alias: "Kimi" } },
     },
   },
   {
@@ -743,55 +765,6 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     icon: "grooroute",
   },
   {
-    name: "DIT.ai",
-    websiteUrl: "https://dit.ai",
-    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
-    settingsConfig: {
-      baseUrl: "https://api.dit.ai",
-      apiKey: "",
-      api: "anthropic-messages",
-      models: [
-        {
-          id: "claude-opus-5-5",
-          name: "Claude Opus 5.5",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 1000000,
-          maxTokens: 128000,
-        },
-        {
-          id: "claude-sonnet-5-5",
-          name: "Claude Sonnet 5.5",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 1000000,
-          maxTokens: 128000,
-        },
-      ],
-    },
-    category: "aggregator",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    suggestedDefaults: {
-      model: {
-        primary: "dit/claude-opus-5-5",
-        fallbacks: ["dit/claude-sonnet-5-5"],
-      },
-      modelCatalog: {
-        "dit/claude-opus-5-5": { alias: "Opus" },
-        "dit/claude-sonnet-5-5": { alias: "Sonnet" },
-      },
-    },
-    isPartner: true,
-    partnerPromotionKey: "dit",
-    icon: "dit",
-  },
-  {
     name: "BuyToken",
     websiteUrl: "https://buytoken.work",
     apiKeyUrl: "https://buytoken.work/sign-up?aff=cc-switch",
@@ -1263,6 +1236,56 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    // OpenAI 平台 API Key 直连 Responses（按量计费）。前缀不用 openai：那是 OpenClaw 内置供应商的键
+    name: "OpenAI API",
+    websiteUrl: "https://platform.openai.com",
+    apiKeyUrl: "https://platform.openai.com/api-keys",
+    settingsConfig: {
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "",
+      api: "openai-responses",
+      models: [
+        {
+          id: "gpt-6.1-sol",
+          name: "GPT-6.1 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+          cost: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
+        },
+        {
+          id: "gpt-6-luna",
+          name: "GPT-6 Luna",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+          cost: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "openai",
+    iconColor: "#00A67E",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "openai-api/gpt-6.1-sol",
+      },
+      modelCatalog: {
+        "openai-api/gpt-6.1-sol": { alias: "GPT-6.1 Sol" },
+        "openai-api/gpt-6-luna": { alias: "GPT-6 Luna" },
+      },
+    },
+  },
+  {
     name: "SubRouter",
     websiteUrl: "https://subrouter.ai",
     apiKeyUrl: "https://subrouter.ai/register?aff=l3ri",
@@ -1309,6 +1332,55 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         "subrouter/gpt-6.1-sol": { alias: "GPT-6.1 Sol" },
       },
     },
+  },
+  {
+    name: "OspreyAI",
+    websiteUrl: "https://open.ospreyai.cn",
+    apiKeyUrl: "https://open.ospreyai.cn",
+    settingsConfig: {
+      baseUrl: "https://open.ospreyai.cn",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "ospreyai/claude-opus-5-5",
+        fallbacks: ["ospreyai/claude-sonnet-5-5"],
+      },
+      modelCatalog: {
+        "ospreyai/claude-opus-5-5": { alias: "Opus" },
+        "ospreyai/claude-sonnet-5-5": { alias: "Sonnet" },
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "ospreyai",
+    icon: "ospreyai",
   },
   {
     name: "Shengsuanyun",
@@ -1612,11 +1684,11 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     settingsConfig: {
-      baseUrl: "https://api.teamorouter.cn/v1",
+      baseUrl: "https://api.teamorouter.com/v1",
       apiKey: "",
       api: "openai-completions",
       models: [
@@ -1649,11 +1721,11 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "TeamoRouter Claude",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     settingsConfig: {
-      baseUrl: "https://api.teamorouter.cn",
+      baseUrl: "https://api.teamorouter.com",
       apiKey: "",
       api: "anthropic-messages",
       models: [
@@ -2107,10 +2179,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "A6API",
-    websiteUrl: "https://www.a6api.com",
-    apiKeyUrl: "https://a6api.com/register?aff=AqNr",
+    websiteUrl: "https://www.a6api.vip",
+    apiKeyUrl: "https://a6api.vip/register?aff=AqNr",
     settingsConfig: {
-      baseUrl: "https://api.a6api.com/v1",
+      baseUrl: "https://api.a6api.vip/v1",
       apiKey: "",
       api: "openai-completions",
       models: [
@@ -4002,7 +4074,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     apiKeyUrl:
       "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002972",
     settingsConfig: {
-      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      baseUrl: "https://maas.qianwenaiapi.com/compatible-mode/v1",
       apiKey: "",
       api: "openai-completions",
       models: [
@@ -4019,8 +4091,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     templateValues: {
       baseUrl: {
         label: "Base URL",
-        placeholder: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        defaultValue: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        placeholder: "https://maas.qianwenaiapi.com/compatible-mode/v1",
+        defaultValue: "https://maas.qianwenaiapi.com/compatible-mode/v1",
         editorValue: "",
       },
       apiKey: {
@@ -4043,7 +4115,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     apiKeyUrl:
       "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002978",
     settingsConfig: {
-      baseUrl: "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+      baseUrl: "https://token-plan.maas.qianwenaiapi.com/apps/anthropic",
       apiKey: "",
       api: "anthropic-messages",
       models: [
@@ -4071,10 +4143,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     templateValues: {
       baseUrl: {
         label: "Base URL",
-        placeholder:
-          "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
-        defaultValue:
-          "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+        placeholder: "https://token-plan.maas.qianwenaiapi.com/apps/anthropic",
+        defaultValue: "https://token-plan.maas.qianwenaiapi.com/apps/anthropic",
         editorValue: "",
       },
       apiKey: {
@@ -4105,7 +4175,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     websiteUrl: "https://home.qwencloud.com/?utm_content=g_20000002974",
     apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002975",
     settingsConfig: {
-      baseUrl: "https://dashscope-intl.aliyuncs.com/apps/anthropic/v1",
+      baseUrl: "https://ap-southeast-1.maas.qwencloudapi.com/apps/anthropic/v1",
       apiKey: "",
       api: "anthropic-messages",
       models: [
@@ -4140,8 +4210,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     templateValues: {
       baseUrl: {
         label: "Base URL",
-        placeholder: "https://dashscope-intl.aliyuncs.com/apps/anthropic/v1",
-        defaultValue: "https://dashscope-intl.aliyuncs.com/apps/anthropic/v1",
+        placeholder:
+          "https://ap-southeast-1.maas.qwencloudapi.com/apps/anthropic/v1",
+        defaultValue:
+          "https://ap-southeast-1.maas.qwencloudapi.com/apps/anthropic/v1",
         editorValue: "",
       },
       apiKey: {
@@ -4228,8 +4300,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       "https://www.qwencloud.com/pricing/token-plan?utm_content=g_20000002980",
     apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002981",
     settingsConfig: {
-      baseUrl:
-        "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1",
+      baseUrl: "https://token-plan.maas.qwencloudapi.com/apps/anthropic/v1",
       apiKey: "",
       api: "anthropic-messages",
       models: [
@@ -4265,9 +4336,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       baseUrl: {
         label: "Base URL",
         placeholder:
-          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1",
+          "https://token-plan.maas.qwencloudapi.com/apps/anthropic/v1",
         defaultValue:
-          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1",
+          "https://token-plan.maas.qwencloudapi.com/apps/anthropic/v1",
         editorValue: "",
       },
       apiKey: {
@@ -4554,7 +4625,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     family: "streamlake",
     regionKey: "cn",
     websiteUrl: "https://www.streamlake.com",
-    apiKeyUrl: "https://console.streamlake.com/console/wanqing/api-key",
+    apiKeyUrl:
+      "https://console.streamlake.com/console/wanqing/api-key?channel=ccswitch",
     settingsConfig: {
       baseUrl: "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints",
       apiKey: "",
@@ -4582,7 +4654,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     family: "streamlake",
     regionKey: "intl",
     websiteUrl: "https://console.streamlake.ai",
-    apiKeyUrl: "https://console.streamlake.ai/console/api-key",
+    apiKeyUrl: "https://console.streamlake.ai/console/api-key?channel=ccswitch",
     settingsConfig: {
       baseUrl: "https://vanchin.streamlake.ai/api/gateway/v1/endpoints",
       apiKey: "",
@@ -6370,29 +6442,33 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   {
     name: "Mistral AI",
     websiteUrl: "https://mistral.ai",
-    apiKeyUrl: "https://console.mistral.ai/api-keys",
+    // Vibe（原 Le Chat）订阅额度与 API 共用，Key 在 Code > Vibe CLI 页创建，
+    // 免费 / 订阅 / 按量付费通用（docs.mistral.ai/vibe/code/cli/
+    // api-keys-profiles，2026-11-06 核对）
+    apiKeyUrl: "https://chat.mistral.ai/code/extensions",
     // OpenAI Chat 端点 base 为 https://api.mistral.ai/v1（docs.mistral.ai/
     // openapi.yaml，2026-10-14 核对），Bearer 鉴权。OpenClaw 的 Mistral 支持是
     // 须另装的官方插件（docs.openclaw.ai/providers/mistral 同日），装了插件的话
-    // 供应商名请另取。模型用官方模型表（docs.mistral.ai/models.md 同日）的固定
-    // 版本 ID，窗口官方写 256k；cost（每百万 token）取 docs.mistral.ai/inference/
-    // pricing.md 同日，缓存读按官方「缓存 token 按输入价 10% 计」
-    //（docs.mistral.ai/studio/conversations/advanced/prompt-caching.md）推算，
-    // 不收缓存写入费，写 0。官方没有单独的最大输出，规则是 prompt + max_tokens
-    // ≤ 窗口，保守按 32768 写
+    // 供应商名请另取。模型用官方模型表（docs.mistral.ai/models.md，2026-11-06
+    // 核对）的 GA 型号：Medium 3.5 已于 10-31 弃用，主力改 Large 4（窗口官方写
+    // 1M，按 1000000 计），Small 4 为 256k。cost（每百万 token）：Large 4 取其
+    // 模型卡（docs.mistral.ai/models/mistral-large-4-0 同日，缓存读 0.07 官方
+    // 直接给出），Small 4 取 docs.mistral.ai/inference/pricing.md（10-14），
+    // 缓存读按官方「缓存 token 按输入价 10% 计」推算；不收缓存写入费，写 0。
+    // 官方没有单独的最大输出，保守按 32768 写
     settingsConfig: {
       baseUrl: "https://api.mistral.ai/v1",
       apiKey: "",
       api: "openai-completions",
       models: [
         {
-          id: "mistral-medium-3-5",
-          name: "Mistral Medium 3.5",
+          id: "mistral-large-4",
+          name: "Mistral Large 4",
           reasoning: true,
           input: ["text", "image"],
-          contextWindow: 256000,
+          contextWindow: 1000000,
           maxTokens: 32768,
-          cost: { input: 1.5, output: 7.5, cacheRead: 0.15, cacheWrite: 0 },
+          cost: { input: 0.7, output: 2.1, cacheRead: 0.07, cacheWrite: 0 },
         },
         {
           id: "mistral-small-2603",
@@ -6415,9 +6491,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "mistral/mistral-medium-3-5" },
+      model: { primary: "mistral/mistral-large-4" },
       modelCatalog: {
-        "mistral/mistral-medium-3-5": { alias: "Mistral Medium 3.5" },
+        "mistral/mistral-large-4": { alias: "Mistral Large 4" },
       },
     },
   },
@@ -7170,10 +7246,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "TokenFlux",
-    websiteUrl: "https://tokenflux.dev",
-    apiKeyUrl: "https://tokenflux.dev/keys",
+    websiteUrl: "https://tokenflux.com",
+    apiKeyUrl: "https://tokenflux.com/keys",
     settingsConfig: {
-      baseUrl: "https://tokenflux.dev",
+      baseUrl: "https://tokenflux.com",
       apiKey: "",
       api: "anthropic-messages",
       models: [

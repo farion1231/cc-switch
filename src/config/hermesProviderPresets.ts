@@ -177,7 +177,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "kimi",
     iconColor: "#6366F1",
     suggestedDefaults: {
-      model: { default: "kimi-k2.7-code", provider: "kimi" },
+      // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+      // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文）
+      model: { default: "kimi-k3.1-pro", provider: "kimi" },
     },
   },
   // API 开放平台海外/Global 变体：platform.kimi.ai + api.moonshot.ai 端点
@@ -214,7 +216,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "kimi",
     iconColor: "#6366F1",
     suggestedDefaults: {
-      model: { default: "kimi-k2.7-code", provider: "kimi" },
+      // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+      // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文）
+      model: { default: "kimi-k3.1-pro", provider: "kimi" },
     },
   },
   {
@@ -521,36 +525,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "grooroute",
   },
   {
-    name: "DIT.ai",
-    websiteUrl: "https://dit.ai",
-    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
-    settingsConfig: {
-      name: "dit_ai",
-      base_url: "https://api.dit.ai",
-      api_key: "",
-      api_mode: "anthropic_messages",
-      models: [
-        {
-          id: "claude-opus-5-5",
-          name: "Claude Opus 5.5",
-          context_length: 1000000,
-        },
-        {
-          id: "claude-sonnet-5-5",
-          name: "Claude Sonnet 5.5",
-          context_length: 1000000,
-        },
-      ],
-    },
-    category: "aggregator",
-    suggestedDefaults: {
-      model: { default: "claude-opus-5-5", provider: "dit_ai" },
-    },
-    isPartner: true,
-    partnerPromotionKey: "dit",
-    icon: "dit",
-  },
-  {
     name: "BuyToken",
     websiteUrl: "https://buytoken.work",
     apiKeyUrl: "https://buytoken.work/sign-up?aff=cc-switch",
@@ -816,6 +790,41 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "OspreyAI",
+    websiteUrl: "https://open.ospreyai.cn",
+    apiKeyUrl: "https://open.ospreyai.cn",
+    settingsConfig: {
+      name: "ospreyai",
+      base_url: "https://open.ospreyai.cn",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-fable-5-1",
+          name: "Claude Fable 5.1",
+          context_length: 1000000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5-5", provider: "ospreyai" },
+    },
+    isPartner: true,
+    partnerPromotionKey: "ospreyai",
+    icon: "ospreyai",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
@@ -985,12 +994,12 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     settingsConfig: {
       name: "teamorouter",
-      base_url: "https://api.teamorouter.cn/v1",
+      base_url: "https://api.teamorouter.com/v1",
       api_key: "",
       api_mode: "chat_completions",
       models: [
@@ -1009,12 +1018,12 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "TeamoRouter Claude",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     settingsConfig: {
       name: "teamorouter_claude",
-      base_url: "https://api.teamorouter.cn",
+      base_url: "https://api.teamorouter.com",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
@@ -1327,11 +1336,11 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "A6API",
-    websiteUrl: "https://www.a6api.com",
-    apiKeyUrl: "https://a6api.com/register?aff=AqNr",
+    websiteUrl: "https://www.a6api.vip",
+    apiKeyUrl: "https://a6api.vip/register?aff=AqNr",
     settingsConfig: {
       name: "a6api",
-      base_url: "https://api.a6api.com/v1",
+      base_url: "https://api.a6api.vip/v1",
       api_key: "",
       api_mode: "chat_completions",
       models: [
@@ -2365,7 +2374,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002972",
     settingsConfig: {
       name: "qianwenai",
-      base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      base_url: "https://maas.qianwenaiapi.com/compatible-mode/v1",
       api_key: "",
       api_mode: "chat_completions",
       models: [
@@ -2391,8 +2400,12 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
+        // 2026-11-03 盘点：qwen3-coder-plus / qwen3-max 已于 2026-10-10 停服
+        // （下线公告含 Coding Plan 支持模型，官方推荐替换 qwen3.7-plus）；
+        // 默认改 qwen3.7-plus，qwen3-coder-plus 行保留给存量用户
+        { id: "qwen3.7-plus", name: "Qwen3.7 Plus", context_length: 1000000 },
+        { id: "qwen3.6-plus", name: "Qwen3.6 Plus", context_length: 1000000 },
         { id: "qwen3-coder-plus", name: "Qwen3 Coder Plus" },
-        { id: "qwen3-max", name: "Qwen3 Max" },
       ],
     },
     category: "cn_official",
@@ -2400,7 +2413,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     iconColor: "#624AFF",
     suggestedDefaults: {
       model: {
-        default: "qwen3-coder-plus",
+        default: "qwen3.7-plus",
         provider: "qianwenai_coding_plan",
       },
     },
@@ -2415,8 +2428,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002978",
     settingsConfig: {
       name: "qianwenai_token_plan",
-      base_url:
-        "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+      base_url: "https://token-plan.maas.qianwenaiapi.com/apps/anthropic",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
@@ -2443,7 +2455,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002975",
     settingsConfig: {
       name: "qwencloud",
-      base_url: "https://dashscope-intl.aliyuncs.com/apps/anthropic",
+      base_url: "https://ap-southeast-1.maas.qwencloudapi.com/apps/anthropic",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
@@ -2496,8 +2508,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002981",
     settingsConfig: {
       name: "qwencloud_token_plan",
-      base_url:
-        "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic",
+      base_url: "https://token-plan.maas.qwencloudapi.com/apps/anthropic",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
@@ -2580,7 +2591,8 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     family: "streamlake",
     regionKey: "cn",
     websiteUrl: "https://www.streamlake.com",
-    apiKeyUrl: "https://console.streamlake.com/console/wanqing/api-key",
+    apiKeyUrl:
+      "https://console.streamlake.com/console/wanqing/api-key?channel=ccswitch",
     settingsConfig: {
       name: "streamlake",
       base_url:
@@ -2600,7 +2612,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     family: "streamlake",
     regionKey: "intl",
     websiteUrl: "https://console.streamlake.ai",
-    apiKeyUrl: "https://console.streamlake.ai/console/api-key",
+    apiKeyUrl: "https://console.streamlake.ai/console/api-key?channel=ccswitch",
     settingsConfig: {
       name: "streamlake_en",
       base_url:
@@ -3567,21 +3579,26 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "Mistral AI",
     websiteUrl: "https://mistral.ai",
-    apiKeyUrl: "https://console.mistral.ai/api-keys",
+    // Vibe（原 Le Chat）订阅额度与 API 共用，Key 在 Code > Vibe CLI 页创建，
+    // 免费 / 订阅 / 按量付费通用（docs.mistral.ai/vibe/code/cli/
+    // api-keys-profiles，2026-11-06 核对）
+    apiKeyUrl: "https://chat.mistral.ai/code/extensions",
     settingsConfig: {
       // Hermes 内置的 Mistral 只有语音与转写，没有 LLM provider，名字不冲突
       name: "mistral",
       // OpenAI Chat 端点 base 为 https://api.mistral.ai/v1（docs.mistral.ai/
       // openapi.yaml，2026-10-14 核对），Bearer 鉴权。模型用官方模型表
-      //（docs.mistral.ai/models.md 同日）的固定版本 ID，窗口官方写 256k
+      //（docs.mistral.ai/models.md，2026-11-06 核对）的 GA 型号：Medium 3.5 已于
+      // 10-31 弃用，主力改 Large 4（窗口官方写 1M，按 1000000 计），Small 4 为
+      // 256k
       base_url: "https://api.mistral.ai/v1",
       api_key: "",
       api_mode: "chat_completions",
       models: [
         {
-          id: "mistral-medium-3-5",
-          name: "Mistral Medium 3.5",
-          context_length: 256000,
+          id: "mistral-large-4",
+          name: "Mistral Large 4",
+          context_length: 1000000,
         },
         {
           id: "mistral-small-2603",
@@ -3593,7 +3610,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     category: "cn_official",
     icon: "mistral",
     suggestedDefaults: {
-      model: { default: "mistral-medium-3-5", provider: "mistral" },
+      model: { default: "mistral-large-4", provider: "mistral" },
     },
   },
   {
@@ -3981,11 +3998,11 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "TokenFlux",
-    websiteUrl: "https://tokenflux.dev",
-    apiKeyUrl: "https://tokenflux.dev/keys",
+    websiteUrl: "https://tokenflux.com",
+    apiKeyUrl: "https://tokenflux.com/keys",
     settingsConfig: {
       name: "tokenflux",
-      base_url: "https://tokenflux.dev",
+      base_url: "https://tokenflux.com",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [

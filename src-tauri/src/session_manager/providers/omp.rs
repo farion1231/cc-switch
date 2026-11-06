@@ -5,7 +5,7 @@ use crate::session_manager::{SessionMessage, SessionMeta};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const OMP: Dialect = Dialect {
+pub(crate) const OMP: Dialect = Dialect {
     provider_id: "omp",
     label: "Oh My Pi",
     resolve_root: resolve_session_root,
@@ -47,6 +47,10 @@ pub fn session_roots() -> Vec<PathBuf> {
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
     pi::scan_sessions_for(&OMP)
+}
+
+pub(crate) fn scan_sessions_with_status(status: &mut super::utils::ScanStatus) -> Vec<SessionMeta> {
+    pi::scan_sessions_for_with_status(&OMP, status)
 }
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
