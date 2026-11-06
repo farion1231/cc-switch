@@ -276,7 +276,7 @@ impl ProviderRouter {
             Err(_) => crate::proxy::circuit_breaker::CircuitBreakerConfig::default(),
         };
 
-        let breaker = Arc::new(CircuitBreaker::new(config));
+        let breaker = Arc::new(CircuitBreaker::new(config).with_label(key));
         breakers.insert(key.to_string(), breaker.clone());
 
         breaker
