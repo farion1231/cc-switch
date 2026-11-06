@@ -163,6 +163,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["tokenflux", "flux", "aggregator", "relay", "claude", "codex"],
     defaultColor: "currentColor",
   },
+  genesis: {
+    name: "genesis",
+    displayName: "Genesis",
+    category: "ai-provider",
+    keywords: ["genesis", "matrixorigin", "taas", "token"],
+    defaultColor: "currentColor",
+  },
   soshow: {
     name: "soshow",
     displayName: "Soshow",
