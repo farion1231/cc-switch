@@ -688,7 +688,16 @@ fn wsl_chmod(distro: &str, user: &str, linux_path: &str) -> Result<(), String> {
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
     let mut child = std::process::Command::new("wsl.exe")
-        .args(["-d", distro, "-u", user, "--", "chmod", "700", linux_path])
+        .args([
+            "-d",
+            distro,
+            "-u",
+            user,
+            "--exec",
+            "/bin/chmod",
+            "700",
+            linux_path,
+        ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())

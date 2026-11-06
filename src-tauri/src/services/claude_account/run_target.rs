@@ -100,10 +100,11 @@ pub fn wsl_user(linux_home: &str) -> Result<String, String> {
     Ok(user)
 }
 
-/// `wsl.exe` 的参数（不含程序名）：以 `-u <user>` 进入发行版，再用该用户的登录 shell 找 `claude`。
+/// `wsl.exe` 的参数（不含程序名）。
 ///
-/// 不依赖 `$SHELL`。`wsl.exe -d … -- sh -c` 里它经常是空的，退回 `sh -lic` 时 dash 不读
-/// bashrc/zshrc，nvm 和 `~/.local/bin` 都会从 PATH 里消失。
+/// 必须用 `--exec`。`wsl.exe -d … -- cmd` 会把后面的参数拼成一行，交给发行版的默认登录
+/// shell 再解析，`$cc_home` / `$(...)` 会在我们的 `sh -c` 之前被展开掉。`--exec` 直接
+/// exec，不经那层 shell。`--cd` 是 wsl.exe 自己的选项，和 `--exec` 一起用。
 pub fn wsl_claude_argv(
     distro: &str,
     user: &str,
@@ -123,15 +124,17 @@ pub fn wsl_claude_argv(
         user.to_string(),
         "--cd".to_string(),
         linux_cd.to_string(),
-        "--".to_string(),
-        "sh".to_string(),
+        "--exec".to_string(),
+        "/bin/sh".to_string(),
         "-c".to_string(),
         script,
     ])
 }
 
-/// 写进 Windows `.bat` 的一行：`wsl.exe -d <distro> -u <user> --cd <linux> -- sh -c ...`。
-/// 路径或参数里有 `%`、`"`、`^` 时拒绝，避免 cmd 展开。
+/// 写进 Windows `.bat` 的一行：`wsl.exe … --exec /bin/sh -c "<script>"`。
+///
+/// 脚本里的 `"` 写成 cmd 的 `""`，这样 cmd 仍把整段脚本当成 `-c` 的一个参数交给
+/// `--exec`，`$` 不会被提前展开。路径里有 `%`、`^` 时拒绝。
 pub fn wsl_terminal_batch_line(
     distro: &str,
     user: &str,
@@ -145,12 +148,12 @@ pub fn wsl_terminal_batch_line(
     let cd = cmd_quote(linux_cd)?;
     let args: Vec<&str> = claude_args.iter().map(String::as_str).collect();
     let script = shell_payload(distro, user, set, unset, &args)?;
-    if script.contains('%') {
-        return Err("WSL 命令里有 %，Windows 终端无法安全传递".to_string());
+    if script.contains('%') || script.contains('^') {
+        return Err("WSL 命令里有 % 或 ^，Windows 终端无法安全传递".to_string());
     }
     Ok(format!(
-        "wsl.exe -d {distro} -u {user} --cd {cd} -- sh -c {}",
-        cmd_double_quote(&script)
+        "wsl.exe -d {distro} -u {user} --cd {cd} --exec /bin/sh -c {}",
+        cmd_quote_script(&script)
     ))
 }
 
@@ -433,8 +436,16 @@ fn cmd_quote(value: &str) -> Result<String, String> {
     }
 }
 
-fn cmd_double_quote(value: &str) -> String {
-    format!("\"{}\"", value.replace('"', "\\\""))
+/// cmd 把 `""` 当成引号里的一个 `"`，整段仍是一个参数。不要用 `\"`：cmd 会把那个 `"` 当成引号结束。
+fn cmd_quote_script(script: &str) -> String {
+    format!("\"{}\"", script.replace('"', "\"\""))
+}
+
+/// 从 .bat 里 `-c` 后面那一个被双引号包住的参数还原脚本。只用于测试 cmd 引用是否闭合。
+#[cfg(test)]
+fn cmd_unquote_script(quoted: &str) -> Option<String> {
+    let quoted = quoted.strip_prefix('"')?.strip_suffix('"')?;
+    Some(quoted.replace("\"\"", "\""))
 }
 
 #[cfg(test)]
@@ -543,11 +554,12 @@ mod tests {
                 "me",
                 "--cd",
                 "/home/me",
-                "--",
-                "sh",
+                "--exec",
+                "/bin/sh",
                 "-c",
             ]
         );
+        assert!(!argv.iter().any(|arg| arg == "--"));
         let script = argv.last().unwrap();
         assert!(script.contains("getent passwd"));
         assert!(script.contains("cut -d: -f7"));
@@ -601,9 +613,20 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            &argv[..6],
-            ["-d", "Ubuntu", "-u", "sean", "--cd", "/home/sean"]
+            &argv[..9],
+            [
+                "-d",
+                "Ubuntu",
+                "-u",
+                "sean",
+                "--cd",
+                "/home/sean",
+                "--exec",
+                "/bin/sh",
+                "-c",
+            ]
         );
+        assert!(!argv.iter().any(|arg| arg == "--"));
         let script = argv.last().unwrap();
         assert!(script.contains("cc_home='/home/sean'"), "{script}");
         assert!(
@@ -624,7 +647,15 @@ mod tests {
             &["--dangerously-skip-permissions".to_string()],
         )
         .unwrap();
-        assert!(line.starts_with("wsl.exe -d Ubuntu -u sean --cd /home/sean/proj -- sh -c "));
+        assert!(
+            line.starts_with("wsl.exe -d Ubuntu -u sean --cd /home/sean/proj --exec /bin/sh -c ")
+        );
+        assert!(!line.contains(" -- sh ") && !line.contains(" -- /bin/sh "));
+        let quoted = line.split(" --exec /bin/sh -c ").nth(1).unwrap();
+        let restored = cmd_unquote_script(quoted).expect("script is one quoted argv");
+        assert!(restored.contains("$cc_home/.local/bin/claude"));
+        assert!(restored.contains("$(getent passwd"));
+        assert!(restored.contains("cc_home='/home/sean'"));
         assert!(line.contains("cc_home='/home/sean'"));
         assert!(line.contains("$cc_home/.local/bin/claude"));
         assert!(line.contains("--dangerously-skip-permissions"));
@@ -644,9 +675,9 @@ mod tests {
             &["--dangerously-skip-permissions".to_string()],
         )
         .unwrap();
-        assert!(
-            line.starts_with("wsl.exe -d Ubuntu -u jane --cd \"/home/Jane Doe/proj\" -- sh -c ")
-        );
+        assert!(line.starts_with(
+            "wsl.exe -d Ubuntu -u jane --cd \"/home/Jane Doe/proj\" --exec /bin/sh -c "
+        ));
         assert!(line.contains("-u ANTHROPIC_API_KEY"));
         assert!(line.contains("/home/Jane Doe/.cc-switch/claude-accounts/abc/config"));
         assert!(line.contains("CLAUDE_CONFIG_DIR="));
@@ -657,7 +688,7 @@ mod tests {
                 .unwrap();
         assert!(default_slot.contains("-u CLAUDE_CONFIG_DIR"));
         assert!(!default_slot.contains("CLAUDE_CONFIG_DIR="));
-        assert!(default_slot.starts_with("wsl.exe -d Ubuntu -u root --cd /root -- sh -c "));
+        assert!(default_slot.starts_with("wsl.exe -d Ubuntu -u root --cd /root --exec /bin/sh -c "));
 
         assert!(
             wsl_terminal_batch_line("Ubuntu & calc", "me", "/home/me", &[], &[], &[],).is_err()
