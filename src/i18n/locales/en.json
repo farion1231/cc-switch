@@ -3555,7 +3555,21 @@
       "syncCopyDesc": "Uses more disk space; copied again after each update",
       "moveHint": "Switching moves {{count}} Skills to the new location."
     },
-    "updatesIncomplete": "No updates found, but {{count}} repositories couldn't be read"
+    "updatesIncomplete": "No updates found, but {{count}} repositories couldn't be read",
+    "github": {
+      "title": "Get from GitHub",
+      "lead": "Fetch a public GitHub repository and choose Skills to install.",
+      "fetch": "Fetch Skills",
+      "search": "Search Skills…",
+      "count": "Selected {{selected}} / {{total}} Skills",
+      "occupied": "Directory in use by another Skill. Manage it in Installed.",
+      "open": "Open {{name}} on GitHub",
+      "empty": "No matching Skills",
+      "install": "Install selected",
+      "found": "Found {{count}} Skills in this repository",
+      "selectAll": "Select All",
+      "selectNone": "Select None"
+    }
   },
   "deeplink": {
     "confirmImport": "Confirm Import Provider",

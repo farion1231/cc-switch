@@ -3555,7 +3555,21 @@
       "syncCopyDesc": "占用更多空间，更新后会重新复制",
       "moveHint": "切换位置会把 {{count}} 个 Skill 移动过去。"
     },
-    "updatesIncomplete": "没有发现更新，但有 {{count}} 个仓库没有读到"
+    "updatesIncomplete": "没有发现更新，但有 {{count}} 个仓库没有读到",
+    "github": {
+      "title": "从 GitHub 仓库获取",
+      "lead": "读取公开 GitHub 仓库并选择要安装的 Skills。",
+      "fetch": "获取 Skills",
+      "search": "搜索 Skills…",
+      "count": "已选 {{selected}} / 共 {{total}} 个 Skills",
+      "occupied": "目录已被其他 Skill 使用，可在“已安装”页面管理。",
+      "open": "在 GitHub 打开 {{name}}",
+      "empty": "没有匹配的 Skills",
+      "install": "安装所选",
+      "found": "搜索获取到了 {{count}} 个 Skills",
+      "selectAll": "全选",
+      "selectNone": "全不选"
+    }
   },
   "deeplink": {
     "confirmImport": "确认导入供应商配置",

@@ -3556,7 +3556,21 @@
       "syncCopyDesc": "佔用更多空間，更新後會重新複製",
       "moveHint": "切換位置會把 {{count}} 個 Skill 移動過去。"
     },
-    "updatesIncomplete": "沒有發現更新，但有 {{count}} 個倉庫沒有讀到"
+    "updatesIncomplete": "沒有發現更新，但有 {{count}} 個倉庫沒有讀到",
+    "github": {
+      "title": "從 GitHub 倉庫取得",
+      "lead": "讀取公開 GitHub 倉庫並選擇要安裝的 Skills。",
+      "fetch": "取得 Skills",
+      "search": "搜尋 Skills…",
+      "count": "已選 {{selected}} / 共 {{total}} 個 Skills",
+      "occupied": "目錄已被其他 Skill 使用，可在「已安裝」頁面管理。",
+      "open": "在 GitHub 開啟 {{name}}",
+      "empty": "沒有符合的 Skills",
+      "install": "安裝所選",
+      "found": "搜尋取得了 {{count}} 個 Skills",
+      "selectAll": "全選",
+      "selectNone": "全不選"
+    }
   },
   "deeplink": {
     "confirmImport": "確認匯入供應商設定",
