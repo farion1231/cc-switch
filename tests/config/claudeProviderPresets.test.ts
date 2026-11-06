@@ -214,3 +214,32 @@ describe("Microsoft Foundry Provider Preset", () => {
     expect(env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
   });
 });
+
+describe("StepFun Provider Presets", () => {
+  const presets = providerPresets.filter((p) => p.family === "stepfun");
+
+  // cn 预设的默认模型 step-5-preview 是 1M 窗口（官方模型页），不钉 256K——回填
+  // 规则（stepfun_context_window.rs）对 3.x 系列和带 [1M] 标记的模型按需处理。
+  it("StepFun (cn) ships the 1M default model without pinned window keys", () => {
+    const preset = presets.find((p) => p.name === "StepFun");
+    expect(preset).toBeDefined();
+    const env = (preset!.settingsConfig as any).env;
+    expect(env.ANTHROPIC_BASE_URL).toBe("https://api.stepfun.com/step_plan");
+    expect(env.ANTHROPIC_MODEL).toBe("step-5-preview");
+    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe("step-5-preview");
+    expect(env).not.toHaveProperty("CLAUDE_CODE_MAX_CONTEXT_TOKENS");
+    expect(env).not.toHaveProperty("CLAUDE_CODE_AUTO_COMPACT_WINDOW");
+  });
+
+  // en 预设仍是 3.x 系列（262,144 窗口），两个键同值钉住（与 Kimi For Coding、
+  // Mistral 等预设一致）。不声明时 Claude Code 会按更小的默认窗口走。
+  it("StepFun en pins the 256K window on both keys", () => {
+    const preset = presets.find((p) => p.name === "StepFun en");
+    expect(preset).toBeDefined();
+    const env = (preset!.settingsConfig as any).env;
+    expect(env.ANTHROPIC_BASE_URL).toBe("https://api.stepfun.ai/step_plan");
+    expect(env.ANTHROPIC_MODEL).toBe("step-3.5-flash-2603");
+    expect(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe("262144");
+    expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("262144");
+  });
+});
