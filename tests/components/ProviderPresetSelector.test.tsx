@@ -246,11 +246,12 @@ describe("preset families", () => {
     expect(hits("moonshot")).toEqual([["family:kimi", []]]);
   });
 
-  it("merges Claude's visible presets into 113 rows", () => {
+  it("merges Claude's visible presets into 114 rows", () => {
     const claudeEntries = providerPresets
       .map((item, index) => ({ id: `claude-${index}`, preset: item }))
       .filter((entry) => !entry.preset.hidden);
-    expect(groupPresetRows(claudeEntries)).toHaveLength(113);
+    // 上游 113 行 + 本分支新增的 TokenRhythm
+    expect(groupPresetRows(claudeEntries)).toHaveLength(114);
   });
 
   it("orders plans and regions as the design does where a family says so", () => {
