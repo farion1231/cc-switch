@@ -138,7 +138,10 @@ impl StreamCheckService {
             None => Self::resolve_base_url(app_type, provider)?,
         };
 
-        let client = crate::proxy::http_client::get_for_url(&base_url);
+        // 探测不跟随重定向：3xx 本身就是 HTTP 响应，已证明可达。跟随反而会被
+        // `/v1` ↔ `/v1/` 互跳之类的服务端配置拖进重定向循环，误判为不可达（#5747）。
+        let client =
+            crate::proxy::http_client::no_redirect_for_url(&base_url).map_err(AppError::Message)?;
         let timeout = std::time::Duration::from_secs(config.timeout_secs);
         let ua = Self::custom_user_agent(provider);
 
@@ -209,6 +212,8 @@ impl StreamCheckService {
     /// - `send()` 在收到响应头时即返回，故计时天然是 TTFB；不读 body。
     /// - reqwest 对任何 HTTP 状态码都返回 `Ok`，只有网络级错误进 `Err`——
     ///   这正是"任何响应都算可达、只有连不上才算失败"的语义。
+    /// - `client` 必须不跟随重定向，否则重定向循环会在 `send()` 阶段变成 `Err`，
+    ///   把一个明明返回了 3xx 的供应商判为不可达。
     async fn probe_reachability(
         client: &Client,
         base_url: &str,
@@ -661,5 +666,43 @@ mod tests {
         .unwrap();
         assert!(result.success, "{}", result.message);
         assert_eq!(result.http_status, Some(404));
+    }
+
+    /// 回归 #5747：网关 `/v1` ↔ `/v1/` 互相 301。探测若跟随重定向会撞上限报错、
+    /// 误判不可达；收到第一个 3xx 就应判为可达。
+    #[tokio::test]
+    async fn test_redirect_loop_is_reachable() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0u8; 1024];
+                let n = socket.read(&mut buf).await.unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]);
+                let target = if req.starts_with("GET /v1/ ") {
+                    "/v1"
+                } else {
+                    "/v1/"
+                };
+                let resp = format!(
+                    "HTTP/1.1 301 Moved Permanently\r\nlocation: http://{addr}{target}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                );
+                let _ = socket.write_all(resp.as_bytes()).await;
+            }
+        });
+        let provider = make_provider(serde_json::json!({
+            "env": { "ANTHROPIC_BASE_URL": format!("http://{addr}/v1") }
+        }));
+        let result = StreamCheckService::check_with_retry(
+            &AppType::Claude,
+            &provider,
+            &StreamCheckConfig::default(),
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(result.success, "{}", result.message);
+        assert_eq!(result.http_status, Some(301));
     }
 }
