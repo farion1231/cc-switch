@@ -1,0 +1,3 @@
+DEBUG: listing directory /home/growthhacker/.openclaw/workspaces/coo
+
+$(ls -la /home/growthhacker/.openclaw/workspaces/coo)
