@@ -405,10 +405,6 @@ fn create_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         }
         _ => {}
     });
-    // 面板也是 WebView2：渲染进程被系统杀掉时它自己会白屏/卡住（面板失焦只隐藏、
-    // 进程常驻，下次弹出时 JS 已死）。同样挂上崩溃自动恢复。
-    #[cfg(target_os = "windows")]
-    crate::webview_recovery::install(app, PANEL_LABEL);
     Ok(window)
 }
 

@@ -520,7 +520,7 @@ pub fn run() {
         builder = builder.plugin(
             tauri::plugin::Builder::<_, ()>::new("windows-webview-recovery")
                 .on_webview_ready(|webview| {
-                    crate::webview_recovery::install_for_webview(webview);
+                    crate::webview_recovery::install_for_webview(&webview);
                 })
                 .build(),
         );
