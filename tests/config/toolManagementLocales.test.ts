@@ -37,6 +37,8 @@ const requiredKeys = [
   "toolUpgradeWillRun",
   "toolUpgradeConfirmBtn",
   "toolUpgradeUnanchoredHint",
+  "toolUpgradeUnmanagedDetail",
+  "toolUpgradeDesktopManagedDetail",
 ] as const;
 
 type SettingsTranslations = Record<string, unknown>;
