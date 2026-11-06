@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { claudeDesktopProviderPresets } from "@/config/claudeDesktopProviderPresets";
+import { providerPresets } from "@/config/claudeProviderPresets";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
 import { dshProviderPresets } from "@/config/dshProviderPresets";
 import { hermesProviderPresets } from "@/config/hermesProviderPresets";
@@ -26,6 +27,27 @@ const find = <T extends { name: string }>(items: T[]) =>
   items.find((item) => item.name === "Genesis");
 
 describe("Genesis app compatibility", () => {
+  it("links every Genesis preset to the current credential page", () => {
+    const catalogs = [
+      providerPresets,
+      claudeDesktopProviderPresets,
+      codexProviderPresets,
+      opencodeProviderPresets,
+      openclawProviderPresets,
+      hermesProviderPresets,
+      piProviderPresets,
+      kimiProviderPresets,
+      mcodeProviderPresets,
+      dshProviderPresets,
+      ompProviderPresets,
+    ];
+    for (const catalog of catalogs) {
+      expect(
+        catalog.find((preset) => preset.name === "Genesis")?.apiKeyUrl,
+      ).toBe("https://uc.moi.matrixorigin.cn/account/credentials?app=genesis");
+    }
+  });
+
   it("uses native Responses for Codex and exposes the chat model catalog", () => {
     const preset = find(codexProviderPresets);
     expect(preset?.config).toContain(

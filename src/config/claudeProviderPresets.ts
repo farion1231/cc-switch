@@ -3,6 +3,7 @@
  */
 import { ProviderCategory } from "../types";
 import type { PresetFamilyFields } from "./presetFamilies";
+import { GENESIS_API_KEY_URL } from "./genesisModels";
 
 export interface TemplateValueConfig {
   label: string;
@@ -3203,7 +3204,7 @@ export const providerPresets: ProviderPreset[] = [
   {
     name: "Genesis",
     websiteUrl: "https://genesis.moi.matrixorigin.cn/taas/",
-    apiKeyUrl: "https://genesis.moi.matrixorigin.cn/taas/token-keys",
+    apiKeyUrl: GENESIS_API_KEY_URL,
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://token.moi.matrixorigin.cn",
