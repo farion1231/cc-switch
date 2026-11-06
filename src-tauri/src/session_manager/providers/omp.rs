@@ -49,6 +49,10 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     pi::scan_sessions_for(&OMP)
 }
 
+pub(crate) fn scan_sessions_with_status(status: &mut super::utils::ScanStatus) -> Vec<SessionMeta> {
+    pi::scan_sessions_for_with_status(&OMP, status)
+}
+
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     pi::load_messages_for(&OMP, path)
 }

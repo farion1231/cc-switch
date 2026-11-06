@@ -405,7 +405,7 @@ export function ProviderCard({
         dragHandleProps?.isDragging && "cursor-grabbing shadow-v7-md",
       )}
     >
-      <div className="flex min-h-[58px] items-center gap-3 py-2.5 pe-3 ps-2">
+      <div className="flex min-h-card items-center gap-3 py-card-y pe-3 ps-2">
         {dragHandleProps ? (
           <button
             type="button"
@@ -428,12 +428,12 @@ export function ProviderCard({
           name={provider.name}
           color={provider.iconColor}
           className={cn(
-            // 底色固定为白，图标颜色也要固定：单色（currentColor）图标和首字母
-            // fallback 不能继承深色模式下的浅色文字
-            "bg-white text-neutral-900",
+            // 不再垫白底：单色 / 近黑笔画的图标跟随文字色（ProviderIcon 里换成 currentColor），
+            // 自带底色的 tile 图标铺满整框
+            "bg-transparent text-fg-1",
             presentation.dim && "opacity-60",
           )}
-          fallbackClassName="bg-transparent text-neutral-600"
+          fallbackClassName="bg-transparent text-fg-2"
         />
 
         <div className="min-w-0 flex-1">
