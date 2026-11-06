@@ -108,11 +108,11 @@ pub(crate) fn scan_sessions_with_status() -> SessionScan {
         ("pi", pi::scan_sessions_with_status),
         ("omp", omp::scan_sessions_with_status),
         ("mcode", mcode::scan_sessions_with_status),
+        ("copilot", copilot::scan_sessions_with_status),
         // 以下来源的扫描还不报告读取失败，按完整处理
         ("kimi", |_| kimi::scan_sessions()),
         ("dsh", |_| dsh::scan_sessions()),
         ("agy", |_| agy::scan_sessions()),
-        ("copilot", |_| copilot::scan_sessions()),
     ];
     let mut scan = SessionScan {
         sessions: Vec::new(),

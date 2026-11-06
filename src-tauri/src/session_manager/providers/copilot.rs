@@ -20,16 +20,18 @@ pub(crate) fn session_roots() -> Vec<PathBuf> {
 }
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    let files = event_files(&crate::copilot_config::session_state_dir());
-    PARSE_CACHE.scan(files, |path| Ok(parse_session(path)))
+    scan_sessions_with_status(&mut utils::ScanStatus::default())
 }
 
-fn event_files(root: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(root) else {
-        return Vec::new();
-    };
-    entries
-        .flatten()
+pub(crate) fn scan_sessions_with_status(status: &mut utils::ScanStatus) -> Vec<SessionMeta> {
+    let files = event_files(&crate::copilot_config::session_state_dir(), status);
+    PARSE_CACHE.scan_with_status(files, |path| Ok(parse_session(path)), status)
+}
+
+fn event_files(root: &Path, status: &mut utils::ScanStatus) -> Vec<PathBuf> {
+    status
+        .entries(root)
+        .into_iter()
         .map(|entry| entry.path().join("events.jsonl"))
         .filter(|path| path.is_file())
         .collect()
