@@ -4286,7 +4286,8 @@
       "stack": "Aggregation"
     },
     "needsAttention": "Needs attention",
-    "back": "Back"
+    "back": "Back",
+    "noAppsFound": "No apps match \"{{filter}}\"."
   },
   "appsPage": {
     "showInSidebar": "Show {{name}} in the sidebar",

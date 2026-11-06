@@ -4286,7 +4286,8 @@
       "stack": "聚合"
     },
     "needsAttention": "需要处理",
-    "back": "返回"
+    "back": "返回",
+    "noAppsFound": "未找到匹配 \"{{filter}}\" 的应用。"
   },
   "appsPage": {
     "showInSidebar": "在侧栏显示 {{name}}",

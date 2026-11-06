@@ -1,4 +1,4 @@
-import { useRef, type ComponentType } from "react";
+import { useMemo, useRef, useState, type ComponentType } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { getVersion } from "@tauri-apps/api/app";
@@ -42,6 +42,7 @@ import {
 } from "@/components/usage/format";
 import { useSidebarStatus, type AppNavStatus } from "@/hooks/useSidebarStatus";
 import { HoverTip } from "@/components/ui/hover-tip";
+import { SearchField } from "@/components/ui/search-field";
 import { DRAG_REGION_ATTR, DRAG_REGION_STYLE, isMac } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 import ccswitchLogo from "@/assets/icons/logo.svg";
@@ -234,6 +235,17 @@ function MainDirectory({
   );
   const onAppPage = isAppPage(view);
 
+  // Hledání aplikací v postranním panelu
+  const [filter, setFilter] = useState<string>("");
+  const filteredApps = useMemo(() => {
+    if (!filter) return apps;
+    const lowercaseFilter = filter.toLowerCase();
+    return apps.filter((app) => {
+      const name = APP_DISPLAY_NAME[app]?.toLowerCase() || "";
+      return name.includes(lowercaseFilter);
+    });
+  }, [filter, apps]);
+
   // 选了的项里是 0 的不写（没配定价时金额总是 0）；命中率在今天还没有请求时不写；
   // 全都没有就整个不显示。两项都有时只写数、上下两行（「今日」放进悬停和读屏）：
   // 带上「今日」，换成新台币这类长币种后一行放不下，会把「用量统计」挤成省略号
@@ -304,12 +316,26 @@ function MainDirectory({
           collapsed && "no-scrollbar",
         )}
       >
+        {/* 应用搜索：过滤应用列表实时，空查询 = všechny */}
+        <div
+          className={cn(
+            "flex shrink-0 items-center gap-2 px-2 pb-2",
+            collapsed && "hidden",
+          )}
+        >
+          <SearchField
+            value={filter}
+            onValueChange={setFilter}
+            clearLabel={t("common.clear")}
+            containerClassName="w-full"
+          />
+        </div>
         <div
           role="group"
           aria-label={t("nav.appsGroup")}
           className="flex shrink-0 flex-col"
         >
-          {apps.map((app) => (
+          {filteredApps.map((app) => (
             <AppNavItem
               key={app}
               app={app}
@@ -319,6 +345,11 @@ function MainDirectory({
               onSelect={() => onSelectApp(app)}
             />
           ))}
+          {filteredApps.length === 0 && (
+            <div className="px-4 py-2 text-caption text-fg-3">
+              {t("nav.noAppsFound", { filter })}
+            </div>
+          )}
         </div>
       </div>
 
@@ -482,7 +513,7 @@ function AppNavItem({
       onClick={onSelect}
       aria-current={selected ? "page" : undefined}
       className={cn(
-        "mx-2 flex h-nav-row w-[184px] shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
+        "mx-2 flex h-7 w-[184px] shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
         selected && "bg-selected font-medium hover:bg-selected",
       )}
     >
@@ -643,7 +674,7 @@ function NavItem({
         aria-label={trailingLabel ? accessibleName : undefined}
         aria-current={selected ? "page" : undefined}
         className={cn(
-          "flex h-nav-row shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
+          "flex h-7 shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
           compact ? "min-w-0 flex-1" : "mx-2 w-[184px]",
           selected && "bg-selected font-medium hover:bg-selected",
         )}
@@ -653,10 +684,9 @@ function NavItem({
           <span className="min-w-0 flex-1 truncate">{label}</span>
         ) : (
           <>
-            {/* 有行尾小字时名字不让：放不下就让小字折行（两行正好塞进 28px 的行高）。
-                裸文字贴着行内距会比模式标签的字更靠边，右边让出标签的 px-1.5 和它对齐 */}
+            {/* 有行尾小字时名字不让：放不下就让小字折行（两行正好塞进 28px 的行高） */}
             <span className="shrink-0 grow">{label}</span>
-            <span className="min-w-0 pe-1.5 text-end text-caption leading-[13px] tabular-nums text-fg-3">
+            <span className="min-w-0 text-end text-caption leading-[13px] tabular-nums text-fg-3">
               {trailingLines.map((line) => (
                 <span
                   key={line}
@@ -730,7 +760,7 @@ function SettingsDirectory({
         <button
           type="button"
           onClick={onExitSettings}
-          className="mx-2 flex h-nav-row w-[184px] shrink-0 items-center gap-2 rounded-control px-2 text-start text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1"
+          className="mx-2 flex h-7 w-[184px] shrink-0 items-center gap-2 rounded-control px-2 text-start text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1"
         >
           <ArrowLeft className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
           {t("nav.back")}

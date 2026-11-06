@@ -4226,7 +4226,8 @@
       "stack": "Birleştirme"
     },
     "needsAttention": "Dikkat edilmesi gerekiyor",
-    "back": "Geri"
+    "back": "Geri",
+    "noAppsFound": "\"{{filter}}\" ile eşleşen uygulama bulunamadı."
   },
   "appsPage": {
     "showInSidebar": "Kenar çubuğunda {{name}}'yi göster",
