@@ -245,7 +245,7 @@ describe("Genesis Claude Code preset", () => {
     expect(providerNeedsRouting("claude", provider)).toBe(true);
   });
 
-  it("discovers the account's chat model choices without pinning one model", () => {
+  it("starts with K3 and still discovers the account's chat model choices", () => {
     const env = (preset!.settingsConfig as any).env;
     expect(preset!.modelsUrl).toBe(
       "https://token.moi.matrixorigin.cn/v1/models?type=chat",
@@ -256,7 +256,7 @@ describe("Genesis Claude Code preset", () => {
       "ANTHROPIC_DEFAULT_SONNET_MODEL",
       "ANTHROPIC_DEFAULT_OPUS_MODEL",
     ]) {
-      expect(env).not.toHaveProperty(key);
+      expect(env).toHaveProperty(key, "kimi-k3");
     }
   });
 });

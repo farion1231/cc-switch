@@ -11,7 +11,6 @@ import { openclawProviderPresets } from "@/config/openclawProviderPresets";
 import { opencodeProviderPresets } from "@/config/opencodeProviderPresets";
 import { piProviderPresets } from "@/config/piProviderPresets";
 
-const emptyModels: string[] = [];
 const find = <T extends { name: string }>(items: T[]) =>
   items.find((item) => item.name === "Genesis");
 
@@ -44,16 +43,16 @@ describe("Genesis app compatibility", () => {
     }
   });
 
-  it("uses native Responses for Codex without a pinned model", () => {
+  it("uses native Responses for Codex with a K3 starter", () => {
     const preset = find(codexProviderPresets);
     expect(preset?.config).toContain(
       'base_url = "https://token.moi.matrixorigin.cn/v1"',
     );
     expect(preset?.config).toContain('wire_api = "responses"');
-    expect(preset?.config).not.toMatch(/^model\s*=/m);
-    expect(preset?.modelCatalog?.map((model) => model.model)).toEqual(
-      emptyModels,
-    );
+    expect(preset?.config).toMatch(/^model\s*=\s*"kimi-k3"$/m);
+    expect(preset?.modelCatalog?.map((model) => model.model)).toEqual([
+      "kimi-k3",
+    ]);
   });
 
   it("gives Pi its required K3 starter", () => {

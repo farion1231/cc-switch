@@ -3,7 +3,7 @@
  */
 import { ProviderCategory } from "../types";
 import type { PresetFamilyFields } from "./presetFamilies";
-import { GENESIS_API_KEY_URL } from "./genesisModels";
+import { GENESIS_API_KEY_URL, GENESIS_DEFAULT_MODEL } from "./genesisModels";
 
 export interface TemplateValueConfig {
   label: string;
@@ -3209,6 +3209,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://token.moi.matrixorigin.cn",
         ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: GENESIS_DEFAULT_MODEL,
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: GENESIS_DEFAULT_MODEL,
+        ANTHROPIC_DEFAULT_SONNET_MODEL: GENESIS_DEFAULT_MODEL,
+        ANTHROPIC_DEFAULT_OPUS_MODEL: GENESIS_DEFAULT_MODEL,
       },
     },
     modelsUrl: "https://token.moi.matrixorigin.cn/v1/models?type=chat",
