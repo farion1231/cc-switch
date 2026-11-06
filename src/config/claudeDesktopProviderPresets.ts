@@ -177,11 +177,13 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "proxy",
     apiFormat: "anthropic",
     // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
-    // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文）
+    // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文，supports1m 必开，
+    // 否则 Desktop 按 200K 攒上下文）
     modelRoutes: brandedRoutes(
       "kimi-k3.1-pro",
       "kimi-k3.1-pro",
       "kimi-k3.1-pro",
+      true,
     ),
     partnerPromotionKey: "kimi",
     icon: "kimi",
@@ -200,11 +202,13 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "proxy",
     apiFormat: "anthropic",
     // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
-    // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文）
+    // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文，supports1m 必开，
+    // 否则 Desktop 按 200K 攒上下文）
     modelRoutes: brandedRoutes(
       "kimi-k3.1-pro",
       "kimi-k3.1-pro",
       "kimi-k3.1-pro",
+      true,
     ),
     partnerPromotionKey: "kimi",
     icon: "kimi",
@@ -791,6 +795,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "doubao-seed-2-1-pro-260915",
       "doubao-seed-2-1-pro-260915",
       "doubao-seed-2-1-pro-260915",
+      true,
     ),
     isPartner: true,
     partnerPromotionKey: "doubaoseed",
@@ -1205,6 +1210,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "gemini-3.8-flash",
       "gemini-3.8-flash",
       "gemini-3.8-flash",
+      true,
     ),
     endpointCandidates: ["https://generativelanguage.googleapis.com"],
     icon: "gemini",
@@ -1457,7 +1463,9 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://open.bigmodel.cn/api/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes("glm-5.3", "glm-5.3", "glm-5.3", true),
+    // Haiku 档用 Flash（后台任务足够，价格约 1/9、Coding Plan 3× 配额）；
+    // 主档 5.3 为纯文本，需要贴图时把对应档切到 glm-5.3-flash
+    modelRoutes: brandedRoutes("glm-5.3", "glm-5.3", "glm-5.3-flash", true),
     icon: "zhipu",
     iconColor: "#0F62FE",
   },
@@ -1471,7 +1479,9 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.z.ai/api/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes("glm-5.3", "glm-5.3", "glm-5.3", true),
+    // Haiku 档用 Flash（后台任务足够，价格约 1/9、Coding Plan 3× 配额）；
+    // 主档 5.3 为纯文本，需要贴图时把对应档切到 glm-5.3-flash
+    modelRoutes: brandedRoutes("glm-5.3", "glm-5.3", "glm-5.3-flash", true),
     icon: "zhipu",
     iconColor: "#0F62FE",
   },
@@ -1675,6 +1685,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "step-5-preview",
       "step-5-preview",
       "step-5-preview",
+      true,
     ),
     endpointCandidates: ["https://api.stepfun.com/step_plan"],
     icon: "stepfun",
@@ -1929,6 +1940,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "zai-org/glm-5.3",
       "zai-org/glm-5.3",
       "zai-org/glm-5.3-flash",
+      true,
     ),
     endpointCandidates: ["https://api.novita.ai/anthropic"],
     icon: "novita",

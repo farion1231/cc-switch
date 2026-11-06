@@ -41,17 +41,20 @@ export interface UniversalProviderPreset {
  */
 const NEWAPI_DEFAULT_MODELS: UniversalProviderModels = {
   claude: {
-    model: "claude-sonnet-5",
-    haikuModel: "claude-haiku-4-5-20251001",
-    sonnetModel: "claude-sonnet-5",
-    opusModel: "claude-opus-5",
+    // 2026-11-03 盘点：预设默认值跟着各 app 自有预设一起刷新到现役旗舰
+    // （Claude 5.5 代 / GPT-6.1 / Gemini 3.8 Flash）；中转站没上这些型号时
+    // 用户可在表单里改
+    model: "claude-sonnet-5-5",
+    haikuModel: "claude-haiku-5-5",
+    sonnetModel: "claude-sonnet-5-5",
+    opusModel: "claude-opus-5-5",
   },
   codex: {
-    model: "gpt-5.6-sol",
+    model: "gpt-6.1-sol",
     reasoningEffort: "high",
   },
   gemini: {
-    model: "gemini-3.6-flash",
+    model: "gemini-3.8-flash",
   },
 };
 

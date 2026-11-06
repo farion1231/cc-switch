@@ -214,3 +214,68 @@ describe("Microsoft Foundry Provider Preset", () => {
     expect(env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
   });
 });
+
+describe("Kimi API 预设的 1M 窗口声明", () => {
+  // Claude Code 对非 claude- 前缀 id 默认按 200K 自动压缩，K3.1 Pro 是 1M
+  // 模型，四档 id 必须带 [1M] 标记（上游 31038e68 的约定）
+  for (const name of ["Kimi", "Kimi Global"]) {
+    it(`${name} 的四档模型都带 [1M]`, () => {
+      const preset = providerPresets.find((p) => p.name === name);
+      expect(preset).toBeDefined();
+      const env = (preset!.settingsConfig as any).env;
+      expect(env).toMatchObject({
+        ANTHROPIC_MODEL: "kimi-k3.1-pro[1M]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-k3.1-pro[1M]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k3.1-pro[1M]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k3.1-pro[1M]",
+      });
+    });
+  }
+});
+
+describe("1M 模型预设的窗口声明", () => {
+  const cases: Array<[string, string]> = [
+    ["Volcengine Doubao", "doubao-seed-2-1-pro-260915[1M]"],
+    ["Gemini Native", "gemini-3.8-flash[1M]"],
+    ["StepFun", "step-5-preview[1M]"],
+    ["Novita AI", "zai-org/glm-5.3[1M]"],
+  ];
+
+  for (const [name, model] of cases) {
+    it(`${name} 的四档模型都带 [1M]`, () => {
+      const preset = providerPresets.find((p) => p.name === name);
+      const env = (preset!.settingsConfig as any).env;
+      expect(env).toMatchObject({
+        ANTHROPIC_MODEL: model,
+        ANTHROPIC_DEFAULT_SONNET_MODEL: model,
+        ANTHROPIC_DEFAULT_OPUS_MODEL: model,
+      });
+      // Haiku 档也指向同一 1M 模型（Novita 的 Haiku 是 1M 的 glm-5.3-flash）
+      expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toMatch(/\[1M\]$/);
+    });
+  }
+
+  it("AtlasCloud 用环境变量钉 1M（平台要求禁用 beta）", () => {
+    const preset = providerPresets.find((p) => p.name === "AtlasCloud");
+    const env = (preset!.settingsConfig as any).env;
+    expect(env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS).toBe("1");
+    expect(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe("1000000");
+    expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("1000000");
+    expect(env.ANTHROPIC_MODEL).toBe("zai-org/glm-5.3");
+  });
+});
+
+describe("Zhipu GLM 预设的档位分工", () => {
+  for (const name of ["Zhipu GLM", "Zhipu GLM en"]) {
+    it(`${name} 主档用 5.3、Haiku 档用 5.3-Flash`, () => {
+      const preset = providerPresets.find((p) => p.name === name);
+      const env = (preset!.settingsConfig as any).env;
+      expect(env).toMatchObject({
+        ANTHROPIC_MODEL: "glm-5.3[1M]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.3[1M]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.3[1M]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.3-flash[1M]",
+      });
+    });
+  }
+});

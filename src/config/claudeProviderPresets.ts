@@ -106,10 +106,13 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_AUTH_TOKEN: "",
         // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
         // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文，thinking 强制开启）
-        ANTHROPIC_MODEL: "kimi-k3.1-pro",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-k3.1-pro",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k3.1-pro",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k3.1-pro",
+        // [1M] 标记必带：Claude Code 对非 claude- 前缀 id 默认按 200K 窗口
+        // 自动压缩，只有 id 带 [1M]（或钉 CLAUDE_CODE_MAX_CONTEXT_TOKENS）
+        // 才按 1M 处理，见上游 31038e68
+        ANTHROPIC_MODEL: "kimi-k3.1-pro[1M]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-k3.1-pro[1M]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k3.1-pro[1M]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k3.1-pro[1M]",
       },
     },
     category: "cn_official",
@@ -131,10 +134,13 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_AUTH_TOKEN: "",
         // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
         // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文，thinking 强制开启）
-        ANTHROPIC_MODEL: "kimi-k3.1-pro",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-k3.1-pro",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k3.1-pro",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k3.1-pro",
+        // [1M] 标记必带：Claude Code 对非 claude- 前缀 id 默认按 200K 窗口
+        // 自动压缩，只有 id 带 [1M]（或钉 CLAUDE_CODE_MAX_CONTEXT_TOKENS）
+        // 才按 1M 处理，见上游 31038e68
+        ANTHROPIC_MODEL: "kimi-k3.1-pro[1M]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-k3.1-pro[1M]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k3.1-pro[1M]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k3.1-pro[1M]",
       },
     },
     category: "cn_official",
@@ -777,10 +783,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://ark.cn-beijing.volces.com/api/compatible",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "doubao-seed-2-1-pro-260915",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "doubao-seed-2-1-pro-260915",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "doubao-seed-2-1-pro-260915",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "doubao-seed-2-1-pro-260915",
+        ANTHROPIC_MODEL: "doubao-seed-2-1-pro-260915[1M]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "doubao-seed-2-1-pro-260915[1M]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "doubao-seed-2-1-pro-260915[1M]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "doubao-seed-2-1-pro-260915[1M]",
       },
     },
     category: "cn_official",
@@ -1203,6 +1209,10 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_DEFAULT_SONNET_MODEL: "zai-org/glm-5.3",
         ANTHROPIC_DEFAULT_OPUS_MODEL: "zai-org/glm-5.3",
         CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: "1",
+        // 平台要求关掉所有 beta 参数，[1M] 后缀会带上 context-1m beta，
+        // 故这里改用不依赖 beta 的环境变量钉 1M 窗口（GLM-5.3 官方 1M）
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "1000000",
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1000000",
       },
     },
     endpointCandidates: ["https://api.atlascloud.ai"],
@@ -1237,10 +1247,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://generativelanguage.googleapis.com",
         ANTHROPIC_API_KEY: "",
-        ANTHROPIC_MODEL: "gemini-3.8-flash",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "gemini-3.8-flash",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "gemini-3.8-flash",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "gemini-3.8-flash",
+        ANTHROPIC_MODEL: "gemini-3.8-flash[1M]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "gemini-3.8-flash[1M]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "gemini-3.8-flash[1M]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "gemini-3.8-flash[1M]",
       },
     },
     category: "third_party",
@@ -1515,7 +1525,10 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_BASE_URL: "https://open.bigmodel.cn/api/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
         ANTHROPIC_MODEL: "glm-5.3[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.3[1M]",
+        // Haiku 档跑会话标题、摘要和 Explore 子代理：用 Flash 省约 9 倍价格、
+        // Coding Plan 多 3× 配额；主档保持 5.3（更强，但纯文本——需要贴图时
+        // 把活跃模型切到 glm-5.3-flash）
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.3-flash[1M]",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.3[1M]",
         ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.3[1M]",
       },
@@ -1535,7 +1548,10 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
         ANTHROPIC_MODEL: "glm-5.3[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.3[1M]",
+        // Haiku 档跑会话标题、摘要和 Explore 子代理：用 Flash 省约 9 倍价格、
+        // Coding Plan 多 3× 配额；主档保持 5.3（更强，但纯文本——需要贴图时
+        // 把活跃模型切到 glm-5.3-flash）
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.3-flash[1M]",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.3[1M]",
         ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.3[1M]",
       },
@@ -1814,10 +1830,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.stepfun.com/step_plan",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "step-5-preview",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "step-5-preview",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "step-5-preview",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "step-5-preview",
+        ANTHROPIC_MODEL: "step-5-preview[1M]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "step-5-preview[1M]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "step-5-preview[1M]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "step-5-preview[1M]",
       },
     },
     category: "cn_official",
@@ -2128,10 +2144,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.novita.ai/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "zai-org/glm-5.3",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "zai-org/glm-5.3-flash",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "zai-org/glm-5.3",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "zai-org/glm-5.3",
+        ANTHROPIC_MODEL: "zai-org/glm-5.3[1M]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "zai-org/glm-5.3-flash[1M]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "zai-org/glm-5.3[1M]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "zai-org/glm-5.3[1M]",
       },
     },
     category: "aggregator",
