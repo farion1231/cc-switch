@@ -4,6 +4,8 @@
 //! - 拿到登录链接给窗口显示、打开。macOS / Linux 把 `BROWSER` 设成账号目录旁的小脚本，
 //!   Claude Code 要打开的那个链接（登录后回到本机端口）会被写进文件；Windows 上让 Claude
 //!   Code 自己打开浏览器。两种情况下它打印出来的链接都作后备（那个页面显示一段代码让人粘贴）。
+//!   授权中心关了「登录时自动打开浏览器」时，Windows 上把 `BROWSER` 指向一个不存在的程序，
+//!   Claude Code 打不开浏览器、只打印链接（多账号用独立浏览器环境的用户不希望弹出系统默认浏览器）。
 //! - 浏览器回不到本机时，替用户把回调地址转交给本机端口，或把页面上的代码写进 stdin。
 //! - 等它退出，退出码 0 就是登录成功。
 
@@ -168,14 +170,21 @@ fn looks_like_code(raw: &str) -> bool {
 
 /// 在 `config_dir` 里启动 `claude auth login --claudeai`，等到拿到登录链接再返回。
 /// `home` 是账号的外层目录（放截获脚本）。`timeout` 到了还没登完就杀掉子进程。
+/// `open_browser` 为假时不让 Claude Code 自己打开浏览器（只影响 Windows，别的平台本来就截获）。
 pub async fn start(
     config_dir: PathBuf,
     home: PathBuf,
     timeout: Duration,
+    open_browser: bool,
 ) -> Result<RunningLogin, AppError> {
     let opened_file = home.join(layout::OPENED_URL_FILENAME);
     let _ = std::fs::remove_file(&opened_file);
-    let opener = write_opener(&home)?;
+    let opener = match write_opener(&home)? {
+        Some(opener) => Some(opener),
+        // 不存在的程序：Claude Code 打开浏览器失败，照常打印链接
+        None if !open_browser => Some(home.join(layout::NO_BROWSER_FILENAME)),
+        None => None,
+    };
 
     let spawn = {
         let config_dir = config_dir.clone();
@@ -269,7 +278,7 @@ pub async fn start(
         auth_url,
         // 截获到的链接是 CC Switch 拦下来的，浏览器还没开；只打印出来的链接，Windows 上
         // Claude Code 已经自己去开浏览器了，macOS / Linux 上则是它没打算开（没有图形界面）
-        browser_opened: !intercepted && cfg!(windows),
+        browser_opened: open_browser && !intercepted && cfg!(windows),
         stdin,
         callback_port,
         cancel,
@@ -464,6 +473,44 @@ fn spawn_login(
 pub fn apply_account_env(cmd: &mut std::process::Command, config_dir: &Path) {
     clear_account_env(cmd);
     cmd.env("CLAUDE_CONFIG_DIR", config_dir);
+    apply_global_proxy_env(cmd);
+}
+
+/// 把设置里的全局代理交给 Claude Code 子进程。
+///
+/// 全局代理只作用于进程内的 reqwest 客户端；Claude Code（Node）只认 `HTTPS_PROXY`
+/// 这类环境变量、不读系统代理设置，不传的话登录换令牌、`/usage` 都会直连出去。
+/// 只传 http(s)：Claude Code 不支持 SOCKS 代理。大小写两套都设，Node 优先读小写。
+/// 没配全局代理时不动，子进程照旧继承 CC Switch 的环境变量。
+pub fn apply_global_proxy_env(cmd: &mut std::process::Command) {
+    let Some(url) = crate::proxy::http_client::get_current_proxy_url() else {
+        return;
+    };
+    for (key, value) in global_proxy_env(&url, |key| std::env::var_os(key).is_some()) {
+        cmd.env(key, value);
+    }
+}
+
+fn global_proxy_env(url: &str, is_set: impl Fn(&str) -> bool) -> Vec<(&'static str, String)> {
+    let is_http = url::Url::parse(url.trim())
+        .map(|parsed| matches!(parsed.scheme(), "http" | "https"))
+        .unwrap_or(false);
+    if !is_http {
+        return Vec::new();
+    }
+    let url = url.trim().to_string();
+    let mut vars: Vec<(&'static str, String)> =
+        ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"]
+            .into_iter()
+            .map(|key| (key, url.clone()))
+            .collect();
+    // 用户自己设了 NO_PROXY 就沿用，没设才补上本机地址
+    if !is_set("NO_PROXY") && !is_set("no_proxy") {
+        for key in ["NO_PROXY", "no_proxy"] {
+            vars.push((key, "localhost,127.0.0.1,::1".to_string()));
+        }
+    }
+    vars
 }
 
 /// 清掉会把 Claude Code 指到别的登录、别的接口的变量（`CLAUDE_CONFIG_DIR` 由调用方决定）。
@@ -485,6 +532,29 @@ mod tests {
 
     /// 取消登录要终止整棵进程树：后代进程还占着输出管道的话，读输出的线程永远等不到
     /// EOF（Windows 上 claude.cmd → node 就是这样）。这里用 sh → sleep 模拟。
+    #[test]
+    fn global_proxy_env_passes_http_proxies_only() {
+        let vars = global_proxy_env("http://127.0.0.1:7890", |_| false);
+        for key in ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"] {
+            assert!(
+                vars.contains(&(key, "http://127.0.0.1:7890".to_string())),
+                "{key}"
+            );
+        }
+        assert!(vars.contains(&("NO_PROXY", "localhost,127.0.0.1,::1".to_string())));
+
+        // 用户的 NO_PROXY 不覆盖
+        let vars = global_proxy_env("https://proxy.example.com:8443", |key| key == "no_proxy");
+        assert!(vars
+            .iter()
+            .all(|(key, _)| !key.eq_ignore_ascii_case("NO_PROXY")));
+        assert_eq!(vars.len(), 4);
+
+        // Claude Code 不支持 SOCKS，不传
+        assert!(global_proxy_env("socks5://127.0.0.1:1080", |_| false).is_empty());
+        assert!(global_proxy_env("not a url", |_| false).is_empty());
+    }
+
     #[cfg(unix)]
     #[test]
     fn cancel_ends_descendants_holding_the_output_pipe() {

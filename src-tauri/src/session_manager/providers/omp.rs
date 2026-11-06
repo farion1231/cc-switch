@@ -5,7 +5,7 @@ use crate::session_manager::{SessionMessage, SessionMeta};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const OMP: Dialect = Dialect {
+pub(crate) const OMP: Dialect = Dialect {
     provider_id: "omp",
     label: "Oh My Pi",
     resolve_root: resolve_session_root,

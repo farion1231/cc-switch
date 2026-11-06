@@ -1,11 +1,10 @@
 // models.dev 公共数据（https://models.dev/api.json）的拉取与原始结构。
 // 用量统计的价格导入和供应商表单的模型参数补全共用这一份数据和查询缓存。
 
+import { invoke } from "@tauri-apps/api/core";
 import { queryOptions } from "@tanstack/react-query";
 
-export const MODELS_DEV_API_URL = "https://models.dev/api.json";
 const MODELS_DEV_STALE_TIME_MS = 60 * 60 * 1000;
-const MODELS_DEV_FETCH_TIMEOUT_MS = 15_000;
 
 export interface ModelsDevCost {
   input?: number;
@@ -55,22 +54,10 @@ export interface ModelsDevProvider {
 export type ModelsDevResponse = Record<string, ModelsDevProvider>;
 
 export async function fetchModelsDev(): Promise<ModelsDevResponse> {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(
-    () => controller.abort(),
-    MODELS_DEV_FETCH_TIMEOUT_MS,
-  );
-  try {
-    const response = await fetch(MODELS_DEV_API_URL, {
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    return (await response.json()) as ModelsDevResponse;
-  } finally {
-    window.clearTimeout(timeout);
-  }
+  // 走后端的全局代理客户端拉取：WebView 的 fetch 只跟随系统代理，
+  // 代理环境下直连 models.dev 会超时。超时与响应大小上限由后端控制。
+  const raw = await invoke<string>("fetch_models_dev");
+  return JSON.parse(raw) as ModelsDevResponse;
 }
 
 /**

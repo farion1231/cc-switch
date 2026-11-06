@@ -31,6 +31,8 @@ pub fn ensure_test_home() -> &'static Path {
         // 涉及 Claude Desktop 供应商切换的测试会写进开发者真实的桌面版配置。
         #[cfg(windows)]
         std::env::set_var("LOCALAPPDATA", base.join("AppData").join("Local"));
+        // Pi 配置目录优先认 PI_CODING_AGENT_DIR：开发者 shell 里设了它，Pi 相关测试会写进真实目录
+        std::env::remove_var("PI_CODING_AGENT_DIR");
         base
     })
     .as_path()
@@ -47,6 +49,7 @@ pub fn reset_test_fs() {
         ".grok",
         ".config",
         ".openclaw",
+        ".pi",
         "profiles",
     ] {
         let path = home.join(sub);

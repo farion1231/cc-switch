@@ -147,7 +147,7 @@ impl RequestContext {
 
         // 提取 Session ID
         let session_result = extract_session_id(headers, body, app_type_str);
-        let session_id = session_result.session_id.clone();
+        let session_id = session_result.session_id;
 
         log::debug!(
             "[{}] Session ID: {} (from {:?}, client_provided: {})",
@@ -306,10 +306,11 @@ impl RequestContext {
                         target.upstream_model,
                         session_id
                     );
+                    let current_provider_id = target.provider.id.clone();
                     (
                         target.provider.clone(),
-                        vec![target.provider.clone()],
-                        target.provider.id,
+                        vec![target.provider],
+                        current_provider_id,
                         target.original_model,
                     )
                 }
@@ -343,7 +344,11 @@ impl RequestContext {
                             } else {
                                 state
                                     .provider_router
-                                    .select_providers_with_current(app_type_str, current_provider)
+                                    .select_providers_with_current(
+                                        app_type_str,
+                                        current_provider,
+                                        app_config.auto_failover_enabled,
+                                    )
                                     .await
                                     .map_err(|e| match e {
                                         crate::error::AppError::AllProvidersCircuitOpen => {
@@ -503,8 +508,8 @@ impl RequestContext {
     /// 获取 Provider 列表（用于故障转移）
     ///
     /// 返回在创建上下文时已选择的 providers，避免重复调用 select_providers()
-    pub fn get_providers(&self) -> Vec<Provider> {
-        self.providers.clone()
+    pub fn get_providers(&self) -> &[Provider] {
+        &self.providers
     }
 
     /// 计算请求延迟（毫秒）

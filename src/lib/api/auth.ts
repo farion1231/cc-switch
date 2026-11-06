@@ -8,7 +8,15 @@ export type ManagedAuthProvider =
   | "claude_official";
 
 export type CodexLoginMethod = "browser" | "device_code";
-export type AuthCenterTarget = ManagedAuthProvider | "kimi_oauth";
+/**
+ * 传给 `auth_start_login` 的登录方式（不传＝各服务的默认方式）。`copy_link` 只给 Claude 官方账号：
+ * 授权中心关了「自动打开浏览器」时，让 Windows 上的 Claude Code 也别自己开浏览器。
+ */
+export type ManagedLoginMethod = CodexLoginMethod | "copy_link";
+export type AuthCenterTarget =
+  | ManagedAuthProvider
+  | "kimi_oauth"
+  | "dsh_account";
 
 export const CODEX_OAUTH_DUPLICATE_ACCOUNT_ERROR =
   "codex_oauth_duplicate_account";
@@ -56,7 +64,7 @@ export async function authStartLogin(
   authProvider: ManagedAuthProvider,
   githubDomain?: string,
   targetAccountId?: string,
-  loginMethod?: CodexLoginMethod,
+  loginMethod?: ManagedLoginMethod,
 ): Promise<ManagedAuthDeviceCodeResponse> {
   return invoke<ManagedAuthDeviceCodeResponse>("auth_start_login", {
     authProvider,
@@ -149,8 +157,8 @@ export async function claudeAccountSubmitPaste(
 export interface ClaudeLoginSwitchStatus {
   /** 切到选了账号的官方卡时会切换登录（没被挡住） */
   active: boolean;
-  /** 不切换登录的原因：设了 Claude 配置目录覆盖 */
-  blocked: "overrideDir" | null;
+  /** 不切换登录的原因：配置目录在 WSL 里（账号功能不可用）；设了别的 Claude 配置目录覆盖 */
+  blocked: "wsl" | "overrideDir" | null;
   /** Claude Code 现在登录的账号 key */
   live: string | null;
 }

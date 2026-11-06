@@ -261,7 +261,11 @@ describe("UsageDashboard (smoke)", () => {
     await user.click(
       screen.getByRole("tab", { name: /^usage\.tabs\.providers/ }),
     );
-    const providerRow = (await screen.findByText("DeepSeek")).closest("tr")!;
+    // 应用筛选条上也有一个 DeepSeek 图标（图标的 <title> 同样是 "DeepSeek"），
+    // 所以只在表格行里认供应商行。
+    const providerRow = (await screen.findAllByText("DeepSeek"))
+      .map((element) => element.closest("tr"))
+      .find((row) => row !== null) as HTMLTableRowElement;
     expect(within(providerRow).getByText("92")).toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: /^usage\.tabs\.models/ }));

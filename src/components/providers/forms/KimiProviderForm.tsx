@@ -5,6 +5,7 @@ import { ChevronRight, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Form, FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { HelpTip } from "@/components/ui/help-tip";
@@ -16,8 +17,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import JsonEditor from "@/components/JsonEditor";
-import { useDarkMode } from "@/hooks/useDarkMode";
 import { useLatestRef } from "@/hooks/useLatestRef";
 import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
 import {
@@ -46,12 +45,18 @@ import {
   findRequestHeaderValue,
   normalizeRequestHeaders,
 } from "./helpers/requestHeaders";
+import {
+  kimiConfigFromToml,
+  kimiConfigToToml,
+  type KimiTomlError,
+} from "./helpers/kimiToml";
 import { BasicFormFields, REQUIRED_LABEL } from "./BasicFormFields";
 import {
   ApiKeySection,
   EndpointField,
   GptContextWindowHint,
   ModelDropdown,
+  NativeConfigEditor,
 } from "./shared";
 import {
   FetchedModelPicker,
@@ -100,6 +105,9 @@ const PRESETS = [
   })),
 ];
 
+const normalizeProviderKey = (value: string) =>
+  value.toLowerCase().replace(/[^a-z0-9-]/g, "");
+
 export function KimiProviderForm({
   providerId,
   initialData,
@@ -113,13 +121,16 @@ export function KimiProviderForm({
   onManageAuthAccounts,
 }: ProviderFormProps) {
   const { t } = useTranslation();
-  const darkMode = useDarkMode();
   const [config, setConfig] = useState<KimiProviderConfig>(() =>
     kimiConfigSchema.parse(initialData?.settingsConfig ?? emptyKimiConfig()),
   );
-  const [text, setText] = useState(JSON.stringify(config, null, 2));
-  const [jsonValid, setJsonValid] = useState(true);
   const [providerKey, setProviderKey] = useState(providerId ?? "");
+  // 编辑器里显示的是这一家在 config.toml 里的表；键还没填时先用 custom 占位。
+  const textKey = providerKey || "custom";
+  const [text, setText] = useState(() =>
+    kimiConfigToToml(config, providerId || "custom"),
+  );
+  const [textError, setTextError] = useState<KimiTomlError | null>(null);
   const [presetId, setPresetId] = useState("custom");
   const [category, setCategory] = useState<ProviderCategory>(
     initialData?.category ?? "custom",
@@ -166,7 +177,7 @@ export function KimiProviderForm({
     );
   const ready = Boolean(
     !isAccountLogin &&
-      jsonValid &&
+      !textError &&
       name.trim() &&
       keyValid &&
       !duplicate &&
@@ -191,11 +202,11 @@ export function KimiProviderForm({
     onSubmitReadyChange?.(ready);
   }, [ready, onSubmitReadyChange]);
   const configRef = useLatestRef(config);
-  const update = (next: KimiProviderConfig) => {
+  const update = (next: KimiProviderConfig, key = textKey) => {
     configRef.current = next;
     setConfig(next);
-    setText(JSON.stringify(next, null, 2));
-    setJsonValid(true);
+    setText(kimiConfigToToml(next, key));
+    setTextError(null);
   };
   // 窗口还是占位值的行（这次新加、用户没改过窗口），选中模型时可以换成查到的值。
   const placeholderContextKeys = useRef(new Set<string>());
@@ -411,6 +422,7 @@ export function KimiProviderForm({
           kimiConfigSchema.parse(
             structuredClone(preset?.settingsConfig ?? emptyKimiConfig()),
           ),
+          preset?.providerKey || "custom",
         );
         setProviderKey(preset?.providerKey ?? "");
         form.reset({
@@ -505,7 +517,7 @@ export function KimiProviderForm({
           </p>
         )}
         <fieldset
-          disabled={busy || !jsonValid}
+          disabled={busy || Boolean(textError)}
           className="min-w-0 space-y-6 border-0 p-0 disabled:opacity-50"
         >
           <BasicFormFields
@@ -515,14 +527,12 @@ export function KimiProviderForm({
                 <Label htmlFor="kimi-provider-key" className={REQUIRED_LABEL}>
                   {t("opencode.providerKey")}
                 </Label>
-                <Input
+                <ImeSafeInput
                   id="kimi-provider-key"
                   value={providerKey}
                   disabled={isEdit}
-                  onChange={(e) => {
-                    const next = e.target.value
-                      .toLowerCase()
-                      .replace(/[^a-z0-9-]/g, "");
+                  normalize={normalizeProviderKey}
+                  onValueChange={(next) => {
                     const rename = (key: string) =>
                       key.startsWith(`${modelKeyPrefix}/`)
                         ? `${next || "custom"}/${key.slice(modelKeyPrefix.length + 1)}`
@@ -540,7 +550,7 @@ export function KimiProviderForm({
                       (current) => new Set([...current].map(rename)),
                     );
                     setProviderKey(next);
-                    update({ ...config, models });
+                    update({ ...config, models }, next || "custom");
                   }}
                   placeholder={t("opencode.providerKeyPlaceholder")}
                 />
@@ -831,32 +841,38 @@ export function KimiProviderForm({
             )}
           </div>
         </fieldset>
-        <div className="space-y-2">
-          <Label htmlFor="kimi-settings-config">
-            {t("provider.configJson")}
-          </Label>
-          <JsonEditor
-            id="kimi-settings-config"
-            ariaLabel={t("provider.configJson")}
-            value={text}
-            darkMode={darkMode}
-            language="json"
-            showValidation
-            height={Math.max(1, text.split("\n").length) * 20 + 20}
-            onChange={(text) => {
-              setText(text);
-              const parsed = (() => {
-                try {
-                  return kimiConfigSchema.safeParse(JSON.parse(text));
-                } catch {
-                  return null;
-                }
-              })();
-              setJsonValid(Boolean(parsed?.success));
-              if (parsed?.success) setConfig(parsed.data);
-            }}
-          />
-        </div>
+        <NativeConfigEditor
+          appId="kimi"
+          file="config.toml"
+          id="kimi-settings-config"
+          value={text}
+          onChange={(text) => {
+            setText(text);
+            const parsed = kimiConfigFromToml(text, textKey);
+            setTextError(parsed.ok ? null : parsed.error);
+            if (parsed.ok) {
+              const next = {
+                ...configRef.current,
+                provider: parsed.provider,
+                models: parsed.models,
+              };
+              configRef.current = next;
+              setConfig(next);
+            }
+          }}
+          error={
+            !textError
+              ? null
+              : textError.kind === "syntax"
+                ? t("providerForm.nativeConfig.invalid", {
+                    format: "TOML",
+                    error: textError.detail,
+                  })
+                : textError.kind === "scope"
+                  ? t("kimi.configTomlScope", { key: textKey })
+                  : t("kimi.configTomlSchema")
+          }
+        />
         {showButtons && (
           <div className="flex justify-end gap-2">
             <Button

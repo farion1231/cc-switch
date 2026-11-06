@@ -739,10 +739,19 @@ fn mapping_key(line: &str) -> Result<String, AppError> {
 }
 
 /// Anchors, aliases, tags and merge keys can't be edited as text without breaking a
-/// reference elsewhere; refuse them before writing. `&`, `*` and `!` are only YAML
-/// indicators where a node starts: inside a plain scalar (`name: Search & Fetch`, which
-/// serde_yaml and Bun both write unquoted) they are ordinary text.
+/// reference elsewhere; refuse them before writing.
 fn reject_yaml_tokens(line: &str) -> Result<(), AppError> {
+    if has_yaml_reference_tokens(line) {
+        return Err(manual_edit());
+    }
+    Ok(())
+}
+
+/// Whether a YAML line has an anchor, alias, tag or merge key outside quotes and comments.
+/// `&`, `*` and `!` are only YAML indicators where a node starts: inside a plain scalar
+/// (`name: Search & Fetch`, which serde_yaml and Bun both write unquoted) they are
+/// ordinary text.
+pub(crate) fn has_yaml_reference_tokens(line: &str) -> bool {
     let mut quote = None;
     let mut escaped = false;
     // A node may start here: line start, after `:`, a flow opener or `,`, and after a
@@ -777,12 +786,12 @@ fn reject_yaml_tokens(line: &str) -> Result<(), AppError> {
             continue;
         }
         if c == ':' && previous == ['<', '<'] {
-            return Err(manual_edit());
+            return true;
         }
         match c {
             '#' if after_space => break,
             '"' | '\'' if node_start => quote = Some(c),
-            '&' | '*' | '!' if node_start => return Err(manual_edit()),
+            '&' | '*' | '!' if node_start => return true,
             _ => {}
         }
         previous = [previous[1], c];
@@ -794,7 +803,7 @@ fn reject_yaml_tokens(line: &str) -> Result<(), AppError> {
             node_start = entry_marker || matches!(c, ':' | '[' | '{' | ',');
         }
     }
-    Ok(())
+    false
 }
 
 #[derive(Clone, Copy)]

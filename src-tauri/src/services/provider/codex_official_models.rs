@@ -319,7 +319,12 @@ fn fetch_models(login: &OfficialLogin, version: &str, etag: Option<&str>) -> Fet
             }
             let response = match request.send().await {
                 Ok(response) => response,
-                Err(error) => return Fetch::Failed(format!("网络错误: {error}")),
+                Err(error) => {
+                    return Fetch::Failed(format!(
+                        "网络错误: {}",
+                        crate::proxy::error::describe_reqwest_error(error)
+                    ))
+                }
             };
             // 被重定向到别处（登录页之类）不算数。
             if response.url().host_str() != Some("chatgpt.com") {
@@ -340,7 +345,14 @@ fn fetch_models(login: &OfficialLogin, version: &str, etag: Option<&str>) -> Fet
             let bytes = match response.bytes().await {
                 Ok(bytes) if bytes.len() <= MAX_BODY_BYTES => bytes,
                 Ok(_) => return Fetch::Failed("响应过大".to_string()),
-                Err(error) => return Fetch::Failed(format!("读取响应失败: {error}")),
+                // reqwest 把读响应体时的任何错误（超时、连接被断开）都报成「error decoding
+                // response body」，真正的原因在原因链里。
+                Err(error) => {
+                    return Fetch::Failed(format!(
+                        "读取响应失败: {}",
+                        crate::proxy::error::describe_reqwest_error(error)
+                    ))
+                }
             };
             match serde_json::from_slice::<Value>(&bytes)
                 .ok()
