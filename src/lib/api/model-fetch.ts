@@ -2,6 +2,10 @@ import { invoke } from "@tauri-apps/api/core";
 import type { TFunction } from "i18next";
 import { toast } from "@/lib/toast";
 import { parseHeaderOverrideJson } from "@/lib/requestOverrides";
+import {
+  GENESIS_BASE_URL,
+  GENESIS_CHAT_MODELS_URL,
+} from "@/config/genesisModels";
 
 export interface FetchedModel {
   id: string;
@@ -50,6 +54,23 @@ export async function fetchModelsForConfig(
   customUserAgent?: string,
   options?: ModelFetchOptions,
 ): Promise<FetchedModel[]> {
+  // Genesis returns the account-visible catalog. Filter out embedding and
+  // reranking models before showing them in coding-client model pickers.
+  if (!modelsUrl) {
+    try {
+      const endpoint = new URL(baseUrl);
+      if (
+        endpoint.origin === GENESIS_BASE_URL &&
+        (endpoint.pathname === "/" ||
+          endpoint.pathname === "/v1" ||
+          endpoint.pathname === "/v1/")
+      ) {
+        modelsUrl = GENESIS_CHAT_MODELS_URL;
+      }
+    } catch {
+      // Keep the native fetcher's normal validation for malformed URLs.
+    }
+  }
   return invoke("fetch_models_for_config", {
     baseUrl,
     apiKey,

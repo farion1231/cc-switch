@@ -60,6 +60,17 @@ export function hermesUninstallMayLeaveFiles(plan: ToolUninstallPlan) {
   return isWindows() && plan.tool === "hermes" && !plan.wsl_distro;
 }
 
+/**
+ * npm 全局安装在链接可执行文件时撞到不归它管的同名文件会以 EEXIST 退出（#9173），
+ * 原样输出的结尾却是 npm 建议的 `--force`，照做会覆盖用户另一种安装方式的启动脚本。
+ * 认出这类失败并取出冲突路径，交给调用方换成可操作的提示。
+ */
+export function npmBinCollisionPath(detail: string): string | null {
+  if (!detail.includes("EEXIST")) return null;
+  const match = detail.match(/File exists:\s*(.+?)\s*$/m);
+  return match?.[1] ?? null;
+}
+
 interface PendingUpgrade {
   toolNames: ToolName[];
   plans: ToolInstallationReport[];
@@ -802,7 +813,14 @@ export function useToolManagement() {
               `[useToolManagement] Failed to run tool action for ${toolName}`,
               error,
             );
-            failures.push({ toolName, detail, soft: false });
+            const collisionPath = npmBinCollisionPath(detail);
+            failures.push({
+              toolName,
+              detail: collisionPath
+                ? t("settings.toolActionBinCollision", { path: collisionPath })
+                : detail,
+              soft: false,
+            });
           } finally {
             releaseTools([toolName]);
           }

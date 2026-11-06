@@ -3,6 +3,7 @@
  */
 import { ProviderCategory } from "../types";
 import type { PresetFamilyFields } from "./presetFamilies";
+import { GENESIS_API_KEY_URL, GENESIS_DEFAULT_MODEL } from "./genesisModels";
 
 export interface TemplateValueConfig {
   label: string;
@@ -641,22 +642,19 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://api.teamorouter.cn",
+        ANTHROPIC_BASE_URL: "https://api.teamorouter.com",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "teamorouter",
-    endpointCandidates: [
-      "https://api.teamorouter.cn",
-      "https://api.teamorouter.com",
-    ],
+    endpointCandidates: ["https://api.teamorouter.com"],
     icon: "teamorouter",
   },
   {
@@ -3202,5 +3200,25 @@ export const providerPresets: ProviderPreset[] = [
     },
     category: "aggregator",
     icon: "aicoming",
+  },
+  {
+    name: "Genesis",
+    websiteUrl: "https://genesis.moi.matrixorigin.cn/taas/",
+    apiKeyUrl: GENESIS_API_KEY_URL,
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://token.moi.matrixorigin.cn",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: GENESIS_DEFAULT_MODEL,
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: GENESIS_DEFAULT_MODEL,
+        ANTHROPIC_DEFAULT_SONNET_MODEL: GENESIS_DEFAULT_MODEL,
+        ANTHROPIC_DEFAULT_OPUS_MODEL: GENESIS_DEFAULT_MODEL,
+      },
+    },
+    modelsUrl: "https://token.moi.matrixorigin.cn/v1/models?type=chat",
+    endpointCandidates: ["https://token.moi.matrixorigin.cn"],
+    category: "aggregator",
+    icon: "genesis",
+    apiFormat: "openai_chat",
   },
 ];

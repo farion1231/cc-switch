@@ -11,6 +11,11 @@ import {
   type PiThinkingLevelMap,
 } from "./piThinkingProfiles";
 import type { PresetFamilyFields } from "./presetFamilies";
+import {
+  GENESIS_API_KEY_URL,
+  GENESIS_OPENAI_BASE_URL,
+  GENESIS_WEBSITE_URL,
+} from "./genesisModels";
 
 export type PiApiFormat =
   | "openai-completions"
@@ -828,12 +833,12 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "TeamoRouter",
     providerKey: "cc-switch-teamo-router",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     settingsConfig: {
       name: "TeamoRouter",
-      baseUrl: "https://api.teamorouter.cn/v1",
+      baseUrl: "https://api.teamorouter.com/v1",
       api: "openai-completions",
       apiKey: "",
       models: [
@@ -852,12 +857,12 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "TeamoRouter Claude",
     providerKey: "cc-switch-teamo-router-claude",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     settingsConfig: {
       name: "TeamoRouter Claude",
-      baseUrl: "https://api.teamorouter.cn",
+      baseUrl: "https://api.teamorouter.com",
       api: "anthropic-messages",
       apiKey: "",
       models: [
@@ -2032,6 +2037,26 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     category: "aggregator",
     icon: "aihubmix",
     iconColor: "#006FFB",
+  },
+  {
+    name: "Genesis",
+    providerKey: "cc-switch-genesis",
+    websiteUrl: GENESIS_WEBSITE_URL,
+    apiKeyUrl: GENESIS_API_KEY_URL,
+    settingsConfig: {
+      name: "Genesis",
+      baseUrl: GENESIS_OPENAI_BASE_URL,
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        {
+          ...piModel("moonshotai/kimi-k3", { id: "kimi-k3" }),
+          compat: OPENAI_COMPLETIONS_COMPAT,
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "genesis",
   },
   {
     name: "CherryIN",
