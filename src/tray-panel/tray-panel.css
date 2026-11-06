@@ -1,4 +1,4 @@
-/* macOS 背景交给系统玻璃，其余平台只给卡片画磨砂背景；画布本身始终透明 */
+/* 画布默认透明，Linux 软件绘制回退时使用实色背景 */
 html,
 body.tray-panel,
 body.tray-panel #root {
@@ -39,8 +39,7 @@ html.dark[data-glass="native"][data-layout="floating"] .tp-card {
     0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
-/* 兼容磨砂背景：Windows、Linux 在卡片内绘制，保持固定画布的其余部分透明——
-   半透明底色 + 背景模糊（只作用于网页内容）+ 顶部高光和细描边，看起来像磨砂玻璃 */
+/* 卡片内的磨砂背景，平台特定样式在下方覆盖 */
 html[data-glass="frosted"] .tp-card {
   background:
     linear-gradient(
@@ -77,6 +76,22 @@ html [data-platform="windows"] .tp-card {
 }
 html.dark [data-platform="windows"] .tp-card {
   background: #242428;
+}
+
+/* Linux 软件绘制回退：与原生窗口一致，使用不透明背景 */
+html[data-platform="linux"][data-glass="solid"],
+html[data-platform="linux"][data-glass="solid"] body.tray-panel,
+html[data-platform="linux"][data-glass="solid"] body.tray-panel #root,
+html[data-platform="linux"][data-glass="solid"] .tp-card {
+  background: #ebebed !important;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+html.dark[data-platform="linux"][data-glass="solid"],
+html.dark[data-platform="linux"][data-glass="solid"] body.tray-panel,
+html.dark[data-platform="linux"][data-glass="solid"] body.tray-panel #root,
+html.dark[data-platform="linux"][data-glass="solid"] .tp-card {
+  background: #242428 !important;
 }
 
 /* 两栏时子面板和主面板之间一条分隔线 */
