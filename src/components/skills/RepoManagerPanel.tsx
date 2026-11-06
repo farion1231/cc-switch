@@ -11,7 +11,13 @@ import {
 } from "@/components/ui/sheet";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { settingsApi } from "@/lib/api";
-import type { DiscoverableSkill, SkillRepo } from "@/lib/api/skills";
+import type {
+  DiscoverableSkill,
+  SkillRepo,
+  SkillRepoFailure,
+} from "@/lib/api/skills";
+import { repoFailureKey } from "./repoFailures";
+import { skillErrorReason } from "@/lib/errors/skillErrorParser";
 import { cn } from "@/lib/utils";
 import {
   CHECKBOX_CLASS,
@@ -23,6 +29,9 @@ import {
 interface RepoManagerPanelProps {
   repos: SkillRepo[];
   skills: DiscoverableSkill[];
+  failures?: SkillRepoFailure[];
+  isLoading?: boolean;
+  pendingRepos?: SkillRepo[];
   onAdd: (repo: SkillRepo) => Promise<void>;
   onRemove: (owner: string, name: string) => Promise<void>;
   /** 勾掉 = 停用（不参与发现），不删除 */
@@ -48,7 +57,8 @@ export function countRepoSkills(skills: DiscoverableSkill[], repo: SkillRepo) {
     (skill) =>
       skill.repoOwner === repo.owner &&
       skill.repoName === repo.name &&
-      (skill.repoBranch || "main") === (repo.branch || "main"),
+      ((skill.repoRequestedBranch ?? skill.repoBranch) || "main") ===
+        (repo.branch || "main"),
   ).length;
 }
 
@@ -56,6 +66,9 @@ export function countRepoSkills(skills: DiscoverableSkill[], repo: SkillRepo) {
 export function RepoManagerPanel({
   repos,
   skills,
+  failures = [],
+  isLoading = false,
+  pendingRepos = [],
   onAdd,
   onRemove,
   onToggle,
@@ -66,6 +79,9 @@ export function RepoManagerPanel({
   const [branch, setBranch] = useState("");
   const [error, setError] = useState("");
   const [adding, setAdding] = useState(false);
+  const failureByRepo = new Map(
+    failures.map((failure) => [repoFailureKey(failure), failure]),
+  );
 
   const handleAdd = async () => {
     setError("");
@@ -190,6 +206,10 @@ export function RepoManagerPanel({
                 {repos.map((repo, index) => {
                   const id = `${repo.owner}/${repo.name}`;
                   const checkboxId = `sk-repo-manage-${index}`;
+                  const failure = repo.enabled
+                    ? failureByRepo.get(repoFailureKey(repo))
+                    : undefined;
+                  const count = countRepoSkills(skills, repo);
                   return (
                     <li
                       key={id}
@@ -219,11 +239,33 @@ export function RepoManagerPanel({
                         <span className="text-caption text-fg-2">
                           {repo.branch || "main"}
                           {" · "}
-                          {repo.enabled
-                            ? t("skills.repo.skillCount", {
-                                count: countRepoSkills(skills, repo),
-                              })
-                            : t("skillsPage.repos.disabled")}
+                          {!repo.enabled ? (
+                            t("skillsPage.repos.disabled")
+                          ) : failure ? (
+                            <span className="text-warning-text" role="status">
+                              {count > 0 && (
+                                <>
+                                  {t("skills.repo.cachedSkillCount", { count })}
+                                  {" · "}
+                                </>
+                              )}
+                              {t("skillsPage.repos.readFailed")}
+                              {"："}
+                              {skillErrorReason(failure.error, t)}
+                            </span>
+                          ) : count === 0 &&
+                            (isLoading ||
+                              pendingRepos.some(
+                                (pending) =>
+                                  pending.owner === repo.owner &&
+                                  pending.name === repo.name &&
+                                  (pending.branch || "main") ===
+                                    (repo.branch || "main"),
+                              )) ? (
+                            t("skills.loading")
+                          ) : (
+                            t("skills.repo.skillCount", { count })
+                          )}
                         </span>
                       </div>
                       <HoverTip content={t("common.view")}>

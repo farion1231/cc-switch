@@ -3439,7 +3439,8 @@
       "addFailed": "新增失敗",
       "removeSuccess": "儲存庫 {{owner}}/{{name}} 已刪除",
       "removeFailed": "刪除失敗",
-      "skillCount": "識別到 {{count}} 個技能"
+      "skillCount": "識別到 {{count}} 個技能",
+      "cachedSkillCount": "上次識別到 {{count}} 個技能"
     },
     "search": "搜尋技能",
     "searchPlaceholder": "搜尋技能名稱或儲存庫名稱...",

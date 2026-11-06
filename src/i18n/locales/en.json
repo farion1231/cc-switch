@@ -3438,7 +3438,8 @@
       "addFailed": "Failed to add",
       "removeSuccess": "Repository {{owner}}/{{name}} removed",
       "removeFailed": "Failed to remove",
-      "skillCount": "{{count}} skills detected"
+      "skillCount": "{{count}} skills detected",
+      "cachedSkillCount": "Last successful scan: {{count}} skills"
     },
     "search": "Search Skills",
     "searchPlaceholder": "Search skill name or repo...",

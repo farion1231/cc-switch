@@ -75,6 +75,8 @@ export interface DiscoverableSkill {
   repoOwner: string;
   repoName: string;
   repoBranch: string;
+  /** 发现时配置的分支；repoBranch 保留实际下载分支，供安装和文档链接使用。 */
+  repoRequestedBranch?: string;
 }
 
 /** 未管理的 Skill（用于导入） */

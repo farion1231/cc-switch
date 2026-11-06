@@ -20,6 +20,37 @@ export function mergeImportedSkills(
   return Array.from(merged.values());
 }
 
+/** 下载失败不能把上次成功的发现结果清空；成功的空结果仍然是权威结果。 */
+export function mergeDiscoveryResults(
+  existing: SkillDiscoveryResult | undefined,
+  incoming: SkillDiscoveryResult,
+): SkillDiscoveryResult {
+  if (!existing || incoming.failures.length === 0) return incoming;
+
+  const retained = existing.skills.filter((skill) =>
+    incoming.failures.some(
+      (failure) =>
+        failure.owner.toLowerCase() === skill.repoOwner.toLowerCase() &&
+        failure.name.toLowerCase() === skill.repoName.toLowerCase() &&
+        (failure.branch || "main") ===
+          ((skill.repoRequestedBranch ?? skill.repoBranch) || "main"),
+    ),
+  );
+  const skills = new Map(
+    retained.map((skill) => [skill.key.toLowerCase(), skill]),
+  );
+  for (const skill of incoming.skills)
+    skills.set(skill.key.toLowerCase(), skill);
+  return {
+    skills: Array.from(skills.values()).sort((a, b) => {
+      const x = a.name.toLowerCase();
+      const y = b.name.toLowerCase();
+      return x < y ? -1 : x > y ? 1 : 0;
+    }),
+    failures: incoming.failures,
+  };
+}
+
 /**
  * 把发现结果里某个仓库的 Skill 和失败记录换成 next（不传就是删掉），
  * 去重、排序规则和后端 discover_available_report 一致。
@@ -36,10 +67,11 @@ export function replaceRepoDiscovery(
 
   const otherRepo = (owner?: string, name?: string) =>
     owner !== repo.owner || name !== repo.name;
+  const replacement = next && mergeDiscoveryResults(existing, next);
   const seen = new Set<string>();
   const skills = [
     ...existing.skills.filter((s) => otherRepo(s.repoOwner, s.repoName)),
-    ...(next?.skills ?? []),
+    ...(replacement?.skills ?? []),
   ]
     .filter((skill) => {
       const key = skill.key.toLowerCase();

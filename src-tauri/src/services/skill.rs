@@ -95,6 +95,13 @@ pub struct DiscoverableSkill {
     /// 分支名称
     #[serde(rename = "repoBranch")]
     pub repo_branch: String,
+    /// 发现时的配置分支，与实际下载分支分开，避免回退后丢失缓存身份。
+    #[serde(
+        rename = "repoRequestedBranch",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub repo_requested_branch: Option<String>,
 }
 
 /// 技能对象（兼容旧 API，内部使用 DiscoverableSkill）
@@ -3300,6 +3307,9 @@ impl SkillService {
         let mut resolved_repo = repo.clone();
         resolved_repo.branch = resolved_branch;
         self.scan_dir_recursive(scan_dir, scan_dir, &resolved_repo, &mut skills)?;
+        for skill in &mut skills {
+            skill.repo_requested_branch = Some(repo.branch.clone());
+        }
 
         Ok(skills)
     }
@@ -3371,6 +3381,7 @@ impl SkillService {
             repo_owner: repo.owner.clone(),
             repo_name: repo.name.clone(),
             repo_branch: repo.branch.clone(),
+            repo_requested_branch: None,
         })
     }
 
@@ -5052,6 +5063,25 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn discoverable_skill_preserves_requested_and_resolved_branches_separately() {
+        let payload = serde_json::json!({
+            "key": "owner/repo:example", "name": "example", "description": "",
+            "directory": "example", "repoOwner": "owner", "repoName": "repo",
+            "repoBranch": "master", "repoRequestedBranch": "HEAD"
+        });
+        let skill: super::DiscoverableSkill = serde_json::from_value(payload.clone()).unwrap();
+        let serialized = serde_json::to_value(skill).unwrap();
+        assert_eq!(serialized["repoRequestedBranch"], "HEAD");
+        assert_eq!(serialized["repoBranch"], "master");
+        let mut legacy = payload;
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("repoRequestedBranch");
+        assert!(serde_json::from_value::<super::DiscoverableSkill>(legacy).is_ok());
+    }
+
     use super::*;
     use tempfile::tempdir;
 

@@ -37,9 +37,11 @@ import {
   useCheckSkillUpdates,
   useDeleteSkillBackup,
   useDiscoverableSkills,
+  useDiscoverableSkillsFailures,
   useImportSkillsFromApps,
   useInstallSkillsFromZip,
   useInstalledSkills,
+  usePendingSkillRepos,
   useRestoreSkillBackup,
   useScanUnmanagedSkills,
   useSkillBackups,
@@ -2097,12 +2099,17 @@ function AppMenuButton({
 // ─── 仓库管理抽屉（打开时才挂载，避免进页面就去读仓库） ─────────────────────
 function RepoManagerContainer({ onClose }: { onClose: () => void }) {
   const { data: repos = [] } = useSkillRepos();
-  const { data: discoverable = [] } = useDiscoverableSkills();
+  const { data: discoverable = [], isFetching } = useDiscoverableSkills();
+  const { data: failures = [] } = useDiscoverableSkillsFailures();
+  const pendingRepos = usePendingSkillRepos();
   const { addRepo, removeRepo, setRepoEnabled } = useSkillRepoActions();
   return (
     <RepoManagerPanel
       repos={repos}
       skills={discoverable}
+      failures={failures}
+      isLoading={isFetching}
+      pendingRepos={pendingRepos}
       onAdd={addRepo}
       onRemove={removeRepo}
       onToggle={setRepoEnabled}
