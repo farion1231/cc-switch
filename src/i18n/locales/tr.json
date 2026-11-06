@@ -1405,6 +1405,8 @@
     "emptyAppHint": "CC Switch, {{path}}'den oturum verilerini okur",
     "emptySearch": "“{{query}}” ile eşleşen oturum başlığı, klasör veya ilk/son mesaj yok",
     "clearSearchAction": "Aramayı temizle",
+    "emptySearchEnableContent": "Mesaj metninde ara",
+    "emptySearchEnableContentHint": "Açıldığında mesaj metni için yerel bir dizin oluşturulur",
     "backToList": "Oturumlara geri dön",
     "back": "Geri",
     "sessionOf": "{{app}} oturumu",
