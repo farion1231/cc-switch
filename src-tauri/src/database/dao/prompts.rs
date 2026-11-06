@@ -75,9 +75,10 @@ impl Database {
         Ok(())
     }
 
-    // Backfill and activation must commit together with MiniMax Code's live file.
-    pub(crate) fn save_mcode_prompts(
+    // Backfill and activation must commit together with the managed file.
+    pub(crate) fn save_app_prompts(
         &self,
+        app_type: &str,
         prompts: &IndexMap<String, Prompt>,
     ) -> Result<(), AppError> {
         let mut conn = lock_conn!(self.conn);
@@ -89,9 +90,10 @@ impl Database {
                 .execute(
                     "INSERT OR REPLACE INTO prompts (
                     id, app_type, name, content, description, enabled, created_at, updated_at
-                ) VALUES (?1, 'mcode', ?2, ?3, ?4, ?5, ?6, ?7)",
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     params![
                         prompt.id,
+                        app_type,
                         prompt.name,
                         prompt.content,
                         prompt.description,
