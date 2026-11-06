@@ -11,6 +11,49 @@ use serde_json::Value;
 use crate::session_manager::model::ContentRef;
 use crate::session_manager::SessionMeta;
 
+/// Completeness belongs to one scan, never to the cached result of a previous scan.
+/// Missing paths are a successful empty scan; other I/O errors must not authorize pruning.
+#[derive(Default)]
+pub(crate) struct ScanStatus {
+    pub incomplete: bool,
+}
+
+impl ScanStatus {
+    pub fn record<T, E: std::fmt::Display>(&mut self, result: Result<T, E>) -> Option<T> {
+        match result {
+            Ok(value) => Some(value),
+            Err(error) => {
+                self.incomplete = true;
+                log::debug!("Session scan incomplete: {error}");
+                None
+            }
+        }
+    }
+
+    pub fn metadata(&mut self, path: &Path) -> Option<std::fs::Metadata> {
+        match std::fs::metadata(path) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            result => self.record(result),
+        }
+    }
+
+    pub fn entries(&mut self, path: &Path) -> Vec<std::fs::DirEntry> {
+        let entries = match std::fs::read_dir(path) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Vec::new(),
+            Err(error) => {
+                self.record::<(), _>(Err(error));
+                return Vec::new();
+            }
+        };
+        entries.filter_map(|entry| self.record(entry)).collect()
+    }
+
+    pub fn is_dir(&mut self, path: &Path) -> bool {
+        self.metadata(path).is_some_and(|meta| meta.is_dir())
+    }
+}
+
 /// Maximum number of characters for session titles (shared across providers).
 pub const TITLE_MAX_CHARS: usize = 80;
 
@@ -39,7 +82,20 @@ impl FileParseCache {
     }
 
     /// 按顺序解析 `files`，没变过的文件直接用缓存。返回能解析出会话的那些。
+    #[cfg(test)]
     pub fn scan<F>(&self, files: Vec<PathBuf>, parse: F) -> Vec<SessionMeta>
+    where
+        F: Fn(&Path) -> io::Result<Option<SessionMeta>>,
+    {
+        self.scan_with_status(files, parse, &mut ScanStatus::default())
+    }
+
+    pub(crate) fn scan_with_status<F>(
+        &self,
+        files: Vec<PathBuf>,
+        parse: F,
+        status: &mut ScanStatus,
+    ) -> Vec<SessionMeta>
     where
         F: Fn(&Path) -> io::Result<Option<SessionMeta>>,
     {
@@ -58,7 +114,10 @@ impl FileParseCache {
         for path in files {
             let (modified, len) = match std::fs::metadata(&path) {
                 Ok(meta) => (meta.modified().ok(), meta.len()),
-                Err(_) => continue,
+                Err(error) => {
+                    status.record::<(), _>(Err(error));
+                    continue;
+                }
             };
             let meta = match previous.remove(&path) {
                 Some(entry) if entry.modified == modified && entry.len == len => entry.meta,
@@ -67,6 +126,7 @@ impl FileParseCache {
                     // 读不了（权限、被占用等）不缓存：否则恢复读取后文件没变，
                     // 会一直命中「没有会话」，直到文件改动或重启
                     Err(err) => {
+                        status.incomplete = true;
                         log::debug!("会话文件暂时读取失败，下轮重试 {}: {err}", path.display());
                         continue;
                     }
@@ -111,7 +171,7 @@ pub fn read_head_tail_lines(
     // For small files, read all lines once and split
     if file_len < 16_384 {
         let reader = BufReader::new(file);
-        let all: Vec<String> = reader.lines().map_while(Result::ok).collect();
+        let all: Vec<String> = reader.lines().collect::<io::Result<Vec<_>>>()?;
         let head = all.iter().take(head_n).cloned().collect();
         let skip = all.len().saturating_sub(tail_n);
         let tail = all.into_iter().skip(skip).collect();
@@ -120,20 +180,23 @@ pub fn read_head_tail_lines(
 
     // Read head lines from the beginning
     let reader = BufReader::new(file);
-    let head: Vec<String> = reader.lines().take(head_n).map_while(Result::ok).collect();
+    let head: Vec<String> = reader
+        .lines()
+        .take(head_n)
+        .collect::<io::Result<Vec<_>>>()?;
 
     // Seek to last ~16 KB for tail lines
     let seek_pos = file_len.saturating_sub(16_384);
     let mut file2 = File::open(path)?;
     file2.seek(SeekFrom::Start(seek_pos))?;
-    let tail_reader = BufReader::new(file2);
-    let all_tail: Vec<String> = tail_reader.lines().map_while(Result::ok).collect();
-
-    // Skip first partial line if we seeked into the middle of a line
-    let skip_first = if seek_pos > 0 { 1 } else { 0 };
-    let usable: Vec<String> = all_tail.into_iter().skip(skip_first).collect();
-    let skip = usable.len().saturating_sub(tail_n);
-    let tail = usable.into_iter().skip(skip).collect();
+    let mut tail_reader = BufReader::new(file2);
+    // Skip the first partial line as bytes: the seek can land inside a UTF-8 character.
+    if seek_pos > 0 {
+        tail_reader.read_until(b'\n', &mut Vec::new())?;
+    }
+    let all_tail: Vec<String> = tail_reader.lines().collect::<io::Result<Vec<_>>>()?;
+    let skip = all_tail.len().saturating_sub(tail_n);
+    let tail = all_tail.into_iter().skip(skip).collect();
 
     Ok((head, tail))
 }
@@ -365,6 +428,29 @@ mod tests {
         })
     }
 
+    #[test]
+    fn head_tail_read_skips_partial_utf8_before_decoding() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("multibyte.jsonl");
+        let data = format!("{}\nlast\n", "😀".repeat(5000));
+        assert!(!data.is_char_boundary(data.len() - 16_384));
+        std::fs::write(&path, &data).unwrap();
+        let (head, tail) = read_head_tail_lines(&path, 1, 10).unwrap();
+        assert_eq!(head, vec!["😀".repeat(5000)]);
+        assert_eq!(tail, vec!["last"]);
+    }
+
+    #[test]
+    fn head_tail_read_propagates_invalid_utf8_in_complete_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("invalid.jsonl");
+        std::fs::write(&path, b"valid\n\xff\n").unwrap();
+        assert_eq!(
+            read_head_tail_lines(&path, 1, 10).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
+
     /// 读取失败不能缓存成「没有会话」：恢复读取后，文件没变也要重新解析出来
     #[test]
     fn file_parse_cache_retries_files_that_failed_to_read() {
@@ -386,12 +472,18 @@ mod tests {
             }
         };
 
-        assert!(cache.scan(vec![a.clone()], parse).is_empty());
+        let mut failed = ScanStatus::default();
+        assert!(cache
+            .scan_with_status(vec![a.clone()], parse, &mut failed)
+            .is_empty());
+        assert!(failed.incomplete);
         assert!(cache.scan(vec![a.clone()], parse).is_empty());
         assert_eq!(calls.get(), 2, "失败的文件每轮都要重试，不能命中缓存");
 
         fail.set(false);
-        let sessions = cache.scan(vec![a.clone()], parse);
+        let mut recovered = ScanStatus::default();
+        let sessions = cache.scan_with_status(vec![a.clone()], parse, &mut recovered);
+        assert!(!recovered.incomplete);
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].session_id, "alpha");
         assert_eq!(calls.get(), 3);

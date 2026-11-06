@@ -2034,6 +2034,28 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     iconColor: "#006FFB",
   },
   {
+    name: "Genesis",
+    providerKey: "cc-switch-genesis",
+    websiteUrl: "https://genesis.moi.matrixorigin.cn/taas/",
+    apiKeyUrl: "https://uc.moi.matrixorigin.cn/account/credentials?app=genesis",
+    // 矩阵起源 TaaS 走 Chat Completions，Pi 1.2.0 实测 kimi-k3 可用。Kimi Code /
+    // MiniMax Code / DeepSeek Harness / Oh My Pi 由这条派生，未逐个实测（#9269）
+    settingsConfig: {
+      name: "Genesis",
+      baseUrl: "https://token.moi.matrixorigin.cn/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        {
+          ...piModel("moonshotai/kimi-k3", { id: "kimi-k3" }),
+          compat: { ...OPENAI_COMPLETIONS_COMPAT },
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "genesis",
+  },
+  {
     name: "CherryIN",
     providerKey: "cc-switch-cherry-in",
     websiteUrl: "https://open.cherryin.ai",
