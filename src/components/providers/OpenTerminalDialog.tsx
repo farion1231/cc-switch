@@ -113,13 +113,14 @@ const TERMINAL_APP_NAMES: Partial<Record<AppId, string>> = {
   claude: "Claude Code",
   codex: "Codex",
   agy: "Antigravity CLI",
+  grokbuild: "Grok Build",
 };
 
-/** 跳过权限确认的参数：Claude Code 和 agy 同名，Codex 同时关掉沙箱 */
+/** 跳过权限确认的参数：Claude Code 和 agy 同名，Codex 同时关掉沙箱，Grok Build 用自己的 */
 function skipPermissionsFlag(appId: AppId): string {
-  return appId === "codex"
-    ? "--dangerously-bypass-approvals-and-sandbox"
-    : "--dangerously-skip-permissions";
+  if (appId === "codex") return "--dangerously-bypass-approvals-and-sandbox";
+  if (appId === "grokbuild") return "--always-approve";
+  return "--dangerously-skip-permissions";
 }
 
 /** Codex 卡自己带路由表（第三方地址），终端能只对这一次用 `-c` 换成它 */
@@ -134,12 +135,15 @@ function codexHasOwnRoute(provider: Provider): boolean {
 /**
  * 卡片上显示不显示「打开终端」。Codex 的官方卡、没有路由的卡跟着 Codex 自己的登录走，
  * 只有是当前供应商时才能打开（直接跑 `codex`）；要经本地路由的卡终端直连不了。
+ * Grok Build 没有只对一个进程换配置的办法（没有 `-c`，换 `GROK_HOME` 会连会话和登录一起换掉），
+ * 只有当前供应商能打开，直接跑 `grok` 读 live 的 config.toml。
  */
 export function terminalAvailable(
   provider: Provider,
   appId: AppId,
   isCurrent: boolean,
 ): boolean {
+  if (appId === "grokbuild") return isCurrent;
   if (appId !== "codex") return true;
   if (providerNeedsRouting("codex", provider)) return false;
   return isCurrent || codexHasOwnRoute(provider);
@@ -156,11 +160,14 @@ export function terminalAvailable(
  *
  * Antigravity：带 Key 的卡用自己的私有 `--gemini_dir` 启动，Key 只给这个 agy 进程；官方
  * 登录卡直接跑原生 agy，跟着全局设置和登录走。
+ *
+ * Grok Build：只能打开当前供应商，跑的就是 live 配置，谈不上隔离。
  */
 export function terminalIsIsolated(
   provider: Provider,
   appId: AppId = "claude",
 ): boolean {
+  if (appId === "grokbuild") return false;
   if (appId === "codex") return codexHasOwnRoute(provider);
   const env = (provider.settingsConfig as { env?: unknown } | undefined)?.env;
   if (!env || typeof env !== "object") return false;

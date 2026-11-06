@@ -1574,7 +1574,10 @@ function App() {
     onConfigureUsage: setUsageProvider,
     onOpenWebsite: handleOpenWebsite,
     onOpenTerminal:
-      activeApp === "claude" || activeApp === "codex" || activeApp === "agy"
+      activeApp === "claude" ||
+      activeApp === "codex" ||
+      activeApp === "agy" ||
+      activeApp === "grokbuild"
         ? setTerminalProvider
         : undefined,
     onCreate: () => openAddProvider(currentModeView),
