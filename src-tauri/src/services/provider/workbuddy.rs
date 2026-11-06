@@ -108,6 +108,26 @@ fn sync_native(
         changed += 1;
     }
 
+    // A model removed directly in WorkBuddy is absent from the native
+    // snapshot. Keep its saved card so it can be added again, but clear the
+    // native-membership flag or the UI will keep treating it as enabled.
+    for (id, saved_provider) in &saved {
+        if snapshot.models.contains_key(id) {
+            continue;
+        }
+        if saved_provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.live_config_managed)
+            == Some(true)
+        {
+            let mut provider = saved_provider.clone();
+            set_managed(&mut provider, false);
+            state.db.save_provider(WORKBUDDY_APP, &provider)?;
+            changed += 1;
+        }
+    }
+
     Ok(changed)
 }
 
@@ -220,7 +240,7 @@ pub(super) fn update(
         None => false,
         Some(_) => match workbuddy_config::read_available_models() {
             Ok(available) => workbuddy_config::is_available(available.as_deref(), &original_id),
-            Err(_) => true,
+            Err(error) => return Err(error),
         },
     };
     set_managed(&mut provider, managed);
@@ -614,6 +634,19 @@ mod tests {
             ProviderService::current(&state, AppType::WorkBuddy).unwrap(),
             ""
         );
+    }
+
+    #[test]
+    #[serial]
+    fn native_deletion_retains_card_and_allows_readding() {
+        let _dir = TestConfigDir::new();
+        let state = state();
+        ProviderService::add(&state, AppType::WorkBuddy, input("model-a"), true).unwrap();
+        workbuddy_config::remove_model("model-a").unwrap();
+        let providers = ProviderService::list(&state, AppType::WorkBuddy).unwrap();
+        assert_eq!(providers["model-a"].meta.as_ref().unwrap().live_config_managed, Some(false));
+        ProviderService::switch(&state, AppType::WorkBuddy, "model-a").unwrap();
+        assert!(workbuddy_config::model_exists("model-a").unwrap());
     }
 
     #[test]

@@ -188,6 +188,7 @@ export function ProviderList({
         case "kimi":
         case "dsh":
         case "mcode":
+        case "workbuddy":
           return provider.meta?.liveConfigManaged === true;
         case "opencode":
           return opencodeLiveIds?.includes(provider.id) ?? false;

@@ -244,6 +244,12 @@ export function DeepLinkImportDialog() {
 
   const handleImport = async () => {
     if (!request) return;
+    if (request.resource === "provider" && request.app === "workbuddy") {
+      toast.error(
+        "WorkBuddy providers cannot be imported from deep links; add the model in CC Switch instead.",
+      );
+      return;
+    }
 
     setIsImporting(true);
 
@@ -975,7 +981,15 @@ export function DeepLinkImportDialog() {
                   )}
 
                   {/* Antigravity 的卡没有「启用」，只导入，不给这个开关 */}
-                  {request.app !== "agy" && (
+                  {request.app === "workbuddy" && (
+                    <p role="alert" className="text-warning-text text-sm">
+                      {t("deeplink.workbuddyUnsupported", {
+                        defaultValue:
+                          "WorkBuddy models cannot be imported from deep links. Add the model in CC Switch instead.",
+                      })}
+                    </p>
+                  )}
+                  {request.app !== "agy" && request.app !== "workbuddy" && (
                     <>
                       {/*
                         导入后是否立即生效由用户决定，链接里的 enabled 只是初始值。切换式应用打开后
@@ -1026,7 +1040,14 @@ export function DeepLinkImportDialog() {
               >
                 {t("common.cancel")}
               </Button>
-              <Button onClick={handleImport} disabled={isImporting}>
+              <Button
+                onClick={handleImport}
+                disabled={
+                  isImporting ||
+                  (request?.resource === "provider" &&
+                    request.app === "workbuddy")
+                }
+              >
                 {isImporting ? t("deeplink.importing") : t("deeplink.import")}
               </Button>
             </DialogFooter>

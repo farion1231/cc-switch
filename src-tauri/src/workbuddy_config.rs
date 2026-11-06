@@ -185,17 +185,20 @@ pub(crate) fn validate_model_node(model_key: &str, config: &Value) -> Result<(),
             ))
         }
     }
-    for key in [
-        "maxInputTokens",
-        "maxOutputTokens",
-        "supportsToolCall",
-        "supportsImages",
-        "supportsReasoning",
-    ] {
+    for key in ["maxInputTokens", "maxOutputTokens"] {
         if let Some(value) = object.get(key) {
-            if !value.is_number() && !value.is_boolean() {
+            if !value.is_number() {
                 return Err(AppError::InvalidInput(format!(
-                    "WorkBuddy model '{key}' must be a number or a boolean"
+                    "WorkBuddy model '{key}' must be a number"
+                )));
+            }
+        }
+    }
+    for key in ["supportsToolCall", "supportsImages", "supportsReasoning"] {
+        if let Some(value) = object.get(key) {
+            if !value.is_boolean() {
+                return Err(AppError::InvalidInput(format!(
+                    "WorkBuddy model '{key}' must be a boolean"
                 )));
             }
         }
@@ -966,6 +969,21 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("not valid JSON"));
         assert!(message.contains("models.json"));
+    }
+
+    #[test]
+    fn known_model_fields_reject_swapped_types() {
+        for key in ["maxInputTokens", "maxOutputTokens"] {
+            let mut config = model("x");
+            config[key] = json!(true);
+            assert!(validate_model_node("x", &config).is_err(), "{key}");
+        }
+        for key in ["supportsToolCall", "supportsImages", "supportsReasoning"] {
+            let mut config = model("x");
+            config[key] = json!(1);
+            assert!(validate_model_node("x", &config).is_err(), "{key}");
+        }
+        assert!(validate_model_node("x", &model("x")).is_ok());
     }
 
     #[test]
