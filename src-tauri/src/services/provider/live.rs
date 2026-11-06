@@ -39,6 +39,7 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Mcode => crate::mcode_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Omp => Ok(crate::omp_config::get_providers()?.contains_key(provider_id)),
+        AppType::WorkBuddy => crate::workbuddy_config::model_exists(provider_id),
         _ => Ok(false),
     }
 }
@@ -312,6 +313,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Dsh
         | AppType::Agy
         | AppType::Omp
+        | AppType::WorkBuddy
         | AppType::ClaudeDesktop => false,
     }
 }
@@ -392,7 +394,8 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Dsh
         | AppType::ClaudeDesktop
         | AppType::Agy
-        | AppType::Omp => Ok(settings.clone()),
+        | AppType::Omp
+        | AppType::WorkBuddy => Ok(settings.clone()),
     }
 }
 
@@ -731,6 +734,11 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 "Oh My Pi providers use the Oh My Pi provider service".to_string(),
             ));
         }
+        AppType::WorkBuddy => {
+            return Err(AppError::InvalidInput(
+                "WorkBuddy models use the WorkBuddy provider service".to_string(),
+            ));
+        }
     }
     Ok(())
 }
@@ -1060,6 +1068,9 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         AppType::Omp => Err(AppError::InvalidInput(
             "Oh My Pi providers are read from Oh My Pi's native models file".to_string(),
         )),
+        AppType::WorkBuddy => Err(AppError::InvalidInput(
+            "WorkBuddy models are read from WorkBuddy's native models file".to_string(),
+        )),
     }
 }
 
@@ -1181,7 +1192,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         | AppType::Mcode
         | AppType::Kimi
         | AppType::Dsh
-        | AppType::Omp => {
+        | AppType::Omp
+        | AppType::WorkBuddy => {
             unreachable!("additive mode apps are handled by early return")
         }
     };

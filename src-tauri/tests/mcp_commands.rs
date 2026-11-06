@@ -1894,6 +1894,10 @@ fn resync_targets_default_to_managed_apps_and_reject_unsupported() {
     );
     assert!(McpService::resync_targets(Some(&["openclaw".to_string()])).is_err());
     assert!(McpService::resync_targets(Some(&["not-an-app".to_string()])).is_err());
+    // WorkBuddy 本期只接 Provider，没有 MCP 配置面：既不能进默认目标，
+    // 也不能被显式点名同步，否则会去写一个不存在的文件。
+    assert!(!all.contains(&AppType::WorkBuddy));
+    assert!(McpService::resync_targets(Some(&["workbuddy".to_string()])).is_err());
 }
 
 /// 「重新同步到各应用」逐应用报告：Codex 配置坏了只让 Codex 失败、文件不动，

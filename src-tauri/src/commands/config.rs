@@ -189,6 +189,19 @@ pub async fn get_config_status(
                 path,
             })
         }
+        AppType::WorkBuddy => {
+            let config_path =
+                crate::workbuddy_config::get_models_path().map_err(|e| e.to_string())?;
+            let path = crate::workbuddy_config::get_workbuddy_dir()
+                .map_err(|e| e.to_string())?
+                .to_string_lossy()
+                .to_string();
+            Ok(ConfigStatus {
+                // models.json may not exist yet: WorkBuddy creates it on first save.
+                exists: config_path.exists(),
+                path,
+            })
+        }
     }
 }
 
@@ -219,6 +232,9 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
             .unwrap()
             .to_path_buf(),
         AppType::Agy => crate::agy_config::agy_dir(),
+        AppType::WorkBuddy => {
+            crate::workbuddy_config::get_workbuddy_dir().map_err(|e| e.to_string())?
+        }
     };
 
     Ok(dir.to_string_lossy().to_string())
@@ -246,6 +262,9 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
             .unwrap()
             .to_path_buf(),
         AppType::Agy => crate::agy_config::agy_dir(),
+        AppType::WorkBuddy => {
+            crate::workbuddy_config::get_workbuddy_dir().map_err(|e| e.to_string())?
+        }
     };
 
     if !config_dir.exists() {
@@ -470,4 +489,18 @@ pub async fn extract_common_config_snippet(
 
     crate::services::provider::ProviderService::extract_common_config_snippet(&state, app)
         .map_err(|e| e.to_string())
+}
+
+/// Whether the backup WorkBuddy's `models.json` gets before every CC Switch
+/// write is still on disk.
+#[tauri::command]
+pub fn workbuddy_backup_exists() -> Result<bool, String> {
+    crate::workbuddy_config::backup_exists().map_err(|e| e.to_string())
+}
+
+/// Put WorkBuddy's `models.json` back to the state it had before the last
+/// CC Switch write. Returns `false` when there is no backup to restore.
+#[tauri::command]
+pub fn restore_workbuddy_backup() -> Result<bool, String> {
+    crate::workbuddy_config::restore_backup().map_err(|e| e.to_string())
 }

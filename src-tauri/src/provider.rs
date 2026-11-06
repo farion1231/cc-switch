@@ -230,6 +230,12 @@ impl Provider {
                 str_at(settings.get("baseUrl")),
                 str_at(settings.get("apiKey")),
             ),
+            // WorkBuddy models carry the endpoint and key at the top level of one
+            // `models[]` entry, with camelCase field names.
+            AppType::WorkBuddy => (
+                crate::workbuddy_config::model_base_url(settings).unwrap_or_default(),
+                crate::workbuddy_config::model_api_key(settings),
+            ),
             // Pi custom providers use the native models.json field names. Pi expands
             // `$NAME` references in `apiKey`, so resolve them before sending (#8822).
             AppType::Pi => (

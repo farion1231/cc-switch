@@ -319,4 +319,51 @@ describe("useAddProviderMutation", () => {
     expect(toastMocks.error).toHaveBeenCalled();
     expect(toastMocks.warning).not.toHaveBeenCalled();
   });
+
+  it("uses the model id as the WorkBuddy provider id", async () => {
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useAddProviderMutation("workbuddy"), {
+      wrapper,
+    });
+
+    const provider = await act(async () =>
+      result.current.mutateAsync({
+        name: "Claude Sonnet",
+        providerKey: "claude-sonnet-4",
+        settingsConfig: {
+          id: "claude-sonnet-4",
+          name: "Claude Sonnet",
+          url: "https://api.example.com/v1",
+        },
+      }),
+    );
+
+    // 一个 Provider 就是 models[] 里的一家，id 必须等于上游模型名
+    expect(apiMocks.add).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "claude-sonnet-4" }),
+      "workbuddy",
+      undefined,
+      undefined,
+    );
+    expect(provider.id).toBe("claude-sonnet-4");
+    expect(provider).not.toHaveProperty("providerKey");
+  });
+
+  it("refuses a WorkBuddy provider without a model id", async () => {
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useAddProviderMutation("workbuddy"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await expect(
+        result.current.mutateAsync({
+          name: "No model id",
+          settingsConfig: { name: "No model id" },
+        }),
+      ).rejects.toThrow("Provider key is required for workbuddy");
+    });
+
+    expect(apiMocks.add).not.toHaveBeenCalled();
+  });
 });

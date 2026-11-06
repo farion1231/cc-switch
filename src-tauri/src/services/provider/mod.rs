@@ -26,6 +26,7 @@ mod omp;
 mod opencode_tests;
 mod pi;
 mod usage;
+mod workbuddy;
 
 use indexmap::IndexMap;
 use regex::Regex;
@@ -52,6 +53,10 @@ pub fn import_pi_providers_from_live(state: &AppState) -> Result<usize, AppError
 
 pub fn import_omp_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     omp::import_from_live(state)
+}
+
+pub fn import_workbuddy_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    workbuddy::import_from_live(state)
 }
 
 pub(crate) use claude_editor::{switch_drops as claude_switch_drops, SwitchDrops};
@@ -5496,6 +5501,9 @@ impl ProviderService {
         if app_type == AppType::Omp {
             return omp::list(state);
         }
+        if app_type == AppType::WorkBuddy {
+            return workbuddy::list(state);
+        }
         if matches!(app_type, AppType::Mcode | AppType::Kimi | AppType::Dsh) {
             let native = if matches!(app_type, AppType::Dsh) {
                 crate::dsh_config::get_providers()?
@@ -5676,6 +5684,10 @@ impl ProviderService {
 
         if app_type == AppType::Omp {
             return omp::add(state, provider, add_to_live);
+        }
+
+        if app_type == AppType::WorkBuddy {
+            return workbuddy::add(state, provider, add_to_live);
         }
 
         let mut provider = provider;
@@ -6282,6 +6294,10 @@ impl ProviderService {
             return omp::update(state, original_id, provider);
         }
 
+        if app_type == AppType::WorkBuddy {
+            return workbuddy::update(state, original_id, provider);
+        }
+
         let original_id = original_id.unwrap_or(provider.id.as_str()).to_string();
         let provider_id_changed = original_id != provider.id;
         // 读旧行、判断谁是当前供应商、存行、写 live 都在切换锁里：进入代理和切换都等这次
@@ -6595,6 +6611,10 @@ impl ProviderService {
             return omp::delete(state, id);
         }
 
+        if app_type == AppType::WorkBuddy {
+            return workbuddy::delete(state, id);
+        }
+
         // Additive mode apps - no current provider concept
         if app_type.is_additive_mode() {
             // Single DB read shared across all additive-mode sub-paths below.
@@ -6731,6 +6751,10 @@ impl ProviderService {
 
         if app_type == AppType::Omp {
             return omp::remove(state, id);
+        }
+
+        if app_type == AppType::WorkBuddy {
+            return workbuddy::remove(state, id);
         }
 
         match app_type {
@@ -6870,6 +6894,10 @@ impl ProviderService {
 
         if app_type == AppType::Omp {
             return omp::enable(state, id);
+        }
+
+        if app_type == AppType::WorkBuddy {
+            return workbuddy::enable(state, id);
         }
 
         // Check if provider exists
@@ -7337,7 +7365,8 @@ impl ProviderService {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Omp
-            | AppType::Agy => Ok(String::new()),
+            | AppType::Agy
+            | AppType::WorkBuddy => Ok(String::new()),
         }
     }
 
@@ -7360,7 +7389,8 @@ impl ProviderService {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Omp
-            | AppType::Agy => Ok(String::new()),
+            | AppType::Agy
+            | AppType::WorkBuddy => Ok(String::new()),
         }
     }
 
@@ -8139,6 +8169,12 @@ impl ProviderService {
             AppType::Omp => {
                 crate::omp_config::validate_provider(&provider.id, &provider.settings_config)?;
             }
+            AppType::WorkBuddy => {
+                crate::workbuddy_config::validate_model_node(
+                    &provider.id,
+                    &provider.settings_config,
+                )?;
+            }
         }
 
         // Validate and clean UsageScript configuration (common for all app types)
@@ -8362,6 +8398,22 @@ impl ProviderService {
                     .settings_config
                     .pointer("/provider/base_url")
                     .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .into(),
+            )),
+            AppType::WorkBuddy => Ok((
+                // A WorkBuddy model node keeps the key on `apiKey` and, unlike
+                // the additive providers below, names its endpoint `url`.
+                provider
+                    .settings_config
+                    .get("apiKey")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .into(),
+                provider
+                    .settings_config
+                    .get("url")
+                    .and_then(|v| v.as_str())
                     .unwrap_or_default()
                     .into(),
             )),

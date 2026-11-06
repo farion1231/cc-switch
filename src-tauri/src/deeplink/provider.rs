@@ -379,32 +379,40 @@ pub(crate) fn build_provider_from_request(
 ) -> Result<Provider, AppError> {
     let api_format = link_api_format(app_type, request)?;
     check_link_values(app_type, request)?;
-    let settings_config = match app_type {
-        AppType::Claude | AppType::ClaudeDesktop => build_claude_settings(request),
-        AppType::Codex => build_codex_settings(request)?,
-        AppType::Gemini => build_gemini_settings(request),
-        AppType::GrokBuild => build_grokbuild_settings(request)?,
-        AppType::OpenCode => build_opencode_settings(request, api_format),
-        AppType::OpenClaw => build_additive_app_settings(request, api_format),
-        AppType::Hermes => build_hermes_settings(request, api_format),
-        AppType::Pi => build_pi_settings(request, api_format)?,
-        AppType::Mcode | AppType::Dsh => {
-            build_custom_provider_settings(app_type, request, api_format)?
-        }
-        AppType::Kimi => build_kimi_settings(request, api_format)?,
-        AppType::Agy => {
-            let mut settings = build_gemini_settings(request);
-            settings["env"]
-                .as_object_mut()
-                .unwrap()
-                .remove("GEMINI_MODEL");
-            if let Some(model) = &request.model {
-                settings["config"] = json!({"model": {"name": model}});
+    let settings_config =
+        match app_type {
+            AppType::Claude | AppType::ClaudeDesktop => build_claude_settings(request),
+            AppType::Codex => build_codex_settings(request)?,
+            AppType::Gemini => build_gemini_settings(request),
+            AppType::GrokBuild => build_grokbuild_settings(request)?,
+            AppType::OpenCode => build_opencode_settings(request, api_format),
+            AppType::OpenClaw => build_additive_app_settings(request, api_format),
+            AppType::Hermes => build_hermes_settings(request, api_format),
+            AppType::Pi => build_pi_settings(request, api_format)?,
+            AppType::Mcode | AppType::Dsh => {
+                build_custom_provider_settings(app_type, request, api_format)?
             }
-            settings
-        }
-        AppType::Omp => build_omp_settings(request, api_format)?,
-    };
+            AppType::Kimi => build_kimi_settings(request, api_format)?,
+            AppType::Agy => {
+                let mut settings = build_gemini_settings(request);
+                settings["env"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("GEMINI_MODEL");
+                if let Some(model) = &request.model {
+                    settings["config"] = json!({"model": {"name": model}});
+                }
+                settings
+            }
+            AppType::Omp => build_omp_settings(request, api_format)?,
+            // A WorkBuddy card's id must be the model name WorkBuddy sends upstream, while a deep
+            // link only carries a display name. Importing one would create an entry WorkBuddy
+            // cannot use, so the link is refused here and the model is added in CC Switch instead.
+            AppType::WorkBuddy => return Err(AppError::InvalidInput(
+                "WorkBuddy models cannot be imported from a deep link; add the model in CC Switch"
+                    .to_string(),
+            )),
+        };
 
     // Build usage script configuration if provided
     let mut meta = build_provider_meta(app_type, request)?;

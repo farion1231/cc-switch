@@ -69,8 +69,9 @@ impl SystemKeychain {
         }
     }
 
-    /// 真机测试用的另一条，别动 agy 那条。
-    #[cfg(test)]
+    /// 真机测试用的另一条，别动 agy 那条。只有 Unix 上的真机冒烟测试会用，
+    /// Windows 没有钥匙串，这里也就不该存在这个构造函数。
+    #[cfg(all(test, unix))]
     pub fn named(service: &'static str, account: &'static str) -> Self {
         Self { service, account }
     }

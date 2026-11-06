@@ -63,6 +63,7 @@ const DIRECTORY_KEYS = [
   "piConfigDir",
   "ompConfigDir",
   "dshConfigDir",
+  "workbuddyConfigDir",
 ] as const;
 
 const sanitizeDir = (value?: string | null): string | undefined => {
@@ -137,6 +138,7 @@ export function useSettings(): UseSettingsResult {
       pi: sanitizeDir(data?.piConfigDir),
       omp: sanitizeDir(data?.ompConfigDir),
       dsh: sanitizeDir(data?.dshConfigDir),
+      workbuddy: sanitizeDir(data?.workbuddyConfigDir),
     });
     setRequiresRestart(false);
   }, [

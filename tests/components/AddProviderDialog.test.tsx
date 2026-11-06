@@ -590,4 +590,37 @@ context_window = 500000
     );
     expect(universalProps.onManageUniversalProviders).toBeTypeOf("function");
   });
+
+  // WorkBuddy 的一个供应商就是 `models.json` 里的一家：id 取上游模型名，
+  // 对话框必须把表单给的 providerKey 原样交出去，后端才有稳定身份。
+  it("WorkBuddy 添加供应商时把模型 ID 当作 providerKey 提交", async () => {
+    mockFormValues = {
+      name: "Claude Sonnet",
+      providerKey: "claude-sonnet-4",
+      settingsConfig: JSON.stringify({
+        id: "claude-sonnet-4",
+        name: "Claude Sonnet",
+        url: "https://api.example.com/v1",
+        apiKey: "secret",
+      }),
+    };
+    const onSubmit = vi.fn();
+    render(
+      <AddProviderDialog
+        open
+        onOpenChange={vi.fn()}
+        appId="workbuddy"
+        onSubmit={onSubmit}
+      />,
+    );
+    // 统一供应商投影不到 WorkBuddy，入口不能出现
+    await screen.findByRole("button", { name: "common.add" });
+    expect(universalProps.onUniversalPresetSelect).toBeUndefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "common.add" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({
+      providerKey: "claude-sonnet-4",
+    });
+  });
 });

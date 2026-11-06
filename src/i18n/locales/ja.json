@@ -994,6 +994,7 @@
     "browsePlaceholderPi": "例: /home/<your-username>/.pi/agent",
     "browsePlaceholderOmp": "例: /home/<your-username>/.omp/agent",
     "browsePlaceholderDsh": "例: /home/<your-username>/.dsh",
+    "browsePlaceholderWorkbuddy": "例: /home/<your-username>/.workbuddy-ai",
     "browseDirectory": "ディレクトリを選択",
     "resetDefault": "デフォルトに戻す（保存後に反映）",
     "checkForUpdates": "アップデートを確認",
@@ -1140,6 +1141,33 @@
       "location": "保存場所"
     }
   },
+  "workbuddy": {
+    "modelId": "モデル ID",
+    "modelIdHint": "WorkBuddy はこれをモデル名として上流に送るため、作成後は名前を変更できません。",
+    "modelIdLocked": "モデル ID は作成後に変更できません。名前を変えるには削除して追加し直してください。",
+    "modelIdPlaceholder": "例: claude-sonnet-4-5",
+    "modelIdDuplicate": "このモデル ID はすでに CC Switch にあります。",
+    "modelIdWhitespace": "モデル ID の前後に空白は入れられません。",
+    "urlPlaceholder": "https://api.example.com/v1/chat/completions",
+    "urlHelp": "入力したままの URL を保存します。CC Switch はパスの結合も書き換えも行いません。/chat/completions を補うかどうかは WorkBuddy 側のプロトコル設定によります。",
+    "apiKeyPlaceholder": "このモデル提供元の API Key を入力",
+    "apiKeyLocalOptional": "ローカル宛先なら空欄可",
+    "vendor": "ベンダー",
+    "vendorPlaceholder": "例: custom",
+    "maxInputTokens": "最大入力トークン",
+    "maxOutputTokens": "最大出力トークン",
+    "tokensPlaceholder": "空欄ならこの項目を書き込みません",
+    "tokensHint": "空欄の項目はファイルに書き込まず、WorkBuddy の既定値を使います。",
+    "capabilities": "モデル機能",
+    "capabilitiesHint": "触っていないスイッチは書き込まないため、WorkBuddy の既定値を上書きしません。",
+    "supportsToolCall": "ツール呼び出し",
+    "supportsImages": "画像入力",
+    "supportsReasoning": "推論",
+    "relatedModels": "関連モデル",
+    "relatedModelsPlaceholder": "カンマ区切り（例: model-a, model-b）",
+    "relatedModelsHint": "関連モデルの ID 一覧。空欄ならこの項目を書き込みません。",
+    "rawConfigInvalid": "JSON の形式が正しくありません。修正するまで保存できません。"
+  },
   "apps": {
     "claude": "Claude",
     "claudeCode": "Claude Code",
@@ -1154,7 +1182,8 @@
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
-    "omp": "Oh My Pi"
+    "omp": "Oh My Pi",
+    "workbuddy": "WorkBuddy"
   },
   "mcode": {
     "empty": {

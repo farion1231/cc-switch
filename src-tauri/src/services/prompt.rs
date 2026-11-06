@@ -281,7 +281,12 @@ impl PromptService {
     pub fn sync_to_live(state: &AppState, app: AppType) -> Result<(), AppError> {
         // Pi derives activation from its native AGENTS.md; its persisted prompt
         // rows are intentionally disabled and must not drive generic projection.
-        if matches!(app, AppType::ClaudeDesktop | AppType::Pi) {
+        // WorkBuddy has no prompt file CC Switch manages (see `prompt_file_path`),
+        // so a bulk sync must skip it instead of failing on every run.
+        if matches!(
+            app,
+            AppType::ClaudeDesktop | AppType::Pi | AppType::WorkBuddy
+        ) {
             return Ok(());
         }
 
@@ -638,6 +643,20 @@ mod tests {
             created_at: None,
             updated_at: None,
         }
+    }
+
+    #[test]
+    fn sync_to_live_skips_apps_without_a_prompt_file() {
+        use super::PromptService;
+        use crate::app_config::AppType;
+        use crate::{database::Database, store::AppState};
+        use std::sync::Arc;
+
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        // 批量同步会遍历所有应用：WorkBuddy 没有提示词文件，必须安静跳过而不是
+        // 每次都在聚合失败列表里出现一条。
+        PromptService::sync_to_live(&state, AppType::WorkBuddy).expect("WorkBuddy is skipped");
+        PromptService::sync_to_live(&state, AppType::ClaudeDesktop).expect("desktop is skipped");
     }
 
     #[test]

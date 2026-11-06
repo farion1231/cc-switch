@@ -375,6 +375,10 @@ impl McpService {
             AppType::Pi => mcp::pi::sync(&server.id, Some(&server.server))?,
             AppType::Agy => mcp::agy::sync(&server.id, Some(&server.server))?,
             AppType::Omp => mcp::sync_single_server_to_omp(&server.id, &server.server)?,
+            // WorkBuddy keeps no MCP file that CC Switch manages.
+            AppType::WorkBuddy => {
+                log::debug!("WorkBuddy MCP sync is not supported, skipping");
+            }
         }
         Ok(())
     }
@@ -433,6 +437,9 @@ impl McpService {
             AppType::Pi => mcp::pi::sync(id, None)?,
             AppType::Agy => mcp::agy::sync(id, None)?,
             AppType::Omp => mcp::remove_server_from_omp(id)?,
+            AppType::WorkBuddy => {
+                log::debug!("WorkBuddy MCP sync is not supported, skipping remove");
+            }
         }
         Ok(())
     }
@@ -473,9 +480,17 @@ impl McpService {
     }
 
     /// 由 CC Switch 管理 MCP 的应用（Claude Desktop、OpenClaw 不支持）
+    ///
+    /// WorkBuddy 本期只接 Provider，没有 MCP 配置面，不能因为它是 `AppType`
+    /// 的成员就被算进默认同步目标。
     pub fn live_sync_apps() -> Vec<AppType> {
         AppType::all()
-            .filter(|app| !matches!(app, AppType::OpenClaw | AppType::ClaudeDesktop))
+            .filter(|app| {
+                !matches!(
+                    app,
+                    AppType::OpenClaw | AppType::ClaudeDesktop | AppType::WorkBuddy
+                )
+            })
             .collect()
     }
 

@@ -994,6 +994,7 @@
     "browsePlaceholderPi": "e.g., /home/<your-username>/.pi/agent",
     "browsePlaceholderOmp": "e.g., /home/<your-username>/.omp/agent",
     "browsePlaceholderDsh": "e.g., /home/<your-username>/.dsh",
+    "browsePlaceholderWorkbuddy": "e.g., /home/<your-username>/.workbuddy-ai",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",
     "checkForUpdates": "Check for Updates",
@@ -1140,6 +1141,33 @@
       "location": "Location"
     }
   },
+  "workbuddy": {
+    "modelId": "Model ID",
+    "modelIdHint": "WorkBuddy sends this as the model name upstream, so it cannot be renamed after creation.",
+    "modelIdLocked": "The model ID is fixed after creation. Delete the model and add it again to rename it.",
+    "modelIdPlaceholder": "e.g. claude-sonnet-4-5",
+    "modelIdDuplicate": "CC Switch already has a model with this ID.",
+    "modelIdWhitespace": "The model ID cannot start or end with a space.",
+    "urlPlaceholder": "https://api.example.com/v1/chat/completions",
+    "urlHelp": "Saved exactly as typed: CC Switch neither joins nor rewrites the path. Whether /chat/completions is appended is up to WorkBuddy's own protocol setting.",
+    "apiKeyPlaceholder": "Enter the API key for this model provider",
+    "apiKeyLocalOptional": "Optional for a local endpoint",
+    "vendor": "Vendor",
+    "vendorPlaceholder": "e.g. custom",
+    "maxInputTokens": "Max input tokens",
+    "maxOutputTokens": "Max output tokens",
+    "tokensPlaceholder": "Leave empty to omit this field",
+    "tokensHint": "An empty field is not written, so WorkBuddy's own default applies.",
+    "capabilities": "Capabilities",
+    "capabilitiesHint": "Switches you never touch are not written, so WorkBuddy's defaults are preserved.",
+    "supportsToolCall": "Tool calling",
+    "supportsImages": "Image input",
+    "supportsReasoning": "Reasoning",
+    "relatedModels": "Related models",
+    "relatedModelsPlaceholder": "Comma separated, e.g. model-a, model-b",
+    "relatedModelsHint": "IDs of related models. Leave empty to omit the field.",
+    "rawConfigInvalid": "Invalid JSON - fix it before saving."
+  },
   "apps": {
     "claude": "Claude",
     "claudeCode": "Claude Code",
@@ -1154,7 +1182,8 @@
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
-    "omp": "Oh My Pi"
+    "omp": "Oh My Pi",
+    "workbuddy": "WorkBuddy"
   },
   "mcode": {
     "empty": {

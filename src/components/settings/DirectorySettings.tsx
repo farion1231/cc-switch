@@ -5,13 +5,12 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { useTranslation } from "react-i18next";
-import type { AppId } from "@/lib/api";
 import type { ResolvedDirectories } from "@/hooks/useSettings";
+import type { DirectoryAppId } from "@/hooks/useDirectorySettings";
 
-export type DirectoryAppId = Exclude<
-  AppId,
-  "claude-desktop" | "mcode" | "agy" | "kimi"
->;
+// Re-exported rather than redefined: two copies of this union drifted apart
+// once already, and a missed member turns into a runtime gap, not a type error.
+export type { DirectoryAppId };
 
 interface DirectorySettingsProps {
   appConfigDir?: string;

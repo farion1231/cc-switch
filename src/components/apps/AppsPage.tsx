@@ -109,10 +109,13 @@ const SOURCE_LABEL: Record<string, string> = {
 
 type Row = { kind: "tool"; tool: ToolName } | { kind: "desktop" };
 
+// WorkBuddy ships as a desktop app with no CLI to install or upgrade, so it has
+// no row on this page. The map stays partial and every lookup filters, otherwise
+// a new AppId without a tool would be read back as `undefined`.
 const ROW_BY_APP = Object.fromEntries([
   ["claude-desktop", { kind: "desktop" }],
   ...TOOL_NAMES.map((tool) => [TOOL_APP_IDS[tool], { kind: "tool", tool }]),
-]) as Record<AppId, Row>;
+]) as Partial<Record<AppId, Row>>;
 
 type RowSection = { key: string; title: string; rows: Row[] };
 
@@ -195,7 +198,10 @@ export function AppsPage() {
   };
   // 两组共用一份顺序（拖动后写进设置，侧栏也按它排），每组只是按装没装过滤
   const appOrder = orderAppIds(settings?.appOrder);
-  const orderedRows = appOrder.map((app) => ROW_BY_APP[app]);
+  const orderedRows = appOrder.flatMap((app) => {
+    const row = ROW_BY_APP[app];
+    return row ? [row] : [];
+  });
   const rowStates = orderedRows.map((row) => ({
     row,
     installed: rowInstalled(row),

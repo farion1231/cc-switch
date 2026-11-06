@@ -994,6 +994,7 @@
     "browsePlaceholderPi": "例如：/home/<你的用户名>/.pi/agent",
     "browsePlaceholderOmp": "例如：/home/<你的用户名>/.omp/agent",
     "browsePlaceholderDsh": "例如：/home/<你的用户名>/.dsh",
+    "browsePlaceholderWorkbuddy": "例如：/home/<你的用户名>/.workbuddy-ai",
     "browseDirectory": "浏览目录",
     "resetDefault": "恢复默认目录（需保存后生效）",
     "checkForUpdates": "检查更新",
@@ -1140,6 +1141,33 @@
       "location": "存储位置"
     }
   },
+  "workbuddy": {
+    "modelId": "模型 ID",
+    "modelIdHint": "WorkBuddy 拿它当模型名向上游发起请求，创建后不能改名。",
+    "modelIdLocked": "模型 ID 创建后不可修改；要换名字请删除后重新添加。",
+    "modelIdPlaceholder": "例如 claude-sonnet-4-5",
+    "modelIdDuplicate": "这个模型 ID 已经存在于 CC Switch。",
+    "modelIdWhitespace": "模型 ID 首尾不能有空格。",
+    "urlPlaceholder": "https://api.example.com/v1/chat/completions",
+    "urlHelp": "按填写的原样保存：CC Switch 不拼接、不改写路径。是否自动补 /chat/completions 由 WorkBuddy 自己的协议设置决定。",
+    "apiKeyPlaceholder": "输入该模型服务商的 API Key",
+    "apiKeyLocalOptional": "本机地址可以留空",
+    "vendor": "厂商标识",
+    "vendorPlaceholder": "例如 custom",
+    "maxInputTokens": "最大输入 Token",
+    "maxOutputTokens": "最大输出 Token",
+    "tokensPlaceholder": "留空则不写入该字段",
+    "tokensHint": "留空即不写入文件，沿用 WorkBuddy 自己的默认值。",
+    "capabilities": "模型能力",
+    "capabilitiesHint": "没有动过的开关不会写入文件，避免覆盖 WorkBuddy 的默认值。",
+    "supportsToolCall": "支持工具调用",
+    "supportsImages": "支持图片输入",
+    "supportsReasoning": "支持推理",
+    "relatedModels": "关联模型",
+    "relatedModelsPlaceholder": "用英文逗号分隔，例如 model-a, model-b",
+    "relatedModelsHint": "关联模型的 ID 列表；留空则不写入该字段。",
+    "rawConfigInvalid": "JSON 格式有误，修正后才能保存。"
+  },
   "apps": {
     "claude": "Claude",
     "claudeCode": "Claude Code",
@@ -1154,7 +1182,8 @@
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
-    "omp": "Oh My Pi"
+    "omp": "Oh My Pi",
+    "workbuddy": "WorkBuddy"
   },
   "mcode": {
     "empty": {

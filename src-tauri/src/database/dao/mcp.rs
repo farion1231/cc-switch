@@ -102,7 +102,7 @@ impl Database {
             AppType::Dsh => Some("enabled_dsh"),
             AppType::Pi => Some("enabled_pi"),
             AppType::Omp => Some("enabled_omp"),
-            AppType::ClaudeDesktop | AppType::OpenClaw => None,
+            AppType::ClaudeDesktop | AppType::OpenClaw | AppType::WorkBuddy => None,
             AppType::Agy => Some("enabled_agy"),
         };
 

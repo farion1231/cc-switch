@@ -108,6 +108,7 @@ import { ClaudeAccountSelect } from "./ClaudeOfficialSection";
 import { isMac } from "@/lib/platform";
 import { McodeProviderForm } from "./McodeProviderForm";
 import { PiProviderForm } from "./PiProviderForm";
+import { WorkBuddyProviderForm } from "./WorkBuddyProviderForm";
 import { OmoFormFields } from "./OmoFormFields";
 import { parseOmoOtherFieldsObject } from "@/types/omo";
 import type { AppMode } from "@/types/proxy";
@@ -346,6 +347,11 @@ export function ProviderForm(props: ProviderFormProps) {
   }
   if (props.appId === "grokbuild") {
     return <GrokBuildProviderForm {...props} />;
+  }
+  if (props.appId === "workbuddy") {
+    // WorkBuddy's `models[]` entry has its own field set, so it gets its own
+    // form instead of the generic JSON editor.
+    return <WorkBuddyProviderForm {...props} />;
   }
 
   return <ProviderFormFull {...props} />;

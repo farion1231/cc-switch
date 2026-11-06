@@ -744,12 +744,13 @@ describe("AppsPage concurrent CLI upgrades", () => {
       "hermes",
       "codex",
     ]);
-    // 只有已安装的能拖
+    // 只有已安装的能拖。WorkBuddy 是桌面应用、没有 CLI，本来就没有行，不参与计数。
+    const rowAppCount = APP_IDS.filter((app) => app !== "workbuddy").length;
     expect(
       within(
         screen.getByRole("region", { name: "appsPage.sectionInstalled" }),
       ).getAllByRole("button", { name: "appsPage.dragHandle" }),
-    ).toHaveLength(APP_IDS.length - 2);
+    ).toHaveLength(rowAppCount - 2);
     expect(
       within(
         screen.getByRole("region", { name: "appsPage.sectionNotInstalled" }),

@@ -324,6 +324,7 @@ export interface VisibleApps {
   dsh?: boolean;
   agy: boolean;
   omp: boolean;
+  workbuddy?: boolean;
 }
 
 // WebDAV 同步状态
@@ -514,6 +515,8 @@ export interface Settings {
   ompConfigDir?: string;
   // 覆盖 DeepSeek Harness 主目录（相当于 DSH_HOME，可选）
   dshConfigDir?: string;
+  // 覆盖 WorkBuddy 用户配置目录（默认 ~/.workbuddy-ai，可选）
+  workbuddyConfigDir?: string;
 
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）

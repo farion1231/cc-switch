@@ -19,7 +19,10 @@ pub(crate) fn validate_prompt_content(app: &AppType, content: &str) -> Result<()
 
 /// 返回指定应用所使用的提示词文件路径。
 pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
-    if matches!(app, AppType::ClaudeDesktop) {
+    // WorkBuddy 本期只接 Provider，没有确认过它读哪份提示词文件。猜一个路径出来
+    // 会让 `sync_all_to_live` 在恢复 Prompt 时真的往 `~/.workbuddy-ai` 里写文件，
+    // 所以和 Claude Desktop 一样直接拒绝，而不是给一个没人读的 AGENTS.md。
+    if matches!(app, AppType::ClaudeDesktop | AppType::WorkBuddy) {
         return Err(AppError::localized(
             "app.prompts_unsupported",
             "当前应用暂不支持 Prompts",
@@ -44,7 +47,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Agy => crate::agy_config::customizations_dir(),
         // omp 只读按 profile 切换的 agent 目录里的 AGENTS.md（上游 discovery/builtin.ts）
         AppType::Omp => crate::omp_config::get_omp_agent_dir()?,
-        AppType::ClaudeDesktop => unreachable!("handled above"),
+        AppType::ClaudeDesktop | AppType::WorkBuddy => unreachable!("handled above"),
     };
 
     let filename = match app {
@@ -59,7 +62,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         | AppType::Kimi
         | AppType::Dsh
         | AppType::Omp => "AGENTS.md",
-        AppType::ClaudeDesktop => unreachable!("handled above"),
+        AppType::ClaudeDesktop | AppType::WorkBuddy => unreachable!("handled above"),
     };
 
     Ok(base_dir.join(filename))
@@ -105,6 +108,15 @@ mod tests {
         assert!(validate_prompt_content(&AppType::Mcode, &"a".repeat(32769)).is_err());
         assert!(validate_prompt_content(&AppType::Mcode, &"中".repeat(10923)).is_err());
         assert!(validate_prompt_content(&AppType::OpenCode, &"中".repeat(10923)).is_ok());
+    }
+
+    #[test]
+    fn apps_without_a_prompt_file_are_refused_instead_of_guessed() {
+        // WorkBuddy 只接了 Provider：猜出来的路径会被 `sync_all_to_live` 真的写下去。
+        for app in [AppType::WorkBuddy, AppType::ClaudeDesktop] {
+            let error = prompt_file_path(&app).expect_err("no prompt file for this app");
+            assert!(error.to_string().contains("Prompts"), "{error}");
+        }
     }
 
     #[test]

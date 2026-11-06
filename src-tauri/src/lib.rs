@@ -53,6 +53,7 @@ mod tray_compat;
 mod tray_panel;
 mod usage_events;
 mod usage_script;
+mod workbuddy_config;
 
 pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps};
 pub use codex_config::{
@@ -1047,6 +1048,13 @@ pub fn run() {
                 Ok(_) => log::debug!("○ No Oh My Pi provider changes from native config"),
                 Err(e) => log::warn!("✗ Failed to import Oh My Pi providers: {e}"),
             }
+            match crate::services::provider::import_workbuddy_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Synced {count} WorkBuddy provider(s) from native config");
+                }
+                Ok(_) => log::debug!("○ No WorkBuddy provider changes from native config"),
+                Err(e) => log::warn!("✗ Failed to import WorkBuddy providers: {e}"),
+            }
 
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
             {
@@ -1604,6 +1612,8 @@ pub fn run() {
             commands::get_claude_code_config_path,
             commands::get_config_dir,
             commands::open_config_folder,
+            commands::workbuddy_backup_exists,
+            commands::restore_workbuddy_backup,
             commands::pick_directory,
             commands::open_external,
             commands::get_init_error,

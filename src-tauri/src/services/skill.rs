@@ -677,7 +677,11 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
-            AppType::ClaudeDesktop | AppType::Mcode | AppType::Kimi | AppType::Dsh => {}
+            AppType::ClaudeDesktop
+            | AppType::Mcode
+            | AppType::Kimi
+            | AppType::Dsh
+            | AppType::WorkBuddy => {}
             AppType::Codex => {
                 if let Some(custom) = crate::settings::get_codex_override_dir() {
                     return Ok(custom.join("skills"));
@@ -742,6 +746,9 @@ impl SkillService {
             AppType::Pi => crate::pi_config::get_pi_agent_dir()?.join("skills"),
             AppType::Omp => crate::omp_config::get_omp_agent_dir()?.join("skills"),
             AppType::Agy => home.join(".gemini").join("config").join("skills"),
+            // Skill sync is off for WorkBuddy (`SkillApps::is_enabled_for`), but
+            // the path still has to be right for the "same directory" checks.
+            AppType::WorkBuddy => crate::workbuddy_config::get_workbuddy_dir()?.join("skills"),
         })
     }
 

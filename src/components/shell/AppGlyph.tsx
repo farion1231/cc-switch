@@ -1,6 +1,7 @@
 import { Monitor, Terminal } from "lucide-react";
 import type { AppId } from "@/lib/api";
 import { ProviderIcon } from "@/components/ProviderIcon";
+import { hasIcon } from "@/icons/extracted";
 import { cn } from "@/lib/utils";
 
 /** 应用名：品牌名不翻译，四种语言都写原文。 */
@@ -19,6 +20,7 @@ export const APP_DISPLAY_NAME: Record<AppId, string> = {
   dsh: "DeepSeek Harness",
   agy: "Antigravity",
   omp: "Oh My Pi",
+  workbuddy: "WorkBuddy",
 };
 
 const APP_ICON_NAME: Record<AppId, string> = {
@@ -36,6 +38,7 @@ const APP_ICON_NAME: Record<AppId, string> = {
   dsh: "deepseek",
   agy: "antigravity",
   omp: "omp",
+  workbuddy: "workbuddy",
 };
 
 // Claude Code 和 Claude Desktop 用同一个图标，靠右下角的小角标区分终端与桌面
@@ -70,11 +73,13 @@ export function AppGlyph({
       )}
       style={{ width: size + 2, height: size + 2 }}
     >
+      {/* Only an app with no bundled icon asks for the initial fallback: naming
+          the others would add an SVG <title> that duplicates the row's own title. */}
       <ProviderIcon
         icon={APP_ICON_NAME[app]}
-        name=""
+        name={hasIcon(APP_ICON_NAME[app]) ? "" : APP_DISPLAY_NAME[app]}
         size={size}
-        showFallback={false}
+        showFallback={!hasIcon(APP_ICON_NAME[app])}
       />
       {BadgeIcon && (
         <span
