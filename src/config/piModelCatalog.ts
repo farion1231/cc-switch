@@ -126,6 +126,15 @@ export const piModelCatalog = {
       maxTokens: 384_000,
     },
   },
+  "deepseek/deepseek-v4.1-flash": {
+    capabilities: {
+      name: "DeepSeek V4.1 Flash",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1_048_576,
+      maxTokens: 131_072,
+    },
+  },
   "deepseek/deepseek-v4-pro": {
     capabilities: {
       name: "DeepSeek V4 Pro",
@@ -570,6 +579,15 @@ export const piModelCatalog = {
       name: "Qwen3.8 Flash",
       reasoning: true,
       // 官方 Codex catalog 未单列 flash 的输入模态，按同族 3.8-max 处理
+      input: ["text", "image"],
+      contextWindow: 983_616,
+      maxTokens: 131_072,
+    },
+  },
+  "qwen/qwen3.8-27b": {
+    capabilities: {
+      name: "Qwen3.8 27B",
+      reasoning: true,
       input: ["text", "image"],
       contextWindow: 983_616,
       maxTokens: 131_072,

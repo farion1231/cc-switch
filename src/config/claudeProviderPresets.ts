@@ -3201,20 +3201,19 @@ export const providerPresets: ProviderPreset[] = [
     icon: "aicoming",
   },
   {
-    name: "MatrixOrigin Token",
+    name: "Genesis",
     websiteUrl: "https://genesis.moi.matrixorigin.cn/taas/",
     apiKeyUrl: "https://genesis.moi.matrixorigin.cn/taas/token-keys",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://token.moi.matrixorigin.cn",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "glm-5.3",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.3",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.3",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.3",
       },
     },
+    modelsUrl: "https://token.moi.matrixorigin.cn/v1/models?type=chat",
     endpointCandidates: ["https://token.moi.matrixorigin.cn"],
     category: "aggregator",
+    icon: "genesis",
+    apiFormat: "openai_chat",
   },
 ];

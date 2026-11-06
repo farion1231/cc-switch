@@ -1,6 +1,12 @@
 import type { ProviderCategory, OpenCodeProviderConfig } from "../types";
 import type { PresetTheme, TemplateValueConfig } from "./claudeProviderPresets";
 import type { PresetFamilyFields } from "./presetFamilies";
+import {
+  GENESIS_API_KEY_URL,
+  GENESIS_CHAT_MODELS,
+  GENESIS_OPENAI_BASE_URL,
+  GENESIS_WEBSITE_URL,
+} from "./genesisModels";
 
 export interface OpenCodeProviderPreset extends PresetFamilyFields {
   name: string;
@@ -3787,6 +3793,21 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         editorValue: "",
       },
     },
+  },
+  {
+    name: "Genesis",
+    websiteUrl: GENESIS_WEBSITE_URL,
+    apiKeyUrl: GENESIS_API_KEY_URL,
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Genesis",
+      options: { baseURL: GENESIS_OPENAI_BASE_URL, apiKey: "" },
+      models: Object.fromEntries(
+        GENESIS_CHAT_MODELS.map((id) => [id, { name: id, reasoning: true }]),
+      ),
+    },
+    category: "aggregator",
+    icon: "genesis",
   },
   {
     name: "CherryIN",

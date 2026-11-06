@@ -11,6 +11,11 @@
 import { ProviderCategory } from "../types";
 import type { PresetTheme } from "./claudeProviderPresets";
 import type { PresetFamilyFields } from "./presetFamilies";
+import {
+  GENESIS_API_KEY_URL,
+  GENESIS_BASE_URL,
+  GENESIS_WEBSITE_URL,
+} from "./genesisModels";
 
 export type ClaudeDesktopApiFormat =
   | "anthropic"
@@ -1820,6 +1825,22 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     endpointCandidates: ["https://aihubmix.com", "https://api.aihubmix.com"],
     icon: "aihubmix",
     iconColor: "#006FFB",
+  },
+  {
+    name: "Genesis",
+    websiteUrl: GENESIS_WEBSITE_URL,
+    apiKeyUrl: GENESIS_API_KEY_URL,
+    category: "aggregator",
+    baseUrl: GENESIS_BASE_URL,
+    mode: "proxy",
+    apiFormat: "openai_chat",
+    modelRoutes: brandedRoutes(
+      "qwen3.8-flash",
+      "glm-5.3",
+      "deepseek-v4.1-flash",
+    ),
+    endpointCandidates: [GENESIS_BASE_URL],
+    icon: "genesis",
   },
   {
     name: "CherryIN",

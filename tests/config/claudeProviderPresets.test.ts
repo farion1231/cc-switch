@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { providerPresets } from "@/config/claudeProviderPresets";
+import { hasIcon } from "@/icons/extracted";
 import { GPT_CONTEXT_WINDOW_CAP } from "@/lib/modelMetadata";
 import type { Provider } from "@/types";
 import { providerNeedsRouting } from "@/utils/providerCapabilities";
@@ -215,13 +216,18 @@ describe("Microsoft Foundry Provider Preset", () => {
   });
 });
 
-describe("MatrixOrigin Token Claude Code preset", () => {
-  const preset = providerPresets.find((p) => p.name === "MatrixOrigin Token");
+describe("Genesis Claude Code preset", () => {
+  const preset = providerPresets.find((p) => p.name === "Genesis");
 
-  it("uses the public Anthropic Messages endpoint with a user-supplied bearer key", () => {
+  it("uses the Genesis logo", () => {
+    expect(preset?.icon).toBe("genesis");
+    expect(hasIcon("genesis")).toBe(true);
+  });
+
+  it("routes Claude Code through OpenAI Chat with a user-supplied bearer key", () => {
     expect(preset).toBeDefined();
     expect(preset!.category).toBe("aggregator");
-    expect(preset!.apiFormat).toBeUndefined();
+    expect(preset!.apiFormat).toBe("openai_chat");
     expect(preset!.settingsConfig).toMatchObject({
       env: {
         ANTHROPIC_BASE_URL: "https://token.moi.matrixorigin.cn",
@@ -230,24 +236,27 @@ describe("MatrixOrigin Token Claude Code preset", () => {
     });
 
     const provider: Provider = {
-      id: "matrixorigin-token",
+      id: "genesis",
       name: preset!.name,
       category: preset!.category,
       settingsConfig: preset!.settingsConfig as Record<string, any>,
       meta: { apiFormat: preset!.apiFormat },
     };
-    expect(providerNeedsRouting("claude", provider)).toBe(false);
+    expect(providerNeedsRouting("claude", provider)).toBe(true);
   });
 
-  it("maps Claude Code's model roles to the verified public model", () => {
+  it("discovers the account's chat model choices without pinning one model", () => {
     const env = (preset!.settingsConfig as any).env;
+    expect(preset!.modelsUrl).toBe(
+      "https://token.moi.matrixorigin.cn/v1/models?type=chat",
+    );
     for (const key of [
       "ANTHROPIC_MODEL",
       "ANTHROPIC_DEFAULT_HAIKU_MODEL",
       "ANTHROPIC_DEFAULT_SONNET_MODEL",
       "ANTHROPIC_DEFAULT_OPUS_MODEL",
     ]) {
-      expect(env[key]).toBe("glm-5.3");
+      expect(env).not.toHaveProperty(key);
     }
   });
 });

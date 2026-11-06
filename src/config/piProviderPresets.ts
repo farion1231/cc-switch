@@ -11,6 +11,11 @@ import {
   type PiThinkingLevelMap,
 } from "./piThinkingProfiles";
 import type { PresetFamilyFields } from "./presetFamilies";
+import {
+  GENESIS_API_KEY_URL,
+  GENESIS_OPENAI_BASE_URL,
+  GENESIS_WEBSITE_URL,
+} from "./genesisModels";
 
 export type PiApiFormat =
   | "openai-completions"
@@ -2032,6 +2037,37 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     category: "aggregator",
     icon: "aihubmix",
     iconColor: "#006FFB",
+  },
+  {
+    name: "Genesis",
+    providerKey: "cc-switch-genesis",
+    websiteUrl: GENESIS_WEBSITE_URL,
+    apiKeyUrl: GENESIS_API_KEY_URL,
+    settingsConfig: {
+      name: "Genesis",
+      baseUrl: GENESIS_OPENAI_BASE_URL,
+      api: "openai-completions",
+      apiKey: "",
+      models: (
+        [
+          ["moonshotai/kimi-k2.7-code", "kimi-k2.7-code"],
+          ["qwen/qwen3.7-plus", "qwen3.7-plus"],
+          ["zai/glm-5.2", "glm-5.2"],
+          ["qwen/qwen3.8-27b", "qwen3.8-27b"],
+          ["qwen/qwen3.8-max", "qwen3.8-max"],
+          ["qwen/qwen3.8-flash", "qwen3.8-flash"],
+          ["moonshotai/kimi-k3", "kimi-k3"],
+          ["deepseek/deepseek-v4.1-flash", "deepseek-v4.1-flash"],
+          ["zai/glm-5.3", "glm-5.3"],
+          ["zai/glm-5.3-flash", "glm-5.3-flash"],
+        ] as const
+      ).map(([catalogKey, id]) => ({
+        ...piModel(catalogKey, { id }),
+        compat: OPENAI_COMPLETIONS_COMPAT,
+      })),
+    },
+    category: "aggregator",
+    icon: "genesis",
   },
   {
     name: "CherryIN",

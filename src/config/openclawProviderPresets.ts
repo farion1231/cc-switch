@@ -11,6 +11,12 @@ import type {
 } from "../types";
 import type { PresetTheme, TemplateValueConfig } from "./claudeProviderPresets";
 import type { PresetFamilyFields } from "./presetFamilies";
+import {
+  GENESIS_API_KEY_URL,
+  GENESIS_CHAT_MODELS,
+  GENESIS_OPENAI_BASE_URL,
+  GENESIS_WEBSITE_URL,
+} from "./genesisModels";
 
 /** Suggested default model configuration for a preset */
 export interface OpenClawSuggestedDefaults {
@@ -4926,6 +4932,22 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         "aihubmix/claude-opus-5-5": { alias: "Opus" },
         "aihubmix/claude-sonnet-5-5": { alias: "Sonnet" },
       },
+    },
+  },
+  {
+    name: "Genesis",
+    websiteUrl: GENESIS_WEBSITE_URL,
+    apiKeyUrl: GENESIS_API_KEY_URL,
+    settingsConfig: {
+      baseUrl: GENESIS_OPENAI_BASE_URL,
+      apiKey: "",
+      api: "openai-completions",
+      models: GENESIS_CHAT_MODELS.map((id) => ({ id, name: id })),
+    },
+    category: "aggregator",
+    icon: "genesis",
+    suggestedDefaults: {
+      model: { primary: "genesis/qwen3.8-flash" },
     },
   },
   {
