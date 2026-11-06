@@ -446,12 +446,52 @@ fn finish_lifecycle_output(output: &std::process::Output) -> Result<(), String> 
     } else {
         stderr.trim()
     };
-    let detail = last_lines(raw, 8);
+    let detail = npm_bin_collision_detail(raw).unwrap_or_else(|| last_lines(raw, 8));
     Err(if detail.is_empty() {
         format!("命令执行失败 (exit code: {:?})", output.status.code())
     } else {
-        detail
+        append_npm_bin_collision_hint(detail, raw)
     })
+}
+
+/// npm 全局安装在链接可执行文件时若目标路径已被其他安装方式留下的启动器
+/// 占用，会以 EEXIST 失败，原始输出只建议 `--force` 覆盖（#9173）。识别这种
+/// bin 路径冲突后在原始输出后追加可执行提示：指出冲突文件、给出安全的
+/// 备份改名/改用原安装方式两条路，并明确提醒不要盲目 `--force`。
+/// 非此类失败原样返回，不改变既有错误文案。
+fn append_npm_bin_collision_hint(detail: String, raw: &str) -> String {
+    let Some(path) = npm_bin_collision_path(raw) else {
+        return detail;
+    };
+    format!(
+        "{detail}\n\nHint: npm could not create the executable because {path} already exists. \
+         If it is a launcher from another installation, back it up or rename it \
+         (for example to {path}.bak) and try again, or update the tool with the \
+         installation method that created it. Do not use npm --force unless you \
+         mean to overwrite the existing file."
+    )
+}
+
+/// 从 npm 输出里提取 bin 冲突路径：要求同时出现 `EEXIST` 与
+/// `File exists: <path>` 行，避免把其他含 EEXIST 字样的失败误判为路径冲突。
+fn npm_bin_collision_path(raw: &str) -> Option<&str> {
+    if !raw.contains("EEXIST") {
+        return None;
+    }
+    raw.lines().find_map(|line| {
+        line.split_once("File exists:")
+            .map(|(_, path)| path.trim())
+            .filter(|path| !path.is_empty())
+    })
+}
+
+/// npm 链接可执行文件撞上不归它管的同名文件时以 EEXIST 退出（#9173）。关键的两行
+/// 可能被尾部的 `--force` 建议、更新通知和日志路径挤出最后 8 行，这里单独保留，
+/// 前端据此换成可操作的提示。
+fn npm_bin_collision_detail(text: &str) -> Option<String> {
+    let code = text.lines().find(|line| line.contains("EEXIST"))?;
+    let exists = text.lines().find(|line| line.contains("File exists:"))?;
+    Some(format!("{}\n{}", code.trim(), exists.trim()))
 }
 
 /// 取文本末尾最多 `n` 行（npm / pip 的关键错误通常出现在输出尾部）。
@@ -5138,6 +5178,7 @@ fn wsl_distro_for_tool(tool: &str) -> Option<String> {
         "hermes" => crate::settings::get_hermes_override_dir(),
         "pi" => crate::settings::get_pi_override_dir(),
         "omp" => crate::settings::get_omp_override_dir(),
+        "dsh" => crate::settings::get_dsh_override_dir(),
         _ => None,
     }?;
 
@@ -5250,13 +5291,21 @@ pub async fn open_provider_terminal(
                 None => {
                     let env_vars =
                         extract_env_vars_from_config(&provider.settings_config, &app_type);
-                    claude_terminal_launch(&env_vars, &providerId)?
+                    let drops = crate::services::provider::claude_switch_drops(
+                        state.inner(),
+                        &provider.settings_config,
+                    )
+                    .unwrap_or_else(|e| {
+                        log::warn!("计算终端要挡住的 live 键失败，按原样启动: {e}");
+                        Default::default()
+                    });
+                    claude_terminal_launch(&env_vars, &providerId, &provider.name, &drops)?
                 }
             }
         }
         _ => {
             let env_vars = extract_env_vars_from_config(&provider.settings_config, &app_type);
-            claude_terminal_launch(&env_vars, &providerId)?
+            claude_terminal_launch(&env_vars, &providerId, &provider.name, &Default::default())?
         }
     };
     if skipPermissions == Some(true) {
@@ -5571,13 +5620,17 @@ fn codex_launch(
     })
 }
 
-/// Claude Code：把卡上的 env 写进临时 settings 文件，`claude --settings <文件>` 启动。
+/// Claude Code：把卡上的 env 和 `/model` 菜单写进临时 settings 文件，
+/// `claude --settings <文件>` 启动。`drops` 是切到这张卡时会从 live 清掉的键，在临时文件里
+/// 挡住（见 [`write_claude_config`]）。
 fn claude_terminal_launch(
     env_vars: &[(String, String)],
     provider_id: &str,
+    provider_name: &str,
+    drops: &crate::services::provider::SwitchDrops,
 ) -> Result<ProviderLaunch, String> {
     let config_file = unique_temp_path(&format!("claude_{provider_id}"), "json");
-    write_claude_config(&config_file, env_vars)?;
+    write_claude_config(&config_file, env_vars, provider_name, drops)?;
     let config_name = config_file
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -5949,18 +6002,43 @@ fn write_unix_launcher(
 }
 
 /// 写入 claude 配置文件（含凭据，0600）
+///
+/// 这个文件叠在用户级 `settings.json` 上：`env` 按键合并、顶层按键覆盖。所以：
+/// - `modelPicker` 一定要写：它按层级整个胜出，不写的话路由 / 聚合模式的菜单会漏进这个
+///   终端，选了就把别家的模型发给这张卡；
+/// - 切换会清掉、卡上又没有的键（`drops`）写成空值挡住：Claude Code 把空串当没设（2.1.314
+///   实测：代理的占位凭据不再随请求发出，没配的档位回到内置模型）。
 fn write_claude_config(
     config_file: &std::path::Path,
     env_vars: &[(String, String)],
+    provider_name: &str,
+    drops: &crate::services::provider::SwitchDrops,
 ) -> Result<(), String> {
+    use serde_json::Value;
     let mut config_obj = serde_json::Map::new();
     let mut env_obj = serde_json::Map::new();
 
     for (key, value) in env_vars {
-        env_obj.insert(key.clone(), serde_json::Value::String(value.clone()));
+        env_obj.insert(key.clone(), Value::String(value.clone()));
     }
 
-    config_obj.insert("env".to_string(), serde_json::Value::Object(env_obj));
+    let model_picker = crate::live::project::claude::terminal_model_picker(&env_obj, provider_name);
+    for key in drops.env.keys() {
+        env_obj
+            .entry(key.clone())
+            .or_insert_with(|| Value::String(String::new()));
+    }
+    for (key, value) in &drops.top {
+        let empty = match value {
+            Value::String(_) => Value::String(String::new()),
+            Value::Object(_) => Value::Object(serde_json::Map::new()),
+            Value::Array(_) => Value::Array(Vec::new()),
+            _ => continue,
+        };
+        config_obj.insert(key.clone(), empty);
+    }
+    config_obj.insert("env".to_string(), Value::Object(env_obj));
+    config_obj.insert("modelPicker".to_string(), model_picker);
 
     let config_json =
         serde_json::to_string_pretty(&config_obj).map_err(|e| format!("序列化配置失败: {e}"))?;
@@ -7267,6 +7345,66 @@ mod tests {
         );
     }
 
+    /// npm bin 路径冲突（#9173）：EEXIST + File exists 行齐备时，错误详情后
+    /// 追加指出冲突路径与安全处理方式的提示，且不建议盲目 --force。
+    #[test]
+    fn npm_bin_collision_appends_actionable_hint() {
+        let raw = "npm error code EEXIST\n\
+                   npm error path /home/user/.local/bin/pi\n\
+                   npm error EEXIST: file already exists\n\
+                   npm error File exists: /home/user/.local/bin/pi\n\
+                   npm error Remove the existing file and try again, or run npm\n\
+                   npm error with --force to overwrite files recklessly.";
+        let detail = append_npm_bin_collision_hint("npm error code EEXIST".to_string(), raw);
+        assert!(detail.contains("/home/user/.local/bin/pi"));
+        assert!(detail.contains("/home/user/.local/bin/pi.bak"));
+        assert!(detail.contains("Do not use npm --force"));
+    }
+
+    /// Windows 的 npm 输出同样带 `File exists:` 行（含盘符路径），应能提取。
+    #[test]
+    fn npm_bin_collision_extracts_windows_path() {
+        let raw = "npm error code EEXIST\nnpm error File exists: C:\\Users\\me\\AppData\\Roaming\\npm\\pi.cmd";
+        assert_eq!(
+            npm_bin_collision_path(raw),
+            Some("C:\\Users\\me\\AppData\\Roaming\\npm\\pi.cmd")
+        );
+    }
+
+    /// 只有 EEXIST 字样、没有 File exists 行的失败不误判，原样返回。
+    #[test]
+    fn npm_bin_collision_ignores_other_failures() {
+        let raw = "some tool failed with EEXIST while writing its cache";
+        let detail = "cache write failed".to_string();
+        assert_eq!(append_npm_bin_collision_hint(detail.clone(), raw), detail);
+        assert_eq!(npm_bin_collision_path("npm error code E404"), None);
+    }
+
+    #[test]
+    fn npm_bin_collision_detail_survives_trailing_noise() {
+        let raw = [
+            "npm error code EEXIST",
+            "npm error path /home/me/.local/bin/pi",
+            "npm error EEXIST: file already exists",
+            "npm error File exists: /home/me/.local/bin/pi",
+            "npm error Remove the existing file and try again, or run npm",
+            "npm error with --force to overwrite files recklessly.",
+            "npm notice",
+            "npm notice New major version of npm available! 10.9.2 -> 11.6.0",
+            "npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.6.0",
+            "npm notice To update run: npm install -g npm@11.6.0",
+            "npm notice",
+            "npm error A complete log of this run can be found in: /tmp/debug-0.log",
+        ]
+        .join("\n");
+        assert_eq!(
+            npm_bin_collision_detail(&raw).as_deref(),
+            Some("npm error code EEXIST\nnpm error File exists: /home/me/.local/bin/pi")
+        );
+        assert_eq!(npm_bin_collision_detail("npm error code E404"), None);
+        assert_eq!(npm_bin_collision_detail("EEXIST without a path"), None);
+    }
+
     /// 探测 helper 正常路径：spawn（含 pre_exec setsid）能启动、输出能捕获。
     /// `/bin/echo --version` 在 macOS/Linux 均即刻成功退出。
     #[cfg(not(target_os = "windows"))]
@@ -7687,8 +7825,13 @@ mod tests {
     #[test]
     fn claude_terminal_config_is_private() {
         use std::os::unix::fs::PermissionsExt;
-        let launch =
-            claude_terminal_launch(&[("ANTHROPIC_AUTH_TOKEN".into(), "t".into())], "p").unwrap();
+        let launch = claude_terminal_launch(
+            &[("ANTHROPIC_AUTH_TOKEN".into(), "t".into())],
+            "p",
+            "P",
+            &Default::default(),
+        )
+        .unwrap();
         let file = &launch.cleanup[0];
         assert_eq!(
             std::fs::metadata(file).unwrap().permissions().mode() & 0o777,
@@ -7702,6 +7845,127 @@ mod tests {
             ]
         );
         std::fs::remove_file(file).unwrap();
+    }
+
+    #[test]
+    fn claude_terminal_config_writes_the_cards_own_model_picker() {
+        let read = |env: &[(&str, &str)]| {
+            let env: Vec<(String, String)> = env
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            let launch =
+                claude_terminal_launch(&env, "p", "DeepSeek", &Default::default()).unwrap();
+            let file = &launch.cleanup[0];
+            let value: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
+            std::fs::remove_file(file).unwrap();
+            value["modelPicker"].clone()
+        };
+
+        // 卡上显式配了档位：只列这几档，`model` 写档位别名。
+        let picker = read(&[
+            ("ANTHROPIC_MODEL", "deepseek-v4-pro"),
+            ("ANTHROPIC_DEFAULT_OPUS_MODEL", "deepseek-v4-pro[1M]"),
+            ("ANTHROPIC_DEFAULT_HAIKU_MODEL", "deepseek-v4-flash"),
+            ("ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME", "Flash"),
+        ]);
+        assert_eq!(
+            picker,
+            serde_json::json!({
+                "replaceBuiltInOptions": true,
+                "options": [
+                    {
+                        "model": "opus",
+                        "label": "Opus · deepseek-v4-pro",
+                        "description": "DeepSeek · deepseek-v4-pro · 1M",
+                    },
+                    {
+                        "model": "haiku",
+                        "label": "Haiku · Flash",
+                        "description": "DeepSeek · deepseek-v4-flash",
+                    },
+                ],
+            })
+        );
+
+        // 一档都没配：空菜单，挡住用户级菜单，显示内置的。
+        let picker = read(&[("ANTHROPIC_MODEL", "deepseek-v4-pro")]);
+        assert_eq!(
+            picker,
+            serde_json::json!({ "replaceBuiltInOptions": false, "options": [] })
+        );
+    }
+
+    #[test]
+    fn claude_terminal_config_shadows_what_the_switch_clears() {
+        let drops = crate::services::provider::SwitchDrops {
+            env: serde_json::json!({
+                "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "ccs-claude-kimi--k3[1M]",
+            })
+            .as_object()
+            .unwrap()
+            .clone(),
+            top: serde_json::json!({
+                "model": "ccs-claude-kimi--k3[1M]",
+                "modelOverrides": { "a": "b" },
+                "modelPicker": { "replaceBuiltInOptions": true, "options": [] },
+            })
+            .as_object()
+            .unwrap()
+            .clone(),
+        };
+        let launch = claude_terminal_launch(
+            &[
+                ("ANTHROPIC_API_KEY".into(), "sk".into()),
+                (
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL".into(),
+                    "deepseek-v4-pro".into(),
+                ),
+            ],
+            "p",
+            "DeepSeek",
+            &drops,
+        )
+        .unwrap();
+        let file = &launch.cleanup[0];
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
+        std::fs::remove_file(file).unwrap();
+
+        // 卡上有的照写，没有的写空值挡住用户级的。
+        assert_eq!(value["env"]["ANTHROPIC_API_KEY"], "sk");
+        assert_eq!(
+            value["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"],
+            "deepseek-v4-pro"
+        );
+        assert_eq!(value["env"]["ANTHROPIC_AUTH_TOKEN"], "");
+        assert_eq!(value["model"], "");
+        assert_eq!(value["modelOverrides"], serde_json::json!({}));
+        // 菜单写卡自己的，不是空对象。
+        assert_eq!(value["modelPicker"]["options"][0]["model"], "opus");
+    }
+
+    #[test]
+    fn claude_terminal_config_without_drops_writes_only_the_card() {
+        let launch = claude_terminal_launch(
+            &[("ANTHROPIC_MODEL".into(), "deepseek-v4-pro".into())],
+            "p",
+            "DeepSeek",
+            &Default::default(),
+        )
+        .unwrap();
+        let file = &launch.cleanup[0];
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
+        std::fs::remove_file(file).unwrap();
+        let keys: Vec<&String> = value.as_object().unwrap().keys().collect();
+        assert_eq!(keys, ["env", "modelPicker"]);
+        assert_eq!(
+            value["modelPicker"],
+            serde_json::json!({ "replaceBuiltInOptions": false, "options": [] })
+        );
     }
 
     #[test]

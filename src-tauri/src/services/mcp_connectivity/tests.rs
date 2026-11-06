@@ -1,4 +1,4 @@
-use super::*;
+use super::{ConnectivityStatus::*, *};
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
@@ -10,6 +10,7 @@ use axum::{
     Json, Router,
 };
 use serde_json::{json, Value};
+use serial_test::serial;
 use std::{
     convert::Infallible,
     path::{Path, PathBuf},
@@ -28,6 +29,7 @@ struct MockServer {
     fail: bool,
     hang: bool,
     foreign_endpoint: Option<String>,
+    unauthorized: bool,
 }
 
 fn initialize_result(request: &Value) -> Value {
@@ -44,6 +46,9 @@ async fn http_message(
 ) -> Response {
     assert_eq!(headers["x-mcp-test"], "configured-header");
     state.started.fetch_add(1, Ordering::SeqCst);
+    if state.unauthorized {
+        return unauthorized();
+    }
     if state.hang {
         return std::future::pending().await;
     }
@@ -64,8 +69,11 @@ async fn http_message(
     StatusCode::ACCEPTED.into_response()
 }
 
-async fn sse_stream(State(state): State<MockServer>, headers: HeaderMap) -> impl IntoResponse {
+async fn sse_stream(State(state): State<MockServer>, headers: HeaderMap) -> Response {
     assert_eq!(headers["x-mcp-test"], "configured-header");
+    if state.unauthorized {
+        return unauthorized();
+    }
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     tx.send(
         Event::default()
@@ -77,6 +85,20 @@ async fn sse_stream(State(state): State<MockServer>, headers: HeaderMap) -> impl
     Sse::new(async_stream::stream! {
         while let Some(event) = rx.recv().await { yield Ok::<_, Infallible>(event); }
     })
+    .into_response()
+}
+
+/// What OAuth-protected remote MCP servers (Notion, Sentry, ...) answer an
+/// anonymous request with.
+fn unauthorized() -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        [(
+            axum::http::header::WWW_AUTHENTICATE,
+            r#"Bearer resource_metadata="https://example.test/.well-known/oauth-protected-resource""#,
+        )],
+    )
+        .into_response()
 }
 
 async fn sse_message(
@@ -131,7 +153,7 @@ async fn http_json_and_sse_responses_require_a_real_mcp_handshake() {
         let (url, task) = mock_http(state.clone()).await;
         let mut spec = http_spec(&format!("{url}/mcp"), "http");
         spec.as_object_mut().unwrap().remove("type"); // URL-only configs are HTTP.
-        assert!(check_server(spec, CHECK_TIMEOUT).await);
+        assert_eq!(check_server(spec, CHECK_TIMEOUT).await, Connected);
         let messages = state.messages.lock().unwrap();
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0]["method"], "initialize");
@@ -144,7 +166,10 @@ async fn http_json_and_sse_responses_require_a_real_mcp_handshake() {
 async fn legacy_sse_uses_configured_headers_and_closes_after_initialize() {
     let state = MockServer::default();
     let (url, task) = mock_http(state.clone()).await;
-    assert!(check_server(http_spec(&format!("{url}/sse"), "sse"), CHECK_TIMEOUT).await);
+    assert_eq!(
+        check_server(http_spec(&format!("{url}/sse"), "sse"), CHECK_TIMEOUT).await,
+        Connected
+    );
     assert_eq!(state.messages.lock().unwrap().len(), 2);
     task.abort();
 }
@@ -158,9 +183,33 @@ async fn legacy_sse_does_not_forward_headers_to_a_foreign_endpoint() {
         ..Default::default()
     };
     let (url, task) = mock_http(state).await;
-    assert!(!check_server(http_spec(&format!("{url}/sse"), "sse"), CHECK_TIMEOUT).await);
+    assert_eq!(
+        check_server(http_spec(&format!("{url}/sse"), "sse"), CHECK_TIMEOUT).await,
+        Failed
+    );
     assert!(foreign.messages.lock().unwrap().is_empty());
     foreign_task.abort();
+    task.abort();
+}
+
+#[tokio::test]
+async fn unauthorized_endpoints_report_auth_required_not_failure() {
+    let state = MockServer {
+        unauthorized: true,
+        ..Default::default()
+    };
+    let (url, task) = mock_http(state.clone()).await;
+    for (path, transport) in [("mcp", "http"), ("sse", "sse")] {
+        assert_eq!(
+            check_server(
+                http_spec(&format!("{url}/{path}"), transport),
+                CHECK_TIMEOUT
+            )
+            .await,
+            AuthRequired
+        );
+    }
+    assert!(state.messages.lock().unwrap().is_empty());
     task.abort();
 }
 
@@ -173,12 +222,13 @@ async fn http_success_without_mcp_and_timeouts_are_disconnected() {
             ..Default::default()
         };
         let (url, task) = mock_http(state).await;
-        assert!(
-            !check_server(
+        assert_eq!(
+            check_server(
                 http_spec(&format!("{url}/mcp"), "http"),
                 Duration::from_millis(100)
             )
-            .await
+            .await,
+            Failed
         );
         task.abort();
     }
@@ -187,7 +237,7 @@ async fn http_success_without_mcp_and_timeouts_are_disconnected() {
         json!({"type":"unsupported"}),
         json!({"command":"cc-switch-nonexistent-mcp-test-command"}),
     ] {
-        assert!(!check_server(value, CHECK_TIMEOUT).await);
+        assert_eq!(check_server(value, CHECK_TIMEOUT).await, Failed);
     }
 }
 
@@ -208,6 +258,7 @@ async fn wait_until(mut condition: impl FnMut() -> bool) {
 }
 
 #[tokio::test]
+#[serial(mcp_check_permits)]
 async fn batches_skip_empty_selections_limit_concurrency_and_cancel_queued_checks() {
     let state = MockServer {
         hang: true,
@@ -227,6 +278,32 @@ async fn batches_skip_empty_selections_limit_concurrency_and_cancel_queued_check
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(state.started.load(Ordering::SeqCst), MAX_CONCURRENT_CHECKS);
     assert!(!BATCHES.lock().unwrap().contains_key(&batch));
+    task.abort();
+}
+
+#[tokio::test]
+#[serial(mcp_check_permits)]
+async fn concurrency_limit_spans_batches_and_passes_to_queued_checks() {
+    let state = MockServer {
+        hang: true,
+        ..Default::default()
+    };
+    let (url, task) = mock_http(state.clone()).await;
+    let spec = http_spec(&format!("{url}/mcp"), "http");
+    let batch = |ids: std::ops::Range<usize>| {
+        start_checks(
+            ids.map(|id| server(id, spec.clone(), true)).collect(),
+            |_| true,
+        )
+    };
+    let first = batch(0..MAX_CONCURRENT_CHECKS);
+    wait_until(|| state.started.load(Ordering::SeqCst) == MAX_CONCURRENT_CHECKS).await;
+    let second = batch(0..1);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(state.started.load(Ordering::SeqCst), MAX_CONCURRENT_CHECKS);
+    cancel_checks(&first);
+    wait_until(|| state.started.load(Ordering::SeqCst) == MAX_CONCURRENT_CHECKS + 1).await;
+    cancel_checks(&second);
     task.abort();
 }
 
@@ -267,7 +344,10 @@ async fn assert_process_released_port(marker: &Path) {
 async fn stdio_honors_args_env_cwd_and_releases_the_process() {
     let dir = tempfile::tempdir().unwrap();
     let marker = dir.path().join("stdio");
-    assert!(check_server(stdio_spec(&marker, false), CHECK_TIMEOUT).await);
+    assert_eq!(
+        check_server(stdio_spec(&marker, false), CHECK_TIMEOUT).await,
+        Connected
+    );
     // A probe may terminate the process immediately after flushing initialized;
     // the HTTP/SSE tests separately assert receipt of that notification.
     assert_process_released_port(&marker).await;
@@ -275,6 +355,7 @@ async fn stdio_honors_args_env_cwd_and_releases_the_process() {
 }
 
 #[tokio::test]
+#[serial(mcp_check_permits)]
 async fn batches_allow_stdio_cold_starts_longer_than_ten_seconds() {
     let dir = tempfile::tempdir().unwrap();
     let marker = dir.path().join("slow-start");
@@ -299,8 +380,8 @@ async fn batches_allow_stdio_cold_starts_longer_than_ten_seconds() {
         .await
         .unwrap()
         .unwrap();
-    assert!(
-        result.connected,
+    assert_eq!(
+        result.status, Connected,
         "a healthy cold start must not fail after ten seconds"
     );
     assert_process_released_port(&marker).await;
@@ -308,6 +389,7 @@ async fn batches_allow_stdio_cold_starts_longer_than_ten_seconds() {
 }
 
 #[tokio::test]
+#[serial(mcp_check_permits)]
 async fn cancellation_and_timeout_release_stdio_descendants() {
     for cancel in [false, true] {
         let dir = tempfile::tempdir().unwrap();
@@ -325,7 +407,7 @@ async fn cancellation_and_timeout_release_stdio_descendants() {
             // expiring the probe, regardless of the CI runner's startup speed.
             tokio::time::pause();
             tokio::time::advance(CHECK_TIMEOUT).await;
-            assert!(!check.await.unwrap());
+            assert_eq!(check.await.unwrap(), Failed);
             tokio::time::resume();
         }
         assert_process_released_port(&marker).await;
@@ -338,7 +420,13 @@ async fn cancellation_and_timeout_release_stdio_descendants() {
 async fn stdio_login_path_finds_bare_launchers_and_configured_path_wins() {
     let dir = tempfile::tempdir().unwrap();
     let launcher = dir.path().join("mcp-path-fixture");
-    std::fs::copy("/usr/bin/env", &launcher).unwrap();
+    // A wrapper script rather than a copy of /usr/bin/env: newer macOS kills
+    // relocated copies of platform binaries (SIGKILL on exec).
+    std::fs::write(&launcher, "#!/bin/sh\nexec /usr/bin/env \"$@\"\n").unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
     let login_path = format!("{}:/usr/bin:/bin", dir.path().display());
     for configured_path in [None, Some("/explicit/server/bin:/usr/bin")] {
         let mut command = Command::new("mcp-path-fixture");

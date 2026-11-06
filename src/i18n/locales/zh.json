@@ -390,7 +390,8 @@
     "codexAuthCleanupFailed": "切换成功，但未能删除 auth.json，官方登录凭据仍留在磁盘上；如需彻底移除请手动删除 Codex 配置目录中的 auth.json",
     "windowControlFailed": "窗口控制失败：{{error}}",
     "officialBlockedByProxy": "本地路由模式下不能切换到官方供应商，使用路由访问官方 API 可能导致账号被封禁",
-    "proxyOfficialWarning": "当前供应商 {{name}} 是官方供应商，建议切换到第三方供应商后再使用本地路由"
+    "proxyOfficialWarning": "当前供应商 {{name}} 是官方供应商，建议切换到第三方供应商后再使用本地路由",
+    "proxyLoopbackHijacked": "{{app}} 发往本地路由 {{origin}} 的请求会被系统代理接走，{{app}} 会报 502 错误。请在代理工具里让本机地址直连（例如 Clash 规则最前面加 IP-CIDR,127.0.0.0/8,DIRECT,no-resolve），改完后彻底退出 {{app}} 再打开。"
   },
   "confirm": {
     "deleteProvider": "删除供应商",
@@ -892,6 +893,17 @@
     "skipClaudeOnboarding": "跳过 Claude Code 初次安装确认",
     "skipClaudeOnboardingDescription": "Claude Code 第一次启动时会先走一遍引导流程，要求选主题并登录 Anthropic 账号。如果你用的是第三方供应商，不需要登录官方账号，开启后就能跳过这一步直接使用。原理是在 ~/.claude.json 里写入 hasCompletedOnboarding: true；关闭时删除该字段，下次启动会重新出现引导。",
     "codexAuth": "Codex 应用增强",
+    "codexQuotaProtection": {
+      "title": "官方额度保护",
+      "help": "达到任一使用率阈值时暂停新的官方请求，第三方模型仍可使用。仅保护经过 CC Switch 本地路由的 Codex 官方请求。使用率直接读取官方响应里自带的额度信息，正常使用时不会多发请求；只有刚开始使用或空闲约 5 分钟后，才会先单独查询一次。查不到额度（网络问题、登录过期等）时照常放行，不会误挡。已放行的请求和其他应用仍可能把额度用过阈值；暂停期间不会因正常额度耗尽而进入 Luna Reserve。",
+      "thresholds": "暂停官方请求的使用率",
+      "fiveHour": "五小时使用率（%）",
+      "weekly": "周使用率（%）",
+      "save": "保存阈值",
+      "reset": "恢复默认值",
+      "hint": "任一达到即暂停。默认 95% / 98%，保存后立即对新请求生效。",
+      "invalid": "请输入 1–99 的整数。"
+    },
     "preserveCodexOfficialAuthOnSwitch": "非接管切换时保留官方登录",
     "preserveCodexOfficialAuthOnSwitchDescription": "控制未开启路由接管时切换第三方供应商是否保留 Codex 官方登录；路由接管期间始终保留",
     "unifyCodexSessionHistory": "统一 Codex 会话历史",
@@ -981,6 +993,7 @@
     "browsePlaceholderHermes": "例如：/home/<你的用户名>/.hermes",
     "browsePlaceholderPi": "例如：/home/<你的用户名>/.pi/agent",
     "browsePlaceholderOmp": "例如：/home/<你的用户名>/.omp/agent",
+    "browsePlaceholderDsh": "例如：/home/<你的用户名>/.dsh",
     "browseDirectory": "浏览目录",
     "resetDefault": "恢复默认目录（需保存后生效）",
     "checkForUpdates": "检查更新",
@@ -1040,6 +1053,7 @@
     "toolActionDone": "{{count}} 个工具{{action}}完成",
     "toolActionPartial": "{{succeeded}} 个{{action}}成功，{{failed}} 个失败",
     "toolActionFailed": "安装/升级命令执行失败",
+    "toolActionBinCollision": "{{path}} 已经有一个同名文件，多半来自另一种安装方式，npm 不会覆盖它。请先确认它是什么，改名备份后再重试；不要用 npm 的 --force，它会直接覆盖这个文件。",
     "toolActionInProgress": "应用操作仍在进行中",
     "toolActionInProgressDetail": "{{tool}} 已有安装、升级或卸载任务正在后台处理，请等待完成，无需重复操作。",
     "toolNotRunnable": "已安装但无法运行（未探测到版本）",
@@ -1684,7 +1698,6 @@
       "alltokens_si": "AllTokens SI 秉持「稳定为基，真实为本」，是专为企业打造的 AI Token 中转与团队协作平台：成员、密钥、用量与余额统一纳入企业控制台，以清晰的权限与额度配置，让团队协作有据可查、安心可控。",
       "openmodel": "OpenModel 为 Codex 和 Claude Code 提供客户端专属折扣，所支持的模型通过 Codex 调用最高优惠 90%、通过 Claude Code 调用最高优惠 60%。CC Switch 用户通过此链接注册并使用优惠码 \"cc-switch\"，即可享受首次充值九折优惠！",
       "grooroute": "GrooRoute Pro 是可靠流畅的 AI API 中转服务平台，接入 OpenAI、Claude、DeepSeek 等主流大模型，支持按量计费与订阅套餐。CC Switch 用户通过此链接注册即可获得免费 5 元体验额度！",
-      "dit": "同样的模型，更低的账单，一个 OpenAI 兼容 API 即可调用 GPT、Claude、Gemini 等 50 多个模型，并在 160 多家供应商之间路由到性价比最优的选项，价格通常比官方定价低 30–70%。只需更换 Base URL 和 API Key，即可在保留现有技术栈的情况下开始调用。CC Switch 用户通过此链接注册并使用优惠码 \"cc-switch\"，新人首充可享 7 折！",
       "buytoken": "BuyToken 提供 Claude Code、Codex、DeepSeek 等各类中转服务，支持企业级并发、可极速开票，专注做稳定长久站。CC Switch 用户通过此链接注册可得 3 元体验额度，首充享 9 折！",
       "vapi": "V-API 是三年老品牌，为个人、开发者和企业提供稳定、快速、安全的高品质大语言模型 API 服务，支持合同签约、正规开票（普票 / 专票）。CC Switch 用户通过此链接注册，首单立减 2 元并享 9 折优惠！",
       "ospreyai": "ACS OspreyAI 是面向开发者和企业的一站式多模型 API 服务平台。一个 API Key 即可调用 Claude、Gemini、GPT、GLM、Kimi、Qwen、DeepSeek、腾讯混元等国内外主流模型。平台兼容 OpenAI、Anthropic 等主流 API 协议，也可用于 Claude Code、Codex、OpenCode、Pi、Hermes 等主流 AI 工具。海外模型较官方价格可节省 20%—40%，国内模型可节省 30%—50%。支持统一充值、统一账单、用量查询和模型灵活切换，适用于 AI 应用开发、内容生产及自动化工作流等场景。通过此链接创建账号，即可获取优惠，快速接入国内外主流大模型。"
@@ -2046,7 +2059,7 @@
     "subagentModelHint": "Codex 派出的子代理默认用的模型和推理强度。留空时沿用主代理的；只填模型时用该模型自己的默认强度。聚合模式下不生效，改用聚合页签「聚合设置」里的子代理模型。",
     "subagentModelNotInCatalog": "该模型不在模型列表中：Codex 拿不到它的上下文窗口；经路由转成 Chat / Anthropic 协议时会被换成默认模型。",
     "agentMaxThreadsLabel": "子代理并发上限",
-    "agentMaxThreadsHint": "一个 Codex 会话里最多同时开多少个子代理（不含主代理）。这是 Codex 的全局设置，写进 config.toml 的 [agents] max_threads，切换供应商时保持不变。留空用 Codex 默认值：经典子 agent 工具 6 个，新版工具 3 个。Codex 不支持不限，最小为 1；开得越多，同时消耗的额度越多。重新打开 Codex 后生效。",
+    "agentMaxThreadsHint": "一个 Codex 会话里最多同时开多少个子代理（不含主代理），切换供应商时保持不变。留空用 Codex 默认值（经典子 agent 工具 6 个，新版工具 3 个），最小为 1，不支持不限。新对话生效。",
     "agentMaxThreadsPlaceholder": "留空则用 Codex 默认值",
     "agentMaxThreadsV2Override": "config.toml 的 [features.multi_agent_v2] 写了总数 {{total}}（含主代理），使用新版子 agent 工具时以它为准。",
     "autoReviewModelLabel": "自动审批模型",
@@ -2054,6 +2067,8 @@
     "autoReviewModelCodexDefault": "Codex 默认（codex-auto-review）",
     "autoReviewModelMainDefault": "主模型自己审批（默认）",
     "autoReviewModelNoList": "这张卡没有模型列表：Codex 会用官方的 codex-auto-review 审批，只有部分转发 ChatGPT 账号的中转认它，不认就会报 404。在上面的模型列表里加上模型后就能选。",
+    "officialSpeedTiersLabel": "保留官方 Fast 档",
+    "officialSpeedTiersHint": "让模型列表里的 GPT 模型保留官方的 Fast 速度档，Codex 选了 Fast 后请求会带 service_tier=priority。只有转发官方 ChatGPT 账号的中转（如 CPA）才认，会更快消耗额度；其他上游可能报错或按更高价计费。打开后，之前在官方卡下选过的 Fast 会立刻在这家生效。聚合模式下不生效。改完需要重启 Codex。",
     "modelListHint": "修改后需要重启 Codex。",
     "modelListDefaultHelp": "这些模型会出现在 Codex 的 /model 里，第一行是默认模型。名字是官方 GPT 模型的行按官方条目生成，行里的显示名、窗口和思考等级不生效。",
     "addCatalogModel": "手动添加",
@@ -2658,7 +2673,7 @@
     "officialSubscriptionHint": "读取本机 CLI 的 OAuth 凭据，并调用官方接口查询订阅额度。默认关闭，只有启用后才会请求。",
     "officialSubscriptionHintAgy": "运行 agy 自带的 /usage 命令查询登录账号的额度，不读取登录凭据，每次查询约需 10 秒。默认关闭，只有启用后才会请求。",
     "resetDate": "重置日期",
-    "premiumRequests": "Premium 请求",
+    "premiumRequests": "Credits",
     "credentialsConfig": "凭证配置",
     "credentialsHint": "留空则自动使用供应商配置",
     "optional": "可选",
@@ -4194,7 +4209,7 @@
       "agyThirdPartyWeekly": "Claude 每周",
       "monthly": "每月",
       "credits": "额度",
-      "copilotPremium": "高级请求"
+      "copilotPremium": "Credits"
     },
     "fiveHour": "5 小时",
     "sevenDay": "每周",
@@ -4214,7 +4229,11 @@
     "weeklyLimit": "每周",
     "monthly": "每月",
     "credits": "额度",
-    "copilotPremium": "高级请求",
+    "copilotPremium": "Credits",
+    "copilotCompletions": "代码补全",
+    "copilotChat": "聊天",
+    "copilotCount": "剩余 {{remaining}} / 共 {{total}}",
+    "copilotNotIncluded": "当前计划不含",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}}后重置",
     "extraUsage": "超额用量",
@@ -4598,6 +4617,7 @@
     "connection": {
       "unchecked": "未检查",
       "connected": "连接成功",
+      "authRequired": "服务器可连接，但要求登录授权（如 OAuth）。CC Switch 检测时不带客户端自己的登录凭据：客户端里已登录即可正常使用；如果在请求头里配置了令牌，请确认它仍然有效",
       "disconnected": "连接失败",
       "checking": "正在检查连接",
       "disabled": "未启用"
@@ -4868,7 +4888,7 @@
       "help": "会，默认用你上次的选择。装好后也能在「已安装」里随时调整。从 ZIP 安装和从备份恢复也用这里的选择。"
     },
     "discover": {
-      "searchPlaceholder": "搜索 Skill 或仓库",
+      "searchPlaceholder": "搜索名称、描述或仓库",
       "searchAria": "搜索发现里的 Skill",
       "skillsShPlaceholder": "至少 2 个字，回车搜索",
       "skillsShAria": "在 skills.sh 搜索",
@@ -4876,7 +4896,7 @@
       "skillsShNone": "skills.sh 上没有找到“{{query}}”",
       "sourceAria": "发现来源",
       "sourceRepos": "仓库 · {{count}}",
-      "reload": "重新读取仓库",
+      "reload": "刷新仓库",
       "listLabel": "可安装的 Skill",
       "installed": "已安装",
       "installedAria": "{{name}} 已安装在 {{count}} 个应用，在「已安装」里查看",
@@ -4895,8 +4915,8 @@
       "onlyUninstalled": "只看未安装"
     },
     "repos": {
-      "buttonAll": "仓库：全部",
-      "buttonSome": "仓库：{{count}} / {{total}}",
+      "buttonAll": "来源：全部",
+      "buttonSome": "来源：{{count}} / {{total}}",
       "popoverAria": "参与发现的仓库",
       "enableAria": "在发现里使用 {{repo}}",
       "disabledShort": "停用",
@@ -5110,7 +5130,6 @@
       "title": "添加 Kimi Code 供应商",
       "description": "配置请求地址、API Key 和模型；已有 Kimi 配置会自动导入。"
     },
-    "deleteSessionHint": "请在 Kimi Code 中删除，以同时更新会话索引和历史记录。",
     "error": {
       "defaultModelInUse": "Kimi Code 正在使用该供应商的模型，请先在 Kimi Code 中用 /model 切换到其他模型",
       "secondaryModelInUse": "Kimi Code 的子代理模型正在使用该供应商的模型，请先在 Kimi Code 中用 /secondary-model 更换"

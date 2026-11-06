@@ -877,6 +877,17 @@
     "skipClaudeOnboarding": "Claude Code ilk çalıştırma onayını atla",
     "skipClaudeOnboardingDescription": "İlk başlatmada Claude Code, bir tema seçmenizi ve bir Anthropic hesabında oturum açmanızı isteyen bir katılım akışı çalıştırır. Üçüncü taraf bir sağlayıcı kullanıyorsanız bu oturum açma işlemine ihtiyacınız yoktur; bu nedenle, bunu açmak doğrudan atlar. ~/.claude.json'a hasCompletedOnboarding: true yazılarak çalışır; kapatıldığında bu alan kaldırılır ve bir sonraki başlatmada katılım yeniden görünür.",
     "codexAuth": "Codex Uygulama Geliştirmeleri",
+    "codexQuotaProtection": {
+      "title": "Resmî kota koruması",
+      "help": "Kullanım eşiklerinden birine ulaşıldığında yeni resmî istekleri durdurur; üçüncü taraf modeller kullanılabilir kalır. Yalnızca CC Switch yerel yönlendirmesinden geçen Codex resmî isteklerini kapsar. Kullanım, resmî yanıtların zaten taşıdığı kota bilgisinden okunur; normal kullanımda ek istek gönderilmez. Yalnızca ilk istekte veya yaklaşık 5 dakikalık boşta kalmanın ardından ayrı bir kota sorgusu yapılır. Kullanım belirlenemezse (ağ sorunu, oturumun süresinin dolması vb.) istekler engellenmez, normal şekilde geçer. Önceden kabul edilmiş istekler ve diğer uygulamalar kullanımı eşiğin üzerine çıkarabilir; duraklatma sırasında normal kotanın tükenmesi Luna Reserve'i etkinleştirmez.",
+      "thresholds": "Resmî istekler için kullanım eşikleri",
+      "fiveHour": "5 saatlik kullanım (%)",
+      "weekly": "Haftalık kullanım (%)",
+      "save": "Eşikleri kaydet",
+      "reset": "Varsayılanları geri yükle",
+      "hint": "Eşiklerden birinde duraklatır. Varsayılanlar: %95 / %98. Kaydedilen değişiklikler yeni isteklere hemen uygulanır.",
+      "invalid": "1 ile 99 arasında tam sayılar girin."
+    },
     "preserveCodexOfficialAuthOnSwitch": "Doğrudan geçişler için resmi giriş bilgilerini koruyun",
     "preserveCodexOfficialAuthOnSwitchDescription": "Yerel yönlendirme kapalıyken üçüncü taraf anahtarları kontrol eder. Devralma yönlendirmesi her zaman Codex resmi giriş bilgilerini korur.",
     "unifyCodexSessionHistory": "Birleşik Codex oturum geçmişi",
@@ -1662,7 +1673,6 @@
       "alltokens_si": "AllTokens SI, istikrar ve güvenilirliği temel alan kurumsal bir yapay zekâ token aktarım ve ekip iş birliği platformudur. Üyeler, anahtarlar, kullanım ve bakiye tek bir şirket konsolunda yönetilir; açık izinler ve harcama sınırları ekip kullanımının izlenebilir ve denetimli olmasını sağlar.",
       "openmodel": "OpenModel, desteklenen modellerde Codex için %90'a, Claude Code için %60'a varan uygulamaya özel indirimler sunar. Bu bağlantıyla kaydolup \"cc-switch\" promosyon kodunu kullanan CC Switch kullanıcıları ilk yüklemelerinde %10 indirim kazanır!",
       "grooroute": "GrooRoute Pro; kullandıkça öde ve abonelik planlarıyla OpenAI, Claude, DeepSeek ve diğer yaygın modellere erişim sağlayan güvenilir bir yapay zekâ API aktarım hizmetidir. Bu bağlantı üzerinden kaydolan CC Switch kullanıcıları ¥5 deneme bakiyesi kazanır!",
-      "dit": "Aynı modeller, çoğu zaman çok daha düşük bir fatura. OpenAI uyumlu tek bir API ile GPT, Claude, Gemini ve daha fazlası dahil 50'den fazla modele erişin; istekler 160'tan fazla sağlayıcı arasında en iyi fiyat-kalite seçeneğine yönlendirilir ve fiyatlar genellikle resmî liste fiyatlarından %30–70 daha düşüktür. Base URL'nizi ve API anahtarınızı değiştirin, mevcut yığınınızı koruyun ve hemen çağırmaya başlayın. CC Switch kullanıcıları bu bağlantıdan kaydolup \"cc-switch\" koduyla hoş geldin yüklemesinde %30 indirim kazanır!",
       "buytoken": "BuyToken; Claude Code, Codex, DeepSeek ve daha fazlası için kurumsal düzeyde eşzamanlılık ve hızlı faturalandırma sunan, uzun süreli ve istikrarlı kullanım için tasarlanmış bir yönlendirme hizmetidir. CC Switch kullanıcıları bu bağlantı üzerinden kaydolduklarında 3 ¥ deneme kredisi ve ilk yüklemelerinde %10 indirim kazanır.",
       "vapi": "V-API, bireyler, geliştiriciler ve işletmeler için kararlı, hızlı ve güvenli, yüksek kaliteli LLM API hizmetleri sunan üç yıllık bir markadır. Resmî sözleşmelerin yanı sıra genel ve özel KDV faturaları sağlar. Bu bağlantıdan kaydolan CC Switch kullanıcıları 2 ¥ indirim ve ilk siparişlerinde %10 indirim kazanır!"
     },
@@ -2018,7 +2028,7 @@
     "subagentModelHint": "Codex alt ajanlarının varsayılan olarak kullandığı model ve akıl yürütme çabası. Boş ana ajanyı takip eder; bir model tek başına kendi varsayılan eforunu kullanır. Birleştirme modunda yoksayılır; orada Birleştirme sekmesinin ayarlarındaki alt ajan modeli kullanılır.",
     "subagentModelNotInCatalog": "Bu model model listesinde yok: Codex bağlam penceresini alamıyor ve yönlendirme istekleri Chat / Anthropic'ye dönüştürdüğünde bunun yerini varsayılan model alıyor.",
     "agentMaxThreadsLabel": "Alt ajan eşzamanlılık sınırı",
-    "agentMaxThreadsHint": "Bir Codex oturumunda aynı anda çalışabilecek alt ajan sayısı (ana ajan hariç). Bu, config.toml içindeki [agents] max_threads değerine yazılan Codex genelinde bir ayardır ve sağlayıcı değiştirildiğinde aynı kalır. Codex varsayılanı için boş bırakın: klasik alt ajan araçlarında 6, yenilerinde 3. Codex sınırsız seçeneği sunmaz, en az 1'dir; alt ajan sayısı arttıkça kota daha hızlı tükenir. Codex yeniden açıldığında geçerli olur.",
+    "agentMaxThreadsHint": "Bir Codex oturumunda aynı anda çalışabilecek alt ajan sayısı (ana ajan hariç); sağlayıcı değiştirildiğinde aynı kalır. Codex varsayılanı için boş bırakın (klasik alt ajan araçlarında 6, yenilerinde 3); en az 1'dir, sınırsız seçeneği yoktur. Yeni konuşmalarda geçerli olur.",
     "agentMaxThreadsPlaceholder": "Codex varsayılanı için boş bırakın",
     "agentMaxThreadsV2Override": "config.toml içindeki [features.multi_agent_v2] toplamı {{total}} olarak belirliyor (ana ajan dahil); yeni alt ajan araçları kullanıldığında bu geçerlidir.",
     "autoReviewModelLabel": "Otomatik inceleme modeli",
@@ -2619,7 +2629,7 @@
     "officialSubscriptionHint": "Yerel CLI OAuth kimlik bilgilerini okur ve abonelik kotasını sorgulamak için resmi API'yi çağırır. Varsayılan olarak devre dışıdır ve yalnızca siz etkinleştirdikten sonra istekte bulunur.",
     "officialSubscriptionHintAgy": "agy'nin yerleşik /usage komutu, oturumu açık hesabın kotasını kontrol eder. Oturum açma bilgileri okunmaz; her kontrol yaklaşık 10 saniye sürer. Varsayılan olarak kapalıdır ve yalnızca etkinleştirdiğinizde çalışır.",
     "resetDate": "Tarihi sıfırla",
-    "premiumRequests": "Prim Talepleri",
+    "premiumRequests": "Credits",
     "credentialsConfig": "Kimlik bilgileri",
     "credentialsHint": "Sağlayıcı yapılandırmasını kullanmak için boş bırakın",
     "optional": "isteğe bağlı",
@@ -4152,7 +4162,7 @@
       "agyThirdPartyWeekly": "Claude haftalık",
       "monthly": "Ay",
       "credits": "Kredi",
-      "copilotPremium": "Premium"
+      "copilotPremium": "Credits"
     },
     "fiveHour": "5 saat",
     "sevenDay": "Haftalık",
@@ -4172,7 +4182,7 @@
     "weeklyLimit": "Haftalık",
     "monthly": "Aylık",
     "credits": "Kredi",
-    "copilotPremium": "Premium",
+    "copilotPremium": "Credits",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}} sonra sıfırlanır",
     "extraUsage": "Ekstra Kullanım",
@@ -4826,7 +4836,7 @@
       "help": "Evet, son seçiminiz varsayılandır. Bunu istediğiniz zaman Yüklendi altında değiştirebilirsiniz. ZIP'ten yüklemek ve yedeklemeden geri yüklemek için de bu seçeneği kullanın."
     },
     "discover": {
-      "searchPlaceholder": "Becerileri veya depoları arayın",
+      "searchPlaceholder": "Ad, açıklama veya repoyu arayın",
       "searchAria": "Keşfet’te ara",
       "skillsShPlaceholder": "En az 2 karakter, Enter'a basın",
       "skillsShAria": "Skills.sh'de arama yapın",
@@ -4834,7 +4844,7 @@
       "skillsShNone": "skills.sh'de “{{query}}” için hiçbir şey bulunamadı",
       "sourceAria": "Kaynağı keşfedin",
       "sourceRepos": "Depolar · {{count}}",
-      "reload": "Kod depolarını yeniden yükle",
+      "reload": "Depoları yenile",
       "listLabel": "Yükleyebileceğiniz beceriler",
       "installed": "Yüklendi",
       "installedAria": "{{name}}, {{count}} uygulamalarına yüklenir; Yüklendi altında görüntüleyin",
@@ -4853,8 +4863,8 @@
       "onlyUninstalled": "Yalnızca yüklü değil"
     },
     "repos": {
-      "buttonAll": "Depolar: hepsi",
-      "buttonSome": "Depolar: {{count}} / {{total}}",
+      "buttonAll": "Kaynak: hepsi",
+      "buttonSome": "Kaynak: {{count}} / {{total}}",
       "popoverAria": "Discover tarafından kullanılan depolar",
       "enableAria": "Keşfet'te {{repo}}'yi kullanın",
       "disabledShort": "Kapalı",
@@ -5054,7 +5064,6 @@
       "title": "Kimi Code sağlayıcısı ekle",
       "description": "Bir uç nokta, API anahtarı ve modeller yapılandırın. Mevcut Kimi yapılandırması otomatik olarak içe aktarılır."
     },
-    "deleteSessionHint": "Dizini ve geçmişi birlikte güncellemek için bu oturumu Kimi Code'da silin.",
     "capabilityHints": {
       "always_thinking": "Modelin akıl yürütme özelliği kapatılamıyorsa işaretleyin: bu model seçildiğinde Kimi akıl yürütmeyi açar ve kapatma seçeneğini gizler.",
       "dynamically_loaded_tools": "İstekleri kısa tutmak için modelin araç açıklamalarını gerektiğinde yüklemesini sağlar. Yalnızca Kimi'nin kendi modelleri destekler; üçüncü taraf modellerde kapalı bırakın. KIMI_CODE_EXPERIMENTAL_TOOL_SELECT ayarının da etkin olması gerekir."

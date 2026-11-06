@@ -451,6 +451,11 @@ export interface Settings {
   nativeTrayMenu?: boolean;
   // Preserve Codex ChatGPT login in auth.json when switching third-party providers
   preserveCodexOfficialAuthOnSwitch?: boolean;
+  codexQuotaProtection?: {
+    enabled: boolean;
+    fiveHourThreshold: number;
+    weeklyThreshold: number;
+  };
   // Run official Codex under the shared "custom" provider id so future
   // sessions share one resume-history bucket with third-party providers
   unifyCodexSessionHistory?: boolean;
@@ -507,6 +512,8 @@ export interface Settings {
   piConfigDir?: string;
   // 覆盖 Oh My Pi agent 配置目录（可选）
   ompConfigDir?: string;
+  // 覆盖 DeepSeek Harness 主目录（相当于 DSH_HOME，可选）
+  dshConfigDir?: string;
 
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）

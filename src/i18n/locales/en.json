@@ -390,7 +390,8 @@
     "codexAuthCleanupFailed": "Switched successfully, but auth.json could not be removed — the official login credentials are still on disk; delete auth.json from the Codex config directory to remove them",
     "windowControlFailed": "Window control failed: {{error}}",
     "officialBlockedByProxy": "Cannot switch to official provider while local routing is active. Using routing with official APIs may cause account bans.",
-    "proxyOfficialWarning": "Current provider {{name}} is official. Consider switching to a third-party provider before using local routing."
+    "proxyOfficialWarning": "Current provider {{name}} is official. Consider switching to a third-party provider before using local routing.",
+    "proxyLoopbackHijacked": "Requests from {{app}} to the local route {{origin}} will be picked up by the system proxy, so {{app}} will fail with 502 errors. Make loopback addresses connect directly in your proxy tool (for example, add IP-CIDR,127.0.0.0/8,DIRECT,no-resolve at the top of your Clash rules), then fully quit and reopen {{app}}."
   },
   "confirm": {
     "deleteProvider": "Delete Provider",
@@ -892,6 +893,17 @@
     "skipClaudeOnboarding": "Skip Claude Code first-run confirmation",
     "skipClaudeOnboardingDescription": "On first launch, Claude Code runs an onboarding flow that asks you to pick a theme and sign in to an Anthropic account. If you use a third-party provider you don't need that sign-in, so turning this on skips straight past it. It works by writing hasCompletedOnboarding: true to ~/.claude.json; turning it off removes that field, and the onboarding appears again on the next launch.",
     "codexAuth": "Codex App Enhancements",
+    "codexQuotaProtection": {
+      "title": "Official quota protection",
+      "help": "Pause new official requests when either usage threshold is reached; third-party models remain available. Covers Codex official requests through CC Switch local routing only. Usage is read from the quota information official responses already carry, so normal use adds no extra requests; only the first request, or one after about 5 idle minutes, triggers a separate quota lookup. When usage can't be determined (network problems, expired login, and so on) requests go through as usual instead of being blocked. Requests already admitted and other apps can still push usage past a threshold; while paused, ordinary-quota exhaustion won't activate Luna Reserve.",
+      "thresholds": "Usage cutoffs for official requests",
+      "fiveHour": "5-hour usage (%)",
+      "weekly": "Weekly usage (%)",
+      "save": "Save thresholds",
+      "reset": "Restore defaults",
+      "hint": "Pause at either cutoff. Defaults: 95% / 98%. Saved changes apply to new requests immediately.",
+      "invalid": "Enter whole numbers from 1 to 99."
+    },
     "preserveCodexOfficialAuthOnSwitch": "Keep official login for direct switches",
     "preserveCodexOfficialAuthOnSwitchDescription": "Controls third-party switches when local routing is off. Takeover routing always preserves the Codex official login.",
     "unifyCodexSessionHistory": "Unified Codex session history",
@@ -981,6 +993,7 @@
     "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
     "browsePlaceholderPi": "e.g., /home/<your-username>/.pi/agent",
     "browsePlaceholderOmp": "e.g., /home/<your-username>/.omp/agent",
+    "browsePlaceholderDsh": "e.g., /home/<your-username>/.dsh",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",
     "checkForUpdates": "Check for Updates",
@@ -1040,6 +1053,7 @@
     "toolActionDone": "{{action}} completed for {{count}} tool(s)",
     "toolActionPartial": "{{action}} succeeded for {{succeeded}}, failed for {{failed}}",
     "toolActionFailed": "Install/update command failed",
+    "toolActionBinCollision": "A file already exists at {{path}}, probably from another installation method, and npm won't overwrite it. Check what it is, rename it as a backup, then try again. Don't use npm's --force: it overwrites the file outright.",
     "toolActionInProgress": "An app operation is still running",
     "toolActionInProgressDetail": "{{tool}} already has an installation, update or uninstall running in the background. Please wait for it to finish.",
     "toolNotRunnable": "Installed but not runnable (no version detected)",
@@ -1684,7 +1698,6 @@
       "alltokens_si": "AllTokens SI is built on stability and honesty: an enterprise AI token relay and team collaboration platform. Members, keys, usage, and balance all live in one company console, and clear permissions and spending limits keep team usage traceable and under control.",
       "openmodel": "OpenModel offers client-specific discounts of up to 90% for Codex and 60% for Claude Code across supported models. CC Switch users who register via this link and use promo code \"cc-switch\" get 10% off their first top-up!",
       "grooroute": "GrooRoute Pro is a reliable AI API relay with access to OpenAI, Claude, DeepSeek, and other mainstream models, offering pay-as-you-go and subscription plans. CC Switch users get ¥5 in free trial credit by registering via this link!",
-      "dit": "Same models. Often a much lower bill. One OpenAI-compatible API for 50+ models: GPT, Claude, Gemini, and more, with routing across 160+ providers to the best available price-to-quality option, typically 30–70% below official list pricing. Change your base URL and API key, keep your stack, and start calling. CC Switch users: register via this link and use code \"cc-switch\" for 30% off your welcome top-up.",
       "buytoken": "BuyToken offers relay access for Claude Code, Codex, DeepSeek, and more, with enterprise-grade concurrency and fast invoicing, built to be a stable, long-running service. CC Switch users who register via this link get ¥3 in trial credit and 10% off their first top-up!",
       "vapi": "V-API is a three-year-old brand offering stable, fast, and secure high-quality LLM API services for individuals, developers, and businesses, with formal contracts and official invoices (general / special VAT). CC Switch users who register via this link get ¥2 off and 10% off their first order!",
       "ospreyai": "ACS OspreyAI is a one-stop multi-model API platform for developers and businesses. A single API key gives you access to leading Chinese and international models, including Claude, Gemini, GPT, GLM, Kimi, Qwen, DeepSeek, and Tencent Hunyuan. The platform is compatible with OpenAI, Anthropic, and other mainstream API protocols, and works with popular AI tools such as Claude Code, Codex, OpenCode, Pi, and Hermes. International models cost 20–40% less than official prices, and Chinese models 30–50% less. Unified top-ups, unified billing, usage tracking, and flexible model switching make it a fit for AI app development, content production, and automated workflows. Create an account via this link to get a discount and quickly connect to leading models from China and abroad."
@@ -2046,7 +2059,7 @@
     "subagentModelHint": "The model and reasoning effort Codex sub-agents use by default. Empty follows the main agent; a model alone uses its own default effort. Ignored in Aggregation mode, where the sub-agent model in the Aggregation tab's settings applies instead.",
     "subagentModelNotInCatalog": "This model is not in the model list: Codex can't get its context window, and when routing converts requests to Chat / Anthropic it is replaced by the default model.",
     "agentMaxThreadsLabel": "Sub-agent concurrency limit",
-    "agentMaxThreadsHint": "How many sub-agents (not counting the main agent) one Codex session can run at the same time. This is a Codex-wide setting written to [agents] max_threads in config.toml, and it stays the same when you switch providers. Leave empty for the Codex default: 6 with the classic sub-agent tools, 3 with the new ones. Codex has no unlimited option and the minimum is 1; more sub-agents use up quota faster. Takes effect after reopening Codex.",
+    "agentMaxThreadsHint": "How many sub-agents (not counting the main agent) one Codex session can run at the same time; it stays the same when you switch providers. Leave empty for the Codex default (6 with the classic sub-agent tools, 3 with the new ones); the minimum is 1 and there is no unlimited option. Applies to new conversations.",
     "agentMaxThreadsPlaceholder": "Leave empty for the Codex default",
     "agentMaxThreadsV2Override": "[features.multi_agent_v2] in config.toml sets a total of {{total}} (including the main agent), which applies when the new sub-agent tools are used.",
     "autoReviewModelLabel": "Auto Review model",
@@ -2054,6 +2067,8 @@
     "autoReviewModelCodexDefault": "Codex default (codex-auto-review)",
     "autoReviewModelMainDefault": "Main model reviews itself (default)",
     "autoReviewModelNoList": "This card has no model list: Codex reviews approvals with the official codex-auto-review, which only some relays that forward to ChatGPT accounts accept; the rest return 404. Add models to the list above to pick one.",
+    "officialSpeedTiersLabel": "Keep official Fast tier",
+    "officialSpeedTiersHint": "Keeps the official Fast speed tier on GPT models in the model list, so choosing Fast in Codex sends service_tier=priority. Only relays that forward to official ChatGPT accounts (such as CPA) accept it, and it uses quota faster; other upstreams may reject it or bill it at a higher price. Once on, a Fast choice you made under the official card takes effect on this provider right away. Not used in aggregation mode. Restart Codex after changing it.",
     "modelListHint": "Restart Codex after changes.",
     "modelListDefaultHelp": "These models appear in Codex's /model menu; the first row is the default model. Rows named after an official GPT model use the official entry, so their display name, window and reasoning levels are ignored.",
     "addCatalogModel": "Add manually",
@@ -2658,7 +2673,7 @@
     "officialSubscriptionHint": "Reads the local CLI OAuth credentials and calls the official API to query subscription quota. Disabled by default and only requests after you enable it.",
     "officialSubscriptionHintAgy": "Runs agy's built-in /usage command to check the signed-in account's quota. Sign-in credentials are not read; each check takes about 10 seconds. Disabled by default and only runs after you enable it.",
     "resetDate": "Reset date",
-    "premiumRequests": "Premium Requests",
+    "premiumRequests": "Credits",
     "credentialsConfig": "Credentials",
     "credentialsHint": "Leave empty to use provider config",
     "optional": "optional",
@@ -4194,7 +4209,7 @@
       "agyThirdPartyWeekly": "Claude Wk",
       "monthly": "Mo",
       "credits": "Credits",
-      "copilotPremium": "Premium"
+      "copilotPremium": "Credits"
     },
     "fiveHour": "5-hour",
     "sevenDay": "Weekly",
@@ -4214,7 +4229,11 @@
     "weeklyLimit": "Weekly",
     "monthly": "Monthly",
     "credits": "Credits",
-    "copilotPremium": "Premium",
+    "copilotPremium": "Credits",
+    "copilotCompletions": "Completions",
+    "copilotChat": "Chat",
+    "copilotCount": "{{remaining}} of {{total}} left",
+    "copilotNotIncluded": "Not in your plan",
     "utilization": "{{value}}%",
     "resetsIn": "Resets in {{time}}",
     "extraUsage": "Extra Usage",
@@ -4598,6 +4617,7 @@
     "connection": {
       "unchecked": "Not checked",
       "connected": "Connection successful",
+      "authRequired": "Server reachable but requires sign-in (e.g. OAuth). CC Switch checks without your client's own login: if you've signed in from the client, it works there; if you set a token in the headers, make sure it is still valid",
       "disconnected": "Connection failed",
       "checking": "Checking connection",
       "disabled": "Not enabled"
@@ -4868,7 +4888,7 @@
       "help": "Yes, your last choice is the default. You can change it any time under Installed. Installing from ZIP and restoring from backup use this choice too."
     },
     "discover": {
-      "searchPlaceholder": "Search Skills or repos",
+      "searchPlaceholder": "Search name, description or repo",
       "searchAria": "Search Discover",
       "skillsShPlaceholder": "At least 2 characters, press Enter",
       "skillsShAria": "Search skills.sh",
@@ -4876,7 +4896,7 @@
       "skillsShNone": "Nothing found on skills.sh for “{{query}}”",
       "sourceAria": "Discover source",
       "sourceRepos": "Repos · {{count}}",
-      "reload": "Reload repositories",
+      "reload": "Refresh repos",
       "listLabel": "Skills you can install",
       "installed": "Installed",
       "installedAria": "{{name}} is installed in {{count}} apps; view it under Installed",
@@ -4895,8 +4915,8 @@
       "onlyUninstalled": "Not installed only"
     },
     "repos": {
-      "buttonAll": "Repos: all",
-      "buttonSome": "Repos: {{count}} of {{total}}",
+      "buttonAll": "Source: all",
+      "buttonSome": "Source: {{count}} of {{total}}",
       "popoverAria": "Repositories used by Discover",
       "enableAria": "Use {{repo}} in Discover",
       "disabledShort": "Off",
@@ -5110,7 +5130,6 @@
       "title": "Add a Kimi Code provider",
       "description": "Configure an endpoint, API key and models. Existing Kimi configuration is imported automatically."
     },
-    "deleteSessionHint": "Delete this session in Kimi Code to update its index and history together.",
     "error": {
       "defaultModelInUse": "Kimi Code is using a model from this provider. Switch to another model with /model in Kimi Code first.",
       "secondaryModelInUse": "Kimi Code's subagent model uses a model from this provider. Change it with /secondary-model in Kimi Code first."
