@@ -109,16 +109,14 @@ fn handle_renderer_exit(app: &tauri::AppHandle, label: &str) -> bool {
     }
 }
 
-/// 在指定窗口的 WebView2 上挂 ProcessFailed 监听。失败只记日志——这条路径
-/// 的任何问题都不该拦住应用启动。
-pub fn install(app: &tauri::AppHandle, label: &str) {
+/// 对刚就绪的 WebView 挂 ProcessFailed 监听（经 `on_webview_ready` 对每个新建
+/// WebView 调用：初始主窗口、轻量模式重建的主窗口、托盘面板全覆盖）。
+/// 失败只记日志——这条路径的任何问题都不该拦住窗口创建。
+pub fn install_for_webview(view: &tauri::Webview) {
     use tauri::Manager;
-    let Some(window) = app.get_webview_window(label) else {
-        return;
-    };
-    let handle = app.clone();
-    let owned_label = label.to_string();
-    let result = window.with_webview(move |webview| {
+    let label = view.label().to_string();
+    let handle = view.app_handle().clone();
+    let result = view.with_webview(move |webview| {
         use webview2_com::Microsoft::Web::WebView2::Win32::{
             ICoreWebView2ProcessFailedEventArgs, COREWEBVIEW2_PROCESS_FAILED_KIND,
         };
@@ -133,7 +131,7 @@ pub fn install(app: &tauri::AppHandle, label: &str) {
             }
         };
         let mut token = 0i64;
-        let event_label = owned_label.clone();
+        let event_label = label.clone();
         let registration = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
             core_webview.add_ProcessFailed(
                 &ProcessFailedEventHandler::create(Box::new(move |_, args| {
@@ -160,7 +158,7 @@ pub fn install(app: &tauri::AppHandle, label: &str) {
         }));
         match registration {
             Ok(Ok(())) => {
-                log::info!("[WebViewRecovery] 已注册渲染进程崩溃自动恢复（{owned_label}）")
+                log::info!("[WebViewRecovery] 已注册渲染进程崩溃自动恢复（{label}）")
             }
             Ok(Err(error)) => {
                 log::warn!("[WebViewRecovery] 注册 ProcessFailed 失败: {error}")
