@@ -9,6 +9,7 @@ import { server } from "../msw/server";
 import { renderWithQueryClient as render } from "../utils/testQueryClient";
 import { piThinkingProfiles } from "@/config/piThinkingProfiles";
 import { piProviderPresets } from "@/config/piProviderPresets";
+import { waitForOverlayTransition } from "../utils/overlayTransition";
 
 const TAURI_ENDPOINT = "http://tauri.local";
 
@@ -1354,6 +1355,7 @@ describe("PiProviderForm", () => {
       await screen.findByRole("option", { name: "current-model" }),
     );
     expect(modelIdInput).toHaveValue("current-model");
+    await waitForOverlayTransition();
 
     releaseSlowRequest?.();
     await waitFor(() => expect(modelIdInput).toHaveValue("current-model"));

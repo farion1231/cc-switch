@@ -1,10 +1,96 @@
 import * as React from "react";
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
 import { cn } from "@/lib/utils";
+import {
+  OVERLAY_MOTION_CLASS,
+  type OverlayAnimationGuard,
+  useOverlayAnimationGuard,
+} from "./overlay-animation-guard";
 
-const DropdownMenu = DropdownMenuPrimitive.Root;
+interface DropdownMenuAnimationContextValue extends OverlayAnimationGuard {
+  triggerRef: React.MutableRefObject<HTMLButtonElement | null>;
+}
 
-const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger;
+const MENU_CONTENT_CLASS =
+  "z-[100] min-w-[8rem] rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md";
+
+const DropdownMenuAnimationContext = React.createContext<
+  DropdownMenuAnimationContextValue | undefined
+>(undefined);
+
+function DropdownMenu({
+  onOpenChange,
+  ...props
+}: React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Root>) {
+  const animation = useOverlayAnimationGuard();
+  const triggerRef = React.useRef<HTMLButtonElement | null>(null);
+  const context = React.useMemo<DropdownMenuAnimationContextValue>(
+    () => ({ ...animation, triggerRef }),
+    [animation],
+  );
+  const handleOpenChange = React.useCallback(
+    (open: boolean) => {
+      animation.beginTransition();
+      onOpenChange?.(open);
+    },
+    [animation, onOpenChange],
+  );
+
+  return (
+    <DropdownMenuAnimationContext.Provider value={context}>
+      <DropdownMenuPrimitive.Root {...props} onOpenChange={handleOpenChange} />
+    </DropdownMenuAnimationContext.Provider>
+  );
+}
+
+const DropdownMenuTrigger = React.forwardRef<
+  React.ElementRef<typeof DropdownMenuPrimitive.Trigger>,
+  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Trigger>
+>(
+  (
+    { className, onPointerDown, onKeyDown, disabled = false, ...props },
+    forwardedRef,
+  ) => {
+    const animation = React.useContext(DropdownMenuAnimationContext);
+    const setRefs = React.useCallback(
+      (node: HTMLButtonElement | null) => {
+        if (animation) animation.triggerRef.current = node;
+        if (typeof forwardedRef === "function") forwardedRef(node);
+        else if (forwardedRef) forwardedRef.current = node;
+      },
+      [animation, forwardedRef],
+    );
+    const handleToggle = (
+      event: React.SyntheticEvent<HTMLButtonElement>,
+      canToggle: boolean,
+    ) => {
+      if (event.defaultPrevented) return;
+      if (animation?.isTransitioning()) {
+        event.preventDefault();
+      } else if (!disabled && canToggle) {
+        animation?.beginTransition();
+      }
+    };
+
+    return (
+      <DropdownMenuPrimitive.Trigger
+        {...props}
+        className={cn("data-[state=open]:pointer-events-auto", className)}
+        disabled={disabled}
+        ref={setRefs}
+        onPointerDown={(event) => {
+          onPointerDown?.(event);
+          handleToggle(event, event.button === 0 && !event.ctrlKey);
+        }}
+        onKeyDown={(event) => {
+          onKeyDown?.(event);
+          handleToggle(event, ["Enter", " ", "ArrowDown"].includes(event.key));
+        }}
+      />
+    );
+  },
+);
+DropdownMenuTrigger.displayName = DropdownMenuPrimitive.Trigger.displayName;
 
 const DropdownMenuGroup = DropdownMenuPrimitive.Group;
 
@@ -36,35 +122,56 @@ DropdownMenuSubTrigger.displayName =
 const DropdownMenuSubContent = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.SubContent>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.SubContent>
->(({ className, ...props }, ref) => (
-  <DropdownMenuPrimitive.SubContent
-    ref={ref}
-    className={cn(
-      "z-[100] min-w-[8rem] rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
-      className,
-    )}
-    {...props}
-  />
-));
+>(({ className, ...props }, ref) => {
+  return (
+    <DropdownMenuPrimitive.SubContent
+      ref={ref}
+      className={cn(MENU_CONTENT_CLASS, OVERLAY_MOTION_CLASS, className)}
+      {...props}
+    />
+  );
+});
 DropdownMenuSubContent.displayName =
   DropdownMenuPrimitive.SubContent.displayName;
 
 const DropdownMenuContent = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Content>
->(({ className, sideOffset = 4, ...props }, ref) => (
-  <DropdownMenuPrimitive.Portal>
-    <DropdownMenuPrimitive.Content
-      ref={ref}
-      sideOffset={sideOffset}
-      className={cn(
-        "z-[100] min-w-[8rem] overflow-hidden rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
-        className,
-      )}
-      {...props}
-    />
-  </DropdownMenuPrimitive.Portal>
-));
+>(
+  (
+    { className, sideOffset = 4, onPointerDownOutside, ...props },
+    forwardedRef,
+  ) => {
+    const animation = React.useContext(DropdownMenuAnimationContext);
+    return (
+      <DropdownMenuPrimitive.Portal>
+        <DropdownMenuPrimitive.Content
+          ref={forwardedRef}
+          sideOffset={sideOffset}
+          className={cn(
+            MENU_CONTENT_CLASS,
+            "overflow-hidden",
+            OVERLAY_MOTION_CLASS,
+            className,
+          )}
+          onPointerDownOutside={(event) => {
+            onPointerDownOutside?.(event);
+            const target = event.target;
+            if (
+              !event.defaultPrevented &&
+              animation?.isTransitioning() &&
+              target instanceof Node &&
+              animation.triggerRef.current?.contains(target)
+            ) {
+              event.preventDefault();
+            }
+          }}
+          {...props}
+        />
+      </DropdownMenuPrimitive.Portal>
+    );
+  },
+);
 DropdownMenuContent.displayName = DropdownMenuPrimitive.Content.displayName;
 
 const DropdownMenuItem = React.forwardRef<
