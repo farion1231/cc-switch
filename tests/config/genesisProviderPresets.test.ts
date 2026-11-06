@@ -11,18 +11,9 @@ import { openclawProviderPresets } from "@/config/openclawProviderPresets";
 import { opencodeProviderPresets } from "@/config/opencodeProviderPresets";
 import { piProviderPresets } from "@/config/piProviderPresets";
 
-const ids = [
-  "kimi-k2.7-code",
-  "qwen3.7-plus",
-  "glm-5.2",
-  "qwen3.8-27b",
-  "qwen3.8-max",
-  "qwen3.8-flash",
-  "kimi-k3",
-  "deepseek-v4.1-flash",
-  "glm-5.3",
-  "glm-5.3-flash",
-];
+// Presets need one immediately usable model; the current catalog is fetched
+// with the account's API key instead of being frozen in the app bundle.
+const starterModels = ["qwen3.8-flash"];
 const find = <T extends { name: string }>(items: T[]) =>
   items.find((item) => item.name === "Genesis");
 
@@ -48,13 +39,15 @@ describe("Genesis app compatibility", () => {
     }
   });
 
-  it("uses native Responses for Codex and exposes the chat model catalog", () => {
+  it("uses native Responses for Codex with a starter model", () => {
     const preset = find(codexProviderPresets);
     expect(preset?.config).toContain(
       'base_url = "https://token.moi.matrixorigin.cn/v1"',
     );
     expect(preset?.config).toContain('wire_api = "responses"');
-    expect(preset?.modelCatalog?.map((model) => model.model)).toEqual(ids);
+    expect(preset?.modelCatalog?.map((model) => model.model)).toEqual(
+      starterModels,
+    );
   });
 
   it("routes Claude Desktop through Chat Completions", () => {
@@ -67,13 +60,15 @@ describe("Genesis app compatibility", () => {
     expect(preset?.modelRoutes?.length).toBeGreaterThan(0);
   });
 
-  it("offers every chat model to OpenCode, OpenClaw, Hermes and Pi", () => {
+  it("seeds OpenCode, OpenClaw, Hermes and Pi with one model", () => {
     const opencode = find(opencodeProviderPresets);
     expect(opencode?.settingsConfig.npm).toBe("@ai-sdk/openai-compatible");
     expect(opencode?.settingsConfig.options.baseURL).toBe(
       "https://token.moi.matrixorigin.cn/v1",
     );
-    expect(Object.keys(opencode?.settingsConfig.models ?? {})).toEqual(ids);
+    expect(Object.keys(opencode?.settingsConfig.models ?? {})).toEqual(
+      starterModels,
+    );
 
     const openclaw = find(openclawProviderPresets);
     expect(openclaw?.settingsConfig).toMatchObject({
@@ -81,7 +76,7 @@ describe("Genesis app compatibility", () => {
       api: "openai-completions",
     });
     expect(openclaw?.settingsConfig.models?.map((model) => model.id)).toEqual(
-      ids,
+      starterModels,
     );
 
     const hermes = find(hermesProviderPresets);
@@ -90,7 +85,7 @@ describe("Genesis app compatibility", () => {
       api_mode: "chat_completions",
     });
     expect(hermes?.settingsConfig.models?.map((model) => model.id)).toEqual(
-      ids,
+      starterModels,
     );
 
     const pi = find(piProviderPresets);
@@ -98,7 +93,9 @@ describe("Genesis app compatibility", () => {
       baseUrl: "https://token.moi.matrixorigin.cn/v1",
       api: "openai-completions",
     });
-    expect(pi?.settingsConfig.models.map((model) => model.id)).toEqual(ids);
+    expect(pi?.settingsConfig.models.map((model) => model.id)).toEqual(
+      starterModels,
+    );
   });
 
   it("inherits the Pi preset in compatible Pi based clients", () => {

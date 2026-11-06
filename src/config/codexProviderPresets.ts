@@ -12,7 +12,7 @@ import type { PresetTheme } from "./claudeProviderPresets";
 import type { PresetFamilyFields } from "./presetFamilies";
 import {
   GENESIS_API_KEY_URL,
-  GENESIS_CHAT_MODELS,
+  GENESIS_DEFAULT_MODEL,
   GENESIS_OPENAI_BASE_URL,
   GENESIS_WEBSITE_URL,
 } from "./genesisModels";
@@ -4685,10 +4685,10 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "genesis",
       GENESIS_OPENAI_BASE_URL,
-      "qwen3.8-flash",
+      GENESIS_DEFAULT_MODEL,
     ),
     apiFormat: "openai_responses",
-    modelCatalog: modelCatalog([...GENESIS_CHAT_MODELS]),
+    modelCatalog: modelCatalog([GENESIS_DEFAULT_MODEL]),
     endpointCandidates: [GENESIS_OPENAI_BASE_URL],
     icon: "genesis",
   },

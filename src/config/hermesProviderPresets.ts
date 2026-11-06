@@ -7,7 +7,7 @@ import type { PresetTheme, TemplateValueConfig } from "./claudeProviderPresets";
 import type { PresetFamilyFields } from "./presetFamilies";
 import {
   GENESIS_API_KEY_URL,
-  GENESIS_CHAT_MODELS,
+  GENESIS_DEFAULT_MODEL,
   GENESIS_OPENAI_BASE_URL,
   GENESIS_WEBSITE_URL,
 } from "./genesisModels";
@@ -2764,12 +2764,12 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       base_url: GENESIS_OPENAI_BASE_URL,
       api_key: "",
       api_mode: "chat_completions",
-      models: GENESIS_CHAT_MODELS.map((id) => ({ id, name: id })),
+      models: [{ id: GENESIS_DEFAULT_MODEL, name: GENESIS_DEFAULT_MODEL }],
     },
     category: "aggregator",
     icon: "genesis",
     suggestedDefaults: {
-      model: { default: "qwen3.8-flash", provider: "genesis" },
+      model: { default: GENESIS_DEFAULT_MODEL, provider: "genesis" },
     },
   },
   {
