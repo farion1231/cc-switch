@@ -63,19 +63,40 @@ fn sqlite_table_exists(conn: &Connection, table: &str) -> bool {
     .unwrap_or(false)
 }
 
-/// Read the V1→V2 migration marker timestamp (`migration.v1-v2`) from the `kv` table.
-fn get_v2_migration_marker_ts(conn: &Connection) -> Option<i64> {
+/// Read the V1→V2 migration cutoff timestamp (`migration.v1-v2`) from the `kv` table.
+///
+/// If migration completed (`phase == "completed"`), returns the marker timestamp
+/// so pre-migration sessions that were subsequently deleted in 2.x remain hidden.
+/// If migration was interrupted (phase is not "completed") or absent, returns 0 so
+/// unmigrated V1 sessions are not hidden.
+fn get_v2_migration_cutoff_ts(conn: &Connection) -> i64 {
     if !sqlite_table_exists(conn, "kv") {
-        return None;
+        return 0;
     }
-    conn.query_row(
-        "SELECT max(coalesce(time_created, 0), coalesce(time_updated, 0)) \
+    let row: rusqlite::Result<(String, i64)> = conn.query_row(
+        "SELECT value, max(coalesce(time_created, 0), coalesce(time_updated, 0)) \
          FROM kv WHERE key = 'migration.v1-v2'",
         [],
-        |row| row.get(0),
-    )
-    .ok()
-    .filter(|&ts| ts > 0)
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    );
+    match row {
+        Ok((value, ts)) => {
+            let is_completed = serde_json::from_str::<Value>(&value)
+                .ok()
+                .and_then(|v| {
+                    v.get("phase")
+                        .and_then(Value::as_str)
+                        .map(|p| p == "completed")
+                })
+                .unwrap_or(false);
+            if is_completed {
+                ts
+            } else {
+                0
+            }
+        }
+        Err(_) => 0,
+    }
 }
 
 /// Scan sessions from both the legacy JSON files and the newer SQLite database,
@@ -233,21 +254,46 @@ fn scan_sessions_sqlite_v2(conn: &Connection, db_display: &str) -> Vec<SessionMe
 
     let mut sessions: Vec<SessionMeta> = iter.flatten().collect();
 
-    // Include V1 sessions for mixed V1/V2 databases (e.g. user tested 2.x beta then continued on 1.x)
+    // Include V1 sessions for mixed V1/V2 databases (e.g. user tested 2.x beta then continued on 1.x,
+    // or migration was interrupted).
     if sqlite_table_exists(conn, "session") {
-        if let Some(marker_ts) = get_v2_migration_marker_ts(conn) {
-            let v1_sql = "SELECT id, COALESCE(title, ''), directory, time_created, time_updated \
-                          FROM session \
-                          WHERE NOT EXISTS (SELECT 1 FROM session_v2 WHERE session_v2.id = session.id) \
-                            AND time_updated > ?1 \
-                          ORDER BY time_updated DESC";
-            if let Ok(mut v1_stmt) = conn.prepare(v1_sql) {
-                if let Ok(rows) =
-                    v1_stmt.query_map([marker_ts], |row| parse_sqlite_session_row(row, db_display))
-                {
-                    sessions.extend(rows.flatten());
-                    sessions.sort_by_key(|s| std::cmp::Reverse(s.last_active_at));
+        let cutoff_ts = get_v2_migration_cutoff_ts(conn);
+        let v1_sql = "SELECT id, COALESCE(title, ''), directory, time_created, time_updated \
+                      FROM session \
+                      WHERE time_updated > ?1 \
+                      ORDER BY time_updated DESC";
+        if let Ok(mut v1_stmt) = conn.prepare(v1_sql) {
+            if let Ok(rows) =
+                v1_stmt.query_map([cutoff_ts], |row| parse_sqlite_session_row(row, db_display))
+            {
+                let mut session_index_by_id: HashMap<String, usize> = sessions
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| (s.session_id.clone(), i))
+                    .collect();
+
+                for v1_meta in rows.flatten() {
+                    if let Some(&idx) = session_index_by_id.get(&v1_meta.session_id) {
+                        if v1_meta.last_active_at > sessions[idx].last_active_at {
+                            let v2_title = sessions[idx].title.take();
+                            let v2_summary = sessions[idx].summary.take();
+                            let mut meta = v1_meta;
+                            if (meta.title.is_none()
+                                || meta.title
+                                    == path_basename(meta.project_dir.as_deref().unwrap_or("")))
+                                && v2_title.is_some()
+                            {
+                                meta.title = v2_title;
+                                meta.summary = v2_summary;
+                            }
+                            sessions[idx] = meta;
+                        }
+                    } else {
+                        session_index_by_id.insert(v1_meta.session_id.clone(), sessions.len());
+                        sessions.push(v1_meta);
+                    }
                 }
+                sessions.sort_by_key(|s| std::cmp::Reverse(s.last_active_at));
             }
         }
     }
@@ -347,7 +393,8 @@ pub fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String>
     match schema {
         OpenCodeSchema::V1 => load_messages_sqlite_v1(&conn, &session_id),
         OpenCodeSchema::V2 => {
-            // In a mixed V1/V2 database, load messages from whichever table the session actually lives in.
+            // In a mixed V1/V2 database, load messages from whichever table is newer
+            // or actually contains the session.
             let in_session_v2 = conn
                 .query_row(
                     "SELECT EXISTS(SELECT 1 FROM session_v2 WHERE id = ?1)",
@@ -357,7 +404,59 @@ pub fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String>
                 .unwrap_or(false);
 
             if in_session_v2 {
-                load_messages_sqlite_v2(&conn, &session_id)
+                let prefer_v1 = if sqlite_table_exists(&conn, "message") {
+                    let v1_msg_ts: Option<i64> = if sqlite_table_exists(&conn, "part") {
+                        conn.query_row(
+                            "SELECT MAX(ts) FROM ( \
+                                 SELECT MAX(time_created) AS ts FROM message WHERE session_id = ?1 \
+                                 UNION ALL \
+                                 SELECT MAX(time_created) AS ts FROM part WHERE session_id = ?1 \
+                             )",
+                            [&session_id],
+                            |row| row.get(0),
+                        )
+                        .ok()
+                        .flatten()
+                    } else {
+                        conn.query_row(
+                            "SELECT MAX(time_created) FROM message WHERE session_id = ?1",
+                            [&session_id],
+                            |row| row.get(0),
+                        )
+                        .ok()
+                        .flatten()
+                    };
+
+                    let v2_msg_ts: Option<i64> = if sqlite_table_exists(&conn, "session_message") {
+                        conn.query_row(
+                            "SELECT MAX(ts) FROM ( \
+                                 SELECT MAX(time_updated) AS ts FROM session_message WHERE session_id = ?1 \
+                                 UNION ALL \
+                                 SELECT MAX(time_created) AS ts FROM session_message WHERE session_id = ?1 \
+                             )",
+                            [&session_id],
+                            |row| row.get(0),
+                        )
+                        .ok()
+                        .flatten()
+                    } else {
+                        None
+                    };
+
+                    match (v1_msg_ts, v2_msg_ts) {
+                        (Some(v1), Some(v2)) => v1 > v2,
+                        (Some(_), None) => true,
+                        _ => false,
+                    }
+                } else {
+                    false
+                };
+
+                if prefer_v1 {
+                    load_messages_sqlite_v1(&conn, &session_id)
+                } else {
+                    load_messages_sqlite_v2(&conn, &session_id)
+                }
             } else if sqlite_table_exists(&conn, "message") {
                 load_messages_sqlite_v1(&conn, &session_id)
             } else {
@@ -1641,6 +1740,298 @@ mod tests {
             .expect("count v1");
         assert_eq!(remaining_v2, 0);
         assert_eq!(remaining_v1_active, 0);
+
+        if let Some(value) = original_xdg {
+            std::env::set_var("XDG_DATA_HOME", value);
+        } else {
+            std::env::remove_var("XDG_DATA_HOME");
+        }
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn session_in_both_tables_continued_in_v1_reads_newer_v1_messages_and_meta() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let _guard = opencode_env_lock().lock().expect("lock");
+        let temp = tempdir().expect("tempdir");
+        let original_xdg = std::env::var_os("XDG_DATA_HOME");
+        std::env::set_var("XDG_DATA_HOME", temp.path());
+
+        let base_dir = temp.path().join("opencode");
+        std::fs::create_dir_all(&base_dir).expect("create base dir");
+        let db_path = base_dir.join("opencode.db");
+        let conn = Connection::open(&db_path).expect("open sqlite db");
+        create_sqlite_schema(&conn);
+        create_sqlite_schema_v2(&conn);
+
+        conn.execute_batch(
+            "CREATE TABLE kv (
+                key TEXT PRIMARY KEY NOT NULL,
+                value TEXT NOT NULL,
+                time_created INTEGER NOT NULL,
+                time_updated INTEGER NOT NULL
+            );",
+        )
+        .expect("create kv table");
+
+        // Migration completed at t = 2000
+        conn.execute(
+            "INSERT INTO kv (key, value, time_created, time_updated) VALUES (?1, ?2, ?3, ?4)",
+            (
+                "migration.v1-v2",
+                r#"{"phase":"completed"}"#,
+                1900_i64,
+                2000_i64,
+            ),
+        )
+        .expect("insert migration marker");
+
+        // Session exists in V2 with last activity at t = 2000
+        conn.execute(
+            "INSERT INTO session_v2 (id, title, directory, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ("ses_both", "Session Title", "/tmp/project", 1000_i64, 2000_i64),
+        )
+        .expect("insert v2 session");
+        conn.execute(
+            "INSERT INTO session_message (id, session_id, type, seq, data, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            ("msg_v2", "ses_both", "user", 1_i64, r#"{"text":"Old V2 message"}"#, 1000_i64, 2000_i64),
+        )
+        .expect("insert v2 message");
+
+        // Same session exists in V1, but was continued in 1.x up to t = 3000
+        conn.execute(
+            "INSERT INTO session (id, title, directory, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ("ses_both", "Session Title Updated in 1.x", "/tmp/project", 1000_i64, 3000_i64),
+        )
+        .expect("insert v1 session");
+        conn.execute(
+            "INSERT INTO message (id, session_id, time_created, data) VALUES (?1, ?2, ?3, ?4)",
+            ("msg_v1", "ses_both", 3000_i64, r#"{"role":"user"}"#),
+        )
+        .expect("insert v1 message");
+        conn.execute(
+            "INSERT INTO part (id, session_id, message_id, time_created, data) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ("prt_v1", "ses_both", "msg_v1", 3000_i64, r#"{"type":"text","text":"Continued in V1"}"#),
+        )
+        .expect("insert v1 part");
+        drop(conn);
+
+        // 1. scan_sessions_sqlite must report the newer V1 last_active_at (3000) and updated title
+        let sessions = scan_sessions_sqlite();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session_id, "ses_both");
+        assert_eq!(sessions[0].last_active_at, Some(3000));
+        assert_eq!(
+            sessions[0].title.as_deref(),
+            Some("Session Title Updated in 1.x")
+        );
+
+        // 2. load_messages_sqlite must load the newer V1 messages
+        let source = format!("sqlite:{}:ses_both", db_path.display());
+        let messages = load_messages_sqlite(&source).expect("load messages");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].content, "Continued in V1");
+
+        if let Some(value) = original_xdg {
+            std::env::set_var("XDG_DATA_HOME", value);
+        } else {
+            std::env::remove_var("XDG_DATA_HOME");
+        }
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn session_in_both_tables_v1_metadata_update_only_preserves_newer_v2_messages() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let _guard = opencode_env_lock().lock().expect("lock");
+        let temp = tempdir().expect("tempdir");
+        let original_xdg = std::env::var_os("XDG_DATA_HOME");
+        std::env::set_var("XDG_DATA_HOME", temp.path());
+
+        let base_dir = temp.path().join("opencode");
+        std::fs::create_dir_all(&base_dir).expect("create base dir");
+        let db_path = base_dir.join("opencode.db");
+        let conn = Connection::open(&db_path).expect("open sqlite db");
+        create_sqlite_schema(&conn);
+        create_sqlite_schema_v2(&conn);
+
+        conn.execute_batch(
+            "CREATE TABLE kv (
+                key TEXT PRIMARY KEY NOT NULL,
+                value TEXT NOT NULL,
+                time_created INTEGER NOT NULL,
+                time_updated INTEGER NOT NULL
+            );",
+        )
+        .expect("create kv table");
+
+        // Migration completed at t = 2000
+        conn.execute(
+            "INSERT INTO kv (key, value, time_created, time_updated) VALUES (?1, ?2, ?3, ?4)",
+            (
+                "migration.v1-v2",
+                r#"{"phase":"completed"}"#,
+                1900_i64,
+                2000_i64,
+            ),
+        )
+        .expect("insert migration marker");
+
+        // Session created in V1 at t = 1000
+        conn.execute(
+            "INSERT INTO session (id, title, directory, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ("ses_perm_update", "Original Session Title", "/tmp/project", 1000_i64, 1000_i64),
+        )
+        .expect("insert v1 session");
+
+        // V1 has old snapshot messages stopping at t = 1000
+        conn.execute(
+            "INSERT INTO message (id, session_id, time_created, data) VALUES (?1, ?2, ?3, ?4)",
+            ("msg_v1", "ses_perm_update", 1000_i64, r#"{"role":"user"}"#),
+        )
+        .expect("insert v1 message");
+        conn.execute(
+            "INSERT INTO part (id, session_id, message_id, time_created, data) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ("prt_v1", "ses_perm_update", "msg_v1", 1000_i64, r#"{"type":"text","text":"Old V1 message"}"#),
+        )
+        .expect("insert v1 part");
+
+        // Migrated to V2 with newer message at t = 2000
+        conn.execute(
+            "INSERT INTO session_v2 (id, title, directory, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ("ses_perm_update", "V2 Active Session", "/tmp/project", 1000_i64, 2000_i64),
+        )
+        .expect("insert v2 session");
+        conn.execute(
+            "INSERT INTO session_message (id, session_id, type, seq, data, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            ("msg_v2", "ses_perm_update", "user", 1_i64, r#"{"text":"Newer V2 message"}"#, 2000_i64, 2000_i64),
+        )
+        .expect("insert v2 message");
+
+        // User later updates permission in a V1 client (Session.setPermission updates permission and time_updated only)
+        // V1 session time_updated becomes 3000, but message/part stay at 1000.
+        conn.execute(
+            "UPDATE session SET time_updated = 3000 WHERE id = 'ses_perm_update'",
+            [],
+        )
+        .expect("update v1 session time_updated");
+        drop(conn);
+
+        // 1. scan_sessions_sqlite reports the newer metadata timestamp (3000)
+        let sessions = scan_sessions_sqlite();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session_id, "ses_perm_update");
+        assert_eq!(sessions[0].last_active_at, Some(3000));
+
+        // 2. load_messages_sqlite must NOT roll back to V1 old snapshot; it must load newer V2 messages
+        let source = format!("sqlite:{}:ses_perm_update", db_path.display());
+        let messages = load_messages_sqlite(&source).expect("load messages");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].content, "Newer V2 message");
+
+        if let Some(value) = original_xdg {
+            std::env::set_var("XDG_DATA_HOME", value);
+        } else {
+            std::env::remove_var("XDG_DATA_HOME");
+        }
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn interrupted_migration_incomplete_phase_does_not_hide_unmigrated_v1_sessions() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let _guard = opencode_env_lock().lock().expect("lock");
+        let temp = tempdir().expect("tempdir");
+        let original_xdg = std::env::var_os("XDG_DATA_HOME");
+        std::env::set_var("XDG_DATA_HOME", temp.path());
+
+        let base_dir = temp.path().join("opencode");
+        std::fs::create_dir_all(&base_dir).expect("create base dir");
+        let db_path = base_dir.join("opencode.db");
+        let conn = Connection::open(&db_path).expect("open sqlite db");
+        create_sqlite_schema(&conn);
+        create_sqlite_schema_v2(&conn);
+
+        conn.execute_batch(
+            "CREATE TABLE kv (
+                key TEXT PRIMARY KEY NOT NULL,
+                value TEXT NOT NULL,
+                time_created INTEGER NOT NULL,
+                time_updated INTEGER NOT NULL
+            );",
+        )
+        .expect("create kv table");
+
+        // Migration marker at t = 2000, but phase is "running" (not "completed")
+        conn.execute(
+            "INSERT INTO kv (key, value, time_created, time_updated) VALUES (?1, ?2, ?3, ?4)",
+            (
+                "migration.v1-v2",
+                r#"{"phase":"running"}"#,
+                1900_i64,
+                2000_i64,
+            ),
+        )
+        .expect("insert interrupted migration marker");
+
+        // Session 1: already migrated to V2 before the interruption
+        conn.execute(
+            "INSERT INTO session (id, title, directory, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ("ses_migrated", "Migrated", "/tmp/p1", 1000_i64, 1500_i64),
+        )
+        .expect("insert migrated v1");
+        conn.execute(
+            "INSERT INTO session_v2 (id, title, directory, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ("ses_migrated", "Migrated", "/tmp/p1", 1000_i64, 1500_i64),
+        )
+        .expect("insert migrated v2");
+        conn.execute(
+            "INSERT INTO session_message (id, session_id, type, seq, data, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            ("msg_mig", "ses_migrated", "user", 1_i64, r#"{"text":"V2 Msg"}"#, 1000_i64, 1500_i64),
+        )
+        .expect("insert migrated message");
+
+        // Session 2: old V1 session that was NOT migrated before the interruption (t_updated = 1200 < marker 2000)
+        conn.execute(
+            "INSERT INTO session (id, title, directory, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ("ses_unmigrated", "Unmigrated Session", "/tmp/p2", 800_i64, 1200_i64),
+        )
+        .expect("insert unmigrated v1 session");
+        conn.execute(
+            "INSERT INTO message (id, session_id, time_created, data) VALUES (?1, ?2, ?3, ?4)",
+            ("msg_unmig", "ses_unmigrated", 800_i64, r#"{"role":"user"}"#),
+        )
+        .expect("insert unmigrated message");
+        conn.execute(
+            "INSERT INTO part (id, session_id, message_id, time_created, data) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ("prt_unmig", "ses_unmigrated", "msg_unmig", 800_i64, r#"{"type":"text","text":"V1 Unmigrated"}"#),
+        )
+        .expect("insert unmigrated part");
+        drop(conn);
+
+        let sessions = scan_sessions_sqlite();
+        // Both sessions must be listed; ses_unmigrated must not be hidden; ses_migrated must not be duplicated
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions[0].session_id, "ses_migrated");
+        assert_eq!(sessions[0].last_active_at, Some(1500));
+        assert_eq!(sessions[1].session_id, "ses_unmigrated");
+        assert_eq!(sessions[1].last_active_at, Some(1200));
+
+        let unmig_source = format!("sqlite:{}:ses_unmigrated", db_path.display());
+        let unmig_msgs = load_messages_sqlite(&unmig_source).expect("load unmigrated messages");
+        assert_eq!(unmig_msgs.len(), 1);
+        assert_eq!(unmig_msgs[0].content, "V1 Unmigrated");
+
+        let mig_source = format!("sqlite:{}:ses_migrated", db_path.display());
+        let mig_msgs = load_messages_sqlite(&mig_source).expect("load migrated messages");
+        assert_eq!(mig_msgs.len(), 1);
+        assert_eq!(mig_msgs[0].content, "V2 Msg");
 
         if let Some(value) = original_xdg {
             std::env::set_var("XDG_DATA_HOME", value);
