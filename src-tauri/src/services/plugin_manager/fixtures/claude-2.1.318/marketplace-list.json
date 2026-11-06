@@ -1,0 +1,8 @@
+[
+  {
+    "name": "ccs-test",
+    "source": "directory",
+    "path": "C:\\fixture\\mkt",
+    "installLocation": "C:\\fixture\\mkt"
+  }
+]
