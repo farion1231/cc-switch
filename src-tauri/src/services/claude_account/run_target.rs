@@ -87,23 +87,40 @@ pub fn windows_path_to_linux(path: &str, distro: &str) -> Result<String, String>
     drive_to_mnt(path).ok_or_else(|| format!("无法把目录转成 WSL 里的路径: {path}"))
 }
 
-/// `wsl.exe` 的参数（不含程序名）：在发行版的登录 shell 里跑一次 `claude`。
+/// 从 `/home/<user>` 或 `/root` 得到 `wsl.exe -u` 的用户名。
+pub fn wsl_user(linux_home: &str) -> Result<String, String> {
+    let user = if linux_home == "/root" {
+        "root".to_string()
+    } else if let Some(name) = linux_home.strip_prefix("/home/") {
+        name.split('/').next().unwrap_or("").to_string()
+    } else {
+        return Err(format!("无法从 {linux_home} 得到 WSL 用户名"));
+    };
+    validate_wsl_user(&user)?;
+    Ok(user)
+}
+
+/// `wsl.exe` 的参数（不含程序名）：以 `-u <user>` 进入发行版，再用该用户的登录 shell 找 `claude`。
 ///
-/// 先按 `-lic`、`-lc`、`-c` 找得到 `claude` 的 flag（nvm 这类写在 rc 里），找到就 `exec`，
-/// 不再换 flag。`env` 放在 rc 之后，rc 里 export 的同名变量盖不住这里的值。
+/// 不依赖 `$SHELL`。`wsl.exe -d … -- sh -c` 里它经常是空的，退回 `sh -lic` 时 dash 不读
+/// bashrc/zshrc，nvm 和 `~/.local/bin` 都会从 PATH 里消失。
 pub fn wsl_claude_argv(
     distro: &str,
+    user: &str,
     linux_cd: &str,
     set: &[(&str, &str)],
     unset: &[&str],
     claude_args: &[&str],
 ) -> Result<Vec<String>, String> {
     validate_distro(distro)?;
+    validate_wsl_user(user)?;
     validate_linux_abs(linux_cd)?;
-    let script = shell_payload(set, unset, claude_args)?;
+    let script = shell_payload(distro, user, set, unset, claude_args)?;
     Ok(vec![
         "-d".to_string(),
         distro.to_string(),
+        "-u".to_string(),
+        user.to_string(),
         "--cd".to_string(),
         linux_cd.to_string(),
         "--".to_string(),
@@ -113,26 +130,36 @@ pub fn wsl_claude_argv(
     ])
 }
 
-/// 写进 Windows `.bat` 的一行：`wsl.exe -d <distro> --cd <linux> -- sh -c ...`。
-/// `claude_args` 的第一项是 `claude`。路径或参数里有 `%`、`"`、`^` 时拒绝，避免 cmd 展开。
+/// 写进 Windows `.bat` 的一行：`wsl.exe -d <distro> -u <user> --cd <linux> -- sh -c ...`。
+/// 路径或参数里有 `%`、`"`、`^` 时拒绝，避免 cmd 展开。
 pub fn wsl_terminal_batch_line(
     distro: &str,
+    user: &str,
     linux_cd: &str,
     set: &[(&str, &str)],
     unset: &[&str],
     claude_args: &[String],
 ) -> Result<String, String> {
     validate_distro(distro)?;
+    validate_wsl_user(user)?;
     let cd = cmd_quote(linux_cd)?;
     let args: Vec<&str> = claude_args.iter().map(String::as_str).collect();
-    let script = shell_payload(set, unset, &args)?;
+    let script = shell_payload(distro, user, set, unset, &args)?;
     if script.contains('%') {
         return Err("WSL 命令里有 %，Windows 终端无法安全传递".to_string());
     }
     Ok(format!(
-        "wsl.exe -d {distro} --cd {cd} -- sh -c {}",
+        "wsl.exe -d {distro} -u {user} --cd {cd} -- sh -c {}",
         cmd_double_quote(&script)
     ))
+}
+
+fn home_for_user(user: &str) -> String {
+    if user == "root" {
+        "/root".to_string()
+    } else {
+        format!("/home/{user}")
+    }
 }
 
 /// 把 UNC 账号目录转成给 `CLAUDE_CONFIG_DIR` 的 Linux 路径。不是这条发行版的 UNC 时为 `None`。
@@ -256,6 +283,20 @@ fn validate_distro(distro: &str) -> Result<(), String> {
     }
 }
 
+fn validate_wsl_user(name: &str) -> Result<(), String> {
+    if !name.is_empty()
+        && name.len() <= 32
+        && !name.starts_with(['-', '.'])
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+    {
+        Ok(())
+    } else {
+        Err(format!("Invalid WSL user name: {name}"))
+    }
+}
+
 fn validate_linux_abs(path: &str) -> Result<(), String> {
     if path.starts_with('/') && !path.contains("//") && path.split('/').skip(1).all(valid_path_part)
     {
@@ -274,42 +315,87 @@ fn valid_env_key(key: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-fn shell_payload(
-    set: &[(&str, &str)],
-    unset: &[&str],
-    claude_args: &[&str],
-) -> Result<String, String> {
+/// 登录 shell 找到 `claude` 之后，或探测到安装路径之后，真正执行的那一行。
+fn env_exec(set: &[(&str, &str)], unset: &[&str], claude_args: &[&str]) -> Result<String, String> {
+    let mut line = String::from("exec env");
     for key in unset {
         if !valid_env_key(key) {
             return Err(format!("invalid env name: {key}"));
         }
-    }
-    let mut inner = String::from("exec env");
-    for key in unset {
-        inner.push_str(" -u ");
-        inner.push_str(key);
+        line.push_str(" -u ");
+        line.push_str(key);
     }
     for (key, value) in set {
         if !valid_env_key(key) || value.chars().any(|c| c.is_control()) {
             return Err(format!("invalid env for {key}"));
         }
-        inner.push(' ');
-        inner.push_str(key);
-        inner.push('=');
-        inner.push_str(&shell_single_quote(value));
+        line.push(' ');
+        line.push_str(key);
+        line.push('=');
+        line.push_str(&shell_single_quote(value));
     }
-    // 参数是给 claude 的；命令名在这里补上，调用方不用再写一遍。
-    inner.push_str(" claude");
+    line.push_str(" \"$bin\"");
     for arg in claude_args {
         if arg.chars().any(|c| c.is_control()) {
             return Err("命令参数里不能有控制字符".to_string());
         }
-        inner.push(' ');
-        inner.push_str(&shell_word(arg));
+        line.push(' ');
+        line.push_str(&shell_word(arg));
     }
-    let quoted = shell_single_quote(&inner);
+    Ok(line)
+}
+
+fn shell_payload(
+    distro: &str,
+    user: &str,
+    set: &[(&str, &str)],
+    unset: &[&str],
+    claude_args: &[&str],
+) -> Result<String, String> {
+    let home = home_for_user(user);
+    let launch = env_exec(set, unset, claude_args)?;
+    let in_shell = shell_single_quote(&format!(
+        "bin=$(command -v claude) || exit 127\nd=$(dirname \"$bin\")\nPATH=\"$d:$PATH\"\nexport PATH\n{launch}"
+    ));
+    let home_quoted = shell_single_quote(&home);
     Ok(format!(
-        "for flag in -lic -lc -c; do if \"${{SHELL:-sh}}\" \"$flag\" 'command -v claude' >/dev/null 2>&1; then exec \"${{SHELL:-sh}}\" \"$flag\" {quoted}; fi; done; echo 'claude: not found' >&2; exit 127"
+        r#"cc_shell=$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)
+case "$cc_shell" in
+  ""|*/nologin|*/false) cc_shell=${{SHELL:-}} ;;
+esac
+cc_base=${{cc_shell##*/}}
+cc_try={in_shell}
+if [ -n "$cc_shell" ] && [ -x "$cc_shell" ]; then
+  case "$cc_base" in
+    bash|zsh)
+      if "$cc_shell" -lic 'command -v claude >/dev/null 2>&1' </dev/null 2>/dev/null; then
+        exec "$cc_shell" -lic "$cc_try"
+      fi
+      ;;
+    fish)
+      if "$cc_shell" -l -i -c 'command -v claude >/dev/null 2>&1' </dev/null 2>/dev/null; then
+        exec "$cc_shell" -l -i -c "$cc_try"
+      fi
+      ;;
+  esac
+fi
+cc_home={home_quoted}
+cc_bin=
+cc_take() {{ if [ -x "$1" ]; then cc_bin=$1; return 0; fi; return 1; }}
+cc_take "$cc_home/.local/bin/claude" || cc_take "$HOME/.local/bin/claude" || cc_take "$cc_home/.claude/local/claude" || cc_take "$cc_home/.npm-global/bin/claude" || cc_take "$cc_home/.volta/bin/claude" || cc_take "$cc_home/.bun/bin/claude" || cc_take /usr/local/bin/claude || cc_take /usr/bin/claude || true
+if [ -z "$cc_bin" ]; then
+  cc_nvm=$(ls -d "$cc_home/.nvm/versions/node/"*/bin/claude 2>/dev/null | sort -V | tail -n 1)
+  if [ -n "$cc_nvm" ] && [ -x "$cc_nvm" ]; then cc_bin=$cc_nvm; fi
+fi
+if [ -n "$cc_bin" ]; then
+  bin=$cc_bin
+  d=$(dirname "$bin")
+  PATH="$d:$PATH"
+  export PATH
+  {launch}
+fi
+echo "claude: not found in WSL distro {distro} as user {user} (login shell: ${{cc_shell:-unknown}}). Looked on PATH and in $cc_home/.local/bin/claude, $cc_home/.claude/local/claude, $cc_home/.npm-global/bin/claude, $cc_home/.nvm/versions/node/*/bin/claude, $cc_home/.volta/bin/claude, $cc_home/.bun/bin/claude, /usr/local/bin/claude, /usr/bin/claude. Install Claude Code in that distro as that user, then try again." >&2
+exit 127"#,
     ))
 }
 
@@ -438,6 +524,7 @@ mod tests {
     fn login_argv_sets_linux_config_dir_and_unsets_after_the_shell_rc() {
         let argv = wsl_claude_argv(
             "Ubuntu-22.04",
+            "me",
             "/home/me",
             &[(
                 "CLAUDE_CONFIG_DIR",
@@ -448,22 +535,39 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            &argv[..7],
-            ["-d", "Ubuntu-22.04", "--cd", "/home/me", "--", "sh", "-c",]
+            &argv[..9],
+            [
+                "-d",
+                "Ubuntu-22.04",
+                "-u",
+                "me",
+                "--cd",
+                "/home/me",
+                "--",
+                "sh",
+                "-c",
+            ]
         );
         let script = argv.last().unwrap();
-        assert!(script.contains("command -v claude"));
+        assert!(script.contains("getent passwd"));
+        assert!(script.contains("cut -d: -f7"));
+        assert!(script.contains("-lic"));
+        assert!(script.contains("-l -i -c"));
+        assert!(script.contains("cc_home='/home/me'"));
+        assert!(script.contains(r#""$cc_home/.local/bin/claude""#));
         assert!(script.contains("-u ANTHROPIC_API_KEY"));
         assert!(script.contains("-u CLAUDE_CODE_USE_BEDROCK"));
         assert!(script.contains("/home/me/.cc-switch/claude-accounts/abc/config"));
         assert!(script.contains("CLAUDE_CONFIG_DIR="));
-        assert!(script.contains("claude auth login --claudeai"));
-        assert!(script.contains("for flag in -lic -lc -c"));
-        assert!(wsl_claude_argv("Ubuntu;id", "/home/me", &[], &[], &["claude"]).is_err());
-        assert!(wsl_claude_argv("-Ubuntu", "/home/me", &[], &[], &["claude"]).is_err());
-        assert!(wsl_claude_argv("Ubuntu", "home/me", &[], &[], &["claude"]).is_err());
+        assert!(script.contains("auth login --claudeai"));
+        assert!(script.contains("Install Claude Code in that distro"));
+        assert!(wsl_claude_argv("Ubuntu;id", "me", "/home/me", &[], &[], &["claude"]).is_err());
+        assert!(wsl_claude_argv("-Ubuntu", "me", "/home/me", &[], &[], &["claude"]).is_err());
+        assert!(wsl_claude_argv("Ubuntu", "me", "home/me", &[], &[], &["claude"]).is_err());
+        assert!(wsl_claude_argv("Ubuntu", "me;id", "/home/me", &[], &[], &["claude"]).is_err());
         assert!(wsl_claude_argv(
             "Ubuntu",
+            "me",
             "/home/me",
             &[("CLAUDE_CONFIG_DIR", "/tmp/bad\npath")],
             &[],
@@ -472,10 +576,65 @@ mod tests {
         .is_err());
     }
 
+    /// 用户 sean 的 Claude Code 装在 `~/.local/bin/claude`（官方 native installer）。
+    /// 发行版里要以 `-u sean` 跑，并直接探测 `/home/sean/.local/bin/claude`。
+    #[test]
+    fn sean_native_installer_uses_local_bin_and_wsl_user() {
+        let wsl = match from_override_path(r"\\wsl.localhost\Ubuntu\home\sean\.claude") {
+            RunTarget::Wsl(wsl) => wsl,
+            RunTarget::Native => panic!("expected sean's WSL home"),
+        };
+        assert_eq!(wsl.linux_home, "/home/sean");
+        assert_eq!(wsl_user(&wsl.linux_home).as_deref(), Ok("sean"));
+        assert_eq!(wsl_user("/root").as_deref(), Ok("root"));
+
+        let argv = wsl_claude_argv(
+            &wsl.distro,
+            "sean",
+            &wsl.linux_home,
+            &[(
+                "CLAUDE_CONFIG_DIR",
+                "/home/sean/.cc-switch/claude-accounts/abc/config",
+            )],
+            &["ANTHROPIC_API_KEY"],
+            &["auth", "login", "--claudeai"],
+        )
+        .unwrap();
+        assert_eq!(
+            &argv[..6],
+            ["-d", "Ubuntu", "-u", "sean", "--cd", "/home/sean"]
+        );
+        let script = argv.last().unwrap();
+        assert!(script.contains("cc_home='/home/sean'"), "{script}");
+        assert!(
+            script.contains(r#""$cc_home/.local/bin/claude""#),
+            "{script}"
+        );
+        assert!(script.contains(r#""$HOME/.local/bin/claude""#), "{script}");
+        assert!(script.contains("getent passwd"), "{script}");
+        assert!(script.contains("as user sean"), "{script}");
+        assert!(script.contains("distro Ubuntu"), "{script}");
+
+        let line = wsl_terminal_batch_line(
+            "Ubuntu",
+            "sean",
+            "/home/sean/proj",
+            &[],
+            &[],
+            &["--dangerously-skip-permissions".to_string()],
+        )
+        .unwrap();
+        assert!(line.starts_with("wsl.exe -d Ubuntu -u sean --cd /home/sean/proj -- sh -c "));
+        assert!(line.contains("cc_home='/home/sean'"));
+        assert!(line.contains("$cc_home/.local/bin/claude"));
+        assert!(line.contains("--dangerously-skip-permissions"));
+    }
+
     #[test]
     fn terminal_line_quotes_spaces_and_rejects_batch_metacharacters() {
         let line = wsl_terminal_batch_line(
             "Ubuntu",
+            "jane",
             "/home/Jane Doe/proj",
             &[(
                 "CLAUDE_CONFIG_DIR",
@@ -485,44 +644,62 @@ mod tests {
             &["--dangerously-skip-permissions".to_string()],
         )
         .unwrap();
-        assert!(line.starts_with("wsl.exe -d Ubuntu --cd \"/home/Jane Doe/proj\" -- sh -c "));
+        assert!(
+            line.starts_with("wsl.exe -d Ubuntu -u jane --cd \"/home/Jane Doe/proj\" -- sh -c ")
+        );
         assert!(line.contains("-u ANTHROPIC_API_KEY"));
         assert!(line.contains("/home/Jane Doe/.cc-switch/claude-accounts/abc/config"));
         assert!(line.contains("CLAUDE_CONFIG_DIR="));
-        assert!(line.contains("claude --dangerously-skip-permissions"));
+        assert!(line.contains("--dangerously-skip-permissions"));
 
         let default_slot =
-            wsl_terminal_batch_line("Ubuntu", "/root", &[], &["CLAUDE_CONFIG_DIR"], &[]).unwrap();
+            wsl_terminal_batch_line("Ubuntu", "root", "/root", &[], &["CLAUDE_CONFIG_DIR"], &[])
+                .unwrap();
         assert!(default_slot.contains("-u CLAUDE_CONFIG_DIR"));
         assert!(!default_slot.contains("CLAUDE_CONFIG_DIR="));
-        assert!(default_slot.starts_with("wsl.exe -d Ubuntu --cd /root -- sh -c "));
+        assert!(default_slot.starts_with("wsl.exe -d Ubuntu -u root --cd /root -- sh -c "));
 
-        assert!(wsl_terminal_batch_line("Ubuntu & calc", "/home/me", &[], &[], &[],).is_err());
-        assert!(wsl_terminal_batch_line("Ubuntu", "/home/me/%PATH%", &[], &[], &[],).is_err());
+        assert!(
+            wsl_terminal_batch_line("Ubuntu & calc", "me", "/home/me", &[], &[], &[],).is_err()
+        );
+        assert!(
+            wsl_terminal_batch_line("Ubuntu", "me", "/home/me/%PATH%", &[], &[], &[],).is_err()
+        );
     }
 
-    /// 生成的 shell 真的会清掉变量、把 Linux 路径交给 `claude`。用假的 `claude` 跑，不依赖 WSL。
+    /// 登录 shell 找不到命令时，落到 `$HOME/.local/bin/claude`（sean 的 native installer 就是这个位置）。
     #[cfg(unix)]
     #[test]
     fn shell_payload_reaches_a_fake_claude_with_the_linux_path() {
         let dir = tempfile::tempdir().unwrap();
         let bin = dir.path().join("bin");
-        std::fs::create_dir(&bin).unwrap();
-        let fake = bin.join("claude");
+        let local_bin = dir.path().join(".local").join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(&local_bin).unwrap();
+        let fake = local_bin.join("claude");
         std::fs::write(
             &fake,
             "#!/bin/sh\n[ -n \"$ANTHROPIC_API_KEY\" ] && echo LEAK && exit 1\nprintf '%s\\n' \"$CLAUDE_CONFIG_DIR\"\nprintf '%s\\n' \"$1\"\n",
         )
         .unwrap();
+        std::fs::write(bin.join("id"), "#!/bin/sh\necho sean\n").unwrap();
+        std::fs::write(
+            bin.join("getent"),
+            "#!/bin/sh\necho 'sean:x:1000:1000::/no/such:/no/such/bash'\n",
+        )
+        .unwrap();
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        for path in [fake.as_path(), &bin.join("id"), &bin.join("getent")] {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
 
         let argv = wsl_claude_argv(
             "Ubuntu",
-            "/home/me",
+            "sean",
+            "/home/sean",
             &[(
                 "CLAUDE_CONFIG_DIR",
-                "/home/me/.cc-switch/claude-accounts/abc/config",
+                "/home/sean/.cc-switch/claude-accounts/abc/config",
             )],
             &["ANTHROPIC_API_KEY"],
             &["auth", "login", "--claudeai"],
@@ -538,6 +715,7 @@ mod tests {
             .arg("-c")
             .arg(script)
             .env("PATH", &path)
+            .env("HOME", dir.path())
             .env("SHELL", "/bin/sh")
             .env("ANTHROPIC_API_KEY", "secret")
             .env_remove("ENV")
@@ -552,7 +730,7 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
         assert!(
-            stdout.contains("/home/me/.cc-switch/claude-accounts/abc/config"),
+            stdout.contains("/home/sean/.cc-switch/claude-accounts/abc/config"),
             "{stdout}"
         );
         assert!(stdout.contains("auth"), "{stdout}");

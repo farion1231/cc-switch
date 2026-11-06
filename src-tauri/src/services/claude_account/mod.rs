@@ -787,8 +787,10 @@ fn clarify_wsl_dir_error(error: AppError) -> AppError {
 #[cfg(windows)]
 fn auth_status_wsl(wsl: &run_target::WslTarget, config_dir: &Path) -> Option<identity::AuthStatus> {
     let linux_config = run_target::linux_config_dir(config_dir, &wsl.distro)?;
+    let user = run_target::wsl_user(&wsl.linux_home).ok()?;
     let output = login::capture_wsl_claude(
         &wsl.distro,
+        &user,
         &wsl.linux_home,
         &linux_config,
         &["auth", "status", "--json"],

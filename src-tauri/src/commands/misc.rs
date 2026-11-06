@@ -5422,6 +5422,7 @@ struct ProviderLaunch {
 #[cfg_attr(not(windows), allow(dead_code))]
 struct WslAccountLaunch {
     distro: String,
+    linux_user: String,
     linux_home: String,
     linux_config_dir: Option<String>,
 }
@@ -5676,6 +5677,7 @@ fn claude_account_terminal_launch(config_dir: Option<PathBuf>) -> Result<Provide
                 None => None,
             };
             Some(WslAccountLaunch {
+                linux_user: crate::services::claude_account::run_target::wsl_user(&wsl.linux_home)?,
                 distro: wsl.distro,
                 linux_home: wsl.linux_home,
                 linux_config_dir,
@@ -6539,7 +6541,14 @@ fn wsl_account_batch(
             Vec::new()
         }
     };
-    wsl_terminal_batch_line(&wsl.distro, &linux_cd, &set, &unset, &launch.args)
+    wsl_terminal_batch_line(
+        &wsl.distro,
+        &wsl.linux_user,
+        &linux_cd,
+        &set,
+        &unset,
+        &launch.args,
+    )
 }
 
 /// Windows: 根据用户首选终端启动

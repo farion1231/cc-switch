@@ -490,6 +490,7 @@ fn spawn_wsl_login(
     opener: Option<&Path>,
     opened_file: &Path,
 ) -> Result<Child, AppError> {
+    let user = wsl_user_name(wsl)?;
     let linux_config = linux_in_distro(config_dir, &wsl.distro)?;
     let mut set = vec![("CLAUDE_CONFIG_DIR", linux_config)];
     let linux_opener = opener
@@ -509,6 +510,7 @@ fn spawn_wsl_login(
         .collect();
     spawn_wsl_claude(
         &wsl.distro,
+        &user,
         &wsl.linux_home,
         &set_ref,
         CLAUDE_ACCOUNT_UNSET,
@@ -532,6 +534,7 @@ fn linux_in_distro(path: &Path, distro: &str) -> Result<String, AppError> {
 #[cfg(windows)]
 pub(super) fn capture_wsl_claude(
     distro: &str,
+    user: &str,
     linux_cd: &str,
     linux_config: &str,
     args: &[&str],
@@ -547,6 +550,7 @@ pub(super) fn capture_wsl_claude(
         .collect();
     let mut child = spawn_wsl_claude(
         distro,
+        user,
         linux_cd,
         &set_ref,
         CLAUDE_ACCOUNT_UNSET,
@@ -604,6 +608,7 @@ impl WslStdio {
 #[cfg(windows)]
 fn spawn_wsl_claude(
     distro: &str,
+    user: &str,
     linux_cd: &str,
     set: &[(&str, &str)],
     unset: &[&str],
@@ -613,15 +618,14 @@ fn spawn_wsl_claude(
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-    let argv = super::run_target::wsl_claude_argv(distro, linux_cd, set, unset, args).map_err(
-        |error| {
+    let argv = super::run_target::wsl_claude_argv(distro, user, linux_cd, set, unset, args)
+        .map_err(|error| {
             AppError::localized(
                 "claude.account.wsl_command",
                 format!("无法构造在 WSL 里运行 claude 的命令: {error}"),
                 format!("Couldn't build the command that runs claude inside WSL: {error}"),
             )
-        },
-    )?;
+        })?;
     let mut cmd = std::process::Command::new("wsl.exe");
     cmd.args(&argv)
         .stdin(stdio.stdin)
@@ -658,7 +662,8 @@ fn wsl_opener_path(
     );
     std::fs::write(&path, script).map_err(|source| AppError::io(&path, source))?;
     let linux = linux_in_distro(&path, &wsl.distro)?;
-    if wsl_chmod(&wsl.distro, &linux).is_err() {
+    let user = wsl_user_name(wsl)?;
+    if wsl_chmod(&wsl.distro, &user, &linux).is_err() {
         log::warn!("[ClaudeAccount] 没法把 WSL 里的登录脚本标成可执行，改为只使用打印出来的链接");
         let _ = std::fs::remove_file(&path);
         return Ok(None);
@@ -667,12 +672,23 @@ fn wsl_opener_path(
 }
 
 #[cfg(windows)]
-fn wsl_chmod(distro: &str, linux_path: &str) -> Result<(), String> {
+fn wsl_user_name(wsl: &super::run_target::WslTarget) -> Result<String, AppError> {
+    super::run_target::wsl_user(&wsl.linux_home).map_err(|error| {
+        AppError::localized(
+            "claude.account.wsl_user",
+            format!("无法从 WSL 家目录得到用户名（{error}）"),
+            format!("Couldn't get the WSL user name from the home directory ({error})"),
+        )
+    })
+}
+
+#[cfg(windows)]
+fn wsl_chmod(distro: &str, user: &str, linux_path: &str) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
     let mut child = std::process::Command::new("wsl.exe")
-        .args(["-d", distro, "--", "chmod", "700", linux_path])
+        .args(["-d", distro, "-u", user, "--", "chmod", "700", linux_path])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -824,6 +840,7 @@ mod tests {
     fn wsl_login_command_clears_every_account_env_var() {
         let argv = super::super::run_target::wsl_claude_argv(
             "Ubuntu",
+            "me",
             "/home/me",
             &[(
                 "CLAUDE_CONFIG_DIR",
