@@ -4847,6 +4847,7 @@
     "rowFail": "Enabling in {{app}} failed: {{error}}",
     "fixSync": "Change sync method",
     "rowMoreAria": "More actions for {{name}}",
+    "rowUpdateAria": "Update {{name}}",
     "openDir": "Open folder",
     "uninstallEllipsis": "Uninstall",
     "listLabel": "Installed Skills",
@@ -4954,9 +4955,6 @@
       "discoverBody": "The list may be incomplete.",
       "updatesBody": "Skills from these repositories weren't checked, so the results may be incomplete."
     },
-    "headerUpdates": "{{count}} updates",
-    "headerUpdatesShow": "Show only Skills with updates",
-    "headerUpdatesClear": "Show all Skills",
     "updateAllCount": "Update all ({{count}})",
     "updatingProgress": "Updating {{done}}/{{total}}…"
   },

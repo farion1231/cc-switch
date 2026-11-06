@@ -4848,6 +4848,7 @@
     "rowFail": "在 {{app}} 啟用失敗：{{error}}",
     "fixSync": "改同步方式",
     "rowMoreAria": "{{name}} 的更多操作",
+    "rowUpdateAria": "更新 {{name}}",
     "openDir": "開啟資料夾",
     "uninstallEllipsis": "解除安裝",
     "listLabel": "已安裝的 Skill",
@@ -4955,9 +4956,6 @@
       "discoverBody": "列表可能不完整。",
       "updatesBody": "這些倉庫裡的 Skill 沒有檢查，更新結果可能不完整。"
     },
-    "headerUpdates": "{{count}} 個可更新",
-    "headerUpdatesShow": "只看可更新的 Skill",
-    "headerUpdatesClear": "顯示全部 Skill",
     "updateAllCount": "全部更新（{{count}} 個）",
     "updatingProgress": "正在更新 {{done}}/{{total}}…"
   },

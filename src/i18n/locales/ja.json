@@ -4847,6 +4847,7 @@
     "rowFail": "{{app}} での有効化に失敗：{{error}}",
     "fixSync": "同期方法を変更",
     "rowMoreAria": "{{name}} のその他の操作",
+    "rowUpdateAria": "{{name}} を更新",
     "openDir": "フォルダーを開く",
     "uninstallEllipsis": "アンインストール",
     "listLabel": "インストール済みの Skill",
@@ -4954,9 +4955,6 @@
       "discoverBody": "一覧が不完全な可能性があります。",
       "updatesBody": "これらのリポジトリの Skill は確認されていないため、結果が不完全な可能性があります。"
     },
-    "headerUpdates": "{{count}} 件の更新",
-    "headerUpdatesShow": "更新がある Skill だけを表示",
-    "headerUpdatesClear": "すべての Skill を表示",
     "updateAllCount": "すべて更新（{{count}} 件）",
     "updatingProgress": "更新中 {{done}}/{{total}}…"
   },

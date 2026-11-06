@@ -4795,6 +4795,7 @@
     "rowFail": "{{app}}'de etkinleştirme başarısız oldu: {{error}}",
     "fixSync": "Eşitleme yöntemini değiştir",
     "rowMoreAria": "{{name}} için diğer işlemler",
+    "rowUpdateAria": "{{name}} öğesini güncelle",
     "openDir": "Klasörü aç",
     "uninstallEllipsis": "Kaldır",
     "listLabel": "Yüklü Beceriler",
@@ -4902,9 +4903,6 @@
       "discoverBody": "Liste eksik olabilir.",
       "updatesBody": "Bu depolardaki beceriler kontrol edilmediğinden sonuçlar eksik olabilir."
     },
-    "headerUpdates": "{{count}} güncellemeleri",
-    "headerUpdatesShow": "Yalnızca güncellemeleri olan Becerileri göster",
-    "headerUpdatesClear": "Tüm Becerileri Göster",
     "updateAllCount": "Tümünü güncelle ({{count}})",
     "updatingProgress": "{{done}}/{{total}} güncelleniyor…"
   },
