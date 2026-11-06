@@ -1196,6 +1196,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     ],
     defaultColor: "currentColor",
   },
+  runcrate: {
+    name: "runcrate",
+    displayName: "Runcrate",
+    category: "ai-provider",
+    keywords: ["runcrate", "run crate", "gpu", "inference"],
+    defaultColor: "currentColor",
+  },
 };
 
 export function getIconMetadata(name: string): IconMetadata | undefined {
