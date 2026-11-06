@@ -81,6 +81,7 @@ cc_acquire() {
   stale=$2
   wait_s=$3
   start=$(date +%s)
+  cc_parent_try=0
   while :; do
     if mkdir -- "$p" 2>/dev/null; then
       stamp=$(stat -c %Y -- "$p")
@@ -94,10 +95,16 @@ cc_acquire() {
         rm -rf -- "$p" 2>/dev/null || true
         continue
       fi
+    elif [ "$cc_parent_try" = 0 ]; then
+      # 和本机 CcLock 一样：父目录还不存在（备份目录 config.prev 等）就先建好再抢，
+      # 不能把「没有这个目录」当成 Claude Code 正拿着锁。
+      mkdir -p -- "$(dirname -- "$p")" 2>/dev/null || true
+      cc_parent_try=1
+      continue
     fi
     now=$(date +%s)
     if [ $((now - start)) -ge "$wait_s" ]; then
-      echo "lock busy" >&2
+      echo "lock busy: $p" >&2
       exit 75
     fi
     sleep 0.1
@@ -115,7 +122,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     LOCK)
       mkdir -p -- "$(dirname -- "$rest")"
       exec 9>"$rest"
-      flock -w 10 9 || { echo "lock busy" >&2; exit 75; }
+      flock -w 10 9 || { echo "lock busy: $rest" >&2; exit 75; }
       ;;
     ACQUIRE)
       path=${rest%%|*}
@@ -446,19 +453,15 @@ fn execute(job: &Job<'_>, runner: &mut dyn Runner) -> Result<Outcome, AppError> 
     if planned.edits.is_empty() {
         return Ok(planned.outcome);
     }
-    let prior = super::load_state(job.ctx.data_dir).journal;
     if let Some(journal) = &planned.journal {
         update_state(job.ctx.data_dir, |state| {
             state.journal = Some(journal.clone());
         })?;
     }
     let payload = render_payload(job.layout, &snap, &planned.edits);
-    if let Err(error) = runner.apply(APPLY_SCRIPT, &payload) {
-        if planned.journal.is_some() {
-            let _ = update_state(job.ctx.data_dir, |state| state.journal = prior);
-        }
-        return Err(error);
-    }
+    // 失败也留下日志。比对失败时什么都没写，下次补完看见默认槽位仍是切换前的登录，
+    // 会把日志清掉。中途被杀掉时可能已经写了一部分，丢掉日志就补不完。
+    runner.apply(APPLY_SCRIPT, &payload)?;
     update_state(job.ctx.data_dir, |state| {
         for (account, secret) in &planned.expiry {
             note_expiry(state, account, secret);
@@ -1202,11 +1205,31 @@ fn run_wsl(layout: &WslLayout, script: &str, payload: &[u8]) -> Result<Vec<u8>, 
     match output.status.code() {
         Some(0) => Ok(output.stdout),
         Some(3) => Err(changed()),
-        Some(75) => Err(AppError::localized(
-            "claude.snapshot.lock_busy",
-            "Claude Code 正在使用登录信息（刷新或登录中），请稍后再切换",
-            "Claude Code is using its sign-in right now (refreshing or signing in). Try switching again in a moment.",
-        )),
+        Some(75) => {
+            let detail = String::from_utf8_lossy(&output.stderr);
+            let path = detail.lines().find_map(|line| {
+                line.trim()
+                    .strip_prefix("lock busy:")
+                    .map(str::trim)
+                    .filter(|path| !path.is_empty())
+            });
+            match path {
+                Some(path) => Err(AppError::localized(
+                    "claude.snapshot.lock_busy",
+                    format!(
+                        "Claude Code 正在使用登录信息（刷新或登录中），请稍后再切换（{path}）"
+                    ),
+                    format!(
+                        "Claude Code is using its sign-in right now (refreshing or signing in). Try switching again in a moment ({path})."
+                    ),
+                )),
+                None => Err(AppError::localized(
+                    "claude.snapshot.lock_busy",
+                    "Claude Code 正在使用登录信息（刷新或登录中），请稍后再切换",
+                    "Claude Code is using its sign-in right now (refreshing or signing in). Try switching again in a moment.",
+                )),
+            }
+        }
         _ => {
             let detail = String::from_utf8_lossy(&output.stderr);
             let detail = detail.trim();
@@ -1885,6 +1908,12 @@ mod tests {
         let error = run(&world, Kind::Switch, &b_key, &b_dir, &mut runner).unwrap_err();
         let _ = error;
         assert_eq!(runner.files.lock().unwrap().clone(), before);
+        assert_eq!(
+            super::super::load_state(&world.data).journal.unwrap().step,
+            Step::Parked
+        );
+        run(&world, Kind::Recover, "", "", &mut runner).unwrap();
+        assert_eq!(runner.files.lock().unwrap().clone(), before);
         assert!(super::super::load_state(&world.data).journal.is_none());
     }
 
@@ -2059,6 +2088,61 @@ mod tests {
         assert_eq!(failed.status.code(), Some(3));
         assert_eq!(std::fs::read(&cred).unwrap(), b"new-token");
         let _ = sha_now;
+    }
+
+    /// 备份目录还不存在时要先建父目录再拿锁。不能把「没有这个目录」报成 Claude 正在刷新。
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn shell_script_creates_a_missing_lock_parent_and_still_reports_a_held_lock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_string_lossy().replace('\\', "/");
+        let missing = format!("{root}/config.prev/.oauth_refresh.lock");
+        let held = format!("{root}/held/.oauth_refresh.lock");
+        std::fs::create_dir_all(&held).unwrap();
+        let switch_lock = format!("{root}/.switch.lock");
+
+        let created = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(APPLY_SCRIPT)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .and_then(|mut child| {
+                use std::io::Write;
+                child.stdin.as_mut().unwrap().write_all(
+                    format!("LOCK|{switch_lock}\nACQUIRE|{missing}|60|1\nEND\n").as_bytes(),
+                )?;
+                drop(child.stdin.take());
+                child.wait_with_output()
+            })
+            .unwrap();
+        assert!(
+            created.status.success(),
+            "{}",
+            String::from_utf8_lossy(&created.stderr)
+        );
+        assert!(!std::path::Path::new(&missing).exists());
+
+        let busy = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(APPLY_SCRIPT)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .and_then(|mut child| {
+                use std::io::Write;
+                child.stdin.as_mut().unwrap().write_all(
+                    format!("LOCK|{switch_lock}\nACQUIRE|{held}|60|1\nEND\n").as_bytes(),
+                )?;
+                drop(child.stdin.take());
+                child.wait_with_output()
+            })
+            .unwrap();
+        assert_eq!(busy.status.code(), Some(75));
+        let stderr = String::from_utf8_lossy(&busy.stderr);
+        assert!(stderr.contains(&format!("lock busy: {held}")), "{stderr}");
     }
 
     #[test]

@@ -387,8 +387,12 @@ fn shell_payload(
 ) -> Result<String, String> {
     let home = home_for_user(user);
     let launch = env_exec(set, unset, claude_args)?;
+    // bash/zsh 能跑这段。fish 的 `$(...)` 不是命令替换，不能把同一段塞进 `fish -c`。
     let in_shell = shell_single_quote(&format!(
         "bin=$(command -v claude) || exit 127\nd=$(dirname \"$bin\")\nPATH=\"$d:$PATH\"\nexport PATH\n{launch}"
+    ));
+    let in_fish = shell_single_quote(&format!(
+        "set bin (command -v claude); or exit 127\nset d (dirname $bin)\nset -gx PATH \"$d\" $PATH\n{launch}"
     ));
     let home_quoted = shell_single_quote(&home);
     Ok(format!(
@@ -398,6 +402,7 @@ case "$cc_shell" in
 esac
 cc_base=${{cc_shell##*/}}
 cc_try={in_shell}
+cc_fish={in_fish}
 if [ -n "$cc_shell" ] && [ -x "$cc_shell" ]; then
   case "$cc_base" in
     bash|zsh)
@@ -407,7 +412,7 @@ if [ -n "$cc_shell" ] && [ -x "$cc_shell" ]; then
       ;;
     fish)
       if "$cc_shell" -l -i -c 'command -v claude >/dev/null 2>&1' </dev/null 2>/dev/null; then
-        exec "$cc_shell" -l -i -c "$cc_try"
+        exec "$cc_shell" -l -i -c "$cc_fish"
       fi
       ;;
   esac
@@ -602,6 +607,10 @@ mod tests {
         assert!(script.contains("/home/me/.cc-switch/claude-accounts/abc/config"));
         assert!(script.contains("CLAUDE_CONFIG_DIR="));
         assert!(script.contains("auth login --claudeai"));
+        assert!(script.contains("exec \"$cc_shell\" -lic \"$cc_try\""));
+        assert!(script.contains("set bin (command -v claude); or exit 127"));
+        assert!(script.contains("exec \"$cc_shell\" -l -i -c \"$cc_fish\""));
+        assert!(!script.contains("exec \"$cc_shell\" -l -i -c \"$cc_try\""));
         assert!(script.contains("Install Claude Code in that distro"));
         assert!(wsl_claude_argv("Ubuntu;id", "me", "/home/me", &[], &[], &["claude"]).is_err());
         assert!(wsl_claude_argv("-Ubuntu", "me", "/home/me", &[], &[], &["claude"]).is_err());

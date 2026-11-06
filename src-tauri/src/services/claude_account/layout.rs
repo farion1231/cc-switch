@@ -28,7 +28,7 @@ pub const NO_BROWSER_FILENAME: &str = ".no-browser";
 ///
 /// Windows 上 Claude 配置目录指向 WSL 的家目录（`/home/<user>` 或 `/root`）时，根在该发行版里，
 /// Windows 通过 `\\wsl.localhost\<distro>\...\.cc-switch\claude-accounts` 读元数据。
-/// 登录和「打开终端」再把这个 UNC 转成 Linux 路径交给发行版里的 `claude`。
+/// 登录、「打开终端」和切卡再把这个 UNC 转成 Linux 路径，在发行版里操作。
 /// 其他情况仍是 `<data_dir>/claude-accounts`（Windows 本机、macOS、Linux 不变）。
 pub fn accounts_root(data_dir: &Path) -> PathBuf {
     if let Some(root) = wsl_accounts_root() {
