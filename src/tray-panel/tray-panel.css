@@ -1,4 +1,4 @@
-/* macOS 背景交给系统玻璃，其余平台只给卡片画磨砂背景；画布本身始终透明 */
+/* macOS 背景交给系统玻璃；Windows 保留透明画布，Linux 在内层画布铺实色。 */
 html,
 body.tray-panel,
 body.tray-panel #root {
@@ -68,14 +68,20 @@ html.dark[data-glass="frosted"] .tp-card {
     inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
-/* Windows：移除整窗 Acrylic 后，卡片自己提供完整底色，避免桌面内容透进菜单。
-   保留卡片上的控件、选中态和用量区块的层次；只有卡片之外的画布透明。 */
-html [data-platform="windows"] .tp-card {
+/* Windows / Linux：卡片自己提供完整底色，避免桌面内容透进菜单。
+   Linux WebKitGTK 使用软件渲染；不依赖 backdrop-filter 的合成层，避免轻量模式
+   重建面板后悬停或调整大小时出现透明缺块（#9216）。
+   保留卡片上的控件、选中态和用量区块的层次；Windows 卡片之外的画布仍透明。 */
+html [data-platform="windows"] .tp-card,
+html [data-platform="linux"],
+html [data-platform="linux"] .tp-card {
   background: #ebebed;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
-html.dark [data-platform="windows"] .tp-card {
+html.dark [data-platform="windows"] .tp-card,
+html.dark [data-platform="linux"],
+html.dark [data-platform="linux"] .tp-card {
   background: #242428;
 }
 
