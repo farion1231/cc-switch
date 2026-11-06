@@ -43,6 +43,7 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
   dsh: ["~/.dsh/sessions/<project>/<session>/session.v*.jsonl[.zstd]"],
   agy: [
     "~/.gemini/antigravity-cli/brain/<conversation>/.system_generated/logs",
+    "~/.gemini/antigravity/brain/<conversation>/.system_generated/logs",
   ],
 };
 

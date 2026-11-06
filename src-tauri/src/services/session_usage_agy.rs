@@ -15,24 +15,24 @@ use std::path::Path;
 mod native_models;
 
 pub fn sync_agy_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
+    sync_agy_usage_from_files(db, agy::transcript_files())
+}
+
+fn sync_agy_usage_from_files(
+    db: &Database,
+    files: Vec<(String, std::path::PathBuf)>,
+) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();
-    for session in agy::scan_sessions() {
-        let Some(path) = session.source_path else {
-            continue;
-        };
+    for (session_id, path) in files {
         result.files_scanned += 1;
-        match agy::records(std::path::Path::new(&path)) {
-            Ok(rows) => {
-                match import_records(db, &session.session_id, &rows, Some(Path::new(&path))) {
-                    Ok((imported, skipped)) => {
-                        result.imported += imported;
-                        result.skipped += skipped;
-                    }
-                    Err(e) => result
-                        .errors
-                        .push(format!("Antigravity {}: {e}", session.session_id)),
+        match agy::records(&path) {
+            Ok(rows) => match import_records(db, &session_id, &rows, Some(&path)) {
+                Ok((imported, skipped)) => {
+                    result.imported += imported;
+                    result.skipped += skipped;
                 }
-            }
+                Err(e) => result.errors.push(format!("Antigravity {session_id}: {e}")),
+            },
             Err(e) => result.errors.push(e),
         }
     }
@@ -665,5 +665,40 @@ mod tests {
         );
         row["status"] = json!("DONE");
         assert_eq!(import_records(&db, "s", &[row], None).unwrap(), (1, 0));
+    }
+
+    #[test]
+    fn sync_agy_usage_imports_subagent_transcripts_excluded_from_session_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("brain");
+        for (id, line) in [
+            (
+                "main-1",
+                r#"{"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","input_tokens":40,"output_tokens":10}"#,
+            ),
+            (
+                "subagent-1",
+                r#"{"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","input_tokens":120,"output_tokens":30}"#,
+            ),
+        ] {
+            let logs = root.join(id).join(".system_generated/logs");
+            std::fs::create_dir_all(&logs).unwrap();
+            std::fs::write(logs.join("transcript_full.jsonl"), line).unwrap();
+        }
+        let db = Database::memory().unwrap();
+        let files = agy::transcript_files_in_roots(&[(root, None)]);
+        let res = sync_agy_usage_from_files(&db, files).unwrap();
+        assert_eq!(res.files_scanned, 2);
+        assert_eq!(res.imported, 2);
+        assert!(res.errors.is_empty());
+        let conn = db.conn.lock().unwrap();
+        let total_input: i64 = conn
+            .query_row(
+                "SELECT SUM(input_tokens) FROM proxy_request_logs WHERE app_type='agy'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(total_input, 160);
     }
 }
