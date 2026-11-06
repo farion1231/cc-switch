@@ -2867,12 +2867,32 @@ fn windows_runnable_sibling_for_extensionless_tool(path: &Path) -> Option<std::p
         .find(|candidate| candidate.is_file())
 }
 
+/// Pi ships only through npm, but PyPI has an unrelated Python 2 package also named
+/// `pi` whose console script lands in a Python `Scripts` dir as `pi.exe`. That file is
+/// never the Pi coding agent: probing it reports a Python traceback as "installed but
+/// broken", and uninstall would target it (#9267). Only pip's own layout is matched
+/// (`<tool>.exe` directly inside a `Scripts` dir); npm writes `.cmd` shims, so a custom
+/// npm prefix under some `Scripts` folder is left alone.
+#[cfg(any(target_os = "windows", test))]
+fn is_foreign_pip_launcher(tool: &str, path: &Path) -> bool {
+    tool == "pi"
+        && path
+            .to_string_lossy()
+            .replace('\\', "/")
+            .to_ascii_lowercase()
+            .ends_with(&format!("/scripts/{tool}.exe"))
+}
+
 /// OpenCode Desktop has shipped both root-level and Electron `resources/` CLI sidecars.
 /// Some Electron releases omitted the sidecar; `resources/app.asar` still identifies the
 /// Desktop bundle, so skip its GUI instead of probing `opencode.exe` with `--version`.
 /// A standalone OpenCode CLI install remains valid when no Desktop marker is present.
+/// Also skips launchers that only share the tool's name (`is_foreign_pip_launcher`).
 #[cfg(target_os = "windows")]
 fn windows_preferred_tool_executable(tool: &str, path: &Path) -> Option<std::path::PathBuf> {
+    if is_foreign_pip_launcher(tool, path) {
+        return None;
+    }
     if tool == "opencode"
         && path
             .file_name()
@@ -11858,6 +11878,64 @@ mod tests {
         assert_eq!(
             windows_preferred_tool_executable("opencode", &standalone),
             Some(standalone)
+        );
+    }
+
+    #[test]
+    fn foreign_pip_launcher_only_rejects_pi_exe_in_scripts_dir() {
+        let pip_pi = Path::new(r"D:\soft\Python\Python311\Scripts\pi.exe");
+        assert!(is_foreign_pip_launcher("pi", pip_pi));
+        assert!(is_foreign_pip_launcher(
+            "pi",
+            Path::new(r"C:\venvs\tools\SCRIPTS\PI.EXE")
+        ));
+        assert!(!is_foreign_pip_launcher(
+            "pi",
+            Path::new(r"C:\Users\me\AppData\Roaming\npm\pi.cmd")
+        ));
+        // A custom npm prefix under a `Scripts` folder writes `.cmd` shims.
+        assert!(!is_foreign_pip_launcher(
+            "pi",
+            Path::new(r"D:\Scripts\npm-global\pi.cmd")
+        ));
+        assert!(!is_foreign_pip_launcher(
+            "pi",
+            Path::new(r"D:\Scripts\pi.cmd")
+        ));
+        // Bun's global shims are `.exe` but live in `.bun\bin`.
+        assert!(!is_foreign_pip_launcher(
+            "pi",
+            Path::new(r"C:\Users\me\.bun\bin\pi.exe")
+        ));
+        // Hermes really is installed by pip.
+        assert!(!is_foreign_pip_launcher(
+            "hermes",
+            Path::new(r"D:\soft\Python\Python311\Scripts\hermes.exe")
+        ));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_path_default_skips_pip_pi_and_uses_npm_pi() {
+        let root = tempfile::tempdir().expect("temp dir should be created");
+        let scripts = root.path().join("Python311").join("Scripts");
+        std::fs::create_dir_all(&scripts).expect("Scripts dir should be created");
+        let pip_pi = scripts.join("pi.exe");
+        std::fs::write(&pip_pi, "").expect("pip launcher should be created");
+        assert!(tool_executable_candidates("pi", &scripts)
+            .iter()
+            .all(|candidate| candidate != &pip_pi));
+
+        let npm = root.path().join("npm");
+        std::fs::create_dir_all(&npm).expect("npm dir should be created");
+        let npm_pi = npm.join("pi.cmd");
+        std::fs::write(&npm_pi, "").expect("npm shim should be created");
+
+        let raw = format!("{}\r\n{}\r\n", pip_pi.display(), npm_pi.display());
+        assert_eq!(windows_preferred_path_default("pi", &raw), Some(npm_pi));
+        assert_eq!(
+            windows_preferred_path_default("pi", &format!("{}\r\n", pip_pi.display())),
+            None
         );
     }
 
