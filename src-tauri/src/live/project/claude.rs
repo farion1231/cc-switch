@@ -1031,8 +1031,9 @@ mod tests {
         let row = json!({ "env": { "ANTHROPIC_AUTH_TOKEN": "sk" } });
         let projection = proxy_projection(
             &ClaudeProjection::of(&row),
+            "Route",
             "http://127.0.0.1:15721",
-            ProxyAuth::FollowRow,
+            ProxyAuth::AuthToken,
             None,
         );
 
@@ -1051,8 +1052,9 @@ mod tests {
         }});
         let projection = proxy_projection(
             &ClaudeProjection::of(&row),
+            "Route",
             "http://127.0.0.1:15721",
-            ProxyAuth::FollowRow,
+            ProxyAuth::AuthToken,
             None,
         );
 
