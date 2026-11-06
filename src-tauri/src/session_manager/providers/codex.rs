@@ -34,8 +34,8 @@ use super::codex_items::{
 };
 
 use super::utils::{
-    extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
-    FileParseCache, JsonlSpan, LineSpans, TITLE_MAX_CHARS,
+    collect_files, extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines,
+    truncate_summary, FileParseCache, JsonlSpan, LineSpans, TITLE_MAX_CHARS,
 };
 
 const PROVIDER_ID: &str = "codex";
@@ -94,7 +94,8 @@ fn scan_sessions_in_roots_with_titles(
 }
 
 /// 会话页每次打开都会全量扫描；没变过的文件直接复用上次的解析结果。
-static PARSE_CACHE: LazyLock<FileParseCache> = LazyLock::new(FileParseCache::new);
+static PARSE_CACHE: LazyLock<FileParseCache> =
+    LazyLock::new(|| FileParseCache::persistent("codex"));
 
 fn load_thread_titles() -> HashMap<String, String> {
     let config_dir = get_codex_config_dir();
@@ -2174,23 +2175,7 @@ fn infer_session_id_from_filename(path: &Path) -> Option<String> {
 }
 
 fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
-    if !root.exists() {
-        return;
-    }
-
-    let entries = match std::fs::read_dir(root) {
-        Ok(entries) => entries,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_jsonl_files(&path, files);
-        } else if codex_rollout_file::is_rollout_file(&path) {
-            files.push(path);
-        }
-    }
+    collect_files(root, files, &codex_rollout_file::is_rollout_file);
 }
 
 #[cfg(test)]

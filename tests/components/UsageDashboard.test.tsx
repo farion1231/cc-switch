@@ -18,6 +18,7 @@ const requestLogTableMock = vi.hoisted(() => vi.fn());
 const detailPanelMock = vi.hoisted(() => vi.fn());
 const usageApiMock = vi.hoisted(() => ({
   getUsageSummary: vi.fn(),
+  hasUsageData: vi.fn(),
   syncSessionUsage: vi.fn(),
   getSessionUsageLastSync: vi.fn(),
   rebuildCodexUsage: vi.fn(),
@@ -209,6 +210,7 @@ describe("UsageDashboard", () => {
     useModelStatsMock.mockReturnValue({ data: [] });
     useSummaryByAppMock.mockReturnValue({ data: [] });
     usageApiMock.getUsageSummary.mockResolvedValue({ totalRequests: 5 });
+    usageApiMock.hasUsageData.mockResolvedValue(true);
     usageApiMock.getSessionUsageLastSync.mockReset().mockResolvedValue(null);
     usageApiMock.syncSessionUsage.mockResolvedValue({
       imported: 2,
@@ -731,7 +733,7 @@ describe("UsageDashboard", () => {
   });
 
   it("shows the empty state when there is no usage at all", async () => {
-    usageApiMock.getUsageSummary.mockResolvedValue({ totalRequests: 0 });
+    usageApiMock.hasUsageData.mockResolvedValue(false);
     renderDashboard();
 
     expect(await screen.findByText("usage.empty.title")).toBeInTheDocument();
@@ -739,7 +741,7 @@ describe("UsageDashboard", () => {
   });
 
   it("still lets pricing be opened from the empty state", async () => {
-    usageApiMock.getUsageSummary.mockResolvedValue({ totalRequests: 0 });
+    usageApiMock.hasUsageData.mockResolvedValue(false);
     const user = userEvent.setup();
     renderDashboard();
 

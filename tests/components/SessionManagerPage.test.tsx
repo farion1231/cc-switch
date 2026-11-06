@@ -307,6 +307,24 @@ describe("SessionManagerPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps the search query while switching between visible apps", async () => {
+    renderPage("codex");
+    await screen.findByText("Alpha Session");
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索会话" }), {
+      target: { value: "Session" },
+    });
+    await openAppMenu();
+    await userEvent.click(
+      screen.getByRole("menuitemradio", { name: /^Claude Code/ }),
+    );
+    await screen.findByRole("button", { name: "Claude Session" });
+    await openAppMenu();
+    await userEvent.click(
+      screen.getByRole("menuitemradio", { name: /^Codex/ }),
+    );
+    await screen.findByRole("button", { name: "Alpha Session" });
+  });
+
   it("only offers apps that are shown in the sidebar", async () => {
     setSettings({
       visibleApps: {

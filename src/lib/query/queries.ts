@@ -9,6 +9,7 @@ import {
 } from "@/lib/api";
 import type { Provider, Settings, UsageResult, SessionMeta } from "@/types";
 import { usageKeys } from "@/lib/query/usage";
+import { endSessionTrace, startSessionTrace } from "@/lib/sessionPerf";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
 const sortProviders = (
@@ -308,7 +309,12 @@ export const useUsageQuery = (
 export const useSessionsQuery = () => {
   return useQuery<SessionMeta[]>({
     queryKey: ["sessions"],
-    queryFn: async () => sessionsApi.list(),
+    queryFn: async () => {
+      startSessionTrace("list");
+      const sessions = await sessionsApi.list();
+      endSessionTrace("list", `fetched(${sessions.length})`);
+      return sessions;
+    },
     staleTime: 30 * 1000,
   });
 };

@@ -24,6 +24,7 @@
 //! ```
 
 pub(crate) mod backup;
+mod config_cache;
 mod dao;
 mod migration;
 mod schema;
@@ -45,7 +46,8 @@ use crate::config::get_app_config_dir;
 use crate::error::AppError;
 use rusqlite::{hooks::Action, Connection};
 use serde::Serialize;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 // DAO 方法通过 impl Database 提供，无需额外导出
 
@@ -79,12 +81,19 @@ pub struct Database {
     pub(crate) conn: Mutex<Connection>,
     /// 请求日志总数缓存，见 `services::usage_stats::LogCountCache`
     pub(crate) log_count_cache: Mutex<Option<crate::services::usage_stats::LogCountCache>>,
+    /// 统计查询去重窗口计数的缓存，见 `services::usage_stats::DedupScopeCache`
+    pub(crate) dedup_scope_cache: Mutex<Option<crate::services::usage_stats::DedupScopeCache>>,
+    /// 代理请求路径上的配置读缓存，见 [`config_cache`]
+    pub(crate) config_cache: config_cache::ConfigCache,
 }
 
-fn register_db_change_hook(conn: &Connection) {
+fn register_db_change_hook(conn: &Connection, config_generation: Arc<AtomicU64>) {
     conn.update_hook(Some(
-        |action: Action, _database: &str, table: &str, _row_id: i64| match action {
+        move |action: Action, _database: &str, table: &str, _row_id: i64| match action {
             Action::SQLITE_INSERT | Action::SQLITE_UPDATE | Action::SQLITE_DELETE => {
+                if config_cache::invalidates_config_cache(table) {
+                    config_generation.fetch_add(1, Ordering::AcqRel);
+                }
                 crate::services::webdav_auto_sync::notify_db_changed(table);
                 crate::services::s3_auto_sync::notify_db_changed(table);
             }
@@ -117,11 +126,15 @@ impl Database {
             conn.execute("PRAGMA auto_vacuum = INCREMENTAL;", [])
                 .map_err(|e| AppError::Database(e.to_string()))?;
         }
-        register_db_change_hook(&conn);
+        Self::enable_wal(&conn);
+        let config_cache = config_cache::ConfigCache::new();
+        register_db_change_hook(&conn, config_cache.generation_handle());
 
         let db = Self {
             conn: Mutex::new(conn),
             log_count_cache: Mutex::new(None),
+            dedup_scope_cache: Mutex::new(None),
+            config_cache,
         };
         db.create_tables()?;
 
@@ -156,6 +169,27 @@ impl Database {
         Ok(db)
     }
 
+    /// 主库改用 WAL：提交时只追加写日志，不再回写主文件和回滚日志，减少每次提交的同步次数。
+    ///
+    /// 同步级别保持 `synchronous = FULL`：每次提交都把 WAL 刷到磁盘，断电也不丢已提交的
+    /// 数据（供应商、设置等配置数据同样写在主库里，不为写入速度降低持久性）。
+    /// 网络盘等不支持共享内存的位置切换会失败，此时保持原模式继续用。
+    /// 备份、恢复都走 Backup API，同步走 SQL 导出，都不直接复制库文件，不受影响。
+    pub(crate) fn enable_wal(conn: &Connection) {
+        match conn.query_row("PRAGMA journal_mode = WAL;", [], |row| {
+            row.get::<_, String>(0)
+        }) {
+            Ok(mode) if mode.eq_ignore_ascii_case("wal") => {
+                // 显式设置，不依赖 SQLite 编译期默认值
+                if let Err(e) = conn.execute_batch("PRAGMA synchronous = FULL;") {
+                    log::warn!("Failed to set synchronous=FULL for WAL: {e}");
+                }
+            }
+            Ok(mode) => log::warn!("WAL is unavailable here, keeping journal_mode={mode}"),
+            Err(e) => log::warn!("Failed to enable WAL, keeping the current journal mode: {e}"),
+        }
+    }
+
     /// 读取磁盘上数据库的 `user_version`；仅当它比应用支持的 [`SCHEMA_VERSION`]
     /// 更新时返回 `Some(version)`。
     ///
@@ -181,11 +215,14 @@ impl Database {
             .map_err(|e| AppError::Database(e.to_string()))?;
         conn.execute("PRAGMA auto_vacuum = INCREMENTAL;", [])
             .map_err(|e| AppError::Database(e.to_string()))?;
-        register_db_change_hook(&conn);
+        let config_cache = config_cache::ConfigCache::new();
+        register_db_change_hook(&conn, config_cache.generation_handle());
 
         let db = Self {
             conn: Mutex::new(conn),
             log_count_cache: Mutex::new(None),
+            dedup_scope_cache: Mutex::new(None),
+            config_cache,
         };
         db.create_tables()?;
         db.ensure_model_pricing_seeded()?;

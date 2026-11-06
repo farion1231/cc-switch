@@ -13,7 +13,11 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import type { SessionTranscriptResult } from "@/lib/query/sessions";
+import {
+  transcriptTraceId,
+  type SessionTranscriptResult,
+} from "@/lib/query/sessions";
+import { endSessionTrace, markSessionTrace } from "@/lib/sessionPerf";
 import { toast } from "@/lib/toast";
 
 import { sessionsApi } from "@/lib/api";
@@ -211,6 +215,7 @@ export function SessionReader({
     [session.providerId],
   );
   const failed = transcript.isError;
+  const traceId = transcriptTraceId(session.sourcePath ?? undefined);
 
   // 流式数据每到一批就重建 turn；交给低优先级渲染，滚动和点击不被打断
   const messages = useDeferredValue(transcript.messages);
@@ -273,6 +278,24 @@ export function SessionReader({
   const activeKey = activeRowIndex >= 0 ? rows[activeRowIndex].key : null;
   // 高亮词跟命中计算用同一个低优先级值：长会话里每次按键都整页重新解析 Markdown 会卡输入
   const highlightQuery = deferredFind || listQuery;
+
+  // 打点：第一批内容画出来、全部内容画出来
+  const hasRows = rows.length > 0;
+  const settled = !transcript.isStreaming && messages === transcript.messages;
+  useEffect(() => {
+    if (!hasRows) return;
+    const frame = requestAnimationFrame(() =>
+      markSessionTrace(traceId, "firstPaint"),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [hasRows, traceId]);
+  useEffect(() => {
+    if (!settled) return;
+    const frame = requestAnimationFrame(() =>
+      endSessionTrace(traceId, "rendered"),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [settled, traceId]);
 
   const virtualizer = useVirtualizer({
     count: rows.length,

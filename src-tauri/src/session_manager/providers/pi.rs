@@ -2,16 +2,19 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::session_manager::{SessionMessage, SessionMeta};
 
+use super::codex_items::{opt_str, Str};
 use super::pi_blocks::PiTranscript;
 use super::utils::for_each_jsonl_value;
 use super::utils::{
-    extract_text, parse_timestamp_to_ms, path_basename, truncate_summary, TITLE_MAX_CHARS,
+    extract_text, parse_timestamp_to_ms, path_basename, truncate_summary, FileParseCache,
+    TITLE_MAX_CHARS,
 };
 use crate::session_manager::terminal::shell_escape;
 
@@ -60,6 +63,7 @@ pub(crate) struct Dialect {
     pub label: &'static str,
     pub resolve_root: fn() -> SessionRootResolution,
     pub resume_command: fn(&str) -> Result<String, String>,
+    pub parse_cache: &'static LazyLock<FileParseCache>,
     /// Oh My Pi：首行可能是定宽的 `{"type":"title"}` 标题槽，会话头里也可能带 `title`
     pub title_slot: bool,
     /// Oh My Pi 的 `model_change` 只写 `provider/id` 一个串，Pi 拆成 `provider` + `modelId`
@@ -71,9 +75,12 @@ const PI: Dialect = Dialect {
     label: "Pi",
     resolve_root: resolve_session_root,
     resume_command: |source| Ok(format!("pi --session {}", shell_escape(source))),
+    parse_cache: &PARSE_CACHE,
     title_slot: false,
     model_selector: false,
 };
+
+static PARSE_CACHE: LazyLock<FileParseCache> = LazyLock::new(|| FileParseCache::persistent("pi"));
 
 #[derive(Debug)]
 struct SessionHeader {
@@ -88,7 +95,6 @@ struct SessionHeader {
 struct SessionTree {
     header: SessionHeader,
     active_entry_indexes: HashSet<usize>,
-    summary: SessionSummary,
 }
 
 #[derive(Debug, Default)]
@@ -278,18 +284,30 @@ pub(crate) fn scan_sessions_for(d: &Dialect) -> Vec<SessionMeta> {
 fn scan_sessions_in_root(d: &Dialect, root: &Path, layout: SessionLayout) -> Vec<SessionMeta> {
     let mut files = Vec::new();
     collect_jsonl_files(root, layout, &mut files, true);
-    files
+    scan_session_files(d, files, d.parse_cache)
+}
+
+fn scan_session_files(
+    d: &Dialect,
+    files: Vec<PathBuf>,
+    cache: &FileParseCache,
+) -> Vec<SessionMeta> {
+    cache
+        .scan(files, |path| {
+            // 读取失败不能记为永久空结果，下一轮即使 mtime 未变也必须重试。
+            parse_session_metadata(d, path)
+                .map(Some)
+                .map_err(std::io::Error::other)
+        })
         .into_iter()
-        .filter_map(|path| match parse_session(d, &path) {
-            Ok(session) => Some(session),
-            Err(error) => {
-                log::debug!(
-                    "Skipping invalid {} session {}: {error}",
-                    d.label,
-                    path.display()
-                );
-                None
-            }
+        .filter_map(|mut session| {
+            // OMP 的命令还依赖当前 profile/环境；文件没变也要刷新这些设置。
+            session.resume_command = Some(
+                (d.resume_command)(session.source_path.as_deref()?)
+                    .map_err(|error| log::debug!("{} resume command: {error}", d.label))
+                    .ok()?,
+            );
+            Some(session)
         })
         .collect()
 }
@@ -384,7 +402,7 @@ fn layout_for_current_root(d: &Dialect, root: &Path) -> Result<SessionLayout, St
     Ok(layout)
 }
 
-fn parse_session(d: &Dialect, path: &Path) -> Result<SessionMeta, String> {
+fn parse_session_metadata(d: &Dialect, path: &Path) -> Result<SessionMeta, String> {
     let source = path.canonicalize().map_err(|error| {
         format!(
             "Failed to resolve {} session {}: {error}",
@@ -396,9 +414,7 @@ fn parse_session(d: &Dialect, path: &Path) -> Result<SessionMeta, String> {
         .to_str()
         .ok_or_else(|| format!("{} session path is not valid UTF-8", d.label))?
         .to_string();
-    let SessionTree {
-        header, summary, ..
-    } = read_tree(d, &source)?;
+    let (header, summary) = read_list_summary(d, &source)?;
     let title = summary.explicit_name.flatten().or_else(|| {
         summary
             .first_user_message
@@ -420,7 +436,7 @@ fn parse_session(d: &Dialect, path: &Path) -> Result<SessionMeta, String> {
         project_dir: (!header.cwd.trim().is_empty()).then(|| header.cwd.clone()),
         created_at: header.timestamp,
         last_active_at: summary.last_active_at.or(header.timestamp),
-        resume_command: Some((d.resume_command)(&source_path)?),
+        resume_command: None,
         source_path: Some(source_path),
     })
 }
@@ -436,7 +452,8 @@ fn read_tree(d: &Dialect, path: &Path) -> Result<SessionTree, String> {
     let mut latest_id = None;
     let mut legacy_previous_id = None;
     let mut entry_index = 0usize;
-    let mut summary = SessionSummary::default();
+    // 只有列表用摘要，这里的标题不需要
+    let mut unused_summary = SessionSummary::default();
     for line in reader.lines() {
         let line = line.map_err(|error| format!("Failed to read {label} session: {error}"))?;
         if line.trim().is_empty() {
@@ -446,15 +463,7 @@ fn read_tree(d: &Dialect, path: &Path) -> Result<SessionTree, String> {
             continue;
         };
         if header.is_none() {
-            if d.title_slot && value.get("type").and_then(Value::as_str) == Some("title") {
-                summary.explicit_name = Some(non_empty_text(value.get("title")));
-                continue;
-            }
-            let parsed = parse_header(d, &value)?;
-            if summary.explicit_name.is_none() && parsed.title.is_some() {
-                summary.explicit_name = Some(parsed.title.clone());
-            }
-            header = Some(parsed);
+            header = read_header_line(d, &value, &mut unused_summary)?;
             continue;
         }
         entry_index += 1;
@@ -463,7 +472,6 @@ fn read_tree(d: &Dialect, path: &Path) -> Result<SessionTree, String> {
                 "{label} session exceeds the {MAX_TREE_ENTRIES}-entry safety limit"
             ));
         }
-        update_session_summary(&mut summary, &value);
         let version = header
             .as_ref()
             .map_or(1, |item: &SessionHeader| item.version);
@@ -500,7 +508,98 @@ fn read_tree(d: &Dialect, path: &Path) -> Result<SessionTree, String> {
     Ok(SessionTree {
         header,
         active_entry_indexes,
-        summary,
+    })
+}
+
+/// 处理会话头之前的一行：返回解析出的会话头；Oh My Pi 的标题槽不算会话头，返回 `None`。
+fn read_header_line(
+    d: &Dialect,
+    value: &Value,
+    summary: &mut SessionSummary,
+) -> Result<Option<SessionHeader>, String> {
+    if d.title_slot && value.get("type").and_then(Value::as_str) == Some("title") {
+        summary.explicit_name = Some(non_empty_text(value.get("title")));
+        return Ok(None);
+    }
+    let parsed = parse_header(d, value)?;
+    if summary.explicit_name.is_none() && parsed.title.is_some() {
+        summary.explicit_name = Some(parsed.title.clone());
+    }
+    Ok(Some(parsed))
+}
+
+/// 列表只要会话头和摘要，不需要活动分支。空行、坏行、会话头与条目上限的处理和
+/// [`read_tree`] 一致；[`entry_affects_summary`] 判定不影响摘要的行不构建 JSON 树。
+fn read_list_summary(d: &Dialect, path: &Path) -> Result<(SessionHeader, SessionSummary), String> {
+    let label = d.label;
+    validate_file_size(d, path)?;
+    let reader = BufReader::new(
+        File::open(path).map_err(|error| format!("Failed to open {label} session: {error}"))?,
+    );
+    let mut header = None;
+    let mut entry_index = 0usize;
+    let mut summary = SessionSummary::default();
+    let mut count_entry = || {
+        entry_index += 1;
+        if entry_index > MAX_TREE_ENTRIES {
+            return Err(format!(
+                "{label} session exceeds the {MAX_TREE_ENTRIES}-entry safety limit"
+            ));
+        }
+        Ok(())
+    };
+    for line in reader.lines() {
+        let line = line.map_err(|error| format!("Failed to read {label} session: {error}"))?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        if header.is_some() && entry_affects_summary(&line) == Some(false) {
+            count_entry()?;
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if header.is_none() {
+            header = read_header_line(d, &value, &mut summary)?;
+            continue;
+        }
+        count_entry()?;
+        update_session_summary(&mut summary, &value);
+    }
+    let header = header.ok_or_else(|| format!("{label} session has no valid header"))?;
+    Ok((header, summary))
+}
+
+/// [`update_session_summary`] 需要看的字段；其余（尤其是工具输出）只扫过不解析。
+#[derive(Deserialize)]
+struct EntryProbe<'a> {
+    #[serde(rename = "type", default, borrow)]
+    kind: Option<Str<'a>>,
+    #[serde(default, borrow)]
+    message: Option<MessageProbe<'a>>,
+}
+
+#[derive(Deserialize)]
+struct MessageProbe<'a> {
+    #[serde(default, borrow)]
+    role: Option<Str<'a>>,
+}
+
+/// 这一行会不会改变摘要。形状不合预期（字段类型不对、重复键、坏行）时返回 `None`，
+/// 由调用方按完整 JSON 处理，保证判断不了的行不会被跳过。
+fn entry_affects_summary(line: &str) -> Option<bool> {
+    let probe = serde_json::from_str::<EntryProbe>(line).ok()?;
+    Some(match opt_str(&probe.kind) {
+        Some("session_info") => true,
+        Some("message") => matches!(
+            probe
+                .message
+                .as_ref()
+                .and_then(|message| opt_str(&message.role)),
+            Some("user" | "assistant")
+        ),
+        _ => false,
     })
 }
 
@@ -864,6 +963,180 @@ fn collect_child_session_files(dir: &Path, output: &mut Vec<PathBuf>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Uncached reference: metadata plus the current runtime resume settings.
+    fn parse_session(d: &Dialect, path: &Path) -> Result<SessionMeta, String> {
+        let mut session = parse_session_metadata(d, path)?;
+        session.resume_command = Some((d.resume_command)(session.source_path.as_deref().unwrap())?);
+        Ok(session)
+    }
+
+    #[test]
+    fn list_cache_refreshes_changed_files_and_resume_settings() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("session.jsonl");
+        write_session_header(&path, "cached");
+        let cache = FileParseCache::new();
+        let scan = |dialect: &Dialect| scan_session_files(dialect, vec![path.clone()], &cache);
+        let first = scan(&PI);
+        assert_eq!(first.len(), 1);
+        assert_eq!(
+            serde_json::to_value(scan(&PI)).unwrap(),
+            serde_json::to_value(&first).unwrap()
+        );
+
+        // Commands depend on settings in addition to the fingerprinted file.
+        let changed_settings = Dialect {
+            resume_command: |_| Ok("new profile command".to_string()),
+            ..PI
+        };
+        assert_eq!(
+            scan(&changed_settings)[0].resume_command.as_deref(),
+            Some("new profile command")
+        );
+
+        use std::io::Write;
+        let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        writeln!(
+            file,
+            "{}",
+            serde_json::json!({"type":"session_info", "name":"Renamed"})
+        )
+        .unwrap();
+        drop(file);
+        assert_eq!(scan(&PI)[0].title.as_deref(), Some("Renamed"));
+        fs::remove_file(&path).unwrap();
+        assert!(scan(&PI).is_empty());
+    }
+
+    #[test]
+    fn list_cache_retries_errors_even_with_an_unchanged_fingerprint() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("session.jsonl");
+        let valid = r#"{"type":"session","version":3,"id":"one","cwd":"/work"}"#;
+        fs::write(&path, valid.replace("session", "invalid")).unwrap();
+        let modified = fs::metadata(&path).unwrap().modified().unwrap();
+        let cache = FileParseCache::new();
+        assert!(scan_session_files(&PI, vec![path.clone()], &cache).is_empty());
+        fs::write(&path, valid).unwrap();
+        File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+        assert_eq!(
+            scan_session_files(&PI, vec![path], &cache)[0].session_id,
+            "one"
+        );
+    }
+
+    #[test]
+    #[ignore = "synthetic list benchmark; run with --ignored --nocapture"]
+    fn benchmark_pi_list_cache() {
+        use std::time::Instant;
+        let temp = tempfile::tempdir().unwrap();
+        let header = r#"{"type":"session","version":3,"id":"bench","cwd":"/work"}"#;
+        let tool = serde_json::json!({"type":"message","message":{"role":"toolResult","content":"x".repeat(16 * 1024)}});
+        let body = format!("{header}\n{}", format!("{tool}\n").repeat(8));
+        let files: Vec<_> = (0..512)
+            .map(|i| {
+                let path = temp.path().join(format!("{i}.jsonl"));
+                fs::write(&path, &body).unwrap();
+                path
+            })
+            .collect();
+        let cache = FileParseCache::new();
+        let start = Instant::now();
+        let reference = super::super::utils::scan_files(files.clone(), |path| {
+            parse_session(&PI, path)
+                .map(Some)
+                .map_err(std::io::Error::other)
+        });
+        let baseline = start.elapsed();
+        let start = Instant::now();
+        let cold = scan_session_files(&PI, files.clone(), &cache);
+        let cold_time = start.elapsed();
+        let start = Instant::now();
+        let warm = scan_session_files(&PI, files.clone(), &cache);
+        let warm_time = start.elapsed();
+        let changed = files[0].clone();
+        fs::write(
+            &changed,
+            format!("{body}{{\"type\":\"session_info\",\"name\":\"updated\"}}\n"),
+        )
+        .unwrap();
+        let start = Instant::now();
+        let updated = scan_session_files(&PI, files, &cache);
+        let changed_time = start.elapsed();
+        assert_eq!(
+            serde_json::to_value(&reference).unwrap(),
+            serde_json::to_value(cold).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&reference).unwrap(),
+            serde_json::to_value(warm).unwrap()
+        );
+        assert_eq!(updated[0].title.as_deref(), Some("updated"));
+        eprintln!("Pi 512 files / {} MiB: uncached={baseline:?}, cold={cold_time:?}, warm={warm_time:?}, one_changed={changed_time:?}", body.len() * 512 / 1024 / 1024);
+    }
+
+    /// 列表用的轻量读取必须和完整读取算出同一份摘要，包括探测判断不了的行
+    #[test]
+    fn list_summary_matches_the_full_tree_summary() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("session.jsonl");
+        let lines = [
+            r#"{"type":"session","version":3,"id":"s1","cwd":"/work","timestamp":"2026-03-06T10:00:00Z"}"#,
+            r#"{"type":"message","id":"a1","message":{"role":"user","content":"   ","timestamp":1772791300000}}"#,
+            r#"{"type":"message","id":"a2","message":{"content":[{"type":"text","text":"first question"}],"timestamp":1772791301000,"role":"user"}}"#,
+            r#"{"type":"message","id":"a3","message":{"role":"toolResult","content":"huge output","timestamp":1772799999000}}"#,
+            r#"not json at all"#,
+            r#"12345"#,
+            r#"{"type":5,"message":"not an object"}"#,
+            r#"{"type":"message","type":"message","id":"a4","message":{"role":"assistant","content":"duplicate key","timestamp":1772791302000}}"#,
+            r#"{"type":"session_info","id":"a5","name":"  Renamed  "}"#,
+            r#"{"type":"message","id":"a6","message":{"role":"user","content":"escaped","timestamp":1772791303000}}"#,
+            r#"{"type":"model_change","id":"a7","model":"m"}"#,
+            r#"{"type":"message","id":"a8","message":{"role":"assistant","content":"","timestamp":1772799999000}}"#,
+            r#"{"type":"message","id":"a9","timestamp":"2026-03-06T11:00:00Z","message":{"role":"assistant","content":"last answer"}}"#,
+            r#"{"type":"message","id":"a10","message":{"role":"bashExecution","command":"ls","output":"x"}}"#,
+        ];
+        fs::write(&path, lines.join("\n")).expect("write session");
+
+        // 参照：每一行都解析成完整 JSON
+        let mut expected = SessionSummary::default();
+        for line in &lines[1..] {
+            if let Ok(value) = serde_json::from_str::<Value>(line) {
+                update_session_summary(&mut expected, &value);
+            }
+        }
+        let tree = read_tree(&PI, &path).expect("full read");
+
+        let (header, summary) = read_list_summary(&PI, &path).expect("list read");
+
+        assert_eq!(header.id, tree.header.id);
+        assert_eq!(header.cwd, tree.header.cwd);
+        assert_eq!(header.timestamp, tree.header.timestamp);
+        assert_eq!(summary.first_user_message, expected.first_user_message);
+        assert_eq!(summary.last_message, expected.last_message);
+        assert_eq!(summary.explicit_name, expected.explicit_name);
+        assert_eq!(summary.last_active_at, expected.last_active_at);
+        assert_eq!(
+            summary.first_user_message.as_deref(),
+            Some("first question")
+        );
+        assert_eq!(summary.last_message.as_deref(), Some("last answer"));
+    }
+
+    #[test]
+    fn list_summary_rejects_a_file_without_a_header() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("session.jsonl");
+        fs::write(&path, "{\"type\":\"message\"}\n").expect("write session");
+
+        assert!(read_list_summary(&PI, &path).is_err());
+    }
 
     fn write_session_header(path: &Path, id: &str) {
         fs::create_dir_all(path.parent().expect("session parent")).expect("create session parent");

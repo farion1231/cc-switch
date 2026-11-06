@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -8,7 +9,8 @@ use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::blocks::{assign_turn_ids, openai_tool_calls, tool_result_block};
 use super::utils::{
-    extract_text, for_each_jsonl_value, parse_timestamp_to_ms, truncate_summary, TITLE_MAX_CHARS,
+    collect_files, extract_text, for_each_jsonl_value, parse_timestamp_to_ms, truncate_summary,
+    FileParseCache, TITLE_MAX_CHARS,
 };
 
 #[derive(Debug, Deserialize)]
@@ -41,15 +43,16 @@ pub fn session_roots() -> Vec<PathBuf> {
     ]
 }
 
+/// 会话页每次打开都会全量扫描；没变过的 summary.json 直接复用上次的解析结果。
+static PARSE_CACHE: LazyLock<FileParseCache> =
+    LazyLock::new(|| FileParseCache::persistent("grokbuild"));
+
 pub fn scan_sessions() -> Vec<SessionMeta> {
     let mut summaries = Vec::new();
     for root in session_roots() {
         collect_summary_files(&root, &mut summaries);
     }
-    summaries
-        .into_iter()
-        .filter_map(|path| parse_summary(&path))
-        .collect()
+    PARSE_CACHE.scan(summaries, scan_summary_file)
 }
 
 /// `chat_history.jsonl`：`type ∈ {system, user, assistant, tool}`。
@@ -165,18 +168,20 @@ pub fn delete_session(root: &Path, path: &Path, session_id: &str) -> Result<bool
     Ok(true)
 }
 
+/// 会话目录里还有 chat_history.jsonl 等大量文件；类型直接取自目录枚举，不为每个条目再 stat
 fn collect_summary_files(root: &Path, files: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(root) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_summary_files(&path, files);
-        } else if path.file_name().and_then(|name| name.to_str()) == Some("summary.json") {
-            files.push(path);
-        }
-    }
+    collect_files(root, files, &|path| {
+        path.file_name().and_then(|name| name.to_str()) == Some("summary.json")
+    });
+}
+
+/// 列表扫描用：读不了（权限、被占用等）返回 `Err`，不进解析缓存、下轮重试；
+/// 读到了但不是有效的会话摘要返回 `Ok(None)`，可以缓存（文件改动后会重新解析）。
+fn scan_summary_file(path: &Path) -> std::io::Result<Option<SessionMeta>> {
+    let text = std::fs::read_to_string(path)?;
+    Ok(serde_json::from_str::<GrokSessionSummary>(&text)
+        .ok()
+        .map(|summary| summary_meta(path, summary)))
 }
 
 fn read_summary(path: &Path) -> Result<GrokSessionSummary, String> {
@@ -186,8 +191,7 @@ fn read_summary(path: &Path) -> Result<GrokSessionSummary, String> {
         .map_err(|e| format!("Failed to parse Grok Build session summary: {e}"))
 }
 
-fn parse_summary(path: &Path) -> Option<SessionMeta> {
-    let summary = read_summary(path).ok()?;
+fn summary_meta(path: &Path, summary: GrokSessionSummary) -> SessionMeta {
     let session_id = summary.info.id;
     let title = summary
         .generated_title
@@ -212,7 +216,7 @@ fn parse_summary(path: &Path) -> Option<SessionMeta> {
         .or(summary.updated_at.as_ref())
         .and_then(parse_timestamp_to_ms);
 
-    Some(SessionMeta {
+    SessionMeta {
         provider_id: "grokbuild".to_string(),
         session_id: session_id.clone(),
         title,
@@ -222,7 +226,7 @@ fn parse_summary(path: &Path) -> Option<SessionMeta> {
         last_active_at,
         source_path: Some(path.to_string_lossy().to_string()),
         resume_command: Some(format!("grok --resume {session_id}")),
-    })
+    }
 }
 
 #[cfg(test)]
@@ -246,10 +250,9 @@ mod tests {
         .expect("write summary");
         let mut files = Vec::new();
         collect_summary_files(&sessions_dir, &mut files);
-        let sessions = files
-            .iter()
-            .filter_map(|path| parse_summary(path))
-            .collect::<Vec<_>>();
+        // 混进一个不是摘要的文件，确认只收集 summary.json
+        std::fs::write(session_dir.join("chat_history.jsonl"), "").expect("write history");
+        let sessions = FileParseCache::new().scan(files, scan_summary_file);
 
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].provider_id, "grokbuild");
@@ -260,6 +263,42 @@ mod tests {
             sessions[0].resume_command.as_deref(),
             Some(expected_resume.as_str())
         );
+    }
+
+    #[test]
+    fn scan_reuses_unchanged_summaries_and_rereads_changed_ones() {
+        let temp = tempdir().expect("tempdir");
+        let session_dir = temp.path().join("sessions").join("project").join("s1");
+        std::fs::create_dir_all(&session_dir).expect("create session dir");
+        let summary = session_dir.join("summary.json");
+        let write = |title: &str| {
+            std::fs::write(
+                &summary,
+                format!(r#"{{"info":{{"id":"s1"}},"generated_title":"{title}"}}"#),
+            )
+            .expect("write summary");
+        };
+        let scan = |cache: &FileParseCache| {
+            let mut files = Vec::new();
+            collect_summary_files(&temp.path().join("sessions"), &mut files);
+            cache
+                .scan(files, scan_summary_file)
+                .into_iter()
+                .map(|meta| meta.title.unwrap_or_default())
+                .collect::<Vec<_>>()
+        };
+        let cache = FileParseCache::new();
+
+        write("first");
+        assert_eq!(scan(&cache), ["first"]);
+        // 长度变了，按修改时间 + 大小判断为已改动，重新解析
+        write("second title");
+        assert_eq!(scan(&cache), ["second title"]);
+        // 写坏的摘要不是会话；修好后重新出现
+        std::fs::write(&summary, "{").expect("write broken summary");
+        assert!(scan(&cache).is_empty());
+        write("repaired");
+        assert_eq!(scan(&cache), ["repaired"]);
     }
 
     #[test]
