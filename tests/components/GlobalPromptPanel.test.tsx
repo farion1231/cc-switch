@@ -339,4 +339,22 @@ describe("GlobalPromptPanel", () => {
       expect.objectContaining({ description: "disk full" }),
     );
   });
+
+  it("retains edited content when the save is rejected", async () => {
+    vi.spyOn(promptsApi, "getGlobalPrompts").mockResolvedValue([entry()]);
+    vi.spyOn(promptsApi, "upsertGlobalPrompt").mockRejectedValue(
+      new Error("disk full"),
+    );
+    renderGlobal();
+    const user = userEvent.setup();
+    await user.click(await screen.findByText("Team Rules"));
+    const body = await screen.findByLabelText("prompts.content");
+    await user.clear(body);
+    await user.type(body, "unsaved user edits");
+    await user.click(
+      screen.getByRole("button", { name: "prompts.global.saveAndSync" }),
+    );
+    await waitFor(() => expect(mocks.toastError).toHaveBeenCalled());
+    expect(body).toHaveValue("unsaved user edits");
+  });
 });

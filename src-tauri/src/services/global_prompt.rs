@@ -756,4 +756,72 @@ mod tests {
             GlobalPromptService::set_app_enabled(&state, &id, AppType::OpenClaw, true).is_err()
         );
     }
+
+    #[test]
+    #[serial]
+    fn pi_global_selection_survives_identical_local_templates_and_edits() {
+        let _home = TestHomeGuard::new();
+        let _agent = crate::pi_config::test_support::TestAgentDir::new();
+        let state = state();
+        state
+            .db
+            .save_prompt("pi", &local("old", "shared", false))
+            .unwrap();
+        let id = GlobalPromptService::upsert(&state, global("g", "shared"))
+            .unwrap()
+            .id;
+        GlobalPromptService::set_app_enabled(&state, &id, AppType::Pi, true).unwrap();
+        assert_eq!(apps_of(&state, &id), vec!["pi"]);
+
+        PromptService::enable_prompt(&state, AppType::Pi, "old").unwrap();
+        assert!(apps_of(&state, &id).is_empty());
+        GlobalPromptService::set_app_enabled(&state, &id, AppType::Pi, true).unwrap();
+        assert_eq!(apps_of(&state, &id), vec!["pi"]);
+
+        let mut edited = state.db.get_global_prompt(&id).unwrap().unwrap();
+        edited.content = "shared v2".to_string();
+        GlobalPromptService::upsert(&state, edited).unwrap();
+        assert_eq!(read(&AppType::Pi), "shared v2");
+        assert_eq!(apps_of(&state, &id), vec!["pi"]);
+
+        crate::config::write_text_file(&prompt_file_path(&AppType::Pi).unwrap(), "external edit")
+            .unwrap();
+        assert!(apps_of(&state, &id).is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn ordinary_activation_refreshes_global_content_after_external_edits() {
+        let _home = TestHomeGuard::new();
+        let state = state();
+        for app in [AppType::Claude, AppType::Mcode] {
+            let id = GlobalPromptService::upsert(&state, global(app.as_str(), "shared"))
+                .unwrap()
+                .id;
+            GlobalPromptService::set_app_enabled(&state, &id, app.clone(), true).unwrap();
+            let path = prompt_file_path(&app).unwrap();
+            crate::config::write_text_file(&path, "external local edit").unwrap();
+            PromptService::get_prompts(&state, app.clone()).unwrap();
+
+            PromptService::enable_prompt(&state, app.clone(), &linked_prompt_id(&id)).unwrap();
+            assert_eq!(read(&app), "shared");
+
+            crate::config::write_text_file(&path, "external local edit").unwrap();
+            state
+                .db
+                .save_prompt(app.as_str(), &local("other", "other", false))
+                .unwrap();
+            PromptService::enable_prompt(&state, app.clone(), "other").unwrap();
+            assert_eq!(
+                state.db.get_prompts(app.as_str()).unwrap()[&linked_prompt_id(&id)].content,
+                "external local edit"
+            );
+            PromptService::enable_prompt(&state, app.clone(), &linked_prompt_id(&id)).unwrap();
+            assert_eq!(read(&app), "shared");
+            assert_eq!(
+                state.db.get_prompts(app.as_str()).unwrap()[&linked_prompt_id(&id)].content,
+                "shared"
+            );
+        }
+    }
 }

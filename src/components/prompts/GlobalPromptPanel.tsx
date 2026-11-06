@@ -101,14 +101,15 @@ const GlobalPromptPanel: React.FC<GlobalPromptPanelProps> = ({
   const entries = useMemo(() => query.data ?? [], [query.data]);
   const [searchQuery, setSearchQuery] = useState("");
   const [formOpen, setFormOpen] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editing, setEditing] = useState<GlobalPromptEntry | null>(null);
   const [busy, setBusy] = useState(false);
   const [fails, setFails] = useState<Record<string, string>>({});
   const busyRef = useRef(false);
 
-  const editing = editingId
-    ? entries.find((entry) => entry.id === editingId)
-    : undefined;
+  const initialData = useMemo(
+    () => (editing ? asPrompt(editing) : undefined),
+    [editing],
+  );
   const filtered = useMemo(
     () => entries.filter((entry) => matches(entry, searchQuery)),
     [entries, searchQuery],
@@ -323,14 +324,14 @@ const GlobalPromptPanel: React.FC<GlobalPromptPanelProps> = ({
 
   const openForm = (id: string | null) => {
     if (busyRef.current || formOpen) return;
-    setEditingId(id);
+    setEditing(entries.find((entry) => entry.id === id) ?? null);
     setFormOpen(true);
   };
 
   const closeForm = () => {
     if (busyRef.current) return;
     setFormOpen(false);
-    setEditingId(null);
+    setEditing(null);
   };
 
   const listEmpty = entries.length === 0;
@@ -485,7 +486,7 @@ const GlobalPromptPanel: React.FC<GlobalPromptPanelProps> = ({
         <PromptFormPanel
           globalApps={editing ? globalPromptApps(editing) : []}
           editingId={editing?.id}
-          initialData={editing ? asPrompt(editing) : undefined}
+          initialData={initialData}
           onSave={handleSave}
           onClose={closeForm}
         />
