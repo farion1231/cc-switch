@@ -11,11 +11,6 @@ import type {
 } from "../types";
 import type { PresetTheme, TemplateValueConfig } from "./claudeProviderPresets";
 import type { PresetFamilyFields } from "./presetFamilies";
-import {
-  GENESIS_API_KEY_URL,
-  GENESIS_OPENAI_BASE_URL,
-  GENESIS_WEBSITE_URL,
-} from "./genesisModels";
 
 /** Suggested default model configuration for a preset */
 export interface OpenClawSuggestedDefaults {
@@ -4932,19 +4927,6 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         "aihubmix/claude-sonnet-5-5": { alias: "Sonnet" },
       },
     },
-  },
-  {
-    name: "Genesis",
-    websiteUrl: GENESIS_WEBSITE_URL,
-    apiKeyUrl: GENESIS_API_KEY_URL,
-    settingsConfig: {
-      baseUrl: GENESIS_OPENAI_BASE_URL,
-      apiKey: "",
-      api: "openai-completions",
-      models: [],
-    },
-    category: "aggregator",
-    icon: "genesis",
   },
   {
     name: "CherryIN",

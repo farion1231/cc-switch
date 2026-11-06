@@ -5,11 +5,6 @@
 import type { ProviderCategory } from "../types";
 import type { PresetTheme, TemplateValueConfig } from "./claudeProviderPresets";
 import type { PresetFamilyFields } from "./presetFamilies";
-import {
-  GENESIS_API_KEY_URL,
-  GENESIS_OPENAI_BASE_URL,
-  GENESIS_WEBSITE_URL,
-} from "./genesisModels";
 
 /**
  * Marker field and source values that `hermes_config.rs::get_providers`
@@ -2753,20 +2748,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     suggestedDefaults: {
       model: { default: "gpt-6.1-sol", provider: "aihubmix" },
     },
-  },
-  {
-    name: "Genesis",
-    websiteUrl: GENESIS_WEBSITE_URL,
-    apiKeyUrl: GENESIS_API_KEY_URL,
-    settingsConfig: {
-      name: "genesis",
-      base_url: GENESIS_OPENAI_BASE_URL,
-      api_key: "",
-      api_mode: "chat_completions",
-      models: [],
-    },
-    category: "aggregator",
-    icon: "genesis",
   },
   {
     name: "CherryIN",

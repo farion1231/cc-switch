@@ -11,7 +11,6 @@ import { openclawProviderPresets } from "@/config/openclawProviderPresets";
 import { opencodeProviderPresets } from "@/config/opencodeProviderPresets";
 import { piProviderPresets } from "@/config/piProviderPresets";
 
-// Optional catalogs stay empty; clients requiring a model start with K3.
 const emptyModels: string[] = [];
 const find = <T extends { name: string }>(items: T[]) =>
   items.find((item) => item.name === "Genesis");
@@ -20,11 +19,7 @@ describe("Genesis app compatibility", () => {
   it("links every Genesis preset to the current credential page", () => {
     const catalogs = [
       providerPresets,
-      claudeDesktopProviderPresets,
       codexProviderPresets,
-      opencodeProviderPresets,
-      openclawProviderPresets,
-      hermesProviderPresets,
       piProviderPresets,
       kimiProviderPresets,
       mcodeProviderPresets,
@@ -35,6 +30,17 @@ describe("Genesis app compatibility", () => {
       expect(
         catalog.find((preset) => preset.name === "Genesis")?.apiKeyUrl,
       ).toBe("https://uc.moi.matrixorigin.cn/account/credentials?app=genesis");
+    }
+  });
+
+  it("does not advertise unverified client presets", () => {
+    for (const catalog of [
+      claudeDesktopProviderPresets,
+      opencodeProviderPresets,
+      openclawProviderPresets,
+      hermesProviderPresets,
+    ]) {
+      expect(catalog.some((preset) => preset.name === "Genesis")).toBe(false);
     }
   });
 
@@ -50,48 +56,7 @@ describe("Genesis app compatibility", () => {
     );
   });
 
-  it("routes Claude Desktop through Chat Completions", () => {
-    const preset = find(claudeDesktopProviderPresets);
-    expect(preset).toMatchObject({
-      mode: "proxy",
-      apiFormat: "openai_chat",
-      baseUrl: "https://token.moi.matrixorigin.cn",
-    });
-    expect(preset?.modelRoutes?.map((route) => route.upstreamModel)).toEqual([
-      "kimi-k3",
-    ]);
-  });
-
-  it("leaves optional model lists empty and gives Pi its required starter", () => {
-    const opencode = find(opencodeProviderPresets);
-    expect(opencode?.settingsConfig.npm).toBe("@ai-sdk/openai-compatible");
-    expect(opencode?.settingsConfig.options.baseURL).toBe(
-      "https://token.moi.matrixorigin.cn/v1",
-    );
-    expect(Object.keys(opencode?.settingsConfig.models ?? {})).toEqual(
-      emptyModels,
-    );
-
-    const openclaw = find(openclawProviderPresets);
-    expect(openclaw?.settingsConfig).toMatchObject({
-      baseUrl: "https://token.moi.matrixorigin.cn/v1",
-      api: "openai-completions",
-    });
-    expect(openclaw?.settingsConfig.models?.map((model) => model.id)).toEqual(
-      emptyModels,
-    );
-    expect(openclaw?.suggestedDefaults?.model).toBeUndefined();
-
-    const hermes = find(hermesProviderPresets);
-    expect(hermes?.settingsConfig).toMatchObject({
-      base_url: "https://token.moi.matrixorigin.cn/v1",
-      api_mode: "chat_completions",
-    });
-    expect(hermes?.settingsConfig.models?.map((model) => model.id)).toEqual(
-      emptyModels,
-    );
-    expect(hermes?.suggestedDefaults?.model).toBeUndefined();
-
+  it("gives Pi its required K3 starter", () => {
     const pi = find(piProviderPresets);
     expect(pi?.settingsConfig).toMatchObject({
       baseUrl: "https://token.moi.matrixorigin.cn/v1",
