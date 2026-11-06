@@ -408,7 +408,13 @@ export function PricingConfigPanel() {
           containerClassName="w-56"
           className="h-7"
           onKeyDown={(event) => {
-            if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+            if (event.key !== "Enter") return;
+            // WebKit 输入法回车确认候选词时 isComposing 已是 false，只剩 keyCode 229 可辨认
+            if (
+              event.nativeEvent.isComposing ||
+              event.nativeEvent.keyCode === 229
+            )
+              return;
             event.preventDefault();
             if (!trimmedQuery) return;
             // 编辑页不接管焦点：先让搜索框失焦，免得后续按键还落在被挡住的搜索框上
