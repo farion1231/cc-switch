@@ -1995,7 +1995,8 @@ mod tests {
         assert!(parsed[1].is_none());
     }
 
-    #[cfg(unix)]
+    /// macOS CI 没有 `flock(1)`；脚本只在发行版的 Linux 里跑，所以只在 Linux 上实测。
+    #[cfg(target_os = "linux")]
     #[test]
     fn shell_script_applies_atomically_and_rejects_a_changed_file() {
         let tmp = tempfile::tempdir().unwrap();
