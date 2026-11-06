@@ -85,14 +85,14 @@ export function useUsageAutoRefresh({
   ]);
 
   useEffect(() => {
-    if (!rollingRange) return;
+    if (!rollingRange || paused) return;
     const timer = window.setInterval(() => {
       if (focusManager.isFocused()) {
         void queryClient.invalidateQueries({ queryKey: usageKeys.all });
       }
     }, ROLLING_RANGE_REFRESH_MS);
     return () => window.clearInterval(timer);
-  }, [queryClient, rollingRange]);
+  }, [paused, queryClient, rollingRange]);
 
   return { syncSessionUsage };
 }
