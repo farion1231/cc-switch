@@ -11,6 +11,11 @@ import {
   type PiThinkingLevelMap,
 } from "./piThinkingProfiles";
 import type { PresetFamilyFields } from "./presetFamilies";
+import {
+  GENESIS_API_KEY_URL,
+  GENESIS_OPENAI_BASE_URL,
+  GENESIS_WEBSITE_URL,
+} from "./genesisModels";
 
 export type PiApiFormat =
   | "openai-completions"
@@ -2032,6 +2037,26 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     category: "aggregator",
     icon: "aihubmix",
     iconColor: "#006FFB",
+  },
+  {
+    name: "Genesis",
+    providerKey: "cc-switch-genesis",
+    websiteUrl: GENESIS_WEBSITE_URL,
+    apiKeyUrl: GENESIS_API_KEY_URL,
+    settingsConfig: {
+      name: "Genesis",
+      baseUrl: GENESIS_OPENAI_BASE_URL,
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        {
+          ...piModel("moonshotai/kimi-k3", { id: "kimi-k3" }),
+          compat: OPENAI_COMPLETIONS_COMPAT,
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "genesis",
   },
   {
     name: "CherryIN",

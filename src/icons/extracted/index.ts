@@ -24,6 +24,7 @@ import _etok from "./etok.png";
 import _everyapi from "./everyapi.svg?url";
 import _fenno from "./fenno-icon.png";
 import _fluxa from "./fluxa.png";
+import _genesis from "./genesis.svg?url";
 import _grooroute from "./grooroute.jpg";
 import _hermes from "./hermes.png";
 import _huoshan from "./huoshan.png";
@@ -182,6 +183,7 @@ export const iconUrls: Record<string, string> = {
   everyapi: _everyapi,
   fenno: _fenno,
   fluxa: _fluxa,
+  genesis: _genesis,
   grooroute: _grooroute,
   hermes: _hermes,
   huoshan: _huoshan,
