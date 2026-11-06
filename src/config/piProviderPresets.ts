@@ -11,11 +11,6 @@ import {
   type PiThinkingLevelMap,
 } from "./piThinkingProfiles";
 import type { PresetFamilyFields } from "./presetFamilies";
-import {
-  GENESIS_API_KEY_URL,
-  GENESIS_OPENAI_BASE_URL,
-  GENESIS_WEBSITE_URL,
-} from "./genesisModels";
 
 export type PiApiFormat =
   | "openai-completions"
@@ -2041,17 +2036,19 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "Genesis",
     providerKey: "cc-switch-genesis",
-    websiteUrl: GENESIS_WEBSITE_URL,
-    apiKeyUrl: GENESIS_API_KEY_URL,
+    websiteUrl: "https://genesis.moi.matrixorigin.cn/taas/",
+    apiKeyUrl: "https://uc.moi.matrixorigin.cn/account/credentials?app=genesis",
+    // 矩阵起源 TaaS 走 Chat Completions，Pi 1.2.0 实测 kimi-k3 可用。Kimi Code /
+    // MiniMax Code / DeepSeek Harness / Oh My Pi 由这条派生，未逐个实测（#9269）
     settingsConfig: {
       name: "Genesis",
-      baseUrl: GENESIS_OPENAI_BASE_URL,
+      baseUrl: "https://token.moi.matrixorigin.cn/v1",
       api: "openai-completions",
       apiKey: "",
       models: [
         {
           ...piModel("moonshotai/kimi-k3", { id: "kimi-k3" }),
-          compat: OPENAI_COMPLETIONS_COMPAT,
+          compat: { ...OPENAI_COMPLETIONS_COMPAT },
         },
       ],
     },

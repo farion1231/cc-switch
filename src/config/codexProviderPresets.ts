@@ -10,12 +10,6 @@ import type {
 } from "../types";
 import type { PresetTheme } from "./claudeProviderPresets";
 import type { PresetFamilyFields } from "./presetFamilies";
-import {
-  GENESIS_API_KEY_URL,
-  GENESIS_DEFAULT_MODEL,
-  GENESIS_OPENAI_BASE_URL,
-  GENESIS_WEBSITE_URL,
-} from "./genesisModels";
 
 // MiMo 官方 Codex 目录的系统提示词。
 // https://mimo.mi.com/docs/tokenplan/integration/codex-configuration
@@ -4679,18 +4673,20 @@ requires_openai_auth = true`,
   },
   {
     name: "Genesis",
-    websiteUrl: GENESIS_WEBSITE_URL,
-    apiKeyUrl: GENESIS_API_KEY_URL,
+    websiteUrl: "https://genesis.moi.matrixorigin.cn/taas/",
+    apiKeyUrl: "https://uc.moi.matrixorigin.cn/account/credentials?app=genesis",
     category: "aggregator",
+    // 矩阵起源 TaaS 原生提供 /v1/responses（实测 kimi-k3 返回 200），直连不经
+    // 转换。起步模型 kimi-k3，「获取模型」按账号拉取对话模型（#9269）
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "genesis",
-      GENESIS_OPENAI_BASE_URL,
-      GENESIS_DEFAULT_MODEL,
+      "https://token.moi.matrixorigin.cn/v1",
+      "kimi-k3",
     ),
     apiFormat: "openai_responses",
-    modelCatalog: modelCatalog([GENESIS_DEFAULT_MODEL]),
-    endpointCandidates: [GENESIS_OPENAI_BASE_URL],
+    modelCatalog: modelCatalog(["kimi-k3"]),
+    endpointCandidates: ["https://token.moi.matrixorigin.cn/v1"],
     icon: "genesis",
   },
   {

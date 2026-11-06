@@ -3,7 +3,6 @@
  */
 import { ProviderCategory } from "../types";
 import type { PresetFamilyFields } from "./presetFamilies";
-import { GENESIS_API_KEY_URL, GENESIS_DEFAULT_MODEL } from "./genesisModels";
 
 export interface TemplateValueConfig {
   label: string;
@@ -3202,15 +3201,20 @@ export const providerPresets: ProviderPreset[] = [
   {
     name: "Genesis",
     websiteUrl: "https://genesis.moi.matrixorigin.cn/taas/",
-    apiKeyUrl: GENESIS_API_KEY_URL,
+    apiKeyUrl: "https://uc.moi.matrixorigin.cn/account/credentials?app=genesis",
+    // 矩阵起源 TaaS 按请求路径路由、不按模型名：同一模型未必每种请求格式都有
+    // 上游。/v1/chat/completions 经本地路由实测可用（含流式、工具调用），
+    // /v1/messages 不保证，所以走 openai_chat；base 不带 /v1，适配器自拼。
+    // /v1/models 需 Key（无 Key 返回 invalid_api_key），加 ?type=chat 滤掉
+    // embedding / rerank。起步模型 kimi-k3，用户可再按账号拉取更换（#9269）
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://token.moi.matrixorigin.cn",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: GENESIS_DEFAULT_MODEL,
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: GENESIS_DEFAULT_MODEL,
-        ANTHROPIC_DEFAULT_SONNET_MODEL: GENESIS_DEFAULT_MODEL,
-        ANTHROPIC_DEFAULT_OPUS_MODEL: GENESIS_DEFAULT_MODEL,
+        ANTHROPIC_MODEL: "kimi-k3",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-k3",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k3",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k3",
       },
     },
     modelsUrl: "https://token.moi.matrixorigin.cn/v1/models?type=chat",

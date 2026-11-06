@@ -2,10 +2,11 @@ import { invoke } from "@tauri-apps/api/core";
 import type { TFunction } from "i18next";
 import { toast } from "@/lib/toast";
 import { parseHeaderOverrideJson } from "@/lib/requestOverrides";
-import {
-  GENESIS_BASE_URL,
-  GENESIS_CHAT_MODELS_URL,
-} from "@/config/genesisModels";
+
+// 矩阵起源 Genesis 的 /v1/models 会混入 embedding / rerank 模型。除 Claude 外
+// 的表单不读预设的 modelsUrl，所以在这里按地址补上 ?type=chat。
+const GENESIS_ORIGIN = "https://token.moi.matrixorigin.cn";
+const GENESIS_CHAT_MODELS_URL = `${GENESIS_ORIGIN}/v1/models?type=chat`;
 
 export interface FetchedModel {
   id: string;
@@ -54,13 +55,11 @@ export async function fetchModelsForConfig(
   customUserAgent?: string,
   options?: ModelFetchOptions,
 ): Promise<FetchedModel[]> {
-  // Genesis returns the account-visible catalog. Filter out embedding and
-  // reranking models before showing them in coding-client model pickers.
   if (!modelsUrl) {
     try {
       const endpoint = new URL(baseUrl);
       if (
-        endpoint.origin === GENESIS_BASE_URL &&
+        endpoint.origin === GENESIS_ORIGIN &&
         (endpoint.pathname === "/" ||
           endpoint.pathname === "/v1" ||
           endpoint.pathname === "/v1/")
