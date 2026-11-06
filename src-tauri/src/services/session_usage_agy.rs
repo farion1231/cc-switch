@@ -832,4 +832,39 @@ mod tests {
         let r5 = sync_agy_usage_from_files(&db, agy::transcript_files_in_roots(&roots)).unwrap();
         assert_eq!((r5.files_scanned, r5.imported, r5.skipped), (1, 1, 1));
     }
+
+    #[test]
+    fn sync_agy_usage_imports_subagent_transcripts_excluded_from_session_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("brain");
+        for (id, line) in [
+            (
+                "main-1",
+                r#"{"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","input_tokens":40,"output_tokens":10}"#,
+            ),
+            (
+                "subagent-1",
+                r#"{"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","input_tokens":120,"output_tokens":30}"#,
+            ),
+        ] {
+            let logs = root.join(id).join(".system_generated/logs");
+            std::fs::create_dir_all(&logs).unwrap();
+            std::fs::write(logs.join("transcript_full.jsonl"), line).unwrap();
+        }
+        let db = Database::memory().unwrap();
+        let files = agy::transcript_files_in_roots(&[(root, None)]);
+        let res = sync_agy_usage_from_files(&db, files).unwrap();
+        assert_eq!(res.files_scanned, 2);
+        assert_eq!(res.imported, 2);
+        assert!(res.errors.is_empty());
+        let conn = db.conn.lock().unwrap();
+        let total_input: i64 = conn
+            .query_row(
+                "SELECT SUM(input_tokens) FROM proxy_request_logs WHERE app_type='agy'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(total_input, 160);
+    }
 }
