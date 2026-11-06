@@ -1,5 +1,5 @@
 //! OpenClaw：`openclaw plugins list --json`、`plugins marketplace entries|refresh --json`、
-//! `plugins install|uninstall|enable|disable|update`（实测 openclaw 2026.10.10）。
+//! `plugins install|uninstall|enable|disable|update`（实测 openclaw 2026.11.1）。
 //!
 //! - 已安装列表含随程序自带的插件（`origin: bundled`），它们只能开关；装进状态目录的
 //!   （`origin: global`）才能卸载、更新。
@@ -51,7 +51,7 @@ pub(super) fn update_changed(stdout: &str) -> bool {
 }
 
 /// `{plugins: [{id, name, version, description, origin, enabled, status, rootDir, …}], …}`
-fn parse_installed(value: &Value) -> Vec<PluginEntry> {
+pub(super) fn parse_installed(value: &Value) -> Vec<PluginEntry> {
     value
         .get("plugins")
         .and_then(Value::as_array)
@@ -90,7 +90,7 @@ fn parse_installed(value: &Value) -> Vec<PluginEntry> {
 }
 
 /// `{source: "hosted", entries: [{label, id, version, install: {clawhubSpec, …}}]}`
-fn parse_catalog(value: &Value) -> Vec<PluginEntry> {
+pub(super) fn parse_catalog(value: &Value) -> Vec<PluginEntry> {
     value
         .get("entries")
         .and_then(Value::as_array)

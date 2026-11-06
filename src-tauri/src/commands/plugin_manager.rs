@@ -5,6 +5,7 @@
 use crate::services::plugin_manager::{
     self, PluginActionOutcome, PluginApp, PluginEntry, PluginMarketplace,
 };
+use crate::store::AppState;
 
 async fn blocking<T, F>(f: F) -> Result<T, String>
 where
@@ -43,16 +44,23 @@ pub async fn uninstall_plugin(app: PluginApp, id: String) -> Result<PluginAction
 
 #[tauri::command]
 pub async fn set_plugin_enabled(
+    state: tauri::State<'_, AppState>,
     app: PluginApp,
     id: String,
     enabled: bool,
 ) -> Result<PluginActionOutcome, String> {
-    blocking(move || plugin_manager::set_plugin_enabled(app, &id, enabled)).await
+    let db = state.db.clone();
+    blocking(move || plugin_manager::set_plugin_enabled(&db, app, &id, enabled)).await
 }
 
 #[tauri::command]
-pub async fn update_plugin(app: PluginApp, id: String) -> Result<PluginActionOutcome, String> {
-    blocking(move || plugin_manager::update_plugin(app, &id)).await
+pub async fn update_plugin(
+    state: tauri::State<'_, AppState>,
+    app: PluginApp,
+    id: String,
+) -> Result<PluginActionOutcome, String> {
+    let db = state.db.clone();
+    blocking(move || plugin_manager::update_plugin(&db, app, &id)).await
 }
 
 #[tauri::command]

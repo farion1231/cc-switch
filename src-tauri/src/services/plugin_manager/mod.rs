@@ -7,12 +7,18 @@
 //!   `claude plugin marketplace list|add|remove|update`。
 //! - Codex：`codex plugin list|add|remove` 和 `codex plugin marketplace list|add|remove|upgrade`。
 //!   Codex 没有启用 / 停用命令，开关就是 `config.toml` 的 `[plugins."<id>"] enabled`，
-//!   用 `toml_edit` 原位改这一个键。
+//!   经写入引擎原位改这一个键。
 //! - Grok Build、MiniMax Code、OpenClaw：见各自的子模块。
+//!
+//! 写锁只在 CC Switch 自己写文件时拿（目前只有 Codex 的启停）。CLI 改自己的配置和用户手改
+//! 文件是一回事：切换供应商写之前本来就会重读比对，所以 CLI 调用期间（安装、更新最长
+//! 300 秒）不拿锁，不挡切换、托盘和退出。CLI 的 stdin 是 null，要确认的操作立刻失败。
 //!
 //! CLI 读的配置目录和 CC Switch 读的必须是同一份：设置里覆盖了目录时，用各应用的环境变量
 //! （`CLAUDE_CONFIG_DIR`、`CODEX_HOME`、`GROK_HOME`……）告诉 CLI。
 
+#[cfg(test)]
+mod cli_fixtures;
 mod grok;
 mod mcode;
 mod openclaw;
@@ -23,8 +29,20 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::app_config::AppType;
+use crate::database::Database;
+use crate::live::engine::LiveFile;
+use crate::live::patch::toml::TomlPatch;
+use crate::live::patch::KeyPath;
+use crate::mode::operation::{AppWrite, FileChange};
+use crate::mode::state::{op, PendingTarget};
+
 /// 工具没装（或 WSL 里找不到）时返回的错误码，前端据此显示安装提示。
 pub const CLI_NOT_INSTALLED: &str = "PLUGIN_CLI_NOT_INSTALLED";
+
+/// Claude Code 要用户亲自确认市场声明的命令（命令来源的插件、取归档用的 headersHelper）
+/// 时返回的错误码。CC Switch 不传 `-y` 代为同意，前端提示用户去终端里装。
+pub const NEEDS_TERMINAL_CONFIRM: &str = "PLUGIN_NEEDS_TERMINAL_CONFIRM";
 
 const LIST_TIMEOUT: Duration = Duration::from_secs(90);
 const TOGGLE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -343,17 +361,38 @@ fn failure_detail(out: &CliOutput) -> String {
 }
 
 /// Claude 的 `--json` 结果行：`{"outcome":"ok"|"failed","message":…}`。
+///
+/// 要确认命令时失败结果里带 `shownCommand`（stdin 不是终端，CLI 只显示不执行，立刻返回）。
 fn claude_action_result(out: &CliOutput) -> Result<Value, String> {
     let payload = parse_json_payload(&out.stdout);
     if let Some(value) = payload.as_ref() {
         if value.get("outcome").and_then(Value::as_str) == Some("ok") && out.success {
             return Ok(value.clone());
         }
+        if value.get("shownCommand").is_some_and(Value::is_object) {
+            return Err(NEEDS_TERMINAL_CONFIRM.to_string());
+        }
         if let Some(message) = str_field(value, "message") {
             return Err(message);
         }
     }
     Err(failure_detail(out))
+}
+
+/// `claude plugin update --json`：已是最新版时 `updateOutcome` 为 `up_to_date`。
+fn claude_update_outcome(value: &Value) -> PluginActionOutcome {
+    PluginActionOutcome {
+        changed: value.get("updateOutcome").and_then(Value::as_str) != Some("up_to_date"),
+        message: str_field(value, "message"),
+    }
+}
+
+/// `codex plugin marketplace add --json`：加过的再加一次 `alreadyAdded` 为 true。
+fn codex_marketplace_add_outcome(value: &Value) -> PluginActionOutcome {
+    PluginActionOutcome {
+        changed: value.get("alreadyAdded").and_then(Value::as_bool) != Some(true),
+        message: str_field(value, "marketplaceName"),
+    }
 }
 
 fn codex_action_result(out: &CliOutput) -> Result<Value, String> {
@@ -626,40 +665,15 @@ fn codex_plugin_enabled_in_text(text: &str, id: &str) -> Option<bool> {
     doc.get("plugins")?.get(id)?.get("enabled")?.as_bool()
 }
 
-/// 在 `config.toml` 里设置 `[plugins."<id>"] enabled`，其余内容原样保留。
-fn set_codex_plugin_enabled_in_text(text: &str, id: &str, enabled: bool) -> Result<String, String> {
-    use toml_edit::{table, value, DocumentMut, Item};
-
-    let mut doc = if text.trim().is_empty() {
-        DocumentMut::new()
-    } else {
-        text.parse::<DocumentMut>()
-            .map_err(|e| format!("Failed to parse config.toml: {e}"))?
-    };
-
-    if !doc.contains_key("plugins") {
-        let mut plugins = toml_edit::Table::new();
-        plugins.set_implicit(true);
-        doc.insert("plugins", Item::Table(plugins));
+/// 设置 `config.toml` 里 `[plugins."<id>"] enabled` 的补丁，其余内容原样保留。
+fn codex_plugin_enabled_patch(id: &str, enabled: bool) -> TomlPatch {
+    TomlPatch {
+        set: vec![(
+            KeyPath::new(&["plugins", id, "enabled"]),
+            toml_edit::value(enabled),
+        )],
+        ..TomlPatch::default()
     }
-    let plugins = doc["plugins"]
-        .as_table_like_mut()
-        .ok_or_else(|| "config.toml: `plugins` is not a table".to_string())?;
-
-    match plugins.get_mut(id) {
-        Some(entry) => {
-            let entry = entry
-                .as_table_like_mut()
-                .ok_or_else(|| format!("config.toml: `plugins.\"{id}\"` is not a table"))?;
-            entry.insert("enabled", value(enabled));
-        }
-        None => {
-            let mut entry = table();
-            entry["enabled"] = value(enabled);
-            plugins.insert(id, entry);
-        }
-    }
-    Ok(doc.to_string())
 }
 
 // ───────────────────────────── 对外接口 ─────────────────────────────
@@ -767,16 +781,6 @@ fn ok_outcome(value: &Value) -> PluginActionOutcome {
     }
 }
 
-fn locked<T>(app: PluginApp, f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
-    // 和供应商切换、编辑器共用写锁，避免整份配置读改写时互相覆盖。
-    let app_id = match app {
-        PluginApp::Grok => "grokbuild",
-        _ => app.tool(),
-    };
-    let _guard = crate::live::engine::lock_app(app_id);
-    f()
-}
-
 /// 只看退出码的写操作（Grok Build、OpenClaw 成功时只打印一句话）。
 fn run_action(
     app: PluginApp,
@@ -797,8 +801,9 @@ fn run_action(
 /// 才肯装：前端对这两个应用先弹确认框，用户确认后才会调到这里。
 pub fn install_plugin(app: PluginApp, id: &str) -> Result<PluginActionOutcome, String> {
     validate_app_plugin_id(app, id)?;
-    locked(app, || match app {
+    match app {
         // 不传 -y：市场声明了安装命令的插件要用户在终端里亲自确认，CC Switch 不代为同意。
+        // CLI 的 stdin 是 null，这种插件会立刻失败（`NEEDS_TERMINAL_CONFIRM`），不会等到超时。
         PluginApp::Claude => run_cli(
             app,
             &["plugin", "install", id, "--scope", "user", "--json"],
@@ -821,12 +826,12 @@ pub fn install_plugin(app: PluginApp, id: &str) -> Result<PluginActionOutcome, S
                 NETWORK_TIMEOUT,
             )
         }
-    })
+    }
 }
 
 pub fn uninstall_plugin(app: PluginApp, id: &str) -> Result<PluginActionOutcome, String> {
     validate_app_plugin_id(app, id)?;
-    locked(app, || match app {
+    match app {
         PluginApp::Claude => run_cli(
             app,
             &[
@@ -858,17 +863,18 @@ pub fn uninstall_plugin(app: PluginApp, id: &str) -> Result<PluginActionOutcome,
             &["plugins", "uninstall", id, "--force"],
             TOGGLE_TIMEOUT,
         ),
-    })
+    }
 }
 
 pub fn set_plugin_enabled(
+    db: &Database,
     app: PluginApp,
     id: &str,
     enabled: bool,
 ) -> Result<PluginActionOutcome, String> {
     validate_app_plugin_id(app, id)?;
     let verb = if enabled { "enable" } else { "disable" };
-    locked(app, || match app {
+    match app {
         PluginApp::Claude => run_cli(
             app,
             &["plugin", verb, id, "--scope", "user", "--json"],
@@ -877,7 +883,7 @@ pub fn set_plugin_enabled(
         .and_then(|out| claude_action_result(&out))
         .map(|v| ok_outcome(&v)),
         PluginApp::Codex => {
-            write_codex_plugin_enabled(id, enabled).map(|changed| PluginActionOutcome {
+            write_codex_plugin_enabled(db, id, enabled).map(|changed| PluginActionOutcome {
                 changed,
                 message: None,
             })
@@ -888,37 +894,45 @@ pub fn set_plugin_enabled(
         PluginApp::Grok => run_action(app, &["plugin", verb, id], TOGGLE_TIMEOUT),
         // 不代传 `--accept-capabilities`：要权限确认的插件，CLI 会报错让用户去终端里确认
         PluginApp::Openclaw => run_action(app, &["plugins", verb, id], TOGGLE_TIMEOUT),
-    })
+    }
 }
 
-/// 改 `config.toml` 里这个插件的开关；返回文件是否有变化。调用方持有写锁。
-fn write_codex_plugin_enabled(id: &str, enabled: bool) -> Result<bool, String> {
-    let path = crate::codex_config::get_codex_config_path();
-    let text = crate::codex_config::read_codex_config_text().map_err(|e| e.to_string())?;
-    let next = set_codex_plugin_enabled_in_text(&text, id, enabled)?;
-    if next == text {
-        return Ok(false);
-    }
-    crate::config::write_text_file(&path, &next).map_err(|e| e.to_string())?;
-    Ok(true)
+/// 改 `config.toml` 里这个插件的开关；返回文件是否有变化。
+///
+/// 插件管理里只有这一步是 CC Switch 自己写文件，和切换供应商写 `config.toml` 走同一条路：
+/// 拿 Codex 的写锁、先补完上一次没做完的写入，经写入引擎按 0600 发布（文件里有第三方
+/// Key）；发布前重读比对，CLI 或用户恰好改过就以新内容为底重算。
+fn write_codex_plugin_enabled(db: &Database, id: &str, enabled: bool) -> Result<bool, String> {
+    let write = AppWrite::begin(db, AppType::Codex.as_str()).map_err(|e| e.to_string())?;
+    let report = write
+        .run(
+            op::APPLY,
+            &[FileChange {
+                file: LiveFile::private(crate::codex_config::get_codex_config_path()),
+                patch: &codex_plugin_enabled_patch(id, enabled),
+            }],
+            PendingTarget::default(),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(!report.changed.is_empty())
 }
 
 /// 更新到市场里的最新版。Claude Code、Grok Build、OpenClaw 有这个命令；Codex 先刷新市场再
 /// 重新安装；MiniMax Code 的 CLI 没有更新命令。
-pub fn update_plugin(app: PluginApp, id: &str) -> Result<PluginActionOutcome, String> {
+pub fn update_plugin(
+    db: &Database,
+    app: PluginApp,
+    id: &str,
+) -> Result<PluginActionOutcome, String> {
     validate_app_plugin_id(app, id)?;
-    locked(app, || match app {
+    match app {
         PluginApp::Claude => {
             let out = run_cli(
                 app,
                 &["plugin", "update", id, "--scope", "user", "--json"],
                 NETWORK_TIMEOUT,
             )?;
-            let value = claude_action_result(&out)?;
-            Ok(PluginActionOutcome {
-                changed: value.get("updateOutcome").and_then(Value::as_str) != Some("up_to_date"),
-                message: str_field(&value, "message"),
-            })
+            claude_action_result(&out).map(|v| claude_update_outcome(&v))
         }
         PluginApp::Codex => {
             let (_, market) = split_id(id);
@@ -939,7 +953,7 @@ pub fn update_plugin(app: PluginApp, id: &str) -> Result<PluginActionOutcome, St
                 .and_then(|out| codex_action_result(&out))
                 .map(|v| ok_outcome(&v))?;
             if was_disabled {
-                write_codex_plugin_enabled(id, false)?;
+                write_codex_plugin_enabled(db, id, false)?;
             }
             Ok(outcome)
         }
@@ -964,12 +978,12 @@ pub fn update_plugin(app: PluginApp, id: &str) -> Result<PluginActionOutcome, St
             })
         }
         PluginApp::Mcode => Err(unsupported(app, "plugin update")),
-    })
+    }
 }
 
 pub fn add_marketplace(app: PluginApp, source: &str) -> Result<PluginActionOutcome, String> {
     let source = validate_marketplace_source(source)?;
-    locked(app, || match app {
+    match app {
         PluginApp::Claude | PluginApp::Codex => {
             let out = run_cli(
                 app,
@@ -979,10 +993,7 @@ pub fn add_marketplace(app: PluginApp, source: &str) -> Result<PluginActionOutco
             if app == PluginApp::Claude {
                 claude_action_result(&out).map(|v| ok_outcome(&v))
             } else {
-                codex_action_result(&out).map(|v| PluginActionOutcome {
-                    changed: v.get("alreadyAdded").and_then(Value::as_bool) != Some(true),
-                    message: str_field(&v, "marketplaceName"),
-                })
+                codex_action_result(&out).map(|v| codex_marketplace_add_outcome(&v))
             }
         }
         // Grok Build 的 `marketplace add` 不认 `--json`
@@ -992,12 +1003,12 @@ pub fn add_marketplace(app: PluginApp, source: &str) -> Result<PluginActionOutco
             NETWORK_TIMEOUT,
         ),
         PluginApp::Mcode | PluginApp::Openclaw => Err(unsupported(app, "marketplace management")),
-    })
+    }
 }
 
 pub fn remove_marketplace(app: PluginApp, name: &str) -> Result<PluginActionOutcome, String> {
     validate_marketplace_name(name)?;
-    locked(app, || match app {
+    match app {
         PluginApp::Claude | PluginApp::Codex => {
             let out = run_cli(
                 app,
@@ -1017,7 +1028,7 @@ pub fn remove_marketplace(app: PluginApp, name: &str) -> Result<PluginActionOutc
             TOGGLE_TIMEOUT,
         ),
         PluginApp::Mcode | PluginApp::Openclaw => Err(unsupported(app, "marketplace management")),
-    })
+    }
 }
 
 /// 逐个刷新有名字的市场；一个失败不挡其余的。
@@ -1026,24 +1037,22 @@ fn refresh_each(
     refresh: impl Fn(&str) -> Result<(), String>,
 ) -> Result<PluginActionOutcome, String> {
     let markets = list_marketplaces(app)?;
-    locked(app, || {
-        let failures: Vec<String> = markets
-            .iter()
-            .filter_map(|market| {
-                refresh(&market.name)
-                    .err()
-                    .map(|e| format!("{}: {e}", market.name))
-            })
-            .collect();
-        if failures.is_empty() {
-            Ok(PluginActionOutcome {
-                changed: !markets.is_empty(),
-                message: None,
-            })
-        } else {
-            Err(failures.join("\n"))
-        }
-    })
+    let failures: Vec<String> = markets
+        .iter()
+        .filter_map(|market| {
+            refresh(&market.name)
+                .err()
+                .map(|e| format!("{}: {e}", market.name))
+        })
+        .collect();
+    if failures.is_empty() {
+        Ok(PluginActionOutcome {
+            changed: !markets.is_empty(),
+            message: None,
+        })
+    } else {
+        Err(failures.join("\n"))
+    }
 }
 
 /// 从来源重新拉取所有市场的目录。
@@ -1068,23 +1077,20 @@ pub fn refresh_marketplaces(app: PluginApp) -> Result<PluginActionOutcome, Strin
             )
             .map(|_| ())
         }),
-        PluginApp::Codex => locked(app, || {
-            let out = run_cli(
-                app,
-                &["plugin", "marketplace", "upgrade", "--json"],
-                NETWORK_TIMEOUT,
-            )?;
-            codex_action_result(&out).map(|v| ok_outcome(&v))
-        }),
+        PluginApp::Codex => run_cli(
+            app,
+            &["plugin", "marketplace", "upgrade", "--json"],
+            NETWORK_TIMEOUT,
+        )
+        .and_then(|out| codex_action_result(&out))
+        .map(|v| ok_outcome(&v)),
         // ClawHub 托管的目录
-        PluginApp::Openclaw => locked(app, || {
-            run_json(
-                app,
-                &["plugins", "marketplace", "refresh", "--json"],
-                NETWORK_TIMEOUT,
-            )
-            .map(|v| ok_outcome(&v))
-        }),
+        PluginApp::Openclaw => run_json(
+            app,
+            &["plugins", "marketplace", "refresh", "--json"],
+            NETWORK_TIMEOUT,
+        )
+        .map(|v| ok_outcome(&v)),
         PluginApp::Mcode => Err(unsupported(app, "marketplace refresh")),
     }
 }
@@ -1353,23 +1359,37 @@ source = "/plugins"
         assert!(codex_marketplace_needs_upgrade("not = [valid", "team").is_err());
     }
 
+    fn apply_toggle(text: &str, id: &str, enabled: bool) -> Result<String, String> {
+        use crate::live::patch::LivePatch;
+        codex_plugin_enabled_patch(id, enabled)
+            .apply(Path::new("config.toml"), Some(text.as_bytes()))
+            .map(|bytes| String::from_utf8(bytes).unwrap())
+            .map_err(|e| e.to_string())
+    }
+
     #[test]
     fn codex_enable_toggle_preserves_other_content() {
         let text = "# keep me\nmodel = \"gpt\"\n\n[plugins.\"a@m\"]\nenabled = true # trailing\n\n[mcp_servers]\n";
-        let next = set_codex_plugin_enabled_in_text(text, "a@m", false).unwrap();
+        let next = apply_toggle(text, "a@m", false).unwrap();
         assert!(next.contains("# keep me"));
         assert!(next.contains("model = \"gpt\""));
         assert!(next.contains("[mcp_servers]"));
+        assert!(next.contains("enabled = false # trailing"));
         let doc: toml::Table = toml::from_str(&next).unwrap();
         assert_eq!(doc["plugins"]["a@m"]["enabled"].as_bool(), Some(false));
 
-        let added = set_codex_plugin_enabled_in_text(&next, "b@m", true).unwrap();
+        let added = apply_toggle(&next, "b@m", true).unwrap();
         let doc: toml::Table = toml::from_str(&added).unwrap();
         assert_eq!(doc["plugins"]["b@m"]["enabled"].as_bool(), Some(true));
         assert_eq!(doc["plugins"]["a@m"]["enabled"].as_bool(), Some(false));
 
-        let fresh = set_codex_plugin_enabled_in_text("", "c@m", false).unwrap();
+        let fresh = apply_toggle("", "c@m", false).unwrap();
         assert_eq!(fresh.trim(), "[plugins.\"c@m\"]\nenabled = false");
+
+        let inline =
+            apply_toggle("plugins = { \"a@m\" = { enabled = true } }\n", "a@m", false).unwrap();
+        let doc: toml::Table = toml::from_str(&inline).unwrap();
+        assert_eq!(doc["plugins"]["a@m"]["enabled"].as_bool(), Some(false));
     }
 
     #[test]
@@ -1386,7 +1406,8 @@ enabled = false
 
     #[test]
     fn codex_enable_rejects_unparsable_config() {
-        assert!(set_codex_plugin_enabled_in_text("not = [valid", "a@m", true).is_err());
+        assert!(apply_toggle("not = [valid", "a@m", true).is_err());
+        assert!(apply_toggle("plugins = 1\n", "a@m", true).is_err());
     }
 
     #[test]
@@ -1421,5 +1442,78 @@ enabled = false
             r"\\wsl$\Ubuntu\home\jane\alt-claude"
         )));
         assert!(!is_default_claude_dir(Path::new("/opt/claude-alt")));
+    }
+
+    /// 临时 HOME，结束时还原（`CC_SWITCH_TEST_HOME` 是进程级的，用到它的测试都要 `#[serial]`）。
+    struct HomeGuard(tempfile::TempDir, Option<std::ffi::OsString>);
+
+    impl HomeGuard {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let previous = std::env::var_os("CC_SWITCH_TEST_HOME");
+            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            crate::settings::reload_settings().unwrap();
+            Self(dir, previous)
+        }
+    }
+
+    impl Drop for HomeGuard {
+        fn drop(&mut self) {
+            match self.1.take() {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+            let _ = crate::settings::reload_settings();
+        }
+    }
+
+    /// Codex 的启停开关经写入引擎写 `config.toml`：只改这一个键、按 0600 写、拿 Codex 的写锁。
+    #[test]
+    #[serial_test::serial]
+    fn codex_toggle_goes_through_the_write_engine() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let home = HomeGuard::new();
+        let config = home.0.path().join(".codex").join("config.toml");
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        let before = "model_provider = \"custom\"\n\n[model_providers.custom]\nexperimental_bearer_token = \"sk-third-party\"\n\n[plugins.\"a@m\"]\nenabled = true # keep\n";
+        std::fs::write(&config, before).unwrap();
+        let db = Arc::new(Database::memory().unwrap());
+
+        // 别的写入方拿着 Codex 的写锁时，开关要等它放手
+        let guard = crate::live::engine::lock_app("codex");
+        let done = Arc::new(AtomicBool::new(false));
+        let worker = {
+            let (db, done) = (db.clone(), done.clone());
+            std::thread::spawn(move || {
+                let outcome = set_plugin_enabled(&db, PluginApp::Codex, "a@m", false);
+                done.store(true, Ordering::SeqCst);
+                outcome
+            })
+        };
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(
+            !done.load(Ordering::SeqCst),
+            "toggle must wait for the lock"
+        );
+        drop(guard);
+        let outcome = worker.join().unwrap().unwrap();
+        assert!(outcome.changed);
+
+        let after = std::fs::read_to_string(&config).unwrap();
+        assert_eq!(
+            after,
+            before.replace("enabled = true # keep", "enabled = false # keep")
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&config).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+
+        let again = set_plugin_enabled(&db, PluginApp::Codex, "a@m", false).unwrap();
+        assert!(!again.changed);
     }
 }
