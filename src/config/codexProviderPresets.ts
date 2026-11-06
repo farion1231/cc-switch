@@ -84,10 +84,10 @@ export function generateThirdPartyConfig(
 ): string {
   const tomlString = (value: string) => JSON.stringify(value);
   const requiresOpenAiAuth = options?.requiresOpenAiAuth ?? true;
-  const modelLine = modelName ? `model = ${tomlString(modelName)}\n` : "";
 
   return `model_provider = "custom"
-${modelLine}model_reasoning_effort = "high"
+model = ${tomlString(modelName)}
+model_reasoning_effort = "high"
 disable_response_storage = true
 
 [model_providers.custom]
