@@ -89,7 +89,7 @@ jobs:
         env:
           APPLE_SIGNING_IDENTITY: '-'
         run: >-
-          pnpm tauri build --target aarch64-apple-darwin --bundles dmg
+          pnpm tauri build --target aarch64-apple-darwin --bundles app,dmg
           --config '{"bundle":{"createUpdaterArtifacts":false,"macOS":{"signingIdentity":"-"}}}'
 
       - name: Prepare artifacts and checksums
