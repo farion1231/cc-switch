@@ -7,7 +7,6 @@ import type { PresetTheme, TemplateValueConfig } from "./claudeProviderPresets";
 import type { PresetFamilyFields } from "./presetFamilies";
 import {
   GENESIS_API_KEY_URL,
-  GENESIS_DEFAULT_MODEL,
   GENESIS_OPENAI_BASE_URL,
   GENESIS_WEBSITE_URL,
 } from "./genesisModels";
@@ -2764,13 +2763,10 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       base_url: GENESIS_OPENAI_BASE_URL,
       api_key: "",
       api_mode: "chat_completions",
-      models: [{ id: GENESIS_DEFAULT_MODEL, name: GENESIS_DEFAULT_MODEL }],
+      models: [],
     },
     category: "aggregator",
     icon: "genesis",
-    suggestedDefaults: {
-      model: { default: GENESIS_DEFAULT_MODEL, provider: "genesis" },
-    },
   },
   {
     name: "CherryIN",

@@ -3,7 +3,6 @@ import type { PresetTheme, TemplateValueConfig } from "./claudeProviderPresets";
 import type { PresetFamilyFields } from "./presetFamilies";
 import {
   GENESIS_API_KEY_URL,
-  GENESIS_DEFAULT_MODEL,
   GENESIS_OPENAI_BASE_URL,
   GENESIS_WEBSITE_URL,
 } from "./genesisModels";
@@ -3802,12 +3801,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       npm: "@ai-sdk/openai-compatible",
       name: "Genesis",
       options: { baseURL: GENESIS_OPENAI_BASE_URL, apiKey: "" },
-      models: {
-        [GENESIS_DEFAULT_MODEL]: {
-          name: GENESIS_DEFAULT_MODEL,
-          reasoning: true,
-        },
-      },
+      models: {},
     },
     category: "aggregator",
     icon: "genesis",

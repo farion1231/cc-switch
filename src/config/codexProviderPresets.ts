@@ -12,7 +12,6 @@ import type { PresetTheme } from "./claudeProviderPresets";
 import type { PresetFamilyFields } from "./presetFamilies";
 import {
   GENESIS_API_KEY_URL,
-  GENESIS_DEFAULT_MODEL,
   GENESIS_OPENAI_BASE_URL,
   GENESIS_WEBSITE_URL,
 } from "./genesisModels";
@@ -84,10 +83,10 @@ export function generateThirdPartyConfig(
 ): string {
   const tomlString = (value: string) => JSON.stringify(value);
   const requiresOpenAiAuth = options?.requiresOpenAiAuth ?? true;
+  const modelLine = modelName ? `model = ${tomlString(modelName)}\n` : "";
 
   return `model_provider = "custom"
-model = ${tomlString(modelName)}
-model_reasoning_effort = "high"
+${modelLine}model_reasoning_effort = "high"
 disable_response_storage = true
 
 [model_providers.custom]
@@ -4682,13 +4681,9 @@ requires_openai_auth = true`,
     apiKeyUrl: GENESIS_API_KEY_URL,
     category: "aggregator",
     auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig(
-      "genesis",
-      GENESIS_OPENAI_BASE_URL,
-      GENESIS_DEFAULT_MODEL,
-    ),
+    config: generateThirdPartyConfig("genesis", GENESIS_OPENAI_BASE_URL, ""),
     apiFormat: "openai_responses",
-    modelCatalog: modelCatalog([GENESIS_DEFAULT_MODEL]),
+    modelCatalog: [],
     endpointCandidates: [GENESIS_OPENAI_BASE_URL],
     icon: "genesis",
   },

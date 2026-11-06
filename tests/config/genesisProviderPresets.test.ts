@@ -11,9 +11,8 @@ import { openclawProviderPresets } from "@/config/openclawProviderPresets";
 import { opencodeProviderPresets } from "@/config/opencodeProviderPresets";
 import { piProviderPresets } from "@/config/piProviderPresets";
 
-// Presets need one immediately usable model; the current catalog is fetched
-// with the account's API key instead of being frozen in the app bundle.
-const starterModels = ["qwen3.8-flash"];
+// Optional catalogs stay empty; clients requiring a model start with K3.
+const emptyModels: string[] = [];
 const find = <T extends { name: string }>(items: T[]) =>
   items.find((item) => item.name === "Genesis");
 
@@ -39,14 +38,15 @@ describe("Genesis app compatibility", () => {
     }
   });
 
-  it("uses native Responses for Codex with a starter model", () => {
+  it("uses native Responses for Codex without a pinned model", () => {
     const preset = find(codexProviderPresets);
     expect(preset?.config).toContain(
       'base_url = "https://token.moi.matrixorigin.cn/v1"',
     );
     expect(preset?.config).toContain('wire_api = "responses"');
+    expect(preset?.config).not.toMatch(/^model\s*=/m);
     expect(preset?.modelCatalog?.map((model) => model.model)).toEqual(
-      starterModels,
+      emptyModels,
     );
   });
 
@@ -57,17 +57,19 @@ describe("Genesis app compatibility", () => {
       apiFormat: "openai_chat",
       baseUrl: "https://token.moi.matrixorigin.cn",
     });
-    expect(preset?.modelRoutes?.length).toBeGreaterThan(0);
+    expect(preset?.modelRoutes?.map((route) => route.upstreamModel)).toEqual([
+      "kimi-k3",
+    ]);
   });
 
-  it("seeds OpenCode, OpenClaw, Hermes and Pi with one model", () => {
+  it("leaves optional model lists empty and gives Pi its required starter", () => {
     const opencode = find(opencodeProviderPresets);
     expect(opencode?.settingsConfig.npm).toBe("@ai-sdk/openai-compatible");
     expect(opencode?.settingsConfig.options.baseURL).toBe(
       "https://token.moi.matrixorigin.cn/v1",
     );
     expect(Object.keys(opencode?.settingsConfig.models ?? {})).toEqual(
-      starterModels,
+      emptyModels,
     );
 
     const openclaw = find(openclawProviderPresets);
@@ -76,8 +78,9 @@ describe("Genesis app compatibility", () => {
       api: "openai-completions",
     });
     expect(openclaw?.settingsConfig.models?.map((model) => model.id)).toEqual(
-      starterModels,
+      emptyModels,
     );
+    expect(openclaw?.suggestedDefaults?.model).toBeUndefined();
 
     const hermes = find(hermesProviderPresets);
     expect(hermes?.settingsConfig).toMatchObject({
@@ -85,27 +88,31 @@ describe("Genesis app compatibility", () => {
       api_mode: "chat_completions",
     });
     expect(hermes?.settingsConfig.models?.map((model) => model.id)).toEqual(
-      starterModels,
+      emptyModels,
     );
+    expect(hermes?.suggestedDefaults?.model).toBeUndefined();
 
     const pi = find(piProviderPresets);
     expect(pi?.settingsConfig).toMatchObject({
       baseUrl: "https://token.moi.matrixorigin.cn/v1",
       api: "openai-completions",
     });
-    expect(pi?.settingsConfig.models.map((model) => model.id)).toEqual(
-      starterModels,
-    );
+    expect(pi?.settingsConfig.models.map((model) => model.id)).toEqual([
+      "kimi-k3",
+    ]);
   });
 
-  it("inherits the Pi preset in compatible Pi based clients", () => {
-    for (const presets of [
-      kimiProviderPresets,
-      mcodeProviderPresets,
-      dshProviderPresets,
-      ompProviderPresets,
-    ]) {
-      expect(presets.some((preset) => preset.name === "Genesis")).toBe(true);
+  it("inherits the K3 starter in compatible Pi based clients", () => {
+    expect(
+      Object.keys(find(kimiProviderPresets)?.settingsConfig.models ?? {}),
+    ).toEqual(["cc-switch-genesis/kimi-k3"]);
+    for (const presets of [mcodeProviderPresets, dshProviderPresets]) {
+      expect(Object.keys(find(presets)?.settingsConfig.models ?? {})).toEqual([
+        "kimi-k3",
+      ]);
     }
+    expect(
+      find(ompProviderPresets)?.settingsConfig.models.map((model) => model.id),
+    ).toEqual(["kimi-k3"]);
   });
 });

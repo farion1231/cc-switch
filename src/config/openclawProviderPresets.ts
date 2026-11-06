@@ -13,7 +13,6 @@ import type { PresetTheme, TemplateValueConfig } from "./claudeProviderPresets";
 import type { PresetFamilyFields } from "./presetFamilies";
 import {
   GENESIS_API_KEY_URL,
-  GENESIS_DEFAULT_MODEL,
   GENESIS_OPENAI_BASE_URL,
   GENESIS_WEBSITE_URL,
 } from "./genesisModels";
@@ -4942,13 +4941,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       baseUrl: GENESIS_OPENAI_BASE_URL,
       apiKey: "",
       api: "openai-completions",
-      models: [{ id: GENESIS_DEFAULT_MODEL, name: GENESIS_DEFAULT_MODEL }],
+      models: [],
     },
     category: "aggregator",
     icon: "genesis",
-    suggestedDefaults: {
-      model: { primary: `genesis/${GENESIS_DEFAULT_MODEL}` },
-    },
   },
   {
     name: "CherryIN",

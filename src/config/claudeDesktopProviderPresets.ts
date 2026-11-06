@@ -1834,11 +1834,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: GENESIS_BASE_URL,
     mode: "proxy",
     apiFormat: "openai_chat",
-    modelRoutes: brandedRoutes(
-      "qwen3.8-flash",
-      "glm-5.3",
-      "deepseek-v4.1-flash",
-    ),
+    modelRoutes: brandedRoutes("kimi-k3", "kimi-k3", "kimi-k3"),
     endpointCandidates: [GENESIS_BASE_URL],
     icon: "genesis",
   },

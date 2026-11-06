@@ -13,7 +13,6 @@ import {
 import type { PresetFamilyFields } from "./presetFamilies";
 import {
   GENESIS_API_KEY_URL,
-  GENESIS_DEFAULT_MODEL,
   GENESIS_OPENAI_BASE_URL,
   GENESIS_WEBSITE_URL,
 } from "./genesisModels";
@@ -2051,7 +2050,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       apiKey: "",
       models: [
         {
-          ...piModel("qwen/qwen3.8-flash", { id: GENESIS_DEFAULT_MODEL }),
+          ...piModel("moonshotai/kimi-k3", { id: "kimi-k3" }),
           compat: OPENAI_COMPLETIONS_COMPAT,
         },
       ],
