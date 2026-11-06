@@ -1775,6 +1775,31 @@ fn serialize_tool_definition_for_description(tool: &Value) -> String {
     canonical_json_string(tool)
 }
 
+/// Recursively remove Responses-only markers from a tool parameter schema.
+///
+/// Codex marks some built-in tool parameters (the multi-agent v2 `message`
+/// parameter of `spawn_agent` / `send_message` / `followup_task`) with
+/// `"encrypted": true`. Codex's own source documents this as a Responses-only
+/// marker: it has no meaning on the Chat Completions edge, and strict
+/// upstreams (notably Gemini function declarations) reject the whole request
+/// with a 400 when it reaches them inside `function.parameters`.
+fn strip_responses_only_schema_markers(schema: &mut Value) {
+    match schema {
+        Value::Object(obj) => {
+            obj.remove("encrypted");
+            for value in obj.values_mut() {
+                strip_responses_only_schema_markers(value);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                strip_responses_only_schema_markers(item);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Normalize a function's `parameters` JSON Schema so `type` is always `"object"`.
 ///
 /// Some Responses tools carry `parameters: null` or `parameters: {"type": null}`,
@@ -1784,6 +1809,7 @@ fn normalize_function_parameters(params: Option<&Value>) -> Value {
         Some(Value::Object(obj)) => Value::Object(obj.clone()),
         _ => json!({"type": "object", "properties": {}}),
     };
+    strip_responses_only_schema_markers(&mut params);
     if let Some(obj) = params.as_object_mut() {
         match obj.get("type").and_then(|v| v.as_str()) {
             Some("object") => {}
@@ -2598,6 +2624,89 @@ mod tests {
             "input": items
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn responses_request_to_chat_strips_encrypted_schema_marker() {
+        // Codex multi-agent v2 tools mark their `message` parameter with
+        // `"encrypted": true`, a Responses-only marker. On the Chat edge it
+        // must not reach the upstream: Gemini function declarations reject
+        // the whole request over the unknown field (#9168).
+        let result = responses_to_chat_completions(json!({
+            "model": "gemini-3.8-flash",
+            "input": "List the md files",
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "spawn_agent",
+                    "description": "Spawn a sub-agent",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "message": {"type": "string", "encrypted": true},
+                            "options": {
+                                "type": "object",
+                                "properties": {
+                                    "payload": {"type": "string", "encrypted": true}
+                                }
+                            },
+                            "targets": {
+                                "type": "array",
+                                "items": {
+                                    "anyOf": [
+                                        {"type": "string", "encrypted": true},
+                                        {"type": "integer"}
+                                    ]
+                                }
+                            }
+                        },
+                        "required": ["message"]
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "send_message",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "message": {"type": "string", "encrypted": true}
+                            }
+                        }
+                    }
+                }
+            ]
+        }))
+        .unwrap();
+
+        let tools = result["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2);
+        // Everything except the marker survives, on both tool shapes.
+        assert_eq!(
+            tools[0]["function"]["parameters"],
+            json!({
+                "type": "object",
+                "properties": {
+                    "message": {"type": "string"},
+                    "options": {
+                        "type": "object",
+                        "properties": {"payload": {"type": "string"}}
+                    },
+                    "targets": {
+                        "type": "array",
+                        "items": {"anyOf": [{"type": "string"}, {"type": "integer"}]}
+                    }
+                },
+                "required": ["message"]
+            })
+        );
+        assert_eq!(
+            tools[1]["function"]["parameters"],
+            json!({
+                "type": "object",
+                "properties": {"message": {"type": "string"}}
+            })
+        );
     }
 
     #[test]
