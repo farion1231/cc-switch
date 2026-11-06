@@ -649,7 +649,6 @@ fn plan_main(job: &Job<'_>, runner: &mut dyn Runner, snap: &mut Snap) -> Result<
             live_profile.as_ref(),
             job.target,
             &target,
-            job.now_ms,
         )?;
         strip_cred(snap, &mut edits, &default.cred, live)?;
         edits.put_profile(
@@ -707,7 +706,6 @@ fn plan_main(job: &Job<'_>, runner: &mut dyn Runner, snap: &mut Snap) -> Result<
                     live_profile.as_ref(),
                     &owner.key,
                     &slot,
-                    job.now_ms,
                 )?;
                 expiry.push((owner.key.clone(), live.clone()));
                 if let Some(dir) = park_journal {
@@ -800,7 +798,6 @@ fn park_into(
     live_profile: Option<&Value>,
     owner: &str,
     slot: &SlotPaths,
-    now_ms: i64,
 ) -> Result<(), AppError> {
     edits.watch(&slot.secure);
     let dir_owner = snap
@@ -809,10 +806,11 @@ fn park_into(
         .and_then(super::identity::identity_from_profile);
     if dir_owner.as_ref().map(|found| found.key.as_str()) != Some(owner) {
         if let Some(account) = live_profile.and_then(|doc| doc.get("oauthAccount")) {
-            let stamped = stamp_account(account, now_ms);
+            // 和本机 park 一样：收回时原样写回 oauthAccount，不盖 profileFetchedAt。
+            // 这个时间戳只打在默认槽位换进去的那份上。
             edits.put_profile(
                 &slot.profile,
-                profile_bytes(snap.profile(&slot.profile).as_ref(), Some(&stamped))?,
+                profile_bytes(snap.profile(&slot.profile).as_ref(), Some(account))?,
             );
         }
     }
@@ -1780,6 +1778,11 @@ mod tests {
                 assert_eq!(previous, adopted);
                 let parked = runner.file(&cred_path(&dir.to_string_lossy())).unwrap();
                 assert_eq!(refresh_of(&parked).as_deref(), Some("refresh-a"));
+                let parked_profile = runner
+                    .file(&format!("{}/.claude.json", dir.to_string_lossy()))
+                    .unwrap();
+                let parked_doc: Value = serde_json::from_slice(&parked_profile).unwrap();
+                assert!(parked_doc["oauthAccount"].get("profileFetchedAt").is_none());
             }
             other => panic!("unexpected {other:?}"),
         }
@@ -2100,49 +2103,54 @@ mod tests {
         let held = format!("{root}/held/.oauth_refresh.lock");
         std::fs::create_dir_all(&held).unwrap();
         let switch_lock = format!("{root}/.switch.lock");
+        // Ubuntu 的 /bin/sh 是 dash，Fedora / RHEL 的 /bin/sh 是 bash。两边都跑同一支脚本。
+        for shell in ["sh", "bash"] {
+            let created = std::process::Command::new(shell)
+                .arg("-c")
+                .arg(APPLY_SCRIPT)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .and_then(|mut child| {
+                    use std::io::Write;
+                    child.stdin.as_mut().unwrap().write_all(
+                        format!("LOCK|{switch_lock}\nACQUIRE|{missing}|60|1\nEND\n").as_bytes(),
+                    )?;
+                    drop(child.stdin.take());
+                    child.wait_with_output()
+                })
+                .unwrap();
+            assert!(
+                created.status.success(),
+                "{shell}: {}",
+                String::from_utf8_lossy(&created.stderr)
+            );
+            assert!(!std::path::Path::new(&missing).exists());
 
-        let created = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(APPLY_SCRIPT)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .and_then(|mut child| {
-                use std::io::Write;
-                child.stdin.as_mut().unwrap().write_all(
-                    format!("LOCK|{switch_lock}\nACQUIRE|{missing}|60|1\nEND\n").as_bytes(),
-                )?;
-                drop(child.stdin.take());
-                child.wait_with_output()
-            })
-            .unwrap();
-        assert!(
-            created.status.success(),
-            "{}",
-            String::from_utf8_lossy(&created.stderr)
-        );
-        assert!(!std::path::Path::new(&missing).exists());
-
-        let busy = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(APPLY_SCRIPT)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .and_then(|mut child| {
-                use std::io::Write;
-                child.stdin.as_mut().unwrap().write_all(
-                    format!("LOCK|{switch_lock}\nACQUIRE|{held}|60|1\nEND\n").as_bytes(),
-                )?;
-                drop(child.stdin.take());
-                child.wait_with_output()
-            })
-            .unwrap();
-        assert_eq!(busy.status.code(), Some(75));
-        let stderr = String::from_utf8_lossy(&busy.stderr);
-        assert!(stderr.contains(&format!("lock busy: {held}")), "{stderr}");
+            let busy = std::process::Command::new(shell)
+                .arg("-c")
+                .arg(APPLY_SCRIPT)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .and_then(|mut child| {
+                    use std::io::Write;
+                    child.stdin.as_mut().unwrap().write_all(
+                        format!("LOCK|{switch_lock}\nACQUIRE|{held}|60|1\nEND\n").as_bytes(),
+                    )?;
+                    drop(child.stdin.take());
+                    child.wait_with_output()
+                })
+                .unwrap();
+            assert_eq!(busy.status.code(), Some(75), "{shell}");
+            let stderr = String::from_utf8_lossy(&busy.stderr);
+            assert!(
+                stderr.contains(&format!("lock busy: {held}")),
+                "{shell}: {stderr}"
+            );
+        }
     }
 
     #[test]
