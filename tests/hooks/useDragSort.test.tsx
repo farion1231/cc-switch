@@ -61,6 +61,37 @@ const mockProviders: Record<string, Provider> = {
 };
 
 describe("useDragSort", () => {
+  it.each([undefined, 0])(
+    "keeps legacy rows with createdAt %s before a newly appended row",
+    (createdAt) => {
+      const { wrapper } = createWrapper();
+      const { result } = renderHook(
+        () =>
+          useDragSort(
+            {
+              old: {
+                id: "old",
+                name: "Z existing",
+                settingsConfig: {},
+                createdAt,
+              },
+              new: {
+                id: "new",
+                name: "A imported",
+                settingsConfig: {},
+                createdAt: 100,
+              },
+            },
+            "claude",
+          ),
+        { wrapper },
+      );
+      expect(result.current.sortedProviders.map((p) => p.id)).toEqual([
+        "old",
+        "new",
+      ]);
+    },
+  );
   beforeEach(() => {
     updateSortOrderMock.mockReset();
     toastSuccessMock.mockReset();
