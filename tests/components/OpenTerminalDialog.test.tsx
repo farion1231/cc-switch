@@ -24,7 +24,10 @@ vi.mock("@/lib/api", () => ({
     agyAccountIsRunning: () => agyRunningMock(),
   },
 }));
-vi.mock("@/lib/platform", () => ({ isMac: () => true }));
+vi.mock("@/lib/platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/platform")>()),
+  isMac: () => true,
+}));
 
 vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
