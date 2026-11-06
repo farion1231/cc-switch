@@ -1,0 +1,122 @@
+name: Build macOS fork
+
+on:
+  push:
+    branches: [feat/classifier-queue]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-macos-fork-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Test and package macOS arm64
+    if: github.repository == 'sxin0/cc-switch'
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Setup pnpm
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+        run: |
+          corepack enable
+          corepack install
+
+      - name: Get pnpm store directory
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: TypeScript type check
+        run: pnpm typecheck
+
+      - name: Frontend unit tests
+        run: pnpm test:unit
+
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        run: |
+          channel=$(sed -nE 's/^channel *= *"([^"]+)".*/\1/p' rust-toolchain.toml)
+          test -n "$channel"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+          targets: aarch64-apple-darwin
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: fork-macos-arm64
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
+        with:
+          tool: cargo-nextest
+
+      - name: Backend tests
+        run: |
+          mkdir -p dist
+          cargo nextest run --release --target aarch64-apple-darwin --manifest-path src-tauri/Cargo.toml --profile ci
+
+      # Fork builds have no official Apple certificate or updater private key.
+      # Use ad-hoc signing and disable updater artifacts only for this build.
+      - name: Build macOS installer
+        env:
+          APPLE_SIGNING_IDENTITY: '-'
+        run: >-
+          pnpm tauri build --target aarch64-apple-darwin --bundles dmg
+          --config '{"bundle":{"createUpdaterArtifacts":false,"macOS":{"signingIdentity":"-"}}}'
+
+      - name: Prepare artifacts and checksums
+        run: |
+          set -euo pipefail
+          version=$(node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version")
+          short_sha="${GITHUB_SHA:0:8}"
+          name="CC-Switch-v${version}-fork-${short_sha}-macOS-arm64.dmg"
+          mkdir -p artifacts
+          dmg_count=0
+          for dmg in src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg; do
+            [ -f "$dmg" ] || continue
+            cp "$dmg" "artifacts/$name"
+            dmg_count=$((dmg_count + 1))
+          done
+          test "$dmg_count" -eq 1
+          hdiutil verify "artifacts/$name"
+          codesign --verify --deep --strict --verbose=2 \
+            'src-tauri/target/aarch64-apple-darwin/release/bundle/macos/CC Switch.app'
+          (cd artifacts && shasum -a 256 "$name" > SHA256SUMS.txt)
+          printf 'Source commit: %s\nArchitecture: arm64\nApple notarization: none (fork build)\n' \
+            "$GITHUB_SHA" > artifacts/BUILD-INFO.txt
+
+      - name: Upload macOS installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: CC-Switch-macOS-arm64-${{ github.sha }}
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14
