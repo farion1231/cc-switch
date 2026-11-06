@@ -37,6 +37,7 @@ import {
   useCheckSkillUpdates,
   useDeleteSkillBackup,
   useDiscoverableSkills,
+  useDiscoverableSkillsFailures,
   useImportSkillsFromApps,
   useInstallSkillsFromZip,
   useInstalledSkills,
@@ -2100,11 +2101,13 @@ function AppMenuButton({
 function RepoManagerContainer({ onClose }: { onClose: () => void }) {
   const { data: repos = [] } = useSkillRepos();
   const { data: discoverable = [] } = useDiscoverableSkills();
+  const { data: failures = [] } = useDiscoverableSkillsFailures();
   const { addRepo, removeRepo, setRepoEnabled } = useSkillRepoActions();
   return (
     <RepoManagerPanel
       repos={repos}
       skills={discoverable}
+      failures={failures}
       onAdd={addRepo}
       onRemove={removeRepo}
       onToggle={setRepoEnabled}
