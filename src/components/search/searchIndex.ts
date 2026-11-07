@@ -210,6 +210,8 @@ export const SETTING_ENTRIES: SettingEntry[] = [
   { section: "general", label: "settings.language" },
   { section: "general", label: "settings.theme" },
   { section: "general", label: "settings.general.quotaDisplay" },
+  { section: "general", label: "settings.general.density" },
+  { section: "general", label: "settings.general.zoom" },
   { section: "general", label: "settings.general.visibleApps" },
   { section: "general", label: "settings.appVisibility.showProfileSwitcher" },
   { section: "general", label: "settings.general.checkToolUpdates" },

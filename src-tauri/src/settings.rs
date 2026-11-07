@@ -501,6 +501,9 @@ pub struct AppSettings {
     /// 代理接管记账与启动费用回填（不读会话文件）不受此开关影响。
     #[serde(default = "default_session_auto_sync_enabled")]
     pub session_auto_sync_enabled: bool,
+    /// 会话页搜索消息正文（默认关闭，开启后在本地建 `session-index.db` 索引）；关闭时删除索引
+    #[serde(default = "default_session_content_search_enabled")]
+    pub session_content_search_enabled: bool,
     /// Whether to show the failover toggle independently on the main page
     #[serde(default)]
     pub enable_failover_toggle: bool,
@@ -604,6 +607,9 @@ pub struct AppSettings {
     pub pi_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub omp_config_dir: Option<String>,
+    /// DeepSeek Harness 主目录（相当于 `DSH_HOME`，优先于环境变量）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dsh_config_dir: Option<String>,
 
     // ===== 当前供应商 ID（设备级）=====
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
@@ -694,6 +700,10 @@ fn default_session_auto_sync_enabled() -> bool {
     true
 }
 
+fn default_session_content_search_enabled() -> bool {
+    false
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -712,6 +722,7 @@ impl Default for AppSettings {
             usage_dashboard_refresh_interval_ms: None,
             usage_display: None,
             session_auto_sync_enabled: true,
+            session_content_search_enabled: false,
             enable_failover_toggle: false,
             show_profile_switcher: false,
             show_provider_search: true,
@@ -743,6 +754,7 @@ impl Default for AppSettings {
             hermes_config_dir: None,
             pi_config_dir: None,
             omp_config_dir: None,
+            dsh_config_dir: None,
             current_provider_claude: None,
             current_provider_claude_desktop: None,
             current_provider_codex: None,
@@ -840,6 +852,13 @@ impl AppSettings {
 
         self.omp_config_dir = self
             .omp_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        self.dsh_config_dir = self
+            .dsh_config_dir
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
@@ -1352,6 +1371,14 @@ pub fn get_omp_override_dir() -> Option<PathBuf> {
         .map(|path| resolve_override_path(path))
 }
 
+pub fn get_dsh_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .dsh_config_dir
+        .as_ref()
+        .map(|path| resolve_override_path(path))
+}
+
 pub fn preserve_codex_official_auth_on_switch() -> bool {
     settings_store()
         .read()
@@ -1759,6 +1786,16 @@ mod tests {
             resolve_override_path(r"~\pi\agent"),
             home.join("pi").join("agent")
         );
+    }
+
+    #[test]
+    fn session_content_search_defaults_off_and_keeps_a_saved_choice() {
+        assert!(!AppSettings::default().session_content_search_enabled);
+        let missing: AppSettings = serde_json::from_str("{}").unwrap();
+        assert!(!missing.session_content_search_enabled);
+        let on: AppSettings =
+            serde_json::from_str(r#"{"sessionContentSearchEnabled":true}"#).unwrap();
+        assert!(on.session_content_search_enabled);
     }
 
     #[test]
