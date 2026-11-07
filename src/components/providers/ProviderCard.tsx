@@ -204,6 +204,11 @@ export function ProviderCard({
 }: ProviderCardProps) {
   const { t } = useTranslation();
   const codexOfficialIdentity = resolveCodexOfficialIdentity(appId, provider);
+  const isBoundCodexOfficial = codexOfficialIdentity === "managed_account";
+  const isCodexOauth =
+    appId === "codex"
+      ? isBoundCodexOfficial
+      : provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
   const managedCodexAccountId = resolveManagedAccountId(
     provider.meta,
     "codex_oauth",
@@ -215,13 +220,13 @@ export function ProviderCard({
   } = useQuery({
     queryKey: ["managed-auth-status", "codex_oauth"],
     queryFn: () => authApi.authGetStatus("codex_oauth"),
-    enabled:
-      codexOfficialIdentity === "managed_account" &&
-      Boolean(managedCodexAccountId),
+    enabled: isCodexOauth,
     staleTime: 30_000,
   });
   const managedCodexAccount = codexAuthStatus?.accounts.find(
-    (account) => account.id === managedCodexAccountId,
+    (account) =>
+      account.id ===
+      (managedCodexAccountId ?? codexAuthStatus?.default_account_id),
   );
   const manualNote = provider.notes?.trim() || undefined;
   const providerNameIncludesAccountLogin = Boolean(
@@ -260,7 +265,6 @@ export function ProviderCard({
     return true;
   }, [provider.notes, displayUrl, fallbackUrlText]);
 
-  const isBoundCodexOfficial = codexOfficialIdentity === "managed_account";
   const isOfficial = isOfficialProvider(provider, appId);
   // Claude 官方卡绑了 Claude 官方账号：副标题写账号，额度按这个号查
   const claudeBoundAccountId =
@@ -300,10 +304,6 @@ export function ProviderCard({
   const isCopilot =
     provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
     provider.meta?.usage_script?.templateType === "github_copilot";
-  const isCodexOauth =
-    appId === "codex"
-      ? isBoundCodexOfficial
-      : provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
   // xAI OAuth (SuperGrok 反代)：额度经自管 OAuth token 自动显示，与 codex_oauth 同构
   const isXaiOauth = provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH;
   // Antigravity 官方卡绑了授权中心的账号：额度查绑定的号（只有 macOS 能切号，其他平台忽略绑定）
@@ -456,7 +456,7 @@ export function ProviderCard({
             )}
           </div>
 
-          {codexOfficialIdentity && codexOfficialIdentity !== "api_key" ? (
+          {codexOfficialIdentity === "native_login" || isCodexOauth ? (
             <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
               {codexOfficialIdentity === "native_login" ? (
                 <>
