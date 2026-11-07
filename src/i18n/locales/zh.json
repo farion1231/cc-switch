@@ -3079,6 +3079,214 @@
       "copied": "已把「{{name}}」复制到 {{apps}}"
     }
   },
+  "subagents": {
+    "helpTitle": "Subagents",
+    "helpText": "Subagent 是 Claude Code 可以委派任务的专用助手：每个都有自己的系统提示词、工具权限和模型。这里管理的是用户级 subagent（~/.claude/agents），在所有项目里都可用。启用时写入目录，停用时移除文件，库里的内容保留。",
+    "copyDir": "复制目录路径",
+    "copyDirAria": "复制目录路径 {{path}}",
+    "dirNotExists": "目录还不存在，启用第一个 subagent 时会自动创建",
+    "import": "导入",
+    "new": "新建",
+    "clearSearch": "清除搜索",
+    "noSearchResults": "没有匹配「{{query}}」的 subagent",
+    "loadFailed": "读取 subagent 失败",
+    "tabs": {
+      "managed": "已管理",
+      "unmanaged": "未管理",
+      "plugins": "插件"
+    },
+    "empty": {
+      "body": "Subagent 是 Claude Code 会按描述自动委派任务的专用助手，各自有独立的上下文、提示词和工具权限。启用后写入 {{path}}，所有项目都能用。",
+      "importCount": "导入 {{count}} 个现有文件"
+    },
+    "status": {
+      "drifted": "磁盘已被修改",
+      "missing": "文件缺失"
+    },
+    "actions": {
+      "resolve": "处理",
+      "rewrite": "重新写入",
+      "enableTip": "启用：写入 agents 目录",
+      "disableTip": "停用：从 agents 目录移除文件（库里保留）",
+      "enableAria": "启用 {{name}}",
+      "disableAria": "停用 {{name}}",
+      "rowMore": "{{name}} 的更多操作",
+      "duplicate": "复制为新 agent",
+      "export": "导出 .md（复制到剪贴板）",
+      "copyPath": "复制文件路径"
+    },
+    "confirmDelete": {
+      "title": "删除「{{name}}」？",
+      "message": "只从 cc-switch 的库里删除，agents 目录里没有它的文件。",
+      "messageEnabled": "会同时删除 {{path}}，删除后无法撤销。"
+    },
+    "conflict": {
+      "driftedTitle": "磁盘上的文件已被修改",
+      "driftedMessage": "这个文件在 cc-switch 之外被改过：{{detail}}\n继续会用 cc-switch 的版本覆盖（或删除）磁盘上的改动。",
+      "driftedConfirm": "仍然继续",
+      "fileExistsTitle": "目标文件已存在",
+      "fileExistsMessage": "agents 目录里已有同名文件，且不由 cc-switch 管理：{{detail}}\n继续会覆盖这个文件。",
+      "fileExistsConfirm": "覆盖"
+    },
+    "errors": {
+      "invalid": "内容不合法：{{detail}}",
+      "nameTaken": "名字已被占用：{{detail}}",
+      "notFound": "这个 subagent 已不存在，列表已刷新",
+      "drifted": "磁盘上的文件已被修改：{{detail}}",
+      "fileExists": "目标文件已存在：{{detail}}"
+    },
+    "toast": {
+      "created": "已新建「{{name}}」",
+      "saved": "已保存「{{name}}」",
+      "writtenTo": "已写入 {{path}}",
+      "removedFrom": "已移除 {{path}}",
+      "saveFailed": "保存失败",
+      "enabled": "已启用「{{name}}」",
+      "disabled": "已停用「{{name}}」",
+      "enableFailed": "启用「{{name}}」失败",
+      "disableFailed": "停用「{{name}}」失败",
+      "rewritten": "已重新写入「{{name}}」",
+      "rewriteFailed": "重新写入「{{name}}」失败",
+      "deleted": "已删除「{{name}}」",
+      "deleteFailed": "删除「{{name}}」失败",
+      "adoptedDisk": "已采纳磁盘上的「{{name}}」",
+      "overwroteDisk": "已用 cc-switch 的版本覆盖「{{name}}」",
+      "resolveFailed": "处理「{{name}}」失败",
+      "imported": "已导入 {{count}} 个 subagent",
+      "importFailed": "导入失败",
+      "exported": "已复制「{{name}}」的 Markdown",
+      "pathCopied": "已复制文件路径",
+      "dirCopied": "已复制目录路径",
+      "copyFailed": "复制失败"
+    },
+    "drift": {
+      "title": "「{{name}}」的文件已被修改",
+      "body": "{{path}} 在 cc-switch 之外被改过。选择保留哪个版本：",
+      "ccSwitchVersion": "cc-switch 版本",
+      "diskVersion": "磁盘版本",
+      "diskMissing": "磁盘上已没有这个文件。",
+      "loadFailed": "读取磁盘文件失败：{{error}}",
+      "adoptDisk": "采纳磁盘版本",
+      "overwriteDisk": "用 cc-switch 版本覆盖"
+    },
+    "unmanaged": {
+      "emptyTitle": "没有未管理的 subagent",
+      "emptyBody": "{{path}} 里的文件都已由 cc-switch 管理。手动放进这个目录的 .md 文件会出现在这里。",
+      "hint": "{{path}} 里有、cc-switch 还没管理的文件",
+      "selectAll": "全选",
+      "selectAria": "选择 {{name}}",
+      "importSelected": "导入所选（{{count}}）",
+      "importing": "导入中…",
+      "parseError": "无法导入：{{error}}"
+    },
+    "plugins": {
+      "emptyTitle": "没有插件提供的 subagent",
+      "emptyBody": "已安装的 Claude Code 插件里自带的 subagent 会列在这里。",
+      "hint": "这些 subagent 由插件提供，只读；要修改请在插件里改。",
+      "fromPlugin": "来自插件 {{plugin}}"
+    },
+    "form": {
+      "newTitle": "新建 subagent",
+      "editTitle": "编辑「{{name}}」",
+      "sheetDescription": "编辑 subagent，保存到 {{path}}",
+      "viewAria": "编辑方式",
+      "viewForm": "表单",
+      "viewSource": "源码",
+      "enabled": "启用",
+      "enabledHint": "保存后写入 {{path}}",
+      "disabledHint": "只保存在 cc-switch 的库里，不写文件",
+      "saveAndWrite": "保存并写入",
+      "saveFailed": "保存失败",
+      "name": "名称",
+      "nameHint": "小写字母、数字和连字符。保存到",
+      "nameRequired": "请填写名称",
+      "nameInvalid": "只能用小写字母、数字和连字符，以字母或数字开头，最长 64 个字符",
+      "nameTaken": "已有名为「{{name}}」的 subagent",
+      "description": "描述",
+      "descriptionPlaceholder": "例如：Expert code reviewer. Use proactively after writing or modifying code.",
+      "descriptionHint": "Claude 根据描述决定何时委派，写清触发场景；写上 “use proactively” 会更主动地调用。",
+      "descRequired": "请填写描述",
+      "model": "模型",
+      "tools": "工具",
+      "color": "颜色",
+      "colorNone": "无颜色",
+      "body": "系统提示词",
+      "bodyHint": "frontmatter 之后的正文，作为这个 subagent 的系统提示词。",
+      "bodyPlaceholder": "You are a ...",
+      "sourceHint": "直接编辑整份 Markdown（YAML frontmatter + 正文）。表单里不认识的字段会原样保留。",
+      "fixSourceFirst": "frontmatter 无法解析，请先在源码模式里修正",
+      "parseError": {
+        "unclosed": "frontmatter 没有结束的 ---",
+        "yaml": "YAML 语法错误：{{detail}}",
+        "not_map": "frontmatter 必须是「键: 值」的形式"
+      }
+    },
+    "model": {
+      "inherit": "继承主模型",
+      "inheritShort": "继承",
+      "inheritHint": "跟随主会话当前使用的模型",
+      "loading": "正在读取当前供应商…",
+      "loadFailed": "读取模型选项失败，只显示通用选项",
+      "contextDirect": "当前：直连 · {{provider}}",
+      "contextDirectNone": "当前：直连",
+      "contextRoute": "路由 · {{provider}}",
+      "contextStack": "聚合模式",
+      "unknownProvider": "未知供应商",
+      "searchPlaceholder": "搜索模型",
+      "searchEmpty": "没有匹配的模型",
+      "groupCurrent": "当前值",
+      "groupAlias": "别名",
+      "groupModels": "模型",
+      "groupModelsOf": "模型 · {{provider}}",
+      "custom": "自定义…",
+      "customPlaceholder": "输入模型 id，例如 claude-sonnet-4-5",
+      "notInList": "不在当前模式可用列表中",
+      "notInListHint": "「{{value}}」不在当前模式的可用列表中，切换供应商或模式后可能失效。",
+      "aliasUnmappedShort": "当前供应商未配置该档",
+      "aliasUnmapped": "当前供应商未配置该档，Claude Code 会把官方模型 id 直接发给第三方，可能失败。",
+      "notice": {
+        "routeAliasesOnly": "路由模式下代理只按别名映射，完整模型 id 会被替换为默认模型。",
+        "stackAliasesShareDefault": "聚合模式下别名都指向默认供应商的首个模型；选具体的 ccs- 模型可直达对应供应商。",
+        "noProvider": "Claude Code 还没有当前供应商，只能选择通用选项。",
+        "override": "检测到 CLAUDE_CODE_SUBAGENT_MODEL={{value}}，它优先于这里的设置。"
+      }
+    },
+    "tools": {
+      "modeAria": "工具权限",
+      "inherit": "继承全部工具",
+      "allow": "仅允许",
+      "inheritHint": "不写 tools：可以使用主会话的全部工具（包括 MCP 工具）。",
+      "all": "全部工具",
+      "none": "无工具",
+      "summaryMore": "{{head}} +{{count}}",
+      "builtinAria": "内置工具",
+      "custom": "自定义工具",
+      "customPlaceholder": "例如 mcp__github__search_code，多个用逗号分隔",
+      "add": "添加",
+      "remove": "移除 {{tool}}",
+      "emptyError": "至少选择一个工具，或改为继承全部工具"
+    },
+    "colors": {
+      "red": "红",
+      "blue": "蓝",
+      "green": "绿",
+      "yellow": "黄",
+      "purple": "紫",
+      "orange": "橙",
+      "pink": "粉",
+      "cyan": "青"
+    },
+    "section": {
+      "title": "Subagents",
+      "summary": "{{count}} 个",
+      "summaryEmpty": "未添加",
+      "needsAttention": "{{count}} 个需要处理",
+      "sharedHint": "所有 Claude 供应商共用。这里的修改会立即写入文件，不受本页「保存 / 取消」影响。",
+      "overrideWarning": "本供应商填写了 Subagent 模型（{{model}}）：它通过 CLAUDE_CODE_SUBAGENT_MODEL 生效，会覆盖下面各 Subagent 自己设置的 model。",
+      "pluginsToggle": "插件提供的 Subagent {{count}} 个（只读）",
+      "backToList": "返回 Subagent 列表"
+    }
+  },
   "profiles": {
     "switcherAriaLabel": "项目：{{name}}",
     "switcherTooltip": {

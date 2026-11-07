@@ -3024,6 +3024,214 @@
       "copied": "\"{{name}}\" {{apps}}'ye kopyalandı"
     }
   },
+  "subagents": {
+    "helpTitle": "Subagents",
+    "helpText": "Subagent'lar, Claude Code'un görev devredebildiği özel asistanlardır. Her birinin kendi sistem istemi, araç izinleri ve modeli vardır. Bu sayfa her projede kullanılabilen kullanıcı düzeyindeki subagent'ları (~/.claude/agents) yönetir. Etkinleştirmek dosyayı dizine yazar; devre dışı bırakmak dosyayı kaldırır ama kütüphanede tutar.",
+    "copyDir": "Dizin yolunu kopyala",
+    "copyDirAria": "Dizin yolunu kopyala {{path}}",
+    "dirNotExists": "Dizin henüz yok. İlk subagent'ı etkinleştirdiğinizde oluşturulacak.",
+    "import": "İçe aktar",
+    "new": "Yeni",
+    "clearSearch": "Aramayı temizle",
+    "noSearchResults": "\"{{query}}\" ile eşleşen subagent yok",
+    "loadFailed": "Subagent'lar yüklenemedi",
+    "tabs": {
+      "managed": "Yönetilen",
+      "unmanaged": "Yönetilmeyen",
+      "plugins": "Eklentiler"
+    },
+    "empty": {
+      "body": "Subagent'lar, Claude Code'un açıklamalarına göre görev devrettiği özel asistanlardır; her birinin kendi bağlamı, istemi ve araç izinleri vardır. Etkin subagent'lar {{path}} dizinine yazılır ve her projede çalışır.",
+      "importCount": "Mevcut {{count}} dosyayı içe aktar"
+    },
+    "status": {
+      "drifted": "Diskte değiştirildi",
+      "missing": "Dosya eksik"
+    },
+    "actions": {
+      "resolve": "Çöz",
+      "rewrite": "Yeniden yaz",
+      "enableTip": "Etkinleştir: agents dizinine yazar",
+      "disableTip": "Devre dışı bırak: dosyayı agents dizininden kaldırır (kütüphanede kalır)",
+      "enableAria": "{{name}} etkinleştir",
+      "disableAria": "{{name}} devre dışı bırak",
+      "rowMore": "{{name}} için diğer işlemler",
+      "duplicate": "Yeni agent olarak çoğalt",
+      "export": ".md dışa aktar (panoya kopyala)",
+      "copyPath": "Dosya yolunu kopyala"
+    },
+    "confirmDelete": {
+      "title": "\"{{name}}\" silinsin mi?",
+      "message": "Yalnızca cc-switch kütüphanesinden kaldırılır; agents dizininde bu agent için dosya yok.",
+      "messageEnabled": "{{path}} de silinecek. Bu işlem geri alınamaz."
+    },
+    "conflict": {
+      "driftedTitle": "Dosya diskte değiştirilmiş",
+      "driftedMessage": "Bu dosya cc-switch dışında değiştirildi: {{detail}}\nDevam ederseniz bu değişiklikler cc-switch sürümüyle üzerine yazılır (veya silinir).",
+      "driftedConfirm": "Yine de devam et",
+      "fileExistsTitle": "Hedef dosya zaten var",
+      "fileExistsMessage": "agents dizininde cc-switch tarafından yönetilmeyen aynı adlı bir dosya var: {{detail}}\nDevam ederseniz üzerine yazılır.",
+      "fileExistsConfirm": "Üzerine yaz"
+    },
+    "errors": {
+      "invalid": "Geçersiz içerik: {{detail}}",
+      "nameTaken": "Ad zaten kullanılıyor: {{detail}}",
+      "notFound": "Bu subagent artık yok. Liste yenilendi.",
+      "drifted": "Dosya diskte değiştirilmiş: {{detail}}",
+      "fileExists": "Hedef dosya zaten var: {{detail}}"
+    },
+    "toast": {
+      "created": "\"{{name}}\" oluşturuldu",
+      "saved": "\"{{name}}\" kaydedildi",
+      "writtenTo": "{{path}} konumuna yazıldı",
+      "removedFrom": "{{path}} kaldırıldı",
+      "saveFailed": "Kaydedilemedi",
+      "enabled": "\"{{name}}\" etkinleştirildi",
+      "disabled": "\"{{name}}\" devre dışı bırakıldı",
+      "enableFailed": "\"{{name}}\" etkinleştirilemedi",
+      "disableFailed": "\"{{name}}\" devre dışı bırakılamadı",
+      "rewritten": "\"{{name}}\" yeniden yazıldı",
+      "rewriteFailed": "\"{{name}}\" yazılamadı",
+      "deleted": "\"{{name}}\" silindi",
+      "deleteFailed": "\"{{name}}\" silinemedi",
+      "adoptedDisk": "\"{{name}}\" için diskteki sürüm benimsendi",
+      "overwroteDisk": "\"{{name}}\" cc-switch sürümüyle üzerine yazıldı",
+      "resolveFailed": "\"{{name}}\" çözülemedi",
+      "imported": "{{count}} subagent içe aktarıldı",
+      "importFailed": "İçe aktarma başarısız",
+      "exported": "\"{{name}}\" Markdown'ı kopyalandı",
+      "pathCopied": "Dosya yolu kopyalandı",
+      "dirCopied": "Dizin yolu kopyalandı",
+      "copyFailed": "Kopyalanamadı"
+    },
+    "drift": {
+      "title": "\"{{name}}\" dosyası değiştirilmiş",
+      "body": "{{path}} cc-switch dışında değiştirildi. Hangi sürümün kalacağını seçin:",
+      "ccSwitchVersion": "cc-switch sürümü",
+      "diskVersion": "Diskteki sürüm",
+      "diskMissing": "Dosya artık diskte yok.",
+      "loadFailed": "Diskteki dosya okunamadı: {{error}}",
+      "adoptDisk": "Diskteki sürümü benimse",
+      "overwriteDisk": "cc-switch sürümüyle üzerine yaz"
+    },
+    "unmanaged": {
+      "emptyTitle": "Yönetilmeyen subagent yok",
+      "emptyBody": "{{path}} içindeki tüm dosyalar cc-switch tarafından yönetiliyor. Bu dizine elle koyduğunuz .md dosyaları burada görünür.",
+      "hint": "{{path}} içinde olup cc-switch'in henüz yönetmediği dosyalar",
+      "selectAll": "Tümünü seç",
+      "selectAria": "{{name}} seç",
+      "importSelected": "Seçilenleri içe aktar ({{count}})",
+      "importing": "İçe aktarılıyor…",
+      "parseError": "İçe aktarılamaz: {{error}}"
+    },
+    "plugins": {
+      "emptyTitle": "Eklentilerden gelen subagent yok",
+      "emptyBody": "Yüklü Claude Code eklentileriyle gelen subagent'lar burada listelenir.",
+      "hint": "Bu subagent'lar eklentilerden gelir ve salt okunurdur. Eklentinin içinde değiştirin.",
+      "fromPlugin": "{{plugin}} eklentisinden"
+    },
+    "form": {
+      "newTitle": "Yeni subagent",
+      "editTitle": "\"{{name}}\" düzenle",
+      "sheetDescription": "Subagent'ı düzenleyin, {{path}} konumuna kaydedilir",
+      "viewAria": "Düzenleme modu",
+      "viewForm": "Form",
+      "viewSource": "Kaynak",
+      "enabled": "Etkin",
+      "enabledHint": "Kaydedildiğinde {{path}} konumuna yazılır",
+      "disabledHint": "Yalnızca cc-switch kütüphanesinde tutulur; dosya yazılmaz",
+      "saveAndWrite": "Kaydet ve yaz",
+      "saveFailed": "Kaydedilemedi",
+      "name": "Ad",
+      "nameHint": "Küçük harf, rakam ve kısa çizgi. Kayıt yeri",
+      "nameRequired": "Bir ad girin",
+      "nameInvalid": "Küçük harf, rakam ve kısa çizgi kullanın; harf veya rakamla başlamalı, en fazla 64 karakter",
+      "nameTaken": "\"{{name}}\" adlı bir subagent zaten var",
+      "description": "Açıklama",
+      "descriptionPlaceholder": "ör. Expert code reviewer. Use proactively after writing or modifying code.",
+      "descriptionHint": "Claude ne zaman devredeceğine bu açıklamaya göre karar verir; hangi durumlarda kullanılacağını açıkça yazın. \"use proactively\" eklemek daha sık çağrılmasını sağlar.",
+      "descRequired": "Bir açıklama girin",
+      "model": "Model",
+      "tools": "Araçlar",
+      "color": "Renk",
+      "colorNone": "Renk yok",
+      "body": "Sistem istemi",
+      "bodyHint": "Frontmatter'dan sonraki metin bu subagent'ın sistem istemidir.",
+      "bodyPlaceholder": "You are a ...",
+      "sourceHint": "Tüm Markdown dosyasını (YAML frontmatter + gövde) düzenleyin. Formun tanımadığı alanlar olduğu gibi korunur.",
+      "fixSourceFirst": "Frontmatter ayrıştırılamıyor. Önce kaynak modunda düzeltin.",
+      "parseError": {
+        "unclosed": "Frontmatter'ın kapanış --- satırı yok",
+        "yaml": "YAML söz dizimi hatası: {{detail}}",
+        "not_map": "Frontmatter anahtar: değer çiftlerinden oluşmalı"
+      }
+    },
+    "model": {
+      "inherit": "Ana modeli devral",
+      "inheritShort": "Devral",
+      "inheritHint": "Ana konuşmanın kullandığı modeli kullanır",
+      "loading": "Geçerli sağlayıcı okunuyor…",
+      "loadFailed": "Model seçenekleri yüklenemedi; yalnızca genel seçenekler gösteriliyor",
+      "contextDirect": "Geçerli: Doğrudan · {{provider}}",
+      "contextDirectNone": "Geçerli: Doğrudan",
+      "contextRoute": "Yönlendirme · {{provider}}",
+      "contextStack": "Yığın modu",
+      "unknownProvider": "bilinmeyen sağlayıcı",
+      "searchPlaceholder": "Model ara",
+      "searchEmpty": "Eşleşen model yok",
+      "groupCurrent": "Geçerli değer",
+      "groupAlias": "Takma adlar",
+      "groupModels": "Modeller",
+      "groupModelsOf": "Modeller · {{provider}}",
+      "custom": "Özel…",
+      "customPlaceholder": "Bir model id girin, ör. claude-sonnet-4-5",
+      "notInList": "Geçerli modda kullanılamıyor",
+      "notInListHint": "\"{{value}}\" geçerli modun listesinde yok. Sağlayıcı veya mod değiştirildikten sonra çalışmayabilir.",
+      "aliasUnmappedShort": "Geçerli sağlayıcıda yapılandırılmamış",
+      "aliasUnmapped": "Geçerli sağlayıcı bu katmanı yapılandırmıyor. Claude Code resmi model id'sini üçüncü taraf sağlayıcıya olduğu gibi gönderir; bu başarısız olabilir.",
+      "notice": {
+        "routeAliasesOnly": "Yönlendirme modunda proxy yalnızca takma adları eşler; tam model id'leri varsayılan modelle değiştirilir.",
+        "stackAliasesShareDefault": "Yığın modunda tüm takma adlar varsayılan sağlayıcının ilk modelini gösterir. Sağlayıcısına doğrudan ulaşmak için belirli bir ccs- modeli seçin.",
+        "noProvider": "Claude Code'un henüz geçerli bir sağlayıcısı yok; yalnızca genel seçenekler kullanılabilir.",
+        "override": "CLAUDE_CODE_SUBAGENT_MODEL={{value}} ayarlı ve bu ayardan önceliklidir."
+      }
+    },
+    "tools": {
+      "modeAria": "Araç izinleri",
+      "inherit": "Tüm araçları devral",
+      "allow": "Yalnızca izin verilenler",
+      "inheritHint": "tools alanı yok: subagent, MCP araçları dahil ana konuşmanın tüm araçlarını kullanabilir.",
+      "all": "Tüm araçlar",
+      "none": "Araç yok",
+      "summaryMore": "{{head}} +{{count}}",
+      "builtinAria": "Yerleşik araçlar",
+      "custom": "Özel araç",
+      "customPlaceholder": "ör. mcp__github__search_code, virgülle ayrılmış",
+      "add": "Ekle",
+      "remove": "{{tool}} kaldır",
+      "emptyError": "En az bir araç seçin veya tüm araçları devralmaya geçin"
+    },
+    "colors": {
+      "red": "Kırmızı",
+      "blue": "Mavi",
+      "green": "Yeşil",
+      "yellow": "Sarı",
+      "purple": "Mor",
+      "orange": "Turuncu",
+      "pink": "Pembe",
+      "cyan": "Camgöbeği"
+    },
+    "section": {
+      "title": "Subagents",
+      "summary": "{{count}} adet",
+      "summaryEmpty": "Henüz yok",
+      "needsAttention": "{{count}} tanesi ilgi bekliyor",
+      "sharedHint": "Tüm Claude sağlayıcıları tarafından paylaşılır. Buradaki değişiklikler hemen diske yazılır ve bu sayfanın Kaydet / İptal düğmelerinden etkilenmez.",
+      "overrideWarning": "Bu sağlayıcı bir Subagent modeli ({{model}}) ayarlıyor. CLAUDE_CODE_SUBAGENT_MODEL ile uygulanır ve aşağıdaki her subagent'ın kendi model ayarını geçersiz kılar.",
+      "pluginsToggle": "Eklentilerden {{count}} adet (salt okunur)",
+      "backToList": "Subagent listesine dön"
+    }
+  },
   "profiles": {
     "switcherAriaLabel": "Proje: {{name}}",
     "switcherTooltip": {

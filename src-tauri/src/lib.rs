@@ -1688,6 +1688,17 @@ pub fn run() {
             commands::list_pi_prompt_templates,
             commands::upsert_pi_prompt_template,
             commands::delete_pi_prompt_template,
+            // Claude Code subagent management (~/.claude/agents)
+            commands::list_subagents,
+            commands::get_subagents_dir,
+            commands::upsert_subagent,
+            commands::delete_subagent,
+            commands::toggle_subagent,
+            commands::scan_unmanaged_subagents,
+            commands::import_subagents,
+            commands::resolve_subagent_drift,
+            commands::get_subagent_disk_content,
+            commands::list_plugin_subagents,
             // Pi native provider and session views
             commands::get_pi_current_state,
             commands::update_pi_provider_usage_script,
@@ -1900,6 +1911,8 @@ pub fn run() {
             commands::add_custom_icon,
             commands::rename_custom_icon,
             commands::delete_custom_icon,
+            // Claude Code subagent editor
+            commands::get_subagent_model_options,
             // OpenCode specific
             commands::import_opencode_providers_from_live,
             commands::get_opencode_live_provider_ids,
