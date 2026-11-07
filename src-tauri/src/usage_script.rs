@@ -17,7 +17,7 @@ pub async fn execute_usage_script(
 ) -> Result<Value, AppError> {
     // 检测是否为自定义模板模式
     // 优先使用前端传递的 template_type
-    let is_custom_template = template_type.map(|t| t == "custom").unwrap_or(false);
+    let is_custom_template = is_custom_template_type(template_type);
 
     // 1. 替换模板变量，避免泄露敏感信息
     let script_with_vars =
@@ -498,6 +498,10 @@ fn should_validate_base_url(base_url: &str, is_custom_template: bool) -> bool {
     !base_url.is_empty() && !is_custom_template
 }
 
+fn is_custom_template_type(template_type: Option<&str>) -> bool {
+    matches!(template_type, Some("custom" | "custom_token_plan"))
+}
+
 /// 验证请求 URL 是否安全（HTTPS 强制 + 同源检查）
 fn validate_request_url(
     request_url: &str,
@@ -624,6 +628,25 @@ mod tests {
             result.is_ok(),
             "Custom usage scripts should be able to call an explicit HTTP quota endpoint"
         );
+
+        let result = validate_request_url(
+            "https://quota.example.com/v1/usage",
+            "https://api.example.com/anthropic",
+            true,
+        );
+        assert!(
+            result.is_ok(),
+            "Custom Token Plan scripts should be able to call a different HTTPS quota host"
+        );
+    }
+
+    #[test]
+    fn custom_token_plan_uses_custom_template_validation() {
+        assert!(is_custom_template_type(Some("custom")));
+        assert!(is_custom_template_type(Some("custom_token_plan")));
+        assert!(!is_custom_template_type(Some("token_plan")));
+        assert!(!is_custom_template_type(Some("general")));
+        assert!(!is_custom_template_type(None));
     }
 
     #[test]

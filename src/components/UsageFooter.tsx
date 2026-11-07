@@ -11,6 +11,7 @@ import {
 import type { QuotaTier } from "@/types/subscription";
 import { QuotaBars, QuotaLines } from "@/components/quota/QuotaLines";
 import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
+import { isTokenPlanTemplate } from "@/config/constants";
 import {
   balanceLine,
   expiredLine,
@@ -103,8 +104,9 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
 }) => {
   const { t } = useTranslation();
   const display = useQuotaDisplay();
-  const isTokenPlan =
-    provider.meta?.usage_script?.templateType === "token_plan";
+  const isTokenPlan = isTokenPlanTemplate(
+    provider.meta?.usage_script?.templateType,
+  );
 
   // 按用户配置自动查询，未启用的供应商也可能在其他客户端产生用量。
   const autoQueryInterval = provider.meta?.usage_script?.autoQueryInterval ?? 0;
