@@ -99,16 +99,16 @@ jobs:
         run: pnpm build:renderer
 
   # 单元测试是前端最慢的一段：4 核上约 5 分钟，几乎全是每个文件起 jsdom、跑 setup 的 CPU。
-  # 按文件分到三台机器上跑。
+  # 按文件分到四台机器上跑。
   frontend-tests:
-    name: Frontend Tests (${{ matrix.shard }}/3)
+    name: Frontend Tests (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.frontend == 'true'
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -127,7 +127,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Unit tests
-        run: pnpm test:unit --shard=${{ matrix.shard }}/3
+        run: pnpm test:unit --shard=${{ matrix.shard }}/4
 
   backend:
     name: Backend Checks
