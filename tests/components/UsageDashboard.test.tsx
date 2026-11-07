@@ -389,6 +389,7 @@ describe("UsageDashboard", () => {
         pi: false,
         mcode: false,
         kimi: false,
+        cline: false,
         agy: false,
         omp: false,
       },

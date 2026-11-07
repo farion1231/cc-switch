@@ -16,6 +16,7 @@ describe("appConfig provider lifecycle", () => {
     "pi",
     "mcode",
     "kimi",
+    "cline",
     "dsh",
     "omp",
   ])("classifies %s as additive", (appId) => {

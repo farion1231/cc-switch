@@ -1,6 +1,7 @@
 pub mod agy;
 mod blocks;
 pub mod claude;
+pub mod cline;
 pub mod codex;
 mod codex_items;
 pub mod gemini;
