@@ -9,8 +9,9 @@ use crate::app_config::{AppType, InstalledSkill, UnmanagedSkill};
 use crate::error::format_skill_error;
 use crate::services::skill::{
     DiscoverableSkill, ImportSkillSelection, MigrationResult, Skill, SkillAppSyncOutcome,
-    SkillBackupEntry, SkillDiscoveryResult, SkillRepo, SkillService, SkillStorageLocation,
-    SkillUninstallResult, SkillUpdateCheckResult, SkillsShSearchResult, ZipInstallResult,
+    SkillBackupEntry, SkillDiscoveryResult, SkillReconciliationCandidate, SkillRepo, SkillService,
+    SkillStorageLocation, SkillUninstallResult, SkillUpdateCheckResult, SkillsShSearchResult,
+    ZipInstallResult,
 };
 use crate::store::AppState;
 use std::str::FromStr;
@@ -35,6 +36,29 @@ pub async fn get_installed_skills(
 ) -> Result<Vec<InstalledSkill>, String> {
     run_db_task(&app_state, |state| {
         SkillService::get_all_installed(&state.db).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn get_skill_reconciliation_candidates(
+    app_state: State<'_, AppState>,
+) -> Result<Vec<SkillReconciliationCandidate>, String> {
+    run_db_task(&app_state, |state| {
+        SkillService::find_managed_skill_duplicates(&state.db).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn remove_skill_reconciliation_duplicate(
+    app: String,
+    directory: String,
+    app_state: State<'_, AppState>,
+) -> Result<bool, String> {
+    run_db_task(&app_state, move |state| {
+        SkillService::remove_managed_skill_duplicate(&state.db, &app, &directory)
+            .map_err(|e| e.to_string())
     })
     .await
 }

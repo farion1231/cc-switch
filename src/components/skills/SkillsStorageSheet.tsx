@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Loader2, RefreshCw } from "lucide-react";
 import { toast } from "@/lib/toast";
@@ -19,6 +20,7 @@ import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { shortenHomePath } from "@/components/sessions/utils";
 import { skillsApi, type SkillAppSyncOutcome } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
+import type { Settings } from "@/types";
 import type { SkillStorageLocation, SkillSyncMethod } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
@@ -61,6 +63,7 @@ export function SkillsStorageSheet({
   onOpenChange,
 }: SkillsStorageSheetProps) {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const { settings, updateSettings, autoSaveSettings } = useSettings();
   const { data: installedSkills } = useInstalledSkills();
   const { data: ccSwitchDirRaw } = useCcSwitchSkillsDir(open);
@@ -112,6 +115,16 @@ export function SkillsStorageSheet({
         );
       }
       updateSettings({ skillStorageLocation: target });
+      queryClient.setQueryData<Settings>(["settings"], (current) =>
+        current ? { ...current, skillStorageLocation: target } : current,
+      );
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["settings"] }),
+        queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
+        queryClient.invalidateQueries({
+          queryKey: ["skills", "reconciliation"],
+        }),
+      ]);
     } catch (error) {
       toast.error(t("common.error"), {
         description: extractErrorMessage(error) || String(error),

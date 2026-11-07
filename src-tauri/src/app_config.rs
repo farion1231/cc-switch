@@ -486,6 +486,14 @@ pub enum AppType {
 }
 
 impl AppType {
+    /// Whether this agent natively scans `~/.agents/skills/`.
+    pub fn scans_agents_skills_dir(&self) -> bool {
+        matches!(
+            self,
+            Self::Codex | Self::Gemini | Self::OpenCode | Self::OpenClaw
+        )
+    }
+
     pub fn as_str(&self) -> &str {
         match self {
             AppType::Claude => "claude",
