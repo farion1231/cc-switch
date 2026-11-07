@@ -45,6 +45,9 @@ import { formatUsageDataSummary } from "@/utils/usageDisplay";
  */
 const VOLCENGINE_KEY_CONSOLE_URL =
   "https://console.volcengine.com/iam/keymanage";
+// 阿里云账号级 AccessKey 的 RAM 管理页。百炼 Token Plan 用量查询走控制台网关，
+// 鉴权用 AK/SK 换的临时 console token，与套餐的 sk-sp- 推理 Key 是两套凭据。
+const BAILIAN_KEY_CONSOLE_URL = "https://ram.console.aliyun.com/manage/ak";
 // 智谱团队套餐用量页（组织 ID / 项目 ID 在此页 URL 或管理后台可见）
 const ZHIPU_TEAM_USAGE_URL = "https://bigmodel.cn/coding-plan/team/usage-stats";
 
@@ -1383,28 +1386,43 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
               </div>
             )}
 
-            {/* 火山方舟：控制面用量查询需账号 AK/SK（与推理 Key 是两套凭据） */}
+            {/* 火山方舟 / 百炼：控制面用量查询需账号 AK/SK（与推理 Key 是两套凭据） */}
             {selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN &&
-              script.codingPlanProvider === "volcengine" && (
+              (script.codingPlanProvider === "volcengine" ||
+                script.codingPlanProvider === "bailian") && (
                 <div className="space-y-4">
                   <div>
                     <h4 className="text-sm font-medium text-fg-1">
                       {t("usageScript.credentialsConfig")}
                     </h4>
                     <p className="text-xs text-fg-2 mt-1 leading-relaxed">
-                      {t("usageScript.volcengineAkSkHint")}
+                      {t(
+                        script.codingPlanProvider === "bailian"
+                          ? "usageScript.bailianAkSkHint"
+                          : "usageScript.volcengineAkSkHint",
+                      )}
                     </p>
                     <p className="text-xs text-fg-2 mt-1.5">
-                      {t("usageScript.volcengineKeyConsoleLink")}
+                      {t(
+                        script.codingPlanProvider === "bailian"
+                          ? "usageScript.bailianKeyConsoleLink"
+                          : "usageScript.volcengineKeyConsoleLink",
+                      )}
                       {""}
                       <button
                         type="button"
                         onClick={() =>
-                          settingsApi.openExternal(VOLCENGINE_KEY_CONSOLE_URL)
+                          settingsApi.openExternal(
+                            script.codingPlanProvider === "bailian"
+                              ? BAILIAN_KEY_CONSOLE_URL
+                              : VOLCENGINE_KEY_CONSOLE_URL,
+                          )
                         }
                         className="inline-flex items-center gap-1 text-fg-1 hover:text-fg-1 transition-colors break-all align-baseline underline-offset-2 hover:underline"
                       >
-                        {VOLCENGINE_KEY_CONSOLE_URL}
+                        {script.codingPlanProvider === "bailian"
+                          ? BAILIAN_KEY_CONSOLE_URL
+                          : VOLCENGINE_KEY_CONSOLE_URL}
                         <ExternalLink size={12} className="shrink-0" />
                       </button>
                     </p>
@@ -1412,11 +1430,11 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">
-                      <Label htmlFor="usage-volcengine-ak">
+                      <Label htmlFor="usage-plan-ak">
                         {t("usageScript.accessKeyId")}
                       </Label>
                       <Input
-                        id="usage-volcengine-ak"
+                        id="usage-plan-ak"
                         type="text"
                         value={script.accessKeyId || ""}
                         onChange={(e) =>
@@ -1425,19 +1443,23 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                             accessKeyId: e.target.value,
                           })
                         }
-                        placeholder="AKLT..."
+                        placeholder={
+                          script.codingPlanProvider === "bailian"
+                            ? "LTAI..."
+                            : "AKLT..."
+                        }
                         autoComplete="off"
                         className="border-white/10"
                       />
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="usage-volcengine-sk">
+                      <Label htmlFor="usage-plan-sk">
                         {t("usageScript.secretAccessKey")}
                       </Label>
                       <div className="relative">
                         <Input
-                          id="usage-volcengine-sk"
+                          id="usage-plan-sk"
                           type={showApiKey ? "text" : "password"}
                           value={script.secretAccessKey || ""}
                           onChange={(e) =>
