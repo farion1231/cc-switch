@@ -939,10 +939,6 @@ function App() {
     setCurrentView("settings");
   };
 
-  const exitSettings = () => {
-    setCurrentView(settingsReturnViewRef.current);
-  };
-
   const selectApp = (app: AppId) => {
     if (managementBusyRef.current) return;
     if (confirmLeave(() => selectApp(app))) return;
@@ -954,7 +950,8 @@ function App() {
 
   const openPage = (page: GlobalPage | "settings") => {
     if (page === "settings") {
-      openSettings("general");
+      // 侧栏在设置里也一直在：已经在设置里再点「设置」不动，免得把当前分组打回「通用」
+      if (currentViewRef.current !== "settings") openSettings("general");
       return;
     }
     if (managementBusyRef.current) return;
@@ -996,7 +993,11 @@ function App() {
   // 侧栏、⌘K 进用量统计看全部应用；只有应用页 ⋯ 进来时带应用筛选
   const openPageFromNav = (page: GlobalPage | "settings") => {
     // 「设置」上的绿点说的是 CC Switch 有新版本，点进去直接到「关于」里的更新按钮
-    if (page === "settings" && hasUpdate) {
+    if (
+      page === "settings" &&
+      hasUpdate &&
+      currentViewRef.current !== "settings"
+    ) {
       openSettings("about");
       return;
     }
@@ -1849,6 +1850,10 @@ function App() {
       return (
         <SettingsPage
           section={settingsSection}
+          onSectionChange={(section) => {
+            setAppConfigScrollTarget(undefined);
+            setSettingsSection(section);
+          }}
           appConfigScrollTarget={appConfigScrollTarget}
           onImportSuccess={handleImportSuccess}
           onOpenApps={() => setCurrentView("apps")}
@@ -1868,14 +1873,8 @@ function App() {
           activeApp={activeApp}
           view={currentView}
           visibleApps={visibleApps}
-          settingsSection={settingsSection}
           onSelectApp={selectApp}
           onSelectPage={openPageFromNav}
-          onSelectSettingsSection={(section) => {
-            setAppConfigScrollTarget(undefined);
-            setSettingsSection(section);
-          }}
-          onExitSettings={exitSettings}
           appsUpdateAvailable={
             checkToolUpdatesOnStartup && toolUpdatesAvailable
           }

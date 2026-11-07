@@ -4208,6 +4208,7 @@
     "expandSidebar": "Kenar çubuğunu genişlet",
     "collapseSidebar": "Kenar çubuğunu daralt",
     "appsGroup": "Uygulamalar",
+    "toolsGroup": "Araçlar",
     "today": "Bugün {{value}}",
     "todayRequests": "{{value}} istek",
     "todayHitRate": "İsabet {{value}}",
@@ -4225,8 +4226,7 @@
       "route": "Yönlendirme",
       "stack": "Birleştirme"
     },
-    "needsAttention": "Dikkat edilmesi gerekiyor",
-    "back": "Geri"
+    "needsAttention": "Dikkat edilmesi gerekiyor"
   },
   "appsPage": {
     "showInSidebar": "Kenar çubuğunda {{name}}'yi göster",

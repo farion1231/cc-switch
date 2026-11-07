@@ -5,18 +5,8 @@ import {
   useMemo,
   useRef,
   useState,
-  type ComponentType,
 } from "react";
-import {
-  Database,
-  Folder,
-  FolderOpen,
-  Globe,
-  Info,
-  Loader2,
-  Route,
-  SlidersHorizontal,
-} from "lucide-react";
+import { FolderOpen, Loader2, Settings } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { useTranslation } from "react-i18next";
 import {
@@ -29,8 +19,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { settingsApi, type AppId } from "@/lib/api";
 import { useSettingsQuery } from "@/lib/query";
-import type { SettingsSection } from "@/lib/navigation";
+import { SETTINGS_SECTIONS, type SettingsSection } from "@/lib/navigation";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
+import { PageTabs } from "@/components/ui/page-tabs";
+import { useUpdate } from "@/contexts/UpdateContext";
 import { DirectoryInput } from "@/components/settings/DirectorySettings";
 import { ImportExportSection } from "@/components/settings/ImportExportSection";
 import { BackupListSection } from "@/components/settings/BackupListSection";
@@ -52,20 +44,9 @@ import { useImportExport } from "@/hooks/useImportExport";
 import type { SettingsFormState } from "@/hooks/useSettings";
 import { isTextEditableTarget } from "@/utils/domUtils";
 
-const SECTION_ICON: Record<
-  SettingsSection,
-  ComponentType<{ className?: string; strokeWidth?: number | string }>
-> = {
-  general: SlidersHorizontal,
-  appConfig: Folder,
-  routing: Route,
-  network: Globe,
-  data: Database,
-  about: Info,
-};
-
 interface SettingsPageProps {
   section: SettingsSection;
+  onSectionChange: (section: SettingsSection) => void;
   /** 从应用页的「配置目录」进入时，定位到该应用的配置区域。 */
   appConfigScrollTarget?: AppId;
   onImportSuccess?: () => void | Promise<void>;
@@ -76,17 +57,19 @@ interface SettingsPageProps {
 }
 
 /**
- * 设置（v7）：侧栏换成设置目录，这里只渲染当前分组。设置里只放偏好，功能页都在侧栏。
+ * 设置（v7）：侧栏不换，6 个分组是页头下面的页签，这里只渲染当前分组。设置里只放偏好，功能页都在侧栏。
  * 开关类即时保存；路径类改完点本节的「保存」。
  */
 export function SettingsPage({
   section,
+  onSectionChange,
   appConfigScrollTarget,
   onImportSuccess,
   onOpenApps,
   onOpenApp,
 }: SettingsPageProps) {
   const { t } = useTranslation();
+  const { hasUpdate } = useUpdate();
   const {
     settings,
     isLoading,
@@ -358,7 +341,6 @@ export function SettingsPage({
   );
 
   const isBusy = useMemo(() => isLoading && !settings, [isLoading, settings]);
-  const SectionIcon = SECTION_ICON[section];
 
   const appConfigDirty =
     (appConfigDir?.trim() || undefined) !==
@@ -529,12 +511,41 @@ export function SettingsPage({
   return (
     <>
       <AppPageHeader
-        icon={<SectionIcon className="h-5 w-5" strokeWidth={1.5} />}
-        title={t(`settings.sections.${section}`)}
+        icon={<Settings className="h-5 w-5" strokeWidth={1.5} />}
+        title={t("nav.settings")}
       />
+      <div className="shrink-0 px-6 pt-2">
+        <PageTabs
+          aria-label={t("nav.settings")}
+          idPrefix="settings-tab"
+          controls="main-content"
+          value={section}
+          onValueChange={onSectionChange}
+          items={SETTINGS_SECTIONS.map((value) => ({
+            value,
+            label:
+              // 「关于」里有 CC Switch 的更新按钮：有新版本时页签上带绿点（侧栏「设置」上的绿点指到这里）。
+              // 和侧栏「设置」图标上的绿点同样放在右上角、同样大小和描边，两处一眼对得上
+              value === "about" && hasUpdate ? (
+                <span className="relative inline-block">
+                  {t(`settings.sections.${value}`)}
+                  <span
+                    role="img"
+                    aria-label={t("nav.settingsHasUpdate")}
+                    className="absolute -end-2.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-app bg-success"
+                  />
+                </span>
+              ) : (
+                t(`settings.sections.${value}`)
+              ),
+          }))}
+        />
+      </div>
       <div
         ref={scrollRef}
         id="main-content"
+        role="tabpanel"
+        aria-labelledby={`settings-tab-${section}`}
         className="min-h-0 flex-1 overflow-y-auto scroll-stable"
       >
         {isBusy ? (
