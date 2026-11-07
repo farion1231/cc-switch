@@ -7,6 +7,7 @@
 //! - FO: Failover (故障转移)
 //! - RSP: Response (响应处理)
 //! - USG: Usage (使用量)
+//! - QTA: Quota Relay (订阅配额接力)
 
 #![allow(dead_code)]
 
@@ -59,4 +60,13 @@ pub mod rsp {
 pub mod usg {
     pub const LOG_FAILED: &str = "USG-001";
     pub const PRICING_NOT_FOUND: &str = "USG-002";
+}
+
+/// 订阅配额接力日志码（issue #7493）
+pub mod qta {
+    pub const PROVIDER_SKIPPED: &str = "QTA-001";
+    pub const WINDOW_RESET: &str = "QTA-002";
+    pub const WINDOW_SEEDED: &str = "QTA-003";
+    pub const PREFILL_DONE: &str = "QTA-004";
+    pub const ALL_QUOTA_EXHAUSTED: &str = "QTA-005";
 }
