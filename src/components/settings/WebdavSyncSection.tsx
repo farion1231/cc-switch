@@ -9,6 +9,7 @@ import {
   Check,
   Info,
   AlertTriangle,
+  Plus,
   Trash2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -39,6 +40,7 @@ import type { SettingsFormState } from "@/hooks/useSettings";
 import type {
   RemoteSnapshotInfo,
   S3SyncSettings,
+  SyncExtraPath,
   WebDavSyncSettings,
 } from "@/types";
 
@@ -228,6 +230,268 @@ function ActionButton({
         {isActive ? activeLabel : idleLabel}
       </span>
     </Button>
+  );
+}
+
+// ─── Extra sync paths editor (#7835) ────────────────────────
+
+/** 校验单条源路径；返回 i18n 错误 key，null 表示合法。规则与后端
+ * `normalize_sync_extra_source` 一致（相对路径、无 `..`、无空分量等）。 */
+function validateExtraSource(source: string): string | null {
+  const normalized = source.trim().replace(/\\/g, "/");
+  if (!normalized) return "settings.syncExtraPaths.errorEmpty";
+  if (normalized.startsWith("/") || /^[a-zA-Z]:/.test(normalized)) {
+    return "settings.syncExtraPaths.errorAbsolute";
+  }
+  const parts = normalized.split("/");
+  if (parts.some((c) => c.length === 0)) {
+    // 连续或结尾分隔符
+    return "settings.syncExtraPaths.errorEmpty";
+  }
+  if (parts.some((c) => c === "." || c === "..")) {
+    return "settings.syncExtraPaths.errorTraversal";
+  }
+  if (parts.some((c) => /[<>:"|?*\u0000-\u001f]/.test(c) || /[. ]$/.test(c))) {
+    return "settings.syncExtraPaths.errorInvalidChar";
+  }
+  return null;
+}
+
+/** 列表级校验：拒绝重复与互相嵌套的路径（与后端 `validate_sync_extra_paths` 一致）。 */
+function validateExtraList(paths: SyncExtraPath[]): string | null {
+  const seen = new Set<string>();
+  for (const path of paths) {
+    const source = path.source.trim().replace(/\\/g, "/");
+    if (seen.has(source)) return "settings.syncExtraPaths.errorDuplicate";
+    seen.add(source);
+  }
+  for (const a of paths) {
+    const aNorm = a.source.trim().replace(/\\/g, "/");
+    for (const b of paths) {
+      const bNorm = b.source.trim().replace(/\\/g, "/");
+      if (a !== b && bNorm.startsWith(`${aNorm}/`)) {
+        return "settings.syncExtraPaths.errorNested";
+      }
+    }
+  }
+  return null;
+}
+
+/** 归一化（去空白、反斜杠转正斜杠），供序列化与校验共用。 */
+function normalizeExtraSourceDraft(source: string): string {
+  return source.trim().replace(/\\/g, "/");
+}
+
+interface ExtraPathRow {
+  key: number;
+  source: string;
+  enabled: boolean;
+}
+
+/** 云同步额外路径编辑器：增删、启用开关与路径输入校验，合法变更即时自动保存。 */
+function SyncExtraPathsEditor({
+  paths,
+  onChange,
+  disabled,
+}: {
+  paths: SyncExtraPath[];
+  onChange: (paths: SyncExtraPath[]) => void;
+  disabled?: boolean;
+}) {
+  const { t } = useTranslation();
+  const [rows, setRows] = useState<ExtraPathRow[]>(() =>
+    paths.map((path, index) => ({
+      key: index,
+      source: path.source,
+      enabled: path.enabled,
+    })),
+  );
+  const nextKeyRef = useRef(paths.length);
+
+  // 以父级（已保存）状态为准回填；本组件发起的保存回写是幂等的，
+  // 保存失败回滚时也会把列表恢复成已保存的值。父组件可能传内联数组
+  // （settings?.syncExtraPaths ?? []），按值比较避免无意义的重置。
+  const pathsKey = JSON.stringify(paths);
+  useEffect(() => {
+    const parsed: SyncExtraPath[] = JSON.parse(pathsKey);
+    setRows(
+      parsed.map((path, index) => ({
+        key: index,
+        source: path.source,
+        enabled: path.enabled,
+      })),
+    );
+    nextKeyRef.current = parsed.length;
+  }, [pathsKey]);
+
+  const serialize = useCallback(
+    (current: ExtraPathRow[]): SyncExtraPath[] =>
+      current.map((row) => ({
+        source: normalizeExtraSourceDraft(row.source),
+        enabled: row.enabled,
+      })),
+    [],
+  );
+
+  const listError = validateExtraList(serialize(rows));
+  const hasInvalidRow = rows.some(
+    (row) => validateExtraSource(row.source) !== null,
+  );
+
+  /** 结构性变更（增删/开关）后尝试提交；存在非法输入时不提交，先提示修复。 */
+  const commitRows = useCallback(
+    (next: ExtraPathRow[]) => {
+      setRows(next);
+      const serialized = serialize(next);
+      if (
+        serialized.some((path) => validateExtraSource(path.source) !== null) ||
+        validateExtraList(serialized) !== null
+      ) {
+        return;
+      }
+      onChange(serialized);
+    },
+    [onChange, serialize],
+  );
+
+  const handleSourceBlur = useCallback(
+    (key: number) => {
+      const row = rows.find((r) => r.key === key);
+      if (!row) return;
+      const normalized = normalizeExtraSourceDraft(row.source);
+      if (normalized === row.source) {
+        // 无实质变化也允许顺手提交（例如上一轮被挡下的开关变更）
+        if (!hasInvalidRow && listError === null) {
+          onChange(serialize(rows));
+        }
+        return;
+      }
+      const next = rows.map((r) =>
+        r.key === key ? { ...r, source: normalized } : r,
+      );
+      if (
+        next.some((r) => validateExtraSource(r.source) !== null) ||
+        validateExtraList(serialize(next)) !== null
+      ) {
+        setRows(next);
+        return;
+      }
+      commitRows(next);
+    },
+    [commitRows, hasInvalidRow, listError, onChange, rows, serialize],
+  );
+
+  const addRow = useCallback(() => {
+    nextKeyRef.current += 1;
+    const next = [
+      ...rows,
+      { key: nextKeyRef.current, source: "", enabled: true },
+    ];
+    commitRows(next);
+  }, [commitRows, rows]);
+
+  const removeRow = useCallback(
+    (key: number) => {
+      commitRows(rows.filter((row) => row.key !== key));
+    },
+    [commitRows, rows],
+  );
+
+  const toggleRow = useCallback(
+    (key: number, enabled: boolean) => {
+      commitRows(
+        rows.map((row) => (row.key === key ? { ...row, enabled } : row)),
+      );
+    },
+    [commitRows, rows],
+  );
+
+  return (
+    <div className="space-y-3 rounded-lg border border-border bg-subtle p-6">
+      <div className="space-y-1">
+        <h4 className="text-sm font-semibold text-fg-1">
+          {t("settings.syncExtraPaths.title")}
+        </h4>
+        <p className="text-xs text-fg-2">
+          {t("settings.syncExtraPaths.description")}
+        </p>
+      </div>
+
+      {rows.length === 0 ? (
+        <p className="text-xs text-fg-2">
+          {t("settings.syncExtraPaths.empty")}
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((row) => {
+            const rowError = validateExtraSource(row.source);
+            return (
+              <div key={row.key} className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={row.source}
+                    onChange={(e) =>
+                      setRows((prev) =>
+                        prev.map((r) =>
+                          r.key === row.key
+                            ? { ...r, source: e.target.value }
+                            : r,
+                        ),
+                      )
+                    }
+                    onBlur={() => handleSourceBlur(row.key)}
+                    placeholder={t("settings.syncExtraPaths.placeholder")}
+                    className="text-xs flex-1 font-mono"
+                    aria-label={t("settings.syncExtraPaths.sourceLabel")}
+                    disabled={disabled}
+                  />
+                  <Switch
+                    checked={row.enabled}
+                    onCheckedChange={(checked) => toggleRow(row.key, checked)}
+                    aria-label={t("settings.syncExtraPaths.enabled")}
+                    disabled={disabled}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => removeRow(row.key)}
+                    aria-label={t("settings.syncExtraPaths.remove")}
+                    disabled={disabled}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+                {rowError && (
+                  <p className="text-[11px] text-danger-text">{t(rowError)}</p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {listError && (
+        <p className="text-[11px] text-danger-text">{t(listError)}</p>
+      )}
+
+      <div className="flex items-center justify-between gap-3">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={addRow}
+          disabled={disabled}
+        >
+          <Plus className="h-3.5 w-3.5" />
+          {t("settings.syncExtraPaths.add")}
+        </Button>
+      </div>
+
+      <p className="text-[11px] text-fg-2">
+        {t("settings.syncExtraPaths.rulesHint")}
+      </p>
+    </div>
   );
 }
 
@@ -1000,6 +1264,17 @@ export function WebdavSyncSection({
   const s3ShowAutoSyncError =
     !!s3LastError && s3Config?.status?.lastErrorSource === "auto";
 
+  // ─── Extra sync paths (#7835) ──────────────────────────────
+  const handleSyncExtraPathsChange = useCallback(
+    (next: SyncExtraPath[]) => {
+      void onAutoSave?.({ syncExtraPaths: next });
+    },
+    [onAutoSave],
+  );
+  const hasEnabledExtraPaths = (settings?.syncExtraPaths ?? []).some(
+    (path) => path.enabled,
+  );
+
   // ─── Render ─────────────────────────────────────────────
 
   return (
@@ -1581,6 +1856,13 @@ export function WebdavSyncSection({
         </div>
       )}
 
+      {/* ─── Extra sync paths (~/.claude 自定义路径，对两种同步方式生效) ── */}
+      <SyncExtraPathsEditor
+        paths={settings?.syncExtraPaths ?? []}
+        onChange={handleSyncExtraPathsChange}
+        disabled={isLoading || isS3Loading}
+      />
+
       {/* ─── WebDAV Upload confirmation dialog ───────────── */}
       <Dialog
         open={dialogType === "upload"}
@@ -1600,6 +1882,9 @@ export function WebdavSyncSection({
                 <ul className="list-disc pl-5 space-y-1 text-fg-2">
                   <li>{t("settings.webdavSync.confirmUpload.dbItem")}</li>
                   <li>{t("settings.webdavSync.confirmUpload.skillsItem")}</li>
+                  {hasEnabledExtraPaths && (
+                    <li>{t("settings.webdavSync.confirmUpload.extraItem")}</li>
+                  )}
                 </ul>
                 <p className="text-fg-2">
                   {t("settings.webdavSync.confirmUpload.targetPath")}
@@ -1761,6 +2046,9 @@ export function WebdavSyncSection({
                 <ul className="list-disc pl-5 space-y-1 text-fg-2">
                   <li>{t("settings.s3Sync.confirmUpload.dbItem")}</li>
                   <li>{t("settings.s3Sync.confirmUpload.skillsItem")}</li>
+                  {hasEnabledExtraPaths && (
+                    <li>{t("settings.s3Sync.confirmUpload.extraItem")}</li>
+                  )}
                 </ul>
                 <p className="text-fg-2">
                   {t("settings.s3Sync.confirmUpload.targetPath")}

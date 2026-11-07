@@ -43,6 +43,11 @@ fn merge_settings_for_save(
         }
         _ => {}
     }
+    // sync_extra_paths：incoming 没有（None）→ 保留现有，避免前端缓存里没有
+    // 该字段的全量保存把用户配置的额外路径静默清空。
+    if incoming.sync_extra_paths.is_none() {
+        incoming.sync_extra_paths = existing.sync_extra_paths.clone();
+    }
     // local_migrations 是纯后端状态（迁移完成标记），前端没有合法的修改场景，
     // 无条件取现有值。若按 incoming 透传：后端清掉 marker（如关闭统一会话
     // 开关）后、前端 query 缓存刷新前的一次全量保存会把旧 marker 重放回来，
@@ -70,7 +75,12 @@ pub async fn save_settings(
     settings: crate::settings::AppSettings,
 ) -> Result<bool, String> {
     let existing = crate::settings::get_settings();
-    let merged = merge_settings_for_save(settings, &existing);
+    let mut merged = merge_settings_for_save(settings, &existing);
+    // 额外同步路径在保存入口归一化并校验（相对路径、无 .. / 绝对路径、不重复不嵌套），
+    // 让非法配置死在门口，而不是等下一次同步打包时报错。
+    if let Some(paths) = &mut merged.sync_extra_paths {
+        *paths = crate::settings::validate_sync_extra_paths(paths).map_err(|e| e.to_string())?;
+    }
     let unify_codex_changed =
         merged.unify_codex_session_history != existing.unify_codex_session_history;
     let unify_codex_enabled = merged.unify_codex_session_history;
