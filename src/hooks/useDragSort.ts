@@ -104,6 +104,8 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
         );
       } catch (error) {
         console.error("Failed to update provider sort order", error);
+        // 排序可能已经存下、只是聚合名单没发布成：按库里的顺序重画，再拖一次会重试发布。
+        void queryClient.invalidateQueries({ queryKey: ["providers", appId] });
         toast.error(
           t("provider.sortUpdateFailed", {
             defaultValue: "排序更新失败",

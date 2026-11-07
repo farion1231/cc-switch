@@ -209,8 +209,11 @@ pub fn build_copilot_request_headers(
 /// Copilot 使用量响应
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CopilotUsageResponse {
-    /// Copilot 计划类型
+    /// Copilot 计划类型（Free 也报 `individual`，认套餐要先看 `access_type_sku`）
     pub copilot_plan: String,
+    /// 订阅 SKU：`free_limited_copilot`（Free）、`max_monthly_subscriber_quota`（Max）…
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_type_sku: Option<String>,
     /// 配额重置日期
     pub quota_reset_date: String,
     /// 配额快照
@@ -252,6 +255,10 @@ pub struct QuotaDetail {
     pub percent_remaining: f64,
     /// 是否无限
     pub unlimited: bool,
+    /// 当前计划是否含这一项：Free 的 premium_interactions 是 false（总额 0，不是用完了）；
+    /// 旧响应没有这个字段
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_quota: Option<bool>,
 }
 
 /// Copilot 可用模型
@@ -1037,6 +1044,26 @@ impl CopilotAuthManager {
     ) -> Result<Option<String>, CopilotAuthError> {
         let models = self.fetch_all_models_for_account(account_id).await?;
         Ok(super::copilot_model_map::resolve_model(model_id, &models).map(|model| model.vendor))
+    }
+
+    /// Vendor and upstream endpoints Copilot advertises for `model_id`.
+    pub async fn get_model_record_for_account(
+        &self,
+        account_id: &str,
+        model_id: &str,
+    ) -> Result<Option<CopilotModel>, CopilotAuthError> {
+        let models = self.fetch_all_models_for_account(account_id).await?;
+        Ok(super::copilot_model_map::resolve_model_record(model_id, &models).cloned())
+    }
+
+    pub async fn get_model_record(
+        &self,
+        model_id: &str,
+    ) -> Result<Option<CopilotModel>, CopilotAuthError> {
+        match self.resolve_default_account_id().await {
+            Some(id) => self.get_model_record_for_account(&id, model_id).await,
+            None => Err(CopilotAuthError::GitHubTokenInvalid),
+        }
     }
 
     pub async fn resolve_model_for_account(

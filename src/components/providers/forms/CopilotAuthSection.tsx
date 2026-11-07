@@ -33,6 +33,8 @@ import {
 } from "@/components/settings/auth/ManagedAccountsGroup";
 import { CopilotAccountQuota } from "@/components/settings/auth/AccountQuota";
 import { signedInDate } from "@/components/settings/auth/accountDetails";
+import { useAccountQuotaPlans } from "@/lib/query/accountPlans";
+import type { CopilotQuota } from "@/lib/query/copilot";
 
 interface CopilotAuthSectionProps {
   className?: string;
@@ -102,7 +104,6 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
     removeAccount,
     setDefaultAccount,
     cancelAuth,
-    logout,
     refetchStatus,
   } = useCopilotAuth(effectiveGithubDomain);
   const accountUsers = useManagedAccountUsers(
@@ -138,11 +139,8 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
   const confirmRemove = () => {
     const target = removeTarget;
     setRemoveTarget(null);
-    if (!target) return;
-    if (target.kind === "all") {
-      logout();
-      return;
-    }
+    // 标题行没有「删除全部」，只会是单个账号
+    if (target?.kind !== "one") return;
     removeAccount(target.accountId);
     // 如果移除的是当前选中的账号，清除选择
     if (selectedAccountId === target.accountId) {
@@ -173,6 +171,13 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
         {t("copilot.retry", "重试")}
       </Button>
     </div>
+  );
+
+  // 授权中心第二行的套餐（额度查到才有）
+  const plans = useAccountQuotaPlans(
+    "copilot",
+    accounts.map((account) => account.id),
+    (data) => (data as CopilotQuota).plan,
   );
 
   if (mode === "select") {
@@ -276,6 +281,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
       login: account.login,
       avatarUrl: account.avatar_url,
       details: [
+        plans[account.id],
         domain,
         enterprise
           ? t("authCenter.enterpriseServer", {
@@ -433,7 +439,6 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
         defaultValue: "还没有登录 {{service}} 账号。",
         service: "GitHub Copilot",
       })}
-      loginLabel={t("copilot.loginWithGitHub", "使用 GitHub 登录")}
       onAdd={openChooser}
       chooser={chooser || undefined}
       canReauth={false}
@@ -442,12 +447,6 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
       settingDefault={isSettingDefaultAccount}
       onRemove={(accountId, login) =>
         setRemoveTarget({ kind: "one", accountId, login })
-      }
-      onRemoveAll={() =>
-        setRemoveTarget({
-          kind: "all",
-          accountIds: accounts.map((account) => account.id),
-        })
       }
       removing={isRemovingAccount}
       login={{

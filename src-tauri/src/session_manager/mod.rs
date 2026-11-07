@@ -4,16 +4,21 @@ pub mod content;
 pub(crate) mod hermes_wsl;
 pub mod model;
 pub mod providers;
+pub mod search;
+mod search_revision;
 pub mod terminal;
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Instant;
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 // 其余模型类型从 `session_manager::model` 引用
 pub use model::SessionMessage;
-use providers::{claude, codex, gemini, grokbuild, hermes, mcode, openclaw, opencode, pi};
+use providers::{
+    agy, claude, codex, dsh, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw, opencode, pi,
+};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,45 +61,91 @@ pub struct DeleteSessionOutcome {
 }
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    let (r1, r2, r3, r4, r5, r6, r7, r8) = std::thread::scope(|s| {
-        let h1 = s.spawn(codex::scan_sessions);
-        let h2 = s.spawn(claude::scan_sessions);
-        let h3 = s.spawn(opencode::scan_sessions);
-        let h4 = s.spawn(openclaw::scan_sessions);
-        let h5 = s.spawn(gemini::scan_sessions);
-        let h6 = s.spawn(hermes::scan_sessions);
-        let h7 = s.spawn(grokbuild::scan_sessions);
-        let h8 = s.spawn(pi::scan_sessions);
-        (
-            h1.join().unwrap_or_default(),
-            h2.join().unwrap_or_default(),
-            h3.join().unwrap_or_default(),
-            h4.join().unwrap_or_default(),
-            h5.join().unwrap_or_default(),
-            h6.join().unwrap_or_default(),
-            h7.join().unwrap_or_default(),
-            h8.join().unwrap_or_default(),
-        )
+    let scan = scan_sessions_with_status();
+    let sessions = scan.sessions.clone();
+    *RECENT_SCAN.lock().unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), scan));
+    sessions
+}
+
+// The index request follows list_sessions. Reuse that scan once, including its
+// completeness flags; enabling from a cached page or a queued rerun scans afresh.
+static RECENT_SCAN: LazyLock<Mutex<Option<(Instant, SessionScan)>>> =
+    LazyLock::new(|| Mutex::new(None));
+const SCAN_REUSE_WINDOW: Duration = Duration::from_secs(5);
+
+pub(crate) fn scan_for_index() -> SessionScan {
+    take_recent_scan(&RECENT_SCAN, Instant::now()).unwrap_or_else(scan_sessions_with_status)
+}
+
+fn take_recent_scan(
+    slot: &Mutex<Option<(Instant, SessionScan)>>,
+    now: Instant,
+) -> Option<SessionScan> {
+    slot.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+        .filter(|(created, _)| now.saturating_duration_since(*created) <= SCAN_REUSE_WINDOW)
+        .map(|(_, scan)| scan)
+}
+
+pub(crate) struct SessionScan {
+    pub sessions: Vec<SessionMeta>,
+    pub complete_providers: HashSet<String>,
+}
+
+pub(crate) fn scan_sessions_with_status() -> SessionScan {
+    use providers::utils::ScanStatus;
+    type Scanner = fn(&mut ScanStatus) -> Vec<SessionMeta>;
+    let scanners: [(&str, Scanner); 13] = [
+        ("codex", codex::scan_sessions_with_status),
+        ("claude", claude::scan_sessions_with_status),
+        ("opencode", opencode::scan_sessions_with_status),
+        ("openclaw", openclaw::scan_sessions_with_status),
+        ("gemini", gemini::scan_sessions_with_status),
+        ("hermes", hermes::scan_sessions_with_status),
+        ("grokbuild", grokbuild::scan_sessions_with_status),
+        ("pi", pi::scan_sessions_with_status),
+        ("omp", omp::scan_sessions_with_status),
+        ("mcode", mcode::scan_sessions_with_status),
+        // Kimi Code、DeepSeek Harness、Antigravity 的扫描还不报告读取失败，按完整处理
+        ("kimi", |_| kimi::scan_sessions()),
+        ("dsh", |_| dsh::scan_sessions()),
+        ("agy", |_| agy::scan_sessions()),
+    ];
+    let mut scan = SessionScan {
+        sessions: Vec::new(),
+        complete_providers: HashSet::new(),
+    };
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = scanners
+            .into_iter()
+            .map(|(provider, scanner)| {
+                (
+                    provider,
+                    scope.spawn(move || {
+                        let mut status = ScanStatus::default();
+                        let sessions = scanner(&mut status);
+                        (sessions, status)
+                    }),
+                )
+            })
+            .collect();
+        for (provider, handle) in handles {
+            // A failed worker is not evidence that all its sessions were deleted.
+            if let Ok((sessions, status)) = handle.join() {
+                scan.sessions.extend(sessions);
+                if !status.incomplete {
+                    scan.complete_providers.insert(provider.to_string());
+                }
+            }
+        }
     });
-
-    let mut sessions = Vec::new();
-    sessions.extend(r1);
-    sessions.extend(r2);
-    sessions.extend(r3);
-    sessions.extend(r4);
-    sessions.extend(r5);
-    sessions.extend(r6);
-    sessions.extend(r7);
-    sessions.extend(r8);
-    sessions.extend(mcode::scan_sessions());
-
-    sessions.sort_by(|a, b| {
+    scan.sessions.sort_by(|a, b| {
         let a_ts = a.last_active_at.or(a.created_at).unwrap_or(0);
         let b_ts = b.last_active_at.or(b.created_at).unwrap_or(0);
         b_ts.cmp(&a_ts)
     });
-
-    sessions
+    scan
 }
 
 pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<SessionMessage>, String> {
@@ -116,9 +167,13 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "opencode" => opencode::load_messages(path),
         "openclaw" => openclaw::load_messages(path),
         "gemini" => gemini::load_messages(path),
+        "agy" => agy::load_messages(path),
         "grokbuild" => grokbuild::load_messages(path),
         "hermes" => hermes::load_messages(path),
         "pi" => pi::load_messages(path),
+        "kimi" => kimi::load_messages(path),
+        "omp" => omp::load_messages(path),
+        "dsh" => dsh::load_messages(path),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -157,6 +212,7 @@ pub fn delete_session(
     let deleted = delete_session_source(provider_id, session_id, source_path)?;
     if deleted {
         cache::global().remove(provider_id, source_path);
+        search::forget_source(provider_id, source_path);
     }
     Ok(deleted)
 }
@@ -166,6 +222,17 @@ fn delete_session_source(
     session_id: &str,
     source_path: &str,
 ) -> Result<bool, String> {
+    if provider_id == "dsh" {
+        return Err(
+            "Delete this session in DeepSeek Harness to keep its native history consistent".into(),
+        );
+    }
+    if provider_id == "agy" {
+        return Err(
+            "Delete this session in Antigravity to keep its binary store and summaries consistent"
+                .into(),
+        );
+    }
     if provider_id == "mcode" {
         return Err(
             "Delete this session in MCode so its runtime state and history are removed together"
@@ -212,6 +279,8 @@ fn delete_session_with_roots(
         "grokbuild" => grokbuild::delete_session(&validated_root, &validated_source, session_id),
         "hermes" => hermes::delete_session(&validated_root, &validated_source, session_id),
         "pi" => pi::delete_session(&validated_root, &validated_source, session_id),
+        "omp" => omp::delete_session(&validated_root, &validated_source, session_id),
+        "kimi" => kimi::delete_session(&validated_root, &validated_source, session_id),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -226,6 +295,10 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "grokbuild" => grokbuild::session_roots(),
         "hermes" => vec![crate::hermes_config::get_hermes_dir().join("sessions")],
         "pi" => pi::session_roots(),
+        "kimi" => kimi::session_roots(),
+        "dsh" => dsh::session_roots(),
+        "agy" => agy::session_roots(),
+        "omp" => omp::session_roots(),
         _ => return Err(format!("Unsupported provider: {provider_id}")),
     };
 
@@ -280,6 +353,30 @@ where
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn index_reuses_a_fresh_scan_once_and_preserves_incomplete_providers() {
+        let now = Instant::now();
+        let slot = Mutex::new(Some((
+            now,
+            SessionScan {
+                sessions: Vec::new(),
+                // Claude failed; Codex really has no sessions. These flags must
+                // survive reuse so only Codex's old index is eligible for pruning.
+                complete_providers: HashSet::from(["codex".into()]),
+            },
+        )));
+        let scan = take_recent_scan(&slot, now).unwrap();
+        assert!(scan.sessions.is_empty());
+        assert_eq!(scan.complete_providers, HashSet::from(["codex".into()]));
+        assert!(take_recent_scan(&slot, now).is_none());
+
+        *slot.lock().unwrap() = Some((now, scan));
+        assert!(
+            take_recent_scan(&slot, now + SCAN_REUSE_WINDOW + Duration::from_secs(1)).is_none()
+        );
+        assert!(slot.lock().unwrap().is_none());
+    }
 
     fn write_codex_session(path: &Path, session_id: &str) {
         std::fs::write(

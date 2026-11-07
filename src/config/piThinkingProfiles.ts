@@ -159,6 +159,19 @@ export const piThinkingProfiles = {
       max: "max",
     },
   },
+  // MiniMax-M3.1-Flash always thinks (reasoning_effort "none" is rejected) and
+  // takes low/medium/high/xhigh/max.
+  minimaxM31: {
+    map: {
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "xhigh",
+      max: "max",
+    },
+  },
   geminiLowHigh: {
     map: {
       off: null,
@@ -316,6 +329,11 @@ export const piThinkingBindings: readonly PiThinkingBinding[] = [
     catalogKey: "openai/gpt-6-astra",
     api: "openai-responses",
     profileId: "openaiResponsesGpt6Astra",
+  },
+  {
+    catalogKey: "openai/gpt-6.1-sol",
+    api: "openai-responses",
+    profileId: "openaiResponsesGpt56",
   },
   {
     catalogKey: "openai/gpt-6-sol",

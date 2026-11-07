@@ -16,6 +16,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -182,6 +183,18 @@ fn is_residue(auth: &Value, third_party_keys: &[String]) -> bool {
         && extract_codex_auth_api_key(auth).is_some_and(|key| third_party_keys.contains(&key))
 }
 
+/// 登录的 access_token 已经过期：按 JWT 里的 `exp` 算，解不出的当没过期。Codex 在用的
+/// 登录每隔几天会刷新一次，过期说明这份登录很久没用过了。
+fn access_token_expired(auth: &Value, now: i64) -> bool {
+    auth.pointer("/tokens/access_token")
+        .and_then(Value::as_str)
+        .and_then(|token| token.split('.').nth(1))
+        .and_then(|payload| URL_SAFE_NO_PAD.decode(payload.trim_end_matches('=')).ok())
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .and_then(|claims| claims.get("exp").and_then(Value::as_i64))
+        .is_some_and(|exp| exp <= now)
+}
+
 /// 目标供应商对 `auth.json` 的要求。
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum AuthTarget<'a> {
@@ -190,6 +203,8 @@ pub(crate) enum AuthTarget<'a> {
     /// 代理的第三方路由：不动用户的原生登录（请求凭据由代理注入）。`restore_last`：进入或
     /// 接上代理时 `auth.json` 里没有登录，就把最近暂存的那份还回去。Codex 桌面版续会话要
     /// ChatGPT 登录，旧版退出 CC Switch 时分离会把它暂存走，接上时又不还（#8431）。
+    /// access_token 已过期的不还：那是很久没用的旧登录，还回去 Codex 会拿它刷新、失败后
+    /// 卡在登录页，比没有登录更糟（#8573）。它留在暂存里，切回官方卡时照常还。
     ProxyThirdParty { restore_last: bool },
     /// 没绑托管账号的官方卡（直连，或代理的官方路由）。
     Official { row_auth: &'a Value },
@@ -209,6 +224,8 @@ pub(crate) struct AuthInput<'a> {
     pub leaving_official: Option<&'a Value>,
     pub target: AuthTarget<'a>,
     pub stash: LoginStash,
+    /// 现在的 Unix 时间（秒），判断暂存的登录过没过期。
+    pub now: i64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -259,8 +276,15 @@ pub(crate) fn plan(input: AuthInput<'_>) -> AuthPlan {
         }
         AuthTarget::ProxyThirdParty { restore_last } => {
             let restored = (restore_last && !managed && native.is_none())
-                .then(|| stash.last.clone().and_then(|id| stash.take(&id)))
-                .flatten();
+                .then(|| stash.last.clone())
+                .flatten()
+                .filter(|id| {
+                    stash
+                        .logins
+                        .get(id)
+                        .is_some_and(|auth| !access_token_expired(auth, input.now))
+                })
+                .and_then(|id| stash.take(&id));
             match restored {
                 Some(saved) => Some(Some(saved)),
                 None => managed.then_some(None),
@@ -369,7 +393,18 @@ mod tests {
             leaving_official: None,
             target,
             stash,
+            now: NOW,
         }
+    }
+
+    const NOW: i64 = 1_800_000_000;
+
+    /// access_token 换成带 `exp` 的 JWT。
+    fn with_access_exp(mut auth: Value, exp: i64) -> Value {
+        let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"none"}"#);
+        let payload = URL_SAFE_NO_PAD.encode(serde_json::json!({ "exp": exp }).to_string());
+        auth["tokens"]["access_token"] = Value::String(format!("{header}.{payload}."));
+        auth
     }
 
     fn ready() -> LoginStash {
@@ -730,5 +765,41 @@ mod tests {
             ready(),
         ));
         assert_eq!(nothing.auth, None);
+    }
+
+    #[test]
+    fn an_expired_stashed_login_is_not_given_back_to_the_proxy() {
+        let stale = with_access_exp(login("alice"), NOW - 60);
+        let mut stash = ready();
+        stash.put(&stale);
+
+        let attach = plan(input(
+            None,
+            AuthTarget::ProxyThirdParty { restore_last: true },
+            stash.clone(),
+        ));
+        assert_eq!(attach.auth, None, "auth.json stays absent");
+        assert!(!attach.login_on_disk);
+        assert_eq!(attach.stash, None, "the login stays in the stash");
+
+        // 切回官方卡照常还回去（Codex 自己会提示重新登录）。
+        let empty = json!({});
+        let back = plan(input(
+            None,
+            AuthTarget::Official { row_auth: &empty },
+            stash,
+        ));
+        assert_eq!(back.auth, Some(Some(stale)));
+
+        // 还没过期的照还。
+        let fresh = with_access_exp(login("bob"), NOW + 3600);
+        let mut stash = ready();
+        stash.put(&fresh);
+        let attach = plan(input(
+            None,
+            AuthTarget::ProxyThirdParty { restore_last: true },
+            stash,
+        ));
+        assert_eq!(attach.auth, Some(Some(fresh)));
     }
 }

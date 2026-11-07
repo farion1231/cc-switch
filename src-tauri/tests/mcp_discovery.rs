@@ -9,7 +9,7 @@ use serde_json::json;
 mod support;
 use support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
 
-const SOURCES: [&str; 8] = [
+const SOURCES: [&str; 12] = [
     ".claude.json",
     ".codex/config.toml",
     ".gemini/settings.json",
@@ -18,6 +18,10 @@ const SOURCES: [&str; 8] = [
     ".hermes-mcp-discovery/config.yaml",
     ".minimax/mcp.json",
     ".pi/agent/mcp.json",
+    ".kimi-code/mcp.json",
+    ".gemini/config/mcp_config.json",
+    ".omp/agent/mcp.json",
+    ".dsh/profiles/web/cordis.patch.yml",
 ];
 
 fn reset_sources() {
@@ -59,7 +63,7 @@ fn snapshots(home: &Path) -> BTreeMap<&'static str, Option<Vec<u8>>> {
 }
 
 #[test]
-fn discovery_deduplicates_eight_apps_is_read_only_and_import_keeps_flat_ids() {
+fn discovery_deduplicates_twelve_apps_is_read_only_and_import_keeps_flat_ids() {
     let _guard = test_mutex().lock().unwrap();
     reset_sources();
     let state = create_test_state().unwrap();
@@ -92,12 +96,25 @@ fn discovery_deduplicates_eight_apps_is_read_only_and_import_keeps_flat_ids() {
         SOURCES[7],
         r#"{"mcpServers":{"shared":{"command":"node"},"pi-disabled":{"command":"node","enabled":false}}}"#,
     );
+    write_source(
+        SOURCES[8],
+        r#"{"mcpServers":{"kimi-only":{"command":"node"}}}"#,
+    );
+    write_source(
+        SOURCES[9],
+        r#"{"mcpServers":{"agy-only":{"command":"node"}}}"#,
+    );
+    write_source(
+        SOURCES[10],
+        r#"{"mcpServers":{"omp-only":{"command":"node"}}}"#,
+    );
+    write_source(SOURCES[11], "- id: dsh-only\n  name: '@deepseek-ai/dsh-mcp-client'\n  config: {serverName: dsh-only, transport: stdio, command: node}\n");
     let before = snapshots(ensure_test_home());
     let rows_before = serde_json::to_value(state.db.get_all_mcp_servers().unwrap()).unwrap();
 
     for _ in 0..2 {
         let discovery = McpService::scan_unmanaged(&state).unwrap();
-        assert_eq!(discovery.unmanaged_count, 3);
+        assert_eq!(discovery.unmanaged_count, 7);
         assert!(
             discovery.failed_apps.is_empty(),
             "{:?}",
@@ -110,9 +127,9 @@ fn discovery_deduplicates_eight_apps_is_read_only_and_import_keeps_flat_ids() {
         assert_eq!(snapshots(ensure_test_home()), before);
     }
 
-    assert_eq!(McpService::import_from_all_apps(&state).unwrap(), 3);
+    assert_eq!(McpService::import_from_all_apps(&state).unwrap(), 7);
     let servers = state.db.get_all_mcp_servers().unwrap();
-    assert_eq!(servers.len(), 4);
+    assert_eq!(servers.len(), 8);
     assert_eq!(servers["managed"].name, "Keep my name");
     assert_eq!(servers["managed"].server, managed.server);
     assert!(!servers["pi-disabled"].apps.pi);

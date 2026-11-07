@@ -1,7 +1,16 @@
-import { render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
+import { WindowControlsContext } from "@/components/shell/AppPageHeader";
 import { DRAG_REGION_ENABLED } from "@/lib/platform";
+
+// 模拟 Linux 默认禁用拖动区域，避免依赖测试运行机器的平台。
+vi.mock("@/lib/platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/platform")>()),
+  DRAG_REGION_ENABLED: false,
+  DRAG_REGION_ATTR: {},
+  DRAG_REGION_STYLE: {},
+}));
 
 const Panels = ({ innerOpen }: { innerOpen: boolean }) => (
   <>
@@ -75,7 +84,108 @@ describe("FullScreenPanel body scroll locking", () => {
   });
 });
 
+describe("FullScreenPanel Escape", () => {
+  const Stacked = ({
+    innerOpen,
+    onOuterClose,
+    onInnerClose,
+  }: {
+    innerOpen: boolean;
+    onOuterClose: () => void;
+    onInnerClose: () => void;
+  }) => (
+    <>
+      <FullScreenPanel isOpen title="Pricing" onClose={onOuterClose}>
+        pricing
+      </FullScreenPanel>
+      <FullScreenPanel
+        isOpen={innerOpen}
+        title="Edit pricing"
+        onClose={onInnerClose}
+      >
+        <input aria-label="price" />
+      </FullScreenPanel>
+    </>
+  );
+
+  it("closes only the topmost of two stacked panels", async () => {
+    const onOuterClose = vi.fn();
+    const onInnerClose = vi.fn();
+    const view = render(
+      <Stacked
+        innerOpen={false}
+        onOuterClose={onOuterClose}
+        onInnerClose={onInnerClose}
+      />,
+    );
+    // 子页后打开，叠在上面
+    view.rerender(
+      <Stacked
+        innerOpen
+        onOuterClose={onOuterClose}
+        onInnerClose={onInnerClose}
+      />,
+    );
+
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(onInnerClose).toHaveBeenCalledTimes(1);
+    expect(onOuterClose).not.toHaveBeenCalled();
+
+    // 输入框里的 ESC 留给输入框，哪层都不关
+    fireEvent.keyDown(screen.getByLabelText("price"), { key: "Escape" });
+    expect(onInnerClose).toHaveBeenCalledTimes(1);
+    expect(onOuterClose).not.toHaveBeenCalled();
+
+    // 子页关掉后，下一次 ESC 才轮到下面那层
+    view.rerender(
+      <Stacked
+        innerOpen={false}
+        onOuterClose={onOuterClose}
+        onInnerClose={onInnerClose}
+      />,
+    );
+    await waitFor(() => expect(screen.queryByLabelText("price")).toBeNull());
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(onOuterClose).toHaveBeenCalledTimes(1);
+    expect(onInnerClose).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("FullScreenPanel header", () => {
+  it("enables dragging with app window controls and updates through the portal", () => {
+    const onBack = vi.fn();
+    const onMinimize = vi.fn();
+    const panel = (enabled: boolean) => (
+      <WindowControlsContext.Provider
+        value={enabled ? <button onClick={onMinimize}>Minimize</button> : null}
+      >
+        <FullScreenPanel isOpen title="Edit MCP" onClose={onBack}>
+          body
+        </FullScreenPanel>
+      </WindowControlsContext.Provider>
+    );
+    const view = render(panel(false));
+    const title = screen.getByRole("heading", { name: "Edit MCP" });
+    expect(view.container).not.toContainElement(title);
+    const dragRegions = [title, title.parentElement!, title.closest("header")!];
+    for (const enabled of [false, true, false]) {
+      view.rerender(panel(enabled));
+      for (const element of dragRegions) {
+        expect(element.hasAttribute("data-tauri-drag-region")).toBe(enabled);
+      }
+      if (enabled) {
+        const back = screen.getByRole("button", { name: "common.back" });
+        const minimize = screen.getByRole("button", { name: "Minimize" });
+        for (const button of [back, minimize]) {
+          expect(button).not.toHaveAttribute("data-tauri-drag-region");
+          fireEvent.click(button);
+        }
+      }
+    }
+    expect(onBack).toHaveBeenCalledOnce();
+    expect(onMinimize).toHaveBeenCalledOnce();
+  });
+
   it("lets a long title shrink and truncate instead of pushing the window controls away", () => {
     const title = "Edit " + "a-very-long-user-provided-name-".repeat(8);
     render(

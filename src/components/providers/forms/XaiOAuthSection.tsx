@@ -37,6 +37,7 @@ import {
 } from "@/components/settings/auth/ManagedAccountsGroup";
 import { XaiAccountQuota } from "@/components/settings/auth/AccountQuota";
 import { signedInDate } from "@/components/settings/auth/accountDetails";
+import { useAccountQuotaPlans } from "@/lib/query/accountPlans";
 
 interface XaiOAuthSectionProps {
   className?: string;
@@ -138,6 +139,12 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
     />
   );
 
+  // 授权中心第二行的套餐（额度查到才有）
+  const plans = useAccountQuotaPlans(
+    "xai_oauth",
+    accounts.map((account) => account.id),
+  );
+
   if (resolvedMode === "manage") {
     const rows: GroupAccountRow[] = accounts.map((account) => {
       const date = signedInDate(account.authenticated_at, i18n.language);
@@ -151,14 +158,15 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
                 defaultValue: "登录凭据已失效，用到它的供应商无法使用",
               }),
             ]
-          : date
-            ? [
-                t("authCenter.signedInOn", {
-                  defaultValue: "{{date}}登录",
-                  date,
-                }),
-              ]
-            : [],
+          : [
+              plans[account.id],
+              date
+                ? t("authCenter.signedInOn", {
+                    defaultValue: "{{date}}登录",
+                    date,
+                  })
+                : null,
+            ].filter(Boolean),
         isDefault: defaultAccountId === account.id,
         needsReauth,
         users: accountUsers([account.id]),
@@ -188,7 +196,6 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
           defaultValue: "还没有登录 {{service}} 账号。",
           service: "xAI",
         })}
-        loginLabel={t("xaiOauth.login", "使用 xAI 登录")}
         onAdd={addAccount}
         canReauth
         // 后端不支持指定账号重新登录：发起一次普通登录，用同一个 xAI 账号登录会替换掉旧凭据
@@ -197,12 +204,6 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
         settingDefault={isSettingDefaultAccount}
         onRemove={(accountId, login) =>
           setRemoveTarget({ kind: "one", accountId, login })
-        }
-        onRemoveAll={() =>
-          setRemoveTarget({
-            kind: "all",
-            accountIds: accounts.map((account) => account.id),
-          })
         }
         removing={isRemovingAccount}
         login={{

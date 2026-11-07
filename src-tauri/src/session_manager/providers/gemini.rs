@@ -12,45 +12,41 @@ use super::blocks::{
     assign_turn_ids, count_diff_lines, single_file_diff, thinking_block, tool_call_block,
     tool_result_block, ToolSource,
 };
-use super::utils::{parse_timestamp_to_ms, truncate_summary};
+use super::utils::{parse_timestamp_to_ms, truncate_summary, ScanStatus};
 
 const PROVIDER_ID: &str = "gemini";
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
+    scan_sessions_with_status(&mut ScanStatus::default())
+}
+
+pub(crate) fn scan_sessions_with_status(status: &mut ScanStatus) -> Vec<SessionMeta> {
     let gemini_dir = crate::gemini_config::get_gemini_dir();
     let tmp_dir = gemini_dir.join("tmp");
-    if !tmp_dir.exists() {
-        return Vec::new();
-    }
 
     let mut sessions = Vec::new();
 
     // Iterate over project directories: tmp/<project_name>/chats/session-*.json(l)
-    let project_dirs = match std::fs::read_dir(&tmp_dir) {
-        Ok(entries) => entries,
-        Err(_) => return Vec::new(),
-    };
-
-    for entry in project_dirs.flatten() {
+    for entry in status.entries(&tmp_dir) {
+        if !status.is_dir(&entry.path()) {
+            continue;
+        }
         let chats_dir = entry.path().join("chats");
-        if !chats_dir.is_dir() {
+        if !status.is_dir(&chats_dir) {
             continue;
         }
 
-        let chat_files = match std::fs::read_dir(&chats_dir) {
-            Ok(entries) => entries,
-            Err(_) => continue,
-        };
+        let chat_files = status.entries(&chats_dir);
 
         let project_root_file = entry.path().join(".project_root");
         let project_dir = std::fs::read_to_string(project_root_file).ok();
 
-        for file_entry in chat_files.flatten() {
+        for file_entry in chat_files {
             let path = file_entry.path();
             if !is_session_file(&path) {
                 continue;
             }
-            if let Some(meta) = parse_session(&path) {
+            if let Some(meta) = parse_session_with_status(&path, status) {
                 sessions.push(SessionMeta {
                     project_dir: project_dir.clone(),
                     ..meta
@@ -512,7 +508,12 @@ pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<boo
 }
 
 fn parse_session(path: &Path) -> Option<SessionMeta> {
-    let value = read_session_document(path).ok()?;
+    parse_session_with_status(path, &mut ScanStatus::default())
+}
+
+fn parse_session_with_status(path: &Path, status: &mut ScanStatus) -> Option<SessionMeta> {
+    let data = status.record(std::fs::read_to_string(path))?;
+    let value = parse_session_document(&data)?;
 
     let session_id = value.get("sessionId").and_then(Value::as_str)?.to_string();
 

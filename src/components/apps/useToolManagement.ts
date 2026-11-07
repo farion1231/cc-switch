@@ -48,12 +48,27 @@ export const TOOL_NAMES = [
   "hermes",
   "pi",
   "mcode",
+  "kimi",
+  "dsh",
+  "agy",
+  "omp",
 ] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
 export type ToolLifecycleAction = "install" | "update" | "uninstall";
 
 export function hermesUninstallMayLeaveFiles(plan: ToolUninstallPlan) {
   return isWindows() && plan.tool === "hermes" && !plan.wsl_distro;
+}
+
+/**
+ * npm 全局安装在链接可执行文件时撞到不归它管的同名文件会以 EEXIST 退出（#9173），
+ * 原样输出的结尾却是 npm 建议的 `--force`，照做会覆盖用户另一种安装方式的启动脚本。
+ * 认出这类失败并取出冲突路径，交给调用方换成可操作的提示。
+ */
+export function npmBinCollisionPath(detail: string): string | null {
+  if (!detail.includes("EEXIST")) return null;
+  const match = detail.match(/File exists:\s*(.+?)\s*$/m);
+  return match?.[1] ?? null;
 }
 
 interface PendingUpgrade {
@@ -121,6 +136,14 @@ const MCODE_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -ExecutionPolicy By
   "irm https://filecdn.minimax.chat/public/install.ps1 | iex",
 )}`;
 
+const KIMI_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${powershellEncodedCommand(
+  "irm https://code.kimi.com/kimi-code/install.ps1 | iex",
+)}`;
+
+const AGY_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${powershellEncodedCommand(
+  "irm https://antigravity.google/cli/install.ps1 | iex",
+)}`;
+
 // 与后端 npm_install_command_for("claude") 保持一致：原生依赖和 postinstall 缺一不可，
 // 否则 bin/claude.exe 会保留文本占位文件，在 Windows 上报兼容性错误。
 const CLAUDE_NPM_INSTALL_COMMAND =
@@ -131,6 +154,16 @@ const CLAUDE_NPM_INSTALL_COMMAND =
 const MCODE_NPM_INSTALL_COMMAND =
   'npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional "--allow-scripts=@minimax-ai/code,better-sqlite3"';
 
+// 与后端 npm_install_command_for("opencode") 保持一致：postinstall 负责把平台二进制
+// 铺到 bin/opencode.exe，npm 12 拦截后只剩文本占位文件。
+const OPENCODE_NPM_INSTALL_COMMAND =
+  "npm i -g opencode-ai@latest --ignore-scripts=false --include=optional --allow-scripts=opencode-ai";
+
+// 与后端 npm_install_command_for("grok") 保持一致：postinstall 负责把平台二进制解到
+// ~/.grok/bin 并 relink，npm 12 拦截后升级会一直跑旧版。
+const GROK_NPM_INSTALL_COMMAND =
+  "npm i -g @xai-official/grok@latest --ignore-scripts=false --include=optional --allow-scripts=@xai-official/grok";
+
 const POSIX_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 ${posixScriptInstallCommand("https://claude.ai/install.sh")} || ${CLAUDE_NPM_INSTALL_COMMAND}
 # Codex
@@ -138,9 +171,9 @@ npm i -g @openai/codex@latest
 # Gemini CLI
 npm i -g @google/gemini-cli@latest
 # Grok Build
-npm i -g @xai-official/grok@latest
+${GROK_NPM_INSTALL_COMMAND}
 # OpenCode
-${posixScriptInstallCommand("https://opencode.ai/install")} || npm i -g opencode-ai@latest
+${posixScriptInstallCommand("https://opencode.ai/install")} || ${OPENCODE_NPM_INSTALL_COMMAND}
 # OpenClaw
 npm i -g openclaw@latest
 # Hermes
@@ -148,7 +181,15 @@ ${posixScriptInstallCommand("https://raw.githubusercontent.com/NousResearch/herm
 # Pi
 npm i -g @earendil-works/pi-coding-agent@latest
 # MiniMax Code
-${posixScriptInstallCommand("https://filecdn.minimax.chat/public/install.sh")} || ${MCODE_NPM_INSTALL_COMMAND}`;
+${posixScriptInstallCommand("https://filecdn.minimax.chat/public/install.sh")} || ${MCODE_NPM_INSTALL_COMMAND}
+# DeepSeek Harness
+npm i -g @deepseek-ai/dsh@latest --engine-strict
+# Kimi Code
+${posixScriptInstallCommand("https://code.kimi.com/kimi-code/install.sh")}
+# Antigravity CLI
+${posixScriptInstallCommand("https://antigravity.google/cli/install.sh")}
+# Oh My Pi
+bun install -g @oh-my-pi/pi-coding-agent@latest`;
 
 const WINDOWS_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 ${CLAUDE_NPM_INSTALL_COMMAND}
@@ -157,9 +198,9 @@ npm i -g @openai/codex@latest
 # Gemini CLI
 npm i -g @google/gemini-cli@latest
 # Grok Build
-npm i -g @xai-official/grok@latest
+${GROK_NPM_INSTALL_COMMAND}
 # OpenCode
-npm i -g opencode-ai@latest
+${OPENCODE_NPM_INSTALL_COMMAND}
 # OpenClaw
 npm i -g openclaw@latest
 # Hermes
@@ -167,7 +208,15 @@ ${HERMES_WINDOWS_INSTALL_COMMAND}
 # Pi
 npm i -g @earendil-works/pi-coding-agent@latest
 # MiniMax Code
-${MCODE_WINDOWS_INSTALL_COMMAND}`;
+${MCODE_WINDOWS_INSTALL_COMMAND}
+# DeepSeek Harness
+npm i -g @deepseek-ai/dsh@latest --engine-strict
+# Kimi Code
+${KIMI_WINDOWS_INSTALL_COMMAND}
+# Antigravity CLI
+${AGY_WINDOWS_INSTALL_COMMAND}
+# Oh My Pi
+bun install -g @oh-my-pi/pi-coding-agent@latest`;
 
 export const ONE_CLICK_INSTALL_COMMANDS = isWindows()
   ? WINDOWS_ONE_CLICK_INSTALL_COMMANDS
@@ -183,6 +232,10 @@ export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   hermes: "Hermes",
   pi: "Pi",
   mcode: "MiniMax Code",
+  kimi: "Kimi Code",
+  dsh: "DeepSeek Harness",
+  agy: "Antigravity CLI",
+  omp: "Oh My Pi",
 };
 
 // 后端返回的 tool 是 string；这里收敛唯一的 ToolName 断言与兜底，供升级确认
@@ -201,6 +254,10 @@ export const TOOL_APP_IDS: Record<ToolName, AppId> = {
   hermes: "hermes",
   pi: "pi",
   mcode: "mcode",
+  kimi: "kimi",
+  dsh: "dsh",
+  agy: "agy",
+  omp: "omp",
 };
 
 // 工具版本探测代价高：每个工具一次 `--version` 子进程 + 一次 npm/github/pypi 网络请求。
@@ -756,7 +813,14 @@ export function useToolManagement() {
               `[useToolManagement] Failed to run tool action for ${toolName}`,
               error,
             );
-            failures.push({ toolName, detail, soft: false });
+            const collisionPath = npmBinCollisionPath(detail);
+            failures.push({
+              toolName,
+              detail: collisionPath
+                ? t("settings.toolActionBinCollision", { path: collisionPath })
+                : detail,
+              soft: false,
+            });
           } finally {
             releaseTools([toolName]);
           }

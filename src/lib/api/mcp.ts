@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
   McpConfigResponse,
   McpServer,
@@ -13,9 +13,30 @@ export interface McpDiscoveryResult {
   failedApps: string[];
 }
 
+export interface McpConnectivityResult {
+  serverId: string;
+  /** `authRequired`: the server answered 401 and wants the client's own sign-in. */
+  status: "connected" | "authRequired" | "failed";
+}
+
 export const mcpApi = {
   async scanUnmanaged(): Promise<McpDiscoveryResult> {
     return await invoke("scan_unmanaged_mcp_servers");
+  },
+  async startConnectivityChecks(
+    serverIds: string[],
+    onResult: (result: McpConnectivityResult) => void,
+  ): Promise<string> {
+    const channel = new Channel<McpConnectivityResult>();
+    channel.onmessage = onResult;
+    return await invoke("start_mcp_connectivity_checks", {
+      serverIds,
+      onResult: channel,
+    });
+  },
+
+  async cancelConnectivityChecks(batchId: string): Promise<void> {
+    await invoke("cancel_mcp_connectivity_checks", { batchId });
   },
 
   async getStatus(): Promise<McpStatus> {
