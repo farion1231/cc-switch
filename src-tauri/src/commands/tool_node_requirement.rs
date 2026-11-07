@@ -67,7 +67,7 @@ pub(super) async fn ensure_update_node(tool: &str) -> Result<(), String> {
 /// 升级默认那处时用到的 node 版本：与锚定升级同源，先找安装旁边的 node，再按 PATH 找。
 /// 默认那处不由 node 运行（原生二进制、Homebrew 管、bun）时返回 None。
 fn update_node_version(tool: &str) -> Option<String> {
-    let installs = enumerate_tool_installations(tool);
+    let installs = enumerate_tool_installations(tool).ok()?;
     let inst = default_install(&installs)?;
     let real = inst.real.to_string_lossy();
     if !real.replace('\\', "/").contains("/node_modules/") || inst.source == "bun" {
