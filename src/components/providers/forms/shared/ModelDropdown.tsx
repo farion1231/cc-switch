@@ -22,7 +22,7 @@ export function ModelDropdown({
   onSelect,
 }: {
   models: FetchedModel[];
-  onSelect: (id: string) => void;
+  onSelect: (id: string, model: FetchedModel) => void;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -82,7 +82,7 @@ export function ModelDropdown({
                     // fuzzy-matched by vendor, not just by model id.
                     keywords={[m.ownedBy || "Other"]}
                     onSelect={() => {
-                      onSelect(m.id);
+                      onSelect(m.id, m);
                       setOpen(false);
                     }}
                   >
