@@ -7906,7 +7906,11 @@ model_provider = "c"
             .expect("routing");
         assert_eq!(
             codex_doc()["model_catalog_json"].as_str(),
-            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+            Some(
+                crate::codex_config::get_codex_model_catalog_path()
+                    .to_string_lossy()
+                    .as_ref()
+            )
         );
         assert_eq!(
             stale_clients_of(&state).await,
@@ -8035,7 +8039,11 @@ model_provider = "c"
         );
         assert_eq!(
             codex_doc()["model_catalog_json"].as_str(),
-            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+            Some(
+                crate::codex_config::get_codex_model_catalog_path()
+                    .to_string_lossy()
+                    .as_ref()
+            )
         );
         let slugs: Vec<String> = codex_catalog()["models"]
             .as_array()
