@@ -868,8 +868,9 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
     let isDefault = false;
     let removeReason: string | undefined = piBlocked;
 
-    // OpenCode 的顶层 model 一直允许移走所指的那家，这里不改；OpenClaw 不能
-    if (app === "openclaw" || app === "opencode") {
+    // OpenCode 的顶层 model 一直允许移走所指的那家，这里不改；OpenClaw 和
+    // LiveAgent 不能（LiveAgent 后端拒绝移除默认路由指向的供应商）
+    if (app === "openclaw" || app === "opencode" || app === "liveagent") {
       isDefault = input.defaultModel?.providerId === p.id;
       if (isDefault) {
         status = { label: t("providerCard.status.default"), dot: "direct" };
@@ -880,7 +881,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
           }),
           tone: "outline",
         });
-        if (app === "openclaw") {
+        if (app === "openclaw" || app === "liveagent") {
           removeReason = t("providerCard.reason.defaultCannotRemove");
         }
       } else {

@@ -44,6 +44,7 @@ import {
 } from "lucide-react";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
+import { liveagentApi } from "@/lib/api/liveagent";
 import type { ToolInstallationReport } from "@/lib/api/settings";
 import type { VisibleApps } from "@/types";
 import { DEFAULT_VISIBLE_APPS, orderAppIds } from "@/config/appConfig";
@@ -107,17 +108,22 @@ const SOURCE_LABEL: Record<string, string> = {
   pip: "pip",
 };
 
-type Row = { kind: "tool"; tool: ToolName } | { kind: "desktop" };
+// 桌面应用没有命令可装 / 升级，只显示接入状态和侧栏开关
+type DesktopApp = "claude-desktop" | "liveagent";
+type Row =
+  | { kind: "tool"; tool: ToolName }
+  | { kind: "desktop"; app: DesktopApp };
 
 const ROW_BY_APP = Object.fromEntries([
-  ["claude-desktop", { kind: "desktop" }],
+  ["claude-desktop", { kind: "desktop", app: "claude-desktop" }],
+  ["liveagent", { kind: "desktop", app: "liveagent" }],
   ...TOOL_NAMES.map((tool) => [TOOL_APP_IDS[tool], { kind: "tool", tool }]),
-]) as Record<AppId, Row>;
+]) as Partial<Record<AppId, Row>>;
 
 type RowSection = { key: string; title: string; rows: Row[] };
 
 const rowKey = (row: Row): AppId =>
-  row.kind === "desktop" ? "claude-desktop" : TOOL_APP_IDS[row.tool];
+  row.kind === "desktop" ? row.app : TOOL_APP_IDS[row.tool];
 
 // 只上下拖，且停在本组的列表框里：列表框裁掉超出的部分，拖出去整行会看不见
 const verticalDragModifiers: Modifier[] = [
@@ -182,12 +188,35 @@ export function AppsPage() {
     queryFn: () => providersApi.getClaudeDesktopStatus(),
     staleTime: 30_000,
   });
+  const { data: liveagentStatus, isPending: isLiveagentStatusPending } =
+    useQuery({
+      queryKey: ["liveagent-status"],
+      queryFn: () => liveagentApi.getStatus(),
+      staleTime: 30_000,
+    });
+  const desktop = {
+    "claude-desktop": {
+      pending: isDesktopStatusPending,
+      installed: Boolean(desktopStatus?.installed),
+      configured: Boolean(desktopStatus?.configured),
+      unsupported: desktopStatus?.supported === false,
+      help: t("appsPage.desktopHelp"),
+    },
+    liveagent: {
+      pending: isLiveagentStatusPending,
+      installed: Boolean(liveagentStatus?.installed),
+      configured: Boolean(liveagentStatus?.configured),
+      unsupported: false,
+      help: t("appsPage.liveagentHelp"),
+    },
+  } satisfies Record<DesktopApp, unknown>;
 
   // 按「已安装 / 未安装」分两组。Claude Desktop 没有命令可探，用后端按数据目录 / 应用包推断的结果。
   // 首次探测还没出结果时不分组，免得各行探完一个跳一个；之后重新检查时沿用上次结果，位置不动。
   const rowInstalled = (row: Row): boolean | null => {
     if (row.kind === "desktop") {
-      return isDesktopStatusPending ? null : Boolean(desktopStatus?.installed);
+      const status = desktop[row.app];
+      return status.pending ? null : status.installed;
     }
     const info = tools.toolVersionByName.get(row.tool);
     if (!info && tools.isLoadingTools) return null;
@@ -195,7 +224,10 @@ export function AppsPage() {
   };
   // 两组共用一份顺序（拖动后写进设置，侧栏也按它排），每组只是按装没装过滤
   const appOrder = orderAppIds(settings?.appOrder);
-  const orderedRows = appOrder.map((app) => ROW_BY_APP[app]);
+  const orderedRows = appOrder.flatMap((app) => {
+    const row = ROW_BY_APP[app];
+    return row ? [row] : [];
+  });
   const rowStates = orderedRows.map((row) => ({
     row,
     installed: rowInstalled(row),
@@ -338,24 +370,22 @@ export function AppsPage() {
   const renderRow = (row: Row) =>
     row.kind === "desktop" ? (
       <AppRow
-        key="claude-desktop"
-        app="claude-desktop"
-        name={
-          <span className="truncate">{APP_DISPLAY_NAME["claude-desktop"]}</span>
-        }
+        key={row.app}
+        app={row.app}
+        name={<span className="truncate">{APP_DISPLAY_NAME[row.app]}</span>}
         version={
           <span className="inline-flex items-center gap-1 text-caption text-fg-2">
-            {desktopStatus?.supported === false
+            {desktop[row.app].unsupported
               ? t("appsPage.desktopUnsupported")
-              : desktopStatus?.configured
+              : desktop[row.app].configured
                 ? t("appsPage.desktopConnected")
                 : t("appsPage.desktopNotConnected")}
-            <HelpTip title={APP_DISPLAY_NAME["claude-desktop"]} align="end">
-              {t("appsPage.desktopHelp")}
+            <HelpTip title={APP_DISPLAY_NAME[row.app]} align="end">
+              {desktop[row.app].help}
             </HelpTip>
           </span>
         }
-        visibility={visibilitySwitch("claude-desktop")}
+        visibility={visibilitySwitch(row.app)}
       />
     ) : (
       <ToolRow

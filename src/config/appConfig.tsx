@@ -32,6 +32,7 @@ export const APP_IDS: AppId[] = [
   "dsh",
   "agy",
   "omp",
+  "liveagent",
 ];
 
 export const DEFAULT_VISIBLE_APPS: VisibleApps = {
@@ -49,6 +50,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   dsh: true,
   agy: true,
   omp: true,
+  liveagent: true,
 };
 
 /**
@@ -88,6 +90,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "dsh",
   "agy",
   "omp",
+  "liveagent",
 ];
 
 export type ProxyAppId = Extract<
@@ -137,13 +140,22 @@ export function isStackAppId(appId: string): appId is StackAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "kimi" | "dsh" | "omp"
+  | "opencode"
+  | "openclaw"
+  | "hermes"
+  | "pi"
+  | "mcode"
+  | "kimi"
+  | "dsh"
+  | "omp"
+  | "liveagent"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
   "mcode",
   "kimi",
   "dsh",
+  "liveagent",
   "opencode",
   "openclaw",
   "hermes",
@@ -192,6 +204,7 @@ export const MCP_APP_IDS: McpAppId[] = [
   "dsh",
   "agy",
   "omp",
+  "liveagent",
 ];
 
 export function isMcpAppId(appId: string): appId is McpAppId {
@@ -301,6 +314,13 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
     activeClass: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
     badgeClass:
       "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-0 gap-1.5",
+  },
+  liveagent: {
+    label: "LiveAgent",
+    icon: <ProviderIcon icon="liveagent" name="LiveAgent" size={14} />,
+    activeClass: "bg-teal-500/10 text-teal-700 dark:text-teal-300",
+    badgeClass:
+      "bg-teal-500/10 text-teal-700 dark:text-teal-300 border-0 gap-1.5",
   },
   mcode: {
     label: "MiniMax Code",

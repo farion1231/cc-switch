@@ -1410,6 +1410,7 @@
     "selectSessionLabel": "{{title}} を選択",
     "agyDeleteHint": "実行状態も削除するには Antigravity でセッションを削除してください",
     "mcodeDeleteHint": "MiniMax Code で削除してください",
+    "liveagentDeleteHint": "実行状態も削除するには LiveAgent でセッションを削除してください",
     "groupMeta": "{{count}} 件 · {{time}}",
     "bucketToday": "今日",
     "bucketYesterday": "昨日",
@@ -4307,6 +4308,7 @@
     "columnVisible": "表示",
     "visibleHelp": "オフにすると、このアプリはサイドバー、トレイメニュー、MCP / Skills のアプリ列、プロンプトとセッションのアプリ選択に表示されなくなります。表示しないだけで、プロバイダーや MCP などの設定はそのまま残り、アプリ自身の設定ファイルも変更されません。",
     "desktopHelp": "Claude Desktop はデスクトップアプリのため、ここではインストールやアップグレードはできません。CC Switch は設定ファイル経由で接続します。",
+    "liveagentHelp": "LiveAgent はデスクトップアプリのため、ここではインストールやアップグレードはできません。CC Switch は config.json を通じてプロバイダー、MCP、Skill を管理します。",
     "desktopUnsupported": "このシステムには対応していません",
     "desktopConnected": "接続済み",
     "desktopNotConnected": "未接続",
@@ -5210,5 +5212,44 @@
       "managedHint": "アカウントは認証センターで管理します。ログアウトするとこのカードは自動で消えます。"
     },
     "deleteSessionHint": "履歴の整合性を保つため、DeepSeek Harness でこのセッションを削除してください。"
+  },
+  "liveagent": {
+    "modelApi": "API プロトコル（個別指定）",
+    "modelApiInherit": "プロバイダーと同じ",
+    "noModelsTyped": "組み込みタイプ {{type}} のモデルは LiveAgent が実行時に取得します。デフォルトにするには「モデル一覧を取得」で /v1/models から選んで追加してください。",
+    "sampling": {
+      "temperature": "Temperature",
+      "top_p": "Top P",
+      "unset": "未設定（モデルの既定値）"
+    },
+    "apiHint": {
+      "completions": "最も一般的：OpenAI 互換 API（/v1/chat/completions）。多くの中継サービスやサードパーティモデルはこちら。",
+      "responses": "OpenAI の新しい Responses API（/v1/responses）。OpenAI 公式や対応を明示しているサービス向け。",
+      "anthropic": "Claude ネイティブ API（/v1/messages）。Anthropic 公式や Claude 互換の中継向け。",
+      "google": "Gemini ネイティブ API。Google AI Studio の API キー向け。",
+      "fromType": "LiveAgent がプロバイダーの種類から API を自動で選びます。"
+    },
+    "noModels": "モデルがありません。「モデル一覧を取得」で /v1/models から選ぶか、手動で追加してください。",
+    "toggleModelDetails": "{{model}} の詳細を表示または非表示",
+    "enableModel": "モデル {{model}} を有効にする",
+    "reasoning": "拡張思考に対応",
+    "imageInput": "画像入力に対応",
+    "restartRequired": "モデルや MCP を変更する前に LiveAgent を終了してください（起動中の LiveAgent は変更を上書きします）。保存後に起動すると反映されます。プロジェクト別の Skill 設定は LiveAgent で管理します。",
+    "apiFromType": "タイプから自動（{{type}}）",
+    "providerKey": "プロバイダー ID",
+    "duplicateKey": "このプロバイダー ID は既に存在します",
+    "api": "API プロトコル",
+    "baseUrl": "API URL",
+    "apiKey": "API キーまたはシークレット参照",
+    "models": "モデル",
+    "addModel": "モデルを追加",
+    "modelId": "モデル ID",
+    "modelName": "表示名",
+    "removeModel": "モデル {{model}} を削除",
+    "contextWindow": "コンテキストウィンドウ",
+    "maxTokens": "最大出力トークン",
+    "enabled": "モデルを有効にする",
+    "advanced": "詳細 JSON 設定",
+    "validationHint": "名前、一意の ID、API URL、認証情報、有効なモデルを入力してください。モデル ID は重複できません。"
   }
 }

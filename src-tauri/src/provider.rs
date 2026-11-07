@@ -232,7 +232,7 @@ impl Provider {
             ),
             // Pi custom providers use the native models.json field names. Pi expands
             // `$NAME` references in `apiKey`, so resolve them before sending (#8822).
-            AppType::Pi => (
+            AppType::Pi | AppType::LiveAgent => (
                 crate::pi_config::provider_base_url(settings).unwrap_or_default(),
                 crate::pi_config::resolve_usage_api_key(&str_at(settings.get("apiKey"))),
             ),

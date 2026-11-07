@@ -1410,6 +1410,7 @@
     "selectSessionLabel": "选择 {{title}}",
     "agyDeleteHint": "请在 Antigravity 中删除会话，以同步清理运行状态",
     "mcodeDeleteHint": "请在 MiniMax Code 中删除",
+    "liveagentDeleteHint": "请在 LiveAgent 中删除会话，以同步清理运行状态",
     "groupMeta": "{{count}} 个会话 · {{time}}",
     "bucketToday": "今天",
     "bucketYesterday": "昨天",
@@ -4307,6 +4308,7 @@
     "columnVisible": "显示",
     "visibleHelp": "关掉后，这个应用不再出现在侧栏、托盘菜单、MCP / Skills 的应用列，以及提示词和会话的应用下拉里。只是不显示：它的供应商、MCP 等配置都还在，它自己的配置文件也不会被改动。",
     "desktopHelp": "Claude Desktop 是桌面应用，不能在这里安装或升级；CC Switch 通过它的配置文件接入。",
+    "liveagentHelp": "LiveAgent 是桌面应用，不能在这里安装或升级；CC Switch 通过它的 config.json 接入供应商、MCP 和 Skill。",
     "desktopUnsupported": "当前系统不支持",
     "desktopConnected": "已接入",
     "desktopNotConnected": "未接入",
@@ -5210,5 +5212,44 @@
       "managedHint": "账号在授权中心管理：退出登录后这张卡会自动消失。"
     },
     "deleteSessionHint": "请在 DeepSeek Harness 中删除此会话，以保持原生历史记录一致。"
+  },
+  "liveagent": {
+    "modelApi": "接口协议（单独指定）",
+    "modelApiInherit": "跟随供应商",
+    "noModelsTyped": "内置类型 {{type}} 的模型由 LiveAgent 运行时获取；可点「获取模型列表」从 /v1/models 选择后写入，才能设为默认。",
+    "sampling": {
+      "temperature": "Temperature（温度）",
+      "top_p": "Top P",
+      "unset": "不设置，用模型默认"
+    },
+    "apiHint": {
+      "completions": "最常用：OpenAI 兼容接口（/v1/chat/completions），大多数中转站和国产模型都选它。",
+      "responses": "OpenAI 新版 Responses 接口（/v1/responses），适合 OpenAI 官方或明确支持它的服务。",
+      "anthropic": "Claude 原生接口（/v1/messages），适合 Anthropic 官方或兼容 Claude 的中转。",
+      "google": "Gemini 原生接口，适合 Google AI Studio 的 API Key。",
+      "fromType": "由 LiveAgent 按供应商类型自动选择接口。"
+    },
+    "noModels": "暂无模型，可点「获取模型列表」从 /v1/models 选择，或手动添加",
+    "toggleModelDetails": "展开或收起 {{model}} 的详情",
+    "enableModel": "启用模型 {{model}}",
+    "reasoning": "支持扩展思考",
+    "imageInput": "支持图片输入",
+    "restartRequired": "修改模型或 MCP 前请先退出 LiveAgent（运行中的 LiveAgent 会覆盖这些修改），保存后再启动即可生效。项目级 Skill 设置仍由 LiveAgent 管理。",
+    "apiFromType": "按类型自动（{{type}}）",
+    "providerKey": "供应商标识",
+    "duplicateKey": "此供应商标识已存在",
+    "api": "API 协议",
+    "baseUrl": "API 地址",
+    "apiKey": "API Key 或密钥引用",
+    "models": "模型",
+    "addModel": "添加模型",
+    "modelId": "模型 ID",
+    "modelName": "显示名称",
+    "removeModel": "删除模型 {{model}}",
+    "contextWindow": "上下文窗口",
+    "maxTokens": "最大输出 Token",
+    "enabled": "启用模型",
+    "advanced": "高级配置 JSON",
+    "validationHint": "请填写名称、唯一标识、API 地址、密钥和有效模型；模型 ID 不可重复。"
   }
 }

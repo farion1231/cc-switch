@@ -19,6 +19,7 @@ const SESSION_PROVIDER_APPS: Record<string, AppId> = {
   "Oh My Pi (Session)": "omp",
   "Antigravity (Session)": "agy",
   "DeepSeek Harness (Session)": "dsh",
+  "LiveAgent (Session)": "liveagent",
 };
 
 /**

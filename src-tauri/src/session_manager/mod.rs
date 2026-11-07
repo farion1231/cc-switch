@@ -17,7 +17,8 @@ use std::time::{Duration, Instant};
 // 其余模型类型从 `session_manager::model` 引用
 pub use model::SessionMessage;
 use providers::{
-    agy, claude, codex, dsh, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw, opencode, pi,
+    agy, claude, codex, dsh, gemini, grokbuild, hermes, kimi, liveagent, mcode, omp, openclaw,
+    opencode, pi,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -96,7 +97,7 @@ pub(crate) struct SessionScan {
 pub(crate) fn scan_sessions_with_status() -> SessionScan {
     use providers::utils::ScanStatus;
     type Scanner = fn(&mut ScanStatus) -> Vec<SessionMeta>;
-    let scanners: [(&str, Scanner); 13] = [
+    let scanners: [(&str, Scanner); 14] = [
         ("codex", codex::scan_sessions_with_status),
         ("claude", claude::scan_sessions_with_status),
         ("opencode", opencode::scan_sessions_with_status),
@@ -107,6 +108,7 @@ pub(crate) fn scan_sessions_with_status() -> SessionScan {
         ("pi", pi::scan_sessions_with_status),
         ("omp", omp::scan_sessions_with_status),
         ("mcode", mcode::scan_sessions_with_status),
+        ("liveagent", liveagent::scan_sessions_with_status),
         // Kimi Code、DeepSeek Harness、Antigravity 的扫描还不报告读取失败，按完整处理
         ("kimi", |_| kimi::scan_sessions()),
         ("dsh", |_| dsh::scan_sessions()),
@@ -174,6 +176,7 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "kimi" => kimi::load_messages(path),
         "omp" => omp::load_messages(path),
         "dsh" => dsh::load_messages(path),
+        "liveagent" => liveagent::load_messages(path),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -230,6 +233,12 @@ fn delete_session_source(
     if provider_id == "agy" {
         return Err(
             "Delete this session in Antigravity to keep its binary store and summaries consistent"
+                .into(),
+        );
+    }
+    if provider_id == "liveagent" {
+        return Err(
+            "Delete this session in LiveAgent so its runtime state and history are removed together"
                 .into(),
         );
     }
@@ -297,6 +306,7 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "pi" => pi::session_roots(),
         "kimi" => kimi::session_roots(),
         "dsh" => dsh::session_roots(),
+        "liveagent" => liveagent::session_roots(),
         "agy" => agy::session_roots(),
         "omp" => omp::session_roots(),
         _ => return Err(format!("Unsupported provider: {provider_id}")),

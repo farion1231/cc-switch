@@ -393,6 +393,7 @@ fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
          WHEN '_mcode_session' THEN 'MiniMax Code (Session)' \
          WHEN '_pi_session' THEN 'Pi (Session)' \
          WHEN '_omp_session' THEN 'Oh My Pi (Session)' \
+         WHEN '_liveagent_session' THEN 'LiveAgent (Session)' \
          ELSE {log_alias}.provider_id END)"
     )
 }

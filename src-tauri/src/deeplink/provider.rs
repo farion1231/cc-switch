@@ -388,6 +388,11 @@ pub(crate) fn build_provider_from_request(
         AppType::OpenClaw => build_additive_app_settings(request, api_format),
         AppType::Hermes => build_hermes_settings(request, api_format),
         AppType::Pi => build_pi_settings(request, api_format)?,
+        AppType::LiveAgent => {
+            return Err(AppError::InvalidInput(
+                "Add LiveAgent providers from the LiveAgent page".into(),
+            ))
+        }
         AppType::Mcode | AppType::Dsh => {
             build_custom_provider_settings(app_type, request, api_format)?
         }
