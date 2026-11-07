@@ -2,10 +2,25 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import type { McpServer, McpServersMap } from "@/types";
 import type { AppId } from "./types";
 
+/**
+ * How the tools a server listed compare with the ones recorded the first time
+ * it was checked. `pinned`: first sight, now recorded. `changed`: the server
+ * now advertises different tools than the ones the user accepted.
+ */
+export interface McpToolsCheck {
+  status: "pinned" | "unchanged" | "changed";
+  toolCount: number;
+  added: string[];
+  removed: string[];
+  modified: string[];
+}
+
 export interface McpConnectivityResult {
   serverId: string;
   /** `authRequired`: the server answered 401 and wants the client's own sign-in. */
   status: "connected" | "authRequired" | "failed";
+  /** Absent when the server has no tools or didn't list them in time. */
+  tools?: McpToolsCheck;
 }
 
 export const mcpApi = {
@@ -25,6 +40,10 @@ export const mcpApi = {
     await invoke("cancel_mcp_connectivity_checks", { batchId });
   },
 
+  /** Accept the tool definitions the latest check reported as changed. */
+  async trustTools(serverId: string): Promise<boolean> {
+    return await invoke("trust_mcp_tools", { serverId });
+  },
   // ========================================================================
   // v3.7.0 新增：统一 MCP 管理 API
   // ========================================================================

@@ -4870,7 +4870,16 @@
       "homepage": "Startseite",
       "docs": "Doku"
     },
-    "resync": "Konfiguration jeder App anhand dieser Schalter neu schreiben"
+    "resync": "Konfiguration jeder App anhand dieser Schalter neu schreiben",
+    "tools": {
+      "changedBadge": "Tools geändert",
+      "changedHint": "Dieser Server bietet jetzt andere Tools als bei der ersten Prüfung an. Tool-Beschreibungen gehen direkt an das Modell; stellen Sie daher sicher, dass die Änderung aus einer vertrauenswürdigen Quelle stammt, bevor Sie ihr vertrauen.",
+      "added": "Hinzugefügt: {{names}}",
+      "removed": "Entfernt: {{names}}",
+      "modified": "Geändert: {{names}}",
+      "trust": "Aktuellen Tools vertrauen",
+      "trusted": "Aktuellen Tools von {{id}} wird jetzt vertraut"
+    }
   },
   "skillsPage": {
     "noun": "Skills",
