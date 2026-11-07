@@ -2526,7 +2526,7 @@ impl SkillService {
             apps.pi = Self::skill_exists_in_app(&dir_name, &AppType::Pi);
             apps.omp = Self::skill_exists_in_app(&dir_name, &AppType::Omp);
 
-            // An explicitly imported MCode link must point at the managed copy
+            // An explicitly imported link must be retargeted to the managed copy
             // so subsequent toggles and updates can verify its ownership.
             for app in [AppType::Mcode, AppType::Agy, AppType::Kimi, AppType::Dsh] {
                 if apps.is_enabled_for(&app) {
@@ -2534,23 +2534,7 @@ impl SkillService {
                         let native =
                             Self::get_distinct_app_skills_dir(&ssot_dir, &app)?.join(&dir_name);
                         if Self::is_symlink(&native) && !Self::paths_alias(&native, &dest) {
-                            if Self::compute_deployment_hash(&native)?
-                                != Self::compute_deployment_hash(&dest)?
-                            {
-                                return Err(anyhow!(
-                                    "Skill 与托管副本内容不同，拒绝替换链接: {dir_name}"
-                                ));
-                            }
-                            if let Some(deployment) =
-                                Self::inspect_skill_destination(&native, &native, &dir_name)?
-                            {
-                                Self::refresh_skill_destination(
-                                    &dest,
-                                    &native,
-                                    &dir_name,
-                                    &deployment,
-                                )?;
-                            }
+                            Self::adopt_external_skill_link(&dest, &native, &dir_name, &app)?;
                         } else {
                             Self::preflight_install_destination(&dest, &dir_name, &app)?;
                         }
@@ -2567,8 +2551,10 @@ impl SkillService {
             }
             // 勾选的应用里还没有这个 Skill（它是在别处发现的）：导入时就投影过去。
             // 只存标志的话，界面显示已启用、应用却读不到，要等下次切换供应商才补上。
-            // 已经在应用目录里的保持原样；投影失败就不记这个应用的启用，
-            // 让库里的标志始终等于磁盘上的事实。
+            // 已经在应用目录里的真实目录保持原样；指向外部目录的链接（如
+            // `npx skills add` 建的 ~/.claude/skills/<名字> -> ~/.agents/skills/<名字>）
+            // 内容一致时改成 CC Switch 的部署，否则之后停用、更新、重新同步都无法验证它。
+            // 投影失败就不记这个应用的启用，让库里的标志始终等于磁盘上的事实。
             for app in AppType::all() {
                 if matches!(
                     app,
@@ -2579,11 +2565,25 @@ impl SkillService {
                         | AppType::Dsh
                         | AppType::Omp
                 ) || !apps.is_enabled_for(&app)
-                    || Self::skill_exists_in_app(&dir_name, &app)
                 {
                     continue;
                 }
-                if let Err(error) = Self::sync_to_app_dir(&dir_name, &app) {
+                let projection = (|| -> Result<()> {
+                    if Self::is_sync_managed_app(&app) {
+                        let native =
+                            Self::get_distinct_app_skills_dir(&ssot_dir, &app)?.join(&dir_name);
+                        if Self::is_symlink(&native) && !Self::paths_alias(&native, &dest) {
+                            return Self::adopt_external_skill_link(
+                                &dest, &native, &dir_name, &app,
+                            );
+                        }
+                    }
+                    if Self::skill_exists_in_app(&dir_name, &app) {
+                        return Ok(());
+                    }
+                    Self::sync_to_app_dir(&dir_name, &app)
+                })();
+                if let Err(error) = projection {
                     log::warn!("导入 Skill {dir_name} 时同步到 {app:?} 失败: {error:#}");
                     apps.set_enabled_for(&app, false);
                     not_enabled.push(format!("{dir_name} ({}): {error:#}", app.as_str()));
@@ -2784,15 +2784,7 @@ impl SkillService {
         }
 
         if Self::is_symlink(destination) {
-            let target = fs::read_link(destination)?;
-            let resolved = if target.is_absolute() {
-                target
-            } else {
-                destination
-                    .parent()
-                    .map(|parent| parent.join(&target))
-                    .unwrap_or(target)
-            };
+            let resolved = Self::resolve_link_target(destination)?;
             if matches!(
                 (resolved.canonicalize(), source.canonicalize()),
                 (Ok(resolved), Ok(source)) if resolved == source
@@ -2818,6 +2810,18 @@ impl SkillService {
             "已存在同名但无法验证为托管副本的 Skill，拒绝覆盖或删除: {} ({directory})",
             destination.display()
         ))
+    }
+
+    /// The link target joined to the link's parent when it is relative.
+    fn resolve_link_target(link: &Path) -> Result<PathBuf> {
+        let target = fs::read_link(link)?;
+        Ok(if target.is_absolute() {
+            target
+        } else {
+            link.parent()
+                .map(|parent| parent.join(&target))
+                .unwrap_or(target)
+        })
     }
 
     fn remove_verified_skill_destination(
@@ -2916,11 +2920,22 @@ impl SkillService {
             Self::ensure_skill_destination_matches(&source, &dest, &directory)?;
         }
 
+        Self::deploy_skill_destination(&source, &dest, &directory, app)
+    }
+
+    /// Deploy `source` at `dest` with the configured sync method. The caller
+    /// must already have verified that `dest` is absent or safe to replace.
+    fn deploy_skill_destination(
+        source: &Path,
+        dest: &Path,
+        directory: &str,
+        app: &AppType,
+    ) -> Result<()> {
         let sync_method = Self::get_sync_method();
         // WSL targets reject directory symlinks outright (ERROR_ACCESS_DENIED),
         // so Auto skips the doomed symlink attempt and goes straight to copy.
         let sync_method =
-            if matches!(sync_method, SyncMethod::Auto) && crate::config::is_wsl_path(&dest) {
+            if matches!(sync_method, SyncMethod::Auto) && crate::config::is_wsl_path(dest) {
                 SyncMethod::Copy
             } else {
                 sync_method
@@ -2928,14 +2943,14 @@ impl SkillService {
 
         match sync_method {
             SyncMethod::Auto => {
-                if dest.exists() && !Self::is_symlink(&dest) {
-                    Self::replace_dest_with_copy(&source, &dest, &directory)?;
+                if dest.exists() && !Self::is_symlink(dest) {
+                    Self::replace_dest_with_copy(source, dest, directory)?;
                     log::debug!("Skill {directory} 已通过复制同步到 {app:?}");
                     return Ok(());
                 }
 
                 // 优先尝试 symlink
-                match Self::replace_dest_with_symlink(&source, &dest, &directory) {
+                match Self::replace_dest_with_symlink(source, dest, directory) {
                     Ok(()) => {
                         log::debug!("Skill {directory} 已通过 symlink 同步到 {app:?}");
                         return Ok(());
@@ -2949,20 +2964,51 @@ impl SkillService {
                     }
                 }
                 // Fallback 到 copy
-                Self::replace_dest_with_copy(&source, &dest, &directory)?;
+                Self::replace_dest_with_copy(source, dest, directory)?;
                 log::debug!("Skill {directory} 已通过复制同步到 {app:?}");
             }
             SyncMethod::Symlink => {
-                Self::replace_dest_with_symlink(&source, &dest, &directory)?;
+                Self::replace_dest_with_symlink(source, dest, directory)?;
                 log::debug!("Skill {directory} 已通过 symlink 同步到 {app:?}");
             }
             SyncMethod::Copy => {
-                Self::replace_dest_with_copy(&source, &dest, &directory)?;
+                Self::replace_dest_with_copy(source, dest, directory)?;
                 log::debug!("Skill {directory} 已通过复制同步到 {app:?}");
             }
         }
 
         Ok(())
+    }
+
+    /// Import-time adoption of a link created outside CC Switch (for example
+    /// `npx skills add`, which links `~/.claude/skills/<name>` to
+    /// `~/.agents/skills/<name>`). Only a link whose content matches the
+    /// managed copy is replaced by a CC Switch deployment; the folder it
+    /// pointed at is left untouched.
+    fn adopt_external_skill_link(
+        source: &Path,
+        native: &Path,
+        directory: &str,
+        app: &AppType,
+    ) -> Result<()> {
+        let Some(SkillDeployment::Symlink { expected_target }) =
+            Self::inspect_skill_destination(native, native, directory)?
+        else {
+            return Err(anyhow!(
+                "目标 Skill 已在操作期间发生变化，拒绝覆盖: {directory}"
+            ));
+        };
+        if Self::compute_deployment_hash(native)? != Self::compute_deployment_hash(source)? {
+            return Err(anyhow!(
+                "Skill 与托管副本内容不同，拒绝替换链接: {directory}"
+            ));
+        }
+        if !Self::is_symlink(native) || Self::resolve_link_target(native)? != expected_target {
+            return Err(anyhow!(
+                "目标 Skill 已在操作期间发生变化，拒绝覆盖: {directory}"
+            ));
+        }
+        Self::deploy_skill_destination(source, native, directory, app)
     }
 
     /// 复制 Skill 到应用目录（保留用于向后兼容）
@@ -7096,6 +7142,140 @@ description: Test skill
         assert_eq!(installed.len(), 1);
         assert!(installed[0].apps.claude);
         assert!(!installed[0].apps.codex);
+    }
+
+    /// `npx skills add` layout: the app entry is a link to `~/.agents/skills/<name>`.
+    /// Returns `None` where this platform/user cannot create directory links.
+    fn link_app_skill_to_agents(app: &AppType, directory: &str) -> Option<PathBuf> {
+        let agents = crate::config::get_home_dir()
+            .join(".agents")
+            .join("skills")
+            .join(directory);
+        if !agents.exists() {
+            write_skill(&agents, "external");
+        }
+        let native = SkillService::get_app_skills_dir(app)
+            .unwrap()
+            .join(directory);
+        fs::create_dir_all(native.parent().unwrap()).unwrap();
+        match SkillService::create_symlink(&agents, &native) {
+            Ok(()) => Some(agents),
+            Err(error) => {
+                eprintln!("skipping: cannot create a directory link here: {error:#}");
+                None
+            }
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn imported_external_link_is_retargeted_for_every_selected_app() {
+        let temp = tempdir().unwrap();
+        let home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&home, SkillStorageLocation::CcSwitch);
+        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let apps = [AppType::Claude, AppType::Codex];
+        let mut external = None;
+        for app in &apps {
+            let Some(agents) = link_app_skill_to_agents(app, "ext") else {
+                return;
+            };
+            external = Some(agents);
+        }
+        let external = external.unwrap();
+        let original = fs::read(external.join("SKILL.md")).unwrap();
+
+        let imported = SkillService::import_from_apps(
+            &db,
+            vec![ImportSkillSelection {
+                directory: "ext".into(),
+                apps: SkillApps {
+                    claude: true,
+                    codex: true,
+                    ..Default::default()
+                },
+            }],
+        )
+        .unwrap();
+        let id = &imported[0].id;
+        assert!(imported[0].apps.claude && imported[0].apps.codex);
+
+        let ssot = SkillService::get_ssot_dir().unwrap().join("ext");
+        for app in &apps {
+            let native = SkillService::get_app_skills_dir(app).unwrap().join("ext");
+            assert!(!SkillService::paths_alias(&native, &external), "{app:?}");
+            assert!(
+                SkillService::inspect_skill_destination(&ssot, &native, "ext").is_ok(),
+                "{app:?} deployment must be verifiable after import"
+            );
+            SkillService::sync_to_app(&db, app).unwrap();
+        }
+        assert!(SkillService::resync_all_apps(&db)
+            .iter()
+            .all(|outcome| outcome.ok));
+
+        let claude = SkillService::get_app_skills_dir(&AppType::Claude)
+            .unwrap()
+            .join("ext");
+        SkillService::toggle_app(&db, id, &AppType::Claude, false).unwrap();
+        assert!(!claude.exists() && !SkillService::is_symlink(&claude));
+        SkillService::toggle_app(&db, id, &AppType::Claude, true).unwrap();
+        assert_eq!(fs::read(claude.join("SKILL.md")).unwrap(), original);
+
+        let result = SkillService::uninstall(&db, id).unwrap();
+        assert!(
+            result.cleanup_failures.is_empty(),
+            "{:?}",
+            result.cleanup_failures
+        );
+        for app in &apps {
+            let native = SkillService::get_app_skills_dir(app).unwrap().join("ext");
+            assert!(!native.exists() && !SkillService::is_symlink(&native));
+        }
+        // The folder the link pointed at belongs to the skills CLI.
+        assert_eq!(fs::read(external.join("SKILL.md")).unwrap(), original);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn imported_external_link_with_different_content_is_kept_and_not_enabled() {
+        let temp = tempdir().unwrap();
+        let home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&home, SkillStorageLocation::CcSwitch);
+        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+        let db = Arc::new(Database::memory().unwrap());
+        // A leftover managed copy with different content already sits in the SSOT.
+        write_skill(
+            &SkillService::get_ssot_dir().unwrap().join("ext"),
+            "leftover",
+        );
+        let Some(external) = link_app_skill_to_agents(&AppType::Claude, "ext") else {
+            return;
+        };
+        let claude = SkillService::get_app_skills_dir(&AppType::Claude)
+            .unwrap()
+            .join("ext");
+
+        let error = SkillService::import_from_apps(
+            &db,
+            vec![ImportSkillSelection {
+                directory: "ext".into(),
+                apps: SkillApps::only(&AppType::Claude),
+            }],
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("ext (claude)"), "{error}");
+        let installed = db.get_all_installed_skills().unwrap();
+        assert_eq!(installed.len(), 1);
+        assert!(!installed[0].apps.claude);
+        assert!(SkillService::is_symlink(&claude));
+        assert!(SkillService::paths_alias(&claude, &external));
+        assert!(fs::read_to_string(external.join("SKILL.md"))
+            .unwrap()
+            .contains("external"));
     }
 
     #[tokio::test]
