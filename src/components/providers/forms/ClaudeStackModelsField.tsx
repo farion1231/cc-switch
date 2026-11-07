@@ -7,12 +7,18 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { FormLabel } from "@/components/ui/form";
 import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Input } from "@/components/ui/input";
+import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
+import { useCommittableRef } from "@/hooks/useLatestRef";
 import type { FetchedModel } from "@/lib/api/model-fetch";
 import type { ClaudeStackModel } from "@/types";
 import {
   FetchedModelPicker,
   type FetchedModelSelection,
 } from "./FetchedModelPicker";
+import {
+  fillClaudeStackModel,
+  metadataFilledAnything,
+} from "./modelMetadataFill";
 import { ModelDropdown } from "./shared";
 import {
   hasClaudeOneMMarker,
@@ -20,7 +26,11 @@ import {
 } from "./hooks/useModelState";
 
 /** 表单里的一行：多一个只在前端用的行 id，删行时输入框不串位。 */
-export type ClaudeStackModelRow = ClaudeStackModel & { rowId: string };
+export type ClaudeStackModelRow = ClaudeStackModel & {
+  rowId: string;
+  /** 显示名由补全生成时的值；用户改过名称后不再跟随模型。 */
+  displayNameAuto?: string;
+};
 
 let nextRowId = 0;
 
@@ -115,10 +125,55 @@ export function ClaudeStackModelsField({
   baseUrl = "",
 }: ClaudeStackModelsFieldProps) {
   const { t } = useTranslation();
+  const [rowsRef, commitRows] = useCommittableRef(rows, onRowsChange);
+  const fillModelMetadata = useModelMetadataFill({
+    baseUrl,
+    presets: () => [],
+    prefetch: fetchedModels.length > 0,
+    fetchedModels,
+    fetchedFrom: baseUrl,
+  });
 
-  const updateRow = (rowId: string, patch: Partial<ClaudeStackModel>) =>
-    onRowsChange(
-      rows.map((row) => (row.rowId === rowId ? { ...row, ...patch } : row)),
+  const fillRowMetadata = (
+    rowId: string,
+    modelId: string,
+    silent?: boolean,
+  ) => {
+    fillModelMetadata(
+      modelId,
+      (metadata) => {
+        const current = rowsRef.current.find((row) => row.rowId === rowId);
+        if (
+          !current ||
+          stripClaudeOneMMarker(current.model).trim() !== modelId
+        ) {
+          return false;
+        }
+        const filled = fillClaudeStackModel(current, metadata);
+        if (metadataFilledAnything(current, filled)) {
+          if (
+            metadata.displayName &&
+            (!current.displayName?.trim() ||
+              current.displayName.trim() === current.model.trim())
+          ) {
+            filled.displayNameAuto = metadata.displayName;
+          }
+          commitRows(
+            rowsRef.current.map((row) => (row.rowId === rowId ? filled : row)),
+          );
+          return true;
+        }
+        return false;
+      },
+      { silent },
+    );
+  };
+
+  const updateRow = (rowId: string, patch: Partial<ClaudeStackModelRow>) =>
+    commitRows(
+      rowsRef.current.map((row) =>
+        row.rowId === rowId ? { ...row, ...patch } : row,
+      ),
     );
 
   const applyFetchedModels = ({ add, remove }: FetchedModelSelection) => {
@@ -132,7 +187,10 @@ export function ClaudeStackModelsField({
     const additions = add
       .filter((id) => !configured.has(id))
       .map((id) => createClaudeStackModelRow({ model: id }));
-    onRowsChange([...kept, ...additions]);
+    commitRows([...kept, ...additions]);
+    for (const row of additions) {
+      fillRowMetadata(row.rowId, stripClaudeOneMMarker(row.model).trim(), true);
+    }
   };
 
   return (
@@ -216,7 +274,10 @@ export function ClaudeStackModelsField({
                 <ImeSafeInput
                   value={row.displayName ?? ""}
                   onValueChange={(value) =>
-                    updateRow(row.rowId, { displayName: value })
+                    updateRow(row.rowId, {
+                      displayName: value,
+                      displayNameAuto: undefined,
+                    })
                   }
                   placeholder={
                     modelBase ||
@@ -232,9 +293,15 @@ export function ClaudeStackModelsField({
                 <div className="flex gap-1">
                   <Input
                     value={row.model}
-                    onChange={(event) =>
-                      updateRow(row.rowId, { model: event.target.value })
-                    }
+                    onChange={(event) => {
+                      const autoName =
+                        row.displayNameAuto !== undefined &&
+                        row.displayName?.trim() === row.displayNameAuto.trim();
+                      updateRow(row.rowId, {
+                        model: event.target.value,
+                        ...(autoName ? { displayName: undefined } : {}),
+                      });
+                    }}
                     placeholder={t("providerForm.stackModelPlaceholder", {
                       defaultValue: "例如 deepseek-v4-pro",
                     })}
@@ -247,7 +314,17 @@ export function ClaudeStackModelsField({
                   {fetchedModels.length > 0 && (
                     <ModelDropdown
                       models={fetchedModels}
-                      onSelect={(id) => updateRow(row.rowId, { model: id })}
+                      onSelect={(id) => {
+                        const autoName =
+                          row.displayNameAuto !== undefined &&
+                          row.displayName?.trim() ===
+                            row.displayNameAuto.trim();
+                        updateRow(row.rowId, {
+                          model: id,
+                          ...(autoName ? { displayName: undefined } : {}),
+                        });
+                        fillRowMetadata(row.rowId, id);
+                      }}
                     />
                   )}
                 </div>

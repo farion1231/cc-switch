@@ -1804,6 +1804,8 @@
     "gptContextWindowHint": "Aktarım hizmetlerindeki GPT genellikle bağlam penceresi yalnızca 272K olan ChatGPT aboneliklerini kullanır. Daha büyük bir pencere, üst hizmet isteği reddedip tur başarısız olana kadar sıkıştırmayı geciktirir; bunu yalnızca sağlayıcınız destekliyorsa kullanın.",
     "modelMetadataSourcePreset": "önceden ayarlanmış",
     "modelMetadataSourceBoth": "ön ayar ve models.dev",
+    "modelMetadataSourceGateway": "ağ geçidi",
+    "modelMetadataSourceModelsDev": "models.dev",
     "modelPicker": {
       "title": "Modelleri seçin",
       "lead": "İşaretli modeller listeye eklenir; bir modelin işaretini kaldırmak onu listeden kaldırır.",

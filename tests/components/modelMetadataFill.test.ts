@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  fillClaudeStackModel,
   fillCodexCatalogModel,
   fillHermesModel,
   fillKimiModel,
@@ -9,6 +10,7 @@ import {
   piPresetThinkingFor,
   piSendsReasoningEffort,
   piThinkingLevelMapFromEfforts,
+  restrictPiThinkingToEfforts,
 } from "@/components/providers/forms/modelMetadataFill";
 import type { KnownModelMetadata } from "@/lib/modelMetadata";
 
@@ -62,6 +64,52 @@ describe("fillCodexCatalogModel", () => {
       contextWindow: "1000000",
     });
   });
+
+  it("fills a blank display name or one still equal to the model id", () => {
+    const named = { ...metadata, displayName: "Model M" };
+    expect(
+      fillCodexCatalogModel(
+        { model: "m", displayName: "" },
+        named,
+        CODEX_LEVELS,
+      ).displayName,
+    ).toBe("Model M");
+    expect(
+      fillCodexCatalogModel(
+        { model: "m", displayName: "m" },
+        named,
+        CODEX_LEVELS,
+      ).displayName,
+    ).toBe("Model M");
+    expect(
+      fillCodexCatalogModel(
+        { model: "m", displayName: "Custom" },
+        named,
+        CODEX_LEVELS,
+      ).displayName,
+    ).toBe("Custom");
+  });
+});
+
+describe("fillClaudeStackModel", () => {
+  it("fills the display name and the 1M flag", () => {
+    expect(
+      fillClaudeStackModel(
+        { model: "m" },
+        { displayName: "Model M", contextWindow: 1_000_000 },
+      ),
+    ).toEqual({ model: "m", displayName: "Model M", oneM: true });
+  });
+
+  it("keeps user values", () => {
+    const row = { model: "m", displayName: "Custom", oneM: false };
+    expect(
+      fillClaudeStackModel(row, {
+        displayName: "Model M",
+        contextWindow: 1_000_000,
+      }),
+    ).toEqual(row);
+  });
 });
 
 describe("fillOpenClawModel", () => {
@@ -76,6 +124,10 @@ describe("fillOpenClawModel", () => {
       reasoning: true,
       input: ["text", "image"],
       cost: { input: 1, output: 4 },
+      compat: {
+        supportsReasoningEffort: true,
+        supportedReasoningEfforts: ["max", "low", "turbo", "high"],
+      },
     });
   });
 
@@ -88,6 +140,7 @@ describe("fillOpenClawModel", () => {
       reasoning: true,
       input: ["text", "image"],
       cost: { input: 9, output: 9 },
+      compat: { supportsReasoningEffort: false },
     };
     expect(
       fillOpenClawModel(model, {
@@ -96,6 +149,21 @@ describe("fillOpenClawModel", () => {
         inputModalities: ["text"],
       }),
     ).toEqual(model);
+  });
+
+  it("fills the display name and reasoning effort list", () => {
+    expect(
+      fillOpenClawModel(
+        { id: "m", name: "m" },
+        { displayName: "Model M", reasoningEfforts: ["low", "high"] },
+      ),
+    ).toMatchObject({
+      name: "Model M",
+      compat: {
+        supportsReasoningEffort: true,
+        supportedReasoningEfforts: ["low", "high"],
+      },
+    });
   });
 });
 
@@ -115,12 +183,21 @@ describe("fillHermesModel", () => {
   });
 
   it("only fills supports_vision towards true and keeps an explicit false", () => {
-    expect(
-      fillHermesModel({ id: "m" }, { inputModalities: ["text"] }),
-    ).toEqual({ id: "m" });
+    expect(fillHermesModel({ id: "m" }, { inputModalities: ["text"] })).toEqual(
+      { id: "m" },
+    );
     expect(
       fillHermesModel({ id: "m", supports_vision: false }, metadata),
     ).toEqual({ id: "m", context_length: 262144, supports_vision: false });
+  });
+
+  it("fills the display name when it is blank or still the model id", () => {
+    const named = { ...metadata, displayName: "Model M" };
+    expect(fillHermesModel({ id: "m" }, named).name).toBe("Model M");
+    expect(fillHermesModel({ id: "m", name: "m" }, named).name).toBe("Model M");
+    expect(fillHermesModel({ id: "m", name: "Custom" }, named).name).toBe(
+      "Custom",
+    );
   });
 });
 
@@ -131,6 +208,13 @@ describe("fillOpenCodeModel", () => {
       limit: { context: 262144, output: 32768 },
       reasoning: true,
       modalities: { input: ["text", "image", "video"], output: ["text"] },
+      cost: { input: 1, output: 4 },
+      variants: {
+        max: { reasoningEffort: "max" },
+        low: { reasoningEffort: "low" },
+        turbo: { reasoningEffort: "turbo" },
+        high: { reasoningEffort: "high" },
+      },
     });
   });
 
@@ -158,7 +242,117 @@ describe("fillOpenCodeModel", () => {
       limit: { context: 1000, output: 32768 },
       modalities: { input: ["text"] },
       reasoning: true,
+      cost: { input: 1, output: 4 },
+      variants: {
+        max: { reasoningEffort: "max" },
+        low: { reasoningEffort: "low" },
+        turbo: { reasoningEffort: "turbo" },
+        high: { reasoningEffort: "high" },
+      },
     });
+  });
+
+  it("fills OpenCode cost and variants for the selected provider package", () => {
+    expect(
+      fillOpenCodeModel({ name: "m" }, metadata, {
+        npm: "@ai-sdk/anthropic",
+      }),
+    ).toMatchObject({
+      cost: { input: 1, output: 4 },
+      variants: {
+        low: { effort: "low" },
+        high: { effort: "high" },
+      },
+    });
+    expect(
+      fillOpenCodeModel({ name: "m" }, metadata, { npm: "@ai-sdk/google" }),
+    ).toMatchObject({
+      variants: {
+        low: {
+          thinkingConfig: { includeThoughts: true, thinkingLevel: "low" },
+        },
+      },
+    });
+    expect(
+      fillOpenCodeModel({ name: "m" }, metadata, {
+        npm: "@ai-sdk/amazon-bedrock",
+      }),
+    ).not.toHaveProperty("variants");
+  });
+
+  it("keeps user cost and variants, and skips them for the DSH dialect", () => {
+    const model = {
+      name: "m",
+      cost: { input: 9, output: 9 },
+      variants: { fast: { disabled: true } },
+    };
+    expect(fillOpenCodeModel(model, metadata)).toEqual({
+      ...model,
+      limit: { context: 262144, output: 32768 },
+      modalities: { input: ["text", "image", "video"], output: ["text"] },
+      reasoning: true,
+    });
+    expect(
+      fillOpenCodeModel({ name: "m" }, metadata, { dialect: "dsh" }),
+    ).not.toHaveProperty("cost");
+    expect(
+      fillOpenCodeModel({ name: "m" }, metadata, { dialect: "dsh" }),
+    ).not.toHaveProperty("variants");
+  });
+
+  it("fills DSH reasoningEfforts instead of OpenCode variants", () => {
+    expect(
+      fillOpenCodeModel(
+        { name: "m" },
+        {
+          ...metadata,
+          reasoningEfforts: ["none", "low", "high"],
+        },
+        { dialect: "dsh" },
+      ),
+    ).toMatchObject({
+      reasoning: true,
+      reasoningEfforts: { off: "none", low: "low", high: "high" },
+    });
+  });
+
+  it("does not offer an off level when the model cannot disable thinking", () => {
+    expect(
+      fillOpenCodeModel(
+        { name: "m" },
+        { ...metadata, reasoningEfforts: ["low", "high"] },
+        { dialect: "dsh" },
+      ).reasoningEfforts,
+    ).toEqual({ low: "low", high: "high" });
+  });
+
+  it("writes MiniMax Code effort options instead of OpenCode variants", () => {
+    expect(
+      fillOpenCodeModel(
+        { name: "m" },
+        { ...metadata, reasoningEfforts: ["none", "low", "high"] },
+        { dialect: "mcode" },
+      ),
+    ).toMatchObject({
+      reasoning: true,
+      thinking: { effortOptions: ["low", "high"] },
+    });
+    expect(
+      fillOpenCodeModel({ name: "m" }, metadata, { dialect: "mcode" }),
+    ).not.toHaveProperty("variants");
+  });
+
+  it("fills the display name when it is blank or still the model id", () => {
+    const named = { ...metadata, displayName: "Model M" };
+    expect(fillOpenCodeModel({ name: "" }, named, { modelId: "m" }).name).toBe(
+      "Model M",
+    );
+    expect(fillOpenCodeModel({ name: "m" }, named, { modelId: "m" }).name).toBe(
+      "Model M",
+    );
+    expect(
+      fillOpenCodeModel({ name: "Custom" }, named, { modelId: "m" }).name,
+    ).toBe("Custom");
   });
 
   it("leaves the model untouched when nothing is known", () => {
@@ -195,6 +389,29 @@ describe("fillKimiModel", () => {
       ),
     ).toEqual(model);
   });
+
+  it("fills display_name when it is blank or still the model id", () => {
+    const named = { ...metadata, displayName: "Model M" };
+    expect(
+      fillKimiModel({ model: "m", max_context_size: 1 }, named, {
+        replaceContext: true,
+      }).display_name,
+    ).toBe("Model M");
+    expect(
+      fillKimiModel(
+        { model: "m", max_context_size: 1, display_name: "m" },
+        named,
+        { replaceContext: true },
+      ).display_name,
+    ).toBe("Model M");
+    expect(
+      fillKimiModel(
+        { model: "m", max_context_size: 1, display_name: "Custom" },
+        named,
+        { replaceContext: true },
+      ).display_name,
+    ).toBe("Custom");
+  });
 });
 
 describe("piThinkingLevelMapFromEfforts", () => {
@@ -218,6 +435,23 @@ describe("piThinkingLevelMapFromEfforts", () => {
   it("generates nothing without a Pi level", () => {
     expect(piThinkingLevelMapFromEfforts(undefined)).toBeUndefined();
     expect(piThinkingLevelMapFromEfforts(["default"])).toBeUndefined();
+  });
+});
+
+describe("restrictPiThinkingToEfforts", () => {
+  it("hides preset levels the gateway does not declare", () => {
+    expect(
+      restrictPiThinkingToEfforts(
+        { off: "none", low: "low", medium: "medium", high: "high", max: "max" },
+        ["low", "high"],
+      ),
+    ).toEqual({
+      off: null,
+      low: "low",
+      medium: null,
+      high: "high",
+      max: null,
+    });
   });
 });
 

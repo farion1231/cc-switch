@@ -1838,6 +1838,8 @@
     "gptContextWindowHint": "中转站的 GPT 多来自 ChatGPT 订阅，窗口只有 272K。窗口写大了不会提前压缩，等上游拒收时这一轮会失败；确认这家支持更大窗口再这样填。",
     "modelMetadataSourcePreset": "预设",
     "modelMetadataSourceBoth": "预设和 models.dev",
+    "modelMetadataSourceGateway": "网关",
+    "modelMetadataSourceModelsDev": "models.dev",
     "modelPicker": {
       "title": "选择模型",
       "lead": "勾选的模型会加入列表，取消勾选会从列表中移除。",

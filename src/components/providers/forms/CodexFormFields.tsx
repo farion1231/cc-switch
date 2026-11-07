@@ -717,6 +717,7 @@ export function CodexFormFields({
   const { t } = useTranslation();
 
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
+  const [fetchedModelsFrom, setFetchedModelsFrom] = useState("");
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   // 拉取请求序号：请求身份（Base URL / 完整地址开关 / API Key / 自定义 UA /
   // Header 覆盖）一变即自增，清空旧列表并作废在途响应——/models 结果可能按
@@ -726,6 +727,7 @@ export function CodexFormFields({
   useEffect(() => {
     fetchModelsSeqRef.current += 1;
     setFetchedModels((prev) => (prev.length === 0 ? prev : []));
+    setFetchedModelsFrom((prev) => (prev === "" ? prev : ""));
   }, [
     codexBaseUrl,
     isFullUrl,
@@ -881,6 +883,7 @@ export function CodexFormFields({
 
   const receiveFetchedModels = useCallback((models: FetchedModel[]) => {
     setFetchedModels(models);
+    setFetchedModelsFrom("");
     return models.length;
   }, []);
 
@@ -1020,7 +1023,11 @@ export function CodexFormFields({
             requestHeaders: modelFetchRequestHeaders(localProxyHeadersOverride),
           },
         ),
-      receiveFetchedModels,
+      (models) => {
+        const count = receiveFetchedModels(models);
+        setFetchedModelsFrom(codexBaseUrl);
+        return count;
+      },
       "[ModelFetch] Failed:",
     );
   }, [
@@ -1049,6 +1056,8 @@ export function CodexFormFields({
     baseUrl: codexBaseUrl,
     presets: codexPresetModelSources,
     prefetch: fetchedModels.length > 0,
+    fetchedModels,
+    fetchedFrom: fetchedModelsFrom,
   });
   // 补全要在「改模型名」提交后立刻读到那一行，所以这两处经 ref 同步提交。
   const [catalogRowsRef, commitCatalogRows] = useCommittableRef(

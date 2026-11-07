@@ -335,6 +335,7 @@ export function OpenCodeFormFields({
   const { t } = useTranslation();
 
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
+  const [fetchedModelsFrom, setFetchedModelsFrom] = useState("");
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const modelFetchGeneration = useRef(0);
 
@@ -342,6 +343,7 @@ export function OpenCodeFormFields({
   const headersKey = JSON.stringify(headers);
   useEffect(() => {
     setFetchedModels((prev) => (prev.length === 0 ? prev : []));
+    setFetchedModelsFrom((prev) => (prev === "" ? prev : ""));
     setIsFetchingModels(false);
     return () => {
       // Ignore responses for a previous endpoint/key or an unmounted form.
@@ -368,6 +370,7 @@ export function OpenCodeFormFields({
 
     const generation = ++modelFetchGeneration.current;
     setFetchedModels([]);
+    setFetchedModelsFrom("");
     setIsFetchingModels(true);
     fetchModelsForConfig(
       baseUrl,
@@ -383,6 +386,7 @@ export function OpenCodeFormFields({
           ...new Map(result.map((model) => [model.id, model])).values(),
         ];
         setFetchedModels(models);
+        setFetchedModelsFrom(baseUrl);
         // 拉到模型时直接打开选择弹窗，不再提示成功。
         if (models.length === 0) {
           toast.info(t("providerForm.fetchModelsEmpty"));
@@ -429,6 +433,8 @@ export function OpenCodeFormFields({
     baseUrl,
     presets: presetModelSources,
     prefetch: fetchedModels.length > 0,
+    fetchedModels,
+    fetchedFrom: fetchedModelsFrom,
   });
   const fillModelMetadataFor = (id: string, silent?: boolean) =>
     fillModelMetadata(
@@ -436,7 +442,11 @@ export function OpenCodeFormFields({
       (metadata) => {
         const current = modelsRef.current;
         if (!Object.prototype.hasOwnProperty.call(current, id)) return false;
-        const filled = fillOpenCodeModel(current[id], metadata);
+        const filled = fillOpenCodeModel(current[id], metadata, {
+          npm,
+          dialect: modelDialect,
+          modelId: id,
+        });
         if (!metadataFilledAnything(current[id], filled)) return false;
         commitModels({ ...current, [id]: filled });
         return true;

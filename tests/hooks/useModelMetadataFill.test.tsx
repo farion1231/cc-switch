@@ -22,7 +22,13 @@ const presets = (): PresetModelSource[] => [
   },
 ];
 
-const renderFill = () => {
+const renderFill = (
+  options: {
+    baseUrl?: string;
+    fetchedModels?: Parameters<typeof useModelMetadataFill>[0]["fetchedModels"];
+    fetchedFrom?: string;
+  } = {},
+) => {
   const client = createTestQueryClient();
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
@@ -30,9 +36,11 @@ const renderFill = () => {
   return renderHook(
     () =>
       useModelMetadataFill({
-        baseUrl: "https://api.example.com/v1",
+        baseUrl: options.baseUrl ?? "https://api.example.com/v1",
         presets,
         prefetch: false,
+        fetchedModels: options.fetchedModels,
+        fetchedFrom: options.fetchedFrom,
       }),
     { wrapper },
   );
@@ -86,6 +94,45 @@ describe("useModelMetadataFill", () => {
       baseUrl: "https://other.example.com/v1",
     });
     expect(apply).not.toHaveBeenCalled();
+  });
+
+  it("uses gateway metadata only when the list came from the same endpoint", () => {
+    server.use(
+      http.post("http://tauri.local/fetch_models_dev", () =>
+        HttpResponse.error(),
+      ),
+    );
+    const gatewayModels = [
+      {
+        id: "model-x",
+        ownedBy: null,
+        metadata: { meta: { models_dev: { limit: { context: 123456 } } } },
+      },
+    ];
+    const applyFrom = (baseUrl: string, fetchedFrom: string) =>
+      renderFill({ baseUrl, fetchedModels: gatewayModels, fetchedFrom });
+
+    const matching = applyFrom(
+      "https://api.example.com/v1",
+      "https://api.example.com/v1",
+    );
+    const matchingApply = vi.fn(() => true);
+    matching.result.current("model-x", matchingApply);
+    expect(matchingApply).toHaveBeenCalledWith({
+      contextWindow: 123456,
+      sources: ["gateway"],
+    });
+
+    const mismatched = applyFrom(
+      "https://api.example.com/v1",
+      "https://api.example.com/v1",
+    );
+    const mismatchedApply = vi.fn(() => true);
+    // 行单独指向别的地址时，不使用供应商级列表的元数据。
+    mismatched.result.current("model-x", mismatchedApply, {
+      baseUrl: "https://other.example.com/v1",
+    });
+    expect(mismatchedApply).not.toHaveBeenCalled();
   });
 
   it("keeps preset values and stays quiet when models.dev is unreachable", async () => {

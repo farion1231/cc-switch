@@ -54,6 +54,7 @@ import {
   showFetchModelsError,
   type FetchedModel,
 } from "@/lib/api/model-fetch";
+import { metadataFromGateway } from "@/lib/modelMetadata";
 import {
   copilotGetModels,
   copilotGetModelsForAccount,
@@ -114,6 +115,10 @@ type RouteRow = {
   model: string;
   labelOverride: string;
   supports1m: boolean;
+  /** 显示名由模型补全生成时的值；用户改过名称后不再跟随模型。 */
+  labelAuto?: string;
+  /** 用户手动改过 1M 勾选后，不再由模型补全自动覆盖。 */
+  oneMUserSet?: boolean;
 };
 
 type RouteRowValues = Omit<RouteRow, "rowId">;
@@ -326,6 +331,7 @@ export function ClaudeDesktopProviderForm({
   );
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
+  const modelFetchGenerationRef = useRef(0);
   const { data: defaultRoutes = [] } = useQuery({
     queryKey: ["claudeDesktopDefaultRoutes"],
     queryFn: () => providersApi.getClaudeDesktopDefaultRoutes(),
@@ -526,25 +532,48 @@ export function ClaudeDesktopProviderForm({
     );
   };
 
+  const fetchedModelMetadata = (modelId: string) =>
+    metadataFromGateway(
+      fetchedModels.find((model) => model.id === modelId)?.metadata,
+    );
+
   // 菜单显示名仍等于原来的实际请求模型（保存时自动回落出来的）就跟着模型走，
   // 否则编辑已有映射卡只换模型，Desktop 菜单和 profile 里仍是旧模型名（#9203）。
-  // 从下拉选模型时，留空的显示名也一并填上。
+  // 从下拉选模型时，留空的显示名也一并填上；上游声明 1M 时勾上 1M。
   const updateRouteModel = (
     index: number,
     model: string,
     fillEmptyLabel = false,
   ) => {
+    const metadata = fillEmptyLabel ? fetchedModelMetadata(model) : undefined;
     setRoutes((current) =>
       current.map((row, i) => {
         if (i !== index) return row;
         const label = row.labelOverride.trim();
+        const previousAuto = row.labelAuto?.trim();
         const labelFollowsModel = label
-          ? label === row.model.trim()
+          ? label === row.model.trim() ||
+            (!!previousAuto && label === previousAuto)
           : fillEmptyLabel;
+        const nextLabel = labelFollowsModel
+          ? (metadata?.displayName ?? model)
+          : row.labelOverride;
         return {
           ...row,
           model,
-          labelOverride: labelFollowsModel ? model : row.labelOverride,
+          labelOverride: nextLabel,
+          labelAuto:
+            labelFollowsModel && metadata?.displayName
+              ? metadata.displayName
+              : labelFollowsModel
+                ? undefined
+                : row.labelAuto,
+          supports1m:
+            metadata?.contextWindow !== undefined &&
+            metadata.contextWindow >= 1_000_000 &&
+            !row.oneMUserSet
+              ? true
+              : row.supports1m,
         };
       }),
     );
@@ -602,6 +631,17 @@ export function ClaudeDesktopProviderForm({
     selectedCodexAccountId,
     selectedXaiAccountId,
   ]);
+
+  // 普通供应商的模型列表也绑定当前地址和 Key：换了之后旧列表的元数据不再适用。
+  useEffect(() => {
+    if (usesManagedOAuth) return;
+    modelFetchGenerationRef.current += 1;
+    setFetchedModels((prev) => (prev.length === 0 ? prev : []));
+    setIsFetchingModels(false);
+    return () => {
+      modelFetchGenerationRef.current += 1;
+    };
+  }, [baseUrl, apiKey, usesManagedOAuth]);
 
   const handleFetchManagedModels = async () => {
     let request: Promise<FetchedModel[]>;
@@ -690,9 +730,12 @@ export function ClaudeDesktopProviderForm({
       return;
     }
 
+    const generation = ++modelFetchGenerationRef.current;
+    setFetchedModels([]);
     setIsFetchingModels(true);
     try {
       const models = await fetchModelsForConfig(baseUrl.trim(), apiKey.trim());
+      if (generation !== modelFetchGenerationRef.current) return;
       setFetchedModels(models);
       toast.success(
         t("providerForm.fetchModelsSuccess", {
@@ -701,12 +744,15 @@ export function ClaudeDesktopProviderForm({
         }),
       );
     } catch (error) {
+      if (generation !== modelFetchGenerationRef.current) return;
       showFetchModelsError(error, t, {
         hasBaseUrl: Boolean(baseUrl.trim()),
         hasApiKey: Boolean(apiKey.trim()),
       });
     } finally {
-      setIsFetchingModels(false);
+      if (generation === modelFetchGenerationRef.current) {
+        setIsFetchingModels(false);
+      }
     }
   };
 
@@ -1337,6 +1383,7 @@ export function ClaudeDesktopProviderForm({
                             onChange={(event) =>
                               updateRoute(index, {
                                 labelOverride: event.target.value,
+                                labelAuto: undefined,
                               })
                             }
                             placeholder={labelPlaceholder}
@@ -1365,6 +1412,7 @@ export function ClaudeDesktopProviderForm({
                               onCheckedChange={(checked) =>
                                 updateRoute(index, {
                                   supports1m: checked === true,
+                                  oneMUserSet: true,
                                 })
                               }
                             />
@@ -1432,9 +1480,16 @@ export function ClaudeDesktopProviderForm({
                             {fetchedModels.length > 0 && (
                               <ModelDropdown
                                 models={fetchedModels}
-                                onSelect={(id) =>
-                                  updateRoute(index, { route: id })
-                                }
+                                onSelect={(id) => {
+                                  const metadata = fetchedModelMetadata(id);
+                                  updateRoute(index, {
+                                    route: id,
+                                    ...(metadata?.contextWindow !== undefined &&
+                                    metadata.contextWindow >= 1_000_000
+                                      ? { supports1m: true }
+                                      : {}),
+                                  });
+                                }}
                               />
                             )}
                           </div>
@@ -1444,6 +1499,7 @@ export function ClaudeDesktopProviderForm({
                               onCheckedChange={(checked) =>
                                 updateRoute(index, {
                                   supports1m: checked === true,
+                                  oneMUserSet: true,
                                 })
                               }
                             />

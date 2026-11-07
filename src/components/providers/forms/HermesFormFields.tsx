@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { useState, useRef, useCallback, useMemo } from "react";
+import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { FormLabel } from "@/components/ui/form";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -104,8 +104,20 @@ export function HermesFormFields({
     new Set(),
   );
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
+  const [fetchedModelsFrom, setFetchedModelsFrom] = useState("");
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const [baseUrlTouched, setBaseUrlTouched] = useState(false);
+  const modelFetchGeneration = useRef(0);
+
+  useEffect(() => {
+    modelFetchGeneration.current += 1;
+    setFetchedModels((prev) => (prev.length === 0 ? prev : []));
+    setFetchedModelsFrom((prev) => (prev === "" ? prev : ""));
+    setIsFetchingModels(false);
+    return () => {
+      modelFetchGeneration.current += 1;
+    };
+  }, [baseUrl, apiKey]);
 
   const baseUrlErrorCode = useMemo(() => validateBaseUrl(baseUrl), [baseUrl]);
   const showBaseUrlError = baseUrlTouched && baseUrlErrorCode !== null;
@@ -149,10 +161,16 @@ export function HermesFormFields({
       });
       return;
     }
+    const endpoint = baseUrl.trim();
+    const generation = ++modelFetchGeneration.current;
+    setFetchedModels([]);
+    setFetchedModelsFrom("");
     setIsFetchingModels(true);
     fetchModelsForConfig(baseUrl, apiKey)
       .then((fetched) => {
+        if (generation !== modelFetchGeneration.current) return;
         setFetchedModels(fetched);
+        setFetchedModelsFrom(endpoint);
         if (fetched.length === 0) {
           toast.info(t("providerForm.fetchModelsEmpty"));
         } else {
@@ -162,10 +180,15 @@ export function HermesFormFields({
         }
       })
       .catch((err) => {
+        if (generation !== modelFetchGeneration.current) return;
         console.warn("[ModelFetch] Failed:", err);
         showFetchModelsError(err, t);
       })
-      .finally(() => setIsFetchingModels(false));
+      .finally(() => {
+        if (generation === modelFetchGeneration.current) {
+          setIsFetchingModels(false);
+        }
+      });
   }, [baseUrl, apiKey, t]);
 
   const handleRemoveModel = (index: number) => {
@@ -198,6 +221,8 @@ export function HermesFormFields({
     baseUrl,
     presets: hermesPresetModelSources,
     prefetch: fetchedModels.length > 0,
+    fetchedModels,
+    fetchedFrom: fetchedModelsFrom,
   });
   const handleSelectFetchedModel = (index: number, id: string) => {
     commitModels(

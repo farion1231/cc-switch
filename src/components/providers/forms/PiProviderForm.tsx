@@ -93,6 +93,7 @@ import {
   piPresetThinkingFor,
   piSendsReasoningEffort,
   piThinkingLevelMapFromEfforts,
+  restrictPiThinkingToEfforts,
 } from "./modelMetadataFill";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
 import type { ProviderCategory } from "@/types";
@@ -147,6 +148,8 @@ interface PiModelDraft {
   id: string;
   name: string;
   hasName: boolean;
+  /** 显示名由补全生成时的值；用户改过名称后清空。 */
+  autoName?: string;
   reasoning: boolean;
   hasReasoning: boolean;
   input: unknown;
@@ -365,6 +368,14 @@ function fillPiModelDraft(
   allowPiThinking = true,
 ): PiModelDraft {
   const next = { ...model };
+  if (
+    metadata.displayName &&
+    (!model.name.trim() || model.name.trim() === model.id.trim())
+  ) {
+    next.name = metadata.displayName;
+    next.hasName = true;
+    next.autoName = metadata.displayName;
+  }
   if (!model.contextWindow.trim() && metadata.contextWindow) {
     next.contextWindow = String(metadata.contextWindow);
     next.hasContextWindow = true;
@@ -387,8 +398,12 @@ function fillPiModelDraft(
   if (allowPiThinking && !model.hasThinkingLevelMap && next.reasoning) {
     const effective = piModelProtocol(model, provider);
     const preset = piPresetThinkingFor(metadata.piThinking, effective);
+    const presetMap =
+      preset && metadata.reasoningEfforts
+        ? restrictPiThinkingToEfforts(preset.map, metadata.reasoningEfforts)
+        : preset?.map;
     const map =
-      preset?.map ??
+      presetMap ??
       (piSendsReasoningEffort(effective)
         ? piThinkingLevelMapFromEfforts(metadata.reasoningEfforts)
         : undefined);
@@ -607,6 +622,7 @@ export function PiProviderForm({
     Record<string, unknown>
   >(() => objectWithout(initialConfig, rootControlledKeys));
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
+  const [fetchedModelsFrom, setFetchedModelsFrom] = useState("");
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   // 请求头、自动发现和兼容性很少需要动，默认收起；预设填了值也不自动展开。
   const [advancedExpanded, setAdvancedExpanded] = useState(false);
@@ -691,6 +707,7 @@ export function PiProviderForm({
   const invalidateFetchedModels = useCallback(() => {
     modelFetchGenerationRef.current += 1;
     setFetchedModels([]);
+    setFetchedModelsFrom("");
     setIsFetchingModels(false);
   }, []);
 
@@ -1027,26 +1044,37 @@ export function PiProviderForm({
   ) => {
     commitModels(
       modelsRef.current.map((model) =>
-        model.key === key ? { ...model, ...update } : model,
+        model.key === key
+          ? {
+              ...model,
+              ...update,
+              ...(update.name !== undefined ? { autoName: undefined } : {}),
+            }
+          : model,
       ),
     );
   };
 
   const changeModelId = (key: string, id: string) => {
     commitModels(
-      modelsRef.current.map((model) =>
-        model.key === key
-          ? {
-              ...model,
-              id,
-              name:
-                model.hasName &&
-                (model.name.length === 0 || model.name === model.id)
-                  ? id
-                  : model.name,
-            }
-          : model,
-      ),
+      modelsRef.current.map((model) => {
+        if (model.key !== key) return model;
+        // 补全生成的显示名跟着模型走；用户自己写的名称保持不动。
+        const autoName =
+          model.autoName !== undefined &&
+          model.name.trim() === model.autoName.trim();
+        return {
+          ...model,
+          id,
+          name:
+            autoName ||
+            (model.hasName &&
+              (model.name.length === 0 || model.name === model.id))
+              ? id
+              : model.name,
+          ...(autoName ? { autoName: undefined } : {}),
+        };
+      }),
     );
   };
 
@@ -1061,6 +1089,8 @@ export function PiProviderForm({
     baseUrl,
     presets: piPresetModelSources,
     prefetch: fetchedModels.length > 0,
+    fetchedModels,
+    fetchedFrom: fetchedModelsFrom,
   });
 
   // 补上模型已知的窗口、输出上限、推理、图片输入和思考档位。补全可能晚到：
@@ -1240,6 +1270,7 @@ export function PiProviderForm({
           ...new Map(result.map((model) => [model.id, model])).values(),
         ];
         setFetchedModels(models);
+        setFetchedModelsFrom(endpoint);
         // 拉到模型时直接打开选择弹窗，不再提示成功。
         if (models.length === 0) {
           toast.info(t("providerForm.fetchModelsEmpty"));
