@@ -1,7 +1,9 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { useRef } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProviderCardActions } from "@/components/providers/ProviderCardActions";
+import { useIconOnlyActions } from "@/components/providers/useIconOnlyActions";
 import type { CardPresentation } from "@/components/providers/presentation";
 
 async function openMenu(presentation: CardPresentation) {
@@ -160,5 +162,127 @@ describe("ProviderCardActions — open terminal", () => {
         name: "providerCard.action.openTerminal",
       }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("ProviderCardActions — primary button", () => {
+  const presentation: CardPresentation = {
+    buttons: [{ key: "switch", label: "provider.switch", onClick: vi.fn() }],
+    chips: [],
+  };
+
+  it("shows its name on the button when there is room", () => {
+    render(
+      <ProviderCardActions
+        providerName="Kimi"
+        presentation={presentation}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "provider.switch" }),
+    ).toHaveTextContent("provider.switch");
+  });
+
+  it("falls back to an icon with an accessible name when the card is cramped", () => {
+    render(
+      <ProviderCardActions
+        providerName="Kimi"
+        presentation={presentation}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        iconOnly
+      />,
+    );
+    const button = screen.getByRole("button", { name: "provider.switch" });
+    expect(button).toHaveAttribute("aria-label", "provider.switch");
+    expect(button.textContent).toBe("");
+  });
+});
+
+describe("useIconOnlyActions", () => {
+  // 名字列的宽度 = 外部给的可用宽度 + 收成图标时按钮文字让出来的 100px
+  const FREED = 100;
+  let available = 300;
+  let observed: (() => void) | undefined;
+
+  function Harness({ label = "Switch" }: { label?: string }) {
+    const ref = useRef<HTMLDivElement>(null);
+    const iconOnly = useIconOnlyActions(ref, label);
+    return (
+      <div
+        ref={(el) => {
+          (ref as { current: HTMLDivElement | null }).current = el;
+          if (el) {
+            el.getBoundingClientRect = () =>
+              ({
+                width: available + (el.dataset.iconOnly === "true" ? FREED : 0),
+              }) as DOMRect;
+          }
+        }}
+        data-testid="name"
+        data-icon-only={iconOnly}
+      />
+    );
+  }
+
+  const resize = (width: number) => {
+    available = width;
+    act(() => observed?.());
+  };
+  const iconOnly = () =>
+    screen.getByTestId("name").getAttribute("data-icon-only") === "true";
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    available = 300;
+    observed = undefined;
+  });
+
+  function setup(label?: string) {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: () => void) {
+          observed = callback;
+        }
+        observe() {
+          observed?.();
+        }
+        disconnect() {}
+      },
+    );
+    return render(<Harness label={label} />);
+  }
+
+  it("keeps the name when the name column has room", () => {
+    setup();
+    expect(iconOnly()).toBe(false);
+  });
+
+  it("switches to icons once the name column gets too narrow", () => {
+    setup();
+    resize(80);
+    expect(iconOnly()).toBe(true);
+  });
+
+  // 收起后名字列多出 100px；只要扣掉这 100px 还不够宽就别放回文字，免得在临界宽度来回跳
+  it("doesn't flip back until the name column can give the label its room again", () => {
+    setup();
+    resize(80);
+    resize(100);
+    expect(iconOnly()).toBe(true);
+    resize(110);
+    expect(iconOnly()).toBe(false);
+  });
+
+  it("re-measures with the name when the button label changes", () => {
+    const { rerender } = setup();
+    resize(80);
+    expect(iconOnly()).toBe(true);
+    available = 300;
+    rerender(<Harness label="Remove from queue" />);
+    expect(iconOnly()).toBe(false);
   });
 });

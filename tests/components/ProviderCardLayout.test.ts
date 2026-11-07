@@ -26,7 +26,7 @@ describe("ProviderCard layout", () => {
 
   it("lets website links use available card width before truncating", () => {
     expect(source).not.toContain("max-w-[280px]");
-    expect(source).toContain('<div className="min-w-0 flex-1">');
+    expect(source).toContain('ref={nameColumnRef} className="min-w-0 flex-1"');
     expect(source).toContain(
       "inline-flex max-w-full items-center overflow-hidden text-start",
     );
