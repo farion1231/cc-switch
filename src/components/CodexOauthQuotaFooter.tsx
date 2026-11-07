@@ -40,7 +40,6 @@ const CodexOauthQuotaFooter: React.FC<CodexOauthQuotaFooterProps> = ({
       quota={quota}
       loading={loading}
       refetch={refetch}
-      appIdForExpiredHint="codex_oauth"
       inline={inline}
       display={display}
     />

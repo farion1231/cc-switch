@@ -218,6 +218,8 @@ export interface ProviderMeta {
   codexFastMode?: boolean;
   // Codex Responses -> Chat Completions reasoning capability metadata
   codexChatReasoning?: CodexChatReasoning;
+  // Claude route → OpenAI Chat / Responses: how the client's thinking effort is sent upstream (absent = auto)
+  claudeReasoningEffort?: ClaudeReasoningEffortMode;
   // Codex → Anthropic path: emulate the Claude Code client (disabled by default; only an explicit true enables it)
   impersonateClaudeCode?: boolean;
   // Codex → Anthropic path: override the Anthropic max_tokens (output ceiling).
@@ -268,6 +270,9 @@ export type ClaudeApiFormat =
   | "openai_chat"
   | "openai_responses"
   | "gemini_native";
+
+// Claude 路由经 OpenAI Chat / Responses 转发时思考档位的发法；缺省 = 自动
+export type ClaudeReasoningEffortMode = "off" | "passthrough";
 
 // Codex API 格式类型
 // - "openai_responses": OpenAI Responses API 格式，直接透传
@@ -385,6 +390,22 @@ export interface UsageDisplaySettings {
   requestLogColumns?: Record<string, boolean>;
   /** 用量趋势图的样式（见 `TREND_CHART_TYPES`），缺省为柱形图 */
   trendChartType?: string;
+  /** 汇率来源（"auto" 自动获取 / "manual" 手动填写），缺省为 manual，只有用户主动选自动才联网 */
+  rateSource?: string;
+  /** 自动获取到的汇率，按币种存；与手填的 `exchangeRates` 分开，切回手动不丢手填值 */
+  autoExchangeRates?: Record<string, number>;
+  /** 上次成功取到汇率的时间（毫秒时间戳） */
+  rateFetchedAt?: number;
+  /** 上次取到汇率的实际数据源（后端返回的 source），用于界面署名 */
+  rateProvider?: string;
+}
+
+/** 后端 `fetch_exchange_rates` 的返回：1 美元折多少目标币种 */
+export interface FetchedExchangeRates {
+  rates: Record<string, number>;
+  fetchedAt: number;
+  /** 实际取到数据的源，界面标注用 */
+  source: string;
 }
 
 // 应用设置类型（用于设置对话框与 Tauri API）
@@ -418,6 +439,8 @@ export interface Settings {
   usageDisplay?: UsageDisplaySettings;
   // 会话用量自动扫描开关（默认开启=自动模式；关闭后仅手动同步时扫描会话日志，代理记账不受影响）
   sessionAutoSyncEnabled?: boolean;
+  // 会话页搜索消息正文（默认关闭；开启后在本地建 session-index.db 索引，关闭时删除索引）
+  sessionContentSearchEnabled?: boolean;
   // Whether to show the failover toggle independently on the main page
   enableFailoverToggle?: boolean;
   // Whether to show the project profile switcher on the main page header
@@ -430,6 +453,11 @@ export interface Settings {
   nativeTrayMenu?: boolean;
   // Preserve Codex ChatGPT login in auth.json when switching third-party providers
   preserveCodexOfficialAuthOnSwitch?: boolean;
+  codexQuotaProtection?: {
+    enabled: boolean;
+    fiveHourThreshold: number;
+    weeklyThreshold: number;
+  };
   // Run official Codex under the shared "custom" provider id so future
   // sessions share one resume-history bucket with third-party providers
   unifyCodexSessionHistory?: boolean;
@@ -486,6 +514,8 @@ export interface Settings {
   piConfigDir?: string;
   // 覆盖 Oh My Pi agent 配置目录（可选）
   ompConfigDir?: string;
+  // 覆盖 DeepSeek Harness 主目录（相当于 DSH_HOME，可选）
+  dshConfigDir?: string;
 
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）
@@ -532,6 +562,43 @@ export interface Settings {
       migratedStateRows?: number;
     };
   };
+}
+
+/** 原文 UTF-16 坐标，左闭右开；不得切开代理对。 */
+export interface SessionTextRange {
+  start: number;
+  end: number;
+}
+
+/** 一条命中消息的摘录 */
+export interface SessionContentSnippet {
+  /** 摘录所在消息在会话里的序号 */
+  messageIndex: number;
+  /** 命中词附近的纯文本，空白已压缩 */
+  text: string;
+  /** 按完整消息匹配后映射到最终 text 的位置，避免截断改变上下文小写规则。 */
+  highlights: SessionTextRange[];
+}
+
+/** 会话正文搜索的命中（search_session_content）：最多 3 条摘录，第一条最相关 */
+export interface SessionContentHit {
+  providerId: string;
+  sourcePath: string;
+  snippets: SessionContentSnippet[];
+  /** 命中的消息条数 */
+  matchCount: number;
+}
+
+/** 正文索引的进度；running 为 false 且 processed === total 时索引已是最新 */
+export interface SessionIndexStatus {
+  running: boolean;
+  processed: number;
+  total: number;
+}
+
+export interface SessionContentSearchResult {
+  hits: SessionContentHit[];
+  status: SessionIndexStatus;
 }
 
 export interface SessionMeta {

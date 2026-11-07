@@ -44,15 +44,16 @@ pub(crate) async fn agy_quota(
         },
     };
     Ok(match result {
-        Ok(tiers) => SubscriptionQuota {
+        Ok(quota) => SubscriptionQuota {
             tool: TOOL.to_string(),
             credential_status: CredentialStatus::Valid,
             credential_message: None,
             success: true,
-            tiers,
+            tiers: quota.tiers,
             extra_usage: None,
             reset_credits: None,
             credits_balance: None,
+            plan_name: quota.plan,
             error: None,
             queried_at: Some(chrono::Utc::now().timestamp_millis()),
         },

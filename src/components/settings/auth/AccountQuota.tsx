@@ -21,7 +21,6 @@ import {
   countdownStr,
   formatRelativeTime,
   lineHint,
-  tierLine,
   type QuotaDisplay,
   type QuotaLine,
 } from "@/components/quota/quotaRules";
@@ -31,6 +30,7 @@ import {
 } from "@/components/SubscriptionQuotaFooter";
 import type { SubscriptionQuota } from "@/types/subscription";
 import { useCopilotQuota } from "@/lib/query/copilot";
+import { copilotQuotaRows } from "@/components/CopilotQuotaFooter";
 import {
   useAgyAccountQuota,
   useClaudeAccountQuota,
@@ -80,17 +80,11 @@ export function AccountQuotaColumn({
     Boolean(queriedAt) ||
       (state?.kind === "rows" && state.rows.some(({ line }) => line.resetsAt)),
   );
-  const agoId = useId();
   if (!state) return null;
   // 倒计时格始终留着（没有重置时间就空着），别的号的条才不会因此变宽或挪位
   const resetCell = (line: QuotaLine) => (
     <ResetSlot countdown={countdownStr(line.resetsAt, now)} className="" />
   );
-
-  const ago = queriedAt ? formatRelativeTime(queriedAt, now, t) : "";
-  const agoText = loading
-    ? t("authCenter.quota.updating", { defaultValue: "更新中…" })
-    : ago;
 
   return (
     <>
@@ -147,37 +141,73 @@ export function AccountQuotaColumn({
           </span>
         )}
       </div>
-      <div className="flex w-[84px] shrink-0 items-center justify-end gap-0.5 whitespace-nowrap text-caption text-fg-3">
-        <span id={agoId} className="truncate">
-          {agoText}
-        </span>
-        <HoverTip
-          content={t("authCenter.quota.refresh", { defaultValue: "刷新额度" })}
-        >
-          <button
-            type="button"
-            aria-label={t("authCenter.quota.refreshAria", {
-              defaultValue: "刷新 {{login}} 的额度",
-              login,
-            })}
-            aria-disabled={loading}
-            aria-describedby={loading ? agoId : undefined}
-            onClick={() => {
-              if (!loading) onRefresh();
-            }}
-            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1 aria-disabled:opacity-45 aria-disabled:hover:bg-transparent"
-          >
-            <RefreshCw
-              className={cn(
-                "h-[13px] w-[13px]",
-                loading && "motion-safe:animate-spin",
-              )}
-              strokeWidth={1.5}
-            />
-          </button>
-        </HoverTip>
-      </div>
+      <QuotaRefreshCell
+        login={login}
+        queriedAt={queriedAt}
+        loading={loading}
+        onRefresh={onRefresh}
+      />
     </>
+  );
+}
+
+interface QuotaRefreshCellProps {
+  /** 账号名，拼进刷新按钮的无障碍名字 */
+  login: string;
+  queriedAt?: number | null;
+  loading: boolean;
+  onRefresh: () => void;
+}
+
+/**
+ * 额度列右边 84 宽的「x 分钟前 ↻」。各服务的账号行共用，刷新按钮的位置和样式一致；
+ * 不是额度条的服务（DeepSeek 账号的余额）也直接用它。
+ */
+export function QuotaRefreshCell({
+  login,
+  queriedAt,
+  loading,
+  onRefresh,
+}: QuotaRefreshCellProps) {
+  const { t } = useTranslation();
+  const now = useNow(Boolean(queriedAt));
+  const agoId = useId();
+  const ago = queriedAt ? formatRelativeTime(queriedAt, now, t) : "";
+  const agoText = loading
+    ? t("authCenter.quota.updating", { defaultValue: "更新中…" })
+    : ago;
+
+  return (
+    <div className="flex w-[84px] shrink-0 items-center justify-end gap-0.5 whitespace-nowrap text-caption text-fg-3">
+      <span id={agoId} className="truncate">
+        {agoText}
+      </span>
+      <HoverTip
+        content={t("authCenter.quota.refresh", { defaultValue: "刷新额度" })}
+      >
+        <button
+          type="button"
+          aria-label={t("authCenter.quota.refreshAria", {
+            defaultValue: "刷新 {{login}} 的额度",
+            login,
+          })}
+          aria-disabled={loading}
+          aria-describedby={loading ? agoId : undefined}
+          onClick={() => {
+            if (!loading) onRefresh();
+          }}
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1 aria-disabled:opacity-45 aria-disabled:hover:bg-transparent"
+        >
+          <RefreshCw
+            className={cn(
+              "h-[13px] w-[13px]",
+              loading && "motion-safe:animate-spin",
+            )}
+            strokeWidth={1.5}
+          />
+        </button>
+      </HoverTip>
+    </div>
   );
 }
 
@@ -267,7 +297,7 @@ export function subscriptionQuotaState(
   return rows.length > 0 ? { kind: "rows", rows } : null;
 }
 
-/** GitHub Copilot 账号的高级请求额度（copilot_get_usage_for_account） */
+/** GitHub Copilot 账号的额度：高级请求，Free 另有代码补全（copilot_get_usage_for_account） */
 export function CopilotAccountQuota({
   accountId,
   login,
@@ -275,22 +305,21 @@ export function CopilotAccountQuota({
   accountId: string;
   login: string;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const display = useQuotaDisplay();
   const query = useCopilotQuota(accountId, { enabled: true, autoQuery: false });
   const { data: quota, isFetching: loading } = query;
 
   let state: AccountQuotaState;
   if (quota?.success) {
-    const label = t("subscription.copilotPremium");
     state =
       quota.tiers.length > 0
         ? {
             kind: "rows",
-            rows: quota.tiers.map((tier) => ({
-              label,
-              line: tierLine(t, tier, label, { display }),
-            })),
+            rows: copilotQuotaRows(t, quota.tiers, {
+              display,
+              locale: i18n.language,
+            }),
           }
         : null;
   } else if (quota) {
