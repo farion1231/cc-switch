@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "cc-switch",
+  "bundle": {
+    "linux": {
+      "deb": {
+        "desktopTemplate": "desktop/cc-switch.desktop.hbs"
+      },
+      "rpm": {
+        "desktopTemplate": "desktop/cc-switch.desktop.hbs"
+      }
+    }
+  }
+}
