@@ -1,5 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { promptsApi, type AppId, type Prompt } from "@/lib/api";
+import {
+  promptsApi,
+  type AppId,
+  type GlobalPromptEntry,
+  type Prompt,
+} from "@/lib/api";
 
 /**
  * 提示词页之外读提示词的地方（应用页页头的「提示词：X ›」、提示词页应用下拉里的条数）。
@@ -9,7 +14,12 @@ export const promptKeys = {
   all: ["prompts"] as const,
   list: (app: AppId) => ["prompts", "list", app] as const,
   location: (app: AppId) => ["prompts", "location", app] as const,
+  global: ["prompts", "global"] as const,
 };
+
+/** 提示词页应用下拉里「全局提示词」那一项 */
+export const GLOBAL_PROMPT_SCOPE = "global" as const;
+export type PromptScope = AppId | typeof GLOBAL_PROMPT_SCOPE;
 
 /** 支持提示词的应用，按侧栏顺序。Claude Desktop 用 Claude Code 的；OpenClaw 在自己的「工作区」里管理。 */
 export const PROMPT_APP_IDS: AppId[] = [
@@ -46,6 +56,15 @@ export function usePromptFileLocationQuery(app: AppId) {
     queryKey: promptKeys.location(app),
     queryFn: () => promptsApi.getFileLocation(app),
     staleTime: 30_000,
+  });
+}
+
+/** 全局提示词列表（含每条在哪些应用里启用） */
+export function useGlobalPromptsQuery(enabled = true) {
+  return useQuery<GlobalPromptEntry[]>({
+    queryKey: promptKeys.global,
+    queryFn: () => promptsApi.getGlobalPrompts(),
+    enabled,
   });
 }
 

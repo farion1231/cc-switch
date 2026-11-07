@@ -24,6 +24,9 @@ import {
   type PiPromptTemplatesHandle,
 } from "./PiNativePromptResources";
 import { usePromptPageCommon } from "./usePromptPageCommon";
+import { globalPromptApps, useGlobalPromptLinks } from "./useGlobalPromptLinks";
+import { GLOBAL_PROMPT_SCOPE, type PromptScope } from "@/lib/query/prompts";
+import { extractErrorMessage } from "@/utils/errorUtils";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import {
   copyText,
@@ -39,7 +42,7 @@ export type PiPromptTab = "global" | "system" | "templates";
 interface PiPromptPanelProps {
   open: boolean;
   apps: AppId[];
-  onAppChange: (app: AppId) => void;
+  onAppChange: (scope: PromptScope) => void;
   onInteractionBlockedChange?: (blocked: boolean) => void;
   onNavigationBlockedChange?: (blocked: boolean) => void;
 }
@@ -82,6 +85,8 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
   } = usePromptActions("pi", { notify: false });
   const { displayPath, location, invalidate, moreItems } =
     usePromptPageCommon("pi");
+  const globalLinks = useGlobalPromptLinks("pi");
+  const editingGlobal = editingId ? globalLinks.globalOf(editingId) : undefined;
   const templates = usePiPromptTemplatesQuery();
 
   const dialogOpen = copyingId !== null;
@@ -240,6 +245,24 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
 
   const handleSave = async (id: string, prompt: Prompt) => {
     const isNew = !(id in prompts);
+    const linked = isNew ? undefined : globalLinks.globalOf(id);
+    if (linked) {
+      // 全局提示词的关联记录：改的是全局那份，同步到所有使用它的应用
+      try {
+        setBusy(true);
+        await globalLinks.saveLinked(linked, prompt);
+        await reload();
+        return true;
+      } catch (error) {
+        toast.error(t("prompts.saveFailed"), {
+          description: extractErrorMessage(error) || undefined,
+        });
+        return false;
+      } finally {
+        setBusy(false);
+        invalidate();
+      }
+    }
     try {
       setBusy(true);
       await savePrompt(id, prompt);
@@ -259,6 +282,34 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
       setBusy(false);
       invalidate();
     }
+  };
+
+  const handlePromote = (id: string) => {
+    if (interactionBlocked) return;
+    const prompt = prompts[id];
+    if (!prompt) return;
+    void runWrite(async () => {
+      try {
+        await globalLinks.promote(id);
+        await reload();
+        toast.success(
+          t("prompts.global.toast.promoted", { name: prompt.name }),
+          {
+            id: "prompts-result",
+            description: t("prompts.global.toast.promotedSub"),
+            closeButton: true,
+            action: {
+              label: t("prompts.global.open"),
+              onClick: () => onAppChange(GLOBAL_PROMPT_SCOPE),
+            },
+          },
+        );
+      } catch (error) {
+        toast.error(t("prompts.global.toast.promoteFailed"), {
+          description: extractErrorMessage(error) || undefined,
+        });
+      }
+    });
   };
 
   const handleImport = () => {
@@ -519,6 +570,8 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
                 }
               });
             }}
+            isGlobal={globalLinks.isGlobal}
+            onPromote={handlePromote}
           />
         )
       ) : activeTab === "system" ? (
@@ -534,6 +587,9 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
       {isFormOpen && (
         <PromptFormPanel
           appId="pi"
+          globalApps={
+            editingGlobal ? globalPromptApps(editingGlobal) : undefined
+          }
           editingId={editingId ?? undefined}
           initialData={editingId ? prompts[editingId] : undefined}
           onSave={handleSave}

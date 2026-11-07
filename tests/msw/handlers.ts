@@ -571,6 +571,8 @@ export const handlers = [
   ),
   // 应用页页头的「提示词：X ›」会读各应用的提示词列表
   http.post(`${TAURI_ENDPOINT}/get_prompts`, () => success({})),
+  // 提示词页认出全局提示词的关联记录、应用下拉里的「全局提示词」条数
+  http.post(`${TAURI_ENDPOINT}/get_global_prompts`, () => success([])),
   http.post(
     `${TAURI_ENDPOINT}/get_prompt_file_location`,
     async ({ request }) => {
