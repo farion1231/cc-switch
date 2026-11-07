@@ -2712,8 +2712,19 @@ mod mode_tests {
         fs::write(path, text).unwrap();
     }
 
+    /// 落定后的 `settings.json`：切换写进去的空值墓碑几秒后才删（见 `claude_direct`），
+    /// 这里先把它们删完再读。
+    fn settled_bytes() -> Vec<u8> {
+        crate::services::provider::claude_direct::settle_tombstones();
+        fs::read(settings_path()).unwrap()
+    }
+
+    fn settled_string() -> String {
+        String::from_utf8(settled_bytes()).unwrap()
+    }
+
     fn settings() -> Value {
-        serde_json::from_slice(&fs::read(settings_path()).unwrap()).unwrap()
+        serde_json::from_slice(&settled_bytes()).unwrap()
     }
 
     fn mode(app: &AppType) -> ModeState {
@@ -2801,12 +2812,12 @@ mod mode_tests {
         exit(&state, &AppType::Claude).await.expect("exit");
         assert_back_to_user_settings();
         // 第一次写入可能挪动关键字段的位置，之后的往返字节稳定。
-        let settled = fs::read(settings_path()).unwrap();
+        let settled = settled_bytes();
         enter(&state, &AppType::Claude, false)
             .await
             .expect("enter again");
         exit(&state, &AppType::Claude).await.expect("exit again");
-        assert_eq!(fs::read(settings_path()).unwrap(), settled);
+        assert_eq!(settled_bytes(), settled);
         let left = mode(&AppType::Claude);
         assert_eq!(left.mode, Some(Mode::Direct));
         assert_eq!(left.proxy_route.as_deref(), Some("a"), "the route is kept");
@@ -2853,7 +2864,7 @@ mod mode_tests {
             "a",
         )
         .await;
-        let unchanged = fs::read(settings_path()).unwrap();
+        let unchanged = settled_bytes();
         for _ in 0..2 {
             let result = set_route(&state, &AppType::Claude, "b").await.unwrap();
             assert_eq!(
@@ -2864,7 +2875,7 @@ mod mode_tests {
                 }
             );
         }
-        assert_eq!(fs::read(settings_path()).unwrap(), unchanged);
+        assert_eq!(settled_bytes(), unchanged);
         assert!(!current::is_proxy(&AppType::Claude));
         enter(&state, &AppType::Claude, false).await.unwrap();
         let result = set_route(&state, &AppType::Claude, "a").await.unwrap();
@@ -2911,7 +2922,7 @@ mod mode_tests {
         )
         .await;
         enter(&state, &AppType::Claude, false).await.expect("enter");
-        let before = fs::read(settings_path()).unwrap();
+        let before = settled_bytes();
         let mtime = fs::metadata(settings_path()).unwrap().modified().unwrap();
 
         // 契约相同时客户端文件不读也不写：连读权限都拿掉，换路由照样成功。
@@ -2927,7 +2938,7 @@ mod mode_tests {
             fs::set_permissions(settings_path(), fs::Permissions::from_mode(0o600)).unwrap();
         }
 
-        assert_eq!(fs::read(settings_path()).unwrap(), before);
+        assert_eq!(settled_bytes(), before);
         assert_eq!(
             fs::metadata(settings_path()).unwrap().modified().unwrap(),
             mtime
@@ -3168,12 +3179,12 @@ mod mode_tests {
         )
         .await;
         enter(&state, &AppType::Claude, false).await.expect("enter");
-        let before = fs::read(settings_path()).unwrap();
+        let before = settled_bytes();
 
         assert!(record_failover_route(&state, &AppType::Claude, "b")
             .await
             .expect("record failover"));
-        assert_eq!(fs::read(settings_path()).unwrap(), before);
+        assert_eq!(settled_bytes(), before);
         assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("b"));
         assert_eq!(direct(&state, &AppType::Claude).as_deref(), Some("a"));
         exit(&state, &AppType::Claude).await.expect("exit");
@@ -3212,7 +3223,7 @@ mod mode_tests {
                 .unwrap()
                 .is_none());
             if !expect_proxy {
-                assert_eq!(fs::read_to_string(settings_path()).unwrap(), USER_SETTINGS);
+                assert_eq!(settled_string(), USER_SETTINGS);
             }
             if state.proxy_service.is_running().await {
                 state.proxy_service.stop().await.unwrap();
@@ -3239,6 +3250,8 @@ mod mode_tests {
 
         crate::mode::operation::recover_on_startup(&state.db);
         assert_eq!(mode(&AppType::Claude).mode, Some(Mode::Direct));
+        // 补完的是崩溃前备好的文件，带着给开着的会话看的空值墓碑：写之前记下了，启动时接着删
+        crate::services::provider::claude_direct::resume_tombstone_sweep();
         assert_back_to_user_settings();
         if state.proxy_service.is_running().await {
             state.proxy_service.stop().await.unwrap();
@@ -3403,7 +3416,7 @@ mod mode_tests {
         enter(&state, &AppType::Claude, false)
             .await
             .expect("enter claude");
-        let routed = fs::read_to_string(settings_path()).unwrap();
+        let routed = settled_string();
 
         fs::write(settings_path(), "not json").unwrap();
         crate::commands::save_proxy_client_host(&state, " 172.25.144.1 ")
@@ -3420,7 +3433,7 @@ mod mode_tests {
         crate::commands::save_proxy_client_host(&state, "172.25.144.1")
             .await
             .expect("retry the same save");
-        let settings = fs::read_to_string(settings_path()).unwrap();
+        let settings = settled_string();
         assert!(settings.contains("http://172.25.144.1:"), "{settings}");
         assert!(
             crate::claude_desktop_config::proxy_gateway_base_url_from_db(&state.db)
@@ -3432,7 +3445,7 @@ mod mode_tests {
             .await
             .expect("clear the client host");
         assert_eq!(crate::settings::get_proxy_client_host(), None);
-        let settings = fs::read_to_string(settings_path()).unwrap();
+        let settings = settled_string();
         assert!(settings.contains("http://127.0.0.1:"), "{settings}");
         state.proxy_service.stop().await.unwrap();
     }
@@ -5813,7 +5826,7 @@ model_provider = "c"
         seed_settings(USER_SETTINGS);
         let state = state_with(AppType::Claude, &stack_rows(), "a").await;
         enter(&state, &AppType::Claude, true).await.expect("enter");
-        let only_default_bytes = fs::read(settings_path()).unwrap();
+        let only_default_bytes = settled_bytes();
         let only_default_contract = mode(&AppType::Claude).contract.unwrap();
 
         // 进入 Stack 模式时默认那家（a）已经在名单里，照常发布；四档都指向它的第一个模型。
@@ -5879,7 +5892,7 @@ model_provider = "c"
 
         // 只剩默认那家：客户端文件和契约回到刚进入时的样子，登记簿保留。
         set_member(&state, "zhipu", false).await;
-        assert_eq!(fs::read(settings_path()).unwrap(), only_default_bytes);
+        assert_eq!(settled_bytes(), only_default_bytes);
         assert_eq!(
             mode(&AppType::Claude).contract.unwrap(),
             only_default_contract
@@ -5941,7 +5954,7 @@ model_provider = "c"
 
         // 不在代理模式：只存名单，客户端文件不动。
         set_member(&state, "kimi", true).await;
-        assert_eq!(fs::read_to_string(settings_path()).unwrap(), USER_SETTINGS);
+        assert_eq!(settled_string(), USER_SETTINGS);
         assert!(stack_state().is_member("kimi"));
 
         enter(&state, &AppType::Claude, true).await.expect("enter");
@@ -5963,17 +5976,17 @@ model_provider = "c"
         seed_settings(USER_SETTINGS);
         let state = state_with(AppType::Claude, &stack_rows(), "a").await;
         enter(&state, &AppType::Claude, true).await.expect("enter");
-        let before = fs::read(settings_path()).unwrap();
+        let before = settled_bytes();
 
         // 路由那家已经在名单里：再加一次什么都不变。
         let views = set_member(&state, "a", true).await;
         assert_eq!(views.len(), 1);
-        assert_eq!(fs::read(settings_path()).unwrap(), before);
+        assert_eq!(settled_bytes(), before);
 
         set_member(&state, "kimi", true).await;
-        let with_kimi = fs::read(settings_path()).unwrap();
+        let with_kimi = settled_bytes();
         set_member(&state, "kimi", true).await;
-        assert_eq!(fs::read(settings_path()).unwrap(), with_kimi);
+        assert_eq!(settled_bytes(), with_kimi);
         assert_eq!(stack_state().members, vec!["a", "kimi"]);
 
         // 换默认到名单里的 kimi：四档跟着指向 kimi 的第一个模型，两家都照常发布。
@@ -6727,7 +6740,7 @@ model_provider = "c"
         seed_settings(USER_SETTINGS);
         let state = state_with(AppType::Claude, &stack_rows(), "a").await;
         enter(&state, &AppType::Claude, true).await.expect("enter");
-        let before = fs::read(settings_path()).unwrap();
+        let before = settled_bytes();
 
         // 进入 Stack 模式之前发出的路由请求，这时才转移到 kimi 成功。
         assert!(!record_failover_route(&state, &AppType::Claude, "kimi")
@@ -6735,7 +6748,7 @@ model_provider = "c"
             .expect("record failover"));
         assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("a"));
         assert_eq!(stack_state().members, vec!["a"]);
-        assert_eq!(fs::read(settings_path()).unwrap(), before);
+        assert_eq!(settled_bytes(), before);
     }
 
     #[tokio::test]
