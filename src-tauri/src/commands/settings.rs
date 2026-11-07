@@ -782,6 +782,34 @@ pub async fn set_optimizer_config(
     Ok(true)
 }
 
+/// 获取隐私过滤器配置
+#[tauri::command]
+pub async fn get_privacy_filter_config(
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<crate::proxy::types::PrivacyFilterConfig, String> {
+    state
+        .db
+        .get_privacy_filter_config()
+        .map_err(|e| e.to_string())
+}
+
+/// 设置隐私过滤器配置
+#[tauri::command]
+pub async fn set_privacy_filter_config(
+    state: tauri::State<'_, crate::AppState>,
+    config: crate::proxy::types::PrivacyFilterConfig,
+) -> Result<bool, String> {
+    state
+        .db
+        .set_privacy_filter_config(&config)
+        .map_err(|e| e.to_string())?;
+    if config.enabled {
+        // 规则编译有一次性耗时，开关打开时在后台预热，不压到第一个请求上
+        std::thread::spawn(crate::proxy::privacy_filter::warm_up);
+    }
+    Ok(true)
+}
+
 /// 获取 Copilot 优化器配置
 #[tauri::command]
 pub async fn get_copilot_optimizer_config(
