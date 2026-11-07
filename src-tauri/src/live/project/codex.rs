@@ -577,7 +577,7 @@ fn is_cc_switch_catalog(value: &str) -> bool {
 /// 例外：对宿主 OS 不是绝对路径的目录、或只有 WSL 侧 Codex 会读的 Windows UNC
 /// 目录（`\\wsl.localhost\...`）——绝对形态对读取器无意义，保留裸文件名由
 /// Codex 按自己的配置目录解析（#3614）。
-fn catalog_pointer_value(config_dir: &Path) -> String {
+pub(crate) fn catalog_pointer_value(config_dir: &Path) -> String {
     let catalog_path = config_dir.join(CATALOG_FILENAME);
     let text = catalog_path.to_string_lossy();
     let is_unc = text.starts_with(r"\\") || text.starts_with("//");
