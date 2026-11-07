@@ -522,6 +522,10 @@ pub struct AppSettings {
     /// 默认关：用托盘面板，想要原生菜单在设置里换回。
     #[serde(default)]
     pub native_tray_menu: bool,
+    /// 给 macOS 桌面小组件供数：后台定时查额度，写快照到 App Group 容器。默认关：
+    /// 开了才会在主窗口关掉时也去请求各家额度接口。没嵌入小组件扩展的构建里不起作用。
+    #[serde(default)]
+    pub macos_widget_enabled: bool,
     /// Keep Codex ChatGPT login material in auth.json when switching to third-party providers.
     /// Opt-in: defaults to false so third-party switches cleanly overwrite auth.json.
     #[serde(default)]
@@ -728,6 +732,7 @@ impl Default for AppSettings {
             show_provider_search: true,
             check_tool_updates_on_startup: false,
             native_tray_menu: false,
+            macos_widget_enabled: false,
             preserve_codex_official_auth_on_switch: false,
             codex_quota_protection: CodexQuotaProtection::default(),
             unify_codex_session_history: false,

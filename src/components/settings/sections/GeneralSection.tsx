@@ -301,6 +301,19 @@ export function GeneralSection({
               }
             />
           )}
+          {isMac() && (
+            <SettingsSwitchRow
+              label={t("settings.general.macosWidget")}
+              help={{
+                title: t("settings.general.macosWidget"),
+                body: t("settings.general.macosWidgetHelp"),
+              }}
+              checked={!!settings.macosWidgetEnabled}
+              onCheckedChange={(value) =>
+                void onAutoSave({ macosWidgetEnabled: value })
+              }
+            />
+          )}
           {isLinux() && (
             <SettingsSwitchRow
               label={t("settings.useAppWindowControls")}

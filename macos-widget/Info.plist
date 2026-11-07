@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Xcode 构建时展开 $(MARKETING_VERSION) / $(CURRENT_PROJECT_VERSION) / $(CCSWITCH_APP_GROUP)（build.sh 传入）。CCSwitchAppGroup 主程序也会读。 -->
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleDisplayName</key>
+  <string>CC Switch</string>
+  <key>CFBundleExecutable</key>
+  <string>CCSwitchWidget</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.ccswitch.desktop.widget</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>CCSwitchWidget</string>
+  <key>CFBundlePackageType</key>
+  <string>XPC!</string>
+  <key>CFBundleShortVersionString</key>
+  <string>$(MARKETING_VERSION)</string>
+  <key>CFBundleVersion</key>
+  <string>$(CURRENT_PROJECT_VERSION)</string>
+  <key>CFBundleSupportedPlatforms</key>
+  <array>
+    <string>MacOSX</string>
+  </array>
+  <key>LSMinimumSystemVersion</key>
+  <string>14.0</string>
+  <key>CCSwitchAppGroup</key>
+  <string>$(CCSWITCH_APP_GROUP)</string>
+  <key>NSExtension</key>
+  <dict>
+    <key>NSExtensionPointIdentifier</key>
+    <string>com.apple.widgetkit-extension</string>
+  </dict>
+</dict>
+</plist>
