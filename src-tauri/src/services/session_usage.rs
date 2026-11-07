@@ -185,6 +185,11 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
         "Kimi Code",
         crate::services::session_usage_kimi::sync_kimi_usage(db),
     );
+    merge_sync_step(
+        &mut result,
+        "WorkBuddy",
+        crate::services::session_usage_workbuddy::sync_workbuddy_usage(db),
+    );
     // Web 与 Desktop 共用 `$DSH_HOME/sessions`，一次扫描覆盖两端
     merge_sync_step(
         &mut result,

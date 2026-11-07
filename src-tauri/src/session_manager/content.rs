@@ -672,6 +672,7 @@ fn project_dir_for(source: &ValidatedSource) -> Option<PathBuf> {
         "kimi" => kimi::scan_sessions(),
         "omp" => omp::scan_sessions(),
         "dsh" => super::providers::dsh::scan_sessions(),
+        "workbuddy" => super::providers::workbuddy::scan_sessions(),
         "agy" => super::providers::agy::scan_sessions(),
         _ => return None,
     };
