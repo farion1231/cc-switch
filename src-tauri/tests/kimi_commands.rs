@@ -491,6 +491,7 @@ fn kimi_mcp_and_global_prompts_follow_the_native_home() {
     let home = KimiHome::new();
     let state = create_test_state().unwrap();
     let server = McpServer {
+        app_overrides: Default::default(),
         id: "test".into(),
         name: "Test".into(),
         server: json!({"type":"sse","url":"https://example.com/sse"}),

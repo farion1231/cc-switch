@@ -8,7 +8,7 @@
 //!
 //! 项目级 `.pi/mcp.json` 不在这里管。
 
-use crate::app_config::{McpApps, McpServer};
+use crate::app_config::{AppType, McpApps, McpServer};
 use crate::config::atomic_write_private;
 use crate::database::Database;
 use crate::error::AppError;
@@ -40,11 +40,20 @@ pub(crate) enum PiChange<'a> {
     Enable(&'a Value),
     /// 取消勾选：只标 `enabled: false`，保留条目和 Pi 自己的设置，重新勾选时原样恢复
     Disable,
+    /// Update an owned disabled entry when its stored connection changes.
+    DisableManaged(&'a Value, &'a Value),
     /// 从 CC Switch 删除服务器：删掉条目
     Remove,
 }
 
 impl<'a> PiChange<'a> {
+    pub(crate) fn from_previous(spec: &'a Value, previous: &'a Value, enabled: bool) -> Self {
+        if enabled {
+            Self::Enable(spec)
+        } else {
+            Self::DisableManaged(spec, previous)
+        }
+    }
     /// 勾选状态 → 改动：勾选写入，未勾选只禁用
     pub(crate) fn from_enabled(spec: Option<&'a Value>) -> Self {
         spec.map_or(Self::Disable, Self::Enable)
@@ -137,12 +146,12 @@ fn validate_entry(id: &str, spec: &Value) -> Result<(), AppError> {
 fn validate_change(id: &str, change: PiChange<'_>) -> Result<(), AppError> {
     match change {
         PiChange::Enable(spec) => validate_entry(id, spec),
-        PiChange::Disable | PiChange::Remove => Ok(()),
+        PiChange::Disable | PiChange::DisableManaged(_, _) | PiChange::Remove => Ok(()),
     }
 }
 
 /// CC Switch 的统一格式 → 写进 Pi 的连接字段。SSE 直接拒绝
-fn native_transport(spec: &Value) -> Result<Value, AppError> {
+pub(super) fn native_transport(spec: &Value) -> Result<Value, AppError> {
     super::validation::validate_server_spec(spec)?;
     if spec.get("type").and_then(Value::as_str) == Some("sse") {
         return Err(AppError::McpValidation(
@@ -186,6 +195,15 @@ pub(crate) fn remove_disabled_if_managed(id: &str, spec: &Value) -> Result<(), A
     Ok(())
 }
 
+pub(crate) fn is_disabled_managed(id: &str, spec: &Value) -> Result<bool, AppError> {
+    Ok(read(&config_path()?)?["mcpServers"]
+        .get(id)
+        .is_some_and(|entry| {
+            entry.get("enabled") == Some(&json!(false))
+                && transport_spec(entry) == transport_spec(spec)
+        }))
+}
+
 /// 先写 Pi 的 `mcp.json` 再提交数据库；数据库失败就把文件恢复原样。
 /// 启用时在同一把写锁里重新读数据库查重名：锁外读的快照挡不住两个并发请求分别勾上
 /// dev-tools 和 dev_tools（Pi 没装时没有文件可对照）
@@ -215,7 +233,17 @@ fn sync_file(path: &Path, id: &str, change: PiChange<'_>) -> Result<(), AppError
     }
     let servers = document["mcpServers"].as_object_mut().unwrap();
     match change {
-        PiChange::Enable(spec) => {
+        PiChange::Enable(spec) | PiChange::DisableManaged(spec, _) => {
+            if let PiChange::DisableManaged(_, previous) = change {
+                let Some(native) = servers.get(id) else {
+                    return Ok(());
+                };
+                if transport_spec(native) != transport_spec(previous) {
+                    return Err(AppError::InvalidInput(format!(
+                        "Pi MCP '{id}' changed outside CC Switch; native configuration preserved"
+                    )));
+                }
+            }
             validate_entry(id, spec)?;
             check_name_collision(id, servers.keys())?;
             let transport = native_transport(spec)?;
@@ -228,7 +256,10 @@ fn sync_file(path: &Path, id: &str, change: PiChange<'_>) -> Result<(), AppError
                 object.remove(field);
             }
             object.extend(transport.as_object().unwrap().clone());
-            object.insert("enabled".into(), json!(true));
+            object.insert(
+                "enabled".into(),
+                json!(matches!(change, PiChange::Enable(_))),
+            );
             servers.insert(id.into(), merged);
         }
         PiChange::Disable => match servers.get_mut(id) {
@@ -294,15 +325,13 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
         }
         spec.as_object_mut().unwrap().remove("enabled");
         let server = if let Some(mut server) = existing.shift_remove(id) {
-            if transport_spec(&server.server) != transport_spec(&spec) {
-                skipped.push(format!("'{id}': conflicts with an existing server"));
-                continue;
-            }
+            server.import_app_server(&AppType::Pi, spec);
             server.apps.pi = enabled;
             server
         } else {
             count += 1;
             McpServer {
+                app_overrides: Default::default(),
                 id: id.clone(),
                 name: id.clone(),
                 server: spec,
@@ -333,11 +362,11 @@ pub(crate) fn transport_spec(spec: &Value) -> Value {
     if let Some(object) = spec.as_object_mut() {
         object.retain(|key, _| TRANSPORT_FIELDS.contains(&key.as_str()));
     }
-    spec
+    super::comparison::without_empty_collections(spec)
 }
 
 /// 连接定义里保存的 Pi 字段（导入时原样存下）→ 重建条目的起点
-fn pi_fields(spec: &Value) -> Value {
+pub(super) fn pi_fields(spec: &Value) -> Value {
     let mut fields = serde_json::Map::new();
     if let Some(object) = spec.as_object() {
         for field in PI_FIELDS {

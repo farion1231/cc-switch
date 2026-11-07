@@ -1,6 +1,6 @@
 //! OMP-native MCP state: preserve per-server options and use the user denylist
 //! when disabling so project and foreign discovery cannot reactivate a server.
-use crate::app_config::{McpApps, McpServer};
+use crate::app_config::{AppType, McpApps, McpServer};
 use crate::error::AppError;
 use crate::store::AppState;
 use serde_json::{json, Value};
@@ -218,15 +218,13 @@ pub(crate) fn import(state: &AppState) -> Result<usize, AppError> {
         let enabled = native_enabled(&document, id, native);
         spec.as_object_mut().unwrap().remove("enabled");
         let server = if let Some(mut server) = existing.shift_remove(id) {
-            if transport_spec(&server.server) != transport_spec(&spec) {
-                skipped.push(format!("'{id}': conflicts with an existing server"));
-                continue;
-            }
+            server.import_app_server(&AppType::Omp, spec);
             server.apps.omp = enabled;
             server
         } else {
             count += 1;
             McpServer {
+                app_overrides: Default::default(),
                 id: id.clone(),
                 name: id.clone(),
                 server: spec,

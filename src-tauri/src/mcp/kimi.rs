@@ -1,4 +1,4 @@
-use crate::app_config::{McpApps, McpServer};
+use crate::app_config::{AppType, McpApps, McpServer};
 use crate::config::atomic_write_private;
 use crate::error::AppError;
 use crate::store::AppState;
@@ -6,10 +6,11 @@ use serde_json::{json, Value};
 use std::{fs, path::Path, sync::Mutex};
 
 static WRITE_LOCK: Mutex<()> = Mutex::new(());
-const TRANSPORT_FIELDS: [&str; 7] = [
+const TRANSPORT_FIELDS: [&str; 8] = [
     "command",
     "args",
     "env",
+    "cwd",
     "url",
     "headers",
     "type",
@@ -102,15 +103,13 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
             .unwrap_or(true);
         spec.as_object_mut().unwrap().remove("enabled");
         let server = if let Some(mut server) = existing.shift_remove(id) {
-            if transport_spec(&server.server) != transport_spec(&spec) {
-                skipped.push(format!("'{id}': conflicts with an existing server"));
-                continue;
-            }
+            server.import_app_server(&AppType::Kimi, spec);
             server.apps.kimi = enabled;
             server
         } else {
             count += 1;
             McpServer {
+                app_overrides: Default::default(),
                 id: id.clone(),
                 name: id.clone(),
                 server: spec,
@@ -136,15 +135,7 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
     }
 }
 
-fn transport_spec(spec: &Value) -> Value {
-    let mut spec = unified_spec(spec);
-    if let Some(object) = spec.as_object_mut() {
-        object.retain(|key, _| TRANSPORT_FIELDS.contains(&key.as_str()));
-    }
-    spec
-}
-
-fn unified_spec(native: &Value) -> Value {
+pub(super) fn unified_spec(native: &Value) -> Value {
     let mut spec = native.clone();
     if let Some(object) = spec.as_object_mut() {
         if let Some(transport) = object.remove("transport") {

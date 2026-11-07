@@ -2,7 +2,54 @@
 
 use serde_json::Value;
 
-use crate::error::AppError;
+use crate::{app_config::AppType, error::AppError};
+
+/// Validate every independent spec before saving or touching any live file.
+pub(crate) fn validate_app_overrides(
+    server: &crate::app_config::McpServer,
+) -> Result<(), AppError> {
+    for (app, key) in [
+        (AppType::Claude, "mcp.error.invalidOverrideClaude"),
+        (AppType::Codex, "mcp.error.invalidOverrideCodex"),
+        (AppType::Gemini, "mcp.error.invalidOverrideGemini"),
+        (AppType::GrokBuild, "mcp.error.invalidOverrideGrokbuild"),
+        (AppType::OpenCode, "mcp.error.invalidOverrideOpencode"),
+        (AppType::Hermes, "mcp.error.invalidOverrideHermes"),
+        (AppType::Pi, "mcp.error.invalidOverridePi"),
+        (AppType::Mcode, "mcp.error.invalidOverrideMcode"),
+        (AppType::Kimi, "mcp.error.invalidOverrideKimi"),
+        (AppType::Dsh, "mcp.error.invalidOverrideDsh"),
+        (AppType::Agy, "mcp.error.invalidOverrideAgy"),
+        (AppType::Omp, "mcp.error.invalidOverrideOmp"),
+    ] {
+        let Some(spec) = server.app_overrides.get(&app) else {
+            continue;
+        };
+        let invalid = || AppError::McpValidation(key.to_string());
+        if spec.get("type").is_some_and(|v| !v.is_string()) {
+            return Err(invalid());
+        }
+        // Validate the spec that will actually be written. In particular, an
+        // explicit stdio transport without a command cannot masquerade as HTTP.
+        validate_server_spec(spec).map_err(|_| invalid())?;
+        if matches!(app, AppType::Pi | AppType::Agy | AppType::Dsh) && spec["type"] == "sse" {
+            return Err(invalid());
+        }
+        if spec.get("args").is_some_and(|v| {
+            !v.as_array()
+                .is_some_and(|args| args.iter().all(Value::is_string))
+        }) || ["env", "headers"].iter().any(|field| {
+            spec.get(field).is_some_and(|v| {
+                !v.as_object()
+                    .is_some_and(|rows| rows.values().all(Value::is_string))
+            })
+        }) || spec.get("cwd").is_some_and(|v| !v.is_string())
+        {
+            return Err(invalid());
+        }
+    }
+    Ok(())
+}
 
 /// 基础校验：允许 stdio/http/sse；或省略 type（视为 stdio）。对应必填字段存在
 pub fn validate_server_spec(spec: &Value) -> Result<(), AppError> {

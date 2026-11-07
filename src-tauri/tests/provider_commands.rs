@@ -529,6 +529,7 @@ command = "say"
     config.mcp.servers.as_mut().unwrap().insert(
         "echo-server".into(),
         McpServer {
+            app_overrides: Default::default(),
             id: "echo-server".to_string(),
             name: "Echo Server".to_string(),
             server: json!({

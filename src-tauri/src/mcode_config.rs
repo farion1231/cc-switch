@@ -526,6 +526,7 @@ mod capability_tests {
         let original = json!({"extension":42,"mcpServers":{"keep":{"type":"sse","url":"https://example.com/sse","enabled":false}}});
         fs::write(&mcp_path, original.to_string()).unwrap();
         let server = McpServer {
+            app_overrides: Default::default(),
             id: "cc-switch-validation".into(),
             name: "Validation".into(),
             server: json!({"type":"stdio","command":std::env::var("MCODE_TEST_NODE").unwrap(),"args":[std::env::var("MCODE_TEST_MCP_SERVER").unwrap()]}),
