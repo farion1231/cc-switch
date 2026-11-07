@@ -46,13 +46,22 @@ function useClaudeLoginSwitch() {
 
 /**
  * 切卡为什么不会换 Claude Code 的登录：
- * - `"wsl"`：配置目录在 WSL 里，账号功能整体不可用（登录、终端都跑在 Windows 上）；
+ * - `"wsl"`：配置目录在 WSL 里，但又推不出 Linux 家目录，添加账号仍不可用；
  * - `"overrideDir"`：设了别的配置目录覆盖，只能从卡片「打开终端」用选中账号。
+ *
+ * 配置目录在 WSL 家目录里时切卡会在发行版里换登录（`wslAccounts`），这里不再把它当成挡住。
  */
 function useClaudeLoginBlocked(): "wsl" | "overrideDir" | null {
   const { data } = useClaudeLoginSwitch();
   if (data?.active !== false) return null;
-  return data.blocked === "wsl" ? "wsl" : "overrideDir";
+  if (data.blocked === "wsl") return "wsl";
+  return "overrideDir";
+}
+
+/** Claude 配置目录在 WSL 家目录里。切卡已接通；额度仍然不查。 */
+function useClaudeWslAccounts(): boolean {
+  const { data } = useClaudeLoginSwitch();
+  return data?.wslAccounts === true;
 }
 
 /**
@@ -161,6 +170,7 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
 }) => {
   const { t, i18n } = useTranslation();
   const blocked = useClaudeLoginBlocked();
+  const wslAccounts = useClaudeWslAccounts();
   const {
     accounts,
     isStatusSuccess,
@@ -240,9 +250,10 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
       isDefault: false,
       needsReauth,
       users: accountUsers([account.id]),
-      quota: needsReauth ? undefined : (
-        <ClaudeAccountQuota accountId={account.id} login={account.login} />
-      ),
+      quota:
+        needsReauth || wslAccounts ? undefined : (
+          <ClaudeAccountQuota accountId={account.id} login={account.login} />
+        ),
     };
   });
 
@@ -257,15 +268,20 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
               defaultValue:
                 "Claude Code 的官方订阅账号（Pro / Max / Team）。Claude 配置目录在 WSL 里时暂不支持，后续会跟进。",
             })
-          : blocked === "overrideDir"
-            ? t("authCenter.group.claudeHelpTerminal", {
+          : wslAccounts
+            ? t("authCenter.group.claudeHelpWslAccounts", {
                 defaultValue:
-                  "Claude Code 的官方订阅账号（Pro / Max / Team）。设置里覆盖了 Claude 配置目录，切卡不会切换 Claude Code 的登录；在官方卡上选一个账号，再从卡片「打开终端」使用。",
+                  "Claude Code 的官方订阅账号（Pro / Max / Team）。Claude 配置目录在 WSL 里：选中一个账号并切到对应的官方卡后，该发行版里直接运行的 claude 会换成这个号。选「跟随 Claude Code 登录」则不改现有登录。从卡片「打开终端」仍进入这个账号自己的目录，可同时开几个号。额度还不会显示。登录令牌只留在本机。",
               })
-            : t("authCenter.group.claudeHelp", {
-                defaultValue:
-                  "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 官方卡上选一个账号，切到这张卡后，Claude Code 的登录会实时换成这个号；想同时用几个号，从卡片「打开终端」。登录令牌只留在本机，不上传、不刷新、不登出。第一次切换会自动收进 Claude Code 现在登录的号；切号后 Remote Control 会断开，提示缓存要重建。",
-              })
+            : blocked === "overrideDir"
+              ? t("authCenter.group.claudeHelpTerminal", {
+                  defaultValue:
+                    "Claude Code 的官方订阅账号（Pro / Max / Team）。设置里覆盖了 Claude 配置目录，切卡不会切换 Claude Code 的登录；在官方卡上选一个账号，再从卡片「打开终端」使用。",
+                })
+              : t("authCenter.group.claudeHelp", {
+                  defaultValue:
+                    "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 官方卡上选一个账号，切到这张卡后，Claude Code 的登录会实时换成这个号；想同时用几个号，从卡片「打开终端」。登录令牌只留在本机，不上传、不刷新、不登出。第一次切换会自动收进 Claude Code 现在登录的号；切号后 Remote Control 会断开，提示缓存要重建。",
+                })
       }
       helpSide={helpSide}
       accounts={rows}
@@ -360,6 +376,7 @@ export function ClaudeAccountSelect({
 }: ClaudeAccountSelectProps) {
   const { t } = useTranslation();
   const blocked = useClaudeLoginBlocked();
+  const wslAccounts = useClaudeWslAccounts();
   const { data } = useQuery({
     queryKey: ["managed-auth-status", "claude_official"],
     queryFn: () => authApi.authGetStatus("claude_official"),
@@ -488,15 +505,20 @@ export function ClaudeAccountSelect({
               defaultValue:
                 "Claude 配置目录在 WSL 里，暂不支持 Claude 账号，切到这张卡不会切换 Claude Code 的登录。",
             })
-          : blocked === "overrideDir"
-            ? t("provider.form.claudeAccount.helpTerminal", {
+          : wslAccounts
+            ? t("provider.form.claudeAccount.helpWslAccounts", {
                 defaultValue:
-                  "设置里覆盖了 Claude 配置目录，切到这张卡不会切换 Claude Code 的登录，请从卡片「打开终端」使用选中的账号。",
+                  "Claude 配置目录在 WSL 里。选中一个账号后，切到这张卡会把该发行版里的 claude 换成这个号；「跟随 Claude Code 登录」不改发行版里现有的登录。从卡片「打开终端」仍只进入这个账号自己的目录。额度还不会显示。",
               })
-            : t("provider.form.claudeAccount.help", {
-                defaultValue:
-                  "切到这张卡后，Claude Code 的登录会实时换成选中的账号，正在运行的会话也一样。想同时用几个号，从卡片「打开终端」。",
-              })}
+            : blocked === "overrideDir"
+              ? t("provider.form.claudeAccount.helpTerminal", {
+                  defaultValue:
+                    "设置里覆盖了 Claude 配置目录，切到这张卡不会切换 Claude Code 的登录，请从卡片「打开终端」使用选中的账号。",
+                })
+              : t("provider.form.claudeAccount.help", {
+                  defaultValue:
+                    "切到这张卡后，Claude Code 的登录会实时换成选中的账号，正在运行的会话也一样。想同时用几个号，从卡片「打开终端」。",
+                })}
       </p>
     </div>
   );

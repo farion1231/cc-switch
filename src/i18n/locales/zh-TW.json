@@ -247,6 +247,7 @@
         "manage": "新增或管理 Claude 帳號",
         "helpTerminal": "設定裡覆寫了 Claude 設定目錄，切到這張卡不會切換 Claude Code 的登入，請從卡片「開啟終端機」使用選取的帳號。",
         "helpWsl": "Claude 設定目錄在 WSL 裡，暫不支援 Claude 帳號，切到這張卡不會切換 Claude Code 的登入。",
+        "helpWslAccounts": "Claude 設定目錄在 WSL 裡。選取一個帳號後，切到這張卡會把該發行版裡的 claude 換成這個帳號；「跟隨 Claude Code 登入」不改發行版裡現有的登入。從卡片「開啟終端機」仍只進入這個帳號自己的目錄。額度還不會顯示。",
         "help": "切到這張卡後，Claude Code 的登入會即時換成選取的帳號，正在執行的工作階段也一樣。想同時用幾個帳號，從卡片「開啟終端機」。",
         "claudeAccount": "Claude 帳號",
         "reauthBadge": "需要重新登入",
@@ -5005,6 +5006,7 @@
       "agyHelp": "Antigravity CLI（agy）的官方登入。agy 同時只能登入一個帳號，「切換」會把 agy 的登入換成選中的帳號，之後新開的 agy 都用它。agy 裡原本登入的帳號會自動收進這裡，切走也不會遺失。",
       "claudeHelpTerminal": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。設定裡覆寫了 Claude 設定目錄，切卡不會切換 Claude Code 的登入；在官方卡上選一個帳號，再從卡片「開啟終端機」使用。",
       "claudeHelpWsl": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。Claude 設定目錄在 WSL 裡時暫不支援，後續會跟進。",
+      "claudeHelpWslAccounts": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。Claude 設定目錄在 WSL 裡：選取一個帳號並切到對應的官方卡後，該發行版裡直接執行的 claude 會換成這個帳號。選「跟隨 Claude Code 登入」則不改現有登入。從卡片「開啟終端機」仍進入這個帳號自己的目錄，可同時開幾個帳號。額度還不會顯示。登入權杖只留在本機。",
       "claudeHelp": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。在 Claude 官方卡上選一個帳號，切到這張卡後，Claude Code 的登入會即時換成這個帳號；想同時用幾個帳號，從卡片「開啟終端機」。登入權杖只留在本機，不上傳、不重新整理、不登出。第一次切換會自動收進 Claude Code 目前登入的帳號；切換帳號後 Remote Control 會中斷，提示快取要重建。"
     },
     "addAccount": "新增帳號",

@@ -28,6 +28,7 @@ mod recover;
 mod state;
 pub mod store;
 mod switch;
+mod wsl;
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -95,15 +96,23 @@ const COMMIT_DEADLINE: Duration = Duration::from_secs(30);
 static SWITCH: Mutex<()> = Mutex::new(());
 
 /// 切卡时为什么不能切换登录：
-/// - `"wsl"`：Claude 配置目录指向 WSL（Windows）。登录、查额度、打开终端都跑在 Windows 上，
-///   用不到 WSL 里的 Claude Code，账号功能整体不可用。
+/// - `"wsl"`：Claude 配置目录指向 WSL，但推不出 `/home/<用户>` 或 `/root`。不能安全地
+///   把登录放进发行版的默认槽位。
 /// - `"overrideDir"`：设了别的 Claude 配置目录覆盖（默认槽位不在 `~/.claude`）。这时绑号卡
 ///   只能从卡片「打开终端」使用。
+///
+/// 配置目录就是 WSL 家目录里的 `~/.claude` 时不挡：切卡在发行版里搬 `.credentials.json`
+/// 和 `.claude.json` 的 `oauthAccount`（见 [`wsl`]），和本机快照同一套语义。
 pub fn blocked_reason() -> Option<&'static str> {
     if crate::commands::tool_runs_in_wsl("claude") {
-        return Some("wsl");
+        if crate::services::claude_account::run_target::current_wsl().is_some() {
+            None
+        } else {
+            Some("wsl")
+        }
+    } else {
+        crate::settings::get_claude_override_dir().map(|_| "overrideDir")
     }
-    crate::settings::get_claude_override_dir().map(|_| "overrideDir")
 }
 
 /// 切卡时会不会切换登录。
@@ -111,9 +120,44 @@ pub fn active() -> bool {
     blocked_reason().is_none()
 }
 
+/// 默认槽位现在登的是哪个账号。WSL 家目录时在发行版里读 `.claude.json`（9P 上的读会滞后）。
+pub fn live_owner() -> Option<String> {
+    probed_live_owner().unwrap_or_else(|| default_owner(&display_default_slot()))
+}
+
+fn probed_live_owner() -> Option<Option<String>> {
+    #[cfg(windows)]
+    if let Some(wsl) = crate::services::claude_account::run_target::current_wsl() {
+        match wsl::probe_live_owner(&wsl) {
+            Ok(owner) => return Some(owner),
+            Err(error) => {
+                log::warn!(
+                    "[ClaudeAccount] 读取 WSL 默认登录失败，改看 Windows 能看见的文件: {error}"
+                );
+            }
+        }
+    }
+    None
+}
+
 /// 默认槽位现在登的是不是账号 `account`（被移进去以后它的账号目录是空的，用它要走默认目录）。
 pub fn is_live(account: &str) -> bool {
-    default_owner(&Slot::default_slot()).as_deref() == Some(account)
+    live_owner().as_deref() == Some(account)
+}
+
+fn display_default_slot() -> Slot {
+    wsl_display_slot().unwrap_or_else(Slot::default_slot)
+}
+
+fn wsl_display_slot() -> Option<Slot> {
+    #[cfg(windows)]
+    if let Some(wsl) = crate::services::claude_account::run_target::current_wsl() {
+        let rel = wsl.linux_home.trim_start_matches('/').replace('/', "\\");
+        return Some(Slot::Default {
+            home: PathBuf::from(format!(r"\\{}\{}\{}", wsl.host, wsl.distro, rel)),
+        });
+    }
+    None
 }
 
 /// 默认槽位现在登的是哪个账号（只看 `.claude.json` 的资料，不读凭据）。
@@ -133,6 +177,9 @@ pub fn account_slot(data_dir: &Path, account: &str) -> Option<Slot> {
 
 /// 账号目录里有没有能用的登录（读凭据判断；钥匙串条目在、里面只剩 MCP 授权也算没有）。
 pub fn dir_has_login(config_dir: &Path) -> bool {
+    if let Some(has) = probed_dir_has_login(config_dir) {
+        return has;
+    }
     creds::read_login(
         store::platform_store().as_ref(),
         &Slot::Account(config_dir.to_path_buf()),
@@ -140,6 +187,27 @@ pub fn dir_has_login(config_dir: &Path) -> bool {
     .ok()
     .flatten()
     .is_some()
+}
+
+fn probed_dir_has_login(config_dir: &Path) -> Option<bool> {
+    #[cfg(windows)]
+    if let Some(wsl) = crate::services::claude_account::run_target::current_wsl() {
+        if let Some(linux) =
+            crate::services::claude_account::run_target::linux_config_dir(config_dir, &wsl.distro)
+        {
+            match wsl::probe_dir_has_login(&wsl, &linux) {
+                Ok(has) => return Some(has),
+                Err(error) => {
+                    log::warn!(
+                        "[ClaudeAccount] 读取 WSL 账号登录失败，改看 Windows 能看见的文件: {error}"
+                    );
+                }
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = config_dir;
+    None
 }
 
 /// 凭据里 Claude Code 记的套餐。

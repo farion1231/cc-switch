@@ -5280,14 +5280,14 @@ pub async fn open_provider_terminal(
             match terminal_account(provider).map_err(|e| e.to_string())? {
                 Some(AccountTerminal::Dir(config_dir)) => {
                     crate::services::claude_account::sync_shared(&config_dir);
-                    claude_account_terminal_launch(Some(config_dir))
+                    claude_account_terminal_launch(Some(config_dir))?
                 }
                 Some(AccountTerminal::Default) => {
                     crate::services::provider::claude_official::ensure_default_terminal_is_official(
                         &state.db,
                     )
                     .map_err(|e| e.to_string())?;
-                    claude_account_terminal_launch(None)
+                    claude_account_terminal_launch(None)?
                 }
                 None => {
                     let env_vars =
@@ -5424,6 +5424,18 @@ struct ProviderLaunch {
     batch_vars: Vec<(&'static str, String)>,
     /// 退出时删除的临时文件，都在系统临时目录里
     cleanup: Vec<PathBuf>,
+    /// Windows 上官方账号终端改在这个 WSL 发行版里启动。其他平台和本机启动为 `None`。
+    #[cfg_attr(not(windows), allow(dead_code))]
+    wsl_account: Option<WslAccountLaunch>,
+}
+
+/// 官方账号终端要进的发行版。`linux_config_dir` 为空表示用发行版里的默认 `~/.claude`。
+#[cfg_attr(not(windows), allow(dead_code))]
+struct WslAccountLaunch {
+    distro: String,
+    linux_user: String,
+    linux_home: String,
+    linux_config_dir: Option<String>,
 }
 
 impl ProviderLaunch {
@@ -5619,6 +5631,7 @@ fn codex_launch(
         env,
         batch_vars,
         cleanup,
+        wsl_account: None,
     })
 }
 
@@ -5666,6 +5679,8 @@ fn grok_launch(grok_home: String) -> ProviderLaunch {
         env: vec![("GROK_HOME", Some(grok_home))],
         batch_vars: Vec::new(),
         cleanup: Vec::new(),
+        // Grok 终端仍在本机启动。这个字段只给 Claude 官方账号进 WSL。
+        wsl_account: None,
     }
 }
 
@@ -5701,6 +5716,7 @@ fn claude_terminal_launch(
         env: Vec::new(),
         batch_vars: Vec::new(),
         cleanup: vec![config_file],
+        wsl_account: None,
     })
 }
 
@@ -5709,19 +5725,42 @@ fn claude_terminal_launch(
 /// （写在 settings 里的话 macOS 上前 30 秒会用默认登录的令牌）。会把它指向别处的变量一并清掉。
 /// 绑号卡的终端：清掉会改走别家服务或别的登录的变量，再指定账号目录；`None` 是账号正在默认
 /// 槽位里，去掉 `CLAUDE_CONFIG_DIR` 用默认目录。
-fn claude_account_terminal_launch(config_dir: Option<PathBuf>) -> ProviderLaunch {
+fn claude_account_terminal_launch(config_dir: Option<PathBuf>) -> Result<ProviderLaunch, String> {
+    let wsl_account = match crate::services::claude_account::run_target::current_wsl() {
+        Some(wsl) => {
+            let linux_config_dir = match &config_dir {
+                Some(dir) => Some(
+                    crate::services::claude_account::run_target::windows_path_to_linux(
+                        &dir.to_string_lossy(),
+                        &wsl.distro,
+                    )?,
+                ),
+                None => None,
+            };
+            Some(WslAccountLaunch {
+                linux_user: crate::services::claude_account::run_target::wsl_user(&wsl.linux_home)?,
+                distro: wsl.distro,
+                linux_home: wsl.linux_home,
+                linux_config_dir,
+            })
+        }
+        None => None,
+    };
     let mut env: Vec<(&'static str, Option<String>)> =
         crate::services::claude_account::login::CLAUDE_ACCOUNT_UNSET
             .iter()
             .map(|name| (*name, None))
             .collect();
-    env.push((
-        "CLAUDE_CONFIG_DIR",
-        config_dir
-            .as_ref()
-            .map(|dir| dir.to_string_lossy().into_owned()),
-    ));
-    ProviderLaunch {
+    // WSL 里的路径由 `wsl.exe` 那一行设置。这里如果写成 UNC，发行版里的 claude 用不了。
+    if wsl_account.is_none() {
+        env.push((
+            "CLAUDE_CONFIG_DIR",
+            config_dir
+                .as_ref()
+                .map(|dir| dir.to_string_lossy().into_owned()),
+        ));
+    }
+    Ok(ProviderLaunch {
         title: if config_dir.is_some() {
             "Using this Claude account's config directory:"
         } else {
@@ -5734,7 +5773,8 @@ fn claude_account_terminal_launch(config_dir: Option<PathBuf>) -> ProviderLaunch
         env,
         batch_vars: Vec::new(),
         cleanup: Vec::new(),
-    }
+        wsl_account,
+    })
 }
 
 /// 官方卡绑了授权中心的账号时，先把 agy 的全局登录切到它（已经是它就不写）。没绑的卡跟着
@@ -5806,6 +5846,7 @@ fn agy_terminal_launch(provider: &crate::provider::Provider) -> Result<ProviderL
             env: launch.env,
             batch_vars,
             cleanup: Vec::new(),
+            wsl_account: None,
         });
     };
     Ok(ProviderLaunch {
@@ -5817,6 +5858,7 @@ fn agy_terminal_launch(provider: &crate::provider::Provider) -> Result<ProviderL
         env: launch.env,
         batch_vars: vec![(AGY_DIR_BATCH_VAR, dir.to_string_lossy().into_owned())],
         cleanup: Vec::new(),
+        wsl_account: None,
     })
 }
 
@@ -6536,19 +6578,66 @@ fn which_command(cmd: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// 官方账号终端：在发行版的登录 shell 里跑 `claude`，`CLAUDE_CONFIG_DIR` 用 Linux 路径。
+#[cfg(target_os = "windows")]
+fn wsl_account_batch(
+    launch: &ProviderLaunch,
+    wsl: &WslAccountLaunch,
+    cwd: Option<&Path>,
+) -> Result<String, String> {
+    use crate::services::claude_account::login::CLAUDE_ACCOUNT_UNSET;
+    use crate::services::claude_account::run_target::{
+        windows_path_to_linux, wsl_terminal_batch_line,
+    };
+
+    let linux_cd = match cwd {
+        Some(dir) => windows_path_to_linux(&dir.to_string_lossy(), &wsl.distro)?,
+        None => wsl.linux_home.clone(),
+    };
+    let mut unset: Vec<&str> = CLAUDE_ACCOUNT_UNSET.to_vec();
+    let set: Vec<(&str, &str)> = match wsl.linux_config_dir.as_deref() {
+        Some(dir) => vec![("CLAUDE_CONFIG_DIR", dir)],
+        None => {
+            unset.push("CLAUDE_CONFIG_DIR");
+            Vec::new()
+        }
+    };
+    wsl_terminal_batch_line(
+        &wsl.distro,
+        &wsl.linux_user,
+        &linux_cd,
+        &set,
+        &unset,
+        &launch.args,
+    )
+}
+
 /// Windows: 根据用户首选终端启动
 #[cfg(target_os = "windows")]
 fn launch_windows_terminal(launch: &ProviderLaunch, cwd: Option<&Path>) -> Result<(), String> {
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("cmd");
 
+    let wsl_batch = match &launch.wsl_account {
+        Some(wsl) => Some(wsl_account_batch(launch, wsl, cwd)?),
+        None => None,
+    };
     let bat_file = unique_temp_path("cc_switch_launcher", "bat");
-    let (cwd_command, cwd_env) = build_windows_cwd_command(cwd);
+    // 发行版里的工作目录用 `wsl.exe --cd`，不再 `pushd` 到 UNC（那会进 9P 挂载而不是家目录）。
+    let (cwd_command, cwd_env) = if wsl_batch.is_some() {
+        (String::new(), None)
+    } else {
+        build_windows_cwd_command(cwd)
+    };
     let mut launch_env: Vec<(String, String)> = cwd_env
         .map(|value| (WINDOWS_CWD_ENV.to_string(), value))
         .into_iter()
         .collect();
-    let (set_lines, extra_env) = build_windows_launch_env(launch);
+    let (set_lines, extra_env) = if wsl_batch.is_some() {
+        (String::new(), Vec::new())
+    } else {
+        build_windows_launch_env(launch)
+    };
     launch_env.extend(extra_env);
     let launch_env: Vec<(&str, &str)> = launch_env
         .iter()
@@ -6571,7 +6660,7 @@ fn launch_windows_terminal(launch: &ProviderLaunch, cwd: Option<&Path>) -> Resul
     let content = format!(
         "@echo off\r\n{cwd_command}setlocal DisableDelayedExpansion\r\n{set_lines}echo {title}\r\n{command}\r\nendlocal\r\n{cleanup}del \"%~f0\" >nul 2>&1\r\n",
         title = escape_windows_batch_value(launch.title),
-        command = launch.batch_command,
+        command = wsl_batch.as_deref().unwrap_or(&launch.batch_command),
     );
 
     std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
@@ -7597,6 +7686,7 @@ mod tests {
                 r"C:\Users\张三\.cc-switch\agy\relay".to_string(),
             )],
             cleanup: Vec::new(),
+            wsl_account: None,
         }
     }
 
@@ -7652,7 +7742,7 @@ mod tests {
 
     #[test]
     fn fish_gets_its_own_quoting_for_user_text() {
-        let mut launch = claude_account_terminal_launch(None);
+        let mut launch = claude_account_terminal_launch(None).unwrap();
         launch.env.clear();
         launch
             .append_user_args(vec!["x\\'; printf INJECTED; #".into(), "C:\\work\\".into()])
@@ -7672,7 +7762,7 @@ mod tests {
             build_provider_command_line("/usr/bin/fish", "claude", Some(Path::new("/tmp/a\\'b"))),
             "'/usr/bin/fish' -ic 'cd '\"'\"'/tmp/a\\\\\\'\"'\"'b'\"'\"' && claude'"
         );
-        let mut launch = claude_account_terminal_launch(None);
+        let mut launch = claude_account_terminal_launch(None).unwrap();
         launch.env.clear();
         launch.append_user_args(vec!["=sh".into()]).unwrap();
         assert_eq!(unix_launch_command_in(&launch, "/bin/zsh"), "claude '=sh'");
@@ -7680,7 +7770,7 @@ mod tests {
 
     #[test]
     fn user_args_follow_the_generated_args_and_pass_through_batch_vars() {
-        let mut launch = claude_account_terminal_launch(None);
+        let mut launch = claude_account_terminal_launch(None).unwrap();
         launch.env.clear();
         launch.skip_permissions();
         launch
@@ -7705,7 +7795,7 @@ mod tests {
 
     #[test]
     fn skip_permissions_appends_the_flag_on_every_platform() {
-        let mut launch = claude_account_terminal_launch(None);
+        let mut launch = claude_account_terminal_launch(None).unwrap();
         launch.env.clear();
         launch.skip_permissions();
         assert_eq!(

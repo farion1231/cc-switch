@@ -179,12 +179,7 @@ pub async fn start(
 ) -> Result<RunningLogin, AppError> {
     let opened_file = home.join(layout::OPENED_URL_FILENAME);
     let _ = std::fs::remove_file(&opened_file);
-    let opener = match write_opener(&home)? {
-        Some(opener) => Some(opener),
-        // 不存在的程序：Claude Code 打开浏览器失败，照常打印链接
-        None if !open_browser => Some(home.join(layout::NO_BROWSER_FILENAME)),
-        None => None,
-    };
+    let opener = opener_path(&home, open_browser)?;
 
     let spawn = {
         let config_dir = config_dir.clone();
@@ -445,11 +440,28 @@ fn write_opener(home: &Path) -> Result<Option<PathBuf>, AppError> {
     }
 }
 
+fn opener_path(home: &Path, open_browser: bool) -> Result<Option<PathBuf>, AppError> {
+    #[cfg(windows)]
+    if let Some(wsl) = super::run_target::current_wsl() {
+        return wsl_opener_path(home, &wsl, open_browser);
+    }
+    match write_opener(home)? {
+        Some(opener) => Ok(Some(opener)),
+        // 不存在的程序：Claude Code 打开浏览器失败，照常打印链接
+        None if !open_browser => Ok(Some(home.join(layout::NO_BROWSER_FILENAME))),
+        None => Ok(None),
+    }
+}
+
 fn spawn_login(
     config_dir: &Path,
     opener: Option<&Path>,
     opened_file: &Path,
 ) -> Result<Child, AppError> {
+    #[cfg(windows)]
+    if let Some(wsl) = super::run_target::current_wsl() {
+        return spawn_wsl_login(&wsl, config_dir, opener, opened_file);
+    }
     let mut cmd = crate::commands::detected_tool_command(
         "claude",
         &["auth", "login", "--claudeai"],
@@ -469,6 +481,247 @@ fn spawn_login(
         .map_err(|error| AppError::Message(format!("无法启动 claude auth login: {error}")))
 }
 
+/// 发行版里的登录：`CLAUDE_CONFIG_DIR` 和 `BROWSER` 都是 Linux 路径。
+/// CC Switch 仍从 UNC 上的 `.opened-url` 读链接，再在 Windows 上打开。
+#[cfg(windows)]
+fn spawn_wsl_login(
+    wsl: &super::run_target::WslTarget,
+    config_dir: &Path,
+    opener: Option<&Path>,
+    opened_file: &Path,
+) -> Result<Child, AppError> {
+    let user = wsl_user_name(wsl)?;
+    let linux_config = linux_in_distro(config_dir, &wsl.distro)?;
+    let mut set = vec![("CLAUDE_CONFIG_DIR", linux_config)];
+    let linux_opener = opener
+        .map(|path| linux_in_distro(path, &wsl.distro))
+        .transpose()?;
+    let linux_opened = linux_in_distro(opened_file, &wsl.distro)?;
+    if let Some(opener) = linux_opener.as_deref() {
+        set.push(("BROWSER", opener.to_string()));
+        set.push((OPENED_URL_ENV, linux_opened));
+    }
+    for (key, value) in proxy_assignments() {
+        set.push((key, value));
+    }
+    let set_ref: Vec<(&str, &str)> = set
+        .iter()
+        .map(|(key, value)| (*key, value.as_str()))
+        .collect();
+    spawn_wsl_claude(
+        &wsl.distro,
+        &user,
+        &wsl.linux_home,
+        &set_ref,
+        CLAUDE_ACCOUNT_UNSET,
+        &["auth", "login", "--claudeai"],
+        WslStdio::piped(),
+    )
+}
+
+#[cfg(windows)]
+fn linux_in_distro(path: &Path, distro: &str) -> Result<String, AppError> {
+    super::run_target::windows_path_to_linux(&path.to_string_lossy(), distro).map_err(|error| {
+        AppError::localized(
+            "claude.account.wsl_path",
+            format!("无法把路径转成 WSL 里的 Linux 路径: {error}"),
+            format!("Couldn't turn this path into a Linux path inside WSL: {error}"),
+        )
+    })
+}
+
+/// 在发行版里跑一条短的 `claude` 命令，等到退出或超时，返回 stdout。
+#[cfg(windows)]
+pub(super) fn capture_wsl_claude(
+    distro: &str,
+    user: &str,
+    linux_cd: &str,
+    linux_config: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<String, String> {
+    let mut set = vec![("CLAUDE_CONFIG_DIR", linux_config.to_string())];
+    for (key, value) in proxy_assignments() {
+        set.push((key, value));
+    }
+    let set_ref: Vec<(&str, &str)> = set
+        .iter()
+        .map(|(key, value)| (*key, value.as_str()))
+        .collect();
+    let mut child = spawn_wsl_claude(
+        distro,
+        user,
+        linux_cd,
+        &set_ref,
+        CLAUDE_ACCOUNT_UNSET,
+        args,
+        WslStdio {
+            stdin: Stdio::null(),
+            stdout: Stdio::piped(),
+            stderr: Stdio::null(),
+        },
+    )?;
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if started.elapsed() < timeout => {
+                std::thread::sleep(Duration::from_millis(100))
+            }
+            _ => {
+                crate::commands::terminate_child_tree(&mut child);
+                let _ = child.wait();
+                return Err(format!(
+                    "WSL 发行版 {distro} 里的 claude 没有在时限内结束。请确认该发行版已安装并能启动。"
+                ));
+            }
+        }
+    }
+    let mut output = String::new();
+    child
+        .stdout
+        .take()
+        .ok_or_else(|| "claude 没有输出".to_string())?
+        .read_to_string(&mut output)
+        .map_err(|error| error.to_string())?;
+    Ok(output)
+}
+
+#[cfg(windows)]
+struct WslStdio {
+    stdin: Stdio,
+    stdout: Stdio,
+    stderr: Stdio,
+}
+
+#[cfg(windows)]
+impl WslStdio {
+    fn piped() -> Self {
+        Self {
+            stdin: Stdio::piped(),
+            stdout: Stdio::piped(),
+            stderr: Stdio::piped(),
+        }
+    }
+}
+
+#[cfg(windows)]
+fn spawn_wsl_claude(
+    distro: &str,
+    user: &str,
+    linux_cd: &str,
+    set: &[(&str, &str)],
+    unset: &[&str],
+    args: &[&str],
+    stdio: WslStdio,
+) -> Result<Child, AppError> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let argv = super::run_target::wsl_claude_argv(distro, user, linux_cd, set, unset, args)
+        .map_err(|error| {
+            AppError::localized(
+                "claude.account.wsl_command",
+                format!("无法构造在 WSL 里运行 claude 的命令: {error}"),
+                format!("Couldn't build the command that runs claude inside WSL: {error}"),
+            )
+        })?;
+    let mut cmd = std::process::Command::new("wsl.exe");
+    cmd.args(&argv)
+        .stdin(stdio.stdin)
+        .stdout(stdio.stdout)
+        .stderr(stdio.stderr)
+        .creation_flags(CREATE_NO_WINDOW);
+    cmd.spawn().map_err(|error| {
+        AppError::localized(
+            "claude.account.wsl_login",
+            format!(
+                "无法在 WSL 发行版 {distro} 里启动 claude（{error}）。请确认该发行版已安装并能启动（wsl -d {distro}）。"
+            ),
+            format!(
+                "Couldn't start claude in WSL distro {distro} ({error}). Make sure that distro is installed and can start (wsl -d {distro})."
+            ),
+        )
+    })
+}
+
+/// 把登录链接写进 `.opened-url` 的脚本。`chmod` 失败时不设置 `BROWSER`，
+/// Claude Code 会把链接打印出来，现有的粘贴代码流程仍然可用。
+#[cfg(windows)]
+fn wsl_opener_path(
+    home: &Path,
+    wsl: &super::run_target::WslTarget,
+    open_browser: bool,
+) -> Result<Option<PathBuf>, AppError> {
+    if !open_browser {
+        return Ok(Some(home.join(layout::NO_BROWSER_FILENAME)));
+    }
+    let path = home.join(layout::OPENER_FILENAME);
+    let script = format!(
+        "#!/bin/sh\n[ -n \"${OPENED_URL_ENV}\" ] && printf '%s' \"$1\" > \"${OPENED_URL_ENV}\"\nexit 0\n"
+    );
+    std::fs::write(&path, script).map_err(|source| AppError::io(&path, source))?;
+    let linux = linux_in_distro(&path, &wsl.distro)?;
+    let user = wsl_user_name(wsl)?;
+    if wsl_chmod(&wsl.distro, &user, &linux).is_err() {
+        log::warn!("[ClaudeAccount] 没法把 WSL 里的登录脚本标成可执行，改为只使用打印出来的链接");
+        let _ = std::fs::remove_file(&path);
+        return Ok(None);
+    }
+    Ok(Some(path))
+}
+
+#[cfg(windows)]
+fn wsl_user_name(wsl: &super::run_target::WslTarget) -> Result<String, AppError> {
+    super::run_target::wsl_user(&wsl.linux_home).map_err(|error| {
+        AppError::localized(
+            "claude.account.wsl_user",
+            format!("无法从 WSL 家目录得到用户名（{error}）"),
+            format!("Couldn't get the WSL user name from the home directory ({error})"),
+        )
+    })
+}
+
+#[cfg(windows)]
+fn wsl_chmod(distro: &str, user: &str, linux_path: &str) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let mut child = std::process::Command::new("wsl.exe")
+        .args([
+            "-d",
+            distro,
+            "-u",
+            user,
+            "--exec",
+            "/bin/chmod",
+            "700",
+            linux_path,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    let started = Instant::now();
+    let limit = Duration::from_secs(45);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(status)) => return Err(format!("chmod 退出 {status}")),
+            Ok(None) if started.elapsed() < limit => std::thread::sleep(Duration::from_millis(50)),
+            _ => {
+                crate::commands::terminate_child_tree(&mut child);
+                let _ = child.wait();
+                return Err(format!(
+                    "WSL 发行版 {distro} 没有在时限内完成 chmod。请确认该发行版已安装并能启动。"
+                ));
+            }
+        }
+    }
+}
+
 /// 让命令只用这个账号目录：清掉会指向别处的变量，设 `CLAUDE_CONFIG_DIR`。
 pub fn apply_account_env(cmd: &mut std::process::Command, config_dir: &Path) {
     clear_account_env(cmd);
@@ -483,12 +736,16 @@ pub fn apply_account_env(cmd: &mut std::process::Command, config_dir: &Path) {
 /// 只传 http(s)：Claude Code 不支持 SOCKS 代理。大小写两套都设，Node 优先读小写。
 /// 没配全局代理时不动，子进程照旧继承 CC Switch 的环境变量。
 pub fn apply_global_proxy_env(cmd: &mut std::process::Command) {
-    let Some(url) = crate::proxy::http_client::get_current_proxy_url() else {
-        return;
-    };
-    for (key, value) in global_proxy_env(&url, |key| std::env::var_os(key).is_some()) {
+    for (key, value) in proxy_assignments() {
         cmd.env(key, value);
     }
+}
+
+fn proxy_assignments() -> Vec<(&'static str, String)> {
+    let Some(url) = crate::proxy::http_client::get_current_proxy_url() else {
+        return Vec::new();
+    };
+    global_proxy_env(&url, |key| std::env::var_os(key).is_some())
 }
 
 fn global_proxy_env(url: &str, is_set: impl Fn(&str) -> bool) -> Vec<(&'static str, String)> {
@@ -586,6 +843,31 @@ mod tests {
             eof_rx.recv_timeout(Duration::from_secs(5)).is_ok(),
             "the grandchild still holds the pipe"
         );
+    }
+
+    #[test]
+    fn wsl_login_command_clears_every_account_env_var() {
+        let argv = super::super::run_target::wsl_claude_argv(
+            "Ubuntu",
+            "me",
+            "/home/me",
+            &[(
+                "CLAUDE_CONFIG_DIR",
+                "/home/me/.cc-switch/claude-accounts/abc/config",
+            )],
+            CLAUDE_ACCOUNT_UNSET,
+            &["auth", "login", "--claudeai"],
+        )
+        .unwrap();
+        let script = argv.last().unwrap();
+        for name in CLAUDE_ACCOUNT_UNSET {
+            assert!(
+                script.contains(&format!("-u {name}")),
+                "{name} missing from {script}"
+            );
+        }
+        assert!(script.contains("/home/me/.cc-switch/claude-accounts/abc/config"));
+        assert!(script.contains("CLAUDE_CONFIG_DIR="));
     }
 
     #[test]
