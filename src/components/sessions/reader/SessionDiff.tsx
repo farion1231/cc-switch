@@ -137,6 +137,22 @@ export const buildInputDiff = (call: ToolCallBlock): string | null => {
   }
   if (!input || typeof input !== "object") return null;
   const record = input as Record<string, unknown>;
+  // AGY's multi-replacement export may contain incomplete chunks. Do not turn
+  // a missing old/new side into a fictitious insertion or deletion on fallback.
+  if (
+    call.rawName === "multi_replace_file_content" &&
+    (!Array.isArray(record.edits) ||
+      record.edits.length === 0 ||
+      !record.edits.every(
+        (edit) =>
+          edit !== null &&
+          typeof edit === "object" &&
+          typeof edit.old_string === "string" &&
+          typeof edit.new_string === "string",
+      ))
+  ) {
+    return null;
+  }
   const pairs: { old: string; next: string }[] = [];
   const edits = Array.isArray(record.edits) ? record.edits : [record];
   edits.forEach((edit) => {
