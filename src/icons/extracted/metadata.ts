@@ -730,7 +730,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     name: "liveagent",
     displayName: "LiveAgent",
     category: "tool",
-    shape: "tile",
+    // Transparent mark cut from the app icon: no white tile in dark mode.
     keywords: ["liveagent", "live agent", "k-brain", "kbrain"],
   },
   tuzi: {
