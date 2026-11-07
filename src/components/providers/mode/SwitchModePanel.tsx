@@ -566,12 +566,8 @@ export function SwitchModePanel({
                     : "bg-fg-3",
                 )}
               />
-              <span className="shrink-0 text-fg-2">
-                {t(`mode.names.${active}`)}
-              </span>
-              <span aria-hidden="true" className="text-fg-3">
-                ·
-              </span>
+              {/* 不再写模式名：哪个模式生效，下面的模式页签已经写了「生效中」。
+                  圆点要留着：服务在跑但应用没接上时它是灰的，页面上只有这里能看出来 */}
               <span className="min-w-0 truncate font-medium text-fg-1">
                 {active === "stack" ? nameOf(routeId) : status.value}
               </span>

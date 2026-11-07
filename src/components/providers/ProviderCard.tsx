@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import {
   AlertTriangle,
   GripVertical,
@@ -50,6 +50,7 @@ import { useUsageQuery } from "@/lib/query/queries";
 import { resolveProviderIcon } from "@/utils/providerIcon";
 import { isProxyAppId } from "@/config/appConfig";
 import { ProviderCardActions } from "./ProviderCardActions";
+import { useIconOnlyActions } from "./useIconOnlyActions";
 import { terminalAvailable, terminalIsIsolated } from "./OpenTerminalDialog";
 import type { CardChip, CardPresentation, CardTone } from "./presentation";
 
@@ -229,6 +230,13 @@ export function ProviderCard({
       (provider.name.trim() === managedCodexAccount.login ||
         provider.name.trim() ===
           `OpenAI Official (${managedCodexAccount.login})`),
+  );
+
+  // 名字列被挤得太窄时，右侧主操作按钮收成纯图标（见 useIconOnlyActions）
+  const nameColumnRef = useRef<HTMLDivElement>(null);
+  const iconOnlyActions = useIconOnlyActions(
+    nameColumnRef,
+    presentation.buttons.map((button) => button.label).join("|"),
   );
 
   const { data: health } = useProviderHealth(
@@ -434,7 +442,7 @@ export function ProviderCard({
           fallbackClassName="bg-transparent text-fg-2"
         />
 
-        <div className="min-w-0 flex-1">
+        <div ref={nameColumnRef} className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-1.5">
             <h3
               className={cn(
@@ -713,6 +721,7 @@ export function ProviderCard({
                 : undefined
             }
             openTerminalIsolated={terminalIsIsolated(provider, appId)}
+            iconOnly={iconOnlyActions}
           />
         </div>
       </div>
