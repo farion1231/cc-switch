@@ -101,8 +101,11 @@ export function useImportExport(
       // - 避免依赖 setTimeout（组件卸载会取消）
       void onImportSuccess?.();
 
+      // The backend also syncs prompts and pricing; a provider-only retry
+      // cannot clear warnings from those operations.
+      const importWarning = result.warning?.trim();
       const syncResult = await syncCurrentProvidersLiveSafe();
-      if (syncResult.ok) {
+      if (syncResult.ok && !importWarning) {
         setStatus("success");
         toast.success(
           t("settings.importSuccess", {
@@ -111,17 +114,25 @@ export function useImportExport(
           { closeButton: true },
         );
       } else {
-        console.error(
-          "[useImportExport] Failed to sync live config",
-          syncResult.error,
-        );
+        if (!syncResult.ok) {
+          console.error(
+            "[useImportExport] Failed to sync live config",
+            syncResult.error,
+          );
+        }
+        const warning = [
+          importWarning,
+          !syncResult.ok &&
+            t("settings.importPartialSuccess", {
+              defaultValue:
+                "配置已导入，但同步到当前供应商失败。请手动重新选择一次供应商。",
+            }),
+        ]
+          .filter(Boolean)
+          .join("\n");
         setStatus("partial-success");
-        toast.warning(
-          t("settings.importPartialSuccess", {
-            defaultValue:
-              "配置已导入，但同步到当前供应商失败。请手动重新选择一次供应商。",
-          }),
-        );
+        setErrorMessage(importWarning ? warning : null);
+        toast.warning(warning);
       }
     } catch (error) {
       console.error("[useImportExport] Failed to import config", error);

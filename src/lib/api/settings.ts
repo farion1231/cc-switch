@@ -12,6 +12,7 @@ export interface ConfigTransferResult {
   message: string;
   filePath?: string;
   backupId?: string;
+  warning?: string;
 }
 
 export interface WebDavTestResult {

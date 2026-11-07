@@ -100,6 +100,35 @@ describe("ImportExportSection Component", () => {
     expect(screen.getByText("settings.autoReload")).toBeInTheDocument();
   });
 
+  it("shows the backend warning instead of provider-only advice after a partial import", () => {
+    const warning =
+      "Post-operation synchronization failed: prompts: permission denied";
+    render(
+      <ImportExportSection
+        {...baseProps}
+        status="partial-success"
+        errorMessage={warning}
+      />,
+    );
+
+    expect(screen.getByText(warning)).toBeInTheDocument();
+    expect(
+      screen.queryByText("settings.importPartialSuccess"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("settings.importPartialHint"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps provider retry advice when no specific import warning is supplied", () => {
+    render(<ImportExportSection {...baseProps} status="partial-success" />);
+
+    expect(
+      screen.getByText("settings.importPartialSuccess"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("settings.importPartialHint")).toBeInTheDocument();
+  });
+
   it("should display error message when import fails", () => {
     render(
       <ImportExportSection
