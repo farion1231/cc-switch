@@ -46,6 +46,8 @@ mod services;
 mod session_manager;
 mod settings;
 mod store;
+#[cfg(target_os = "windows")]
+mod webview_recovery;
 
 mod tray;
 #[cfg(target_os = "windows")]
@@ -468,6 +470,10 @@ fn handle_second_instance(app: &tauri::AppHandle, args: Vec<String>) {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
+        // 渲染进程死亡后自动恢复没能完成时，借二次启动补一次重载；
+        // 正常情况下标志未置位，这里不会多余地打断用户
+        #[cfg(target_os = "windows")]
+        crate::webview_recovery::reload_if_renderer_failure_pending(&window);
         #[cfg(target_os = "linux")]
         {
             linux_fix::nudge_main_window(window.clone(), "single-instance");
@@ -506,10 +512,25 @@ pub fn run() {
         );
     }
 
+    // Windows: 渲染进程被系统（常见于内存压力）杀掉后 WebView2 只留白屏，
+    // wry/tauri 都不暴露 ProcessFailed；对每个新建 WebView（主窗口与托盘面板，
+    // 含轻量模式重建）挂 COM 事件，死亡发生时自动重载
+    #[cfg(target_os = "windows")]
+    {
+        builder = builder.plugin(
+            tauri::plugin::Builder::<_, ()>::new("windows-webview-recovery")
+                .on_webview_ready(|webview| {
+                    crate::webview_recovery::install_for_webview(&webview);
+                })
+                .build(),
+        );
+    }
+
     #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             log::info!("=== Single Instance Callback Triggered ===");
+
             // Windows 上这个回调跑在主线程处理 WM_COPYDATA 的窗口过程里，第二个实例的
             // SendMessage 正等它返回：轻量模式下要在这里同步重建主窗口，WebView2 会把主线程
             // 卡死（托盘随之无响应）。挪到后台线程，建窗口改由事件循环处理，和 macOS / Linux
@@ -1523,6 +1544,7 @@ pub fn run() {
                     }
                 });
             });
+
 
             // 静默启动：根据设置决定是否显示主窗口
             let settings = crate::settings::get_settings();
