@@ -24,8 +24,9 @@ fn default_true() -> bool {
     true
 }
 
-/// 主页面显示的应用配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 主页面显示的应用配置。缺省值与前端 `DEFAULT_VISIBLE_APPS` 一致（全部显示），
+/// 否则应用页开关显示为开、托盘却不列这个应用
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VisibleApps {
     #[serde(default = "default_true")]
@@ -47,11 +48,11 @@ pub struct VisibleApps {
     pub opencode: bool,
     #[serde(default = "default_true")]
     pub openclaw: bool,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub hermes: bool,
     #[serde(default = "default_true")]
     pub pi: bool,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub omp: bool,
     #[serde(default = "default_true")]
     pub mcode: bool,
@@ -73,7 +74,7 @@ impl Default for VisibleApps {
             grokbuild: true,
             opencode: true,
             openclaw: true,
-            hermes: false, // 默认不显示，需用户手动启用
+            hermes: true,
             pi: true,
             mcode: true,
             kimi: true,
@@ -1761,6 +1762,15 @@ mod tests {
         .expect("visible apps");
 
         assert!(visible.is_visible(&AppType::ClaudeDesktop));
+    }
+
+    #[test]
+    fn visible_apps_defaults_show_every_app_like_the_frontend() {
+        // 前端 `DEFAULT_VISIBLE_APPS` 全部为 true；没保存过 / 旧设置缺字段时托盘要跟应用页开关一致
+        let missing: VisibleApps =
+            serde_json::from_value(serde_json::json!({})).expect("visible apps");
+        assert_eq!(missing, VisibleApps::default());
+        assert!(AppType::all().all(|app| missing.is_visible(&app)));
     }
 
     #[test]
