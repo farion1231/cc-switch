@@ -1522,8 +1522,8 @@ impl SkillService {
                         } else if h != remote_hash && Self::is_legacy_hash_of(&h, &remote_skill_dir)
                         {
                             // 旧版缓存（字节码计入）与上游一致：迁移成新算法的
-                            // 值，不报「有更新」。
-                            let _ = db.update_skill_hash(&skill.id, &remote_hash, 0);
+                            // 值，不报「有更新」；更新时间保持原值。
+                            let _ = db.update_skill_hash(&skill.id, &remote_hash, skill.updated_at);
                             Some(remote_hash.clone())
                         } else {
                             Some(h)
