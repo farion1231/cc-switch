@@ -26,7 +26,6 @@ use serde_json::Value;
 use tokio::sync::{oneshot, Mutex};
 
 use crate::error::AppError;
-use crate::services::subscription::QuotaTier;
 use keychain::AgyLoginStore;
 use oauth::{AgyOAuthError, TokenResponse};
 
@@ -386,10 +385,10 @@ impl AgyAccountManager {
     // ---------- 额度 ----------
 
     /// 用这个账号自己的令牌查剩余额度（不用先切号）。令牌被拒时强制续期再试一次。
-    pub async fn quota(&self, account_id: &str) -> Result<Vec<QuotaTier>, AccountQuotaError> {
+    pub async fn quota(&self, account_id: &str) -> Result<quota::AccountQuota, AccountQuotaError> {
         let token = self.access_token(account_id).await?;
         match quota::fetch(&token).await {
-            Ok(tiers) => Ok(tiers),
+            Ok(result) => Ok(result),
             Err(quota::QuotaError::Unauthorized) => {
                 let token = self.refresh_account(account_id).await?;
                 quota::fetch(&token)
@@ -403,7 +402,7 @@ impl AgyAccountManager {
     /// agy 现在登着的号的额度（跟随 agy 登录的卡片用）。钥匙串里没有认得出的已收录账号时
     /// 返回 `None`（没登录、读不到、格式不认识、或用户在 CC Switch 里删过这个号），由调用方
     /// 改问 agy 自己。
-    pub async fn live_quota(&self) -> Option<Result<Vec<QuotaTier>, AccountQuotaError>> {
+    pub async fn live_quota(&self) -> Option<Result<quota::AccountQuota, AccountQuotaError>> {
         let account_id = self.live_account_id().await?;
         Some(self.quota(&account_id).await)
     }

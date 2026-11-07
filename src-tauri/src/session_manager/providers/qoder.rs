@@ -1,6 +1,9 @@
 //! Qoder's committed transcript records use the same user/assistant/tool block
 //! schema as Claude. Reuse its reader while keeping discovery and roots separate.
-use super::{claude, utils::FileParseCache};
+use super::{
+    claude,
+    utils::{FileParseCache, ScanStatus},
+};
 use crate::{
     app_config::AppType,
     qoder_config,
@@ -18,38 +21,47 @@ pub fn session_roots(app: &AppType) -> Vec<PathBuf> {
     vec![qoder_config::data_dir(app).join("projects")]
 }
 
-pub fn scan_sessions() -> Vec<SessionMeta> {
-    let mut sessions = Vec::new();
-    for (app, cache) in [
-        (AppType::Qoder, &GLOBAL_CACHE),
-        (AppType::QoderCn, &CN_CACHE),
-    ] {
-        sessions.extend(scan_root(&app, &session_roots(&app)[0], cache));
-    }
-    sessions
+pub fn scan_edition_sessions(app: &AppType) -> Vec<SessionMeta> {
+    scan_edition_sessions_with_status(app, &mut ScanStatus::default())
 }
 
-fn scan_root(app: &AppType, root: &Path, cache: &FileParseCache) -> Vec<SessionMeta> {
+/// Scans one edition so the index can track each provider id's completeness separately.
+pub(crate) fn scan_edition_sessions_with_status(
+    app: &AppType,
+    status: &mut ScanStatus,
+) -> Vec<SessionMeta> {
+    let cache: &FileParseCache = if *app == AppType::QoderCn {
+        &CN_CACHE
+    } else {
+        &GLOBAL_CACHE
+    };
+    scan_root(app, &session_roots(app)[0], cache, status)
+}
+
+fn scan_root(
+    app: &AppType,
+    root: &Path,
+    cache: &FileParseCache,
+    status: &mut ScanStatus,
+) -> Vec<SessionMeta> {
     let mut files = Vec::new();
-    if let Ok(projects) = std::fs::read_dir(root) {
-        for project in projects.flatten() {
-            if !project.file_type().is_ok_and(|kind| kind.is_dir()) {
-                continue;
-            }
-            // Subagents and session sidecars live one level deeper. They are not
-            // standalone conversations and must not be listed a second time.
-            if let Ok(entries) = std::fs::read_dir(project.path()) {
-                files.extend(
-                    entries
-                        .flatten()
-                        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
-                        .map(|entry| entry.path())
-                        .filter(|path| path.extension().is_some_and(|ext| ext == "jsonl")),
-                );
+    for project in status.entries(root) {
+        let project = project.path();
+        if !status.is_dir(&project) {
+            continue;
+        }
+        // Subagents and session sidecars live one level deeper. They are not
+        // standalone conversations and must not be listed a second time.
+        for entry in status.entries(&project) {
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "jsonl")
+                && entry.file_type().is_ok_and(|kind| kind.is_file())
+            {
+                files.push(path);
             }
         }
     }
-    let mut sessions = cache.scan(files, claude::scan_session_file);
+    let mut sessions = cache.scan_with_status(files, claude::scan_session_file, status);
     for session in &mut sessions {
         session.provider_id = app.as_str().into();
         session.resume_command = Some(resume_command(app, &session.session_id));
@@ -119,7 +131,12 @@ mod tests {
         std::fs::write(project.join("session.jsonl"), &text).unwrap();
         std::fs::write(project.join("session/subagents/agent-test.jsonl"), &text).unwrap();
         for app in [AppType::Qoder, AppType::QoderCn] {
-            let sessions = scan_root(&app, dir.path(), &FileParseCache::new());
+            let sessions = scan_root(
+                &app,
+                dir.path(),
+                &FileParseCache::new(),
+                &mut ScanStatus::default(),
+            );
             assert_eq!(sessions.len(), 1);
             assert_eq!(sessions[0].provider_id, app.as_str());
             assert_eq!(sessions[0].project_dir.as_deref(), Some("/work/repo"));

@@ -138,7 +138,10 @@ impl StreamCheckService {
             None => Self::resolve_base_url(app_type, provider)?,
         };
 
-        let client = crate::proxy::http_client::get_for_url(&base_url);
+        // 探测不跟随重定向：3xx 本身就是 HTTP 响应，已证明可达。跟随反而会被
+        // `/v1` ↔ `/v1/` 互跳之类的服务端配置拖进重定向循环，误判为不可达（#5747）。
+        let client =
+            crate::proxy::http_client::no_redirect_for_url(&base_url).map_err(AppError::Message)?;
         let timeout = std::time::Duration::from_secs(config.timeout_secs);
         let ua = Self::custom_user_agent(provider);
 
@@ -170,10 +173,7 @@ impl StreamCheckService {
         match app_type {
             // 累加模式应用的 settings_config 结构与 Claude/Codex/Gemini 不同，
             // 不走 adapter，直接按各自约定提取 base_url。
-            AppType::OpenCode => {
-                let npm = Self::extract_opencode_npm(provider);
-                Self::resolve_opencode_base_url(provider, npm.as_deref())
-            }
+            AppType::OpenCode => Self::resolve_opencode_base_url(provider),
             AppType::OpenClaw => Self::extract_openclaw_base_url(provider),
             AppType::Hermes => Self::extract_hermes_base_url(provider),
             AppType::Pi => crate::pi_config::provider_base_url(&provider.settings_config),
@@ -212,6 +212,8 @@ impl StreamCheckService {
     /// - `send()` 在收到响应头时即返回，故计时天然是 TTFB；不读 body。
     /// - reqwest 对任何 HTTP 状态码都返回 `Ok`，只有网络级错误进 `Err`——
     ///   这正是"任何响应都算可达、只有连不上才算失败"的语义。
+    /// - `client` 必须不跟随重定向，否则重定向循环会在 `send()` 阶段变成 `Err`，
+    ///   把一个明明返回了 3xx 的供应商判为不可达。
     async fn probe_reachability(
         client: &Client,
         base_url: &str,
@@ -336,51 +338,65 @@ impl StreamCheckService {
             })
     }
 
-    /// OpenCode: `{ npm, options: { baseURL, apiKey }, ... }`
+    /// OpenCode V1: `{ npm, options: { baseURL, apiKey }, ... }`；
+    /// V2（原生）: `{ package, settings: { baseURL, apiKey }, ... }`（#8969）。
     ///
-    /// 用户未显式填 `options.baseURL` 时，按 `npm`（AI SDK 包）回退到包自带默认端点。
-    /// `@ai-sdk/openai-compatible` 无默认端点，必须显式填。
-    fn resolve_opencode_base_url(
-        provider: &Provider,
-        npm: Option<&str>,
-    ) -> Result<String, AppError> {
-        if let Some(explicit) = Self::extract_opencode_base_url(provider) {
-            return Ok(explicit);
+    /// 按 `meta.opencodeConfigFormat`（缺省按内容推断）先读本格式的字段，取不到再读
+    /// 另一种格式的同名字段。用户未显式填地址时，按 SDK 包回退到包自带默认端点；
+    /// openai-compatible 这类包没有默认端点，必须显式填。
+    fn resolve_opencode_base_url(provider: &Provider) -> Result<String, AppError> {
+        use crate::provider::OpenCodeConfigFormat;
+
+        let settings = &provider.settings_config;
+        let format =
+            crate::opencode_config::provider_format(settings, provider.opencode_config_format());
+        let (url_pointers, package_pointers) = match format {
+            OpenCodeConfigFormat::V2 => (
+                ["/settings/baseURL", "/options/baseURL"],
+                ["/package", "/npm"],
+            ),
+            OpenCodeConfigFormat::V1 => (
+                ["/options/baseURL", "/settings/baseURL"],
+                ["/npm", "/package"],
+            ),
+        };
+        let first_str = |pointers: [&str; 2]| {
+            pointers.into_iter().find_map(|pointer| {
+                settings
+                    .pointer(pointer)
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+            })
+        };
+
+        if let Some(explicit) = first_str(url_pointers) {
+            return Ok(explicit.to_string());
         }
 
-        let fallback = match npm {
-            Some("@ai-sdk/openai") => Some("https://api.openai.com/v1"),
-            Some("@ai-sdk/anthropic") => Some("https://api.anthropic.com"),
-            Some("@ai-sdk/google") => Some("https://generativelanguage.googleapis.com"),
+        let fallback = match first_str(package_pointers) {
+            Some(
+                "@ai-sdk/openai"
+                | "@opencode/ai/providers/openai"
+                | "@opencode/ai/providers/openai/chat"
+                | "@opencode/ai/providers/openai/responses",
+            ) => Some("https://api.openai.com/v1"),
+            Some("@ai-sdk/anthropic" | "@opencode/ai/providers/anthropic") => {
+                Some("https://api.anthropic.com")
+            }
+            Some("@ai-sdk/google" | "@opencode/ai/providers/google") => {
+                Some(DEFAULT_GEMINI_BASE_URL)
+            }
             _ => None,
         };
 
         fallback.map(|s| s.to_string()).ok_or_else(|| {
             AppError::localized(
                 "opencode_base_url_missing",
-                "OpenCode 供应商缺少 options.baseURL，且当前 SDK 包没有默认端点",
-                "OpenCode provider is missing `options.baseURL` and the SDK package has no default endpoint",
+                "OpenCode 供应商缺少 baseURL（V1 为 options.baseURL，V2 为 settings.baseURL），且当前 SDK 包没有默认端点",
+                "OpenCode provider is missing a base URL (`options.baseURL` in V1, `settings.baseURL` in V2) and the SDK package has no default endpoint",
             )
         })
-    }
-
-    fn extract_opencode_base_url(provider: &Provider) -> Option<String> {
-        provider
-            .settings_config
-            .get("options")
-            .and_then(|v| v.get("baseURL"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-    }
-
-    fn extract_opencode_npm(provider: &Provider) -> Option<String> {
-        provider
-            .settings_config
-            .get("npm")
-            .and_then(|v| v.as_str())
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
     }
 }
 
@@ -471,8 +487,7 @@ mod tests {
             "options": { "baseURL": "https://proxy.local/v1", "apiKey": "k" },
             "models": {},
         }));
-        let resolved =
-            StreamCheckService::resolve_opencode_base_url(&p, Some("@ai-sdk/openai")).unwrap();
+        let resolved = StreamCheckService::resolve_opencode_base_url(&p).unwrap();
         assert_eq!(resolved, "https://proxy.local/v1");
     }
 
@@ -483,8 +498,7 @@ mod tests {
             "options": { "apiKey": "k" },
             "models": {},
         }));
-        let resolved =
-            StreamCheckService::resolve_opencode_base_url(&p, Some("@ai-sdk/anthropic")).unwrap();
+        let resolved = StreamCheckService::resolve_opencode_base_url(&p).unwrap();
         assert_eq!(resolved, "https://api.anthropic.com");
     }
 
@@ -495,9 +509,77 @@ mod tests {
             "options": { "apiKey": "k" },
             "models": {},
         }));
-        let result =
-            StreamCheckService::resolve_opencode_base_url(&p, Some("@ai-sdk/openai-compatible"));
+        let result = StreamCheckService::resolve_opencode_base_url(&p);
         assert!(result.is_err());
+    }
+
+    fn make_v2_provider(settings_config: serde_json::Value) -> Provider {
+        let mut p = make_provider(settings_config);
+        p.meta = Some(crate::provider::ProviderMeta {
+            opencode_config_format: Some(crate::provider::OpenCodeConfigFormat::V2),
+            ..Default::default()
+        });
+        p
+    }
+
+    #[test]
+    fn test_resolve_opencode_base_url_reads_v2_settings() {
+        // #8969：V2 原生声明的地址在 settings.baseURL
+        let p = make_v2_provider(serde_json::json!({
+            "name": "SGLang",
+            "package": "@opencode/ai/providers/openai-compatible",
+            "settings": { "baseURL": "http://10.0.0.1/v1", "apiKey": "EMPTY" },
+            "models": { "m": { "modelID": "m" } },
+        }));
+        assert_eq!(
+            StreamCheckService::resolve_opencode_base_url(&p).unwrap(),
+            "http://10.0.0.1/v1"
+        );
+
+        // 未标注格式时按内容推断为 V2
+        let inferred = make_provider(p.settings_config.clone());
+        assert_eq!(
+            StreamCheckService::resolve_opencode_base_url(&inferred).unwrap(),
+            "http://10.0.0.1/v1"
+        );
+    }
+
+    #[test]
+    fn test_resolve_opencode_base_url_v2_package_defaults() {
+        let p = make_v2_provider(serde_json::json!({
+            "package": "@opencode/ai/providers/anthropic",
+            "settings": { "apiKey": "k" },
+        }));
+        assert_eq!(
+            StreamCheckService::resolve_opencode_base_url(&p).unwrap(),
+            "https://api.anthropic.com"
+        );
+
+        let p = make_v2_provider(serde_json::json!({
+            "package": "@opencode/ai/providers/openai/responses",
+        }));
+        assert_eq!(
+            StreamCheckService::resolve_opencode_base_url(&p).unwrap(),
+            "https://api.openai.com/v1"
+        );
+
+        let p = make_v2_provider(serde_json::json!({
+            "package": "@opencode/ai/providers/openai-compatible",
+            "settings": { "apiKey": "k" },
+        }));
+        assert!(StreamCheckService::resolve_opencode_base_url(&p).is_err());
+    }
+
+    #[test]
+    fn test_resolve_opencode_base_url_v2_falls_back_to_v1_options() {
+        let p = make_v2_provider(serde_json::json!({
+            "package": "@opencode/ai/providers/openai-compatible",
+            "options": { "baseURL": "https://legacy.example/v1" },
+        }));
+        assert_eq!(
+            StreamCheckService::resolve_opencode_base_url(&p).unwrap(),
+            "https://legacy.example/v1"
+        );
     }
 
     #[test]
@@ -584,5 +666,43 @@ mod tests {
         .unwrap();
         assert!(result.success, "{}", result.message);
         assert_eq!(result.http_status, Some(404));
+    }
+
+    /// 回归 #5747：网关 `/v1` ↔ `/v1/` 互相 301。探测若跟随重定向会撞上限报错、
+    /// 误判不可达；收到第一个 3xx 就应判为可达。
+    #[tokio::test]
+    async fn test_redirect_loop_is_reachable() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0u8; 1024];
+                let n = socket.read(&mut buf).await.unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]);
+                let target = if req.starts_with("GET /v1/ ") {
+                    "/v1"
+                } else {
+                    "/v1/"
+                };
+                let resp = format!(
+                    "HTTP/1.1 301 Moved Permanently\r\nlocation: http://{addr}{target}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                );
+                let _ = socket.write_all(resp.as_bytes()).await;
+            }
+        });
+        let provider = make_provider(serde_json::json!({
+            "env": { "ANTHROPIC_BASE_URL": format!("http://{addr}/v1") }
+        }));
+        let result = StreamCheckService::check_with_retry(
+            &AppType::Claude,
+            &provider,
+            &StreamCheckConfig::default(),
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(result.success, "{}", result.message);
+        assert_eq!(result.http_status, Some(301));
     }
 }

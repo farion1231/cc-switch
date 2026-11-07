@@ -3,6 +3,7 @@ import {
   type PiPresetModel,
   type PiProviderPreset,
 } from "./piProviderPresets";
+import { piModel } from "./piModelCatalog";
 import type { PiThinkingLevel } from "./piThinkingProfiles";
 
 export const MCODE_API_FORMATS = [
@@ -99,8 +100,34 @@ function adaptiveEffortOptions(model: PiPresetModel): string[] {
   return [...new Set(efforts)];
 }
 
+// Presets for MCode alone, in Pi's shape so they go through the same mapping.
+// OpenAI API stays out of Pi: Pi ships its own OpenAI provider.
+export const mcodeOnlyPiPresets: PiProviderPreset[] = [
+  {
+    name: "OpenAI API",
+    providerKey: "cc-switch-openai-api",
+    websiteUrl: "https://platform.openai.com",
+    apiKeyUrl: "https://platform.openai.com/api-keys",
+    settingsConfig: {
+      name: "OpenAI API",
+      baseUrl: "https://api.openai.com/v1",
+      api: "openai-responses",
+      apiKey: "",
+      models: [
+        piModel("openai/gpt-6.1-sol", { id: "gpt-6.1-sol" }),
+        piModel("openai/gpt-6-luna", { id: "gpt-6-luna" }),
+      ],
+    },
+    category: "cn_official",
+    icon: "openai",
+    iconColor: "#00A67E",
+  },
+];
+
+const mcodeSourcePresets = [...piProviderPresets, ...mcodeOnlyPiPresets];
+
 export const mcodeProviderPresets: McodeProviderPreset[] =
-  piProviderPresets.flatMap((preset) => {
+  mcodeSourcePresets.flatMap((preset) => {
     const config = preset.settingsConfig;
     const api = MCODE_API_FORMATS.find((format) => format === config.api);
     if (!api || config.compat) return [];

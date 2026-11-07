@@ -1,0 +1,33 @@
+{
+  "version": "4.0.23",
+  "items": [
+    {
+      "type": "new",
+      "zh": "Kimi Code 等三个应用的供应商改用原生格式编辑",
+      "zh-TW": "Kimi Code 等三個應用的供應商改用原生格式編輯",
+      "en": "Edit Kimi Code, MiniMax Code and Oh My Pi providers in their native config format",
+      "ja": "Kimi Code・MiniMax Code・Oh My Pi のプロバイダーをネイティブ形式で編集"
+    },
+    {
+      "type": "improve",
+      "zh": "经路由连 OpenAI 格式和 Gemini 时，思考档位能发给更多模型",
+      "zh-TW": "經路由連 OpenAI 格式和 Gemini 時，思考檔位能傳給更多模型",
+      "en": "Thinking levels now reach more models on OpenAI-format and Gemini routes",
+      "ja": "OpenAI 形式と Gemini のルートで、より多くのモデルに思考レベルを送信"
+    },
+    {
+      "type": "new",
+      "zh": "授权中心新增「全部刷新」，一次刷新所有账号的额度",
+      "zh-TW": "授權中心新增「全部重新整理」，一次重新整理所有帳號的額度",
+      "en": "Refresh all account quotas at once from the Auth Center",
+      "ja": "認証センターで全アカウントのクォータを一括更新"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 Windows 进入轻量模式后主窗口无法恢复",
+      "zh-TW": "修正 Windows 進入輕量模式後主視窗無法恢復",
+      "en": "Fixed the main window not coming back from lightweight mode on Windows",
+      "ja": "Windows で軽量モードからメインウィンドウが戻らない問題を修正"
+    }
+  ]
+}

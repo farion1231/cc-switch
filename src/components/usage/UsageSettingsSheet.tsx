@@ -199,7 +199,12 @@ export function UsageSettingsSheet({
               >
                 {/* 说明直接写在卡片里，不再套一层灰底：暗色下灰底比卡片暗、比页面亮，成了第三种底色 */}
                 <ul className="m-0 flex list-none flex-col gap-1 p-0 text-caption text-fg-2">
-                  <li>{t("usage.sources.coverage", { apps: coveredApps })}</li>
+                  <li>
+                    {t("usage.sources.coverage", {
+                      total: KNOWN_APP_TYPES.length,
+                      apps: coveredApps,
+                    })}
+                  </li>
                   <li>
                     {syncedLabel ? `${cadence} · ${syncedLabel}` : cadence}
                   </li>

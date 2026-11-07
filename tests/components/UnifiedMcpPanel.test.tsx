@@ -25,6 +25,16 @@ const mocks = vi.hoisted(() => ({
   toastSuccess: vi.fn(),
   toastWarning: vi.fn(),
   visibleApps: ["claude", "codex", "gemini"] as string[],
+  connectivity: {
+    states: { alpha: "connected", beta: "disconnected" } as Record<
+      string,
+      string
+    >,
+    checking: false,
+    canCheck: true,
+    checkAll: vi.fn(),
+    checkServer: vi.fn(),
+  },
 }));
 
 vi.mock("@/hooks/useMcp", () => ({
@@ -58,6 +68,10 @@ vi.mock("@/hooks/useMcp", () => ({
 vi.mock("@/components/mcp/useVisibleAppIds", () => ({
   useVisibleAppIds: (ids: string[]) =>
     ids.filter((id) => mocks.visibleApps.includes(id)),
+}));
+
+vi.mock("@/hooks/useMcpConnectivity", () => ({
+  useMcpConnectivity: () => mocks.connectivity,
 }));
 
 vi.mock("@/components/mcp/McpFormModal", () => ({
@@ -127,7 +141,7 @@ function PendingEditorSave() {
 const rowNames = () =>
   within(screen.getByRole("list", { name: "mcpPage.listLabel" }))
     .getAllByRole("listitem")
-    .map((item) => item.querySelector("span")?.textContent);
+    .map((item) => item.querySelector("span[title].truncate")?.textContent);
 
 describe("UnifiedMcpPanel", () => {
   beforeEach(() => {
@@ -135,6 +149,11 @@ describe("UnifiedMcpPanel", () => {
     mocks.isLoading = false;
     mocks.isError = false;
     mocks.visibleApps = ["claude", "codex", "gemini"];
+    mocks.connectivity.states = { alpha: "connected", beta: "disconnected" };
+    mocks.connectivity.checking = false;
+    mocks.connectivity.canCheck = true;
+    mocks.connectivity.checkAll.mockReset();
+    mocks.connectivity.checkServer.mockReset();
     mocks.toggle.mockReset().mockResolvedValue(true);
     mocks.bulkToggle.mockReset().mockImplementation(async ({ serverIds }) => ({
       succeeded: serverIds,
@@ -194,6 +213,84 @@ describe("UnifiedMcpPanel", () => {
     expect(screen.queryByText("mcpPage.noMatch")).not.toBeInTheDocument();
   });
 
+  it("shows compact connectivity lights separately from app enablement", () => {
+    mocks.serversMap = {
+      alpha: makeServer("alpha", { apps: { claude: true } }),
+      beta: makeServer("beta", { apps: { codex: true } }),
+      pending: makeServer("pending", { apps: { claude: true } }),
+      oauth: makeServer("oauth", { apps: { claude: true } }),
+      disabled: makeServer("disabled"),
+    };
+    mocks.connectivity.states.oauth = "authRequired";
+    renderPanel();
+    expect(
+      screen.getByRole("img", { name: "mcpPage.connection.connected" }),
+    ).toHaveClass("bg-success", "rounded-full");
+    expect(
+      screen.getByRole("img", { name: "mcpPage.connection.disconnected" }),
+    ).toHaveClass("bg-danger", "rounded-full");
+    expect(
+      screen.getByRole("img", { name: "mcpPage.connection.authRequired" }),
+    ).toHaveClass("bg-warning", "rounded-full");
+    expect(
+      screen.getByRole("img", { name: "mcpPage.connection.unchecked" }),
+    ).toHaveClass("bg-fg-3");
+    expect(
+      screen.queryByRole("img", { name: "mcpPage.connection.checking" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("img", { name: "mcpPage.connection.disabled" }),
+    ).toHaveClass("bg-fg-3");
+  });
+
+  it("checks connectivity only when asked, for the page or a single row", async () => {
+    mocks.serversMap = {
+      alpha: makeServer("alpha", { apps: { claude: true } }),
+      disabled: makeServer("disabled"),
+    };
+    renderPanel();
+    expect(mocks.connectivity.checkAll).not.toHaveBeenCalled();
+    expect(mocks.connectivity.checkServer).not.toHaveBeenCalled();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "mcpPage.checkConnectivity" }),
+    );
+    expect(mocks.connectivity.checkAll).toHaveBeenCalledTimes(1);
+
+    const [alphaMore, disabledMore] = screen.getAllByRole("button", {
+      name: "mcpPage.rowMoreAria",
+    });
+    await userEvent.click(alphaMore);
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "mcpPage.testConnection" }),
+    );
+    expect(mocks.connectivity.checkServer).toHaveBeenCalledWith("alpha");
+
+    await userEvent.click(disabledMore);
+    await screen.findByRole("menuitem", { name: "mcpPage.copyJson" });
+    expect(
+      screen.queryByRole("menuitem", { name: "mcpPage.testConnection" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("disables the page check while a check runs or nothing is enabled", () => {
+    mocks.serversMap = {
+      alpha: makeServer("alpha", { apps: { claude: true } }),
+    };
+    mocks.connectivity.checking = true;
+    const { unmount } = renderPanel();
+    expect(
+      screen.getByRole("button", { name: "mcpPage.checkConnectivity" }),
+    ).toBeDisabled();
+    unmount();
+    mocks.connectivity.checking = false;
+    mocks.connectivity.canCheck = false;
+    renderPanel();
+    expect(
+      screen.getByRole("button", { name: "mcpPage.checkConnectivity" }),
+    ).toBeDisabled();
+  });
+
   it("shows the load error instead of the empty state", () => {
     mocks.isError = true;
     renderPanel();
@@ -211,7 +308,8 @@ describe("UnifiedMcpPanel", () => {
     ).toHaveLength(3);
   });
 
-  it("highlights the column header when a cell gets keyboard focus", async () => {
+  it("highlights a column for its cells but shows the app name only when hovering the header", async () => {
+    const user = userEvent.setup();
     mocks.serversMap = { alpha: makeServer("alpha") };
     renderPanel();
     const columns = screen.getAllByRole("button", {
@@ -220,9 +318,28 @@ describe("UnifiedMcpPanel", () => {
     const cell = screen.getAllByRole("button", { name: /appMatrix.cell/ })[1];
     act(() => cell.focus());
     expect(columns[1]).toHaveAttribute("data-highlighted");
-    expect(screen.getByTestId("matrix-column-name")).toHaveTextContent("Codex");
+    expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
     act(() => cell.blur());
     expect(columns[1]).not.toHaveAttribute("data-highlighted");
+
+    await user.hover(cell);
+    expect(columns[1]).toHaveAttribute("data-highlighted");
+    expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "appMatrix.cell.off",
+    );
+    await user.click(cell);
+    expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
+
+    await user.hover(columns[1]);
+    expect(screen.getByTestId("matrix-column-name")).toHaveTextContent("Codex");
+    await user.unhover(columns[1]);
+    expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
+
+    await user.hover(columns[1]);
+    await user.hover(cell);
+    expect(columns[1]).toHaveAttribute("data-highlighted");
+    expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
   });
 
   it("bulk-enables only the rows left by the search and offers undo", async () => {

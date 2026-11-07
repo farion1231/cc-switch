@@ -44,10 +44,69 @@ struct ResponseModelId {
     model_id: String,
 }
 
-pub(super) fn models_for_transcript(
+// Field 11 is the wait for the first token and field 12 the rest of the stream; both match the
+// step's own created / first-output / done timestamps to the millisecond. Decoded on their own
+// so an unexpected wire type there can never hide the model name.
+#[derive(Clone, PartialEq, Message)]
+struct GenerationTiming {
+    #[prost(message, optional, tag = "1")]
+    response: Option<ResponseTiming>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct ResponseTiming {
+    #[prost(message, optional, tag = "11")]
+    first_token: Option<DurationValue>,
+    #[prost(message, optional, tag = "12")]
+    streaming: Option<DurationValue>,
+}
+
+/// `google.protobuf.Duration`.
+#[derive(Clone, PartialEq, Message)]
+struct DurationValue {
+    #[prost(int64, tag = "1")]
+    seconds: i64,
+    #[prost(int32, tag = "2")]
+    nanos: i32,
+}
+
+impl DurationValue {
+    fn millis(&self) -> Option<i64> {
+        let ms = self
+            .seconds
+            .checked_mul(1000)?
+            .checked_add(i64::from(self.nanos) / 1_000_000)?;
+        (ms >= 0).then_some(ms)
+    }
+}
+
+/// Exact timing recorded by agy for one generation.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Timing {
+    pub latency_ms: i64,
+    pub first_token_ms: i64,
+}
+
+#[derive(Default)]
+pub(super) struct Generation {
+    pub model: Option<String>,
+    pub timing: Option<Timing>,
+}
+
+fn timing_of(bytes: &[u8]) -> Option<Timing> {
+    let response = GenerationTiming::decode(bytes).ok()?.response?;
+    let first_token_ms = response.first_token?.millis()?;
+    let latency_ms = first_token_ms.checked_add(response.streaming?.millis()?)?;
+    (latency_ms > 0).then_some(Timing {
+        latency_ms,
+        first_token_ms,
+    })
+}
+
+pub(super) fn generations_for_transcript(
     transcript: &Path,
     steps: &[u64],
-) -> Result<HashMap<u64, String>, String> {
+) -> Result<HashMap<u64, Generation>, String> {
     // brain/<id>/.system_generated/logs/transcript_full.jsonl and conversations/<id>.db
     // share the same CLI/IDE/private-profile root.
     let session = transcript
@@ -70,10 +129,10 @@ pub(super) fn models_for_transcript(
     if !path.starts_with(root) {
         return Err("Conversation database is outside the Antigravity root".into());
     }
-    read_models(&path, steps).map_err(|error| error.to_string())
+    read_generations(&path, steps).map_err(|error| error.to_string())
 }
 
-fn read_models(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64, String>> {
+fn read_generations(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64, Generation>> {
     let mut conn = Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -84,7 +143,7 @@ fn read_models(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64, Stri
     let tx = conn.transaction()?;
     let mut step_query = tx.prepare("SELECT metadata FROM steps WHERE idx=?1 AND step_type=15")?;
     let mut generation_query = tx.prepare("SELECT data FROM gen_metadata WHERE idx=?1")?;
-    let mut models = HashMap::new();
+    let mut generations = HashMap::new();
     for &step in steps {
         let Ok(index) = i64::try_from(step) else {
             continue;
@@ -116,16 +175,25 @@ fn read_models(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64, Stri
             .ok()
             .and_then(|metadata| metadata.response)
             .map(|response| response.model);
-        if let Some(model) = [tiered, base]
+        let model = [tiered, base]
             .into_iter()
             .flatten()
             .map(|model| model.trim().to_string())
-            .find(|model| !model.is_empty() && !model.eq_ignore_ascii_case("unknown"))
-        {
-            models.insert(step, model);
+            .find(|model| !model.is_empty() && !model.eq_ignore_ascii_case("unknown"));
+        let timing = timing_of(&bytes);
+        if model.is_some() || timing.is_some() {
+            generations.insert(step, Generation { model, timing });
         }
     }
-    Ok(models)
+    Ok(generations)
+}
+
+#[cfg(test)]
+fn read_models(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64, String>> {
+    Ok(read_generations(path, steps)?
+        .into_iter()
+        .filter_map(|(step, generation)| Some((step, generation.model?)))
+        .collect())
 }
 
 #[cfg(test)]
@@ -181,12 +249,28 @@ pub(super) fn test_model_id(id: &str) -> Vec<u8> {
     field
 }
 
+/// Fields 11 and 12 as durations of the given milliseconds.
+#[cfg(test)]
+pub(super) fn test_timing(first_token_ms: i64, streaming_ms: i64) -> Vec<u8> {
+    let duration = |ms: i64| DurationValue {
+        seconds: ms / 1000,
+        nanos: i32::try_from(ms % 1000 * 1_000_000).unwrap(),
+    };
+    let mut fields = Vec::new();
+    prost::encoding::message::encode(11, &duration(first_token_ms), &mut fields);
+    prost::encoding::message::encode(12, &duration(streaming_ms), &mut fields);
+    fields
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn uses_step_references_including_zero_instead_of_generation_order() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("session.db");
         let conn = write_test_database(
@@ -215,6 +299,9 @@ mod tests {
 
     #[test]
     fn skips_missing_references_and_malformed_metadata() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("session.db");
         let conn = write_test_database(&path, &[(1, 0, "gemini-4-argon")]);
@@ -235,6 +322,9 @@ mod tests {
 
     #[test]
     fn prefers_tiered_model_id_and_falls_back_to_the_base_name() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("session.db");
         let conn = write_test_database(
@@ -268,6 +358,9 @@ mod tests {
 
     #[test]
     fn reads_committed_wal_and_returns_promptly_for_an_exclusive_writer() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("session.db");
         let conn = write_test_database(&path, &[(1, 0, "gemini-4-argon")]);
@@ -303,8 +396,55 @@ mod tests {
         let transcript = dir
             .path()
             .join("brain/session/.system_generated/logs/transcript_full.jsonl");
-        assert!(models_for_transcript(&transcript, &[1]).unwrap().is_empty());
+        assert!(generations_for_transcript(&transcript, &[1])
+            .unwrap()
+            .is_empty());
         assert!(!dir.path().join("conversations").exists());
+    }
+
+    #[test]
+    fn reads_first_token_and_streaming_durations_without_hiding_the_model() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.db");
+        let conn = write_test_database(
+            &path,
+            &[
+                (1, 0, "gemini-4-argon"),
+                (2, 1, "gemini-4-argon"),
+                (3, 2, "gemini-4-argon"),
+                (4, 3, "gemini-4-argon"),
+            ],
+        );
+        // Values taken from a real claude-opus generation: 2.799 s wait, 1.722 s stream.
+        set_test_generation(&conn, 0, "gemini-4-argon", &test_timing(2799, 1722));
+        // Only the wait recorded: no total to compare against, so no timing.
+        let mut wait_only = Vec::new();
+        prost::encoding::message::encode(
+            11,
+            &DurationValue {
+                seconds: 3,
+                nanos: 0,
+            },
+            &mut wait_only,
+        );
+        set_test_generation(&conn, 1, "gemini-4-argon", &wait_only);
+        // Field 11 as a varint (wrong wire type) must not hide the model.
+        set_test_generation(&conn, 2, "gemini-4-argon", b"\x58\x07");
+        let got = read_generations(&path, &[1, 2, 3, 4]).unwrap();
+        assert_eq!(
+            got[&1].timing,
+            Some(Timing {
+                latency_ms: 4521,
+                first_token_ms: 2799,
+            })
+        );
+        for step in [2, 3, 4] {
+            assert_eq!(got[&step].model.as_deref(), Some("gemini-4-argon"));
+            assert_eq!(got[&step].timing, None, "step {step}");
+        }
     }
 
     #[test]
@@ -319,6 +459,6 @@ mod tests {
         let transcript = dir
             .path()
             .join("brain/session/.system_generated/logs/transcript_full.jsonl");
-        assert!(models_for_transcript(&transcript, &[1]).is_err());
+        assert!(generations_for_transcript(&transcript, &[1]).is_err());
     }
 }

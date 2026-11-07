@@ -477,6 +477,8 @@ export function loginAccountKey(
     case "qoder":
     case "qoder-cn":
       return "qoder";
+    case "dsh":
+      return "deepseek";
     default:
       return "claude";
   }

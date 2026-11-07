@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[path = "support.rs"]
+#[path = "support/mod.rs"]
 mod support;
 use support::{create_test_state, reset_test_fs, test_mutex};
 

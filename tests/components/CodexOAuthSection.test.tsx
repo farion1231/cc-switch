@@ -11,6 +11,10 @@ const mocks = vi.hoisted(() => ({
   accountUsers: vi.fn(),
 }));
 
+vi.mock("@/lib/query/accountPlans", () => ({
+  useAccountQuotaPlans: () => ({}),
+}));
+
 vi.mock("@/components/providers/forms/hooks/useManagedAccountUsers", () => ({
   useManagedAccountUsers: () => mocks.accountUsers,
 }));
@@ -44,6 +48,10 @@ vi.mock("@/components/providers/KimiAccountLogin", () => ({
 
 vi.mock("@/components/providers/QoderAuthSection", () => ({
   QoderAuthSection: () => <div />,
+}));
+
+vi.mock("@/components/providers/DshAccount", () => ({
+  DshAccountLogin: () => <div />,
 }));
 
 describe("CodexOAuthSection", () => {

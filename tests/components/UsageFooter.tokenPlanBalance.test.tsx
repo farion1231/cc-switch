@@ -31,7 +31,6 @@ function renderFooter(result: UsageResult) {
         providerId={provider.id}
         appId="claude"
         usageEnabled={true}
-        isCurrent={true}
       />
     </QueryClientProvider>,
   );

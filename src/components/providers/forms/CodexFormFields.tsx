@@ -106,6 +106,7 @@ import {
   fillCodexCatalogModel,
   metadataFilledAnything,
 } from "./modelMetadataFill";
+import { normalizeEnabledCodexChatEffortParam } from "./helpers/codexChatReasoning";
 import type {
   ClaudeApiKeyField,
   CodexApiFormat,
@@ -207,6 +208,11 @@ interface CodexFormFieldsProps {
   onSubagentModelChange?: (model: string) => void;
   subagentReasoningEffort?: string;
   onSubagentReasoningEffortChange?: (effort: string) => void;
+  // Sub-agent concurrency limit (config.toml `[agents] max_threads`): a Codex-wide
+  // setting saved into live, shown wherever the config.toml editor is (classic layout).
+  agentMaxThreads?: string;
+  multiAgentV2Total?: number;
+  onAgentMaxThreadsChange?: (value: string) => void;
 
   // API Format
   // Note: wire_api is always "responses" for Codex; apiFormat controls proxy-layer conversion
@@ -235,6 +241,10 @@ interface CodexFormFieldsProps {
   // the catalog rows. Codex only; the Stack layout omits it (aggregation settings apply).
   autoReviewModel?: string;
   onAutoReviewModelChange?: (model: string) => void;
+  // Keep the official Fast speed tier on GPT rows mirrored from Codex's bundled
+  // entries: `modelCatalog.officialSpeedTiers`. Native Responses only.
+  officialSpeedTiers?: boolean;
+  onOfficialSpeedTiersChange?: (keep: boolean) => void;
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
@@ -671,6 +681,9 @@ export function CodexFormFields({
   onSubagentModelChange,
   subagentReasoningEffort = "",
   onSubagentReasoningEffortChange,
+  agentMaxThreads = "",
+  multiAgentV2Total,
+  onAgentMaxThreadsChange,
   apiFormat,
   onApiFormatChange,
   copilotApiFormat = "auto",
@@ -688,6 +701,8 @@ export function CodexFormFields({
   catalogModels = [],
   autoReviewModel = "",
   onAutoReviewModelChange,
+  officialSpeedTiers = false,
+  onOfficialSpeedTiersChange,
   onCatalogModelsChange,
   speedTestEndpoints,
   customUserAgent,
@@ -857,7 +872,7 @@ export function CodexFormFields({
         supportsThinking: checked ? true : codexChatReasoning.supportsThinking,
         supportsEffort: checked,
         effortParam: checked
-          ? (codexChatReasoning.effortParam ?? "reasoning_effort")
+          ? normalizeEnabledCodexChatEffortParam(codexChatReasoning.effortParam)
           : "none",
       });
     },
@@ -1388,6 +1403,34 @@ export function CodexFormFields({
       <HelpTip title={label}>{help}</HelpTip>
     </div>
   );
+
+  // 保留官方 Fast 档：镜像官方的 GPT 行默认清空速度档，后面接官方账号的中转（如 CPA）才认
+  // service_tier=priority。Chat、Anthropic 转换会把它转给不认的上游，Copilot 走自己的目录，
+  // 都只给原生 Responses；聚合布局不显示（合并目录不看卡上的设置）。
+  const officialSpeedTiersToggle = onOfficialSpeedTiersChange &&
+    !isCopilotPreset &&
+    effectiveApiFormat === "openai_responses" && (
+      <div className="flex items-center justify-between gap-4">
+        {labelWithHelp(
+          t("codexConfig.officialSpeedTiersLabel", {
+            defaultValue: "保留官方 Fast 档",
+          }),
+          t("codexConfig.officialSpeedTiersHint", {
+            defaultValue:
+              "让模型列表里的 GPT 模型保留官方的 Fast 速度档，Codex 选了 Fast 后请求会带 service_tier=priority。只有转发官方 ChatGPT 账号的中转（如 CPA）才认，会更快消耗额度；其他上游可能报错或按更高价计费。打开后，之前在官方卡下选过的 Fast 会立刻在这家生效。聚合模式下不生效。改完需要重启 Codex。",
+          }),
+          "codexOfficialSpeedTiers",
+        )}
+        <Switch
+          id="codexOfficialSpeedTiers"
+          checked={officialSpeedTiers}
+          onCheckedChange={onOfficialSpeedTiersChange}
+          aria-label={t("codexConfig.officialSpeedTiersLabel", {
+            defaultValue: "保留官方 Fast 档",
+          })}
+        />
+      </div>
+    );
 
   const upstreamFormatSelect = (
     <div className="space-y-1.5">
@@ -2038,7 +2081,7 @@ export function CodexFormFields({
             placeholder={
               isGrokBuild
                 ? t("grokBuild.defaultModelPlaceholder", {
-                    defaultValue: "例如: grok-4.5",
+                    defaultValue: "例如: grok-4.7",
                   })
                 : t("codexConfig.defaultModelPlaceholder", {
                     defaultValue: "例如: gpt-5.6",
@@ -2327,6 +2370,41 @@ export function CodexFormFields({
         </div>
       )}
 
+      {/* 子代理并发上限 —— config.toml 的 [agents] max_threads，Codex 的全局设置（官方供应商也显示），
+          保存时写进 live。留空删键，回到 Codex 默认值。 */}
+      {onAgentMaxThreadsChange && (
+        <div className="space-y-1.5">
+          {labelWithHelp(
+            t("codexConfig.agentMaxThreadsLabel", {
+              defaultValue: "子代理并发上限",
+            }),
+            t("codexConfig.agentMaxThreadsHint", {
+              defaultValue:
+                "一个 Codex 会话里最多同时开多少个子代理（不含主代理），切换供应商时保持不变。留空用 Codex 默认值（经典子 agent 工具 6 个，新版工具 3 个），最小为 1，不支持不限。新对话生效。",
+            }),
+            "codexAgentMaxThreads",
+          )}
+          <Input
+            id="codexAgentMaxThreads"
+            value={agentMaxThreads}
+            inputMode="numeric"
+            onChange={(event) => onAgentMaxThreadsChange(event.target.value)}
+            placeholder={t("codexConfig.agentMaxThreadsPlaceholder", {
+              defaultValue: "留空则用 Codex 默认值",
+            })}
+          />
+          {multiAgentV2Total !== undefined && (
+            <p className="text-xs leading-relaxed text-fg-2">
+              {t("codexConfig.agentMaxThreadsV2Override", {
+                total: multiAgentV2Total,
+                defaultValue:
+                  "config.toml 的 [features.multi_agent_v2] 写了总数 {{total}}（含主代理），使用新版子 agent 工具时以它为准。",
+              })}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* 自动审批 —— 写进模型目录每一行的 auto_review_model_override，Codex 按主模型那一行
           选审批模型。只能选列表里的模型；聚合模式下不生效，改用聚合设置。 */}
       {category !== "official" && onAutoReviewModelChange && (
@@ -2417,6 +2495,7 @@ export function CodexFormFields({
             {(shouldShowSpeedTest || isCopilotPreset) && !isXaiOauthPreset && (
               <div className="space-y-3">
                 {upstreamFormatSelect}
+                {officialSpeedTiersToggle}
                 {isAnthropicFormat && anthropicAuthFieldSelect}
                 {isAnthropicFormat && impersonateClaudeCodeToggle}
                 {isAnthropicFormat && maxOutputTokensField}
