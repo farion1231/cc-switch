@@ -8,14 +8,12 @@ import type { ToolInstallation } from "@/lib/api/settings";
 export function ToolInstallRow({ inst }: { inst: ToolInstallation }) {
   const { t } = useTranslation();
   return (
-    <div className="flex items-center gap-1.5 text-badge">
+    // 路径写全、放不下就折行，不截断、不靠悬停看全文；折行时徽标和版本跟第一行对齐
+    <div className="flex items-baseline gap-1.5 text-badge">
       <span className="shrink-0 rounded bg-surface px-1 py-0.5 font-mono text-fg-2">
         {inst.source}
       </span>
-      <span
-        className="min-w-0 flex-1 truncate font-mono text-fg-2"
-        title={inst.path}
-      >
+      <span className="min-w-0 flex-1 break-all font-mono text-fg-2">
         {inst.path}
       </span>
       <span

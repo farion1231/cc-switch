@@ -76,7 +76,8 @@
     --bg-card: #ffffff;
     --border-strong: #cfcfd6;
     --text-1: #18181b;
-    --text-2: #52525b;
+    /* 三级对选中底（--bg-selected）已贴着 4.5:1 的下限不能再浅，次级和三级的层次靠把次级加深拉开 */
+    --text-2: #45454d;
     --text-3: #65656e;
     --action-bg: #f97316;
     --action-fg: #ffffff;
