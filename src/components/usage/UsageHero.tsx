@@ -114,24 +114,33 @@ function MetricCell({
         aria-label={`${label} ${value}`}
         onClick={onSelect}
         className={cn(
-          "absolute inset-0 transition-[background-color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-          // 选中：底边一道 2px 正文色线，下半像素压住分隔线，和它在同一水平线上；不再用底色
-          // 悬停用 group：鼠标在数字上（数字接指针事件、显示完整值）时整格也要变色
+          "absolute inset-0 cursor-pointer transition-[background-color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          // 选中 Tab：浅底色浮起 + 底部 2.5px 强调线压住分隔线，明显强化 Tab 激活态
           selected
-            ? "shadow-[inset_0_-1px_0_var(--text-1),0_1px_0_var(--text-1)]"
-            : "group-hover:bg-sidebar",
+            ? "bg-selected shadow-[inset_0_-2.5px_0_var(--text-1)]"
+            : "hover:bg-subtle",
         )}
       />
       <div className="pointer-events-none relative flex min-w-0 flex-col gap-0.5">
-        <div className="flex h-[18px] min-w-0 items-center gap-0.5">
-          <span
-            className={cn(
-              "truncate text-caption",
-              selected ? "text-fg-1" : "text-fg-2",
+        <div className="flex h-[18px] min-w-0 items-center justify-between gap-1">
+          <div className="flex min-w-0 items-center gap-1.5">
+            {selected && (
+              <span
+                aria-hidden="true"
+                className="h-1.5 w-1.5 shrink-0 rounded-full bg-chart-usage"
+              />
             )}
-          >
-            {label}
-          </span>
+            <span
+              className={cn(
+                "truncate text-caption transition-colors",
+                selected
+                  ? "font-semibold text-fg-1"
+                  : "text-fg-2 group-hover:text-fg-1",
+              )}
+            >
+              {label}
+            </span>
+          </div>
           {help && (
             // flex 包一层：行内 span 会让「?」按基线排、比文字低约 1px
             <span className="pointer-events-auto flex">
@@ -148,9 +157,11 @@ function MetricCell({
             aria-hidden="true"
             onClick={onSelect}
             className={cn(
-              "max-w-full self-start truncate text-metric leading-7 tabular-nums",
+              "max-w-full self-start cursor-pointer truncate text-metric leading-7 tabular-nums transition-colors",
               title && "pointer-events-auto",
-              selected ? "text-fg-1" : "text-fg-2",
+              selected
+                ? "font-semibold text-fg-1"
+                : "text-fg-2 group-hover:text-fg-1",
             )}
           >
             {value}
@@ -255,7 +266,9 @@ export function UsageHero({
   const tokens = (value: number) => formatTokensCompact(value, locale);
   // 悬停看完整数字；加载中、没有数据时格子里是「…」「—」，不提示
   const exact = (text: string | undefined) => (placeholder ? undefined : text);
-  const columns = compact ? "grid-cols-2" : "grid-cols-4";
+  const gridLayout = compact
+    ? "grid-cols-2 [&>*:nth-child(2n)]:border-l [&>*:nth-child(n+3)]:border-t [&>*]:border-border"
+    : "grid-cols-4 divide-x divide-border";
 
   const cacheWriteHelp =
     cacheWriteState === "na"
@@ -269,7 +282,7 @@ export function UsageHero({
       aria-label={t("usage.metrics.label")}
       className="relative z-10 border-b border-border"
     >
-      <div className={cn("grid", columns)}>
+      <div className={cn("grid border-border", gridLayout)}>
         <MetricCell
           label={t("usage.totalCost")}
           value={placeholder ?? (totalCost == null ? "—" : money(totalCost, 2))}
@@ -320,7 +333,7 @@ export function UsageHero({
         {...(moreOpen ? {} : { inert: "" })}
       >
         <div className="min-h-0 overflow-hidden">
-          <div className={cn("grid border-t border-border", columns)}>
+          <div className={cn("grid border-t border-border", gridLayout)}>
             <SubMetric
               label={t("usage.freshInput")}
               value={placeholder ?? tokens(input)}
