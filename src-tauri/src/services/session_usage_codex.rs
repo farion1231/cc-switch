@@ -4348,6 +4348,25 @@ mod tests {
         supported
     }
 
+    /// 能不能区分「大小、修改时间都相同的两个文件」：要文件系统提供文件身份。
+    /// Windows 访问 9P 共享（`\\wsl.localhost\...`）时没有文件 ID，只比较时间和大小。
+    fn same_size_same_mtime_replacement_detectable(path: &Path) -> bool {
+        let Some(stamp) = ParentFileStamp::from_file(&fs::File::open(path).unwrap()) else {
+            eprintln!("no file stamp for {}; skipping", path.display());
+            return false;
+        };
+        #[cfg(windows)]
+        if stamp.identity.is_none() {
+            eprintln!(
+                "no file ID for {}; same-size same-mtime replacement is undetectable, skipping",
+                path.display()
+            );
+            return false;
+        }
+        let _ = stamp;
+        true
+    }
+
     /// 缓存是进程级的，`serial` 只互斥带标记的测试：不带标记的测试（如续写页
     /// 解析会经 `load_parent_timeline` 缓存前序页）可能同时写入别的条目。
     /// 数条目时只数本测试临时目录下的键，不数全局总数。
@@ -4572,7 +4591,7 @@ mod tests {
         let values = [session_meta(PARENT_ID), token_count(100, 50, 10)];
         write_jsonl(&parent, &values);
         write_jsonl(&replacement, &values);
-        if !parent_cache_supported(&parent) {
+        if !same_size_same_mtime_replacement_detectable(&parent) {
             return;
         }
         let original_file = fs::File::open(&parent).unwrap();
@@ -5499,7 +5518,7 @@ mod tests {
         let db = Database::memory()?;
         let temp = tempdir().unwrap();
         let (parent, child) = retryable_parent_and_child(temp.path());
-        if !parent_cache_supported(&parent) {
+        if !same_size_same_mtime_replacement_detectable(&parent) {
             return Ok(());
         }
         assert!(sync_test_file(&db, &child, &[&parent, &child])?.deferred);
@@ -5620,7 +5639,7 @@ mod tests {
         let db = Database::memory()?;
         let temp = tempdir().unwrap();
         let (parent, child) = retryable_parent_and_child(temp.path());
-        if !parent_cache_supported(&child) {
+        if !same_size_same_mtime_replacement_detectable(&child) {
             return Ok(());
         }
         assert!(sync_test_file(&db, &child, &[&parent, &child])?.deferred);
