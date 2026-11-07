@@ -3457,7 +3457,8 @@
       "addFailed": "追加に失敗しました",
       "removeSuccess": "リポジトリ {{owner}}/{{name}} を削除しました",
       "removeFailed": "削除に失敗しました",
-      "skillCount": "{{count}} 件のスキルを検出"
+      "skillCount": "{{count}} 件のスキルを検出",
+      "cachedSkillCount": "前回の検出結果：{{count}} 個のスキル"
     },
     "search": "スキルを検索",
     "searchPlaceholder": "スキル名またはリポジトリで検索...",

@@ -3402,7 +3402,8 @@
       "addFailed": "Eklenemedi",
       "removeSuccess": "Depo {{owner}}/{{name}} kaldırıldı",
       "removeFailed": "Kaldırılamadı",
-      "skillCount": "{{count}} becerileri algılandı"
+      "skillCount": "{{count}} becerileri algılandı",
+      "cachedSkillCount": "Son başarılı tarama: {{count}} beceri"
     },
     "search": "Arama Becerileri",
     "searchPlaceholder": "Beceri adını veya deposunu arayın...",

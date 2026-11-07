@@ -3457,7 +3457,8 @@
       "addFailed": "添加失败",
       "removeSuccess": "仓库 {{owner}}/{{name}} 已删除",
       "removeFailed": "删除失败",
-      "skillCount": "识别到 {{count}} 个技能"
+      "skillCount": "识别到 {{count}} 个技能",
+      "cachedSkillCount": "上次识别到 {{count}} 个技能"
     },
     "search": "搜索技能",
     "searchPlaceholder": "搜索技能名称或仓库名称...",

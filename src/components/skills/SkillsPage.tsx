@@ -71,7 +71,7 @@ export function useSkillRepoActions() {
   const removeRepoMutation = useRemoveSkillRepo();
 
   const addRepo = async (repo: SkillRepo) => {
-    const discovery = await addRepoMutation.mutateAsync(repo);
+    const { discovery } = await addRepoMutation.mutateAsync(repo);
     toast.success(
       t("skills.repo.addSuccess", {
         owner: repo.owner,

@@ -3,6 +3,7 @@ import {
   useMutation,
   useQuery,
   useQueryClient,
+  useMutationState,
   keepPreviousData,
   type QueryClient,
 } from "@tanstack/react-query";
@@ -21,6 +22,7 @@ import {
 import type { AppId } from "@/lib/api/types";
 import {
   mergeImportedSkills,
+  mergeDiscoveryResults,
   replaceRepoDiscovery,
 } from "@/hooks/useSkills.helpers";
 import { readLocalCache, writeLocalCache } from "@/lib/localCache";
@@ -79,15 +81,22 @@ let discoverRevalidated = false;
 let discoverForceNext = false;
 // 按仓库改过缓存就加一：被取消的旧请求晚到时不能再覆盖本地缓存
 let discoverGeneration = 0;
+// 单仓库下载开始后发起的全量刷新优先，不能被较早的单仓库结果取消或覆盖。
+let fullDiscoveryGeneration = 0;
 
 const discoverableQuery = {
   queryKey: DISCOVERABLE_QUERY_KEY,
-  queryFn: async () => {
+  queryFn: async ({ signal }: { signal: AbortSignal }) => {
+    fullDiscoveryGeneration += 1;
+    discoverRevalidated = false;
     const force = discoverForceNext;
     discoverForceNext = false;
-    const generation = discoverGeneration;
-    const result = await skillsApi.discoverAvailable(force);
-    if (generation === discoverGeneration) {
+    const generation = ++discoverGeneration;
+    const result = mergeDiscoveryResults(
+      readLocalCache<SkillDiscoveryResult>(DISCOVER_CACHE_KEY),
+      await skillsApi.discoverAvailable(force),
+    );
+    if (!signal.aborted && generation === discoverGeneration) {
       discoverRevalidated = true;
       writeLocalCache(DISCOVER_CACHE_KEY, result);
     }
@@ -97,7 +106,8 @@ const discoverableQuery = {
   initialData: () => readLocalCache<SkillDiscoveryResult>(DISCOVER_CACHE_KEY),
   // 本地缓存是旧数据：时间记成 0，配合 refetchOnMount 在后台刷新
   initialDataUpdatedAt: 0,
-  refetchOnMount: () => (discoverRevalidated ? false : ("always" as const)),
+  // 已验证后仍须响应导入等操作的失效标记；Infinity 会避免有效缓存重复下载。
+  refetchOnMount: () => (discoverRevalidated ? true : ("always" as const)),
   placeholderData: keepPreviousData,
 };
 
@@ -119,6 +129,17 @@ export function useRefreshDiscoverableSkills() {
   }, [queryClient]);
 }
 
+/** 导入可能新增仓库；即使查询已被回收，也必须使持久缓存重新验证。 */
+async function invalidateDiscoverableSkills(queryClient: QueryClient) {
+  discoverRevalidated = false;
+  discoverGeneration += 1;
+  await queryClient.cancelQueries({
+    queryKey: DISCOVERABLE_QUERY_KEY,
+    exact: true,
+  });
+  return queryClient.invalidateQueries({ queryKey: DISCOVERABLE_QUERY_KEY });
+}
+
 /**
  * 只改发现缓存里一个仓库的部分（next 不传就是删掉这个仓库）。
  * 先取消进行中的整体发现：它读的是改动前的仓库表，晚到会把这次改动盖掉。
@@ -128,6 +149,7 @@ async function patchRepoDiscovery(
   repo: { owner: string; name: string },
   next?: SkillDiscoveryResult,
 ) {
+  discoverGeneration += 1;
   await queryClient.cancelQueries({
     queryKey: DISCOVERABLE_QUERY_KEY,
     exact: true,
@@ -135,13 +157,13 @@ async function patchRepoDiscovery(
   // 还没有任何发现结果（首次发现被上面取消了，或压根没开始）：没有底可以
   // 打补丁，重新整体发现一次，此时读到的仓库表已包含这次改动
   if (!queryClient.getQueryData(DISCOVERABLE_QUERY_KEY)) {
+    discoverRevalidated = false;
     void queryClient.invalidateQueries({
       queryKey: DISCOVERABLE_QUERY_KEY,
       exact: true,
     });
     return;
   }
-  discoverGeneration += 1;
   const updated = queryClient.setQueryData<SkillDiscoveryResult>(
     DISCOVERABLE_QUERY_KEY,
     (old) => replaceRepoDiscovery(old, repo, next),
@@ -364,9 +386,7 @@ export function useImportSkillsFromApps() {
     // 才结束，「发现」重拉要从 GitHub 下载仓库，等它会让弹窗一直锁着（#7994）
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ["skills", "repos"] });
-      void queryClient.invalidateQueries({
-        queryKey: ["skills", "discoverable"],
-      });
+      void invalidateDiscoverableSkills(queryClient);
       return Promise.all([
         queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
         queryClient.invalidateQueries({ queryKey: ["skills", "unmanaged"] }),
@@ -389,32 +409,56 @@ export function useSkillRepos() {
  * 添加仓库（也用来改启用状态：add_skill_repo 是 INSERT OR REPLACE）
  *
  * 只发现这一个仓库并合并进发现缓存，不重拉其它仓库（#1426）；停用的仓库
- * 直接从缓存里去掉。返回这个仓库的发现结果，读取单仓库失败时为 null。
+ * 直接从缓存里去掉。结果附带下载开始时的全量刷新代次，用于排除迟到的旧结果。
  */
+const ADD_SKILL_REPO_KEY = ["skills", "repos", "add"];
+
+export function usePendingSkillRepos() {
+  return useMutationState({
+    filters: { mutationKey: ADD_SKILL_REPO_KEY, status: "pending" },
+    select: (mutation) => {
+      const repo = mutation.state.variables as SkillRepo;
+      return repo.enabled &&
+        isLatestRepoMutation(
+          mutation.state.context as
+            | ReturnType<typeof nextRepoMutation>
+            | undefined,
+        )
+        ? repo
+        : undefined;
+    },
+  }).filter((repo): repo is SkillRepo => repo !== undefined);
+}
+
 export function useAddSkillRepo() {
   const queryClient = useQueryClient();
   return useMutation({
+    mutationKey: ADD_SKILL_REPO_KEY,
     mutationFn: async (repo: SkillRepo) => {
       await skillsApi.addRepo(repo);
       // 写库后马上刷新仓库列表：勾选框读的是它，不能等下面的归档下载完
       void queryClient.invalidateQueries({ queryKey: ["skills", "repos"] });
-      if (!repo.enabled) return { skills: [], failures: [] };
+      // 在写库之后记代次：此前开始的全量发现可能尚未读到这次仓库修改。
+      const fullGeneration = fullDiscoveryGeneration;
+      if (!repo.enabled) {
+        return { discovery: { skills: [], failures: [] }, fullGeneration };
+      }
       try {
-        return await skillsApi.discoverRepo(repo.owner, repo.name);
+        const discovery = await skillsApi.discoverRepo(repo.owner, repo.name);
+        return { discovery, fullGeneration };
       } catch (error) {
         console.error("[useAddSkillRepo] discover repo failed", error);
-        return null;
+        return { discovery: null, fullGeneration };
       }
     },
     onMutate: nextRepoMutation,
-    onSuccess: async (discovery, repo, ctx) => {
+    onSuccess: async ({ discovery, fullGeneration }, repo, ctx) => {
       if (!isLatestRepoMutation(ctx)) return;
+      if (repo.enabled && fullGeneration !== fullDiscoveryGeneration) return;
       if (discovery) {
         await patchRepoDiscovery(queryClient, repo, discovery);
       } else {
-        void queryClient.invalidateQueries({
-          queryKey: DISCOVERABLE_QUERY_KEY,
-        });
+        void invalidateDiscoverableSkills(queryClient);
       }
     },
   });
