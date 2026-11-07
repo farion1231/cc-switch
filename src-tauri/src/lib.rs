@@ -561,25 +561,37 @@ pub fn run() {
 
                 let settings = crate::settings::get_settings();
 
-                if settings.minimize_to_tray_on_close {
-                    api.prevent_close();
-                    if window.hide().is_ok() {
-                        // An already-unfocused window may emit no blur/resize.
-                        let _ = window.emit("main-window-visibility-changed", ());
+                match settings.effective_close_window_action() {
+                    crate::settings::CloseWindowAction::MinimizeToTaskbar => {
+                        api.prevent_close();
+                        #[cfg(target_os = "windows")]
+                        {
+                            let _ = window.set_skip_taskbar(false);
+                        }
+                        let _ = window.minimize();
+                        log::info!("关闭请求已处理：最小化到任务栏");
                     }
-                    log::info!("关闭请求已处理：最小化到托盘");
-                    #[cfg(target_os = "windows")]
-                    {
-                        let _ = window.set_skip_taskbar(true);
+                    crate::settings::CloseWindowAction::MinimizeToTray => {
+                        api.prevent_close();
+                        if window.hide().is_ok() {
+                            // An already-unfocused window may emit no blur/resize.
+                            let _ = window.emit("main-window-visibility-changed", ());
+                        }
+                        log::info!("关闭请求已处理：最小化到托盘");
+                        #[cfg(target_os = "windows")]
+                        {
+                            let _ = window.set_skip_taskbar(true);
+                        }
+                        #[cfg(target_os = "macos")]
+                        {
+                            tray::apply_tray_policy(window.app_handle(), false);
+                        }
                     }
-                    #[cfg(target_os = "macos")]
-                    {
-                        tray::apply_tray_policy(window.app_handle(), false);
+                    crate::settings::CloseWindowAction::Exit => {
+                        api.prevent_close();
+                        log::info!("关闭请求已处理：退出应用");
+                        window.app_handle().exit(0);
                     }
-                } else {
-                    api.prevent_close();
-                    log::info!("关闭请求已处理：退出应用");
-                    window.app_handle().exit(0);
                 }
             }
         })

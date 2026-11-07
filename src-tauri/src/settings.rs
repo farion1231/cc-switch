@@ -448,6 +448,32 @@ pub struct UsageDisplaySettings {
     pub rate_provider: Option<String>,
 }
 
+/// 关闭主窗口时的动作
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CloseWindowAction {
+    /// 最小化到任务栏（任务栏保留应用图标）
+    MinimizeToTaskbar,
+    /// 最小化到系统托盘（隐藏窗口并在系统托盘运行）
+    MinimizeToTray,
+    /// 直接退出应用
+    Exit,
+}
+
+#[allow(clippy::derivable_impls)]
+impl Default for CloseWindowAction {
+    fn default() -> Self {
+        #[cfg(target_os = "linux")]
+        {
+            Self::MinimizeToTaskbar
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Self::MinimizeToTray
+        }
+    }
+}
+
 /// 应用设置结构
 ///
 /// 存储设备级别设置，保存在本地 `~/.cc-switch/settings.json`，不随数据库同步。
@@ -460,6 +486,9 @@ pub struct AppSettings {
     pub show_in_tray: bool,
     #[serde(default = "default_minimize_to_tray_on_close")]
     pub minimize_to_tray_on_close: bool,
+    /// 关闭窗口时的具体动作；若未指定则由 `minimize_to_tray_on_close` 派生。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub close_window_action: Option<CloseWindowAction>,
     #[serde(default)]
     pub use_app_window_controls: bool,
     /// 是否启用 Claude 插件联动
@@ -709,6 +738,7 @@ impl Default for AppSettings {
         Self {
             show_in_tray: true,
             minimize_to_tray_on_close: true,
+            close_window_action: Some(CloseWindowAction::default()),
             use_app_window_controls: false,
             enable_claude_plugin_integration: false,
             skip_claude_onboarding: false,
@@ -779,6 +809,26 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
+    /// 获取当前生效的窗口关闭动作
+    pub fn effective_close_window_action(&self) -> CloseWindowAction {
+        if let Some(action) = self.close_window_action {
+            action
+        } else if self.minimize_to_tray_on_close {
+            CloseWindowAction::MinimizeToTray
+        } else {
+            CloseWindowAction::Exit
+        }
+    }
+
+    /// 双向同步 `close_window_action` 与存量 `minimize_to_tray_on_close`
+    pub fn sync_close_window_action(&mut self) {
+        if let Some(action) = self.close_window_action {
+            self.minimize_to_tray_on_close = action == CloseWindowAction::MinimizeToTray;
+        } else {
+            self.close_window_action = Some(self.effective_close_window_action());
+        }
+    }
+
     /// 额度百分比按「已用」写（默认按剩余）
     pub fn quota_shows_used(&self) -> bool {
         self.quota_display.as_deref() == Some("used")
@@ -1128,6 +1178,7 @@ pub fn get_settings_for_frontend() -> AppSettings {
 pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
     new_settings.codex_quota_protection.validate()?;
     new_settings.normalize_paths();
+    new_settings.sync_close_window_action();
     save_settings_file(&new_settings)?;
 
     let mut guard = settings_store().write().unwrap_or_else(|e| {
@@ -1944,5 +1995,46 @@ mod tests {
         );
         let entries = fs::read_dir(dir.path()).expect("read dir").count();
         assert_eq!(entries, 1, "no temp or backup files left behind");
+    }
+
+    #[test]
+    fn close_window_action_derives_and_syncs_correctly() {
+        let mut settings = AppSettings {
+            minimize_to_tray_on_close: true,
+            close_window_action: None,
+            ..AppSettings::default()
+        };
+        assert_eq!(
+            settings.effective_close_window_action(),
+            CloseWindowAction::MinimizeToTray
+        );
+
+        settings.minimize_to_tray_on_close = false;
+        assert_eq!(
+            settings.effective_close_window_action(),
+            CloseWindowAction::Exit
+        );
+
+        settings.close_window_action = Some(CloseWindowAction::MinimizeToTaskbar);
+        assert_eq!(
+            settings.effective_close_window_action(),
+            CloseWindowAction::MinimizeToTaskbar
+        );
+
+        settings.sync_close_window_action();
+        assert!(!settings.minimize_to_tray_on_close);
+
+        settings.close_window_action = Some(CloseWindowAction::MinimizeToTray);
+        settings.sync_close_window_action();
+        assert!(settings.minimize_to_tray_on_close);
+
+        let json_data = serde_json::json!({
+            "closeWindowAction": "minimize_to_taskbar"
+        });
+        let parsed: AppSettings = serde_json::from_value(json_data).expect("parse json");
+        assert_eq!(
+            parsed.effective_close_window_action(),
+            CloseWindowAction::MinimizeToTaskbar
+        );
     }
 }

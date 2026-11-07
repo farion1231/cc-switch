@@ -408,14 +408,21 @@ export interface FetchedExchangeRates {
   source: string;
 }
 
+export type CloseWindowAction =
+  | "minimize_to_tray"
+  | "minimize_to_taskbar"
+  | "exit";
+
 // 应用设置类型（用于设置对话框与 Tauri API）
 // 存储在本地 ~/.cc-switch/settings.json，不随数据库同步
 export interface Settings {
   // ===== 设备级 UI 设置 =====
   // 是否在系统托盘（macOS 菜单栏）显示图标
   showInTray: boolean;
-  // 点击关闭按钮时是否最小化到托盘而不是关闭应用
+  // 点击关闭按钮时是否最小化到托盘而不是关闭应用（向后兼容）
   minimizeToTrayOnClose: boolean;
+  // 点击关闭按钮时的动作（最小化到系统托盘、最小化到任务栏、直接退出）
+  closeWindowAction?: CloseWindowAction;
   // 是否启用应用级窗口控制按钮（最小化/最大化/关闭）
   useAppWindowControls?: boolean;
   // 启用 Claude 插件联动（写入 ~/.claude/config.json 的 primaryApiKey）

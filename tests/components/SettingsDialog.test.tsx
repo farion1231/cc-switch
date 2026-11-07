@@ -49,6 +49,8 @@ interface SettingsMock {
 const savedSettings = {
   showInTray: true,
   minimizeToTrayOnClose: true,
+  closeWindowAction: "minimize_to_tray",
+  launchOnStartup: false,
   enableClaudePluginIntegration: false,
   language: "zh",
   claudeConfigDir: "/claude",
@@ -224,14 +226,14 @@ describe("SettingsPage", () => {
     const { props } = renderSettingsPage();
 
     fireEvent.click(
-      screen.getByRole("switch", { name: "settings.minimizeToTray" }),
+      screen.getByRole("switch", { name: "settings.launchOnStartup" }),
     );
     expect(settingsMock.updateSettings).toHaveBeenCalledWith({
-      minimizeToTrayOnClose: false,
+      launchOnStartup: true,
     });
     await waitFor(() =>
       expect(settingsMock.autoSaveSettings).toHaveBeenCalledWith({
-        minimizeToTrayOnClose: false,
+        launchOnStartup: true,
       }),
     );
 
@@ -257,12 +259,12 @@ describe("SettingsPage", () => {
 
     renderSettingsPage();
     fireEvent.click(
-      screen.getByRole("switch", { name: "settings.minimizeToTray" }),
+      screen.getByRole("switch", { name: "settings.launchOnStartup" }),
     );
 
     await waitFor(() =>
       expect(settingsMock.updateSettings).toHaveBeenLastCalledWith({
-        minimizeToTrayOnClose: true,
+        launchOnStartup: false,
       }),
     );
     expect(toastErrorMock).toHaveBeenCalledWith("settings.saveFailedGeneric");
