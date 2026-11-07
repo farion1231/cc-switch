@@ -14,10 +14,13 @@ import type { OpenCodeModel, OpenCodeProviderOptions } from "@/types";
 import { mcodeProviderPresets } from "@/config/mcodeProviderPresets";
 import {
   DSH_ACCOUNT_PRESET_ID,
+  DSH_CODEX_PRESET_ID,
+  dshCodexPreset,
   dshAccountPreset,
   dshProviderPresets,
 } from "@/config/dshProviderPresets";
 import { mcodePresetModelSources } from "@/config/presetModelMetadata";
+import { DshCodexAccount } from "../DshCodexAccount";
 import { BasicFormFields } from "./BasicFormFields";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
@@ -98,7 +101,10 @@ export function McodeProviderForm({
   const presetEntries = [
     // DeepSeek 账号和 Kimi 一样放在「账号登录」组：选中后去授权中心登录，不新建供应商
     ...(appId === "dsh"
-      ? [{ id: DSH_ACCOUNT_PRESET_ID, preset: dshAccountPreset }]
+      ? [
+          { id: DSH_ACCOUNT_PRESET_ID, preset: dshAccountPreset },
+          { id: DSH_CODEX_PRESET_ID, preset: dshCodexPreset },
+        ]
       : []),
     ...presets.map((preset, index) => ({
       id: String(index),
@@ -129,7 +135,11 @@ export function McodeProviderForm({
   >(null);
   const [presetId, setPresetId] = useState("custom");
   const step = usePresetStep();
-  const isAccountLogin = !initialData && presetId === DSH_ACCOUNT_PRESET_ID;
+  const isCodexLogin =
+    appId === "dsh" &&
+    (presetId === DSH_CODEX_PRESET_ID || providerId === "openai-codex");
+  const isAccountLogin =
+    isCodexLogin || (!initialData && presetId === DSH_ACCOUNT_PRESET_ID);
   const showAccountLogin = isAccountLogin && (!step || step.step === "form");
   useEffect(() => {
     onAccountLoginChange?.(showAccountLogin);
@@ -192,7 +202,7 @@ export function McodeProviderForm({
     update({ ...config, options: { ...config.options, ...next } });
   const choosePreset = (id: string) => {
     setPresetId(id);
-    if (id === DSH_ACCOUNT_PRESET_ID) return;
+    if (id === DSH_ACCOUNT_PRESET_ID || id === DSH_CODEX_PRESET_ID) return;
     const selected = id === "custom" ? undefined : presets[Number(id)];
     const next = selected?.settingsConfig ?? {
       kind: "custom",
@@ -227,6 +237,20 @@ export function McodeProviderForm({
       category={category}
     />
   );
+  if (isCodexLogin) {
+    return (
+      <div className="space-y-4">
+        {presetSelector}
+        {showAccountLogin && (
+          <DshCodexAccount
+            initialData={initialData}
+            onManageAccounts={() => onManageAuthAccounts?.("codex_oauth")}
+            onApplied={onCancel}
+          />
+        )}
+      </div>
+    );
+  }
   if (isAccountLogin) {
     return (
       <Form {...form}>

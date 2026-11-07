@@ -159,6 +159,8 @@ struct IdTokenClaims {
     chatgpt_account_id: Option<String>,
     #[serde(default)]
     email: Option<String>,
+    #[serde(default)]
+    iat: Option<i64>,
     #[serde(default, rename = "https://api.openai.com/auth")]
     openai_auth: Option<OpenAiAuthClaim>,
 }
@@ -867,6 +869,15 @@ impl CodexOAuthManager {
         &self,
         account_id: &str,
     ) -> Result<CachedAccessToken, CodexOAuthError> {
+        if crate::dsh_config::codex_binding()
+            .map_err(|_| CodexOAuthError::ParseError("Cannot read DSH Codex binding".into()))?
+            .as_deref()
+            == Some(account_id)
+        {
+            let lock = self.get_refresh_lock(account_id).await;
+            let _guard = lock.lock().await;
+            return self.resolve_valid_cached_token_under_lock(account_id).await;
+        }
         // 快路径：确认账号存在后读缓存
         {
             let accounts = self.accounts.read().await;
@@ -892,6 +903,16 @@ impl CodexOAuthManager {
     /// Keeping this separate lets the full auth-bundle path hold one generation
     /// lock across access/id/refresh reads without recursively locking the mutex.
     async fn resolve_valid_cached_token_under_lock(
+        &self,
+        account_id: &str,
+    ) -> Result<CachedAccessToken, CodexOAuthError> {
+        if let Some(token) = self.resolve_dsh_token_under_lock(account_id, true).await? {
+            return Ok(token);
+        }
+        self.resolve_managed_token_under_lock(account_id).await
+    }
+
+    async fn resolve_managed_token_under_lock(
         &self,
         account_id: &str,
     ) -> Result<CachedAccessToken, CodexOAuthError> {
@@ -1085,12 +1106,23 @@ impl CodexOAuthManager {
         let refresh_lock = self.get_refresh_lock(account_id).await;
         let _refresh_guard = refresh_lock.lock().await;
 
+        self.token_bundle_under_lock(account_id, true).await
+    }
+
+    async fn token_bundle_under_lock(
+        &self,
+        account_id: &str,
+        use_dsh: bool,
+    ) -> Result<ManagedTokenBundle, CodexOAuthError> {
         // Resolve and read every persistent token field while holding the same
         // account generation lock. Otherwise an adoption between these reads
         // can create an invalid A0 + R1/ID1 mixed bundle.
-        let cached = self
-            .resolve_valid_cached_token_under_lock(account_id)
-            .await?;
+        let cached = if use_dsh {
+            self.resolve_valid_cached_token_under_lock(account_id)
+                .await?
+        } else {
+            self.resolve_managed_token_under_lock(account_id).await?
+        };
 
         // A managed bundle is about to overwrite auth.json. Re-read under the
         // same manager generation lock after token resolution so an ambiguous
@@ -1119,8 +1151,8 @@ impl CodexOAuthManager {
                 }
                 RefreshTokenAdoptionOutcome::Adopted => {
                     return Err(CodexOAuthError::TokenFetchFailed(format!(
-                        "Codex CLI 账号 {account_id} 的磁盘凭据在准备写入期间已刷新；为避免写入混合 token bundle，本次操作已取消，请重试"
-                    )));
+                    "Codex CLI 账号 {account_id} 的磁盘凭据在准备写入期间已刷新；为避免写入混合 token bundle，本次操作已取消，请重试"
+                )));
                 }
                 RefreshTokenAdoptionOutcome::NotManaged => {
                     return Err(CodexOAuthError::AccountNotFound(account_id.to_string()));
@@ -1153,6 +1185,272 @@ impl CodexOAuthManager {
             refresh_token,
             last_refresh,
         })
+    }
+
+    /// Native DSH credentials are authoritative for the explicitly bound account.
+    /// The DSH document lock spans read / refresh / write, matching pi-ai's modify().
+    async fn resolve_dsh_token_under_lock(
+        &self,
+        account_id: &str,
+        refresh_if_expiring: bool,
+    ) -> Result<Option<CachedAccessToken>, CodexOAuthError> {
+        let Some(mut guard) =
+            crate::dsh_config::CodexGrantGuard::acquire(account_id).map_err(|_| {
+                CodexOAuthError::TokenFetchFailed(
+                    "DSH credentials are busy or unavailable; retry".into(),
+                )
+            })?
+        else {
+            return Ok(None);
+        };
+        let mut payload = guard.payload().map_err(|_| {
+            CodexOAuthError::ParseError(
+                "DSH Codex login is missing or invalid; select an account again".into(),
+            )
+        })?;
+        let string = |key: &str| {
+            payload[key]
+                .as_str()
+                .filter(|v| !v.is_empty())
+                .map(str::to_owned)
+        };
+        let access = string("access")
+            .ok_or_else(|| CodexOAuthError::ParseError("Missing DSH access token".into()))?;
+        let mut refresh = string("refresh")
+            .ok_or_else(|| CodexOAuthError::ParseError("Missing DSH refresh token".into()))?;
+        let workspace = string("accountId")
+            .ok_or_else(|| CodexOAuthError::ParseError("Missing DSH account identity".into()))?;
+        let expires = payload["expires"]
+            .as_i64()
+            .ok_or_else(|| CodexOAuthError::ParseError("Invalid DSH expiry".into()))?;
+        if let Some((refresh, id_token, updated)) = self
+            .read_managed_live_auth_refresh_for_account(account_id)
+            .await?
+        {
+            self.adopt_account_refresh_token_under_lock(
+                account_id,
+                refresh,
+                id_token,
+                updated,
+                RefreshTokenAdoptionMode::TimestampChecked,
+            )
+            .await?;
+        }
+        let (expected_workspace, identity, old_refresh, updated_at_ms) = {
+            let accounts = self.accounts.read().await;
+            let a = accounts
+                .get(account_id)
+                .ok_or_else(|| CodexOAuthError::AccountNotFound(account_id.into()))?;
+            (
+                a.chatgpt_account_id.clone(),
+                a.id_token
+                    .as_deref()
+                    .and_then(crate::codex_config::extract_codex_id_token_user_identity),
+                a.refresh_token.clone(),
+                a.token_updated_at_ms,
+            )
+        };
+        if payload["type"].as_str() != Some("oauth")
+            || expected_workspace.as_deref() != Some(&workspace)
+            || identity.is_none()
+            || crate::codex_config::extract_codex_id_token_user_identity(&access) != identity
+        {
+            return Err(CodexOAuthError::ParseError(
+                "DSH account identity changed; select the account again".into(),
+            ));
+        }
+        let claims = parse_jwt_claims(&access)
+            .ok_or_else(|| CodexOAuthError::ParseError("Invalid DSH access token".into()))?;
+        let token_workspace = claims
+            .openai_auth
+            .as_ref()
+            .and_then(|c| c.chatgpt_account_id.as_deref())
+            .or(claims.chatgpt_account_id.as_deref());
+        if token_workspace != Some(workspace.as_str()) {
+            return Err(CodexOAuthError::ParseError(
+                "DSH workspace does not match its token".into(),
+            ));
+        }
+        let issued = claims
+            .iat
+            .and_then(|t| t.checked_mul(1000))
+            .filter(|t| *t > 0)
+            .ok_or_else(|| CodexOAuthError::ParseError("DSH token has no issue time".into()))?;
+        // Explicit re-binding must retain a newer login from Accounts instead
+        // of replacing it with the stale native grant it is meant to repair.
+        if refresh != old_refresh && issued / 1000 <= updated_at_ms / 1000 {
+            if !refresh_if_expiring {
+                return Ok(None);
+            }
+            // JWT iat has only second precision. Refuse ambiguous generations;
+            // an explicit re-bind can choose the account from Accounts.
+            if issued / 1000 == updated_at_ms / 1000 {
+                return Err(CodexOAuthError::TokenFetchFailed(
+                    "DSH token generation is ambiguous; select the account again".into(),
+                ));
+            }
+            let cached = self.resolve_managed_token_under_lock(account_id).await?;
+            let accounts = self.accounts.read().await;
+            let account = accounts
+                .get(account_id)
+                .ok_or_else(|| CodexOAuthError::AccountNotFound(account_id.into()))?;
+            payload["access"] = serde_json::json!(cached.token);
+            payload["refresh"] = serde_json::json!(account.refresh_token);
+            payload["expires"] = serde_json::json!(cached.expires_at_ms);
+            drop(accounts);
+            guard.save(&payload).map_err(|_| {
+                CodexOAuthError::IoError("Cannot synchronize newer DSH credential".into())
+            })?;
+            return Ok(Some(cached));
+        }
+        let mut cached = CachedAccessToken {
+            token: access,
+            expires_at_ms: expires,
+            obtained_at_ms: issued,
+        };
+        let mut refreshed_id = None;
+        let mut sync_expected_refresh = old_refresh.clone();
+        let mut native_write_needed = false;
+        if refresh_if_expiring && cached.is_expiring_soon() {
+            let tokens = match self.refresh_with_token(&refresh).await {
+                Err(CodexOAuthError::RefreshTokenInvalid) => {
+                    // The native Codex CLI may rotate the same grant outside DSH's lock.
+                    let live = self
+                        .read_managed_live_auth_refresh_for_account(account_id)
+                        .await?
+                        .filter(|(token, _, _)| token != &refresh)
+                        .ok_or(CodexOAuthError::RefreshTokenInvalid)?;
+                    refresh = live.0;
+                    // Only recovery consumes a newly observed CLI generation.
+                    sync_expected_refresh = refresh.clone();
+                    self.refresh_with_token(&refresh).await?
+                }
+                result => result?,
+            };
+            refresh = tokens.refresh_token.clone().unwrap_or(refresh);
+            let refreshed_claims = parse_jwt_claims(&tokens.access_token)
+                .ok_or_else(|| CodexOAuthError::ParseError("Invalid refreshed DSH token".into()))?;
+            let refreshed_workspace = refreshed_claims
+                .openai_auth
+                .as_ref()
+                .and_then(|c| c.chatgpt_account_id.as_deref())
+                .or(refreshed_claims.chatgpt_account_id.as_deref());
+            if refreshed_workspace != Some(workspace.as_str())
+                || crate::codex_config::extract_codex_id_token_user_identity(&tokens.access_token)
+                    != identity
+            {
+                return Err(CodexOAuthError::ParseError(
+                    "Refreshed DSH account identity changed; sign in again".into(),
+                ));
+            }
+            cached.token = tokens.access_token;
+            cached.obtained_at_ms = chrono::Utc::now().timestamp_millis();
+            cached.expires_at_ms = compute_expires_at_ms(tokens.expires_in);
+            refreshed_id = tokens.id_token;
+            payload["access"] = serde_json::json!(cached.token);
+            payload["refresh"] = serde_json::json!(refresh);
+            payload["expires"] = serde_json::json!(cached.expires_at_ms);
+            native_write_needed = true;
+        }
+        {
+            let mut accounts = self.accounts.write().await;
+            let a = accounts
+                .get_mut(account_id)
+                .ok_or_else(|| CodexOAuthError::AccountNotFound(account_id.into()))?;
+            a.refresh_token = refresh;
+            if let Some(id) = refreshed_id {
+                a.id_token = Some(id);
+            }
+            if a.refresh_token != old_refresh {
+                a.token_updated_at_ms = cached.obtained_at_ms;
+            }
+        }
+        self.access_tokens
+            .write()
+            .await
+            .insert(account_id.into(), cached.clone());
+        // Once the server rotates a token, retain the complete bundle before any
+        // fallible native write. Try every destination even if one write fails.
+        let manager_save = self.save_to_disk().await;
+        let native_save = if native_write_needed {
+            guard.save(&payload).map_err(|_| {
+                CodexOAuthError::IoError("Cannot save refreshed DSH credential".into())
+            })
+        } else {
+            Ok(())
+        };
+        let accounts = self.accounts.read().await;
+        let account = accounts
+            .get(account_id)
+            .ok_or_else(|| CodexOAuthError::AccountNotFound(account_id.into()))?;
+        let last_refresh =
+            chrono::DateTime::<chrono::Utc>::from_timestamp_millis(cached.obtained_at_ms)
+                .ok_or_else(|| CodexOAuthError::ParseError("Invalid token issue time".into()))?
+                .to_rfc3339();
+        let auth = crate::codex_config::codex_managed_oauth_auth_value(
+            &workspace,
+            &cached.token,
+            account.id_token.as_deref(),
+            &account.refresh_token,
+            &last_refresh,
+        );
+        drop(accounts);
+        let cli_save = crate::codex_config::sync_codex_managed_oauth_live_auth_after_refresh(
+            account_id,
+            &sync_expected_refresh,
+            &auth,
+        )
+        .map_err(|_| CodexOAuthError::IoError("Cannot synchronize the managed Codex login".into()));
+        manager_save?;
+        native_save?;
+        cli_save?;
+        Ok(Some(cached))
+    }
+
+    pub(crate) async fn bind_dsh_account(
+        &self,
+        account_id: &str,
+        config: Option<&serde_json::Value>,
+        commit: impl FnOnce() -> Result<(), crate::error::AppError>,
+    ) -> Result<(), CodexOAuthError> {
+        let _lifecycle = self.lifecycle_lock.read().await;
+        let old = crate::dsh_config::codex_binding()
+            .map_err(|_| CodexOAuthError::ParseError("Cannot read DSH binding".into()))?;
+        let snapshot = crate::dsh_config::codex_snapshot()
+            .map_err(|_| CodexOAuthError::ParseError("Cannot read DSH credentials".into()))?;
+        // Preserve any rotated native grant without requiring the old login to refresh.
+        // An explicit replacement may recover a removed or invalid native login;
+        // persistence/locking failures still abort rather than discard a valid grant.
+        if let Some(old) = old.as_deref() {
+            let lock = self.get_refresh_lock(old).await;
+            let _guard = lock.lock().await;
+            match self.resolve_dsh_token_under_lock(old, false).await {
+                Ok(_)
+                | Err(CodexOAuthError::ParseError(_))
+                | Err(CodexOAuthError::AccountNotFound(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        self.ensure_account_ready_for_use(account_id).await?;
+        let lock = self.get_refresh_lock(account_id).await;
+        let _guard = lock.lock().await;
+        // Resolve from the manager/CLI after adoption. This does not mutate DSH,
+        // so the snapshot detects only external changes while the bundle is prepared.
+        let bundle = self.token_bundle_under_lock(account_id, false).await?;
+        let cache = self.access_tokens.read().await;
+        let expires = cache
+            .get(account_id)
+            .ok_or_else(|| CodexOAuthError::TokenFetchFailed("Access token unavailable".into()))?
+            .expires_at_ms;
+        let payload = serde_json::json!({"type":"oauth","access":bundle.access_token,"refresh":bundle.refresh_token,"expires":expires,"accountId":bundle.chatgpt_account_id});
+        drop(cache);
+        crate::dsh_config::bind_codex(account_id, payload, &snapshot, config, commit).map_err(
+            |_| {
+                CodexOAuthError::IoError(
+                    "DSH configuration changed or could not be written; retry".into(),
+                )
+            },
+        )
     }
 
     /// 采纳（读回）Codex CLI 轮换后的 refresh_token / id_token。
@@ -1425,6 +1723,18 @@ impl CodexOAuthManager {
                 .clone()
         };
 
+        let identity = managed_id_token
+            .as_deref()
+            .and_then(crate::codex_config::extract_codex_id_token_user_identity);
+        let workspace = self
+            .accounts
+            .read()
+            .await
+            .get(account_id)
+            .and_then(|account| account.chatgpt_account_id.clone());
+        crate::dsh_config::unlink_codex(account_id, identity.as_deref(), workspace.as_deref())
+            .map_err(|_| CodexOAuthError::IoError("Cannot remove DSH Codex binding".into()))?;
+
         // Explicit Auth Center removal means credentials for this managed
         // account must leave the machine. Content matching intentionally also
         // claims a native `codex login` of the same account; that is the same
@@ -1491,6 +1801,23 @@ impl CodexOAuthManager {
         // write guard guarantees no refresh can recreate live/disk state after
         // the clear has committed.
         let _lifecycle = self.lifecycle_lock.write().await;
+        if let Some(id) = crate::dsh_config::codex_binding()
+            .map_err(|_| CodexOAuthError::ParseError("Cannot read DSH binding".into()))?
+        {
+            let accounts = self.accounts.read().await;
+            if let Some(account) = accounts.get(&id) {
+                let identity = account
+                    .id_token
+                    .as_deref()
+                    .and_then(crate::codex_config::extract_codex_id_token_user_identity);
+                crate::dsh_config::unlink_codex(
+                    &id,
+                    identity.as_deref(),
+                    account.chatgpt_account_id.as_deref(),
+                )
+                .map_err(|_| CodexOAuthError::IoError("Cannot remove DSH Codex binding".into()))?;
+            }
+        }
 
         let accounts_to_clear = self
             .accounts

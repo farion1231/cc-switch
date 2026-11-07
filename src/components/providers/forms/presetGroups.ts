@@ -460,6 +460,12 @@ export function loginAccountKey(
   appId: AppId | undefined,
   preset: AnyPreset,
 ): string {
+  if (
+    appId === "dsh" &&
+    "providerKey" in preset &&
+    preset.providerKey === "dsh-codex-account"
+  )
+    return "chatgpt";
   const type = (preset as PresetFields).providerType;
   if (type === "github_copilot") return "github";
   if (type === "codex_oauth") return "chatgpt";

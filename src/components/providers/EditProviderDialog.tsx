@@ -76,6 +76,7 @@ export function EditProviderDialog({
 }: EditProviderDialogProps) {
   const { t } = useTranslation();
   const [isFormSubmitting, setIsFormSubmitting] = useState(false);
+  const [accountLogin, setAccountLogin] = useState(false);
   // 表单用了聚合的简化布局：页头应用名后标「聚合模式」
   const [stackLayout, setStackLayout] = useState(false);
   const [authSettingsTarget, setAuthSettingsTarget] =
@@ -368,7 +369,7 @@ export function EditProviderDialog({
       // Keep the list visible until the initial projection is ready.
       // Showing a loading page first causes a flash for fast local reads.
       isOpen={open && !waitingForEditorView}
-      trackUnsavedChanges
+      trackUnsavedChanges={!accountLogin}
       title={t("provider.editProviderNamed", { name: provider.name })}
       subtitle={
         stackLayout
@@ -382,26 +383,28 @@ export function EditProviderDialog({
       onClose={handlePanelClose}
       contentClassName={appId === "pi" ? "pb-0 pt-4" : "pt-4"}
       footer={
-        <>
-          <Button
-            type="button"
-            variant="neutral"
-            size="regular"
-            onClick={closeDialog}
-          >
-            {t("common.cancel")}
-          </Button>
-          <Button
-            type="submit"
-            form="provider-form"
-            variant="solid"
-            size="regular"
-            disabled={isFormSubmitting || !isFormReady}
-          >
-            {isFormSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
-            {t("common.save")}
-          </Button>
-        </>
+        accountLogin ? undefined : (
+          <>
+            <Button
+              type="button"
+              variant="neutral"
+              size="regular"
+              onClick={closeDialog}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button
+              type="submit"
+              form="provider-form"
+              variant="solid"
+              size="regular"
+              disabled={isFormSubmitting || !isFormReady}
+            >
+              {isFormSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+              {t("common.save")}
+            </Button>
+          </>
+        )
       }
     >
       {currentNotice}
@@ -417,6 +420,7 @@ export function EditProviderDialog({
           onSubmit={handleSubmit}
           onCancel={closeDialog}
           onManageAuthAccounts={setAuthSettingsTarget}
+          onAccountLoginChange={setAccountLogin}
           onSubmittingChange={setIsFormSubmitting}
           onSubmitReadyChange={handleSubmitReadyChange}
           initialData={initialData}
