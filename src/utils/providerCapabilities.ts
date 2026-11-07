@@ -13,6 +13,7 @@ import {
 
 export const CODEX_OFFICIAL_PROVIDER_ID = "codex-official";
 export const GROKBUILD_OFFICIAL_PROVIDER_ID = "grokbuild-official";
+export const CURSOR_OFFICIAL_PROVIDER_ID = "cursor-official";
 export const KIMI_OFFICIAL_PROVIDER_ID = "managed:kimi-code";
 
 export type CodexOfficialIdentity =

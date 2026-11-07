@@ -22,12 +22,16 @@ describe("appConfig provider lifecycle", () => {
     expect(isAdditiveAppId(appId)).toBe(true);
   });
 
-  it.each(["claude", "claude-desktop", "codex", "gemini", "grokbuild"])(
-    "does not classify %s as additive",
-    (appId) => {
-      expect(isAdditiveAppId(appId)).toBe(false);
-    },
-  );
+  it.each([
+    "claude",
+    "claude-desktop",
+    "codex",
+    "gemini",
+    "grokbuild",
+    "cursor",
+  ])("does not classify %s as additive", (appId) => {
+    expect(isAdditiveAppId(appId)).toBe(false);
+  });
 });
 
 // Antigravity shares management UI, but has independent configuration and no CCS proxy.

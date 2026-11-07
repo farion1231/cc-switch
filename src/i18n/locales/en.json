@@ -1160,7 +1160,8 @@
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
-    "omp": "Oh My Pi"
+    "omp": "Oh My Pi",
+    "cursor": "Cursor"
   },
   "mcode": {
     "empty": {
@@ -4228,7 +4229,8 @@
       "agyThirdPartyWeekly": "Claude Wk",
       "monthly": "Mo",
       "credits": "Credits",
-      "copilotPremium": "Credits"
+      "copilotPremium": "Credits",
+      "fastRequests": "Fast"
     },
     "fiveHour": "5-hour",
     "sevenDay": "Weekly",
@@ -4253,6 +4255,7 @@
     "copilotChat": "Chat",
     "copilotCount": "{{remaining}} of {{total}} left",
     "copilotNotIncluded": "Not in your plan",
+    "fastRequests": "Fast Requests",
     "utilization": "{{value}}%",
     "resetsIn": "Resets in {{time}}",
     "extraUsage": "Extra Usage",
@@ -4309,6 +4312,9 @@
     "desktopUnsupported": "Not supported on this system",
     "desktopConnected": "Connected",
     "desktopNotConnected": "Not connected",
+    "cursorHelp": "Cursor is a desktop editor that cannot be installed or updated here; CC Switch monitors its subscription quota via local credentials.",
+    "cursorDetected": "Detected",
+    "cursorNotDetected": "Not detected",
     "newVersion": "{{version}} available",
     "notRunnable": "Can't run",
     "updateNeedsNode": "{{version}} requires Node {{required}}, but this installation runs on Node {{current}}. Upgrade Node first.",

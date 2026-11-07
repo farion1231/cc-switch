@@ -1161,7 +1161,8 @@
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
-    "omp": "Oh My Pi"
+    "omp": "Oh My Pi",
+    "cursor": "Cursor"
   },
   "mcode": {
     "empty": {
@@ -4229,7 +4230,8 @@
       "agyThirdPartyWeekly": "Claude 每週",
       "monthly": "每月",
       "credits": "額度",
-      "copilotPremium": "Credits"
+      "copilotPremium": "Credits",
+      "fastRequests": "快速請求"
     },
     "fiveHour": "5 小時",
     "sevenDay": "每週",
@@ -4254,6 +4256,7 @@
     "copilotChat": "聊天",
     "copilotCount": "剩餘 {{remaining}} / 共 {{total}}",
     "copilotNotIncluded": "目前方案不含",
+    "fastRequests": "快速請求",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}} 後重設",
     "extraUsage": "超額用量",
@@ -4310,6 +4313,9 @@
     "desktopUnsupported": "目前系統不支援",
     "desktopConnected": "已接入",
     "desktopNotConnected": "未接入",
+    "cursorHelp": "Cursor 是桌面編輯器，不能在此處安裝或升級；CC Switch 透過其本機認證憑證監控官方訂閱與額度。",
+    "cursorDetected": "已偵測到",
+    "cursorNotDetected": "未偵測到",
     "newVersion": "有新版本 {{version}}",
     "notRunnable": "無法執行",
     "updateNeedsNode": "新版本 {{version}} 需要 Node {{required}}，這處安裝用的是 Node {{current}}，需要先升級 Node。",

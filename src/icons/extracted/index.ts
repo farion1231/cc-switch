@@ -15,6 +15,7 @@ import _bailing from "./bailing.png";
 import _claudeapi from "./ClaudeApi.png";
 import _byteplus from "./byteplus.png";
 import _ccsub from "./ccsub.svg?url";
+import _cursor from "./cursor.svg?url";
 import _claudecn from "./claudecn.png";
 import _cherryin from "./cherryin.png";
 import _code0 from "./code0.png";
@@ -173,6 +174,7 @@ export const iconUrls: Record<string, string> = {
   bailing: _bailing,
   byteplus: _byteplus,
   ccsub: _ccsub,
+  cursor: _cursor,
   claudeapi: _claudeapi,
   claudecn: _claudecn,
   cherryin: _cherryin,

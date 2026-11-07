@@ -1142,7 +1142,8 @@
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
-    "omp": "Oh My Pi"
+    "omp": "Oh My Pi",
+    "cursor": "Cursor"
   },
   "mcode": {
     "empty": {
@@ -4173,7 +4174,8 @@
       "agyThirdPartyWeekly": "Claude haftalık",
       "monthly": "Ay",
       "credits": "Kredi",
-      "copilotPremium": "Credits"
+      "copilotPremium": "Credits",
+      "fastRequests": "Hızlı"
     },
     "fiveHour": "5 saat",
     "sevenDay": "Haftalık",
@@ -4194,6 +4196,7 @@
     "monthly": "Aylık",
     "credits": "Kredi",
     "copilotPremium": "Credits",
+    "fastRequests": "Hızlı İstekler",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}} sonra sıfırlanır",
     "extraUsage": "Ekstra Kullanım",
@@ -4246,6 +4249,9 @@
     "desktopUnsupported": "Bu sistemde desteklenmiyor",
     "desktopConnected": "Bağlı",
     "desktopNotConnected": "Bağlı değil",
+    "cursorHelp": "Cursor bir masaüstü düzenleyicisidir ve buradan yüklenemez veya yükseltilemez; CC Switch, yerel kimlik bilgileri aracılığıyla resmi aboneliğini ve kotasını izler.",
+    "cursorDetected": "Algılandı",
+    "cursorNotDetected": "Algılanmadı",
     "newVersion": "{{version}} mevcut",
     "notRunnable": "Çalıştırılamıyor",
     "updateNeedsNode": "{{version}} sürümü Node {{required}} gerektiriyor; bu kurulumda Node {{current}} çalışıyor. Önce Node'u yükseltin.",

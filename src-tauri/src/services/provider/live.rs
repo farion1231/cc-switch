@@ -311,6 +311,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Kimi
         | AppType::Dsh
         | AppType::Agy
+        | AppType::Cursor
         | AppType::Omp
         | AppType::ClaudeDesktop => false,
     }
@@ -392,6 +393,7 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Dsh
         | AppType::ClaudeDesktop
         | AppType::Agy
+        | AppType::Cursor
         | AppType::Omp => Ok(settings.clone()),
     }
 }
@@ -431,8 +433,8 @@ pub(crate) fn write_live_for_state(
         super::grok_direct::reapply(db, Some(provider), provider)?;
         return Ok(());
     }
-    if matches!(app_type, AppType::Agy) {
-        // 卡片只作用于它打开的终端，全量同步不写真实 settings.json。
+    if matches!(app_type, AppType::Agy | AppType::Cursor) {
+        // 卡片只作用于它打开的终端/额度追踪，全量同步不写真实 settings.json。
         return Ok(());
     }
 
@@ -724,6 +726,11 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         AppType::Agy => {
             return Err(AppError::Config(
                 "Antigravity configuration requires the provider switch flow".into(),
+            ));
+        }
+        AppType::Cursor => {
+            return Err(AppError::Config(
+                "Cursor configuration is managed through official subscription tracking".into(),
             ));
         }
         AppType::Omp => {
@@ -1057,6 +1064,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             "Pi providers are read from Pi's native models file".to_string(),
         )),
         AppType::Agy => crate::agy_config::read_live_settings(),
+        AppType::Cursor => Ok(json!({"config": ""})),
         AppType::Omp => Err(AppError::InvalidInput(
             "Oh My Pi providers are read from Oh My Pi's native models file".to_string(),
         )),
@@ -1173,6 +1181,13 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             }
             live
         }
+        AppType::Cursor => {
+            state.db.ensure_official_seed_by_id(
+                crate::database::CURSOR_OFFICIAL_PROVIDER_ID,
+                AppType::Cursor,
+            )?;
+            return Ok(true);
+        }
         // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
         AppType::OpenCode
         | AppType::OpenClaw
@@ -1213,8 +1228,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             } else {
                 "custom"
             }
-        } else if matches!(app_type, AppType::Agy) {
-            // Key 只在进程环境里，从不落盘：从 live 导入的一定是 agy 自己的登录。
+        } else if matches!(app_type, AppType::Agy | AppType::Cursor) {
+            // Key 只在进程环境里，从不落盘：从 live 导入的一定是官方登录。
             "official"
         } else {
             "custom"
@@ -1254,7 +1269,7 @@ pub fn should_import_default_config_on_startup(
     state: &AppState,
     app_type: &AppType,
 ) -> Result<bool, AppError> {
-    if app_type.is_additive_mode() {
+    if app_type.is_additive_mode() || matches!(app_type, AppType::Cursor) {
         return Ok(false);
     }
 

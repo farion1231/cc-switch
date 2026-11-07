@@ -44,7 +44,7 @@ import {
 } from "lucide-react";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
-import type { ToolInstallationReport } from "@/lib/api/settings";
+import { settingsApi, type ToolInstallationReport } from "@/lib/api/settings";
 import type { VisibleApps } from "@/types";
 import { DEFAULT_VISIBLE_APPS, orderAppIds } from "@/config/appConfig";
 import { useSettings } from "@/hooks/useSettings";
@@ -107,17 +107,24 @@ const SOURCE_LABEL: Record<string, string> = {
   pip: "pip",
 };
 
-type Row = { kind: "tool"; tool: ToolName } | { kind: "desktop" };
+type Row =
+  | { kind: "tool"; tool: ToolName }
+  | { kind: "desktop" }
+  | { kind: "cursor" };
 
 const ROW_BY_APP = Object.fromEntries([
   ["claude-desktop", { kind: "desktop" }],
+  ["cursor", { kind: "cursor" }],
   ...TOOL_NAMES.map((tool) => [TOOL_APP_IDS[tool], { kind: "tool", tool }]),
 ]) as Record<AppId, Row>;
 
 type RowSection = { key: string; title: string; rows: Row[] };
 
-const rowKey = (row: Row): AppId =>
-  row.kind === "desktop" ? "claude-desktop" : TOOL_APP_IDS[row.tool];
+const rowKey = (row: Row): AppId => {
+  if (row.kind === "desktop") return "claude-desktop";
+  if (row.kind === "cursor") return "cursor";
+  return TOOL_APP_IDS[row.tool];
+};
 
 // 只上下拖，且停在本组的列表框里：列表框裁掉超出的部分，拖出去整行会看不见
 const verticalDragModifiers: Modifier[] = [
@@ -182,12 +189,20 @@ export function AppsPage() {
     queryFn: () => providersApi.getClaudeDesktopStatus(),
     staleTime: 30_000,
   });
+  const { data: cursorStatus, isPending: isCursorStatusPending } = useQuery({
+    queryKey: ["cursor-config-status"],
+    queryFn: () => settingsApi.getConfigStatus("cursor"),
+    staleTime: 30_000,
+  });
 
   // 按「已安装 / 未安装」分两组。Claude Desktop 没有命令可探，用后端按数据目录 / 应用包推断的结果。
   // 首次探测还没出结果时不分组，免得各行探完一个跳一个；之后重新检查时沿用上次结果，位置不动。
   const rowInstalled = (row: Row): boolean | null => {
     if (row.kind === "desktop") {
       return isDesktopStatusPending ? null : Boolean(desktopStatus?.installed);
+    }
+    if (row.kind === "cursor") {
+      return isCursorStatusPending ? null : Boolean(cursorStatus?.exists);
     }
     const info = tools.toolVersionByName.get(row.tool);
     if (!info && tools.isLoadingTools) return null;
@@ -335,29 +350,54 @@ export function AppsPage() {
     );
   };
 
-  const renderRow = (row: Row) =>
-    row.kind === "desktop" ? (
-      <AppRow
-        key="claude-desktop"
-        app="claude-desktop"
-        name={
-          <span className="truncate">{APP_DISPLAY_NAME["claude-desktop"]}</span>
-        }
-        version={
-          <span className="inline-flex items-center gap-1 text-caption text-fg-2">
-            {desktopStatus?.supported === false
-              ? t("appsPage.desktopUnsupported")
-              : desktopStatus?.configured
-                ? t("appsPage.desktopConnected")
-                : t("appsPage.desktopNotConnected")}
-            <HelpTip title={APP_DISPLAY_NAME["claude-desktop"]} align="end">
-              {t("appsPage.desktopHelp")}
-            </HelpTip>
-          </span>
-        }
-        visibility={visibilitySwitch("claude-desktop")}
-      />
-    ) : (
+  const renderRow = (row: Row) => {
+    if (row.kind === "desktop") {
+      return (
+        <AppRow
+          key="claude-desktop"
+          app="claude-desktop"
+          name={
+            <span className="truncate">
+              {APP_DISPLAY_NAME["claude-desktop"]}
+            </span>
+          }
+          version={
+            <span className="inline-flex items-center gap-1 text-caption text-fg-2">
+              {desktopStatus?.supported === false
+                ? t("appsPage.desktopUnsupported")
+                : desktopStatus?.configured
+                  ? t("appsPage.desktopConnected")
+                  : t("appsPage.desktopNotConnected")}
+              <HelpTip title={APP_DISPLAY_NAME["claude-desktop"]} align="end">
+                {t("appsPage.desktopHelp")}
+              </HelpTip>
+            </span>
+          }
+          visibility={visibilitySwitch("claude-desktop")}
+        />
+      );
+    }
+    if (row.kind === "cursor") {
+      return (
+        <AppRow
+          key="cursor"
+          app="cursor"
+          name={<span className="truncate">{APP_DISPLAY_NAME["cursor"]}</span>}
+          version={
+            <span className="inline-flex items-center gap-1 text-caption text-fg-2">
+              {cursorStatus?.exists
+                ? t("appsPage.cursorDetected")
+                : t("appsPage.cursorNotDetected")}
+              <HelpTip title={APP_DISPLAY_NAME["cursor"]} align="end">
+                {t("appsPage.cursorHelp")}
+              </HelpTip>
+            </span>
+          }
+          visibility={visibilitySwitch("cursor")}
+        />
+      );
+    }
+    return (
       <ToolRow
         key={row.tool}
         tool={row.tool}
@@ -373,6 +413,7 @@ export function AppsPage() {
         visibility={visibilitySwitch(TOOL_APP_IDS[row.tool])}
       />
     );
+  };
 
   return (
     <>
