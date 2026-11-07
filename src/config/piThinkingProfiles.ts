@@ -96,7 +96,7 @@ export const piThinkingProfiles = {
   openaiResponsesGpt5: {
     map: {
       off: null,
-      minimal: "minimal",
+      minimal: null,
       low: "low",
       medium: "medium",
       high: "high",
@@ -159,6 +159,60 @@ export const piThinkingProfiles = {
       max: "max",
     },
   },
+  claudeAdaptive: {
+    map: {
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "xhigh",
+      max: "max",
+    },
+  },
+  claudeAdaptiveAlwaysThinking: {
+    map: {
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "xhigh",
+      max: "max",
+    },
+  },
+  grokReasoning: {
+    map: {
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "xhigh",
+      max: null,
+    },
+  },
+  qwen38: {
+    map: {
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: null,
+      xhigh: "xhigh",
+      max: null,
+    },
+  },
+  gemini3: {
+    map: {
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: null,
+      max: null,
+    },
+  },
   // MiniMax-M3.1-Flash always thinks (reasoning_effort "none" is rejected) and
   // takes low/medium/high/xhigh/max.
   minimaxM31: {
@@ -179,6 +233,27 @@ export const piThinkingProfiles = {
       low: "LOW",
       medium: null,
       high: "HIGH",
+    },
+  },
+  mimo: {
+    map: {
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: null,
+      max: null,
+    },
+  },
+  fourTiers: {
+    map: {
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "xhigh",
+      max: null,
     },
   },
 } as const satisfies Record<string, PiThinkingProfile>;
@@ -205,13 +280,19 @@ export const piThinkingBindings: readonly PiThinkingBinding[] = [
   {
     catalogKey: "anthropic/claude-opus-5.5",
     api: "anthropic-messages",
-    profileId: "offUnsupportedXhighAndMax",
+    profileId: "claudeAdaptive",
+    modelCompat: { forceAdaptiveThinking: true },
+  },
+  {
+    catalogKey: "anthropic/claude-sonnet-5.5",
+    api: "anthropic-messages",
+    profileId: "claudeAdaptive",
     modelCompat: { forceAdaptiveThinking: true },
   },
   {
     catalogKey: "anthropic/claude-fable-5.1",
     api: "anthropic-messages",
-    profileId: "offUnsupportedXhighAndMax",
+    profileId: "claudeAdaptiveAlwaysThinking",
     modelCompat: { forceAdaptiveThinking: true },
   },
   {
@@ -251,19 +332,24 @@ export const piThinkingBindings: readonly PiThinkingBinding[] = [
     modelCompat: { forceAdaptiveThinking: true },
   },
   {
-    catalogKey: "google/gemini-3.1-pro-preview",
+    catalogKey: "google/gemini-3.8-flash",
     api: "google-generative-ai",
-    profileId: "geminiLowHigh",
-  },
-  {
-    catalogKey: "google/gemini-3.5-flash",
-    api: "google-generative-ai",
-    profileId: "offUnsupported",
+    profileId: "gemini3",
   },
   {
     catalogKey: "google/gemini-3.6-flash",
     api: "google-generative-ai",
-    profileId: "offUnsupported",
+    profileId: "gemini3",
+  },
+  {
+    catalogKey: "google/gemini-3.5-flash",
+    api: "google-generative-ai",
+    profileId: "gemini3",
+  },
+  {
+    catalogKey: "google/gemini-3.1-pro-preview",
+    api: "google-generative-ai",
+    profileId: "gemini3",
   },
   {
     catalogKey: "openai/gpt-5",
@@ -341,9 +427,24 @@ export const piThinkingBindings: readonly PiThinkingBinding[] = [
     profileId: "openaiResponsesGpt56",
   },
   {
+    catalogKey: "openai/gpt-6.1-terra",
+    api: "openai-responses",
+    profileId: "openaiResponsesGpt56",
+  },
+  {
     catalogKey: "openai/gpt-6-luna",
     api: "openai-responses",
     profileId: "openaiResponsesGpt56",
+  },
+  {
+    catalogKey: "qwen/qwen3.8-max",
+    api: "openai-completions",
+    profileId: "qwen38",
+  },
+  {
+    catalogKey: "qwen/qwen3.8-flash",
+    api: "openai-completions",
+    profileId: "qwen38",
   },
   {
     catalogKey: "openai/o3",
@@ -356,9 +457,34 @@ export const piThinkingBindings: readonly PiThinkingBinding[] = [
     profileId: "lowMediumHighOnly",
   },
   {
+    catalogKey: "xai/grok-4.7",
+    api: "openai-responses",
+    profileId: "grokReasoning",
+  },
+  {
+    catalogKey: "xai/grok-4.6",
+    api: "openai-responses",
+    profileId: "grokReasoning",
+  },
+  {
     catalogKey: "xai/grok-4.5",
     api: "openai-responses",
-    profileId: "lowMediumHighOnly",
+    profileId: "grokReasoning",
+  },
+  {
+    catalogKey: "xiaomi/mimo-v2.6-pro",
+    api: "openai-completions",
+    profileId: "mimo",
+  },
+  {
+    catalogKey: "xiaomi/mimo-v2.6-flash",
+    api: "openai-completions",
+    profileId: "mimo",
+  },
+  {
+    catalogKey: "xiaomi/mimo-v2.6-pro-ultraspeed",
+    api: "openai-completions",
+    profileId: "mimo",
   },
 ];
 

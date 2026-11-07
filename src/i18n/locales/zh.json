@@ -1220,6 +1220,8 @@
         "xhigh": "XHigh",
         "max": "Max"
       },
+      "showAllLevels": "显示全部档位",
+      "showPrunedLevels": "只显示支持档位",
       "contextWindow": "上下文长度",
       "maxTokens": "最大输出 Token 数",
       "compatibility": "接口兼容性",

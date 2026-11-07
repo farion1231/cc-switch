@@ -8,6 +8,7 @@ import { piProviderPresets } from "@/config/piProviderPresets";
 import {
   isPiThinkingLevelMap,
   PI_THINKING_LEVELS,
+  type PiThinkingLevelMap,
   piThinkingBindings,
   piThinkingProfiles,
   resolvePiThinkingProfile,
@@ -128,5 +129,50 @@ describe("Pi thinking profiles", () => {
         /^(deepseek|zai|moonshotai)\//.test(binding.catalogKey),
       ),
     ).toBe(false);
+  });
+
+  it("materializes reviewed thinking maps for Qwen and MiMo completion presets", () => {
+    const qwenPreset = piProviderPresets.find(
+      (preset) => preset.name === "千问AI平台",
+    );
+    expect(qwenPreset).toBeDefined();
+    const qwenModel = qwenPreset!.settingsConfig.models.find(
+      (m) => m.id === "qwen3.8-max",
+    );
+    expect(qwenModel?.thinkingLevelMap).toEqual(
+      piThinkingProfiles.qwen38.map,
+    );
+
+    const mimoPreset = piProviderPresets.find(
+      (preset) => preset.name === "Xiaomi MiMo",
+    );
+    expect(mimoPreset).toBeDefined();
+    const mimoModel = mimoPreset!.settingsConfig.models.find(
+      (m) => m.id === "mimo-v2.6-pro",
+    );
+    expect(mimoModel?.thinkingLevelMap).toEqual(
+      piThinkingProfiles.mimo.map,
+    );
+  });
+
+  it("preserves off capability for Sonnet 5.5, MiMo, and Responses models", () => {
+    const sonnetBinding = piThinkingBindings.find(
+      (b) => b.catalogKey === "anthropic/claude-sonnet-5.5",
+    );
+    expect(sonnetBinding).toBeDefined();
+    const sonnetProfile = piThinkingProfiles[sonnetBinding!.profileId];
+    const sonnetMap = sonnetProfile.map as PiThinkingLevelMap;
+    expect(sonnetMap.off).not.toBeNull();
+
+    const mimoMap = piThinkingProfiles.mimo.map as PiThinkingLevelMap;
+    expect(mimoMap.off).not.toBeNull();
+
+    const gpt6SolBinding = piThinkingBindings.find(
+      (b) => b.catalogKey === "openai/gpt-6.1-sol",
+    );
+    expect(gpt6SolBinding).toBeDefined();
+    const gpt6SolProfile = piThinkingProfiles[gpt6SolBinding!.profileId];
+    const gpt6SolMap = gpt6SolProfile.map as PiThinkingLevelMap;
+    expect(gpt6SolMap.off).toBe("none");
   });
 });

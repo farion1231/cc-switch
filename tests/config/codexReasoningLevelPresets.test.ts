@@ -81,8 +81,10 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["Tencent Token Plan Enterprise Lite (Intl)", "auto", ["none", "high"]],
     // LongCat 无档位可调：全站唯一 effort 证据=官方示例的 high
     ["Longcat", "LongCat-2.0", ["high"]],
-    // xAI Reasoning guide 模型级枚举；grok-4.5 不可关思考故无 none
+    // xAI Reasoning guide 模型级枚举；grok-4.5/4.6/4.7 不可关思考故无 none
+    ["xAI (Grok)", "grok-4.6", ["low", "medium", "high", "xhigh"]],
     ["xAI (Grok)", "grok-4.5", ["low", "medium", "high", "xhigh"]],
+    ["xAI (Grok) OAuth", "grok-4.6", ["low", "medium", "high", "xhigh"]],
     ["xAI (Grok) OAuth", "grok-4.5", ["low", "medium", "high", "xhigh"]],
     // grok-4.7（docs.x.ai，2026-11-03 复核）：官方默认 high ≠ 回落档
     // （子集最高档 xhigh）→ 显式声明

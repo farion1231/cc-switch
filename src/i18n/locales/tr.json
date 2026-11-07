@@ -1202,6 +1202,8 @@
         "xhigh": "Ekstra yüksek",
         "max": "Maksimum"
       },
+      "showAllLevels": "Tüm seviyeleri göster",
+      "showPrunedLevels": "Yalnızca desteklenen seviyeleri göster",
       "contextWindow": "Bağlam penceresi",
       "maxTokens": "Maksimum çıkış tokenları",
       "compatibility": "Uyumluluk",

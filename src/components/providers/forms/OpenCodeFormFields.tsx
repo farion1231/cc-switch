@@ -37,7 +37,7 @@ import {
   type OpenCodeModelDialect,
 } from "./helpers/opencodeFormUtils";
 import { StructuredOptionsEditor } from "./StructuredOptionsEditor";
-import { PI_THINKING_LEVELS } from "@/config/piThinkingProfiles";
+import { type PiThinkingLevel } from "@/config/piThinkingProfiles";
 import { RequestHeadersEditor } from "./RequestHeadersEditor";
 import {
   findRequestHeaderValue,
@@ -194,14 +194,19 @@ function ReasoningEffortsField({
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const offeredCount = Object.keys(efforts).length;
+  const ALL_THINKING_LEVELS: readonly PiThinkingLevel[] = [
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+  ];
 
   const toggle = (level: string, offered: boolean) => {
     const next: Record<string, string | null> = {};
-    for (const known of PI_THINKING_LEVELS) {
+    for (const known of ALL_THINKING_LEVELS) {
       if (known === level) {
-        if (offered)
-          next[known] =
-            known in efforts ? efforts[known] : known === "off" ? null : known;
+        if (offered) next[known] = known in efforts ? efforts[known] : known;
       } else if (known in efforts) {
         next[known] = efforts[known];
       }
@@ -233,7 +238,7 @@ function ReasoningEffortsField({
       </div>
       {expanded && (
         <div className="overflow-hidden rounded-lg border border-border/70 bg-surface">
-          {PI_THINKING_LEVELS.map((level) => {
+          {ALL_THINKING_LEVELS.map((level) => {
             const offered = level in efforts;
             const value = efforts[level];
             const id = `opencode-${modelKey}-effort-${level}`;

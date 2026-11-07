@@ -1220,6 +1220,8 @@
         "xhigh": "超高",
         "max": "最大"
       },
+      "showAllLevels": "すべてのレベルを表示",
+      "showPrunedLevels": "サポートされているレベルのみ表示",
       "contextWindow": "コンテキストウィンドウ",
       "maxTokens": "最大出力トークン数",
       "compatibility": "互換性",
