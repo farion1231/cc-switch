@@ -334,6 +334,7 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
           />
           <SettingsRow
             label={t("routingSettings.clientHost")}
+            summary={t("routingSettings.clientHostSummary")}
             help={{
               title: t("routingSettings.clientHost"),
               body: t("routingSettings.clientHostHelp"),
@@ -351,14 +352,11 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
                     aria-invalid={clientHostError ? true : undefined}
                     className="w-[262px]"
                   />
-                  <span
-                    className={cn(
-                      "block text-caption",
-                      clientHostError ? "text-danger-text" : "text-fg-3",
-                    )}
-                  >
-                    {clientHostError ?? t("routingSettings.clientHostHint")}
-                  </span>
+                  {clientHostError && (
+                    <span className="block text-caption text-danger-text">
+                      {clientHostError}
+                    </span>
+                  )}
                 </label>
                 <Button
                   variant="neutral"
