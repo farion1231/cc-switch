@@ -4641,7 +4641,7 @@
     "connection": {
       "unchecked": "未检查",
       "connected": "连接成功",
-      "authRequired": "需要登录授权：服务器可连通，但要求登录（如 OAuth）。CC Switch 检测时不带各客户端自己的登录凭据，客户端里登录后可正常使用",
+      "authRequired": "服务器可连接，但要求登录授权（如 OAuth）。CC Switch 检测时不带客户端自己的登录凭据：客户端里已登录即可正常使用；如果在请求头里配置了令牌，请确认它仍然有效",
       "disconnected": "连接失败",
       "checking": "正在检查连接",
       "disabled": "未启用"
