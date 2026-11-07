@@ -42,6 +42,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::SystemTime;
 #[cfg(windows)]
+use windows_sys::Win32::Foundation::{ERROR_INVALID_PARAMETER, ERROR_NOT_SUPPORTED};
+#[cfg(windows)]
 use windows_sys::Win32::Storage::FileSystem::{
     FileIdInfo, GetFileInformationByHandleEx, FILE_ID_INFO,
 };
@@ -101,17 +103,18 @@ struct ParentFileStamp {
     device: u64,
     #[cfg(unix)]
     inode: u64,
+    /// 卷序列号 + 文件 ID。`None`：文件系统不提供文件 ID（Windows 访问
+    /// `\\wsl.localhost\...` 的 9P 共享时返回 ERROR_NOT_SUPPORTED），只凭
+    /// 修改时间和大小判断文件变没变，否则 WSL 上的父 rollout 永远验证不了。
     #[cfg(windows)]
-    volume_serial: u64,
-    #[cfg(windows)]
-    file_id: [u8; 16],
+    identity: Option<(u64, [u8; 16])>,
 }
 
 impl ParentFileStamp {
     fn from_file(file: &fs::File) -> Option<Self> {
         let metadata = file.metadata().ok()?;
         #[cfg(windows)]
-        let (volume_serial, file_id) = windows_file_identity(file)?;
+        let identity = windows_file_identity(file).ok()?;
         Some(Self {
             modified_nanos: metadata_modified_nanos(&metadata),
             size: metadata.len(),
@@ -120,15 +123,14 @@ impl ParentFileStamp {
             #[cfg(unix)]
             inode: metadata.ino(),
             #[cfg(windows)]
-            volume_serial,
-            #[cfg(windows)]
-            file_id,
+            identity,
         })
     }
 }
 
+/// `Ok(None)`：文件系统不支持查询文件 ID；其他失败照常报错。
 #[cfg(windows)]
-fn windows_file_identity(file: &fs::File) -> Option<(u64, [u8; 16])> {
+fn windows_file_identity(file: &fs::File) -> std::io::Result<Option<(u64, [u8; 16])>> {
     let mut information = FILE_ID_INFO::default();
     // SAFETY: `file` owns a live handle for this call, and `information` is a
     // valid writable FILE_ID_INFO buffer of the size passed to Windows.
@@ -140,10 +142,17 @@ fn windows_file_identity(file: &fs::File) -> Option<(u64, [u8; 16])> {
             std::mem::size_of::<FILE_ID_INFO>() as u32,
         )
     } != 0;
-    succeeded.then_some((
-        information.VolumeSerialNumber,
-        information.FileId.Identifier,
-    ))
+    if succeeded {
+        return Ok(Some((
+            information.VolumeSerialNumber,
+            information.FileId.Identifier,
+        )));
+    }
+    let error = std::io::Error::last_os_error();
+    match error.raw_os_error().map(|code| code as u32) {
+        Some(ERROR_NOT_SUPPORTED | ERROR_INVALID_PARAMETER) => Ok(None),
+        _ => Err(error),
+    }
 }
 
 #[derive(Debug)]
