@@ -199,10 +199,6 @@ export function GeneralSection({
           />
           <SettingsSwitchRow
             label={t("settings.appVisibility.showProfileSwitcher")}
-            help={{
-              title: t("settings.appVisibility.showProfileSwitcher"),
-              body: t("settings.appVisibility.showProfileSwitcherDescription"),
-            }}
             checked={settings.showProfileSwitcher ?? false}
             onCheckedChange={(value) =>
               void onAutoSave({ showProfileSwitcher: value })
@@ -250,10 +246,7 @@ export function GeneralSection({
           {settings.launchOnStartup && (
             <SettingsSwitchRow
               label={t("settings.silentStartup")}
-              help={{
-                title: t("settings.silentStartup"),
-                body: t("settings.silentStartupDescription"),
-              }}
+              summary={t("settings.silentStartupDescription")}
               checked={!!settings.silentStartup}
               onCheckedChange={(value) =>
                 void onAutoSave({ silentStartup: value })
@@ -304,10 +297,7 @@ export function GeneralSection({
           {isLinux() && (
             <SettingsSwitchRow
               label={t("settings.useAppWindowControls")}
-              help={{
-                title: t("settings.useAppWindowControls"),
-                body: t("settings.useAppWindowControlsDescription"),
-              }}
+              summary={t("settings.useAppWindowControlsSummary")}
               checked={!!settings.useAppWindowControls}
               onCheckedChange={(value) =>
                 void onAutoSave({ useAppWindowControls: value })

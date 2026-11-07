@@ -333,6 +333,7 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
           />
           <SettingsRow
             label={t("routingSettings.clientHost")}
+            summary={t("routingSettings.clientHostSummary")}
             help={{
               title: t("routingSettings.clientHost"),
               body: t("routingSettings.clientHostHelp"),
