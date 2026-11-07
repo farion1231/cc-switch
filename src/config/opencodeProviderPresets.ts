@@ -329,6 +329,28 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
 };
 
 export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
+  {
+    name: "TokenPlus",
+    websiteUrl: "https://www.tokenplus.cn/",
+    apiKeyUrl: "https://www.tokenplus.cn/workspace",
+    category: "aggregator",
+    partnerPromotionKey: "tokenplus",
+    icon: "tokenplus",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "TokenPlus",
+      options: { baseURL: "https://api.tokenplus.cn/v1", apiKey: "" },
+      models: {
+        "deepseek/deepseek-v4.1-flash-1017": {
+          name: "DeepSeek V4.1 Flash 1017",
+          reasoning: true,
+        },
+        "z-ai/glm-5.3-flash": { name: "GLM 5.3 Flash", reasoning: true },
+        "moonshot-ai/kimi-k3.1-pro": { name: "Kimi K3.1 Pro", reasoning: true },
+        "minimax/m3.1-flash": { name: "MiniMax M3.1 Flash", reasoning: true },
+      },
+    },
+  },
   // ===== 赞助商预设：文件顺序与 README 赞助商表对齐（仅维护约定；应用内一律按显示名排序，不置顶）=====
   {
     name: "Kimi",

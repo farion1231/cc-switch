@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mergeImportedSkills } from "@/hooks/useSkills.helpers";
 import {
+  useDiscoverableSkills,
   useImportSkillsFromApps,
   useInstallSkill,
   useInstallSkillsFromZip,
@@ -12,6 +13,7 @@ import {
 import type { DiscoverableSkill, InstalledSkill } from "@/lib/api/skills";
 
 const apiMocks = vi.hoisted(() => ({
+  discoverAvailable: vi.fn(),
   importFromApps: vi.fn(),
   installFromZip: vi.fn(),
   installUnified: vi.fn(),
@@ -219,6 +221,39 @@ describe("Skills install and import mutation hooks", () => {
     ]) {
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey });
     }
+  });
+
+  // #9273：导入可能新增来源仓库，发现列表没人在看时 invalidate 不会重拉，
+  // 下次打开也必须重新发现，不能沿用本次运行已验证过的旧结果
+  it("rediscovers on the next mount after an import", async () => {
+    const queryClient = createQueryClient();
+    apiMocks.discoverAvailable.mockResolvedValue({ skills: [], failures: [] });
+    const wrapper = createWrapper(queryClient);
+    const first = renderHook(() => useDiscoverableSkills(), { wrapper });
+    await waitFor(() =>
+      expect(apiMocks.discoverAvailable).toHaveBeenCalledTimes(1),
+    );
+    await waitFor(() => expect(first.result.current.isFetching).toBe(false));
+    first.unmount();
+
+    // 验证过一次后，再挂载不重拉
+    const second = renderHook(() => useDiscoverableSkills(), { wrapper });
+    second.unmount();
+    expect(apiMocks.discoverAvailable).toHaveBeenCalledTimes(1);
+
+    apiMocks.importFromApps.mockResolvedValueOnce([]);
+    const { result } = renderHook(() => useImportSkillsFromApps(), {
+      wrapper,
+    });
+    await act(async () => {
+      await result.current.mutateAsync([]);
+    });
+    expect(apiMocks.discoverAvailable).toHaveBeenCalledTimes(1);
+
+    renderHook(() => useDiscoverableSkills(), { wrapper });
+    await waitFor(() =>
+      expect(apiMocks.discoverAvailable).toHaveBeenCalledTimes(2),
+    );
   });
 
   it("keeps a rejected install pending until installed and unmanaged refresh", async () => {

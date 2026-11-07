@@ -2867,12 +2867,32 @@ fn windows_runnable_sibling_for_extensionless_tool(path: &Path) -> Option<std::p
         .find(|candidate| candidate.is_file())
 }
 
+/// Pi ships only through npm, but PyPI has an unrelated Python 2 package also named
+/// `pi` whose console script lands in a Python `Scripts` dir as `pi.exe`. That file is
+/// never the Pi coding agent: probing it reports a Python traceback as "installed but
+/// broken", and uninstall would target it (#9267). Only pip's own layout is matched
+/// (`<tool>.exe` directly inside a `Scripts` dir); npm writes `.cmd` shims, so a custom
+/// npm prefix under some `Scripts` folder is left alone.
+#[cfg(any(target_os = "windows", test))]
+fn is_foreign_pip_launcher(tool: &str, path: &Path) -> bool {
+    tool == "pi"
+        && path
+            .to_string_lossy()
+            .replace('\\', "/")
+            .to_ascii_lowercase()
+            .ends_with(&format!("/scripts/{tool}.exe"))
+}
+
 /// OpenCode Desktop has shipped both root-level and Electron `resources/` CLI sidecars.
 /// Some Electron releases omitted the sidecar; `resources/app.asar` still identifies the
 /// Desktop bundle, so skip its GUI instead of probing `opencode.exe` with `--version`.
 /// A standalone OpenCode CLI install remains valid when no Desktop marker is present.
+/// Also skips launchers that only share the tool's name (`is_foreign_pip_launcher`).
 #[cfg(target_os = "windows")]
 fn windows_preferred_tool_executable(tool: &str, path: &Path) -> Option<std::path::PathBuf> {
+    if is_foreign_pip_launcher(tool, path) {
+        return None;
+    }
     if tool == "opencode"
         && path
             .file_name()
@@ -5274,6 +5294,7 @@ pub async fn open_provider_terminal(
             agy_terminal_launch(provider)?
         }
         AppType::Codex => codex_terminal_launch(state.db.as_ref(), provider)?,
+        AppType::GrokBuild => grok_terminal_launch(state.db.as_ref(), provider)?,
         AppType::Claude => {
             use crate::services::provider::claude_official::{terminal_account, AccountTerminal};
             match terminal_account(provider).map_err(|e| e.to_string())? {
@@ -5428,9 +5449,10 @@ struct ProviderLaunch {
 impl ProviderLaunch {
     /// 用户在「打开终端」里勾了跳过权限确认：只加给这一次启动，不写进任何配置。
     fn skip_permissions(&mut self) {
-        // Claude Code 和 agy 的参数同名；Codex 跳过确认的同时也关掉沙箱。
+        // Claude Code 和 agy 的参数同名；Codex 跳过确认的同时也关掉沙箱；Grok Build 用自己的。
         let flag = match self.program {
             "codex" => "--dangerously-bypass-approvals-and-sandbox",
+            "grok" => "--always-approve",
             _ => "--dangerously-skip-permissions",
         };
         self.args.push(flag.to_string());
@@ -5618,6 +5640,53 @@ fn codex_launch(
         batch_vars,
         cleanup,
     })
+}
+
+/// Grok Build：直接跑 `grok`，读的就是 live 的 `config.toml`，所以只能打开当前供应商。
+///
+/// Grok CLI 没有只对一个进程换配置的办法：没有 `-c` 之类的覆盖参数，`GROK_CONFIG_PATH`
+/// 不生效（1.0.70 实测），`GROK_HOME` 会把会话、登录、技能一起换到别的目录。
+/// `GROK_HOME` 定到 CC Switch 管的目录（设置里可以改），Grok 读的就是这里写的那份。
+fn grok_terminal_launch(
+    db: &crate::database::Database,
+    provider: &crate::provider::Provider,
+) -> Result<ProviderLaunch, String> {
+    use crate::mode::current::{self, Purpose};
+    let in_use = current::provider_for(db, &AppType::GrokBuild, Purpose::InUse)
+        .map_err(|e| e.to_string())?;
+    if in_use.as_deref() != Some(provider.id.as_str()) {
+        return Err(crate::error::AppError::localized(
+            "grokbuild.terminal.not_current",
+            format!(
+                "Grok Build 不能只对一个终端换供应商：请先切换到「{}」，再打开终端",
+                provider.name
+            ),
+            format!(
+                "Grok Build can't use a different provider in a single terminal. Switch to \"{}\" first, then open the terminal",
+                provider.name
+            ),
+        )
+        .to_string());
+    }
+    Ok(grok_launch(
+        crate::grok_config::get_grok_config_dir()
+            .to_string_lossy()
+            .into_owned(),
+    ))
+}
+
+fn grok_launch(grok_home: String) -> ProviderLaunch {
+    ProviderLaunch {
+        title: "Starting Grok Build with its current config",
+        detail: None,
+        program: "grok",
+        args: Vec::new(),
+        // npm 装的是 grok.cmd：不加 `call` 跑完不回到启动 .bat，后面的清理就不执行了。
+        batch_command: "call grok".to_string(),
+        env: vec![("GROK_HOME", Some(grok_home))],
+        batch_vars: Vec::new(),
+        cleanup: Vec::new(),
+    }
 }
 
 /// Claude Code：把卡上的 env 和 `/model` 菜单写进临时 settings 文件，
@@ -7677,6 +7746,28 @@ mod tests {
             launch.batch_command,
             format!("agy \"--gemini_dir=%{AGY_DIR_BATCH_VAR}%\" --dangerously-skip-permissions")
         );
+    }
+
+    #[test]
+    fn grok_launch_runs_plain_grok_against_the_managed_home() {
+        let mut launch = grok_launch("/home/me/.grok".to_string());
+        launch.skip_permissions();
+        launch
+            .append_user_args(vec!["--model".to_string(), "grok-4.6".to_string()])
+            .unwrap();
+        assert_eq!(launch.program, "grok");
+        assert_eq!(launch.args, vec!["--always-approve", "--model", "grok-4.6"]);
+        assert_eq!(
+            launch.batch_command,
+            "call grok --always-approve \"%CC_SWITCH_ARG0%\" \"%CC_SWITCH_ARG1%\""
+        );
+        assert_eq!(
+            launch.env,
+            vec![("GROK_HOME", Some("/home/me/.grok".to_string()))]
+        );
+        assert!(unix_launch_command(&launch).starts_with(
+            "env -u CC_SWITCH_LAUNCH_ENV_0 GROK_HOME=\"$CC_SWITCH_LAUNCH_ENV_0\" grok "
+        ));
     }
 
     #[test]
@@ -11787,6 +11878,64 @@ mod tests {
         assert_eq!(
             windows_preferred_tool_executable("opencode", &standalone),
             Some(standalone)
+        );
+    }
+
+    #[test]
+    fn foreign_pip_launcher_only_rejects_pi_exe_in_scripts_dir() {
+        let pip_pi = Path::new(r"D:\soft\Python\Python311\Scripts\pi.exe");
+        assert!(is_foreign_pip_launcher("pi", pip_pi));
+        assert!(is_foreign_pip_launcher(
+            "pi",
+            Path::new(r"C:\venvs\tools\SCRIPTS\PI.EXE")
+        ));
+        assert!(!is_foreign_pip_launcher(
+            "pi",
+            Path::new(r"C:\Users\me\AppData\Roaming\npm\pi.cmd")
+        ));
+        // A custom npm prefix under a `Scripts` folder writes `.cmd` shims.
+        assert!(!is_foreign_pip_launcher(
+            "pi",
+            Path::new(r"D:\Scripts\npm-global\pi.cmd")
+        ));
+        assert!(!is_foreign_pip_launcher(
+            "pi",
+            Path::new(r"D:\Scripts\pi.cmd")
+        ));
+        // Bun's global shims are `.exe` but live in `.bun\bin`.
+        assert!(!is_foreign_pip_launcher(
+            "pi",
+            Path::new(r"C:\Users\me\.bun\bin\pi.exe")
+        ));
+        // Hermes really is installed by pip.
+        assert!(!is_foreign_pip_launcher(
+            "hermes",
+            Path::new(r"D:\soft\Python\Python311\Scripts\hermes.exe")
+        ));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_path_default_skips_pip_pi_and_uses_npm_pi() {
+        let root = tempfile::tempdir().expect("temp dir should be created");
+        let scripts = root.path().join("Python311").join("Scripts");
+        std::fs::create_dir_all(&scripts).expect("Scripts dir should be created");
+        let pip_pi = scripts.join("pi.exe");
+        std::fs::write(&pip_pi, "").expect("pip launcher should be created");
+        assert!(tool_executable_candidates("pi", &scripts)
+            .iter()
+            .all(|candidate| candidate != &pip_pi));
+
+        let npm = root.path().join("npm");
+        std::fs::create_dir_all(&npm).expect("npm dir should be created");
+        let npm_pi = npm.join("pi.cmd");
+        std::fs::write(&npm_pi, "").expect("npm shim should be created");
+
+        let raw = format!("{}\r\n{}\r\n", pip_pi.display(), npm_pi.display());
+        assert_eq!(windows_preferred_path_default("pi", &raw), Some(npm_pi));
+        assert_eq!(
+            windows_preferred_path_default("pi", &format!("{}\r\n", pip_pi.display())),
+            None
         );
     }
 
