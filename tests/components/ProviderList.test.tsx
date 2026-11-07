@@ -2,6 +2,8 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useState, type ReactElement } from "react";
+import { createInstance } from "i18next";
+import { I18nextProvider } from "react-i18next";
 import { http, HttpResponse } from "msw";
 import type { Provider } from "@/types";
 import {
@@ -9,6 +11,7 @@ import {
   type SwitchModeProps,
 } from "@/components/providers/ProviderList";
 import { server } from "../msw/server";
+import { ompApi } from "@/lib/api/omp";
 
 vi.mock("sonner", () => ({
   toast: {
@@ -49,6 +52,7 @@ vi.mock("@/hooks/useDragSort", () => ({
 }));
 
 vi.mock("@/components/providers/ProviderCard", () => ({
+  CardChipBadge: ({ chip }: any) => <span>{chip.label}</span>,
   ProviderCard: (props: any) => {
     providerCardRenderSpy(props);
     const { provider, presentation, onEdit, onDelete, onDuplicate } = props;
@@ -170,6 +174,125 @@ describe("ProviderList Component", () => {
     onDuplicate: vi.fn(),
     onOpenWebsite: vi.fn(),
   };
+
+  it("shows omp logins at the top of Added and filters by display name", async () => {
+    const i18n = createInstance();
+    await i18n.init({
+      lng: "en",
+      resources: {
+        en: {
+          translation: {
+            providerCard: { section: { added: "Added ({{count}})" } },
+          },
+        },
+      },
+    });
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/omp_list_logins`, () =>
+        HttpResponse.json([
+          {
+            provider: "opencode-go",
+            credentialTypes: ["apiKey"],
+            total: 2,
+            active: 1,
+          },
+          {
+            provider: "openai-codex",
+            credentialTypes: ["oauth"],
+            total: 1,
+            active: 0,
+          },
+        ]),
+      ),
+      http.post(`${TAURI_ENDPOINT}/get_omp_current_state`, () =>
+        HttpResponse.json({ enabledProviderIds: ["custom"] }),
+      ),
+    );
+    const custom = createProvider({ id: "custom", name: "Custom" });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [custom],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    renderWithQueryClient(
+      <I18nextProvider i18n={i18n}>
+        <ProviderList {...baseProps} appId="omp" providers={{ custom }} />
+      </I18nextProvider>,
+    );
+
+    const loginHeading = await screen.findByRole("heading", {
+      name: "OpenCode Go",
+    });
+    const section = loginHeading.closest("section")!;
+    expect(screen.getByRole("heading", { name: "Added (3)" })).toBeVisible();
+    expect(section).toContainElement(
+      screen.getByTestId("provider-card-custom"),
+    );
+    expect(
+      loginHeading.compareDocumentPosition(
+        screen.getByTestId("provider-card-custom"),
+      ) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      screen.queryByText("providerCard.section.addedEmpty"),
+    ).not.toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Search providers" }),
+      { target: { value: "OpenAI Codex" } },
+    );
+    expect(screen.getByRole("heading", { name: "OpenAI Codex" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Added (1)" })).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "OpenCode Go" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("provider-card-custom"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows omp logins with no custom providers instead of the empty state", async () => {
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/omp_list_logins`, () =>
+        HttpResponse.json([
+          {
+            provider: "opencode-go",
+            credentialTypes: ["apiKey"],
+            total: 1,
+            active: 1,
+          },
+        ]),
+      ),
+      http.post(`${TAURI_ENDPOINT}/get_omp_current_state`, () =>
+        HttpResponse.json({ enabledProviderIds: [] }),
+      ),
+    );
+    renderWithQueryClient(
+      <ProviderList {...baseProps} appId="omp" providers={{}} />,
+    );
+    expect(
+      await screen.findByRole("heading", { name: "OpenCode Go" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "providerCard.section.added" }),
+    ).toBeVisible();
+    expect(screen.queryByText("omp.empty.title")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("providerCard.section.addedEmpty"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not query omp logins on other provider pages", () => {
+    const spy = vi.spyOn(ompApi, "listLogins");
+    try {
+      renderWithQueryClient(
+        <ProviderList {...baseProps} appId="pi" providers={{}} />,
+      );
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
 
   it.each([false, true])(
     "keeps account login inside the add-provider flow with existing providers: %s",
