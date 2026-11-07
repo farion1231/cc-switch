@@ -29,9 +29,15 @@ pub(crate) fn config_file() -> LiveFile {
     LiveFile::private(get_grok_config_path())
 }
 
+/// `~/.grok/auth.json`：存放 xAI OAuth 登录凭据，按 0600 写。
+pub(crate) fn auth_file() -> LiveFile {
+    LiveFile::private(crate::grok_config::get_grok_auth_path())
+}
+
 /// 官方卡：不写模型表，Grok 回落到内置模型和自带的 xAI 登录。
 pub(crate) fn is_official(provider: &Provider) -> bool {
     provider.category.as_deref() == Some("official")
+        || provider.id == crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID
 }
 
 /// 供应商要写的模型表。写之前校验，校验不过什么都不写。
@@ -79,8 +85,20 @@ pub(crate) fn switch_to(
     db: &Database,
     live_owner: Option<&Provider>,
     target: &Provider,
+    xai_manager: Option<
+        &std::sync::Arc<
+            tokio::sync::RwLock<crate::proxy::providers::xai_oauth_auth::XaiOAuthManager>,
+        >,
+    >,
 ) -> Result<OperationReport, AppError> {
-    write(db, op::SWITCH, live_owner, target, Some(&target.id))
+    write(
+        db,
+        op::SWITCH,
+        live_owner,
+        target,
+        Some(&target.id),
+        xai_manager,
+    )
 }
 
 /// 把当前供应商重新投影到 live，不改指针。
@@ -88,8 +106,13 @@ pub(crate) fn reapply(
     db: &Database,
     live_owner: Option<&Provider>,
     target: &Provider,
+    xai_manager: Option<
+        &std::sync::Arc<
+            tokio::sync::RwLock<crate::proxy::providers::xai_oauth_auth::XaiOAuthManager>,
+        >,
+    >,
 ) -> Result<OperationReport, AppError> {
-    write(db, op::APPLY, live_owner, target, None)
+    write(db, op::APPLY, live_owner, target, None, xai_manager)
 }
 
 fn write(
@@ -98,14 +121,78 @@ fn write(
     live_owner: Option<&Provider>,
     target: &Provider,
     pointer: Option<&str>,
+    xai_manager: Option<
+        &std::sync::Arc<
+            tokio::sync::RwLock<crate::proxy::providers::xai_oauth_auth::XaiOAuthManager>,
+        >,
+    >,
 ) -> Result<OperationReport, AppError> {
     let projection = projection(target)?;
-    run(
+    let mut auth_bytes: Option<Vec<u8>> = None;
+
+    if is_official(target) {
+        if let Some(xai_manager) = xai_manager {
+            let auth_path = crate::grok_config::get_grok_auth_path();
+            if auth_path.exists() {
+                if let Ok(content) = std::fs::read_to_string(&auth_path) {
+                    let mgr = std::sync::Arc::clone(xai_manager);
+                    let _ = std::thread::spawn(move || {
+                        tauri::async_runtime::block_on(async move {
+                            let manager = mgr.read().await;
+                            let _ = manager.sync_live_auth_json_refresh(&content).await;
+                        });
+                    })
+                    .join();
+                }
+            }
+
+            if let Some(account_id) = target
+                .meta
+                .as_ref()
+                .and_then(|m| m.managed_account_id_for("xai_oauth"))
+            {
+                let mgr = std::sync::Arc::clone(xai_manager);
+                let acc_id = account_id.to_string();
+                let creds_result = std::thread::spawn(move || {
+                    tauri::async_runtime::block_on(async move {
+                        let manager = mgr.read().await;
+                        manager.get_auth_json_credentials_for_account(&acc_id).await
+                    })
+                })
+                .join()
+                .map_err(|_| AppError::Message("Failed to join OAuth task".to_string()))?;
+
+                let creds = creds_result.map_err(|e| {
+                    AppError::localized(
+                        "provider.grokbuild.oauth.failed",
+                        format!("获取 xAI 账号凭据失败: {e}"),
+                        format!("Failed to get credentials for xAI account: {e}"),
+                    )
+                })?;
+
+                let auth_json = crate::grok_config::build_grok_auth_json(
+                    &creds.access_token,
+                    &creds.refresh_token,
+                    &creds.expires_at,
+                    creds.email.as_deref(),
+                    &creds.account_id,
+                );
+                let mut bytes = serde_json::to_vec_pretty(&auth_json)
+                    .map_err(|e| AppError::Message(e.to_string()))?;
+                bytes.push(b'\n');
+                auth_bytes = Some(bytes);
+            }
+        }
+    }
+
+    run_with_edits_and_auth(
         db,
         op,
         live_owner,
         Some(&projection),
         PendingTarget::pointer(pointer.map(str::to_string)),
+        None,
+        auth_bytes,
     )
 }
 
@@ -127,8 +214,20 @@ pub(crate) fn run_with_edits(
     op: &str,
     live_owner: Option<&Provider>,
     projection: Option<&GrokProjection>,
+    target: PendingTarget,
+    edits: Option<&TomlEdits>,
+) -> Result<OperationReport, AppError> {
+    run_with_edits_and_auth(db, op, live_owner, projection, target, edits, None)
+}
+
+pub(crate) fn run_with_edits_and_auth(
+    db: &Database,
+    op: &str,
+    live_owner: Option<&Provider>,
+    projection: Option<&GrokProjection>,
     mut target: PendingTarget,
     edits: Option<&TomlEdits>,
+    auth_bytes: Option<Vec<u8>>,
 ) -> Result<OperationReport, AppError> {
     // 先补完上一次没做完的操作：它可能改了写入记录和指针，下面要按最新的记录删表。
     let app_write = AppWrite::begin(db, app())?;
@@ -156,12 +255,21 @@ pub(crate) fn run_with_edits(
         steps.push(patch);
     }
     let write = TomlSteps(steps);
-    let changes: Vec<FileChange<'_>> = (!write.0.is_empty())
-        .then(|| FileChange {
+    let mut changes: Vec<FileChange<'_>> = Vec::new();
+    if !write.0.is_empty() {
+        changes.push(FileChange {
             file: config_file(),
             patch: &write,
-        })
-        .into_iter()
-        .collect();
+        });
+    }
+
+    let auth_patch = auth_bytes.map(crate::live::patch::WholeFile::Write);
+    if let Some(ref patch) = auth_patch {
+        changes.push(FileChange {
+            file: auth_file(),
+            patch,
+        });
+    }
+
     app_write.run(op, &changes, target)
 }

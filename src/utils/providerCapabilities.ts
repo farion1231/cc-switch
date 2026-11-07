@@ -142,6 +142,13 @@ export function supportsOfficialProxyTakeover(
   appId: AppId,
   provider: Pick<Provider, "id" | "category" | "meta" | "settingsConfig">,
 ): boolean {
+  if (appId === "grokbuild") {
+    return (
+      (provider.category === "official" ||
+        provider.id === GROKBUILD_OFFICIAL_PROVIDER_ID) &&
+      Boolean(resolveManagedAccountId(provider.meta, "xai_oauth"))
+    );
+  }
   const identity = resolveCodexOfficialIdentity(appId, provider);
   if (!identity || identity === "api_key") return false;
   if (

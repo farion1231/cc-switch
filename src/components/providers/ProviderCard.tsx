@@ -24,6 +24,7 @@ import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
 import XaiOauthQuotaFooter from "@/components/XaiOauthQuotaFooter";
 import AgyAccountQuotaFooter from "@/components/AgyAccountQuotaFooter";
 import { ClaudeBoundAccountLine } from "@/components/providers/forms/ClaudeOfficialSection";
+import { XaiBoundAccountLine } from "@/components/providers/forms/XaiOAuthSection";
 import ClaudeAccountQuotaFooter from "@/components/ClaudeAccountQuotaFooter";
 import { claudePlanLabel } from "@/lib/claudePlan";
 import {
@@ -268,10 +269,17 @@ export function ProviderCard({
       ? resolveManagedAccountId(provider.meta, "claude_official")?.trim() ||
         null
       : null;
-  // 绑了账号的官方卡（Codex / Claude）默认查额度，和 Kimi、agy 的账号卡一样
+  // Grok Build 官方卡绑了 xAI OAuth 账号
+  const grokBoundAccountId =
+    appId === "grokbuild" && isOfficial
+      ? resolveManagedAccountId(provider.meta, "xai_oauth")?.trim() || null
+      : null;
+  // 绑了账号的官方卡（Codex / Claude / Grok）默认查额度，和 Kimi、agy 的账号卡一样
   const usageEnabled =
     provider.meta?.usage_script?.enabled ??
-    (isBoundCodexOfficial || Boolean(claudeBoundAccountId));
+    (isBoundCodexOfficial ||
+      Boolean(claudeBoundAccountId) ||
+      Boolean(grokBoundAccountId));
   const supportsOfficialSubscription =
     isOfficial &&
     ["claude", "codex", "gemini", "grokbuild", "agy"].includes(appId);
@@ -533,6 +541,12 @@ export function ProviderCard({
               note={manualNote}
               showPlan={usageEnabled}
             />
+          ) : grokBoundAccountId ? (
+            <XaiBoundAccountLine
+              accountId={grokBoundAccountId}
+              providerName={provider.name}
+              note={manualNote}
+            />
           ) : agyModel ? (
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-caption text-fg-2">
               <span className="min-w-0 truncate" title={agyModel}>
@@ -622,6 +636,14 @@ export function ProviderCard({
                     autoQueryInterval={
                       provider.meta?.usage_script?.autoQueryInterval ?? 5
                     }
+                  />
+                ) : null
+              ) : grokBoundAccountId ? (
+                usageEnabled ? (
+                  <XaiOauthQuotaFooter
+                    meta={provider.meta}
+                    inline={true}
+                    isCurrent={isCurrent}
                   />
                 ) : null
               ) : isOfficial ? (

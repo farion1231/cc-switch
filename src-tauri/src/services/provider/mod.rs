@@ -83,8 +83,15 @@ fn desktop_needs_routing_error() -> AppError {
 }
 
 pub fn official_provider_supports_proxy_takeover(app_type: &AppType, provider: &Provider) -> bool {
-    matches!(app_type, AppType::Codex)
-        && crate::proxy::providers::is_codex_official_provider(provider)
+    (matches!(app_type, AppType::Codex)
+        && crate::proxy::providers::is_codex_official_provider(provider))
+        || (matches!(app_type, AppType::GrokBuild)
+            && grok_direct::is_official(provider)
+            && provider
+                .meta
+                .as_ref()
+                .and_then(|m| m.managed_account_id_for("xai_oauth"))
+                .is_some())
 }
 
 /// 统一会话开关变更后，立即按新开关状态重写当前官方 Codex 供应商的选路（关键字段），
@@ -5770,7 +5777,12 @@ impl ProviderService {
                 // Antigravity 的卡只用来打开终端，添加不写任何文件。
                 AppType::Agy => return Ok(true),
                 AppType::GrokBuild => {
-                    grok_direct::switch_to(state.db.as_ref(), None, &provider)?;
+                    grok_direct::switch_to(
+                        state.db.as_ref(),
+                        None,
+                        &provider,
+                        Some(&state.xai_oauth_manager),
+                    )?;
                     return Ok(true);
                 }
                 AppType::ClaudeDesktop => {
@@ -7207,7 +7219,12 @@ impl ProviderService {
         let live_owner = current_id
             .as_deref()
             .and_then(|current_id| providers.get(current_id));
-        grok_direct::switch_to(state.db.as_ref(), live_owner, provider)?;
+        grok_direct::switch_to(
+            state.db.as_ref(),
+            live_owner,
+            provider,
+            Some(&state.xai_oauth_manager),
+        )?;
         Ok(SwitchResult::default())
     }
 
@@ -8072,7 +8089,9 @@ impl ProviderService {
                             "Grok Build configuration is missing the config field",
                         )
                     })?;
-                if provider.category.as_deref() == Some("official") {
+                if provider.category.as_deref() == Some("official")
+                    || provider.id == crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID
+                {
                     // 官方条目走 Grok CLI 自带 OAuth：空 config 合法，
                     // 其余内容只要求 TOML 语法合法。
                     crate::grok_config::validate_config_toml_syntax(config)?;

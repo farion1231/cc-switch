@@ -31,6 +31,38 @@ pub fn get_grok_config_path() -> PathBuf {
     get_grok_config_dir().join("config.toml")
 }
 
+/// Grok Build live auth path (`~/.grok/auth.json`).
+pub fn get_grok_auth_path() -> PathBuf {
+    get_grok_config_dir().join("auth.json")
+}
+
+/// Build `~/.grok/auth.json` content for an xAI OAuth account.
+pub fn build_grok_auth_json(
+    access_token: &str,
+    refresh_token: &str,
+    expires_at: &str,
+    email: Option<&str>,
+    account_id: &str,
+) -> Value {
+    let entry_key = format!(
+        "{}::{}",
+        crate::proxy::providers::xai_oauth_auth::XAI_ISSUER,
+        crate::proxy::providers::xai_oauth_auth::XAI_CLIENT_ID
+    );
+    json!({
+        entry_key: {
+            "key": access_token,
+            "refresh_token": refresh_token,
+            "expires_at": expires_at,
+            "email": email.unwrap_or(account_id),
+            "user_id": account_id,
+            "auth_mode": "oauth",
+            "oidc_issuer": crate::proxy::providers::xai_oauth_auth::XAI_ISSUER,
+            "oidc_client_id": crate::proxy::providers::xai_oauth_auth::XAI_CLIENT_ID,
+        }
+    })
+}
+
 fn required_non_empty_string<'a>(
     table: &'a toml::value::Table,
     key: &str,

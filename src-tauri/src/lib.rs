@@ -1351,13 +1351,11 @@ pub fn run() {
 
             // 初始化 xAI OAuthManager (Grok API 反代)
             {
-                use crate::proxy::providers::xai_oauth_auth::XaiOAuthManager;
                 use commands::XaiOAuthState;
-                use tokio::sync::RwLock;
 
-                let app_config_dir = crate::config::get_app_config_dir();
-                let xai_oauth_manager = XaiOAuthManager::new(app_config_dir);
-                app.manage(XaiOAuthState(Arc::new(RwLock::new(xai_oauth_manager))));
+                let xai_oauth_manager =
+                    app.state::<AppState>().xai_oauth_manager.clone();
+                app.manage(XaiOAuthState(xai_oauth_manager));
                 log::info!("✓ XaiOAuthManager initialized");
             }
 
