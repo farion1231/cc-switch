@@ -15,6 +15,7 @@ const twMerge = extendTailwindMerge({
         "title",
         "page",
         "metric",
+        "hint",
       ],
       radius: ["control", "panel", "dialog"],
       shadow: ["v7-sm", "v7-md", "v7-lg"],
