@@ -1806,6 +1806,7 @@ impl SkillService {
             updated_at: chrono::Utc::now().timestamp(),
         };
 
+        let mut refresh_failures = Vec::new();
         let mut updated_skill =
             if skill.apps.mcode || skill.apps.agy || skill.apps.kimi || skill.apps.dsh {
                 Self::update_managed_skill_files(
@@ -1828,13 +1829,24 @@ impl SkillService {
                     },
                 )?
             } else {
+                // The SSOT already holds the new version. Refresh every copy even if
+                // one fails (each replacement is atomic, so a failed copy keeps its
+                // old content intact) and still commit the metadata; stopping here
+                // would leave the remaining copies out of step with the SSOT.
                 for (destination, deployment) in deployments {
-                    Self::refresh_skill_destination(
+                    if let Err(error) = Self::refresh_skill_destination(
                         &dest,
                         &destination,
                         &updated_metadata.directory,
                         &deployment,
-                    )?;
+                    ) {
+                        log::warn!(
+                            "更新 Skill {} 时刷新副本失败 {}: {error:#}",
+                            updated_metadata.directory,
+                            destination.display()
+                        );
+                        refresh_failures.push(format!("{}: {error:#}", destination.display()));
+                    }
                 }
                 Self::persist_updated_skill_metadata(db, &updated_metadata)?
             };
@@ -1857,6 +1869,14 @@ impl SkillService {
             if let Err(e) = Self::sync_to_app_dir(&updated_skill.directory, &app) {
                 log::warn!("同步更新后的 skill 到 {:?} 失败: {e}", app);
             }
+        }
+
+        if !refresh_failures.is_empty() {
+            return Err(anyhow!(
+                "Skill {} 已更新，但以下应用副本未能刷新，仍为旧版本: {}",
+                updated_skill.name,
+                refresh_failures.join("; ")
+            ));
         }
 
         log::info!("Skill {} 更新成功", updated_skill.name);
@@ -1895,10 +1915,11 @@ impl SkillService {
         let mut targets = vec![(ssot.to_path_buf(), false)];
         for (destination, deployment) in deployments {
             Self::ensure_skill_destination_matches(ssot, destination, directory)?;
-            targets.push((
-                destination.clone(),
-                matches!(deployment, SkillDeployment::Symlink { .. }),
-            ));
+            // Verified links point at the SSOT, which is swapped in place below
+            // (and restored in place on rollback), so they need no restaging.
+            if matches!(deployment, SkillDeployment::Copy { .. }) {
+                targets.push((destination.clone(), false));
+            }
         }
         for native in native_targets {
             if !native.exists() && !Self::is_symlink(native) {
@@ -2850,19 +2871,17 @@ impl SkillService {
                         "目标 Skill 已在操作期间发生变化，拒绝覆盖: {directory}"
                     ));
                 }
-                let target = fs::read_link(destination)?;
-                let resolved = if target.is_absolute() {
-                    target
-                } else {
-                    destination
-                        .parent()
-                        .map(|parent| parent.join(&target))
-                        .unwrap_or(target)
-                };
+                let resolved = Self::resolve_link_target(destination)?;
                 if &resolved != expected_target {
                     return Err(anyhow!(
                         "目标 Skill 已在操作期间发生变化，拒绝覆盖: {directory}"
                     ));
+                }
+                // The SSOT is replaced in place, so a link to it already serves the
+                // new content. Rebuilding it would only add a failure mode, e.g.
+                // Windows after the user lost the privilege to create links.
+                if Self::paths_alias(&resolved, source) {
+                    return Ok(());
                 }
                 Self::replace_dest_with_symlink(source, destination, directory)?;
             }
@@ -6543,6 +6562,164 @@ description: Test skill
             assert!(fs::read_to_string(source.join("SKILL.md"))
                 .unwrap()
                 .contains("name: new\n"));
+        }
+    }
+
+    /// Makes replacing `dir` fail while the files inside stay readable, so the
+    /// pre-update ownership check passes but the copy refresh does not.
+    struct ReplacementBlocker {
+        #[cfg(unix)]
+        parent: PathBuf,
+        #[cfg(unix)]
+        permissions: fs::Permissions,
+        #[cfg(windows)]
+        _handle: fs::File,
+    }
+    impl ReplacementBlocker {
+        #[cfg(unix)]
+        fn new(dir: &Path) -> Self {
+            use std::os::unix::fs::PermissionsExt;
+            let parent = dir.parent().unwrap().to_path_buf();
+            let permissions = fs::metadata(&parent).unwrap().permissions();
+            fs::set_permissions(&parent, fs::Permissions::from_mode(0o555)).unwrap();
+            Self {
+                parent,
+                permissions,
+            }
+        }
+
+        #[cfg(windows)]
+        fn new(dir: &Path) -> Self {
+            use std::os::windows::fs::OpenOptionsExt;
+            const FILE_SHARE_READ: u32 = 0x1;
+            const FILE_SHARE_WRITE: u32 = 0x2;
+            const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+            // Without FILE_SHARE_DELETE nobody can rename the directory.
+            let handle = fs::OpenOptions::new()
+                .read(true)
+                .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+                .open(dir)
+                .unwrap();
+            Self { _handle: handle }
+        }
+    }
+    #[cfg(unix)]
+    impl Drop for ReplacementBlocker {
+        fn drop(&mut self) {
+            let _ = fs::set_permissions(&self.parent, self.permissions.clone());
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn update_refreshes_remaining_copies_when_one_copy_refresh_fails() {
+        let temp = tempdir().unwrap();
+        let home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&home, SkillStorageLocation::CcSwitch);
+        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let mut skill = poisoned_skill("owner/repo:shared", "shared");
+        skill.repo_owner = Some("owner".into());
+        skill.repo_name = Some("repo".into());
+        skill.apps = SkillApps {
+            claude: true,
+            codex: true,
+            ..Default::default()
+        };
+        db.save_skill(&skill).unwrap();
+        let source = SkillService::get_ssot_dir().unwrap().join("shared");
+        write_skill(&source, "old");
+        let copy = |app: &AppType| {
+            SkillService::get_app_skills_dir(app)
+                .unwrap()
+                .join("shared")
+        };
+        for app in [AppType::Claude, AppType::Codex] {
+            SkillService::copy_dir_recursive(&source, &copy(&app)).unwrap();
+        }
+        let remote = tempdir().unwrap();
+        write_skill(&remote.path().join("shared"), "new");
+        let service = SkillService {
+            repo_fixture: Some(remote.path().to_path_buf()),
+            ..SkillService::new()
+        };
+
+        let error = {
+            let _blocked = ReplacementBlocker::new(&copy(&AppType::Claude));
+            service.update_skill(&db, &skill.id).await.unwrap_err()
+        }
+        .to_string();
+
+        let claude = copy(&AppType::Claude);
+        assert!(error.contains(claude.to_string_lossy().as_ref()), "{error}");
+        assert!(fs::read_to_string(claude.join("SKILL.md"))
+            .unwrap()
+            .contains("name: old\n"));
+        assert!(fs::read_to_string(copy(&AppType::Codex).join("SKILL.md"))
+            .unwrap()
+            .contains("name: new\n"));
+        let stored = db.get_installed_skill(&skill.id).unwrap().unwrap();
+        assert_eq!(stored.name, "new");
+        assert_ne!(stored.updated_at, 0);
+        assert_eq!(
+            stored.content_hash,
+            Some(SkillService::compute_dir_hash(&source).unwrap())
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn update_keeps_links_into_the_ssot_without_rebuilding_them() {
+        let temp = tempdir().unwrap();
+        let home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&home, SkillStorageLocation::CcSwitch);
+        let ssot = SkillService::get_ssot_dir().unwrap().join("test-skill");
+        let download = temp.path().join("download");
+        write_skill(&ssot, "old");
+        write_skill(&download, "new");
+        let mut deployments = Vec::new();
+        for app in [AppType::Claude, AppType::Mcode] {
+            let link = SkillService::get_app_skills_dir(&app)
+                .unwrap()
+                .join("test-skill");
+            fs::create_dir_all(link.parent().unwrap()).unwrap();
+            SkillService::create_symlink(&ssot, &link).unwrap();
+            let deployment = SkillService::inspect_skill_destination(&ssot, &link, "test-skill")
+                .unwrap()
+                .unwrap();
+            assert!(matches!(deployment, SkillDeployment::Symlink { .. }));
+            deployments.push((link, deployment));
+        }
+
+        // Neither link can be recreated (as on Windows without link privilege).
+        let blockers: Vec<_> = deployments
+            .iter()
+            .map(|(link, _)| ReplacementBlocker::new(link))
+            .collect();
+        // Non-managed path: SSOT replaced in place, then each deployment refreshed.
+        SkillService::replace_dest_with_copy(&download, &ssot, "test-skill").unwrap();
+        let (claude, claude_deployment) = &deployments[0];
+        SkillService::refresh_skill_destination(&ssot, claude, "test-skill", claude_deployment)
+            .unwrap();
+        // Managed path: staged swap of the SSOT plus its deployments.
+        write_skill(&download, "newer");
+        SkillService::update_mcode_skill_files(
+            &download,
+            &ssot,
+            "test-skill",
+            &deployments[1..],
+            || Ok(()),
+        )
+        .unwrap();
+        drop(blockers);
+
+        for (link, _) in &deployments {
+            assert!(SkillService::is_symlink(link));
+            assert!(fs::read_to_string(link.join("SKILL.md"))
+                .unwrap()
+                .contains("name: newer\n"));
         }
     }
 
