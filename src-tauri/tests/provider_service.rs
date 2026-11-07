@@ -1504,11 +1504,10 @@ fn reapply_codex_official_live_rewrites_only_the_session_routing() {
     assert!(cc_switch_lib::reapply_current_codex_official_live(&state).expect("reapply"));
     let unified = read_live();
     let doc: toml::Value = toml::from_str(&unified).expect("parse");
-    assert_eq!(doc["model_provider"].as_str(), Some("custom"), "{unified}");
-    assert_eq!(
-        doc["model_providers"]["custom"]["requires_openai_auth"].as_bool(),
-        Some(true),
-        "the unified bucket is the official mirror: {unified}"
+    assert!(doc.get("model_provider").is_none(), "{unified}");
+    assert!(
+        doc.get("openai_base_url").is_none(),
+        "official login stays native: {unified}"
     );
     assert!(
         unified.contains("[mcp_servers.echo-server]") && unified.contains("approval_policy"),
