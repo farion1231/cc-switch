@@ -4269,6 +4269,7 @@
     "expandSidebar": "展開側欄",
     "collapseSidebar": "收起側欄",
     "appsGroup": "應用",
+    "toolsGroup": "工具",
     "today": "今日 {{value}}",
     "todayRequests": "{{value}} 次",
     "todayHitRate": "命中 {{value}}",
@@ -4286,8 +4287,7 @@
       "route": "路由",
       "stack": "聚合"
     },
-    "needsAttention": "需要處理",
-    "back": "返回"
+    "needsAttention": "需要處理"
   },
   "appsPage": {
     "showInSidebar": "在側欄顯示 {{name}}",

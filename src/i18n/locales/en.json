@@ -4268,6 +4268,7 @@
     "expandSidebar": "Expand sidebar",
     "collapseSidebar": "Collapse sidebar",
     "appsGroup": "Apps",
+    "toolsGroup": "Tools",
     "today": "Today {{value}}",
     "todayRequests": "{{value}} req",
     "todayHitRate": "Hit {{value}}",
@@ -4285,8 +4286,7 @@
       "route": "Routing",
       "stack": "Aggregation"
     },
-    "needsAttention": "Needs attention",
-    "back": "Back"
+    "needsAttention": "Needs attention"
   },
   "appsPage": {
     "showInSidebar": "Show {{name}} in the sidebar",
