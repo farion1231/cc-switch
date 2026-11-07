@@ -303,6 +303,7 @@ pub fn responses_request_to_anthropic(
     let adaptive_by_default = crate::proxy::thinking_optimizer::adaptive_thinking_is_default(model);
     let cannot_disable_thinking =
         crate::proxy::thinking_optimizer::thinking_cannot_be_disabled(model);
+    let opus_5_5 = crate::proxy::thinking_optimizer::is_opus_5_5(model);
 
     // max_output_tokens → max_tokens (required)
     let max_tokens = body
@@ -321,7 +322,10 @@ pub fn responses_request_to_anthropic(
                 .and_then(codex_effort_to_anthropic)
                 .is_some());
 
-    if !thinking_history_is_valid {
+    // Opus 5.5 accepts complete unsigned tool turns (for example after switching
+    // providers). Keep their original calls/results; never invent a signature or
+    // disable mandatory thinking. Other generations retain the existing check.
+    if !thinking_history_is_valid && !opus_5_5 {
         if cannot_disable_thinking {
             return Err(ProxyError::InvalidRequest(
                 "Anthropic model requires thinking, but the tool history has no signed thinking block to replay"
@@ -337,7 +341,7 @@ pub fn responses_request_to_anthropic(
         if let Some(effort) = reasoning_effort.and_then(codex_effort_to_anthropic) {
             result["output_config"] = json!({ "effort": effort });
         } else if explicitly_disabled && cannot_disable_thinking {
-            // Fable/Mythos cannot turn thinking off. `low` is the closest safe
+            // Mandatory-thinking models cannot turn it off. `low` is the closest safe
             // representation of Codex's explicit `none` request.
             result["output_config"] = json!({ "effort": "low" });
         }
@@ -403,12 +407,47 @@ pub fn responses_request_to_anthropic(
     // unsupported hosted tools (for example web_search) must drop tool_choice too.
     if has_tools {
         if let Some(tc) = body.get("tool_choice") {
-            let mapped = map_tool_choice_to_anthropic(tc, &tool_context);
+            let mut mapped = map_tool_choice_to_anthropic(tc, &tool_context);
             let forced = matches!(
                 mapped.get("type").and_then(|value| value.as_str()),
                 Some("any" | "tool")
             );
-            if thinking_enabled && forced {
+            if thinking_enabled && forced && opus_5_5 {
+                // Opus 5.5 rejects `any`/`tool` even with adaptive thinking. Use
+                // auto plus a request-local instruction, and constrain named
+                // selection to the requested tool. This is best-effort, not a
+                // protocol-level guarantee; log the downgrade explicitly.
+                let requested_name = mapped
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let instruction = if let Some(name) = requested_name.as_deref() {
+                    let tools = result["tools"].as_array_mut().unwrap();
+                    tools.retain(|tool| tool.get("name").and_then(Value::as_str) == Some(name));
+                    if tools.is_empty() {
+                        return Err(ProxyError::InvalidRequest(
+                            "forced tool is not available in the converted tool list".to_string(),
+                        ));
+                    }
+                    format!(
+                        "For this response, call the tool {} before providing a final answer.",
+                        json!(name)
+                    )
+                } else {
+                    "For this response, call at least one available tool before providing a final answer."
+                        .to_string()
+                };
+                let system = result.get("system").and_then(Value::as_str).unwrap_or("");
+                result["system"] = json!(if system.is_empty() {
+                    instruction
+                } else {
+                    format!("{system}\n\n{instruction}")
+                });
+                log::warn!(
+                    "[Codex Opus 5.5 compatibility] forced tool_choice converted to auto; tool intent is best-effort"
+                );
+                mapped = json!({ "type": "auto" });
+            } else if thinking_enabled && forced {
                 if cannot_disable_thinking {
                     return Err(ProxyError::InvalidRequest(
                         "Anthropic model requires adaptive thinking and cannot honor a forced tool_choice"
