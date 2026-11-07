@@ -5101,4 +5101,41 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     ),
     icon: "aicoming",
   },
+  {
+    name: "TokenPlus",
+    websiteUrl: "https://www.tokenplus.cn/",
+    apiKeyUrl: "https://www.tokenplus.cn/workspace",
+    category: "aggregator",
+    partnerPromotionKey: "tokenplus",
+    icon: "tokenplus",
+    auth: generateThirdPartyAuth(""),
+    config: `model_provider = "custom"
+model = "deepseek/deepseek-v4.1-flash-1017"
+disable_response_storage = true
+
+[model_providers.custom]
+name = "tokenplus"
+base_url = "https://api.tokenplus.cn/v1"
+wire_api = "responses"
+requires_openai_auth = true`,
+    apiFormat: "openai_chat",
+    modelCatalog: [
+      {
+        model: "deepseek/deepseek-v4.1-flash-1017",
+        displayName: "DeepSeek V4.1 Flash 1017",
+      },
+      {
+        model: "z-ai/glm-5.3-flash",
+        displayName: "GLM 5.3 Flash",
+      },
+      {
+        model: "moonshot-ai/kimi-k3.1-pro",
+        displayName: "Kimi K3.1 Pro",
+      },
+      {
+        model: "minimax/m3.1-flash",
+        displayName: "MiniMax M3.1 Flash",
+      },
+    ],
+  },
 ];

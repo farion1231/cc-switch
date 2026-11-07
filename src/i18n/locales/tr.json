@@ -1638,6 +1638,7 @@
     "providerKeyStatusLoading": "Sağlayıcı tanımlayıcı durumu hâlâ yükleniyor. Lütfen kısa süre sonra tekrar deneyin.",
     "getApiKey": "API Anahtarını Alın",
     "partnerPromotion": {
+      "tokenplus": "TokenPlus ile yapay zekâ destekli kodlama daha kararlı, ekonomik ve sorunsuz: tek anahtarla birden çok sağlayıcının modellerine erişin, akıllı geçişle kararlılığı koruyun, uygun fiyat seçimi ve önbellek optimizasyonuyla maliyetleri azaltın; faturalandırma, ekip ve veri güvenliğini tek yerden yönetin.",
       "kimi": "Yeni Kimi kullanıcıları ilk başarılı yüklemelerinin %10'unu 1.000 CNY'ye kadar bonus API kredisi olarak geri alırlar.",
       "a6api": "A6API, piyasadaki en düşük fiyatı otomatik olarak seçen, yerleşik gerçek zamanlı fiyat sıralama tablosuna sahip bir token birleştirme platformudur. Sorunsuz ve istikrarlı, kullanımı basit ve sıkıcı fiyat karşılaştırmalarına son. Ücretsiz deneme kredilerinden yararlanmak için şimdi kaydolun!",
       "sudocode": "Bir SudoCode anahtarıyla Claude Code ve Claude Desktop, Claude Opus 5'i kullanırken Codex, GPT-5.6'yı kullanır. Kaydolun, 726213516 numaralı QQ grubuna katılın ve 10 CNY tutarında deneme kredisi talep etmek için grup sahibiyle iletişime geçin.",
