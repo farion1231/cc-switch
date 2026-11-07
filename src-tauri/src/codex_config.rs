@@ -952,6 +952,38 @@ pub(crate) fn is_custom_codex_model_provider_id(id: &str) -> bool {
     !id.is_empty() && !CODEX_RESERVED_MODEL_PROVIDER_IDS.contains(&id)
 }
 
+/// 校验显式输入的 Codex Provider ID（deeplink `modelProvider` 参数、表单字段）。
+///
+/// 拒绝 Codex 保留的表标识（精确小写匹配，见 [`CODEX_RESERVED_MODEL_PROVIDER_IDS`]，
+/// 大写 `OpenAI` 等是合法的自定义 id）和控制字符；其余名称交给 toml_edit 做 TOML 转义。
+pub fn validate_codex_model_provider_id(id: &str) -> Result<String, AppError> {
+    let trimmed = id.trim();
+    if CODEX_RESERVED_MODEL_PROVIDER_IDS.contains(&trimmed) {
+        return Err(AppError::InvalidInput(format!(
+            "\"{trimmed}\" is a reserved Codex model provider id; pick a different Provider ID"
+        )));
+    }
+    if trimmed.chars().any(char::is_control) {
+        return Err(AppError::InvalidInput(
+            "The Codex Provider ID must not contain control characters".to_string(),
+        ));
+    }
+    Ok(trimmed.to_string())
+}
+
+/// 行的 `settings_config.modelProvider`：显式指定的路由表标识（issue #7856）。
+///
+/// 只有表单字段、编辑器保存和 deeplink 参数会写这个键；缺失或非法（含保留名）一律按
+/// 旧行为归一化为 `custom`，所以存量行零迁移、行为零变化。
+pub fn explicit_codex_model_provider_id(settings: &Value) -> Option<String> {
+    settings
+        .get("modelProvider")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|id| is_custom_codex_model_provider_id(id))
+        .map(str::to_string)
+}
+
 pub fn extract_codex_auth_api_key(auth: &Value) -> Option<String> {
     auth.get("OPENAI_API_KEY")
         .and_then(|value| value.as_str())
