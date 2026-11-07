@@ -28,6 +28,7 @@ const XaiOauthQuotaFooter: React.FC<XaiOauthQuotaFooterProps> = ({
     data: quota,
     isFetching: loading,
     refetch,
+    manualIdle,
   } = useXaiOauthQuota(meta, { enabled: true, autoQuery: isCurrent });
 
   return (
@@ -35,6 +36,7 @@ const XaiOauthQuotaFooter: React.FC<XaiOauthQuotaFooterProps> = ({
       quota={quota}
       loading={loading}
       refetch={refetch}
+      idle={manualIdle}
       inline={inline}
       display={display}
     />

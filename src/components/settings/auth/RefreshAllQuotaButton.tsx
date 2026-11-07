@@ -19,6 +19,11 @@ const QUOTA_SERVICES = new Set([
   "agy_oauth",
 ]);
 
+/** 当前页面上（有组件在用）的账号额度。只手动查询时这些 query 是 disabled 的，不算 active */
+function isShownAccountQuotaQuery(query: Query): boolean {
+  return query.getObserversCount() > 0 && isAccountQuotaQuery(query);
+}
+
 function isAccountQuotaQuery({ queryKey }: Query): boolean {
   const [service, kind] = queryKey;
   if (service === DSH_ACCOUNT_STATUS_KEY[0]) return true;
@@ -46,8 +51,7 @@ export function RefreshAllQuotaButton() {
       disabled={fetching}
       onClick={() =>
         void queryClient.refetchQueries({
-          type: "active",
-          predicate: isAccountQuotaQuery,
+          predicate: isShownAccountQuotaQuery,
         })
       }
     >
