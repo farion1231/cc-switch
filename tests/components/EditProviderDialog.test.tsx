@@ -1,3 +1,5 @@
+import ApiKeyInput from "@/components/providers/forms/ApiKeyInput";
+import { renderWithQueryClient } from "../utils/testQueryClient";
 import {
   act,
   fireEvent,
@@ -113,6 +115,13 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
           });
         }}
       >
+        {initialData.meta?.credentialEditProtected === true && (
+          <ApiKeyInput
+            label="Protected test key"
+            value="public-test-key"
+            onChange={() => {}}
+          />
+        )}
         <output data-testid="settings-config">
           {JSON.stringify(initialData.settingsConfig ?? {})}
         </output>
@@ -645,4 +654,48 @@ describe("EditProviderDialog", () => {
     act(() => submitReadyCallbacks.at(-1)?.(true));
     await waitFor(() => expect(saveButton).toBeEnabled());
   });
+});
+
+it("passes editing protection into the key editor and retains it on an ordinary save", async () => {
+  mockFormReady = true;
+  mockCodexManagedAccountSelected = false;
+  const provider: Provider = {
+    id: "protected",
+    name: "Protected",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_AUTH_TOKEN: "public-test-key",
+        ANTHROPIC_BASE_URL: "https://example.com",
+      },
+    },
+    meta: { credentialEditProtected: true },
+  };
+  apiMocks.getEditorView.mockResolvedValue({
+    settings: provider.settingsConfig,
+    inactive: [],
+  });
+  const onSubmit = vi.fn();
+  renderWithQueryClient(
+    <EditProviderDialog
+      open
+      provider={provider}
+      appId="claude"
+      onOpenChange={vi.fn()}
+      onSubmit={onSubmit}
+    />,
+  );
+  expect(await screen.findByLabelText("Protected test key")).toHaveAttribute(
+    "readonly",
+  );
+  expect(screen.getByText("credentialProtection.title")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+  await waitFor(() =>
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: expect.objectContaining({
+          meta: expect.objectContaining({ credentialEditProtected: true }),
+        }),
+      }),
+    ),
+  );
 });
