@@ -1740,8 +1740,13 @@ export const extractCodexMultiAgentV2Total = (
 
 // ========== Codex top-level integer field utils ==========
 
+const TOML_INTEGER_LITERAL_PATTERN =
+  /(?:[+-]?(?:0|[1-9](?:_?\d)*)|0x[0-9a-fA-F](?:_?[0-9a-fA-F])*|0o[0-7](?:_?[0-7])*|0b[01](?:_?[01])*)/;
+
 const tomlTopLevelIntPattern = (field: string) =>
-  new RegExp(`^\\s*${field}\\s*=\\s*(\\d+)\\s*(?:#.*)?$`);
+  new RegExp(
+    `^\\s*${field}\\s*=\\s*(${TOML_INTEGER_LITERAL_PATTERN.source})\\s*(?:#.*)?$`,
+  );
 
 const findTopLevelIntMatch = (
   lines: string[],
@@ -1749,10 +1754,12 @@ const findTopLevelIntMatch = (
   topLevelEndIndex: number,
 ): { index: number; value: number } | undefined => {
   const pattern = tomlTopLevelIntPattern(fieldName);
+  const stringLines = getTomlMultilineStringLines(lines);
   for (let i = 0; i < topLevelEndIndex; i += 1) {
+    if (stringLines[i]) continue;
     const m = lines[i].match(pattern);
     if (m) {
-      return { index: i, value: Number(m[1]) };
+      return { index: i, value: Number(m[1].replace(/_/g, "")) };
     }
   }
   return undefined;
