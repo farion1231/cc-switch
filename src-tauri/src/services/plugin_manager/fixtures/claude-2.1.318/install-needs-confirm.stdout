@@ -1,0 +1,5 @@
+"cmdplug" is installed by running a command from marketplace "ccs-test" on this machine:
+  echo hi
+  (mode "copy": its output directory is copied into the plugin cache)
+Not an interactive terminal, so the command was only displayed, not accepted. Run this in your own terminal (outside the Claude Code session) to confirm the command shown above.
+{"command":"install","outcome":"failed","plugin":"cmdplug@ccs-test","scope":"user","message":"cmdplug@ccs-test is installed by running a command on this machine (`echo hi`) that has not been reviewed yet, so it was not run. Review and accept it from its /plugin details pane, or in a terminal: run `claude plugin install cmdplug@ccs-test`.","failureCode":"command_source_refused","shownCommand":{"kind":"command_source","pluginId":"cmdplug@ccs-test","command":"echo hi","mode":"copy","catalogRevision":"sha256:fcebbfe40c8afbbf9f19cd1fdc6997c7061e95a30f6cff6a457e1191bf73b86c","sha256":"d25550e8e28f73e6166611fb31caaad8285286ceefd61730b8123288e57e0957"}}

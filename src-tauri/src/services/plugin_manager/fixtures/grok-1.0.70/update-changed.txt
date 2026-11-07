@@ -1,0 +1,1 @@
+c--fixture-gmkt-plugins-hello-00000000: updated (0.1.0 -> 0.2.0)

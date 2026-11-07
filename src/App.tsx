@@ -99,6 +99,7 @@ import { SwitchModePanel } from "@/components/providers/mode/SwitchModePanel";
 import { proxyApi } from "@/lib/api/proxy";
 import type { AppMode, StartupAttachFailure } from "@/types/proxy";
 import { PROMPT_APP_IDS } from "@/lib/query/prompts";
+import { PLUGIN_APPS, isPluginApp } from "@/lib/api/plugins";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
 import { WhatsNewNotice } from "@/components/WhatsNewDialog";
@@ -169,6 +170,11 @@ const UnifiedMcpPanel = lazy(() => import("@/components/mcp/UnifiedMcpPanel"));
 const PromptPanel = lazy(() => import("@/components/prompts/PromptPanel"));
 const UnifiedSkillsPanel = lazy(
   () => import("@/components/skills/UnifiedSkillsPanel"),
+);
+const PluginsPage = lazy(() =>
+  import("@/components/plugins/PluginsPage").then((m) => ({
+    default: m.PluginsPage,
+  })),
 );
 const WorkspaceFilesPanel = lazy(
   () => import("@/components/workspace/WorkspaceFilesPanel"),
@@ -1809,6 +1815,13 @@ function App() {
               currentView === "skillsDiscovery" ? "discover" : "installed"
             }
             onNavigationBlockedChange={setSkillsNavigationBusy}
+          />
+        );
+      case "plugins":
+        return (
+          <PluginsPage
+            apps={PLUGIN_APPS.filter((app) => visibleApps[app])}
+            initialApp={isPluginApp(activeApp) ? activeApp : "claude"}
           />
         );
       case "prompts":
