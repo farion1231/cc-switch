@@ -131,6 +131,10 @@
     --heat-3: var(--chart-usage);
     --heat-4: #0e7490;
     --chart-2: #db2777;
+    --chart-3: #7c3aed;
+    --chart-4: #ea580c;
+    --chart-5: #16a34a;
+    --chart-6: #ca8a04;
     --chart-grid: #ececf0;
 
     /* 会话阅读页的 Agent 主题色：只用于提问竖条和助手 glyph，
@@ -215,6 +219,10 @@
     --heat-3: color-mix(in srgb, var(--chart-usage) 75%, transparent);
     --heat-4: var(--chart-usage);
     --chart-2: #f472b6;
+    --chart-3: #a78bfa;
+    --chart-4: #fb923c;
+    --chart-5: #4ade80;
+    --chart-6: #facc15;
     --chart-grid: #2c2c31;
 
     --agent-claude: #e08a6a;

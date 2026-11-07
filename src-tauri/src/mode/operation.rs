@@ -437,6 +437,20 @@ pub fn commit_target(
     if let Some(mode) = &target.state {
         mirror_proxy_flag(db, app, mode.is_proxy())?;
     }
+    // 只有真正落定模式状态时才记 mode_change；纯指针切换由 ProviderService::switch 记录。
+    if target.state.is_some() {
+        if let Ok(app_type) = app.parse::<crate::app_config::AppType>() {
+            if let Err(err) =
+                crate::services::usage_attribution::record_activation_for_current_state(
+                    db,
+                    &app_type,
+                    "mode_change",
+                )
+            {
+                log::warn!("[USAGE-ATTR] 写入 {} 模式变更激活失败: {err}", app);
+            }
+        }
+    }
     Ok(())
 }
 

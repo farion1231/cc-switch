@@ -222,7 +222,7 @@ fn import_records(
             // A rewritten completed step may correct counters; update retained detail only.
             // If retention already removed it, its tombstone still forbids resurrection.
             // Timing is only ever filled in: an unreadable native database keeps what was stored.
-            let changed = tx.execute("UPDATE proxy_request_logs SET model=?2,request_model=?7,input_tokens=?3,output_tokens=?4,cache_read_tokens=?5,cache_creation_tokens=?6,input_cost_usd=?8,output_cost_usd=?9,cache_read_cost_usd=?10,cache_creation_cost_usd=?11,total_cost_usd=?12,latency_ms=CASE WHEN ?13>0 THEN ?13 ELSE latency_ms END,first_token_ms=COALESCE(?14,first_token_ms) WHERE request_id=?1 AND (model!=?2 OR request_model!=?7 OR input_tokens!=?3 OR output_tokens!=?4 OR cache_read_tokens!=?5 OR cache_creation_tokens!=?6 OR total_cost_usd!=?12 OR (?13>0 AND latency_ms!=?13) OR (?14 IS NOT NULL AND first_token_ms IS NOT ?14))", params![id,model,input,output,cache,write,display,input_cost,output_cost,cache_cost,write_cost,total_cost,latency_ms,first_token_ms])?;
+            let changed = tx.execute("UPDATE proxy_request_logs SET model=?2,request_model=?7,input_tokens=?3,output_tokens=?4,cache_read_tokens=?5,cache_creation_tokens=?6,input_cost_usd=?8,output_cost_usd=?9,cache_read_cost_usd=?10,cache_creation_cost_usd=?11,total_cost_usd=?12,attribution_source='unknown',attribution_confidence='unknown',attribution_reason='agy_native_session',latency_ms=CASE WHEN ?13>0 THEN ?13 ELSE latency_ms END,first_token_ms=COALESCE(?14,first_token_ms) WHERE request_id=?1 AND (model!=?2 OR request_model!=?7 OR input_tokens!=?3 OR output_tokens!=?4 OR cache_read_tokens!=?5 OR cache_creation_tokens!=?6 OR total_cost_usd!=?12 OR attribution_source!='unknown' OR attribution_confidence!='unknown' OR (?13>0 AND latency_ms!=?13) OR (?14 IS NOT NULL AND first_token_ms IS NOT ?14))", params![id,model,input,output,cache,write,display,input_cost,output_cost,cache_cost,write_cost,total_cost,latency_ms,first_token_ms])?;
             imported += changed as u32;
             skipped += u32::from(changed == 0);
             continue;
@@ -234,8 +234,9 @@ fn import_records(
             request_id,provider_id,app_type,model,request_model,input_tokens,output_tokens,
             cache_read_tokens,cache_creation_tokens,input_cost_usd,output_cost_usd,
             cache_read_cost_usd,cache_creation_cost_usd,total_cost_usd,latency_ms,first_token_ms,status_code,
-            session_id,provider_type,is_streaming,cost_multiplier,created_at,data_source,input_token_semantics
-        ) VALUES (?1,'_agy_session','agy',?2,?10,?3,?4,?5,?6,?11,?12,?13,?14,?15,?16,?17,200,?7,'agy_session',1,'1',?8,'agy_session',?9)",
+            session_id,provider_type,is_streaming,cost_multiplier,created_at,data_source,input_token_semantics,
+            attribution_source,attribution_confidence,attribution_reason
+        ) VALUES (?1,'_agy_session','agy',?2,?10,?3,?4,?5,?6,?11,?12,?13,?14,?15,?16,?17,200,?7,'agy_session',1,'1',?8,'agy_session',?9,'unknown','unknown','agy_native_session')",
         params![id, model, input, output, cache, write, session, agy::timestamp(row).unwrap_or(0)/1000, INPUT_TOKEN_SEMANTICS_FRESH, display, input_cost, output_cost, cache_cost, write_cost, total_cost, latency_ms, first_token_ms])?;
         imported += 1;
     }
@@ -499,6 +500,11 @@ mod tests {
             (1, 0)
         );
         assert_eq!(timing(&db.conn.lock().unwrap(), 1), (0, None));
+        db.conn.lock().unwrap().execute(
+            "UPDATE proxy_request_logs SET attribution_source='proxy', attribution_confidence='exact'
+             WHERE request_id='agy:timed:1'",
+            [],
+        ).unwrap();
 
         let native = native_models::write_test_database(
             &dir.path().join("conversations/timed.db"),
@@ -521,6 +527,16 @@ mod tests {
             let conn = db.conn.lock().unwrap();
             assert_eq!(timing(&conn, 1), (5655, Some(5220)));
             assert_eq!(timing(&conn, 2), (44_600, Some(3100)));
+            let unknown: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM proxy_request_logs WHERE app_type='agy'
+                 AND attribution_source='unknown' AND attribution_confidence='unknown'
+                 AND attribution_reason='agy_native_session'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(unknown, 2);
             let model: String = conn
                 .query_row(
                     "SELECT model FROM proxy_request_logs WHERE request_id='agy:timed:2'",

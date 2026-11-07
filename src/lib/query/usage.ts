@@ -34,8 +34,12 @@ type RequestLogsKey = {
   customEndDate?: number;
   liveEndTime?: boolean;
   appType?: string;
+  providerAppType?: string;
+  providerId?: string;
   providerName?: string;
   model?: string;
+  projectKey?: string;
+  projectKeys?: string[];
   statusCode?: number;
 };
 
@@ -57,14 +61,25 @@ export const usageKeys = {
       customEndDate ?? 0,
       liveEndTime ?? false,
       filters?.appType ?? null,
+      filters?.providerAppType ?? null,
+      filters?.providerId ?? null,
       filters?.providerName ?? null,
       filters?.model ?? null,
+      selectedProjectKeys(filters) ?? null,
     ] as const,
   summaryByApp: (
     preset: UsageRangeSelection["preset"],
     customStartDate: number | undefined,
     customEndDate: number | undefined,
-    filters?: Pick<UsageScopeFilters, "providerName" | "model">,
+    filters?: Pick<
+      UsageScopeFilters,
+      | "providerAppType"
+      | "providerId"
+      | "providerName"
+      | "model"
+      | "projectKey"
+      | "projectKeys"
+    >,
     liveEndTime?: boolean,
   ) =>
     [
@@ -74,8 +89,11 @@ export const usageKeys = {
       customStartDate ?? 0,
       customEndDate ?? 0,
       liveEndTime ?? false,
+      filters?.providerAppType ?? null,
+      filters?.providerId ?? null,
       filters?.providerName ?? null,
       filters?.model ?? null,
+      selectedProjectKeys(filters) ?? null,
     ] as const,
   trends: (
     preset: UsageRangeSelection["preset"],
@@ -92,16 +110,22 @@ export const usageKeys = {
       customEndDate ?? 0,
       liveEndTime ?? false,
       filters?.appType ?? null,
+      filters?.providerAppType ?? null,
+      filters?.providerId ?? null,
       filters?.providerName ?? null,
       filters?.model ?? null,
+      selectedProjectKeys(filters) ?? null,
     ] as const,
   firstDate: (filters?: UsageScopeFilters) =>
     [
       ...usageKeys.all,
       "first-date",
       filters?.appType ?? null,
+      filters?.providerAppType ?? null,
+      filters?.providerId ?? null,
       filters?.providerName ?? null,
       filters?.model ?? null,
+      selectedProjectKeys(filters) ?? null,
     ] as const,
   providerStats: (
     preset: UsageRangeSelection["preset"],
@@ -118,8 +142,11 @@ export const usageKeys = {
       customEndDate ?? 0,
       liveEndTime ?? false,
       filters?.appType ?? null,
+      filters?.providerAppType ?? null,
+      filters?.providerId ?? null,
       filters?.providerName ?? null,
       filters?.model ?? null,
+      selectedProjectKeys(filters) ?? null,
     ] as const,
   modelStats: (
     preset: UsageRangeSelection["preset"],
@@ -136,8 +163,11 @@ export const usageKeys = {
       customEndDate ?? 0,
       liveEndTime ?? false,
       filters?.appType ?? null,
+      filters?.providerAppType ?? null,
+      filters?.providerId ?? null,
       filters?.providerName ?? null,
       filters?.model ?? null,
+      selectedProjectKeys(filters) ?? null,
     ] as const,
   logs: (key: RequestLogsKey, page: number, pageSize: number) =>
     [
@@ -148,8 +178,11 @@ export const usageKeys = {
       key.customEndDate ?? 0,
       key.liveEndTime ?? false,
       key.appType ?? "",
+      key.providerAppType ?? "",
+      key.providerId ?? "",
       key.providerName ?? "",
       key.model ?? "",
+      selectedProjectKeys(key) ?? null,
       key.statusCode ?? -1,
       page,
       pageSize,
@@ -165,12 +198,25 @@ export const usageKeys = {
     [...usageKeys.all, providerId, appType] as const,
 };
 
+/** Canonical set keys avoid cache misses when the same projects are selected in a different order. */
+function selectedProjectKeys(
+  filters?: Pick<UsageScopeFilters, "projectKey" | "projectKeys">,
+) {
+  const keys =
+    filters?.projectKeys ??
+    (filters?.projectKey !== undefined ? [filters.projectKey] : []);
+  return keys.length ? [...new Set(keys)].sort() : undefined;
+}
+
 /** 把 UI 侧的 "all" 哨兵归一成 undefined（后端语义：不过滤）。 */
 function normalizeScopeFilters(filters?: UsageScopeFilters): UsageScopeFilters {
   return {
     appType: filters?.appType === "all" ? undefined : filters?.appType,
+    providerAppType: filters?.providerAppType,
+    providerId: filters?.providerId,
     providerName: filters?.providerName,
     model: filters?.model,
+    projectKeys: selectedProjectKeys(filters),
   };
 }
 
@@ -197,8 +243,11 @@ export function useUsageSummary(
         startDate,
         endDate,
         effective.appType,
+        effective.providerAppType,
+        effective.providerId,
         effective.providerName,
         effective.model,
+        effective.projectKeys,
       );
     },
     placeholderData: keepPreviousData,
@@ -209,7 +258,15 @@ export function useUsageSummary(
 
 export function useUsageSummaryByApp(
   range: UsageRangeSelection,
-  filters?: Pick<UsageScopeFilters, "providerName" | "model">,
+  filters?: Pick<
+    UsageScopeFilters,
+    | "providerAppType"
+    | "providerId"
+    | "providerName"
+    | "model"
+    | "projectKey"
+    | "projectKeys"
+  >,
   options?: UsageQueryOptions,
 ) {
   return useQuery({
@@ -225,8 +282,11 @@ export function useUsageSummaryByApp(
       return usageApi.getUsageSummaryByApp(
         startDate,
         endDate,
+        filters?.providerAppType,
+        filters?.providerId,
         filters?.providerName,
         filters?.model,
+        selectedProjectKeys(filters),
       );
     },
     placeholderData: keepPreviousData,
@@ -255,8 +315,11 @@ export function useUsageTrends(
         startDate,
         endDate,
         effective.appType,
+        effective.providerAppType,
+        effective.providerId,
         effective.providerName,
         effective.model,
+        effective.projectKeys,
       );
     },
     enabled: options?.enabled ?? true,
@@ -277,8 +340,11 @@ export function useUsageFirstDate(
     queryFn: () =>
       usageApi.getUsageFirstDate(
         effective.appType,
+        effective.providerAppType,
+        effective.providerId,
         effective.providerName,
         effective.model,
+        effective.projectKeys,
       ),
     placeholderData: keepPreviousData,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
@@ -306,8 +372,11 @@ export function useProviderStats(
         startDate,
         endDate,
         effective.appType,
+        effective.providerAppType,
+        effective.providerId,
         effective.providerName,
         effective.model,
+        effective.projectKeys,
       );
     },
     placeholderData: keepPreviousData,
@@ -337,8 +406,11 @@ export function useModelStats(
         startDate,
         endDate,
         effective.appType,
+        effective.providerAppType,
+        effective.providerId,
         effective.providerName,
         effective.model,
+        effective.projectKeys,
       );
     },
     placeholderData: keepPreviousData,
@@ -361,15 +433,23 @@ export function useRequestLogs({
     customEndDate: range.customEndDate,
     liveEndTime: range.liveEndTime,
     appType: filters.appType,
+    providerAppType: filters.providerAppType,
+    providerId: filters.providerId,
     providerName: filters.providerName,
     model: filters.model,
+    projectKeys: selectedProjectKeys(filters),
     statusCode: filters.statusCode,
   };
 
   return useQuery({
     queryKey: usageKeys.logs(key, page, pageSize),
     queryFn: () => {
-      const effectiveFilters = { ...filters, ...resolveUsageRange(range) };
+      const effectiveFilters = {
+        ...filters,
+        projectKey: undefined,
+        projectKeys: selectedProjectKeys(filters),
+        ...resolveUsageRange(range),
+      };
       return usageApi.getRequestLogs(effectiveFilters, page, pageSize);
     },
     placeholderData: keepPreviousData,
@@ -414,6 +494,158 @@ export function useModelPricing() {
   return useQuery({
     queryKey: usageKeys.pricing(),
     queryFn: usageApi.getModelPricing,
+  });
+}
+
+export function useProjectStats(
+  range: UsageRangeSelection,
+  filters?: UsageScopeFilters,
+  options?: UsageQueryOptions,
+) {
+  const effective = normalizeScopeFilters(filters);
+  return useQuery({
+    queryKey: [
+      ...usageKeys.all,
+      "project-stats",
+      range.preset,
+      range.customStartDate ?? 0,
+      range.customEndDate ?? 0,
+      range.liveEndTime ?? false,
+      effective.appType ?? null,
+      effective.providerAppType ?? null,
+      effective.providerId ?? null,
+      effective.providerName ?? null,
+      effective.model ?? null,
+      effective.projectKeys ?? null,
+    ] as const,
+    queryFn: () => {
+      const { startDate, endDate } = resolveUsageRange(range);
+      return usageApi.getProjectStats(
+        startDate,
+        endDate,
+        effective.appType,
+        effective.providerAppType,
+        effective.providerId,
+        effective.providerName,
+        effective.model,
+        effective.projectKeys,
+      );
+    },
+    enabled: options?.enabled ?? true,
+    placeholderData: keepPreviousData,
+    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
+    refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
+  });
+}
+
+export function useUsageProjects(
+  range: UsageRangeSelection,
+  filters?: UsageScopeFilters,
+  options?: UsageQueryOptions,
+) {
+  const effective = normalizeScopeFilters(filters);
+  return useQuery({
+    queryKey: [
+      ...usageKeys.all,
+      "projects",
+      range.preset,
+      range.customStartDate ?? 0,
+      range.customEndDate ?? 0,
+      range.liveEndTime ?? false,
+      effective.appType ?? null,
+      effective.providerAppType ?? null,
+      effective.providerId ?? null,
+      effective.providerName ?? null,
+      effective.model ?? null,
+    ] as const,
+    queryFn: () => {
+      const { startDate, endDate } = resolveUsageRange(range);
+      return usageApi.getUsageProjects(
+        startDate,
+        endDate,
+        effective.appType,
+        effective.providerAppType,
+        effective.providerId,
+        effective.providerName,
+        effective.model,
+      );
+    },
+    placeholderData: keepPreviousData,
+    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
+    refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
+  });
+}
+
+export function useProjectProviderStats(
+  projectKey: string,
+  range: UsageRangeSelection,
+  appType?: string,
+  options?: UsageQueryOptions,
+) {
+  return useQuery({
+    queryKey: [
+      ...usageKeys.all,
+      "project-provider-stats",
+      projectKey,
+      range.preset,
+      range.customStartDate ?? 0,
+      range.customEndDate ?? 0,
+      range.liveEndTime ?? false,
+      appType === "all" ? null : (appType ?? null),
+    ] as const,
+    queryFn: () => {
+      const { startDate, endDate } = resolveUsageRange(range);
+      return usageApi.getProjectProviderStats(
+        projectKey,
+        startDate,
+        endDate,
+        appType === "all" ? undefined : appType,
+      );
+    },
+    enabled: true,
+    placeholderData: keepPreviousData,
+    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
+    refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
+  });
+}
+
+export function useUsageDataQuality(
+  range: UsageRangeSelection,
+  filters?: UsageScopeFilters,
+  options?: UsageQueryOptions,
+) {
+  const effective = normalizeScopeFilters(filters);
+  return useQuery({
+    queryKey: [
+      ...usageKeys.all,
+      "data-quality",
+      range.preset,
+      range.customStartDate ?? 0,
+      range.customEndDate ?? 0,
+      range.liveEndTime ?? false,
+      effective.appType ?? null,
+      effective.providerAppType ?? null,
+      effective.providerId ?? null,
+      effective.providerName ?? null,
+      effective.model ?? null,
+      effective.projectKeys ?? null,
+    ] as const,
+    queryFn: () => {
+      const { startDate, endDate } = resolveUsageRange(range);
+      return usageApi.getUsageDataQuality(
+        startDate,
+        endDate,
+        effective.appType,
+        effective.providerAppType,
+        effective.providerId,
+        effective.providerName,
+        effective.model,
+        effective.projectKeys,
+      );
+    },
+    placeholderData: keepPreviousData,
+    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
+    refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
 }
 

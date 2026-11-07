@@ -112,7 +112,39 @@ function useDetailSections(request: RequestLog) {
     {
       key: "provider",
       label: t("usage.provider"),
-      value: getUsageProviderLabel(request.providerName, t).shortLabel,
+      value: getUsageProviderLabel(
+        request.providerNameSnapshot || request.providerName,
+        t,
+      ).shortLabel,
+    },
+    {
+      key: "project",
+      label: t("usage.project"),
+      value:
+        request.projectName ||
+        request.projectPath ||
+        ((request.projectKey ?? "") === ""
+          ? t("usage.projectFilter.unknown")
+          : request.projectKey),
+      title: request.projectPath || request.projectName || request.projectKey,
+    },
+    {
+      key: "attributionSource",
+      label: t("usage.attributionSource"),
+      value: request.attributionSource
+        ? t(`usage.attribution.source.${request.attributionSource}`, {
+            defaultValue: request.attributionSource,
+          })
+        : "—",
+    },
+    {
+      key: "attributionConfidence",
+      label: t("usage.attributionConfidence"),
+      value: request.attributionConfidence
+        ? t(`usage.attribution.confidence.${request.attributionConfidence}`, {
+            defaultValue: request.attributionConfidence,
+          })
+        : "—",
     },
     { key: "model", label: t("usage.model"), value: request.model, mono: true },
   ];
@@ -123,6 +155,14 @@ function useDetailSections(request: RequestLog) {
       label: t("usage.detail.providerId"),
       value: request.providerId,
       mono: true,
+    });
+  }
+  if (request.attributionReason) {
+    basic.push({
+      key: "attributionReason",
+      label: t("usage.attributionReason"),
+      value: request.attributionReason,
+      muted: true,
     });
   }
   if (request.requestModel && request.requestModel !== request.model) {
