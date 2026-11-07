@@ -1,6 +1,6 @@
 {
   "name": "cc-switch",
-  "version": "4.0.24",
+  "version": "4.0.27",
   "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI",
   "type": "module",
   "scripts": {
@@ -20,7 +20,7 @@
   "license": "MIT",
   "packageManager": "pnpm@10.12.3",
   "devDependencies": {
-    "@tauri-apps/cli": "^2.10.1",
+    "@tauri-apps/cli": "^2.12.4",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.0.1",
     "@testing-library/user-event": "^14.5.2",
@@ -86,7 +86,7 @@
     "react-hook-form": "^7.65.0",
     "react-i18next": "^16.0.0",
     "recharts": "^3.5.1",
-    "smol-toml": "^1.4.2",
+    "smol-toml": "^1.9.1",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.3.1",
     "yaml": "^2.8.1",

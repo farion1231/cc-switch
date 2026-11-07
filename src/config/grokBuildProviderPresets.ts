@@ -12,9 +12,12 @@
  * - 不含国产模型官方直连（cn_official）与纯开源模型托管站
  *   （SiliconFlow / ModelScope / Novita / Nvidia / AtlasCloud）：
  *   这些上游没有 Grok 模型，无法在 Grok CLI 中使用。
- * - OpenCode Go 上游自 2026-08 起已提供 grok-4.5，但暂仍不收录：
- *   订阅制网关是否纳入 Grok 预设属产品决策，收录前需单独评估。
- * - 只收聚合站与第三方中转站，默认模型统一为 grok-4.5；
+ * - OpenCode Go 上游自 2026-08 起已提供 grok 系模型（2026-11 时已含
+ *   grok-4.7），但暂仍不收录：订阅制网关是否纳入 Grok 预设属产品决策，
+ *   收录前需单独评估。
+ * - 只收聚合站与第三方中转站，默认模型统一为 grok-4.7（xAI 2026-11 起
+ *   的旗舰，context 最高 500k；Grok CLI 自身默认按 256k 处理，模板经
+ *   GROK_BUILD_DEFAULT_CONTEXT_WINDOW 显式钉 500k）；
  *   OpenRouter 系命名空间的路由站用 "x-ai/grok-4.7"。
  *
  * config 字段沿用 Codex 风格 TOML 作为载体：Grok 表单只从中提取
@@ -208,17 +211,6 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     icon: "grooroute",
   },
   {
-    name: "DIT.ai",
-    websiteUrl: "https://dit.ai",
-    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
-    auth: grokAuth(),
-    config: grokPresetConfig("DIT.ai", "https://api.dit.ai/v1", "grok-4.7"),
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "dit",
-    icon: "dit",
-  },
-  {
     name: "BuyToken",
     websiteUrl: "https://buytoken.work",
     apiKeyUrl: "https://buytoken.work/sign-up?aff=cc-switch",
@@ -376,15 +368,12 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     auth: grokAuth(),
-    config: grokPresetConfig("TeamoRouter", "https://api.teamorouter.cn/v1"),
-    endpointCandidates: [
-      "https://api.teamorouter.cn/v1",
-      "https://api.teamorouter.com/v1",
-    ],
+    config: grokPresetConfig("TeamoRouter", "https://api.teamorouter.com/v1"),
+    endpointCandidates: ["https://api.teamorouter.com/v1"],
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "teamorouter",

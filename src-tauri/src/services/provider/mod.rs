@@ -54,6 +54,7 @@ pub fn import_omp_providers_from_live(state: &AppState) -> Result<usize, AppErro
     omp::import_from_live(state)
 }
 
+pub(crate) use claude_editor::{switch_drops as claude_switch_drops, SwitchDrops};
 pub use claude_editor::{EditorSave, EditorView};
 
 // Internal re-exports (pub(crate))
