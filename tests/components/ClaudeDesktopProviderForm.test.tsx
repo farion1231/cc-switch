@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClientProvider } from "@tanstack/react-query";
 import type { ComponentProps } from "react";
@@ -14,6 +20,7 @@ const toastMocks = vi.hoisted(() => ({
 }));
 const modelFetchMocks = vi.hoisted(() => ({
   fetchCodexOauthModels: vi.fn(),
+  fetchModelsForConfig: vi.fn(),
 }));
 
 vi.mock("@/lib/api/model-fetch", async (importOriginal) => {
@@ -21,6 +28,7 @@ vi.mock("@/lib/api/model-fetch", async (importOriginal) => {
   return {
     ...actual,
     fetchCodexOauthModels: modelFetchMocks.fetchCodexOauthModels,
+    fetchModelsForConfig: modelFetchMocks.fetchModelsForConfig,
   };
 });
 
@@ -100,6 +108,7 @@ describe("ClaudeDesktopProviderForm", () => {
     authState.codexReauthRequired = false;
     toastMocks.error.mockReset();
     modelFetchMocks.fetchCodexOauthModels.mockReset();
+    modelFetchMocks.fetchModelsForConfig.mockReset();
   });
 
   it("托管 OAuth 供应商也能获取模型并在映射行里选择（#8426）", async () => {
@@ -692,6 +701,58 @@ describe("ClaudeDesktopProviderForm", () => {
       model: "deepseek-v4-pro",
       supports1m: true,
     });
+  });
+
+  it("直连列表里手动取消的 1M 不会被重新选中模型重新勾上", async () => {
+    const user = userEvent.setup();
+    modelFetchMocks.fetchModelsForConfig.mockResolvedValue([
+      {
+        id: "claude-opus-5",
+        ownedBy: null,
+        metadata: { meta: { models_dev: { limit: { context: 1_000_000 } } } },
+      },
+    ]);
+    renderForm({
+      name: "Direct Provider",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://api.example.com",
+          ANTHROPIC_AUTH_TOKEN: "sk-test",
+        },
+      },
+      meta: {
+        claudeDesktopMode: "direct",
+        claudeDesktopModelRoutes: {
+          "claude-sonnet-5": { model: "claude-sonnet-5" },
+        },
+      },
+    });
+
+    await user.click(screen.getByRole("button", { name: /获取模型/ }));
+    const rowInput = screen.getByDisplayValue("claude-sonnet-5");
+    const openModels = () =>
+      user.click(
+        within(rowInput.parentElement as HTMLElement).getByRole("button", {
+          name: "Select model",
+        }),
+      );
+    const checkbox = () =>
+      screen.getByRole("checkbox", { name: "1M" }) as HTMLInputElement;
+
+    await openModels();
+    await user.click(
+      await screen.findByRole("option", { name: "claude-opus-5" }),
+    );
+    await waitFor(() => expect(checkbox()).toBeChecked());
+
+    await user.click(checkbox());
+    await waitFor(() => expect(checkbox()).not.toBeChecked());
+
+    await openModels();
+    await user.click(
+      await screen.findByRole("option", { name: "claude-opus-5" }),
+    );
+    await waitFor(() => expect(checkbox()).not.toBeChecked());
   });
 
   it("保存直连模型列表时不会保留旧 route 作为隐藏映射目标", async () => {
