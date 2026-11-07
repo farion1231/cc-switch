@@ -320,6 +320,8 @@
     "addRoute": "Model ekle",
     "routeInvalid": "Bir model rolü seçin ve istenen modeli girin",
     "routesRequired": "En az bir model eşlemesi gerekli",
+    "requestHeadersHelp": "Model eşleme (yönlendirme) modunda yerel proxy tarafından yukarı akış isteklerine eklenir. authorization, x-api-key ve content-type gibi standart başlıklar proxy tarafından yönetilir ve geçersiz kılınamaz; diğer özel adlı başlıklar kullanılabilir.",
+    "requestHeadersDirectModeWarning": "Özel istek başlıkları yalnızca model eşleme (yönlendirme) modunda geçerlidir; mevcut doğrudan bağlantı modunda kaydedilen başlıklar gönderilmez.",
     "statusTitle": "Claude Desktop yapılandırmasına dikkat edilmesi gerekiyor",
     "statusUnsupported": "Bu platform henüz Claude Desktop 3P konfigürasyonunun yazılmasını desteklemiyor.",
     "statusStaleRawModels": "Claude Desktop profili, Sonnet / Opus / Haiku rol ailelerinin dışındaki model kimliklerini içerir. Daha yeni Claude Desktop sürümleri bunu reddedebilir; onarmak için tekrar mevcut sağlayıcıya geçin.",

@@ -326,6 +326,8 @@
     "addRoute": "モデルを追加",
     "routeInvalid": "モデル役割を選択し、リクエストモデルを入力してください",
     "routesRequired": "少なくとも 1 つのモデルマッピングが必要です",
+    "requestHeadersHelp": "モデルマッピング（ルーティング）モードで、ローカルプロキシが上流へのリクエストに付加します。authorization、x-api-key、content-type などの標準ヘッダーはプロキシが管理しており上書きできません。それ以外のカスタム名のヘッダーを利用できます。",
+    "requestHeadersDirectModeWarning": "カスタムリクエストヘッダーはモデルマッピング（ルーティング）モードでのみ有効です。現在は直連モードのため、保存されたヘッダーはリクエストに送信されません。",
     "statusTitle": "Claude Desktop 設定の確認が必要です",
     "statusUnsupported": "このプラットフォームでは Claude Desktop 3P 設定の書き込みはまだサポートされていません。",
     "statusStaleRawModels": "Claude Desktop profile に Sonnet / Opus / Haiku の役割ファミリー以外のモデル ID が含まれています。新しい Claude Desktop では拒否される可能性があります。現在のプロバイダーへ再度切り替えると修復できます。",
