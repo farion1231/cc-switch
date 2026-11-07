@@ -66,6 +66,7 @@ function DetailSection({ title, rows }: { title: string; rows: DetailRow[] }) {
               className={cn(
                 "m-0 min-w-0 flex-1 truncate text-end tabular-nums",
                 row.mono ? "font-mono text-caption" : "text-body",
+                row.key === "requestId" && "selectable",
                 row.strong && "font-semibold",
                 row.muted ? "text-fg-3" : "text-fg-1",
               )}
@@ -340,7 +341,7 @@ function RequestDetailBody({ request }: { request: RequestLog }) {
           <h3 className="m-0 text-strong font-semibold text-danger-text">
             {t("usage.errorMessage")}
           </h3>
-          <p className="m-0 whitespace-pre-wrap break-words rounded-panel bg-danger-soft px-3.5 py-2.5 font-mono text-caption text-fg-1">
+          <p className="selectable m-0 whitespace-pre-wrap break-words rounded-panel bg-danger-soft px-3.5 py-2.5 font-mono text-caption text-fg-1">
             {request.errorMessage}
           </p>
         </section>

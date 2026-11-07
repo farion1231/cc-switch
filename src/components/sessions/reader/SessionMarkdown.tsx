@@ -523,7 +523,7 @@ export const SessionPlainText = memo(function SessionPlainText({
   return (
     <div
       className={cn(
-        "min-w-0 break-words text-body text-fg-1 [overflow-wrap:anywhere]",
+        "selectable min-w-0 break-words text-body text-fg-1 [overflow-wrap:anywhere]",
         className,
       )}
     >
@@ -1134,7 +1134,7 @@ export const SessionMarkdown = memo(function SessionMarkdown({
       <div
         data-session-markdown=""
         className={cn(
-          "min-w-0 break-words [overflow-wrap:anywhere]",
+          "selectable min-w-0 break-words [overflow-wrap:anywhere]",
           VARIANT_CLASS[variant],
           className,
         )}
