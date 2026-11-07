@@ -50,7 +50,8 @@ struct UsageBucket {
     reset_time: Option<String>,
 }
 
-/// agy 的额度分组：Gemini 一组，Claude 和 GPT 共用一组，每组各有 5 小时和每周两档。
+/// agy 的额度分组：Gemini 一组，Claude 和 GPT 共用一组，每组各有 5 小时和每周两档；
+/// Pro 档的 Gemini 组另有 Gemini 4 Argon 单独的每周额度。
 /// 不认识的桶（以后新增的组）跳过，免得显示成没有文案的档。
 fn tier_name(bucket_id: &str) -> Option<&'static str> {
     match bucket_id {
