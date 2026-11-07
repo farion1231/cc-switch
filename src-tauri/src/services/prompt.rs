@@ -5,7 +5,9 @@ use crate::app_config::AppType;
 use crate::config::write_text_file;
 use crate::error::AppError;
 use crate::prompt::Prompt;
-use crate::prompt_files::{prompt_file_path, validate_prompt_content};
+use crate::prompt_files::{
+    prompt_file_path, read_independent_prompt, validate_prompt_content, PromptFileAccess,
+};
 use crate::services::pi_prompt_files::PiAgentsFileGuard;
 use crate::store::AppState;
 
@@ -56,6 +58,15 @@ impl PromptService {
         state: &AppState,
         app: AppType,
     ) -> Result<IndexMap<String, Prompt>, AppError> {
+        let file_access = PromptFileAccess::acquire(&app)?;
+        if file_access.detached {
+            // A locally owned file is not the contents of the synced template.
+            let mut prompts = state.db.get_prompts(app.as_str())?;
+            for prompt in prompts.values_mut() {
+                prompt.enabled = false;
+            }
+            return Ok(prompts);
+        }
         if matches!(app, AppType::Pi) {
             return get_pi_prompts(state);
         }
@@ -90,6 +101,15 @@ impl PromptService {
         id: &str,
         prompt: Prompt,
     ) -> Result<(), AppError> {
+        let file_access = PromptFileAccess::acquire(&app)?;
+        file_access.require_write()?;
+        if file_access.detached && prompt.enabled {
+            return Err(AppError::localized(
+                "prompts.explicit_activation_required",
+                "规则文件由你独立维护，请先启用模板再编辑已启用的提示词。",
+                "The rule file is independently managed. Enable a template before editing an active prompt.",
+            ));
+        }
         if matches!(app, AppType::Pi) {
             return upsert_pi_prompt(state, id, prompt);
         }
@@ -102,7 +122,8 @@ impl PromptService {
         let prompts = state.db.get_prompts(app.as_str())?;
         // 只有停用最后一条启用中的提示词时才清空文件；新建、导入或重存
         // 停用条目时，文件可能是用户自己写的，必须原样保留
-        let clear_live = !prompt.enabled
+        let clear_live = !file_access.detached
+            && !prompt.enabled
             && prompts.get(id).is_some_and(|previous| previous.enabled)
             && !prompts
                 .iter()
@@ -148,6 +169,38 @@ impl PromptService {
     }
 
     pub fn enable_prompt(state: &AppState, app: AppType, id: &str) -> Result<(), AppError> {
+        let file_access = PromptFileAccess::acquire(&app)?;
+        file_access.require_write()?;
+        Self::enable_prompt_with_access(state, app, id, &file_access)
+    }
+
+    /// Project application is idempotent only while the file is still managed.
+    /// A restored enabled bit alone must not skip explicit adoption after protection.
+    pub fn enable_prompt_if_needed(
+        state: &AppState,
+        app: AppType,
+        id: &str,
+    ) -> Result<(), AppError> {
+        let file_access = PromptFileAccess::acquire(&app)?;
+        file_access.require_write()?;
+        if !file_access.detached
+            && state
+                .db
+                .get_prompts(app.as_str())?
+                .get(id)
+                .is_some_and(|p| p.enabled)
+        {
+            return Ok(());
+        }
+        Self::enable_prompt_with_access(state, app, id, &file_access)
+    }
+
+    fn enable_prompt_with_access(
+        state: &AppState,
+        app: AppType,
+        id: &str,
+        file_access: &PromptFileAccess,
+    ) -> Result<(), AppError> {
         if matches!(app, AppType::Pi) {
             return enable_pi_prompt(state, id);
         }
@@ -155,50 +208,75 @@ impl PromptService {
             return enable_mcode_prompt(state, id, &prompt_file_path(&app)?);
         }
 
+        // Do not adopt or back up private text for a missing/invalid target.
+        let target = state
+            .db
+            .get_prompts(app.as_str())?
+            .get(id)
+            .cloned()
+            .ok_or_else(|| AppError::InvalidInput(format!("提示词 {id} 不存在")))?;
+        validate_prompt_content(&app, &target.content)?;
+
         // 回填当前 live 文件内容到已启用的提示词，或创建备份
         let target_path = prompt_file_path(&app)?;
-        if target_path.exists() {
-            if let Ok(live_content) = std::fs::read_to_string(&target_path) {
-                if !live_content.trim().is_empty() {
-                    let mut prompts = state.db.get_prompts(app.as_str())?;
+        let existing = if file_access.detached {
+            read_independent_prompt(&target_path)?
+        } else {
+            std::fs::read_to_string(&target_path).ok()
+        };
+        if let Some(live_content) = existing {
+            let has_content = if file_access.detached {
+                !live_content.is_empty()
+            } else {
+                !live_content.trim().is_empty()
+            };
+            if has_content {
+                let mut prompts = state.db.get_prompts(app.as_str())?;
 
-                    // 尝试回填到当前已启用的提示词
-                    if let Some((enabled_id, enabled_prompt)) = prompts
-                        .iter_mut()
-                        .find(|(_, p)| p.enabled)
-                        .map(|(id, p)| (id.clone(), p))
-                    {
-                        let timestamp = get_unix_timestamp()?;
-                        enabled_prompt.content = live_content.clone();
-                        enabled_prompt.updated_at = Some(timestamp);
-                        log::info!("回填 live 提示词内容到已启用项: {enabled_id}");
-                        state.db.save_prompt(app.as_str(), enabled_prompt)?;
-                    } else {
-                        // 没有已启用的提示词，则创建一次备份（避免重复备份）
-                        let content_exists = prompts
-                            .values()
-                            .any(|p| p.content.trim() == live_content.trim());
-                        if !content_exists {
-                            let timestamp = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_secs() as i64;
-                            let backup_id = format!("backup-{timestamp}");
-                            let backup_prompt = Prompt {
-                                id: backup_id.clone(),
-                                name: format!(
-                                    "原始提示词 {}",
-                                    chrono::Local::now().format("%Y-%m-%d %H:%M")
-                                ),
-                                content: live_content,
-                                description: Some("自动备份的原始提示词".to_string()),
-                                enabled: false,
-                                created_at: Some(timestamp),
-                                updated_at: Some(timestamp),
-                            };
-                            log::info!("回填 live 提示词内容，创建备份: {backup_id}");
-                            state.db.save_prompt(app.as_str(), &backup_prompt)?;
+                // 尝试回填到当前已启用的提示词
+                if let Some((enabled_id, enabled_prompt)) = prompts
+                    .iter_mut()
+                    .find(|(_, p)| p.enabled && !file_access.detached)
+                    .map(|(id, p)| (id.clone(), p))
+                {
+                    let timestamp = get_unix_timestamp()?;
+                    enabled_prompt.content = live_content.clone();
+                    enabled_prompt.updated_at = Some(timestamp);
+                    log::info!("回填 live 提示词内容到已启用项: {enabled_id}");
+                    state.db.save_prompt(app.as_str(), enabled_prompt)?;
+                } else {
+                    // 没有已启用的提示词，则创建一次备份（避免重复备份）
+                    let content_exists = prompts.values().any(|p| {
+                        if file_access.detached {
+                            p.content == live_content
+                        } else {
+                            p.content.trim() == live_content.trim()
                         }
+                    });
+                    if !content_exists {
+                        let timestamp = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs() as i64;
+                        let backup_id = if file_access.detached {
+                            format!("backup-{timestamp}-{}", uuid::Uuid::new_v4())
+                        } else {
+                            format!("backup-{timestamp}")
+                        };
+                        let backup_prompt = Prompt {
+                            id: backup_id.clone(),
+                            name: format!(
+                                "原始提示词 {}",
+                                chrono::Local::now().format("%Y-%m-%d %H:%M")
+                            ),
+                            content: live_content,
+                            description: Some("自动备份的原始提示词".to_string()),
+                            enabled: false,
+                            created_at: Some(timestamp),
+                            updated_at: Some(timestamp),
+                        };
+                        log::info!("回填 live 提示词内容，创建备份: {backup_id}");
+                        state.db.save_prompt(app.as_str(), &backup_prompt)?;
                     }
                 }
             }
@@ -224,6 +302,8 @@ impl PromptService {
         for (_, prompt) in prompts.iter() {
             state.db.save_prompt(app.as_str(), prompt)?;
         }
+
+        file_access.record_managed_write(&app)?;
 
         Ok(())
     }
@@ -279,6 +359,10 @@ impl PromptService {
     /// This deliberately does not call `enable_prompt`: restore paths must not
     /// read stale live content and write it back into the freshly imported DB.
     pub fn sync_to_live(state: &AppState, app: AppType) -> Result<(), AppError> {
+        let file_access = PromptFileAccess::acquire(&app)?;
+        if file_access.protected {
+            return Ok(());
+        }
         // Pi derives activation from its native AGENTS.md; its persisted prompt
         // rows are intentionally disabled and must not drive generic projection.
         if matches!(app, AppType::ClaudeDesktop | AppType::Pi) {
@@ -299,7 +383,11 @@ impl PromptService {
         if let Some(prompt) = prompts.values().find(|prompt| prompt.enabled) {
             validate_prompt_content(&app, &prompt.content)?;
         }
-        if let Some(warning) = project_prompt_set_to_path(&prompts, &target_path)? {
+        let warning = project_prompt_set_to_path(&prompts, &target_path)?;
+        if prompts.values().any(|prompt| prompt.enabled) {
+            file_access.record_managed_write(&app)?;
+        }
+        if let Some(warning) = warning {
             return Err(AppError::Message(warning));
         }
         Ok(())
@@ -334,6 +422,10 @@ impl PromptService {
         state: &AppState,
         app: AppType,
     ) -> Result<usize, AppError> {
+        let file_access = PromptFileAccess::acquire(&app)?;
+        if file_access.detached {
+            return Ok(0);
+        }
         // 幂等性保护：该应用已有提示词则跳过
         let existing = state.db.get_prompts(app.as_str())?;
         if !existing.is_empty() {

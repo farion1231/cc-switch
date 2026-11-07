@@ -176,7 +176,8 @@ jobs:
       # 每个测试一个进程，单测超时见 src-tauri/.config/nextest.toml。doctest 目前只有两个
       # ignored，nextest 不跑 doctest 也不漏。
       - name: Run tests
-        run: cargo nextest run --manifest-path src-tauri/Cargo.toml --profile ci
+        # Includes isolated data-directory override regression hooks, absent from release builds.
+        run: cargo nextest run --features test-hooks --manifest-path src-tauri/Cargo.toml --profile ci
 
   backend-windows-wsl2:
     name: Backend Checks (Windows + WSL2 home)
