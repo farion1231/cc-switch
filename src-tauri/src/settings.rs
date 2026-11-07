@@ -580,6 +580,10 @@ pub struct AppSettings {
     /// 授权中心和托盘一起变；余额、Credits、重置次数不受影响（#8024）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quota_display: Option<String>,
+    /// 官方账号额度只在手动刷新时查询（授权中心开关，#8990）：开着时界面不自动查，托盘
+    /// 悬停也不刷新官方账号额度；第三方余额脚本不受影响
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub official_quota_manual_only: bool,
 
     // ===== 主页面显示的应用 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -743,6 +747,7 @@ impl Default for AppSettings {
             common_config_confirmed: None,
             language: None,
             quota_display: None,
+            official_quota_manual_only: false,
             visible_apps: None,
             app_order: None,
             claude_config_dir: None,

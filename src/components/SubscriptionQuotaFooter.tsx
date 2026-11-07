@@ -42,6 +42,8 @@ interface SubscriptionQuotaViewProps {
   display?: QuotaDisplay;
   /** 查询成功但一档都没有时写的一句（Kimi 没订阅的号返回空对象）；不给时不显示 */
   emptyText?: string;
+  /** 只手动查询、还没查过（hook 的 manualIdle）：写「点刷新查询额度」 */
+  idle?: boolean;
 }
 
 /** 已知 tier 名称的显示映射（官方订阅 + Token Plan 共用） */
@@ -220,6 +222,38 @@ export function quotaFailureReason(
   return quota.error || t("subscription.queryFailed");
 }
 
+/** 「额度只在手动刷新时查询」开着、还没查过时的占位：一句灰字 + 刷新 */
+export function ManualQuotaIdle({
+  inline,
+  refetch,
+}: {
+  inline: boolean;
+  refetch: () => unknown;
+}) {
+  const { t } = useTranslation();
+  const text = t("quota.manualIdle");
+  if (inline) {
+    return (
+      <QuotaLines
+        lines={[{ key: "idle", left: Infinity, tone: "muted", text }]}
+        queriedAt={null}
+        loading={false}
+        onRefresh={refetch}
+      />
+    );
+  }
+  return (
+    <QuotaBars
+      className="mt-3"
+      title={t("subscription.title")}
+      rows={[]}
+      loading={false}
+      onRefresh={refetch}
+      footer={<p className="text-caption text-fg-3">{text}</p>}
+    />
+  );
+}
+
 /**
  * 纯展示组件：渲染 SubscriptionQuota 的状态（not_found / parse_error 不显示；
  * 登录过期 / 令牌待刷新 / 查询失败写「额度查询失败」+ 原因；成功按档写剩余或已用），支持卡片（inline）和展开两种布局。
@@ -236,8 +270,14 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
   inline = false,
   display = "left",
   emptyText,
+  idle = false,
 }) => {
   const { t, i18n } = useTranslation();
+
+  // 只手动查询、还没查过：写一句提示，点刷新再查
+  if (!quota && idle) {
+    return <ManualQuotaIdle inline={inline} refetch={refetch} />;
+  }
 
   // 无凭据 / 凭据解析错误 → 不显示（静默）
   if (!quota || quota.credentialStatus === "not_found") return null;
@@ -373,6 +413,7 @@ const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
     data: quota,
     isFetching: loading,
     refetch,
+    manualIdle,
   } = useSubscriptionQuota(
     appId,
     isCurrent,
@@ -387,6 +428,7 @@ const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
       quota={quota}
       loading={loading}
       refetch={refetch}
+      idle={manualIdle}
       // expiredHint 里的 {tool} 是 CLI 命令名：Grok 的命令是 `grok` 而非 appId
       appIdForExpiredHint={appId === "grokbuild" ? "grok" : appId}
       inline={inline}

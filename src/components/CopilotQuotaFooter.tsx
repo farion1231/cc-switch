@@ -11,6 +11,7 @@ import { resolveManagedAccountId } from "@/lib/authBinding";
 import { PROVIDER_TYPES } from "@/config/constants";
 import { QuotaBars, QuotaLines } from "@/components/quota/QuotaLines";
 import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
+import { ManualQuotaIdle } from "@/components/SubscriptionQuotaFooter";
 import {
   failedLines,
   tierLine,
@@ -94,9 +95,14 @@ const CopilotQuotaFooter: React.FC<CopilotQuotaFooterProps> = ({
     data: quota,
     isFetching: loading,
     refetch,
+    manualIdle,
   } = useCopilotQuota(accountId, { enabled: true, autoQuery: isCurrent });
 
-  if (!quota) return null;
+  if (!quota) {
+    return manualIdle ? (
+      <ManualQuotaIdle inline={inline} refetch={refetch} />
+    ) : null;
+  }
 
   if (!quota.success) {
     return inline ? (

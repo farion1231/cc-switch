@@ -4517,6 +4517,7 @@
     },
     "updatedAt": "{{time}} tarihinde güncellendi",
     "clickToRefresh": "Tekrar kontrol etmek için tıklayın",
+    "manualIdle": "Kotayı sorgulamak için yenile düğmesine tıklayın",
     "resetCredits": {
       "label": "Sıfırlanma",
       "left": "Kalan sıfırlama: {{count}}",
@@ -5015,6 +5016,10 @@
       "removeNote": "Only removes the sign-in CC Switch saved for this account; it isn't signed out anywhere else, and Claude Code's current sign-in (~/.claude) is untouched. Cards bound to it switch to Claude Code's current sign-in.",
       "statusLoadFailed": "Couldn't read Claude accounts. Try again.",
       "wslUnsupported": "The Claude config folder is in WSL. Adding and switching Claude accounts isn't supported there yet."
+    },
+    "autoQuota": {
+      "title": "Kotayı otomatik sorgula",
+      "description": "Kapalıyken resmi hesap kotaları yalnızca yenile düğmesine tıkladığınızda sorgulanır: Yetkilendirme Merkezi’ni açmak, kartların zamanlanmış yenilemeleri ve tepsi simgesinin üzerine gelmek resmi hizmetlere istek göndermez."
     }
   },
   "kimi": {

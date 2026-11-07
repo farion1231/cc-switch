@@ -4579,6 +4579,7 @@
     },
     "updatedAt": "{{time}}更新",
     "clickToRefresh": "點擊重新查詢",
+    "manualIdle": "點重新整理查詢額度",
     "resetCredits": {
       "label": "重設",
       "left": "重設剩餘 {{count}} 次",
@@ -5086,6 +5087,10 @@
     "openBrowser": {
       "title": "登入時自動開啟瀏覽器",
       "description": "關掉後只複製登入連結，由你自己選瀏覽器開啟，適合用獨立的瀏覽器環境管理多個帳號。"
+    },
+    "autoQuota": {
+      "title": "自動查詢額度",
+      "description": "關掉後，官方帳號的額度只在你點重新整理時查詢：開啟授權中心、卡片定時重新整理和懸停系統匣都不會自動向官方服務發出請求。"
     }
   },
   "kimi": {

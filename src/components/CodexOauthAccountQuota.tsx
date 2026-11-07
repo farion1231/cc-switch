@@ -30,6 +30,7 @@ const CodexOauthAccountQuota: React.FC<CodexOauthAccountQuotaProps> = ({
     data: quota,
     isFetching: loading,
     refetch,
+    manualIdle,
   } = useCodexOauthQuotaByAccountId(accountId, {
     enabled: true,
     autoQuery: false,
@@ -42,6 +43,7 @@ const CodexOauthAccountQuota: React.FC<CodexOauthAccountQuotaProps> = ({
       queriedAt={quota?.queriedAt ?? null}
       loading={loading}
       onRefresh={() => void refetch()}
+      idle={manualIdle}
     />
   );
 };

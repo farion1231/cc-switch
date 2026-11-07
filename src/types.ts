@@ -489,6 +489,8 @@ export interface Settings {
   language?: "en" | "zh" | "zh-TW" | "ja" | "tr";
   // 按档的额度百分比写剩余还是已用（默认剩余；余额、Credits 不受影响）
   quotaDisplay?: "left" | "used";
+  // 官方账号额度只在手动刷新时查询（授权中心开关，#8990；默认自动查询）
+  officialQuotaManualOnly?: boolean;
 
   // 主页面显示的应用（默认全部显示）
   visibleApps?: VisibleApps;

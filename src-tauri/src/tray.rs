@@ -3224,9 +3224,9 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
 
     // 与 `create_tray_menu` 保持一致：用户隐藏的 app 不参与外部 API 查询，
     // 避免在未使用的 app 上浪费请求、撞 rate limit 或反复触发鉴权失败日志。
-    let visible_apps = crate::settings::get_settings()
-        .visible_apps
-        .unwrap_or_default();
+    let settings = crate::settings::get_settings();
+    let visible_apps = settings.visible_apps.unwrap_or_default();
+    let official_manual_only = settings.official_quota_manual_only;
 
     let mut usage_futures = Vec::new();
 
@@ -3262,7 +3262,9 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
             }
         };
 
-        if let Some(source) = tray_usage_source(app_type, &current) {
+        if let Some(source) = tray_usage_source(app_type, &current)
+            .filter(|source| refreshes_on_hover(source, official_manual_only))
+        {
             let app_clone = app.clone();
             let state = app.state::<AppState>();
             let copilot_state = app.state::<CopilotAuthState>();
@@ -3311,6 +3313,12 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
     }
 
     join_all(usage_futures).await;
+}
+
+/// 「额度只在手动刷新时查询」开着时，悬停托盘不替官方账号查额度（托盘照常显示上次的缓存）；
+/// 第三方余额脚本不是官方账号，照常刷新。
+fn refreshes_on_hover(source: &TrayUsageSource, official_manual_only: bool) -> bool {
+    !official_manual_only || *source == TrayUsageSource::Script
 }
 
 /// 托盘面板发起过的脚本额度查询：(应用, 供应商 id) → 上次查询时间。
@@ -3528,6 +3536,20 @@ mod tests {
     }
 
     // ─── 额度文字 ───
+
+    #[test]
+    fn manual_only_quota_skips_official_accounts_on_hover_but_not_scripts() {
+        let official = [
+            TrayUsageSource::ManagedCodex("acct".into()),
+            TrayUsageSource::ClaudeAccount("acct".into()),
+            TrayUsageSource::Subscription,
+        ];
+        for source in &official {
+            assert!(refreshes_on_hover(source, false));
+            assert!(!refreshes_on_hover(source, true));
+        }
+        assert!(refreshes_on_hover(&TrayUsageSource::Script, true));
+    }
 
     fn make_quota(tool: &str, success: bool, tiers: Vec<QuotaTier>) -> SubscriptionQuota {
         SubscriptionQuota {
