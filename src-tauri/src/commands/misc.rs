@@ -12,7 +12,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tauri::AppHandle;
 use tauri::State;
-use tauri_plugin_opener::OpenerExt;
 
 #[path = "tool_node_requirement.rs"]
 mod tool_node_requirement;
@@ -50,9 +49,7 @@ fn validate_external_url(raw: &str) -> Result<String, String> {
 pub async fn open_external(app: AppHandle, url: String) -> Result<bool, String> {
     let url = validate_external_url(&url)?;
 
-    app.opener()
-        .open_url(&url, None::<String>)
-        .map_err(|e| format!("打开链接失败: {e}"))?;
+    crate::host_open::open_url(&app, &url).map_err(|e| format!("打开链接失败: {e}"))?;
 
     Ok(true)
 }
@@ -76,13 +73,11 @@ pub async fn copy_text_to_clipboard(text: String) -> Result<bool, String> {
 /// 检查更新
 #[tauri::command]
 pub async fn check_for_updates(handle: AppHandle) -> Result<bool, String> {
-    handle
-        .opener()
-        .open_url(
-            "https://github.com/farion1231/cc-switch/releases/latest",
-            None::<String>,
-        )
-        .map_err(|e| format!("打开更新页面失败: {e}"))?;
+    crate::host_open::open_url(
+        &handle,
+        "https://github.com/farion1231/cc-switch/releases/latest",
+    )
+    .map_err(|e| format!("打开更新页面失败: {e}"))?;
 
     Ok(true)
 }
@@ -113,10 +108,7 @@ pub async fn open_portable_update_download(
 ) -> Result<bool, String> {
     let url = portable_zip_url(&version, cfg!(target_arch = "aarch64"))
         .unwrap_or_else(|| "https://github.com/farion1231/cc-switch/releases/latest".to_string());
-    handle
-        .opener()
-        .open_url(url, None::<String>)
-        .map_err(|e| format!("打开更新页面失败: {e}"))?;
+    crate::host_open::open_url(&handle, &url).map_err(|e| format!("打开更新页面失败: {e}"))?;
 
     Ok(true)
 }
