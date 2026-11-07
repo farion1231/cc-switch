@@ -4,6 +4,7 @@
 import type { KnownModelMetadata } from "@/lib/modelMetadata";
 import type { CodexCatalogModel, OpenClawModel, OpenCodeModel } from "@/types";
 import type { HermesModel } from "@/config/hermesProviderPresets";
+import type { CodebuddyModelConfig } from "@/config/codebuddyProviderPresets";
 import type { KimiProviderConfig } from "@/config/kimiProviderPresets";
 import {
   PI_THINKING_LEVELS,
@@ -149,6 +150,26 @@ export function fillKimiModel(
   if (capabilities.size > (model.capabilities?.length ?? 0)) {
     next.capabilities = [...capabilities];
   }
+  return next;
+}
+
+/**
+ * CodeBuddy models.json 的一条模型：上下文窗口当作最大输入，空着的 token 上限才补；
+ * 图片输入和推理只往「支持」方向补。
+ */
+export function fillCodebuddyModel(
+  model: CodebuddyModelConfig,
+  metadata: KnownModelMetadata,
+): CodebuddyModelConfig {
+  const next = { ...model };
+  if (isBlank(model.maxInputTokens) && metadata.contextWindow) {
+    next.maxInputTokens = metadata.contextWindow;
+  }
+  if (isBlank(model.maxOutputTokens) && metadata.maxOutputTokens) {
+    next.maxOutputTokens = metadata.maxOutputTokens;
+  }
+  if (metadata.inputModalities?.includes("image")) next.supportsImages = true;
+  if (metadata.reasoning === true) next.supportsReasoning = true;
   return next;
 }
 

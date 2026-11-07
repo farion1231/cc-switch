@@ -14,6 +14,8 @@ pub struct McpApps {
     #[serde(default)]
     pub dsh: bool,
     #[serde(default)]
+    pub codebuddy: bool,
+    #[serde(default)]
     pub agy: bool,
     #[serde(default)]
     pub claude: bool,
@@ -43,6 +45,7 @@ impl McpApps {
             AppType::GrokBuild => self.grokbuild,
             AppType::OpenCode => self.opencode,
             AppType::OpenClaw => false, // OpenClaw doesn't support MCP
+            AppType::Codebuddy => self.codebuddy,
             AppType::Hermes => self.hermes,
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
@@ -63,6 +66,7 @@ impl McpApps {
             AppType::GrokBuild => self.grokbuild = enabled,
             AppType::OpenCode => self.opencode = enabled,
             AppType::OpenClaw => {} // OpenClaw doesn't support MCP, ignore
+            AppType::Codebuddy => self.codebuddy = enabled,
             AppType::Hermes => self.hermes = enabled,
             AppType::Mcode => self.mcode = enabled,
             AppType::Kimi => self.kimi = enabled,
@@ -101,6 +105,9 @@ impl McpApps {
         if self.kimi {
             apps.push(AppType::Kimi);
         }
+        if self.codebuddy {
+            apps.push(AppType::Codebuddy);
+        }
         if self.mcode {
             apps.push(AppType::Mcode);
         }
@@ -126,6 +133,7 @@ impl McpApps {
             && !self.hermes
             && !self.agy
             && !self.kimi
+            && !self.codebuddy
             && !self.dsh
             && !self.mcode
             && !self.pi
@@ -142,6 +150,8 @@ pub struct SkillApps {
     pub kimi: bool,
     #[serde(default)]
     pub dsh: bool,
+    #[serde(default)]
+    pub codebuddy: bool,
     #[serde(default)]
     pub agy: bool,
     #[serde(default)]
@@ -177,6 +187,7 @@ impl SkillApps {
             AppType::Kimi => self.kimi,
             AppType::Dsh => self.dsh,
             AppType::OpenClaw => false,
+            AppType::Codebuddy => self.codebuddy,
             AppType::Agy => self.agy,
             AppType::Omp => self.omp,
             AppType::ClaudeDesktop => false,
@@ -197,6 +208,7 @@ impl SkillApps {
             AppType::Kimi => self.kimi = enabled,
             AppType::Dsh => self.dsh = enabled,
             AppType::OpenClaw => {}
+            AppType::Codebuddy => self.codebuddy = enabled,
             AppType::Agy => self.agy = enabled,
             AppType::Omp => self.omp = enabled,
             AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
@@ -230,6 +242,9 @@ impl SkillApps {
         if self.kimi {
             apps.push(AppType::Kimi);
         }
+        if self.codebuddy {
+            apps.push(AppType::Codebuddy);
+        }
         if self.mcode {
             apps.push(AppType::Mcode);
         }
@@ -255,6 +270,7 @@ impl SkillApps {
             && !self.hermes
             && !self.agy
             && !self.kimi
+            && !self.codebuddy
             && !self.dsh
             && !self.mcode
             && !self.pi
@@ -483,6 +499,7 @@ pub enum AppType {
     Dsh,
     Agy,
     Omp,
+    Codebuddy,
 }
 
 impl AppType {
@@ -502,6 +519,7 @@ impl AppType {
             AppType::Dsh => "dsh",
             AppType::Agy => "agy",
             AppType::Omp => "omp",
+            AppType::Codebuddy => "codebuddy",
         }
     }
 
@@ -521,6 +539,7 @@ impl AppType {
                 | AppType::Kimi
                 | AppType::Dsh
                 | AppType::Omp
+                | AppType::Codebuddy
         )
     }
 
@@ -555,6 +574,7 @@ impl AppType {
             AppType::Dsh,
             AppType::Agy,
             AppType::Omp,
+            AppType::Codebuddy,
         ]
         .into_iter()
     }
@@ -580,10 +600,11 @@ impl FromStr for AppType {
             "dsh" | "deepseek-harness" => Ok(AppType::Dsh),
             "agy" | "antigravity" | "antigravity-cli" => Ok(AppType::Agy),
             "omp" | "oh-my-pi" | "oh_my_pi" | "ohmypi" => Ok(AppType::Omp),
+            "codebuddy" | "codebuddy-code" | "codebuddy_code" => Ok(AppType::Codebuddy),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, codebuddy。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, codebuddy."),
             )),
         }
     }
@@ -628,7 +649,8 @@ impl CommonConfigSnippets {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Omp
-            | AppType::Agy => None,
+            | AppType::Agy
+            | AppType::Codebuddy => None,
         }
     }
 
@@ -648,7 +670,8 @@ impl CommonConfigSnippets {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Omp
-            | AppType::Agy => {}
+            | AppType::Agy
+            | AppType::Codebuddy => {}
         }
     }
 }
@@ -980,7 +1003,8 @@ impl MultiAppConfig {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Omp
-            | AppType::Agy => return Ok(false),
+            | AppType::Agy
+            | AppType::Codebuddy => return Ok(false),
         };
 
         prompts.insert(id, prompt);
@@ -1029,7 +1053,8 @@ impl MultiAppConfig {
                 | AppType::Kimi
                 | AppType::Dsh
                 | AppType::Omp
-                | AppType::Agy => continue, // Pi didn't exist in v3.6.x, skip
+                | AppType::Agy
+                | AppType::Codebuddy => continue, // Pi didn't exist in v3.6.x, skip
             };
 
             for (id, entry) in old_servers {

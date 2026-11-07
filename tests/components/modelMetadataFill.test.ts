@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  fillCodebuddyModel,
   fillCodexCatalogModel,
   fillHermesModel,
   fillKimiModel,
@@ -115,9 +116,9 @@ describe("fillHermesModel", () => {
   });
 
   it("only fills supports_vision towards true and keeps an explicit false", () => {
-    expect(
-      fillHermesModel({ id: "m" }, { inputModalities: ["text"] }),
-    ).toEqual({ id: "m" });
+    expect(fillHermesModel({ id: "m" }, { inputModalities: ["text"] })).toEqual(
+      { id: "m" },
+    );
     expect(
       fillHermesModel({ id: "m", supports_vision: false }, metadata),
     ).toEqual({ id: "m", context_length: 262144, supports_vision: false });
@@ -331,5 +332,26 @@ describe("piPresetThinkingFor", () => {
         compat: { supportsReasoningEffort: false },
       }),
     ).toBeNull();
+  });
+
+  it("fills blank CodeBuddy token limits and only turns capabilities on", () => {
+    expect(
+      fillCodebuddyModel(
+        { url: "https://e.example", maxOutputTokens: 4096 },
+        metadata,
+      ),
+    ).toEqual({
+      url: "https://e.example",
+      maxInputTokens: 262144,
+      maxOutputTokens: 4096,
+      supportsImages: true,
+      supportsReasoning: true,
+    });
+    expect(
+      fillCodebuddyModel(
+        { supportsImages: true, supportsReasoning: true },
+        { reasoning: false, inputModalities: ["text"] },
+      ),
+    ).toEqual({ supportsImages: true, supportsReasoning: true });
   });
 });

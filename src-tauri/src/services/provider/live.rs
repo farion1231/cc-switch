@@ -39,6 +39,7 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Mcode => crate::mcode_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Omp => Ok(crate::omp_config::get_providers()?.contains_key(provider_id)),
+        AppType::Codebuddy => crate::codebuddy_config::provider_key_exists(provider_id),
         _ => Ok(false),
     }
 }
@@ -312,6 +313,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Dsh
         | AppType::Agy
         | AppType::Omp
+        | AppType::Codebuddy
         | AppType::ClaudeDesktop => false,
     }
 }
@@ -392,7 +394,8 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Dsh
         | AppType::ClaudeDesktop
         | AppType::Agy
-        | AppType::Omp => Ok(settings.clone()),
+        | AppType::Omp
+        | AppType::Codebuddy => Ok(settings.clone()),
     }
 }
 
@@ -716,6 +719,15 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         AppType::Mcode => {
             crate::mcode_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
+        AppType::Codebuddy => {
+            // 官方登录卡只绑定账号，不是 models.json 里的模型
+            if crate::codebuddy_config::is_official_provider(provider) {
+                return Err(AppError::InvalidInput(
+                    "CodeBuddy official sign-in cards are not written to models.json".into(),
+                ));
+            }
+            crate::codebuddy_config::set_provider(&provider.id, provider.settings_config.clone())?
+        }
         AppType::Pi => {
             return Err(AppError::InvalidInput(
                 "Pi providers use the Pi provider service".to_string(),
@@ -892,7 +904,12 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     for app_type in AppType::all() {
         if matches!(
             app_type,
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp
+            AppType::Pi
+                | AppType::Mcode
+                | AppType::Kimi
+                | AppType::Dsh
+                | AppType::Omp
+                | AppType::Codebuddy
         ) {
             continue;
         }
@@ -1050,9 +1067,8 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         }
         AppType::Mcode => Ok(json!(crate::mcode_config::get_providers()?)),
         AppType::Kimi => Ok(json!(crate::kimi_config::get_providers()?)),
-        AppType::Dsh => {
-            Ok(json!(crate::dsh_config::get_providers()?))
-        }
+        AppType::Codebuddy => Ok(json!(crate::codebuddy_config::get_providers()?)),
+        AppType::Dsh => Ok(json!(crate::dsh_config::get_providers()?)),
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
         )),
@@ -1181,7 +1197,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         | AppType::Mcode
         | AppType::Kimi
         | AppType::Dsh
-        | AppType::Omp => {
+        | AppType::Omp
+        | AppType::Codebuddy => {
             unreachable!("additive mode apps are handled by early return")
         }
     };

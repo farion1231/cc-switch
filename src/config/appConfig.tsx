@@ -32,6 +32,7 @@ export const APP_IDS: AppId[] = [
   "dsh",
   "agy",
   "omp",
+  "codebuddy",
 ];
 
 export const DEFAULT_VISIBLE_APPS: VisibleApps = {
@@ -49,6 +50,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   dsh: true,
   agy: true,
   omp: true,
+  codebuddy: true,
 };
 
 /**
@@ -85,6 +87,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "pi",
   "mcode",
   "kimi",
+  "codebuddy",
   "dsh",
   "agy",
   "omp",
@@ -137,12 +140,21 @@ export function isStackAppId(appId: string): appId is StackAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "kimi" | "dsh" | "omp"
+  | "opencode"
+  | "openclaw"
+  | "hermes"
+  | "pi"
+  | "mcode"
+  | "kimi"
+  | "dsh"
+  | "omp"
+  | "codebuddy"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
   "mcode",
   "kimi",
+  "codebuddy",
   "dsh",
   "opencode",
   "openclaw",
@@ -177,7 +189,9 @@ export function usesEditorView(appId: AppId): boolean {
   return EDITOR_VIEW_APP_IDS.includes(appId);
 }
 
-/** Claude Desktop、OpenClaw 不由 CC Switch 管理 MCP；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`） */
+/**
+ * Claude Desktop、OpenClaw 不由 CC Switch 管理 MCP；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`）。
+ */
 export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw">;
 export const MCP_APP_IDS: McpAppId[] = [
   "claude",
@@ -189,6 +203,7 @@ export const MCP_APP_IDS: McpAppId[] = [
   "pi",
   "mcode",
   "kimi",
+  "codebuddy",
   "dsh",
   "agy",
   "omp",
@@ -316,6 +331,21 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-fuchsia-500/10 ring-1 ring-fuchsia-500/20 hover:bg-fuchsia-500/20 text-fuchsia-600 dark:text-fuchsia-400",
     badgeClass:
       "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300 hover:bg-fuchsia-500/20 border-0 gap-1.5",
+  },
+  codebuddy: {
+    label: "CodeBuddy Code",
+    icon: (
+      <ProviderIcon
+        icon="codebuddy"
+        name="CodeBuddy Code"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-blue-500/10 ring-1 ring-blue-500/20 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400",
+    badgeClass:
+      "bg-blue-500/10 text-blue-700 dark:text-blue-300 hover:bg-blue-500/20 border-0 gap-1.5",
   },
   agy: {
     label: "Antigravity",

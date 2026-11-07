@@ -8,6 +8,7 @@ import type { CodexLoginMethod, ManagedLoginMethod } from "@/lib/api/auth";
 import { deliverLoginLink, readAuthOpenBrowser } from "@/lib/authLoginLink";
 import { copyText } from "@/lib/clipboard";
 import type {
+  ManagedAuthAccount,
   ManagedAuthProvider,
   ManagedAuthStatus,
   ManagedAuthDeviceCodeResponse,
@@ -20,10 +21,16 @@ type LoginRequest = {
   loginMethod?: ManagedLoginMethod;
 };
 
+export interface ManagedAuthOptions {
+  /** 登录完成、账号已收录（状态已刷新）后回调，参数是这次登上的账号 */
+  onLoginComplete?: (account: ManagedAuthAccount) => void;
+}
+
 export function useManagedAuth(
   authProvider: ManagedAuthProvider,
   githubDomain?: string,
   loginMethod?: CodexLoginMethod,
+  options?: ManagedAuthOptions,
 ) {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
@@ -42,6 +49,8 @@ export function useManagedAuth(
   const activeDeviceCodeRef = useRef<string | null>(null);
   const retryTargetAccountIdRef = useRef<string | undefined>(undefined);
   const flowTransitionRef = useRef<Promise<void>>(Promise.resolve());
+  const onLoginCompleteRef = useRef(options?.onLoginComplete);
+  onLoginCompleteRef.current = options?.onLoginComplete;
 
   const {
     data: authStatus,
@@ -56,7 +65,11 @@ export function useManagedAuth(
     // A rejected xAI refresh token is persisted as `requires_reauth` by the
     // proxy hot path. Periodically refresh local status so an already-open Auth
     // Center stops showing the account as logged in without requiring a reload.
-    refetchInterval: authProvider === "xai_oauth" ? 15_000 : false,
+    // CodeBuddy 的当前账号可能在 CLI 里被换掉（/login、/logout），同样定期刷新。
+    refetchInterval:
+      authProvider === "xai_oauth" || authProvider === "codebuddy_oauth"
+        ? 15_000
+        : false,
   });
 
   const stopPolling = useCallback(() => {
@@ -72,11 +85,12 @@ export function useManagedAuth(
 
   const cancelBackendFlow = useCallback(
     async (deviceCode: string | null): Promise<boolean> => {
-      // Codex（设备码）、Antigravity（本机回调服务）和 Claude 官方账号（后台的 claude 进程）
-      // 在后端占着资源，要通知取消
+      // Codex（设备码）、Antigravity（本机回调服务）、CodeBuddy（等凭据文件变化）和 Claude
+      // 官方账号（后台的 claude 进程）在后端记着这次登录，要通知取消
       if (
         (authProvider !== "codex_oauth" &&
           authProvider !== "agy_oauth" &&
+          authProvider !== "codebuddy_oauth" &&
           authProvider !== "claude_official") ||
         !deviceCode
       )
@@ -143,10 +157,12 @@ export function useManagedAuth(
       setPollingState("polling");
       setError(null);
 
-      // 按授权中心的偏好打开浏览器，或只复制登录链接
-      const linkOnly = response.browser_opened
-        ? false
-        : (await deliverLoginLink(response.verification_uri, t)).linkOnly;
+      // 按授权中心的偏好打开浏览器，或只复制登录链接。终端登录（CodeBuddy）没有登录页，
+      // 后端已经打开了终端；Claude 官方账号在 Windows 上由 Claude Code 自己打开了登录页
+      const linkOnly =
+        response.browser_opened || !response.verification_uri
+          ? false
+          : (await deliverLoginLink(response.verification_uri, t)).linkOnly;
       if (request.generation !== flowGenerationRef.current) return;
 
       // Browser login has no verification code; leave the clipboard untouched.
@@ -204,6 +220,7 @@ export function useManagedAuth(
             await refetchStatus();
             await queryClient.invalidateQueries({ queryKey });
             if (completionGeneration !== flowGenerationRef.current) return;
+            onLoginCompleteRef.current?.(newAccount);
             setPollingState("idle");
             setDeviceCode(null);
           }
@@ -393,7 +410,8 @@ export function useManagedAuth(
     [beginLogin],
   );
 
-  const cancelAuth = useCallback(() => {
+  /** 取消这次登录，返回后端取消完成的 Promise（CodeBuddy 取消时要恢复原来的登录，调用方可以等它） */
+  const cancelAuthAndWait = useCallback(() => {
     flowGenerationRef.current += 1;
     const previousDeviceCode = activeDeviceCodeRef.current;
     activeDeviceCodeRef.current = null;
@@ -402,8 +420,12 @@ export function useManagedAuth(
     setPollingState("idle");
     setDeviceCode(null);
     setError(null);
-    void queueBackendCancellation(previousDeviceCode);
+    return queueBackendCancellation(previousDeviceCode);
   }, [queueBackendCancellation, stopPolling]);
+
+  const cancelAuth = useCallback(() => {
+    void cancelAuthAndWait();
+  }, [cancelAuthAndWait]);
 
   const logout = useCallback(() => {
     logoutMutation.mutate();
@@ -449,6 +471,7 @@ export function useManagedAuth(
     reauthAccount,
     retryAuth,
     cancelAuth,
+    cancelAuthAndWait,
     logout,
     removeAccount,
     setDefaultAccount,

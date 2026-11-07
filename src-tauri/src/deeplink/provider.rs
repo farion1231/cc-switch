@@ -392,6 +392,11 @@ pub(crate) fn build_provider_from_request(
             build_custom_provider_settings(app_type, request, api_format)?
         }
         AppType::Kimi => build_kimi_settings(request, api_format)?,
+        AppType::Codebuddy => {
+            return Err(AppError::InvalidInput(
+                "Add CodeBuddy models from the CodeBuddy page".into(),
+            ))
+        }
         AppType::Agy => {
             let mut settings = build_gemini_settings(request);
             settings["env"]
