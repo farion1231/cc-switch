@@ -183,7 +183,7 @@ fn run_package_uninstall(command: &str) -> Result<(), String> {
     let batch = format!("@chcp 65001>nul\r\n@echo off\r\ncall {command}\r\nexit /b %errorlevel%");
     #[cfg(target_os = "windows")]
     let command = batch.as_str();
-    run_tool_lifecycle_silently(command, "tool_uninstall")
+    run_tool_lifecycle_silently(command, "tool_uninstall", None)
 }
 
 fn validate_confirmed_plan(
