@@ -1,4 +1,4 @@
-import { useRef, type ComponentType } from "react";
+import { useRef, useState, type ComponentType, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { getVersion } from "@tauri-apps/api/app";
@@ -11,6 +11,7 @@ import {
   Database,
   Folder,
   Globe,
+  GripVertical,
   History,
   Info,
   KeyRound,
@@ -21,6 +22,26 @@ import {
   Settings,
   SlidersHorizontal,
 } from "lucide-react";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  KeyboardSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { useSettingsQuery, useSaveSettingsMutation } from "@/lib/query";
+import { providersApi } from "@/lib/api";
+import { toast } from "@/lib/toast";
 import type { AppId } from "@/lib/api";
 import type { VisibleApps } from "@/types";
 import { orderAppIds } from "@/config/appConfig";
@@ -30,7 +51,6 @@ import { SkillsIcon } from "@/components/BrandIcons";
 import { useUpdate } from "@/contexts/UpdateContext";
 import { sidebarWidth, useSidebarCollapsed } from "@/hooks/useSidebarCollapsed";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
-import { useSettingsQuery } from "@/lib/query";
 import {
   fmtInt,
   formatHitRatePercent,
@@ -219,6 +239,44 @@ function MainDirectory({
   const { t, i18n } = useTranslation();
   const { moneyShort } = useMoneyFormat();
   const { data: settings } = useSettingsQuery();
+  const saveSettings = useSaveSettingsMutation();
+  const [pendingOrder, setPendingOrder] = useState<AppId[]>();
+  const [savingOrder, setSavingOrder] = useState(false);
+  const orderSavePending = useRef(false);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
+  const handleDragEnd = async ({ active, over }: DragEndEvent) => {
+    if (!settings || orderSavePending.current || !over || active.id === over.id)
+      return;
+    const order = orderAppIds(settings.appOrder);
+    const from = order.indexOf(active.id as AppId);
+    const to = order.indexOf(over.id as AppId);
+    if (from < 0 || to < 0) return;
+    const appOrder = arrayMove(order, from, to);
+    orderSavePending.current = true;
+    setSavingOrder(true);
+    setPendingOrder(appOrder);
+    try {
+      await saveSettings.mutateAsync({ ...settings, appOrder });
+      try {
+        await providersApi.updateTrayMenu();
+      } catch (error) {
+        console.warn("Failed to refresh tray menu", error);
+      }
+    } catch (error) {
+      toast.error(
+        t("notifications.settingsSaveFailed", { error: String(error) }),
+      );
+    } finally {
+      orderSavePending.current = false;
+      setSavingOrder(false);
+      setPendingOrder(undefined);
+    }
+  };
   const { hasUpdate } = useUpdate();
   const {
     appStatus,
@@ -229,7 +287,7 @@ function MainDirectory({
     authNeedsAttention,
   } = useSidebarStatus();
   // 顺序跟应用页拖出来的一致
-  const apps = orderAppIds(settings?.appOrder).filter(
+  const apps = orderAppIds(pendingOrder ?? settings?.appOrder).filter(
     (app) => visibleApps[app],
   );
   const onAppPage = isAppPage(view);
@@ -309,16 +367,35 @@ function MainDirectory({
           aria-label={t("nav.appsGroup")}
           className="flex shrink-0 flex-col"
         >
-          {apps.map((app) => (
-            <AppNavItem
-              key={app}
-              app={app}
-              collapsed={collapsed}
-              selected={onAppPage && activeApp === app}
-              status={appStatus(app)}
-              onSelect={() => onSelectApp(app)}
-            />
-          ))}
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext
+              items={apps}
+              strategy={verticalListSortingStrategy}
+            >
+              {apps.map((app) => (
+                <SortableSidebarApp
+                  key={app}
+                  app={app}
+                  collapsed={collapsed}
+                  selected={onAppPage && activeApp === app}
+                  disabled={!settings || savingOrder}
+                >
+                  <AppNavItem
+                    key={app}
+                    app={app}
+                    collapsed={collapsed}
+                    selected={onAppPage && activeApp === app}
+                    status={appStatus(app)}
+                    onSelect={() => onSelectApp(app)}
+                  />
+                </SortableSidebarApp>
+              ))}
+            </SortableContext>
+          </DndContext>
         </div>
       </div>
 
@@ -405,6 +482,59 @@ function modeTag(
     };
   }
   return null;
+}
+
+function SortableSidebarApp({
+  app,
+  collapsed,
+  selected,
+  disabled,
+  children,
+}: {
+  app: AppId;
+  collapsed: boolean;
+  selected: boolean;
+  disabled: boolean;
+  children: ReactNode;
+}) {
+  const { t } = useTranslation();
+  const {
+    setNodeRef,
+    setActivatorNodeRef,
+    attributes,
+    listeners,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: app, disabled });
+  return (
+    <div
+      ref={setNodeRef}
+      className="group relative"
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        zIndex: isDragging ? 1 : undefined,
+      }}
+    >
+      {children}
+      <button
+        ref={setActivatorNodeRef}
+        type="button"
+        {...attributes}
+        {...listeners}
+        disabled={disabled}
+        aria-label={t("appsPage.dragHandle", { name: APP_DISPLAY_NAME[app] })}
+        className={cn(
+          "absolute top-1/2 flex h-6 w-5 -translate-y-1/2 touch-none items-center justify-center rounded text-fg-2 opacity-0 hover:text-fg-1 focus-visible:opacity-100 group-hover:opacity-100 cursor-grab active:cursor-grabbing",
+          collapsed ? "start-[26px]" : "start-4",
+          selected ? "bg-selected" : "bg-sidebar",
+        )}
+      >
+        <GripVertical className="h-3 w-3" />
+      </button>
+    </div>
+  );
 }
 
 function AppNavItem({
