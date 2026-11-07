@@ -95,15 +95,6 @@ export function isClineCustomConfig(config: unknown): boolean {
   return Boolean(provider) && typeof provider === "object";
 }
 
-/** OAuth entries (e.g. the Cline account) keep their tokens in Cline. */
-export function isClineOAuthConfig(config: unknown): boolean {
-  return (
-    Boolean(config) &&
-    typeof config === "object" &&
-    (config as Record<string, unknown>).tokenSource === "oauth"
-  );
-}
-
 export function emptyClineCustomConfig(
   protocol: ClineProtocol = "openai-chat",
 ): ClineProviderConfig {
