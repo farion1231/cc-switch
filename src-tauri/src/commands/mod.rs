@@ -2,6 +2,7 @@
 
 mod agy_account;
 mod auth;
+mod auxiliary;
 mod balance;
 mod claude_account;
 mod codex_oauth;
@@ -50,6 +51,7 @@ mod startup_tests;
 
 pub use agy_account::*;
 pub use auth::*;
+pub use auxiliary::*;
 pub use balance::*;
 pub use claude_account::*;
 pub use codex_oauth::*;

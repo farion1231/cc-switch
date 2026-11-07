@@ -39,6 +39,9 @@ impl Database {
                 meta TEXT NOT NULL DEFAULT '{}',
                 is_current BOOLEAN NOT NULL DEFAULT 0,
                 in_failover_queue BOOLEAN NOT NULL DEFAULT 0,
+                in_classifier_queue BOOLEAN NOT NULL DEFAULT 0,
+                classifier_sort_index INTEGER,
+                classifier_model TEXT,
                 PRIMARY KEY (id, app_type)
             )",
             [],
@@ -138,6 +141,8 @@ impl Database {
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
+            classifier_queue_enabled INTEGER NOT NULL DEFAULT 0,
+            classifier_force_thinking_off INTEGER NOT NULL DEFAULT 1,
             max_retries INTEGER NOT NULL DEFAULT 3, streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
             streaming_idle_timeout INTEGER NOT NULL DEFAULT 120, non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
             circuit_failure_threshold INTEGER NOT NULL DEFAULT 4, circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
@@ -444,6 +449,26 @@ impl Database {
             [],
         );
 
+        // 确保分类器队列的三列存在（对于已存在的旧数据库）
+        Self::add_column_if_missing(
+            conn,
+            "providers",
+            "in_classifier_queue",
+            "BOOLEAN NOT NULL DEFAULT 0",
+        )?;
+        Self::add_column_if_missing(conn, "providers", "classifier_sort_index", "INTEGER")?;
+        Self::add_column_if_missing(conn, "providers", "classifier_model", "TEXT")?;
+
+        // 分类器队列有自己的拖拽顺序，索引也必须落在 classifier_sort_index 上。
+        // 换新名字而不是原地重建同名索引：`CREATE INDEX IF NOT EXISTS` 对已存在的
+        // 同名旧索引是空操作，沿用旧名会让升级库永远停在按 sort_index 的旧定义上。
+        let _ = conn.execute("DROP INDEX IF EXISTS idx_providers_classifier", []);
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_providers_classifier_order
+             ON providers(app_type, in_classifier_queue, classifier_sort_index)",
+            [],
+        );
+
         Ok(())
     }
 
@@ -656,6 +681,26 @@ impl Database {
                 }
                 version = Self::get_user_version(conn)?;
             }
+
+            // 两条历史分支复用了版本 19..23：本分支的分类器队列/修复迁移，
+            // 与上游的 Mcode/Pi/AGY/Kimi/OMP 迁移并不等价。即使已是 v23，
+            // 也必须按实际结构补齐双方的列；仅添加缺失列，保留所有已有开关值。
+            for (table, column) in [
+                ("mcp_servers", "enabled_mcode"),
+                ("skills", "enabled_mcode"),
+                ("mcp_servers", "enabled_pi"),
+                ("mcp_servers", "enabled_agy"),
+                ("skills", "enabled_agy"),
+                ("mcp_servers", "enabled_kimi"),
+                ("skills", "enabled_kimi"),
+                ("mcp_servers", "enabled_omp"),
+            ] {
+                if Self::table_exists(conn, table)? {
+                    Self::add_column_if_missing(conn, table, column, "BOOLEAN NOT NULL DEFAULT 0")?;
+                }
+            }
+            Self::migrate_v20_to_v21(conn)?;
+            Self::migrate_v21_to_v22(conn)?;
             Ok(())
         })();
 
@@ -1695,6 +1740,90 @@ impl Database {
                 "INTEGER",
             )?;
         }
+        Ok(())
+    }
+
+    /// 历史分支 v20 -> v21：分类器队列（Auto Mode 安全分类器请求的侧信道路由）
+    ///
+    /// 上游复用了该版本号，因此也在版本迁移结束后幂等执行。
+    /// 每一步都用 `table_exists` / `has_column` 兜底：迁移可能跑在很旧的库上
+    /// （`add_column_if_missing` 遇到缺表会直接报错），且索引依赖的 `sort_index`
+    /// 在 v4 那种老结构里还不存在。
+    fn migrate_v20_to_v21(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "providers")? {
+            Self::add_column_if_missing(
+                conn,
+                "providers",
+                "in_classifier_queue",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+
+            // 索引只是 ORDER BY 的加速，不是功能前提。老库可能还没有 sort_index
+            // （它由 v0->v1 补，v4 起步的升级链走不到那一步），此时跳过即可：
+            // create_tables_on_conn 的幂等尾部会在列齐全后的某次启动补上。
+            if Self::has_column(conn, "providers", "sort_index")? {
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_providers_classifier
+                     ON providers(app_type, in_classifier_queue, sort_index)",
+                    [],
+                )
+                .map_err(|error| AppError::Database(format!("创建分类器队列索引失败: {error}")))?;
+            }
+        }
+
+        if Self::table_exists(conn, "proxy_config")? {
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "classifier_queue_enabled",
+                "INTEGER NOT NULL DEFAULT 0",
+            )?;
+            // 历史列：曾经是「强制关闭思考」开关，现已改为恒定行为，代码不再读写它。
+            // 保留建列逻辑而不写迁移删除：DEFAULT 1 的 NOT NULL 列留着是零成本的，
+            // 而 DROP COLUMN 要动 SCHEMA_VERSION、跨版本回滚时反而会把旧版打挂。
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "classifier_force_thinking_off",
+                "INTEGER NOT NULL DEFAULT 1",
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// 历史分支 v21 -> v22：分类器队列的独立排序列与每条目的模型覆写列
+    ///
+    /// 旧版让分类器队列复用首页的 `sort_index`，队列顺序被首页拖拽绑架；
+    /// 这里给它一个自己的 `classifier_sort_index`。存量行保持 NULL，
+    /// 读取时 `COALESCE` 回落到 `sort_index`，所以升级当下顺序**不变**，
+    /// 直到用户第一次在分类器面板里拖动为止。
+    ///
+    /// `classifier_model` 是每个队列条目的出站模型名覆写（NULL / 空 = 透传
+    /// 客户端请求的模型）。分类器请求带着完整会话上下文，队列里那些便宜的
+    /// 供应商未必认得客户端选的模型名，只能逐条指定。
+    ///
+    /// 与队列建列迁移同样用 `table_exists` 兜底：迁移可能跑在很旧的库上。
+    fn migrate_v21_to_v22(conn: &Connection) -> Result<(), AppError> {
+        if !Self::table_exists(conn, "providers")? {
+            return Ok(());
+        }
+
+        Self::add_column_if_missing(conn, "providers", "classifier_sort_index", "INTEGER")?;
+        Self::add_column_if_missing(conn, "providers", "classifier_model", "TEXT")?;
+
+        // 旧索引按 sort_index 排序，对新的队列顺序无用。换名重建而不是原地
+        // `CREATE INDEX IF NOT EXISTS`：后者对已存在的同名索引是空操作。
+        conn.execute("DROP INDEX IF EXISTS idx_providers_classifier", [])
+            .map_err(|error| AppError::Database(format!("删除旧分类器队列索引失败: {error}")))?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_providers_classifier_order
+             ON providers(app_type, in_classifier_queue, classifier_sort_index)",
+            [],
+        )
+        .map_err(|error| AppError::Database(format!("创建分类器队列排序索引失败: {error}")))?;
+
         Ok(())
     }
 
@@ -4054,6 +4183,135 @@ mod tests {
     }
 
     #[test]
+    fn reconcile_colliding_branch_versions_preserves_flags() -> Result<(), AppError> {
+        for version in [19, 20, 21, 22, 23] {
+            for upstream_columns in [false, true] {
+                let conn = Connection::open_in_memory()?;
+                conn.execute_batch(
+                    "CREATE TABLE mcp_servers (id TEXT PRIMARY KEY, enabled_codex BOOLEAN NOT NULL DEFAULT 0);
+                     CREATE TABLE skills (id TEXT PRIMARY KEY, enabled_codex BOOLEAN NOT NULL DEFAULT 0);
+                     INSERT INTO mcp_servers VALUES ('mcp-1', 1);
+                     INSERT INTO skills VALUES ('skill-1', 1);",
+                )?;
+                if upstream_columns {
+                    conn.execute_batch(
+                        "ALTER TABLE mcp_servers ADD COLUMN enabled_mcode BOOLEAN NOT NULL DEFAULT 0;
+                         ALTER TABLE mcp_servers ADD COLUMN enabled_pi BOOLEAN NOT NULL DEFAULT 0;
+                         ALTER TABLE mcp_servers ADD COLUMN enabled_agy BOOLEAN NOT NULL DEFAULT 0;
+                         ALTER TABLE mcp_servers ADD COLUMN enabled_kimi BOOLEAN NOT NULL DEFAULT 0;
+                         ALTER TABLE mcp_servers ADD COLUMN enabled_omp BOOLEAN NOT NULL DEFAULT 0;
+                         ALTER TABLE skills ADD COLUMN enabled_mcode BOOLEAN NOT NULL DEFAULT 0;
+                         ALTER TABLE skills ADD COLUMN enabled_agy BOOLEAN NOT NULL DEFAULT 0;
+                         ALTER TABLE skills ADD COLUMN enabled_kimi BOOLEAN NOT NULL DEFAULT 0;
+                         UPDATE mcp_servers SET enabled_mcode = 1, enabled_pi = 1, enabled_agy = 1, enabled_kimi = 1, enabled_omp = 1;
+                         UPDATE skills SET enabled_mcode = 1, enabled_agy = 1, enabled_kimi = 1;",
+                    )?;
+                }
+                Database::set_user_version(&conn, version)?;
+                // Reopening an already migrated database must also be harmless.
+                for _ in 0..2 {
+                    Database::apply_schema_migrations_on_conn(&conn)?;
+                    assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+                    let expected = i64::from(upstream_columns);
+                    for (table, columns) in [
+                        (
+                            "mcp_servers",
+                            &[
+                                "enabled_mcode",
+                                "enabled_pi",
+                                "enabled_agy",
+                                "enabled_kimi",
+                                "enabled_omp",
+                            ][..],
+                        ),
+                        (
+                            "skills",
+                            &["enabled_mcode", "enabled_agy", "enabled_kimi"][..],
+                        ),
+                    ] {
+                        for column in columns {
+                            let flags: (i64, i64) = conn.query_row(
+                                &format!("SELECT enabled_codex, {column} FROM {table}"),
+                                [],
+                                |row| Ok((row.get(0)?, row.get(1)?)),
+                            )?;
+                            assert_eq!(flags, (1, expected), "v{version}: {table}.{column}");
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn reconcile_v23_and_v24_classifier_schema_preserves_queue_data() -> Result<(), AppError> {
+        for (version, existing_queue) in [(23, false), (23, true), (24, false), (24, true)] {
+            let conn = Connection::open_in_memory()?;
+            conn.execute_batch(
+                "CREATE TABLE providers (
+                    id TEXT PRIMARY KEY, app_type TEXT, sort_index INTEGER,
+                    in_failover_queue BOOLEAN NOT NULL DEFAULT 0
+                 );
+                 CREATE TABLE proxy_config (app_type TEXT PRIMARY KEY);
+                 INSERT INTO providers VALUES ('p', 'claude', 7, 1);
+                 INSERT INTO proxy_config VALUES ('claude');",
+            )?;
+            if existing_queue {
+                conn.execute_batch(
+                    "ALTER TABLE providers ADD COLUMN in_classifier_queue BOOLEAN NOT NULL DEFAULT 0;
+                     ALTER TABLE providers ADD COLUMN classifier_sort_index INTEGER;
+                     ALTER TABLE providers ADD COLUMN classifier_model TEXT;
+                     ALTER TABLE proxy_config ADD COLUMN classifier_queue_enabled INTEGER NOT NULL DEFAULT 0;
+                     ALTER TABLE proxy_config ADD COLUMN classifier_force_thinking_off INTEGER NOT NULL DEFAULT 1;
+                     UPDATE providers SET in_classifier_queue = 1, classifier_sort_index = 42, classifier_model = 'queue-model';
+                     UPDATE proxy_config SET classifier_queue_enabled = 1, classifier_force_thinking_off = 0;",
+                )?;
+            }
+            Database::set_user_version(&conn, version)?;
+            for _ in 0..2 {
+                Database::apply_schema_migrations_on_conn(&conn)?;
+                assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+                let provider: (i64, i64, i64, Option<i64>, Option<String>) = conn.query_row(
+                    "SELECT sort_index, in_failover_queue, in_classifier_queue,
+                            classifier_sort_index, classifier_model FROM providers",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                        ))
+                    },
+                )?;
+                let proxy: (i64, i64) = conn.query_row(
+                    "SELECT classifier_queue_enabled, classifier_force_thinking_off FROM proxy_config",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?;
+                if existing_queue {
+                    assert_eq!(provider, (7, 1, 1, Some(42), Some("queue-model".into())));
+                    assert_eq!(proxy, (1, 0));
+                } else {
+                    assert_eq!(provider, (7, 1, 0, None, None));
+                    assert_eq!(proxy, (0, 1));
+                }
+                let mut stmt = conn.prepare("PRAGMA index_info(idx_providers_classifier_order)")?;
+                let columns = stmt
+                    .query_map([], |row| row.get::<_, String>(2))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                assert_eq!(
+                    columns,
+                    ["app_type", "in_classifier_queue", "classifier_sort_index"]
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn dsh_migration_preserves_existing_flags_and_persists_mcp_and_skill_flags(
     ) -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
@@ -4335,6 +4593,192 @@ mod tests {
         )?;
         assert_eq!(byte_offset, None, "存量行的字节游标必须为 NULL");
         assert_eq!(fingerprint, None, "存量行的尾部指纹必须为 NULL");
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v20_to_v21_adds_classifier_columns_and_index() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        // 回退到 v20 形态，模拟升级前的库
+        conn.execute("DROP INDEX IF EXISTS idx_providers_classifier_order", [])?;
+        conn.execute(
+            "ALTER TABLE providers DROP COLUMN classifier_sort_index",
+            [],
+        )?;
+        conn.execute("ALTER TABLE providers DROP COLUMN classifier_model", [])?;
+        conn.execute("ALTER TABLE providers DROP COLUMN in_classifier_queue", [])?;
+        conn.execute(
+            "ALTER TABLE proxy_config DROP COLUMN classifier_queue_enabled",
+            [],
+        )?;
+        conn.execute(
+            "ALTER TABLE proxy_config DROP COLUMN classifier_force_thinking_off",
+            [],
+        )?;
+        Database::set_user_version(&conn, 20)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::has_column(
+            &conn,
+            "providers",
+            "in_classifier_queue"
+        )?);
+        assert!(Database::has_column(
+            &conn,
+            "proxy_config",
+            "classifier_queue_enabled"
+        )?);
+        assert!(Database::has_column(
+            &conn,
+            "proxy_config",
+            "classifier_force_thinking_off"
+        )?);
+
+        let index_exists: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'index' AND name = 'idx_providers_classifier_order'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(index_exists, 1);
+
+        // 默认值：队列关、强制关思考开
+        let (enabled, thinking_off): (i32, i32) = conn.query_row(
+            "SELECT classifier_queue_enabled, classifier_force_thinking_off
+             FROM proxy_config WHERE app_type = 'claude'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(enabled, 0);
+        assert_eq!(thinking_off, 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v20_to_v21_preserves_existing_failover_flags() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        // SQLite 拒绝删除被索引引用的列，必须先删索引
+        conn.execute("DROP INDEX IF EXISTS idx_providers_classifier_order", [])?;
+        conn.execute(
+            "ALTER TABLE providers DROP COLUMN classifier_sort_index",
+            [],
+        )?;
+        conn.execute("ALTER TABLE providers DROP COLUMN classifier_model", [])?;
+        conn.execute("ALTER TABLE providers DROP COLUMN in_classifier_queue", [])?;
+        conn.execute(
+            "INSERT INTO providers (id, app_type, name, settings_config, in_failover_queue)
+             VALUES ('p1', 'claude', 'P1', '{}', 1)",
+            [],
+        )?;
+        Database::set_user_version(&conn, 20)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        let (in_failover, in_classifier): (bool, bool) = conn.query_row(
+            "SELECT in_failover_queue, in_classifier_queue FROM providers WHERE id = 'p1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert!(in_failover);
+        assert!(!in_classifier);
+
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v21_to_v22_adds_order_and_model_columns() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        // 回退到 v21 形态：没有独立排序列 / 模型列，索引还挂在 sort_index 上
+        conn.execute("DROP INDEX IF EXISTS idx_providers_classifier_order", [])?;
+        conn.execute(
+            "ALTER TABLE providers DROP COLUMN classifier_sort_index",
+            [],
+        )?;
+        conn.execute("ALTER TABLE providers DROP COLUMN classifier_model", [])?;
+        conn.execute(
+            "CREATE INDEX idx_providers_classifier
+             ON providers(app_type, in_classifier_queue, sort_index)",
+            [],
+        )?;
+        Database::set_user_version(&conn, 21)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::has_column(
+            &conn,
+            "providers",
+            "classifier_sort_index"
+        )?);
+        assert!(Database::has_column(
+            &conn,
+            "providers",
+            "classifier_model"
+        )?);
+
+        // 旧索引必须被换掉，否则升级库永远按 sort_index 排序
+        let old_index: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'index' AND name = 'idx_providers_classifier'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(old_index, 0, "按 sort_index 的旧索引必须被删除");
+
+        let new_index: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'index' AND name = 'idx_providers_classifier_order'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(new_index, 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v21_to_v22_leaves_existing_queue_order_untouched() -> Result<(), AppError> {
+        // 升级当下顺序不能变：存量行的 classifier_sort_index 是 NULL，
+        // 读取时由 COALESCE 回落到首页的 sort_index。
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute("DROP INDEX IF EXISTS idx_providers_classifier_order", [])?;
+        conn.execute(
+            "ALTER TABLE providers DROP COLUMN classifier_sort_index",
+            [],
+        )?;
+        conn.execute("ALTER TABLE providers DROP COLUMN classifier_model", [])?;
+        conn.execute(
+            "INSERT INTO providers
+             (id, app_type, name, settings_config, sort_index, in_classifier_queue)
+             VALUES ('a', 'claude', 'A', '{}', 2, 1), ('b', 'claude', 'B', '{}', 1, 1)",
+            [],
+        )?;
+        Database::set_user_version(&conn, 21)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        let order: Option<i64> = conn.query_row(
+            "SELECT classifier_sort_index FROM providers WHERE id = 'a'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(order, None, "存量行不应被回填排序值");
+
+        Ok(())
+    }
+
+    #[test]
+    fn fresh_memory_database_has_classifier_columns() -> Result<(), AppError> {
+        // Database::memory() 只跑 create_tables()，不跑迁移 —— 建表语句必须自带新列
+        let db = Database::memory()?;
+        assert!(db.get_auxiliary_queue("claude")?.is_empty());
         Ok(())
     }
 }
