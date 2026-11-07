@@ -5431,6 +5431,37 @@ mod tests {
     }
 
     #[test]
+    fn claude_transform_endpoint_then_build_url_matches_the_zhipu_case() {
+        // The end-to-end chain for #8393: the client's `/v1/messages` is rewritten to
+        // `/v1/chat/completions`, then joined onto a base URL that already ends in
+        // `v4`. Before the fix this produced `.../v4/v1/chat/completions` and 404'd.
+        use super::super::providers::{ClaudeAdapter, ProviderAdapter};
+
+        let (endpoint, _query) = rewrite_claude_transform_endpoint(
+            "/v1/messages",
+            "openai_chat",
+            false,
+            &json!({ "model": "glm-5.3" }),
+        );
+        assert_eq!(endpoint, "/v1/chat/completions");
+
+        let url = ClaudeAdapter::new().build_url("https://open.bigmodel.cn/api/paas/v4", &endpoint);
+        assert_eq!(url, "https://open.bigmodel.cn/api/paas/v4/chat/completions");
+
+        // The same chain on a base URL that does not carry a version segment is
+        // unchanged, and a query on the client endpoint still survives.
+        let (endpoint, query) = rewrite_claude_transform_endpoint(
+            "/v1/messages?beta=true&x-id=1",
+            "openai_responses",
+            false,
+            &json!({ "model": "glm-5.3" }),
+        );
+        let url = ClaudeAdapter::new().build_url("https://integrate.api.nvidia.com", &endpoint);
+        assert_eq!(url, "https://integrate.api.nvidia.com/v1/responses?x-id=1");
+        assert_eq!(query.as_deref(), Some("x-id=1"));
+    }
+
+    #[test]
     fn rewrite_codex_responses_endpoint_to_chat_preserves_query() {
         let (endpoint, passthrough_query) =
             rewrite_codex_responses_endpoint_to_chat("/v1/responses?foo=bar");
