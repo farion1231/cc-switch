@@ -15,6 +15,5 @@
 "usage.chart" = "Chart";
 "usage.chart.bars" = "Bar";
 "usage.chart.line" = "Line";
-"usage.chart.area" = "Area";
 "usage.intent.title" = "Usage";
 "usage.intent.description" = "Choose the chart style. Tap the range buttons on the widget to change the time range.";

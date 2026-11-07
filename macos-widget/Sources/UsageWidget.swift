@@ -4,7 +4,7 @@
 // - 中：左边花费和三个数，右边趋势图
 // - 大：再加按应用拆分
 // - 特大：左边花费 + 趋势图，右边三个数 + 按应用排行
-// 趋势图画成柱状 / 折线 / 面积，在「编辑小组件」里选（UsageIntent.swift）。
+// 趋势图画成柱状 / 折线，在「编辑小组件」里选（UsageIntent.swift）。
 
 import Charts
 import SwiftUI
@@ -86,9 +86,9 @@ func compactNumber(_ value: Int) -> String {
 
 // MARK: - 部件
 
-/// 趋势图。柱状（概览）或面积（趋势样式）；横轴按粒度写小时 / 星期 / 日期 / 月份。
+/// 趋势图。柱状或折线；横轴按粒度写小时 / 星期 / 日期 / 月份。
 struct UsageChart: View {
-    enum Kind { case bars, line, area }
+    enum Kind { case bars, line }
 
     let points: [UsagePoint]
     let granularity: String
@@ -139,25 +139,6 @@ struct UsageChart: View {
                     .symbolSize(point.start == last ? 28 : 12)
                     .foregroundStyle(fullColor ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.primary))
                 }
-            case .area:
-                AreaMark(
-                    x: .value("time", point.date, unit: unit),
-                    y: .value("cost", point.costValue)
-                )
-                .interpolationMethod(.monotone)
-                // 填充要够实：桌面不在前台时系统按单色「鲜明」样式画小组件，太淡的填充会整片消失，只剩一条线
-                .foregroundStyle(
-                    fullColor
-                        ? AnyShapeStyle(LinearGradient(colors: [Color.accentColor.opacity(0.6), Color.accentColor.opacity(0.22)], startPoint: .top, endPoint: .bottom))
-                        : AnyShapeStyle(.primary.opacity(0.5))
-                )
-                LineMark(
-                    x: .value("time", point.date, unit: unit),
-                    y: .value("cost", point.costValue)
-                )
-                .interpolationMethod(.monotone)
-                .lineStyle(StrokeStyle(lineWidth: 1.6))
-                .foregroundStyle(fullColor ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.primary))
             }
         }
         .chartYAxis(.hidden)

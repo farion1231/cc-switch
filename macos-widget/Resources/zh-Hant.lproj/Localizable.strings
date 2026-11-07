@@ -15,6 +15,5 @@
 "usage.chart" = "圖表樣式";
 "usage.chart.bars" = "長條圖";
 "usage.chart.line" = "折線圖";
-"usage.chart.area" = "面積圖";
 "usage.intent.title" = "用量";
 "usage.intent.description" = "選擇趨勢圖的樣式。時間範圍直接點小工具上的按鈕切換。";

@@ -15,6 +15,5 @@
 "usage.chart" = "グラフ";
 "usage.chart.bars" = "棒グラフ";
 "usage.chart.line" = "折れ線グラフ";
-"usage.chart.area" = "面グラフ";
 "usage.intent.title" = "使用量";
 "usage.intent.description" = "グラフのスタイルを選びます。期間はウィジェット上のボタンで切り替えます。";

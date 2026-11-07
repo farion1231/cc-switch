@@ -7,7 +7,6 @@ import WidgetKit
 enum UsageChartOption: String, AppEnum {
     case bars
     case line
-    case area
 
     static let typeDisplayRepresentation = TypeDisplayRepresentation(
         name: LocalizedStringResource("usage.chart", defaultValue: "Chart")
@@ -15,14 +14,12 @@ enum UsageChartOption: String, AppEnum {
     static let caseDisplayRepresentations: [UsageChartOption: DisplayRepresentation] = [
         .bars: DisplayRepresentation(title: LocalizedStringResource("usage.chart.bars", defaultValue: "Bar")),
         .line: DisplayRepresentation(title: LocalizedStringResource("usage.chart.line", defaultValue: "Line")),
-        .area: DisplayRepresentation(title: LocalizedStringResource("usage.chart.area", defaultValue: "Area")),
     ]
 
     var kind: UsageChart.Kind {
         switch self {
         case .bars: return .bars
         case .line: return .line
-        case .area: return .area
         }
     }
 }

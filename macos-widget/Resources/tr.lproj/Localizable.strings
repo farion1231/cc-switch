@@ -15,6 +15,5 @@
 "usage.chart" = "Grafik";
 "usage.chart.bars" = "Çubuk";
 "usage.chart.line" = "Çizgi";
-"usage.chart.area" = "Alan";
 "usage.intent.title" = "Kullanım";
 "usage.intent.description" = "Grafik stilini seçin. Zaman aralığını widget üzerindeki düğmelerle değiştirin.";

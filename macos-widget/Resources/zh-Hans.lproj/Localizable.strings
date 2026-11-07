@@ -15,6 +15,5 @@
 "usage.chart" = "图表样式";
 "usage.chart.bars" = "柱状图";
 "usage.chart.line" = "折线图";
-"usage.chart.area" = "面积图";
 "usage.intent.title" = "用量";
 "usage.intent.description" = "选择趋势图的样式。时间范围直接点小组件上的按钮切换。";
