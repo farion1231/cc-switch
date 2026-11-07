@@ -47,6 +47,7 @@ mod session_manager;
 mod settings;
 mod store;
 
+mod trae_config;
 mod tray;
 #[cfg(target_os = "windows")]
 mod tray_compat;

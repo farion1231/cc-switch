@@ -2189,6 +2189,31 @@ fn codex_model_catalog_from_settings(
     Ok(Some(catalog))
 }
 
+/// Catalog for a Codex-derived client that talks to a native `/responses` gateway
+/// directly (TRAE CLI). Same entries as a Codex card with these models: official
+/// GPT / vendor entries when they match, the clean native template otherwise.
+pub(crate) fn native_responses_catalog(
+    base_url: &str,
+    models: &[String],
+) -> Result<Value, AppError> {
+    let specs: Vec<CodexCatalogModelSpec> = models
+        .iter()
+        .map(|model| CodexCatalogModelSpec {
+            model: model.clone(),
+            ..Default::default()
+        })
+        .collect();
+    let config_text = format!(
+        "model_provider = \"ccs\"\n\n[model_providers.ccs]\nbase_url = {}\n",
+        serde_json::to_string(base_url).map_err(|e| AppError::Config(e.to_string()))?
+    );
+    codex_catalog_from_specs_for_row(
+        &specs,
+        &config_text,
+        CodexCatalogToolProfile::NativeResponses,
+    )
+}
+
 /// 卡上的「保留官方 Fast 档」（`modelCatalog.officialSpeedTiers`）。和自动审批模型一样只在
 /// 直连、路由下生效，聚合下不看。
 fn codex_card_keeps_official_speed_tiers(settings: &Value) -> bool {

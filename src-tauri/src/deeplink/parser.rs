@@ -350,11 +350,12 @@ fn parse_mcp_deeplink(
                 | "mcode"
                 | "pi"
                 | "kimi"
+                | "trae"
                 | "dsh"
                 | "omp"
         ) {
             return Err(AppError::InvalidInput(format!(
-                "Invalid app in 'apps': must be 'claude', 'codex', 'gemini', 'agy', 'grokbuild', 'opencode', 'openclaw', 'hermes', 'pi', 'kimi', 'dsh', 'mcode', or 'omp', got '{trimmed}'"
+                "Invalid app in 'apps': must be 'claude', 'codex', 'gemini', 'agy', 'grokbuild', 'opencode', 'openclaw', 'hermes', 'pi', 'kimi', 'trae', 'dsh', 'mcode', or 'omp', got '{trimmed}'"
             )));
         }
     }

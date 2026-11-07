@@ -1,0 +1,497 @@
+import { useCallback, useEffect, useState } from "react";
+import { useForm } from "react-hook-form";
+import { useTranslation } from "react-i18next";
+import { Button } from "@/components/ui/button";
+import { Form } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import JsonEditor from "@/components/JsonEditor";
+import { useDarkMode } from "@/hooks/useDarkMode";
+import { useProvidersQuery } from "@/lib/query/queries";
+import { toast } from "@/lib/toast";
+import {
+  fetchModelsForConfig,
+  showFetchModelsError,
+  type FetchedModel,
+} from "@/lib/api/model-fetch";
+import type { ProviderFormData } from "@/lib/schemas/provider";
+import {
+  isTraeOfficialConfig,
+  normalizeTraeProviderKey,
+  traeProviderPresets,
+  TRAE_PROVIDER_KEY_PATTERN,
+  TRAE_RESERVED_PROVIDER_KEYS,
+  type TraeProviderConfig,
+  type TraeProviderTable,
+} from "@/config/traeProviderPresets";
+import { Notice } from "@/components/ui/notice";
+import { HelpTip } from "@/components/ui/help-tip";
+import { BasicFormFields, REQUIRED_LABEL } from "./BasicFormFields";
+import { RequestHeadersEditor } from "./RequestHeadersEditor";
+import { ProviderPresetSelector } from "./ProviderPresetSelector";
+import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
+import {
+  FetchedModelPicker,
+  type FetchedModelSelection,
+} from "./FetchedModelPicker";
+import { X } from "lucide-react";
+import type { ProviderFormProps } from "./ProviderForm";
+
+const PRESET_ENTRIES = traeProviderPresets.map((preset, index) => ({
+  id: String(index),
+  preset,
+}));
+
+type CustomConfig = {
+  provider: TraeProviderTable;
+  model: string;
+  models?: string[];
+};
+
+const emptyConfig = (): CustomConfig => ({
+  provider: {
+    base_url: "",
+    wire_api: "responses",
+    experimental_bearer_token: "",
+  },
+  model: "",
+});
+
+const isCustomConfig = (value: unknown): value is CustomConfig =>
+  typeof value === "object" &&
+  value !== null &&
+  typeof (value as { provider?: unknown }).provider === "object" &&
+  (value as { provider?: unknown }).provider !== null;
+
+export function TraeProviderForm({
+  providerId,
+  initialData,
+  onSubmit,
+  onCancel,
+  submitLabel,
+  showButtons = true,
+  onSubmittingChange,
+  onSubmitReadyChange,
+}: ProviderFormProps) {
+  const { t } = useTranslation();
+  const isDarkMode = useDarkMode();
+  const [config, setConfig] = useState<TraeProviderConfig>(
+    (initialData?.settingsConfig as TraeProviderConfig | undefined) ??
+      emptyConfig(),
+  );
+  const [jsonText, setJsonText] = useState(JSON.stringify(config, null, 2));
+  const [jsonValid, setJsonValid] = useState(true);
+  const [presetId, setPresetId] = useState("custom");
+  const preset =
+    presetId === "custom" ? undefined : traeProviderPresets[Number(presetId)];
+  const official = isTraeOfficialConfig(config);
+  const category = initialData?.category ?? preset?.category ?? "custom";
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
+  const [isFetchingModels, setIsFetchingModels] = useState(false);
+  // The key names `[model_providers.<key>]` and the top-level `model_provider`
+  // reference, so it is fixed once the provider exists.
+  const isEdit = Boolean(initialData);
+  const [providerKey, setProviderKey] = useState(providerId ?? "");
+  const { data: existing } = useProvidersQuery("trae");
+  const keyTaken =
+    !isEdit &&
+    Object.prototype.hasOwnProperty.call(
+      existing?.providers ?? {},
+      providerKey,
+    );
+  const keyInvalid =
+    !isEdit &&
+    !official &&
+    providerKey !== "" &&
+    (!TRAE_PROVIDER_KEY_PATTERN.test(providerKey) ||
+      TRAE_RESERVED_PROVIDER_KEYS.has(providerKey));
+  const form = useForm<ProviderFormData>({
+    defaultValues: {
+      name: initialData?.name ?? "",
+      notes: initialData?.notes ?? "",
+      websiteUrl: initialData?.websiteUrl ?? "",
+      icon: initialData?.icon ?? "",
+      iconColor: initialData?.iconColor ?? "",
+      settingsConfig: jsonText,
+    },
+  });
+  const name = form.watch("name");
+  const custom = isCustomConfig(config) ? config : undefined;
+  // Models offered in traecli's `/model` list besides the default model.
+  const extraModels = (custom?.models ?? []).filter(
+    (model) => model && model !== custom?.model,
+  );
+  const listedModels = custom?.model
+    ? [custom.model, ...extraModels]
+    : extraModels;
+  const setExtraModels = (models: string[]) => {
+    const current = custom ?? emptyConfig();
+    const next = { ...current };
+    if (models.length) next.models = models;
+    else delete next.models;
+    update(next);
+  };
+  const applyFetchedModels = ({ add, remove }: FetchedModelSelection) => {
+    const removed = new Set(remove);
+    const kept = extraModels.filter((model) => !removed.has(model));
+    const added = add.filter(
+      (model) => model !== custom?.model && !kept.includes(model),
+    );
+    setExtraModels([...kept, ...added]);
+  };
+  const baseUrl = custom?.provider.base_url ?? "";
+  const apiKey = custom?.provider.experimental_bearer_token ?? "";
+  const envKey = custom?.provider.env_key ?? "";
+  const ready = Boolean(
+    jsonValid &&
+      name.trim() &&
+      (isEdit || (providerKey && !keyInvalid && !keyTaken)) &&
+      (official ||
+        (custom &&
+          baseUrl.trim() &&
+          custom.model.trim() &&
+          (apiKey.trim() || envKey.trim()))),
+  );
+  useEffect(() => {
+    onSubmitReadyChange?.(ready);
+  }, [ready, onSubmitReadyChange]);
+
+  const update = (next: TraeProviderConfig) => {
+    setConfig(next);
+    setJsonText(JSON.stringify(next, null, 2));
+    setJsonValid(true);
+  };
+  const updateProvider = (patch: Partial<TraeProviderTable>) => {
+    const current = custom ?? emptyConfig();
+    const provider = { ...current.provider, ...patch };
+    for (const [field, value] of Object.entries(patch)) {
+      if (value === "" && field !== "base_url") delete provider[field];
+    }
+    update({ ...current, provider });
+  };
+  const choosePreset = (id: string) => {
+    setPresetId(id);
+    const selected =
+      id === "custom" ? undefined : traeProviderPresets[Number(id)];
+    const next = selected
+      ? (JSON.parse(
+          JSON.stringify(selected.settingsConfig),
+        ) as TraeProviderConfig)
+      : emptyConfig();
+    update(next);
+    setFetchedModels([]);
+    setProviderKey(selected?.providerKey ?? "");
+    form.reset({
+      name: selected
+        ? selected.nameKey
+          ? t(selected.nameKey, { defaultValue: selected.name })
+          : selected.name
+        : "",
+      notes: "",
+      websiteUrl: selected?.websiteUrl ?? "",
+      icon: selected?.icon ?? "",
+      iconColor: selected?.iconColor ?? "",
+      settingsConfig: JSON.stringify(next),
+    });
+  };
+  const handleFetchModels = useCallback(() => {
+    if (!baseUrl || !apiKey) {
+      showFetchModelsError(null, t, {
+        hasApiKey: !!apiKey,
+        hasBaseUrl: !!baseUrl,
+      });
+      return;
+    }
+    setIsFetchingModels(true);
+    fetchModelsForConfig(baseUrl, apiKey)
+      .then((fetched) => {
+        setFetchedModels(fetched);
+        if (fetched.length === 0) {
+          toast.info(t("providerForm.fetchModelsEmpty"));
+        } else {
+          toast.success(
+            t("providerForm.fetchModelsSuccess", { count: fetched.length }),
+          );
+        }
+      })
+      .catch((err) => showFetchModelsError(err, t))
+      .finally(() => setIsFetchingModels(false));
+  }, [baseUrl, apiKey, t]);
+
+  return (
+    <Form {...form}>
+      <form
+        id="provider-form"
+        className="space-y-6"
+        onSubmit={form.handleSubmit(async (identity) => {
+          if (!ready || busy) return;
+          setBusy(true);
+          onSubmittingChange?.(true);
+          setError("");
+          try {
+            const settings: TraeProviderConfig = custom
+              ? {
+                  ...custom,
+                  model: custom.model.trim(),
+                  provider: {
+                    ...custom.provider,
+                    name: identity.name.trim(),
+                    base_url: custom.provider.base_url.trim(),
+                    wire_api: "responses",
+                  },
+                }
+              : { official: true };
+            await onSubmit({
+              ...identity,
+              name: identity.name.trim(),
+              meta: initialData?.meta,
+              providerKey: isEdit ? providerId : providerKey,
+              presetCategory: category,
+              settingsConfig: JSON.stringify(settings),
+            });
+          } catch (error) {
+            setError(String(error));
+          } finally {
+            setBusy(false);
+            onSubmittingChange?.(false);
+          }
+        })}
+      >
+        {!initialData && (
+          <ProviderPresetSelector
+            selectedPresetId={presetId}
+            presetEntries={PRESET_ENTRIES}
+            onPresetChange={choosePreset}
+            category={category}
+          />
+        )}
+        {error && (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        )}
+        <fieldset
+          disabled={busy || !jsonValid}
+          className="min-w-0 space-y-6 border-0 p-0 disabled:opacity-50"
+        >
+          <BasicFormFields
+            form={form}
+            beforeNameSlot={
+              official ? undefined : (
+                <div className="space-y-2">
+                  <Label htmlFor="trae-provider-key" className={REQUIRED_LABEL}>
+                    {t("opencode.providerKey")}
+                  </Label>
+                  <Input
+                    id="trae-provider-key"
+                    value={providerKey}
+                    onChange={(event) =>
+                      setProviderKey(
+                        normalizeTraeProviderKey(event.target.value),
+                      )
+                    }
+                    disabled={isEdit}
+                    placeholder={t("opencode.providerKeyPlaceholder")}
+                    autoComplete="off"
+                    aria-required
+                    aria-invalid={keyTaken || keyInvalid}
+                  />
+                  <p
+                    className={
+                      keyTaken || keyInvalid
+                        ? "text-caption text-danger-text"
+                        : "text-caption text-fg-2"
+                    }
+                  >
+                    {keyTaken
+                      ? t("opencode.providerKeyDuplicate")
+                      : keyInvalid
+                        ? t("trae.providerKeyInvalid")
+                        : isEdit
+                          ? t("opencode.providerKeyLockedHint")
+                          : t("trae.providerKeyHint")}
+                  </p>
+                </div>
+              )
+            }
+          />
+          {official ? (
+            <div className="space-y-2">
+              <Notice title={t("trae.officialHint")} />
+              {keyTaken && (
+                <Notice tone="warning" title={t("trae.officialExists")} />
+              )}
+            </div>
+          ) : (
+            <>
+              <ApiKeySection
+                id="trae-api-key"
+                value={apiKey}
+                onChange={(value) =>
+                  updateProvider({ experimental_bearer_token: value })
+                }
+                category={category}
+                shouldShowLink={Boolean(preset?.apiKeyUrl)}
+                websiteUrl={preset?.apiKeyUrl ?? ""}
+                isPartner={preset?.isPartner}
+                partnerPromotionKey={preset?.partnerPromotionKey}
+                required={!envKey.trim()}
+              />
+              <div className="space-y-2">
+                <div className="flex items-center gap-0.5">
+                  <Label htmlFor="trae-env-key">{t("trae.envKey")}</Label>
+                  <HelpTip title={t("trae.envKey")}>
+                    {t("trae.envKeyHint")}
+                  </HelpTip>
+                </div>
+                <Input
+                  id="trae-env-key"
+                  value={envKey}
+                  onChange={(event) =>
+                    updateProvider({ env_key: event.target.value.trim() })
+                  }
+                  placeholder="MY_PROVIDER_API_KEY"
+                  autoComplete="off"
+                />
+              </div>
+              <EndpointField
+                id="trae-base-url"
+                label={t("opencode.baseUrl")}
+                value={baseUrl}
+                onChange={(value) => updateProvider({ base_url: value })}
+                placeholder="https://api.example.com/v1"
+                hint={t("trae.responsesOnlyHint")}
+                required
+              />
+              <RequestHeadersEditor
+                headers={
+                  (custom?.provider.http_headers as
+                    | Record<string, string>
+                    | undefined) ?? {}
+                }
+                onHeadersChange={(headers) =>
+                  updateProvider({
+                    http_headers: Object.keys(headers).length
+                      ? headers
+                      : undefined,
+                  })
+                }
+              />
+              <div className="space-y-2">
+                <Label htmlFor="trae-model" className={REQUIRED_LABEL}>
+                  {t("trae.model")}
+                </Label>
+                <ModelInputWithFetch
+                  id="trae-model"
+                  value={custom?.model ?? ""}
+                  onChange={(model) =>
+                    update({ ...(custom ?? emptyConfig()), model })
+                  }
+                  placeholder="gpt-5.1-codex"
+                  fetchedModels={fetchedModels}
+                  isLoading={isFetchingModels}
+                  onFetch={handleFetchModels}
+                />
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-0.5">
+                    <Label>{t("trae.models")}</Label>
+                    <HelpTip title={t("trae.models")}>
+                      {t("trae.modelsHint")}
+                    </HelpTip>
+                  </div>
+                  <FetchedModelPicker
+                    models={fetchedModels}
+                    configuredModelIds={listedModels}
+                    onApply={applyFetchedModels}
+                    onFetch={handleFetchModels}
+                    isFetching={isFetchingModels}
+                  />
+                </div>
+                {extraModels.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {extraModels.map((model) => (
+                      <span
+                        key={model}
+                        className="inline-flex items-center gap-1 rounded-control border border-border bg-subtle py-0.5 pe-1 ps-2 text-caption text-fg-1"
+                      >
+                        {model}
+                        <button
+                          type="button"
+                          aria-label={t("trae.removeModel", { model })}
+                          className="rounded-sm p-0.5 text-fg-2 transition-colors hover:text-fg-1"
+                          onClick={() =>
+                            setExtraModels(
+                              extraModels.filter((item) => item !== model),
+                            )
+                          }
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-caption text-fg-2">
+                    {t("trae.modelsEmpty")}
+                  </p>
+                )}
+              </div>
+            </>
+          )}
+        </fieldset>
+        {!official && (
+          <div className="space-y-2">
+            <Label htmlFor="trae-settings-config">
+              {t("provider.configJson")}
+            </Label>
+            <JsonEditor
+              id="trae-settings-config"
+              ariaLabel={t("provider.configJson")}
+              value={jsonText}
+              darkMode={isDarkMode}
+              language="json"
+              showValidation
+              height={Math.max(1, jsonText.split("\n").length) * 20 + 20}
+              onChange={(text) => {
+                setJsonText(text);
+                try {
+                  const next = JSON.parse(text);
+                  if (
+                    !isCustomConfig(next) ||
+                    typeof next.model !== "string" ||
+                    typeof next.provider.base_url !== "string"
+                  ) {
+                    throw new Error("invalid");
+                  }
+                  setConfig(next);
+                  setJsonValid(true);
+                } catch {
+                  setJsonValid(false);
+                }
+              }}
+            />
+          </div>
+        )}
+        {showButtons && (
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onCancel}
+              disabled={busy}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button type="submit" disabled={busy || !ready}>
+              {submitLabel}
+            </Button>
+          </div>
+        )}
+      </form>
+    </Form>
+  );
+}
