@@ -482,11 +482,11 @@ mod tests {
             sessions[1].last_active_at,
             parse_timestamp_to_ms(&json!("2026-01-03T00:00:00Z"))
         );
-        assert!(sessions[1]
-            .source_path
-            .as_deref()
-            .unwrap()
-            .ends_with("proj-1/session.jsonl"));
+        // Compare path components: Windows separates them with `\`.
+        assert!(
+            std::path::Path::new(sessions[1].source_path.as_deref().unwrap())
+                .ends_with(std::path::Path::new("proj-1").join("session.jsonl"))
+        );
     }
 
     #[test]
