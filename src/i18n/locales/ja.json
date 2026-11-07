@@ -3571,7 +3571,21 @@
       "syncCopyDesc": "ディスク容量を多く使い、更新のたびにコピーし直します",
       "moveHint": "場所を切り替えると {{count}} 個の Skill を移動します。"
     },
-    "updatesIncomplete": "更新は見つかりませんでしたが、{{count}} 個のリポジトリを読み込めませんでした"
+    "updatesIncomplete": "更新は見つかりませんでしたが、{{count}} 個のリポジトリを読み込めませんでした",
+    "github": {
+      "title": "GitHub から取得",
+      "lead": "公開 GitHub リポジトリからインストールする Skills を選択します。",
+      "fetch": "Skills を取得",
+      "search": "Skills を検索…",
+      "count": "選択 {{selected}} / 全 {{total}} Skills",
+      "occupied": "ディレクトリは別の Skill が使用しています。インストール済み画面で管理できます。",
+      "open": "GitHub で {{name}} を開く",
+      "empty": "一致する Skills がありません",
+      "install": "選択項目をインストール",
+      "found": "{{count}} 個の Skills が見つかりました",
+      "selectAll": "すべて選択",
+      "selectNone": "すべて解除"
+    }
   },
   "deeplink": {
     "confirmImport": "プロバイダーのインポートを確認",

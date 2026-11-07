@@ -3516,7 +3516,21 @@
       "syncCopyDesc": "Daha fazla disk alanı kullanır; her güncellemeden sonra tekrar kopyalandı",
       "moveHint": "Geçiş, {{count}} Becerilerini yeni konuma taşır."
     },
-    "updatesIncomplete": "Güncelleme bulunamadı ancak {{count}} depoları okunamadı"
+    "updatesIncomplete": "Güncelleme bulunamadı ancak {{count}} depoları okunamadı",
+    "github": {
+      "title": "GitHub’dan al",
+      "lead": "Herkese açık GitHub deposundan kurulacak Skills öğelerini seçin.",
+      "fetch": "Skills getir",
+      "search": "Skills ara…",
+      "count": "Seçilen {{selected}} / {{total}} Skills",
+      "occupied": "Dizin başka bir Skill tarafından kullanılıyor. Kurulu sayfasından yönetin.",
+      "open": "{{name}} öğesini GitHub’da aç",
+      "empty": "Eşleşen Skills yok",
+      "install": "Seçilenleri kur",
+      "found": "Depoda {{count}} Skills bulundu",
+      "selectAll": "Tümünü seç",
+      "selectNone": "Seçimi temizle"
+    }
   },
   "deeplink": {
     "confirmImport": "İçe Aktarma Sağlayıcısını Onayla",
