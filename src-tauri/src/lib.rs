@@ -2004,6 +2004,9 @@ pub fn run() {
             commands::enter_lightweight_mode,
             commands::exit_lightweight_mode,
             commands::is_lightweight_mode,
+            commands::get_desktop_app_status,
+            commands::launch_desktop_app,
+            commands::restart_desktop_app,
         ]);
 
     let app = builder
