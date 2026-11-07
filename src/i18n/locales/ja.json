@@ -4316,6 +4316,8 @@
     "notRunnable": "実行できません",
     "updateNeedsNode": "{{version}} には Node {{required}} が必要ですが、このインストールは Node {{current}} で動いています。先に Node を更新してください。",
     "otherInstalls": "ほかに {{count}} 件のインストール",
+    "toolQueued": "順番待ち中（前のアプリの完了待ち）",
+    "toolElapsed": "経過 {{time}}",
     "installsFound": "{{count}} 件のインストールを検出",
     "wslFlag": "フラグ",
     "installHint": {

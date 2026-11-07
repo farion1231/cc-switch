@@ -13,7 +13,10 @@ use std::sync::Arc;
 use tauri::AppHandle;
 use tauri::State;
 use tauri_plugin_opener::OpenerExt;
+use tool_lifecycle_progress::ToolLifecycleProgress;
 
+#[path = "tool_lifecycle_progress.rs"]
+mod tool_lifecycle_progress;
 #[path = "tool_node_requirement.rs"]
 mod tool_node_requirement;
 #[path = "tool_uninstall.rs"]
@@ -257,8 +260,24 @@ impl Default for ToolLifecycleCoordinator {
 }
 
 impl ToolLifecycleCoordinator {
+    #[cfg(test)]
     async fn run<F>(&self, tools: Vec<&'static str>, operation: F) -> Result<(), String>
     where
+        F: FnOnce(&[&str]) -> Result<(), String> + Send + 'static,
+    {
+        self.run_with_queue_notice(tools, || {}, operation).await
+    }
+
+    /// 按工具加锁后串行执行 `operation`；要等前一个工具的写入结束时先调用
+    /// `on_queued`，让界面显示「排队中」而不是一直转圈。
+    async fn run_with_queue_notice<Q, F>(
+        &self,
+        tools: Vec<&'static str>,
+        on_queued: Q,
+        operation: F,
+    ) -> Result<(), String>
+    where
+        Q: FnOnce(),
         F: FnOnce(&[&str]) -> Result<(), String> + Send + 'static,
     {
         let tool_guards = tools
@@ -273,7 +292,13 @@ impl ToolLifecycleCoordinator {
                     .map_err(|_| "TOOL_ACTION_IN_PROGRESS".to_string())
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let execution_guard = self.execution.clone().lock_owned().await;
+        let execution_guard = match self.execution.clone().try_lock_owned() {
+            Ok(guard) => guard,
+            Err(_) => {
+                on_queued();
+                self.execution.clone().lock_owned().await
+            }
+        };
 
         // 必须把锁移进 blocking 任务：即使等待它的 IPC future 被取消，
         // 子进程仍会继续运行，直到它真正退出前都不能允许下一次写入。
@@ -332,6 +357,7 @@ pub async fn prepare_tool_uninstall(
 
 #[tauri::command]
 pub async fn run_tool_lifecycle_action(
+    app: AppHandle,
     tools: Vec<String>,
     action: String,
     wsl_shell_by_tool: Option<HashMap<String, WslShellPreferenceInput>>,
@@ -347,16 +373,23 @@ pub async fn run_tool_lifecycle_action(
         if requested.len() != 1 || requested[0] != plan.tool {
             return Err("The uninstall plan does not match the selected tool.".into());
         }
+        let progress = ToolLifecycleProgress::from_app(app, &requested);
+        let queued = progress.clone();
         return TOOL_LIFECYCLE
-            .run(requested, move |tools| {
-                for tool in tools {
-                    let pref = wsl_shell_by_tool
-                        .as_ref()
-                        .and_then(|prefs| prefs.get(*tool));
-                    tool_uninstall::uninstall(tool, pref, &plan)?;
-                }
-                Ok(())
-            })
+            .run_with_queue_notice(
+                requested,
+                move || queued.queued(),
+                move |tools| {
+                    progress.running();
+                    for tool in tools {
+                        let pref = wsl_shell_by_tool
+                            .as_ref()
+                            .and_then(|prefs| prefs.get(*tool));
+                        tool_uninstall::uninstall(tool, pref, &plan, &progress)?;
+                    }
+                    Ok(())
+                },
+            )
             .await;
     }
     let action = ToolLifecycleAction::from_str(&action)?;
@@ -372,12 +405,19 @@ pub async fn run_tool_lifecycle_action(
     };
 
     // 排队结束后再探测安装目标，与执行一起持锁，避免读到另一升级的中间状态。
+    let progress = ToolLifecycleProgress::from_app(app, &requested);
+    let queued = progress.clone();
     TOOL_LIFECYCLE
-        .run(requested, move |tools| {
-            let command_line =
-                build_tool_lifecycle_command(tools, action, wsl_shell_by_tool.as_ref())?;
-            run_tool_lifecycle_silently(&command_line, label)
-        })
+        .run_with_queue_notice(
+            requested,
+            move || queued.queued(),
+            move |tools| {
+                progress.running();
+                let command_line =
+                    build_tool_lifecycle_command(tools, action, wsl_shell_by_tool.as_ref())?;
+                run_tool_lifecycle_silently(&command_line, label, &progress)
+            },
+        )
         .await
 }
 
@@ -385,8 +425,13 @@ pub async fn run_tool_lifecycle_action(
 /// 不再弹出可见终端窗口（与 `launch_terminal_running` 的"开窗即返回"形成对比，
 /// 后者仍保留给 provider 切换等需要交互式终端的场景）。
 /// 失败时回传 stderr/stdout 末尾若干行，供前端 toast 提示。
+/// 不开终端窗口，但每行输出会经 `progress` 推给界面显示。
 #[cfg(not(target_os = "windows"))]
-fn run_tool_lifecycle_silently(command_line: &str, _label: &str) -> Result<(), String> {
+fn run_tool_lifecycle_silently(
+    command_line: &str,
+    _label: &str,
+    progress: &ToolLifecycleProgress,
+) -> Result<(), String> {
     use std::process::Command;
     // command_line 是 bash 风格脚本（含 `set -e` 与多行命令）；强制用 bash 执行，
     // 避免用户默认 shell 为 fish/zsh 时 `set -e` 等语义不一致。
@@ -399,14 +444,19 @@ fn run_tool_lifecycle_silently(command_line: &str, _label: &str) -> Result<(), S
         let inherited = std::env::var("PATH").unwrap_or_default();
         cmd.env("PATH", merge_path_segments(&login_path, &inherited));
     }
-    let output = cmd.output().map_err(|e| format!("启动安装进程失败: {e}"))?;
+    let output = tool_lifecycle_progress::run_with_progress(cmd, progress)
+        .map_err(|e| format!("启动安装进程失败: {e}"))?;
     finish_lifecycle_output(&output)
 }
 
 /// Windows 静默执行：command_line 是 .bat 内容（chcp 65001 + @echo off + call/wsl 行，CRLF 分隔），
 /// 写临时 .bat 后用 `cmd /C` 执行，`CREATE_NO_WINDOW` 抑制 console 窗口。
 #[cfg(target_os = "windows")]
-fn run_tool_lifecycle_silently(command_line: &str, label: &str) -> Result<(), String> {
+fn run_tool_lifecycle_silently(
+    command_line: &str,
+    label: &str,
+    progress: &ToolLifecycleProgress,
+) -> Result<(), String> {
     // 每次调用使用独立目录，避免同进程并发升级时覆盖或删除另一工具的脚本。
     let script_dir = tempfile::Builder::new()
         .prefix("cc_switch_lifecycle_")
@@ -415,7 +465,10 @@ fn run_tool_lifecycle_silently(command_line: &str, label: &str) -> Result<(), St
     let bat_file = script_dir.path().join(format!("{label}.bat"));
     std::fs::write(&bat_file, command_line).map_err(|e| format!("写入批处理文件失败: {e}"))?;
 
-    let output = windows_lifecycle_command(&bat_file, &effective_path_string()).output();
+    let output = tool_lifecycle_progress::run_with_progress(
+        windows_lifecycle_command(&bat_file, &effective_path_string()),
+        progress,
+    );
 
     finish_lifecycle_output(&output.map_err(|e| format!("启动安装进程失败: {e}"))?)
 }
@@ -7171,6 +7224,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn lifecycle_coordinator_reports_queue_only_while_waiting() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let coordinator = Arc::new(ToolLifecycleCoordinator::default());
+        let queued = Arc::new(AtomicUsize::new(0));
+        let notice = |count: &Arc<AtomicUsize>| {
+            let count = count.clone();
+            move || {
+                count.fetch_add(1, Ordering::SeqCst);
+            }
+        };
+
+        // 没有别的写入在跑时直接执行，不显示排队
+        coordinator
+            .run_with_queue_notice(vec!["codex"], notice(&queued), |_| Ok(()))
+            .await
+            .unwrap();
+        assert_eq!(queued.load(Ordering::SeqCst), 0);
+
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (finish_tx, finish_rx) = std::sync::mpsc::channel::<()>();
+        let first = {
+            let coordinator = coordinator.clone();
+            tokio::spawn(async move {
+                coordinator
+                    .run(vec!["codex"], move |_| {
+                        started_tx.send(()).unwrap();
+                        finish_rx.recv().unwrap();
+                        Ok(())
+                    })
+                    .await
+            })
+        };
+        started_rx.await.unwrap();
+        let second = coordinator.run_with_queue_notice(vec!["claude"], notice(&queued), |_| Ok(()));
+        tokio::pin!(second);
+        assert!(futures::poll!(second.as_mut()).is_pending());
+        assert_eq!(queued.load(Ordering::SeqCst), 1);
+
+        finish_tx.send(()).unwrap();
+        first.await.unwrap().unwrap();
+        second.await.unwrap();
+        assert_eq!(queued.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn lifecycle_coordinator_keeps_running_locks_when_caller_is_cancelled() {
         let coordinator = Arc::new(ToolLifecycleCoordinator::default());
         let (started_tx, started_rx) = tokio::sync::oneshot::channel();
@@ -7246,7 +7344,8 @@ mod tests {
                 scope.spawn(move || {
                     let command = format!("@echo off\r\n>\"{}\" echo %~f0\r\n", output.display());
                     barrier.wait();
-                    run_tool_lifecycle_silently(&command, "tool_update").unwrap();
+                    let progress = ToolLifecycleProgress::noop();
+                    run_tool_lifecycle_silently(&command, "tool_update", &progress).unwrap();
                 });
             }
         });

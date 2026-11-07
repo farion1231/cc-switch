@@ -4317,6 +4317,8 @@
     "notRunnable": "無法執行",
     "updateNeedsNode": "新版本 {{version}} 需要 Node {{required}}，這處安裝用的是 Node {{current}}，需要先升級 Node。",
     "otherInstalls": "另有 {{count}} 處安裝",
+    "toolQueued": "排隊中，等前一個應用完成",
+    "toolElapsed": "已用 {{time}}",
     "installsFound": "偵測到 {{count}} 處安裝",
     "wslFlag": "旗標",
     "installHint": {
