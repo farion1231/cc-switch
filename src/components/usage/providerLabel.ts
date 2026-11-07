@@ -12,6 +12,7 @@ const SESSION_PROVIDER_APPS: Record<string, AppId> = {
   "Codex (Session)": "codex",
   "Gemini (Session)": "gemini",
   "OpenCode (Session)": "opencode",
+  "Hermes (Session)": "hermes",
   "Grok Build (Session)": "grokbuild",
   "MiniMax Code (Session)": "mcode",
   "Kimi Code (Session)": "kimi",
