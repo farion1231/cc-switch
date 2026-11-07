@@ -6,6 +6,7 @@ import {
   parseGrokBuildConfig,
   updateGrokBuildConfig,
   validateGrokBuildConfig,
+  validateGrokBuildConfigSyntax,
 } from "./grokBuildConfig";
 
 describe("Grok Build config", () => {
@@ -138,5 +139,14 @@ context_window = 500000
     expect(parsed.models.default).toBe("new-profile");
     expect(parsed.model["new-profile"].model).toBe("grok-upstream");
     expect(parsed.model).not.toHaveProperty("old-profile");
+  });
+
+  // #7724：官方条目的 config 走 Grok 自带 OAuth，没有自定义模型表也合法，
+  // 只做语法校验（与后端 validate_config_toml_syntax 同语义）。
+  it("validates official configs by syntax only", () => {
+    expect(validateGrokBuildConfigSyntax("")).toBeNull();
+    expect(validateGrokBuildConfigSyntax('[ui]\ntheme = "dark"\n')).toBeNull();
+    expect(validateGrokBuildConfigSyntax("[models")).not.toBeNull();
+    expect(validateGrokBuildConfigSyntax("not = [valid")).not.toBeNull();
   });
 });
