@@ -30,10 +30,14 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
 use crate::app_config::McpServer;
+use crate::database::Database;
+use crate::services::mcp_tool_pins::{self, ToolsCheck};
 
 // Package launchers such as npx/uvx may need time to prepare a cold start.
 const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_CONCURRENT_CHECKS: usize = 3;
+// Listing tools is extra to the handshake; a server that stalls here is still connected.
+const LIST_TOOLS_TIMEOUT: Duration = Duration::from_secs(10);
 // Shared across batches: rows can be tested while another batch is still running.
 static CHECK_PERMITS: tokio::sync::Semaphore =
     tokio::sync::Semaphore::const_new(MAX_CONCURRENT_CHECKS);
@@ -65,6 +69,9 @@ pub enum ConnectivityStatus {
 pub struct ConnectivityResult {
     pub server_id: String,
     pub status: ConnectivityStatus,
+    /// Present when the server listed its tools and pins could be compared.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<ToolsCheck>,
 }
 
 #[derive(Deserialize)]
@@ -82,8 +89,10 @@ struct ConnectionSpec {
     headers: HashMap<String, String>,
 }
 
+/// `pins`: where to compare and record tool definitions; `None` skips pinning.
 pub fn start_checks(
     servers: Vec<McpServer>,
+    pins: Option<Arc<Database>>,
     on_result: impl Fn(ConnectivityResult) -> bool + Send + 'static,
 ) -> String {
     let id = uuid::Uuid::new_v4().to_string();
@@ -92,12 +101,24 @@ pub fn start_checks(
     let batch_id = id.clone();
     tauri::async_runtime::spawn(async move {
         let checks = async move {
-            let mut results = stream::iter(servers.into_iter().map(|server| async move {
-                // Queueing here keeps the wait out of the per-server CHECK_TIMEOUT.
-                let _permit = CHECK_PERMITS.acquire().await;
-                ConnectivityResult {
-                    server_id: server.id,
-                    status: check_server(server.server, CHECK_TIMEOUT).await,
+            let mut results = stream::iter(servers.into_iter().map(|server| {
+                let pins = pins.clone();
+                async move {
+                    // Queueing here keeps the wait out of the per-server CHECK_TIMEOUT.
+                    let _permit = CHECK_PERMITS.acquire().await;
+                    let config_hash = mcp_tool_pins::config_hash(&server.server);
+                    let (status, tools) = probe_server(server.server, CHECK_TIMEOUT).await;
+                    let tools = match (pins, tools) {
+                        (Some(db), Some(tools)) => {
+                            compare_tools(db, server.id.clone(), config_hash, tools).await
+                        }
+                        _ => None,
+                    };
+                    ConnectivityResult {
+                        server_id: server.id,
+                        status,
+                        tools,
+                    }
                 }
             }))
             .buffer_unordered(MAX_CONCURRENT_CHECKS);
@@ -119,21 +140,50 @@ pub fn cancel_checks(batch_id: &str) {
     }
 }
 
+async fn compare_tools(
+    db: Arc<Database>,
+    server_id: String,
+    config_hash: String,
+    tools: Vec<rmcp::model::Tool>,
+) -> Option<ToolsCheck> {
+    let observed = mcp_tool_pins::hash_tools(&tools);
+    tokio::task::spawn_blocking(move || {
+        mcp_tool_pins::record(&db, &server_id, &config_hash, observed)
+            .map_err(|error| log::warn!("MCP tool pin check failed for {server_id}: {error}"))
+            .ok()
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+#[cfg(test)]
 async fn check_server(value: serde_json::Value, timeout: Duration) -> ConnectivityStatus {
+    probe_server(value, timeout).await.0
+}
+
+/// The coarse status, plus the advertised tools when the server has any and
+/// listed them in time.
+async fn probe_server(
+    value: serde_json::Value,
+    timeout: Duration,
+) -> (ConnectivityStatus, Option<Vec<rmcp::model::Tool>>) {
     // Do not return/log transport errors: URLs, headers and process arguments may
     // contain credentials. The UI only needs the coarse status.
     let unauthorized = Arc::new(AtomicBool::new(false));
     match tokio::time::timeout(timeout, connect(value, unauthorized.clone())).await {
-        Ok(Ok(())) => ConnectivityStatus::Connected,
-        _ if unauthorized.load(Ordering::Relaxed) => ConnectivityStatus::AuthRequired,
-        _ => ConnectivityStatus::Failed,
+        Ok(Ok(tools)) => (ConnectivityStatus::Connected, tools),
+        _ if unauthorized.load(Ordering::Relaxed) => (ConnectivityStatus::AuthRequired, None),
+        _ => (ConnectivityStatus::Failed, None),
     }
 }
+
+type Tools = Option<Vec<rmcp::model::Tool>>;
 
 async fn connect(
     value: serde_json::Value,
     unauthorized: Arc<AtomicBool>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Tools, Box<dyn std::error::Error + Send + Sync>> {
     let spec: ConnectionSpec = serde_json::from_value(value)?;
     let transport = spec.transport.as_deref().unwrap_or_else(|| {
         if spec.url.is_some() && spec.command.is_none() {
@@ -266,7 +316,7 @@ impl Drop for ProbeProcess {
 
 async fn handshake<T: Transport<RoleClient> + 'static>(
     transport: T,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Tools, Box<dyn std::error::Error + Send + Sync>> {
     let client = ClientInfo {
         client_info: Implementation {
             name: "cc-switch-connectivity".into(),
@@ -275,11 +325,23 @@ async fn handshake<T: Transport<RoleClient> + 'static>(
         },
         ..Default::default()
     };
-    // serve performs initialize + notifications/initialized. No tools are called.
+    // serve performs initialize + notifications/initialized. Tools are listed
+    // for pinning, never called.
     let service = client.serve(transport).await?;
+    let advertises_tools = service
+        .peer_info()
+        .is_some_and(|info| info.capabilities.tools.is_some());
+    let tools = if advertises_tools {
+        tokio::time::timeout(LIST_TOOLS_TIMEOUT, service.list_all_tools())
+            .await
+            .ok()
+            .and_then(Result::ok)
+    } else {
+        None
+    };
     // A drop guard also closes the transport if the page leaves or we time out.
     let _ = service.cancel().await;
-    Ok(())
+    Ok(tools)
 }
 
 fn is_unauthorized(error: &reqwest::Error) -> bool {

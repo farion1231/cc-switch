@@ -4646,6 +4646,15 @@
       "checking": "接続を確認中",
       "disabled": "無効"
     },
+    "tools": {
+      "changedBadge": "ツールが変更済み",
+      "changedHint": "このサーバーが提供するツールが初回チェック時と異なります。ツールの説明はそのままモデルに渡されるため、変更元が信頼できることを確認してから信頼してください。",
+      "added": "追加：{{names}}",
+      "removed": "削除：{{names}}",
+      "modified": "変更：{{names}}",
+      "trust": "現在のツールを信頼",
+      "trusted": "{{id}} の現在のツールを信頼しました"
+    },
     "noun": "MCP",
     "listSeparator": "、",
     "helpTitle": "MCP の同期のしくみ",

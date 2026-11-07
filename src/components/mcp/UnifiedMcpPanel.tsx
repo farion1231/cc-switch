@@ -169,6 +169,16 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
     refetch,
   } = useAllMcpServers();
   const connectivity = useMcpConnectivity(isError ? undefined : serversMap);
+  const trustTools = async (id: string) => {
+    try {
+      await connectivity.trustTools(id);
+      toast.success(t("mcpPage.tools.trusted", { id }));
+    } catch (error) {
+      toast.error(t("common.error"), {
+        description: extractErrorMessage(error) || String(error),
+      });
+    }
+  };
   const toggleAppMutation = useToggleMcpApp();
   const bulkToggleAppMutation = useBulkToggleMcpApp();
   const deleteServerMutation = useDeleteMcpServer();
@@ -869,6 +879,10 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                         const connection = enabled
                           ? (connectivity.states[id] ?? "unchecked")
                           : "disabled";
+                        const toolsChanged =
+                          connectivity.tools[id]?.status === "changed"
+                            ? connectivity.tools[id]
+                            : undefined;
                         const rowFailedApps = appIds.filter(
                           (app) => fails[failKey(id, app)],
                         );
@@ -933,6 +947,35 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                                   <NeutralBadge>
                                     {t("mcpPage.notEnabled")}
                                   </NeutralBadge>
+                                )}
+                                {toolsChanged && (
+                                  <HoverTip
+                                    content={[
+                                      t("mcpPage.tools.changedHint"),
+                                      ...(
+                                        [
+                                          ["added", toolsChanged.added],
+                                          ["removed", toolsChanged.removed],
+                                          ["modified", toolsChanged.modified],
+                                        ] as const
+                                      )
+                                        .filter(([, names]) => names.length > 0)
+                                        .map(([kind, names]) =>
+                                          t(`mcpPage.tools.${kind}`, {
+                                            names: names.join(listSeparator),
+                                          }),
+                                        ),
+                                    ].map((line) => (
+                                      <div key={line}>{line}</div>
+                                    ))}
+                                  >
+                                    <span
+                                      tabIndex={0}
+                                      className="inline-flex h-[18px] shrink-0 items-center whitespace-nowrap rounded-full bg-warning-soft px-1.5 text-badge font-medium text-warning-text"
+                                    >
+                                      {t("mcpPage.tools.changedBadge")}
+                                    </span>
+                                  </HoverTip>
                                 )}
                               </div>
                               <div className="flex min-w-0 items-center text-caption text-fg-2">
@@ -1048,6 +1091,13 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                                       }
                                     >
                                       {t("mcpPage.testConnection")}
+                                    </DropdownMenuItem>
+                                  )}
+                                  {toolsChanged && (
+                                    <DropdownMenuItem
+                                      onSelect={() => void trustTools(id)}
+                                    >
+                                      {t("mcpPage.tools.trust")}
                                     </DropdownMenuItem>
                                   )}
                                   <DropdownMenuItem

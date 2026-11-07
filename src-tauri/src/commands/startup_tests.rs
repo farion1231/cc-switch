@@ -255,6 +255,7 @@ fn remaining_database_commands_yield_during_session_sync_contention() {
         tauri::ipc::Channel::new(|_| Ok(()))
     );
     assert!(!batch.is_empty());
+    assert!(!query!(trust_mcp_tools, "missing".into()));
 
     let profile = query!(create_profile, "Test profile".into(), "claude".into());
     assert_eq!(

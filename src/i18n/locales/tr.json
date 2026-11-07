@@ -4584,6 +4584,15 @@
       "checking": "Bağlantı kontrol ediliyor",
       "disabled": "Etkin değil"
     },
+    "tools": {
+      "changedBadge": "Araçlar değişti",
+      "changedHint": "Bu sunucu artık ilk kontrol edildiğindekinden farklı araçlar sunuyor. Araç açıklamaları doğrudan modele gider; güvenmeden önce değişikliğin güvendiğiniz bir kaynaktan geldiğinden emin olun.",
+      "added": "Eklenen: {{names}}",
+      "removed": "Kaldırılan: {{names}}",
+      "modified": "Değiştirilen: {{names}}",
+      "trust": "Mevcut araçlara güven",
+      "trusted": "{{id}} için mevcut araçlara artık güveniliyor"
+    },
     "noun": "MCP sunucuları",
     "listSeparator": ", ",
     "helpTitle": "MCP nasıl eşitlenir?",

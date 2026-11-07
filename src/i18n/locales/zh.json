@@ -4646,6 +4646,15 @@
       "checking": "正在检查连接",
       "disabled": "未启用"
     },
+    "tools": {
+      "changedBadge": "工具已变更",
+      "changedHint": "这个服务器现在提供的工具和首次检查时不一样。工具描述会直接交给模型，请先确认变更来自可信来源，再选择信任。",
+      "added": "新增：{{names}}",
+      "removed": "移除：{{names}}",
+      "modified": "修改：{{names}}",
+      "trust": "信任当前工具",
+      "trusted": "已信任 {{id}} 当前的工具"
+    },
     "noun": "MCP",
     "listSeparator": "、",
     "helpTitle": "MCP 怎么同步",

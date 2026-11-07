@@ -4646,6 +4646,15 @@
       "checking": "Checking connection",
       "disabled": "Not enabled"
     },
+    "tools": {
+      "changedBadge": "Tools changed",
+      "changedHint": "This server now advertises different tools than when it was first checked. Tool descriptions go straight to the model, so make sure the change comes from a source you trust before trusting it.",
+      "added": "Added: {{names}}",
+      "removed": "Removed: {{names}}",
+      "modified": "Modified: {{names}}",
+      "trust": "Trust current tools",
+      "trusted": "Now trusting the current tools of {{id}}"
+    },
     "noun": "MCP servers",
     "listSeparator": ", ",
     "helpTitle": "How MCP syncs",

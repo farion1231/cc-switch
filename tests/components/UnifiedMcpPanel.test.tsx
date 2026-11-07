@@ -30,10 +30,12 @@ const mocks = vi.hoisted(() => ({
       string,
       string
     >,
+    tools: {} as Record<string, unknown>,
     checking: false,
     canCheck: true,
     checkAll: vi.fn(),
     checkServer: vi.fn(),
+    trustTools: vi.fn(),
   },
 }));
 
@@ -154,6 +156,8 @@ describe("UnifiedMcpPanel", () => {
     mocks.connectivity.canCheck = true;
     mocks.connectivity.checkAll.mockReset();
     mocks.connectivity.checkServer.mockReset();
+    mocks.connectivity.tools = {};
+    mocks.connectivity.trustTools.mockReset().mockResolvedValue(true);
     mocks.toggle.mockReset().mockResolvedValue(true);
     mocks.bulkToggle.mockReset().mockImplementation(async ({ serverIds }) => ({
       succeeded: serverIds,
@@ -271,6 +275,50 @@ describe("UnifiedMcpPanel", () => {
     expect(
       screen.queryByRole("menuitem", { name: "mcpPage.testConnection" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("flags servers whose tools changed and lets the user trust them", async () => {
+    mocks.serversMap = {
+      alpha: makeServer("alpha", { apps: { claude: true } }),
+      beta: makeServer("beta", { apps: { codex: true } }),
+    };
+    mocks.connectivity.tools = {
+      alpha: {
+        status: "changed",
+        toolCount: 2,
+        added: ["exec"],
+        removed: [],
+        modified: ["read"],
+      },
+      beta: {
+        status: "pinned",
+        toolCount: 1,
+        added: [],
+        removed: [],
+        modified: [],
+      },
+    };
+    renderPanel();
+    expect(screen.getAllByText("mcpPage.tools.changedBadge")).toHaveLength(1);
+
+    const [alphaMore, betaMore] = screen.getAllByRole("button", {
+      name: "mcpPage.rowMoreAria",
+    });
+    await userEvent.click(betaMore);
+    await screen.findByRole("menuitem", { name: "mcpPage.testConnection" });
+    expect(
+      screen.queryByRole("menuitem", { name: "mcpPage.tools.trust" }),
+    ).not.toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+
+    await userEvent.click(alphaMore);
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "mcpPage.tools.trust" }),
+    );
+    expect(mocks.connectivity.trustTools).toHaveBeenCalledWith("alpha");
+    await waitFor(() =>
+      expect(mocks.toastSuccess).toHaveBeenCalledWith("mcpPage.tools.trusted"),
+    );
   });
 
   it("disables the page check while a check runs or nothing is enabled", () => {
