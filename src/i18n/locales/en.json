@@ -4487,6 +4487,7 @@
       "models": "{{count}} models",
       "noModels": "No models",
       "direct": "Direct",
+      "accountUnavailable": "Account unavailable",
       "hermesManaged": "Managed by Hermes",
       "defaultModel": "Default model {{model}}"
     },

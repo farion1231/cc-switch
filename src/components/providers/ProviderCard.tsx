@@ -96,6 +96,15 @@ const CHIP_CLASS: Record<CardChip["tone"], string> = {
   danger: "bg-danger-soft text-danger-text",
 };
 
+const COPILOT_ACCOUNT_LABEL_MAX = 24;
+
+/** 账号 chip 过长会撑坏标题行，截断显示，完整登录名放到 title。 */
+function copilotAccountLabel(login: string): string {
+  return login.length > COPILOT_ACCOUNT_LABEL_MAX
+    ? `${login.slice(0, COPILOT_ACCOUNT_LABEL_MAX - 1)}…`
+    : login;
+}
+
 export function CardChipBadge({ chip }: { chip: CardChip }) {
   return (
     <span
@@ -300,6 +309,59 @@ export function ProviderCard({
   const isCopilot =
     provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
     provider.meta?.usage_script?.templateType === "github_copilot";
+  // Copilot 卡片在标题行显示绑定的 GitHub 账号，做成独立 chip，不占用副标题的
+  // 备注/官网/网关取值链；未绑定账号时回退到授权中心的默认账号。
+  const copilotAccountId = isCopilot
+    ? resolveManagedAccountId(
+        provider.meta,
+        PROVIDER_TYPES.GITHUB_COPILOT,
+      )?.trim() || null
+    : null;
+  const { data: copilotAuthStatus, isSuccess: isCopilotAuthSuccess } = useQuery(
+    {
+      queryKey: ["managed-auth-status", "github_copilot"],
+      queryFn: () => authApi.authGetStatus("github_copilot"),
+      enabled: isCopilot,
+      staleTime: 30_000,
+    },
+  );
+  const copilotAccount = !isCopilot
+    ? undefined
+    : copilotAccountId
+      ? copilotAuthStatus?.accounts.find(
+          (account) => account.id === copilotAccountId,
+        )
+      : (copilotAuthStatus?.accounts.find(
+          (account) => account.id === copilotAuthStatus.default_account_id,
+        ) ?? copilotAuthStatus?.accounts[0]);
+  const copilotDefaultSuffix = t("providerCard.chip.default", {
+    defaultValue: "默认",
+  });
+  const copilotAccountChip: CardChip | null = !isCopilotAuthSuccess
+    ? null
+    : copilotAccount
+      ? {
+          key: "copilot-account",
+          label:
+            copilotAccountLabel(copilotAccount.login) +
+            (copilotAccountId ? "" : ` · ${copilotDefaultSuffix}`),
+          title: copilotAccountId
+            ? copilotAccount.login
+            : `${copilotAccount.login} · ${copilotDefaultSuffix}`,
+          tone: "outline",
+        }
+      : copilotAccountId
+        ? {
+            key: "copilot-account",
+            label: t("providerCard.chip.accountUnavailable", {
+              defaultValue: "账号不可用",
+            }),
+            title: t("providerCard.chip.accountUnavailable", {
+              defaultValue: "账号不可用",
+            }),
+            tone: "warning",
+          }
+        : null;
   const isCodexOauth =
     appId === "codex"
       ? isBoundCodexOfficial
@@ -448,6 +510,7 @@ export function ProviderCard({
             {presentation.chips.map((chip) => (
               <CardChipBadge key={chip.key} chip={chip} />
             ))}
+            {copilotAccountChip && <CardChipBadge chip={copilotAccountChip} />}
             {presentation.showHealth && health && (
               <HealthChip
                 consecutiveFailures={health.consecutive_failures}
