@@ -1978,7 +1978,12 @@ fn build_exec_line(shell: &str, cwd: Option<&Path>) -> String {
 
 /// 构建 provider 命令行：通过用户 shell 的交互模式执行，确保 GUI 启动的终端也加载用户 PATH。
 #[cfg_attr(windows, allow(dead_code))]
-fn build_provider_command_line(shell: &str, launch_command: &str, cwd: Option<&Path>) -> String {
+fn build_provider_command_line(
+    shell: &str,
+    flag: &'static str,
+    launch_command: &str,
+    cwd: Option<&Path>,
+) -> String {
     let command = cwd
         .map(|dir| {
             format!(
@@ -1992,16 +1997,65 @@ fn build_provider_command_line(shell: &str, launch_command: &str, cwd: Option<&P
     format!(
         "{} {} {}",
         shell_single_quote(shell),
-        provider_command_flag_for_shell(shell),
+        flag,
         shell_single_quote(&command)
     )
 }
 
+/// 选择 bash 的启动参数：优先加载用户终端会读的配置。
+///
+/// macOS 终端默认启动登录 shell，先看登录文件；Linux 终端默认启动非登录交互
+/// shell，先看 `.bashrc`。首选文件不存在时回退到另一类。两类都不存在时用平台
+/// 默认（macOS `-lic`，其它 `-ic`）。
+#[cfg_attr(windows, allow(dead_code))]
+fn bash_provider_flag(home: Option<&Path>, is_macos: bool) -> &'static str {
+    let Some(home) = home else {
+        return if is_macos { "-lic" } else { "-ic" };
+    };
+    let login_file = [".bash_profile", ".bash_login", ".profile"]
+        .iter()
+        .any(|name| home.join(name).is_file());
+    let bashrc = home.join(".bashrc").is_file();
+    if is_macos {
+        if login_file {
+            "-lic"
+        } else if bashrc {
+            "-ic"
+        } else {
+            "-lic"
+        }
+    } else if bashrc {
+        "-ic"
+    } else if login_file {
+        "-lic"
+    } else {
+        "-ic"
+    }
+}
+
+/// 选择用户 shell 的启动参数。bash 会读取 `$HOME` 下的配置文件；这里的主目录
+/// 探测只用于 `is_file` 判断，不写入启动脚本。
 #[cfg_attr(windows, allow(dead_code))]
 fn provider_command_flag_for_shell(shell: &str) -> &'static str {
+    provider_command_flag_for_shell_with_home(
+        shell,
+        dirs::home_dir().as_deref(),
+        cfg!(target_os = "macos"),
+    )
+}
+
+/// 和 [`provider_command_flag_for_shell`] 相同，但主目录与平台由调用方给出。
+/// 测试用它避免依赖运行测试的机器。
+#[cfg_attr(windows, allow(dead_code))]
+fn provider_command_flag_for_shell_with_home(
+    shell: &str,
+    home: Option<&Path>,
+    is_macos: bool,
+) -> &'static str {
     match shell.rsplit('/').next().unwrap_or(shell) {
         "dash" | "sh" => "-c",
         "zsh" => "-lic",
+        "bash" => bash_provider_flag(home, is_macos),
         _ => "-ic",
     }
 }
@@ -5847,8 +5901,9 @@ const AGY_DIR_BATCH_VAR: &str = "CC_SWITCH_AGY_DIR";
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 const AGY_MODEL_BATCH_VAR: &str = "CC_SWITCH_AGY_MODEL";
 
-/// macOS / Linux 的启动脚本里，环境变量先以这个前缀的名字读进来，再由 `env` 改名交给
-/// 程序：用户 shell 的 rc 文件在中间执行，直接用原名会被 rc 里的 export 覆盖。
+/// macOS / Linux 的启动脚本里，环境变量先以这个前缀的名字读进来。POSIX shell 再把
+/// 值复制到未导出的临时变量，程序名用赋值前缀拿到原值；fish 仍用 `env`。rc 文件在
+/// 中间执行，直接用原名会被 rc 里的 export 覆盖。
 #[cfg_attr(windows, allow(dead_code))]
 const LAUNCH_ENV_PREFIX: &str = "CC_SWITCH_LAUNCH_ENV_";
 
@@ -5916,32 +5971,91 @@ fn shell_word(value: &str) -> String {
     }
 }
 
-/// 交给用户 shell 执行的启动命令。有环境变量时经 `env` 设置或清除，值从启动脚本读进来的
-/// `CC_SWITCH_LAUNCH_ENV_<n>` 取，不出现在命令行里。
+/// 交给用户 shell 执行的启动命令。
+///
+/// POSIX shell 用赋值前缀传环境变量。程序名仍在命令位，alias 与 function 才会展开。
+/// 值从启动脚本读进来的 `CC_SWITCH_LAUNCH_ENV_<n>` 取，不出现在命令行里。命令前先
+/// `set +a`，防止 rc 打开 allexport 后把搬运变量导出给程序。读完立即清掉中转变量。
+/// fish 不支持这种前缀，保留 `env`。
+///
+/// 参数按用户 shell 的规则加引号：这条命令由用户 shell 解析（见
+/// `build_provider_command_line`），附加参数又是用户随手填的文本。
+///
+/// 已知限制：rc 把目标变量设为 readonly 时 `unset` 会失败。zsh 会中止整条命令，
+/// bash 在 `set -e` 下也会中止。此时供应商命令不运行。
 #[cfg_attr(windows, allow(dead_code))]
+fn unix_launch_command_in(launch: &ProviderLaunch, shell: &str) -> String {
+    if launch.env.is_empty() {
+        return plain_launch_command(launch, shell);
+    }
+    if is_fish_shell(shell) {
+        return fish_launch_command(launch, shell);
+    }
+
+    let mut prelude: Vec<String> = Vec::new();
+    let mut unset_names: Vec<String> = Vec::new();
+    let mut assignments: Vec<String> = Vec::new();
+    for (index, (name, value)) in launch.env.iter().enumerate() {
+        match value {
+            Some(_) => {
+                let transfer = format!("{LAUNCH_ENV_PREFIX}{index}");
+                prelude.push(format!("_cc_switch_launch_{index}=\"${transfer}\""));
+                unset_names.push(transfer);
+                assignments.push(format!("{name}=\"$_cc_switch_launch_{index}\""));
+            }
+            None => unset_names.push((*name).to_string()),
+        }
+    }
+    if !unset_names.is_empty() {
+        prelude.push(format!("unset {}", unset_names.join(" ")));
+    }
+
+    let mut command = String::from("{ set +a; ");
+    for statement in &prelude {
+        command.push_str(statement);
+        command.push_str("; ");
+    }
+    for assignment in &assignments {
+        command.push_str(assignment);
+        command.push(' ');
+    }
+    command.push_str(launch.program);
+    for arg in &launch.args {
+        command.push(' ');
+        command.push_str(&user_shell_word(shell, arg));
+    }
+    command.push_str("; }");
+    command
+}
+
+/// 测试里不关心具体 shell 时，按 POSIX 规则生成启动命令。
 #[cfg(test)]
+#[cfg_attr(windows, allow(dead_code))]
 fn unix_launch_command(launch: &ProviderLaunch) -> String {
     unix_launch_command_in(launch, "/bin/sh")
 }
 
-/// 同上，参数按用户 shell 的规则加引号：这条命令由用户 shell 解析（见
-/// `build_provider_command_line`），附加参数又是用户随手填的文本。
 #[cfg_attr(windows, allow(dead_code))]
-fn unix_launch_command_in(launch: &ProviderLaunch, shell: &str) -> String {
-    let mut words = Vec::new();
-    if !launch.env.is_empty() {
-        words.push("env".to_string());
-        for (index, (name, value)) in launch.env.iter().enumerate() {
-            // 中转用的变量也不留给程序。
-            words.push(format!("-u {LAUNCH_ENV_PREFIX}{index}"));
-            if value.is_none() {
-                words.push(format!("-u {name}"));
-            }
+fn plain_launch_command(launch: &ProviderLaunch, shell: &str) -> String {
+    let mut words = vec![launch.program.to_string()];
+    words.extend(launch.args.iter().map(|arg| user_shell_word(shell, arg)));
+    words.join(" ")
+}
+
+/// fish 没有赋值前缀。保留 `env`，程序名不在命令位，fish 的函数不会展开。
+#[cfg_attr(windows, allow(dead_code))]
+fn fish_launch_command(launch: &ProviderLaunch, shell: &str) -> String {
+    let mut words = vec!["env".to_string()];
+    for (index, (name, value)) in launch.env.iter().enumerate() {
+        // 中转用的变量也不留给程序。
+        words.push(format!("-u {LAUNCH_ENV_PREFIX}{index}"));
+        if value.is_none() {
+            words.push(format!("-u {name}"));
         }
-        for (index, (name, value)) in launch.env.iter().enumerate() {
-            if value.is_some() {
-                words.push(format!("{name}=\"${LAUNCH_ENV_PREFIX}{index}\""));
-            }
+    }
+    for (index, (name, value)) in launch.env.iter().enumerate() {
+        if value.is_some() {
+            words.push(format!("{name}=\"${LAUNCH_ENV_PREFIX}{index}\""));
         }
     }
     words.push(launch.program.to_string());
@@ -5969,6 +6083,27 @@ fn unix_launch_env_file(launch: &ProviderLaunch) -> String {
 fn build_unix_launcher_script(
     launch: &ProviderLaunch,
     shell: &str,
+    cwd: Option<&Path>,
+    script_file: &Path,
+    env_file: Option<&Path>,
+) -> String {
+    build_unix_launcher_script_with_flag(
+        launch,
+        shell,
+        provider_command_flag_for_shell(shell),
+        cwd,
+        script_file,
+        env_file,
+    )
+}
+
+/// 和 [`build_unix_launcher_script`] 相同，但允许调用方注入 shell 参数，
+/// 让测试不依赖运行测试的机器的 home 目录。
+#[cfg_attr(windows, allow(dead_code))]
+fn build_unix_launcher_script_with_flag(
+    launch: &ProviderLaunch,
+    shell: &str,
+    flag: &'static str,
     cwd: Option<&Path>,
     script_file: &Path,
     env_file: Option<&Path>,
@@ -6001,6 +6136,7 @@ fn build_unix_launcher_script(
     }
     script.push_str(&build_provider_command_line(
         shell,
+        flag,
         &unix_launch_command_in(launch, shell),
         cwd,
     ));
@@ -7564,20 +7700,107 @@ mod tests {
             shell_word("/tmp/claude config.json")
         );
         assert_eq!(
-            build_provider_command_line("/bin/zsh", &claude, None),
+            build_provider_command_line("/bin/zsh", "-lic", &claude, None),
             "'/bin/zsh' -lic 'claude --settings '\"'\"'/tmp/claude config.json'\"'\"''"
         );
         assert_eq!(
-            build_provider_command_line("/bin/bash", &claude, Some(Path::new("/tmp/project"))),
-            r#"'/bin/bash' -ic 'cd '"'"'/tmp/project'"'"' && claude --settings '"'"'/tmp/claude config.json'"'"''"#
+            build_provider_command_line(
+                "/bin/bash",
+                "-lic",
+                &claude,
+                Some(Path::new("/tmp/project"))
+            ),
+            r#"'/bin/bash' -lic 'cd '"'"'/tmp/project'"'"' && claude --settings '"'"'/tmp/claude config.json'"'"''"#
         );
         assert_eq!(
             build_provider_command_line(
                 "/bin/sh",
+                "-c",
                 &claude,
                 Some(Path::new("/tmp/project O'Brien"))
             ),
             r#"'/bin/sh' -c 'cd '"'"'/tmp/project O'"'"'"'"'"'"'"'"'Brien'"'"' && claude --settings '"'"'/tmp/claude config.json'"'"''"#
+        );
+    }
+
+    #[test]
+    fn bash_provider_flag_prefers_the_config_file_the_terminal_reads() {
+        let profile_only = tempfile::tempdir().unwrap();
+        std::fs::write(profile_only.path().join(".bash_profile"), "").unwrap();
+        assert_eq!(bash_provider_flag(Some(profile_only.path()), true), "-lic");
+        assert_eq!(bash_provider_flag(Some(profile_only.path()), false), "-lic");
+
+        for name in [".bash_login", ".profile"] {
+            let login_only = tempfile::tempdir().unwrap();
+            std::fs::write(login_only.path().join(name), "").unwrap();
+            assert_eq!(
+                bash_provider_flag(Some(login_only.path()), true),
+                "-lic",
+                "{name}"
+            );
+            assert_eq!(
+                bash_provider_flag(Some(login_only.path()), false),
+                "-lic",
+                "{name}"
+            );
+        }
+
+        let bashrc_only = tempfile::tempdir().unwrap();
+        std::fs::write(bashrc_only.path().join(".bashrc"), "").unwrap();
+        assert_eq!(bash_provider_flag(Some(bashrc_only.path()), true), "-ic");
+        assert_eq!(bash_provider_flag(Some(bashrc_only.path()), false), "-ic");
+
+        let both = tempfile::tempdir().unwrap();
+        std::fs::write(both.path().join(".bash_profile"), "").unwrap();
+        std::fs::write(both.path().join(".bashrc"), "").unwrap();
+        assert_eq!(bash_provider_flag(Some(both.path()), true), "-lic");
+        assert_eq!(bash_provider_flag(Some(both.path()), false), "-ic");
+
+        let neither = tempfile::tempdir().unwrap();
+        assert_eq!(bash_provider_flag(Some(neither.path()), true), "-lic");
+        assert_eq!(bash_provider_flag(Some(neither.path()), false), "-ic");
+
+        assert_eq!(bash_provider_flag(None, true), "-lic");
+        assert_eq!(bash_provider_flag(None, false), "-ic");
+    }
+
+    #[test]
+    fn bash_dispatch_uses_the_selected_flag() {
+        let profile_only = tempfile::tempdir().unwrap();
+        std::fs::write(profile_only.path().join(".bash_profile"), "").unwrap();
+        assert_eq!(
+            provider_command_flag_for_shell_with_home("/bin/bash", Some(profile_only.path()), true),
+            "-lic"
+        );
+        assert_eq!(
+            provider_command_flag_for_shell_with_home(
+                "/bin/bash",
+                Some(profile_only.path()),
+                false
+            ),
+            "-lic"
+        );
+
+        let bashrc_only = tempfile::tempdir().unwrap();
+        std::fs::write(bashrc_only.path().join(".bashrc"), "").unwrap();
+        assert_eq!(
+            provider_command_flag_for_shell_with_home("/bin/bash", Some(bashrc_only.path()), true),
+            "-ic"
+        );
+        assert_eq!(
+            provider_command_flag_for_shell_with_home("/bin/bash", Some(bashrc_only.path()), false),
+            "-ic"
+        );
+    }
+
+    #[test]
+    fn non_bash_shell_flags_stay_fixed() {
+        assert_eq!(provider_command_flag_for_shell("/bin/zsh"), "-lic");
+        assert_eq!(provider_command_flag_for_shell("/bin/sh"), "-c");
+        assert_eq!(provider_command_flag_for_shell("/bin/dash"), "-c");
+        assert_eq!(
+            provider_command_flag_for_shell("/usr/local/bin/fish"),
+            "-ic"
         );
     }
 
@@ -7604,7 +7827,11 @@ mod tests {
     fn launch_command_keeps_secrets_out_of_the_command_line() {
         let launch = agy_key_launch();
         assert_eq!(
-            unix_launch_command(&launch),
+            unix_launch_command_in(&launch, "/bin/bash"),
+            "{ set +a; _cc_switch_launch_0=\"$CC_SWITCH_LAUNCH_ENV_0\"; unset CC_SWITCH_LAUNCH_ENV_0 GOOGLE_GEMINI_BASE_URL; GEMINI_API_KEY=\"$_cc_switch_launch_0\" agy --gemini_dir=/home/me/.cc-switch/agy/relay; }"
+        );
+        assert_eq!(
+            unix_launch_command_in(&launch, "/usr/local/bin/fish"),
             "env -u CC_SWITCH_LAUNCH_ENV_0 -u CC_SWITCH_LAUNCH_ENV_1 -u GOOGLE_GEMINI_BASE_URL GEMINI_API_KEY=\"$CC_SWITCH_LAUNCH_ENV_0\" agy --gemini_dir=/home/me/.cc-switch/agy/relay"
         );
         assert_eq!(
@@ -7616,7 +7843,7 @@ mod tests {
             ..agy_key_launch()
         };
         assert_eq!(
-            unix_launch_command(&plain),
+            unix_launch_command_in(&plain, "/bin/bash"),
             "agy --gemini_dir=/home/me/.cc-switch/agy/relay"
         );
         assert_eq!(unix_launch_env_file(&plain), "");
@@ -7669,7 +7896,12 @@ mod tests {
         assert_eq!(launch.batch_vars[1].1, "C:\\work\\\\");
         assert_eq!(launch.args[1], "C:\\work\\");
         assert_eq!(
-            build_provider_command_line("/usr/bin/fish", "claude", Some(Path::new("/tmp/a\\'b"))),
+            build_provider_command_line(
+                "/usr/bin/fish",
+                "-ic",
+                "claude",
+                Some(Path::new("/tmp/a\\'b"))
+            ),
             "'/usr/bin/fish' -ic 'cd '\"'\"'/tmp/a\\\\\\'\"'\"'b'\"'\"' && claude'"
         );
         let mut launch = claude_account_terminal_launch(None);
@@ -7720,7 +7952,7 @@ mod tests {
         let mut launch = agy_key_launch();
         launch.skip_permissions();
         assert!(unix_launch_command(&launch).ends_with(
-            "agy --gemini_dir=/home/me/.cc-switch/agy/relay --dangerously-skip-permissions"
+            "agy --gemini_dir=/home/me/.cc-switch/agy/relay --dangerously-skip-permissions; }"
         ));
         assert_eq!(
             launch.batch_command,
@@ -7787,6 +8019,20 @@ mod tests {
     }
 
     #[test]
+    fn provider_command_line_keeps_the_cd_guard_around_the_env_prelude() {
+        let launch = agy_key_launch();
+        let command = unix_launch_command_in(&launch, "/bin/bash");
+        let line = build_provider_command_line(
+            "/bin/bash",
+            "-lic",
+            &command,
+            Some(Path::new("/tmp/project")),
+        );
+        assert!(line.contains("&& { "), "{line}");
+        assert!(line.contains("; }"), "{line}");
+    }
+
+    #[test]
     fn agy_login_launch_picks_the_model_for_this_session_only() {
         let mut row = crate::provider::Provider::with_id(
             "login".into(),
@@ -7799,7 +8045,7 @@ mod tests {
         assert!(launch.env.is_empty());
         assert_eq!(launch.detail, None);
         assert_eq!(
-            unix_launch_command(&launch),
+            unix_launch_command_in(&launch, "/bin/bash"),
             "agy '--model=Gemini 3.1 Pro (High)'"
         );
         assert_eq!(
@@ -7815,30 +8061,34 @@ mod tests {
 
         row.settings_config = serde_json::json!({"env":{},"config":{}});
         let launch = agy_terminal_launch(&row).unwrap();
-        assert_eq!(unix_launch_command(&launch), "agy");
+        assert_eq!(unix_launch_command_in(&launch, "/bin/bash"), "agy");
         assert_eq!(launch.batch_command, "agy");
     }
 
     #[cfg(unix)]
-    #[test]
-    fn unix_launcher_script_passes_env_past_rc_files_and_cleans_up() {
+    fn unix_launcher_env_case(flag: &'static str, rc_name: &str) {
         use std::os::unix::fs::PermissionsExt;
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path().join("home");
         let bin = tmp.path().join("bin");
         std::fs::create_dir_all(&home).unwrap();
         std::fs::create_dir_all(&bin).unwrap();
+        let rc_marker = tmp.path().join("rc-ran");
         // A user rc that exports its own Gemini variables must not win.
+        // The marker proves the rc file actually ran.
         std::fs::write(
-            home.join(".bashrc"),
-            "export GEMINI_API_KEY=from-rc\nexport GOOGLE_GEMINI_BASE_URL=https://rc.test\n",
+            home.join(rc_name),
+            format!(
+                "set -a\nexport GEMINI_API_KEY=from-rc\nexport GOOGLE_GEMINI_BASE_URL=https://rc.test\ntouch '{}'\n",
+                rc_marker.display()
+            ),
         )
         .unwrap();
         let out = tmp.path().join("out");
         std::fs::write(
             bin.join("agy"),
             format!(
-                "#!/bin/sh\nprintf '%s\\n' \"${{GEMINI_API_KEY-unset}}\" \"${{GOOGLE_GEMINI_BASE_URL-unset}}\" \"${{CC_SWITCH_LAUNCH_ENV_0-unset}}\" \"$@\" > '{}'\n",
+                "#!/bin/sh\nprintf '%s\\n' \"${{GEMINI_API_KEY-unset}}\" \"${{GOOGLE_GEMINI_BASE_URL-unset}}\" \"${{CC_SWITCH_LAUNCH_ENV_0-unset}}\" \"${{_cc_switch_launch_0-unset}}\" \"$@\" > '{}'\n",
                 out.display()
             ),
         )
@@ -7850,9 +8100,15 @@ mod tests {
         let env_file = tmp.path().join("env.sh");
         std::fs::write(&env_file, unix_launch_env_file(&launch)).unwrap();
         // Replace the final interactive shell with a no-op so the test returns.
-        let content =
-            build_unix_launcher_script(&launch, "/bin/bash", None, &script, Some(&env_file))
-                .replace("exec '/bin/bash'", "exit 0 #");
+        let content = build_unix_launcher_script_with_flag(
+            &launch,
+            "/bin/bash",
+            flag,
+            None,
+            &script,
+            Some(&env_file),
+        )
+        .replace("exec '/bin/bash'", "exit 0 #");
         std::fs::write(&script, content).unwrap();
         let status = std::process::Command::new("sh")
             .arg(&script)
@@ -7864,13 +8120,119 @@ mod tests {
         assert!(status.success());
         assert_eq!(
             std::fs::read_to_string(&out).unwrap(),
-            "k'$(echo no)`x`%PATH%\nunset\nunset\n--gemini_dir=/home/me/.cc-switch/agy/relay\n"
+            "k'$(echo no)`x`%PATH%\nunset\nunset\nunset\n--gemini_dir=/home/me/.cc-switch/agy/relay\n"
         );
+        assert!(rc_marker.exists(), "{rc_name} must run");
         assert!(
             !env_file.exists(),
             "env file is removed right after reading"
         );
         assert!(!script.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_launcher_script_passes_env_past_login_rc_and_cleans_up() {
+        unix_launcher_env_case("-lic", ".bash_profile");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_launcher_script_passes_env_past_bashrc_and_cleans_up() {
+        unix_launcher_env_case("-ic", ".bashrc");
+    }
+
+    #[cfg(unix)]
+    fn unix_launcher_alias_case(
+        shell: &str,
+        flag: &'static str,
+        rc_name: &str,
+        missing_cwd: bool,
+        expect_output: bool,
+    ) {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let bin = tmp.path().join("bin");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&bin).unwrap();
+        let out = tmp.path().join("alias-out");
+        let probe = bin.join("probe");
+        std::fs::write(
+            &probe,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"${{GEMINI_API_KEY-unset}}\" \"${{CC_SWITCH_LAUNCH_ENV_0-unset}}\" \"$1\" > '{}'\n",
+                out.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(
+            home.join(rc_name),
+            format!("alias agy='sh \"{}\"'\n", probe.display()),
+        )
+        .unwrap();
+
+        let launch = agy_key_launch();
+        let script = tmp.path().join("launcher.sh");
+        let env_file = tmp.path().join("env.sh");
+        std::fs::write(&env_file, unix_launch_env_file(&launch)).unwrap();
+        let cwd = missing_cwd.then(|| tmp.path().join("missing"));
+        let content = build_unix_launcher_script_with_flag(
+            &launch,
+            shell,
+            flag,
+            cwd.as_deref(),
+            &script,
+            Some(&env_file),
+        )
+        .replace(&format!("exec {}", shell_single_quote(shell)), "exit 0 #");
+        std::fs::write(&script, content).unwrap();
+        let status = std::process::Command::new("sh")
+            .arg(&script)
+            .env("HOME", &home)
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .status()
+            .unwrap();
+        if !expect_output {
+            assert!(!out.exists(), "the provider command must not run");
+            return;
+        }
+        assert!(status.success());
+        assert_eq!(
+            std::fs::read_to_string(&out).unwrap(),
+            "k'$(echo no)`x`%PATH%\nunset\n--gemini_dir=/home/me/.cc-switch/agy/relay\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_launcher_expands_user_alias_with_env_on_bash() {
+        unix_launcher_alias_case("/bin/bash", "-lic", ".bash_profile", false, true);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_launcher_expands_user_alias_with_env_on_zsh() {
+        if !std::path::Path::new("/bin/zsh").exists() {
+            return;
+        }
+        unix_launcher_alias_case("/bin/zsh", "-lic", ".zshrc", false, true);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_launcher_expands_user_alias_with_env_on_zsh_profile() {
+        if !std::path::Path::new("/bin/zsh").exists() {
+            return;
+        }
+        unix_launcher_alias_case("/bin/zsh", "-lic", ".zprofile", false, true);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_launcher_skips_the_provider_command_when_cwd_is_missing() {
+        unix_launcher_alias_case("/bin/bash", "-lic", ".bash_profile", true, false);
     }
 
     #[test]
