@@ -14,6 +14,13 @@ const TAURI_ENDPOINT = "http://tauri.local";
 
 const MODELS: ProxyStackSubagentModel[] = [
   {
+    id: "gpt-official",
+    providerId: "official",
+    displayName: "GPT Official（OpenAI Official）",
+    efforts: ["low", "high"],
+    defaultEffort: "high",
+  },
+  {
     id: "ccs-deepseek/deepseek-v4-flash",
     providerId: "deepseek",
     displayName: "DeepSeek V4 Flash（DeepSeek）",
@@ -77,6 +84,29 @@ beforeEach(() => {
 });
 
 describe("StackSettingsSheet", () => {
+  it("saves an official sub-agent and effort without adding it to reviewers", async () => {
+    const user = userEvent.setup();
+    renderSheet({}, { routeOfficial: true });
+    await user.click(await screen.findByRole("combobox", { name: MODEL }));
+    await user.click(
+      await screen.findByRole("option", {
+        name: "GPT Official（OpenAI Official）",
+      }),
+    );
+    await waitFor(() =>
+      expect(saved.at(-1)?.codexStackSubagentModel).toBe("gpt-official"),
+    );
+    await user.click(screen.getByRole("combobox", { name: EFFORT }));
+    await user.click(await screen.findByRole("option", { name: "high" }));
+    await waitFor(() =>
+      expect(saved.at(-1)?.codexStackSubagentReasoningEffort).toBe("high"),
+    );
+    await user.click(screen.getByRole("combobox", { name: AUTO_REVIEW }));
+    expect(
+      screen.queryByRole("option", { name: "GPT Official（OpenAI Official）" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("treats the classic tools as on when the setting was never saved", async () => {
     renderSheet();
     expect(await screen.findByRole("switch", { name: CLASSIC })).toBeChecked();
