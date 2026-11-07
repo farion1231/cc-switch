@@ -61,7 +61,9 @@
   "apiKeyInput": {
     "placeholder": "API Key を入力",
     "show": "API Key を表示",
-    "hide": "API Key を隠す"
+    "hide": "API Key を隠す",
+    "copied": "API Key をコピーしました",
+    "copyFailed": "API Key のコピーに失敗しました"
   },
   "jsonEditor": {
     "mustBeObject": "設定はオブジェクト形式の JSON で入力してください（配列や他の型は不可）",
