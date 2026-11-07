@@ -13,8 +13,8 @@ use super::codex_items::{opt_str, Str};
 use super::pi_blocks::PiTranscript;
 use super::utils::for_each_jsonl_value;
 use super::utils::{
-    extract_text, parse_timestamp_to_ms, path_basename, truncate_summary, FileParseCache,
-    TITLE_MAX_CHARS,
+    extract_text, parse_timestamp_to_ms, path_basename, retry_without_cache, truncate_summary,
+    FileParseCache, ScanStatus, TITLE_MAX_CHARS,
 };
 use crate::session_manager::terminal::shell_escape;
 
@@ -257,17 +257,29 @@ fn resolve_global_session_dir(value: &str, home: &Path) -> Option<PathBuf> {
 }
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    scan_sessions_for(&PI)
+    scan_sessions_with_status(&mut ScanStatus::default())
+}
+
+pub(crate) fn scan_sessions_with_status(status: &mut ScanStatus) -> Vec<SessionMeta> {
+    scan_sessions_for_with_status(&PI, status)
 }
 
 pub(crate) fn scan_sessions_for(d: &Dialect) -> Vec<SessionMeta> {
+    scan_sessions_for_with_status(d, &mut ScanStatus::default())
+}
+
+pub(crate) fn scan_sessions_for_with_status(
+    d: &Dialect,
+    status: &mut ScanStatus,
+) -> Vec<SessionMeta> {
     match (d.resolve_root)() {
         SessionRootResolution::Available { root, layout, .. } => {
-            scan_sessions_in_root(d, &root, layout)
+            scan_sessions_in_root_with_status(d, &root, layout, status)
         }
         SessionRootResolution::RequiresProjectContext {
             configured_path, ..
         } => {
+            status.incomplete = true;
             log::warn!(
                 "{} session directory '{configured_path}' requires a project cwd and cannot be globally enumerated",
                 d.label
@@ -275,30 +287,51 @@ pub(crate) fn scan_sessions_for(d: &Dialect) -> Vec<SessionMeta> {
             Vec::new()
         }
         SessionRootResolution::Unavailable { reason } => {
+            status.incomplete = true;
             log::warn!("{} session discovery unavailable: {reason}", d.label);
             Vec::new()
         }
     }
 }
 
+#[cfg(test)]
 fn scan_sessions_in_root(d: &Dialect, root: &Path, layout: SessionLayout) -> Vec<SessionMeta> {
+    scan_sessions_in_root_with_status(d, root, layout, &mut ScanStatus::default())
+}
+
+fn scan_sessions_in_root_with_status(
+    d: &Dialect,
+    root: &Path,
+    layout: SessionLayout,
+    status: &mut ScanStatus,
+) -> Vec<SessionMeta> {
     let mut files = Vec::new();
-    collect_jsonl_files(root, layout, &mut files, true);
-    scan_session_files(d, files, d.parse_cache)
+    collect_jsonl_files_with_status(root, layout, &mut files, true, status);
+    scan_session_files(d, files, d.parse_cache, status)
 }
 
 fn scan_session_files(
     d: &Dialect,
     files: Vec<PathBuf>,
     cache: &FileParseCache,
+    status: &mut ScanStatus,
 ) -> Vec<SessionMeta> {
     cache
-        .scan(files, |path| {
-            // 读取失败不能记为永久空结果，下一轮即使 mtime 未变也必须重试。
-            parse_session_metadata(d, path)
-                .map(Some)
-                .map_err(std::io::Error::other)
-        })
+        .scan_with_status(
+            files,
+            |path| {
+                let mut file_status = ScanStatus::default();
+                match parse_session_metadata(d, path, &mut file_status) {
+                    Ok(session) => Ok(Some(session)),
+                    // 读取失败不能记为永久空结果，下一轮即使 mtime 未变也必须重试，
+                    // 本轮扫描也不算完整。
+                    Err(error) if file_status.incomplete => Err(std::io::Error::other(error)),
+                    // 内容无效同样每轮重试，但不是读取失败，不影响扫描完整性。
+                    Err(error) => Err(retry_without_cache(error)),
+                }
+            },
+            status,
+        )
         .into_iter()
         .filter_map(|mut session| {
             // OMP 的命令还依赖当前 profile/环境；文件没变也要刷新这些设置。
@@ -402,19 +435,26 @@ fn layout_for_current_root(d: &Dialect, root: &Path) -> Result<SessionLayout, St
     Ok(layout)
 }
 
-fn parse_session_metadata(d: &Dialect, path: &Path) -> Result<SessionMeta, String> {
-    let source = path.canonicalize().map_err(|error| {
-        format!(
-            "Failed to resolve {} session {}: {error}",
-            d.label,
-            path.display()
-        )
-    })?;
+fn parse_session_metadata(
+    d: &Dialect,
+    path: &Path,
+    status: &mut ScanStatus,
+) -> Result<SessionMeta, String> {
+    let source = path
+        .canonicalize()
+        .inspect_err(|_| status.incomplete = true)
+        .map_err(|error| {
+            format!(
+                "Failed to resolve {} session {}: {error}",
+                d.label,
+                path.display()
+            )
+        })?;
     let source_path = source
         .to_str()
         .ok_or_else(|| format!("{} session path is not valid UTF-8", d.label))?
         .to_string();
-    let (header, summary) = read_list_summary(d, &source)?;
+    let (header, summary) = read_list_summary_with_status(d, &source, status)?;
     let title = summary.explicit_name.flatten().or_else(|| {
         summary
             .first_user_message
@@ -442,10 +482,20 @@ fn parse_session_metadata(d: &Dialect, path: &Path) -> Result<SessionMeta, Strin
 }
 
 fn read_tree(d: &Dialect, path: &Path) -> Result<SessionTree, String> {
+    read_tree_with_status(d, path, &mut ScanStatus::default())
+}
+
+fn read_tree_with_status(
+    d: &Dialect,
+    path: &Path,
+    status: &mut ScanStatus,
+) -> Result<SessionTree, String> {
     let label = d.label;
-    validate_file_size(d, path)?;
+    validate_file_size_with_status(d, path, status)?;
     let reader = BufReader::new(
-        File::open(path).map_err(|error| format!("Failed to open {label} session: {error}"))?,
+        File::open(path)
+            .inspect_err(|_| status.incomplete = true)
+            .map_err(|error| format!("Failed to open {label} session: {error}"))?,
     );
     let mut header = None;
     let mut parents = HashMap::<String, (Option<String>, usize)>::new();
@@ -455,7 +505,9 @@ fn read_tree(d: &Dialect, path: &Path) -> Result<SessionTree, String> {
     // 只有列表用摘要，这里的标题不需要
     let mut unused_summary = SessionSummary::default();
     for line in reader.lines() {
-        let line = line.map_err(|error| format!("Failed to read {label} session: {error}"))?;
+        let line = line
+            .inspect_err(|_| status.incomplete = true)
+            .map_err(|error| format!("Failed to read {label} session: {error}"))?;
         if line.trim().is_empty() {
             continue;
         }
@@ -530,11 +582,23 @@ fn read_header_line(
 
 /// 列表只要会话头和摘要，不需要活动分支。空行、坏行、会话头与条目上限的处理和
 /// [`read_tree`] 一致；[`entry_affects_summary`] 判定不影响摘要的行不构建 JSON 树。
+#[cfg(test)]
 fn read_list_summary(d: &Dialect, path: &Path) -> Result<(SessionHeader, SessionSummary), String> {
+    read_list_summary_with_status(d, path, &mut ScanStatus::default())
+}
+
+/// I/O 失败（打开、读取、查元数据）记到 `status`；内容无效只返回 `Err`。
+fn read_list_summary_with_status(
+    d: &Dialect,
+    path: &Path,
+    status: &mut ScanStatus,
+) -> Result<(SessionHeader, SessionSummary), String> {
     let label = d.label;
-    validate_file_size(d, path)?;
+    validate_file_size_with_status(d, path, status)?;
     let reader = BufReader::new(
-        File::open(path).map_err(|error| format!("Failed to open {label} session: {error}"))?,
+        File::open(path)
+            .inspect_err(|_| status.incomplete = true)
+            .map_err(|error| format!("Failed to open {label} session: {error}"))?,
     );
     let mut header = None;
     let mut entry_index = 0usize;
@@ -549,7 +613,9 @@ fn read_list_summary(d: &Dialect, path: &Path) -> Result<(SessionHeader, Session
         Ok(())
     };
     for line in reader.lines() {
-        let line = line.map_err(|error| format!("Failed to read {label} session: {error}"))?;
+        let line = line
+            .inspect_err(|_| status.incomplete = true)
+            .map_err(|error| format!("Failed to read {label} session: {error}"))?;
         if line.trim().is_empty() {
             continue;
         }
@@ -867,8 +933,17 @@ fn matches_session_layout(root: &Path, source: &Path, layout: SessionLayout) -> 
 }
 
 fn validate_file_size(d: &Dialect, path: &Path) -> Result<(), String> {
+    validate_file_size_with_status(d, path, &mut ScanStatus::default())
+}
+
+fn validate_file_size_with_status(
+    d: &Dialect,
+    path: &Path,
+    status: &mut ScanStatus,
+) -> Result<(), String> {
     let label = d.label;
     let metadata = fs::metadata(path)
+        .inspect_err(|_| status.incomplete = true)
         .map_err(|error| format!("Failed to inspect {label} session: {error}"))?;
     if metadata.len() > MAX_SESSION_BYTES {
         Err(format!(
@@ -896,27 +971,37 @@ fn collect_jsonl_files(
     output: &mut Vec<PathBuf>,
     enforce_size_limit: bool,
 ) {
-    let Ok(entries) = fs::read_dir(root) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let Ok(file_type) = entry.file_type() else {
+    collect_jsonl_files_with_status(
+        root,
+        layout,
+        output,
+        enforce_size_limit,
+        &mut ScanStatus::default(),
+    );
+}
+
+fn collect_jsonl_files_with_status(
+    root: &Path,
+    layout: SessionLayout,
+    output: &mut Vec<PathBuf>,
+    enforce_size_limit: bool,
+    status: &mut ScanStatus,
+) {
+    for entry in status.entries(root) {
+        let Some(file_type) = status.record(entry.file_type()) else {
             continue;
         };
         match layout {
             SessionLayout::Flat if file_type.is_file() => {
-                push_jsonl_file(&entry, output, enforce_size_limit);
+                push_jsonl_file(&entry, output, enforce_size_limit, status);
             }
             SessionLayout::ProjectDirectories if file_type.is_dir() => {
-                let Ok(project_entries) = fs::read_dir(entry.path()) else {
-                    continue;
-                };
-                for project_entry in project_entries.flatten() {
-                    if project_entry
-                        .file_type()
-                        .is_ok_and(|file_type| file_type.is_file())
+                for project_entry in status.entries(&entry.path()) {
+                    if status
+                        .record(project_entry.file_type())
+                        .is_some_and(|file_type| file_type.is_file())
                     {
-                        push_jsonl_file(&project_entry, output, enforce_size_limit);
+                        push_jsonl_file(&project_entry, output, enforce_size_limit, status);
                     }
                 }
             }
@@ -925,13 +1010,18 @@ fn collect_jsonl_files(
     }
 }
 
-fn push_jsonl_file(entry: &fs::DirEntry, output: &mut Vec<PathBuf>, enforce_size_limit: bool) {
+fn push_jsonl_file(
+    entry: &fs::DirEntry,
+    output: &mut Vec<PathBuf>,
+    enforce_size_limit: bool,
+    status: &mut ScanStatus,
+) {
     let path = entry.path();
     if path.extension().and_then(|value| value.to_str()) == Some("jsonl")
         && (!enforce_size_limit
-            || entry
-                .metadata()
-                .is_ok_and(|metadata| metadata.len() <= MAX_SESSION_BYTES))
+            || status
+                .record(entry.metadata())
+                .is_some_and(|metadata| metadata.len() <= MAX_SESSION_BYTES))
     {
         output.push(path);
     }
@@ -955,7 +1045,8 @@ fn collect_child_session_files(dir: &Path, output: &mut Vec<PathBuf>) {
                 collect_child_session_files(&entry.path(), output);
             }
         } else if file_type.is_file() {
-            push_jsonl_file(&entry, output, false);
+            // 不限大小时 push_jsonl_file 不读元数据，扫描状态用不上
+            push_jsonl_file(&entry, output, false, &mut ScanStatus::default());
         }
     }
 }
@@ -966,7 +1057,7 @@ mod tests {
 
     // Uncached reference: metadata plus the current runtime resume settings.
     fn parse_session(d: &Dialect, path: &Path) -> Result<SessionMeta, String> {
-        let mut session = parse_session_metadata(d, path)?;
+        let mut session = parse_session_metadata(d, path, &mut ScanStatus::default())?;
         session.resume_command = Some((d.resume_command)(session.source_path.as_deref().unwrap())?);
         Ok(session)
     }
@@ -977,7 +1068,14 @@ mod tests {
         let path = temp.path().join("session.jsonl");
         write_session_header(&path, "cached");
         let cache = FileParseCache::new();
-        let scan = |dialect: &Dialect| scan_session_files(dialect, vec![path.clone()], &cache);
+        let scan = |dialect: &Dialect| {
+            scan_session_files(
+                dialect,
+                vec![path.clone()],
+                &cache,
+                &mut ScanStatus::default(),
+            )
+        };
         let first = scan(&PI);
         assert_eq!(first.len(), 1);
         assert_eq!(
@@ -1017,7 +1115,10 @@ mod tests {
         fs::write(&path, valid.replace("session", "invalid")).unwrap();
         let modified = fs::metadata(&path).unwrap().modified().unwrap();
         let cache = FileParseCache::new();
-        assert!(scan_session_files(&PI, vec![path.clone()], &cache).is_empty());
+        let mut status = ScanStatus::default();
+        assert!(scan_session_files(&PI, vec![path.clone()], &cache, &mut status).is_empty());
+        // Invalid content is retried, but it is not a read failure.
+        assert!(!status.incomplete);
         fs::write(&path, valid).unwrap();
         File::options()
             .write(true)
@@ -1026,7 +1127,7 @@ mod tests {
             .set_modified(modified)
             .unwrap();
         assert_eq!(
-            scan_session_files(&PI, vec![path], &cache)[0].session_id,
+            scan_session_files(&PI, vec![path], &cache, &mut ScanStatus::default())[0].session_id,
             "one"
         );
     }
@@ -1055,10 +1156,10 @@ mod tests {
         });
         let baseline = start.elapsed();
         let start = Instant::now();
-        let cold = scan_session_files(&PI, files.clone(), &cache);
+        let cold = scan_session_files(&PI, files.clone(), &cache, &mut ScanStatus::default());
         let cold_time = start.elapsed();
         let start = Instant::now();
-        let warm = scan_session_files(&PI, files.clone(), &cache);
+        let warm = scan_session_files(&PI, files.clone(), &cache, &mut ScanStatus::default());
         let warm_time = start.elapsed();
         let changed = files[0].clone();
         fs::write(
@@ -1067,7 +1168,7 @@ mod tests {
         )
         .unwrap();
         let start = Instant::now();
-        let updated = scan_session_files(&PI, files, &cache);
+        let updated = scan_session_files(&PI, files, &cache, &mut ScanStatus::default());
         let changed_time = start.elapsed();
         assert_eq!(
             serde_json::to_value(&reference).unwrap(),

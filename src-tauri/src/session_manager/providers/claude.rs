@@ -26,8 +26,9 @@ use super::blocks::{
     ToolSource, INPUT_PREVIEW_CHARS, THINKING_PREVIEW_CHARS,
 };
 use super::utils::{
-    collect_files, extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines,
-    truncate_summary, FileParseCache, JsonlSpan, LineSpans, TITLE_MAX_CHARS,
+    collect_files_with_status, extract_text, parse_timestamp_to_ms, path_basename,
+    read_head_tail_lines, truncate_summary, FileParseCache, JsonlSpan, LineSpans, ScanStatus,
+    TITLE_MAX_CHARS,
 };
 
 const PROVIDER_ID: &str = "claude";
@@ -37,11 +38,19 @@ static PARSE_CACHE: LazyLock<FileParseCache> =
     LazyLock::new(|| FileParseCache::persistent("claude"));
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    let root = get_claude_config_dir().join("projects");
-    let mut files = Vec::new();
-    collect_jsonl_files(&root, &mut files);
+    scan_sessions_with_status(&mut ScanStatus::default())
+}
 
-    PARSE_CACHE.scan(files, scan_session_file)
+pub(crate) fn scan_sessions_with_status(status: &mut ScanStatus) -> Vec<SessionMeta> {
+    let root = get_claude_config_dir().join("projects");
+    scan_sessions_in_root(&root, status)
+}
+
+pub(crate) fn scan_sessions_in_root(root: &Path, status: &mut ScanStatus) -> Vec<SessionMeta> {
+    let mut files = Vec::new();
+    collect_jsonl_files_with_status(root, &mut files, status);
+
+    PARSE_CACHE.scan_with_status(files, scan_session_file, status)
 }
 
 pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
@@ -290,10 +299,13 @@ fn infer_session_id_from_filename(path: &Path) -> Option<String> {
         .map(|stem| stem.to_string())
 }
 
-fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
-    collect_files(root, files, &|path| {
-        path.extension().and_then(|ext| ext.to_str()) == Some("jsonl")
-    });
+fn collect_jsonl_files_with_status(root: &Path, files: &mut Vec<PathBuf>, status: &mut ScanStatus) {
+    collect_files_with_status(
+        root,
+        files,
+        &|path| path.extension().and_then(|ext| ext.to_str()) == Some("jsonl"),
+        status,
+    );
 }
 
 fn remove_path_if_exists(path: &Path) -> std::io::Result<()> {

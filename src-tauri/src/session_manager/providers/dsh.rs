@@ -115,7 +115,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
 /// A summary needs the whole (possibly compressed) transcript, so unchanged files reuse the
 /// previous parse and only new or modified ones are read again.
 fn scan(root: &Path, cache: &FileParseCache) -> Vec<SessionMeta> {
-    cache.scan(files(root), scan_file)
+    cache.scan_with_status(files(root), scan_file, &mut utils::ScanStatus::default())
 }
 
 /// I/O failures are retried on the next scan; content that is not a session is cached as such.

@@ -4,12 +4,15 @@ pub mod content;
 pub(crate) mod hermes_wsl;
 pub mod model;
 pub mod providers;
+pub mod search;
+mod search_revision;
 pub mod terminal;
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Instant;
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 // 其余模型类型从 `session_manager::model` 引用
 pub use model::SessionMessage;
@@ -57,52 +60,96 @@ pub struct DeleteSessionOutcome {
     pub error: Option<String>,
 }
 
-type ScanFn = fn() -> Vec<SessionMeta>;
-
-/// 跑一个应用的扫描并记下耗时
-fn timed_scan(provider: &str, scan: ScanFn) -> Vec<SessionMeta> {
-    let started = Instant::now();
-    let sessions = scan();
-    log::debug!(
-        "[sessions] scan {provider}: {} sessions in {}ms",
-        sessions.len(),
-        started.elapsed().as_millis()
-    );
+pub fn scan_sessions() -> Vec<SessionMeta> {
+    let scan = scan_sessions_with_status();
+    let sessions = scan.sessions.clone();
+    *RECENT_SCAN.lock().unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), scan));
     sessions
 }
 
-/// 各应用的列表扫描；顺序决定时间相同的会话的先后（排序是稳定的）
-const SCANNERS: &[(&str, ScanFn)] = &[
-    ("codex", codex::scan_sessions),
-    ("claude", claude::scan_sessions),
-    ("opencode", opencode::scan_sessions),
-    ("openclaw", openclaw::scan_sessions),
-    ("gemini", gemini::scan_sessions),
-    ("hermes", hermes::scan_sessions),
-    ("grokbuild", grokbuild::scan_sessions),
-    ("pi", pi::scan_sessions),
-    ("omp", omp::scan_sessions),
-    ("mcode", mcode::scan_sessions),
-    ("kimi", kimi::scan_sessions),
-    ("dsh", dsh::scan_sessions),
-    ("agy", agy::scan_sessions),
-];
+// The index request follows list_sessions. Reuse that scan once, including its
+// completeness flags; enabling from a cached page or a queued rerun scans afresh.
+static RECENT_SCAN: LazyLock<Mutex<Option<(Instant, SessionScan)>>> =
+    LazyLock::new(|| Mutex::new(None));
+const SCAN_REUSE_WINDOW: Duration = Duration::from_secs(5);
 
-pub fn scan_sessions() -> Vec<SessionMeta> {
+pub(crate) fn scan_for_index() -> SessionScan {
+    take_recent_scan(&RECENT_SCAN, Instant::now()).unwrap_or_else(scan_sessions_with_status)
+}
+
+fn take_recent_scan(
+    slot: &Mutex<Option<(Instant, SessionScan)>>,
+    now: Instant,
+) -> Option<SessionScan> {
+    slot.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+        .filter(|(created, _)| now.saturating_duration_since(*created) <= SCAN_REUSE_WINDOW)
+        .map(|(_, scan)| scan)
+}
+
+pub(crate) struct SessionScan {
+    pub sessions: Vec<SessionMeta>,
+    pub complete_providers: HashSet<String>,
+}
+
+pub(crate) fn scan_sessions_with_status() -> SessionScan {
+    use providers::utils::ScanStatus;
+    type Scanner = fn(&mut ScanStatus) -> Vec<SessionMeta>;
     let started = Instant::now();
-    // 所有应用同时扫描，总耗时取决于最慢的一个；读文件的并行数另由全局名额限制
-    let mut sessions: Vec<SessionMeta> = std::thread::scope(|s| {
-        let handles: Vec<_> = SCANNERS
-            .iter()
-            .map(|&(provider, scan)| s.spawn(move || timed_scan(provider, scan)))
-            .collect();
-        handles
+    // 所有应用同时扫描，总耗时取决于最慢的一个；读文件的并行数另由全局名额限制。
+    // 顺序决定时间相同的会话的先后（排序是稳定的）
+    let scanners: [(&str, Scanner); 13] = [
+        ("codex", codex::scan_sessions_with_status),
+        ("claude", claude::scan_sessions_with_status),
+        ("opencode", opencode::scan_sessions_with_status),
+        ("openclaw", openclaw::scan_sessions_with_status),
+        ("gemini", gemini::scan_sessions_with_status),
+        ("hermes", hermes::scan_sessions_with_status),
+        ("grokbuild", grokbuild::scan_sessions_with_status),
+        ("pi", pi::scan_sessions_with_status),
+        ("omp", omp::scan_sessions_with_status),
+        ("mcode", mcode::scan_sessions_with_status),
+        // Kimi Code、DeepSeek Harness、Antigravity 的扫描还不报告读取失败，按完整处理
+        ("kimi", |_| kimi::scan_sessions()),
+        ("dsh", |_| dsh::scan_sessions()),
+        ("agy", |_| agy::scan_sessions()),
+    ];
+    let mut scan = SessionScan {
+        sessions: Vec::new(),
+        complete_providers: HashSet::new(),
+    };
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = scanners
             .into_iter()
-            .flat_map(|handle| handle.join().unwrap_or_default())
-            .collect()
+            .map(|(provider, scanner)| {
+                (
+                    provider,
+                    scope.spawn(move || {
+                        let started = Instant::now();
+                        let mut status = ScanStatus::default();
+                        let sessions = scanner(&mut status);
+                        log::debug!(
+                            "[sessions] scan {provider}: {} sessions in {}ms",
+                            sessions.len(),
+                            started.elapsed().as_millis()
+                        );
+                        (sessions, status)
+                    }),
+                )
+            })
+            .collect();
+        for (provider, handle) in handles {
+            // A failed worker is not evidence that all its sessions were deleted.
+            if let Ok((sessions, status)) = handle.join() {
+                scan.sessions.extend(sessions);
+                if !status.incomplete {
+                    scan.complete_providers.insert(provider.to_string());
+                }
+            }
+        }
     });
-
-    sessions.sort_by(|a, b| {
+    scan.sessions.sort_by(|a, b| {
         let a_ts = a.last_active_at.or(a.created_at).unwrap_or(0);
         let b_ts = b.last_active_at.or(b.created_at).unwrap_or(0);
         b_ts.cmp(&a_ts)
@@ -110,10 +157,10 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
 
     log::info!(
         "[sessions] scanned {} sessions in {}ms",
-        sessions.len(),
+        scan.sessions.len(),
         started.elapsed().as_millis()
     );
-    sessions
+    scan
 }
 
 pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<SessionMessage>, String> {
@@ -186,6 +233,7 @@ pub fn delete_session(
     let deleted = delete_session_source(provider_id, session_id, source_path)?;
     if deleted {
         cache::global().remove(provider_id, source_path);
+        search::forget_source(provider_id, source_path);
     }
     Ok(deleted)
 }
@@ -326,6 +374,30 @@ where
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn index_reuses_a_fresh_scan_once_and_preserves_incomplete_providers() {
+        let now = Instant::now();
+        let slot = Mutex::new(Some((
+            now,
+            SessionScan {
+                sessions: Vec::new(),
+                // Claude failed; Codex really has no sessions. These flags must
+                // survive reuse so only Codex's old index is eligible for pruning.
+                complete_providers: HashSet::from(["codex".into()]),
+            },
+        )));
+        let scan = take_recent_scan(&slot, now).unwrap();
+        assert!(scan.sessions.is_empty());
+        assert_eq!(scan.complete_providers, HashSet::from(["codex".into()]));
+        assert!(take_recent_scan(&slot, now).is_none());
+
+        *slot.lock().unwrap() = Some((now, scan));
+        assert!(
+            take_recent_scan(&slot, now + SCAN_REUSE_WINDOW + Duration::from_secs(1)).is_none()
+        );
+        assert!(slot.lock().unwrap().is_none());
+    }
 
     fn write_codex_session(path: &Path, session_id: &str) {
         std::fs::write(

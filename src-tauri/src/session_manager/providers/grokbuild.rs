@@ -9,8 +9,8 @@ use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::blocks::{assign_turn_ids, openai_tool_calls, tool_result_block};
 use super::utils::{
-    collect_files, extract_text, for_each_jsonl_value, parse_timestamp_to_ms, truncate_summary,
-    FileParseCache, TITLE_MAX_CHARS,
+    collect_files_with_status, extract_text, for_each_jsonl_value, parse_timestamp_to_ms,
+    truncate_summary, FileParseCache, ScanStatus, TITLE_MAX_CHARS,
 };
 
 #[derive(Debug, Deserialize)]
@@ -48,11 +48,15 @@ static PARSE_CACHE: LazyLock<FileParseCache> =
     LazyLock::new(|| FileParseCache::persistent("grokbuild"));
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
+    scan_sessions_with_status(&mut ScanStatus::default())
+}
+
+pub(crate) fn scan_sessions_with_status(status: &mut ScanStatus) -> Vec<SessionMeta> {
     let mut summaries = Vec::new();
     for root in session_roots() {
-        collect_summary_files(&root, &mut summaries);
+        collect_summary_files_with_status(&root, &mut summaries, status);
     }
-    PARSE_CACHE.scan(summaries, scan_summary_file)
+    PARSE_CACHE.scan_with_status(summaries, scan_summary_file, status)
 }
 
 /// `chat_history.jsonl`：`type ∈ {system, user, assistant, tool}`。
@@ -168,11 +172,23 @@ pub fn delete_session(root: &Path, path: &Path, session_id: &str) -> Result<bool
     Ok(true)
 }
 
-/// 会话目录里还有 chat_history.jsonl 等大量文件；类型直接取自目录枚举，不为每个条目再 stat
+#[cfg(test)]
 fn collect_summary_files(root: &Path, files: &mut Vec<PathBuf>) {
-    collect_files(root, files, &|path| {
-        path.file_name().and_then(|name| name.to_str()) == Some("summary.json")
-    });
+    collect_summary_files_with_status(root, files, &mut ScanStatus::default());
+}
+
+/// 会话目录里还有 chat_history.jsonl 等大量文件；类型直接取自目录枚举，不为每个条目再 stat
+fn collect_summary_files_with_status(
+    root: &Path,
+    files: &mut Vec<PathBuf>,
+    status: &mut ScanStatus,
+) {
+    collect_files_with_status(
+        root,
+        files,
+        &|path| path.file_name().and_then(|name| name.to_str()) == Some("summary.json"),
+        status,
+    );
 }
 
 /// 列表扫描用：读不了（权限、被占用等）返回 `Err`，不进解析缓存、下轮重试；

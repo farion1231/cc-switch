@@ -14,7 +14,7 @@ use super::blocks::{
     assign_turn_ids, count_diff_lines, single_file_diff, thinking_block, tool_call_block,
     tool_result_block, ToolSource,
 };
-use super::utils::{parse_timestamp_to_ms, truncate_summary, FileParseCache};
+use super::utils::{parse_timestamp_to_ms, truncate_summary, FileParseCache, ScanStatus};
 
 const PROVIDER_ID: &str = "gemini";
 
@@ -22,39 +22,47 @@ static PARSE_CACHE: LazyLock<FileParseCache> =
     LazyLock::new(|| FileParseCache::persistent("gemini"));
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
+    scan_sessions_with_status(&mut ScanStatus::default())
+}
+
+pub(crate) fn scan_sessions_with_status(status: &mut ScanStatus) -> Vec<SessionMeta> {
     let tmp_dir = crate::gemini_config::get_gemini_dir().join("tmp");
-    scan_tmp_dir(&tmp_dir, &PARSE_CACHE)
+    scan_tmp_dir(&tmp_dir, &PARSE_CACHE, status)
 }
 
 /// 扫描 `tmp/<project_name>/chats/session-*.json(l)`。
 ///
 /// 摘要要回放整份会话才能拿到，所以走 [`FileParseCache`]：只重新解析新增或改过的文件。
 /// 项目目录来自同级的 `.project_root`，不属于会话文件本身，拿到缓存结果后再叠加。
-fn scan_tmp_dir(tmp_dir: &Path, cache: &FileParseCache) -> Vec<SessionMeta> {
-    let Ok(project_entries) = std::fs::read_dir(tmp_dir) else {
-        return Vec::new();
-    };
-
+fn scan_tmp_dir(
+    tmp_dir: &Path,
+    cache: &FileParseCache,
+    status: &mut ScanStatus,
+) -> Vec<SessionMeta> {
     let mut files = Vec::new();
     let mut project_dirs: HashMap<PathBuf, String> = HashMap::new();
-    for entry in project_entries.flatten() {
+    for entry in status.entries(tmp_dir) {
         let project = entry.path();
-        let chats_dir = project.join("chats");
-        let Ok(chat_files) = std::fs::read_dir(&chats_dir) else {
+        if !status.is_dir(&project) {
             continue;
-        };
+        }
+        let chats_dir = project.join("chats");
+        if !status.is_dir(&chats_dir) {
+            continue;
+        }
+        let chat_files = status.entries(&chats_dir);
         if let Ok(project_dir) = std::fs::read_to_string(project.join(".project_root")) {
             project_dirs.insert(chats_dir, project_dir);
         }
         files.extend(
             chat_files
-                .flatten()
+                .into_iter()
                 .map(|file| file.path())
                 .filter(|path| is_session_file(path)),
         );
     }
 
-    let mut sessions = cache.scan(files, scan_session_file);
+    let mut sessions = cache.scan_with_status(files, scan_session_file, status);
     for meta in &mut sessions {
         meta.project_dir = meta
             .source_path
@@ -719,18 +727,21 @@ mod tests {
         std::fs::write(chats.join("session-bad.json"), [0xff, 0xfe]).expect("write bad");
 
         let cache = FileParseCache::new();
-        let sessions = scan_tmp_dir(temp.path(), &cache);
+        let mut status = ScanStatus::default();
+        let sessions = scan_tmp_dir(temp.path(), &cache, &mut status);
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].title.as_deref(), Some("first"));
         assert_eq!(sessions[0].project_dir.as_deref(), Some("/work/one"));
+        // 非 UTF-8 文件按「无会话」缓存，不算读取失败
+        assert!(!status.incomplete);
 
         // `.project_root` is not part of the cached parse, so a change shows up immediately.
         std::fs::write(project.join(".project_root"), "/work/two").expect("project root");
-        let sessions = scan_tmp_dir(temp.path(), &cache);
+        let sessions = scan_tmp_dir(temp.path(), &cache, &mut status);
         assert_eq!(sessions[0].project_dir.as_deref(), Some("/work/two"));
 
         std::fs::write(&path, session("second question")).expect("rewrite session");
-        let sessions = scan_tmp_dir(temp.path(), &cache);
+        let sessions = scan_tmp_dir(temp.path(), &cache, &mut status);
         assert_eq!(sessions[0].title.as_deref(), Some("second question"));
     }
 
