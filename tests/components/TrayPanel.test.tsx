@@ -570,7 +570,7 @@ describe("TrayPanel window layout", () => {
       });
       const main = container.querySelector<HTMLElement>(".tp-card")!;
       expect(Number.parseFloat(main.style.width)).toBeCloseTo(320 / factor);
-      expect(Number.parseFloat(main.style.maxHeight)).toBeCloseTo(620 / factor);
+      expect(Number.parseFloat(main.style.maxHeight)).toBeCloseTo(480 / factor);
       const collapsed = vi.mocked(trayPanelApi.layout).mock.lastCall![0];
       expect(collapsed.width).toBeCloseTo(320);
       expect(collapsed.height).toBeCloseTo(320 * factor);
@@ -599,7 +599,7 @@ describe("TrayPanel window layout", () => {
       ratio.mockReturnValue(scaleFactor);
       fireEvent.resize(window);
       await paint();
-      expect(main).toHaveStyle({ width: "320px", maxHeight: "620px" });
+      expect(main).toHaveStyle({ width: "320px", maxHeight: "480px" });
       expect(sub).toHaveStyle({ width: "300px", height: "320px" });
       fireEvent.keyDown(window, { key: "Escape" });
       await paint();
