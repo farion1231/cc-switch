@@ -9,18 +9,18 @@ use std::{
     time::Duration,
 };
 
-use futures::{future::AbortHandle, future::Abortable, stream, stream::BoxStream, StreamExt};
+use futures::{future::AbortHandle, future::Abortable, stream, StreamExt};
 use once_cell::sync::Lazy;
 use process_wrap::tokio::{KillOnDrop, TokioChildWrapper, TokioCommandWrap};
 use rmcp::{
-    model::{ClientInfo, ClientJsonRpcMessage, Implementation},
+    model::{ClientInfo, Implementation},
     transport::{
         async_rw::AsyncRwTransport,
         common::client_side_sse::{BoxedSseResponse, NeverRetry},
         sse_client::{SseClient, SseClientConfig, SseTransportError},
         streamable_http_client::{
-            SseError, StreamableHttpClient, StreamableHttpClientTransportConfig,
-            StreamableHttpError, StreamableHttpPostResponse,
+            StreamableHttpClient, StreamableHttpClientTransportConfig, StreamableHttpError,
+            StreamableHttpPostResponse,
         },
         SseClientTransport, StreamableHttpClientTransport, Transport,
     },
@@ -55,11 +55,11 @@ static LOGIN_SHELL_PATH: Lazy<Option<String>> = Lazy::new(|| {
 pub enum ConnectivityStatus {
     Connected,
     /// The server answered 401 to a probe that carried no credentials (a 401 despite
-    /// configured credentials is `Disconnected`). OAuth servers (Notion, Sentry, ...) reject this
+    /// configured credentials is `Failed`). OAuth servers (Notion, Sentry, ...) reject this
     /// anonymous probe but work in clients that hold their own login, and CC Switch
     /// never reads those clients' tokens, so this is not a connection failure.
     AuthRequired,
-    Disconnected,
+    Failed,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -123,12 +123,12 @@ pub fn cancel_checks(batch_id: &str) {
 
 async fn check_server(value: serde_json::Value, timeout: Duration) -> ConnectivityStatus {
     // Do not return/log transport errors: URLs, headers and process arguments may
-    // contain credentials. The UI only needs the connectivity state.
+    // contain credentials. The UI only needs the coarse status.
     let unauthorized = Arc::new(AtomicBool::new(false));
     match tokio::time::timeout(timeout, connect(value, unauthorized.clone())).await {
         Ok(Ok(())) => ConnectivityStatus::Connected,
         _ if unauthorized.load(Ordering::Relaxed) => ConnectivityStatus::AuthRequired,
-        _ => ConnectivityStatus::Disconnected,
+        _ => ConnectivityStatus::Failed,
     }
 }
 
@@ -240,7 +240,7 @@ async fn connect(
                 handshake(transport).await
             } else {
                 let transport = StreamableHttpClientTransport::with_client(
-                    AuthProbeClient {
+                    UnauthorizedAwareClient {
                         client,
                         unauthorized,
                     },
@@ -304,25 +304,23 @@ fn is_unauthorized(error: &reqwest::Error) -> bool {
     error.status() == Some(reqwest::StatusCode::UNAUTHORIZED)
 }
 
-/// Streamable HTTP client that remembers whether the server asked for authorization.
+/// Remembers a 401 so the result can say "sign-in required" instead of
+/// "connection failed": the server answered, it just wants the client's login.
 #[derive(Clone)]
-struct AuthProbeClient {
+struct UnauthorizedAwareClient {
     client: reqwest::Client,
     unauthorized: Arc<AtomicBool>,
 }
 
-impl AuthProbeClient {
-    fn observe<T>(
+impl UnauthorizedAwareClient {
+    fn note<T>(
         &self,
         result: Result<T, StreamableHttpError<reqwest::Error>>,
     ) -> Result<T, StreamableHttpError<reqwest::Error>> {
-        if let Err(error) = &result {
-            let unauthorized = match error {
-                StreamableHttpError::AuthRequired(_) => true,
-                StreamableHttpError::Client(error) => is_unauthorized(error),
-                _ => false,
-            };
-            if unauthorized {
+        if let Err(StreamableHttpError::AuthRequired(_)) = &result {
+            self.unauthorized.store(true, Ordering::Relaxed);
+        } else if let Err(StreamableHttpError::Client(error)) = &result {
+            if is_unauthorized(error) {
                 self.unauthorized.store(true, Ordering::Relaxed);
             }
         }
@@ -330,17 +328,17 @@ impl AuthProbeClient {
     }
 }
 
-impl StreamableHttpClient for AuthProbeClient {
+impl StreamableHttpClient for UnauthorizedAwareClient {
     type Error = reqwest::Error;
 
     async fn post_message(
         &self,
         uri: Arc<str>,
-        message: ClientJsonRpcMessage,
+        message: rmcp::model::ClientJsonRpcMessage,
         session_id: Option<Arc<str>>,
         auth_header: Option<String>,
     ) -> Result<StreamableHttpPostResponse, StreamableHttpError<Self::Error>> {
-        self.observe(
+        self.note(
             StreamableHttpClient::post_message(&self.client, uri, message, session_id, auth_header)
                 .await,
         )
@@ -352,9 +350,7 @@ impl StreamableHttpClient for AuthProbeClient {
         session_id: Arc<str>,
         auth_header: Option<String>,
     ) -> Result<(), StreamableHttpError<Self::Error>> {
-        self.observe(
-            StreamableHttpClient::delete_session(&self.client, uri, session_id, auth_header).await,
-        )
+        StreamableHttpClient::delete_session(&self.client, uri, session_id, auth_header).await
     }
 
     async fn get_stream(
@@ -363,11 +359,8 @@ impl StreamableHttpClient for AuthProbeClient {
         session_id: Arc<str>,
         last_event_id: Option<String>,
         auth_header: Option<String>,
-    ) -> Result<
-        BoxStream<'static, Result<sse_stream::Sse, SseError>>,
-        StreamableHttpError<Self::Error>,
-    > {
-        self.observe(
+    ) -> Result<BoxedSseResponse, StreamableHttpError<Self::Error>> {
+        self.note(
             StreamableHttpClient::get_stream(
                 &self.client,
                 uri,
@@ -389,7 +382,7 @@ struct SameOriginSseClient {
 }
 
 impl SameOriginSseClient {
-    fn observe<T>(
+    fn note<T>(
         &self,
         result: Result<T, SseTransportError<reqwest::Error>>,
     ) -> Result<T, SseTransportError<reqwest::Error>> {
@@ -417,7 +410,7 @@ impl SseClient for SameOriginSseClient {
                 "Cross-origin MCP message endpoint",
             )));
         }
-        self.observe(SseClient::post_message(&self.client, uri, message, auth_token).await)
+        self.note(SseClient::post_message(&self.client, uri, message, auth_token).await)
     }
 
     async fn get_stream(
@@ -426,7 +419,7 @@ impl SseClient for SameOriginSseClient {
         last_event_id: Option<String>,
         auth_token: Option<String>,
     ) -> Result<BoxedSseResponse, SseTransportError<Self::Error>> {
-        self.observe(SseClient::get_stream(&self.client, uri, last_event_id, auth_token).await)
+        self.note(SseClient::get_stream(&self.client, uri, last_event_id, auth_token).await)
     }
 }
 

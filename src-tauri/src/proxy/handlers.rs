@@ -60,14 +60,22 @@ use subtle::ConstantTimeEq;
 // ============================================================================
 
 /// 健康检查
-pub async fn health_check() -> (StatusCode, Json<Value>) {
-    (
+pub async fn health_check(headers: axum::http::HeaderMap) -> axum::response::Response {
+    let mut response = (
         StatusCode::OK,
         Json(json!({
             "status": "healthy",
             "timestamp": chrono::Utc::now().to_rfc3339(),
         })),
     )
+        .into_response();
+    // 环回自检带的随机值原样写回，证明请求回到了本地路由（见 loopback_probe）
+    if let Some(nonce) = headers.get(super::loopback_probe::PROBE_HEADER) {
+        response
+            .headers_mut()
+            .insert(super::loopback_probe::PROBE_HEADER, nonce.clone());
+    }
+    response
 }
 
 /// 获取服务状态
@@ -380,6 +388,7 @@ async fn handle_messages_for_app(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
+            ctx.outbound_model = err.outbound_model.take();
             log_forward_error(&state, &ctx, is_stream, &err.error).await;
             return Err(err.error);
         }
@@ -1025,6 +1034,7 @@ pub async fn handle_chat_completions(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
+            ctx.outbound_model = err.outbound_model.take();
             log_forward_error(&state, &ctx, is_stream, &err.error).await;
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error, is_stream);
         }
@@ -1152,6 +1162,7 @@ async fn handle_responses_for_app(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
+            ctx.outbound_model = err.outbound_model.take();
             log_forward_error(&state, &ctx, is_stream, &err.error).await;
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error, is_stream);
         }
@@ -1202,7 +1213,10 @@ async fn handle_responses_for_app(
     // Native Responses passthrough to a strict gateway (xAI): restore flattened
     // function-call names *and* rewrite whole-float tool arguments. The integer
     // rewrite must run even when the request had no namespace tools.
-    if super::providers::provider_needs_responses_namespace_flatten(&ctx.provider) {
+    if super::providers::provider_needs_responses_namespace_flatten(
+        &ctx.provider,
+        ctx.outbound_model.as_deref(),
+    ) {
         return handle_codex_xai_native_responses_rewrite(
             response,
             &ctx,
@@ -1252,6 +1266,25 @@ fn rewritten_sse_response_builder(
     builder
 }
 
+fn codex_native_responses_stream(
+    response: super::hyper_client::ProxyResponse,
+    ctx: &RequestContext,
+) -> std::pin::Pin<Box<dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send>> {
+    let stream = response.bytes_stream();
+    if matches!(ctx.app_type, AppType::Codex)
+        && ctx
+            .provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.provider_type.as_deref())
+            == Some("github_copilot")
+    {
+        Box::pin(super::providers::copilot_responses::create_stable_item_id_stream(stream))
+    } else {
+        Box::pin(stream)
+    }
+}
+
 async fn handle_codex_native_compaction_response(
     response: super::hyper_client::ProxyResponse,
     ctx: &RequestContext,
@@ -1275,7 +1308,7 @@ async fn handle_codex_native_compaction_response(
     let builder = rewritten_sse_response_builder(status, response.headers());
 
     let compaction_stream = super::providers::codex_compaction::create_native_compaction_sse_stream(
-        response.bytes_stream(),
+        codex_native_responses_stream(response, ctx),
     );
     let usage_collector = create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
     let logged_stream = create_logged_passthrough_stream(
@@ -1386,6 +1419,7 @@ async fn handle_codex_standalone_passthrough(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
+            ctx.outbound_model = err.outbound_model.take();
             log_forward_error(&state, &ctx, false, &err.error).await;
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error, false);
         }
@@ -1485,6 +1519,7 @@ async fn handle_responses_compact_for_app(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
+            ctx.outbound_model = err.outbound_model.take();
             log_forward_error(&state, &ctx, is_stream, &err.error).await;
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error, is_stream);
         }
@@ -1521,7 +1556,10 @@ async fn handle_responses_compact_for_app(
         .await;
     }
 
-    if super::providers::provider_needs_responses_namespace_flatten(&ctx.provider) {
+    if super::providers::provider_needs_responses_namespace_flatten(
+        &ctx.provider,
+        ctx.outbound_model.as_deref(),
+    ) {
         return handle_codex_xai_native_responses_rewrite(
             response,
             &ctx,
@@ -1579,7 +1617,7 @@ async fn handle_codex_late_arguments_repair(
     let builder = rewritten_sse_response_builder(status, response.headers());
     let repair_stream =
         super::providers::responses_late_arguments::create_late_arguments_repair_stream(
-            response.bytes_stream(),
+            codex_native_responses_stream(response, ctx),
         );
     let usage_collector = create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
     let logged_stream = create_logged_passthrough_stream(
@@ -1597,7 +1635,7 @@ async fn handle_codex_late_arguments_repair(
         })
 }
 
-/// Response handler for the native Responses passthrough to xAI: restore
+/// Response handler for native Responses to xAI (direct or Copilot): restore
 /// flattened `function_call` names and rewrite whole-float tool arguments.
 /// Error bodies pass through unchanged. Usage is collected exactly as
 /// `process_response` would (same `CODEX_PARSER_CONFIG`).
@@ -1631,9 +1669,23 @@ async fn handle_codex_xai_native_responses_rewrite(
     if response.is_sse() {
         let builder = rewritten_sse_response_builder(status, response.headers());
 
+        // Copilot: stabilize item IDs, then repair late tool arguments, then restore
+        // Grok names. Direct xAI responses retain their original stream pipeline.
+        let stream = codex_native_responses_stream(response, ctx);
+        let stream: std::pin::Pin<
+            Box<dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send>,
+        > = if matches!(ctx.app_type, AppType::Codex) && ctx.provider.is_github_copilot() {
+            Box::pin(
+                super::providers::responses_late_arguments::create_late_arguments_repair_stream(
+                    stream,
+                ),
+            )
+        } else {
+            stream
+        };
         let restore_stream =
             transform_codex_responses_xai_sanitize::create_xai_native_responses_sse_stream(
-                response.bytes_stream(),
+                stream,
                 restore_map,
             );
         let usage_collector =
@@ -1769,7 +1821,11 @@ async fn handle_codex_chat_to_responses_transform(
     if is_stream || response.is_sse() {
         let stream = response.bytes_stream();
         let sse_stream = create_responses_sse_stream_from_chat_with_context(stream, tool_context);
-        let sse_stream = record_responses_sse_stream(sse_stream, state.codex_chat_history.clone());
+        let sse_stream = record_responses_sse_stream(
+            sse_stream,
+            state.codex_chat_history.clone(),
+            ctx.session_client_provided.then(|| ctx.session_id.clone()),
+        );
 
         let usage_collector = if usage_logging_enabled(state) {
             let state = state.clone();
@@ -1905,7 +1961,11 @@ async fn handle_codex_chat_to_responses_transform(
     })?;
     state
         .codex_chat_history
-        .record_response(&responses_response)
+        .record_response(
+            &responses_response,
+            ctx.session_client_provided
+                .then_some(ctx.session_id.as_str()),
+        )
         .await;
 
     // 上游非流式 Chat 省略 usage 时，chat_usage_to_responses_usage 会合成全 0 usage
@@ -2623,6 +2683,7 @@ pub async fn handle_gemini(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
+            ctx.outbound_model = err.outbound_model.take();
             log_forward_error(&state, &ctx, is_stream, &err.error).await;
             return Err(err.error);
         }
@@ -3287,6 +3348,11 @@ async fn log_forward_error(
     let provider_id = ctx.provider.id.clone();
     let app_type = ctx.app_type_str.to_string();
     let request_model = ctx.request_model.clone();
+    // 记实际发往上游的模型名（与成功行同口径），映射前就失败的回落到请求名。
+    let model = ctx
+        .outbound_model
+        .clone()
+        .unwrap_or_else(|| request_model.clone());
     let session_id = ctx.session_id.clone();
     let latency_ms = ctx.latency_ms();
     let write = tokio::task::spawn_blocking(move || {
@@ -3294,6 +3360,7 @@ async fn log_forward_error(
             request_id,
             provider_id,
             app_type,
+            model,
             request_model,
             status_code,
             error_message,
@@ -4579,6 +4646,728 @@ data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\"}}\n
     fn extract_gateway_token_returns_none_when_no_auth_header() {
         let h = axum::http::HeaderMap::new();
         assert_eq!(extract_gateway_token(&h), None);
+    }
+}
+
+#[cfg(test)]
+mod copilot_native_responses_tests {
+    use super::*;
+    use crate::{
+        database::Database,
+        mode::stack::StackTarget,
+        provider::{Provider, ProviderMeta},
+        proxy::hyper_client::ProxyResponse,
+    };
+    use std::sync::Arc;
+
+    async fn context(copilot: bool) -> (ProxyState, RequestContext) {
+        let state = ProxyState::for_test(Arc::new(Database::memory().unwrap()));
+        let mut provider = Provider::with_id(
+            "native".to_string(),
+            "Native Responses".to_string(),
+            json!({}),
+            None,
+        );
+        if copilot {
+            provider.meta = Some(ProviderMeta {
+                provider_type: Some("github_copilot".to_string()),
+                ..Default::default()
+            });
+        }
+        let ctx = RequestContext::new(
+            &state,
+            &json!({ "model": "gpt-test", "stream": true }),
+            &axum::http::HeaderMap::new(),
+            AppType::Codex,
+            "Codex",
+            "codex",
+            Some(StackTarget {
+                provider,
+                upstream_model: "gpt-test".to_string(),
+                original_model: "gpt-test".to_string(),
+            }),
+        )
+        .await
+        .unwrap();
+        (state, ctx)
+    }
+
+    fn changing_message_ids() -> String {
+        [
+            json!({ "type": "response.created", "response": { "id": "resp_1" } }),
+            json!({ "type": "response.output_item.added", "output_index": 0,
+                "item": { "type": "message", "id": "copilot_added", "role": "assistant",
+                    "phase": "commentary", "status": "in_progress", "content": [] } }),
+            json!({ "type": "response.content_part.added", "output_index": 0,
+                "content_index": 0, "item_id": "copilot_part",
+                "part": { "type": "output_text", "text": "" } }),
+            json!({ "type": "response.output_text.delta", "output_index": 0,
+                "content_index": 0, "item_id": "copilot_delta", "delta": "Hello" }),
+            json!({ "type": "response.output_text.done", "output_index": 0,
+                "content_index": 0, "item_id": "copilot_text_done", "text": "Hello" }),
+            json!({ "type": "response.content_part.done", "output_index": 0,
+                "content_index": 0, "item_id": "copilot_part_done",
+                "part": { "type": "output_text", "text": "Hello" } }),
+            json!({ "type": "response.output_item.done", "output_index": 0,
+                "item": { "type": "message", "id": "copilot_done", "role": "assistant",
+                    "phase": "commentary", "status": "completed",
+                    "content": [{ "type": "output_text", "text": "Hello" }] } }),
+            json!({ "type": "response.completed", "response": {
+                "id": "resp_1", "status": "completed", "model": "gpt-test",
+                "output": [{ "type": "message", "id": "copilot_done", "role": "assistant",
+                    "phase": "commentary", "status": "completed",
+                    "content": [{ "type": "output_text", "text": "Hello" }] }],
+                "usage": { "input_tokens": 3, "output_tokens": 1 } } }),
+        ]
+        .into_iter()
+        .map(|event| {
+            format!(
+                "event: {}\ndata: {event}\n\n",
+                event["type"].as_str().unwrap()
+            )
+        })
+        .collect()
+    }
+
+    fn upstream(body: &str) -> ProxyResponse {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("content-type", "text/event-stream".parse().unwrap());
+        headers.insert("content-length", body.len().to_string().parse().unwrap());
+        ProxyResponse::buffered(
+            StatusCode::OK,
+            headers,
+            Bytes::copy_from_slice(body.as_bytes()),
+        )
+    }
+
+    async fn body_and_events(response: axum::response::Response) -> (Bytes, Vec<Value>) {
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().get("content-length").is_none());
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let mut events = Vec::new();
+        for block in SseBlocks::new(std::str::from_utf8(&body).unwrap()) {
+            let data = block
+                .lines()
+                .filter_map(|line| strip_sse_field(line, "data"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !data.is_empty() && data.trim() != "[DONE]" {
+                events.push(serde_json::from_str(&data).unwrap());
+            }
+        }
+        (body, events)
+    }
+
+    #[tokio::test]
+    async fn copilot_messages_keep_the_original_id_until_completion() {
+        let (state, ctx) = context(true).await;
+        let response = handle_codex_late_arguments_repair(
+            upstream(&changing_message_ids()),
+            &ctx,
+            &state,
+            true,
+            None,
+        )
+        .await
+        .unwrap();
+        let (_, events) = body_and_events(response).await;
+
+        assert_eq!(events.len(), 8);
+        assert_eq!(events[1]["item"]["id"], "copilot_added");
+        assert_eq!(events[2]["item_id"], "copilot_added");
+        assert_eq!(events[3]["item_id"], "copilot_added");
+        assert_eq!(events[3]["delta"], "Hello");
+        assert_eq!(events[4]["item_id"], "copilot_added");
+        assert_eq!(events[5]["item_id"], "copilot_added");
+        assert_eq!(events[6]["item"]["id"], "copilot_added");
+        assert_eq!(events[6]["item"]["phase"], "commentary");
+        assert_eq!(events[6]["item"]["content"][0]["text"], "Hello");
+        assert_eq!(events[7]["response"]["output"][0]["id"], "copilot_added");
+        assert_eq!(events[7]["response"]["id"], "resp_1");
+        assert_eq!(events[7]["response"]["usage"]["output_tokens"], 1);
+    }
+
+    #[tokio::test]
+    async fn other_native_providers_keep_their_original_events() {
+        let (state, ctx) = context(false).await;
+        let input = changing_message_ids();
+        let response =
+            handle_codex_late_arguments_repair(upstream(&input), &ctx, &state, true, None)
+                .await
+                .unwrap();
+        let (body, _) = body_and_events(response).await;
+
+        assert_eq!(body.as_ref(), input.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn copilot_compaction_also_keeps_message_ids_stable() {
+        let (state, ctx) = context(true).await;
+        let response = handle_codex_native_compaction_response(
+            upstream(&changing_message_ids()),
+            &ctx,
+            &state,
+            None,
+        )
+        .await
+        .unwrap();
+        let (_, events) = body_and_events(response).await;
+        let message = events
+            .iter()
+            .find(|event| {
+                event["type"] == "response.output_item.done" && event["item"]["type"] == "message"
+            })
+            .unwrap();
+
+        assert_eq!(message["item"]["id"], "copilot_added");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event["type"] == "response.output_item.done"
+                    && event["item"]["type"] == "compaction")
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn interleaved_items_keep_separate_ids_without_changing_tool_call_ids() {
+        let (state, ctx) = context(true).await;
+        let input: String = [
+            json!({ "type": "response.output_item.added", "output_index": 0,
+                "item": { "type": "message", "id": "message_start", "role": "assistant", "content": [] } }),
+            json!({ "type": "response.output_item.added", "output_index": 1,
+                "item": { "type": "reasoning", "id": "reasoning_start", "summary": [] } }),
+            json!({ "type": "response.output_item.added", "output_index": 2,
+                "item": { "type": "function_call", "id": "tool_start", "call_id": "call_1",
+                    "name": "read_file", "arguments": "" } }),
+            json!({ "type": "response.output_text.delta", "output_index": 0,
+                "item_id": "message_delta", "content_index": 0, "delta": "Checking." }),
+            json!({ "type": "response.reasoning_summary_text.delta", "output_index": 1,
+                "item_id": "reasoning_delta", "summary_index": 0, "delta": "Need a file." }),
+            json!({ "type": "response.function_call_arguments.delta", "output_index": 2,
+                "item_id": "tool_delta", "delta": "{}" }),
+            json!({ "type": "response.output_item.done", "output_index": 2,
+                "item": { "type": "function_call", "id": "tool_done", "call_id": "call_1",
+                    "name": "read_file", "arguments": "{}" } }),
+            json!({ "type": "response.output_item.done", "output_index": 1,
+                "item": { "type": "reasoning", "id": "reasoning_done",
+                    "summary": [{ "type": "summary_text", "text": "Need a file." }],
+                    "encrypted_content": "upstream-signed-reasoning" } }),
+            json!({ "type": "response.output_item.done", "output_index": 0,
+                "item": { "type": "message", "id": "message_done", "role": "assistant",
+                    "content": [{ "type": "output_text", "text": "Checking." }] } }),
+            json!({ "type": "response.completed", "response": { "id": "resp_1", "output": [
+                { "type": "message", "id": "message_snapshot" },
+                { "type": "reasoning", "id": "reasoning_snapshot", "encrypted_content": "upstream-signed-reasoning" },
+                { "type": "function_call", "id": "tool_snapshot", "call_id": "call_1", "arguments": "{}" }
+            ] } }),
+        ]
+        .into_iter()
+        .map(|event| format!("data: {event}\n\n"))
+        .collect();
+        let response =
+            handle_codex_late_arguments_repair(upstream(&input), &ctx, &state, true, None)
+                .await
+                .unwrap();
+        let (_, events) = body_and_events(response).await;
+
+        assert_eq!(events.len(), 10);
+        assert_eq!(events[3]["item_id"], "message_start");
+        assert_eq!(events[4]["item_id"], "reasoning_start");
+        assert_eq!(events[5]["item_id"], "tool_start");
+        assert_eq!(events[6]["item"]["id"], "tool_start");
+        assert_eq!(events[6]["item"]["call_id"], "call_1");
+        assert_eq!(events[6]["item"]["arguments"], "{}");
+        assert_eq!(events[7]["item"]["id"], "reasoning_start");
+        assert_eq!(
+            events[7]["item"]["encrypted_content"],
+            "upstream-signed-reasoning"
+        );
+        assert_eq!(events[8]["item"]["id"], "message_start");
+        assert_eq!(events[9]["response"]["output"][0]["id"], "message_start");
+        assert_eq!(events[9]["response"]["output"][1]["id"], "reasoning_start");
+        assert_eq!(events[9]["response"]["output"][2]["id"], "tool_start");
+        assert_eq!(events[9]["response"]["output"][2]["call_id"], "call_1");
+    }
+
+    #[tokio::test]
+    async fn fragmented_utf8_and_unterminated_final_events_keep_stable_ids() {
+        let (state, ctx) = context(true).await;
+        let input = concat!(
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"start\",\"role\":\"assistant\",\"content\":[]}}\r\n\r\n",
+            "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"item_id\":\"delta\",\"delta\":\"你好\"}\r\n\r\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"done\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"你好\"}]}}"
+        );
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("content-type", "text/event-stream".parse().unwrap());
+        let chunks: Vec<_> = input
+            .as_bytes()
+            .chunks(1)
+            .map(|chunk| Ok::<_, std::io::Error>(Bytes::copy_from_slice(chunk)))
+            .collect();
+        let response = handle_codex_late_arguments_repair(
+            ProxyResponse::streamed(StatusCode::OK, headers, futures::stream::iter(chunks)),
+            &ctx,
+            &state,
+            true,
+            None,
+        )
+        .await
+        .unwrap();
+        let (_, events) = body_and_events(response).await;
+
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[1]["item_id"], "start");
+        assert_eq!(events[1]["delta"], "你好");
+        assert_eq!(events[2]["item"]["id"], "start");
+        assert_eq!(events[2]["item"]["content"][0]["text"], "你好");
+    }
+
+    #[tokio::test]
+    async fn copilot_stable_ids_and_sse_metadata_are_preserved() {
+        let (state, ctx) = context(true).await;
+        let input = concat!(
+            ": keepalive\n\n",
+            "id: upstream-event-1\nretry: 1000\nevent: response.output_item.added\n",
+            "data: { \"type\": \"response.output_item.added\", \"output_index\": 0, \"item\": { \"type\": \"message\", \"id\": \"stable\" } }\n\n",
+            "event: response.output_item.done\n",
+            "data: { \"type\": \"response.output_item.done\", \"output_index\": 0, \"item\": { \"type\": \"message\", \"id\": \"stable\" } }\n\n",
+            "data: [DONE]\n\n"
+        );
+        let response =
+            handle_codex_late_arguments_repair(upstream(input), &ctx, &state, true, None)
+                .await
+                .unwrap();
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+
+        assert_eq!(body.as_ref(), input.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn copilot_text_is_streamed_before_the_item_finishes() {
+        let (state, ctx) = context(true).await;
+        let added = "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"start\"}}\n\n";
+        let delta = "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"item_id\":\"delta\",\"delta\":\"Hello\"}\n\n";
+        let stream = futures::stream::iter([
+            Ok::<_, std::io::Error>(Bytes::from_static(added.as_bytes())),
+            Ok(Bytes::from_static(delta.as_bytes())),
+        ])
+        .chain(futures::stream::pending());
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("content-type", "text/event-stream".parse().unwrap());
+        let response = handle_codex_late_arguments_repair(
+            ProxyResponse::streamed(StatusCode::OK, headers, stream),
+            &ctx,
+            &state,
+            true,
+            None,
+        )
+        .await
+        .unwrap();
+        let mut body = response.into_body();
+
+        for expected in ["response.output_item.added", "response.output_text.delta"] {
+            let frame = tokio::time::timeout(std::time::Duration::from_secs(1), body.frame())
+                .await
+                .expect("must not wait for the completed item")
+                .unwrap()
+                .unwrap()
+                .into_data()
+                .unwrap();
+            let text = std::str::from_utf8(&frame).unwrap();
+            let data = text
+                .lines()
+                .find_map(|line| strip_sse_field(line, "data"))
+                .unwrap();
+            let event: Value = serde_json::from_str(data).unwrap();
+            assert_eq!(event["type"], expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn copilot_stream_errors_are_not_converted_to_completion() {
+        let (state, ctx) = context(true).await;
+        let added = "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"start\"}}\n\n";
+        let stream = futures::stream::iter([
+            Ok(Bytes::from_static(added.as_bytes())),
+            Err(std::io::Error::other("upstream disconnected")),
+        ]);
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("content-type", "text/event-stream".parse().unwrap());
+        let response = handle_codex_late_arguments_repair(
+            ProxyResponse::streamed(StatusCode::OK, headers, stream),
+            &ctx,
+            &state,
+            true,
+            None,
+        )
+        .await
+        .unwrap();
+        let mut body = response.into_body();
+
+        assert!(body.frame().await.unwrap().is_ok());
+        let error = body.frame().await.unwrap().unwrap_err();
+        assert!(error.to_string().contains("upstream disconnected"));
+        assert!(body.frame().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn identical_text_in_distinct_message_items_is_not_deduplicated() {
+        let (state, ctx) = context(true).await;
+        let input: String = [
+            json!({ "type": "response.output_item.added", "output_index": 0,
+                "item": { "type": "message", "id": "commentary_start", "phase": "commentary" } }),
+            json!({ "type": "response.output_text.delta", "output_index": 0,
+                "item_id": "commentary_delta", "delta": "Hello" }),
+            json!({ "type": "response.output_item.done", "output_index": 0,
+                "item": { "type": "message", "id": "commentary_done", "phase": "commentary",
+                    "content": [{ "type": "output_text", "text": "Hello" }] } }),
+            json!({ "type": "response.output_item.added", "output_index": 1,
+                "item": { "type": "message", "id": "final_start", "phase": "final_answer" } }),
+            json!({ "type": "response.output_text.delta", "output_index": 1,
+                "item_id": "final_delta", "delta": "Hello" }),
+            json!({ "type": "response.output_item.done", "output_index": 1,
+                "item": { "type": "message", "id": "final_done", "phase": "final_answer",
+                    "content": [{ "type": "output_text", "text": "Hello" }] } }),
+        ]
+        .into_iter()
+        .map(|event| format!("data: {event}\n\n"))
+        .collect();
+        let response =
+            handle_codex_late_arguments_repair(upstream(&input), &ctx, &state, true, None)
+                .await
+                .unwrap();
+        let (_, events) = body_and_events(response).await;
+
+        assert_eq!(events.len(), 6);
+        assert_eq!(events[2]["item"]["id"], "commentary_start");
+        assert_eq!(events[2]["item"]["phase"], "commentary");
+        assert_eq!(events[2]["item"]["content"][0]["text"], "Hello");
+        assert_eq!(events[5]["item"]["id"], "final_start");
+        assert_eq!(events[5]["item"]["phase"], "final_answer");
+        assert_eq!(events[5]["item"]["content"][0]["text"], "Hello");
+    }
+
+    #[tokio::test]
+    async fn changed_tool_ids_are_stabilized_before_late_arguments_are_repaired() {
+        let (state, ctx) = context(true).await;
+        let input: String = [
+            json!({ "type": "response.output_item.added", "output_index": 0,
+                "item": { "type": "function_call", "id": "tool_start", "call_id": "call_1",
+                    "name": "read_file", "arguments": "" } }),
+            json!({ "type": "response.function_call_arguments.done", "output_index": 0,
+                "item_id": "arguments_done", "arguments": "" }),
+            json!({ "type": "response.output_item.done", "output_index": 0,
+                "item": { "type": "function_call", "id": "tool_done", "call_id": "call_1",
+                    "name": "read_file", "arguments": "" } }),
+            json!({ "type": "response.function_call_arguments.delta", "output_index": 0,
+                "item_id": "arguments_delta", "delta": "{\"path\":\"README.md\"}" }),
+            json!({ "type": "response.completed", "response": { "id": "resp_1", "output": [] } }),
+        ]
+        .into_iter()
+        .map(|event| format!("data: {event}\n\n"))
+        .collect();
+        let response =
+            handle_codex_late_arguments_repair(upstream(&input), &ctx, &state, true, None)
+                .await
+                .unwrap();
+        let (_, events) = body_and_events(response).await;
+
+        assert_eq!(events.len(), 5);
+        assert_eq!(events[1]["type"], "response.function_call_arguments.delta");
+        assert_eq!(events[1]["item_id"], "tool_start");
+        assert_eq!(events[2]["type"], "response.function_call_arguments.done");
+        assert_eq!(events[2]["item_id"], "tool_start");
+        assert_eq!(events[2]["arguments"], "{\"path\":\"README.md\"}");
+        assert_eq!(events[3]["item"]["id"], "tool_start");
+        assert_eq!(events[3]["item"]["call_id"], "call_1");
+        assert_eq!(events[3]["item"]["arguments"], "{\"path\":\"README.md\"}");
+    }
+
+    #[tokio::test]
+    async fn rewritten_events_preserve_sse_metadata_and_sequence_numbers() {
+        let (state, ctx) = context(true).await;
+        let input = concat!(
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"start\"}}\n\n",
+            "id: upstream-event-2\nretry: 1000\n: heartbeat\nevent: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"sequence_number\":7,\n",
+            "data: \"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"done\"}}\n\n"
+        );
+        let response =
+            handle_codex_late_arguments_repair(upstream(input), &ctx, &state, true, None)
+                .await
+                .unwrap();
+        let (body, events) = body_and_events(response).await;
+        let text = std::str::from_utf8(&body).unwrap();
+
+        assert!(text.contains("id: upstream-event-2\nretry: 1000\n: heartbeat\n"));
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[1]["item"]["id"], "start");
+        assert_eq!(events[1]["sequence_number"], 7);
+    }
+}
+
+#[cfg(test)]
+mod copilot_grok_responses_tests {
+    use super::*;
+    use crate::{
+        database::Database,
+        mode::stack::StackTarget,
+        provider::{Provider, ProviderMeta},
+        proxy::hyper_client::ProxyResponse,
+    };
+    use std::sync::Arc;
+
+    async fn context(copilot: bool) -> (ProxyState, RequestContext) {
+        let state = ProxyState::for_test(Arc::new(Database::memory().unwrap()));
+        let mut provider = Provider::with_id(
+            "native".to_string(),
+            "Native Responses".to_string(),
+            json!({}),
+            None,
+        );
+        if copilot {
+            provider.meta = Some(ProviderMeta {
+                provider_type: Some("github_copilot".to_string()),
+                ..Default::default()
+            });
+        }
+        let ctx = RequestContext::new(
+            &state,
+            &json!({ "model": "gpt-test", "stream": true }),
+            &axum::http::HeaderMap::new(),
+            AppType::Codex,
+            "Codex",
+            "codex",
+            Some(StackTarget {
+                provider,
+                upstream_model: "gpt-test".to_string(),
+                original_model: "gpt-test".to_string(),
+            }),
+        )
+        .await
+        .unwrap();
+        (state, ctx)
+    }
+
+    fn upstream(body: &str) -> ProxyResponse {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("content-type", "text/event-stream".parse().unwrap());
+        headers.insert("content-length", body.len().to_string().parse().unwrap());
+        ProxyResponse::buffered(
+            StatusCode::OK,
+            headers,
+            Bytes::copy_from_slice(body.as_bytes()),
+        )
+    }
+
+    async fn body_and_events(response: axum::response::Response) -> (Bytes, Vec<Value>) {
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().get("content-length").is_none());
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let mut events = Vec::new();
+        for block in SseBlocks::new(std::str::from_utf8(&body).unwrap()) {
+            let data = block
+                .lines()
+                .filter_map(|line| strip_sse_field(line, "data"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !data.is_empty() && data.trim() != "[DONE]" {
+                events.push(serde_json::from_str(&data).unwrap());
+            }
+        }
+        (body, events)
+    }
+
+    #[tokio::test]
+    async fn copilot_grok_rewrite_restores_late_tool_arguments() {
+        let (state, mut ctx) = context(true).await;
+        // The client-facing route can have a different name from the resolved model.
+        ctx.outbound_model = Some("grok-4.7".to_string());
+        assert!(
+            super::super::providers::provider_needs_responses_namespace_flatten(
+                &ctx.provider,
+                ctx.outbound_model.as_deref(),
+            )
+        );
+        let restore_map = grok_namespace_restore_map();
+        let call = |id: &str, arguments: &str| {
+            json!({
+                "type": "function_call", "id": id, "call_id": "call_1",
+                "name": "diagnostic__ping", "arguments": arguments
+            })
+        };
+        let input: String = [
+            json!({"type": "response.output_item.added", "output_index": 0,
+                "item": call("start", "")}),
+            json!({"type": "response.function_call_arguments.done", "output_index": 0,
+                "item_id": "start", "arguments": ""}),
+            json!({"type": "response.output_item.done", "output_index": 0,
+                "item": call("start", "")}),
+            json!({"type": "response.function_call_arguments.delta", "output_index": 0,
+                "item_id": "start", "delta": "{\"count\":2.0,\"ratio\":0.5}"}),
+            json!({"type": "response.completed", "response": {
+                "id": "resp_1", "status": "completed", "model": "grok-4.7",
+                "output": [call("start", "{\"count\":2.0,\"ratio\":0.5}")],
+                "usage": {"input_tokens": 3, "output_tokens": 1}
+            }}),
+        ]
+        .into_iter()
+        .map(|event| format!("data: {event}\n\n"))
+        .collect();
+        let response = handle_codex_xai_native_responses_rewrite(
+            upstream(&input),
+            &ctx,
+            &state,
+            None,
+            restore_map,
+        )
+        .await
+        .unwrap();
+        let (_, events) = body_and_events(response).await;
+
+        assert_eq!(events.len(), 5);
+        assert_eq!(events[0]["item"]["name"], "ping");
+        assert_eq!(events[0]["item"]["namespace"], "diagnostic");
+        assert_eq!(events[1]["type"], "response.function_call_arguments.delta");
+        assert_eq!(events[1]["item_id"], "start");
+        assert_eq!(events[1]["delta"], "{\"count\":2.0,\"ratio\":0.5}");
+        assert_eq!(events[2]["arguments"], "{\"count\":2,\"ratio\":0.5}");
+        assert_eq!(events[2]["item_id"], "start");
+        for item in [&events[3]["item"], &events[4]["response"]["output"][0]] {
+            assert_eq!(item["id"], "start");
+            assert_eq!(item["call_id"], "call_1");
+            assert_eq!(item["name"], "ping");
+            assert_eq!(item["namespace"], "diagnostic");
+            assert_eq!(item["arguments"], "{\"count\":2,\"ratio\":0.5}");
+        }
+        assert_eq!(events[4]["response"]["usage"]["input_tokens"], 3);
+    }
+
+    #[tokio::test]
+    async fn copilot_grok_rewrite_stabilizes_item_ids_before_restoring_names() {
+        let (state, mut ctx) = context(true).await;
+        ctx.outbound_model = Some("grok-4.7".to_string());
+        let call = |id: &str, arguments: &str| {
+            json!({
+                "type": "function_call", "id": id, "call_id": "call_1",
+                "name": "diagnostic__ping", "arguments": arguments
+            })
+        };
+        // Copilot reissues the item ID on every lifecycle event.
+        let input: String = [
+            json!({"type": "response.output_item.added", "output_index": 0,
+                "item": call("fc_a", "")}),
+            json!({"type": "response.function_call_arguments.delta", "output_index": 0,
+                "item_id": "fc_b", "delta": "{\"count\":2.0}"}),
+            json!({"type": "response.function_call_arguments.done", "output_index": 0,
+                "item_id": "fc_c", "arguments": "{\"count\":2.0}"}),
+            json!({"type": "response.output_item.done", "output_index": 0,
+                "item": call("fc_d", "{\"count\":2.0}")}),
+            json!({"type": "response.completed", "response": {
+                "id": "resp_1", "status": "completed", "model": "grok-4.7",
+                "output": [call("fc_e", "{\"count\":2.0}")],
+                "usage": {"input_tokens": 3, "output_tokens": 1}
+            }}),
+        ]
+        .into_iter()
+        .map(|event| format!("data: {event}\n\n"))
+        .collect();
+        let response = handle_codex_xai_native_responses_rewrite(
+            upstream(&input),
+            &ctx,
+            &state,
+            None,
+            grok_namespace_restore_map(),
+        )
+        .await
+        .unwrap();
+        let (_, events) = body_and_events(response).await;
+
+        assert_eq!(events.len(), 5);
+        assert_eq!(events[1]["item_id"], "fc_a");
+        assert_eq!(events[2]["item_id"], "fc_a");
+        assert_eq!(events[2]["arguments"], "{\"count\":2}");
+        for item in [
+            &events[0]["item"],
+            &events[3]["item"],
+            &events[4]["response"]["output"][0],
+        ] {
+            assert_eq!(item["id"], "fc_a");
+            assert_eq!(item["name"], "ping");
+            assert_eq!(item["namespace"], "diagnostic");
+        }
+    }
+
+    fn grok_namespace_restore_map(
+    ) -> std::collections::HashMap<String, transform_codex_responses_namespace::NamespacedName>
+    {
+        transform_codex_responses_namespace::namespace_restore_map(&json!({
+            "tools": [{"type": "namespace", "name": "diagnostic", "tools": [
+                {"type": "function", "name": "ping",
+                 "parameters": {"type": "object", "properties": {"count": {"type": "integer"}}}}
+            ]}]
+        }))
+    }
+
+    #[tokio::test]
+    async fn copilot_grok_nonstream_restores_names_and_preserves_usage() {
+        let (state, mut ctx) = context(true).await;
+        ctx.outbound_model = Some("grok-4.7".to_string());
+        let input = json!({
+            "model": "grok-4.7", "status": "completed",
+            "output": [{"type": "function_call", "id": "upstream",
+                "call_id": "call_1", "name": "diagnostic__ping", "arguments": "{\"count\":2.0}"}],
+            "usage": {"input_tokens": 3, "output_tokens": 1}
+        });
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("content-type", "application/json".parse().unwrap());
+        headers.insert("content-length", input.to_string().len().into());
+        headers.insert("x-request-id", "upstream-request".parse().unwrap());
+        let response = handle_codex_xai_native_responses_rewrite(
+            ProxyResponse::buffered(StatusCode::OK, headers, Bytes::from(input.to_string())),
+            &ctx,
+            &state,
+            None,
+            grok_namespace_restore_map(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["x-request-id"], "upstream-request");
+        assert!(response.headers().get("content-length").is_none());
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let output: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(output["output"][0]["name"], "ping");
+        assert_eq!(output["output"][0]["namespace"], "diagnostic");
+        assert_eq!(output["output"][0]["arguments"], "{\"count\":2}");
+        assert_eq!(output["output"][0]["call_id"], "call_1");
+        assert_eq!(output["usage"], input["usage"]);
+    }
+
+    #[tokio::test]
+    async fn copilot_grok_rewrite_passes_error_bodies_through() {
+        let (state, ctx) = context(true).await;
+        let input = Bytes::from_static(br#"{"error":{"message":"upstream rejected request"}}"#);
+        let response = handle_codex_xai_native_responses_rewrite(
+            ProxyResponse::buffered(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                axum::http::HeaderMap::new(),
+                input.clone(),
+            ),
+            &ctx,
+            &state,
+            None,
+            grok_namespace_restore_map(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            response.into_body().collect().await.unwrap().to_bytes(),
+            input
+        );
     }
 }
 

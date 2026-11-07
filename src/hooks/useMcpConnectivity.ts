@@ -77,7 +77,7 @@ export function useMcpConnectivity(servers: McpServersMap | undefined) {
         targets,
         ({ serverId, status }) => {
           if (disposed || !pending.delete(serverId)) return;
-          settle(serverId, status);
+          settle(serverId, status === "failed" ? "disconnected" : status);
           if (pending.size === 0) finish();
         },
       );

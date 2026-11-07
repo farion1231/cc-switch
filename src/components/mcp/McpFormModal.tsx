@@ -535,6 +535,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                 value={row.key}
                 autoComplete="off"
                 spellCheck={false}
+                autoCorrect="off"
+                autoCapitalize="off"
                 onChange={(event) =>
                   updateRows(field, (list) =>
                     list.map((item, i) =>
@@ -554,6 +556,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                 value={row.value}
                 autoComplete="off"
                 spellCheck={false}
+                autoCorrect="off"
+                autoCapitalize="off"
                 onChange={(event) =>
                   updateRows(field, (list) =>
                     list.map((item, i) =>
@@ -685,6 +689,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                   aria-invalid={paste?.ok === false}
                   aria-describedby={paste ? "mcp-paste-hint" : undefined}
                   spellCheck={false}
+                  autoCorrect="off"
+                  autoCapitalize="off"
                   rows={3}
                   className={cn(
                     MONO_FIELD_CLASS,
@@ -868,6 +874,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                   }
                   autoComplete="off"
                   spellCheck={false}
+                  autoCorrect="off"
+                  autoCapitalize="off"
                   onChange={(event) => setName(event.target.value)}
                 />
                 {visibleErrors.name && (
@@ -967,6 +975,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                             }
                             autoComplete="off"
                             spellCheck={false}
+                            autoCorrect="off"
+                            autoCapitalize="off"
                             onChange={(event) =>
                               patchConn({ command: event.target.value })
                             }
@@ -1000,6 +1010,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                                 value={arg}
                                 autoComplete="off"
                                 spellCheck={false}
+                                autoCorrect="off"
+                                autoCapitalize="off"
                                 onChange={(event) =>
                                   patchConn({
                                     args: conn.args.map((item, i) =>
@@ -1061,6 +1073,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                             placeholder={t("mcpPage.drawer.cwdPlaceholder")}
                             autoComplete="off"
                             spellCheck={false}
+                            autoCorrect="off"
+                            autoCapitalize="off"
                             onChange={(event) =>
                               patchConn({ cwd: event.target.value })
                             }
@@ -1090,6 +1104,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                             }
                             autoComplete="off"
                             spellCheck={false}
+                            autoCorrect="off"
+                            autoCapitalize="off"
                             onChange={(event) =>
                               patchConn({ url: event.target.value })
                             }
@@ -1164,6 +1180,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                       aria-invalid={jsonError !== null}
                       aria-describedby={jsonError ? "mcp-json-hint" : undefined}
                       spellCheck={false}
+                      autoCorrect="off"
+                      autoCapitalize="off"
                       wrap="off"
                       className={cn(
                         MONO_FIELD_CLASS,
@@ -1278,6 +1296,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                       className={FIELD_CLASS}
                       value={meta.name}
                       autoComplete="off"
+                      autoCorrect="off"
+                      autoCapitalize="off"
                       onChange={(event) =>
                         setMeta((prev) => ({
                           ...prev,
@@ -1301,6 +1321,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                           description: event.target.value,
                         }))
                       }
+                      autoCorrect="off"
+                      autoCapitalize="off"
                     />
                   </div>
                   <div className="flex flex-col gap-1.5">
@@ -1314,6 +1336,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                       value={meta.tags}
                       placeholder={t("mcpPage.drawer.tagsPlaceholder")}
                       autoComplete="off"
+                      autoCorrect="off"
+                      autoCapitalize="off"
                       onChange={(event) =>
                         setMeta((prev) => ({
                           ...prev,
@@ -1335,6 +1359,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                       placeholder="https://"
                       autoComplete="off"
                       spellCheck={false}
+                      autoCorrect="off"
+                      autoCapitalize="off"
                       onChange={(event) =>
                         setMeta((prev) => ({
                           ...prev,
@@ -1356,6 +1382,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                       placeholder="https://"
                       autoComplete="off"
                       spellCheck={false}
+                      autoCorrect="off"
+                      autoCapitalize="off"
                       onChange={(event) =>
                         setMeta((prev) => ({
                           ...prev,

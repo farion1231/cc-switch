@@ -1,4 +1,4 @@
-use super::*;
+use super::{ConnectivityStatus::*, *};
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
@@ -29,6 +29,7 @@ struct MockServer {
     fail: bool,
     hang: bool,
     foreign_endpoint: Option<String>,
+    unauthorized: bool,
 }
 
 fn initialize_result(request: &Value) -> Value {
@@ -45,6 +46,9 @@ async fn http_message(
 ) -> Response {
     assert_eq!(headers["x-mcp-test"], "configured-header");
     state.started.fetch_add(1, Ordering::SeqCst);
+    if state.unauthorized {
+        return unauthorized();
+    }
     if state.hang {
         return std::future::pending().await;
     }
@@ -65,8 +69,11 @@ async fn http_message(
     StatusCode::ACCEPTED.into_response()
 }
 
-async fn sse_stream(State(state): State<MockServer>, headers: HeaderMap) -> impl IntoResponse {
+async fn sse_stream(State(state): State<MockServer>, headers: HeaderMap) -> Response {
     assert_eq!(headers["x-mcp-test"], "configured-header");
+    if state.unauthorized {
+        return unauthorized();
+    }
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     tx.send(
         Event::default()
@@ -78,6 +85,20 @@ async fn sse_stream(State(state): State<MockServer>, headers: HeaderMap) -> impl
     Sse::new(async_stream::stream! {
         while let Some(event) = rx.recv().await { yield Ok::<_, Infallible>(event); }
     })
+    .into_response()
+}
+
+/// What OAuth-protected remote MCP servers (Notion, Sentry, ...) answer an
+/// anonymous request with.
+fn unauthorized() -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        [(
+            axum::http::header::WWW_AUTHENTICATE,
+            r#"Bearer resource_metadata="https://example.test/.well-known/oauth-protected-resource""#,
+        )],
+    )
+        .into_response()
 }
 
 async fn sse_message(
@@ -122,10 +143,6 @@ fn http_spec(url: &str, transport: &str) -> Value {
     json!({"type": transport, "url": url, "headers": {"x-mcp-test": "configured-header"}})
 }
 
-async fn connected(value: Value, timeout: Duration) -> bool {
-    check_server(value, timeout).await == ConnectivityStatus::Connected
-}
-
 /// An OAuth-protected remote server as an anonymous client sees it (#9190).
 async fn mock_unauthorized(www_authenticate: bool) -> (String, tokio::task::JoinHandle<()>) {
     let reply = move || async move {
@@ -152,22 +169,22 @@ async fn mock_unauthorized(www_authenticate: bool) -> (String, tokio::task::Join
 }
 
 #[tokio::test]
-async fn unauthorized_servers_are_reported_as_auth_required() {
-    for www_authenticate in [true, false] {
-        let (url, task) = mock_unauthorized(www_authenticate).await;
-        for (path, transport) in [("mcp", "http"), ("sse", "sse")] {
-            assert_eq!(
-                check_server(
-                    http_spec(&format!("{url}/{path}"), transport),
-                    CHECK_TIMEOUT
-                )
-                .await,
-                ConnectivityStatus::AuthRequired,
-                "{transport}, www-authenticate: {www_authenticate}"
-            );
-        }
-        task.abort();
+async fn unauthorized_without_www_authenticate_is_still_auth_required() {
+    // `unauthorized_endpoints_report_auth_required_not_failure` covers the
+    // challenge-carrying 401; some servers send a bare 401.
+    let (url, task) = mock_unauthorized(false).await;
+    for (path, transport) in [("mcp", "http"), ("sse", "sse")] {
+        assert_eq!(
+            check_server(
+                http_spec(&format!("{url}/{path}"), transport),
+                CHECK_TIMEOUT
+            )
+            .await,
+            AuthRequired,
+            "{transport}"
+        );
     }
+    task.abort();
 }
 
 #[tokio::test]
@@ -184,7 +201,7 @@ async fn unauthorized_with_configured_credentials_is_a_failure() {
             });
             assert_eq!(
                 check_server(spec, CHECK_TIMEOUT).await,
-                ConnectivityStatus::Disconnected,
+                Failed,
                 "{transport}, {header}"
             );
         }
@@ -198,7 +215,7 @@ async fn url_only_spec_labelled_stdio_is_probed_over_http_like_the_projections()
     let (url, task) = mock_http(state).await;
     let spec = json!({"type": "stdio", "url": format!("{url}/mcp"),
         "headers": {"x-mcp-test": "configured-header"}});
-    assert!(connected(spec, CHECK_TIMEOUT).await);
+    assert_eq!(check_server(spec, CHECK_TIMEOUT).await, Connected);
     task.abort();
 }
 
@@ -212,7 +229,7 @@ async fn http_json_and_sse_responses_require_a_real_mcp_handshake() {
         let (url, task) = mock_http(state.clone()).await;
         let mut spec = http_spec(&format!("{url}/mcp"), "http");
         spec.as_object_mut().unwrap().remove("type"); // URL-only configs are HTTP.
-        assert!(connected(spec, CHECK_TIMEOUT).await);
+        assert_eq!(check_server(spec, CHECK_TIMEOUT).await, Connected);
         let messages = state.messages.lock().unwrap();
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0]["method"], "initialize");
@@ -225,7 +242,10 @@ async fn http_json_and_sse_responses_require_a_real_mcp_handshake() {
 async fn legacy_sse_uses_configured_headers_and_closes_after_initialize() {
     let state = MockServer::default();
     let (url, task) = mock_http(state.clone()).await;
-    assert!(connected(http_spec(&format!("{url}/sse"), "sse"), CHECK_TIMEOUT).await);
+    assert_eq!(
+        check_server(http_spec(&format!("{url}/sse"), "sse"), CHECK_TIMEOUT).await,
+        Connected
+    );
     assert_eq!(state.messages.lock().unwrap().len(), 2);
     task.abort();
 }
@@ -239,9 +259,33 @@ async fn legacy_sse_does_not_forward_headers_to_a_foreign_endpoint() {
         ..Default::default()
     };
     let (url, task) = mock_http(state).await;
-    assert!(!connected(http_spec(&format!("{url}/sse"), "sse"), CHECK_TIMEOUT).await);
+    assert_eq!(
+        check_server(http_spec(&format!("{url}/sse"), "sse"), CHECK_TIMEOUT).await,
+        Failed
+    );
     assert!(foreign.messages.lock().unwrap().is_empty());
     foreign_task.abort();
+    task.abort();
+}
+
+#[tokio::test]
+async fn unauthorized_endpoints_report_auth_required_not_failure() {
+    let state = MockServer {
+        unauthorized: true,
+        ..Default::default()
+    };
+    let (url, task) = mock_http(state.clone()).await;
+    for (path, transport) in [("mcp", "http"), ("sse", "sse")] {
+        assert_eq!(
+            check_server(
+                http_spec(&format!("{url}/{path}"), transport),
+                CHECK_TIMEOUT
+            )
+            .await,
+            AuthRequired
+        );
+    }
+    assert!(state.messages.lock().unwrap().is_empty());
     task.abort();
 }
 
@@ -254,12 +298,13 @@ async fn http_success_without_mcp_and_timeouts_are_disconnected() {
             ..Default::default()
         };
         let (url, task) = mock_http(state).await;
-        assert!(
-            !connected(
+        assert_eq!(
+            check_server(
                 http_spec(&format!("{url}/mcp"), "http"),
                 Duration::from_millis(100)
             )
-            .await
+            .await,
+            Failed
         );
         task.abort();
     }
@@ -268,7 +313,7 @@ async fn http_success_without_mcp_and_timeouts_are_disconnected() {
         json!({"type":"unsupported"}),
         json!({"command":"cc-switch-nonexistent-mcp-test-command"}),
     ] {
-        assert!(!connected(value, CHECK_TIMEOUT).await);
+        assert_eq!(check_server(value, CHECK_TIMEOUT).await, Failed);
     }
 }
 
@@ -375,7 +420,10 @@ async fn assert_process_released_port(marker: &Path) {
 async fn stdio_honors_args_env_cwd_and_releases_the_process() {
     let dir = tempfile::tempdir().unwrap();
     let marker = dir.path().join("stdio");
-    assert!(connected(stdio_spec(&marker, false), CHECK_TIMEOUT).await);
+    assert_eq!(
+        check_server(stdio_spec(&marker, false), CHECK_TIMEOUT).await,
+        Connected
+    );
     // A probe may terminate the process immediately after flushing initialized;
     // the HTTP/SSE tests separately assert receipt of that notification.
     assert_process_released_port(&marker).await;
@@ -389,16 +437,19 @@ async fn batches_allow_stdio_cold_starts_longer_than_ten_seconds() {
     let marker = dir.path().join("slow-start");
     let mut spec = stdio_spec(&marker, false);
     spec["env"]["MCP_TEST_STARTUP_DELAY_MS"] = json!("11000");
-    // Exercise the shell launcher used by Windows MCP presets as well.
+    // Exercise the shell launcher used by Windows MCP presets as well. cmd.exe
+    // cannot use a UNC working directory, so skip it when TEMP is on a WSL share.
     #[cfg(windows)]
     {
-        spec["command"] = json!("cmd");
-        spec["args"] = json!([
-            "/d",
-            "/c",
-            STDIO_FIXTURE.1,
-            "argument with spaces & symbols"
-        ]);
+        if !crate::config::is_wsl_path(dir.path()) {
+            spec["command"] = json!("cmd");
+            spec["args"] = json!([
+                "/d",
+                "/c",
+                STDIO_FIXTURE.1,
+                "argument with spaces & symbols"
+            ]);
+        }
     }
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     start_checks(vec![server(0, spec, true)], move |result| {
@@ -408,8 +459,8 @@ async fn batches_allow_stdio_cold_starts_longer_than_ten_seconds() {
         .await
         .unwrap()
         .unwrap();
-    assert!(
-        result.status == ConnectivityStatus::Connected,
+    assert_eq!(
+        result.status, Connected,
         "a healthy cold start must not fail after ten seconds"
     );
     assert_process_released_port(&marker).await;
@@ -428,14 +479,14 @@ async fn cancellation_and_timeout_release_stdio_descendants() {
             wait_until(|| marker.with_extension("child").exists()).await;
             cancel_checks(&batch);
         } else {
-            let check = tokio::spawn(connected(spec, CHECK_TIMEOUT));
+            let check = tokio::spawn(check_server(spec, CHECK_TIMEOUT));
             wait_until(|| marker.with_extension("child").exists()).await;
             assert!(!check.is_finished(), "the fixture must wait for initialize");
             // Resolve the login shell PATH and start both processes before
             // expiring the probe, regardless of the CI runner's startup speed.
             tokio::time::pause();
             tokio::time::advance(CHECK_TIMEOUT).await;
-            assert!(!check.await.unwrap());
+            assert_eq!(check.await.unwrap(), Failed);
             tokio::time::resume();
         }
         assert_process_released_port(&marker).await;

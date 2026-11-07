@@ -89,13 +89,13 @@ describe("page-local MCP connectivity", () => {
       ["example"],
       expect.any(Function),
     );
-    act(() => delivery()({ serverId: "example", status: "disconnected" }));
+    act(() => delivery()({ serverId: "example", status: "failed" }));
     expect(result.current.states.example).toBe("disconnected");
   });
 
-  it("reports servers that require sign-in separately from failures", () => {
+  it("keeps a sign-in requirement apart from a failed connection", () => {
     const { result } = renderHook(() => useMcpConnectivity(servers()));
-    act(() => result.current.checkServer("example"));
+    act(() => result.current.checkAll());
     act(() => delivery()({ serverId: "example", status: "authRequired" }));
     expect(result.current.states.example).toBe("authRequired");
     expect(result.current.checking).toBe(false);
@@ -131,7 +131,7 @@ describe("page-local MCP connectivity", () => {
     );
     act(() => delivery(0)({ serverId: "example", status: "connected" }));
     expect(result.current.states.example).toBe("checking");
-    act(() => delivery(1)({ serverId: "example", status: "disconnected" }));
+    act(() => delivery(1)({ serverId: "example", status: "failed" }));
     expect(result.current.states.example).toBe("disconnected");
   });
 
@@ -156,7 +156,7 @@ describe("page-local MCP connectivity", () => {
     act(() => result.current.checkServer("example"));
     expect(mcpApi.startConnectivityChecks).toHaveBeenCalledTimes(2);
     act(() => delivery(1)({ serverId: "example", status: "connected" }));
-    act(() => delivery(0)({ serverId: "example", status: "disconnected" }));
+    act(() => delivery(0)({ serverId: "example", status: "failed" }));
     expect(result.current.states.example).toBe("connected");
   });
 

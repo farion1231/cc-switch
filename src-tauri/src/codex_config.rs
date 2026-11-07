@@ -2183,7 +2183,60 @@ fn codex_model_catalog_from_settings(
     if let Some(model) = codex_card_auto_review_model(settings) {
         apply_codex_auto_review_model(&mut catalog, model);
     }
+    if codex_card_keeps_official_speed_tiers(settings) {
+        apply_codex_official_speed_tiers(&mut catalog, config_text, profile);
+    }
     Ok(Some(catalog))
+}
+
+/// 卡上的「保留官方 Fast 档」（`modelCatalog.officialSpeedTiers`）。和自动审批模型一样只在
+/// 直连、路由下生效，聚合下不看。
+fn codex_card_keeps_official_speed_tiers(settings: &Value) -> bool {
+    settings
+        .get("modelCatalog")
+        .and_then(|catalog| catalog.get("officialSpeedTiers"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+/// 把官方的速度档还给镜像官方的 GPT 行（[`codex_official_model_entry`] 默认清空）。
+///
+/// Codex 只在目录行声明了这一档时才发 `service_tier`：没声明时 `config.toml` 里的
+/// `service_tier = "fast"` 会被略过并打一条警告，声明了就照发 `"priority"`（0.166 实测）。
+/// 所以只有后面接官方账号的中转（如 CPA）才该打开，而且打开后之前在官方卡下选过的 Fast
+/// 会立刻在这家生效。只认原生 Responses：Chat 转换会把这个字段原样转给不认识它的上游。
+fn apply_codex_official_speed_tiers(
+    catalog: &mut Value,
+    config_text: &str,
+    profile: CodexCatalogToolProfile,
+) {
+    if profile != CodexCatalogToolProfile::NativeResponses
+        || codex_official_vendor_catalog_models(config_text, profile).is_some()
+    {
+        return;
+    }
+    let Some(entries) = catalog.get_mut("models").and_then(Value::as_array_mut) else {
+        return;
+    };
+    let official = codex_openai_official_models();
+    for entry in entries.iter_mut() {
+        let Some(slug) = entry.get("slug").and_then(Value::as_str) else {
+            continue;
+        };
+        // 生成时按同一规则找官方条目：找得到的行就是镜像出来的那些。
+        let Some(found) = find_codex_official_model(slug, &official) else {
+            continue;
+        };
+        let tiers =
+            ["service_tiers", "additional_speed_tiers"].map(|key| (key, found.get(key).cloned()));
+        if let Some(obj) = entry.as_object_mut() {
+            for (key, value) in tiers {
+                if let Some(value) = value {
+                    obj.insert(key.to_string(), value);
+                }
+            }
+        }
+    }
 }
 
 /// 卡上选的自动审批模型（`modelCatalog.autoReviewModel`），空串当作没选。只在直连、路由
@@ -2839,8 +2892,7 @@ pub(crate) fn resolve_cc_switch_catalog_path(
     // 注意（有意的行为变更）：Windows 上 `/…` 形式的旧 WSL 风格 Linux 路径也会
     // 被视为绝对路径，从而在下方的包含性校验中失败——此前这类路径会因无法匹配
     // 生成文件名而回退为按文件名解析、碰巧能工作。可接受：下一次切换供应商时
-    // 写入侧会重新落一个裸文件名，配置自愈（见
-    // `set_catalog_json_none_removes_cc_switch_owned_by_filename` 的场景注释）。
+    // 写入侧会重写指针（原生目录写绝对路径、WSL 形态目录写裸文件名），配置自愈。
     let is_unix_absolute = catalog_path_str.starts_with('/');
     let resolved = if referenced_path.is_absolute() || is_unix_absolute {
         referenced_path.to_path_buf()
@@ -2902,6 +2954,8 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
         extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
 
     let mut official: Option<Vec<Value>> = None;
+    // 镜像行默认清空速度档，带着就是卡上开了「保留官方 Fast 档」。
+    let mut official_speed_tiers = false;
     let mut entries = Vec::with_capacity(models.len());
     for entry in models {
         let Some(model) = entry
@@ -2942,6 +2996,10 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
                 {
                     restored["contextWindow"] = json!(window);
                 }
+                official_speed_tiers |= entry
+                    .get("additional_speed_tiers")
+                    .and_then(Value::as_array)
+                    .is_some_and(|tiers| !tiers.is_empty());
                 entries.push(restored);
                 continue;
             }
@@ -3018,6 +3076,9 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
     let mut simplified = json!({ "models": entries });
     if let Some(model) = auto_review {
         simplified["autoReviewModel"] = json!(model);
+    }
+    if official_speed_tiers {
+        simplified["officialSpeedTiers"] = json!(true);
     }
     Some(simplified)
 }
@@ -5187,6 +5248,61 @@ wire_api = "responses"
             .as_array()
             .unwrap()
             .clone()
+    }
+
+    #[test]
+    fn card_can_keep_official_speed_tiers_on_native_gpt_rows() {
+        let catalog = |keep: bool, profile| {
+            let settings = json!({ "modelCatalog": {
+                "models": [{ "model": "gpt-6-sol" }, { "model": "glm-5" }],
+                "officialSpeedTiers": keep
+            }});
+            with_official_models(official_gpt_rows(), || {
+                codex_model_catalog_from_settings(&settings, "", profile)
+                    .unwrap()
+                    .unwrap()
+            })
+        };
+        let tiers = |catalog: &Value, row: usize| {
+            (
+                catalog["models"][row]["additional_speed_tiers"].clone(),
+                catalog["models"][row]["service_tiers"].clone(),
+            )
+        };
+        let official = (
+            json!(["fast"]),
+            json!([{ "id": "priority", "name": "Fast" }]),
+        );
+        let cleared = (json!([]), json!([]));
+
+        let kept = catalog(true, CodexCatalogToolProfile::NativeResponses);
+        assert_eq!(tiers(&kept, 0), official);
+        // 模板生成的非 GPT 行没有官方档可还。
+        assert_eq!(tiers(&kept, 1), cleared);
+        // 默认关；Chat 转换会把 service_tier 转给不认它的上游，开了也不还。
+        assert_eq!(
+            tiers(&catalog(false, CodexCatalogToolProfile::NativeResponses), 0),
+            cleared
+        );
+        assert_eq!(
+            tiers(&catalog(true, CodexCatalogToolProfile::ProxyChat), 0),
+            cleared
+        );
+
+        // 反向解析把开关还原到卡上，镜像行照旧只还原模型名。
+        let restored = |catalog: &Value| {
+            with_official_models(official_gpt_rows(), || {
+                build_simplified_catalog_from_texts("", &catalog.to_string()).expect("entries")
+            })
+        };
+        let simplified = restored(&kept);
+        assert_eq!(simplified["officialSpeedTiers"], true);
+        assert_eq!(simplified["models"][0], json!({ "model": "gpt-6-sol" }));
+        assert!(
+            restored(&catalog(false, CodexCatalogToolProfile::NativeResponses))
+                .get("officialSpeedTiers")
+                .is_none()
+        );
     }
 
     #[test]
