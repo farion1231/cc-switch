@@ -3279,12 +3279,11 @@ impl SkillService {
                     if !skill.apps.is_enabled_for(app) {
                         // Import may have selected another app's version of this
                         // skill. Preserve unrelated or edited copies on reconcile.
+                        // The skill is off for this app, so a same-name folder the
+                        // user owns is expected here: log it rather than report a
+                        // failure that every import and cloud sync would repeat.
                         if let Err(error) = Self::remove_from_app(&dir_name, app) {
-                            log::warn!("保留未验证的 Skill {}: {error:#}", path.display());
-                            failed.push(SkillSyncFailure {
-                                directory: dir_name,
-                                error: format!("{error:#}"),
-                            });
+                            log::info!("保留未验证的 Skill {}: {error:#}", path.display());
                         }
                     }
                     continue;
@@ -6263,9 +6262,25 @@ mod tests {
             .join("shared");
         write_skill(&local, "Codex original");
 
+        // Not enabled for Codex: the user's folder is kept, and that is not a
+        // failure worth repeating on every import, cloud sync or resync.
+        SkillService::sync_to_app(&db, &AppType::Codex).unwrap();
+        let codex = SkillService::resync_all_apps(&db)
+            .into_iter()
+            .find(|outcome| outcome.app == AppType::Codex.as_str())
+            .unwrap();
+        assert!(codex.ok, "{codex:?}");
+
+        assert!(fs::read_to_string(local.join("SKILL.md"))
+            .unwrap()
+            .contains("Codex original"));
+
+        // Once the skill is enabled for Codex, the conflict is reported.
+        let mut enabled = skill.clone();
+        enabled.apps = SkillApps::only(&AppType::Codex);
+        db.save_skill(&enabled).unwrap();
         let error = SkillService::sync_to_app(&db, &AppType::Codex).unwrap_err();
         assert!(error.to_string().contains("shared"));
-
         assert!(fs::read_to_string(local.join("SKILL.md"))
             .unwrap()
             .contains("Codex original"));
