@@ -28,6 +28,8 @@ import {
 import { usageKeys } from "@/lib/query/usage";
 import { routeSwitchNotification } from "@/utils/routeSwitchNotification";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { liveagentApi } from "@/lib/api/liveagent";
+import { enabledLiveAgentModels } from "@/lib/liveagentProvider";
 import { openclawKeys } from "@/hooks/useOpenClaw";
 import { supportsOfficialProxyTakeover } from "@/utils/providerCapabilities";
 import { getRoutingReason } from "@/utils/routingReason";
@@ -255,6 +257,9 @@ export function useProviderActions(
           if (activeApp === "codex") {
             messageKey = "notifications.codexRestartRequired";
             defaultMessage = "切换成功，请重启客户端以生效";
+          } else if (activeApp === "liveagent") {
+            messageKey = "liveagent.restartRequired";
+            defaultMessage = "配置已保存，重启 LiveAgent 后生效";
           } else if (activeApp === "gemini") {
             messageKey = "notifications.geminiRestartRequired";
             defaultMessage = "切换成功，请重启 Gemini CLI 以生效";
@@ -396,6 +401,35 @@ export function useProviderActions(
     async (provider: Provider, modelId?: string) => {
       if (activeApp === "opencode") {
         await setOpenCodeDefaultModel(provider, modelId);
+        return;
+      }
+      if (activeApp === "liveagent") {
+        const models = enabledLiveAgentModels(provider.settingsConfig);
+        const selected = modelId ?? models[0]?.id;
+        if (!selected || !models.some((model) => model.id === selected)) {
+          toast.error(
+            t(
+              models.length === 0
+                ? "notifications.openclawNoModels"
+                : "notifications.openclawModelNotFound",
+            ),
+          );
+          return;
+        }
+        try {
+          await liveagentApi.setDefaultModel(provider.id, selected);
+          await queryClient.invalidateQueries({
+            queryKey: ["liveagentSettings"],
+          });
+          toast.success(t("notifications.openclawDefaultModelSet"), {
+            closeButton: true,
+          });
+        } catch (error) {
+          toast.error(
+            extractErrorMessage(error) ||
+              t("notifications.openclawDefaultModelSetFailed"),
+          );
+        }
         return;
       }
       const config = provider.settingsConfig as OpenClawProviderConfig;

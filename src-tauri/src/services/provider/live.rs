@@ -36,6 +36,9 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Kimi => {
             crate::kimi_config::get_providers().map(|providers| providers.contains_key(provider_id))
         }
+        AppType::LiveAgent => {
+            crate::liveagent_config::get_providers().map(|p| p.contains_key(provider_id))
+        }
         AppType::Mcode => crate::mcode_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Omp => Ok(crate::omp_config::get_providers()?.contains_key(provider_id)),
@@ -307,6 +310,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
+        | AppType::LiveAgent
         | AppType::Mcode
         | AppType::Kimi
         | AppType::Dsh
@@ -387,6 +391,7 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
+        | AppType::LiveAgent
         | AppType::Mcode
         | AppType::Kimi
         | AppType::Dsh
@@ -713,6 +718,22 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         AppType::Kimi => {
             crate::kimi_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
+        AppType::LiveAgent => {
+            crate::liveagent_config::validate_provider(&provider.id, &provider.settings_config)?;
+            crate::liveagent_config::update_and_commit(
+                |doc| {
+                    crate::liveagent_config::check_routes(
+                        doc,
+                        &provider.id,
+                        Some(&provider.settings_config),
+                    )?;
+                    crate::liveagent_config::provider_map(doc)?
+                        .insert(provider.id.clone(), provider.settings_config.clone());
+                    Ok(())
+                },
+                || Ok(()),
+            )?;
+        }
         AppType::Mcode => {
             crate::mcode_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
@@ -892,7 +913,12 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     for app_type in AppType::all() {
         if matches!(
             app_type,
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp
+            AppType::Pi
+                | AppType::Mcode
+                | AppType::Kimi
+                | AppType::Dsh
+                | AppType::Omp
+                | AppType::LiveAgent
         ) {
             continue;
         }
@@ -1053,6 +1079,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         AppType::Dsh => {
             Ok(json!(crate::dsh_config::get_providers()?))
         }
+        AppType::LiveAgent => crate::liveagent_config::read(),
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
         )),
@@ -1181,7 +1208,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         | AppType::Mcode
         | AppType::Kimi
         | AppType::Dsh
-        | AppType::Omp => {
+        | AppType::Omp
+        | AppType::LiveAgent => {
             unreachable!("additive mode apps are handled by early return")
         }
     };

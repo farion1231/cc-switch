@@ -1410,6 +1410,7 @@
     "selectSessionLabel": "Select {{title}}",
     "agyDeleteHint": "Delete this session in Antigravity to also remove its runtime state",
     "mcodeDeleteHint": "Delete it in MiniMax Code",
+    "liveagentDeleteHint": "Delete this session in LiveAgent to also remove its runtime state",
     "groupMeta": "{{count}} sessions · {{time}}",
     "bucketToday": "Today",
     "bucketYesterday": "Yesterday",
@@ -4309,6 +4310,7 @@
     "columnVisible": "Show",
     "visibleHelp": "When off, the app no longer appears in the sidebar, the tray menu, the MCP / Skills app columns, or the app pickers on Prompts and Sessions. It is only hidden: its providers, MCP servers and other settings stay, and its own config files are left untouched.",
     "desktopHelp": "Claude Desktop is a desktop app and can't be installed or upgraded here; CC Switch connects to it through its config file.",
+    "liveagentHelp": "LiveAgent is a desktop app and can't be installed or upgraded here. CC Switch manages its providers, MCP servers and Skills through its config.json.",
     "desktopUnsupported": "Not supported on this system",
     "desktopConnected": "Connected",
     "desktopNotConnected": "Not connected",
@@ -5212,5 +5214,44 @@
       "managedHint": "This account is managed in the Auth Center; the card disappears after you sign out."
     },
     "deleteSessionHint": "Delete this session in DeepSeek Harness to keep its history consistent."
+  },
+  "liveagent": {
+    "modelApi": "API protocol (override)",
+    "modelApiInherit": "Same as provider",
+    "noModelsTyped": "LiveAgent loads models for the built-in {{type}} type at runtime. Fetch the list from /v1/models and add models here to make one the default.",
+    "sampling": {
+      "temperature": "Temperature",
+      "top_p": "Top P",
+      "unset": "Not set (model default)"
+    },
+    "apiHint": {
+      "completions": "Most common: the OpenAI-compatible API (/v1/chat/completions). Pick this for most relays and third-party models.",
+      "responses": "OpenAI's newer Responses API (/v1/responses), for OpenAI itself or services that explicitly support it.",
+      "anthropic": "Claude's native API (/v1/messages), for Anthropic or Claude-compatible relays.",
+      "google": "Gemini's native API, for Google AI Studio API keys.",
+      "fromType": "LiveAgent chooses the API from the provider type."
+    },
+    "noModels": "No models yet. Fetch the list from /v1/models or add one manually.",
+    "toggleModelDetails": "Show or hide details for {{model}}",
+    "enableModel": "Enable model {{model}}",
+    "reasoning": "Supports extended thinking",
+    "imageInput": "Supports image input",
+    "restartRequired": "Quit LiveAgent before changing models or MCP servers (a running LiveAgent overwrites these changes), then start it again to apply them. Project-specific Skill settings remain managed by LiveAgent.",
+    "apiFromType": "Automatic from type ({{type}})",
+    "providerKey": "Provider key",
+    "duplicateKey": "This provider key already exists",
+    "api": "API protocol",
+    "baseUrl": "API base URL",
+    "apiKey": "API key or secret reference",
+    "models": "Models",
+    "addModel": "Add model",
+    "modelId": "Model ID",
+    "modelName": "Display name",
+    "removeModel": "Remove model {{model}}",
+    "contextWindow": "Context window",
+    "maxTokens": "Maximum output tokens",
+    "enabled": "Enable model",
+    "advanced": "Advanced JSON configuration",
+    "validationHint": "Enter a name, unique key, API URL, credential and valid models. Model IDs must be unique."
   }
 }

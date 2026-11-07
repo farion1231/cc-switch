@@ -1593,7 +1593,8 @@
       "rawMatch": "Kaynaktaki eşleşmeler",
       "expandContent": "İçeriğin tamamını göster",
       "collapseContent": "Daralt"
-    }
+    },
+    "liveagentDeleteHint": "Çalışma zamanı durumunun da silinmesi için bu oturumu LiveAgent içinde silin"
   },
   "console": {
     "providerSwitchReceived": "Alınan sağlayıcı değiştirme etkinliği:",
@@ -4270,7 +4271,8 @@
     },
     "sectionInstalled": "Yüklü · {{count}}",
     "sectionNotInstalled": "Yüklü değil · {{count}}",
-    "dragHandle": "{{name}} öğesini yeniden sıralamak için sürükleyin"
+    "dragHandle": "{{name}} öğesini yeniden sıralamak için sürükleyin",
+    "liveagentHelp": "LiveAgent bir masaüstü uygulamasıdır ve buraya yüklenemez veya yükseltilemez; CC Switch, sağlayıcılarını, MCP sunucularını ve Skill'lerini config.json dosyası aracılığıyla yönetir."
   },
   "appPage": {
     "moreActions": "{{name}} için diğer işlemler",
@@ -5142,5 +5144,44 @@
       "managedHint": "Hesap Yetkilendirme Merkezi'nde yönetilir; oturumu kapatınca bu kart kendiliğinden kaybolur."
     },
     "deleteSessionHint": "Geçmişin tutarlı kalması için bu oturumu DeepSeek Harness içinde silin."
+  },
+  "liveagent": {
+    "modelApi": "API protokolü (modele özel)",
+    "modelApiInherit": "Sağlayıcıyla aynı",
+    "noModelsTyped": "Yerleşik {{type}} türünün modellerini LiveAgent çalışma sırasında yükler. Birini varsayılan yapmak için /v1/models listesini getirip modelleri buraya ekleyin.",
+    "sampling": {
+      "temperature": "Temperature",
+      "top_p": "Top P",
+      "unset": "Ayarlanmadı (model varsayılanı)"
+    },
+    "apiHint": {
+      "completions": "En yaygın seçenek: OpenAI uyumlu API (/v1/chat/completions). Çoğu aracı hizmet ve üçüncü taraf model için bunu seçin.",
+      "responses": "OpenAI'nin yeni Responses API'si (/v1/responses); OpenAI'nin kendisi veya bunu açıkça destekleyen hizmetler için.",
+      "anthropic": "Claude'un yerel API'si (/v1/messages); Anthropic veya Claude uyumlu aracı hizmetler için.",
+      "google": "Gemini'nin yerel API'si; Google AI Studio API anahtarları için.",
+      "fromType": "API'yi LiveAgent sağlayıcı türüne göre seçer."
+    },
+    "noModels": "Henüz model yok. Listeyi /v1/models üzerinden getirin veya elle ekleyin.",
+    "toggleModelDetails": "{{model}} ayrıntılarını göster veya gizle",
+    "enableModel": "{{model}} modelini etkinleştir",
+    "reasoning": "Genişletilmiş düşünmeyi destekler",
+    "imageInput": "Görüntü girişini destekler",
+    "restartRequired": "Modelleri veya MCP sunucularını değiştirmeden önce LiveAgent'tan çıkın (çalışan LiveAgent bu değişikliklerin üzerine yazar), ardından uygulamak için yeniden başlatın. Projeye özel Skill ayarları LiveAgent tarafından yönetilmeye devam eder.",
+    "apiFromType": "Türe göre otomatik ({{type}})",
+    "providerKey": "Sağlayıcı anahtarı",
+    "duplicateKey": "Bu sağlayıcı anahtarı zaten var",
+    "api": "API protokolü",
+    "baseUrl": "API temel URL'si",
+    "apiKey": "API anahtarı veya gizli anahtar referansı",
+    "models": "Modeller",
+    "addModel": "Model ekle",
+    "modelId": "Model Kimliği",
+    "modelName": "Görünen ad",
+    "removeModel": "{{model}} modelini kaldır",
+    "contextWindow": "Bağlam penceresi",
+    "maxTokens": "Maksimum çıkış tokenları",
+    "enabled": "Modeli etkinleştir",
+    "advanced": "Gelişmiş JSON yapılandırması",
+    "validationHint": "Bir ad, benzersiz anahtar, API URL'si, kimlik bilgisi ve geçerli modeller girin. Model kimlikleri benzersiz olmalıdır."
   }
 }

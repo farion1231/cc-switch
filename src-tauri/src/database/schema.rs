@@ -71,6 +71,7 @@ impl Database {
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
+            enabled_liveagent BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             enabled_pi BOOLEAN NOT NULL DEFAULT 0,
             enabled_omp BOOLEAN NOT NULL DEFAULT 0
@@ -106,6 +107,7 @@ impl Database {
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
+            enabled_liveagent BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
@@ -647,6 +649,20 @@ impl Database {
                             )?;
                         }
                         Self::set_user_version(conn, 24)?;
+                    }
+                    24 => {
+                        // LiveAgent：MCP 与 Skills 都记启用开关。
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    "enabled_liveagent",
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
+                            }
+                        }
+                        Self::set_user_version(conn, 25)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -4163,6 +4179,24 @@ mod tests {
         let read = db.get_all_installed_skills()?;
         assert!(!read["s"].apps.agy);
         assert!(read["s"].apps.gemini);
+        Ok(())
+    }
+
+    #[test]
+    fn liveagent_migration_preserves_existing_flags() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers (id TEXT PRIMARY KEY, enabled_pi BOOLEAN DEFAULT 0); CREATE TABLE skills (id TEXT PRIMARY KEY, enabled_mcode BOOLEAN DEFAULT 0); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+        Database::set_user_version(&conn, 24)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        for (table, previous) in [("mcp_servers", "enabled_pi"), ("skills", "enabled_mcode")] {
+            let values: (i64, i64) = conn.query_row(
+                &format!("SELECT {previous}, enabled_liveagent FROM {table}"),
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            assert_eq!(values, (1, 0));
+        }
+        assert_eq!(Database::get_user_version(&conn)?, 25);
         Ok(())
     }
 

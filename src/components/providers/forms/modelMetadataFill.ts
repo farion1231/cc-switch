@@ -283,3 +283,34 @@ export function piPresetThinkingFor(
   }
   return { map: { ...piThinking.thinkingLevelMap }, missingCompat };
 }
+
+interface LiveAgentModelFields {
+  contextWindow?: number | null;
+  maxTokens?: number | null;
+  reasoning?: boolean | null;
+  input?: string[] | null;
+}
+
+/**
+ * LiveAgent（K-brain 的 Pi 风格模型）：补窗口、输出上限；推理只补 true；输入模态
+ * 只在支持图片时写 `["text","image"]`，不写只收文字的值以免关掉图片入口。
+ */
+export function fillLiveAgentModel<T extends LiveAgentModelFields>(
+  model: T,
+  metadata: KnownModelMetadata,
+): T {
+  const next = { ...model };
+  if (isBlank(model.contextWindow) && metadata.contextWindow) {
+    next.contextWindow = metadata.contextWindow;
+  }
+  if (isBlank(model.maxTokens) && metadata.maxOutputTokens) {
+    next.maxTokens = metadata.maxOutputTokens;
+  }
+  if (model.reasoning == null && metadata.reasoning === true) {
+    next.reasoning = true;
+  }
+  if (!model.input?.length && metadata.inputModalities?.includes("image")) {
+    next.input = ["text", "image"];
+  }
+  return next;
+}

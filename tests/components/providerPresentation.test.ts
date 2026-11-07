@@ -559,6 +559,32 @@ describe("buildAdditiveSections", () => {
     expect(item(sections, "relay").menuItems).toBeUndefined();
   });
 
+  it("lets LiveAgent pick its default model from the card like OpenClaw", () => {
+    const multi = provider("multi");
+    const actions = additiveActions();
+    const sections = buildAdditiveSections({
+      app: "liveagent",
+      t,
+      providers: [relay, multi],
+      isInConfig: () => true,
+      defaultModel: { providerId: "relay", model: "vendor/model" },
+      defaultModelOptions: (p) =>
+        p.id === "multi" ? [{ id: "m-1" }, { id: "m-2", name: "Two" }] : [],
+      actions,
+    });
+    expect(item(sections, "relay")).toMatchObject({
+      tone: "direct",
+      status: { label: "providerCard.status.default" },
+    });
+    // LiveAgent rejects removing the provider its default route points at.
+    expect(button(sections, "relay", "remove").disabledReason).toBe(
+      "providerCard.reason.defaultCannotRemove",
+    );
+    const setDefault = setDefaultItem(sections, "multi");
+    setDefault.submenu?.options[1].onSelect();
+    expect(actions.setDefault).toHaveBeenCalledWith(multi, "m-2");
+  });
+
   it("lets OpenCode set the top-level default model without blocking removal", () => {
     const multi = provider("multi");
     const actions = additiveActions();

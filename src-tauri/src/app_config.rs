@@ -16,6 +16,8 @@ pub struct McpApps {
     #[serde(default)]
     pub agy: bool,
     #[serde(default)]
+    pub liveagent: bool,
+    #[serde(default)]
     pub claude: bool,
     #[serde(default)]
     pub codex: bool,
@@ -47,6 +49,7 @@ impl McpApps {
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
             AppType::Dsh => self.dsh,
+            AppType::LiveAgent => self.liveagent,
             AppType::Pi => self.pi,
             AppType::Omp => self.omp,
             AppType::ClaudeDesktop => false,
@@ -67,6 +70,7 @@ impl McpApps {
             AppType::Mcode => self.mcode = enabled,
             AppType::Kimi => self.kimi = enabled,
             AppType::Dsh => self.dsh = enabled,
+            AppType::LiveAgent => self.liveagent = enabled,
             AppType::Pi => self.pi = enabled,
             AppType::ClaudeDesktop => {}
             AppType::Agy => self.agy = enabled,
@@ -101,6 +105,9 @@ impl McpApps {
         if self.kimi {
             apps.push(AppType::Kimi);
         }
+        if self.liveagent {
+            apps.push(AppType::LiveAgent);
+        }
         if self.mcode {
             apps.push(AppType::Mcode);
         }
@@ -127,6 +134,7 @@ impl McpApps {
             && !self.agy
             && !self.kimi
             && !self.dsh
+            && !self.liveagent
             && !self.mcode
             && !self.pi
             && !self.omp
@@ -144,6 +152,8 @@ pub struct SkillApps {
     pub dsh: bool,
     #[serde(default)]
     pub agy: bool,
+    #[serde(default)]
+    pub liveagent: bool,
     #[serde(default)]
     pub claude: bool,
     #[serde(default)]
@@ -174,6 +184,7 @@ impl SkillApps {
             AppType::Hermes => self.hermes,
             AppType::Pi => self.pi,
             AppType::Mcode => self.mcode,
+            AppType::LiveAgent => self.liveagent,
             AppType::Kimi => self.kimi,
             AppType::Dsh => self.dsh,
             AppType::OpenClaw => false,
@@ -194,6 +205,7 @@ impl SkillApps {
             AppType::Hermes => self.hermes = enabled,
             AppType::Pi => self.pi = enabled,
             AppType::Mcode => self.mcode = enabled,
+            AppType::LiveAgent => self.liveagent = enabled,
             AppType::Kimi => self.kimi = enabled,
             AppType::Dsh => self.dsh = enabled,
             AppType::OpenClaw => {}
@@ -230,6 +242,9 @@ impl SkillApps {
         if self.kimi {
             apps.push(AppType::Kimi);
         }
+        if self.liveagent {
+            apps.push(AppType::LiveAgent);
+        }
         if self.mcode {
             apps.push(AppType::Mcode);
         }
@@ -256,6 +271,7 @@ impl SkillApps {
             && !self.agy
             && !self.kimi
             && !self.dsh
+            && !self.liveagent
             && !self.mcode
             && !self.pi
             && !self.omp
@@ -483,6 +499,8 @@ pub enum AppType {
     Dsh,
     Agy,
     Omp,
+    #[serde(rename = "liveagent")]
+    LiveAgent,
 }
 
 impl AppType {
@@ -502,6 +520,7 @@ impl AppType {
             AppType::Dsh => "dsh",
             AppType::Agy => "agy",
             AppType::Omp => "omp",
+            AppType::LiveAgent => "liveagent",
         }
     }
 
@@ -521,6 +540,7 @@ impl AppType {
                 | AppType::Kimi
                 | AppType::Dsh
                 | AppType::Omp
+                | AppType::LiveAgent
         )
     }
 
@@ -555,6 +575,7 @@ impl AppType {
             AppType::Dsh,
             AppType::Agy,
             AppType::Omp,
+            AppType::LiveAgent,
         ]
         .into_iter()
     }
@@ -580,10 +601,11 @@ impl FromStr for AppType {
             "dsh" | "deepseek-harness" => Ok(AppType::Dsh),
             "agy" | "antigravity" | "antigravity-cli" => Ok(AppType::Agy),
             "omp" | "oh-my-pi" | "oh_my_pi" | "ohmypi" => Ok(AppType::Omp),
+            "liveagent" => Ok(AppType::LiveAgent),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, liveagent。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, liveagent."),
             )),
         }
     }
@@ -628,7 +650,8 @@ impl CommonConfigSnippets {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Omp
-            | AppType::Agy => None,
+            | AppType::Agy
+            | AppType::LiveAgent => None,
         }
     }
 
@@ -648,7 +671,8 @@ impl CommonConfigSnippets {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Omp
-            | AppType::Agy => {}
+            | AppType::Agy
+            | AppType::LiveAgent => {}
         }
     }
 }
@@ -980,7 +1004,8 @@ impl MultiAppConfig {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Omp
-            | AppType::Agy => return Ok(false),
+            | AppType::Agy
+            | AppType::LiveAgent => return Ok(false),
         };
 
         prompts.insert(id, prompt);
@@ -1029,7 +1054,8 @@ impl MultiAppConfig {
                 | AppType::Kimi
                 | AppType::Dsh
                 | AppType::Omp
-                | AppType::Agy => continue, // Pi didn't exist in v3.6.x, skip
+                | AppType::Agy
+                | AppType::LiveAgent => continue, // Pi didn't exist in v3.6.x, skip
             };
 
             for (id, entry) in old_servers {

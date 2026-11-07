@@ -44,6 +44,7 @@ const mocks = vi.hoisted(() => ({
   autoSaveSettings: vi.fn(async () => null),
   dragEndHandlers: [] as ((event: DragEndEvent) => void)[],
   desktopStatus: { supported: true, installed: true, configured: true },
+  liveagentStatus: { installed: true, configured: true, configPath: "" },
 }));
 
 vi.mock("@/lib/api", () => ({ settingsApi: mocks }));
@@ -51,6 +52,9 @@ vi.mock("@/lib/api/providers", () => ({
   providersApi: {
     getClaudeDesktopStatus: async () => mocks.desktopStatus,
   },
+}));
+vi.mock("@/lib/api/liveagent", () => ({
+  liveagentApi: { getStatus: async () => mocks.liveagentStatus },
 }));
 vi.mock("@/hooks/useSettings", () => ({
   useSettings: () => ({
@@ -239,6 +243,11 @@ describe("AppsPage concurrent CLI upgrades", () => {
       supported: true,
       installed: true,
       configured: true,
+    };
+    mocks.liveagentStatus = {
+      installed: true,
+      configured: true,
+      configPath: "",
     };
     mocks.updateSettings.mockReset();
     mocks.autoSaveSettings.mockReset().mockResolvedValue(null);
@@ -704,6 +713,29 @@ describe("AppsPage concurrent CLI upgrades", () => {
     expect(
       card("Claude Desktop").getByText("appsPage.desktopNotConnected"),
     ).toBeInTheDocument();
+  });
+
+  it("lists LiveAgent as a desktop app with its connection status", async () => {
+    mocks.liveagentStatus = {
+      installed: true,
+      configured: false,
+      configPath: "",
+    };
+    await renderApps();
+    expect(rowApps("appsPage.sectionInstalled")).toContain("liveagent");
+    expect(
+      card("LiveAgent").getByText("appsPage.desktopNotConnected"),
+    ).toBeInTheDocument();
+  });
+
+  it("puts LiveAgent under not installed when neither the app nor its data exist", async () => {
+    mocks.liveagentStatus = {
+      installed: false,
+      configured: false,
+      configPath: "",
+    };
+    await renderApps();
+    expect(rowApps("appsPage.sectionNotInstalled")).toContain("liveagent");
   });
 
   it("puts Claude Desktop under not installed when it is not on this machine", async () => {

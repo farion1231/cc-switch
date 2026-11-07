@@ -678,6 +678,9 @@ impl SkillService {
                 }
             }
             AppType::ClaudeDesktop | AppType::Mcode | AppType::Kimi | AppType::Dsh => {}
+            AppType::LiveAgent => {
+                return Ok(crate::liveagent_config::data_dir()?.join("skills"));
+            }
             AppType::Codex => {
                 if let Some(custom) = crate::settings::get_codex_override_dir() {
                     return Ok(custom.join("skills"));
@@ -731,6 +734,7 @@ impl SkillService {
             AppType::Mcode => crate::mcode_config::data_dir().join("skills"),
             AppType::Dsh => crate::dsh_config::data_dir().join("skills"),
             AppType::Kimi => crate::kimi_config::data_dir().join("skills"),
+            AppType::LiveAgent => crate::liveagent_config::data_dir()?.join("skills"),
             AppType::Claude => home.join(".claude").join("skills"),
             AppType::ClaudeDesktop => home.join(".claude-desktop").join("skills"),
             AppType::Codex => home.join(".codex").join("skills"),
@@ -1092,6 +1096,15 @@ impl SkillService {
                 Ok(directory) => {
                     let ssot_dir = Self::get_ssot_dir()?;
                     let source = ssot_dir.join(&directory);
+                    let liveagent_destination = if skill.apps.liveagent {
+                        let destination =
+                            Self::get_distinct_app_skills_dir(&ssot_dir, &AppType::LiveAgent)?
+                                .join(&directory);
+                        Self::inspect_pi_skill_destination(&source, &destination, &directory)?;
+                        Some(destination)
+                    } else {
+                        None
+                    };
                     let mut managed_destinations = Vec::new();
                     for app in [AppType::Mcode, AppType::Agy, AppType::Kimi, AppType::Dsh] {
                         if skill.apps.is_enabled_for(&app) {
@@ -1155,6 +1168,9 @@ impl SkillService {
                         Self::create_uninstall_backup_excluding(&skill, &preserved_paths)?
                             .map(|path| path.to_string_lossy().to_string());
 
+                    if liveagent_destination.is_some() {
+                        Self::sync_liveagent_skill(&directory, false, || Ok(()))?;
+                    }
                     for destination in managed_destinations {
                         Self::remove_verified_pi_destination(&source, &destination, &directory)
                             .context("Managed Skill could not be removed; uninstall cancelled")?;
@@ -1184,6 +1200,7 @@ impl SkillService {
                                 | AppType::Kimi
                                 | AppType::Dsh
                                 | AppType::Omp
+                                | AppType::LiveAgent
                         ) {
                             continue;
                         }
@@ -1708,6 +1725,7 @@ impl SkillService {
             AppType::Kimi,
             AppType::Dsh,
             AppType::Omp,
+            AppType::LiveAgent,
         ] {
             if skill.apps.is_enabled_for(&app) {
                 let destination =
@@ -1723,7 +1741,12 @@ impl SkillService {
         // 备份旧文件
         let _ = Self::create_uninstall_backup(&skill);
 
-        if !(skill.apps.mcode || skill.apps.agy || skill.apps.kimi || skill.apps.dsh) {
+        let managed_native = skill.apps.mcode
+            || skill.apps.agy
+            || skill.apps.kimi
+            || skill.apps.dsh
+            || skill.apps.liveagent;
+        if !managed_native {
             if dest.exists() {
                 fs::remove_dir_all(&dest)?;
             }
@@ -1731,12 +1754,7 @@ impl SkillService {
         }
 
         // 计算新哈希 + 解析新元数据
-        let metadata_source =
-            if skill.apps.mcode || skill.apps.agy || skill.apps.kimi || skill.apps.dsh {
-                &source
-            } else {
-                &dest
-            };
+        let metadata_source = if managed_native { &source } else { &dest };
         let new_hash = Self::compute_dir_hash(metadata_source).ok();
         let skill_md = metadata_source.join("SKILL.md");
         let (new_name, new_description) = Self::read_skill_name_desc(&skill_md, &skill.directory);
@@ -1764,38 +1782,56 @@ impl SkillService {
             updated_at: chrono::Utc::now().timestamp(),
         };
 
-        let mut updated_skill =
-            if skill.apps.mcode || skill.apps.agy || skill.apps.kimi || skill.apps.dsh {
+        let mut updated_skill = if managed_native {
+            let native_targets = [
+                AppType::Mcode,
+                AppType::Agy,
+                AppType::Kimi,
+                AppType::Dsh,
+                AppType::LiveAgent,
+            ]
+            .iter()
+            .filter(|app| skill.apps.is_enabled_for(app))
+            .map(|app| Self::get_app_skills_dir(app).map(|dir| dir.join(&skill.directory)))
+            .collect::<Result<Vec<_>>>()?;
+            let apply = || {
                 Self::update_managed_skill_files(
                     &source,
                     &dest,
                     &skill.directory,
                     &deployments,
-                    &[AppType::Mcode, AppType::Agy, AppType::Kimi, AppType::Dsh]
-                        .iter()
-                        .filter(|app| skill.apps.is_enabled_for(app))
-                        .map(|app| {
-                            Self::get_app_skills_dir(app).map(|dir| dir.join(&skill.directory))
-                        })
-                        .collect::<Result<Vec<_>>>()?,
+                    &native_targets,
                     || {
                         if !db.update_skill_metadata(&updated_metadata)? {
                             return Err(anyhow!("Skill no longer installed: {}", skill.id));
                         }
-                        Ok(updated_metadata)
+                        Ok(updated_metadata.clone())
                     },
+                )
+            };
+            if skill.apps.liveagent {
+                let old_name =
+                    Self::read_skill_name_desc(&dest.join("SKILL.md"), &skill.directory).0;
+                Self::update_liveagent_skill_name(
+                    &skill.directory,
+                    &old_name,
+                    &updated_metadata.name,
+                    apply,
                 )?
             } else {
-                for (destination, deployment) in deployments {
-                    Self::refresh_pi_skill_destination(
-                        &dest,
-                        &destination,
-                        &updated_metadata.directory,
-                        &deployment,
-                    )?;
-                }
-                Self::persist_updated_skill_metadata(db, &updated_metadata)?
-            };
+                apply()?
+            }
+        } else {
+            for (destination, deployment) in deployments {
+                Self::refresh_pi_skill_destination(
+                    &dest,
+                    &destination,
+                    &updated_metadata.directory,
+                    &deployment,
+                )?;
+            }
+            Self::persist_updated_skill_metadata(db, &updated_metadata)?
+        };
         updated_skill.apps.pi = Self::skill_exists_in_app(&updated_skill.directory, &AppType::Pi);
         updated_skill.apps.omp = Self::skill_exists_in_app(&updated_skill.directory, &AppType::Omp);
 
@@ -1809,6 +1845,7 @@ impl SkillService {
                     | AppType::Kimi
                     | AppType::Dsh
                     | AppType::Omp
+                    | AppType::LiveAgent
             ) {
                 continue;
             }
@@ -1858,9 +1895,17 @@ impl SkillService {
                 matches!(deployment, PiSkillDeployment::Symlink { .. }),
             ));
         }
+        // LiveAgent's scanner skips directory symlinks, so its copy is always real.
+        let liveagent_root = Self::get_app_skills_dir(&AppType::LiveAgent).ok();
         for native in native_targets {
             if !native.exists() && !Self::is_symlink(native) {
-                targets.push((native.clone(), Self::get_sync_method() != SyncMethod::Copy));
+                let copy_only = liveagent_root
+                    .as_ref()
+                    .is_some_and(|root| native.starts_with(root));
+                targets.push((
+                    native.clone(),
+                    !copy_only && Self::get_sync_method() != SyncMethod::Copy,
+                ));
             }
         }
 
@@ -2049,6 +2094,16 @@ impl SkillService {
                     {
                         mcode_deployments.push((directory.clone(), destination, deployment));
                     }
+                }
+            }
+            if skill.apps.liveagent {
+                let destination = Self::get_app_skills_dir(&AppType::LiveAgent)?.join(&directory);
+                if let Some(deployment) =
+                    Self::inspect_pi_skill_destination(&src, &destination, &directory)
+                        .ok()
+                        .flatten()
+                {
+                    mcode_deployments.push((directory.clone(), destination, deployment));
                 }
             }
             // Omp 没有开关列，是否部署只看原生目录里有没有 CC Switch 的副本。
@@ -2309,6 +2364,15 @@ impl SkillService {
             return Ok(());
         }
 
+        if matches!(app, AppType::LiveAgent) {
+            skill.apps.liveagent = enabled;
+            return Self::sync_liveagent_skill(&skill.directory, enabled, || {
+                db.update_skill_apps(id, &skill.apps)
+                    .map(|_| ())
+                    .map_err(Into::into)
+            });
+        }
+
         // 更新状态
         skill.apps.set_enabled_for(app, enabled);
 
@@ -2518,6 +2582,42 @@ impl SkillService {
                     }
                 }
             }
+            // An explicitly imported LiveAgent link must point at the managed copy
+            // so subsequent toggles and updates can verify its ownership.
+            if apps.liveagent {
+                let projection = (|| -> Result<()> {
+                    let native = Self::get_distinct_app_skills_dir(&ssot_dir, &AppType::LiveAgent)?
+                        .join(&dir_name);
+                    if Self::is_symlink(&native) && !Self::paths_alias(&native, &dest) {
+                        if Self::compute_pi_deployment_hash(&native)?
+                            != Self::compute_pi_deployment_hash(&dest)?
+                        {
+                            return Err(anyhow!(
+                                "LiveAgent Skill 与托管副本内容不同，拒绝替换链接: {dir_name}"
+                            ));
+                        }
+                        if let Some(deployment) =
+                            Self::inspect_pi_skill_destination(&native, &native, &dir_name)?
+                        {
+                            Self::refresh_pi_skill_destination(
+                                &dest,
+                                &native,
+                                &dir_name,
+                                &deployment,
+                            )?;
+                        }
+                    } else {
+                        Self::preflight_install_destination(&dest, &dir_name, &AppType::LiveAgent)?;
+                    }
+                    Self::sync_to_app_dir(&dir_name, &AppType::LiveAgent)?;
+                    Ok(())
+                })();
+                if let Err(error) = projection {
+                    skipped_mcode.push(format!("{dir_name}: {error}"));
+                    continue;
+                }
+            }
+
             // 勾选的应用里还没有这个 Skill（它是在别处发现的）：导入时就投影过去。
             // 只存标志的话，界面显示已启用、应用却读不到，要等下次切换供应商才补上。
             // 已经在应用目录里的保持原样；投影失败就不记这个应用的启用，
@@ -2531,6 +2631,7 @@ impl SkillService {
                         | AppType::Kimi
                         | AppType::Dsh
                         | AppType::Omp
+                        | AppType::LiveAgent
                 ) || !apps.is_enabled_for(&app)
                     || Self::skill_exists_in_app(&dir_name, &app)
                 {
@@ -2643,6 +2744,7 @@ impl SkillService {
                 | AppType::Kimi
                 | AppType::Dsh
                 | AppType::Omp
+                | AppType::LiveAgent
         ) {
             return Ok(());
         }
@@ -2793,6 +2895,138 @@ impl SkillService {
         crate::settings::get_skill_sync_method()
     }
 
+    /// LiveAgent selects managed Skills by frontmatter name, not directory. Another
+    /// managed directory with the same name would share one selection entry.
+    fn liveagent_name_owner(root: &Path, directory: &str, name: &str) -> Option<String> {
+        let entries = fs::read_dir(root).ok()?;
+        for entry in entries.flatten() {
+            let dir_name = entry.file_name().to_string_lossy().to_string();
+            // K-brain's scanner only reads real directories (it skips symlinks).
+            if dir_name == directory
+                || dir_name.starts_with('.')
+                || !entry.file_type().is_ok_and(|kind| kind.is_dir())
+            {
+                continue;
+            }
+            let skill_md = entry.path().join("SKILL.md");
+            if !skill_md.is_file() {
+                continue;
+            }
+            if Self::read_skill_name_desc(&skill_md, &dir_name).0 == name {
+                return Some(dir_name);
+            }
+        }
+        None
+    }
+
+    fn liveagent_name_conflict(owner: &str, name: &str) -> anyhow::Error {
+        anyhow!(
+            "LiveAgent already has another Skill named \"{name}\" in skills/{owner}; rename one of them first"
+        )
+    }
+
+    /// Update a deployed LiveAgent Skill whose frontmatter name may change, keeping
+    /// the selected names, the copied files and the database commit together.
+    fn update_liveagent_skill_name<T>(
+        directory: &str,
+        old_name: &str,
+        new_name: &str,
+        apply: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        let root = Self::get_app_skills_dir(&AppType::LiveAgent)?;
+        if let Some(owner) = Self::liveagent_name_owner(&root, directory, new_name) {
+            return Err(Self::liveagent_name_conflict(&owner, new_name));
+        }
+        let mut changes = vec![(new_name, true)];
+        // The old name stays selected while another directory still uses it.
+        if old_name != new_name && Self::liveagent_name_owner(&root, directory, old_name).is_none()
+        {
+            changes.insert(0, (old_name, false));
+        }
+        crate::liveagent_config::update_skill_selections_and_commit(&changes, || {
+            apply().map_err(|e| crate::error::AppError::Message(e.to_string()))
+        })
+        .map_err(|e| anyhow!(e.to_string()))
+    }
+
+    fn sync_liveagent_skill<T>(
+        directory: &str,
+        enabled: bool,
+        commit: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        let directory = Self::require_valid_directory(directory)?;
+        let ssot = Self::get_ssot_dir()?;
+        let source = ssot.join(&directory);
+        Self::validate_sync_source_dir(&source, &directory)?;
+        let root = Self::get_distinct_app_skills_dir(&ssot, &AppType::LiveAgent)?;
+        let destination = root.join(&directory);
+        Self::inspect_pi_skill_destination(&source, &destination, &directory)?;
+        let (name, _) = Self::read_skill_name_desc(&source.join("SKILL.md"), &directory);
+        let shared_owner = Self::liveagent_name_owner(&root, &directory, &name);
+        if enabled {
+            if let Some(owner) = &shared_owner {
+                return Err(Self::liveagent_name_conflict(owner, &name));
+            }
+        }
+        // Disabling never deselects a name that another directory still uses, and an
+        // invalid name was never selected; both only remove our copy.
+        let selection_changes: Vec<(&str, bool)> = if enabled
+            || (shared_owner.is_none() && crate::liveagent_config::valid_skill_name(&name))
+        {
+            vec![(name.as_str(), enabled)]
+        } else {
+            Vec::new()
+        };
+        fs::create_dir_all(&root)?;
+        let stage = tempfile::Builder::new()
+            .prefix(".cc-switch-skill-")
+            .tempdir_in(&root)?;
+        let replacement = stage.path().join("new");
+        // LiveAgent's native scanner ignores directory symlinks. Always deploy
+        // a real directory, even when other CC Switch apps use symlink mode.
+        if enabled {
+            Self::copy_dir_recursive(&source, &replacement)?;
+        }
+        let old = stage.path().join("old");
+        let mut changed = false;
+        let result =
+            crate::liveagent_config::update_skill_selections_and_commit(&selection_changes, || {
+                let update = (|| -> Result<T> {
+                    // Repeat ownership check after preparing the replacement.
+                    Self::inspect_pi_skill_destination(&source, &destination, &directory)?;
+                    if destination.exists() || Self::is_symlink(&destination) {
+                        fs::rename(&destination, &old)?;
+                    }
+                    changed = true;
+                    if enabled {
+                        fs::rename(&replacement, &destination)?;
+                    }
+                    commit()
+                })();
+                update.map_err(|e| crate::error::AppError::Message(e.to_string()))
+            });
+        if let Err(error) = result {
+            if changed {
+                let rollback = (|| -> Result<()> {
+                    Self::remove_path(&destination)?;
+                    if old.exists() || Self::is_symlink(&old) {
+                        fs::rename(&old, &destination)?;
+                    }
+                    Ok(())
+                })();
+                if let Err(rollback) = rollback {
+                    let saved = stage.keep();
+                    return Err(anyhow!(
+                        "{error}; LiveAgent skill rollback failed: {rollback}; backup: {}",
+                        saved.display()
+                    ));
+                }
+            }
+            return Err(error.into());
+        }
+        result.map_err(Into::into)
+    }
+
     /// 同步 Skill 到应用目录（使用 symlink 或 copy）
     ///
     /// 根据配置和平台选择最佳同步方式：
@@ -2800,6 +3034,10 @@ impl SkillService {
     /// - Symlink: 仅使用 symlink
     /// - Copy: 仅使用文件复制
     pub fn sync_to_app_dir(directory: &str, app: &AppType) -> Result<()> {
+        if matches!(app, AppType::LiveAgent) {
+            return Self::sync_liveagent_skill(directory, true, || Ok(()));
+        }
+
         if matches!(app, AppType::ClaudeDesktop) {
             return Ok(());
         }
@@ -2825,6 +3063,7 @@ impl SkillService {
                 | AppType::Kimi
                 | AppType::Dsh
                 | AppType::Omp
+                | AppType::LiveAgent
         ) && (dest.exists() || Self::is_symlink(&dest))
         {
             Self::ensure_pi_skill_destination_matches(&source, &dest, &directory)?;
@@ -3024,6 +3263,10 @@ impl SkillService {
             return Ok(());
         }
 
+        if matches!(app, AppType::LiveAgent) {
+            return Self::sync_liveagent_skill(&directory, false, || Ok(()));
+        }
+
         if skill_path.exists() || Self::is_symlink(&skill_path) {
             if matches!(
                 app,
@@ -3033,6 +3276,7 @@ impl SkillService {
                     | AppType::Kimi
                     | AppType::Dsh
                     | AppType::Omp
+                    | AppType::LiveAgent
             ) {
                 let source = ssot_dir.join(&directory);
                 Self::ensure_pi_skill_destination_matches(&source, &skill_path, &directory)?;
@@ -3107,7 +3351,7 @@ impl SkillService {
         if app_dir.exists()
             && !matches!(
                 app,
-                AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Dsh
+                AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Dsh | AppType::LiveAgent
             )
         {
             for entry in fs::read_dir(&app_dir)? {
@@ -4258,7 +4502,7 @@ impl SkillService {
         for app in AppType::all() {
             if matches!(
                 app,
-                AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Dsh
+                AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Dsh | AppType::LiveAgent
             ) && !skill.apps.is_enabled_for(&app)
             {
                 continue;
@@ -5997,6 +6241,231 @@ mod tests {
         assert!(fs::read_to_string(pi_skill.join("SKILL.md"))
             .expect("read external skill")
             .contains("external"));
+    }
+
+    /// Export a credential-free fixture for validation by LiveAgent's pinned
+    /// K-brain source. Normal test runs keep everything in temporary directories.
+    #[test]
+    #[serial_test::serial]
+    fn liveagent_native_contract_fixture() {
+        let temp = tempdir().unwrap();
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+        let root = crate::liveagent_config::test_support::TestRoot::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let state = crate::store::AppState::new(db.clone());
+        let config = serde_json::json!({"api":"openai-responses","baseUrl":"https://example.invalid/v1","apiKey":"fixture-only","models":[{"id":"fixture-model","contextWindow":32000}],"activeModels":["fixture-model"]});
+        crate::services::ProviderService::add(
+            &state,
+            AppType::LiveAgent,
+            crate::provider::Provider::with_id("fixture".into(), "Fixture".into(), config, None),
+            true,
+        )
+        .unwrap();
+        crate::liveagent_config::set_default("fixture", "fixture-model").unwrap();
+        let server = crate::app_config::McpServer {
+            id: "fixture-mcp".into(),
+            name: "Fixture MCP".into(),
+            server: serde_json::json!({"type":"stdio","command":"node","args":["fixture-server.js"],"env":{"FIXTURE":"1"}}),
+            apps: crate::app_config::McpApps {
+                liveagent: true,
+                ..Default::default()
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: vec![],
+        };
+        crate::services::McpService::upsert_server(&state, server).unwrap();
+        let mut skill = poisoned_skill("local:fixture-skill", "fixture-skill");
+        skill.apps.liveagent = true;
+        write_skill(
+            &SkillService::get_ssot_dir().unwrap().join("fixture-skill"),
+            "fixture-skill",
+        );
+        SkillService::persist_and_sync_new_skill(&db, &skill, &AppType::LiveAgent).unwrap();
+        assert!(!SkillService::is_symlink(
+            &root.dir.path().join("skills/fixture-skill")
+        ));
+        let config = crate::liveagent_config::read().unwrap();
+        assert_eq!(config["providers"]["fixture"]["api"], "openai-responses");
+        assert_eq!(
+            config["mcp"]["fixture-mcp"]["command"],
+            serde_json::json!(["node", "fixture-server.js"])
+        );
+        if let Some(destination) = std::env::var_os("CC_SWITCH_LIVEAGENT_FIXTURE") {
+            let destination = PathBuf::from(destination);
+            assert!(
+                !destination.exists(),
+                "fixture export must use a new directory"
+            );
+            SkillService::copy_dir_recursive(root.dir.path(), &destination).unwrap();
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn liveagent_skill_update_rolls_back_files_and_selection_together() {
+        let temp = tempdir().unwrap();
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+        let root = crate::liveagent_config::test_support::TestRoot::new();
+        let ssot = SkillService::get_ssot_dir().unwrap().join("test-skill");
+        write_skill(&ssot, "old-name");
+        SkillService::sync_to_app_dir("test-skill", &AppType::LiveAgent).unwrap();
+        let destination = root.dir.path().join("skills/test-skill");
+        let deployment =
+            SkillService::inspect_pi_skill_destination(&ssot, &destination, "test-skill")
+                .unwrap()
+                .unwrap();
+        let fresh = temp.path().join("fresh");
+        write_skill(&fresh, "new-name");
+        let settings = root.dir.path().join("skills-settings.json");
+        let before = fs::read(&settings).unwrap();
+        let changes = [("old-name", false), ("new-name", true)];
+        let deployments = vec![(destination.clone(), deployment)];
+        let result: std::result::Result<(), crate::error::AppError> =
+            crate::liveagent_config::update_skill_selections_and_commit(&changes, || {
+                SkillService::update_managed_skill_files(
+                    &fresh,
+                    &ssot,
+                    "test-skill",
+                    &deployments,
+                    std::slice::from_ref(&destination),
+                    || Err(anyhow!("database unavailable")),
+                )
+                .map_err(|e| crate::error::AppError::Message(e.to_string()))
+            });
+        assert!(result.is_err());
+        assert_eq!(fs::read(&settings).unwrap(), before);
+        assert!(fs::read_to_string(destination.join("SKILL.md"))
+            .unwrap()
+            .contains("old-name"));
+        assert!(fs::read_to_string(ssot.join("SKILL.md"))
+            .unwrap()
+            .contains("old-name"));
+        crate::liveagent_config::update_skill_selections_and_commit(&changes, || {
+            SkillService::update_managed_skill_files(
+                &fresh,
+                &ssot,
+                "test-skill",
+                &deployments,
+                std::slice::from_ref(&destination),
+                || Ok(()),
+            )
+            .map_err(|e| crate::error::AppError::Message(e.to_string()))
+        })
+        .unwrap();
+        assert!(!SkillService::is_symlink(&destination));
+        let settings: serde_json::Value =
+            serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+        assert_eq!(
+            settings["global"]["selected"],
+            serde_json::json!(["new-name"])
+        );
+        assert!(fs::read_to_string(destination.join("SKILL.md"))
+            .unwrap()
+            .contains("new-name"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn liveagent_skill_lifecycle_updates_native_selection_and_preserves_external_files() {
+        let temp = tempdir().unwrap();
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+        let root = crate::liveagent_config::test_support::TestRoot::new();
+        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let mut skill = poisoned_skill("local:skill", "test-skill");
+        skill.apps.liveagent = true;
+        let source = SkillService::get_ssot_dir().unwrap().join(&skill.directory);
+        write_skill(&source, "managed-name");
+        SkillService::persist_and_sync_new_skill(&db, &skill, &AppType::LiveAgent).unwrap();
+        let destination = root.dir.path().join("skills/test-skill");
+        assert!(destination.join("SKILL.md").exists());
+        assert!(
+            !SkillService::is_symlink(&destination),
+            "LiveAgent ignores skill directory symlinks"
+        );
+        let settings = || -> serde_json::Value {
+            serde_json::from_slice(&fs::read(root.dir.path().join("skills-settings.json")).unwrap())
+                .unwrap()
+        };
+        assert_eq!(
+            settings()["global"]["selected"],
+            serde_json::json!(["managed-name"])
+        );
+        SkillService::toggle_app(&db, &skill.id, &AppType::LiveAgent, false).unwrap();
+        assert!(!destination.exists());
+        assert_eq!(settings()["global"]["selected"], serde_json::json!([]));
+        assert!(
+            !db.get_installed_skill(&skill.id)
+                .unwrap()
+                .unwrap()
+                .apps
+                .liveagent
+        );
+        SkillService::toggle_app(&db, &skill.id, &AppType::LiveAgent, true).unwrap();
+        assert!(
+            db.get_installed_skill(&skill.id)
+                .unwrap()
+                .unwrap()
+                .apps
+                .liveagent
+        );
+        SkillService::uninstall(&db, &skill.id).unwrap();
+        assert!(!destination.exists());
+        assert_eq!(settings()["global"]["selected"], serde_json::json!([]));
+        // A same-named native Skill with different content is never overwritten.
+        write_skill(&source, "managed-name");
+        write_skill(&destination, "external-name");
+        assert!(
+            SkillService::persist_and_sync_new_skill(&db, &skill, &AppType::LiveAgent).is_err()
+        );
+        assert!(fs::read_to_string(destination.join("SKILL.md"))
+            .unwrap()
+            .contains("external-name"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn liveagent_skill_names_shared_with_native_skills_are_not_reused() {
+        let temp = tempdir().unwrap();
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+        let root = crate::liveagent_config::test_support::TestRoot::new();
+        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let settings_path = root.dir.path().join("skills-settings.json");
+        let selected = || -> serde_json::Value {
+            serde_json::from_slice::<serde_json::Value>(&fs::read(&settings_path).unwrap()).unwrap()
+                ["global"]["selected"]
+                .clone()
+        };
+        let mut skill = poisoned_skill("local:skill", "test-skill");
+        skill.apps.liveagent = true;
+        let source = SkillService::get_ssot_dir().unwrap().join(&skill.directory);
+        write_skill(&source, "shared-name");
+        // The user's own LiveAgent Skill already uses this name in another directory.
+        write_skill(&root.dir.path().join("skills/user-skill"), "shared-name");
+        fs::write(
+            &settings_path,
+            r#"{"revision":1,"global":{"enabled":true,"selected":["shared-name"]},"projects":{}}"#,
+        )
+        .unwrap();
+        assert!(
+            SkillService::persist_and_sync_new_skill(&db, &skill, &AppType::LiveAgent).is_err()
+        );
+        assert!(!root.dir.path().join("skills/test-skill").exists());
+
+        // Deployed before the user added theirs: disabling ours keeps their selection.
+        fs::remove_dir_all(root.dir.path().join("skills/user-skill")).unwrap();
+        SkillService::persist_and_sync_new_skill(&db, &skill, &AppType::LiveAgent).unwrap();
+        write_skill(&root.dir.path().join("skills/user-skill"), "shared-name");
+        SkillService::toggle_app(&db, &skill.id, &AppType::LiveAgent, false).unwrap();
+        assert!(!root.dir.path().join("skills/test-skill").exists());
+        assert_eq!(selected(), serde_json::json!(["shared-name"]));
     }
 
     #[test]
