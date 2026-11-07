@@ -1939,6 +1939,9 @@ pub fn run() {
             commands::delete_daily_memory_file,
             commands::search_daily_memory_files,
             commands::open_workspace_directory,
+            commands::get_desktop_app_status,
+            commands::launch_desktop_app,
+            commands::restart_desktop_app,
         ]);
 
     let app = builder

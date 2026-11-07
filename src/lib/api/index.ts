@@ -1,4 +1,5 @@
 export type { AppId } from "./types";
+export type { DesktopAppStatus } from "./desktopApp";
 export { piApi } from "./pi";
 export { providersApi, universalProvidersApi } from "./providers";
 export { settingsApi } from "./settings";
@@ -8,6 +9,7 @@ export { promptsApi } from "./prompts";
 export { skillsApi } from "./skills";
 export { usageApi } from "./usage";
 export { vscodeApi } from "./vscode";
+export { desktopAppApi } from "./desktopApp";
 export { openclawApi } from "./openclaw";
 export { sessionsApi } from "./sessions";
 export * as authApi from "./auth";
