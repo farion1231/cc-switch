@@ -55,8 +55,42 @@
   "firstRunNotice": {
     "title": "歡迎使用 CC Switch",
     "bodyDefault": "CC Switch 可以協助您在 Claude Code / Codex / Gemini CLI 的多個供應商之間一鍵切換。如果您之前已經設定過這些工具，CC Switch 會自動將現有設定儲存為名為 default 的供應商，確保您的設定不會遺失。",
-    "bodyOfficial": "清單中還預設了「官方 (Official)」供應商，隨時點擊即可切換回官方預設設定。切換前 CC Switch 會自動將目前設定備份回 default，可以放心來回切換。這就是 CC Switch 的運作方式。",
-    "confirm": "我了解了"
+    "bodyOfficial": "清單中還預設了「官方 (Official)」供應商，隨時點擊即可切換回官方預設設定。切換前 CC Switch 會自動將目前設定備份回 default，可以放心來回切換。這就是 CC Switch 的運作方式。"
+  },
+  "tutorial": {
+    "open": "使用教學",
+    "progress": "第 {{current}} 步，共 {{total}} 步",
+    "skip": "略過",
+    "back": "上一步",
+    "next": "下一步",
+    "done": "開始使用",
+    "apps": {
+      "title": "選擇應用",
+      "body": "側欄這一列是 CC Switch 管理的應用（Claude Code、Codex、Gemini CLI 等）。選中一個，右邊就顯示它的供應商。想調整顯示哪些應用，可以點底部的「應用」。"
+    },
+    "providers": {
+      "title": "啟用供應商",
+      "body": "每張卡片是一個供應商。點卡片上的「啟用」，CC Switch 就會把它寫進這個應用的設定檔；系統匣選單裡也能快速切換。",
+      "empty": "這個應用還沒有供應商。新增之後，每個供應商都會以卡片顯示在這裡；點卡片上的「啟用」，CC Switch 就會把它寫進這個應用的設定檔。"
+    },
+    "add": {
+      "title": "新增供應商",
+      "body": "點這裡填好請求位址和 API Key，就能新增一個供應商；常見服務商都有現成的預設可選。"
+    },
+    "modes": {
+      "title": "直連、路由與聚合",
+      "body": "預設是直連：應用直接請求目前的供應商。開始路由後，請求先經過本機的路由服務，可以按佇列做故障轉移，並記錄用量。Claude Code 和 Codex 還可以在設定裡開啟聚合模式，把多家供應商的模型同時放進用戶端的模型清單。",
+      "unavailable": "目前的應用沒有這組切換。選中 Claude Code、Codex、Gemini CLI 或 Grok Build 等應用，頁面頂部就會出現「直連 / 路由」切換。"
+    },
+    "shared": {
+      "title": "MCP、Skills 與提示詞",
+      "body": "側欄裡的 MCP、Skills、提示詞頁面集中管理這些設定，每一項都可以選擇同步到哪些應用。工作階段頁可以瀏覽和恢復各個應用的歷史對話。"
+    },
+    "more": {
+      "title": "用量、授權與設定",
+      "body": "用量統計頁查看請求次數、Token 和費用；授權中心管理 GitHub Copilot、ChatGPT 等訂閱帳號的登入；設定裡可以調整通用偏好、應用設定目錄、本地路由、網路和資料備份。",
+      "replay": "想再看一遍，可以在「設定 → 關於」裡重新開啟這份教學。"
+    }
   },
   "apiKeyInput": {
     "placeholder": "請輸入 API Key",

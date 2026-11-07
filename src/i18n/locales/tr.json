@@ -55,8 +55,42 @@
   "firstRunNotice": {
     "title": "CC Switch’e hoş geldiniz",
     "bodyDefault": "CC Switch, tek bir tıklamayla birden fazla Claude Code / Codex / Gemini CLI sağlayıcısı arasında geçiş yapmanızı sağlar. Bu araçları zaten yapılandırdıysanız, CC Switch mevcut kurulumunuzu \"varsayılan\" adlı bir sağlayıcı olarak kaydetmiştir, böylece önceki yapılandırmalarınızın hiçbiri kaybolmaz.",
-    "bodyOfficial": "Listede “Resmî” ön ayarı da bulunur; resmî varsayılan ayarlara dönmek istediğinizde buna tıklayın. CC Switch, geçiş yapmadan önce mevcut yapılandırmanızı “default” olarak yedekler; böylece iki yapılandırma arasında rahatça geçiş yapabilirsiniz. CC Switch böyle çalışır 😊",
-    "confirm": "Anladım"
+    "bodyOfficial": "Listede “Resmî” ön ayarı da bulunur; resmî varsayılan ayarlara dönmek istediğinizde buna tıklayın. CC Switch, geçiş yapmadan önce mevcut yapılandırmanızı “default” olarak yedekler; böylece iki yapılandırma arasında rahatça geçiş yapabilirsiniz. CC Switch böyle çalışır 😊"
+  },
+  "tutorial": {
+    "open": "Eğitim",
+    "progress": "Adım {{current}} / {{total}}",
+    "skip": "Atla",
+    "back": "Geri",
+    "next": "İleri",
+    "done": "Başla",
+    "apps": {
+      "title": "Bir uygulama seçin",
+      "body": "Bu sütun CC Switch'in yönettiği uygulamaları listeler (Claude Code, Codex, Gemini CLI ve diğerleri). Birini seçtiğinizde sağlayıcıları sağda görünür. Hangi uygulamaların gösterileceğini alttaki “Uygulamalar”dan seçebilirsiniz."
+    },
+    "providers": {
+      "title": "Bir sağlayıcıyı etkinleştirin",
+      "body": "Her kart bir sağlayıcıdır. Bir kartta “Etkinleştir”e tıkladığınızda CC Switch onu o uygulamanın yapılandırma dosyasına yazar. Tepsi menüsünden de hızlıca geçiş yapabilirsiniz.",
+      "empty": "Bu uygulamada henüz sağlayıcı yok. Eklediğinizde her sağlayıcı burada bir kart olarak görünür; bir kartta “Etkinleştir”e tıkladığınızda CC Switch onu o uygulamanın yapılandırma dosyasına yazar."
+    },
+    "add": {
+      "title": "Sağlayıcı ekleyin",
+      "body": "Buraya tıklayıp uç noktayı ve API anahtarını girerek bir sağlayıcı ekleyin. Yaygın hizmetler için hazır ön ayarlar vardır."
+    },
+    "modes": {
+      "title": "Doğrudan, Yönlendirme ve Birleştirme",
+      "body": "Varsayılan mod Doğrudan'dır: uygulama mevcut sağlayıcıya kendisi bağlanır. Yönlendirmeyi başlattığınızda istekler bu makinedeki yerel yönlendirme hizmetinden geçer; bu hizmet bir sıra boyunca yedek sağlayıcıya geçebilir ve kullanımı kaydeder. Claude Code ve Codex için Ayarlar'dan Birleştirme modunu açarak birden fazla sağlayıcının modellerini istemcinin model listesine aynı anda ekleyebilirsiniz.",
+      "unavailable": "Geçerli uygulamada bu geçiş yok. Claude Code, Codex, Gemini CLI, Grok Build gibi bir uygulama seçtiğinizde Doğrudan / Yönlendirme geçişi sayfanın üstünde görünür."
+    },
+    "shared": {
+      "title": "MCP, Skills ve İstemler",
+      "body": "Kenar çubuğundaki MCP, Skills ve İstemler sayfaları bunları tek yerden yönetir; her öğeyi hangi uygulamalara eşitleyeceğinizi seçebilirsiniz. Oturumlar sayfasında her uygulamanın geçmiş konuşmalarına göz atabilir ve onları sürdürebilirsiniz."
+    },
+    "more": {
+      "title": "Kullanım, Hesaplar ve Ayarlar",
+      "body": "Kullanım sayfası istekleri, token'ları ve maliyeti gösterir. Hesaplar, GitHub Copilot ve ChatGPT gibi aboneliklerin oturum açma işlemlerini yönetir. Ayarlar genel tercihleri, yapılandırma klasörlerini, yerel yönlendirmeyi, ağı ve veri yedeklemeyi kapsar.",
+      "replay": "Tekrar görmek isterseniz eğitimi Ayarlar → Hakkında bölümünden yeniden açabilirsiniz."
+    }
   },
   "apiKeyInput": {
     "placeholder": "API Anahtarını Girin",
