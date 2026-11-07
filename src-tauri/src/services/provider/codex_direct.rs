@@ -610,13 +610,7 @@ pub(crate) fn plan(
                 Route::Official if crate::settings::unify_codex_session_history() => {
                     (RouteWrite::OfficialMirror, None, auth)
                 }
-                Route::Official => (
-                    RouteWrite::Official {
-                        dormant_base_url: configured_proxy_base_url(db),
-                    },
-                    None,
-                    auth,
-                ),
+                Route::Official => (RouteWrite::Official, None, auth),
                 Route::Custom { table, auth: kind } => {
                     (RouteWrite::Custom(table.clone()), Some(*kind), auth)
                 }
