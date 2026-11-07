@@ -1839,6 +1839,8 @@
     "gptContextWindowHint": "中継サービスの GPT は多くが ChatGPT サブスクリプション由来で、ウィンドウは 272K しかありません。大きく設定すると圧縮が遅れ、上流に拒否された時点でそのターンが失敗します。このプロバイダーが対応している場合のみ設定してください。",
     "modelMetadataSourcePreset": "プリセット",
     "modelMetadataSourceBoth": "プリセットと models.dev",
+    "modelMetadataSourceGateway": "ゲートウェイ",
+    "modelMetadataSourceModelsDev": "models.dev",
     "modelPicker": {
       "title": "モデルを選択",
       "lead": "チェックしたモデルはリストに追加され、チェックを外すとリストから削除されます。",

@@ -10,6 +10,8 @@ interface ModelInputWithFetchProps {
   id: string;
   value: string;
   onChange: (value: string) => void;
+  /** 从下拉里选模型时额外回调；不传就沿用 onChange。 */
+  onSelect?: (value: string) => void;
   placeholder?: string;
   fetchedModels: FetchedModel[];
   isLoading: boolean;
@@ -21,6 +23,7 @@ export function ModelInputWithFetch({
   id,
   value,
   onChange,
+  onSelect,
   placeholder,
   fetchedModels,
   isLoading,
@@ -41,7 +44,7 @@ export function ModelInputWithFetch({
           autoComplete="off"
           className="flex-1"
         />
-        <ModelDropdown models={fetchedModels} onSelect={onChange} />
+        <ModelDropdown models={fetchedModels} onSelect={onSelect ?? onChange} />
       </div>
     );
   }

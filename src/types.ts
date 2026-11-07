@@ -952,6 +952,7 @@ export interface OpenCodeModel {
   name: string;
   limit?: {
     context?: number;
+    input?: number;
     output?: number;
   };
   options?: Record<string, unknown>; // 模型级别额外选项（provider 路由等）

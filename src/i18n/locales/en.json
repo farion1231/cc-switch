@@ -1839,6 +1839,8 @@
     "gptContextWindowHint": "GPT on relays usually comes from ChatGPT subscriptions, whose window is only 272K. A larger window delays compaction until the upstream rejects the request and the turn fails; only use it if this provider supports it.",
     "modelMetadataSourcePreset": "preset",
     "modelMetadataSourceBoth": "preset and models.dev",
+    "modelMetadataSourceGateway": "gateway",
+    "modelMetadataSourceModelsDev": "models.dev",
     "modelPicker": {
       "title": "Select models",
       "lead": "Checked models are added to the list; unchecking a model removes it from the list.",

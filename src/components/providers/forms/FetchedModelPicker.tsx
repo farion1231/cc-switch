@@ -9,7 +9,9 @@ import { SearchField } from "@/components/ui/search-field";
 import { CHECKBOX_CLASS, V7Dialog } from "@/components/mcp/formBits";
 import type { FetchedModel } from "@/lib/api/model-fetch";
 import {
+  metadataFromGateway,
   resolveModelMetadata,
+  type KnownModelMetadata,
   type PresetModelSource,
 } from "@/lib/modelMetadata";
 import { modelsDevQueryOptions } from "@/lib/modelsDev";
@@ -171,15 +173,26 @@ function FetchedModelPickerBody({
   const baseUrl = metadataSource?.baseUrl;
   const presets = metadataSource?.presets;
   const allIdsKey = allIds.join("\n");
+  // 网关随列表返回的参数，优先于本地预设和 models.dev。
+  const gatewayMetadata = useMemo(() => {
+    const result = new Map<string, KnownModelMetadata>();
+    for (const model of models) {
+      const metadata = metadataFromGateway(model.metadata);
+      if (metadata) result.set(model.id, metadata);
+    }
+    return result;
+  }, [models]);
   const summaries = useMemo(() => {
     const result = new Map<string, string>();
-    if (baseUrl === undefined) return result;
     const presetSources = presets?.();
     for (const id of allIdsKey.split("\n")) {
+      const gateway = gatewayMetadata.get(id);
+      if (!gateway && baseUrl === undefined) continue;
       const metadata = resolveModelMetadata(id, {
-        baseUrl,
+        baseUrl: baseUrl ?? "",
         presets: presetSources,
         modelsDev,
+        gatewayMetadata: gateway,
       });
       if (!metadata) continue;
       const parts: string[] = [];
@@ -195,7 +208,7 @@ function FetchedModelPickerBody({
       if (parts.length > 0) result.set(id, parts.join(" · "));
     }
     return result;
-  }, [allIdsKey, baseUrl, modelsDev, presets, t]);
+  }, [allIdsKey, baseUrl, gatewayMetadata, modelsDev, presets, t]);
 
   const setChecked = (ids: string[], checked: boolean) =>
     setDraft((prev) => {

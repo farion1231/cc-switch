@@ -1677,6 +1677,71 @@ describe("PiProviderForm", () => {
     });
   });
 
+  it("replaces an auto-filled display name when another model is selected", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
+        HttpResponse.json([
+          {
+            id: "model-a",
+            ownedBy: null,
+            metadata: { meta: { models_dev: { name: "Model A" } } },
+          },
+          {
+            id: "model-b",
+            ownedBy: null,
+            metadata: { meta: { models_dev: { name: "Model B" } } },
+          },
+        ]),
+      ),
+      http.post(`${TAURI_ENDPOINT}/fetch_models_dev`, () =>
+        HttpResponse.error(),
+      ),
+    );
+
+    render(
+      <PiProviderForm
+        appId="pi"
+        submitLabel="Save manual provider"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "providerPreset.custom" }),
+    );
+    fireEvent.change(screen.getByPlaceholderText("my-provider"), {
+      target: { value: "autofilled-provider" },
+    });
+    fireEvent.change(screen.getByLabelText("pi.form.credential"), {
+      target: { value: "literal-key" },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText("https://api.example.com/v1"),
+      {
+        target: { value: "https://api.example.com/v1" },
+      },
+    );
+    await user.click(screen.getByRole("button", { name: "pi.form.addModel" }));
+    await fetchModelsAndClosePicker(user);
+
+    const modelIdInput = screen.getByLabelText("pi.form.modelId");
+    const openModelMenu = async () =>
+      user.click(
+        within(modelIdInput.parentElement as HTMLElement).getByRole("button"),
+      );
+
+    await openModelMenu();
+    await user.click(await screen.findByRole("option", { name: "model-a" }));
+    const modelNameInput = screen.getByLabelText("pi.form.modelName");
+    await waitFor(() => expect(modelNameInput).toHaveValue("Model A"));
+
+    await openModelMenu();
+    await user.click(await screen.findByRole("option", { name: "model-b" }));
+    await waitFor(() => expect(modelNameInput).toHaveValue("Model B"));
+  });
+
   it("adds the compat a preset thinking map depends on", async () => {
     const user = userEvent.setup();
     server.use(

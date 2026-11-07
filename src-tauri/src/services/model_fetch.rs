@@ -16,6 +16,10 @@ use std::time::Duration;
 pub struct FetchedModel {
     pub id: String,
     pub owned_by: Option<String>,
+    /// 供应商在列表条目里附带的模型参数，原样转给前端解析。部分网关
+    /// 把 models.dev 的 enrichment 放在 `info.meta`（窗口、价格、模态等）。
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
 }
 
 /// 模型列表响应的兼容格式。
@@ -36,6 +40,32 @@ struct ModelsResponse {
 struct ModelEntry {
     id: String,
     owned_by: Option<String>,
+    info: Option<serde_json::Value>,
+    meta: Option<serde_json::Value>,
+}
+
+fn is_non_empty_object(value: &serde_json::Value) -> bool {
+    value.as_object().is_some_and(|object| !object.is_empty())
+}
+
+/// 条目自带的参数块：优先 `info`（网关常见的路由/元数据信封），
+/// 其次少数实现直接放在条目上的 `meta`。`info` 只有路由信息、`meta` 为空或
+/// 非对象时，回退到条目级 `meta`，避免非空 `info` 遮蔽真正可解析的参数。
+fn model_entry_metadata(
+    info: Option<serde_json::Value>,
+    meta: Option<serde_json::Value>,
+) -> Option<serde_json::Value> {
+    let has_info_meta = info
+        .as_ref()
+        .and_then(|value| value.get("meta"))
+        .is_some_and(is_non_empty_object);
+    if has_info_meta {
+        return info;
+    }
+    if meta.as_ref().is_some_and(is_non_empty_object) {
+        return meta;
+    }
+    info.filter(is_non_empty_object)
 }
 
 /// `models[]` 条目对应的模型 id：`slug` 优先，回退 OpenAI 风格的 `id`；
@@ -142,15 +172,23 @@ pub async fn fetch_models(
 
             let mut models: Vec<FetchedModel> = if let Some(data) = resp.data {
                 data.into_iter()
-                    .map(|m| FetchedModel {
-                        id: m.id,
-                        owned_by: m.owned_by,
+                    .map(|m| {
+                        let metadata = model_entry_metadata(m.info, m.meta);
+                        FetchedModel {
+                            id: m.id,
+                            owned_by: m.owned_by,
+                            metadata,
+                        }
                     })
                     .collect()
             } else {
                 catalog_model_ids(resp.models)
                     .into_iter()
-                    .map(|id| FetchedModel { id, owned_by: None })
+                    .map(|id| FetchedModel {
+                        id,
+                        owned_by: None,
+                        metadata: None,
+                    })
                     .collect()
             };
 
@@ -679,6 +717,55 @@ mod tests {
         let data = resp.data.unwrap();
         assert_eq!(data[0].id, "my-model");
         assert!(data[0].owned_by.is_none());
+    }
+
+    #[test]
+    fn test_parse_response_keeps_info_meta() {
+        let json = r#"{"data":[{"id":"gpt-6-luna","owned_by":"example-gateway","info":{"meta":{"capabilities":{"vision":true},"models_dev":{"limit":{"context":1050000,"output":128000},"reasoning":true}}}}]}"#;
+        let resp: ModelsResponse = serde_json::from_str(json).unwrap();
+        let entry = &resp.data.unwrap()[0];
+        let metadata = model_entry_metadata(entry.info.clone(), entry.meta.clone()).unwrap();
+        assert_eq!(
+            metadata["meta"]["models_dev"]["limit"]["context"],
+            1_050_000
+        );
+        assert_eq!(metadata["meta"]["models_dev"]["limit"]["output"], 128_000);
+        assert_eq!(metadata["meta"]["capabilities"]["vision"], true);
+    }
+
+    #[test]
+    fn test_model_entry_metadata_skips_empty_and_falls_back_to_meta() {
+        let json = serde_json::json!({"n_ctx": 8192});
+        assert_eq!(
+            model_entry_metadata(Some(serde_json::json!({})), Some(json.clone())),
+            Some(json.clone())
+        );
+        assert_eq!(
+            model_entry_metadata(Some(serde_json::json!("not-an-object")), Some(json.clone())),
+            Some(json)
+        );
+        assert_eq!(model_entry_metadata(None, None), None);
+    }
+
+    #[test]
+    fn test_model_entry_metadata_does_not_shadow_meta_with_non_empty_info() {
+        let meta = serde_json::json!({"n_ctx": 8192});
+        assert_eq!(
+            model_entry_metadata(
+                Some(serde_json::json!({"route": "primary"})),
+                Some(meta.clone())
+            ),
+            Some(meta)
+        );
+        // `info.meta` 有效时仍优先使用整个 `info` 信封。
+        let envelope = serde_json::json!({"meta": {"n_ctx": 4096}});
+        assert_eq!(
+            model_entry_metadata(
+                Some(envelope.clone()),
+                Some(serde_json::json!({"n_ctx": 1}))
+            ),
+            Some(envelope)
+        );
     }
 
     #[test]
