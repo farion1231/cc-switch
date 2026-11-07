@@ -152,6 +152,7 @@ mod tests {
             tiers: vec![],
             extra_usage: None,
             reset_credits: None,
+            membership: None,
             credits_balance: None,
             plan_name: None,
             error: None,

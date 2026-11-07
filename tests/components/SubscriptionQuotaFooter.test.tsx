@@ -457,3 +457,80 @@ describe("ChatGPT Credits balance", () => {
     expect(screen.queryByText("Credits")).not.toBeInTheDocument();
   });
 });
+
+describe("Codex membership validity", () => {
+  it.each([true, false])(
+    "shows membership separately from usage windows (inline=%s)",
+    (inline) => {
+      renderQuota(baseTiers, inline, {
+        tool: "codex_oauth",
+        membership: { planType: "plus", activeUntil: "2026-10-29T12:00:00Z" },
+      });
+      expect(screen.getByText(/plus · 订阅有效至/)).toHaveTextContent(
+        "2026/10/29",
+      );
+      expect(screen.getByText(sentence("5 小时剩余 88%"))).toBeInTheDocument();
+    },
+  );
+
+  it("marks expired membership while preserving available quota", () => {
+    renderQuota(baseTiers, true, {
+      tool: "codex",
+      membership: { planType: "plus", activeUntil: "2026-09-08T12:00:00Z" },
+    });
+    expect(screen.getByText(/订阅已于/)).toHaveClass("text-danger-text");
+    expect(screen.getByText(sentence("5 小时剩余 88%"))).toBeInTheDocument();
+  });
+
+  it("warns when membership will expire within seven days", () => {
+    renderQuota(baseTiers, true, {
+      tool: "codex_oauth",
+      membership: { planType: "plus", activeUntil: "2026-09-10T12:00:00Z" },
+    });
+    expect(screen.getByText(/订阅有效至/)).toHaveClass("text-orange-500");
+  });
+
+  it.each([null, "invalid"])(
+    "shows unavailable for missing or invalid membership date (%s)",
+    (activeUntil) => {
+      renderQuota(baseTiers, true, {
+        tool: "codex_oauth",
+        membership: { planType: "plus", activeUntil },
+      });
+      expect(
+        screen.getByText("plus · 订阅到期时间暂不可用"),
+      ).toBeInTheDocument();
+      expect(screen.getByText(sentence("5 小时剩余 88%"))).toBeInTheDocument();
+    },
+  );
+
+  it("shows membership even when no usage window is returned", () => {
+    renderQuota([], true, {
+      tool: "codex_oauth",
+      membership: { planType: "plus", activeUntil: "2026-10-29T12:00:00Z" },
+    });
+    expect(screen.getByText(/订阅有效至/)).toBeInTheDocument();
+  });
+
+  it("keeps legacy quota payloads working", () => {
+    renderQuota(baseTiers, true, { tool: "codex_oauth" });
+    expect(
+      screen.queryByText(/订阅有效至|订阅到期时间/),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(sentence("5 小时剩余 88%"))).toBeInTheDocument();
+  });
+
+  it.each(["zh-TW", "en", "ja"])(
+    "renders translated membership text in %s",
+    async (locale) => {
+      await i18n.changeLanguage(locale);
+      renderQuota([], true, {
+        tool: "codex_oauth",
+        membership: { planType: "plus", activeUntil: "2026-10-29T12:00:00Z" },
+      });
+      expect(screen.getByText(/plus ·/)).not.toHaveTextContent(
+        "subscription.membership",
+      );
+    },
+  );
+});

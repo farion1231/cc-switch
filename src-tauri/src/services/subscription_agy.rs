@@ -152,6 +152,7 @@ pub(crate) async fn get_agy_subscription_quota() -> Result<SubscriptionQuota, St
         tiers,
         extra_usage: None,
         reset_credits: None,
+        membership: None,
         credits_balance: None,
         plan_name: None,
         error: None,
