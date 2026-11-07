@@ -7660,6 +7660,11 @@ description: Test skill
             std::env::set_var("DSH_HOME", home.join(".dsh"));
             std::env::set_var("CC_SWITCH_TEST_HOME", home);
             std::env::set_var("KIMI_CODE_HOME", home.join(".kimi-code"));
+            // The settings cache is process-wide and may have been loaded from the
+            // developer's real ~/.cc-switch/settings.json (e.g. skillSyncMethod =
+            // symlink). Reload it from the isolated home so every test starts from
+            // default settings.
+            crate::settings::reload_settings().expect("reload settings for isolated test home");
             guard
         }
     }
@@ -7677,6 +7682,7 @@ description: Test skill
                 Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
                 None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
             }
+            let _ = crate::settings::reload_settings();
         }
     }
 
