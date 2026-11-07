@@ -321,6 +321,18 @@ fn sync_file(
     Ok(result)
 }
 
+fn merge_tokens(previous: &mut TokenUsage, next: &TokenUsage) {
+    previous.input_tokens = previous.input_tokens.max(next.input_tokens);
+    previous.output_tokens = previous.output_tokens.max(next.output_tokens);
+    previous.cache_read_tokens = previous.cache_read_tokens.max(next.cache_read_tokens);
+    previous.cache_creation_tokens = previous
+        .cache_creation_tokens
+        .max(next.cache_creation_tokens);
+    previous.cache_creation_1h_tokens = previous
+        .cache_creation_1h_tokens
+        .max(next.cache_creation_1h_tokens);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -503,7 +515,7 @@ mod tests {
                 let path = dir.path().join("project/session.jsonl");
                 let providers = serde_json::Map::new();
                 let original = message("reply", None, 5);
-                write(&path, &[original.clone()]);
+                write(&path, std::slice::from_ref(&original));
                 let old_key = format!("{}:v1:{}", app.as_str(), path.display());
                 sync_file(&db, &app, &path, &old_key, 0, &providers).unwrap();
                 let input = if semantics == INPUT_TOKEN_SEMANTICS_TOTAL {
@@ -630,7 +642,10 @@ mod tests {
             .unwrap()
             .clone();
             let parent = message("parent", Some("openai"), 5);
-            write(&project.join("session.jsonl"), &[parent.clone()]);
+            write(
+                &project.join("session.jsonl"),
+                std::slice::from_ref(&parent),
+            );
             let sidechain = |mut record: Value, agent: &str| {
                 record["isSidechain"] = json!(true);
                 record["agentId"] = json!(agent);
@@ -764,16 +779,4 @@ mod tests {
             );
         }
     }
-}
-
-fn merge_tokens(previous: &mut TokenUsage, next: &TokenUsage) {
-    previous.input_tokens = previous.input_tokens.max(next.input_tokens);
-    previous.output_tokens = previous.output_tokens.max(next.output_tokens);
-    previous.cache_read_tokens = previous.cache_read_tokens.max(next.cache_read_tokens);
-    previous.cache_creation_tokens = previous
-        .cache_creation_tokens
-        .max(next.cache_creation_tokens);
-    previous.cache_creation_1h_tokens = previous
-        .cache_creation_1h_tokens
-        .max(next.cache_creation_1h_tokens);
 }
