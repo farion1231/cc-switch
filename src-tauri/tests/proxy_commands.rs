@@ -2,7 +2,7 @@ use cc_switch_lib::{
     get_pricing_model_source_test_hook, set_pricing_model_source_test_hook, AppError,
 };
 
-#[path = "support.rs"]
+#[path = "support/mod.rs"]
 mod support;
 use support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
 
