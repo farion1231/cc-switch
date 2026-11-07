@@ -170,6 +170,19 @@ impl Database {
         conn.execute(&aggregation_sql, [cutoff])
             .map_err(|e| AppError::Database(format!("Rollup aggregation failed: {e}")))?;
 
+        // Reuse the durable session ledger for OpenCode's stable message IDs.
+        // This also covers pre-upgrade details and excluded duplicates. Keep
+        // the ledger write inside the aggregation/deletion savepoint so a
+        // failed prune cannot hide usage that has not actually been archived.
+        conn.execute(
+            "INSERT OR IGNORE INTO session_usage_dedup
+             (data_source, request_id, semantic_id, has_entry_id)
+             SELECT data_source, request_id, request_id, 1 FROM proxy_request_logs
+             WHERE data_source = 'opencode_session' AND created_at < ?1",
+            [cutoff],
+        )
+        .map_err(|e| AppError::Database(format!("Saving OpenCode dedup IDs failed: {e}")))?;
+
         // INSERT uses the effective-log filter to exclude duplicate session rows.
         // DELETE intentionally prunes all old details so those duplicates are discarded.
         let deleted = conn
