@@ -259,15 +259,19 @@ export function useProviderActions(
 
         if (activeApp === "codex" && options?.restartDesktop) {
           try {
-            const restartResult = await restartCodexDesktop(provider.id);
-            toast.success(
-              t(
-                restartResult.action === "started"
-                  ? "codexDesktop.switchedAndOpened"
-                  : "codexDesktop.switchedAndRestarted",
-              ),
-              { closeButton: true, ...splitExtras },
+            const restartMessage = t(
+              restartResult.action === "started"
+                ? "codexDesktop.switchedAndOpened"
+                : "codexDesktop.switchedAndRestarted",
             );
+            if (splitExtras) {
+              toast.success(restartMessage, {
+                closeButton: true,
+                ...splitExtras,
+              });
+            } else {
+              toast.success(restartMessage);
+            }
           } catch (error) {
             toast.error(
               t("codexDesktop.switchRestartFailed", {
