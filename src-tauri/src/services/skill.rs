@@ -1241,11 +1241,22 @@ impl SkillService {
     ///
     /// 递归遍历目录下所有非隐藏文件，按相对路径字典序排列，
     /// 将 "相对路径\0内容\0" 逐文件 feed 给同一个 hasher。
+    /// Python 字节码（`__pycache__/`、`*.pyc`）不计入，见 `collect_files_for_hash`。
     pub fn compute_dir_hash(dir: &Path) -> Result<String> {
+        Self::compute_dir_hash_with(dir, true)
+    }
+
+    /// 旧版算法：字节码也计入。库里在 #7772 修复前保存的 content_hash 是用它
+    /// 算的；只给 check_updates 识别并迁移这类旧缓存用。
+    fn compute_legacy_dir_hash(dir: &Path) -> Result<String> {
+        Self::compute_dir_hash_with(dir, false)
+    }
+
+    fn compute_dir_hash_with(dir: &Path, skip_bytecode: bool) -> Result<String> {
         use sha2::{Digest, Sha256};
 
         let mut files: Vec<PathBuf> = Vec::new();
-        Self::collect_files_for_hash(dir, dir, &mut files)?;
+        Self::collect_files_for_hash(dir, dir, skip_bytecode, &mut files)?;
         files.sort();
 
         let mut hasher = Sha256::new();
@@ -1263,9 +1274,19 @@ impl SkillService {
         Ok(format!("{:x}", hasher.finalize()))
     }
 
-    /// 递归收集目录下所有非隐藏文件
+    /// 递归收集目录下所有非隐藏文件。
+    ///
+    /// `__pycache__/` 目录与 `*.pyc` 文件是 Python 运行/导入时生成的字节码缓存，
+    /// 不属于 Skill 自身内容；只跑一遍 Skill（不修改任何源文件）就会让目录哈希
+    /// 发生变化，结果是 Skill 会被报为「有更新」，用户点更新又会触发整目录替
+    /// 换（见 #7772）。忽略这两类条目后，运行 Skill 不再影响哈希。
     #[allow(clippy::only_used_in_recursion)]
-    fn collect_files_for_hash(base: &Path, current: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+    fn collect_files_for_hash(
+        base: &Path,
+        current: &Path,
+        skip_bytecode: bool,
+        files: &mut Vec<PathBuf>,
+    ) -> Result<()> {
         let entries = fs::read_dir(current)
             .with_context(|| format!("读取目录失败: {}", current.display()))?;
         for entry in entries {
@@ -1276,8 +1297,14 @@ impl SkillService {
             }
             let path = entry.path();
             if path.is_dir() {
-                Self::collect_files_for_hash(base, &path, files)?;
+                if skip_bytecode && name == "__pycache__" {
+                    continue;
+                }
+                Self::collect_files_for_hash(base, &path, skip_bytecode, files)?;
             } else {
+                if skip_bytecode && name.ends_with(".pyc") {
+                    continue;
+                }
                 files.push(path);
             }
         }
@@ -1372,6 +1399,16 @@ impl SkillService {
             Ok(h) => Some((h, true)),
             Err(_) => None,
         }
+    }
+
+    /// 库里缓存的哈希是否是该远端目录按旧算法（字节码计入）算出的值。
+    ///
+    /// 上游仓库自带 `.pyc` / `__pycache__` 时，#7772 修复前安装的 Skill 缓存的
+    /// 是旧算法的哈希，与新算法的远端哈希必然不等；不识别就会对未变化的
+    /// Skill 误报「有更新」，用户点更新又是一次整目录替换。远端不含字节码时
+    /// 新旧算法结果相同，前面的相等比较已经放行，不会走到这里。
+    fn is_legacy_hash_of(cached_hash: &str, remote_dir: &Path) -> bool {
+        Self::compute_legacy_dir_hash(remote_dir).is_ok_and(|legacy| legacy == cached_hash)
     }
 
     /// 检查所有已安装 Skill 的更新
@@ -1481,8 +1518,16 @@ impl SkillService {
                     Some((h, freshly_computed)) => {
                         if freshly_computed {
                             let _ = db.update_skill_hash(&skill.id, &h, 0);
+                            Some(h)
+                        } else if h != remote_hash && Self::is_legacy_hash_of(&h, &remote_skill_dir)
+                        {
+                            // 旧版缓存（字节码计入）与上游一致：迁移成新算法的
+                            // 值，不报「有更新」；更新时间保持原值。
+                            let _ = db.update_skill_hash(&skill.id, &remote_hash, skill.updated_at);
+                            Some(remote_hash.clone())
+                        } else {
+                            Some(h)
                         }
-                        Some(h)
                     }
                     None => None,
                 };
@@ -7197,6 +7242,81 @@ mod tests {
             SkillService::local_hash_for_update_check(ssot.path(), "../evil", None),
             None
         );
+    }
+
+    /// `#7772`：运行 Skill 留下的 `__pycache__/`、`*.pyc` 不属于 Skill 自身
+    /// 内容，必须在目录哈希里忽略，否则只跑一遍 Skill 就会改变哈希并被报为
+    /// 「有更新」，点更新又会触发整目录替换、覆盖本地修改。
+    #[test]
+    fn compute_dir_hash_ignores_python_bytecode() {
+        let dir = tempdir().expect("tempdir");
+        let baseline = dir.path().join("baseline");
+        fs::create_dir(&baseline).expect("create baseline dir");
+        fs::write(baseline.join("SKILL.md"), "---\nname: x\n---\n").expect("write skill");
+        fs::write(baseline.join("helper.py"), "def f():\n    return 1\n").expect("write helper");
+        let baseline_hash = SkillService::compute_dir_hash(&baseline).expect("baseline hash");
+
+        // 复制一份并补上 `__pycache__/` 与同名 `.pyc`，其它内容不变。
+        let with_bytecode = dir.path().join("with-bytecode");
+        SkillService::copy_dir_recursive(&baseline, &with_bytecode).expect("copy baseline");
+        fs::create_dir(with_bytecode.join("__pycache__")).expect("create pycache dir");
+        fs::write(
+            with_bytecode
+                .join("__pycache__")
+                .join("helper.cpython-311.pyc"),
+            b"\x00\x00\x00\x00 bytecode blob \x00\x00",
+        )
+        .expect("write nested pyc");
+        fs::write(
+            with_bytecode.join("helper.pyc"),
+            b"\x00\x00\x00\x00 standalone pyc \x00\x00",
+        )
+        .expect("write root pyc");
+        let with_bytecode_hash =
+            SkillService::compute_dir_hash(&with_bytecode).expect("with-bytecode hash");
+
+        assert_eq!(
+            baseline_hash, with_bytecode_hash,
+            "__pycache__/ 与 *.pyc 不应影响目录哈希"
+        );
+
+        // 仍然要识别真正修改过的源文件。
+        let edited = dir.path().join("edited");
+        SkillService::copy_dir_recursive(&baseline, &edited).expect("copy edited");
+        fs::write(edited.join("helper.py"), "def f():\n    return 2\n").expect("edit helper");
+        let edited_hash = SkillService::compute_dir_hash(&edited).expect("edited hash");
+        assert_ne!(
+            baseline_hash, edited_hash,
+            "修改过的源文件仍必须改变目录哈希"
+        );
+    }
+
+    /// 上游仓库自带字节码时，#7772 修复前保存的缓存哈希按旧算法计入了
+    /// `.pyc`；检查更新要能认出它，而不是对未变化的 Skill 误报「有更新」。
+    #[test]
+    fn legacy_cached_hash_with_upstream_bytecode_is_recognized() {
+        let dir = tempdir().expect("tempdir");
+        let remote = dir.path().join("remote");
+        fs::create_dir_all(remote.join("__pycache__")).expect("create remote dir");
+        fs::write(remote.join("SKILL.md"), "---\nname: x\n---\n").expect("write skill");
+        fs::write(remote.join("helper.py"), "def f():\n    return 1\n").expect("write helper");
+        fs::write(remote.join("helper.pyc"), b"\x00 shipped pyc \x00").expect("write pyc");
+        fs::write(
+            remote.join("__pycache__").join("helper.cpython-311.pyc"),
+            b"\x00 shipped nested pyc \x00",
+        )
+        .expect("write nested pyc");
+
+        let legacy_cached = SkillService::compute_legacy_dir_hash(&remote).expect("legacy hash");
+        let new_remote = SkillService::compute_dir_hash(&remote).expect("new hash");
+        assert_ne!(legacy_cached, new_remote, "上游带字节码时新旧算法结果不同");
+        assert!(SkillService::is_legacy_hash_of(&legacy_cached, &remote));
+
+        // 上游真的改了源文件：旧缓存对不上新内容，仍要报更新。
+        let changed = dir.path().join("changed");
+        SkillService::copy_dir_recursive(&remote, &changed).expect("copy remote");
+        fs::write(changed.join("helper.py"), "def f():\n    return 2\n").expect("edit helper");
+        assert!(!SkillService::is_legacy_hash_of(&legacy_cached, &changed));
     }
 
     #[test]

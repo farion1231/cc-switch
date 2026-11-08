@@ -137,9 +137,11 @@ fn read_text(path: &Path) -> Result<String, AppError> {
     }
 }
 
+const INVALID_PROFILE_YAML: &str = "Invalid DeepSeek Harness profile YAML";
+
 pub(crate) fn entries(text: &str) -> Result<Vec<Yaml>, AppError> {
     let value: Yaml = serde_yaml::from_str(text)
-        .map_err(|_| AppError::Config("Invalid DeepSeek Harness profile YAML".into()))?;
+        .map_err(|error| AppError::Config(format!("{INVALID_PROFILE_YAML}: {error}")))?;
     match value {
         Yaml::Null => Ok(vec![]),
         Yaml::Sequence(entries) => Ok(entries),
@@ -401,7 +403,7 @@ fn edit_files_and_commit<T>(
         });
         current.push(read_text(path)?);
     }
-    let next = plan(&current)?;
+    let next = plan(&current).map_err(|error| name_invalid_profile(paths, &current, error))?;
     // plan 少给或多给一个文件都意味着某一处改动会被静默丢掉：宁可整体失败。
     if next.len() != paths.len() {
         return Err(AppError::Message(format!(
@@ -444,6 +446,41 @@ fn edit_files_and_commit<T>(
                 )))
             }
         }
+    }
+}
+
+/// A profile that no longer parses fails the whole write, but the plan only reports the YAML
+/// error. Name the file so the user can find which profile to repair (#9297).
+fn name_invalid_profile(paths: &[PathBuf], texts: &[String], error: AppError) -> AppError {
+    if !is_invalid_profile_yaml(&error) {
+        return error;
+    }
+    paths
+        .iter()
+        .zip(texts)
+        .filter(|(path, _)| {
+            path.file_name()
+                .is_some_and(|name| name == "cordis.patch.yml")
+        })
+        .find_map(|(path, text)| {
+            entries(text)
+                .err()
+                .filter(is_invalid_profile_yaml)
+                .map(|parse_error| with_profile_path(path, parse_error))
+        })
+        .unwrap_or(error)
+}
+
+fn is_invalid_profile_yaml(error: &AppError) -> bool {
+    matches!(error, AppError::Config(message) if message.starts_with(INVALID_PROFILE_YAML))
+}
+
+fn with_profile_path(path: &Path, error: AppError) -> AppError {
+    match error {
+        AppError::Config(message) if message.starts_with(INVALID_PROFILE_YAML) => {
+            AppError::Config(format!("{message} ({})", path.display()))
+        }
+        error => error,
     }
 }
 
@@ -618,7 +655,7 @@ pub(crate) fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
                 );
                 continue;
             }
-            Err(error) => return Err(error),
+            Err(error) => return Err(with_profile_path(&path, error)),
         };
         for (id, provider) in providers {
             merged.entry(id).or_insert(provider);
@@ -634,7 +671,8 @@ fn ensure_providers_not_shadowed(home: &Path) -> Result<(), AppError> {
     if text.trim().is_empty() {
         return Ok(());
     }
-    let shadowed = entries(&text)?
+    let shadowed = entries(&text)
+        .map_err(|error| with_profile_path(home, error))?
         .iter()
         .any(|entry| entry["id"].as_str() == Some("llm-pi-ai") && !entry["config"].is_null());
     if shadowed {
@@ -1304,7 +1342,8 @@ pub(crate) fn remove_provider(id: &str) -> Result<(), AppError> {
 /// A key is taken when any target profile already has it (CC Switch never overwrites a node).
 pub(crate) fn provider_key_exists(id: &str) -> Result<bool, AppError> {
     for path in target_paths() {
-        let entry = provider_entry(&read_text(&path)?)?;
+        let entry =
+            provider_entry(&read_text(&path)?).map_err(|error| with_profile_path(&path, error))?;
         if entry["config"]["providers"]
             .as_mapping()
             .is_some_and(|providers| providers.contains_key(Yaml::from(id)))
@@ -1333,7 +1372,7 @@ pub(crate) fn mcp_entries() -> Result<Vec<Yaml>, AppError> {
                 );
                 continue;
             }
-            Err(error) => return Err(error),
+            Err(error) => return Err(with_profile_path(&path, error)),
         };
         for entry in entries {
             let name = entry["config"]["serverName"]
@@ -1628,6 +1667,35 @@ mod tests {
         assert_eq!(entries(&text).unwrap().len(), 1);
         assert_eq!(get_providers_from(&path, &credentials).unwrap().len(), 1);
         assert!(!text.lines().any(|line| line.trim() == "[]"));
+    }
+
+    #[test]
+    fn provider_write_names_the_profile_that_does_not_parse() {
+        let temp = tempfile::tempdir().unwrap();
+        let web = temp.path().join("web").join("cordis.patch.yml");
+        let desktop = temp.path().join("desktop").join("cordis.patch.yml");
+        let credentials = temp.path().join(".credentials.yaml");
+        fs::create_dir_all(web.parent().unwrap()).unwrap();
+        fs::create_dir_all(desktop.parent().unwrap()).unwrap();
+        // A tool appended block entries after the factory `[]` instead of replacing it (#9297).
+        let broken = format!("{FACTORY_PROFILE}\n- id: system-prompt\n  config: {{}}\n");
+        fs::write(&web, &broken).unwrap();
+        fs::write(&desktop, FACTORY_PROFILE).unwrap();
+        let error = save_paths_and_commit(
+            &[web.clone(), desktop.clone()],
+            &credentials,
+            "gateway",
+            Some(editor_config()),
+            true,
+            || Ok(()),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains(INVALID_PROFILE_YAML), "{error}");
+        assert!(error.contains(&web.display().to_string()), "{error}");
+        assert_eq!(read_text(&web).unwrap(), broken);
+        assert_eq!(read_text(&desktop).unwrap(), FACTORY_PROFILE);
+        assert!(!credentials.exists());
     }
 
     #[test]
