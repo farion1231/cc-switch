@@ -20,11 +20,12 @@ use chrono::{Local, Utc};
 use rusqlite::{backup::Backup, params_from_iter, Connection};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::hash::{Hash, Hasher};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 use toml_edit::DocumentMut;
 
 pub(crate) const MIGRATION_NAME: &str = "codex-history-provider-migration-v1";
@@ -32,8 +33,6 @@ pub(crate) const OFFICIAL_UNIFY_MIGRATION_NAME: &str = "codex-official-history-u
 /// 还原操作自身的备份目录（与迁移备份分开，保持迁移账本目录纯净）。
 pub(crate) const OFFICIAL_UNIFY_RESTORE_BACKUP_NAME: &str =
     "codex-official-history-unify-restore-v1";
-/// SQLite 变量上限保守值，IN 列表按此分块。
-const STATE_DB_ID_CHUNK: usize = 500;
 
 /// 串行化官方历史的迁移与还原：开启迁移（启动重试 + 设置保存后台任务）和
 /// 关闭还原可能在毫秒级先后被触发，对同一批 jsonl / state DB 双向改写。
@@ -106,11 +105,15 @@ const CC_SWITCH_LEGACY_CODEX_MODEL_PROVIDER_IDS: &[&str] = &[
     "zhipu_glm_en",
 ];
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CodexHistoryProviderBucketMigrationOutcome {
     pub source_provider_ids: Vec<String>,
     pub migrated_jsonl_files: usize,
     pub migrated_state_rows: usize,
+    pub skipped_jsonl_files: usize,
+    pub skipped_state_rows: usize,
+    pub retry_pending: bool,
     pub skipped_reason: Option<String>,
 }
 
@@ -120,23 +123,70 @@ pub struct CodexProviderTemplateBucketMigrationOutcome {
     pub skipped_reason: Option<String>,
 }
 
+/// Until an inventory can prove otherwise, saved history may still reference
+/// an old route. Check only the presence of history stores, not their contents,
+/// so switching a provider never scans or rewrites all saved conversations.
+pub(crate) fn history_may_reference_legacy_routes() -> bool {
+    let root = get_codex_config_dir();
+    [root.join("sessions"), root.join("archived_sessions")]
+        .into_iter()
+        .chain(codex_state_db_paths(
+            &root,
+            &read_codex_config_text().unwrap_or_default(),
+        ))
+        .any(|path| path.try_exists().unwrap_or(true))
+}
+
 pub fn maybe_migrate_codex_third_party_history_provider_bucket(
     db: &Database,
 ) -> Result<CodexHistoryProviderBucketMigrationOutcome, AppError> {
-    if crate::settings::is_codex_third_party_history_provider_bucket_migrated() {
+    migrate_third_party_history(db, false)
+}
+
+/// Only called by the settings action after the user confirms moving managed
+/// custom histories to the currently selected shared connection.
+pub fn migrate_managed_codex_history_to_unified_bucket(
+    db: &Database,
+) -> Result<CodexHistoryProviderBucketMigrationOutcome, AppError> {
+    migrate_third_party_history(db, true)
+}
+
+fn migrate_third_party_history(
+    db: &Database,
+    include_managed_custom: bool,
+) -> Result<CodexHistoryProviderBucketMigrationOutcome, AppError> {
+    let _op_guard = lock_codex_official_history_op();
+    let codex_dir = get_codex_config_dir();
+    let config_text = read_history_config(&codex_dir)?;
+    let codex_dir_key = canonical_dir_string(&codex_dir);
+    if !include_managed_custom
+        && crate::settings::is_codex_third_party_history_provider_bucket_migrated_for_dir(
+            &codex_dir_key,
+        )
+    {
         return Ok(CodexHistoryProviderBucketMigrationOutcome {
             skipped_reason: Some("already_migrated".to_string()),
             ..Default::default()
         });
     }
-
-    let source_provider_ids = collect_source_model_provider_ids(db)?;
+    if include_managed_custom
+        && (!crate::settings::unify_codex_session_history()
+            || !codex_config_text_routes_custom(&config_text))
+    {
+        return Err(AppError::Message(
+            "Enable unified Codex session history and apply a shared connection before migrating"
+                .into(),
+        ));
+    }
+    let source_provider_ids =
+        collect_source_model_provider_ids_for_unify(db, include_managed_custom, &codex_dir)?;
     if source_provider_ids.is_empty() {
         crate::settings::mark_codex_third_party_history_provider_bucket_migrated(
             CodexThirdPartyHistoryProviderBucketMigration {
+                codex_config_dir: Some(canonical_dir_string(&codex_dir)),
                 completed_at: Utc::now().to_rfc3339(),
                 target_provider_id: CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string(),
-                source_provider_ids: Vec::new(),
+                source_provider_ids: remembered_source_provider_ids(&BTreeSet::new(), &codex_dir),
                 migrated_jsonl_files: 0,
                 migrated_state_rows: 0,
                 scanned_history_files: true,
@@ -148,22 +198,44 @@ pub fn maybe_migrate_codex_third_party_history_provider_bucket(
         });
     }
 
+    if state_db_unavailable(&codex_dir, &config_text) {
+        return Ok(CodexHistoryProviderBucketMigrationOutcome {
+            skipped_reason: Some("state_db_unlockable".into()),
+            retry_pending: true,
+            ..Default::default()
+        });
+    }
+    if include_managed_custom {
+        validate_history_index_layouts(&codex_dir, &config_text)?;
+    }
     let backup_root = migration_backup_root(MIGRATION_NAME);
-    let codex_dir = get_codex_config_dir();
-    let migrated_jsonl_files =
-        migrate_codex_jsonl_files(&codex_dir, &source_provider_ids, &backup_root)?;
-    let migrated_state_rows =
-        migrate_codex_state_dbs(&codex_dir, &source_provider_ids, &backup_root)?;
+    let files = migrate_codex_jsonl_files_to(
+        &codex_dir,
+        &source_provider_ids,
+        CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+        &backup_root,
+    )?;
+    let state = migrate_codex_state_dbs_to(
+        &codex_dir,
+        &source_provider_ids,
+        CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+        &backup_root,
+        &files.skipped_paths,
+        &config_text,
+    )?;
+    let migrated_jsonl_files = files.migrated;
+    let migrated_state_rows = state.migrated;
 
     let source_provider_ids_vec: Vec<String> = source_provider_ids.iter().cloned().collect();
     crate::settings::mark_codex_third_party_history_provider_bucket_migrated(
         CodexThirdPartyHistoryProviderBucketMigration {
+            codex_config_dir: Some(canonical_dir_string(&codex_dir)),
             completed_at: Utc::now().to_rfc3339(),
             target_provider_id: CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string(),
-            source_provider_ids: source_provider_ids_vec.clone(),
+            source_provider_ids: remembered_source_provider_ids(&source_provider_ids, &codex_dir),
             migrated_jsonl_files,
             migrated_state_rows,
-            scanned_history_files: true,
+            scanned_history_files: !files.retry_pending && !state.retry_pending,
         },
     )?;
 
@@ -171,6 +243,9 @@ pub fn maybe_migrate_codex_third_party_history_provider_bucket(
         source_provider_ids: source_provider_ids_vec,
         migrated_jsonl_files,
         migrated_state_rows,
+        skipped_jsonl_files: files.skipped_paths.len(),
+        skipped_state_rows: state.skipped,
+        retry_pending: files.retry_pending || state.retry_pending,
         skipped_reason: None,
     })
 }
@@ -205,6 +280,13 @@ pub fn maybe_migrate_codex_provider_template_bucket(
 /// 迁移前 jsonl / state DB 均备份到 `~/.cc-switch/backups/codex-official-history-unify-v1/`。
 pub fn maybe_migrate_codex_official_history_to_unified_bucket(
 ) -> Result<CodexHistoryProviderBucketMigrationOutcome, AppError> {
+    migrate_official_history_with_lock(lock_codex_official_history_op)
+}
+
+fn migrate_official_history_with_lock(
+    acquire: impl FnOnce() -> std::sync::MutexGuard<'static, ()>,
+) -> Result<CodexHistoryProviderBucketMigrationOutcome, AppError> {
+    let _op_guard = acquire();
     if !crate::settings::unify_codex_session_history() {
         return Ok(CodexHistoryProviderBucketMigrationOutcome {
             skipped_reason: Some("unify_toggle_off".to_string()),
@@ -217,8 +299,8 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
             ..Default::default()
         });
     }
-    let _op_guard = lock_codex_official_history_op();
     let codex_dir = get_codex_config_dir();
+    let config_text = read_history_config(&codex_dir)?;
     // marker 绑定迁移时的 Codex 目录：切换 codex_config_dir 后旧 marker 不再
     // 挡住新目录的迁移（迁移幂等，重跑无害）。
     let codex_dir_key = canonical_dir_string(&codex_dir);
@@ -234,7 +316,7 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
     // 这些状态下新会话仍落 "openai" 桶，迁移只会把历史搬进当前 live 看不见的
     // 桶里。开关与迁移意愿保持不动，待 live 真正统一后（下次切换 / 启动重试）
     // 再迁。
-    if !codex_config_text_routes_custom(&read_codex_config_text().unwrap_or_default()) {
+    if !codex_config_text_routes_custom(&config_text) {
         return Ok(CodexHistoryProviderBucketMigrationOutcome {
             skipped_reason: Some("live_not_unified".to_string()),
             ..Default::default()
@@ -243,24 +325,46 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
 
     let source_provider_ids: BTreeSet<String> =
         std::iter::once(OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID.to_string()).collect();
+    if state_db_unavailable(&codex_dir, &config_text) {
+        return Ok(CodexHistoryProviderBucketMigrationOutcome {
+            skipped_reason: Some("state_db_unlockable".into()),
+            retry_pending: true,
+            ..Default::default()
+        });
+    }
     let backup_root = migration_backup_root(OFFICIAL_UNIFY_MIGRATION_NAME);
-    let migrated_jsonl_files =
-        migrate_codex_jsonl_files(&codex_dir, &source_provider_ids, &backup_root)?;
-    let migrated_state_rows =
-        migrate_codex_state_dbs(&codex_dir, &source_provider_ids, &backup_root)?;
-    // 备份代际记录来源目录，restore 据此只取当前目录的账本。
-    write_backup_generation_meta(&backup_root, &codex_dir_key)?;
-
+    let files = migrate_codex_jsonl_files_to(
+        &codex_dir,
+        &source_provider_ids,
+        CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+        &backup_root,
+    )?;
+    let state = migrate_codex_state_dbs_to(
+        &codex_dir,
+        &source_provider_ids,
+        CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+        &backup_root,
+        &files.skipped_paths,
+        &config_text,
+    )?;
+    let migrated_jsonl_files = files.migrated;
+    let migrated_state_rows = state.migrated;
     let outcome = CodexHistoryProviderBucketMigrationOutcome {
         source_provider_ids: source_provider_ids.into_iter().collect(),
         migrated_jsonl_files,
         migrated_state_rows,
+        skipped_jsonl_files: files.skipped_paths.len(),
+        skipped_state_rows: state.skipped,
+        retry_pending: files.retry_pending || state.retry_pending,
         skipped_reason: None,
     };
 
     // 条件写入在 settings 写锁内原子完成："迁移期间开关被关掉"时不写完成标记，
     // 避免下一次开启被标记挡住而漏迁"关闭期间"新产生的 openai 桶会话。
     // 与关闭路径（update_settings + 清标记）共用同一把锁，无检查-写入窗口。
+    if outcome.retry_pending {
+        return Ok(outcome);
+    }
     let marker_written = crate::settings::mark_codex_official_history_unify_migrated_if_enabled(
         CodexOfficialHistoryUnifyMigration {
             completed_at: Utc::now().to_rfc3339(),
@@ -304,63 +408,88 @@ fn codex_config_text_routes_custom(config_text: &str) -> bool {
 /// 不迁；state DB 打不开（WSL 路径）时不迁也不写标记，只改 jsonl 恢复时仍会报错。
 pub fn maybe_migrate_codex_legacy_official_history_to_openai_bucket(
 ) -> Result<CodexHistoryProviderBucketMigrationOutcome, AppError> {
+    migrate_codex_legacy_official_history(false)
+}
+
+/// Confirmed repair of leftover official ids, without clearing the startup marker.
+pub fn repair_codex_legacy_official_history_to_openai_bucket(
+) -> Result<CodexHistoryProviderBucketMigrationOutcome, AppError> {
+    migrate_codex_legacy_official_history(true)
+}
+
+fn migrate_codex_legacy_official_history(
+    confirmed_retry: bool,
+) -> Result<CodexHistoryProviderBucketMigrationOutcome, AppError> {
     let _op_guard = lock_codex_official_history_op();
     let codex_dir = get_codex_config_dir();
     let codex_dir_key = canonical_dir_string(&codex_dir);
-    if crate::settings::is_codex_legacy_official_history_bucket_migrated_for_dir(&codex_dir_key) {
+    if !confirmed_retry
+        && crate::settings::is_codex_legacy_official_history_bucket_migrated_for_dir(&codex_dir_key)
+    {
         return Ok(CodexHistoryProviderBucketMigrationOutcome {
             skipped_reason: Some("already_migrated".to_string()),
             ..Default::default()
         });
     }
 
-    let config_text = read_codex_config_text().unwrap_or_default();
+    let config_text = read_history_config(&codex_dir)?;
     if codex_config_selects_provider(&config_text, CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID) {
         return Ok(CodexHistoryProviderBucketMigrationOutcome {
             skipped_reason: Some("legacy_route_in_use".to_string()),
             ..Default::default()
         });
     }
-    if codex_state_db_paths(&codex_dir, &config_text)
-        .iter()
-        .any(|path| path.exists() && !codex_state_db_is_lockable(path))
-    {
+    if state_db_unavailable(&codex_dir, &config_text) {
         return Ok(CodexHistoryProviderBucketMigrationOutcome {
             skipped_reason: Some("state_db_unlockable".to_string()),
+            retry_pending: true,
             ..Default::default()
         });
+    }
+
+    if confirmed_retry {
+        validate_history_index_layouts(&codex_dir, &config_text)?;
     }
 
     let source_provider_ids: BTreeSet<String> =
         std::iter::once(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID.to_string()).collect();
     let backup_root = migration_backup_root(MIGRATION_NAME);
-    let migrated_jsonl_files = migrate_codex_jsonl_files_to(
+    let files = migrate_codex_jsonl_files_to(
         &codex_dir,
         &source_provider_ids,
         OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID,
         &backup_root,
     )?;
-    let migrated_state_rows = migrate_codex_state_dbs_to(
+    let state = migrate_codex_state_dbs_to(
         &codex_dir,
         &source_provider_ids,
         OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID,
         &backup_root,
+        &files.skipped_paths,
+        &config_text,
     )?;
+    let migrated_jsonl_files = files.migrated;
+    let migrated_state_rows = state.migrated;
 
-    crate::settings::mark_codex_legacy_official_history_bucket_migrated(
-        CodexLegacyOfficialHistoryBucketMigration {
-            completed_at: Utc::now().to_rfc3339(),
-            target_provider_id: OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID.to_string(),
-            migrated_jsonl_files,
-            migrated_state_rows,
-            codex_config_dir: Some(codex_dir_key),
-        },
-    )?;
+    if !files.retry_pending && !state.retry_pending {
+        crate::settings::mark_codex_legacy_official_history_bucket_migrated(
+            CodexLegacyOfficialHistoryBucketMigration {
+                completed_at: Utc::now().to_rfc3339(),
+                target_provider_id: OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID.to_string(),
+                migrated_jsonl_files,
+                migrated_state_rows,
+                codex_config_dir: Some(codex_dir_key),
+            },
+        )?;
+    }
 
     Ok(CodexHistoryProviderBucketMigrationOutcome {
         source_provider_ids: source_provider_ids.into_iter().collect(),
         migrated_jsonl_files,
         migrated_state_rows,
+        skipped_jsonl_files: files.skipped_paths.len(),
+        skipped_state_rows: state.skipped,
+        retry_pending: files.retry_pending || state.retry_pending,
         skipped_reason: None,
     })
 }
@@ -396,22 +525,42 @@ fn canonical_dir_string(dir: &Path) -> String {
         .to_string()
 }
 
-/// 在备份代际根目录写入 meta.json，记录这批备份来自哪个 Codex 目录。
-/// 代际目录不存在（本轮没有任何文件被迁移）时跳过。
+/// Bind a backup generation before copying originals or modifying history.
+/// Reusing an existing generation is allowed only for the same directory.
 fn write_backup_generation_meta(backup_root: &Path, codex_dir_key: &str) -> Result<(), AppError> {
-    if !backup_root.exists() {
-        return Ok(());
+    fs::create_dir_all(backup_root).map_err(|e| AppError::io(backup_root, e))?;
+    let meta_path = backup_root.join("meta.json");
+    match fs::read_to_string(&meta_path) {
+        Ok(text) => {
+            if serde_json::from_str::<Value>(&text)
+                .ok()
+                .is_some_and(|value| value["codexConfigDir"].as_str() == Some(codex_dir_key))
+            {
+                return Ok(());
+            }
+            return Err(AppError::Message(format!(
+                "Cannot verify Codex backup directory metadata: {}",
+                meta_path.display()
+            )));
+        }
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                && matches!(fs::symlink_metadata(&meta_path), Err(missing) if missing.kind() == std::io::ErrorKind::NotFound) =>
+            {}
+        Err(error) => return Err(AppError::io(&meta_path, error)),
     }
     let payload = serde_json::json!({ "codexConfigDir": codex_dir_key });
     let bytes =
         serde_json::to_vec_pretty(&payload).map_err(|e| AppError::JsonSerialize { source: e })?;
-    atomic_write(&backup_root.join("meta.json"), &bytes)
+    atomic_write(&meta_path, &bytes)
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct CodexOfficialHistoryRestoreOutcome {
     pub restored_jsonl_files: usize,
     pub restored_state_rows: usize,
+    pub skipped_jsonl_files: usize,
+    pub skipped_state_rows: usize,
     pub skipped_reason: Option<String>,
 }
 
@@ -464,9 +613,10 @@ pub fn restore_codex_official_history_from_backups(
             ..Default::default()
         });
     }
-    let config_text = read_codex_config_text().unwrap_or_default();
+    let codex_dir = get_codex_config_dir();
+    let config_text = read_history_config(&codex_dir)?;
     restore_codex_official_history_inner(
-        &get_codex_config_dir(),
+        &codex_dir,
         &official_history_unify_backup_parent(),
         &migration_backup_root(OFFICIAL_UNIFY_RESTORE_BACKUP_NAME),
         &config_text,
@@ -480,41 +630,75 @@ fn restore_codex_official_history_inner(
     config_text: &str,
 ) -> Result<CodexOfficialHistoryRestoreOutcome, AppError> {
     let codex_dir_key = canonical_dir_string(codex_dir);
-    let (official_session_ids, official_thread_ids) =
-        collect_official_ledger(ledger_parent, &codex_dir_key)?;
-    if official_session_ids.is_empty() && official_thread_ids.is_empty() {
+    let ledger = collect_official_ledger(ledger_parent, &codex_dir_key)?;
+    if ledger.session_ids.is_empty()
+        && ledger.settings_ids.is_empty()
+        && ledger.thread_ids_by_path.is_empty()
+    {
         return Ok(CodexOfficialHistoryRestoreOutcome {
             skipped_reason: Some("no_backup_ledger".to_string()),
             ..Default::default()
         });
     }
 
+    if state_db_unavailable(codex_dir, config_text) {
+        return Ok(CodexOfficialHistoryRestoreOutcome {
+            skipped_reason: Some("state_db_unlockable".into()),
+            ..Default::default()
+        });
+    }
     let mut files = Vec::new();
-    collect_jsonl_files(&codex_dir.join("sessions"), &mut files, 0, 8);
-    collect_jsonl_files(&codex_dir.join("archived_sessions"), &mut files, 0, 4);
+    collect_jsonl_files(&codex_dir.join("sessions"), &mut files, 0, 8)?;
+    collect_jsonl_files(&codex_dir.join("archived_sessions"), &mut files, 0, 4)?;
     let mut restored_jsonl_files = 0;
-    for file_path in files {
-        if rewrite_codex_session_file_lines(&file_path, codex_dir, restore_backup_root, |line| {
-            rewrite_codex_session_meta_line_for_restore(line, &official_session_ids)
-        })? {
-            restored_jsonl_files += 1;
+    let mut skipped_rollouts = HashSet::new();
+    for file_path in codex_rollout_file::dedupe_siblings(files) {
+        let mut current_session_id = None;
+        match rewrite_codex_session_file_lines(&file_path, codex_dir, restore_backup_root, |line| {
+            rewrite_codex_provider_line_for_restore(line, &ledger, &mut current_session_id)
+        }) {
+            Ok(changed) => restored_jsonl_files += usize::from(changed),
+            Err(error) => {
+                log::warn!(
+                    "Skipping Codex history restore file {}: {error}",
+                    file_path.display()
+                );
+                skipped_rollouts.insert(fs::canonicalize(&file_path).unwrap_or(file_path));
+            }
         }
     }
 
     let mut restored_state_rows = 0;
+    let mut skipped_state_rows = 0;
+    let source_ids = BTreeSet::from([CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string()]);
     for db_path in codex_state_db_paths(codex_dir, config_text) {
+        let Some(thread_ids) = ledger
+            .thread_ids_by_path
+            .get(&relative_backup_path(&db_path, codex_dir))
+        else {
+            continue;
+        };
         if !codex_state_db_is_lockable(&db_path) {
             continue;
         }
-        restored_state_rows += restore_codex_state_db_official_threads(
+        let state = migrate_codex_state_db_provider_bucket_to(
             &db_path,
             codex_dir,
-            &official_thread_ids,
+            &source_ids,
+            OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID,
             restore_backup_root,
+            &skipped_rollouts,
+            Some(thread_ids),
         )?;
+        restored_state_rows += state.migrated;
+        skipped_state_rows += state.skipped;
     }
 
-    if restored_jsonl_files == 0 && restored_state_rows == 0 {
+    if restored_jsonl_files == 0
+        && restored_state_rows == 0
+        && skipped_rollouts.is_empty()
+        && skipped_state_rows == 0
+    {
         // 账本非空但没有任何"当前仍为 custom"的目标（如重复还原）：
         // 以 reason 告知前端，避免误报"已还原 0 项"为成功。
         return Ok(CodexOfficialHistoryRestoreOutcome {
@@ -526,25 +710,31 @@ fn restore_codex_official_history_inner(
     Ok(CodexOfficialHistoryRestoreOutcome {
         restored_jsonl_files,
         restored_state_rows,
+        skipped_jsonl_files: skipped_rollouts.len(),
+        skipped_state_rows,
         skipped_reason: None,
     })
 }
 
-/// 从备份代际收集官方会话账本：jsonl 备份里 session_meta 为 "openai" 的
-/// 会话 id + state DB 备份里 model_provider 为 "openai" 的 thread id。
+/// 从备份代际分别收集官方头部、设置事件及各索引路径的官方会话 ID。
 /// 只采纳 meta.json 目录与当前 Codex 目录一致的代际，避免切换
 /// codex_config_dir 后拿旧目录的账本作用到新目录。
-/// 还原操作自身的备份（restore 目录）天然不会混入：那些副本里的 id 都是
-/// custom，解析后贡献为空。
+/// 还原操作自身的备份写入独立 restore 目录，不进入此迁移账本。
+#[derive(Default)]
+struct OfficialHistoryLedger {
+    session_ids: HashSet<String>,
+    settings_ids: HashSet<String>,
+    thread_ids_by_path: HashMap<PathBuf, BTreeSet<String>>,
+}
+
 fn collect_official_ledger(
     ledger_parent: &Path,
     codex_dir_key: &str,
-) -> Result<(HashSet<String>, BTreeSet<String>), AppError> {
-    let mut session_ids = HashSet::new();
-    let mut thread_ids = BTreeSet::new();
+) -> Result<OfficialHistoryLedger, AppError> {
+    let mut ledger = OfficialHistoryLedger::default();
     let entries = match fs::read_dir(ledger_parent) {
         Ok(entries) => entries,
-        Err(_) => return Ok((session_ids, thread_ids)),
+        Err(_) => return Ok(ledger),
     };
     for entry in entries.flatten() {
         let generation = entry.path();
@@ -555,25 +745,48 @@ fn collect_official_ledger(
             continue;
         }
         let mut backup_files = Vec::new();
-        collect_jsonl_files(&generation.join("jsonl"), &mut backup_files, 0, 10);
+        collect_jsonl_files(&generation.join("jsonl"), &mut backup_files, 0, 10)?;
         for backup_file in backup_files {
-            collect_official_session_ids_from_backup(&backup_file, &mut session_ids);
+            collect_official_metadata_from_backup(&backup_file, &mut ledger);
         }
+        let state_dir = generation.join("state");
         let mut backup_dbs = Vec::new();
-        collect_files_with_extension(&generation.join("state"), "sqlite", &mut backup_dbs, 0, 4);
+        collect_files_with_extension(&state_dir, "sqlite", &mut backup_dbs, 0, 4);
         for backup_db in backup_dbs {
-            collect_official_thread_ids_from_backup(&backup_db, &mut thread_ids);
+            let mut ids = BTreeSet::new();
+            collect_official_thread_ids_from_backup(&backup_db, &mut ids);
+            if ids.is_empty() {
+                continue;
+            }
+            let Ok(relative) = backup_db.strip_prefix(&state_dir) else {
+                continue;
+            };
+            ledger
+                .thread_ids_by_path
+                .entry(relative.to_path_buf())
+                .or_default()
+                .extend(ids);
         }
     }
-    Ok((session_ids, thread_ids))
+    Ok(ledger)
 }
 
-/// 备份代际是否属于指定 Codex 目录。无 meta.json 或解析失败时宽容接受：
-/// 早期版本的备份没有 meta，而那个时期不存在切目录场景；误纳的代价也被
-/// "按会话 id 精确匹配 + 仅改写 custom"双重条件兜底。
+/// Only absent metadata retains the legacy compatibility path. Explicit
+/// metadata that cannot be read or validated never proves directory ownership.
 fn backup_generation_matches_dir(generation: &Path, codex_dir_key: &str) -> bool {
-    let Ok(text) = fs::read_to_string(generation.join("meta.json")) else {
-        return true;
+    let meta_path = generation.join("meta.json");
+    let text = match fs::read_to_string(&meta_path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return matches!(fs::symlink_metadata(&meta_path), Err(missing) if missing.kind() == std::io::ErrorKind::NotFound);
+        }
+        Err(error) => {
+            log::warn!(
+                "Cannot verify Codex backup generation {}: {error}",
+                generation.display()
+            );
+            return false;
+        }
     };
     serde_json::from_str::<Value>(&text)
         .ok()
@@ -583,34 +796,41 @@ fn backup_generation_matches_dir(generation: &Path, codex_dir_key: &str) -> bool
                 .and_then(Value::as_str)
                 .map(|dir| dir == codex_dir_key)
         })
-        .unwrap_or(true)
+        .unwrap_or(false)
 }
 
-fn collect_official_session_ids_from_backup(path: &Path, session_ids: &mut HashSet<String>) {
+fn collect_official_metadata_from_backup(path: &Path, ledger: &mut OfficialHistoryLedger) {
     let Ok(content) = codex_rollout_file::read_to_string(path) else {
         log::debug!("Failed to read unify backup file {}", path.display());
         return;
     };
+    let mut current_session_id = None;
     for line in content.lines() {
-        if !line.contains("\"session_meta\"") || !line.contains("\"model_provider\"") {
-            continue;
-        }
-        let Ok(value) = serde_json::from_str::<Value>(line) else {
+        let value = match parse_provider_metadata_line(line) {
+            Ok(Some(value)) => value,
+            Ok(None) => continue,
+            Err(_) => {
+                current_session_id = None;
+                continue;
+            }
+        };
+        let owner = match provider_metadata_owner(&value, &mut current_session_id) {
+            Ok(Some(owner)) => owner,
+            Ok(None) | Err(_) => continue,
+        };
+        let Some(pointer) = provider_metadata_pointer(&value) else {
             continue;
         };
-        if value.get("type").and_then(Value::as_str) != Some("session_meta") {
-            continue;
-        }
-        let Some(payload) = value.get("payload") else {
-            continue;
-        };
-        if payload.get("model_provider").and_then(Value::as_str)
+        if value.pointer(pointer).and_then(Value::as_str)
             != Some(OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID)
         {
             continue;
         }
-        if let Some(session_id) = payload.get("id").and_then(Value::as_str) {
-            session_ids.insert(session_id.to_string());
+        // An original official header authorizes this thread's shared settings
+        // too. Settings-only evidence must never authorize a third-party header.
+        ledger.settings_ids.insert(owner.clone());
+        if pointer == "/payload/model_provider" {
+            ledger.session_ids.insert(owner);
         }
     }
 }
@@ -652,7 +872,10 @@ fn collect_files_with_extension(
     depth: u8,
     max_depth: u8,
 ) {
-    if depth > max_depth || !dir.is_dir() {
+    if depth > max_depth
+        || !dir.is_dir()
+        || fs::symlink_metadata(dir).is_ok_and(|m| m.file_type().is_symlink())
+    {
         return;
     }
     let Ok(entries) = fs::read_dir(dir) else {
@@ -668,96 +891,29 @@ fn collect_files_with_extension(
     }
 }
 
-fn rewrite_codex_session_meta_line_for_restore(
+fn rewrite_codex_provider_line_for_restore(
     line: &str,
-    official_session_ids: &HashSet<String>,
-) -> Option<String> {
-    if !line.contains("\"session_meta\"") || !line.contains("\"model_provider\"") {
-        return None;
-    }
-    let mut value: Value = serde_json::from_str(line).ok()?;
-    if value.get("type").and_then(Value::as_str) != Some("session_meta") {
-        return None;
-    }
-    let payload = value.get_mut("payload")?.as_object_mut()?;
-    if payload.get("model_provider")?.as_str()? != CC_SWITCH_CODEX_MODEL_PROVIDER_ID {
-        return None;
-    }
-    let session_id = payload.get("id")?.as_str()?;
-    if !official_session_ids.contains(session_id) {
-        return None;
-    }
-    payload.insert(
-        "model_provider".to_string(),
-        Value::String(OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID.to_string()),
-    );
-    serde_json::to_string(&value).ok()
-}
-
-fn restore_codex_state_db_official_threads(
-    db_path: &Path,
-    codex_dir: &Path,
-    official_thread_ids: &BTreeSet<String>,
-    backup_root: &Path,
-) -> Result<usize, AppError> {
-    if !db_path.exists() || official_thread_ids.is_empty() {
-        return Ok(0);
-    }
-
-    let mut conn = Connection::open(db_path)
-        .map_err(|e| AppError::Database(format!("打开 Codex state DB 失败: {e}")))?;
-    conn.busy_timeout(Duration::from_secs(5))
-        .map_err(|e| AppError::Database(format!("设置 Codex state DB busy_timeout 失败: {e}")))?;
-
-    if !Database::table_exists(&conn, "threads")?
-        || !Database::has_column(&conn, "threads", "model_provider")?
+    ledger: &OfficialHistoryLedger,
+    current_session_id: &mut Option<String>,
+) -> Result<Option<String>, AppError> {
+    let Some(value) = parse_provider_metadata_line(line)? else {
+        return Ok(None);
+    };
+    let Some(owner) = provider_metadata_owner(&value, current_session_id)? else {
+        return Ok(None);
+    };
+    let pointer = provider_metadata_pointer(&value).expect("recognized metadata");
+    let allowed = if pointer == "/payload/model_provider" {
+        &ledger.session_ids
+    } else {
+        &ledger.settings_ids
+    };
+    if value.pointer(pointer).and_then(Value::as_str) != Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
+        || !allowed.contains(&owner)
     {
-        return Ok(0);
+        return Ok(None);
     }
-
-    let ids: Vec<&String> = official_thread_ids.iter().collect();
-    let mut matching_rows: i64 = 0;
-    for chunk in ids.chunks(STATE_DB_ID_CHUNK) {
-        let placeholders = placeholders(chunk.len());
-        let count_sql = format!(
-            "SELECT COUNT(*) FROM threads WHERE model_provider = ? AND id IN ({placeholders})"
-        );
-        let mut values = Vec::with_capacity(chunk.len() + 1);
-        values.push(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
-        values.extend(chunk.iter().map(|id| (*id).clone()));
-        let count: i64 = conn
-            .query_row(&count_sql, params_from_iter(values.iter()), |row| {
-                row.get(0)
-            })
-            .map_err(|e| AppError::Database(format!("统计 Codex state DB 待还原行失败: {e}")))?;
-        matching_rows += count;
-    }
-    if matching_rows == 0 {
-        return Ok(0);
-    }
-
-    backup_codex_state_db(db_path, codex_dir, backup_root, &conn)?;
-
-    let tx = conn
-        .transaction()
-        .map_err(|e| AppError::Database(format!("开启 Codex state DB 还原事务失败: {e}")))?;
-    let mut changed = 0;
-    for chunk in ids.chunks(STATE_DB_ID_CHUNK) {
-        let placeholders = placeholders(chunk.len());
-        let update_sql = format!(
-            "UPDATE threads SET model_provider = ? WHERE model_provider = ? AND id IN ({placeholders})"
-        );
-        let mut values = Vec::with_capacity(chunk.len() + 2);
-        values.push(OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID.to_string());
-        values.push(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
-        values.extend(chunk.iter().map(|id| (*id).clone()));
-        changed += tx
-            .execute(&update_sql, params_from_iter(values.iter()))
-            .map_err(|e| AppError::Database(format!("还原 Codex state DB provider 失败: {e}")))?;
-    }
-    tx.commit()
-        .map_err(|e| AppError::Database(format!("提交 Codex state DB 还原事务失败: {e}")))?;
-    Ok(changed)
+    replace_metadata_provider(line, &value, OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID).map(Some)
 }
 
 fn migrate_codex_provider_templates_to_custom(
@@ -808,9 +964,21 @@ fn migrate_codex_provider_templates_to_custom(
     })
 }
 
+#[cfg(test)]
 fn collect_source_model_provider_ids(db: &Database) -> Result<BTreeSet<String>, AppError> {
+    collect_source_model_provider_ids_for_unify(db, false, &get_codex_config_dir())
+}
+
+fn collect_source_model_provider_ids_for_unify(
+    db: &Database,
+    include_managed_custom: bool,
+    codex_dir: &Path,
+) -> Result<BTreeSet<String>, AppError> {
     let providers = db.get_all_providers("codex")?;
     let mut ids = BTreeSet::new();
+    if include_managed_custom {
+        ids.extend(remembered_source_provider_ids(&BTreeSet::new(), codex_dir));
+    }
 
     for provider in providers.values() {
         if provider.category.as_deref() == Some("official")
@@ -830,6 +998,20 @@ fn collect_source_model_provider_ids(db: &Database) -> Result<BTreeSet<String>, 
             continue;
         };
 
+        if include_managed_custom {
+            if let Ok(doc) = config_text.parse::<DocumentMut>() {
+                if let Some(id) = doc
+                    .get("model_provider")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                {
+                    if is_migratable_custom_id(id) && config_defines_model_provider(&doc, id) {
+                        ids.insert(id.to_string());
+                    }
+                }
+            }
+        }
+
         for provider_id in trusted_legacy_codex_model_provider_ids_from_config(config_text) {
             insert_known_cc_switch_legacy_source_id(&mut ids, &provider_id);
         }
@@ -843,6 +1025,27 @@ fn collect_source_model_provider_ids(db: &Database) -> Result<BTreeSet<String>, 
     Ok(ids)
 }
 
+fn remembered_source_provider_ids(current: &BTreeSet<String>, codex_dir: &Path) -> Vec<String> {
+    let mut ids = current.clone();
+    if let Some(previous) = crate::settings::codex_third_party_history_migration_for_dir(
+        &canonical_dir_string(codex_dir),
+    ) {
+        ids.extend(
+            previous
+                .source_provider_ids
+                .into_iter()
+                .filter(|id| is_migratable_custom_id(id)),
+        );
+    }
+    ids.into_iter().collect()
+}
+
+fn is_migratable_custom_id(id: &str) -> bool {
+    !id.trim().is_empty()
+        && !crate::live::project::codex::BUILT_IN_IDS.contains(&id)
+        && !["custom", "cc-switch-official", "codex_local_access"].contains(&id)
+}
+
 fn insert_known_cc_switch_legacy_source_id(ids: &mut BTreeSet<String>, provider_id: &str) {
     let trimmed = provider_id.trim();
     if is_known_cc_switch_legacy_codex_model_provider_id(trimmed) {
@@ -854,7 +1057,7 @@ fn migration_backup_root(migration_name: &str) -> PathBuf {
     get_app_config_dir()
         .join("backups")
         .join(migration_name)
-        .join(Local::now().format("%Y%m%d_%H%M%S").to_string())
+        .join(Local::now().format("%Y%m%d_%H%M%S_%f").to_string())
 }
 
 fn is_known_cc_switch_legacy_codex_model_provider_id(provider_id: &str) -> bool {
@@ -1062,6 +1265,21 @@ fn rewrite_legacy_provider_profile_refs(doc: &mut DocumentMut, source_provider_i
     changed
 }
 
+#[derive(Default)]
+struct RolloutMigrationReport {
+    migrated: usize,
+    skipped_paths: HashSet<PathBuf>,
+    retry_pending: bool,
+}
+
+#[derive(Default)]
+struct StateMigrationReport {
+    migrated: usize,
+    skipped: usize,
+    retry_pending: bool,
+}
+
+#[cfg(test)]
 fn migrate_codex_jsonl_files(
     codex_dir: &Path,
     source_provider_ids: &BTreeSet<String>,
@@ -1073,6 +1291,7 @@ fn migrate_codex_jsonl_files(
         CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
         backup_root,
     )
+    .map(|report| report.migrated)
 }
 
 fn migrate_codex_jsonl_files_to(
@@ -1080,47 +1299,75 @@ fn migrate_codex_jsonl_files_to(
     source_provider_ids: &BTreeSet<String>,
     target_provider_id: &str,
     backup_root: &Path,
-) -> Result<usize, AppError> {
+) -> Result<RolloutMigrationReport, AppError> {
     let mut files = Vec::new();
-    collect_jsonl_files(&codex_dir.join("sessions"), &mut files, 0, 8);
-    collect_jsonl_files(&codex_dir.join("archived_sessions"), &mut files, 0, 4);
+    collect_jsonl_files(&codex_dir.join("sessions"), &mut files, 0, 8)?;
+    collect_jsonl_files(&codex_dir.join("archived_sessions"), &mut files, 0, 4)?;
 
     let source_provider_ids: HashSet<String> = source_provider_ids.iter().cloned().collect();
-    let mut migrated = 0;
-    for file_path in files {
-        if rewrite_codex_session_file_lines(&file_path, codex_dir, backup_root, |line| {
-            rewrite_codex_session_meta_line(line, &source_provider_ids, target_provider_id)
-        })? {
-            migrated += 1;
+    let mut report = RolloutMigrationReport::default();
+    for file_path in codex_rollout_file::dedupe_siblings(files) {
+        let mut current_session_id = None;
+        match rewrite_codex_session_file_lines(&file_path, codex_dir, backup_root, |line| {
+            rewrite_codex_provider_metadata_line(
+                line,
+                &source_provider_ids,
+                target_provider_id,
+                &mut current_session_id,
+            )
+        }) {
+            Ok(changed) => report.migrated += usize::from(changed),
+            Err(error) => {
+                report.retry_pending |= !matches!(error, AppError::InvalidInput(_));
+                log::warn!(
+                    "Skipping Codex history file {}: {error}",
+                    file_path.display()
+                );
+                report
+                    .skipped_paths
+                    .insert(fs::canonicalize(&file_path).unwrap_or(file_path));
+            }
         }
     }
-    Ok(migrated)
+    Ok(report)
 }
 
-fn collect_jsonl_files(dir: &Path, files: &mut Vec<PathBuf>, depth: u8, max_depth: u8) {
-    if depth > max_depth || !dir.is_dir() {
-        return;
-    }
-
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(err) => {
-            log::debug!(
-                "Failed to read Codex session directory {}: {err}",
-                dir.display()
-            );
-            return;
-        }
+fn collect_jsonl_files(
+    dir: &Path,
+    files: &mut Vec<PathBuf>,
+    depth: u8,
+    max_depth: u8,
+) -> Result<(), AppError> {
+    let metadata = match fs::symlink_metadata(dir) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(AppError::io(dir, error)),
     };
-
-    for entry in entries.flatten() {
+    if metadata.file_type().is_symlink() {
+        return Ok(());
+    }
+    if !metadata.is_dir() || depth > max_depth {
+        return Err(AppError::Message(format!(
+            "Cannot completely scan Codex history directory: {}",
+            dir.display()
+        )));
+    }
+    for entry in fs::read_dir(dir).map_err(|error| AppError::io(dir, error))? {
+        let entry = entry.map_err(|error| AppError::io(dir, error))?;
         let path = entry.path();
-        if path.is_dir() {
-            collect_jsonl_files(&path, files, depth + 1, max_depth);
+        let kind = entry
+            .file_type()
+            .map_err(|error| AppError::io(&path, error))?;
+        if kind.is_symlink() {
+            continue;
+        }
+        if kind.is_dir() {
+            collect_jsonl_files(&path, files, depth + 1, max_depth)?;
         } else if codex_rollout_file::is_rollout_file(&path) {
             files.push(path);
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1130,61 +1377,203 @@ fn rewrite_codex_session_file_for_provider_bucket(
     source_provider_ids: &HashSet<String>,
     backup_root: &Path,
 ) -> Result<bool, AppError> {
+    let mut current_session_id = None;
     rewrite_codex_session_file_lines(path, codex_dir, backup_root, |line| {
-        rewrite_codex_session_meta_line(
+        rewrite_codex_provider_metadata_line(
             line,
             source_provider_ids,
             CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+            &mut current_session_id,
         )
     })
 }
 
+/// Byte offsets refer to uncompressed JSONL; changing even one header length
+/// invalidates every subsequent paginated item. Never reserialize a whole file.
 fn rewrite_codex_session_file_lines(
     path: &Path,
     codex_dir: &Path,
     backup_root: &Path,
-    rewrite_line: impl Fn(&str) -> Option<String>,
+    mut rewrite_line: impl FnMut(&str) -> Result<Option<String>, AppError>,
 ) -> Result<bool, AppError> {
-    let metadata_before = fs::metadata(path).map_err(|e| AppError::io(path, e))?;
-    let modified_before = metadata_before.modified().ok();
-    let len_before = metadata_before.len();
-    // Codex 压缩过的 rollout（`.jsonl.zst`）解压后改写、再压回原形态
+    // Retain the original handle: Windows creation times can be reused by
+    // filesystem tunneling and cannot identify a replacement at the same path.
+    let original = fs::File::open(path).map_err(|e| AppError::io(path, e))?;
+    let metadata_before = original.metadata().map_err(|e| AppError::io(path, e))?;
     let content = codex_rollout_file::read_to_string(path).map_err(|e| AppError::io(path, e))?;
-
-    let mut rewritten = String::with_capacity(content.len());
-    let mut changed = false;
+    let mut edits = Vec::new();
+    let mut offset = 0usize;
     for segment in content.split_inclusive('\n') {
-        let (line, newline) = segment
-            .strip_suffix('\n')
-            .map(|line| (line, "\n"))
-            .unwrap_or((segment, ""));
-        if let Some(next_line) = rewrite_line(line) {
-            rewritten.push_str(&next_line);
-            changed = true;
-        } else {
-            rewritten.push_str(line);
+        let line = segment.strip_suffix('\n').unwrap_or(segment);
+        if let Some(next) = rewrite_line(line)? {
+            if next.len() != line.len() {
+                return Err(AppError::Message(
+                    "Codex metadata patch would invalidate paginated byte offsets".into(),
+                ));
+            }
+            edits.push((offset, line.as_bytes().to_vec(), next.into_bytes()));
         }
-        rewritten.push_str(newline);
+        offset += segment.len();
     }
-
-    if !changed {
+    if edits.is_empty() {
         return Ok(false);
     }
 
-    ensure_codex_session_file_unchanged(path, modified_before, len_before)?;
-    backup_codex_jsonl_file(path, codex_dir, backup_root)?;
-    ensure_codex_session_file_unchanged(path, modified_before, len_before)?;
-    codex_rollout_file::write_rollout(path, rewritten.as_bytes())?;
+    if codex_rollout_file::is_compressed(path) {
+        ensure_codex_session_file_unchanged(path, &original, &metadata_before)?;
+        if codex_rollout_file::sibling(path).is_some_and(|p| p.exists()) {
+            return Err(AppError::Message(
+                "Codex rollout is being decompressed; retry after it is idle".into(),
+            ));
+        }
+        backup_codex_jsonl_file(path, codex_dir, backup_root)?;
+        let mut rewritten = content.into_bytes();
+        for (offset, _, next) in &edits {
+            rewritten[*offset..*offset + next.len()].copy_from_slice(next);
+        }
+        ensure_codex_session_file_unchanged(path, &original, &metadata_before)?;
+        if codex_rollout_file::sibling(path).is_some_and(|p| p.exists()) {
+            return Err(AppError::Message(
+                "Codex rollout changed representation during migration".into(),
+            ));
+        }
+        codex_rollout_file::write_rollout(path, &rewritten)?;
+    } else {
+        backup_codex_jsonl_file(path, codex_dir, backup_root)?;
+        let mut file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .map_err(|e| AppError::io(path, e))?;
+        apply_plain_metadata_edits(path, &mut file, &original, content.len() as u64, &edits)?;
+    }
     Ok(true)
+}
+
+type MetadataEdit = (usize, Vec<u8>, Vec<u8>);
+
+fn same_file_identity(left: &fs::File, right: &fs::File) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        match (left.metadata(), right.metadata()) {
+            (Ok(left), Ok(right)) => left.dev() == right.dev() && left.ino() == right.ino(),
+            _ => false,
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FileIdInfo, GetFileInformationByHandleEx, FILE_ID_INFO,
+        };
+        fn identity(file: &fs::File) -> Option<(u64, [u8; 16])> {
+            let mut info = FILE_ID_INFO::default();
+            // SAFETY: the file owns a valid handle throughout this call; info
+            // is a writable FILE_ID_INFO buffer with the supplied exact size.
+            let ok = unsafe {
+                GetFileInformationByHandleEx(
+                    file.as_raw_handle(),
+                    FileIdInfo,
+                    std::ptr::addr_of_mut!(info).cast(),
+                    std::mem::size_of::<FILE_ID_INFO>() as u32,
+                )
+            };
+            if ok == 0 {
+                log::warn!(
+                    "Cannot verify Codex rollout file identity: {}",
+                    std::io::Error::last_os_error()
+                );
+                return None;
+            }
+            Some((info.VolumeSerialNumber, info.FileId.Identifier))
+        }
+        match (identity(left), identity(right)) {
+            (Some(left), Some(right)) => left == right,
+            _ => false,
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (left, right);
+        false
+    }
+}
+
+fn apply_plain_metadata_edits(
+    path: &Path,
+    file: &mut fs::File,
+    original: &fs::File,
+    original_len: u64,
+    edits: &[MetadataEdit],
+) -> Result<(), AppError> {
+    let check = |file: &fs::File| -> Result<(), AppError> {
+        let opened = file.metadata().map_err(|e| AppError::io(path, e))?;
+        let current = fs::File::open(path).map_err(|e| AppError::io(path, e))?;
+        let current_metadata = current.metadata().map_err(|e| AppError::io(path, e))?;
+        if opened.len() < original_len
+            || current_metadata.len() < original_len
+            || !same_file_identity(original, file)
+            || !same_file_identity(file, &current)
+        {
+            return Err(AppError::Message(format!(
+                "Codex rollout replaced or truncated during migration: {}",
+                path.display()
+            )));
+        }
+        Ok(())
+    };
+    check(file)?;
+    // Validate every old range before the first write; tolerate only tail appends.
+    for (offset, old, next) in edits {
+        if old.len() != next.len() {
+            return Err(AppError::Message(
+                "Unequal Codex metadata patch lengths".into(),
+            ));
+        }
+        file.seek(SeekFrom::Start(*offset as u64))
+            .map_err(|e| AppError::io(path, e))?;
+        let mut bytes = vec![0; old.len()];
+        file.read_exact(&mut bytes)
+            .map_err(|e| AppError::io(path, e))?;
+        if bytes != *old {
+            return Err(AppError::Message(format!(
+                "Codex metadata changed during migration: {}",
+                path.display()
+            )));
+        }
+    }
+    for (offset, old, next) in edits {
+        check(file)?;
+        file.seek(SeekFrom::Start(*offset as u64))
+            .map_err(|e| AppError::io(path, e))?;
+        let mut bytes = vec![0; old.len()];
+        file.read_exact(&mut bytes)
+            .map_err(|e| AppError::io(path, e))?;
+        if bytes != *old {
+            return Err(AppError::Message(
+                "Codex metadata changed before write; retry migration".into(),
+            ));
+        }
+        file.seek(SeekFrom::Start(*offset as u64))
+            .map_err(|e| AppError::io(path, e))?;
+        file.write_all(next).map_err(|e| AppError::io(path, e))?;
+    }
+    file.sync_data().map_err(|e| AppError::io(path, e))?;
+    check(file)
 }
 
 fn ensure_codex_session_file_unchanged(
     path: &Path,
-    modified_before: Option<SystemTime>,
-    len_before: u64,
+    original: &fs::File,
+    metadata_before: &fs::Metadata,
 ) -> Result<(), AppError> {
-    let metadata_after = fs::metadata(path).map_err(|e| AppError::io(path, e))?;
-    if metadata_after.modified().ok() != modified_before || metadata_after.len() != len_before {
+    let current = fs::File::open(path).map_err(|e| AppError::io(path, e))?;
+    let metadata_after = current.metadata().map_err(|e| AppError::io(path, e))?;
+    if !same_file_identity(original, &current)
+        || metadata_after.modified().ok() != metadata_before.modified().ok()
+        || metadata_after.len() != metadata_before.len()
+    {
         return Err(AppError::Message(format!(
             "Codex session file changed during migration: {}",
             path.display()
@@ -1193,44 +1582,175 @@ fn ensure_codex_session_file_unchanged(
     Ok(())
 }
 
-fn rewrite_codex_session_meta_line(
+fn provider_metadata_pointer(value: &Value) -> Option<&'static str> {
+    match value.get("type").and_then(Value::as_str) {
+        Some("session_meta") => Some("/payload/model_provider"),
+        Some("event_msg")
+            if value["payload"]["type"].as_str() == Some("thread_settings_applied") =>
+        {
+            Some("/payload/thread_settings/model_provider_id")
+        }
+        _ => None,
+    }
+}
+
+fn parse_provider_metadata_line(line: &str) -> Result<Option<Value>, AppError> {
+    if !line.contains("session_meta")
+        && !line.contains("thread_settings_applied")
+        && !line.contains("model_provider")
+    {
+        return Ok(None);
+    }
+    let value: Value = serde_json::from_str(line).map_err(|_| {
+        AppError::Message(
+            "Incomplete or invalid Codex metadata; retry after the rollout is idle".into(),
+        )
+    })?;
+    let Some(pointer) = provider_metadata_pointer(&value) else {
+        return Ok(None);
+    };
+    if pointer != "/payload/model_provider"
+        && value.pointer(pointer).and_then(Value::as_str).is_none()
+    {
+        return Err(AppError::InvalidInput(
+            "Cannot verify Codex provider settings metadata".into(),
+        ));
+    }
+    if value.pointer(pointer).and_then(Value::as_str).is_some() {
+        // Even an already-target value must not make an ambiguous record
+        // authorize an index update.
+        provider_metadata_span(line, pointer)?;
+    }
+    Ok(Some(value))
+}
+
+fn provider_metadata_owner(
+    value: &Value,
+    current_session_id: &mut Option<String>,
+) -> Result<Option<String>, AppError> {
+    if value["type"].as_str() == Some("session_meta") {
+        *current_session_id = value["payload"]["id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .map(str::to_string);
+        return Ok(current_session_id.clone());
+    }
+    let owner = match value.pointer("/payload/thread_id") {
+        None | Some(Value::Null) => current_session_id.clone(),
+        Some(Value::String(id)) if !id.is_empty() => Some(id.clone()),
+        _ => None,
+    };
+    owner.map(Some).ok_or_else(|| {
+        AppError::InvalidInput("Cannot verify the owner of Codex provider settings metadata".into())
+    })
+}
+
+fn provider_metadata_span(line: &str, pointer: &str) -> Result<std::ops::Range<usize>, AppError> {
+    let key = pointer.rsplit('/').next().expect("provider field");
+    static FIELD: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r#""(model_provider|model_provider_id)"\s*:\s*("(?:\\.|[^"\\])*")[ \t]*"#)
+            .expect("static JSON field regex")
+    });
+    let fields: Vec<_> = FIELD
+        .captures_iter(line)
+        .filter(|field| &field[1] == key)
+        .collect();
+    if fields.len() != 1 {
+        return Err(AppError::InvalidInput(
+            "Ambiguous Codex provider metadata; refusing migration".into(),
+        ));
+    }
+    let field = &fields[0];
+    let value = field.get(2).expect("capture");
+    let end = field.get(0).expect("match").end();
+    Ok(value.start()..end)
+}
+
+fn replace_metadata_provider(line: &str, before: &Value, target: &str) -> Result<String, AppError> {
+    let pointer = provider_metadata_pointer(before).expect("recognized metadata");
+    let span = provider_metadata_span(line, pointer)?;
+    let width = span.end - span.start;
+    let replacement =
+        serde_json::to_string(target).map_err(|e| AppError::JsonSerialize { source: e })?;
+    if replacement.len() > width {
+        return Err(AppError::InvalidInput("Codex provider id cannot fit without changing paginated offsets; use native resume or an explicit index migration".into()));
+    }
+    let mut next = line.to_string();
+    let padded = format!("{replacement}{}", " ".repeat(width - replacement.len()));
+    next.replace_range(span, &padded);
+    let mut expected = before.clone();
+    *expected.pointer_mut(pointer).expect("existing provider") = Value::String(target.to_string());
+    if next.len() != line.len()
+        || serde_json::from_str::<Value>(&next).ok().as_ref() != Some(&expected)
+    {
+        return Err(AppError::InvalidInput(
+            "Codex metadata patch changed non-provider data".into(),
+        ));
+    }
+    Ok(next)
+}
+
+fn rewrite_codex_provider_metadata_line(
     line: &str,
     source_provider_ids: &HashSet<String>,
     target_provider_id: &str,
-) -> Option<String> {
-    if !line.contains("\"session_meta\"") || !line.contains("\"model_provider\"") {
-        return None;
+    current_session_id: &mut Option<String>,
+) -> Result<Option<String>, AppError> {
+    let Some(value) = parse_provider_metadata_line(line)? else {
+        return Ok(None);
+    };
+    provider_metadata_owner(&value, current_session_id)?;
+    let pointer = provider_metadata_pointer(&value).expect("recognized metadata");
+    let Some(provider) = value.pointer(pointer).and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    if provider == target_provider_id || !source_provider_ids.contains(provider) {
+        return Ok(None);
     }
-
-    let mut value: Value = serde_json::from_str(line).ok()?;
-    if value.get("type").and_then(Value::as_str) != Some("session_meta") {
-        return None;
-    }
-
-    let payload = value.get_mut("payload")?.as_object_mut()?;
-    let current_provider = payload.get("model_provider")?.as_str()?;
-    if !source_provider_ids.contains(current_provider) {
-        return None;
-    }
-
-    payload.insert(
-        "model_provider".to_string(),
-        Value::String(target_provider_id.to_string()),
-    );
-    serde_json::to_string(&value).ok()
+    replace_metadata_provider(line, &value, target_provider_id).map(Some)
 }
 
-fn migrate_codex_state_dbs(
-    codex_dir: &Path,
-    source_provider_ids: &BTreeSet<String>,
-    backup_root: &Path,
-) -> Result<usize, AppError> {
-    migrate_codex_state_dbs_to(
-        codex_dir,
-        source_provider_ids,
-        CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
-        backup_root,
-    )
+fn read_history_config(codex_dir: &Path) -> Result<String, AppError> {
+    let path = codex_dir.join("config.toml");
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(AppError::io(&path, error)),
+    };
+    text.parse::<DocumentMut>().map_err(|error| {
+        AppError::Message(format!(
+            "Cannot verify Codex history config {}: {error}",
+            path.display()
+        ))
+    })?;
+    Ok(text)
+}
+
+/// Manual history writes require every existing index to support rollout verification.
+fn validate_history_index_layouts(codex_dir: &Path, config_text: &str) -> Result<(), AppError> {
+    for path in codex_state_db_paths(codex_dir, config_text) {
+        if !path.exists() {
+            continue;
+        }
+        let conn = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        conn.busy_timeout(Duration::from_secs(5))?;
+        if !Database::table_exists(&conn, "threads")?
+            || !Database::has_column(&conn, "threads", "id")?
+            || !Database::has_column(&conn, "threads", "model_provider")?
+            || !Database::has_column(&conn, "threads", "rollout_path")?
+        {
+            return Err(AppError::Message(format!(
+                "Codex index layout cannot be verified safely: {}. Restore the original provider definition instead", path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn state_db_unavailable(codex_dir: &Path, config_text: &str) -> bool {
+    codex_state_db_paths(codex_dir, config_text)
+        .iter()
+        .any(|path| path.exists() && !codex_state_db_is_lockable(path))
 }
 
 fn migrate_codex_state_dbs_to(
@@ -1238,22 +1758,49 @@ fn migrate_codex_state_dbs_to(
     source_provider_ids: &BTreeSet<String>,
     target_provider_id: &str,
     backup_root: &Path,
-) -> Result<usize, AppError> {
-    let config_text = read_codex_config_text().unwrap_or_default();
-    let mut migrated = 0;
-    for db_path in codex_state_db_paths(codex_dir, &config_text) {
-        if !codex_state_db_is_lockable(&db_path) {
+    skipped_rollouts: &HashSet<PathBuf>,
+    config_text: &str,
+) -> Result<StateMigrationReport, AppError> {
+    migrate_codex_state_dbs_with_lock_check(
+        codex_dir,
+        source_provider_ids,
+        target_provider_id,
+        backup_root,
+        skipped_rollouts,
+        config_text,
+        codex_state_db_is_lockable,
+    )
+}
+
+fn migrate_codex_state_dbs_with_lock_check(
+    codex_dir: &Path,
+    source_provider_ids: &BTreeSet<String>,
+    target_provider_id: &str,
+    backup_root: &Path,
+    skipped_rollouts: &HashSet<PathBuf>,
+    config_text: &str,
+    can_lock: impl Fn(&Path) -> bool,
+) -> Result<StateMigrationReport, AppError> {
+    let mut report = StateMigrationReport::default();
+    for db_path in codex_state_db_paths(codex_dir, config_text) {
+        if db_path.exists() && !can_lock(&db_path) {
+            report.retry_pending = true;
             continue;
         }
-        migrated += migrate_codex_state_db_provider_bucket_to(
+        let state = migrate_codex_state_db_provider_bucket_to(
             &db_path,
             codex_dir,
             source_provider_ids,
             target_provider_id,
             backup_root,
+            skipped_rollouts,
+            None,
         )?;
+        report.migrated += state.migrated;
+        report.skipped += state.skipped;
+        report.retry_pending |= state.retry_pending;
     }
-    Ok(migrated)
+    Ok(report)
 }
 
 #[cfg(test)]
@@ -1269,7 +1816,10 @@ fn migrate_codex_state_db_provider_bucket(
         source_provider_ids,
         CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
         backup_root,
+        &HashSet::new(),
+        None,
     )
+    .map(|report| report.migrated)
 }
 
 fn migrate_codex_state_db_provider_bucket_to(
@@ -1278,9 +1828,11 @@ fn migrate_codex_state_db_provider_bucket_to(
     source_provider_ids: &BTreeSet<String>,
     target_provider_id: &str,
     backup_root: &Path,
-) -> Result<usize, AppError> {
+    skipped_rollouts: &HashSet<PathBuf>,
+    eligible_thread_ids: Option<&BTreeSet<String>>,
+) -> Result<StateMigrationReport, AppError> {
     if !db_path.exists() || source_provider_ids.is_empty() {
-        return Ok(0);
+        return Ok(StateMigrationReport::default());
     }
 
     let mut conn = Connection::open(db_path)
@@ -1291,39 +1843,168 @@ fn migrate_codex_state_db_provider_bucket_to(
     if !Database::table_exists(&conn, "threads")?
         || !Database::has_column(&conn, "threads", "model_provider")?
     {
-        return Ok(0);
+        return Ok(StateMigrationReport::default());
     }
 
     let placeholders = placeholders(source_provider_ids.len());
-    let count_sql =
-        format!("SELECT COUNT(*) FROM threads WHERE model_provider IN ({placeholders})");
-    let matching_rows: i64 = conn
-        .query_row(
-            &count_sql,
-            params_from_iter(source_provider_ids.iter()),
-            |row| row.get(0),
-        )
-        .map_err(|e| AppError::Database(format!("统计 Codex state DB 待迁移行失败: {e}")))?;
-    if matching_rows == 0 {
-        return Ok(0);
+    // A no-op scan must not require a writer lock. Re-read the actual plan
+    // inside the immediate transaction below before updating any candidates.
+    let has_candidate = {
+        let mut statement = conn.prepare(&format!(
+            "SELECT id FROM threads WHERE model_provider IN ({placeholders})"
+        ))?;
+        let ids = statement.query_map(params_from_iter(source_provider_ids.iter()), |row| {
+            row.get::<_, String>(0)
+        })?;
+        let mut found = false;
+        for id in ids {
+            let id = id?;
+            if eligible_thread_ids.is_none_or(|eligible| eligible.contains(&id)) {
+                found = true;
+                break;
+            }
+        }
+        found
+    };
+    if !has_candidate {
+        return Ok(StateMigrationReport::default());
     }
-
-    backup_codex_state_db(db_path, codex_dir, backup_root, &conn)?;
-
-    let update_sql =
-        format!("UPDATE threads SET model_provider = ? WHERE model_provider IN ({placeholders})");
-    let mut values = Vec::with_capacity(source_provider_ids.len() + 1);
-    values.push(target_provider_id.to_string());
-    values.extend(source_provider_ids.iter().cloned());
+    let has_path = Database::has_column(&conn, "threads", "rollout_path")?;
     let tx = conn
-        .transaction()
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(|e| AppError::Database(format!("开启 Codex state DB 迁移事务失败: {e}")))?;
-    let changed = tx
-        .execute(&update_sql, params_from_iter(values.iter()))
-        .map_err(|e| AppError::Database(format!("迁移 Codex state DB provider 失败: {e}")))?;
+    let path_column = if has_path { "rollout_path" } else { "NULL" };
+    let mut rows: Vec<(String, String, Option<String>)> = {
+        let mut statement = tx.prepare(&format!("SELECT id, model_provider, {path_column} FROM threads WHERE model_provider IN ({placeholders})"))?;
+        let mapped = statement.query_map(params_from_iter(source_provider_ids.iter()), |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?;
+        mapped.collect::<Result<_, _>>()?
+    };
+    if let Some(ids) = eligible_thread_ids {
+        rows.retain(|(id, _, _)| ids.contains(id));
+    }
+    if !has_path && !skipped_rollouts.is_empty() {
+        log::warn!(
+            "Skipping {} Codex index rows without rollout paths after file safety skips: {}",
+            rows.len(),
+            db_path.display()
+        );
+        return Ok(StateMigrationReport {
+            skipped: rows.len(),
+            ..Default::default()
+        });
+    }
+    if rows.is_empty() {
+        return Ok(StateMigrationReport::default());
+    }
+    // Back up via a separate read connection while the immediate transaction
+    // prevents another writer from adding an unplanned index row.
+    let mut backed_up = false;
+    let mut changed = 0;
+    let mut unresolved = 0;
+    let mut retry_pending = false;
+    for (id, old_provider, rollout) in rows {
+        if has_path {
+            let verification = match rollout.as_deref() {
+                Some(raw) => {
+                    rollout_is_migrated(codex_dir, raw, &id, target_provider_id, skipped_rollouts)
+                }
+                None => Ok(false),
+            };
+            match verification {
+                Ok(true) => {}
+                result => {
+                    if let Err(error) = result {
+                        retry_pending = true;
+                        log::warn!("Deferring Codex index row {id}: {error}");
+                    } else {
+                        log::warn!("Skipping Codex index row {id}: no verified migrated rollout ({rollout:?})");
+                    }
+                    unresolved += 1;
+                    continue;
+                }
+            }
+        }
+        if !backed_up {
+            let snapshot =
+                Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                    .map_err(|e| {
+                        AppError::Database(format!("打开 Codex state DB 备份源失败: {e}"))
+                    })?;
+            backup_codex_state_db(db_path, codex_dir, backup_root, &snapshot)?;
+            backed_up = true;
+        }
+        changed += tx.execute(
+            "UPDATE threads SET model_provider = ?1 WHERE id = ?2 AND model_provider = ?3",
+            rusqlite::params![target_provider_id, id, old_provider],
+        )?;
+    }
     tx.commit()
         .map_err(|e| AppError::Database(format!("提交 Codex state DB 迁移事务失败: {e}")))?;
-    Ok(changed)
+    Ok(StateMigrationReport {
+        migrated: changed,
+        skipped: unresolved,
+        retry_pending,
+    })
+}
+
+fn rollout_is_migrated(
+    codex_dir: &Path,
+    raw: &str,
+    expected_id: &str,
+    target: &str,
+    skipped_rollouts: &HashSet<PathBuf>,
+) -> Result<bool, AppError> {
+    use std::io::BufRead;
+    let raw = Path::new(raw);
+    let mut path = if raw.is_absolute() {
+        raw.to_path_buf()
+    } else {
+        codex_dir.join(raw)
+    };
+    if codex_rollout_file::is_compressed(&path) && codex_rollout_file::logical_path(&path).is_file()
+    {
+        path = codex_rollout_file::logical_path(&path);
+    } else if !path.is_file() {
+        if let Some(other) = codex_rollout_file::sibling(&path) {
+            path = other;
+        }
+    }
+    let root = fs::canonicalize(codex_dir).map_err(|error| AppError::io(codex_dir, error))?;
+    let actual = fs::canonicalize(&path).map_err(|error| AppError::io(&path, error))?;
+    if skipped_rollouts.contains(&actual)
+        || !codex_rollout_file::is_rollout_file(&actual)
+        || !(actual.starts_with(root.join("sessions"))
+            || actual.starts_with(root.join("archived_sessions")))
+    {
+        return Ok(false);
+    }
+    let reader =
+        codex_rollout_file::open_reader(&actual).map_err(|error| AppError::io(&actual, error))?;
+    let mut found_target = false;
+    let mut current_session_id = None;
+    for line in reader.lines() {
+        let line = line.map_err(|error| AppError::io(&actual, error))?;
+        let Some(value) = parse_provider_metadata_line(&line)? else {
+            continue;
+        };
+        if provider_metadata_owner(&value, &mut current_session_id)?.as_deref() != Some(expected_id)
+        {
+            continue;
+        }
+        if let Some(provider) = value
+            .pointer(provider_metadata_pointer(&value).expect("recognized metadata"))
+            .and_then(Value::as_str)
+        {
+            if provider == target {
+                found_target |= value["type"].as_str() == Some("session_meta");
+            } else {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(found_target)
 }
 
 fn placeholders(count: usize) -> String {
@@ -1337,6 +2018,7 @@ fn backup_codex_jsonl_file(
     codex_dir: &Path,
     backup_root: &Path,
 ) -> Result<(), AppError> {
+    write_backup_generation_meta(backup_root, &canonical_dir_string(codex_dir))?;
     let backup_path = backup_root
         .join("jsonl")
         .join(relative_backup_path(path, codex_dir));
@@ -1349,6 +2031,7 @@ fn backup_codex_state_db(
     backup_root: &Path,
     source_conn: &Connection,
 ) -> Result<(), AppError> {
+    write_backup_generation_meta(backup_root, &canonical_dir_string(codex_dir))?;
     let backup_path = backup_root
         .join("state")
         .join(relative_backup_path(db_path, codex_dir));
@@ -2138,7 +2821,7 @@ base_url = "https://proxy.example/v1"
             .expect("set mtime");
 
         let mut files = Vec::new();
-        collect_jsonl_files(&codex_dir.join("sessions"), &mut files, 0, 8);
+        collect_jsonl_files(&codex_dir.join("sessions"), &mut files, 0, 8).unwrap();
         assert_eq!(files, vec![path.clone()]);
 
         let changed = rewrite_codex_session_file_for_provider_bucket(
@@ -2899,6 +3582,486 @@ model_provider = "aihubmix"
         )
     }
 
+    fn settings_event_line(id: Option<&str>, provider: &str) -> String {
+        let mut payload = serde_json::json!({
+            "type": "thread_settings_applied",
+            "thread_settings": {
+                "model_provider_id": provider,
+                "model": "synthetic-model",
+                "approval_policy": "on-request"
+            }
+        });
+        if let Some(id) = id {
+            payload["thread_id"] = Value::String(id.into());
+        }
+        serde_json::json!({"type":"event_msg","payload":payload}).to_string() + "\n"
+    }
+
+    #[test]
+    fn related_history_settings_events_migrate_in_plain_and_compressed_files() {
+        for compressed in [false, true] {
+            for header_provider in ["legacy-relay", "custom"] {
+                let dir = tempdir().unwrap();
+                let codex = dir.path().join("codex");
+                fs::create_dir_all(codex.join("sessions")).unwrap();
+                let path = codex.join(if compressed {
+                    "sessions/history.jsonl.zst"
+                } else {
+                    "sessions/history.jsonl"
+                });
+                let untouched = settings_event_line(Some("other"), "unmanaged-source")
+                    + "{\"type\":\"response_item\",\"payload\":{\"model_provider_id\":\"legacy-relay\",\"text\":\"thread_settings_applied\"}}\n";
+                let original = session_meta_line("target", header_provider)
+                    + &settings_event_line(None, "legacy-relay")
+                    + &settings_event_line(Some("target"), "legacy-relay")
+                    + &untouched;
+                if compressed {
+                    fs::write(
+                        &path,
+                        zstd::stream::encode_all(original.as_bytes(), 3).unwrap(),
+                    )
+                    .unwrap();
+                } else {
+                    fs::write(&path, &original).unwrap();
+                }
+                assert!(rewrite_codex_session_file_for_provider_bucket(
+                    &path,
+                    &codex,
+                    &HashSet::from(["legacy-relay".into()]),
+                    &dir.path().join("backup")
+                )
+                .unwrap());
+                let next = codex_rollout_file::read_to_string(&path).unwrap();
+                assert_eq!(next.len(), original.len());
+                let rows: Vec<Value> = next
+                    .lines()
+                    .map(|line| serde_json::from_str(line).unwrap())
+                    .collect();
+                assert_eq!(rows[0]["payload"]["model_provider"], "custom");
+                for row in &rows[1..3] {
+                    assert_eq!(
+                        row["payload"]["thread_settings"]["model_provider_id"],
+                        "custom"
+                    );
+                    assert_eq!(
+                        row["payload"]["thread_settings"]["model"],
+                        "synthetic-model"
+                    );
+                    assert_eq!(
+                        row["payload"]["thread_settings"]["approval_policy"],
+                        "on-request"
+                    );
+                }
+                assert!(next.ends_with(&untouched));
+                if compressed {
+                    assert_eq!(&fs::read(&path).unwrap()[..4], &[0x28, 0xb5, 0x2f, 0xfd]);
+                }
+                assert!(!rewrite_codex_session_file_for_provider_bucket(
+                    &path,
+                    &codex,
+                    &HashSet::from(["legacy-relay".into()]),
+                    &dir.path().join("second-backup")
+                )
+                .unwrap());
+            }
+        }
+    }
+
+    #[test]
+    fn related_history_unsafe_settings_event_keeps_the_entire_file_unchanged() {
+        for event in [
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"thread_settings_applied\",\"thread_settings\":{\"model_provider_id\":\"legacy-relay\"",
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"thread_settings_applied\",\"thread_settings\":{\"model_provider_id\":\"legacy-relay\"},\"extra\":{\"model_provider_id\":\"legacy-relay\"}}}",
+            r#"{"type":"event_msg","payload":{"type":"thread_settings_applied","thread_settings":{"model_provider_\u0069d":"legacy-relay"}}}"#,
+            r#"{"type":"event_msg","payload":{"type":"thread_settings_applied","thread_id":42,"thread_settings":{"model_provider_id":"legacy-relay"}}}"#,
+            r#"{"type":"event_msg","payload":{"type":"thread_settings_applied","thread_settings":{}}}"#,
+        ] {
+            let dir = tempdir().unwrap();
+            let codex = dir.path().join("codex");
+            fs::create_dir_all(codex.join("sessions")).unwrap();
+            let path = codex.join("sessions/history.jsonl");
+            let before = session_meta_line("target", "legacy-relay") + event + "\n";
+            fs::write(&path, &before).unwrap();
+            assert!(rewrite_codex_session_file_for_provider_bucket(
+                &path, &codex, &HashSet::from(["legacy-relay".into()]),
+                &dir.path().join("backup")
+            ).is_err(), "unsafe settings metadata must refuse the whole file");
+            assert_eq!(fs::read_to_string(&path).unwrap(), before);
+            assert!(!dir.path().join("backup").exists());
+        }
+    }
+
+    #[test]
+    fn related_history_restore_uses_event_ownership_and_keeps_unledgered_records() {
+        let dir = tempdir().unwrap();
+        let codex = dir.path().join("codex");
+        let generation = dir.path().join("ledger/generation/jsonl/sessions");
+        fs::create_dir_all(&generation).unwrap();
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        let third_party =
+            session_meta_line("third-party", "custom") + &settings_event_line(None, "custom");
+        let foreign = settings_event_line(Some("foreign"), "custom");
+        fs::write(
+            generation.join("history.jsonl"),
+            session_meta_line("official", "openai")
+                + &settings_event_line(None, "openai")
+                + &settings_event_line(Some("official"), "openai")
+                + &foreign
+                + &third_party,
+        )
+        .unwrap();
+        let path = codex.join("sessions/history.jsonl");
+        let current = session_meta_line("official", "custom")
+            + &settings_event_line(None, "custom")
+            + &settings_event_line(Some("official"), "custom")
+            + &foreign
+            + &third_party;
+        fs::write(&path, &current).unwrap();
+        let result = restore_codex_official_history_inner(
+            &codex,
+            &dir.path().join("ledger"),
+            &dir.path().join("restore"),
+            "",
+        )
+        .unwrap();
+        assert_eq!(result.restored_jsonl_files, 1);
+        let next = fs::read_to_string(&path).unwrap();
+        let rows: Vec<Value> = next
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(rows[0]["payload"]["model_provider"], "openai");
+        assert_eq!(
+            rows[1]["payload"]["thread_settings"]["model_provider_id"],
+            "openai"
+        );
+        assert_eq!(
+            rows[2]["payload"]["thread_settings"]["model_provider_id"],
+            "openai"
+        );
+        assert!(next.ends_with(&(foreign + &third_party)));
+        assert_eq!(next.len(), current.len());
+        assert_eq!(
+            restore_codex_official_history_inner(
+                &codex,
+                &dir.path().join("ledger"),
+                &dir.path().join("retry"),
+                ""
+            )
+            .unwrap()
+            .restored_jsonl_files,
+            0
+        );
+    }
+
+    #[test]
+    fn related_history_settings_only_ledger_never_authorizes_a_third_party_header() {
+        let dir = tempdir().unwrap();
+        let codex = dir.path().join("codex");
+        let generation = dir.path().join("ledger/generation/jsonl/sessions");
+        fs::create_dir_all(&generation).unwrap();
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::write(
+            generation.join("history.jsonl"),
+            session_meta_line("mixed", "custom") + &settings_event_line(None, "openai"),
+        )
+        .unwrap();
+        let path = codex.join("sessions/history.jsonl");
+        fs::write(
+            &path,
+            session_meta_line("mixed", "custom") + &settings_event_line(None, "custom"),
+        )
+        .unwrap();
+        let result = restore_codex_official_history_inner(
+            &codex,
+            &dir.path().join("ledger"),
+            &dir.path().join("restore"),
+            "",
+        )
+        .unwrap();
+        assert_eq!(result.restored_jsonl_files, 1);
+        let rows: Vec<Value> = fs::read_to_string(path)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(rows[0]["payload"]["model_provider"], "custom");
+        assert_eq!(
+            rows[1]["payload"]["thread_settings"]["model_provider_id"],
+            "openai"
+        );
+    }
+
+    #[test]
+    fn related_history_index_rejects_stale_settings_but_ignores_foreign_owners() {
+        for (owner, expected_changes) in [(None, 0), (Some("target"), 0), (Some("foreign"), 1)] {
+            let dir = tempdir().unwrap();
+            let codex = dir.path().join("codex");
+            fs::create_dir_all(codex.join("sessions")).unwrap();
+            fs::write(
+                codex.join("sessions/history.jsonl"),
+                session_meta_line("target", "custom")
+                    + &settings_event_line(owner, "unmanaged-source"),
+            )
+            .unwrap();
+            let state = codex.join(CODEX_STATE_DB_FILENAME);
+            let conn = Connection::open(&state).unwrap();
+            conn.execute_batch("CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT, rollout_path TEXT);
+                INSERT INTO threads VALUES ('target', 'legacy-relay', 'sessions/history.jsonl');").unwrap();
+            let result = migrate_codex_state_db_provider_bucket_to(
+                &state,
+                &codex,
+                &source_ids(&["legacy-relay"]),
+                "custom",
+                &dir.path().join("backup"),
+                &HashSet::new(),
+                None,
+            )
+            .unwrap();
+            assert_eq!(result.migrated, expected_changes, "owner: {owner:?}");
+            assert_eq!(result.skipped, 1 - expected_changes);
+            assert_eq!(
+                thread_provider(&state, "target"),
+                if expected_changes == 1 {
+                    "custom"
+                } else {
+                    "legacy-relay"
+                }
+            );
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn related_history_default_sqlite_directory_migrates_and_restores() {
+        let home = IsolatedHome::new();
+        let _env = EnvVarGuard::set("CODEX_SQLITE_HOME", Path::new(""));
+        let codex = home.codex_dir();
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::create_dir_all(codex.join("sqlite")).unwrap();
+        fs::write(codex.join("config.toml"), "model_provider = \"custom\"\n").unwrap();
+        fs::write(
+            codex.join("sessions/history.jsonl"),
+            session_meta_line("official", "openai"),
+        )
+        .unwrap();
+        let state = codex.join("sqlite").join(CODEX_STATE_DB_FILENAME);
+        seed_threads(&state, &[("official", "openai")]);
+        let mut settings = crate::settings::get_settings();
+        settings.unify_codex_session_history = true;
+        settings.unify_codex_migrate_existing = Some(true);
+        crate::settings::update_settings(settings).unwrap();
+        assert_eq!(
+            maybe_migrate_codex_official_history_to_unified_bucket()
+                .unwrap()
+                .migrated_state_rows,
+            1
+        );
+        assert_eq!(thread_provider(&state, "official"), "custom");
+        let result = restore_codex_official_history_inner(
+            &codex,
+            &official_history_unify_backup_parent(),
+            &home.dir.path().join("restore"),
+            "",
+        )
+        .unwrap();
+        assert_eq!(result.restored_state_rows, 1);
+        assert_eq!(thread_provider(&state, "official"), "openai");
+    }
+
+    #[test]
+    #[serial]
+    fn related_history_bad_nested_index_is_rejected_before_manual_file_writes() {
+        let home = IsolatedHome::new();
+        let _env = EnvVarGuard::set("CODEX_SQLITE_HOME", Path::new(""));
+        let codex = home.codex_dir();
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::create_dir_all(codex.join("sqlite")).unwrap();
+        fs::write(codex.join("config.toml"), "model_provider = \"custom\"\n").unwrap();
+        let path = codex.join("sessions/history.jsonl");
+        let original = session_meta_line("target", "legacy-relay");
+        fs::write(&path, &original).unwrap();
+        Connection::open(codex.join("sqlite").join(CODEX_STATE_DB_FILENAME))
+            .unwrap()
+            .execute_batch("CREATE TABLE threads (id TEXT);")
+            .unwrap();
+        let db = Database::memory().unwrap();
+        db.save_provider("codex", &Provider::with_id(
+            "synthetic-card".into(), "Synthetic relay".into(),
+            serde_json::json!({"config":"model_provider = \"legacy-relay\"\n[model_providers.legacy-relay]\nbase_url = \"https://api.example/v1\"\n"}), None
+        )).unwrap();
+        let mut settings = crate::settings::get_settings();
+        settings.unify_codex_session_history = true;
+        crate::settings::update_settings(settings).unwrap();
+        assert!(migrate_managed_codex_history_to_unified_bucket(&db).is_err());
+        assert_eq!(fs::read_to_string(path).unwrap(), original);
+    }
+
+    #[test]
+    fn related_history_nested_index_detection_keeps_overrides_and_deduplicates() {
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join("sqlite")).unwrap();
+        let nested = dir.path().join("sqlite").join(CODEX_STATE_DB_FILENAME);
+        fs::write(&nested, "").unwrap();
+        let other = dir.path().join("configured");
+        let paths = codex_state_db_paths(
+            dir.path(),
+            &format!("sqlite_home = '{}'\n", other.display()),
+        );
+        assert!(paths.contains(&nested));
+        assert!(paths.contains(&other.join(CODEX_STATE_DB_FILENAME)));
+        assert_eq!(paths.len(), 3);
+        assert_eq!(
+            codex_state_db_paths(
+                dir.path(),
+                &format!("sqlite_home = '{}'\n", dir.path().join("sqlite").display())
+            )
+            .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn related_history_short_settings_id_skips_without_changing_byte_offsets() {
+        let dir = tempdir().unwrap();
+        let codex = dir.path().join("codex");
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        let path = codex.join("sessions/history.jsonl");
+        let before = session_meta_line("target", "custom") + &settings_event_line(None, "api");
+        fs::write(&path, &before).unwrap();
+        let report = migrate_codex_jsonl_files_to(
+            &codex,
+            &source_ids(&["api"]),
+            "custom",
+            &dir.path().join("backup"),
+        )
+        .unwrap();
+        assert_eq!(report.migrated, 0);
+        assert_eq!(report.skipped_paths.len(), 1);
+        assert!(!report.retry_pending);
+        assert_eq!(fs::read_to_string(path).unwrap(), before);
+        assert!(!dir.path().join("backup").exists());
+    }
+
+    #[test]
+    fn related_history_restore_never_borrows_another_indexes_ledger() {
+        let dir = tempdir().unwrap();
+        let codex = dir.path().join("codex");
+        let generation = dir.path().join("ledger/generation");
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::create_dir_all(codex.join("sqlite")).unwrap();
+        fs::create_dir_all(generation.join("jsonl/sessions")).unwrap();
+        fs::create_dir_all(generation.join("state/sqlite")).unwrap();
+        fs::write(
+            codex.join("sessions/history.jsonl"),
+            session_meta_line("shared-id", "custom"),
+        )
+        .unwrap();
+        fs::write(
+            generation.join("jsonl/sessions/history.jsonl"),
+            session_meta_line("shared-id", "openai"),
+        )
+        .unwrap();
+        let root_state = codex.join(CODEX_STATE_DB_FILENAME);
+        let nested_state = codex.join("sqlite").join(CODEX_STATE_DB_FILENAME);
+        seed_threads(&root_state, &[("shared-id", "custom")]);
+        seed_threads(&nested_state, &[("shared-id", "custom")]);
+        // Only the nested store had an original official row and was backed up.
+        seed_threads(
+            &generation
+                .join("state/sqlite")
+                .join(CODEX_STATE_DB_FILENAME),
+            &[("shared-id", "openai")],
+        );
+        let result = restore_codex_official_history_inner(
+            &codex,
+            &dir.path().join("ledger"),
+            &dir.path().join("restore"),
+            &format!("sqlite_home = '{}'\n", codex.join("sqlite").display()),
+        )
+        .unwrap();
+        assert_eq!(result.restored_state_rows, 1);
+        assert_eq!(thread_provider(&root_state, "shared-id"), "custom");
+        assert_eq!(thread_provider(&nested_state, "shared-id"), "openai");
+    }
+
+    #[test]
+    fn related_history_duplicate_target_settings_do_not_authorize_index_writes() {
+        let dir = tempdir().unwrap();
+        let codex = dir.path().join("codex");
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        let path = codex.join("sessions/history.jsonl");
+        let original = session_meta_line("target", "custom")
+            + "{\"type\":\"event_msg\",\"payload\":{\"type\":\"thread_settings_applied\",\"thread_settings\":{\"model_provider_id\":\"legacy-relay\",\"model_provider_id\":\"custom\"}}}\n";
+        fs::write(&path, &original).unwrap();
+        let state = codex.join(CODEX_STATE_DB_FILENAME);
+        Connection::open(&state).unwrap().execute_batch(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT, rollout_path TEXT);
+             INSERT INTO threads VALUES ('target', 'legacy-relay', 'sessions/history.jsonl');"
+        ).unwrap();
+        let report = migrate_codex_state_db_provider_bucket_to(
+            &state,
+            &codex,
+            &source_ids(&["legacy-relay"]),
+            "custom",
+            &dir.path().join("backup"),
+            &HashSet::new(),
+            None,
+        )
+        .unwrap();
+        assert_eq!((report.migrated, report.skipped), (0, 1));
+        assert_eq!(thread_provider(&state, "target"), "legacy-relay");
+        assert_eq!(fs::read_to_string(path).unwrap(), original);
+    }
+
+    #[test]
+    #[serial]
+    fn related_history_completed_scan_waits_for_manual_settings_repair() {
+        let home = IsolatedHome::new();
+        let codex = home.codex_dir();
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::write(codex.join("config.toml"), "model_provider = \"custom\"\n").unwrap();
+        let path = codex.join("sessions/history.jsonl");
+        fs::write(&path, session_meta_line("target", "legacy-relay")).unwrap();
+        let db = Database::memory().unwrap();
+        db.save_provider("codex", &Provider::with_id(
+            "synthetic-card".into(), "Synthetic relay".into(),
+            serde_json::json!({"config":"model_provider = \"legacy-relay\"\n[model_providers.legacy-relay]\nbase_url = \"https://api.example/v1\"\n"}), None
+        )).unwrap();
+        let mut settings = crate::settings::get_settings();
+        settings.unify_codex_session_history = true;
+        crate::settings::update_settings(settings).unwrap();
+        migrate_managed_codex_history_to_unified_bucket(&db).unwrap();
+        db.update_provider_settings_config(
+            "codex",
+            "synthetic-card",
+            &serde_json::json!({"config":"model_provider = \"custom\"\n"}),
+        )
+        .unwrap();
+        let imported =
+            session_meta_line("target", "custom") + &settings_event_line(None, "legacy-relay");
+        fs::write(&path, &imported).unwrap();
+        assert_eq!(
+            maybe_migrate_codex_third_party_history_provider_bucket(&db)
+                .unwrap()
+                .skipped_reason,
+            Some("already_migrated".into())
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), imported);
+        assert_eq!(
+            migrate_managed_codex_history_to_unified_bucket(&db)
+                .unwrap()
+                .migrated_jsonl_files,
+            1
+        );
+        let next = fs::read_to_string(path).unwrap();
+        let event: Value = serde_json::from_str(next.lines().nth(1).unwrap()).unwrap();
+        assert_eq!(
+            event["payload"]["thread_settings"]["model_provider_id"],
+            "custom"
+        );
+    }
+
     fn seed_threads(db_path: &Path, rows: &[(&str, &str)]) {
         let conn = Connection::open(db_path).expect("open state db");
         conn.execute_batch(
@@ -2923,6 +4086,972 @@ model_provider = "aihubmix"
                 |row| row.get(0),
             )
             .expect("thread provider")
+    }
+
+    #[test]
+    #[serial]
+    fn history_safety_managed_migration_rejects_incomplete_indexes_before_file_writes() {
+        let mut violations = Vec::new();
+        for (case, schema) in [
+            (
+                "missing provider",
+                "CREATE TABLE threads (id TEXT, rollout_path TEXT);",
+            ),
+            (
+                "missing id",
+                "CREATE TABLE threads (model_provider TEXT, rollout_path TEXT);",
+            ),
+            (
+                "missing rollout",
+                "CREATE TABLE threads (id TEXT, model_provider TEXT);",
+            ),
+            ("missing threads", "CREATE TABLE unrelated (id TEXT);"),
+        ] {
+            let home = IsolatedHome::new();
+            let codex = home.codex_dir();
+            fs::create_dir_all(codex.join("sessions")).unwrap();
+            fs::write(codex.join("config.toml"), "model_provider = \"custom\"\n").unwrap();
+            let mut settings = crate::settings::get_settings();
+            settings.unify_codex_session_history = true;
+            crate::settings::update_settings(settings).unwrap();
+            let db = Database::memory().unwrap();
+            db.save_provider("codex", &Provider::with_id("synthetic-card".into(), "Synthetic relay".into(), serde_json::json!({"config": "model_provider = \"legacy-relay\"\n[model_providers.legacy-relay]\nbase_url = \"https://api.example/v1\"\n"}), None)).unwrap();
+            let path = codex.join("sessions/history.jsonl");
+            let before = session_meta_line("history", "legacy-relay");
+            fs::write(&path, &before).unwrap();
+            Connection::open(codex.join(CODEX_STATE_DB_FILENAME))
+                .unwrap()
+                .execute_batch(schema)
+                .unwrap();
+
+            let result = migrate_managed_codex_history_to_unified_bucket(&db);
+            if result.is_ok() || fs::read_to_string(&path).unwrap() != before {
+                violations.push((case, result.is_err()));
+            }
+        }
+        assert!(
+            violations.is_empty(),
+            "unsupported indexes must fail before changing history: {violations:?}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn history_safety_failed_official_migration_keeps_backups_scoped_to_the_original_directory() {
+        let home = IsolatedHome::new();
+        let codex = home.codex_dir();
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::write(codex.join("config.toml"), "model_provider = \"custom\"\n").unwrap();
+        let mut settings = crate::settings::get_settings();
+        settings.unify_codex_session_history = true;
+        settings.unify_codex_migrate_existing = Some(true);
+        crate::settings::update_settings(settings).unwrap();
+        let original = codex.join("sessions/cloned.jsonl");
+        fs::write(&original, session_meta_line("cloned", "openai")).unwrap();
+        // A real index decoding failure occurs after the rollout has been backed up.
+        Connection::open(codex.join(CODEX_STATE_DB_FILENAME)).unwrap()
+            .execute_batch("CREATE TABLE threads (id BLOB PRIMARY KEY, model_provider TEXT); INSERT INTO threads VALUES (x'01', 'openai');").unwrap();
+        assert!(maybe_migrate_codex_official_history_to_unified_bucket().is_err());
+        assert_eq!(
+            fs::read_to_string(&original).unwrap(),
+            session_meta_line("cloned", "custom")
+        );
+
+        let other = home.dir.path().join("other-codex");
+        fs::create_dir_all(other.join("sessions")).unwrap();
+        let other_path = other.join("sessions/cloned.jsonl");
+        let before = session_meta_line("cloned", "custom");
+        fs::write(&other_path, &before).unwrap();
+        let outcome = restore_codex_official_history_inner(
+            &other,
+            &official_history_unify_backup_parent(),
+            &home.dir.path().join("restore-backup"),
+            "",
+        )
+        .unwrap();
+        assert_eq!(
+            outcome.restored_jsonl_files, 0,
+            "a failed migration's ledger must not authorize another directory"
+        );
+        assert_eq!(fs::read_to_string(other_path).unwrap(), before);
+        assert!(!has_official_history_unify_backup_for_dir(
+            &official_history_unify_backup_parent(),
+            &canonical_dir_string(&other)
+        ));
+    }
+
+    #[test]
+    fn history_safety_damaged_backup_metadata_does_not_prove_directory_ownership() {
+        let dir = tempdir().unwrap();
+        let codex = dir.path().join("codex");
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        let path = codex.join("sessions/cloned.jsonl");
+        let before = session_meta_line("cloned", "custom");
+        let mut violations = Vec::new();
+        for (case, metadata) in [
+            ("invalid-json", Some("{")),
+            ("missing-scope", Some("{}")),
+            ("wrong-type", Some("{\"codexConfigDir\":42}")),
+            ("unreadable-meta", None),
+        ] {
+            let ledger = dir.path().join(case);
+            let generation = ledger.join("generation");
+            fs::create_dir_all(generation.join("jsonl/sessions")).unwrap();
+            fs::write(
+                generation.join("jsonl/sessions/cloned.jsonl"),
+                session_meta_line("cloned", "openai"),
+            )
+            .unwrap();
+            if let Some(text) = metadata {
+                fs::write(generation.join("meta.json"), text).unwrap();
+            } else {
+                fs::create_dir(generation.join("meta.json")).unwrap();
+            }
+            fs::write(&path, &before).unwrap();
+            let outcome = restore_codex_official_history_inner(
+                &codex,
+                &ledger,
+                &dir.path().join(format!("restore-{case}")),
+                "",
+            )
+            .unwrap();
+            if outcome.restored_jsonl_files != 0
+                || fs::read_to_string(&path).unwrap() != before
+                || has_official_history_unify_backup_for_dir(&ledger, &canonical_dir_string(&codex))
+            {
+                violations.push(case);
+            }
+        }
+        assert!(
+            violations.is_empty(),
+            "damaged explicit metadata must never act as an unscoped legacy ledger: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn history_safety_backup_scope_failure_never_changes_the_rollout() {
+        let dir = tempdir().unwrap();
+        let codex = dir.path().join("codex");
+        let backup = dir.path().join("backup");
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::create_dir(&backup).unwrap();
+        fs::write(
+            backup.join("meta.json"),
+            "{\"codexConfigDir\":\"unrelated-directory\"}",
+        )
+        .unwrap();
+        let path = codex.join("sessions/history.jsonl");
+        let before = session_meta_line("history", "legacy-relay");
+        fs::write(&path, &before).unwrap();
+        let sources = HashSet::from(["legacy-relay".to_string()]);
+        let result =
+            rewrite_codex_session_file_for_provider_bucket(&path, &codex, &sources, &backup);
+        assert!(
+            result.is_err(),
+            "an unusable backup scope must stop the write"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn history_safety_dangling_backup_metadata_is_not_an_absent_legacy_file() {
+        let dir = tempdir().unwrap();
+        let codex = dir.path().join("codex");
+        let ledger = dir.path().join("ledger");
+        let generation = ledger.join("generation");
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::create_dir_all(&generation).unwrap();
+        std::os::unix::fs::symlink("missing-meta.json", generation.join("meta.json")).unwrap();
+        let path = codex.join("sessions/history.jsonl");
+        let before = session_meta_line("history", "openai");
+        fs::write(&path, &before).unwrap();
+        let accepted =
+            has_official_history_unify_backup_for_dir(&ledger, &canonical_dir_string(&codex));
+        let result = rewrite_codex_session_file_for_provider_bucket(
+            &path,
+            &codex,
+            &HashSet::from(["openai".into()]),
+            &generation,
+        );
+        assert!(
+            !accepted && result.is_err() && fs::read_to_string(&path).unwrap() == before,
+            "a dangling metadata entry must not be adopted or silently replaced"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn missing_rollout_index_verification_keeps_the_startup_retry_open() {
+        let home = IsolatedHome::new();
+        let codex = home.codex_dir();
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        let db = Database::memory().unwrap();
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "rightcode".into(),
+                "Synthetic relay".into(),
+                serde_json::json!({"config": "model_provider = \"rightcode\"\n"}),
+                None,
+            ),
+        )
+        .unwrap();
+        let state = codex.join(CODEX_STATE_DB_FILENAME);
+        let conn = Connection::open(&state).unwrap();
+        conn.execute_batch("CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT, rollout_path TEXT); INSERT INTO threads VALUES ('late','rightcode','sessions/late.jsonl');").unwrap();
+        drop(conn);
+        let first = maybe_migrate_codex_third_party_history_provider_bucket(&db).unwrap();
+        assert!(first.retry_pending, "missing rollout must remain retryable");
+        fs::write(
+            codex.join("sessions/late.jsonl"),
+            session_meta_line("late", "custom"),
+        )
+        .unwrap();
+        let second = maybe_migrate_codex_third_party_history_provider_bucket(&db).unwrap();
+        assert_eq!(second.migrated_state_rows, 1);
+        assert_eq!(thread_provider(&state, "late"), "custom");
+    }
+
+    #[test]
+    #[serial]
+    fn incomplete_directory_inventory_never_marks_startup_complete() {
+        let home = IsolatedHome::new();
+        let codex = home.codex_dir();
+        fs::create_dir_all(&codex).unwrap();
+        fs::write(codex.join("sessions"), "not a directory").unwrap();
+        let db = Database::memory().unwrap();
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "rightcode".into(),
+                "Synthetic relay".into(),
+                serde_json::json!({"config": "model_provider = \"rightcode\"\n"}),
+                None,
+            ),
+        )
+        .unwrap();
+        assert!(maybe_migrate_codex_third_party_history_provider_bucket(&db).is_err());
+        // Replace only this synthetic malformed store with an accessible one.
+        fs::remove_file(codex.join("sessions")).unwrap();
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::write(
+            codex.join("sessions/recovered.jsonl"),
+            session_meta_line("recovered", "rightcode"),
+        )
+        .unwrap();
+        assert_eq!(
+            maybe_migrate_codex_third_party_history_provider_bucket(&db)
+                .unwrap()
+                .migrated_jsonl_files,
+            1
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn third_party_markers_do_not_hide_another_codex_directory() {
+        let home = IsolatedHome::new();
+        let db = Database::memory().unwrap();
+        db.save_provider(
+            "codex",
+            &Provider::with_id(
+                "rightcode".into(),
+                "Synthetic relay".into(),
+                serde_json::json!({"config": "model_provider = \"rightcode\"\n"}),
+                None,
+            ),
+        )
+        .unwrap();
+        assert!(maybe_migrate_codex_third_party_history_provider_bucket(&db).is_ok());
+        let other = home.dir.path().join("other-codex");
+        fs::create_dir_all(other.join("sessions")).unwrap();
+        fs::write(
+            other.join("sessions/imported.jsonl"),
+            session_meta_line("imported", "rightcode"),
+        )
+        .unwrap();
+        let mut settings = crate::settings::get_settings();
+        settings.codex_config_dir = Some(other.to_string_lossy().to_string());
+        crate::settings::update_settings(settings).unwrap();
+        let result = maybe_migrate_codex_third_party_history_provider_bucket(&db).unwrap();
+        assert_eq!(result.migrated_jsonl_files, 1);
+    }
+
+    #[test]
+    #[serial]
+    fn queued_official_migration_rechecks_cancellation_after_acquiring_the_lock() {
+        let home = IsolatedHome::new();
+        let codex = home.codex_dir();
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::write(codex.join("config.toml"), "model_provider = \"custom\"\n").unwrap();
+        let path = codex.join("sessions/official.jsonl");
+        let before = session_meta_line("official", "openai");
+        fs::write(&path, &before).unwrap();
+        let mut settings = crate::settings::get_settings();
+        settings.unify_codex_session_history = true;
+        settings.unify_codex_migrate_existing = Some(true);
+        crate::settings::update_settings(settings).unwrap();
+        let guard = lock_codex_official_history_op();
+        let (ready, waiting) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            migrate_official_history_with_lock(|| {
+                ready.send(()).unwrap();
+                lock_codex_official_history_op()
+            })
+        });
+        waiting.recv_timeout(Duration::from_secs(5)).unwrap();
+        let mut settings = crate::settings::get_settings();
+        settings.unify_codex_session_history = false;
+        settings.unify_codex_migrate_existing = Some(false);
+        crate::settings::update_settings(settings).unwrap();
+        drop(guard);
+        let result = worker.join().unwrap().unwrap();
+        assert_eq!(result.migrated_jsonl_files, 0);
+        assert_eq!(result.skipped_reason.as_deref(), Some("unify_toggle_off"));
+        assert_eq!(fs::read_to_string(path).unwrap(), before);
+    }
+
+    #[test]
+    #[serial]
+    fn custom_source_ledgers_are_isolated_and_survive_directory_round_trips() {
+        let home = IsolatedHome::new();
+        let codex = home.codex_dir();
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::write(codex.join("config.toml"), "model_provider = \"custom\"\n").unwrap();
+        let db = Database::memory().unwrap();
+        db.save_provider("codex", &Provider::with_id("synthetic-card".into(), "Synthetic relay".into(), serde_json::json!({"config": "model_provider = \"legacy-relay\"\n[model_providers.legacy-relay]\nbase_url = \"https://api.example/v1\"\n"}), None)).unwrap();
+        let mut settings = crate::settings::get_settings();
+        settings.unify_codex_session_history = true;
+        crate::settings::update_settings(settings).unwrap();
+        migrate_managed_codex_history_to_unified_bucket(&db).unwrap();
+        db.update_provider_settings_config(
+            "codex",
+            "synthetic-card",
+            &serde_json::json!({"config": "model_provider = \"custom\"\n"}),
+        )
+        .unwrap();
+        let other = home.dir.path().join("other-codex");
+        fs::create_dir_all(other.join("sessions")).unwrap();
+        fs::write(other.join("config.toml"), "model_provider = \"custom\"\n").unwrap();
+        let other_path = other.join("sessions/unknown.jsonl");
+        let original = session_meta_line("unknown", "legacy-relay");
+        fs::write(&other_path, &original).unwrap();
+        let mut settings = crate::settings::get_settings();
+        settings.codex_config_dir = Some(other.to_string_lossy().to_string());
+        crate::settings::update_settings(settings).unwrap();
+        assert_eq!(
+            migrate_managed_codex_history_to_unified_bucket(&db)
+                .unwrap()
+                .migrated_jsonl_files,
+            0
+        );
+        assert_eq!(fs::read_to_string(&other_path).unwrap(), original);
+        let mut settings = crate::settings::get_settings();
+        settings.codex_config_dir = None;
+        crate::settings::update_settings(settings).unwrap();
+        fs::write(
+            codex.join("sessions/imported.jsonl"),
+            session_meta_line("imported", "legacy-relay"),
+        )
+        .unwrap();
+        assert_eq!(
+            migrate_managed_codex_history_to_unified_bucket(&db)
+                .unwrap()
+                .migrated_jsonl_files,
+            1
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn unscoped_legacy_marker_does_not_prove_a_completed_current_directory() {
+        let home = IsolatedHome::new();
+        let codex = home.codex_dir();
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        let mut settings = crate::settings::get_settings();
+        settings.local_migrations = Some(crate::settings::LocalMigrations {
+            codex_third_party_history_provider_bucket_v1: Some(
+                CodexThirdPartyHistoryProviderBucketMigration {
+                    codex_config_dir: None,
+                    completed_at: "legacy".into(),
+                    target_provider_id: "custom".into(),
+                    source_provider_ids: vec!["legacy-relay".into()],
+                    migrated_jsonl_files: 0,
+                    migrated_state_rows: 0,
+                    scanned_history_files: true,
+                },
+            ),
+            ..Default::default()
+        });
+        crate::settings::update_settings(settings).unwrap();
+        assert!(
+            !crate::settings::is_codex_third_party_history_provider_bucket_migrated_for_dir(
+                &canonical_dir_string(&codex)
+            )
+        );
+        assert!(!collect_source_model_provider_ids_for_unify(
+            &Database::memory().unwrap(),
+            true,
+            &codex
+        )
+        .unwrap()
+        .contains("legacy-relay"));
+    }
+
+    #[test]
+    #[serial]
+    fn transient_metadata_skips_retry_on_each_startup_migration_path() {
+        for kind in ["third-party", "official", "legacy-official"] {
+            let home = IsolatedHome::new();
+            let codex = home.codex_dir();
+            fs::create_dir_all(codex.join("sessions")).unwrap();
+            fs::write(
+                codex.join("config.toml"),
+                "model_provider = \"custom\"\n[model_providers.custom]\nname = \"Shared\"\n",
+            )
+            .unwrap();
+            let mut settings = crate::settings::get_settings();
+            settings.unify_codex_session_history = true;
+            settings.unify_codex_migrate_existing = Some(true);
+            crate::settings::update_settings(settings).unwrap();
+            let db = Database::memory().unwrap();
+            db.save_provider(
+                "codex",
+                &Provider::with_id(
+                    "rightcode".into(),
+                    "Synthetic relay".into(),
+                    serde_json::json!({"config": "model_provider = \"rightcode\"\n"}),
+                    None,
+                ),
+            )
+            .unwrap();
+            let source = match kind {
+                "third-party" => "rightcode",
+                "official" => "openai",
+                _ => "cc-switch-official",
+            };
+            let run = || match kind {
+                "third-party" => maybe_migrate_codex_third_party_history_provider_bucket(&db),
+                "official" => maybe_migrate_codex_official_history_to_unified_bucket(),
+                _ => maybe_migrate_codex_legacy_official_history_to_openai_bucket(),
+            };
+            let path = codex.join("sessions/active.jsonl");
+            fs::write(&path, format!("{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"active\",\"model_provider\":\"{source}\"")).unwrap();
+            let first = run().unwrap();
+            assert_eq!(first.skipped_jsonl_files, 1, "{kind}");
+            fs::write(&path, session_meta_line("active", source)).unwrap();
+            let second = run().unwrap();
+            assert_eq!(second.migrated_jsonl_files, 1, "{kind}: {second:?}");
+            assert_eq!(
+                run().unwrap().skipped_reason.as_deref(),
+                Some("already_migrated")
+            );
+        }
+    }
+
+    #[test]
+    fn restore_skips_bad_rollouts_and_updates_only_verified_ledger_rows() {
+        let dir = tempdir().unwrap();
+        let codex = dir.path().join("codex");
+        let ledger = dir.path().join("ledger");
+        let generation = ledger.join("generation");
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::create_dir_all(generation.join("jsonl/sessions")).unwrap();
+        fs::create_dir_all(generation.join("state")).unwrap();
+        let broken = "{\"type\":\"session_meta\",\"payload\":{\"model_provider\":\"custom\"";
+        for id in ["good", "broken", "unrelated", "unledgered", "missing"] {
+            if id != "missing" {
+                fs::write(
+                    codex.join(format!("sessions/{id}.jsonl")),
+                    if ["broken", "unrelated"].contains(&id) {
+                        broken.to_string()
+                    } else {
+                        session_meta_line(id, "custom")
+                    },
+                )
+                .unwrap();
+            }
+            if ["good", "broken", "missing"].contains(&id) {
+                fs::write(
+                    generation.join(format!("jsonl/sessions/{id}.jsonl")),
+                    session_meta_line(id, "openai"),
+                )
+                .unwrap();
+            }
+        }
+        fs::write(
+            codex.join("sessions/good.jsonl"),
+            session_meta_line("good", "custom") + &session_meta_line("new-in-shared", "custom"),
+        )
+        .unwrap();
+        seed_threads(
+            &generation.join("state").join(CODEX_STATE_DB_FILENAME),
+            &[
+                ("good", "openai"),
+                ("broken", "openai"),
+                ("missing", "openai"),
+            ],
+        );
+        let state = codex.join(CODEX_STATE_DB_FILENAME);
+        let conn = Connection::open(&state).unwrap();
+        conn.execute_batch("CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT, rollout_path TEXT);
+            INSERT INTO threads VALUES ('good','custom','sessions/good.jsonl'), ('broken','custom','sessions/broken.jsonl'), ('missing','custom','sessions/missing.jsonl'), ('unledgered','custom','sessions/unledgered.jsonl');").unwrap();
+        drop(conn);
+        let result =
+            restore_codex_official_history_inner(&codex, &ledger, &dir.path().join("restore"), "")
+                .unwrap();
+        assert_eq!(
+            (result.restored_jsonl_files, result.restored_state_rows),
+            (1, 1)
+        );
+        assert_eq!(thread_provider(&state, "good"), "openai");
+        for id in ["broken", "missing", "unledgered"] {
+            assert_eq!(thread_provider(&state, id), "custom");
+        }
+        assert_eq!(
+            fs::read_to_string(codex.join("sessions/broken.jsonl")).unwrap(),
+            broken
+        );
+        assert_eq!(
+            (result.skipped_jsonl_files, result.skipped_state_rows),
+            (2, 2)
+        );
+        assert!(fs::read_to_string(codex.join("sessions/good.jsonl"))
+            .unwrap()
+            .contains(&session_meta_line("new-in-shared", "custom")));
+    }
+
+    #[test]
+    #[serial]
+    fn unavailable_state_db_is_deferred_without_aborting_other_indexes() {
+        let home = IsolatedHome::new();
+        let codex = home.codex_dir();
+        let other = home.dir.path().join("sqlite");
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        fs::write(
+            codex.join("config.toml"),
+            format!("sqlite_home = '{}'\n", other.display()),
+        )
+        .unwrap();
+        fs::write(
+            codex.join("sessions/good.jsonl"),
+            session_meta_line("good", "custom"),
+        )
+        .unwrap();
+        let blocked = codex.join(CODEX_STATE_DB_FILENAME);
+        let accessible = other.join(CODEX_STATE_DB_FILENAME);
+        for path in [&blocked, &accessible] {
+            let conn = Connection::open(path).unwrap();
+            conn.execute_batch("CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT, rollout_path TEXT); INSERT INTO threads VALUES ('good', 'legacy-relay', 'sessions/good.jsonl');").unwrap();
+        }
+        let result = migrate_codex_state_dbs_with_lock_check(
+            &codex,
+            &source_ids(&["legacy-relay"]),
+            "custom",
+            &home.dir.path().join("backup"),
+            &HashSet::new(),
+            &read_history_config(&codex).unwrap(),
+            |path| path != blocked,
+        )
+        .unwrap();
+        assert!(result.retry_pending);
+        assert_eq!(result.migrated, 1);
+        assert_eq!(thread_provider(&blocked, "good"), "legacy-relay");
+        assert_eq!(thread_provider(&accessible, "good"), "custom");
+    }
+
+    #[test]
+    #[serial]
+    fn pending_custom_sources_survive_startup_without_automatic_expansion() {
+        let home = IsolatedHome::new();
+        let codex = home.codex_dir();
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::write(codex.join("config.toml"), "model_provider = \"custom\"\n").unwrap();
+        let mut settings = crate::settings::get_settings();
+        settings.unify_codex_session_history = true;
+        crate::settings::update_settings(settings).unwrap();
+        let db = Database::memory().unwrap();
+        db.save_provider("codex", &Provider::with_id("synthetic-card".into(), "Synthetic relay".into(), serde_json::json!({"config": "model_provider = \"legacy-relay\"\n[model_providers.legacy-relay]\nbase_url = \"https://api.example/v1\"\n"}), None)).unwrap();
+        let path = codex.join("sessions/active.jsonl");
+        fs::write(&path, "{\"type\":\"session_meta\",\"model_provider\":").unwrap();
+        assert!(
+            migrate_managed_codex_history_to_unified_bucket(&db)
+                .unwrap()
+                .retry_pending
+        );
+        db.update_provider_settings_config(
+            "codex",
+            "synthetic-card",
+            &serde_json::json!({"config": "model_provider = \"custom\"\n"}),
+        )
+        .unwrap();
+        fs::write(&path, session_meta_line("active", "legacy-relay")).unwrap();
+        let startup = maybe_migrate_codex_third_party_history_provider_bucket(&db).unwrap();
+        assert_eq!(startup.migrated_jsonl_files, 0);
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            session_meta_line("active", "legacy-relay")
+        );
+        assert_eq!(
+            migrate_managed_codex_history_to_unified_bucket(&db)
+                .unwrap()
+                .migrated_jsonl_files,
+            1
+        );
+    }
+
+    #[test]
+    fn no_op_index_restore_does_not_wait_for_a_writer_lock() {
+        let dir = tempdir().unwrap();
+        let state = dir.path().join(CODEX_STATE_DB_FILENAME);
+        seed_threads(&state, &[("unledgered", "custom")]);
+        let conn = Connection::open(&state).unwrap();
+        conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let report = migrate_codex_state_db_provider_bucket_to(
+            &state,
+            dir.path(),
+            &source_ids(&["custom"]),
+            "openai",
+            &dir.path().join("backup"),
+            &HashSet::new(),
+            Some(&source_ids(&["ledgered"])),
+        )
+        .unwrap();
+        assert_eq!((report.migrated, report.skipped), (0, 0));
+        assert!(!dir.path().join("backup").exists());
+    }
+
+    fn seed_legacy_repair_index(path: &Path, rows: &[(&str, &str, &str)]) {
+        let conn = Connection::open(path).unwrap();
+        conn.execute_batch("CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT NOT NULL, rollout_path TEXT NOT NULL);").unwrap();
+        for (id, provider, rollout) in rows {
+            conn.execute(
+                "INSERT INTO threads VALUES (?1, ?2, ?3)",
+                [id, provider, rollout],
+            )
+            .unwrap();
+        }
+    }
+
+    fn mark_legacy_repair_completed(codex: &Path) {
+        crate::settings::mark_codex_legacy_official_history_bucket_migrated(
+            CodexLegacyOfficialHistoryBucketMigration {
+                completed_at: "previous-completion".into(),
+                target_provider_id: "openai".into(),
+                migrated_jsonl_files: 3,
+                migrated_state_rows: 3,
+                codex_config_dir: Some(canonical_dir_string(codex)),
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    #[serial]
+    fn legacy_official_repair_retries_completed_metadata_and_nested_indexes() {
+        let home = IsolatedHome::new();
+        let _env = EnvVarGuard::set("CODEX_SQLITE_HOME", Path::new(""));
+        let codex = home.codex_dir();
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::create_dir_all(codex.join("sqlite")).unwrap();
+        let config = "model_provider = \"custom\"\n[model_providers.custom]\nbase_url = \"https://api.example/v1\"\n";
+        fs::write(codex.join("config.toml"), config).unwrap();
+        let auth = "{\"tokens\":{\"synthetic\":true}}";
+        fs::write(codex.join("auth.json"), auth).unwrap();
+        let plain = codex.join("sessions/plain.jsonl");
+        let original = session_meta_line("plain", "openai")
+            + &settings_event_line(Some("plain"), "cc-switch-official")
+            + "{\"type\":\"response_item\",\"payload\":{\"text\":\"cc-switch-official\",\"encrypted_content\":\"synthetic-ciphertext\"}}\n";
+        fs::write(&plain, &original).unwrap();
+        let compressed = codex.join("sessions/zstd.jsonl.zst");
+        let zstd_original = session_meta_line("zstd", "cc-switch-official")
+            + &settings_event_line(None, "cc-switch-official");
+        let zstd_raw = zstd::stream::encode_all(zstd_original.as_bytes(), 3).unwrap();
+        fs::write(&compressed, &zstd_raw).unwrap();
+        let untouched = codex.join("sessions/third-party.jsonl");
+        let third_party = session_meta_line("third-party", "legacy-relay");
+        fs::write(&untouched, &third_party).unwrap();
+        let root = codex.join(CODEX_STATE_DB_FILENAME);
+        let nested = codex.join("sqlite").join(CODEX_STATE_DB_FILENAME);
+        seed_legacy_repair_index(
+            &root,
+            &[
+                ("plain", "cc-switch-official", "sessions/plain.jsonl"),
+                ("third-party", "legacy-relay", "sessions/third-party.jsonl"),
+            ],
+        );
+        seed_legacy_repair_index(
+            &nested,
+            &[("zstd", "cc-switch-official", "sessions/zstd.jsonl.zst")],
+        );
+        mark_legacy_repair_completed(&codex);
+        let original_file = fs::File::open(&plain).unwrap();
+        let zstd_mtime = fs::metadata(&compressed).unwrap().modified().unwrap();
+        assert_eq!(
+            maybe_migrate_codex_legacy_official_history_to_openai_bucket()
+                .unwrap()
+                .skipped_reason
+                .as_deref(),
+            Some("already_migrated")
+        );
+        assert_eq!(fs::read_to_string(&plain).unwrap(), original);
+        let result = repair_codex_legacy_official_history_to_openai_bucket().unwrap();
+        assert_eq!(
+            (result.migrated_jsonl_files, result.migrated_state_rows),
+            (2, 2)
+        );
+        assert_eq!(
+            (result.skipped_jsonl_files, result.skipped_state_rows),
+            (0, 0)
+        );
+        assert!(!result.retry_pending);
+        let next = fs::read_to_string(&plain).unwrap();
+        assert_eq!(next.len(), original.len());
+        assert!(next.contains("synthetic-ciphertext"));
+        assert!(next.contains("\"text\":\"cc-switch-official\""));
+        assert!(same_file_identity(
+            &original_file,
+            &fs::File::open(&plain).unwrap()
+        ));
+        let event: Value = serde_json::from_str(next.lines().nth(1).unwrap()).unwrap();
+        assert_eq!(
+            event["payload"]["thread_settings"]["model_provider_id"],
+            "openai"
+        );
+        let raw = fs::read(&compressed).unwrap();
+        assert_eq!(&raw[..4], &[0x28, 0xB5, 0x2F, 0xFD]);
+        let decoded = String::from_utf8(zstd::stream::decode_all(raw.as_slice()).unwrap()).unwrap();
+        assert_eq!(decoded.len(), zstd_original.len());
+        assert_eq!(
+            fs::metadata(&compressed).unwrap().modified().unwrap(),
+            zstd_mtime
+        );
+        assert_eq!(thread_provider(&root, "plain"), "openai");
+        assert_eq!(thread_provider(&nested, "zstd"), "openai");
+        assert_eq!(thread_provider(&root, "third-party"), "legacy-relay");
+        assert_eq!(fs::read_to_string(untouched).unwrap(), third_party);
+        assert_eq!(
+            fs::read_to_string(codex.join("config.toml")).unwrap(),
+            config
+        );
+        assert_eq!(fs::read_to_string(codex.join("auth.json")).unwrap(), auth);
+        let backups = get_app_config_dir().join("backups").join(MIGRATION_NAME);
+        let generations: Vec<_> = fs::read_dir(&backups)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        assert_eq!(generations.len(), 1);
+        let backup = &generations[0];
+        assert_eq!(
+            fs::read_to_string(backup.join("jsonl/sessions/plain.jsonl")).unwrap(),
+            original
+        );
+        assert_eq!(
+            fs::read(backup.join("jsonl/sessions/zstd.jsonl.zst")).unwrap(),
+            zstd_raw
+        );
+        assert_eq!(
+            thread_provider(&backup.join("state").join(CODEX_STATE_DB_FILENAME), "plain"),
+            "cc-switch-official"
+        );
+        assert_eq!(
+            thread_provider(
+                &backup.join("state/sqlite").join(CODEX_STATE_DB_FILENAME),
+                "zstd"
+            ),
+            "cc-switch-official"
+        );
+        let repeated = repair_codex_legacy_official_history_to_openai_bucket().unwrap();
+        assert_eq!(
+            (repeated.migrated_jsonl_files, repeated.migrated_state_rows),
+            (0, 0)
+        );
+        assert_eq!(fs::read_dir(backups).unwrap().count(), 1);
+        assert_eq!(
+            maybe_migrate_codex_legacy_official_history_to_openai_bucket()
+                .unwrap()
+                .skipped_reason
+                .as_deref(),
+            Some("already_migrated")
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn legacy_official_repair_preflights_all_indexes_before_changing_files() {
+        let home = IsolatedHome::new();
+        let _env = EnvVarGuard::set("CODEX_SQLITE_HOME", Path::new(""));
+        let codex = home.codex_dir();
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::create_dir_all(codex.join("sqlite")).unwrap();
+        fs::write(codex.join("config.toml"), "model_provider = \"openai\"\n").unwrap();
+        let plain = codex.join("sessions/official.jsonl");
+        let original = session_meta_line("official", "cc-switch-official");
+        fs::write(&plain, &original).unwrap();
+        let root = codex.join(CODEX_STATE_DB_FILENAME);
+        seed_legacy_repair_index(
+            &root,
+            &[("official", "cc-switch-official", "sessions/official.jsonl")],
+        );
+        Connection::open(codex.join("sqlite").join(CODEX_STATE_DB_FILENAME))
+            .unwrap()
+            .execute_batch("CREATE TABLE threads (id TEXT);")
+            .unwrap();
+        assert!(repair_codex_legacy_official_history_to_openai_bucket().is_err());
+        assert_eq!(fs::read_to_string(plain).unwrap(), original);
+        assert_eq!(thread_provider(&root, "official"), "cc-switch-official");
+        assert!(!get_app_config_dir()
+            .join("backups")
+            .join(MIGRATION_NAME)
+            .exists());
+    }
+
+    #[test]
+    #[serial]
+    fn legacy_official_repair_skips_bad_files_and_retries_missing_rollouts() {
+        let home = IsolatedHome::new();
+        let _env = EnvVarGuard::set("CODEX_SQLITE_HOME", Path::new(""));
+        let codex = home.codex_dir();
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::write(codex.join("config.toml"), "model_provider = \"openai\"\n").unwrap();
+        let good = codex.join("sessions/good.jsonl");
+        fs::write(&good, session_meta_line("good", "cc-switch-official")).unwrap();
+        let bad = codex.join("sessions/bad.jsonl");
+        let malformed = "{\"type\":\"session_meta\",\"payload\":";
+        fs::write(&bad, malformed).unwrap();
+        let root = codex.join(CODEX_STATE_DB_FILENAME);
+        seed_legacy_repair_index(
+            &root,
+            &[
+                ("good", "cc-switch-official", "sessions/good.jsonl"),
+                ("bad", "cc-switch-official", "sessions/bad.jsonl"),
+                ("missing", "cc-switch-official", "sessions/missing.jsonl"),
+            ],
+        );
+        mark_legacy_repair_completed(&codex);
+        let result = repair_codex_legacy_official_history_to_openai_bucket().unwrap();
+        assert_eq!(
+            (result.migrated_jsonl_files, result.migrated_state_rows),
+            (1, 1)
+        );
+        assert_eq!(
+            (result.skipped_jsonl_files, result.skipped_state_rows),
+            (1, 2)
+        );
+        assert!(result.retry_pending);
+        assert_eq!(thread_provider(&root, "bad"), "cc-switch-official");
+        assert_eq!(thread_provider(&root, "missing"), "cc-switch-official");
+        assert_eq!(fs::read_to_string(&bad).unwrap(), malformed);
+        assert_eq!(
+            maybe_migrate_codex_legacy_official_history_to_openai_bucket()
+                .unwrap()
+                .skipped_reason
+                .as_deref(),
+            Some("already_migrated")
+        );
+        fs::write(&bad, session_meta_line("bad", "cc-switch-official")).unwrap();
+        fs::write(
+            codex.join("sessions/missing.jsonl"),
+            session_meta_line("missing", "cc-switch-official"),
+        )
+        .unwrap();
+        let retried = repair_codex_legacy_official_history_to_openai_bucket().unwrap();
+        assert_eq!(
+            (retried.migrated_jsonl_files, retried.migrated_state_rows),
+            (2, 2)
+        );
+        assert!(!retried.retry_pending);
+        assert_eq!(thread_provider(&root, "bad"), "openai");
+        assert_eq!(thread_provider(&root, "missing"), "openai");
+    }
+
+    #[test]
+    #[serial]
+    fn legacy_official_repair_defers_busy_index_and_preserves_backups() {
+        let home = IsolatedHome::new();
+        let _env = EnvVarGuard::set("CODEX_SQLITE_HOME", Path::new(""));
+        let codex = home.codex_dir();
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::write(codex.join("config.toml"), "model_provider = \"openai\"\n").unwrap();
+        let path = codex.join("sessions/official.jsonl");
+        let original = session_meta_line("official", "cc-switch-official");
+        fs::write(&path, &original).unwrap();
+        let root = codex.join(CODEX_STATE_DB_FILENAME);
+        seed_legacy_repair_index(
+            &root,
+            &[("official", "cc-switch-official", "sessions/official.jsonl")],
+        );
+        mark_legacy_repair_completed(&codex);
+        let locked = Connection::open(&root).unwrap();
+        locked.execute_batch("BEGIN IMMEDIATE").unwrap();
+        assert!(repair_codex_legacy_official_history_to_openai_bucket().is_err());
+        assert_eq!(thread_provider(&root, "official"), "cc-switch-official");
+        let backups = get_app_config_dir().join("backups").join(MIGRATION_NAME);
+        let generation = fs::read_dir(&backups)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert_eq!(
+            fs::read_to_string(generation.join("jsonl/sessions/official.jsonl")).unwrap(),
+            original
+        );
+        assert_eq!(
+            maybe_migrate_codex_legacy_official_history_to_openai_bucket()
+                .unwrap()
+                .skipped_reason
+                .as_deref(),
+            Some("already_migrated")
+        );
+        locked.execute_batch("ROLLBACK").unwrap();
+        let retry = repair_codex_legacy_official_history_to_openai_bucket().unwrap();
+        // The prior safe file patch can be reused to verify the still-stale index.
+        assert_eq!(
+            (retry.migrated_jsonl_files, retry.migrated_state_rows),
+            (0, 1)
+        );
+        assert_eq!(thread_provider(&root, "official"), "openai");
+    }
+
+    #[test]
+    #[serial]
+    fn legacy_official_repair_keeps_active_profiles_and_rejects_invalid_config() {
+        for config in [
+            "model_provider = \"cc-switch-official\"\n",
+            "[profiles.legacy]\nmodel_provider = \"cc-switch-official\"\n",
+            "model_provider = [invalid",
+        ] {
+            let home = IsolatedHome::new();
+            let _env = EnvVarGuard::set("CODEX_SQLITE_HOME", Path::new(""));
+            let codex = home.codex_dir();
+            fs::create_dir_all(codex.join("sessions")).unwrap();
+            fs::write(codex.join("config.toml"), config).unwrap();
+            let path = codex.join("sessions/official.jsonl");
+            let original = session_meta_line("official", "cc-switch-official");
+            fs::write(&path, &original).unwrap();
+            mark_legacy_repair_completed(&codex);
+            let result = repair_codex_legacy_official_history_to_openai_bucket();
+            if config.ends_with("[invalid") {
+                assert!(result.is_err());
+            } else {
+                assert_eq!(
+                    result.unwrap().skipped_reason.as_deref(),
+                    Some("legacy_route_in_use")
+                );
+            }
+            assert_eq!(fs::read_to_string(path).unwrap(), original);
+            assert_eq!(
+                fs::read_to_string(codex.join("config.toml")).unwrap(),
+                config
+            );
+            assert!(!get_app_config_dir()
+                .join("backups")
+                .join(MIGRATION_NAME)
+                .exists());
+        }
     }
 
     #[test]
@@ -3057,5 +5186,429 @@ model_provider = "aihubmix"
             id
         ));
         assert!(!codex_config_selects_provider("not = [valid", id));
+    }
+
+    #[test]
+    #[serial]
+    fn unified_history_retries_imports_after_a_completed_legacy_migration() {
+        let home = IsolatedHome::new();
+        let codex = home.codex_dir();
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::write(codex.join("config.toml"), "model_provider = \"custom\"\n[model_providers.custom]\nname = \"OpenAI\"\nrequires_openai_auth = true\n").unwrap();
+        let db = Database::memory().unwrap();
+        assert!(migrate_managed_codex_history_to_unified_bucket(&db).is_err());
+        let mut settings = crate::settings::get_settings();
+        settings.unify_codex_session_history = true;
+        crate::settings::update_settings(settings).unwrap();
+        crate::settings::mark_codex_third_party_history_provider_bucket_migrated(
+            CodexThirdPartyHistoryProviderBucketMigration {
+                codex_config_dir: Some(canonical_dir_string(&codex)),
+                completed_at: "old".into(),
+                target_provider_id: "custom".into(),
+                source_provider_ids: vec![],
+                migrated_jsonl_files: 0,
+                migrated_state_rows: 0,
+                scanned_history_files: true,
+            },
+        )
+        .unwrap();
+        let card = Provider::with_id(
+            "card-id".into(),
+            "Legacy relay".into(),
+            serde_json::json!({"config": "model_provider = \"legacy-relay\"\n[model_providers.legacy-relay]\nbase_url = \"https://api.example/v1\"\n"}),
+            None,
+        );
+        db.save_provider("codex", &card).unwrap();
+        assert!(
+            !collect_source_model_provider_ids_for_unify(&db, false, &get_codex_config_dir())
+                .unwrap()
+                .contains("legacy-relay")
+        );
+        assert!(
+            collect_source_model_provider_ids_for_unify(&db, true, &get_codex_config_dir())
+                .unwrap()
+                .contains("legacy-relay")
+        );
+        let first = codex.join("sessions/first.jsonl");
+        fs::write(&first, session_meta_line("first", "legacy-relay")).unwrap();
+        seed_threads(
+            &codex.join(CODEX_STATE_DB_FILENAME),
+            &[("first", "legacy-relay")],
+        );
+        let state = Connection::open(codex.join(CODEX_STATE_DB_FILENAME)).unwrap();
+        state
+            .execute("ALTER TABLE threads ADD COLUMN rollout_path TEXT", [])
+            .unwrap();
+        state
+            .execute(
+                "UPDATE threads SET rollout_path = 'sessions/first.jsonl'",
+                [],
+            )
+            .unwrap();
+        drop(state);
+        // Startup must not extend the old migration to custom ids implicitly.
+        let startup = maybe_migrate_codex_third_party_history_provider_bucket(&db).unwrap();
+        assert_eq!(startup.skipped_reason.as_deref(), Some("already_migrated"));
+        assert!(fs::read_to_string(&first).unwrap().contains("legacy-relay"));
+        let migrated = migrate_managed_codex_history_to_unified_bucket(&db).unwrap();
+        assert_eq!(
+            (migrated.migrated_jsonl_files, migrated.migrated_state_rows),
+            (1, 1)
+        );
+        let again = migrate_managed_codex_history_to_unified_bucket(&db).unwrap();
+        assert_eq!(
+            (again.migrated_jsonl_files, again.migrated_state_rows),
+            (0, 0)
+        );
+        // The card can be normalized or renamed without losing proven old ids.
+        db.update_provider_settings_config("codex", "card-id", &serde_json::json!({"config":"model_provider = \"custom\"\n[model_providers.custom]\nname = \"Renamed\"\n"})).unwrap();
+        let imported = codex.join("sessions/imported.jsonl");
+        fs::write(&imported, session_meta_line("imported", "legacy-relay")).unwrap();
+        let state = Connection::open(codex.join(CODEX_STATE_DB_FILENAME)).unwrap();
+        state
+            .execute(
+                "INSERT INTO threads VALUES ('imported', 'legacy-relay', 'sessions/imported.jsonl')",
+                [],
+            )
+            .unwrap();
+        let last = migrate_managed_codex_history_to_unified_bucket(&db).unwrap();
+        assert_eq!(
+            (last.migrated_jsonl_files, last.migrated_state_rows),
+            (1, 1)
+        );
+        assert_eq!(
+            thread_provider(&codex.join(CODEX_STATE_DB_FILENAME), "imported"),
+            "custom"
+        );
+    }
+
+    #[test]
+    fn migrated_index_requires_a_verified_rollout_and_keeps_unresolved_rows() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("sessions")).unwrap();
+        let good = dir.path().join("sessions/good.jsonl");
+        fs::write(&good, session_meta_line("good", "custom")).unwrap();
+        let state_path = dir.path().join(CODEX_STATE_DB_FILENAME);
+        let conn = Connection::open(&state_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT, rollout_path TEXT);",
+        )
+        .unwrap();
+        conn.execute("INSERT INTO threads VALUES ('good','legacy-relay',?1), ('missing','legacy-relay','sessions/missing.jsonl')", [good.to_string_lossy().as_ref()]).unwrap();
+        let result = migrate_codex_state_db_provider_bucket_to(
+            &state_path,
+            dir.path(),
+            &source_ids(&["legacy-relay"]),
+            "custom",
+            &dir.path().join("backup"),
+            &HashSet::new(),
+            None,
+        );
+        let report = result.unwrap();
+        assert_eq!((report.migrated, report.skipped), (1, 1));
+        assert_eq!(thread_provider(&state_path, "good"), "custom");
+        assert_eq!(thread_provider(&state_path, "missing"), "legacy-relay");
+    }
+    #[test]
+    #[serial]
+    fn review_builtin_bedrock_routes_are_not_custom_migration_sources() {
+        let _home = IsolatedHome::new();
+        let db = Database::memory().unwrap();
+        for id in [
+            "amazon-bedrock",
+            "amazon-bedrock-runtime",
+            "openai",
+            "ollama",
+            "lmstudio",
+        ] {
+            let card = Provider::with_id(
+                format!("card-{id}"),
+                "Built-in route".into(),
+                serde_json::json!({"config": format!("model_provider = \"{id}\"\n[model_providers.{id}]\nregion = \"example-region\"\n")}),
+                None,
+            );
+            db.save_provider("codex", &card).unwrap();
+        }
+        let ids = collect_source_model_provider_ids_for_unify(&db, true, &get_codex_config_dir())
+            .unwrap();
+        assert!(!ids.contains("amazon-bedrock"));
+        assert!(!ids.contains("amazon-bedrock-runtime"));
+        assert!(
+            ids.is_empty(),
+            "built-in routes must stay out of custom history"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn review_short_and_ambiguous_files_do_not_block_healthy_migration() {
+        let home = IsolatedHome::new();
+        let codex = home.codex_dir();
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::write(
+            codex.join("config.toml"),
+            "model_provider = \"custom\"\n[model_providers.custom]\nname = \"Shared\"\n",
+        )
+        .unwrap();
+        let mut settings = crate::settings::get_settings();
+        settings.unify_codex_session_history = true;
+        crate::settings::update_settings(settings).unwrap();
+        let db = Database::memory().unwrap();
+        for (id, route) in [("short-card", "kimi"), ("legacy-card", "legacy-relay")] {
+            let card = Provider::with_id(
+                id.into(),
+                "Legacy test connection".into(),
+                serde_json::json!({"config": format!("model_provider = \"{route}\"\n[model_providers.{route}]\nbase_url = \"https://api.example/v1\"\n")}),
+                None,
+            );
+            db.save_provider("codex", &card).unwrap();
+        }
+        let short = session_meta_line("short", "kimi");
+        let ambiguous = "{\"type\":\"session_meta\",\"payload\":{\"id\":\"ambiguous\",\"model_provider\":\"legacy-relay\",\"model_provider\":\"legacy-relay\"}}\n";
+        fs::write(codex.join("sessions/a-short.jsonl"), &short).unwrap();
+        fs::write(codex.join("sessions/b-ambiguous.jsonl"), ambiguous).unwrap();
+        fs::write(
+            codex.join("sessions/c-good.jsonl"),
+            session_meta_line("good", "legacy-relay"),
+        )
+        .unwrap();
+        let state_path = codex.join(CODEX_STATE_DB_FILENAME);
+        let conn = Connection::open(&state_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT, rollout_path TEXT);
+            INSERT INTO threads VALUES
+            ('short','kimi','sessions/a-short.jsonl'),
+            ('ambiguous','legacy-relay','sessions/b-ambiguous.jsonl'),
+            ('good','legacy-relay','sessions/c-good.jsonl');",
+        )
+        .unwrap();
+        drop(conn);
+        let outcome = migrate_managed_codex_history_to_unified_bucket(&db).unwrap();
+        assert_eq!(
+            (outcome.migrated_jsonl_files, outcome.migrated_state_rows),
+            (1, 1)
+        );
+        let wire = serde_json::to_value(&outcome).unwrap();
+        assert_eq!(wire["skippedJsonlFiles"], 2);
+        assert_eq!(wire["skippedStateRows"], 2);
+        assert_eq!(thread_provider(&state_path, "good"), "custom");
+        assert_eq!(thread_provider(&state_path, "short"), "kimi");
+        assert_eq!(thread_provider(&state_path, "ambiguous"), "legacy-relay");
+        assert_eq!(
+            fs::read_to_string(codex.join("sessions/a-short.jsonl")).unwrap(),
+            short
+        );
+        assert_eq!(
+            fs::read_to_string(codex.join("sessions/b-ambiguous.jsonl")).unwrap(),
+            ambiguous
+        );
+        // The background path must not keep retrying expected safety skips.
+        let startup = maybe_migrate_codex_third_party_history_provider_bucket(&db).unwrap();
+        assert_eq!(startup.skipped_reason.as_deref(), Some("already_migrated"));
+        let retried = migrate_managed_codex_history_to_unified_bucket(&db).unwrap();
+        assert_eq!(
+            (retried.migrated_jsonl_files, retried.migrated_state_rows),
+            (0, 0)
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn review_startup_records_a_completed_scan_with_short_ids_skipped() {
+        let home = IsolatedHome::new();
+        let codex = home.codex_dir();
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::write(
+            codex.join("sessions/a-short.jsonl"),
+            session_meta_line("short", "kimi"),
+        )
+        .unwrap();
+        fs::write(
+            codex.join("sessions/b-good.jsonl"),
+            session_meta_line("good", "rightcode"),
+        )
+        .unwrap();
+        let db = Database::memory().unwrap();
+        for route in ["kimi", "rightcode"] {
+            let card = Provider::with_id(
+                route.into(),
+                "Test connection".into(),
+                serde_json::json!({"config": format!("model_provider = \"{route}\"\n[model_providers.{route}]\nbase_url = \"https://api.example/v1\"\n")}),
+                None,
+            );
+            db.save_provider("codex", &card).unwrap();
+        }
+        let state_path = codex.join(CODEX_STATE_DB_FILENAME);
+        let conn = Connection::open(&state_path).unwrap();
+        conn.execute_batch("CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT, rollout_path TEXT);
+            INSERT INTO threads VALUES ('short','kimi','sessions/a-short.jsonl'), ('good','rightcode','sessions/b-good.jsonl');").unwrap();
+        drop(conn);
+        let outcome = maybe_migrate_codex_third_party_history_provider_bucket(&db).unwrap();
+        assert_eq!(
+            (outcome.migrated_jsonl_files, outcome.migrated_state_rows),
+            (1, 1)
+        );
+        assert_eq!(
+            serde_json::to_value(outcome).unwrap()["skippedJsonlFiles"],
+            1
+        );
+        assert_eq!(thread_provider(&state_path, "good"), "custom");
+        assert_eq!(thread_provider(&state_path, "short"), "kimi");
+        assert_eq!(
+            maybe_migrate_codex_third_party_history_provider_bucket(&db)
+                .unwrap()
+                .skipped_reason
+                .as_deref(),
+            Some("already_migrated")
+        );
+    }
+}
+
+#[cfg(test)]
+mod switch_attribution_regression {
+    use super::*;
+
+    #[test]
+    fn switch_attribution_migration_keeps_metadata_byte_offsets() {
+        let line = r#"{ "type": "session_meta", "payload": { "id": "x", "model_provider": "legacy-relay", "cwd": "/工作" } }"#;
+        let ids = HashSet::from(["legacy-relay".to_string()]);
+        let changed = rewrite_codex_provider_metadata_line(line, &ids, "custom", &mut None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(changed.len(), line.len());
+        let mut expected: Value = serde_json::from_str(line).unwrap();
+        expected["payload"]["model_provider"] = Value::String("custom".into());
+        assert_eq!(serde_json::from_str::<Value>(&changed).unwrap(), expected);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn switch_attribution_migration_keeps_plain_inode_and_all_metadata() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sessions/test.jsonl");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let meta =
+            r#"{"type":"session_meta","payload":{"id":"x","model_provider":"legacy-relay"}}"#;
+        let original = format!(
+            "{meta}\n{{\"type\":\"event_msg\",\"payload\":{{\"text\":\"unchanged\"}}}}\n{meta}\n"
+        );
+        fs::write(&path, &original).unwrap();
+        let inode = fs::metadata(&path).unwrap().ino();
+        let backup = dir.path().join("backup");
+        rewrite_codex_session_file_for_provider_bucket(
+            &path,
+            dir.path(),
+            &HashSet::from(["legacy-relay".into()]),
+            &backup,
+        )
+        .unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().ino(), inode);
+        let changed = fs::read_to_string(&path).unwrap();
+        assert_eq!(changed.len(), original.len());
+        assert!(!changed.contains("legacy-relay"));
+        assert!(changed.contains("unchanged"));
+    }
+
+    #[test]
+    fn metadata_that_cannot_preserve_offsets_is_left_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("short.jsonl");
+        let original =
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"x\",\"model_provider\":\"kimi\"}}\n";
+        fs::write(&path, original).unwrap();
+        assert!(rewrite_codex_session_file_for_provider_bucket(
+            &path,
+            dir.path(),
+            &HashSet::from(["kimi".into()]),
+            &dir.path().join("backup")
+        )
+        .is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        assert!(!dir.path().join("backup").exists());
+    }
+
+    #[test]
+    fn plain_metadata_patch_keeps_a_concurrent_tail_append() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("append.jsonl");
+        fs::write(&path, b"OLD\noriginal\n").unwrap();
+        let original = fs::File::open(&path).unwrap();
+        let original_len = original.metadata().unwrap().len();
+        let mut file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"new tail\n")
+            .unwrap();
+        apply_plain_metadata_edits(
+            &path,
+            &mut file,
+            &original,
+            original_len,
+            &[(0, b"OLD".to_vec(), b"NEW".to_vec())],
+        )
+        .unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"NEW\noriginal\nnew tail\n");
+    }
+
+    #[test]
+    fn plain_metadata_patch_rejects_a_replaced_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("replace.jsonl");
+        fs::write(&path, b"OLD").unwrap();
+        let original = fs::File::open(&path).unwrap();
+        let original_len = original.metadata().unwrap().len();
+        let mut file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        fs::rename(&path, dir.path().join("previous.jsonl")).unwrap();
+        fs::write(&path, b"OLD").unwrap();
+        assert!(apply_plain_metadata_edits(
+            &path,
+            &mut file,
+            &original,
+            original_len,
+            &[(0, b"OLD".to_vec(), b"NEW".to_vec())]
+        )
+        .is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"OLD");
+        assert_eq!(fs::read(dir.path().join("previous.jsonl")).unwrap(), b"OLD");
+    }
+
+    #[test]
+    fn malformed_and_ambiguous_metadata_do_not_advance_migration() {
+        let ids = HashSet::from(["legacy-relay".to_string()]);
+        assert!(rewrite_codex_provider_metadata_line(
+            "{\"type\":\"session_meta\",\"payload\":{\"model_provider\":",
+            &ids,
+            "custom",
+            &mut None
+        )
+        .is_err());
+        let ambiguous = r#"{"type":"session_meta","payload":{"model_provider":"legacy-relay","model_provider":"legacy-relay"}}"#;
+        assert!(
+            rewrite_codex_provider_metadata_line(ambiguous, &ids, "custom", &mut None).is_err()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn history_inventory_does_not_follow_directory_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("outside")).unwrap();
+        fs::write(dir.path().join("outside/secret.jsonl"), b"unchanged").unwrap();
+        std::os::unix::fs::symlink(dir.path().join("outside"), dir.path().join("sessions"))
+            .unwrap();
+        let mut found = vec![];
+        collect_jsonl_files(&dir.path().join("sessions"), &mut found, 0, 8).unwrap();
+        assert!(found.is_empty());
     }
 }

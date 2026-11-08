@@ -145,6 +145,8 @@ pub enum LiveWriteError {
     /// 写完之后客户端实际走的路由不是目标供应商：当前生效的 profile 覆盖了选路。
     #[error("Codex 当前生效的 profile \"{profile}\" 覆盖了 {key}")]
     Route { profile: String, key: String },
+    #[error("Codex profile {profile} routes through {provider} without independent credentials")]
+    UnsafeCodexProfile { profile: String, provider: String },
 }
 
 /// 编辑冲突的错误码。命令返回 JSON 字符串，前端据此让用户选保留哪一边。
@@ -154,6 +156,11 @@ impl From<LiveWriteError> for crate::error::AppError {
     fn from(err: LiveWriteError) -> Self {
         use crate::error::AppError;
         match err {
+            LiveWriteError::UnsafeCodexProfile { profile, provider } => AppError::localized(
+                "live.codex_profile_auth_fallback",
+                format!("Codex profile「{profile}」引用的旧连接「{provider}」没有独立密钥，却要求使用官方登录，可能将当前登录凭据发送到旧地址。请为该连接配置 token/env_key，或移除 requires_openai_auth。未写入任何文件"),
+                format!("Codex profile \"{profile}\" references legacy provider \"{provider}\" without independent credentials and could send the current official login to its endpoint. Configure a token/env_key or remove requires_openai_auth. Nothing was written"),
+            ),
             LiveWriteError::Parse {
                 path,
                 line,
