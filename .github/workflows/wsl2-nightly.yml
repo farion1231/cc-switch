@@ -72,11 +72,14 @@ jobs:
         shell: bash
         run: mkdir -p dist
 
+      # /var/tmp, not /tmp: Ubuntu wipes /tmp when the distro boots, and a
+      # distro restart mid-run once deleted the whole test root, failing every
+      # later test that needed a temp dir (os error 3).
       - name: Prepare WSL2-backed test environment
         shell: pwsh
         run: |
-          wsl.exe -d Ubuntu-24.04 -- bash -lc "rm -rf /tmp/cc-switch-windows-test-root && mkdir -p /tmp/cc-switch-windows-test-root/{home,temp} && chmod -R 0777 /tmp/cc-switch-windows-test-root"
-          $testRoot = "\\wsl.localhost\Ubuntu-24.04\tmp\cc-switch-windows-test-root"
+          wsl.exe -d Ubuntu-24.04 -- bash -lc "rm -rf /var/tmp/cc-switch-windows-test-root && mkdir -p /var/tmp/cc-switch-windows-test-root/{home,temp} && chmod -R 0777 /var/tmp/cc-switch-windows-test-root"
+          $testRoot = "\\wsl.localhost\Ubuntu-24.04\var\tmp\cc-switch-windows-test-root"
           $testHome = Join-Path $testRoot "home"
           $testTemp = Join-Path $testRoot "temp"
           foreach ($path in @($testRoot, $testHome, $testTemp)) {
@@ -116,9 +119,22 @@ jobs:
 
       # The 9P share sometimes aborts a write mid-test (os error 995). Retry here
       # only, not in the ci profile; nextest still reports such tests as FLAKY.
+      # The tests reach the distro only through \\wsl.localhost, which does not
+      # count as a running Linux process, so a sleeping wsl.exe keeps the distro
+      # from being stopped as idle while they run.
       - name: Run lib tests against WSL2-backed home
         shell: pwsh
         run: |
+          $keepalive = Start-Process -FilePath wsl.exe -ArgumentList '-d', 'Ubuntu-24.04', '--', 'sleep', 'infinity' -WindowStyle Hidden -PassThru
           $env:TEMP = $env:CC_SWITCH_WSL_TEST_TEMP
           $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
-          cargo nextest run --archive-file $env:NEXTEST_ARCHIVE --extract-to $env:NEXTEST_EXTRACT_DIR --extract-overwrite --profile ci --test-threads 1 --retries 2 -E 'not test(/database::/)'
+          try {
+            cargo nextest run --archive-file $env:NEXTEST_ARCHIVE --extract-to $env:NEXTEST_EXTRACT_DIR --extract-overwrite --profile ci --test-threads 1 --retries 2 -E 'not test(/database::/)'
+            $code = $LASTEXITCODE
+          } finally {
+            if (-not (Test-Path -LiteralPath $env:CC_SWITCH_WSL_TEST_DIR)) {
+              Write-Host "::warning::The WSL2 test root is gone; the distro probably restarted mid-run, so failures after that point are not test bugs."
+            }
+            Stop-Process -Id $keepalive.Id -ErrorAction SilentlyContinue
+          }
+          exit $code

@@ -142,6 +142,29 @@ export interface HermesProviderSettingsConfig {
 }
 
 export const hermesProviderPresets: HermesProviderPreset[] = [
+  {
+    name: "TokenPlus",
+    websiteUrl: "https://www.tokenplus.cn/",
+    apiKeyUrl: "https://www.tokenplus.cn/workspace",
+    category: "aggregator",
+    partnerPromotionKey: "tokenplus",
+    icon: "tokenplus",
+    settingsConfig: {
+      name: "tokenplus",
+      base_url: "https://api.tokenplus.cn/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "deepseek/deepseek-v4.1-flash-1017",
+          name: "DeepSeek V4.1 Flash 1017",
+        },
+        { id: "z-ai/glm-5.3-flash", name: "GLM 5.3 Flash" },
+        { id: "moonshot-ai/kimi-k3.1-pro", name: "Kimi K3.1 Pro" },
+        { id: "minimax/m3.1-flash", name: "MiniMax M3.1 Flash" },
+      ],
+    },
+  },
   // ===== 赞助商预设：文件顺序与 README 赞助商表对齐（仅维护约定；应用内一律按显示名排序，不置顶）=====
   {
     name: "Kimi",
@@ -3579,21 +3602,26 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "Mistral AI",
     websiteUrl: "https://mistral.ai",
-    apiKeyUrl: "https://console.mistral.ai/api-keys",
+    // Vibe（原 Le Chat）订阅额度与 API 共用，Key 在 Code > Vibe CLI 页创建，
+    // 免费 / 订阅 / 按量付费通用（docs.mistral.ai/vibe/code/cli/
+    // api-keys-profiles，2026-11-06 核对）
+    apiKeyUrl: "https://chat.mistral.ai/code/extensions",
     settingsConfig: {
       // Hermes 内置的 Mistral 只有语音与转写，没有 LLM provider，名字不冲突
       name: "mistral",
       // OpenAI Chat 端点 base 为 https://api.mistral.ai/v1（docs.mistral.ai/
       // openapi.yaml，2026-10-14 核对），Bearer 鉴权。模型用官方模型表
-      //（docs.mistral.ai/models.md 同日）的固定版本 ID，窗口官方写 256k
+      //（docs.mistral.ai/models.md，2026-11-06 核对）的 GA 型号：Medium 3.5 已于
+      // 10-31 弃用，主力改 Large 4（窗口官方写 1M，按 1000000 计），Small 4 为
+      // 256k
       base_url: "https://api.mistral.ai/v1",
       api_key: "",
       api_mode: "chat_completions",
       models: [
         {
-          id: "mistral-medium-3-5",
-          name: "Mistral Medium 3.5",
-          context_length: 256000,
+          id: "mistral-large-4",
+          name: "Mistral Large 4",
+          context_length: 1000000,
         },
         {
           id: "mistral-small-2603",
@@ -3605,7 +3633,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     category: "cn_official",
     icon: "mistral",
     suggestedDefaults: {
-      model: { default: "mistral-medium-3-5", provider: "mistral" },
+      model: { default: "mistral-large-4", provider: "mistral" },
     },
   },
   {

@@ -6,7 +6,7 @@ use cc_switch_lib::{
     ProviderMeta, ProviderService,
 };
 
-#[path = "support.rs"]
+#[path = "support/mod.rs"]
 mod support;
 use support::{
     create_test_state, create_test_state_with_config, enable_codex_official_auth_preservation,
