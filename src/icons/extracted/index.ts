@@ -1,3 +1,4 @@
+import _tokenplus from "./tokenplus.png";
 // Hand-curated icon index with optimized SVG content and custom name mappings.
 // Update entries deliberately; automatic regeneration is intentionally unsupported.
 
@@ -199,6 +200,7 @@ export const iconUrls: Record<string, string> = {
   relaxcode: _relaxcode,
   runapi: _runapi,
   runtoken: _runtoken,
+  tokenplus: _tokenplus,
   tokenflux: _tokenflux,
   tokenrhythm: _tokenrhythm,
   shengsuanyun: _shengsuanyun,

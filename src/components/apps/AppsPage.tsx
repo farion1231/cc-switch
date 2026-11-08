@@ -799,7 +799,24 @@ function ToolRow({
   ) : null;
 
   const installHint = t(`appsPage.installHint.${tool}`, { defaultValue: "" });
-  const meta = defaultInstall ? (
+  // 执行期间副行换成进度：排队中，或已用时间 + 命令最新一行输出
+  const progress = isBusy ? tools.toolProgress.get(tool) : undefined;
+  const progressMeta =
+    progress?.stage === "queued" ? (
+      <span className="truncate">{t("appsPage.toolQueued")}</span>
+    ) : progress?.stage === "running" ? (
+      <>
+        <ElapsedTime since={progress.startedAt} />
+        {progress.line && (
+          <span className="min-w-0 truncate font-mono" title={progress.line}>
+            {progress.line}
+          </span>
+        )}
+      </>
+    ) : null;
+  const meta = progressMeta ? (
+    progressMeta
+  ) : defaultInstall ? (
     <>
       <span className="min-w-0 truncate font-mono" title={defaultInstall.path}>
         {defaultInstall.path}
@@ -966,6 +983,30 @@ function ToolRow({
       }
       footer={footer}
     />
+  );
+}
+
+function formatElapsed(ms: number) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = String(total % 60).padStart(2, "0");
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${seconds}`
+    : `${minutes}:${seconds}`;
+}
+
+function ElapsedTime({ since }: { since: number }) {
+  const { t } = useTranslation();
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return (
+    <span className="shrink-0 tabular-nums">
+      {t("appsPage.toolElapsed", { time: formatElapsed(now - since) })}
+    </span>
   );
 }
 

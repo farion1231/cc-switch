@@ -55,7 +55,6 @@ pub(crate) const ROW_TOP_FIELDS: &[&str] = &[
     "review_model",
     "model_reasoning_effort",
     "plan_mode_reasoning_effort",
-    "disable_response_storage",
 ];
 
 fn is_built_in_id(id: &str) -> bool {
@@ -105,7 +104,7 @@ pub enum Route {
 #[derive(Debug, Clone)]
 pub struct CodexProjection {
     pub route: Route,
-    /// 顶层关键字段（模型名、推理档位、`disable_response_storage`）。
+    /// 顶层关键字段（模型名、推理档位）。
     pub top: Vec<(String, TomlValue)>,
     /// 嵌在用户表里的模型名（`agents.default_subagent_model` 等）。
     pub nested: Vec<(Vec<String>, TomlValue)>,
@@ -566,6 +565,27 @@ fn is_cc_switch_catalog(value: &str) -> bool {
     Path::new(value).file_name().and_then(|name| name.to_str()) == Some(CATALOG_FILENAME)
 }
 
+/// cc-switch 接管 `model_catalog_json` 时写入的指针值。
+///
+/// 新版 Codex 在解析自定义权限档位（如校验 `default_permissions`）时会重读
+/// config.toml，并把该字段按绝对路径反序列化——裸相对文件名在那里被拒
+/// （`AbsolutePathBuf deserialized without a base path`），对配了自定义
+/// default_permissions 的用户表现为 plan 模式 turn/start 硬失败。写绝对路径，
+/// 启动读取器（相对路径按配置目录解析）与严格重读器就都认这个指针。
+///
+/// 例外：对宿主 OS 不是绝对路径的目录、或只有 WSL 侧 Codex 会读的 Windows UNC
+/// 目录（`\\wsl.localhost\...`）——绝对形态对读取器无意义，保留裸文件名由
+/// Codex 按自己的配置目录解析（#3614）。
+pub(crate) fn catalog_pointer_value(config_dir: &Path) -> String {
+    let catalog_path = config_dir.join(CATALOG_FILENAME);
+    let text = catalog_path.to_string_lossy();
+    let is_unc = text.starts_with(r"\\") || text.starts_with("//");
+    if is_unc || !catalog_path.is_absolute() {
+        return CATALOG_FILENAME.to_string();
+    }
+    text.into_owned()
+}
+
 /// 去掉行里自己指定的模型目录指针（[`row_catalog_pointer`]），其余内容原样；行里没有时为
 /// `None`。
 pub fn without_row_catalog(config_text: &str) -> Option<String> {
@@ -697,7 +717,11 @@ impl CodexConfigPatch {
         }
         let row_pointer = self.top.iter().any(|(key, _)| key == MODEL_CATALOG_JSON);
         if self.catalog && !row_pointer {
-            put_value(root, MODEL_CATALOG_JSON, &TomlValue::from(CATALOG_FILENAME));
+            // 见 [`catalog_pointer_value`]：原生绝对目录写绝对指针，WSL 形态保裸文件名。
+            let pointer = path
+                .parent()
+                .map_or_else(|| CATALOG_FILENAME.to_string(), catalog_pointer_value);
+            put_value(root, MODEL_CATALOG_JSON, &TomlValue::from(pointer));
         }
 
         check_effective_route(doc, selector)
@@ -1017,6 +1041,22 @@ mod tests {
     }
 
     #[test]
+    fn disable_response_storage_from_old_rows_is_not_projected_and_is_cleared_from_live() {
+        // Codex 0.167 删了这个键，旧预设写进行里的那一行不再投影；它仍是关键字段，写入时
+        // live 里旧版留下的同名行会被清掉。
+        let settings = row(
+            json!({ "OPENAI_API_KEY": "sk" }),
+            &format!("disable_response_storage = true\n{RELAY}"),
+        );
+        let projection = project(&settings).unwrap();
+        assert!(projection
+            .top
+            .iter()
+            .all(|(key, _)| key != "disable_response_storage"));
+        assert!(floor::CODEX_FLOOR_TOP.contains(&"disable_response_storage"));
+    }
+
+    #[test]
     fn a_table_with_its_own_credentials_gets_no_key() {
         for extra in [
             "env_key = \"RELAY_KEY\"",
@@ -1111,6 +1151,84 @@ mod tests {
             .apply_to(Path::new("config.toml"), &mut doc)
             .expect("apply");
         doc
+    }
+
+    fn apply_catalog(live: &str, config_path: &Path) -> DocumentMut {
+        let patch = CodexConfigPatch {
+            top: Vec::new(),
+            nested: Vec::new(),
+            exclusive: Vec::new(),
+            outgoing: Vec::new(),
+            route: RouteWrite::Default,
+            catalog: true,
+            retired: Vec::new(),
+        };
+        let mut doc = live.parse::<DocumentMut>().unwrap();
+        patch.apply_to(config_path, &mut doc).expect("apply");
+        doc
+    }
+
+    fn catalog_pointer(doc: &DocumentMut) -> &str {
+        doc.get(MODEL_CATALOG_JSON)
+            .and_then(Item::as_str)
+            .expect("model_catalog_json must be set")
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn catalog_pointer_is_absolute_for_a_native_config_dir() {
+        // 新版 Codex 解析自定义权限档位时重读 config.toml，把 model_catalog_json
+        // 按绝对路径反序列化；裸文件名在那里被拒（#7294）。
+        let doc = apply_catalog("", Path::new("/home/user/.codex/config.toml"));
+        assert_eq!(
+            catalog_pointer(&doc),
+            "/home/user/.codex/cc-switch-model-catalog.json"
+        );
+    }
+
+    #[test]
+    fn catalog_pointer_keeps_the_bare_filename_for_a_relative_config_path() {
+        // 占位路径不是绝对路径：保裸文件名，与 #3614 的解析语义一致。
+        let doc = apply_catalog("", Path::new("config.toml"));
+        assert_eq!(catalog_pointer(&doc), CATALOG_FILENAME);
+    }
+
+    #[test]
+    fn catalog_pointer_keeps_the_bare_filename_for_a_unc_config_dir() {
+        // 只有 WSL 侧的 Codex 会读 UNC 目录里的配置；绝对指针对它无意义（#3614）。
+        let doc = apply_catalog(
+            "",
+            Path::new(r"\\wsl.localhost\Ubuntu\home\user\.codex\config.toml"),
+        );
+        assert_eq!(catalog_pointer(&doc), CATALOG_FILENAME);
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn catalog_pointer_is_absolute_for_a_windows_config_dir() {
+        let doc = apply_catalog("", Path::new(r"C:\Users\user\.codex\config.toml"));
+        assert_eq!(
+            catalog_pointer(&doc),
+            r"C:\Users\user\.codex\cc-switch-model-catalog.json"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn catalog_pointer_keeps_the_bare_filename_for_a_wsl_style_config_dir() {
+        // Linux 形态目录对 Windows 宿主不是绝对路径；WSL 侧 Codex 需要裸文件名。
+        let doc = apply_catalog("", Path::new("/home/user/.codex/config.toml"));
+        assert_eq!(catalog_pointer(&doc), CATALOG_FILENAME);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn switching_away_removes_an_absolute_catalog_pointer() {
+        // 归属判定按文件名比较：绝对形态的指针同样被认成 cc-switch 的，
+        // 切到没有目录的供应商时照删（live 里两种形态都可能留下）。
+        let live = "model_catalog_json = \"/home/user/.codex/cc-switch-model-catalog.json\"\n";
+        let doc = apply(RouteWrite::Default, live);
+        assert!(doc.get(MODEL_CATALOG_JSON).is_none());
     }
 
     const PROXY: &str = "http://127.0.0.1:15721/v1";

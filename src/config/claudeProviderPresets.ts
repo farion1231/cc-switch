@@ -76,6 +76,27 @@ export interface ProviderPreset extends PresetFamilyFields {
 
 export const providerPresets: ProviderPreset[] = [
   {
+    name: "TokenPlus",
+    websiteUrl: "https://www.tokenplus.cn/",
+    apiKeyUrl: "https://www.tokenplus.cn/workspace",
+    category: "aggregator",
+    partnerPromotionKey: "tokenplus",
+    icon: "tokenplus",
+    apiKeyField: "ANTHROPIC_API_KEY",
+    apiFormat: "anthropic",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.tokenplus.cn",
+        ANTHROPIC_API_KEY: "",
+        ANTHROPIC_MODEL: "deepseek/deepseek-v4.1-flash-1017",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek/deepseek-v4.1-flash-1017",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "z-ai/glm-5.3-flash",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "moonshot-ai/kimi-k3.1-pro",
+        ANTHROPIC_SMALL_FAST_MODEL: "minimax/m3.1-flash",
+      },
+    },
+  },
+  {
     name: "Claude Official",
     websiteUrl: "https://www.anthropic.com/claude-code",
     settingsConfig: {
