@@ -679,7 +679,7 @@ mod platform {
         NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
         NSGlassEffectView, NSGlassEffectViewStyle, NSScreen, NSView, NSVisualEffectBlendingMode,
         NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
-        NSWindowOrderingMode,
+        NSWindowCollectionBehavior, NSWindowOrderingMode,
     };
     use objc2_foundation_03::{NSPoint, NSRect, NSSize};
     use tauri::WebviewWindow;
@@ -699,8 +699,19 @@ mod platform {
     /// macOS 26 上还会描一圈深色边。阴影由网页给每块卡片画（窗口四周留了边距）。
     pub fn init(window: &WebviewWindow) {
         let _ = window.set_shadow(false);
-        // 轻量模式下面板会销毁重建：旧窗口的玻璃挂在已销毁的视图上，丢掉，按新窗口重新垫。
-        let _ = window.run_on_main_thread(|| GLASS.with(|glass| glass.borrow_mut().clear()));
+        let target = window.clone();
+        let _ = window.run_on_main_thread(move || {
+            // 轻量模式下面板会销毁重建：旧窗口的玻璃挂在已销毁的视图上，丢掉，按新窗口重新垫。
+            GLASS.with(|glass| glass.borrow_mut().clear());
+            // `visible_on_all_workspaces` 只加 CanJoinAllSpaces，进不了别的应用的全屏 Space：
+            // 在全屏应用里点托盘图标，面板会显示在别的桌面上、看不见（#9331）。
+            if let Some(ns_window) = ns_window(&target) {
+                ns_window.setCollectionBehavior(
+                    ns_window.collectionBehavior()
+                        | NSWindowCollectionBehavior::FullScreenAuxiliary,
+                );
+            }
+        });
     }
 
     fn ns_window(window: &WebviewWindow) -> Option<&NSWindow> {
