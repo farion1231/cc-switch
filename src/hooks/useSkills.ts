@@ -364,6 +364,12 @@ export function useImportSkillsFromApps() {
     // 才结束，「发现」重拉要从 GitHub 下载仓库，等它会让弹窗一直锁着（#7994）
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ["skills", "repos"] });
+      // 导入可能新增了来源仓库。没人在看发现列表时 invalidate 不会马上重拉，
+      // 而 refetchOnMount 在本次运行验证过一次后就是 false，下次打开还是旧
+      // 结果（新仓库显示 0 个，#9273）：清掉标记，下次挂载时重新发现。
+      // 代次加一：导入前开始的整体发现读的是旧仓库表，晚到不能写回本地缓存
+      discoverRevalidated = false;
+      discoverGeneration += 1;
       void queryClient.invalidateQueries({
         queryKey: ["skills", "discoverable"],
       });
