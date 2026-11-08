@@ -2591,6 +2591,8 @@ impl RequestForwarder {
             // 身份（`chatgpt-account-id` 等），它们只能发往官方上游。Stack 目标不会是官方账号，
             // 这里仍按上游判断，防止以后放宽。只限 Codex：Claude Code 自己的 `x-stainless-*`
             // 是 Anthropic SDK 的正常请求头，Stack 请求照常转发。
+            // 路由那家是第三方时 Codex 也可能以内置 openai 身份、带着 ChatGPT 登录发请求
+            // （`codex_direct` 的 `openai_route`），身份头同样只能发往官方或 ChatGPT 托管账号。
             if should_strip_codex_client_fingerprint_header(
                 key_str,
                 &effective_endpoint,
@@ -2598,6 +2600,7 @@ impl RequestForwarder {
                 codex_responses_to_chat,
                 codex_stack_request,
                 codex_official_auth_passthrough,
+                matches!(app_type, AppType::Codex) && !provider.is_codex_oauth(),
             ) {
                 continue;
             }
@@ -3754,6 +3757,12 @@ fn is_codex_client_fingerprint_header(key_str: &str) -> bool {
 /// and reject requests without it. Keep only that marker; all other Codex and
 /// OpenAI identity headers remain stripped. Converted Chat/Anthropic requests
 /// continue to receive a clean client fingerprint.
+///
+/// Any other Codex request to a third party (`codex_unmanaged_upstream`: Codex and
+/// not a CC Switch-managed ChatGPT account) drops only the ChatGPT account identity
+/// ([`is_chatgpt_identity_header`]): the client may be the built-in `openai`
+/// provider carrying the user's ChatGPT login. Session and client headers stay,
+/// so requests from a plain custom table are unchanged.
 fn should_strip_codex_client_fingerprint_header(
     key_str: &str,
     endpoint: &str,
@@ -3761,6 +3770,7 @@ fn should_strip_codex_client_fingerprint_header(
     codex_responses_to_chat: bool,
     codex_stack_request: bool,
     codex_official_auth_passthrough: bool,
+    codex_unmanaged_upstream: bool,
 ) -> bool {
     if codex_responses_to_anthropic {
         return is_codex_client_fingerprint_header(key_str);
@@ -3773,7 +3783,21 @@ fn should_strip_codex_client_fingerprint_header(
             && !(native_third_party_responses && key_str == "x-codex-beta-features");
     }
 
-    false
+    codex_unmanaged_upstream
+        && !codex_official_auth_passthrough
+        && is_chatgpt_identity_header(key_str)
+}
+
+/// 只有带着 ChatGPT 登录的内置 openai 才会发的请求头：账号、组织 / 项目、设备证明和
+/// 内置 openai 的固定版本头。会话、客户端标识（`session_id`、`originator`、`x-codex-*`）
+/// 任何 Codex 客户端都发，不在其中。
+fn is_chatgpt_identity_header(key_str: &str) -> bool {
+    matches!(
+        key_str,
+        "chatgpt-account-id" | "openai-organization" | "openai-project" | "version"
+    ) || key_str.starts_with("x-oai-")
+        || key_str.starts_with("x-openai-")
+        || key_str.starts_with("x-responsesapi-")
 }
 
 fn codex_anthropic_error_envelope_message(body: &[u8]) -> Option<String> {
@@ -7441,7 +7465,38 @@ mod tests {
                 assert!(!auth.contains("chatgpt"), "{api_format}: {auth}");
             }
 
-            // Control: routing requests to native Responses still forward these headers.
+            // Routing requests to a third party keep the session and client headers
+            // (cache keys, protocol marker) but never the ChatGPT account identity:
+            // the client may be the built-in `openai` provider carrying the login.
+            for api_format in ["openai_responses", "openai_chat"] {
+                let seen = send(
+                    &forwarder(false),
+                    &upstream,
+                    provider(&upstream, api_format),
+                    "/responses",
+                    body("listed", json!([])),
+                )
+                .await;
+                for name in ["session_id", "originator", "x-codex-turn-state"] {
+                    assert!(seen.headers.contains_key(name), "{api_format}: {name}");
+                }
+                for name in [
+                    "chatgpt-account-id",
+                    "x-oai-attestation",
+                    "x-openai-fedramp",
+                ] {
+                    assert!(
+                        !seen.headers.contains_key(name),
+                        "{api_format}: {name} reached a third party"
+                    );
+                }
+                let auth = seen
+                    .headers
+                    .get("authorization")
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or_default();
+                assert!(auth.contains("sk-third-party"), "{api_format}: {auth}");
+            }
             let seen = send(
                 &forwarder(false),
                 &upstream,
@@ -7450,8 +7505,38 @@ mod tests {
                 body("listed", json!([])),
             )
             .await;
-            assert!(seen.headers.contains_key("session_id"));
             assert!(seen.headers.contains_key("x-codex-beta-features"));
+        }
+
+        #[test]
+        fn chatgpt_identity_reaches_only_official_or_managed_account_upstreams() {
+            let strip = |key: &str, passthrough: bool, unmanaged: bool| {
+                should_strip_codex_client_fingerprint_header(
+                    key,
+                    "/responses",
+                    false,
+                    false,
+                    false,
+                    passthrough,
+                    unmanaged,
+                )
+            };
+            for key in ["chatgpt-account-id", "x-oai-attestation", "version"] {
+                assert!(strip(key, false, true), "{key} to a third party");
+                assert!(!strip(key, true, true), "{key} to the official upstream");
+                assert!(
+                    !strip(key, false, false),
+                    "{key} to a managed ChatGPT account"
+                );
+            }
+            for key in [
+                "session_id",
+                "originator",
+                "x-codex-turn-state",
+                "openai-beta",
+            ] {
+                assert!(!strip(key, false, true), "{key} is not account identity");
+            }
         }
 
         /// Native Responses third parties cannot consume Codex's private compaction
