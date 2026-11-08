@@ -1618,6 +1618,7 @@ pub fn run() {
             commands::get_settings,
             commands::save_settings,
             commands::has_codex_unify_history_backup,
+            commands::dismiss_codex_history_split_hint,
             commands::codex_forces_multi_agent_v2,
             commands::get_codex_session_compression,
             commands::set_codex_session_compression,

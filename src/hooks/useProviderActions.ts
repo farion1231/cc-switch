@@ -32,6 +32,7 @@ import { openclawKeys } from "@/hooks/useOpenClaw";
 import { supportsOfficialProxyTakeover } from "@/utils/providerCapabilities";
 import { getRoutingReason } from "@/utils/routingReason";
 import { logFrontendInfo } from "@/lib/frontendLogger";
+import { showCodexHistorySplitHint } from "@/utils/codexHistorySplitHint";
 
 /**
  * Hook for managing provider actions (add, update, delete, switch)
@@ -280,11 +281,22 @@ export function useProviderActions(
             closeButton: true,
           });
         }
+
+        if (result?.codexHistorySplit) {
+          showCodexHistorySplitHint(result.codexHistorySplit, t, queryClient);
+        }
       } catch {
         // 错误提示由 mutation 处理
       }
     },
-    [switchProviderMutation, syncClaudePlugin, activeApp, isProxyTakeover, t],
+    [
+      switchProviderMutation,
+      syncClaudePlugin,
+      activeApp,
+      isProxyTakeover,
+      t,
+      queryClient,
+    ],
   );
 
   // 删除供应商

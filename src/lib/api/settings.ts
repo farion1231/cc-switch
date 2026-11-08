@@ -44,6 +44,11 @@ export const settingsApi = {
     return await invoke("has_codex_unify_history_backup");
   },
 
+  /** 切换后「Codex 会话分成两组」提示的「不再提示」 */
+  async dismissCodexHistorySplitHint(): Promise<boolean> {
+    return await invoke("dismiss_codex_history_split_hint");
+  },
+
   /** Codex 的 config.toml 是否用 [features] multi_agent_v2 强制了新版子 agent 工具 */
   async codexForcesMultiAgentV2(): Promise<boolean> {
     return await invoke("codex_forces_multi_agent_v2");

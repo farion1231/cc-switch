@@ -391,7 +391,17 @@
     "windowControlFailed": "Window control failed: {{error}}",
     "officialBlockedByProxy": "Cannot switch to official provider while local routing is active. Using routing with official APIs may cause account bans.",
     "proxyOfficialWarning": "Current provider {{name}} is official. Consider switching to a third-party provider before using local routing.",
-    "proxyLoopbackHijacked": "Requests from {{app}} to the local route {{origin}} will be picked up by the system proxy, so {{app}} will fail with 502 errors. Make loopback addresses connect directly in your proxy tool (for example, add IP-CIDR,127.0.0.0/8,DIRECT,no-resolve at the top of your Clash rules), then fully quit and reopen {{app}}."
+    "proxyLoopbackHijacked": "Requests from {{app}} to the local route {{origin}} will be picked up by the system proxy, so {{app}} will fail with 502 errors. Make loopback addresses connect directly in your proxy tool (for example, add IP-CIDR,127.0.0.0/8,DIRECT,no-resolve at the top of your Clash rules), then fully quit and reopen {{app}}.",
+    "codexHistorySplit": {
+      "title": "Codex sessions are now split into two groups",
+      "description": "Newer Codex can only continue sessions in the current provider's group. Your {{count}} sessions from {{previous}} are now read-only. Turn on Unified Codex session history to merge both groups.",
+      "officialBucket": "the official subscription",
+      "thirdPartyBucket": "third-party providers",
+      "enable": "Unify",
+      "dismiss": "Don't show again",
+      "enabled": "Unified session history is on. Old sessions are migrating in the background; restart Codex once it's done.",
+      "enableFailed": "Failed to turn on unified session history: {{error}}"
+    }
   },
   "confirm": {
     "deleteProvider": "Delete Provider",
