@@ -386,6 +386,9 @@ pub struct RequestForwarder {
     /// Stack 模型的请求（`mode::stack`）：挂在结构体上，整流器重试再次调用 `forward()` 时照样
     /// 生效。见 [`Self::routing_state_enabled`]。
     stack_request: bool,
+    /// 这个请求走故障转移队列（故障转移开着）。Codex 换家时据此按目标家改模型名，见
+    /// [`super::model_mapper::map_codex_failover_model`]。
+    failover_chain: bool,
     /// 最近一次 `forward()` 定下的出站模型名，失败时随 [`ForwardError`] 交给日志。
     /// 每次 `forward()` 开头清空，映射失败等没走到出站的尝试留 None（日志回落到请求名）。
     last_outbound_model: std::sync::Mutex<Option<String>>,
@@ -522,6 +525,7 @@ impl RequestForwarder {
             ),
             max_attempts,
             stack_request: false,
+            failover_chain: false,
             last_outbound_model: std::sync::Mutex::new(None),
         }
     }
@@ -542,6 +546,12 @@ impl RequestForwarder {
     /// 标记为 Stack 模型的请求。
     pub fn stack_request(mut self, stack_request: bool) -> Self {
         self.stack_request = stack_request;
+        self
+    }
+
+    /// 这个请求走故障转移队列（故障转移开着）。
+    pub fn failover_chain(mut self, failover_chain: bool) -> Self {
+        self.failover_chain = failover_chain;
         self
     }
 
@@ -1540,7 +1550,13 @@ impl RequestForwarder {
         } else {
             let (mapped_body, _original_model, _mapped_model) =
                 super::model_mapper::apply_model_mapping(body.clone(), provider);
-            mapped_body
+            // Codex 行没有档位映射，客户端发的是路由那家的模型名：故障转移换到不认这个名字的
+            // 那家时，换成它自己的模型。
+            if self.failover_chain && matches!(app_type, AppType::Codex) {
+                super::model_mapper::map_codex_failover_model(mapped_body, provider)
+            } else {
+                mapped_body
+            }
         };
 
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
@@ -4954,6 +4970,7 @@ mod tests {
             streaming_first_byte_timeout,
             max_attempts: 1,
             stack_request: false,
+            failover_chain: false,
             last_outbound_model: std::sync::Mutex::new(None),
         }
     }
