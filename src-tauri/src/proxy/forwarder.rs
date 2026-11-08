@@ -5391,6 +5391,33 @@ mod tests {
     }
 
     #[test]
+    fn claude_transform_endpoint_then_build_url_matches_the_qianfan_case() {
+        // The end-to-end chain for the #8491 follow-up: the client's `/v1/messages`
+        // is rewritten to `/v1/responses`, then joined onto a base URL whose version
+        // segment sits mid-path (`.../v2/tokenplan/personal`). Before the fix this
+        // produced `.../personal/v1/responses` and 404'd, because only a trailing
+        // version segment was recognised.
+        use super::super::providers::{ClaudeAdapter, ProviderAdapter};
+
+        let (endpoint, _query) = rewrite_claude_transform_endpoint(
+            "/v1/messages",
+            "openai_responses",
+            false,
+            &json!({ "model": "deepseek-v4.1-flash-1017" }),
+        );
+        assert_eq!(endpoint, "/v1/responses");
+
+        let url = ClaudeAdapter::new().build_url(
+            "https://qianfan.baidubce.com/v2/tokenplan/personal",
+            &endpoint,
+        );
+        assert_eq!(
+            url,
+            "https://qianfan.baidubce.com/v2/tokenplan/personal/responses"
+        );
+    }
+
+    #[test]
     fn rewrite_codex_responses_endpoint_to_chat_preserves_query() {
         let (endpoint, passthrough_query) =
             rewrite_codex_responses_endpoint_to_chat("/v1/responses?foo=bar");
