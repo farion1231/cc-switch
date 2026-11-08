@@ -459,6 +459,8 @@ function SubPanel({
               onChange={(event) => onQuery(event.target.value)}
               placeholder={texts.searchPlaceholder}
               className="min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-muted-foreground"
+              autoCorrect="off"
+              autoCapitalize="off"
             />
           </label>
         </div>
@@ -521,9 +523,11 @@ function FooterButton({
 export function TrayPanel() {
   const [nativePlacement, setPlacement] = useState<PanelPlacement | null>(null);
   const [pixelRatio, setPixelRatio] = useState(window.devicePixelRatio || 1);
-  // Windows 文本大小 / WebView 缩放可能让 CSS 像素和屏幕逻辑像素不再一一对应。
+  // 将 CSS 像素换算为原生窗口逻辑像素，适配文本和 WebKit 缩放。
   const coordinateScale =
-    nativePlacement?.platform === "windows"
+    nativePlacement &&
+    (nativePlacement.platform === "windows" ||
+      nativePlacement.platform === "linux")
       ? pixelRatio / nativePlacement.scaleFactor
       : 1;
   const placement = useMemo(

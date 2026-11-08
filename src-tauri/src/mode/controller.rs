@@ -32,6 +32,7 @@ use crate::live::project::claude::{
 use crate::live::project::gemini::GeminiProjection;
 use crate::live::project::grok::GrokProjection;
 use crate::provider::Provider;
+use crate::proxy::loopback_probe;
 use crate::services::provider::codex_client_catalog;
 use crate::services::provider::codex_direct::{self, Owner};
 use crate::services::provider::codex_official_models;
@@ -842,7 +843,44 @@ async fn enter_locked(
     );
     state.proxy_service.set_active_target(app, &route).await;
     warn_if_official_route(state, app, &route).await;
+    spawn_loopback_check(state, app, op_name == op::ENTER);
     Ok(())
+}
+
+/// Codex、Grok Build 跟随系统代理发请求，发往本地路由的请求可能被系统代理接走、客户端只看到
+/// 空正文 502（见 [`loopback_probe`]）。后台自检一次，不拦进入：日志里留一笔；`notify` 时
+/// （用户手动进入）再提示。启动时接上不提示，那时界面多半还没在听事件。
+fn spawn_loopback_check(state: &AppState, app: &AppType, notify: bool) {
+    if !matches!(app, AppType::Codex | AppType::GrokBuild) {
+        return;
+    }
+    let service = state.proxy_service.clone();
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let Ok((origin, _)) = service.build_proxy_urls().await else {
+            return;
+        };
+        // 客户端地址改成别的机器时，CC Switch 这边走一遍代表不了客户端。
+        if !crate::proxy::http_client::is_loopback_url(&origin) {
+            return;
+        }
+        let Some(reason) = loopback_probe::hijack_reason(&origin).await else {
+            return;
+        };
+        log::warn!(
+            "[MODE] {} 的本地路由 {origin} 按系统代理访问回不到 CC Switch（{reason}），\
+             客户端的请求可能被系统代理接走",
+            app.as_str()
+        );
+        if notify {
+            service
+                .emit(
+                    "proxy-loopback-hijacked",
+                    json!({ "appType": app.as_str(), "origin": origin }),
+                )
+                .await;
+        }
+    });
 }
 
 async fn warn_if_official_route(state: &AppState, app: &AppType, route: &Provider) {
@@ -3651,6 +3689,14 @@ mod mode_tests {
         toml::from_str(&codex_text()).unwrap()
     }
 
+    /// CC Switch 写进 live 的目录指针，按当前配置目录现算：本机目录是绝对路径，
+    /// `\\wsl.localhost\...` 这类 UNC 目录是裸文件名（WSL2 夜测的 HOME 就在那里）。
+    fn ours_catalog_pointer() -> String {
+        crate::live::project::codex::catalog_pointer_value(
+            &crate::codex_config::get_codex_config_dir(),
+        )
+    }
+
     fn set_preservation(on: bool) {
         crate::settings::update_settings(crate::settings::AppSettings {
             preserve_codex_official_auth_on_switch: on,
@@ -3791,12 +3837,18 @@ command = "fs-server"
                 .get("model_catalog_json")
                 .and_then(|value| value.as_str().map(str::to_string))
         };
-        let ours = crate::live::project::codex::CATALOG_FILENAME;
+        // cc-switch 接管指针时写绝对路径（严格重读的 Codex 只认绝对形态；UNC 目录写裸文件名）。
+        let ours = ours_catalog_pointer();
 
         ProviderService::switch(&state, AppType::Codex, "a").expect("to a");
         assert_eq!(pointer().as_deref(), Some("/work/a-catalog.json"));
         ProviderService::switch(&state, AppType::Codex, "b").expect("to b");
-        assert_eq!(pointer().as_deref(), Some(ours), "{}", codex_text());
+        assert_eq!(
+            pointer().as_deref(),
+            Some(ours.as_str()),
+            "{}",
+            codex_text()
+        );
         ProviderService::switch(&state, AppType::Codex, "a").expect("back to a");
         ProviderService::switch(&state, AppType::Codex, "c").expect("to c");
         assert_eq!(pointer(), None, "{}", codex_text());
@@ -3812,7 +3864,12 @@ command = "fs-server"
         let with_user = format!("model_catalog_json = \"/work/mine.json\"\n{}", codex_text());
         fs::write(codex_config_path(), with_user).unwrap();
         ProviderService::switch(&state, AppType::Codex, "b").expect("to b");
-        assert_eq!(pointer().as_deref(), Some(ours), "{}", codex_text());
+        assert_eq!(
+            pointer().as_deref(),
+            Some(ours.as_str()),
+            "{}",
+            codex_text()
+        );
         let with_user = codex_text().replace(
             &format!("model_catalog_json = \"{ours}\""),
             "model_catalog_json = \"/work/mine.json\"",
@@ -6760,8 +6817,8 @@ model_provider = "c"
         };
         let chain = |ctx: &crate::proxy::handler_context::RequestContext| {
             ctx.get_providers()
-                .into_iter()
-                .map(|provider| provider.id)
+                .iter()
+                .map(|provider| provider.id.clone())
                 .collect::<Vec<_>>()
         };
 
@@ -7175,7 +7232,7 @@ model_provider = "c"
         );
         assert_eq!(
             doc["model_catalog_json"].as_str(),
-            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+            Some(ours_catalog_pointer().as_str())
         );
         // 窗口类全局键会覆盖每一行，改写进路由那家自己的行。
         assert!(doc.get("model_context_window").is_none(), "{doc:?}");
@@ -7846,7 +7903,7 @@ model_provider = "c"
             .expect("routing");
         assert_eq!(
             codex_doc()["model_catalog_json"].as_str(),
-            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+            Some(ours_catalog_pointer().as_str())
         );
         assert_eq!(
             stale_clients_of(&state).await,
@@ -7935,7 +7992,7 @@ model_provider = "c"
         assert_eq!(notice, None);
         assert_eq!(
             codex_doc()["model_catalog_json"].as_str(),
-            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+            Some(ours_catalog_pointer().as_str())
         );
     }
 
@@ -7971,7 +8028,7 @@ model_provider = "c"
         );
         assert_eq!(
             codex_doc()["model_catalog_json"].as_str(),
-            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+            Some(ours_catalog_pointer().as_str())
         );
         let slugs: Vec<String> = codex_catalog()["models"]
             .as_array()

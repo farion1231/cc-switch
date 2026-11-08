@@ -241,6 +241,10 @@ interface CodexFormFieldsProps {
   // the catalog rows. Codex only; the Stack layout omits it (aggregation settings apply).
   autoReviewModel?: string;
   onAutoReviewModelChange?: (model: string) => void;
+  // Keep the official Fast speed tier on GPT rows mirrored from Codex's bundled
+  // entries: `modelCatalog.officialSpeedTiers`. Native Responses only.
+  officialSpeedTiers?: boolean;
+  onOfficialSpeedTiersChange?: (keep: boolean) => void;
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
@@ -697,6 +701,8 @@ export function CodexFormFields({
   catalogModels = [],
   autoReviewModel = "",
   onAutoReviewModelChange,
+  officialSpeedTiers = false,
+  onOfficialSpeedTiersChange,
   onCatalogModelsChange,
   speedTestEndpoints,
   customUserAgent,
@@ -1398,6 +1404,34 @@ export function CodexFormFields({
     </div>
   );
 
+  // 保留官方 Fast 档：镜像官方的 GPT 行默认清空速度档，后面接官方账号的中转（如 CPA）才认
+  // service_tier=priority。Chat、Anthropic 转换会把它转给不认的上游，Copilot 走自己的目录，
+  // 都只给原生 Responses；聚合布局不显示（合并目录不看卡上的设置）。
+  const officialSpeedTiersToggle = onOfficialSpeedTiersChange &&
+    !isCopilotPreset &&
+    effectiveApiFormat === "openai_responses" && (
+      <div className="flex items-center justify-between gap-4">
+        {labelWithHelp(
+          t("codexConfig.officialSpeedTiersLabel", {
+            defaultValue: "保留官方 Fast 档",
+          }),
+          t("codexConfig.officialSpeedTiersHint", {
+            defaultValue:
+              "让模型列表里的 GPT 模型保留官方的 Fast 速度档，Codex 选了 Fast 后请求会带 service_tier=priority。只有转发官方 ChatGPT 账号的中转（如 CPA）才认，会更快消耗额度；其他上游可能报错或按更高价计费。打开后，之前在官方卡下选过的 Fast 会立刻在这家生效。聚合模式下不生效。改完需要重启 Codex。",
+          }),
+          "codexOfficialSpeedTiers",
+        )}
+        <Switch
+          id="codexOfficialSpeedTiers"
+          checked={officialSpeedTiers}
+          onCheckedChange={onOfficialSpeedTiersChange}
+          aria-label={t("codexConfig.officialSpeedTiersLabel", {
+            defaultValue: "保留官方 Fast 档",
+          })}
+        />
+      </div>
+    );
+
   const upstreamFormatSelect = (
     <div className="space-y-1.5">
       {labelWithHelp(
@@ -2047,7 +2081,7 @@ export function CodexFormFields({
             placeholder={
               isGrokBuild
                 ? t("grokBuild.defaultModelPlaceholder", {
-                    defaultValue: "例如: grok-4.5",
+                    defaultValue: "例如: grok-4.7",
                   })
                 : t("codexConfig.defaultModelPlaceholder", {
                     defaultValue: "例如: gpt-5.6",
@@ -2346,7 +2380,7 @@ export function CodexFormFields({
             }),
             t("codexConfig.agentMaxThreadsHint", {
               defaultValue:
-                "一个 Codex 会话里最多同时开多少个子代理（不含主代理）。这是 Codex 的全局设置，写进 config.toml 的 [agents] max_threads，切换供应商时保持不变。留空用 Codex 默认值：经典子 agent 工具 6 个，新版工具 3 个。Codex 不支持不限，最小为 1；开得越多，同时消耗的额度越多。重新打开 Codex 后生效。",
+                "一个 Codex 会话里最多同时开多少个子代理（不含主代理），切换供应商时保持不变。留空用 Codex 默认值（经典子 agent 工具 6 个，新版工具 3 个），最小为 1，不支持不限。新对话生效。",
             }),
             "codexAgentMaxThreads",
           )}
@@ -2461,6 +2495,7 @@ export function CodexFormFields({
             {(shouldShowSpeedTest || isCopilotPreset) && !isXaiOauthPreset && (
               <div className="space-y-3">
                 {upstreamFormatSelect}
+                {officialSpeedTiersToggle}
                 {isAnthropicFormat && anthropicAuthFieldSelect}
                 {isAnthropicFormat && impersonateClaudeCodeToggle}
                 {isAnthropicFormat && maxOutputTokensField}
