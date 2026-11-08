@@ -102,6 +102,28 @@ export const openclawApiProtocols = [
  * OpenClaw provider presets list
  */
 export const openclawProviderPresets: OpenClawProviderPreset[] = [
+  {
+    name: "TokenPlus",
+    websiteUrl: "https://www.tokenplus.cn/",
+    apiKeyUrl: "https://www.tokenplus.cn/workspace",
+    category: "aggregator",
+    partnerPromotionKey: "tokenplus",
+    icon: "tokenplus",
+    settingsConfig: {
+      baseUrl: "https://api.tokenplus.cn/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "deepseek/deepseek-v4.1-flash-1017",
+          name: "DeepSeek V4.1 Flash 1017",
+        },
+        { id: "z-ai/glm-5.3-flash", name: "GLM 5.3 Flash" },
+        { id: "moonshot-ai/kimi-k3.1-pro", name: "Kimi K3.1 Pro" },
+        { id: "minimax/m3.1-flash", name: "MiniMax M3.1 Flash" },
+      ],
+    },
+  },
   // ===== 赞助商预设：文件顺序与 README 赞助商表对齐（仅维护约定；应用内一律按显示名排序，不置顶）=====
   {
     name: "Kimi",
@@ -6442,29 +6464,33 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   {
     name: "Mistral AI",
     websiteUrl: "https://mistral.ai",
-    apiKeyUrl: "https://console.mistral.ai/api-keys",
+    // Vibe（原 Le Chat）订阅额度与 API 共用，Key 在 Code > Vibe CLI 页创建，
+    // 免费 / 订阅 / 按量付费通用（docs.mistral.ai/vibe/code/cli/
+    // api-keys-profiles，2026-11-06 核对）
+    apiKeyUrl: "https://chat.mistral.ai/code/extensions",
     // OpenAI Chat 端点 base 为 https://api.mistral.ai/v1（docs.mistral.ai/
     // openapi.yaml，2026-10-14 核对），Bearer 鉴权。OpenClaw 的 Mistral 支持是
     // 须另装的官方插件（docs.openclaw.ai/providers/mistral 同日），装了插件的话
-    // 供应商名请另取。模型用官方模型表（docs.mistral.ai/models.md 同日）的固定
-    // 版本 ID，窗口官方写 256k；cost（每百万 token）取 docs.mistral.ai/inference/
-    // pricing.md 同日，缓存读按官方「缓存 token 按输入价 10% 计」
-    //（docs.mistral.ai/studio/conversations/advanced/prompt-caching.md）推算，
-    // 不收缓存写入费，写 0。官方没有单独的最大输出，规则是 prompt + max_tokens
-    // ≤ 窗口，保守按 32768 写
+    // 供应商名请另取。模型用官方模型表（docs.mistral.ai/models.md，2026-11-06
+    // 核对）的 GA 型号：Medium 3.5 已于 10-31 弃用，主力改 Large 4（窗口官方写
+    // 1M，按 1000000 计），Small 4 为 256k。cost（每百万 token）：Large 4 取其
+    // 模型卡（docs.mistral.ai/models/mistral-large-4-0 同日，缓存读 0.07 官方
+    // 直接给出），Small 4 取 docs.mistral.ai/inference/pricing.md（10-14），
+    // 缓存读按官方「缓存 token 按输入价 10% 计」推算；不收缓存写入费，写 0。
+    // 官方没有单独的最大输出，保守按 32768 写
     settingsConfig: {
       baseUrl: "https://api.mistral.ai/v1",
       apiKey: "",
       api: "openai-completions",
       models: [
         {
-          id: "mistral-medium-3-5",
-          name: "Mistral Medium 3.5",
+          id: "mistral-large-4",
+          name: "Mistral Large 4",
           reasoning: true,
           input: ["text", "image"],
-          contextWindow: 256000,
+          contextWindow: 1000000,
           maxTokens: 32768,
-          cost: { input: 1.5, output: 7.5, cacheRead: 0.15, cacheWrite: 0 },
+          cost: { input: 0.7, output: 2.1, cacheRead: 0.07, cacheWrite: 0 },
         },
         {
           id: "mistral-small-2603",
@@ -6487,9 +6513,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "mistral/mistral-medium-3-5" },
+      model: { primary: "mistral/mistral-large-4" },
       modelCatalog: {
-        "mistral/mistral-medium-3-5": { alias: "Mistral Medium 3.5" },
+        "mistral/mistral-large-4": { alias: "Mistral Large 4" },
       },
     },
   },

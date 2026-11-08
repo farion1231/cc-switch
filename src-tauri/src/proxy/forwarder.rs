@@ -545,10 +545,11 @@ impl RequestForwarder {
         app_type: &str,
         used_half_open_permit: bool,
     ) {
+        // 名额本身由这次尝试的 HalfOpenPermitGuard 归还，这里只记结果，所以传 false。
         if used_half_open_permit {
             if let Err(e) = self
                 .router
-                .record_result(provider_id, app_type, true, true, None)
+                .record_result(provider_id, app_type, false, true, None)
                 .await
             {
                 log::warn!(
@@ -585,7 +586,6 @@ impl RequestForwarder {
         retry_err: ProxyError,
         provider: &Provider,
         app_type_str: &str,
-        used_half_open_permit: bool,
         rectifier_label: &str,
         last_error: &mut Option<ProxyError>,
         last_provider: &mut Option<Provider>,
@@ -602,7 +602,6 @@ impl RequestForwarder {
             self.record_provider_failure(
                 provider,
                 app_type_str,
-                used_half_open_permit,
                 &retry_err,
                 format!(
                     "Provider {} {rectifier_label}重试失败: {}",
@@ -615,10 +614,7 @@ impl RequestForwarder {
             return None;
         }
 
-        Some(
-            self.finish_neutral_failure(retry_err, provider, app_type_str, used_half_open_permit)
-                .await,
-        )
+        Some(self.finish_neutral_failure(retry_err, provider).await)
     }
 
     // 一次尝试和一个客户端请求的收尾记账（熔断器、「正在使用」、代理统计、故障转移切换）
@@ -661,7 +657,7 @@ impl RequestForwarder {
         }
 
         // 普通闭合熔断状态异步记录，避免阻塞流式首包返回；
-        // HalfOpen 探测仍同步等待，保证 permit 与熔断状态及时释放。
+        // HalfOpen 探测仍同步等待，保证熔断状态在归还名额前就转回 Closed。
         self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
             .await;
 
@@ -700,7 +696,6 @@ impl RequestForwarder {
         &self,
         provider: &Provider,
         app_type_str: &str,
-        used_half_open_permit: bool,
         error: &ProxyError,
         last_error: String,
     ) {
@@ -712,7 +707,7 @@ impl RequestForwarder {
             .record_result(
                 &provider.id,
                 app_type_str,
-                used_half_open_permit,
+                false,
                 false,
                 Some(error.to_string()),
             )
@@ -720,18 +715,10 @@ impl RequestForwarder {
         self.status.write().await.last_error = Some(last_error);
     }
 
-    /// 不计入熔断的失败（客户端错误、整流后仍被拒）：只释放 HalfOpen 名额，这个请求记为失败。
-    async fn finish_neutral_failure(
-        &self,
-        error: ProxyError,
-        provider: &Provider,
-        app_type_str: &str,
-        used_half_open_permit: bool,
-    ) -> ForwardError {
+    /// 不计入熔断的失败（客户端错误、整流后仍被拒）：不记熔断器，这个请求记为失败。
+    /// 占用的 HalfOpen 名额随这次尝试的 guard 归还。
+    async fn finish_neutral_failure(&self, error: ProxyError, provider: &Provider) -> ForwardError {
         if self.routing_state_enabled() {
-            self.router
-                .release_permit_neutral(&provider.id, app_type_str, used_half_open_permit)
-                .await;
             self.record_failed_request(error.to_string()).await;
         }
         ForwardError {
@@ -872,17 +859,27 @@ impl RequestForwarder {
 
             // 发起请求前先获取熔断器放行许可（HalfOpen 会占用探测名额）
             // 单 Provider 场景下跳过此检查，避免熔断器阻塞所有请求
-            let (allowed, used_half_open_permit) = if bypass_circuit_breaker {
-                (true, false)
+            // 占用了 HalfOpen 名额时，`_half_open_permit` 一直持有到这次尝试结束（continue /
+            // return，或客户端断开把整个 future 丢掉），drop 时归还名额。
+            let (allowed, used_half_open_permit, _half_open_permit) = if bypass_circuit_breaker {
+                (true, false, None)
             } else {
                 let permit = self
                     .router
                     .allow_provider_request(&provider.id, app_type_str)
                     .await;
-                (permit.allowed, permit.used_half_open_permit)
+                (permit.allowed, permit.used_half_open_permit, Some(permit))
             };
 
             if !allowed {
+                // 熔断器没放行（Open 未到恢复时间，或 HalfOpen 的探测名额被占用）：
+                // 这家没有发出请求，留一行日志，和「试了但失败」区分开。
+                log::info!(
+                    "[{app_type_str}] [{}] Provider {} ({}) 熔断器未放行，跳过",
+                    log_fwd::CIRCUIT_SKIPPED,
+                    provider.name,
+                    provider.id
+                );
                 continue;
             }
 
@@ -1007,7 +1004,6 @@ impl RequestForwarder {
                                             retry_err,
                                             provider,
                                             app_type_str,
-                                            used_half_open_permit,
                                             "media 降级",
                                             &mut last_error,
                                             &mut last_provider,
@@ -1041,12 +1037,7 @@ impl RequestForwarder {
                                 provider.id
                             );
                             return Err(self
-                                .finish_neutral_failure(
-                                    unreadable_agent_task_error(),
-                                    provider,
-                                    app_type_str,
-                                    used_half_open_permit,
-                                )
+                                .finish_neutral_failure(unreadable_agent_task_error(), provider)
                                 .await);
                         }
                         if rectified.applied {
@@ -1113,8 +1104,6 @@ impl RequestForwarder {
                                             .finish_neutral_failure(
                                                 unreadable_agent_task_error(),
                                                 provider,
-                                                app_type_str,
-                                                used_half_open_permit,
                                             )
                                             .await);
                                     }
@@ -1134,14 +1123,7 @@ impl RequestForwarder {
                             if rectifier_retried {
                                 log::warn!("[{app_type_str}] [RECT-005] 整流器已触发过，不再重试");
                                 // 不记录熔断器，这是客户端兼容性问题
-                                return Err(self
-                                    .finish_neutral_failure(
-                                        e,
-                                        provider,
-                                        app_type_str,
-                                        used_half_open_permit,
-                                    )
-                                    .await);
+                                return Err(self.finish_neutral_failure(e, provider).await);
                             }
 
                             // 首次触发：整流请求体
@@ -1202,7 +1184,6 @@ impl RequestForwarder {
                                                 retry_err,
                                                 provider,
                                                 app_type_str,
-                                                used_half_open_permit,
                                                 "整流",
                                                 &mut last_error,
                                                 &mut last_provider,
@@ -1230,14 +1211,7 @@ impl RequestForwarder {
                                 log::warn!(
                                     "[{app_type_str}] [RECT-013] budget 整流器已触发过，不再重试"
                                 );
-                                return Err(self
-                                    .finish_neutral_failure(
-                                        e,
-                                        provider,
-                                        app_type_str,
-                                        used_half_open_permit,
-                                    )
-                                    .await);
+                                return Err(self.finish_neutral_failure(e, provider).await);
                             }
 
                             let budget_rectified = rectify_thinking_budget(provider_body.to_mut());
@@ -1245,14 +1219,7 @@ impl RequestForwarder {
                                 log::warn!(
                                     "[{app_type_str}] [RECT-014] budget 整流器触发但无可整流内容，不做无意义重试"
                                 );
-                                return Err(self
-                                    .finish_neutral_failure(
-                                        e,
-                                        provider,
-                                        app_type_str,
-                                        used_half_open_permit,
-                                    )
-                                    .await);
+                                return Err(self.finish_neutral_failure(e, provider).await);
                             }
 
                             log::info!(
@@ -1301,7 +1268,6 @@ impl RequestForwarder {
                                             retry_err,
                                             provider,
                                             app_type_str,
-                                            used_half_open_permit,
                                             "budget 整流",
                                             &mut last_error,
                                             &mut last_provider,
@@ -1317,19 +1283,12 @@ impl RequestForwarder {
                     }
 
                     if signature_rectifier_non_retryable_client_error {
-                        return Err(self
-                            .finish_neutral_failure(
-                                e,
-                                provider,
-                                app_type_str,
-                                used_half_open_permit,
-                            )
-                            .await);
+                        return Err(self.finish_neutral_failure(e, provider).await);
                     }
 
                     // 先分类错误，决定是否计入 provider 健康度
                     // —— NonRetryable / ClientAbort 是客户端层错误，无论换哪家 provider 都会被拒绝，
-                    //    不应污染熔断器和数据库健康度（与 release_permit_neutral 同语义）。
+                    //    不应污染熔断器和数据库健康度（与 finish_neutral_failure 同语义）。
                     let category = self.categorize_proxy_error(&e, provider);
 
                     match category {
@@ -1338,7 +1297,6 @@ impl RequestForwarder {
                             self.record_provider_failure(
                                 provider,
                                 app_type_str,
-                                used_half_open_permit,
                                 &e,
                                 format!("Provider {} 失败: {}", provider.name, e),
                             )
@@ -1359,14 +1317,7 @@ impl RequestForwarder {
                         }
                         ErrorCategory::NonRetryable | ErrorCategory::ClientAbort => {
                             // 不可重试：客户端层错误或客户端断连 → 不污染健康度，仅释放 HalfOpen permit
-                            return Err(self
-                                .finish_neutral_failure(
-                                    e,
-                                    provider,
-                                    app_type_str,
-                                    used_half_open_permit,
-                                )
-                                .await);
+                            return Err(self.finish_neutral_failure(e, provider).await);
                         }
                     }
                 }

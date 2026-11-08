@@ -145,16 +145,16 @@ pub(super) fn uninstall(
     tool: &str,
     pref: Option<&WslShellPreferenceInput>,
     confirmed: &ToolUninstallPlan,
+    progress: &ToolLifecycleProgress,
 ) -> Result<(), String> {
     // Never execute a command supplied by the frontend or silently switch installations
     // while the dialog is open / this task is queued behind another lifecycle operation.
     #[cfg(target_os = "windows")]
     if let Some(distro) = wsl_distro_for_tool(tool) {
         // Run the very process the re-derived plan describes (same shell and flag).
-        let (current, mut process) = wsl_plan_and_process(tool, &distro, pref)?;
+        let (current, process) = wsl_plan_and_process(tool, &distro, pref)?;
         validate_confirmed_plan(&current, confirmed)?;
-        let output = process
-            .output()
+        let output = tool_lifecycle_progress::run_with_progress(process, progress)
             .map_err(|e| format!("Cannot start WSL uninstall: {e}"))?;
         return finish_lifecycle_output(&output);
     }
@@ -172,18 +172,18 @@ pub(super) fn uninstall(
     if current.native {
         remove_native_files(inst, &removals)?;
     } else {
-        run_package_uninstall(&current.command)?;
+        run_package_uninstall(&current.command, progress)?;
     }
     // Some managers return zero even if the selected package was not removed.
     verify_removed(tool, &current.path)
 }
 
-fn run_package_uninstall(command: &str) -> Result<(), String> {
+fn run_package_uninstall(command: &str, progress: &ToolLifecycleProgress) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let batch = format!("@chcp 65001>nul\r\n@echo off\r\ncall {command}\r\nexit /b %errorlevel%");
     #[cfg(target_os = "windows")]
     let command = batch.as_str();
-    run_tool_lifecycle_silently(command, "tool_uninstall")
+    run_tool_lifecycle_silently(command, "tool_uninstall", progress)
 }
 
 fn validate_confirmed_plan(
@@ -967,7 +967,7 @@ mod tests {
             assert!(!plan.command.contains(r"\\?\"));
             assert!(!marker.exists(), "planning must not execute npm");
 
-            run_package_uninstall(&plan.command)
+            run_package_uninstall(&plan.command, &ToolLifecycleProgress::noop())
                 .expect("PATH npm.cmd should execute via batch call");
             assert_eq!(std::fs::read_to_string(marker).unwrap().trim(), arguments);
             return;
@@ -1226,7 +1226,7 @@ mod tests {
             // The package reference models an npm .cmd shim without running a real CLI.
             std::fs::write(&entry, format!("@echo off\r\nrem node_modules/openclaw/openclaw.mjs\r\nexit /b {exit_code}\r\n")).unwrap();
             let plan = plan_for_install("openclaw", &installation(&entry)).unwrap();
-            let result = run_package_uninstall(&plan.command);
+            let result = run_package_uninstall(&plan.command, &ToolLifecycleProgress::noop());
             assert_eq!(result.is_ok(), exit_code == 0);
             assert_eq!(marker.exists(), exit_code == 0);
         }
