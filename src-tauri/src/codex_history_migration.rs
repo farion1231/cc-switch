@@ -1455,8 +1455,11 @@ fn backup_codex_state_db(
         .map_err(|e| AppError::Database(format!("创建 Codex state DB 备份失败: {e}")))?;
     let backup = Backup::new(source_conn, &mut backup_conn)
         .map_err(|e| AppError::Database(format!("初始化 Codex state DB 备份失败: {e}")))?;
+    // 一步拷完（rusqlite 不收 -1，用 c_int::MAX 等价）：Codex 的 state DB 是 WAL 库，
+    // 备份只占一个读快照，不挡 Codex 写；原先每步 5 页、歇 25ms，42MB 的库要拷一分半，
+    // 迁入 / 还原都得干等。碰上锁（Busy/Locked）时 run_to_completion 会歇一下再试。
     backup
-        .run_to_completion(5, Duration::from_millis(25), None)
+        .run_to_completion(std::ffi::c_int::MAX, Duration::from_millis(50), None)
         .map_err(|e| AppError::Database(format!("写入 Codex state DB 备份失败: {e}")))?;
     Ok(())
 }
