@@ -236,12 +236,14 @@ function piCompletionsThinking({
 
 /**
  * Pi 会不会把档位原样作为 `reasoning_effort` 发给上游。Pi 官方只在这种协议下用
- * effort 档位生成映射（`supportsDirectReasoningEffort`）：Responses 总是；Chat
- * Completions 看 `piCompletionsThinking`。Anthropic 等协议还需要额外的 compat，
+ * effort 档位生成映射（`supportsDirectReasoningEffort`）：Responses 和 Mistral
+ * 总是；Chat Completions 看 `piCompletionsThinking`。Anthropic 等协议还需要额外的 compat，
  * 不生成。
  */
 export function piSendsReasoningEffort(protocol: PiProviderProtocol): boolean {
   if (protocol.api === "openai-responses") return true;
+  // Pi 的 Mistral 协议把映射值原样作为 reasoning_effort 发出
+  if (protocol.api === "mistral-conversations") return true;
   if (protocol.api !== "openai-completions") return false;
   const { format, effort } = piCompletionsThinking(protocol);
   return format === "openai" && effort;

@@ -236,6 +236,16 @@ describe("piSendsReasoningEffort", () => {
     expect(piSendsReasoningEffort(base)).toBe(true);
   });
 
+  it("accepts Pi's native Mistral protocol", () => {
+    expect(
+      piSendsReasoningEffort({
+        ...base,
+        api: "mistral-conversations",
+        baseUrl: "https://api.mistral.ai",
+      }),
+    ).toBe(true);
+  });
+
   it("rejects protocols and endpoints with their own thinking format", () => {
     expect(piSendsReasoningEffort({ ...base, api: "anthropic-messages" })).toBe(
       false,
