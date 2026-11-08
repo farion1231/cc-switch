@@ -607,9 +607,15 @@ pub(crate) fn plan(
                 None => AuthGoal::ThirdParty,
             };
             match &projection.route {
-                Route::Official if crate::settings::unify_codex_session_history() => {
-                    (RouteWrite::OfficialMirror, None, auth)
-                }
+                Route::Official if crate::settings::unify_codex_session_history() => (
+                    RouteWrite::OfficialMirror {
+                        supports_websockets: projection
+                            .official_supports_websockets
+                            .unwrap_or(true),
+                    },
+                    None,
+                    auth,
+                ),
                 Route::Official => (
                     RouteWrite::Official {
                         dormant_base_url: configured_proxy_base_url(db),
