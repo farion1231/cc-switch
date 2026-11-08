@@ -1,0 +1,67 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "DeepSeek Search and Fetch",
+    "version": "example-1",
+    "description": "Configuration example based on https://api-docs.deepseek.com/guides/search/ (checked 2026-10-25)."
+  },
+  "servers": [{ "url": "https://api.deepseek.com" }],
+  "security": [{ "DeepSeekKey": [] }],
+  "components": {
+    "securitySchemes": {
+      "DeepSeekKey": { "type": "http", "scheme": "bearer" }
+    }
+  },
+  "paths": {
+    "/v1/tools/search": {
+      "post": {
+        "operationId": "deepseek_search",
+        "x-mcp-read-only": true,
+        "summary": "Search the web and return ranked sources, snippets and summaries.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "query": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "\\S", "description": "Search query; supports site:, lang:, after:, before: and quoted phrases." },
+                  "count": { "type": "integer", "minimum": 1, "maximum": 50, "description": "Number of results; the API defaults to 10." },
+                  "ori_question": { "type": ["string", "null"], "minLength": 1, "maxLength": 128, "pattern": "\\S", "description": "Optional original user question." },
+                  "localization": { "type": "string", "description": "Optional localization IP address." },
+                  "need_content": { "type": "boolean", "description": "Request page content; the API defaults to false." }
+                },
+                "required": ["query"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Ranked search results." } }
+      }
+    },
+    "/v1/tools/fetch": {
+      "post": {
+        "operationId": "deepseek_fetch",
+        "x-mcp-read-only": true,
+        "summary": "Retrieve a public web page as a title and Markdown content.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "url": { "type": "string", "minLength": 1, "maxLength": 8192, "pattern": "^https?://", "description": "Public HTTP(S) page URL without embedded credentials." }
+                },
+                "required": ["url"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Page title and Markdown content." } }
+      }
+    }
+  }
+}

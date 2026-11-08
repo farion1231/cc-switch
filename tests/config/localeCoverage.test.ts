@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { parseDocument } from "yaml";
 import tr from "@/i18n/locales/tr.json";
 import en from "@/i18n/locales/en.json";
 import ja from "@/i18n/locales/ja.json";
@@ -52,6 +53,22 @@ const locales = [
   ["ja", ja],
   ["zh-TW", zhTW],
 ] as const;
+
+const rawLocales = import.meta.glob<string>("../../src/i18n/locales/*.json", {
+  eager: true,
+  query: "?raw",
+  import: "default",
+});
+
+describe("locale JSON", () => {
+  it.each(Object.entries(rawLocales))(
+    "has unique keys in %s",
+    (_path, source) => {
+      const document = parseDocument(source, { uniqueKeys: true });
+      expect(document.errors.map((error) => error.message)).toEqual([]);
+    },
+  );
+});
 
 describe("locale coverage", () => {
   it.each(locales)("covers every Pi translation key in %s", (_name, tree) => {

@@ -47,6 +47,7 @@ import {
 } from "@/utils/errorUtils";
 import { cn } from "@/lib/utils";
 import McpFormModal from "./McpFormModal";
+import ApiMcpModal from "./ApiMcpModal";
 import {
   MatrixCell,
   MatrixColumnHeader,
@@ -147,7 +148,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   const { t } = useTranslation();
   const appIds = useVisibleAppIds(MCP_APP_IDS);
   const [drawer, setDrawer] = useState<
-    { mode: "add" } | { mode: "edit"; id: string } | null
+    { mode: "add" | "api" } | { mode: "edit"; id: string } | null
   >(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [importReport, setImportReport] = useState<ImportReport | null>(null);
@@ -630,6 +631,15 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
               variant="quiet"
               size="regular"
               disabled={controlsDisabled}
+              onClick={() => setDrawer({ mode: "api" })}
+            >
+              {t("mcpApi.title")}
+            </Button>
+            <Button
+              type="button"
+              variant="quiet"
+              size="regular"
+              disabled={controlsDisabled}
               onClick={() => void handleImport()}
             >
               <Download className="h-4 w-4" strokeWidth={2} />
@@ -1103,18 +1113,32 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
         </div>
       </div>
 
-      {drawer && (
-        <McpFormModal
-          key={drawer.mode === "edit" ? `edit:${drawer.id}` : "add"}
-          editingId={drawer.mode === "edit" ? drawer.id : undefined}
+      {drawer &&
+      (drawer.mode === "api" ||
+        (drawer.mode === "edit" &&
+          serversMap?.[drawer.id]?.server.env?.CC_SWITCH_MCP_API_CONFIG)) ? (
+        <ApiMcpModal
           initialData={
             drawer.mode === "edit" ? serversMap?.[drawer.id] : undefined
           }
           existingServers={serversMap ?? {}}
           visibleAppIds={appIds}
-          onSave={() => setDrawer(null)}
           onClose={() => setDrawer(null)}
         />
+      ) : (
+        drawer && (
+          <McpFormModal
+            key={drawer.mode === "edit" ? `edit:${drawer.id}` : "add"}
+            editingId={drawer.mode === "edit" ? drawer.id : undefined}
+            initialData={
+              drawer.mode === "edit" ? serversMap?.[drawer.id] : undefined
+            }
+            existingServers={serversMap ?? {}}
+            visibleAppIds={appIds}
+            onSave={() => setDrawer(null)}
+            onClose={() => setDrawer(null)}
+          />
+        )
       )}
 
       <V7ConfirmDialog
