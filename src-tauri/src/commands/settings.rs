@@ -59,8 +59,6 @@ fn merge_settings_for_save(
     // 开关）后、前端 query 缓存刷新前的一次全量保存会把旧 marker 重放回来，
     // 重新开启时被"复活"的标记挡住而漏迁。
     incoming.local_migrations = existing.local_migrations.clone();
-    // 「不再提示」只经 dismiss_codex_history_split_hint 写，全量保存带的是前端缓存。
-    incoming.codex_history_split_hint_dismissed = existing.codex_history_split_hint_dismissed;
     // 客户端地址只经 set_proxy_client_host 保存（它还要重写客户端）；全量保存带的是前端
     // 缓存里的旧值，透传会把刚保存的地址冲掉。
     incoming.proxy_client_host = existing.proxy_client_host.clone();
@@ -205,13 +203,6 @@ pub struct CodexUnifyHistoryRestoreResult {
     /// 还原被跳过的原因（如当前目录没有账本），前端据此提示而非报"成功 0 项"。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skipped_reason: Option<String>,
-}
-
-/// 切换后「Codex 会话分成两组」提示里点了「不再提示」。
-#[tauri::command]
-pub async fn dismiss_codex_history_split_hint() -> Result<bool, String> {
-    crate::settings::dismiss_codex_history_split_hint().map_err(|e| e.to_string())?;
-    Ok(true)
 }
 
 /// 是否存在统一会话开关的迁移备份（决定关闭弹窗里是否显示"恢复备份"勾选）。
@@ -458,19 +449,6 @@ mod tests {
         let merged = merge_settings_for_save(AppSettings::default(), &existing);
 
         assert!(merged.lightweight_mode);
-    }
-
-    #[test]
-    fn save_settings_should_keep_the_codex_split_hint_dismissal() {
-        let existing = AppSettings {
-            codex_history_split_hint_dismissed: true,
-            ..AppSettings::default()
-        };
-
-        // 前端缓存里的旧设置（未点「不再提示」）全量保存回来，不能把它冲掉
-        let merged = merge_settings_for_save(AppSettings::default(), &existing);
-
-        assert!(merged.codex_history_split_hint_dismissed);
     }
 
     #[test]

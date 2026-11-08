@@ -393,14 +393,9 @@
     "proxyOfficialWarning": "目前供應商 {{name}} 是官方供應商，建議切換至第三方供應商後再使用本地路由",
     "proxyLoopbackHijacked": "{{app}} 發往本地路由 {{origin}} 的請求會被系統代理接走，{{app}} 會回報 502 錯誤。請在代理工具裡讓本機位址直連（例如在 Clash 規則最前面加上 IP-CIDR,127.0.0.0/8,DIRECT,no-resolve），改完後徹底結束 {{app}} 再重新開啟。",
     "codexHistorySplit": {
-      "title": "Codex 會話分成了兩組",
-      "description": "新版 Codex 只能繼續和目前供應商同一組的會話。你之前在{{previous}}下的 {{count}} 個會話現在只能檢視。開啟「統一 Codex 會話歷史」可把兩組合併。",
+      "hint": "之前在{{previous}}下的 {{count}} 個會話現在只能檢視",
       "officialBucket": "官方訂閱",
       "thirdPartyBucket": "第三方供應商",
-      "enable": "開啟統一",
-      "dismiss": "不再提示",
-      "enabled": "已開啟統一會話歷史，舊會話正在背景遷入，遷完會再提示你",
-      "enableFailed": "開啟統一會話歷史失敗：{{error}}",
       "migrationFinished": "已遷入 {{count}} 個舊會話，重新啟動 Codex 後即可繼續",
       "migrationFailed": "遷入舊會話失敗：{{error}}。下次啟動 CC Switch 會自動重試"
     }

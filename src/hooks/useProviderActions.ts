@@ -32,7 +32,7 @@ import { openclawKeys } from "@/hooks/useOpenClaw";
 import { supportsOfficialProxyTakeover } from "@/utils/providerCapabilities";
 import { getRoutingReason } from "@/utils/routingReason";
 import { logFrontendInfo } from "@/lib/frontendLogger";
-import { showCodexHistorySplitHint } from "@/utils/codexHistorySplitHint";
+import { codexHistorySplitToastExtras } from "@/utils/codexHistorySplitHint";
 
 /**
  * Hook for managing provider actions (add, update, delete, switch)
@@ -249,6 +249,11 @@ export function useProviderActions(
           }
         }
 
+        // 会话分组的提醒并进「切换成功」那条，不另弹
+        const splitExtras = result?.codexHistorySplit
+          ? codexHistorySplitToastExtras(result.codexHistorySplit, t)
+          : undefined;
+
         // 若已弹过 proxyRequired 警告则不再弹 success
         if (!proxyRequiredReason) {
           let messageKey = "notifications.switchSuccess";
@@ -279,24 +284,20 @@ export function useProviderActions(
             : t(messageKey, { defaultValue: defaultMessage });
           toast.success(message, {
             closeButton: true,
+            ...splitExtras,
           });
-        }
-
-        if (result?.codexHistorySplit) {
-          showCodexHistorySplitHint(result.codexHistorySplit, t, queryClient);
+        } else if (splitExtras?.description) {
+          // 没弹「切换成功」时单独提醒一句，仍然只是一行
+          toast.info(splitExtras.description as string, {
+            closeButton: true,
+            duration: splitExtras.duration,
+          });
         }
       } catch {
         // 错误提示由 mutation 处理
       }
     },
-    [
-      switchProviderMutation,
-      syncClaudePlugin,
-      activeApp,
-      isProxyTakeover,
-      t,
-      queryClient,
-    ],
+    [switchProviderMutation, syncClaudePlugin, activeApp, isProxyTakeover, t],
   );
 
   // 删除供应商

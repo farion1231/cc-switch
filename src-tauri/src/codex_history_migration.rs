@@ -333,12 +333,10 @@ fn codex_config_text_history_bucket(config_text: &str) -> Option<String> {
     Some(id.to_string())
 }
 
-/// 切换完成后判断要不要提示：开关关着、用户没点过「不再提示」、新会话从 openai 换到
-/// custom（或反过来），并且原来那组确实有线程。只看 CC Switch 自己会写的这两组。
+/// 切换完成后判断要不要提示：开关关着、新会话从 openai 换到 custom（或反过来），并且
+/// 原来那组确实有线程。只看 CC Switch 自己会写的这两组。
 pub fn codex_history_split_hint(previous_bucket: Option<&str>) -> Option<CodexHistorySplitHint> {
-    if crate::settings::unify_codex_session_history()
-        || crate::settings::codex_history_split_hint_dismissed()
-    {
+    if crate::settings::unify_codex_session_history() {
         return None;
     }
     let config_text = read_codex_config_text().ok()?;

@@ -393,14 +393,9 @@
     "proxyOfficialWarning": "現在のプロバイダー {{name}} は公式です。ローカルルーティングを使用する前にサードパーティプロバイダーに切り替えてください。",
     "proxyLoopbackHijacked": "{{app}} からローカルルート {{origin}} へのリクエストがシステムプロキシに横取りされるため、{{app}} は 502 エラーになります。プロキシツールでループバックアドレスを直結にしてください（例：Clash のルールの先頭に IP-CIDR,127.0.0.0/8,DIRECT,no-resolve を追加）。変更後は {{app}} を完全に終了してから開き直してください。",
     "codexHistorySplit": {
-      "title": "Codex のセッションが 2 つのグループに分かれました",
-      "description": "新しい Codex は現在のプロバイダーと同じグループのセッションしか再開できません。{{previous}}で作成した {{count}} 件のセッションは閲覧のみになりました。「Codex セッション履歴を統一」をオンにすると 2 つのグループをまとめられます。",
+      "hint": "{{previous}}で作成した {{count}} 件のセッションは閲覧のみになりました",
       "officialBucket": "公式サブスクリプション",
       "thirdPartyBucket": "サードパーティプロバイダー",
-      "enable": "統一する",
-      "dismiss": "今後表示しない",
-      "enabled": "セッション履歴の統一をオンにしました。古いセッションをバックグラウンドで移行中です。完了したらお知らせします。",
-      "enableFailed": "セッション履歴の統一をオンにできませんでした：{{error}}",
       "migrationFinished": "古いセッションを {{count}} 件移行しました。Codex を再起動すると続けられます。",
       "migrationFailed": "古いセッションの移行に失敗しました：{{error}}。次回 CC Switch の起動時に自動で再試行します。"
     }

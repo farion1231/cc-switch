@@ -540,11 +540,6 @@ pub struct AppSettings {
     /// toggle turns off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unify_codex_migrate_existing: Option<bool>,
-    /// The user chose "don't show again" on the hint that a Codex switch split
-    /// session history (newer Codex locks the other provider bucket). Backend-
-    /// only state: `save_settings` always keeps the stored value.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub codex_history_split_hint_dismissed: bool,
     /// Codex 聚合模式下，合并目录里的每个模型都改用经典子 agent 工具（`multi_agent_version`
     /// 写 `"v1"`）。新版工具（v2）把派给子 agent 的任务加密，只有主 agent 那家后端解得开，
     /// 主、子 agent 不在同一家时子 agent 读不到任务。默认开（代价是没有新版工具的
@@ -738,7 +733,6 @@ impl Default for AppSettings {
             codex_quota_protection: CodexQuotaProtection::default(),
             unify_codex_session_history: false,
             unify_codex_migrate_existing: None,
-            codex_history_split_hint_dismissed: false,
             codex_stack_classic_tools: true,
             codex_stack_subagent_model: None,
             codex_stack_subagent_reasoning_effort: None,
@@ -1394,22 +1388,6 @@ pub fn preserve_codex_official_auth_on_switch() -> bool {
             e.into_inner()
         })
         .preserve_codex_official_auth_on_switch
-}
-
-pub fn codex_history_split_hint_dismissed() -> bool {
-    settings_store()
-        .read()
-        .unwrap_or_else(|e| {
-            log::warn!("设置锁已毒化，使用恢复值: {e}");
-            e.into_inner()
-        })
-        .codex_history_split_hint_dismissed
-}
-
-pub fn dismiss_codex_history_split_hint() -> Result<(), AppError> {
-    mutate_settings(|settings| {
-        settings.codex_history_split_hint_dismissed = true;
-    })
 }
 
 pub fn unify_codex_session_history() -> bool {
