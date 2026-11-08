@@ -458,6 +458,8 @@ export interface Settings {
     fiveHourThreshold: number;
     weeklyThreshold: number;
   };
+  // 路由 / 聚合模式下暂停使用 Codex 官方登录（官方额度用完、发送键被锁时的应急开关；默认关）
+  codexProxyWithoutOfficialLogin?: boolean;
   // Run official Codex under the shared "custom" provider id so future
   // sessions share one resume-history bucket with third-party providers
   unifyCodexSessionHistory?: boolean;

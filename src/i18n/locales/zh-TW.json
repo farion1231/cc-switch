@@ -917,6 +917,12 @@
       "hint": "任一達到即暫停。預設 95% / 98%，儲存後立即對新請求生效。",
       "invalid": "請輸入 1–99 的整數。"
     },
+    "codexPauseOfficialLogin": {
+      "title": "暫停使用官方登入",
+      "help": "官方額度用完、Codex 鎖住傳送鍵（選第三方模型也送不出去）時開啟。開啟後 Codex 不再使用官方登入，也就不會再因為官方額度鎖住傳送鍵，聚合和路由裡的第三方模型可以繼續用。官方登入仍保存在本機，不會登出。只在路由或聚合模式下生效，直連不受影響。開啟期間：官方模型送不出去，會提示改用第三方模型；Codex 裡不顯示帳號和用量資訊；新對話記在 custom 組，切回官方後只能檢視。官方額度恢復後關閉它。開啟和關閉後都要徹底結束並重新開啟 Codex。",
+      "pausedToast": "已暫停使用官方登入，徹底結束並重新開啟 Codex 後生效",
+      "resumedToast": "已恢復使用官方登入，徹底結束並重新開啟 Codex 後生效"
+    },
     "preserveCodexOfficialAuthOnSwitch": "非接管切換時保留官方登入",
     "preserveCodexOfficialAuthOnSwitchDescription": "控制未開啟本機路由時切換第三方供應商是否保留 Codex 官方登入；路由接管期間一律保留",
     "unifyCodexSessionHistory": "統一 Codex 會話歷史",

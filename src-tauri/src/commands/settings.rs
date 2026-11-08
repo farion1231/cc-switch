@@ -94,6 +94,8 @@ pub async fn save_settings(
             != existing.codex_stack_subagent_reasoning_effort
         || merged.codex_stack_auto_review_model != existing.codex_stack_auto_review_model;
     let tray_style_changed = merged.native_tray_menu != existing.native_tray_menu;
+    let without_login_changed =
+        merged.codex_proxy_without_official_login != existing.codex_proxy_without_official_login;
     crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
 
     // 原生托盘菜单 / 托盘面板当场切换，不用重启。
@@ -116,6 +118,22 @@ pub async fn save_settings(
             }
             return Err(format!(
                 "聚合设置未生效（Codex 配置重写失败） (The aggregation setting did not take effect: rewriting the Codex config failed): {err}"
+            ));
+        }
+    }
+
+    // 「暂停使用官方登录」只影响路由 / 聚合模式下写给 Codex 的内容：立即重写，失败回滚。
+    if without_login_changed {
+        if let Err(err) = crate::mode::controller::resync_codex_proxy(state.inner()).await {
+            log::warn!("「暂停使用官方登录」变更后重写 Codex 配置失败，回滚设置: {err}");
+            let mut rollback = crate::settings::get_settings();
+            rollback.codex_proxy_without_official_login =
+                existing.codex_proxy_without_official_login;
+            if let Err(rollback_err) = crate::settings::update_settings(rollback) {
+                log::error!("回滚「暂停使用官方登录」设置失败: {rollback_err}");
+            }
+            return Err(format!(
+                "「暂停使用官方登录」未生效（Codex 配置重写失败） (\"Pause the official login\" did not take effect: rewriting the Codex config failed): {err}"
             ));
         }
     }

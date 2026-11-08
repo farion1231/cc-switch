@@ -1559,6 +1559,20 @@ pub async fn resync_codex_stack_catalog(state: &AppState) -> Result<(), String> 
         .map(|_| ())
 }
 
+/// 「暂停使用官方登录」变了：路由 / 聚合模式下按新契约重写 Codex（契约没变就什么都不做）。
+/// 直连或没接上代理时这个开关不起作用，等进代理时自然按设置写。
+pub async fn resync_codex_proxy(state: &AppState) -> Result<(), String> {
+    let app = AppType::Codex;
+    let _guard = lock_settled(state, &app).await.map_err(err)?;
+    let Some((mode, route)) = attached_route(state, &app)? else {
+        return Ok(());
+    };
+    let live_now = LiveNow::of(state, &app, &mode)?;
+    write_proxy(state, &app, op::APPLY, &route, &live_now, mode, None)
+        .await
+        .map(|_| ())
+}
+
 /// 路由供应商的行或代理地址变了：按新契约重写客户端（契约没变就什么都不做）。调用方
 /// 持有切换锁。
 pub async fn resync_route_locked(state: &AppState, app: &AppType) -> Result<(), String> {
@@ -4280,6 +4294,78 @@ model_provider = "c"
             }
             exit(&state, &AppType::Codex).await.expect("exit");
         }
+    }
+
+    /// 暂停使用官方登录：官方路由和第三方路由都写成不要求登录的 custom 表（Codex 不按官方
+    /// 额度锁发送键），登录留在 auth.json；关掉后回到内置 openai 的写法。
+    #[tokio::test]
+    #[serial]
+    async fn codex_paused_official_login_writes_a_login_free_custom_table() {
+        let _home = Home::new();
+        let set_paused = |paused: bool| {
+            let mut settings = crate::settings::get_settings();
+            settings.preserve_codex_official_auth_on_switch = true;
+            settings.codex_proxy_without_official_login = paused;
+            crate::settings::update_settings(settings).unwrap();
+        };
+        set_paused(false);
+        seed_codex("", Some(&chatgpt_login("acct")));
+        let official_id = crate::database::CODEX_OFFICIAL_PROVIDER_ID;
+        let mut official = Provider::with_id(
+            official_id.to_string(),
+            "OpenAI Official".to_string(),
+            json!({ "auth": {}, "config": "model = \"gpt-5.4\"\n" }),
+            None,
+        );
+        official.category = Some("official".to_string());
+        let [a, _] = codex_a_b();
+        let state = state_with(AppType::Codex, &[official, a], official_id).await;
+        ProviderService::switch(&state, AppType::Codex, official_id).expect("direct");
+        enter(&state, &AppType::Codex, false).await.expect("enter");
+        assert!(
+            codex_doc().get("openai_base_url").is_some(),
+            "{}",
+            codex_text()
+        );
+
+        set_paused(true);
+        resync_codex_proxy(&state).await.expect("pause");
+        for route in [official_id, "a"] {
+            if route == "a" {
+                set_route(&state, &AppType::Codex, "a")
+                    .await
+                    .expect("route a");
+            }
+            let doc = codex_doc();
+            assert_eq!(
+                doc["model_provider"].as_str(),
+                Some("custom"),
+                "{route}: {}",
+                codex_text()
+            );
+            assert!(doc.get("openai_base_url").is_none(), "{}", codex_text());
+            let table = &doc["model_providers"]["custom"];
+            assert_ne!(
+                table
+                    .get("requires_openai_auth")
+                    .and_then(|value| value.as_bool()),
+                Some(true),
+                "{route}: {}",
+                codex_text()
+            );
+            assert_eq!(
+                table["experimental_bearer_token"].as_str(),
+                Some(PROXY_TOKEN_PLACEHOLDER)
+            );
+            assert_eq!(codex_login_file(), Some(chatgpt_login("acct")));
+        }
+
+        set_paused(false);
+        resync_codex_proxy(&state).await.expect("resume");
+        let doc = codex_doc();
+        assert!(doc.get("model_provider").is_none(), "{}", codex_text());
+        assert!(doc.get("openai_base_url").is_some(), "{}", codex_text());
+        exit(&state, &AppType::Codex).await.expect("exit");
     }
 
     fn codex_login_on_disk() -> Value {

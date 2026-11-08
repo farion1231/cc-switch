@@ -917,6 +917,12 @@
       "hint": "Pause at either cutoff. Defaults: 95% / 98%. Saved changes apply to new requests immediately.",
       "invalid": "Enter whole numbers from 1 to 99."
     },
+    "codexPauseOfficialLogin": {
+      "title": "Pause the official login",
+      "help": "Turn this on when the official quota is used up and Codex has locked the send button (even third-party models can't be sent). Codex then stops using the official login, so it no longer locks the send button over the official quota, and third-party models in Aggregation and Routing keep working. The login stays saved on this computer; you are not signed out. Applies only in Routing or Aggregation mode; Direct is unaffected. While it's on: official models can't be used and you'll be asked to pick a third-party model; Codex hides account and usage info; new sessions are recorded under the custom group and become view-only after you switch back to official. Turn it off once the official quota is back. Fully quit and reopen Codex after turning it on or off.",
+      "pausedToast": "Official login paused. Fully quit and reopen Codex for it to take effect",
+      "resumedToast": "Official login resumed. Fully quit and reopen Codex for it to take effect"
+    },
     "preserveCodexOfficialAuthOnSwitch": "Keep official login for direct switches",
     "preserveCodexOfficialAuthOnSwitchDescription": "Controls third-party switches when local routing is off. Takeover routing always preserves the Codex official login.",
     "unifyCodexSessionHistory": "Unified Codex session history",

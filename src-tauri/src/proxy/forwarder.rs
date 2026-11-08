@@ -1484,6 +1484,11 @@ impl RequestForwarder {
         let mut quota_token = None;
 
         if codex_official_auth_passthrough {
+            // 暂停使用官方登录时 Codex 带的是占位 Key，没有官方凭据可透传：本地拒绝并说明
+            // 怎么恢复，不发往上游。
+            if crate::settings::codex_proxy_without_official_login() {
+                return Err(ProxyError::CodexOfficialLoginPaused);
+            }
             let (expected_chatgpt_account_id, managed_session_matches) = match provider
                 .meta
                 .as_ref()
