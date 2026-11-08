@@ -5,7 +5,7 @@
 use super::log_codes::cb as log_cb;
 use super::types::AppProxyConfig;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
@@ -88,8 +88,12 @@ pub struct CircuitBreaker {
     last_opened_at: Arc<RwLock<Option<Instant>>>,
     /// 配置（支持热更新）
     config: Arc<RwLock<CircuitBreakerConfig>>,
-    /// 半开状态已放行的请求数（用于限流）
-    half_open_requests: Arc<AtomicU32>,
+    /// 半开探测名额：高 32 位是第几轮 HalfOpen，低 32 位是这一轮已放出的名额数。
+    /// 两者放在一个原子里，归还时才能确认名额属于当前这一轮：上一轮的探测晚到归还，
+    /// 不能把这一轮正在进行的探测名额也还掉。
+    half_open_slots: Arc<AtomicU64>,
+    /// 日志里标明是哪家的熔断器（路由器传 `app_type:provider_id`）
+    label: String,
 }
 
 /// 熔断器放行结果
@@ -100,6 +104,31 @@ pub struct CircuitBreaker {
 pub struct AllowResult {
     pub allowed: bool,
     pub used_half_open_permit: bool,
+    /// 名额属于第几轮 HalfOpen（只在 `used_half_open_permit` 时有意义）
+    pub(crate) half_open_round: u32,
+}
+
+/// 持有一个 HalfOpen 探测名额，drop 时归还。
+///
+/// 名额若只靠请求结束时的 `record_*` 归还，请求中途被丢弃（客户端断开取消了 future、
+/// panic）就永远还不回来：计数卡在上限，这家一直停在 HalfOpen、每个请求都被拒绝，
+/// 直到重启（#7206 / #9292）。拿到名额后立即交给它，任何退出路径都会归还。
+/// 只归还它自己那一轮的名额：熔断器已经进入新一轮 HalfOpen（计数已清零）时什么都不做。
+pub struct HalfOpenPermitGuard {
+    breaker: Arc<CircuitBreaker>,
+    round: u32,
+}
+
+impl HalfOpenPermitGuard {
+    pub(crate) fn new(breaker: Arc<CircuitBreaker>, round: u32) -> Self {
+        Self { breaker, round }
+    }
+}
+
+impl Drop for HalfOpenPermitGuard {
+    fn drop(&mut self) {
+        self.breaker.release_half_open_slot(Some(self.round));
+    }
 }
 
 impl CircuitBreaker {
@@ -113,8 +142,15 @@ impl CircuitBreaker {
             failed_requests: Arc::new(AtomicU32::new(0)),
             last_opened_at: Arc::new(RwLock::new(None)),
             config: Arc::new(RwLock::new(config)),
-            half_open_requests: Arc::new(AtomicU32::new(0)),
+            half_open_slots: Arc::new(AtomicU64::new(0)),
+            label: String::new(),
         }
+    }
+
+    /// 设置日志标识，状态变化的日志会带上它，多家同时熔断时才分得清是哪家。
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = label.into();
+        self
     }
 
     /// 更新熔断器配置（热更新，不重置状态）
@@ -141,8 +177,9 @@ impl CircuitBreaker {
                     if opened_at.elapsed().as_secs() >= config.timeout_seconds {
                         drop(config); // 释放读锁再转换状态
                         log::info!(
-                            "[{}] 熔断器 Open → HalfOpen (超时恢复)",
-                            log_cb::OPEN_TO_HALF_OPEN
+                            "[{}] 熔断器 [{}] Open → HalfOpen (超时恢复)",
+                            log_cb::OPEN_TO_HALF_OPEN,
+                            self.label
                         );
                         self.transition_to_half_open().await;
                         return true;
@@ -161,6 +198,7 @@ impl CircuitBreaker {
             CircuitState::Closed => AllowResult {
                 allowed: true,
                 used_half_open_permit: false,
+                half_open_round: 0,
             },
             CircuitState::Open => {
                 let config = self.config.read().await;
@@ -169,8 +207,9 @@ impl CircuitBreaker {
                     if opened_at.elapsed().as_secs() >= config.timeout_seconds {
                         drop(config); // 释放读锁再转换状态
                         log::info!(
-                            "[{}] 熔断器 Open → HalfOpen (超时恢复)",
-                            log_cb::OPEN_TO_HALF_OPEN
+                            "[{}] 熔断器 [{}] Open → HalfOpen (超时恢复)",
+                            log_cb::OPEN_TO_HALF_OPEN,
+                            self.label
                         );
                         self.transition_to_half_open().await;
 
@@ -180,11 +219,13 @@ impl CircuitBreaker {
                             CircuitState::Closed => AllowResult {
                                 allowed: true,
                                 used_half_open_permit: false,
+                                half_open_round: 0,
                             },
                             CircuitState::HalfOpen => self.allow_half_open_probe(),
                             CircuitState::Open => AllowResult {
                                 allowed: false,
                                 used_half_open_permit: false,
+                                half_open_round: 0,
                             },
                         };
                     }
@@ -193,6 +234,7 @@ impl CircuitBreaker {
                 AllowResult {
                     allowed: false,
                     used_half_open_permit: false,
+                    half_open_round: 0,
                 }
             }
             CircuitState::HalfOpen => self.allow_half_open_probe(),
@@ -218,8 +260,9 @@ impl CircuitBreaker {
             if successes >= config.success_threshold {
                 drop(config); // 释放读锁再转换状态
                 log::info!(
-                    "[{}] 熔断器 HalfOpen → Closed (恢复正常)",
-                    log_cb::HALF_OPEN_TO_CLOSED
+                    "[{}] 熔断器 [{}] HalfOpen → Closed (恢复正常)",
+                    log_cb::HALF_OPEN_TO_CLOSED,
+                    self.label
                 );
                 self.transition_to_closed().await;
             }
@@ -248,8 +291,9 @@ impl CircuitBreaker {
             CircuitState::HalfOpen => {
                 // HalfOpen 状态下失败，立即转为 Open
                 log::warn!(
-                    "[{}] 熔断器 HalfOpen 探测失败 → Open",
-                    log_cb::HALF_OPEN_PROBE_FAILED
+                    "[{}] 熔断器 [{}] HalfOpen 探测失败 → Open",
+                    log_cb::HALF_OPEN_PROBE_FAILED,
+                    self.label
                 );
                 drop(config);
                 self.transition_to_open().await;
@@ -258,8 +302,9 @@ impl CircuitBreaker {
                 // 检查连续失败次数
                 if failures >= config.failure_threshold {
                     log::warn!(
-                        "[{}] 熔断器触发: 连续失败 {failures} 次 → Open",
-                        log_cb::TRIGGERED_FAILURES
+                        "[{}] 熔断器 [{}] 触发: 连续失败 {failures} 次 → Open",
+                        log_cb::TRIGGERED_FAILURES,
+                        self.label
                     );
                     drop(config); // 释放读锁再转换状态
                     self.transition_to_open().await;
@@ -273,8 +318,9 @@ impl CircuitBreaker {
 
                         if error_rate >= config.error_rate_threshold {
                             log::warn!(
-                                "[{}] 熔断器触发: 错误率 {:.1}% → Open",
+                                "[{}] 熔断器 [{}] 触发: 错误率 {:.1}% → Open",
                                 log_cb::TRIGGERED_ERROR_RATE,
+                                self.label,
                                 error_rate * 100.0
                             );
                             drop(config); // 释放读锁再转换状态
@@ -308,26 +354,33 @@ impl CircuitBreaker {
     /// 重置熔断器（手动恢复）
     #[allow(dead_code)]
     pub async fn reset(&self) {
-        log::info!("[{}] 熔断器手动重置 → Closed", log_cb::MANUAL_RESET);
+        log::info!(
+            "[{}] 熔断器 [{}] 手动重置 → Closed",
+            log_cb::MANUAL_RESET,
+            self.label
+        );
         self.transition_to_closed().await;
     }
 
     fn allow_half_open_probe(&self) -> AllowResult {
         // 半开状态限流：只允许有限请求通过进行探测
         let max_half_open_requests = 1u32;
-        let current = self.half_open_requests.fetch_add(1, Ordering::SeqCst);
+        let previous = self.half_open_slots.fetch_add(1, Ordering::SeqCst);
+        let (round, current) = split_half_open_slots(previous);
 
         if current < max_half_open_requests {
             AllowResult {
                 allowed: true,
                 used_half_open_permit: true,
+                half_open_round: round,
             }
         } else {
             // 超过限额，回退计数，拒绝请求
-            self.half_open_requests.fetch_sub(1, Ordering::SeqCst);
+            self.release_half_open_slot(Some(round));
             AllowResult {
                 allowed: false,
                 used_half_open_permit: false,
+                half_open_round: 0,
             }
         }
     }
@@ -337,22 +390,21 @@ impl CircuitBreaker {
     /// 用于整流器等场景：请求结果不应计入 Provider 健康度，
     /// 但仍需释放占用的探测名额，避免 HalfOpen 状态卡死
     pub fn release_half_open_permit(&self) {
-        let mut current = self.half_open_requests.load(Ordering::SeqCst);
-        loop {
-            if current == 0 {
-                return;
-            }
+        self.release_half_open_slot(None);
+    }
 
-            match self.half_open_requests.compare_exchange(
-                current,
-                current - 1,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            ) {
-                Ok(_) => return,
-                Err(actual) => current = actual,
-            }
-        }
+    /// 归还一个名额。`round` 给定时只在仍是那一轮时归还；计数已为 0 时不动。
+    fn release_half_open_slot(&self, round: Option<u32>) {
+        let _ = self
+            .half_open_slots
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |slots| {
+                let (current_round, count) = split_half_open_slots(slots);
+                if count == 0 || round.is_some_and(|round| round != current_round) {
+                    None
+                } else {
+                    Some(slots - 1)
+                }
+            });
     }
 
     /// 转换到打开状态
@@ -372,8 +424,13 @@ impl CircuitBreaker {
 
         *state = CircuitState::HalfOpen;
         self.consecutive_successes.store(0, Ordering::SeqCst);
-        // 重置半开状态的请求限流计数
-        self.half_open_requests.store(0, Ordering::SeqCst);
+        // 进入新一轮：轮次加一、名额计数清零（上一轮没还的名额就此作废）
+        let _ = self
+            .half_open_slots
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |slots| {
+                let (round, _) = split_half_open_slots(slots);
+                Some(u64::from(round.wrapping_add(1)) << 32)
+            });
     }
 
     /// 转换到关闭状态
@@ -385,6 +442,11 @@ impl CircuitBreaker {
         self.total_requests.store(0, Ordering::SeqCst);
         self.failed_requests.store(0, Ordering::SeqCst);
     }
+}
+
+/// 拆出 `half_open_slots` 的（轮次，已放出名额数）。
+fn split_half_open_slots(slots: u64) -> (u32, u32) {
+    ((slots >> 32) as u32, slots as u32)
 }
 
 /// 熔断器统计信息
