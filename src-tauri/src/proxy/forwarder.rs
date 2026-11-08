@@ -460,6 +460,25 @@ impl RequestForwarder {
         detect_opaque_state_rejection(error, &self.rectifier_config, request, codex_third_party)
     }
 
+    /// 压缩回合被原生 Responses 第三方以 400 拒绝时，去掉 `tool_choice` 的重试请求体。
+    fn compaction_tool_choice_retry_body(
+        &self,
+        app_type: &AppType,
+        provider: &Provider,
+        codex_upstream_format: Option<CodexUpstreamFormat>,
+        request: &Value,
+        error: &ProxyError,
+    ) -> Option<Value> {
+        if !matches!(app_type, AppType::Codex)
+            || codex_upstream_format != Some(CodexUpstreamFormat::NativeResponses)
+            || super::providers::is_codex_official_provider(provider)
+            || !matches!(error, ProxyError::UpstreamError { status: 400, .. })
+        {
+            return None;
+        }
+        super::providers::codex_compaction::compaction_retry_without_tool_choice(request)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         router: Arc<ProviderRouter>,
@@ -1014,6 +1033,56 @@ impl RequestForwarder {
                                     }
                                     continue;
                                 }
+                            }
+                        }
+                    }
+
+                    // 压缩回合被原生 Responses 第三方拒绝：有的上游不收 `tool_choice: "none"`
+                    // （见 `compaction_retry_without_tool_choice`），去掉它对同一家重试一次。
+                    if let Some(retry_body) = self.compaction_tool_choice_retry_body(
+                        app_type,
+                        provider,
+                        attempted_codex_upstream_format,
+                        &provider_body,
+                        &e,
+                    ) {
+                        log::info!(
+                            "[{app_type_str}] [RECT-030] provider={} 拒绝了压缩请求，去掉 tool_choice 后重试一次",
+                            provider.id
+                        );
+                        let mut retry_codex_upstream_format = None;
+                        match self
+                            .forward(
+                                app_type,
+                                &method,
+                                provider,
+                                endpoint,
+                                &retry_body,
+                                &headers,
+                                &extensions,
+                                adapter.as_ref(),
+                                &mut retry_codex_upstream_format,
+                            )
+                            .await
+                        {
+                            Ok(forwarded) => {
+                                log::info!("[{app_type_str}] [RECT-031] 压缩重试成功");
+                                return Ok(self
+                                    .finish_success(
+                                        provider,
+                                        app_type_str,
+                                        used_half_open_permit,
+                                        forwarded,
+                                        retry_codex_upstream_format,
+                                    )
+                                    .await);
+                            }
+                            // 重试仍失败：按这次的错误走常规分类。
+                            Err(retry_err) => {
+                                log::warn!(
+                                    "[{app_type_str}] [RECT-032] 压缩重试仍失败: {retry_err}"
+                                );
+                                e = retry_err;
                             }
                         }
                     }
@@ -7722,6 +7791,133 @@ mod tests {
             assert_eq!(retried.len(), 5);
             assert_eq!(retried[0]["content"][0]["text"], OPAQUE_COMPACTION_NOTE);
             assert!(carries_reasoning(&seen[1]));
+        }
+
+        /// Kimi For Coding 不收 `tool_choice: "none"`，只回「Invalid request Error」：压缩回合
+        /// 被拒后去掉 `tool_choice` 对同一家重试一次，其余改写照旧。
+        #[tokio::test]
+        async fn compaction_rejected_for_tool_choice_none_retries_without_it() {
+            use crate::proxy::providers::codex_compaction::COMPACT_PROMPT;
+            let rejected = (
+                400,
+                json!({ "error": { "message": "Invalid request Error", "type": "invalid_request_error" } }),
+            );
+            let upstream = scripted_upstream(vec![rejected, response_ok()]).await;
+            let mut request = body(
+                "listed",
+                json!([{ "type": "function", "name": "shell", "parameters": { "type": "object" } }]),
+            );
+            request["input"] = json!([
+                { "role": "user", "content": [{ "type": "input_text", "text": "hi" }] },
+                { "type": "compaction_trigger" }
+            ]);
+            forwarder(true)
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    &request,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    &[provider(&upstream, "openai_responses")],
+                )
+                .await
+                .map_err(|error| error.error)
+                .expect("retried");
+
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 2);
+            assert_eq!(seen[0].body["tool_choice"], "none");
+            assert!(
+                seen[1].body.get("tool_choice").is_none(),
+                "{}",
+                seen[1].body
+            );
+            assert!(seen[1].body.get("tools").is_some());
+            let input = seen[1].body["input"].as_array().unwrap();
+            assert!(input
+                .iter()
+                .all(|item| item["type"] != "compaction_trigger"));
+            assert_eq!(input.last().unwrap()["content"][0]["text"], COMPACT_PROMPT);
+        }
+
+        /// 去掉 `tool_choice` 的重试只给 Codex 原生 Responses 第三方的压缩回合、且只在 400 时。
+        #[test]
+        fn compaction_tool_choice_retry_is_limited_to_rejected_third_party_compactions() {
+            let upstream = Upstream {
+                base_url: "https://relay.example".to_string(),
+                seen: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            };
+            let third_party = provider(&upstream, "openai_responses");
+            let mut official = third_party.clone();
+            official.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
+            official.category = Some("official".to_string());
+            let compaction = json!({
+                "tools": [{ "type": "function", "name": "shell" }],
+                "input": [{ "type": "compaction_trigger" }]
+            });
+            let turn = json!({
+                "tools": [{ "type": "function", "name": "shell" }],
+                "input": [{ "role": "user", "content": [] }]
+            });
+            let rejected = ProxyError::UpstreamError {
+                status: 400,
+                body: Some("Invalid request Error".to_string()),
+            };
+            let overloaded = ProxyError::UpstreamError {
+                status: 529,
+                body: None,
+            };
+            let forwarder = forwarder(false);
+            let native = Some(CodexUpstreamFormat::NativeResponses);
+            let gate = |app: AppType, provider: &Provider, format, request: &Value, error| {
+                forwarder
+                    .compaction_tool_choice_retry_body(&app, provider, format, request, error)
+                    .is_some()
+            };
+
+            assert!(gate(
+                AppType::Codex,
+                &third_party,
+                native,
+                &compaction,
+                &rejected
+            ));
+            assert!(!gate(
+                AppType::Codex,
+                &official,
+                native,
+                &compaction,
+                &rejected
+            ));
+            assert!(!gate(
+                AppType::GrokBuild,
+                &third_party,
+                native,
+                &compaction,
+                &rejected
+            ));
+            assert!(!gate(
+                AppType::Codex,
+                &third_party,
+                Some(CodexUpstreamFormat::ChatCompletions),
+                &compaction,
+                &rejected
+            ));
+            assert!(!gate(
+                AppType::Codex,
+                &third_party,
+                native,
+                &turn,
+                &rejected
+            ));
+            assert!(!gate(
+                AppType::Codex,
+                &third_party,
+                native,
+                &compaction,
+                &overloaded
+            ));
         }
 
         /// 措辞不在清单里的兜底只给 Codex 的原生 Responses 第三方：官方的压缩密文只在错误
