@@ -690,6 +690,8 @@ fn fill_claude_desktop_card(
                     model: model.clone(),
                     label_override: None,
                     supports_1m: None,
+                    max_effort: None,
+                    enabled: None,
                 };
                 (model, route)
             })
@@ -722,6 +724,8 @@ fn fill_claude_desktop_card(
                 model: upstream.clone(),
                 label_override: Some(upstream),
                 supports_1m: None,
+                max_effort: None,
+                enabled: None,
             };
             (route.route_id.to_string(), mapped)
         })
