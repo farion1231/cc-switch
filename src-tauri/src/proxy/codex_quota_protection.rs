@@ -37,7 +37,7 @@ const MAX_ACCOUNTS: usize = 256;
 const FIVE_HOUR_MINUTES: i64 = 300;
 const WEEKLY_MINUTES: i64 = 10_080;
 
-const RECOVERY: &str = "已暂停新的官方请求，第三方模型仍可使用。使用率回落到阈值以下或窗口重置后自动恢复（约 5 分钟内重新确认）；可在 CC Switch 设置 → 应用配置 → Codex 调整或关闭官方额度保护。如果额度已经用完、Codex 锁住了发送键，在同一处打开「暂停使用官方登录」并重启 Codex。 (Official requests paused; third-party models remain available. Requests resume once usage is below the thresholds or the window resets, rechecked within about 5 minutes. Adjust or disable protection in CC Switch settings. If the quota is already used up and Codex has locked the send button, turn on \"Pause the official login\" in the same place and restart Codex.)";
+const RECOVERY: &str = "已暂停新的官方请求，第三方模型仍可使用。使用率回落到阈值以下或窗口重置后自动恢复（约 5 分钟内重新确认）；可在 CC Switch 设置 → 应用配置 → Codex 调整或关闭官方额度保护。如果额度已经用完、Codex 锁住了发送键，在 CC Switch 的 Codex 页面打开路由或聚合页签右侧的设置，打开「暂停使用官方登录」并重启 Codex。 (Official requests paused; third-party models remain available. Requests resume once usage is below the thresholds or the window resets, rechecked within about 5 minutes. Adjust or disable protection in CC Switch settings. If the quota is already used up and Codex has locked the send button, open the Routing or Aggregation settings on the Codex page in CC Switch, turn on \"Pause the official login\" and restart Codex.)";
 
 #[derive(Debug, Clone, PartialEq)]
 struct Window {

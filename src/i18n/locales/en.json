@@ -919,9 +919,11 @@
     },
     "codexPauseOfficialLogin": {
       "title": "Pause the official login",
-      "help": "Turn this on when the official quota is used up and Codex has locked the send button (even third-party models can't be sent). Codex then stops using the official login, so it no longer locks the send button over the official quota, and third-party models in Aggregation and Routing keep working. The login stays saved on this computer; you are not signed out. Applies only in Routing or Aggregation mode; Direct is unaffected. While it's on: official models can't be used and you'll be asked to pick a third-party model; Codex hides account and usage info; new sessions are recorded under the custom group and become view-only after you switch back to official. Turn it off once the official quota is back. Fully quit and reopen Codex after turning it on or off.",
+      "description": "Turn this on when the official quota is used up and Codex has locked the send button; third-party models in Aggregation and Routing keep working. Fully quit and reopen Codex after turning it on or off.",
+      "help": "Turn this on when the official quota is used up and Codex has locked the send button (even third-party models can't be sent). Codex then stops using the official login, so it no longer locks the send button over the official quota, and third-party models in Aggregation and Routing keep working. The login stays saved on this computer; you are not signed out. Applies only in Routing or Aggregation mode; Direct is unaffected. While it's on: official models can't be used and you'll be asked to pick a third-party model; Codex hides account and usage info and may show its onboarding questions on the first launch; your existing threads under Projects in the sidebar are hidden for now (not lost; they come back when you turn this off); new sessions are recorded under the custom group and become view-only after you switch back to official. Turn it off once the official quota is back. Fully quit and reopen Codex after turning it on or off.",
       "pausedToast": "Official login paused. Fully quit and reopen Codex for it to take effect",
-      "resumedToast": "Official login resumed. Fully quit and reopen Codex for it to take effect"
+      "resumedToast": "Official login resumed. Fully quit and reopen Codex for it to take effect",
+      "saveFailed": "Failed to save: {{error}}"
     },
     "preserveCodexOfficialAuthOnSwitch": "Keep official login for direct switches",
     "preserveCodexOfficialAuthOnSwitchDescription": "Controls third-party switches when local routing is off. Takeover routing always preserves the Codex official login.",
@@ -4411,6 +4413,9 @@
       "serviceDown": "{{app}} is in {{mode}} mode but the routing service isn't running, so requests will fail.",
       "startService": "Start service",
       "backToDirect": "Back to direct",
+      "officialLoginPaused": "Codex official login is paused",
+      "officialLoginPausedBody": "Official models can't be used, and your existing threads under Projects in the Codex sidebar are hidden for now. Once the official quota is back, click “Resume official login”, then fully quit and reopen Codex.",
+      "resumeOfficialLogin": "Resume official login",
       "attachFailed": "{{mode}} couldn't reconnect last time, so {{app}} went back to direct."
     },
     "toast": {
