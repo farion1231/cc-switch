@@ -50,6 +50,11 @@ import {
   useTrayNavigation,
 } from "@/hooks/useTrayNavigation";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
+import {
+  CODEX_UNIFY_MIGRATION_FINISHED_EVENT,
+  showCodexUnifyMigrationFinished,
+  type CodexUnifyMigrationFinished,
+} from "@/utils/codexHistorySplitHint";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
 import {
   extractErrorMessage,
@@ -57,6 +62,7 @@ import {
   translatePiProviderMutationError,
 } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
+import { setZoom, stepZoom } from "@/lib/interfacePrefs";
 import { deepClone } from "@/utils/deepClone";
 import { isLinux, isMac, isWindows } from "@/lib/platform";
 import {
@@ -558,6 +564,12 @@ function App() {
     }
   });
 
+  // 开启统一会话历史后的后台迁入跑完了：提示用户现在可以重启 Codex
+  useTauriEvent<CodexUnifyMigrationFinished>(
+    CODEX_UNIFY_MIGRATION_FINISHED_EVENT,
+    (payload) => showCodexUnifyMigrationFinished(payload, t),
+  );
+
   // 应用项目后刷新相关缓存（providers 由既有 provider-switched 监听承接；
   // proxy 状态由后端直接改 DB，不走 mutation，必须显式刷新）
   useTauriEvent("profile-applied", async () => {
@@ -1015,6 +1027,24 @@ function App() {
         event.preventDefault();
         openSettingsRef.current("general");
         return;
+      }
+      // 界面缩放：= / +（含小键盘）放大、- 缩小、0 复原，档位见 ZOOM_LEVELS
+      if (mod && !event.altKey) {
+        if (event.key === "=" || event.key === "+") {
+          event.preventDefault();
+          stepZoom(1);
+          return;
+        }
+        if (event.key === "-") {
+          event.preventDefault();
+          stepZoom(-1);
+          return;
+        }
+        if (event.key === "0") {
+          event.preventDefault();
+          setZoom(1);
+          return;
+        }
       }
 
       if (event.key !== "Escape" || event.defaultPrevented) return;
@@ -1578,7 +1608,10 @@ function App() {
     onConfigureUsage: setUsageProvider,
     onOpenWebsite: handleOpenWebsite,
     onOpenTerminal:
-      activeApp === "claude" || activeApp === "codex" || activeApp === "agy"
+      activeApp === "claude" ||
+      activeApp === "codex" ||
+      activeApp === "agy" ||
+      activeApp === "grokbuild"
         ? setTerminalProvider
         : undefined,
     onCreate: () => openAddProvider(currentModeView),

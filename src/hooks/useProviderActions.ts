@@ -32,6 +32,7 @@ import { openclawKeys } from "@/hooks/useOpenClaw";
 import { supportsOfficialProxyTakeover } from "@/utils/providerCapabilities";
 import { getRoutingReason } from "@/utils/routingReason";
 import { logFrontendInfo } from "@/lib/frontendLogger";
+import { codexHistorySplitToastExtras } from "@/utils/codexHistorySplitHint";
 import { restartCodexDesktop } from "@/lib/api/codexDesktop";
 
 /**
@@ -251,15 +252,21 @@ export function useProviderActions(
           }
         }
 
+        // Keep the session-history hint with the restart confirmation when possible.
+        const splitExtras = result?.codexHistorySplit
+          ? codexHistorySplitToastExtras(result.codexHistorySplit, t)
+          : undefined;
+
         if (activeApp === "codex" && options?.restartDesktop) {
           try {
-            const result = await restartCodexDesktop(provider.id);
+            const restartResult = await restartCodexDesktop(provider.id);
             toast.success(
               t(
-                result.action === "started"
+                restartResult.action === "started"
                   ? "codexDesktop.switchedAndOpened"
                   : "codexDesktop.switchedAndRestarted",
               ),
+              { closeButton: true, ...splitExtras },
             );
           } catch (error) {
             toast.error(
@@ -267,6 +274,12 @@ export function useProviderActions(
                 error: error instanceof Error ? error.message : String(error),
               }),
             );
+            if (splitExtras?.description) {
+              toast.info(splitExtras.description as string, {
+                closeButton: true,
+                duration: splitExtras.duration,
+              });
+            }
           } finally {
             void queryClient.invalidateQueries({
               queryKey: ["codex-desktop-status"],
@@ -274,7 +287,6 @@ export function useProviderActions(
           }
           return;
         }
-
         // 若已弹过 proxyRequired 警告则不再弹 success
         if (!proxyRequiredReason) {
           let messageKey = "notifications.switchSuccess";
@@ -305,6 +317,13 @@ export function useProviderActions(
             : t(messageKey, { defaultValue: defaultMessage });
           toast.success(message, {
             closeButton: true,
+            ...splitExtras,
+          });
+        } else if (splitExtras?.description) {
+          // 没弹「切换成功」时单独提醒一句，仍然只是一行
+          toast.info(splitExtras.description as string, {
+            closeButton: true,
+            duration: splitExtras.duration,
           });
         }
       } catch {

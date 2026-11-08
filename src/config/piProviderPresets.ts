@@ -101,6 +101,39 @@ const KIMI_K3_COMPAT = {
  */
 const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
+    name: "TokenPlus",
+    websiteUrl: "https://www.tokenplus.cn/",
+    apiKeyUrl: "https://www.tokenplus.cn/workspace",
+    category: "aggregator",
+    partnerPromotionKey: "tokenplus",
+    icon: "tokenplus",
+    providerKey: "cc-switch-tokenplus",
+    settingsConfig: {
+      name: "TokenPlus",
+      baseUrl: "https://api.tokenplus.cn/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("deepseek/deepseek-v4.1-flash-1017", {
+          id: "deepseek/deepseek-v4.1-flash-1017",
+          name: "DeepSeek V4.1 Flash 1017",
+        }),
+        piModel("zai/glm-5.3-flash", {
+          id: "z-ai/glm-5.3-flash",
+          name: "GLM 5.3 Flash",
+        }),
+        piModel("moonshotai/kimi-k3.1-pro", {
+          id: "moonshot-ai/kimi-k3.1-pro",
+          name: "Kimi K3.1 Pro",
+        }),
+        piModel("minimax/minimax-m3.1-flash", {
+          id: "minimax/m3.1-flash",
+          name: "MiniMax M3.1 Flash",
+        }),
+      ],
+    },
+  },
+  {
     name: "Kimi",
     family: "kimi",
     planKey: "payg",
@@ -2032,6 +2065,28 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     category: "aggregator",
     icon: "aihubmix",
     iconColor: "#006FFB",
+  },
+  {
+    name: "Genesis",
+    providerKey: "cc-switch-genesis",
+    websiteUrl: "https://genesis.moi.matrixorigin.cn/taas/",
+    apiKeyUrl: "https://uc.moi.matrixorigin.cn/account/credentials?app=genesis",
+    // 矩阵起源 TaaS 走 Chat Completions，Pi 1.2.0 实测 kimi-k3 可用。Kimi Code /
+    // MiniMax Code / DeepSeek Harness / Oh My Pi 由这条派生，未逐个实测（#9269）
+    settingsConfig: {
+      name: "Genesis",
+      baseUrl: "https://token.moi.matrixorigin.cn/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        {
+          ...piModel("moonshotai/kimi-k3", { id: "kimi-k3" }),
+          compat: { ...OPENAI_COMPLETIONS_COMPAT },
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "genesis",
   },
   {
     name: "CherryIN",
