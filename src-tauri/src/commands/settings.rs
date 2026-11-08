@@ -130,9 +130,9 @@ pub async fn save_settings(
         }
 
         if unify_codex_enabled {
-            // 后台执行存量迁移（openai 桶 → custom 桶；仅当用户勾选了迁入既有
+            // 后台把留在 openai 桶的会话迁进 custom 桶（仅当用户勾选了迁入既有
             // 会话，函数内部自门控）。大会话目录可能要读数秒，不能阻塞设置保存；
-            // 失败时不写完成标记，下次启动自动重试。
+            // 失败时下次启动自动重试。
             tauri::async_runtime::spawn_blocking(|| {
                 match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {
                     Ok(outcome) => {

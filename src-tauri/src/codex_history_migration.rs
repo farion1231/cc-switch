@@ -195,11 +195,15 @@ pub fn maybe_migrate_codex_provider_template_bucket(
     Ok(outcome)
 }
 
-/// 统一会话开关的存量迁移：把官方会话（内建 "openai" 桶）迁入共享 "custom" 桶。
+/// 统一会话开关的迁移：把留在内建 "openai" 桶的官方会话迁入共享 "custom" 桶。
 ///
-/// 仅当用户在开启弹窗里勾选了"迁入既有官方会话"（`unify_codex_migrate_existing`）
-/// 且本轮未完成时执行；开关关闭时标记与勾选意愿都会被清除（见 `save_settings`），
-/// 重新开启并再次勾选即可补迁关闭期间产生的官方会话。
+/// 仅当用户在开启弹窗里勾选了"迁入既有官方会话"（`unify_codex_migrate_existing`）时执行；
+/// 开关关闭时标记与勾选意愿都会被清除（见 `save_settings`）。
+/// 勾选后不只跑一次：开启时一次、之后每次启动一次。Codex 桌面版 26.1103（CLI 0.167）起，
+/// 线程记的 provider id 和当前选中的不一致就只读，开关开着（live 选 custom）时之后又落进
+/// openai 桶的会话（开关关过又开、绕过 CC Switch 用过 Codex）也得跟着迁，否则打不开。
+/// 为免每次启动都扫一遍会话目录（几千个文件、还要解压 .zst），先查 state DB：
+/// 没有 openai 线程就跳过；读不到 state DB 时退回「每个 Codex 目录只全扫一次」。
 /// custom 桶里官方与第三方会话无法区分，自动逻辑绝不反向搬回；
 /// 用户可在关闭开关时选择按备份账本精确还原（见 `restore_codex_official_history_from_backups`）。
 /// 迁移前 jsonl / state DB 均备份到 `~/.cc-switch/backups/codex-official-history-unify-v1/`。
@@ -222,23 +226,40 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
     // marker 绑定迁移时的 Codex 目录：切换 codex_config_dir 后旧 marker 不再
     // 挡住新目录的迁移（迁移幂等，重跑无害）。
     let codex_dir_key = canonical_dir_string(&codex_dir);
-    if crate::settings::is_codex_official_history_unify_migrated_for_dir(&codex_dir_key) {
-        return Ok(CodexHistoryProviderBucketMigrationOutcome {
-            skipped_reason: Some("already_migrated".to_string()),
-            ..Default::default()
-        });
-    }
+    let config_text = read_codex_config_text().unwrap_or_default();
     // live 必须已实际路由到共享 custom 桶才允许迁移：官方配置的注入可能被拒
     // （已有显式 model_provider / 形态冲突的 custom 表，见
     // `inject_codex_unified_session_bucket`），live 也可能还没按开关重写。
     // 这些状态下新会话仍落 "openai" 桶，迁移只会把历史搬进当前 live 看不见的
-    // 桶里。开关与迁移意愿保持不动，待 live 真正统一后（下次切换 / 启动重试）
-    // 再迁。
-    if !codex_config_text_routes_custom(&read_codex_config_text().unwrap_or_default()) {
+    // 桶里。待 live 真正统一后（下次切换 / 启动重试）再迁。
+    if !codex_config_text_routes_custom(&config_text) {
         return Ok(CodexHistoryProviderBucketMigrationOutcome {
             skipped_reason: Some("live_not_unified".to_string()),
             ..Default::default()
         });
+    }
+    match crate::codex_state_db::count_threads_with_model_provider(
+        &codex_dir,
+        &config_text,
+        OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID,
+    ) {
+        Some(0) => {
+            return Ok(CodexHistoryProviderBucketMigrationOutcome {
+                skipped_reason: Some("nothing_to_migrate".to_string()),
+                ..Default::default()
+            });
+        }
+        Some(_) => {}
+        None if crate::settings::is_codex_official_history_unify_migrated_for_dir(
+            &codex_dir_key,
+        ) =>
+        {
+            return Ok(CodexHistoryProviderBucketMigrationOutcome {
+                skipped_reason: Some("already_migrated".to_string()),
+                ..Default::default()
+            });
+        }
+        None => {}
     }
 
     let source_provider_ids: BTreeSet<String> =
@@ -3057,5 +3078,113 @@ model_provider = "aihubmix"
             id
         ));
         assert!(!codex_config_selects_provider("not = [valid", id));
+    }
+
+    fn enable_unify_toggle(migrate_existing: bool) {
+        let mut settings = crate::settings::get_settings();
+        settings.unify_codex_session_history = true;
+        settings.unify_codex_migrate_existing = migrate_existing.then_some(true);
+        crate::settings::update_settings(settings).expect("enable unify toggle");
+    }
+
+    const UNIFIED_CONFIG: &str = "model_provider = \"custom\"\n\n[model_providers.custom]\nname = \"OpenAI\"\nrequires_openai_auth = true\nwire_api = \"responses\"\n";
+
+    #[test]
+    #[serial]
+    fn unify_migration_keeps_moving_new_official_sessions_after_opt_in() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let home = IsolatedHome::new();
+        enable_unify_toggle(true);
+        let codex_dir = home.codex_dir();
+        let session_dir = codex_dir.join("sessions/2026/11/08");
+        fs::create_dir_all(&session_dir).expect("create session dir");
+        fs::write(codex_dir.join("config.toml"), UNIFIED_CONFIG).expect("write config");
+        fs::write(
+            session_dir.join("rollout-s1.jsonl"),
+            session_meta_line("s1", "openai"),
+        )
+        .expect("write s1");
+        fs::write(
+            session_dir.join("rollout-s2.jsonl"),
+            session_meta_line("s2", "custom"),
+        )
+        .expect("write s2");
+        let state_db = codex_dir.join(CODEX_STATE_DB_FILENAME);
+        seed_threads(&state_db, &[("s1", "openai"), ("s2", "custom")]);
+
+        let first = maybe_migrate_codex_official_history_to_unified_bucket().expect("first pass");
+        assert_eq!(first.skipped_reason, None);
+        assert_eq!(first.migrated_jsonl_files, 1);
+        assert_eq!(first.migrated_state_rows, 1);
+        assert_eq!(thread_provider(&state_db, "s1"), "custom");
+
+        // 之后又冒出一个 openai 会话（例如开关关过又开、或绕过 CC Switch 用过 Codex）：
+        // 完成标记不再挡住，下一次照样迁。
+        fs::write(
+            session_dir.join("rollout-s3.jsonl"),
+            session_meta_line("s3", "openai"),
+        )
+        .expect("write s3");
+        Connection::open(&state_db)
+            .expect("open state db")
+            .execute(
+                "INSERT INTO threads (id, model_provider) VALUES ('s3', 'openai')",
+                [],
+            )
+            .expect("insert s3");
+        let second = maybe_migrate_codex_official_history_to_unified_bucket().expect("second pass");
+        assert_eq!(second.skipped_reason, None);
+        assert_eq!(second.migrated_state_rows, 1);
+        assert_eq!(thread_provider(&state_db, "s3"), "custom");
+        assert!(fs::read_to_string(session_dir.join("rollout-s3.jsonl"))
+            .expect("read s3")
+            .contains("\"model_provider\":\"custom\""));
+
+        // 再没有 openai 线程：只查一次 state DB 就返回，不扫会话目录。
+        let third = maybe_migrate_codex_official_history_to_unified_bucket().expect("third pass");
+        assert_eq!(third.skipped_reason.as_deref(), Some("nothing_to_migrate"));
+    }
+
+    #[test]
+    #[serial]
+    fn unify_migration_waits_until_live_selects_the_shared_bucket() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let home = IsolatedHome::new();
+        enable_unify_toggle(true);
+        let codex_dir = home.codex_dir();
+        fs::create_dir_all(&codex_dir).expect("create codex dir");
+        fs::write(codex_dir.join("config.toml"), "model = \"gpt-5.5\"\n").expect("write config");
+        let state_db = codex_dir.join(CODEX_STATE_DB_FILENAME);
+        seed_threads(&state_db, &[("s1", "openai")]);
+
+        let outcome = maybe_migrate_codex_official_history_to_unified_bucket().expect("check");
+        assert_eq!(outcome.skipped_reason.as_deref(), Some("live_not_unified"));
+        assert_eq!(thread_provider(&state_db, "s1"), "openai");
+    }
+
+    #[test]
+    #[serial]
+    fn unify_migration_leaves_sessions_alone_without_opt_in() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let home = IsolatedHome::new();
+        enable_unify_toggle(false);
+        let codex_dir = home.codex_dir();
+        fs::create_dir_all(&codex_dir).expect("create codex dir");
+        fs::write(codex_dir.join("config.toml"), UNIFIED_CONFIG).expect("write config");
+        let state_db = codex_dir.join(CODEX_STATE_DB_FILENAME);
+        seed_threads(&state_db, &[("s1", "openai")]);
+
+        let outcome = maybe_migrate_codex_official_history_to_unified_bucket().expect("check");
+        assert_eq!(
+            outcome.skipped_reason.as_deref(),
+            Some("stock_migration_not_requested")
+        );
+        assert_eq!(thread_provider(&state_db, "s1"), "openai");
     }
 }

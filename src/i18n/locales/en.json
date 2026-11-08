@@ -411,14 +411,14 @@
     },
     "unifyCodexHistory": {
       "title": "Unified Codex session history",
-      "message": "When enabled, the Codex CLI resume list shows official subscription and third-party sessions together (the Codex desktop app can show all sessions since a recent update and is unaffected). Note: resuming an old session across providers may fail because the other backend cannot decrypt its encrypted_content reasoning.\n\nYou can also migrate your existing official session history into the shared list (backed up to ~/.cc-switch/backups first; you can restore it when turning this off).",
+      "message": "When enabled, the official subscription runs under the shared \"custom\" provider id, so official and third-party sessions share one group: newer Codex can continue both, and the CLI resume list shows them together.\n\nYou can also migrate your existing official sessions; if you do, CC Switch also moves any official sessions left behind on every launch (backed up to ~/.cc-switch/backups first; you can restore them when turning this off). Sessions you don't migrate stay read-only in newer Codex. Restart Codex after the migration.\n\nNote: resuming an old session across providers may fail because the other backend cannot decrypt its encrypted_content reasoning.",
       "migrateExisting": "Also migrate existing official session history",
       "confirm": "I understand, enable"
     },
     "unifyCodexHistoryOff": {
       "title": "Turn off unified session history",
-      "message": "When turned off, the Codex CLI goes back to separate session lists for the official subscription and third-party providers (the desktop app still shows all sessions). Sessions created while this was on can't be told apart, so they stay in the third-party history and the CLI won't show them under the official subscription.",
-      "restoreBackup": "Restore the official sessions migrated at enable time back to the official history (exact restore from backup)",
+      "message": "When turned off, official and third-party sessions split into two groups again: newer Codex can only continue the current provider's group, and the other group becomes read-only. Sessions created while this was on can't be told apart, so they stay in the third-party group.",
+      "restoreBackup": "Restore the migrated official sessions to the official group (exact restore from backup)",
       "confirm": "Turn off"
     },
     "usage": {
@@ -913,7 +913,7 @@
     "preserveCodexOfficialAuthOnSwitch": "Keep official login for direct switches",
     "preserveCodexOfficialAuthOnSwitchDescription": "Controls third-party switches when local routing is off. Takeover routing always preserves the Codex official login.",
     "unifyCodexSessionHistory": "Unified Codex session history",
-    "unifyCodexSessionHistoryDescription": "Affects the Codex CLI only: its resume list shows only the current provider's sessions. When enabled, the official subscription runs under the shared \"custom\" provider id so official and third-party sessions appear in one list. The Codex desktop app can show all sessions since a recent update, so desktop-only users don't need this. You can optionally migrate existing official sessions in (backed up first) and restore them from backup when turning it off. Note: resuming an old session across providers may fail because its encrypted_content reasoning can only be decrypted by the backend that created it.",
+    "unifyCodexSessionHistoryDescription": "Official subscriptions run under the same \"custom\" provider id as third-party providers, so all sessions share one group. Newer Codex (desktop 26.1103 / CLI 0.167 and later) can only continue sessions in the current provider's group; the other group becomes read-only, and the CLI resume list only shows the current group. Turn this on if you switch between official and third-party providers. You can optionally migrate official sessions into the shared group (backed up first) and restore them from backup when you turn it off. Note: resuming an old session across providers may fail because its encrypted_content reasoning can only be decrypted by the backend that created it.",
     "codexStackClassicSubagents": "Classic sub-agent tools in aggregation",
     "codexStackClassicSubagentsDescription": "Must be on when the main agent and a sub-agent use different providers, or the sub-agent cannot receive its task.",
     "codexStackClassicSubagentsForcedV2": "Codex config.toml turns on [features] multi_agent_v2, which takes precedence over this setting, so it has no effect.",

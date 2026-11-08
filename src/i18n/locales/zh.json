@@ -411,14 +411,14 @@
     },
     "unifyCodexHistory": {
       "title": "统一 Codex 会话历史",
-      "message": "开启后，Codex CLI 的 resume 列表会把官方订阅与第三方的会话合并显示（Codex 桌面版更新后已经可以显示全部会话，不受影响）。注意：跨供应商继续旧会话时，可能因对方后端无法解密 encrypted_content 推理内容而失败。\n\n可选择同时把现有官方会话历史迁入共享列表（迁移前自动备份到 ~/.cc-switch/backups，关闭开关时可选择恢复）。",
+      "message": "开启后，官方订阅改用共享的 custom 供应商标识，官方与第三方的会话归到同一组：新版 Codex 里两边的会话都能继续，CLI 的 resume 列表也会合并显示。\n\n可选择同时迁入现有官方会话；勾选后，之后每次启动也会把仍留在官方组的会话迁进来（迁移前自动备份到 ~/.cc-switch/backups，关闭开关时可选择还原）。不迁入的话，这些会话在新版 Codex 里只能查看。迁移完成后重启 Codex 生效。\n\n注意：跨供应商继续旧会话时，可能因对方后端无法解密 encrypted_content 推理内容而失败。",
       "migrateExisting": "同时迁入现有官方会话历史",
       "confirm": "我已了解，继续开启"
     },
     "unifyCodexHistoryOff": {
       "title": "关闭统一会话历史",
-      "message": "关闭后，Codex CLI 中官方订阅与第三方将恢复各自独立的会话列表（桌面版仍显示全部会话）。开启期间产生的会话因无法区分来源，将留在第三方历史中，CLI 在官方订阅下将看不到它们。",
-      "restoreBackup": "把开启时迁入的官方会话还原回官方历史（按备份精确还原）",
+      "message": "关闭后，官方订阅与第三方的会话重新分成两组：新版 Codex 只能继续当前供应商那一组，另一组只能查看。开启期间产生的会话无法区分来源，将留在第三方那组。",
+      "restoreBackup": "把迁入的官方会话还原回官方组（按备份精确还原）",
       "confirm": "关闭"
     },
     "usage": {
@@ -913,7 +913,7 @@
     "preserveCodexOfficialAuthOnSwitch": "非接管切换时保留官方登录",
     "preserveCodexOfficialAuthOnSwitchDescription": "控制未开启路由接管时切换第三方供应商是否保留 Codex 官方登录；路由接管期间始终保留",
     "unifyCodexSessionHistory": "统一 Codex 会话历史",
-    "unifyCodexSessionHistoryDescription": "只影响 Codex CLI：CLI 的 resume 列表只显示当前供应商的会话，开启后官方订阅改以共享的 custom 供应商标识运行，官方与第三方会话出现在同一列表中。Codex 桌面版更新后已经可以显示全部会话，只用桌面版无需开启。可选择把现有官方会话一并迁入（迁移前自动备份），关闭时可按备份恢复。注意：跨供应商继续旧会话时，对方后端可能无法解密会话中的 encrypted_content 推理内容，导致继续失败",
+    "unifyCodexSessionHistoryDescription": "官方订阅改用和第三方相同的 custom 供应商标识运行，官方与第三方的会话归到同一组。新版 Codex（桌面版 26.1103、CLI 0.167 起）只能继续与当前供应商同一组的会话，另一组只能查看；CLI 的 resume 列表也只显示当前这组。经常在官方和第三方之间切换时建议开启。可选择把官方组的会话迁入这一组（迁移前自动备份），关闭时可按备份还原。注意：跨供应商继续旧会话时，对方后端可能无法解密会话中的 encrypted_content 推理内容，导致继续失败",
     "codexStackClassicSubagents": "聚合模式下子 agent 用经典工具",
     "codexStackClassicSubagentsDescription": "主、子 agent 不在同一家供应商时必须打开，否则子 agent 收不到任务。",
     "codexStackClassicSubagentsForcedV2": "Codex 的 config.toml 里打开了 [features] multi_agent_v2，它比这个开关优先，开关不会生效",

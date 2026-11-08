@@ -534,9 +534,10 @@ pub struct AppSettings {
     /// providers. Opt-in: defaults to false.
     #[serde(default)]
     pub unify_codex_session_history: bool,
-    /// User opted in (via the enable dialog checkbox) to migrate existing
-    /// official sessions ("openai" bucket) into the shared bucket. Persisted so
-    /// a failed migration retries at startup; cleared when the toggle turns off.
+    /// User opted in (via the enable dialog checkbox) to migrate official
+    /// sessions ("openai" bucket) into the shared bucket. While set, every
+    /// launch also moves official sessions left behind since; cleared when the
+    /// toggle turns off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unify_codex_migrate_existing: Option<bool>,
     /// Codex 聚合模式下，合并目录里的每个模型都改用经典子 agent 工具（`multi_agent_version`

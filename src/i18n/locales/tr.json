@@ -404,14 +404,14 @@
     },
     "unifyCodexHistory": {
       "title": "Birleşik Codex oturum geçmişi",
-      "message": "Etkinleştirildiğinde Codex CLI’nin devam edilebilir oturum listesinde resmî abonelik ve üçüncü taraf oturumları birlikte görünür (Codex masaüstü uygulaması yakın tarihli bir güncellemeden beri tüm oturumları gösterebilir ve bu ayardan etkilenmez). Not: Diğer arka uç encrypted_content içindeki akıl yürütme verilerinin şifresini çözemediği için eski bir oturuma farklı bir sağlayıcıyla devam etmek başarısız olabilir.\n\nMevcut resmî oturum geçmişinizi de paylaşılan listeye taşıyabilirsiniz (önce ~/.cc-switch/backups konumuna yedeklenir; bu ayarı kapatırken geri yükleyebilirsiniz).",
+      "message": "Etkinleştirildiğinde resmî abonelik paylaşılan \"custom\" sağlayıcı kimliğiyle çalışır ve resmî ile üçüncü taraf oturumlar tek grupta toplanır: yeni Codex her ikisine de devam edebilir, CLI'nin devam listesi de bunları birlikte gösterir.\n\nMevcut resmî oturumlarınızı da taşıyabilirsiniz; taşırsanız CC Switch her açılışta geride kalan resmî oturumları da taşır (önce ~/.cc-switch/backups konumuna yedeklenir; bu ayarı kapatırken geri yükleyebilirsiniz). Taşımadığınız oturumlar yeni Codex'te salt okunur kalır. Taşıma bittikten sonra Codex'i yeniden başlatın.\n\nNot: Diğer arka uç encrypted_content içindeki akıl yürütme verilerinin şifresini çözemediği için eski bir oturuma farklı bir sağlayıcıyla devam etmek başarısız olabilir.",
       "migrateExisting": "Ayrıca mevcut resmi oturum geçmişini taşıyın",
       "confirm": "Anladım, etkinleştir"
     },
     "unifyCodexHistoryOff": {
       "title": "Birleşik oturum geçmişini kapat",
-      "message": "Kapatıldığında Codex CLI, resmi abonelik ve üçüncü taraf sağlayıcılar için ayrı oturum listelerine geri döner (masaüstü uygulaması tüm oturumları göstermeye devam eder). Bu açıkken oluşturulan oturumlar birbirinden ayrılamaz, dolayısıyla üçüncü taraf geçmişinde kalırlar ve CLI bunları resmi abonelik altında göstermez.",
-      "restoreBackup": "Etkinleştirme zamanında taşınan resmi oturumları resmi geçmişe geri yükleyin (yedekten tam geri yükleme)",
+      "message": "Kapatıldığında resmî ve üçüncü taraf oturumlar yeniden iki gruba ayrılır: yeni Codex yalnızca geçerli sağlayıcının grubuna devam edebilir, diğer grup salt okunur olur. Bu açıkken oluşturulan oturumlar birbirinden ayrılamaz, bu yüzden üçüncü taraf grubunda kalırlar.",
+      "restoreBackup": "Taşınan resmî oturumları resmî gruba geri yükleyin (yedekten tam geri yükleme)",
       "confirm": "Kapat"
     },
     "usage": {
@@ -897,7 +897,7 @@
     "preserveCodexOfficialAuthOnSwitch": "Doğrudan geçişler için resmi giriş bilgilerini koruyun",
     "preserveCodexOfficialAuthOnSwitchDescription": "Yerel yönlendirme kapalıyken üçüncü taraf anahtarları kontrol eder. Devralma yönlendirmesi her zaman Codex resmi giriş bilgilerini korur.",
     "unifyCodexSessionHistory": "Birleşik Codex oturum geçmişi",
-    "unifyCodexSessionHistoryDescription": "Yalnızca Codex CLI'yi etkiler: devam edilebilir oturum listesi yalnızca mevcut sağlayıcının oturumlarını gösterir. Etkinleştirildiğinde resmi abonelik, paylaşılan \"özel\" sağlayıcı kimliği altında çalışır, böylece resmi ve üçüncü taraf oturumları tek bir listede görünür. Codex masaüstü uygulaması, yeni bir güncellemeden bu yana tüm oturumları gösterebilir, dolayısıyla yalnızca masaüstü kullanıcılarının buna ihtiyacı yoktur. İsteğe bağlı olarak mevcut resmi oturumları (öncelikle yedeklenen) taşıyabilir ve kapattığınızda bunları yedeklemeden geri yükleyebilirsiniz. Not: eski bir oturumun sağlayıcılar arasında sürdürülmesi başarısız olabilir, çünkü encrypted_content mantığının şifresi yalnızca onu oluşturan arka uç tarafından çözülebilir.",
+    "unifyCodexSessionHistoryDescription": "Resmî abonelik, üçüncü taraf sağlayıcılarla aynı \"custom\" sağlayıcı kimliğiyle çalışır; böylece tüm oturumlar tek bir grupta toplanır. Yeni Codex sürümleri (masaüstü 26.1103 / CLI 0.167 ve sonrası) yalnızca geçerli sağlayıcının grubundaki oturumlara devam edebilir; diğer grup salt okunur olur ve CLI'nin devam listesi yalnızca geçerli grubu gösterir. Resmî ve üçüncü taraf sağlayıcılar arasında geçiş yapıyorsanız açın. İsteğe bağlı olarak resmî oturumları paylaşılan gruba taşıyabilir (önce yedeklenir) ve kapatırken yedekten geri yükleyebilirsiniz. Not: eski bir oturumun sağlayıcılar arasında sürdürülmesi başarısız olabilir, çünkü encrypted_content mantığının şifresi yalnızca onu oluşturan arka uç tarafından çözülebilir.",
     "codexStackClassicSubagents": "Birleştirmedaki klasik alt ajan araçları",
     "codexStackClassicSubagentsDescription": "Ana ajan ile alt ajan farklı sağlayıcılar kullandığında açık olmalıdır; aksi halde alt ajan görevini alamaz.",
     "codexStackClassicSubagentsForcedV2": "Codex config.toml, bu ayara göre öncelikli olan [features] multi_agent_v2'yi açar, dolayısıyla hiçbir etkisi olmaz.",
