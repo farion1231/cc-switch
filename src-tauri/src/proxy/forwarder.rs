@@ -2080,11 +2080,12 @@ impl RequestForwarder {
                 );
             }
 
-            // Kimi 会在工具调用后再吐一条空助手消息，下一轮又拒收这段历史（见
-            // `transform_codex_responses_kimi_history`）。只对 Kimi / Moonshot 上游、
-            // 只在出现这种排列时改写。
+            // Kimi 会在工具调用后再吐一条空助手消息，下一轮又拒收这段历史；DeepSeek 同样
+            // 拒收，别家留在同一线程里的这种排列续到它就会中（见
+            // `transform_codex_responses_kimi_history`）。只对这几家上游、只在出现这种排列
+            // 时改写。
             if !codex_official_auth_passthrough
-                && super::providers::transform_codex_responses_kimi_history::upstream_is_kimi(
+                && super::providers::transform_codex_responses_kimi_history::upstream_rejects_messages_inside_tool_calls(
                     &base_url,
                 )
                 && super::providers::transform_codex_responses_kimi_history::repair_tool_history(
@@ -2092,7 +2093,7 @@ impl RequestForwarder {
                 )
             {
                 log::debug!(
-                    "[Codex] Reordered assistant messages inside tool-call groups for Kimi (provider={})",
+                    "[Codex] Reordered assistant messages inside tool-call groups (provider={})",
                     provider.id
                 );
             }

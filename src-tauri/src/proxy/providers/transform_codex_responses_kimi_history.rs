@@ -1,10 +1,15 @@
-//! Kimi For Coding / Moonshot 原生 Responses：把 Kimi 自己产出、却又拒收的历史排列理顺。
+//! Kimi For Coding / Moonshot / DeepSeek 原生 Responses：把工具调用组里夹着助手消息的历史
+//! 排列理顺。
 //!
 //! Kimi 有时在一次回复里先给出工具调用，再给出一条（多半是空文字的）助手消息。
 //! Codex 按收到的顺序记进历史，下一轮原样带回去，这条消息就夹在工具调用和它的结果
 //! 之间。Kimi 在内部转成 Chat 消息后校验，报「an assistant message with 'tool_calls'
 //! must be followed by tool messages」，整个线程从此每轮都失败；空文字的助手消息放在
 //! 别处也会被拒（「text content is empty」）。
+//!
+//! DeepSeek 的校验相同（报「No tool output found for tool call」）。它自己不吐这种排列，
+//! 但同一线程里别家（如 xAI Grok 在调用后补一句说明）留下的历史续到 DeepSeek 时就会中；
+//! 实测它收「推理→消息→调用→结果」，即下面的挪法。
 //!
 //! 只改这两种排列：夹在调用与结果之间的助手消息，有文字的挪到这组调用前面（先说话
 //! 再调工具），空文字的去掉；不在调用组里的空文字助手消息也去掉。改写是确定的，同一
@@ -16,12 +21,32 @@ use std::collections::HashSet;
 const CALL_TYPES: &[&str] = &["function_call", "custom_tool_call"];
 const OUTPUT_TYPES: &[&str] = &["function_call_output", "custom_tool_call_output"];
 
-/// 上游是不是 Kimi / Moonshot（与 Chat 转换的 `$ref` 改写共用同一份域名名单）。
-pub fn upstream_is_kimi(base_url: &str) -> bool {
+const DEEPSEEK_HOST_SUFFIXES: &[&str] = &["deepseek.com"];
+
+/// 上游是否拒收调用与结果之间的助手消息：Kimi / Moonshot（与 Chat 转换的 `$ref` 改写共用
+/// 同一份域名名单）和 DeepSeek。
+pub fn upstream_rejects_messages_inside_tool_calls(base_url: &str) -> bool {
     super::transform_codex_chat_moonshot_schema::upstream_requires_ref_sibling_all_of(base_url)
+        || host_matches(base_url, DEEPSEEK_HOST_SUFFIXES)
 }
 
-/// 理顺 `input` 里 Kimi 拒收的助手消息排列。返回是否改动过请求体。
+fn host_matches(base_url: &str, suffixes: &[&str]) -> bool {
+    let Ok(url) = url::Url::parse(base_url.trim()) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let host = host.to_ascii_lowercase();
+    suffixes.iter().any(|suffix| {
+        host == *suffix
+            || host
+                .strip_suffix(suffix)
+                .is_some_and(|prefix| prefix.ends_with('.'))
+    })
+}
+
+/// 理顺 `input` 里这些上游拒收的助手消息排列。返回是否改动过请求体。
 pub fn repair_tool_history(body: &mut Value) -> bool {
     let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) else {
         return false;
@@ -210,10 +235,15 @@ mod tests {
     }
 
     #[test]
-    fn only_kimi_and_moonshot_hosts_are_gated_in() {
-        assert!(upstream_is_kimi("https://api.kimi.com/coding/v1"));
-        assert!(upstream_is_kimi("https://api.moonshot.cn/v1"));
-        assert!(!upstream_is_kimi("https://api.deepseek.com/v1"));
-        assert!(!upstream_is_kimi("https://api.kimi.com.evil.net/v1"));
+    fn kimi_moonshot_and_deepseek_hosts_are_gated_in() {
+        let gated = upstream_rejects_messages_inside_tool_calls;
+        assert!(gated("https://api.kimi.com/coding/v1"));
+        assert!(gated("https://api.moonshot.cn/v1"));
+        assert!(gated("https://api.deepseek.com/v1"));
+        assert!(gated("https://api.deepseek.com"));
+        assert!(!gated("https://api.kimi.com.evil.net/v1"));
+        assert!(!gated("https://api.deepseek.com.evil.net/v1"));
+        assert!(!gated("https://notdeepseek.com/v1"));
+        assert!(!gated("https://api.minimaxi.com/v1"));
     }
 }
