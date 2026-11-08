@@ -6,6 +6,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { listen } from "@tauri-apps/api/event";
 import { toast } from "@/lib/toast";
 import { settingsApi } from "@/lib/api";
 import type {
@@ -270,9 +271,24 @@ const EMPTY_TOOL_VERSIONS: ToolVersion[] = [];
 let toolVersionRequestSequence = 0;
 const latestToolVersionRequests = new Map<string, number>();
 
+/**
+ * 安装 / 升级 / 卸载的进度（后端 `tool-lifecycle-progress` 事件）。所有写入在后端
+ * 串行执行，前面有别的工具在跑时先是 queued；轮到它后 running，并带命令最新一行输出。
+ */
+export type ToolProgress =
+  | { stage: "queued" }
+  | { stage: "running"; startedAt: number; line?: string };
+
+interface ToolLifecycleProgressEvent {
+  tools: string[];
+  stage: "queued" | "running" | "output";
+  line?: string;
+}
+
 interface ToolManagementState {
   toolVersionsCache: { data: ToolVersion[]; at: number } | null;
   busyTools: ReadonlyMap<ToolName, ToolLifecycleAction>;
+  toolProgress: ReadonlyMap<ToolName, ToolProgress>;
   pendingUpgrades: readonly PendingUpgrade[];
   batchAction: ToolLifecycleAction | null;
   /** 每个工具的安装分布（路径、来源、多处安装），页面打开时探测一次 */
@@ -284,6 +300,7 @@ interface ToolManagementState {
 let toolManagementState: ToolManagementState = {
   toolVersionsCache: null,
   busyTools: new Map(),
+  toolProgress: new Map(),
   pendingUpgrades: [],
   batchAction: null,
   installReports: null,
@@ -299,6 +316,44 @@ function subscribeToolManagement(listener: () => void) {
 function updateToolManagementState(update: Partial<ToolManagementState>) {
   toolManagementState = { ...toolManagementState, ...update };
   toolManagementListeners.forEach((listener) => listener());
+}
+
+// 进度只记给仍在忙的工具：任务结束后迟到的输出不会让卡片重新出现进度。
+function applyToolProgressEvent(event: ToolLifecycleProgressEvent) {
+  const next = new Map(toolManagementState.toolProgress);
+  let changed = false;
+  for (const name of event.tools) {
+    const tool = name as ToolName;
+    if (!toolManagementState.busyTools.has(tool)) continue;
+    const current = next.get(tool);
+    if (event.stage === "queued") {
+      next.set(tool, { stage: "queued" });
+    } else if (event.stage === "running" || current?.stage !== "running") {
+      next.set(tool, {
+        stage: "running",
+        startedAt: Date.now(),
+        line: event.line,
+      });
+    } else if (event.line) {
+      next.set(tool, { ...current, line: event.line });
+    } else {
+      continue;
+    }
+    changed = true;
+  }
+  if (changed) updateToolManagementState({ toolProgress: next });
+}
+
+// 与任务一样跟随应用会话：离开「应用」页时任务还在跑，监听也不能停。
+let toolProgressListener: Promise<unknown> | null = null;
+function ensureToolProgressListener() {
+  toolProgressListener ??= listen<ToolLifecycleProgressEvent>(
+    "tool-lifecycle-progress",
+    ({ payload }) => applyToolProgressEvent(payload),
+  ).catch((error) => {
+    toolProgressListener = null;
+    console.error("[useToolManagement] Failed to listen for progress", error);
+  });
 }
 
 // 把探测结果按 name 合并进已有列表：替换同名项、追加新项；空列表时直接采用新结果。
@@ -362,10 +417,12 @@ export function useToolManagement() {
   const {
     toolVersionsCache,
     busyTools,
+    toolProgress,
     pendingUpgrades,
     batchAction,
     installReports,
   } = useSyncExternalStore(subscribeToolManagement, getToolManagementState);
+  useEffect(ensureToolProgressListener, []);
   const toolVersions = toolVersionsCache?.data ?? EMPTY_TOOL_VERSIONS;
   const pendingUpgrade = pendingUpgrades[0] ?? null;
   // 有缓存（哪怕已超期）就先展示旧值、初始不 loading；超期时由挂载副作用触发后台
@@ -389,8 +446,12 @@ export function useToolManagement() {
   const releaseTools = useCallback((toolNames: ToolName[]) => {
     if (toolNames.length === 0) return;
     const next = new Map(toolManagementState.busyTools);
-    toolNames.forEach((name) => next.delete(name));
-    updateToolManagementState({ busyTools: next });
+    const progress = new Map(toolManagementState.toolProgress);
+    toolNames.forEach((name) => {
+      next.delete(name);
+      progress.delete(name);
+    });
+    updateToolManagementState({ busyTools: next, toolProgress: progress });
   }, []);
 
   const toolVersionByName = useMemo(() => {
@@ -1069,6 +1130,7 @@ export function useToolManagement() {
     isLoadingTools,
     loadingTools,
     busyTools,
+    toolProgress,
     batchAction,
     pendingUpgrade,
     updatableToolNames,

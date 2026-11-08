@@ -361,16 +361,19 @@ async fn batches_allow_stdio_cold_starts_longer_than_ten_seconds() {
     let marker = dir.path().join("slow-start");
     let mut spec = stdio_spec(&marker, false);
     spec["env"]["MCP_TEST_STARTUP_DELAY_MS"] = json!("11000");
-    // Exercise the shell launcher used by Windows MCP presets as well.
+    // Exercise the shell launcher used by Windows MCP presets as well. cmd.exe
+    // cannot use a UNC working directory, so skip it when TEMP is on a WSL share.
     #[cfg(windows)]
     {
-        spec["command"] = json!("cmd");
-        spec["args"] = json!([
-            "/d",
-            "/c",
-            STDIO_FIXTURE.1,
-            "argument with spaces & symbols"
-        ]);
+        if !crate::config::is_wsl_path(dir.path()) {
+            spec["command"] = json!("cmd");
+            spec["args"] = json!([
+                "/d",
+                "/c",
+                STDIO_FIXTURE.1,
+                "argument with spaces & symbols"
+            ]);
+        }
     }
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     start_checks(vec![server(0, spec, true)], move |result| {

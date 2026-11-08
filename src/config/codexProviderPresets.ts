@@ -4498,7 +4498,8 @@ requires_openai_auth = true`,
   {
     name: "Mistral AI",
     websiteUrl: "https://mistral.ai",
-    apiKeyUrl: "https://console.mistral.ai/api-keys",
+    // Vibe 订阅额度与 API 共用，Key 在 Code > Vibe CLI 页创建（同 Claude 预设）
+    apiKeyUrl: "https://chat.mistral.ai/code/extensions",
     auth: generateThirdPartyAuth(""),
     // 官方 OpenAPI（docs.mistral.ai/openapi.yaml，2026-10-14 核对）只列
     // /v1/chat/completions，Bearer 鉴权；官方给 Codex 的只有 MCP 接法，没有模型
@@ -4506,7 +4507,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "mistral",
       "https://api.mistral.ai/v1",
-      "mistral-medium-3-5",
+      "mistral-large-4",
     ),
     endpointCandidates: ["https://api.mistral.ai/v1"],
     // /v1/responses 无 Key 实测 401（网关配了路由），但 OpenAPI、llms-full.txt
@@ -4514,16 +4515,19 @@ requires_openai_auth = true`,
     // 由转换层转成 function）。Chat 请求 schema 不收额外字段，转换层加的
     // stream_options 与透传的 user / logit_bias / seed 会不会被拒，未经真 Key 实测
     apiFormat: "openai_chat",
-    // 模型取官方模型表（docs.mistral.ai/models.md 同日）的固定版本 ID，均为 GA，
-    // 窗口官方写 256k、收文本与图片。两款都支持 reasoning_effort（官方只写
-    // none / high），但开推理后流式 content 是 thinking/text 分块数组，转换层
-    // 暂不解析，第一版不声明 codexChatReasoning、不下发推理参数，也不填档位。
-    // 首行 = 默认模型，须与 config 的 model 一致
+    // 模型取官方模型表（docs.mistral.ai/models.md，2026-11-06 核对）的 GA 型号：
+    // Medium 3.5 已于 10-31 弃用，主力改 Mistral Large 4（窗口官方写 1M，按
+    // 1000000 计），Small 4 窗口 256k，均收文本与图片。Large 4 档位只收
+    // low / medium / high（不收 none），Small 4 收 none / high；推理时流式
+    // content 是 thinking/text 分块数组，转换层暂不解析，第一版不声明
+    // codexChatReasoning、不下发推理参数，也不填档位（Large 4 不发档位时是否
+    // 仍推理官方未写）。首行 = 默认模型，须与 config 的 model 一致。以上风险
+    // 未经真 Key 冒烟，2026-11-06 起照常展示（不再隐藏）
     modelCatalog: modelCatalog([
       {
-        model: "mistral-medium-3-5",
-        displayName: "Mistral Medium 3.5",
-        contextWindow: 256000,
+        model: "mistral-large-4",
+        displayName: "Mistral Large 4",
+        contextWindow: 1000000,
         inputModalities: ["text", "image"],
       },
       {
@@ -4535,9 +4539,6 @@ requires_openai_auth = true`,
     ]),
     category: "cn_official",
     icon: "mistral",
-    // 先隐藏：上面的转换层风险（stream_options / 额外字段可能 422、推理分块
-    // 数组）真 Key 冒烟通过前不在列表里展示
-    hidden: true,
   },
   {
     name: "Cloudflare AI Gateway",
@@ -4669,6 +4670,24 @@ requires_openai_auth = true`,
     ],
     icon: "aihubmix",
     iconColor: "#006FFB",
+  },
+  {
+    name: "Genesis",
+    websiteUrl: "https://genesis.moi.matrixorigin.cn/taas/",
+    apiKeyUrl: "https://uc.moi.matrixorigin.cn/account/credentials?app=genesis",
+    category: "aggregator",
+    // 矩阵起源 TaaS 原生提供 /v1/responses（实测 kimi-k3 返回 200），直连不经
+    // 转换。起步模型 kimi-k3，「获取模型」按账号拉取对话模型（#9269）
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "genesis",
+      "https://token.moi.matrixorigin.cn/v1",
+      "kimi-k3",
+    ),
+    apiFormat: "openai_responses",
+    modelCatalog: modelCatalog(["kimi-k3"]),
+    endpointCandidates: ["https://token.moi.matrixorigin.cn/v1"],
+    icon: "genesis",
   },
   {
     name: "CherryIN",
@@ -5081,5 +5100,42 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
       "gpt-6.1-sol",
     ),
     icon: "aicoming",
+  },
+  {
+    name: "TokenPlus",
+    websiteUrl: "https://www.tokenplus.cn/",
+    apiKeyUrl: "https://www.tokenplus.cn/workspace",
+    category: "aggregator",
+    partnerPromotionKey: "tokenplus",
+    icon: "tokenplus",
+    auth: generateThirdPartyAuth(""),
+    config: `model_provider = "custom"
+model = "deepseek/deepseek-v4.1-flash-1017"
+disable_response_storage = true
+
+[model_providers.custom]
+name = "tokenplus"
+base_url = "https://api.tokenplus.cn/v1"
+wire_api = "responses"
+requires_openai_auth = true`,
+    apiFormat: "openai_chat",
+    modelCatalog: [
+      {
+        model: "deepseek/deepseek-v4.1-flash-1017",
+        displayName: "DeepSeek V4.1 Flash 1017",
+      },
+      {
+        model: "z-ai/glm-5.3-flash",
+        displayName: "GLM 5.3 Flash",
+      },
+      {
+        model: "moonshot-ai/kimi-k3.1-pro",
+        displayName: "Kimi K3.1 Pro",
+      },
+      {
+        model: "minimax/m3.1-flash",
+        displayName: "MiniMax M3.1 Flash",
+      },
+    ],
   },
 ];
