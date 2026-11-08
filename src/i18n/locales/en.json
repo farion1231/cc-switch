@@ -399,8 +399,10 @@
       "thirdPartyBucket": "third-party providers",
       "enable": "Unify",
       "dismiss": "Don't show again",
-      "enabled": "Unified session history is on. Old sessions are migrating in the background; restart Codex once it's done.",
-      "enableFailed": "Failed to turn on unified session history: {{error}}"
+      "enabled": "Unified session history is on. Old sessions are migrating in the background; you'll be notified when it's done.",
+      "enableFailed": "Failed to turn on unified session history: {{error}}",
+      "migrationFinished": "Migrated {{count}} old sessions. Restart Codex to continue them.",
+      "migrationFailed": "Failed to migrate old sessions: {{error}}. CC Switch will retry on next launch."
     }
   },
   "confirm": {

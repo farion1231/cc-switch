@@ -399,8 +399,10 @@
       "thirdPartyBucket": "第三方供應商",
       "enable": "開啟統一",
       "dismiss": "不再提示",
-      "enabled": "已開啟統一會話歷史，舊會話正在背景遷入，完成後重新啟動 Codex 即可繼續",
-      "enableFailed": "開啟統一會話歷史失敗：{{error}}"
+      "enabled": "已開啟統一會話歷史，舊會話正在背景遷入，遷完會再提示你",
+      "enableFailed": "開啟統一會話歷史失敗：{{error}}",
+      "migrationFinished": "已遷入 {{count}} 個舊會話，重新啟動 Codex 後即可繼續",
+      "migrationFailed": "遷入舊會話失敗：{{error}}。下次啟動 CC Switch 會自動重試"
     }
   },
   "confirm": {

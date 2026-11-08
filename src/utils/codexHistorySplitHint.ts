@@ -5,6 +5,44 @@ import { settingsApi } from "@/lib/api";
 import type { CodexHistorySplitHint } from "@/lib/api/providers";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
+/** 后端 `codex-unify-migration-finished` 事件：开启统一后的后台迁入跑完了（或失败）。 */
+export const CODEX_UNIFY_MIGRATION_FINISHED_EVENT =
+  "codex-unify-migration-finished";
+
+export interface CodexUnifyMigrationFinished {
+  migratedStateRows: number;
+  migratedJsonlFiles: number;
+  error?: string | null;
+}
+
+/** 迁完才算数：此刻重启 Codex，原来锁住的旧会话才能继续。 */
+export function showCodexUnifyMigrationFinished(
+  payload: CodexUnifyMigrationFinished,
+  t: TFunction,
+) {
+  if (payload.error) {
+    toast.error(
+      t("notifications.codexHistorySplit.migrationFailed", {
+        defaultValue:
+          "迁入旧会话失败：{{error}}。下次启动 CC Switch 会自动重试",
+        error: payload.error,
+      }),
+      { duration: 10000, closeButton: true },
+    );
+    return;
+  }
+  // state DB 读不到时只剩 jsonl 的计数
+  const count = payload.migratedStateRows || payload.migratedJsonlFiles;
+  if (count <= 0) return;
+  toast.success(
+    t("notifications.codexHistorySplit.migrationFinished", {
+      defaultValue: "已迁入 {{count}} 个旧会话，重启 Codex 后即可继续",
+      count,
+    }),
+    { duration: 10000, closeButton: true },
+  );
+}
+
 /**
  * Codex 切换跨了组（官方 openai ↔ 第三方 custom）、统一会话历史又关着时提示一次：
  * 新版 Codex 只能继续当前组的会话，另一组只能查看。可当场开启统一，或不再提示。
@@ -37,7 +75,7 @@ export function showCodexHistorySplitHint(
       toast.success(
         t("notifications.codexHistorySplit.enabled", {
           defaultValue:
-            "已开启统一会话历史，旧会话正在后台迁入，完成后重启 Codex 即可继续",
+            "已开启统一会话历史，旧会话正在后台迁入，迁完会再提示你",
         }),
         { duration: 6000 },
       );
