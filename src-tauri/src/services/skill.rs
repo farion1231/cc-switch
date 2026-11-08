@@ -1279,7 +1279,8 @@ impl SkillService {
     /// `__pycache__/` 目录与 `*.pyc` 文件是 Python 运行/导入时生成的字节码缓存，
     /// 不属于 Skill 自身内容；只跑一遍 Skill（不修改任何源文件）就会让目录哈希
     /// 发生变化，结果是 Skill 会被报为「有更新」，用户点更新又会触发整目录替
-    /// 换（见 #7772）。忽略这两类条目后，运行 Skill 不再影响哈希。    #[allow(clippy::only_used_in_recursion)]
+    /// 换（见 #7772）。忽略这两类条目后，运行 Skill 不再影响哈希。
+    #[allow(clippy::only_used_in_recursion)]
     fn collect_files_for_hash(
         base: &Path,
         current: &Path,
