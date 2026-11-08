@@ -844,7 +844,7 @@ function ProviderFormFull({
   const [localCodexImpersonateClaudeCode, setLocalCodexImpersonateClaudeCode] =
     useState<boolean>(initialData?.meta?.impersonateClaudeCode === true);
 
-  // Codex → Anthropic output ceiling override (empty string = use the 8192 default).
+  // Codex → Anthropic output ceiling override (empty string = use the 32000 default).
   // Kept as a string so the numeric input can be cleared; parsed on save.
   const [localCodexMaxOutputTokens, setLocalCodexMaxOutputTokens] =
     useState<string>(
