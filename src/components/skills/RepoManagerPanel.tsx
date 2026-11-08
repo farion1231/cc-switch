@@ -11,7 +11,12 @@ import {
 } from "@/components/ui/sheet";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { settingsApi } from "@/lib/api";
-import type { DiscoverableSkill, SkillRepo } from "@/lib/api/skills";
+import type {
+  DiscoverableSkill,
+  SkillRepo,
+  SkillRepoFailure,
+} from "@/lib/api/skills";
+import { skillErrorReason } from "@/lib/errors/skillErrorParser";
 import { cn } from "@/lib/utils";
 import {
   CHECKBOX_CLASS,
@@ -19,10 +24,13 @@ import {
   LABEL_CLASS,
   MONO_FIELD_CLASS,
 } from "@/components/mcp/formBits";
+import { repoFailureKey } from "./repoFailures";
 
 interface RepoManagerPanelProps {
   repos: SkillRepo[];
   skills: DiscoverableSkill[];
+  /** 本次发现没读到的仓库：显示「读取失败」而不是「识别到 0 个」 */
+  failures?: SkillRepoFailure[];
   onAdd: (repo: SkillRepo) => Promise<void>;
   onRemove: (owner: string, name: string) => Promise<void>;
   /** 勾掉 = 停用（不参与发现），不删除 */
@@ -43,12 +51,29 @@ export function parseRepoUrl(
   return null;
 }
 
+/**
+ * 发现结果里的 `repoBranch` 是实际下载成功的分支，不一定等于配置的分支：
+ * 后端依次试「配置分支 → main → master」（`HEAD` / 空串表示默认分支，直接从
+ * main 开始试，见 `try_repo_branches`）。所以按同一张候选表匹配，否则配成 HEAD
+ * 或默认分支是 master 的仓库会显示 0 个（#9273）。
+ */
+function resolvableBranches(branch: string | undefined): string[] {
+  const configured = branch ?? "";
+  const branches =
+    configured && configured.toUpperCase() !== "HEAD" ? [configured] : [];
+  for (const fallback of ["main", "master"]) {
+    if (!branches.includes(fallback)) branches.push(fallback);
+  }
+  return branches;
+}
+
 export function countRepoSkills(skills: DiscoverableSkill[], repo: SkillRepo) {
+  const branches = resolvableBranches(repo.branch);
   return skills.filter(
     (skill) =>
       skill.repoOwner === repo.owner &&
       skill.repoName === repo.name &&
-      (skill.repoBranch || "main") === (repo.branch || "main"),
+      branches.includes(skill.repoBranch || "main"),
   ).length;
 }
 
@@ -56,12 +81,16 @@ export function countRepoSkills(skills: DiscoverableSkill[], repo: SkillRepo) {
 export function RepoManagerPanel({
   repos,
   skills,
+  failures = [],
   onAdd,
   onRemove,
   onToggle,
   onClose,
 }: RepoManagerPanelProps) {
   const { t } = useTranslation();
+  const failureByRepo = new Map(
+    failures.map((failure) => [repoFailureKey(failure), failure]),
+  );
   const [repoUrl, setRepoUrl] = useState("");
   const [branch, setBranch] = useState("");
   const [error, setError] = useState("");
@@ -190,6 +219,7 @@ export function RepoManagerPanel({
                 {repos.map((repo, index) => {
                   const id = `${repo.owner}/${repo.name}`;
                   const checkboxId = `sk-repo-manage-${index}`;
+                  const failure = failureByRepo.get(repoFailureKey(repo));
                   return (
                     <li
                       key={id}
@@ -219,11 +249,20 @@ export function RepoManagerPanel({
                         <span className="text-caption text-fg-2">
                           {repo.branch || "main"}
                           {" · "}
-                          {repo.enabled
-                            ? t("skills.repo.skillCount", {
-                                count: countRepoSkills(skills, repo),
-                              })
-                            : t("skillsPage.repos.disabled")}
+                          {!repo.enabled ? (
+                            t("skillsPage.repos.disabled")
+                          ) : failure ? (
+                            <span
+                              className="text-warning-text"
+                              title={skillErrorReason(failure.error, t)}
+                            >
+                              {t("skillsPage.repos.readFailed")}
+                            </span>
+                          ) : (
+                            t("skills.repo.skillCount", {
+                              count: countRepoSkills(skills, repo),
+                            })
+                          )}
                         </span>
                       </div>
                       <HoverTip content={t("common.view")}>

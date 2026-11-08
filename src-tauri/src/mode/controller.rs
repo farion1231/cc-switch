@@ -3704,6 +3704,14 @@ mod mode_tests {
         toml::from_str(&codex_text()).unwrap()
     }
 
+    /// CC Switch 写进 live 的目录指针，按当前配置目录现算：本机目录是绝对路径，
+    /// `\\wsl.localhost\...` 这类 UNC 目录是裸文件名（WSL2 夜测的 HOME 就在那里）。
+    fn ours_catalog_pointer() -> String {
+        crate::live::project::codex::catalog_pointer_value(
+            &crate::codex_config::get_codex_config_dir(),
+        )
+    }
+
     fn set_preservation(on: bool) {
         crate::settings::update_settings(crate::settings::AppSettings {
             preserve_codex_official_auth_on_switch: on,
@@ -3844,12 +3852,18 @@ command = "fs-server"
                 .get("model_catalog_json")
                 .and_then(|value| value.as_str().map(str::to_string))
         };
-        let ours = crate::live::project::codex::CATALOG_FILENAME;
+        // cc-switch 接管指针时写绝对路径（严格重读的 Codex 只认绝对形态；UNC 目录写裸文件名）。
+        let ours = ours_catalog_pointer();
 
         ProviderService::switch(&state, AppType::Codex, "a").expect("to a");
         assert_eq!(pointer().as_deref(), Some("/work/a-catalog.json"));
         ProviderService::switch(&state, AppType::Codex, "b").expect("to b");
-        assert_eq!(pointer().as_deref(), Some(ours), "{}", codex_text());
+        assert_eq!(
+            pointer().as_deref(),
+            Some(ours.as_str()),
+            "{}",
+            codex_text()
+        );
         ProviderService::switch(&state, AppType::Codex, "a").expect("back to a");
         ProviderService::switch(&state, AppType::Codex, "c").expect("to c");
         assert_eq!(pointer(), None, "{}", codex_text());
@@ -3865,7 +3879,12 @@ command = "fs-server"
         let with_user = format!("model_catalog_json = \"/work/mine.json\"\n{}", codex_text());
         fs::write(codex_config_path(), with_user).unwrap();
         ProviderService::switch(&state, AppType::Codex, "b").expect("to b");
-        assert_eq!(pointer().as_deref(), Some(ours), "{}", codex_text());
+        assert_eq!(
+            pointer().as_deref(),
+            Some(ours.as_str()),
+            "{}",
+            codex_text()
+        );
         let with_user = codex_text().replace(
             &format!("model_catalog_json = \"{ours}\""),
             "model_catalog_json = \"/work/mine.json\"",
@@ -7235,7 +7254,7 @@ model_provider = "c"
         );
         assert_eq!(
             doc["model_catalog_json"].as_str(),
-            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+            Some(ours_catalog_pointer().as_str())
         );
         // 窗口类全局键会覆盖每一行，改写进路由那家自己的行。
         assert!(doc.get("model_context_window").is_none(), "{doc:?}");
@@ -7906,7 +7925,7 @@ model_provider = "c"
             .expect("routing");
         assert_eq!(
             codex_doc()["model_catalog_json"].as_str(),
-            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+            Some(ours_catalog_pointer().as_str())
         );
         assert_eq!(
             stale_clients_of(&state).await,
@@ -7995,7 +8014,7 @@ model_provider = "c"
         assert_eq!(notice, None);
         assert_eq!(
             codex_doc()["model_catalog_json"].as_str(),
-            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+            Some(ours_catalog_pointer().as_str())
         );
     }
 
@@ -8031,7 +8050,7 @@ model_provider = "c"
         );
         assert_eq!(
             codex_doc()["model_catalog_json"].as_str(),
-            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+            Some(ours_catalog_pointer().as_str())
         );
         let slugs: Vec<String> = codex_catalog()["models"]
             .as_array()
