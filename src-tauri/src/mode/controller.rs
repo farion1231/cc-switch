@@ -3534,10 +3534,19 @@ mod mode_tests {
         assert!(!official_contract.contains("sk-relay"));
         assert_eq!(auth(), native_auth);
 
+        // 本机有 ChatGPT 登录：第三方路由也写成内置 openai（和官方路由同一个会话组），
+        // 之前的 custom 表仍是休眠形态，第三方的 Key 不进客户端文件。
         ProviderService::switch(&state, AppType::Codex, "relay").expect("route back");
         let third_party = fs::read_to_string(&config_path).unwrap();
-        assert!(third_party.contains(PROXY_TOKEN_PLACEHOLDER));
-        assert!(!third_party.contains("openai_base_url"), "{third_party}");
+        let doc: toml::Table = toml::from_str(&third_party).unwrap();
+        assert!(doc.get("model_provider").is_none(), "{third_party}");
+        assert_eq!(doc["openai_base_url"].as_str(), Some(base_url));
+        assert_eq!(
+            doc["model_providers"]["custom"]["experimental_bearer_token"].as_str(),
+            Some(PROXY_TOKEN_PLACEHOLDER)
+        );
+        assert!(!third_party.contains("sk-relay"), "{third_party}");
+        assert_eq!(auth(), native_auth);
         exit(&state, &AppType::Codex).await.expect("exit");
         assert_eq!(auth(), native_auth);
         assert!(!state
@@ -4206,18 +4215,71 @@ model_provider = "c"
 
         enter(&state, &AppType::Codex, false).await.expect("enter");
         assert_eq!(codex_login_file(), Some(chatgpt_login("acct")));
-        assert_eq!(
-            codex_doc()["model_providers"]["custom"]["requires_openai_auth"].as_bool(),
-            Some(true)
-        );
+        // 还回来的登录算数：第三方路由也写成内置 openai，会话和官方同组。
+        let doc = codex_doc();
+        assert!(doc.get("model_provider").is_none(), "{}", codex_text());
+        assert!(doc["openai_base_url"]
+            .as_str()
+            .is_some_and(|url| url.starts_with("http://127.0.0.1:")));
 
-        // 只还一次：在 Codex 里登出后换路由，不会又被登上。
+        // 只还一次：在 Codex 里登出后换路由，不会又被登上；没有登录就退回 custom 表。
         fs::remove_file(codex_auth_path()).unwrap();
         set_route(&state, &AppType::Codex, "b")
             .await
             .expect("route b");
         assert_eq!(codex_login_file(), None);
+        let doc = codex_doc();
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        assert!(doc.get("openai_base_url").is_none(), "{}", codex_text());
+        assert_eq!(
+            doc["model_providers"]["custom"]["requires_openai_auth"].as_bool(),
+            Some(false)
+        );
         exit(&state, &AppType::Codex).await.expect("exit");
+    }
+
+    /// 有登录也仍写 custom 表的两种情况：统一会话历史开着（本来全在 custom 组），行里写了
+    /// 内置 openai 表达不了的客户端设置（流空闲超时等，Codex 只认 provider 表上的）。
+    #[tokio::test]
+    #[serial]
+    async fn codex_third_party_route_keeps_the_custom_table_when_openai_cannot_carry_it() {
+        let slow = Provider::with_id(
+            "slow".to_string(),
+            "Slow".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-slow" },
+                "config": "model_provider = \"custom\"\nmodel = \"m\"\n\n[model_providers.custom]\nname = \"slow\"\nbase_url = \"https://slow.example/v1\"\nwire_api = \"responses\"\nstream_idle_timeout_ms = 900000\n"
+            }),
+            None,
+        );
+        let [a, _] = codex_a_b();
+        for (unified, route) in [(true, "a"), (false, "slow")] {
+            let _home = Home::new();
+            crate::settings::update_settings(crate::settings::AppSettings {
+                preserve_codex_official_auth_on_switch: true,
+                unify_codex_session_history: unified,
+                ..Default::default()
+            })
+            .unwrap();
+            seed_codex("", Some(&chatgpt_login("acct")));
+            let state = state_with(AppType::Codex, &[a.clone(), slow.clone()], route).await;
+            ProviderService::switch(&state, AppType::Codex, route).expect("direct");
+            enter(&state, &AppType::Codex, false).await.expect("enter");
+            let doc = codex_doc();
+            assert_eq!(
+                doc.get("model_provider").and_then(|v| v.as_str()),
+                Some("custom"),
+                "unified={unified}: {}",
+                codex_text()
+            );
+            assert!(doc.get("openai_base_url").is_none(), "{}", codex_text());
+            let table = &doc["model_providers"]["custom"];
+            assert_eq!(table["requires_openai_auth"].as_bool(), Some(true));
+            if route == "slow" {
+                assert_eq!(table["stream_idle_timeout_ms"].as_integer(), Some(900000));
+            }
+            exit(&state, &AppType::Codex).await.expect("exit");
+        }
     }
 
     fn codex_login_on_disk() -> Value {
