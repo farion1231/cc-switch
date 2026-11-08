@@ -1256,7 +1256,8 @@ impl SkillService {
         use sha2::{Digest, Sha256};
 
         let mut files: Vec<PathBuf> = Vec::new();
-        Self::collect_files_for_hash(dir, dir, skip_bytecode, &mut files)?;        files.sort();
+        Self::collect_files_for_hash(dir, dir, skip_bytecode, &mut files)?;
+        files.sort();
 
         let mut hasher = Sha256::new();
         for file_path in &files {
@@ -1283,7 +1284,8 @@ impl SkillService {
         base: &Path,
         current: &Path,
         skip_bytecode: bool,
-        files: &mut Vec<PathBuf>,    ) -> Result<()> {
+        files: &mut Vec<PathBuf>,
+    ) -> Result<()> {
         let entries = fs::read_dir(current)
             .with_context(|| format!("读取目录失败: {}", current.display()))?;
         for entry in entries {
@@ -1297,7 +1299,8 @@ impl SkillService {
                 if skip_bytecode && name == "__pycache__" {
                     continue;
                 }
-                Self::collect_files_for_hash(base, &path, skip_bytecode, files)?;            } else {
+                Self::collect_files_for_hash(base, &path, skip_bytecode, files)?;
+            } else {
                 if skip_bytecode && name.ends_with(".pyc") {
                     continue;
                 }
@@ -1488,7 +1491,8 @@ impl SkillService {
         // 「有更新」的本地侧用过滤口径现算哈希：登记哈希（尤其旧版本登记的）
         // 可能把运行缓存一起哈希了，直接与过滤口径的远端哈希比较，会把
         // 「内容与上游完全相同、只差缓存」误报成有更新（funkpopo P2，#7781）。
-        current_filtered.or(local_hash) != Some(remote_hash)    }
+        current_filtered.or(local_hash) != Some(remote_hash)
+    }
 
     /// 检查所有已安装 Skill 的更新
     ///
@@ -7575,8 +7579,7 @@ mod tests {
         fs::create_dir_all(dir.join("__pycache__")).expect("create skill dir");
         fs::write(dir.join("SKILL.md"), "pristine").expect("write skill");
         fs::write(dir.join("__pycache__").join("helper.pyc"), b"bytecode").expect("write pyc");
-        let legacy_baseline =
-            SkillService::compute_legacy_dir_hash(&dir).expect("legacy hash");
+        let legacy_baseline = SkillService::compute_legacy_dir_hash(&dir).expect("legacy hash");
         let filtered_current = SkillService::compute_dir_hash(&dir).expect("filtered hash");
         assert_ne!(legacy_baseline, filtered_current, "fixture must differ");
 
@@ -7603,8 +7606,8 @@ mod tests {
         fs::create_dir_all(dir.join("__pycache__")).expect("create skill dir");
         fs::write(dir.join("SKILL.md"), "pristine").expect("write skill");
         fs::write(dir.join("__pycache__").join("helper.pyc"), b"bytecode").expect("write pyc");
-        let legacy_baseline = SkillService::compute_legacy_dir_hash(&dir)
-            .expect("legacy hash (cache baked in)");
+        let legacy_baseline =
+            SkillService::compute_legacy_dir_hash(&dir).expect("legacy hash (cache baked in)");
         // 基线登记后缓存被清理（纯运行现象，非源码改动）。
         fs::remove_file(dir.join("__pycache__").join("helper.pyc")).expect("clear cache");
         let filtered_current = SkillService::compute_dir_hash(&dir).expect("filtered hash");
@@ -7639,8 +7642,7 @@ mod tests {
             b"bytecode",
         )
         .expect("write pyc");
-        let legacy_baseline =
-            SkillService::compute_legacy_dir_hash(&dir).expect("legacy hash");
+        let legacy_baseline = SkillService::compute_legacy_dir_hash(&dir).expect("legacy hash");
         let clean_baseline = SkillService::compute_dir_hash(&dir).expect("clean hash");
         assert_ne!(legacy_baseline, clean_baseline, "fixture must differ");
 
