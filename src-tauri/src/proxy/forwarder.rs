@@ -555,6 +555,14 @@ impl RequestForwarder {
         self
     }
 
+    /// 故障转移换家时按目标家改 Codex 模型名，只对对话请求。图片、搜索这些独立接口带的是
+    /// 图片 / 搜索模型，不在目标家的文本模型目录里，换成它的文本模型就发错了。
+    fn maps_codex_failover_model(&self, app_type: &AppType, endpoint: &str) -> bool {
+        self.failover_chain
+            && matches!(app_type, AppType::Codex)
+            && CodexStandaloneEndpoint::from_effective_endpoint(endpoint).is_none()
+    }
+
     /// 这个请求读写路由状态吗：熔断器（许可、结果、健康度）、「正在使用」、代理统计
     /// （总数、成功率、故障转移次数、最近错误、活跃连接）、故障转移切换。Stack 模型的请求
     /// 和普通路由完全分开，一律不碰；只有用量日志照常按供应商记。以后新增路由状态也先问它。
@@ -1557,7 +1565,7 @@ impl RequestForwarder {
                 super::model_mapper::apply_model_mapping(body.clone(), provider);
             // Codex 行没有档位映射，客户端发的是路由那家的模型名：故障转移换到不认这个名字的
             // 那家时，换成它自己的模型。
-            if self.failover_chain && matches!(app_type, AppType::Codex) {
+            if self.maps_codex_failover_model(app_type, endpoint) {
                 super::model_mapper::map_codex_failover_model(mapped_body, provider)
             } else {
                 mapped_body
@@ -4979,6 +4987,32 @@ mod tests {
             failover_chain: false,
             last_outbound_model: std::sync::Mutex::new(None),
         }
+    }
+
+    #[test]
+    fn codex_failover_model_mapping_skips_standalone_endpoints() {
+        let mut forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        assert!(!forwarder.maps_codex_failover_model(&AppType::Codex, "/responses"));
+
+        forwarder.failover_chain = true;
+        for endpoint in ["/responses", "/responses/compact", "/chat/completions"] {
+            assert!(
+                forwarder.maps_codex_failover_model(&AppType::Codex, endpoint),
+                "{endpoint}"
+            );
+        }
+        for endpoint in [
+            "/images/generations",
+            "/images/edits",
+            "/images/generations?client_version=0.145.0",
+            "/alpha/search",
+        ] {
+            assert!(
+                !forwarder.maps_codex_failover_model(&AppType::Codex, endpoint),
+                "{endpoint}"
+            );
+        }
+        assert!(!forwarder.maps_codex_failover_model(&AppType::GrokBuild, "/responses"));
     }
 
     #[tokio::test]
