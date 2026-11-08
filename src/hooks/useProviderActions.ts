@@ -259,6 +259,7 @@ export function useProviderActions(
 
         if (activeApp === "codex" && options?.restartDesktop) {
           try {
+            const restartResult = await restartCodexDesktop(provider.id);
             const restartMessage = t(
               restartResult.action === "started"
                 ? "codexDesktop.switchedAndOpened"
