@@ -2063,6 +2063,23 @@ impl RequestForwarder {
                     provider.id
                 );
             }
+
+            // Kimi 会在工具调用后再吐一条空助手消息，下一轮又拒收这段历史（见
+            // `transform_codex_responses_kimi_history`）。只对 Kimi / Moonshot 上游、
+            // 只在出现这种排列时改写。
+            if !codex_official_auth_passthrough
+                && super::providers::transform_codex_responses_kimi_history::upstream_is_kimi(
+                    &base_url,
+                )
+                && super::providers::transform_codex_responses_kimi_history::repair_tool_history(
+                    &mut request_body,
+                )
+            {
+                log::debug!(
+                    "[Codex] Reordered assistant messages inside tool-call groups for Kimi (provider={})",
+                    provider.id
+                );
+            }
         }
 
         // Native Responses passthrough to xAI, directly or via Copilot/Grok.
