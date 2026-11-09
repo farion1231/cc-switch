@@ -44,6 +44,8 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Agy => crate::agy_config::customizations_dir(),
         // omp 只读按 profile 切换的 agent 目录里的 AGENTS.md（上游 discovery/builtin.ts）
         AppType::Omp => crate::omp_config::get_omp_agent_dir()?,
+        // AtomCode 的项目指令由它自己按 AGENTS.md 标准加载，管理页暂不接入。
+        AppType::AtomCode => crate::atomcode_config::data_dir(),
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
@@ -58,7 +60,8 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         | AppType::Agy
         | AppType::Kimi
         | AppType::Dsh
-        | AppType::Omp => "AGENTS.md",
+        | AppType::Omp
+        | AppType::AtomCode => "AGENTS.md",
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 

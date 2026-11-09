@@ -21,7 +21,8 @@ export interface DeepLinkImportRequest {
     | "mcode"
     | "kimi"
     | "dsh"
-    | "omp";
+    | "omp"
+    | "atomcode";
   name?: string;
   enabled?: boolean;
 

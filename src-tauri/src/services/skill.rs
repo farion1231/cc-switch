@@ -678,6 +678,8 @@ impl SkillService {
                 }
             }
             AppType::ClaudeDesktop | AppType::Mcode | AppType::Kimi | AppType::Dsh => {}
+            // AtomCode skills are managed through its own directories later.
+            AppType::AtomCode => {}
             AppType::Codex => {
                 if let Some(custom) = crate::settings::get_codex_override_dir() {
                     return Ok(custom.join("skills"));
@@ -742,6 +744,7 @@ impl SkillService {
             AppType::Pi => crate::pi_config::get_pi_agent_dir()?.join("skills"),
             AppType::Omp => crate::omp_config::get_omp_agent_dir()?.join("skills"),
             AppType::Agy => home.join(".gemini").join("config").join("skills"),
+            AppType::AtomCode => crate::atomcode_config::data_dir().join("skills"),
         })
     }
 

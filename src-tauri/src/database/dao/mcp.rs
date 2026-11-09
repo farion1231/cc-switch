@@ -102,7 +102,8 @@ impl Database {
             AppType::Dsh => Some("enabled_dsh"),
             AppType::Pi => Some("enabled_pi"),
             AppType::Omp => Some("enabled_omp"),
-            AppType::ClaudeDesktop | AppType::OpenClaw => None,
+            // AtomCode MCP sync is not wired yet (needs a schema column).
+            AppType::AtomCode | AppType::ClaudeDesktop | AppType::OpenClaw => None,
             AppType::Agy => Some("enabled_agy"),
         };
 

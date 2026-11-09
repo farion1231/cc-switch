@@ -5183,6 +5183,31 @@
       "legacyModelsJson": "Oh My Pi still has a legacy models.json, which omp migrates to models.yml on its next start. Run omp once, then add the provider again."
     }
   },
+  "atomcode": {
+    "empty": {
+      "title": "Add an AtomCode provider",
+      "description": "Configure an endpoint, API key and models. Existing custom providers appear here automatically."
+    },
+    "sharedProviders": "Added providers are written into AtomCode's config.toml (provider_accounts and models); pick the model inside AtomCode.",
+    "form": {
+      "providerKeyInvalid": "Provider key may only contain letters, digits, '-', '_' or '.'",
+      "providerKeyHint": "Unique identifier in config.toml (the provider_accounts key)",
+      "providerType": "API type",
+      "baseUrl": "Base URL",
+      "apiKey": "API Key",
+      "apiKeyPlaceholder": "sk-…",
+      "apiKeyHint": "Optional: when empty, the account relies on AtomCode's native OAuth (auth.toml).",
+      "models": "Models",
+      "addModel": "Add model",
+      "noModels": "Add at least one model",
+      "modelKey": "Model key",
+      "modelKeyPlaceholder": "deepseek-flash",
+      "modelId": "Model ID",
+      "contextWindow": "Context window",
+      "contextWindowPlaceholder": "Optional",
+      "removeModel": "Remove model"
+    }
+  },
   "dsh": {
     "empty": {
       "title": "Add a DeepSeek Harness provider",

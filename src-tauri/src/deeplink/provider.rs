@@ -404,6 +404,13 @@ pub(crate) fn build_provider_from_request(
             settings
         }
         AppType::Omp => build_omp_settings(request, api_format)?,
+        AppType::AtomCode => {
+            return Err(AppError::localized(
+                "atomcode.deeplink_unsupported",
+                "AtomCode 暂不支持通过链接导入供应商",
+                "AtomCode does not support importing providers via deep link yet",
+            ))
+        }
     };
 
     // Build usage script configuration if provided

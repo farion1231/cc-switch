@@ -16,7 +16,8 @@ export type AppType =
   | "kimi"
   | "dsh"
   | "agy"
-  | "omp";
+  | "omp"
+  | "atomcode";
 
 /** Skill 应用启用状态 */
 export interface SkillApps {
@@ -34,6 +35,7 @@ export interface SkillApps {
   dsh?: boolean;
   agy?: boolean;
   omp?: boolean;
+  atomcode?: boolean;
 }
 
 /** 已安装的 Skill（v3.10.0+ 统一结构） */

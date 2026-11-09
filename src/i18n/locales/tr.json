@@ -5111,6 +5111,31 @@
       "legacyModelsJson": "Oh My Pi'de eski biçimde bir models.json dosyası var. omp, sonraki açılışında bunu models.yml biçimine geçirir. omp'yi bir kez çalıştırın, ardından sağlayıcıyı yeniden ekleyin."
     }
   },
+  "atomcode": {
+    "empty": {
+      "title": "AtomCode sağlayıcısı ekle",
+      "description": "Bir uç nokta, API anahtarı ve modeller yapılandırın. Mevcut özel sağlayıcılar burada otomatik olarak görünür."
+    },
+    "sharedProviders": "Eklenen sağlayıcılar AtomCode'un config.toml dosyasına (provider_accounts ve models) yazılır; modeli AtomCode içinde seçin.",
+    "form": {
+      "providerKeyInvalid": "Sağlayıcı anahtarı yalnızca harf, rakam ve -, _, . içerebilir",
+      "providerKeyHint": "config.toml içindeki benzersiz tanımlayıcı (provider_accounts anahtarı)",
+      "providerType": "API türü",
+      "baseUrl": "Temel URL",
+      "apiKey": "API anahtarı",
+      "apiKeyPlaceholder": "sk-…",
+      "apiKeyHint": "İsteğe bağlı: boş bırakılırsa hesap, AtomCode'un yerel OAuth'ını (auth.toml) kullanır.",
+      "models": "Modeller",
+      "addModel": "Model ekle",
+      "noModels": "En az bir model ekleyin",
+      "modelKey": "Model anahtarı",
+      "modelKeyPlaceholder": "deepseek-flash",
+      "modelId": "Model kimliği",
+      "contextWindow": "Bağlam penceresi",
+      "contextWindowPlaceholder": "İsteğe bağlı",
+      "removeModel": "Modeli kaldır"
+    }
+  },
   "dsh": {
     "empty": {
       "title": "DeepSeek Harness sağlayıcısı ekle",

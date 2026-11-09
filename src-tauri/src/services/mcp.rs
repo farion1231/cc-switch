@@ -375,6 +375,10 @@ impl McpService {
             AppType::Pi => mcp::pi::sync(&server.id, Some(&server.server))?,
             AppType::Agy => mcp::agy::sync(&server.id, Some(&server.server))?,
             AppType::Omp => mcp::sync_single_server_to_omp(&server.id, &server.server)?,
+            // AtomCode MCP sync is not wired yet (needs an enabled_atomcode schema column).
+            AppType::AtomCode => {
+                log::debug!("AtomCode MCP sync is not wired yet, skipping");
+            }
         }
         Ok(())
     }
@@ -433,6 +437,10 @@ impl McpService {
             AppType::Pi => mcp::pi::sync(id, None)?,
             AppType::Agy => mcp::agy::sync(id, None)?,
             AppType::Omp => mcp::remove_server_from_omp(id)?,
+            // AtomCode MCP sync is not wired yet (needs an enabled_atomcode schema column).
+            AppType::AtomCode => {
+                log::debug!("AtomCode MCP sync is not wired yet, skipping remove");
+            }
         }
         Ok(())
     }

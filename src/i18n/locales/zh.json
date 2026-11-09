@@ -5183,6 +5183,31 @@
       "legacyModelsJson": "Oh My Pi 目录里还是旧的 models.json，omp 会在下次启动时把它迁移成 models.yml。请先运行一次 omp，再回来添加供应商。"
     }
   },
+  "atomcode": {
+    "empty": {
+      "title": "添加 AtomCode 供应商",
+      "description": "配置请求地址、API Key 和模型。已有的自定义供应商会自动显示在这里。"
+    },
+    "sharedProviders": "已添加的供应商会一起写进 AtomCode 的 config.toml（provider_accounts 与 models），在 AtomCode 里选模型即可。",
+    "form": {
+      "providerKeyInvalid": "标识格式无效，只能使用字母、数字和 - _ .",
+      "providerKeyHint": "config.toml 中 provider_accounts 的账号键，保存后不可修改",
+      "providerType": "接口类型",
+      "baseUrl": "请求地址",
+      "apiKey": "API Key",
+      "apiKeyPlaceholder": "sk-…",
+      "apiKeyHint": "可选：留空时账号依赖 AtomCode 自带的 OAuth 授权（auth.toml）。",
+      "models": "模型列表",
+      "addModel": "添加模型",
+      "noModels": "请至少添加一个模型",
+      "modelKey": "模型键",
+      "modelKeyPlaceholder": "deepseek-flash",
+      "modelId": "模型 ID",
+      "contextWindow": "上下文窗口",
+      "contextWindowPlaceholder": "可选",
+      "removeModel": "移除模型"
+    }
+  },
   "dsh": {
     "empty": {
       "title": "添加 DeepSeek Harness 供应商",

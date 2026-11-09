@@ -51,6 +51,8 @@ impl McpApps {
             AppType::Omp => self.omp,
             AppType::ClaudeDesktop => false,
             AppType::Agy => self.agy,
+            // AtomCode MCP sync is not wired yet (needs a schema column).
+            AppType::AtomCode => false,
         }
     }
 
@@ -71,6 +73,7 @@ impl McpApps {
             AppType::ClaudeDesktop => {}
             AppType::Agy => self.agy = enabled,
             AppType::Omp => self.omp = enabled,
+            AppType::AtomCode => {}
         }
     }
 
@@ -180,6 +183,7 @@ impl SkillApps {
             AppType::Agy => self.agy,
             AppType::Omp => self.omp,
             AppType::ClaudeDesktop => false,
+            AppType::AtomCode => false,
         }
     }
 
@@ -200,6 +204,7 @@ impl SkillApps {
             AppType::Agy => self.agy = enabled,
             AppType::Omp => self.omp = enabled,
             AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
+            AppType::AtomCode => {} // AtomCode skills are not wired yet
         }
     }
 
@@ -483,6 +488,7 @@ pub enum AppType {
     Dsh,
     Agy,
     Omp,
+    AtomCode,
 }
 
 impl AppType {
@@ -502,6 +508,7 @@ impl AppType {
             AppType::Dsh => "dsh",
             AppType::Agy => "agy",
             AppType::Omp => "omp",
+            AppType::AtomCode => "atomcode",
         }
     }
 
@@ -521,6 +528,7 @@ impl AppType {
                 | AppType::Kimi
                 | AppType::Dsh
                 | AppType::Omp
+                | AppType::AtomCode
         )
     }
 
@@ -555,6 +563,7 @@ impl AppType {
             AppType::Dsh,
             AppType::Agy,
             AppType::Omp,
+            AppType::AtomCode,
         ]
         .into_iter()
     }
@@ -580,10 +589,11 @@ impl FromStr for AppType {
             "dsh" | "deepseek-harness" => Ok(AppType::Dsh),
             "agy" | "antigravity" | "antigravity-cli" => Ok(AppType::Agy),
             "omp" | "oh-my-pi" | "oh_my_pi" | "ohmypi" => Ok(AppType::Omp),
+            "atomcode" | "atom-code" | "atom_code" => Ok(AppType::AtomCode),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, atomcode。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, atomcode."),
             )),
         }
     }
@@ -623,12 +633,14 @@ impl CommonConfigSnippets {
             AppType::OpenCode => self.opencode.as_ref(),
             AppType::OpenClaw => self.openclaw.as_ref(),
             AppType::Hermes => self.hermes.as_ref(),
+            // AtomCode 的通用配置片段暂不接入
             AppType::Pi
             | AppType::Mcode
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Omp
-            | AppType::Agy => None,
+            | AppType::Agy
+            | AppType::AtomCode => None,
         }
     }
 
@@ -648,7 +660,8 @@ impl CommonConfigSnippets {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Omp
-            | AppType::Agy => {}
+            | AppType::Agy
+            | AppType::AtomCode => {}
         }
     }
 }
@@ -980,7 +993,8 @@ impl MultiAppConfig {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Omp
-            | AppType::Agy => return Ok(false),
+            | AppType::Agy
+            | AppType::AtomCode => return Ok(false),
         };
 
         prompts.insert(id, prompt);
@@ -1029,7 +1043,8 @@ impl MultiAppConfig {
                 | AppType::Kimi
                 | AppType::Dsh
                 | AppType::Omp
-                | AppType::Agy => continue, // Pi didn't exist in v3.6.x, skip
+                | AppType::Agy
+                | AppType::AtomCode => continue, // Pi didn't exist in v3.6.x, skip
             };
 
             for (id, entry) in old_servers {

@@ -24,7 +24,8 @@ const ENDPOINT_TIMEOUT_SECS: Record<AppId, number> = {
   dsh: 8,
   agy: 8,
   omp: 8,
-};
+  atomcode: 8,
+} satisfies Record<AppId, number>;
 
 interface TestResult {
   url: string;

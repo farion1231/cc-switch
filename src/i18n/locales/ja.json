@@ -5183,6 +5183,31 @@
       "legacyModelsJson": "Oh My Pi にはまだ旧形式の models.json があり、omp は次回起動時にこれを models.yml へ移行します。omp を一度起動してから、もう一度プロバイダを追加してください。"
     }
   },
+  "atomcode": {
+    "empty": {
+      "title": "AtomCode プロバイダーを追加",
+      "description": "接続先 URL、API キー、モデルを設定します。既存のカスタムプロバイダーは自動的にここに表示されます。"
+    },
+    "sharedProviders": "追加したプロバイダーは AtomCode の config.toml（provider_accounts と models）にまとめて書き込まれます。モデルは AtomCode の中で選びます。",
+    "form": {
+      "providerKeyInvalid": "プロバイダーキーには英数字と -、_、. のみを使用できます",
+      "providerKeyHint": "config.toml 内の一意な識別子（provider_accounts のキー）",
+      "providerType": "API タイプ",
+      "baseUrl": "ベース URL",
+      "apiKey": "API キー",
+      "apiKeyPlaceholder": "sk-…",
+      "apiKeyHint": "省略可：空欄の場合は AtomCode のネイティブ OAuth（auth.toml）を使用します。",
+      "models": "モデル一覧",
+      "addModel": "モデルを追加",
+      "noModels": "モデルを 1 つ以上追加してください",
+      "modelKey": "モデルキー",
+      "modelKeyPlaceholder": "deepseek-flash",
+      "modelId": "モデル ID",
+      "contextWindow": "コンテキストウィンドウ",
+      "contextWindowPlaceholder": "省略可",
+      "removeModel": "モデルを削除"
+    }
+  },
   "dsh": {
     "empty": {
       "title": "DeepSeek Harness プロバイダーを追加",

@@ -189,6 +189,13 @@ pub async fn get_config_status(
                 path,
             })
         }
+        AppType::AtomCode => {
+            let file = crate::atomcode_config::config_path();
+            Ok(ConfigStatus {
+                exists: file.exists(),
+                path: file.parent().unwrap().to_string_lossy().into_owned(),
+            })
+        }
     }
 }
 
@@ -219,6 +226,7 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
             .unwrap()
             .to_path_buf(),
         AppType::Agy => crate::agy_config::agy_dir(),
+        AppType::AtomCode => crate::atomcode_config::data_dir(),
     };
 
     Ok(dir.to_string_lossy().to_string())
@@ -246,6 +254,7 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
             .unwrap()
             .to_path_buf(),
         AppType::Agy => crate::agy_config::agy_dir(),
+        AppType::AtomCode => crate::atomcode_config::data_dir(),
     };
 
     if !config_dir.exists() {

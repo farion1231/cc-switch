@@ -38,6 +38,8 @@ pub(crate) fn provider_exists_in_live_config(
         }
         AppType::Mcode => crate::mcode_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
+        AppType::AtomCode => crate::atomcode_config::get_providers()
+            .map(|providers| providers.contains_key(provider_id)),
         AppType::Omp => Ok(crate::omp_config::get_providers()?.contains_key(provider_id)),
         _ => Ok(false),
     }
@@ -312,6 +314,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Dsh
         | AppType::Agy
         | AppType::Omp
+        | AppType::AtomCode
         | AppType::ClaudeDesktop => false,
     }
 }
@@ -392,7 +395,8 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Dsh
         | AppType::ClaudeDesktop
         | AppType::Agy
-        | AppType::Omp => Ok(settings.clone()),
+        | AppType::Omp
+        | AppType::AtomCode => Ok(settings.clone()),
     }
 }
 
@@ -716,6 +720,9 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         AppType::Mcode => {
             crate::mcode_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
+        AppType::AtomCode => {
+            crate::atomcode_config::set_provider(&provider.id, provider.settings_config.clone())?
+        }
         AppType::Pi => {
             return Err(AppError::InvalidInput(
                 "Pi providers use the Pi provider service".to_string(),
@@ -892,7 +899,7 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     for app_type in AppType::all() {
         if matches!(
             app_type,
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp
+            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp | AppType::AtomCode
         ) {
             continue;
         }
@@ -1050,6 +1057,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         }
         AppType::Mcode => Ok(json!(crate::mcode_config::get_providers()?)),
         AppType::Kimi => Ok(json!(crate::kimi_config::get_providers()?)),
+        AppType::AtomCode => Ok(json!(crate::atomcode_config::get_providers()?)),
         AppType::Dsh => {
             Ok(json!(crate::dsh_config::get_providers()?))
         }
@@ -1181,7 +1189,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         | AppType::Mcode
         | AppType::Kimi
         | AppType::Dsh
-        | AppType::Omp => {
+        | AppType::Omp
+        | AppType::AtomCode => {
             unreachable!("additive mode apps are handled by early return")
         }
     };

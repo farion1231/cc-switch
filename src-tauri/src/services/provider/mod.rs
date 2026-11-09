@@ -6639,6 +6639,7 @@ impl ProviderService {
                     AppType::Mcode => crate::mcode_config::remove_provider(id)?,
                     AppType::Kimi => crate::kimi_config::remove_provider(id)?,
                     AppType::Dsh => crate::dsh_config::remove_provider(id)?,
+                    AppType::AtomCode => crate::atomcode_config::remove_provider(id)?,
                     _ => {}
                 }
             }
@@ -6677,21 +6678,31 @@ impl ProviderService {
         id: &str,
     ) -> Result<(), AppError> {
         let _native_guard = lock_native_provider_operations(state, &app_type);
-        if app_type != AppType::Kimi {
-            return Err(AppError::InvalidInput(format!(
+        if app_type == AppType::Kimi {
+            let mut provider = state
+                .db
+                .get_provider_by_id(id, "kimi")?
+                .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+            crate::services::kimi_oauth::ensure_profile_signed_in(&provider.settings_config)?;
+            Self::set_provider_live_config_managed(&mut provider, true);
+            crate::kimi_config::add_and_commit(id, provider.settings_config.clone(), || {
+                state.db.save_provider("kimi", &provider)
+            })
+        } else if app_type == AppType::AtomCode {
+            let mut provider = state
+                .db
+                .get_provider_by_id(id, app_type.as_str())?
+                .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+            Self::set_provider_live_config_managed(&mut provider, true);
+            crate::atomcode_config::add_and_commit(id, provider.settings_config.clone(), || {
+                state.db.save_provider(app_type.as_str(), &provider)
+            })
+        } else {
+            Err(AppError::InvalidInput(format!(
                 "{} adds providers through switch",
                 app_type.as_str()
-            )));
+            )))
         }
-        let mut provider = state
-            .db
-            .get_provider_by_id(id, "kimi")?
-            .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
-        crate::services::kimi_oauth::ensure_profile_signed_in(&provider.settings_config)?;
-        Self::set_provider_live_config_managed(&mut provider, true);
-        crate::kimi_config::add_and_commit(id, provider.settings_config.clone(), || {
-            state.db.save_provider("kimi", &provider)
-        })
     }
 
     /// Remove provider from live config only (for additive mode apps like OpenCode, OpenClaw)
@@ -6771,6 +6782,7 @@ impl ProviderService {
             AppType::Mcode => crate::mcode_config::remove_provider(id)?,
             AppType::Kimi => crate::kimi_config::remove_provider(id)?,
             AppType::Dsh => crate::dsh_config::remove_provider(id)?,
+            AppType::AtomCode => crate::atomcode_config::remove_provider(id)?,
             _ => {
                 return Err(AppError::Message(format!(
                     "App {} does not support remove from live config",
@@ -6899,6 +6911,20 @@ impl ProviderService {
                 |config| {
                     provider.settings_config = config;
                     state.db.save_provider("kimi", &provider)
+                },
+            )?;
+            return Ok(SwitchResult::default());
+        }
+
+        if app_type == AppType::AtomCode {
+            let mut provider = _provider.clone();
+            Self::set_provider_live_config_managed(&mut provider, true);
+            crate::atomcode_config::switch_and_commit(
+                id,
+                provider.settings_config.clone(),
+                |config| {
+                    provider.settings_config = config;
+                    state.db.save_provider(app_type.as_str(), &provider)
                 },
             )?;
             return Ok(SwitchResult::default());
@@ -7069,6 +7095,7 @@ impl ProviderService {
                     AppType::Mcode => crate::mcode_config::remove_provider(&provider.id),
                     AppType::Kimi => crate::kimi_config::remove_provider(&provider.id),
                     AppType::Dsh => crate::dsh_config::remove_provider(&provider.id),
+                    AppType::AtomCode => crate::atomcode_config::remove_provider(&provider.id),
                     _ => Ok(()),
                 };
 
@@ -7337,6 +7364,7 @@ impl ProviderService {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Omp
+            | AppType::AtomCode
             | AppType::Agy => Ok(String::new()),
         }
     }
@@ -7360,6 +7388,7 @@ impl ProviderService {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Omp
+            | AppType::AtomCode
             | AppType::Agy => Ok(String::new()),
         }
     }
@@ -8133,6 +8162,12 @@ impl ProviderService {
             AppType::Mcode => {
                 crate::mcode_config::validate_provider(&provider.id, &provider.settings_config)?
             }
+            AppType::AtomCode => {
+                crate::atomcode_config::validate_provider(
+                    &provider.id,
+                    &provider.settings_config,
+                )?
+            }
             AppType::Pi => {
                 crate::pi_config::validate_provider_node(&provider.id, &provider.settings_config)?;
             }
@@ -8389,6 +8424,20 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
+            AppType::AtomCode => Ok((
+                provider
+                    .settings_config
+                    .pointer("/account/api_key")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                provider
+                    .settings_config
+                    .pointer("/account/base_url")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+            ))
         }
     }
 }

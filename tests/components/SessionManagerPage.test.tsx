@@ -581,6 +581,7 @@ describe("SessionManagerPage", () => {
         dsh: false,
         agy: false,
         omp: false,
+        atomcode: true,
       },
     });
     renderPage("codex");

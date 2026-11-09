@@ -267,6 +267,11 @@ impl Provider {
                 crate::omp_config::provider_base_url(settings).unwrap_or_default(),
                 crate::omp_config::resolve_usage_api_key(&str_at(settings.get("apiKey"))),
             ),
+            // AtomCode keeps credentials on the provider_accounts node.
+            AppType::AtomCode => (
+                str_at(settings.pointer("/account/base_url")),
+                str_at(settings.pointer("/account/api_key")),
+            ),
         };
 
         // Normalize like the JS-script path (extract_base_url_from_provider) so a

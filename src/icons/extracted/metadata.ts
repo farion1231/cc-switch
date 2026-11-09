@@ -628,6 +628,14 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["omp", "oh my pi", "oh-my-pi", "pi"],
     defaultColor: "#9b4dff",
   },
+  atomcode: {
+    name: "atomcode",
+    displayName: "AtomCode",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["atomcode", "atom", "atomgit"],
+    defaultColor: "#34d399",
+  },
   ollama: {
     name: "ollama",
     displayName: "ollama",
