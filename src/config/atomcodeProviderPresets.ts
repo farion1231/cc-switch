@@ -61,6 +61,40 @@ export const atomCodeCustomTemplate = () =>
 // validate_provider 不接受，本地模型请走自定义模板填 OpenAI 兼容网关。
 export const atomcodeProviderPresets: AtomCodeProviderPreset[] = [
   {
+    name: "Anthropic",
+    providerKey: "anthropic",
+    websiteUrl: "https://www.anthropic.com",
+    apiKeyUrl: "https://console.anthropic.com/settings/keys",
+    category: "official",
+    settingsConfig: {
+      account: {
+        provider: "anthropic",
+        base_url: "https://api.anthropic.com",
+        api_key: "",
+      },
+      models: {
+        "claude-sonnet-4-5": { model: "claude-sonnet-4-5" },
+      },
+    },
+  },
+  {
+    name: "OpenAI",
+    providerKey: "openai",
+    websiteUrl: "https://platform.openai.com",
+    apiKeyUrl: "https://platform.openai.com/api-keys",
+    category: "official",
+    settingsConfig: {
+      account: {
+        provider: "openai",
+        base_url: "https://api.openai.com/v1",
+        api_key: "",
+      },
+      models: {
+        "gpt-5.2": { model: "gpt-5.2", context_window: 400000 },
+      },
+    },
+  },
+  {
     name: "DeepSeek",
     providerKey: "deepseek",
     websiteUrl: "https://platform.deepseek.com",
