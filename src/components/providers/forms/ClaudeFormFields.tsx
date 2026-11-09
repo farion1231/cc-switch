@@ -396,7 +396,7 @@ export function ClaudeFormFields({
         setCopilotModels(models);
         if (models.length === 0) {
           // Copilot Free 账号的模型都不允许在模型选择器中使用，会被后端过滤成空
-          toast.info(t("copilot.noPickerModels"));
+          toast.info(t("copilot.noPickerModelsClaude"));
         } else {
           showModelFetchResult(models.length);
         }
