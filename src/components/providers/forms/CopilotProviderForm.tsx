@@ -438,7 +438,7 @@ export function CopilotProviderForm({
               id="copilot-model"
               value={model}
               onChange={(value) => setField(COPILOT_ENV.model, value)}
-              placeholder={isOfficial ? "claude-sonnet-4.6" : "gpt-5.4"}
+              placeholder={isOfficial ? "claude-sonnet-5.5" : "gpt-5.4"}
               fetchedModels={
                 fetchedModels.length > 0
                   ? fetchedModels
