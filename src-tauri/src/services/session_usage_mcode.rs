@@ -82,11 +82,15 @@ fn sync_from_database(
                 input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd,
                 total_cost_usd, latency_ms, status_code, session_id, provider_type,
                 is_streaming, cost_multiplier, created_at, data_source, input_token_semantics
+                , project_key, project_name, project_path, session_key,
+                attribution_source, attribution_confidence, attribution_reason, provider_name_snapshot
              ) VALUES (?1, '_mcode_session', 'mcode', ?2, ?2, ?3, ?4, ?5, ?6,
-                       '0', '0', '0', '0', ?7, 0, 200, ?8, 'mcode_session', 1, '1', ?9, 'mcode_session', ?10)",
+                       '0', '0', '0', '0', ?7, 0, 200, ?8, 'mcode_session', 1, '1', ?9, 'mcode_session', ?10,
+                       '', '', '', ?11, 'unknown', 'unknown', 'adapter_not_attributed', '')",
             params![request_id, model, usage.input_tokens, usage.output_tokens,
                 usage.cache_read_tokens, usage.cache_creation_tokens, cost, session_id,
-                ts / 1000, INPUT_TOKEN_SEMANTICS_FRESH],
+                ts / 1000, INPUT_TOKEN_SEMANTICS_FRESH,
+                crate::services::usage_attribution::normalize_session_key("mcode", &session_id)],
         )?;
         result.imported += changed as u32;
         result.skipped += u32::from(changed == 0);

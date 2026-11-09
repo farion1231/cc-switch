@@ -1,6 +1,6 @@
-import { useMemo } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowDown } from "lucide-react";
+import { ArrowDown, ChevronDown, ChevronRight } from "lucide-react";
 import { useProviderStats } from "@/lib/query/usage";
 import { TablePagination, useClientPagination } from "./TablePagination";
 import { cn } from "@/lib/utils";
@@ -13,13 +13,18 @@ import {
 import { usageTable } from "./usageTable";
 import { getUsageProviderLabel, usageProviderTitle } from "./providerLabel";
 import { PerformanceCells, PerformanceHeaders } from "./statsColumns";
+import { ProviderUsageBreakdown } from "./ProviderUsageBreakdown";
 import type { UsageRangeSelection } from "@/types/usage";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 
 interface ProviderStatsTableProps {
   range: UsageRangeSelection;
   appType?: string;
+  providerAppType?: string;
+  providerId?: string;
   providerName?: string;
+  projectKey?: string;
+  projectKeys?: string[];
   model?: string;
   refreshIntervalMs: number;
 }
@@ -27,16 +32,32 @@ interface ProviderStatsTableProps {
 export function ProviderStatsTable({
   range,
   appType,
+  providerAppType,
+  providerId,
   providerName,
+  projectKey,
+  projectKeys,
   model,
   refreshIntervalMs,
 }: ProviderStatsTableProps) {
   const { t, i18n } = useTranslation();
   const { money, moneyTitle } = useMoneyFormat();
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
-  const { data: stats, isLoading } = useProviderStats(
+  const {
+    data: stats,
+    isLoading,
+    isPlaceholderData,
+  } = useProviderStats(
     range,
-    { appType, providerName, model },
+    {
+      appType,
+      providerAppType,
+      providerId,
+      providerName,
+      projectKey,
+      projectKeys,
+      model,
+    },
     {
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },
@@ -49,10 +70,32 @@ export function ProviderStatsTable({
   );
   const pagination = useClientPagination(
     rows,
-    JSON.stringify([range, appType, providerName, model]),
+    JSON.stringify([
+      range,
+      appType,
+      providerAppType,
+      providerId,
+      providerName,
+      projectKey,
+      projectKeys,
+      model,
+    ]),
   );
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  if (isLoading) {
+  const toggle = (key: string) => {
+    setExpanded((previous) => {
+      const next = new Set(previous);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
+  if (isLoading || isPlaceholderData) {
     return <div className={usageTable.skeleton} />;
   }
 
@@ -84,50 +127,88 @@ export function ProviderStatsTable({
               <th className={cn(usageTable.th, usageTable.groupGap)}>
                 {t("usage.tokens")}
               </th>
+              <th className={usageTable.th}>{t("usage.cacheHitRate")}</th>
               <PerformanceHeaders />
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={7} className={usageTable.empty}>
+                <td colSpan={8} className={usageTable.empty}>
                   {t("usage.noData")}
                 </td>
               </tr>
             ) : (
               pagination.pageRows.map((stat) => {
                 const provider = getUsageProviderLabel(stat.providerName, t);
+                const rowKey = JSON.stringify([stat.appType, stat.providerId]);
+                const isExpanded = expanded.has(rowKey);
                 return (
-                  <tr
-                    key={JSON.stringify([stat.appType, stat.providerId])}
-                    className={usageTable.row}
-                  >
-                    <td className={usageTable.td}>
-                      <span title={usageProviderTitle(provider)}>
-                        {provider.label}
-                      </span>
-                    </td>
-                    <td className={usageTable.td}>
-                      {fmtInt(stat.requestCount, locale)}
-                    </td>
-                    <td
-                      className={cn(
-                        usageTable.td,
-                        usageTable.groupGap,
-                        "font-medium",
-                      )}
-                      title={moneyTitle(stat.totalCost, 6)}
-                    >
-                      {money(stat.totalCost, 2)}
-                    </td>
-                    <td
-                      className={cn(usageTable.td, usageTable.groupGap)}
-                      title={fmtInt(stat.totalTokens, locale)}
-                    >
-                      {formatTokensCompact(stat.totalTokens, locale)}
-                    </td>
-                    <PerformanceCells stat={stat} />
-                  </tr>
+                  <Fragment key={rowKey}>
+                    <tr className={usageTable.row}>
+                      <td className={usageTable.td}>
+                        <span className="inline-flex max-w-[260px] items-center gap-1">
+                          <button
+                            type="button"
+                            className="grid size-5 shrink-0 place-items-center rounded-[4px] text-fg-2 hover:bg-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            aria-label={t("usage.providers.expandModels")}
+                            aria-expanded={isExpanded}
+                            onClick={() => toggle(rowKey)}
+                          >
+                            {isExpanded ? (
+                              <ChevronDown className="size-3.5" />
+                            ) : (
+                              <ChevronRight className="size-3.5" />
+                            )}
+                          </button>
+                          <span
+                            className="truncate"
+                            title={usageProviderTitle(provider)}
+                          >
+                            {provider.label}
+                          </span>
+                        </span>
+                      </td>
+                      <td className={usageTable.td}>
+                        {fmtInt(stat.requestCount, locale)}
+                      </td>
+                      <td
+                        className={cn(
+                          usageTable.td,
+                          usageTable.groupGap,
+                          "font-medium",
+                        )}
+                        title={moneyTitle(stat.totalCost, 6)}
+                      >
+                        {money(stat.totalCost, 2)}
+                      </td>
+                      <td
+                        className={cn(usageTable.td, usageTable.groupGap)}
+                        title={fmtInt(stat.totalTokens, locale)}
+                      >
+                        {formatTokensCompact(stat.totalTokens, locale)}
+                      </td>
+                      <td className={usageTable.td}>
+                        {(stat.cacheableInputTokens ?? 0) > 0
+                          ? `${((stat.cacheHitRate ?? 0) * 100).toFixed(1)}%`
+                          : "—"}
+                      </td>
+                      <PerformanceCells stat={stat} />
+                    </tr>
+                    {isExpanded ? (
+                      <ProviderUsageBreakdown
+                        providerId={stat.providerId}
+                        providerAppType={stat.appType}
+                        providerName={stat.providerName}
+                        projectKey={projectKey}
+                        projectKeys={projectKeys}
+                        model={model}
+                        range={range}
+                        refreshIntervalMs={refreshIntervalMs}
+                        colSpan={8}
+                      />
+                    ) : null}
+                  </Fragment>
                 );
               })
             )}
