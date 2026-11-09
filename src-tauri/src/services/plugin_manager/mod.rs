@@ -8,20 +8,21 @@
 //! - Codex：`codex plugin list|add|remove` 和 `codex plugin marketplace list|add|remove|upgrade`。
 //!   Codex 没有启用 / 停用命令，开关就是 `config.toml` 的 `[plugins."<id>"] enabled`，
 //!   经写入引擎原位改这一个键。
-//! - Grok Build、MiniMax Code、OpenClaw：见各自的子模块。
+//! - Grok Build、MiniMax Code、OpenClaw、Pi：见各自的子模块。
 //!
-//! 写锁只在 CC Switch 自己写文件时拿（目前只有 Codex 的启停）。CLI 改自己的配置和用户手改
+//! 写锁只在 CC Switch 自己写文件时拿（Codex 和 Pi 的启停、Pi 本地包的卸载）。CLI 改自己的配置和用户手改
 //! 文件是一回事：切换供应商写之前本来就会重读比对，所以 CLI 调用期间（安装、更新最长
 //! 300 秒）不拿锁，不挡切换、托盘和退出。CLI 的 stdin 是 null，要确认的操作立刻失败。
 //!
 //! CLI 读的配置目录和 CC Switch 读的必须是同一份：设置里覆盖了目录时，用各应用的环境变量
-//! （`CLAUDE_CONFIG_DIR`、`CODEX_HOME`、`GROK_HOME`……）告诉 CLI。
+//! （`CLAUDE_CONFIG_DIR`、`CODEX_HOME`、`GROK_HOME`、`PI_CODING_AGENT_DIR`……）告诉 CLI。
 
 #[cfg(test)]
 mod cli_fixtures;
 mod grok;
 mod mcode;
 mod openclaw;
+mod pi;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -61,6 +62,7 @@ pub enum PluginApp {
     Grok,
     Mcode,
     Openclaw,
+    Pi,
 }
 
 impl PluginApp {
@@ -71,6 +73,7 @@ impl PluginApp {
             PluginApp::Grok => "grok",
             PluginApp::Mcode => "mcode",
             PluginApp::Openclaw => "openclaw",
+            PluginApp::Pi => "pi",
         }
     }
 }
@@ -79,7 +82,8 @@ impl PluginApp {
 #[serde(rename_all = "camelCase")]
 pub struct PluginEntry {
     /// 交给 CLI 的插件 id：Claude Code / Codex / MiniMax Code 是 `name@marketplace`，
-    /// Grok Build 是插件名，OpenClaw 是插件 id（目录里是 ClawHub 包名）。
+    /// Grok Build 是插件名，OpenClaw 是插件 id（目录里是 ClawHub 包名），Pi 是包来源
+    /// （`npm:<包名>`、`git:…`、本地路径）。
     pub id: String,
     pub name: String,
     /// 来自哪个市场；没有市场概念的（OpenClaw 已装的）为空。
@@ -167,6 +171,7 @@ fn validate_app_plugin_id(app: PluginApp, id: &str) -> Result<(), String> {
         }
         PluginApp::Grok => is_name_segment(id),
         PluginApp::Openclaw => is_package_name(id),
+        PluginApp::Pi => return pi::validate_source(id),
     };
     if ok {
         Ok(())
@@ -264,6 +269,12 @@ fn cli_context(app: PluginApp) -> (Vec<(&'static str, String)>, PathBuf) {
                     config.to_string_lossy().into_owned(),
                 ),
             ];
+            (dir, env)
+        }
+        PluginApp::Pi => {
+            let dir = crate::pi_config::get_pi_agent_dir()
+                .unwrap_or_else(|_| crate::config::get_home_dir().join(".pi").join("agent"));
+            let env = vec![("PI_CODING_AGENT_DIR", dir.to_string_lossy().into_owned())];
             (dir, env)
         }
     };
@@ -701,8 +712,10 @@ fn run_list(app: PluginApp, with_catalog: bool) -> Result<PluginListing, String>
         PluginApp::Codex => parse_codex_listing(&value),
         PluginApp::Mcode => mcode::parse_listing(&value),
         PluginApp::Grok => grok::parse_listing(&value, &grok::read_config_text()),
-        // OpenClaw 的列表命令不同，不走这里
-        PluginApp::Openclaw => return Err(unsupported(app, "plugin list --available")),
+        // OpenClaw、Pi 的列表命令不同，不走这里
+        PluginApp::Openclaw | PluginApp::Pi => {
+            return Err(unsupported(app, "plugin list --available"))
+        }
     })
 }
 
@@ -711,6 +724,7 @@ fn run_list(app: PluginApp, with_catalog: bool) -> Result<PluginListing, String>
 pub fn list_installed(app: PluginApp) -> Result<Vec<PluginEntry>, String> {
     match app {
         PluginApp::Openclaw => openclaw::list_installed(),
+        PluginApp::Pi => pi::list_installed(),
         _ => run_list(app, false).map(|listing| listing.installed),
     }
 }
@@ -720,6 +734,7 @@ pub fn list_installed(app: PluginApp) -> Result<Vec<PluginEntry>, String> {
 pub fn list_catalog(app: PluginApp) -> Result<Vec<PluginEntry>, String> {
     match app {
         PluginApp::Openclaw => openclaw::list_catalog(),
+        PluginApp::Pi => pi::list_catalog(),
         _ => run_list(app, true).map(catalog_from_listing),
     }
 }
@@ -750,8 +765,8 @@ fn catalog_from_listing(listing: PluginListing) -> Vec<PluginEntry> {
 }
 
 pub fn list_marketplaces(app: PluginApp) -> Result<Vec<PluginMarketplace>, String> {
-    // MiniMax Code 正式版禁用了市场管理；OpenClaw 没有可增删的市场。
-    if matches!(app, PluginApp::Mcode | PluginApp::Openclaw) {
+    // MiniMax Code 正式版禁用了市场管理；OpenClaw、Pi 没有可增删的市场。
+    if matches!(app, PluginApp::Mcode | PluginApp::Openclaw | PluginApp::Pi) {
         return Err(unsupported(app, "marketplace management"));
     }
     let out = run_cli(
@@ -770,7 +785,7 @@ pub fn list_marketplaces(app: PluginApp) -> Result<Vec<PluginMarketplace>, Strin
             parse_codex_marketplaces(&value, &config)
         }
         PluginApp::Grok => grok::parse_marketplaces(&value),
-        PluginApp::Mcode | PluginApp::Openclaw => Vec::new(),
+        PluginApp::Mcode | PluginApp::Openclaw | PluginApp::Pi => Vec::new(),
     })
 }
 
@@ -826,10 +841,21 @@ pub fn install_plugin(app: PluginApp, id: &str) -> Result<PluginActionOutcome, S
                 NETWORK_TIMEOUT,
             )
         }
+        // 包能执行代码：前端先弹确认框
+        PluginApp::Pi => {
+            if !pi::can_pass_to_cli(id) {
+                return Err(pi::terminal_hint("install", id));
+            }
+            run_action(app, &["install", id], NETWORK_TIMEOUT)
+        }
     }
 }
 
-pub fn uninstall_plugin(app: PluginApp, id: &str) -> Result<PluginActionOutcome, String> {
+pub fn uninstall_plugin(
+    db: &Database,
+    app: PluginApp,
+    id: &str,
+) -> Result<PluginActionOutcome, String> {
     validate_app_plugin_id(app, id)?;
     match app {
         PluginApp::Claude => run_cli(
@@ -863,6 +889,17 @@ pub fn uninstall_plugin(app: PluginApp, id: &str) -> Result<PluginActionOutcome,
             &["plugins", "uninstall", id, "--force"],
             TOGGLE_TIMEOUT,
         ),
+        // npm / git 来源要删安装目录（npm uninstall 可能要联网）
+        PluginApp::Pi if pi::can_pass_to_cli(id) => {
+            run_action(app, &["remove", id], NETWORK_TIMEOUT)
+        }
+        PluginApp::Pi if pi::is_local_source(id) => {
+            pi::remove_local_entry(db, id).map(|changed| PluginActionOutcome {
+                changed,
+                message: None,
+            })
+        }
+        PluginApp::Pi => Err(pi::terminal_hint("remove", id)),
     }
 }
 
@@ -894,6 +931,11 @@ pub fn set_plugin_enabled(
         PluginApp::Grok => run_action(app, &["plugin", verb, id], TOGGLE_TIMEOUT),
         // 不代传 `--accept-capabilities`：要权限确认的插件，CLI 会报错让用户去终端里确认
         PluginApp::Openclaw => run_action(app, &["plugins", verb, id], TOGGLE_TIMEOUT),
+        // Pi 没有包级开关命令，改 settings.json 里的资源过滤
+        PluginApp::Pi => pi::set_enabled(db, id, enabled).map(|changed| PluginActionOutcome {
+            changed,
+            message: None,
+        }),
     }
 }
 
@@ -917,7 +959,7 @@ fn write_codex_plugin_enabled(db: &Database, id: &str, enabled: bool) -> Result<
     Ok(!report.changed.is_empty())
 }
 
-/// 更新到市场里的最新版。Claude Code、Grok Build、OpenClaw 有这个命令；Codex 先刷新市场再
+/// 更新到市场里的最新版。Claude Code、Grok Build、OpenClaw、Pi 有这个命令；Codex 先刷新市场再
 /// 重新安装；MiniMax Code 的 CLI 没有更新命令。
 pub fn update_plugin(
     db: &Database,
@@ -977,6 +1019,24 @@ pub fn update_plugin(
                 message: None,
             })
         }
+        // 本地来源直接加载目录，没有可更新的
+        PluginApp::Pi if pi::is_local_source(id) => Ok(PluginActionOutcome {
+            changed: false,
+            message: None,
+        }),
+        PluginApp::Pi => {
+            if !pi::can_pass_to_cli(id) {
+                return Err(pi::terminal_hint("update", id));
+            }
+            let out = run_cli(app, &["update", id], NETWORK_TIMEOUT)?;
+            if !out.success {
+                return Err(failure_detail(&out));
+            }
+            Ok(PluginActionOutcome {
+                changed: pi::update_changed(&out.stdout),
+                message: None,
+            })
+        }
         PluginApp::Mcode => Err(unsupported(app, "plugin update")),
     }
 }
@@ -1002,7 +1062,9 @@ pub fn add_marketplace(app: PluginApp, source: &str) -> Result<PluginActionOutco
             &["plugin", "marketplace", "add", &source],
             NETWORK_TIMEOUT,
         ),
-        PluginApp::Mcode | PluginApp::Openclaw => Err(unsupported(app, "marketplace management")),
+        PluginApp::Mcode | PluginApp::Openclaw | PluginApp::Pi => {
+            Err(unsupported(app, "marketplace management"))
+        }
     }
 }
 
@@ -1027,7 +1089,9 @@ pub fn remove_marketplace(app: PluginApp, name: &str) -> Result<PluginActionOutc
             &["plugin", "marketplace", "remove", name],
             TOGGLE_TIMEOUT,
         ),
-        PluginApp::Mcode | PluginApp::Openclaw => Err(unsupported(app, "marketplace management")),
+        PluginApp::Mcode | PluginApp::Openclaw | PluginApp::Pi => {
+            Err(unsupported(app, "marketplace management"))
+        }
     }
 }
 
@@ -1091,6 +1155,11 @@ pub fn refresh_marketplaces(app: PluginApp) -> Result<PluginActionOutcome, Strin
             NETWORK_TIMEOUT,
         )
         .map(|v| ok_outcome(&v)),
+        // 目录是直接查 npm registry 的，没有本地缓存要刷新；前端随后重读目录
+        PluginApp::Pi => Ok(PluginActionOutcome {
+            changed: true,
+            message: None,
+        }),
         PluginApp::Mcode => Err(unsupported(app, "marketplace refresh")),
     }
 }
@@ -1126,6 +1195,7 @@ mod tests {
             (PluginApp::Grok, "grokbuild"),
             (PluginApp::Mcode, "mcode"),
             (PluginApp::Openclaw, "openclaw"),
+            (PluginApp::Pi, "pi"),
         ] {
             assert_eq!(serde_json::to_value(app).unwrap(), json!(id));
             assert_eq!(serde_json::from_value::<PluginApp>(json!(id)).unwrap(), app);
