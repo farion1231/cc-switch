@@ -75,7 +75,7 @@ pub(crate) async fn execute_and_format_usage_result(
 
             let msg = match err {
                 AppError::Localized { zh, en, .. } => {
-                    if lang == "en" || lang == "tr" {
+                    if lang == "en" || lang == "tr" || lang == "ko" {
                         en
                     } else {
                         zh
