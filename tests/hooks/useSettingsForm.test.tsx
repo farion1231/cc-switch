@@ -78,7 +78,7 @@ describe("useSettingsForm Hook", () => {
     expect(changeLanguageSpy).toHaveBeenCalledWith("en");
   });
 
-  it.each(["tr", "ko"])(
+  it.each(["tr", "ko", "ru"])(
     "preserves %s from server settings",
     async (language) => {
       useSettingsQueryMock.mockReturnValue({

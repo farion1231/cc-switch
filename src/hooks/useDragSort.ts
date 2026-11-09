@@ -25,9 +25,13 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
         ? "zh-CN"
         : i18n.language === "zh-TW"
           ? "zh-TW"
-          : language === "ko" || language?.startsWith("ko-")
-            ? "ko-KR"
-            : "en-US";
+          : language === "ja" || language?.startsWith("ja-")
+            ? "ja-JP"
+            : language === "ko" || language?.startsWith("ko-")
+              ? "ko-KR"
+              : language === "ru" || language?.startsWith("ru-")
+                ? "ru-RU"
+                : "en-US";
     return Object.values(providers).sort((a, b) => {
       if (a.sortIndex !== undefined && b.sortIndex !== undefined) {
         return a.sortIndex - b.sortIndex;

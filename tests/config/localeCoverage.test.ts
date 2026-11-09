@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import ko from "@/i18n/locales/ko.json";
+import ru from "@/i18n/locales/ru.json";
 import tr from "@/i18n/locales/tr.json";
 import en from "@/i18n/locales/en.json";
 import ja from "@/i18n/locales/ja.json";
@@ -265,5 +266,79 @@ describe("Korean locale", () => {
     expect(translations.get("prompts.contentPlaceholderHermes")).toMatch(
       /^# SOUL\.md\n/,
     );
+  });
+});
+
+// Russian is a community translation too: it covers only part of en.json and
+// missing keys fall back to English, so every check here only looks at strings
+// that already exist in ru.json.
+describe("Russian locale", () => {
+  const translations = flattenStrings(ru);
+
+  it("only keeps keys that still exist in English", () => {
+    expect([...translations.keys()].filter((key) => !reference.has(key))).toEqual(
+      [],
+    );
+  });
+
+  it("keeps every existing translation non-empty", () => {
+    expect(
+      [...translations].filter(
+        ([key, value]) => reference.get(key)?.trim() && !value.trim(),
+      ),
+    ).toEqual([]);
+  });
+
+  it("preserves interpolation variables in existing translations", () => {
+    expect(
+      [...translations]
+        .filter(([key, value]) => {
+          const expected = reference.get(key);
+          return (
+            expected !== undefined &&
+            interpolationVariables(value).join("\0") !==
+              interpolationVariables(expected).join("\0")
+          );
+        })
+        .map(([key]) => key),
+    ).toEqual([]);
+  });
+
+  it("preserves protocol fields, configuration literals, and commands", () => {
+    const exactLiterals = [
+      "opencode.extraOptionKeyPlaceholder",
+      "opencode.modelExtraFieldKeyPlaceholder",
+      "opencode.modelOptionKeyPlaceholder",
+      "opencode.modelOptionValuePlaceholder",
+      "opencode.providerKeyPlaceholder",
+      "openclaw.providerKeyPlaceholder",
+      "hermes.form.providerKeyPlaceholder",
+      "grokBuild.rawConfig",
+      "codexConfig.configToml",
+      "providerPreset.plan.aksk",
+      "mcp.envPlaceholder",
+      "mcp.wizard.envPlaceholder",
+      "skills.searchSource.skillssh",
+    ];
+    for (const key of exactLiterals.filter((key) => translations.has(key))) {
+      expect(translations.get(key), key).toBe(reference.get(key));
+    }
+
+    const embeddedLiterals: [string, string][] = [
+      ["usageScript.fieldRemaining", "• remaining:"],
+      ["usageScript.fieldUnit", "• unit:"],
+      ["usageScript.fieldTotal", "• total:"],
+      ["usageScript.fieldUsed", "• used:"],
+      ["usageScript.fieldExtra", "• extra:"],
+      ["settings.s3Sync.presets.r2Hint", "'auto'"],
+      ["settings.s3Sync.presets.cosHint", "ap-beijing"],
+      ["hermes.webui.launchConfirmMessage", "pip install hermes-agent[web]"],
+      ["settings.manualUninstallBunLauncherHint", "OpenClaw Bun launcher"],
+    ];
+    for (const [key, literal] of embeddedLiterals.filter(([key]) =>
+      translations.has(key),
+    )) {
+      expect(translations.get(key), key).toContain(literal);
+    }
   });
 });

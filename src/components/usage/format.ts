@@ -465,6 +465,7 @@ export function getLocaleFromLanguage(language: string): string {
   if (normalized === "ja" || normalized.startsWith("ja-")) return "ja-JP";
   if (normalized === "ko" || normalized.startsWith("ko-")) return "ko-KR";
   if (normalized === "tr" || normalized.startsWith("tr-")) return "tr-TR";
+  if (normalized === "ru" || normalized.startsWith("ru-")) return "ru-RU";
   return "en-US";
 }
 

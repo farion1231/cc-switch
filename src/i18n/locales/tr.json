@@ -868,6 +868,7 @@
     "languageOptionJapanese": "日本語",
     "languageOptionTurkish": "Türkçe",
     "languageOptionKorean": "한국어",
+    "languageOptionRussian": "Русский",
     "windowBehavior": "Pencere Davranışı",
     "windowBehaviorHint": "Pencere simge durumuna küçültme ve Claude eklenti entegrasyon ilkelerini yapılandırın.",
     "launchOnStartup": "Sistem açılışında başlat",

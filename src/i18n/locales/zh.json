@@ -891,6 +891,7 @@
     "languageOptionJapanese": "日本語",
     "languageOptionTurkish": "Türkçe",
     "languageOptionKorean": "한국어",
+    "languageOptionRussian": "Русский",
     "windowBehavior": "窗口行为",
     "windowBehaviorHint": "配置窗口最小化与 Claude 插件联动策略。",
     "launchOnStartup": "开机自启",

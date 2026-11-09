@@ -176,6 +176,8 @@ fn map_locale_to_tray_language(locale: &str) -> &'static str {
         "ko"
     } else if locale == "tr" || locale.starts_with("tr-") {
         "tr"
+    } else if locale == "ru" || locale.starts_with("ru-") {
+        "ru"
     } else if locale.is_empty() {
         "zh"
     } else {
@@ -301,6 +303,18 @@ impl TrayTexts {
                 texts.reset_on_date = "{when}에 {label} 할당량 초기화";
                 texts.reset_at_time = "{when}에 {label} 할당량 초기화";
                 texts.date_format = "%-m월 %-d일";
+                texts
+            },
+            // 俄语同为社区翻译：从英文起步，只覆盖已翻译的项。
+            "ru" => {
+                let mut texts = Self::from_language("en");
+                texts.show_main = "Открыть главное окно";
+                texts.open_website = "Открыть официальный сайт";
+                texts.lightweight_mode = "Облегчённый режим";
+                texts.quit = "Выйти из CC Switch";
+                texts.quit_stops_routing = "Выйти из CC Switch (служба маршрутизации остановится)";
+                texts.projects_label = "Проекты";
+                texts.no_project_label = "Без проекта";
                 texts
             },
             "tr" => {
@@ -3556,6 +3570,17 @@ mod tests {
     }
 
     #[test]
+    fn locale_maps_russian_without_matching_other_language_subtags() {
+        for locale in ["ru", "ru-RU", "ru-UA", "RU-ru"] {
+            assert_eq!(map_locale_to_tray_language(locale), "ru");
+        }
+        // 卢森尼亚语 rue、Rupuni 等以 ru 开头但不是俄语，按不支持的语言回落英文
+        for locale in ["rue", "rue-UA", "rup"] {
+            assert_eq!(map_locale_to_tray_language(locale), "en");
+        }
+    }
+
+    #[test]
     fn locale_maps_japanese_and_english() {
         assert_eq!(map_locale_to_tray_language("ko-KR"), "ko");
         assert_eq!(map_locale_to_tray_language("ko"), "ko");
@@ -4830,7 +4855,7 @@ mod tests {
             quit_text(&en(), true),
             "Quit CC Switch (stops the routing service)"
         );
-        for language in ["zh", "zh-TW", "en", "ja", "tr", "ko"] {
+        for language in ["zh", "zh-TW", "en", "ja", "tr", "ko", "ru"] {
             let texts = TrayTexts::from_language(language);
             assert_ne!(texts.quit, texts.quit_stops_routing, "{language}");
             assert!(
