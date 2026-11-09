@@ -55,7 +55,6 @@ pub(crate) const ROW_TOP_FIELDS: &[&str] = &[
     "review_model",
     "model_reasoning_effort",
     "plan_mode_reasoning_effort",
-    "disable_response_storage",
 ];
 
 fn is_built_in_id(id: &str) -> bool {
@@ -105,7 +104,7 @@ pub enum Route {
 #[derive(Debug, Clone)]
 pub struct CodexProjection {
     pub route: Route,
-    /// 顶层关键字段（模型名、推理档位、`disable_response_storage`）。
+    /// 顶层关键字段（模型名、推理档位）。
     pub top: Vec<(String, TomlValue)>,
     /// 嵌在用户表里的模型名（`agents.default_subagent_model` 等）。
     pub nested: Vec<(Vec<String>, TomlValue)>,
@@ -1039,6 +1038,22 @@ mod tests {
         );
         assert_eq!(table.get("name").and_then(Item::as_str), Some("Relay"));
         assert_eq!(projection.top[0].0, "model");
+    }
+
+    #[test]
+    fn disable_response_storage_from_old_rows_is_not_projected_and_is_cleared_from_live() {
+        // Codex 0.167 删了这个键，旧预设写进行里的那一行不再投影；它仍是关键字段，写入时
+        // live 里旧版留下的同名行会被清掉。
+        let settings = row(
+            json!({ "OPENAI_API_KEY": "sk" }),
+            &format!("disable_response_storage = true\n{RELAY}"),
+        );
+        let projection = project(&settings).unwrap();
+        assert!(projection
+            .top
+            .iter()
+            .all(|(key, _)| key != "disable_response_storage"));
+        assert!(floor::CODEX_FLOOR_TOP.contains(&"disable_response_storage"));
     }
 
     #[test]
