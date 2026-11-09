@@ -138,9 +138,21 @@ export function isStackAppId(appId: string): appId is StackAppId {
   return (STACK_APP_IDS as string[]).includes(appId);
 }
 
+/**
+ * 累加式应用（后端 `AppType::is_additive_mode`）。Copilot CLI 是混合的：自带模型卡累加写进
+ * providers.json，官方卡仍是启动式（只有「打开终端」）。
+ */
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "kimi" | "dsh" | "omp"
+  | "opencode"
+  | "openclaw"
+  | "hermes"
+  | "pi"
+  | "mcode"
+  | "kimi"
+  | "dsh"
+  | "omp"
+  | "copilot"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
@@ -152,6 +164,7 @@ export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
   "hermes",
   "pi",
   "omp",
+  "copilot",
 ];
 
 export function isAdditiveAppId(appId: string): appId is AdditiveAppId {

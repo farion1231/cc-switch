@@ -206,7 +206,7 @@
       "agySwitchTitle": "Bu işlem agy'nin oturum açma hesabını değiştirir",
       "agySwitchBody": "Terminal açılmadan önce agy'nin oturumu {{account}} hesabına geçirilir; bundan sonra başlatılan agy oturumları bu hesabı kullanır.",
       "agySwitchRunning": "agy çalışıyor: açık agy oturumları önceki hesabı kullanmaya devam eder ve hesabı yeniden kaydedebilir. Mümkünse önce agy oturumlarını kapatın.",
-      "isolationBodyCopilot": "\"{{name}}\" kartının uç noktası, anahtarı ve modeli yalnızca bu terminaldeki copilot'a iletilir ve hiçbir dosyaya yazılmaz; başka bir terminalde doğrudan copilot çalıştırmak yine GitHub oturumunuzu kullanır."
+      "isolationBodyCopilot": "Bu terminaldeki copilot, yalnızca bu oturum için --model ile \"{{name}}\" sağlayıcısının ilk modeliyle başlar. Uç nokta ve anahtar Copilot'un providers.json dosyasından okunur; diğer terminaller de /model ile seçebilir."
     },
     "name": "İsim",
     "namePlaceholder": "ör. Claude Resmi",
@@ -1940,24 +1940,36 @@
     "form": {
       "officialTitle": "Copilot CLI'nin GitHub oturumunu kullanır",
       "officialHint": "\"Terminal aç\", copilot'u bu kartın modeliyle başlatır; Yetki Merkezi'nden bir hesap bağlarsanız o hesapla başlatır.",
-      "byokTitle": "Yalnızca bu karttan açılan terminallerde geçerlidir",
-      "byokHint": "Copilot CLI özel modelleri yalnızca ortam değişkenlerinden okur; Copilot'un kendi dosyalarına hiçbir şey yazılmaz.",
+      "byokTitle": "Eklendiğinde Copilot'un providers.json dosyasına yazılır",
+      "byokHint": "Ekle, bu sağlayıcıyı ve modellerini Copilot'un kendi providers.json dosyasına yazar (yalnızca kullanıcı hesabınız okuyabilir). Ardından nasıl başlatılırsa başlatılsın copilot, /model içinde \"kart kimliği/model\" seçebilir. Kaldır yalnızca bu sağlayıcının girdilerini siler, dosyanın geri kalanına dokunmaz.",
       "apiFormat": "API biçimi",
       "baseUrl": "API uç noktası",
       "baseUrlHint": "OpenAI uyumlu uç noktalar genellikle /v1 ile biter (ör. Ollama http://localhost:11434/v1); Anthropic için yalnızca sunucu adresi (https://api.anthropic.com).",
       "model": "Model",
       "officialModelHint": "Boş bırakırsanız Copilot'un geçerli modeli kullanılır. Yalnızca bu oturum için --model olarak iletilir; copilot içindeki /model çalışmaya devam eder.",
-      "byokModelHint": "Uç noktanızın beklediği model kimliği (COPILOT_MODEL).",
       "reasoningEffort": "Akıl yürütme düzeyi",
       "reasoningEffortDefault": "Copilot varsayılanı",
       "reasoningEffortHint": "Terminal açılırken --reasoning-effort olarak iletilir. none seçildiğinde Copilot, Responses isteklerinde reasoning.summary göndermez; bazı aktarıcılar bu alanı kabul etmez.",
       "maxPromptTokens": "En fazla istem token'ı",
       "maxOutputTokens": "En fazla çıktı token'ı",
-      "envJsonHint": "Gelişmiş: her COPILOT_PROVIDER_* değişkeni (ör. COPILOT_PROVIDER_MODEL_ID veya COPILOT_PROVIDER_BEARER_TOKEN) copilot'a olduğu gibi iletilir."
+      "byokModelsHint": "Her model Copilot'un /model listesinde \"{{id}}/model kimliği\" olarak görünür; en az bir tane ekleyin. Satırı açıp bir üst akış model adı girmediğiniz sürece model kimliği uç noktaya gönderilen addır. Bu karttan terminal açıldığında ilk model kullanılır.",
+      "providerIdHint": "Copilot'taki sağlayıcı adıdır da; /model içinde \"{{id}}/model\" olarak görünür. Kaydettikten sonra değiştirilemez. Yalnızca harf, rakam, nokta, alt çizgi ve kısa çizgi kullanılabilir.",
+      "duplicateModelId": "Yinelenen model kimliği: {{model}}",
+      "wireModel": "Üst akış model adı",
+      "wireModelHint": "Uç noktaya gönderilen model adı (wireModel). Boş bırakılırsa model kimliği kullanılır.",
+      "maxContextWindowTokens": "Bağlam penceresi",
+      "azureApiVersion": "Azure API sürümü"
     },
     "quota": {
       "accountNotInAuthCenter": "Copilot CLI'nin oturum açtığı {{login}} hesabı Yetki Merkezi'nde yok. Yetki Merkezi'ne ekleyin veya bu kartta bir hesap bağlayın.",
       "notSignedIn": "Copilot CLI'de oturum açılmamış. copilot'u çalıştırıp /login ile oturum açın veya bu kartta bir Yetki Merkezi hesabı bağlayın."
+    },
+    "defaultCannotRemove": "Copilot'un varsayılan modeli bu sağlayıcıya ait olduğundan kaldırılamaz veya silinemez. Önce copilot içinde /model ile başka bir sağlayıcının modelini seçin.",
+    "terminalNeedsAdd": "Terminalin modelini seçebilmesi için önce bu sağlayıcıyı Copilot'a ekleyin.",
+    "section": {
+      "official": "Resmi oturum · {{count}}",
+      "officialHelpTitle": "Resmi oturum",
+      "officialHelp": "Copilot CLI'nin kendi GitHub oturumunu kullanır ve hiçbir dosyaya yazmaz. Terminal Aç, copilot'u kartın modeli ve bağlı hesabıyla başlatır."
     }
   },
   "codexOauth": {
@@ -4552,7 +4564,6 @@
       "defaultWhileRouting": "Yönlendirme sırasında varsayılan, yönlendirdiğiniz sağlayıcıdır. Birleştirme'ya geçerken başka bir tane seçebilirsiniz.",
       "needsRoute": "Yönlendirme gerekiyor: {{reason}}; doğrudan bağlanamıyorum.",
       "defaultCannotRemove": "Varsayılan kaldırılamaz. Önce başka bir sağlayıcıyı varsayılan yapın.",
-      "currentCannotRemove": "Kullanılan sağlayıcı kaldırılamaz. Önce başka birini etkinleştirin.",
       "inUseCannotDelete": "Kullanılan sağlayıcı silinemez. Önce diğerine geçin.",
       "directDefaultCannotDelete": "Yönlendirmeden çıkıldığında bu sağlayıcıya dönülür; bu nedenle silinemez. Önce doğrudan bağlantı sayfasında başka bir sağlayıcı için \"Doğrudan bağlantıya dön ve kullan\" seçeneğini seçin.",
       "noFailover": "Resmi hesaplar yedek sağlayıcıya geçiş kuyruğuna katılamaz: İstemcinin kendi oturum açma bilgilerini kullanırlar ve diğer sağlayıcılarla dönüşümlü olarak çalışamazlar."

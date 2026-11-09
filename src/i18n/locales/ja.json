@@ -206,7 +206,7 @@
       "agySwitchTitle": "agy のログインを切り替えます",
       "agySwitchBody": "開く前に agy のログインを {{account}} に切り替えます。以降に起動する agy はこのアカウントを使います。",
       "agySwitchRunning": "agy が実行中です。開いている agy は元のアカウントのままで、元のアカウントを書き戻す可能性があります。できれば先に終了してください。",
-      "isolationBodyCopilot": "「{{name}}」のエンドポイント、キー、モデルはこのターミナルの copilot にだけ渡され、ファイルには書き込まれません。別のターミナルで直接 copilot を実行した場合は GitHub ログインのままです。"
+      "isolationBodyCopilot": "このターミナルの copilot は --model で「{{name}}」の先頭モデルを選んで起動し、このセッションにのみ有効です。エンドポイントとキーは Copilot の providers.json から読むので、ほかのターミナルでも /model で選べます。"
     },
     "name": "名前",
     "namePlaceholder": "例: Claude Official",
@@ -1940,24 +1940,36 @@
     "form": {
       "officialTitle": "Copilot CLI 自身の GitHub ログインを使用",
       "officialHint": "「ターミナルを開く」はこのカードのモデルで copilot を起動します。認証センターのアカウントを紐付けると、そのアカウントで起動します。",
-      "byokTitle": "このカードから開いたターミナルでのみ有効",
-      "byokHint": "Copilot CLI は独自モデルをプロセス環境からのみ読み込むため、Copilot 自身のファイルには書き込みません。",
+      "byokTitle": "追加すると Copilot の providers.json に書き込まれます",
+      "byokHint": "「追加」はこのプロバイダーとモデルを Copilot 自身の providers.json（このマシンの現在のユーザーのみ読み取り可）に書き込みます。以後どの方法で起動した copilot でも /model で「カード ID/モデル」を選べます。「削除」はこのプロバイダーのエントリだけを消し、ファイルのほかの内容はそのまま残します。",
       "apiFormat": "API 形式",
       "baseUrl": "API エンドポイント",
       "baseUrlHint": "OpenAI 互換エンドポイントは通常 /v1 で終わります（例：Ollama http://localhost:11434/v1）。Anthropic はホストのみ（https://api.anthropic.com）。",
       "model": "モデル",
       "officialModelHint": "空欄なら Copilot の現在のモデルを使います。--model として渡され、このセッションにのみ適用されます。copilot 内の /model も使えます。",
-      "byokModelHint": "エンドポイントが要求するモデル ID（COPILOT_MODEL）。",
       "reasoningEffort": "推論の強さ",
       "reasoningEffortDefault": "Copilot の既定値",
       "reasoningEffortHint": "ターミナルを開くときに --reasoning-effort として渡します。none を選ぶと、Copilot は Responses リクエストに reasoning.summary を付けません（このフィールドを受け付けない中継があります）。",
       "maxPromptTokens": "最大入力トークン",
       "maxOutputTokens": "最大出力トークン",
-      "envJsonHint": "上級者向け：任意の COPILOT_PROVIDER_* 変数（COPILOT_PROVIDER_MODEL_ID、COPILOT_PROVIDER_BEARER_TOKEN など）はそのまま copilot に渡されます。"
+      "byokModelsHint": "各モデルは Copilot の /model に「{{id}}/モデル ID」として表示されます。少なくとも 1 つ必要です。モデル ID はそのままエンドポイントに送る名前になります。異なる場合は行を展開して「上流のモデル名」を入力してください。このカードからターミナルを開くと先頭のモデルを使います。",
+      "providerIdHint": "Copilot でのプロバイダー名でもあり、/model には「{{id}}/モデル」と表示されます。保存後は変更できません。英字、数字、ドット、アンダースコア、ハイフンのみ使用できます。",
+      "duplicateModelId": "モデル ID が重複しています：{{model}}",
+      "wireModel": "上流のモデル名",
+      "wireModelHint": "エンドポイントに送るモデル名（wireModel）。空欄ならモデル ID を使います。",
+      "maxContextWindowTokens": "コンテキストウィンドウ",
+      "azureApiVersion": "Azure API バージョン"
     },
     "quota": {
       "accountNotInAuthCenter": "Copilot CLI でログイン中のアカウント {{login}} が認証センターにありません。認証センターに追加するか、このカードでアカウントを紐付けてください。",
       "notSignedIn": "Copilot CLI にログインしていません。copilot を実行して /login でログインするか、このカードで認証センターのアカウントを紐付けてください。"
+    },
+    "defaultCannotRemove": "Copilot の既定モデルがこのプロバイダーのものなので、削除できません。先に copilot の /model でほかのプロバイダーのモデルに切り替えてください。",
+    "terminalNeedsAdd": "ターミナルでモデルを選べるよう、先にこのプロバイダーを Copilot に追加してください。",
+    "section": {
+      "official": "公式ログイン · {{count}}",
+      "officialHelpTitle": "公式ログイン",
+      "officialHelp": "Copilot CLI 自身の GitHub ログインを使い、ファイルには何も書き込みません。「ターミナルを開く」はカードのモデルと紐付けたアカウントで copilot を起動します。"
     }
   },
   "codexOauth": {

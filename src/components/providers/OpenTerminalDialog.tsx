@@ -23,6 +23,7 @@ import { toast } from "@/lib/toast";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { cn } from "@/lib/utils";
 import { providerNeedsRouting } from "@/utils/providerCapabilities";
+import { isCopilotOfficialCard } from "@/config/copilotConfig";
 
 const STORAGE_KEY = "cc-switch:terminal:recent-dirs";
 const MAX_RECENT = 5;
@@ -178,6 +179,9 @@ export function terminalNeedsRoute(provider: Provider, appId: AppId): boolean {
  * 登录卡直接跑原生 agy，跟着全局设置和登录走。
  *
  * Grok Build：只能打开当前供应商，跑的就是 live 配置，谈不上隔离。
+ *
+ * Copilot CLI：自带模型卡写在 providers.json 里，终端以 `--model=<卡片 id>/<模型>` 选中它，
+ * 只对这次会话生效；官方卡跟着 Copilot 自己的 GitHub 登录走。
  */
 export function terminalIsIsolated(
   provider: Provider,
@@ -185,6 +189,11 @@ export function terminalIsIsolated(
 ): boolean {
   if (appId === "grokbuild") return false;
   if (appId === "codex") return codexHasOwnRoute(provider);
+  // Copilot CLI：自带模型卡以 --model=<卡片 id>/<模型> 启动，清掉进程环境里的 BYOK 变量，
+  // 只对这个 copilot 会话生效
+  if (appId === "copilot") {
+    return !isCopilotOfficialCard(provider);
+  }
   const env = (provider.settingsConfig as { env?: unknown } | undefined)?.env;
   if (!env || typeof env !== "object") return false;
   const filled = (key: string) => {
@@ -193,12 +202,6 @@ export function terminalIsIsolated(
   };
   if (appId === "agy") {
     return provider.category !== "official" && filled("GEMINI_API_KEY");
-  }
-  // Copilot CLI：自带模型的地址、Key 和模型只经环境变量交给这个 copilot 进程。
-  if (appId === "copilot") {
-    return (
-      provider.category !== "official" && filled("COPILOT_PROVIDER_BASE_URL")
-    );
   }
   if (provider.category === "official") {
     return Boolean(

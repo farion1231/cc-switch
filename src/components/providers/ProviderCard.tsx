@@ -39,7 +39,11 @@ import {
   extractCodexExperimentalBearerToken,
   extractProviderBaseUrl,
 } from "@/utils/providerConfigUtils";
-import { isCopilotByok } from "@/config/copilotProviderPresets";
+import {
+  copilotByokConfigOf,
+  copilotEnvOf,
+  isCopilotByok,
+} from "@/config/copilotConfig";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { isMac } from "@/lib/platform";
 import {
@@ -173,13 +177,16 @@ function isOfficialProvider(provider: Provider, appId: AppId): boolean {
 
 /** Copilot CLI 卡片显示模型（`COPILOT_MODEL`），自带模型卡再带上地址。 */
 function extractCopilotSummary(provider: Provider): string | null {
-  const env = (provider.settingsConfig as Record<string, any>)?.env ?? {};
-  const model =
-    typeof env.COPILOT_MODEL === "string" ? env.COPILOT_MODEL.trim() : "";
-  const baseUrl =
-    typeof env.COPILOT_PROVIDER_BASE_URL === "string"
-      ? env.COPILOT_PROVIDER_BASE_URL.trim()
-      : "";
+  // 官方卡写的是 --model；自带模型卡写 providers.json 里的第一个模型（打开终端用它）和地址
+  if (!isCopilotByok(provider.settingsConfig)) {
+    return copilotEnvOf(provider.settingsConfig).COPILOT_MODEL?.trim() || null;
+  }
+  const { provider: node, models } = copilotByokConfigOf(
+    provider.settingsConfig,
+  );
+  const ids = models.map((model) => model.id.trim()).filter(Boolean);
+  const model = ids.length > 1 ? `${ids[0]} +${ids.length - 1}` : ids[0];
+  const baseUrl = node.baseUrl.trim();
   if (model && baseUrl) return `${model} · ${baseUrl}`;
   return model || baseUrl || null;
 }
@@ -756,7 +763,12 @@ export function ProviderCard({
             openTerminalDisabledReason={
               terminalNeedsRoute(provider, appId)
                 ? t("provider.openTerminalNeedsRoute")
-                : undefined
+                : // Copilot 自带模型卡要先写进 providers.json，终端才能用 --model 选到它
+                  appId === "copilot" &&
+                    !isOfficial &&
+                    provider.meta?.liveConfigManaged !== true
+                  ? t("copilot.terminalNeedsAdd")
+                  : undefined
             }
           />
         </div>

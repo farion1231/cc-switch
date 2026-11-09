@@ -206,7 +206,7 @@
       "agySwitchTitle": "會切換 agy 的登入",
       "agySwitchBody": "開啟前把 agy 的登入切換到 {{account}}，之後新開的 agy 都用這個帳號。",
       "agySwitchRunning": "偵測到 agy 正在執行：已開啟的 agy 仍使用原帳號，還可能把原帳號寫回去，最好先結束它們。",
-      "isolationBodyCopilot": "「{{name}}」的位址、Key 和模型只傳給這個終端機裡的 copilot，不寫進任何檔案；在別的終端機裡直接執行 copilot 仍是 GitHub 登入。"
+      "isolationBodyCopilot": "這個終端機裡的 copilot 以 --model 選中「{{name}}」的第一個模型，只對這次工作階段生效；位址和 Key 讀自 Copilot 的 providers.json，在別的終端機裡也能用 /model 選到它。"
     },
     "name": "名稱",
     "namePlaceholder": "例如：Claude 官方",
@@ -1940,24 +1940,36 @@
     "form": {
       "officialTitle": "使用 Copilot CLI 自己的 GitHub 登入",
       "officialHint": "「開啟終端機」以這張卡的模型啟動 copilot；綁定授權中心的帳號後改用該帳號啟動。",
-      "byokTitle": "只在從這張卡開啟的終端機裡生效",
-      "byokHint": "Copilot CLI 只從程序環境讀取自帶模型，不會寫進 Copilot 自己的檔案。",
+      "byokTitle": "新增後寫入 Copilot 的 providers.json",
+      "byokHint": "「新增」會把這一家和它的模型寫入 Copilot 自己的 providers.json（僅本機目前使用者可讀），之後以任何方式啟動的 copilot 都能在 /model 裡選到「卡片識別碼/模型」；「移除」只刪除這一家的項目，檔案裡的其他內容原樣保留。",
       "apiFormat": "介面格式",
       "baseUrl": "API 位址",
       "baseUrlHint": "OpenAI 相容位址通常以 /v1 結尾（如 Ollama http://localhost:11434/v1）；Anthropic 只填主機（https://api.anthropic.com）。",
       "model": "模型",
       "officialModelHint": "留空則使用 Copilot 目前的模型。以 --model 傳入，只對這次工作階段生效；copilot 裡的 /model 照常可用。",
-      "byokModelHint": "介面要求的模型 ID（COPILOT_MODEL）。",
       "reasoningEffort": "推理強度",
       "reasoningEffortDefault": "Copilot 預設",
       "reasoningEffortHint": "開啟終端機時作為 --reasoning-effort 傳入。選 none 時 Copilot 不再在 Responses 請求裡帶 reasoning.summary，部分中轉不認這個欄位。",
       "maxPromptTokens": "最大輸入 Token",
       "maxOutputTokens": "最大輸出 Token",
-      "envJsonHint": "進階：任意 COPILOT_PROVIDER_* 變數（如 COPILOT_PROVIDER_MODEL_ID、COPILOT_PROVIDER_BEARER_TOKEN）都會原樣傳給 copilot。"
+      "byokModelsHint": "每個模型在 Copilot 的 /model 裡顯示為「{{id}}/模型 ID」，至少填一個。模型 ID 預設就是送給介面的名稱，需要不同時展開填「介面模型名稱」。從這張卡開啟終端機時使用第一個模型。",
+      "providerIdHint": "也是 Copilot 裡的供應商名稱，/model 裡顯示為「{{id}}/模型」；儲存後不能修改。只能使用字母、數字、點、底線和連字號。",
+      "duplicateModelId": "模型 ID 重複：{{model}}",
+      "wireModel": "介面模型名稱",
+      "wireModelHint": "送給介面的模型名稱（wireModel）。留空則使用模型 ID。",
+      "maxContextWindowTokens": "上下文視窗",
+      "azureApiVersion": "Azure API 版本"
     },
     "quota": {
       "accountNotInAuthCenter": "授權中心裡沒有 Copilot CLI 目前登入的帳號 {{login}}。請在授權中心新增它，或在卡片裡綁定帳號。",
       "notSignedIn": "Copilot CLI 尚未登入。請執行 copilot 並用 /login 登入，或在卡片裡綁定授權中心的帳號。"
+    },
+    "defaultCannotRemove": "Copilot 的預設模型屬於這一家，不能移除或刪除。請先在 copilot 裡用 /model 換成別家的模型。",
+    "terminalNeedsAdd": "請先把這一家新增到 Copilot，終端機才能選到它的模型。",
+    "section": {
+      "official": "官方登入 · {{count}}",
+      "officialHelpTitle": "官方登入",
+      "officialHelp": "使用 Copilot CLI 自己的 GitHub 登入，不寫入任何檔案；「開啟終端機」以卡片上的模型和綁定的帳號啟動 copilot。"
     }
   },
   "codexOauth": {
