@@ -3,6 +3,7 @@ mod blocks;
 pub mod claude;
 pub mod codex;
 mod codex_items;
+pub mod copilot;
 pub mod gemini;
 pub mod grokbuild;
 pub mod hermes;

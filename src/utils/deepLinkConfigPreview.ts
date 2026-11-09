@@ -4,7 +4,7 @@ import { decodeBase64Utf8 } from "@/lib/utils/base64";
 import { isSensitiveConfigKey, maskSensitiveValue } from "@/utils/deeplinkRisk";
 
 export interface ParsedDeepLinkConfig {
-  type: "claude" | "codex" | "gemini" | "grokbuild" | "agy";
+  type: "claude" | "codex" | "gemini" | "grokbuild" | "agy" | "copilot";
   env?: Record<string, string>;
   model?: string;
   auth?: Record<string, string>;
@@ -88,6 +88,23 @@ export function parseDeepLinkConfigPreview(
             .map((key) => [key, values[key] as string]),
         ),
         model: typeof model === "string" ? model : undefined,
+      };
+    }
+    if (request.app === "copilot") {
+      const env = parsed.env ?? parsed;
+      if (!env || typeof env !== "object" || Array.isArray(env)) return null;
+      const values = env as Record<string, unknown>;
+      return {
+        type: "copilot",
+        env: Object.fromEntries(
+          ["COPILOT_PROVIDER_API_KEY", "COPILOT_PROVIDER_BASE_URL"]
+            .filter((key) => typeof values[key] === "string")
+            .map((key) => [key, values[key] as string]),
+        ),
+        model:
+          typeof values.COPILOT_MODEL === "string"
+            ? values.COPILOT_MODEL
+            : undefined,
       };
     }
     if (request.app === "gemini") {

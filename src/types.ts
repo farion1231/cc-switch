@@ -324,6 +324,7 @@ export interface VisibleApps {
   dsh?: boolean;
   agy: boolean;
   omp: boolean;
+  copilot: boolean;
   codebuddy: boolean;
 }
 
@@ -459,6 +460,8 @@ export interface Settings {
     fiveHourThreshold: number;
     weeklyThreshold: number;
   };
+  // 路由 / 聚合模式下暂停使用 Codex 官方登录（官方额度用完、发送键被锁时的应急开关；默认关）
+  codexProxyWithoutOfficialLogin?: boolean;
   // Run official Codex under the shared "custom" provider id so future
   // sessions share one resume-history bucket with third-party providers
   unifyCodexSessionHistory?: boolean;
@@ -487,7 +490,7 @@ export interface Settings {
   // User has confirmed the common config first-run notice
   commonConfigConfirmed?: boolean;
   // 首选语言（可选，默认中文）
-  language?: "en" | "zh" | "zh-TW" | "ja" | "tr";
+  language?: "en" | "zh" | "zh-TW" | "ja" | "tr" | "ko" | "ru";
   // 按档的额度百分比写剩余还是已用（默认剩余；余额、Credits 不受影响）
   quotaDisplay?: "left" | "used";
 
@@ -843,6 +846,7 @@ export interface McpApps {
   codebuddy?: boolean;
   dsh?: boolean;
   agy?: boolean;
+  copilot?: boolean;
   claude: boolean;
   "claude-desktop"?: boolean;
   codex: boolean;

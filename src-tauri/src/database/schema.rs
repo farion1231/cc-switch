@@ -22,6 +22,37 @@ impl Database {
 
     /// 在指定连接上创建表（供迁移和测试使用）
     pub(crate) fn create_tables_on_conn(conn: &Connection) -> Result<(), AppError> {
+        Self::in_savepoint(conn, "create_tables", || {
+            Self::create_tables_on_conn_unbatched(conn)
+        })
+    }
+
+    /// 在 SAVEPOINT 里执行一组写入：成功 RELEASE，失败 ROLLBACK TO 再 RELEASE。
+    ///
+    /// 自动提交模式下每条语句单独一个事务，都要建 / 删一次日志文件并落盘；建表和
+    /// 二百多条内置定价逐条提交，在 Windows 上新库要多花约 6 秒（首次启动、每个用到
+    /// 数据库的测试都会碰上）。合成一个事务只落一次盘。外面已有事务时 SAVEPOINT 会嵌套。
+    pub(crate) fn in_savepoint<T>(
+        conn: &Connection,
+        name: &str,
+        f: impl FnOnce() -> Result<T, AppError>,
+    ) -> Result<T, AppError> {
+        conn.execute_batch(&format!("SAVEPOINT {name};"))
+            .map_err(|e| AppError::Database(format!("开启 savepoint {name} 失败: {e}")))?;
+        match f() {
+            Ok(value) => {
+                conn.execute_batch(&format!("RELEASE {name};"))
+                    .map_err(|e| AppError::Database(format!("提交 savepoint {name} 失败: {e}")))?;
+                Ok(value)
+            }
+            Err(err) => {
+                let _ = conn.execute_batch(&format!("ROLLBACK TO {name}; RELEASE {name};"));
+                Err(err)
+            }
+        }
+    }
+
+    fn create_tables_on_conn_unbatched(conn: &Connection) -> Result<(), AppError> {
         // 1. Providers 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS providers (
@@ -71,6 +102,7 @@ impl Database {
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
+            enabled_copilot BOOLEAN NOT NULL DEFAULT 0,
             enabled_codebuddy BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             enabled_pi BOOLEAN NOT NULL DEFAULT 0,
@@ -107,6 +139,7 @@ impl Database {
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
+            enabled_copilot BOOLEAN NOT NULL DEFAULT 0,
             enabled_codebuddy BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
@@ -651,30 +684,25 @@ impl Database {
                         Self::set_user_version(conn, 24)?;
                     }
                     24 => {
-                        // CodeBuddy 早期开发版曾把 enabled_codebuddy 作为 v23（无 enabled_omp）
-                        // 或 v24（无 enabled_dsh）发布；这里各列都按“缺失才加”补齐，
-                        // 上游与任一开发版来源的 v24 库都能升到 v25。
-                        if Self::table_exists(conn, "mcp_servers")? {
-                            Self::add_column_if_missing(
-                                conn,
-                                "mcp_servers",
-                                "enabled_omp",
-                                "BOOLEAN NOT NULL DEFAULT 0",
-                            )?;
-                        }
+                        // GitHub Copilot CLI：MCP 与 Skills 均在 SSOT 中保存独立开关。
                         for table in ["mcp_servers", "skills"] {
                             if Self::table_exists(conn, table)? {
-                                for column in ["enabled_dsh", "enabled_codebuddy"] {
-                                    Self::add_column_if_missing(
-                                        conn,
-                                        table,
-                                        column,
-                                        "BOOLEAN NOT NULL DEFAULT 0",
-                                    )?;
-                                }
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    "enabled_copilot",
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
                             }
                         }
                         Self::set_user_version(conn, 25)?;
+                    }
+                    25 => {
+                        log::info!(
+                            "迁移数据库从 v25 到 v26（MCP/Skills 添加 CodeBuddy Code 支持）"
+                        );
+                        Self::migrate_v25_to_v26(conn)?;
+                        Self::set_user_version(conn, 26)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -699,6 +727,31 @@ impl Database {
                 Err(e)
             }
         }
+    }
+
+    /// v25 -> v26 迁移：CodeBuddy Code 的 MCP 与 Skills 开关。
+    ///
+    /// CodeBuddy 早期开发版曾把 `enabled_codebuddy` 作为 v23（无 `enabled_omp`）、
+    /// v24（无 `enabled_dsh`）或 v25（无 `enabled_copilot`）发布，这些库会跳过
+    /// 上游对应的迁移步骤；这里各列都按“缺失才加”补齐，上游与任一开发版来源的库
+    /// 都能升到 v26，且不会改动已有开关。
+    fn migrate_v25_to_v26(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "mcp_servers")? {
+            Self::add_column_if_missing(
+                conn,
+                "mcp_servers",
+                "enabled_omp",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
+        for table in ["mcp_servers", "skills"] {
+            if Self::table_exists(conn, table)? {
+                for column in ["enabled_dsh", "enabled_copilot", "enabled_codebuddy"] {
+                    Self::add_column_if_missing(conn, table, column, "BOOLEAN NOT NULL DEFAULT 0")?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// v0 -> v1 迁移：补齐所有缺失列
@@ -3811,8 +3864,10 @@ impl Database {
 
     pub(crate) fn ensure_model_pricing_seeded_on_conn(conn: &Connection) -> Result<(), AppError> {
         // 每次启动都执行 INSERT OR IGNORE，增量追加新模型；仅修复仍等于旧内置值的定价。
-        Self::seed_model_pricing(conn)?;
-        Self::repair_current_model_pricing(conn)
+        Self::in_savepoint(conn, "seed_model_pricing", || {
+            Self::seed_model_pricing(conn)?;
+            Self::repair_current_model_pricing(conn)
+        })
     }
 
     // --- 辅助方法 ---
@@ -4117,7 +4172,7 @@ mod tests {
         conn.execute_batch("ALTER TABLE mcp_servers DROP COLUMN enabled_omp;")?;
         for table in ["mcp_servers", "skills"] {
             conn.execute_batch(&format!(
-                "ALTER TABLE {table} DROP COLUMN enabled_dsh; ALTER TABLE {table} DROP COLUMN enabled_codebuddy;"
+                "ALTER TABLE {table} DROP COLUMN enabled_dsh; ALTER TABLE {table} DROP COLUMN enabled_copilot; ALTER TABLE {table} DROP COLUMN enabled_codebuddy;"
             ))?;
         }
         conn.execute_batch("INSERT INTO mcp_servers (id, name, server_config, enabled_claude) VALUES ('m', 'm', '{\"command\":\"echo\"}', 1);")?;
@@ -4151,7 +4206,7 @@ mod tests {
         Database::create_tables_on_conn(&conn)?;
         for table in ["mcp_servers", "skills"] {
             conn.execute_batch(&format!(
-                "ALTER TABLE {table} DROP COLUMN enabled_dsh; ALTER TABLE {table} DROP COLUMN enabled_codebuddy;"
+                "ALTER TABLE {table} DROP COLUMN enabled_dsh; ALTER TABLE {table} DROP COLUMN enabled_copilot; ALTER TABLE {table} DROP COLUMN enabled_codebuddy;"
             ))?;
         }
         conn.execute_batch("INSERT INTO mcp_servers (id, name, server_config, enabled_omp) VALUES ('m', 'm', '{\"command\":\"echo\"}', 1); INSERT INTO skills (id, name, directory, enabled_kimi) VALUES ('s', 's', 's', 1);")?;
@@ -4193,7 +4248,7 @@ mod tests {
         Database::create_tables_on_conn(&conn)?;
         for table in ["mcp_servers", "skills"] {
             conn.execute_batch(&format!(
-                "ALTER TABLE {table} DROP COLUMN enabled_codebuddy;"
+                "ALTER TABLE {table} DROP COLUMN enabled_copilot; ALTER TABLE {table} DROP COLUMN enabled_codebuddy;"
             ))?;
         }
         conn.execute_batch("INSERT INTO mcp_servers (id, name, server_config, enabled_omp, enabled_dsh) VALUES ('m', 'm', '{\"command\":\"echo\"}', 1, 1); INSERT INTO skills (id, name, directory, enabled_dsh) VALUES ('s', 's', 's', 1);")?;
@@ -4231,7 +4286,9 @@ mod tests {
         Database::create_tables_on_conn(&conn)?;
         conn.execute_batch("ALTER TABLE mcp_servers DROP COLUMN enabled_omp;")?;
         for table in ["mcp_servers", "skills"] {
-            conn.execute_batch(&format!("ALTER TABLE {table} DROP COLUMN enabled_dsh;"))?;
+            conn.execute_batch(&format!(
+                "ALTER TABLE {table} DROP COLUMN enabled_dsh; ALTER TABLE {table} DROP COLUMN enabled_copilot;"
+            ))?;
         }
         conn.execute_batch("INSERT INTO mcp_servers (id, name, server_config, enabled_codebuddy) VALUES ('m', 'm', '{\"command\":\"echo\"}', 1); INSERT INTO skills (id, name, directory, enabled_codebuddy) VALUES ('s', 's', 's', 1);")?;
         Database::set_user_version(&conn, 23)?;
@@ -4260,14 +4317,16 @@ mod tests {
     }
 
     /// CodeBuddy dev builds before DeepSeek Harness landed shipped `enabled_codebuddy`
-    /// as v24 without `enabled_dsh`; the v24 -> v25 step must add it.
+    /// as v24 without `enabled_dsh`; the v25 -> v26 step must add it.
     #[test]
     fn codebuddy_dev_v24_database_gains_dsh_column_and_keeps_codebuddy_flags(
     ) -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
         Database::create_tables_on_conn(&conn)?;
         for table in ["mcp_servers", "skills"] {
-            conn.execute_batch(&format!("ALTER TABLE {table} DROP COLUMN enabled_dsh;"))?;
+            conn.execute_batch(&format!(
+                "ALTER TABLE {table} DROP COLUMN enabled_dsh; ALTER TABLE {table} DROP COLUMN enabled_copilot;"
+            ))?;
         }
         conn.execute_batch("INSERT INTO mcp_servers (id, name, server_config, enabled_omp, enabled_codebuddy) VALUES ('m', 'm', '{\"command\":\"echo\"}', 1, 1); INSERT INTO skills (id, name, directory, enabled_codebuddy) VALUES ('s', 's', 's', 1);")?;
         Database::set_user_version(&conn, 24)?;
@@ -4301,12 +4360,78 @@ mod tests {
         let conn = Connection::open_in_memory()?;
         Database::create_tables_on_conn(&conn)?;
         Database::apply_schema_migrations_on_conn(&conn)?;
-        assert_eq!(Database::get_user_version(&conn)?, 25);
+        assert_eq!(Database::get_user_version(&conn)?, 26);
+        assert_eq!(SCHEMA_VERSION, 26);
         assert!(Database::has_column(&conn, "mcp_servers", "enabled_omp")?);
         for table in ["mcp_servers", "skills"] {
             assert!(Database::has_column(&conn, table, "enabled_dsh")?);
+            assert!(Database::has_column(&conn, table, "enabled_copilot")?);
             assert!(Database::has_column(&conn, table, "enabled_codebuddy")?);
         }
+        Ok(())
+    }
+
+    /// CodeBuddy dev builds that predated Copilot CLI shipped `enabled_codebuddy` as
+    /// v25 without `enabled_copilot`; the v25 -> v26 step must add it.
+    #[test]
+    fn codebuddy_dev_v25_database_gains_copilot_column_and_keeps_codebuddy_flags(
+    ) -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        for table in ["mcp_servers", "skills"] {
+            conn.execute_batch(&format!("ALTER TABLE {table} DROP COLUMN enabled_copilot;"))?;
+        }
+        conn.execute_batch("INSERT INTO mcp_servers (id, name, server_config, enabled_dsh, enabled_codebuddy) VALUES ('m', 'm', '{\"command\":\"echo\"}', 1, 1); INSERT INTO skills (id, name, directory, enabled_codebuddy) VALUES ('s', 's', 's', 1);")?;
+        Database::set_user_version(&conn, 25)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let flags = conn.query_row(
+            "SELECT enabled_dsh, enabled_copilot, enabled_codebuddy FROM mcp_servers WHERE id = 'm'",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
+        )?;
+        assert_eq!(flags, (1, 0, 1));
+        let skill_flags = conn.query_row(
+            "SELECT enabled_copilot, enabled_codebuddy FROM skills WHERE id = 's'",
+            [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )?;
+        assert_eq!(skill_flags, (0, 1));
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Ok(())
+    }
+
+    /// Upstream v25 (GitHub Copilot CLI): `enabled_copilot` exists, CodeBuddy columns do not.
+    #[test]
+    fn codebuddy_upstream_v25_database_upgrades_and_keeps_copilot_flags() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        for table in ["mcp_servers", "skills"] {
+            conn.execute_batch(&format!(
+                "ALTER TABLE {table} DROP COLUMN enabled_codebuddy;"
+            ))?;
+        }
+        conn.execute_batch("INSERT INTO mcp_servers (id, name, server_config, enabled_copilot) VALUES ('m', 'm', '{\"command\":\"echo\"}', 1); INSERT INTO skills (id, name, directory, enabled_copilot) VALUES ('s', 's', 's', 1);")?;
+        Database::set_user_version(&conn, 25)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        for (table, id) in [("mcp_servers", "m"), ("skills", "s")] {
+            let flags = conn.query_row(
+                &format!(
+                    "SELECT enabled_copilot, enabled_codebuddy FROM {table} WHERE id = '{id}'"
+                ),
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )?;
+            assert_eq!(flags, (1, 0), "{table}");
+        }
+        Database::apply_schema_migrations_on_conn(&conn)?;
         Ok(())
     }
 
@@ -4389,6 +4514,62 @@ mod tests {
             assert_eq!(flags, (1, 0));
         }
         Database::apply_schema_migrations_on_conn(&conn)?;
+        Ok(())
+    }
+
+    #[test]
+    fn copilot_migration_preserves_existing_flags_and_defaults_to_disabled() -> Result<(), AppError>
+    {
+        // v23 先经 dsh 迁移（v23→v24）再经 copilot 迁移（v24→v25）；v24 只走后者。
+        for start in [23, 24] {
+            let conn = Connection::open_in_memory()?;
+            conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_claude BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+            if start == 24 {
+                conn.execute_batch("ALTER TABLE mcp_servers ADD COLUMN enabled_dsh BOOLEAN NOT NULL DEFAULT 0; ALTER TABLE skills ADD COLUMN enabled_dsh BOOLEAN NOT NULL DEFAULT 0; UPDATE mcp_servers SET enabled_dsh = 1;")?;
+            }
+            Database::set_user_version(&conn, start)?;
+            Database::apply_schema_migrations_on_conn(&conn)?;
+            assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+            for (table, flag, dsh) in [
+                ("mcp_servers", "enabled_kimi", i64::from(start == 24)),
+                ("skills", "enabled_claude", 0),
+            ] {
+                let flags = conn.query_row(
+                    &format!("SELECT {flag}, enabled_dsh, enabled_copilot FROM {table}"),
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, i64>(1)?,
+                            row.get::<_, i64>(2)?,
+                        ))
+                    },
+                )?;
+                assert_eq!(flags, (1, dsh, 0), "start version {start}, table {table}");
+            }
+            Database::apply_schema_migrations_on_conn(&conn)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn copilot_clean_database_persists_mcp_and_skill_flags_independently() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let server = serde_json::from_value(serde_json::json!({"id":"m", "name":"m", "server":{"command":"echo"}, "apps":{"copilot":true,"kimi":true}})).unwrap();
+        db.save_mcp_server(&server)?;
+        db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::Copilot, false)?;
+        let saved = db.get_all_mcp_servers()?;
+        assert!(!saved["m"].apps.copilot);
+        assert!(saved["m"].apps.kimi);
+        let skill = serde_json::from_value(serde_json::json!({"id":"s", "name":"s", "description":"", "directory":"s", "apps":{"copilot":true,"claude":true}, "installedAt":0})).unwrap();
+        db.save_skill(&skill)?;
+        let saved = db.get_installed_skill("s")?.unwrap();
+        assert!(saved.apps.copilot && saved.apps.claude);
+        let mut apps = saved.apps.clone();
+        apps.copilot = false;
+        db.update_skill_apps("s", &apps)?;
+        let saved = db.get_all_installed_skills()?;
+        assert!(!saved["s"].apps.copilot && saved["s"].apps.claude);
         Ok(())
     }
 

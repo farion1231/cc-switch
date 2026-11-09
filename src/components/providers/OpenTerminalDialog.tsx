@@ -114,12 +114,14 @@ const TERMINAL_APP_NAMES: Partial<Record<AppId, string>> = {
   codex: "Codex",
   agy: "Antigravity CLI",
   grokbuild: "Grok Build",
+  copilot: "GitHub Copilot CLI",
 };
 
-/** 跳过权限确认的参数：Claude Code 和 agy 同名，Codex 同时关掉沙箱，Grok Build 用自己的 */
+/** 跳过权限确认的参数：Claude Code 和 agy 同名，Codex 同时关掉沙箱，Grok Build 用自己的，Copilot CLI 用 `--allow-all` */
 function skipPermissionsFlag(appId: AppId): string {
   if (appId === "codex") return "--dangerously-bypass-approvals-and-sandbox";
   if (appId === "grokbuild") return "--always-approve";
+  if (appId === "copilot") return "--allow-all";
   return "--dangerously-skip-permissions";
 }
 
@@ -177,6 +179,12 @@ export function terminalIsIsolated(
   };
   if (appId === "agy") {
     return provider.category !== "official" && filled("GEMINI_API_KEY");
+  }
+  // Copilot CLI：自带模型的地址、Key 和模型只经环境变量交给这个 copilot 进程。
+  if (appId === "copilot") {
+    return (
+      provider.category !== "official" && filled("COPILOT_PROVIDER_BASE_URL")
+    );
   }
   if (provider.category === "official") {
     return Boolean(
@@ -324,7 +332,9 @@ export function OpenTerminalDialog({
               {t(
                 appId === "agy"
                   ? "provider.openTerminalDialog.isolationBodyAgy"
-                  : "provider.openTerminalDialog.isolationBody",
+                  : appId === "copilot"
+                    ? "provider.openTerminalDialog.isolationBodyCopilot"
+                    : "provider.openTerminalDialog.isolationBody",
                 { name: provider.name },
               )}
             </Notice>

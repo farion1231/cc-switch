@@ -216,6 +216,9 @@ mod tests {
 
     #[test]
     fn checkpoint_does_not_change_revision_and_failed_reads_can_retry() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("state.db");
         let conn = Connection::open(&db).unwrap();

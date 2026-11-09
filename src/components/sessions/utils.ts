@@ -21,6 +21,7 @@ export const SESSION_APP_IDS = [
   "codebuddy",
   "dsh",
   "agy",
+  "copilot",
 ] as const satisfies readonly AppId[];
 
 export type SessionAppId = (typeof SESSION_APP_IDS)[number];
@@ -46,12 +47,13 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
   agy: [
     "~/.gemini/antigravity-cli/brain/<conversation>/.system_generated/logs",
   ],
+  copilot: ["~/.copilot/session-state"],
 };
 
 /** MiniMax Code、Antigravity、DeepSeek Harness、CodeBuddy Code 的会话只能在原应用里管理（后端也会拒绝）。 */
 export const canDeleteSession = (session: SessionMeta) =>
   Boolean(session.sourcePath) &&
-  !["mcode", "agy", "dsh", "codebuddy"].includes(session.providerId);
+  !["mcode", "agy", "dsh", "copilot", "codebuddy"].includes(session.providerId);
 
 export interface SessionProjectGroup {
   key: string;

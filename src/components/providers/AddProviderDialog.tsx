@@ -73,6 +73,7 @@ export function AddProviderDialog({
     appId !== "mcode" &&
     appId !== "dsh" &&
     appId !== "kimi" &&
+    appId !== "copilot" &&
     appId !== "codebuddy" &&
     appId !== "grokbuild" &&
     appId !== "claude-desktop";

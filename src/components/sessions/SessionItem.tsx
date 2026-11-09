@@ -142,11 +142,13 @@ export function SessionItem({
     ? t(
         session.providerId === "dsh"
           ? "dsh.deleteSessionHint"
-          : session.providerId === "codebuddy"
-            ? "sessionManager.codebuddyDeleteHint"
-            : session.providerId === "agy"
-              ? "sessionManager.agyDeleteHint"
-              : "sessionManager.mcodeDeleteHint",
+          : session.providerId === "agy"
+            ? "sessionManager.agyDeleteHint"
+            : session.providerId === "copilot"
+              ? "sessionManager.copilotDeleteHint"
+              : session.providerId === "codebuddy"
+                ? "sessionManager.codebuddyDeleteHint"
+                : "sessionManager.mcodeDeleteHint",
         {
           defaultValue: "请在 MiniMax Code 中删除",
         },

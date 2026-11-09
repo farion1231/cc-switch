@@ -6,7 +6,7 @@ use cc_switch_lib::{
     ProviderMeta, ProviderService,
 };
 
-#[path = "support.rs"]
+#[path = "support/mod.rs"]
 mod support;
 use support::{
     create_test_state, create_test_state_with_config, enable_codex_official_auth_preservation,
@@ -171,6 +171,7 @@ command = "say"
                 hermes: false,
                 mcode: false,
                 kimi: false,
+                copilot: false,
                 codebuddy: false,
                 dsh: false,
                 pi: false,
@@ -1586,6 +1587,7 @@ fn switch_codex_ignores_a_broken_claude_json() {
                 hermes: false,
                 mcode: false,
                 kimi: false,
+                copilot: false,
                 codebuddy: false,
                 dsh: false,
                 pi: false,
@@ -1654,6 +1656,7 @@ fn sync_all_enabled_reports_broken_app_but_projects_the_rest() {
                 hermes: false,
                 mcode: false,
                 kimi: false,
+                copilot: false,
                 codebuddy: false,
                 dsh: false,
                 pi: false,

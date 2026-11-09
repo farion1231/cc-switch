@@ -972,6 +972,7 @@ describe("UnifiedSkillsPanel", () => {
           codebuddy: false,
           dsh: false,
           agy: false,
+          copilot: false,
         },
       },
     ]);

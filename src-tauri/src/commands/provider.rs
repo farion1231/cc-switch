@@ -192,7 +192,17 @@ fn switch_provider_internal(
     app_type: AppType,
     id: &str,
 ) -> Result<SwitchResult, AppError> {
-    ProviderService::switch(state, app_type, id)
+    // Codex：切换前后各看一次新会话落在哪组，跨组时提示（新版 Codex 会锁住另一组）。
+    let codex_bucket_before = matches!(app_type, AppType::Codex)
+        .then(crate::codex_history_migration::codex_live_history_bucket)
+        .flatten();
+    let mut result = ProviderService::switch(state, app_type.clone(), id)?;
+    if matches!(app_type, AppType::Codex) {
+        result.codex_history_split = crate::codex_history_migration::codex_history_split_hint(
+            codex_bucket_before.as_deref(),
+        );
+    }
+    Ok(result)
 }
 
 #[cfg_attr(not(feature = "test-hooks"), doc(hidden))]
