@@ -29,6 +29,7 @@ use crate::services::usage_cache::UsageCache;
 use crate::store::AppState;
 
 const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str = "official_subscription";
+const TEMPLATE_TYPE_GITHUB_COPILOT: &str = "github_copilot";
 /// Copilot 用量结果的单位（`commands::provider` 的 `COPILOT_UNIT_PREMIUM`）：Credits（接口里仍叫 premium_interactions）。
 const COPILOT_UNIT_PREMIUM: &str = "requests";
 
@@ -3263,7 +3264,7 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
         };
 
         if let Some(source) = tray_usage_source(app_type, &current)
-            .filter(|source| refreshes_on_hover(source, official_manual_only))
+            .filter(|source| auto_refresh_allowed(source, &current, official_manual_only))
         {
             let app_clone = app.clone();
             let state = app.state::<AppState>();
@@ -3315,10 +3316,32 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
     join_all(usage_futures).await;
 }
 
-/// 「额度只在手动刷新时查询」开着时，悬停托盘不替官方账号查额度（托盘照常显示上次的缓存）；
-/// 第三方余额脚本不是官方账号，照常刷新。
-fn refreshes_on_hover(source: &TrayUsageSource, official_manual_only: bool) -> bool {
-    !official_manual_only || *source == TrayUsageSource::Script
+/// 这一路额度查询打的是不是官方账号的接口。托管 Codex、Claude 账号、客户端订阅都是；
+/// 脚本路径里 GitHub Copilot 卡（查 Copilot 账号用量）和官方订阅模板（xAI OAuth 查
+/// SuperGrok 账号额度）也是，其余脚本是第三方余额 / 套餐查询。
+fn queries_official_account(source: &TrayUsageSource, provider: &Provider) -> bool {
+    match source {
+        TrayUsageSource::Script => provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.usage_script.as_ref())
+            .and_then(|script| script.template_type.as_deref())
+            .is_some_and(|template| {
+                template == TEMPLATE_TYPE_GITHUB_COPILOT
+                    || template == TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION
+            }),
+        _ => true,
+    }
+}
+
+/// 托盘自己发起的额度查询（悬停、面板弹出）能不能查这一家。「自动查询额度」关着时
+/// 不替官方账号查（托盘照常显示上次的缓存）；第三方余额脚本不是官方账号，照常刷新。
+fn auto_refresh_allowed(
+    source: &TrayUsageSource,
+    provider: &Provider,
+    official_manual_only: bool,
+) -> bool {
+    !official_manual_only || !queries_official_account(source, provider)
 }
 
 /// 托盘面板发起过的脚本额度查询：(应用, 供应商 id) → 上次查询时间。
@@ -3336,9 +3359,9 @@ pub(crate) async fn refresh_panel_provider_usage(app: &tauri::AppHandle) {
     let Some(app_state) = app.try_state::<AppState>() else {
         return;
     };
-    let visible_apps = crate::settings::get_settings()
-        .visible_apps
-        .unwrap_or_default();
+    let settings = crate::settings::get_settings();
+    let visible_apps = settings.visible_apps.unwrap_or_default();
+    let official_manual_only = settings.official_quota_manual_only;
     let mut due = Vec::new();
     for app_type in TRAY_APPS.iter().filter(|app| visible_apps.is_visible(app)) {
         let rows = match app_state.db.get_all_providers(app_type.as_str()) {
@@ -3349,7 +3372,10 @@ pub(crate) async fn refresh_panel_provider_usage(app: &tauri::AppHandle) {
             }
         };
         for (id, provider) in &rows {
-            if tray_usage_source(app_type, provider) != Some(TrayUsageSource::Script) {
+            if !tray_usage_source(app_type, provider).is_some_and(|source| {
+                source == TrayUsageSource::Script
+                    && auto_refresh_allowed(&source, provider, official_manual_only)
+            }) {
                 continue;
             }
             let interval_minutes = provider
@@ -3537,18 +3563,66 @@ mod tests {
 
     // ─── 额度文字 ───
 
+    fn script_provider(template_type: &str, provider_type: Option<&str>) -> Provider {
+        serde_json::from_value(serde_json::json!({
+            "id": "script",
+            "name": "Script",
+            "settingsConfig": {},
+            "meta": {
+                "providerType": provider_type,
+                "usage_script": {
+                    "enabled": true,
+                    "language": "javascript",
+                    "code": "",
+                    "templateType": template_type
+                }
+            }
+        }))
+        .unwrap()
+    }
+
     #[test]
-    fn manual_only_quota_skips_official_accounts_on_hover_but_not_scripts() {
+    fn manual_only_quota_skips_official_accounts_but_not_third_party_scripts() {
+        let any_provider = script_provider("balance", None);
         let official = [
             TrayUsageSource::ManagedCodex("acct".into()),
             TrayUsageSource::ClaudeAccount("acct".into()),
             TrayUsageSource::Subscription,
         ];
         for source in &official {
-            assert!(refreshes_on_hover(source, false));
-            assert!(!refreshes_on_hover(source, true));
+            assert!(auto_refresh_allowed(source, &any_provider, false));
+            assert!(!auto_refresh_allowed(source, &any_provider, true));
         }
-        assert!(refreshes_on_hover(&TrayUsageSource::Script, true));
+
+        // 脚本路径里查官方账号的：Copilot 卡、xAI OAuth（官方订阅模板）。
+        let copilot = script_provider("github_copilot", Some("github_copilot"));
+        let xai = script_provider("official_subscription", Some("xai_oauth"));
+        for provider in [&copilot, &xai] {
+            assert_eq!(
+                tray_usage_source(&AppType::Claude, provider),
+                Some(TrayUsageSource::Script)
+            );
+            assert!(auto_refresh_allowed(
+                &TrayUsageSource::Script,
+                provider,
+                false
+            ));
+            assert!(!auto_refresh_allowed(
+                &TrayUsageSource::Script,
+                provider,
+                true
+            ));
+        }
+
+        // 第三方余额 / 套餐脚本不是官方账号，照常刷新。
+        for template in ["balance", "token_plan", "custom"] {
+            let provider = script_provider(template, None);
+            assert!(auto_refresh_allowed(
+                &TrayUsageSource::Script,
+                &provider,
+                true
+            ));
+        }
     }
 
     fn make_quota(tool: &str, success: bool, tiers: Vec<QuotaTier>) -> SubscriptionQuota {

@@ -14,6 +14,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { useClaudeAccountQuota } from "@/lib/query/subscription";
 import { SubscriptionQuotaView } from "@/components/SubscriptionQuotaFooter";
 import { AutoQuotaToggle } from "@/components/settings/auth/AutoQuotaToggle";
+import { RefreshAllQuotaButton } from "@/components/settings/auth/RefreshAllQuotaButton";
 import zh from "@/i18n/locales/zh.json";
 
 const mocks = vi.hoisted(() => ({
@@ -110,6 +111,33 @@ describe("manual-only official quota (#8990)", () => {
     await act(async () => resolveSettings({ officialQuotaManualOnly: true }));
     await waitFor(() => expect(result.current.manualIdle).toBe(true));
     expect(mocks.getClaudeAccountQuota).not.toHaveBeenCalled();
+  });
+
+  it("lets Refresh all query rows that wait for a manual refresh", async () => {
+    mocks.getSettings.mockResolvedValue({ officialQuotaManualOnly: true });
+    function QuotaRow() {
+      const { manualIdle, data } = useClaudeAccountQuota("acc");
+      return (
+        <span>
+          {manualIdle ? "idle" : data?.success ? "loaded" : "pending"}
+        </span>
+      );
+    }
+    render(
+      <>
+        <QuotaRow />
+        <RefreshAllQuotaButton />
+      </>,
+      { wrapper: wrapperFor(newClient()) },
+    );
+    await screen.findByText("idle");
+    expect(mocks.getClaudeAccountQuota).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: zh.authCenter.quota.refreshAll }),
+    );
+    await screen.findByText("loaded");
+    expect(mocks.getClaudeAccountQuota).toHaveBeenCalledTimes(1);
   });
 
   it("shows a refresh hint instead of nothing while idle", () => {
