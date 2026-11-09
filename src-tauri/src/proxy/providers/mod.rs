@@ -41,6 +41,7 @@ pub mod transform;
 pub mod transform_codex_anthropic;
 pub mod transform_codex_chat;
 pub mod transform_codex_chat_moonshot_schema;
+pub mod transform_codex_responses_kimi_history;
 pub mod transform_codex_responses_namespace;
 pub mod transform_codex_responses_xai_sanitize;
 pub mod transform_gemini;
@@ -223,7 +224,8 @@ impl ProviderType {
             | AppType::Agy
             | AppType::Cline
             | AppType::Dsh
-            | AppType::Omp => return None,
+            | AppType::Omp
+            | AppType::Copilot => return None,
         };
         Some(provider_type)
     }
@@ -285,7 +287,8 @@ pub fn get_adapter(app_type: &AppType) -> Option<Box<dyn ProviderAdapter>> {
         | AppType::Agy
         | AppType::Cline
         | AppType::Dsh
-        | AppType::Omp => return None,
+        | AppType::Omp
+        | AppType::Copilot => return None,
     })
 }
 

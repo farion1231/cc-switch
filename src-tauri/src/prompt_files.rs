@@ -46,6 +46,8 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Cline => crate::cline_config::rules_dir(),
         // omp 只读按 profile 切换的 agent 目录里的 AGENTS.md（上游 discovery/builtin.ts）
         AppType::Omp => crate::omp_config::get_omp_agent_dir()?,
+        // Copilot CLI 的个人指令是 `~/.copilot/copilot-instructions.md`（`copilot instruction list`）。
+        AppType::Copilot => crate::copilot_config::copilot_dir(),
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
@@ -62,6 +64,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         | AppType::Cline
         | AppType::Dsh
         | AppType::Omp => "AGENTS.md",
+        AppType::Copilot => "copilot-instructions.md",
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 

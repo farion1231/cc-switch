@@ -63,6 +63,7 @@ pub use usage_stats::{
 };
 
 pub mod session_usage_cline;
+pub mod session_usage_copilot;
 pub mod session_usage_kimi;
 pub mod session_usage_mcode;
 

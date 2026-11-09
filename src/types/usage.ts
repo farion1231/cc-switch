@@ -233,7 +233,8 @@ export type AppType =
   | "kimi"
   | "cline"
   | "dsh"
-  | "agy";
+  | "agy"
+  | "copilot";
 
 export type AppTypeFilter = "all" | AppType;
 
@@ -250,6 +251,7 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "cline",
   "dsh",
   "agy",
+  "copilot",
 ];
 
 /**
