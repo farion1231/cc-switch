@@ -30,6 +30,7 @@ import type {
   CodexChatReasoning,
   PromptCacheRoutingMode,
   ClaudeApiKeyField,
+  ProxyRateLimitConfig,
 } from "@/types";
 import {
   providerPresets,
@@ -101,6 +102,7 @@ import { useAppMode } from "@/lib/query/proxy";
 import { ClaudeDesktopProviderForm } from "./ClaudeDesktopProviderForm";
 import { GrokBuildProviderForm } from "./GrokBuildProviderForm";
 import { CodexFormFields } from "./CodexFormFields";
+import { ProxyRateLimitField } from "./ProxyRateLimitField";
 import { GeminiFormFields } from "./GeminiFormFields";
 import { KimiProviderForm } from "./KimiProviderForm";
 import { AgyAccountSelect } from "./AgyOAuthSection";
@@ -413,6 +415,10 @@ function ProviderFormFull({
   const [endpointAutoSelect, setEndpointAutoSelect] = useState<boolean>(
     () => initialData?.meta?.endpointAutoSelect ?? true,
   );
+  // 请求削峰默认关闭：缺省 undefined 与「显式关闭」都按不启用处理。
+  const [proxyRateLimit, setProxyRateLimit] = useState<
+    ProxyRateLimitConfig | undefined
+  >(() => initialData?.meta?.proxyRateLimit);
   const supportsFullUrl = appId === "claude" || appId === "codex";
   const [localIsFullUrl, setLocalIsFullUrl] = useState<boolean>(() => {
     if (!supportsFullUrl) return false;
@@ -439,6 +445,7 @@ function ProviderFormFull({
       setDraftCustomEndpoints([]);
     }
     setEndpointAutoSelect(initialData?.meta?.endpointAutoSelect ?? true);
+    setProxyRateLimit(initialData?.meta?.proxyRateLimit);
     setLocalIsFullUrl(
       supportsFullUrl ? (initialData?.meta?.isFullUrl ?? false) : false,
     );
@@ -2002,6 +2009,7 @@ function ProviderFormFull({
           ? initialData?.meta?.commonConfigEnabled
           : undefined,
       endpointAutoSelect,
+      proxyRateLimit,
       claudeDesktopMode: undefined,
       // 保存 providerType（用于识别 Copilot / Codex OAuth 等特殊供应商）
       providerType,
@@ -2895,6 +2903,15 @@ function ProviderFormFull({
               variant={useStackLayout ? "stack" : "classic"}
               directModeFormatNotice={directModeFormatNotice}
             />
+          )}
+
+          {(appId === "codex" || appId === "claude") && (
+            <div className="border-t border-border pt-3">
+              <ProxyRateLimitField
+                value={proxyRateLimit}
+                onChange={setProxyRateLimit}
+              />
+            </div>
           )}
 
           {usesGeminiStyleForm(appId) && (

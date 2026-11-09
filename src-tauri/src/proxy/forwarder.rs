@@ -9,7 +9,7 @@ use super::{
     error::*,
     failover_switch::FailoverSwitchManager,
     json_canonical::{canonicalize_value, short_value_hash},
-    log_codes::fwd as log_fwd,
+    log_codes::{fwd as log_fwd, rl as log_rl},
     opaque_state_rectifier::{
         carries_encrypted_agent_task, detect_opaque_state_rejection, rectify_opaque_state,
         unreadable_agent_task_error, OpaqueStateRejection,
@@ -943,6 +943,30 @@ impl RequestForwarder {
             // forward_with_retry wrapper 在客户端请求维度统一处理，这里只刷
             // 新「正在尝试哪个 provider」的展示字段。
             self.note_attempt(provider).await;
+
+            // 请求削峰（供应商级，默认关闭）：超限时先排队再发，避免直接撞上游 429。
+            // 排队超时后放行，保证本地限流只会增加延迟、不会让请求失败。
+            if let Some(outcome) = self
+                .router
+                .wait_for_rate_limit(app_type_str, provider)
+                .await
+            {
+                if outcome.timed_out {
+                    log::warn!(
+                        "[{app_type_str}] [{}] Provider {} 削峰排队超时（{} ms），直接放行",
+                        log_rl::QUEUE_TIMEOUT,
+                        provider.name,
+                        outcome.waited.as_millis()
+                    );
+                } else if outcome.waited >= std::time::Duration::from_millis(200) {
+                    log::info!(
+                        "[{app_type_str}] [{}] Provider {} 削峰排队 {} ms",
+                        log_rl::QUEUED,
+                        provider.name,
+                        outcome.waited.as_millis()
+                    );
+                }
+            }
 
             // 转发请求（每个 Provider 只尝试一次，重试由客户端控制）
             let mut attempted_codex_upstream_format = None;

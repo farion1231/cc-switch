@@ -482,6 +482,27 @@ impl LocalProxyRequestOverrides {
     }
 }
 
+/// 供应商级请求削峰（客户端限流）配置。
+///
+/// 只作用于本地代理转发：在请求发往上游前先按令牌桶排队，超出每分钟配额时
+/// 等待而不是立刻撞上游 429。默认关闭，阈值由各供应商套餐决定（例如火山
+/// Coding Plan 实测约 20 次/60 秒）。
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct ProxyRateLimit {
+    /// 是否启用。缺省 false，老数据无需迁移。
+    #[serde(default)]
+    pub enabled: bool,
+    /// 每分钟允许的请求数；缺省 18，运行时 clamp 到 1–600。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rpm: Option<u32>,
+    /// 允许的瞬时突发请求数；缺省 2，运行时 clamp 到 1–50。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub burst: Option<u32>,
+    /// 超限后最长排队时间（毫秒），超时即放行；缺省 30000，上限 300000。
+    #[serde(default, rename = "maxWaitMs", skip_serializing_if = "Option::is_none")]
+    pub max_wait_ms: Option<u64>,
+}
+
 /// 供应商元数据
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderMeta {
@@ -636,6 +657,13 @@ pub struct ProviderMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub stack_models: Option<Vec<ClaudeStackModel>>,
+    /// 本地代理请求削峰（客户端限流）；缺省或 `enabled = false` 表示不启用。
+    #[serde(
+        rename = "proxyRateLimit",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub proxy_rate_limit: Option<ProxyRateLimit>,
 }
 
 /// Stack 模式下 Claude Code 供应商发布的一个模型。

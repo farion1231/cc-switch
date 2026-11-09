@@ -7,6 +7,7 @@ use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
 use crate::proxy::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, HalfOpenPermitGuard};
+use crate::proxy::rate_limiter::{AcquireOutcome, ProviderRateLimiter, RateLimitConfig};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -33,6 +34,8 @@ pub struct ProviderRouter {
     db: Arc<Database>,
     /// 熔断器管理器 - key 格式: "app_type:provider_id"
     circuit_breakers: Arc<RwLock<HashMap<String, Arc<CircuitBreaker>>>>,
+    /// 请求削峰令牌桶 - key 格式: "app_type:provider_id"
+    rate_limiters: Arc<RwLock<HashMap<String, Arc<ProviderRateLimiter>>>>,
 }
 
 impl ProviderRouter {
@@ -41,7 +44,36 @@ impl ProviderRouter {
         Self {
             db,
             circuit_breakers: Arc::new(RwLock::new(HashMap::new())),
+            rate_limiters: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// 按供应商配置排队（请求削峰）。
+    ///
+    /// 返回 `None` 表示这家没有启用削峰（或配置缺失），调用方直接转发。
+    /// 超时放行由 `AcquireOutcome::timed_out` 表达，不会在这里失败。
+    pub async fn wait_for_rate_limit(
+        &self,
+        app_type: &str,
+        provider: &Provider,
+    ) -> Option<AcquireOutcome> {
+        let config = RateLimitConfig::from_meta(
+            provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.proxy_rate_limit.as_ref()),
+        )?;
+
+        let key = format!("{app_type}:{}", provider.id);
+        let limiter = {
+            let mut limiters = self.rate_limiters.write().await;
+            limiters
+                .entry(key)
+                .or_insert_with(|| Arc::new(ProviderRateLimiter::new(config)))
+                .clone()
+        };
+
+        Some(limiter.acquire(config).await)
     }
 
     /// 选择可用的供应商（支持故障转移）

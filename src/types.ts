@@ -242,6 +242,19 @@ export interface ProviderMeta {
   githubAccountId?: string;
   // Stack 模式下这家 Claude Code 供应商发布的模型；没有时按模型映射发布，空列表什么都不发布
   stackModels?: ClaudeStackModel[];
+  // 本地代理请求削峰（客户端限流）；缺省或 enabled=false 表示不启用
+  proxyRateLimit?: ProxyRateLimitConfig;
+}
+
+// 供应商级请求削峰配置：本地代理在转发前按令牌桶排队，避免直接撞上游 429
+export interface ProxyRateLimitConfig {
+  enabled: boolean;
+  // 每分钟允许的请求数（默认 18，后端 clamp 到 1–600）
+  rpm?: number;
+  // 允许的瞬时突发请求数（默认 2，后端 clamp 到 1–50）
+  burst?: number;
+  // 超限后最长排队时间（毫秒，默认 30000，超时放行）
+  maxWaitMs?: number;
 }
 
 // Stack 模式下 Claude Code 供应商发布的一个模型

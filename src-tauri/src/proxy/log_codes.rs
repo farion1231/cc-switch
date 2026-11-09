@@ -61,3 +61,9 @@ pub mod usg {
     pub const LOG_FAILED: &str = "USG-001";
     pub const PRICING_NOT_FOUND: &str = "USG-002";
 }
+
+/// 请求削峰日志码
+pub mod rl {
+    pub const QUEUED: &str = "RL-001";
+    pub const QUEUE_TIMEOUT: &str = "RL-002";
+}
