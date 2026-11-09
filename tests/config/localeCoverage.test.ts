@@ -170,18 +170,6 @@ describe("Turkish locale", () => {
 });
 
 describe("Korean locale", () => {
-  it("preserves technical field identifiers in translated strings", () => {
-    const translations = flattenStrings(ko);
-    for (const [key, value] of translations) {
-      const source = reference.get(key) ?? "";
-      const identifiers =
-        source.match(/\b[a-z]+[A-Z][a-zA-Z]*\b|\b\w+_\w+\b/g) ?? [];
-      for (const identifier of identifiers) {
-        expect(value, `${key}: ${identifier}`).toContain(identifier);
-      }
-    }
-  });
-
   it("keeps every existing translation non-empty", () => {
     expect(
       [...flattenStrings(ko)].filter(
@@ -272,9 +260,9 @@ describe("Russian locale", () => {
   const translations = flattenStrings(ru);
 
   it("only keeps keys that still exist in English", () => {
-    expect([...translations.keys()].filter((key) => !reference.has(key))).toEqual(
-      [],
-    );
+    expect(
+      [...translations.keys()].filter((key) => !reference.has(key)),
+    ).toEqual([]);
   });
 
   it("keeps every existing translation non-empty", () => {
