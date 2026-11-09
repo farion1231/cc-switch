@@ -63,6 +63,7 @@ pub struct VisibleApps {
     pub agy: bool,
     #[serde(default = "default_true")]
     pub copilot: bool,
+    #[serde(default = "default_true")]
     pub workbuddy: bool,
 }
 
