@@ -33,3 +33,9 @@ pub mod fwd {
     pub const SINGLE_PROVIDER_FAILED: &str = "FWD-003";
     pub const CIRCUIT_SKIPPED: &str = "FWD-004";
 }
+
+/// 请求削峰日志码
+pub mod rl {
+    pub const QUEUED: &str = "RL-001";
+    pub const QUEUE_TIMEOUT: &str = "RL-002";
+}
