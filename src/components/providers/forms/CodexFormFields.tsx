@@ -2011,6 +2011,7 @@ export function CodexFormFields({
           autoSelect={autoSelect}
           onAutoSelectChange={onAutoSelectChange}
           onCustomEndpointsChange={onCustomEndpointsChange}
+          proxyUrl={proxyUrl}
         />
       )}
     </>

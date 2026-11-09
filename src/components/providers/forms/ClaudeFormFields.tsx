@@ -847,6 +847,7 @@ export function ClaudeFormFields({
           autoSelect={autoSelect}
           onAutoSelectChange={onAutoSelectChange}
           onCustomEndpointsChange={onCustomEndpointsChange}
+          proxyUrl={proxyUrl}
         />
       )}
     </>

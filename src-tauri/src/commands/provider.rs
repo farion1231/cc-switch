@@ -952,8 +952,9 @@ pub fn read_live_provider_settings(app: String) -> Result<serde_json::Value, Str
 pub async fn test_api_endpoints(
     urls: Vec<String>,
     #[allow(non_snake_case)] timeoutSecs: Option<u64>,
+    #[allow(non_snake_case)] proxyUrl: Option<String>,
 ) -> Result<Vec<EndpointLatency>, String> {
-    SpeedtestService::test_endpoints(urls, timeoutSecs)
+    SpeedtestService::test_endpoints(urls, timeoutSecs, proxyUrl.as_deref())
         .await
         .map_err(|e| e.to_string())
 }

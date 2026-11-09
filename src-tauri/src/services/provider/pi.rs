@@ -289,6 +289,7 @@ fn strip_unsupported_pi_metadata(provider: &mut Provider) {
         usage_script: meta.usage_script,
         is_partner: meta.is_partner,
         partner_promotion_key: meta.partner_promotion_key,
+        proxy_url: meta.proxy_url,
         ..ProviderMeta::default()
     });
 }
@@ -395,6 +396,44 @@ mod tests {
             .get_provider_by_id("cc-switch-test", "pi")
             .unwrap()
             .is_some());
+    }
+
+    #[test]
+    #[serial]
+    fn provider_proxy_survives_add_update_and_usage_metadata_save() {
+        let _agent = TestAgentDir::new();
+        let state = state();
+        let proxy = "socks5://user:pass@127.0.0.1:1080";
+        let saved_proxy = |state: &AppState| {
+            state
+                .db
+                .get_provider_by_id("cc-switch-test", "pi")
+                .unwrap()
+                .unwrap()
+                .meta
+                .and_then(|meta| meta.proxy_url)
+        };
+
+        let mut provider = input("model-a");
+        provider
+            .meta
+            .get_or_insert_with(ProviderMeta::default)
+            .proxy_url = Some(proxy.into());
+        ProviderService::add(&state, AppType::Pi, provider.clone(), true).expect("add provider");
+        assert_eq!(saved_proxy(&state).as_deref(), Some(proxy));
+
+        provider.settings_config["models"][0]["id"] = json!("model-b");
+        ProviderService::update(&state, AppType::Pi, None, provider).expect("update provider");
+        assert_eq!(saved_proxy(&state).as_deref(), Some(proxy));
+
+        ProviderService::update_pi_usage_script(
+            &state,
+            AppType::Pi,
+            "cc-switch-test",
+            usage_script("return {}"),
+        )
+        .expect("save usage metadata");
+        assert_eq!(saved_proxy(&state).as_deref(), Some(proxy));
     }
 
     #[test]

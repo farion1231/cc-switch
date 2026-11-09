@@ -46,6 +46,8 @@ interface EndpointSpeedTestProps {
   // 新建模式：当自定义端点列表变化时回传（仅包含 isCustom 的条目）
   // 编辑模式：不使用此回调，端点直接保存到后端
   onCustomEndpointsChange?: (urls: string[]) => void;
+  // 表单里当前填写的供应商代理；全局代理开启时后端会忽略它
+  proxyUrl?: string;
 }
 
 interface EndpointEntry extends EndpointCandidate {
@@ -101,6 +103,7 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
   autoSelect,
   onAutoSelectChange,
   onCustomEndpointsChange,
+  proxyUrl,
 }) => {
   const { t } = useTranslation();
   const [entries, setEntries] = useState<EndpointEntry[]>(() =>
@@ -337,6 +340,7 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
     try {
       const results = await vscodeApi.testApiEndpoints(urls, {
         timeoutSecs: ENDPOINT_TIMEOUT_SECS[appId],
+        proxyUrl: proxyUrl?.trim() || undefined,
       });
 
       const resultMap = new Map(
@@ -386,7 +390,7 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
     } finally {
       setIsTesting(false);
     }
-  }, [entries, autoSelect, appId, normalizedSelected, onChange, t]);
+  }, [entries, autoSelect, appId, normalizedSelected, onChange, proxyUrl, t]);
 
   const handleSelect = useCallback(
     (url: string) => {
