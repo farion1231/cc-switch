@@ -5051,7 +5051,7 @@
   "pluginsPage": {
     "title": "Plugins",
     "helpTitle": "Plugins",
-    "help": "Install, enable and remove plugins for Claude Code, Codex, Grok Build, MiniMax Code and OpenClaw. CC Switch runs each app's own CLI, so the result is the same as using its plugin command in a terminal.",
+    "help": "Install, enable and remove plugins for Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw and Pi. CC Switch runs each app's own CLI, so the result is the same as using its plugin command in a terminal. For Pi, plugins are Pi packages and the catalog comes from npm.",
     "appAria": "App",
     "viewAria": "Plugin views",
     "viewInstalled": "Installed",

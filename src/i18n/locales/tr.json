@@ -5051,7 +5051,7 @@
   "pluginsPage": {
     "title": "Eklentiler",
     "helpTitle": "Eklentiler",
-    "help": "Claude Code, Codex, Grok Build, MiniMax Code ve OpenClaw eklentilerini yükleyin, etkinleştirin ve kaldırın. CC Switch her uygulamanın kendi CLI'ını çalıştırır; sonuç terminalde eklenti komutunu kullanmakla aynıdır.",
+    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw ve Pi eklentilerini yükleyin, etkinleştirin ve kaldırın. CC Switch her uygulamanın kendi CLI'ını çalıştırır; sonuç terminalde eklenti komutunu kullanmakla aynıdır. Pi'de eklentiler Pi paketleridir ve katalog npm'den gelir.",
     "appAria": "Uygulama",
     "viewAria": "Eklenti görünümleri",
     "viewInstalled": "Yüklü",

@@ -140,8 +140,8 @@ export function installedFromCatalog(
     ...entry,
     id,
     name: id === entry.id ? entry.name : id,
-    // 没有市场概念的应用（OpenClaw）已装条目不显示来源
-    marketplace: app === "openclaw" ? "" : entry.marketplace,
+    // 没有市场概念的应用（OpenClaw、Pi）已装条目不显示来源
+    marketplace: app === "openclaw" || app === "pi" ? "" : entry.marketplace,
     installedId: null,
     installed: true,
     enabled: true,

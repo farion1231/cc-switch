@@ -5051,7 +5051,7 @@
   "pluginsPage": {
     "title": "插件",
     "helpTitle": "插件",
-    "help": "安装、启用、移除 Claude Code、Codex、Grok Build、MiniMax Code 和 OpenClaw 的插件。CC Switch 调用各应用自带的命令行，效果和在终端里执行它的插件命令一样。",
+    "help": "安装、启用、移除 Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw 和 Pi 的插件。CC Switch 调用各应用自带的命令行，效果和在终端里执行它的插件命令一样。Pi 的插件就是 Pi 包，目录取自 npm。",
     "appAria": "应用",
     "viewAria": "插件视图",
     "viewInstalled": "已安装",

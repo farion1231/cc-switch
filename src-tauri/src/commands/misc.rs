@@ -4877,6 +4877,7 @@ fn build_wsl_env_argv(extra_env: &[(&str, String)]) -> Result<Vec<String>, Strin
                 | "GROK_HOME"
                 | "OPENCLAW_STATE_DIR"
                 | "OPENCLAW_CONFIG_PATH"
+                | "PI_CODING_AGENT_DIR"
         ) {
             let Some(value) = wsl_unc_path_to_linux(Path::new(value)) else {
                 continue;

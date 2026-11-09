@@ -743,6 +743,69 @@ describe("PluginsPage", () => {
     );
   });
 
+  it("manages Pi packages without marketplaces and confirms installs", async () => {
+    m.listInstalled.mockResolvedValue([
+      plugin({
+        id: "npm:@scope/pi-tools",
+        name: "@scope/pi-tools",
+        marketplace: "",
+        scope: null,
+      }),
+    ]);
+    m.listCatalog.mockResolvedValue([
+      catalogItem({
+        id: "npm:@scope/pi-tools",
+        name: "@scope/pi-tools",
+        marketplace: "",
+      }),
+      catalogItem({
+        id: "npm:pi-review",
+        name: "pi-review",
+        marketplace: "",
+        description: "Review prompts",
+      }),
+    ]);
+    m.install.mockResolvedValue({ changed: true });
+    renderPage({ apps: ["pi"] });
+
+    const toggle = await enableSwitch();
+    expect(screen.queryByText("pluginsPage.builtIn")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: "pluginsPage.viewMarketplaces" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "pluginsPage.refreshCatalog" }),
+    ).toBeInTheDocument();
+    await userEvent.click(toggle);
+    await waitFor(() =>
+      expect(m.setEnabled).toHaveBeenCalledWith(
+        "pi",
+        "npm:@scope/pi-tools",
+        false,
+      ),
+    );
+
+    // 已装的不在「发现」里；安装前先确认
+    await userEvent.click(
+      screen.getByRole("tab", { name: "pluginsPage.viewDiscoverCount" }),
+    );
+    expect(await screen.findByText("pi-review")).toBeInTheDocument();
+    expect(
+      screen.getAllByRole("button", { name: "pluginsPage.install" }),
+    ).toHaveLength(1);
+    await userEvent.click(
+      screen.getByRole("button", { name: "pluginsPage.install" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("npm:pi-review")).toBeInTheDocument();
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "pluginsPage.install" }),
+    );
+    await waitFor(() =>
+      expect(m.install).toHaveBeenCalledWith("pi", "npm:pi-review"),
+    );
+  });
+
   it("offers no update for apps without an update command", async () => {
     m.listInstalled.mockResolvedValue([
       plugin({

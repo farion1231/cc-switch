@@ -5051,7 +5051,7 @@
   "pluginsPage": {
     "title": "外掛",
     "helpTitle": "外掛",
-    "help": "安裝、啟用、移除 Claude Code、Codex、Grok Build、MiniMax Code 和 OpenClaw 的外掛。CC Switch 呼叫各應用程式自帶的命令列，效果和在終端機執行它的外掛指令相同。",
+    "help": "安裝、啟用、移除 Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw 和 Pi 的外掛。CC Switch 呼叫各應用程式自帶的命令列，效果和在終端機執行它的外掛指令相同。Pi 的外掛就是 Pi 套件，目錄取自 npm。",
     "appAria": "應用程式",
     "viewAria": "外掛檢視",
     "viewInstalled": "已安裝",

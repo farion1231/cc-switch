@@ -5051,7 +5051,7 @@
   "pluginsPage": {
     "title": "プラグイン",
     "helpTitle": "プラグイン",
-    "help": "Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw のプラグインをインストール・有効化・削除します。CC Switch は各アプリ付属の CLI を実行するため、ターミナルでそのプラグインコマンドを使うのと同じ結果になります。",
+    "help": "Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw、Pi のプラグインをインストール・有効化・削除します。CC Switch は各アプリ付属の CLI を実行するため、ターミナルでそのプラグインコマンドを使うのと同じ結果になります。Pi のプラグインは Pi パッケージで、カタログは npm から取得します。",
     "appAria": "アプリ",
     "viewAria": "プラグインの表示",
     "viewInstalled": "インストール済み",

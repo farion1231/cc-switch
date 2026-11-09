@@ -38,8 +38,13 @@ pub async fn install_plugin(app: PluginApp, id: String) -> Result<PluginActionOu
 }
 
 #[tauri::command]
-pub async fn uninstall_plugin(app: PluginApp, id: String) -> Result<PluginActionOutcome, String> {
-    blocking(move || plugin_manager::uninstall_plugin(app, &id)).await
+pub async fn uninstall_plugin(
+    state: tauri::State<'_, AppState>,
+    app: PluginApp,
+    id: String,
+) -> Result<PluginActionOutcome, String> {
+    let db = state.db.clone();
+    blocking(move || plugin_manager::uninstall_plugin(&db, app, &id)).await
 }
 
 #[tauri::command]

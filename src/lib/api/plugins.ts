@@ -1,7 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 
 /** 支持插件的应用（值和 `AppId` 一致）。 */
-export type PluginApp = "claude" | "codex" | "grokbuild" | "mcode" | "openclaw";
+export type PluginApp =
+  | "claude"
+  | "codex"
+  | "grokbuild"
+  | "mcode"
+  | "openclaw"
+  | "pi";
 
 export const PLUGIN_APPS: PluginApp[] = [
   "claude",
@@ -9,6 +15,7 @@ export const PLUGIN_APPS: PluginApp[] = [
   "grokbuild",
   "mcode",
   "openclaw",
+  "pi",
 ];
 
 export const isPluginApp = (app: string): app is PluginApp =>
@@ -67,6 +74,14 @@ export const PLUGIN_APP_FEATURES: Record<PluginApp, PluginAppFeatures> = {
     confirmInstall: true,
     restartNote: "gateway",
   },
+  // 插件是 Pi 包：目录取自 npm（pi-package 关键词），没有市场；包能执行代码，安装前先确认
+  pi: {
+    marketplaces: false,
+    refresh: true,
+    update: true,
+    confirmInstall: true,
+    restartNote: "session",
+  },
 };
 
 /** 工具没装时后端返回的错误码。 */
@@ -76,7 +91,7 @@ export const PLUGIN_CLI_NOT_INSTALLED = "PLUGIN_CLI_NOT_INSTALLED";
 export const PLUGIN_NEEDS_TERMINAL_CONFIRM = "PLUGIN_NEEDS_TERMINAL_CONFIRM";
 
 export interface PluginEntry {
-  /** 交给 CLI 的 id：多数应用是 `name@marketplace`，Grok Build 是插件名，OpenClaw 是插件 id 或 ClawHub 包名 */
+  /** 交给 CLI 的 id：多数应用是 `name@marketplace`，Grok Build 是插件名，OpenClaw 是插件 id 或 ClawHub 包名，Pi 是包来源（`npm:<包名>`） */
   id: string;
   name: string;
   /** 来自哪个市场；没有市场概念的为空串 */
@@ -95,7 +110,7 @@ export interface PluginEntry {
   removable?: boolean;
   /** 市场是否允许安装 */
   installable: boolean;
-  /** 目录条目装好后在已安装列表里的 id（和 id 不同时才有，OpenClaw 用） */
+  /** 目录条目装好后在已安装列表里的 id（和 id 不同时才有：OpenClaw 的包名、Pi 已按别的写法装过的来源） */
   installedId?: string | null;
   installPath?: string | null;
   updatedAt?: string | null;
