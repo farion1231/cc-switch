@@ -750,6 +750,8 @@ describe("PiProviderForm", () => {
     );
   });
 
+  // This drives the preset, model and header editors. Parallel CI workers can
+  // take longer than five seconds to complete the full interaction sequence.
   it("stores Pi-native request headers without mixing them with API-key auth", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);
@@ -813,7 +815,7 @@ describe("PiProviderForm", () => {
     expect(config).not.toHaveProperty("authHeader");
     expect(config.headers).not.toHaveProperty("authorization");
     expect(config.headers).not.toHaveProperty("x-api-key");
-  });
+  }, 15_000);
 
   it("echoes existing Pi headers and preserves them when saving", async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined);
