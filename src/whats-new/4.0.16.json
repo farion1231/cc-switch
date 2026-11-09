@@ -1,0 +1,33 @@
+{
+  "version": "4.0.16",
+  "items": [
+    {
+      "type": "new",
+      "zh": "托盘改为快捷面板，可查看用量并切换，设置里可换回旧菜单",
+      "zh-TW": "系統匣改為快捷面板，可查看用量並切換，設定裡可換回舊選單",
+      "en": "The tray now opens a quick panel for usage and switching; the old menu is in Settings",
+      "ja": "トレイがクイックパネルに。使用量の確認と切替が可能、旧メニューは設定で戻せます"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 Codex 聚合会话卡住、路由下重启丢失 ChatGPT 登录",
+      "zh-TW": "修正 Codex 聚合工作階段卡住、路由下重啟遺失 ChatGPT 登入",
+      "en": "Fixed stuck Codex aggregation sessions and the ChatGPT login lost on restart while routed",
+      "ja": "Codex 集約セッションの停止と、再起動で ChatGPT ログインが消える問題を修正"
+    },
+    {
+      "type": "fix",
+      "zh": "修复并行工具结果报 400，自填的 GPT 上下文窗口生效",
+      "zh-TW": "修正並行工具結果報 400，自填的 GPT 上下文視窗生效",
+      "en": "Fixed 400 errors on parallel tool results; configured GPT context windows now apply",
+      "ja": "並列ツール結果の 400 を修正、設定した GPT コンテキストウィンドウが有効に"
+    },
+    {
+      "type": "new",
+      "zh": "OpenCode 卡片可以设为默认模型",
+      "zh-TW": "OpenCode 卡片可以設為預設模型",
+      "en": "OpenCode cards can set OpenCode's default model",
+      "ja": "OpenCode のカードからデフォルトモデルを設定可能に"
+    }
+  ]
+}

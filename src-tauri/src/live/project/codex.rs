@@ -2,7 +2,8 @@
 //!
 //! 行的形状是 `{auth, config}`（`config` 是 TOML 文本）。投影只取关键字段，第三方路由
 //! 一律写成 `[model_providers.custom]`：行里用别的 id（`deepseek`）、旧形态的顶层
-//! `openai_base_url`、旧版留下的保留 id 表（`[model_providers.openai]`），都在这里归一。
+//! `openai_base_url` 或顶层 `base_url`、旧版留下的保留 id 表（`[model_providers.openai]`），
+//! 都在这里归一。
 //! 行里其余内容（旧版回填进来的 MCP、projects、插件）不投影，归用户和 Codex。
 //!
 //! Key 写成路由表的 `experimental_bearer_token`：Codex 0.149 起自定义 provider 不再读
@@ -20,14 +21,17 @@ use crate::live::patch::LiveWriteError;
 
 /// CC Switch 写入的路由表 id。
 pub const ROUTE_ID: &str = "custom";
-/// 代理模式下官方路由的表 id（旧版也认这个 id，兼容期保留）。
+/// 旧版代理官方路由写的表 id。会话按选中的 id 分桶，它让代理下的官方会话自成一桶，
+/// 表一删就 resume 不了，新版不再写；live 里留着的只清理。
 pub const OFFICIAL_PROXY_ROUTE_ID: &str = "cc-switch-official";
+/// 把内置 openai 改道到别的地址的顶层键。
+const OPENAI_BASE_URL: &str = "openai_base_url";
 /// CC Switch 生成的模型目录文件名。
 pub const CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
 pub use super::claude::PROXY_TOKEN_PLACEHOLDER;
 /// `web_search` 的禁用值。
 pub const WEB_SEARCH_DISABLED: &str = "disabled";
-const MODEL_CATALOG_JSON: &str = "model_catalog_json";
+pub const MODEL_CATALOG_JSON: &str = "model_catalog_json";
 
 /// Codex 内置的 provider id（大小写敏感，和上游一致：`OpenAI` 是合法的自定义 id）。
 const BUILT_IN_IDS: &[&str] = &[
@@ -46,12 +50,11 @@ const BEDROCK_IDS: &[&str] = &["amazon-bedrock", "amazon-bedrock-runtime"];
 const LEGACY_REROUTE_ID: &str = "cc-switch";
 
 /// 顶层的关键字段里，直接取行里值的那几个（选路、凭据、模型目录指针另算）。
-const ROW_TOP_FIELDS: &[&str] = &[
+pub(crate) const ROW_TOP_FIELDS: &[&str] = &[
     "model",
     "review_model",
     "model_reasoning_effort",
     "plan_mode_reasoning_effort",
-    "disable_response_storage",
 ];
 
 fn is_built_in_id(id: &str) -> bool {
@@ -101,7 +104,7 @@ pub enum Route {
 #[derive(Debug, Clone)]
 pub struct CodexProjection {
     pub route: Route,
-    /// 顶层关键字段（模型名、推理档位、`disable_response_storage`）。
+    /// 顶层关键字段（模型名、推理档位）。
     pub top: Vec<(String, TomlValue)>,
     /// 嵌在用户表里的模型名（`agents.default_subagent_model` 等）。
     pub nested: Vec<(Vec<String>, TomlValue)>,
@@ -153,15 +156,7 @@ impl CodexProjection {
             .collect();
         // 行里自己指定的模型目录（用户管理的文件）照写；指向 CC Switch 自己目录的不算，
         // 那个指针由写入方按有没有生成目录决定。
-        if let Some(pointer) =
-            doc.get(MODEL_CATALOG_JSON)
-                .and_then(Item::as_value)
-                .filter(|value| {
-                    value
-                        .as_str()
-                        .is_some_and(|path| !is_cc_switch_catalog(path))
-                })
-        {
+        if let Some(pointer) = foreign_catalog(&doc) {
             top.push((MODEL_CATALOG_JSON.to_string(), undecorated(pointer.clone())));
         }
         let nested = floor::CODEX_FLOOR_NESTED
@@ -323,7 +318,18 @@ fn third_party_route(doc: &DocumentMut, input: &RowInput<'_>) -> Result<Route, A
                 table.insert("wire_api", toml_edit::value("responses"));
                 (table, "Custom".to_string())
             }
-            None if selector.is_none() => return default_route(doc, input),
+            // 旧形态：没有选路，地址直接写在顶层 `base_url`（Codex 不认，代理认）。不收进
+            // 路由表的话，存行时它作为关键字段被剥掉、再也写不回来（#8039）。
+            None if selector.is_none() => match non_empty_str(doc.get("base_url")) {
+                Some(base_url) => {
+                    let mut table = Table::new();
+                    table.insert("name", toml_edit::value("Custom"));
+                    table.insert("base_url", toml_edit::value(base_url));
+                    table.insert("wire_api", toml_edit::value("responses"));
+                    (table, "Custom".to_string())
+                }
+                None => return default_route(doc, input),
+            },
             None => return built_in_route("openai", providers, doc, input),
         },
         Some(id) => return built_in_route(id, providers, doc, input),
@@ -346,9 +352,16 @@ fn row_key(doc: &DocumentMut, table: Option<&Table>, input: &RowInput<'_>) -> Op
         .or_else(|| non_empty_str(doc.get("experimental_bearer_token")))
 }
 
+const KEYLESS_FALLBACK_ERROR: &str = "provider.codex.config.official_auth_fallback";
+
+/// 是不是 [`keyless_fallback_error`]：行没有 Key，却会回退去用 `auth.json` 里的登录。
+pub fn is_keyless_fallback(error: &AppError) -> bool {
+    matches!(error, AppError::Localized { key, .. } if *key == KEYLESS_FALLBACK_ERROR)
+}
+
 fn keyless_fallback_error() -> AppError {
     AppError::localized(
-        "provider.codex.config.official_auth_fallback",
+        KEYLESS_FALLBACK_ERROR,
         "该 Codex 配置没有可用的 API 密钥，而 requires_openai_auth = true（或顶层 openai_base_url）会让 Codex 回退使用 auth.json 里的登录凭据访问第三方地址。请为供应商填写 API 密钥，或移除该回退指令",
         "This Codex config has no usable API key, and requires_openai_auth = true (or a top-level openai_base_url) would make Codex fall back to whatever login auth.json holds for a third-party route. Add an API key to the provider or remove the fallback directive",
     )
@@ -446,8 +459,10 @@ pub enum RouteWrite {
     BuiltIn { id: String, table: Option<Table> },
     /// 第三方行没有路由：不写选路。
     Default,
-    /// 代理的官方路由：选路写 `cc-switch-official`，客户端带自己的登录。
-    OfficialProxy(Table),
+    /// 代理的官方路由，客户端带自己的登录。写法和官方直连对齐，进出代理不换会话的桶：
+    /// 没开「统一会话历史」时不写选路，顶层 `openai_base_url` 把内置 openai 改道到代理
+    /// （会话仍记在 `openai` 下）；开了时写 custom 官方镜像表，指向代理。
+    OfficialProxy { base_url: String, unified: bool },
 }
 
 impl RouteWrite {
@@ -456,7 +471,18 @@ impl RouteWrite {
             Self::Official { .. } | Self::Default => None,
             Self::OfficialMirror | Self::Custom(_) => Some(ROUTE_ID),
             Self::BuiltIn { id, .. } => Some(id),
-            Self::OfficialProxy(_) => Some(OFFICIAL_PROXY_ROUTE_ID),
+            Self::OfficialProxy { unified, .. } => unified.then_some(ROUTE_ID),
+        }
+    }
+
+    /// 要写进顶层 `openai_base_url` 的地址（只有代理的官方路由、没开统一会话历史时有）。
+    fn openai_base_url(&self) -> Option<&str> {
+        match self {
+            Self::OfficialProxy {
+                base_url,
+                unified: false,
+            } => Some(base_url),
+            _ => None,
         }
     }
 }
@@ -505,10 +531,10 @@ pub struct CodexConfigPatch {
     pub nested: Vec<(Vec<String>, TomlValue)>,
     /// 独有字段的目标值（含 `web_search`）。
     pub exclusive: Vec<(String, TomlValue)>,
-    /// 上一家带进来的独有字段和它行里指定的模型目录指针：live 里的值还相同才删。
+    /// 上一家带进来的独有字段：live 里的值还相同才删。
     pub outgoing: Vec<(String, TomlValue)>,
     pub route: RouteWrite,
-    /// 指向 CC Switch 生成的模型目录（用户自己的指针不认领、不删除）。
+    /// 生成了模型目录：行里没有自己的指针时，`model_catalog_json` 写成 CC Switch 的目录。
     pub catalog: bool,
     /// 旧版按别的 id 写进去的表，能证明是 CC Switch 写的就删掉（里面可能有真实 Key）。
     pub retired: Vec<KnownTable>,
@@ -539,9 +565,58 @@ fn is_cc_switch_catalog(value: &str) -> bool {
     Path::new(value).file_name().and_then(|name| name.to_str()) == Some(CATALOG_FILENAME)
 }
 
-/// 行里自己指定的模型目录指针（投影的 `top` 只收不是 CC Switch 的指针）。它和独有字段
-/// 一样跟着这一家走：切走时 live 里的值还相同就删（见 [`CodexConfigPatch::outgoing`]），
-/// 否则第 1 步会把它当成用户的指针留下，之后每一家都用它的模型目录。
+/// cc-switch 接管 `model_catalog_json` 时写入的指针值。
+///
+/// 新版 Codex 在解析自定义权限档位（如校验 `default_permissions`）时会重读
+/// config.toml，并把该字段按绝对路径反序列化——裸相对文件名在那里被拒
+/// （`AbsolutePathBuf deserialized without a base path`），对配了自定义
+/// default_permissions 的用户表现为 plan 模式 turn/start 硬失败。写绝对路径，
+/// 启动读取器（相对路径按配置目录解析）与严格重读器就都认这个指针。
+///
+/// 例外：对宿主 OS 不是绝对路径的目录、或只有 WSL 侧 Codex 会读的 Windows UNC
+/// 目录（`\\wsl.localhost\...`）——绝对形态对读取器无意义，保留裸文件名由
+/// Codex 按自己的配置目录解析（#3614）。
+pub(crate) fn catalog_pointer_value(config_dir: &Path) -> String {
+    let catalog_path = config_dir.join(CATALOG_FILENAME);
+    let text = catalog_path.to_string_lossy();
+    let is_unc = text.starts_with(r"\\") || text.starts_with("//");
+    if is_unc || !catalog_path.is_absolute() {
+        return CATALOG_FILENAME.to_string();
+    }
+    text.into_owned()
+}
+
+/// 去掉行里自己指定的模型目录指针（[`row_catalog_pointer`]），其余内容原样；行里没有时为
+/// `None`。
+pub fn without_row_catalog(config_text: &str) -> Option<String> {
+    let mut doc = config_text.parse::<DocumentMut>().ok()?;
+    foreign_catalog(&doc)?;
+    doc.remove(MODEL_CATALOG_JSON);
+    Some(doc.to_string())
+}
+
+/// 顶层指向别的目录（不是 CC Switch 生成的那个）的 `model_catalog_json`。
+pub fn foreign_catalog(doc: &DocumentMut) -> Option<&TomlValue> {
+    doc.get(MODEL_CATALOG_JSON)
+        .and_then(Item::as_value)
+        .filter(|value| {
+            value
+                .as_str()
+                .is_some_and(|path| !is_cc_switch_catalog(path))
+        })
+}
+
+/// live 的 `model_catalog_json` 指向 CC Switch 生成的目录：新启动的 Codex 读的是它。
+pub fn live_catalog_is_ours(config_text: &str) -> bool {
+    config_text.parse::<DocumentMut>().ok().is_some_and(|doc| {
+        doc.get(MODEL_CATALOG_JSON)
+            .and_then(Item::as_str)
+            .is_some_and(is_cc_switch_catalog)
+    })
+}
+
+/// 行里自己指定的模型目录指针（投影的 `top` 只收不是 CC Switch 的指针）。它和别的关键
+/// 字段一样只属于这一家：切到别家时第 1 步清掉。
 pub fn row_catalog_pointer(top: &[(String, TomlValue)]) -> Option<&(String, TomlValue)> {
     top.iter().find(|(key, _)| key == MODEL_CATALOG_JSON)
 }
@@ -555,28 +630,28 @@ impl CodexConfigPatch {
             .map(|(key, _)| key.as_str())
             .collect();
         let selector = self.route.selector();
+        // 第 4 步选路要写的顶层键。
+        let route_keys: Vec<&str> = selector
+            .map(|_| "model_provider")
+            .into_iter()
+            .chain(self.route.openai_base_url().map(|_| OPENAI_BASE_URL))
+            .collect();
         let root = doc.as_table_mut();
 
-        // 1. 清空顶层关键字段。目标里也有的留给后面原位改值；模型目录指针只认自己的，
-        //    上一家行里指定的指针在第 3 步按值删。
+        // 1. 清空顶层关键字段。目标里也有的（含选路要写的）留给后面原位改值。模型目录指针
+        //    同样不论原来指向哪里：要写 CC Switch 的目录时留给第 5 步原位改值，否则删掉。
         let doomed: Vec<String> = root
             .iter()
             .map(|(key, _)| key.to_string())
             .filter(|key| {
                 floor::CODEX_FLOOR_TOP.contains(&key.as_str())
                     && !target_top.contains(&key.as_str())
-                    && !(key == "model_provider" && selector.is_some())
+                    && !route_keys.contains(&key.as_str())
             })
             .collect();
         for key in doomed {
-            if key == MODEL_CATALOG_JSON {
-                let ours = root
-                    .get(MODEL_CATALOG_JSON)
-                    .and_then(Item::as_str)
-                    .is_some_and(is_cc_switch_catalog);
-                if !ours || self.catalog {
-                    continue;
-                }
+            if key == MODEL_CATALOG_JSON && self.catalog {
+                continue;
             }
             root.remove(&key);
         }
@@ -602,9 +677,11 @@ impl CodexConfigPatch {
             }
         }
 
-        // 3. 上一家带进来的独有字段和模型目录指针：值还相同才删。
+        // 3. 上一家带进来的独有字段：值还相同才删。关键字段第 1 步已经清过（旧版契约里记着的
+        //    模型目录指针也在这里跳过）。
         for (key, value) in &self.outgoing {
-            if target_top.contains(&key.as_str()) {
+            if target_top.contains(&key.as_str()) || floor::CODEX_FLOOR_TOP.contains(&key.as_str())
+            {
                 continue;
             }
             let matches = root
@@ -640,13 +717,11 @@ impl CodexConfigPatch {
         }
         let row_pointer = self.top.iter().any(|(key, _)| key == MODEL_CATALOG_JSON);
         if self.catalog && !row_pointer {
-            let user_pointer = root
-                .get(MODEL_CATALOG_JSON)
-                .and_then(Item::as_str)
-                .is_some_and(|value| !is_cc_switch_catalog(value));
-            if !user_pointer {
-                put_value(root, MODEL_CATALOG_JSON, &TomlValue::from(CATALOG_FILENAME));
-            }
+            // 见 [`catalog_pointer_value`]：原生绝对目录写绝对指针，WSL 形态保裸文件名。
+            let pointer = path
+                .parent()
+                .map_or_else(|| CATALOG_FILENAME.to_string(), catalog_pointer_value);
+            put_value(root, MODEL_CATALOG_JSON, &TomlValue::from(pointer));
         }
 
         check_effective_route(doc, selector)
@@ -659,6 +734,9 @@ impl CodexConfigPatch {
             None => {
                 root.remove("model_provider");
             }
+        }
+        if let Some(base_url) = self.route.openai_base_url() {
+            put_value(root, OPENAI_BASE_URL, &TomlValue::from(base_url));
         }
 
         let referenced = profile_selectors(root);
@@ -695,7 +773,8 @@ impl CodexConfigPatch {
             providers.insert(&renamed, item);
         }
 
-        // 旧版按别的 id 写进去的表、残留的代理占位表。被 profile 引用的不动。
+        // 旧版按别的 id 写进去的表（含旧版代理官方路由表）、残留的代理占位表。被 profile
+        // 引用的不动。
         let doomed: Vec<String> = providers
             .iter()
             .filter(|(id, item)| {
@@ -744,18 +823,24 @@ impl CodexConfigPatch {
             RouteWrite::Custom(table) => {
                 put_table(providers, ROUTE_ID, table.clone(), container_inline);
             }
-            RouteWrite::OfficialProxy(table) => {
+            RouteWrite::OfficialProxy {
+                base_url,
+                unified: false,
+            } => {
                 // 之前第三方路由留下的 custom 表改成休眠形态（同样指向本地代理）。
                 if providers.contains_key(ROUTE_ID) {
-                    if let Some(base_url) = table.get("base_url").and_then(Item::as_str) {
-                        let dormant = proxy_route_table(ROUTE_ID, base_url, false);
-                        put_table(providers, ROUTE_ID, dormant, container_inline);
-                    }
+                    let dormant = proxy_route_table(ROUTE_ID, base_url, false);
+                    put_table(providers, ROUTE_ID, dormant, container_inline);
                 }
+            }
+            RouteWrite::OfficialProxy {
+                base_url,
+                unified: true,
+            } => {
                 put_table(
                     providers,
-                    OFFICIAL_PROXY_ROUTE_ID,
-                    table.clone(),
+                    ROUTE_ID,
+                    official_mirror_table(Some(base_url), false),
                     container_inline,
                 );
             }
@@ -772,7 +857,10 @@ impl CodexConfigPatch {
         match &self.route {
             RouteWrite::Custom(table) => Some((ROUTE_ID, table.clone())),
             RouteWrite::OfficialMirror => Some((ROUTE_ID, official_mirror_table(None, true))),
-            RouteWrite::OfficialProxy(table) => Some((OFFICIAL_PROXY_ROUTE_ID, table.clone())),
+            RouteWrite::OfficialProxy {
+                base_url,
+                unified: true,
+            } => Some((ROUTE_ID, official_mirror_table(Some(base_url), false))),
             RouteWrite::BuiltIn {
                 id,
                 table: Some(table),
@@ -953,6 +1041,22 @@ mod tests {
     }
 
     #[test]
+    fn disable_response_storage_from_old_rows_is_not_projected_and_is_cleared_from_live() {
+        // Codex 0.167 删了这个键，旧预设写进行里的那一行不再投影；它仍是关键字段，写入时
+        // live 里旧版留下的同名行会被清掉。
+        let settings = row(
+            json!({ "OPENAI_API_KEY": "sk" }),
+            &format!("disable_response_storage = true\n{RELAY}"),
+        );
+        let projection = project(&settings).unwrap();
+        assert!(projection
+            .top
+            .iter()
+            .all(|(key, _)| key != "disable_response_storage"));
+        assert!(floor::CODEX_FLOOR_TOP.contains(&"disable_response_storage"));
+    }
+
+    #[test]
     fn a_table_with_its_own_credentials_gets_no_key() {
         for extra in [
             "env_key = \"RELAY_KEY\"",
@@ -1002,6 +1106,207 @@ mod tests {
             Some("responses")
         );
         assert_eq!(table.get("name").and_then(Item::as_str), Some("Custom"));
+
+        // 顶层 base_url（#8039）：没有选路也是第三方路由，Key 照常注入。
+        let top_level = row(
+            json!({ "OPENAI_API_KEY": "sk" }),
+            "base_url = \"https://relay.example/v1\"\nmodel = \"m\"\nwire_api = \"chat\"\n",
+        );
+        let projection = project(&top_level).unwrap();
+        let (table, auth) = custom(&projection);
+        assert_eq!(auth, RouteAuth::Bearer);
+        assert_eq!(
+            table.get("base_url").and_then(Item::as_str),
+            Some("https://relay.example/v1")
+        );
+        assert_eq!(
+            table.get("wire_api").and_then(Item::as_str),
+            Some("responses")
+        );
+        assert_eq!(
+            table
+                .get("experimental_bearer_token")
+                .and_then(Item::as_str),
+            Some("sk")
+        );
+
+        // 没填 Key 也放行：没有回退指令，不会去用 auth.json 的登录。
+        let keyless = row(json!({}), "base_url = \"https://relay.example/v1\"\n");
+        let projection = project(&keyless).unwrap();
+        assert_eq!(custom(&projection).1, RouteAuth::None);
+    }
+
+    fn apply(route: RouteWrite, live: &str) -> DocumentMut {
+        let patch = CodexConfigPatch {
+            top: Vec::new(),
+            nested: Vec::new(),
+            exclusive: Vec::new(),
+            outgoing: Vec::new(),
+            route,
+            catalog: false,
+            retired: Vec::new(),
+        };
+        let mut doc = live.parse::<DocumentMut>().unwrap();
+        patch
+            .apply_to(Path::new("config.toml"), &mut doc)
+            .expect("apply");
+        doc
+    }
+
+    fn apply_catalog(live: &str, config_path: &Path) -> DocumentMut {
+        let patch = CodexConfigPatch {
+            top: Vec::new(),
+            nested: Vec::new(),
+            exclusive: Vec::new(),
+            outgoing: Vec::new(),
+            route: RouteWrite::Default,
+            catalog: true,
+            retired: Vec::new(),
+        };
+        let mut doc = live.parse::<DocumentMut>().unwrap();
+        patch.apply_to(config_path, &mut doc).expect("apply");
+        doc
+    }
+
+    fn catalog_pointer(doc: &DocumentMut) -> &str {
+        doc.get(MODEL_CATALOG_JSON)
+            .and_then(Item::as_str)
+            .expect("model_catalog_json must be set")
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn catalog_pointer_is_absolute_for_a_native_config_dir() {
+        // 新版 Codex 解析自定义权限档位时重读 config.toml，把 model_catalog_json
+        // 按绝对路径反序列化；裸文件名在那里被拒（#7294）。
+        let doc = apply_catalog("", Path::new("/home/user/.codex/config.toml"));
+        assert_eq!(
+            catalog_pointer(&doc),
+            "/home/user/.codex/cc-switch-model-catalog.json"
+        );
+    }
+
+    #[test]
+    fn catalog_pointer_keeps_the_bare_filename_for_a_relative_config_path() {
+        // 占位路径不是绝对路径：保裸文件名，与 #3614 的解析语义一致。
+        let doc = apply_catalog("", Path::new("config.toml"));
+        assert_eq!(catalog_pointer(&doc), CATALOG_FILENAME);
+    }
+
+    #[test]
+    fn catalog_pointer_keeps_the_bare_filename_for_a_unc_config_dir() {
+        // 只有 WSL 侧的 Codex 会读 UNC 目录里的配置；绝对指针对它无意义（#3614）。
+        let doc = apply_catalog(
+            "",
+            Path::new(r"\\wsl.localhost\Ubuntu\home\user\.codex\config.toml"),
+        );
+        assert_eq!(catalog_pointer(&doc), CATALOG_FILENAME);
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn catalog_pointer_is_absolute_for_a_windows_config_dir() {
+        let doc = apply_catalog("", Path::new(r"C:\Users\user\.codex\config.toml"));
+        assert_eq!(
+            catalog_pointer(&doc),
+            r"C:\Users\user\.codex\cc-switch-model-catalog.json"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn catalog_pointer_keeps_the_bare_filename_for_a_wsl_style_config_dir() {
+        // Linux 形态目录对 Windows 宿主不是绝对路径；WSL 侧 Codex 需要裸文件名。
+        let doc = apply_catalog("", Path::new("/home/user/.codex/config.toml"));
+        assert_eq!(catalog_pointer(&doc), CATALOG_FILENAME);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn switching_away_removes_an_absolute_catalog_pointer() {
+        // 归属判定按文件名比较：绝对形态的指针同样被认成 cc-switch 的，
+        // 切到没有目录的供应商时照删（live 里两种形态都可能留下）。
+        let live = "model_catalog_json = \"/home/user/.codex/cc-switch-model-catalog.json\"\n";
+        let doc = apply(RouteWrite::Default, live);
+        assert!(doc.get(MODEL_CATALOG_JSON).is_none());
+    }
+
+    const PROXY: &str = "http://127.0.0.1:15721/v1";
+
+    fn official_proxy(unified: bool) -> RouteWrite {
+        RouteWrite::OfficialProxy {
+            base_url: PROXY.to_string(),
+            unified,
+        }
+    }
+
+    #[test]
+    fn the_official_proxy_route_stays_in_the_built_in_openai_bucket() {
+        // 旧版写的 cc-switch-official 表删掉；第三方留下的 custom 表改成休眠形态。
+        let live = "model_provider = \"cc-switch-official\"\nopenai_base_url = \"https://stale.example/v1\"\nmodel = \"gpt-5.5\"\n\n[model_providers.cc-switch-official]\nname = \"OpenAI\"\nbase_url = \"http://127.0.0.1:15721/v1\"\nrequires_openai_auth = true\n\n[model_providers.custom]\nname = \"custom\"\nbase_url = \"https://relay.example/v1\"\nexperimental_bearer_token = \"sk-relay\"\n";
+        let doc = apply(official_proxy(false), live);
+        assert!(doc.get("model_provider").is_none(), "{doc}");
+        assert_eq!(doc["openai_base_url"].as_str(), Some(PROXY));
+        let providers = doc["model_providers"].as_table().unwrap();
+        assert!(!providers.contains_key(OFFICIAL_PROXY_ROUTE_ID), "{doc}");
+        let dormant = providers[ROUTE_ID].as_table().unwrap();
+        assert_eq!(dormant["base_url"].as_str(), Some(PROXY));
+        assert_eq!(
+            dormant["experimental_bearer_token"].as_str(),
+            Some(PROXY_TOKEN_PLACEHOLDER)
+        );
+        assert!(!doc.to_string().contains("sk-relay"));
+
+        // 已有的改道原位改值，重写不挪位置。
+        let settled =
+            "openai_base_url = \"http://127.0.0.1:15721/v1\"\napproval_policy = \"never\"\n";
+        assert_eq!(apply(official_proxy(false), settled).to_string(), settled);
+
+        // 没有 model_providers 时不建表。
+        let bare = apply(official_proxy(false), "model = \"gpt-5.5\"\n");
+        assert!(bare.get("model_providers").is_none(), "{bare}");
+        assert_eq!(bare["openai_base_url"].as_str(), Some(PROXY));
+    }
+
+    #[test]
+    fn the_unified_official_proxy_route_is_a_custom_mirror_of_the_proxy() {
+        for live in [
+            "model = \"gpt-5.5\"\n",
+            "openai_base_url = \"http://127.0.0.1:15721/v1\"\n",
+        ] {
+            let doc = apply(official_proxy(true), live);
+            assert_eq!(doc["model_provider"].as_str(), Some(ROUTE_ID), "{doc}");
+            assert!(doc.get("openai_base_url").is_none(), "{doc}");
+            let mirror = doc["model_providers"][ROUTE_ID].as_table().unwrap();
+            assert_eq!(mirror["name"].as_str(), Some("OpenAI"));
+            assert_eq!(mirror["base_url"].as_str(), Some(PROXY));
+            assert_eq!(mirror["requires_openai_auth"].as_bool(), Some(true));
+            assert_eq!(mirror["supports_websockets"].as_bool(), Some(false));
+            assert!(mirror.get("experimental_bearer_token").is_none());
+        }
+    }
+
+    #[test]
+    fn leaving_the_official_proxy_route_drops_the_reroute() {
+        let proxied = apply(official_proxy(false), "model = \"gpt-5.5\"\n").to_string();
+        let direct = apply(
+            RouteWrite::Official {
+                dormant_base_url: PROXY.to_string(),
+            },
+            &proxied,
+        );
+        assert!(direct.get("openai_base_url").is_none(), "{direct}");
+        assert!(direct.get("model_provider").is_none(), "{direct}");
+
+        let mut relay = Table::new();
+        relay.insert("name", toml_edit::value("relay"));
+        relay.insert("base_url", toml_edit::value("https://relay.example/v1"));
+        let third_party = apply(RouteWrite::Custom(relay), &proxied);
+        assert!(
+            third_party.get("openai_base_url").is_none(),
+            "{third_party}"
+        );
+        assert_eq!(third_party["model_provider"].as_str(), Some(ROUTE_ID));
     }
 
     #[test]

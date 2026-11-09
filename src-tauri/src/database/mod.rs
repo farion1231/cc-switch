@@ -32,6 +32,7 @@ mod schema;
 mod tests;
 
 // DAO 类型导出供外部使用
+pub use dao::custom_icons::{CustomIconEntry, CUSTOM_ICONS_KEY};
 pub(crate) use dao::providers_seed::{
     is_official_seed_id, CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID, CODEX_OFFICIAL_PROVIDER_ID,
     GROKBUILD_OFFICIAL_PROVIDER_ID,
@@ -50,7 +51,7 @@ use std::sync::Mutex;
 
 /// 当前 Schema 版本号
 /// 每次修改表结构时递增，并在 schema.rs 中添加相应的迁移逻辑
-pub(crate) const SCHEMA_VERSION: i32 = 19;
+pub(crate) const SCHEMA_VERSION: i32 = 24;
 
 /// 安全地序列化 JSON，避免 unwrap panic
 pub(crate) fn to_json_string<T: Serialize>(value: &T) -> Result<String, AppError> {
@@ -76,6 +77,8 @@ pub(crate) use lock_conn;
 /// rusqlite::Connection 本身不是 Sync 的，因此需要这层包装。
 pub struct Database {
     pub(crate) conn: Mutex<Connection>,
+    /// 请求日志总数缓存，见 `services::usage_stats::LogCountCache`
+    pub(crate) log_count_cache: Mutex<Option<crate::services::usage_stats::LogCountCache>>,
 }
 
 fn register_db_change_hook(conn: &Connection) {
@@ -118,6 +121,7 @@ impl Database {
 
         let db = Self {
             conn: Mutex::new(conn),
+            log_count_cache: Mutex::new(None),
         };
         db.create_tables()?;
 
@@ -145,20 +149,9 @@ impl Database {
             log::warn!("Failed to sync local model pricing file: {e}");
         }
 
-        // Startup cleanup: prune old logs and reclaim space
-        if let Err(e) = db.cleanup_old_stream_check_logs(7) {
-            log::warn!("Startup stream_check_logs cleanup failed: {e}");
-        }
-        if let Err(e) = db.rollup_and_prune(30) {
-            log::warn!("Startup rollup_and_prune failed: {e}");
-        }
-        // Reclaim disk space after cleanup
-        {
-            let conn = lock_conn!(db.conn);
-            if let Err(e) = Self::incremental_vacuum_on_conn(&conn) {
-                log::warn!("Startup incremental vacuum failed: {e}");
-            }
-        }
+        // Log rollup/pruning and vacuum run in periodic_backup_if_needed after
+        // startup recovery, on a blocking worker. Doing them here holds up the
+        // main window and repeats the same maintenance during startup.
 
         Ok(db)
     }
@@ -192,6 +185,7 @@ impl Database {
 
         let db = Self {
             conn: Mutex::new(conn),
+            log_count_cache: Mutex::new(None),
         };
         db.create_tables()?;
         db.ensure_model_pricing_seeded()?;

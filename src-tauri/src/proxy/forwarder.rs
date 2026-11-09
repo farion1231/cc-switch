@@ -10,6 +10,10 @@ use super::{
     failover_switch::FailoverSwitchManager,
     json_canonical::{canonicalize_value, short_value_hash},
     log_codes::fwd as log_fwd,
+    opaque_state_rectifier::{
+        carries_encrypted_agent_task, detect_opaque_state_rejection, rectify_opaque_state,
+        unreadable_agent_task_error, OpaqueStateRejection,
+    },
     provider_router::ProviderRouter,
     providers::{
         codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore, get_adapter,
@@ -23,21 +27,131 @@ use super::{
     ProxyError,
 };
 use crate::commands::{CodexOAuthState, CopilotAuthState, XaiOAuthState};
-use crate::proxy::providers::copilot_auth::CopilotAuthManager;
+use crate::proxy::providers::copilot_auth::{CopilotAuthError, CopilotAuthManager};
+use crate::proxy::providers::copilot_model_map::{
+    CopilotProtocol, CopilotTransport, ResolvedCopilotModel,
+};
 use crate::proxy::providers::xai_oauth_auth::XaiOAuthManager;
 use crate::{
     app_config::AppType,
-    provider::{LocalProxyRequestOverrides, Provider},
+    provider::{CodexCopilotApiFormat, LocalProxyRequestOverrides, Provider},
 };
 use bytes::Bytes;
 use futures::StreamExt;
 use http::Extensions;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
+use std::borrow::Cow;
 use std::sync::Arc;
 use tauri::Manager;
 use tokio::sync::RwLock;
 
 const PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
+
+/// Whether the upstream belongs to the OpenCode gateway (`opencode.ai`).
+///
+/// That gateway (<https://opencode.ai/docs/go/>) expects clients to identify
+/// themselves with a `User-Agent` and to carry a **stable per-conversation**
+/// session id in `x-opencode-session`; a request without the session header is
+/// rejected with `400 MissingSessionID`. Claude Code and Codex already send
+/// headers the gateway recognises, Claude Desktop does not - the proxy fills
+/// the gap (see the injection site in `forward`).
+fn is_opencode_upstream(upstream_host: Option<&str>) -> bool {
+    upstream_host
+        .map(|host| {
+            let host = host.rsplit_once(':').map_or(host, |(h, _)| h);
+            host.trim_matches(['[', ']']).to_ascii_lowercase()
+        })
+        .is_some_and(|host| host == "opencode.ai" || host.ends_with(".opencode.ai"))
+}
+
+/// Derive a session id that stays **stable within one conversation**: a digest
+/// of the system prompt plus the first user message.
+///
+/// The gateway uses the session id for upstream routing and prompt caching, so
+/// it must not change between the turns of a conversation. Claude Desktop hands
+/// CC Switch a fresh id on every request, which defeats that; hashing the
+/// conversation prefix keeps the id stable while still separating conversations.
+fn conversation_fingerprint(body: &Value) -> Option<String> {
+    let mut hasher = Sha256::new();
+    let mut fed = false;
+    if let Some(system) = body.get("system") {
+        hasher.update(without_cache_control(system).to_string().as_bytes());
+        fed = true;
+    }
+    if let Some(first_user) = body
+        .get("messages")
+        .and_then(Value::as_array)
+        .and_then(|messages| {
+            messages
+                .iter()
+                .find(|m| m.get("role").and_then(Value::as_str) == Some("user"))
+        })
+    {
+        hasher.update(without_cache_control(first_user).to_string().as_bytes());
+        fed = true;
+    }
+    if !fed {
+        return None;
+    }
+    let digest = format!("{:x}", hasher.finalize());
+    Some(format!("ccsw-{}", &digest[..32]))
+}
+
+/// A stable session header the client already sends and the gateway recognises
+/// natively (Claude Code, Codex). Checked before deriving an id of our own.
+fn native_session_header(headers: &http::HeaderMap) -> Option<&str> {
+    [
+        "x-claude-code-session-id",
+        "session-id",
+        "session_id",
+        "x-session-id",
+    ]
+    .iter()
+    .find_map(|name| {
+        headers
+            .get(*name)?
+            .to_str()
+            .ok()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    })
+}
+
+/// Pick the value for `x-opencode-session`, most stable identity first: a native
+/// session header the client already sends, the client-provided session id, the
+/// conversation fingerprint, then the generated id.
+fn pick_opencode_session<'a>(
+    native: Option<&'a str>,
+    client_provided: Option<&'a str>,
+    fingerprint: Option<&'a str>,
+    generated: &'a str,
+) -> Option<String> {
+    [native, client_provided, fingerprint, Some(generated)]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+/// Clone `value` without any `cache_control` key, at any depth.
+///
+/// Clients move that marker between messages as the conversation grows (Claude
+/// Code puts it on the first user message, then on the last one), so hashing it
+/// would change the session id once, mid-conversation.
+fn without_cache_control(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .filter(|(key, _)| key.as_str() != "cache_control")
+                .map(|(key, value)| (key.clone(), without_cache_control(value)))
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(without_cache_control).collect()),
+        other => other.clone(),
+    }
+}
 
 fn codex_bearer_access_token(headers: &http::HeaderMap) -> Option<&str> {
     let authorization = headers
@@ -68,8 +182,10 @@ fn validate_codex_official_authorization(
         None | Some("") => Err(ProxyError::AuthError(
             "Codex 官方登录不可用，请先在 Codex 中完成 ChatGPT 登录".to_string(),
         )),
+        // 带占位 Key 的请求有两种来源：没重载配置的 Codex 进程；或切换前用第三方供应商建的
+        // 旧会话（Codex 按会话记下的 provider 走休眠的 custom 表，重启也还是它）。
         Some(value) if value.contains(PROXY_AUTH_PLACEHOLDER) => Err(ProxyError::AuthError(
-            "已切换到 OpenAI 官方供应商，请重启 Codex 或新建会话以加载官方登录配置".to_string(),
+            "已切换到 OpenAI 官方供应商，但这个请求仍按第三方供应商的配置发出。如果这是切换前用第三方供应商创建的旧会话，它会一直沿用原供应商，重启也无效，请新建会话继续；否则请重启 Codex 以加载官方登录配置".to_string(),
         )),
         Some(_) => {
             let managed_account_id = provider
@@ -98,10 +214,79 @@ fn validate_codex_official_authorization(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodexUpstreamFormat {
+    NativeResponses,
+    ChatCompletions,
+    Anthropic,
+}
+
+struct CopilotRequestContext {
+    classification: super::copilot_optimizer::CopilotClassification,
+    request_id: Option<String>,
+    interaction_id: Option<String>,
+}
+
+impl CopilotRequestContext {
+    fn apply_headers(
+        &self,
+        headers: &mut Vec<(http::HeaderName, http::HeaderValue)>,
+        request_classification: bool,
+    ) -> Result<(), ProxyError> {
+        let request_id = self
+            .request_id
+            .as_deref()
+            .map(http::HeaderValue::from_str)
+            .transpose()
+            .map_err(|_| ProxyError::ConfigError("Invalid Copilot request ID".to_string()))?;
+        let interaction_id = self
+            .interaction_id
+            .as_deref()
+            .map(http::HeaderValue::from_str)
+            .transpose()
+            .map_err(|_| ProxyError::ConfigError("Invalid Copilot interaction ID".to_string()))?;
+
+        for (name, value) in headers.iter_mut() {
+            match name.as_str() {
+                "x-initiator" if request_classification => {
+                    *value = http::HeaderValue::from_static(self.classification.initiator);
+                }
+                "x-interaction-type" if self.classification.is_subagent => {
+                    *value = http::HeaderValue::from_static("conversation-subagent");
+                }
+                "x-request-id" | "x-agent-task-id" => {
+                    if let Some(request_id) = &request_id {
+                        *value = request_id.clone();
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(interaction_id) = interaction_id {
+            headers.push((
+                http::HeaderName::from_static("x-interaction-id"),
+                interaction_id,
+            ));
+        }
+        if self.classification.is_subagent {
+            log::info!(
+                "[Copilot] 子代理请求: x-initiator=agent, x-interaction-type=conversation-subagent"
+            );
+        }
+        Ok(())
+    }
+}
+
 pub struct ForwardResult {
     pub response: ProxyResponse,
     pub provider: Provider,
     pub claude_api_format: Option<String>,
+    /// Wire format selected for this specific Codex Responses request.
+    ///
+    /// Copilot chooses this per model, so response handlers must consume this
+    /// value rather than re-deriving the format from static provider metadata.
+    pub codex_upstream_format: Option<CodexUpstreamFormat>,
     /// 实际发往上游的模型名（路由接管/模型映射后的真值）。
     ///
     /// usage 归因不能依赖 ctx.request_model（映射前的客户端别名）：上游响应
@@ -115,13 +300,16 @@ pub struct ForwardResult {
 pub struct ForwardError {
     pub error: ProxyError,
     pub provider: Option<Provider>,
+    /// 最后一次尝试发往上游的模型名（映射之后）。错误行记这个，不记客户端别名：
+    /// 路由下 Desktop 的 claude-haiku-* 实际发的是映射后的模型，记别名会被当成调错了模型。
+    pub outbound_model: Option<String>,
 }
 
 /// 活跃连接 RAII guard
 ///
-/// 构造时把 `ProxyStatus.active_connections` +1；Drop 时在 tokio runtime 上调度
-/// 一个异步任务执行 -1，从而支持把 guard move 进流式 body future（stream 自然结束
-/// 时 guard 与 future 一起 drop）。
+/// 构造时记录请求并把 `ProxyStatus.active_connections` +1；Drop 时优先直接 -1，
+/// 锁被占用才调度异步任务，从而支持把 guard move 进流式 body future（stream
+/// 自然结束时 guard 与 future 一起 drop）。
 ///
 /// 设计动机：之前在 `forward_with_retry` 出口处同步 -1，但流式响应的 body 实际
 /// 在 `create_logged_passthrough_stream` 内还会继续 yield 字节流，导致 UI 的
@@ -133,9 +321,12 @@ pub(crate) struct ActiveConnectionGuard {
 
 impl ActiveConnectionGuard {
     pub(crate) async fn acquire(status: Arc<RwLock<ProxyStatus>>) -> Self {
+        let last_request_at = chrono::Utc::now().to_rfc3339();
         {
             let mut s = status.write().await;
             s.active_connections = s.active_connections.saturating_add(1);
+            s.total_requests = s.total_requests.saturating_add(1);
+            s.last_request_at = Some(last_request_at);
         }
         Self { status }
     }
@@ -143,6 +334,10 @@ impl ActiveConnectionGuard {
 
 impl Drop for ActiveConnectionGuard {
     fn drop(&mut self) {
+        if let Ok(mut status) = self.status.try_write() {
+            status.active_connections = status.active_connections.saturating_sub(1);
+            return;
+        }
         // Drop 不能 await：把减量操作调度到 tokio runtime
         let status = self.status.clone();
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
@@ -188,6 +383,15 @@ pub struct RequestForwarder {
     /// `max_attempts = max_retries + 1`，所以 max_retries=0 表示仅尝试一家、
     /// max_retries=3（默认）表示最多 4 家。loop 同时受 providers.len() 自然限制。
     max_attempts: usize,
+    /// Stack 模型的请求（`mode::stack`）：挂在结构体上，整流器重试再次调用 `forward()` 时照样
+    /// 生效。见 [`Self::routing_state_enabled`]。
+    stack_request: bool,
+    /// 这个请求走故障转移队列（故障转移开着）。Codex 换家时据此按目标家改模型名，见
+    /// [`super::model_mapper::map_codex_failover_model`]。
+    failover_chain: bool,
+    /// 最近一次 `forward()` 定下的出站模型名，失败时随 [`ForwardError`] 交给日志。
+    /// 每次 `forward()` 开头清空，映射失败等没走到出站的尝试留 None（日志回落到请求名）。
+    last_outbound_model: std::sync::Mutex<Option<String>>,
 }
 
 impl RequestForwarder {
@@ -195,26 +399,25 @@ impl RequestForwarder {
     ///
     /// 受 `enabled && request_media_fallback` 管辖；其中"启发式模型名单预测"
     /// 再受 `request_media_heuristic` 单独管辖（显式声明 text-only 始终生效）。
-    /// 返回被替换的图片块数量（0 = 未触发或开关关闭）。
+    /// 返回被替换的媒体块数量（0 = 未触发或开关关闭）。
     fn apply_media_prevention(&self, body: &mut Value, provider: &Provider) -> usize {
         if !(self.rectifier_config.enabled && self.rectifier_config.request_media_fallback) {
             return 0;
         }
-        let replaced_images = super::media_sanitizer::replace_images_for_text_only_model(
+        let replaced_media = super::media_sanitizer::replace_images_for_text_only_model(
             body,
             provider,
             self.rectifier_config.request_media_heuristic,
         );
-        if replaced_images > 0 {
+        if replaced_media > 0 {
             let model = body.get("model").and_then(Value::as_str).unwrap_or("");
             log::info!(
-                "[Media] Replaced {replaced_images} image block(s) with {} for text-only provider={}, model={}",
-                super::media_sanitizer::UNSUPPORTED_IMAGE_MARKER,
+                "[Media] Replaced {replaced_media} unsupported media block(s) for provider={}, model={}",
                 provider.id,
                 model
             );
         }
-        replaced_images
+        replaced_media
     }
 
     /// 反应式 media 重试判定：上游因图片输入报错后，是否应替换图片块并对同一供应商重试一次。
@@ -234,6 +437,49 @@ impl RequestForwarder {
             && !already_retried
             && super::media_sanitizer::contains_image_blocks(provider_body)
             && super::media_sanitizer::is_unsupported_image_error(error)
+    }
+
+    /// 反应式密文重试判定：原样转发的 Responses 上游拒绝了请求里别家签发的密文时，
+    /// 返回要去掉哪些状态，对同一供应商重试一次。
+    ///
+    /// 转成 Chat / Anthropic 的上游收不到这些密文，不参与。受整流器总开关管辖。
+    fn opaque_state_retry_rejection(
+        &self,
+        app_type: &AppType,
+        provider: &Provider,
+        codex_upstream_format: Option<CodexUpstreamFormat>,
+        already_retried: bool,
+        request: &Value,
+        error: &ProxyError,
+    ) -> Option<OpaqueStateRejection> {
+        if already_retried
+            || !matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            || codex_upstream_format != Some(CodexUpstreamFormat::NativeResponses)
+        {
+            return None;
+        }
+        let codex_third_party = matches!(app_type, AppType::Codex)
+            && !super::providers::is_codex_official_provider(provider);
+        detect_opaque_state_rejection(error, &self.rectifier_config, request, codex_third_party)
+    }
+
+    /// 压缩回合被原生 Responses 第三方以 400 拒绝时，去掉 `tool_choice` 的重试请求体。
+    fn compaction_tool_choice_retry_body(
+        &self,
+        app_type: &AppType,
+        provider: &Provider,
+        codex_upstream_format: Option<CodexUpstreamFormat>,
+        request: &Value,
+        error: &ProxyError,
+    ) -> Option<Value> {
+        if !matches!(app_type, AppType::Codex)
+            || codex_upstream_format != Some(CodexUpstreamFormat::NativeResponses)
+            || super::providers::is_codex_official_provider(provider)
+            || !matches!(error, ProxyError::UpstreamError { status: 400, .. })
+        {
+            return None;
+        }
+        super::providers::codex_compaction::compaction_retry_without_tool_choice(request)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -278,7 +524,56 @@ impl RequestForwarder {
                 streaming_first_byte_timeout,
             ),
             max_attempts,
+            stack_request: false,
+            failover_chain: false,
+            last_outbound_model: std::sync::Mutex::new(None),
         }
+    }
+
+    fn set_last_outbound_model(&self, model: Option<String>) {
+        if let Ok(mut slot) = self.last_outbound_model.lock() {
+            *slot = model;
+        }
+    }
+
+    fn last_outbound_model(&self) -> Option<String> {
+        self.last_outbound_model
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone())
+    }
+
+    /// 标记为 Stack 模型的请求。
+    pub fn stack_request(mut self, stack_request: bool) -> Self {
+        self.stack_request = stack_request;
+        self
+    }
+
+    /// 这个请求走故障转移队列（故障转移开着）。
+    pub fn failover_chain(mut self, failover_chain: bool) -> Self {
+        self.failover_chain = failover_chain;
+        self
+    }
+
+    /// 故障转移换家时按目标家改 Codex 模型名，只对对话请求。图片、搜索这些独立接口带的是
+    /// 图片 / 搜索模型，不在目标家的文本模型目录里，换成它的文本模型就发错了。
+    fn maps_codex_failover_model(&self, app_type: &AppType, endpoint: &str) -> bool {
+        self.failover_chain
+            && matches!(app_type, AppType::Codex)
+            && CodexStandaloneEndpoint::from_effective_endpoint(endpoint).is_none()
+    }
+
+    /// 这个请求读写路由状态吗：熔断器（许可、结果、健康度）、「正在使用」、代理统计
+    /// （总数、成功率、故障转移次数、最近错误、活跃连接）、故障转移切换。Stack 模型的请求
+    /// 和普通路由完全分开，一律不碰；只有用量日志照常按供应商记。以后新增路由状态也先问它。
+    fn routing_state_enabled(&self) -> bool {
+        !self.stack_request
+    }
+
+    /// 请求体里的模型名已经是这家的上游名（Stack 模型的请求）：不按角色映射、不换成行里配置
+    /// 的模型。以后新增模型改写也先问它。
+    fn keeps_resolved_model(&self) -> bool {
+        self.stack_request
     }
 
     async fn record_success_result(
@@ -287,10 +582,11 @@ impl RequestForwarder {
         app_type: &str,
         used_half_open_permit: bool,
     ) {
+        // 名额本身由这次尝试的 HalfOpenPermitGuard 归还，这里只记结果，所以传 false。
         if used_half_open_permit {
             if let Err(e) = self
                 .router
-                .record_result(provider_id, app_type, true, true, None)
+                .record_result(provider_id, app_type, false, true, None)
                 .await
             {
                 log::warn!(
@@ -327,7 +623,6 @@ impl RequestForwarder {
         retry_err: ProxyError,
         provider: &Provider,
         app_type_str: &str,
-        used_half_open_permit: bool,
         rectifier_label: &str,
         last_error: &mut Option<ProxyError>,
         last_provider: &mut Option<Provider>,
@@ -344,7 +639,6 @@ impl RequestForwarder {
             self.record_provider_failure(
                 provider,
                 app_type_str,
-                used_half_open_permit,
                 &retry_err,
                 format!(
                     "Provider {} {rectifier_label}重试失败: {}",
@@ -357,10 +651,7 @@ impl RequestForwarder {
             return None;
         }
 
-        Some(
-            self.finish_neutral_failure(retry_err, provider, app_type_str, used_half_open_permit)
-                .await,
-        )
+        Some(self.finish_neutral_failure(retry_err, provider).await)
     }
 
     // 一次尝试和一个客户端请求的收尾记账（熔断器、「正在使用」、代理统计、故障转移切换）
@@ -368,6 +659,9 @@ impl RequestForwarder {
 
     /// 开始尝试一家：界面上显示正在尝试哪家。
     async fn note_attempt(&self, provider: &Provider) {
+        if !self.routing_state_enabled() {
+            return;
+        }
         let mut status = self.status.write().await;
         status.current_provider = Some(provider.name.clone());
         status.current_provider_id = Some(provider.id.clone());
@@ -385,9 +679,22 @@ impl RequestForwarder {
             Option<String>,
             Option<String>,
         ),
+        codex_upstream_format: Option<CodexUpstreamFormat>,
     ) -> ForwardResult {
+        let result = ForwardResult {
+            response,
+            provider: provider.clone(),
+            claude_api_format,
+            codex_upstream_format,
+            outbound_model,
+            connection_guard: None,
+        };
+        if !self.routing_state_enabled() {
+            return result;
+        }
+
         // 普通闭合熔断状态异步记录，避免阻塞流式首包返回；
-        // HalfOpen 探测仍同步等待，保证 permit 与熔断状态及时释放。
+        // HalfOpen 探测仍同步等待，保证熔断状态在归还名额前就转回 Closed。
         self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
             .await;
 
@@ -418,13 +725,7 @@ impl RequestForwarder {
             refresh_success_rate(&mut status);
         }
 
-        ForwardResult {
-            response,
-            provider: provider.clone(),
-            claude_api_format,
-            outbound_model,
-            connection_guard: None,
-        }
+        result
     }
 
     /// 这家本身出了问题（下一家可能可用）：记熔断器失败，更新最近错误。调用方接着试下一家。
@@ -432,16 +733,18 @@ impl RequestForwarder {
         &self,
         provider: &Provider,
         app_type_str: &str,
-        used_half_open_permit: bool,
         error: &ProxyError,
         last_error: String,
     ) {
+        if !self.routing_state_enabled() {
+            return;
+        }
         let _ = self
             .router
             .record_result(
                 &provider.id,
                 app_type_str,
-                used_half_open_permit,
+                false,
                 false,
                 Some(error.to_string()),
             )
@@ -449,26 +752,24 @@ impl RequestForwarder {
         self.status.write().await.last_error = Some(last_error);
     }
 
-    /// 不计入熔断的失败（客户端错误、整流后仍被拒）：只释放 HalfOpen 名额，这个请求记为失败。
-    async fn finish_neutral_failure(
-        &self,
-        error: ProxyError,
-        provider: &Provider,
-        app_type_str: &str,
-        used_half_open_permit: bool,
-    ) -> ForwardError {
-        self.router
-            .release_permit_neutral(&provider.id, app_type_str, used_half_open_permit)
-            .await;
-        self.record_failed_request(error.to_string()).await;
+    /// 不计入熔断的失败（客户端错误、整流后仍被拒）：不记熔断器，这个请求记为失败。
+    /// 占用的 HalfOpen 名额随这次尝试的 guard 归还。
+    async fn finish_neutral_failure(&self, error: ProxyError, provider: &Provider) -> ForwardError {
+        if self.routing_state_enabled() {
+            self.record_failed_request(error.to_string()).await;
+        }
         ForwardError {
             error,
             provider: Some(provider.clone()),
+            outbound_model: self.last_outbound_model(),
         }
     }
 
     /// 这个客户端请求最终失败：失败数加一，记下错误，重算成功率。
     async fn record_failed_request(&self, last_error: String) {
+        if !self.routing_state_enabled() {
+            return;
+        }
         let mut status = self.status.write().await;
         status.failed_requests += 1;
         status.last_error = Some(last_error);
@@ -487,17 +788,19 @@ impl RequestForwarder {
         app_type: &AppType,
         method: http::Method,
         endpoint: &str,
-        body: Value,
+        body: &Value,
         headers: axum::http::HeaderMap,
         extensions: Extensions,
-        providers: Vec<Provider>,
+        providers: &[Provider],
     ) -> Result<ForwardResult, ForwardError> {
-        let guard = ActiveConnectionGuard::acquire(self.status.clone()).await;
-        {
-            let mut s = self.status.write().await;
-            s.total_requests = s.total_requests.saturating_add(1);
-            s.last_request_at = Some(chrono::Utc::now().to_rfc3339());
+        if !self.routing_state_enabled() {
+            return self
+                .forward_with_retry_inner(
+                    app_type, method, endpoint, body, headers, extensions, providers,
+                )
+                .await;
         }
+        let guard = ActiveConnectionGuard::acquire(self.status.clone()).await;
         let result = self
             .forward_with_retry_inner(
                 app_type, method, endpoint, body, headers, extensions, providers,
@@ -527,11 +830,24 @@ impl RequestForwarder {
         app_type: &AppType,
         method: http::Method,
         endpoint: &str,
-        body: Value,
+        body: &Value,
         headers: axum::http::HeaderMap,
         extensions: Extensions,
-        providers: Vec<Provider>,
+        providers: &[Provider],
     ) -> Result<ForwardResult, ForwardError> {
+        if matches!(app_type, AppType::Claude | AppType::ClaudeDesktop)
+            && super::classifier_guard::classifier_retry_loop(body)
+        {
+            let error = ProxyError::InvalidRequest(
+                super::classifier_guard::CLASSIFIER_LOOP_MESSAGE.to_string(),
+            );
+            self.record_failed_request(error.to_string()).await;
+            return Err(ForwardError {
+                error,
+                provider: providers.first().cloned(),
+                outbound_model: None,
+            });
+        }
         // 获取适配器
         let adapter = get_adapter(app_type).ok_or_else(|| ForwardError {
             error: ProxyError::ConfigError(format!(
@@ -539,6 +855,7 @@ impl RequestForwarder {
                 app_type.as_str()
             )),
             provider: None,
+            outbound_model: None,
         })?;
         let app_type_str = app_type.as_str();
 
@@ -546,6 +863,7 @@ impl RequestForwarder {
             return Err(ForwardError {
                 error: ProxyError::NoAvailableProvider,
                 provider: None,
+                outbound_model: None,
             });
         }
 
@@ -553,8 +871,8 @@ impl RequestForwarder {
         let mut last_provider = None;
         let mut attempted_providers = 0usize;
 
-        // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）
-        let bypass_circuit_breaker = providers.len() == 1;
+        // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）；Stack 模型的请求不碰熔断器。
+        let bypass_circuit_breaker = providers.len() == 1 || !self.routing_state_enabled();
 
         // 依次尝试每个供应商
         for provider in providers.iter() {
@@ -563,6 +881,7 @@ impl RequestForwarder {
             let mut rectifier_retried = false;
             let mut budget_rectifier_retried = false;
             let mut media_rectifier_retried = false;
+            let mut opaque_rectifier_retried = false;
 
             // 上限检查：尊重用户在 AppProxyConfig.max_retries 上配置的「重试次数」。
             // 放在熔断器 allow 检查之前，避免在已经超限时还占用 HalfOpen 探测名额。
@@ -577,35 +896,44 @@ impl RequestForwarder {
 
             // 发起请求前先获取熔断器放行许可（HalfOpen 会占用探测名额）
             // 单 Provider 场景下跳过此检查，避免熔断器阻塞所有请求
-            let (allowed, used_half_open_permit) = if bypass_circuit_breaker {
-                (true, false)
+            // 占用了 HalfOpen 名额时，`_half_open_permit` 一直持有到这次尝试结束（continue /
+            // return，或客户端断开把整个 future 丢掉），drop 时归还名额。
+            let (allowed, used_half_open_permit, _half_open_permit) = if bypass_circuit_breaker {
+                (true, false, None)
             } else {
                 let permit = self
                     .router
                     .allow_provider_request(&provider.id, app_type_str)
                     .await;
-                (permit.allowed, permit.used_half_open_permit)
+                (permit.allowed, permit.used_half_open_permit, Some(permit))
             };
 
             if !allowed {
+                // 熔断器没放行（Open 未到恢复时间，或 HalfOpen 的探测名额被占用）：
+                // 这家没有发出请求，留一行日志，和「试了但失败」区分开。
+                log::info!(
+                    "[{app_type_str}] [{}] Provider {} ({}) 熔断器未放行，跳过",
+                    log_fwd::CIRCUIT_SKIPPED,
+                    provider.name,
+                    provider.id
+                );
                 continue;
             }
 
             // PRE-SEND 优化器：每个 provider 独立决定是否优化
-            // clone body 以避免 Bedrock 优化字段泄漏到非 Bedrock provider（failover 场景）
-            let mut provider_body =
-                if self.optimizer_config.enabled && is_bedrock_provider(provider) {
-                    let mut b = body.clone();
-                    if self.optimizer_config.thinking_optimizer {
-                        super::thinking_optimizer::optimize(&mut b, &self.optimizer_config);
-                    }
-                    if self.optimizer_config.cache_injection {
-                        super::cache_injector::inject(&mut b, &self.optimizer_config);
-                    }
-                    b
-                } else {
-                    body.clone()
-                };
+            // 只有优化器或错误整流要改写时才复制，避免每家额外复制整段会话历史。
+            let mut provider_body = Cow::Borrowed(body);
+            if self.optimizer_config.enabled && is_bedrock_provider(provider) {
+                if self.optimizer_config.thinking_optimizer {
+                    super::thinking_optimizer::optimize(
+                        provider_body.to_mut(),
+                        &self.optimizer_config,
+                    );
+                }
+                if self.optimizer_config.cache_injection {
+                    super::cache_injector::inject(provider_body.to_mut(), &self.optimizer_config);
+                }
+            }
 
             attempted_providers += 1;
 
@@ -617,6 +945,7 @@ impl RequestForwarder {
             self.note_attempt(provider).await;
 
             // 转发请求（每个 Provider 只尝试一次，重试由客户端控制）
+            let mut attempted_codex_upstream_format = None;
             match self
                 .forward(
                     app_type,
@@ -627,20 +956,25 @@ impl RequestForwarder {
                     &headers,
                     &extensions,
                     adapter.as_ref(),
+                    &mut attempted_codex_upstream_format,
                 )
                 .await
             {
                 Ok(forwarded) => {
                     return Ok(self
-                        .finish_success(provider, app_type_str, used_half_open_permit, forwarded)
+                        .finish_success(
+                            provider,
+                            app_type_str,
+                            used_half_open_permit,
+                            forwarded,
+                            attempted_codex_upstream_format,
+                        )
                         .await);
                 }
-                Err(e) => {
-                    // 检测是否需要触发整流器（仅 Claude/ClaudeAuth 供应商）
-                    let provider_type = ProviderType::from_app_type_and_config(app_type, provider);
-                    let is_anthropic_provider = matches!(
-                        provider_type,
-                        Some(ProviderType::Claude | ProviderType::ClaudeAuth)
+                Err(mut e) => {
+                    // 检测是否需要触发整流器（上游为 Anthropic Messages 的供应商）
+                    let is_anthropic_provider = uses_anthropic_rectifiers(
+                        ProviderType::from_app_type_and_config(app_type, provider),
                     );
                     let mut signature_rectifier_non_retryable_client_error = false;
 
@@ -650,7 +984,7 @@ impl RequestForwarder {
                         &provider_body,
                         &e,
                     ) {
-                        let mut media_body = provider_body.clone();
+                        let mut media_body = provider_body.as_ref().clone();
                         let replaced_images =
                             super::media_sanitizer::replace_image_blocks_with_marker(
                                 &mut media_body,
@@ -669,6 +1003,7 @@ impl RequestForwarder {
                                 super::media_sanitizer::UNSUPPORTED_IMAGE_MARKER
                             );
 
+                            let mut media_retry_codex_upstream_format = None;
                             match self
                                 .forward(
                                     app_type,
@@ -679,6 +1014,7 @@ impl RequestForwarder {
                                     &headers,
                                     &extensions,
                                     adapter.as_ref(),
+                                    &mut media_retry_codex_upstream_format,
                                 )
                                 .await
                             {
@@ -692,6 +1028,7 @@ impl RequestForwarder {
                                             app_type_str,
                                             used_half_open_permit,
                                             forwarded,
+                                            media_retry_codex_upstream_format,
                                         )
                                         .await);
                                 }
@@ -704,7 +1041,6 @@ impl RequestForwarder {
                                             retry_err,
                                             provider,
                                             app_type_str,
-                                            used_half_open_permit,
                                             "media 降级",
                                             &mut last_error,
                                             &mut last_provider,
@@ -714,6 +1050,151 @@ impl RequestForwarder {
                                         return Err(err);
                                     }
                                     continue;
+                                }
+                            }
+                        }
+                    }
+
+                    // 压缩回合被原生 Responses 第三方拒绝：有的上游不收 `tool_choice: "none"`
+                    // （见 `compaction_retry_without_tool_choice`），去掉它对同一家重试一次。
+                    if let Some(retry_body) = self.compaction_tool_choice_retry_body(
+                        app_type,
+                        provider,
+                        attempted_codex_upstream_format,
+                        &provider_body,
+                        &e,
+                    ) {
+                        log::info!(
+                            "[{app_type_str}] [RECT-030] provider={} 拒绝了压缩请求，去掉 tool_choice 后重试一次",
+                            provider.id
+                        );
+                        let mut retry_codex_upstream_format = None;
+                        match self
+                            .forward(
+                                app_type,
+                                &method,
+                                provider,
+                                endpoint,
+                                &retry_body,
+                                &headers,
+                                &extensions,
+                                adapter.as_ref(),
+                                &mut retry_codex_upstream_format,
+                            )
+                            .await
+                        {
+                            Ok(forwarded) => {
+                                log::info!("[{app_type_str}] [RECT-031] 压缩重试成功");
+                                return Ok(self
+                                    .finish_success(
+                                        provider,
+                                        app_type_str,
+                                        used_half_open_permit,
+                                        forwarded,
+                                        retry_codex_upstream_format,
+                                    )
+                                    .await);
+                            }
+                            // 重试仍失败：按这次的错误走常规分类。
+                            Err(retry_err) => {
+                                log::warn!(
+                                    "[{app_type_str}] [RECT-032] 压缩重试仍失败: {retry_err}"
+                                );
+                                e = retry_err;
+                            }
+                        }
+                    }
+
+                    if let Some(rejection) = self.opaque_state_retry_rejection(
+                        app_type,
+                        provider,
+                        attempted_codex_upstream_format,
+                        opaque_rectifier_retried,
+                        &provider_body,
+                        &e,
+                    ) {
+                        // 这一轮是派给子 agent 的加密任务：整流不动它（见
+                        // `opaque_state_rectifier`），去掉别家的状态后仍被拒，就是任务本身解不开。
+                        let agent_task = carries_encrypted_agent_task(&provider_body);
+                        let mut opaque_body = provider_body.as_ref().clone();
+                        let rectified = rectify_opaque_state(&mut opaque_body, rejection);
+                        if !rectified.applied && agent_task {
+                            log::warn!(
+                                "[{app_type_str}] [RECT-023] provider={} 解不开子 agent 任务的密文（主、子 agent 不在同一家），不重试",
+                                provider.id
+                            );
+                            return Err(self
+                                .finish_neutral_failure(unreadable_agent_task_error(), provider)
+                                .await);
+                        }
+                        if rectified.applied {
+                            let _ = std::mem::replace(&mut opaque_rectifier_retried, true);
+                            log::info!(
+                                "[{app_type_str}] [RECT-020] 上游拒绝了请求里别家签发的状态，去掉 {} 个推理条目、{} 个加密片段、{} 个别家 id，换掉 {} 个压缩条目后对 provider={} 重试一次",
+                                rectified.removed_reasoning_items,
+                                rectified.replaced_encrypted_parts,
+                                rectified.removed_foreign_ids,
+                                rectified.replaced_compaction_items,
+                                provider.id
+                            );
+
+                            let mut opaque_retry_codex_upstream_format = None;
+                            match self
+                                .forward(
+                                    app_type,
+                                    &method,
+                                    provider,
+                                    endpoint,
+                                    &opaque_body,
+                                    &headers,
+                                    &extensions,
+                                    adapter.as_ref(),
+                                    &mut opaque_retry_codex_upstream_format,
+                                )
+                                .await
+                            {
+                                Ok(forwarded) => {
+                                    log::info!("[{app_type_str}] [RECT-021] 密文整流重试成功");
+                                    return Ok(self
+                                        .finish_success(
+                                            provider,
+                                            app_type_str,
+                                            used_half_open_permit,
+                                            forwarded,
+                                            opaque_retry_codex_upstream_format,
+                                        )
+                                        .await);
+                                }
+                                // 重试仍失败：按这次的错误走常规分类，和没整流过一样
+                                // 决定是否计入熔断、是否换下一家。
+                                Err(retry_err) => {
+                                    log::warn!(
+                                        "[{app_type_str}] [RECT-022] 密文整流重试仍失败: {retry_err}"
+                                    );
+                                    if agent_task
+                                        && self
+                                            .opaque_state_retry_rejection(
+                                                app_type,
+                                                provider,
+                                                opaque_retry_codex_upstream_format,
+                                                false,
+                                                &opaque_body,
+                                                &retry_err,
+                                            )
+                                            .is_some()
+                                    {
+                                        log::warn!(
+                                            "[{app_type_str}] [RECT-023] provider={} 解不开子 agent 任务的密文（主、子 agent 不在同一家），不再重试",
+                                            provider.id
+                                        );
+                                        return Err(self
+                                            .finish_neutral_failure(
+                                                unreadable_agent_task_error(),
+                                                provider,
+                                            )
+                                            .await);
+                                    }
+                                    e = retry_err;
                                 }
                             }
                         }
@@ -729,18 +1210,11 @@ impl RequestForwarder {
                             if rectifier_retried {
                                 log::warn!("[{app_type_str}] [RECT-005] 整流器已触发过，不再重试");
                                 // 不记录熔断器，这是客户端兼容性问题
-                                return Err(self
-                                    .finish_neutral_failure(
-                                        e,
-                                        provider,
-                                        app_type_str,
-                                        used_half_open_permit,
-                                    )
-                                    .await);
+                                return Err(self.finish_neutral_failure(e, provider).await);
                             }
 
                             // 首次触发：整流请求体
-                            let rectified = rectify_anthropic_request(&mut provider_body);
+                            let rectified = rectify_anthropic_request(provider_body.to_mut());
 
                             // 整流未生效：继续尝试 budget 整流路径，避免误判后短路
                             if !rectified.applied {
@@ -761,6 +1235,7 @@ impl RequestForwarder {
                                 let _ = std::mem::replace(&mut rectifier_retried, true);
 
                                 // 使用同一供应商重试（不计入熔断器）
+                                let mut signature_retry_codex_upstream_format = None;
                                 match self
                                     .forward(
                                         app_type,
@@ -771,6 +1246,7 @@ impl RequestForwarder {
                                         &headers,
                                         &extensions,
                                         adapter.as_ref(),
+                                        &mut signature_retry_codex_upstream_format,
                                     )
                                     .await
                                 {
@@ -782,6 +1258,7 @@ impl RequestForwarder {
                                                 app_type_str,
                                                 used_half_open_permit,
                                                 forwarded,
+                                                signature_retry_codex_upstream_format,
                                             )
                                             .await);
                                     }
@@ -794,7 +1271,6 @@ impl RequestForwarder {
                                                 retry_err,
                                                 provider,
                                                 app_type_str,
-                                                used_half_open_permit,
                                                 "整流",
                                                 &mut last_error,
                                                 &mut last_provider,
@@ -810,7 +1286,7 @@ impl RequestForwarder {
                         }
                     }
 
-                    // 检测是否需要触发 budget 整流器（仅 Claude/ClaudeAuth 供应商）
+                    // 检测是否需要触发 budget 整流器（上游为 Anthropic Messages 的供应商）
                     if is_anthropic_provider {
                         let error_message = extract_error_message(&e);
                         if should_rectify_thinking_budget(
@@ -822,29 +1298,15 @@ impl RequestForwarder {
                                 log::warn!(
                                     "[{app_type_str}] [RECT-013] budget 整流器已触发过，不再重试"
                                 );
-                                return Err(self
-                                    .finish_neutral_failure(
-                                        e,
-                                        provider,
-                                        app_type_str,
-                                        used_half_open_permit,
-                                    )
-                                    .await);
+                                return Err(self.finish_neutral_failure(e, provider).await);
                             }
 
-                            let budget_rectified = rectify_thinking_budget(&mut provider_body);
+                            let budget_rectified = rectify_thinking_budget(provider_body.to_mut());
                             if !budget_rectified.applied {
                                 log::warn!(
                                     "[{app_type_str}] [RECT-014] budget 整流器触发但无可整流内容，不做无意义重试"
                                 );
-                                return Err(self
-                                    .finish_neutral_failure(
-                                        e,
-                                        provider,
-                                        app_type_str,
-                                        used_half_open_permit,
-                                    )
-                                    .await);
+                                return Err(self.finish_neutral_failure(e, provider).await);
                             }
 
                             log::info!(
@@ -857,6 +1319,7 @@ impl RequestForwarder {
                             let _ = std::mem::replace(&mut budget_rectifier_retried, true);
 
                             // 使用同一供应商重试（不计入熔断器）
+                            let mut budget_retry_codex_upstream_format = None;
                             match self
                                 .forward(
                                     app_type,
@@ -867,6 +1330,7 @@ impl RequestForwarder {
                                     &headers,
                                     &extensions,
                                     adapter.as_ref(),
+                                    &mut budget_retry_codex_upstream_format,
                                 )
                                 .await
                             {
@@ -878,6 +1342,7 @@ impl RequestForwarder {
                                             app_type_str,
                                             used_half_open_permit,
                                             forwarded,
+                                            budget_retry_codex_upstream_format,
                                         )
                                         .await);
                                 }
@@ -890,7 +1355,6 @@ impl RequestForwarder {
                                             retry_err,
                                             provider,
                                             app_type_str,
-                                            used_half_open_permit,
                                             "budget 整流",
                                             &mut last_error,
                                             &mut last_provider,
@@ -906,19 +1370,12 @@ impl RequestForwarder {
                     }
 
                     if signature_rectifier_non_retryable_client_error {
-                        return Err(self
-                            .finish_neutral_failure(
-                                e,
-                                provider,
-                                app_type_str,
-                                used_half_open_permit,
-                            )
-                            .await);
+                        return Err(self.finish_neutral_failure(e, provider).await);
                     }
 
                     // 先分类错误，决定是否计入 provider 健康度
                     // —— NonRetryable / ClientAbort 是客户端层错误，无论换哪家 provider 都会被拒绝，
-                    //    不应污染熔断器和数据库健康度（与 release_permit_neutral 同语义）。
+                    //    不应污染熔断器和数据库健康度（与 finish_neutral_failure 同语义）。
                     let category = self.categorize_proxy_error(&e, provider);
 
                     match category {
@@ -927,7 +1384,6 @@ impl RequestForwarder {
                             self.record_provider_failure(
                                 provider,
                                 app_type_str,
-                                used_half_open_permit,
                                 &e,
                                 format!("Provider {} 失败: {}", provider.name, e),
                             )
@@ -948,14 +1404,7 @@ impl RequestForwarder {
                         }
                         ErrorCategory::NonRetryable | ErrorCategory::ClientAbort => {
                             // 不可重试：客户端层错误或客户端断连 → 不污染健康度，仅释放 HalfOpen permit
-                            return Err(self
-                                .finish_neutral_failure(
-                                    e,
-                                    provider,
-                                    app_type_str,
-                                    used_half_open_permit,
-                                )
-                                .await);
+                            return Err(self.finish_neutral_failure(e, provider).await);
                         }
                     }
                 }
@@ -969,6 +1418,7 @@ impl RequestForwarder {
             return Err(ForwardError {
                 error: ProxyError::NoAvailableProvider,
                 provider: None,
+                outbound_model: None,
             });
         }
 
@@ -985,6 +1435,7 @@ impl RequestForwarder {
         Err(ForwardError {
             error: last_error.unwrap_or(ProxyError::MaxRetriesExceeded),
             provider: last_provider,
+            outbound_model: self.last_outbound_model(),
         })
     }
 
@@ -992,6 +1443,8 @@ impl RequestForwarder {
     ///
     /// 成功时返回 `(response, claude_api_format, outbound_model)`，其中
     /// `outbound_model` 是最终发往上游的模型名（所有映射/改写之后）。
+    /// `codex_upstream_format_out` 记下这次实际选中的 Codex 上游格式：成功时交给
+    /// `finish_success`，失败时给整流判断用（Copilot 按模型逐次选协议，不能从静态配置推）。
     #[allow(clippy::too_many_arguments)]
     async fn forward(
         &self,
@@ -1003,7 +1456,10 @@ impl RequestForwarder {
         headers: &axum::http::HeaderMap,
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
+        codex_upstream_format_out: &mut Option<CodexUpstreamFormat>,
     ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
+        *codex_upstream_format_out = None;
+        self.set_last_outbound_model(None);
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
 
@@ -1013,27 +1469,34 @@ impl RequestForwarder {
             .and_then(|meta| meta.is_full_url)
             .unwrap_or(false)
             && !provider.is_codex_oauth()
-            && !provider.is_xai_oauth();
+            && !provider.is_xai_oauth()
+            && !provider.is_github_copilot();
 
         // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
-        let is_copilot = provider
-            .meta
-            .as_ref()
-            .and_then(|m| m.provider_type.as_deref())
-            == Some("github_copilot")
-            || base_url.contains("githubcopilot.com");
+        let is_copilot = is_managed_copilot_request(app_type, provider, &base_url);
 
         // Codex upstream conversion mode — computed early because the [1m]-suffix strip
         // below must be skipped on the Anthropic path (the marker has to survive to
         // catalog matching and to the transform's own strip+beta detection).
-        let codex_responses_to_chat = matches!(app_type, AppType::Codex | AppType::GrokBuild)
+        let mut codex_responses_to_chat = matches!(app_type, AppType::Codex | AppType::GrokBuild)
             && super::providers::should_convert_codex_responses_to_chat(provider, endpoint);
-        let codex_responses_to_anthropic = matches!(app_type, AppType::Codex | AppType::GrokBuild)
-            && super::providers::should_convert_codex_responses_to_anthropic(provider, endpoint);
+        let mut codex_responses_to_anthropic =
+            matches!(app_type, AppType::Codex | AppType::GrokBuild)
+                && super::providers::should_convert_codex_responses_to_anthropic(
+                    provider, endpoint,
+                );
+        let mut copilot_endpoint_override: Option<String> = None;
         let codex_official_auth_passthrough = matches!(app_type, AppType::Codex)
             && super::providers::is_codex_official_provider(provider);
+        let codex_stack_request = self.stack_request && matches!(app_type, AppType::Codex);
+        let mut quota_token = None;
 
         if codex_official_auth_passthrough {
+            // 暂停使用官方登录时 Codex 带的是占位 Key，没有官方凭据可透传：本地拒绝并说明
+            // 怎么恢复，不发往上游。
+            if crate::settings::codex_proxy_without_official_login() {
+                return Err(ProxyError::CodexOfficialLoginPaused);
+            }
             let (expected_chatgpt_account_id, managed_session_matches) = match provider
                 .meta
                 .as_ref()
@@ -1073,22 +1536,73 @@ impl RequestForwarder {
                 expected_chatgpt_account_id.as_deref(),
                 managed_session_matches,
             )?;
+            if method == http::Method::POST {
+                let token = codex_bearer_access_token(headers).ok_or_else(|| {
+                    ProxyError::AuthError(
+                        "Codex official route requires a bearer token".to_string(),
+                    )
+                })?;
+                super::codex_quota_protection::admit(token, headers).await?;
+                quota_token = Some(token);
+            }
         }
 
         // 应用模型映射（独立于格式转换）
         // Claude Desktop proxy 模式必须先把 Desktop 可见的 claude-* route
         // 映射成真实上游模型名，并且未知 route 要直接报错，不能使用默认模型兜底。
+        // 聚合模型的请求已经解出了上游名，不再查映射表（查不到会报错，按档位回落会发错模型）。
         let mapped_body = if matches!(app_type, AppType::ClaudeDesktop) {
-            crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
-                .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
+            if self.keeps_resolved_model() {
+                crate::claude_desktop_config::normalize_upstream_request(body.clone(), provider)
+            } else {
+                crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
+                    .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
+            }
+        } else if self.keeps_resolved_model() {
+            body.clone()
         } else {
             let (mapped_body, _original_model, _mapped_model) =
                 super::model_mapper::apply_model_mapping(body.clone(), provider);
-            mapped_body
+            // Codex 行没有档位映射，客户端发的是路由那家的模型名：故障转移换到不认这个名字的
+            // 那家时，换成它自己的模型。
+            if self.maps_codex_failover_model(app_type, endpoint) {
+                super::model_mapper::map_codex_failover_model(mapped_body, provider)
+            } else {
+                mapped_body
+            }
         };
 
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
         let mut mapped_body = normalize_thinking_type(mapped_body);
+        let is_copilot_codex_responses = matches!(app_type, AppType::Codex)
+            && is_copilot
+            && super::providers::is_codex_responses_endpoint(endpoint);
+        let is_copilot_claude_body = is_copilot && !matches!(app_type, AppType::Codex);
+
+        // The OpenCode gateway wants a stable per-conversation session id (see the
+        // injection site below). It has to be derived here: `mapped_body` is moved
+        // by the format conversion further down.
+        //
+        // Only that upstream consumes it, and only when the client neither sent
+        // `x-opencode-session` nor supplied a session id, so guard the work: the
+        // digest serialises the system prompt plus the first user message, which
+        // routinely carry files and images and can reach megabytes. The host check
+        // uses `base_url` - none of the URL-construction branches below rewrites the
+        // authority (the only one that replaces the host wholesale is Copilot's
+        // dynamic endpoint, which points at GitHub, never opencode.ai).
+        let base_url_host = base_url
+            .parse::<http::Uri>()
+            .ok()
+            .and_then(|u| u.authority().map(|a| a.to_string()));
+        let opencode_conversation_fingerprint = if !self.session_client_provided
+            && !headers.contains_key("x-opencode-session")
+            && native_session_header(headers).is_none()
+            && is_opencode_upstream(base_url_host.as_deref())
+        {
+            conversation_fingerprint(&mapped_body)
+        } else {
+            None
+        };
 
         // Grok Build exposes a stable client-side model profile in config.toml.
         // Route requests to the provider's real upstream model before applying
@@ -1097,7 +1611,7 @@ impl RequestForwarder {
             super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
         }
 
-        if is_copilot {
+        if is_copilot_claude_body {
             mapped_body =
                 super::providers::copilot_model_map::apply_copilot_model_normalization(mapped_body);
             self.apply_copilot_live_model_resolution(provider, &mut mapped_body)
@@ -1111,7 +1625,7 @@ impl RequestForwarder {
             // variants pass through unchanged.
             mapped_body =
                 super::model_mapper::strip_one_m_suffix_for_upstream_from_body(mapped_body);
-        } else if !codex_responses_to_anthropic {
+        } else if !is_copilot_codex_responses && !codex_responses_to_anthropic {
             // Skip on the Codex→Anthropic path: stripping [1m] here would break both the
             // model-catalog match (apply_codex_upstream_model) and the transform's own
             // strip+`context-1m` beta detection. The marker is stripped later, on the
@@ -1127,7 +1641,8 @@ impl RequestForwarder {
         //   1. 先在原始 body 上分类（保留 tool_result 语义，避免误判为 user）
         //   2. 再清洗孤立 tool_result（防止上游 API 报错）
         //   3. 再合并 tool_result + text（减少 premium 计费）
-        let copilot_optimization = if is_copilot && self.copilot_optimizer_config.enabled {
+        let run_copilot_optimizer = is_copilot_claude_body && self.copilot_optimizer_config.enabled;
+        let copilot_request_context = if run_copilot_optimizer {
             // 1. 在原始 body 上分类 — 必须在清洗/合并之前执行
             //    孤立 tool_result 仍保持 tool_result 类型，分类能正确识别为 agent
             let has_anthropic_beta = headers.contains_key("anthropic-beta");
@@ -1153,12 +1668,6 @@ impl RequestForwarder {
             // 3. Tool result 合并 — 将 [tool_result, text] 变为 [tool_result(含text)]
             if self.copilot_optimizer_config.tool_result_merging {
                 mapped_body = super::copilot_optimizer::merge_tool_results(mapped_body);
-            }
-
-            // 3.5. 主动剥离 thinking block — Copilot 走 OpenAI 兼容端点不识别该块
-            //      避免上游拒绝后由 rectifier 反应式重试（首次请求已消耗 quota）
-            if self.copilot_optimizer_config.strip_thinking {
-                mapped_body = super::copilot_optimizer::strip_thinking_blocks(mapped_body);
             }
 
             // 4. Warmup 小模型降级
@@ -1217,10 +1726,44 @@ impl RequestForwarder {
             let interaction_id =
                 super::copilot_optimizer::deterministic_interaction_id(&session_id);
 
-            Some((classification, det_request_id, interaction_id))
+            Some(CopilotRequestContext {
+                classification,
+                request_id: det_request_id,
+                interaction_id,
+            })
+        } else {
+            self.codex_copilot_request_context(is_copilot_codex_responses, &mapped_body)
+        };
+
+        // Codex always speaks Responses to the local proxy. Resolve the final
+        // Copilot model after every model rewrite, then select only a protocol
+        // that the model advertises. Messages is intentionally not supported
+        // on the Codex bridge. Only auto mode may fall back from Responses to Chat.
+        if is_copilot_codex_responses {
+            let api_format = CodexCopilotApiFormat::from_meta(provider.meta.as_ref());
+            let resolved = self
+                .resolve_codex_copilot_model(provider, &mapped_body, api_format)
+                .await?;
+            let transport = apply_codex_copilot_model(&mut mapped_body, resolved, api_format)?;
+            copilot_endpoint_override = Some(transport.endpoint);
+            codex_responses_to_chat = matches!(transport.protocol, CopilotProtocol::Chat);
+            codex_responses_to_anthropic = false;
+        }
+
+        let codex_upstream_format = if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && super::providers::is_codex_responses_endpoint(endpoint)
+        {
+            Some(if codex_responses_to_anthropic {
+                CodexUpstreamFormat::Anthropic
+            } else if codex_responses_to_chat {
+                CodexUpstreamFormat::ChatCompletions
+            } else {
+                CodexUpstreamFormat::NativeResponses
+            })
         } else {
             None
         };
+        *codex_upstream_format_out = codex_upstream_format;
 
         // GitHub Copilot 动态 endpoint 路由
         // 从 CopilotAuthManager 获取缓存的 API endpoint（支持企业版等非默认 endpoint）
@@ -1261,6 +1804,15 @@ impl RequestForwarder {
         };
         if adapter.name() == "Claude" {
             if let Some(api_format) = resolved_claude_api_format.as_deref() {
+                // 主动剥离 thinking block — Copilot 的 OpenAI 兼容端点不识别该块，避免上游拒绝后
+                // 由 rectifier 反应式重试（首次请求已消耗 quota）。原生 Messages 透传保留它们：
+                // 工具循环里 Anthropic 会校验 thinking block。
+                if run_copilot_optimizer
+                    && self.copilot_optimizer_config.strip_thinking
+                    && super::providers::claude_api_format_needs_transform(api_format)
+                {
+                    mapped_body = super::copilot_optimizer::strip_thinking_blocks(mapped_body);
+                }
                 super::providers::normalize_anthropic_messages_for_provider(
                     &mut mapped_body,
                     provider,
@@ -1285,23 +1837,26 @@ impl RequestForwarder {
                 .as_ref()
                 .and_then(|meta| meta.impersonate_claude_code)
                 == Some(true);
-        let (effective_endpoint, passthrough_query) = if codex_responses_to_chat {
-            rewrite_codex_responses_endpoint_to_chat(endpoint)
-        } else if codex_responses_to_anthropic {
-            rewrite_codex_responses_endpoint_to_anthropic(endpoint)
-        } else if needs_transform && adapter.name() == "Claude" {
-            let api_format = resolved_claude_api_format
-                .as_deref()
-                .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
-            rewrite_claude_transform_endpoint(endpoint, api_format, is_copilot, &mapped_body)
-        } else {
-            (
-                endpoint.to_string(),
-                split_endpoint_and_query(endpoint)
-                    .1
-                    .map(ToString::to_string),
-            )
-        };
+        let (effective_endpoint, passthrough_query) =
+            if let Some(copilot_endpoint) = copilot_endpoint_override.as_deref() {
+                rewrite_codex_endpoint_for_copilot(endpoint, copilot_endpoint)
+            } else if codex_responses_to_chat {
+                rewrite_codex_responses_endpoint_to_chat(endpoint)
+            } else if codex_responses_to_anthropic {
+                rewrite_codex_responses_endpoint_to_anthropic(endpoint)
+            } else if needs_transform && adapter.name() == "Claude" {
+                let api_format = resolved_claude_api_format
+                    .as_deref()
+                    .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
+                rewrite_claude_transform_endpoint(endpoint, api_format, is_copilot, &mapped_body)
+            } else {
+                (
+                    endpoint.to_string(),
+                    split_endpoint_and_query(endpoint)
+                        .1
+                        .map(ToString::to_string),
+                )
+            };
 
         let codex_chat_base_is_full_endpoint =
             codex_responses_to_chat && base_url_is_full_endpoint(&base_url, "/chat/completions");
@@ -1317,6 +1872,11 @@ impl RequestForwarder {
         let codex_standalone_endpoint = matches!(app_type, AppType::Codex)
             .then(|| CodexStandaloneEndpoint::from_effective_endpoint(&effective_endpoint))
             .flatten();
+        let is_copilot_unversioned_endpoint = is_copilot
+            && matches!(
+                split_endpoint_and_query(&effective_endpoint).0,
+                "/chat/completions" | "/responses" | "/responses/compact"
+            );
 
         let url = if matches!(resolved_claude_api_format.as_deref(), Some("gemini_native")) {
             super::gemini_url::resolve_gemini_native_url(
@@ -1343,9 +1903,17 @@ impl RequestForwarder {
             rewrite_codex_standalone_full_url(&base_url, passthrough_query.as_deref(), endpoint)?
         } else if codex_chat_base_is_full_endpoint || codex_anthropic_base_is_full_endpoint {
             append_query_to_full_url(&base_url, passthrough_query.as_deref())
+        } else if is_copilot_unversioned_endpoint {
+            build_copilot_unversioned_url(&base_url, &effective_endpoint)
         } else {
             adapter.build_url(&base_url, &effective_endpoint)
         };
+
+        let (listen_address, listen_port) = {
+            let status = self.status.read().await;
+            (status.address.clone(), status.port)
+        };
+        super::upstream_guard::reject_self_forwarding(&url, &listen_address, listen_port).await?;
 
         // 记录映射后的出站模型名（此时 mapped_body 已完成接管映射 / [1m] 剥离 /
         // Copilot 归一化）。格式转换后若 body 仍带 model 字段会在下方刷新覆盖；
@@ -1355,6 +1923,7 @@ impl RequestForwarder {
             .and_then(|m| m.as_str())
             .filter(|m| !m.is_empty())
             .map(str::to_string);
+        self.set_last_outbound_model(outbound_model.clone());
 
         // Codex→Anthropic: when the model name carries the [1m] marker, strip the
         // suffix and add the context-1m beta header.
@@ -1369,20 +1938,35 @@ impl RequestForwarder {
                 .map(ToString::to_string);
             let restored = self
                 .codex_chat_history
-                .enrich_request(&mut mapped_body)
+                .enrich_request(
+                    &mut mapped_body,
+                    self.session_client_provided
+                        .then_some(self.session_id.as_str()),
+                )
                 .await;
             if restored > 0 {
                 log::debug!(
                     "[Codex] Restored or enriched {restored} cached function call item(s) for Chat upstream"
                 );
             }
-            super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
+            if !self.keeps_resolved_model() && !is_copilot_codex_responses {
+                super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
+            }
             let reasoning_config =
                 super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
             let mut chat_body = super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
                 mapped_body,
                 reasoning_config.as_ref(),
             )?;
+            let signature_fallbacks =
+                super::providers::codex_chat_common::fill_gemini_thought_signature_fallback(
+                    &mut chat_body,
+                );
+            if signature_fallbacks > 0 {
+                log::debug!(
+                    "[Codex] Filled {signature_fallbacks} missing Gemini thought signature(s) with the skip placeholder"
+                );
+            }
             super::providers::inject_codex_chat_prompt_cache_key(
                 provider,
                 &mut chat_body,
@@ -1393,7 +1977,9 @@ impl RequestForwarder {
             chat_body
         } else if codex_responses_to_anthropic {
             let mut mapped_body = mapped_body;
-            super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
+            if !self.keeps_resolved_model() {
+                super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
+            }
             // Per-provider output ceiling override. Codex does not forward its
             // `model_max_output_tokens` in the request body, so honor the value
             // configured on the provider here — it takes precedence over any
@@ -1452,6 +2038,19 @@ impl RequestForwarder {
                 let api_format = resolved_claude_api_format
                     .as_deref()
                     .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
+                let mut mapped_body = mapped_body;
+                // 映射后的模型名不再带「省略 thinking 仍默认开思考」的语义（5.x 的
+                // Fable / Mythos / Opus / Sonnet），按客户端原模型补成显式 adaptive，
+                // effort 换算才不会当成关闭。
+                if matches!(
+                    api_format,
+                    "openai_chat" | "openai_responses" | "gemini_native"
+                ) {
+                    super::providers::transform::make_default_adaptive_thinking_explicit(
+                        &mut mapped_body,
+                        body.get("model").and_then(|m| m.as_str()),
+                    );
+                }
                 super::providers::transform_claude_request_for_api_format(
                     mapped_body,
                     provider,
@@ -1467,29 +2066,86 @@ impl RequestForwarder {
             mapped_body
         };
 
-        // Native Responses passthrough to a strict third-party gateway (xAI).
+        // Codex 远程压缩，以及同一线程里别家回合留下的状态（见 `codex_compaction`）。
+        // Chat / Anthropic 转换在转换器里处理；这里管原样转发的两种上游：官方清掉
+        // CC Switch 产出、官方一定会拒的条目，原生 Responses 第三方把压缩触发和
+        // CC Switch 包装的压缩摘要改成普通消息。看不出来源的密文原样发出，被拒后由
+        // `opaque_state_rectifier` 处理。请求里没有这些条目时逐字节不变。
+        if matches!(app_type, AppType::Codex)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+        {
+            if codex_official_auth_passthrough {
+                if super::providers::codex_compaction::scrub_ccswitch_state_for_official(
+                    &mut request_body,
+                ) {
+                    log::debug!(
+                        "[Codex] Scrubbed third-party turn state before the official upstream (provider={})",
+                        provider.id
+                    );
+                }
+            } else if super::providers::codex_compaction::prepare_native_third_party_request(
+                &mut request_body,
+            ) {
+                log::debug!(
+                    "[Codex] Rewrote compaction items for a native Responses upstream (provider={})",
+                    provider.id
+                );
+            }
+
+            // Kimi 会在工具调用后再吐一条空助手消息，下一轮又拒收这段历史；DeepSeek 同样
+            // 拒收，别家留在同一线程里的这种排列续到它就会中（见
+            // `transform_codex_responses_kimi_history`）。只对这几家上游、只在出现这种排列
+            // 时改写。
+            if !codex_official_auth_passthrough
+                && super::providers::transform_codex_responses_kimi_history::upstream_rejects_messages_inside_tool_calls(
+                    &base_url,
+                )
+                && super::providers::transform_codex_responses_kimi_history::repair_tool_history(
+                    &mut request_body,
+                )
+            {
+                log::debug!(
+                    "[Codex] Reordered assistant messages inside tool-call groups (provider={})",
+                    provider.id
+                );
+            }
+        }
+
+        // Native Responses passthrough to xAI, directly or via Copilot/Grok.
         // One gate so rebase conflicts stay here plus the isolate file, not
         // scattered across sanitizers. Flatten namespaces first; then apply
         // xAI request rewrites (schema, agent_message, unknown models).
         if matches!(app_type, AppType::Codex | AppType::GrokBuild)
             && !codex_responses_to_chat
             && !codex_responses_to_anthropic
-            && super::providers::provider_needs_responses_namespace_flatten(provider)
+            && (!provider.is_github_copilot() || is_copilot_codex_responses)
         {
-            if super::providers::transform_codex_responses_namespace::flatten_request_namespaces(
+            apply_native_responses_request_compat(
+                provider,
                 &mut request_body,
-            )? {
+                self.keeps_resolved_model(),
+            )?;
+        }
+
+        // Stack 请求发往拒收托管 `web_search` 的原生 Responses 上游：去掉这个工具，和 Chat、
+        // Anthropic 转换丢掉托管工具是同一件事。只对 Stack 请求、只对名单上的上游生效；
+        // 路由请求和其他 Stack 请求逐字节不变。
+        if codex_stack_request && !codex_responses_to_chat && !codex_responses_to_anthropic {
+            let request_model = request_body
+                .get("model")
+                .and_then(|model| model.as_str())
+                .map(str::to_string);
+            if super::providers::codex_stack_upstream_rejects_web_search(
+                provider,
+                request_model.as_deref(),
+            ) && super::providers::strip_codex_hosted_web_search(&mut request_body)
+            {
                 log::debug!(
-                    "[Codex] Flattened namespace tools for native Responses upstream (provider={})",
+                    "[Codex] Dropped hosted web_search for a stacked model (provider={})",
                     provider.id
                 );
             }
-            super::providers::transform_codex_responses_xai_sanitize::apply_xai_native_responses_request_compat(
-                &mut request_body,
-                &provider.id,
-                super::providers::codex_provider_upstream_model(provider).as_deref(),
-                &provider.settings_config,
-            );
         }
 
         // Moonshot / Kimi Chat Completions reject `$ref` nodes that carry sibling
@@ -1539,6 +2195,7 @@ impl RequestForwarder {
         {
             outbound_model = Some(m.to_string());
         }
+        self.set_last_outbound_model(outbound_model.clone());
         log_prompt_cache_trace(
             app_type,
             provider,
@@ -1756,41 +2413,11 @@ impl RequestForwarder {
         };
 
         // --- Copilot 优化器：动态 header 注入 ---
-        if let Some((ref classification, ref det_request_id, ref interaction_id)) =
-            copilot_optimization
-        {
-            for (name, value) in auth_headers.iter_mut() {
-                match name.as_str() {
-                    "x-initiator" if self.copilot_optimizer_config.request_classification => {
-                        *value = http::HeaderValue::from_static(classification.initiator);
-                    }
-                    "x-interaction-type" if classification.is_subagent => {
-                        // 子代理请求：conversation-subagent 不计 premium interaction
-                        *value = http::HeaderValue::from_static("conversation-subagent");
-                    }
-                    "x-request-id" | "x-agent-task-id" => {
-                        if let Some(ref det_id) = det_request_id {
-                            if let Ok(hv) = http::HeaderValue::from_str(det_id) {
-                                *value = hv;
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-
-            // x-interaction-id：仅在有 session 时注入（不在 get_auth_headers 中）
-            if let Some(ref iid) = interaction_id {
-                if let Ok(hv) = http::HeaderValue::from_str(iid) {
-                    auth_headers.push((http::HeaderName::from_static("x-interaction-id"), hv));
-                }
-            }
-
-            if classification.is_subagent {
-                log::info!(
-                    "[Copilot] 子代理请求: x-initiator=agent, x-interaction-type=conversation-subagent"
-                );
-            }
+        if let Some(context) = copilot_request_context {
+            context.apply_headers(
+                &mut auth_headers,
+                self.copilot_optimizer_config.request_classification,
+            )?;
         }
 
         // Copilot 指纹头名（由 get_auth_headers 注入，需在原始头中去重）
@@ -1819,6 +2446,48 @@ impl RequestForwarder {
             .parse::<http::Uri>()
             .ok()
             .and_then(|u| u.authority().map(|a| a.to_string()));
+
+        // OpenCode Go places two hard requirements on clients
+        // (<https://opencode.ai/docs/go/>); satisfy both, only for its upstream.
+        //
+        // 1) User-Agent: a client that identifies itself is passed through
+        //    untouched (Claude Code, Codex, ...). Only a request that carries no
+        //    UA at all gets this fallback - the gateway sits behind Cloudflare and
+        //    rejects unidentified clients (403 Access denied; a UA clears it).
+        //    The fallback is therefore applied after the header loop, next to the
+        //    custom UA. An explicitly configured custom UA still wins.
+        let opencode_fallback_user_agent =
+            if custom_user_agent.is_none() && is_opencode_upstream(upstream_host.as_deref()) {
+                Some(http::HeaderValue::from_static(concat!(
+                    "cc-switch/",
+                    env!("CARGO_PKG_VERSION")
+                )))
+            } else {
+                None
+            };
+
+        // 2) Session header: without `x-opencode-session` the gateway answers
+        //    400 MissingSessionID. Pass it through when the client already sends
+        //    one, otherwise send the most stable identity we have
+        //    (`pick_opencode_session`) - a native client header, the client's
+        //    session id, the conversation fingerprint, or the generated id.
+        if is_opencode_upstream(upstream_host.as_deref())
+            && !headers.contains_key("x-opencode-session")
+        {
+            let client_id = self
+                .session_client_provided
+                .then_some(self.session_id.as_str());
+            if let Some(session) = pick_opencode_session(
+                native_session_header(headers),
+                client_id,
+                opencode_conversation_fingerprint.as_deref(),
+                &self.session_id,
+            ) {
+                if let Ok(value) = http::HeaderValue::from_str(&session) {
+                    auth_headers.push((http::HeaderName::from_static("x-opencode-session"), value));
+                }
+            }
+        }
 
         let should_send_anthropic_headers = adapter.name() == "Claude"
             && matches!(resolved_claude_api_format.as_deref(), Some("anthropic"));
@@ -1948,7 +2617,21 @@ impl RequestForwarder {
             // can defeat strict gateway fingerprint checks.
             // The full set lives in `is_codex_client_fingerprint_header` so it stays in one
             // place. (HeaderName is lowercased by the http crate, so a direct match is safe.)
-            if codex_responses_to_anthropic && is_codex_client_fingerprint_header(key_str) {
+            // Codex Stack 请求发往第三方时同样剥掉：官方做路由时 Codex 每个请求都带着 ChatGPT
+            // 身份（`chatgpt-account-id` 等），它们只能发往官方上游。Stack 目标不会是官方账号，
+            // 这里仍按上游判断，防止以后放宽。只限 Codex：Claude Code 自己的 `x-stainless-*`
+            // 是 Anthropic SDK 的正常请求头，Stack 请求照常转发。
+            // 路由那家是第三方时 Codex 也可能以内置 openai 身份、带着 ChatGPT 登录发请求
+            // （`codex_direct` 的 `openai_route`），身份头同样只能发往官方或 ChatGPT 托管账号。
+            if should_strip_codex_client_fingerprint_header(
+                key_str,
+                &effective_endpoint,
+                codex_responses_to_anthropic,
+                codex_responses_to_chat,
+                codex_stack_request,
+                codex_official_auth_passthrough,
+                matches!(app_type, AppType::Codex) && !provider.is_codex_oauth(),
+            ) {
                 continue;
             }
 
@@ -2060,7 +2743,10 @@ impl RequestForwarder {
         }
 
         if !saw_user_agent {
-            if let Some(ref ua) = custom_user_agent {
+            if let Some(ua) = custom_user_agent
+                .as_ref()
+                .or(opencode_fallback_user_agent.as_ref())
+            {
                 ordered_headers.append(http::header::USER_AGENT, ua.clone());
             }
         }
@@ -2153,6 +2839,15 @@ impl RequestForwarder {
             short_value_hash(Some(&filtered_body))
         );
 
+        // 序列化后释放工作副本；只有加密子任务的流式判错还需要保留请求体。
+        let encrypted_agent_request = (matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+            && request_is_streaming
+            && self.rectifier_config.enabled
+            && carries_encrypted_agent_task(&filtered_body))
+        .then_some(filtered_body);
+
         // 确定超时
         let timeout = if self.non_streaming_timeout.is_zero() {
             std::time::Duration::from_secs(600) // 默认 600 秒
@@ -2160,8 +2855,8 @@ impl RequestForwarder {
             self.non_streaming_timeout
         };
 
-        // 获取全局代理 URL
-        let upstream_proxy_url: Option<String> = super::http_client::get_current_proxy_url();
+        // 获取全局代理 URL（上游是本机地址时直连，不送进代理）
+        let upstream_proxy_url: Option<String> = super::http_client::proxy_url_for(&url);
 
         // SOCKS5 代理不支持 CONNECT 隧道，需要用 reqwest
         let is_socks_proxy = upstream_proxy_url
@@ -2183,7 +2878,7 @@ impl RequestForwarder {
             log::debug!(
                 "[Forwarder] Using pooled reqwest client (preserve_exact_header_case={preserve_exact_header_case}, socks_proxy={is_socks_proxy})"
             );
-            let client = super::http_client::get();
+            let client = super::http_client::get_for_url(&url);
             let mut request = client.request(method.clone(), &url);
             if request_is_streaming {
                 // reqwest 的 timeout 是整请求超时；流式请求交给 response_processor
@@ -2234,6 +2929,12 @@ impl RequestForwarder {
             .await?
         };
 
+        // Official responses (errors included) carry the account's usage headers;
+        // they feed the next request's quota check without an extra lookup.
+        if let Some(token) = quota_token {
+            super::codex_quota_protection::observe_response(token, headers, response.headers());
+        }
+
         // 检查响应状态
         let status = response.status();
 
@@ -2264,6 +2965,13 @@ impl RequestForwarder {
                     // A response.failed/error before output remains failover-safe.
                     response = self.validate_responses_stream_start(response).await?;
                 }
+            } else if let Some(request) = encrypted_agent_request
+                .as_ref()
+                .filter(|_| !response.is_json())
+            {
+                response = self
+                    .hold_encrypted_agent_task_stream(response, request)
+                    .await?;
             }
             Ok((response, resolved_claude_api_format, outbound_model))
         } else {
@@ -2395,8 +3103,7 @@ impl RequestForwarder {
         let headers = response.headers().clone();
         let mut stream = Box::pin(response.bytes_stream());
         let mut replay_chunks: Vec<Bytes> = Vec::new();
-        let mut parse_buffer = String::new();
-        let mut utf8_remainder = Vec::new();
+        let mut sse = crate::proxy::sse::SseBuffer::new();
 
         loop {
             let next = if self.streaming_first_byte_timeout.is_zero() {
@@ -2413,13 +3120,13 @@ impl RequestForwarder {
             };
 
             let Some(chunk) = next else {
-                if let Some(outcome) = inspect_responses_json_document(&parse_buffer) {
+                if let Some(outcome) = inspect_responses_json_document(sse.pending()) {
                     outcome?;
                     let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok));
                     return Ok(ProxyResponse::streamed(status, headers, replay));
                 }
-                if !parse_buffer.trim().is_empty() {
-                    if let Some(outcome) = inspect_responses_start_event(parse_buffer.trim()) {
+                if !sse.pending().trim().is_empty() {
+                    if let Some(outcome) = inspect_responses_start_event(sse.pending().trim()) {
                         outcome?;
                         let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok));
                         return Ok(ProxyResponse::streamed(status, headers, replay));
@@ -2435,21 +3142,21 @@ impl RequestForwarder {
                     "Failed while validating Responses stream start: {error}"
                 ))
             })?;
-            crate::proxy::sse::append_utf8_safe(&mut parse_buffer, &mut utf8_remainder, &chunk);
+            sse.push_bytes(&chunk);
             replay_chunks.push(chunk);
 
             // Some compatible gateways ignore `stream:true` and return a complete
             // Responses JSON document without a JSON content-type. Recognize that
             // shape before looking for SSE delimiters; pretty-printed JSON may itself
             // contain blank lines and must stay intact.
-            if let Some(outcome) = inspect_responses_json_document(&parse_buffer) {
+            if let Some(outcome) = inspect_responses_json_document(sse.pending()) {
                 outcome?;
                 let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok)).chain(stream);
                 return Ok(ProxyResponse::streamed(status, headers, replay));
             }
 
-            while let Some(block) = crate::proxy::sse::take_sse_block(&mut parse_buffer) {
-                if let Some(outcome) = inspect_responses_start_event(&block) {
+            while let Some(block) = sse.next_block() {
+                if let Some(outcome) = inspect_responses_start_event(block) {
                     outcome?;
                     let replay =
                         futures::stream::iter(replay_chunks.into_iter().map(Ok)).chain(stream);
@@ -2465,6 +3172,65 @@ impl RequestForwarder {
                 return Ok(ProxyResponse::streamed(status, headers, replay));
             }
         }
+    }
+
+    /// 原样转发的 Responses 请求末尾是一条带密文的子 agent 任务时（见
+    /// `opaque_state_rectifier::carries_encrypted_agent_task`），先看到第一个不是生命周期的事件
+    /// 再交出流：上游解不开密文时会在流里、输出之前回 `response.failed`，这时改成上游错误，
+    /// 回到重试循环里和 HTTP 报错一样整流或说明原因。其余情况（有输出、别的失败、到了截止
+    /// 时间、缓冲太多）把读过的字节原样接回去，客户端看到的流和没经过这里一样。
+    ///
+    /// 整个缓冲阶段只有一个截止时间（不是每读一块重新计时）：上游在输出前一直发心跳时，流
+    /// 也得按时交出去。解不开密文是上游一收到请求就报的错，不用等到生成，所以最多压
+    /// [`MAX_HOLD`]，首包超时更短时按首包超时。
+    async fn hold_encrypted_agent_task_stream(
+        &self,
+        response: ProxyResponse,
+        request: &Value,
+    ) -> Result<ProxyResponse, ProxyError> {
+        const MAX_HOLD_BYTES: usize = 256 * 1024;
+        const MAX_HOLD: std::time::Duration = std::time::Duration::from_secs(10);
+
+        let window = match self.streaming_first_byte_timeout {
+            timeout if timeout.is_zero() => MAX_HOLD,
+            timeout => timeout.min(MAX_HOLD),
+        };
+        let deadline = tokio::time::Instant::now() + window;
+        let status = response.status();
+        let headers = response.headers().clone();
+        let mut stream = Box::pin(response.bytes_stream());
+        let mut replay_chunks: Vec<Bytes> = Vec::new();
+        let mut held_bytes = 0usize;
+        let mut sse = crate::proxy::sse::SseBuffer::new();
+
+        'hold: loop {
+            let Ok(next) = tokio::time::timeout_at(deadline, stream.next()).await else {
+                break 'hold;
+            };
+            let Some(chunk) = next else {
+                break 'hold;
+            };
+            // 还没有交出流，读出错和首包前出错一样回到重试循环。
+            let chunk = chunk
+                .map_err(|error| ProxyError::ForwardFailed(format!("读取流式响应失败: {error}")))?;
+            sse.push_bytes(&chunk);
+            held_bytes += chunk.len();
+            replay_chunks.push(chunk);
+
+            while let Some(block) = sse.next_block() {
+                match encrypted_task_stream_start(block, request) {
+                    StreamStart::Pending => {}
+                    StreamStart::Commit => break 'hold,
+                    StreamStart::Rejected(error) => return Err(error),
+                }
+            }
+            if held_bytes > MAX_HOLD_BYTES {
+                break 'hold;
+            }
+        }
+
+        let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok)).chain(stream);
+        Ok(ProxyResponse::streamed(status, headers, replay))
     }
 
     async fn prime_streaming_response(
@@ -2502,6 +3268,25 @@ impl RequestForwarder {
         Ok(ProxyResponse::streamed(status, headers, replay))
     }
 
+    fn codex_copilot_request_context(
+        &self,
+        is_codex_copilot_responses: bool,
+        body: &Value,
+    ) -> Option<CopilotRequestContext> {
+        if !is_codex_copilot_responses || !self.copilot_optimizer_config.enabled {
+            return None;
+        }
+        Some(CopilotRequestContext {
+            classification: super::copilot_optimizer::classify_responses_request(body),
+            // Keep Codex request IDs per-request; only the interaction ID groups a session.
+            request_id: None,
+            interaction_id: self
+                .session_client_provided
+                .then(|| super::copilot_optimizer::deterministic_interaction_id(&self.session_id))
+                .flatten(),
+        })
+    }
+
     async fn resolve_claude_api_format(
         &self,
         provider: &Provider,
@@ -2512,17 +3297,24 @@ impl RequestForwarder {
             return super::providers::get_claude_api_format(provider).to_string();
         }
 
-        let model = body.get("model").and_then(|value| value.as_str());
-        if let Some(model_id) = model {
-            if self
-                .is_copilot_openai_vendor_model(provider, model_id)
-                .await
-            {
-                return "openai_responses".to_string();
-            }
-        }
+        self.resolve_copilot_api_format(provider, body)
+            .await
+            .to_string()
+    }
 
-        "openai_chat".to_string()
+    async fn resolve_copilot_api_format(&self, provider: &Provider, body: &Value) -> &'static str {
+        let model = body.get("model").and_then(|value| value.as_str());
+        let record = match model {
+            Some(model_id) => self.copilot_model_record(provider, model_id).await,
+            None => None,
+        };
+        copilot_api_format_for_model(
+            record.as_ref().map(|model| model.vendor.as_str()),
+            record
+                .as_ref()
+                .map(|model| model.supported_endpoints.as_slice())
+                .unwrap_or_default(),
+        )
     }
 
     /// 用 Copilot live `/models` 列表确认 model ID 真实可用，找不到时按 family 降级。
@@ -2568,10 +3360,54 @@ impl RequestForwarder {
         }
     }
 
-    async fn is_copilot_openai_vendor_model(&self, provider: &Provider, model_id: &str) -> bool {
+    async fn resolve_codex_copilot_model(
+        &self,
+        provider: &Provider,
+        body: &Value,
+        api_format: CodexCopilotApiFormat,
+    ) -> Result<Option<ResolvedCopilotModel>, ProxyError> {
+        let model_id = body
+            .get("model")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+            .ok_or_else(|| {
+                ProxyError::InvalidRequest(
+                    "Codex Copilot requests require a non-empty string model".to_string(),
+                )
+            })?;
+        let app_handle = self.app_handle.as_ref().ok_or_else(|| {
+            ProxyError::ConfigError(format!(
+                "GitHub Copilot capabilities for model {model_id} cannot be resolved: AppHandle unavailable"
+            ))
+        })?;
+
+        let copilot_state = app_handle.state::<CopilotAuthState>();
+        let copilot_auth = copilot_state.0.read().await;
+        let account_id = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.managed_account_id_for("github_copilot"));
+        let resolved = match account_id.as_deref() {
+            Some(id) => {
+                copilot_auth
+                    .resolve_model_for_account(id, model_id, api_format)
+                    .await
+            }
+            None => copilot_auth.resolve_model(model_id, api_format).await,
+        };
+
+        resolved.map_err(|error| codex_copilot_lookup_error(model_id, error))
+    }
+
+    async fn copilot_model_record(
+        &self,
+        provider: &Provider,
+        model_id: &str,
+    ) -> Option<super::providers::copilot_auth::CopilotModel> {
         let Some(app_handle) = &self.app_handle else {
             log::debug!("[Copilot] AppHandle unavailable, fallback to chat/completions");
-            return false;
+            return None;
         };
 
         let copilot_state = app_handle.state::<CopilotAuthState>();
@@ -2581,28 +3417,28 @@ impl RequestForwarder {
             .as_ref()
             .and_then(|m| m.managed_account_id_for("github_copilot"));
 
-        let vendor_result = match account_id.as_deref() {
+        let record_result = match account_id.as_deref() {
             Some(id) => {
                 copilot_auth
-                    .get_model_vendor_for_account(id, model_id)
+                    .get_model_record_for_account(id, model_id)
                     .await
             }
-            None => copilot_auth.get_model_vendor(model_id).await,
+            None => copilot_auth.get_model_record(model_id).await,
         };
 
-        match vendor_result {
-            Ok(Some(vendor)) => vendor.eq_ignore_ascii_case("openai"),
+        match record_result {
+            Ok(Some(record)) => Some(record),
             Ok(None) => {
                 log::debug!(
                     "[Copilot] Model vendor unavailable for {model_id}, fallback to chat/completions"
                 );
-                false
+                None
             }
             Err(err) => {
                 log::warn!(
                     "[Copilot] Failed to resolve model vendor for {model_id}, fallback to chat/completions: {err}"
                 );
-                false
+                None
             }
         }
     }
@@ -2655,6 +3491,41 @@ impl RequestForwarder {
             _ => ErrorCategory::NonRetryable,
         }
     }
+}
+
+/// Shared strict-Grok request pipeline, called only after native Responses
+/// transport selection. Keep the model-aware gate alongside its transforms.
+fn apply_native_responses_request_compat(
+    provider: &Provider,
+    body: &mut Value,
+    keep_resolved_model: bool,
+) -> Result<(), ProxyError> {
+    if !super::providers::provider_needs_responses_namespace_flatten(
+        provider,
+        body.get("model").and_then(Value::as_str),
+    ) {
+        return Ok(());
+    }
+    if super::providers::transform_codex_responses_namespace::flatten_request_namespaces(body)? {
+        log::debug!(
+            "[Codex] Flattened namespace tools for native Responses upstream (provider={})",
+            provider.id
+        );
+    }
+    // Copilot already resolved against its live catalog; never replace that
+    // model with the card default. Direct xAI keeps its existing fallback.
+    let upstream_model = if keep_resolved_model || provider.is_github_copilot() {
+        None
+    } else {
+        super::providers::codex_provider_upstream_model(provider)
+    };
+    super::providers::transform_codex_responses_xai_sanitize::apply_xai_native_responses_request_compat(
+        body,
+        &provider.id,
+        upstream_model.as_deref(),
+        &provider.settings_config,
+    );
+    Ok(())
 }
 
 /// 从 ProxyError 中提取错误消息
@@ -2891,13 +3762,72 @@ fn is_codex_client_fingerprint_header(key_str: &str) -> bool {
             | "thread-id"
             | "conversation_id"
             | "chatgpt-account-id"
-            | "x-openai-subagent"
             | "x-client-request-id"
             | "openai-beta"
             | "openai-organization"
             | "openai-project"
+            // Codex 内置 openai 的固定请求头（值是 Codex 版本号）。
+            | "version"
     ) || key_str.starts_with("x-stainless-")
         || key_str.starts_with("x-codex-")
+        // ChatGPT 登录态下 Codex 每个请求都带：`x-oai-attestation`（设备证明）、
+        // `x-openai-fedramp`、`x-openai-account-routing-override`、`x-openai-memgen-request`、
+        // `x-openai-internal-codex-responses-lite`、`x-responsesapi-include-timing-metrics`。
+        || key_str.starts_with("x-oai-")
+        || key_str.starts_with("x-openai-")
+        || key_str.starts_with("x-responsesapi-")
+}
+
+/// Decide whether a Codex fingerprint header must be removed before the request
+/// reaches an upstream.
+///
+/// Stack requests to a third party still must not carry ChatGPT session or
+/// account identity. A native Responses third party, however, may use the
+/// non-identity `x-codex-beta-features` marker to recognize the Codex protocol
+/// and reject requests without it. Keep only that marker; all other Codex and
+/// OpenAI identity headers remain stripped. Converted Chat/Anthropic requests
+/// continue to receive a clean client fingerprint.
+///
+/// Any other Codex request to a third party (`codex_unmanaged_upstream`: Codex and
+/// not a CC Switch-managed ChatGPT account) drops only the ChatGPT account identity
+/// ([`is_chatgpt_identity_header`]): the client may be the built-in `openai`
+/// provider carrying the user's ChatGPT login. Session and client headers stay,
+/// so requests from a plain custom table are unchanged.
+fn should_strip_codex_client_fingerprint_header(
+    key_str: &str,
+    endpoint: &str,
+    codex_responses_to_anthropic: bool,
+    codex_responses_to_chat: bool,
+    codex_stack_request: bool,
+    codex_official_auth_passthrough: bool,
+    codex_unmanaged_upstream: bool,
+) -> bool {
+    if codex_responses_to_anthropic {
+        return is_codex_client_fingerprint_header(key_str);
+    }
+
+    if codex_stack_request && !codex_official_auth_passthrough {
+        let native_third_party_responses =
+            !codex_responses_to_chat && super::providers::is_codex_responses_endpoint(endpoint);
+        return is_codex_client_fingerprint_header(key_str)
+            && !(native_third_party_responses && key_str == "x-codex-beta-features");
+    }
+
+    codex_unmanaged_upstream
+        && !codex_official_auth_passthrough
+        && is_chatgpt_identity_header(key_str)
+}
+
+/// 只有带着 ChatGPT 登录的内置 openai 才会发的请求头：账号、组织 / 项目、设备证明和
+/// 内置 openai 的固定版本头。会话、客户端标识（`session_id`、`originator`、`x-codex-*`）
+/// 任何 Codex 客户端都发，不在其中。
+fn is_chatgpt_identity_header(key_str: &str) -> bool {
+    matches!(
+        key_str,
+        "chatgpt-account-id" | "openai-organization" | "openai-project" | "version"
+    ) || key_str.starts_with("x-oai-")
+        || key_str.starts_with("x-openai-")
+        || key_str.starts_with("x-responsesapi-")
 }
 
 fn codex_anthropic_error_envelope_message(body: &[u8]) -> Option<String> {
@@ -2952,6 +3882,48 @@ fn codex_anthropic_cache_config(config: &OptimizerConfig) -> OptimizerConfig {
         enabled: true,
         thinking_optimizer: false,
         cache_injection: config.cache_injection,
+    }
+}
+
+/// [`Forwarder::hold_encrypted_agent_task_stream`] 看到一个完整 SSE 块之后怎么做。
+enum StreamStart {
+    /// 生命周期事件（或不是 JSON），接着读。
+    Pending,
+    /// 有输出或别的结局：交出流。
+    Commit,
+    /// 输出之前上游就自证验不了请求里的密文。
+    Rejected(ProxyError),
+}
+
+fn encrypted_task_stream_start(block: &str, request: &Value) -> StreamStart {
+    let mut named_event = None;
+    let mut data_lines = Vec::new();
+    for line in block.lines() {
+        if let Some(event) = crate::proxy::sse::strip_sse_field(line, "event") {
+            named_event = Some(event.trim().to_string());
+        } else if let Some(data) = crate::proxy::sse::strip_sse_field(line, "data") {
+            data_lines.push(data);
+        }
+    }
+    let Ok(value) = serde_json::from_str::<Value>(&data_lines.join("\n")) else {
+        return StreamStart::Pending;
+    };
+    let event = named_event
+        .as_deref()
+        .filter(|event| !event.is_empty())
+        .or_else(|| value.get("type").and_then(Value::as_str))
+        .unwrap_or("");
+    match event {
+        "response.created" | "response.in_progress" | "response.queued" => StreamStart::Pending,
+        "response.failed" | "error" => {
+            let response = value.get("response").unwrap_or(&value);
+            let error = response.get("error").unwrap_or(response);
+            match super::opaque_state_rectifier::in_stream_rejection(error, request) {
+                Some(rejection) => StreamStart::Rejected(rejection),
+                None => StreamStart::Commit,
+            }
+        }
+        _ => StreamStart::Commit,
     }
 }
 
@@ -3058,6 +4030,130 @@ fn rewrite_codex_responses_endpoint_to_anthropic(endpoint: &str) -> (String, Opt
     };
 
     (rewritten, passthrough_query)
+}
+
+fn is_managed_copilot_request(app_type: &AppType, provider: &Provider, base_url: &str) -> bool {
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.provider_type.as_deref())
+        == Some("github_copilot")
+        || (!matches!(app_type, AppType::Codex) && base_url.contains("githubcopilot.com"))
+}
+
+fn codex_copilot_lookup_error(model_id: &str, error: CopilotAuthError) -> ProxyError {
+    let message =
+        format!("Failed to resolve GitHub Copilot capabilities for model {model_id}: {error}");
+    match error {
+        CopilotAuthError::DeviceFlowNotStarted
+        | CopilotAuthError::AuthorizationPending
+        | CopilotAuthError::AccessDenied
+        | CopilotAuthError::ExpiredToken
+        | CopilotAuthError::GitHubTokenInvalid
+        | CopilotAuthError::NoCopilotSubscription
+        | CopilotAuthError::AccountNotFound(_) => ProxyError::AuthError(message),
+        CopilotAuthError::NetworkError(_) | CopilotAuthError::CopilotTokenFetchFailed(_) => {
+            ProxyError::ForwardFailed(message)
+        }
+        CopilotAuthError::ParseError(_)
+        | CopilotAuthError::IoError(_)
+        | CopilotAuthError::InvalidDomain(_) => ProxyError::ConfigError(message),
+    }
+}
+
+fn apply_codex_copilot_model(
+    body: &mut Value,
+    resolved: Option<ResolvedCopilotModel>,
+    api_format: CodexCopilotApiFormat,
+) -> Result<CopilotTransport, ProxyError> {
+    let requested = match api_format {
+        CodexCopilotApiFormat::Auto => "a Responses or Chat Completions endpoint",
+        CodexCopilotApiFormat::OpenaiResponses => {
+            "the requested Responses endpoint (codexCopilotApiFormat=openai_responses)"
+        }
+        CodexCopilotApiFormat::OpenaiChat => {
+            "the requested Chat Completions endpoint (codexCopilotApiFormat=openai_chat)"
+        }
+    };
+    let Some(resolved) = resolved else {
+        let model = body
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or("<missing>");
+        return Err(ProxyError::ConfigError(format!(
+            "GitHub Copilot model {model} is unavailable for {requested} in this provider's catalogue"
+        )));
+    };
+    let Some(transport) = resolved.transport else {
+        return Err(ProxyError::ConfigError(format!(
+            "GitHub Copilot model {} does not advertise {requested}",
+            resolved.id
+        )));
+    };
+    body["model"] = Value::String(resolved.id);
+    Ok(transport)
+}
+
+fn rewrite_codex_endpoint_for_copilot(
+    inbound_endpoint: &str,
+    supported_endpoint: &str,
+) -> (String, Option<String>) {
+    let (inbound_path, query) = split_endpoint_and_query(inbound_endpoint);
+    let passthrough_query = query.map(ToString::to_string);
+    let mut target_path = supported_endpoint.trim_end_matches('/').to_string();
+    if inbound_path.ends_with("/responses/compact")
+        && matches!(target_path.as_str(), "/responses" | "/v1/responses")
+    {
+        target_path.push_str("/compact");
+    }
+    let rewritten = match passthrough_query.as_deref() {
+        Some(query) if !query.is_empty() => format!("{target_path}?{query}"),
+        _ => target_path,
+    };
+    (rewritten, passthrough_query)
+}
+
+/// Providers whose errors can come from an Anthropic Messages endpoint and therefore
+/// need the thinking signature / budget rectifiers. GitHub Copilot passes Anthropic
+/// models through to its native `/v1/messages`, where history replayed from another
+/// provider or from the Responses bridge fails signature validation; errors from its
+/// Chat / Responses bridges never match the rectifier keywords.
+fn uses_anthropic_rectifiers(provider_type: Option<ProviderType>) -> bool {
+    matches!(
+        provider_type,
+        Some(ProviderType::Claude | ProviderType::ClaudeAuth | ProviderType::GitHubCopilot)
+    )
+}
+
+/// Pick the Copilot upstream protocol for a Claude-client request.
+///
+/// Anthropic models that advertise `/v1/messages` are passed through natively:
+/// the Chat Completions bridge drops `cache_control` breakpoints and Copilot's
+/// chat endpoint stops prefix caching at the first mid-conversation `system`
+/// message Claude Code inserts, so every turn re-bills the whole history.
+fn copilot_api_format_for_model(
+    vendor: Option<&str>,
+    supported_endpoints: &[String],
+) -> &'static str {
+    if vendor.is_some_and(|vendor| vendor.eq_ignore_ascii_case("openai")) {
+        "openai_responses"
+    } else if vendor.is_some_and(|vendor| vendor.eq_ignore_ascii_case("anthropic"))
+        && supported_endpoints
+            .iter()
+            .any(|endpoint| endpoint.trim_end_matches('/') == "/v1/messages")
+    {
+        "anthropic"
+    } else {
+        "openai_chat"
+    }
+}
+
+fn build_copilot_unversioned_url(base_url: &str, endpoint: &str) -> String {
+    format!(
+        "{}/{}",
+        base_url.trim_end_matches('/'),
+        endpoint.trim_start_matches('/')
+    )
 }
 
 fn rewrite_claude_transform_endpoint(
@@ -3404,12 +4500,15 @@ fn should_force_identity_encoding(
 }
 
 fn map_reqwest_send_error(error: reqwest::Error) -> ProxyError {
-    if error.is_timeout() {
-        ProxyError::Timeout(format!("上游请求超时: {}", error.without_url()))
-    } else if error.is_connect() {
-        ProxyError::ForwardFailed(format!("上游连接失败: {}", error.without_url()))
+    let is_timeout = error.is_timeout();
+    let is_connect = error.is_connect();
+    let detail = super::error::describe_reqwest_error(error);
+    if is_timeout {
+        ProxyError::Timeout(format!("上游请求超时: {detail}"))
+    } else if is_connect {
+        ProxyError::ForwardFailed(format!("上游连接失败: {detail}"))
     } else {
-        ProxyError::ForwardFailed(format!("上游请求发送失败: {}", error.without_url()))
+        ProxyError::ForwardFailed(format!("上游请求发送失败: {detail}"))
     }
 }
 
@@ -3689,6 +4788,158 @@ mod tests {
     use std::collections::HashMap;
     use std::time::Duration;
 
+    #[test]
+    fn opencode_upstream_host_matching() {
+        // With or without a port, and subdomains, count as OpenCode; other
+        // upstreams must not (they would otherwise gain a stray header).
+        for host in ["opencode.ai", "opencode.ai:443", "zen.opencode.ai"] {
+            assert!(
+                is_opencode_upstream(Some(host)),
+                "{host} should be recognised as OpenCode"
+            );
+        }
+        for host in [
+            "api.anthropic.com",
+            "notopencode.ai",
+            "example.com",
+            "127.0.0.1:15721",
+        ] {
+            assert!(
+                !is_opencode_upstream(Some(host)),
+                "{host} must not be recognised as OpenCode"
+            );
+        }
+        assert!(!is_opencode_upstream(None));
+    }
+
+    #[test]
+    fn conversation_fingerprint_is_stable_per_conversation() {
+        let turn1 = json!({
+            "system": "You are an assistant.",
+            "messages": [{"role": "user", "content": "first question"}]
+        });
+        // Later turns of the same conversation append messages; system and the
+        // first user message stay put.
+        let turn2 = json!({
+            "system": "You are an assistant.",
+            "messages": [
+                {"role": "user", "content": "first question"},
+                {"role": "assistant", "content": "answer"},
+                {"role": "user", "content": "follow-up"}
+            ]
+        });
+        let other = json!({
+            "system": "You are an assistant.",
+            "messages": [{"role": "user", "content": "another conversation"}]
+        });
+
+        let a = conversation_fingerprint(&turn1).expect("fingerprint");
+        let b = conversation_fingerprint(&turn2).expect("fingerprint");
+        let c = conversation_fingerprint(&other).expect("fingerprint");
+        assert_eq!(a, b, "one conversation must keep a single session id");
+        assert_ne!(a, c, "different conversations must not share a session id");
+        assert!(
+            a.starts_with("ccsw-"),
+            "prefix keeps the origin recognisable: {a}"
+        );
+    }
+
+    #[test]
+    fn conversation_fingerprint_requires_conversation_content() {
+        assert!(conversation_fingerprint(&json!({"model": "x"})).is_none());
+    }
+
+    #[test]
+    fn conversation_fingerprint_ignores_cache_control() {
+        // Clients move `cache_control` between messages as a conversation grows
+        // (Claude Code puts it on the first user message, then on the last one);
+        // the session id must not change with it.
+        let first = json!({
+            "system": "You are an assistant.",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "hello", "cache_control": {"type": "ephemeral"}}
+                ]
+            }]
+        });
+        let later = json!({
+            "system": "You are an assistant.",
+            "messages": [
+                {"role": "user", "content": [{"type": "text", "text": "hello"}]},
+                {"role": "assistant", "content": "hi"},
+                {"role": "user", "content": [
+                    {"type": "text", "text": "again", "cache_control": {"type": "ephemeral"}}
+                ]}
+            ]
+        });
+        assert_eq!(
+            conversation_fingerprint(&first),
+            conversation_fingerprint(&later),
+            "cache_control placement must not change the session id"
+        );
+    }
+
+    #[test]
+    fn opencode_session_precedence() {
+        // native client header > client-provided id > fingerprint > generated id
+        assert_eq!(
+            pick_opencode_session(Some("native"), Some("client"), Some("fp"), "gen").as_deref(),
+            Some("native")
+        );
+        assert_eq!(
+            pick_opencode_session(None, Some("client"), Some("fp"), "gen").as_deref(),
+            Some("client")
+        );
+        assert_eq!(
+            pick_opencode_session(None, None, Some("fp"), "gen").as_deref(),
+            Some("fp")
+        );
+        assert_eq!(
+            pick_opencode_session(None, None, None, "gen").as_deref(),
+            Some("gen")
+        );
+        // Blank candidates are skipped, and nothing is sent when all are blank.
+        assert_eq!(
+            pick_opencode_session(Some("   "), None, None, "gen").as_deref(),
+            Some("gen")
+        );
+        assert_eq!(pick_opencode_session(None, None, None, "  "), None);
+    }
+
+    #[test]
+    fn native_session_header_recognises_real_client_headers() {
+        // Claude Code and Codex each send one of these; unknown headers do not count.
+        for name in [
+            "x-claude-code-session-id",
+            "session-id",
+            "session_id",
+            "x-session-id",
+        ] {
+            let mut headers = http::HeaderMap::new();
+            headers.insert(
+                http::HeaderName::from_static(name),
+                http::HeaderValue::from_static("abc123"),
+            );
+            assert_eq!(native_session_header(&headers), Some("abc123"), "{name}");
+        }
+
+        let mut blank = http::HeaderMap::new();
+        blank.insert(
+            http::HeaderName::from_static("session_id"),
+            http::HeaderValue::from_static("  "),
+        );
+        assert_eq!(native_session_header(&blank), None);
+
+        let mut other = http::HeaderMap::new();
+        other.insert(
+            http::HeaderName::from_static("x-request-id"),
+            http::HeaderValue::from_static("ignored"),
+        );
+        assert_eq!(native_session_header(&other), None);
+        assert_eq!(native_session_header(&http::HeaderMap::new()), None);
+    }
+
     fn test_provider_with_type(provider_type: Option<&str>) -> Provider {
         Provider {
             id: "provider-1".to_string(),
@@ -3732,6 +4983,74 @@ mod tests {
             non_streaming_timeout,
             streaming_first_byte_timeout,
             max_attempts: 1,
+            stack_request: false,
+            failover_chain: false,
+            last_outbound_model: std::sync::Mutex::new(None),
+        }
+    }
+
+    #[test]
+    fn codex_failover_model_mapping_skips_standalone_endpoints() {
+        let mut forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        assert!(!forwarder.maps_codex_failover_model(&AppType::Codex, "/responses"));
+
+        forwarder.failover_chain = true;
+        for endpoint in ["/responses", "/responses/compact", "/chat/completions"] {
+            assert!(
+                forwarder.maps_codex_failover_model(&AppType::Codex, endpoint),
+                "{endpoint}"
+            );
+        }
+        for endpoint in [
+            "/images/generations",
+            "/images/edits",
+            "/images/generations?client_version=0.145.0",
+            "/alpha/search",
+        ] {
+            assert!(
+                !forwarder.maps_codex_failover_model(&AppType::Codex, endpoint),
+                "{endpoint}"
+            );
+        }
+        assert!(!forwarder.maps_codex_failover_model(&AppType::GrokBuild, "/responses"));
+    }
+
+    #[tokio::test]
+    async fn copilot_success_bookkeeping_preserves_actual_upstream_format() {
+        for format in [
+            Some(CodexUpstreamFormat::NativeResponses),
+            Some(CodexUpstreamFormat::ChatCompletions),
+            Some(CodexUpstreamFormat::Anthropic),
+            None,
+        ] {
+            let mut forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+            let mut provider = test_provider_with_type(Some("github_copilot"));
+            provider.meta.as_mut().unwrap().api_format = Some("openai_chat".to_string());
+            forwarder.current_provider_id_at_start = provider.id.clone();
+            forwarder.status.write().await.total_requests = 1;
+            let response = ProxyResponse::buffered(
+                StatusCode::OK,
+                HeaderMap::new(),
+                Bytes::from_static(b"{}"),
+            );
+
+            let result = forwarder
+                .finish_success(
+                    &provider,
+                    "codex",
+                    false,
+                    (response, None, Some("resolved-model".to_string())),
+                    format,
+                )
+                .await;
+
+            assert_eq!(result.codex_upstream_format, format);
+            assert_eq!(result.outbound_model.as_deref(), Some("resolved-model"));
+            assert_eq!(result.provider.id, provider.id);
+            assert_eq!(result.response.status(), StatusCode::OK);
+            let status = forwarder.status.read().await;
+            assert_eq!(status.success_requests, 1);
+            assert_eq!(status.failover_count, 0);
         }
     }
 
@@ -4350,9 +5669,17 @@ mod tests {
             "openai-beta",
             "openai-organization",
             "openai-project",
+            "version",
             "x-stainless-lang",
             "x-stainless-runtime",
             "x-codex-turn-id",
+            // ChatGPT 登录态下的身份头，Stack 请求发往第三方时同样不能带出去。
+            "x-oai-attestation",
+            "x-openai-fedramp",
+            "x-openai-account-routing-override",
+            "x-openai-memgen-request",
+            "x-openai-internal-codex-responses-lite",
+            "x-responsesapi-include-timing-metrics",
         ] {
             assert!(
                 is_codex_client_fingerprint_header(header),
@@ -4553,7 +5880,11 @@ mod tests {
         provider.category = Some("official".to_string());
         let error = validate_codex_official_authorization(&headers, &provider, None, None)
             .expect_err("stale placeholder must be rejected");
-        assert!(matches!(error, ProxyError::AuthError(message) if message.contains("重启 Codex")));
+        assert!(matches!(
+            error,
+            ProxyError::AuthError(message)
+                if message.contains("重启 Codex") && message.contains("新建会话")
+        ));
     }
 
     #[test]
@@ -4982,88 +6313,727 @@ mod tests {
 
     // ==================== Copilot 动态 endpoint 路由相关测试 ====================
 
+    fn codex_copilot_headers(forwarder: &RequestForwarder, body: &Value) -> HeaderMap {
+        let mut headers =
+            super::super::providers::copilot_auth::build_copilot_request_headers("test-token")
+                .unwrap();
+        let request_id = headers
+            .iter()
+            .find(|(name, _)| name.as_str() == "x-request-id")
+            .unwrap()
+            .1
+            .clone();
+        if let Some(context) = forwarder.codex_copilot_request_context(true, body) {
+            context
+                .apply_headers(
+                    &mut headers,
+                    forwarder.copilot_optimizer_config.request_classification,
+                )
+                .unwrap();
+        }
+        let headers: HeaderMap = headers.into_iter().collect();
+        assert_eq!(headers["x-request-id"], request_id);
+        assert_eq!(headers["x-agent-task-id"], request_id);
+        headers
+    }
+
+    #[test]
+    fn codex_copilot_tool_continuations_receive_agent_and_session_headers() {
+        let mut forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        forwarder.session_id = "codex_12345678-1234-1234-1234-123456789abc".to_string();
+        forwarder.session_client_provided = true;
+        for item_type in [
+            "function_call_output",
+            "custom_tool_call_output",
+            "tool_search_output",
+        ] {
+            for stream in [false, true] {
+                let body = json!({
+                    "input": [{"type": item_type, "call_id": "call-1", "output": "done"}],
+                    "stream": stream
+                });
+                let headers = codex_copilot_headers(&forwarder, &body);
+                assert_eq!(headers["x-initiator"], "agent", "{body}");
+                assert_eq!(
+                    headers["x-interaction-id"].to_str().unwrap(),
+                    super::super::copilot_optimizer::deterministic_interaction_id(
+                        &forwarder.session_id
+                    )
+                    .unwrap()
+                );
+                assert_eq!(headers["x-interaction-type"], "conversation-agent");
+            }
+        }
+    }
+
+    #[test]
+    fn codex_copilot_headers_reuse_client_session_across_turns() {
+        let first = json!({"input": "Read the file"});
+        let continuation = json!({
+            "input": [{"type": "function_call_output", "call_id": "call-1", "output": "done"}]
+        });
+        for source in [
+            "session_id",
+            "x-session-id",
+            "session-id",
+            "thread-id",
+            "metadata",
+        ] {
+            let mut headers = HeaderMap::new();
+            let mut body = first.clone();
+            let session_id = "12345678-1234-1234-1234-123456789abc";
+            if source == "metadata" {
+                body["metadata"] = json!({"session_id": session_id});
+            } else {
+                headers.insert(source, HeaderValue::from_static(session_id));
+            }
+            let session = super::super::session::extract_session_id(&headers, &body, "codex");
+            let mut forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+            forwarder.session_id = session.session_id;
+            forwarder.session_client_provided = session.client_provided;
+            let first_headers = codex_copilot_headers(&forwarder, &first);
+            let next_headers = codex_copilot_headers(&forwarder, &continuation);
+            assert_eq!(first_headers["x-initiator"], "user");
+            assert_eq!(next_headers["x-initiator"], "agent");
+            assert_eq!(
+                first_headers["x-interaction-id"], next_headers["x-interaction-id"],
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn codex_copilot_headers_honor_switches_and_do_not_invent_sessions() {
+        let body = json!({
+            "previous_response_id": "resp-not-a-session",
+            "input": [{"type": "function_call_output", "call_id": "call-1", "output": "done"}]
+        });
+        let session = super::super::session::extract_session_id(&HeaderMap::new(), &body, "codex");
+        let mut forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        forwarder.session_id = session.session_id;
+        forwarder.session_client_provided = session.client_provided;
+        let headers = codex_copilot_headers(&forwarder, &body);
+        assert_eq!(headers["x-initiator"], "agent");
+        assert!(!headers.contains_key("x-interaction-id"));
+
+        forwarder.session_client_provided = true;
+        forwarder.copilot_optimizer_config.request_classification = false;
+        let headers = codex_copilot_headers(&forwarder, &body);
+        assert_eq!(headers["x-initiator"], "user");
+        assert!(headers.contains_key("x-interaction-id"));
+
+        forwarder.copilot_optimizer_config.enabled = false;
+        let headers = codex_copilot_headers(&forwarder, &body);
+        assert_eq!(headers["x-initiator"], "user");
+        assert!(!headers.contains_key("x-interaction-id"));
+
+        forwarder.copilot_optimizer_config.enabled = true;
+        assert!(forwarder
+            .codex_copilot_request_context(false, &body)
+            .is_none());
+    }
+
+    #[test]
+    fn codex_copilot_new_user_input_is_not_a_replayed_tool_continuation() {
+        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let body = json!({
+            "input": [
+                {"type": "function_call_output", "call_id": "call-1", "output": "done"},
+                {"role": "assistant", "content": "The file is updated"},
+                {"role": "user", "content": "Explain a different file"}
+            ]
+        });
+        assert_eq!(
+            codex_copilot_headers(&forwarder, &body)["x-initiator"],
+            "user"
+        );
+    }
+
+    #[test]
+    fn copilot_request_context_preserves_claude_header_overrides() {
+        let mut headers =
+            super::super::providers::copilot_auth::build_copilot_request_headers("test-token")
+                .unwrap();
+        let context = CopilotRequestContext {
+            classification: super::super::copilot_optimizer::CopilotClassification {
+                initiator: "agent",
+                is_warmup: false,
+                is_compact: false,
+                is_subagent: true,
+            },
+            request_id: Some("12345678-1234-1234-1234-123456789abc".to_string()),
+            interaction_id: Some("abcdef12-1234-1234-1234-123456789abc".to_string()),
+        };
+        context.apply_headers(&mut headers, true).unwrap();
+        let headers: HeaderMap = headers.into_iter().collect();
+        assert_eq!(headers["x-initiator"], "agent");
+        assert_eq!(headers["x-interaction-type"], "conversation-subagent");
+        assert_eq!(
+            headers["x-request-id"],
+            context.request_id.as_deref().unwrap()
+        );
+        assert_eq!(headers["x-agent-task-id"], headers["x-request-id"]);
+        assert_eq!(
+            headers["x-interaction-id"],
+            context.interaction_id.as_deref().unwrap()
+        );
+    }
+
+    #[test]
+    fn anthropic_rectifiers_cover_copilot_native_messages() {
+        for provider_type in [
+            ProviderType::Claude,
+            ProviderType::ClaudeAuth,
+            ProviderType::GitHubCopilot,
+        ] {
+            assert!(uses_anthropic_rectifiers(Some(provider_type)));
+        }
+        for provider_type in [
+            ProviderType::Codex,
+            ProviderType::OpenRouter,
+            ProviderType::CodexOAuth,
+        ] {
+            assert!(!uses_anthropic_rectifiers(Some(provider_type)));
+        }
+        assert!(!uses_anthropic_rectifiers(None));
+    }
+
+    #[test]
+    fn copilot_transport_selects_protocol_by_vendor_and_endpoints() {
+        let messages = vec!["/v1/messages".to_string(), "/chat/completions".to_string()];
+        let chat_only = vec!["/chat/completions".to_string()];
+        assert_eq!(
+            copilot_api_format_for_model(Some("OpenAI"), &chat_only),
+            "openai_responses"
+        );
+        assert_eq!(
+            copilot_api_format_for_model(Some("Anthropic"), &messages),
+            "anthropic"
+        );
+        assert_eq!(
+            copilot_api_format_for_model(Some("Anthropic"), &chat_only),
+            "openai_chat"
+        );
+        assert_eq!(
+            copilot_api_format_for_model(Some("Anthropic"), &[]),
+            "openai_chat"
+        );
+        assert_eq!(copilot_api_format_for_model(None, &messages), "openai_chat");
+    }
+
+    #[test]
+    fn copilot_unversioned_url_does_not_add_v1_prefix() {
+        assert_eq!(
+            build_copilot_unversioned_url(
+                "https://api.githubcopilot.com/",
+                "/chat/completions?client_version=0.149"
+            ),
+            "https://api.githubcopilot.com/chat/completions?client_version=0.149"
+        );
+        assert_eq!(
+            build_copilot_unversioned_url(
+                "https://api.githubcopilot.com",
+                "/responses?client_version=0.149"
+            ),
+            "https://api.githubcopilot.com/responses?client_version=0.149"
+        );
+    }
+
+    #[test]
+    fn codex_copilot_lookup_errors_preserve_cause_and_allow_failover() {
+        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let copilot = test_provider_with_type(Some("github_copilot"));
+        for (cause, expected_kind) in [
+            (CopilotAuthError::DeviceFlowNotStarted, "auth"),
+            (CopilotAuthError::AuthorizationPending, "auth"),
+            (CopilotAuthError::AccessDenied, "auth"),
+            (CopilotAuthError::ExpiredToken, "auth"),
+            (CopilotAuthError::GitHubTokenInvalid, "auth"),
+            (CopilotAuthError::NoCopilotSubscription, "auth"),
+            (CopilotAuthError::AccountNotFound("missing".into()), "auth"),
+            (
+                CopilotAuthError::NetworkError("connection reset".into()),
+                "upstream",
+            ),
+            (
+                CopilotAuthError::CopilotTokenFetchFailed("models HTTP 503".into()),
+                "upstream",
+            ),
+            (
+                CopilotAuthError::ParseError("invalid models JSON".into()),
+                "config",
+            ),
+            (
+                CopilotAuthError::IoError("permission denied".into()),
+                "config",
+            ),
+            (
+                CopilotAuthError::InvalidDomain("invalid.example/path".into()),
+                "config",
+            ),
+        ] {
+            let cause_text = cause.to_string();
+            let error = codex_copilot_lookup_error("gpt-5.5", cause);
+            let (kind, message) = match &error {
+                ProxyError::AuthError(message) => ("auth", message),
+                ProxyError::ForwardFailed(message) => ("upstream", message),
+                ProxyError::ConfigError(message) => ("config", message),
+                _ => panic!("unexpected capability error: {error}"),
+            };
+            assert_eq!(kind, expected_kind, "{error}");
+            assert!(message.contains(&cause_text), "{message}");
+            assert!(message.contains("gpt-5.5"), "{message}");
+            assert!(!message.contains("unavailable"), "{message}");
+            assert_eq!(
+                forwarder.categorize_proxy_error(&error, &copilot),
+                ErrorCategory::Retryable
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn codex_copilot_validates_client_model_before_runtime_lookup() {
+        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let copilot = test_provider_with_type(Some("github_copilot"));
+        let adapter = get_adapter(&AppType::Codex).unwrap();
+        for body in [
+            json!({}),
+            json!({"model": null}),
+            json!({"model": 42}),
+            json!({"model": ""}),
+            json!({"model": " \t "}),
+            json!({"model": "gpt-5.5"}),
+        ] {
+            let mut codex_upstream_format = None;
+            let error = match forwarder
+                .forward(
+                    &AppType::Codex,
+                    &http::Method::POST,
+                    &copilot,
+                    "/v1/responses",
+                    &body,
+                    &HeaderMap::new(),
+                    &Extensions::new(),
+                    adapter.as_ref(),
+                    &mut codex_upstream_format,
+                )
+                .await
+            {
+                Err(error) => error,
+                Ok(_) => panic!("expected local validation failure: {body}"),
+            };
+            if body["model"] == "gpt-5.5" {
+                assert!(matches!(&error, ProxyError::ConfigError(message)
+                    if message.contains("AppHandle") && message.contains("gpt-5.5")));
+                assert_eq!(
+                    forwarder.categorize_proxy_error(&error, &copilot),
+                    ErrorCategory::Retryable
+                );
+            } else {
+                assert!(matches!(&error, ProxyError::InvalidRequest(message)
+                    if message.contains("model")));
+                assert_eq!(
+                    forwarder.categorize_proxy_error(&error, &copilot),
+                    ErrorCategory::NonRetryable
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn codex_copilot_unavailable_model_is_provider_scoped() {
+        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let copilot = test_provider_with_type(Some("github_copilot"));
+        for api_format in [
+            CodexCopilotApiFormat::Auto,
+            CodexCopilotApiFormat::OpenaiResponses,
+            CodexCopilotApiFormat::OpenaiChat,
+        ] {
+            let mut body = json!({"model": "gpt-6-astra"});
+            let error = apply_codex_copilot_model(&mut body, None, api_format).unwrap_err();
+            assert!(matches!(&error, ProxyError::ConfigError(message)
+                if message.contains("gpt-6-astra") && message.contains("unavailable")));
+            assert_eq!(
+                forwarder.categorize_proxy_error(&error, &copilot),
+                ErrorCategory::Retryable
+            );
+            assert_eq!(body["model"], "gpt-6-astra");
+        }
+    }
+
+    #[tokio::test]
+    async fn codex_copilot_capability_failure_tries_healthy_later_provider() {
+        let captured = Arc::new(tokio::sync::Mutex::new(Vec::<Value>::new()));
+        let app = axum::Router::new().route(
+            "/v1/responses",
+            axum::routing::post({
+                let captured = captured.clone();
+                move |axum::Json(body): axum::Json<Value>| {
+                    let captured = captured.clone();
+                    async move {
+                        captured.lock().await.push(body);
+                        axum::Json(json!({"status": "completed", "output": []}))
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+                .unwrap();
+        });
+        let mut forwarder = test_forwarder(Duration::from_secs(5), Duration::from_secs(5));
+        forwarder.max_attempts = 2;
+        // Avoid persisting a provider switch outside this in-memory test.
+        forwarder.current_provider_id_at_start = "healthy".to_string();
+        let copilot = test_provider_with_type(Some("github_copilot"));
+        let mut healthy = test_provider_with_type(None);
+        healthy.id = "healthy".to_string();
+        healthy.settings_config = json!({
+            "base_url": format!("http://{addr}/v1"),
+            "auth": {"OPENAI_API_KEY": "test-key"}
+        });
+        let body = json!({"model": "gpt-5.5", "input": "Hello", "stream": false});
+
+        let result = forwarder
+            .forward_with_retry(
+                &AppType::Codex,
+                http::Method::POST,
+                "/v1/responses",
+                &body,
+                HeaderMap::new(),
+                Extensions::new(),
+                &[copilot, healthy],
+            )
+            .await;
+
+        shutdown_tx.send(()).unwrap();
+        server.await.unwrap();
+        let result = result.unwrap_or_else(|failure| {
+            panic!(
+                "Copilot capability failure blocked failover: {}",
+                failure.error
+            )
+        });
+        assert_eq!(result.provider.id, "healthy");
+        assert_eq!(result.response.status(), StatusCode::OK);
+        assert_eq!(
+            result.codex_upstream_format,
+            Some(CodexUpstreamFormat::NativeResponses)
+        );
+        assert_eq!(*captured.lock().await, vec![body]);
+        assert_eq!(forwarder.status.read().await.success_requests, 1);
+    }
+
+    #[test]
+    fn copilot_grok_native_request_reuses_xai_compat_without_model_fallback() {
+        let mut copilot = test_provider_with_type(Some("github_copilot"));
+        copilot.settings_config = json!({
+            "config": "model = \"gpt-6.1-sol\"",
+            "modelCatalog": {"models": [{"model": "gpt-6.1-sol"}]}
+        });
+        let mut body = grok_desktop_request("grok-4.7");
+        let reasoning = body["reasoning"].clone();
+        apply_native_responses_request_compat(&copilot, &mut body, false).unwrap();
+
+        assert_eq!(body["model"], "grok-4.7");
+        assert_eq!(body["reasoning"], reasoning);
+        assert!(body.get("safety_identifier").is_none());
+        assert!(body.get("prompt_cache_retention").is_none());
+        assert_eq!(body["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(body["tools"][0]["type"], "function");
+        assert_eq!(body["tools"][0]["name"], "diagnostic__ping");
+        assert_eq!(body["tools"][0]["parameters"]["type"], "object");
+        assert!(body["tools"][0]["parameters"].get("anyOf").is_none());
+        assert!(body["tools"][0].get("external_web_access").is_none());
+        assert_eq!(body["input"][0]["name"], "diagnostic__ping");
+        assert!(body["input"][0].get("namespace").is_none());
+        assert_eq!(body["input"][0]["call_id"], "call_1");
+        assert_eq!(body["input"][1]["output"], "pong");
+        assert_eq!(body["input"][2]["type"], "message");
+        assert_eq!(body["input"][2]["content"][0]["text"], "Continue.");
+
+        let sanitized = body.clone();
+        apply_native_responses_request_compat(&copilot, &mut body, false).unwrap();
+        assert_eq!(body, sanitized);
+    }
+
+    fn grok_desktop_request(model: &str) -> Value {
+        json!({
+            "model": model,
+            "stream": true,
+            "reasoning": {"effort": "high"},
+            "safety_identifier": "diagnostic",
+            "prompt_cache_retention": "24h",
+            "tools": [
+                {"type": "namespace", "name": "diagnostic", "tools": [
+                    {"type": "function", "name": "ping", "external_web_access": false,
+                     "parameters": {"anyOf": [
+                         {"type": "object", "properties": {"count": {"type": "integer"}}},
+                         {"type": "null"}
+                     ]}}
+                ]},
+                {"type": "tool_search"}
+            ],
+            "input": [
+                {"type": "function_call", "namespace": "diagnostic", "name": "ping",
+                 "call_id": "call_1", "arguments": "{\"count\":1}"},
+                {"type": "function_call_output", "call_id": "call_1", "output": "pong"},
+                {"type": "agent_message", "content": [{"type": "input_text", "text": "Continue."}]}
+            ]
+        })
+    }
+
+    #[test]
+    fn native_grok_compat_leaves_other_copilot_models_and_providers_unchanged() {
+        for provider_type in [Some("github_copilot"), None] {
+            let provider = test_provider_with_type(provider_type);
+            for model in ["gpt-6.1-sol", "claude-sonnet-4.6", "grok-4.7"] {
+                if provider_type == Some("github_copilot") && model == "grok-4.7" {
+                    continue;
+                }
+                let original = grok_desktop_request(model);
+                let mut body = original.clone();
+                apply_native_responses_request_compat(&provider, &mut body, false).unwrap();
+                assert_eq!(body, original, "{provider_type:?}: {model}");
+            }
+        }
+    }
+
+    #[test]
+    fn direct_xai_model_fallback_and_stack_preservation_are_unchanged() {
+        let mut xai = test_provider_with_type(Some("xai_oauth"));
+        xai.settings_config = json!({"config": "model = \"grok-4.5\""});
+        for keep_resolved_model in [false, true] {
+            let mut body = grok_desktop_request("gpt-subagent");
+            body["presence_penalty"] = json!(1);
+            apply_native_responses_request_compat(&xai, &mut body, keep_resolved_model).unwrap();
+            assert_eq!(body["tools"][0]["type"], "function");
+            if keep_resolved_model {
+                assert_eq!(body["model"], "gpt-subagent");
+                assert_eq!(body["presence_penalty"], 1);
+            } else {
+                assert_eq!(body["model"], "grok-4.5");
+                assert!(body.get("presence_penalty").is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn copilot_grok_namespace_collisions_keep_the_existing_error() {
+        let copilot = test_provider_with_type(Some("github_copilot"));
+        let mut body = grok_desktop_request("grok-4.7");
+        body["tools"].as_array_mut().unwrap().push(json!({
+            "type": "function", "name": "diagnostic__ping",
+            "parameters": {"type": "object", "properties": {}}
+        }));
+        let original = body.clone();
+        let error = apply_native_responses_request_compat(&copilot, &mut body, false).unwrap_err();
+        assert!(
+            matches!(error, ProxyError::TransformError(message) if message.contains("collides"))
+        );
+        assert_eq!(body, original);
+    }
+
+    #[test]
+    fn codex_copilot_metadata_selects_advertised_transport_at_forwarding_seam() {
+        use super::super::providers::copilot_auth::CopilotModel;
+        use super::super::providers::copilot_model_map::resolve_model_with_format;
+        use crate::provider::ProviderMeta;
+
+        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let copilot = test_provider_with_type(Some("github_copilot"));
+        for (metadata, endpoints, expected) in [
+            (
+                json!({}),
+                vec!["/responses", "/chat/completions"],
+                Some((CopilotProtocol::Responses, "/responses")),
+            ),
+            (
+                json!({"apiFormat": "openai_chat"}),
+                vec!["/v1/chat/completions", "/v1/responses"],
+                Some((CopilotProtocol::Responses, "/v1/responses")),
+            ),
+            (
+                json!({"apiFormat": "openai_responses"}),
+                vec!["/chat/completions"],
+                Some((CopilotProtocol::Chat, "/chat/completions")),
+            ),
+            (
+                json!({"codexCopilotApiFormat": "auto"}),
+                vec!["/chat/completions", "/responses"],
+                Some((CopilotProtocol::Responses, "/responses")),
+            ),
+            (
+                json!({"codexCopilotApiFormat": "auto"}),
+                vec!["/v1/messages", "/v1/chat/completions"],
+                Some((CopilotProtocol::Chat, "/v1/chat/completions")),
+            ),
+            (
+                json!({"codexCopilotApiFormat": "openai_chat"}),
+                vec!["/responses", "/chat/completions"],
+                Some((CopilotProtocol::Chat, "/chat/completions")),
+            ),
+            (
+                json!({"apiFormat": "openai_responses", "codexCopilotApiFormat": "openai_chat"}),
+                vec!["/v1/responses", "/v1/chat/completions"],
+                Some((CopilotProtocol::Chat, "/v1/chat/completions")),
+            ),
+            (
+                json!({"codexCopilotApiFormat": "openai_responses"}),
+                vec!["/chat/completions", "/responses"],
+                Some((CopilotProtocol::Responses, "/responses")),
+            ),
+            (
+                json!({"apiFormat": "openai_chat", "codexCopilotApiFormat": "openai_responses"}),
+                vec!["/v1/chat/completions", "/v1/responses/"],
+                Some((CopilotProtocol::Responses, "/v1/responses")),
+            ),
+            (
+                json!({"codexCopilotApiFormat": "openai_chat"}),
+                vec!["/responses"],
+                None,
+            ),
+            (
+                json!({"codexCopilotApiFormat": "openai_responses"}),
+                vec!["/v1/chat/completions"],
+                None,
+            ),
+            (
+                json!({"codexCopilotApiFormat": "auto"}),
+                vec!["/v1/messages"],
+                None,
+            ),
+            (
+                json!({"codexCopilotApiFormat": "openai_chat"}),
+                vec!["/v1/messages"],
+                None,
+            ),
+            (
+                json!({"codexCopilotApiFormat": "openai_responses"}),
+                vec![],
+                None,
+            ),
+        ] {
+            let meta: ProviderMeta = serde_json::from_value(metadata.clone()).unwrap();
+            let api_format = CodexCopilotApiFormat::from_meta(Some(&meta));
+            let models = [CopilotModel {
+                id: "gpt-5.6".to_string(),
+                name: "GPT-5.6".to_string(),
+                vendor: "OpenAI".to_string(),
+                model_picker_enabled: false,
+                context_window: Some(400_000),
+                supported_endpoints: endpoints.into_iter().map(str::to_string).collect(),
+                supports_parallel_tool_calls: None,
+                reasoning_effort: None,
+            }];
+            let mut body = json!({"model": "GPT-5.6", "input": "Hello"});
+            let resolved = resolve_model_with_format("GPT-5.6", &models, api_format);
+            let result = apply_codex_copilot_model(&mut body, resolved, api_format);
+            if let Some((protocol, endpoint)) = expected {
+                let transport = result.unwrap();
+                assert_eq!(transport.protocol, protocol, "{metadata}");
+                assert_eq!(transport.endpoint, endpoint, "{metadata}");
+                assert_eq!(body["model"], "gpt-5.6");
+                assert_eq!(body["input"], "Hello");
+                let expected_compact = if protocol == CopilotProtocol::Responses {
+                    "/compact"
+                } else {
+                    ""
+                };
+                assert_eq!(
+                    rewrite_codex_endpoint_for_copilot(
+                        "/v1/responses/compact?x=1",
+                        &transport.endpoint
+                    ),
+                    (
+                        format!("{endpoint}{expected_compact}?x=1"),
+                        Some("x=1".to_string())
+                    ),
+                    "{metadata}"
+                );
+            } else {
+                let error = result.unwrap_err();
+                assert_eq!(
+                    forwarder.categorize_proxy_error(&error, &copilot),
+                    ErrorCategory::Retryable,
+                    "{metadata}: {error}"
+                );
+                let ProxyError::ConfigError(message) = error else {
+                    panic!("expected provider ConfigError for {metadata}");
+                };
+                assert!(message.contains("gpt-5.6"), "{message}");
+                assert!(message.contains("does not advertise"), "{message}");
+                if api_format != CodexCopilotApiFormat::Auto {
+                    assert!(
+                        message.contains(metadata["codexCopilotApiFormat"].as_str().unwrap()),
+                        "{message}"
+                    );
+                }
+                assert_eq!(body["model"], "GPT-5.6");
+            }
+        }
+    }
+
+    #[test]
+    fn copilot_endpoint_rewrite_preserves_advertised_version_and_compact() {
+        assert_eq!(
+            rewrite_codex_endpoint_for_copilot("/v1/responses?x=1", "/responses"),
+            ("/responses?x=1".to_string(), Some("x=1".to_string()))
+        );
+        assert_eq!(
+            rewrite_codex_endpoint_for_copilot("/responses", "/v1/responses"),
+            ("/v1/responses".to_string(), None)
+        );
+        assert_eq!(
+            rewrite_codex_endpoint_for_copilot("/v1/responses/compact", "/responses"),
+            ("/responses/compact".to_string(), None)
+        );
+    }
+
     /// 验证 is_copilot 检测逻辑：通过 provider_type 判断
     #[test]
     fn copilot_detection_via_provider_type() {
-        use crate::provider::{Provider, ProviderMeta};
-
-        let provider = Provider {
-            id: "test".to_string(),
-            name: "Test Copilot".to_string(),
-            settings_config: serde_json::json!({}),
-            website_url: None,
-            category: None,
-            created_at: None,
-            sort_index: None,
-            notes: None,
-            meta: Some(ProviderMeta {
-                provider_type: Some("github_copilot".to_string()),
-                ..Default::default()
-            }),
-            icon: None,
-            icon_color: None,
-            in_failover_queue: false,
-        };
-
-        let is_copilot = provider
-            .meta
-            .as_ref()
-            .and_then(|m| m.provider_type.as_deref())
-            == Some("github_copilot");
-
-        assert!(is_copilot, "应该通过 provider_type 检测为 Copilot");
+        let provider = test_provider_with_type(Some("github_copilot"));
+        assert!(is_managed_copilot_request(
+            &AppType::Codex,
+            &provider,
+            "https://copilot-api.corp.example.com"
+        ));
     }
 
-    /// 验证 is_copilot 检测逻辑：通过 base_url 判断
+    /// Claude 保留旧 URL 识别；Codex 必须有显式托管身份，避免接管自建中转。
     #[test]
     fn copilot_detection_via_base_url() {
-        let base_url = "https://api.githubcopilot.com";
-        let is_copilot = base_url.contains("githubcopilot.com");
-        assert!(is_copilot, "应该通过 base_url 检测为 Copilot");
-
-        let non_copilot_url = "https://api.anthropic.com";
-        let is_not_copilot = non_copilot_url.contains("githubcopilot.com");
-        assert!(!is_not_copilot, "非 Copilot URL 不应被检测为 Copilot");
-    }
-
-    /// 验证企业版 endpoint（不包含 githubcopilot.com）场景下 is_copilot 仍然正确
-    #[test]
-    fn copilot_detection_for_enterprise_endpoint() {
-        use crate::provider::{Provider, ProviderMeta};
-
-        // 企业版场景：provider_type 是 github_copilot，但 base_url 可能是企业内部域名
-        let provider = Provider {
-            id: "enterprise".to_string(),
-            name: "Enterprise Copilot".to_string(),
-            settings_config: serde_json::json!({}),
-            website_url: None,
-            category: None,
-            created_at: None,
-            sort_index: None,
-            notes: None,
-            meta: Some(ProviderMeta {
-                provider_type: Some("github_copilot".to_string()),
-                ..Default::default()
-            }),
-            icon: None,
-            icon_color: None,
-            in_failover_queue: false,
-        };
-
-        let enterprise_base_url = "https://copilot-api.corp.example.com";
-
-        // is_copilot 应该通过 provider_type 检测成功，即使 base_url 不包含 githubcopilot.com
-        let is_copilot = provider
-            .meta
-            .as_ref()
-            .and_then(|m| m.provider_type.as_deref())
-            == Some("github_copilot")
-            || enterprise_base_url.contains("githubcopilot.com");
-
-        assert!(
-            is_copilot,
-            "企业版 Copilot 应该通过 provider_type 被正确检测"
-        );
+        let ordinary = test_provider_with_type(None);
+        assert!(is_managed_copilot_request(
+            &AppType::Claude,
+            &ordinary,
+            "https://api.githubcopilot.com"
+        ));
+        assert!(!is_managed_copilot_request(
+            &AppType::Codex,
+            &ordinary,
+            "https://api.githubcopilot.com"
+        ));
+        assert!(!is_managed_copilot_request(
+            &AppType::Codex,
+            &ordinary,
+            "https://copilot-api.example.com"
+        ));
+        assert!(!is_managed_copilot_request(
+            &AppType::Claude,
+            &ordinary,
+            "https://api.anthropic.com"
+        ));
     }
 
     /// 验证动态 endpoint 替换条件
@@ -5279,6 +7249,21 @@ mod tests {
     }
 
     #[test]
+    fn reactive_triggers_for_openrouter_no_image_endpoint_404() {
+        let fwd = forwarder_with_rectifier(RectifierConfig::default());
+        let body = body_with_codex_input_image("deepseek/deepseek-v4-flash-0731");
+        let error = ProxyError::UpstreamError {
+            status: 404,
+            body: Some(
+                r#"{"error":{"message":"No endpoints found that support image input"}}"#
+                    .to_string(),
+            ),
+        };
+
+        assert!(fwd.media_retry_should_trigger("Codex", false, &body, &error));
+    }
+
+    #[test]
     fn reactive_triggers_for_structured_and_stringified_codex_tool_images() {
         let fwd = forwarder_with_rectifier(RectifierConfig::default());
 
@@ -5363,6 +7348,1125 @@ mod tests {
         assert!(fwd.media_retry_should_trigger("Claude", false, &body, &image_unsupported_error()));
     }
 
+    /// Codex Stack 请求的转发改写：身份头、模型名、托管 web_search。
+    /// 在本机一个空闲端口上起假上游 `app`，返回它的地址。
+    async fn serve_upstream(app: axum::Router) -> String {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind upstream");
+        let addr = listener.local_addr().expect("upstream address");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve upstream");
+        });
+        format!("http://{addr}")
+    }
+
+    mod codex_stack {
+        use super::*;
+        use tokio::sync::Mutex;
+
+        struct Seen {
+            headers: HeaderMap,
+            body: Value,
+        }
+
+        struct Upstream {
+            base_url: String,
+            seen: Arc<Mutex<Vec<Seen>>>,
+        }
+
+        /// 什么都回 200 的假上游，记下请求头和请求体。
+        async fn upstream() -> Upstream {
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let app = {
+                let seen = seen.clone();
+                axum::Router::new().fallback(move |headers: HeaderMap, body: Bytes| {
+                    let seen = seen.clone();
+                    async move {
+                        seen.lock().await.push(Seen {
+                            headers,
+                            body: serde_json::from_slice(&body).unwrap_or(Value::Null),
+                        });
+                        (
+                            StatusCode::OK,
+                            [(http::header::CONTENT_TYPE, "application/json")],
+                            json!({ "id": "r1", "object": "response", "output": [] }).to_string(),
+                        )
+                    }
+                })
+            };
+            Upstream {
+                base_url: serve_upstream(app).await,
+                seen,
+            }
+        }
+
+        /// 一家 Codex 第三方供应商：行里的模型是 `row-model`，目录里只有 `listed`。
+        fn provider(upstream: &Upstream, api_format: &str) -> Provider {
+            let mut provider = test_provider_with_type(None);
+            provider.id = format!("p-{api_format}");
+            provider.settings_config = json!({
+                "auth": { "OPENAI_API_KEY": "sk-third-party" },
+                "config": format!(
+                    "model_provider = \"custom\"\nmodel = \"row-model\"\n\n[model_providers.custom]\nname = \"custom\"\nbase_url = \"{}/v1\"\nwire_api = \"responses\"\n",
+                    upstream.base_url
+                ),
+                "modelCatalog": { "models": [{ "model": "listed" }] },
+            });
+            provider.meta = Some(crate::provider::ProviderMeta {
+                api_format: Some(api_format.to_string()),
+                ..Default::default()
+            });
+            provider
+        }
+
+        fn forwarder(stack: bool) -> RequestForwarder {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            test_forwarder(Duration::from_secs(5), Duration::from_secs(5)).stack_request(stack)
+        }
+
+        /// 官方做路由时 Codex 每个请求都带的 ChatGPT 身份。
+        fn chatgpt_headers() -> HeaderMap {
+            let mut headers = HeaderMap::new();
+            for (name, value) in [
+                ("content-type", "application/json"),
+                ("authorization", "Bearer chatgpt-access-token"),
+                ("chatgpt-account-id", "acct-workspace"),
+                ("originator", "codex_cli_rs"),
+                ("session_id", "session-1"),
+                ("x-codex-beta-features", "remote_compaction_v2"),
+                ("x-codex-turn-state", "state"),
+                ("openai-beta", "responses=experimental"),
+                ("x-oai-attestation", "device-proof"),
+                ("x-openai-fedramp", "true"),
+            ] {
+                headers.insert(
+                    http::HeaderName::from_static(name),
+                    HeaderValue::from_static(value),
+                );
+            }
+            headers
+        }
+
+        fn body(model: &str, tools: Value) -> Value {
+            json!({
+                "model": model,
+                "input": [{ "role": "user", "content": [{ "type": "input_text", "text": "hi" }] }],
+                "tools": tools,
+                "stream": false
+            })
+        }
+
+        async fn send(
+            forwarder: &RequestForwarder,
+            upstream: &Upstream,
+            provider: Provider,
+            endpoint: &str,
+            body: Value,
+        ) -> Seen {
+            forwarder
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    endpoint,
+                    &body,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    &[provider],
+                )
+                .await
+                .map_err(|error| error.error)
+                .expect("forward");
+            upstream.seen.lock().await.pop().expect("upstream request")
+        }
+
+        #[tokio::test]
+        async fn stacked_requests_drop_chatgpt_identity_but_keep_native_responses_beta_marker() {
+            let upstream = upstream().await;
+            for api_format in ["openai_responses", "openai_chat", "anthropic"] {
+                let seen = send(
+                    &forwarder(true),
+                    &upstream,
+                    provider(&upstream, api_format),
+                    "/responses",
+                    body("listed", json!([])),
+                )
+                .await;
+                for name in [
+                    "chatgpt-account-id",
+                    "originator",
+                    "session_id",
+                    "x-codex-turn-state",
+                    "openai-beta",
+                    "x-oai-attestation",
+                    "x-openai-fedramp",
+                ] {
+                    assert!(
+                        !seen.headers.contains_key(name),
+                        "{api_format}: {name} reached a third party"
+                    );
+                }
+                assert_eq!(
+                    seen.headers.contains_key("x-codex-beta-features"),
+                    api_format == "openai_responses",
+                    "{api_format}: protocol marker handling"
+                );
+                let auth = seen
+                    .headers
+                    .get("authorization")
+                    .or_else(|| seen.headers.get("x-api-key"))
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or_default()
+                    .to_string();
+                assert!(auth.contains("sk-third-party"), "{api_format}: {auth}");
+                assert!(!auth.contains("chatgpt"), "{api_format}: {auth}");
+            }
+
+            // Routing requests to a third party keep the session and client headers
+            // (cache keys, protocol marker) but never the ChatGPT account identity:
+            // the client may be the built-in `openai` provider carrying the login.
+            for api_format in ["openai_responses", "openai_chat"] {
+                let seen = send(
+                    &forwarder(false),
+                    &upstream,
+                    provider(&upstream, api_format),
+                    "/responses",
+                    body("listed", json!([])),
+                )
+                .await;
+                for name in ["session_id", "originator", "x-codex-turn-state"] {
+                    assert!(seen.headers.contains_key(name), "{api_format}: {name}");
+                }
+                for name in [
+                    "chatgpt-account-id",
+                    "x-oai-attestation",
+                    "x-openai-fedramp",
+                ] {
+                    assert!(
+                        !seen.headers.contains_key(name),
+                        "{api_format}: {name} reached a third party"
+                    );
+                }
+                let auth = seen
+                    .headers
+                    .get("authorization")
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or_default();
+                assert!(auth.contains("sk-third-party"), "{api_format}: {auth}");
+            }
+            let seen = send(
+                &forwarder(false),
+                &upstream,
+                provider(&upstream, "openai_responses"),
+                "/responses",
+                body("listed", json!([])),
+            )
+            .await;
+            assert!(seen.headers.contains_key("x-codex-beta-features"));
+        }
+
+        #[test]
+        fn chatgpt_identity_reaches_only_official_or_managed_account_upstreams() {
+            let strip = |key: &str, passthrough: bool, unmanaged: bool| {
+                should_strip_codex_client_fingerprint_header(
+                    key,
+                    "/responses",
+                    false,
+                    false,
+                    false,
+                    passthrough,
+                    unmanaged,
+                )
+            };
+            for key in ["chatgpt-account-id", "x-oai-attestation", "version"] {
+                assert!(strip(key, false, true), "{key} to a third party");
+                assert!(!strip(key, true, true), "{key} to the official upstream");
+                assert!(
+                    !strip(key, false, false),
+                    "{key} to a managed ChatGPT account"
+                );
+            }
+            for key in [
+                "session_id",
+                "originator",
+                "x-codex-turn-state",
+                "openai-beta",
+            ] {
+                assert!(!strip(key, false, true), "{key} is not account identity");
+            }
+        }
+
+        /// Native Responses third parties cannot consume Codex's private compaction
+        /// trigger. Rewrite it into a summary turn that prevents new tool calls
+        /// while preserving tool definitions and historical tool-call references.
+        #[tokio::test]
+        async fn native_third_party_compaction_becomes_summary_turn() {
+            use crate::proxy::providers::codex_compaction::{
+                encode_compaction_summary, COMPACT_PROMPT, SUMMARY_PREFIX,
+            };
+            let upstream = upstream().await;
+            let mut request = body(
+                "listed",
+                json!([{ "type": "function", "name": "shell", "parameters": { "type": "object" } }]),
+            );
+            request["input"] = json!([
+                { "type": "compaction", "encrypted_content": "gAAAA-openai" },
+                { "type": "compaction", "encrypted_content": encode_compaction_summary("prior work") },
+                { "role": "user", "content": [{ "type": "input_text", "text": "hi" }] },
+                { "type": "compaction_trigger" }
+            ]);
+            let seen = send(
+                &forwarder(true),
+                &upstream,
+                provider(&upstream, "openai_responses"),
+                "/responses",
+                request,
+            )
+            .await;
+            assert_eq!(
+                seen.body["tools"],
+                json!([{ "type": "function", "name": "shell", "parameters": { "type": "object" } }])
+            );
+            assert_eq!(seen.body["tool_choice"], "none");
+            let input = seen.body["input"].as_array().unwrap();
+            assert_eq!(
+                input[0],
+                json!({ "type": "compaction", "encrypted_content": "gAAAA-openai" })
+            );
+            assert_eq!(
+                input[1]["content"][0]["text"],
+                format!("{SUMMARY_PREFIX}\nprior work")
+            );
+            assert!(input
+                .iter()
+                .all(|item| item["type"] != "compaction_trigger"));
+            assert_eq!(input.last().unwrap()["content"][0]["text"], COMPACT_PROMPT);
+
+            // 同一家上游自己签发的压缩密文：请求逐字节不改，不能把已压缩的历史换成占位文字。
+            let mut own_history = body("listed", json!([]));
+            own_history["input"] = json!([
+                { "type": "compaction", "id": "cmp_1", "encrypted_content": "gAAAA-issued-here" },
+                { "role": "user", "content": [{ "type": "input_text", "text": "go on" }] }
+            ]);
+            let seen = send(
+                &forwarder(false),
+                &upstream,
+                provider(&upstream, "openai_responses"),
+                "/responses",
+                own_history.clone(),
+            )
+            .await;
+            assert_eq!(seen.body["input"], own_history["input"]);
+
+            // 对照：普通请求逐字节不改。
+            let plain = body(
+                "listed",
+                json!([{ "type": "function", "name": "shell", "parameters": { "type": "object" } }]),
+            );
+            let seen = send(
+                &forwarder(true),
+                &upstream,
+                provider(&upstream, "openai_responses"),
+                "/responses",
+                plain.clone(),
+            )
+            .await;
+            assert_eq!(seen.body["tools"], plain["tools"]);
+            assert_eq!(seen.body["input"], plain["input"]);
+        }
+
+        /// 剥身份头只针对 Codex：Claude Code 的 Stack 请求照常带着 Anthropic SDK 的请求头。
+        #[tokio::test]
+        async fn claude_stacked_requests_keep_sdk_headers() {
+            let upstream = upstream().await;
+            let mut provider = test_provider_with_type(None);
+            provider.settings_config = json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": upstream.base_url,
+                    "ANTHROPIC_AUTH_TOKEN": "sk-third-party",
+                }
+            });
+            let mut headers = HeaderMap::new();
+            for (name, value) in [
+                ("content-type", "application/json"),
+                ("x-stainless-lang", "js"),
+                ("x-stainless-package-version", "0.60.0"),
+            ] {
+                headers.insert(
+                    http::HeaderName::from_static(name),
+                    HeaderValue::from_static(value),
+                );
+            }
+            forwarder(true)
+                .forward_with_retry(
+                    &AppType::Claude,
+                    http::Method::POST,
+                    "/v1/messages",
+                    &json!({
+                        "model": "stacked-model",
+                        "max_tokens": 16,
+                        "messages": [{ "role": "user", "content": "hi" }]
+                    }),
+                    headers,
+                    Extensions::new(),
+                    &[provider],
+                )
+                .await
+                .map_err(|error| error.error)
+                .expect("forward");
+            let seen = upstream.seen.lock().await.pop().expect("upstream request");
+            assert_eq!(seen.headers["x-stainless-lang"], "js");
+            assert_eq!(seen.headers["x-stainless-package-version"], "0.60.0");
+            assert_eq!(seen.body["model"], "stacked-model");
+        }
+
+        #[tokio::test]
+        async fn stacked_requests_are_not_rewritten_to_the_rows_model() {
+            let upstream = upstream().await;
+            for api_format in ["openai_responses", "openai_chat", "anthropic"] {
+                let seen = send(
+                    &forwarder(true),
+                    &upstream,
+                    provider(&upstream, api_format),
+                    "/responses",
+                    body("not-listed", json!([])),
+                )
+                .await;
+                assert_eq!(seen.body["model"], "not-listed", "{api_format}");
+            }
+
+            // 对照：路由请求发往 Chat 转换时，目录外的模型换成行里的模型。
+            let seen = send(
+                &forwarder(false),
+                &upstream,
+                provider(&upstream, "openai_chat"),
+                "/responses",
+                body("not-listed", json!([])),
+            )
+            .await;
+            assert_eq!(seen.body["model"], "row-model");
+        }
+
+        #[tokio::test]
+        async fn stacked_requests_drop_hosted_web_search_only_where_it_is_rejected() {
+            let upstream = upstream().await;
+            let function = json!({ "type": "function", "name": "shell", "parameters": {} });
+            let tools = json!([function.clone(), { "type": "web_search" }]);
+            let with_choice = |model: &str| {
+                let mut body = body(model, tools.clone());
+                body["tool_choice"] = json!({ "type": "web_search" });
+                body
+            };
+
+            // GLM 的原生 Responses 网关不认托管 web_search：去掉工具和指向它的 tool_choice。
+            for endpoint in ["/responses", "/responses/compact"] {
+                let seen = send(
+                    &forwarder(true),
+                    &upstream,
+                    provider(&upstream, "openai_responses"),
+                    endpoint,
+                    with_choice("glm-5.2"),
+                )
+                .await;
+                assert_eq!(seen.body["tools"], json!([function.clone()]), "{endpoint}");
+                assert!(seen.body.get("tool_choice").is_none(), "{endpoint}");
+            }
+
+            // 只剩它一个工具时整个 `tools` 删掉。
+            let seen = send(
+                &forwarder(true),
+                &upstream,
+                provider(&upstream, "openai_responses"),
+                "/responses",
+                body("glm-5.2", json!([{ "type": "web_search" }])),
+            )
+            .await;
+            assert!(seen.body.get("tools").is_none(), "{}", seen.body);
+
+            // 对照：支持的上游、路由请求都原样转发。
+            for (stack, model) in [(true, "deepseek-v4-pro"), (false, "glm-5.2")] {
+                let seen = send(
+                    &forwarder(stack),
+                    &upstream,
+                    provider(&upstream, "openai_responses"),
+                    "/responses",
+                    with_choice(model),
+                )
+                .await;
+                assert_eq!(seen.body["tools"], tools, "stack={stack} {model}");
+                assert_eq!(seen.body["tool_choice"]["type"], "web_search");
+            }
+        }
+
+        /// 按脚本依次回应的假上游，记下请求头和请求体。
+        async fn scripted_upstream(script: Vec<(u16, Value)>) -> Upstream {
+            let script = Arc::new(Mutex::new(std::collections::VecDeque::from(script)));
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let app = {
+                let seen = seen.clone();
+                axum::Router::new().fallback(move |headers: HeaderMap, body: Bytes| {
+                    let script = script.clone();
+                    let seen = seen.clone();
+                    async move {
+                        seen.lock().await.push(Seen {
+                            headers,
+                            body: serde_json::from_slice(&body).unwrap_or(Value::Null),
+                        });
+                        let (status, body) = script
+                            .lock()
+                            .await
+                            .pop_front()
+                            .expect("upstream script exhausted");
+                        (
+                            StatusCode::from_u16(status).expect("status"),
+                            [(http::header::CONTENT_TYPE, "application/json")],
+                            body.to_string(),
+                        )
+                    }
+                })
+            };
+            Upstream {
+                base_url: serve_upstream(app).await,
+                seen,
+            }
+        }
+
+        fn blob_rejection() -> (u16, Value) {
+            (
+                400,
+                json!({ "error": {
+                    "type": "invalid_request_error",
+                    "code": "invalid_encrypted_content",
+                    "message": "The encrypted content could not be verified."
+                } }),
+            )
+        }
+
+        fn response_ok() -> (u16, Value) {
+            (
+                200,
+                json!({ "id": "r1", "object": "response", "output": [] }),
+            )
+        }
+
+        /// 上一轮是别家原生 Responses 上游，历史里留着它签发的推理密文。
+        fn history_with_foreign_reasoning() -> Value {
+            let mut request = body("listed", json!([]));
+            request["input"] = json!([
+                { "role": "user", "content": [{ "type": "input_text", "text": "hi" }] },
+                { "type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "gAAAA-other-org" },
+                { "type": "message", "id": "msg_1", "role": "assistant",
+                  "content": [{ "type": "output_text", "text": "a" }] },
+                { "role": "user", "content": [{ "type": "input_text", "text": "again" }] }
+            ]);
+            request
+        }
+
+        async fn forward_codex(
+            forwarder: &RequestForwarder,
+            provider: Provider,
+        ) -> Result<ForwardResult, ForwardError> {
+            forwarder
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    &history_with_foreign_reasoning(),
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    &[provider],
+                )
+                .await
+        }
+
+        fn carries_reasoning(seen: &Seen) -> bool {
+            seen.body["input"]
+                .as_array()
+                .is_some_and(|input| input.iter().any(|item| item["type"] == "reasoning"))
+        }
+
+        /// 上游明确说验不了别家签发的密文：去掉推理条目，对同一家只重试一次。
+        #[tokio::test]
+        async fn foreign_blob_rejection_is_retried_once_without_reasoning() {
+            for stack in [true, false] {
+                let upstream = scripted_upstream(vec![blob_rejection(), response_ok()]).await;
+                let result =
+                    forward_codex(&forwarder(stack), provider(&upstream, "openai_responses")).await;
+                assert!(result.is_ok(), "stack={stack}");
+                let seen = upstream.seen.lock().await;
+                assert_eq!(seen.len(), 2, "stack={stack}");
+                assert!(carries_reasoning(&seen[0]));
+                assert!(!carries_reasoning(&seen[1]));
+                assert_eq!(seen[1].body["input"].as_array().unwrap().len(), 3);
+            }
+
+            // 重试仍被拒：不再重试，把第二次的错误交回客户端。
+            let upstream = scripted_upstream(vec![blob_rejection(), blob_rejection()]).await;
+            let error = forward_codex(&forwarder(true), provider(&upstream, "openai_responses"))
+                .await
+                .err()
+                .expect("still rejected");
+            assert!(matches!(
+                error.error,
+                ProxyError::UpstreamError { status: 400, .. }
+            ));
+            assert_eq!(upstream.seen.lock().await.len(), 2);
+        }
+
+        /// Stack 模式下官方压缩过、再切到别家原生 Responses 模型：官方的压缩密文原样发出，
+        /// 那家网关不认识、报错措辞又不在清单里时，只换掉压缩条目对同一家重试一次，
+        /// 这家自己的推理条目照旧发。
+        #[tokio::test]
+        async fn unrecognized_compaction_is_replaced_after_a_native_third_party_rejects_it() {
+            use crate::proxy::providers::codex_compaction::OPAQUE_COMPACTION_NOTE;
+            let unsupported = (
+                400,
+                json!({ "error": { "message": "unsupported input item type: compaction" } }),
+            );
+            let upstream = scripted_upstream(vec![unsupported, response_ok()]).await;
+            let mut request = history_with_foreign_reasoning();
+            request["input"].as_array_mut().unwrap().insert(
+                0,
+                json!({ "type": "compaction", "encrypted_content": "gAAAA-openai" }),
+            );
+            forwarder(true)
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    &request,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    &[provider(&upstream, "openai_responses")],
+                )
+                .await
+                .map_err(|error| error.error)
+                .expect("retried");
+
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 2);
+            assert_eq!(seen[0].body["input"][0]["type"], "compaction");
+            let retried = seen[1].body["input"].as_array().unwrap();
+            assert_eq!(retried.len(), 5);
+            assert_eq!(retried[0]["content"][0]["text"], OPAQUE_COMPACTION_NOTE);
+            assert!(carries_reasoning(&seen[1]));
+        }
+
+        /// Kimi For Coding 不收 `tool_choice: "none"`，只回「Invalid request Error」：压缩回合
+        /// 被拒后去掉 `tool_choice` 对同一家重试一次，其余改写照旧。
+        #[tokio::test]
+        async fn compaction_rejected_for_tool_choice_none_retries_without_it() {
+            use crate::proxy::providers::codex_compaction::COMPACT_PROMPT;
+            let rejected = (
+                400,
+                json!({ "error": { "message": "Invalid request Error", "type": "invalid_request_error" } }),
+            );
+            let upstream = scripted_upstream(vec![rejected, response_ok()]).await;
+            let mut request = body(
+                "listed",
+                json!([{ "type": "function", "name": "shell", "parameters": { "type": "object" } }]),
+            );
+            request["input"] = json!([
+                { "role": "user", "content": [{ "type": "input_text", "text": "hi" }] },
+                { "type": "compaction_trigger" }
+            ]);
+            forwarder(true)
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    &request,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    &[provider(&upstream, "openai_responses")],
+                )
+                .await
+                .map_err(|error| error.error)
+                .expect("retried");
+
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 2);
+            assert_eq!(seen[0].body["tool_choice"], "none");
+            assert!(
+                seen[1].body.get("tool_choice").is_none(),
+                "{}",
+                seen[1].body
+            );
+            assert!(seen[1].body.get("tools").is_some());
+            let input = seen[1].body["input"].as_array().unwrap();
+            assert!(input
+                .iter()
+                .all(|item| item["type"] != "compaction_trigger"));
+            assert_eq!(input.last().unwrap()["content"][0]["text"], COMPACT_PROMPT);
+        }
+
+        /// 去掉 `tool_choice` 的重试只给 Codex 原生 Responses 第三方的压缩回合、且只在 400 时。
+        #[test]
+        fn compaction_tool_choice_retry_is_limited_to_rejected_third_party_compactions() {
+            let upstream = Upstream {
+                base_url: "https://relay.example".to_string(),
+                seen: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            };
+            let third_party = provider(&upstream, "openai_responses");
+            let mut official = third_party.clone();
+            official.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
+            official.category = Some("official".to_string());
+            let compaction = json!({
+                "tools": [{ "type": "function", "name": "shell" }],
+                "input": [{ "type": "compaction_trigger" }]
+            });
+            let turn = json!({
+                "tools": [{ "type": "function", "name": "shell" }],
+                "input": [{ "role": "user", "content": [] }]
+            });
+            let rejected = ProxyError::UpstreamError {
+                status: 400,
+                body: Some("Invalid request Error".to_string()),
+            };
+            let overloaded = ProxyError::UpstreamError {
+                status: 529,
+                body: None,
+            };
+            let forwarder = forwarder(false);
+            let native = Some(CodexUpstreamFormat::NativeResponses);
+            let gate = |app: AppType, provider: &Provider, format, request: &Value, error| {
+                forwarder
+                    .compaction_tool_choice_retry_body(&app, provider, format, request, error)
+                    .is_some()
+            };
+
+            assert!(gate(
+                AppType::Codex,
+                &third_party,
+                native,
+                &compaction,
+                &rejected
+            ));
+            assert!(!gate(
+                AppType::Codex,
+                &official,
+                native,
+                &compaction,
+                &rejected
+            ));
+            assert!(!gate(
+                AppType::GrokBuild,
+                &third_party,
+                native,
+                &compaction,
+                &rejected
+            ));
+            assert!(!gate(
+                AppType::Codex,
+                &third_party,
+                Some(CodexUpstreamFormat::ChatCompletions),
+                &compaction,
+                &rejected
+            ));
+            assert!(!gate(
+                AppType::Codex,
+                &third_party,
+                native,
+                &turn,
+                &rejected
+            ));
+            assert!(!gate(
+                AppType::Codex,
+                &third_party,
+                native,
+                &compaction,
+                &overloaded
+            ));
+        }
+
+        /// 措辞不在清单里的兜底只给 Codex 的原生 Responses 第三方：官方的压缩密文只在错误
+        /// 点名时才换，Grok Build 的压缩密文是 xAI 自己的。
+        #[tokio::test]
+        async fn generic_compaction_retry_is_limited_to_codex_third_parties() {
+            let upstream = upstream().await;
+            let third_party = provider(&upstream, "openai_responses");
+            let mut official = third_party.clone();
+            official.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
+            official.category = Some("official".to_string());
+            let request = json!({ "input": [
+                { "type": "compaction", "encrypted_content": "gAAAA-openai" }
+            ] });
+            let unsupported = ProxyError::UpstreamError {
+                status: 400,
+                body: Some("unsupported input item".to_string()),
+            };
+            let forwarder = forwarder(false);
+            let gate = |app_type: AppType, provider: &Provider| {
+                forwarder.opaque_state_retry_rejection(
+                    &app_type,
+                    provider,
+                    Some(CodexUpstreamFormat::NativeResponses),
+                    false,
+                    &request,
+                    &unsupported,
+                )
+            };
+
+            assert_eq!(
+                gate(AppType::Codex, &third_party),
+                Some(OpaqueStateRejection {
+                    reasoning: false,
+                    compaction: true,
+                    item_ids: false,
+                })
+            );
+            assert_eq!(gate(AppType::Codex, &official), None);
+            assert_eq!(gate(AppType::GrokBuild, &third_party), None);
+        }
+
+        #[test]
+        fn copilot_opaque_retry_uses_actual_transport_not_legacy_static_format() {
+            let forwarder = forwarder(false);
+            let mut provider = provider(
+                &Upstream {
+                    base_url: "https://api.githubcopilot.com".to_string(),
+                    seen: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+                },
+                "openai_chat",
+            );
+            provider.meta = Some(crate::provider::ProviderMeta {
+                provider_type: Some("github_copilot".to_string()),
+                api_format: Some("openai_chat".to_string()),
+                ..Default::default()
+            });
+            let request = json!({ "input": [
+                { "type": "compaction", "encrypted_content": "gAAAA-openai" }
+            ] });
+            let unsupported = ProxyError::UpstreamError {
+                status: 400,
+                body: Some("unsupported input item".to_string()),
+            };
+
+            assert_eq!(
+                forwarder.opaque_state_retry_rejection(
+                    &AppType::Codex,
+                    &provider,
+                    Some(CodexUpstreamFormat::NativeResponses),
+                    false,
+                    &request,
+                    &unsupported,
+                ),
+                Some(OpaqueStateRejection {
+                    reasoning: false,
+                    compaction: true,
+                    item_ids: false,
+                })
+            );
+            assert_eq!(
+                forwarder.opaque_state_retry_rejection(
+                    &AppType::Codex,
+                    &provider,
+                    Some(CodexUpstreamFormat::ChatCompletions),
+                    false,
+                    &request,
+                    &unsupported,
+                ),
+                None
+            );
+        }
+
+        /// 其他 400、转换成 Chat 的上游都不触发。
+        #[tokio::test]
+        async fn blob_retry_only_follows_self_identified_rejections_on_native_upstreams() {
+            let unrelated = (
+                400,
+                json!({ "error": { "type": "invalid_request_error", "message": "Invalid value for 'model'." } }),
+            );
+            let upstream = scripted_upstream(vec![unrelated]).await;
+            assert!(
+                forward_codex(&forwarder(true), provider(&upstream, "openai_responses"))
+                    .await
+                    .is_err()
+            );
+            assert_eq!(upstream.seen.lock().await.len(), 1);
+
+            let upstream = scripted_upstream(vec![blob_rejection()]).await;
+            assert!(
+                forward_codex(&forwarder(true), provider(&upstream, "openai_chat"))
+                    .await
+                    .is_err()
+            );
+            assert_eq!(upstream.seen.lock().await.len(), 1);
+        }
+
+        /// 按脚本依次回应的假上游，每一步自己定 content-type 和原始响应体（流式用）。
+        async fn raw_upstream(script: Vec<(u16, &'static str, String)>) -> Upstream {
+            let script = Arc::new(Mutex::new(std::collections::VecDeque::from(script)));
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let app = {
+                let seen = seen.clone();
+                axum::Router::new().fallback(move |headers: HeaderMap, body: Bytes| {
+                    let script = script.clone();
+                    let seen = seen.clone();
+                    async move {
+                        seen.lock().await.push(Seen {
+                            headers,
+                            body: serde_json::from_slice(&body).unwrap_or(Value::Null),
+                        });
+                        let (status, content_type, body) = script
+                            .lock()
+                            .await
+                            .pop_front()
+                            .expect("upstream script exhausted");
+                        (
+                            StatusCode::from_u16(status).expect("status"),
+                            [(http::header::CONTENT_TYPE, content_type)],
+                            body,
+                        )
+                    }
+                })
+            };
+            Upstream {
+                base_url: serve_upstream(app).await,
+                seen,
+            }
+        }
+
+        const ENCRYPTED_TASK_REJECTION: &str =
+            "Encrypted function output content could not be decrypted or decoded.";
+
+        fn sse(events: &[Value]) -> (u16, &'static str, String) {
+            let body = events
+                .iter()
+                .map(|event| {
+                    format!(
+                        "event: {}\ndata: {event}\n\n",
+                        event["type"].as_str().unwrap()
+                    )
+                })
+                .collect::<String>();
+            (200, "text/event-stream", body)
+        }
+
+        fn failed_stream(message: &str) -> (u16, &'static str, String) {
+            sse(&[
+                json!({ "type": "response.created", "response": { "id": "r1", "status": "in_progress" } }),
+                json!({ "type": "response.failed", "response": { "id": "r1", "status": "failed",
+                         "error": { "code": "server_error", "message": message } } }),
+            ])
+        }
+
+        fn completed_stream() -> (u16, &'static str, String) {
+            sse(&[
+                json!({ "type": "response.created", "response": { "id": "r1", "status": "in_progress" } }),
+                json!({ "type": "response.output_item.added", "output_index": 0,
+                         "item": { "type": "message", "id": "msg_1", "role": "assistant", "content": [] } }),
+                json!({ "type": "response.completed", "response": { "id": "r1", "status": "completed", "output": [] } }),
+            ])
+        }
+
+        /// 子 agent 的第一个请求：末尾是主 agent 那家签发的任务密文。`history` 放在它前面。
+        fn sub_agent_request(history: Vec<Value>) -> Value {
+            let mut input = history;
+            input.push(json!({
+                "type": "agent_message",
+                "author": "/root",
+                "recipient": "/root/worker",
+                "content": [
+                    { "type": "input_text", "text": "Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\n" },
+                    { "type": "encrypted_content", "encrypted_content": "gAAAAB-task-from-main" }
+                ]
+            }));
+            json!({ "model": "listed", "input": input, "stream": true })
+        }
+
+        async fn forward_sub_agent(
+            upstream: &Upstream,
+            request: Value,
+        ) -> Result<ForwardResult, ForwardError> {
+            forwarder(true)
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    &request,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    &[provider(upstream, "openai_responses")],
+                )
+                .await
+        }
+
+        async fn body_text(result: ForwardResult) -> String {
+            let chunks: Vec<_> = result.response.bytes_stream().collect().await;
+            let bytes: Vec<u8> = chunks
+                .into_iter()
+                .flat_map(|chunk| chunk.expect("chunk").to_vec())
+                .collect();
+            String::from_utf8(bytes).expect("utf8")
+        }
+
+        fn is_unreadable_task_error(error: &ProxyError) -> bool {
+            let ProxyError::UpstreamError {
+                status: 400,
+                body: Some(body),
+            } = error
+            else {
+                return false;
+            };
+            serde_json::from_str::<Value>(body)
+                .is_ok_and(|body| body["error"]["code"] == "unreadable_encrypted_agent_task")
+        }
+
+        fn task_ciphertext(seen: &Seen) -> &Value {
+            &seen.body["input"].as_array().unwrap().last().unwrap()["content"][1]
+                ["encrypted_content"]
+        }
+
+        /// 子 agent 换了一家：上游在流里、输出之前说解不开。不把空任务交给子 agent，也不让
+        /// Codex 对着同一个错重试，直接说明原因。
+        #[tokio::test]
+        async fn sub_agent_task_rejected_in_stream_returns_an_explanation() {
+            let upstream = raw_upstream(vec![failed_stream(ENCRYPTED_TASK_REJECTION)]).await;
+            let error = forward_sub_agent(&upstream, sub_agent_request(Vec::new()))
+                .await
+                .err()
+                .expect("rejected");
+            assert!(is_unreadable_task_error(&error.error), "{:?}", error.error);
+            // 请求里没有别家的历史状态可去：只发一次。
+            assert_eq!(upstream.seen.lock().await.len(), 1);
+        }
+
+        /// 历史里也有别家的状态时，先去掉历史里的、任务原样保留重试一次；还被拒才说明原因。
+        #[tokio::test]
+        async fn sub_agent_retry_strips_history_but_keeps_the_task() {
+            let history = vec![
+                json!({ "type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "gAAAA-other-org" }),
+                json!({ "type": "agent_message", "author": "/root", "recipient": "/root/worker",
+                         "content": [{ "type": "encrypted_content", "encrypted_content": "gAAAA-older-task" }] }),
+            ];
+            let upstream = raw_upstream(vec![
+                failed_stream(ENCRYPTED_TASK_REJECTION),
+                failed_stream(ENCRYPTED_TASK_REJECTION),
+            ])
+            .await;
+            let error = forward_sub_agent(&upstream, sub_agent_request(history.clone()))
+                .await
+                .err()
+                .expect("rejected");
+            assert!(is_unreadable_task_error(&error.error), "{:?}", error.error);
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 2);
+            assert!(carries_reasoning(&seen[0]));
+            assert!(!carries_reasoning(&seen[1]));
+            assert_eq!(seen[1].body["input"][0]["content"][0]["type"], "input_text");
+            assert_eq!(task_ciphertext(&seen[1]), "gAAAAB-task-from-main");
+            drop(seen);
+
+            // 历史里的状态才是问题：重试成功，任务照样原样到达上游。
+            let upstream = raw_upstream(vec![
+                failed_stream(ENCRYPTED_TASK_REJECTION),
+                completed_stream(),
+            ])
+            .await;
+            assert!(forward_sub_agent(&upstream, sub_agent_request(history))
+                .await
+                .is_ok());
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 2);
+            assert_eq!(task_ciphertext(&seen[1]), "gAAAAB-task-from-main");
+        }
+
+        /// HTTP 报错同样处理。
+        #[tokio::test]
+        async fn sub_agent_task_rejected_over_http_returns_an_explanation() {
+            let rejection = json!({ "error": { "message": ENCRYPTED_TASK_REJECTION } }).to_string();
+            let upstream = raw_upstream(vec![(502, "application/json", rejection)]).await;
+            let error = forward_sub_agent(&upstream, sub_agent_request(Vec::new()))
+                .await
+                .err()
+                .expect("rejected");
+            assert!(is_unreadable_task_error(&error.error), "{:?}", error.error);
+            assert_eq!(upstream.seen.lock().await.len(), 1);
+        }
+
+        /// 缓冲阶段只有一个截止时间：上游在输出前一直发心跳，也不能无限期压着流不交给客户端。
+        #[tokio::test]
+        async fn sub_agent_hold_has_one_deadline_despite_heartbeats() {
+            const HEARTBEATS: u32 = 40;
+            let created = "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"r1\"}}\n\n";
+            let completed = "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"r1\",\"status\":\"completed\",\"output\":[]}}\n\n";
+            let app = axum::Router::new().fallback(move || async move {
+                let stream = futures::stream::unfold(0u32, move |n| async move {
+                    if n > HEARTBEATS {
+                        return None;
+                    }
+                    if n > 0 {
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                    }
+                    let chunk = match n {
+                        0 => created,
+                        HEARTBEATS => completed,
+                        _ => ": keepalive\n\n",
+                    };
+                    Some((
+                        Ok::<_, std::io::Error>(Bytes::from_static(chunk.as_bytes())),
+                        n + 1,
+                    ))
+                });
+                (
+                    [(http::header::CONTENT_TYPE, "text/event-stream")],
+                    axum::body::Body::from_stream(stream),
+                )
+            });
+            let upstream = Upstream {
+                base_url: serve_upstream(app).await,
+                seen: Arc::new(Mutex::new(Vec::new())),
+            };
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            let forwarder = test_forwarder(Duration::from_secs(5), Duration::from_millis(100))
+                .stack_request(true);
+
+            let started = std::time::Instant::now();
+            let result = forwarder
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    &sub_agent_request(Vec::new()),
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    &[provider(&upstream, "openai_responses")],
+                )
+                .await
+                .map_err(|error| error.error)
+                .expect("committed");
+            let handed_over = started.elapsed();
+            // 心跳要发 800ms；截止时间 100ms，交出流不该等到心跳发完。
+            assert!(
+                handed_over < Duration::from_millis(500),
+                "held for {handed_over:?}"
+            );
+            let text = body_text(result).await;
+            assert!(text.starts_with(created), "{text}");
+            assert!(text.ends_with(completed), "{text}");
+            assert_eq!(
+                text.matches(": keepalive").count(),
+                (HEARTBEATS - 1) as usize
+            );
+        }
+
+        /// 上游解得开（同一家）或者是别的失败：客户端收到的流和上游发的逐字节一样。
+        #[tokio::test]
+        async fn sub_agent_streams_pass_through_unchanged_otherwise() {
+            for step in [completed_stream(), failed_stream("backend exploded")] {
+                let expected = step.2.clone();
+                let upstream = raw_upstream(vec![step]).await;
+                let result = forward_sub_agent(&upstream, sub_agent_request(Vec::new()))
+                    .await
+                    .map_err(|error| error.error)
+                    .expect("committed");
+                assert_eq!(body_text(result).await, expected);
+                assert_eq!(upstream.seen.lock().await.len(), 1);
+            }
+        }
+    }
+
     /// 一次请求结束后留下的记账：代理统计、「正在使用」、熔断器。每条出口路径各断言一次，
     /// 锁住成功、失败、不计入熔断三种收尾对路由状态的影响。
     mod bookkeeping {
@@ -5402,15 +8506,8 @@ mod tests {
                     }
                 })
             };
-            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-                .await
-                .expect("bind upstream");
-            let addr = listener.local_addr().expect("upstream address");
-            tokio::spawn(async move {
-                axum::serve(listener, app).await.expect("serve upstream");
-            });
             Upstream {
-                base_url: format!("http://{addr}"),
+                base_url: serve_upstream(app).await,
                 requests,
             }
         }
@@ -5452,10 +8549,10 @@ mod tests {
                     &AppType::Claude,
                     http::Method::POST,
                     "/v1/messages",
-                    body,
+                    &body,
                     headers,
                     Extensions::new(),
-                    providers,
+                    &providers,
                 )
                 .await
         }
@@ -5659,6 +8756,28 @@ mod tests {
             assert_eq!(breaker(&fwd, "p1").await, None);
         }
 
+        /// 失败时带出映射后的上游模型名，错误日志才不会把客户端别名（claude-haiku-*）
+        /// 记成「调了没配置的模型」。429 走中性失败、500 走全部失败两条出口。
+        #[tokio::test]
+        async fn failed_request_reports_the_mapped_upstream_model() {
+            for status in [429, 500] {
+                let up = upstream(vec![error(status, "upstream failed")]).await;
+                let fwd = forwarder(1, "p1");
+                let mut mapped = provider("p1", &up);
+                mapped.settings_config["env"]["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = json!("grok-4.7");
+                let mut body = plain_body();
+                body["model"] = json!("claude-haiku-4-5-20251001");
+
+                let err = expect_err(send(&fwd, vec![mapped], body).await);
+
+                assert_eq!(
+                    err.outbound_model.as_deref(),
+                    Some("grok-4.7"),
+                    "status {status}"
+                );
+            }
+        }
+
         #[tokio::test]
         async fn every_provider_failing_records_each_failure() {
             let up1 = upstream(vec![error(500, "boom")]).await;
@@ -5690,6 +8809,41 @@ mod tests {
             );
             assert_eq!(breaker(&fwd, "p1").await, Some((1, 1)));
             assert_eq!(breaker(&fwd, "p2").await, Some((1, 1)));
+        }
+
+        #[tokio::test]
+        async fn repeated_classifier_errors_stop_main_requests_before_any_upstream_call() {
+            let up = upstream(vec![ok()]).await;
+            let fwd = forwarder(2, "p1");
+            let mut body = plain_body();
+            body["tools"] = json!([{"name":"Bash","input_schema":{"type":"object"}}]);
+            for n in 0..3 {
+                body["messages"].as_array_mut().unwrap().extend([
+                    json!({"role":"assistant","content":[{"type":"tool_use","id":format!("tool_{n}"),"name":"Bash","input":{}}]}),
+                    json!({"role":"user","content":[{"type":"tool_result","tool_use_id":format!("tool_{n}"),"is_error":true,"content":"claude-opus-5[1m] is temporarily unavailable, so auto mode cannot determine the safety of Bash right now."}]}),
+                ]);
+            }
+            for _ in 0..10 {
+                let err = expect_err(send(&fwd, vec![provider("p1", &up)], body.clone()).await);
+                assert!(matches!(err.error, ProxyError::InvalidRequest(_)));
+            }
+            assert_eq!(up.requests.lock().await.len(), 0);
+            for _ in 0..100 {
+                if fwd.status.read().await.active_connections == 0 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+            assert_eq!(fwd.status.read().await.active_connections, 0);
+            body["messages"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"role":"user","content":"I fixed the mapping; continue."}));
+            send(&fwd, vec![provider("p1", &up)], body)
+                .await
+                .map_err(|e| e.error)
+                .expect("new user turn resumes");
+            assert_eq!(up.requests.lock().await.len(), 1);
         }
 
         #[tokio::test]
@@ -5949,6 +9103,154 @@ mod tests {
             assert!(requests[1]
                 .to_string()
                 .contains(crate::proxy::media_sanitizer::UNSUPPORTED_IMAGE_MARKER));
+        }
+
+        // ---- Stack 模型：不读也不写任何路由状态 ----
+
+        fn untouched() -> Books {
+            Books {
+                total: 0,
+                success: 0,
+                failed: 0,
+                success_rate: 0.0,
+                failover_count: 0,
+                last_error: None,
+                attempting: None,
+                in_use: None,
+            }
+        }
+
+        /// 熔断器从没为这家建过记录（成功是异步记的，给它时间落下）。
+        async fn breaker_untouched(forwarder: &RequestForwarder, provider_id: &str) -> bool {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            forwarder
+                .router
+                .get_circuit_breaker_stats(provider_id, "claude")
+                .await
+                .is_none()
+        }
+
+        fn stack_forwarder() -> RequestForwarder {
+            // 请求开始时的「当前供应商」是别家：普通请求成功后会记一次故障转移并切路由。
+            forwarder(4, "route").stack_request(true)
+        }
+
+        #[tokio::test]
+        async fn stacked_requests_leave_every_routing_state_alone() {
+            for script in [
+                vec![ok()],
+                vec![error(503, "overloaded")],
+                vec![error(400, "bad request")],
+            ] {
+                let status = script[0].0;
+                let up = upstream(script).await;
+                let fwd = stack_forwarder();
+
+                let result = send(&fwd, vec![provider("kimi", &up)], plain_body()).await;
+
+                assert_eq!(result.is_ok(), status == 200, "{status}");
+                if let Ok(result) = &result {
+                    assert!(result.connection_guard.is_none(), "no active connection");
+                }
+                assert_eq!(books(&fwd).await, untouched(), "{status}");
+                assert_eq!(fwd.status.read().await.active_connections, 0);
+                assert!(breaker_untouched(&fwd, "kimi").await, "{status}");
+                assert_eq!(up.requests.lock().await.len(), 1, "{status}");
+            }
+        }
+
+        #[tokio::test]
+        async fn stacked_requests_keep_their_model() {
+            let up = upstream(vec![ok(), ok()]).await;
+            let mut kimi = provider("kimi", &up);
+            kimi.settings_config["env"]["ANTHROPIC_MODEL"] = json!("kimi-k2");
+            let mut body = plain_body();
+            body["model"] = json!("kimi-k3");
+
+            // 对照：普通请求按角色映射成行里配置的模型。
+            send(&forwarder(1, "kimi"), vec![kimi.clone()], body.clone())
+                .await
+                .map_err(|e| e.error)
+                .expect("routed");
+            send(&stack_forwarder(), vec![kimi], body)
+                .await
+                .map_err(|e| e.error)
+                .expect("stack mode");
+
+            let requests = up.requests.lock().await;
+            assert_eq!(requests[0]["model"], "kimi-k2");
+            assert_eq!(requests[1]["model"], "kimi-k3");
+        }
+
+        #[tokio::test]
+        async fn claude_desktop_stacked_requests_skip_the_mapping_table() {
+            let up = upstream(vec![ok(), ok()]).await;
+            let mut kimi = provider("kimi", &up);
+            kimi.meta = Some(crate::provider::ProviderMeta {
+                claude_desktop_model_routes: [(
+                    "claude-sonnet-5".to_string(),
+                    crate::provider::ClaudeDesktopModelRoute {
+                        model: "kimi-k2".to_string(),
+                        label_override: None,
+                        supports_1m: None,
+                    },
+                )]
+                .into_iter()
+                .collect(),
+                ..Default::default()
+            });
+            let send_desktop = |fwd: RequestForwarder, model: &'static str| {
+                let kimi = kimi.clone();
+                async move {
+                    let mut body = plain_body();
+                    body["model"] = json!(model);
+                    fwd.forward_with_retry(
+                        &AppType::ClaudeDesktop,
+                        http::Method::POST,
+                        "/v1/messages",
+                        &body,
+                        HeaderMap::new(),
+                        Extensions::new(),
+                        &[kimi],
+                    )
+                    .await
+                    .map_err(|e| e.error)
+                }
+            };
+
+            // 对照：路由请求按映射表换成上游名；聚合请求体里已经是上游名，映射表里没有它也照发。
+            send_desktop(forwarder(1, "kimi"), "claude-sonnet-5")
+                .await
+                .expect("routed");
+            send_desktop(stack_forwarder(), "kimi-k3")
+                .await
+                .expect("stack mode");
+
+            let requests = up.requests.lock().await;
+            assert_eq!(requests[0]["model"], "kimi-k2");
+            assert_eq!(requests[1]["model"], "kimi-k3");
+        }
+
+        #[tokio::test]
+        async fn stacked_requests_stay_stacked_through_rectifier_retries() {
+            let up = upstream(vec![error(400, SIGNATURE_ERROR), ok()]).await;
+            let mut kimi = provider("kimi", &up);
+            kimi.settings_config["env"]["ANTHROPIC_MODEL"] = json!("kimi-k2");
+            let mut body = body_with_thinking_signature();
+            body["model"] = json!("kimi-k3");
+            let fwd = stack_forwarder();
+
+            send(&fwd, vec![kimi], body)
+                .await
+                .map_err(|e| e.error)
+                .expect("retried");
+
+            let requests = up.requests.lock().await;
+            assert_eq!(requests.len(), 2);
+            assert_eq!(requests[1]["model"], "kimi-k3");
+            assert!(!requests[1].to_string().contains("\"signature\""));
+            assert_eq!(books(&fwd).await, untouched());
+            assert!(breaker_untouched(&fwd, "kimi").await);
         }
     }
 }

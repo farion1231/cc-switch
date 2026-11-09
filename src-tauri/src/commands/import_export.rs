@@ -162,8 +162,12 @@ pub async fn create_db_backup(state: State<'_, AppState>) -> Result<String, Stri
 
 /// List all database backup files
 #[tauri::command]
-pub fn list_db_backups() -> Result<Vec<BackupEntry>, String> {
-    Database::list_backups().map_err(|e| e.to_string())
+pub async fn list_db_backups() -> Result<Vec<BackupEntry>, String> {
+    // 备份文件锁的持有方（定时备份、恢复）会在锁内等数据库，不能在主线程上等它。
+    tauri::async_runtime::spawn_blocking(Database::list_backups)
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
 }
 
 /// Restore database from a backup file
@@ -197,17 +201,53 @@ pub async fn restore_db_backup(
 
 /// Rename a database backup file
 #[tauri::command]
-pub fn rename_db_backup(
+pub async fn rename_db_backup(
     #[allow(non_snake_case)] oldFilename: String,
     #[allow(non_snake_case)] newName: String,
 ) -> Result<String, String> {
-    Database::rename_backup(&oldFilename, &newName).map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || Database::rename_backup(&oldFilename, &newName))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
 }
 
 /// Delete a database backup file
 #[tauri::command]
-pub fn delete_db_backup(filename: String) -> Result<(), String> {
-    Database::delete_backup(&filename).map_err(|e| e.to_string())
+pub async fn delete_db_backup(filename: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || Database::delete_backup(&filename))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+// ─── Backup storage overview ─────────────────────────────────
+
+/// 列出本机各类备份的位置与大小
+#[tauri::command]
+pub async fn list_backup_locations(
+) -> Result<Vec<crate::services::backup_storage::BackupLocation>, String> {
+    tauri::async_runtime::spawn_blocking(crate::services::backup_storage::list_locations)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 删除一类备份（只认类别 id），返回释放的字节数
+#[tauri::command]
+pub async fn delete_backup_location(id: String) -> Result<u64, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::services::backup_storage::delete_location(&id)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
+}
+
+/// 在文件管理器中显示一类备份所在的目录
+#[tauri::command]
+pub async fn reveal_backup_location(id: String) -> Result<bool, String> {
+    let dir = crate::services::backup_storage::location_dir(&id).map_err(|e| e.to_string())?;
+    tauri_plugin_opener::reveal_item_in_dir(&dir).map_err(|e| format!("打开文件夹失败: {e}"))?;
+    Ok(true)
 }
 
 #[cfg(test)]

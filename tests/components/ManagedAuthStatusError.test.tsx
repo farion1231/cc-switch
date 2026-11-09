@@ -30,12 +30,21 @@ const failedStatus = (refetchStatus: () => void) => ({
   refetchStatus,
 });
 
+vi.mock("@/lib/query/accountPlans", () => ({
+  useAccountQuotaPlans: () => ({}),
+}));
+
 vi.mock("@/components/providers/forms/hooks/useCodexOauth", () => ({
   useCodexOauth: () => failedStatus(authMocks.refetchCodex),
 }));
 
 vi.mock("@/components/providers/forms/hooks/useCopilotAuth", () => ({
   useCopilotAuth: () => failedStatus(authMocks.refetchCopilot),
+}));
+
+// 「N 个供应商在用」要读供应商列表（React Query）；这里不关心，给空
+vi.mock("@/components/providers/forms/hooks/useManagedAccountUsers", () => ({
+  useManagedAccountUsers: () => () => [],
 }));
 
 describe("managed auth status failures", () => {

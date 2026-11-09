@@ -2,6 +2,7 @@ import React from "react";
 import type { ProviderMeta } from "@/types";
 import { useCodexOauthQuota } from "@/lib/query/subscription";
 import { SubscriptionQuotaView } from "@/components/SubscriptionQuotaFooter";
+import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
 
 interface CodexOauthQuotaFooterProps {
   meta?: ProviderMeta;
@@ -23,6 +24,7 @@ const CodexOauthQuotaFooter: React.FC<CodexOauthQuotaFooterProps> = ({
   isCurrent = false,
   autoQueryInterval = 5,
 }) => {
+  const display = useQuotaDisplay();
   const {
     data: quota,
     isFetching: loading,
@@ -38,8 +40,8 @@ const CodexOauthQuotaFooter: React.FC<CodexOauthQuotaFooterProps> = ({
       quota={quota}
       loading={loading}
       refetch={refetch}
-      appIdForExpiredHint="codex_oauth"
       inline={inline}
+      display={display}
     />
   );
 };

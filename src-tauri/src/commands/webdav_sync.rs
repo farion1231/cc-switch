@@ -188,6 +188,16 @@ pub async fn webdav_sync_save_settings(
     Ok(json!({ "success": true }))
 }
 
+/// Forget the saved WebDAV config (URL, credentials, remote root, status) on
+/// this device. Remote snapshots are left untouched.
+#[tauri::command]
+pub async fn webdav_sync_clear_settings() -> Result<Value, String> {
+    run_with_webdav_lock(async { settings::set_webdav_sync_settings(None) })
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(json!({ "success": true }))
+}
+
 #[tauri::command]
 pub async fn webdav_sync_fetch_remote_info() -> Result<Value, String> {
     let settings = require_enabled_webdav_settings()?;

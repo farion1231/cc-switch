@@ -12,7 +12,7 @@ There are many ways to contribute:
 - **Suggest features** — Have an idea? [Submit a feature request](https://github.com/farion1231/cc-switch/issues/new?template=feature_request.yml).
 - **Improve docs** — Spot a typo or missing info? [Report a doc issue](https://github.com/farion1231/cc-switch/issues/new?template=doc_issue.yml).
 - **Contribute code** — Fix bugs or implement features via pull requests.
-- **Translate** — Help us improve translations for Simplified Chinese, Traditional Chinese, English, and Japanese.
+- **Translate** — Help us improve translations for Simplified Chinese, Traditional Chinese, English, and Japanese, as well as the community translations for Turkish and Korean.
 
 > **Security vulnerabilities**: Please do NOT use public issues. See our [Security Policy](./SECURITY.md) instead.
 
@@ -147,7 +147,7 @@ Backend (Tauri 2 + Rust)
 │   ├── config/               # Provider presets per tool (*ProviderPresets.ts), MCP presets
 │   ├── hooks/                # Custom hooks (business logic)
 │   ├── lib/api/              # Tauri invoke wrappers (lib/query/ holds the TanStack Query config)
-│   ├── i18n/locales/         # UI strings (zh / zh-TW / en / ja)
+│   ├── i18n/locales/         # UI strings (zh / zh-TW / en / ja; community: tr / ko)
 │   ├── icons/                # Provider icons (index is maintained by hand)
 │   └── types/ utils/ contexts/
 ├── src-tauri/                # Backend (Rust)
@@ -187,6 +187,7 @@ cd src-tauri && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 2. **Fork and branch** — Create a feature branch from `main` (e.g., `feat/my-feature` or `fix/issue-123`).
 3. **Keep PRs focused** — One feature or fix per PR. Avoid unrelated changes.
 4. **Follow the PR template** — Fill in the summary, related issue, and checklist.
+5. **Leave the database version to maintainers** — Don't change `SCHEMA_VERSION`; such PRs from non-collaborators are closed automatically. If your change truly needs a schema change, mention any one maintainer (`@farion1231`, `@funkpopo`, `@YUZHEthefool`, `@Owlbay` or `@SaladDay`) in the PR to explain why.
 
 ### PR Checklist
 
@@ -219,12 +220,23 @@ By submitting a PR, you agree to the following:
 3. **PRs must be small and focused.** One issue, one PR. Large, sprawling, multi-topic PRs will be closed.
 4. **Open an issue first.** Drive-by PRs with no prior discussion — especially AI-generated ones — may be closed without review.
 5. **Maintainers may close without explanation.** PRs that appear to be unreviewed AI output — hallucinated fixes, unnecessary refactors, bulk changes with no context — may be closed at the maintainer's discretion.
+6. **Write the Human Note yourself.** The "Human Note / 本人说明" section of the PR template must say, in your own words, what you want to do. It must not be AI-generated. PRs that leave it empty or fill it with obviously AI-written text may be closed without review.
 
 **In short**: AI is a tool, not a substitute for understanding. Use it to help you contribute better, not to shift work onto maintainers.
 
+## Provider Presets
+
+There are a great many relay and aggregator services, so to keep the preset list short enough for users to actually browse, we limit which services get a built-in preset:
+
+- **Accepted**: model vendors (e.g., DeepSeek, Moonshot AI, Zhipu AI), cloud platforms that serve models under their own brand (e.g., Alibaba Cloud Bailian, Volcano Engine), and a few large, well-established aggregator platforms (e.g., OpenRouter, SiliconFlow).
+- **Sponsors only**: other relay and aggregator services that resell other vendors' models. They are included only as project sponsors; to become one, contact support@ccswitch.io.
+- **Everything else** still works through **Custom Provider** — a service does not need a preset to be usable in CC Switch.
+
+PRs that add a relay or aggregator preset outside the sponsorship program will be closed. If you are unsure whether a service qualifies, open an issue before writing the PR.
+
 ## Internationalization (i18n)
 
-The CC Switch UI supports four languages: Simplified Chinese, Traditional Chinese, English, and Japanese. When modifying user-facing text:
+The CC Switch UI supports Simplified Chinese, Traditional Chinese, English, and Japanese, plus community translations for Turkish and Korean. When modifying user-facing text:
 
 1. Update **all four** locale files:
    - `src/i18n/locales/zh.json`
@@ -233,6 +245,10 @@ The CC Switch UI supports four languages: Simplified Chinese, Traditional Chines
    - `src/i18n/locales/ja.json`
 2. Use the `t()` function from i18next for all UI text.
 3. Never hardcode user-facing strings.
+
+Korean (`ko.json`) is a community translation with English fallback; contributors are not required to update it. When editing it, preserve `{{variables}}`, file names, commands, and other technical literals. Native Korean tray texts are maintained in `src-tauri/src/tray.rs` and `src-tauri/src/tray_panel.rs`; the native menu in `tray.rs` starts from English and overrides translated entries.
+
+Turkish (`tr.json`) is a community translation and is optional: you do not need to add Turkish strings, and missing ones fall back to English. If you do edit `tr.json`, keep `{{variables}}`, file names, commands, and other technical literals unchanged. The tray's Turkish texts in `src-tauri/src/tray.rs` start from English in the same way.
 
 > Forgetting to update a locale file does not fail the build: the missing strings fall back to English, and if the English file lacks them too, the UI shows the raw key.
 
@@ -257,7 +273,7 @@ The CC Switch UI supports four languages: Simplified Chinese, Traditional Chines
 - **建议功能** — 有想法？[提交功能请求](https://github.com/farion1231/cc-switch/issues/new?template=feature_request.yml)。
 - **改进文档** — 发现错误或缺失？[报告文档问题](https://github.com/farion1231/cc-switch/issues/new?template=doc_issue.yml)。
 - **贡献代码** — 通过 Pull Request 修复 Bug 或实现新功能。
-- **翻译** — 帮助改进简体中文、繁体中文、英文和日文的翻译。
+- **翻译** — 帮助改进简体中文、繁体中文、英文和日文的翻译，以及土耳其语和韩语的社区翻译。
 
 > **安全漏洞**：请不要使用公开 Issue 报告。请参阅我们的[安全策略](./SECURITY.md)。
 
@@ -392,7 +408,7 @@ Backend (Tauri 2 + Rust)
 │   ├── config/               # 各工具的供应商预设（*ProviderPresets.ts）、MCP 预设
 │   ├── hooks/                # 自定义 hooks（业务逻辑）
 │   ├── lib/api/              # Tauri invoke 封装（lib/query/ 为 TanStack Query 配置）
-│   ├── i18n/locales/         # 界面文案（zh / zh-TW / en / ja）
+│   ├── i18n/locales/         # 界面文案（zh / zh-TW / en / ja；社区翻译：tr / ko）
 │   ├── icons/                # 供应商图标（索引需手工维护）
 │   └── types/ utils/ contexts/
 ├── src-tauri/                # 后端（Rust）
@@ -432,6 +448,7 @@ cd src-tauri && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 2. **Fork 并创建分支** — 从 `main` 创建功能分支（如 `feat/my-feature` 或 `fix/issue-123`）。
 3. **保持 PR 专注** — 每个 PR 只做一件事，避免无关改动。
 4. **遵循 PR 模板** — 填写概述、关联 Issue 和检查清单。
+5. **数据库版本交给维护者** — 请勿修改 `SCHEMA_VERSION`，非协作者的此类 PR 会被自动关闭。如确需改动数据库结构，请在 PR 中 @ 任意一位维护者（`@farion1231`、`@funkpopo`、`@YUZHEthefool`、`@Owlbay`、`@SaladDay`）说明原因。
 
 ### PR 检查清单
 
@@ -464,12 +481,23 @@ chore(deps): update dependencies
 3. **PR 必须小而聚焦。** 一个 Issue 对应一个 PR。大而散、跨多个主题的 PR 会被直接关闭。
 4. **先开 Issue 讨论。** 没有事先讨论的"路过式 PR"——尤其是 AI 生成的——可能会被直接关闭。
 5. **维护者可以直接关闭。** 看起来是未经审阅的 AI 产出的 PR——虚构的修复、不必要的重构、缺乏上下文的批量改动——维护者可自行决定关闭。
+6. **本人说明须亲自写。** PR 模板里的「Human Note / 本人说明」必须用你自己的话说清楚你想做什么，不允许 AI 生成。留空或明显由 AI 代写的 PR，可能会被直接关闭。
 
 **一句话总结**：AI 是工具，不是理解力的替代品。用它来帮助你更好地贡献，而不是把工作转移给维护者。
 
+## 供应商预设
+
+中转站和聚合平台数量非常多，为了让预设列表保持在用户翻得过来的长度，我们限制可以内置预设的服务范围：
+
+- **可以收录**：模型原厂（如 DeepSeek、月之暗面、智谱）、以自有品牌提供模型服务的云平台（如阿里云百炼、火山引擎），以及少数规模大、运营成熟的聚合平台（如 OpenRouter、硅基流动）。
+- **仅限赞助商**：其余转售其他厂商模型的中转站、聚合平台，只作为项目赞助商收录；如需赞助，请联系 support@ccswitch.io。
+- **其余服务**照样可以通过「**自定义供应商**」接入——没有预设也不影响在 CC Switch 里使用。
+
+赞助计划之外新增中转站或聚合平台预设的 PR 会被关闭。拿不准某个服务是否符合条件时，请先开 Issue 再写 PR。
+
 ## 国际化（i18n）
 
-CC Switch 的界面支持简体中文、繁体中文、英文和日文四种语言。修改用户可见文本时：
+CC Switch 的界面支持简体中文、繁体中文、英文和日文，另有土耳其语和韩语的社区翻译。修改用户可见文本时：
 
 1. **同时更新四个**语言文件：
    - `src/i18n/locales/zh.json`
@@ -478,6 +506,10 @@ CC Switch 的界面支持简体中文、繁体中文、英文和日文四种语�
    - `src/i18n/locales/ja.json`
 2. 所有 UI 文本使用 i18next 的 `t()` 函数。
 3. 不要硬编码用户可见的字符串。
+
+韩语（`ko.json`）属于社区翻译，缺失文案回退到英文，不要求其他贡献者同步更新。编辑时请保留 `{{变量}}`、文件名、命令等技术字面量。原生韩语托盘文案位于 `src-tauri/src/tray.rs` 和 `src-tauri/src/tray_panel.rs`；其中 `tray.rs` 的原生菜单从英文起步，再覆盖已翻译的条目。
+
+土耳其语（`tr.json`）是社区翻译，可以不改：新增文案不必补土耳其语，缺少的会回退显示英文。如果改了 `tr.json`，请保留 `{{变量}}`、文件名、命令等技术字面量不翻译。`src-tauri/src/tray.rs` 里托盘的土耳其语文案同样从英文起步。
 
 > 漏掉某个语言文件不会导致构建失败：缺少的文案会回退显示英文，英文文件也缺时，界面上会直接显示 key 的字面量。
 

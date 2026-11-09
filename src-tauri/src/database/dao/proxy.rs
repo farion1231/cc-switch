@@ -142,33 +142,31 @@ impl Database {
         app_type: &str,
     ) -> Result<AppProxyConfig, AppError> {
         // 使用 block 限制 conn 的作用域，避免跨 await 持有锁
-        let app_type_owned = app_type.to_string();
         let result = {
             let conn = lock_conn!(self.conn);
-            conn.query_row(
+            let mut stmt = conn.prepare_cached(
                 "SELECT app_type, enabled, auto_failover_enabled,
                         max_retries, streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
                         circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
                         circuit_error_rate_threshold, circuit_min_requests
-                 FROM proxy_config WHERE app_type = ?1",
-                [app_type],
-                |row| {
-                    Ok(AppProxyConfig {
-                        app_type: row.get(0)?,
-                        enabled: row.get::<_, i32>(1)? != 0,
-                        auto_failover_enabled: row.get::<_, i32>(2)? != 0,
-                        max_retries: row.get::<_, i32>(3)? as u32,
-                        streaming_first_byte_timeout: row.get::<_, i32>(4)? as u32,
-                        streaming_idle_timeout: row.get::<_, i32>(5)? as u32,
-                        non_streaming_timeout: row.get::<_, i32>(6)? as u32,
-                        circuit_failure_threshold: row.get::<_, i32>(7)? as u32,
-                        circuit_success_threshold: row.get::<_, i32>(8)? as u32,
-                        circuit_timeout_seconds: row.get::<_, i32>(9)? as u32,
-                        circuit_error_rate_threshold: row.get(10)?,
-                        circuit_min_requests: row.get::<_, i32>(11)? as u32,
-                    })
-                },
-            )
+                 FROM proxy_config WHERE app_type = ?1"
+            ).map_err(|e| AppError::Database(e.to_string()))?;
+            stmt.query_row([app_type], |row| {
+                Ok(AppProxyConfig {
+                    app_type: row.get(0)?,
+                    enabled: row.get::<_, i32>(1)? != 0,
+                    auto_failover_enabled: row.get::<_, i32>(2)? != 0,
+                    max_retries: row.get::<_, i32>(3)? as u32,
+                    streaming_first_byte_timeout: row.get::<_, i32>(4)? as u32,
+                    streaming_idle_timeout: row.get::<_, i32>(5)? as u32,
+                    non_streaming_timeout: row.get::<_, i32>(6)? as u32,
+                    circuit_failure_threshold: row.get::<_, i32>(7)? as u32,
+                    circuit_success_threshold: row.get::<_, i32>(8)? as u32,
+                    circuit_timeout_seconds: row.get::<_, i32>(9)? as u32,
+                    circuit_error_rate_threshold: row.get(10)?,
+                    circuit_min_requests: row.get::<_, i32>(11)? as u32,
+                })
+            })
         };
         // conn 已在 block 结束时释放
 
@@ -178,7 +176,7 @@ impl Database {
                 // 如果不存在，创建默认配置
                 self.init_proxy_config_rows().await?;
                 Ok(AppProxyConfig {
-                    app_type: app_type_owned,
+                    app_type: app_type.to_string(),
                     enabled: false,
                     auto_failover_enabled: false,
                     max_retries: 3,
@@ -785,22 +783,26 @@ impl Database {
     ///
     /// 用于托盘菜单构建等同步场景
     /// 返回 (enabled, auto_failover_enabled)
-    /// 同步读代理的监听地址和端口（读不到时用默认值）。给直连切换生成 Codex 休眠表的
-    /// 本地地址用，不需要代理在运行。
-    pub fn get_proxy_listen_sync(&self) -> (String, u16) {
+    /// 同步读客户端连代理用的主机和端口（读不到时用默认值）：本机设了客户端地址
+    /// （settings.json）就用它，否则是监听地址（交给 `proxy_origin` 处理 `0.0.0.0`）。
+    /// 写进客户端文件的代理地址都按这个生成，不需要代理在运行。
+    pub fn get_proxy_client_endpoint_sync(&self) -> (String, u16) {
         let fallback = || {
             let defaults = crate::proxy::types::ProxyConfig::default();
             (defaults.listen_address, defaults.listen_port)
         };
-        let Ok(conn) = self.conn.lock() else {
-            return fallback();
+        let (listen_address, port) = match self.conn.lock() {
+            Ok(conn) => conn
+                .query_row(
+                    "SELECT listen_address, listen_port FROM proxy_config WHERE app_type = 'claude'",
+                    [],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)? as u16)),
+                )
+                .unwrap_or_else(|_| fallback()),
+            Err(_) => fallback(),
         };
-        conn.query_row(
-            "SELECT listen_address, listen_port FROM proxy_config WHERE app_type = 'claude'",
-            [],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)? as u16)),
-        )
-        .unwrap_or_else(|_| fallback())
+        let host = crate::settings::get_proxy_client_host().unwrap_or(listen_address);
+        (host, port)
     }
 
     pub fn get_proxy_flags_sync(&self, app_type: &str) -> (bool, bool) {

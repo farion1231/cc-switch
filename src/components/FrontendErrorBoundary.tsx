@@ -32,10 +32,10 @@ export class FrontendErrorBoundary extends React.Component<
     }
 
     return (
-      <main className="flex min-h-screen items-center justify-center bg-background p-6 text-foreground">
+      <main className="flex min-h-screen items-center justify-center bg-surface p-6 text-fg-1">
         <section
           role="alert"
-          className="w-full max-w-md space-y-5 rounded-lg border border-border bg-card p-6 shadow-sm"
+          className="w-full max-w-md space-y-5 rounded-lg border border-border bg-surface p-6 shadow-sm"
         >
           <div className="flex items-start gap-3">
             <TriangleAlert className="mt-0.5 size-5 shrink-0 text-destructive" />
@@ -45,7 +45,7 @@ export class FrontendErrorBoundary extends React.Component<
                   defaultValue: "界面遇到了问题",
                 })}
               </h1>
-              <p className="text-sm leading-6 text-muted-foreground">
+              <p className="text-sm leading-6 text-fg-2">
                 {i18n.t("errors.frontendCrashMessage", {
                   defaultValue:
                     "已尝试将错误信息写入应用诊断日志。请重新加载界面；如果问题持续，请在提交 Issue 时附上日志。",

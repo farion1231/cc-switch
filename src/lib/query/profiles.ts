@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { profilesApi, providersApi } from "@/lib/api";
 import type { ProfileScope } from "@/lib/api/profiles";
 import { extractErrorMessage } from "@/utils/errorUtils";

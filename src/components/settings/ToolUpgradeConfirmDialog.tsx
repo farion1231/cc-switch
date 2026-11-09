@@ -62,7 +62,7 @@ export function ToolUpgradeConfirmDialog({
             tabIndex={-1}
             className="flex items-center gap-2 text-base font-semibold"
           >
-            <AlertTriangle className="h-5 w-5 text-yellow-500" />
+            <AlertTriangle className="h-5 w-5 text-warning-text" />
             {t("settings.toolUpgradeConfirmTitle")}
           </DialogTitle>
           <DialogDescription className="text-sm leading-relaxed">
@@ -74,13 +74,13 @@ export function ToolUpgradeConfirmDialog({
           {plans.map((plan) => (
             <div
               key={plan.tool}
-              className="space-y-1.5 rounded-lg border border-yellow-500/20 bg-yellow-500/5 p-2.5"
+              className="space-y-1.5 rounded-lg border border-transparent bg-warning-soft p-2.5"
             >
               <div className="text-xs font-medium">
                 {displayName(plan.tool)}
               </div>
               {!plan.anchored && (
-                <div className="text-[10px] leading-snug text-yellow-600 dark:text-yellow-400">
+                <div className="text-badge leading-snug text-warning-text">
                   {t("settings.toolUpgradeUnanchoredHint")}
                 </div>
               )}
@@ -92,11 +92,11 @@ export function ToolUpgradeConfirmDialog({
                 ))}
               </ul>
               <div className="space-y-0.5">
-                <div className="text-[10px] text-muted-foreground">
+                <div className="text-badge text-fg-2">
                   {t("settings.toolUpgradeWillRun")}
                 </div>
                 <code
-                  className="block truncate rounded bg-background/80 px-1.5 py-0.5 font-mono text-[10px] text-foreground"
+                  className="block truncate rounded bg-surface px-1.5 py-0.5 font-mono text-badge text-fg-1"
                   title={plan.command}
                 >
                   {plan.command}

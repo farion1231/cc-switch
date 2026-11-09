@@ -1,0 +1,208 @@
+[
+  {
+    "role": "user",
+    "ts": 1791014400000,
+    "id": "1201",
+    "turnId": "t1",
+    "blocks": [
+      {
+        "type": "text",
+        "text": "帮我看看服务器上的磁盘占用，顺便搜一下 ext4 预留空间怎么调。"
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "ts": 1791014404000,
+    "id": "1202",
+    "turnId": "t1",
+    "blocks": [
+      {
+        "type": "text",
+        "text": "我先看一下磁盘使用情况。"
+      },
+      {
+        "type": "tool_call",
+        "id": "call_h3rm3s01",
+        "rawName": "terminal",
+        "kind": "shell",
+        "title": "df -h /",
+        "inputPreview": "{\"command\": \"df -h /\", \"timeout\": 30}",
+        "inputTotalLen": 37
+      },
+      {
+        "type": "tool_call",
+        "id": "call_h3rm3s02",
+        "rawName": "web_search",
+        "kind": "web",
+        "title": "ext4 reserved blocks tune2fs",
+        "inputPreview": "{\"query\": \"ext4 reserved blocks tune2fs\"}",
+        "inputTotalLen": 41
+      }
+    ],
+    "meta": {
+      "model": "hermes-4-405b"
+    }
+  },
+  {
+    "role": "tool",
+    "ts": 1791014405000,
+    "id": "1203",
+    "turnId": "t1",
+    "blocks": [
+      {
+        "type": "tool_result",
+        "callId": "call_h3rm3s01",
+        "status": "unknown",
+        "preview": "Filesystem      Size  Used Avail Use% Mounted on\n/dev/vda1        79G   74G  1.3G  99% /",
+        "totalLen": 88,
+        "lineCount": 2,
+        "truncated": false
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "ts": 1791014407000,
+    "id": "1205",
+    "turnId": "t1",
+    "blocks": [
+      {
+        "type": "tool_result",
+        "callId": "call_h3rm3s02",
+        "status": "unknown",
+        "preview": "1. tune2fs(8) — Linux manual page\n   -m reserved-blocks-percentage: Set the percentage of the filesystem which may only be allocated by privileged processes.\n2. How to reduce reserved space on ext4 — Ask Ubuntu\n   sudo tune2fs -m 1 /dev/sda1\n3. Reserved blocks explained — ArchWiki\n   By default 5% of the filesystem blocks are reserved for the super-user.\n4. ext4 Howto — kernel.org wiki\n   Reserved block count can be adjusted on a mounted filesystem.\n5. tune2fs reserved blocks on root — Server Fault\n   Reducing below 1% on the root filesystem is not recommended.\n6. ext4 filesystem tuning — Red Hat Docs\n   Use tune2fs -l to inspect the current reserved block count.",
+        "totalLen": 3480,
+        "lineCount": 40,
+        "truncated": true,
+        "full": {
+          "kind": "sqlite",
+          "table": "messages",
+          "id": "1205",
+          "column": "content",
+          "pointer": ""
+        }
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "ts": 1791014420000,
+    "id": "1206",
+    "turnId": "t1",
+    "blocks": [
+      {
+        "type": "text",
+        "text": "根分区已用 99%。ext4 默认给 root 预留 5%（约 4G），可以用 `sudo tune2fs -m 1 /dev/vda1` 降到 1%，但根分区不建议低于 1%。更稳妥的是先清理 `/var/log/journal`。"
+      }
+    ],
+    "meta": {
+      "model": "hermes-4-405b"
+    }
+  },
+  {
+    "role": "user",
+    "ts": 1791014520000,
+    "id": "1207",
+    "turnId": "t2",
+    "blocks": [
+      {
+        "type": "text",
+        "text": "那清一下 journal，保留 3 天。"
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "ts": 1791014523000,
+    "id": "1208",
+    "turnId": "t2",
+    "blocks": [
+      {
+        "type": "tool_call",
+        "id": "call_h3rm3s03",
+        "rawName": "terminal",
+        "kind": "shell",
+        "title": "sudo journalctl --vacuum-time=3d",
+        "inputPreview": "{\"command\": \"sudo journalctl --vacuum-time=3d\"}",
+        "inputTotalLen": 47
+      }
+    ],
+    "meta": {
+      "model": "hermes-4-405b"
+    }
+  },
+  {
+    "role": "tool",
+    "ts": 1791014529000,
+    "id": "1209",
+    "turnId": "t2",
+    "blocks": [
+      {
+        "type": "tool_result",
+        "callId": "",
+        "status": "unknown",
+        "preview": "Vacuuming done, freed 2.1G of archived journals from /var/log/journal/3f1c9e.",
+        "totalLen": 77,
+        "lineCount": 1,
+        "truncated": false
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "ts": 1791014529000,
+    "id": "1210",
+    "turnId": "t2",
+    "blocks": [
+      {
+        "type": "tool_result",
+        "callId": "call_h3rm3s03",
+        "status": "unknown",
+        "preview": "Deleted archived journal /var/log/journal/3f1c9e/system@0005f1-…journal (128.0M).",
+        "totalLen": 81,
+        "lineCount": 1,
+        "truncated": false
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "ts": 1791014535000,
+    "id": "1211",
+    "turnId": "t2",
+    "blocks": [
+      {
+        "type": "text",
+        "text": "已清理 2.1G 的 journal 归档，现在根分区剩余约 3.4G。"
+      }
+    ],
+    "meta": {
+      "model": "hermes-4-405b"
+    }
+  },
+  {
+    "role": "user",
+    "ts": 1791014640000,
+    "id": "1212",
+    "turnId": "t3",
+    "blocks": [
+      {
+        "type": "text",
+        "text": "以后怎么避免再满？"
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "ts": 1791014646000,
+    "id": "1213",
+    "turnId": "t3",
+    "blocks": [
+      {
+        "type": "text",
+        "text": "在 `/etc/systemd/journald.conf` 里设 `SystemMaxUse=500M`，再 `systemctl restart systemd-journald`。"
+      }
+    ]
+  }
+]

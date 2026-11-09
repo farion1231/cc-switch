@@ -1,0 +1,26 @@
+{
+  "version": "4.0.4",
+  "items": [
+    {
+      "type": "improve",
+      "zh": "v4.0 正式版发布，之后应用内会自动更新",
+      "zh-TW": "v4.0 正式版發布，之後應用程式內會自動更新",
+      "en": "v4.0 is now a stable release; future versions update automatically in the app",
+      "ja": "v4.0 正式版をリリース。今後はアプリ内で自動更新されます"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 macOS 上更新或改配置目录后重启，窗口不在最前面",
+      "zh-TW": "修復 macOS 上更新或變更設定目錄後重新啟動，視窗不在最前面",
+      "en": "Fixed the window opening behind other apps after an update or config-directory restart on macOS",
+      "ja": "macOS で更新や設定フォルダ変更後に再起動すると、ウィンドウが前面に出ない問題を修正"
+    },
+    {
+      "type": "fix",
+      "zh": "修复用量页窗口较窄时，请求日志的速度列被挤出视野",
+      "zh-TW": "修復用量頁視窗較窄時，請求日誌的速度欄被擠出視野",
+      "en": "Fixed the request log's speed column being pushed out of view in a narrow window",
+      "ja": "使用量ページのウィンドウが狭いと、リクエストログの速度列が見えなくなる問題を修正"
+    }
+  ]
+}

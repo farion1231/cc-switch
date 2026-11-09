@@ -20,17 +20,71 @@ use crate::error::AppError;
 /// 为了让 Windows CI/本地测试能稳定隔离真实用户数据，可通过 `CC_SWITCH_TEST_HOME`
 /// 显式覆盖 home dir（仅用于测试/调试场景）。
 pub fn get_home_dir() -> PathBuf {
-    if let Ok(home) = std::env::var("CC_SWITCH_TEST_HOME") {
-        let trimmed = home.trim();
-        if !trimmed.is_empty() {
-            return PathBuf::from(trimmed);
-        }
+    if let Some(home) = test_home_override() {
+        return home;
     }
 
     dirs::home_dir().unwrap_or_else(|| {
         log::warn!("无法获取用户主目录，回退到当前目录");
         PathBuf::from(".")
     })
+}
+
+/// 检测路径是否为 WSL 网络路径（如 \\wsl$\Ubuntu\... 或 \\wsl.localhost\Ubuntu\...）
+/// 注意：仅检测直接 UNC 路径，映射磁盘符（如 Z: -> \\wsl$\...）无法检测
+#[cfg(windows)]
+pub(crate) fn is_wsl_path(path: &Path) -> bool {
+    use std::path::Prefix;
+    if let Some(Component::Prefix(prefix)) = path.components().next() {
+        match prefix.kind() {
+            Prefix::UNC(server, _) | Prefix::VerbatimUNC(server, _) => {
+                let s = server.to_string_lossy();
+                s.eq_ignore_ascii_case("wsl$") || s.eq_ignore_ascii_case("wsl.localhost")
+            }
+            _ => false,
+        }
+    } else {
+        false
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn is_wsl_path(_path: &Path) -> bool {
+    false
+}
+
+/// 临时目录在 WSL 共享路径上时（WSL2 夜间测试），SQLite 拿不到文件锁，
+/// 在磁盘上建 SQLite 夹具的测试只能跳过。
+#[cfg(test)]
+pub(crate) fn sqlite_unsupported_in_temp_dir() -> bool {
+    let temp = std::env::temp_dir();
+    let unsupported = is_wsl_path(&temp);
+    if unsupported {
+        eprintln!(
+            "temp dir {} is a WSL share where SQLite cannot lock; skipping",
+            temp.display()
+        );
+    }
+    unsupported
+}
+
+/// `CC_SWITCH_TEST_HOME` 的覆盖值（测试/调试用的 home 覆盖）。
+///
+/// 返回 `Some` 即表示显式覆盖生效——此时任何基于“库里有没有 db”的启发式回退
+/// 都不该再介入，否则测试会被引导到真实用户数据上。
+///
+/// 用 `var_os` 而非 `var`：非 Unicode 的取值只应让路径变 lossy，而不该让
+/// “覆盖是否存在”的判断失效、进而退回真实用户目录。
+fn test_home_override() -> Option<PathBuf> {
+    let raw = std::env::var_os("CC_SWITCH_TEST_HOME")?;
+    // to_string_lossy 的结果必须先绑住，否则 trim 借的是一个已释放的临时值。
+    let lossy = raw.to_string_lossy();
+    let trimmed = lossy.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(trimmed))
+    }
 }
 
 /// 获取 Claude Code 配置目录路径
@@ -267,6 +321,16 @@ pub fn get_app_config_dir() -> PathBuf {
     // v3.10.3 可能在 `HOME/.cc-switch/` 下创建/使用了数据库。
     // 这里仅在“默认位置没有数据库”时回退到旧位置，避免再次出现“供应商消失”问题，
     // 同时也避免新安装因为 `HOME` 被设置而写入非预期路径。
+    //
+    // `CC_SWITCH_TEST_HOME` 是测试用的显式 home 覆盖，必须在这里短路：测试的临时
+    // 目录本来就不带 cc-switch.db，若不先返回，下面的 HOME 回退会把测试指向真实
+    // 用户库（Windows 上 runner 的 HOME 下常常确实有该 db），既污染用户数据，又让
+    // 隔离测试读到别人写的状态而失败。
+    #[cfg(windows)]
+    if test_home_override().is_some() {
+        return default_dir;
+    }
+
     #[cfg(windows)]
     {
         let default_db = default_dir.join("cc-switch.db");
@@ -445,6 +509,9 @@ pub(crate) fn stage_write(
     #[cfg(not(unix))]
     let _ = unix_mode;
 
+    let resolved = resolve_symlink_target(path);
+    let path = resolved.as_path();
+
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
     }
@@ -521,17 +588,88 @@ pub(crate) fn stage_write(
     })
 }
 
+/// 目标是软链接时返回它最终指向的文件（逐跳 `read_link`，相对目标按链接所在目录解析），
+/// 否则原样返回。原子写要替换的是这个最终文件：rename 到软链接本身会把链接换成普通
+/// 文件（Unix），Windows 的 `ReplaceFileW` 则直接报 os error 1464。只解析最后一段，
+/// 不碰路径里的目录软链；除相对目标带 `..` 外不做 `canonicalize`（Windows 上会把路径
+/// 改写成 `\\?\` 形式），普通文件原样返回。
+/// 悬空链接照样返回它指向的路径，写入时会在那里新建文件、链接保留。
+fn resolve_symlink_target(path: &Path) -> PathBuf {
+    // 与 Linux 的 MAXSYMLINKS 一致，防止链接成环时死循环。
+    const MAX_HOPS: usize = 40;
+    let mut current = path.to_path_buf();
+    for _ in 0..MAX_HOPS {
+        let is_link = fs::symlink_metadata(&current)
+            .map(|meta| meta.file_type().is_symlink())
+            .unwrap_or(false);
+        if !is_link {
+            return current;
+        }
+        let Ok(target) = fs::read_link(&current) else {
+            return current;
+        };
+        current = if target.is_absolute() {
+            target
+        } else {
+            match current.parent() {
+                Some(parent) => join_link_target(parent, &target),
+                None => target,
+            }
+        };
+    }
+    log::warn!("软链接层数过多，按原路径写入: {}", path.display());
+    path.to_path_buf()
+}
+
+/// 把相对链接目标接到链接所在目录上。目标里有 `..` 时先把目录解析成真实路径再逐段
+/// 回退：Windows 按字面折叠 `..`，链接所在目录本身是 junction / 目录软链时会退到
+/// 错误的上级目录（Unix 内核按真实路径解析，结果一样）。
+fn join_link_target(parent: &Path, target: &Path) -> PathBuf {
+    if !target
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return parent.join(target);
+    }
+    let Ok(mut resolved) = fs::canonicalize(parent) else {
+        return parent.join(target);
+    };
+    for component in target.components() {
+        match component {
+            Component::ParentDir => {
+                // 已走过的段里也可能有目录软链，回退前先解析成真实路径。
+                if let Ok(real) = fs::canonicalize(&resolved) {
+                    resolved = real;
+                }
+                resolved.pop();
+            }
+            Component::CurDir => {}
+            other => resolved.push(other.as_os_str()),
+        }
+    }
+    resolved
+}
+
 /// 原子写的后半步：用 `tmp` 替换 `path`。崩溃恢复也用它提交上次留下的临时文件。
+/// `path` 是软链接时替换它指向的文件，链接本身保留。
 ///
 /// 失败时临时文件留在原处：写入引擎的 pending 指着它，下次恢复要靠它前滚（目标文件被
 /// 占用、只读这类失败，过后多半能补完）。只做一次性原子写的调用方自己删。
 pub(crate) fn commit_staged(tmp: &Path, path: &Path) -> Result<(), AppError> {
+    let resolved = resolve_symlink_target(path);
+    let path = resolved.as_path();
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
         use windows_sys::Win32::{
             Foundation::ERROR_NOT_SUPPORTED, Storage::FileSystem::ReplaceFileW,
         };
+
+        // WSL UNC paths reject ReplaceFileW with ERROR_NOT_SUPPORTED (50) on
+        // every attempt; treat it as failed up front and let the rename
+        // fallback below do the work, instead of burning the syscall (and the
+        // retry loop) on each write.
+        let skip_replace = is_wsl_path(path);
 
         let replaced: Vec<u16> = path
             .as_os_str()
@@ -549,15 +687,19 @@ pub(crate) fn commit_staged(tmp: &Path, path: &Path) -> Result<(), AppError> {
         for _ in 0..3 {
             // SAFETY: both path buffers are NUL-terminated UTF-16 and remain alive for the
             // duration of the call. Backup, exclusion, and reserved pointers are intentionally null.
-            let replaced_ok = unsafe {
-                ReplaceFileW(
-                    replaced.as_ptr(),
-                    replacement.as_ptr(),
-                    std::ptr::null(),
-                    0,
-                    std::ptr::null(),
-                    std::ptr::null(),
-                )
+            let replaced_ok = if skip_replace {
+                0
+            } else {
+                unsafe {
+                    ReplaceFileW(
+                        replaced.as_ptr(),
+                        replacement.as_ptr(),
+                        std::ptr::null(),
+                        0,
+                        std::ptr::null(),
+                        std::ptr::null(),
+                    )
+                }
             };
             if replaced_ok != 0 {
                 completed = true;
@@ -568,7 +710,7 @@ pub(crate) fn commit_staged(tmp: &Path, path: &Path) -> Result<(), AppError> {
             // WSL UNC paths reject ReplaceFileW with ERROR_NOT_SUPPORTED (50).
             // std::fs::rename uses a different replace-existing API on Windows.
             let replace_not_supported =
-                replace_error.raw_os_error() == Some(ERROR_NOT_SUPPORTED as i32);
+                skip_replace || replace_error.raw_os_error() == Some(ERROR_NOT_SUPPORTED as i32);
             if replace_error.kind() != std::io::ErrorKind::NotFound && !replace_not_supported {
                 last_error = Some(replace_error);
                 break;
@@ -619,6 +761,20 @@ pub(crate) fn commit_staged(tmp: &Path, path: &Path) -> Result<(), AppError> {
 mod tests {
     use super::*;
 
+    /// 共享的环境变量互斥锁：改 `HOME` / `CC_SWITCH_TEST_HOME` 这类进程级
+    /// 状态的测试都必须经它（配合 `#[serial_test::serial]`）。锁必须放在
+    /// 函数里经 `OnceLock` 取用——写成某个测试函数体内的 `static` 只对那一个
+    /// 测试可见，等于没有互斥。
+    ///
+    /// 目前唯一使用者是下面的 Windows 回归测试，故同样 cfg 掉，避免在
+    /// Linux/macOS 的 `clippy -D warnings` 里变成 never-used。
+    #[cfg(windows)]
+    fn env_lock() -> &'static std::sync::Mutex<()> {
+        use std::sync::OnceLock;
+        static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+    }
+
     fn assert_atomic_write_replaces_existing_file(dir: &Path) {
         let path = dir.join("atomic-write-contract.json");
         std::fs::write(&path, b"old contents").unwrap();
@@ -662,6 +818,111 @@ mod tests {
         // 一次性的原子写不留临时文件。
         assert!(staged.commit().is_err());
         assert!(!tmp.exists());
+    }
+
+    /// dotfiles 用户把 settings.json 等配置软链到别的目录（#6764 / #9283）：原子写要
+    /// 写透到链接指向的文件，链接本身保留，临时文件建在目标旁边、不留残留。
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_writes_through_symlinks_and_keeps_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let dotfiles = dir.path().join("dotfiles");
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(&dotfiles).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        let real = dotfiles.join("settings.json");
+        std::fs::write(&real, b"old contents").unwrap();
+        // 相对链接 + 两跳：home/settings.json -> home/hop.json -> ../dotfiles/settings.json
+        let hop = home.join("hop.json");
+        let link = home.join("settings.json");
+        std::os::unix::fs::symlink("../dotfiles/settings.json", &hop).unwrap();
+        std::os::unix::fs::symlink("hop.json", &link).unwrap();
+
+        atomic_write_private(&link, b"new contents").unwrap();
+
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(std::fs::symlink_metadata(&hop)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(std::fs::read(&real).unwrap(), b"new contents");
+        for d in [&dotfiles, &home] {
+            let leftovers: Vec<_> = std::fs::read_dir(d)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+                .filter(|name| name.contains(".tmp."))
+                .collect();
+            assert!(
+                leftovers.is_empty(),
+                "temporary files remain: {leftovers:?}"
+            );
+        }
+
+        // 写入引擎的两步写（以及崩溃前滚）拿的也是链接路径。
+        let staged = stage_write(&link, b"engine contents", None, false).unwrap();
+        assert_eq!(
+            staged.tmp_path().parent().unwrap().canonicalize().unwrap(),
+            dotfiles.canonicalize().unwrap()
+        );
+        let tmp = staged.tmp_path().to_path_buf();
+        commit_staged(&tmp, &link).unwrap();
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(std::fs::read(&real).unwrap(), b"engine contents");
+    }
+
+    /// 链接所在目录本身是目录软链、相对目标带 `..` 时，`..` 要按真实目录回退。
+    #[cfg(unix)]
+    #[test]
+    fn symlink_parent_dir_is_resolved_before_walking_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let sync = dir.path().join("sync");
+        let real_dir = sync.join("claude");
+        std::fs::create_dir_all(&real_dir).unwrap();
+        let real = sync.join("settings.json");
+        std::fs::write(&real, b"old").unwrap();
+        std::os::unix::fs::symlink("../settings.json", real_dir.join("settings.json")).unwrap();
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        std::os::unix::fs::symlink(&real_dir, home.join(".claude")).unwrap();
+        let link = home.join(".claude").join("settings.json");
+
+        assert_eq!(resolve_symlink_target(&link), real.canonicalize().unwrap());
+        atomic_write(&link, b"new").unwrap();
+        assert_eq!(std::fs::read(&real).unwrap(), b"new");
+
+        // 目标里先经过一个目录软链再回退：`sub/../other.json`，sub -> sync/claude。
+        let other = sync.join("other.json");
+        std::fs::write(&other, b"old").unwrap();
+        std::os::unix::fs::symlink(&real_dir, home.join("sub")).unwrap();
+        let link2 = home.join("other.json");
+        std::os::unix::fs::symlink("sub/../other.json", &link2).unwrap();
+        assert_eq!(
+            resolve_symlink_target(&link2),
+            other.canonicalize().unwrap()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_creates_the_target_of_a_dangling_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real.json");
+        let link = dir.path().join("link.json");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        atomic_write(&link, b"contents").unwrap();
+
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(std::fs::read(&real).unwrap(), b"contents");
     }
 
     #[cfg(windows)]
@@ -916,6 +1177,51 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&sorted_a).unwrap(),
             serde_json::to_string(&sorted_b).unwrap(),
+        );
+    }
+
+    /// 回归：`CC_SWITCH_TEST_HOME` 必须盖过 v3.10.3 的 `HOME` 兼容回退。
+    ///
+    /// Windows 上回退只看"默认位置有没有 cc-switch.db"，而测试临时目录里通常没有，
+    /// 于是会被引向 `HOME/.cc-switch`——runner 的 HOME 下往往真有一份 db，测试就此
+    /// 读写到真实用户数据（既污染用户库，又让断言读到别人写下的状态）。
+    #[cfg(windows)]
+    #[test]
+    #[serial_test::serial]
+    fn test_home_short_circuits_the_home_legacy_fallback() {
+        // 进程级环境变量的读写必须与同样改它们的测试互斥。锁是模块级共享的
+        // （写成测试函数体内的 static 只能锁住自己，等于没锁），见
+        // `proxy::http_client` 里同一套 env_lock() 用法。
+        let _guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
+
+        // 假装 HOME 指向另一处，并且那里有一份 db——正是会触发回退的形状
+        let legacy_home = tempfile::tempdir().expect("tempdir");
+        let legacy_dir = legacy_home.path().join(".cc-switch");
+        std::fs::create_dir_all(&legacy_dir).expect("create legacy dir");
+        std::fs::write(legacy_dir.join("cc-switch.db"), b"legacy").expect("seed legacy db");
+
+        let test_home = tempfile::tempdir().expect("tempdir");
+        let saved_home = std::env::var_os("HOME");
+        let saved_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+
+        std::env::set_var("HOME", legacy_home.path());
+        std::env::set_var("CC_SWITCH_TEST_HOME", test_home.path());
+
+        let dir = get_app_config_dir();
+
+        match saved_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+        match saved_home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+
+        let expected = test_home.path().join(".cc-switch");
+        assert_eq!(
+            dir, expected,
+            "测试 home 优先：不得回退到 HOME 下的旧库目录"
         );
     }
 }

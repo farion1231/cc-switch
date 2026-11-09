@@ -2,7 +2,7 @@
 
 # CC Switch
 
-### Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes Agent、Pi、MiniMax Code のオールインワン管理ツール
+### Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes Agent、Pi、MiniMax Code、Kimi Code、Oh My Pi のオールインワン管理ツール
 
 **ワンクリックで API プロバイダを切り替え、MCP・Skills・プロンプトを一元管理。JSON / TOML / YAML の設定ファイルを手作業で編集する必要はもうありません。**
 
@@ -29,9 +29,9 @@
 <details open>
 <summary>クリックで折りたたむ</summary>
 
-[![Kimi K2.7 Code](https://gcdn.moonshot.cn/growth-cdn/sponsor/kimi-en.png)](https://platform.kimi.ai?track_id=track-674ed6e2af924a5682a87421f7cf753a&aff=cc-switch)
+[![Kimi K3.1 Pro](assets/partners/banners/kimi-banner-en.png)](https://platform.kimi.ai?track_id=track-674ed6e2af924a5682a87421f7cf753a&aff=cc-switch)
 
-Kimi K3 は Moonshot AI がこれまでに開発した中で最も高性能なモデルであり、世界初のオープンソース 3T クラスモデルです。2.8 兆パラメータ、ネイティブな視覚能力、100 万トークンのコンテキストウィンドウを備え、長期にわたるコーディング、ナレッジワーク、推論タスクにおいてフロンティア級の性能を発揮します。CC Switch を使えば、さまざまなエージェントツールで Kimi を手軽に設定・切り替えできます。
+Kimi K3.1 Pro は、Moonshot AI がこれまでに開発した中で最も高性能な 3T クラスのオープンウェイトモデルで、100 万トークンのコンテキストウィンドウに対応しています。Kimi K3 をベースに、より大規模な事後学習の計算資源を投入したことで、コーディング、エージェントワークフロー、3D 制作、推論の各分野で着実に性能が向上しています。CC Switch を使えば、さまざまなエージェントツールで Kimi K3.1 Pro を手軽に設定・切り替えできます。
 
 コーディング作業がメインですか？**Kimi Code プラン**（[中文站](https://www.kimi.com/code?aff=cc-switch) | [Global](https://www.kimi.ai/code?aff=cc-switch)）を試すか、Kimi オープンプラットフォームの **API**（[中文站](https://platform.kimi.com?track_id=track-7cf2b91dcde043eda6ef9a95951a042c&aff=cc-switch) | [Global](https://platform.kimi.ai?track_id=track-674ed6e2af924a5682a87421f7cf753a&aff=cc-switch)）をご利用ください。
 
@@ -43,11 +43,6 @@ Kimi K3 は Moonshot AI がこれまでに開発した中で最も高性能な�
 <tr>
 <td width="180"><a href="https://www.packyapi.ai/register?aff=cc-switch"><img src="assets/partners/logos/packycode.png" alt="PackyCode" width="150"></a></td>
 <td>PackyCode のご支援に感謝します！PackyCode は Claude Code、Codex、Gemini などのリレーサービスを提供する信頼性の高い API 中継プラットフォームです。本ソフト利用者向けに特別割引があります：<a href="https://www.packyapi.ai/register?aff=cc-switch">このリンク</a>で登録し、チャージ時に「cc-switch」クーポンを入力すると 10% オフになります。</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://zetaapi.ai/go/u117"><img src="assets/partners/logos/zetaapi-banner.png" alt="ZetaAPI" width="150"></a></td>
-<td>本プロジェクトをご支援いただいている ZetaAPI に感謝します！ZetaAPI は、モデル品質の忠実性、水増しなし、性能劣化なし、公式価格の 35% から利用できる低価格を主な特徴としています。プラットフォームはトラフィックの混在、低品質モデルへの密かな切り替え、虚偽のモデルルーティングを行わず、Claude Code、Codex、Gemini、ChatGPT などの主要 AI モデルに対応しており、モデル品質を維持しながら API 利用コストを大幅に削減できます。同時に、ZetaAPI はエンタープライズ級の SLA 安定性保証、標準 API 互換、1つの Key による複数モデル接続、迅速な導入、従量課金などの機能を提供し、AI プロダクト、コード生成、企業内ツール、カスタマーサポート、コンテンツ生成、自動化ワークフローなどの用途に適しています。万が一、モデル品質が表記内容と一致しないことが確認された場合、ZetaAPI は 10 倍補償保証を提供し、ユーザーがより安定して、透明性高く、安心して利用できる環境を実現します。<a href="https://zetaapi.ai/go/u117">こちらのリンク</a>から登録し、初回チャージ時にプロモコード CC-SWITCH を使用すると、CC Switch ユーザー限定の初回チャージ 10% オフ特典をご利用いただけます！</td>
 </tr>
 
 <tr>
@@ -63,9 +58,14 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 
 <tr>
 <td width="180"><a href="https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/"><img src="assets/partners/logos/pateway.png" alt="PatewayAI" width="150"></a></td>
-<td>PatewayAI のご支援に感謝します！PatewayAI はヘビーな AI 開発者向けに、公式直結の高品質モデル API 中継サービスを専門に提供するプロバイダーです。Claude シリーズ全モデルおよび Codex シリーズに対応し、100% 公式ソースから直接提供。混ぜ物・水増しは一切なく、検証も歓迎します。課金は透明で、トークン単位の請求書を 1 件ずつ照合可能です。
-エンタープライズ級の高同時接続にも対応し、法人のお客様には専用の管理プラットフォームを提供。正式契約および請求書発行に対応しており、詳細は公式サイトの連絡先よりお問い合わせください。
-現在、<a href="https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/">このリンク</a>からご登録いただくと $3 のトライアルクレジットを進呈。チャージは最安で元価格の 60%、友達紹介は双方にボーナスが付与され、紹介報酬は最大 $150！</td>
+<td>PatewayAI のご支援に感謝します！PatewayAI は経験豊富な AI 開発者向けの API 中継サービスプロバイダーで、Claude、GPT シリーズ、そして中国の主要モデルを幅広くフルサポートしています。すべてのモデルは公式の高品質チャネルから提供され、希釈や偽装は一切なく、課金明細も透明で確認できます。
+エコノミーモードは最安で元価格の 5%。<a href="https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/">このリンク</a>から登録すると $1 の無料トライアルクレジットがもらえ、不定期のキャンペーンで無料クレジットを受け取ることもできます。
+企業向けの高並列処理、専用管理コンソール、正式な契約書とインボイスにも対応し、最大 $150 の双方向紹介チャージ報酬も用意しています。</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://hao.ai/invite/DTBZS3OR"><img src="assets/partners/logos/haoai-banner.png" alt="hao.ai" width="150"></a></td>
+<td>本プロジェクトのスポンサーである hao.ai に感謝いたします！hao.ai は、開発者とチーム向けの高速で安定した LLM 統合 API ゲートウェイです。1 つの API キーと統一インターフェースで GPT、Claude、xAI Grok などの主要モデルにアクセスでき、OpenAI や Anthropic などの一般的なプロトコルと SDK に対応しています。モデルルーティング、フェイルオーバー、チーム管理、完全な呼び出しログを備え、モデル価格は公式参考価格の最大 85% オフ。AI アプリケーションをよりシンプルに、より安定して、より低コストで構築できます。hao.ai は CC Switch ユーザー向けに特別特典を用意しています：<a href="https://hao.ai/invite/DTBZS3OR">このリンク</a>から登録すると、初回注文で 5% のボーナスクレジットを受け取れます！</td>
 </tr>
 
 <tr>
@@ -79,13 +79,40 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
-<td width="180"><a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF"><img src="assets/partners/logos/shengsuanyun.png" alt="Shengsuanyun" width="150"></a></td>
-<td>胜算雲（Shengsuanyun）のご支援に感謝します！胜算雲は AI ネイティブチーム向けのスーパーファクトリーであり、産業グレードの AI タスク並列実行プラットフォームです。モデルマーケットプレイスでは Claude、ChatGPT、Gemini をはじめとする国内外の LLM およびマルチメディアモデルの計算リソースを集約・直接提供。リバースエンジニアリングや品質低下は一切なく、プラットフォーム全体のモデル SLA 可用性は 99.7% に達し、<a href="https://watch.shengsuanyun.com/status/shengsuanyun">監視ダッシュボード</a>は常時グリーン表示です。さらにエンタープライズ向けカスタムゲートウェイを提供し、チームのきめ細かなコスト・権限管理、スマートルーティング、セキュリティ保護、BYOK（自社キー持ち込み）ホスティングを実現します。従量課金およびトークンプラン（近日公開）対応で、請求書発行にも対応。<a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF">このリンク</a>から新規登録すると 10 元分のクレジットと初回チャージ 10% ボーナスが付与されます。</td>
+<td width="180"><a href="https://www.openmodel.ai?ref=cc-switch"><img src="assets/partners/logos/openmodel-banner.jpg" alt="OpenModel" width="150"></a></td>
+<td>本プロジェクトのスポンサーである OpenModel に感謝いたします！OpenModel は Codex と Claude Code 向けにクライアント専用の割引を提供しており、対応モデルを Codex 経由で使うと最大 90% オフ、Claude Code 経由で使うと最大 60% オフになります。開発スタイルを変えることなく API コストを削減できます。OpenModel の API Key を設定するだけで、いつも通り Codex や Claude Code を使い続けられます。対応クライアントは自動で判別され、追加パラメータや手動でのルーティング設定なしに割引ルートが適用されます。さらに API Key ごとにフォールバック動作を設定でき、割引ルートが一時的に利用できない場合に標準価格で続行するか停止するかを選べます。CC Switch ユーザーは<a href="https://www.openmodel.ai?ref=cc-switch">こちらのリンク</a>から登録し、プロモコード <strong>"cc-switch"</strong> を使うと初回チャージが 10% オフになります！</td>
 </tr>
 
 <tr>
-<td width="180"><a href="https://aigocode.app/invite/CC-SWITCH"><img src="assets/partners/logos/aigocode.png" alt="AIGoCode" width="150"></a></td>
-<td>本プロジェクトは AIGoCode のスポンサー提供でお届けしています。AIGoCode は、Claude Code・Codex・最新の Gemini モデルを統合したオールインワンのAIコーディングプラットフォームで、安定性・高速性・コストパフォーマンスに優れた開発サービスを提供します。柔軟なサブスクリプションプランを備え、レスポンスも非常に高速です。さらに、CC Switch ユーザー向けの特典として、<a href="https://aigocode.app/invite/CC-SWITCH">このリンク</a>から登録すると、初回チャージ時に10％分のボーナスクレジットが付与されます！</td>
+<td width="180"><a href="https://grooroute.pro/sign-up?aff=qqm9"><img src="assets/partners/logos/grooroute-banner.jpg" alt="GrooRoute Pro" width="150"></a></td>
+<td>本プロジェクトのスポンサーである GrooRoute Pro に感謝いたします！GrooRoute Pro は信頼性が高くスムーズな AI API 中継サービスプラットフォームで、OpenAI、Claude、DeepSeek など多数の主要モデルに対応しています。海外サーバーで運用されており、料金倍率のプランを自由に選択でき、従量課金とサブスクリプションの 2 つの料金体系から柔軟に選べます。回線は安定しており応答も速く、さまざまな AI 機能をより手軽に利用できます。CC Switch ユーザー向けの特典として、<a href="https://grooroute.pro/sign-up?aff=qqm9">こちらのリンク</a>から登録すると 5 元分の無料お試しクレジットがもらえます！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://buytoken.work/sign-up?aff=cc-switch"><img src="assets/partners/logos/buytoken-banner.png" alt="BuyToken" width="150"></a></td>
+<td>本プロジェクトのスポンサーである BuyToken に感謝いたします！BuyToken は Claude Code / Codex / DeepSeek などの各種中継サービスを提供し、エンタープライズ級の同時実行と迅速な請求書発行に対応、安定して長く続くサービスを目指しています。CC Switch ユーザー向けの特別特典もご用意しています：<a href="https://buytoken.work/sign-up?aff=cc-switch">このリンク</a>から登録すると 3 元分のお試しクレジットを受け取れ、さらに初回チャージが 10% オフになります！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://gpt.ge/signup?aff=URNP"><img src="assets/partners/logos/vapi-banner.jpg" alt="V-API" width="150"></a></td>
+<td>本プロジェクトのスポンサーである V-API に感謝いたします！V-API は 3 年の実績を持つブランドで、個人・開発者・企業向けに安定・高速・安全な高品質 LLM API サービスプラットフォームを提供しており、契約締結と正規の請求書発行（普通 / 専用）に対応しています。CC Switch ユーザー向けの特別特典として、<a href="https://gpt.ge/signup?aff=URNP">このリンク</a>から登録すると初回注文が 2 元引きのうえ 10% オフになります！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans"><img src="assets/partners/logos/fluxa-banner.png" alt="FluxA TokenPlan" width="150"></a></td>
+<td>FluxA &amp; Baidu AI Cloud による本プロジェクトへのご支援に感謝します！FluxA と百度智能雲（Baidu AI Cloud）は共同で AgenticPlan を提供しています。AI エージェントがモデル・API・ツールを自ら購入し、管理し、利用できるようにするプランです。百度千帆 TokenPlan を最大 40% オフで含み、DeepSeek V4、GLM 5.2、Kimi などの主力モデルを利用できます。さらに FluxA AgentMarket の API 利用クレジットが特典として付き、検索・データ取得・ソーシャルメディア・金融・暗号資産・画像生成・動画など 13,000 以上の有料 API を利用できます。<br>ユーザーの承認のもとで、AI エージェントは公式の Visa カードで支払い、自らリソースを調達し、API キーを管理し、使用量を監視して更新を計画することもできます。エージェントは「タスクを自律的に完了する」段階から、真に「自ら予算を計画してタスクを完了する」段階へと進化します。<a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans">こちらのリンク</a>から購入してください！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://aigocode.net/invite/CC-SWITCH"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/partners/logos/aigocode-dark.png"><img src="assets/partners/logos/aigocode-light.png" alt="AIGoCode" width="150"></picture></a></td>
+<td>本プロジェクトは AIGoCode のスポンサー提供でお届けしています。AIGoCode はトークン従量課金だけではない、サブスクリプション型の AI コーディングプラットフォームです。1 つのアカウント・月額プランで Claude Code、Codex、Gemini を使い放題、中国本土から直接接続でき、レスポンスも高速です。<a href="https://aigocode.net/invite/CC-SWITCH">このリンク</a>からサブスクリプションすると 10% のクレジットが追加でもらえます！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory"><img src="assets/partners/logos/TeamoRouter-banner.png" alt="TeamoRouter" width="150"></a></td>
+<td>このプロジェクトをご支援いただいている TeamoRouter に感謝します！TeamoRouter は、開発者、AI チーム、企業向けに構築されたエンタープライズグレードの Agentic LLM ゲートウェイです。サブスクリプション不要で、単一の統合 API を通じて Claude Code、Codex、Gemini CLI、OpenAI Codex、その他の人気 AI エージェントにアクセスでき、API 料金は最大 90% オフで利用できます。
+一般的な API リレーサービスとは異なり、TeamoRouter は OpenAI、Anthropic、Vertex、Azure、AWS Bedrock など、数百の公式モデルプロバイダーと信頼できるインフラパートナーを集約しています。各プロバイダーは、Agent プロトコルとの 100% 互換性、キャッシュ性能、リクエストの追跡可能性について検証されており、リバースエンジニアリングされたものや品質が薄められたエンドポイントではなく、安定した品質を提供します。プラットフォームは公式に近い TTFT、99.6% の SLA、最大 5,000 QPM のエンタープライズ規模のスループット、そして業界トップクラスのキャッシュヒット率を提供し、長時間稼働するエージェントワークフローのトークンコストを大幅に削減します。
+TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーティング、利用状況分析、動的なプロバイダー最適化、専任サポートなどのエンタープライズ機能も提供しています。さらにシンプルな体験を求める場合は、Teamo Desktop を使うことで、Claude Code、Codex、Gemini CLI、その他の人気 AI エージェントをワンクリックで利用できます。API キー管理や手動のゲートウェイ設定は不要です。新規ユーザーとして<a href="https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory">こちらのリンク</a>から登録すると、初回チャージが 10% オフになります。</td>
 </tr>
 
 <tr>
@@ -99,8 +126,18 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
-<td width="180"><a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans"><img src="assets/partners/logos/fluxa-banner.png" alt="FluxA TokenPlan" width="150"></a></td>
-<td>FluxA &amp; Baidu AI Cloud による本プロジェクトへのご支援に感謝します！FluxA と百度智能雲（Baidu AI Cloud）は共同で AgenticPlan を提供しています。AI エージェントがモデル・API・ツールを自ら購入し、管理し、利用できるようにするプランです。百度千帆 TokenPlan を最大 40% オフで含み、DeepSeek V4、GLM 5.2、Kimi などの主力モデルを利用できます。さらに FluxA AgentMarket の API 利用クレジットが特典として付き、検索・データ取得・ソーシャルメディア・金融・暗号資産・画像生成・動画など 13,000 以上の有料 API を利用できます。<br>ユーザーの承認のもとで、AI エージェントは公式の Visa カードで支払い、自らリソースを調達し、API キーを管理し、使用量を監視して更新を計画することもできます。エージェントは「タスクを自律的に完了する」段階から、真に「自ら予算を計画してタスクを完了する」段階へと進化します。<a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans">こちらのリンク</a>から購入してください！</td>
+<td width="180"><a href="https://open.ospreyai.cn"><img src="assets/partners/logos/ospreyai-banner.png" alt="OspreyAI" width="150"></a></td>
+<td>OspreyAI のご支援に感謝します！ACS OspreyAI は開発者と企業向けのワンストップ・マルチモデル API サービスプラットフォームです。1 つの API Key で Claude、Gemini、GPT、GLM、Kimi、Qwen、DeepSeek、Tencent Hunyuan など国内外の主要モデルを呼び出せます。OpenAI、Anthropic などの主要 API プロトコルに対応し、Claude Code、Codex、OpenCode、Pi、Hermes などの主要 AI ツールでも利用できます。海外モデルは公式価格より 20〜40%、中国国内モデルは 30〜50% お得です。チャージと請求の一元化、使用量の確認、モデルの柔軟な切り替えに対応し、AI アプリ開発、コンテンツ制作、自動化ワークフローなどに適しています。<a href="https://open.ospreyai.cn">このリンク</a>からアカウントを作成すると特典を受けられ、国内外の主要モデルにすぐ接続できます。</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF"><img src="assets/partners/logos/shengsuanyun.png" alt="Shengsuanyun" width="150"></a></td>
+<td>胜算雲（Shengsuanyun）のご支援に感謝します！胜算雲は AI ネイティブチーム向けのスーパーファクトリーであり、産業グレードの AI タスク並列実行プラットフォームです。モデルマーケットプレイスでは Claude、ChatGPT、Gemini をはじめとする国内外の LLM およびマルチメディアモデルの計算リソースを集約・直接提供。リバースエンジニアリングや品質低下は一切なく、プラットフォーム全体のモデル SLA 可用性は 99.7% に達し、<a href="https://watch.shengsuanyun.com/status/shengsuanyun">監視ダッシュボード</a>は常時グリーン表示です。さらにエンタープライズ向けカスタムゲートウェイを提供し、チームのきめ細かなコスト・権限管理、スマートルーティング、セキュリティ保護、BYOK（自社キー持ち込み）ホスティングを実現します。従量課金およびトークンプラン（近日公開）対応で、請求書発行にも対応。<a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF">このリンク</a>から新規登録すると 10 元分のクレジットと初回チャージ 10% ボーナスが付与されます。</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://88api.ai/sign-up?aff=HSGY"><img src="assets/partners/logos/88api-banner-en.jpg" alt="88API" width="150"></a></td>
+<td>88API Token アグリゲーションプラットフォームによる本プロジェクトへのご支援に感謝します！88API は香港企業が運営し、主に開発者・クリエイター・AI アプリユーザー向けに提供されているワンストップのマルチモデル API プラットフォームです。統一インターフェースからテキスト・画像・音声・動画モデルを利用でき、AI コーディング、スマート翻訳、コンテンツ制作、ナレーション、画像生成、動画生成などの一般的なワークフローをカバーします。CC Switch 上でそのままプロバイダーを追加して切り替えられます。主要な国際決済方法に対応し、請求書の発行も可能で、エンタープライズ級の安定したサービスを提供します。<a href="https://88api.ai/sign-up?aff=HSGY">こちらのリンク</a>から登録すると、専用の特典クレジットがもらえます！</td>
 </tr>
 
 <tr>
@@ -111,23 +148,6 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 <tr>
 <td width="180"><a href="https://9527.codes/register?aff=e5zI"><img src="assets/partners/logos/9527-banner.png" alt="9527CODE" width="150"></a></td>
 <td>9527CODE のご支援に感謝します！9527 CODE は、安定性とサービス品質にこだわったエンタープライズ級のフルスペック AI リレープラットフォームです。Claude Code や Codex などの主要 AI モデルに、高速・安定・高品質なリレーサービスを提供します。長期的な安定性、回線品質、継続的な可用性をより重視し、企業や高負荷の AI ユーザーに安定かつ高効率なワンストップのモデル接続ソリューションを提供します。1 年間の継続運営、サービス安定性 99.9%、7×24 時間の有人技術サポート。本プロジェクトの<a href="https://9527.codes/register?aff=e5zI">専用リンク</a>から登録すると、新規ユーザーはカスタマーサポートへのご連絡で体験クレジットを進呈、紹介キャッシュバックは上限なしです！</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://console.apito.ai/agent/register/pQBql2buaqiX3dDS"><img src="assets/partners/logos/claudeapi.png" alt="ClaudeAPI" width="150"></a></td>
-<td>本プロジェクトは <a href="https://console.apito.ai/agent/register/pQBql2buaqiX3dDS">Claude API</a> がスポンサーです。Claude API 直結 — わずか 3 分で Claude Code や Agent アプリに接続可能。新規ユーザーにはテストクレジットを提供しています。Anthropic 公式キーおよび AWS Bedrock 公式チャネルに基づいており、リバースエンジニアリングや性能劣化はありません。Opus / Sonnet / Haiku の全モデルラインナップをサポートし、Tool Use や 1M コンテキストなどの公式機能をすべて保持しています。Claude Code ヘビーユーザー、Agent エンジニア、企業技術チームに最適です。請求書発行およびチーム対応が可能です。<a href="https://console.apito.ai/agent/register/pQBql2buaqiX3dDS">こちら</a>から登録してください！</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://code0.ai/agent/register/B2XHxGjGmRvqgznY"><img src="assets/partners/logos/code0.png" alt="code0.ai" width="150"></a></td>
-<td>本プロジェクトをご支援いただいている <a href="https://code0.ai/agent/register/B2XHxGjGmRvqgznY">code0.ai</a> に感謝します！code0.ai は開発者向けの AI コーディングサービスプラットフォームで、Claude Code、Codex、Gemini などの主要な AI コーディング機能に対応しています。個人開発者やチームが、コーディング、デバッグ、リファクタリング、自動化ワークフローで AI Agent をより安定かつ効率的に活用できるよう支援します。ccswitch ユーザーは <a href="https://code0.ai/agent/register/B2XHxGjGmRvqgznY">code0.ai 公式サイト</a> からカスタマーサポートに連絡することで、テストクレジットを受け取り、信頼性の高い AI コーディングサービスを体験できます。</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory"><img src="assets/partners/logos/TeamoRouter-banner.png" alt="TeamoRouter" width="150"></a></td>
-<td>このプロジェクトをご支援いただいている TeamoRouter に感謝します！TeamoRouter は、開発者、AI チーム、企業向けに構築されたエンタープライズグレードの Agentic LLM ゲートウェイです。サブスクリプション不要で、単一の統合 API を通じて Claude Code、Codex、Gemini CLI、OpenAI Codex、その他の人気 AI エージェントにアクセスでき、API 料金は最大 90% オフで利用できます。
-一般的な API リレーサービスとは異なり、TeamoRouter は OpenAI、Anthropic、Vertex、Azure、AWS Bedrock など、数百の公式モデルプロバイダーと信頼できるインフラパートナーを集約しています。各プロバイダーは、Agent プロトコルとの 100% 互換性、キャッシュ性能、リクエストの追跡可能性について検証されており、リバースエンジニアリングされたものや品質が薄められたエンドポイントではなく、安定した品質を提供します。プラットフォームは公式に近い TTFT、99.6% の SLA、最大 5,000 QPM のエンタープライズ規模のスループット、そして業界トップクラスのキャッシュヒット率を提供し、長時間稼働するエージェントワークフローのトークンコストを大幅に削減します。
-TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーティング、利用状況分析、動的なプロバイダー最適化、専任サポートなどのエンタープライズ機能も提供しています。さらにシンプルな体験を求める場合は、Teamo Desktop を使うことで、Claude Code、Codex、Gemini CLI、その他の人気 AI エージェントをワンクリックで利用できます。API キー管理や手動のゲートウェイ設定は不要です。新規ユーザーとして<a href="https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory">こちらのリンク</a>から登録すると、初回チャージが 10% オフになります。</td>
 </tr>
 
 <tr>
@@ -156,8 +176,8 @@ TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーテ�
 </tr>
 
 <tr>
-<td width="180"><a href="https://a6api.com/register?aff=AqNr"><img src="assets/partners/logos/a6-banner-en.jpg" alt="A6API" width="150"></a></td>
-<td>本プロジェクトをご支援いただいている <a href="https://a6api.com/register?aff=AqNr">A6API</a> に感謝します！A6API は、Claude、GPT、Gemini、Codex などの主要モデルを網羅するワンストップの AI モデル API アグリゲーションプラットフォームです。複数のベンダーが出品でき、同じモデルを複数の上流プロバイダーが競争価格で提供します。スマートルーティングにより、より安定して安価な利用可能ルートを自動で選択し、失敗時には自動で切り替えるため、リクエストの失敗を減らし、コストを抑え、安定性を高められます。個人開発者でも、AI プロダクトチームでも、スタジオでも、統一されたインターフェースからすぐに接続でき、あらゆるフォーマットに対応、移行コストも低く抑えられます。<a href="https://a6api.com/register?aff=AqNr">こちらのリンク</a> から新規登録すると無料の体験クレジットがもらえます。まず試してから、低価格で使い始められます。</td>
+<td width="180"><a href="https://a6api.vip/register?aff=AqNr"><img src="assets/partners/logos/a6-banner-en.jpg" alt="A6API" width="150"></a></td>
+<td>本プロジェクトをご支援いただいている <a href="https://a6api.vip/register?aff=AqNr">A6API</a> に感謝します！A6API は、Claude、GPT、Gemini、Codex などの主要モデルを網羅するワンストップの AI モデル API アグリゲーションプラットフォームです。複数のベンダーが出品でき、同じモデルを複数の上流プロバイダーが競争価格で提供します。スマートルーティングにより、より安定して安価な利用可能ルートを自動で選択し、失敗時には自動で切り替えるため、リクエストの失敗を減らし、コストを抑え、安定性を高められます。個人開発者でも、AI プロダクトチームでも、スタジオでも、統一されたインターフェースからすぐに接続でき、あらゆるフォーマットに対応、移行コストも低く抑えられます。<a href="https://a6api.vip/register?aff=AqNr">こちらのリンク</a> から新規登録すると無料の体験クレジットがもらえます。まず試してから、低価格で使い始められます。</td>
 </tr>
 
 <tr>
@@ -191,11 +211,6 @@ TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーテ�
 </tr>
 
 <tr>
-<td width="180"><a href="https://etok.ai"><img src="assets/partners/logos/etok.png" alt="ETok" width="150"></a></td>
-<td>ETok.ai のご支援に感謝します！ETok.ai はワンストップ AI プログラミングツールサービスプラットフォームの構築に取り組んでいます。Claude Code のプロフェッショナルプランと技術コミュニティサービスを提供し、Google Gemini や OpenAI Codex にも対応しています。丁寧に設計されたプランと専門的な技術コミュニティを通じて、開発者に安定したサービス保証と継続的な技術サポートを提供し、AI アシストプログラミングを真の生産性ツールにします。<a href="https://etok.ai">こちら</a>から登録してください！</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://cubence.com/signup?code=CCSWITCH&source=ccs"><img src="assets/partners/logos/cubence.png" alt="Cubence" width="150"></a></td>
 <td>Cubence のご支援に感謝します！Cubence は Claude Code、Codex、Gemini などのリレーサービスを提供する信頼性の高い API 中継プラットフォームで、従量課金や月額プランなど柔軟な料金体系を提供しています。CC Switch ユーザー向けの特別割引：<a href="https://cubence.com/signup?code=CCSWITCH&source=ccs">このリンク</a>で登録し、チャージ時に「CCSWITCH」クーポンを入力すると、毎回 10% オフになります！</td>
 </tr>
@@ -218,20 +233,32 @@ TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーテ�
 
 Claude Code、Codex、Gemini CLI などの AI コーディングツールは、それぞれ設定形式が異なります。API プロバイダを変えるたびに JSON、TOML、YAML、`.env` ファイルを手作業で編集しなければならず、MCP、Skills、プロンプトもツールごとに個別に管理する必要があります。
 
-**CC Switch** は、こうした作業を 1 つのデスクトップアプリに集約します。プリセットを選んでキーを入力すれば、ワンクリックで切り替えられます。既存の設定が失われることもありません。
+**CC Switch** は、こうした作業を 1 つのデスクトップアプリに集約します。プリセットを選んでキーを入力すれば、ワンクリックで切り替えられます。切り替え時に置き換えるのはアドレス、キー、モデルといった接続情報だけで、自分で追加したプラグイン、フック、MCP、コメントはそのまま残ります。
 
-- **1 つのアプリで 10 のツール** — Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi、MiniMax Code
+- **1 つのアプリで 12 のツール** — Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi、MiniMax Code、Kimi Code、Oh My Pi
 - **手動編集は不要** — AWS Bedrock、NVIDIA NIM、コミュニティリレーなど 90 以上のプロバイダプリセットを内蔵
-- **Claude Code で GPT を、Codex で Claude を使う** — ローカルルーティングを内蔵し、Anthropic、OpenAI、Gemini の API 形式を自動で変換。自動フェイルオーバーにも対応
+- **直接接続・ルーティング・集約を用途に応じて選択** — 直接接続はツールがプロバイダへ直接つなぎます。ルーティングはローカルで転送し、API 形式の変換と自動フェイルオーバーにより、Claude Code で GPT を、Codex で Claude を使えるようにします。集約は複数のプロバイダのモデルを Claude Code や Codex の 1 つのモデル一覧にまとめ、選んだモデルに応じてそのプロバイダへリクエストを送ります
 - **MCP・Skills・プロンプトを一元管理** — MCP と Skills は一度追加すれば、ツールごとにチェックを入れて同期。プロンプトはツールごとに個別に管理
-- **使用量とクォータをひと目で確認** — ローカルルーティングを使わなくてもトークン使用量と費用を集計。サブスクリプションのクォータと残高をプロバイダカードとトレイに直接表示
+- **読みやすいセッション** — 各ツールのセッション記録を読みやすいページに整理。各ターンで何をしたか、どのファイルを変更したか、どのステップで失敗したかがひと目でわかります
+- **使用量とクォータをひと目で確認** — ローカルルーティングを使わなくてもトークン使用量と費用を集計。サブスクリプションのクォータ残量とアカウント残高をプロバイダカードとトレイに直接表示
 - **クロスプラットフォーム** — Tauri 2 で構築された Windows、macOS、Linux 対応のネイティブデスクトップアプリ
 
 ## スクリーンショット
 
-|                  メイン画面                   |                  プロバイダ追加                  |
-| :-------------------------------------------: | :----------------------------------------------: |
-| ![メイン画面](assets/screenshots/main-ja.png) | ![プロバイダ追加](assets/screenshots/add-ja.png) |
+<table>
+<tr>
+<td align="center" width="50%"><img src="assets/release-notes/v4.0.0/main-en.png" alt="メイン画面：サイドバー、直接接続 / ルーティング / 集約タブとプロバイダカード" width="400"><br>メイン画面</td>
+<td align="center" width="50%"><img src="assets/release-notes/v4.0.0/apps-en.png" alt="アプリページ：各 AI コーディングツールのバージョン、インストール、アップグレードを一元管理" width="400"><br>アプリページ</td>
+</tr>
+<tr>
+<td align="center"><img src="assets/release-notes/v4.0.0/agg-en.png" alt="集約モード：既定のプロバイダ 1 社に加え、複数のプロバイダを追加" width="400"><br>集約モード</td>
+<td align="center"><img src="assets/release-notes/v4.0.0/agg-codex-en.png" alt="Codex のモデル選択画面に複数のプロバイダのモデルが並ぶ" width="400"><br>Codex の集約モデル一覧</td>
+</tr>
+<tr>
+<td align="center"><img src="assets/release-notes/v4.0.0/session-en.png" alt="セッション閲覧ページ：実行過程の要約、ツール呼び出しの詳細、会話の目次" width="400"><br>セッション閲覧ページ</td>
+<td align="center"><img src="assets/release-notes/v4.0.0/usage-en.png" alt="使用量：ヒートマップとリクエストログ" width="400"><br>使用量</td>
+</tr>
+</table>
 
 ## ダウンロード & インストール
 
@@ -287,21 +314,23 @@ paru -S cc-switch-bin
 
 ### 基本的な使い方
 
-1. **プロバイダ追加**: ツールバーの「新しいプロバイダーを追加」（+ ボタン）をクリック → プリセットを選ぶかカスタム設定を作成
+1. **プロバイダ追加**: サイドバーで管理するツールを選び、ページ右上の「+」（プロバイダーを追加）をクリック → プリセットを選ぶかカスタム設定を作成
 2. **プロバイダ切り替え**:
-   - メイン UI: プロバイダを選択 → 「有効化」をクリック（OpenCode、OpenClaw、Hermes、MiniMax Code ではボタンが「追加」になります。この 4 つのツールと Pi は共存型のツールで、複数のプロバイダを同時に追加できます）
-   - システムトレイ: プロバイダ名をクリック（Claude Code、Codex、Gemini CLI、Grok Build に対応）
+   - メイン UI: プロバイダを選択 → 「有効化」をクリック（OpenCode、OpenClaw、Hermes、MiniMax Code、Kimi Code ではボタンが「追加」、Pi と Oh My Pi では「有効にする / 削除」になります。この 7 つは共存型のツールで、複数のプロバイダを同時に追加できます）
+   - システムトレイ: ツールごとに 1 行で「名前 · モード · プロバイダ · クォータ」を表示。サブメニューでプロバイダ名をクリック（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build に対応）
 3. **反映**: Claude Code は再起動不要。Codex、Gemini CLI、Grok Build はターミナルまたは CLI ツールを再起動、Claude Desktop はアプリ自体を再起動（詳しくはよくある質問を参照）
 4. **公式ログインに戻す**: リストに含まれている公式プロバイダ（例：「Claude Official」）に切り替え、ツールを再起動してログイン/OAuth フローを実行
-5. **ローカルルーティング（任意）**: Claude Code で OpenAI 形式や Gemini 形式のプロバイダを使う場合や、Codex で Claude を使う場合は、ローカルルーティングを有効にする必要があります。「設定 → ルーティング → ローカルルーティング」で「ルーティング総スイッチ」をオンにし、「ルーティング有効」で対象のツールをオンにしてください。メインページ上部から直接オン/オフしたい場合は、「メインページにルーティング切り替えを表示」をオンにします
+5. **ルーティングと集約（任意）**: Claude Code、Codex、Gemini CLI、Grok Build のページ上部には「直接接続 / ルーティング」タブがあり、Claude Code と Codex には「集約」タブもあります。タブを押しても表示内容が切り替わるだけで、設定は変わりません。実際に切り替えるにはページ上の「ルーティングを開始」または「集約に切り替え」を、直接接続に戻すには「直接接続に戻す」をクリックします。Claude Code で OpenAI 形式や Gemini 形式のプロバイダを使う場合や、Codex で Claude を使う場合はルーティングを、複数のプロバイダのモデルを 1 つのモデル一覧で使い分けたい場合は集約を使います
+6. **ツール管理**: サイドバーの「アプリ」ページに、各 AI コーディングツールのバージョン、インストール場所、インストール元がまとめて表示されます。インストール、アップグレード、一括アップグレードができ、サイドバーに表示するツールも選べます
 
 ### MCP、プロンプト、Skills、プロジェクト & セッション
 
-- **MCP**: 「MCP 管理」ボタンをクリック → テンプレートまたはカスタム設定でサーバーを追加（または「既存をインポート」）→ ツールごとの同期をトグルで切り替え
-- **プロンプト**: 「プロンプト」をクリック → Markdown エディタでプロンプトを作成 → 有効化すると、そのツールのプロンプトファイルに書き込み
-- **Skills**: 「Skills」をクリック → 「スキルを発見」 → skills.sh を検索、または GitHub リポジトリを閲覧 → 対応ツールへワンクリックでインストール
-- **プロジェクト**: Claude Code、Claude Desktop、Codex のページで、メインページ上部のプロジェクトスイッチャーを開く → 「新規プロジェクト」で現在の設定を保存。以降はスイッチャーから選ぶだけで設定一式を切り替え
-- **セッション**: 「セッション管理」をクリック → 各ツールの会話履歴を閲覧・検索・復元
+- **MCP**: サイドバーの「MCP」をクリック → テンプレートまたはカスタム設定でサーバーを追加（または「既存をインポート」）→ ツールごとの同期をトグルで切り替え
+- **プロンプト**: サイドバーの「プロンプト」をクリック → Markdown エディタでプロンプトを作成 → 有効化すると、そのツールのプロンプトファイルに書き込み
+- **Skills**: サイドバーの「Skills」をクリック → 「スキルを発見」 → skills.sh を検索、または GitHub リポジトリを閲覧 → 対応ツールへワンクリックでインストール
+- **プロジェクト**: まず「設定 → 一般」で「プロジェクト切り替えを表示」をオンにします。そのうえで Claude Code、Claude Desktop、Codex のページで、上部のプロジェクトスイッチャーを開く → 「新規プロジェクト」で現在の設定を保存。以降はスイッチャーから選ぶだけで設定一式を切り替え
+- **セッション**: サイドバーの「セッション」をクリック → 会話履歴を閲覧・検索し、閲覧ページを開いたり、各ツールのセッションを再開したり
+- **アカウント**: サイドバーの「アカウント」をクリックし、GitHub Copilot、ChatGPT、xAI（Grok）、Kimi Code のアカウントにログインすると、サブスクリプションをプロバイダとして使えます。Kimi Code は複数の公式アカウントを保存でき、それぞれ独立した認証情報とネイティブプロバイダを使用します。最初のログインには Kimi 標準の認証情報スロットを使用します。追加、再ログイン、ログアウトはここで管理します。ネイティブ設定に存在する Kimi 公式 OAuth ノードはプロバイダ画面で保護されます。ネイティブノードが削除された後は、保存済みプロファイルを削除できます。
 
 > **補足**: 初回起動時、CC Switch は Claude Code、Codex、Gemini CLI、Grok Build の既存設定を `default` という名前のプロバイダとして自動でインポートし、これらのツールと Claude Desktop に公式プロバイダを追加します。既存の設定が失われることはありません。
 
@@ -309,81 +338,94 @@ paru -S cc-switch-bin
 
 ## 特長
 
-[完全な更新履歴](CHANGELOG.md) | [リリースノート](docs/release-notes/v3.20.4-ja.md)
+[完全な更新履歴](CHANGELOG.md) | [v4.0 リリースノート](docs/release-notes/v4.0.4-ja.md)
 
 ### ツール別の対応機能
 
-| ツール | プロバイダ | ローカルルーティング | トレイ切り替え | MCP | Skills | プロンプト | セッション | 使用量統計 |
-| --- | --- | :---: | :---: | :---: | :---: | --- | :---: | :---: |
-| Claude Code | 切り替え | ✓ | ✓ | ✓ | ✓ | CLAUDE.md | ✓ | ✓ |
-| Claude Desktop | 切り替え | モデルマッピング時 | – | – | – | – | – | モデルマッピング時 |
-| Codex | 切り替え | ✓ | ✓ | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
-| Gemini CLI | 切り替え | ✓ | ✓ | ✓ | ✓ | GEMINI.md | ✓ | ✓ |
-| Grok Build | 切り替え | ✓ | ✓ | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
-| OpenCode | 共存 | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
-| OpenClaw | 共存 | – | – | – | – | ワークスペースエディタ | ✓ | – |
-| Hermes | 共存 | – | – | ✓ | ✓ | メモリ | ✓ | – |
-| Pi | 共存 | – | – | – | ✓ | AGENTS.md、SYSTEM.md、プロンプトテンプレート | ✓ | ✓ |
-| MiniMax Code | 共存 | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+| ツール | プロバイダ | ローカルルーティング | 集約 | トレイ切り替え | MCP | Skills | プロンプト | セッション | 使用量統計 |
+| --- | --- | :---: | :---: | :---: | :---: | :---: | --- | :---: | :---: |
+| Claude Code | 切り替え | ✓ | ✓ | ✓ | ✓ | ✓ | CLAUDE.md | ✓ | ✓ |
+| Claude Desktop | 切り替え | モデルマッピング時 | – | ✓ | – | – | – | – | モデルマッピング時 |
+| Codex | 切り替え | ✓ | ✓ | ✓ | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+| Gemini CLI | 切り替え | ✓ | – | ✓ | ✓ | ✓ | GEMINI.md | ✓ | ✓ |
+| Grok Build | 切り替え | ✓ | – | ✓ | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+| OpenCode | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+| OpenClaw | 共存 | – | – | – | – | – | ワークスペースエディタ | ✓ | – |
+| Hermes | 共存 | – | – | – | ✓ | ✓ | メモリ | ✓ | – |
+| Pi | 共存 | – | – | – | ✓ | ✓ | AGENTS.md、SYSTEM.md、プロンプトテンプレート | ✓ | ✓ |
+| MiniMax Code | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+| Kimi Code | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+| Oh My Pi | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | – |
 
 - **切り替え**：同時に有効にできるプロバイダは 1 つだけです。**共存**：複数のプロバイダを同時にツール自身の設定に書き込み、ツール内で選んで使用します。
 - **ローカルルーティング**：CC Switch がローカルでリクエストを転送し、API 形式を変換します。詳しくは下記の[ローカルルーティング & フェイルオーバー](#ローカルルーティング--フェイルオーバー)をご覧ください。Claude Desktop のプロバイダでは「直接接続」か「モデルマッピング」を選択でき、「モデルマッピング」を選ぶとローカルルーティング経由で転送されます。
-- **セッション**：会話履歴を閲覧・検索し、再開コマンドをコピーして会話を続けられます（OpenClaw と Hermes のセッションは現在、再開に対応していません）。Hermes のセッションは、セッション管理で「すべて」を選ぶと表示されます。
+- **集約**：複数のプロバイダのモデルを 1 つのモデル一覧にまとめ、選んだモデルに応じてリクエストを振り分けます。詳しくは下記の[集約モード](#集約モード)をご覧ください。
+- **セッション**：会話履歴を閲覧・検索し、閲覧ページを開いたり、再開コマンドをコピーして会話を続けたりできます（OpenClaw と Hermes のセッションは現在、再開に対応していません）。Hermes は直近 500 件のセッションのみ表示します。
 - **使用量統計**：ローカルルーティングを使わない場合は、各ツールのローカルセッション記録から集計します。ローカルルーティングを経由したリクエストも集計に含まれます。
 - Claude Desktop のページで開いた MCP、Skills、プロンプト、セッションの各パネルは、Claude Code に適用されます。
 
 ### プロバイダ管理
 
-- **90 以上のプロバイダプリセット** — プリセットを選んでキーを入力するだけで追加。カスタム設定の作成も可能
-- **主要フィールドだけを変更** — 切り替え時に置き換えるのはリクエスト先アドレス、キー、モデルなどの接続情報だけ。プラグイン、フック、MCP、自分で追加した設定やコメントはそのまま残ります
-- **プロジェクト** — Claude Code または Codex の現在のプロバイダ、MCP、Skills、プロンプトファイルを 1 つのプロジェクトとして保存（Claude Desktop はプロバイダのみ保存）。以降はメインページ上部のプロジェクトスイッチャーやトレイから設定一式をワンクリックで切り替え。別のプロジェクトに切り替えると、現在の状態は自動的に元のプロジェクトへ保存
-- **OAuth 認証センター（Beta）** — 「設定 → 認証」で GitHub Copilot、ChatGPT、xAI（Grok）の複数アカウントにログインし、サブスクリプションをプロバイダとして Claude Code、Claude Desktop、Codex で利用（Codex の OpenAI Official 以外はすべてローカルルーティングの有効化が必要）。公式クライアント以外でサブスクリプションを使用すると、ベンダーの利用規約に違反する可能性があります。リスクはご自身で判断してください
+- **90 以上のプロバイダプリセット** — プリセットを選んでキーを入力するだけで追加。カスタム設定の作成も可能。追加パネルでは中国語名やドメインでも検索でき、同じプロバイダのプランや地域の違いは 1 行にまとめて表示
+- **主要フィールドだけを変更** — 切り替え時に置き換えるのはリクエスト先アドレス、キー、モデルなどの接続情報だけ。プラグイン、フック、MCP、自分で追加した設定やコメントはそのまま残ります。エディタの下部には切り替え後の設定ファイルの内容が表示され、CC Switch が設定ファイルを初めて書き換える前には元のファイルを自動でバックアップします
+- **プロジェクト** — Claude Code または Codex の現在のプロバイダ、MCP、Skills、プロンプトファイルを 1 つのプロジェクトとして保存（Claude Desktop はプロバイダのみ保存）。以降はページ上部のプロジェクトスイッチャーやトレイから設定一式をワンクリックで切り替え。別のプロジェクトに切り替えると、現在の状態は自動的に元のプロジェクトへ保存。プロジェクトスイッチャーはデフォルトで非表示のため、「設定 → 一般」で「プロジェクト切り替えを表示」をオンにしてください
+- **アカウント（Beta）** — サイドバーの「アカウント」で GitHub Copilot、ChatGPT、xAI（Grok）の複数アカウントにログインし、サブスクリプションをプロバイダとして Claude Code、Claude Desktop、Codex で利用（Codex の OpenAI Official 以外はすべてルーティングモードでの利用が必要）。公式クライアント以外でサブスクリプションを使用すると、ベンダーの利用規約に違反する可能性があります。リスクはご自身で判断してください
 - **Claude Desktop でサードパーティを利用** — Anthropic 互換エンドポイントに直接接続可能。Claude 以外のモデルは「モデルマッピング」を選び、ローカルルーティング経由で Sonnet、Opus、Haiku などのティアをプロバイダの実際のモデルにマッピング
 - **ユニバーサルプロバイダ** — 1 つの設定を Claude Code、Codex、Gemini CLI に同期
-- ワンクリック切り替え、システムトレイからのクイック切り替え（Claude Code、Codex、Gemini CLI、Grok Build）、ドラッグ＆ドロップ並び替え、インポート/エクスポート
+- ワンクリック切り替え、システムトレイからのクイック切り替え（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build）、ドラッグ＆ドロップ並び替え、インポート/エクスポート
 
 ### ローカルルーティング & フェイルオーバー
 
 - **API 形式の変換** — ローカルルーティングが Anthropic Messages、OpenAI Chat Completions、OpenAI Responses、Gemini Native の間でリクエスト形式を変換。Claude Code と Claude Desktop は OpenAI 形式や Gemini 形式のプロバイダを、Codex と Grok Build は Chat Completions 形式や Anthropic Messages 形式のプロバイダを利用可能
-- **ツールごとに有効化** — Claude Code、Codex、Gemini CLI、Grok Build でそれぞれ個別にローカルルーティングを有効化可能。有効化すると、プロバイダの切り替えが以降のリクエストに即座に反映（切り替えでモデルが変わる場合、Codex、Gemini CLI、Grok Build は再起動が必要になることがあります）
+- **ツールごとに有効化** — Claude Code、Codex、Gemini CLI、Grok Build はそれぞれ個別にルーティングモードに入れます。ページ上部の「ルーティング」タブで「ルーティングを開始」をクリックします。ルーティングモードでは、プロバイダの切り替えが以降のリクエストに即座に反映（切り替えでモデルが変わる場合、Codex、Gemini CLI、Grok Build は再起動が必要になることがあります）。CC Switch を終了するときは先に直接接続の設定を書き戻し、次回起動時に再接続します
 - **自動フェイルオーバー** — ツールごとにフェイルオーバーキューを設定し、リクエストが失敗するとキューの順に次のプロバイダへ自動で切り替え。サーキットブレーカーとプロバイダのヘルスモニタリングと連携
 - **整流器** — 一部の上流と互換性のないリクエストを自動で修正（Thinking 署名、画像非対応時のフォールバックなど）
 - 公式プロバイダ（Claude Official など）はローカルルーティングを経由できません（Codex の OpenAI Official を除く）
+- ルーティングサービスの状態、待ち受けアドレス、フェイルオーバーのパラメータは「設定 → ローカルルーティング」にまとまっています
 - 使い方ガイド：[Claude Code で GPT を使う](docs/guides/claude-codex-routing-guide-ja.md) · [Codex で Claude を使う](docs/guides/codex-claude-routing-guide-ja.md)
+
+### 集約モード
+
+- **1 つのモデル一覧に複数のプロバイダ** — Claude Code または Codex のページで「集約」に切り替えてプロバイダをいくつか追加すると、それぞれのモデルがクライアントのモデル選択画面にまとめて表示されます。選んだモデルに応じてそのプロバイダへリクエストが送られるので、CC Switch に戻って切り替える必要はありません
+- **いつでも追加・削除** — プロバイダカードの「追加」または「削除」をクリックし、さらに 1 社を既定のプロバイダに選びます。集約モデルを指定していないリクエストはすべて既定のプロバイダに送られます。Codex の OpenAI Official は既定のプロバイダ専用です。集約モードは現在 Claude の公式サブスクリプションに対応していません
+- **注意** — 集約ではフェイルオーバーを行いません。Claude Code は 2.1.243 以降が必要です。Codex は集約の一覧が変わると再起動が必要ですが、Claude Code は不要です。同じセッションの途中でモデルを変えると、新しいモデルでプロンプトキャッシュを作り直すため、最初のターンは費用がやや高くなります
+- 集約モードの設計の多くは [opencodex](https://github.com/lidge-jun/opencodex) を参考にしています。作者とコントリビューターに感謝します
+- ドキュメント：[集約モードのマニュアル](docs/user-manual/ja/4-proxy/4.6-aggregation.md) · [図解ガイド（中国語）](docs/guides/aggregation-mode-guide-zh.md)
 
 ### MCP、プロンプト & Skills
 
-- **統一 MCP パネル** — すべての MCP サーバーを 1 か所で管理し、ツールごとにチェックを入れて同期。各ツールの既存設定からのインポート、Deep Link インポートに対応
+- **統一 MCP パネル** — すべての MCP サーバーを 1 か所で管理し、ツールごとにチェックを入れて同期（Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Hermes、Pi、MiniMax Code、Kimi Code、Oh My Pi）。各ツールの既存設定からのインポート、Deep Link インポートに対応
 - **プロンプト** — ツールごとに管理するプロンプトライブラリ（Markdown エディタ付き）。有効化すると、そのツールのプロンプトファイル（CLAUDE.md / AGENTS.md / GEMINI.md）に書き込み。有効化の前にファイル内の既存の内容をプロンプトライブラリへ保存するため、内容が失われることはありません。Pi では SYSTEM.md、APPEND_SYSTEM.md、プロンプトテンプレートも編集可能
-- **Skills** — skills.sh を検索、または GitHub リポジトリや ZIP ファイルからワンクリックでインストール。更新の確認とワンクリックでの一括更新に対応。シンボリックリンクまたはファイルコピーで各ツールに同期し、保存場所として `~/.agents/skills` も選択可能
-- 3 つのパネルはいずれも検索に対応。MCP と Skills はツールごとにワンクリックで一括有効化・一括無効化も可能
+- **Skills** — skills.sh を検索、または GitHub リポジトリや ZIP ファイルからワンクリックでインストール。更新の確認とワンクリックでの一括更新に対応。各ツールへの同期方式は「自動」「シンボリックリンクのみ」「コピーのみ」から選べ、保存場所として `~/.agents/skills` も選択可能
+- 3 つのパネルはいずれも検索に対応。MCP と Skills はツールごとにワンクリックで一括有効化・一括無効化も可能。プロバイダ、MCP、プロンプトはコンテンツ領域の全画面で編集し、未保存の変更があるままページを離れようとすると確認が表示されます
 
 ### 使用量 & コストトラッキング
 
-- **使用量ダッシュボード** — ローカルルーティングを使わなくても集計可能。デフォルトで各ツールのローカルセッション記録を自動スキャンし、プロバイダとモデルごとにリクエスト数、トークン、キャッシュヒット率、費用を集計。トレンドチャートとリクエスト単位のログを提供
-- **クォータと残高** — プロバイダカードとトレイに、公式サブスクリプションのクォータ（Claude、ChatGPT、Gemini、SuperGrok）、Coding Plan の 5 時間 / 週 / 月のクォータ（Kimi、Zhipu GLM、MiniMax、Volcengine Ark など）、アカウント残高（DeepSeek、OpenRouter、SiliconFlow など）を直接表示。一部はプロバイダカードの「利用状況を設定」で事前に有効化が必要。その他のプロバイダではカスタム使用量スクリプトを作成可能
+- **使用量ダッシュボード** — ローカルルーティングを使わなくても集計可能。デフォルトで各ツールのローカルセッション記録を自動スキャンし、プロバイダとモデルごとにリクエスト数、トークン、キャッシュヒット率、出力速度、費用を集計。トレンドチャート、年間ヒートマップ、リクエスト単位のログを提供
+- **クォータと残高** — プロバイダカードとトレイに、残量とリセットまでのカウントダウンを直接表示（例：「5時間 残り 94%」）。対象は公式サブスクリプションのクォータ（Claude、ChatGPT、Gemini、SuperGrok）、Coding Plan の 5 時間 / 週 / 月のクォータ（Kimi、Zhipu GLM、MiniMax、Volcengine Ark など）、アカウント残高（DeepSeek、OpenRouter、SiliconFlow など）。一部はプロバイダカードの「利用状況を設定」で事前に有効化が必要。その他のプロバイダではカスタム使用量スクリプトを作成可能。ChatGPT サブスクリプションでは、残りのリセット回数と Codex Credits の残高も表示
 - **カスタム価格設定** — モデルごとに単価を設定。models.dev からのインポートも可能
 
 ### セッション管理 & ワークスペース
 
-- **セッション管理** — 各ツールの会話履歴を閲覧・検索し、再開コマンドをコピーして会話を継続。macOS ではワンクリックでターミナルから再開可能
+- **セッション閲覧ページ** — 各ツールのセッション記録を構造化して表示。本文、思考、ツール呼び出し、ツール結果、画像を分けて表示し、各ターンの作業を 1 行の要約（ステップ数、変更したファイル数、失敗数）に折りたたみます。失敗したステップは赤で表示。右側には会話の目次があり、セッション内検索、Markdown へのエクスポート、1 ターンまたは会話全体のコピーに対応
+- **一覧と再開** — プロジェクトまたは時間でグループ化し、タイトル、ディレクトリ、メッセージ、セッション ID で検索。一括削除にも対応。再開コマンドをコピーして会話を継続でき、macOS ではワンクリックでターミナルから再開可能
 - **ワークスペースエディタ**（OpenClaw）— エージェントファイル（AGENTS.md、SOUL.md など）とデイリーメモリーを編集
 - **メモリ**（Hermes）— Hermes の MEMORY.md と USER.md を編集
 
 ### システム & プラットフォーム
 
 - **クラウド同期** — WebDAV（坚果云、Nextcloud、Synology NAS など）または S3 互換ストレージ（AWS S3、Cloudflare R2、Alibaba Cloud OSS、Tencent Cloud COS など）で複数のデバイス間を同期。CC Switch の設定ディレクトリを Dropbox、OneDrive、iCloud などのクラウドストレージのフォルダに置くことも可能
-- **CLI ツール管理** — 「バージョン情報」ページで Claude Code、Codex などのコマンドラインツールの現在のバージョンと最新バージョンを確認し、ワンクリックでインストール、アップグレード、一括アップグレード。重複インストールの診断にも対応。Windows では WSL 内のツールも管理可能（よくある質問を参照）
-- **Deep Link**（`ccswitch://`）— リンクからプロバイダ、MCP サーバー、プロンプトをワンクリックでインポート、またはスキルリポジトリを追加
+- **CLI ツール管理** — サイドバーの「アプリ」ページで Claude Code、Codex などのコマンドラインツールの現在のバージョンと最新バージョンを確認し、ワンクリックでインストール、アップグレード、一括アップグレード。重複インストールの診断にも対応。Windows では WSL 内のツールも管理可能（よくある質問を参照）
+- **Deep Link**（`ccswitch://`）— リンクからプロバイダ、MCP サーバー、プロンプトをワンクリックでインポート、またはスキルリポジトリを追加。リンクは [オンライン生成ツール](https://ccswitch.io/deplink.html) で作成可能。サイトにインポートボタンを置きたい運営者は [連携ガイド](https://github.com/farion1231/cc-switch/blob/main/docs/guides/deeplink-site-integration-guide-ja.md) を参照
 - **便利ツール** — Claude Code の初回確認のスキップ、AI 署名の非表示、VS Code の Claude Code 拡張を CC Switch のプロバイダ切り替えに追従させる機能など
-- ダーク / ライト / システムテーマ、自動起動、自動アップデーター、アトミック書き込み、自動バックアップ、多言語対応（簡体中文/繁體中文/英/日）
+- ダーク / ライト / システムテーマ、自動起動、自動アップデーター、アトミック書き込み、自動バックアップ（「設定 → データ」ですべてのバックアップの場所と使用容量を確認可能）、多言語対応（簡体中文/繁體中文/英/日、コミュニティ翻訳のトルコ語・韓国語）
 
 ## よくある質問
 
 <details>
 <summary><strong>CC Switch はどの AI ツールに対応していますか？</strong></summary>
 
-CC Switch は **Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw**、**Hermes**、**Pi**、**MiniMax Code** の 10 のツールに対応しています。各ツールに専用のプロバイダプリセットと設定管理が用意されています。ツールごとに対応している機能は[ツール別の対応機能](#ツール別の対応機能)をご覧ください。
+CC Switch は **Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw**、**Hermes**、**Pi**、**MiniMax Code**、**Kimi Code**、**Oh My Pi** の 12 のツールに対応しています。各ツールに専用のプロバイダプリセットと設定管理が用意されています。ツールごとに対応している機能は[ツール別の対応機能](#ツール別の対応機能)をご覧ください。
 
 </details>
 
@@ -393,9 +435,23 @@ CC Switch は **Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**�
 ツールによって異なります：
 
 - **Claude Code**：プロバイダデータのホットスイッチに対応しており、再起動は不要です。
-- **Codex、Gemini CLI、Grok Build**：変更を反映するにはターミナルまたは CLI ツールを再起動してください（切り替え後に通知が表示されます）。ローカルルーティングを有効にしている場合、リクエストは即座に新しいプロバイダへ転送されますが、切り替えでモデルが変わる場合は、この 3 つのツールは再起動が必要になることがあります。
+- **Codex、Gemini CLI、Grok Build**：変更を反映するにはターミナルまたは CLI ツールを再起動してください（切り替え後に通知が表示されます）。ルーティングモードでは、リクエストは即座に新しいプロバイダへ転送されますが、切り替えでモデルが変わる場合は、この 3 つのツールは再起動が必要になることがあります。
+- **集約モード**：Claude Code の集約モデルの変更はすぐに反映されます。Codex は集約モードに入る・抜ける、または集約モデルの一覧を変更した後、完全に再起動する必要があります。次の質問をご覧ください。
 - **Claude Desktop**：Claude Desktop を完全に終了してから再度開いてください。「モデルマッピング」を使用する場合は、CC Switch を起動したままにしておく必要もあります。
-- **OpenCode、OpenClaw、Hermes、Pi、MiniMax Code**：これらは共存型のツールです。「追加」（Pi では「有効化」）をクリックするとプロバイダがツール自身の設定に書き込まれ、他のプロバイダと共存します。その後、ツール内で使用するモデルを選んでください。
+- **OpenCode、OpenClaw、Hermes、Pi、MiniMax Code、Kimi Code、Oh My Pi**：これらは共存型のツールです。「追加」（Pi と Oh My Pi では「有効化」）をクリックするとプロバイダがツール自身の設定に書き込まれ、他のプロバイダと共存します。その後、ツール内で使用するモデルを選んでください。Kimi Code では「切り替え」ボタンでも選択でき、主モデルやサブエージェントから参照されているモデルは除去できません。設定とアカウントの詳細は [Kimi Code 接続ガイド](docs/kimi-code-integration-zh.md)（中国語）をご覧ください。
+
+</details>
+
+<details>
+<summary><strong>Codex の集約モードで、/model に集約したモデルが表示されないのはなぜですか？</strong></summary>
+
+Codex はモデル一覧を起動時にしか読み込みません。集約モードに入る・抜ける、集約するプロバイダを追加・削除する、あるいはいずれかのプロバイダの集約モデルを変更した後は、Codex を完全に再起動しないと新しい一覧は表示されません：
+
+- **Codex CLI**：ターミナルを閉じて `codex` を開き直すだけでは不十分です。すべてのターミナルの `codex` は 1 つのバックグラウンドデーモンを共有しており、それを再起動しないと新しい一覧が読み込まれません。Codex がまだ古い一覧を使っていることを CC Switch が検出すると、Codex のページ上部にお知らせが表示されるので、その中の「Codex デーモンを再起動」をクリックしてください。再起動すると、デーモンで実行中のタスクは中断されます。
+- **Codex デスクトップ版**：完全に終了してから開き直してください（macOS では ⌘Q。ウィンドウを閉じるだけでは不十分です）。
+- **エディタ拡張**：エディタのウィンドウを開き直してください。
+
+Claude Code は影響を受けず、集約モデルの変更はすぐに反映されます。
 
 </details>
 
@@ -420,11 +476,11 @@ CC Switch は **Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**�
 </details>
 
 <details>
-<summary><strong>現在アクティブなプロバイダを削除できないのはなぜですか？</strong></summary>
+<summary><strong>使用中のプロバイダを削除できないのはなぜですか？</strong></summary>
 
 CC Switch は「最小限の介入」という設計原則に従っています。アプリをアンインストールしても、各ツールは正常に動作し続けます。
 
-そのため、同時に 1 つのプロバイダのみ有効なツール（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build）では、すべての設定を削除すると対応するツールが使用できなくなるため、システムは常にアクティブな設定を 1 つ保持します。OpenCode、OpenClaw、Hermes、Pi、MiniMax Code などの共存型ツールにはこの制限がなく、どのプロバイダでも直接削除できます。あまり使わないツールがある場合は、設定で非表示にできます。公式ログインに戻す方法は、次の質問をご覧ください。
+そのため、同時に 1 つのプロバイダのみ有効なツール（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build）では、すべての設定を削除すると対応するツールが使用できなくなるため、システムは常に使用中の設定を 1 つ保持します。削除したい場合は、先に別のプロバイダに切り替えてください。集約モードの既定のプロバイダも同様に削除できないので、先に別のプロバイダを既定にしてください。OpenCode、OpenClaw、Hermes、Pi、MiniMax Code などの共存型ツールにはこの制限がなく、どのプロバイダでも直接削除できます。あまり使わないツールがある場合は、サイドバーの「アプリ」ページでサイドバーから非表示にできます。公式ログインに戻す方法は、次の質問をご覧ください。
 
 </details>
 
@@ -435,34 +491,34 @@ Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build のプロバイ�
 
 Codex では、CC Switch 内の「ChatGPT でログイン」から複数の ChatGPT アカウントにログインし、**OpenAI Official** カードごとに「使用するアカウント」を選べるため、複数の Plus、Pro、Team アカウントをワンクリックで切り替えられます。「Codex のログインに追従」を選んだカードは、Codex CLI 自身のログインをそのまま使用します。
 
-注意：ローカルルーティングを有効にしている間は、公式プロバイダに切り替えられません（Codex の OpenAI Official カードを除く）。
+注意：公式サブスクリプションはツール自身のログインを使い、ローカルルーティングを経由しません。ルーティングモードでは公式プロバイダに切り替えられないので（Codex の OpenAI Official カードを除く）、先に直接接続に戻してください。
 
 </details>
 
 <details>
-<summary><strong>ローカルルーティングを有効にすると、設定ファイルのアドレスが 127.0.0.1 に変わるのはなぜですか？</strong></summary>
+<summary><strong>ルーティングを開始すると、設定ファイルのアドレスが 127.0.0.1 に変わるのはなぜですか？</strong></summary>
 
-ローカルルーティングを有効にすると、ツールのリクエストはまず CC Switch のローカルルーティング（デフォルトは `http://127.0.0.1:15721`）に送られ、そこから CC Switch が選択中のプロバイダへ転送します。そのため、ツールの設定ファイルにはローカルアドレスとプレースホルダーのキー `PROXY_MANAGED` だけが書き込まれます。Claude Code のモデル名も `claude-sonnet-5` のような固定のエイリアスになります（`/model` メニューには実際のモデル名が表示されます）。実際のプロバイダのアドレス、キー、モデルはすべて CC Switch に保存されています。
+ルーティングモードでは、ツールのリクエストはまず CC Switch のローカルルーティング（デフォルトは `http://127.0.0.1:15721`）に送られ、そこから CC Switch が選択中のプロバイダへ転送します。そのため、ツールの設定ファイルにはローカルアドレスとプレースホルダーのキー `PROXY_MANAGED` だけが書き込まれます。Claude Code のモデル名も `claude-sonnet-5` のような固定のエイリアスになります（`/model` メニューには実際のモデル名が表示されます）。実際のプロバイダのアドレス、キー、モデルはすべて CC Switch に保存されています。集約モードでも同様です。
 
-「設定 → 利用統計 → リクエストログ」では、各リクエストの「リクエストモデル → 実際のモデル」を確認できます。
+サイドバーの「使用量」のリクエストログでは、各リクエストの「リクエストモデル → 実際のモデル」を確認できます。
 
-ローカルルーティングを有効にしている間に切り替わるのは、ローカルルーティングが使うプロバイダです。有効にする前に使っていたプロバイダは変わらず、カードに「直接接続」と表示されます。ローカルルーティングを無効にすると、設定ファイルはこの直接接続のプロバイダの設定に書き戻されます。CC Switch を終了するときも先に直接接続のプロバイダを書き戻し、次回起動時にローカルルーティングへ接続し直します。
+ルーティングモードで切り替わるのは、ルーティングが使うプロバイダです。ルーティングに入る前に使っていたプロバイダは変わらず、カードに「直接接続」と表示されます。「直接接続に戻す」をクリックすると、設定ファイルはこの直接接続のプロバイダの設定に書き戻されます。CC Switch を終了するときも先に直接接続のプロバイダを書き戻し、次回起動時に接続し直します。
 
 </details>
 
 <details>
 <summary><strong>Claude Code で OpenAI 互換 API、Gemini、ローカルモデルを使えますか？</strong></summary>
 
-使えますが、ローカルルーティングを有効にする必要があります。プロバイダを編集する際に、「高級オプション」の「上流フォーマット」でプロバイダに合った API 形式を選んでください。Chat Completions API のみを提供するサービス（多くのローカルモデルサービスがこれに当たります）は「OpenAI Chat Completions」、Responses API を提供するサービスは「OpenAI Responses API」、Gemini は「Gemini Native generateContent」を選びます。その後、[クイックスタート](#クイックスタート)の手順 5 に従って Claude Code のローカルルーティングを有効にしてください。形式の選択を誤ったり、ローカルルーティングを有効にしていなかったりすると、通常は 404 または 405 エラーになります。
+使えますが、ルーティングを使う必要があります。プロバイダを編集する際に、「詳細オプション」の「上流フォーマット」でプロバイダに合った API 形式を選んでください。Chat Completions API のみを提供するサービス（多くのローカルモデルサービスがこれに当たります）は「OpenAI Chat Completions」、Responses API を提供するサービスは「OpenAI Responses API」、Gemini は「Gemini Native generateContent」を選びます。その後、Claude Code のページの「ルーティング」タブで「ルーティングを開始」をクリックしてください。形式の選択を誤ったり、ルーティングを開始していなかったりすると、通常は 404 または 405 エラーになります。
 
-逆に、Codex や Grok Build の「上流フォーマット」で「Anthropic Messages」を選ぶと、Claude 形式のプロバイダを使えます。この場合もローカルルーティングの有効化が必要です。詳しくは [Claude Code で GPT を使う](docs/guides/claude-codex-routing-guide-ja.md) と [Codex で Claude を使う](docs/guides/codex-claude-routing-guide-ja.md) をご覧ください。
+逆に、Codex や Grok Build の「上流フォーマット」で「Anthropic Messages」を選ぶと、Claude 形式のプロバイダを使えます。この場合もルーティングが必要です。詳しくは [Claude Code で GPT を使う](docs/guides/claude-codex-routing-guide-ja.md) と [Codex で Claude を使う](docs/guides/codex-claude-routing-guide-ja.md) をご覧ください。
 
 </details>
 
 <details>
 <summary><strong>「接続チェック」は成功したのに、リクエストが失敗するのはなぜですか？</strong></summary>
 
-プロバイダカードの「接続チェック」は、プロバイダのアドレスに接続できるかどうかだけを確認し、実際のモデルリクエストは送信しません。そのため、API キーやモデル名が正しいかどうかは検証できません。リクエストが失敗する場合は、キー、モデル名、上流フォーマットを確認してください。ローカルルーティングを有効にしている場合は、「設定 → 利用統計 → リクエストログ」で具体的なエラー内容も確認できます。
+プロバイダカードの「接続チェック」は、プロバイダのアドレスに接続できるかどうかだけを確認し、実際のモデルリクエストは送信しません。そのため、API キーやモデル名が正しいかどうかは検証できません。リクエストが失敗する場合は、キー、モデル名、上流フォーマットを確認してください。ルーティングを経由したリクエストは、サイドバーの「使用量」のリクエストログで具体的なエラー内容も確認できます。
 
 </details>
 
@@ -473,24 +529,24 @@ Codex では、CC Switch 内の「ChatGPT でログイン」から複数の Chat
 
 - **データベース**: `cc-switch.db`（SQLite — プロバイダ、MCP、プロンプト、Skills、プロジェクト、使用量記録など）
 - **ローカル設定**: `settings.json`（デバイスレベルの設定。各ツールの設定ディレクトリ、バックアップポリシー、クラウド同期の接続情報など）
-- **バックアップ**: `backups/`（デフォルトでは 24 時間ごとに自動バックアップし、最新 10 件を保持。「設定 → 詳細 → バックアップと復元」で変更可能）
+- **バックアップ**: `backups/`（デフォルトでは 24 時間ごとに自動バックアップし、最新 10 件を保持。「設定 → データ → バックアップと復元」で変更可能。その下の「その他のバックアップ」には、それ以外のバックアップの場所とサイズが一覧表示され、種類ごとに削除できます）
 - **Skills**: `skills/`（設定で `~/.agents/skills` に変更可能）。デフォルトではシンボリックリンクで各ツールに同期し、失敗した場合はコピーに切り替え
 - **Skill バックアップ**: `skill-backups/`（スキルのアンインストールまたは更新の前に自動作成、最新 20 件を保持）
 - **OAuth ログイン認証情報**: `copilot_auth.json`、`codex_oauth_auth.json`、`xai_oauth_auth.json`
 - **ログ**: `logs/cc-switch.log` と `crash.log`（問題を報告する際は添付してください）
-- **この端末の状態**: `live-state.json`（各ツールが直接接続かローカルルーティング経由か、前回何を書き込んだか）、`codex-login-stash.json`（サードパーティのプロバイダに切り替えたときに退避した Codex の公式ログイン。公式プロバイダに戻すと復元されます）
+- **この端末の状態**: `live-state.json`（各ツールが現在、直接接続・ルーティング・集約のどれか、前回何を書き込んだか）、`codex-login-stash.json`（サードパーティのプロバイダに切り替えたときに退避した Codex の公式ログイン。公式プロバイダに戻すと復元されます）
 - **設定ファイルの原本**: `backups/live-first-write/`（CC Switch が各ツールの設定ファイルを初めて書き換える前の元のファイル）
 
-「設定 → 詳細 → 設定ディレクトリ」で「CC Switch 設定ディレクトリ」を変更すると、`settings.json`、この端末の状態、設定ファイルの原本以外の上記ファイルはすべて新しいディレクトリに保存されるようになります。CC Switch は既存のファイルを自動では移動しないため、先に手動でコピーしておいてください。`settings.json`、この端末の状態、設定ファイルの原本はこのコンピュータ専用のもので、常にデフォルトのディレクトリに置かれ、クラウド同期の対象にもなりません。
+「設定 → データ → 保存場所」で「CC Switch 設定ディレクトリ」を変更すると、`settings.json`、この端末の状態、設定ファイルの原本以外の上記ファイルはすべて新しいディレクトリに保存されるようになります。CC Switch は既存のファイルを自動では移動しないため、先に手動でコピーしておいてください。`settings.json`、この端末の状態、設定ファイルの原本はこのコンピュータ専用のもので、常にデフォルトのディレクトリに置かれ、クラウド同期の対象にもなりません。
 
 </details>
 
 <details>
 <summary><strong>Windows で WSL 内のツールを管理するには？</strong></summary>
 
-CC Switch は WSL を自動では認識しません。「設定 → 詳細 → 設定ディレクトリ → 設定ディレクトリの上書き（詳細）」で、対象ツールのディレクトリを WSL 内のパス（例：`\\wsl.localhost\Ubuntu\home\<ユーザー名>\.claude`）に変更して保存すると、CC Switch は WSL 内の設定を読み書きするようになります（Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi で設定可能）。設定後は、「バージョン情報」ページでも対応する WSL ディストリビューション内でそのツールを検出・アップグレードします。
+CC Switch は WSL を自動では認識しません。「設定 → アプリ設定」で、対象ツールの設定ディレクトリを WSL 内のパス（例：`\\wsl.localhost\Ubuntu\home\<ユーザー名>\.claude`）に変更して保存すると、CC Switch は WSL 内の設定を読み書きするようになります（Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi で設定可能）。設定後は、サイドバーの「アプリ」ページでも対応する WSL ディストリビューション内でそのツールを検出・アップグレードします。
 
-注意：ローカルルーティングが設定に書き込むアドレスは `127.0.0.1` です。WSL2 のデフォルトである NAT ネットワークモードでは、WSL 内の `127.0.0.1` から Windows 上のローカルルーティングに接続できないため、WSL の mirrored ネットワークモードに切り替える必要があります。
+注意：ルーティングと集約が設定に書き込むアドレスは `127.0.0.1` です。WSL2 のデフォルトである NAT ネットワークモードでは、WSL 内の `127.0.0.1` から Windows 上のローカルルーティングに接続できないため、WSL の mirrored ネットワークモードに切り替える必要があります。
 
 </details>
 

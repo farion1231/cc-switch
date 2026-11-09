@@ -1,4 +1,4 @@
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import type { ProviderEditorInactiveField } from "@/lib/api/providers";
 
 /** 点一个字段做什么：加入上方的编辑框，或复制它的值（可以照抄的 TOML）。 */
@@ -25,8 +25,8 @@ export function InactiveFieldsPanel({
 }: InactiveFieldsPanelProps) {
   if (fields.length === 0) return null;
   return (
-    <div className="rounded-md border border-border-default bg-muted/40 p-3 space-y-2">
-      <p className="text-xs text-muted-foreground">{hint}</p>
+    <div className="rounded-md border border-border bg-subtle p-3 space-y-2">
+      <p className="text-xs text-fg-2">{hint}</p>
       <div className="flex flex-wrap gap-2">
         {fields.map((field) => {
           const name = field.path.join(".");
@@ -44,7 +44,7 @@ export function InactiveFieldsPanel({
                   ?.writeText(String(field.value))
                   .then(() => toast.success(action.copiedText));
               }}
-              className="rounded border border-border-default px-2 py-0.5 font-mono text-xs text-blue-500 hover:bg-blue-500/10 dark:text-blue-400"
+              className="rounded border border-border px-2 py-0.5 font-mono text-xs text-fg-1 hover:bg-subtle"
             >
               {action.kind === "add" ? `+ ${name}` : name}
             </button>

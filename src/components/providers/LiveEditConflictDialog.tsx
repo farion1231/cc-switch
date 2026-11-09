@@ -40,7 +40,7 @@ export function LiveEditConflictDialog({
       <DialogContent className="max-w-md" zIndex="alert">
         <DialogHeader className="space-y-3 border-b-0 bg-transparent pb-0">
           <DialogTitle className="flex items-center gap-2 text-lg font-semibold">
-            <AlertTriangle className="h-5 w-5 text-amber-500" />
+            <AlertTriangle className="h-5 w-5 text-warning-text" />
             {t("provider.editConflict.title", {
               defaultValue: "配置文件在编辑期间被修改",
             })}
@@ -52,7 +52,7 @@ export function LiveEditConflictDialog({
             })}
           </DialogDescription>
         </DialogHeader>
-        <ul className="px-6 pt-2 font-mono text-xs text-muted-foreground">
+        <ul className="px-6 pt-2 font-mono text-xs text-fg-2">
           {(keys ?? []).map((key) => (
             <li key={key}>• {key}</li>
           ))}

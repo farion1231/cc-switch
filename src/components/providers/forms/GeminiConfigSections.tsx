@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import JsonEditor from "@/components/JsonEditor";
 
 interface GeminiEnvSectionProps {
+  isAgy?: boolean;
   value: string;
   onChange: (value: string) => void;
   onBlur?: () => void;
@@ -13,6 +14,7 @@ interface GeminiEnvSectionProps {
  * GeminiEnvSection - .env editor section for Gemini environment variables
  */
 export const GeminiEnvSection: React.FC<GeminiEnvSectionProps> = ({
+  isAgy = false,
   value,
   onChange,
   onBlur,
@@ -47,9 +49,11 @@ export const GeminiEnvSection: React.FC<GeminiEnvSectionProps> = ({
     <div className="space-y-2">
       <label
         htmlFor="geminiEnv"
-        className="block text-sm font-medium text-foreground"
+        className="block text-sm font-medium text-fg-1"
       >
-        {t("geminiConfig.envFile", { defaultValue: "环境变量 (.env)" })}
+        {isAgy
+          ? t("provider.form.agy.envFile")
+          : t("geminiConfig.envFile", { defaultValue: "环境变量 (.env)" })}
       </label>
 
       <JsonEditor
@@ -64,15 +68,15 @@ GEMINI_MODEL=gemini-3.6-flash`}
         language="javascript"
       />
 
-      {error && (
-        <p className="text-xs text-red-500 dark:text-red-400">{error}</p>
-      )}
+      {error && <p className="text-xs text-danger-text">{error}</p>}
 
       {!error && (
-        <p className="text-xs text-muted-foreground">
-          {t("geminiConfig.envFileHint", {
-            defaultValue: "使用 .env 格式配置 Gemini 环境变量",
-          })}
+        <p className="text-xs text-fg-2">
+          {isAgy
+            ? t("provider.form.agy.envFileHint")
+            : t("geminiConfig.envFileHint", {
+                defaultValue: "使用 .env 格式配置 Gemini 环境变量",
+              })}
         </p>
       )}
     </div>
@@ -80,6 +84,7 @@ GEMINI_MODEL=gemini-3.6-flash`}
 };
 
 interface GeminiConfigSectionProps {
+  isAgy?: boolean;
   value: string;
   onChange: (value: string) => void;
   configError?: string;
@@ -89,6 +94,7 @@ interface GeminiConfigSectionProps {
  * GeminiConfigSection - settings.json editor section
  */
 export const GeminiConfigSection: React.FC<GeminiConfigSectionProps> = ({
+  isAgy = false,
   value,
   onChange,
   configError,
@@ -115,36 +121,42 @@ export const GeminiConfigSection: React.FC<GeminiConfigSectionProps> = ({
     <div className="space-y-2">
       <label
         htmlFor="geminiConfig"
-        className="block text-sm font-medium text-foreground"
+        className="block text-sm font-medium text-fg-1"
       >
-        {t("geminiConfig.configJson", {
-          defaultValue: "配置文件 (settings.json)",
-        })}
+        {isAgy
+          ? t("provider.form.agy.configJson")
+          : t("geminiConfig.configJson", {
+              defaultValue: "配置文件 (settings.json)",
+            })}
       </label>
 
       <JsonEditor
         value={value}
         onChange={onChange}
-        placeholder={`{
+        placeholder={
+          isAgy
+            ? '{"model":{"name":"gemini-3.8-flash"}}'
+            : `{
   "timeout": 30000,
   "maxRetries": 3
-}`}
+}`
+        }
         darkMode={isDarkMode}
         rows={3}
         showValidation={true}
         language="json"
       />
 
-      {configError && (
-        <p className="text-xs text-red-500 dark:text-red-400">{configError}</p>
-      )}
+      {configError && <p className="text-xs text-danger-text">{configError}</p>}
 
       {!configError && (
-        <p className="text-xs text-muted-foreground">
-          {t("geminiConfig.configJsonHint", {
-            defaultValue:
-              "Gemini CLI 的 settings.json（MCP 服务器在 MCP 面板里管理）",
-          })}
+        <p className="text-xs text-fg-2">
+          {isAgy
+            ? t("provider.form.agy.configJsonHint")
+            : t("geminiConfig.configJsonHint", {
+                defaultValue:
+                  "Gemini CLI 的 settings.json（MCP 服务器在 MCP 面板里管理）",
+              })}
         </p>
       )}
     </div>

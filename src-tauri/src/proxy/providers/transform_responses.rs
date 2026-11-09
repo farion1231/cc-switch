@@ -380,11 +380,12 @@ fn anthropic_web_search_to_responses(
         .get("blocked_domains")
         .and_then(Value::as_array)
         .filter(|domains| !domains.is_empty());
-    if blocked_domains.is_some() {
-        // OpenAI Responses currently exposes an allow-list but no deny-list.
-        // Failing closed avoids silently searching domains the caller excluded.
+    if blocked_domains.is_some() && is_codex_oauth {
+        // The Responses API documents `filters.blocked_domains`, but the
+        // ChatGPT Codex backend does not. Failing closed avoids silently
+        // searching domains the caller excluded if that backend ignores it.
         return Err(ProxyError::InvalidRequest(
-            "Anthropic WebSearch blocked_domains cannot be represented by the Responses API"
+            "Anthropic WebSearch blocked_domains is not supported by the Codex OAuth backend"
                 .to_string(),
         ));
     }
@@ -405,14 +406,19 @@ fn anthropic_web_search_to_responses(
         response_tool["external_web_access"] = json!(true);
     }
 
+    let mut filters = serde_json::Map::new();
     if let Some(allowed_domains) = tool
         .get("allowed_domains")
         .and_then(Value::as_array)
         .filter(|domains| !domains.is_empty())
     {
-        response_tool["filters"] = json!({
-            "allowed_domains": allowed_domains
-        });
+        filters.insert("allowed_domains".to_string(), json!(allowed_domains));
+    }
+    if let Some(blocked_domains) = blocked_domains {
+        filters.insert("blocked_domains".to_string(), json!(blocked_domains));
+    }
+    if !filters.is_empty() {
+        response_tool["filters"] = Value::Object(filters);
     }
 
     if let Some(user_location) = tool
@@ -1905,6 +1911,12 @@ pub fn anthropic_to_responses(
                 }
                 let mut response_tool = json!({
                     "type": "function",
+                    // Anthropic 工具 schema 允许可选参数（required 是任意子集），而
+                    // Responses 后端把省略的 `strict` 按 true 处理：可选属性会被
+                    // 严格化进 required，模型被迫输出它本应能省略的字段（#7713 中
+                    // Claude Code Agent 的可选 isolation 被强制输出即此形态）。
+                    // 显式 false 保留客户端 schema 的可选语义。
+                    "strict": false,
                     "name": tool.get("name").and_then(Value::as_str).unwrap_or(""),
                 });
                 // 同 transform.rs：缺失的 description 省略而非输出 null，
@@ -1926,15 +1938,10 @@ pub fn anthropic_to_responses(
 
     if let Some(max_uses) = hosted_web_search_max_uses {
         if is_codex_oauth {
-            if forced_hosted_web_search_name.is_none() {
-                // The ChatGPT Codex contract rejects max_tool_calls. Without a
-                // forced, isolated hosted tool, the proxy cannot safely bound
-                // which built-in calls consume Anthropic's per-tool budget.
-                return Err(ProxyError::InvalidRequest(
-                    "Anthropic WebSearch max_uses on the Codex OAuth backend requires forcing that hosted tool"
-                        .to_string(),
-                ));
-            }
+            // Codex rejects max_tool_calls. Add a soft instruction cap here;
+            // downstream converters count web_search_call items and cut off the
+            // response on excess calls, forced or not. This response-side bound
+            // cannot guarantee that excess searches have not executed upstream.
             let existing = result
                 .get("instructions")
                 .and_then(Value::as_str)
@@ -2086,6 +2093,38 @@ fn map_tool_choice_to_responses(
         },
         _ => tool_choice.clone(),
     }
+}
+
+/// xAI Responses 的 `ModelToolChoice` 不接受 `{"type":"web_search"}`。
+/// 强制托管搜索时改成 `"required"`，并去掉其它工具，否则 required 可能落到本地函数上。
+/// 字符串选择和函数选择不动。没有存活的 web_search 工具时删掉这条 choice，避免空工具列表配 required。
+pub(crate) fn rewrite_xai_hosted_web_search_tool_choice(body: &mut Value) -> bool {
+    let is_hosted_choice = body
+        .get("tool_choice")
+        .and_then(Value::as_object)
+        .and_then(|choice| choice.get("type"))
+        .and_then(Value::as_str)
+        == Some("web_search");
+    if !is_hosted_choice {
+        return false;
+    }
+    let Some(obj) = body.as_object_mut() else {
+        return false;
+    };
+    if let Some(tools) = obj.get_mut("tools").and_then(Value::as_array_mut) {
+        tools.retain(|tool| tool.get("type").and_then(Value::as_str) == Some("web_search"));
+    }
+    let has_search = obj
+        .get("tools")
+        .and_then(Value::as_array)
+        .is_some_and(|tools| !tools.is_empty());
+    if has_search {
+        obj.insert("tool_choice".to_string(), json!("required"));
+    } else {
+        obj.remove("tool_choice");
+        obj.remove("tools");
+    }
+    true
 }
 
 pub(crate) fn map_responses_stop_reason(
@@ -3341,6 +3380,8 @@ mod tests {
 
         let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["tools"][0]["type"], "function");
+        // 省略 strict 会被 Responses 后端按 true 严格化，可选参数被强制输出（#7713）
+        assert_eq!(result["tools"][0]["strict"], json!(false));
         assert_eq!(result["tools"][0]["name"], "get_weather");
         assert!(result["tools"][0].get("parameters").is_some());
         assert_eq!(result["tools"][0]["parameters"]["type"], json!("object"));
@@ -3350,6 +3391,46 @@ mod tests {
         );
         // input_schema should not appear
         assert!(result["tools"][0].get("input_schema").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_marks_function_tools_not_strict() {
+        // #7713：可选参数（required 是任意子集）必须保留可选语义。
+        // 省略 strict 时 Responses 后端按 true 严格化，模型被迫输出 isolation。
+        let input = json!({
+            "model": "gpt-5.6-luna",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Call the agent"}],
+            "tools": [{
+                "name": "Agent",
+                "description": "Launch a sub-agent",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "description": {"type": "string"},
+                        "prompt": {"type": "string"},
+                        "isolation": {"type": "string", "enum": ["worktree", "remote"]}
+                    },
+                    "required": ["description", "prompt"]
+                }
+            }]
+        });
+
+        let plain = anthropic_to_responses(input.clone(), None, false, false).unwrap();
+        assert_eq!(plain["tools"][0]["strict"], json!(false));
+        // required 保持为原有子集，strict 语义交由后端保留
+        assert_eq!(
+            plain["tools"][0]["parameters"]["required"],
+            json!(["description", "prompt"])
+        );
+
+        // 同一转换分支也服务 Codex OAuth 后端
+        let oauth = anthropic_to_responses(input, None, true, false).unwrap();
+        assert_eq!(oauth["tools"][0]["strict"], json!(false));
+        assert_eq!(
+            oauth["tools"][0]["parameters"]["required"],
+            json!(["description", "prompt"])
+        );
     }
 
     #[test]
@@ -3433,6 +3514,49 @@ mod tests {
     }
 
     #[test]
+    fn xai_hosted_web_search_choice_becomes_required_and_drops_other_tools() {
+        let mut body = json!({
+            "model": "grok-4.5",
+            "tools": [
+                {"type": "function", "name": "Bash"},
+                {"type": "web_search"}
+            ],
+            "tool_choice": {"type": "web_search"}
+        });
+
+        assert!(rewrite_xai_hosted_web_search_tool_choice(&mut body));
+        assert_eq!(body["tool_choice"], json!("required"));
+        assert_eq!(body["tools"], json!([{"type": "web_search"}]));
+        assert!(!rewrite_xai_hosted_web_search_tool_choice(&mut body));
+    }
+
+    #[test]
+    fn xai_rewrite_leaves_string_and_function_tool_choice() {
+        let mut auto =
+            json!({"tool_choice": "auto", "tools": [{"type": "function", "name": "Bash"}]});
+        assert!(!rewrite_xai_hosted_web_search_tool_choice(&mut auto));
+        assert_eq!(auto["tool_choice"], json!("auto"));
+
+        let mut function = json!({
+            "tool_choice": {"type": "function", "name": "Bash"},
+            "tools": [{"type": "function", "name": "Bash"}]
+        });
+        assert!(!rewrite_xai_hosted_web_search_tool_choice(&mut function));
+        assert_eq!(function["tool_choice"]["name"], json!("Bash"));
+    }
+
+    #[test]
+    fn xai_rewrite_drops_choice_when_no_web_search_tool_survives() {
+        let mut body = json!({
+            "tools": [{"type": "function", "name": "Bash"}],
+            "tool_choice": {"type": "web_search"}
+        });
+        assert!(rewrite_xai_hosted_web_search_tool_choice(&mut body));
+        assert!(body.get("tool_choice").is_none());
+        assert!(body.get("tools").is_none());
+    }
+
+    #[test]
     fn test_api_key_hosted_web_search_maps_max_uses_to_max_tool_calls() {
         let input = json!({
             "model": "gpt-5",
@@ -3470,19 +3594,40 @@ mod tests {
     }
 
     #[test]
-    fn test_codex_auto_hosted_web_search_max_uses_fails_closed() {
+    fn test_codex_auto_hosted_web_search_max_uses_enforced_via_instructions() {
         let input = json!({
             "model": "gpt-5.6",
             "messages": [{"role": "user", "content": "Search"}],
-            "tools": [{
-                "type": "web_search_20250305",
-                "name": "web_search",
-                "max_uses": 3
-            }]
+            "tools": [
+                {
+                    "type": "web_search_20250305",
+                    "name": "web_search",
+                    "max_uses": 3
+                },
+                {
+                    "name": "get_weather",
+                    "description": "A client-side function",
+                    "input_schema": {"type": "object"}
+                }
+            ]
         });
 
-        let error = anthropic_to_responses(input, None, true, false).unwrap_err();
-        assert!(error.to_string().contains("requires forcing"));
+        // An unforced hosted search must coexist with client-side tools.
+        let result = anthropic_to_responses(input, None, true, false).unwrap();
+        assert!(result.get("max_tool_calls").is_none());
+        assert!(result["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("no more than 3 web search calls"));
+        // Unrelated tools are preserved when the hosted tool is not forced.
+        let tools = result["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2);
+        assert!(tools
+            .iter()
+            .any(|tool| tool["type"] == "web_search" && tool["external_web_access"] == true));
+        assert!(tools
+            .iter()
+            .any(|tool| tool["type"] == "function" && tool["name"] == "get_weather"));
     }
 
     #[test]
@@ -3628,7 +3773,32 @@ mod tests {
     }
 
     #[test]
-    fn test_hosted_web_search_blocked_domains_fails_closed() {
+    fn test_hosted_web_search_blocked_domains_maps_to_responses_filters() {
+        let input = json!({
+            "model": "gpt-5",
+            "messages": [{"role": "user", "content": "Search"}],
+            "tools": [{
+                "type": "web_search_20260209",
+                "name": "web_search",
+                "allowed_callers": ["direct"],
+                "blocked_domains": ["doc.rust-lang.org", "docs.rs", "github.com"]
+            }]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(
+            result["tools"][0],
+            json!({
+                "type": "web_search",
+                "filters": {
+                    "blocked_domains": ["doc.rust-lang.org", "docs.rs", "github.com"]
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn test_hosted_web_search_blocked_domains_fails_closed_on_codex_oauth() {
         let input = json!({
             "model": "gpt-5",
             "messages": [{"role": "user", "content": "Search"}],
@@ -4261,6 +4431,77 @@ mod tests {
     }
 
     #[test]
+    fn test_web_search_max_uses_cuts_off_later_function_calls() {
+        let input = json!({
+            "id": "resp_mixed_search_limit",
+            "status": "completed",
+            "model": "gpt-5.6",
+            "output": [
+                {
+                    "type": "web_search_call",
+                    "id": "ws_first",
+                    "status": "completed",
+                    "action": {"type": "search", "query": "first query"}
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_before",
+                    "name": "get_weather",
+                    "arguments": "{\"location\":\"Tokyo\"}"
+                },
+                {
+                    "type": "web_search_call",
+                    "id": "ws_second",
+                    "status": "completed",
+                    "action": {"type": "search", "query": "second query"}
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_after",
+                    "name": "get_weather",
+                    "arguments": "{\"location\":\"Paris\"}"
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Later answer."}]
+                }
+            ],
+            "usage": {"input_tokens": 4, "output_tokens": 3}
+        });
+
+        let within_limit = responses_to_anthropic_with_web_search_options(
+            input.clone(),
+            Some("web_search"),
+            Some(2),
+        )
+        .unwrap();
+        let content = within_limit["content"].as_array().unwrap();
+        assert_eq!(content.len(), 7);
+        assert_eq!(content[2]["id"], "call_before");
+        assert_eq!(content[5]["id"], "call_after");
+        assert_eq!(content[6]["text"], "Later answer.");
+        assert_eq!(within_limit["stop_reason"], "tool_use");
+
+        // Match stream cutoff: preserve completed calls before the excess
+        // search, but do not return anything produced after that search.
+        let over_limit =
+            responses_to_anthropic_with_web_search_options(input, Some("web_search"), Some(1))
+                .unwrap();
+        let content = over_limit["content"].as_array().unwrap();
+        assert_eq!(content.len(), 5);
+        assert_eq!(content[2]["id"], "call_before");
+        assert_eq!(content[2]["input"], json!({"location": "Tokyo"}));
+        assert_eq!(content[3]["id"], "ws_second");
+        assert_eq!(content[4]["content"]["error_code"], "max_uses_exceeded");
+        assert_eq!(over_limit["stop_reason"], "tool_use");
+        assert_eq!(
+            over_limit["usage"]["server_tool_use"]["web_search_requests"],
+            1
+        );
+    }
+
+    #[test]
     fn test_responses_to_anthropic_pairs_every_hosted_web_search_call() {
         let input = json!({
             "id": "resp_multi_search",
@@ -4621,6 +4862,61 @@ mod tests {
     }
 
     #[test]
+    fn test_replayed_legacy_envelope_omits_output_only_fields() {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+
+        // A pre-whitelist envelope keeps the backend output item verbatim,
+        // including the `status` field the official Codex backend started
+        // emitting on 2026-10-03 and rejects as an unknown input parameter.
+        let legacy = json!({
+            "id": "rs_legacy",
+            "type": "reasoning",
+            "summary": [{"type": "summary_text", "text": "prior turn"}],
+            "encrypted_content": "opaque",
+            "status": "completed"
+        });
+        let signature = format!(
+            "ccswitch-openai-reasoning-v1:{}",
+            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&legacy).unwrap())
+        );
+        let replay = anthropic_to_responses(
+            json!({
+                "model": "gpt-5.6",
+                "messages": [
+                    {"role": "user", "content": "hi"},
+                    {"role": "assistant", "content": [
+                        {"type": "thinking", "thinking": "prior turn", "signature": signature},
+                        {"type": "tool_use", "id": "call_9", "name": "lookup", "input": {}}
+                    ]},
+                    {"role": "user", "content": [
+                        {"type": "tool_result", "tool_use_id": "call_9", "content": "ok"}
+                    ]}
+                ]
+            }),
+            None,
+            true,
+            false,
+        )
+        .unwrap();
+        let reasoning_items: Vec<&Value> = replay["input"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item.get("type").and_then(Value::as_str) == Some("reasoning"))
+            .collect();
+        assert_eq!(reasoning_items.len(), 1);
+        assert_eq!(
+            reasoning_items[0],
+            &json!({
+                "id": "rs_legacy",
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "prior turn"}],
+                "encrypted_content": "opaque"
+            })
+        );
+    }
+
+    #[test]
     fn test_reasoning_only_assistant_turn_is_not_replayed() {
         let item = json!({
             "type": "reasoning",
@@ -4855,6 +5151,7 @@ mod tests {
         let input = json!({
             "model": "gpt-5.4",
             "max_tokens": 1024,
+            "thinking": {"type": "adaptive"},
             "output_config": {"effort": "max"},
             "messages": [{"role": "user", "content": "Hello"}]
         });
@@ -4877,6 +5174,7 @@ mod tests {
             let input = json!({
                 "model": model,
                 "max_tokens": 1024,
+                "thinking": {"type": "adaptive"},
                 "output_config": {"effort": "max"},
                 "messages": [{"role": "user", "content": "Hello"}]
             });
@@ -4893,6 +5191,7 @@ mod tests {
         let input = json!({
             "model": "gpt-5.4",
             "max_tokens": 1024,
+            "thinking": {"type": "adaptive"},
             "output_config": {"effort": "xhigh"},
             "messages": [{"role": "user", "content": "Hello"}]
         });
@@ -4908,12 +5207,27 @@ mod tests {
         let input = json!({
             "model": "grok-4.6-build",
             "max_tokens": 1024,
+            "thinking": {"type": "adaptive"},
             "output_config": {"effort": "xhigh"},
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
         let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["reasoning"]["effort"], "xhigh");
+    }
+
+    #[test]
+    fn test_responses_thinking_off_clamps_effort_to_low() {
+        // Thinking turned off in Claude Code: no `thinking`, effort still "high".
+        let input = json!({
+            "model": "gpt-5.4",
+            "max_tokens": 1024,
+            "output_config": {"effort": "high"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "low");
     }
 
     #[test]

@@ -10,11 +10,10 @@ use url::Url;
 
 use crate::error::AppError;
 use crate::proxy::http_client;
+use crate::services::sync_protocol::{transfer_timeout, TRANSFER_IDLE_TIMEOUT};
 use futures::StreamExt;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
-/// Timeout for large file transfers (PUT / GET of db.sql, skills.zip, etc.).
-const TRANSFER_TIMEOUT_SECS: u64 = 300;
 
 // ─── Credentials ─────────────────────────────────────────────
 
@@ -270,6 +269,15 @@ fn s3_transport_error(
     )
 }
 
+fn s3_stalled_error(key: &'static str, op_zh: &str, op_en: &str) -> AppError {
+    let secs = TRANSFER_IDLE_TIMEOUT.as_secs();
+    AppError::localized(
+        key,
+        format!("S3 {op_zh}失败（{secs} 秒未收到数据）"),
+        format!("S3 {op_en} failed (no data received for {secs}s)"),
+    )
+}
+
 fn s3_status_error(op: &str, status: StatusCode, url: &str) -> AppError {
     let safe_url = redact_url(url);
     let mut zh = format!("S3 {op} 失败: {status} ({safe_url})");
@@ -390,8 +398,8 @@ pub(crate) async fn put_object(
     let resp = client
         .put(url.as_str())
         .headers(headers)
+        .timeout(transfer_timeout(bytes.len() as u64))
         .body(bytes)
-        .timeout(Duration::from_secs(TRANSFER_TIMEOUT_SECS))
         .send()
         .await
         .map_err(|e| s3_transport_error("s3.put_failed", "PUT 请求", "PUT request", &e))?;
@@ -431,12 +439,13 @@ pub(crate) async fn get_object(
         chrono::Utc::now(),
     );
 
-    let resp = client
+    let request = client
         .get(url.as_str())
         .headers(headers)
-        .timeout(Duration::from_secs(TRANSFER_TIMEOUT_SECS))
-        .send()
+        .timeout(transfer_timeout(max_bytes as u64));
+    let resp = tokio::time::timeout(TRANSFER_IDLE_TIMEOUT, request.send())
         .await
+        .map_err(|_| s3_stalled_error("s3.get_failed", "GET 请求", "GET request"))?
         .map_err(|e| s3_transport_error("s3.get_failed", "GET 请求", "GET request", &e))?;
 
     if resp.status() == StatusCode::NOT_FOUND {
@@ -455,7 +464,11 @@ pub(crate) async fn get_object(
 
     let mut bytes = Vec::new();
     let mut stream = resp.bytes_stream();
-    while let Some(chunk) = stream.next().await {
+    // Slow transfers may run long; only a stretch without any data fails them.
+    while let Some(chunk) = tokio::time::timeout(TRANSFER_IDLE_TIMEOUT, stream.next())
+        .await
+        .map_err(|_| s3_stalled_error("s3.response_read_failed", "读取响应", "response read"))?
+    {
         let chunk = chunk.map_err(|e| {
             AppError::localized(
                 "s3.response_read_failed",

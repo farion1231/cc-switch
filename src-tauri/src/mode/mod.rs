@@ -5,4 +5,5 @@ pub mod contract;
 pub mod controller;
 pub mod current;
 pub mod operation;
+pub mod stack;
 pub mod state;

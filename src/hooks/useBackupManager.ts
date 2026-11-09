@@ -1,6 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { backupsApi } from "@/lib/api";
 
+const BACKUP_LOCATIONS_KEY = ["backup-locations"];
+
 export function useBackupManager() {
   const queryClient = useQueryClient();
 
@@ -13,9 +15,15 @@ export function useBackupManager() {
     queryFn: () => backupsApi.listDbBackups(),
   });
 
+  // 数据库备份增删也会改变「其他备份」总览里数据库那一行
+  const refreshAll = async () => {
+    await refetch();
+    await queryClient.invalidateQueries({ queryKey: BACKUP_LOCATIONS_KEY });
+  };
+
   const createMutation = useMutation({
     mutationFn: () => backupsApi.createDbBackup(),
-    onSuccess: () => refetch(),
+    onSuccess: refreshAll,
   });
 
   const restoreMutation = useMutation({
@@ -41,7 +49,7 @@ export function useBackupManager() {
 
   const deleteMutation = useMutation({
     mutationFn: (filename: string) => backupsApi.deleteDbBackup(filename),
-    onSuccess: () => refetch(),
+    onSuccess: refreshAll,
   });
 
   return {
@@ -53,6 +61,36 @@ export function useBackupManager() {
     isRestoring: restoreMutation.isPending,
     rename: renameMutation.mutateAsync,
     isRenaming: renameMutation.isPending,
+    remove: deleteMutation.mutateAsync,
+    isDeleting: deleteMutation.isPending,
+  };
+}
+
+export function useBackupLocations() {
+  const queryClient = useQueryClient();
+
+  const query = useQuery({
+    queryKey: BACKUP_LOCATIONS_KEY,
+    queryFn: () => backupsApi.listBackupLocations(),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => backupsApi.deleteBackupLocation(id),
+    onSuccess: async (_freed, id) => {
+      await queryClient.invalidateQueries({ queryKey: BACKUP_LOCATIONS_KEY });
+      // Skills 页的备份列表与这里删的是同一个目录
+      if (id === "skills") {
+        await queryClient.invalidateQueries({
+          queryKey: ["skills", "backups"],
+        });
+      }
+    },
+  });
+
+  return {
+    locations: query.data ?? [],
+    isLoading: query.isLoading,
+    isError: query.isError,
     remove: deleteMutation.mutateAsync,
     isDeleting: deleteMutation.isPending,
   };

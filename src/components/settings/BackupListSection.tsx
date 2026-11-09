@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Pencil, RotateCcw, Check, X, Download, Trash2 } from "lucide-react";
 import {
   Dialog,
@@ -18,9 +18,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useBackupManager } from "@/hooks/useBackupManager";
+import {
+  BackupStorageSection,
+  formatBytes,
+} from "@/components/settings/BackupStorageSection";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
 interface BackupListSectionProps {
@@ -30,12 +35,6 @@ interface BackupListSectionProps {
     backupIntervalHours?: number;
     backupRetainCount?: number;
   }) => void;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function formatBackupDate(isoString: string): string {
@@ -67,6 +66,12 @@ export function BackupListSection({
   onSettingsChange,
 }: BackupListSectionProps) {
   const { t } = useTranslation();
+  const renameLabel = t("settings.backupManager.rename", {
+    defaultValue: "Rename",
+  });
+  const deleteLabel = t("settings.backupManager.delete", {
+    defaultValue: "Delete",
+  });
   const {
     backups,
     isLoading,
@@ -293,9 +298,9 @@ export function BackupListSection({
         </div>
 
         {isLoading ? (
-          <div className="text-sm text-muted-foreground py-2">Loading...</div>
+          <div className="text-sm text-fg-2 py-2">Loading...</div>
         ) : backups.length === 0 ? (
-          <div className="text-sm text-muted-foreground py-2">
+          <div className="text-sm text-fg-2 py-2">
             {t("settings.backupManager.empty", {
               defaultValue: "No backups yet",
             })}
@@ -305,7 +310,7 @@ export function BackupListSection({
             {backups.map((backup) => (
               <div
                 key={backup.filename}
-                className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors text-sm"
+                className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-subtle hover:bg-subtle transition-colors text-sm"
               >
                 <div className="flex-1 min-w-0">
                   {editingFilename === backup.filename ? (
@@ -349,8 +354,8 @@ export function BackupListSection({
                       <div className="font-mono text-xs truncate">
                         {getDisplayName(backup.filename)}
                       </div>
-                      <div className="text-xs text-muted-foreground">
-                        {formatBackupDate(backup.createdAt)} &middot;{" "}
+                      <div className="text-xs text-fg-2">
+                        {formatBackupDate(backup.createdAt)} &middot;{""}
                         {formatBytes(backup.sizeBytes)}
                       </div>
                     </>
@@ -358,30 +363,30 @@ export function BackupListSection({
                 </div>
                 {editingFilename !== backup.filename && (
                   <div className="flex items-center gap-1 shrink-0">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      onClick={() => handleStartRename(backup.filename)}
-                      disabled={isRestoring || isRenaming || isDeleting}
-                      title={t("settings.backupManager.rename", {
-                        defaultValue: "Rename",
-                      })}
-                    >
-                      <Pencil className="h-3 w-3" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-destructive hover:text-destructive"
-                      onClick={() => setDeleteFilename(backup.filename)}
-                      disabled={isRestoring || isDeleting}
-                      title={t("settings.backupManager.delete", {
-                        defaultValue: "Delete",
-                      })}
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
+                    <HoverTip content={renameLabel}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => handleStartRename(backup.filename)}
+                        disabled={isRestoring || isRenaming || isDeleting}
+                        aria-label={renameLabel}
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </Button>
+                    </HoverTip>
+                    <HoverTip content={deleteLabel}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-destructive hover:text-destructive"
+                        onClick={() => setDeleteFilename(backup.filename)}
+                        disabled={isRestoring || isDeleting}
+                        aria-label={deleteLabel}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </HoverTip>
                     <Button
                       variant="ghost"
                       size="sm"
@@ -405,6 +410,8 @@ export function BackupListSection({
           </div>
         )}
       </div>
+
+      <BackupStorageSection />
 
       {/* Restore Confirmation Dialog */}
       <Dialog

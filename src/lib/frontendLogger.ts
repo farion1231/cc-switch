@@ -1,4 +1,7 @@
-import { error as writeErrorLog } from "@tauri-apps/plugin-log";
+import {
+  error as writeErrorLog,
+  info as writeInfoLog,
+} from "@tauri-apps/plugin-log";
 
 const MAX_LOG_MESSAGE_LENGTH = 12_000;
 const MAX_RAW_LOG_INPUT_LENGTH = 16_000;
@@ -320,6 +323,14 @@ export function reportFrontendError(
   // Web 开发/测试环境没有 Tauri invoke，日志上报失败不应再触发
   // console.error 或未处理 Promise，否则会形成错误循环。
   void writeErrorLog(message, { file: "frontend" }).catch(() => undefined);
+}
+
+/** 用户动作（确认框里的选择等）写一行 INFO，和后端的切换日志对得上。 */
+export function logFrontendInfo(message: string): void {
+  const redacted = redactFrontendLogText(
+    truncateForProcessing(`[frontend] ${message}`, MAX_LOG_MESSAGE_LENGTH),
+  );
+  void writeInfoLog(redacted, { file: "frontend" }).catch(() => undefined);
 }
 
 export function installGlobalErrorHandlers(

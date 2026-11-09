@@ -1,11 +1,14 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde_json::Value;
 
 use crate::session_manager::{SessionMessage, SessionMeta};
 
-use super::utils::{parse_timestamp_to_ms, path_basename, truncate_summary};
+use super::blocks::assign_turn_ids;
+use super::opencode_blocks::{message_from_parts, PartLocator};
+use super::utils::{parse_timestamp_to_ms, path_basename, truncate_summary, ScanStatus};
 
 const PROVIDER_ID: &str = "opencode";
 
@@ -52,34 +55,54 @@ fn detect_schema(conn: &Connection) -> OpenCodeSchema {
 }
 
 fn sqlite_table_exists(conn: &Connection, table: &str) -> bool {
-    conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
-        [table],
-        |row| row.get(0),
-    )
-    .unwrap_or(false)
+    sqlite_table_exists_with_status(conn, table, &mut ScanStatus::default())
+}
+
+fn sqlite_table_exists_with_status(
+    conn: &Connection,
+    table: &str,
+    status: &mut ScanStatus,
+) -> bool {
+    status
+        .record(conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+            [table],
+            |row| row.get(0),
+        ))
+        .unwrap_or(false)
 }
 
 /// Read the V1→V2 migration marker timestamp (`migration.v1-v2`) from the `kv` table.
-fn get_v2_migration_marker_ts(conn: &Connection) -> Option<i64> {
-    if !sqlite_table_exists(conn, "kv") {
+fn get_v2_migration_marker_ts_with_status(
+    conn: &Connection,
+    status: &mut ScanStatus,
+) -> Option<i64> {
+    if !sqlite_table_exists_with_status(conn, "kv", status) {
         return None;
     }
-    conn.query_row(
-        "SELECT max(coalesce(time_created, 0), coalesce(time_updated, 0)) \
+    status
+        .record(
+            conn.query_row(
+                "SELECT max(coalesce(time_created, 0), coalesce(time_updated, 0)) \
          FROM kv WHERE key = 'migration.v1-v2'",
-        [],
-        |row| row.get(0),
-    )
-    .ok()
-    .filter(|&ts| ts > 0)
+                [],
+                |row| row.get(0),
+            )
+            .optional(),
+        )
+        .flatten()
+        .filter(|&ts| ts > 0)
 }
 
 /// Scan sessions from both the legacy JSON files and the newer SQLite database,
 /// merging results with SQLite taking precedence on ID conflicts.
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    let json_sessions = scan_sessions_json();
-    let sqlite_sessions = scan_sessions_sqlite();
+    scan_sessions_with_status(&mut ScanStatus::default())
+}
+
+pub(crate) fn scan_sessions_with_status(status: &mut ScanStatus) -> Vec<SessionMeta> {
+    let json_sessions = scan_sessions_json(status);
+    let sqlite_sessions = scan_sessions_sqlite_with_status(status);
 
     if sqlite_sessions.is_empty() {
         return json_sessions;
@@ -103,19 +126,16 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     merged
 }
 
-fn scan_sessions_json() -> Vec<SessionMeta> {
+fn scan_sessions_json(status: &mut ScanStatus) -> Vec<SessionMeta> {
     let storage = get_opencode_data_dir();
     let session_dir = storage.join("session");
-    if !session_dir.exists() {
-        return Vec::new();
-    }
 
     let mut json_files = Vec::new();
-    collect_json_files(&session_dir, &mut json_files);
+    collect_json_files_with_status(&session_dir, &mut json_files, status);
 
     let mut sessions = Vec::new();
     for path in json_files {
-        if let Some(meta) = parse_session(&storage, &path) {
+        if let Some(meta) = parse_session_with_status(&storage, &path, status) {
             sessions.push(meta);
         }
     }
@@ -127,7 +147,7 @@ fn scan_sessions_json() -> Vec<SessionMeta> {
 /// Uses `rfind(":ses_")` to split the path from the session ID because the
 /// db path itself may contain colons (e.g. `C:\Users\...` on Windows).
 /// This relies on the OpenCode convention that session IDs start with `ses_`.
-fn parse_sqlite_source(source: &str) -> Option<(PathBuf, String)> {
+pub(crate) fn parse_sqlite_source(source: &str) -> Option<(PathBuf, String)> {
     let rest = source.strip_prefix("sqlite:")?;
     let sep = rest.rfind(":ses_")?;
     let db_path = PathBuf::from(&rest[..sep]);
@@ -135,9 +155,14 @@ fn parse_sqlite_source(source: &str) -> Option<(PathBuf, String)> {
     Some((db_path, session_id))
 }
 
+#[cfg(test)]
 fn scan_sessions_sqlite() -> Vec<SessionMeta> {
+    scan_sessions_sqlite_with_status(&mut ScanStatus::default())
+}
+
+fn scan_sessions_sqlite_with_status(status: &mut ScanStatus) -> Vec<SessionMeta> {
     let db_path = get_opencode_db_path();
-    if !db_path.exists() {
+    if status.metadata(&db_path).is_none() {
         return Vec::new();
     }
 
@@ -146,15 +171,24 @@ fn scan_sessions_sqlite() -> Vec<SessionMeta> {
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     ) {
         Ok(c) => c,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            status.record::<(), _>(Err(error));
+            return Vec::new();
+        }
     };
 
-    let schema = detect_schema(&conn);
+    let schema = if sqlite_table_exists_with_status(&conn, "session_v2", status)
+        && sqlite_table_exists_with_status(&conn, "session_message", status)
+    {
+        OpenCodeSchema::V2
+    } else {
+        OpenCodeSchema::V1
+    };
     let db_display = db_path.display().to_string();
 
     match schema {
-        OpenCodeSchema::V1 => scan_sessions_sqlite_v1(&conn, &db_display),
-        OpenCodeSchema::V2 => scan_sessions_sqlite_v2(&conn, &db_display),
+        OpenCodeSchema::V1 => scan_sessions_sqlite_v1(&conn, &db_display, status),
+        OpenCodeSchema::V2 => scan_sessions_sqlite_v2(&conn, &db_display, status),
     }
 }
 
@@ -190,24 +224,38 @@ fn parse_sqlite_session_row(
     })
 }
 
-fn scan_sessions_sqlite_v1(conn: &Connection, db_display: &str) -> Vec<SessionMeta> {
+fn scan_sessions_sqlite_v1(
+    conn: &Connection,
+    db_display: &str,
+    status: &mut ScanStatus,
+) -> Vec<SessionMeta> {
     let sql = "SELECT id, COALESCE(title, ''), directory, time_created, time_updated \
                FROM session ORDER BY time_updated DESC";
 
     let mut stmt = match conn.prepare(sql) {
         Ok(s) => s,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            status.record::<(), _>(Err(error));
+            return Vec::new();
+        }
     };
 
     let iter = match stmt.query_map([], |row| parse_sqlite_session_row(row, db_display)) {
         Ok(rows) => rows,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            status.record::<(), _>(Err(error));
+            return Vec::new();
+        }
     };
 
-    iter.flatten().collect()
+    iter.filter_map(|row| status.record(row)).collect()
 }
 
-fn scan_sessions_sqlite_v2(conn: &Connection, db_display: &str) -> Vec<SessionMeta> {
+fn scan_sessions_sqlite_v2(
+    conn: &Connection,
+    db_display: &str,
+    status: &mut ScanStatus,
+) -> Vec<SessionMeta> {
     let sql = "SELECT s.id, \
                       COALESCE(s.title, ''), \
                       s.directory, \
@@ -220,29 +268,35 @@ fn scan_sessions_sqlite_v2(conn: &Connection, db_display: &str) -> Vec<SessionMe
 
     let mut stmt = match conn.prepare(sql) {
         Ok(s) => s,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            status.record::<(), _>(Err(error));
+            return Vec::new();
+        }
     };
 
     let iter = match stmt.query_map([], |row| parse_sqlite_session_row(row, db_display)) {
         Ok(rows) => rows,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            status.record::<(), _>(Err(error));
+            return Vec::new();
+        }
     };
 
-    let mut sessions: Vec<SessionMeta> = iter.flatten().collect();
+    let mut sessions: Vec<SessionMeta> = iter.filter_map(|row| status.record(row)).collect();
 
     // Include V1 sessions for mixed V1/V2 databases (e.g. user tested 2.x beta then continued on 1.x)
-    if sqlite_table_exists(conn, "session") {
-        if let Some(marker_ts) = get_v2_migration_marker_ts(conn) {
+    if sqlite_table_exists_with_status(conn, "session", status) {
+        if let Some(marker_ts) = get_v2_migration_marker_ts_with_status(conn, status) {
             let v1_sql = "SELECT id, COALESCE(title, ''), directory, time_created, time_updated \
                           FROM session \
                           WHERE NOT EXISTS (SELECT 1 FROM session_v2 WHERE session_v2.id = session.id) \
                             AND time_updated > ?1 \
                           ORDER BY time_updated DESC";
-            if let Ok(mut v1_stmt) = conn.prepare(v1_sql) {
-                if let Ok(rows) =
-                    v1_stmt.query_map([marker_ts], |row| parse_sqlite_session_row(row, db_display))
-                {
-                    sessions.extend(rows.flatten());
+            if let Some(mut v1_stmt) = status.record(conn.prepare(v1_sql)) {
+                if let Some(rows) = status.record(
+                    v1_stmt.query_map([marker_ts], |row| parse_sqlite_session_row(row, db_display)),
+                ) {
+                    sessions.extend(rows.filter_map(|row| status.record(row)));
                     sessions.sort_by_key(|s| std::cmp::Reverse(s.last_active_at));
                 }
             }
@@ -266,59 +320,64 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     let mut msg_files = Vec::new();
     collect_json_files(path, &mut msg_files);
 
-    // Parse all messages and collect (created_ts, message_id, role, parts_text)
-    let mut entries: Vec<(i64, String, String, String)> = Vec::new();
+    // (created_ts, message_id, message)
+    let mut entries: Vec<(i64, String, SessionMessage)> = Vec::new();
 
     for msg_path in &msg_files {
-        let data = match std::fs::read_to_string(msg_path) {
-            Ok(d) => d,
-            Err(_) => continue,
+        let Some(value) = read_json(msg_path) else {
+            continue;
         };
-        let value: Value = match serde_json::from_str(&data) {
-            Ok(v) => v,
-            Err(_) => continue,
+        let Some(msg_id) = value.get("id").and_then(Value::as_str) else {
+            continue;
         };
-
-        let msg_id = match value.get("id").and_then(Value::as_str) {
-            Some(id) => id.to_string(),
-            None => continue,
-        };
-
         let role = value
             .get("role")
             .and_then(Value::as_str)
-            .unwrap_or("unknown")
-            .to_string();
-
+            .unwrap_or("unknown");
         let created_ts = value
             .get("time")
             .and_then(|t| t.get("created"))
             .and_then(parse_timestamp_to_ms)
             .unwrap_or(0);
 
-        // Collect text parts from storage/part/{messageID}/
-        let part_dir = storage.join("part").join(&msg_id);
-        let text = collect_parts_text(&part_dir);
-        if text.trim().is_empty() {
+        // storage/part/{messageID}/ 下的 part 文件；part id 按时间递增，按文件名排序即生成顺序
+        let mut part_files = Vec::new();
+        collect_json_files(&storage.join("part").join(msg_id), &mut part_files);
+        part_files.sort();
+        let parts: Vec<(PartLocator, Value)> = part_files
+            .iter()
+            .filter_map(|part_path| {
+                let part = read_json(part_path)?;
+                let rel_path = part_path
+                    .strip_prefix(storage)
+                    .ok()?
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                Some((PartLocator::File { rel_path }, part))
+            })
+            .collect();
+
+        let ts = (created_ts > 0).then_some(created_ts);
+        let message = message_from_parts(role, Some(msg_id.to_string()), ts, &value, &parts);
+        if message.is_empty() {
             continue;
         }
-
-        entries.push((created_ts, msg_id, role, text));
+        entries.push((created_ts, msg_id.to_string(), message));
     }
 
-    // Sort by created timestamp
-    entries.sort_by_key(|(ts, _, _, _)| *ts);
+    // Sort by created timestamp, then by (time-ordered) message id
+    entries.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
 
-    let messages = entries
-        .into_iter()
-        .map(|(ts, _, role, content)| SessionMessage {
-            role,
-            content,
-            ts: if ts > 0 { Some(ts) } else { None },
-        })
-        .collect();
-
+    let mut messages: Vec<SessionMessage> = entries.into_iter().map(|(_, _, m)| m).collect();
+    assign_turn_ids(&mut messages);
     Ok(messages)
+}
+
+fn read_json(path: &Path) -> Option<Value> {
+    let data = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&data).ok()
 }
 
 /// Load messages from the OpenCode SQLite database for a given source reference.
@@ -365,7 +424,8 @@ fn load_messages_sqlite_v1(
 ) -> Result<Vec<SessionMessage>, String> {
     let mut msg_stmt = conn
         .prepare(
-            "SELECT id, time_created, data FROM message WHERE session_id = ?1 ORDER BY time_created ASC",
+            "SELECT id, time_created, data FROM message WHERE session_id = ?1 \
+             ORDER BY time_created ASC, id ASC",
         )
         .map_err(|e| format!("Failed to prepare message query: {e}"))?;
 
@@ -380,63 +440,53 @@ fn load_messages_sqlite_v1(
 
     let mut part_stmt = conn
         .prepare(
-            "SELECT message_id, data FROM part WHERE session_id = ?1 ORDER BY time_created ASC",
+            "SELECT id, message_id, data FROM part WHERE session_id = ?1 \
+             ORDER BY time_created ASC, id ASC",
         )
         .map_err(|e| format!("Failed to prepare part query: {e}"))?;
 
     let part_rows = part_stmt
         .query_map([session_id], |row| {
-            let message_id: String = row.get(0)?;
-            let data: String = row.get(1)?;
-            Ok((message_id, data))
+            let part_id: String = row.get(0)?;
+            let message_id: String = row.get(1)?;
+            let data: String = row.get(2)?;
+            Ok((part_id, message_id, data))
         })
         .map_err(|e| format!("Failed to query parts: {e}"))?;
 
-    let mut parts_map: std::collections::HashMap<String, Vec<String>> =
-        std::collections::HashMap::new();
-    for part in part_rows.flatten() {
-        let (message_id, data) = part;
-        parts_map.entry(message_id).or_default().push(data);
+    let mut parts_map: HashMap<String, Vec<(PartLocator, Value)>> = HashMap::new();
+    for (part_id, message_id, data) in part_rows.flatten() {
+        let Ok(part) = serde_json::from_str::<Value>(&data) else {
+            continue;
+        };
+        let locator = PartLocator::Sqlite {
+            table: "part",
+            id: part_id,
+            base: String::new(),
+        };
+        parts_map
+            .entry(message_id)
+            .or_default()
+            .push((locator, part));
     }
 
     let mut messages = Vec::new();
-    for row in msg_rows.flatten() {
-        let (msg_id, ts, data) = row;
-        let msg_value: Value = match serde_json::from_str(&data) {
-            Ok(v) => v,
-            Err(_) => continue,
+    for (msg_id, ts, data) in msg_rows.flatten() {
+        let Ok(msg_value) = serde_json::from_str::<Value>(&data) else {
+            continue;
         };
         let role = msg_value
             .get("role")
             .and_then(Value::as_str)
-            .unwrap_or("unknown")
-            .to_string();
-
-        let mut texts = Vec::new();
-        if let Some(parts) = parts_map.get(&msg_id) {
-            for part_data in parts {
-                let part_value: Value = match serde_json::from_str(part_data) {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
-                if let Some(text) = extract_part_text(&part_value) {
-                    texts.push(text);
-                }
-            }
+            .unwrap_or("unknown");
+        let parts = parts_map.remove(&msg_id).unwrap_or_default();
+        let message = message_from_parts(role, Some(msg_id), Some(ts), &msg_value, &parts);
+        if !message.is_empty() {
+            messages.push(message);
         }
-
-        let content = texts.join("\n");
-        if content.trim().is_empty() {
-            continue;
-        }
-
-        messages.push(SessionMessage {
-            role,
-            content,
-            ts: Some(ts),
-        });
     }
 
+    assign_turn_ids(&mut messages);
     Ok(messages)
 }
 
@@ -446,7 +496,7 @@ fn load_messages_sqlite_v2(
 ) -> Result<Vec<SessionMessage>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT type, time_created, data \
+            "SELECT id, type, time_created, data \
              FROM session_message \
              WHERE session_id = ?1 \
              ORDER BY seq ASC, rowid ASC",
@@ -455,95 +505,72 @@ fn load_messages_sqlite_v2(
 
     let rows = stmt
         .query_map([session_id], |row| {
-            let msg_type: String = row.get(0)?;
-            let ts: i64 = row.get(1)?;
-            let data: String = row.get(2)?;
-            Ok((msg_type, ts, data))
+            let id: String = row.get(0)?;
+            let msg_type: String = row.get(1)?;
+            let ts: i64 = row.get(2)?;
+            let data: String = row.get(3)?;
+            Ok((id, msg_type, ts, data))
         })
         .map_err(|e| format!("Failed to query V2 messages: {e}"))?;
 
     let mut messages = Vec::new();
-    for row in rows.flatten() {
-        let (msg_type, ts, data) = row;
-        let msg_value: Value = match serde_json::from_str(&data) {
-            Ok(v) => v,
-            Err(_) => continue,
+    for (row_id, msg_type, ts, data) in rows.flatten() {
+        let Ok(msg_value) = serde_json::from_str::<Value>(&data) else {
+            continue;
+        };
+        if !matches!(msg_type.as_str(), "user" | "assistant" | "system") {
+            continue;
+        }
+
+        // user 优先取 `text`；其余取 `content[]`（结构同 v1 parts），最后退回 `text`
+        let text_part = |text: &str| {
+            (
+                PartLocator::Sqlite {
+                    table: "session_message",
+                    id: row_id.clone(),
+                    base: String::new(),
+                },
+                serde_json::json!({ "type": "text", "text": text }),
+            )
+        };
+        let parts: Vec<(PartLocator, Value)> = match (
+            msg_type.as_str(),
+            msg_value.get("text").and_then(Value::as_str),
+            msg_value.get("content"),
+        ) {
+            ("user" | "system", Some(text), _) => vec![text_part(text)],
+            (_, _, Some(Value::Array(items))) if msg_type != "system" => items
+                .iter()
+                .enumerate()
+                .map(|(i, item)| {
+                    (
+                        PartLocator::Sqlite {
+                            table: "session_message",
+                            id: row_id.clone(),
+                            base: format!("/content/{i}"),
+                        },
+                        item.clone(),
+                    )
+                })
+                .collect(),
+            (_, _, Some(Value::String(text))) if msg_type == "user" => vec![text_part(text)],
+            (_, Some(text), _) => vec![text_part(text)],
+            _ => Vec::new(),
         };
 
-        match msg_type.as_str() {
-            "user" => {
-                let text = msg_value
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-                    .or_else(|| {
-                        msg_value.get("content").and_then(|c| match c {
-                            Value::String(s) => Some(s.clone()),
-                            Value::Array(arr) => {
-                                let parts: Vec<String> =
-                                    arr.iter().filter_map(extract_part_text).collect();
-                                if parts.is_empty() {
-                                    None
-                                } else {
-                                    Some(parts.join("\n"))
-                                }
-                            }
-                            _ => None,
-                        })
-                    });
-
-                if let Some(content) = text {
-                    if !content.trim().is_empty() {
-                        messages.push(SessionMessage {
-                            role: "user".to_string(),
-                            content,
-                            ts: Some(ts),
-                        });
-                    }
-                }
-            }
-            "assistant" => {
-                let mut texts = Vec::new();
-                if let Some(content_array) = msg_value.get("content").and_then(Value::as_array) {
-                    for part_value in content_array {
-                        if let Some(text) = extract_part_text(part_value) {
-                            texts.push(text);
-                        }
-                    }
-                } else if let Some(text) = msg_value.get("text").and_then(Value::as_str) {
-                    if !text.trim().is_empty() {
-                        texts.push(text.to_string());
-                    }
-                }
-
-                let content = texts.join("\n");
-                if !content.trim().is_empty() {
-                    messages.push(SessionMessage {
-                        role: "assistant".to_string(),
-                        content,
-                        ts: Some(ts),
-                    });
-                }
-            }
-            "system" => {
-                let text = msg_value
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .map(str::to_string);
-                if let Some(content) = text {
-                    if !content.trim().is_empty() {
-                        messages.push(SessionMessage {
-                            role: "system".to_string(),
-                            content,
-                            ts: Some(ts),
-                        });
-                    }
-                }
-            }
-            _ => continue,
+        let message = message_from_parts(
+            &msg_type,
+            Some(row_id.clone()),
+            Some(ts),
+            &msg_value,
+            &parts,
+        );
+        if !message.is_empty() {
+            messages.push(message);
         }
     }
 
+    assign_turn_ids(&mut messages);
     Ok(messages)
 }
 
@@ -711,8 +738,12 @@ pub fn delete_session_sqlite(session_id: &str, source: &str) -> Result<bool, Str
     Ok(deleted > 0)
 }
 
-fn parse_session(storage: &Path, path: &Path) -> Option<SessionMeta> {
-    let data = std::fs::read_to_string(path).ok()?;
+fn parse_session_with_status(
+    storage: &Path,
+    path: &Path,
+    status: &mut ScanStatus,
+) -> Option<SessionMeta> {
+    let data = status.record(std::fs::read_to_string(path))?;
     let value: Value = serde_json::from_str(&data).ok()?;
 
     let session_id = value.get("id").and_then(Value::as_str)?.to_string();
@@ -868,19 +899,14 @@ fn collect_parts_text(part_dir: &Path) -> String {
 }
 
 fn collect_json_files(root: &Path, files: &mut Vec<PathBuf>) {
-    if !root.exists() {
-        return;
-    }
+    collect_json_files_with_status(root, files, &mut ScanStatus::default());
+}
 
-    let entries = match std::fs::read_dir(root) {
-        Ok(entries) => entries,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
+fn collect_json_files_with_status(root: &Path, files: &mut Vec<PathBuf>, status: &mut ScanStatus) {
+    for entry in status.entries(root) {
         let path = entry.path();
-        if path.is_dir() {
-            collect_json_files(&path, files);
+        if status.is_dir(&path) {
+            collect_json_files_with_status(&path, files, status);
         } else if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
             files.push(path);
         }
@@ -1074,6 +1100,9 @@ mod tests {
     #[test]
     #[allow(deprecated)] // set_var/remove_var deprecated since Rust 1.81; safe here under mutex
     fn scan_sessions_sqlite_reads_temp_database() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let _guard = opencode_env_lock().lock().expect("lock");
         let temp = tempdir().expect("tempdir");
         let original_xdg = std::env::var_os("XDG_DATA_HOME");
@@ -1125,6 +1154,9 @@ mod tests {
 
     #[test]
     fn load_messages_sqlite_reads_messages_and_parts() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let temp = tempdir().expect("tempdir");
         let db_path = temp.path().join("opencode.db");
         let conn = Connection::open(&db_path).expect("open sqlite db");
@@ -1182,12 +1214,15 @@ mod tests {
         assert_eq!(messages[0].content, "Hello");
         assert_eq!(messages[0].ts, Some(1000));
         assert_eq!(messages[1].role, "assistant");
-        assert_eq!(messages[1].content, "[Tool: bash]\nDone");
+        assert_eq!(messages[1].content, "[Tool: bash]\n\nDone");
         assert_eq!(messages[1].ts, Some(2000));
     }
 
     #[test]
     fn delete_session_sqlite_removes_session() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let _guard = opencode_env_lock().lock().expect("lock");
         let temp = tempdir().expect("tempdir");
         let original_xdg = std::env::var_os("XDG_DATA_HOME");
@@ -1258,6 +1293,9 @@ mod tests {
 
     #[test]
     fn delete_session_sqlite_rejects_foreign_db_path() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let _guard = opencode_env_lock().lock().expect("lock");
         let temp = tempdir().expect("tempdir");
         let original_xdg = std::env::var_os("XDG_DATA_HOME");
@@ -1320,6 +1358,9 @@ mod tests {
     #[test]
     #[allow(deprecated)]
     fn scan_sessions_sqlite_v2_reads_temp_database() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let _guard = opencode_env_lock().lock().expect("lock");
         let temp = tempdir().expect("tempdir");
         let original_xdg = std::env::var_os("XDG_DATA_HOME");
@@ -1370,6 +1411,9 @@ mod tests {
 
     #[test]
     fn load_messages_sqlite_v2_reads_messages() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let temp = tempdir().expect("tempdir");
         let db_path = temp.path().join("opencode.db");
         let conn = Connection::open(&db_path).expect("open sqlite db");
@@ -1413,13 +1457,16 @@ mod tests {
         assert_eq!(messages[0].content, "Hello V2");
         assert_eq!(messages[0].ts, Some(1000));
         assert_eq!(messages[1].role, "assistant");
-        assert_eq!(messages[1].content, "[Tool: shell]\nAll done in V2");
+        assert_eq!(messages[1].content, "[Tool: shell] shell\n\nAll done in V2");
         assert_eq!(messages[1].ts, Some(2000));
     }
 
     #[test]
     #[allow(deprecated)]
     fn delete_session_sqlite_v2_removes_session() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let _guard = opencode_env_lock().lock().expect("lock");
         let temp = tempdir().expect("tempdir");
         let original_xdg = std::env::var_os("XDG_DATA_HOME");
@@ -1475,6 +1522,9 @@ mod tests {
 
     #[test]
     fn load_messages_sqlite_v2_orders_by_seq_instead_of_time_created() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let temp = tempdir().expect("tempdir");
         let db_path = temp.path().join("opencode.db");
         let conn = Connection::open(&db_path).expect("open sqlite db");
@@ -1523,6 +1573,9 @@ mod tests {
     #[test]
     #[allow(deprecated)]
     fn mixed_v1_v2_database_scans_loads_and_deletes_post_migration_v1_sessions() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let _guard = opencode_env_lock().lock().expect("lock");
         let temp = tempdir().expect("tempdir");
         let original_xdg = std::env::var_os("XDG_DATA_HOME");

@@ -8,7 +8,7 @@ import {
 } from "@dnd-kit/core";
 import { arrayMove, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useTranslation } from "react-i18next";
 import type { Provider } from "@/types";
 import { providersApi, type AppId } from "@/lib/api";
@@ -19,16 +19,15 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
   const { t, i18n } = useTranslation();
 
   const sortedProviders = useMemo(() => {
+    const language = i18n.language?.toLowerCase();
     const locale =
       i18n.language === "zh"
         ? "zh-CN"
         : i18n.language === "zh-TW"
           ? "zh-TW"
-          : i18n.language === "ja"
-            ? "ja-JP"
-            : i18n.language === "ru"
-              ? "ru-RU"
-              : "en-US";
+          : language === "ko" || language?.startsWith("ko-")
+            ? "ko-KR"
+            : "en-US";
     return Object.values(providers).sort((a, b) => {
       if (a.sortIndex !== undefined && b.sortIndex !== undefined) {
         return a.sortIndex - b.sortIndex;
@@ -108,6 +107,8 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
         );
       } catch (error) {
         console.error("Failed to update provider sort order", error);
+        // 排序可能已经存下、只是聚合名单没发布成：按库里的顺序重画，再拖一次会重试发布。
+        void queryClient.invalidateQueries({ queryKey: ["providers", appId] });
         toast.error(
           t("provider.sortUpdateFailed", {
             defaultValue: "排序更新失败",

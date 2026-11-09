@@ -1,0 +1,56 @@
+[
+  {
+    "name": "Responses",
+    "endpoints": ["/responses"],
+    "formats": ["auto", "openai_responses"]
+  },
+  {
+    "name": "versioned Responses",
+    "endpoints": ["/v1/responses"],
+    "formats": ["auto", "openai_responses"]
+  },
+  {
+    "name": "Chat Completions",
+    "endpoints": ["/chat/completions"],
+    "formats": ["auto", "openai_chat"]
+  },
+  {
+    "name": "versioned Chat Completions",
+    "endpoints": ["/v1/chat/completions"],
+    "formats": ["auto", "openai_chat"]
+  },
+  {
+    "name": "both protocols",
+    "endpoints": ["/chat/completions", "/responses"],
+    "formats": ["auto", "openai_responses", "openai_chat"]
+  },
+  {
+    "name": "Responses case, trailing slash and query",
+    "endpoints": ["/V1/RESPONSES/?preview=1"],
+    "formats": ["auto", "openai_responses"]
+  },
+  {
+    "name": "Chat case, trailing slash and query",
+    "endpoints": ["/V1/CHAT/COMPLETIONS/?preview=1"],
+    "formats": ["auto", "openai_chat"]
+  },
+  {
+    "name": "Messages only",
+    "endpoints": ["/v1/messages"],
+    "formats": []
+  },
+  {
+    "name": "missing capabilities",
+    "endpoints": [],
+    "formats": []
+  },
+  {
+    "name": "unsupported paths",
+    "endpoints": [
+      "/responses/compact",
+      "responses",
+      "https://example.com/responses"
+    ],
+    "formats": []
+  }
+]

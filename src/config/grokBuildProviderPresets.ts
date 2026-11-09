@@ -12,10 +12,13 @@
  * - 不含国产模型官方直连（cn_official）与纯开源模型托管站
  *   （SiliconFlow / ModelScope / Novita / Nvidia / AtlasCloud）：
  *   这些上游没有 Grok 模型，无法在 Grok CLI 中使用。
- * - OpenCode Go 上游自 2026-08 起已提供 grok-4.5，但暂仍不收录：
- *   订阅制网关是否纳入 Grok 预设属产品决策，收录前需单独评估。
- * - 只收聚合站与第三方中转站，默认模型统一为 grok-4.5；
- *   OpenRouter 系命名空间的路由站用 "x-ai/grok-4.5"。
+ * - OpenCode Go 上游自 2026-08 起已提供 grok 系模型（2026-11 时已含
+ *   grok-4.7），但暂仍不收录：订阅制网关是否纳入 Grok 预设属产品决策，
+ *   收录前需单独评估。
+ * - 只收聚合站与第三方中转站，默认模型统一为 grok-4.7（xAI 2026-11 起
+ *   的旗舰，context 最高 500k；Grok CLI 自身默认按 256k 处理，模板经
+ *   GROK_BUILD_DEFAULT_CONTEXT_WINDOW 显式钉 500k）；
+ *   OpenRouter 系命名空间的路由站用 "x-ai/grok-4.7"。
  *
  * config 字段沿用 Codex 风格 TOML 作为载体：Grok 表单只从中提取
  * base_url / model / wire_api 三个字段（extractCodex* 工具），再重建
@@ -24,8 +27,9 @@
 import type { ProviderCategory } from "../types";
 import type { CodexApiFormat } from "../types";
 import { GROK_BUILD_DEFAULT_MODEL } from "../utils/grokBuildConfig";
+import type { PresetFamilyFields } from "./presetFamilies";
 
-export interface GrokBuildProviderPreset {
+export interface GrokBuildProviderPreset extends PresetFamilyFields {
   name: string;
   nameKey?: string; // i18n key for localized display name
   websiteUrl: string;
@@ -57,7 +61,7 @@ export const grokBuildOfficialPreset: GrokBuildProviderPreset = {
 };
 
 /** OpenRouter 系命名空间路由站的 Grok 模型 id */
-const OPENROUTER_STYLE_GROK_MODEL = "x-ai/grok-4.5";
+const OPENROUTER_STYLE_GROK_MODEL = "x-ai/grok-4.7";
 
 const grokAuth = (): Record<string, any> => ({ OPENAI_API_KEY: "" });
 
@@ -79,7 +83,7 @@ requires_openai_auth = true`;
 }
 
 export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
-  // ===== 赞助商预设：文件顺序 = 应用内展示顺序，与 README 赞助商表对齐 =====
+  // ===== 赞助商预设：文件顺序与 README 赞助商表对齐（仅维护约定；应用内一律按显示名排序，不置顶）=====
   {
     name: "PackyCode",
     websiteUrl: "https://www.packyapi.ai",
@@ -96,18 +100,6 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "packycode",
     icon: "packycode",
-  },
-  {
-    name: "ZetaAPI",
-    websiteUrl: "https://zetaapi.ai",
-    apiKeyUrl: "https://zetaapi.ai/go/u117",
-    auth: grokAuth(),
-    config: grokPresetConfig("ZetaAPI", "https://api.zetaapi.ai/v1"),
-    endpointCandidates: ["https://api.zetaapi.ai/v1"],
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "zetaapi",
-    icon: "zetaapi",
   },
   {
     name: "APINebula",
@@ -152,6 +144,22 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     icon: "pateway",
   },
   {
+    name: "hao.ai",
+    websiteUrl: "https://hao.ai",
+    apiKeyUrl: "https://hao.ai/invite/DTBZS3OR",
+    auth: grokAuth(),
+    // xAI 协议另有地址 /x-ai/v1（hao.ai/docs/develop/authentication，2026-10-21）
+    config: grokPresetConfig(
+      "hao.ai",
+      "https://api.hao.ai/x-ai/v1",
+      "x-ai/grok-4.7",
+    ),
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "haoai",
+    icon: "haoai",
+  },
+  {
     name: "FennoAI",
     websiteUrl: "https://api.fenno.ai",
     apiKeyUrl:
@@ -177,6 +185,69 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     icon: "runapi",
   },
   {
+    name: "OpenModel",
+    websiteUrl: "https://www.openmodel.ai",
+    apiKeyUrl: "https://www.openmodel.ai?ref=cc-switch",
+    auth: grokAuth(),
+    config: grokPresetConfig("OpenModel", "https://api.openmodel.ai/v1"),
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "openmodel",
+    icon: "openmodel",
+  },
+  {
+    name: "GrooRoute Pro",
+    websiteUrl: "https://grooroute.pro",
+    apiKeyUrl: "https://grooroute.pro/sign-up?aff=qqm9",
+    auth: grokAuth(),
+    config: grokPresetConfig(
+      "GrooRoute Pro",
+      "https://grooroute.pro/v1",
+      "grok-4.7",
+    ),
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "grooroute",
+    icon: "grooroute",
+  },
+  {
+    name: "BuyToken",
+    websiteUrl: "https://buytoken.work",
+    apiKeyUrl: "https://buytoken.work/sign-up?aff=cc-switch",
+    auth: grokAuth(),
+    // 须用 grok 分组的 Key；分组里只有 grok-4.7（buytoken.work/pricing，2026-10-23）
+    config: grokPresetConfig(
+      "BuyToken",
+      "https://api.buytoken.work/v1",
+      "grok-4.7",
+    ),
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "buytoken",
+    icon: "buytoken",
+  },
+  {
+    name: "V-API",
+    websiteUrl: "https://gpt.ge",
+    apiKeyUrl: "https://gpt.ge/signup?aff=URNP",
+    auth: grokAuth(),
+    // grok-4.7 支持 /v1/responses，只在 gf 分组（gpt.ge/models/grok-4.7，2026-10-23）
+    config: grokPresetConfig("V-API", "https://api.gpt.ge/v1", "grok-4.7"),
+    category: "aggregator",
+    // 备用线路取自 gpt.ge/api/status 的 api_list（2026-10-23）
+    endpointCandidates: [
+      "https://api.gpt.ge/v1",
+      "https://api.vveai.com/v1",
+      "https://run.v3.cm/v1",
+      "https://api1.v3.cm/v1",
+      "https://api2.v3.cm/v1",
+      "https://us.gpt.ge/v1",
+    ],
+    isPartner: true,
+    partnerPromotionKey: "vapi",
+    icon: "vapi",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
@@ -194,11 +265,14 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "AIGoCode",
-    websiteUrl: "https://aigocode.app",
-    apiKeyUrl: "https://aigocode.app/invite/CC-SWITCH",
+    websiteUrl: "https://aigocode.net",
+    apiKeyUrl: "https://aigocode.net/invite/CC-SWITCH",
     auth: grokAuth(),
-    config: grokPresetConfig("AIGoCode", "https://api.aigocode.app"),
-    endpointCandidates: ["https://api.aigocode.app"],
+    config: grokPresetConfig("AIGoCode", "https://api.aigocode.dev"),
+    endpointCandidates: [
+      "https://api.aigocode.dev",
+      "https://api.aigocode.app",
+    ],
     category: "third_party",
     isPartner: true,
     partnerPromotionKey: "aigocode",
@@ -235,6 +309,19 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "subrouter",
     icon: "subrouter",
+  },
+  {
+    name: "88API",
+    websiteUrl: "https://88api.ai",
+    apiKeyUrl: "https://88api.ai/sign-up?aff=HSGY",
+    auth: grokAuth(),
+    config: grokPresetConfig("88API", "https://api.88api.ai/v1"),
+    endpointCandidates: ["https://api.88api.ai/v1", "https://88api.ai/v1"],
+    apiFormat: "openai_responses",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "88api",
+    icon: "88api",
   },
   {
     name: "APIKEY.FUN",
@@ -277,21 +364,16 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     config: grokPresetConfig("Code0", "https://code0.ai/v1"),
     endpointCandidates: ["https://code0.ai/v1"],
     category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "code0",
     icon: "code0",
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     auth: grokAuth(),
-    config: grokPresetConfig("TeamoRouter", "https://api.teamorouter.cn/v1"),
-    endpointCandidates: [
-      "https://api.teamorouter.cn/v1",
-      "https://api.teamorouter.com/v1",
-    ],
+    config: grokPresetConfig("TeamoRouter", "https://api.teamorouter.com/v1"),
+    endpointCandidates: ["https://api.teamorouter.com/v1"],
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "teamorouter",
@@ -310,11 +392,11 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "A6API",
-    websiteUrl: "https://www.a6api.com",
-    apiKeyUrl: "https://a6api.com/register?aff=AqNr",
+    websiteUrl: "https://www.a6api.vip",
+    apiKeyUrl: "https://a6api.vip/register?aff=AqNr",
     auth: grokAuth(),
-    config: grokPresetConfig("A6API", "https://api.a6api.com/v1"),
-    endpointCandidates: ["https://api.a6api.com/v1"],
+    config: grokPresetConfig("A6API", "https://api.a6api.vip/v1"),
+    endpointCandidates: ["https://api.a6api.vip/v1"],
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "a6api",
@@ -322,6 +404,8 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "Compshare",
+    family: "compshare",
+    planKey: "payg",
     nameKey: "providerForm.presets.ucloud",
     websiteUrl: "https://www.compshare.cn",
     apiKeyUrl:
@@ -337,6 +421,8 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "Compshare Coding Plan",
+    family: "compshare",
+    planKey: "codingPlan",
     nameKey: "providerForm.presets.ucloudCoding",
     websiteUrl: "https://www.compshare.cn",
     apiKeyUrl:
@@ -423,19 +509,6 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     iconColor: "#E96B2C",
   },
   {
-    name: "ETok.ai",
-    websiteUrl: "https://etok.ai",
-    apiKeyUrl: "https://etok.ai",
-    auth: grokAuth(),
-    config: grokPresetConfig("ETok.ai", "https://api.etok.ai/v1"),
-    endpointCandidates: ["https://api.etok.ai/v1"],
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "etok",
-    icon: "etok",
-    iconColor: "#000000",
-  },
-  {
     name: "Cubence",
     websiteUrl: "https://cubence.com",
     apiKeyUrl: "https://cubence.com/signup?code=CCSWITCH&source=ccs",
@@ -474,9 +547,11 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "dmxapi",
+    icon: "dmxapi",
   },
   {
     name: "SudoCode.chat",
+    family: "sudocode",
     websiteUrl: "https://sudocode.chat",
     apiKeyUrl:
       "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
@@ -494,6 +569,7 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "SudoCode.us",
+    family: "sudocode",
     websiteUrl: "https://sudocode.us",
     apiKeyUrl: "https://sudocode.us",
     auth: grokAuth(),
@@ -504,13 +580,79 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     isPartner: true,
     icon: "sudocode-us",
   },
+  {
+    name: "Modelflare",
+    websiteUrl: "https://modelflare.dev",
+    apiKeyUrl:
+      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
+    auth: grokAuth(),
+    // 官方 Grok Build 文档（docs.modelflare.dev/guides/clients/grok-build，
+    // 2026-10-15 核对）：Responses + /v1、grok-4.5
+    config: grokPresetConfig("Modelflare", "https://modelflare.dev/v1"),
+    endpointCandidates: [
+      "https://modelflare.dev/v1",
+      "https://origin.modelflare.dev/v1",
+    ],
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "modelflare",
+    icon: "modelflare",
+  },
+  {
+    name: "AllTokens",
+    websiteUrl: "https://alltokens.cc",
+    apiKeyUrl: "https://alltokens.cc/register",
+    auth: grokAuth(),
+    // Sub2API 网关：Key 绑定单个分组，须用 Grok 分组的 Key（分组与模型见
+    // alltokens.cc/api/v1/model-plaza，2026-10-17 核对）
+    config: grokPresetConfig("AllTokens", "https://alltokens.cc/v1"),
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "alltokens",
+    icon: "alltokens",
+  },
+  {
+    name: "AllTokens SI",
+    websiteUrl: "https://alltokens.si",
+    // 站点关闭了个人注册（/api/status 的 register_enabled=false），只能企业注册
+    apiKeyUrl: "https://alltokens.si/enterprise-register",
+    auth: grokAuth(),
+    // Grok 分组不在默认自动分组里，须用 Grok 分组的 Key；分组没有 grok-4.5，
+    // 取 grok-4.7（alltokens.si/api/pricing，2026-10-19 核对）
+    config: grokPresetConfig(
+      "AllTokens SI",
+      "https://alltokens.si/v1",
+      "grok-4.7",
+    ),
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "alltokens_si",
+    icon: "alltokens-si",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
+  {
+    name: "Tu-zi",
+    nameKey: "providerForm.presets.tuzi",
+    websiteUrl: "https://api.tu-zi.com",
+    apiKeyUrl: "https://api.tu-zi.com/token",
+    auth: grokAuth(),
+    config: grokPresetConfig("Tu-zi", "https://api.tu-zi.com/v1"),
+    endpointCandidates: [
+      "https://api.tu-zi.com/v1",
+      "https://api.ourzhishi.top/v1",
+      "https://api.sydney-ai.com/v1",
+      "https://apicdn.tu-zi.com/v1",
+    ],
+    apiFormat: "openai_responses",
+    category: "aggregator",
+    icon: "tuzi",
+  },
   {
     name: "xAI (Grok)",
     websiteUrl: "https://x.ai/api",
     apiKeyUrl: "https://console.x.ai",
     auth: grokAuth(),
-    config: grokPresetConfig("xAI (Grok)", "https://api.x.ai/v1"),
+    config: grokPresetConfig("xAI (Grok)", "https://api.x.ai/v1", "grok-4.7"),
     endpointCandidates: ["https://api.x.ai/v1"],
     apiFormat: "openai_responses",
     category: "third_party",
@@ -606,9 +748,99 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     config: grokPresetConfig(
       "TheRouter",
       "https://api.therouter.ai/v1",
-      OPENROUTER_STYLE_GROK_MODEL,
+      // TheRouter 的 xAI 前缀是 xai/（不是 x-ai/）
+      "xai/grok-4.7",
     ),
     endpointCandidates: ["https://api.therouter.ai/v1"],
     category: "aggregator",
+    icon: "therouter",
+  },
+  {
+    name: "SoruxGPT",
+    websiteUrl: "https://ai.soruxgpt.com",
+    apiKeyUrl: "https://ai.soruxgpt.com/console/token",
+    auth: grokAuth(),
+    config: grokPresetConfig("SoruxGPT", "https://ai.soruxgpt.com/v1"),
+    endpointCandidates: [
+      "https://ai.soruxgpt.com/v1",
+      "https://api-cf.soruxgpt.com/v1",
+      "https://api-host.soruxgpt.com/v1",
+      "https://api-node6.soruxgpt.com/v1",
+      "https://api-node3.soruxgpt.com/v1",
+    ],
+    category: "aggregator",
+    icon: "soruxgpt",
+  },
+  {
+    name: "IKunCode",
+    websiteUrl: "https://api.ikuncode.ai",
+    apiKeyUrl: "https://api.ikuncode.ai/console/token",
+    auth: grokAuth(),
+    config: grokPresetConfig("IKunCode", "https://api.ikuncode.ai/v1"),
+    endpointCandidates: [
+      "https://api.ikuncode.ai/v1",
+      "https://api.ikuncode.cc/v1",
+    ],
+    category: "aggregator",
+    icon: "ikuncode",
+  },
+  {
+    name: "RunToken",
+    websiteUrl: "https://www.runtoken.ai",
+    apiKeyUrl: "https://www.runtoken.ai/console/token",
+    auth: grokAuth(),
+    config: grokPresetConfig("RunToken", "https://www.runtoken.ai/v1"),
+    endpointCandidates: [
+      "https://www.runtoken.ai/v1",
+      "https://fast.runtoken.ai/v1",
+    ],
+    category: "aggregator",
+    icon: "runtoken",
+  },
+  {
+    name: "BotCF",
+    websiteUrl: "https://botcf.com",
+    apiKeyUrl: "https://botcf.com/console/token",
+    auth: grokAuth(),
+    config: grokPresetConfig("BotCF", "https://botcf.com/v1"),
+    category: "aggregator",
+    icon: "botcf",
+  },
+  {
+    name: "YYLX",
+    nameKey: "providerForm.presets.yylx",
+    websiteUrl: "https://yylx.io",
+    apiKeyUrl: "https://app.yylx.io/keys",
+    auth: grokAuth(),
+    config: grokPresetConfig("YYLX", "https://app.yylx.io/v1"),
+    endpointCandidates: [
+      "https://app.yylx.io/v1",
+      "https://global.yylx.io/v1",
+      "https://cn.yylx.io/v1",
+    ],
+    category: "aggregator",
+    icon: "yylx",
+  },
+  {
+    name: "TokenFlux",
+    websiteUrl: "https://tokenflux.com",
+    apiKeyUrl: "https://tokenflux.com/keys",
+    auth: grokAuth(),
+    config: grokPresetConfig("TokenFlux", "https://tokenflux.com/v1"),
+    category: "aggregator",
+    endpointCandidates: [
+      "https://tokenflux.com/v1",
+      "https://tokenflux.dev/v1",
+    ],
+    icon: "tokenflux",
+  },
+  {
+    name: "AIComing",
+    websiteUrl: "https://aicoming.top",
+    apiKeyUrl: "https://aicoming.top/console#keys",
+    auth: grokAuth(),
+    config: grokPresetConfig("AIComing", "https://api.aicoming.top/v1"),
+    category: "aggregator",
+    icon: "aicoming",
   },
 ];

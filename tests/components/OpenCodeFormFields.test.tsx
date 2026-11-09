@@ -1,11 +1,11 @@
 import {
   act,
   fireEvent,
-  render,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
+import { renderWithQueryClient as render } from "../utils/testQueryClient";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps, PropsWithChildren } from "react";
 import { useForm } from "react-hook-form";
@@ -13,6 +13,10 @@ import { describe, expect, it, vi } from "vitest";
 import { OpenCodeFormFields } from "@/components/providers/forms/OpenCodeFormFields";
 import { Form } from "@/components/ui/form";
 import { fetchModelsForConfig } from "@/lib/api/model-fetch";
+import type { PresetModelSource } from "@/lib/modelMetadata";
+import { http, HttpResponse } from "msw";
+import { toast } from "sonner";
+import { server } from "../msw/server";
 
 vi.mock("@/lib/api/model-fetch", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api/model-fetch")>()),
@@ -64,53 +68,93 @@ const renderOpenCodeForm = (
   };
 };
 
+const FETCH = "providerForm.fetchModels";
+const PICK = "providerForm.modelPicker.title";
+const APPLY = "providerForm.modelPicker.apply";
+const REFRESH = "providerForm.modelPicker.refresh";
+const SEARCH = "providerForm.searchModelPlaceholder";
+const CANCEL = "common.cancel";
+
 const expandFirstModel = () => {
   fireEvent.click(screen.getByRole("button", { name: "Toggle model details" }));
 };
 
 describe("OpenCodeFormFields", () => {
-  it("shows fetched models even when no models are configured", async () => {
+  it("opens the picker after fetching and adds the checked models", async () => {
     vi.mocked(fetchModelsForConfig).mockResolvedValue([
       { id: "vendor/model-a", ownedBy: "vendor" },
     ]);
-    const { props, rerender } = renderOpenCodeForm({ models: {} });
+    const { props } = renderOpenCodeForm({ models: {} });
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "providerForm.fetchModels" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: FETCH }));
 
-    const checkbox = await screen.findByRole("checkbox", {
+    const dialog = await screen.findByRole("dialog");
+    const checkbox = within(dialog).getByRole("checkbox", {
       name: "vendor/model-a",
     });
     expect(checkbox).not.toBeChecked();
-    expect(props.onModelsChange).not.toHaveBeenCalled();
-    expect(
-      screen.getByRole("button", { name: "Add selected (0)" }),
-    ).toBeDisabled();
-
     fireEvent.click(checkbox);
-    fireEvent.click(screen.getByRole("button", { name: "Add selected (1)" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: APPLY }));
 
     expect(props.onModelsChange).toHaveBeenCalledWith({
       "vendor/model-a": { name: "vendor/model-a" },
     });
-    rerender(
-      <FormShell>
-        <OpenCodeFormFields
-          {...props}
-          models={{ "vendor/model-a": { name: "vendor/model-a" } }}
-        />
-      </FormShell>,
-    );
-    expect(
-      screen.getByRole("checkbox", { name: "vendor/model-a" }),
-    ).toBeDisabled();
-    expect(
-      screen.getByRole("button", { name: "Add selected (0)" }),
-    ).toBeDisabled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    // 拉过之后按钮直接打开弹窗，不再请求
+    fireEvent.click(screen.getByRole("button", { name: PICK }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(fetchModelsForConfig).toHaveBeenCalledTimes(1);
   });
 
-  it("adds only selected models across searches and preserves existing configuration", async () => {
+  it("shows each model's window and capabilities and fills picked models quietly", async () => {
+    server.use(
+      http.post("http://tauri.local/fetch_models_dev", () =>
+        HttpResponse.error(),
+      ),
+    );
+    const toastInfo = vi.spyOn(toast, "info");
+    vi.mocked(fetchModelsForConfig).mockResolvedValue([
+      { id: "model-a", ownedBy: null },
+      { id: "model-b", ownedBy: null },
+    ]);
+    const presetModelSources = (): PresetModelSource[] => [
+      {
+        baseUrl: "https://api.example.com/v1",
+        models: new Map([
+          [
+            "model-a",
+            {
+              contextWindow: 262144,
+              reasoning: true,
+              inputModalities: ["text", "image"],
+            },
+          ],
+        ]),
+      },
+    ];
+    const { props } = renderOpenCodeForm({ models: {}, presetModelSources });
+    fireEvent.click(screen.getByRole("button", { name: FETCH }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(
+        "256K · providerForm.modelPicker.reasoning · providerForm.modelPicker.image",
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "model-a" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: APPLY }));
+
+    expect(props.onModelsChange).toHaveBeenLastCalledWith({
+      "model-a": expect.objectContaining({
+        limit: expect.objectContaining({ context: 262144 }),
+      }),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(toastInfo).not.toHaveBeenCalled();
+    toastInfo.mockRestore();
+  });
+
+  it("checks configured models and removes the ones unchecked on apply", async () => {
     vi.mocked(fetchModelsForConfig).mockResolvedValue([
       { id: "kimi-k2", ownedBy: "moonshot" },
       { id: "model-a", ownedBy: "vendor-a" },
@@ -118,31 +162,71 @@ describe("OpenCodeFormFields", () => {
       { id: "model-c", ownedBy: "vendor-b" },
       { id: "model-a", ownedBy: "vendor-a" },
     ]);
-    const { props } = renderOpenCodeForm();
-    fireEvent.click(
-      screen.getByRole("button", { name: "providerForm.fetchModels" }),
-    );
+    const { props } = renderOpenCodeForm({
+      models: {
+        "kimi-k2": {
+          name: "Kimi K2",
+          limit: { context: 1048576, output: 131072 },
+        },
+        "custom-model": { name: "Custom" },
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: FETCH }));
 
-    const existing = await screen.findByRole("checkbox", { name: "kimi-k2" });
-    expect(existing).toBeDisabled();
+    const dialog = await screen.findByRole("dialog");
+    const existing = within(dialog).getByRole("checkbox", { name: "kimi-k2" });
     expect(existing).toBeChecked();
+    expect(existing).toBeEnabled();
+    // 配置里有、供应商没返回的模型单独列出，也能取消
+    expect(
+      within(dialog).getByText("providerForm.modelPicker.notInProvider"),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("checkbox", { name: "custom-model" }),
+    ).toBeChecked();
 
-    const search = screen.getByRole("textbox", { name: "Search models..." });
+    const search = within(dialog).getByRole("textbox", { name: SEARCH });
     fireEvent.change(search, { target: { value: "VENDOR-A" } });
     expect(
-      screen.queryByRole("checkbox", { name: "model-b" }),
+      within(dialog).queryByRole("checkbox", { name: "model-b" }),
     ).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("checkbox", { name: "model-a" }));
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "model-a" }));
     fireEvent.change(search, { target: { value: "model-b" } });
-    fireEvent.click(screen.getByRole("checkbox", { name: "model-b" }));
-    fireEvent.click(screen.getByRole("button", { name: "Add selected (2)" }));
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "model-b" }));
+    fireEvent.change(search, { target: { value: "" } });
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "kimi-k2" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: APPLY }));
 
     expect(props.onModelsChange).toHaveBeenCalledTimes(1);
     expect(props.onModelsChange).toHaveBeenCalledWith({
-      ...props.models,
+      "custom-model": { name: "Custom" },
       "model-a": { name: "model-a" },
       "model-b": { name: "model-b" },
     });
+  });
+
+  it("discards unchecked and checked models when the picker is cancelled", async () => {
+    vi.mocked(fetchModelsForConfig).mockResolvedValue([
+      { id: "kimi-k2", ownedBy: null },
+      { id: "model-a", ownedBy: null },
+    ]);
+    const { props } = renderOpenCodeForm();
+    fireEvent.click(screen.getByRole("button", { name: FETCH }));
+
+    let dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "kimi-k2" }));
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "model-a" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: CANCEL }));
+    expect(props.onModelsChange).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: PICK }));
+    dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByRole("checkbox", { name: "kimi-k2" }),
+    ).toBeChecked();
+    expect(
+      within(dialog).getByRole("checkbox", { name: "model-a" }),
+    ).not.toBeChecked();
   });
 
   it("does not submit the provider form when Enter is pressed in the model search", async () => {
@@ -165,19 +249,21 @@ describe("OpenCodeFormFields", () => {
     );
     const user = userEvent.setup();
 
-    await user.click(
-      screen.getByRole("button", { name: "providerForm.fetchModels" }),
-    );
-    await user.click(await screen.findByRole("checkbox", { name: "model-a" }));
+    await user.click(screen.getByRole("button", { name: FETCH }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("checkbox", { name: "model-a" }));
     await user.type(
-      screen.getByRole("textbox", { name: "Search models..." }),
+      within(dialog).getByRole("textbox", { name: SEARCH }),
       "model{Enter}",
     );
 
     expect(onSubmit).not.toHaveBeenCalled();
-    expect(screen.getByRole("checkbox", { name: "model-a" })).toBeChecked();
+    expect(
+      within(dialog).getByRole("checkbox", { name: "model-a" }),
+    ).toBeChecked();
     expect(props.onModelsChange).not.toHaveBeenCalled();
 
+    await user.click(within(dialog).getByRole("button", { name: CANCEL }));
     await user.click(screen.getByRole("button", { name: "save" }));
     expect(onSubmit).toHaveBeenCalledTimes(1);
 
@@ -189,18 +275,15 @@ describe("OpenCodeFormFields", () => {
   });
 
   it.each(["baseUrl", "apiKey"] as const)(
-    "clears fetched models and pending selections when %s changes",
+    "clears fetched models when %s changes",
     async (field) => {
       vi.mocked(fetchModelsForConfig).mockResolvedValue([
         { id: "old-model", ownedBy: null },
       ]);
       const { props, rerender } = renderOpenCodeForm();
-      fireEvent.click(
-        screen.getByRole("button", { name: "providerForm.fetchModels" }),
-      );
-      fireEvent.click(
-        await screen.findByRole("checkbox", { name: "old-model" }),
-      );
+      fireEvent.click(screen.getByRole("button", { name: FETCH }));
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.click(within(dialog).getByRole("button", { name: CANCEL }));
 
       rerender(
         <FormShell>
@@ -212,15 +295,16 @@ describe("OpenCodeFormFields", () => {
       );
 
       expect(
-        screen.queryByRole("checkbox", { name: "old-model" }),
+        screen.queryByRole("button", { name: PICK }),
       ).not.toBeInTheDocument();
-      expect(props.onModelsChange).not.toHaveBeenCalled();
-      fireEvent.click(
-        screen.getByRole("button", { name: "providerForm.fetchModels" }),
-      );
+      fireEvent.click(screen.getByRole("button", { name: FETCH }));
+      expect(fetchModelsForConfig).toHaveBeenCalledTimes(2);
       expect(
-        await screen.findByRole("checkbox", { name: "old-model" }),
+        within(await screen.findByRole("dialog")).getByRole("checkbox", {
+          name: "old-model",
+        }),
       ).not.toBeChecked();
+      expect(props.onModelsChange).not.toHaveBeenCalled();
     },
   );
 
@@ -245,9 +329,7 @@ describe("OpenCodeFormFields", () => {
           }),
       );
     const { props, rerender } = renderOpenCodeForm();
-    const fetchButton = screen.getByRole("button", {
-      name: "providerForm.fetchModels",
-    });
+    const fetchButton = screen.getByRole("button", { name: FETCH });
     fireEvent.click(fetchButton);
     rerender(
       <FormShell>
@@ -259,34 +341,179 @@ describe("OpenCodeFormFields", () => {
     await act(async () => {
       resolveOld([{ id: "old-model", ownedBy: null }]);
     });
-    expect(
-      screen.queryByRole("checkbox", { name: "old-model" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(fetchButton).toBeDisabled();
 
     await act(async () => {
       resolveNew([{ id: "new-model", ownedBy: null }]);
     });
+    const dialog = await screen.findByRole("dialog");
     expect(
-      await screen.findByRole("checkbox", { name: "new-model" }),
+      within(dialog).getByRole("checkbox", { name: "new-model" }),
     ).toBeEnabled();
-    expect(fetchButton).toBeEnabled();
+    expect(
+      within(dialog).queryByRole("checkbox", { name: "old-model" }),
+    ).not.toBeInTheDocument();
     expect(props.onModelsChange).not.toHaveBeenCalled();
   });
 
+  it("sends the configured provider headers when fetching models", async () => {
+    vi.mocked(fetchModelsForConfig).mockResolvedValue([]);
+    renderOpenCodeForm({
+      headers: {
+        "cf-aig-authorization": "Bearer gateway-key",
+        "draft-header:1700000000000": "unfinished",
+      },
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "providerForm.fetchModels" }),
+    );
+
+    await waitFor(() => expect(fetchModelsForConfig).toHaveBeenCalledTimes(1));
+    expect(fetchModelsForConfig).toHaveBeenCalledWith(
+      "https://api.example.com/v1",
+      "sk-test",
+      undefined,
+      undefined,
+      undefined,
+      {
+        requestHeaders: { "cf-aig-authorization": "Bearer gateway-key" },
+      },
+    );
+  });
+
+  it("passes a User-Agent provider header as the model fetch user agent", async () => {
+    vi.mocked(fetchModelsForConfig).mockResolvedValue([]);
+    renderOpenCodeForm({
+      headers: { "User-Agent": "cc-switch-test" },
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "providerForm.fetchModels" }),
+    );
+
+    await waitFor(() => expect(fetchModelsForConfig).toHaveBeenCalledTimes(1));
+    expect(fetchModelsForConfig).toHaveBeenCalledWith(
+      "https://api.example.com/v1",
+      "sk-test",
+      undefined,
+      undefined,
+      "cc-switch-test",
+      { requestHeaders: { "User-Agent": "cc-switch-test" } },
+    );
+  });
+
+  it("fetches models with headers alone when the API key is empty", async () => {
+    vi.mocked(fetchModelsForConfig).mockResolvedValue([]);
+    renderOpenCodeForm({
+      apiKey: "",
+      headers: { "cf-aig-authorization": "Bearer gateway-key" },
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "providerForm.fetchModels" }),
+    );
+
+    await waitFor(() => expect(fetchModelsForConfig).toHaveBeenCalledTimes(1));
+    expect(fetchModelsForConfig).toHaveBeenCalledWith(
+      "https://api.example.com/v1",
+      "",
+      undefined,
+      undefined,
+      undefined,
+      {
+        requestHeaders: { "cf-aig-authorization": "Bearer gateway-key" },
+      },
+    );
+  });
+
+  it("clears fetched models when headers change", async () => {
+    vi.mocked(fetchModelsForConfig).mockResolvedValue([
+      { id: "old-model", ownedBy: null },
+    ]);
+    const { props, rerender } = renderOpenCodeForm({
+      headers: { "X-Title": "CC Switch" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: FETCH }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: CANCEL }));
+
+    rerender(
+      <FormShell>
+        <OpenCodeFormFields {...props} headers={{ "X-Title": "OpenCode" }} />
+      </FormShell>,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: PICK }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: FETCH })).toBeEnabled();
+    expect(props.onModelsChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps fetched models when the parent re-renders with equal headers", async () => {
+    vi.mocked(fetchModelsForConfig).mockResolvedValue([
+      { id: "old-model", ownedBy: null },
+    ]);
+    const { props, rerender } = renderOpenCodeForm({ headers: {} });
+    fireEvent.click(screen.getByRole("button", { name: FETCH }));
+    const dialog = await screen.findByRole("dialog");
+
+    // Forms without custom headers may pass a fresh {} on every render.
+    rerender(
+      <FormShell>
+        <OpenCodeFormFields {...props} headers={{}} />
+      </FormShell>,
+    );
+
+    expect(
+      within(dialog).getByRole("checkbox", { name: "old-model" }),
+    ).toBeInTheDocument();
+    expect(fetchModelsForConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an in-flight fetch when the parent re-renders with equal headers", async () => {
+    let resolveFetch!: (
+      models: Awaited<ReturnType<typeof fetchModelsForConfig>>,
+    ) => void;
+    vi.mocked(fetchModelsForConfig).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+    const { props, rerender } = renderOpenCodeForm({ headers: {} });
+    const fetchButton = screen.getByRole("button", { name: FETCH });
+    fireEvent.click(fetchButton);
+    rerender(
+      <FormShell>
+        <OpenCodeFormFields {...props} headers={{}} />
+      </FormShell>,
+    );
+    expect(fetchButton).toBeDisabled();
+
+    await act(async () => {
+      resolveFetch([{ id: "new-model", ownedBy: null }]);
+    });
+    expect(
+      within(await screen.findByRole("dialog")).getByRole("checkbox", {
+        name: "new-model",
+      }),
+    ).toBeEnabled();
+  });
+
   it.each(["empty", "failure"])(
-    "removes previous choices after an %s fetch without changing configured models",
+    "drops the previous list after an %s refresh without changing configured models",
     async (result) => {
       vi.mocked(fetchModelsForConfig).mockResolvedValueOnce([
         { id: "old-model", ownedBy: null },
       ]);
       const { props } = renderOpenCodeForm();
-      const fetchButton = screen.getByRole("button", {
-        name: "providerForm.fetchModels",
-      });
-      fireEvent.click(fetchButton);
+      fireEvent.click(screen.getByRole("button", { name: FETCH }));
+      const dialog = await screen.findByRole("dialog");
       fireEvent.click(
-        await screen.findByRole("checkbox", { name: "old-model" }),
+        within(dialog).getByRole("checkbox", { name: "old-model" }),
       );
       if (result === "empty") {
         vi.mocked(fetchModelsForConfig).mockResolvedValueOnce([]);
@@ -295,13 +522,17 @@ describe("OpenCodeFormFields", () => {
           new Error("HTTP 500"),
         );
       }
-      fireEvent.click(fetchButton);
-      await waitFor(() => expect(fetchButton).toBeEnabled());
+      const refresh = within(dialog).getByRole("button", { name: REFRESH });
+      fireEvent.click(refresh);
+      await waitFor(() => expect(refresh).toBeEnabled());
 
       expect(
-        screen.queryByRole("checkbox", { name: "old-model" }),
+        within(dialog).queryByRole("checkbox", { name: "old-model" }),
       ).not.toBeInTheDocument();
-      expect(screen.getByDisplayValue("Kimi K2")).toBeInTheDocument();
+      expect(
+        within(dialog).getByRole("checkbox", { name: "kimi-k2" }),
+      ).toBeChecked();
+      fireEvent.click(within(dialog).getByRole("button", { name: APPLY }));
       expect(props.onModelsChange).not.toHaveBeenCalled();
     },
   );
@@ -434,11 +665,26 @@ describe("OpenCodeFormFields", () => {
     expect(Object.keys(nextOptions)[0]).toMatch(/^draft-option:/);
   });
 
+  it("rejects renaming an extra option onto an existing key and restores the input", () => {
+    const onExtraOptionsChange = vi.fn();
+    renderOpenCodeForm({
+      extraOptions: { target: "100", source: "100" },
+      onExtraOptionsChange,
+    });
+
+    const keyInput = screen.getByDisplayValue("source");
+    fireEvent.change(keyInput, { target: { value: "target" } });
+    fireEvent.blur(keyInput);
+
+    expect(onExtraOptionsChange).not.toHaveBeenCalled();
+    expect(keyInput).toHaveValue("source");
+  });
+
   it("uses the family section divider for model configuration", () => {
     renderOpenCodeForm();
 
     const section = screen.getByText("Models").closest("div.border-l");
-    expect(section).toHaveClass("border-border-default", "pl-3");
+    expect(section).toHaveClass("border-border", "pl-3");
   });
 
   it("surfaces existing model token limits", () => {
@@ -446,8 +692,8 @@ describe("OpenCodeFormFields", () => {
 
     expandFirstModel();
 
-    expect(screen.getByLabelText("Context")).toHaveValue(1048576);
-    expect(screen.getByLabelText("Output")).toHaveValue(131072);
+    expect(screen.getByLabelText("pi.form.contextWindow")).toHaveValue(1048576);
+    expect(screen.getByLabelText("pi.form.maxTokens")).toHaveValue(131072);
   });
 
   it("keeps model name composition local until the IME commits", () => {
@@ -566,7 +812,7 @@ describe("OpenCodeFormFields", () => {
     renderOpenCodeForm({ onModelsChange });
 
     expandFirstModel();
-    fireEvent.change(screen.getByLabelText("Context"), {
+    fireEvent.change(screen.getByLabelText("pi.form.contextWindow"), {
       target: { value: "2000000" },
     });
 
@@ -583,7 +829,7 @@ describe("OpenCodeFormFields", () => {
     const { rerender, props } = renderOpenCodeForm({ onModelsChange });
 
     expandFirstModel();
-    fireEvent.change(screen.getByLabelText("Context"), {
+    fireEvent.change(screen.getByLabelText("pi.form.contextWindow"), {
       target: { value: "" },
     });
 
@@ -600,7 +846,7 @@ describe("OpenCodeFormFields", () => {
         <OpenCodeFormFields {...props} models={withoutContext} />
       </FormShell>,
     );
-    fireEvent.change(screen.getByLabelText("Output"), {
+    fireEvent.change(screen.getByLabelText("pi.form.maxTokens"), {
       target: { value: "" },
     });
 
@@ -608,6 +854,89 @@ describe("OpenCodeFormFields", () => {
       "kimi-k2": {
         name: "Kimi K2",
       },
+    });
+  });
+
+  it("edits reasoning and image input with switches instead of raw JSON", () => {
+    const onModelsChange = vi.fn();
+    renderOpenCodeForm({
+      onModelsChange,
+      models: {
+        "kimi-k2": {
+          name: "Kimi K2",
+          reasoning: true,
+          modalities: { input: ["text"], output: ["text"] },
+        },
+      },
+    });
+
+    expandFirstModel();
+    expect(screen.queryByDisplayValue("reasoning")).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("modalities")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("pi.form.reasoning")).toBeChecked();
+    expect(screen.getByLabelText("pi.form.imageInput")).not.toBeChecked();
+
+    fireEvent.click(screen.getByLabelText("pi.form.imageInput"));
+    expect(onModelsChange).toHaveBeenLastCalledWith({
+      "kimi-k2": {
+        name: "Kimi K2",
+        reasoning: true,
+        modalities: { input: ["text", "image"], output: ["text"] },
+      },
+    });
+
+    // OpenCode 关掉思考是去掉字段，不写 false 盖住 models.dev
+    fireEvent.click(screen.getByLabelText("pi.form.reasoning"));
+    expect(onModelsChange).toHaveBeenLastCalledWith({
+      "kimi-k2": {
+        name: "Kimi K2",
+        modalities: { input: ["text"], output: ["text"] },
+      },
+    });
+  });
+
+  it("shows DeepSeek Harness thinking levels and compatibility as structured fields", () => {
+    const onModelsChange = vi.fn();
+    const model = {
+      name: "MiMo V2.6 Pro",
+      reasoning: true,
+      reasoningEfforts: { off: null, low: "low", high: "high" },
+      compat: { supportsStore: false },
+    };
+    renderOpenCodeForm({
+      modelDialect: "dsh",
+      onModelsChange,
+      models: { "mimo-v2.6-pro": model },
+    });
+
+    expandFirstModel();
+    expect(
+      screen.queryByDisplayValue("reasoningEfforts"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("compat")).not.toBeInTheDocument();
+    expect(screen.getByText("pi.form.compatibility")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("supportsStore")).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "pi.form.thinkingLevelsLabel" }),
+    );
+    fireEvent.click(screen.getByLabelText("pi.form.thinkingLevels.medium"));
+    expect(onModelsChange).toHaveBeenLastCalledWith({
+      "mimo-v2.6-pro": {
+        ...model,
+        reasoningEfforts: {
+          off: null,
+          low: "low",
+          medium: "medium",
+          high: "high",
+        },
+      },
+    });
+
+    // DSH 只认 reasoningEfforts：关掉思考要写 false
+    fireEvent.click(screen.getByLabelText("pi.form.reasoning"));
+    expect(onModelsChange).toHaveBeenLastCalledWith({
+      "mimo-v2.6-pro": { ...model, reasoning: false, reasoningEfforts: false },
     });
   });
 });

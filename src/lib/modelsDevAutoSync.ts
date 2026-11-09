@@ -1,6 +1,6 @@
 import { usageApi } from "@/lib/api/usage";
+import { fetchModelsDev } from "@/lib/modelsDev";
 import {
-  fetchModelsDevPricing,
   flattenModels,
   resolveModelsDevSelection,
   toModelPricing,
@@ -43,7 +43,7 @@ export async function syncModelsDevPricing(
   }
 
   try {
-    const data = await fetchModelsDevPricing();
+    const data = await fetchModelsDev();
     const latestState = await usageApi.getModelsDevSyncConfig();
     if (!force && !latestState.config.autoSyncEnabled) {
       return {

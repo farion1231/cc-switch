@@ -53,6 +53,15 @@ pub(crate) fn response_completed(response: &Value) -> Bytes {
     )
 }
 
+/// `response.incomplete`. Codex treats it as a retryable stream error; the converters
+/// only use it for compaction turns, where a truncated summary must not be installed.
+pub(crate) fn response_incomplete(response: &Value) -> Bytes {
+    sse_event(
+        "response.incomplete",
+        json!({ "type": "response.incomplete", "response": response }),
+    )
+}
+
 /// `response.failed`.
 pub(crate) fn response_failed(response: &Value) -> Bytes {
     sse_event(

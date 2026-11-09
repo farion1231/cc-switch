@@ -10,8 +10,9 @@
 //! - 查询：`GrokWebBillingFetcher.swift` —— POST 空 gRPC-web 帧到
 //!   `GetGrokCreditsConfig`，响应无公开 .proto，用通用 protobuf 扫描按
 //!   字段路径启发式提取已用百分比与重置时间。
-//! - token 刷新由 Grok CLI 自己负责（约 7 天过期），本模块只读不刷新，
-//!   过期时引导用户重新 `grok login`。
+//! - token 刷新由 Grok CLI 自己负责（访问令牌约 6 小时过期，CLI 下次运行时
+//!   用 refresh_token 换新），本模块只读不刷新；过期但仍有 refresh_token 时
+//!   报“待刷新”，刷新令牌也没了才引导用户重新 `grok login`。
 
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -101,11 +102,28 @@ fn parse_grok_auth_json(content: &str) -> GrokCredentials {
 
     if let Some(expires_at) = entry.get("expires_at").and_then(|v| v.as_str()) {
         if is_iso_expired(expires_at) {
-            return (
-                Some(access_token),
-                CredentialStatus::Expired,
-                Some("Grok OAuth token has expired".to_string()),
-            );
+            // 访问令牌几小时一换，Grok 下次运行时用刷新令牌换新的并写回 auth.json；
+            // 刷新令牌被永久拒绝时 Grok 会把这条记录删掉，所以还在就不算登录过期。
+            let refreshable = entry
+                .get("refresh_token")
+                .and_then(|v| v.as_str())
+                .is_some_and(|t| !t.is_empty());
+            return if refreshable {
+                (
+                    Some(access_token),
+                    CredentialStatus::RefreshPending,
+                    Some(
+                        "Access token has expired; Grok refreshes it the next time it runs"
+                            .to_string(),
+                    ),
+                )
+            } else {
+                (
+                    Some(access_token),
+                    CredentialStatus::Expired,
+                    Some("Grok OAuth token has expired".to_string()),
+                )
+            };
         }
     }
 
@@ -523,6 +541,56 @@ fn grpc_status_error(
     )
 }
 
+/// Grok CLI 启动时读的设置（`subscription_tier_display` 就是 CLI 里显示的套餐名）
+const GROK_SETTINGS_ENDPOINT: &str = "https://cli-chat-proxy.grok.com/v1/settings";
+
+/// 账号的 SuperGrok 套餐名；问不到（网络、令牌、形状不对）时为 None，不影响额度。
+pub(crate) async fn query_grok_plan(access_token: &str) -> Option<String> {
+    let resp = crate::proxy::http_client::get()
+        .get(GROK_SETTINGS_ENDPOINT)
+        .bearer_auth(access_token)
+        .header("Accept", "application/json")
+        .header("User-Agent", "cc-switch")
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let body: serde_json::Value = serde_json::from_slice(&resp.bytes().await.ok()?).ok()?;
+    parse_grok_plan(&body)
+}
+
+/// 先取 `subscription_tier_display`（「SuperGrok」「SuperGrok Heavy」），没有时把
+/// `subscription_tier`（`SUPERGROK_HEAVY`）规整成同样的写法。字段可能直接在顶层，
+/// 也可能在 `settings` 下（Grok CLI 的缓存就是这样存的）。
+fn parse_grok_plan(body: &serde_json::Value) -> Option<String> {
+    let settings = body.get("settings").unwrap_or(body);
+    let text = |key: &str| {
+        settings
+            .get(key)
+            .or_else(|| body.get(key))?
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    };
+    if let Some(display) = text("subscription_tier_display") {
+        return Some(display.to_string());
+    }
+    let raw = text("subscription_tier")?;
+    let letters: String = raw
+        .chars()
+        .filter(|c| c.is_ascii_alphabetic())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    Some(match letters.as_str() {
+        "supergrokheavy" | "heavy" => "SuperGrok Heavy".to_string(),
+        "supergrok" => "SuperGrok".to_string(),
+        _ => crate::services::subscription::title_case_words(&raw.to_ascii_lowercase()),
+    })
+}
+
 /// 按重置时间距今的天数推断窗口 tier 名（CodexBar `primaryLabel` 的阈值）：
 /// 4–12 天 → 周窗口，20–45 天 → 月窗口，其余 → 通用 credit 额度
 fn tier_name_for_reset(resets_at: Option<i64>, now_secs: i64) -> &'static str {
@@ -673,6 +741,9 @@ pub(crate) async fn query_grok_quota(
         success: true,
         tiers: vec![tier],
         extra_usage: None,
+        reset_credits: None,
+        credits_balance: None,
+        plan_name: None,
         error: None,
         queried_at: Some(now_millis()),
     })
@@ -689,7 +760,7 @@ pub(crate) async fn get_grok_subscription_quota() -> Result<SubscriptionQuota, S
             CredentialStatus::ParseError,
             message.unwrap_or_else(|| "Failed to parse Grok credentials".to_string()),
         )),
-        CredentialStatus::Expired => {
+        CredentialStatus::Expired | CredentialStatus::RefreshPending => {
             // 即使过期也尝试调用 API（时钟偏差时 token 可能仍有效）
             if let Some(ref token) = token {
                 let result = query_grok_quota(token, "grokbuild", RELOGIN_HINT).await?;
@@ -697,14 +768,13 @@ pub(crate) async fn get_grok_subscription_quota() -> Result<SubscriptionQuota, S
                     return Ok(result);
                 }
             }
-            Ok(SubscriptionQuota::error(
-                "grokbuild",
-                CredentialStatus::Expired,
-                format!(
-                    "{} {RELOGIN_HINT}",
-                    message.unwrap_or_else(|| "Grok OAuth token has expired.".to_string())
-                ),
-            ))
+            let message = message.unwrap_or_else(|| "Grok OAuth token has expired.".to_string());
+            let message = if matches!(status, CredentialStatus::Expired) {
+                format!("{message} {RELOGIN_HINT}")
+            } else {
+                message
+            };
+            Ok(SubscriptionQuota::error("grokbuild", status, message))
         }
         CredentialStatus::Valid => {
             let token = token.expect("token must be Some when status is Valid");
@@ -904,6 +974,24 @@ mod tests {
     }
 
     #[test]
+    fn auth_json_expired_entry_with_refresh_token_is_refresh_pending() {
+        let status = |refresh_token: &str| {
+            let content = serde_json::json!({
+                "https://auth.x.ai::client-id": {
+                    "key": "token",
+                    "expires_at": "2020-01-01T00:00:00.000Z",
+                    "refresh_token": refresh_token
+                }
+            })
+            .to_string();
+            parse_grok_auth_json(&content).1
+        };
+        assert!(matches!(status("rt"), CredentialStatus::RefreshPending));
+        // 空的刷新令牌换不了新令牌：真的要重新登录。
+        assert!(matches!(status(""), CredentialStatus::Expired));
+    }
+
+    #[test]
     fn auth_json_without_usable_entry_is_parse_error() {
         let (token, status, _) = parse_grok_auth_json(r#"{"other-scope": {"key": "x"}}"#);
         assert!(token.is_none());
@@ -957,5 +1045,27 @@ mod tests {
             grpc_status_failure(16, "", "xai_oauth", "re-login").expect("auth failure is Ok");
         assert!(matches!(auth.credential_status, CredentialStatus::Expired));
         assert_eq!(auth.tool, "xai_oauth");
+    }
+
+    #[test]
+    fn grok_plan_comes_from_the_cli_settings() {
+        // Grok CLI 缓存里的形状：在 settings 下
+        assert_eq!(
+            parse_grok_plan(&serde_json::json!({
+                "settings": {"subscription_tier": null, "subscription_tier_display": "SuperGrok"}
+            }))
+            .as_deref(),
+            Some("SuperGrok")
+        );
+        assert_eq!(
+            parse_grok_plan(&serde_json::json!({"subscription_tier": "SUPERGROK_HEAVY"}))
+                .as_deref(),
+            Some("SuperGrok Heavy")
+        );
+        assert_eq!(
+            parse_grok_plan(&serde_json::json!({"subscription_tier": "GROK_TEAM"})).as_deref(),
+            Some("Grok Team")
+        );
+        assert_eq!(parse_grok_plan(&serde_json::json!({"settings": {}})), None);
     }
 }

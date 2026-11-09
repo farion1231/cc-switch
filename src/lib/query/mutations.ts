@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { providersApi, sessionsApi, settingsApi, type AppId } from "@/lib/api";
 import type { DeleteSessionOptions } from "@/lib/api/sessions";
 import type { ProviderEditorSave, SwitchResult } from "@/lib/api/providers";
@@ -8,6 +8,7 @@ import { parseLiveEditConflict } from "@/lib/errors/liveEditConflict";
 import type { Provider, SessionMeta, Settings } from "@/types";
 import {
   extractErrorMessage,
+  translateKimiProviderMutationError,
   translatePiProviderMutationError,
 } from "@/utils/errorUtils";
 import { generateUUID } from "@/utils/uuid";
@@ -15,7 +16,9 @@ import { openclawKeys } from "@/hooks/useOpenClaw";
 import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
 import { proxyKeys } from "@/lib/query/proxy";
 import { usageKeys } from "@/lib/query/usage";
+import { sessionKeys } from "@/lib/query/sessions";
 import { invalidatePiProviderCaches } from "@/lib/query/pi";
+import { isPiFamilyApp } from "@/config/appConfig";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 
 export const useAddProviderMutation = (appId: AppId) => {
@@ -68,7 +71,10 @@ export const useAddProviderMutation = (appId: AppId) => {
         appId === "openclaw" ||
         appId === "hermes" ||
         appId === "pi" ||
-        appId === "mcode"
+        appId === "mcode" ||
+        appId === "kimi" ||
+        appId === "dsh" ||
+        appId === "omp"
       ) {
         if (
           providerInput.category === "omo" ||
@@ -146,9 +152,11 @@ export const useAddProviderMutation = (appId: AppId) => {
       if (parseLiveEditConflict(error)) return;
       const rawDetail = extractErrorMessage(error);
       const detail =
-        (appId === "pi"
+        (isPiFamilyApp(appId)
           ? translatePiProviderMutationError(rawDetail, t)
-          : "") ||
+          : appId === "kimi"
+            ? translateKimiProviderMutationError(rawDetail, t)
+            : "") ||
         rawDetail ||
         t("common.unknown");
       toast.error(
@@ -159,8 +167,8 @@ export const useAddProviderMutation = (appId: AppId) => {
       );
     },
     onSettled: async () => {
-      if (appId === "pi") {
-        await invalidatePiProviderCaches(queryClient);
+      if (isPiFamilyApp(appId)) {
+        await invalidatePiProviderCaches(queryClient, appId);
       }
     },
   });
@@ -214,9 +222,11 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       if (parseLiveEditConflict(error)) return;
       const rawDetail = extractErrorMessage(error);
       const detail =
-        (appId === "pi"
+        (isPiFamilyApp(appId)
           ? translatePiProviderMutationError(rawDetail, t)
-          : "") ||
+          : appId === "kimi"
+            ? translateKimiProviderMutationError(rawDetail, t)
+            : "") ||
         rawDetail ||
         t("common.unknown");
       toast.error(
@@ -227,8 +237,13 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       );
     },
     onSettled: async () => {
-      if (appId === "pi") {
-        await invalidatePiProviderCaches(queryClient);
+      if (isPiFamilyApp(appId)) {
+        await invalidatePiProviderCaches(queryClient, appId);
+      } else if (appId === "kimi") {
+        // 默认模型可能在 Kimi Code 里改过：失败时也重读，页面上的「默认」才跟得上
+        await queryClient.invalidateQueries({
+          queryKey: ["providers", "kimi"],
+        });
       }
     },
   });
@@ -290,9 +305,11 @@ export const useDeleteProviderMutation = (appId: AppId) => {
     onError: (error: Error) => {
       const rawDetail = extractErrorMessage(error);
       const detail =
-        (appId === "pi"
+        (isPiFamilyApp(appId)
           ? translatePiProviderMutationError(rawDetail, t)
-          : "") ||
+          : appId === "kimi"
+            ? translateKimiProviderMutationError(rawDetail, t)
+            : "") ||
         rawDetail ||
         t("common.unknown");
       toast.error(
@@ -303,8 +320,13 @@ export const useDeleteProviderMutation = (appId: AppId) => {
       );
     },
     onSettled: async () => {
-      if (appId === "pi") {
-        await invalidatePiProviderCaches(queryClient);
+      if (isPiFamilyApp(appId)) {
+        await invalidatePiProviderCaches(queryClient, appId);
+      } else if (appId === "kimi") {
+        // 默认模型可能在 Kimi Code 里改过：失败时也重读，页面上的「默认」才跟得上
+        await queryClient.invalidateQueries({
+          queryKey: ["providers", "kimi"],
+        });
       }
     },
   });
@@ -320,6 +342,12 @@ export const useSwitchProviderMutation = (appId: AppId) => {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      if (appId === "claude") {
+        // 切到绑了账号的官方卡时，后端可能把原来的默认登录收成了新账号：授权中心要重读
+        await queryClient.invalidateQueries({
+          queryKey: ["managed-auth-status", "claude_official"],
+        });
+      }
       if (appId === "claude-desktop") {
         await queryClient.invalidateQueries({ queryKey: proxyKeys.status });
         await queryClient.invalidateQueries({
@@ -386,8 +414,8 @@ export const useSwitchProviderMutation = (appId: AppId) => {
       );
     },
     onSettled: async () => {
-      if (appId === "pi") {
-        await invalidatePiProviderCaches(queryClient);
+      if (isPiFamilyApp(appId)) {
+        await invalidatePiProviderCaches(queryClient, appId);
       }
     },
   });
@@ -403,6 +431,15 @@ export const useDeleteSessionMutation = () => {
       return input;
     },
     onSuccess: async (input) => {
+      const deleted = queryClient
+        .getQueryData<SessionMeta[]>(["sessions"])
+        ?.find(
+          (session) =>
+            session.providerId === input.providerId &&
+            session.sessionId === input.sessionId &&
+            session.sourcePath === input.sourcePath,
+        );
+      const deletedTitle = deleted?.title?.trim() || deleted?.summary?.trim();
       queryClient.setQueryData<SessionMeta[]>(["sessions"], (current) =>
         (current ?? []).filter(
           (session) =>
@@ -414,15 +451,20 @@ export const useDeleteSessionMutation = () => {
         ),
       );
       queryClient.removeQueries({
-        queryKey: ["sessionMessages", input.providerId, input.sourcePath],
+        queryKey: sessionKeys.messages(input.providerId, input.sourcePath),
+      });
+      queryClient.removeQueries({
+        queryKey: sessionKeys.transcript(input.providerId, input.sourcePath),
       });
 
       await queryClient.invalidateQueries({ queryKey: ["sessions"] });
 
       toast.success(
-        t("sessionManager.sessionDeleted", {
-          defaultValue: "会话已删除",
-        }),
+        deletedTitle
+          ? t("sessionManager.sessionDeletedNamed", { title: deletedTitle })
+          : t("sessionManager.sessionDeleted", {
+              defaultValue: "会话已删除",
+            }),
       );
     },
     onError: (error: Error) => {

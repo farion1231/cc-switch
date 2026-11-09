@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { mcodeProviderPresets } from "./mcodeProviderPresets";
+import {
+  mcodeOnlyPiPresets,
+  mcodeProviderPresets,
+} from "./mcodeProviderPresets";
 import { piProviderPresets } from "./piProviderPresets";
 
 const mcodePreset = (name: string) =>
   mcodeProviderPresets.find((preset) => preset.name === name);
 const piPreset = (name: string) =>
-  piProviderPresets.find((preset) => preset.name === name)!;
+  [...piProviderPresets, ...mcodeOnlyPiPresets].find(
+    (preset) => preset.name === name,
+  )!;
 
 describe("mcodeProviderPresets", () => {
   it("passes Pi's model compat through verbatim but never its thinkingLevelMap", () => {
@@ -58,6 +63,17 @@ describe("mcodeProviderPresets", () => {
     expect(
       piPreset("Kimi").settingsConfig.models.map((model) => model.id),
     ).toContain("kimi-k3");
+  });
+
+  it("inherits both Volcengine plans with their own endpoints", () => {
+    const baseUrl = (name: string) =>
+      mcodePreset(name)?.settingsConfig.options.baseURL;
+    expect(baseUrl("火山 Agent Plan")).toBe(
+      "https://ark.cn-beijing.volces.com/api/plan/v3",
+    );
+    expect(baseUrl("火山 Coding Plan")).toBe(
+      "https://ark.cn-beijing.volces.com/api/coding/v3",
+    );
   });
 
   it("excludes presets on APIs MCode does not support", () => {

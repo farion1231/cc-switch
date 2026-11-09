@@ -1,6 +1,6 @@
 //! 项目 Profile 快照/应用的端到端集成测试
 //!
-//! 全链路 apply 会写 live 配置文件——support.rs 已把 HOME 指向临时目录，安全。
+//! 全链路 apply 会写 live 配置文件——support 模块已把 HOME 指向临时目录，安全。
 
 use std::fs;
 
@@ -8,10 +8,10 @@ use serde_json::json;
 
 use cc_switch_lib::{
     AppType, InstalledSkill, McpServer, McpService, ProfilePayload, ProfileScope, ProfileService,
-    Prompt, PromptService, Provider, ProviderService, SkillApps, SkillService,
+    Prompt, PromptService, Provider, ProviderService, SkillApps, SkillService, NO_ACTIVE_PROMPT,
 };
 
-#[path = "support.rs"]
+#[path = "support/mod.rs"]
 mod support;
 use support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
 
@@ -644,6 +644,55 @@ fn switching_profile_autosaves_previous_profile_state() {
 }
 
 #[test]
+fn applying_profile_without_active_prompt_disables_current_prompt() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_prompt(AppType::Claude.as_str(), &prompt("pr1", false))
+        .expect("save prompt pr1");
+
+    // 拍快照时没有启用中的提示词：记成「拍到的是无」，不是「没拍过」
+    let project =
+        ProfileService::create(&state, "No Prompt", ProfileScope::Claude).expect("create profile");
+    let payload: ProfilePayload =
+        serde_json::from_str(&project.payload).expect("parse project payload");
+    assert_eq!(
+        payload.prompts.claude.as_deref(),
+        Some(NO_ACTIVE_PROMPT),
+        "no active prompt is captured explicitly"
+    );
+
+    // 之后启用 pr1，并在外部编辑器里改过 CLAUDE.md
+    PromptService::enable_prompt(&state, AppType::Claude, "pr1").expect("enable pr1");
+    let claude_md = home.join(".claude").join("CLAUDE.md");
+    fs::write(&claude_md, "# edited outside\n").expect("edit CLAUDE.md");
+
+    let warnings =
+        ProfileService::apply(&state, &project.id, ProfileScope::Claude).expect("apply profile");
+    assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+
+    let prompts = state
+        .db
+        .get_prompts(AppType::Claude.as_str())
+        .expect("get prompts");
+    let pr1 = prompts.get("pr1").expect("pr1");
+    assert!(!pr1.enabled, "pr1 disabled by applying the project");
+    assert_eq!(
+        pr1.content, "# edited outside\n",
+        "external edit backfilled before disabling"
+    );
+    assert_eq!(
+        fs::read_to_string(&claude_md).expect("read CLAUDE.md"),
+        "",
+        "live prompt file cleared"
+    );
+}
+
+#[test]
 fn profile_switch_in_routing_mode_changes_the_route_only() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
@@ -683,6 +732,7 @@ fn profile_switch_in_routing_mode_changes_the_route_only() {
     rt.block_on(cc_switch_lib::mode::controller::enter(
         &state,
         &AppType::Claude,
+        false,
     ))
     .expect("enter routing mode");
 

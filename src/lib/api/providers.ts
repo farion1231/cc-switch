@@ -2,10 +2,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   Provider,
+  ProviderMeta,
   UniversalProvider,
   UniversalProvidersMap,
 } from "@/types";
 import type { AppId } from "./types";
+import type { RouteSwitchResult } from "@/types/proxy";
 
 export interface ProviderSortUpdate {
   id: string;
@@ -17,16 +19,36 @@ export interface ProviderSwitchEvent {
   providerId: string;
 }
 
+/**
+ * Codex 切换让新会话换了组（openai ↔ custom），统一会话历史又关着：
+ * 新版 Codex 只能继续当前组的会话，切换前那组从此只读。
+ */
+export interface CodexHistorySplitHint {
+  /** 切换前新会话记的 provider id（"openai" 或 "custom"） */
+  previousBucket: string;
+  currentBucket: string;
+  /** 记在切换前那组、现在只能查看的会话数 */
+  lockedThreads: number;
+}
+
 export interface SwitchResult {
   warnings: string[];
+  route?: RouteSwitchResult;
+  codexHistorySplit?: CodexHistorySplitHint;
 }
 
 export interface OpenTerminalOptions {
   cwd?: string;
+  /** 启动时跳过权限确认：Claude Code 与 agy 加 `--dangerously-skip-permissions`，Codex 加 `--dangerously-bypass-approvals-and-sandbox` */
+  skipPermissions?: boolean;
+  /** 追加在生成的参数后面，后端按空白拆分、引号括起的算一个 */
+  extraArgs?: string;
 }
 
 export interface ClaudeDesktopStatus {
   supported: boolean;
+  /** 本机装了 Claude Desktop（按它的数据目录或 macOS 应用包推断；接入了也算） */
+  installed: boolean;
   configured: boolean;
   appliedId?: string | null;
   profilePath?: string | null;
@@ -106,23 +128,33 @@ export const providersApi = {
     });
   },
 
-  /** 切换式应用（Claude Code、Codex、Gemini CLI、Grok Build）的编辑器显示内容。`settingsConfig` 是供应商的行，新增时传空对象。编辑已有供应商时传 `providerId`：后端按库里那一行认官方卡，和切换的判断一致。 */
+  /**
+   * 切换式应用的编辑器显示内容。编辑已有供应商时传 `providerId`：后端按库里那一行认
+   * 官方卡。`meta` 保留 Codex Copilot 等供应商的认证和协议身份，新增时取当前预设。
+   */
   async getEditorView(
     appId: AppId,
     settingsConfig: Record<string, unknown>,
     category?: string,
     providerId?: string,
+    meta?: ProviderMeta,
   ): Promise<ProviderEditorView> {
     return await invoke("get_provider_editor_view", {
       app: appId,
       settingsConfig,
       ...(category ? { category } : {}),
       ...(providerId ? { providerId } : {}),
+      ...(meta ? { meta } : {}),
     });
   },
 
   async delete(id: string, appId: AppId): Promise<boolean> {
     return await invoke("delete_provider", { id, app: appId });
+  },
+
+  /** Kimi「添加」：写进 config.toml 但不改默认模型（「切换」才改） */
+  async addToLiveConfig(id: string, appId: AppId): Promise<boolean> {
+    return await invoke("add_provider_to_live_config", { id, app: appId });
   },
 
   /**
@@ -195,11 +227,13 @@ export const providersApi = {
     appId: AppId,
     options?: OpenTerminalOptions,
   ): Promise<boolean> {
-    const { cwd } = options ?? {};
+    const { cwd, skipPermissions, extraArgs } = options ?? {};
     return await invoke("open_provider_terminal", {
       providerId,
       app: appId,
       cwd,
+      skipPermissions,
+      extraArgs,
     });
   },
 
@@ -217,6 +251,15 @@ export const providersApi = {
    */
   async getOpenCodeLiveProviderIds(): Promise<string[]> {
     return await invoke("get_opencode_live_provider_ids");
+  },
+
+  /** OpenCode 顶层 model（`<provider>/<model>`），没写时为 null */
+  async getOpenCodeDefaultModel(): Promise<string | null> {
+    return await invoke("get_opencode_default_model");
+  },
+
+  async setOpenCodeDefaultModel(model: string): Promise<void> {
+    await invoke("set_opencode_default_model", { model });
   },
 
   /**

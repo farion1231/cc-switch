@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useSettingsQuery } from "@/lib/query";
 import type { Settings } from "@/types";
 
-type Language = "zh" | "zh-TW" | "en" | "ja" | "ru";
+type Language = "zh" | "zh-TW" | "en" | "ja" | "tr" | "ko";
 
 export type SettingsFormState = Omit<Settings, "language"> & {
   language: Language;
@@ -19,23 +19,28 @@ const normalizeLanguage = (lang?: string | null): Language => {
 
   if (
     normalized === "zh-tw" ||
-    normalized.startsWith("zh-hant") ||
-    normalized.startsWith("zh-hk") ||
-    normalized.startsWith("zh-mo")
+    normalized.startsWith("zh-tw-") ||
+    normalized === "zh-hant" ||
+    normalized.startsWith("zh-hant-") ||
+    normalized === "zh-hk" ||
+    normalized.startsWith("zh-hk-") ||
+    normalized === "zh-mo" ||
+    normalized.startsWith("zh-mo-")
   ) {
     return "zh-TW";
   }
 
-  if (normalized === "en" || normalized === "ja" || normalized === "ru") {
+  if (
+    normalized === "en" ||
+    normalized === "ja" ||
+    normalized === "tr" ||
+    normalized === "ko"
+  ) {
     return normalized;
   }
 
-  if (normalized.startsWith("zh")) {
+  if (normalized === "zh" || normalized.startsWith("zh-")) {
     return "zh";
-  }
-
-  if (normalized.startsWith("ru")) {
-    return "ru";
   }
 
   return "zh";
@@ -47,9 +52,10 @@ const isSupportedLanguage = (lang?: string | null): boolean => {
   return (
     normalized === "en" ||
     normalized === "ja" ||
-    normalized === "ru" ||
-    normalized.startsWith("ru") ||
-    normalized.startsWith("zh")
+    normalized === "tr" ||
+    normalized === "ko" ||
+    normalized === "zh" ||
+    normalized.startsWith("zh-")
   );
 };
 
@@ -127,6 +133,7 @@ export function useSettingsForm(): UseSettingsFormResult {
       preserveCodexOfficialAuthOnSwitch:
         data.preserveCodexOfficialAuthOnSwitch ?? false,
       unifyCodexSessionHistory: data.unifyCodexSessionHistory ?? false,
+      codexStackClassicTools: data.codexStackClassicTools ?? true,
       claudeConfigDir: sanitizeDir(data.claudeConfigDir),
       codexConfigDir: sanitizeDir(data.codexConfigDir),
       geminiConfigDir: sanitizeDir(data.geminiConfigDir),
@@ -155,6 +162,7 @@ export function useSettingsForm(): UseSettingsFormResult {
             skipClaudeOnboarding: false,
             preserveCodexOfficialAuthOnSwitch: false,
             unifyCodexSessionHistory: false,
+            codexStackClassicTools: true,
             language: readPersistedLanguage(),
           } as SettingsFormState);
 
@@ -195,6 +203,7 @@ export function useSettingsForm(): UseSettingsFormResult {
         preserveCodexOfficialAuthOnSwitch:
           serverData.preserveCodexOfficialAuthOnSwitch ?? false,
         unifyCodexSessionHistory: serverData.unifyCodexSessionHistory ?? false,
+        codexStackClassicTools: serverData.codexStackClassicTools ?? true,
         claudeConfigDir: sanitizeDir(serverData.claudeConfigDir),
         codexConfigDir: sanitizeDir(serverData.codexConfigDir),
         geminiConfigDir: sanitizeDir(serverData.geminiConfigDir),

@@ -13,6 +13,7 @@ import {
 
 export const CODEX_OFFICIAL_PROVIDER_ID = "codex-official";
 export const GROKBUILD_OFFICIAL_PROVIDER_ID = "grokbuild-official";
+export const KIMI_OFFICIAL_PROVIDER_ID = "managed:kimi-code";
 
 export type CodexOfficialIdentity =
   | "native_login"
@@ -84,6 +85,58 @@ export function resolveCodexOfficialIdentity(
     : null;
 }
 
+/**
+ * 官方账号卡（对应后端 `codex_direct::is_official`）：Codex 早期绑定托管账号的官方卡
+ * 没有 category，按身份认。
+ */
+export function isOfficialAccount(
+  appId: AppId,
+  provider: Pick<Provider, "id" | "category" | "meta" | "settingsConfig">,
+): boolean {
+  if (appId === "kimi") {
+    const config = provider.settingsConfig.provider as
+      | { type?: string; oauth?: { key?: unknown } }
+      | undefined;
+    return config?.type === "kimi" && nonEmptyString(config?.oauth?.key);
+  }
+  return (
+    provider.category === "official" ||
+    resolveCodexOfficialIdentity(appId, provider) !== null
+  );
+}
+
+/**
+ * 能进故障转移队列（对应后端 `provider_router::provider_supports_failover`）：
+ * Codex 官方账号卡靠客户端自己的登录走路由，不能和别家轮换。
+ */
+export function supportsFailover(
+  appId: AppId,
+  provider: Pick<Provider, "id" | "category" | "meta" | "settingsConfig">,
+): boolean {
+  return !supportsOfficialProxyTakeover(appId, provider);
+}
+
+/**
+ * 能否做「检测连通」（对 base_url 的可达性探测）。
+ *
+ * 探测需要一个真实的上游地址，所以两类卡片不参与：
+ * - 官方账号卡：base_url 故意留空，走客户端默认 / OAuth 端点；
+ * - OMO / OMO Slim：`settings_config` 里只有 agents / categories 的模型映射，
+ *   没有 `npm` 与 `options.baseURL`，后端无从解析探测目标。要测上游请到它引用的
+ *   OpenCode 供应商卡片上测。
+ */
+export function supportsConnectivityCheck(
+  appId: AppId,
+  provider: Pick<Provider, "category">,
+): boolean {
+  if (appId === "mcode" || appId === "dsh" || appId === "kimi") return false;
+  return (
+    provider.category !== "official" &&
+    provider.category !== "omo" &&
+    provider.category !== "omo-slim"
+  );
+}
+
 /** Keep the UI capability rule aligned with the Rust takeover policy. */
 export function supportsOfficialProxyTakeover(
   appId: AppId,
@@ -117,11 +170,7 @@ export function providerNeedsRouting(
   appId: AppId,
   provider: Provider,
 ): boolean {
-  if (
-    provider.category === "official" ||
-    resolveCodexOfficialIdentity(appId, provider)
-  )
-    return false;
+  if (isOfficialAccount(appId, provider)) return false;
 
   const isManagedOAuth = isOAuthProviderType(provider.meta?.providerType);
 

@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { Edit2, Trash2, RefreshCw, Globe, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import type { UniversalProvider } from "@/types";
 
@@ -29,59 +30,75 @@ export function UniversalProviderCard({
   ].filter((app): app is string => app !== null);
 
   return (
-    <div className="group relative rounded-xl border border-border/50 bg-card p-4 transition-all hover:border-border hover:shadow-md">
+    <div className="group relative rounded-xl border border-border/50 bg-surface p-4 transition-all hover:border-border hover:shadow-md">
       {/* 头部：图标和名称 */}
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-subtle">
             <ProviderIcon icon={provider.icon} name={provider.name} size={24} />
           </div>
           <div>
-            <h3 className="font-semibold text-foreground">{provider.name}</h3>
-            <p className="text-xs text-muted-foreground">
-              {provider.providerType}
-            </p>
+            <h3 className="font-semibold text-fg-1">{provider.name}</h3>
+            <p className="text-xs text-fg-2">{provider.providerType}</p>
           </div>
         </div>
 
         {/* 操作按钮 */}
-        <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            onClick={() => onSync(provider.id)}
-            title={t("universalProvider.sync", { defaultValue: "同步到应用" })}
+        <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+          <HoverTip
+            content={t("universalProvider.sync", {
+              defaultValue: "同步到应用",
+            })}
           >
-            <RefreshCw className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            onClick={() => onDuplicate(provider)}
-            title={t("universalProvider.duplicate", { defaultValue: "复制" })}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => onSync(provider.id)}
+              aria-label={t("universalProvider.sync", {
+                defaultValue: "同步到应用",
+              })}
+            >
+              <RefreshCw className="h-4 w-4" />
+            </Button>
+          </HoverTip>
+          <HoverTip
+            content={t("universalProvider.duplicate", { defaultValue: "复制" })}
           >
-            <Copy className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            onClick={() => onEdit(provider)}
-            title={t("common.edit", { defaultValue: "编辑" })}
-          >
-            <Edit2 className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 text-destructive hover:text-destructive"
-            onClick={() => onDelete(provider.id)}
-            title={t("common.delete", { defaultValue: "删除" })}
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => onDuplicate(provider)}
+              aria-label={t("universalProvider.duplicate", {
+                defaultValue: "复制",
+              })}
+            >
+              <Copy className="h-4 w-4" />
+            </Button>
+          </HoverTip>
+          <HoverTip content={t("common.edit", { defaultValue: "编辑" })}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => onEdit(provider)}
+              aria-label={t("common.edit", { defaultValue: "编辑" })}
+            >
+              <Edit2 className="h-4 w-4" />
+            </Button>
+          </HoverTip>
+          <HoverTip content={t("common.delete", { defaultValue: "删除" })}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-destructive hover:text-destructive"
+              onClick={() => onDelete(provider.id)}
+              aria-label={t("common.delete", { defaultValue: "删除" })}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </HoverTip>
         </div>
       </div>
 
@@ -89,10 +106,8 @@ export function UniversalProviderCard({
       <div className="mt-4 space-y-2">
         {/* Base URL */}
         <div className="flex items-center gap-2 text-sm">
-          <Globe className="h-3.5 w-3.5 text-muted-foreground" />
-          <span className="truncate text-muted-foreground">
-            {provider.baseUrl || "-"}
-          </span>
+          <Globe className="h-3.5 w-3.5 text-fg-2" />
+          <span className="truncate text-fg-2">{provider.baseUrl || "-"}</span>
         </div>
 
         {/* 启用的应用 */}
@@ -106,7 +121,7 @@ export function UniversalProviderCard({
             </span>
           ))}
           {enabledApps.length === 0 && (
-            <span className="text-xs text-muted-foreground">
+            <span className="text-xs text-fg-2">
               {t("universalProvider.noAppsEnabled", {
                 defaultValue: "未启用任何应用",
               })}
@@ -117,9 +132,7 @@ export function UniversalProviderCard({
 
       {/* 备注 */}
       {provider.notes && (
-        <p className="mt-3 text-xs text-muted-foreground line-clamp-2">
-          {provider.notes}
-        </p>
+        <p className="mt-3 text-xs text-fg-2 line-clamp-2">{provider.notes}</p>
       )}
     </div>
   );

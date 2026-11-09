@@ -3,8 +3,11 @@
 //! 提供本地HTTP代理服务，支持多Provider故障转移和请求透传
 
 pub mod body_filter;
+mod browser_guard;
 pub mod cache_injector;
 pub mod circuit_breaker;
+mod classifier_guard;
+pub(crate) mod codex_quota_protection;
 pub(crate) mod content_encoding;
 pub mod copilot_optimizer;
 pub mod error;
@@ -19,8 +22,10 @@ pub mod http_client;
 pub mod hyper_client;
 pub(crate) mod json_canonical;
 pub mod log_codes;
+pub(crate) mod loopback_probe;
 pub mod media_sanitizer;
 pub mod model_mapper;
+pub mod opaque_state_rectifier;
 pub mod provider_router;
 pub mod providers;
 pub mod response_processor;
@@ -33,7 +38,11 @@ pub mod thinking_optimizer;
 pub mod thinking_rectifier;
 pub(crate) mod tool_media;
 pub(crate) mod types;
+mod upstream_guard;
 pub mod usage;
+
+#[cfg(test)]
+mod tests_issue_7271;
 
 // 公开导出给外部使用（commands, services等模块需要）
 #[allow(unused_imports)]

@@ -22,6 +22,37 @@ impl Database {
 
     /// 在指定连接上创建表（供迁移和测试使用）
     pub(crate) fn create_tables_on_conn(conn: &Connection) -> Result<(), AppError> {
+        Self::in_savepoint(conn, "create_tables", || {
+            Self::create_tables_on_conn_unbatched(conn)
+        })
+    }
+
+    /// 在 SAVEPOINT 里执行一组写入：成功 RELEASE，失败 ROLLBACK TO 再 RELEASE。
+    ///
+    /// 自动提交模式下每条语句单独一个事务，都要建 / 删一次日志文件并落盘；建表和
+    /// 二百多条内置定价逐条提交，在 Windows 上新库要多花约 6 秒（首次启动、每个用到
+    /// 数据库的测试都会碰上）。合成一个事务只落一次盘。外面已有事务时 SAVEPOINT 会嵌套。
+    pub(crate) fn in_savepoint<T>(
+        conn: &Connection,
+        name: &str,
+        f: impl FnOnce() -> Result<T, AppError>,
+    ) -> Result<T, AppError> {
+        conn.execute_batch(&format!("SAVEPOINT {name};"))
+            .map_err(|e| AppError::Database(format!("开启 savepoint {name} 失败: {e}")))?;
+        match f() {
+            Ok(value) => {
+                conn.execute_batch(&format!("RELEASE {name};"))
+                    .map_err(|e| AppError::Database(format!("提交 savepoint {name} 失败: {e}")))?;
+                Ok(value)
+            }
+            Err(err) => {
+                let _ = conn.execute_batch(&format!("ROLLBACK TO {name}; RELEASE {name};"));
+                Err(err)
+            }
+        }
+    }
+
+    fn create_tables_on_conn_unbatched(conn: &Connection) -> Result<(), AppError> {
         // 1. Providers 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS providers (
@@ -68,7 +99,12 @@ impl Database {
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
-            enabled_hermes BOOLEAN NOT NULL DEFAULT 0
+            enabled_agy BOOLEAN NOT NULL DEFAULT 0,
+            enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
+            enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            enabled_pi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_omp BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -98,6 +134,9 @@ impl Database {
             enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_agy BOOLEAN NOT NULL DEFAULT 0,
+            enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
@@ -312,11 +351,15 @@ impl Database {
                 last_line_offset INTEGER NOT NULL DEFAULT 0,
                 last_synced_at INTEGER NOT NULL,
                 last_byte_offset INTEGER,
-                last_tail_fingerprint INTEGER
+                last_tail_fingerprint INTEGER,
+                parser_state TEXT
             )",
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 修复跑过未发布开发版 v24 的库：parser_state 随 v24 定稿，不单独 bump 版本
+        Self::add_column_if_missing(conn, "session_log_sync", "parser_state", "TEXT")?;
 
         // Session detail rows are pruned after rollup, so request IDs needed
         // for fork/rewrite deduplication live in a compact durable ledger.
@@ -563,6 +606,78 @@ impl Database {
                             }
                         }
                         Self::set_user_version(conn, 19)?;
+                    }
+                    19 => {
+                        log::info!("迁移数据库从 v19 到 v20（MCP 添加 Pi 支持）");
+                        if Self::table_exists(conn, "mcp_servers")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "mcp_servers",
+                                "enabled_pi",
+                                "BOOLEAN NOT NULL DEFAULT 0",
+                            )?;
+                        }
+                        Self::set_user_version(conn, 20)?;
+                    }
+                    20 => {
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    "enabled_agy",
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
+                            }
+                        }
+                        Self::set_user_version(conn, 21)?;
+                    }
+                    21 => {
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    "enabled_kimi",
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
+                            }
+                        }
+                        Self::set_user_version(conn, 22)?;
+                    }
+                    22 => {
+                        // Oh My Pi：只有 MCP 存开关；Skills 的启用状态按原生目录现算（同 Pi）。
+                        if Self::table_exists(conn, "mcp_servers")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "mcp_servers",
+                                "enabled_omp",
+                                "BOOLEAN NOT NULL DEFAULT 0",
+                            )?;
+                        }
+                        Self::set_user_version(conn, 23)?;
+                    }
+                    23 => {
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    "enabled_dsh",
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
+                            }
+                        }
+                        // DSH 用量导入：游标处未完成请求的解析上下文
+                        if Self::table_exists(conn, "session_log_sync")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "session_log_sync",
+                                "parser_state",
+                                "TEXT",
+                            )?;
+                        }
+                        Self::set_user_version(conn, 24)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1668,6 +1783,26 @@ impl Database {
                 "0.50",
                 "6.25",
             ),
+            // Claude Sonnet 5.5（2026-09-28 发布；同 Sonnet 5 价，但缓存读为
+            // 0.05x = $0.10，非 Sonnet 5 的 $0.20）
+            (
+                "claude-sonnet-5-5",
+                "Claude Sonnet 5.5",
+                "2",
+                "10",
+                "0.10",
+                "2.50",
+            ),
+            // Claude Haiku 5.5（2026-10-07 发布；按提示词长度分档，表内只存
+            // 10 万 token 以内的标准档，超过时 $0.50/$2.50 的高档不入表）
+            (
+                "claude-haiku-5-5",
+                "Claude Haiku 5.5",
+                "0.10",
+                "0.50",
+                "0.01",
+                "0.125",
+            ),
             // Claude Sonnet 5（官方定价页 2026-09 确认：$2/$10 介绍价转为正式价，
             // 原定 09-01 涨至 $3/$15 取消）
             (
@@ -1794,6 +1929,13 @@ impl Database {
             // effort 档 low/medium/high/xhigh 由查价剥后缀回落到本行；max 不在剥离列表
             //（会与 *-max 真 id 撞名），不另加后缀行。
             ("gpt-6-astra", "GPT-6 Astra", "10", "50", "1", "12.5"),
+            // GPT-6.1 Sol: Standard short-context pricing; cached input is 0.05× input.
+            // https://developers.openai.com/api/docs/models/gpt-6.1-sol
+            ("gpt-6.1-sol", "GPT-6.1 Sol", "2", "10", "0.10", "2.50"),
+            // GPT-6.1 Terra（2026-10-26 发布）：2026-11-02 核对官方模型页 + 价页，取 Standard 短上下文价，
+            // cache write 取 30 分钟档（12 小时档为 2 倍）。
+            // https://developers.openai.com/api/docs/models/gpt-6.1-terra
+            ("gpt-6.1-terra", "GPT-6.1 Terra", "1", "5", "0.05", "1.25"),
             ("gpt-6-sol", "GPT-6 Sol", "2", "10", "0.20", "2.50"),
             ("gpt-6-luna", "GPT-6 Luna", "0.10", "0.50", "0.01", "0.125"),
             // GPT-5.6 系列（Sol / Terra / Luna，2026-06 发布）
@@ -2027,6 +2169,23 @@ impl Database {
             ("gpt-5.2-pro", "GPT-5.2 Pro", "21", "168", "0", "0"),
             ("gpt-4o", "GPT-4o", "2.50", "10", "1.25", "0"),
             ("gpt-4o-mini", "GPT-4o Mini", "0.15", "0.60", "0.075", "0"),
+            // Gemini 4 系列
+            // 来源：https://ai.google.dev/gemini-api/docs/pricing#gemini-4-argon
+            // 录的是标准档介绍价（2026-10-15 抓取）：输入 2.00 / 输出 10.00 / 上下文缓存读 0.10
+            // （缓存仅支持隐式，不支持显式写入，cache_creation 记 0，与其他 Gemini 条目口径一致）。
+            // ⚠️ 介绍价 2026-11-30 到期，2026-12-01 起恢复挂牌价 4.00/20.00/0.20。
+            // 到期后需走 seed + repair 双写改回；刻意不进 audit-ignore.json，
+            // 由 /jason-update-model 审计的 A 段在到期后报出提醒，口径同 3.6/3.7/3.8 Flash。
+            // 免费层级不可用；批量档（输入 1.00→2.00 / 输出 5.00→10.00）与 Flex 档不入表，
+            // 仓库现有口径仅录标准档。
+            (
+                "gemini-4-argon",
+                "Gemini 4 Argon",
+                "2.00",
+                "10.00",
+                "0.10",
+                "0",
+            ),
             // Gemini 3.8 系列（2026-09-02 发布，1M 窗口）
             // 介绍价 0.75/3.75/0.075 至 2026-12-31，2027-01-01 起挂牌价 1.50/7.50/0.15；口径同 3.7 Flash，勿加豁免。
             (
@@ -2156,13 +2315,14 @@ impl Database {
                 "0",
             ),
             // StepFun 系列：CNY 按 1 USD ≈ 7.14 CNY 折算，保留两位小数。
-            // Step 5 Preview 官方输入 / 输出 / 缓存读取：7 / 20 / 0.35 元。
+            // Step 5 Preview 官方输入 / 输出 / 缓存读取：7 / 20 / 0.70 元（缓存读取 2026-10-14
+            // 起由 0.35 元上调；此前已按量调用过的老用户仍按 0.35 元计，表里取现行挂牌价）。
             (
                 "step-5-preview",
                 "Step 5 Preview",
                 "0.98",
                 "2.80",
-                "0.05",
+                "0.10",
                 "0",
             ),
             (
@@ -2324,6 +2484,17 @@ impl Database {
                 "0.006",
                 "0",
             ),
+            // 第三方上游（OpenCode Go、OpenRouter 的 deepseek/ 命名空间、Hermes 预设等）用带版本号的
+            // deepseek-v4.1-flash。点号版本既剥不成 deepseek-flash，前缀兜底也只命中更长的行，
+            // 不单列会显示「未定价」并按 0 计费
+            (
+                "deepseek-v4.1-flash",
+                "DeepSeek V4.1 Flash",
+                "0.3",
+                "1.2",
+                "0.006",
+                "0",
+            ),
             (
                 "deepseek-v4-flash",
                 "DeepSeek V4 Flash",
@@ -2403,9 +2574,38 @@ impl Database {
                 "0.38",
                 "0",
             ),
-            ("kimi-k3", "Kimi K3", "3.00", "15.00", "0.30", "0"),
+            // 2026-10-19 官方价页：K3 缓存写入按 TTL 计费，默认 5 分钟档 $3（1 小时档 $6，取默认档）
+            ("kimi-k3", "Kimi K3", "3.00", "15.00", "0.30", "3.00"),
             // Kimi For Coding 套餐里 K3 的裸名（无 kimi- 前缀），同标准 list 价
-            ("k3", "Kimi K3", "3.00", "15.00", "0.30", "0"),
+            ("k3", "Kimi K3", "3.00", "15.00", "0.30", "3.00"),
+            // 2026-10-24 官方价页：K3.1 Pro 缓存写入取默认 5 分钟档（1 小时档为 2 倍）。
+            // HighSpeed 只有输入/输出/缓存写翻倍，缓存读仍是 $0.20，别按 K2.7 的 2 倍规律改
+            (
+                "kimi-k3.1-pro",
+                "Kimi K3.1 Pro",
+                "2.00",
+                "10.00",
+                "0.20",
+                "2.00",
+            ),
+            (
+                "kimi-k3.1-pro-highspeed",
+                "Kimi K3.1 Pro HighSpeed",
+                "4.00",
+                "20.00",
+                "0.20",
+                "4.00",
+            ),
+            // Kimi Code 套餐里的裸名（无 kimi- 前缀），同标准 list 价
+            ("k3.1-pro", "Kimi K3.1 Pro", "2.00", "10.00", "0.20", "2.00"),
+            (
+                "k3.1-pro-highspeed",
+                "Kimi K3.1 Pro HighSpeed",
+                "4.00",
+                "20.00",
+                "0.20",
+                "4.00",
+            ),
             // 腾讯混元 (Tencent Hunyuan)（官方 CNY 1/4/0.25 按 1 USD ≈ 7.14 折算；Hy3 阶梯计价取最低档）
             ("hunyuan-hy3", "Hunyuan Hy3", "0.14", "0.56", "0.035", "0"),
             ("hy3", "Hunyuan Hy3", "0.14", "0.56", "0.035", "0"),
@@ -2471,6 +2671,14 @@ impl Database {
                 "0.375",
             ),
             ("minimax-m3", "MiniMax M3", "0.30", "1.20", "0.06", "0"),
+            (
+                "minimax-m3.1-flash",
+                "MiniMax M3.1 Flash",
+                "0.15",
+                "0.60",
+                "0.015",
+                "0",
+            ),
             // GLM (智谱)
             ("glm-4.7", "GLM-4.7", "0.6", "2.2", "0.11", "0"),
             ("glm-4.6", "GLM-4.6", "0.6", "2.2", "0.11", "0"),
@@ -2540,6 +2748,26 @@ impl Database {
             ("qwen3.8-27b", "Qwen3.8 27B", "0.50", "3", "0.10", "0.625"),
             ("qwen3.7-max", "Qwen3.7 Max", "2.50", "7.50", "0.25", "0"),
             ("qwen3.7-plus", "Qwen3.7 Plus", "0.40", "1.60", "0.08", "0"),
+            // 2026-10-19：阿里国际站（新加坡）价页。qwen3.7-flash 阶梯计价取最低档（≤32K），
+            // 缓存两列按 qwen3.8 同口径（隐式命中 20%、显式创建 125%）；qwen3.6-27b 无阶梯、
+            // 价页未列缓存价；qwen3.8-omni-flash 取文本价，价页只列缓存命中价
+            (
+                "qwen3.7-flash",
+                "Qwen3.7 Flash",
+                "0.03",
+                "0.13",
+                "0.006",
+                "0.0375",
+            ),
+            ("qwen3.6-27b", "Qwen3.6 27B", "0.60", "3.60", "0", "0"),
+            (
+                "qwen3.8-omni-flash",
+                "Qwen3.8 Omni Flash",
+                "0.15",
+                "0.47",
+                "0.016",
+                "0",
+            ),
             (
                 "qwen3.6-plus",
                 "Qwen3.6 Plus",
@@ -2619,6 +2847,19 @@ impl Database {
             // costUsdTicks（1 tick = 1e-10 USD）双轮实测反推：input/output 与
             // grok-4.5 同为 2/6，cache read 同为 0.30
             ("grok-4.5-build", "Grok 4.5 Build", "2", "6", "0.30", "0"),
+            // grok-4.6-build 同理：查价层不剥 -build，且 grok- 不走前缀匹配，
+            // 必须单独 seed，否则会话导入只能用 CLI 自报 total、分项成本为 0
+            ("grok-4.6-build", "Grok 4.6 Build", "2", "6", "0.50", "0"),
+            ("grok-4.7-build", "Grok 4.7 Build", "2", "6", "0.50", "0"),
+            // docs.x.ai：Grok 4.7 Fast（仅 Cursor / Grok Build）<200k 档 $4 / $12，cached $1
+            (
+                "grok-4.7-build-fast",
+                "Grok 4.7 Build Fast",
+                "4",
+                "12",
+                "1",
+                "0",
+            ),
             ("grok-4.3", "Grok 4.3", "1.25", "2.50", "0.20", "0"),
             (
                 "grok-4.20-0309-reasoning",
@@ -2812,6 +3053,26 @@ impl Database {
 
     fn repair_current_model_pricing(conn: &Connection) -> Result<(), AppError> {
         let pricing_fixes = [
+            // 2026-10-19 models.dev 审计核价：Kimi K3 官方价页列有缓存写入（默认 5 分钟档 $3），
+            // 早先按 0 录入；Step 5 Preview 缓存读取 2026-10-14 起由 0.35 元上调至 0.70 元
+            (
+                "kimi-k3", "Kimi K3", "3.00", "15.00", "0.30", "3.00", "3.00", "15.00", "0.30", "0",
+            ),
+            (
+                "k3", "Kimi K3", "3.00", "15.00", "0.30", "3.00", "3.00", "15.00", "0.30", "0",
+            ),
+            (
+                "step-5-preview",
+                "Step 5 Preview",
+                "0.98",
+                "2.80",
+                "0.10",
+                "0",
+                "0.98",
+                "2.80",
+                "0.05",
+                "0",
+            ),
             // 2026-09-02 官方定价页确认 Sonnet 5 $2/$10 介绍价转为正式价、原定 09-01 涨至
             // $3/$15 取消：早先按 list 价 seed 的行改回正式价（用户手改过的行不匹配旧值，不动）
             (
@@ -3553,8 +3814,10 @@ impl Database {
 
     pub(crate) fn ensure_model_pricing_seeded_on_conn(conn: &Connection) -> Result<(), AppError> {
         // 每次启动都执行 INSERT OR IGNORE，增量追加新模型；仅修复仍等于旧内置值的定价。
-        Self::seed_model_pricing(conn)?;
-        Self::repair_current_model_pricing(conn)
+        Self::in_savepoint(conn, "seed_model_pricing", || {
+            Self::seed_model_pricing(conn)?;
+            Self::repair_current_model_pricing(conn)
+        })
     }
 
     // --- 辅助方法 ---
@@ -3711,6 +3974,52 @@ mod tests {
     use super::*;
 
     #[test]
+    fn migrate_v23_to_v24_preserves_existing_session_cursors() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE session_log_sync (
+                file_path TEXT PRIMARY KEY, last_modified INTEGER NOT NULL,
+                last_line_offset INTEGER NOT NULL DEFAULT 0, last_synced_at INTEGER NOT NULL,
+                last_byte_offset INTEGER, last_tail_fingerprint INTEGER
+             );
+             INSERT INTO session_log_sync VALUES ('dsh:test', 11, 123, 12, 123, NULL);",
+        )?;
+        Database::set_user_version(&conn, 23)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let row: (i64, i64, Option<String>) = conn.query_row(
+            "SELECT last_modified, last_byte_offset, parser_state FROM session_log_sync",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(row, (11, 123, None));
+        Ok(())
+    }
+
+    #[test]
+    fn create_tables_patches_parser_state_into_unreleased_v24_dev_databases() -> Result<(), AppError>
+    {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE session_log_sync (
+                file_path TEXT PRIMARY KEY, last_modified INTEGER NOT NULL,
+                last_line_offset INTEGER NOT NULL DEFAULT 0, last_synced_at INTEGER NOT NULL,
+                last_byte_offset INTEGER, last_tail_fingerprint INTEGER
+             );",
+        )?;
+        Database::set_user_version(&conn, 24)?;
+        Database::create_tables_on_conn(&conn)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert!(Database::has_column(
+            &conn,
+            "session_log_sync",
+            "parser_state"
+        )?);
+        Ok(())
+    }
+
+    #[test]
     fn migrate_v12_to_v13_adds_input_token_semantics_columns() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
         conn.execute(
@@ -3774,6 +4083,144 @@ mod tests {
         )?;
         assert_eq!(codex_values, (1, 9));
 
+        Ok(())
+    }
+
+    #[test]
+    fn dsh_migration_preserves_existing_flags_and_persists_mcp_and_skill_flags(
+    ) -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_claude BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+        Database::set_user_version(&conn, 22)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        for (table, flag) in [
+            ("mcp_servers", "enabled_kimi"),
+            ("skills", "enabled_claude"),
+        ] {
+            let flags = conn.query_row(
+                &format!("SELECT {flag}, enabled_dsh FROM {table}"),
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )?;
+            assert_eq!(flags, (1, 0));
+        }
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        let db = Database::memory()?;
+        let server = serde_json::from_value(serde_json::json!({"id":"m", "name":"m", "server":{"command":"node"}, "apps":{"dsh":true,"kimi":true}})).unwrap();
+        db.save_mcp_server(&server)?;
+        db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::Dsh, false)?;
+        let saved = db.get_all_mcp_servers()?;
+        assert!(!saved["m"].apps.dsh && saved["m"].apps.kimi);
+        let skill = serde_json::from_value(serde_json::json!({"id":"s", "name":"s", "directory":"s", "apps":{"dsh":true,"claude":true}, "installedAt":0})).unwrap();
+        db.save_skill(&skill)?;
+        assert!(db.get_installed_skill("s")?.unwrap().apps.dsh);
+        assert!(db.get_all_installed_skills()?["s"].apps.claude);
+        Ok(())
+    }
+
+    #[test]
+    fn kimi_migration_preserves_existing_flags_and_defaults_to_disabled() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_codex BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_claude BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+        Database::set_user_version(&conn, 21)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        for (table, flag) in [
+            ("mcp_servers", "enabled_codex"),
+            ("skills", "enabled_claude"),
+        ] {
+            let flags = conn.query_row(
+                &format!("SELECT {flag}, enabled_kimi FROM {table}"),
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )?;
+            assert_eq!(flags, (1, 0));
+        }
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Ok(())
+    }
+
+    #[test]
+    fn kimi_clean_database_persists_mcp_and_skill_flags_independently() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let server = serde_json::from_value(serde_json::json!({"id":"m", "name":"m", "server":{"command":"echo"}, "apps":{"kimi":true,"codex":true}})).unwrap();
+        db.save_mcp_server(&server)?;
+        db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::Kimi, false)?;
+        let saved = db.get_all_mcp_servers()?;
+        assert!(!saved["m"].apps.kimi);
+        assert!(saved["m"].apps.codex);
+        let skill = serde_json::from_value(serde_json::json!({"id":"s", "name":"s", "description":"", "directory":"s", "apps":{"kimi":true,"claude":true}, "installedAt":0})).unwrap();
+        db.save_skill(&skill)?;
+        let saved = db.get_installed_skill("s")?.unwrap();
+        assert!(saved.apps.kimi && saved.apps.claude);
+        assert!(db.get_all_installed_skills()?["s"].apps.kimi);
+        Ok(())
+    }
+
+    #[test]
+    fn agy_migration_preserves_existing_flags_and_defaults_to_disabled() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_gemini BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_codex BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+        Database::set_user_version(&conn, 20)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        for (table, flag) in [
+            ("mcp_servers", "enabled_gemini"),
+            ("skills", "enabled_codex"),
+        ] {
+            let row = conn.query_row(
+                &format!("SELECT {flag}, enabled_agy FROM {table}"),
+                [],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+            )?;
+            assert_eq!(row, (1, 0));
+        }
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Ok(())
+    }
+
+    #[test]
+    fn agy_clean_database_persists_independent_mcp_and_skill_flags() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let mut server: crate::app_config::McpServer = serde_json::from_value(serde_json::json!({"id":"m", "name":"m", "server":{"command":"echo"}, "apps":{"gemini":true,"agy":true}})).unwrap();
+        db.save_mcp_server(&server)?;
+        server.apps.agy = false;
+        db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::Agy, false)?;
+        assert_eq!(db.get_all_mcp_servers()?["m"].apps, server.apps);
+        let skill: crate::app_config::InstalledSkill = serde_json::from_value(serde_json::json!({"id":"s", "name":"s", "directory":"s", "installedAt":0, "apps":{"agy":true,"gemini":true}})).unwrap();
+        db.save_skill(&skill)?;
+        assert!(db.get_installed_skill("s")?.unwrap().apps.agy);
+        let mut apps = skill.apps;
+        apps.agy = false;
+        db.update_skill_apps("s", &apps)?;
+        let read = db.get_all_installed_skills()?;
+        assert!(!read["s"].apps.agy);
+        assert!(read["s"].apps.gemini);
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v19_to_v20_adds_pi_mcp_flag_and_keeps_existing_flags() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE mcp_servers (
+                id TEXT PRIMARY KEY,
+                enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+                enabled_mcode BOOLEAN NOT NULL DEFAULT 0
+            );
+            INSERT INTO mcp_servers (id, enabled_codex, enabled_mcode) VALUES ('mcp-1', 1, 1);",
+        )?;
+        Database::set_user_version(&conn, 19)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let values: (i64, i64, i64) = conn.query_row(
+            "SELECT enabled_codex, enabled_mcode, enabled_pi FROM mcp_servers WHERE id = 'mcp-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(values, (1, 1, 0));
         Ok(())
     }
 

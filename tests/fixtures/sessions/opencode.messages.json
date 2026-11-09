@@ -1,0 +1,314 @@
+[
+  {
+    "role": "user",
+    "ts": 1791014400000,
+    "id": "msg_c1a2b3d4e001AbCdEfGhIjKl",
+    "turnId": "t1",
+    "blocks": [
+      {
+        "type": "text",
+        "text": "给 package.json 加一个 lint 脚本，用 biome。"
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "ts": 1791014404000,
+    "id": "msg_c1a2b3d50003YzAbCdEfGh",
+    "turnId": "t1",
+    "blocks": [
+      {
+        "type": "step",
+        "phase": "start"
+      },
+      {
+        "type": "thinking",
+        "text": "用户要 biome lint。先确认 biome 是否已安装，再看 package.json 的 scripts。",
+        "durationMs": 1800
+      },
+      {
+        "type": "tool_call",
+        "id": "toolu_vrtx_01Lint",
+        "rawName": "bash",
+        "kind": "shell",
+        "title": "bunx biome --version",
+        "detail": "Check biome version",
+        "inputPreview": "{\"command\": \"bunx biome --version\", \"description\": \"Check biome version\"}",
+        "inputTotalLen": 73
+      },
+      {
+        "type": "tool_result",
+        "callId": "toolu_vrtx_01Lint",
+        "status": "error",
+        "preview": "error: could not determine executable to run for package biome",
+        "totalLen": 62,
+        "lineCount": 1,
+        "truncated": false,
+        "exitCode": 1,
+        "durationMs": 1312
+      },
+      {
+        "type": "step",
+        "phase": "finish",
+        "tokens": 18734,
+        "costUsd": 0.0123,
+        "reason": "tool-calls"
+      },
+      {
+        "type": "step",
+        "phase": "start"
+      },
+      {
+        "type": "tool_call",
+        "id": "toolu_vrtx_02Read",
+        "rawName": "read",
+        "kind": "read",
+        "title": "/Users/yovinchen/Projects/demo-app/package.json",
+        "inputPreview": "{\"filePath\": \"/Users/yovinchen/Projects/demo-app/package.json\"}",
+        "inputTotalLen": 63
+      },
+      {
+        "type": "tool_result",
+        "callId": "toolu_vrtx_02Read",
+        "status": "success",
+        "preview": "00001| {\n00002|   \"name\": \"demo-app\",\n00003|   \"version\": \"0.3.1\",\n00004|   \"type\": \"module\",\n00005|   \"scripts\": {\n00006|     \"dev\": \"vite\",\n00007|     \"build\": \"tsc -p . && vite build\",\n00008|     \"test\": \"vitest run\"\n00009|   },\n00010|   \"devDependencies\": {\n00011|     \"typescript\": \"^5.6.3\",\n00012|     \"vite\": \"^6.0.0\",",
+        "totalLen": 742,
+        "lineCount": 21,
+        "truncated": true,
+        "full": {
+          "kind": "sqlite",
+          "table": "part",
+          "id": "prt_c1a2b3d4f002MnOpQrStUvWx",
+          "column": "data",
+          "pointer": "/state/output"
+        },
+        "durationMs": 21
+      },
+      {
+        "type": "tool_call",
+        "id": "toolu_vrtx_03Grep",
+        "rawName": "grep",
+        "kind": "search",
+        "title": "\"lint\" in /Users/yovinchen/Projects/demo-app",
+        "inputPreview": "{\"pattern\": \"\\\"lint\\\"\", \"path\": \"/Users/yovinchen/Projects/demo-app\", \"include\": \"*.json\"}",
+        "inputTotalLen": 90
+      },
+      {
+        "type": "tool_result",
+        "callId": "toolu_vrtx_03Grep",
+        "status": "success",
+        "preview": "No files found",
+        "totalLen": 14,
+        "lineCount": 1,
+        "truncated": false,
+        "durationMs": 35
+      },
+      {
+        "type": "tool_call",
+        "id": "toolu_vrtx_04Edit",
+        "rawName": "edit",
+        "kind": "edit",
+        "title": "package.json",
+        "inputPreview": "{\"filePath\": \"/Users/yovinchen/Projects/demo-app/package.json\", \"oldString\": \"    \\\"test\\\": \\\"vitest run\\\"\", \"newString\": \"    \\\"test\\\": \\\"vitest run\\\",\\n    \\\"lint\\\": \\\"biome check .\\\"\"}",
+        "inputTotalLen": 187,
+        "diff": {
+          "files": [
+            {
+              "path": "/Users/yovinchen/Projects/demo-app/package.json",
+              "op": "update",
+              "added": 2,
+              "removed": 1
+            }
+          ],
+          "added": 2,
+          "removed": 1
+        }
+      },
+      {
+        "type": "tool_result",
+        "callId": "toolu_vrtx_04Edit",
+        "status": "success",
+        "preview": "",
+        "totalLen": 0,
+        "lineCount": 0,
+        "truncated": false,
+        "durationMs": 9
+      },
+      {
+        "type": "step",
+        "phase": "finish",
+        "tokens": 21960,
+        "costUsd": 0.0081,
+        "reason": "tool-calls"
+      },
+      {
+        "type": "step",
+        "phase": "start"
+      },
+      {
+        "type": "text",
+        "text": "已在 `scripts` 里加了 `\"lint\": \"biome check .\"`。本机还没装 biome，需要先 `bun add -d @biomejs/biome`。"
+      },
+      {
+        "type": "step",
+        "phase": "finish",
+        "tokens": 22410,
+        "costUsd": 0.0042,
+        "reason": "stop"
+      }
+    ],
+    "meta": {
+      "model": "anthropic/claude-sonnet-4-5",
+      "inputTokens": 61204,
+      "outputTokens": 1900,
+      "cacheReadTokens": 52100,
+      "cacheWriteTokens": 3010,
+      "reasoningTokens": 96,
+      "costUsd": 0.0246,
+      "durationMs": 14200,
+      "stopReason": "stop"
+    }
+  },
+  {
+    "role": "user",
+    "ts": 1791014580000,
+    "id": "msg_c1a2b3d60004IjKlMnOpQr",
+    "turnId": "t2",
+    "blocks": [
+      {
+        "type": "event",
+        "kind": "other",
+        "text": "@explore"
+      },
+      {
+        "type": "text",
+        "text": "@explore 看看仓库里还有没有别的 lint 配置会冲突，再查一下 biome 文档里推荐的 CI 写法。"
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "ts": 1791014585000,
+    "id": "msg_c1a2b3d80007CdEfGhIjKl",
+    "turnId": "t2",
+    "blocks": [
+      {
+        "type": "step",
+        "phase": "start"
+      },
+      {
+        "type": "tool_call",
+        "id": "toolu_vrtx_05Task",
+        "rawName": "task",
+        "kind": "agent",
+        "title": "Find conflicting lint configs",
+        "detail": "explore",
+        "inputPreview": "{\"description\": \"Find conflicting lint configs\", \"subagent_type\": \"explore\", \"prompt\": \"Search for eslint/prettier configs that conflict with biome.\"}",
+        "inputTotalLen": 150
+      },
+      {
+        "type": "tool_result",
+        "callId": "toolu_vrtx_05Task",
+        "status": "pending",
+        "preview": "",
+        "totalLen": 0,
+        "lineCount": 0,
+        "truncated": false
+      },
+      {
+        "type": "tool_call",
+        "id": "toolu_vrtx_06Fetch",
+        "rawName": "webfetch",
+        "kind": "web",
+        "title": "https://biomejs.dev/recipes/continuous-integration/",
+        "inputPreview": "{\"url\": \"https://biomejs.dev/recipes/continuous-integration/\", \"format\": \"markdown\"}",
+        "inputTotalLen": 84
+      },
+      {
+        "type": "tool_result",
+        "callId": "toolu_vrtx_06Fetch",
+        "status": "success",
+        "preview": "# Continuous Integration\n\nRunning Biome in a CI environment is easy. Use `biome ci` instead of `biome check`.",
+        "totalLen": 6120,
+        "lineCount": 148,
+        "truncated": true,
+        "full": {
+          "kind": "sqlite",
+          "table": "part",
+          "id": "prt_c1a2b3d70006StUvWxYzAb",
+          "column": "data",
+          "pointer": "/state/output"
+        },
+        "durationMs": 842
+      },
+      {
+        "type": "tool_call",
+        "id": "toolu_vrtx_07Todo",
+        "rawName": "todowrite",
+        "kind": "todo",
+        "title": "2 项",
+        "inputPreview": "{\"todos\": [{\"content\": \"Remove .eslintrc\", \"status\": \"pending\", \"priority\": \"high\", \"id\": \"1\"}, {\"content\": \"Add biome ci to workflow\", \"status\": \"pending\", \"priority\": \"medium\", \"id\": \"2\"}]}",
+        "inputTotalLen": 191
+      },
+      {
+        "type": "tool_result",
+        "callId": "toolu_vrtx_07Todo",
+        "status": "success",
+        "preview": "[{\"content\":\"Remove .eslintrc\",\"status\":\"pending\"},{\"content\":\"Add biome ci to workflow\",\"status\":\"pending\"}]",
+        "totalLen": 109,
+        "lineCount": 1,
+        "truncated": false
+      },
+      {
+        "type": "tool_call",
+        "id": "toolu_vrtx_08Ask",
+        "rawName": "question",
+        "kind": "ask",
+        "title": "要删除 .eslintrc 吗？",
+        "inputPreview": "{\"questions\": [{\"question\": \"要删除 .eslintrc 吗？\", \"header\": \"ESLint\", \"options\": [{\"label\": \"删除\"}, {\"label\": \"保留\"}]}]}",
+        "inputTotalLen": 116
+      },
+      {
+        "type": "tool_result",
+        "callId": "toolu_vrtx_08Ask",
+        "status": "success",
+        "preview": "User answered: 删除",
+        "totalLen": 17,
+        "lineCount": 1,
+        "truncated": false
+      },
+      {
+        "type": "tool_call",
+        "id": "toolu_vrtx_09Bad",
+        "rawName": "invalid",
+        "kind": "other",
+        "title": "invalid",
+        "inputPreview": "{\"tool\": \"bash \", \"error\": \"Model tried to call unavailable tool 'bash '.\"}",
+        "inputTotalLen": 75
+      },
+      {
+        "type": "tool_result",
+        "callId": "toolu_vrtx_09Bad",
+        "status": "error",
+        "preview": "Model tried to call unavailable tool 'bash '. Available tools: bash, read, edit, write, grep, glob, task, webfetch, todowrite, question.",
+        "totalLen": 136,
+        "lineCount": 1,
+        "truncated": false
+      },
+      {
+        "type": "step",
+        "phase": "finish",
+        "tokens": 30112,
+        "costUsd": 0.0157,
+        "reason": "tool-calls"
+      }
+    ],
+    "meta": {
+      "model": "anthropic/claude-sonnet-4-5",
+      "inputTokens": 29010,
+      "outputTokens": 1102,
+      "costUsd": 0.0157,
+      "stopReason": "tool-calls"
+    }
+  }
+]

@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
   McpConfigResponse,
   McpServer,
@@ -8,7 +8,29 @@ import type {
 } from "@/types";
 import type { AppId } from "./types";
 
+export interface McpConnectivityResult {
+  serverId: string;
+  /** `authRequired`: the server answered 401 and wants the client's own sign-in. */
+  status: "connected" | "authRequired" | "failed";
+}
+
 export const mcpApi = {
+  async startConnectivityChecks(
+    serverIds: string[],
+    onResult: (result: McpConnectivityResult) => void,
+  ): Promise<string> {
+    const channel = new Channel<McpConnectivityResult>();
+    channel.onmessage = onResult;
+    return await invoke("start_mcp_connectivity_checks", {
+      serverIds,
+      onResult: channel,
+    });
+  },
+
+  async cancelConnectivityChecks(batchId: string): Promise<void> {
+    await invoke("cancel_mcp_connectivity_checks", { batchId });
+  },
+
   async getStatus(): Promise<McpStatus> {
     return await invoke("get_claude_mcp_status");
   },
@@ -126,4 +148,19 @@ export const mcpApi = {
   async importFromApps(): Promise<number> {
     return await invoke("import_mcp_from_apps");
   },
+
+  /**
+   * 按这里的开关把 MCP 重新写进各应用的配置，逐应用返回结果。
+   * 不传 apps 时同步全部受管应用；单个应用失败不影响其余应用。
+   */
+  async resyncToApps(apps?: AppId[]): Promise<McpAppSyncOutcome[]> {
+    return await invoke("resync_mcp_to_apps", { apps: apps ?? null });
+  },
 };
+
+/** 「重新同步到各应用」里单个应用的结果 */
+export interface McpAppSyncOutcome {
+  app: AppId;
+  ok: boolean;
+  error?: string;
+}
