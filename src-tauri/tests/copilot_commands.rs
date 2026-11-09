@@ -88,6 +88,8 @@ fn copilot_import_uses_the_signed_in_model_only_when_present() {
     reset_test_fs();
     let home = CopilotHome::new();
     let state = create_test_state().unwrap();
+    // 刚装好的 Copilot 还没有 settings.json：没什么可导入，不报错。
+    assert!(!ProviderService::import_default_config(&state, AppType::Copilot).unwrap());
     fs::write(home.path("settings.json"), "{\"theme\":\"dark\"}").unwrap();
     assert!(!ProviderService::import_default_config(&state, AppType::Copilot).unwrap());
 

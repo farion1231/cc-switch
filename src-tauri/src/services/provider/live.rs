@@ -1182,6 +1182,10 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             live
         }
         AppType::Copilot => {
+            // 刚装好、还没在 Copilot 里选过模型时没有 settings.json：同样没什么可导入，不报错。
+            if !crate::copilot_config::settings_path().exists() {
+                return Ok(false);
+            }
             let live = crate::copilot_config::read_live_settings()?;
             // Copilot 首次启动写出的 settings.json 没有模型，不是用户的供应商，不导入。
             if !crate::copilot_config::has_managed_content(&live) {
