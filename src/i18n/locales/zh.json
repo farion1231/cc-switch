@@ -391,7 +391,14 @@
     "windowControlFailed": "窗口控制失败：{{error}}",
     "officialBlockedByProxy": "本地路由模式下不能切换到官方供应商，使用路由访问官方 API 可能导致账号被封禁",
     "proxyOfficialWarning": "当前供应商 {{name}} 是官方供应商，建议切换到第三方供应商后再使用本地路由",
-    "proxyLoopbackHijacked": "{{app}} 发往本地路由 {{origin}} 的请求会被系统代理接走，{{app}} 会报 502 错误。请在代理工具里让本机地址直连（例如 Clash 规则最前面加 IP-CIDR,127.0.0.0/8,DIRECT,no-resolve），改完后彻底退出 {{app}} 再打开。"
+    "proxyLoopbackHijacked": "{{app}} 发往本地路由 {{origin}} 的请求会被系统代理接走，{{app}} 会报 502 错误。请在代理工具里让本机地址直连（例如 Clash 规则最前面加 IP-CIDR,127.0.0.0/8,DIRECT,no-resolve），改完后彻底退出 {{app}} 再打开。",
+    "codexHistorySplit": {
+      "hint": "之前在{{previous}}下的 {{count}} 个会话现在只能查看",
+      "officialBucket": "官方订阅",
+      "thirdPartyBucket": "第三方供应商",
+      "migrationFinished": "已迁入 {{count}} 个旧会话，重启 Codex 后即可继续",
+      "migrationFailed": "迁入旧会话失败：{{error}}。下次启动 CC Switch 会自动重试"
+    }
   },
   "confirm": {
     "deleteProvider": "删除供应商",
@@ -411,14 +418,14 @@
     },
     "unifyCodexHistory": {
       "title": "统一 Codex 会话历史",
-      "message": "开启后，Codex CLI 的 resume 列表会把官方订阅与第三方的会话合并显示（Codex 桌面版更新后已经可以显示全部会话，不受影响）。注意：跨供应商继续旧会话时，可能因对方后端无法解密 encrypted_content 推理内容而失败。\n\n可选择同时把现有官方会话历史迁入共享列表（迁移前自动备份到 ~/.cc-switch/backups，关闭开关时可选择恢复）。",
+      "message": "开启后，官方订阅改用共享的 custom 供应商标识，官方与第三方的会话归到同一组：新版 Codex 里两边的会话都能继续，CLI 的 resume 列表也会合并显示。\n\n可选择同时迁入现有官方会话；勾选后，之后每次启动也会把仍留在官方组的会话迁进来（迁移前自动备份到 ~/.cc-switch/backups，关闭开关时可选择还原）。不迁入的话，这些会话在新版 Codex 里只能查看。迁移完成后重启 Codex 生效。\n\n注意：跨供应商继续旧会话时，可能因对方后端无法解密 encrypted_content 推理内容而失败。",
       "migrateExisting": "同时迁入现有官方会话历史",
       "confirm": "我已了解，继续开启"
     },
     "unifyCodexHistoryOff": {
       "title": "关闭统一会话历史",
-      "message": "关闭后，Codex CLI 中官方订阅与第三方将恢复各自独立的会话列表（桌面版仍显示全部会话）。开启期间产生的会话因无法区分来源，将留在第三方历史中，CLI 在官方订阅下将看不到它们。",
-      "restoreBackup": "把开启时迁入的官方会话还原回官方历史（按备份精确还原）",
+      "message": "关闭后，官方订阅与第三方的会话重新分成两组：新版 Codex 只能继续当前供应商那一组，另一组只能查看。开启期间产生的会话无法区分来源，将留在第三方那组。",
+      "restoreBackup": "把迁入的官方会话还原回官方组（按备份精确还原）",
       "confirm": "关闭"
     },
     "usage": {
@@ -439,6 +446,12 @@
       "quotaDisplay": "额度显示",
       "quotaDisplayLeft": "剩余",
       "quotaDisplayUsed": "已用",
+      "density": "界面密度",
+      "densityHelp": "舒适的字号更大、控件更高；紧凑保持原来的尺寸。",
+      "densityComfortable": "舒适",
+      "densityCompact": "紧凑",
+      "zoom": "界面缩放",
+      "zoomHelp": "也可以按 {{shortcut}} + / {{shortcut}} − 调，{{shortcut}} 0 复原。",
       "quotaDisplayHelp": "供应商卡片、授权中心和托盘里，各档额度写还剩多少还是已经用了多少。余额和 Credits 始终写剩下的。",
       "sidebarAndHeader": "侧栏与页头",
       "visibleApps": "在侧栏显示哪些应用",
@@ -905,10 +918,18 @@
       "hint": "任一达到即暂停。默认 95% / 98%，保存后立即对新请求生效。",
       "invalid": "请输入 1–99 的整数。"
     },
+    "codexPauseOfficialLogin": {
+      "title": "暂停使用官方登录",
+      "description": "官方额度用完、Codex 锁住发送键时打开，聚合和路由里的第三方模型可以继续用。打开和关闭后都要彻底退出并重新打开 Codex。",
+      "help": "官方额度用完、Codex 锁住发送键（选第三方模型也发不出去）时打开。打开后 Codex 不再使用官方登录，也就不会再因为官方额度锁住发送键，聚合和路由里的第三方模型可以继续用。官方登录仍保存在本机，不会退出。只在路由或聚合模式下生效，直连不受影响。打开期间：官方模型发不出去，会提示改用第三方模型；Codex 里不显示账号和用量信息，第一次打开可能弹出新手问卷；侧栏「项目」里原来的会话暂时看不到（没有丢，关掉后回来）；新会话记在 custom 组，切回官方后只能查看。官方额度恢复后关掉它。打开和关闭后都要彻底退出并重新打开 Codex。",
+      "pausedToast": "已暂停使用官方登录，彻底退出并重新打开 Codex 后生效",
+      "resumedToast": "已恢复使用官方登录，彻底退出并重新打开 Codex 后生效",
+      "saveFailed": "保存失败：{{error}}"
+    },
     "preserveCodexOfficialAuthOnSwitch": "非接管切换时保留官方登录",
     "preserveCodexOfficialAuthOnSwitchDescription": "控制未开启路由接管时切换第三方供应商是否保留 Codex 官方登录；路由接管期间始终保留",
     "unifyCodexSessionHistory": "统一 Codex 会话历史",
-    "unifyCodexSessionHistoryDescription": "只影响 Codex CLI：CLI 的 resume 列表只显示当前供应商的会话，开启后官方订阅改以共享的 custom 供应商标识运行，官方与第三方会话出现在同一列表中。Codex 桌面版更新后已经可以显示全部会话，只用桌面版无需开启。可选择把现有官方会话一并迁入（迁移前自动备份），关闭时可按备份恢复。注意：跨供应商继续旧会话时，对方后端可能无法解密会话中的 encrypted_content 推理内容，导致继续失败",
+    "unifyCodexSessionHistoryDescription": "官方订阅改用和第三方相同的 custom 供应商标识运行，官方与第三方的会话归到同一组。新版 Codex（桌面版 26.1103、CLI 0.167 起）只能继续与当前供应商同一组的会话，另一组只能查看；CLI 的 resume 列表也只显示当前这组。经常在官方和第三方之间切换时建议开启。可选择把官方组的会话迁入这一组（迁移前自动备份），关闭时可按备份还原。注意：跨供应商继续旧会话时，对方后端可能无法解密会话中的 encrypted_content 推理内容，导致继续失败",
     "codexStackClassicSubagents": "聚合模式下子 agent 用经典工具",
     "codexStackClassicSubagentsDescription": "主、子 agent 不在同一家供应商时必须打开，否则子 agent 收不到任务。",
     "codexStackClassicSubagentsForcedV2": "Codex 的 config.toml 里打开了 [features] multi_agent_v2，它比这个开关优先，开关不会生效",
@@ -1332,6 +1353,14 @@
   },
   "sessionManager": {
     "searchPlaceholder": "搜索标题、目录、首末消息或会话 ID",
+    "searchPlaceholderContent": "搜索标题、目录、消息正文或会话 ID",
+    "emptySearchContent": "没有会话的标题、目录或消息正文包含“{{query}}”",
+    "contentSearchToggle": "搜索消息正文",
+    "contentSearchToggleFailed": "无法更改正文搜索设置：{{error}}",
+    "contentIndexing": "正在建立正文索引（{{processed}}/{{total}}），正文结果可能还不全",
+    "contentHitPrefix": "正文：",
+    "contentHitMore": "（{{count}} 条消息命中）",
+    "moreContentHits": "更多正文命中",
     "searchSessions": "搜索会话",
     "sessionList": "会话列表",
     "unknownDirectory": "未知目录",
@@ -1418,6 +1447,8 @@
     "emptyAppHint": "CC Switch 读取 {{path}} 下的会话数据",
     "emptySearch": "没有标题、目录或首末消息匹配“{{query}}”的会话",
     "clearSearchAction": "清除搜索",
+    "emptySearchEnableContent": "搜索消息正文",
+    "emptySearchEnableContentHint": "开启后会在本地为消息正文建立索引",
     "backToList": "返回会话列表",
     "back": "返回",
     "sessionOf": "{{app}} 的会话",
@@ -1656,6 +1687,7 @@
     "providerKeyStatusLoading": "正在加载供应商标识状态，请稍后再试",
     "getApiKey": "获取 API Key",
     "partnerPromotion": {
+      "tokenplus": "TokenPlus，让 AI 编程更稳、更省、更省心：一个 Key 畅用多家模型，智能切换保障稳定、价格优选与缓存优化节省成本，账单、团队和数据安全一站管理。",
       "kimi": "Kimi 新用户首次成功充值，即可获赠充值金额 10% 的 API 额度，最高赠送 ¥1000。",
       "a6api": "A6API 是一家 Token 聚合站，内置实时价格排行自动筛选全网最低价，丝滑稳定不卡顿，简易操作省去比价繁琐，注册获得体验金！",
       "sudocode": "SudoCode 让 Claude Code 与 Claude Desktop 接入 Claude Opus 5，Codex 接入 GPT-5.6，一个 Key 统一使用。CC Switch 用户注册并加入 QQ 群 726213516，联系群主领取 ¥10 试用额度。",
@@ -2638,6 +2670,9 @@
       "byRequest": "按请求模型计价",
       "edit": "修改",
       "tableTitle": "模型定价 · {{count}}",
+      "searchPlaceholder": "搜索模型 ID 或名称",
+      "noSearchMatch": "没有匹配「{{query}}」的模型",
+      "addForQuery": "新增 {{query}} 的定价",
       "costHelpTitle": "成本怎么算",
       "costHelp": "每条请求按模型定价算成本：新增输入、输出、缓存命中、缓存写入各乘对应单价，再相加。",
       "unit": "USD / 每百万 Tokens",
@@ -4206,6 +4241,7 @@
       "geminiFlashLite": "Lite",
       "agyGeminiFiveHour": "Gemini 5 小时",
       "agyGeminiWeekly": "Gemini 每周",
+      "agyGeminiArgonWeekly": "Argon 每周",
       "agyThirdPartyFiveHour": "Claude 5 小时",
       "agyThirdPartyWeekly": "Claude 每周",
       "monthly": "每月",
@@ -4225,6 +4261,7 @@
     "agyThirdParty": "Claude/GPT",
     "agyGeminiFiveHour": "Gemini 5 小时",
     "agyGeminiWeekly": "Gemini 每周",
+    "agyGeminiArgonWeekly": "Argon 每周",
     "agyThirdPartyFiveHour": "Claude/GPT 5 小时",
     "agyThirdPartyWeekly": "Claude/GPT 每周",
     "weeklyLimit": "每周",
@@ -4295,6 +4332,8 @@
     "notRunnable": "无法运行",
     "updateNeedsNode": "新版本 {{version}} 要求 Node {{required}}，这处安装用的是 Node {{current}}，需要先升级 Node。",
     "otherInstalls": "另有 {{count}} 处安装",
+    "toolQueued": "排队中，等前一个应用完成",
+    "toolElapsed": "已用 {{time}}",
     "installsFound": "检测到 {{count}} 处安装",
     "wslFlag": "标志",
     "installHint": {
@@ -4375,6 +4414,9 @@
       "serviceDown": "{{app}} 处于{{mode}}模式，但路由服务没有运行，请求会失败。",
       "startService": "启动服务",
       "backToDirect": "回到直连",
+      "officialLoginPaused": "Codex 已暂停使用官方登录",
+      "officialLoginPausedBody": "官方模型发不出去，Codex 侧栏「项目」里原来的会话暂时看不到。官方额度恢复后点「恢复官方登录」，再彻底退出并重新打开 Codex。",
+      "resumeOfficialLogin": "恢复官方登录",
       "attachFailed": "上次的{{mode}}模式没能接上，{{app}} 已回到直连。"
     },
     "toast": {
@@ -4845,6 +4887,7 @@
     "rowFail": "在 {{app}} 启用失败：{{error}}",
     "fixSync": "改同步方式",
     "rowMoreAria": "{{name}} 的更多操作",
+    "rowUpdateAria": "更新 {{name}}",
     "openDir": "打开目录",
     "uninstallEllipsis": "卸载",
     "listLabel": "已安装的 Skill",
@@ -4952,9 +4995,6 @@
       "discoverBody": "列表可能不完整。",
       "updatesBody": "这些仓库里的 Skill 没有检查，更新结果可能不完整。"
     },
-    "headerUpdates": "{{count}} 个可更新",
-    "headerUpdatesShow": "只看可更新的 Skill",
-    "headerUpdatesClear": "显示全部 Skill",
     "updateAllCount": "全部更新（{{count}} 个）",
     "updatingProgress": "正在更新 {{done}}/{{total}}…"
   },
