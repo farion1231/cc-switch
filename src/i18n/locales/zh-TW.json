@@ -391,7 +391,14 @@
     "windowControlFailed": "視窗控制失敗：{{error}}",
     "officialBlockedByProxy": "本地路由模式下不能切換至官方供應商，使用路由存取官方 API 可能導致帳號被封鎖",
     "proxyOfficialWarning": "目前供應商 {{name}} 是官方供應商，建議切換至第三方供應商後再使用本地路由",
-    "proxyLoopbackHijacked": "{{app}} 發往本地路由 {{origin}} 的請求會被系統代理接走，{{app}} 會回報 502 錯誤。請在代理工具裡讓本機位址直連（例如在 Clash 規則最前面加上 IP-CIDR,127.0.0.0/8,DIRECT,no-resolve），改完後徹底結束 {{app}} 再重新開啟。"
+    "proxyLoopbackHijacked": "{{app}} 發往本地路由 {{origin}} 的請求會被系統代理接走，{{app}} 會回報 502 錯誤。請在代理工具裡讓本機位址直連（例如在 Clash 規則最前面加上 IP-CIDR,127.0.0.0/8,DIRECT,no-resolve），改完後徹底結束 {{app}} 再重新開啟。",
+    "codexHistorySplit": {
+      "hint": "之前在{{previous}}下的 {{count}} 個會話現在只能檢視",
+      "officialBucket": "官方訂閱",
+      "thirdPartyBucket": "第三方供應商",
+      "migrationFinished": "已遷入 {{count}} 個舊會話，重新啟動 Codex 後即可繼續",
+      "migrationFailed": "遷入舊會話失敗：{{error}}。下次啟動 CC Switch 會自動重試"
+    }
   },
   "confirm": {
     "deleteProvider": "刪除供應商",
@@ -411,14 +418,14 @@
     },
     "unifyCodexHistory": {
       "title": "統一 Codex 會話歷史",
-      "message": "開啟後，Codex CLI 的 resume 清單會把官方訂閱與第三方的會話合併顯示（Codex 桌面版更新後已經可以顯示全部會話，不受影響）。注意：跨供應商繼續舊會話時，可能因對方後端無法解密 encrypted_content 推理內容而失敗。\n\n可選擇同時把現有官方會話歷史遷入共享清單（遷移前自動備份到 ~/.cc-switch/backups，關閉開關時可選擇恢復）。",
+      "message": "開啟後，官方訂閱改用共享的 custom 供應商標識，官方與第三方的會話歸到同一組：新版 Codex 裡兩邊的會話都能繼續，CLI 的 resume 清單也會合併顯示。\n\n可選擇同時遷入現有官方會話；勾選後，之後每次啟動也會把仍留在官方組的會話遷進來（遷移前自動備份到 ~/.cc-switch/backups，關閉開關時可選擇還原）。不遷入的話，這些會話在新版 Codex 裡只能檢視。遷移完成後重新啟動 Codex 生效。\n\n注意：跨供應商繼續舊會話時，可能因對方後端無法解密 encrypted_content 推理內容而失敗。",
       "migrateExisting": "同時遷入現有官方會話歷史",
       "confirm": "我已了解，繼續開啟"
     },
     "unifyCodexHistoryOff": {
       "title": "關閉統一會話歷史",
-      "message": "關閉後，Codex CLI 中官方訂閱與第三方將恢復各自獨立的會話清單（桌面版仍顯示全部會話）。開啟期間產生的會話因無法區分來源，將留在第三方歷史中，CLI 在官方訂閱下將看不到它們。",
-      "restoreBackup": "把開啟時遷入的官方會話還原回官方歷史（按備份精確還原）",
+      "message": "關閉後，官方訂閱與第三方的會話重新分成兩組：新版 Codex 只能繼續目前供應商那一組，另一組只能檢視。開啟期間產生的會話無法區分來源，將留在第三方那組。",
+      "restoreBackup": "把遷入的官方會話還原回官方組（按備份精確還原）",
       "confirm": "關閉"
     },
     "usage": {
@@ -883,6 +890,8 @@
     "languageOptionEnglish": "English",
     "languageOptionJapanese": "日本語",
     "languageOptionTurkish": "Türkçe",
+    "languageOptionKorean": "한국어",
+    "languageOptionRussian": "Русский",
     "windowBehavior": "視窗行為",
     "windowBehaviorHint": "設定視窗最小化與 Claude 外掛程式連動策略。",
     "launchOnStartup": "開機自動啟動",
@@ -910,10 +919,18 @@
       "hint": "任一達到即暫停。預設 95% / 98%，儲存後立即對新請求生效。",
       "invalid": "請輸入 1–99 的整數。"
     },
+    "codexPauseOfficialLogin": {
+      "title": "暫停使用官方登入",
+      "description": "官方額度用完、Codex 鎖住傳送鍵時開啟，聚合和路由裡的第三方模型可以繼續用。開啟和關閉後都要徹底結束並重新開啟 Codex。",
+      "help": "官方額度用完、Codex 鎖住傳送鍵（選第三方模型也送不出去）時開啟。開啟後 Codex 不再使用官方登入，也就不會再因為官方額度鎖住傳送鍵，聚合和路由裡的第三方模型可以繼續用。官方登入仍保存在本機，不會登出。只在路由或聚合模式下生效，直連不受影響。開啟期間：官方模型送不出去，會提示改用第三方模型；Codex 裡不顯示帳號和用量資訊，第一次開啟可能跳出新手問卷；側欄「專案」裡原來的對話暫時看不到（沒有遺失，關閉後回來）；新對話記在 custom 組，切回官方後只能檢視。官方額度恢復後關閉它。開啟和關閉後都要徹底結束並重新開啟 Codex。",
+      "pausedToast": "已暫停使用官方登入，徹底結束並重新開啟 Codex 後生效",
+      "resumedToast": "已恢復使用官方登入，徹底結束並重新開啟 Codex 後生效",
+      "saveFailed": "儲存失敗：{{error}}"
+    },
     "preserveCodexOfficialAuthOnSwitch": "非接管切換時保留官方登入",
     "preserveCodexOfficialAuthOnSwitchDescription": "控制未開啟本機路由時切換第三方供應商是否保留 Codex 官方登入；路由接管期間一律保留",
     "unifyCodexSessionHistory": "統一 Codex 會話歷史",
-    "unifyCodexSessionHistoryDescription": "只影響 Codex CLI：CLI 的 resume 清單只顯示目前供應商的會話，開啟後官方訂閱改以共享的 custom 供應商標識執行，官方與第三方會話出現在同一清單中。Codex 桌面版更新後已經可以顯示全部會話，只用桌面版無需開啟。可選擇把現有官方會話一併遷入（遷移前自動備份），關閉時可按備份恢復。注意：跨供應商繼續舊會話時，對方後端可能無法解密會話中的 encrypted_content 推理內容，導致繼續失敗",
+    "unifyCodexSessionHistoryDescription": "官方訂閱改用和第三方相同的 custom 供應商標識執行，官方與第三方的會話歸到同一組。新版 Codex（桌面版 26.1103、CLI 0.167 起）只能繼續與目前供應商同一組的會話，另一組只能檢視；CLI 的 resume 清單也只顯示目前這組。經常在官方和第三方之間切換時建議開啟。可選擇把官方組的會話遷入這一組（遷移前自動備份），關閉時可按備份還原。注意：跨供應商繼續舊會話時，對方後端可能無法解密會話中的 encrypted_content 推理內容，導致繼續失敗",
     "codexStackClassicSubagents": "聚合模式下子 agent 用經典工具",
     "codexStackClassicSubagentsDescription": "主、子 agent 不在同一家供應商時必須開啟，否則子 agent 收不到任務。",
     "codexStackClassicSubagentsForcedV2": "Codex 的 config.toml 裡開啟了 [features] multi_agent_v2，它比這個開關優先，開關不會生效",
@@ -4399,6 +4416,9 @@
       "serviceDown": "{{app}} 處於{{mode}}模式，但路由服務沒有執行，請求會失敗。",
       "startService": "啟動服務",
       "backToDirect": "回到直連",
+      "officialLoginPaused": "Codex 已暫停使用官方登入",
+      "officialLoginPausedBody": "官方模型送不出去，Codex 側欄「專案」裡原來的對話暫時看不到。官方額度恢復後點「恢復官方登入」，再徹底結束並重新開啟 Codex。",
+      "resumeOfficialLogin": "恢復官方登入",
       "attachFailed": "上次的{{mode}}模式沒能接上，{{app}} 已回到直連。"
     },
     "toast": {
