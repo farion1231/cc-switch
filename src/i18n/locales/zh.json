@@ -1929,6 +1929,8 @@
     "copyCode": "复制代码",
     "migrationFailed": "旧认证数据迁移失败：{{error}}",
     "loadModelsFailed": "加载 Copilot 模型列表失败",
+    "noPickerModels": "这个 GitHub 账号没有可用的 Copilot 模型。Copilot Free 账号通常如此，请确认账号已开通 Copilot Pro 或更高套餐；也可以在模型框中手动填写 gpt-4.1 或 gpt-4o 先用着。",
+    "noModelsForApiFormat": "这个账号的 Copilot 模型都不支持当前选择的上游格式，请换一种上游格式后重试。",
     "deploymentType": "GitHub 部署类型",
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Enterprise Server",

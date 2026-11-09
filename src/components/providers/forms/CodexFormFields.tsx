@@ -889,6 +889,7 @@ export function CodexFormFields({
       fetchModels: () => Promise<T>,
       receiveModels: (models: T) => number,
       errorLogMessage: string,
+      getEmptyMessage?: (models: T) => string,
     ) => {
       const seq = ++fetchModelsSeqRef.current;
       setIsFetchingModels(true);
@@ -897,7 +898,9 @@ export function CodexFormFields({
           if (seq !== fetchModelsSeqRef.current) return;
           const count = receiveModels(models);
           if (count === 0) {
-            toast.info(t("providerForm.fetchModelsEmpty"));
+            toast.info(
+              getEmptyMessage?.(models) ?? t("providerForm.fetchModelsEmpty"),
+            );
           } else if (!canEditCatalog) {
             // 有模型列表时拉取成功会直接打开选择弹窗，不再提示成功。
             toast.success(t("providerForm.fetchModelsSuccess", { count }));
@@ -978,6 +981,12 @@ export function CodexFormFields({
           return usableModels.length;
         },
         "[Copilot] Failed to fetch models:",
+        // 后端返回 0 个＝账号本身无可选模型（Copilot Free 通常如此）；
+        // 否则是有模型但都不支持当前上游格式
+        (models) =>
+          models.length === 0
+            ? t("copilot.noPickerModels")
+            : t("copilot.noModelsForApiFormat"),
       );
       return;
     }

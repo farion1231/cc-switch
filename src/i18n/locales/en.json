@@ -1929,6 +1929,8 @@
     "copyCode": "Copy code",
     "migrationFailed": "Legacy auth migration failed: {{error}}",
     "loadModelsFailed": "Failed to load Copilot models",
+    "noPickerModels": "This GitHub account has no Copilot models available. This is typical for Copilot Free accounts; please make sure the account has Copilot Pro or a higher plan. You can still type gpt-4.1 or gpt-4o into the model field manually.",
+    "noModelsForApiFormat": "None of this account's Copilot models support the selected upstream format. Try a different upstream format.",
     "deploymentType": "GitHub Deployment Type",
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Enterprise Server",

@@ -1929,6 +1929,8 @@
     "copyCode": "コードをコピー",
     "migrationFailed": "旧認証データの移行に失敗しました: {{error}}",
     "loadModelsFailed": "Copilot モデル一覧の読み込みに失敗しました",
+    "noPickerModels": "この GitHub アカウントで利用できる Copilot モデルがありません。Copilot Free アカウントでは通常このようになります。Copilot Pro 以上のプランが有効か確認してください。モデル欄に gpt-4.1 または gpt-4o を手動で入力すれば、そのまま利用できます。",
+    "noModelsForApiFormat": "このアカウントの Copilot モデルはいずれも選択中のアップストリーム形式に対応していません。別のアップストリーム形式をお試しください。",
     "deploymentType": "GitHub デプロイメントタイプ",
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Enterprise Server",
