@@ -16,6 +16,8 @@ export interface FetchedModel {
 export interface ModelFetchOptions {
   apiFormat?: string;
   requestHeaders?: Record<string, string>;
+  /** 供应商级代理；后端在启用全局代理时忽略它 */
+  proxyUrl?: string;
 }
 
 /**
@@ -78,6 +80,7 @@ export async function fetchModelsForConfig(
     customUserAgent,
     apiFormat: options?.apiFormat,
     requestHeaders: options?.requestHeaders,
+    proxyUrl: options?.proxyUrl?.trim() || undefined,
   });
 }
 

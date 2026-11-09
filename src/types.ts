@@ -230,6 +230,8 @@ export interface ProviderMeta {
   maxOutputTokens?: number;
   // Custom User-Agent for local proxy routing. Only applied by the local proxy.
   customUserAgent?: string;
+  // Per-provider outbound proxy URL. Ignored while the global proxy is enabled.
+  proxyUrl?: string;
   // Local proxy request overrides. Only applied by the local proxy after route transforms.
   localProxyRequestOverrides?: LocalProxyRequestOverrides;
   // Whether this provider is currently projected into an additive app's live config.

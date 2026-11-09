@@ -261,6 +261,10 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   // 生成带国际化的预设模板
   const PRESET_TEMPLATES = generatePresetTemplates(t);
 
+  // 供应商级代理：官方供应商只走全局代理（与后端 `Provider::proxy_url` 一致）
+  const providerProxyUrl =
+    provider.category === "official" ? undefined : provider.meta?.proxyUrl;
+
   // 从 provider 的 settingsConfig 中提取 API Key 和 Base URL
   const getProviderCredentials = (): {
     apiKey: string | undefined;
@@ -624,7 +628,11 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         const baseUrl = providerCredentials.baseUrl ?? "";
         const apiKey = providerCredentials.apiKey ?? "";
         const { subscriptionApi } = await import("@/lib/api/subscription");
-        const result = await subscriptionApi.getBalance(baseUrl, apiKey);
+        const result = await subscriptionApi.getBalance(
+          baseUrl,
+          apiKey,
+          providerProxyUrl,
+        );
         if (result.success && result.data && result.data.length > 0) {
           const summary = result.data
             .map((d) =>
@@ -671,6 +679,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           isZhipuTeam ? script.codingPlanProvider : undefined,
           isZhipuTeam ? script.teamOrganizationId : undefined,
           isZhipuTeam ? script.teamProjectId : undefined,
+          providerProxyUrl,
         );
         if (quota.success && quota.tiers.length > 0) {
           const summary = quota.tiers

@@ -162,7 +162,7 @@ pub(crate) async fn query_kimi_at(
     base_url: &str,
     token: &str,
 ) -> Result<SubscriptionQuota, String> {
-    let client = crate::proxy::http_client::get();
+    let client = crate::proxy::http_client::provider_scoped();
     let api_key = token;
 
     let resp = client
@@ -394,7 +394,7 @@ async fn query_zhipu(base_url: &str, api_key: &str) -> Result<CodingPlanOutcome,
 
 /// 拆出 url 参数便于用本地 server 测试鉴权失败 / 没有套餐两条路径。
 async fn query_zhipu_at(url: &str, api_key: &str) -> Result<CodingPlanOutcome, String> {
-    let client = crate::proxy::http_client::get();
+    let client = crate::proxy::http_client::provider_scoped();
     let resp = client
         .get(url)
         .header("Authorization", api_key) // 注意：智谱不加 Bearer 前缀
@@ -542,7 +542,7 @@ fn zhipu_quota_from_body(body: &serde_json::Value) -> SubscriptionQuota {
 // ── MiniMax ─────────────────────────────────────────────────
 
 async fn query_minimax(api_key: &str, is_cn: bool) -> Result<SubscriptionQuota, String> {
-    let client = crate::proxy::http_client::get();
+    let client = crate::proxy::http_client::provider_scoped();
 
     // 额度接口只在 api.minimaxi.com / api.minimax.io 有公开出处；国内新推理域名
     // api.minimax.cn 未见该接口文档，沿用旧域名（同一账号体系与 Key）
@@ -635,7 +635,7 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> Result<SubscriptionQuota, 
 // ── ZenMux ──────────────────────────────────────────────────
 
 async fn query_zenmux(base_url: &str, api_key: &str) -> Result<SubscriptionQuota, String> {
-    let client = crate::proxy::http_client::get();
+    let client = crate::proxy::http_client::provider_scoped();
 
     let resp = client
         .get(base_url)
@@ -896,7 +896,7 @@ fn parse_opencode_go_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
 }
 
 async fn query_opencode_go(api_key: &str) -> Result<SubscriptionQuota, String> {
-    let client = crate::proxy::http_client::get();
+    let client = crate::proxy::http_client::provider_scoped();
 
     // 用量端点只认 `Authorization: Bearer`——与推理侧 /messages 只认
     // x-api-key 正好相反，不能互换。
@@ -1168,7 +1168,7 @@ fn parse_command_code_quota(
 }
 
 async fn query_command_code_at(base_url: &str, api_key: &str) -> Result<SubscriptionQuota, String> {
-    let client = crate::proxy::http_client::get();
+    let client = crate::proxy::http_client::provider_scoped();
 
     let whoami = match fetch_command_code_json(
         &client,
@@ -1462,7 +1462,7 @@ async fn volcengine_openapi_call(
     secret_access_key: &str,
     action: &str,
 ) -> VolcCall {
-    let client = crate::proxy::http_client::get();
+    let client = crate::proxy::http_client::provider_scoped();
     // canonical query 同时用于签名与实际 URL，确保两者逐字一致（否则签名不匹配）。
     let canonical_query = volcengine_canonical_query(action, region);
     let url = format!("https://{VOLCENGINE_OPENAPI_HOST}/?{canonical_query}");
@@ -1785,7 +1785,7 @@ async fn query_zhipu_team_at(
     organization_id: &str,
     project_id: &str,
 ) -> Result<SubscriptionQuota, String> {
-    let client = crate::proxy::http_client::get();
+    let client = crate::proxy::http_client::provider_scoped();
     let url = format!("{quota_url_base}?type=2");
 
     let resp = client

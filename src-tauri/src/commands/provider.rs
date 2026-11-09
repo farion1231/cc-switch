@@ -684,6 +684,8 @@ async fn query_provider_usage_inner(
     let template_type = usage_script
         .and_then(|s| s.template_type.as_deref())
         .unwrap_or("");
+    // Coding Plan / 余额查询发往这家供应商：跟随它的代理（未配置时同全局）
+    let provider_proxy = provider.and_then(Provider::proxy_url);
 
     // ── GitHub Copilot 专用路径 ──
     if template_type == TEMPLATE_TYPE_GITHUB_COPILOT {
@@ -736,14 +738,17 @@ async fn query_provider_usage_inner(
         let team_organization_id = usage_script.and_then(|s| s.team_organization_id.clone());
         let team_project_id = usage_script.and_then(|s| s.team_project_id.clone());
 
-        let outcome = crate::services::coding_plan::query_coding_plan(
-            &base_url,
-            &api_key,
-            access_key_id.as_deref(),
-            secret_access_key.as_deref(),
-            coding_plan_provider.as_deref(),
-            team_organization_id.as_deref(),
-            team_project_id.as_deref(),
+        let outcome = crate::proxy::http_client::scope_provider_proxy(
+            provider_proxy,
+            crate::services::coding_plan::query_coding_plan(
+                &base_url,
+                &api_key,
+                access_key_id.as_deref(),
+                secret_access_key.as_deref(),
+                coding_plan_provider.as_deref(),
+                team_organization_id.as_deref(),
+                team_project_id.as_deref(),
+            ),
         )
         .await
         .map_err(|e| format!("Failed to query coding plan: {e}"))?;
@@ -753,9 +758,12 @@ async fn query_provider_usage_inner(
         let quota = match outcome {
             crate::services::coding_plan::CodingPlanOutcome::Quota(quota) => quota,
             crate::services::coding_plan::CodingPlanOutcome::ZhipuNoPlan(_) => {
-                return crate::services::balance::query_zhipu_balance(&base_url, &api_key)
-                    .await
-                    .map_err(|e| format!("Failed to query balance: {e}"));
+                return crate::proxy::http_client::scope_provider_proxy(
+                    provider_proxy,
+                    crate::services::balance::query_zhipu_balance(&base_url, &api_key),
+                )
+                .await
+                .map_err(|e| format!("Failed to query balance: {e}"));
             }
         };
 
@@ -833,9 +841,12 @@ async fn query_provider_usage_inner(
         // 按 app 区分的凭据存储格式提取 Base URL 与 API Key
         let (base_url, api_key) = resolve_native_credentials(&app_type, provider);
 
-        return crate::services::balance::get_balance(&base_url, &api_key)
-            .await
-            .map_err(|e| format!("Failed to query balance: {e}"));
+        return crate::proxy::http_client::scope_provider_proxy(
+            provider_proxy,
+            crate::services::balance::get_balance(&base_url, &api_key),
+        )
+        .await
+        .map_err(|e| format!("Failed to query balance: {e}"));
     }
 
     // ── 官方订阅额度查询路径 ──

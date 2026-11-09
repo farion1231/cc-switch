@@ -411,6 +411,8 @@ export const handlers = [
     }),
   ),
 
+  // 默认未配置全局代理：供应商代理字段可编辑
+  http.post(`${TAURI_ENDPOINT}/get_global_proxy_url`, () => success(null)),
   // Proxy status (for SettingsPage / ProxyPanel hooks)
   http.post(`${TAURI_ENDPOINT}/get_proxy_status`, () =>
     success({

@@ -140,8 +140,9 @@ impl StreamCheckService {
 
         // 探测不跟随重定向：3xx 本身就是 HTTP 响应，已证明可达。跟随反而会被
         // `/v1` ↔ `/v1/` 互跳之类的服务端配置拖进重定向循环，误判为不可达（#5747）。
-        let client =
-            crate::proxy::http_client::no_redirect_for_url(&base_url).map_err(AppError::Message)?;
+        let provider_proxy = provider.proxy_url();
+        let client = crate::proxy::http_client::no_redirect_for_provider(&base_url, provider_proxy)
+            .map_err(AppError::Message)?;
         let timeout = std::time::Duration::from_secs(config.timeout_secs);
         let ua = Self::custom_user_agent(provider);
 

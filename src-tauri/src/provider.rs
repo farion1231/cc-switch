@@ -71,6 +71,15 @@ impl Provider {
         self.provider_type() == Some("codex_oauth")
     }
 
+    /// 供应商级代理地址。官方供应商（如 Claude Code 官方登录）只走全局代理，
+    /// 即使 meta 里残留了代理（同步、导入的旧数据）也不用；其余同 [`ProviderMeta::proxy_url`]。
+    pub fn proxy_url(&self) -> Option<&str> {
+        if self.category.as_deref() == Some("official") {
+            return None;
+        }
+        self.meta.as_ref().and_then(ProviderMeta::proxy_url)
+    }
+
     pub fn is_xai_oauth(&self) -> bool {
         self.provider_type() == Some("xai_oauth")
     }
@@ -603,6 +612,10 @@ pub struct ProviderMeta {
     /// Custom User-Agent for local proxy routing.
     #[serde(rename = "customUserAgent", skip_serializing_if = "Option::is_none")]
     pub custom_user_agent: Option<String>,
+    /// 供应商级出站代理（http/https/socks5/socks5h URL）。
+    /// 只在未启用全局代理时生效；全局代理优先。
+    #[serde(rename = "proxyUrl", skip_serializing_if = "Option::is_none")]
+    pub proxy_url: Option<String>,
     /// Local proxy request overrides applied to the transformed upstream request.
     #[serde(
         rename = "localProxyRequestOverrides",
@@ -686,6 +699,14 @@ impl ProviderMeta {
     /// 经校验的 Provider 级自定义 User-Agent。见 [`parse_custom_user_agent`]。
     pub fn custom_user_agent_header(&self) -> Result<Option<HeaderValue>, InvalidHeaderValue> {
         parse_custom_user_agent(self.custom_user_agent.as_deref())
+    }
+
+    /// 供应商级代理地址，未设置或纯空白时为 None。
+    pub fn proxy_url(&self) -> Option<&str> {
+        self.proxy_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
     }
 
     /// 解析指定托管认证供应商绑定的账号 ID。
@@ -1119,6 +1140,19 @@ mod tests {
     };
     use serde_json::json;
     use std::collections::HashMap;
+
+    #[test]
+    fn official_provider_ignores_provider_proxy() {
+        let mut provider = Provider::with_id("p".to_string(), "P".to_string(), json!({}), None);
+        provider.meta = Some(ProviderMeta {
+            proxy_url: Some(" http://127.0.0.1:7890 ".to_string()),
+            ..ProviderMeta::default()
+        });
+        assert_eq!(provider.proxy_url(), Some("http://127.0.0.1:7890"));
+
+        provider.category = Some("official".to_string());
+        assert_eq!(provider.proxy_url(), None);
+    }
 
     #[test]
     fn proxy_injected_oauth_excludes_codex_oauth() {

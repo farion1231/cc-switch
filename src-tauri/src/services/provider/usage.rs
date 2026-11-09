@@ -128,7 +128,7 @@ pub async fn query_usage(
     app_type: AppType,
     provider_id: &str,
 ) -> Result<UsageResult, AppError> {
-    let (script_code, timeout, api_key, base_url, access_token, user_id, template_type) = {
+    let (script_code, timeout, api_key, base_url, access_token, user_id, template_type, proxy_url) = {
         let providers = state.db.get_all_providers(app_type.as_str())?;
         let provider = providers.get(provider_id).ok_or_else(|| {
             AppError::localized(
@@ -173,17 +173,21 @@ pub async fn query_usage(
             usage_script.access_token.clone(),
             usage_script.user_id.clone(),
             usage_script.template_type.clone(),
+            provider.proxy_url().map(str::to_owned),
         )
     };
 
-    execute_and_format_usage_result(
-        &script_code,
-        &api_key,
-        &base_url,
-        timeout,
-        access_token.as_deref(),
-        user_id.as_deref(),
-        template_type.as_deref(),
+    crate::proxy::http_client::scope_provider_proxy(
+        proxy_url.as_deref(),
+        execute_and_format_usage_result(
+            &script_code,
+            &api_key,
+            &base_url,
+            timeout,
+            access_token.as_deref(),
+            user_id.as_deref(),
+            template_type.as_deref(),
+        ),
     )
     .await
 }
@@ -214,15 +218,19 @@ pub async fn test_usage_script(
     // Resolve like the real query so testing matches what a saved script does:
     // explicit values win, empty ones fall back to the provider config.
     let (api_key, base_url) = resolve_script_credentials(&app_type, provider, api_key, base_url);
+    let proxy_url = provider.proxy_url();
 
-    execute_and_format_usage_result(
-        script_code,
-        &api_key,
-        &base_url,
-        timeout,
-        access_token,
-        user_id,
-        template_type,
+    crate::proxy::http_client::scope_provider_proxy(
+        proxy_url,
+        execute_and_format_usage_result(
+            script_code,
+            &api_key,
+            &base_url,
+            timeout,
+            access_token,
+            user_id,
+            template_type,
+        ),
     )
     .await
 }

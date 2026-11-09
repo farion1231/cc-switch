@@ -64,6 +64,8 @@ import {
 } from "./FetchedModelPicker";
 import { fillKimiModel, metadataFilledAnything } from "./modelMetadataFill";
 import { RequestHeadersEditor } from "./RequestHeadersEditor";
+import { ProviderProxyField } from "./ProviderProxyField";
+import { withProviderProxy } from "@/lib/proxyUrl";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import type { ProviderFormProps } from "./ProviderForm";
 import { usePresetStep } from "./presetStep";
@@ -135,6 +137,7 @@ export function KimiProviderForm({
   const [category, setCategory] = useState<ProviderCategory>(
     initialData?.category ?? "custom",
   );
+  const [proxyUrl, setProxyUrl] = useState(initialData?.meta?.proxyUrl ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const { data: existing } = useProvidersQuery("kimi");
@@ -302,7 +305,11 @@ export function KimiProviderForm({
       undefined,
       undefined,
       findRequestHeaderValue(requestHeaders, "user-agent"),
-      { apiFormat: MODEL_FETCH_API_FORMATS[providerType], requestHeaders },
+      {
+        apiFormat: MODEL_FETCH_API_FORMATS[providerType],
+        requestHeaders,
+        proxyUrl,
+      },
     )
       .then((result) => {
         if (generation !== modelFetchGeneration.current) return;
@@ -323,7 +330,16 @@ export function KimiProviderForm({
           setIsFetchingModels(false);
         }
       });
-  }, [apiKey, baseUrl, headersKey, isOfficial, providerId, providerType, t]);
+  }, [
+    apiKey,
+    baseUrl,
+    headersKey,
+    isOfficial,
+    providerId,
+    providerType,
+    proxyUrl,
+    t,
+  ]);
 
   const fillModelMetadata = useModelMetadataFill({
     baseUrl,
@@ -485,7 +501,10 @@ export function KimiProviderForm({
               ...identity,
               name: identity.name.trim(),
               providerKey: key,
-              meta: initialData?.meta,
+              meta:
+                category === "official"
+                  ? initialData?.meta
+                  : withProviderProxy(initialData?.meta, proxyUrl),
               presetCategory: category,
               settingsConfig: JSON.stringify({
                 ...config,
@@ -841,6 +860,14 @@ export function KimiProviderForm({
             )}
           </div>
         </fieldset>
+        {category !== "official" && (
+          <ProviderProxyField
+            id="kimi-provider-proxy-url"
+            value={proxyUrl}
+            onChange={setProxyUrl}
+            directOnly
+          />
+        )}
         <NativeConfigEditor
           appId="kimi"
           file="config.toml"

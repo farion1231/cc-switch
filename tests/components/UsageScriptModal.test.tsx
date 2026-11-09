@@ -204,7 +204,7 @@ describe("UsageScriptModal Claude official card bound to an account", () => {
  * provider key and base URL must reach the balance API like they do for Pi.
  */
 describe("UsageScriptModal Oh My Pi credentials", () => {
-  it("passes the omp provider's key and base URL to the balance test", async () => {
+  it("passes the omp provider's key, base URL and proxy to the balance test", async () => {
     const getBalance = vi.fn().mockResolvedValue({ success: true, data: [] });
     vi.doMock("@/lib/api/subscription", () => ({
       subscriptionApi: { getBalance },
@@ -226,6 +226,7 @@ describe("UsageScriptModal Oh My Pi credentials", () => {
               apiKey: "sk-omp",
               api: "openai-completions",
             },
+            meta: { proxyUrl: "socks5://127.0.0.1:1080" },
           }}
           appId="omp"
           isOpen
@@ -247,6 +248,7 @@ describe("UsageScriptModal Oh My Pi credentials", () => {
     expect(getBalance).toHaveBeenCalledWith(
       "https://api.deepseek.com/v1",
       "sk-omp",
+      "socks5://127.0.0.1:1080",
     );
   });
 });
@@ -317,6 +319,7 @@ describe("UsageScriptModal DeepSeek Harness credentials", () => {
       expect(getBalance).toHaveBeenCalledWith(
         "https://api.deepseek.com/v1",
         "sk-test-dsh",
+        undefined,
       );
     } finally {
       getBalance.mockRestore();
@@ -413,6 +416,7 @@ describe.each([
         expect(getBalance).toHaveBeenCalledWith(
           "https://api.deepseek.com/v1",
           apiKey,
+          undefined,
         );
       } finally {
         getBalance.mockRestore();

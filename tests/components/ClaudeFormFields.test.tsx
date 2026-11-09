@@ -23,6 +23,11 @@ const modelFetchApiMock = vi.hoisted(() => ({
   showFetchModelsError: vi.fn(),
 }));
 
+vi.mock("@/hooks/useGlobalProxy", () => ({
+  useGlobalProxyUrl: () => ({ data: null }),
+  useTestProxy: () => ({ mutate: vi.fn(), isPending: false }),
+}));
+
 vi.mock("@/lib/api/copilot", () => ({
   copilotGetModels: copilotApiMock.copilotGetModels,
   copilotGetModelsForAccount: copilotApiMock.copilotGetModelsForAccount,
@@ -106,6 +111,8 @@ const renderCopilotForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) => {
     onFullUrlChange: vi.fn(),
     customUserAgent: "",
     onCustomUserAgentChange: vi.fn(),
+    proxyUrl: "",
+    onProxyUrlChange: vi.fn(),
     localProxyHeadersOverride: "",
     onLocalProxyHeadersOverrideChange: vi.fn(),
     localProxyBodyOverride: "",
@@ -165,9 +172,7 @@ describe("ClaudeFormFields", () => {
         isCopilotPreset: false,
         apiFormat: "openai_chat",
       });
-      expect(
-        screen.getByRole("combobox", { name: "思考档位" }),
-      ).toBeVisible();
+      expect(screen.getByRole("combobox", { name: "思考档位" })).toBeVisible();
       unmount();
 
       renderCopilotForm({

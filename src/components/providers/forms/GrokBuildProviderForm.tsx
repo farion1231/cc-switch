@@ -158,6 +158,7 @@ export function GrokBuildProviderForm({
   const [customUserAgent, setCustomUserAgent] = useState(
     initialData?.meta?.customUserAgent ?? "",
   );
+  const [proxyUrl, setProxyUrl] = useState(initialData?.meta?.proxyUrl ?? "");
   const [headersOverride, setHeadersOverride] = useState(
     formatRequestOverrideObject(
       initialData?.meta?.localProxyRequestOverrides?.headers,
@@ -419,6 +420,7 @@ export function GrokBuildProviderForm({
       promptCacheRouting,
       codexChatReasoning,
       customUserAgent: customUserAgent.trim() || undefined,
+      proxyUrl: proxyUrl.trim() || undefined,
       localProxyRequestOverrides: requestOverrides.overrides,
       maxOutputTokens:
         Number.isInteger(parsedMaxOutputTokens) && parsedMaxOutputTokens > 0
@@ -514,6 +516,8 @@ export function GrokBuildProviderForm({
               speedTestEndpoints={speedTestEndpoints}
               customUserAgent={customUserAgent}
               onCustomUserAgentChange={setCustomUserAgent}
+              proxyUrl={proxyUrl}
+              onProxyUrlChange={setProxyUrl}
               localProxyHeadersOverride={headersOverride}
               onLocalProxyHeadersOverrideChange={setHeadersOverride}
               localProxyBodyOverride={bodyOverride}
