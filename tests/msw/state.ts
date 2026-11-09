@@ -84,6 +84,7 @@ const createDefaultProviders = (): ProvidersByApp => ({
   dsh: {},
   agy: {},
   omp: {},
+  copilot: {},
   workbuddy: {},
 });
 
@@ -102,6 +103,7 @@ const createDefaultCurrent = (): CurrentProviderState => ({
   dsh: "",
   agy: "",
   omp: "",
+  copilot: "",
   workbuddy: "",
 });
 
@@ -222,6 +224,7 @@ let mcpConfigs: McpConfigState = {
   dsh: {},
   agy: {},
   omp: {},
+  copilot: {},
   workbuddy: {},
 };
 
@@ -354,6 +357,7 @@ export const resetProviderState = () => {
     dsh: {},
     agy: {},
     omp: {},
+    copilot: {},
     workbuddy: {},
   };
 };

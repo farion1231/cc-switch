@@ -674,6 +674,7 @@ fn project_dir_for(source: &ValidatedSource) -> Option<PathBuf> {
         "dsh" => super::providers::dsh::scan_sessions(),
         "workbuddy" => super::providers::workbuddy::scan_sessions(),
         "agy" => super::providers::agy::scan_sessions(),
+        "copilot" => super::providers::copilot::scan_sessions(),
         _ => return None,
     };
     let project = sessions

@@ -199,6 +199,7 @@ export function EditProviderDialog({
         appId === "kimi" ||
         appId === "dsh" ||
         appId === "omp" ||
+        appId === "copilot" ||
         appId === "workbuddy"
       ) {
         if (!cancelled) {

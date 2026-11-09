@@ -78,6 +78,10 @@ pub enum ProxyError {
     #[error("Codex 官方额度保护 (quota protection): {0}")]
     CodexQuotaProtection(String),
 
+    /// 「暂停使用官方登录」开着：Codex 不带官方登录，官方请求在本地拒绝。
+    #[error("已暂停使用 Codex 官方登录，官方请求不会发出。请在模型菜单换成第三方模型；官方额度恢复后，在 CC Switch 的 Codex 页面点「恢复官方登录」，然后重启 Codex。 (The Codex official login is paused, so official requests are not sent. Pick a third-party model in the model menu; once the official quota is back, click \"Resume official login\" on the Codex page in CC Switch, then restart Codex.)")]
+    CodexOfficialLoginPaused,
+
     #[allow(dead_code)]
     #[error("内部错误: {0}")]
     Internal(String),
@@ -160,7 +164,7 @@ impl IntoResponse for ProxyError {
                         (StatusCode::GATEWAY_TIMEOUT, self.to_string())
                     }
                     ProxyError::AuthError(_) => (StatusCode::UNAUTHORIZED, self.to_string()),
-                    ProxyError::CodexQuotaProtection(_) => {
+                    ProxyError::CodexQuotaProtection(_) | ProxyError::CodexOfficialLoginPaused => {
                         (StatusCode::FORBIDDEN, self.to_string())
                     }
                     ProxyError::Internal(_) => {

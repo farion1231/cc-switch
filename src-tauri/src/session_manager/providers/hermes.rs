@@ -1063,6 +1063,9 @@ mod tests {
 
     #[test]
     fn sqlite_scan_distinguishes_failure_missing_and_empty_database() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempdir().unwrap();
         let path = dir.path().join("state.db");
         let mut missing = ScanStatus::default();

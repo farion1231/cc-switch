@@ -101,7 +101,7 @@ pub struct PanelTexts {
 impl PanelTexts {
     pub fn from_language(language: &str) -> Self {
         match language {
-            "en" | "tr" => Self {
+            "en" | "tr" | "ru" => Self {
                 switch_provider: "Switch provider",
                 search_placeholder: "Search providers…",
                 in_use: "In use",
@@ -109,10 +109,10 @@ impl PanelTexts {
                 open_main: "Open main window",
                 quit: "Quit",
                 settings: "Settings",
-                lightweight_mode: if language == "tr" {
-                    "Hafif mod"
-                } else {
-                    "Lightweight mode"
+                lightweight_mode: match language {
+                    "tr" => "Hafif mod",
+                    "ru" => "Облегчённый режим",
+                    _ => "Lightweight mode",
                 },
                 open_panel: "Open quick panel",
                 config_tab: "Configuration",
@@ -123,6 +123,25 @@ impl PanelTexts {
                 duration_minutes: "{n}m",
                 duration_sep: " ",
                 reset_credits: "{count} resets available",
+            },
+            "ko" => Self {
+                switch_provider: "공급자 전환",
+                search_placeholder: "공급자 검색…",
+                in_use: "사용 중",
+                no_match: "일치하는 공급자 없음",
+                open_main: "메인 창 열기",
+                quit: "종료",
+                settings: "설정",
+                lightweight_mode: "경량 모드",
+                open_panel: "빠른 패널 열기",
+                config_tab: "설정",
+                usage_tab: "사용량",
+                resets_in: "{when} 후 초기화",
+                duration_days: "{n}일",
+                duration_hours: "{n}시간",
+                duration_minutes: "{n}분",
+                duration_sep: " ",
+                reset_credits: "초기화 {count}회 가능",
             },
             "ja" => Self {
                 switch_provider: "プロバイダーを切り替え",

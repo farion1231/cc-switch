@@ -25,6 +25,7 @@ export const PROMPT_APP_IDS: AppId[] = [
   "dsh",
   "agy",
   "omp",
+  "copilot",
   "workbuddy",
 ];
 

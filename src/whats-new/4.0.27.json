@@ -1,0 +1,33 @@
+{
+  "version": "4.0.27",
+  "items": [
+    {
+      "type": "new",
+      "zh": "会话管理可以搜索消息正文",
+      "zh-TW": "工作階段管理可以搜尋訊息內文",
+      "en": "Session search can now look inside message text",
+      "ja": "セッション管理でメッセージ本文を検索可能に"
+    },
+    {
+      "type": "new",
+      "zh": "新增界面密度和界面缩放设置",
+      "zh-TW": "新增介面密度與介面縮放設定",
+      "en": "New interface density and zoom settings",
+      "ja": "表示密度と表示倍率の設定を追加"
+    },
+    {
+      "type": "new",
+      "zh": "Grok Build 可以从供应商卡片打开终端",
+      "zh-TW": "Grok Build 可以從供應商卡片開啟終端機",
+      "en": "Open a terminal from the Grok Build provider card",
+      "ja": "Grok Build のプロバイダーカードからターミナルを開けるように"
+    },
+    {
+      "type": "fix",
+      "zh": "修复软链接的配置文件被替换成普通文件",
+      "zh-TW": "修正符號連結的設定檔被換成一般檔案",
+      "en": "Symlinked config files are no longer replaced on write",
+      "ja": "シンボリックリンクの設定ファイルが置き換えられる問題を修正"
+    }
+  ]
+}

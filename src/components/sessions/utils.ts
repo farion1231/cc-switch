@@ -20,6 +20,7 @@ export const SESSION_APP_IDS = [
   "kimi",
   "dsh",
   "agy",
+  "copilot",
   "workbuddy",
 ] as const satisfies readonly AppId[];
 
@@ -46,6 +47,7 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
   agy: [
     "~/.gemini/antigravity-cli/brain/<conversation>/.system_generated/logs",
   ],
+  copilot: ["~/.copilot/session-state"],
 };
 
 /** 这些应用的会话只能在原软件里删（后端也会拒绝）：只删文件会让它们自己的索引失效。 */
@@ -53,6 +55,7 @@ const NATIVE_DELETE_HINT_KEYS: Record<string, string> = {
   mcode: "sessionManager.mcodeDeleteHint",
   agy: "sessionManager.agyDeleteHint",
   dsh: "dsh.deleteSessionHint",
+  copilot: "sessionManager.copilotDeleteHint",
   workbuddy: "workbuddy.deleteSessionHint",
 };
 

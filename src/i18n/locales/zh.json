@@ -204,7 +204,8 @@
       "extraArgsHint": "接在启动命令后面，只用于这次打开的终端。用空格分隔，含空格的值用引号括起来。",
       "agySwitchTitle": "会切换 agy 的登录",
       "agySwitchBody": "打开前把 agy 的登录切换到 {{account}}，之后新开的 agy 都用这个号。",
-      "agySwitchRunning": "检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，最好先退出它们。"
+      "agySwitchRunning": "检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，最好先退出它们。",
+      "isolationBodyCopilot": "「{{name}}」的地址、Key 和模型只传给这个终端里的 copilot，不写进任何文件；在别的终端里直接运行 copilot 仍是 GitHub 登录。"
     },
     "name": "名称",
     "namePlaceholder": "例如：Claude 官方",
@@ -391,7 +392,14 @@
     "windowControlFailed": "窗口控制失败：{{error}}",
     "officialBlockedByProxy": "本地路由模式下不能切换到官方供应商，使用路由访问官方 API 可能导致账号被封禁",
     "proxyOfficialWarning": "当前供应商 {{name}} 是官方供应商，建议切换到第三方供应商后再使用本地路由",
-    "proxyLoopbackHijacked": "{{app}} 发往本地路由 {{origin}} 的请求会被系统代理接走，{{app}} 会报 502 错误。请在代理工具里让本机地址直连（例如 Clash 规则最前面加 IP-CIDR,127.0.0.0/8,DIRECT,no-resolve），改完后彻底退出 {{app}} 再打开。"
+    "proxyLoopbackHijacked": "{{app}} 发往本地路由 {{origin}} 的请求会被系统代理接走，{{app}} 会报 502 错误。请在代理工具里让本机地址直连（例如 Clash 规则最前面加 IP-CIDR,127.0.0.0/8,DIRECT,no-resolve），改完后彻底退出 {{app}} 再打开。",
+    "codexHistorySplit": {
+      "hint": "之前在{{previous}}下的 {{count}} 个会话现在只能查看",
+      "officialBucket": "官方订阅",
+      "thirdPartyBucket": "第三方供应商",
+      "migrationFinished": "已迁入 {{count}} 个旧会话，重启 Codex 后即可继续",
+      "migrationFailed": "迁入旧会话失败：{{error}}。下次启动 CC Switch 会自动重试"
+    }
   },
   "confirm": {
     "deleteProvider": "删除供应商",
@@ -411,14 +419,14 @@
     },
     "unifyCodexHistory": {
       "title": "统一 Codex 会话历史",
-      "message": "开启后，Codex CLI 的 resume 列表会把官方订阅与第三方的会话合并显示（Codex 桌面版更新后已经可以显示全部会话，不受影响）。注意：跨供应商继续旧会话时，可能因对方后端无法解密 encrypted_content 推理内容而失败。\n\n可选择同时把现有官方会话历史迁入共享列表（迁移前自动备份到 ~/.cc-switch/backups，关闭开关时可选择恢复）。",
+      "message": "开启后，官方订阅改用共享的 custom 供应商标识，官方与第三方的会话归到同一组：新版 Codex 里两边的会话都能继续，CLI 的 resume 列表也会合并显示。\n\n可选择同时迁入现有官方会话；勾选后，之后每次启动也会把仍留在官方组的会话迁进来（迁移前自动备份到 ~/.cc-switch/backups，关闭开关时可选择还原）。不迁入的话，这些会话在新版 Codex 里只能查看。迁移完成后重启 Codex 生效。\n\n注意：跨供应商继续旧会话时，可能因对方后端无法解密 encrypted_content 推理内容而失败。",
       "migrateExisting": "同时迁入现有官方会话历史",
       "confirm": "我已了解，继续开启"
     },
     "unifyCodexHistoryOff": {
       "title": "关闭统一会话历史",
-      "message": "关闭后，Codex CLI 中官方订阅与第三方将恢复各自独立的会话列表（桌面版仍显示全部会话）。开启期间产生的会话因无法区分来源，将留在第三方历史中，CLI 在官方订阅下将看不到它们。",
-      "restoreBackup": "把开启时迁入的官方会话还原回官方历史（按备份精确还原）",
+      "message": "关闭后，官方订阅与第三方的会话重新分成两组：新版 Codex 只能继续当前供应商那一组，另一组只能查看。开启期间产生的会话无法区分来源，将留在第三方那组。",
+      "restoreBackup": "把迁入的官方会话还原回官方组（按备份精确还原）",
       "confirm": "关闭"
     },
     "usage": {
@@ -883,6 +891,8 @@
     "languageOptionEnglish": "English",
     "languageOptionJapanese": "日本語",
     "languageOptionTurkish": "Türkçe",
+    "languageOptionKorean": "한국어",
+    "languageOptionRussian": "Русский",
     "windowBehavior": "窗口行为",
     "windowBehaviorHint": "配置窗口最小化与 Claude 插件联动策略。",
     "launchOnStartup": "开机自启",
@@ -910,10 +920,18 @@
       "hint": "任一达到即暂停。默认 95% / 98%，保存后立即对新请求生效。",
       "invalid": "请输入 1–99 的整数。"
     },
+    "codexPauseOfficialLogin": {
+      "title": "暂停使用官方登录",
+      "description": "官方额度用完、Codex 锁住发送键时打开，聚合和路由里的第三方模型可以继续用。打开和关闭后都要彻底退出并重新打开 Codex。",
+      "help": "官方额度用完、Codex 锁住发送键（选第三方模型也发不出去）时打开。打开后 Codex 不再使用官方登录，也就不会再因为官方额度锁住发送键，聚合和路由里的第三方模型可以继续用。官方登录仍保存在本机，不会退出。只在路由或聚合模式下生效，直连不受影响。打开期间：官方模型发不出去，会提示改用第三方模型；Codex 里不显示账号和用量信息，第一次打开可能弹出新手问卷；侧栏「项目」里原来的会话暂时看不到（没有丢，关掉后回来）；新会话记在 custom 组，切回官方后只能查看。官方额度恢复后关掉它。打开和关闭后都要彻底退出并重新打开 Codex。",
+      "pausedToast": "已暂停使用官方登录，彻底退出并重新打开 Codex 后生效",
+      "resumedToast": "已恢复使用官方登录，彻底退出并重新打开 Codex 后生效",
+      "saveFailed": "保存失败：{{error}}"
+    },
     "preserveCodexOfficialAuthOnSwitch": "非接管切换时保留官方登录",
     "preserveCodexOfficialAuthOnSwitchDescription": "控制未开启路由接管时切换第三方供应商是否保留 Codex 官方登录；路由接管期间始终保留",
     "unifyCodexSessionHistory": "统一 Codex 会话历史",
-    "unifyCodexSessionHistoryDescription": "只影响 Codex CLI：CLI 的 resume 列表只显示当前供应商的会话，开启后官方订阅改以共享的 custom 供应商标识运行，官方与第三方会话出现在同一列表中。Codex 桌面版更新后已经可以显示全部会话，只用桌面版无需开启。可选择把现有官方会话一并迁入（迁移前自动备份），关闭时可按备份恢复。注意：跨供应商继续旧会话时，对方后端可能无法解密会话中的 encrypted_content 推理内容，导致继续失败",
+    "unifyCodexSessionHistoryDescription": "官方订阅改用和第三方相同的 custom 供应商标识运行，官方与第三方的会话归到同一组。新版 Codex（桌面版 26.1103、CLI 0.167 起）只能继续与当前供应商同一组的会话，另一组只能查看；CLI 的 resume 列表也只显示当前这组。经常在官方和第三方之间切换时建议开启。可选择把官方组的会话迁入这一组（迁移前自动备份），关闭时可按备份还原。注意：跨供应商继续旧会话时，对方后端可能无法解密会话中的 encrypted_content 推理内容，导致继续失败",
     "codexStackClassicSubagents": "聚合模式下子 agent 用经典工具",
     "codexStackClassicSubagentsDescription": "主、子 agent 不在同一家供应商时必须打开，否则子 agent 收不到任务。",
     "codexStackClassicSubagentsForcedV2": "Codex 的 config.toml 里打开了 [features] multi_agent_v2，它比这个开关优先，开关不会生效",
@@ -1161,6 +1179,7 @@
     "mcode": "MiniMax Code",
     "workbuddy": "WorkBuddy",
     "agy": "Antigravity",
+    "copilot": "Copilot CLI",
     "omp": "Oh My Pi"
   },
   "mcode": {
@@ -1676,7 +1695,8 @@
       "rawMatch": "原文中的匹配",
       "expandContent": "展开完整内容",
       "collapseContent": "收起"
-    }
+    },
+    "copilotDeleteHint": "请在 GitHub Copilot CLI 中删除此会话，以保持会话存储一致"
   },
   "console": {
     "providerSwitchReceived": "收到供应商切换事件:",
@@ -1728,6 +1748,7 @@
     "providerKeyStatusLoading": "正在加载供应商标识状态，请稍后再试",
     "getApiKey": "获取 API Key",
     "partnerPromotion": {
+      "tokenplus": "TokenPlus，让 AI 编程更稳、更省、更省心：一个 Key 畅用多家模型，智能切换保障稳定、价格优选与缓存优化节省成本，账单、团队和数据安全一站管理。",
       "kimi": "Kimi 新用户首次成功充值，即可获赠充值金额 10% 的 API 额度，最高赠送 ¥1000。",
       "a6api": "A6API 是一家 Token 聚合站，内置实时价格排行自动筛选全网最低价，丝滑稳定不卡顿，简易操作省去比价繁琐，注册获得体验金！",
       "sudocode": "SudoCode 让 Claude Code 与 Claude Desktop 接入 Claude Opus 5，Codex 接入 GPT-5.6，一个 Key 统一使用。CC Switch 用户注册并加入 QQ 群 726213516，联系群主领取 ¥10 试用额度。",
@@ -1968,7 +1989,29 @@
     "deploymentType": "GitHub 部署类型",
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Enterprise Server",
-    "enterpriseDomainPlaceholder": "例如：company.ghe.com"
+    "enterpriseDomainPlaceholder": "例如：company.ghe.com",
+    "form": {
+      "officialTitle": "使用 Copilot CLI 自己的 GitHub 登录",
+      "officialHint": "「打开终端」以这张卡的模型启动 copilot；绑定授权中心的账号后改用该账号启动。",
+      "byokTitle": "只在从这张卡打开的终端里生效",
+      "byokHint": "Copilot CLI 只从进程环境读取自带模型，不会写进 Copilot 自己的文件。",
+      "apiFormat": "接口格式",
+      "baseUrl": "API 地址",
+      "baseUrlHint": "OpenAI 兼容地址通常以 /v1 结尾（如 Ollama http://localhost:11434/v1）；Anthropic 只填主机（https://api.anthropic.com）。",
+      "model": "模型",
+      "officialModelHint": "留空则使用 Copilot 当前的模型。以 --model 传入，只对这次会话生效；copilot 里的 /model 照常可用。",
+      "byokModelHint": "接口要求的模型 ID（COPILOT_MODEL）。",
+      "reasoningEffort": "推理强度",
+      "reasoningEffortDefault": "Copilot 默认",
+      "reasoningEffortHint": "打开终端时作为 --reasoning-effort 传入。选 none 时 Copilot 不再在 Responses 请求里带 reasoning.summary，部分中转不认这个字段。",
+      "maxPromptTokens": "最大输入 Token",
+      "maxOutputTokens": "最大输出 Token",
+      "envJsonHint": "高级：任意 COPILOT_PROVIDER_* 变量（如 COPILOT_PROVIDER_MODEL_ID、COPILOT_PROVIDER_BEARER_TOKEN）都会原样传给 copilot。"
+    },
+    "quota": {
+      "accountNotInAuthCenter": "授权中心里没有 Copilot CLI 当前登录的账号 {{login}}。请在授权中心添加它，或在卡片里绑定账号。",
+      "notSignedIn": "Copilot CLI 尚未登录。请运行 copilot 并用 /login 登录，或在卡片里绑定授权中心的账号。"
+    }
   },
   "codexOauth": {
     "authStatus": "认证状态",
@@ -4282,6 +4325,7 @@
       "geminiFlashLite": "Lite",
       "agyGeminiFiveHour": "Gemini 5 小时",
       "agyGeminiWeekly": "Gemini 每周",
+      "agyGeminiArgonWeekly": "Argon 每周",
       "agyThirdPartyFiveHour": "Claude 5 小时",
       "agyThirdPartyWeekly": "Claude 每周",
       "monthly": "每月",
@@ -4301,6 +4345,7 @@
     "agyThirdParty": "Claude/GPT",
     "agyGeminiFiveHour": "Gemini 5 小时",
     "agyGeminiWeekly": "Gemini 每周",
+    "agyGeminiArgonWeekly": "Argon 每周",
     "agyThirdPartyFiveHour": "Claude/GPT 5 小时",
     "agyThirdPartyWeekly": "Claude/GPT 每周",
     "weeklyLimit": "每周",
@@ -4372,6 +4417,8 @@
     "notRunnable": "无法运行",
     "updateNeedsNode": "新版本 {{version}} 要求 Node {{required}}，这处安装用的是 Node {{current}}，需要先升级 Node。",
     "otherInstalls": "另有 {{count}} 处安装",
+    "toolQueued": "排队中，等前一个应用完成",
+    "toolElapsed": "已用 {{time}}",
     "installsFound": "检测到 {{count}} 处安装",
     "wslFlag": "标志",
     "installHint": {
@@ -4385,6 +4432,7 @@
       "pi": "通过 npm 安装",
       "mcode": "安装时运行官方安装脚本，失败时改用 npm",
       "agy": "安装时运行官方安装脚本",
+      "copilot": "通过 npm 安装",
       "omp": "安装时运行官方安装脚本"
     }
   },
@@ -4452,6 +4500,9 @@
       "serviceDown": "{{app}} 处于{{mode}}模式，但路由服务没有运行，请求会失败。",
       "startService": "启动服务",
       "backToDirect": "回到直连",
+      "officialLoginPaused": "Codex 已暂停使用官方登录",
+      "officialLoginPausedBody": "官方模型发不出去，Codex 侧栏「项目」里原来的会话暂时看不到。官方额度恢复后点「恢复官方登录」，再彻底退出并重新打开 Codex。",
+      "resumeOfficialLogin": "恢复官方登录",
       "attachFailed": "上次的{{mode}}模式没能接上，{{app}} 已回到直连。"
     },
     "toast": {
