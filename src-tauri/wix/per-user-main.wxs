@@ -34,11 +34,11 @@
         <!-- reinstall all files; rewrite all registry entries; reinstall all shortcuts -->
         <Property Id="REINSTALLMODE" Value="amus" />
 
-        <!-- Never let this installer restart the machine (#8534). The in-app updater runs
-             `msiexec /passive /promptrestart`; with no restart option, passive mode reboots without any
-             prompt as soon as a file is still in use. Updaters shipped in older releases do not pass
-             REBOOT=ReallySuppress themselves, so the package has to carry it. Files that are still
-             in use are then replaced on the next restart instead. -->
+        <!-- Never let this installer restart the machine (#8534). Current builds use
+             `msiexec /quiet /promptrestart` plus REBOOT=ReallySuppress. `/promptrestart` does not
+             stop a reboot when a file is still in use. Older builds used `/passive` without that
+             arg, which is why the package still sets the property. Files that are still in use
+             are then replaced on the next restart instead. -->
         <Property Id="REBOOT" Value="ReallySuppress" />
 
         <!-- Auto launch app after installation, useful for passive mode which usually used in updates -->

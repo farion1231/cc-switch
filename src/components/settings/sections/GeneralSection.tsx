@@ -224,6 +224,22 @@ export function GeneralSection({
         </SettingsCard>
       </SettingsBlock>
 
+      <SettingsBlock title={t("settings.general.appUpdate")}>
+        <SettingsCard>
+          <SettingsSwitchRow
+            label={t("settings.general.silentAppUpdate")}
+            help={{
+              title: t("settings.general.silentAppUpdate"),
+              body: t("settings.general.silentAppUpdateHelp"),
+            }}
+            checked={settings.silentAppUpdate !== false}
+            onCheckedChange={(value) =>
+              void onAutoSave({ silentAppUpdate: value })
+            }
+          />
+        </SettingsCard>
+      </SettingsBlock>
+
       <SettingsBlock title={t("settings.general.updates")}>
         <SettingsCard>
           <SettingsSwitchRow

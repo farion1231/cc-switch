@@ -207,8 +207,8 @@ jobs:
             $msi = Get-ChildItem -Path (Join-Path $targetRoot 'bundle') -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
           }
           if ($null -ne $msi) {
-            # #8534：旧版本的应用内更新器以 `msiexec /passive /promptrestart` 安装、不带任何 REBOOT
-            # 选项，文件被占用时会不经提示直接重启系统，所以 MSI 自身必须带 REBOOT=ReallySuppress。
+            # #8534：当前构建用 `/quiet`，并仍传入 REBOOT=ReallySuppress。MSI 属性检查必须保留，
+            # 因为 `/promptrestart` 挡不住文件被占用时重启系统；更早的构建用 `/passive` 且不带该属性。
             $installer = New-Object -ComObject WindowsInstaller.Installer
             $db = $installer.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $installer, @($msi.FullName, 0))
             $view = $db.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $db, @('SELECT `Value` FROM `Property` WHERE `Property`=''REBOOT'''))

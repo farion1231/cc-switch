@@ -1,5 +1,7 @@
 #![allow(non_snake_case)]
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_updater::UpdaterExt;
 
@@ -318,6 +320,38 @@ pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
     Ok(true)
 }
 
+/// 同一进程里只允许一次应用更新安装。成功（`Ok(true)`）后保持占用：Windows 在
+/// `install()` 内退出，其它平台随后重启。没有更新或失败时放开，下次还能再装。
+static UPDATE_INSTALL_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+struct UpdateInstallGuard {
+    committed: bool,
+}
+
+impl UpdateInstallGuard {
+    fn try_acquire() -> Result<Self, String> {
+        if UPDATE_INSTALL_IN_PROGRESS
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err("update-already-in-progress".to_string());
+        }
+        Ok(Self { committed: false })
+    }
+
+    fn commit(&mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for UpdateInstallGuard {
+    fn drop(&mut self) {
+        if !self.committed {
+            UPDATE_INSTALL_IN_PROGRESS.store(false, Ordering::Release);
+        }
+    }
+}
+
 /// 下载并安装应用更新，然后由后端直接重启应用。
 ///
 /// macOS 更新会原地替换 `.app` bundle。如果先返回前端、再让旧 WebView 调
@@ -325,12 +359,13 @@ pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
 /// 这里把退出清理、安装和重启串在同一个后端流程中，避免依赖旧前端继续执行。
 #[tauri::command]
 pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> {
+    let mut update_install_guard = UpdateInstallGuard::try_acquire()?;
     let builder = app.updater_builder();
-    // Windows 上 updater 以 `msiexec /passive /promptrestart` 安装 MSI。passive 没有模态框、
-    // 未指定重启选项时，安装目录里有文件被占用，Windows Installer 会不经确认直接重启系统
-    // （#8534）。`/promptrestart` 只对应 REBOOTPROMPT，挡不住这一点，因此显式追加
-    // REBOOT=ReallySuppress（即 `/norestart`）。旧版本的 updater 不带这个参数，
-    // 由 MSI 模板自身的 REBOOT 属性兜底。
+    // 当前构建的 updater windows installMode 是 `quiet`（`msiexec /quiet`），插件仍会追加
+    // `/promptrestart`。`/promptrestart` 只对应 REBOOTPROMPT，挡不住文件被占用时 Windows
+    // Installer 不经确认直接重启系统（#8534），因此仍要显式追加 REBOOT=ReallySuppress
+    // （即 `/norestart`）。更早的 updater 用的是 `/passive` 且不带这个参数，所以 MSI 模板
+    // 自身仍保留该属性。
     #[cfg(target_os = "windows")]
     let builder = builder.installer_arg("REBOOT=ReallySuppress");
     let updater = builder
@@ -383,6 +418,7 @@ pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> 
                 "Windows 更新安装失败: {e}。已执行退出前清理，代理或 Live 接管可能已暂停；请重启应用或重新开启代理后再试。"
             )
         })?;
+        update_install_guard.commit();
         Ok(true)
     }
 
@@ -392,6 +428,7 @@ pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> 
         update
             .install(bytes)
             .map_err(|e| format!("安装更新失败: {e}"))?;
+        update_install_guard.commit();
 
         crate::save_window_state_before_exit(&app);
         crate::cleanup_before_exit(&app).await;

@@ -449,6 +449,8 @@ export interface Settings {
   showProviderSearch?: boolean;
   // 启动时检查已安装的命令行应用有没有新版本（默认关）
   checkToolUpdatesOnStartup?: boolean;
+  // 静默更新 CC Switch 本身。缺省开（没写过视为开）。关掉后只提示，由用户在「关于」里安装。
+  silentAppUpdate?: boolean;
   // 点托盘图标出原生菜单，不出托盘面板（macOS / Windows；Linux 一律原生菜单；默认关，没写过视为关，即用托盘面板）
   nativeTrayMenu?: boolean;
   // Preserve Codex ChatGPT login in auth.json when switching third-party providers

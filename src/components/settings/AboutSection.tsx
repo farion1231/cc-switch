@@ -153,6 +153,10 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         }
       } catch (error) {
         console.error("[AboutSection] Update failed", error);
+        // 静默安装已经占着安装锁。这个标记不是失败，不要弹错误，也不要打开下载页。
+        if (extractErrorMessage(error).includes("update-already-in-progress")) {
+          return;
+        }
         toast.error(t("settings.updateFailed"), {
           description: extractErrorMessage(error) || undefined,
           closeButton: true,

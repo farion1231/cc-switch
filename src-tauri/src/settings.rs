@@ -526,6 +526,9 @@ pub struct AppSettings {
     /// many users do not want to chase every release).
     #[serde(default)]
     pub check_tool_updates_on_startup: bool,
+    /// 静默更新 CC Switch 本身。缺省开：启动发现新版本后后台下载安装并重启。关掉后只提示，由用户在「关于」里安装。
+    #[serde(default = "default_true")]
+    pub silent_app_update: bool,
     /// 点托盘图标出原生菜单，不出托盘面板（macOS / Windows；Linux 只能出原生菜单，不看这一项）。
     /// 默认关：用托盘面板，想要原生菜单在设置里换回。
     #[serde(default)]
@@ -742,6 +745,7 @@ impl Default for AppSettings {
             show_profile_switcher: false,
             show_provider_search: true,
             check_tool_updates_on_startup: false,
+            silent_app_update: true,
             native_tray_menu: false,
             preserve_codex_official_auth_on_switch: false,
             codex_quota_protection: CodexQuotaProtection::default(),
@@ -1858,6 +1862,15 @@ mod tests {
         assert!(!missing.native_tray_menu);
         let menu: AppSettings = serde_json::from_str(r#"{"nativeTrayMenu":true}"#).unwrap();
         assert!(menu.native_tray_menu);
+    }
+
+    #[test]
+    fn silent_app_update_defaults_on_when_the_key_is_missing() {
+        let missing: AppSettings = serde_json::from_str("{}").unwrap();
+        assert!(missing.silent_app_update);
+        let off: AppSettings = serde_json::from_str(r#"{"silentAppUpdate": false}"#).unwrap();
+        assert!(!off.silent_app_update);
+        assert!(AppSettings::default().silent_app_update);
     }
 
     #[test]
