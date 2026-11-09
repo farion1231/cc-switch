@@ -19,7 +19,7 @@ import { setSessionFixtures, setSettings } from "../msw/state";
 
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
-const platform = vi.hoisted(() => ({ mac: false }));
+const platform = vi.hoisted(() => ({ mac: false, windows: false }));
 
 vi.mock("sonner", () => ({
   toast: {
@@ -30,7 +30,11 @@ vi.mock("sonner", () => ({
 
 vi.mock("@/lib/platform", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/platform")>();
-  return { ...actual, isMac: () => platform.mac };
+  return {
+    ...actual,
+    isMac: () => platform.mac,
+    isWindows: () => platform.windows,
+  };
 });
 
 // jsdom 没有布局，虚拟列表一条都不渲染；这里让它把全部条目都画出来
@@ -157,6 +161,7 @@ describe("SessionManagerPage", () => {
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
     platform.mac = false;
+    platform.windows = false;
     window.localStorage.clear();
     // 项目分组默认收起；其余用例要直接看到会话，先把模拟项目都记成已展开
     window.localStorage.setItem(
@@ -707,6 +712,31 @@ describe("SessionManagerPage", () => {
   it("launches the resume command in the preferred terminal on macOS", async () => {
     platform.mac = true;
     setSettings({ preferredTerminal: "iterm2" });
+    const launch = vi
+      .spyOn(sessionsApi, "launchTerminal")
+      .mockResolvedValue(true);
+    renderPage("codex");
+    await screen.findByText("Alpha Session");
+    openRow("Alpha Session");
+
+    const resume = await screen.findByRole("button", {
+      name: /中恢复$/,
+    });
+    fireEvent.click(resume);
+
+    await waitFor(() =>
+      expect(launch).toHaveBeenCalledWith({
+        command: "codex resume codex-session-1",
+        cwd: "/mock/codex",
+      }),
+    );
+    expect(toastSuccessMock).toHaveBeenCalled();
+    launch.mockRestore();
+  });
+
+  it("launches the resume command in the preferred terminal on Windows", async () => {
+    platform.windows = true;
+    setSettings({ preferredTerminal: "wt" });
     const launch = vi
       .spyOn(sessionsApi, "launchTerminal")
       .mockResolvedValue(true);

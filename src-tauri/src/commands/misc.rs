@@ -6686,6 +6686,84 @@ fn launch_windows_terminal(launch: &ProviderLaunch, cwd: Option<&Path>) -> Resul
     result
 }
 
+/// 生成「在首选终端里恢复会话」用的批处理内容与需要传给启动进程的目录环境变量。
+///
+/// 会话恢复和供应商卡片的「打开终端」共用同一套 `cmd` 约束：目录必须先 `cd /d`
+/// （UNC 路径用 `pushd`），非 ASCII 路径走 `WINDOWS_CWD_ENV` 以避免代码页乱码，
+/// 并在 `setlocal DisableDelayedExpansion` 下运行，防止注册表启用的延迟展开改写
+/// 命令里的 `!name!`。`command_line` 由后端自己生成（`claude --resume <id>` 等），
+/// 不含用户输入，因此原样写入脚本。
+#[cfg(target_os = "windows")]
+fn build_windows_session_batch(command_line: &str, cwd: Option<&str>) -> (String, Option<String>) {
+    let (cwd_command, cwd_env) = cwd
+        .filter(|dir| !dir.trim().is_empty())
+        .map(build_windows_cwd_command_str)
+        .unwrap_or_default();
+
+    let content = format!(
+        "@echo off\r\n{cwd_command}setlocal DisableDelayedExpansion\r\n{command_line}\r\nendlocal\r\ndel \"%~f0\" >nul 2>&1\r\n"
+    );
+    (content, cwd_env)
+}
+
+/// 在用户首选终端（Windows Terminal / PowerShell / cmd）里执行一条可信命令，
+/// 用于会话管理的一键恢复。与 `launch_windows_terminal` 的区别是不注入供应商环境、
+/// 不写清理语句；首选终端启动失败时回退到 cmd。
+#[cfg(target_os = "windows")]
+pub(crate) fn launch_windows_session_command(
+    command_line: &str,
+    cwd: Option<&str>,
+) -> Result<(), String> {
+    let preferred = crate::settings::get_preferred_terminal();
+    let terminal = preferred
+        .as_deref()
+        .filter(|value| matches!(*value, "wt" | "powershell" | "cmd"))
+        .unwrap_or("cmd");
+
+    let (content, cwd_env) = build_windows_session_batch(command_line, cwd);
+    let bat_file = unique_temp_path("cc_switch_session", "bat");
+    std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
+
+    let launch_env: Vec<(&str, &str)> = cwd_env
+        .as_deref()
+        .map(|value| (WINDOWS_CWD_ENV, value))
+        .into_iter()
+        .collect();
+    let bat_path = bat_file.to_string_lossy();
+    let bat_arg: &str = &bat_path;
+    let ps_cmd = format!("& '{bat_arg}'");
+
+    let result = match terminal {
+        "powershell" => run_windows_start_command_with_env(
+            &[
+                windows_powershell_program(&effective_path_string()),
+                "-NoExit",
+                "-Command",
+                ps_cmd.as_str(),
+            ],
+            "PowerShell",
+            &launch_env,
+        ),
+        "wt" => run_windows_start_command_with_env(
+            &["wt", "cmd", "/K", bat_arg],
+            "Windows Terminal",
+            &launch_env,
+        ),
+        _ => run_windows_start_command_with_env(&["cmd", "/K", bat_arg], "cmd", &launch_env),
+    };
+
+    if result.is_err() && terminal != "cmd" {
+        log::warn!(
+            "首选终端 {} 启动失败，回退到 cmd: {:?}",
+            terminal,
+            result.as_ref().err()
+        );
+        return run_windows_start_command_with_env(&["cmd", "/K", bat_arg], "cmd", &launch_env);
+    }
+
+    result
+}
+
 #[cfg_attr(windows, allow(dead_code))]
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
@@ -12422,5 +12500,42 @@ mod tests {
         let (unc_command, unc_env) = build_windows_cwd_command_str(r"\\server\共享\repo");
         assert!(unc_command.starts_with("pushd \"%CC_SWITCH_INTERNAL_CWD%\" || exit /b 1\r\n"));
         assert_eq!(unc_env.as_deref(), Some(r"\\server\共享\repo"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn build_windows_session_batch_runs_in_cwd_and_cleans_up() {
+        let (content, env) = build_windows_session_batch("codex resume abc", Some(r"C:\work\repo"));
+
+        assert_eq!(env, None);
+        assert!(content.starts_with("@echo off\r\ncd /d \"C:\\work\\repo\" || exit /b 1\r\n"));
+        assert!(content
+            .contains("setlocal DisableDelayedExpansion\r\ncodex resume abc\r\nendlocal\r\n"));
+        assert!(content.ends_with("del \"%~f0\" >nul 2>&1\r\n"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn build_windows_session_batch_omits_blank_cwd() {
+        let (content, env) = build_windows_session_batch("claude --resume abc", None);
+        assert_eq!(env, None);
+        assert!(!content.contains("cd /d"));
+        assert!(content.contains("setlocal DisableDelayedExpansion\r\nclaude --resume abc\r\n"));
+
+        let (blank_content, blank_env) =
+            build_windows_session_batch("claude --resume abc", Some("  "));
+        assert_eq!(blank_env, None);
+        assert!(!blank_content.contains("cd /d"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn build_windows_session_batch_passes_non_ascii_cwd_via_env() {
+        let path = r"C:\Users\林增文\项目";
+        let (content, env) = build_windows_session_batch("claude --resume abc", Some(path));
+
+        assert!(content.is_ascii(), "batch file must stay ASCII: {content}");
+        assert!(content.contains("%CC_SWITCH_INTERNAL_CWD%"));
+        assert_eq!(env.as_deref(), Some(path));
     }
 }

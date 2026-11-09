@@ -50,7 +50,7 @@ import { HoverTip } from "@/components/ui/hover-tip";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { extractErrorMessage } from "@/utils/errorUtils";
-import { isMac } from "@/lib/platform";
+import { isMac, isWindows } from "@/lib/platform";
 import { SearchField } from "@/components/ui/search-field";
 import { cn } from "@/lib/utils";
 import {
@@ -407,11 +407,19 @@ export function SessionManagerPage({
   }, [sessions]);
 
   const terminalName = useMemo(() => {
-    if (!isMac()) return null;
-    const value = settings?.preferredTerminal || "terminal";
-    const key = `settings.terminal.options.macos.${value}`;
-    const label = t(key);
-    return label === key ? value : label;
+    if (isMac()) {
+      const value = settings?.preferredTerminal || "terminal";
+      const key = `settings.terminal.options.macos.${value}`;
+      const label = t(key);
+      return label === key ? value : label;
+    }
+    if (isWindows()) {
+      const value = settings?.preferredTerminal || "cmd";
+      const key = `settings.terminal.options.windows.${value}`;
+      const label = t(key);
+      return label === key ? value : label;
+    }
+    return null;
   }, [settings?.preferredTerminal, t]);
 
   const copyText = useCallback(
