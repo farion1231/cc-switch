@@ -647,22 +647,27 @@ input[type="password"]::-ms-clear {
 }
 
 /*
- * Auth center quota column (AccountQuotaColumn): fixed width so every
- * account's bars start at the same x and have the same length. It widens only
- * when the group card itself has room — a viewport breakpoint would also fire
- * with the sidebar open at the 900px minimum window width and squeeze the
- * account name. Cells: label 112 + bar + value 64 + countdown 52 + 3 × 8 gap.
+ * Auth center quota column (AccountQuotaColumn): the bar, value and countdown
+ * cells have fixed widths and the column hugs its right edge, so every
+ * account's bars start at the same x and have the same length. The label cell
+ * takes the longest tier name in the account (56–112px) instead of always
+ * reserving 112px, so short names ("5-hour") don't leave a gap that squeezes
+ * the account name. The bar widens only when the group card itself has room —
+ * a viewport breakpoint would also fire with the sidebar open at the 900px
+ * minimum window width. Cells: label + bar + value 64 + countdown 52 + 3 × 8 gap.
  */
 .auth-group {
   container-type: inline-size;
 }
 
 .auth-quota-col {
-  width: 332px;
+  --auth-quota-bar: 72px;
+  min-width: calc(56px + var(--auth-quota-bar) + 64px + 52px + 3 * 8px);
+  max-width: calc(112px + var(--auth-quota-bar) + 64px + 52px + 3 * 8px);
 }
 
 @container (min-width: 800px) {
   .auth-quota-col {
-    width: 368px;
+    --auth-quota-bar: 104px;
   }
 }
