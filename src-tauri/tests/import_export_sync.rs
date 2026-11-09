@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use cc_switch_lib::{AppError, AppType, ConfigService, MultiAppConfig, Provider};
 
-#[path = "support.rs"]
+#[path = "support/mod.rs"]
 mod support;
 use support::{
     create_test_state, create_test_state_with_config, ensure_test_home, reset_test_fs, test_mutex,
@@ -427,6 +427,7 @@ command = "echo"
                 mcode: false,
                 kimi: false,
                 trae: false,
+                copilot: false,
                 dsh: false,
                 pi: false,
                 omp: false,
@@ -564,6 +565,7 @@ fn import_from_claude_merges_into_config() {
                 mcode: false,
                 kimi: false,
                 trae: false,
+                copilot: false,
                 dsh: false,
                 pi: false,
                 omp: false,

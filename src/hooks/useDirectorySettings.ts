@@ -7,7 +7,7 @@ import type { SettingsFormState } from "./useSettingsForm";
 
 export type DirectoryAppId = Exclude<
   AppId,
-  "claude-desktop" | "mcode" | "agy" | "kimi" | "trae"
+  "claude-desktop" | "mcode" | "agy" | "kimi" | "trae" | "copilot"
 >;
 type AppDirectoryKey =
   | "claude"

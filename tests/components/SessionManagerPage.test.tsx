@@ -582,6 +582,7 @@ describe("SessionManagerPage", () => {
         dsh: false,
         agy: false,
         omp: false,
+        copilot: false,
       },
     });
     renderPage("codex");

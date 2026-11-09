@@ -2,7 +2,6 @@ use cc_switch_lib::{AppType, McpApps, McpServer, McpService, Provider, ProviderS
 use serde_json::{json, Value};
 use std::{ffi::OsString, fs};
 
-#[path = "support.rs"]
 mod support;
 use support::{create_test_state, reset_test_fs, test_mutex};
 

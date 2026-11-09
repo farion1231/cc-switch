@@ -21,6 +21,7 @@ export const SESSION_APP_IDS = [
   "trae",
   "dsh",
   "agy",
+  "copilot",
 ] as const satisfies readonly AppId[];
 
 export type SessionAppId = (typeof SESSION_APP_IDS)[number];
@@ -46,12 +47,13 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
   agy: [
     "~/.gemini/antigravity-cli/brain/<conversation>/.system_generated/logs",
   ],
+  copilot: ["~/.copilot/session-state"],
 };
 
 /** MiniMax Code / TRAE CLI 等的会话只能在各自客户端里删（后端也会拒绝）。 */
 export const canDeleteSession = (session: SessionMeta) =>
   Boolean(session.sourcePath) &&
-  !["mcode", "agy", "dsh", "trae"].includes(session.providerId);
+  !["mcode", "agy", "dsh", "trae", "copilot"].includes(session.providerId);
 
 export interface SessionProjectGroup {
   key: string;

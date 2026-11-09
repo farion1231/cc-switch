@@ -7,7 +7,7 @@ use cc_switch_lib::{
     MultiAppConfig, Provider, ProviderService,
 };
 
-#[path = "support.rs"]
+#[path = "support/mod.rs"]
 mod support;
 use std::collections::HashMap;
 use support::{
@@ -546,6 +546,7 @@ command = "say"
                 mcode: false,
                 kimi: false,
                 trae: false,
+                copilot: false,
                 dsh: false,
                 pi: false,
                 omp: false,
