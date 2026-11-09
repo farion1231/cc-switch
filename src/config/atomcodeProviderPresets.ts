@@ -65,7 +65,9 @@ export const atomcodeProviderPresets: AtomCodeProviderPreset[] = [
     providerKey: "anthropic",
     websiteUrl: "https://www.anthropic.com",
     apiKeyUrl: "https://console.anthropic.com/settings/keys",
-    category: "official",
+    category: "cn_official",
+    icon: "anthropic",
+    iconColor: "#D4915D",
     settingsConfig: {
       account: {
         provider: "anthropic",
@@ -82,7 +84,9 @@ export const atomcodeProviderPresets: AtomCodeProviderPreset[] = [
     providerKey: "openai",
     websiteUrl: "https://platform.openai.com",
     apiKeyUrl: "https://platform.openai.com/api-keys",
-    category: "official",
+    category: "cn_official",
+    icon: "openai",
+    iconColor: "#00A67E",
     settingsConfig: {
       account: {
         provider: "openai",

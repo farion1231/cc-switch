@@ -52,6 +52,20 @@ describe("atomcodeProviderPresets", () => {
     ]);
   });
 
+  it("categorizes Anthropic and OpenAI under model vendors (cn_official)", () => {
+    const anthropic = atomcodeProviderPresets.find(
+      (p) => p.name === "Anthropic",
+    );
+    expect(anthropic).toBeDefined();
+    expect(anthropic!.category).toBe("cn_official");
+    expect(anthropic!.icon).toBe("anthropic");
+
+    const openai = atomcodeProviderPresets.find((p) => p.name === "OpenAI");
+    expect(openai).toBeDefined();
+    expect(openai!.category).toBe("cn_official");
+    expect(openai!.icon).toBe("openai");
+  });
+
   it("declares exactly the provider types the backend accepts", () => {
     expect(ATOMCODE_PROVIDER_TYPES.map((type) => type.value)).toEqual([
       "openai",
