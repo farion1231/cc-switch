@@ -144,7 +144,9 @@ export function SessionItem({
           ? "dsh.deleteSessionHint"
           : session.providerId === "agy"
             ? "sessionManager.agyDeleteHint"
-            : "sessionManager.mcodeDeleteHint",
+            : session.providerId === "copilot"
+              ? "sessionManager.copilotDeleteHint"
+              : "sessionManager.mcodeDeleteHint",
         {
           defaultValue: "请在 MiniMax Code 中删除",
         },

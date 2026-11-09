@@ -199,7 +199,8 @@ export function EditProviderDialog({
         appId === "kimi" ||
         appId === "dsh" ||
         appId === "omp" ||
-        appId === "atomcode"
+        appId === "atomcode" ||
+        appId === "copilot"
       ) {
         if (!cancelled) {
           setLiveSettings(null);

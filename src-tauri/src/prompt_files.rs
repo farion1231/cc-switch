@@ -46,6 +46,8 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Omp => crate::omp_config::get_omp_agent_dir()?,
         // AtomCode 的项目指令由它自己按 AGENTS.md 标准加载，管理页暂不接入。
         AppType::AtomCode => crate::atomcode_config::data_dir(),
+        // Copilot CLI 的个人指令是 `~/.copilot/copilot-instructions.md`（`copilot instruction list`）。
+        AppType::Copilot => crate::copilot_config::copilot_dir(),
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
@@ -62,6 +64,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         | AppType::Dsh
         | AppType::Omp
         | AppType::AtomCode => "AGENTS.md",
+        AppType::Copilot => "copilot-instructions.md",
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 

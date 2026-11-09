@@ -199,6 +199,7 @@
       "agySwitchTitle": "agy 로그인 계정이 변경됩니다",
       "agySwitchBody": "터미널을 열기 전에 agy 로그인 계정을 {{account}}(으)로 변경합니다. 이후 새로 실행하는 모든 agy는 이 계정을 사용합니다.",
       "agySwitchRunning": "실행 중인 agy가 감지되었습니다. 이미 실행 중인 agy는 기존 계정을 계속 사용하며, 기존 계정 정보를 로그인 설정에 다시 저장할 수도 있습니다. 먼저 해당 agy를 모두 종료하는 것이 좋습니다.",
+      "isolationBodyCopilot": "“{{name}}”의 엔드포인트, API 키와 모델은 이 터미널에서 실행하는 copilot에만 전달되고 어떤 파일에도 저장되지 않습니다. 다른 터미널에서 copilot을 직접 실행하면 GitHub 로그인을 계속 사용합니다.",
       "skipPermissions": "권한 확인 건너뛰기",
       "extraArgs": "추가 인수(선택 사항)",
       "extraArgsPlaceholder": "예: --debug --append-system-prompt \"간결하게 답변하세요\"",
@@ -1177,6 +1178,7 @@
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
+    "copilot": "Copilot CLI",
     "omp": "Oh My Pi"
   },
   "mcode": {
@@ -1636,6 +1638,7 @@
       "expandContent": "전체 콘텐츠 표시",
       "collapseContent": "접기"
     },
+    "copilotDeleteHint": "세션 저장소의 일관성을 유지하려면 GitHub Copilot CLI에서 이 세션을 삭제하세요.",
     "dshMergedNote": "DeepSeek Harness의 Web과 Desktop은 동일한 세션 기록을 공유합니다. 이 기록은 여기에 통합하여 표시됩니다."
   },
   "console": {
@@ -1929,7 +1932,29 @@
     "deploymentType": "GitHub 배포 유형",
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Enterprise Server",
-    "enterpriseDomainPlaceholder": "예를 들어 company.ghe.com"
+    "enterpriseDomainPlaceholder": "예를 들어 company.ghe.com",
+    "form": {
+      "officialTitle": "Copilot CLI 자체의 GitHub 로그인 사용",
+      "officialHint": "‘터미널 열기’는 이 카드의 모델로 copilot을 시작합니다. 인증 센터 계정을 연결하면 해당 계정으로 시작합니다.",
+      "byokTitle": "이 카드에서 연 터미널에서만 적용됩니다",
+      "byokHint": "Copilot CLI는 사용자 지정 모델을 환경 변수에서만 읽으므로 Copilot 자체 파일에는 아무것도 기록하지 않습니다.",
+      "apiFormat": "API 형식",
+      "baseUrl": "API 엔드포인트",
+      "baseUrlHint": "OpenAI 호환 엔드포인트는 보통 /v1로 끝납니다(예: Ollama http://localhost:11434/v1). Anthropic은 호스트만 입력합니다(https://api.anthropic.com).",
+      "model": "모델",
+      "officialModelHint": "비워 두면 Copilot의 현재 모델을 사용합니다. 이번 세션에만 --model로 전달되며, copilot 안의 /model은 그대로 사용할 수 있습니다.",
+      "byokModelHint": "엔드포인트에서 요구하는 모델 ID(COPILOT_MODEL)입니다.",
+      "reasoningEffort": "추론 수준",
+      "reasoningEffortDefault": "Copilot 기본값",
+      "reasoningEffortHint": "터미널을 열 때 --reasoning-effort로 전달됩니다. none을 선택하면 Copilot이 Responses 요청에 reasoning.summary를 보내지 않으며, 일부 중계 서버는 이 필드를 거부합니다.",
+      "maxPromptTokens": "최대 입력 토큰",
+      "maxOutputTokens": "최대 출력 토큰",
+      "envJsonHint": "고급: 모든 COPILOT_PROVIDER_* 변수(예: COPILOT_PROVIDER_MODEL_ID, COPILOT_PROVIDER_BEARER_TOKEN)는 그대로 copilot에 전달됩니다."
+    },
+    "quota": {
+      "accountNotInAuthCenter": "Copilot CLI에 로그인된 계정 {{login}}이(가) 인증 센터에 없습니다. 인증 센터에 추가하거나 이 카드에 계정을 연결하세요.",
+      "notSignedIn": "Copilot CLI에 로그인되어 있지 않습니다. copilot을 실행해 /login으로 로그인하거나 이 카드에 인증 센터 계정을 연결하세요."
+    }
   },
   "codexOauth": {
     "authStatus": "인증 상태",
@@ -4348,6 +4373,7 @@
       "pi": "npm으로 설치",
       "mcode": "공식 스크립트로 설치하며, 실패하면 npm을 사용합니다",
       "agy": "공식 스크립트로 설치",
+      "copilot": "npm으로 설치",
       "omp": "공식 스크립트로 설치"
     }
   },
