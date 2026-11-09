@@ -91,6 +91,32 @@ export function parseDeepLinkConfigPreview(
       };
     }
     if (request.app === "copilot") {
+      // 新形状：providers.json 的供应商条目（provider）和模型列表（models）
+      const provider = parsed.provider;
+      if (
+        provider &&
+        typeof provider === "object" &&
+        !Array.isArray(provider)
+      ) {
+        const values = provider as Record<string, unknown>;
+        const models = Array.isArray(parsed.models) ? parsed.models : [];
+        const ids = models
+          .map((model) =>
+            model && typeof model === "object"
+              ? (model as Record<string, unknown>).id
+              : undefined,
+          )
+          .filter((id): id is string => typeof id === "string" && !!id);
+        return {
+          type: "copilot",
+          env: Object.fromEntries(
+            ["baseUrl", "apiKey", "bearerToken"]
+              .filter((key) => typeof values[key] === "string")
+              .map((key) => [key, values[key] as string]),
+          ),
+          model: ids.length ? ids.join(", ") : undefined,
+        };
+      }
       const env = parsed.env ?? parsed;
       if (!env || typeof env !== "object" || Array.isArray(env)) return null;
       const values = env as Record<string, unknown>;

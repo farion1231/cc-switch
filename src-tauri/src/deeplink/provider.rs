@@ -103,7 +103,9 @@ pub fn import_provider_from_deeplink(
     // Build provider configuration based on app type
     let mut provider = build_provider_from_request(&app_type, &merged_request)?;
 
-    provider.id = if matches!(
+    provider.id = if matches!(app_type, AppType::Copilot) {
+        copilot_link_provider_id(state, &name)?
+    } else if matches!(
         app_type,
         AppType::OpenCode | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp
     ) {
@@ -168,13 +170,46 @@ pub fn import_provider_from_deeplink(
         }
     }
 
-    // If enabled=true, set as current provider. Antigravity、Copilot CLI 没有「启用」，只导入。
-    if !additive && activate && !matches!(app_type, AppType::Agy | AppType::Copilot) {
+    // If enabled=true, set as current provider. Antigravity 没有「启用」，只导入。
+    if !additive && activate && !matches!(app_type, AppType::Agy) {
         ProviderService::switch(state, app_type.clone(), &provider_id)?;
         log::info!("Provider '{provider_id}' set as current for {app_type:?}");
     }
 
     Ok(provider_id)
+}
+
+/// Copilot CLI 的卡片 id 就是 `/model` 里 `<id>/<模型>` 的前缀，用户看得见：取名字的
+/// ASCII slug（`deepseek`），和库里或 providers.json 里已有的撞了就加 `-2`、`-3`…
+fn copilot_link_provider_id(state: &AppState, name: &str) -> Result<String, AppError> {
+    let slug = name
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+        .to_ascii_lowercase();
+    let mut slug = if slug.is_empty() {
+        "provider".to_string()
+    } else {
+        slug
+    };
+    // 给 `-NN` 后缀留位置，整体不超过卡片 id 的 64 字符上限。
+    slug.truncate(56);
+    let slug = slug.trim_end_matches('-').to_string();
+    let taken = |id: &str| -> Result<bool, AppError> {
+        Ok(state.db.get_provider_by_id(id, "copilot")?.is_some()
+            || crate::copilot_config::provider_key_exists(id)?)
+    };
+    if !taken(&slug)? {
+        return Ok(slug);
+    }
+    for n in 2..1000 {
+        let id = format!("{slug}-{n}");
+        if !taken(&id)? {
+            return Ok(id);
+        }
+    }
+    Ok(format!("{slug}-{}", uuid::Uuid::new_v4().simple()))
 }
 
 /// 链接声明的接口格式（`apiFormat`）。站长只学这一套词，各应用换算成自己的字段。
@@ -395,7 +430,7 @@ pub(crate) fn build_provider_from_request(
             build_custom_provider_settings(app_type, request, api_format)?
         }
         AppType::Kimi => build_kimi_settings(request, api_format)?,
-        AppType::Copilot => build_copilot_settings(request, api_format),
+        AppType::Copilot => build_copilot_settings(request, api_format)?,
         AppType::Agy => {
             let mut settings = build_gemini_settings(request);
             settings["env"]
@@ -851,36 +886,28 @@ requires_openai_auth = true
 }
 
 /// Build Gemini settings configuration
-/// Copilot CLI 自带模型的环境变量：接口格式换算成 `COPILOT_PROVIDER_TYPE` 和
-/// `COPILOT_PROVIDER_WIRE_API`。
+/// Copilot CLI 自带模型卡：`provider` 节点（接口格式换算成 `type` / `wireApi`）加一个模型。
+/// Copilot 不调上游 `/models`，链接必须带模型。
 fn build_copilot_settings(
     request: &DeepLinkImportRequest,
     api_format: Option<ApiFormat>,
-) -> serde_json::Value {
-    let mut env = serde_json::Map::new();
-    env.insert(
-        "COPILOT_PROVIDER_BASE_URL".into(),
-        json!(get_primary_endpoint(request)),
-    );
-    if let Some(key) = request.api_key.as_deref() {
-        env.insert(
-            "COPILOT_PROVIDER_API_KEY".into(),
-            json!(normalize_deeplink_api_key(key)),
-        );
-    }
+) -> Result<serde_json::Value, AppError> {
+    let model = required_link_model(&AppType::Copilot, request)?;
+    let mut provider = serde_json::Map::new();
     match native_protocol(&AppType::Copilot, api_format) {
         "anthropic" => {
-            env.insert("COPILOT_PROVIDER_TYPE".into(), json!("anthropic"));
+            provider.insert("type".into(), json!("anthropic"));
         }
         wire => {
-            env.insert("COPILOT_PROVIDER_TYPE".into(), json!("openai"));
-            env.insert("COPILOT_PROVIDER_WIRE_API".into(), json!(wire));
+            provider.insert("type".into(), json!("openai"));
+            provider.insert("wireApi".into(), json!(wire));
         }
     }
-    if let Some(model) = request.model.as_deref().filter(|m| !m.trim().is_empty()) {
-        env.insert("COPILOT_MODEL".into(), json!(model.trim()));
+    provider.insert("baseUrl".into(), json!(get_primary_endpoint(request)));
+    if let Some(key) = request.api_key.as_deref() {
+        provider.insert("apiKey".into(), json!(normalize_deeplink_api_key(key)));
     }
-    json!({ "env": env })
+    Ok(json!({ "provider": provider, "models": [{ "id": model }] }))
 }
 
 fn build_gemini_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
@@ -1411,12 +1438,40 @@ fn merge_agy_config(
     merge_gemini_config(request, env)
 }
 
-/// Copilot CLI：`config` 是 `{env:{...}}` 或扁平的 `COPILOT_*` 键；只取地址、Key、模型，
-/// 其余环境变量不从链接导入。URL 参数优先。
+/// Copilot CLI：`config` 是卡片形状 `{provider:{baseUrl,apiKey}, models:[{id}]}`，或旧版的
+/// `{env:{...}}` / 扁平 `COPILOT_*` 键；只取地址、Key、模型，其余字段不从链接导入。URL 参数优先。
 fn merge_copilot_config(
     request: &mut DeepLinkImportRequest,
     config: &serde_json::Value,
 ) -> Result<(), AppError> {
+    if let Some(provider) = config.get("provider") {
+        let provider = provider.as_object().ok_or_else(|| {
+            AppError::InvalidInput("Copilot CLI config.provider must be an object".into())
+        })?;
+        let get = |key: &str| {
+            provider
+                .get(key)
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        };
+        if request.api_key.is_none() {
+            request.api_key = get("apiKey");
+        }
+        if request.endpoint.is_none() {
+            request.endpoint = get("baseUrl");
+        }
+        if request.model.is_none() {
+            request.model = config
+                .pointer("/models/0/id")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+        }
+        return Ok(());
+    }
     let env = config.get("env").unwrap_or(config);
     if !env.is_object() {
         return Err(AppError::InvalidInput(
