@@ -80,6 +80,10 @@
     "disableArtifactHelp": "Leaves the Artifact tool out of requests. Some third-party gateways reject its schema and return 400 on every request. Switches with the provider.",
     "disableAutoModeServer": "Disable Auto Mode Server Checks",
     "disableAutoModeServerHelp": "Gateways can't run the server-side check, so auto mode pauses once per session with a \"not eligible\" notice, then falls back to the local check after you press Enter. Checked, it uses the local check right away with no notice. Leave it unchecked on official endpoints.",
+    "advisorModel": "Advisor Model",
+    "advisorModelHelp": "Lets Claude consult a stronger model through the server-side advisor tool. Leave empty to turn the advisor off. Accepts opus, sonnet, fable, or a full model ID; the advisor must be at least as capable as the main model. Only works on the Anthropic API; other endpoints ignore it. Switches with the provider.",
+    "advisorModelInput": "Advisor model name",
+    "advisorModelPresets": "Advisor model presets",
     "keyFieldsHint": "Endpoint, key, models, context window and compatibility switches follow the provider; everything else is a global Claude Code setting and applies to every provider once saved.",
     "inactiveFieldsHint": "Saved in this provider by an older version; switching no longer applies them. Click one to add it above; after saving it applies to every provider.",
     "addToGlobalSettings": "Add to global settings"

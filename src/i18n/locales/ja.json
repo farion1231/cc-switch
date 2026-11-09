@@ -80,6 +80,10 @@
     "disableArtifactHelp": "Artifact ツールをリクエストに含めません。一部のサードパーティゲートウェイはそのスキーマを拒否し、すべてのリクエストで 400 を返します。プロバイダーに従って切り替わります。",
     "disableAutoModeServer": "auto mode のサーバー側チェックを無効化",
     "disableAutoModeServerHelp": "ゲートウェイはサーバー側チェックに対応していないため、auto mode はセッションごとに一度「対象外」の通知で止まり、Enter を押すとローカルチェックに切り替わります。オンにすると最初からローカルチェックを使い、通知は出ません。公式エンドポイントではオンにしないでください。",
+    "advisorModel": "Advisor モデル",
+    "advisorModelHelp": "サーバー側の advisor ツールで、Claude がより強いモデルに相談できるようにします。空欄にすると advisor はオフになります。opus、sonnet、fable、または完全なモデル ID を指定でき、advisor はメインモデルと同等以上の性能が必要です。Anthropic API でのみ有効で、他のエンドポイントでは無視されます。プロバイダーに合わせて切り替わります。",
+    "advisorModelInput": "Advisor モデル名",
+    "advisorModelPresets": "Advisor モデルのプリセット",
     "keyFieldsHint": "エンドポイント、キー、モデル、コンテキストウィンドウ、互換スイッチはプロバイダーの切り替えに従います。それ以外のフィールドは Claude Code のグローバル設定で、保存するとすべてのプロバイダーに適用されます。",
     "inactiveFieldsHint": "旧バージョンがこのプロバイダーに保存した設定で、切り替えでは反映されなくなりました。クリックすると上に追加され、保存後はすべてのプロバイダーに適用されます。",
     "addToGlobalSettings": "グローバル設定に追加"

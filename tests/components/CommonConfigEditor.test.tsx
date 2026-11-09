@@ -23,12 +23,14 @@ function renderEditor(
   value: string,
   onChange = vi.fn(),
   inactiveFields: ProviderEditorInactiveField[] = [],
+  showAdvisorModel = true,
 ) {
   render(
     <CommonConfigEditor
       value={value}
       onChange={onChange}
       inactiveFields={inactiveFields}
+      showAdvisorModel={showAdvisorModel}
     />,
   );
   return onChange;
@@ -159,5 +161,90 @@ describe("CommonConfigEditor quick toggle help", () => {
       ).not.toBeChecked();
     }
     expect(onChange).not.toHaveBeenCalled();
+  });
+});
+
+describe("CommonConfigEditor advisor model", () => {
+  const advisorCheckbox = () =>
+    screen.getByRole("checkbox", { name: "claudeConfig.advisorModel" });
+  const advisorInput = () =>
+    screen.getByRole("textbox", { name: "claudeConfig.advisorModelInput" });
+
+  it("reads advisorModel as checked and shows its value", () => {
+    renderEditor(JSON.stringify({ advisorModel: "sonnet" }));
+
+    expect(advisorCheckbox()).toBeChecked();
+    expect(advisorInput()).toHaveValue("sonnet");
+  });
+
+  it("enables the advisor with opus by default", () => {
+    const onChange = renderEditor(JSON.stringify({ model: "opus" }));
+
+    fireEvent.click(advisorCheckbox());
+
+    expect(JSON.parse(onChange.mock.calls[0][0])).toEqual({
+      model: "opus",
+      advisorModel: "opus",
+    });
+  });
+
+  it("removes advisorModel when unchecked", () => {
+    const onChange = renderEditor(
+      JSON.stringify({ model: "opus", advisorModel: "claude-opus-5-5" }),
+    );
+
+    fireEvent.click(advisorCheckbox());
+
+    expect(JSON.parse(onChange.mock.calls[0][0])).toEqual({ model: "opus" });
+  });
+
+  it("writes a typed model and drops the key when cleared", () => {
+    const onChange = renderEditor("{}");
+
+    fireEvent.change(advisorInput(), {
+      target: { value: " claude-opus-5-5 " },
+    });
+    expect(JSON.parse(onChange.mock.calls[0][0])).toEqual({
+      advisorModel: "claude-opus-5-5",
+    });
+
+    fireEvent.change(advisorInput(), { target: { value: "" } });
+    expect(JSON.parse(onChange.mock.calls[1][0])).toEqual({});
+  });
+});
+
+describe("CommonConfigEditor advisor model visibility", () => {
+  it("hides the advisor option for non-official providers", () => {
+    renderEditor(JSON.stringify({ advisorModel: "opus" }), vi.fn(), [], false);
+
+    expect(
+      screen.queryByRole("checkbox", { name: "claudeConfig.advisorModel" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("textbox", { name: "claudeConfig.advisorModelInput" }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("CommonConfigEditor advisor model presets", () => {
+  it("lists every alias even when one is already filled in", () => {
+    const onChange = renderEditor(JSON.stringify({ advisorModel: "opus" }));
+
+    fireEvent.keyDown(
+      screen.getByRole("button", { name: "claudeConfig.advisorModelPresets" }),
+      { key: "Enter" },
+    );
+
+    const items = screen.getAllByRole("menuitem");
+    expect(items.map((item) => item.textContent)).toEqual([
+      "opus",
+      "sonnet",
+      "fable",
+    ]);
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "sonnet" }));
+    expect(JSON.parse(onChange.mock.calls[0][0])).toEqual({
+      advisorModel: "sonnet",
+    });
   });
 });

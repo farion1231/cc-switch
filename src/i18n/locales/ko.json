@@ -80,6 +80,10 @@
     "disableArtifactHelp": "요청에서 Artifact Tool을 제외합니다. 일부 타사 게이트웨이는 이 도구의 스키마를 거부하여 모든 요청에 400 오류를 반환합니다. 공급자를 전환하면 이 설정도 함께 바뀝니다.",
     "disableAutoModeServer": "자동 모드 서버 검사 비활성화",
     "disableAutoModeServerHelp": "게이트웨이는 서버 측 검사를 실행할 수 없어 자동 모드가 세션마다 한 번씩 ‘사용 자격 없음’ 알림과 함께 일시 중지됩니다. Enter를 누르면 로컬 검사로 전환됩니다. 이 옵션을 켜면 알림 없이 바로 로컬 검사를 사용합니다. 공식 엔드포인트에서는 꺼 두세요.",
+    "advisorModel": "Advisor 모델",
+    "advisorModelHelp": "서버 측 advisor 도구를 통해 Claude가 더 강력한 모델에 조언을 구할 수 있게 합니다. 비워 두면 advisor가 꺼집니다. opus, sonnet, fable 또는 전체 모델 ID를 입력할 수 있으며, advisor는 메인 모델 이상의 성능이어야 합니다. Anthropic API에서만 동작하며 다른 엔드포인트에서는 무시됩니다. 공급자를 전환하면 함께 바뀝니다.",
+    "advisorModelInput": "Advisor 모델 이름",
+    "advisorModelPresets": "Advisor 모델 프리셋",
     "keyFieldsHint": "엔드포인트, API 키, 모델, 컨텍스트 창 및 호환성 옵션은 공급자를 전환하면 함께 바뀝니다. 나머지 필드는 Claude Code 전역 설정이며 저장하면 모든 공급자에 적용됩니다.",
     "inactiveFieldsHint": "이전 버전에서 이 공급자에 저장한 설정으로, 이제 공급자를 전환해도 적용되지 않습니다. 항목을 선택하면 위의 전역 설정에 추가됩니다. 저장한 후에는 모든 공급자에 적용됩니다.",
     "addToGlobalSettings": "전역 설정에 추가"
