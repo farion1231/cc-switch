@@ -904,8 +904,9 @@ pub fn read_live_provider_settings(app: String) -> Result<serde_json::Value, App
 pub async fn test_api_endpoints(
     urls: Vec<String>,
     #[allow(non_snake_case)] timeoutSecs: Option<u64>,
+    #[allow(non_snake_case)] proxyUrl: Option<String>,
 ) -> Result<Vec<EndpointLatency>, AppError> {
-    SpeedtestService::test_endpoints(urls, timeoutSecs).await
+    SpeedtestService::test_endpoints(urls, timeoutSecs, proxyUrl.as_deref()).await
 }
 
 #[tauri::command]

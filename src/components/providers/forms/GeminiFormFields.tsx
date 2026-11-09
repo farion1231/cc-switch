@@ -251,6 +251,7 @@ export function GeminiFormFields({
           autoSelect={autoSelect}
           onAutoSelectChange={onAutoSelectChange}
           onCustomEndpointsChange={onCustomEndpointsChange}
+          proxyUrl={proxyUrl}
         />
       )}
     </>
