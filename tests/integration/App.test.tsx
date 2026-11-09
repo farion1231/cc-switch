@@ -159,7 +159,8 @@ vi.mock("@/components/UsageScriptModal", () => ({
 vi.mock("@/components/ConfirmDialog", () => ({
   ConfirmDialog: ({ isOpen, message, onConfirm, onCancel }: any) =>
     isOpen ? (
-      <div data-testid="confirm-dialog">
+      // 与真实 Radix Dialog 的 Content 一致：只有 role="dialog" + data-state，没有 aria-modal
+      <div data-testid="confirm-dialog" role="dialog" data-state="open">
         <div data-testid="confirm-message">{message}</div>
         <button onClick={() => onConfirm()}>confirm-delete</button>
         <button onClick={() => onCancel()}>cancel-delete</button>
@@ -427,6 +428,71 @@ describe("App integration with MSW", () => {
     fireEvent.keyDown(window, { key: ",", metaKey: true });
     expect(await screen.findByTestId("settings-page")).toBeInTheDocument();
     expect(screen.queryByTestId("add-provider-dialog")).not.toBeInTheDocument();
+  }, 10_000);
+
+  it("does not open global search over a confirm dialog", async () => {
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "claude-1",
+      ),
+    );
+
+    // 先关掉首次启动提示（它本身就是模态对话框，会挡住 ⌘K）
+    fireEvent.click(
+      await screen.findByRole("button", { name: "firstRunNotice.confirm" }),
+    );
+    await waitFor(() =>
+      expect(
+        document.querySelector('[role="dialog"][data-state="open"]'),
+      ).toBeNull(),
+    );
+
+    // 确认框开着时若能跨应用跳转，确认后会按新应用删除同 id 的供应商
+    fireEvent.click(screen.getByText("delete"));
+    expect(await screen.findByTestId("confirm-dialog")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    fireEvent.keyDown(document.body, { key: "f", ctrlKey: true });
+    expect(document.querySelector("[data-global-search]")).toBeNull();
+
+    fireEvent.click(screen.getByText("cancel-delete"));
+    await waitFor(() =>
+      expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument(),
+    );
+
+    // Popover 的 Content 也是 role="dialog"，但它不是模态，不该挡住 ⌘K
+    // 搜索框（cmdk）会把选中项 scrollIntoView，jsdom 没有这个方法
+    const scrollIntoView = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      "scrollIntoView",
+    );
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const popper = document.createElement("div");
+    popper.setAttribute("data-radix-popper-content-wrapper", "");
+    popper.innerHTML = '<div role="dialog" data-state="open"></div>';
+    document.body.appendChild(popper);
+    try {
+      fireEvent.keyDown(window, { key: "k", metaKey: true });
+      await waitFor(() =>
+        expect(document.querySelector("[data-global-search]")).not.toBeNull(),
+      );
+    } finally {
+      popper.remove();
+      if (scrollIntoView) {
+        Object.defineProperty(
+          HTMLElement.prototype,
+          "scrollIntoView",
+          scrollIntoView,
+        );
+      } else {
+        Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+      }
+    }
   }, 10_000);
 
   it("asks before leaving an editor page with unsaved changes", async () => {

@@ -45,7 +45,7 @@ const DIRECTORY_PLACEHOLDER: Record<DirectoryAppId, string> = {
   dsh: "settings.browsePlaceholderDsh",
 };
 
-const DIRECTORY_APPS: DirectoryAppId[] = [
+export const DIRECTORY_APPS: DirectoryAppId[] = [
   "claude",
   "codex",
   "gemini",

@@ -17,6 +17,7 @@ import {
   Layers,
   LayoutGrid,
   Route,
+  Search,
   Server,
   Settings,
   SlidersHorizontal,
@@ -62,6 +63,8 @@ interface SidebarProps {
   onExitSettings: () => void;
   /** 打开了「启动时检查应用更新」并且查到了新版本 */
   appsUpdateAvailable?: boolean;
+  /** 打开全局搜索 */
+  onOpenSearch?: () => void;
 }
 
 type DirectoryProps = SidebarProps & { collapsed: boolean };
@@ -95,6 +98,9 @@ export function Sidebar(props: SidebarProps) {
         {t("nav.skipToContent")}
       </a>
       <SidebarTopBar collapsed={collapsed} onToggle={toggle} />
+      {props.onOpenSearch && (
+        <SearchTrigger collapsed={collapsed} onClick={props.onOpenSearch} />
+      )}
       {inSettings ? (
         <SettingsDirectory {...props} collapsed={collapsed} />
       ) : (
@@ -202,6 +208,48 @@ function SidebarTopBar({
       )}
       {toggleButton}
     </div>
+  );
+}
+
+/** 全局搜索的入口：展开时是一条假输入框（带快捷键提示），收起时是图标。 */
+function SearchTrigger({
+  collapsed,
+  onClick,
+}: {
+  collapsed: boolean;
+  onClick: () => void;
+}) {
+  const { t } = useTranslation();
+  const shortcut = isMac() ? "⌘K" : "Ctrl K";
+  const label = t("globalSearch.trigger");
+  const tip = t("globalSearch.triggerTip", { shortcut });
+  if (collapsed) {
+    return (
+      <HoverTip content={tip} side="right" disableHoverableContent>
+        <button
+          type="button"
+          onClick={onClick}
+          aria-label={tip}
+          aria-keyshortcuts={isMac() ? "Meta+K" : "Control+K"}
+          className="mx-auto mb-1.5 flex h-8 w-12 shrink-0 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1"
+        >
+          <Search className="h-[18px] w-[18px]" strokeWidth={1.5} />
+        </button>
+      </HoverTip>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={tip}
+      aria-keyshortcuts={isMac() ? "Meta+K" : "Control+K"}
+      className="mx-2 mb-2 flex h-7 w-[184px] shrink-0 items-center gap-2 rounded-control border border-border bg-surface px-2 text-start text-fg-3 transition-colors hover:border-border-strong hover:text-fg-2"
+    >
+      <Search className="h-3.5 w-3.5 shrink-0" strokeWidth={1.5} />
+      <span className="min-w-0 flex-1 truncate text-caption">{label}</span>
+      <kbd className="shrink-0 font-sans text-badge text-fg-3">{shortcut}</kbd>
+    </button>
   );
 }
 

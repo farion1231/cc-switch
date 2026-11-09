@@ -169,13 +169,6 @@
     "removeFromClaudePlugin": "從 Claude 外掛程式移除",
     "dragToReorder": "拖曳以重新排序",
     "dragHandle": "拖曳排序",
-    "searchPlaceholder": "依名稱/備註/網址搜尋供應商...",
-    "searchAriaLabel": "搜尋供應商",
-    "searchScopeHint": "根據名稱、備註、官網和請求位址比對結果。",
-    "searchButtonTip": "搜尋供應商（{{shortcut}}）",
-    "searchCloseHint": "按 Esc 關閉",
-    "searchCloseAriaLabel": "關閉供應商搜尋",
-    "noSearchResults": "沒有符合搜尋條件的供應商。",
     "duplicate": "複製",
     "sortUpdateFailed": "排序更新失敗",
     "configureUsage": "設定用量查詢",
@@ -950,9 +943,7 @@
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI",
       "showProfileSwitcher": "顯示專案切換",
-      "showProfileSwitcherDescription": "在主頁面頂部顯示專案切換入口",
-      "showProviderSearch": "顯示供應商搜尋",
-      "showProviderSearchDescription": "在供應商頁頂部顯示搜尋按鈕，可依名稱、備註、官網和請求位址查找。關閉後仍可用 ⌘F / Ctrl+F 開啟搜尋"
+      "showProfileSwitcherDescription": "在主頁面頂部顯示專案切換入口"
     },
     "terminal": {
       "title": "首選終端機",
@@ -5235,5 +5226,25 @@
       "managedHint": "帳號在授權中心管理：登出後這張卡會自動消失。"
     },
     "deleteSessionHint": "請在 DeepSeek Harness 中刪除此工作階段，以保持原生歷史記錄一致。"
+  },
+  "globalSearch": {
+    "title": "全域搜尋",
+    "trigger": "搜尋",
+    "triggerTip": "全域搜尋（{{shortcut}}）",
+    "placeholder": "搜尋頁面、設定、供應商、MCP、Skills、提示詞…",
+    "loading": "正在讀取…",
+    "empty": "沒有符合「{{query}}」的結果",
+    "more": "還有 {{count}} 項，繼續輸入以縮小範圍",
+    "hintMove": "選擇",
+    "hintOpen": "開啟",
+    "hintClose": "關閉",
+    "groups": {
+      "pages": "頁面",
+      "settings": "設定項",
+      "providers": "供應商",
+      "mcp": "MCP",
+      "skills": "Skills",
+      "prompts": "提示詞"
+    }
   }
 }

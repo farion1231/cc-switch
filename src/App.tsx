@@ -12,13 +12,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
 import { invoke } from "@tauri-apps/api/core";
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  ExternalLink,
-  KeyRound,
-  MoreHorizontal,
-  Plus,
-  Search,
-} from "lucide-react";
+import { ExternalLink, KeyRound, MoreHorizontal, Plus } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
 import { KNOWN_APP_TYPES, type AppTypeFilter } from "@/types/usage";
@@ -62,9 +56,12 @@ import {
   translatePiProviderMutationError,
 } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
+import { requestReveal } from "@/lib/searchReveal";
+import { GlobalSearchDialog } from "@/components/search/GlobalSearchDialog";
+import type { SearchTarget } from "@/components/search/searchIndex";
 import { setZoom, stepZoom } from "@/lib/interfacePrefs";
 import { deepClone } from "@/utils/deepClone";
-import { isLinux, isMac, isWindows } from "@/lib/platform";
+import { isLinux, isWindows } from "@/lib/platform";
 import {
   APP_STORAGE_KEY,
   appPageBelongsTo,
@@ -212,6 +209,22 @@ interface SyncStatusUpdatedPayload {
 
 type OpenClawConfigTab = "env" | "tools" | "agents";
 
+/**
+ * 有模态对话框开着（确认框、表单弹窗、Sheet）：全局快捷键不抢焦点。
+ * Radix Dialog 的 Content 只设 role="dialog" 不设 aria-modal，按 data-state 判断打开；
+ * Popover 的 Content 同样是 role="dialog"，但它不是模态，排除掉（包在 popper wrapper 里）。
+ */
+const isModalOpen = () =>
+  Array.from(
+    document.querySelectorAll(
+      '[role="dialog"][data-state="open"], [role="alertdialog"]',
+    ),
+  ).some(
+    (el) =>
+      !el.hasAttribute("data-global-search") &&
+      !el.closest("[data-radix-popper-content-wrapper]"),
+  );
+
 const getInitialApp = (): AppId => {
   const saved = localStorage.getItem(APP_STORAGE_KEY) as AppId | null;
   if (saved && APP_IDS.includes(saved)) {
@@ -239,17 +252,14 @@ function App() {
     PROMPT_APP_IDS.includes(sharedFeatureApp) ? sharedFeatureApp : "claude",
   );
   const [isAddOpen, setIsAddOpen] = useState(false);
+  // 全局搜索（⌘K / Ctrl+K、侧栏顶部的搜索条）
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [hasOpenedAdd, setHasOpenedAdd] = useState(false);
   useEffect(() => {
     if (isAddOpen) setHasOpenedAdd(true);
   }, [isAddOpen]);
-  // 供应商搜索面板：页头按钮和 ⌘F 都能打开；换应用或离开供应商页就收起
-  const [providerSearchOpen, setProviderSearchOpen] = useState(false);
   const [connectionStatusSlot, setConnectionStatusSlot] =
     useState<HTMLDivElement | null>(null);
-  useEffect(() => {
-    setProviderSearchOpen(false);
-  }, [activeApp, currentView]);
   // 供应商页顶部正在看的那格（直连 / 路由 / 聚合），由 SwitchModePanel 报上来。打开新增、
   // 编辑时记下当时那格，表单按它选布局：在聚合那格打开就是聚合的简化表单。
   const [providerModeView, setProviderModeView] = useState<{
@@ -285,6 +295,21 @@ function App() {
       ...settingsData?.visibleApps,
     }),
     [settingsData?.visibleApps],
+  );
+
+  // 全局搜索的范围：侧栏里显示的应用、提示词页 / 插件页能选的应用
+  const searchApps = useMemo(
+    () => orderAppIds(settingsData?.appOrder).filter((app) => visibleApps[app]),
+    [settingsData?.appOrder, visibleApps],
+  );
+  const searchPromptApps = useMemo(
+    () =>
+      PROMPT_APP_IDS.filter(
+        (app) =>
+          visibleApps[app] ||
+          (app === "claude" && visibleApps["claude-desktop"]),
+      ),
+    [visibleApps],
   );
 
   const getFirstVisibleApp = (): AppId => {
@@ -1015,6 +1040,68 @@ function App() {
     openPage(page);
   };
 
+  // 全局搜索选中一项：先导航（同普通导航一样受「进行中的操作」和「未保存」拦着），再定位到那一项
+  const navigateToSearchTarget = (target: SearchTarget) => {
+    if (managementBusyRef.current) return;
+    if (confirmLeave(() => navigateToSearchTarget(target))) return;
+    closeProviderPanels();
+
+    const goApp = (app: AppId, page: View = "providers") => {
+      setActiveApp(app);
+      localStorage.setItem(APP_STORAGE_KEY, app);
+      setCurrentView(page);
+    };
+    const goPage = (page: GlobalPage) => {
+      if (page === "usage") setUsageAppFilter("all");
+      if (page === "prompts" && currentViewRef.current !== "prompts") {
+        setPromptsApp(
+          PROMPT_APP_IDS.includes(sharedFeatureApp)
+            ? sharedFeatureApp
+            : "claude",
+        );
+      }
+      setCurrentView(page);
+    };
+
+    switch (target.kind) {
+      case "app":
+        goApp(target.app, target.page);
+        if (target.openclawTab) setOpenclawConfigTab(target.openclawTab);
+        return;
+      case "page":
+        goPage(target.page);
+        return;
+      case "settings":
+        if (currentViewRef.current !== "settings") {
+          settingsReturnViewRef.current = currentViewRef.current;
+        }
+        setSettingsSection(target.section);
+        setAppConfigScrollTarget(target.appConfigApp);
+        setCurrentView("settings");
+        if (target.anchor) {
+          requestReveal(target.anchor, { fallback: target.fallback });
+        }
+        return;
+      case "provider":
+        goApp(target.app);
+        requestReveal(`provider:${target.id}`);
+        return;
+      case "mcp":
+        goPage("mcp");
+        requestReveal(`mcp:${target.id}`);
+        return;
+      case "skill":
+        goPage("skills");
+        requestReveal(`skill:${target.id}`);
+        return;
+      case "prompt":
+        setPromptsApp(target.app);
+        setCurrentView("prompts");
+        requestReveal(`prompt:${target.id}`);
+        return;
+    }
+  };
+
   const openSettingsRef = useRef(openSettings);
   openSettingsRef.current = openSettings;
   const [usageAppFilter, setUsageAppFilter] = useState<AppTypeFilter>("all");
@@ -1044,6 +1131,25 @@ function App() {
           setZoom(1);
           return;
         }
+      }
+
+      // ⌘K / Ctrl+K 在哪都能打开全局搜索；⌘F / Ctrl+F 不在输入框里时也打开
+      // （工作区的每日记忆、新增供应商的预设列表有自己的页内搜索，它们自己接 ⌘F）
+      const key = event.key.toLowerCase();
+      if (
+        mod &&
+        !event.altKey &&
+        !event.shiftKey &&
+        (key === "k" ||
+          (key === "f" &&
+            !event.defaultPrevented &&
+            !isTextEditableTarget(event.target) &&
+            currentViewRef.current !== "workspace"))
+      ) {
+        if (isModalOpen()) return;
+        event.preventDefault();
+        setGlobalSearchOpen((open) => (key === "k" ? !open : true));
+        return;
       }
 
       if (event.key !== "Escape" || event.defaultPrevented) return;
@@ -1514,25 +1620,6 @@ function App() {
               <ExternalLink className="h-3.5 w-3.5" />
             </Button>
           )}
-          {currentView === "providers" &&
-            (settingsData?.showProviderSearch ?? true) && (
-              <HoverTip
-                content={t("provider.searchButtonTip", {
-                  shortcut: isMac() ? "⌘F" : "Ctrl+F",
-                })}
-              >
-                <Button
-                  variant="quiet"
-                  size="icon-compact"
-                  className="h-8 w-8"
-                  aria-label={t("provider.searchAriaLabel")}
-                  aria-pressed={providerSearchOpen}
-                  onClick={() => setProviderSearchOpen((open) => !open)}
-                >
-                  <Search className="h-4 w-4" />
-                </Button>
-              </HoverTip>
-            )}
           {currentView === "providers" && (
             <Button
               variant="solid"
@@ -1611,8 +1698,6 @@ function App() {
         ? setTerminalProvider
         : undefined,
     onCreate: () => openAddProvider(currentModeView),
-    searchOpen: providerSearchOpen,
-    onSearchOpenChange: setProviderSearchOpen,
   };
 
   const renderProviderList = () => {
@@ -1890,6 +1975,7 @@ function App() {
           appsUpdateAvailable={
             checkToolUpdatesOnStartup && toolUpdatesAvailable
           }
+          onOpenSearch={() => setGlobalSearchOpen(true)}
         />
         <main
           ref={mainScrollRef}
@@ -2035,6 +2121,14 @@ function App() {
           })();
         }}
         onCancel={() => setLaunchDashboardOpen(false)}
+      />
+
+      <GlobalSearchDialog
+        open={globalSearchOpen}
+        onOpenChange={setGlobalSearchOpen}
+        onSelect={navigateToSearchTarget}
+        apps={searchApps}
+        promptApps={searchPromptApps}
       />
 
       <DeepLinkImportDialog />
