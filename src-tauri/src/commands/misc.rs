@@ -5973,13 +5973,27 @@ fn copilot_terminal_launch(
             env.push(("COPILOT_GH_HOST", Some(domain)));
         }
     }
+    // npm 装的是 copilot.cmd：不加 `call` 跑完不回到启动 .bat，后面删临时文件（含 Key、
+    // GitHub 令牌的 .bat 本身）的几行就不执行了。`call` 会把 `%` 再展开一遍、把引号里的 `^`
+    // 加倍，cmd 也不认 `\"`，所以模型名里有这些字符时不在 Windows 上启动。
+    if cfg!(target_os = "windows")
+        && launch
+            .model
+            .as_deref()
+            .is_some_and(|model| model.contains(['"', '%', '^']))
+    {
+        return Err(format!(
+            "「{}」的模型名里有 Windows 终端传不过去的字符（\" % ^）",
+            provider.name
+        ));
+    }
     let (mut args, mut batch_command, batch_vars) = match launch.model {
         Some(model) => (
             vec![format!("--model={model}")],
-            format!("copilot \"--model=%{COPILOT_MODEL_BATCH_VAR}%\""),
+            format!("call copilot \"--model=%{COPILOT_MODEL_BATCH_VAR}%\""),
             vec![(COPILOT_MODEL_BATCH_VAR, model)],
         ),
-        None => (Vec::new(), "copilot".to_string(), Vec::new()),
+        None => (Vec::new(), "call copilot".to_string(), Vec::new()),
     };
     // 只会是 copilot_config::REASONING_EFFORTS 里的小写单词（已校验），可以直接写进命令。
     if let Some(effort) = launch.reasoning_effort {
@@ -8056,7 +8070,7 @@ mod tests {
         assert!(env_file.contains("fixture-key"));
         assert!(env_file.contains("gpt-5.4"));
         assert!(!env_file.contains("gho_x"));
-        assert_eq!(launch.batch_command, "copilot");
+        assert_eq!(launch.batch_command, "call copilot");
     }
 
     #[test]
@@ -8078,7 +8092,7 @@ mod tests {
             "{}",
             unix_launch_command(&launch)
         );
-        assert_eq!(launch.batch_command, "copilot --reasoning-effort=none");
+        assert_eq!(launch.batch_command, "call copilot --reasoning-effort=none");
 
         launch.skip_permissions();
         assert!(
@@ -8088,7 +8102,7 @@ mod tests {
         );
         assert_eq!(
             launch.batch_command,
-            "copilot --reasoning-effort=none --allow-all"
+            "call copilot --reasoning-effort=none --allow-all"
         );
 
         // 「打开终端」里的附加参数接在 `--allow-all` 后面
@@ -8103,7 +8117,7 @@ mod tests {
         );
         assert_eq!(
             launch.batch_command,
-            "copilot --reasoning-effort=none --allow-all \"%CC_SWITCH_ARG0%\" \"%CC_SWITCH_ARG1%\""
+            "call copilot --reasoning-effort=none --allow-all \"%CC_SWITCH_ARG0%\" \"%CC_SWITCH_ARG1%\""
         );
     }
 
@@ -8128,7 +8142,7 @@ mod tests {
         );
         assert_eq!(
             launch.batch_command,
-            format!("copilot \"--model=%{COPILOT_MODEL_BATCH_VAR}%\"")
+            format!("call copilot \"--model=%{COPILOT_MODEL_BATCH_VAR}%\"")
         );
 
         let launch = copilot_terminal_launch(
