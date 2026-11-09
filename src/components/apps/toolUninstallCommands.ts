@@ -34,6 +34,7 @@ const COMMANDS: Record<UninstallMethod, UninstallCommand[]> = {
     { tool: "mcode", command: "npm uninstall -g @minimax-ai/code" },
     { tool: "kimi", command: "npm uninstall -g @moonshot-ai/kimi-code" },
     { tool: "qwen", command: "npm uninstall -g @qwen-code/qwen-code" },
+    { tool: "copilot", command: "npm uninstall -g @github/copilot" },
   ],
   pnpm: [
     { tool: "opencode", command: "pnpm remove -g opencode-ai" },
@@ -88,6 +89,11 @@ const COMMANDS: Record<UninstallMethod, UninstallCommand[]> = {
     {
       tool: "agy",
       command: "brew uninstall --cask antigravity-cli",
+      environments: ["macos"],
+    },
+    {
+      tool: "copilot",
+      command: "brew uninstall --cask copilot-cli",
       environments: ["macos"],
     },
   ],

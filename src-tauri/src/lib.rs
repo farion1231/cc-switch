@@ -13,6 +13,7 @@ mod codex_rollout_file;
 mod codex_state_db;
 mod commands;
 mod config;
+mod copilot_config;
 mod database;
 mod deeplink;
 mod dsh_config;
@@ -987,8 +988,9 @@ pub fn run() {
                         }
                     }
 
-                    // 统一会话开关的官方历史迁移：开关开启但上次未完成（如文件被占用
-                    // 中途失败）时在启动期重试；函数内部自门控，开关关闭时直接跳过。
+                    // 统一会话开关的官方历史迁移：开关开着且勾选了迁入既有会话时，每次启动
+                    // 都把留在 openai 桶的会话迁进 custom（新版 Codex 会把它们锁成只读）；
+                    // 函数内部自门控，state DB 里没有 openai 线程时直接跳过。
                     match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {
                         Ok(outcome) => {
                             if let Some(reason) = outcome.skipped_reason {
@@ -1984,6 +1986,7 @@ pub fn run() {
             commands::copilot_get_models_for_account,
             commands::copilot_get_usage,
             commands::copilot_get_usage_for_account,
+            commands::copilot_cli_signed_in_account,
             // OMO commands
             commands::read_omo_local_file,
             commands::get_current_omo_provider_id,
@@ -2263,7 +2266,11 @@ fn is_chinese_locale() -> bool {
     std::env::var("LANG")
         .or_else(|_| std::env::var("LC_ALL"))
         .or_else(|_| std::env::var("LC_MESSAGES"))
-        .map(|lang| lang.starts_with("zh"))
+        .map(|lang| {
+            lang.split(['-', '_', '.', '@'])
+                .next()
+                .is_some_and(|language| language.eq_ignore_ascii_case("zh"))
+        })
         .unwrap_or(false)
 }
 

@@ -17,8 +17,8 @@ use std::time::{Duration, Instant};
 // 其余模型类型从 `session_manager::model` 引用
 pub use model::SessionMessage;
 use providers::{
-    agy, claude, codex, dsh, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw, opencode, pi,
-    qwen,
+    agy, claude, codex, copilot, dsh, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw,
+    opencode, pi, qwen,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -97,7 +97,7 @@ pub(crate) struct SessionScan {
 pub(crate) fn scan_sessions_with_status() -> SessionScan {
     use providers::utils::ScanStatus;
     type Scanner = fn(&mut ScanStatus) -> Vec<SessionMeta>;
-    let scanners: [(&str, Scanner); 14] = [
+    let scanners: [(&str, Scanner); 15] = [
         ("codex", codex::scan_sessions_with_status),
         ("claude", claude::scan_sessions_with_status),
         ("opencode", opencode::scan_sessions_with_status),
@@ -108,6 +108,7 @@ pub(crate) fn scan_sessions_with_status() -> SessionScan {
         ("pi", pi::scan_sessions_with_status),
         ("omp", omp::scan_sessions_with_status),
         ("mcode", mcode::scan_sessions_with_status),
+        ("copilot", copilot::scan_sessions_with_status),
         // 以下来源的扫描还不报告读取失败，按完整处理
         ("kimi", |_| kimi::scan_sessions()),
         ("dsh", |_| dsh::scan_sessions()),
@@ -176,6 +177,7 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "kimi" => kimi::load_messages(path),
         "qwen" => qwen::load_messages(path),
         "omp" => omp::load_messages(path),
+        "copilot" => copilot::load_messages(path),
         "dsh" => dsh::load_messages(path),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
@@ -234,6 +236,12 @@ fn delete_session_source(
     if provider_id == "dsh" {
         return Err(
             "Delete this session in DeepSeek Harness to keep its native history consistent".into(),
+        );
+    }
+    if provider_id == "copilot" {
+        return Err(
+            "Delete this session in GitHub Copilot CLI to keep its session store and history consistent"
+                .into(),
         );
     }
     if provider_id == "agy" {
@@ -309,6 +317,7 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "dsh" => dsh::session_roots(),
         "agy" => agy::session_roots(),
         "omp" => omp::session_roots(),
+        "copilot" => copilot::session_roots(),
         _ => return Err(format!("Unsupported provider: {provider_id}")),
     };
 

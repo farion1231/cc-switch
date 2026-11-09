@@ -14,4 +14,5 @@ export type AppId =
   | "dsh"
   | "mcode"
   | "agy"
-  | "omp";
+  | "omp"
+  | "copilot";

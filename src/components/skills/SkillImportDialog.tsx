@@ -107,6 +107,7 @@ export function SkillImportDialog({
               qwen: chosen.has("qwen"),
               dsh: chosen.has("dsh"),
               agy: chosen.has("agy"),
+              copilot: chosen.has("copilot"),
             },
           };
         }),
