@@ -25,6 +25,7 @@ import type {
 } from "@/lib/api/settings";
 import type { DndContextProps, DragEndEvent } from "@dnd-kit/core";
 import { APP_IDS } from "@/config/appConfig";
+import { TOOL_NAMES } from "@/components/apps/useToolManagement";
 import { emitTauriEvent } from "../msw/tauriMocks";
 
 type ToolVersions = Awaited<ReturnType<typeof settingsApi.getToolVersions>>;
@@ -745,12 +746,12 @@ describe("AppsPage concurrent CLI upgrades", () => {
       "hermes",
       "codex",
     ]);
-    // 只有已安装的能拖
+    // 只有已安装的能拖（共 1 个桌面端 + TOOL_NAMES.length 个工具，减去未安装的 2 个）
     expect(
       within(
         screen.getByRole("region", { name: "appsPage.sectionInstalled" }),
       ).getAllByRole("button", { name: "appsPage.dragHandle" }),
-    ).toHaveLength(APP_IDS.length - 2);
+    ).toHaveLength(TOOL_NAMES.length + 1 - 2);
     expect(
       within(
         screen.getByRole("region", { name: "appsPage.sectionNotInstalled" }),

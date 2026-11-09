@@ -14,6 +14,10 @@ GEMINI.md
 /.codex
 /.gemini
 /.cc-switch
+/.atomcode
+/.mcp.json
+no-updater.json
+tauri-test-config.json
 /.idea
 /.vscode
 vitest-report.json

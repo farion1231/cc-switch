@@ -139,7 +139,15 @@ export function isStackAppId(appId: string): appId is StackAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "kimi" | "dsh" | "omp" | "atomcode"
+  | "opencode"
+  | "openclaw"
+  | "hermes"
+  | "pi"
+  | "mcode"
+  | "kimi"
+  | "dsh"
+  | "omp"
+  | "atomcode"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
@@ -181,7 +189,10 @@ export function usesEditorView(appId: AppId): boolean {
 }
 
 /** Claude Desktop、OpenClaw 不由 CC Switch 管理 MCP；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`）；AtomCode MCP 暂未接入 */
-export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw" | "atomcode">;
+export type McpAppId = Exclude<
+  AppId,
+  "claude-desktop" | "openclaw" | "atomcode"
+>;
 export const MCP_APP_IDS: McpAppId[] = [
   "claude",
   "codex",

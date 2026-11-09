@@ -74,7 +74,9 @@ pub(crate) fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
 
 pub(crate) fn validate_provider(id: &str, config: &Value) -> Result<(), AppError> {
     if id.trim().is_empty() || id.chars().any(char::is_control) {
-        return Err(AppError::InvalidInput("Enter an AtomCode account key".into()));
+        return Err(AppError::InvalidInput(
+            "Enter an AtomCode account key".into(),
+        ));
     }
     if !id
         .chars()
@@ -279,14 +281,18 @@ fn save_at_and_commit<T>(
     let _guard = WRITE_LOCK
         .lock()
         .map_err(|e| AppError::Message(e.to_string()))?;
-    crate::mcode_config::write_and_commit(path, || {
-        let before = read(path)?;
-        let after = apply_provider(&before, id, config, create)?;
-        if before == after {
-            return Ok(());
-        }
-        write(path, &before, &after)
-    }, commit)
+    crate::mcode_config::write_and_commit(
+        path,
+        || {
+            let before = read(path)?;
+            let after = apply_provider(&before, id, config, create)?;
+            if before == after {
+                return Ok(());
+            }
+            write(path, &before, &after)
+        },
+        commit,
+    )
 }
 
 pub(crate) fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
@@ -362,9 +368,7 @@ fn switch_at_and_commit<T>(
         "account": after["provider_accounts"][id],
         "models": models,
     });
-    crate::mcode_config::write_and_commit(path, || write(path, &before, &after), || {
-        commit(config)
-    })
+    crate::mcode_config::write_and_commit(path, || write(path, &before, &after), || commit(config))
 }
 
 /// "Add" writes a saved account into config.toml without changing
@@ -457,7 +461,10 @@ context_window = 262144
         assert_eq!(document["default_model"], json!("fresh-ds"));
         assert_eq!(document["default_provider"], json!("fresh-ds"));
         // 未被切换的既有账号原样保留。
-        assert_eq!(document["provider_accounts"]["acct"]["provider"], json!("openai"));
+        assert_eq!(
+            document["provider_accounts"]["acct"]["provider"],
+            json!("openai")
+        );
         assert_eq!(document["models"]["acct-key-a"]["model"], json!("key-a"));
     }
 
@@ -473,7 +480,10 @@ context_window = 262144
         add_at_and_commit(&path, "b", config, || Ok(())).unwrap();
         let document = read(&path).unwrap();
         assert_eq!(document["default_model"], json!("acct-key-a"));
-        assert_eq!(document["provider_accounts"]["b"]["base_url"], json!("https://b.example/v1"));
+        assert_eq!(
+            document["provider_accounts"]["b"]["base_url"],
+            json!("https://b.example/v1")
+        );
     }
 
     #[test]

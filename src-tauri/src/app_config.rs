@@ -204,7 +204,7 @@ impl SkillApps {
             AppType::Agy => self.agy = enabled,
             AppType::Omp => self.omp = enabled,
             AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
-            AppType::AtomCode => {} // AtomCode skills are not wired yet
+            AppType::AtomCode => {}      // AtomCode skills are not wired yet
         }
     }
 

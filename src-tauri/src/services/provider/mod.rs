@@ -8163,10 +8163,7 @@ impl ProviderService {
                 crate::mcode_config::validate_provider(&provider.id, &provider.settings_config)?
             }
             AppType::AtomCode => {
-                crate::atomcode_config::validate_provider(
-                    &provider.id,
-                    &provider.settings_config,
-                )?
+                crate::atomcode_config::validate_provider(&provider.id, &provider.settings_config)?
             }
             AppType::Pi => {
                 crate::pi_config::validate_provider_node(&provider.id, &provider.settings_config)?;
@@ -8437,7 +8434,7 @@ impl ProviderService {
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_string(),
-            ))
+            )),
         }
     }
 }
