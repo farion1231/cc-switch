@@ -183,6 +183,7 @@
     "managedByHermesHint": "Hermes の providers: dict で定義されています。Hermes Web UI で編集または削除してください。",
     "openTerminal": "このプロバイダーでターミナルを開く",
     "openTerminalIsolated": "このプロバイダーでターミナルを開く（環境を分離）",
+    "openTerminalNeedsRoute": "このカードはルーティング経由でのみ使えます。ターミナルはカードのアドレスへ直接接続するため、ルーティングが提供する認証情報や形式変換を利用できません。ルーティングを有効にしてから、ターミナルでクライアントを直接起動してください",
     "openTerminalWithProvider": "このプロバイダーでターミナルを開く",
     "terminalOpened": "ターミナルを開きました",
     "terminalOpenFailed": "ターミナルを開けませんでした",

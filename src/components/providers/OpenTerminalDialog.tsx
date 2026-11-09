@@ -136,9 +136,10 @@ function codexHasOwnRoute(provider: Provider): boolean {
 
 /**
  * 卡片上显示不显示「打开终端」。Codex 的官方卡、没有路由的卡跟着 Codex 自己的登录走，
- * 只有是当前供应商时才能打开（直接跑 `codex`）；要经本地路由的卡终端直连不了。
+ * 只有是当前供应商时才能打开（直接跑 `codex`）。
  * Grok Build 没有只对一个进程换配置的办法（没有 `-c`，换 `GROK_HOME` 会连会话和登录一起换掉），
  * 只有当前供应商能打开，直接跑 `grok` 读 live 的 config.toml。
+ * 要经本地路由的卡照样显示，但置灰（见 [`terminalNeedsRoute`]）。
  */
 export function terminalAvailable(
   provider: Provider,
@@ -147,8 +148,21 @@ export function terminalAvailable(
 ): boolean {
   if (appId === "grokbuild") return isCurrent;
   if (appId !== "codex") return true;
-  if (providerNeedsRouting("codex", provider)) return false;
+  if (terminalNeedsRoute(provider, appId)) return true;
   return isCurrent || codexHasOwnRoute(provider);
+}
+
+/**
+ * 这张卡只能经本地路由用，卡片终端打不通，按钮置灰并说明原因。终端直连卡上的地址：托管账号卡
+ * （Copilot、Codex OAuth、xAI OAuth）没有 Key，凭据只能由路由注入；非原生格式的卡要路由做
+ * 格式转换。Claude Code 的临时 settings 还会把卡上没有的凭据键置空，Claude Code 便退回
+ * claude.ai 登录、提示 /login。与当前模式无关，直连、路由、聚合下一样置灰。
+ */
+export function terminalNeedsRoute(provider: Provider, appId: AppId): boolean {
+  return (
+    (appId === "claude" || appId === "codex") &&
+    providerNeedsRouting(appId, provider)
+  );
 }
 
 /**

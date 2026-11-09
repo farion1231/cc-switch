@@ -181,6 +181,7 @@
     "managedByHermesHint": "Hermes의 providers: 항목에 정의된 공급자입니다. Hermes 웹 UI에서 편집하거나 제거하세요.",
     "openTerminal": "이 공급자를 사용하여 터미널 열기",
     "openTerminalIsolated": "이 공급자를 사용하여 터미널 열기 (환경 격리)",
+    "openTerminalNeedsRoute": "이 카드는 라우팅을 통해서만 사용할 수 있습니다. 터미널은 카드의 주소에 직접 연결되므로 라우팅이 제공하는 자격 증명과 형식 변환을 받을 수 없습니다. 라우팅을 켠 뒤 터미널에서 클라이언트를 직접 실행하세요",
     "openTerminalWithProvider": "이 공급자를 사용하여 터미널 열기",
     "terminalOpened": "터미널을 열었습니다",
     "terminalOpenFailed": "터미널을 열지 못했습니다.",

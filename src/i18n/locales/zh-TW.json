@@ -183,6 +183,7 @@
     "managedByHermesHint": "該專案定義於 Hermes 的 providers: dict，請在 Hermes Web UI 中編輯或刪除。",
     "openTerminal": "以此供應商開啟終端機",
     "openTerminalIsolated": "以此供應商開啟終端機（環境隔離）",
+    "openTerminalNeedsRoute": "這張卡只能經路由使用：終端機會直連卡上的位址，拿不到路由提供的憑證和格式轉換。請開啟路由後，在終端機裡直接執行用戶端",
     "openTerminalWithProvider": "使用此供應商開啟終端機",
     "terminalOpened": "終端機已開啟",
     "terminalOpenFailed": "開啟終端機失敗",

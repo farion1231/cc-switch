@@ -183,6 +183,7 @@
     "managedByHermesHint": "该条目定义在 Hermes 的 providers: dict，请在 Hermes Web UI 中编辑或删除。",
     "openTerminal": "以此供应商打开终端",
     "openTerminalIsolated": "以此供应商打开终端（环境隔离）",
+    "openTerminalNeedsRoute": "这张卡只能经路由使用：终端会直连卡上的地址，拿不到路由提供的凭据和格式转换。请开启路由后，在终端里直接运行客户端",
     "openTerminalWithProvider": "使用此供应商打开终端",
     "terminalOpened": "终端已打开",
     "terminalOpenFailed": "打开终端失败",

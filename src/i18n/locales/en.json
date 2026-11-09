@@ -183,6 +183,7 @@
     "managedByHermesHint": "Defined in Hermes' providers: dict. Edit or remove it via Hermes Web UI.",
     "openTerminal": "Open Terminal with This Provider",
     "openTerminalIsolated": "Open Terminal with This Provider (Isolated)",
+    "openTerminalNeedsRoute": "This card only works through Routing: a terminal would connect straight to its address, without the credentials and format conversion Routing provides. Turn on Routing, then run the client in a terminal directly",
     "openTerminalWithProvider": "Open Terminal with This Provider",
     "terminalOpened": "Terminal opened",
     "terminalOpenFailed": "Failed to open terminal",
