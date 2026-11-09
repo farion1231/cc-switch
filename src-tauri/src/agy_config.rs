@@ -27,8 +27,12 @@ use crate::error::AppError;
 use crate::live::patch::json::JsonPatch;
 use crate::live::patch::{KeyPath, LivePatch};
 
-/// `~/.gemini/antigravity-cli`
+/// `~/.gemini/antigravity-cli`，或在设置里覆盖的 Antigravity 配置目录（比如指向
+/// WSL 里的同一目录）。共享的 [`customizations_dir`] 不跟随覆盖。
 pub fn agy_dir() -> PathBuf {
+    if let Some(dir) = crate::settings::get_agy_override_dir() {
+        return dir;
+    }
     get_home_dir().join(".gemini").join("antigravity-cli")
 }
 
