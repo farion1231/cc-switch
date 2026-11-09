@@ -2386,6 +2386,7 @@ impl RequestForwarder {
                 body_bytes,
                 request_is_streaming,
                 preserve_exact_header_case,
+                provider.proxy_url(),
             )
             .await?;
 

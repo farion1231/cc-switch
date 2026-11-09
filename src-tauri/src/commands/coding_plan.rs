@@ -1,5 +1,6 @@
 use crate::services::subscription::SubscriptionQuota;
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn get_coding_plan_quota(
     base_url: String,
@@ -11,15 +12,20 @@ pub async fn get_coding_plan_quota(
     coding_plan_provider: Option<String>,
     team_organization_id: Option<String>,
     team_project_id: Option<String>,
+    // 所属供应商的代理（用量设置里测试时传入）；启用全局代理时忽略
+    proxy_url: Option<String>,
 ) -> Result<SubscriptionQuota, String> {
-    crate::services::coding_plan::get_coding_plan_quota(
-        &base_url,
-        &api_key,
-        access_key_id.as_deref(),
-        secret_access_key.as_deref(),
-        coding_plan_provider.as_deref(),
-        team_organization_id.as_deref(),
-        team_project_id.as_deref(),
+    crate::proxy::http_client::scope_provider_proxy(
+        proxy_url.as_deref(),
+        crate::services::coding_plan::get_coding_plan_quota(
+            &base_url,
+            &api_key,
+            access_key_id.as_deref(),
+            secret_access_key.as_deref(),
+            coding_plan_provider.as_deref(),
+            team_organization_id.as_deref(),
+            team_project_id.as_deref(),
+        ),
     )
     .await
 }

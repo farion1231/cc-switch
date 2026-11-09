@@ -53,6 +53,7 @@ import {
   type FetchedModel,
 } from "@/lib/api/model-fetch";
 import { CustomUserAgentField } from "./CustomUserAgentField";
+import { ProviderProxyField } from "./ProviderProxyField";
 import {
   ClaudeStackModelsField,
   type ClaudeStackModelRow,
@@ -177,6 +178,9 @@ interface ClaudeFormFieldsProps {
   /** 供应商费用倍率；不传 onBillingMultiplierChange 时不显示（官方卡等）。 */
   billingMultiplier?: string;
   onBillingMultiplierChange?: (value: string) => void;
+  // Per-provider outbound proxy
+  proxyUrl: string;
+  onProxyUrlChange: (value: string) => void;
   localProxyHeadersOverride: string;
   onLocalProxyHeadersOverrideChange: (value: string) => void;
   localProxyBodyOverride: string;
@@ -263,6 +267,8 @@ export function ClaudeFormFields({
   onCustomUserAgentChange,
   billingMultiplier = "",
   onBillingMultiplierChange,
+  proxyUrl,
+  onProxyUrlChange,
   localProxyHeadersOverride,
   onLocalProxyHeadersOverrideChange,
   localProxyBodyOverride,
@@ -289,6 +295,7 @@ export function ClaudeFormFields({
     isFullUrl ||
     customUserAgent ||
     billingMultiplier ||
+    proxyUrl.trim() ||
     hasRequestOverrides
   );
   const [advancedExpanded, setAdvancedExpanded] = useState(
@@ -304,11 +311,12 @@ export function ClaudeFormFields({
     }
   }, [hasAnyAdvancedValue, isXaiOauthPreset]);
 
-  // Stack 布局的高级区只有完整 URL、User-Agent 和请求覆盖，开了或填了才展开。
+  // Stack 布局的高级区只有完整 URL、代理、User-Agent 和请求覆盖，开了或填了才展开。
   const [stackAdvancedExpanded, setStackAdvancedExpanded] = useState(
     isFullUrl ||
       !!customUserAgent ||
       !!billingMultiplier ||
+      !!proxyUrl.trim() ||
       hasRequestOverrides,
   );
 
@@ -370,6 +378,7 @@ export function ClaudeFormFields({
       {
         apiFormat: claudeModelFetchApiFormat(apiFormat),
         requestHeaders: modelFetchRequestHeaders(localProxyHeadersOverride),
+        proxyUrl: proxyUrl.trim() || undefined,
       },
     )
       .then((models) => {
@@ -387,6 +396,7 @@ export function ClaudeFormFields({
     isFullUrl,
     customUserAgent,
     apiFormat,
+    proxyUrl,
     localProxyHeadersOverride,
     showModelFetchResult,
     t,
@@ -1029,7 +1039,12 @@ export function ClaudeFormFields({
   // 这一组都只在路由、聚合模式下生效：在分组开头说一次，各自的作用收进字段名后的「?」。
   const userAgentAndOverrides = (
     <>
-      <p className="text-xs leading-relaxed text-fg-2">
+      <ProviderProxyField
+        id="claude-provider-proxy-url"
+        value={proxyUrl}
+        onChange={onProxyUrlChange}
+      />
+      <p className="border-t border-border pt-3 text-xs leading-relaxed text-fg-2">
         {t("codexConfig.routeOnlySettingsHint", {
           defaultValue: "以下设置只在路由、聚合模式下生效。",
         })}
@@ -1102,7 +1117,7 @@ export function ClaudeFormFields({
           />
         )}
 
-        {/* 高级区只有 UA 和请求覆盖；Copilot 的转发会跳过这两项，整块不显示 */}
+        {/* 高级区只有代理、UA 和请求覆盖；Copilot 不需要这些，整块不显示 */}
         {!isCopilotPreset && (
           <Collapsible
             open={stackAdvancedExpanded}

@@ -18,6 +18,7 @@ impl RequestForwarder {
         body_bytes: Vec<u8>,
         request_is_streaming: bool,
         preserve_exact_header_case: bool,
+        provider_proxy_url: Option<&str>,
     ) -> Result<ProxyResponse, ProxyError> {
         // 确定超时
         let timeout = if self.non_streaming_timeout.is_zero() {
@@ -26,8 +27,9 @@ impl RequestForwarder {
             self.non_streaming_timeout
         };
 
-        // 获取全局代理 URL（上游是本机地址时直连，不送进代理）
-        let upstream_proxy_url: Option<String> = crate::proxy::http_client::proxy_url_for(url);
+        // 获取有效代理 URL（本机地址直连，全局代理优先于供应商代理）
+        let upstream_proxy_url: Option<String> =
+            crate::proxy::http_client::proxy_url_for_provider(url, provider_proxy_url);
 
         // SOCKS5 代理不支持 CONNECT 隧道，需要用 reqwest
         let is_socks_proxy = upstream_proxy_url
@@ -42,7 +44,9 @@ impl RequestForwarder {
             log::debug!(
                 "[Forwarder] Using pooled reqwest client (preserve_exact_header_case={preserve_exact_header_case}, socks_proxy={is_socks_proxy})"
             );
-            let client = crate::proxy::http_client::get_for_url(url);
+            let client =
+                crate::proxy::http_client::get_for_provider(url, provider_proxy_url)
+                    .map_err(ProxyError::ForwardFailed)?;
             let mut request = client.request(method.clone(), url);
             if request_is_streaming {
                 // reqwest 的 timeout 是整请求超时；流式请求交给 response_processor

@@ -90,6 +90,41 @@ describe("McodeProviderForm", () => {
     },
   );
 
+  it("saves the provider proxy into meta without touching settings", async () => {
+    const submit = vi.fn();
+    render(
+      <McodeProviderForm
+        appId="mcode"
+        providerId="existing"
+        initialData={{
+          name: "Existing",
+          settingsConfig: original,
+          meta: { isPartner: true },
+        }}
+        submitLabel="Save"
+        onSubmit={submit}
+        onCancel={() => {}}
+      />,
+    );
+    const proxyInput = await screen.findByPlaceholderText(
+      "http://127.0.0.1:7890 / socks5://127.0.0.1:1080",
+    );
+    await waitFor(() => expect(proxyInput).toBeEnabled());
+    fireEvent.change(proxyInput, {
+      target: { value: "socks5://127.0.0.1:1080" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    expect(submit.mock.calls[0][0].meta).toEqual({
+      isPartner: true,
+      proxyUrl: "socks5://127.0.0.1:1080",
+    });
+    expect(JSON.parse(submit.mock.calls[0][0].settingsConfig)).toEqual({
+      ...original,
+      name: "Existing",
+    });
+  });
+
   it("keeps untouched extra option values verbatim when another option is edited", async () => {
     const submit = vi.fn();
     render(

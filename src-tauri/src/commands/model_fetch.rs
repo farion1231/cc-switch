@@ -178,6 +178,7 @@ fn parse_opencode_models(output: &str) -> Vec<OpenCodeModelRef> {
 ///
 /// 使用 OpenAI 兼容的 GET /v1/models 端点。优先使用 `models_url` 精确覆写；
 /// 否则对 baseURL 生成候选列表（含「剥离 Anthropic 兼容子路径」兜底），按序尝试。
+#[allow(clippy::too_many_arguments)]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn fetch_models_for_config(
     base_url: String,
@@ -187,6 +188,7 @@ pub async fn fetch_models_for_config(
     custom_user_agent: Option<String>,
     api_format: Option<String>,
     request_headers: Option<BTreeMap<String, String>>,
+    proxy_url: Option<String>,
 ) -> Result<Vec<FetchedModel>, String> {
     // 与转发 / 检测路径共用 parse_custom_user_agent：非法 UA 静默忽略（不阻断取模型）。
     let user_agent = crate::provider::parse_custom_user_agent(custom_user_agent.as_deref())
@@ -200,6 +202,7 @@ pub async fn fetch_models_for_config(
         user_agent,
         api_format.as_deref(),
         request_headers.as_ref(),
+        proxy_url.as_deref(),
     )
     .await
 }
