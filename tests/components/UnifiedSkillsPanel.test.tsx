@@ -556,7 +556,7 @@ describe("UnifiedSkillsPanel", () => {
   it("uninstalls through the row menu after confirming", async () => {
     m.installed = [makeSkill()];
     m.uninstall.mockResolvedValueOnce({
-      preservedPiPath: "/tmp/.pi/agent/skills/alpha-skill",
+      backupPath: "/tmp/.cc-switch/skill-backups/alpha-skill",
     });
     renderPanel();
     await openMenu("skillsPage.rowMoreAria", "skillsPage.uninstallEllipsis");
@@ -570,11 +570,38 @@ describe("UnifiedSkillsPanel", () => {
       expect(m.uninstall).toHaveBeenCalledWith("owner/repo:alpha-skill"),
     );
     await waitFor(() =>
-      expect(m.toastWarning).toHaveBeenCalledWith(
+      expect(m.toastSuccess).toHaveBeenCalledWith(
         "skills.uninstallSuccess",
-        expect.objectContaining({ description: "skills.uninstallPiPreserved" }),
+        expect.objectContaining({ description: "skills.backup.location" }),
       ),
     );
+  });
+
+  it("warns when uninstall leaves an app copy in place", async () => {
+    m.installed = [makeSkill()];
+    m.uninstall.mockResolvedValueOnce({
+      cleanupFailures: [
+        {
+          app: "claude",
+          path: "/tmp/.claude/skills/alpha-skill",
+          error: "local edits preserved",
+        },
+      ],
+    });
+    renderPanel();
+    await openMenu("skillsPage.rowMoreAria", "skillsPage.uninstallEllipsis");
+    await userEvent.click(
+      screen.getByRole("button", { name: "skills.uninstall" }),
+    );
+    await waitFor(() =>
+      expect(m.toastWarning).toHaveBeenCalledWith(
+        "skills.uninstallSuccess",
+        expect.objectContaining({
+          description: "skills.uninstallCleanupIncomplete",
+        }),
+      ),
+    );
+    expect(m.toastSuccess).not.toHaveBeenCalled();
   });
 
   it("filters to Skills with updates from the status filter and updates them after confirming", async () => {
