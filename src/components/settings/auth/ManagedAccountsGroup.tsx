@@ -34,11 +34,11 @@ export interface GroupAccountRow {
   id: string;
   login: string;
   avatarUrl?: string | null;
-  /** 第二行的片段，用「·」连起来：域名、登录日期；需要重新登录时是原因 */
+  /** 第二行的片段，用「·」连起来：套餐、域名、登录日期；需要重新登录时是原因 */
   details: React.ReactNode[];
   isDefault: boolean;
   needsReauth: boolean;
-  /** 在用这个账号的供应商（第二行末尾写「N 个供应商在用」，悬停列名字） */
+  /** 在用这个账号的供应商（第三行写「N 个供应商在用」，悬停列名字） */
   users: ManagedAccountUser[];
   /** 右侧的额度（AccountQuotaColumn）；需要重新登录的账号不传 */
   quota?: React.ReactNode;
@@ -112,7 +112,7 @@ const PILL =
 
 /**
  * 授权中心的一个服务（v7 Auth 画板）：标题行（图标、名字、「?」、添加账号），
- * 每个账号一行（头像、名字 + 默认 / 需要重新登录、第二行、额度、⋯），空状态，
+ * 每个账号一行（头像、名字 + 默认 / 需要重新登录、第二行、在用的供应商、额度、⋯），空状态，
  * 登录等待块。删账号走确认框（列出受影响的供应商），由调用方传进 children。
  */
 export function ManagedAccountsGroup({
@@ -629,23 +629,22 @@ function AccountRow({
             </span>
           )}
         </div>
-        <div
-          id={subId}
-          className="flex min-w-0 items-center text-caption text-fg-2"
-        >
-          <span className="min-w-0 truncate">
+        {account.details.length > 0 && (
+          <span id={subId} className="min-w-0 truncate text-caption text-fg-2">
             {account.details.map((part, index) => (
               <React.Fragment key={index}>
                 {index > 0 && separator}
                 {part}
               </React.Fragment>
             ))}
-            {account.details.length > 0 && account.users.length > 0
-              ? separator
-              : null}
           </span>
-          <ManagedAccountUsage users={account.users} />
-        </div>
+        )}
+        {/* 单独一行：跟在第二行后面时，窄窗口里会把域名、登录日期挤成省略号 */}
+        {account.users.length > 0 && (
+          <span className="flex min-w-0">
+            <ManagedAccountUsage users={account.users} />
+          </span>
+        )}
       </div>
 
       {!account.needsReauth && account.quota}
