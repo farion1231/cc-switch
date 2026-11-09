@@ -20,7 +20,7 @@ use providers::{
     agy, claude, codex, dsh, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw, opencode, pi,
 };
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMeta {
     pub provider_id: String,
@@ -96,6 +96,9 @@ pub(crate) struct SessionScan {
 pub(crate) fn scan_sessions_with_status() -> SessionScan {
     use providers::utils::ScanStatus;
     type Scanner = fn(&mut ScanStatus) -> Vec<SessionMeta>;
+    let started = Instant::now();
+    // 所有应用同时扫描，总耗时取决于最慢的一个；读文件的并行数另由全局名额限制。
+    // 顺序决定时间相同的会话的先后（排序是稳定的）
     let scanners: [(&str, Scanner); 13] = [
         ("codex", codex::scan_sessions_with_status),
         ("claude", claude::scan_sessions_with_status),
@@ -123,8 +126,14 @@ pub(crate) fn scan_sessions_with_status() -> SessionScan {
                 (
                     provider,
                     scope.spawn(move || {
+                        let started = Instant::now();
                         let mut status = ScanStatus::default();
                         let sessions = scanner(&mut status);
+                        log::debug!(
+                            "[sessions] scan {provider}: {} sessions in {}ms",
+                            sessions.len(),
+                            started.elapsed().as_millis()
+                        );
                         (sessions, status)
                     }),
                 )
@@ -145,6 +154,12 @@ pub(crate) fn scan_sessions_with_status() -> SessionScan {
         let b_ts = b.last_active_at.or(b.created_at).unwrap_or(0);
         b_ts.cmp(&a_ts)
     });
+
+    log::info!(
+        "[sessions] scanned {} sessions in {}ms",
+        scan.sessions.len(),
+        started.elapsed().as_millis()
+    );
     scan
 }
 
@@ -196,10 +211,16 @@ pub fn load_transcript(provider_id: &str, source_path: &str) -> Result<LoadedTra
     let (transcript, cached) = cache::global().get_or_load(key, fingerprint, || {
         load_messages(&source.provider_id, &source.load_path()).map(cache::Transcript::new)
     })?;
+    let parse_ms = started.elapsed().as_millis() as u64;
+    log::debug!(
+        "[sessions] load {provider_id}: {} messages, {} bytes in {parse_ms}ms (cached={cached})",
+        transcript.messages.len(),
+        transcript.approx_bytes,
+    );
     Ok(LoadedTranscript {
         transcript,
         cached,
-        parse_ms: started.elapsed().as_millis() as u64,
+        parse_ms,
     })
 }
 

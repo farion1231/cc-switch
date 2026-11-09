@@ -41,6 +41,12 @@ pub async fn get_usage_summary(
     .await
 }
 
+/// 有没有任何用量记录（用量页空状态）
+#[tauri::command]
+pub async fn has_usage_data(state: State<'_, AppState>) -> Result<bool, AppError> {
+    run_db_query(&state, |db| db.has_usage_data()).await
+}
+
 /// 获取单个会话的使用量汇总（会话阅读页头部）
 #[tauri::command]
 pub async fn get_session_usage_summary(

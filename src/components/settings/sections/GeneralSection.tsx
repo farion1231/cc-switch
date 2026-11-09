@@ -30,6 +30,9 @@ import {
 
 type Language = SettingsFormState["language"];
 
+/** 0 表示自动 */
+const SESSION_SCAN_CONCURRENCY_OPTIONS = [0, 1, 2, 4, 6, 8, 12, 16, 24, 32];
+
 const LANGUAGES: { value: Language; labelKey: string }[] = [
   { value: "zh", labelKey: "settings.languageOptionChinese" },
   { value: "zh-TW", labelKey: "settings.languageOptionTraditionalChinese" },
@@ -54,6 +57,15 @@ export function GeneralSection({
   const { t } = useTranslation();
   const { theme, setTheme } = useTheme();
   const { density, zoom } = useInterfacePrefs();
+  const sessionScanConcurrency = settings.sessionScanConcurrency ?? 0;
+  // 手动改过 settings.json 的值也要能显示出来
+  const concurrencyOptions = SESSION_SCAN_CONCURRENCY_OPTIONS.includes(
+    sessionScanConcurrency,
+  )
+    ? SESSION_SCAN_CONCURRENCY_OPTIONS
+    : [...SESSION_SCAN_CONCURRENCY_OPTIONS, sessionScanConcurrency].sort(
+        (a, b) => a - b,
+      );
 
   return (
     <>
@@ -330,6 +342,42 @@ export function GeneralSection({
                   void onAutoSave({ preferredTerminal: terminal })
                 }
               />
+            }
+          />
+        </SettingsCard>
+      </SettingsBlock>
+
+      <SettingsBlock title={t("settings.general.sessions")}>
+        <SettingsCard>
+          <SettingsRow
+            label={t("settings.general.sessionScanConcurrency")}
+            help={{
+              title: t("settings.general.sessionScanConcurrency"),
+              body: t("settings.general.sessionScanConcurrencyHelp"),
+            }}
+            control={
+              <Select
+                value={String(sessionScanConcurrency)}
+                onValueChange={(value) =>
+                  void onAutoSave({ sessionScanConcurrency: Number(value) })
+                }
+              >
+                <SelectTrigger
+                  className="h-8 w-[160px]"
+                  aria-label={t("settings.general.sessionScanConcurrency")}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {concurrencyOptions.map((count) => (
+                    <SelectItem key={count} value={String(count)}>
+                      {count === 0
+                        ? t("settings.general.sessionScanConcurrencyAuto")
+                        : count}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             }
           />
         </SettingsCard>

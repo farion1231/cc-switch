@@ -1,5 +1,5 @@
 //! Read-only DeepSeek Harness session browser; native Web UI owns resume/delete.
-use super::{blocks, utils};
+use super::{blocks, utils, utils::FileParseCache};
 use crate::session_manager::{
     model::{ContentRef, MessageMeta, SessionBlock, ToolStatus},
     SessionMessage, SessionMeta,
@@ -7,9 +7,10 @@ use crate::session_manager::{
 use serde_json::Value;
 use std::{
     collections::HashSet,
-    fs,
+    fs, io,
     io::Read,
     path::{Path, PathBuf},
+    sync::LazyLock,
 };
 
 const MAX_BYTES: u64 = 128 * 1024 * 1024;
@@ -29,11 +30,18 @@ fn generation(path: &Path) -> Option<u64> {
 
 /// Decompress complete independent frames; a partially appended final frame waits for the next scan.
 pub(crate) fn read_session(path: &Path) -> Result<Vec<u8>, String> {
-    let metadata = fs::metadata(path).map_err(|error| error.to_string())?;
+    read_session_bytes(path).map_err(|error| error.to_string())
+}
+
+/// [`read_session`] with I/O failures kept apart from content that is not a usable session
+/// (too large, corrupt zstd), which is reported as `InvalidData`.
+fn read_session_bytes(path: &Path) -> io::Result<Vec<u8>> {
+    let invalid = |message: &str| io::Error::new(io::ErrorKind::InvalidData, message.to_owned());
+    let metadata = fs::metadata(path)?;
     if metadata.len() > MAX_BYTES {
-        return Err("DeepSeek Harness session is too large".into());
+        return Err(invalid("DeepSeek Harness session is too large"));
     }
-    let bytes = fs::read(path).map_err(|error| error.to_string())?;
+    let bytes = fs::read(path)?;
     if path.extension().is_none_or(|ext| ext != "zstd") {
         return Ok(bytes);
     }
@@ -44,16 +52,17 @@ pub(crate) fn read_session(path: &Path) -> Result<Vec<u8>, String> {
         let size = match zstd::zstd_safe::find_frame_compressed_size(frame) {
             Ok(size) => size,
             Err(_) if frame.len() < 4 || frame.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) => break,
-            Err(_) => return Err("Invalid DeepSeek Harness zstd session".into()),
+            Err(_) => return Err(invalid("Invalid DeepSeek Harness zstd session")),
         };
-        let decoder =
-            zstd::stream::read::Decoder::new(&frame[..size]).map_err(|error| error.to_string())?;
+        // The decoder reads from memory, so its failures describe the content, not the disk.
+        let corrupt = |error: io::Error| io::Error::new(io::ErrorKind::InvalidData, error);
+        let decoder = zstd::stream::read::Decoder::new(&frame[..size]).map_err(corrupt)?;
         decoder
             .take(MAX_BYTES + 1 - output.len() as u64)
             .read_to_end(&mut output)
-            .map_err(|error| error.to_string())?;
+            .map_err(corrupt)?;
         if output.len() as u64 > MAX_BYTES {
-            return Err("DeepSeek Harness session is too large".into());
+            return Err(invalid("DeepSeek Harness session is too large"));
         }
         offset += size;
     }
@@ -97,42 +106,54 @@ fn files(root: &Path) -> Vec<PathBuf> {
     result
 }
 
+static PARSE_CACHE: LazyLock<FileParseCache> = LazyLock::new(|| FileParseCache::persistent("dsh"));
+
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    scan(&session_roots()[0])
+    scan(&session_roots()[0], &PARSE_CACHE)
 }
 
-fn scan(root: &Path) -> Vec<SessionMeta> {
-    files(root)
-        .into_iter()
-        .filter_map(|path| {
-            let data = read_session(&path).ok()?;
-            let mut lines = data.split(|byte| *byte == b'\n');
-            let header: Value = serde_json::from_slice(lines.next()?).ok()?;
-            if !matches!(header["type"].as_str(), Some("session" | "header")) {
-                return None;
-            }
-            let id = header["id"]
-                .as_str()
-                .filter(|id| !id.is_empty())?
-                .to_string();
-            let messages = parse_messages(&data).ok()?;
-            let title = messages
-                .iter()
-                .find(|message| message.role == "user" && !message.injected)
-                .map(|message| utils::truncate_summary(&message.content, utils::TITLE_MAX_CHARS));
-            Some(SessionMeta {
-                provider_id: "dsh".into(),
-                session_id: id,
-                title,
-                summary: None,
-                project_dir: header["cwd"].as_str().map(str::to_string),
-                created_at: header["createdAt"].as_i64(),
-                last_active_at: messages.iter().filter_map(|message| message.ts).max(),
-                source_path: Some(path.to_string_lossy().into_owned()),
-                resume_command: None,
-            })
-        })
-        .collect()
+/// A summary needs the whole (possibly compressed) transcript, so unchanged files reuse the
+/// previous parse and only new or modified ones are read again.
+fn scan(root: &Path, cache: &FileParseCache) -> Vec<SessionMeta> {
+    cache.scan_with_status(files(root), scan_file, &mut utils::ScanStatus::default())
+}
+
+/// I/O failures are retried on the next scan; content that is not a session is cached as such.
+fn scan_file(path: &Path) -> io::Result<Option<SessionMeta>> {
+    let data = match read_session_bytes(path) {
+        Ok(data) => data,
+        Err(error) if error.kind() == io::ErrorKind::InvalidData => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    Ok(session_meta(path, &data))
+}
+
+fn session_meta(path: &Path, data: &[u8]) -> Option<SessionMeta> {
+    let mut lines = data.split(|byte| *byte == b'\n');
+    let header: Value = serde_json::from_slice(lines.next()?).ok()?;
+    if !matches!(header["type"].as_str(), Some("session" | "header")) {
+        return None;
+    }
+    let id = header["id"]
+        .as_str()
+        .filter(|id| !id.is_empty())?
+        .to_string();
+    let messages = parse_messages(data).ok()?;
+    let title = messages
+        .iter()
+        .find(|message| message.role == "user" && !message.injected)
+        .map(|message| utils::truncate_summary(&message.content, utils::TITLE_MAX_CHARS));
+    Some(SessionMeta {
+        provider_id: "dsh".into(),
+        session_id: id,
+        title,
+        summary: None,
+        project_dir: header["cwd"].as_str().map(str::to_string),
+        created_at: header["createdAt"].as_i64(),
+        last_active_at: messages.iter().filter_map(|message| message.ts).max(),
+        source_path: Some(path.to_string_lossy().into_owned()),
+        resume_command: None,
+    })
 }
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
@@ -277,7 +298,7 @@ mod tests {
         let path = root.join("session.v4.jsonl.zstd");
         fs::write(&path, compressed).unwrap();
         assert_eq!(read_session(&path).unwrap(), bytes);
-        let sessions = scan(temp.path());
+        let sessions = scan(temp.path(), &FileParseCache::new());
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].title.as_deref(), Some("Fix this"));
         let messages = load_messages(&path).unwrap();
@@ -295,6 +316,33 @@ mod tests {
             SessionBlock::ToolResult { ref call_id, status: ToolStatus::Success, ref preview, .. }
                 if call_id == "call" && preview == "contents"
         ));
+    }
+
+    #[test]
+    fn list_scan_reparses_appended_frames_and_caches_unusable_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project/test");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("session.v1.jsonl.zstd");
+        let mut compressed = zstd::encode_all(fixture().as_slice(), 1).unwrap();
+        fs::write(&path, &compressed).unwrap();
+        let broken = temp.path().join("project/broken");
+        fs::create_dir_all(&broken).unwrap();
+        fs::write(broken.join("session.v1.jsonl.zstd"), b"not zstd at all").unwrap();
+
+        let cache = FileParseCache::new();
+        let sessions = scan(temp.path(), &cache);
+        assert_eq!(sessions.len(), 1, "corrupt files are skipped, not errors");
+        assert_eq!(sessions[0].last_active_at, Some(2001));
+
+        // An appended frame changes the file, so the summary is rebuilt from it.
+        let later = json!({"type":"user/message","seq":4,"surfaceOp":"append","time":3000,"data":{"id":"u2","role":"user","source":{"kind":"user"},"content":[{"type":"text","text":"Again"}]}});
+        compressed.extend(zstd::encode_all(format!("{later}\n").as_bytes(), 1).unwrap());
+        fs::write(&path, &compressed).unwrap();
+        let sessions = scan(temp.path(), &cache);
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].title.as_deref(), Some("Fix this"));
+        assert_eq!(sessions[0].last_active_at, Some(3000));
     }
 
     #[test]

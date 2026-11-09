@@ -240,6 +240,8 @@ impl Database {
             let backup = Backup::new(&temp_conn, &mut main_conn)
                 .map_err(|e| AppError::Database(e.to_string()))?;
             Self::complete_backup(&backup, "替换主数据库")?;
+            // Backup API 直接写页面，不经过 update hook，派生缓存察觉不到
+            self.invalidate_derived_caches();
             backup_path
         };
 
@@ -1075,6 +1077,8 @@ impl Database {
             let backup = Backup::new(&staging_conn, &mut main_conn)
                 .map_err(|e| AppError::Database(e.to_string()))?;
             Self::complete_backup(&backup, "恢复主数据库")?;
+            // Backup API 直接写页面，不经过 update hook，派生缓存察觉不到
+            self.invalidate_derived_caches();
             safety_backup
         };
         let safety_id = safety_backup

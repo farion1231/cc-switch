@@ -200,7 +200,7 @@ fn est_first_token_eligible_sql(alias: &str) -> String {
 }
 
 /// 按分组键取首字时间的中位数（毫秒）。首字时间长尾明显，偶尔一次排队就是十几秒，
-/// 平均值会被拉高，所以用中位数；SQLite 没有中位数函数，取出排好序的值在这里算。
+/// 平均值会被拉高，所以用中位数；分组后用线性选择计算，避免 SQLite 排序所有明细。
 /// `key_sql` 是分组键表达式，`from_sql` 是 `FROM ... JOIN ...`，`detail_where` 是统计查询
 /// 明细部分的 `WHERE ...`（可为空），`params` 是它的参数。
 fn first_token_medians(
@@ -217,8 +217,7 @@ fn first_token_medians(
         "AND"
     };
     let sql = format!(
-        "SELECT {key_sql} AS k, l.first_token_ms {from_sql} {detail_where} {connector} {eligible_sql}
-         ORDER BY k, l.first_token_ms"
+        "SELECT {key_sql} AS k, l.first_token_ms {from_sql} {detail_where} {connector} {eligible_sql}"
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params, |row| {
@@ -235,13 +234,15 @@ fn first_token_medians(
     }
     Ok(grouped
         .into_iter()
-        .map(|(key, values)| {
-            // 已按值升序取出
+        .map(|(key, mut values)| {
             let mid = values.len() / 2;
-            let median = if values.len() % 2 == 0 {
-                (values[mid - 1] + values[mid]) / 2
+            let even = values.len() % 2 == 0;
+            let (lower, upper, _) = values.select_nth_unstable(mid);
+            let median = if even {
+                // 分区内部未排序；较小一半的最大值是另一个中间值。
+                (lower.iter().copied().max().expect("nonempty lower half") + *upper) / 2
             } else {
-                values[mid]
+                *upper
             };
             (key, median)
         })
@@ -567,20 +568,35 @@ const DEDUP_SESSION_SOURCES_SQL: &str =
 ///
 /// 时间边界放宽 [`SESSION_PROXY_DEDUP_WINDOW_SECONDS`]，窗口外的代理行
 /// 不可能匹配窗口内的会话行；边界是整数，直接拼进 SQL。
+#[cfg(test)]
 pub(crate) fn effective_usage_log_filter_for_range(
     conn: &Connection,
     log_alias: &str,
     start_date: Option<i64>,
     end_date: Option<i64>,
 ) -> Result<String, AppError> {
+    let (lo, hi) = dedup_scope_bounds(start_date, end_date);
+    let counts = dedup_scope_counts(conn, lo, hi)?;
+    Ok(effective_usage_log_filter_from_counts(
+        log_alias, lo, hi, counts,
+    ))
+}
+
+/// 去重判断的时间窗口：两端各放宽 [`SESSION_PROXY_DEDUP_WINDOW_SECONDS`]
+fn dedup_scope_bounds(start_date: Option<i64>, end_date: Option<i64>) -> (i64, i64) {
     let lo = start_date
         .map(|v| v.saturating_sub(SESSION_PROXY_DEDUP_WINDOW_SECONDS))
         .unwrap_or(i64::MIN / 2);
     let hi = end_date
         .map(|v| v.saturating_add(SESSION_PROXY_DEDUP_WINDOW_SECONDS))
         .unwrap_or(i64::MAX / 2);
+    (lo, hi)
+}
+
+/// 窗口 `[lo, hi]` 里成功的代理日志、参与去重的会话日志各有多少
+fn dedup_scope_counts(conn: &Connection, lo: i64, hi: i64) -> Result<(i64, i64), AppError> {
     let data_source = data_source_expr("c");
-    let (proxy_count, session_count): (i64, i64) = conn.query_row(
+    Ok(conn.query_row(
         &format!(
             "SELECT
                 COALESCE(SUM(CASE WHEN {data_source} = 'proxy'
@@ -592,13 +608,20 @@ pub(crate) fn effective_usage_log_filter_for_range(
         ),
         rusqlite::params![lo, hi],
         |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
+    )?)
+}
 
+fn effective_usage_log_filter_from_counts(
+    log_alias: &str,
+    lo: i64,
+    hi: i64,
+    (proxy_count, session_count): (i64, i64),
+) -> String {
     if proxy_count == 0 || session_count == 0 {
-        return Ok("1 = 1".to_string());
+        return "1 = 1".to_string();
     }
     if proxy_count > session_count {
-        return Ok(effective_usage_log_filter(log_alias));
+        return effective_usage_log_filter(log_alias);
     }
 
     let dp_source = data_source_expr("dedup_p");
@@ -610,7 +633,7 @@ pub(crate) fn effective_usage_log_filter_for_range(
         "dedup_s.app_type",
         &ds_source,
     );
-    Ok(format!(
+    format!(
         "{log_alias}.rowid NOT IN (
             SELECT dedup_s.rowid
             FROM proxy_request_logs dedup_p
@@ -644,7 +667,78 @@ pub(crate) fn effective_usage_log_filter_for_range(
               AND dedup_p.status_code < 300
               AND dedup_p.created_at BETWEEN {lo} AND {hi}
         )"
-    ))
+    )
+}
+
+/// 去重窗口计数的缓存：仪表盘刷新一次要调七八个统计接口，每个都用同一个时间范围
+/// 先数一遍窗口（真实库上约占这一轮 SQL 耗时的三成）。起点相同、连接上没有写入时
+/// 复用计数；前端每次请求都把结束时间取到「现在」，结束时间往后推时只补数新增的那段。
+/// 另设 [`LOG_COUNT_CACHE_TTL`] 兜底；整库替换（导入、恢复）时由调用方清空。
+pub(crate) struct DedupScopeCache {
+    lo: i64,
+    hi: i64,
+    changes: u64,
+    computed_at: std::time::Instant,
+    counts: (i64, i64),
+}
+
+impl Database {
+    /// 和 [`effective_usage_log_filter_for_range`] 结果相同，窗口计数走 [`DedupScopeCache`]
+    fn effective_usage_log_filter_cached(
+        &self,
+        conn: &Connection,
+        log_alias: &str,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+    ) -> Result<String, AppError> {
+        let (lo, hi) = dedup_scope_bounds(start_date, end_date);
+        let changes = connection_total_changes(conn)?;
+        let mut cache = self
+            .dedup_scope_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let reusable = cache.as_ref().filter(|entry| {
+            entry.lo == lo
+                && entry.changes == changes
+                && entry.hi <= hi
+                && entry.computed_at.elapsed() <= LOG_COUNT_CACHE_TTL
+        });
+        let (counts, computed_at) = match reusable {
+            Some(entry) if entry.hi == hi => (entry.counts, entry.computed_at),
+            Some(entry) => {
+                let (proxy, session) = dedup_scope_counts(conn, entry.hi + 1, hi)?;
+                (
+                    (entry.counts.0 + proxy, entry.counts.1 + session),
+                    entry.computed_at,
+                )
+            }
+            None => (dedup_scope_counts(conn, lo, hi)?, std::time::Instant::now()),
+        };
+        *cache = Some(DedupScopeCache {
+            lo,
+            hi,
+            changes,
+            computed_at,
+            counts,
+        });
+        Ok(effective_usage_log_filter_from_counts(
+            log_alias, lo, hi, counts,
+        ))
+    }
+
+    /// 整库替换（导入、恢复备份）之后清掉派生缓存：Backup API 不经过 update hook，
+    /// 也不计入连接的 `total_changes`，这些缓存自己察觉不到。
+    pub(crate) fn invalidate_derived_caches(&self) {
+        self.config_cache.invalidate();
+        *self
+            .log_count_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        *self
+            .dedup_scope_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
 }
 
 /// 请求日志总数缓存：每次刷新都 `COUNT(*)` 一遍明细，大范围下最耗时。
@@ -990,9 +1084,8 @@ impl Database {
         let conn = lock_conn!(self.conn);
 
         // Build detail WHERE clause
-        let mut conditions = vec![effective_usage_log_filter_for_range(
-            &conn, "l", start_date, end_date,
-        )?];
+        let mut conditions =
+            vec![self.effective_usage_log_filter_cached(&conn, "l", start_date, end_date)?];
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
         if let Some(start) = start_date {
@@ -1104,6 +1197,21 @@ impl Database {
         Ok(result)
     }
 
+    /// 有没有任何用量记录（用量页据此显示空状态）。
+    ///
+    /// 和「全时段汇总的请求数大于 0」等价：去重只会去掉和代理行重复的会话行，
+    /// 代理行本身留着，所以只要明细或按天汇总里有行，汇总请求数就不为 0。
+    /// 用 `EXISTS` 找到第一行就停，不用为一个布尔值把两张表全扫一遍再求和。
+    pub fn has_usage_data(&self) -> Result<bool, AppError> {
+        let conn = lock_conn!(self.conn);
+        Ok(conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM proxy_request_logs)
+                 OR EXISTS(SELECT 1 FROM usage_daily_rollups WHERE request_count > 0)",
+            [],
+            |row| row.get(0),
+        )?)
+    }
+
     /// 单个会话的用量汇总（会话阅读页头部）：总 Token 和花费的口径同 Dashboard。
     ///
     /// 只数会话日志导入的行：它们带客户端自己的会话 ID，经不经过路由都会导入；
@@ -1154,9 +1262,8 @@ impl Database {
     ) -> Result<Vec<UsageSummaryByApp>, AppError> {
         let conn = lock_conn!(self.conn);
 
-        let mut detail_conditions = vec![effective_usage_log_filter_for_range(
-            &conn, "l", start_date, end_date,
-        )?];
+        let mut detail_conditions =
+            vec![self.effective_usage_log_filter_cached(&conn, "l", start_date, end_date)?];
         let mut detail_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         if let Some(start) = start_date {
             detail_conditions.push("l.created_at >= ?".to_string());
@@ -1366,7 +1473,7 @@ impl Database {
             };
 
             let effective_filter =
-                effective_usage_log_filter_for_range(&conn, "l", Some(start_ts), Some(end_ts))?;
+                self.effective_usage_log_filter_cached(&conn, "l", Some(start_ts), Some(end_ts))?;
             let fresh_input = fresh_input_sql("l");
             let sql = format!(
                 "SELECT
@@ -1480,7 +1587,7 @@ impl Database {
         };
 
         let effective_filter =
-            effective_usage_log_filter_for_range(&conn, "l", Some(start_ts), Some(end_ts))?;
+            self.effective_usage_log_filter_cached(&conn, "l", Some(start_ts), Some(end_ts))?;
         let fresh_input = fresh_input_sql("l");
         let detail_sql = format!(
             "SELECT
@@ -1756,9 +1863,8 @@ impl Database {
     ) -> Result<Vec<ProviderStats>, AppError> {
         let conn = lock_conn!(self.conn);
 
-        let mut detail_conditions = vec![effective_usage_log_filter_for_range(
-            &conn, "l", start_date, end_date,
-        )?];
+        let mut detail_conditions =
+            vec![self.effective_usage_log_filter_cached(&conn, "l", start_date, end_date)?];
         let mut detail_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         if let Some(start) = start_date {
             detail_conditions.push("l.created_at >= ?".to_string());
@@ -1949,9 +2055,8 @@ impl Database {
     ) -> Result<Vec<ModelStats>, AppError> {
         let conn = lock_conn!(self.conn);
 
-        let mut detail_conditions = vec![effective_usage_log_filter_for_range(
-            &conn, "l", start_date, end_date,
-        )?];
+        let mut detail_conditions =
+            vec![self.effective_usage_log_filter_cached(&conn, "l", start_date, end_date)?];
         let mut detail_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         if let Some(start) = start_date {
             detail_conditions.push("l.created_at >= ?".to_string());
@@ -2149,7 +2254,7 @@ impl Database {
     ) -> Result<PaginatedLogs, AppError> {
         let conn = lock_conn!(self.conn);
 
-        let mut conditions = vec![effective_usage_log_filter_for_range(
+        let mut conditions = vec![self.effective_usage_log_filter_cached(
             &conn,
             "l",
             filters.start_date,
@@ -2975,6 +3080,122 @@ fn should_try_pricing_prefix_match(model_id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn insert_dedup_row(db: &Database, id: &str, source: &str, created_at: i64) {
+        db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO proxy_request_logs (request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, latency_ms, status_code, created_at, data_source)
+                 VALUES (?1, 'p', 'claude', 'opus', 10, 2, 0, 200, ?2, ?3)",
+                params![id, created_at, source],
+            )
+            .unwrap();
+    }
+
+    fn cached_and_uncached(db: &Database, start: i64, end: i64) -> (String, String) {
+        let conn = db.conn.lock().unwrap();
+        let cached = db
+            .effective_usage_log_filter_cached(&conn, "l", Some(start), Some(end))
+            .unwrap();
+        let uncached =
+            effective_usage_log_filter_for_range(&conn, "l", Some(start), Some(end)).unwrap();
+        (cached, uncached)
+    }
+
+    #[test]
+    fn has_usage_data_matches_the_all_time_summary() {
+        let db = Database::memory().unwrap();
+        let summary_has_rows = |db: &Database| {
+            db.get_usage_summary(None, None, None, None, None)
+                .unwrap()
+                .total_requests
+                > 0
+        };
+        assert!(!db.has_usage_data().unwrap());
+        assert!(!summary_has_rows(&db));
+
+        // 只有按天汇总的行（明细已裁剪）也算有用量
+        db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO usage_daily_rollups (date, app_type, provider_id, model, request_count, success_count)
+                 VALUES ('2026-01-01', 'claude', 'p', 'm', 3, 3)",
+                [],
+            )
+            .unwrap();
+        assert!(db.has_usage_data().unwrap());
+        assert!(summary_has_rows(&db));
+
+        // 只有明细行，且会话行和代理行重复被去重：代理行仍然算数
+        db.conn
+            .lock()
+            .unwrap()
+            .execute("DELETE FROM usage_daily_rollups", [])
+            .unwrap();
+        insert_dedup_row(&db, "s1", "session_log", 1_000_000);
+        insert_dedup_row(&db, "p1", "proxy", 1_000_010);
+        assert!(db.has_usage_data().unwrap());
+        assert!(summary_has_rows(&db));
+    }
+
+    #[test]
+    fn cached_dedup_filter_matches_uncached_as_the_range_moves() {
+        let db = Database::memory().unwrap();
+        let day = 86_400;
+        insert_dedup_row(&db, "s1", "session_log", 1_000_000);
+        insert_dedup_row(&db, "s2", "session_log", 1_000_100);
+        // 结束时间往后推时才进入窗口的代理行：只能靠补数新增区间发现
+        insert_dedup_row(&db, "p1", "proxy", 1_000_000 + day);
+
+        let (cached, uncached) = cached_and_uncached(&db, 999_000, 1_000_200);
+        assert_eq!(cached, "1 = 1");
+        assert_eq!(cached, uncached);
+        // 同一范围直接复用
+        assert_eq!(cached_and_uncached(&db, 999_000, 1_000_200).0, "1 = 1");
+
+        let (cached, uncached) = cached_and_uncached(&db, 999_000, 1_000_000 + day);
+        assert_ne!(
+            cached, "1 = 1",
+            "the proxy row in the extended window counts"
+        );
+        assert_eq!(cached, uncached);
+
+        // 起点变了重新数
+        let (cached, uncached) = cached_and_uncached(&db, 1_000_000 + day - 10, 1_000_000 + day);
+        assert_eq!(cached, "1 = 1");
+        assert_eq!(cached, uncached);
+
+        // 有写入就重新数
+        insert_dedup_row(&db, "s3", "session_log", 1_000_000 + day);
+        let (cached, uncached) = cached_and_uncached(&db, 1_000_000 + day - 10, 1_000_000 + day);
+        assert_ne!(cached, "1 = 1");
+        assert_eq!(cached, uncached);
+    }
+
+    // 导入会在测试目录给 cc-switch.db 做安全备份，和切换测试目录的备份测试一起串行跑
+    #[test]
+    #[serial_test::serial]
+    fn cached_dedup_filter_is_dropped_after_an_import() {
+        let db = Database::memory().unwrap();
+        insert_dedup_row(&db, "s1", "session_log", 1_000_000);
+        insert_dedup_row(&db, "p1", "proxy", 1_000_010);
+        let exported = db.export_sql_string().unwrap();
+        db.conn
+            .lock()
+            .unwrap()
+            .execute("DELETE FROM proxy_request_logs WHERE request_id = 'p1'", [])
+            .unwrap();
+        assert_eq!(cached_and_uncached(&db, 999_000, 1_001_000).0, "1 = 1");
+
+        // 导入经 Backup API 整库替换，连接的 total_changes 不变
+        db.import_sql_string(&exported).unwrap();
+        let (cached, uncached) = cached_and_uncached(&db, 999_000, 1_001_000);
+        assert_eq!(cached, uncached);
+        assert_ne!(cached, "1 = 1");
+    }
 
     fn local_ts(year: i32, month: u32, day: u32, hour: u32, minute: u32, second: u32) -> i64 {
         match Local.with_ymd_and_hms(year, month, day, hour, minute, second) {
@@ -5304,6 +5525,103 @@ mod tests {
         assert_eq!(slow.est_speed_output_tokens, 400);
         assert_eq!(slow.est_speed_duration_ms, 8_000);
 
+        Ok(())
+    }
+
+    #[test]
+    fn first_token_selection_matches_sorted_medians() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE samples (group_id TEXT, first_token_ms INTEGER)")?;
+        let mut expected = HashMap::new();
+        for len in 1..=128 {
+            let key = len.to_string();
+            let mut values = Vec::new();
+            for i in 0..len {
+                // Unsorted values, duplicates, negatives clamped to zero, and
+                // i64::MAX cover both middle ranks and integer rounding.
+                let value = if i % 13 == 0 {
+                    i64::MAX
+                } else {
+                    (i * 7919 % 101) as i64 - 25
+                };
+                conn.execute("INSERT INTO samples VALUES (?1, ?2)", params![key, value])?;
+                values.push(value.max(0) as u64);
+            }
+            values.sort_unstable();
+            expected.insert(key, (values[(len - 1) / 2] + values[len / 2]) / 2);
+        }
+        conn.execute("INSERT INTO samples VALUES ('null-only', NULL)", [])?;
+        let actual = first_token_medians(
+            &conn,
+            "l.group_id",
+            "FROM samples l",
+            "",
+            "l.first_token_ms IS NOT NULL",
+            &[],
+        )?;
+        assert_eq!(actual, expected);
+        let filtered = first_token_medians(
+            &conn,
+            "l.group_id",
+            "FROM samples l",
+            "WHERE l.group_id = ?1",
+            "l.first_token_ms IS NOT NULL",
+            &[&"64"],
+        )?;
+        assert_eq!(
+            filtered,
+            HashMap::from([("64".to_string(), expected["64"])])
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "synthetic SQLite median benchmark; run with --ignored --nocapture"]
+    fn benchmark_first_token_medians() -> Result<(), AppError> {
+        use std::time::Instant;
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE samples (group_id TEXT, first_token_ms INTEGER)")?;
+        let transaction = conn.unchecked_transaction()?;
+        for i in 0..200_000 {
+            transaction.execute(
+                "INSERT INTO samples VALUES (?1, ?2)",
+                params![format!("p{}", i % 20), (i * 7919_i64) % 100_003],
+            )?;
+        }
+        transaction.commit()?;
+        for _ in 0..3 {
+            let start = Instant::now();
+            let mut stmt = conn.prepare(
+                "SELECT group_id, first_token_ms FROM samples ORDER BY group_id, first_token_ms",
+            )?;
+            let mut groups: HashMap<String, Vec<u64>> = HashMap::new();
+            for row in stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?))
+            })? {
+                let (key, value) = row?;
+                groups.entry(key).or_default().push(value);
+            }
+            let expected: HashMap<_, _> = groups
+                .into_iter()
+                .map(|(key, values)| {
+                    let mid = values.len() / 2;
+                    (key, (values[mid - 1] + values[mid]) / 2)
+                })
+                .collect();
+            let sorted_time = start.elapsed();
+            let start = Instant::now();
+            let actual = first_token_medians(
+                &conn,
+                "l.group_id",
+                "FROM samples l",
+                "",
+                "l.first_token_ms IS NOT NULL",
+                &[],
+            )?;
+            let selected_time = start.elapsed();
+            assert_eq!(actual, expected);
+            eprintln!("Median 200000 rows / 20 groups: SQL sort={sorted_time:?}, selection={selected_time:?}");
+        }
         Ok(())
     }
 

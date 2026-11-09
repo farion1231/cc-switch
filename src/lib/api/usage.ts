@@ -66,6 +66,11 @@ export const usageApi = {
     });
   },
 
+  /** 有没有任何用量记录（不分时间范围），用量页据此显示空状态 */
+  hasUsageData: async (): Promise<boolean> => {
+    return invoke("has_usage_data");
+  },
+
   getSessionUsageSummary: async (
     appType: string,
     sessionId: string,

@@ -462,12 +462,12 @@ export function UsageDashboard({
     refetch,
   );
   // 有没有任何用量（不分时间范围）：一条都没有时显示空状态
-  const { data: allTimeSummary } = useQuery({
-    queryKey: [...usageKeys.all, "all-time-summary"],
-    queryFn: () => usageApi.getUsageSummary(),
+  const { data: hasUsageData } = useQuery({
+    queryKey: [...usageKeys.all, "has-usage-data"],
+    queryFn: () => usageApi.hasUsageData(),
     refetchInterval: refetch.refetchInterval,
   });
-  const isEmpty = allTimeSummary != null && allTimeSummary.totalRequests === 0;
+  const isEmpty = hasUsageData === false;
 
   const providerOptions = useMemo(() => {
     const counts = new Map<string, number>();

@@ -1531,3 +1531,89 @@ fn migration_v23_to_v24_adds_dsh_flags_without_changing_omp_or_skill_state() {
             .get::<_, bool>(0))
         .unwrap());
 }
+
+#[test]
+fn enable_wal_switches_file_database_and_keeps_backups_readable() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("wal.db");
+    let conn = Connection::open(&path).expect("open db");
+    Database::enable_wal(&conn);
+
+    let mode: String = conn
+        .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+        .expect("journal mode");
+    assert_eq!(mode, "wal");
+    let synchronous: i64 = conn
+        .query_row("PRAGMA synchronous", [], |row| row.get(0))
+        .expect("synchronous");
+    assert_eq!(
+        synchronous, 2,
+        "WAL must keep synchronous=FULL for durability"
+    );
+
+    conn.execute_batch("CREATE TABLE t (v TEXT); INSERT INTO t VALUES ('kept');")
+        .expect("write");
+    // Backups copy pages through the Backup API, so rows still in the WAL
+    // must reach the backup file without a manual checkpoint.
+    let backup_path = dir.path().join("backup.db");
+    {
+        let mut dest = Connection::open(&backup_path).expect("open backup");
+        let backup = rusqlite::backup::Backup::new(&conn, &mut dest).expect("backup");
+        backup
+            .run_to_completion(64, std::time::Duration::ZERO, None)
+            .expect("complete backup");
+    }
+    let restored = Connection::open(&backup_path).expect("reopen backup");
+    let value: String = restored
+        .query_row("SELECT v FROM t", [], |row| row.get(0))
+        .expect("read backup");
+    assert_eq!(value, "kept");
+}
+
+#[test]
+fn enable_wal_leaves_in_memory_database_usable() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::enable_wal(&conn);
+    let mode: String = conn
+        .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+        .expect("journal mode");
+    assert_eq!(mode, "memory");
+    conn.execute_batch("CREATE TABLE t (v INTEGER); INSERT INTO t VALUES (1);")
+        .expect("write after failed switch");
+}
+
+// 导入会在测试目录给 cc-switch.db 做安全备份，和切换测试目录的备份测试一起串行跑
+#[tokio::test]
+#[serial_test::serial]
+async fn proxy_request_config_reads_follow_writes_and_imports() {
+    let db = Database::memory().expect("memory db");
+
+    // settings 表写入后，缓存的整流器配置要跟着变
+    assert!(db.get_rectifier_config().expect("read").enabled);
+    let mut rectifier = db.get_rectifier_config().expect("read");
+    rectifier.enabled = false;
+    db.set_rectifier_config(&rectifier).expect("write");
+    assert!(!db.get_rectifier_config().expect("reread").enabled);
+
+    // proxy_config 表写入后，缓存的应用级代理配置要跟着变
+    let mut proxy = db.get_proxy_config_for_app("claude").await.expect("read");
+    proxy.max_retries = 7;
+    db.update_proxy_config_for_app(proxy).await.expect("write");
+    assert_eq!(
+        db.get_proxy_config_for_app("claude")
+            .await
+            .expect("reread")
+            .max_retries,
+        7
+    );
+
+    // 导入通过 Backup API 整库替换，不经过 update hook，也必须读到导入后的值
+    let mut snapshot = rectifier.clone();
+    snapshot.enabled = true;
+    db.set_rectifier_config(&snapshot).expect("write");
+    let exported = db.export_sql_string().expect("export");
+    db.set_rectifier_config(&rectifier).expect("write");
+    assert!(!db.get_rectifier_config().expect("cache warm").enabled);
+    db.import_sql_string(&exported).expect("import");
+    assert!(db.get_rectifier_config().expect("after import").enabled);
+}

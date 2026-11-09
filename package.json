@@ -77,7 +77,6 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "codemirror": "^6.0.2",
-    "flexsearch": "^0.8.212",
     "framer-motion": "^12.23.25",
     "i18next": "^25.5.2",
     "lucide-react": "^0.542.0",
