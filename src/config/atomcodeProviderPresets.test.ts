@@ -10,8 +10,10 @@ const KEY_PATTERN = /^[a-zA-Z0-9._-]+$/;
 const PROVIDER_TYPES = new Set([
   "openai",
   "anthropic",
+  "claude",
   "deepseek",
   "gemini",
+  "ollama",
   "openai_responses",
 ]);
 
@@ -70,10 +72,38 @@ describe("atomcodeProviderPresets", () => {
     expect(ATOMCODE_PROVIDER_TYPES.map((type) => type.value)).toEqual([
       "openai",
       "openai_responses",
+      "claude",
       "anthropic",
       "deepseek",
       "gemini",
+      "ollama",
     ]);
+  });
+
+  it("ships the documented Ollama local preset", () => {
+    const ollama = atomcodeProviderPresets.find((p) =>
+      p.name.startsWith("Ollama"),
+    );
+    expect(ollama).toBeDefined();
+    expect(ollama!.category).toBe("local");
+    expect(ollama!.settingsConfig.account.provider).toBe("ollama");
+    expect(ollama!.settingsConfig.account.base_url).toBe(
+      "http://localhost:11434",
+    );
+    expect(ollama!.settingsConfig.models["llama3.2"]).toMatchObject({
+      model: "llama3.2",
+      context_window: 8000,
+    });
+  });
+
+  it("uses the documented Claude type and current Sonnet model", () => {
+    const anthropic = atomcodeProviderPresets.find(
+      (p) => p.name === "Anthropic",
+    );
+    expect(anthropic!.settingsConfig.account.provider).toBe("claude");
+    expect(anthropic!.settingsConfig.models["claude-sonnet-4-6"]).toMatchObject(
+      { model: "claude-sonnet-4-6", context_window: 128000 },
+    );
   });
 
   it("gives the custom template an empty account and no models", () => {

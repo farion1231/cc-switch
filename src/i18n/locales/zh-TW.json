@@ -5215,6 +5215,7 @@
       "providerKeyHint": "config.toml 中的唯一識別符（provider_accounts 的鍵）",
       "providerType": "介面類型",
       "baseUrl": "請求位址",
+      "baseUrlHint": "可選：留空時使用該介面類型的預設端點（Claude、DeepSeek、Ollama 等原生類型可用）。",
       "apiKey": "API Key",
       "apiKeyPlaceholder": "sk-…",
       "apiKeyHint": "可選：留空時帳號依賴 AtomCode 自帶的 OAuth 授權（auth.toml）。",

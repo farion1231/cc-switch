@@ -89,18 +89,31 @@ pub(crate) fn validate_provider(id: &str, config: &Value) -> Result<(), AppError
     let account = &config["account"];
     if !matches!(
         account.get("provider").and_then(Value::as_str),
-        Some("openai" | "anthropic" | "deepseek" | "gemini" | "openai_responses")
+        Some(
+            "openai"
+                | "openai_responses"
+                | "claude"
+                | "anthropic"
+                | "deepseek"
+                | "gemini"
+                | "ollama"
+        )
     ) {
         return Err(AppError::InvalidInput(
             "Select a supported AtomCode provider type".into(),
         ));
     }
+    // base_url is optional: native provider types (claude, deepseek, ollama, ...) fall back to
+    // AtomCode's built-in endpoints, and accounts imported from an existing config.toml may not
+    // carry one. When present it must be a valid http(s) URL.
     let base_url = account
         .get("base_url")
         .and_then(Value::as_str)
-        .unwrap_or_default();
-    if !url::Url::parse(base_url)
-        .is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
+        .unwrap_or_default()
+        .trim();
+    if !base_url.is_empty()
+        && !url::Url::parse(base_url)
+            .is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
     {
         return Err(AppError::InvalidInput(
             "Enter a valid AtomCode endpoint URL".into(),
@@ -236,7 +249,15 @@ fn apply_provider(
         .unwrap()
         .retain(|_, model| model.get("account").and_then(Value::as_str) != Some(id));
     if let Some(config) = config {
-        document["provider_accounts"][id] = config["account"].clone();
+        // An empty base_url means "use the provider type's built-in endpoint"; writing
+        // `base_url = ""` into config.toml would override that default with an invalid URL.
+        let mut account = config["account"].clone();
+        if let Some(map) = account.as_object_mut() {
+            if map.get("base_url").and_then(Value::as_str) == Some("") {
+                map.remove("base_url");
+            }
+        }
+        document["provider_accounts"][id] = account;
         for (key, model) in config["models"].as_object().unwrap() {
             let mut model = model.clone();
             model["account"] = json!(id);
@@ -520,5 +541,45 @@ context_window = 262144
         assert!(save_at_and_commit(&path, "x", Some(bad), false, || Ok(())).is_err());
         let document = read(&path).unwrap();
         assert!(document["provider_accounts"].get("x").is_none());
+    }
+
+    #[test]
+    fn accepts_documented_types_and_native_defaults_without_base_url() {
+        // AtomCode docs list `claude` and `ollama` as provider types; native types may omit
+        // base_url (e.g. an account imported from an existing config.toml).
+        for (kind, model) in [("claude", "claude-sonnet-4-6"), ("ollama", "llama3.2")] {
+            let config = json!({
+                "account": {"provider": kind},
+                "models": {"m": {"model": model}}
+            });
+            validate_provider("acct", &config)
+                .unwrap_or_else(|e| panic!("provider type {kind} should validate: {e}"));
+        }
+        // Legacy alias `anthropic` stays accepted so existing DB rows keep saving.
+        let legacy = json!({
+            "account": {"provider": "anthropic", "base_url": "https://api.anthropic.com"},
+            "models": {"m": {"model": "claude-sonnet-4-6"}}
+        });
+        validate_provider("acct", &legacy).unwrap();
+        // A non-empty base_url must still be a valid http(s) URL.
+        let bad = json!({
+            "account": {"provider": "ollama", "base_url": "not a url"},
+            "models": {"m": {"model": "llama3.2"}}
+        });
+        assert!(validate_provider("acct", &bad).is_err());
+        // Saving an empty base_url must not write `base_url = ""` (it would override the
+        // provider type's built-in endpoint with an invalid URL).
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, toml_text()).unwrap();
+        let config = json!({
+            "account": {"provider": "ollama", "base_url": ""},
+            "models": {"llama3.2": {"model": "llama3.2", "context_window": 8000}}
+        });
+        add_at_and_commit(&path, "ollama", config, || Ok(())).unwrap();
+        let document = read(&path).unwrap();
+        assert!(document["provider_accounts"]["ollama"]
+            .get("base_url")
+            .is_none());
     }
 }

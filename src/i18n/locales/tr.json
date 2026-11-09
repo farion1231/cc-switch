@@ -5124,6 +5124,7 @@
       "providerKeyHint": "config.toml içindeki benzersiz tanımlayıcı (provider_accounts anahtarı)",
       "providerType": "API türü",
       "baseUrl": "Temel URL",
+      "baseUrlHint": "İsteğe bağlı: boş bırakılırsa API türünün varsayılan uç noktası kullanılır (Claude, DeepSeek, Ollama gibi yerel türler).",
       "apiKey": "API anahtarı",
       "apiKeyPlaceholder": "sk-…",
       "apiKeyHint": "İsteğe bağlı: boş bırakılırsa hesap, AtomCode'un yerel OAuth'ını (auth.toml) kullanır.",

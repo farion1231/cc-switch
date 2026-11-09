@@ -1546,6 +1546,71 @@ pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppE
     Ok(imported + updated)
 }
 
+/// Import all providers from AtomCode live config to database
+///
+/// This imports existing accounts from ~/.atomcode/config.toml
+/// into the CC Switch database.
+pub fn import_atomcode_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    use crate::atomcode_config;
+
+    let providers = atomcode_config::get_providers()?;
+    if providers.is_empty() {
+        return Ok(0);
+    }
+
+    let mut imported = 0;
+    let mut updated = 0;
+    let existing_ids = state.db.get_provider_ids("atomcode")?;
+
+    for (name, config) in providers {
+        if name.trim().is_empty() {
+            log::warn!("Skipping AtomCode provider with empty name");
+            continue;
+        }
+
+        if existing_ids.contains(&name) {
+            match state.db.get_provider_by_id(&name, "atomcode") {
+                Ok(Some(existing)) => {
+                    if existing.settings_config != config {
+                        let mut provider = existing;
+                        provider.settings_config = config;
+                        if let Err(e) = state.db.save_provider("atomcode", &provider) {
+                            log::warn!(
+                                "Failed to update AtomCode provider '{name}' from live config: {e}"
+                            );
+                        } else {
+                            updated += 1;
+                            log::info!("Updated AtomCode provider '{name}' from live config");
+                        }
+                    }
+                }
+                Ok(None) => {
+                    log::warn!("AtomCode provider '{name}' disappeared while importing live config")
+                }
+                Err(e) => log::warn!("Failed to look up AtomCode provider '{name}': {e}"),
+            }
+            continue;
+        }
+
+        let mut provider = Provider::with_id(name.clone(), name.clone(), config, None);
+        provider.category = Some("custom".to_string());
+        provider.meta = Some(crate::provider::ProviderMeta {
+            live_config_managed: Some(true),
+            ..Default::default()
+        });
+
+        if let Err(e) = state.db.save_provider("atomcode", &provider) {
+            log::warn!("Failed to import AtomCode provider '{name}': {e}");
+            continue;
+        }
+
+        imported += 1;
+        log::info!("Imported AtomCode provider '{name}' from live config");
+    }
+
+    Ok(imported + updated)
+}
+
 /// Remove a Hermes provider from live config
 ///
 /// This removes a specific provider from ~/.hermes/config.yaml

@@ -5214,6 +5214,7 @@
       "providerKeyHint": "config.toml 中 provider_accounts 的账号键，保存后不可修改",
       "providerType": "接口类型",
       "baseUrl": "请求地址",
+      "baseUrlHint": "可选：留空时使用该接口类型的默认端点（Claude、DeepSeek、Ollama 等原生类型可用）。",
       "apiKey": "API Key",
       "apiKeyPlaceholder": "sk-…",
       "apiKeyHint": "可选：留空时账号依赖 AtomCode 自带的 OAuth 授权（auth.toml）。",

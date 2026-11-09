@@ -1060,6 +1060,13 @@ pub fn run() {
                 Ok(_) => log::debug!("○ No Oh My Pi provider changes from native config"),
                 Err(e) => log::warn!("✗ Failed to import Oh My Pi providers: {e}"),
             }
+            match crate::services::provider::import_atomcode_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Synced {count} AtomCode provider(s) from native config");
+                }
+                Ok(_) => log::debug!("○ No AtomCode provider changes from native config"),
+                Err(e) => log::warn!("✗ Failed to import AtomCode providers: {e}"),
+            }
 
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
             {
@@ -1933,6 +1940,8 @@ pub fn run() {
             commands::set_hermes_memory,
             commands::get_hermes_memory_limits,
             commands::set_hermes_memory_enabled,
+            // AtomCode specific
+            commands::import_atomcode_providers_from_live,
             // Global upstream proxy
             commands::get_global_proxy_url,
             commands::set_global_proxy_url,

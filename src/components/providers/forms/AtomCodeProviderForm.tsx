@@ -26,6 +26,7 @@ import {
   type AtomCodeProviderType,
 } from "@/config/atomcodeProviderPresets";
 import { BasicFormFields } from "./BasicFormFields";
+import ApiKeyInput from "./ApiKeyInput";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import type { ProviderFormProps } from "./ProviderForm";
 
@@ -69,11 +70,20 @@ export function AtomCodeProviderForm({
   const { t } = useTranslation();
   const isDarkMode = useDarkMode();
   const isEdit = Boolean(initialData);
-  const [config, setConfig] = useState<AtomCodeConfig>(
-    () =>
-      (initialData?.settingsConfig as unknown as AtomCodeConfig | undefined) ??
-      atomCodeCustomTemplate(),
-  );
+  const [config, setConfig] = useState<AtomCodeConfig>(() => {
+    const raw = initialData?.settingsConfig as
+      | Partial<AtomCodeConfig>
+      | undefined;
+    const template = atomCodeCustomTemplate();
+    return {
+      account: {
+        provider: raw?.account?.provider ?? template.account.provider,
+        base_url: raw?.account?.base_url ?? template.account.base_url,
+        api_key: raw?.account?.api_key ?? template.account.api_key,
+      },
+      models: raw?.models && typeof raw.models === "object" ? raw.models : {},
+    };
+  });
   const [jsonText, setJsonText] = useState(() =>
     JSON.stringify(config, null, 2),
   );
@@ -109,15 +119,14 @@ export function AtomCodeProviderForm({
     },
   });
   const name = form.watch("name");
-  const hasModels = Object.keys(config.models).length > 0;
-  const modelsValid = Object.entries(config.models).every(
-    ([key, model]) => key.trim() && model.model.trim(),
+  const hasModels = Object.keys(config.models ?? {}).length > 0;
+  const modelsValid = Object.entries(config.models ?? {}).every(
+    ([key, model]) => key.trim() && model?.model?.trim(),
   );
   const ready = Boolean(
     jsonValid &&
       name.trim() &&
       (isEdit || (providerKey && !keyInvalid && !keyTaken)) &&
-      config.account.base_url.trim() &&
       hasModels &&
       modelsValid,
   );
@@ -131,7 +140,13 @@ export function AtomCodeProviderForm({
     setJsonValid(true);
   };
   const updateAccount = (next: Partial<AtomCodeConfig["account"]>) =>
-    update({ ...config, account: { ...config.account, ...next } });
+    update({
+      ...config,
+      account: {
+        ...(config.account ?? {}),
+        ...next,
+      } as AtomCodeConfig["account"],
+    });
 
   const choosePreset = (id: string) => {
     setPresetId(id);
@@ -296,7 +311,7 @@ export function AtomCodeProviderForm({
                 {t("atomcode.form.providerType")}
               </Label>
               <Select
-                value={config.account.provider}
+                value={config.account?.provider ?? "openai"}
                 onValueChange={(value) =>
                   updateAccount({ provider: value as AtomCodeProviderType })
                 }
@@ -316,32 +331,27 @@ export function AtomCodeProviderForm({
             <div className="space-y-2">
               <Label htmlFor="atomcode-base-url">
                 {t("atomcode.form.baseUrl")}
-                <span aria-hidden="true" className="text-destructive ml-1">
-                  *
-                </span>
               </Label>
               <ImeSafeInput
                 id="atomcode-base-url"
-                value={config.account.base_url}
+                value={config.account?.base_url ?? ""}
                 onValueChange={(base_url) => updateAccount({ base_url })}
                 placeholder="https://api.example.com/v1"
                 autoComplete="off"
               />
-            </div>
-            <div className="space-y-2 sm:col-span-2">
-              <Label htmlFor="atomcode-api-key">
-                {t("atomcode.form.apiKey")}
-              </Label>
-              <ImeSafeInput
-                id="atomcode-api-key"
-                value={config.account.api_key ?? ""}
-                onValueChange={(api_key) => updateAccount({ api_key })}
-                placeholder={t("atomcode.form.apiKeyPlaceholder")}
-                autoComplete="off"
-              />
               <p className="text-xs text-fg-2">
-                {t("atomcode.form.apiKeyHint")}
+                {t("atomcode.form.baseUrlHint")}
               </p>
+            </div>
+            <div className="sm:col-span-2">
+              <ApiKeyInput
+                id="atomcode-api-key"
+                label={t("atomcode.form.apiKey")}
+                value={config.account?.api_key ?? ""}
+                onChange={(api_key) => updateAccount({ api_key })}
+                placeholder={t("atomcode.form.apiKeyPlaceholder")}
+                hint={t("atomcode.form.apiKeyHint")}
+              />
             </div>
           </div>
           <div className="space-y-2">
@@ -366,7 +376,7 @@ export function AtomCodeProviderForm({
               <p className="text-xs text-fg-2">{t("atomcode.form.noModels")}</p>
             )}
             <div className="space-y-2">
-              {Object.entries(config.models).map(([key, model]) => (
+              {Object.entries(config.models ?? {}).map(([key, model]) => (
                 <div key={key} className="flex items-start gap-2">
                   <div className="w-44 shrink-0">
                     <ImeSafeInput
@@ -382,7 +392,7 @@ export function AtomCodeProviderForm({
                   <div className="min-w-0 flex-1">
                     <ImeSafeInput
                       aria-label={t("atomcode.form.modelId")}
-                      value={model.model}
+                      value={model?.model ?? ""}
                       onValueChange={(next) =>
                         updateModel(key, { model: next })
                       }
@@ -393,7 +403,7 @@ export function AtomCodeProviderForm({
                   <div className="w-36 shrink-0">
                     <ImeSafeInput
                       aria-label={t("atomcode.form.contextWindow")}
-                      value={model.context_window?.toString() ?? ""}
+                      value={model?.context_window?.toString() ?? ""}
                       onValueChange={(next) =>
                         updateModel(key, { contextWindow: next })
                       }

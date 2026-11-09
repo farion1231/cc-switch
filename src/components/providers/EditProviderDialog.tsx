@@ -198,7 +198,8 @@ export function EditProviderDialog({
         appId === "mcode" ||
         appId === "kimi" ||
         appId === "dsh" ||
-        appId === "omp"
+        appId === "omp" ||
+        appId === "atomcode"
       ) {
         if (!cancelled) {
           setLiveSettings(null);
@@ -297,7 +298,10 @@ export function EditProviderDialog({
         unknown
       >;
       const nextProviderId =
-        (appId === "opencode" || appId === "openclaw" || appId === "pi") &&
+        (appId === "opencode" ||
+          appId === "openclaw" ||
+          appId === "pi" ||
+          appId === "atomcode") &&
         values.providerKey?.trim()
           ? values.providerKey.trim()
           : provider.id;

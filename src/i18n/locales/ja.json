@@ -5214,6 +5214,7 @@
       "providerKeyHint": "config.toml 内の一意な識別子（provider_accounts のキー）",
       "providerType": "API タイプ",
       "baseUrl": "ベース URL",
+      "baseUrlHint": "省略可：空欄の場合はその API タイプの既定エンドポイントを使用します（Claude、DeepSeek、Ollama などのネイティブタイプ）。",
       "apiKey": "API キー",
       "apiKeyPlaceholder": "sk-…",
       "apiKeyHint": "省略可：空欄の場合は AtomCode のネイティブ OAuth（auth.toml）を使用します。",

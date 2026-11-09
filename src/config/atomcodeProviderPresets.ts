@@ -9,8 +9,10 @@ import type { ProviderCategory } from "@/types";
 export type AtomCodeProviderType =
   | "openai"
   | "anthropic"
+  | "claude"
   | "deepseek"
   | "gemini"
+  | "ollama"
   | "openai_responses";
 
 export interface AtomCodeModelEntry {
@@ -43,9 +45,12 @@ export const ATOMCODE_PROVIDER_TYPES: {
 }[] = [
   { value: "openai", label: "OpenAI Chat Completions" },
   { value: "openai_responses", label: "OpenAI Responses" },
-  { value: "anthropic", label: "Anthropic Messages" },
+  { value: "claude", label: "Claude (Anthropic Messages)" },
+  // 旧版集成把 Anthropic 存成 `anthropic`；保留选项以便历史供应商仍可正常编辑保存
+  { value: "anthropic", label: "Anthropic Messages (alias)" },
   { value: "deepseek", label: "DeepSeek" },
   { value: "gemini", label: "Gemini" },
+  { value: "ollama", label: "Ollama (local)" },
 ];
 
 export const atomCodeCustomTemplate = () =>
@@ -57,8 +62,9 @@ export const atomCodeCustomTemplate = () =>
 // 2026-10-25 起官方只留 Flash（Pro 贵且效果不如 Flash），与 Codex/Claude 预设一致；
 // `deepseek` 账号类型走 DeepSeek 原生方言，端点与 Codex 预设同为裸域名。
 // context_window 不写：AtomCode 自带 DeepSeek 模型的窗口知识，留空即用它的默认。
-// 其余预设均为 OpenAI 兼容协议（provider: "openai"）；`ollama` 类型后端
-// validate_provider 不接受，本地模型请走自定义模板填 OpenAI 兼容网关。
+// Claude 走 AtomCode 文档中的 `claude` 类型（`anthropic` 作为历史别名仍被后端接受）；
+// Ollama 走原生 `ollama` 类型，base_url 留 localhost 默认端口。
+// 其余预设均为 OpenAI 兼容协议（provider: "openai"）。
 export const atomcodeProviderPresets: AtomCodeProviderPreset[] = [
   {
     name: "Anthropic",
@@ -70,12 +76,15 @@ export const atomcodeProviderPresets: AtomCodeProviderPreset[] = [
     iconColor: "#D4915D",
     settingsConfig: {
       account: {
-        provider: "anthropic",
+        provider: "claude",
         base_url: "https://api.anthropic.com",
         api_key: "",
       },
       models: {
-        "claude-sonnet-4-5": { model: "claude-sonnet-4-5" },
+        "claude-sonnet-4-6": {
+          model: "claude-sonnet-4-6",
+          context_window: 128000,
+        },
       },
     },
   },
@@ -167,6 +176,25 @@ export const atomcodeProviderPresets: AtomCodeProviderPreset[] = [
       },
       models: {
         "Qwen/Qwen2.5-72B-Instruct": { model: "Qwen/Qwen2.5-72B-Instruct" },
+      },
+    },
+  },
+  {
+    // 本地 Ollama：先 `ollama pull llama3.2` 并启动服务，再切换到这个供应商。
+    // function calling 兼容性参差不齐，弱一些的本地模型可能不稳定触发工具调用；
+    // 优先尝试 Qwen2.5 / Llama3.2 的 Instruct 版本。
+    name: "Ollama (本地)",
+    providerKey: "ollama",
+    websiteUrl: "https://ollama.com",
+    category: "local",
+    icon: "ollama",
+    settingsConfig: {
+      account: {
+        provider: "ollama",
+        base_url: "http://localhost:11434",
+      },
+      models: {
+        "llama3.2": { model: "llama3.2", context_window: 8000 },
       },
     },
   },

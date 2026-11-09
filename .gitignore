@@ -17,6 +17,8 @@ GEMINI.md
 /.atomcode
 /.mcp.json
 no-updater.json
+preview-config.json
+start-preview.bat
 tauri-test-config.json
 /.idea
 /.vscode

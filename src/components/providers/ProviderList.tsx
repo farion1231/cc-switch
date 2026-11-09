@@ -234,6 +234,9 @@ export function ProviderList({
       if (appId === "hermes") {
         return (await providersApi.importHermesFromLive()) > 0;
       }
+      if (appId === "atomcode") {
+        return (await providersApi.importAtomCodeFromLive()) > 0;
+      }
       if (appId === "claude-desktop") {
         return (await providersApi.importClaudeDesktopFromClaude()) > 0;
       }

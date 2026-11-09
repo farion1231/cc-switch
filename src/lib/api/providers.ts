@@ -293,6 +293,13 @@ export const providersApi = {
   async importHermesFromLive(): Promise<number> {
     return await invoke("import_hermes_providers_from_live");
   },
+
+  /**
+   * 从 AtomCode live 配置导入供应商到数据库
+   */
+  async importAtomCodeFromLive(): Promise<number> {
+    return await invoke("import_atomcode_providers_from_live");
+  },
 };
 
 // ============================================================================

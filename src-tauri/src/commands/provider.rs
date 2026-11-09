@@ -1140,6 +1140,17 @@ pub async fn sync_universal_provider(
 }
 
 #[tauri::command]
+pub async fn import_atomcode_providers_from_live(
+    state: State<'_, AppState>,
+) -> Result<usize, String> {
+    run_db_task(&state, |state| {
+        crate::services::provider::import_atomcode_providers_from_live(state)
+            .map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn import_opencode_providers_from_live(
     state: State<'_, AppState>,
 ) -> Result<usize, String> {

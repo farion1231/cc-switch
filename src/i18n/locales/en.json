@@ -5214,6 +5214,7 @@
       "providerKeyHint": "Unique identifier in config.toml (the provider_accounts key)",
       "providerType": "API type",
       "baseUrl": "Base URL",
+      "baseUrlHint": "Optional: leave empty to use the default endpoint of the API type (native Claude, DeepSeek, Ollama, etc.).",
       "apiKey": "API Key",
       "apiKeyPlaceholder": "sk-…",
       "apiKeyHint": "Optional: when empty, the account relies on AtomCode's native OAuth (auth.toml).",
