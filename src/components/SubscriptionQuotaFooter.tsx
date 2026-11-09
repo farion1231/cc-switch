@@ -32,8 +32,11 @@ interface SubscriptionQuotaViewProps {
   loading: boolean;
   /** 原样传 refetch：额度列靠它返回的结果判断点击重查的成败 */
   refetch: () => unknown;
-  /** 用于 `subscription.expiredHint` 的 {tool} 插值；解耦了 hook 的 appId */
-  appIdForExpiredHint: string;
+  /**
+   * 用于 `subscription.expiredHint` 的 {tool} 插值（CLI 命令名）；解耦了 hook 的 appId。
+   * 不传＝账号由 CC Switch 自管（Codex / xAI OAuth），没有 CLI 命令可跑，提示改为去授权中心重新登录
+   */
+  appIdForExpiredHint?: string;
   inline?: boolean;
   /** 按档写剩余还是已用；由外层按设置传入，这里不读设置（见 useQuotaDisplay） */
   display?: QuotaDisplay;
@@ -54,9 +57,10 @@ export const TIER_I18N_KEYS: Record<string, string> = {
   gemini_pro: "subscription.geminiPro",
   gemini_flash: "subscription.geminiFlash",
   gemini_flash_lite: "subscription.geminiFlashLite",
-  // Antigravity：Gemini 一组、Claude 和 GPT 一组，各有 5 小时和每周两档
+  // Antigravity：Gemini 一组、Claude 和 GPT 一组，各有 5 小时和每周两档；Pro 档另有 Argon 每周
   agy_gemini_five_hour: "subscription.agyGeminiFiveHour",
   agy_gemini_weekly: "subscription.agyGeminiWeekly",
+  agy_gemini_argon_weekly: "subscription.agyGeminiArgonWeekly",
   agy_third_party_five_hour: "subscription.agyThirdPartyFiveHour",
   agy_third_party_weekly: "subscription.agyThirdPartyWeekly",
   // Token Plan（five_hour 已在上方官方映射中）
@@ -74,11 +78,13 @@ const HIDDEN_INLINE_TIERS = new Set(["seven_day_sonnet"]);
 
 /**
  * 卡片上按组只留剩余最少的一档、标签写组名（展开时仍逐档列出）：
- * Antigravity 的 Gemini、Claude 和 GPT 两组各有 5 小时和每周两档，四档在卡片上放不下
+ * Antigravity 的 Gemini、Claude 和 GPT 两组各有 5 小时和每周两档（Pro 档 Gemini 组另有 Argon 每周），
+ * 四五档在卡片上放不下。Argon 也算进 Gemini 组，卡片始终两行、位置不随用量跳
  */
 const INLINE_TIER_GROUPS: Record<string, string> = {
   agy_gemini_five_hour: "subscription.agyGemini",
   agy_gemini_weekly: "subscription.agyGemini",
+  agy_gemini_argon_weekly: "subscription.agyGemini",
   agy_third_party_five_hour: "subscription.agyThirdParty",
   agy_third_party_weekly: "subscription.agyThirdParty",
 };
@@ -238,7 +244,7 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
   if (quota.credentialStatus === "parse_error") return null;
 
   if (!quota.success) {
-    // 登录过期和令牌待刷新都是运行一次 CLI 就能解决，展开时给同一条提示
+    // 登录过期和令牌待刷新都是重新登录一次就能解决，展开时给同一条提示
     const expired =
       quota.credentialStatus === "expired" ||
       quota.credentialStatus === "refresh_pending";
@@ -268,7 +274,9 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
             </span>{" "}
             <span className="text-fg-3">
               {expired
-                ? t("subscription.expiredHint", { tool: appIdForExpiredHint })
+                ? appIdForExpiredHint
+                  ? t("subscription.expiredHint", { tool: appIdForExpiredHint })
+                  : t("subscription.expiredHintAccounts")
                 : reason}
             </span>
           </p>

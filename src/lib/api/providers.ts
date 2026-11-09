@@ -19,13 +19,30 @@ export interface ProviderSwitchEvent {
   providerId: string;
 }
 
+/**
+ * Codex 切换让新会话换了组（openai ↔ custom），统一会话历史又关着：
+ * 新版 Codex 只能继续当前组的会话，切换前那组从此只读。
+ */
+export interface CodexHistorySplitHint {
+  /** 切换前新会话记的 provider id（"openai" 或 "custom"） */
+  previousBucket: string;
+  currentBucket: string;
+  /** 记在切换前那组、现在只能查看的会话数 */
+  lockedThreads: number;
+}
+
 export interface SwitchResult {
   warnings: string[];
   route?: RouteSwitchResult;
+  codexHistorySplit?: CodexHistorySplitHint;
 }
 
 export interface OpenTerminalOptions {
   cwd?: string;
+  /** 启动时跳过权限确认：Claude Code 与 agy 加 `--dangerously-skip-permissions`，Codex 加 `--dangerously-bypass-approvals-and-sandbox` */
+  skipPermissions?: boolean;
+  /** 追加在生成的参数后面，后端按空白拆分、引号括起的算一个 */
+  extraArgs?: string;
 }
 
 export interface ClaudeDesktopStatus {
@@ -216,11 +233,13 @@ export const providersApi = {
     appId: AppId,
     options?: OpenTerminalOptions,
   ): Promise<boolean> {
-    const { cwd } = options ?? {};
+    const { cwd, skipPermissions, extraArgs } = options ?? {};
     return await invoke("open_provider_terminal", {
       providerId,
       app: appId,
       cwd,
+      skipPermissions,
+      extraArgs,
     });
   },
 

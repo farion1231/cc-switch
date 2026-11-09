@@ -51,7 +51,7 @@ describe("classifyEndpoint", () => {
     expect(classifyEndpoint(null)).toBeNull();
   });
 
-  it("sees through IPv4-mapped IPv6 hosts", () => {
+  it("sees through IPv4-mapped, IPv4-compatible, SIIT, and NAT64 IPv6 hosts", () => {
     // `new URL()` 把 `[::ffff:127.0.0.1]` 归一成十六进制 `[::ffff:7f00:1]`，
     // 点分形式在这一步就没了——只按 \d+\.\d+\.\d+\.\d+ 匹配会整类漏掉。
     expect(classifyEndpoint("http://[::ffff:127.0.0.1]/")).toBe(
@@ -68,6 +68,35 @@ describe("classifyEndpoint", () => {
     );
     // 映射的公网地址不该误报：8.8.8.8 → ::ffff:808:808
     expect(classifyEndpoint("http://[::ffff:8.8.8.8]/")).toBeNull();
+
+    // IPv4-compatible IPv6 (RFC 4291)
+    expect(classifyEndpoint("http://[::127.0.0.1]/")).toBe("privateEndpoint");
+    expect(classifyEndpoint("http://[::169.254.169.254]/")).toBe(
+      "privateEndpoint",
+    );
+    expect(classifyEndpoint("http://[::10.0.0.1]/")).toBe("privateEndpoint");
+    expect(classifyEndpoint("http://[::8.8.8.8]/")).toBeNull();
+
+    // SIIT IPv4-translated (RFC 6052 / RFC 7915)
+    expect(classifyEndpoint("http://[::ffff:0:127.0.0.1]/")).toBe(
+      "privateEndpoint",
+    );
+    expect(classifyEndpoint("http://[::ffff:0:169.254.169.254]/")).toBe(
+      "privateEndpoint",
+    );
+    expect(classifyEndpoint("http://[::ffff:0:8.8.8.8]/")).toBeNull();
+
+    // NAT64 well-known prefix & local prefix (RFC 6052 / RFC 8215)
+    expect(classifyEndpoint("http://[64:ff9b::127.0.0.1]/")).toBe(
+      "privateEndpoint",
+    );
+    expect(classifyEndpoint("http://[64:ff9b::169.254.169.254]/")).toBe(
+      "privateEndpoint",
+    );
+    expect(classifyEndpoint("http://[64:ff9b:1::192.168.1.1]/")).toBe(
+      "privateEndpoint",
+    );
+    expect(classifyEndpoint("http://[64:ff9b::8.8.8.8]/")).toBeNull();
   });
 });
 

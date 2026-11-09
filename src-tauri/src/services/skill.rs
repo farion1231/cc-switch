@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 
 use crate::app_config::{AppType, InstalledSkill, SkillApps, UnmanagedSkill};
@@ -576,7 +576,17 @@ fn parse_agents_lock() -> HashMap<String, LockRepoInfo> {
 pub struct SkillService {
     #[cfg(test)]
     repo_fixture: Option<PathBuf>,
+    /// 发现结果按仓库缓存（键是 owner/name/branch），只存读成功的仓库。
+    /// 发现要把每个仓库的归档整包下下来，添加、启用仓库或导入后的重拉不该把
+    /// 没变的仓库再下一遍；手动刷新会绕过它（`force_refresh`）。
+    discovery_cache: Mutex<HashMap<RepoCacheKey, (Instant, Vec<DiscoverableSkill>)>>,
 }
+
+/// owner / name / branch（branch 是配置值，不是解析后的分支）
+type RepoCacheKey = (String, String, String);
+
+/// 发现缓存的有效期：GitHub 归档本身也有几分钟的 CDN 缓存，再短意义不大
+const DISCOVERY_CACHE_TTL: Duration = Duration::from_secs(10 * 60);
 
 impl Default for SkillService {
     fn default() -> Self {
@@ -589,6 +599,7 @@ impl SkillService {
         Self {
             #[cfg(test)]
             repo_fixture: None,
+            discovery_cache: Mutex::new(HashMap::new()),
         }
     }
 
@@ -644,6 +655,12 @@ impl SkillService {
         Ok(dir)
     }
 
+    /// 已安装 Skill 在 SSOT 目录下的主副本路径（目录名先过路径穿越校验）
+    pub fn get_installed_skill_dir(directory: &str) -> Result<PathBuf> {
+        let directory = Self::require_valid_directory(directory)?;
+        Ok(Self::get_ssot_dir()?.join(directory))
+    }
+
     /// 获取 Skill 卸载备份目录（~/.cc-switch/skill-backups/）
     fn get_backup_dir() -> Result<PathBuf> {
         let dir = get_app_config_dir().join("skill-backups");
@@ -660,7 +677,11 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
-            AppType::ClaudeDesktop | AppType::Mcode | AppType::Kimi | AppType::Dsh => {}
+            AppType::ClaudeDesktop
+            | AppType::Mcode
+            | AppType::Kimi
+            | AppType::Dsh
+            | AppType::Copilot => {}
             AppType::Codex => {
                 if let Some(custom) = crate::settings::get_codex_override_dir() {
                     return Ok(custom.join("skills"));
@@ -714,6 +735,7 @@ impl SkillService {
             AppType::Mcode => crate::mcode_config::data_dir().join("skills"),
             AppType::Dsh => crate::dsh_config::data_dir().join("skills"),
             AppType::Kimi => crate::kimi_config::data_dir().join("skills"),
+            AppType::Copilot => crate::copilot_config::skills_dir(),
             AppType::Claude => home.join(".claude").join("skills"),
             AppType::ClaudeDesktop => home.join(".claude-desktop").join("skills"),
             AppType::Codex => home.join(".codex").join("skills"),
@@ -1076,7 +1098,13 @@ impl SkillService {
                     let ssot_dir = Self::get_ssot_dir()?;
                     let source = ssot_dir.join(&directory);
                     let mut managed_destinations = Vec::new();
-                    for app in [AppType::Mcode, AppType::Agy, AppType::Kimi, AppType::Dsh] {
+                    for app in [
+                        AppType::Mcode,
+                        AppType::Agy,
+                        AppType::Kimi,
+                        AppType::Dsh,
+                        AppType::Copilot,
+                    ] {
                         if skill.apps.is_enabled_for(&app) {
                             let destination = Self::get_distinct_app_skills_dir(&ssot_dir, &app)?
                                 .join(&directory);
@@ -1167,6 +1195,7 @@ impl SkillService {
                                 | AppType::Kimi
                                 | AppType::Dsh
                                 | AppType::Omp
+                                | AppType::Copilot
                         ) {
                             continue;
                         }
@@ -1224,11 +1253,22 @@ impl SkillService {
     ///
     /// 递归遍历目录下所有非隐藏文件，按相对路径字典序排列，
     /// 将 "相对路径\0内容\0" 逐文件 feed 给同一个 hasher。
+    /// Python 字节码（`__pycache__/`、`*.pyc`）不计入，见 `collect_files_for_hash`。
     pub fn compute_dir_hash(dir: &Path) -> Result<String> {
+        Self::compute_dir_hash_with(dir, true)
+    }
+
+    /// 旧版算法：字节码也计入。库里在 #7772 修复前保存的 content_hash 是用它
+    /// 算的；只给 check_updates 识别并迁移这类旧缓存用。
+    fn compute_legacy_dir_hash(dir: &Path) -> Result<String> {
+        Self::compute_dir_hash_with(dir, false)
+    }
+
+    fn compute_dir_hash_with(dir: &Path, skip_bytecode: bool) -> Result<String> {
         use sha2::{Digest, Sha256};
 
         let mut files: Vec<PathBuf> = Vec::new();
-        Self::collect_files_for_hash(dir, dir, &mut files)?;
+        Self::collect_files_for_hash(dir, dir, skip_bytecode, &mut files)?;
         files.sort();
 
         let mut hasher = Sha256::new();
@@ -1246,9 +1286,19 @@ impl SkillService {
         Ok(format!("{:x}", hasher.finalize()))
     }
 
-    /// 递归收集目录下所有非隐藏文件
+    /// 递归收集目录下所有非隐藏文件。
+    ///
+    /// `__pycache__/` 目录与 `*.pyc` 文件是 Python 运行/导入时生成的字节码缓存，
+    /// 不属于 Skill 自身内容；只跑一遍 Skill（不修改任何源文件）就会让目录哈希
+    /// 发生变化，结果是 Skill 会被报为「有更新」，用户点更新又会触发整目录替
+    /// 换（见 #7772）。忽略这两类条目后，运行 Skill 不再影响哈希。
     #[allow(clippy::only_used_in_recursion)]
-    fn collect_files_for_hash(base: &Path, current: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+    fn collect_files_for_hash(
+        base: &Path,
+        current: &Path,
+        skip_bytecode: bool,
+        files: &mut Vec<PathBuf>,
+    ) -> Result<()> {
         let entries = fs::read_dir(current)
             .with_context(|| format!("读取目录失败: {}", current.display()))?;
         for entry in entries {
@@ -1259,8 +1309,14 @@ impl SkillService {
             }
             let path = entry.path();
             if path.is_dir() {
-                Self::collect_files_for_hash(base, &path, files)?;
+                if skip_bytecode && name == "__pycache__" {
+                    continue;
+                }
+                Self::collect_files_for_hash(base, &path, skip_bytecode, files)?;
             } else {
+                if skip_bytecode && name.ends_with(".pyc") {
+                    continue;
+                }
                 files.push(path);
             }
         }
@@ -1355,6 +1411,16 @@ impl SkillService {
             Ok(h) => Some((h, true)),
             Err(_) => None,
         }
+    }
+
+    /// 库里缓存的哈希是否是该远端目录按旧算法（字节码计入）算出的值。
+    ///
+    /// 上游仓库自带 `.pyc` / `__pycache__` 时，#7772 修复前安装的 Skill 缓存的
+    /// 是旧算法的哈希，与新算法的远端哈希必然不等；不识别就会对未变化的
+    /// Skill 误报「有更新」，用户点更新又是一次整目录替换。远端不含字节码时
+    /// 新旧算法结果相同，前面的相等比较已经放行，不会走到这里。
+    fn is_legacy_hash_of(cached_hash: &str, remote_dir: &Path) -> bool {
+        Self::compute_legacy_dir_hash(remote_dir).is_ok_and(|legacy| legacy == cached_hash)
     }
 
     /// 检查所有已安装 Skill 的更新
@@ -1464,8 +1530,16 @@ impl SkillService {
                     Some((h, freshly_computed)) => {
                         if freshly_computed {
                             let _ = db.update_skill_hash(&skill.id, &h, 0);
+                            Some(h)
+                        } else if h != remote_hash && Self::is_legacy_hash_of(&h, &remote_skill_dir)
+                        {
+                            // 旧版缓存（字节码计入）与上游一致：迁移成新算法的
+                            // 值，不报「有更新」；更新时间保持原值。
+                            let _ = db.update_skill_hash(&skill.id, &remote_hash, skill.updated_at);
+                            Some(remote_hash.clone())
+                        } else {
+                            Some(h)
                         }
-                        Some(h)
                     }
                     None => None,
                 };
@@ -1646,6 +1720,7 @@ impl SkillService {
             AppType::Kimi,
             AppType::Dsh,
             AppType::Omp,
+            AppType::Copilot,
         ] {
             if skill.apps.is_enabled_for(&app) {
                 let destination =
@@ -1661,7 +1736,12 @@ impl SkillService {
         // 备份旧文件
         let _ = Self::create_uninstall_backup(&skill);
 
-        if !(skill.apps.mcode || skill.apps.agy || skill.apps.kimi || skill.apps.dsh) {
+        if !(skill.apps.mcode
+            || skill.apps.agy
+            || skill.apps.kimi
+            || skill.apps.dsh
+            || skill.apps.copilot)
+        {
             if dest.exists() {
                 fs::remove_dir_all(&dest)?;
             }
@@ -1669,12 +1749,16 @@ impl SkillService {
         }
 
         // 计算新哈希 + 解析新元数据
-        let metadata_source =
-            if skill.apps.mcode || skill.apps.agy || skill.apps.kimi || skill.apps.dsh {
-                &source
-            } else {
-                &dest
-            };
+        let metadata_source = if skill.apps.mcode
+            || skill.apps.agy
+            || skill.apps.kimi
+            || skill.apps.dsh
+            || skill.apps.copilot
+        {
+            &source
+        } else {
+            &dest
+        };
         let new_hash = Self::compute_dir_hash(metadata_source).ok();
         let skill_md = metadata_source.join("SKILL.md");
         let (new_name, new_description) = Self::read_skill_name_desc(&skill_md, &skill.directory);
@@ -1702,38 +1786,46 @@ impl SkillService {
             updated_at: chrono::Utc::now().timestamp(),
         };
 
-        let mut updated_skill =
-            if skill.apps.mcode || skill.apps.agy || skill.apps.kimi || skill.apps.dsh {
-                Self::update_managed_skill_files(
-                    &source,
+        let mut updated_skill = if skill.apps.mcode
+            || skill.apps.agy
+            || skill.apps.kimi
+            || skill.apps.dsh
+            || skill.apps.copilot
+        {
+            Self::update_managed_skill_files(
+                &source,
+                &dest,
+                &skill.directory,
+                &deployments,
+                &[
+                    AppType::Mcode,
+                    AppType::Agy,
+                    AppType::Kimi,
+                    AppType::Dsh,
+                    AppType::Copilot,
+                ]
+                .iter()
+                .filter(|app| skill.apps.is_enabled_for(app))
+                .map(|app| Self::get_app_skills_dir(app).map(|dir| dir.join(&skill.directory)))
+                .collect::<Result<Vec<_>>>()?,
+                || {
+                    if !db.update_skill_metadata(&updated_metadata)? {
+                        return Err(anyhow!("Skill no longer installed: {}", skill.id));
+                    }
+                    Ok(updated_metadata)
+                },
+            )?
+        } else {
+            for (destination, deployment) in deployments {
+                Self::refresh_pi_skill_destination(
                     &dest,
-                    &skill.directory,
-                    &deployments,
-                    &[AppType::Mcode, AppType::Agy, AppType::Kimi, AppType::Dsh]
-                        .iter()
-                        .filter(|app| skill.apps.is_enabled_for(app))
-                        .map(|app| {
-                            Self::get_app_skills_dir(app).map(|dir| dir.join(&skill.directory))
-                        })
-                        .collect::<Result<Vec<_>>>()?,
-                    || {
-                        if !db.update_skill_metadata(&updated_metadata)? {
-                            return Err(anyhow!("Skill no longer installed: {}", skill.id));
-                        }
-                        Ok(updated_metadata)
-                    },
-                )?
-            } else {
-                for (destination, deployment) in deployments {
-                    Self::refresh_pi_skill_destination(
-                        &dest,
-                        &destination,
-                        &updated_metadata.directory,
-                        &deployment,
-                    )?;
-                }
-                Self::persist_updated_skill_metadata(db, &updated_metadata)?
-            };
+                    &destination,
+                    &updated_metadata.directory,
+                    &deployment,
+                )?;
+            }
+            Self::persist_updated_skill_metadata(db, &updated_metadata)?
+        };
         updated_skill.apps.pi = Self::skill_exists_in_app(&updated_skill.directory, &AppType::Pi);
         updated_skill.apps.omp = Self::skill_exists_in_app(&updated_skill.directory, &AppType::Omp);
 
@@ -1747,6 +1839,7 @@ impl SkillService {
                     | AppType::Kimi
                     | AppType::Dsh
                     | AppType::Omp
+                    | AppType::Copilot
             ) {
                 continue;
             }
@@ -1977,7 +2070,13 @@ impl SkillService {
                     .ok()
                     .flatten()
             };
-            for app in [AppType::Mcode, AppType::Agy, AppType::Kimi, AppType::Dsh] {
+            for app in [
+                AppType::Mcode,
+                AppType::Agy,
+                AppType::Kimi,
+                AppType::Dsh,
+                AppType::Copilot,
+            ] {
                 if skill.apps.is_enabled_for(&app) {
                     let destination = Self::get_app_skills_dir(&app)?.join(&directory);
                     if let Some(deployment) =
@@ -2206,7 +2305,10 @@ impl SkillService {
             .get_installed_skill(id)?
             .ok_or_else(|| anyhow!("Skill not found: {id}"))?;
 
-        if matches!(app, AppType::Agy | AppType::Kimi | AppType::Dsh) {
+        if matches!(
+            app,
+            AppType::Agy | AppType::Kimi | AppType::Dsh | AppType::Copilot
+        ) {
             if !enabled && !skill.apps.is_enabled_for(app) {
                 return Ok(());
             }
@@ -2419,7 +2521,13 @@ impl SkillService {
 
             // An explicitly imported MCode link must point at the managed copy
             // so subsequent toggles and updates can verify its ownership.
-            for app in [AppType::Mcode, AppType::Agy, AppType::Kimi, AppType::Dsh] {
+            for app in [
+                AppType::Mcode,
+                AppType::Agy,
+                AppType::Kimi,
+                AppType::Dsh,
+                AppType::Copilot,
+            ] {
                 if apps.is_enabled_for(&app) {
                     let projection = (|| -> Result<()> {
                         let native =
@@ -2469,6 +2577,7 @@ impl SkillService {
                         | AppType::Kimi
                         | AppType::Dsh
                         | AppType::Omp
+                        | AppType::Copilot
                 ) || !apps.is_enabled_for(&app)
                     || Self::skill_exists_in_app(&dir_name, &app)
                 {
@@ -2581,6 +2690,7 @@ impl SkillService {
                 | AppType::Kimi
                 | AppType::Dsh
                 | AppType::Omp
+                | AppType::Copilot
         ) {
             return Ok(());
         }
@@ -2763,6 +2873,7 @@ impl SkillService {
                 | AppType::Kimi
                 | AppType::Dsh
                 | AppType::Omp
+                | AppType::Copilot
         ) && (dest.exists() || Self::is_symlink(&dest))
         {
             Self::ensure_pi_skill_destination_matches(&source, &dest, &directory)?;
@@ -2971,6 +3082,7 @@ impl SkillService {
                     | AppType::Kimi
                     | AppType::Dsh
                     | AppType::Omp
+                    | AppType::Copilot
             ) {
                 let source = ssot_dir.join(&directory);
                 Self::ensure_pi_skill_destination_matches(&source, &skill_path, &directory)?;
@@ -3040,12 +3152,12 @@ impl SkillService {
             .map(|skill| (skill.directory.to_lowercase(), skill))
             .collect();
 
-        // Unselected MCode, Agy and Kimi directories may have been installed outside CC Switch.
+        // Unselected MCode, Agy, Kimi and Copilot directories may have been installed outside CC Switch.
         // Explicit disable/uninstall handles removal of managed deployments.
         if app_dir.exists()
             && !matches!(
                 app,
-                AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Dsh
+                AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Dsh | AppType::Copilot
             )
         {
             for entry in fs::read_dir(&app_dir)? {
@@ -3098,13 +3210,16 @@ impl SkillService {
         &self,
         repos: Vec<SkillRepo>,
     ) -> Result<Vec<DiscoverableSkill>> {
-        Ok(self.discover_available_report(repos).await?.skills)
+        Ok(self.discover_available_report(repos, false).await?.skills)
     }
 
     /// 发现可安装的 Skill，并逐仓库报告没读到的仓库（停用的仓库不读也不报）。
+    ///
+    /// `force_refresh` 为 false 时，有效期内的仓库直接用缓存，不重新下载。
     pub async fn discover_available_report(
         &self,
         repos: Vec<SkillRepo>,
+        force_refresh: bool,
     ) -> Result<SkillDiscoveryResult> {
         let mut skills = Vec::new();
         let mut failures = Vec::new();
@@ -3114,7 +3229,7 @@ impl SkillService {
 
         let fetch_tasks = enabled_repos
             .iter()
-            .map(|repo| self.fetch_repo_skills(repo));
+            .map(|repo| self.fetch_repo_skills_cached(repo, force_refresh));
 
         let results: Vec<Result<Vec<DiscoverableSkill>>> =
             futures::future::join_all(fetch_tasks).await;
@@ -3200,6 +3315,71 @@ impl SkillService {
 
         skills.sort_by_key(|skill| skill.name.to_lowercase());
 
+        Ok(skills)
+    }
+
+    /// 只发现一个仓库（添加、重新启用仓库时用），不碰其它仓库。
+    pub async fn discover_repo(&self, repo: &SkillRepo) -> SkillDiscoveryResult {
+        if !repo.enabled {
+            return SkillDiscoveryResult::default();
+        }
+        match self.fetch_repo_skills_cached(repo, false).await {
+            Ok(mut skills) => {
+                Self::deduplicate_discoverable_skills(&mut skills);
+                skills.sort_by_key(|skill| skill.name.to_lowercase());
+                SkillDiscoveryResult {
+                    skills,
+                    failures: Vec::new(),
+                }
+            }
+            Err(e) => {
+                log::warn!("获取仓库 {}/{} 技能失败: {}", repo.owner, repo.name, e);
+                SkillDiscoveryResult {
+                    skills: Vec::new(),
+                    failures: vec![Self::repo_failure(repo, e.to_string())],
+                }
+            }
+        }
+    }
+
+    fn discovery_cache_key(repo: &SkillRepo) -> RepoCacheKey {
+        (repo.owner.clone(), repo.name.clone(), repo.branch.clone())
+    }
+
+    /// 先查缓存，过期或 `force_refresh` 时再下载；下载成功才写回缓存。
+    ///
+    /// 缓存时间记的是开始下载的时刻：前端取消请求停不掉这里的下载，较早开始、
+    /// 较晚结束的旧下载不能覆盖之后（比如强制刷新）写入的结果。
+    async fn fetch_repo_skills_cached(
+        &self,
+        repo: &SkillRepo,
+        force_refresh: bool,
+    ) -> Result<Vec<DiscoverableSkill>> {
+        let key = Self::discovery_cache_key(repo);
+        if !force_refresh {
+            let cache = self
+                .discovery_cache
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if let Some((fetched_at, skills)) = cache.get(&key) {
+                if fetched_at.elapsed() < DISCOVERY_CACHE_TTL {
+                    return Ok(skills.clone());
+                }
+            }
+        }
+
+        let started_at = Instant::now();
+        let skills = self.fetch_repo_skills(repo).await?;
+        let mut cache = self
+            .discovery_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if cache
+            .get(&key)
+            .is_none_or(|(fetched_at, _)| *fetched_at <= started_at)
+        {
+            cache.insert(key, (started_at, skills.clone()));
+        }
         Ok(skills)
     }
 
@@ -4128,7 +4308,7 @@ impl SkillService {
         for app in AppType::all() {
             if matches!(
                 app,
-                AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Dsh
+                AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Dsh | AppType::Copilot
             ) && !skill.apps.is_enabled_for(&app)
             {
                 continue;
@@ -7114,6 +7294,81 @@ mod tests {
         );
     }
 
+    /// `#7772`：运行 Skill 留下的 `__pycache__/`、`*.pyc` 不属于 Skill 自身
+    /// 内容，必须在目录哈希里忽略，否则只跑一遍 Skill 就会改变哈希并被报为
+    /// 「有更新」，点更新又会触发整目录替换、覆盖本地修改。
+    #[test]
+    fn compute_dir_hash_ignores_python_bytecode() {
+        let dir = tempdir().expect("tempdir");
+        let baseline = dir.path().join("baseline");
+        fs::create_dir(&baseline).expect("create baseline dir");
+        fs::write(baseline.join("SKILL.md"), "---\nname: x\n---\n").expect("write skill");
+        fs::write(baseline.join("helper.py"), "def f():\n    return 1\n").expect("write helper");
+        let baseline_hash = SkillService::compute_dir_hash(&baseline).expect("baseline hash");
+
+        // 复制一份并补上 `__pycache__/` 与同名 `.pyc`，其它内容不变。
+        let with_bytecode = dir.path().join("with-bytecode");
+        SkillService::copy_dir_recursive(&baseline, &with_bytecode).expect("copy baseline");
+        fs::create_dir(with_bytecode.join("__pycache__")).expect("create pycache dir");
+        fs::write(
+            with_bytecode
+                .join("__pycache__")
+                .join("helper.cpython-311.pyc"),
+            b"\x00\x00\x00\x00 bytecode blob \x00\x00",
+        )
+        .expect("write nested pyc");
+        fs::write(
+            with_bytecode.join("helper.pyc"),
+            b"\x00\x00\x00\x00 standalone pyc \x00\x00",
+        )
+        .expect("write root pyc");
+        let with_bytecode_hash =
+            SkillService::compute_dir_hash(&with_bytecode).expect("with-bytecode hash");
+
+        assert_eq!(
+            baseline_hash, with_bytecode_hash,
+            "__pycache__/ 与 *.pyc 不应影响目录哈希"
+        );
+
+        // 仍然要识别真正修改过的源文件。
+        let edited = dir.path().join("edited");
+        SkillService::copy_dir_recursive(&baseline, &edited).expect("copy edited");
+        fs::write(edited.join("helper.py"), "def f():\n    return 2\n").expect("edit helper");
+        let edited_hash = SkillService::compute_dir_hash(&edited).expect("edited hash");
+        assert_ne!(
+            baseline_hash, edited_hash,
+            "修改过的源文件仍必须改变目录哈希"
+        );
+    }
+
+    /// 上游仓库自带字节码时，#7772 修复前保存的缓存哈希按旧算法计入了
+    /// `.pyc`；检查更新要能认出它，而不是对未变化的 Skill 误报「有更新」。
+    #[test]
+    fn legacy_cached_hash_with_upstream_bytecode_is_recognized() {
+        let dir = tempdir().expect("tempdir");
+        let remote = dir.path().join("remote");
+        fs::create_dir_all(remote.join("__pycache__")).expect("create remote dir");
+        fs::write(remote.join("SKILL.md"), "---\nname: x\n---\n").expect("write skill");
+        fs::write(remote.join("helper.py"), "def f():\n    return 1\n").expect("write helper");
+        fs::write(remote.join("helper.pyc"), b"\x00 shipped pyc \x00").expect("write pyc");
+        fs::write(
+            remote.join("__pycache__").join("helper.cpython-311.pyc"),
+            b"\x00 shipped nested pyc \x00",
+        )
+        .expect("write nested pyc");
+
+        let legacy_cached = SkillService::compute_legacy_dir_hash(&remote).expect("legacy hash");
+        let new_remote = SkillService::compute_dir_hash(&remote).expect("new hash");
+        assert_ne!(legacy_cached, new_remote, "上游带字节码时新旧算法结果不同");
+        assert!(SkillService::is_legacy_hash_of(&legacy_cached, &remote));
+
+        // 上游真的改了源文件：旧缓存对不上新内容，仍要报更新。
+        let changed = dir.path().join("changed");
+        SkillService::copy_dir_recursive(&remote, &changed).expect("copy remote");
+        fs::write(changed.join("helper.py"), "def f():\n    return 2\n").expect("edit helper");
+        assert!(!SkillService::is_legacy_hash_of(&legacy_cached, &changed));
+    }
+
     #[test]
     #[serial_test::serial]
     fn restore_from_backup_rejects_traversal_directory_in_metadata() {
@@ -7671,6 +7926,7 @@ mod tests {
                 let db = Arc::new(Database::memory().expect("memory db"));
                 let service = SkillService {
                     repo_fixture: Some(remote.path().to_path_buf()),
+                    ..SkillService::new()
                 };
                 let mut installed = poisoned_skill("owner/repo:skill", directory);
                 installed.name = directory.to_string();
@@ -7921,16 +8177,20 @@ mod tests {
         write_skill(&remote.path().join("pdf"), "pdf");
         let service = SkillService {
             repo_fixture: Some(remote.path().to_path_buf()),
+            ..SkillService::new()
         };
 
         let report = service
-            .discover_available_report(vec![
-                repo("owner", "repo", true),
-                // 坐标不合法：下载前就失败，不碰网络
-                repo("bad owner!", "broken", true),
-                // 停用的仓库不读，也不该出现在失败里
-                repo("bad owner?", "disabled", false),
-            ])
+            .discover_available_report(
+                vec![
+                    repo("owner", "repo", true),
+                    // 坐标不合法：下载前就失败，不碰网络
+                    repo("bad owner!", "broken", true),
+                    // 停用的仓库不读，也不该出现在失败里
+                    repo("bad owner?", "disabled", false),
+                ],
+                false,
+            )
             .await
             .expect("discover report");
 
@@ -7967,6 +8227,60 @@ mod tests {
             .await
             .expect("discover");
         assert_eq!(skills.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn discover_reuses_cached_repos_unless_forced() {
+        let remote = tempdir().expect("remote repo");
+        write_skill(&remote.path().join("pdf"), "pdf");
+        let service = SkillService {
+            repo_fixture: Some(remote.path().to_path_buf()),
+            ..SkillService::new()
+        };
+        let repos = || vec![repo("owner", "repo", true)];
+
+        let first = service
+            .discover_available_report(repos(), false)
+            .await
+            .expect("first discover");
+        assert_eq!(first.skills.len(), 1);
+
+        // 仓库里多了一个 Skill：缓存期内不重新下载，强制刷新才看得到
+        write_skill(&remote.path().join("docx"), "docx");
+        let cached = service
+            .discover_available_report(repos(), false)
+            .await
+            .expect("cached discover");
+        assert_eq!(cached.skills.len(), 1);
+        let single = service.discover_repo(&repo("owner", "repo", true)).await;
+        assert_eq!(single.skills.len(), 1);
+
+        let forced = service
+            .discover_available_report(repos(), true)
+            .await
+            .expect("forced discover");
+        assert_eq!(forced.skills.len(), 2);
+        // 强制刷新的结果写回缓存
+        let single = service.discover_repo(&repo("owner", "repo", true)).await;
+        assert_eq!(single.skills.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn discover_repo_reports_failure_and_skips_disabled_repo() {
+        let service = SkillService::new();
+
+        let failed = service
+            .discover_repo(&repo("bad owner!", "broken", true))
+            .await;
+        assert!(failed.skills.is_empty());
+        assert_eq!(failed.failures.len(), 1);
+        assert!(failed.failures[0].error.contains("INVALID_REPO_REF"));
+
+        let disabled = service
+            .discover_repo(&repo("bad owner!", "broken", false))
+            .await;
+        assert!(disabled.skills.is_empty());
+        assert!(disabled.failures.is_empty());
     }
 
     #[tokio::test]

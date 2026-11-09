@@ -61,6 +61,8 @@ pub struct VisibleApps {
     pub dsh: bool,
     #[serde(default = "default_true")]
     pub agy: bool,
+    #[serde(default = "default_true")]
+    pub copilot: bool,
 }
 
 impl Default for VisibleApps {
@@ -80,6 +82,7 @@ impl Default for VisibleApps {
             dsh: true,
             agy: true,
             omp: true,
+            copilot: true,
         }
     }
 }
@@ -102,6 +105,7 @@ impl VisibleApps {
             AppType::Dsh => self.dsh,
             AppType::Agy => self.agy,
             AppType::Omp => self.omp,
+            AppType::Copilot => self.copilot,
         }
     }
 }
@@ -324,6 +328,11 @@ pub struct LocalMigrations {
     /// 旧版官方路由桶（`cc-switch-official`）迁回 openai 桶的标记，按 Codex 目录生效。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_legacy_official_history_bucket_v1: Option<CodexLegacyOfficialHistoryBucketMigration>,
+    /// 官方额度保护改成默认开启的一次性迁移：旧版每次保存都把 `enabled: false` 整块写进
+    /// settings.json，分不出「没碰过」和「主动关掉」，所以没有这个标记的设置一律打开一次。
+    /// 之后用户再关掉就以用户为准。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_quota_protection_default_on_v1: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -378,8 +387,45 @@ pub struct CodexLegacyOfficialHistoryBucketMigration {
     pub codex_config_dir: Option<String>,
 }
 
+/// Used-percentage cutoffs for the Codex ChatGPT proxy. Independent windows.
+/// On by default: an account that reaches 100% makes the Codex app lock its
+/// composer (Luna Reserve), third-party models included. Unknown usage never
+/// blocks. Settings saved before the default changed are switched on once by
+/// [`LocalMigrations::codex_quota_protection_default_on_v1`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CodexQuotaProtection {
+    pub enabled: bool,
+    pub five_hour_threshold: u8,
+    pub weekly_threshold: u8,
+}
+
+impl Default for CodexQuotaProtection {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            five_hour_threshold: 95,
+            weekly_threshold: 98,
+        }
+    }
+}
+
+impl CodexQuotaProtection {
+    pub fn validate(&self) -> Result<(), AppError> {
+        if !(1..=99).contains(&self.five_hour_threshold)
+            || !(1..=99).contains(&self.weekly_threshold)
+        {
+            return Err(AppError::Config(
+                "Codex quota protection thresholds must be integers from 1 to 99".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// 用量金额的显示方式。只影响显示：库里的费用一律是美元，按 `exchange_rates`
-/// 换算后显示；值的合法性（认不认得币种、汇率是否为正数）由前端兜底。
+/// （或自动获取到的 `auto_exchange_rates`）换算后显示；值的合法性（认不认得币种、
+/// 汇率是否为正数）由前端兜底。
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageDisplaySettings {
@@ -400,6 +446,18 @@ pub struct UsageDisplaySettings {
     /// 用量趋势图的样式（"bar" / "area"），缺省为柱形图
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trend_chart_type: Option<String>,
+    /// 汇率来源："auto" 自动获取（每日更新）/"manual" 手动填写，缺省按 manual
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_source: Option<String>,
+    /// 自动获取到的汇率，按币种存；和手填的 `exchange_rates` 分开，切回手动不丢手填值
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub auto_exchange_rates: BTreeMap<String, f64>,
+    /// 上次成功取到汇率的时间（毫秒时间戳）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_fetched_at: Option<i64>,
+    /// 上次取到汇率的实际数据源，界面署名用（open.er-api.com / floatrates.com）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_provider: Option<String>,
 }
 
 /// 应用设置结构
@@ -455,6 +513,9 @@ pub struct AppSettings {
     /// 代理接管记账与启动费用回填（不读会话文件）不受此开关影响。
     #[serde(default = "default_session_auto_sync_enabled")]
     pub session_auto_sync_enabled: bool,
+    /// 会话页搜索消息正文（默认关闭，开启后在本地建 `session-index.db` 索引）；关闭时删除索引
+    #[serde(default = "default_session_content_search_enabled")]
+    pub session_content_search_enabled: bool,
     /// Whether to show the failover toggle independently on the main page
     #[serde(default)]
     pub enable_failover_toggle: bool,
@@ -477,14 +538,24 @@ pub struct AppSettings {
     /// Opt-in: defaults to false so third-party switches cleanly overwrite auth.json.
     #[serde(default)]
     pub preserve_codex_official_auth_on_switch: bool,
+    /// Pre-exhaustion protection for ChatGPT requests passing through the Codex proxy.
+    #[serde(default)]
+    pub codex_quota_protection: CodexQuotaProtection,
+    /// 路由 / 聚合模式下暂不让 Codex 用官方登录：写 `requires_openai_auth = false` 的 custom
+    /// 表，Codex 当成没登录，就不会因官方额度用完锁住发送键（Luna Reserve）。登录留在
+    /// auth.json 里不动；开着期间代理在本地拒绝官方请求，新会话记在 custom 组。直连不受影响。
+    /// 手动开关，默认关。
+    #[serde(default)]
+    pub codex_proxy_without_official_login: bool,
     /// Run official Codex providers under the shared "custom" model_provider id
     /// so official sessions share one resume-history bucket with third-party
     /// providers. Opt-in: defaults to false.
     #[serde(default)]
     pub unify_codex_session_history: bool,
-    /// User opted in (via the enable dialog checkbox) to migrate existing
-    /// official sessions ("openai" bucket) into the shared bucket. Persisted so
-    /// a failed migration retries at startup; cleared when the toggle turns off.
+    /// User opted in (via the enable dialog checkbox) to migrate official
+    /// sessions ("openai" bucket) into the shared bucket. While set, every
+    /// launch also moves official sessions left behind since; cleared when the
+    /// toggle turns off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unify_codex_migrate_existing: Option<bool>,
     /// Codex 聚合模式下，合并目录里的每个模型都改用经典子 agent 工具（`multi_agent_version`
@@ -555,6 +626,9 @@ pub struct AppSettings {
     pub pi_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub omp_config_dir: Option<String>,
+    /// DeepSeek Harness 主目录（相当于 `DSH_HOME`，优先于环境变量）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dsh_config_dir: Option<String>,
 
     // ===== 当前供应商 ID（设备级）=====
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
@@ -584,6 +658,9 @@ pub struct AppSettings {
     /// 当前 Antigravity CLI 供应商 ID
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_agy: Option<String>,
+    /// 当前 GitHub Copilot CLI 供应商 ID（卡片只用于打开终端，保持结构一致）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_copilot: Option<String>,
 
     // ===== 本地路由（设备级）=====
     /// 写给客户端的代理主机（IP 或主机名），空/未设时按监听地址推（`0.0.0.0` → `127.0.0.1`）。
@@ -645,6 +722,10 @@ fn default_session_auto_sync_enabled() -> bool {
     true
 }
 
+fn default_session_content_search_enabled() -> bool {
+    false
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -663,12 +744,15 @@ impl Default for AppSettings {
             usage_dashboard_refresh_interval_ms: None,
             usage_display: None,
             session_auto_sync_enabled: true,
+            session_content_search_enabled: false,
             enable_failover_toggle: false,
             show_profile_switcher: false,
             show_provider_search: true,
             check_tool_updates_on_startup: false,
             native_tray_menu: false,
             preserve_codex_official_auth_on_switch: false,
+            codex_quota_protection: CodexQuotaProtection::default(),
+            codex_proxy_without_official_login: false,
             unify_codex_session_history: false,
             unify_codex_migrate_existing: None,
             codex_stack_classic_tools: true,
@@ -693,6 +777,7 @@ impl Default for AppSettings {
             hermes_config_dir: None,
             pi_config_dir: None,
             omp_config_dir: None,
+            dsh_config_dir: None,
             current_provider_claude: None,
             current_provider_claude_desktop: None,
             current_provider_codex: None,
@@ -702,6 +787,7 @@ impl Default for AppSettings {
             current_provider_openclaw: None,
             current_provider_hermes: None,
             current_provider_agy: None,
+            current_provider_copilot: None,
             proxy_client_host: None,
             skill_sync_method: SyncMethod::default(),
             skill_storage_location: SkillStorageLocation::default(),
@@ -795,11 +881,18 @@ impl AppSettings {
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
 
+        self.dsh_config_dir = self
+            .dsh_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
         self.language = self
             .language
             .as_ref()
             .map(|s| s.trim())
-            .filter(|s| matches!(*s, "en" | "zh" | "zh-TW" | "ja" | "tr"))
+            .filter(|s| matches!(*s, "en" | "zh" | "zh-TW" | "ja" | "tr" | "ko" | "ru"))
             .map(|s| s.to_string());
 
         self.quota_display = self
@@ -845,7 +938,18 @@ impl AppSettings {
         }
         let mut settings = loaded.settings;
         settings.normalize_paths();
+        settings.apply_load_migrations();
         settings
+    }
+
+    /// 读入时的一次性调整。只改内存里的值，下次保存时随标记一起落盘；没保存之前每次启动
+    /// 重跑一遍，结果一样。
+    fn apply_load_migrations(&mut self) {
+        let migrations = self.local_migrations.get_or_insert_with(Default::default);
+        if migrations.codex_quota_protection_default_on_v1.is_none() {
+            migrations.codex_quota_protection_default_on_v1 = Some(true);
+            self.codex_quota_protection.enabled = true;
+        }
     }
 }
 
@@ -1057,6 +1161,7 @@ pub fn get_settings_for_frontend() -> AppSettings {
 }
 
 pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
+    new_settings.codex_quota_protection.validate()?;
     new_settings.normalize_paths();
     save_settings_file(&new_settings)?;
 
@@ -1301,6 +1406,14 @@ pub fn get_omp_override_dir() -> Option<PathBuf> {
         .map(|path| resolve_override_path(path))
 }
 
+pub fn get_dsh_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .dsh_config_dir
+        .as_ref()
+        .map(|path| resolve_override_path(path))
+}
+
 pub fn preserve_codex_official_auth_on_switch() -> bool {
     settings_store()
         .read()
@@ -1309,6 +1422,16 @@ pub fn preserve_codex_official_auth_on_switch() -> bool {
             e.into_inner()
         })
         .preserve_codex_official_auth_on_switch
+}
+
+pub fn codex_proxy_without_official_login() -> bool {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .codex_proxy_without_official_login
 }
 
 pub fn unify_codex_session_history() -> bool {
@@ -1383,6 +1506,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
         AppType::Hermes => settings.current_provider_hermes.clone(),
         AppType::Agy => settings.current_provider_agy.clone(),
+        AppType::Copilot => settings.current_provider_copilot.clone(),
         AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp => None,
     }
 }
@@ -1403,6 +1527,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
         AppType::Agy => settings.current_provider_agy = id_owned.clone(),
+        AppType::Copilot => settings.current_provider_copilot = id_owned.clone(),
         AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp => {}
     })
 }
@@ -1567,6 +1692,22 @@ mod tests {
     use crate::app_config::AppType;
 
     #[test]
+    fn russian_language_survives_normalization() {
+        let mut settings = AppSettings::default();
+        settings.language = Some("ru".into());
+        settings.normalize_paths();
+        assert_eq!(settings.language.as_deref(), Some("ru"));
+    }
+
+    #[test]
+    fn korean_language_survives_normalization() {
+        let mut settings = AppSettings::default();
+        settings.language = Some("ko".into());
+        settings.normalize_paths();
+        assert_eq!(settings.language.as_deref(), Some("ko"));
+    }
+
+    #[test]
     fn codex_stack_classic_tools_default_on_and_ignore_the_old_off_key() {
         // v4.0.10–4.0.12 每次保存都写下默认关的旧键：不再读它，升级后按开。
         let old: AppSettings =
@@ -1599,7 +1740,11 @@ mod tests {
                 "exchangeRates": { "CNY": 6.8 },
                 "sidebarTodayItems": ["cost", "requests"],
                 "requestLogColumns": { "statusCode": true, "app": false },
-                "trendChartType": "area"
+                "trendChartType": "area",
+                "rateSource": "auto",
+                "autoExchangeRates": { "CNY": 6.9 },
+                "rateFetchedAt": 1_700_000_000_000i64,
+                "rateProvider": "open.er-api.com"
             }
         }))
         .expect("usage display");
@@ -1612,6 +1757,10 @@ mod tests {
         );
         assert_eq!(display.request_log_columns.get("app"), Some(&false));
         assert_eq!(display.trend_chart_type.as_deref(), Some("area"));
+        assert_eq!(display.rate_source.as_deref(), Some("auto"));
+        assert_eq!(display.auto_exchange_rates.get("CNY"), Some(&6.9));
+        assert_eq!(display.rate_fetched_at, Some(1_700_000_000_000));
+        assert_eq!(display.rate_provider.as_deref(), Some("open.er-api.com"));
         assert_eq!(
             serde_json::to_value(&saved).expect("serialize")["usageDisplay"],
             serde_json::json!({
@@ -1619,7 +1768,11 @@ mod tests {
                 "exchangeRates": { "CNY": 6.8 },
                 "sidebarTodayItems": ["cost", "requests"],
                 "requestLogColumns": { "app": false, "statusCode": true },
-                "trendChartType": "area"
+                "trendChartType": "area",
+                "rateSource": "auto",
+                "autoExchangeRates": { "CNY": 6.9 },
+                "rateFetchedAt": 1_700_000_000_000i64,
+                "rateProvider": "open.er-api.com"
             })
         );
 
@@ -1699,6 +1852,16 @@ mod tests {
     }
 
     #[test]
+    fn session_content_search_defaults_off_and_keeps_a_saved_choice() {
+        assert!(!AppSettings::default().session_content_search_enabled);
+        let missing: AppSettings = serde_json::from_str("{}").unwrap();
+        assert!(!missing.session_content_search_enabled);
+        let on: AppSettings =
+            serde_json::from_str(r#"{"sessionContentSearchEnabled":true}"#).unwrap();
+        assert!(on.session_content_search_enabled);
+    }
+
+    #[test]
     fn native_tray_menu_defaults_off_and_keeps_a_saved_menu_choice() {
         assert!(!AppSettings::default().native_tray_menu);
         let missing: AppSettings = serde_json::from_str("{}").unwrap();
@@ -1775,6 +1938,31 @@ mod tests {
         let loaded = load_settings_from_path(&path);
         assert!(loaded.lossy);
         assert!(loaded.settings.claude_config_dir.is_none());
+    }
+
+    /// 旧版存下的 `enabled: false` 分不出是不是用户关的，读入时打开一次；带了标记之后
+    /// 用户再关掉就以用户为准。
+    #[test]
+    fn quota_protection_is_switched_on_once_for_settings_saved_before_the_default() {
+        let saved_by_old_version = r#"{"codexQuotaProtection":{"enabled":false,"fiveHourThreshold":90,"weeklyThreshold":97}}"#;
+        let (mut settings, lossy) = parse_settings_lenient(saved_by_old_version);
+        assert!(!lossy);
+        settings.apply_load_migrations();
+        assert!(settings.codex_quota_protection.enabled);
+        assert_eq!(settings.codex_quota_protection.five_hour_threshold, 90);
+        assert_eq!(settings.codex_quota_protection.weekly_threshold, 97);
+
+        settings.codex_quota_protection.enabled = false;
+        let saved = serde_json::to_string(&settings).expect("serialize");
+        assert!(saved.contains("codexQuotaProtectionDefaultOnV1"), "{saved}");
+        let (mut reloaded, _) = parse_settings_lenient(&saved);
+        reloaded.apply_load_migrations();
+        assert!(!reloaded.codex_quota_protection.enabled);
+
+        let (mut fresh, _) = parse_settings_lenient("{}");
+        fresh.apply_load_migrations();
+        assert!(fresh.codex_quota_protection.enabled);
+        assert!(!fresh.codex_proxy_without_official_login);
     }
 
     #[test]

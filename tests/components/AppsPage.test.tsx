@@ -25,6 +25,7 @@ import type {
 } from "@/lib/api/settings";
 import type { DndContextProps, DragEndEvent } from "@dnd-kit/core";
 import { APP_IDS } from "@/config/appConfig";
+import { emitTauriEvent } from "../msw/tauriMocks";
 
 type ToolVersions = Awaited<ReturnType<typeof settingsApi.getToolVersions>>;
 
@@ -282,6 +283,32 @@ describe("AppsPage concurrent CLI upgrades", () => {
         upgraded.add(tool);
         missing.delete(tool);
       });
+  });
+
+  it("waits for Codex loading even while the check-updates label is hidden in the DOM", async () => {
+    const getVersions = mocks.getToolVersions.getMockImplementation()!;
+    const codexReady = deferred<void>();
+    mocks.getToolVersions.mockImplementation(async (tools: string[]) => {
+      if (tools.includes("codex")) await codexReady.promise;
+      return getVersions(tools);
+    });
+    // Finish the first dynamic import before starting a DOM wait. Under the full
+    // suite, transforming AppsPage can take longer than findByText's timeout.
+    await import("@/components/apps/AppsPage");
+    const loading = renderApps();
+    expect(await screen.findByText("appsPage.checkUpdates")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    expect(
+      screen.queryByRole("button", { name: "appsPage.checkUpdates" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "appsPage.checking" }),
+    ).toBeDisabled();
+    await act(async () => codexReady.resolve());
+    await loading;
+    expect(updateButton("Codex")).toBeEnabled();
   });
 
   it("copies only the selected application's manual command and switches installation methods", async () => {
@@ -1872,6 +1899,48 @@ describe("AppsPage concurrent CLI upgrades", () => {
     );
     expect(updateButton("Claude Code")).toBeDisabled();
     await act(async () => claudeRun.resolve());
+  });
+
+  it("shows the queue, elapsed time and latest output on the running rows", async () => {
+    const claudeRun = deferred<void>();
+    const codexRun = deferred<void>();
+    mocks.runToolLifecycleAction.mockImplementation(
+      async ([tool]: string[]) => {
+        await (tool === "claude" ? claudeRun : codexRun).promise;
+        upgraded.add(tool);
+      },
+    );
+    await renderApps();
+    fireEvent.click(updateButton("Claude Code"));
+    fireEvent.click(updateButton("Codex"));
+    await waitFor(() =>
+      expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(2),
+    );
+
+    const progress = (tool: string, stage: string, line?: string) =>
+      emitTauriEvent("tool-lifecycle-progress", { tools: [tool], stage, line });
+    act(() => {
+      progress("claude", "running");
+      progress("claude", "output", "==> [4/5] Installing");
+      progress("codex", "queued");
+      // 没在执行的工具收到迟到的事件，不显示进度
+      progress("gemini", "output", "stray line");
+    });
+    expect(card("Claude Code").getByText("appsPage.toolElapsed")).toBeVisible();
+    expect(card("Claude Code").getByText("==> [4/5] Installing")).toBeVisible();
+    expect(card("Codex").getByText("appsPage.toolQueued")).toBeVisible();
+    expect(card("Gemini CLI").queryByText("stray line")).toBeNull();
+
+    await act(async () => claudeRun.resolve());
+    await waitFor(() => expect(isReady("Claude Code")).toBe(true));
+    expect(card("Claude Code").queryByText("==> [4/5] Installing")).toBeNull();
+    expect(card("Codex").getByText("appsPage.toolQueued")).toBeVisible();
+
+    act(() => progress("codex", "running"));
+    expect(card("Codex").queryByText("appsPage.toolQueued")).toBeNull();
+    expect(card("Codex").getByText("appsPage.toolElapsed")).toBeVisible();
+    await act(async () => codexRun.resolve());
+    await waitFor(() => expect(isReady("Codex")).toBe(true));
   });
 
   it("keeps a tool locked through version refresh and remount with an expired cache", async () => {

@@ -24,7 +24,7 @@ fn provider(app: &AppType) -> Provider {
         AppType::Hermes => {
             json!({"api_key":"test-key-a", "base_url":"https://example.com", "model":"model-a", "api_mode":"chat_completions"})
         }
-        AppType::Kimi | AppType::Dsh | AppType::Agy | AppType::Omp => {
+        AppType::Kimi | AppType::Dsh | AppType::Agy | AppType::Omp | AppType::Copilot => {
             json!({"apiKey":"test-key-a", "baseUrl":"https://example.com", "model":"model-a"})
         }
     };
@@ -47,7 +47,7 @@ fn credential_guard_all_app_configs_allow_model_edits_but_reject_key_and_destina
         let original = provider(&app);
         if matches!(
             app,
-            AppType::Kimi | AppType::Dsh | AppType::Agy | AppType::Omp
+            AppType::Kimi | AppType::Dsh | AppType::Agy | AppType::Omp | AppType::Copilot
         ) {
             assert!(db.save_provider(app.as_str(), &original).is_err());
             assert!(db

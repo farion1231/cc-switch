@@ -162,6 +162,8 @@
     "editClaudeProvider": "Claude Code プロバイダーを編集",
     "editCodexProvider": "Codex プロバイダーを編集",
     "configError": "設定エラー",
+    "liveConfigReadFailed": "{{app}} の設定ファイルを読み込めません",
+    "liveConfigReadFailedHint": "設定ファイルを修正するまで、プロバイダーの追加・削除は失敗します。",
     "notConfigured": "公式サイト用に未設定",
     "applyToClaudePlugin": "Claude プラグインに適用",
     "removeFromClaudePlugin": "Claude プラグインから解除",
@@ -196,9 +198,14 @@
       "recent": "最近使ったフォルダ",
       "forget": "最近使ったフォルダから削除",
       "confirm": "ターミナルを開く",
+      "skipPermissions": "権限の確認をスキップ",
+      "extraArgs": "追加の引数（任意）",
+      "extraArgsPlaceholder": "例: --debug --append-system-prompt \"簡潔に答えて\"",
+      "extraArgsHint": "起動コマンドの後ろに付け、今回開くターミナルだけで使います。スペースで区切り、スペースを含む値は引用符で囲んでください。",
       "agySwitchTitle": "agy のログインを切り替えます",
       "agySwitchBody": "開く前に agy のログインを {{account}} に切り替えます。以降に起動する agy はこのアカウントを使います。",
-      "agySwitchRunning": "agy が実行中です。開いている agy は元のアカウントのままで、元のアカウントを書き戻す可能性があります。できれば先に終了してください。"
+      "agySwitchRunning": "agy が実行中です。開いている agy は元のアカウントのままで、元のアカウントを書き戻す可能性があります。できれば先に終了してください。",
+      "isolationBodyCopilot": "「{{name}}」のエンドポイント、キー、モデルはこのターミナルの copilot にだけ渡され、ファイルには書き込まれません。別のターミナルで直接 copilot を実行した場合は GitHub ログインのままです。"
     },
     "name": "名前",
     "namePlaceholder": "例: Claude Official",
@@ -384,7 +391,15 @@
     "codexAuthCleanupFailed": "切り替えは成功しましたが、auth.json を削除できませんでした。公式ログイン資格情報がディスクに残っています。完全に削除するには Codex 設定ディレクトリの auth.json を手動で削除してください",
     "windowControlFailed": "ウィンドウ操作に失敗しました: {{error}}",
     "officialBlockedByProxy": "ローカルルーティングモード中は公式プロバイダーに切り替えできません。ルーティング経由で公式 API にアクセスするとアカウントが停止される可能性があります。",
-    "proxyOfficialWarning": "現在のプロバイダー {{name}} は公式です。ローカルルーティングを使用する前にサードパーティプロバイダーに切り替えてください。"
+    "proxyOfficialWarning": "現在のプロバイダー {{name}} は公式です。ローカルルーティングを使用する前にサードパーティプロバイダーに切り替えてください。",
+    "proxyLoopbackHijacked": "{{app}} からローカルルート {{origin}} へのリクエストがシステムプロキシに横取りされるため、{{app}} は 502 エラーになります。プロキシツールでループバックアドレスを直結にしてください（例：Clash のルールの先頭に IP-CIDR,127.0.0.0/8,DIRECT,no-resolve を追加）。変更後は {{app}} を完全に終了してから開き直してください。",
+    "codexHistorySplit": {
+      "hint": "{{previous}}で作成した {{count}} 件のセッションは閲覧のみになりました",
+      "officialBucket": "公式サブスクリプション",
+      "thirdPartyBucket": "サードパーティプロバイダー",
+      "migrationFinished": "古いセッションを {{count}} 件移行しました。Codex を再起動すると続けられます。",
+      "migrationFailed": "古いセッションの移行に失敗しました：{{error}}。次回 CC Switch の起動時に自動で再試行します。"
+    }
   },
   "confirm": {
     "deleteProvider": "プロバイダーを削除",
@@ -404,14 +419,14 @@
     },
     "unifyCodexHistory": {
       "title": "Codex セッション履歴を統一",
-      "message": "オンにすると、Codex CLI の resume 一覧に公式サブスクリプションとサードパーティのセッションがまとめて表示されます（Codex デスクトップ版はアップデートで全セッションを表示できるようになったため影響しません）。注意：プロバイダーをまたいで古いセッションを再開すると、相手のバックエンドが encrypted_content の推論内容を復号できず失敗する場合があります。\n\n既存の公式セッション履歴を共有一覧へ移行することもできます（移行前に ~/.cc-switch/backups へ自動バックアップし、オフにする際に復元を選べます）。",
+      "message": "オンにすると、公式サブスクリプションが共有の custom プロバイダー ID で動作し、公式とサードパーティのセッションが同じグループにまとまります。新しい Codex でもどちらのセッションも再開でき、CLI の resume 一覧にもまとめて表示されます。\n\n既存の公式セッションを移行することもできます。移行を選ぶと、以後は起動のたびに公式グループに残ったセッションも移行します（移行前に ~/.cc-switch/backups へ自動バックアップし、オフにする際に復元を選べます）。移行しないセッションは新しい Codex では閲覧のみになります。移行後は Codex を再起動してください。\n\n注意：プロバイダーをまたいで古いセッションを再開すると、相手のバックエンドが encrypted_content の推論内容を復号できず失敗する場合があります。",
       "migrateExisting": "既存の公式セッション履歴も移行する",
       "confirm": "理解しました、オンにする"
     },
     "unifyCodexHistoryOff": {
       "title": "セッション履歴の統一をオフにする",
-      "message": "オフにすると、Codex CLI では公式サブスクリプションとサードパーティのセッション一覧が再び別々になります（デスクトップ版は引き続き全セッションを表示）。オンの間に作成されたセッションは出所を区別できないためサードパーティ側の履歴に残り、CLI では公式サブスクリプション利用時に表示されません。",
-      "restoreBackup": "オンにした際に移行した公式セッションを公式履歴へ復元する（バックアップから正確に復元）",
+      "message": "オフにすると、公式サブスクリプションとサードパーティのセッションが再び 2 つのグループに分かれます。新しい Codex では現在のプロバイダーのグループしか再開できず、もう一方は閲覧のみになります。オンの間に作成されたセッションは出所を区別できないため、サードパーティ側のグループに残ります。",
+      "restoreBackup": "移行した公式セッションを公式グループへ復元する（バックアップから正確に復元）",
       "confirm": "オフにする"
     },
     "usage": {
@@ -432,6 +447,12 @@
       "quotaDisplay": "残量の表示",
       "quotaDisplayLeft": "残り",
       "quotaDisplayUsed": "使用済み",
+      "density": "表示密度",
+      "densityHelp": "標準は文字が大きく、操作部品も高くなります。コンパクトは従来のサイズのままです。",
+      "densityComfortable": "標準",
+      "densityCompact": "コンパクト",
+      "zoom": "表示倍率",
+      "zoomHelp": "{{shortcut}} + / {{shortcut}} − でも変更でき、{{shortcut}} 0 で元に戻ります。",
       "quotaDisplayHelp": "プロバイダーカード、アカウント、トレイで、各枠の残量を「残り」と「使用済み」のどちらで表示するかを選びます。残高と Credits は常に残りを表示します。",
       "sidebarAndHeader": "サイドバーとヘッダー",
       "visibleApps": "サイドバーに表示するアプリ",
@@ -727,6 +748,15 @@
       "saved": "保存済み",
       "unsavedChanges": "先に設定を保存してください",
       "saveBeforeSync": "アップロード/ダウンロードを有効にするには、先に設定を保存してください。",
+      "clear": "設定をクリア",
+      "clearing": "クリア中...",
+      "clearSuccess": "この端末の WebDAV 設定をクリアしました",
+      "clearFailed": "設定のクリアに失敗しました：{{error}}",
+      "clearConfirm": {
+        "title": "WebDAV 設定をクリア",
+        "message": "この端末に保存されている WebDAV のアドレス、ユーザー名、パスワード、リモートフォルダを削除し、自動同期を停止します。サーバーにアップロード済みのデータは削除されません。",
+        "confirm": "クリア"
+      },
       "fetchingRemote": "リモート情報を取得中...",
       "fetchRemoteFailed": "リモート情報の取得に失敗しました。設定とネットワークを確認してください。",
       "confirmDownload": {
@@ -861,6 +891,8 @@
     "languageOptionEnglish": "English",
     "languageOptionJapanese": "日本語",
     "languageOptionTurkish": "Türkçe",
+    "languageOptionKorean": "한국어",
+    "languageOptionRussian": "Русский",
     "windowBehavior": "ウィンドウ動作",
     "windowBehaviorHint": "最小化動作や Claude プラグイン連携を設定します。",
     "launchOnStartup": "起動時に自動実行",
@@ -877,10 +909,29 @@
     "skipClaudeOnboarding": "Claude Code の初回確認をスキップ",
     "skipClaudeOnboardingDescription": "Claude Code は初回起動時にオンボーディングを行い、テーマの選択と Anthropic アカウントへのログインを求めます。サードパーティのプロバイダーを使う場合は公式アカウントへのログインが不要なため、オンにするとこの手順を飛ばしてすぐに使えます。仕組みとしては ~/.claude.json に hasCompletedOnboarding: true を書き込みます。オフにするとこのフィールドを削除し、次回起動時に再びオンボーディングが表示されます。",
     "codexAuth": "Codex アプリ拡張",
+    "codexQuotaProtection": {
+      "title": "公式クォータ保護",
+      "help": "いずれかの使用率しきい値に達すると新しい公式リクエストを停止します。他社モデルは引き続き利用できます。対象は CC Switch のローカルルーティングを経由する Codex 公式リクエストのみです。使用率は公式レスポンスに含まれるクォータ情報から読み取るため、通常の利用で追加のリクエストは発生しません。使い始めや約 5 分以上アイドルだった後にのみ、別途クォータを照会します。クォータを確認できない場合（ネットワークの問題、ログイン期限切れなど）は停止せず通常どおり通します。許可済みのリクエストや他のアプリにより使用率がしきい値を超えることはありますが、停止中は通常クォータの枯渇で Luna Reserve が有効になることはありません。",
+      "thresholds": "公式リクエストを停止する使用率",
+      "fiveHour": "5時間の使用率（%）",
+      "weekly": "週間使用率（%）",
+      "save": "しきい値を保存",
+      "reset": "既定値に戻す",
+      "hint": "いずれかに達すると停止。既定値は 95% / 98%。保存後の新しいリクエストから適用します。",
+      "invalid": "1～99 の整数を入力してください。"
+    },
+    "codexPauseOfficialLogin": {
+      "title": "公式ログインを一時停止",
+      "description": "公式クォータを使い切り、Codex が送信ボタンをロックしたときにオンにします。集約・ルーティングの他社モデルは引き続き使えます。オン・オフのあとは Codex を完全に終了して開き直してください。",
+      "help": "公式クォータを使い切り、Codex が送信ボタンをロックした（他社モデルを選んでも送信できない）ときにオンにします。オンにすると Codex は公式ログインを使わなくなるため、公式クォータを理由に送信ボタンをロックしなくなり、集約・ルーティングの他社モデルを引き続き使えます。公式ログインはこのコンピューターに保存されたままで、ログアウトはしません。ルーティングまたは集約モードでのみ有効で、直接接続には影響しません。オンの間は、公式モデルは使えず他社モデルへの切り替えを案内します。Codex にアカウントと使用量の情報は表示されず、初回起動時に初期設定の質問が表示されることがあります。サイドバーの「プロジェクト」にある既存のセッションは一時的に表示されません（消えてはおらず、オフにすると戻ります）。新しいセッションは custom グループに記録され、公式に戻すと閲覧のみになります。公式クォータが回復したらオフにしてください。オン・オフのあとは Codex を完全に終了して開き直してください。",
+      "pausedToast": "公式ログインを一時停止しました。Codex を完全に終了して開き直すと反映されます",
+      "resumedToast": "公式ログインの使用を再開しました。Codex を完全に終了して開き直すと反映されます",
+      "saveFailed": "保存に失敗しました：{{error}}"
+    },
     "preserveCodexOfficialAuthOnSwitch": "直接切替時に公式ログインを保持",
     "preserveCodexOfficialAuthOnSwitchDescription": "ローカルルーティングが無効な場合のサードパーティ切替を制御します。ルーティング接管中は常に Codex の公式ログインを保持します。",
     "unifyCodexSessionHistory": "Codex セッション履歴を統一",
-    "unifyCodexSessionHistoryDescription": "Codex CLI にのみ影響します：CLI の resume 一覧には現在のプロバイダーのセッションしか表示されません。オンにすると公式サブスクリプションも共有の custom プロバイダー ID で動作し、公式とサードパーティのセッションが同じ一覧に表示されます。Codex デスクトップ版はアップデートで全セッションを表示できるようになったため、デスクトップ版だけなら不要です。既存の公式セッションの移行も選択できます（移行前に自動バックアップ）。オフにする際はバックアップから復元できます。注意：プロバイダーをまたいで古いセッションを再開すると、encrypted_content の推論内容を相手のバックエンドが復号できず、再開に失敗する場合があります。",
+    "unifyCodexSessionHistoryDescription": "公式サブスクリプションもサードパーティと同じ custom プロバイダー ID で動作し、公式とサードパーティのセッションが同じグループにまとまります。新しい Codex（デスクトップ版 26.1103・CLI 0.167 以降）は現在のプロバイダーと同じグループのセッションしか再開できず、別グループは閲覧のみになります。CLI の resume 一覧も現在のグループだけを表示します。公式とサードパーティを切り替えて使う場合はオンを推奨します。公式グループのセッションの移行も選択でき（移行前に自動バックアップ）、オフにする際はバックアップから復元できます。注意：プロバイダーをまたいで古いセッションを再開すると、encrypted_content の推論内容を相手のバックエンドが復号できず、再開に失敗する場合があります。",
     "codexStackClassicSubagents": "集約モードでサブエージェントにクラシックツールを使う",
     "codexStackClassicSubagentsDescription": "メインとサブのエージェントが別のプロバイダーを使う場合は必ずオンにしてください。オフだとサブエージェントにタスクが届きません。",
     "codexStackClassicSubagentsForcedV2": "Codex の config.toml で [features] multi_agent_v2 がオンになっています。こちらが優先されるため、この設定は効きません。",
@@ -966,6 +1017,7 @@
     "browsePlaceholderHermes": "例: /home/<your-username>/.hermes",
     "browsePlaceholderPi": "例: /home/<your-username>/.pi/agent",
     "browsePlaceholderOmp": "例: /home/<your-username>/.omp/agent",
+    "browsePlaceholderDsh": "例: /home/<your-username>/.dsh",
     "browseDirectory": "ディレクトリを選択",
     "resetDefault": "デフォルトに戻す（保存後に反映）",
     "checkForUpdates": "アップデートを確認",
@@ -1025,6 +1077,7 @@
     "toolActionDone": "{{count}} 個のツールの{{action}}が完了しました",
     "toolActionPartial": "{{succeeded}} 個成功、{{failed}} 個失敗（{{action}}）",
     "toolActionFailed": "インストール/更新コマンドの実行に失敗しました",
+    "toolActionBinCollision": "{{path}} に同名のファイルが既にあります（別の方法でインストールされた可能性があります）。npm はこれを上書きしません。中身を確認し、名前を変えてバックアップしてから再試行してください。npm の --force は使わないでください。ファイルがそのまま上書きされます。",
     "toolActionInProgress": "アプリの操作が実行中です",
     "toolActionInProgressDetail": "{{tool}} のインストール、更新、またはアンインストールがバックグラウンドで実行中です。完了するまでお待ちください。",
     "toolNotRunnable": "インストール済みですが実行できません（バージョン未検出）",
@@ -1125,6 +1178,7 @@
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
+    "copilot": "Copilot CLI",
     "omp": "Oh My Pi"
   },
   "mcode": {
@@ -1302,6 +1356,14 @@
   },
   "sessionManager": {
     "searchPlaceholder": "タイトル・ディレクトリ・最初と最後のメッセージ・セッション ID で検索",
+    "searchPlaceholderContent": "タイトル・ディレクトリ・メッセージ本文・セッション ID で検索",
+    "emptySearchContent": "タイトル・ディレクトリ・メッセージ本文に「{{query}}」を含むセッションはありません",
+    "contentSearchToggle": "メッセージ本文を検索",
+    "contentSearchToggleFailed": "本文検索の設定を変更できません：{{error}}",
+    "contentIndexing": "本文のインデックスを作成中（{{processed}}/{{total}}）。本文の結果はまだ不完全な場合があります",
+    "contentHitPrefix": "本文：",
+    "contentHitMore": "（{{count}} 件のメッセージが一致）",
+    "moreContentHits": "その他の本文一致",
     "searchSessions": "セッションを検索",
     "sessionList": "セッション一覧",
     "unknownDirectory": "不明なディレクトリ",
@@ -1352,6 +1414,7 @@
     "groupByTime": "時間順",
     "groupByProject": "プロジェクト別",
     "desktopNote": "Claude Desktop には独自のセッション記録がないため、Claude Code のセッションを表示しています。",
+    "dshMergedNote": "DeepSeek Harness の Web と Desktop は同じセッション記録を共有しているため、ここではまとめて表示します。",
     "matchCount": "一致 {{count}} 件",
     "totalCount": "全 {{count}} 件",
     "selectAllMatches": "一致したものをすべて選択",
@@ -1387,6 +1450,8 @@
     "emptyAppHint": "CC Switch は {{path}} のセッションデータを読み取ります",
     "emptySearch": "タイトル・ディレクトリ・最初と最後のメッセージが「{{query}}」に一致するセッションはありません",
     "clearSearchAction": "検索をクリア",
+    "emptySearchEnableContent": "メッセージ本文を検索",
+    "emptySearchEnableContentHint": "オンにすると、メッセージ本文のインデックスをローカルに作成します",
     "backToList": "セッション一覧に戻る",
     "back": "戻る",
     "sessionOf": "{{app}} のセッション",
@@ -1573,7 +1638,8 @@
       "rawMatch": "原文での一致",
       "expandContent": "全文を表示",
       "collapseContent": "折りたたむ"
-    }
+    },
+    "copilotDeleteHint": "セッションストアの整合性を保つため、このセッションは GitHub Copilot CLI で削除してください"
   },
   "console": {
     "providerSwitchReceived": "プロバイダー切り替えイベントを受信:",
@@ -1595,6 +1661,13 @@
     "openReleaseNotesFailed": "リリースノートを開けませんでした:"
   },
   "providerForm": {
+    "nativeConfig": {
+      "title": "設定ファイル {{path}}（このプロバイダーのみ）",
+      "hint": "このプロバイダーの部分をアプリ本来の形式で表示し、保存時にこのファイルへ書き込みます。デフォルトモデルなどのグローバル設定はここにはありません。ここに書いたコメントは保存されません。",
+      "invalid": "{{format}} の形式が正しくありません：{{error}}",
+      "scope": "ここには {{section}} ノードだけを書けます。プロバイダーキーは上の欄で変更してください。",
+      "schema": "型が正しくない項目があります。上のフォームと照らし合わせて確認してください。"
+    },
     "supplierName": "プロバイダー名",
     "supplierNameRequired": "プロバイダー名 *",
     "supplierNamePlaceholder": "例: Anthropic Official",
@@ -1618,19 +1691,20 @@
     "providerKeyStatusLoading": "プロバイダー識別子の状態を読み込んでいます。しばらくしてからもう一度お試しください",
     "getApiKey": "API Key を取得",
     "partnerPromotion": {
+      "tokenplus": "TokenPlusで、AIコーディングをより安定、低コスト、安心に。1つのキーで複数社のモデルを利用し、インテリジェントな切り替えで安定性を確保。最適な料金の選択とキャッシュの最適化でコストを削減し、請求・チーム・データセキュリティを一元管理できます。",
       "kimi": "Kimi の新規ユーザーは、初回チャージに成功するとチャージ金額の 10%（最大 CNY ¥1,000）が API クレジットとして進呈されます。",
       "a6api": "A6API はトークンアグリゲーションサイトです。リアルタイム価格ランキングを内蔵し、全ネット最安値を自動で選択。動作は滑らかで安定し、面倒な価格比較も不要。登録するだけで体験クレジットがもらえます！",
       "sudocode": "SudoCode の1つのキーで、Claude Code と Claude Desktop では Claude Opus 5、Codex では GPT-5.6 を利用できます。登録後 QQ グループ 726213516 に参加し、管理者へ連絡すると CNY ¥10 のトライアルクレジットを受け取れます。",
       "packycode": "PackyCode は CC Switch の公式パートナーです。登録後チャージ時に \"cc-switch\" を入力すると 10% オフ",
       "apikeyfun": "APIKEY.FUN は CC Switch ユーザー向けに特別優待を提供しています。専用リンクから登録すると、最大でチャージ永久 5% オフを受けられます。",
       "apinebula": "APINEBULA は CC Switch ユーザー向けに特別割引を提供しています。専用リンクから登録し、チャージ時にプロモコード「ccswitch」を入力すると、さらに 10% OFF の割引が適用されます。",
-      "patewayai": "PatewayAI は CC Switch ユーザーに特別な特典を提供しています。このリンクから登録すると $3 のクレジットがもらえます。",
+      "patewayai": "PatewayAI は経験豊富な AI 開発者向けの API 中継サービスプロバイダーで、Claude、GPT シリーズ、そして中国の主要モデルを幅広くフルサポートしています。すべてのモデルは公式の高品質チャネルから提供され、希釈や偽装は一切なく、課金明細も透明で確認できます。エコノミーモードは最安で元価格の 5%。このリンクから登録すると $1 の無料トライアルクレジットがもらえ、不定期のキャンペーンで無料クレジットを受け取ることもできます。企業向けの高並列処理、専用管理コンソール、正式な契約書とインボイスにも対応し、最大 $150 の双方向紹介チャージ報酬も用意しています。",
       "claudecn": "ClaudeCN は登録企業が運営するエンタープライズグレードの AI ゲートウェイプラットフォームで、企業調達プロセスをサポートし、法人支払い、契約、コンプライアンス保証を提供します。",
       "runapi": "RunAPI は CC Switch ユーザーに特別な特典を提供しています。このリンクから登録すると、初回チャージが 10% オフになります。",
       "opencode_go": "OpenCode Go は、複数のコーディングモデルを利用できるサブスクリプションサービスです。このリンクからプランの詳細確認と申し込みができます。",
       "dmxapi": "Claude Code 専用モデル 66% OFF 実施中！",
       "cubence": "Cubence は CC Switch の公式パートナーです。登録後チャージ時に \"CCSWITCH\" を入力すると、毎回 10% オフ",
-      "aigocode": "AIGoCode は CC Switch の公式パートナーです。このリンクから登録すると、初回チャージ時に 10% のボーナスクレジットがもらえます！",
+      "aigocode": "トークン従量課金だけではない、サブスクリプション型の AI コーディングプラットフォーム。1 つのアカウント・月額プランで Claude Code、Codex、Gemini を使い放題、中国本土から直接接続でき、レスポンスも高速です。このリンクからサブスクリプションすると 10% のクレジットが追加でもらえます！",
       "rightcode": "RightCode は CC Switch の公式パートナーです。このリンクから登録すると、毎回のチャージに 5% のボーナスクレジットがもらえます！",
       "aicodemirror": "AICodeMirror は CC Switch の公式パートナーです。このリンクから登録すると20%オフ！",
       "aicoding": "AI Coding は CC Switch ユーザー向けに特別割引を提供しています。初回チャージが 10% オフ！",
@@ -1661,9 +1735,9 @@
       "alltokens_si": "AllTokens SI は「安定を基に、誠実を本に」を掲げる、企業向けの AI トークン中継・チーム協業プラットフォームです。メンバー、キー、使用量、残高を企業コンソールで一元管理し、明確な権限と利用上限の設定により、チームの利用を追跡可能で安心して管理できます。",
       "openmodel": "OpenModel は Codex と Claude Code 向けにクライアント専用割引を提供し、対応モデルを Codex 経由で最大 90% オフ、Claude Code 経由で最大 60% オフで利用できます。CC Switch ユーザーはこのリンクから登録し、プロモコード \"cc-switch\" を使うと初回チャージが 10% オフになります！",
       "grooroute": "GrooRoute Pro は OpenAI、Claude、DeepSeek などの主要モデルに対応する信頼性の高い AI API 中継プラットフォームで、従量課金とサブスクリプションに対応しています。CC Switch ユーザーはこのリンクから登録すると 5 元分の無料お試しクレジットがもらえます！",
-      "dit": "同じモデルを、多くの場合はるかに安く。OpenAI 互換の API 1 つで GPT、Claude、Gemini など 50 以上のモデルを利用でき、160 以上のプロバイダーの中から価格と品質のバランスが最も良い選択肢へルーティングされるため、通常は公式価格より 30〜70% 安くなります。Base URL と API キーを変えるだけで、既存のスタックはそのままですぐに呼び出せます。CC Switch ユーザーはこのリンクから登録し、コード \"cc-switch\" を使うと初回チャージが 30% オフになります！",
       "buytoken": "BuyToken は Claude Code、Codex、DeepSeek などの中継サービスを提供し、エンタープライズ級の同時実行と迅速な請求書発行に対応、安定して長く続くサービスを目指しています。CC Switch ユーザーはこのリンクから登録すると 3 元分のお試しクレジットを受け取れ、初回チャージは 10% オフになります！",
-      "vapi": "V-API は 3 年の実績を持つブランドで、個人・開発者・企業向けに安定・高速・安全な高品質 LLM API サービスを提供し、契約締結と正規の請求書発行（普通 / 専用）に対応しています。CC Switch ユーザーはこのリンクから登録すると、初回注文が 2 元引きのうえ 10% オフになります！"
+      "vapi": "V-API は 3 年の実績を持つブランドで、個人・開発者・企業向けに安定・高速・安全な高品質 LLM API サービスを提供し、契約締結と正規の請求書発行（普通 / 専用）に対応しています。CC Switch ユーザーはこのリンクから登録すると、初回注文が 2 元引きのうえ 10% オフになります！",
+      "ospreyai": "ACS OspreyAI は開発者と企業向けのワンストップ・マルチモデル API サービスプラットフォームです。1 つの API Key で Claude、Gemini、GPT、GLM、Kimi、Qwen、DeepSeek、Tencent Hunyuan など国内外の主要モデルを呼び出せます。OpenAI、Anthropic などの主要 API プロトコルに対応し、Claude Code、Codex、OpenCode、Pi、Hermes などの主要 AI ツールでも利用できます。海外モデルは公式価格より 20〜40%、中国国内モデルは 30〜50% お得です。チャージと請求の一元化、使用量の確認、モデルの柔軟な切り替えに対応し、AI アプリ開発、コンテンツ制作、自動化ワークフローなどに適しています。このリンクからアカウントを作成すると特典を受けられ、国内外の主要モデルにすぐ接続できます。"
     },
     "presets": {
       "ucloud": "Compshare",
@@ -1812,6 +1886,11 @@
     "customUserAgentHelp": "プロバイダーへ転送するリクエストの User-Agent を置き換えます。",
     "localProxyRequestOverridesHelp": "形式変換後に上流へ送るリクエストに適用されます。",
     "apiFormatHelp": "プロバイダーがネイティブ対応するプロトコルを選びます。Anthropic Messages はそのまま転送して変換なし、他の三つはルーティングが Anthropic Messages に変換します。",
+    "reasoningEffort": "思考レベル",
+    "reasoningEffortHelp": "ルーティングが OpenAI 形式に変換するとき、クライアントで選んだ思考レベルを上流にどう送るかを決めます。自動：上流が対応するレベルで送ります。判別できない上流には最大 high まで送り、思考をオフにしたときは送りません。そのまま送信：クライアントで選んだレベルをそのまま送ります。上流が xhigh や max に対応していない場合はエラーになります。送信しない：上流がこのパラメータでエラーを返す場合に選びます。",
+    "reasoningEffortAuto": "自動（推奨）",
+    "reasoningEffortOff": "送信しない",
+    "reasoningEffortPassthrough": "そのまま送信",
     "directModeFormatInUse": "このカードは直結で使用中です。この形式で保存するとリクエストが失敗します。先にルーティングか集約に切り替えてください。",
     "directModeFormatSwitch": "この形式は直結モードでは使えません。ルーティングか集約に切り替えるとこのカードを使えます。"
   },
@@ -1853,7 +1932,29 @@
     "deploymentType": "GitHub デプロイメントタイプ",
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Enterprise Server",
-    "enterpriseDomainPlaceholder": "例: company.ghe.com"
+    "enterpriseDomainPlaceholder": "例: company.ghe.com",
+    "form": {
+      "officialTitle": "Copilot CLI 自身の GitHub ログインを使用",
+      "officialHint": "「ターミナルを開く」はこのカードのモデルで copilot を起動します。認証センターのアカウントを紐付けると、そのアカウントで起動します。",
+      "byokTitle": "このカードから開いたターミナルでのみ有効",
+      "byokHint": "Copilot CLI は独自モデルをプロセス環境からのみ読み込むため、Copilot 自身のファイルには書き込みません。",
+      "apiFormat": "API 形式",
+      "baseUrl": "API エンドポイント",
+      "baseUrlHint": "OpenAI 互換エンドポイントは通常 /v1 で終わります（例：Ollama http://localhost:11434/v1）。Anthropic はホストのみ（https://api.anthropic.com）。",
+      "model": "モデル",
+      "officialModelHint": "空欄なら Copilot の現在のモデルを使います。--model として渡され、このセッションにのみ適用されます。copilot 内の /model も使えます。",
+      "byokModelHint": "エンドポイントが要求するモデル ID（COPILOT_MODEL）。",
+      "reasoningEffort": "推論の強さ",
+      "reasoningEffortDefault": "Copilot の既定値",
+      "reasoningEffortHint": "ターミナルを開くときに --reasoning-effort として渡します。none を選ぶと、Copilot は Responses リクエストに reasoning.summary を付けません（このフィールドを受け付けない中継があります）。",
+      "maxPromptTokens": "最大入力トークン",
+      "maxOutputTokens": "最大出力トークン",
+      "envJsonHint": "上級者向け：任意の COPILOT_PROVIDER_* 変数（COPILOT_PROVIDER_MODEL_ID、COPILOT_PROVIDER_BEARER_TOKEN など）はそのまま copilot に渡されます。"
+    },
+    "quota": {
+      "accountNotInAuthCenter": "Copilot CLI でログイン中のアカウント {{login}} が認証センターにありません。認証センターに追加するか、このカードでアカウントを紐付けてください。",
+      "notSignedIn": "Copilot CLI にログインしていません。copilot を実行して /login でログインするか、このカードで認証センターのアカウントを紐付けてください。"
+    }
   },
   "codexOauth": {
     "authStatus": "認証状態",
@@ -2016,11 +2117,17 @@
     "subagentReasoningEffortDefault": "デフォルト強度",
     "subagentModelHint": "Codex が起動するサブエージェントの既定モデルと推論強度です。空欄ならメインエージェントに従い、モデルだけ指定するとそのモデルの既定強度になります。集約モードでは無効で、集約タブの「集約設定」のサブエージェントモデルが使われます。",
     "subagentModelNotInCatalog": "このモデルはモデル一覧にありません。Codex はコンテキストウィンドウを取得できず、ルーティングで Chat / Anthropic 形式に変換する際はデフォルトモデルに置き換えられます。",
+    "agentMaxThreadsLabel": "サブエージェントの同時実行上限",
+    "agentMaxThreadsHint": "1 つの Codex セッションで同時に動かせるサブエージェントの数（メインエージェントを除く）で、プロバイダーを切り替えても変わりません。空欄なら Codex の既定値（従来のサブエージェントツールは 6、新しいツールは 3）で、最小は 1、無制限は指定できません。新しい会話から反映されます。",
+    "agentMaxThreadsPlaceholder": "空欄なら Codex の既定値",
+    "agentMaxThreadsV2Override": "config.toml の [features.multi_agent_v2] で合計 {{total}}（メインエージェントを含む）が指定されています。新しいサブエージェントツールではこちらが優先されます。",
     "autoReviewModelLabel": "自動承認モデル",
     "autoReviewModelHint": "Codex の自動承認（Approve for me）が有効なとき、操作を許可するかどうかの判断に使うモデルです。承認リクエストは会話と同じプロバイダーに送られるため、このカードのモデル一覧から選びます。集約モードでは無効で、集約タブの「集約設定」の自動承認モデルが使われます。変更後は Codex を再起動してください。",
     "autoReviewModelCodexDefault": "Codex の既定（codex-auto-review）",
     "autoReviewModelMainDefault": "メインモデル自身が承認（既定）",
     "autoReviewModelNoList": "このカードにはモデル一覧がありません。Codex は公式の codex-auto-review で承認しますが、これを受け付けるのは ChatGPT アカウントへ転送する一部の中継だけで、それ以外では 404 になります。上のモデル一覧にモデルを追加すると選べます。",
+    "officialSpeedTiersLabel": "公式の Fast ティアを残す",
+    "officialSpeedTiersHint": "モデル一覧の GPT モデルに公式の Fast 速度ティアを残します。Codex で Fast を選ぶと service_tier=priority が送られます。受け付けるのは公式 ChatGPT アカウントへ転送する中継（CPA など）だけで、利用枠の消費も速くなります。それ以外の上流ではエラーになったり、より高い料金で課金されたりすることがあります。オンにすると、公式カードで選んだ Fast がこのプロバイダーですぐに有効になります。集約モードでは使われません。変更後は Codex を再起動してください。",
     "modelListHint": "変更後は Codex を再起動してください。",
     "modelListDefaultHelp": "これらのモデルは Codex の /model に表示され、先頭の行がデフォルトモデルです。公式 GPT モデル名の行は公式エントリから生成されるため、表示名・ウィンドウ・思考レベルは反映されません。",
     "addCatalogModel": "手動で追加",
@@ -2104,9 +2211,6 @@
     "extraOptionValuePlaceholder": "600000",
     "noExtraOptions": "追加オプションはありません",
     "noModelOptions": "モデルオプション、+ をクリックして追加",
-    "modelLimits": "トークン制限",
-    "limitContext": "コンテキスト",
-    "limitOutput": "出力",
     "modelExtraFields": "モデルプロパティ",
     "noModelExtraFields": "モデルプロパティ（variants、cost など）、+ をクリックして追加",
     "modelExtraFieldKeyPlaceholder": "variants",
@@ -2158,6 +2262,7 @@
     "universalDetail": "Claude Code・Codex・Gemini CLI に同期",
     "manageUniversal": "既存の統合プロバイダーを管理 ›",
     "loginWith": {
+      "deepseek": "DeepSeek アカウントでログイン",
       "kimi": "Kimi アカウントでログイン",
       "claude": "Claude アカウントでログイン",
       "chatgpt": "ChatGPT アカウントでログイン",
@@ -2244,6 +2349,11 @@
       "short": "セッションログ",
       "label": "{{app}} · セッションログ",
       "hint": "ルーティングがオフの間はクライアントのセッションログから読み取るため、どのプロバイダーかは区別できません"
+    },
+    "sessionAccountProvider": {
+      "short": "DeepSeek アカウント",
+      "label": "{{app}} · DeepSeek アカウント（OAuth）",
+      "hint": "セッションログから読み取った、DeepSeek アカウントのログインを使ったリクエストです。Web と Desktop はこのログインを共有するため、使用量はまとめて集計されます"
     },
     "stream": "ストリーム",
     "nonStream": "非ストリーム",
@@ -2432,6 +2542,17 @@
       "title": "表示",
       "currency": "通貨",
       "rate": "為替レート",
+      "rateSource": "レートの取得方法",
+      "rateSources": {
+        "auto": "自動取得",
+        "manual": "手動入力"
+      },
+      "rateAutoHint": "1 日 1 回自動で取得し、表示の換算にのみ使います。費用は引き続き米ドルで記録されます。",
+      "rateAutoUpdated": "最終更新：{{time}}",
+      "rateAutoNever": "レートをまだ取得していません",
+      "rateAutoFailed": "自動取得に失敗しました。前回のレートを使用します",
+      "rateAttribution": "為替レートの提供：{{provider}}。",
+      "rateRefresh": "今すぐ更新",
       "rateHint": "手動で入力し、表示の換算にのみ使います。費用は引き続き米ドルで記録されます。",
       "rateInvalid": "0 より大きい数値を入力してください",
       "approxNote": "換算した金額はホバーで米ドルの値を確認できます。",
@@ -2545,7 +2666,7 @@
       "scanTitle": "セッションログを自動スキャン",
       "scanHelpTitle": "セッションログとは",
       "scanHelp": "各アプリがこのコンピューターに書き込む会話記録です。CC Switch はここから使用量を読み取るので、ルーティングなしでもデータがあります。",
-      "coverage": "対象の 7 アプリ：{{apps}}",
+      "coverage": "対象の {{total}} アプリ：{{apps}}",
       "cadenceOn": "起動時とバックグラウンドで 10 分ごとにスキャン。使用量ページを開くとすぐにスキャンし、その後は選択した間隔でスキャン",
       "cadenceOff": "自動スキャンはオフです。「今すぐ同期」を押したときだけスキャンします",
       "unsupported": "Hermes と OpenClaw は使用量統計にまだ対応していません",
@@ -2575,6 +2696,9 @@
       "byRequest": "リクエストモデルで計算",
       "edit": "変更",
       "tableTitle": "モデル料金 · {{count}}",
+      "searchPlaceholder": "モデル ID または名前で検索",
+      "noSearchMatch": "「{{query}}」に一致するモデルはありません",
+      "addForQuery": "{{query}} の料金を追加",
       "costHelpTitle": "コストの計算方法",
       "costHelp": "各リクエストのコストはモデル料金で計算します。新規入力・出力・キャッシュヒット・キャッシュ書き込みにそれぞれの単価を掛けて合計します。",
       "unit": "USD / 100 万トークン",
@@ -2611,7 +2735,7 @@
     "officialSubscriptionHint": "ローカル CLI の OAuth 認証情報を読み取り、公式 API でサブスクリプション枠を照会します。既定では無効で、有効化した後のみリクエストします。",
     "officialSubscriptionHintAgy": "agy 組み込みの /usage コマンドを実行して、ログイン中のアカウントの枠を照会します。ログイン認証情報は読み取りません。1 回の照会に約 10 秒かかります。既定では無効で、有効化した後のみ実行します。",
     "resetDate": "リセット日",
-    "premiumRequests": "Premium リクエスト",
+    "premiumRequests": "Credits",
     "credentialsConfig": "認証情報",
     "credentialsHint": "空欄の場合はプロバイダー設定を使用",
     "optional": "オプション",
@@ -2744,7 +2868,7 @@
         "mcode": "MiniMax Code"
       }
     },
-    "userLevelPath": "ユーザーレベルの MCP パス",
+    "userLevelPath": "ユーザーレベルの MCP 設定パス",
     "serverList": "サーバー一覧",
     "loading": "読み込み中...",
     "empty": "MCP サーバーがありません",
@@ -2763,12 +2887,12 @@
       "fetch": "クイックテンプレート: mcp-fetch"
     },
     "form": {
-      "title": "MCP ID（ユニーク）",
+      "title": "MCP タイトル（一意）",
       "titlePlaceholder": "my-mcp-server",
       "name": "表示名",
       "namePlaceholder": "例: mcp-server-time",
       "enabledApps": "適用するアプリ",
-      "noAppsWarning": "少なくとも 1 つ選択してください",
+      "noAppsWarning": "アプリを少なくとも 1 つ選択してください",
       "description": "説明",
       "descriptionPlaceholder": "任意の説明",
       "tags": "タグ（カンマ区切り）",
@@ -2787,7 +2911,7 @@
       "useWizard": "設定ウィザード",
       "syncOtherSide": "{{target}} にも反映",
       "syncOtherSideHint": "{{target}} に同じ設定を書き込みます。既存の同一 ID は上書きされます。",
-      "willOverwriteWarning": "{{target}} の既存設定を上書きします"
+      "willOverwriteWarning": "{{target}} の同名の設定を上書きします"
     },
     "wizard": {
       "title": "MCP 設定ウィザード",
@@ -2833,6 +2957,9 @@
       "tomlInvalid": "TOML 形式が無効です",
       "commandRequired": "コマンドを入力してください",
       "singleServerObjectRequired": "単一の MCP サーバーオブジェクトを貼り付けてください（トップレベルの mcpServers は不要）",
+      "piSseUnsupported": "Pi は SSE 接続の MCP サーバーに対応していません。HTTP（streamable HTTP）を使用してください",
+      "piInvalidName": "Pi の MCP サーバー名に使えるのは英数字、_、- のみです：{{id}}",
+      "piNameConflict": "Pi は - と _ だけが異なるサーバー名を同一とみなします：{{id}} は既存の {{other}} と競合しています",
       "saveFailed": "保存に失敗しました",
       "deleteFailed": "削除に失敗しました"
     },
@@ -4151,11 +4278,12 @@
       "geminiFlashLite": "Lite",
       "agyGeminiFiveHour": "Gemini 5h",
       "agyGeminiWeekly": "Gemini 週",
+      "agyGeminiArgonWeekly": "Argon 週",
       "agyThirdPartyFiveHour": "Claude 5h",
       "agyThirdPartyWeekly": "Claude 週",
       "monthly": "月",
       "credits": "クレジット",
-      "copilotPremium": "プレミアム"
+      "copilotPremium": "Credits"
     },
     "fiveHour": "5時間",
     "sevenDay": "週間",
@@ -4170,17 +4298,23 @@
     "agyThirdParty": "Claude/GPT",
     "agyGeminiFiveHour": "Gemini 5時間",
     "agyGeminiWeekly": "Gemini 週間",
+    "agyGeminiArgonWeekly": "Argon 週間",
     "agyThirdPartyFiveHour": "Claude/GPT 5時間",
     "agyThirdPartyWeekly": "Claude/GPT 週間",
     "weeklyLimit": "週間",
     "monthly": "月間",
     "credits": "クレジット",
-    "copilotPremium": "プレミアム",
+    "copilotPremium": "Credits",
+    "copilotCompletions": "コード補完",
+    "copilotChat": "チャット",
+    "copilotCount": "残り {{remaining}} / 合計 {{total}}",
+    "copilotNotIncluded": "現在のプランに含まれません",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}}後にリセット",
     "extraUsage": "超過使用量",
     "expired": "セッション期限切れ",
     "expiredHint": "{{tool}}コマンドを実行してログインを更新してください",
+    "expiredHintAccounts": "「アカウント」でこのアカウントに再ログインしてください",
     "queryFailed": "クエリに失敗しました",
     "refresh": "更新"
   },
@@ -4235,6 +4369,8 @@
     "notRunnable": "実行できません",
     "updateNeedsNode": "{{version}} には Node {{required}} が必要ですが、このインストールは Node {{current}} で動いています。先に Node を更新してください。",
     "otherInstalls": "ほかに {{count}} 件のインストール",
+    "toolQueued": "順番待ち中（前のアプリの完了待ち）",
+    "toolElapsed": "経過 {{time}}",
     "installsFound": "{{count}} 件のインストールを検出",
     "wslFlag": "フラグ",
     "installHint": {
@@ -4248,6 +4384,7 @@
       "pi": "npm でインストール",
       "mcode": "公式インストールスクリプトで入れ、失敗したら npm を使います",
       "agy": "公式インストールスクリプトでインストール",
+      "copilot": "npm でインストール",
       "omp": "公式インストールスクリプトでインストール"
     }
   },
@@ -4315,6 +4452,9 @@
       "serviceDown": "{{app}} は{{mode}}モードですが、ルーティングサービスが動いていないためリクエストは失敗します。",
       "startService": "サービスを起動",
       "backToDirect": "直接接続に戻す",
+      "officialLoginPaused": "Codex の公式ログインを一時停止中です",
+      "officialLoginPausedBody": "公式モデルは使えず、Codex のサイドバー「プロジェクト」にある既存のセッションは一時的に表示されません。公式クォータが回復したら「公式ログインを再開」をクリックし、Codex を完全に終了して開き直してください。",
+      "resumeOfficialLogin": "公式ログインを再開",
       "attachFailed": "前回の{{mode}}モードに再接続できなかったため、{{app}} は直接接続に戻りました。"
     },
     "toast": {
@@ -4553,6 +4693,16 @@
     }
   },
   "mcpPage": {
+    "checkConnectivity": "接続を確認",
+    "testConnection": "接続をテスト",
+    "connection": {
+      "unchecked": "未確認",
+      "connected": "接続成功",
+      "authRequired": "サーバーには接続できますが、ログイン認証（OAuth など）が必要です。CC Switch はクライアント自身のログイン情報を使わずに確認します。クライアントでログイン済みならそのまま利用でき、リクエストヘッダーにトークンを設定している場合は有効か確認してください",
+      "disconnected": "接続失敗",
+      "checking": "接続を確認中",
+      "disabled": "無効"
+    },
     "noun": "MCP",
     "listSeparator": "、",
     "helpTitle": "MCP の同期のしくみ",
@@ -4612,10 +4762,11 @@
       "failedTitle": "読み込めなかったアプリがあります",
       "filesTitle": "読み込んだファイル",
       "claudeNote": "（トップレベルの mcpServers）",
+      "dshNote": "（初期化済みのすべての profile に書き込みます：web、desktop、headless、acp）",
       "ok": "OK"
     },
     "templateLabels": {
-      "sequential-thinking": "sequential-thinking"
+      "sequential-thinking": "逐次思考"
     },
     "drawer": {
       "addTitle": "MCP を追加",
@@ -4774,7 +4925,8 @@
     "rowFail": "{{app}} での有効化に失敗：{{error}}",
     "fixSync": "同期方法を変更",
     "rowMoreAria": "{{name}} のその他の操作",
-    "copyDir": "フォルダー名をコピー",
+    "rowUpdateAria": "{{name}} を更新",
+    "openDir": "フォルダーを開く",
     "uninstallEllipsis": "アンインストール",
     "listLabel": "インストール済みの Skill",
     "noMatch": "「{{query}}」に一致する Skill はありません",
@@ -4802,7 +4954,8 @@
       "enableFailed": "{{apps}} で有効にできませんでした。リストに印を付けました",
       "uninstalledMany": "{{count}} 件の Skill をアンインストールしました",
       "backupAt": "バックアップ先：{{path}}",
-      "copiedDir": "フォルダー名 {{dir}} をコピーしました",
+      "copiedName": "{{name}} をコピーしました",
+      "openDirFailed": "フォルダーを開けませんでした",
       "noUpdatesInSelection": "選択した Skill に更新はありません",
       "selectionAlreadyOn": "選択した {{count}} 件の Skill は既に {{app}} で有効です",
       "selectionAlreadyOff": "選択した {{count}} 件の Skill はどれも {{app}} で有効ではありません",
@@ -4817,7 +4970,7 @@
       "help": "はい、前回の選択が既定になります。インストール後も「インストール済み」でいつでも変更できます。ZIP からのインストールとバックアップからの復元もこの選択を使います。"
     },
     "discover": {
-      "searchPlaceholder": "Skill かリポジトリを検索",
+      "searchPlaceholder": "名前・説明・リポジトリを検索",
       "searchAria": "「見つける」を検索",
       "skillsShPlaceholder": "2 文字以上、Enter で検索",
       "skillsShAria": "skills.sh で検索",
@@ -4825,9 +4978,9 @@
       "skillsShNone": "skills.sh で「{{query}}」は見つかりませんでした",
       "sourceAria": "探す場所",
       "sourceRepos": "リポジトリ · {{count}}",
-      "reload": "リポジトリを読み直す",
+      "reload": "リポジトリを更新",
       "listLabel": "インストールできる Skill",
-      "installed": "インストール済み · {{count}} アプリ",
+      "installed": "インストール済み",
       "installedAria": "{{name}} は {{count}} アプリにインストール済み。「インストール済み」で表示",
       "dirTaken": "フォルダー名は {{name}}（{{source}}）が使用中",
       "installing": "インストール中",
@@ -4844,8 +4997,8 @@
       "onlyUninstalled": "未インストールのみ"
     },
     "repos": {
-      "buttonAll": "リポジトリ：すべて",
-      "buttonSome": "リポジトリ：{{total}} 件中 {{count}}",
+      "buttonAll": "ソース：すべて",
+      "buttonSome": "ソース：{{total}} 件中 {{count}}",
       "popoverAria": "「見つける」で使うリポジトリ",
       "enableAria": "「見つける」で {{repo}} を使う",
       "disabledShort": "停止中",
@@ -4880,9 +5033,6 @@
       "discoverBody": "一覧が不完全な可能性があります。",
       "updatesBody": "これらのリポジトリの Skill は確認されていないため、結果が不完全な可能性があります。"
     },
-    "headerUpdates": "{{count}} 件の更新",
-    "headerUpdatesShow": "更新がある Skill だけを表示",
-    "headerUpdatesClear": "すべての Skill を表示",
     "updateAllCount": "すべて更新（{{count}} 件）",
     "updatingProgress": "更新中 {{done}}/{{total}}…"
   },
@@ -4946,7 +5096,11 @@
       "open": "認可ページを開く",
       "note": "ブラウザで認可ページを開きました。完了するとここが自動で更新されます。{{service}} の利用規約にご注意ください。",
       "browserNote": "ブラウザで {{service}} のログインページを開きました。ログインしてアクセスを許可すると、ここが自動で更新されます。",
-      "reopen": "ログインページを再度開く"
+      "reopen": "ログインページを再度開く",
+      "copyLink": "ログインリンクをコピー",
+      "linkCopied": "ログインリンクをコピーしました。",
+      "linkNote": "ログインリンクをコピーしました。使いたいブラウザで開き、ログインしてアクセスを許可すると、ここが自動で更新されます。",
+      "linkCodeNote": "ログインリンクをコピーしました。使いたいブラウザで開いてコードを入力すると、ここが自動で更新されます。{{service}} の利用規約にご注意ください。"
     },
     "toast": {
       "added": "{{service}} アカウントを追加しました。",
@@ -4956,7 +5110,8 @@
       "updating": "更新中…",
       "loading": "残量を確認中…",
       "refresh": "残量を更新",
-      "refreshAria": "{{login}} の残量を更新"
+      "refreshAria": "{{login}} の残量を更新",
+      "refreshAll": "すべて更新"
     },
     "agy": {
       "reauthNote": "ログイン情報が失効しているため切り替えできません",
@@ -4983,6 +5138,10 @@
       "empty": "Claude アカウントはまだありません。複数のサブスクリプションアカウントを切り替えるときはここでログインします。",
       "removeNote": "CC Switch がこのアカウント用に保存したログインだけを削除します。他の場所でログアウトされることはなく、Claude Code の現在のログイン（~/.claude）も変わりません。このアカウントを使うカードは Claude Code の現在のログインに切り替わります。",
       "wslUnsupported": "Claude の設定フォルダーが WSL にあるため、Claude アカウントの追加と切り替えにはまだ対応していません。"
+    },
+    "openBrowser": {
+      "title": "ログイン時にブラウザを自動で開く",
+      "description": "オフにするとログインリンクをコピーするだけになり、使うブラウザを自分で選べます。アカウントごとに独立したブラウザ環境を使う場合に便利です。"
     }
   },
   "kimi": {
@@ -5017,7 +5176,8 @@
     },
     "modelSelectionHint": "プロバイダーカードの切り替えボタンで既定のプロバイダーを選択します。別のモデルを選ぶには、Kimi Code で /model を使用してください。",
     "contextSize": "コンテキスト長",
-    "deleteSessionHint": "インデックスと履歴を同期するため、Kimi Code 内でセッションを削除してください。",
+    "configTomlScope": "ここには [providers.{{key}}] とそれに属する [models.*] テーブルだけを書けます。プロバイダーキーは上の欄で変更してください。",
+    "configTomlSchema": "設定が不完全です：プロバイダーの type と、各モデルの model・max_context_size（正の整数）を確認してください。",
     "empty": {
       "title": "Kimi Code プロバイダーを追加",
       "description": "URL、API キー、モデルを設定します。既存の Kimi 設定は自動的にインポートされます。"
@@ -5084,6 +5244,31 @@
     "empty": {
       "title": "DeepSeek Harness プロバイダーを追加",
       "description": "接続先 URL、API キー、モデルを設定します。既存のカスタムプロバイダーは自動的にここに表示されます。"
+    },
+    "sharedProviders": "追加したプロバイダーは DeepSeek Harness の Web と Desktop の設定（初期化済みの headless、acp も含む）にまとめて書き込まれます。モデルは DeepSeek Harness の中で選びます。",
+    "sharedProvidersNote": "Web と Desktop で共有",
+    "account": {
+      "help": "DeepSeek アカウントはブラウザでログインします（OAuth）。ここでも DeepSeek Harness でもログインできます。ログイン情報は $DSH_HOME/.credentials.yaml（既定は ~/.dsh/.credentials.yaml） に保存され、DeepSeek Harness の Web と Desktop で共有されます。どこでログイン・ログアウトしても両方に反映され、実行中の DeepSeek Harness は自動で読み直します。アカウント経由のモデルの使用量は、使用量ページで「DeepSeek アカウント（OAuth）」として別に表示されます。",
+      "statusFailed": "DeepSeek アカウントのログイン状態を読み取れません",
+      "empty": "DeepSeek アカウントにログインしていません",
+      "unnamed": "DeepSeek アカウント",
+      "expired": "ログインの有効期限が切れました。再ログインしてください",
+      "shared": "Web と Desktop で共有",
+      "signOut": "ログアウト",
+      "signOutConfirm": "DeepSeek アカウント「{{name}}」からログアウトしますか？DeepSeek Harness の Web と Desktop の両方がログアウトされます。API キーのプロバイダーには影響しません。",
+      "signOutFailed": "DeepSeek アカウントからログアウトできませんでした",
+      "balance": "残高 {{amount}}",
+      "bonus": "ボーナス {{amount}}",
+      "balanceFailed": "現在残高を取得できません",
+      "signedIn": "DeepSeek アカウントにログインしました（Web と Desktop の両方で使えます）",
+      "signInFailed": "DeepSeek アカウントにログインできませんでした",
+      "presetName": "DeepSeek 公式ログイン",
+      "presetDescription": "ブラウザで DeepSeek アカウントにログインすると、DeepSeek Harness がアカウントのモデルをそのまま提供するため、プロバイダーを追加する必要はありません。Web と Desktop はこのログインを共有します。ログインとログアウトは認証センターで管理し、ログイン後はアカウントが「追加済み」に表示されます。",
+      "manageAccounts": "DeepSeek アカウントを管理",
+      "cardSubtitle": "公式アカウント · Web と Desktop で共有",
+      "expiredChip": "ログイン無効",
+      "editDisabled": "このアカウントのモデルは DeepSeek Harness が自動で提供するため、編集は不要です。",
+      "managedHint": "アカウントは認証センターで管理します。ログアウトするとこのカードは自動で消えます。"
     },
     "deleteSessionHint": "履歴の整合性を保つため、DeepSeek Harness でこのセッションを削除してください。"
   }

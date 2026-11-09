@@ -145,7 +145,9 @@ fn native_auth(app: &AppType, settings: &Value) -> Result<Value, AppError> {
             // These are individual native provider nodes, not the global client config.
             auth_fields(settings).unwrap_or(Value::Null)
         }
-        AppType::Kimi | AppType::Dsh | AppType::Agy | AppType::Omp => return Err(unsupported()),
+        AppType::Kimi | AppType::Dsh | AppType::Agy | AppType::Omp | AppType::Copilot => {
+            return Err(unsupported())
+        }
     })
 }
 
@@ -176,7 +178,9 @@ fn inline_key(app: &AppType, settings: &Value) -> Result<Option<String>, AppErro
         AppType::OpenCode | AppType::Mcode => from_paths(&["/options/apiKey", "/settings/apiKey"]),
         AppType::OpenClaw | AppType::Pi => from_paths(&["/apiKey"]),
         AppType::Hermes => from_paths(&["/api_key"]),
-        AppType::Kimi | AppType::Dsh | AppType::Agy | AppType::Omp => return Err(unsupported()),
+        AppType::Kimi | AppType::Dsh | AppType::Agy | AppType::Omp | AppType::Copilot => {
+            return Err(unsupported())
+        }
     })
 }
 

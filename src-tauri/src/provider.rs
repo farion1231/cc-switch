@@ -213,6 +213,16 @@ impl Provider {
                 (base_url, api_key)
             }
             // Hermes (config.yaml) flattens credentials at the top level, snake_case.
+            AppType::Copilot => {
+                let env = settings.get("env");
+                (
+                    str_at(env.and_then(|e| e.get("COPILOT_PROVIDER_BASE_URL"))),
+                    first_non_empty(
+                        env,
+                        &["COPILOT_PROVIDER_API_KEY", "COPILOT_PROVIDER_BEARER_TOKEN"],
+                    ),
+                )
+            }
             AppType::Dsh => (
                 str_at(settings.pointer("/options/baseURL")),
                 str_at(settings.pointer("/options/apiKey")),
@@ -578,6 +588,14 @@ pub struct ProviderMeta {
     /// Codex Responses -> Chat Completions reasoning capability metadata.
     #[serde(rename = "codexChatReasoning", skip_serializing_if = "Option::is_none")]
     pub codex_chat_reasoning: Option<CodexChatReasoningConfig>,
+    /// Claude 路由经 OpenAI Chat / Responses 转发时怎么发思考档位。
+    /// 缺省 = 自动（见 `proxy::providers::claude_reasoning`）；"off"（不发）/
+    /// "passthrough"（原样发）为用户覆盖，其余值按缺省处理。
+    #[serde(
+        rename = "claudeReasoningEffort",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub claude_reasoning_effort: Option<String>,
     /// Codex → Anthropic path: whether to emulate the Claude Code client
     /// (User-Agent / anthropic-beta / x-app + injecting the Claude Code system
     /// prompt first line). Disabled by default; only an explicit `true` enables it.
@@ -934,7 +952,6 @@ impl UniversalProvider {
             r#"model_provider = "custom"
 model = "{model}"
 model_reasoning_effort = "{reasoning_effort}"
-disable_response_storage = true
 
 [model_providers.custom]
 name = "NewAPI"

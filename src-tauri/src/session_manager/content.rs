@@ -673,6 +673,7 @@ fn project_dir_for(source: &ValidatedSource) -> Option<PathBuf> {
         "omp" => omp::scan_sessions(),
         "dsh" => super::providers::dsh::scan_sessions(),
         "agy" => super::providers::agy::scan_sessions(),
+        "copilot" => super::providers::copilot::scan_sessions(),
         _ => return None,
     };
     let project = sessions
