@@ -4,7 +4,7 @@ use cc_switch_lib::{
 use serde_json::json;
 use std::{ffi::OsString, fs};
 
-#[path = "support.rs"]
+#[path = "support/mod.rs"]
 mod support;
 use support::{create_test_state, reset_test_fs, test_mutex};
 

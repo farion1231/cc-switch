@@ -946,7 +946,6 @@ impl UniversalProvider {
             r#"model_provider = "custom"
 model = "{model}"
 model_reasoning_effort = "{reasoning_effort}"
-disable_response_storage = true
 
 [model_providers.custom]
 name = "NewAPI"

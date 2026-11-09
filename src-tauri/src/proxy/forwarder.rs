@@ -386,6 +386,9 @@ pub struct RequestForwarder {
     /// Stack 模型的请求（`mode::stack`）：挂在结构体上，整流器重试再次调用 `forward()` 时照样
     /// 生效。见 [`Self::routing_state_enabled`]。
     stack_request: bool,
+    /// 这个请求走故障转移队列（故障转移开着）。Codex 换家时据此按目标家改模型名，见
+    /// [`super::model_mapper::map_codex_failover_model`]。
+    failover_chain: bool,
     /// 最近一次 `forward()` 定下的出站模型名，失败时随 [`ForwardError`] 交给日志。
     /// 每次 `forward()` 开头清空，映射失败等没走到出站的尝试留 None（日志回落到请求名）。
     last_outbound_model: std::sync::Mutex<Option<String>>,
@@ -460,6 +463,25 @@ impl RequestForwarder {
         detect_opaque_state_rejection(error, &self.rectifier_config, request, codex_third_party)
     }
 
+    /// 压缩回合被原生 Responses 第三方以 400 拒绝时，去掉 `tool_choice` 的重试请求体。
+    fn compaction_tool_choice_retry_body(
+        &self,
+        app_type: &AppType,
+        provider: &Provider,
+        codex_upstream_format: Option<CodexUpstreamFormat>,
+        request: &Value,
+        error: &ProxyError,
+    ) -> Option<Value> {
+        if !matches!(app_type, AppType::Codex)
+            || codex_upstream_format != Some(CodexUpstreamFormat::NativeResponses)
+            || super::providers::is_codex_official_provider(provider)
+            || !matches!(error, ProxyError::UpstreamError { status: 400, .. })
+        {
+            return None;
+        }
+        super::providers::codex_compaction::compaction_retry_without_tool_choice(request)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         router: Arc<ProviderRouter>,
@@ -503,6 +525,7 @@ impl RequestForwarder {
             ),
             max_attempts,
             stack_request: false,
+            failover_chain: false,
             last_outbound_model: std::sync::Mutex::new(None),
         }
     }
@@ -526,6 +549,20 @@ impl RequestForwarder {
         self
     }
 
+    /// 这个请求走故障转移队列（故障转移开着）。
+    pub fn failover_chain(mut self, failover_chain: bool) -> Self {
+        self.failover_chain = failover_chain;
+        self
+    }
+
+    /// 故障转移换家时按目标家改 Codex 模型名，只对对话请求。图片、搜索这些独立接口带的是
+    /// 图片 / 搜索模型，不在目标家的文本模型目录里，换成它的文本模型就发错了。
+    fn maps_codex_failover_model(&self, app_type: &AppType, endpoint: &str) -> bool {
+        self.failover_chain
+            && matches!(app_type, AppType::Codex)
+            && CodexStandaloneEndpoint::from_effective_endpoint(endpoint).is_none()
+    }
+
     /// 这个请求读写路由状态吗：熔断器（许可、结果、健康度）、「正在使用」、代理统计
     /// （总数、成功率、故障转移次数、最近错误、活跃连接）、故障转移切换。Stack 模型的请求
     /// 和普通路由完全分开，一律不碰；只有用量日志照常按供应商记。以后新增路由状态也先问它。
@@ -545,10 +582,11 @@ impl RequestForwarder {
         app_type: &str,
         used_half_open_permit: bool,
     ) {
+        // 名额本身由这次尝试的 HalfOpenPermitGuard 归还，这里只记结果，所以传 false。
         if used_half_open_permit {
             if let Err(e) = self
                 .router
-                .record_result(provider_id, app_type, true, true, None)
+                .record_result(provider_id, app_type, false, true, None)
                 .await
             {
                 log::warn!(
@@ -585,7 +623,6 @@ impl RequestForwarder {
         retry_err: ProxyError,
         provider: &Provider,
         app_type_str: &str,
-        used_half_open_permit: bool,
         rectifier_label: &str,
         last_error: &mut Option<ProxyError>,
         last_provider: &mut Option<Provider>,
@@ -602,7 +639,6 @@ impl RequestForwarder {
             self.record_provider_failure(
                 provider,
                 app_type_str,
-                used_half_open_permit,
                 &retry_err,
                 format!(
                     "Provider {} {rectifier_label}重试失败: {}",
@@ -615,10 +651,7 @@ impl RequestForwarder {
             return None;
         }
 
-        Some(
-            self.finish_neutral_failure(retry_err, provider, app_type_str, used_half_open_permit)
-                .await,
-        )
+        Some(self.finish_neutral_failure(retry_err, provider).await)
     }
 
     // 一次尝试和一个客户端请求的收尾记账（熔断器、「正在使用」、代理统计、故障转移切换）
@@ -661,7 +694,7 @@ impl RequestForwarder {
         }
 
         // 普通闭合熔断状态异步记录，避免阻塞流式首包返回；
-        // HalfOpen 探测仍同步等待，保证 permit 与熔断状态及时释放。
+        // HalfOpen 探测仍同步等待，保证熔断状态在归还名额前就转回 Closed。
         self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
             .await;
 
@@ -700,7 +733,6 @@ impl RequestForwarder {
         &self,
         provider: &Provider,
         app_type_str: &str,
-        used_half_open_permit: bool,
         error: &ProxyError,
         last_error: String,
     ) {
@@ -712,7 +744,7 @@ impl RequestForwarder {
             .record_result(
                 &provider.id,
                 app_type_str,
-                used_half_open_permit,
+                false,
                 false,
                 Some(error.to_string()),
             )
@@ -720,18 +752,10 @@ impl RequestForwarder {
         self.status.write().await.last_error = Some(last_error);
     }
 
-    /// 不计入熔断的失败（客户端错误、整流后仍被拒）：只释放 HalfOpen 名额，这个请求记为失败。
-    async fn finish_neutral_failure(
-        &self,
-        error: ProxyError,
-        provider: &Provider,
-        app_type_str: &str,
-        used_half_open_permit: bool,
-    ) -> ForwardError {
+    /// 不计入熔断的失败（客户端错误、整流后仍被拒）：不记熔断器，这个请求记为失败。
+    /// 占用的 HalfOpen 名额随这次尝试的 guard 归还。
+    async fn finish_neutral_failure(&self, error: ProxyError, provider: &Provider) -> ForwardError {
         if self.routing_state_enabled() {
-            self.router
-                .release_permit_neutral(&provider.id, app_type_str, used_half_open_permit)
-                .await;
             self.record_failed_request(error.to_string()).await;
         }
         ForwardError {
@@ -872,17 +896,27 @@ impl RequestForwarder {
 
             // 发起请求前先获取熔断器放行许可（HalfOpen 会占用探测名额）
             // 单 Provider 场景下跳过此检查，避免熔断器阻塞所有请求
-            let (allowed, used_half_open_permit) = if bypass_circuit_breaker {
-                (true, false)
+            // 占用了 HalfOpen 名额时，`_half_open_permit` 一直持有到这次尝试结束（continue /
+            // return，或客户端断开把整个 future 丢掉），drop 时归还名额。
+            let (allowed, used_half_open_permit, _half_open_permit) = if bypass_circuit_breaker {
+                (true, false, None)
             } else {
                 let permit = self
                     .router
                     .allow_provider_request(&provider.id, app_type_str)
                     .await;
-                (permit.allowed, permit.used_half_open_permit)
+                (permit.allowed, permit.used_half_open_permit, Some(permit))
             };
 
             if !allowed {
+                // 熔断器没放行（Open 未到恢复时间，或 HalfOpen 的探测名额被占用）：
+                // 这家没有发出请求，留一行日志，和「试了但失败」区分开。
+                log::info!(
+                    "[{app_type_str}] [{}] Provider {} ({}) 熔断器未放行，跳过",
+                    log_fwd::CIRCUIT_SKIPPED,
+                    provider.name,
+                    provider.id
+                );
                 continue;
             }
 
@@ -1007,7 +1041,6 @@ impl RequestForwarder {
                                             retry_err,
                                             provider,
                                             app_type_str,
-                                            used_half_open_permit,
                                             "media 降级",
                                             &mut last_error,
                                             &mut last_provider,
@@ -1018,6 +1051,56 @@ impl RequestForwarder {
                                     }
                                     continue;
                                 }
+                            }
+                        }
+                    }
+
+                    // 压缩回合被原生 Responses 第三方拒绝：有的上游不收 `tool_choice: "none"`
+                    // （见 `compaction_retry_without_tool_choice`），去掉它对同一家重试一次。
+                    if let Some(retry_body) = self.compaction_tool_choice_retry_body(
+                        app_type,
+                        provider,
+                        attempted_codex_upstream_format,
+                        &provider_body,
+                        &e,
+                    ) {
+                        log::info!(
+                            "[{app_type_str}] [RECT-030] provider={} 拒绝了压缩请求，去掉 tool_choice 后重试一次",
+                            provider.id
+                        );
+                        let mut retry_codex_upstream_format = None;
+                        match self
+                            .forward(
+                                app_type,
+                                &method,
+                                provider,
+                                endpoint,
+                                &retry_body,
+                                &headers,
+                                &extensions,
+                                adapter.as_ref(),
+                                &mut retry_codex_upstream_format,
+                            )
+                            .await
+                        {
+                            Ok(forwarded) => {
+                                log::info!("[{app_type_str}] [RECT-031] 压缩重试成功");
+                                return Ok(self
+                                    .finish_success(
+                                        provider,
+                                        app_type_str,
+                                        used_half_open_permit,
+                                        forwarded,
+                                        retry_codex_upstream_format,
+                                    )
+                                    .await);
+                            }
+                            // 重试仍失败：按这次的错误走常规分类。
+                            Err(retry_err) => {
+                                log::warn!(
+                                    "[{app_type_str}] [RECT-032] 压缩重试仍失败: {retry_err}"
+                                );
+                                e = retry_err;
                             }
                         }
                     }
@@ -1041,12 +1124,7 @@ impl RequestForwarder {
                                 provider.id
                             );
                             return Err(self
-                                .finish_neutral_failure(
-                                    unreadable_agent_task_error(),
-                                    provider,
-                                    app_type_str,
-                                    used_half_open_permit,
-                                )
+                                .finish_neutral_failure(unreadable_agent_task_error(), provider)
                                 .await);
                         }
                         if rectified.applied {
@@ -1113,8 +1191,6 @@ impl RequestForwarder {
                                             .finish_neutral_failure(
                                                 unreadable_agent_task_error(),
                                                 provider,
-                                                app_type_str,
-                                                used_half_open_permit,
                                             )
                                             .await);
                                     }
@@ -1134,14 +1210,7 @@ impl RequestForwarder {
                             if rectifier_retried {
                                 log::warn!("[{app_type_str}] [RECT-005] 整流器已触发过，不再重试");
                                 // 不记录熔断器，这是客户端兼容性问题
-                                return Err(self
-                                    .finish_neutral_failure(
-                                        e,
-                                        provider,
-                                        app_type_str,
-                                        used_half_open_permit,
-                                    )
-                                    .await);
+                                return Err(self.finish_neutral_failure(e, provider).await);
                             }
 
                             // 首次触发：整流请求体
@@ -1202,7 +1271,6 @@ impl RequestForwarder {
                                                 retry_err,
                                                 provider,
                                                 app_type_str,
-                                                used_half_open_permit,
                                                 "整流",
                                                 &mut last_error,
                                                 &mut last_provider,
@@ -1230,14 +1298,7 @@ impl RequestForwarder {
                                 log::warn!(
                                     "[{app_type_str}] [RECT-013] budget 整流器已触发过，不再重试"
                                 );
-                                return Err(self
-                                    .finish_neutral_failure(
-                                        e,
-                                        provider,
-                                        app_type_str,
-                                        used_half_open_permit,
-                                    )
-                                    .await);
+                                return Err(self.finish_neutral_failure(e, provider).await);
                             }
 
                             let budget_rectified = rectify_thinking_budget(provider_body.to_mut());
@@ -1245,14 +1306,7 @@ impl RequestForwarder {
                                 log::warn!(
                                     "[{app_type_str}] [RECT-014] budget 整流器触发但无可整流内容，不做无意义重试"
                                 );
-                                return Err(self
-                                    .finish_neutral_failure(
-                                        e,
-                                        provider,
-                                        app_type_str,
-                                        used_half_open_permit,
-                                    )
-                                    .await);
+                                return Err(self.finish_neutral_failure(e, provider).await);
                             }
 
                             log::info!(
@@ -1301,7 +1355,6 @@ impl RequestForwarder {
                                             retry_err,
                                             provider,
                                             app_type_str,
-                                            used_half_open_permit,
                                             "budget 整流",
                                             &mut last_error,
                                             &mut last_provider,
@@ -1317,19 +1370,12 @@ impl RequestForwarder {
                     }
 
                     if signature_rectifier_non_retryable_client_error {
-                        return Err(self
-                            .finish_neutral_failure(
-                                e,
-                                provider,
-                                app_type_str,
-                                used_half_open_permit,
-                            )
-                            .await);
+                        return Err(self.finish_neutral_failure(e, provider).await);
                     }
 
                     // 先分类错误，决定是否计入 provider 健康度
                     // —— NonRetryable / ClientAbort 是客户端层错误，无论换哪家 provider 都会被拒绝，
-                    //    不应污染熔断器和数据库健康度（与 release_permit_neutral 同语义）。
+                    //    不应污染熔断器和数据库健康度（与 finish_neutral_failure 同语义）。
                     let category = self.categorize_proxy_error(&e, provider);
 
                     match category {
@@ -1338,7 +1384,6 @@ impl RequestForwarder {
                             self.record_provider_failure(
                                 provider,
                                 app_type_str,
-                                used_half_open_permit,
                                 &e,
                                 format!("Provider {} 失败: {}", provider.name, e),
                             )
@@ -1359,14 +1404,7 @@ impl RequestForwarder {
                         }
                         ErrorCategory::NonRetryable | ErrorCategory::ClientAbort => {
                             // 不可重试：客户端层错误或客户端断连 → 不污染健康度，仅释放 HalfOpen permit
-                            return Err(self
-                                .finish_neutral_failure(
-                                    e,
-                                    provider,
-                                    app_type_str,
-                                    used_half_open_permit,
-                                )
-                                .await);
+                            return Err(self.finish_neutral_failure(e, provider).await);
                         }
                     }
                 }
@@ -1454,6 +1492,11 @@ impl RequestForwarder {
         let mut quota_token = None;
 
         if codex_official_auth_passthrough {
+            // 暂停使用官方登录时 Codex 带的是占位 Key，没有官方凭据可透传：本地拒绝并说明
+            // 怎么恢复，不发往上游。
+            if crate::settings::codex_proxy_without_official_login() {
+                return Err(ProxyError::CodexOfficialLoginPaused);
+            }
             let (expected_chatgpt_account_id, managed_session_matches) = match provider
                 .meta
                 .as_ref()
@@ -1520,7 +1563,13 @@ impl RequestForwarder {
         } else {
             let (mapped_body, _original_model, _mapped_model) =
                 super::model_mapper::apply_model_mapping(body.clone(), provider);
-            mapped_body
+            // Codex 行没有档位映射，客户端发的是路由那家的模型名：故障转移换到不认这个名字的
+            // 那家时，换成它自己的模型。
+            if self.maps_codex_failover_model(app_type, endpoint) {
+                super::model_mapper::map_codex_failover_model(mapped_body, provider)
+            } else {
+                mapped_body
+            }
         };
 
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
@@ -2043,6 +2092,24 @@ impl RequestForwarder {
                     provider.id
                 );
             }
+
+            // Kimi 会在工具调用后再吐一条空助手消息，下一轮又拒收这段历史；DeepSeek 同样
+            // 拒收，别家留在同一线程里的这种排列续到它就会中（见
+            // `transform_codex_responses_kimi_history`）。只对这几家上游、只在出现这种排列
+            // 时改写。
+            if !codex_official_auth_passthrough
+                && super::providers::transform_codex_responses_kimi_history::upstream_rejects_messages_inside_tool_calls(
+                    &base_url,
+                )
+                && super::providers::transform_codex_responses_kimi_history::repair_tool_history(
+                    &mut request_body,
+                )
+            {
+                log::debug!(
+                    "[Codex] Reordered assistant messages inside tool-call groups (provider={})",
+                    provider.id
+                );
+            }
         }
 
         // Native Responses passthrough to xAI, directly or via Copilot/Grok.
@@ -2554,6 +2621,8 @@ impl RequestForwarder {
             // 身份（`chatgpt-account-id` 等），它们只能发往官方上游。Stack 目标不会是官方账号，
             // 这里仍按上游判断，防止以后放宽。只限 Codex：Claude Code 自己的 `x-stainless-*`
             // 是 Anthropic SDK 的正常请求头，Stack 请求照常转发。
+            // 路由那家是第三方时 Codex 也可能以内置 openai 身份、带着 ChatGPT 登录发请求
+            // （`codex_direct` 的 `openai_route`），身份头同样只能发往官方或 ChatGPT 托管账号。
             if should_strip_codex_client_fingerprint_header(
                 key_str,
                 &effective_endpoint,
@@ -2561,6 +2630,7 @@ impl RequestForwarder {
                 codex_responses_to_chat,
                 codex_stack_request,
                 codex_official_auth_passthrough,
+                matches!(app_type, AppType::Codex) && !provider.is_codex_oauth(),
             ) {
                 continue;
             }
@@ -3717,6 +3787,12 @@ fn is_codex_client_fingerprint_header(key_str: &str) -> bool {
 /// and reject requests without it. Keep only that marker; all other Codex and
 /// OpenAI identity headers remain stripped. Converted Chat/Anthropic requests
 /// continue to receive a clean client fingerprint.
+///
+/// Any other Codex request to a third party (`codex_unmanaged_upstream`: Codex and
+/// not a CC Switch-managed ChatGPT account) drops only the ChatGPT account identity
+/// ([`is_chatgpt_identity_header`]): the client may be the built-in `openai`
+/// provider carrying the user's ChatGPT login. Session and client headers stay,
+/// so requests from a plain custom table are unchanged.
 fn should_strip_codex_client_fingerprint_header(
     key_str: &str,
     endpoint: &str,
@@ -3724,6 +3800,7 @@ fn should_strip_codex_client_fingerprint_header(
     codex_responses_to_chat: bool,
     codex_stack_request: bool,
     codex_official_auth_passthrough: bool,
+    codex_unmanaged_upstream: bool,
 ) -> bool {
     if codex_responses_to_anthropic {
         return is_codex_client_fingerprint_header(key_str);
@@ -3736,7 +3813,21 @@ fn should_strip_codex_client_fingerprint_header(
             && !(native_third_party_responses && key_str == "x-codex-beta-features");
     }
 
-    false
+    codex_unmanaged_upstream
+        && !codex_official_auth_passthrough
+        && is_chatgpt_identity_header(key_str)
+}
+
+/// 只有带着 ChatGPT 登录的内置 openai 才会发的请求头：账号、组织 / 项目、设备证明和
+/// 内置 openai 的固定版本头。会话、客户端标识（`session_id`、`originator`、`x-codex-*`）
+/// 任何 Codex 客户端都发，不在其中。
+fn is_chatgpt_identity_header(key_str: &str) -> bool {
+    matches!(
+        key_str,
+        "chatgpt-account-id" | "openai-organization" | "openai-project" | "version"
+    ) || key_str.starts_with("x-oai-")
+        || key_str.starts_with("x-openai-")
+        || key_str.starts_with("x-responsesapi-")
 }
 
 fn codex_anthropic_error_envelope_message(body: &[u8]) -> Option<String> {
@@ -4893,8 +4984,35 @@ mod tests {
             streaming_first_byte_timeout,
             max_attempts: 1,
             stack_request: false,
+            failover_chain: false,
             last_outbound_model: std::sync::Mutex::new(None),
         }
+    }
+
+    #[test]
+    fn codex_failover_model_mapping_skips_standalone_endpoints() {
+        let mut forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        assert!(!forwarder.maps_codex_failover_model(&AppType::Codex, "/responses"));
+
+        forwarder.failover_chain = true;
+        for endpoint in ["/responses", "/responses/compact", "/chat/completions"] {
+            assert!(
+                forwarder.maps_codex_failover_model(&AppType::Codex, endpoint),
+                "{endpoint}"
+            );
+        }
+        for endpoint in [
+            "/images/generations",
+            "/images/edits",
+            "/images/generations?client_version=0.145.0",
+            "/alpha/search",
+        ] {
+            assert!(
+                !forwarder.maps_codex_failover_model(&AppType::Codex, endpoint),
+                "{endpoint}"
+            );
+        }
+        assert!(!forwarder.maps_codex_failover_model(&AppType::GrokBuild, "/responses"));
     }
 
     #[tokio::test]
@@ -7404,7 +7522,38 @@ mod tests {
                 assert!(!auth.contains("chatgpt"), "{api_format}: {auth}");
             }
 
-            // Control: routing requests to native Responses still forward these headers.
+            // Routing requests to a third party keep the session and client headers
+            // (cache keys, protocol marker) but never the ChatGPT account identity:
+            // the client may be the built-in `openai` provider carrying the login.
+            for api_format in ["openai_responses", "openai_chat"] {
+                let seen = send(
+                    &forwarder(false),
+                    &upstream,
+                    provider(&upstream, api_format),
+                    "/responses",
+                    body("listed", json!([])),
+                )
+                .await;
+                for name in ["session_id", "originator", "x-codex-turn-state"] {
+                    assert!(seen.headers.contains_key(name), "{api_format}: {name}");
+                }
+                for name in [
+                    "chatgpt-account-id",
+                    "x-oai-attestation",
+                    "x-openai-fedramp",
+                ] {
+                    assert!(
+                        !seen.headers.contains_key(name),
+                        "{api_format}: {name} reached a third party"
+                    );
+                }
+                let auth = seen
+                    .headers
+                    .get("authorization")
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or_default();
+                assert!(auth.contains("sk-third-party"), "{api_format}: {auth}");
+            }
             let seen = send(
                 &forwarder(false),
                 &upstream,
@@ -7413,8 +7562,38 @@ mod tests {
                 body("listed", json!([])),
             )
             .await;
-            assert!(seen.headers.contains_key("session_id"));
             assert!(seen.headers.contains_key("x-codex-beta-features"));
+        }
+
+        #[test]
+        fn chatgpt_identity_reaches_only_official_or_managed_account_upstreams() {
+            let strip = |key: &str, passthrough: bool, unmanaged: bool| {
+                should_strip_codex_client_fingerprint_header(
+                    key,
+                    "/responses",
+                    false,
+                    false,
+                    false,
+                    passthrough,
+                    unmanaged,
+                )
+            };
+            for key in ["chatgpt-account-id", "x-oai-attestation", "version"] {
+                assert!(strip(key, false, true), "{key} to a third party");
+                assert!(!strip(key, true, true), "{key} to the official upstream");
+                assert!(
+                    !strip(key, false, false),
+                    "{key} to a managed ChatGPT account"
+                );
+            }
+            for key in [
+                "session_id",
+                "originator",
+                "x-codex-turn-state",
+                "openai-beta",
+            ] {
+                assert!(!strip(key, false, true), "{key} is not account identity");
+            }
         }
 
         /// Native Responses third parties cannot consume Codex's private compaction
@@ -7771,6 +7950,133 @@ mod tests {
             assert_eq!(retried.len(), 5);
             assert_eq!(retried[0]["content"][0]["text"], OPAQUE_COMPACTION_NOTE);
             assert!(carries_reasoning(&seen[1]));
+        }
+
+        /// Kimi For Coding 不收 `tool_choice: "none"`，只回「Invalid request Error」：压缩回合
+        /// 被拒后去掉 `tool_choice` 对同一家重试一次，其余改写照旧。
+        #[tokio::test]
+        async fn compaction_rejected_for_tool_choice_none_retries_without_it() {
+            use crate::proxy::providers::codex_compaction::COMPACT_PROMPT;
+            let rejected = (
+                400,
+                json!({ "error": { "message": "Invalid request Error", "type": "invalid_request_error" } }),
+            );
+            let upstream = scripted_upstream(vec![rejected, response_ok()]).await;
+            let mut request = body(
+                "listed",
+                json!([{ "type": "function", "name": "shell", "parameters": { "type": "object" } }]),
+            );
+            request["input"] = json!([
+                { "role": "user", "content": [{ "type": "input_text", "text": "hi" }] },
+                { "type": "compaction_trigger" }
+            ]);
+            forwarder(true)
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/responses",
+                    &request,
+                    chatgpt_headers(),
+                    Extensions::new(),
+                    &[provider(&upstream, "openai_responses")],
+                )
+                .await
+                .map_err(|error| error.error)
+                .expect("retried");
+
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 2);
+            assert_eq!(seen[0].body["tool_choice"], "none");
+            assert!(
+                seen[1].body.get("tool_choice").is_none(),
+                "{}",
+                seen[1].body
+            );
+            assert!(seen[1].body.get("tools").is_some());
+            let input = seen[1].body["input"].as_array().unwrap();
+            assert!(input
+                .iter()
+                .all(|item| item["type"] != "compaction_trigger"));
+            assert_eq!(input.last().unwrap()["content"][0]["text"], COMPACT_PROMPT);
+        }
+
+        /// 去掉 `tool_choice` 的重试只给 Codex 原生 Responses 第三方的压缩回合、且只在 400 时。
+        #[test]
+        fn compaction_tool_choice_retry_is_limited_to_rejected_third_party_compactions() {
+            let upstream = Upstream {
+                base_url: "https://relay.example".to_string(),
+                seen: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            };
+            let third_party = provider(&upstream, "openai_responses");
+            let mut official = third_party.clone();
+            official.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
+            official.category = Some("official".to_string());
+            let compaction = json!({
+                "tools": [{ "type": "function", "name": "shell" }],
+                "input": [{ "type": "compaction_trigger" }]
+            });
+            let turn = json!({
+                "tools": [{ "type": "function", "name": "shell" }],
+                "input": [{ "role": "user", "content": [] }]
+            });
+            let rejected = ProxyError::UpstreamError {
+                status: 400,
+                body: Some("Invalid request Error".to_string()),
+            };
+            let overloaded = ProxyError::UpstreamError {
+                status: 529,
+                body: None,
+            };
+            let forwarder = forwarder(false);
+            let native = Some(CodexUpstreamFormat::NativeResponses);
+            let gate = |app: AppType, provider: &Provider, format, request: &Value, error| {
+                forwarder
+                    .compaction_tool_choice_retry_body(&app, provider, format, request, error)
+                    .is_some()
+            };
+
+            assert!(gate(
+                AppType::Codex,
+                &third_party,
+                native,
+                &compaction,
+                &rejected
+            ));
+            assert!(!gate(
+                AppType::Codex,
+                &official,
+                native,
+                &compaction,
+                &rejected
+            ));
+            assert!(!gate(
+                AppType::GrokBuild,
+                &third_party,
+                native,
+                &compaction,
+                &rejected
+            ));
+            assert!(!gate(
+                AppType::Codex,
+                &third_party,
+                Some(CodexUpstreamFormat::ChatCompletions),
+                &compaction,
+                &rejected
+            ));
+            assert!(!gate(
+                AppType::Codex,
+                &third_party,
+                native,
+                &turn,
+                &rejected
+            ));
+            assert!(!gate(
+                AppType::Codex,
+                &third_party,
+                native,
+                &compaction,
+                &overloaded
+            ));
         }
 
         /// 措辞不在清单里的兜底只给 Codex 的原生 Responses 第三方：官方的压缩密文只在错误

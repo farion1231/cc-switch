@@ -9,7 +9,7 @@ use cc_switch_lib::{
     AppSettings, AppType, McpApps, McpServer, McpService, MultiAppConfig, ProviderService,
 };
 
-#[path = "support.rs"]
+#[path = "support/mod.rs"]
 mod support;
 use support::{
     create_test_state, create_test_state_with_config, ensure_test_home, reset_test_fs, test_mutex,
