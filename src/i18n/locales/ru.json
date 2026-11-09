@@ -122,11 +122,6 @@
     "removeFromClaudePlugin": "Удалить из плагина Claude",
     "dragToReorder": "Перетащите, чтобы изменить порядок",
     "dragHandle": "Перетащите, чтобы изменить порядок",
-    "searchPlaceholder": "Искать по имени, заметкам или URL...",
-    "searchAriaLabel": "Поиск провайдеров",
-    "searchCloseHint": "Нажмите Esc, чтобы закрыть",
-    "searchCloseAriaLabel": "Закрыть поиск провайдеров",
-    "noSearchResults": "По вашему запросу провайдеры не найдены.",
     "duplicate": "Дублировать",
     "sortUpdateFailed": "Не удалось обновить порядок сортировки",
     "configureUsage": "Настроить запрос использования",
@@ -2931,5 +2926,25 @@
     "expiredHint": "Выполните команду {{tool}}, чтобы обновить вход",
     "queryFailed": "Запрос не выполнен",
     "refresh": "Обновить"
+  },
+  "globalSearch": {
+    "title": "Глобальный поиск",
+    "trigger": "Поиск",
+    "triggerTip": "Глобальный поиск ({{shortcut}})",
+    "placeholder": "Поиск по страницам, настройкам, провайдерам, MCP, Skills, промптам…",
+    "loading": "Загрузка…",
+    "empty": "По запросу «{{query}}» ничего не найдено",
+    "more": "Ещё {{count}} — продолжайте ввод, чтобы уточнить",
+    "hintMove": "Выбор",
+    "hintOpen": "Открыть",
+    "hintClose": "Закрыть",
+    "groups": {
+      "pages": "Страницы",
+      "settings": "Настройки",
+      "providers": "Провайдеры",
+      "mcp": "MCP",
+      "skills": "Skills",
+      "prompts": "Промпты"
+    }
   }
 }

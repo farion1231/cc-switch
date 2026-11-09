@@ -209,11 +209,21 @@ interface SyncStatusUpdatedPayload {
 
 type OpenClawConfigTab = "env" | "tools" | "agents";
 
-/** 有模态对话框开着（确认框、表单弹窗）：全局快捷键不抢焦点 */
+/**
+ * 有模态对话框开着（确认框、表单弹窗、Sheet）：全局快捷键不抢焦点。
+ * Radix Dialog 的 Content 只设 role="dialog" 不设 aria-modal，按 data-state 判断打开；
+ * Popover 的 Content 同样是 role="dialog"，但它不是模态，排除掉（包在 popper wrapper 里）。
+ */
 const isModalOpen = () =>
-  document.querySelector(
-    '[role="dialog"][aria-modal="true"]:not([data-global-search]), [role="alertdialog"]',
-  ) !== null;
+  Array.from(
+    document.querySelectorAll(
+      '[role="dialog"][data-state="open"], [role="alertdialog"]',
+    ),
+  ).some(
+    (el) =>
+      !el.hasAttribute("data-global-search") &&
+      !el.closest("[data-radix-popper-content-wrapper]"),
+  );
 
 const getInitialApp = (): AppId => {
   const saved = localStorage.getItem(APP_STORAGE_KEY) as AppId | null;

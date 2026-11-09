@@ -167,13 +167,6 @@
     "removeFromClaudePlugin": "Claude 플러그인에서 제거",
     "dragToReorder": "드래그하여 재정렬하세요.",
     "dragHandle": "드래그하여 재정렬하세요.",
-    "searchPlaceholder": "이름, 메모, URL 검색...",
-    "searchAriaLabel": "공급자 검색",
-    "searchScopeHint": "공급자 이름, 메모, 웹사이트 및 API 주소로 검색합니다.",
-    "searchButtonTip": "공급자 검색 ({{shortcut}})",
-    "searchCloseHint": "닫으려면 Esc를 누르세요.",
-    "searchCloseAriaLabel": "공급자 검색 닫기",
-    "noSearchResults": "검색어와 일치하는 공급자가 없습니다.",
     "duplicate": "복제",
     "sortUpdateFailed": "정렬 순서를 업데이트하지 못했습니다.",
     "configureUsage": "사용량 조회 설정",
@@ -950,9 +943,7 @@
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI",
       "showProfileSwitcher": "프로젝트 전환기 표시",
-      "showProfileSwitcherDescription": "기본 페이지 헤더에 프로젝트 전환기 표시",
-      "showProviderSearch": "공급자 검색 표시",
-      "showProviderSearchDescription": "공급자 페이지 상단에 검색 버튼을 표시합니다. 이름, 메모, 웹사이트 또는 API 주소로 검색할 수 있습니다. 꺼도 ⌘F / Ctrl+F로 검색을 열 수 있습니다."
+      "showProfileSwitcherDescription": "기본 페이지 헤더에 프로젝트 전환기 표시"
     },
     "terminal": {
       "title": "선호하는 터미널",
@@ -5233,6 +5224,26 @@
       "expiredChip": "로그인 만료",
       "editDisabled": "DeepSeek Harness가 이 계정으로 사용할 수 있는 모델을 자동으로 제공하므로 편집할 필요가 없습니다.",
       "managedHint": "이 계정은 인증 센터에서 관리합니다. 로그아웃하면 이 카드가 사라집니다."
+    }
+  },
+  "globalSearch": {
+    "title": "전역 검색",
+    "trigger": "검색",
+    "triggerTip": "전역 검색 ({{shortcut}})",
+    "placeholder": "페이지, 설정, 공급자, MCP, Skills, 프롬프트 검색…",
+    "loading": "불러오는 중…",
+    "empty": "\"{{query}}\"에 대한 결과가 없습니다",
+    "more": "{{count}}개 더 있음 — 계속 입력해 범위를 좁히세요",
+    "hintMove": "선택",
+    "hintOpen": "열기",
+    "hintClose": "닫기",
+    "groups": {
+      "pages": "페이지",
+      "settings": "설정",
+      "providers": "공급자",
+      "mcp": "MCP",
+      "skills": "Skills",
+      "prompts": "프롬프트"
     }
   }
 }
