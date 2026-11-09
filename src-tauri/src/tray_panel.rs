@@ -101,7 +101,7 @@ pub struct PanelTexts {
 impl PanelTexts {
     pub fn from_language(language: &str) -> Self {
         match language {
-            "en" | "tr" | "ru" => Self {
+            "en" => Self {
                 switch_provider: "Switch provider",
                 search_placeholder: "Search providers…",
                 in_use: "In use",
@@ -109,11 +109,7 @@ impl PanelTexts {
                 open_main: "Open main window",
                 quit: "Quit",
                 settings: "Settings",
-                lightweight_mode: match language {
-                    "tr" => "Hafif mod",
-                    "ru" => "Облегчённый режим",
-                    _ => "Lightweight mode",
-                },
+                lightweight_mode: "Lightweight mode",
                 open_panel: "Open quick panel",
                 config_tab: "Configuration",
                 usage_tab: "Usage",
@@ -124,25 +120,37 @@ impl PanelTexts {
                 duration_sep: " ",
                 reset_credits: "{count} resets available",
             },
-            "ko" => Self {
-                switch_provider: "공급자 전환",
-                search_placeholder: "공급자 검색…",
-                in_use: "사용 중",
-                no_match: "일치하는 공급자 없음",
-                open_main: "메인 창 열기",
-                quit: "종료",
-                settings: "설정",
-                lightweight_mode: "경량 모드",
-                open_panel: "빠른 패널 열기",
-                config_tab: "설정",
-                usage_tab: "사용량",
-                resets_in: "{when} 후 초기화",
-                duration_days: "{n}일",
-                duration_hours: "{n}시간",
-                duration_minutes: "{n}분",
-                duration_sep: " ",
-                reset_credits: "초기화 {count}회 가능",
-            },
+            // 社区翻译从英文起步，只覆盖已翻译的项；新增字段在补译前显示英文。
+            "tr" => {
+                let mut texts = Self::from_language("en");
+                texts.lightweight_mode = "Hafif mod";
+                texts
+            }
+            "ru" => {
+                let mut texts = Self::from_language("en");
+                texts.lightweight_mode = "Облегчённый режим";
+                texts
+            }
+            "ko" => {
+                let mut texts = Self::from_language("en");
+                texts.switch_provider = "공급자 전환";
+                texts.search_placeholder = "공급자 검색…";
+                texts.in_use = "사용 중";
+                texts.no_match = "일치하는 공급자 없음";
+                texts.open_main = "메인 창 열기";
+                texts.quit = "종료";
+                texts.settings = "설정";
+                texts.lightweight_mode = "경량 모드";
+                texts.open_panel = "빠른 패널 열기";
+                texts.config_tab = "설정";
+                texts.usage_tab = "사용량";
+                texts.resets_in = "{when} 후 초기화";
+                texts.duration_days = "{n}일";
+                texts.duration_hours = "{n}시간";
+                texts.duration_minutes = "{n}분";
+                texts.reset_credits = "초기화 {count}회 가능";
+                texts
+            }
             "ja" => Self {
                 switch_provider: "プロバイダーを切り替え",
                 search_placeholder: "プロバイダーを検索…",
@@ -1210,6 +1218,18 @@ pub async fn tray_panel_action(app: AppHandle, id: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn partial_community_translations_fall_back_to_english() {
+        let english = serde_json::to_value(PanelTexts::from_language("en")).unwrap();
+        for (language, translated_mode) in [("tr", "Hafif mod"), ("ru", "Облегчённый режим")]
+        {
+            let mut expected = english.clone();
+            expected["lightweightMode"] = serde_json::json!(translated_mode);
+            let actual = serde_json::to_value(PanelTexts::from_language(language)).unwrap();
+            assert_eq!(actual, expected, "{language}");
+        }
+    }
 
     const WORK: Area = Area {
         left: 0.0,
