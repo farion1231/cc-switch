@@ -134,6 +134,9 @@
     "managedByHermesHint": "Определено в словаре providers Hermes. Редактируйте или удаляйте через веб-интерфейс Hermes.",
     "terminalOpened": "Терминал открыт",
     "terminalOpenFailed": "Не удалось открыть терминал",
+    "openTerminalDialog": {
+      "isolationBodyCopilot": "Эндпоинт, ключ и модель «{{name}}» передаются только copilot в этом терминале и никогда не записываются в файл; copilot, запущенный напрямую в другом терминале, по-прежнему использует ваш вход GitHub."
+    },
     "namePlaceholder": "например, Claude Official",
     "websiteUrl": "URL сайта",
     "notes": "Заметки",
@@ -845,7 +848,8 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "copilot": "Copilot CLI"
   },
   "mcode": {
     "empty": {
@@ -988,7 +992,8 @@
     "noResumeCommand": "Эту сессию нельзя возобновить",
     "messageCopied": "Сообщение скопировано",
     "expandContent": "Развернуть всё содержимое",
-    "collapseContent": "Свернуть"
+    "collapseContent": "Свернуть",
+    "copilotDeleteHint": "Удалите эту сессию в GitHub Copilot CLI, чтобы его хранилище сессий оставалось согласованным"
   },
   "console": {
     "providerSwitchReceived": "Получено событие переключения провайдера:",
@@ -1206,7 +1211,29 @@
     "deploymentType": "Тип развёртывания GitHub",
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Enterprise Server",
-    "enterpriseDomainPlaceholder": "например, company.ghe.com"
+    "enterpriseDomainPlaceholder": "например, company.ghe.com",
+    "form": {
+      "officialTitle": "Использует вход GitHub самого Copilot CLI",
+      "officialHint": "«Открыть терминал» запускает copilot с моделью этой карточки. Если привязать аккаунт из раздела «Аккаунты», запуск идёт с этим аккаунтом.",
+      "byokTitle": "Действует только в терминалах, открытых из этой карточки",
+      "byokHint": "Copilot CLI читает собственные модели только из переменных окружения, поэтому в файлы самого Copilot ничего не записывается.",
+      "apiFormat": "Формат API",
+      "baseUrl": "Эндпоинт API",
+      "baseUrlHint": "OpenAI-совместимые эндпоинты обычно заканчиваются на /v1 (например, Ollama http://localhost:11434/v1); для Anthropic указывается только хост (https://api.anthropic.com).",
+      "model": "Модель",
+      "officialModelHint": "Оставьте пустым, чтобы использовать текущую модель Copilot. Передаётся как --model только для этой сессии; /model внутри copilot работает как обычно.",
+      "byokModelHint": "ID модели, который ожидает ваш эндпоинт (COPILOT_MODEL).",
+      "reasoningEffort": "Глубина рассуждения",
+      "reasoningEffortDefault": "По умолчанию в Copilot",
+      "reasoningEffortHint": "Передаётся как --reasoning-effort при открытии терминала. При none Copilot не отправляет reasoning.summary в запросах Responses — некоторые прокси-сервисы отклоняют это поле.",
+      "maxPromptTokens": "Макс. токенов на входе",
+      "maxOutputTokens": "Макс. токенов на выходе",
+      "envJsonHint": "Дополнительно: любая переменная COPILOT_PROVIDER_* (например, COPILOT_PROVIDER_MODEL_ID или COPILOT_PROVIDER_BEARER_TOKEN) передаётся copilot без изменений."
+    },
+    "quota": {
+      "accountNotInAuthCenter": "В разделе «Аккаунты» нет аккаунта {{login}}, под которым вошёл Copilot CLI. Добавьте его там или привяжите аккаунт к этой карточке.",
+      "notSignedIn": "Copilot CLI не выполнил вход. Запустите copilot и войдите через /login или привяжите к этой карточке аккаунт из раздела «Аккаунты»."
+    }
   },
   "codexOauth": {
     "authStatus": "Статус авторизации",
@@ -2931,5 +2958,10 @@
     "expiredHint": "Выполните команду {{tool}}, чтобы обновить вход",
     "queryFailed": "Запрос не выполнен",
     "refresh": "Обновить"
+  },
+  "appsPage": {
+    "installHint": {
+      "copilot": "Устанавливается через npm"
+    }
   }
 }
