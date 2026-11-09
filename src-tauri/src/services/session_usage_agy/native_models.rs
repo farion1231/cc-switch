@@ -103,10 +103,7 @@ fn timing_of(bytes: &[u8]) -> Option<Timing> {
     })
 }
 
-pub(super) fn generations_for_transcript(
-    transcript: &Path,
-    steps: &[u64],
-) -> Result<HashMap<u64, Generation>, String> {
+fn native_database_path(transcript: &Path) -> Result<Option<std::path::PathBuf>, String> {
     // brain/<id>/.system_generated/logs/transcript_full.jsonl and conversations/<id>.db
     // share the same CLI/IDE/private-profile root.
     let session = transcript
@@ -122,13 +119,47 @@ pub(super) fn generations_for_transcript(
     let id = session.file_name().ok_or("Missing session id")?;
     let path = root.join("conversations").join(id).with_extension("db");
     if !path.is_file() {
-        return Ok(HashMap::new());
+        return Ok(None);
     }
     let root = root.canonicalize().map_err(|error| error.to_string())?;
     let path = path.canonicalize().map_err(|error| error.to_string())?;
     if !path.starts_with(root) {
         return Err("Conversation database is outside the Antigravity root".into());
     }
+    Ok(Some(path))
+}
+
+/// Fingerprint of the companion `conversations/<id>.db` (and its WAL file when present) so
+/// `session_log_sync` cursors stay valid across steady-state syncs while still re-importing
+/// when the native database is created or updated after the transcript.
+pub(super) fn native_state_fingerprint(transcript: &Path) -> String {
+    let Ok(Some(path)) = native_database_path(transcript) else {
+        return "none".to_string();
+    };
+    let file_sig = |target: &Path| -> (i64, u64) {
+        std::fs::metadata(target)
+            .map(|meta| {
+                (
+                    crate::services::session_usage::metadata_modified_nanos(&meta),
+                    meta.len(),
+                )
+            })
+            .unwrap_or((0, 0))
+    };
+    let (db_mtime, db_len) = file_sig(&path);
+    let mut wal_os = path.as_os_str().to_os_string();
+    wal_os.push("-wal");
+    let (wal_mtime, wal_len) = file_sig(Path::new(&wal_os));
+    format!("{db_mtime}:{db_len}:{wal_mtime}:{wal_len}")
+}
+
+pub(super) fn generations_for_transcript(
+    transcript: &Path,
+    steps: &[u64],
+) -> Result<HashMap<u64, Generation>, String> {
+    let Some(path) = native_database_path(transcript)? else {
+        return Ok(HashMap::new());
+    };
     read_generations(&path, steps).map_err(|error| error.to_string())
 }
 
