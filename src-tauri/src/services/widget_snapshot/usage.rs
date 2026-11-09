@@ -63,7 +63,7 @@ pub struct Money {
 }
 
 impl Money {
-    /// 照前端 `resolveMoneyDisplay`：不认得的币种按美元，汇率没填或不合法用预置值；
+    /// 照前端 `resolveMoneyDisplay`：不认得的币种按美元，汇率按来源依次取，都不合法用预置值；
     /// 日元少两位小数。
     pub fn from_settings(display: Option<&crate::settings::UsageDisplaySettings>) -> Self {
         let currency = display.and_then(|d| d.currency.as_deref()).unwrap_or("USD");
@@ -81,9 +81,18 @@ impl Money {
                 }
             }
         };
-        let rate = display
-            .and_then(|d| d.exchange_rates.get(currency).copied())
-            .filter(|rate| rate.is_finite() && *rate > 0.0)
+        // 自动模式先用自动取到的汇率、再用手填值；手动模式只看手填值；都不合法用预置值
+        let manual = display.and_then(|d| d.exchange_rates.get(currency).copied());
+        let auto = display.and_then(|d| d.auto_exchange_rates.get(currency).copied());
+        let candidates = if display.and_then(|d| d.rate_source.as_deref()) == Some("auto") {
+            [auto, manual]
+        } else {
+            [manual, None]
+        };
+        let rate = candidates
+            .into_iter()
+            .flatten()
+            .find(|rate| rate.is_finite() && *rate > 0.0)
             .unwrap_or(default_rate);
         Self {
             symbol,
@@ -418,6 +427,33 @@ mod tests {
 
         display.currency = Some("XYZ".to_string());
         assert_eq!(Money::from_settings(Some(&display)).format(1.0), "$1.00");
+    }
+
+    #[test]
+    fn money_follows_rate_source() {
+        let mut display = UsageDisplaySettings {
+            currency: Some("CNY".to_string()),
+            ..Default::default()
+        };
+        display.exchange_rates.insert("CNY".to_string(), 7.0);
+        display.auto_exchange_rates.insert("CNY".to_string(), 7.2);
+        // 手动（缺省）只看手填值
+        assert_eq!(Money::from_settings(Some(&display)).convert(1.0), 7.0);
+
+        // 自动先用自动汇率
+        display.rate_source = Some("auto".to_string());
+        assert_eq!(Money::from_settings(Some(&display)).convert(1.0), 7.2);
+
+        // 自动汇率不合法时退回手填值，再不合法用预置值
+        display.auto_exchange_rates.insert("CNY".to_string(), 0.0);
+        assert_eq!(Money::from_settings(Some(&display)).convert(1.0), 7.0);
+        display.exchange_rates.insert("CNY".to_string(), f64::NAN);
+        assert_eq!(Money::from_settings(Some(&display)).convert(1.0), 6.8);
+
+        // 手动模式不看自动汇率
+        display.rate_source = Some("manual".to_string());
+        display.auto_exchange_rates.insert("CNY".to_string(), 7.2);
+        assert_eq!(Money::from_settings(Some(&display)).convert(1.0), 6.8);
     }
 
     #[test]

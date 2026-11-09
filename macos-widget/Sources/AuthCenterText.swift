@@ -61,6 +61,7 @@ private let tierKeys: [String: String] = [
     "gemini_flash_lite": "subscription.geminiFlashLite",
     "agy_gemini_five_hour": "subscription.agyGeminiFiveHour",
     "agy_gemini_weekly": "subscription.agyGeminiWeekly",
+    "agy_gemini_argon_weekly": "subscription.agyGeminiArgonWeekly",
     "agy_third_party_five_hour": "subscription.agyThirdPartyFiveHour",
     "agy_third_party_weekly": "subscription.agyThirdPartyWeekly",
     "weekly_limit": "subscription.sevenDay",

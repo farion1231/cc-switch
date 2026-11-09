@@ -129,10 +129,11 @@ pub struct TrayTexts {
     pub tier_gemini_pro: &'static str,
     pub tier_gemini_flash: &'static str,
     pub tier_gemini_flash_lite: &'static str,
-    /// Antigravity（agy）的四档：Gemini 一组、Claude/GPT 一组，各有 5 小时和每周。
+    /// Antigravity（agy）的各档：Gemini 一组（5 小时、每周、Argon 每周）、Claude/GPT 一组（5 小时、每周）。
     /// 托盘不显示 agy，桌面小组件给授权中心的 agy 账号写额度时用。
     pub tier_agy_gemini_five_hour: &'static str,
     pub tier_agy_gemini_weekly: &'static str,
+    pub tier_agy_gemini_argon_weekly: &'static str,
     pub tier_agy_third_party_five_hour: &'static str,
     pub tier_agy_third_party_weekly: &'static str,
     pub tier_premium: &'static str,
@@ -237,6 +238,7 @@ impl TrayTexts {
                 tier_gemini_flash_lite: "Flash Lite",
                 tier_agy_gemini_five_hour: "Gemini 5-hour",
                 tier_agy_gemini_weekly: "Gemini weekly",
+                tier_agy_gemini_argon_weekly: "Argon weekly",
                 tier_agy_third_party_five_hour: "Claude/GPT 5-hour",
                 tier_agy_third_party_weekly: "Claude/GPT weekly",
                 tier_premium: "Credits",
@@ -298,6 +300,7 @@ impl TrayTexts {
                 texts.tier_gemini_flash_lite = "Flash Lite";
                 texts.tier_agy_gemini_five_hour = "Gemini 5 saatlik";
                 texts.tier_agy_gemini_weekly = "Gemini haftalık";
+                texts.tier_agy_gemini_argon_weekly = "Argon haftalık";
                 texts.tier_agy_third_party_five_hour = "Claude/GPT 5 saatlik";
                 texts.tier_agy_third_party_weekly = "Claude/GPT haftalık";
                 texts.tier_left = "{label} %{value} kaldı";
@@ -357,6 +360,7 @@ impl TrayTexts {
                 tier_gemini_flash_lite: "Flash Lite",
                 tier_agy_gemini_five_hour: "Gemini 5時間",
                 tier_agy_gemini_weekly: "Gemini 週間",
+                tier_agy_gemini_argon_weekly: "Argon 週間",
                 tier_agy_third_party_five_hour: "Claude/GPT 5時間",
                 tier_agy_third_party_weekly: "Claude/GPT 週間",
                 tier_premium: "Credits",
@@ -415,6 +419,7 @@ impl TrayTexts {
                 tier_gemini_flash_lite: "Flash Lite",
                 tier_agy_gemini_five_hour: "Gemini 5 小時",
                 tier_agy_gemini_weekly: "Gemini 每週",
+                tier_agy_gemini_argon_weekly: "Argon 每週",
                 tier_agy_third_party_five_hour: "Claude/GPT 5 小時",
                 tier_agy_third_party_weekly: "Claude/GPT 每週",
                 tier_premium: "Credits",
@@ -473,6 +478,7 @@ impl TrayTexts {
                 tier_gemini_flash_lite: "Flash Lite",
                 tier_agy_gemini_five_hour: "Gemini 5 小时",
                 tier_agy_gemini_weekly: "Gemini 每周",
+                tier_agy_gemini_argon_weekly: "Argon 每周",
                 tier_agy_third_party_five_hour: "Claude/GPT 5 小时",
                 tier_agy_third_party_weekly: "Claude/GPT 每周",
                 tier_premium: "Credits",
@@ -561,6 +567,7 @@ enum TierGroup {
     GeminiFlashLite,
     AgyGeminiFiveHour,
     AgyGeminiWeekly,
+    AgyGeminiArgonWeekly,
     AgyThirdPartyFiveHour,
     AgyThirdPartyWeekly,
     Premium,
@@ -592,6 +599,10 @@ const TIER_GROUPS: &[(TierGroup, &[&str])] = {
         ),
         (TierGroup::AgyGeminiWeekly, &[agy::TIER_AGY_GEMINI_WEEKLY]),
         (
+            TierGroup::AgyGeminiArgonWeekly,
+            &[agy::TIER_AGY_GEMINI_ARGON_WEEKLY],
+        ),
+        (
             TierGroup::AgyThirdPartyFiveHour,
             &[agy::TIER_AGY_THIRD_PARTY_FIVE_HOUR],
         ),
@@ -618,6 +629,7 @@ fn tier_label(texts: &TrayTexts, group: TierGroup, tier_name: &str) -> &'static 
         TierGroup::GeminiFlashLite => texts.tier_gemini_flash_lite,
         TierGroup::AgyGeminiFiveHour => texts.tier_agy_gemini_five_hour,
         TierGroup::AgyGeminiWeekly => texts.tier_agy_gemini_weekly,
+        TierGroup::AgyGeminiArgonWeekly => texts.tier_agy_gemini_argon_weekly,
         TierGroup::AgyThirdPartyFiveHour => texts.tier_agy_third_party_five_hour,
         TierGroup::AgyThirdPartyWeekly => texts.tier_agy_third_party_weekly,
         TierGroup::Premium => texts.tier_premium,
@@ -3464,6 +3476,32 @@ mod tests {
 
     fn zh() -> TrayTexts {
         TrayTexts::from_language("zh")
+    }
+
+    #[test]
+    fn agy_argon_weekly_gets_its_own_line() {
+        use crate::services::subscription_agy::{
+            TIER_AGY_GEMINI_ARGON_WEEKLY, TIER_AGY_GEMINI_WEEKLY,
+        };
+        let entries = [
+            TierEntry {
+                name: TIER_AGY_GEMINI_WEEKLY,
+                utilization: 10.0,
+                resets_at: None,
+            },
+            TierEntry {
+                name: TIER_AGY_GEMINI_ARGON_WEEKLY,
+                utilization: 20.0,
+                resets_at: None,
+            },
+        ];
+        let texts = en();
+        let labels: Vec<_> = grouped_tier_lines(&texts, &entries)
+            .into_iter()
+            .map(|line| line.label)
+            .collect();
+        assert_eq!(labels, [Some("Gemini weekly"), Some("Argon weekly")]);
+        assert!(is_known_tier(TIER_AGY_GEMINI_ARGON_WEEKLY));
     }
 
     fn now() -> chrono::DateTime<chrono::Local> {

@@ -18,7 +18,7 @@ KEYS = [
     *[f"subscription.{k}" for k in (
         "fiveHour", "sevenDay", "sevenDayFable", "sevenDayOpus", "sevenDaySonnet", "thirtyDay",
         "geminiPro", "geminiFlash", "geminiFlashLite",
-        "agyGeminiFiveHour", "agyGeminiWeekly", "agyThirdPartyFiveHour", "agyThirdPartyWeekly",
+        "agyGeminiFiveHour", "agyGeminiWeekly", "agyGeminiArgonWeekly", "agyThirdPartyFiveHour", "agyThirdPartyWeekly",
         "monthly", "credits", "copilotPremium", "queryFailed",
     )],
     # 额度行
