@@ -198,7 +198,8 @@
       "confirm": "Terminali Aç",
       "agySwitchTitle": "Bu işlem agy'nin oturum açma hesabını değiştirir",
       "agySwitchBody": "Terminal açılmadan önce agy'nin oturumu {{account}} hesabına geçirilir; bundan sonra başlatılan agy oturumları bu hesabı kullanır.",
-      "agySwitchRunning": "agy çalışıyor: açık agy oturumları önceki hesabı kullanmaya devam eder ve hesabı yeniden kaydedebilir. Mümkünse önce agy oturumlarını kapatın."
+      "agySwitchRunning": "agy çalışıyor: açık agy oturumları önceki hesabı kullanmaya devam eder ve hesabı yeniden kaydedebilir. Mümkünse önce agy oturumlarını kapatın.",
+      "isolationBodyCopilot": "\"{{name}}\" kartının uç noktası, anahtarı ve modeli yalnızca bu terminaldeki copilot'a iletilir ve hiçbir dosyaya yazılmaz; başka bir terminalde doğrudan copilot çalıştırmak yine GitHub oturumunuzu kullanır."
     },
     "name": "İsim",
     "namePlaceholder": "ör. Claude Resmi",
@@ -404,14 +405,14 @@
     },
     "unifyCodexHistory": {
       "title": "Birleşik Codex oturum geçmişi",
-      "message": "Etkinleştirildiğinde Codex CLI’nin devam edilebilir oturum listesinde resmî abonelik ve üçüncü taraf oturumları birlikte görünür (Codex masaüstü uygulaması yakın tarihli bir güncellemeden beri tüm oturumları gösterebilir ve bu ayardan etkilenmez). Not: Diğer arka uç encrypted_content içindeki akıl yürütme verilerinin şifresini çözemediği için eski bir oturuma farklı bir sağlayıcıyla devam etmek başarısız olabilir.\n\nMevcut resmî oturum geçmişinizi de paylaşılan listeye taşıyabilirsiniz (önce ~/.cc-switch/backups konumuna yedeklenir; bu ayarı kapatırken geri yükleyebilirsiniz).",
+      "message": "Etkinleştirildiğinde resmî abonelik paylaşılan \"custom\" sağlayıcı kimliğiyle çalışır ve resmî ile üçüncü taraf oturumlar tek grupta toplanır: yeni Codex her ikisine de devam edebilir, CLI'nin devam listesi de bunları birlikte gösterir.\n\nMevcut resmî oturumlarınızı da taşıyabilirsiniz; taşırsanız CC Switch her açılışta geride kalan resmî oturumları da taşır (önce ~/.cc-switch/backups konumuna yedeklenir; bu ayarı kapatırken geri yükleyebilirsiniz). Taşımadığınız oturumlar yeni Codex'te salt okunur kalır. Taşıma bittikten sonra Codex'i yeniden başlatın.\n\nNot: Diğer arka uç encrypted_content içindeki akıl yürütme verilerinin şifresini çözemediği için eski bir oturuma farklı bir sağlayıcıyla devam etmek başarısız olabilir.",
       "migrateExisting": "Ayrıca mevcut resmi oturum geçmişini taşıyın",
       "confirm": "Anladım, etkinleştir"
     },
     "unifyCodexHistoryOff": {
       "title": "Birleşik oturum geçmişini kapat",
-      "message": "Kapatıldığında Codex CLI, resmi abonelik ve üçüncü taraf sağlayıcılar için ayrı oturum listelerine geri döner (masaüstü uygulaması tüm oturumları göstermeye devam eder). Bu açıkken oluşturulan oturumlar birbirinden ayrılamaz, dolayısıyla üçüncü taraf geçmişinde kalırlar ve CLI bunları resmi abonelik altında göstermez.",
-      "restoreBackup": "Etkinleştirme zamanında taşınan resmi oturumları resmi geçmişe geri yükleyin (yedekten tam geri yükleme)",
+      "message": "Kapatıldığında resmî ve üçüncü taraf oturumlar yeniden iki gruba ayrılır: yeni Codex yalnızca geçerli sağlayıcının grubuna devam edebilir, diğer grup salt okunur olur. Bu açıkken oluşturulan oturumlar birbirinden ayrılamaz, bu yüzden üçüncü taraf grubunda kalırlar.",
+      "restoreBackup": "Taşınan resmî oturumları resmî gruba geri yükleyin (yedekten tam geri yükleme)",
       "confirm": "Kapat"
     },
     "usage": {
@@ -432,6 +433,12 @@
       "quotaDisplay": "Kota gösterimi",
       "quotaDisplayLeft": "Kalan",
       "quotaDisplayUsed": "Kullanılan",
+      "density": "Arayüz yoğunluğu",
+      "densityHelp": "Rahat, daha büyük yazı ve daha yüksek denetimler kullanır. Sıkı, özgün boyutları korur.",
+      "densityComfortable": "Rahat",
+      "densityCompact": "Sıkı",
+      "zoom": "Yakınlaştırma",
+      "zoomHelp": "{{shortcut}} + / {{shortcut}} − ile de değiştirebilir, {{shortcut}} 0 ile sıfırlayabilirsiniz.",
       "quotaDisplayHelp": "Sağlayıcı kartlarındaki, Hesaplar'daki ve tepsideki her kota penceresinin ne kadar kaldığını veya ne kadar kullanıldığını gösterip göstermediği. Bakiyeler ve Krediler her zaman kalanları gösterir.",
       "sidebarAndHeader": "Kenar çubuğu ve başlık",
       "visibleApps": "Kenar çubuğunda gösterilen uygulamalar",
@@ -861,6 +868,8 @@
     "languageOptionEnglish": "English",
     "languageOptionJapanese": "日本語",
     "languageOptionTurkish": "Türkçe",
+    "languageOptionKorean": "한국어",
+    "languageOptionRussian": "Русский",
     "windowBehavior": "Pencere Davranışı",
     "windowBehaviorHint": "Pencere simge durumuna küçültme ve Claude eklenti entegrasyon ilkelerini yapılandırın.",
     "launchOnStartup": "Sistem açılışında başlat",
@@ -891,7 +900,7 @@
     "preserveCodexOfficialAuthOnSwitch": "Doğrudan geçişler için resmi giriş bilgilerini koruyun",
     "preserveCodexOfficialAuthOnSwitchDescription": "Yerel yönlendirme kapalıyken üçüncü taraf anahtarları kontrol eder. Devralma yönlendirmesi her zaman Codex resmi giriş bilgilerini korur.",
     "unifyCodexSessionHistory": "Birleşik Codex oturum geçmişi",
-    "unifyCodexSessionHistoryDescription": "Yalnızca Codex CLI'yi etkiler: devam edilebilir oturum listesi yalnızca mevcut sağlayıcının oturumlarını gösterir. Etkinleştirildiğinde resmi abonelik, paylaşılan \"özel\" sağlayıcı kimliği altında çalışır, böylece resmi ve üçüncü taraf oturumları tek bir listede görünür. Codex masaüstü uygulaması, yeni bir güncellemeden bu yana tüm oturumları gösterebilir, dolayısıyla yalnızca masaüstü kullanıcılarının buna ihtiyacı yoktur. İsteğe bağlı olarak mevcut resmi oturumları (öncelikle yedeklenen) taşıyabilir ve kapattığınızda bunları yedeklemeden geri yükleyebilirsiniz. Not: eski bir oturumun sağlayıcılar arasında sürdürülmesi başarısız olabilir, çünkü encrypted_content mantığının şifresi yalnızca onu oluşturan arka uç tarafından çözülebilir.",
+    "unifyCodexSessionHistoryDescription": "Resmî abonelik, üçüncü taraf sağlayıcılarla aynı \"custom\" sağlayıcı kimliğiyle çalışır; böylece tüm oturumlar tek bir grupta toplanır. Yeni Codex sürümleri (masaüstü 26.1103 / CLI 0.167 ve sonrası) yalnızca geçerli sağlayıcının grubundaki oturumlara devam edebilir; diğer grup salt okunur olur ve CLI'nin devam listesi yalnızca geçerli grubu gösterir. Resmî ve üçüncü taraf sağlayıcılar arasında geçiş yapıyorsanız açın. İsteğe bağlı olarak resmî oturumları paylaşılan gruba taşıyabilir (önce yedeklenir) ve kapatırken yedekten geri yükleyebilirsiniz. Not: eski bir oturumun sağlayıcılar arasında sürdürülmesi başarısız olabilir, çünkü encrypted_content mantığının şifresi yalnızca onu oluşturan arka uç tarafından çözülebilir.",
     "codexStackClassicSubagents": "Birleştirmedaki klasik alt ajan araçları",
     "codexStackClassicSubagentsDescription": "Ana ajan ile alt ajan farklı sağlayıcılar kullandığında açık olmalıdır; aksi halde alt ajan görevini alamaz.",
     "codexStackClassicSubagentsForcedV2": "Codex config.toml, bu ayara göre öncelikli olan [features] multi_agent_v2'yi açar, dolayısıyla hiçbir etkisi olmaz.",
@@ -1136,7 +1145,8 @@
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
-    "omp": "Oh My Pi"
+    "omp": "Oh My Pi",
+    "copilot": "Copilot CLI"
   },
   "mcode": {
     "empty": {
@@ -1399,6 +1409,8 @@
     "emptyAppHint": "CC Switch, {{path}}'den oturum verilerini okur",
     "emptySearch": "“{{query}}” ile eşleşen oturum başlığı, klasör veya ilk/son mesaj yok",
     "clearSearchAction": "Aramayı temizle",
+    "emptySearchEnableContent": "Mesaj metninde ara",
+    "emptySearchEnableContentHint": "Açıldığında mesaj metni için yerel bir dizin oluşturulur",
     "backToList": "Oturumlara geri dön",
     "back": "Geri",
     "sessionOf": "{{app}} oturumu",
@@ -1585,7 +1597,8 @@
       "rawMatch": "Kaynaktaki eşleşmeler",
       "expandContent": "İçeriğin tamamını göster",
       "collapseContent": "Daralt"
-    }
+    },
+    "copilotDeleteHint": "Oturum deposunun tutarlı kalması için bu oturumu GitHub Copilot CLI içinde silin"
   },
   "console": {
     "providerSwitchReceived": "Alınan sağlayıcı değiştirme etkinliği:",
@@ -1630,6 +1643,7 @@
     "providerKeyStatusLoading": "Sağlayıcı tanımlayıcı durumu hâlâ yükleniyor. Lütfen kısa süre sonra tekrar deneyin.",
     "getApiKey": "API Anahtarını Alın",
     "partnerPromotion": {
+      "tokenplus": "TokenPlus ile yapay zekâ destekli kodlama daha kararlı, ekonomik ve sorunsuz: tek anahtarla birden çok sağlayıcının modellerine erişin, akıllı geçişle kararlılığı koruyun, uygun fiyat seçimi ve önbellek optimizasyonuyla maliyetleri azaltın; faturalandırma, ekip ve veri güvenliğini tek yerden yönetin.",
       "kimi": "Yeni Kimi kullanıcıları ilk başarılı yüklemelerinin %10'unu 1.000 CNY'ye kadar bonus API kredisi olarak geri alırlar.",
       "a6api": "A6API, piyasadaki en düşük fiyatı otomatik olarak seçen, yerleşik gerçek zamanlı fiyat sıralama tablosuna sahip bir token birleştirme platformudur. Sorunsuz ve istikrarlı, kullanımı basit ve sıkıcı fiyat karşılaştırmalarına son. Ücretsiz deneme kredilerinden yararlanmak için şimdi kaydolun!",
       "sudocode": "Bir SudoCode anahtarıyla Claude Code ve Claude Desktop, Claude Opus 5'i kullanırken Codex, GPT-5.6'yı kullanır. Kaydolun, 726213516 numaralı QQ grubuna katılın ve 10 CNY tutarında deneme kredisi talep etmek için grup sahibiyle iletişime geçin.",
@@ -1863,6 +1877,28 @@
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Kurumsal Sunucu",
     "enterpriseDomainPlaceholder": "örneğin şirket.ghe.com",
+    "form": {
+      "officialTitle": "Copilot CLI'nin GitHub oturumunu kullanır",
+      "officialHint": "\"Terminal aç\", copilot'u bu kartın modeliyle başlatır; Yetki Merkezi'nden bir hesap bağlarsanız o hesapla başlatır.",
+      "byokTitle": "Yalnızca bu karttan açılan terminallerde geçerlidir",
+      "byokHint": "Copilot CLI özel modelleri yalnızca ortam değişkenlerinden okur; Copilot'un kendi dosyalarına hiçbir şey yazılmaz.",
+      "apiFormat": "API biçimi",
+      "baseUrl": "API uç noktası",
+      "baseUrlHint": "OpenAI uyumlu uç noktalar genellikle /v1 ile biter (ör. Ollama http://localhost:11434/v1); Anthropic için yalnızca sunucu adresi (https://api.anthropic.com).",
+      "model": "Model",
+      "officialModelHint": "Boş bırakırsanız Copilot'un geçerli modeli kullanılır. Yalnızca bu oturum için --model olarak iletilir; copilot içindeki /model çalışmaya devam eder.",
+      "byokModelHint": "Uç noktanızın beklediği model kimliği (COPILOT_MODEL).",
+      "reasoningEffort": "Akıl yürütme düzeyi",
+      "reasoningEffortDefault": "Copilot varsayılanı",
+      "reasoningEffortHint": "Terminal açılırken --reasoning-effort olarak iletilir. none seçildiğinde Copilot, Responses isteklerinde reasoning.summary göndermez; bazı aktarıcılar bu alanı kabul etmez.",
+      "maxPromptTokens": "En fazla istem token'ı",
+      "maxOutputTokens": "En fazla çıktı token'ı",
+      "envJsonHint": "Gelişmiş: her COPILOT_PROVIDER_* değişkeni (ör. COPILOT_PROVIDER_MODEL_ID veya COPILOT_PROVIDER_BEARER_TOKEN) copilot'a olduğu gibi iletilir."
+    },
+    "quota": {
+      "accountNotInAuthCenter": "Copilot CLI'nin oturum açtığı {{login}} hesabı Yetki Merkezi'nde yok. Yetki Merkezi'ne ekleyin veya bu kartta bir hesap bağlayın.",
+      "notSignedIn": "Copilot CLI'de oturum açılmamış. copilot'u çalıştırıp /login ile oturum açın veya bu kartta bir Yetki Merkezi hesabı bağlayın."
+    },
     "automaticFormat": "Yönlendirme tarafından otomatik seçilir",
     "automaticFormatHint": "Yönlendirme, her model için Copilot üst akış biçimini seçer; elle belirlenen biçim ayarları yok sayılır."
   },
@@ -2028,7 +2064,7 @@
     "subagentModelHint": "Codex alt ajanlarının varsayılan olarak kullandığı model ve akıl yürütme çabası. Boş ana ajanyı takip eder; bir model tek başına kendi varsayılan eforunu kullanır. Birleştirme modunda yoksayılır; orada Birleştirme sekmesinin ayarlarındaki alt ajan modeli kullanılır.",
     "subagentModelNotInCatalog": "Bu model model listesinde yok: Codex bağlam penceresini alamıyor ve yönlendirme istekleri Chat / Anthropic'ye dönüştürdüğünde bunun yerini varsayılan model alıyor.",
     "agentMaxThreadsLabel": "Alt ajan eşzamanlılık sınırı",
-    "agentMaxThreadsHint": "Bir Codex oturumunda aynı anda çalışabilecek alt ajan sayısı (ana ajan hariç). Bu, config.toml içindeki [agents] max_threads değerine yazılan Codex genelinde bir ayardır ve sağlayıcı değiştirildiğinde aynı kalır. Codex varsayılanı için boş bırakın: klasik alt ajan araçlarında 6, yenilerinde 3. Codex sınırsız seçeneği sunmaz, en az 1'dir; alt ajan sayısı arttıkça kota daha hızlı tükenir. Codex yeniden açıldığında geçerli olur.",
+    "agentMaxThreadsHint": "Bir Codex oturumunda aynı anda çalışabilecek alt ajan sayısı (ana ajan hariç); sağlayıcı değiştirildiğinde aynı kalır. Codex varsayılanı için boş bırakın (klasik alt ajan araçlarında 6, yenilerinde 3); en az 1'dir, sınırsız seçeneği yoktur. Yeni konuşmalarda geçerli olur.",
     "agentMaxThreadsPlaceholder": "Codex varsayılanı için boş bırakın",
     "agentMaxThreadsV2Override": "config.toml içindeki [features.multi_agent_v2] toplamı {{total}} olarak belirliyor (ana ajan dahil); yeni alt ajan araçları kullanıldığında bu geçerlidir.",
     "autoReviewModelLabel": "Otomatik inceleme modeli",
@@ -2591,6 +2627,9 @@
       "byRequest": "Talep modeline göre fiyatlandırılır",
       "edit": "Değiştir",
       "tableTitle": "Model fiyatlandırması · {{count}}",
+      "searchPlaceholder": "Model kimliği veya adı ara",
+      "noSearchMatch": "\"{{query}}\" ile eşleşen model yok",
+      "addForQuery": "{{query}} için fiyatlandırma ekle",
       "costHelpTitle": "Maliyet nasıl hesaplanır?",
       "costHelp": "Her istek modeline göre fiyatlandırılır: yeni giriş, çıkış, önbellek isabetleri ve önbellek yazma işlemlerinin her biri birim fiyatıyla çarpılır ve toplanır.",
       "unit": "USD / 1 milyon token",
@@ -2629,7 +2668,7 @@
     "officialSubscriptionHint": "Yerel CLI OAuth kimlik bilgilerini okur ve abonelik kotasını sorgulamak için resmi API'yi çağırır. Varsayılan olarak devre dışıdır ve yalnızca siz etkinleştirdikten sonra istekte bulunur.",
     "officialSubscriptionHintAgy": "agy'nin yerleşik /usage komutu, oturumu açık hesabın kotasını kontrol eder. Oturum açma bilgileri okunmaz; her kontrol yaklaşık 10 saniye sürer. Varsayılan olarak kapalıdır ve yalnızca etkinleştirdiğinizde çalışır.",
     "resetDate": "Tarihi sıfırla",
-    "premiumRequests": "Prim Talepleri",
+    "premiumRequests": "Credits",
     "credentialsConfig": "Kimlik bilgileri",
     "credentialsHint": "Sağlayıcı yapılandırmasını kullanmak için boş bırakın",
     "optional": "isteğe bağlı",
@@ -2863,6 +2902,7 @@
       "invalidOverrideMcode": "MiniMax Code için ayrı MCP yapılandırması geçersiz. Eksiksiz bir bağlantı yapılandırması girin.",
       "invalidOverrideKimi": "Kimi Code için ayrı MCP yapılandırması geçersiz. Eksiksiz bir bağlantı yapılandırması girin.",
       "invalidOverrideDsh": "DeepSeek Harness için ayrı MCP yapılandırması geçersiz. Eksiksiz bir bağlantı yapılandırması girin.",
+      "invalidOverrideCopilot": "GitHub Copilot CLI için ayrı MCP yapılandırması geçersiz. Eksiksiz bir bağlantı yapılandırması girin.",
       "invalidOverrideAgy": "Antigravity için ayrı MCP yapılandırması geçersiz. Eksiksiz bir bağlantı yapılandırması girin.",
       "invalidOverrideOmp": "Oh My Pi için ayrı MCP yapılandırması geçersiz. Eksiksiz bir bağlantı yapılandırması girin."
     },
@@ -4170,11 +4210,12 @@
       "geminiFlashLite": "Lite",
       "agyGeminiFiveHour": "Gemini 5 sa.",
       "agyGeminiWeekly": "Gemini haftalık",
+      "agyGeminiArgonWeekly": "Argon haftalık",
       "agyThirdPartyFiveHour": "Claude 5 sa.",
       "agyThirdPartyWeekly": "Claude haftalık",
       "monthly": "Ay",
       "credits": "Kredi",
-      "copilotPremium": "Premium"
+      "copilotPremium": "Credits"
     },
     "fiveHour": "5 saat",
     "sevenDay": "Haftalık",
@@ -4189,12 +4230,13 @@
     "agyThirdParty": "Claude/GPT",
     "agyGeminiFiveHour": "Gemini 5 saatlik",
     "agyGeminiWeekly": "Gemini haftalık",
+    "agyGeminiArgonWeekly": "Argon haftalık",
     "agyThirdPartyFiveHour": "Claude/GPT 5 saatlik",
     "agyThirdPartyWeekly": "Claude/GPT haftalık",
     "weeklyLimit": "Haftalık",
     "monthly": "Aylık",
     "credits": "Kredi",
-    "copilotPremium": "Premium",
+    "copilotPremium": "Credits",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}} sonra sıfırlanır",
     "extraUsage": "Ekstra Kullanım",
@@ -4264,7 +4306,8 @@
       "pi": "Npm ile yüklenir",
       "mcode": "Resmi komut dosyasıyla yüklenir, npm'ye geri döner",
       "agy": "Resmî kurulum betiğiyle yüklenir",
-      "omp": "Resmi komut dosyasıyla yüklenir"
+      "omp": "Resmi komut dosyasıyla yüklenir",
+      "copilot": "npm ile kurulur"
     },
     "sectionInstalled": "Yüklü · {{count}}",
     "sectionNotInstalled": "Yüklü değil · {{count}}",
@@ -4810,6 +4853,7 @@
     "rowFail": "{{app}}'de etkinleştirme başarısız oldu: {{error}}",
     "fixSync": "Eşitleme yöntemini değiştir",
     "rowMoreAria": "{{name}} için diğer işlemler",
+    "rowUpdateAria": "{{name}} öğesini güncelle",
     "openDir": "Klasörü aç",
     "uninstallEllipsis": "Kaldır",
     "listLabel": "Yüklü Beceriler",
@@ -4917,9 +4961,6 @@
       "discoverBody": "Liste eksik olabilir.",
       "updatesBody": "Bu depolardaki beceriler kontrol edilmediğinden sonuçlar eksik olabilir."
     },
-    "headerUpdates": "{{count}} güncellemeleri",
-    "headerUpdatesShow": "Yalnızca güncellemeleri olan Becerileri göster",
-    "headerUpdatesClear": "Tüm Becerileri Göster",
     "updateAllCount": "Tümünü güncelle ({{count}})",
     "updatingProgress": "{{done}}/{{total}} güncelleniyor…"
   },

@@ -18,6 +18,7 @@ const SESSION_PROVIDER_APPS: Record<string, AppId> = {
   "Pi (Session)": "pi",
   "Oh My Pi (Session)": "omp",
   "Antigravity (Session)": "agy",
+  "Copilot CLI (Session)": "copilot",
   "DeepSeek Harness (Session)": "dsh",
 };
 

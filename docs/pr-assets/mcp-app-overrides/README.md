@@ -1,6 +1,6 @@
 # Per-app MCP connections — evidence for #7997
 
-One logical MCP ID can retain a shared default and complete independent connection configurations for the 12 clients currently managed by CC Switch: Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code, Kimi Code, DeepSeek Harness, Antigravity and Oh My Pi.
+One logical MCP ID can retain a shared default and complete independent connection configurations for the 13 clients currently managed by CC Switch: Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code, Kimi Code, DeepSeek Harness, GitHub Copilot CLI, Antigravity and Oh My Pi.
 
 ## Before and after
 
@@ -29,7 +29,7 @@ The implementation was assisted by AI and reviewed in separate agent passes for 
 
 An override replaces the shared connection rather than merging fields. Native-owned options retain their existing adapter rules. Claude Desktop and OpenClaw remain outside CC Switch's MCP management. Standard `mcpServers` JSON copying exports the default; database backup/sync retains independent configurations.
 
-The database migration is now v24 → v25, following upstream's v23 → v24 DeepSeek Harness migration. It also accepts the earlier PR build's v24 layout, preserving existing independent connections while adding the DeepSeek Harness flags. Older clients cannot open the new schema; retain the existing pre-migration backup for downgrade. This change does not introduce a transaction spanning all applications' files. Local validation is on macOS ARM64; Windows/Linux runtime and real Agent interoperability are not claimed.
+The proposed database migration is now v25 → v26, following upstream's v24 → v25 GitHub Copilot CLI migration. It also accepts the earlier PR builds' v24/v25 layouts, preserving existing independent connections and enabled flags while adding missing upstream columns. The migration number remains subject to maintainer coordination before merge. Older clients cannot open the new schema; retain the existing pre-migration backup for downgrade. This change does not introduce a transaction spanning all applications' files. Local validation is on macOS ARM64; Windows/Linux runtime and real Agent interoperability are not claimed.
 
 ## Local verification — 2026-10-25
 

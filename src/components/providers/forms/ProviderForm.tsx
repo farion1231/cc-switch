@@ -103,6 +103,7 @@ import { GrokBuildProviderForm } from "./GrokBuildProviderForm";
 import { CodexFormFields } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
 import { KimiProviderForm } from "./KimiProviderForm";
+import { CopilotProviderForm } from "./CopilotProviderForm";
 import { AgyAccountSelect } from "./AgyOAuthSection";
 import { ClaudeAccountSelect } from "./ClaudeOfficialSection";
 import { isMac } from "@/lib/platform";
@@ -336,6 +337,7 @@ export interface ProviderFormProps {
 
 export function ProviderForm(props: ProviderFormProps) {
   if (props.appId === "kimi") return <KimiProviderForm {...props} />;
+  if (props.appId === "copilot") return <CopilotProviderForm {...props} />;
   if (props.appId === "mcode" || props.appId === "dsh")
     return <McodeProviderForm {...props} />;
   if (props.appId === "pi" || props.appId === "omp") {
@@ -782,11 +784,13 @@ function ProviderFormFull({
     codexMultiAgentV2Total,
     codexCatalogModels,
     codexAutoReviewModel,
+    codexOfficialSpeedTiers,
     codexAuthError,
     setCodexAuth,
     setCodexConfig,
     setCodexCatalogModels,
     setCodexAutoReviewModel,
+    setCodexOfficialSpeedTiers,
     handleCodexApiKeyChange,
     handleCodexBaseUrlChange,
     handleCodexModelChange,
@@ -1790,6 +1794,7 @@ function ProviderFormFull({
           modelCatalog?: {
             models: CodexCatalogModel[];
             autoReviewModel?: string;
+            officialSpeedTiers?: boolean;
           };
         };
         if (normalizedCatalogModels.length > 0) {
@@ -1803,6 +1808,9 @@ function ProviderFormFull({
             )
           ) {
             configObj.modelCatalog.autoReviewModel = autoReviewModel;
+          }
+          if (codexOfficialSpeedTiers) {
+            configObj.modelCatalog.officialSpeedTiers = true;
           }
         }
         settingsConfig = JSON.stringify(configObj);
@@ -2877,6 +2885,8 @@ function ProviderFormFull({
               onCatalogModelsChange={setCodexCatalogModels}
               autoReviewModel={codexAutoReviewModel}
               onAutoReviewModelChange={setCodexAutoReviewModel}
+              officialSpeedTiers={codexOfficialSpeedTiers}
+              onOfficialSpeedTiersChange={setCodexOfficialSpeedTiers}
               speedTestEndpoints={speedTestEndpoints}
               customUserAgent={customUserAgent}
               onCustomUserAgentChange={setCustomUserAgent}

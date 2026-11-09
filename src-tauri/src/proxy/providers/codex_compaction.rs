@@ -16,7 +16,7 @@
 //!   来源（可能正是这家自己签发的），原样发出，上游明确拒绝后再由 `opaque_state_rectifier`
 //!   换掉。
 
-use crate::proxy::sse::{append_utf8_safe, strip_sse_field, take_sse_block};
+use crate::proxy::sse::{strip_sse_field, SseBuffer};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
@@ -223,6 +223,23 @@ pub(crate) fn prepare_native_third_party_request(body: &mut Value) -> bool {
     true
 }
 
+/// 压缩回合被原生 Responses 第三方拒绝（HTTP 400）后的重试请求体：改写同
+/// [`prepare_native_third_party_request`]，但不带 `tool_choice`。有的上游不收
+/// `tool_choice: "none"`，整个请求只回一句「Invalid request」（Kimi For Coding 实测，去掉或
+/// 改成 `auto` 都正常）。摘要只取输出里的文字消息，模型偶尔发起的工具调用不影响压缩结果。
+///
+/// 不是压缩请求、或这次改写本来就不会带 `tool_choice`（请求里没有工具）时为 `None`。
+/// 返回的请求体已经改写过，再经过 `prepare_native_third_party_request` 时一个字节都不变。
+pub(crate) fn compaction_retry_without_tool_choice(request: &Value) -> Option<Value> {
+    if !is_compaction_request(request) || request.get("tools").is_none() {
+        return None;
+    }
+    let mut body = request.clone();
+    prepare_native_third_party_request(&mut body);
+    body.as_object_mut()?.remove("tool_choice")?;
+    Some(body)
+}
+
 /// 压缩回合只要一段摘要：强制 `tool_choice: "none"` 不发起新的工具调用，并去掉结构化输出，
 /// 保持和 Codex 本地压缩请求一致的"只要文字"形态（codex-rs `compact.rs` 的 Prompt 不带 tools）。
 /// 工具定义保留：历史里回放的 `web_search_call`、`function_call` 等条目引用这些定义，
@@ -338,8 +355,7 @@ where
     E: std::error::Error + Send + 'static,
 {
     async_stream::stream! {
-        let mut buffer = String::new();
-        let mut utf8_remainder: Vec<u8> = Vec::new();
+        let mut sse = SseBuffer::new();
         let mut state = NativeCompactionState::default();
 
         tokio::pin!(stream);
@@ -347,12 +363,12 @@ where
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
-                    while let Some(block) = take_sse_block(&mut buffer) {
+                    sse.push_bytes(&bytes);
+                    while let Some(block) = sse.next_block() {
                         if block.trim().is_empty() {
                             continue;
                         }
-                        for event in state.handle_block(&block) {
+                        for event in state.handle_block(block) {
                             yield Ok(event);
                         }
                     }
@@ -364,10 +380,7 @@ where
             }
         }
 
-        if !utf8_remainder.is_empty() {
-            buffer.push_str(&String::from_utf8_lossy(&utf8_remainder));
-        }
-        let tail = std::mem::take(&mut buffer);
+        let tail = sse.take_tail();
         if !tail.trim().is_empty() {
             for event in state.handle_block(&tail) {
                 yield Ok(event);

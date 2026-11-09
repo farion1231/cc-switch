@@ -29,7 +29,7 @@ use crate::services::usage_cache::UsageCache;
 use crate::store::AppState;
 
 const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str = "official_subscription";
-/// Copilot 用量结果的单位（`commands::provider` 的 `COPILOT_UNIT_PREMIUM`）：高级请求次数。
+/// Copilot 用量结果的单位（`commands::provider` 的 `COPILOT_UNIT_PREMIUM`）：Credits（接口里仍叫 premium_interactions）。
 const COPILOT_UNIT_PREMIUM: &str = "requests";
 
 pub const TRAY_ID: &str = "cc-switch";
@@ -60,6 +60,7 @@ fn app_display_name(app: &AppType) -> &'static str {
         AppType::Dsh => "DeepSeek Harness",
         AppType::Agy => "Antigravity",
         AppType::Omp => "Oh My Pi",
+        AppType::Copilot => "Copilot CLI",
     }
 }
 
@@ -152,24 +153,32 @@ pub struct TrayTexts {
 /// 镜像前端 `i18n/getInitialLanguage` 的判定顺序，确保首次安装
 /// （`settings.language` 尚未写入）时托盘语言与界面语言一致：
 /// 繁中系统（zh-TW/HK/MO/Hant）→ `zh-TW`，其余 zh → `zh`，
-/// 日文 → `ja`，土耳其文 → `tr`，英文 → `en`，其他语言回退到 `en`，
+/// 日文 → `ja`，韩文 → `ko`，土耳其文 → `tr`，英文 → `en`，其他语言回退到 `en`，
 /// 区域为空时回退到 `zh`（与前端默认一致）。
 fn map_locale_to_tray_language(locale: &str) -> &'static str {
     let locale = locale.to_lowercase();
     if locale == "zh" {
         "zh"
-    } else if locale.starts_with("zh-tw")
-        || locale.starts_with("zh-hk")
-        || locale.starts_with("zh-mo")
-        || locale.starts_with("zh-hant")
+    } else if locale == "zh-tw"
+        || locale.starts_with("zh-tw-")
+        || locale == "zh-hk"
+        || locale.starts_with("zh-hk-")
+        || locale == "zh-mo"
+        || locale.starts_with("zh-mo-")
+        || locale == "zh-hant"
+        || locale.starts_with("zh-hant-")
     {
         "zh-TW"
-    } else if locale.starts_with("zh") {
+    } else if locale == "zh" || locale.starts_with("zh-") {
         "zh"
-    } else if locale.starts_with("ja") {
+    } else if locale == "ja" || locale.starts_with("ja-") {
         "ja"
-    } else if locale.starts_with("tr") {
+    } else if locale == "ko" || locale.starts_with("ko-") {
+        "ko"
+    } else if locale == "tr" || locale.starts_with("tr-") {
         "tr"
+    } else if locale == "ru" || locale.starts_with("ru-") {
+        "ru"
     } else if locale.is_empty() {
         "zh"
     } else {
@@ -229,7 +238,7 @@ impl TrayTexts {
                 tier_gemini_pro: "Pro",
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
-                tier_premium: "Premium",
+                tier_premium: "Credits",
                 tier_left: "{label} {value}% left",
                 tier_used: "{label} {value}% used",
                 tier_used_up: "{label} used up",
@@ -246,6 +255,69 @@ impl TrayTexts {
             },
             // 土耳其语是社区翻译：从英文起步再覆盖已翻译的项，之后新增的托盘项
             // 在有人翻译前显示英文，而不是让所有改托盘的提交都必须补土耳其语。
+            "ko" => {
+                let mut texts = Self::from_language("en");
+                texts.show_main = "CC Switch 열기";
+                texts.open_website = "공식 웹사이트 열기";
+                texts.lightweight_mode = "경량 모드";
+                texts.quit = "CC Switch 종료";
+                texts.quit_stops_routing = "CC Switch 종료 (라우팅 서비스 중지)";
+                texts.projects_label = "프로젝트";
+                texts.no_project_label = "프로젝트 없음";
+                texts.header_direct = "직접 연결";
+                texts.header_route = "라우팅";
+                texts.header_failover = "라우팅 · 장애 조치 켜짐";
+                texts.header_stack = "통합 · 기본 공급자";
+                texts.header_stack_default = "통합 · 기본값: {name}";
+                texts.failover_note = "대기열에서 자동으로 선택됩니다. 앱 페이지에서 변경하세요";
+                texts.mode_route = "라우팅";
+                texts.mode_stack = "통합";
+                texts.needs_routing_suffix = " (라우팅 필요)…";
+                texts.official_blocked_suffix = " (공식 요금제는 라우팅을 사용하지 않음)";
+                texts.open_app_page = "{app} 페이지 열기";
+                texts.add_provider = "공급자 추가…";
+                texts.almost_out = "거의 소진됨";
+                texts.needs_attention = "확인 필요";
+                texts.problem_service_down = "라우팅 서비스가 실행 중이 아닙니다 (포트 {port})";
+                texts.problem_attach_failed = "{app}: 이전 {mode} 연결에 실패하여 직접 연결로 돌아갔습니다";
+                texts.problem_switch_failed = "{app} 전환 실패: {reason}";
+                texts.problem_more = "문제 {count}개 더 있음 — CC Switch에서 확인하세요";
+                texts.tooltip_problem = "CC Switch · 확인 필요: {problem}";
+                texts.feedback_switched = "{app}의 공급자가 {name}(으)로 전환되었습니다. 적용하려면 {app}을(를) 다시 시작하세요";
+                texts.feedback_stack_default = "{app}의 기본 공급자가 {name}(으)로 변경되었습니다. 적용하려면 {app}을(를) 다시 시작하세요";
+                texts.feedback_profile = "{app}에 {name} 프로젝트를 적용했습니다";
+                texts.tier_five_hour = "5시간";
+                texts.tier_weekly = "주간";
+                texts.tier_monthly = "월간";
+                texts.tier_thirty_day = "30일";
+                texts.tier_credits = "크레딧";
+                texts.tier_premium = "프리미엄 요청";
+                texts.tier_left = "{label} {value}% 남음";
+                texts.tier_used = "{label} {value}% 사용";
+                texts.tier_used_up = "{label} 소진됨";
+                texts.balance = "잔액 {value}";
+                texts.plan_expired = "요금제 만료됨";
+                texts.used_amount = "{value} 사용";
+                texts.quota_failed = "할당량 조회 실패";
+                texts.quota_failed_login_expired = "할당량 조회 실패: 로그인 만료";
+                texts.quota_failed_token_refresh_pending = "할당량 조회 실패: 토큰 갱신 대기 중";
+                texts.reset_on_date = "{when}에 {label} 할당량 초기화";
+                texts.reset_at_time = "{when}에 {label} 할당량 초기화";
+                texts.date_format = "%-m월 %-d일";
+                texts
+            },
+            // 俄语同为社区翻译：从英文起步，只覆盖已翻译的项。
+            "ru" => {
+                let mut texts = Self::from_language("en");
+                texts.show_main = "Открыть главное окно";
+                texts.open_website = "Открыть официальный сайт";
+                texts.lightweight_mode = "Облегчённый режим";
+                texts.quit = "Выйти из CC Switch";
+                texts.quit_stops_routing = "Выйти из CC Switch (служба маршрутизации остановится)";
+                texts.projects_label = "Проекты";
+                texts.no_project_label = "Без проекта";
+                texts
+            },
             "tr" => {
                 let mut texts = Self::from_language("en");
                 texts.show_main = "CC Switch'i aç";
@@ -286,7 +358,6 @@ impl TrayTexts {
                 texts.tier_gemini_pro = "Pro";
                 texts.tier_gemini_flash = "Flash";
                 texts.tier_gemini_flash_lite = "Flash Lite";
-                texts.tier_premium = "Premium";
                 texts.tier_left = "{label} %{value} kaldı";
                 texts.tier_used = "{label} %{value} kullanıldı";
                 texts.tier_used_up = "{label} tükendi";
@@ -342,7 +413,7 @@ impl TrayTexts {
                 tier_gemini_pro: "Pro",
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
-                tier_premium: "プレミアム",
+                tier_premium: "Credits",
                 tier_left: "{label} 残り {value}%",
                 tier_used: "{label} 使用済み {value}%",
                 tier_used_up: "{label} 使い切り",
@@ -396,7 +467,7 @@ impl TrayTexts {
                 tier_gemini_pro: "Pro",
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
-                tier_premium: "進階請求",
+                tier_premium: "Credits",
                 tier_left: "{labelSp}剩餘 {value}%",
                 tier_used: "{labelSp}已用 {value}%",
                 tier_used_up: "{labelSp}已用完",
@@ -450,7 +521,7 @@ impl TrayTexts {
                 tier_gemini_pro: "Pro",
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
-                tier_premium: "高级请求",
+                tier_premium: "Credits",
                 tier_left: "{labelSp}剩余 {value}%",
                 tier_used: "{labelSp}已用 {value}%",
                 tier_used_up: "{labelSp}已用完",
@@ -738,12 +809,15 @@ fn plan_line(texts: &TrayTexts, data: &crate::provider::UsageData) -> Option<Quo
     let unit = data.unit.as_deref();
     let total = data.total.filter(|total| *total != -1.0);
     if unit == Some(COPILOT_UNIT_PREMIUM) {
-        if let (Some(remaining), Some(total)) = (data.remaining, total) {
-            if total > 0.0 {
-                let utilization = (total - remaining) / total * 100.0;
-                return Some(tier_line(texts, texts.tier_premium, utilization, None));
-            }
+        // Free 计划不含 Credits（总额 0）：不显示，别落到下面的余额分支写成「余额 0」
+        let (Some(remaining), Some(total)) = (data.remaining, total) else {
+            return None;
+        };
+        if total <= 0.0 {
+            return None;
         }
+        let utilization = (total - remaining) / total * 100.0;
+        return Some(tier_line(texts, texts.tier_premium, utilization, None));
     }
     if let Some(remaining) = data.remaining {
         // 余额不提示「快用完」，只有用完才算（和卡片 `quotaRules.balanceLine` 一致）；
@@ -2907,19 +2981,24 @@ pub fn handle_profile_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool
             log::error!("未知的项目分组托盘事件: {event_id}");
             return true;
         };
-        if let Some(app_state) = app.try_state::<AppState>() {
-            if let Err(e) = app_state.db.set_current_profile_id(scope.as_str(), None) {
-                log::error!("清除当前项目失败: {e}");
+        // 与窗口里的项目命令同一把锁，否则窗口里 apply 收尾写指针会把这里的清除盖掉。
+        let app_handle = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let _serial = crate::commands::PROFILE_LOCK.blocking_lock();
+            if let Some(app_state) = app_handle.try_state::<AppState>() {
+                if let Err(e) = app_state.db.set_current_profile_id(scope.as_str(), None) {
+                    log::error!("清除当前项目失败: {e}");
+                }
             }
-        }
-        // 通知主窗口刷新（profileId=null 表示该分组已清除当前项目）
-        if let Err(e) = app.emit(
-            "profile-applied",
-            serde_json::json!({ "profileId": null, "scope": scope.as_str() }),
-        ) {
-            log::error!("发射 profile-applied 事件失败: {e}");
-        }
-        refresh_tray_menu(app);
+            // 通知主窗口刷新（profileId=null 表示该分组已清除当前项目）
+            if let Err(e) = app_handle.emit(
+                "profile-applied",
+                serde_json::json!({ "profileId": null, "scope": scope.as_str() }),
+            ) {
+                log::error!("发射 profile-applied 事件失败: {e}");
+            }
+            refresh_tray_menu(&app_handle);
+        });
         return true;
     }
 
@@ -2937,6 +3016,7 @@ pub fn handle_profile_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool
     let app_handle = app.clone();
     let profile_id = profile_id.to_string();
     tauri::async_runtime::spawn_blocking(move || {
+        let _serial = crate::commands::PROFILE_LOCK.blocking_lock();
         let Some(app_state) = app_handle.try_state::<AppState>() else {
             return;
         };
@@ -3468,7 +3548,43 @@ mod tests {
     }
 
     #[test]
+    fn locale_matches_language_and_chinese_region_boundaries() {
+        for locale in ["zha", "zhb-CN", "jam", "trv-TW"] {
+            assert_eq!(map_locale_to_tray_language(locale), "en", "{locale}");
+        }
+        for locale in ["zh-TW-u-nu-hanidec", "zh-Hant-TW", "zh-HK"] {
+            assert_eq!(map_locale_to_tray_language(locale), "zh-TW", "{locale}");
+        }
+        for locale in ["zh-hantx", "zh-hkx"] {
+            assert_eq!(map_locale_to_tray_language(locale), "zh", "{locale}");
+        }
+    }
+
+    #[test]
+    fn locale_maps_korean_without_matching_other_language_subtags() {
+        for locale in ["ko", "ko-KR", "ko-KP", "KO-kr"] {
+            assert_eq!(map_locale_to_tray_language(locale), "ko");
+        }
+        for locale in ["kok", "kok-IN", "kos"] {
+            assert_eq!(map_locale_to_tray_language(locale), "en");
+        }
+    }
+
+    #[test]
+    fn locale_maps_russian_without_matching_other_language_subtags() {
+        for locale in ["ru", "ru-RU", "ru-UA", "RU-ru"] {
+            assert_eq!(map_locale_to_tray_language(locale), "ru");
+        }
+        // 卢森尼亚语 rue、Rupuni 等以 ru 开头但不是俄语，按不支持的语言回落英文
+        for locale in ["rue", "rue-UA", "rup"] {
+            assert_eq!(map_locale_to_tray_language(locale), "en");
+        }
+    }
+
+    #[test]
     fn locale_maps_japanese_and_english() {
+        assert_eq!(map_locale_to_tray_language("ko-KR"), "ko");
+        assert_eq!(map_locale_to_tray_language("ko"), "ko");
         assert_eq!(map_locale_to_tray_language("tr-TR"), "tr");
         assert_eq!(map_locale_to_tray_language("tr"), "tr");
         assert_eq!(map_locale_to_tray_language("ja-JP"), "ja");
@@ -3480,7 +3596,7 @@ mod tests {
     #[test]
     fn locale_unknown_falls_back_to_en() {
         // 与前端 getInitialLanguage 保持一致：认不出的语言用英文，区域为空才用默认的 zh。
-        for locale in ["de-DE", "fr", "ko-KR"] {
+        for locale in ["de-DE", "fr", "es-ES"] {
             assert_eq!(
                 map_locale_to_tray_language(locale),
                 "en",
@@ -3531,6 +3647,7 @@ mod tests {
             extra_usage: None,
             reset_credits: None,
             credits_balance: None,
+            plan_name: None,
             error: None,
             queried_at: Some(0),
         }
@@ -3791,19 +3908,27 @@ mod tests {
 
     #[test]
     fn copilot_premium_requests_use_the_card_word() {
-        let data = UsageData {
+        let copilot = |total: f64, remaining: f64| UsageData {
             plan_name: Some("copilot_pro".to_string()),
             extra: Some("Reset: 2026-11-01".to_string()),
             is_valid: Some(true),
             invalid_message: None,
-            total: Some(300.0),
-            used: Some(120.0),
-            remaining: Some(180.0),
+            total: Some(total),
+            used: Some(total - remaining),
+            remaining: Some(remaining),
             unit: Some(COPILOT_UNIT_PREMIUM.to_string()),
         };
         assert_eq!(
-            title(format_script_result(&zh(), &usage_result(true, vec![data]))),
-            Some(("高级请求剩余 60%".to_string(), false))
+            title(format_script_result(
+                &zh(),
+                &usage_result(true, vec![copilot(300.0, 180.0)])
+            )),
+            Some(("Credits 剩余 60%".to_string(), false))
+        );
+        // Free 计划不含 Credits（总额 0）：不显示，不能写成「余额 0」
+        assert_eq!(
+            format_script_result(&zh(), &usage_result(true, vec![copilot(0.0, 0.0)])),
+            None
         );
     }
 
@@ -4731,7 +4856,7 @@ mod tests {
             quit_text(&en(), true),
             "Quit CC Switch (stops the routing service)"
         );
-        for language in ["zh", "zh-TW", "en", "ja", "tr"] {
+        for language in ["zh", "zh-TW", "en", "ja", "tr", "ko", "ru"] {
             let texts = TrayTexts::from_language(language);
             assert_ne!(texts.quit, texts.quit_stops_routing, "{language}");
             assert!(

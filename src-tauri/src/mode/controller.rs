@@ -32,6 +32,7 @@ use crate::live::project::claude::{
 use crate::live::project::gemini::GeminiProjection;
 use crate::live::project::grok::GrokProjection;
 use crate::provider::Provider;
+use crate::proxy::loopback_probe;
 use crate::services::provider::codex_client_catalog;
 use crate::services::provider::codex_direct::{self, Owner};
 use crate::services::provider::codex_official_models;
@@ -842,7 +843,44 @@ async fn enter_locked(
     );
     state.proxy_service.set_active_target(app, &route).await;
     warn_if_official_route(state, app, &route).await;
+    spawn_loopback_check(state, app, op_name == op::ENTER);
     Ok(())
+}
+
+/// Codex、Grok Build 跟随系统代理发请求，发往本地路由的请求可能被系统代理接走、客户端只看到
+/// 空正文 502（见 [`loopback_probe`]）。后台自检一次，不拦进入：日志里留一笔；`notify` 时
+/// （用户手动进入）再提示。启动时接上不提示，那时界面多半还没在听事件。
+fn spawn_loopback_check(state: &AppState, app: &AppType, notify: bool) {
+    if !matches!(app, AppType::Codex | AppType::GrokBuild) {
+        return;
+    }
+    let service = state.proxy_service.clone();
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let Ok((origin, _)) = service.build_proxy_urls().await else {
+            return;
+        };
+        // 客户端地址改成别的机器时，CC Switch 这边走一遍代表不了客户端。
+        if !crate::proxy::http_client::is_loopback_url(&origin) {
+            return;
+        }
+        let Some(reason) = loopback_probe::hijack_reason(&origin).await else {
+            return;
+        };
+        log::warn!(
+            "[MODE] {} 的本地路由 {origin} 按系统代理访问回不到 CC Switch（{reason}），\
+             客户端的请求可能被系统代理接走",
+            app.as_str()
+        );
+        if notify {
+            service
+                .emit(
+                    "proxy-loopback-hijacked",
+                    json!({ "appType": app.as_str(), "origin": origin }),
+                )
+                .await;
+        }
+    });
 }
 
 async fn warn_if_official_route(state: &AppState, app: &AppType, route: &Provider) {
@@ -1512,6 +1550,20 @@ pub async fn resync_codex_stack_catalog(state: &AppState) -> Result<(), String> 
     if !settled_stack(&app)?.enabled {
         return Ok(());
     }
+    let Some((mode, route)) = attached_route(state, &app)? else {
+        return Ok(());
+    };
+    let live_now = LiveNow::of(state, &app, &mode)?;
+    write_proxy(state, &app, op::APPLY, &route, &live_now, mode, None)
+        .await
+        .map(|_| ())
+}
+
+/// 「暂停使用官方登录」变了：路由 / 聚合模式下按新契约重写 Codex（契约没变就什么都不做）。
+/// 直连或没接上代理时这个开关不起作用，等进代理时自然按设置写。
+pub async fn resync_codex_proxy(state: &AppState) -> Result<(), String> {
+    let app = AppType::Codex;
+    let _guard = lock_settled(state, &app).await.map_err(err)?;
     let Some((mode, route)) = attached_route(state, &app)? else {
         return Ok(());
     };
@@ -3496,10 +3548,19 @@ mod mode_tests {
         assert!(!official_contract.contains("sk-relay"));
         assert_eq!(auth(), native_auth);
 
+        // 本机有 ChatGPT 登录：第三方路由也写成内置 openai（和官方路由同一个会话组），
+        // 之前的 custom 表仍是休眠形态，第三方的 Key 不进客户端文件。
         ProviderService::switch(&state, AppType::Codex, "relay").expect("route back");
         let third_party = fs::read_to_string(&config_path).unwrap();
-        assert!(third_party.contains(PROXY_TOKEN_PLACEHOLDER));
-        assert!(!third_party.contains("openai_base_url"), "{third_party}");
+        let doc: toml::Table = toml::from_str(&third_party).unwrap();
+        assert!(doc.get("model_provider").is_none(), "{third_party}");
+        assert_eq!(doc["openai_base_url"].as_str(), Some(base_url));
+        assert_eq!(
+            doc["model_providers"]["custom"]["experimental_bearer_token"].as_str(),
+            Some(PROXY_TOKEN_PLACEHOLDER)
+        );
+        assert!(!third_party.contains("sk-relay"), "{third_party}");
+        assert_eq!(auth(), native_auth);
         exit(&state, &AppType::Codex).await.expect("exit");
         assert_eq!(auth(), native_auth);
         assert!(!state
@@ -3652,6 +3713,14 @@ mod mode_tests {
         toml::from_str(&codex_text()).unwrap()
     }
 
+    /// CC Switch 写进 live 的目录指针，按当前配置目录现算：本机目录是绝对路径，
+    /// `\\wsl.localhost\...` 这类 UNC 目录是裸文件名（WSL2 夜测的 HOME 就在那里）。
+    fn ours_catalog_pointer() -> String {
+        crate::live::project::codex::catalog_pointer_value(
+            &crate::codex_config::get_codex_config_dir(),
+        )
+    }
+
     fn set_preservation(on: bool) {
         crate::settings::update_settings(crate::settings::AppSettings {
             preserve_codex_official_auth_on_switch: on,
@@ -3792,12 +3861,18 @@ command = "fs-server"
                 .get("model_catalog_json")
                 .and_then(|value| value.as_str().map(str::to_string))
         };
-        let ours = crate::live::project::codex::CATALOG_FILENAME;
+        // cc-switch 接管指针时写绝对路径（严格重读的 Codex 只认绝对形态；UNC 目录写裸文件名）。
+        let ours = ours_catalog_pointer();
 
         ProviderService::switch(&state, AppType::Codex, "a").expect("to a");
         assert_eq!(pointer().as_deref(), Some("/work/a-catalog.json"));
         ProviderService::switch(&state, AppType::Codex, "b").expect("to b");
-        assert_eq!(pointer().as_deref(), Some(ours), "{}", codex_text());
+        assert_eq!(
+            pointer().as_deref(),
+            Some(ours.as_str()),
+            "{}",
+            codex_text()
+        );
         ProviderService::switch(&state, AppType::Codex, "a").expect("back to a");
         ProviderService::switch(&state, AppType::Codex, "c").expect("to c");
         assert_eq!(pointer(), None, "{}", codex_text());
@@ -3813,7 +3888,12 @@ command = "fs-server"
         let with_user = format!("model_catalog_json = \"/work/mine.json\"\n{}", codex_text());
         fs::write(codex_config_path(), with_user).unwrap();
         ProviderService::switch(&state, AppType::Codex, "b").expect("to b");
-        assert_eq!(pointer().as_deref(), Some(ours), "{}", codex_text());
+        assert_eq!(
+            pointer().as_deref(),
+            Some(ours.as_str()),
+            "{}",
+            codex_text()
+        );
         let with_user = codex_text().replace(
             &format!("model_catalog_json = \"{ours}\""),
             "model_catalog_json = \"/work/mine.json\"",
@@ -4149,17 +4229,142 @@ model_provider = "c"
 
         enter(&state, &AppType::Codex, false).await.expect("enter");
         assert_eq!(codex_login_file(), Some(chatgpt_login("acct")));
-        assert_eq!(
-            codex_doc()["model_providers"]["custom"]["requires_openai_auth"].as_bool(),
-            Some(true)
-        );
+        // 还回来的登录算数：第三方路由也写成内置 openai，会话和官方同组。
+        let doc = codex_doc();
+        assert!(doc.get("model_provider").is_none(), "{}", codex_text());
+        assert!(doc["openai_base_url"]
+            .as_str()
+            .is_some_and(|url| url.starts_with("http://127.0.0.1:")));
 
-        // 只还一次：在 Codex 里登出后换路由，不会又被登上。
+        // 只还一次：在 Codex 里登出后换路由，不会又被登上；没有登录就退回 custom 表。
         fs::remove_file(codex_auth_path()).unwrap();
         set_route(&state, &AppType::Codex, "b")
             .await
             .expect("route b");
         assert_eq!(codex_login_file(), None);
+        let doc = codex_doc();
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        assert!(doc.get("openai_base_url").is_none(), "{}", codex_text());
+        assert_eq!(
+            doc["model_providers"]["custom"]["requires_openai_auth"].as_bool(),
+            Some(false)
+        );
+        exit(&state, &AppType::Codex).await.expect("exit");
+    }
+
+    /// 有登录也仍写 custom 表的两种情况：统一会话历史开着（本来全在 custom 组），行里写了
+    /// 内置 openai 表达不了的客户端设置（流空闲超时等，Codex 只认 provider 表上的）。
+    #[tokio::test]
+    #[serial]
+    async fn codex_third_party_route_keeps_the_custom_table_when_openai_cannot_carry_it() {
+        let slow = Provider::with_id(
+            "slow".to_string(),
+            "Slow".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-slow" },
+                "config": "model_provider = \"custom\"\nmodel = \"m\"\n\n[model_providers.custom]\nname = \"slow\"\nbase_url = \"https://slow.example/v1\"\nwire_api = \"responses\"\nstream_idle_timeout_ms = 900000\n"
+            }),
+            None,
+        );
+        let [a, _] = codex_a_b();
+        for (unified, route) in [(true, "a"), (false, "slow")] {
+            let _home = Home::new();
+            crate::settings::update_settings(crate::settings::AppSettings {
+                preserve_codex_official_auth_on_switch: true,
+                unify_codex_session_history: unified,
+                ..Default::default()
+            })
+            .unwrap();
+            seed_codex("", Some(&chatgpt_login("acct")));
+            let state = state_with(AppType::Codex, &[a.clone(), slow.clone()], route).await;
+            ProviderService::switch(&state, AppType::Codex, route).expect("direct");
+            enter(&state, &AppType::Codex, false).await.expect("enter");
+            let doc = codex_doc();
+            assert_eq!(
+                doc.get("model_provider").and_then(|v| v.as_str()),
+                Some("custom"),
+                "unified={unified}: {}",
+                codex_text()
+            );
+            assert!(doc.get("openai_base_url").is_none(), "{}", codex_text());
+            let table = &doc["model_providers"]["custom"];
+            assert_eq!(table["requires_openai_auth"].as_bool(), Some(true));
+            if route == "slow" {
+                assert_eq!(table["stream_idle_timeout_ms"].as_integer(), Some(900000));
+            }
+            exit(&state, &AppType::Codex).await.expect("exit");
+        }
+    }
+
+    /// 暂停使用官方登录：官方路由和第三方路由都写成不要求登录的 custom 表（Codex 不按官方
+    /// 额度锁发送键），登录留在 auth.json；关掉后回到内置 openai 的写法。
+    #[tokio::test]
+    #[serial]
+    async fn codex_paused_official_login_writes_a_login_free_custom_table() {
+        let _home = Home::new();
+        let set_paused = |paused: bool| {
+            let mut settings = crate::settings::get_settings();
+            settings.preserve_codex_official_auth_on_switch = true;
+            settings.codex_proxy_without_official_login = paused;
+            crate::settings::update_settings(settings).unwrap();
+        };
+        set_paused(false);
+        seed_codex("", Some(&chatgpt_login("acct")));
+        let official_id = crate::database::CODEX_OFFICIAL_PROVIDER_ID;
+        let mut official = Provider::with_id(
+            official_id.to_string(),
+            "OpenAI Official".to_string(),
+            json!({ "auth": {}, "config": "model = \"gpt-5.4\"\n" }),
+            None,
+        );
+        official.category = Some("official".to_string());
+        let [a, _] = codex_a_b();
+        let state = state_with(AppType::Codex, &[official, a], official_id).await;
+        ProviderService::switch(&state, AppType::Codex, official_id).expect("direct");
+        enter(&state, &AppType::Codex, false).await.expect("enter");
+        assert!(
+            codex_doc().get("openai_base_url").is_some(),
+            "{}",
+            codex_text()
+        );
+
+        set_paused(true);
+        resync_codex_proxy(&state).await.expect("pause");
+        for route in [official_id, "a"] {
+            if route == "a" {
+                set_route(&state, &AppType::Codex, "a")
+                    .await
+                    .expect("route a");
+            }
+            let doc = codex_doc();
+            assert_eq!(
+                doc["model_provider"].as_str(),
+                Some("custom"),
+                "{route}: {}",
+                codex_text()
+            );
+            assert!(doc.get("openai_base_url").is_none(), "{}", codex_text());
+            let table = &doc["model_providers"]["custom"];
+            assert_ne!(
+                table
+                    .get("requires_openai_auth")
+                    .and_then(|value| value.as_bool()),
+                Some(true),
+                "{route}: {}",
+                codex_text()
+            );
+            assert_eq!(
+                table["experimental_bearer_token"].as_str(),
+                Some(PROXY_TOKEN_PLACEHOLDER)
+            );
+            assert_eq!(codex_login_file(), Some(chatgpt_login("acct")));
+        }
+
+        set_paused(false);
+        resync_codex_proxy(&state).await.expect("resume");
+        let doc = codex_doc();
+        assert!(doc.get("model_provider").is_none(), "{}", codex_text());
+        assert!(doc.get("openai_base_url").is_some(), "{}", codex_text());
         exit(&state, &AppType::Codex).await.expect("exit");
     }
 
@@ -6765,8 +6970,8 @@ model_provider = "c"
         };
         let chain = |ctx: &crate::proxy::handler_context::RequestContext| {
             ctx.get_providers()
-                .into_iter()
-                .map(|provider| provider.id)
+                .iter()
+                .map(|provider| provider.id.clone())
                 .collect::<Vec<_>>()
         };
 
@@ -7180,7 +7385,7 @@ model_provider = "c"
         );
         assert_eq!(
             doc["model_catalog_json"].as_str(),
-            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+            Some(ours_catalog_pointer().as_str())
         );
         // 窗口类全局键会覆盖每一行，改写进路由那家自己的行。
         assert!(doc.get("model_context_window").is_none(), "{doc:?}");
@@ -7851,7 +8056,7 @@ model_provider = "c"
             .expect("routing");
         assert_eq!(
             codex_doc()["model_catalog_json"].as_str(),
-            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+            Some(ours_catalog_pointer().as_str())
         );
         assert_eq!(
             stale_clients_of(&state).await,
@@ -7940,7 +8145,7 @@ model_provider = "c"
         assert_eq!(notice, None);
         assert_eq!(
             codex_doc()["model_catalog_json"].as_str(),
-            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+            Some(ours_catalog_pointer().as_str())
         );
     }
 
@@ -7976,7 +8181,7 @@ model_provider = "c"
         );
         assert_eq!(
             codex_doc()["model_catalog_json"].as_str(),
-            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+            Some(ours_catalog_pointer().as_str())
         );
         let slugs: Vec<String> = codex_catalog()["models"]
             .as_array()

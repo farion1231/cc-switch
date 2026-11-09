@@ -12,7 +12,7 @@ use std::{
     sync::Arc,
 };
 
-fn apps() -> [AppType; 12] {
+fn apps() -> [AppType; 13] {
     [
         AppType::Claude,
         AppType::Codex,
@@ -24,6 +24,7 @@ fn apps() -> [AppType; 12] {
         AppType::Mcode,
         AppType::Kimi,
         AppType::Dsh,
+        AppType::Copilot,
         AppType::Agy,
         AppType::Omp,
     ]
@@ -38,19 +39,33 @@ impl Fixture {
     fn new() -> Self {
         support::reset_test_fs();
         let home = support::ensure_test_home();
-        for directory in [".hermes", ".pi", ".omp", ".minimax", ".kimi-code", ".dsh"] {
+        for directory in [
+            ".hermes",
+            ".pi",
+            ".omp",
+            ".minimax",
+            ".kimi-code",
+            ".dsh",
+            ".copilot",
+        ] {
             let path = home.join(directory);
             if path.exists() {
                 fs::remove_dir_all(path).unwrap();
             }
         }
-        let env = ["KIMI_CODE_HOME", "MINIMAX_DATA_DIR", "DSH_HOME"]
-            .into_iter()
-            .map(|key| (key, std::env::var_os(key)))
-            .collect();
+        let env = [
+            "KIMI_CODE_HOME",
+            "MINIMAX_DATA_DIR",
+            "DSH_HOME",
+            "COPILOT_HOME",
+        ]
+        .into_iter()
+        .map(|key| (key, std::env::var_os(key)))
+        .collect();
         std::env::set_var("KIMI_CODE_HOME", home.join(".kimi-code"));
         std::env::set_var("MINIMAX_DATA_DIR", home.join(".minimax"));
         std::env::set_var("DSH_HOME", home.join(".dsh"));
+        std::env::set_var("COPILOT_HOME", home.join(".copilot"));
         update_settings(AppSettings {
             pi_config_dir: Some(home.join(".pi/agent").to_string_lossy().into_owned()),
             omp_config_dir: Some(home.join(".omp/agent").to_string_lossy().into_owned()),
@@ -79,6 +94,7 @@ impl Fixture {
             AppType::Mcode => ".minimax/mcp.json",
             AppType::Kimi => ".kimi-code/mcp.json",
             AppType::Dsh => ".dsh/profiles/web/cordis.patch.yml",
+            AppType::Copilot => ".copilot/mcp-config.json",
             AppType::Agy => ".gemini/config/mcp_config.json",
             AppType::Omp => ".omp/agent/mcp.json",
             _ => unreachable!(),

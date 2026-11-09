@@ -10,7 +10,8 @@ import type { AppId } from "./types";
 
 export interface McpConnectivityResult {
   serverId: string;
-  connected: boolean;
+  /** `authRequired`: the server answered 401 and wants the client's own sign-in. */
+  status: "connected" | "authRequired" | "failed";
 }
 
 export const mcpApi = {

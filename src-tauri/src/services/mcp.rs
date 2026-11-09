@@ -49,6 +49,20 @@ impl McpService {
                     .unwrap_or(false)
             });
         // Native MCP writes and managed state commit together.
+        let save_with_copilot = || {
+            if server.apps.copilot || prev_apps.copilot {
+                mcp::copilot::sync_and_commit(
+                    &server.id,
+                    server
+                        .apps
+                        .copilot
+                        .then_some(server.server_for_app(&AppType::Copilot)),
+                    || state.db.save_mcp_server(&server),
+                )
+            } else {
+                state.db.save_mcp_server(&server)
+            }
+        };
         let save_with_omp = || {
             if managed_omp {
                 mcp::omp::sync_and_commit(
@@ -61,10 +75,10 @@ impl McpService {
                             .unwrap_or(server.server_for_app(&AppType::Omp)),
                         server.apps.omp,
                     ),
-                    || state.db.save_mcp_server(&server),
+                    save_with_copilot,
                 )
             } else {
-                state.db.save_mcp_server(&server)
+                save_with_copilot()
             }
         };
         // MCode / Pi 的文件和数据库一起提交：任一步失败都恢复原样
@@ -175,11 +189,18 @@ impl McpService {
         let server = state.db.get_all_mcp_servers()?.shift_remove(id);
 
         if let Some(server) = server {
+            let delete_with_copilot = || {
+                if server.apps.copilot {
+                    mcp::copilot::delete_and_commit(id, || state.db.delete_mcp_server(id))
+                } else {
+                    mcp::copilot::forget_options_and_commit(id, || state.db.delete_mcp_server(id))
+                }
+            };
             let delete_with_dsh = || {
                 if server.apps.dsh {
-                    mcp::dsh::sync_and_commit(id, None, || state.db.delete_mcp_server(id))
+                    mcp::dsh::sync_and_commit(id, None, delete_with_copilot)
                 } else {
-                    state.db.delete_mcp_server(id)
+                    delete_with_copilot()
                 }
             };
             let delete_with_kimi = || {
@@ -280,6 +301,7 @@ impl McpService {
                 | AppType::Omp
                 | AppType::Pi
                 | AppType::Agy
+                | AppType::Copilot
         ) {
             if let Some(server) = state.db.get_all_mcp_servers()?.get(server_id) {
                 let spec = enabled.then_some(server.server_for_app(&app));
@@ -298,6 +320,8 @@ impl McpService {
                     mcp::dsh::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::Kimi {
                     mcp::kimi::sync_and_commit(server_id, spec, commit)?;
+                } else if app == AppType::Copilot {
+                    mcp::copilot::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::Mcode {
                     mcp::mcode::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::Omp {
@@ -343,6 +367,7 @@ impl McpService {
                     | AppType::Omp
                     | AppType::Pi
                     | AppType::Agy
+                    | AppType::Copilot
             ) {
                 continue; // Already written before saving the managed state.
             }
@@ -422,6 +447,7 @@ impl McpService {
             AppType::Mcode => mcp::mcode::sync(&server.id, Some(server.server_for_app(app)))?,
             AppType::Kimi => mcp::kimi::sync(&server.id, Some(server.server_for_app(app)))?,
             AppType::Dsh => mcp::dsh::sync(&server.id, Some(server.server_for_app(app)))?,
+            AppType::Copilot => mcp::copilot::sync(&server.id, Some(server.server_for_app(app)))?,
             AppType::Pi => mcp::pi::sync(&server.id, Some(server.server_for_app(app)))?,
             AppType::Agy => mcp::agy::sync(&server.id, Some(server.server_for_app(app)))?,
             AppType::Omp => mcp::sync_single_server_to_omp(&server.id, server.server_for_app(app))?,
@@ -445,6 +471,7 @@ impl McpService {
                     | AppType::Omp
                     | AppType::Pi
                     | AppType::Agy
+                    | AppType::Copilot
             ) {
                 continue; // Already removed before deleting the managed record.
             }
@@ -480,6 +507,7 @@ impl McpService {
             AppType::Mcode => mcp::mcode::sync(id, None)?,
             AppType::Kimi => mcp::kimi::sync(id, None)?,
             AppType::Dsh => mcp::dsh::sync(id, None)?,
+            AppType::Copilot => mcp::copilot::sync(id, None)?,
             AppType::Pi => mcp::pi::sync(id, None)?,
             AppType::Agy => mcp::agy::sync(id, None)?,
             AppType::Omp => mcp::remove_server_from_omp(id)?,
@@ -596,6 +624,7 @@ impl McpService {
                     | AppType::Omp
                     | AppType::Pi
                     | AppType::Agy
+                    | AppType::Copilot
             ) {
                 Self::remove_server_from_app(state, &server.id, app)
             } else {
@@ -929,7 +958,7 @@ impl McpService {
         let mut total = 0;
         let mut failures: Vec<String> = Vec::new();
 
-        let results: [(&str, Result<usize, AppError>); 12] = [
+        let results: [(&str, Result<usize, AppError>); 13] = [
             ("claude", Self::import_from_claude(state)),
             ("codex", Self::import_from_codex(state)),
             ("gemini", Self::import_from_gemini(state)),
@@ -942,6 +971,7 @@ impl McpService {
             ("agy", mcp::agy::import(state)),
             ("pi", mcp::pi::import(state)),
             ("omp", Self::import_from_omp(state)),
+            ("copilot", mcp::copilot::import(state)),
         ];
         for (app, result) in results {
             match result {

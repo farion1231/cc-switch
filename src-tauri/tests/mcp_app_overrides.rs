@@ -299,6 +299,23 @@ fn invalid_overrides_fail_before_any_database_or_live_write() {
             codex_before
         );
     }
+    let mut invalid_copilot = independent_server();
+    invalid_copilot.name = "must not persist".into();
+    invalid_copilot.app_overrides.copilot = Some(json!({"type":"http","url":""}));
+    let error = McpService::upsert_server(&state, invalid_copilot.clone()).unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("mcp.error.invalidOverrideCopilot"));
+    assert!(state.db.save_mcp_server(&invalid_copilot).is_err());
+    assert_eq!(
+        serde_json::to_value(&McpService::get_all_servers(&state).unwrap()["serena"]).unwrap(),
+        original
+    );
+    assert_eq!(fs::read(home.join(".claude.json")).unwrap(), claude_before);
+    assert_eq!(
+        fs::read(home.join(".codex/config.toml")).unwrap(),
+        codex_before
+    );
     let mut unsupported = original;
     unsupported["appOverrides"]["unsupported-agent"] = json!({"command":"unsupported"});
     assert!(serde_json::from_value::<McpServer>(unsupported).is_err());
