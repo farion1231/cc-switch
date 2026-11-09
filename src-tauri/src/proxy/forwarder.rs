@@ -2110,6 +2110,29 @@ impl RequestForwarder {
                     provider.id
                 );
             }
+
+            // 原生 Responses 直连：历史里的 `function_call.arguments` 是模型产出的原始字符串。
+            // 模型偶尔会在一个参数对象里重复写同一个键（实测 `_web_run` 的 `time` 两次），
+            // 宽松解析（Codex / serde_json）取后值照常执行，但严格校验的上游（火山方舟实测）
+            // 会以 `input[189].arguments ... duplicate field "time"` 拒掉整条请求；这条历史
+            // 每轮都重放，线程从此不可用。只合并真正含重复键的条目，其余字节不变。
+            //
+            // 不按厂商收窄：Chat / Anthropic 转换路径对**所有**上游都会 canonical 化
+            // `arguments`（见 `transform_codex_chat::responses_function_call_to_chat_tool_call`），
+            // 原生透传只是补齐同一层规范化；按域名判断反而会漏掉中转站、BytePlus 和自定义域名。
+            // 官方上游不参与：OpenAI 接受重复键，保持请求逐字节原样。
+            if !codex_official_auth_passthrough {
+                let repaired =
+                    super::providers::codex_responses_arguments::dedupe_duplicate_argument_keys(
+                        &mut request_body,
+                    );
+                if repaired > 0 {
+                    log::debug!(
+                        "[Codex] Merged repeated JSON keys in {repaired} replayed function_call argument object(s) (provider={})",
+                        provider.id
+                    );
+                }
+            }
         }
 
         // Native Responses passthrough to xAI, directly or via Copilot/Grok.
