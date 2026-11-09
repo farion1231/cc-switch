@@ -159,9 +159,9 @@ impl McpService {
         if let Some(server) = server {
             let delete_with_copilot = || {
                 if server.apps.copilot {
-                    mcp::copilot::sync_and_commit(id, None, || state.db.delete_mcp_server(id))
+                    mcp::copilot::delete_and_commit(id, || state.db.delete_mcp_server(id))
                 } else {
-                    state.db.delete_mcp_server(id)
+                    mcp::copilot::forget_options_and_commit(id, || state.db.delete_mcp_server(id))
                 }
             };
             let delete_with_dsh = || {
