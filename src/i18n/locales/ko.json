@@ -391,7 +391,14 @@
     "windowControlFailed": "창 제어 실패: {{error}}",
     "officialBlockedByProxy": "로컬 라우팅이 활성화된 동안에는 공식 공급자로 전환할 수 없습니다. 공식 API와 함께 라우팅을 사용하면 계정이 차단될 수 있습니다.",
     "proxyOfficialWarning": "현재 선택한 공급자({{name}})는 공식 공급자입니다. 로컬 라우팅을 사용하기 전에 타사 공급자로 전환하는 것을 고려하세요.",
-    "proxyLoopbackHijacked": "{{app}}에서 로컬 라우팅 주소 {{origin}}으로 보내는 요청이 시스템 프록시를 거치게 되어 {{app}}에서 502 오류가 발생합니다. 프록시 도구에서 루프백 주소에 직접 연결하도록 설정하세요(예: Clash 규칙 맨 위에 IP-CIDR,127.0.0.0/8,DIRECT,no-resolve 추가). 설정을 변경한 후 {{app}}을 완전히 종료하고 다시 실행하세요."
+    "proxyLoopbackHijacked": "{{app}}에서 로컬 라우팅 주소 {{origin}}으로 보내는 요청이 시스템 프록시를 거치게 되어 {{app}}에서 502 오류가 발생합니다. 프록시 도구에서 루프백 주소에 직접 연결하도록 설정하세요(예: Clash 규칙 맨 위에 IP-CIDR,127.0.0.0/8,DIRECT,no-resolve 추가). 설정을 변경한 후 {{app}}을 완전히 종료하고 다시 실행하세요.",
+    "codexHistorySplit": {
+      "hint": "{{previous}}의 기존 세션 {{count}}개가 이제 읽기 전용입니다",
+      "officialBucket": "공식 구독",
+      "thirdPartyBucket": "타사 공급자",
+      "migrationFinished": "이전 세션 {{count}}개를 옮겼습니다. Codex를 다시 시작하면 이어갈 수 있습니다.",
+      "migrationFailed": "이전 세션을 옮기지 못했습니다: {{error}}. 다음에 CC Switch를 실행하면 자동으로 다시 시도합니다."
+    }
   },
   "confirm": {
     "deleteProvider": "공급자 삭제",
@@ -411,14 +418,14 @@
     },
     "unifyCodexHistory": {
       "title": "Codex 세션 기록 통합",
-      "message": "켜면 Codex CLI의 resume 목록에 공식 구독과 타사 공급자의 세션이 함께 표시됩니다(Codex 데스크톱 버전은 업데이트 후 이미 모든 세션을 표시하므로 영향을 받지 않습니다). 주의: 다른 공급자로 이전 세션을 이어갈 때 해당 백엔드가 encrypted_content 추론 내용을 복호화하지 못해 실패할 수 있습니다.\n\n기존 공식 세션 기록도 공유 목록으로 옮길 수 있습니다(이전하기 전에 ~/.cc-switch/backups에 자동 백업되며, 이 옵션을 끌 때 복원 여부를 선택할 수 있습니다).",
+      "message": "켜면 공식 구독도 공유된 custom 공급자 ID를 사용하여 공식 세션과 타사 세션이 같은 그룹에 속하게 됩니다. 최신 Codex에서는 두 종류의 세션을 모두 이어갈 수 있으며, CLI의 resume 목록에도 함께 표시됩니다.\n\n기존 공식 세션도 함께 옮길 수 있습니다. 이 옵션을 선택하면 이후 실행할 때마다 공식 그룹에 남아 있는 세션도 옮깁니다(옮기기 전에 ~/.cc-switch/backups에 자동 백업되며, 기능을 끌 때 복원할 수 있습니다). 옮기지 않은 세션은 최신 Codex에서 읽기 전용으로 남습니다. 옮긴 후 Codex를 다시 시작하세요.\n\n주의: 다른 공급자에서 이전 세션을 이어갈 때 해당 백엔드가 encrypted_content 추론 내용을 복호화하지 못해 실패할 수 있습니다.",
       "migrateExisting": "기존 공식 세션 기록도 마이그레이션",
       "confirm": "확인하고 활성화하기"
     },
     "unifyCodexHistoryOff": {
       "title": "통합 세션 기록 끄기",
-      "message": "끄면 Codex CLI는 공식 구독 및 타사 공급자에 대한 별도의 세션 목록으로 돌아갑니다(데스크톱 앱에는 여전히 모든 세션이 표시됨). 이 기능이 켜져 있는 동안 생성된 세션은 구분할 수 없으므로 타사 기록에 유지되며 CLI는 공식 구독에 표시하지 않습니다.",
-      "restoreBackup": "활성화 시점에 마이그레이션된 공식 세션을 공식 기록으로 복원(백업에서 정확한 복원)",
+      "message": "끄면 공식 세션과 타사 세션이 다시 두 그룹으로 나뉩니다. 최신 Codex에서는 현재 공급자 그룹의 세션만 이어갈 수 있으며, 다른 그룹은 읽기 전용이 됩니다. 이 기능이 켜져 있는 동안 생성된 세션은 출처를 구분할 수 없어 타사 그룹에 남습니다.",
+      "restoreBackup": "옮긴 공식 세션을 공식 그룹으로 복원(백업을 기준으로 정확히 복원)",
       "confirm": "끄기"
     },
     "usage": {
@@ -439,6 +446,12 @@
       "quotaDisplay": "할당량 표시",
       "quotaDisplayLeft": "남음",
       "quotaDisplayUsed": "사용됨",
+      "density": "화면 밀도",
+      "densityHelp": "넓게 설정하면 글자가 커지고 컨트롤의 높이가 늘어납니다. 좁게 설정하면 기존 크기를 유지합니다.",
+      "densityComfortable": "넓게",
+      "densityCompact": "좁게",
+      "zoom": "화면 배율",
+      "zoomHelp": "{{shortcut}} + / {{shortcut}} − 키로 조절하고, {{shortcut}} 0 키로 초기화할 수도 있습니다.",
       "quotaDisplayHelp": "공급자 카드, 인증 센터 및 트레이에서 각 할당량 구간의 남은 양과 사용한 양 중 무엇을 표시할지 선택합니다. 잔액과 Credits는 항상 남은 양을 표시합니다.",
       "sidebarAndHeader": "사이드바 및 헤더",
       "visibleApps": "사이드바에 표시되는 앱",
@@ -905,10 +918,18 @@
       "hint": "두 사용률 중 하나라도 임계값에 도달하면 요청을 일시 중지합니다. 기본값은 95% / 98%이며, 저장하면 새 요청에 즉시 적용됩니다.",
       "invalid": "1~99 사이의 정수를 입력하세요."
     },
+    "codexPauseOfficialLogin": {
+      "title": "공식 로그인 사용 일시 중지",
+      "description": "공식 할당량을 모두 사용하여 Codex의 전송 버튼이 잠겼을 때 켜면 통합 및 라우팅 모드에서 타사 모델을 계속 사용할 수 있습니다. 켜거나 끈 후에는 Codex를 완전히 종료하고 다시 실행하세요.",
+      "help": "공식 할당량을 모두 사용하여 Codex의 전송 버튼이 잠겼을 때(타사 모델을 선택해도 전송할 수 없을 때) 켜세요. Codex가 공식 로그인을 사용하지 않게 되어 공식 할당량 때문에 전송 버튼이 잠기지 않으며, 통합 및 라우팅 모드에서 타사 모델을 계속 사용할 수 있습니다. 로그인 정보는 이 컴퓨터에 그대로 저장되며 로그아웃되지 않습니다. 라우팅 또는 통합 모드에서만 적용되며, 직접 연결에는 영향을 주지 않습니다. 켜져 있는 동안에는 공식 모델을 사용할 수 없어 타사 모델을 선택하라는 안내가 표시됩니다. Codex에 계정 및 사용량 정보가 표시되지 않으며, 처음 실행할 때 초기 설정 질문이 나타날 수 있습니다. 사이드바의 ‘프로젝트’에 있던 기존 대화는 일시적으로 숨겨집니다(삭제되지 않으며, 이 기능을 끄면 다시 표시됩니다). 새 세션은 custom 그룹에 기록되며, 공식 공급자로 돌아가면 읽기 전용이 됩니다. 공식 할당량이 복구되면 이 기능을 끄세요. 켜거나 끈 후에는 Codex를 완전히 종료하고 다시 실행하세요.",
+      "pausedToast": "공식 로그인 사용을 일시 중지했습니다. Codex를 완전히 종료하고 다시 실행하면 적용됩니다.",
+      "resumedToast": "공식 로그인 사용을 재개했습니다. Codex를 완전히 종료하고 다시 실행하면 적용됩니다.",
+      "saveFailed": "저장하지 못했습니다: {{error}}"
+    },
     "preserveCodexOfficialAuthOnSwitch": "직접 연결 전환 시 공식 로그인 유지",
     "preserveCodexOfficialAuthOnSwitchDescription": "라우팅이 앱 설정을 관리하지 않는 상태에서 타사 공급자로 전환할 때 Codex 공식 로그인을 유지할지 정합니다. 라우팅이 앱 설정을 관리하는 동안에는 항상 공식 로그인을 유지합니다.",
     "unifyCodexSessionHistory": "Codex 세션 기록 통합",
-    "unifyCodexSessionHistoryDescription": "Codex CLI에만 영향을 줍니다. CLI의 이어가기 목록에는 현재 공급자의 세션만 표시됩니다. 켜면 공식 구독도 공유된 ‘custom’ 공급자 ID를 사용하므로 공식 세션과 타사 세션이 한 목록에 표시됩니다. Codex 데스크톱 앱은 업데이트 후 모든 세션을 표시하므로 데스크톱만 사용한다면 켤 필요가 없습니다. 기존 공식 세션도 함께 옮길 수 있으며, 옮기기 전에 자동 백업하고 기능을 끌 때 복원할 수 있습니다. 주의: 다른 공급자에서 이전 세션을 이어갈 때 해당 백엔드가 세션의 encrypted_content 추론 내용을 복호화하지 못해 실패할 수 있습니다.",
+    "unifyCodexSessionHistoryDescription": "공식 구독도 타사 공급자와 동일한 custom 공급자 ID를 사용하여 모든 세션이 같은 그룹에 속하게 됩니다. 최신 Codex(데스크톱 26.1103 / CLI 0.167 이상)에서는 현재 공급자 그룹의 세션만 이어갈 수 있으며, 다른 그룹은 읽기 전용이 됩니다. CLI의 resume 목록에도 현재 그룹만 표시됩니다. 공식 공급자와 타사 공급자 사이를 자주 전환한다면 이 기능을 켜는 것이 좋습니다. 공식 세션을 공유 그룹으로 옮길 수 있으며(옮기기 전에 자동 백업), 기능을 끌 때 백업에서 복원할 수 있습니다. 주의: 다른 공급자에서 이전 세션을 이어갈 때 해당 백엔드가 세션의 encrypted_content 추론 내용을 복호화하지 못해 실패할 수 있습니다.",
     "codexStackClassicSubagents": "통합 모드에서 기존 서브에이전트 도구 사용",
     "codexStackClassicSubagentsDescription": "주 에이전트와 서브에이전트가 서로 다른 공급자를 사용한다면 반드시 켜야 합니다. 그렇지 않으면 서브에이전트가 작업을 받지 못합니다.",
     "codexStackClassicSubagentsForcedV2": "Codex의 config.toml에서 [features] multi_agent_v2가 켜져 있습니다. 이 설정보다 우선하므로 해당 스위치는 적용되지 않습니다.",
@@ -1332,6 +1353,14 @@
   },
   "sessionManager": {
     "searchPlaceholder": "제목, 폴더, 첫 번째/마지막 메시지 또는 세션 ID 검색",
+    "searchPlaceholderContent": "제목, 폴더, 메시지 본문 또는 세션 ID 검색",
+    "emptySearchContent": "제목, 폴더 또는 메시지 본문에 “{{query}}”이(가) 포함된 세션이 없습니다",
+    "contentSearchToggle": "메시지 본문 검색",
+    "contentSearchToggleFailed": "메시지 본문 검색 설정을 변경하지 못했습니다: {{error}}",
+    "contentIndexing": "메시지 본문 색인을 생성하는 중입니다({{processed}}/{{total}}). 본문 검색 결과가 아직 완전하지 않을 수 있습니다",
+    "contentHitPrefix": "본문: ",
+    "contentHitMore": " (메시지 {{count}}개 일치)",
+    "moreContentHits": "본문 검색 결과 더 보기",
     "searchSessions": "세션 검색",
     "sessionList": "세션 목록",
     "unknownDirectory": "알 수 없는 디렉터리",
@@ -1417,6 +1446,8 @@
     "emptyAppHint": "CC Switch는 {{path}}에서 세션 데이터를 읽습니다.",
     "emptySearch": "제목, 폴더 또는 첫 번째/마지막 메시지가 검색어와 일치하는 세션이 없습니다: \"{{query}}\"",
     "clearSearchAction": "검색 지우기",
+    "emptySearchEnableContent": "메시지 본문 검색",
+    "emptySearchEnableContentHint": "켜면 메시지 본문의 로컬 색인을 생성합니다",
     "backToList": "세션 목록으로 돌아가기",
     "back": "뒤로",
     "sessionOf": "{{app}} 세션",
@@ -1656,6 +1687,7 @@
     "providerKeyStatusLoading": "공급자 식별자 상태를 불러오는 중입니다. 잠시 후 다시 시도해 주세요.",
     "getApiKey": "API 키 가져오기",
     "partnerPromotion": {
+      "tokenplus": "TokenPlus로 더 안정적이고 경제적이며 편리한 AI 코딩을 경험하세요. 하나의 키로 여러 공급자의 모델을 이용하고, 지능형 전환으로 안정성을 유지하며, 최적의 가격 선택과 캐시 최적화로 비용을 절감할 수 있습니다. 청구 내역, 팀, 데이터 보안도 한곳에서 관리하세요.",
       "kimi": "신규 Kimi 사용자는 첫 충전 성공 금액의 10%를 보너스 API 크레딧으로 최대 1,000위안까지 돌려받습니다.",
       "a6api": "A6API는 시장에서 자동으로 가장 낮은 가격을 선택하는 실시간 가격 리더보드가 내장된 토큰 집계 플랫폼입니다. 원활하고 안정적으로 작동하며 사용하기 쉽습니다. 번거롭게 가격을 비교할 필요가 없습니다. 지금 등록하여 무료 평가판 크레딧을 받으세요!",
       "sudocode": "SudoCode는 하나의 API 키로 Claude Code와 Claude Desktop에서는 Claude Opus 5를, Codex에서는 GPT-5.6을 사용할 수 있게 합니다. CC Switch 사용자는 가입 후 QQ 그룹 726213516에 참여하고 그룹 관리자에게 연락하면 체험 크레딧 10위안을 받을 수 있습니다.",
@@ -2633,6 +2665,9 @@
       "byRequest": "요청 모델에 따라 요금 책정",
       "edit": "변경",
       "tableTitle": "모델 요금 · {{count}}",
+      "searchPlaceholder": "모델 ID 또는 이름 검색",
+      "noSearchMatch": "“{{query}}”와(과) 일치하는 모델이 없습니다",
+      "addForQuery": "{{query}} 요금 추가",
       "costHelpTitle": "비용 계산 방법",
       "costHelp": "각 요청의 비용은 해당 모델의 요금을 기준으로 계산합니다. 신규 입력, 출력, 캐시 적중 및 캐시 쓰기 토큰 수에 각각의 단가를 곱한 뒤 합산합니다.",
       "unit": "USD / 100만 토큰",
@@ -4206,6 +4241,7 @@
       "geminiFlashLite": "Lite",
       "agyGeminiFiveHour": "Gemini 5시간",
       "agyGeminiWeekly": "Gemini 주간",
+      "agyGeminiArgonWeekly": "Argon 주간",
       "agyThirdPartyFiveHour": "Claude 5시간",
       "agyThirdPartyWeekly": "Claude 주간",
       "monthly": "월",
@@ -4225,6 +4261,7 @@
     "agyThirdParty": "Claude/GPT",
     "agyGeminiFiveHour": "Gemini 5시간",
     "agyGeminiWeekly": "Gemini 주간",
+    "agyGeminiArgonWeekly": "Argon 주간",
     "agyThirdPartyFiveHour": "Claude/GPT 5시간",
     "agyThirdPartyWeekly": "Claude/GPT 주간",
     "weeklyLimit": "주간",
@@ -4295,6 +4332,8 @@
     "notRunnable": "실행할 수 없습니다",
     "updateNeedsNode": "새 버전 {{version}}에는 Node {{required}}가 필요하지만 이 설치는 Node {{current}}을(를) 사용합니다. 먼저 Node를 업그레이드하세요.",
     "otherInstalls": "추가 설치 {{count}}개",
+    "toolQueued": "대기 중, 다른 앱의 작업이 끝나기를 기다리는 중입니다",
+    "toolElapsed": "{{time}} 경과",
     "installsFound": "설치 항목 {{count}}개를 찾았습니다.",
     "wslFlag": "플래그",
     "installHint": {
@@ -4375,6 +4414,9 @@
       "serviceDown": "{{app}}에서 {{mode}} 모드를 사용 중이지만 라우팅 서비스가 실행되고 있지 않아 요청이 실패합니다.",
       "startService": "서비스 시작",
       "backToDirect": "직접 연결로 돌아가기",
+      "officialLoginPaused": "Codex 공식 로그인 사용이 일시 중지되었습니다",
+      "officialLoginPausedBody": "공식 모델을 사용할 수 없으며, Codex 사이드바의 ‘프로젝트’에 있던 기존 대화가 일시적으로 숨겨져 있습니다. 공식 할당량이 복구되면 ‘공식 로그인 사용 재개’를 누른 다음 Codex를 완전히 종료하고 다시 실행하세요.",
+      "resumeOfficialLogin": "공식 로그인 사용 재개",
       "attachFailed": "이전에 {{mode}} 모드에 다시 연결하지 못하여 {{app}}을(를) 직접 연결로 되돌렸습니다."
     },
     "toast": {
@@ -4845,6 +4887,7 @@
     "rowFail": "{{app}}에서 활성화 실패: {{error}}",
     "fixSync": "동기화 방식 변경",
     "rowMoreAria": "{{name}}에 대한 추가 작업",
+    "rowUpdateAria": "{{name}} 업데이트",
     "openDir": "폴더 열기",
     "uninstallEllipsis": "제거",
     "listLabel": "설치된 스킬",
@@ -4952,9 +4995,6 @@
       "discoverBody": "목록이 완전하지 않을 수 있습니다.",
       "updatesBody": "이 저장소의 스킬은 확인하지 못했으므로 결과가 완전하지 않을 수 있습니다."
     },
-    "headerUpdates": "업데이트 {{count}}개",
-    "headerUpdatesShow": "업데이트가 있는 스킬만 표시",
-    "headerUpdatesClear": "모든 스킬 표시",
     "updateAllCount": "모두 업데이트 ({{count}}개)",
     "updatingProgress": "업데이트 중 {{done}}/{{total}}…"
   },
