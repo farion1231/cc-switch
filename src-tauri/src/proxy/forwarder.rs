@@ -8,7 +8,7 @@ use super::{
     content_encoding::{decompress_body_with_limit, get_content_encoding},
     error::*,
     failover_switch::FailoverSwitchManager,
-    json_canonical::{canonicalize_value, short_value_hash},
+    json_canonical::{canonicalize_tool_arguments_str, canonicalize_value, short_value_hash},
     log_codes::fwd as log_fwd,
     opaque_state_rectifier::{
         carries_encrypted_agent_task, detect_opaque_state_rejection, rectify_opaque_state,
@@ -4673,8 +4673,48 @@ fn is_protected_local_proxy_override_header(name: &http::HeaderName) -> bool {
     )
 }
 
+/// Sanitize tool-call `arguments` strings in a request body.
+///
+/// Tool call `arguments` are JSON-encoded strings. Some upstreams (e.g. 火山
+/// Coding Plan) reject requests where the arguments string contains duplicate
+/// JSON keys, even though lenient upstreams (OpenAI) accept them. This function
+/// parses each arguments string and re-serializes it canonically, which
+/// deduplicates keys (last value wins, matching serde_json's default).
+fn sanitize_tool_arguments(body: &mut Value) {
+    /// Canonicalize an `arguments` field in a JSON object, if it is a string.
+    fn canonicalize_arguments_in_object(obj: &mut serde_json::Map<String, Value>) {
+        if let Some(Value::String(s)) = obj.get_mut("arguments") {
+            *s = canonicalize_tool_arguments_str(s);
+        }
+    }
+
+    // Responses API: body.input[].arguments
+    if let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) {
+        for item in input.iter_mut() {
+            if let Some(obj) = item.as_object_mut() {
+                canonicalize_arguments_in_object(obj);
+            }
+        }
+    }
+
+    // Chat Completions API: body.messages[].tool_calls[].function.arguments
+    if let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) {
+        for msg in messages.iter_mut() {
+            if let Some(tool_calls) = msg.get_mut("tool_calls").and_then(Value::as_array_mut) {
+                for tc in tool_calls.iter_mut() {
+                    if let Some(function) = tc.get_mut("function").and_then(Value::as_object_mut) {
+                        canonicalize_arguments_in_object(function);
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn prepare_upstream_request_body(request_body: Value) -> Value {
-    canonicalize_value(filter_private_params_with_whitelist(request_body, &[]))
+    let mut body = canonicalize_value(filter_private_params_with_whitelist(request_body, &[]));
+    sanitize_tool_arguments(&mut body);
+    body
 }
 
 fn log_prompt_cache_trace(
@@ -5183,6 +5223,76 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&prepared).unwrap(),
             r#"{"a":2,"tools":[{"name":"lookup","parameters":{"properties":{"_id":{"type":"string"},"a":{"type":"string"},"b":{"type":"number"}},"type":"object"}}],"z":1}"#
+        );
+    }
+
+    #[test]
+    fn prepare_upstream_request_body_deduplicates_arguments_json_keys() {
+        // #9339: a tool-call `arguments` string with duplicate JSON keys is
+        // rejected by strict upstreams (e.g. 火山 Coding Plan) even though
+        // lenient ones (OpenAI) accept it. The proxy must canonicalize the
+        // arguments string so duplicate keys are collapsed (last value wins).
+        let body = json!({
+            "model": "gpt-4",
+            "input": [
+                {
+                    "type": "function_call",
+                    "name": "_web_run",
+                    "arguments": r#"{"time": null, "time": null, "query": "test"}"#
+                }
+            ]
+        });
+
+        let prepared = prepare_upstream_request_body(body);
+        let arguments = prepared["input"][0]["arguments"]
+            .as_str()
+            .expect("arguments should still be a string");
+        let parsed: serde_json::Value =
+            serde_json::from_str(arguments).expect("arguments should be valid JSON");
+        assert_eq!(
+            parsed,
+            json!({"query": "test", "time": null}),
+            "duplicate keys should be collapsed"
+        );
+        // Ensure no duplicate keys remain by checking the raw string has only
+        // one occurrence of `"time"`.
+        assert_eq!(
+            arguments.matches("\"time\"").count(),
+            1,
+            "arguments string should contain exactly one `time` key"
+        );
+    }
+
+    #[test]
+    fn prepare_upstream_request_body_deduplicates_chat_tool_call_arguments() {
+        // Chat Completions format: messages[].tool_calls[].function.arguments
+        let body = json!({
+            "model": "gpt-4",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "search",
+                                "arguments": r#"{"q": "a", "q": "b"}"#
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let prepared = prepare_upstream_request_body(body);
+        let arguments = prepared["messages"][0]["tool_calls"][0]["function"]["arguments"]
+            .as_str()
+            .expect("arguments should still be a string");
+        assert_eq!(
+            arguments.matches("\"q\"").count(),
+            1,
+            "arguments string should contain exactly one `q` key"
         );
     }
 
