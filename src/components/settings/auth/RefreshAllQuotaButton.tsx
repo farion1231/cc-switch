@@ -19,7 +19,10 @@ const QUOTA_SERVICES = new Set([
   "agy_oauth",
 ]);
 
-/** 当前页面上（有组件在用）的账号额度。只手动查询时这些 query 是 disabled 的，不算 active */
+/**
+ * 当前页面上（有组件在用）的账号额度。只手动查询时这些 query 是 disabled 的，
+ * `queryClient.refetchQueries` 会把 disabled 的过滤掉，所以要直接对 query 调 `fetch()`。
+ */
 function isShownAccountQuotaQuery(query: Query): boolean {
   return query.getObserversCount() > 0 && isAccountQuotaQuery(query);
 }
@@ -50,9 +53,12 @@ export function RefreshAllQuotaButton() {
       size="regular"
       disabled={fetching}
       onClick={() =>
-        void queryClient.refetchQueries({
-          predicate: isShownAccountQuotaQuery,
-        })
+        void Promise.all(
+          queryClient
+            .getQueryCache()
+            .findAll({ predicate: isShownAccountQuotaQuery })
+            .map((query) => query.fetch().catch(() => undefined)),
+        )
       }
     >
       <RefreshCw
