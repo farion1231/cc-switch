@@ -48,6 +48,11 @@ impl ChatgptProxyConfig {
             return Ok(());
         }
         let url = self.url.trim();
+        if !url.contains("://") {
+            return Err(
+                "Proxy URL must include :// (for example http://127.0.0.1:7890)".to_string(),
+            );
+        }
         let parsed = reqwest::Url::parse(url).map_err(|e| format!("Invalid proxy URL: {e}"))?;
         if parsed.host_str().is_none() {
             return Err(
