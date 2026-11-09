@@ -9,6 +9,7 @@ import type { ModeAppId } from "@/config/appConfig";
 import type { AppMode } from "@/types/proxy";
 import { SwitchModePanel } from "@/components/providers/mode/SwitchModePanel";
 import { server } from "../msw/server";
+import { getSettings, setSettings } from "../msw/state";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
 vi.mock("sonner", () => ({
@@ -86,10 +87,18 @@ function renderPanel(
   onSwitch = vi.fn(),
 ) {
   const queryClient = createTestQueryClient();
+  const statusSlot = document.createElement("div");
   const view = render(
     <QueryClientProvider client={queryClient}>
+      <div
+        data-testid="connection-header"
+        ref={(node) => {
+          node?.appendChild(statusSlot);
+        }}
+      />
       <SwitchModePanel
         app={app}
+        statusSlot={statusSlot}
         providers={providers}
         currentProviderId={Object.keys(providers)[0] ?? ""}
         isLoading={false}
@@ -380,7 +389,9 @@ describe("SwitchModePanel — Claude Desktop", () => {
       map: provider("map"),
     });
 
-    expect(await screen.findByText("→ map")).toBeInTheDocument();
+    expect(
+      await screen.findByLabelText("mode.status.routeLead map"),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /mode\.names\.stack/ }),
     ).toBeInTheDocument();
@@ -792,7 +803,7 @@ describe("SwitchModePanel — mode layer", () => {
     renderPanel("claude", { a: provider("a"), kimi: provider("kimi") });
 
     // 等模式读到了再换页签：生效的模式一变，查看的那格会跳回生效的那格
-    await screen.findByText("→ a");
+    await screen.findByLabelText("mode.status.routeLead a");
     fireEvent.click(screen.getByRole("button", { name: /mode\.names\.stack/ }));
     // 默认和路由目标是同一个指针：路由中改它就是当场换路由，只能在切换时的确认框里选
     expect(await screen.findByTestId("menu-setDefault-kimi")).toBeDisabled();
@@ -864,6 +875,31 @@ describe("SwitchModePanel — mode layer", () => {
     );
   });
 
+  it.each(["route", "stack"] as const)(
+    "keeps %s status gray when the service runs but the app is detached",
+    async (mode) => {
+      mockMode(mode, "a");
+      server.use(
+        http.post(`${TAURI_ENDPOINT}/get_app_mode`, () =>
+          HttpResponse.json({
+            mode,
+            attached: false,
+            routeProviderId: "a",
+            directProviderId: "a",
+          }),
+        ),
+      );
+      renderPanel("claude", { a: provider("a") });
+      await screen.findByLabelText(new RegExp(`mode.status.${mode}Lead`));
+      expect(
+        screen.getByTestId("connection-header").querySelector(".bg-fg-3"),
+      ).not.toBeNull();
+      expect(
+        screen.getByTestId("connection-header").querySelector(`.bg-${mode}`),
+      ).toBeNull();
+    },
+  );
+
   it("shows only the route target in the status line, not the local address", async () => {
     mockMode("route", "route");
     server.use(
@@ -873,7 +909,14 @@ describe("SwitchModePanel — mode layer", () => {
     );
     renderPanel("gemini", { route: provider("route") });
 
-    expect(await screen.findByText("→ route")).toBeInTheDocument();
+    expect(
+      await screen.findByLabelText("mode.status.routeLead route"),
+    ).toHaveTextContent("route");
+    expect(screen.getByTestId("connection-header")).toHaveTextContent("route");
+    fireEvent.click(screen.getByRole("button", { name: "mode.names.direct" }));
+    expect(
+      screen.getByLabelText("mode.status.routeLead route"),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/15721/)).not.toBeInTheDocument();
   });
 });
@@ -910,5 +953,58 @@ describe("SwitchModePanel — tray needs-route request", () => {
       await screen.findByText("mode.dialog.needsRouteTitle"),
     ).toBeInTheDocument();
     expect(onHandled).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("SwitchModePanel — pause the Codex official login", () => {
+  const PAUSED_TITLE = "mode.notice.officialLoginPaused";
+  const TOGGLE = "settings.codexPauseOfficialLogin.title";
+
+  it("keeps a notice up while paused in route mode and resumes from it", async () => {
+    const user = userEvent.setup();
+    setSettings({ codexProxyWithoutOfficialLogin: true });
+    mockMode("route", "route");
+    renderPanel("codex", { route: provider("route") });
+
+    expect(await screen.findByText(PAUSED_TITLE)).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "mode.notice.resumeOfficialLogin" }),
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByText(PAUSED_TITLE)).not.toBeInTheDocument(),
+    );
+    expect(getSettings().codexProxyWithoutOfficialLogin).toBe(false);
+  });
+
+  it("shows no notice in direct mode, where the pause has no effect", async () => {
+    setSettings({ codexProxyWithoutOfficialLogin: true });
+    mockMode("direct", "route");
+    renderPanel("codex", { route: provider("route") });
+
+    await screen.findByTestId("card-route");
+    expect(screen.queryByText(PAUSED_TITLE)).not.toBeInTheDocument();
+  });
+
+  it("offers the switch in the route settings for Codex only", async () => {
+    const user = userEvent.setup();
+    mockMode("route", "route");
+    const codex = renderPanel("codex", { route: provider("route") });
+    await user.click(
+      await screen.findByRole("button", { name: "mode.routeSettings" }),
+    );
+    expect(
+      await screen.findByRole("switch", { name: TOGGLE }),
+    ).toBeInTheDocument();
+    codex.unmount();
+
+    renderPanel("claude", { route: provider("route") });
+    await user.click(
+      await screen.findByRole("button", { name: "mode.routeSettings" }),
+    );
+    await screen.findByText("mode.routeSettingsTitle");
+    expect(
+      screen.queryByRole("switch", { name: TOGGLE }),
+    ).not.toBeInTheDocument();
   });
 });

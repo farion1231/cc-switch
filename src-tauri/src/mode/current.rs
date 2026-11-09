@@ -103,11 +103,13 @@ pub fn local_direct_pointer(app: &AppType) -> Option<String> {
     crate::settings::get_current_provider(app)
 }
 
-/// 删除前检查：本地记录、DB 的 `is_current`、代理路由里任何一处指着它，就算正在用。
+/// 删除前检查：直连指针（同 [`provider_for`] 的 `Direct`）或代理路由指着它，就算正在用。
+///
+/// 和界面上禁用删除的判断是同一个集合。不再单独看 DB 的 `is_current`：本地记录有效时
+/// 它只是回退值，可能停在别的卡上（例如旧版 Claude Desktop 映射卡迁移后，本地指针改成了
+/// 官方、`is_current` 还留在映射卡上），单独看它会让一张界面上可删的卡点了删除却被拒绝。
 pub fn is_referenced(db: &Database, app: &AppType, id: &str) -> Result<bool, AppError> {
-    if crate::settings::get_current_provider(app).as_deref() == Some(id)
-        || db.get_current_provider(app.as_str())?.as_deref() == Some(id)
-    {
+    if provider_for(db, app, Purpose::Direct)?.as_deref() == Some(id) {
         return Ok(true);
     }
     Ok(mode_state(app).routes_to(id))

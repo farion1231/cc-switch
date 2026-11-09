@@ -1,6 +1,7 @@
 //! 供应商余额查询服务
 //!
-//! 支持 DeepSeek、StepFun、SiliconFlow、OpenRouter、Novita AI 的账户余额查询。
+//! 支持 DeepSeek、StepFun、SiliconFlow、OpenRouter、Novita AI 的账户余额查询；
+//! 智谱 GLM 的余额只作为套餐查询的回落（见 `query_zhipu_balance`），不参与自动检测。
 //! 返回 UsageResult 格式，与现有用量系统无缝对接。
 //!
 //! 错误通道语义（与 coding_plan / subscription 两个服务保持一致）：
@@ -110,11 +111,9 @@ async fn query_deepseek(api_key: &str) -> Result<UsageResult, String> {
     Ok(parse_deepseek_balance(&body))
 }
 
+// `is_available` 只表示余额够不够调用，不代表 Key 失效（失效是 401/403，上面已处理），
+// 所以不拿它判 is_valid，否则零余额 / 欠费会被显示成「套餐已过期」；交给 UI 按余额红字显示（#8812）。
 fn parse_deepseek_balance(body: &serde_json::Value) -> UsageResult {
-    let is_available = body
-        .get("is_available")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
     let mut data = Vec::new();
 
     if let Some(infos) = body.get("balance_infos").and_then(|v| v.as_array()) {
@@ -131,19 +130,15 @@ fn parse_deepseek_balance(body: &serde_json::Value) -> UsageResult {
                 total: None,
                 used: None,
                 unit: Some(currency.to_string()),
-                is_valid: Some(is_available),
-                invalid_message: if !is_available {
-                    Some("Insufficient balance".to_string())
-                } else {
-                    None
-                },
+                is_valid: Some(true),
+                invalid_message: None,
                 extra: None,
             });
         }
     }
 
     // 同一账号会列出 CNY / USD 两个币种钱包，扣费走有钱的那个。只要还有币种有余额，
-    // 就不再列出空钱包：否则空的那一行会显示「余额已用完」，两行还会让卡片自动展开（#8170）。
+    // 就不再列出空钱包：否则空的那一行会显示一条红字余额，两行还会让卡片自动展开（#8170）。
     if data.iter().any(|d| d.remaining.is_some_and(|v| v > 0.0)) {
         data.retain(|d| d.remaining.is_none_or(|v| v > 0.0));
     }
@@ -427,8 +422,104 @@ fn parse_novita_balance(body: &serde_json::Value) -> UsageResult {
             total: None,
             used: None,
             unit: Some("USD".to_string()),
-            // 余额为 0 或负数不代表 key 失效：交给 UI 显示「余额已用完」，
+            // 余额为 0 或负数不代表 key 失效：交给 UI 按余额红字显示，
             // 而不是标成套餐已过期（同 OpenRouter，#8175）
+            is_valid: Some(true),
+            invalid_message: None,
+            extra: None,
+        }]),
+        error: None,
+    }
+}
+
+// ── 智谱 GLM ────────────────────────────────────────────────
+// GET {open.bigmodel.cn | api.z.ai}/api/biz/account/query-customer-account-report
+// 没有公开文档。2026-10-18 用国内站按量 Key 实测：接受推理用的 API Key（带不带 Bearer
+// 都行；同在 /api/biz/ 下的其他接口回 403 "APIKey not allow access"，这个是有意开放的），
+// Response: { code, msg, success, data: { balance, availableBalance, frozenBalance, ... } }，
+// 单位人民币。国际站路由存在（无效 Key 回 401 而非 404），返回结构与币种未实测：
+// 按同一结构解析，币种记 USD。
+//
+// 只给智谱 token_plan 卡「账户没有 Coding Plan」时回落用（commands::provider），
+// 不进 detect_provider：智谱卡默认注入 token_plan 模板，余额模板再自动认智谱会和它抢。
+
+pub(crate) async fn query_zhipu_balance(
+    base_url: &str,
+    api_key: &str,
+) -> Result<UsageResult, String> {
+    let is_cn = base_url.to_lowercase().contains("bigmodel.cn");
+    let host = if is_cn {
+        "https://open.bigmodel.cn"
+    } else {
+        "https://api.z.ai"
+    };
+    let client = crate::proxy::http_client::get();
+
+    let resp = client
+        .get(format!(
+            "{host}/api/biz/account/query-customer-account-report"
+        ))
+        .header("Authorization", api_key) // 与套餐接口一致，不加 Bearer
+        .header("Accept", "application/json")
+        .header("Accept-Language", "en-US,en")
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await;
+
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => return Err(format!("Network error: {e}")),
+    };
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Ok(make_auth_error(status));
+    }
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
+    }
+
+    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
+    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return Err(format!("Failed to read response: {e}")),
+    };
+    let body: serde_json::Value = match serde_json::from_slice(&raw) {
+        Ok(v) => v,
+        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
+    };
+
+    Ok(parse_zhipu_balance(&body, is_cn))
+}
+
+fn parse_zhipu_balance(body: &serde_json::Value, is_cn: bool) -> UsageResult {
+    if body.get("success").and_then(|v| v.as_bool()) == Some(false) {
+        let msg = body
+            .get("msg")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error");
+        return make_error(format!("API error: {msg}"));
+    }
+    let data = body.get("data").filter(|d| d.is_object()).unwrap_or(body);
+    // availableBalance 是扣掉冻结后的可用余额；没有时退回 balance。
+    let Some(available) = parse_f64_field(data, "availableBalance")
+        .or_else(|| parse_f64_field(data, "balance"))
+        .filter(|v| v.is_finite())
+    else {
+        return make_error("Missing or invalid Zhipu balance".to_string());
+    };
+
+    UsageResult {
+        success: true,
+        data: Some(vec![UsageData {
+            plan_name: Some(if is_cn { "Zhipu GLM" } else { "Z.ai" }.to_string()),
+            remaining: Some(available),
+            total: None,
+            used: None,
+            unit: Some(if is_cn { "CNY" } else { "USD" }.to_string()),
+            // 余额为 0 不代表 Key 失效，交给 UI 按余额红字显示（同 OpenRouter，#8175）
             is_valid: Some(true),
             invalid_message: None,
             extra: None,
@@ -583,6 +674,21 @@ mod tests {
     }
 
     #[test]
+    fn deepseek_unavailable_balance_does_not_determine_key_validity() {
+        for (raw, expected) in [("-24.96", -24.96), ("-0.00", 0.0)] {
+            let result = parse_deepseek_balance(&json!({
+                "is_available": false,
+                "balance_infos": [{ "currency": "CNY", "total_balance": raw }]
+            }));
+            assert!(result.success);
+            let balance = result.data.unwrap().remove(0);
+            assert_eq!(balance.remaining, Some(expected));
+            assert_eq!(balance.is_valid, Some(true));
+            assert!(balance.invalid_message.is_none());
+        }
+    }
+
+    #[test]
     fn novita_balance_does_not_determine_key_validity() {
         for (raw, available) in [(0.0, 0.0), (-50000.0, -5.0), (255000.0, 25.5)] {
             let result = parse_novita_balance(&json!({ "availableBalance": raw }));
@@ -612,5 +718,55 @@ mod tests {
             assert!(result.data.is_none());
             assert!(result.error.is_some());
         }
+    }
+
+    /// 2026-10-18 国内站按量 Key 实测原文。
+    const ZHIPU_BALANCE_BODY: &str = r#"{"code":200,"msg":"操作成功","data":{"balance":14.68002004,"rechargeAmount":15.0,"giveAmount":0.0,"totalSpendAmount":0.31997996,"todaySpendAmount":null,"availableBalance":14.68002004,"frozenBalance":0.0,"creditBalance":null,"availableCreditBalance":null,"creditStatus":"NOT_OPEN","modelSpendAmountList":null,"isKA":false},"success":true}"#;
+
+    #[test]
+    fn zhipu_balance_shows_available_balance_in_site_currency() {
+        let body: serde_json::Value = serde_json::from_str(ZHIPU_BALANCE_BODY).unwrap();
+        let result = parse_zhipu_balance(&body, true);
+        assert!(result.success);
+        let balance = result.data.unwrap().remove(0);
+        assert_eq!(balance.remaining, Some(14.68002004));
+        assert_eq!(balance.unit.as_deref(), Some("CNY"));
+        assert_eq!(balance.plan_name.as_deref(), Some("Zhipu GLM"));
+        assert_eq!(balance.is_valid, Some(true));
+
+        // 国际站未实测：同结构、币种记 USD；可用余额缺失时退回 balance、数字串也认
+        let result = parse_zhipu_balance(
+            &json!({ "success": true, "data": { "balance": "3.5", "frozenBalance": 0 } }),
+            false,
+        );
+        let balance = result.data.unwrap().remove(0);
+        assert_eq!(balance.remaining, Some(3.5));
+        assert_eq!(balance.unit.as_deref(), Some("USD"));
+
+        // 用完不算 Key 失效
+        let result = parse_zhipu_balance(&json!({ "data": { "availableBalance": 0 } }), true);
+        assert_eq!(result.data.unwrap()[0].is_valid, Some(true));
+    }
+
+    #[test]
+    fn zhipu_balance_rejects_business_errors_and_missing_amounts() {
+        for body in [
+            json!({ "code": 401, "msg": "令牌已过期或验证不正确", "success": false }),
+            json!({ "code": 200, "success": true, "data": null }),
+            json!({ "code": 200, "success": true, "data": { "availableBalance": "inf" } }),
+            json!({}),
+        ] {
+            let result = parse_zhipu_balance(&body, true);
+            assert!(!result.success, "unexpected success for {body}");
+            assert!(result.data.is_none());
+            assert!(result.error.is_some());
+        }
+        let msg = parse_zhipu_balance(
+            &json!({ "msg": "令牌已过期或验证不正确", "success": false }),
+            true,
+        )
+        .error
+        .unwrap();
+        assert!(msg.contains("令牌已过期"), "{msg}");
     }
 }

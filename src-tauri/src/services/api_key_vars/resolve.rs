@@ -70,6 +70,7 @@ pub fn supports_app(app: &AppType) -> bool {
         | AppType::Hermes
         | AppType::Pi
         | AppType::Mcode => true,
+        AppType::Agy | AppType::Kimi | AppType::Dsh | AppType::Omp => false,
     }
 }
 
@@ -654,6 +655,18 @@ fn literal_refs(text: &str) -> Vec<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn oauth_only_agy_does_not_resolve_api_key_variables() {
+        let settings = json!({"env": {"GEMINI_API_KEY": "{{AGY_UNRESOLVED_KEY}}"}});
+        assert!(!supported_apps().any(|app| app == AppType::Agy));
+        assert!(referenced_vars(&AppType::Agy, &settings).is_empty());
+        assert!(matches!(
+            resolve_settings(&AppType::Agy, &settings).unwrap(),
+            Cow::Borrowed(_)
+        ));
+        assert!(rewrite_refs(&AppType::Agy, &settings, "AGY_UNRESOLVED_KEY", "OTHER").is_none());
+    }
 
     #[test]
     fn name_validation() {

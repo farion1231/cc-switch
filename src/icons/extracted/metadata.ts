@@ -2,6 +2,14 @@
 import { IconMetadata } from "@/types/icon";
 
 export const iconMetadata: Record<string, IconMetadata> = {
+  tokenplus: {
+    name: "tokenplus",
+    displayName: "TokenPlus",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["tokenplus", "token plus"],
+    defaultColor: "currentColor",
+  },
   "88api": {
     name: "88api",
     displayName: "88API",
@@ -161,6 +169,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     shape: "tile",
     keywords: ["tokenflux", "flux", "aggregator", "relay", "claude", "codex"],
+    defaultColor: "currentColor",
+  },
+  genesis: {
+    name: "genesis",
+    displayName: "Genesis",
+    category: "ai-provider",
+    keywords: ["genesis", "matrixorigin", "taas", "token"],
     defaultColor: "currentColor",
   },
   soshow: {
@@ -605,6 +620,14 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: [],
     defaultColor: "currentColor",
   },
+  omp: {
+    name: "omp",
+    displayName: "Oh My Pi",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["omp", "oh my pi", "oh-my-pi", "pi"],
+    defaultColor: "#9b4dff",
+  },
   ollama: {
     name: "ollama",
     displayName: "ollama",
@@ -625,6 +648,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     keywords: ["openclaw", "lobster", "claw"],
     defaultColor: "#ff4f40",
+  },
+  antigravity: {
+    name: "antigravity",
+    displayName: "Antigravity",
+    category: "ai-provider",
+    keywords: ["antigravity", "agy", "google"],
+    defaultColor: "#3186FF",
   },
   hermes: {
     name: "hermes",
@@ -802,6 +832,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     shape: "tile",
     keywords: ["openmodel", "aggregator", "gateway", "claude", "codex"],
+    defaultColor: "currentColor",
+  },
+  ospreyai: {
+    name: "ospreyai",
+    displayName: "OspreyAI",
+    category: "ai-provider",
+    keywords: ["ospreyai", "osprey", "枭毅", "aggregator", "claude", "codex"],
     defaultColor: "currentColor",
   },
   runapi: {
@@ -1108,6 +1145,44 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["modelflare", "model flare", "aggregator", "gateway", "relay"],
     defaultColor: "currentColor",
   },
+  dit: {
+    name: "dit",
+    displayName: "DIT.ai",
+    category: "ai-provider",
+    keywords: ["dit", "dit.ai", "aggregator", "marketplace", "exchange"],
+    defaultColor: "currentColor",
+  },
+  haoai: {
+    name: "haoai",
+    displayName: "hao.ai",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["haoai", "hao.ai", "hao", "aggregator", "gateway"],
+    defaultColor: "currentColor",
+  },
+  buytoken: {
+    name: "buytoken",
+    displayName: "BuyToken",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["buytoken", "buy token", "relay", "gateway"],
+    defaultColor: "currentColor",
+  },
+  vapi: {
+    name: "vapi",
+    displayName: "V-API",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["vapi", "v-api", "gpt.ge", "relay", "aggregator"],
+    defaultColor: "currentColor",
+  },
+  cline: {
+    name: "cline",
+    displayName: "Cline",
+    category: "ai-provider",
+    keywords: ["cline", "clinepass", "cline pass"],
+    defaultColor: "currentColor",
+  },
   everyapi: {
     name: "everyapi",
     displayName: "EveryAPI",
@@ -1121,6 +1196,19 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     shape: "tile",
     keywords: ["alltokens", "all tokens", "aggregator", "gateway", "relay"],
+    defaultColor: "currentColor",
+  },
+  "alltokens-si": {
+    name: "alltokens-si",
+    displayName: "AllTokens SI",
+    category: "ai-provider",
+    keywords: [
+      "alltokens",
+      "alltokens si",
+      "enterprise",
+      "aggregator",
+      "relay",
+    ],
     defaultColor: "currentColor",
   },
 };

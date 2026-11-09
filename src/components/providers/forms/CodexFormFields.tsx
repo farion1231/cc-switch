@@ -7,6 +7,24 @@ import {
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type Modifier,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
 import { HoverTip } from "@/components/ui/hover-tip";
@@ -44,6 +62,7 @@ import {
   ChevronDown,
   ChevronRight,
   Download,
+  GripVertical,
   Loader2,
   Plus,
   Trash2,
@@ -56,6 +75,7 @@ import {
   DirectModeFormatWarning,
   EndpointField,
   FullUrlToggle,
+  GptContextWindowHint,
   ModelDropdown,
   type DirectModeFormatNotice,
 } from "./shared";
@@ -86,6 +106,7 @@ import {
   fillCodexCatalogModel,
   metadataFilledAnything,
 } from "./modelMetadataFill";
+import { normalizeEnabledCodexChatEffortParam } from "./helpers/codexChatReasoning";
 import type {
   ClaudeApiKeyField,
   CodexApiFormat,
@@ -187,6 +208,11 @@ interface CodexFormFieldsProps {
   onSubagentModelChange?: (model: string) => void;
   subagentReasoningEffort?: string;
   onSubagentReasoningEffortChange?: (effort: string) => void;
+  // Sub-agent concurrency limit (config.toml `[agents] max_threads`): a Codex-wide
+  // setting saved into live, shown wherever the config.toml editor is (classic layout).
+  agentMaxThreads?: string;
+  multiAgentV2Total?: number;
+  onAgentMaxThreadsChange?: (value: string) => void;
 
   // API Format
   // Note: wire_api is always "responses" for Codex; apiFormat controls proxy-layer conversion
@@ -215,6 +241,10 @@ interface CodexFormFieldsProps {
   // the catalog rows. Codex only; the Stack layout omits it (aggregation settings apply).
   autoReviewModel?: string;
   onAutoReviewModelChange?: (model: string) => void;
+  // Keep the official Fast speed tier on GPT rows mirrored from Codex's bundled
+  // entries: `modelCatalog.officialSpeedTiers`. Native Responses only.
+  officialSpeedTiers?: boolean;
+  onOfficialSpeedTiersChange?: (keep: boolean) => void;
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
@@ -274,6 +304,79 @@ function withDefaultModelFirst<T extends CodexCatalogModel>(
     : -1;
   if (index <= 0) return models;
   return [models[index], ...models.filter((_, i) => i !== index)];
+}
+
+// 拖动行首手柄换行序。`currentDefault` 是第一行代表的默认模型（`model`），为 null 时第一行
+// 不代表它（没填、或不在列表里）；否则换到最前面的那一行成为新的默认模型，和删行一样取第一个
+// 填了名字的行。
+export function reorderCatalogRows<T extends { rowId: string; model: string }>(
+  rows: T[],
+  activeId: string,
+  overId: string,
+  currentDefault: string | null,
+): { rows: T[]; defaultModel?: string } | null {
+  const from = rows.findIndex((row) => row.rowId === activeId);
+  const to = rows.findIndex((row) => row.rowId === overId);
+  if (from === -1 || to === -1 || from === to) return null;
+  const next = arrayMove(rows, from, to);
+  if (currentDefault === null) return { rows: next };
+  const first = next.map((row) => row.model.trim()).find(Boolean);
+  return first && first !== currentDefault
+    ? { rows: next, defaultModel: first }
+    : { rows: next };
+}
+
+// 模型列表只能上下拖。
+const verticalOnly: Modifier[] = [({ transform }) => ({ ...transform, x: 0 })];
+
+function SortableCatalogRow({
+  id,
+  canDrag,
+  children,
+}: {
+  id: string;
+  canDrag: boolean;
+  children: ReactNode;
+}) {
+  const { t } = useTranslation();
+  const {
+    setNodeRef,
+    setActivatorNodeRef,
+    attributes,
+    listeners,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id, disabled: !canDrag });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Translate.toString(transform),
+        transition,
+        position: "relative",
+        zIndex: isDragging ? 10 : undefined,
+      }}
+      className={cn(
+        "flex items-start gap-1",
+        isDragging && "rounded-control bg-surface shadow-v7-md",
+      )}
+    >
+      {/* 只有一行时没东西可换，手柄隐藏但留着位置，各列照旧和表头对齐 */}
+      <button
+        ref={setActivatorNodeRef}
+        type="button"
+        disabled={!canDrag}
+        className="flex h-8 w-4 shrink-0 cursor-grab items-center justify-center text-fg-3 hover:text-fg-1 active:cursor-grabbing disabled:invisible"
+        aria-label={t("provider.dragHandle", { defaultValue: "拖拽排序" })}
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical className="h-4 w-4" />
+      </button>
+      <div className="min-w-0 flex-1">{children}</div>
+    </div>
+  );
 }
 
 // Compares rows (with rowId) to incoming models (without) by data fields only,
@@ -578,6 +681,9 @@ export function CodexFormFields({
   onSubagentModelChange,
   subagentReasoningEffort = "",
   onSubagentReasoningEffortChange,
+  agentMaxThreads = "",
+  multiAgentV2Total,
+  onAgentMaxThreadsChange,
   apiFormat,
   onApiFormatChange,
   copilotApiFormat = "auto",
@@ -595,6 +701,8 @@ export function CodexFormFields({
   catalogModels = [],
   autoReviewModel = "",
   onAutoReviewModelChange,
+  officialSpeedTiers = false,
+  onOfficialSpeedTiersChange,
   onCatalogModelsChange,
   speedTestEndpoints,
   customUserAgent,
@@ -764,7 +872,7 @@ export function CodexFormFields({
         supportsThinking: checked ? true : codexChatReasoning.supportsThinking,
         supportsEffort: checked,
         effortParam: checked
-          ? (codexChatReasoning.effortParam ?? "reasoning_effort")
+          ? normalizeEnabledCodexChatEffortParam(codexChatReasoning.effortParam)
           : "none",
       });
     },
@@ -1078,6 +1186,36 @@ export function CodexFormFields({
     [catalogRows, linkedDefaultIndex, onModelChange],
   );
 
+  const catalogDragSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
+
+  // 拖动换行序：第一行就是默认模型，换到最前面的那一行当场成为新的 `model`。
+  const handleCatalogDragEnd = useCallback(
+    ({ active, over }: DragEndEvent) => {
+      if (!over) return;
+      const result = reorderCatalogRows(
+        catalogRowsRef.current,
+        String(active.id),
+        String(over.id),
+        linkedDefaultIndex >= 0 ? trimmedDefaultModel : null,
+      );
+      if (!result) return;
+      if (result.defaultModel) onModelChange?.(result.defaultModel);
+      commitCatalogRows(result.rows);
+    },
+    [
+      catalogRowsRef,
+      commitCatalogRows,
+      linkedDefaultIndex,
+      onModelChange,
+      trimmedDefaultModel,
+    ],
+  );
+
   // 按弹窗里的勾选增删列表行：留下的行原样不动，新勾的追加到末尾并补参数。
   const handleApplyFetchedCatalogRows = useCallback(
     ({ add, remove }: FetchedModelSelection) => {
@@ -1265,6 +1403,34 @@ export function CodexFormFields({
       <HelpTip title={label}>{help}</HelpTip>
     </div>
   );
+
+  // 保留官方 Fast 档：镜像官方的 GPT 行默认清空速度档，后面接官方账号的中转（如 CPA）才认
+  // service_tier=priority。Chat、Anthropic 转换会把它转给不认的上游，Copilot 走自己的目录，
+  // 都只给原生 Responses；聚合布局不显示（合并目录不看卡上的设置）。
+  const officialSpeedTiersToggle = onOfficialSpeedTiersChange &&
+    !isCopilotPreset &&
+    effectiveApiFormat === "openai_responses" && (
+      <div className="flex items-center justify-between gap-4">
+        {labelWithHelp(
+          t("codexConfig.officialSpeedTiersLabel", {
+            defaultValue: "保留官方 Fast 档",
+          }),
+          t("codexConfig.officialSpeedTiersHint", {
+            defaultValue:
+              "让模型列表里的 GPT 模型保留官方的 Fast 速度档，Codex 选了 Fast 后请求会带 service_tier=priority。只有转发官方 ChatGPT 账号的中转（如 CPA）才认，会更快消耗额度；其他上游可能报错或按更高价计费。打开后，之前在官方卡下选过的 Fast 会立刻在这家生效。聚合模式下不生效。改完需要重启 Codex。",
+          }),
+          "codexOfficialSpeedTiers",
+        )}
+        <Switch
+          id="codexOfficialSpeedTiers"
+          checked={officialSpeedTiers}
+          onCheckedChange={onOfficialSpeedTiersChange}
+          aria-label={t("codexConfig.officialSpeedTiersLabel", {
+            defaultValue: "保留官方 Fast 档",
+          })}
+        />
+      </div>
+    );
 
   const upstreamFormatSelect = (
     <div className="space-y-1.5">
@@ -1566,7 +1732,7 @@ export function CodexFormFields({
   const renderCatalogRows = () => (
     <div className="space-y-2">
       {/* 列头：md+ 显示 */}
-      <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1fr)_140px_minmax(0,1fr)_36px] gap-2 px-1 text-xs font-medium text-fg-2 md:grid">
+      <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1fr)_140px_minmax(0,1fr)_36px] gap-2 pe-1 ps-6 text-xs font-medium text-fg-2 md:grid">
         <span>
           {t("codexConfig.catalogColumnDisplay", {
             defaultValue: "菜单显示名",
@@ -1590,95 +1756,122 @@ export function CodexFormFields({
         <span />
       </div>
 
-      {catalogRows.map((row, index) => (
-        <div
-          key={row.rowId}
-          className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_140px_minmax(0,1fr)_36px]"
+      <DndContext
+        sensors={catalogDragSensors}
+        modifiers={verticalOnly}
+        collisionDetection={closestCenter}
+        onDragEnd={handleCatalogDragEnd}
+      >
+        <SortableContext
+          items={catalogRows.map((row) => row.rowId)}
+          strategy={verticalListSortingStrategy}
         >
-          <Input
-            value={row.displayName ?? ""}
-            onChange={(event) =>
-              handleUpdateCatalogRow(index, {
-                displayName: event.target.value,
-              })
-            }
-            placeholder={t("codexConfig.catalogDisplayNamePlaceholder", {
-              defaultValue: "例如: DeepSeek V4 Flash",
-            })}
-            aria-label={t("codexConfig.catalogColumnDisplay", {
-              defaultValue: "菜单显示名",
-            })}
-          />
-          <div className="flex gap-1">
-            <Input
-              value={row.model}
-              onChange={(event) =>
-                handleUpdateCatalogRow(index, {
-                  model: event.target.value,
-                })
-              }
-              placeholder={t("codexConfig.catalogModelPlaceholder", {
-                defaultValue: "例如: deepseek-v4-flash",
-              })}
-              aria-label={t("codexConfig.catalogColumnModel", {
-                defaultValue: "实际请求模型",
-              })}
-              className="flex-1"
-            />
-            {fetchedModels.length > 0 && (
-              <ModelDropdown
-                models={fetchedModels}
-                onSelect={(id) =>
-                  handleSelectFetchedCatalogModel(row.rowId, id)
-                }
-              />
-            )}
+          <div className="space-y-2">
+            {catalogRows.map((row, index) => (
+              <SortableCatalogRow
+                key={row.rowId}
+                id={row.rowId}
+                canDrag={catalogRows.length > 1}
+              >
+                <div className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_140px_minmax(0,1fr)_36px]">
+                  <Input
+                    value={row.displayName ?? ""}
+                    onChange={(event) =>
+                      handleUpdateCatalogRow(index, {
+                        displayName: event.target.value,
+                      })
+                    }
+                    placeholder={t(
+                      "codexConfig.catalogDisplayNamePlaceholder",
+                      {
+                        defaultValue: "例如: DeepSeek V4 Flash",
+                      },
+                    )}
+                    aria-label={t("codexConfig.catalogColumnDisplay", {
+                      defaultValue: "菜单显示名",
+                    })}
+                  />
+                  <div className="flex gap-1">
+                    <Input
+                      value={row.model}
+                      onChange={(event) =>
+                        handleUpdateCatalogRow(index, {
+                          model: event.target.value,
+                        })
+                      }
+                      placeholder={t("codexConfig.catalogModelPlaceholder", {
+                        defaultValue: "例如: deepseek-v4-flash",
+                      })}
+                      aria-label={t("codexConfig.catalogColumnModel", {
+                        defaultValue: "实际请求模型",
+                      })}
+                      className="flex-1"
+                    />
+                    {fetchedModels.length > 0 && (
+                      <ModelDropdown
+                        models={fetchedModels}
+                        onSelect={(id) =>
+                          handleSelectFetchedCatalogModel(row.rowId, id)
+                        }
+                      />
+                    )}
+                  </div>
+                  <Input
+                    type="number"
+                    min={1}
+                    inputMode="numeric"
+                    value={row.contextWindow ?? ""}
+                    onChange={(event) =>
+                      handleUpdateCatalogRow(index, {
+                        contextWindow: event.target.value.replace(/[^\d]/g, ""),
+                      })
+                    }
+                    placeholder={t("codexConfig.contextWindowPlaceholder", {
+                      defaultValue: "例如: 128000",
+                    })}
+                    aria-label={t("codexConfig.catalogColumnContext", {
+                      defaultValue: "上下文窗口",
+                    })}
+                  />
+                  <ReasoningLevelsEditor
+                    levels={row.reasoningLevels}
+                    defaultLevel={row.defaultReasoningLevel}
+                    onLevelsChange={(levels) =>
+                      handleUpdateCatalogRow(index, {
+                        reasoningLevels: levels,
+                      })
+                    }
+                    onDefaultLevelChange={(level) =>
+                      handleUpdateCatalogRow(index, {
+                        defaultReasoningLevel: level,
+                      })
+                    }
+                  />
+                  <HoverTip
+                    content={t("common.delete", { defaultValue: "删除" })}
+                  >
+                    <Button
+                      aria-label={t("common.delete", { defaultValue: "删除" })}
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="text-fg-2 hover:text-destructive"
+                      onClick={() => handleRemoveCatalogRow(index)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </HoverTip>
+                  <GptContextWindowHint
+                    modelId={row.model}
+                    contextWindow={row.contextWindow}
+                    className="col-span-full px-1"
+                  />
+                </div>
+              </SortableCatalogRow>
+            ))}
           </div>
-          <Input
-            type="number"
-            min={1}
-            inputMode="numeric"
-            value={row.contextWindow ?? ""}
-            onChange={(event) =>
-              handleUpdateCatalogRow(index, {
-                contextWindow: event.target.value.replace(/[^\d]/g, ""),
-              })
-            }
-            placeholder={t("codexConfig.contextWindowPlaceholder", {
-              defaultValue: "例如: 128000",
-            })}
-            aria-label={t("codexConfig.catalogColumnContext", {
-              defaultValue: "上下文窗口",
-            })}
-          />
-          <ReasoningLevelsEditor
-            levels={row.reasoningLevels}
-            defaultLevel={row.defaultReasoningLevel}
-            onLevelsChange={(levels) =>
-              handleUpdateCatalogRow(index, {
-                reasoningLevels: levels,
-              })
-            }
-            onDefaultLevelChange={(level) =>
-              handleUpdateCatalogRow(index, {
-                defaultReasoningLevel: level,
-              })
-            }
-          />
-          <HoverTip content={t("common.delete", { defaultValue: "删除" })}>
-            <Button
-              aria-label={t("common.delete", { defaultValue: "删除" })}
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="text-fg-2 hover:text-destructive"
-              onClick={() => handleRemoveCatalogRow(index)}
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
-          </HoverTip>
-        </div>
-      ))}
+        </SortableContext>
+      </DndContext>
     </div>
   );
 
@@ -1889,7 +2082,7 @@ export function CodexFormFields({
             placeholder={
               isGrokBuild
                 ? t("grokBuild.defaultModelPlaceholder", {
-                    defaultValue: "例如: grok-4.5",
+                    defaultValue: "例如: grok-4.7",
                   })
                 : t("codexConfig.defaultModelPlaceholder", {
                     defaultValue: "例如: gpt-5.6",
@@ -2003,7 +2196,7 @@ export function CodexFormFields({
                 type="button"
                 variant={null}
                 size="sm"
-                className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70"
+                className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70 active:scale-100"
               >
                 {stackAdvancedExpanded ? (
                   <ChevronDown className="h-4 w-4" />
@@ -2178,6 +2371,41 @@ export function CodexFormFields({
         </div>
       )}
 
+      {/* 子代理并发上限 —— config.toml 的 [agents] max_threads，Codex 的全局设置（官方供应商也显示），
+          保存时写进 live。留空删键，回到 Codex 默认值。 */}
+      {onAgentMaxThreadsChange && (
+        <div className="space-y-1.5">
+          {labelWithHelp(
+            t("codexConfig.agentMaxThreadsLabel", {
+              defaultValue: "子代理并发上限",
+            }),
+            t("codexConfig.agentMaxThreadsHint", {
+              defaultValue:
+                "一个 Codex 会话里最多同时开多少个子代理（不含主代理），切换供应商时保持不变。留空用 Codex 默认值（经典子 agent 工具 6 个，新版工具 3 个），最小为 1，不支持不限。新对话生效。",
+            }),
+            "codexAgentMaxThreads",
+          )}
+          <Input
+            id="codexAgentMaxThreads"
+            value={agentMaxThreads}
+            inputMode="numeric"
+            onChange={(event) => onAgentMaxThreadsChange(event.target.value)}
+            placeholder={t("codexConfig.agentMaxThreadsPlaceholder", {
+              defaultValue: "留空则用 Codex 默认值",
+            })}
+          />
+          {multiAgentV2Total !== undefined && (
+            <p className="text-xs leading-relaxed text-fg-2">
+              {t("codexConfig.agentMaxThreadsV2Override", {
+                total: multiAgentV2Total,
+                defaultValue:
+                  "config.toml 的 [features.multi_agent_v2] 写了总数 {{total}}（含主代理），使用新版子 agent 工具时以它为准。",
+              })}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* 自动审批 —— 写进模型目录每一行的 auto_review_model_override，Codex 按主模型那一行
           选审批模型。只能选列表里的模型；聚合模式下不生效，改用聚合设置。 */}
       {category !== "official" && onAutoReviewModelChange && (
@@ -2250,7 +2478,7 @@ export function CodexFormFields({
               type="button"
               variant={null}
               size="sm"
-              className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70"
+              className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70 active:scale-100"
             >
               {advancedExpanded ? (
                 <ChevronDown className="h-4 w-4" />
@@ -2268,6 +2496,7 @@ export function CodexFormFields({
             {(shouldShowSpeedTest || isCopilotPreset) && !isXaiOauthPreset && (
               <div className="space-y-3">
                 {upstreamFormatSelect}
+                {officialSpeedTiersToggle}
                 {isAnthropicFormat && anthropicAuthFieldSelect}
                 {isAnthropicFormat && impersonateClaudeCodeToggle}
                 {isAnthropicFormat && maxOutputTokensField}

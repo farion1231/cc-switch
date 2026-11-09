@@ -18,7 +18,7 @@ use cc_switch_lib::api_key_vars::{
 };
 use cc_switch_lib::{AppState, AppType, Database, MultiAppConfig, Provider, ProviderService};
 
-#[path = "support.rs"]
+#[path = "support/mod.rs"]
 mod support;
 use support::{create_test_state_with_config, ensure_test_home, reset_test_fs, test_mutex};
 

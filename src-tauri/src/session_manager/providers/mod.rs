@@ -1,3 +1,4 @@
+pub mod agy;
 mod blocks;
 pub mod claude;
 pub mod codex;
@@ -5,11 +6,15 @@ mod codex_items;
 pub mod gemini;
 pub mod grokbuild;
 pub mod hermes;
+pub mod omp;
 pub mod openclaw;
 pub mod opencode;
 mod opencode_blocks;
 pub mod pi;
 mod pi_blocks;
-mod utils;
+pub(crate) mod utils;
 
+pub mod kimi;
 pub mod mcode;
+
+pub mod dsh;

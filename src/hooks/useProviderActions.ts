@@ -15,6 +15,7 @@ import type {
   OpenClawProviderConfig,
   OpenClawDefaultModel,
 } from "@/types";
+import { getOpencodeDeclaredModels } from "@/components/providers/forms/helpers/opencodeFormUtils";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import type { ProviderEditorSave } from "@/lib/api/providers";
 import { injectCodingPlanUsageScript } from "@/config/codingPlanProviders";
@@ -31,6 +32,7 @@ import { openclawKeys } from "@/hooks/useOpenClaw";
 import { supportsOfficialProxyTakeover } from "@/utils/providerCapabilities";
 import { getRoutingReason } from "@/utils/routingReason";
 import { logFrontendInfo } from "@/lib/frontendLogger";
+import { codexHistorySplitToastExtras } from "@/utils/codexHistorySplitHint";
 
 /**
  * Hook for managing provider actions (add, update, delete, switch)
@@ -247,6 +249,11 @@ export function useProviderActions(
           }
         }
 
+        // 会话分组的提醒并进「切换成功」那条，不另弹
+        const splitExtras = result?.codexHistorySplit
+          ? codexHistorySplitToastExtras(result.codexHistorySplit, t)
+          : undefined;
+
         // 若已弹过 proxyRequired 警告则不再弹 success
         if (!proxyRequiredReason) {
           let messageKey = "notifications.switchSuccess";
@@ -277,6 +284,13 @@ export function useProviderActions(
             : t(messageKey, { defaultValue: defaultMessage });
           toast.success(message, {
             closeButton: true,
+            ...splitExtras,
+          });
+        } else if (splitExtras?.description) {
+          // 没弹「切换成功」时单独提醒一句，仍然只是一行
+          toast.info(splitExtras.description as string, {
+            closeButton: true,
+            duration: splitExtras.duration,
           });
         }
       } catch {
@@ -306,8 +320,8 @@ export function useProviderActions(
           },
         };
 
-        if (activeApp === "pi") {
-          await piApi.updateProviderUsageScript(provider.id, script);
+        if (activeApp === "pi" || activeApp === "omp") {
+          await piApi.updateProviderUsageScript(provider.id, script, activeApp);
         } else {
           await providersApi.update(updatedProvider, activeApp);
         }
@@ -340,9 +354,63 @@ export function useProviderActions(
     [activeApp, queryClient, t],
   );
 
-  // Set provider as default model (OpenClaw only)
+  // OpenCode：只写 opencode.json 顶层 model，small_model 不动
+  const setOpenCodeDefaultModel = useCallback(
+    async (provider: Provider, modelId?: string) => {
+      const modelIds = getOpencodeDeclaredModels(
+        provider.id,
+        provider.settingsConfig,
+      ).map((model) => model.id);
+      if (modelIds.length === 0) {
+        toast.error(
+          t("notifications.openclawNoModels", {
+            defaultValue: "该供应商没有配置模型",
+          }),
+        );
+        return;
+      }
+      const selected = modelId ?? modelIds[0];
+      if (!modelIds.includes(selected)) {
+        toast.error(
+          t("notifications.openclawModelNotFound", {
+            defaultValue: "所选模型已不存在，请刷新后重试",
+          }),
+        );
+        return;
+      }
+
+      try {
+        await providersApi.setOpenCodeDefaultModel(
+          `${provider.id}/${selected}`,
+        );
+        await queryClient.invalidateQueries({
+          queryKey: ["opencodeDefaultModel"],
+        });
+        toast.success(
+          t("notifications.openclawDefaultModelSet", {
+            defaultValue: "已设为默认模型",
+          }),
+          { closeButton: true },
+        );
+      } catch (error) {
+        toast.error(
+          extractErrorMessage(error) ||
+            t("notifications.openclawDefaultModelSetFailed", {
+              defaultValue: "设置默认模型失败",
+            }),
+        );
+      }
+    },
+    [queryClient, t],
+  );
+
+  // Set provider as default model (OpenClaw / OpenCode)
   const setAsDefaultModel = useCallback(
     async (provider: Provider, modelId?: string) => {
+      if (activeApp === "opencode") {
+        await setOpenCodeDefaultModel(provider, modelId);
+        return;
+      }
       const config = provider.settingsConfig as OpenClawProviderConfig;
       if (!config.models || config.models.length === 0) {
         toast.error(
@@ -400,7 +468,7 @@ export function useProviderActions(
         toast.error(detail);
       }
     },
-    [queryClient, t],
+    [activeApp, queryClient, setOpenCodeDefaultModel, t],
   );
 
   return {

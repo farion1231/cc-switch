@@ -144,3 +144,30 @@ value = "array-table-secret"
     expect(preview?.tomlConfig).not.toContain("secret-config-key");
   });
 });
+
+it("previews agy wrapped and flat configs without unrelated native options", () => {
+  for (const config of [
+    {
+      env: {
+        GEMINI_API_KEY: "fixture",
+        GEMINI_MODEL: "legacy",
+        NODE_OPTIONS: "ignored",
+      },
+      config: { model: { name: "native" }, arbitrary: "ignored" },
+    },
+    {
+      GEMINI_API_KEY: "fixture",
+      GEMINI_MODEL: "native",
+      NODE_OPTIONS: "ignored",
+    },
+  ]) {
+    const preview = parseDeepLinkConfigPreview({
+      app: "agy",
+      config: encodeBase64(JSON.stringify(config)),
+    });
+    expect(preview?.type).toBe("agy");
+    expect(preview?.model).toBe("native");
+    expect(preview?.env).toEqual({ GEMINI_API_KEY: "fixture" });
+    expect(JSON.stringify(preview)).not.toContain("ignored");
+  }
+});

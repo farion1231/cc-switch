@@ -1,3 +1,4 @@
+import { HelpTip } from "@/components/ui/help-tip";
 import { useMemo } from "react";
 import { FolderSearch, Undo2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -7,7 +8,10 @@ import { useTranslation } from "react-i18next";
 import type { AppId } from "@/lib/api";
 import type { ResolvedDirectories } from "@/hooks/useSettings";
 
-export type DirectoryAppId = Exclude<AppId, "claude-desktop" | "mcode">;
+export type DirectoryAppId = Exclude<
+  AppId,
+  "claude-desktop" | "mcode" | "agy" | "kimi"
+>;
 
 interface DirectorySettingsProps {
   appConfigDir?: string;
@@ -23,6 +27,7 @@ interface DirectorySettingsProps {
   openclawDir?: string;
   hermesDir?: string;
   piDir?: string;
+  ompDir?: string;
   onDirectoryChange: (app: DirectoryAppId, value?: string) => void;
   onBrowseDirectory: (app: DirectoryAppId) => Promise<void>;
   onResetDirectory: (app: DirectoryAppId) => Promise<void>;
@@ -42,6 +47,7 @@ export function DirectorySettings({
   openclawDir,
   hermesDir,
   piDir,
+  ompDir,
   onDirectoryChange,
   onBrowseDirectory,
   onResetDirectory,
@@ -93,13 +99,13 @@ export function DirectorySettings({
 
       {/* Claude/Codex 配置目录 - 独立区块 */}
       <section className="space-y-4">
-        <header className="space-y-1">
+        <header className="flex items-center gap-1">
           <h3 className="text-sm font-medium">
             {t("settings.configDirectoryOverride")}
           </h3>
-          <p className="text-xs text-fg-2">
+          <HelpTip title={t("settings.configDirectoryOverride")}>
             {t("settings.configDirectoryDescription")}
-          </p>
+          </HelpTip>
         </header>
 
         <DirectoryInput
@@ -188,6 +194,17 @@ export function DirectorySettings({
           onChange={(val) => onDirectoryChange("pi", val)}
           onBrowse={() => onBrowseDirectory("pi")}
           onReset={() => onResetDirectory("pi")}
+        />
+
+        <DirectoryInput
+          label={t("settings.ompConfigDir")}
+          description={undefined}
+          value={ompDir}
+          resolvedValue={resolvedDirs.omp}
+          placeholder={t("settings.browsePlaceholderOmp")}
+          onChange={(val) => onDirectoryChange("omp", val)}
+          onBrowse={() => onBrowseDirectory("omp")}
+          onReset={() => onResetDirectory("omp")}
         />
       </section>
     </div>

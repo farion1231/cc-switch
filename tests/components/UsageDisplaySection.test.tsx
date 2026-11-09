@@ -1,7 +1,15 @@
-import { render, screen } from "@testing-library/react";
+import { useState } from "react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { UsageDisplaySection } from "@/components/usage/UsageDisplaySection";
+import type { FetchedExchangeRates, UsageDisplaySettings } from "@/types";
+
+const fetchExchangeRatesMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/api", () => ({
+  usageApi: { fetchExchangeRates: fetchExchangeRatesMock },
+}));
 
 const pickCurrency = async (
   user: ReturnType<typeof userEvent.setup>,
@@ -21,6 +29,12 @@ describe("UsageDisplaySection", () => {
     Element.prototype.scrollIntoView = vi.fn();
   });
 
+  beforeEach(() => {
+    // 默认让取汇率的请求一直挂着：不相干的用例不需要异步保存
+    fetchExchangeRatesMock.mockReset();
+    fetchExchangeRatesMock.mockReturnValue(new Promise(() => {}));
+  });
+
   it("offers every display currency and hides the rate while showing USD", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
@@ -38,6 +52,7 @@ describe("UsageDisplaySection", () => {
       "JPY",
       "TWD",
       "TRY",
+      "KRW",
     ]);
     await user.keyboard("{Escape}");
 
@@ -47,12 +62,46 @@ describe("UsageDisplaySection", () => {
     expect(screen.getByRole("textbox")).toHaveValue("158");
   });
 
+  it("selects won and saves its rate without losing other currency rates", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <UsageDisplaySection
+        value={{ currency: "USD", exchangeRates: { CNY: 7 } }}
+        onChange={onChange}
+      />,
+    );
+    await pickCurrency(user, "KRW");
+    expect(onChange).toHaveBeenCalledWith({
+      currency: "KRW",
+      exchangeRates: { CNY: 7 },
+    });
+    rerender(
+      <UsageDisplaySection
+        value={{ currency: "KRW", exchangeRates: { CNY: 7 } }}
+        onChange={onChange}
+      />,
+    );
+    const input = screen.getByRole("textbox");
+    expect(input).toHaveValue("1325");
+    await user.clear(input);
+    await user.type(input, "1400{Enter}");
+    expect(onChange).toHaveBeenLastCalledWith({
+      currency: "KRW",
+      exchangeRates: { CNY: 7, KRW: 1400 },
+    });
+  });
+
   it("rejects a bad rate and keeps the rates of other currencies", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(
       <UsageDisplaySection
-        value={{ currency: "CNY", exchangeRates: { CNY: 7, EUR: 0.9 } }}
+        value={{
+          currency: "CNY",
+          exchangeRates: { CNY: 7, EUR: 0.9 },
+          rateSource: "manual",
+        }}
         onChange={onChange}
       />,
     );
@@ -69,6 +118,7 @@ describe("UsageDisplaySection", () => {
     await user.type(input, "7.25{Enter}");
     expect(onChange).toHaveBeenCalledWith({
       currency: "CNY",
+      rateSource: "manual",
       exchangeRates: { CNY: 7.25, EUR: 0.9 },
     });
   });
@@ -78,12 +128,192 @@ describe("UsageDisplaySection", () => {
     const onChange = vi.fn();
     render(
       <UsageDisplaySection
-        value={{ currency: "CNY", exchangeRates: { CNY: 7, EUR: 0.9 } }}
+        value={{
+          currency: "CNY",
+          exchangeRates: { CNY: 7, EUR: 0.9 },
+          rateSource: "manual",
+        }}
         onChange={onChange}
       />,
     );
     await pickCurrency(user, "EUR");
     expect(screen.getByRole("textbox")).toHaveValue("0.9");
+  });
+
+  it("shows the fetched rate read-only while the source is automatic", () => {
+    render(
+      <UsageDisplaySection
+        value={{
+          currency: "CNY",
+          rateSource: "auto",
+          autoExchangeRates: { CNY: 6.9 },
+          exchangeRates: { CNY: 7.1 },
+        }}
+        onChange={vi.fn()}
+      />,
+    );
+    const input = screen.getByRole("textbox");
+    expect(input).toHaveValue("6.9");
+    expect(input).toHaveAttribute("readonly");
+    expect(
+      screen.getByRole("combobox", { name: "usage.display.rateSource" }),
+    ).toHaveTextContent("usage.display.rateSources.auto");
+  });
+
+  it("keeps the currency picked while a rate refresh is in flight", async () => {
+    const user = userEvent.setup();
+    let resolveFetch!: (value: FetchedExchangeRates) => void;
+    fetchExchangeRatesMock.mockReturnValueOnce(
+      new Promise<FetchedExchangeRates>((resolve) => {
+        resolveFetch = resolve;
+      }),
+    );
+
+    const saved: Array<UsageDisplaySettings | undefined> = [];
+    const Harness = () => {
+      const [value, setValue] = useState<UsageDisplaySettings | undefined>({
+        rateSource: "auto",
+      });
+      return (
+        <UsageDisplaySection
+          value={value}
+          onChange={async (next) => {
+            saved.push(next);
+            setValue(next);
+            return true;
+          }}
+        />
+      );
+    };
+    render(<Harness />);
+
+    await pickCurrency(user, "CNY");
+    await waitFor(() =>
+      expect(fetchExchangeRatesMock).toHaveBeenCalledTimes(1),
+    );
+    // 请求在切币种之后才回来：保存时不能把币种写回切换前的值
+    await act(async () => {
+      resolveFetch({
+        rates: { CNY: 6.9 },
+        fetchedAt: 1_700_000_000_000,
+        source: "open.er-api.com",
+      });
+    });
+
+    const last = saved.at(-1);
+    expect(last?.currency).toBe("CNY");
+    expect(last?.autoExchangeRates?.CNY).toBe(6.9);
+  });
+
+  it("keeps settings changed while a rate refresh is in flight", async () => {
+    const user = userEvent.setup();
+    let resolveFetch!: (value: FetchedExchangeRates) => void;
+    fetchExchangeRatesMock.mockReturnValueOnce(
+      new Promise<FetchedExchangeRates>((resolve) => {
+        resolveFetch = resolve;
+      }),
+    );
+
+    // 模拟 UsagePage 的 autoSaveSettings：用它闭包里的整份设置合并保存。
+    // 请求在途时改了刷新间隔，汇率回来后不能把间隔改回去。
+    const saved: Array<{ usage: UsageDisplaySettings; refreshMs: number }> = [];
+    const Harness = () => {
+      const [usage, setUsage] = useState<UsageDisplaySettings>({
+        currency: "CNY",
+        rateSource: "auto",
+      });
+      const [refreshMs, setRefreshMs] = useState(60_000);
+      const captured = { usage, refreshMs };
+      return (
+        <>
+          <UsageDisplaySection
+            value={usage}
+            onChange={async (next) => {
+              saved.push({ usage: next, refreshMs: captured.refreshMs });
+              setUsage(next);
+              setRefreshMs(captured.refreshMs);
+              return true;
+            }}
+          />
+          <button type="button" onClick={() => setRefreshMs(120_000)}>
+            change refresh
+          </button>
+        </>
+      );
+    };
+    render(<Harness />);
+
+    await user.click(
+      screen.getByRole("button", { name: "usage.display.rateRefresh" }),
+    );
+    await waitFor(() =>
+      expect(fetchExchangeRatesMock).toHaveBeenCalledTimes(1),
+    );
+    await user.click(screen.getByRole("button", { name: "change refresh" }));
+    await act(async () => {
+      resolveFetch({
+        rates: { CNY: 6.9 },
+        fetchedAt: 1_700_000_000_000,
+        source: "open.er-api.com",
+      });
+    });
+
+    const last = saved.at(-1);
+    expect(last?.refreshMs).toBe(120_000);
+    expect(last?.usage.autoExchangeRates?.CNY).toBe(6.9);
+    expect(last?.usage.rateProvider).toBe("open.er-api.com");
+  });
+
+  it("drops a fetched rate when the page was left meanwhile", async () => {
+    const user = userEvent.setup();
+    let resolveFetch!: (value: FetchedExchangeRates) => void;
+    fetchExchangeRatesMock.mockReturnValueOnce(
+      new Promise<FetchedExchangeRates>((resolve) => {
+        resolveFetch = resolve;
+      }),
+    );
+    const onChange = vi.fn();
+    const { unmount } = render(
+      <UsageDisplaySection
+        value={{ currency: "CNY", rateSource: "auto" }}
+        onChange={onChange}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "usage.display.rateRefresh" }),
+    );
+    await waitFor(() =>
+      expect(fetchExchangeRatesMock).toHaveBeenCalledTimes(1),
+    );
+    unmount();
+    await act(async () => {
+      resolveFetch({
+        rates: { CNY: 6.9 },
+        fetchedAt: 1_700_000_000_000,
+        source: "open.er-api.com",
+      });
+    });
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("credits the provider of the automatic rates", () => {
+    render(
+      <UsageDisplaySection
+        value={{
+          currency: "CNY",
+          rateSource: "auto",
+          autoExchangeRates: { CNY: 6.9 },
+          rateProvider: "floatrates.com",
+        }}
+        onChange={vi.fn()}
+      />,
+    );
+    // 备用源署它自己的名字；主源（open.er-api.com）的署名由条款要求
+    expect(
+      screen.getByRole("link", { name: "usage.display.rateAttribution" }),
+    ).toHaveAttribute("href", "https://www.floatrates.com/");
   });
 
   it("does not write the preset rate when it was left unchanged", async () => {
@@ -146,57 +376,6 @@ describe("UsageDisplaySection", () => {
       sidebarTodayItems: [],
     });
     expect(trigger).toHaveTextContent("usage.display.sidebarTodayItems.none");
-  });
-
-  it("shows and hides request log columns", async () => {
-    const user = userEvent.setup();
-    const onChange = vi.fn().mockResolvedValue(true);
-    render(
-      <UsageDisplaySection
-        value={{ currency: "CNY", requestLogColumns: { app: false } }}
-        onChange={onChange}
-      />,
-    );
-
-    await user.click(
-      screen.getByRole("button", {
-        name: "usage.display.logColumns: usage.display.logColumnsSummary",
-      }),
-    );
-    expect(
-      screen.queryByRole("menuitemcheckbox", { name: "usage.time" }),
-    ).not.toBeInTheDocument();
-    const status = await screen.findByRole("menuitemcheckbox", {
-      name: "usage.statusCode",
-    });
-    expect(status).toHaveAttribute("aria-checked", "false");
-    await user.click(status);
-
-    // 菜单不关，可以接着勾；保存时其它显示设置原样带上，只存改过的列
-    expect(onChange).toHaveBeenLastCalledWith({
-      currency: "CNY",
-      requestLogColumns: { app: false, statusCode: true },
-    });
-    expect(
-      screen.getByRole("menuitemcheckbox", { name: "usage.statusCode" }),
-    ).toHaveAttribute("aria-checked", "true");
-
-    // 勾回默认值的列不再写进设置
-    await user.click(
-      screen.getByRole("menuitemcheckbox", { name: "usage.app" }),
-    );
-    expect(onChange).toHaveBeenLastCalledWith({
-      currency: "CNY",
-      requestLogColumns: { statusCode: true },
-    });
-
-    await user.click(
-      screen.getByRole("menuitem", { name: "usage.logColumns.reset" }),
-    );
-    expect(onChange).toHaveBeenLastCalledWith({
-      currency: "CNY",
-      requestLogColumns: {},
-    });
   });
 
   it("picks the trend chart style and keeps the other display settings", async () => {

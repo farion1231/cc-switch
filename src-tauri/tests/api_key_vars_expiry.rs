@@ -7,7 +7,7 @@ use cc_switch_lib::api_key_vars::{
 use cc_switch_lib::{AppState, AppType, Database, MultiAppConfig, Provider, ProviderService};
 use serde_json::{json, Value};
 
-#[path = "support.rs"]
+#[path = "support/mod.rs"]
 mod support;
 
 fn config() -> ApiKeyRefreshConfig {

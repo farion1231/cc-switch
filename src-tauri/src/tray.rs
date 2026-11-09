@@ -18,6 +18,7 @@ use tauri::image::Image;
 use tauri::menu::{
     CheckMenuItem, Menu, MenuBuilder, MenuItem, MenuItemKind, Submenu, SubmenuBuilder,
 };
+use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconEvent};
 use tauri::{Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
@@ -28,7 +29,7 @@ use crate::services::usage_cache::UsageCache;
 use crate::store::AppState;
 
 const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str = "official_subscription";
-/// Copilot 用量结果的单位（`commands::provider` 的 `COPILOT_UNIT_PREMIUM`）：高级请求次数。
+/// Copilot 用量结果的单位（`commands::provider` 的 `COPILOT_UNIT_PREMIUM`）：Credits（接口里仍叫 premium_interactions）。
 const COPILOT_UNIT_PREMIUM: &str = "requests";
 
 pub const TRAY_ID: &str = "cc-switch";
@@ -55,6 +56,10 @@ fn app_display_name(app: &AppType) -> &'static str {
         AppType::Hermes => "Hermes",
         AppType::Pi => "Pi",
         AppType::Mcode => "MiniMax Code",
+        AppType::Kimi => "Kimi Code",
+        AppType::Dsh => "DeepSeek Harness",
+        AppType::Agy => "Antigravity",
+        AppType::Omp => "Oh My Pi",
     }
 }
 
@@ -131,7 +136,6 @@ pub struct TrayTexts {
     pub tier_used: &'static str,
     pub tier_used_up: &'static str,
     pub balance: &'static str,
-    pub balance_used_up: &'static str,
     pub plan_expired: &'static str,
     pub used_amount: &'static str,
     pub quota_failed: &'static str,
@@ -150,24 +154,32 @@ pub struct TrayTexts {
 /// 镜像前端 `i18n/getInitialLanguage` 的判定顺序，确保首次安装
 /// （`settings.language` 尚未写入）时托盘语言与界面语言一致：
 /// 繁中系统（zh-TW/HK/MO/Hant）→ `zh-TW`，其余 zh → `zh`，
-/// 日文 → `ja`，土耳其文 → `tr`，英文 → `en`，其他语言回退到 `en`，
+/// 日文 → `ja`，韩文 → `ko`，土耳其文 → `tr`，英文 → `en`，其他语言回退到 `en`，
 /// 区域为空时回退到 `zh`（与前端默认一致）。
 fn map_locale_to_tray_language(locale: &str) -> &'static str {
     let locale = locale.to_lowercase();
     if locale == "zh" {
         "zh"
-    } else if locale.starts_with("zh-tw")
-        || locale.starts_with("zh-hk")
-        || locale.starts_with("zh-mo")
-        || locale.starts_with("zh-hant")
+    } else if locale == "zh-tw"
+        || locale.starts_with("zh-tw-")
+        || locale == "zh-hk"
+        || locale.starts_with("zh-hk-")
+        || locale == "zh-mo"
+        || locale.starts_with("zh-mo-")
+        || locale == "zh-hant"
+        || locale.starts_with("zh-hant-")
     {
         "zh-TW"
-    } else if locale.starts_with("zh") {
+    } else if locale == "zh" || locale.starts_with("zh-") {
         "zh"
-    } else if locale.starts_with("ja") {
+    } else if locale == "ja" || locale.starts_with("ja-") {
         "ja"
-    } else if locale.starts_with("tr") {
+    } else if locale == "ko" || locale.starts_with("ko-") {
+        "ko"
+    } else if locale == "tr" || locale.starts_with("tr-") {
         "tr"
+    } else if locale == "ru" || locale.starts_with("ru-") {
+        "ru"
     } else if locale.is_empty() {
         "zh"
     } else {
@@ -228,12 +240,11 @@ impl TrayTexts {
                 tier_gemini_pro: "Pro",
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
-                tier_premium: "Premium",
+                tier_premium: "Credits",
                 tier_left: "{label} {value}% left",
                 tier_used: "{label} {value}% used",
                 tier_used_up: "{label} used up",
                 balance: "Balance {value}",
-                balance_used_up: "Balance used up",
                 plan_expired: "Plan expired",
                 used_amount: "Used {value}",
                 quota_failed: "Quota unavailable",
@@ -246,6 +257,69 @@ impl TrayTexts {
             },
             // 土耳其语是社区翻译：从英文起步再覆盖已翻译的项，之后新增的托盘项
             // 在有人翻译前显示英文，而不是让所有改托盘的提交都必须补土耳其语。
+            "ko" => {
+                let mut texts = Self::from_language("en");
+                texts.show_main = "CC Switch 열기";
+                texts.open_website = "공식 웹사이트 열기";
+                texts.lightweight_mode = "경량 모드";
+                texts.quit = "CC Switch 종료";
+                texts.quit_stops_routing = "CC Switch 종료 (라우팅 서비스 중지)";
+                texts.projects_label = "프로젝트";
+                texts.no_project_label = "프로젝트 없음";
+                texts.header_direct = "직접 연결";
+                texts.header_route = "라우팅";
+                texts.header_failover = "라우팅 · 장애 조치 켜짐";
+                texts.header_stack = "통합 · 기본 공급자";
+                texts.header_stack_default = "통합 · 기본값: {name}";
+                texts.failover_note = "대기열에서 자동으로 선택됩니다. 앱 페이지에서 변경하세요";
+                texts.mode_route = "라우팅";
+                texts.mode_stack = "통합";
+                texts.needs_routing_suffix = " (라우팅 필요)…";
+                texts.official_blocked_suffix = " (공식 요금제는 라우팅을 사용하지 않음)";
+                texts.open_app_page = "{app} 페이지 열기";
+                texts.add_provider = "공급자 추가…";
+                texts.almost_out = "거의 소진됨";
+                texts.needs_attention = "확인 필요";
+                texts.problem_service_down = "라우팅 서비스가 실행 중이 아닙니다 (포트 {port})";
+                texts.problem_attach_failed = "{app}: 이전 {mode} 연결에 실패하여 직접 연결로 돌아갔습니다";
+                texts.problem_switch_failed = "{app} 전환 실패: {reason}";
+                texts.problem_more = "문제 {count}개 더 있음 — CC Switch에서 확인하세요";
+                texts.tooltip_problem = "CC Switch · 확인 필요: {problem}";
+                texts.feedback_switched = "{app}의 공급자가 {name}(으)로 전환되었습니다. 적용하려면 {app}을(를) 다시 시작하세요";
+                texts.feedback_stack_default = "{app}의 기본 공급자가 {name}(으)로 변경되었습니다. 적용하려면 {app}을(를) 다시 시작하세요";
+                texts.feedback_profile = "{app}에 {name} 프로젝트를 적용했습니다";
+                texts.tier_five_hour = "5시간";
+                texts.tier_weekly = "주간";
+                texts.tier_monthly = "월간";
+                texts.tier_thirty_day = "30일";
+                texts.tier_credits = "크레딧";
+                texts.tier_premium = "프리미엄 요청";
+                texts.tier_left = "{label} {value}% 남음";
+                texts.tier_used = "{label} {value}% 사용";
+                texts.tier_used_up = "{label} 소진됨";
+                texts.balance = "잔액 {value}";
+                texts.plan_expired = "요금제 만료됨";
+                texts.used_amount = "{value} 사용";
+                texts.quota_failed = "할당량 조회 실패";
+                texts.quota_failed_login_expired = "할당량 조회 실패: 로그인 만료";
+                texts.quota_failed_token_refresh_pending = "할당량 조회 실패: 토큰 갱신 대기 중";
+                texts.reset_on_date = "{when}에 {label} 할당량 초기화";
+                texts.reset_at_time = "{when}에 {label} 할당량 초기화";
+                texts.date_format = "%-m월 %-d일";
+                texts
+            },
+            // 俄语同为社区翻译：从英文起步，只覆盖已翻译的项。
+            "ru" => {
+                let mut texts = Self::from_language("en");
+                texts.show_main = "Открыть главное окно";
+                texts.open_website = "Открыть официальный сайт";
+                texts.lightweight_mode = "Облегчённый режим";
+                texts.quit = "Выйти из CC Switch";
+                texts.quit_stops_routing = "Выйти из CC Switch (служба маршрутизации остановится)";
+                texts.projects_label = "Проекты";
+                texts.no_project_label = "Без проекта";
+                texts
+            },
             "tr" => {
                 let mut texts = Self::from_language("en");
                 texts.show_main = "CC Switch'i aç";
@@ -286,12 +360,10 @@ impl TrayTexts {
                 texts.tier_gemini_pro = "Pro";
                 texts.tier_gemini_flash = "Flash";
                 texts.tier_gemini_flash_lite = "Flash Lite";
-                texts.tier_premium = "Premium";
                 texts.tier_left = "{label} %{value} kaldı";
                 texts.tier_used = "{label} %{value} kullanıldı";
                 texts.tier_used_up = "{label} tükendi";
                 texts.balance = "Bakiye {value}";
-                texts.balance_used_up = "Bakiye tükendi";
                 texts.plan_expired = "Planın süresi doldu";
                 texts.used_amount = "Kullanılan: {value}";
                 texts.quota_failed = "Kota bilgisi alınamıyor";
@@ -344,12 +416,11 @@ impl TrayTexts {
                 tier_gemini_pro: "Pro",
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
-                tier_premium: "プレミアム",
+                tier_premium: "Credits",
                 tier_left: "{label} 残り {value}%",
                 tier_used: "{label} 使用済み {value}%",
                 tier_used_up: "{label} 使い切り",
                 balance: "残高 {value}",
-                balance_used_up: "残高なし",
                 plan_expired: "プラン期限切れ",
                 used_amount: "使用 {value}",
                 quota_failed: "残量を取得できません",
@@ -400,17 +471,16 @@ impl TrayTexts {
                 tier_gemini_pro: "Pro",
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
-                tier_premium: "進階請求",
+                tier_premium: "Credits",
                 tier_left: "{labelSp}剩餘 {value}%",
                 tier_used: "{labelSp}已用 {value}%",
                 tier_used_up: "{labelSp}已用完",
                 balance: "餘額 {value}",
-                balance_used_up: "餘額已用完",
                 plan_expired: "方案已過期",
                 used_amount: "已使用 {value}",
-                quota_failed: "額度沒查到",
-                quota_failed_login_expired: "額度沒查到：登入已過期",
-                quota_failed_token_refresh_pending: "額度沒查到：權杖待重新整理",
+                quota_failed: "額度查詢失敗",
+                quota_failed_login_expired: "額度查詢失敗：登入已過期",
+                quota_failed_token_refresh_pending: "額度查詢失敗：權杖待重新整理",
                 reset_on_date: "{labelSp}額度 {when}重置",
                 reset_at_time: "{labelSp}額度 {when} 重置",
                 date_format: "%-m 月 %-d 日",
@@ -456,17 +526,16 @@ impl TrayTexts {
                 tier_gemini_pro: "Pro",
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
-                tier_premium: "高级请求",
+                tier_premium: "Credits",
                 tier_left: "{labelSp}剩余 {value}%",
                 tier_used: "{labelSp}已用 {value}%",
                 tier_used_up: "{labelSp}已用完",
                 balance: "余额 {value}",
-                balance_used_up: "余额已用完",
                 plan_expired: "套餐已过期",
                 used_amount: "已使用 {value}",
-                quota_failed: "额度没查到",
-                quota_failed_login_expired: "额度没查到：登录已过期",
-                quota_failed_token_refresh_pending: "额度没查到：令牌待刷新",
+                quota_failed: "额度查询失败",
+                quota_failed_login_expired: "额度查询失败：登录已过期",
+                quota_failed_token_refresh_pending: "额度查询失败：令牌待刷新",
                 reset_on_date: "{labelSp}额度 {when}重置",
                 reset_at_time: "{labelSp}额度 {when} 重置",
                 date_format: "%-m 月 %-d 日",
@@ -592,6 +661,8 @@ struct QuotaLine {
     /// 档名（重置说明用；余额等没有档名）。
     label: Option<&'static str>,
     resets_at: Option<String>,
+    /// 要上色的那段数值（还有余额时的金额，照卡片 `balanceLine` 的 `emphasis`）；其余为空。
+    emphasis: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -636,6 +707,7 @@ fn tier_line(
         left,
         label: Some(label),
         resets_at,
+        emphasis: None,
     }
 }
 
@@ -719,6 +791,9 @@ fn resets_at_from_extra(extra: Option<&str>) -> Option<String> {
 }
 
 fn amount(value: f64, unit: Option<&str>) -> String {
+    // `{:.2}` 会把 -0.0 和舍入到 0 的小负数写成 -0.00（DeepSeek 欠费归零时就回 "-0.00"）
+    let rounded = (value * 100.0).round() / 100.0;
+    let value = if rounded == 0.0 { 0.0 } else { value };
     match unit.map(str::trim).filter(|unit| !unit.is_empty()) {
         Some(unit) => format!("{value:.2} {unit}"),
         None => format!("{value:.2}"),
@@ -733,31 +808,35 @@ fn plan_line(texts: &TrayTexts, data: &crate::provider::UsageData) -> Option<Quo
             left: -1.0,
             label: None,
             resets_at: None,
+            emphasis: None,
         });
     }
     let unit = data.unit.as_deref();
     let total = data.total.filter(|total| *total != -1.0);
     if unit == Some(COPILOT_UNIT_PREMIUM) {
-        if let (Some(remaining), Some(total)) = (data.remaining, total) {
-            if total > 0.0 {
-                let utilization = (total - remaining) / total * 100.0;
-                return Some(tier_line(texts, texts.tier_premium, utilization, None));
-            }
+        // Free 计划不含 Credits（总额 0）：不显示，别落到下面的余额分支写成「余额 0」
+        let (Some(remaining), Some(total)) = (data.remaining, total) else {
+            return None;
+        };
+        if total <= 0.0 {
+            return None;
         }
+        let utilization = (total - remaining) / total * 100.0;
+        return Some(tier_line(texts, texts.tier_premium, utilization, None));
     }
     if let Some(remaining) = data.remaining {
-        // 余额不提示「快用完」，只有用完才算（和卡片 `quotaRules.balanceLine` 一致）
+        // 余额不提示「快用完」，只有用完才算（和卡片 `quotaRules.balanceLine` 一致）；
+        // 用完也照写金额（欠费就是负数，#8812），整行变色、金额不另上绿色
         let left = if remaining <= 0.0 { 0.0 } else { f64::INFINITY };
-        let text = if remaining <= 0.0 {
-            texts.balance_used_up.to_string()
-        } else {
-            fill(texts.balance, &[("value", &amount(remaining, unit))])
-        };
+        let value = amount(remaining, unit);
+        let text = fill(texts.balance, &[("value", &value)]);
+        let emphasis = (remaining > 0.0).then_some(value);
         return Some(QuotaLine {
             text,
             left,
             label: None,
             resets_at: None,
+            emphasis,
         });
     }
     data.used.map(|used| QuotaLine {
@@ -765,6 +844,7 @@ fn plan_line(texts: &TrayTexts, data: &crate::provider::UsageData) -> Option<Quo
         left: f64::INFINITY,
         label: None,
         resets_at: None,
+        emphasis: None,
     })
 }
 
@@ -879,6 +959,19 @@ fn managed_codex_account_id(provider: &Provider) -> Option<String> {
     None
 }
 
+/// Claude 官方卡绑了授权中心的账号（同前端 ProviderCard 的 `claudeBoundAccountId`）。
+fn claude_bound_account_id(app_type: &AppType, provider: &Provider) -> Option<String> {
+    if *app_type != AppType::Claude || !is_official_account(app_type, provider) {
+        return None;
+    }
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.managed_account_id_for("claude_official"))
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty())
+}
+
 fn provider_uses_official_subscription(provider: &Provider) -> bool {
     // Managed Codex uses the account-scoped path in tray_usage_source instead
     // of the CLI's app-wide subscription cache.
@@ -900,6 +993,8 @@ fn provider_uses_official_subscription(provider: &Provider) -> bool {
 #[derive(Debug, PartialEq, Eq)]
 enum TrayUsageSource {
     ManagedCodex(String),
+    /// 绑了账号的 Claude 官方卡：按绑定的账号取，不读客户端默认登录的应用级缓存。
+    ClaudeAccount(String),
     /// 客户端自己登录的官方订阅：和供应商卡片读写同一份应用级订阅缓存。
     Subscription,
     Script,
@@ -919,6 +1014,16 @@ fn tray_usage_source(app_type: &AppType, provider: &Provider) -> Option<TrayUsag
                 .unwrap_or(true);
             return enabled.then_some(TrayUsageSource::ManagedCodex(account_id));
         }
+    }
+    if let Some(account_id) = claude_bound_account_id(app_type, provider) {
+        // 同卡片：绑了账号的 Claude 官方卡没保存过开关时默认查额度，用户关掉才不查。
+        let enabled = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.usage_script.as_ref())
+            .map(|script| script.enabled)
+            .unwrap_or(true);
+        return enabled.then_some(TrayUsageSource::ClaudeAccount(account_id));
     }
     // xAI OAuth 的额度属于绑定的 SuperGrok 账号，不是所在应用的客户端登录，仍走脚本路径。
     if provider_uses_official_subscription(provider) && !provider.is_xai_oauth() {
@@ -970,6 +1075,12 @@ fn cached_usage_view(
         // account's quota from a provider cache or the CLI subscription cache.
         return usage_cache
             .with_codex_oauth(account_id, |quota| format_subscription_quota(texts, quota))
+            .flatten();
+    }
+    if let Some(TrayUsageSource::ClaudeAccount(account_id)) = source {
+        // 同上：没查到这个号就不显示，不回落到默认登录的应用级缓存。
+        return usage_cache
+            .with_claude_account(account_id, |quota| format_subscription_quota(texts, quota))
             .flatten();
     }
     if source == Some(&TrayUsageSource::Subscription) {
@@ -1190,7 +1301,12 @@ fn sort_providers(providers: &indexmap::IndexMap<String, Provider>) -> Vec<(&Str
     sorted
 }
 
-fn provider_hint(provider: &Provider) -> Option<String> {
+/// 副标题：备注 > 绑定的 Claude 账号（同主界面卡片） > 官网域名。
+fn provider_hint(
+    app: &AppType,
+    provider: &Provider,
+    claude_accounts: &HashMap<String, String>,
+) -> Option<String> {
     if let Some(notes) = provider
         .notes
         .as_deref()
@@ -1199,6 +1315,11 @@ fn provider_hint(provider: &Provider) -> Option<String> {
         .filter(|notes| !notes.is_empty())
     {
         return Some(truncate_chars(notes, 24));
+    }
+    if let Some(label) =
+        claude_bound_account_id(app, provider).and_then(|id| claude_accounts.get(&id))
+    {
+        return Some(label.clone());
     }
     let url = provider.website_url.as_deref()?.trim();
     let host = url
@@ -1210,11 +1331,15 @@ fn provider_hint(provider: &Provider) -> Option<String> {
     (!host.is_empty()).then(|| host.to_string())
 }
 
-fn provider_entry(app: &AppType, provider: &Provider) -> ProviderEntry {
+fn provider_entry(
+    app: &AppType,
+    provider: &Provider,
+    claude_accounts: &HashMap<String, String>,
+) -> ProviderEntry {
     ProviderEntry {
         id: provider.id.clone(),
         name: provider.name.clone(),
-        hint: provider_hint(provider),
+        hint: provider_hint(app, provider, claude_accounts),
         needs_routing: provider_needs_routing(app, provider),
         official: is_official_account(app, provider),
         blocked_from_routing: blocked_from_routing(app, provider),
@@ -1245,9 +1370,14 @@ fn collect_app_snapshot(
     profiles: &[crate::database::Profile],
 ) -> Result<AppSnapshot, AppError> {
     let rows = app_state.db.get_all_providers(app.as_str())?;
+    let claude_accounts = if *app == AppType::Claude {
+        crate::services::claude_account::labels_on_disk(&crate::config::get_app_config_dir())
+    } else {
+        HashMap::new()
+    };
     let providers: Vec<ProviderEntry> = sort_providers(&rows)
         .into_iter()
-        .map(|(_, provider)| provider_entry(app, provider))
+        .map(|(_, provider)| provider_entry(app, provider, &claude_accounts))
         .collect();
     // 代理模式下是代理路由到的那家（含故障转移切过去的）。
     let current_id = crate::mode::current::provider_for(
@@ -2077,6 +2207,8 @@ pub struct PanelApp {
     pub current: Option<String>,
     /// 直连 / 路由 / 聚合。
     pub mode: &'static str,
+    /// 同一模式的机器可读值（`direct` / `route` / `stack`），面板按它给模式名上主题色。
+    pub mode_kind: &'static str,
     /// 子面板标题下的说明（「路由 · 故障转移开启中」等）。
     pub header: Option<String>,
     pub attention: Option<&'static str>,
@@ -2107,6 +2239,8 @@ pub struct PanelQuotaLine {
     pub warn: bool,
     /// 这一档什么时候重置（ISO 8601），前端按本地时间写。
     pub resets_at: Option<String>,
+    /// `text` 里要上绿色的那段数值（还有余额时的金额）；其余为空。
+    pub emphasis: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2146,6 +2280,7 @@ fn panel_quota(
                     left: line.left.is_finite().then(|| line.left.clamp(0.0, 100.0)),
                     warn: line.left < WARN_BELOW_PERCENT,
                     resets_at: line.resets_at.clone(),
+                    emphasis: line.emphasis.clone(),
                 })
                 .collect(),
             note: None,
@@ -2176,7 +2311,7 @@ fn cached_reset_credits(
             usage_cache.with_codex_oauth(account_id, count).flatten()
         }
         TrayUsageSource::Subscription => usage_cache.with_subscription(app_type, count).flatten(),
-        TrayUsageSource::Script => None,
+        TrayUsageSource::ClaudeAccount(_) | TrayUsageSource::Script => None,
     }
 }
 
@@ -2231,7 +2366,11 @@ fn panel_rows(
                 let source = tray_usage_source(&snapshot.app, provider);
                 Some(PanelProvider {
                     name: provider.name.clone(),
-                    hint: provider_hint(provider),
+                    hint: snapshot
+                        .providers
+                        .iter()
+                        .find(|entry| entry.id == provider_id)
+                        .and_then(|entry| entry.hint.clone()),
                     icon: provider.icon.clone(),
                     icon_color: provider.icon_color.clone(),
                     quota: cached_usage_view(
@@ -2300,6 +2439,11 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
                 TrayMode::Direct => texts.header_direct,
                 TrayMode::Route | TrayMode::Failover => texts.mode_route,
                 TrayMode::Stack => texts.mode_stack,
+            },
+            mode_kind: match snapshot.mode {
+                TrayMode::Direct => "direct",
+                TrayMode::Route | TrayMode::Failover => "route",
+                TrayMode::Stack => "stack",
             },
             header,
             attention: snapshot.needs_attention.then_some(texts.needs_attention),
@@ -2413,6 +2557,8 @@ pub fn create_tray_menu(
         };
     }
     let menu = builder.build().map_err(menu_error)?;
+    #[cfg(target_os = "windows")]
+    crate::tray_compat::remember_native_menu(&menu);
 
     *lock(&TRAY_SECTION_SUBMENUS) = handles;
     update_problem_indicator(app, &texts, &model.status.problems);
@@ -2576,6 +2722,10 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
     #[cfg(not(target_os = "linux"))]
     {
         crate::tray_panel::notify_changed(app);
+        // 出面板时托盘上没挂原生菜单，没有标题要改
+        if !crate::tray_panel::uses_native_menu() {
+            return;
+        }
         let Some(app_state) = app.try_state::<AppState>() else {
             return;
         };
@@ -2601,7 +2751,7 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
 
 pub fn refresh_tray_menu(app: &tauri::AppHandle) {
     if let Some(state) = app.try_state::<AppState>() {
-        if crate::tray_panel::USES_NATIVE_MENU {
+        if crate::tray_panel::uses_native_menu() {
             match create_tray_menu(app, state.inner()) {
                 Ok(new_menu) => {
                     if let Some(tray) = app.tray_by_id(TRAY_ID) {
@@ -2617,6 +2767,70 @@ pub fn refresh_tray_menu(app: &tauri::AppHandle) {
         }
     }
     crate::tray_panel::notify_changed(app);
+}
+
+/// 设置里切换了原生托盘菜单 / 托盘面板：当场换掉托盘的点击行为，不用重启。
+/// 换成原生菜单时挂上重建的菜单、收起面板；换成面板时摘掉菜单（`refresh_tray_menu` 只更新图标状态）。
+pub fn apply_tray_style(app: &tauri::AppHandle) {
+    let native = crate::tray_panel::uses_native_menu();
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        if native {
+            crate::tray_panel::hide_panel(app);
+        } else {
+            if let Err(e) = tray.set_menu(None::<Menu<tauri::Wry>>) {
+                log::error!("摘掉托盘菜单失败: {e}");
+            }
+            // 菜单没了，旧句柄不再更新标题。
+            lock(&TRAY_SECTION_SUBMENUS).clear();
+        }
+        if let Err(e) = tray.set_show_menu_on_left_click(native_menu_on_left_click(native)) {
+            log::warn!("设置托盘左键行为失败: {e}");
+        }
+    }
+    refresh_tray_menu(app);
+}
+
+/// 托盘图标的鼠标事件。Windows 第三方托盘下 `tray_compat` 补发的点击也走这里。
+pub fn handle_tray_icon_event(tray: &TrayIcon, event: TrayIconEvent) {
+    if let TrayIconEvent::Click {
+        button: button @ (MouseButton::Left | MouseButton::Right),
+        button_state: MouseButtonState::Up,
+        rect,
+        ..
+    } = &event
+    {
+        if cfg!(target_os = "windows") && *button == MouseButton::Left {
+            crate::tray_panel::hide_panel(tray.app_handle());
+            show_main_window(tray.app_handle());
+        } else if !crate::tray_panel::uses_native_menu() {
+            crate::tray_panel::toggle(tray.app_handle(), rect);
+            return;
+        } else {
+            // 弹出的菜单里已经有反馈行了：算显示过，下次悬停重建时拿掉。
+            mark_feedback_seen();
+        }
+    }
+    match &event {
+        // 鼠标悬停/点击到托盘图标时，后台异步刷新用量缓存，
+        // 让用户下一次（或快速打开菜单的那一刻）看到较新的数字。
+        // refresh_all_usage_in_tray 内部有 10 秒防抖。
+        TrayIconEvent::Enter { .. } | TrayIconEvent::Click { .. } => {
+            let app = tray.app_handle().clone();
+            // 悬停时菜单还没打开：问题区该出现 / 消失了就趁这时重建。
+            if matches!(event, TrayIconEvent::Enter { .. }) {
+                refresh_tray_if_problems_changed(&app);
+            }
+            tauri::async_runtime::spawn(async move {
+                refresh_all_usage_in_tray(&app).await;
+            });
+        }
+        _ => log::debug!("unhandled event {event:?}"),
+    }
+}
+
+/// 左键是否直接出原生菜单：用面板时不出；Windows 的习惯是左键打开主界面、右键出菜单。
+pub fn native_menu_on_left_click(native: bool) -> bool {
+    native && cfg!(not(target_os = "windows"))
 }
 
 /// 悬停到托盘图标时：问题区该出现 / 该消失了（路由服务停了、又起来了）、反馈行显示过了或到点了，
@@ -2787,19 +3001,24 @@ pub fn handle_profile_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool
             log::error!("未知的项目分组托盘事件: {event_id}");
             return true;
         };
-        if let Some(app_state) = app.try_state::<AppState>() {
-            if let Err(e) = app_state.db.set_current_profile_id(scope.as_str(), None) {
-                log::error!("清除当前项目失败: {e}");
+        // 与窗口里的项目命令同一把锁，否则窗口里 apply 收尾写指针会把这里的清除盖掉。
+        let app_handle = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let _serial = crate::commands::PROFILE_LOCK.blocking_lock();
+            if let Some(app_state) = app_handle.try_state::<AppState>() {
+                if let Err(e) = app_state.db.set_current_profile_id(scope.as_str(), None) {
+                    log::error!("清除当前项目失败: {e}");
+                }
             }
-        }
-        // 通知主窗口刷新（profileId=null 表示该分组已清除当前项目）
-        if let Err(e) = app.emit(
-            "profile-applied",
-            serde_json::json!({ "profileId": null, "scope": scope.as_str() }),
-        ) {
-            log::error!("发射 profile-applied 事件失败: {e}");
-        }
-        refresh_tray_menu(app);
+            // 通知主窗口刷新（profileId=null 表示该分组已清除当前项目）
+            if let Err(e) = app_handle.emit(
+                "profile-applied",
+                serde_json::json!({ "profileId": null, "scope": scope.as_str() }),
+            ) {
+                log::error!("发射 profile-applied 事件失败: {e}");
+            }
+            refresh_tray_menu(&app_handle);
+        });
         return true;
     }
 
@@ -2817,6 +3036,7 @@ pub fn handle_profile_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool
     let app_handle = app.clone();
     let profile_id = profile_id.to_string();
     tauri::async_runtime::spawn_blocking(move || {
+        let _serial = crate::commands::PROFILE_LOCK.blocking_lock();
         let Some(app_state) = app_handle.try_state::<AppState>() else {
             return;
         };
@@ -3222,6 +3442,11 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
                         .await
                         .map(|_| ())
                     }
+                    TrayUsageSource::ClaudeAccount(account_id) => {
+                        crate::commands::get_claude_account_quota(app_clone, state, account_id)
+                            .await
+                            .map(|_| ())
+                    }
                     TrayUsageSource::Subscription => {
                         crate::commands::get_subscription_quota(app_clone, state, app_str)
                             .await
@@ -3411,7 +3636,43 @@ mod tests {
     }
 
     #[test]
+    fn locale_matches_language_and_chinese_region_boundaries() {
+        for locale in ["zha", "zhb-CN", "jam", "trv-TW"] {
+            assert_eq!(map_locale_to_tray_language(locale), "en", "{locale}");
+        }
+        for locale in ["zh-TW-u-nu-hanidec", "zh-Hant-TW", "zh-HK"] {
+            assert_eq!(map_locale_to_tray_language(locale), "zh-TW", "{locale}");
+        }
+        for locale in ["zh-hantx", "zh-hkx"] {
+            assert_eq!(map_locale_to_tray_language(locale), "zh", "{locale}");
+        }
+    }
+
+    #[test]
+    fn locale_maps_korean_without_matching_other_language_subtags() {
+        for locale in ["ko", "ko-KR", "ko-KP", "KO-kr"] {
+            assert_eq!(map_locale_to_tray_language(locale), "ko");
+        }
+        for locale in ["kok", "kok-IN", "kos"] {
+            assert_eq!(map_locale_to_tray_language(locale), "en");
+        }
+    }
+
+    #[test]
+    fn locale_maps_russian_without_matching_other_language_subtags() {
+        for locale in ["ru", "ru-RU", "ru-UA", "RU-ru"] {
+            assert_eq!(map_locale_to_tray_language(locale), "ru");
+        }
+        // 卢森尼亚语 rue、Rupuni 等以 ru 开头但不是俄语，按不支持的语言回落英文
+        for locale in ["rue", "rue-UA", "rup"] {
+            assert_eq!(map_locale_to_tray_language(locale), "en");
+        }
+    }
+
+    #[test]
     fn locale_maps_japanese_and_english() {
+        assert_eq!(map_locale_to_tray_language("ko-KR"), "ko");
+        assert_eq!(map_locale_to_tray_language("ko"), "ko");
         assert_eq!(map_locale_to_tray_language("tr-TR"), "tr");
         assert_eq!(map_locale_to_tray_language("tr"), "tr");
         assert_eq!(map_locale_to_tray_language("ja-JP"), "ja");
@@ -3423,7 +3684,7 @@ mod tests {
     #[test]
     fn locale_unknown_falls_back_to_en() {
         // 与前端 getInitialLanguage 保持一致：认不出的语言用英文，区域为空才用默认的 zh。
-        for locale in ["de-DE", "fr", "ko-KR"] {
+        for locale in ["de-DE", "fr", "es-ES"] {
             assert_eq!(
                 map_locale_to_tray_language(locale),
                 "en",
@@ -3474,6 +3735,7 @@ mod tests {
             extra_usage: None,
             reset_credits: None,
             credits_balance: None,
+            plan_name: None,
             error: None,
             queried_at: Some(0),
         }
@@ -3707,25 +3969,54 @@ mod tests {
         );
         assert_eq!(
             one(balance(0.0, Some(100.0))),
-            Some(("余额已用完".to_string(), false))
+            Some(("余额 0.00 CNY".to_string(), false))
         );
+        // 欠费照写负数；-0.0 和舍入到 0 的小负数不写成 -0.00（#8812）
+        assert_eq!(
+            one(balance(-24.96, None)),
+            Some(("余额 -24.96 CNY".to_string(), false))
+        );
+        assert_eq!(
+            one(balance(-0.0, None)),
+            Some(("余额 0.00 CNY".to_string(), false))
+        );
+        assert_eq!(
+            one(balance(-0.004, None)),
+            Some(("余额 0.00 CNY".to_string(), false))
+        );
+
+        // 面板只给还有的余额金额上绿色；用完的那行整行变色，金额不另上色
+        let emphasis = |data| match format_script_result(&zh(), &usage_result(true, vec![data])) {
+            Some(QuotaView::Lines(lines)) => lines[0].emphasis.clone(),
+            _ => panic!("expected quota lines"),
+        };
+        assert_eq!(emphasis(balance(82.1, None)), Some("82.10 CNY".to_string()));
+        assert_eq!(emphasis(balance(0.0, Some(100.0))), None);
     }
 
     #[test]
     fn copilot_premium_requests_use_the_card_word() {
-        let data = UsageData {
+        let copilot = |total: f64, remaining: f64| UsageData {
             plan_name: Some("copilot_pro".to_string()),
             extra: Some("Reset: 2026-11-01".to_string()),
             is_valid: Some(true),
             invalid_message: None,
-            total: Some(300.0),
-            used: Some(120.0),
-            remaining: Some(180.0),
+            total: Some(total),
+            used: Some(total - remaining),
+            remaining: Some(remaining),
             unit: Some(COPILOT_UNIT_PREMIUM.to_string()),
         };
         assert_eq!(
-            title(format_script_result(&zh(), &usage_result(true, vec![data]))),
-            Some(("高级请求剩余 60%".to_string(), false))
+            title(format_script_result(
+                &zh(),
+                &usage_result(true, vec![copilot(300.0, 180.0)])
+            )),
+            Some(("Credits 剩余 60%".to_string(), false))
+        );
+        // Free 计划不含 Credits（总额 0）：不显示，不能写成「余额 0」
+        assert_eq!(
+            format_script_result(&zh(), &usage_result(true, vec![copilot(0.0, 0.0)])),
+            None
         );
     }
 
@@ -3747,7 +4038,7 @@ mod tests {
         assert_eq!(title(failed.clone()), None);
         assert_eq!(
             quota_note(&zh(), &failed.unwrap(), now()).as_deref(),
-            Some("额度没查到")
+            Some("额度查询失败")
         );
 
         let login =
@@ -3755,7 +4046,7 @@ mod tests {
         let view = format_subscription_quota(&zh(), &login).unwrap();
         assert_eq!(
             quota_note(&zh(), &view, now()).as_deref(),
-            Some("额度没查到：登录已过期")
+            Some("额度查询失败：登录已过期")
         );
         let pending = SubscriptionQuota::error(
             "claude",
@@ -3765,7 +4056,7 @@ mod tests {
         let view = format_subscription_quota(&zh(), &pending).unwrap();
         assert_eq!(
             quota_note(&zh(), &view, now()).as_deref(),
-            Some("额度没查到：令牌待刷新")
+            Some("额度查询失败：令牌待刷新")
         );
         // 没有凭据时不说话。
         let missing =
@@ -3861,6 +4152,109 @@ mod tests {
             tray_usage_source(&AppType::Codex, &legacy),
             Some(TrayUsageSource::ManagedCodex("account-1".to_string()))
         );
+    }
+
+    fn claude_bound_provider(account_id: Option<&str>, enabled: Option<bool>) -> Provider {
+        serde_json::from_value(serde_json::json!({
+            "id": "claude-bound",
+            "name": "Claude Official",
+            "settingsConfig": {"env": {}},
+            "category": "official",
+            "meta": {
+                "authBinding": account_id.map(|id| serde_json::json!({
+                    "source": "managed_account",
+                    "authProvider": "claude_official",
+                    "accountId": id
+                })),
+                "usage_script": enabled.map(|enabled| serde_json::json!({
+                    "enabled": enabled,
+                    "language": "javascript",
+                    "code": "",
+                    "templateType": "official_subscription"
+                }))
+            }
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn claude_bound_card_hint_shows_account_unless_noted() {
+        let accounts = HashMap::from([("acct-1".to_string(), "me@example.com".to_string())]);
+        let mut provider = claude_bound_provider(Some("acct-1"), None);
+        provider.website_url = Some("https://www.anthropic.com".to_string());
+        assert_eq!(
+            provider_hint(&AppType::Claude, &provider, &accounts).as_deref(),
+            Some("me@example.com")
+        );
+
+        provider.notes = Some("Work".to_string());
+        assert_eq!(
+            provider_hint(&AppType::Claude, &provider, &accounts).as_deref(),
+            Some("Work")
+        );
+
+        // 账号不在这台电脑上：退回官网域名
+        let mut missing = claude_bound_provider(Some("acct-2"), None);
+        missing.website_url = Some("https://www.anthropic.com".to_string());
+        assert_eq!(
+            provider_hint(&AppType::Claude, &missing, &accounts).as_deref(),
+            Some("www.anthropic.com")
+        );
+    }
+
+    #[test]
+    fn claude_bound_card_tray_usage_defaults_on_and_reads_its_account() {
+        // 卡片在没保存开关时默认查额度：托盘也要显示，不然两边各说各的
+        for enabled in [Some(true), None] {
+            assert_eq!(
+                tray_usage_source(
+                    &AppType::Claude,
+                    &claude_bound_provider(Some(" acct-1 "), enabled)
+                ),
+                Some(TrayUsageSource::ClaudeAccount("acct-1".to_string()))
+            );
+        }
+        assert_eq!(
+            tray_usage_source(
+                &AppType::Claude,
+                &claude_bound_provider(Some("acct-1"), Some(false))
+            ),
+            None
+        );
+        // 没绑账号的官方卡照旧：开了官方订阅模板才查，读默认登录
+        assert_eq!(
+            tray_usage_source(&AppType::Claude, &claude_bound_provider(None, None)),
+            None
+        );
+        assert_eq!(
+            tray_usage_source(&AppType::Claude, &claude_bound_provider(None, Some(true))),
+            Some(TrayUsageSource::Subscription)
+        );
+
+        // 只读这个号的快照，不回落到默认登录的应用级缓存
+        let cache = UsageCache::new();
+        let texts = en();
+        let provider = claude_bound_provider(Some("acct-1"), None);
+        let label = || {
+            title(usage_view(
+                &cache,
+                &texts,
+                &AppType::Claude,
+                &provider,
+                &provider.id,
+            ))
+            .map(|(text, _)| text)
+        };
+        cache.put_subscription(
+            AppType::Claude,
+            make_quota("claude", true, vec![tier(TIER_FIVE_HOUR, 99.0)]),
+        );
+        assert_eq!(label(), None);
+        cache.put_claude_account(
+            "acct-1".to_string(),
+            make_quota("claude", true, vec![tier(TIER_FIVE_HOUR, 25.0)]),
+        );
+        assert_eq!(label().as_deref(), Some("5-hour 75% left"));
     }
 
     #[test]
@@ -4550,7 +4944,7 @@ mod tests {
             quit_text(&en(), true),
             "Quit CC Switch (stops the routing service)"
         );
-        for language in ["zh", "zh-TW", "en", "ja", "tr"] {
+        for language in ["zh", "zh-TW", "en", "ja", "tr", "ko", "ru"] {
             let texts = TrayTexts::from_language(language);
             assert_ne!(texts.quit, texts.quit_stops_routing, "{language}");
             assert!(

@@ -88,6 +88,7 @@ pub fn import_from_claude(config: &mut MultiAppConfig) -> Result<usize, AppError
                     name: id.clone(),
                     server: spec.clone(),
                     apps: McpApps {
+                        agy: false,
                         claude: true,
                         codex: false,
                         gemini: false,
@@ -95,7 +96,10 @@ pub fn import_from_claude(config: &mut MultiAppConfig) -> Result<usize, AppError
                         opencode: false,
                         hermes: false,
                         mcode: false,
+                        kimi: false,
+                        dsh: false,
                         pi: false,
+                        omp: false,
                     },
                     description: None,
                     homepage: None,
