@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   launch: vi.fn(),
   restart: vi.fn(),
   isWindows: vi.fn(() => true),
+  isMac: vi.fn(() => false),
 }));
 
 vi.mock("react-i18next", () => ({
@@ -24,6 +25,7 @@ vi.mock("react-i18next", () => ({
 
 vi.mock("@/lib/platform", () => ({
   isWindows: mocks.isWindows,
+  isMac: mocks.isMac,
 }));
 
 vi.mock("@/lib/api/desktopApp", () => ({
@@ -62,6 +64,7 @@ describe("DesktopAppControls", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.isWindows.mockReturnValue(true);
+    mocks.isMac.mockReturnValue(false);
     mocks.getStatus.mockResolvedValue({
       supported: true,
       installed: true,
@@ -119,12 +122,23 @@ describe("DesktopAppControls", () => {
     expect(mocks.restart).toHaveBeenCalledWith("codex");
   });
 
-  it("非 Windows 平台不渲染按钮，也不发检测请求", () => {
+  it("非 Windows/macOS 平台不渲染按钮，也不发检测请求", () => {
     mocks.isWindows.mockReturnValue(false);
     const { container } = renderControls();
 
     expect(container).toBeEmptyDOMElement();
     expect(mocks.getStatus).not.toHaveBeenCalled();
+  });
+
+  it("macOS 上渲染启动和重启按钮", async () => {
+    mocks.isWindows.mockReturnValue(false);
+    mocks.isMac.mockReturnValue(true);
+    const { client } = renderControls();
+
+    await waitForStatus(client, "codex", { installed: true });
+
+    expect(screen.getByRole("button", { name: START_LABEL })).toBeEnabled();
+    expect(screen.getByRole("button", { name: RESTART_LABEL })).toBeEnabled();
   });
 
   it("不支持启动的 app 不渲染按钮", () => {

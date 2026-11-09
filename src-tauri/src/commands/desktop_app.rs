@@ -1,8 +1,8 @@
-#[cfg(any(target_os = "windows", test))]
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
 use std::path::Path;
 use std::path::PathBuf;
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 use std::process::{Command, Stdio};
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -24,7 +24,7 @@ impl DesktopAppStatus {
 }
 
 #[derive(Debug, Clone)]
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+#[cfg_attr(not(any(target_os = "windows", target_os = "macos")), allow(dead_code))]
 enum DesktopAppTarget {
     Application(PathBuf),
     #[cfg(target_os = "windows")]
@@ -74,7 +74,7 @@ fn desktop_app_status(app: &str) -> Result<DesktopAppStatus, String> {
         return Ok(DesktopAppStatus::unsupported());
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     let status = {
         let target = find_desktop_app_target(app)?;
         let running = target.as_ref().is_some_and(is_target_running);
@@ -85,7 +85,7 @@ fn desktop_app_status(app: &str) -> Result<DesktopAppStatus, String> {
         }
     };
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let status = DesktopAppStatus::unsupported();
 
     Ok(status)
@@ -108,12 +108,12 @@ fn resolve_target(app: &str) -> Result<DesktopAppTarget, String> {
         return Err(format!("暂不支持启动 {} 桌面应用", app_label(app)));
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     {
         find_desktop_app_target(app)?.ok_or_else(|| format!("未检测到 {} 桌面应用", app_label(app)))
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         Err(format!("当前系统暂不支持启动 {} 桌面应用", app_label(app)))
     }
@@ -235,6 +235,45 @@ fn env_path(key: &str) -> Option<PathBuf> {
     std::env::var_os(key)
         .map(PathBuf::from)
         .filter(|path| path.is_absolute())
+}
+
+#[cfg(target_os = "macos")]
+fn find_desktop_app_target(app: &str) -> Result<Option<DesktopAppTarget>, String> {
+    Ok(macos_bundle_candidates(app)
+        .into_iter()
+        .find(|path| path.is_dir())
+        .map(DesktopAppTarget::Application))
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_bundle_names(app: &str) -> &'static [&'static str] {
+    match app {
+        "codex" => &[
+            "Codex.app",
+            "ChatGPT.app",
+            "OpenAI Codex.app",
+            "OpenAI.Codex.app",
+        ],
+        "claude-desktop" => &["Claude.app", "Claude Desktop.app"],
+        "opencode" => &["OpenCode.app", "opencode.app"],
+        _ => &[],
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_bundle_candidates(app: &str) -> Vec<PathBuf> {
+    let mut roots = vec![PathBuf::from("/Applications")];
+    if let Some(home) = dirs::home_dir() {
+        roots.push(home.join("Applications"));
+    }
+    roots
+        .into_iter()
+        .flat_map(|root| {
+            macos_bundle_names(app)
+                .iter()
+                .map(move |name| root.join(name))
+        })
+        .collect()
 }
 
 #[cfg(target_os = "windows")]
@@ -581,12 +620,152 @@ fn hide_console(command: &mut Command) {
     command.creation_flags(CREATE_NO_WINDOW);
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(any(target_os = "macos", test))]
+fn macos_process_ids_from_ps(output: &str, bundle: &Path) -> Vec<i32> {
+    let current_process = std::process::id() as i32;
+    output
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            let split = line.find(char::is_whitespace)?;
+            let process_id = line[..split].parse::<i32>().ok()?;
+            if process_id <= 0 || process_id == current_process {
+                return None;
+            }
+            let executable = Path::new(line[split..].trim());
+            (executable == bundle || executable.starts_with(bundle)).then_some(process_id)
+        })
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn macos_process_ids(bundle: &Path) -> Result<Vec<i32>, String> {
+    let output = Command::new("ps")
+        .args(["-axww", "-o", "pid=", "-o", "comm="])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| format!("读取进程列表失败: {error}"))?;
+    if !output.status.success() {
+        return Err("读取进程列表失败".to_string());
+    }
+    Ok(macos_process_ids_from_ps(
+        &String::from_utf8_lossy(&output.stdout),
+        bundle,
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_wait_for_exit(bundle: &Path, attempts: u32) -> Result<bool, String> {
+    for _ in 0..attempts {
+        if macos_process_ids(bundle)?.is_empty() {
+            return Ok(true);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    Ok(macos_process_ids(bundle)?.is_empty())
+}
+
+#[cfg(target_os = "macos")]
+fn macos_request_quit(bundle: &Path) {
+    let escaped = bundle
+        .to_string_lossy()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
+    let Ok(mut child) = Command::new("osascript")
+        .args(["-e", &format!("tell application \"{escaped}\" to quit")])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return;
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while std::time::Instant::now() < deadline {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
+            Err(_) => return,
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[cfg(target_os = "macos")]
+fn macos_signal_process(process_id: i32, signal: i32) -> Result<(), String> {
+    if unsafe { libc::kill(process_id, signal) } == 0 {
+        return Ok(());
+    }
+    let error = std::io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        Ok(())
+    } else {
+        Err(format!("结束进程 {process_id} 失败: {error}"))
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn is_target_running(target: &DesktopAppTarget) -> bool {
+    let DesktopAppTarget::Application(bundle) = target;
+    macos_process_ids(bundle)
+        .map(|ids| !ids.is_empty())
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "macos")]
+fn stop_target(target: &DesktopAppTarget, label: &str) -> Result<(), String> {
+    let DesktopAppTarget::Application(bundle) = target;
+    if macos_process_ids(bundle)?.is_empty() {
+        return Ok(());
+    }
+
+    macos_request_quit(bundle);
+    if macos_wait_for_exit(bundle, 50)? {
+        return Ok(());
+    }
+
+    for process_id in macos_process_ids(bundle)? {
+        macos_signal_process(process_id, libc::SIGTERM)?;
+    }
+    if macos_wait_for_exit(bundle, 20)? {
+        return Ok(());
+    }
+
+    for process_id in macos_process_ids(bundle)? {
+        macos_signal_process(process_id, libc::SIGKILL)?;
+    }
+    if macos_wait_for_exit(bundle, 20)? {
+        return Ok(());
+    }
+
+    let ids = macos_process_ids(bundle)?
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(format!("{label} 没有完全退出，剩余进程: {ids}"))
+}
+
+#[cfg(target_os = "macos")]
+fn launch_target(target: &DesktopAppTarget, label: &str) -> Result<(), String> {
+    let DesktopAppTarget::Application(bundle) = target;
+    Command::new("open")
+        .arg(bundle)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("启动 {label} 失败: {error}"))
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn stop_target(_target: &DesktopAppTarget, _label: &str) -> Result<(), String> {
     Err("当前系统暂不支持重启桌面应用".to_string())
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn launch_target(_target: &DesktopAppTarget, _label: &str) -> Result<(), String> {
     Err("当前系统暂不支持启动桌面应用".to_string())
 }
@@ -676,5 +855,20 @@ mod tests {
             Path::new(r"C:\Other\Other.exe"),
             &target
         ));
+    }
+    #[test]
+    fn macos_bundle_names_cover_desktop_apps() {
+        assert!(macos_bundle_names("codex").contains(&"ChatGPT.app"));
+        assert!(macos_bundle_names("claude-desktop").contains(&"Claude.app"));
+        assert!(macos_bundle_names("opencode").contains(&"OpenCode.app"));
+        assert!(macos_bundle_names("claude").is_empty());
+    }
+
+    #[test]
+    fn macos_process_matching_is_scoped_to_the_bundle() {
+        let bundle = Path::new("/Applications/Codex.app");
+        let output = "10 /Applications/Codex.app/Contents/MacOS/Codex\n11 /Applications/Codex.app/Contents/Frameworks/Helper.app/Contents/MacOS/Helper\n12 /Applications/Codex.app.old/Contents/MacOS/Codex\n13 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT\n14 /usr/local/bin/codex\n";
+        assert_eq!(macos_process_ids_from_ps(output, bundle), vec![10, 11]);
+        assert!(macos_process_ids_from_ps("bad input\n-1 /opt/desktop", bundle).is_empty());
     }
 }
