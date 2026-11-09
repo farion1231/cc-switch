@@ -105,6 +105,8 @@ const IMPORT_SOURCE_FILES: Record<
     noteKey: "mcpPage.import.dshNote",
   },
   kimi: { file: "~/.kimi-code/mcp.json" },
+  qoder: { file: "~/.qoder/settings.json" },
+  "qoder-cn": { file: "~/.qoder-cn/settings.json" },
   mcode: { file: "~/.minimax/mcp.json" },
   omp: { file: "~/.omp/agent/mcp.json" },
 };
@@ -114,6 +116,8 @@ const WRITE_THEN_SAVE_APPS: ReadonlySet<McpAppId> = new Set([
   "mcode",
   "kimi",
   "dsh",
+  "qoder",
+  "qoder-cn",
   "pi",
   "agy",
   "omp",

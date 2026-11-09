@@ -176,6 +176,11 @@ impl Provider {
         }
 
         let (base_url, api_key) = match app_type {
+            AppType::Qoder | AppType::QoderCn => {
+                let key = str_at(settings.get("apiKey"));
+                let key = crate::qoder_config::resolve_credential(&key);
+                (str_at(settings.get("baseUrl")), key)
+            }
             // Codex keeps its key in `auth.OPENAI_API_KEY` and its base URL
             // inside a TOML `config` string, not in an `env` map.
             AppType::Codex => {

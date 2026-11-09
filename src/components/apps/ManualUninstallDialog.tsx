@@ -37,10 +37,12 @@ export function ManualUninstallDialog({
   open,
   onOpenChange,
   toolVersionByName,
+  qoderTool = "qoder",
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   toolVersionByName: ReadonlyMap<string, ToolVersion>;
+  qoderTool?: "qoder" | "qodercn";
 }) {
   const { t } = useTranslation();
   const [method, setMethod] = useState<UninstallMethod>("npm");
@@ -80,7 +82,8 @@ export function ManualUninstallDialog({
     ...new Set(TOOL_NAMES.map(environmentLabelForTool)),
   ];
   const methods = (Object.keys(UNINSTALL_METHODS) as UninstallMethod[]).filter(
-    (value) => uninstallCommandsFor(value, environmentForTool).length > 0,
+    (value) =>
+      uninstallCommandsFor(value, environmentForTool, qoderTool).length > 0,
   );
   // A refreshed detection can remove the selected method (e.g. WSL -> Windows).
   const selectedMethod = methods.includes(method) ? method : "npm";
@@ -163,47 +166,49 @@ export function ManualUninstallDialog({
             {t("settings.manualUninstallEnvironmentHint")}
           </p>
           <ul className="space-y-3">
-            {uninstallCommandsFor(selectedMethod, environmentForTool).map(
-              ({ tool, command, variant }) => (
-                <li key={command} className="space-y-1.5">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-strong text-fg-1">
-                      {toolDisplayName(tool)}
-                      {variant && ` (${variant})`}
-                      {environmentLabels.length > 1 && (
-                        <span className="ml-2 text-caption font-normal text-fg-2">
-                          {environmentLabelForTool(tool)}
-                        </span>
-                      )}
-                    </span>
-                    <Button
-                      variant="neutral"
-                      size="compact"
-                      aria-label={t("settings.copyToolUninstallCommand", {
-                        tool: toolDisplayName(tool),
-                      })}
-                      onClick={() => void copyCommand(command)}
-                    >
-                      <Copy className="h-3.5 w-3.5" />
-                      {t("common.copy")}
-                    </Button>
-                  </div>
-                  {tool === "openclaw" && (
-                    <p className="text-caption text-fg-2">
-                      {t("settings.manualUninstallOpenClawHint")}
-                    </p>
-                  )}
-                  {tool === "openclaw" && selectedMethod === "bun" && (
-                    <p className="text-caption text-fg-2">
-                      {t("settings.manualUninstallBunLauncherHint")}
-                    </p>
-                  )}
-                  <pre className="overflow-x-auto rounded-control border border-border bg-subtle px-3 py-2.5 font-mono text-caption">
-                    <code>{command}</code>
-                  </pre>
-                </li>
-              ),
-            )}
+            {uninstallCommandsFor(
+              selectedMethod,
+              environmentForTool,
+              qoderTool,
+            ).map(({ tool, command, variant }) => (
+              <li key={command} className="space-y-1.5">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-strong text-fg-1">
+                    {toolDisplayName(tool)}
+                    {variant && ` (${variant})`}
+                    {environmentLabels.length > 1 && (
+                      <span className="ml-2 text-caption font-normal text-fg-2">
+                        {environmentLabelForTool(tool)}
+                      </span>
+                    )}
+                  </span>
+                  <Button
+                    variant="neutral"
+                    size="compact"
+                    aria-label={t("settings.copyToolUninstallCommand", {
+                      tool: toolDisplayName(tool),
+                    })}
+                    onClick={() => void copyCommand(command)}
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                    {t("common.copy")}
+                  </Button>
+                </div>
+                {tool === "openclaw" && (
+                  <p className="text-caption text-fg-2">
+                    {t("settings.manualUninstallOpenClawHint")}
+                  </p>
+                )}
+                {tool === "openclaw" && selectedMethod === "bun" && (
+                  <p className="text-caption text-fg-2">
+                    {t("settings.manualUninstallBunLauncherHint")}
+                  </p>
+                )}
+                <pre className="overflow-x-auto rounded-control border border-border bg-subtle px-3 py-2.5 font-mono text-caption">
+                  <code>{command}</code>
+                </pre>
+              </li>
+            ))}
           </ul>
           <p className="text-caption text-fg-2">
             {t("settings.manualUninstallOtherMethods")}

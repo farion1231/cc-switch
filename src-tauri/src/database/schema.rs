@@ -102,6 +102,8 @@ impl Database {
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
+            enabled_qoder BOOLEAN NOT NULL DEFAULT 0,
+            enabled_qoder_cn BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             enabled_pi BOOLEAN NOT NULL DEFAULT 0,
             enabled_omp BOOLEAN NOT NULL DEFAULT 0
@@ -137,6 +139,8 @@ impl Database {
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
+            enabled_qoder BOOLEAN NOT NULL DEFAULT 0,
+            enabled_qoder_cn BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
@@ -145,6 +149,14 @@ impl Database {
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // v24 已随 v4.0.22 发布，不含 Qoder 开关；已在 v24 的库不会再走 23 -> 24 迁移，
+        // 在这里补列（幂等），不单独 bump 版本。
+        for table in ["mcp_servers", "skills"] {
+            for column in ["enabled_qoder", "enabled_qoder_cn"] {
+                Self::add_column_if_missing(conn, table, column, "BOOLEAN NOT NULL DEFAULT 0")?;
+            }
+        }
 
         // 6. Skill Repos 表
         conn.execute(
@@ -660,12 +672,14 @@ impl Database {
                     23 => {
                         for table in ["mcp_servers", "skills"] {
                             if Self::table_exists(conn, table)? {
-                                Self::add_column_if_missing(
-                                    conn,
-                                    table,
-                                    "enabled_dsh",
-                                    "BOOLEAN NOT NULL DEFAULT 0",
-                                )?;
+                                for column in ["enabled_dsh", "enabled_qoder", "enabled_qoder_cn"] {
+                                    Self::add_column_if_missing(
+                                        conn,
+                                        table,
+                                        column,
+                                        "BOOLEAN NOT NULL DEFAULT 0",
+                                    )?;
+                                }
                             }
                         }
                         // DSH 用量导入：游标处未完成请求的解析上下文
@@ -4020,6 +4034,33 @@ mod tests {
     }
 
     #[test]
+    fn create_tables_patches_qoder_flags_into_released_v24_databases() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE mcp_servers (id TEXT PRIMARY KEY, name TEXT NOT NULL,
+                server_config TEXT NOT NULL, enabled_dsh BOOLEAN NOT NULL DEFAULT 0);
+             CREATE TABLE skills (id TEXT PRIMARY KEY, name TEXT NOT NULL,
+                directory TEXT NOT NULL, enabled_dsh BOOLEAN NOT NULL DEFAULT 0);
+             INSERT INTO mcp_servers (id, name, server_config, enabled_dsh) VALUES ('m', 'm', '{}', 1);",
+        )?;
+        Database::set_user_version(&conn, 24)?;
+        Database::create_tables_on_conn(&conn)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        for table in ["mcp_servers", "skills"] {
+            for column in ["enabled_qoder", "enabled_qoder_cn"] {
+                assert!(Database::has_column(&conn, table, column)?);
+            }
+        }
+        let flags: (bool, bool, bool) = conn.query_row(
+            "SELECT enabled_dsh, enabled_qoder, enabled_qoder_cn FROM mcp_servers",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(flags, (true, false, false));
+        Ok(())
+    }
+
+    #[test]
     fn migrate_v12_to_v13_adds_input_token_semantics_columns() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
         conn.execute(
@@ -4115,6 +4156,50 @@ mod tests {
         db.save_skill(&skill)?;
         assert!(db.get_installed_skill("s")?.unwrap().apps.dsh);
         assert!(db.get_all_installed_skills()?["s"].apps.claude);
+        Ok(())
+    }
+
+    #[test]
+    fn qoder_migration_and_flags_keep_editions_independent() -> Result<(), AppError> {
+        for version in [22, 23] {
+            let conn = Connection::open_in_memory()?;
+            conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+            if version == 23 {
+                conn.execute_batch("ALTER TABLE mcp_servers ADD COLUMN enabled_omp BOOLEAN NOT NULL DEFAULT 0; UPDATE mcp_servers SET enabled_omp = 1;")?;
+            }
+            Database::set_user_version(&conn, version)?;
+            Database::apply_schema_migrations_on_conn(&conn)?;
+            for table in ["mcp_servers", "skills"] {
+                let flags: (bool, bool, bool) = conn.query_row(
+                    &format!("SELECT enabled_kimi, enabled_qoder, enabled_qoder_cn FROM {table}"),
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )?;
+                assert_eq!(flags, (true, false, false));
+            }
+            let omp_enabled: bool = conn.query_row(
+                "SELECT enabled_omp FROM mcp_servers WHERE id = 'm'",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(omp_enabled, version == 23);
+            assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+            Database::apply_schema_migrations_on_conn(&conn)?;
+        }
+        let db = Database::memory()?;
+        let server = serde_json::from_value(serde_json::json!({"id":"m","name":"m","server":{"command":"node"},"apps":{"qoder":true,"qoder-cn":true,"kimi":true}})).unwrap();
+        db.save_mcp_server(&server)?;
+        db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::Qoder, false)?;
+        let stored = db.get_all_mcp_servers()?;
+        assert!(!stored["m"].apps.qoder && stored["m"].apps.qoder_cn && stored["m"].apps.kimi);
+        let skill = serde_json::from_value(serde_json::json!({"id":"s","name":"s","description":"","directory":"s","apps":{"qoder":true,"qoder-cn":true,"kimi":true},"installedAt":0})).unwrap();
+        db.save_skill(&skill)?;
+        let mut stored = db.get_installed_skill("s")?.unwrap();
+        assert!(stored.apps.qoder && stored.apps.qoder_cn && stored.apps.kimi);
+        stored.apps.qoder_cn = false;
+        db.update_skill_apps("s", &stored.apps)?;
+        let stored = db.get_all_installed_skills()?;
+        assert!(stored["s"].apps.qoder && !stored["s"].apps.qoder_cn && stored["s"].apps.kimi);
         Ok(())
     }
 

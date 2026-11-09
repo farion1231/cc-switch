@@ -350,18 +350,23 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
         >
           {t("sessionManager.deleteEllipsis", { defaultValue: "删除…" })}
         </DropdownMenuItem>
-        {!deletable && ["mcode", "dsh"].includes(session.providerId) && (
-          <p className="px-2.5 pb-1.5 text-caption text-fg-2">
-            {t(
-              session.providerId === "dsh"
-                ? "dsh.deleteSessionHint"
-                : "sessionManager.mcodeDeleteHint",
-              {
-                defaultValue: "请在 MiniMax Code 中删除",
-              },
-            )}
-          </p>
-        )}
+        {!deletable &&
+          ["mcode", "dsh", "qoder", "qoder-cn"].includes(
+            session.providerId,
+          ) && (
+            <p className="px-2.5 pb-1.5 text-caption text-fg-2">
+              {t(
+                session.providerId === "dsh"
+                  ? "dsh.deleteSessionHint"
+                  : ["qoder", "qoder-cn"].includes(session.providerId)
+                    ? "qoder.deleteSessionHint"
+                    : "sessionManager.mcodeDeleteHint",
+                {
+                  defaultValue: "请在 MiniMax Code 中删除",
+                },
+              )}
+            </p>
+          )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

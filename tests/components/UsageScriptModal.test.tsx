@@ -73,6 +73,39 @@ function renderModal(
 }
 
 describe("UsageScriptModal Sub2API template", () => {
+  it.each(["qoder", "qoder-cn"] as const)(
+    "reads %s credentials from its native provider",
+    async (appId) => {
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      render(
+        <QueryClientProvider client={client}>
+          <UsageScriptModal
+            provider={{
+              ...provider,
+              settingsConfig: {
+                baseUrl: "https://native.example/v1",
+                apiKey: "native-key",
+              },
+            }}
+            appId={appId}
+            isOpen
+            onClose={() => {}}
+            onSave={vi.fn()}
+          />
+        </QueryClientProvider>,
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "usageScript.templateCustom" }),
+      );
+      expect(screen.getByText("https://native.example/v1")).toBeInTheDocument();
+      await userEvent.click(
+        screen.getByRole("button", { name: "apiKeyInput.show" }),
+      );
+      expect(screen.getByText("native-key")).toBeInTheDocument();
+    },
+  );
   it("fills the /v1/usage script and saves it as the sub2api template", async () => {
     const onSave = vi.fn();
     renderModal(onSave);

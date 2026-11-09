@@ -105,6 +105,8 @@ export function SkillImportDialog({
               mcode: chosen.has("mcode"),
               kimi: chosen.has("kimi"),
               dsh: chosen.has("dsh"),
+              qoder: chosen.has("qoder"),
+              "qoder-cn": chosen.has("qoder-cn"),
               agy: chosen.has("agy"),
             },
           };

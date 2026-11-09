@@ -11,6 +11,8 @@ export type AppId =
   | "pi"
   | "kimi"
   | "dsh"
+  | "qoder"
+  | "qoder-cn"
   | "mcode"
   | "agy"
   | "omp";

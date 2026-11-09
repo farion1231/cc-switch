@@ -46,6 +46,10 @@ vi.mock("@/components/providers/KimiAccountLogin", () => ({
   KimiAccountLogin: () => <div />,
 }));
 
+vi.mock("@/components/providers/QoderAuthSection", () => ({
+  QoderAuthSection: () => <div />,
+}));
+
 vi.mock("@/components/providers/DshAccount", () => ({
   DshAccountLogin: () => <div />,
 }));

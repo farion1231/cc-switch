@@ -8,3 +8,10 @@ slow-timeout = { period = "60s", terminate-after = 3 }
 [profile.ci]
 # 跑完全部测试再汇总失败
 fail-fast = false
+
+# 此测试会启动隔离进程，再通过 where.exe 查找 npm。Windows runner 并发跑全量
+# 用例时，进程启动和 PATH 探测曾超过 30 秒；独占测试槽位，避免资源争用。
+[[profile.ci.overrides]]
+platform = 'cfg(windows)'
+filter = 'test(=commands::misc::tool_uninstall::tests::windows_npm_path_fallback_uses_batch_compatible_path)'
+threads-required = "num-test-threads"

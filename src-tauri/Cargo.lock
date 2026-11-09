@@ -795,6 +795,7 @@ dependencies = [
  "png 0.18.1",
  "process-wrap",
  "prost",
+ "quick-xml",
  "regex",
  "reqwest 0.12.28",
  "rmcp",

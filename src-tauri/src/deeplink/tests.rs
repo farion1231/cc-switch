@@ -245,6 +245,23 @@ fn test_parse_mcp_deeplink_accepts_dsh() {
     }
 }
 
+/// Qoder 两个版本的 MCP 链接各写各的标记，入口白名单不能先拦掉
+#[test]
+fn test_parse_mcp_deeplink_accepts_qoder_editions() {
+    let config = BASE64_URL_SAFE_NO_PAD.encode(r#"{"mcpServers":{"fetch":{"command":"uvx"}}}"#);
+    for (apps, global, cn) in [
+        ("qoder", true, false),
+        ("qoder-cn", false, true),
+        ("qodercn", false, true),
+        ("claude,qoder,qoder-cn", true, true),
+    ] {
+        let url = format!("ccswitch://v1/import?resource=mcp&apps={apps}&config={config}");
+        let request = parse_deeplink_url(&url).expect("qoder editions are valid MCP targets");
+        let parsed = parse_mcp_apps(request.apps.as_deref().unwrap()).unwrap();
+        assert_eq!((parsed.qoder, parsed.qoder_cn), (global, cn), "{apps}");
+    }
+}
+
 /// 供应商链接对 Oh My Pi 明确拒绝，而不是落到「Invalid provider app type」。
 #[test]
 fn test_parse_provider_deeplink_accepts_the_pi_family_apps_with_a_model() {

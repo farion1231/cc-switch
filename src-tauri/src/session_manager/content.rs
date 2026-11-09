@@ -672,6 +672,12 @@ fn project_dir_for(source: &ValidatedSource) -> Option<PathBuf> {
         "kimi" => kimi::scan_sessions(),
         "omp" => omp::scan_sessions(),
         "dsh" => super::providers::dsh::scan_sessions(),
+        "qoder" => {
+            super::providers::qoder::scan_edition_sessions(&crate::app_config::AppType::Qoder)
+        }
+        "qoder-cn" => {
+            super::providers::qoder::scan_edition_sessions(&crate::app_config::AppType::QoderCn)
+        }
         "agy" => super::providers::agy::scan_sessions(),
         _ => return None,
     };

@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 pub use model::SessionMessage;
 use providers::{
     agy, claude, codex, dsh, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw, opencode, pi,
+    qoder,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -96,7 +97,7 @@ pub(crate) struct SessionScan {
 pub(crate) fn scan_sessions_with_status() -> SessionScan {
     use providers::utils::ScanStatus;
     type Scanner = fn(&mut ScanStatus) -> Vec<SessionMeta>;
-    let scanners: [(&str, Scanner); 13] = [
+    let scanners: [(&str, Scanner); 15] = [
         ("codex", codex::scan_sessions_with_status),
         ("claude", claude::scan_sessions_with_status),
         ("opencode", opencode::scan_sessions_with_status),
@@ -110,6 +111,12 @@ pub(crate) fn scan_sessions_with_status() -> SessionScan {
         // Kimi Code、DeepSeek Harness、Antigravity 的扫描还不报告读取失败，按完整处理
         ("kimi", |_| kimi::scan_sessions()),
         ("dsh", |_| dsh::scan_sessions()),
+        ("qoder", |status| {
+            qoder::scan_edition_sessions_with_status(&crate::app_config::AppType::Qoder, status)
+        }),
+        ("qoder-cn", |status| {
+            qoder::scan_edition_sessions_with_status(&crate::app_config::AppType::QoderCn, status)
+        }),
         ("agy", |_| agy::scan_sessions()),
     ];
     let mut scan = SessionScan {
@@ -174,6 +181,8 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "kimi" => kimi::load_messages(path),
         "omp" => omp::load_messages(path),
         "dsh" => dsh::load_messages(path),
+        "qoder" => qoder::load_messages(&crate::app_config::AppType::Qoder, path),
+        "qoder-cn" => qoder::load_messages(&crate::app_config::AppType::QoderCn, path),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -225,6 +234,12 @@ fn delete_session_source(
     if provider_id == "dsh" {
         return Err(
             "Delete this session in DeepSeek Harness to keep its native history consistent".into(),
+        );
+    }
+    if matches!(provider_id, "qoder" | "qoder-cn") {
+        return Err(
+            "Delete this session in Qoder CLI to keep its session state and history consistent"
+                .into(),
         );
     }
     if provider_id == "agy" {
@@ -297,6 +312,8 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "pi" => pi::session_roots(),
         "kimi" => kimi::session_roots(),
         "dsh" => dsh::session_roots(),
+        "qoder" => qoder::session_roots(&crate::app_config::AppType::Qoder),
+        "qoder-cn" => qoder::session_roots(&crate::app_config::AppType::QoderCn),
         "agy" => agy::session_roots(),
         "omp" => omp::session_roots(),
         _ => return Err(format!("Unsupported provider: {provider_id}")),

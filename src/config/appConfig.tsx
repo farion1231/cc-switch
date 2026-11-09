@@ -30,6 +30,8 @@ export const APP_IDS: AppId[] = [
   "mcode",
   "kimi",
   "dsh",
+  "qoder",
+  "qoder-cn",
   "agy",
   "omp",
 ];
@@ -47,6 +49,8 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   mcode: true,
   kimi: true,
   dsh: true,
+  qoder: true,
+  "qoder-cn": true,
   agy: true,
   omp: true,
 };
@@ -86,6 +90,8 @@ export const SKILLS_APP_IDS: AppId[] = [
   "mcode",
   "kimi",
   "dsh",
+  "qoder",
+  "qoder-cn",
   "agy",
   "omp",
 ];
@@ -190,6 +196,8 @@ export const MCP_APP_IDS: McpAppId[] = [
   "mcode",
   "kimi",
   "dsh",
+  "qoder",
+  "qoder-cn",
   "agy",
   "omp",
 ];
@@ -294,6 +302,20 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
     activeClass: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
     badgeClass:
       "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-0 gap-1.5",
+  },
+  qoder: {
+    label: "Qoder CLI",
+    icon: <ProviderIcon icon="qoder" name="Qoder CLI" size={14} />,
+    activeClass: "bg-green-500/10 text-green-600 dark:text-green-400",
+    badgeClass:
+      "bg-green-500/10 text-green-700 dark:text-green-300 border-0 gap-1.5",
+  },
+  "qoder-cn": {
+    label: "Qoder CLI CN",
+    icon: <ProviderIcon icon="qoder" name="Qoder CLI CN" size={14} />,
+    activeClass: "bg-green-500/10 text-green-600 dark:text-green-400",
+    badgeClass:
+      "bg-green-500/10 text-green-700 dark:text-green-300 border-0 gap-1.5",
   },
   kimi: {
     label: "Kimi Code",
