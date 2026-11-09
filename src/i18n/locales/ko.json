@@ -891,6 +891,7 @@
     "languageOptionJapanese": "日本語",
     "languageOptionTurkish": "Türkçe",
     "languageOptionKorean": "한국어",
+    "languageOptionRussian": "Русский",
     "windowBehavior": "창 동작",
     "windowBehaviorHint": "창 최소화 및 Claude 플러그인 통합 정책을 설정합니다.",
     "launchOnStartup": "시작 시 실행",

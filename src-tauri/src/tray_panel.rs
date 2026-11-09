@@ -101,7 +101,7 @@ pub struct PanelTexts {
 impl PanelTexts {
     pub fn from_language(language: &str) -> Self {
         match language {
-            "en" | "tr" => Self {
+            "en" | "tr" | "ru" => Self {
                 switch_provider: "Switch provider",
                 search_placeholder: "Search providers…",
                 in_use: "In use",
@@ -109,10 +109,10 @@ impl PanelTexts {
                 open_main: "Open main window",
                 quit: "Quit",
                 settings: "Settings",
-                lightweight_mode: if language == "tr" {
-                    "Hafif mod"
-                } else {
-                    "Lightweight mode"
+                lightweight_mode: match language {
+                    "tr" => "Hafif mod",
+                    "ru" => "Облегчённый режим",
+                    _ => "Lightweight mode",
                 },
                 open_panel: "Open quick panel",
                 config_tab: "Configuration",
