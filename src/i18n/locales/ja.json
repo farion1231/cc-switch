@@ -3233,6 +3233,8 @@
       "bodyPlaceholder": "You are a ...",
       "sourceHint": "Markdown 全体（YAML frontmatter + 本文）を直接編集します。フォームが認識しないフィールドはそのまま残ります。",
       "fixSourceFirst": "frontmatter を解析できません。先にソースモードで修正してください",
+      "looseTitle": "このファイルのフィールドはフォームでは読み取り専用です",
+      "looseHint": "このファイルの frontmatter は厳密な YAML ではありません（例：Claude Code の /agents が生成した、引用符なしで「Context:」を含む description）。Claude Code は問題なく読み込めるため、そのまま保持します。システムプロンプトはここで編集でき、フィールドはソースモードで変更してください。",
       "parseError": {
         "unclosed": "frontmatter の終わりの --- がありません",
         "yaml": "YAML の構文エラー：{{detail}}",

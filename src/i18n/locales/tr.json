@@ -3163,6 +3163,8 @@
       "bodyPlaceholder": "You are a ...",
       "sourceHint": "Tüm Markdown dosyasını (YAML frontmatter + gövde) düzenleyin. Formun tanımadığı alanlar olduğu gibi korunur.",
       "fixSourceFirst": "Frontmatter ayrıştırılamıyor. Önce kaynak modunda düzeltin.",
+      "looseTitle": "Bu dosyanın alanları formda salt okunurdur",
+      "looseHint": "Bu dosyanın frontmatter bölümü katı YAML değil (örneğin Claude Code /agents tarafından yazılan, tırnaksız ve \"Context:\" içeren bir description). Claude Code dosyayı yine de yükleyebildiği için olduğu gibi korunur. Sistem istemini burada düzenleyebilir, alanları Kaynak modunda değiştirebilirsiniz.",
       "parseError": {
         "unclosed": "Frontmatter'ın kapanış --- satırı yok",
         "yaml": "YAML söz dizimi hatası: {{detail}}",

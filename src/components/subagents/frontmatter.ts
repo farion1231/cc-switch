@@ -362,3 +362,77 @@ export function buildSubagentMarkdown(
   if (fields.color !== undefined) patch.color = fields.color;
   return updateSubagentFrontmatter(`---\n---\n\n${body}`, patch);
 }
+
+/**
+ * 严格 YAML 解析失败时的宽松兜底，规则与后端 `parse_frontmatter_loose` 一致：按顶层
+ * `key: value` 行切分，缩进行或认不出的行接到上一个字段后面，去掉首尾成对的引号。
+ *
+ * Claude Code `/agents` 生成的文件，description 常常是一长串没加引号、带
+ * `Examples: <example>Context: ...` 的普通标量，严格 YAML 会报错，但 Claude Code
+ * 照样能加载。这里只用来读出字段做展示和校验，frontmatter 原文一字不动。
+ */
+function parseYamlLoose(yaml: string): Map<string, string> {
+  const fields: [string, string][] = [];
+  for (const raw of yaml.split("\n")) {
+    const line = raw.replace(/\r$/, "");
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    if (!/^[ \t]/.test(line)) {
+      const colon = line.indexOf(":");
+      if (colon !== -1) {
+        const key = line.slice(0, colon).trim();
+        if (/^[A-Za-z0-9_-]+$/.test(key)) {
+          fields.push([key, line.slice(colon + 1).trim()]);
+          continue;
+        }
+      }
+    }
+    const last = fields[fields.length - 1];
+    if (last) last[1] = last[1] ? `${last[1]} ${trimmed}` : trimmed;
+  }
+  const result = new Map<string, string>();
+  for (const [key, value] of fields) {
+    // 和后端一样取第一次出现的
+    if (result.has(key)) continue;
+    const text = value.trim();
+    const quoted =
+      text.length >= 2 &&
+      ((text.startsWith('"') && text.endsWith('"')) ||
+        (text.startsWith("'") && text.endsWith("'")));
+    result.set(key, quoted ? text.slice(1, -1) : text);
+  }
+  return result;
+}
+
+/**
+ * 严格解析失败、但后端能宽松读出来的 frontmatter（只有 YAML 语法错误这一种）：返回
+ * 只读的字段和正文；其它情况（严格解析就能过、没闭合、不是映射）返回 null。
+ */
+export function parseSubagentMarkdownLoose(
+  content: string,
+): Pick<ParsedSubagentMarkdown, "fields" | "body"> | null {
+  let parts: SplitResult;
+  try {
+    parts = split(content);
+  } catch {
+    return null;
+  }
+  if (!parts.hasFrontmatter) return null;
+  try {
+    parseYaml(parts.yaml);
+    return null;
+  } catch (error) {
+    if (!(error instanceof FrontmatterError) || error.code !== "yaml") {
+      return null;
+    }
+  }
+  const map = parseYamlLoose(parts.yaml);
+  const fields: SubagentFields = {};
+  for (const key of STRING_KEYS) {
+    const value = map.get(key);
+    if (value) fields[key] = value;
+  }
+  const tools = map.get("tools");
+  if (tools) fields.tools = splitToolsString(tools);
+  return { fields, body: parts.body };
+}

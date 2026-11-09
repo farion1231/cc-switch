@@ -5,6 +5,7 @@ import {
   buildSubagentMarkdown,
   getSubagentBody,
   parseSubagentMarkdown,
+  parseSubagentMarkdownLoose,
   replaceSubagentBody,
   safeParseSubagentMarkdown,
   updateSubagentFrontmatter,
@@ -260,5 +261,58 @@ describe("SUBAGENT_NAME_RE", () => {
     expect(SUBAGENT_NAME_RE.test("-x")).toBe(false);
     expect(SUBAGENT_NAME_RE.test("a_b")).toBe(false);
     expect(SUBAGENT_NAME_RE.test("a".repeat(65))).toBe(false);
+  });
+});
+
+// Claude Code `/agents` 生成的写法：description 没加引号，里面带 `Context: ...`，严格 YAML 会报
+// "Nested mappings are not allowed in compact mappings"，但 Claude Code 和后端都认
+const AGENTS_GENERATED = `---
+name: api-designer
+description: Use this agent when designing REST endpoints. Examples: <example>Context: The user is adding a new resource. user: "Add an orders endpoint" assistant: "I'll use the api-designer agent"</example>
+tools: Read, Grep
+model: sonnet
+---
+
+You design APIs.
+`;
+
+describe("parseSubagentMarkdownLoose", () => {
+  it("reads /agents descriptions that strict YAML rejects", () => {
+    const strict = safeParseSubagentMarkdown(AGENTS_GENERATED);
+    expect(strict.ok).toBe(false);
+    if (!strict.ok) expect(strict.code).toBe("yaml");
+
+    const loose = parseSubagentMarkdownLoose(AGENTS_GENERATED);
+    expect(loose).not.toBeNull();
+    expect(loose?.fields.name).toBe("api-designer");
+    expect(loose?.fields.description).toMatch(
+      /^Use this agent when designing REST endpoints\. Examples: <example>Context: /,
+    );
+    expect(loose?.fields.tools).toEqual(["Read", "Grep"]);
+    expect(loose?.fields.model).toBe("sonnet");
+    expect(loose?.body).toBe("You design APIs.\n");
+  });
+
+  it("joins indented continuation lines and strips matching quotes", () => {
+    const md =
+      "---\nname: 'multi'\ndescription: first line: with colon\n  second line\n---\nBody\n";
+    expect(parseSubagentMarkdownLoose(md)?.fields).toEqual({
+      name: "multi",
+      description: "first line: with colon second line",
+    });
+  });
+
+  it("returns null when strict parsing works or the frontmatter is unusable", () => {
+    expect(parseSubagentMarkdownLoose(SAMPLE)).toBeNull();
+    expect(parseSubagentMarkdownLoose("no frontmatter")).toBeNull();
+    expect(parseSubagentMarkdownLoose("---\nname: x\n")).toBeNull();
+    expect(parseSubagentMarkdownLoose("---\n- a\n- b\n---\n")).toBeNull();
+  });
+
+  it("lets the body be replaced without touching the original frontmatter", () => {
+    const next = replaceSubagentBody(AGENTS_GENERATED, "New prompt.\n");
+    expect(next).toBe(
+      AGENTS_GENERATED.replace("You design APIs.\n", "New prompt.\n"),
+    );
   });
 });

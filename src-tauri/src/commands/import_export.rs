@@ -6,7 +6,8 @@ use tauri::State;
 use tauri_plugin_dialog::DialogExt;
 
 use crate::commands::sync_support::{
-    post_sync_warning_from_result, run_post_import_sync, success_payload_with_warning,
+    capture_pre_import_state, post_sync_warning_from_result, run_post_import_sync,
+    success_payload_with_warning,
 };
 use crate::database::backup::BackupEntry;
 use crate::database::Database;
@@ -59,14 +60,17 @@ pub async fn import_config_from_file(
     run_with_database_restore_lock(move || {
         tauri::async_runtime::spawn_blocking(move || {
             let path_buf = PathBuf::from(&filePath);
+            let pre_import = capture_pre_import_state(&db);
             let backup_id = {
                 // SQL restore replaces the `skills` table. Exclude local Skill
                 // mutations while the database image is being swapped.
                 let _skill_state_guard = skill_state_write_guard();
                 db.import_sql(&path_buf)?
             };
-            let warning =
-                post_sync_warning_from_result(Ok(run_post_import_sync(&app_state_for_sync)));
+            let warning = post_sync_warning_from_result(Ok(run_post_import_sync(
+                &app_state_for_sync,
+                &pre_import,
+            )));
             if let Some(msg) = warning.as_ref() {
                 log::warn!("[Import] post-import sync warning: {msg}");
             }
@@ -180,12 +184,15 @@ pub async fn restore_db_backup(
     let db = app_state_for_sync.db.clone();
     run_with_database_restore_lock(move || {
         tauri::async_runtime::spawn_blocking(move || {
+            let pre_import = capture_pre_import_state(&db);
             let restored = {
                 let _skill_state_guard = skill_state_write_guard();
                 db.restore_from_backup(&filename)?
             };
-            let warning =
-                post_sync_warning_from_result(Ok(run_post_import_sync(&app_state_for_sync)));
+            let warning = post_sync_warning_from_result(Ok(run_post_import_sync(
+                &app_state_for_sync,
+                &pre_import,
+            )));
             if let Some(message) = warning {
                 // This legacy command returns only the restored filename, so keep
                 // restore success and surface incomplete projection in the log.

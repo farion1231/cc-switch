@@ -9,7 +9,7 @@
 //! 后端只解析 frontmatter 做校验和取 name/description，绝不重新序列化回写——
 //! frontmatter 字段在 Claude Code 里不断新增，任何“解析后再生成”都会丢字段。
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -109,6 +109,12 @@ pub struct SubagentsDirInfo {
     pub display_path: String,
     pub exists: bool,
 }
+
+/// 导入前本机磁盘上归 CC Switch 管的子代理文件（`file_name -> written_hash`），
+/// 由 [`SubagentService::capture_local_ownership`] 生成，交给
+/// [`SubagentService::sync_after_restore`] 判断哪些文件可以放心收敛。
+#[derive(Debug, Clone, Default)]
+pub struct SubagentOwnership(HashMap<String, String>);
 
 // ─── 错误（前端按前缀识别冲突类型，前缀不能改）──────────────────────────────
 
@@ -937,23 +943,56 @@ impl SubagentService {
         }
     }
 
-    /// 数据库被同步/备份恢复替换后，把启用记录投影回磁盘。
+    /// 数据库被同步/备份恢复替换**之前**调用：记下本机磁盘上哪些文件是 CC Switch
+    /// 写的（启用记录的 `file_name -> written_hash`）。
     ///
-    /// - 文件缺失：写入（恢复的意义就在于此）；
-    /// - 文件存在且哈希不同：不覆盖，留给用户在界面上处理偏离——本地文件不在同步
-    ///   负载里，覆盖它就是在用远端数据销毁本地独有的修改。
+    /// written_hash 描述的是“本机这份文件是不是我们写的”，但它跟着整张表一起被
+    /// 远端/备份覆盖，导入后就判断不出本机文件的归属了，所以必须在导入前留一份。
+    pub fn capture_local_ownership(db: &Database) -> Result<SubagentOwnership, AppError> {
+        let _guard = lock();
+        let owned = db
+            .list_subagents()?
+            .into_iter()
+            .filter(|record| record.enabled)
+            .filter_map(|record| record.written_hash.map(|hash| (record.file_name, hash)))
+            .collect();
+        Ok(SubagentOwnership(owned))
+    }
+
+    /// 数据库被同步/备份恢复替换后，让磁盘收敛到新记录。`previous` 是导入前用
+    /// [`Self::capture_local_ownership`] 留存的本机归属。
+    ///
+    /// 磁盘哈希仍等于导入前的 written_hash（文件没被外部改过）时，按新记录收敛：
+    /// 停用或已删除的就删文件，内容变了就重写。哈希对不上的文件不归我们处理，
+    /// 留给用户在界面上按偏离 / 文件已存在的冲突处理——本地文件不在同步负载里，
+    /// 覆盖它就是在用远端数据销毁本地独有的修改。
     ///
     /// 正常启动时不调用：用户可能用 Claude Code 的 /agents 主动删了文件。
-    pub fn sync_after_restore(db: &Database, dir: &Path) -> Result<(), AppError> {
+    pub fn sync_after_restore(
+        db: &Database,
+        dir: &Path,
+        previous: &SubagentOwnership,
+    ) -> Result<(), AppError> {
         let _guard = lock();
         let mut failures = Vec::new();
+        let mut seen = HashSet::new();
         for record in db.list_subagents()? {
-            if !record.enabled {
+            seen.insert(record.file_name.clone());
+            let file_name = record.file_name.clone();
+            let owned = previous.0.get(&file_name).map(String::as_str);
+            if let Err(e) = Self::reconcile_restored(db, dir, record, owned) {
+                log::warn!("恢复后收敛子代理 {file_name} 失败: {e}");
+                failures.push(format!("{file_name}: {e}"));
+            }
+        }
+        // 导入后已没有记录的文件：仍是我们写的那份就删掉，否则留给“未管理”列表
+        for (file_name, owned) in &previous.0 {
+            if seen.contains(file_name) {
                 continue;
             }
-            if let Err(e) = Self::project_if_missing(db, dir, record.clone()) {
-                log::warn!("恢复后投影子代理 {} 失败: {e}", record.file_name);
-                failures.push(format!("{}: {e}", record.file_name));
+            if let Err(e) = Self::remove_if_owned(dir, file_name, owned) {
+                log::warn!("恢复后删除子代理 {file_name} 失败: {e}");
+                failures.push(format!("{file_name}: {e}"));
             }
         }
         if failures.is_empty() {
@@ -966,23 +1005,55 @@ impl SubagentService {
         }
     }
 
-    fn project_if_missing(
+    fn remove_if_owned(dir: &Path, file_name: &str, owned: &str) -> Result<(), AppError> {
+        let path = file_path_for(dir, file_name)?;
+        if disk_hash(&path)?.as_deref() == Some(owned) {
+            remove_if_exists(&path)?;
+        }
+        Ok(())
+    }
+
+    fn reconcile_restored(
         db: &Database,
         dir: &Path,
         record: SubagentRecord,
+        owned: Option<&str>,
     ) -> Result<(), AppError> {
         let path = file_path_for(dir, &record.file_name)?;
-        if path.exists() {
-            return Ok(());
-        }
-        // 远端记录同样必须是合法的子代理文件，否则不写
-        validate_content(&record.content)?;
-        write_text_file(&path, &record.content)?;
-        let hash = sha256_hex(record.content.as_bytes());
+        let disk = disk_hash(&path)?;
+        let disk_is_ours = owned.is_some() && disk.as_deref() == owned;
+
+        let written_hash = if !record.enabled {
+            if disk_is_ours {
+                remove_if_exists(&path)?;
+            }
+            None
+        } else {
+            // 远端记录同样必须是合法的子代理文件，否则不写
+            validate_content(&record.content)?;
+            let target = sha256_hex(record.content.as_bytes());
+            match disk {
+                // 已经是这份内容：直接认领
+                Some(hash) if hash == target => Some(target),
+                // 缺失，或仍是我们写的旧内容：按新记录写
+                None => {
+                    write_text_file(&path, &record.content)?;
+                    Some(target)
+                }
+                Some(_) if disk_is_ours => {
+                    write_text_file(&path, &record.content)?;
+                    Some(target)
+                }
+                // 外部改过或根本不是我们的：不动文件。保留本机原来的归属，界面上
+                // 显示为偏离（我们写过、被改了）或文件已存在（不是我们写的）
+                Some(_) => owned.map(str::to_string),
+            }
+        };
+
         // 只有哈希真的变了才写库，避免恢复后无意义的数据库变更再次触发自动上传
-        if record.written_hash.as_deref() != Some(hash.as_str()) {
+        if record.written_hash != written_hash {
             db.save_subagent(&SubagentRecord {
-                written_hash: Some(hash),
+                written_hash,
                 ..record
             })?;
         }

@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use tauri::State;
 
 use crate::commands::sync_support::{
-    attach_warning, post_sync_warning_from_result, run_post_import_sync,
+    attach_warning, capture_pre_import_state, post_sync_warning_from_result, run_post_import_sync,
 };
 use crate::error::AppError;
 use crate::services::s3_sync as s3_sync_service;
@@ -134,10 +134,15 @@ pub async fn s3_sync_download(state: State<'_, AppState>) -> Result<Value, Strin
     // operation. Otherwise another WebDAV/S3 restore can start after the DB
     // apply but before this snapshot has finished projecting its live files.
     let sync_result = run_download_with_s3_lock(
-        s3_sync_service::download(&db, &mut settings),
-        |result| async move {
+        async {
+            // 替换数据库前留存本机子代理文件的归属，导入后据此收敛磁盘
+            let pre_import = capture_pre_import_state(&db);
+            let result = s3_sync_service::download(&db, &mut settings).await?;
+            Ok((result, pre_import))
+        },
+        |(result, pre_import)| async move {
             let post_sync_result = tauri::async_runtime::spawn_blocking(move || {
-                run_post_import_sync(&app_state_for_sync)
+                run_post_import_sync(&app_state_for_sync, &pre_import)
             })
             .await
             .map_err(|e| e.to_string());

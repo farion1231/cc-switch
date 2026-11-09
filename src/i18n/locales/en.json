@@ -3233,6 +3233,8 @@
       "bodyPlaceholder": "You are a ...",
       "sourceHint": "Edit the whole Markdown file (YAML frontmatter + body). Fields the form doesn't know about are kept as-is.",
       "fixSourceFirst": "The frontmatter can't be parsed. Fix it in source mode first.",
+      "looseTitle": "Fields are read-only for this file",
+      "looseHint": "This file's frontmatter isn't strict YAML (for example, an unquoted description containing \"Context:\", as written by Claude Code /agents). Claude Code still loads it, so it's kept as-is. Edit the system prompt here, or change the fields in Source mode.",
       "parseError": {
         "unclosed": "The frontmatter has no closing ---",
         "yaml": "YAML syntax error: {{detail}}",

@@ -611,8 +611,8 @@ export default function SubagentsSection({
     <Collapsible
       open={expanded}
       onOpenChange={setExpanded}
-      // 这里的开关、勾选是即时写盘的子代理操作，不是供应商表单的改动；编辑页的未保存跟踪
-      // 按 DOM closest 判断豁免，所以 portal 出去的编辑器另外在 SubagentFormPanel 上标记
+      // 这里的开关、勾选是即时写盘的子代理操作，不是供应商表单的改动。子代理编辑器是
+      // 自己的一层未保存跟踪（SheetPageContent），它的草稿归它登记，不需要在这里豁免
       data-unsaved-ignore=""
       className="rounded-lg border border-border p-4"
     >

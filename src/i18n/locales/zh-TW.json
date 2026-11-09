@@ -3234,6 +3234,8 @@
       "bodyPlaceholder": "You are a ...",
       "sourceHint": "直接編輯整份 Markdown（YAML frontmatter + 正文）。表單不認得的欄位會原樣保留。",
       "fixSourceFirst": "frontmatter 無法解析，請先在原始碼模式中修正",
+      "looseTitle": "此檔案的欄位在表單中為唯讀",
+      "looseHint": "這個檔案的 frontmatter 不是嚴格的 YAML（例如 Claude Code /agents 產生的、未加引號且含有「Context:」的 description）。Claude Code 仍能正常載入，因此原樣保留。可以在這裡編輯系統提示詞，欄位請在原始碼模式中修改。",
       "parseError": {
         "unclosed": "frontmatter 沒有結束的 ---",
         "yaml": "YAML 語法錯誤：{{detail}}",

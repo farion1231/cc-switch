@@ -648,16 +648,153 @@ fn sync_after_restore_writes_missing_files_and_keeps_drifted_ones() {
     let drifted = fx.create(&agent("local-edit", "remote body"));
     let disabled = fx.create(&agent("off", "body"));
     SubagentService::toggle(&fx.db, &fx.dir, &disabled.id, false, false).unwrap();
+    let before = SubagentService::capture_local_ownership(&fx.db).unwrap();
 
     std::fs::remove_file(fx.path("restored")).unwrap();
     fx.write_disk("local-edit", "local only changes");
 
-    SubagentService::sync_after_restore(&fx.db, &fx.dir).unwrap();
+    SubagentService::sync_after_restore(&fx.db, &fx.dir, &before).unwrap();
     assert_eq!(fx.read("restored"), agent("restored", "remote body"));
     assert_eq!(fx.status(&missing.id), SubagentStatus::Synced);
     assert_eq!(fx.read("local-edit"), "local only changes");
     assert_eq!(fx.status(&drifted.id), SubagentStatus::Drifted);
     assert!(!fx.path("off").exists());
+}
+
+/// 模拟另一台机器上传的记录覆盖本机数据库：直接改库，不经过服务（不碰文件）
+fn replace_record(fx: &Fixture, id: &str, update: impl FnOnce(&mut SubagentRecord)) {
+    let mut record = fx.db.get_subagent(id).unwrap().expect("record");
+    update(&mut record);
+    fx.db.save_subagent(&record).unwrap();
+}
+
+#[test]
+fn sync_after_restore_removes_our_file_when_remote_disabled_it() {
+    let fx = Fixture::new();
+    let created = fx.create(&agent("reviewer", "body"));
+    let before = SubagentService::capture_local_ownership(&fx.db).unwrap();
+
+    replace_record(&fx, &created.id, |r| {
+        r.enabled = false;
+        r.written_hash = None;
+    });
+    SubagentService::sync_after_restore(&fx.db, &fx.dir, &before).unwrap();
+
+    assert!(!fx.path("reviewer").exists());
+    assert_eq!(fx.status(&created.id), SubagentStatus::Disabled);
+    // 重新启用不会因为残留文件报 SUBAGENT_FILE_EXISTS
+    let enabled = SubagentService::toggle(&fx.db, &fx.dir, &created.id, true, false).unwrap();
+    assert_eq!(enabled.status, SubagentStatus::Synced);
+}
+
+#[test]
+fn sync_after_restore_rewrites_our_file_when_remote_changed_content() {
+    let fx = Fixture::new();
+    let created = fx.create(&agent("reviewer", "old body"));
+    let before = SubagentService::capture_local_ownership(&fx.db).unwrap();
+
+    let remote = agent("reviewer", "new body from another machine");
+    replace_record(&fx, &created.id, |r| {
+        r.content = remote.clone();
+        // 另一台机器的 written_hash 对本机没有意义
+        r.written_hash = Some("remote-hash".to_string());
+    });
+    SubagentService::sync_after_restore(&fx.db, &fx.dir, &before).unwrap();
+
+    assert_eq!(fx.read("reviewer"), remote);
+    assert_eq!(fx.status(&created.id), SubagentStatus::Synced);
+}
+
+#[test]
+fn sync_after_restore_keeps_locally_edited_file_as_drift() {
+    let fx = Fixture::new();
+    let created = fx.create(&agent("reviewer", "old body"));
+    fx.write_disk("reviewer", &agent("reviewer", "edited with /agents"));
+    let before = SubagentService::capture_local_ownership(&fx.db).unwrap();
+
+    replace_record(&fx, &created.id, |r| {
+        r.content = agent("reviewer", "remote body");
+        r.written_hash = Some("remote-hash".to_string());
+    });
+    SubagentService::sync_after_restore(&fx.db, &fx.dir, &before).unwrap();
+
+    assert_eq!(
+        fx.read("reviewer"),
+        agent("reviewer", "edited with /agents")
+    );
+    assert_eq!(fx.status(&created.id), SubagentStatus::Drifted);
+    // 仍按“我们写过、被外部改了”处理：编辑要 force，报偏离而不是文件已存在
+    assert_err_prefix(
+        SubagentService::toggle(&fx.db, &fx.dir, &created.id, false, false),
+        "SUBAGENT_DRIFTED",
+    );
+}
+
+#[test]
+fn sync_after_restore_removes_our_files_for_deleted_or_renamed_records() {
+    let fx = Fixture::new();
+    let deleted = fx.create(&agent("gone", "body"));
+    let renamed = fx.create(&agent("old-name", "body"));
+    let edited = fx.create(&agent("kept-local", "body"));
+    fx.write_disk("kept-local", "local only changes");
+    let before = SubagentService::capture_local_ownership(&fx.db).unwrap();
+
+    fx.db.delete_subagent(&deleted.id).unwrap();
+    fx.db.delete_subagent(&edited.id).unwrap();
+    replace_record(&fx, &renamed.id, |r| {
+        r.file_name = "new-name".to_string();
+        r.name = "new-name".to_string();
+        r.content = agent("new-name", "body");
+    });
+    SubagentService::sync_after_restore(&fx.db, &fx.dir, &before).unwrap();
+
+    assert!(!fx.path("gone").exists());
+    assert!(!fx.path("old-name").exists());
+    assert_eq!(fx.read("new-name"), agent("new-name", "body"));
+    assert_eq!(fx.status(&renamed.id), SubagentStatus::Synced);
+    // 外部改过的文件不删，交给“未管理”列表
+    assert_eq!(fx.read("kept-local"), "local only changes");
+    let unmanaged = SubagentService::scan_unmanaged(&fx.db, &fx.dir).unwrap();
+    assert_eq!(unmanaged.len(), 1);
+    assert_eq!(unmanaged[0].file_name, "kept-local");
+}
+
+#[test]
+fn sync_after_restore_never_touches_foreign_files() {
+    let fx = Fixture::new();
+    let created = fx.create(&agent("reviewer", "body"));
+    SubagentService::toggle(&fx.db, &fx.dir, &created.id, false, false).unwrap();
+    fx.write_disk("reviewer", "someone else's file");
+    // 本机这个文件不归我们；远端说它已启用、内容不同
+    let before = SubagentService::capture_local_ownership(&fx.db).unwrap();
+    replace_record(&fx, &created.id, |r| {
+        r.enabled = true;
+        r.written_hash = Some("remote-hash".to_string());
+    });
+    SubagentService::sync_after_restore(&fx.db, &fx.dir, &before).unwrap();
+
+    assert_eq!(fx.read("reviewer"), "someone else's file");
+    assert_eq!(fx.status(&created.id), SubagentStatus::Drifted);
+    assert_err_prefix(
+        SubagentService::toggle(&fx.db, &fx.dir, &created.id, true, false),
+        "SUBAGENT_FILE_EXISTS",
+    );
+}
+
+#[test]
+fn sync_after_restore_adopts_identical_file_without_rewriting() {
+    let fx = Fixture::new();
+    let content = agent("reviewer", "same everywhere");
+    fx.write_disk("reviewer", &content);
+    // 本机库里还没有这条记录（例如首次同步），远端带来同样内容的记录
+    let before = SubagentService::capture_local_ownership(&fx.db).unwrap();
+    let imported = SubagentService::import(&fx.db, &fx.dir, vec!["reviewer".to_string()])
+        .unwrap()
+        .remove(0);
+    replace_record(&fx, &imported.id, |r| r.written_hash = None);
+
+    SubagentService::sync_after_restore(&fx.db, &fx.dir, &before).unwrap();
+    assert_eq!(fx.status(&imported.id), SubagentStatus::Synced);
 }
 
 #[test]

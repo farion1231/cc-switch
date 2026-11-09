@@ -24,6 +24,7 @@ import {
   SUBAGENT_COLORS,
   SUBAGENT_NAME_RE,
   getSubagentBody,
+  parseSubagentMarkdownLoose,
   replaceSubagentBody,
   safeParseSubagentMarkdown,
   updateSubagentFrontmatter,
@@ -40,6 +41,11 @@ export type SubagentSaveResult =
   | { status: "failed"; code?: SubagentErrorCode; message: string };
 
 type EditorView = "form" | "source";
+
+/** 表单模式能不能用：严格解析通过，或后端也认的宽松写法（字段只读、正文可改） */
+const formUsable = (content: string) =>
+  safeParseSubagentMarkdown(content).ok ||
+  parseSubagentMarkdownLoose(content) !== null;
 
 interface SubagentFormPanelProps {
   /** 编辑已有的；新建（含模板、复制为新 agent）时不传 */
@@ -87,13 +93,22 @@ export default function SubagentFormPanel({
   const descRef = useRef<HTMLTextAreaElement>(null);
 
   const parsed = useMemo(() => safeParseSubagentMarkdown(content), [content]);
+  // /agents 生成的 description 常常不是严格 YAML（没加引号、带 `Context: ...`），但
+  // Claude Code 和后端都认：字段按后端同样的规则读出来只读展示，frontmatter 原文不动，
+  // 正文照常编辑，保存交给后端校验
+  const loose = useMemo(
+    () => (parsed.ok ? null : parseSubagentMarkdownLoose(content)),
+    [parsed, content],
+  );
+  const formAvailable = parsed.ok || loose !== null;
+  const fieldsLocked = !parsed.ok;
   // 打开时 frontmatter 就坏了（手改出错的文件）：直接进源码模式修
   const [view, setView] = useState<EditorView>(() =>
-    safeParseSubagentMarkdown(initialContent).ok ? "form" : "source",
+    formUsable(initialContent) ? "form" : "source",
   );
   const [switchError, setSwitchError] = useState(false);
 
-  const fields = parsed.ok ? parsed.value.fields : {};
+  const fields = parsed.ok ? parsed.value.fields : (loose?.fields ?? {});
   const name = fields.name ?? "";
   const description = fields.description ?? "";
   const tools = fields.tools;
@@ -132,7 +147,7 @@ export default function SubagentFormPanel({
     attempted && tools !== undefined && tools.length === 0
       ? t("subagents.tools.emptyError")
       : "";
-  const parseError = parsed.ok
+  const parseError = formAvailable
     ? ""
     : t(`subagents.form.parseError.${parsed.code}`, {
         detail: parsed.message,
@@ -150,7 +165,7 @@ export default function SubagentFormPanel({
 
   const changeView = (next: EditorView) => {
     if (next === view) return;
-    if (next === "form" && !parsed.ok) {
+    if (next === "form" && !formAvailable) {
       setSwitchError(true);
       return;
     }
@@ -161,7 +176,7 @@ export default function SubagentFormPanel({
   const handleSave = async () => {
     if (savingRef.current) return;
     setAttempted(true);
-    if (!parsed.ok) {
+    if (!formAvailable) {
       setView("source");
       return;
     }
@@ -241,6 +256,7 @@ export default function SubagentFormPanel({
           value={name}
           onChange={(event) => patch({ name: event.target.value })}
           disabled={saving}
+          readOnly={fieldsLocked}
           placeholder="code-reviewer"
           aria-required="true"
           aria-invalid={Boolean(nameError)}
@@ -275,6 +291,7 @@ export default function SubagentFormPanel({
           rows={4}
           onChange={(event) => patch({ description: event.target.value })}
           disabled={saving}
+          readOnly={fieldsLocked}
           placeholder={t("subagents.form.descriptionPlaceholder")}
           aria-required="true"
           aria-invalid={Boolean(descError)}
@@ -299,7 +316,7 @@ export default function SubagentFormPanel({
         <SubagentModelSelect
           id={modelId}
           value={fields.model}
-          disabled={saving}
+          disabled={saving || fieldsLocked}
           onChange={(value) => patch({ model: value || null })}
         />
       </div>
@@ -308,7 +325,7 @@ export default function SubagentFormPanel({
         <span className={labelClass}>{t("subagents.form.tools")}</span>
         <SubagentToolsSelect
           tools={tools}
-          disabled={saving}
+          disabled={saving || fieldsLocked}
           error={toolsError || undefined}
           errorId={toolsHintId}
           onChange={(next) => patch({ tools: next ?? null })}
@@ -325,7 +342,7 @@ export default function SubagentFormPanel({
           <button
             type="button"
             aria-pressed={!fields.color}
-            disabled={saving}
+            disabled={saving || fieldsLocked}
             onClick={() => patch({ color: null })}
             aria-label={t("subagents.form.colorNone")}
             title={t("subagents.form.colorNone")}
@@ -343,7 +360,7 @@ export default function SubagentFormPanel({
                 key={color}
                 type="button"
                 aria-pressed={on}
-                disabled={saving}
+                disabled={saving || fieldsLocked}
                 onClick={() => patch({ color })}
                 aria-label={t(`subagents.colors.${color}`)}
                 title={t(`subagents.colors.${color}`)}
@@ -378,9 +395,9 @@ export default function SubagentFormPanel({
         if (!open) handleClose();
       }}
     >
+      {/* SheetPageContent 自带一层未保存跟踪：这里的输入只登记为子代理草稿（离开时会提醒），
+          不会算进外层供应商表单 */}
       <SheetPageContent
-        // 子代理即时写盘，不属于外层供应商表单的改动：别让外层的未保存跟踪把它算进去
-        data-unsaved-ignore=""
         title={title}
         closeLabel={t("common.back")}
         onEscapeKeyDown={(event) => {
@@ -458,6 +475,14 @@ export default function SubagentFormPanel({
           </div>
         ) : null}
 
+        {view === "form" && fieldsLocked ? (
+          <div role="status" className="shrink-0 px-6 pt-3">
+            <Notice tone="neutral" title={t("subagents.form.looseTitle")}>
+              {t("subagents.form.looseHint")}
+            </Notice>
+          </div>
+        ) : null}
+
         {view === "form" ? (
           <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 overflow-y-auto scroll-stable overscroll-contain px-6 pb-6 pt-5 lg:grid-cols-[minmax(300px,400px)_minmax(0,1fr)] lg:grid-rows-[minmax(380px,1fr)]">
             {/* 宽屏两栏：左栏字段自己滚，右栏编辑器铺满高度。行高至少放得下编辑器，窗口再矮就整块滚动，
@@ -491,7 +516,7 @@ export default function SubagentFormPanel({
             <span className="text-caption text-fg-2">
               {t("subagents.form.sourceHint")}
             </span>
-            {!parsed.ok && !switchError && !attempted ? (
+            {parseError && !switchError && !attempted ? (
               <span className="text-caption text-danger-text">
                 {parseError}
               </span>
