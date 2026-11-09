@@ -176,6 +176,7 @@ pub async fn auth_start_login(
     github_domain: Option<String>,
     target_account_id: Option<String>,
     login_method: Option<String>,
+    login_proxy_url: Option<String>,
     copilot_state: State<'_, CopilotAuthState>,
     codex_state: State<'_, CodexOAuthState>,
     xai_state: State<'_, XaiOAuthState>,
@@ -207,11 +208,11 @@ pub async fn auth_start_login(
             let auth_manager = &codex_state.0;
             let response = if browser_login {
                 auth_manager
-                    .start_browser_flow(target_account_id.as_deref())
+                    .start_browser_flow(target_account_id.as_deref(), login_proxy_url.as_deref())
                     .await
             } else {
                 auth_manager
-                    .start_device_flow(target_account_id.as_deref())
+                    .start_device_flow(target_account_id.as_deref(), login_proxy_url.as_deref())
                     .await
             }
             .map_err(|e| e.to_string())?;

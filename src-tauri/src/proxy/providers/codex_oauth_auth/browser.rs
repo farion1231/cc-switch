@@ -153,13 +153,23 @@ impl CodexOAuthManager {
     pub async fn start_browser_flow(
         &self,
         target_account_id: Option<&str>,
+        login_proxy_url: Option<&str>,
     ) -> Result<GitHubDeviceCodeResponse, CodexOAuthError> {
-        self.start_browser_flow_at_port(
-            target_account_id,
-            1455,
-            Duration::from_secs(LOGIN_LIFETIME),
-        )
-        .await
+        let client = crate::proxy::http_client::login_client(login_proxy_url)
+            .map_err(CodexOAuthError::TokenFetchFailed)?;
+        let response = self
+            .start_browser_flow_at_port(
+                target_account_id,
+                1455,
+                Duration::from_secs(LOGIN_LIFETIME),
+            )
+            .await?;
+        let mut pending = self.pending_device_codes.write().await;
+        let entry = pending
+            .get_mut(&response.device_code)
+            .ok_or(CodexOAuthError::ExpiredToken)?;
+        entry.client = client;
+        Ok(response)
     }
 
     async fn start_browser_flow_at_port(
@@ -201,11 +211,14 @@ impl CodexOAuthManager {
         let expires_at = chrono::Utc::now().timestamp_millis() + lifetime.as_millis() as i64;
         self.register_pending_device_code(
             flow_id.clone(),
-            String::new(),
-            expires_at,
             epoch,
-            target,
-            generation,
+            PendingDeviceCode {
+                user_code: String::new(),
+                client: crate::proxy::http_client::get(),
+                expires_at_ms: expires_at,
+                target_account_id: target,
+                target_generation: generation,
+            },
         )
         .await?;
         let pending = Arc::downgrade(&self.pending_device_codes);
@@ -309,7 +322,7 @@ impl CodexOAuthManager {
         flow.stop().await;
         let result = async {
             let tokens = self
-                .exchange_code_for_tokens(&code, &flow.verifier, REDIRECT_URI)
+                .exchange_code_for_tokens(&entry.client, &code, &flow.verifier, REDIRECT_URI)
                 .await?;
             let _commit_guard = before_commit().await;
             self.commit_login_tokens(tokens, flow_id, &entry)

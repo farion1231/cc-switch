@@ -1656,6 +1656,8 @@ pub fn run() {
             // subscription quota
             commands::get_subscription_quota,
             commands::get_codex_oauth_quota,
+            commands::get_chatgpt_proxy_config,
+            commands::set_chatgpt_proxy_config,
             commands::get_codex_oauth_models,
             commands::get_xai_oauth_models,
             commands::get_xai_oauth_quota,

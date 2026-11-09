@@ -5,9 +5,13 @@
 //! 大部分认证命令通过通用 `auth_*` 命令（参见 `commands::auth`）暴露给前端，
 //! 此处定义 State wrapper 以及 Codex OAuth 专属的订阅额度和模型列表查询命令。
 
-use crate::proxy::providers::codex_oauth_auth::{CodexOAuthError, CodexOAuthManager};
+use crate::proxy::providers::codex_oauth_auth::{
+    ChatgptProxyConfig, CodexOAuthError, CodexOAuthManager, CHATGPT_PROXY_CONFIG_KEY,
+};
 use crate::services::model_fetch::FetchedModel;
-use crate::services::subscription::{query_codex_quota, CredentialStatus, SubscriptionQuota};
+use crate::services::subscription::{
+    query_codex_quota_with_client, CredentialStatus, SubscriptionQuota,
+};
 use std::sync::Arc;
 use tauri::State;
 
@@ -17,6 +21,36 @@ use tauri::State;
 /// 直接持有 `Arc`，不再包一层 `RwLock`——避免任一命令持有粗粒度锁跨网络刷新
 /// 时阻塞其他命令（切换 / 认证中心操作 / token 读取）。
 pub struct CodexOAuthState(pub Arc<CodexOAuthManager>);
+
+#[tauri::command]
+pub fn get_chatgpt_proxy_config(
+    app_state: State<'_, crate::store::AppState>,
+) -> Result<ChatgptProxyConfig, String> {
+    let saved = app_state
+        .db
+        .get_setting(CHATGPT_PROXY_CONFIG_KEY)
+        .map_err(|e| e.to_string())?;
+    saved
+        .map(|value| serde_json::from_str(&value).map_err(|e| e.to_string()))
+        .transpose()
+        .map(|config| config.unwrap_or_default())
+}
+
+#[tauri::command]
+pub fn set_chatgpt_proxy_config(
+    app_state: State<'_, crate::store::AppState>,
+    mut config: ChatgptProxyConfig,
+) -> Result<(), String> {
+    config.url = config.url.trim().to_string();
+    // Validate before writing; the manager changes only after persistence succeeds.
+    config.validate()?;
+    let value = serde_json::to_string(&config).map_err(|e| e.to_string())?;
+    app_state
+        .db
+        .set_setting(CHATGPT_PROXY_CONFIG_KEY, &value)
+        .map_err(|e| e.to_string())?;
+    app_state.codex_oauth_manager.set_account_proxy(&config)
+}
 
 /// 查询 Codex OAuth (ChatGPT Plus/Pro) 订阅额度
 ///
@@ -79,7 +113,8 @@ async fn query_codex_oauth_quota_for(
         .map_err(|e| e.to_string())?;
 
     // 瞬时传输失败以 Err 传播（前端 reject → retry + 保留上次成功值）。
-    query_codex_quota(
+    query_codex_quota_with_client(
+        &manager.account_client(),
         &token,
         Some(&chatgpt_account_id),
         "codex_oauth",
@@ -129,5 +164,10 @@ pub async fn get_codex_oauth_models(
         .await
         .map_err(|e| e.to_string())?;
 
-    crate::services::codex_oauth_models::fetch_models_with_token(&token, &chatgpt_account_id).await
+    crate::services::codex_oauth_models::fetch_models_with_token(
+        &token,
+        &chatgpt_account_id,
+        &manager.account_client(),
+    )
+    .await
 }

@@ -199,6 +199,18 @@ pub fn get() -> Client {
         })
 }
 
+/// 为单次登录选择网络路径，不修改全局出站代理。
+/// None 保持原行为；空字符串强制直连；非空 URL 使用指定代理。
+pub fn login_client(proxy_override: Option<&str>) -> Result<Client, String> {
+    match proxy_override {
+        None => Ok(get()),
+        Some(url) if url.trim().is_empty() => {
+            base_builder().no_proxy().build().map_err(|e| e.to_string())
+        }
+        Some(url) => build_client(Some(url)),
+    }
+}
+
 /// 按目标地址取客户端：本机地址直连，其余同 [`get`]
 ///
 /// reqwest 不会自动绕开本机地址：配了全局代理时 `Proxy::all` 对所有目标生效，

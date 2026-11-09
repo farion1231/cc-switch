@@ -1,6 +1,8 @@
 import React from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -13,7 +15,11 @@ import {
 } from "@/components/ui/select";
 import { Loader2, Plus, AlertTriangle, RefreshCw } from "lucide-react";
 import { useCodexOauth } from "./hooks/useCodexOauth";
-import type { CodexLoginMethod } from "@/lib/api/auth";
+import {
+  getChatgptProxyConfig,
+  setChatgptProxyConfig,
+  type CodexLoginMethod,
+} from "@/lib/api/auth";
 import {
   ManagedAccountRemoveDialog,
   type ManagedAccountRemoveTarget,
@@ -22,6 +28,7 @@ import { useManagedAccountUsers } from "./hooks/useManagedAccountUsers";
 import CodexOauthAccountQuota from "@/components/CodexOauthAccountQuota";
 import { cn } from "@/lib/utils";
 import { useAccountQuotaPlans } from "@/lib/query/accountPlans";
+import { toast } from "@/lib/toast";
 import {
   ManagedAccountsGroup,
   type GroupAccountRow,
@@ -96,8 +103,65 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
   helpSide,
 }) => {
   const { t, i18n } = useTranslation();
+  const queryClient = useQueryClient();
   const [loginMethod, setLoginMethod] =
     React.useState<CodexLoginMethod>("browser");
+  const loginProxyId = React.useId();
+  const [loginProxyEnabled, setLoginProxyEnabled] = React.useState(false);
+  const [loginProxyUrl, setLoginProxyUrl] = React.useState("");
+  const [savedProxy, setSavedProxy] = React.useState<{
+    enabled: boolean;
+    url: string;
+  } | null>(null);
+  const [proxyLoading, setProxyLoading] = React.useState(mode === "manage");
+  const [proxySaving, setProxySaving] = React.useState(false);
+  React.useEffect(() => {
+    if (mode !== "manage") return;
+    let active = true;
+    getChatgptProxyConfig()
+      .then((config) => {
+        if (!active) return;
+        setSavedProxy(config);
+        setLoginProxyEnabled(config.enabled);
+        setLoginProxyUrl(config.url);
+      })
+      .catch((error) => {
+        if (active) toast.error(String(error));
+      })
+      .finally(() => {
+        if (active) setProxyLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [mode]);
+  const proxyDirty =
+    savedProxy !== null &&
+    (savedProxy.enabled !== loginProxyEnabled ||
+      savedProxy.url !== loginProxyUrl.trim());
+  const saveProxy = async () => {
+    setProxySaving(true);
+    try {
+      const config = { enabled: loginProxyEnabled, url: loginProxyUrl.trim() };
+      await setChatgptProxyConfig(config);
+      setSavedProxy(config);
+      setLoginProxyUrl(config.url);
+      await queryClient.invalidateQueries({
+        queryKey: ["codex_oauth", "quota"],
+      });
+      toast.success(t("authCenter.loginProxy.saved"));
+    } catch (error) {
+      toast.error(String(error));
+    } finally {
+      setProxySaving(false);
+    }
+  };
+  const loginProxyOverride =
+    mode === "manage"
+      ? loginProxyEnabled
+        ? loginProxyUrl.trim()
+        : ""
+      : undefined;
 
   const {
     accounts,
@@ -119,7 +183,22 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
     setDefaultAccount,
     cancelAuth,
     refetchStatus,
-  } = useCodexOauth(loginMethod);
+  } = useCodexOauth(loginMethod, loginProxyOverride);
+  const withLoginProxy = (start: () => void) => {
+    if (proxyLoading || savedProxy === null) {
+      toast.error(t("authCenter.loginProxy.loading"));
+      return;
+    }
+    if (proxyDirty || proxySaving) {
+      toast.error(t("authCenter.loginProxy.saveFirst"));
+      return;
+    }
+    if (loginProxyEnabled && !loginProxyUrl.trim()) {
+      toast.error(t("authCenter.loginProxy.required"));
+      return;
+    }
+    start();
+  };
   const accountUsers = useManagedAccountUsers("codex_oauth", defaultAccountId);
   const [removeTarget, setRemoveTarget] =
     React.useState<ManagedAccountRemoveTarget | null>(null);
@@ -471,11 +550,53 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
         defaultValue: "无法加载 ChatGPT 账号状态，请重试。",
       })}
       onRetryStatus={() => void refetchStatus()}
+      notice={
+        <div className="space-y-2 border-t border-border pt-3">
+          <div className="flex items-center justify-between gap-3">
+            <Label htmlFor={loginProxyId} className="text-sm text-fg-1">
+              {t("authCenter.loginProxy.label")}
+            </Label>
+            <Switch
+              id={loginProxyId}
+              checked={loginProxyEnabled}
+              onCheckedChange={setLoginProxyEnabled}
+              disabled={isAddingAccount || proxyLoading || proxySaving}
+            />
+          </div>
+          {loginProxyEnabled && (
+            <Input
+              aria-label={t("authCenter.loginProxy.url")}
+              placeholder="http://127.0.0.1:7890"
+              value={loginProxyUrl}
+              onChange={(event) => setLoginProxyUrl(event.target.value)}
+              disabled={isAddingAccount || proxyLoading || proxySaving}
+              className="font-mono text-sm"
+            />
+          )}
+          <p className="text-xs text-fg-2">{t("authCenter.loginProxy.hint")}</p>
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => void saveProxy()}
+              disabled={
+                proxyLoading || proxySaving || isAddingAccount || !proxyDirty
+              }
+            >
+              {proxySaving && (
+                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+              )}
+              {t("authCenter.loginProxy.save")}
+            </Button>
+          </div>
+        </div>
+      }
       emptyText={t("authCenter.empty", {
         defaultValue: "还没有登录 {{service}} 账号。",
         service: "ChatGPT",
       })}
-      onAdd={addAccount}
+      onAdd={() => withLoginProxy(addAccount)}
       loginControl={
         <Select
           value={loginMethod}
@@ -499,7 +620,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
         </Select>
       }
       canReauth
-      onReauth={reauthAccount}
+      onReauth={(accountId) => withLoginProxy(() => reauthAccount(accountId))}
       onSetDefault={setDefaultAccount}
       settingDefault={isSettingDefaultAccount}
       onRemove={(accountId, login) =>
@@ -513,7 +634,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
         deviceCode,
         error,
         onCancel: cancelAuth,
-        onRetry: retryAuth,
+        onRetry: () => withLoginProxy(retryAuth),
       }}
     >
       <ManagedAccountRemoveDialog
