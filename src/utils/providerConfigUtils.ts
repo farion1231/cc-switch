@@ -1176,7 +1176,10 @@ export const extractProviderBaseUrl = (
   }
 
   const directBaseUrl =
-    (isPlainObject(object.provider) ? object.provider.base_url : undefined) ||
+    // Kimi 的 provider.base_url；Copilot CLI 自带模型卡的 provider.baseUrl
+    (isPlainObject(object.provider)
+      ? object.provider.base_url || object.provider.baseUrl
+      : undefined) ||
     object.baseUrl ||
     object.base_url ||
     object.options?.baseURL ||
