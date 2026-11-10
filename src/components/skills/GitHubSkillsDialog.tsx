@@ -23,6 +23,36 @@ import { skillErrorReason } from "@/lib/errors/skillErrorParser";
 import { parseRepoUrl } from "./RepoManagerPanel";
 import type { useSkillInstallTargets } from "./useSkillInstallTargets";
 
+// Imports may use a basename ID. Compare source documents independently of the
+// branch revision, retaining the full path to distinguish same-name Skills.
+function sourceDocumentPath(skill: {
+  repoOwner?: string;
+  repoName?: string;
+  repoBranch?: string;
+  readmeUrl?: string;
+}): string | null {
+  if (!skill.repoOwner || !skill.repoName || !skill.readmeUrl) return null;
+  try {
+    const url = new URL(skill.readmeUrl);
+    if (url.origin !== "https://github.com") return null;
+    const parts = decodeURIComponent(url.pathname).split("/");
+    if (
+      parts[1]?.toLowerCase() !== skill.repoOwner.toLowerCase() ||
+      parts[2]?.toLowerCase() !== skill.repoName.toLowerCase() ||
+      !["blob", "tree"].includes(parts[3])
+    )
+      return null;
+    const branch = (skill.repoBranch || "HEAD").split("/");
+    if (!branch.every((part, index) => parts[index + 4] === part)) return null;
+    const path = parts.slice(4 + branch.length);
+    return path.length > 0 && path.at(-1) === "SKILL.md"
+      ? path.join("/")
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 interface GitHubSkillsDialogProps {
   appIds: AppId[];
   targets: AppId[];
@@ -59,8 +89,21 @@ export function GitHubSkillsDialog({
     skill.directory.split(/[/\\]/).pop()!.trim().toLowerCase();
   const existingFor = (skill: DiscoverableSkill) =>
     installedByDirectory.get(destinationFor(skill));
-  const isInstalled = (skill: DiscoverableSkill) =>
-    completed.has(skill.key) || existingFor(skill)?.id === skill.key;
+  const isInstalled = (skill: DiscoverableSkill) => {
+    const existing = existingFor(skill);
+    if (completed.has(skill.key) || existing?.id === skill.key) return true;
+    if (
+      existing?.repoOwner?.toLowerCase() !== skill.repoOwner.toLowerCase() ||
+      existing?.repoName?.toLowerCase() !== skill.repoName.toLowerCase()
+    )
+      return false;
+    const source = sourceDocumentPath(skill);
+    return (
+      source !== null &&
+      (existing.readmeUrl === skill.readmeUrl ||
+        source === sourceDocumentPath(existing))
+    );
+  };
   const unavailable = (skill: DiscoverableSkill) =>
     completed.has(skill.key) || !!existingFor(skill);
   const visible = (skills ?? []).filter((skill) =>
