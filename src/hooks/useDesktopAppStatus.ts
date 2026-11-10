@@ -5,7 +5,7 @@ import type { AppId } from "@/lib/api";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { toast } from "@/lib/toast";
 import { extractErrorMessage } from "@/utils/errorUtils";
-import { isMac, isWindows } from "@/lib/platform";
+import { isLinux, isMac, isWindows } from "@/lib/platform";
 
 export const DESKTOP_APPS = ["codex", "claude-desktop", "opencode"] as const;
 
@@ -22,7 +22,7 @@ export const desktopAppKeys = {
 const STATUS_REFETCH_INTERVAL = 5_000;
 
 export function useDesktopAppStatus(app: AppId) {
-  const supported = isDesktopApp(app) && (isWindows() || isMac());
+  const supported = isDesktopApp(app) && (isWindows() || isMac() || isLinux());
   const queryClient = useQueryClient();
   const { t } = useTranslation();
   const name = APP_DISPLAY_NAME[app];
