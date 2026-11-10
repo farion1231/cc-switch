@@ -545,7 +545,7 @@ impl AppType {
     ///
     /// - Switch mode (false): Only the current provider is written to live config (Claude, Codex, Gemini)
     /// - Additive mode (true): Providers coexist in native config and can be enabled independently
-    ///   (OpenCode, OpenClaw, Hermes, Pi, MiniMax Code, Kimi Code, DeepSeek Harness, Oh My Pi,
+    ///   (OpenCode, OpenClaw, Hermes, Pi, MiniMax Code, Kimi Code, TRAE CLI, DeepSeek Harness, Oh My Pi,
     ///   GitHub Copilot CLI)
     ///
     /// GitHub Copilot CLI 是混合的：自带模型卡累加式写进 `providers.json`，官方登录卡仍是
