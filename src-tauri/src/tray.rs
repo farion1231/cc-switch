@@ -1192,6 +1192,12 @@ pub(crate) fn provider_needs_routing(app: &AppType, provider: &Provider) -> bool
                     .and_then(codex_wire_api)
                     .is_some_and(|wire_api| is_chat_or_anthropic_wire_api(&wire_api))
         }
+        AppType::Gemini => {
+            // Gemini 原生协议可直连；托管 OAuth 凭据只能由代理注入；仅非 Gemini
+            // 协议上游（openai_chat / anthropic）的转换在本地路由里进行，直连写进
+            // .env 也用不了。
+            managed_oauth || matches!(api_format, Some("openai_chat" | "anthropic"))
+        }
         _ => false,
     }
 }
@@ -4343,11 +4349,11 @@ mod tests {
             AppType::Claude,
             AppType::ClaudeDesktop,
             AppType::Codex,
+            AppType::Gemini,
             AppType::GrokBuild,
         ] {
             assert!(provider_needs_routing(&app, &copilot), "{app:?}");
         }
-        assert!(!provider_needs_routing(&AppType::Gemini, &copilot));
 
         let openai_chat = provider(
             serde_json::json!({"apiFormat": "openai_chat"}),
@@ -4355,12 +4361,21 @@ mod tests {
         );
         assert!(provider_needs_routing(&AppType::Claude, &openai_chat));
         assert!(provider_needs_routing(&AppType::Codex, &openai_chat));
+        assert!(provider_needs_routing(&AppType::Gemini, &openai_chat));
         let anthropic = provider(
             serde_json::json!({"apiFormat": "anthropic"}),
             serde_json::json!({}),
         );
         assert!(!provider_needs_routing(&AppType::Claude, &anthropic));
         assert!(provider_needs_routing(&AppType::Codex, &anthropic));
+        assert!(provider_needs_routing(&AppType::Gemini, &anthropic));
+        // Gemini 原生（无 apiFormat / gemini_native）直连可用
+        assert!(!provider_needs_routing(&AppType::Gemini, &plain));
+        let gemini_native = provider(
+            serde_json::json!({"apiFormat": "gemini_native"}),
+            serde_json::json!({}),
+        );
+        assert!(!provider_needs_routing(&AppType::Gemini, &gemini_native));
         let full_url = provider(
             serde_json::json!({"isFullUrl": true}),
             serde_json::json!({}),

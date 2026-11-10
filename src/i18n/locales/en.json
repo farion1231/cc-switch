@@ -238,7 +238,15 @@
         "model": "Model",
         "oauthTitle": "OAuth Authentication Mode",
         "oauthHint": "Google official uses OAuth personal authentication, no need to fill in API Key. The browser will automatically open for login on first use.",
-        "apiKeyPlaceholder": "Enter Gemini API Key"
+        "apiKeyPlaceholder": "Enter Gemini API Key",
+        "apiFormat": "Upstream API Format",
+        "apiFormatHelp": "Gemini (passthrough): the upstream natively supports the Gemini API. OpenAI Chat: OpenAI-compatible upstream (e.g. DeepSeek), the proxy converts the protocol automatically. Anthropic: the upstream speaks Anthropic Messages. Only effective in proxy routing mode.",
+        "apiFormatGeminiNative": "Gemini (passthrough)",
+        "apiFormatOpenaiChat": "OpenAI Chat (auto-convert)",
+        "apiFormatAnthropic": "Anthropic Messages (auto-convert)",
+        "outboundModel": "Outbound model",
+        "outboundModelHelp": "Model name sent to the upstream after protocol conversion. The client-requested model name (e.g. an agy display name) may not be recognized by the upstream; enter a model ID the upstream actually accepts. Leave empty to send the client-requested model name as is.",
+        "outboundModelPlaceholder": "Upstream model ID, e.g. deepseek-v4-pro"
       },
       "claudeAccount": {
         "label": "Sign-in method",
@@ -1767,6 +1775,7 @@
     "fillParameter": "Please fill in {{label}}",
     "fillTemplateValue": "Please fill in {{label}}",
     "endpointRequired": "API endpoint is required for non-official providers",
+    "translationEndpointRequired": "Protocol translation (OpenAI Chat / Anthropic) requires an upstream API endpoint",
     "apiKeyRequired": "API Key is required for non-official providers",
     "softValidation": {
       "title": "Configuration has the following issues",

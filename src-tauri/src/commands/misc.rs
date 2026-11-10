@@ -5401,10 +5401,54 @@ pub async fn open_provider_terminal(
         return Err(e);
     }
 
+    // agy 协议转换卡：Key 仍带（agy 进程要求非空），但 base_url 改指本地代理的
+    // `/agy/<provider_id>` 命名空间，由代理按卡里的上游地址做协议转换。
+    if app_type == AppType::Agy {
+        apply_agy_proxy_rewrite(state.inner(), provider, &mut launch).await?;
+    }
+
     launch_provider_terminal(&launch, launch_cwd.as_deref())
         .map_err(|e| format!("启动终端失败: {e}"))?;
 
     Ok(true)
+}
+
+/// 协议转换（`meta.apiFormat` 为 OpenAI Chat / Anthropic）的 agy Key 卡：
+/// 确保本地代理在跑，把启动环境里的 `GOOGLE_GEMINI_BASE_URL` 改写到
+/// `{proxy_url}/agy/<provider_id>`。非转换卡不动。
+async fn apply_agy_proxy_rewrite(
+    state: &crate::store::AppState,
+    provider: &crate::provider::Provider,
+    launch: &mut ProviderLaunch,
+) -> Result<(), String> {
+    use crate::services::provider::agy_direct::uses_protocol_translation;
+    if !uses_protocol_translation(provider) {
+        return Ok(());
+    }
+    if !state.proxy_service.is_running().await {
+        state
+            .proxy_service
+            .start()
+            .await
+            .map_err(|e| format!("启动本地代理失败: {e}"))?;
+    }
+    let (proxy_url, _) = state
+        .proxy_service
+        .build_proxy_urls()
+        .await
+        .map_err(|e| format!("获取本地代理地址失败: {e}"))?;
+    let proxied = format!("{}/agy/{}", proxy_url.trim_end_matches('/'), provider.id);
+    let mut replaced = false;
+    for (key, value) in launch.env.iter_mut() {
+        if *key == "GOOGLE_GEMINI_BASE_URL" {
+            *value = Some(proxied.clone());
+            replaced = true;
+        }
+    }
+    if !replaced {
+        launch.env.push(("GOOGLE_GEMINI_BASE_URL", Some(proxied)));
+    }
+    Ok(())
 }
 
 /// 从提供商配置中提取环境变量
@@ -5906,7 +5950,8 @@ fn agy_terminal_launch(provider: &crate::provider::Provider) -> Result<ProviderL
 
 /// 恢复 Antigravity 第三方 Key 模式的会话：和「打开终端」同样带私有目录和 Key，再接上
 /// `--conversation`。卡上已经没有 Key 时私有目录对不上，直接报错，不退回官方登录。
-pub(crate) fn open_agy_resume_terminal(
+pub(crate) async fn open_agy_resume_terminal(
+    state: &crate::store::AppState,
     provider: &crate::provider::Provider,
     conversation: &str,
     cwd: Option<String>,
@@ -5919,6 +5964,7 @@ pub(crate) fn open_agy_resume_terminal(
             provider.name
         ));
     }
+    apply_agy_proxy_rewrite(state, provider, &mut launch).await?;
     let resume = format!("--conversation={conversation}");
     launch.args.push(resume.clone());
     launch.batch_command = format!("{} {resume}", launch.batch_command);
@@ -7195,6 +7241,13 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
 #[cfg(test)]
 mod tests {
 
+    /// 不连真实配置目录的内存态 AppState，专给 agy 启动/恢复这类测试用。
+    fn test_app_state() -> crate::store::AppState {
+        crate::store::AppState::new(std::sync::Arc::new(
+            crate::database::Database::memory().unwrap(),
+        ))
+    }
+
     #[test]
     fn shell_command_missing_matches_shell_formats_only() {
         assert!(is_shell_command_missing(
@@ -8009,8 +8062,8 @@ mod tests {
         assert!(plain.args.is_empty());
     }
 
-    #[test]
-    fn agy_login_launch_picks_the_model_for_this_session_only() {
+    #[tokio::test]
+    async fn agy_login_launch_picks_the_model_for_this_session_only() {
         let mut row = crate::provider::Provider::with_id(
             "login".into(),
             "Google".into(),
@@ -8034,7 +8087,10 @@ mod tests {
             vec![(AGY_MODEL_BATCH_VAR, "Gemini 3.1 Pro (High)".to_string())]
         );
         // 带了 `--model` 的官方卡也没有私有目录，会话恢复不会把它当成 Key 卡（在开终端前就报错）。
-        assert!(open_agy_resume_terminal(&row, "abc", None).is_err());
+        let state = test_app_state();
+        assert!(open_agy_resume_terminal(&state, &row, "abc", None)
+            .await
+            .is_err());
 
         row.settings_config = serde_json::json!({"env":{},"config":{}});
         let launch = agy_terminal_launch(&row).unwrap();

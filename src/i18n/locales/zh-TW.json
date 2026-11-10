@@ -238,7 +238,15 @@
         "model": "模型",
         "oauthTitle": "OAuth 驗證模式",
         "oauthHint": "Google 官方使用 OAuth 個人驗證，無需填寫 API Key。首次使用時會自動開啟瀏覽器進行登入。",
-        "apiKeyPlaceholder": "請輸入 Gemini API Key"
+        "apiKeyPlaceholder": "請輸入 Gemini API Key",
+        "apiFormat": "上游 API 格式",
+        "apiFormatHelp": "Gemini 協定（透傳）：上游原生支援 Gemini API；OpenAI Chat：上游為 OpenAI 相容介面（如 DeepSeek），代理自動做協定轉換；Anthropic：上游為 Anthropic Messages 介面。僅代理路由模式生效。",
+        "apiFormatGeminiNative": "Gemini 協定（透傳）",
+        "apiFormatOpenaiChat": "OpenAI Chat（自動轉換）",
+        "apiFormatAnthropic": "Anthropic Messages（自動轉換）",
+        "outboundModel": "出站模型",
+        "outboundModelHelp": "協定轉換後發給上游的模型名。客戶端請求的模型名（如 agy 的顯示名）上游可能不認識，此處填上游實際可用的模型 ID；留空則按客戶端請求的模型名發送。",
+        "outboundModelPlaceholder": "上游模型 ID，如 deepseek-v4-pro"
       },
       "claudeAccount": {
         "label": "登入方式",
@@ -1768,6 +1776,7 @@
     "fillParameter": "請填寫 {{label}}",
     "fillTemplateValue": "請填寫 {{label}}",
     "endpointRequired": "非官方供應商請填寫 API 端點",
+    "translationEndpointRequired": "協定轉換（OpenAI Chat / Anthropic）需要填寫上游 API 位址",
     "apiKeyRequired": "非官方供應商請填寫 API Key",
     "softValidation": {
       "title": "設定存在以下問題",

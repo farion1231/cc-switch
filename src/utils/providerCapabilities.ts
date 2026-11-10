@@ -179,12 +179,24 @@ export function providerNeedsRouting(
     return isManagedOAuth || provider.meta?.claudeDesktopMode === "proxy";
   }
 
-  if (appId !== "claude" && appId !== "codex" && appId !== "grokbuild") {
+  if (
+    appId !== "claude" &&
+    appId !== "codex" &&
+    appId !== "grokbuild" &&
+    appId !== "gemini"
+  ) {
     return false;
   }
 
   // 托管 OAuth：凭据由代理注入，与 apiFormat 无关，必须接管。
   if (isManagedOAuth) return true;
+
+  if (appId === "gemini") {
+    // Gemini 原生是 Gemini 协议，直连可用；仅 OpenAI Chat / Anthropic 上游
+    // 需要本地代理转换（与后端 tray.rs 的 provider_needs_routing 同一条规则）。
+    const fmt = provider.meta?.apiFormat;
+    return fmt === "openai_chat" || fmt === "anthropic";
+  }
 
   if (appId === "claude") {
     const fmt = provider.meta?.apiFormat;

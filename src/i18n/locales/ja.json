@@ -238,7 +238,15 @@
         "model": "モデル",
         "oauthTitle": "OAuth 認証モード",
         "oauthHint": "Google 公式は OAuth 個人認証を使用するため API Key は不要です。初回利用時にブラウザが開きます。",
-        "apiKeyPlaceholder": "Gemini API Key を入力"
+        "apiKeyPlaceholder": "Gemini API Key を入力",
+        "apiFormat": "上流 API フォーマット",
+        "apiFormatHelp": "Gemini プロトコル（透過）：上流が Gemini API にネイティブ対応。OpenAI Chat：OpenAI 互換の上流（例: DeepSeek）、プロキシが自動でプロトコル変換。Anthropic：上流が Anthropic Messages。プロキシ経由モードでのみ有効です。",
+        "apiFormatGeminiNative": "Gemini プロトコル（透過）",
+        "apiFormatOpenaiChat": "OpenAI Chat（自動変換）",
+        "apiFormatAnthropic": "Anthropic Messages（自動変換）",
+        "outboundModel": "送信モデル",
+        "outboundModelHelp": "プロトコル変換後に上流へ送信するモデル名。クライアントが要求するモデル名（agy の表示名など）は上流で認識されない場合があるため、上流が実際に受け付けるモデル ID を入力してください。空欄の場合はクライアントが要求したモデル名のまま送信します。",
+        "outboundModelPlaceholder": "上流のモデル ID（例: deepseek-v4-pro）"
       },
       "claudeAccount": {
         "label": "ログイン方法",
@@ -1767,6 +1775,7 @@
     "fillParameter": "{{label}} を入力してください",
     "fillTemplateValue": "{{label}} を入力してください",
     "endpointRequired": "公式以外は API エンドポイントが必須です",
+    "translationEndpointRequired": "プロトコル変換（OpenAI Chat / Anthropic）には上流 API エンドポイントが必要です",
     "apiKeyRequired": "公式以外は API Key が必須です",
     "softValidation": {
       "title": "設定に以下の問題があります",

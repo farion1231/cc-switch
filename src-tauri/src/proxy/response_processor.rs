@@ -5,7 +5,7 @@
 use super::{
     content_encoding::{decompress_body_with_limit, get_content_encoding, DecompressError},
     forwarder::ActiveConnectionGuard,
-    handler_config::{StreamUsageEventFilter, UsageParserConfig},
+    handler_config::{StreamUsageEventFilter, UsageParserConfig, GEMINI_PARSER_CONFIG},
     handler_context::{RequestContext, StreamingTimeoutConfig},
     hyper_client::{ProxyResponse, MAX_RESPONSE_BODY_BYTES},
     server::ProxyState,
@@ -328,6 +328,211 @@ pub async fn handle_non_streaming(
         log::error!("[{}] 构建响应失败: {e}", ctx.tag);
         ProxyError::Internal(format!("Failed to build response: {e}"))
     })
+}
+
+/// Gemini 入口 + 非 Gemini 协议上游（openai_chat / anthropic）的响应转换。
+///
+/// 上游响应先归一为 Anthropic 格式（openai_chat 经 `openai_to_anthropic`，
+/// anthropic 原样），再转为 Gemini 格式返回给 gemini-cli：
+/// - 非流式：整包 JSON 转换
+/// - 流式：SSE 事件流转换（openai_chat 上游先经 `create_anthropic_sse_stream`
+///   归一为 Anthropic SSE，再经 `create_gemini_sse_stream_from_anthropic`）
+pub async fn handle_gemini_transform(
+    response: ProxyResponse,
+    ctx: &RequestContext,
+    state: &ProxyState,
+    upstream_api_format: &str,
+    request_is_stream: bool,
+    connection_guard: Option<ActiveConnectionGuard>,
+) -> Result<Response, ProxyError> {
+    let upstream_is_sse = response
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.starts_with("text/event-stream"))
+        .unwrap_or(false);
+
+    if is_sse_response(&response, request_is_stream) || upstream_is_sse {
+        Ok(handle_gemini_transform_streaming(
+            response,
+            ctx,
+            state,
+            upstream_api_format,
+            connection_guard,
+        )
+        .await)
+    } else {
+        handle_gemini_transform_non_streaming(response, ctx, state, upstream_api_format).await
+    }
+}
+
+async fn handle_gemini_transform_streaming(
+    response: ProxyResponse,
+    ctx: &RequestContext,
+    state: &ProxyState,
+    upstream_api_format: &str,
+    connection_guard: Option<ActiveConnectionGuard>,
+) -> Response {
+    let status = response.status();
+    let mut response_headers = response.headers().clone();
+    strip_hop_by_hop_response_headers(&mut response_headers);
+
+    let model = ctx
+        .outbound_model
+        .clone()
+        .unwrap_or_else(|| ctx.request_model.clone());
+
+    let upstream_stream = response.bytes_stream();
+    // openai_chat 上游：OpenAI SSE → Anthropic SSE；anthropic 上游：原样
+    let gemini_stream: std::pin::Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>> =
+        match upstream_api_format {
+            "openai_chat" => {
+                let anthropic_stream =
+                    super::providers::streaming::create_anthropic_sse_stream(upstream_stream);
+                Box::pin(
+                    super::providers::streaming_gemini::create_gemini_sse_stream_from_anthropic(
+                        anthropic_stream,
+                        model,
+                    ),
+                )
+            }
+            _ => Box::pin(
+                super::providers::streaming_gemini::create_gemini_sse_stream_from_anthropic(
+                    upstream_stream,
+                    model,
+                ),
+            ),
+        };
+
+    let usage_collector =
+        create_usage_collector(ctx, state, status.as_u16(), &GEMINI_PARSER_CONFIG);
+    let timeout_config = ctx.streaming_timeout_config();
+    let logged_stream = create_logged_passthrough_stream(
+        gemini_stream,
+        ctx.tag,
+        usage_collector,
+        timeout_config,
+        connection_guard,
+    );
+
+    let mut builder = axum::response::Response::builder().status(status);
+    builder = builder.header(
+        axum::http::header::CONTENT_TYPE,
+        "text/event-stream; charset=utf-8",
+    );
+    for (key, value) in &response_headers {
+        if key == axum::http::header::CONTENT_TYPE
+            || key == axum::http::header::CONTENT_LENGTH
+            || key == axum::http::header::CONTENT_ENCODING
+        {
+            continue;
+        }
+        builder = builder.header(key, value);
+    }
+
+    match builder.body(axum::body::Body::from_stream(logged_stream)) {
+        Ok(resp) => resp,
+        Err(e) => {
+            log::error!("[{}] 构建 Gemini 流式响应失败: {e}", ctx.tag);
+            ProxyError::Internal(format!("Failed to build streaming response: {e}")).into_response()
+        }
+    }
+}
+
+async fn handle_gemini_transform_non_streaming(
+    response: ProxyResponse,
+    ctx: &RequestContext,
+    state: &ProxyState,
+    upstream_api_format: &str,
+) -> Result<Response, ProxyError> {
+    let body_timeout =
+        if ctx.app_config.auto_failover_enabled && ctx.app_config.non_streaming_timeout > 0 {
+            Duration::from_secs(ctx.app_config.non_streaming_timeout as u64)
+        } else {
+            Duration::ZERO
+        };
+    let (mut response_headers, status, body_bytes) =
+        read_decoded_body(response, ctx.tag, body_timeout).await?;
+    strip_hop_by_hop_response_headers(&mut response_headers);
+
+    // 错误响应（非 2xx）原样透传，让客户端看到上游真实错误
+    if !status.is_success() {
+        let mut builder = axum::response::Response::builder().status(status);
+        for (key, value) in response_headers.iter() {
+            builder = builder.header(key, value);
+        }
+        return builder
+            .body(axum::body::Body::from(body_bytes))
+            .map_err(|e| ProxyError::Internal(format!("Failed to build response: {e}")));
+    }
+
+    let upstream_json: Value = serde_json::from_slice(&body_bytes).map_err(|e| {
+        log::warn!(
+            "[{}] Gemini 转换：上游响应非 JSON（{} bytes），原样透传: {e}",
+            ctx.tag,
+            body_bytes.len()
+        );
+        ProxyError::TransformError(format!("Upstream response is not JSON: {e}"))
+    })?;
+
+    let model = ctx
+        .outbound_model
+        .clone()
+        .unwrap_or_else(|| ctx.request_model.clone());
+
+    // 归一为 Anthropic 响应，再转成 Gemini 格式
+    let anthropic = match upstream_api_format {
+        "openai_chat" => super::providers::transform::openai_to_anthropic(upstream_json)?,
+        _ => upstream_json,
+    };
+    let gemini =
+        super::providers::transform_gemini::anthropic_response_to_gemini(anthropic, &model)?;
+    let out_bytes = serde_json::to_vec(&gemini).map_err(|e| {
+        ProxyError::TransformError(format!("Failed to serialize Gemini response: {e}"))
+    })?;
+
+    // 用量记录：转换后的 Gemini 格式走 GEMINI_PARSER_CONFIG
+    if usage_logging_enabled(state) {
+        if let Some(usage) = (GEMINI_PARSER_CONFIG.response_parser)(&gemini) {
+            spawn_log_usage(
+                state,
+                ctx,
+                usage,
+                &model,
+                &ctx.request_model,
+                status.as_u16(),
+                false,
+            );
+        } else {
+            spawn_log_usage(
+                state,
+                ctx,
+                TokenUsage::default(),
+                &model,
+                &ctx.request_model,
+                status.as_u16(),
+                false,
+            );
+        }
+    }
+
+    let mut builder = axum::response::Response::builder().status(status);
+    for (key, value) in response_headers.iter() {
+        if key == axum::http::header::CONTENT_LENGTH
+            || key == axum::http::header::CONTENT_TYPE
+            || key == axum::http::header::CONTENT_ENCODING
+        {
+            continue;
+        }
+        builder = builder.header(key, value);
+    }
+    builder = builder.header(axum::http::header::CONTENT_TYPE, "application/json");
+    builder
+        .body(axum::body::Body::from(out_bytes))
+        .map_err(|e| {
+            log::error!("[{}] 构建 Gemini 响应失败: {e}", ctx.tag);
+            ProxyError::Internal(format!("Failed to build response: {e}"))
+        })
 }
 
 /// 通用响应处理入口

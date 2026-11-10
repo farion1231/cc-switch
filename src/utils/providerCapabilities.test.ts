@@ -409,6 +409,39 @@ describe("providerNeedsRouting", () => {
     });
   });
 
+  describe("Gemini 按格式判定（原生直连，转换格式需路由）", () => {
+    it("apiFormat 缺省视为原生直连，不需要路由", () => {
+      expect(providerNeedsRouting("gemini", mkProvider())).toBe(false);
+    });
+
+    it("gemini_native 不需要路由", () => {
+      expect(
+        providerNeedsRouting(
+          "gemini",
+          mkProvider({ meta: { apiFormat: "gemini_native" } }),
+        ),
+      ).toBe(false);
+    });
+
+    it("openai_chat 上游需要路由", () => {
+      expect(
+        providerNeedsRouting(
+          "gemini",
+          mkProvider({ meta: { apiFormat: "openai_chat" } }),
+        ),
+      ).toBe(true);
+    });
+
+    it("anthropic 上游需要路由", () => {
+      expect(
+        providerNeedsRouting(
+          "gemini",
+          mkProvider({ meta: { apiFormat: "anthropic" } }),
+        ),
+      ).toBe(true);
+    });
+  });
+
   describe("Claude Desktop 路由判定", () => {
     it("proxy 模式需要路由", () => {
       expect(
