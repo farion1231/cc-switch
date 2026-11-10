@@ -4394,9 +4394,6 @@
       "omp": "Resmi komut dosyasıyla yüklenir",
       "copilot": "npm ile kurulur"
     },
-    "sectionInstalled": "Yüklü · {{count}}",
-    "sectionNotInstalled": "Yüklü değil · {{count}}",
-    "dragHandle": "{{name}} öğesini yeniden sıralamak için sürükleyin",
     "workbuddyHelp": "WorkBuddy bir masaüstü uygulamasıdır; buradan kurulamaz veya yükseltilemez, kendini günceller. CC Switch ona yapılandırma dosyası (~/.workbuddy/models.json) üzerinden bağlanır."
   },
   "appPage": {
@@ -5322,19 +5319,19 @@
   "workbuddy": {
     "deleteSessionHint": "Oturum listesi ve geçmişin birlikte güncellenmesi için oturumu WorkBuddy içinden silin.",
     "empty": {
-      "title": "No WorkBuddy providers yet",
-      "description": "CC Switch writes its providers into WorkBuddy's ~/.workbuddy/models.json as custom models and leaves models you added in WorkBuddy untouched, so there is nothing to import. Use the + button in the top-right corner to add a preset or custom provider."
+      "title": "Henüz WorkBuddy sağlayıcısı yok",
+      "description": "CC Switch sağlayıcılarını WorkBuddy'nin ~/.workbuddy/models.json dosyasına özel model olarak yazar ve WorkBuddy'de eklediğiniz modellere dokunmaz; bu yüzden içe aktarılacak bir şey yoktur. Ön ayar veya özel sağlayıcı eklemek için sağ üst köşedeki + düğmesini kullanın."
     },
     "form": {
-      "providerKeyHint": "Lowercase letters, numbers, and hyphens only. Marks which models.json entries belong to this provider.",
-      "providerKeyLockedHint": "The key marks this provider's entries in models.json, so it can't be changed after creation.",
-      "url": "API endpoint",
-      "urlHint": "Full OpenAI-compatible Chat Completions URL, usually ending in /chat/completions.",
-      "apiKeyHint": "Stored in models.json on this machine. ${ENV_VAR} references are expanded by WorkBuddy.",
-      "vendor": "Vendor label",
-      "modelsHint": "Add at least one model. The model ID is sent to the API as-is.",
-      "maxInputTokens": "Max input tokens",
-      "maxOutputTokens": "Max output tokens"
+      "providerKeyHint": "Yalnızca küçük harf, rakam ve kısa çizgi. models.json içindeki hangi girdilerin bu sağlayıcıya ait olduğunu işaretler.",
+      "providerKeyLockedHint": "Anahtar, bu sağlayıcının models.json içindeki girdilerini işaretler; bu yüzden oluşturulduktan sonra değiştirilemez.",
+      "url": "İstek URL'si",
+      "urlHint": "OpenAI uyumlu Chat Completions tam URL'si; genellikle /chat/completions ile biter.",
+      "apiKeyHint": "Bu bilgisayardaki models.json dosyasında saklanır. ${ENV_VAR} başvuruları WorkBuddy tarafından genişletilir.",
+      "vendor": "Sağlayıcı etiketi",
+      "modelsHint": "En az bir model ekleyin. Model kimliği API'ye olduğu gibi gönderilir.",
+      "maxInputTokens": "Maks. giriş token'ı",
+      "maxOutputTokens": "Maks. çıkış token'ı"
     },
     "official": {
       "presetName": "WorkBuddy Resmi Oturum",
