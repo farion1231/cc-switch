@@ -274,6 +274,393 @@ pub async fn handle_claude_desktop_messages(
     .await
 }
 
+/// 处理 `/v1/messages/count_tokens`（Claude Code / Claude Desktop 的上下文计数）。
+///
+/// 这个接口只数 token、不生成内容，官方 API 免费提供。网关缺这条路由时，客户端会退化成
+/// 一条真实的 `max_tokens: 1` 请求（带整段上下文）来读返回值里的 `usage`，按正常对话计费；
+/// Claude Desktop 的后台计数请求因此会落到默认供应商最贵的档位。这里补上路由：
+///
+/// 1. Claude Desktop 配了「计数供应商」就固定发给它；
+/// 2. 否则用当前请求解析出的供应商（聚合 id 先解析）；
+/// 3. 目标供应商支持该端点就透传，不支持（404/405/501/非 Anthropic 格式）就在本地估算。
+///
+/// 计数请求一律不进入熔断器、不触发故障转移、不切换路由：一次 404 不应把正常对话的供应商
+/// 熔断掉（见上游 PR #5581 的评审意见）。
+pub async fn handle_count_tokens(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_count_tokens_for_app(state, request, AppType::Claude, "Claude", "claude").await
+}
+
+pub async fn handle_claude_desktop_count_tokens(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    validate_claude_desktop_gateway_auth(&state, request.headers())?;
+    handle_count_tokens_for_app(
+        state,
+        request,
+        AppType::ClaudeDesktop,
+        "Claude Desktop",
+        "claude-desktop",
+    )
+    .await
+}
+
+async fn handle_count_tokens_for_app(
+    state: ProxyState,
+    request: axum::extract::Request,
+    app_type: AppType,
+    tag: &'static str,
+    app_type_str: &'static str,
+) -> Result<axum::response::Response, ProxyError> {
+    let (parts, body) = request.into_parts();
+    let headers = parts.headers;
+    let extensions = parts.extensions;
+    let body_bytes = body
+        .collect()
+        .await
+        .map_err(|e| ProxyError::InvalidRequest(format!("Failed to read request body: {e}")))?
+        .to_bytes();
+    let body: Value = serde_json::from_slice(&body_bytes)
+        .map_err(|e| ProxyError::InvalidRequest(format!("Invalid JSON body: {e}")))?;
+    drop(body_bytes);
+
+    let requested_raw = body
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .unwrap_or("unknown")
+        .to_string();
+    let requested =
+        crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(&requested_raw).trim();
+
+    // 聚合 id 先解析成实际供应商和上游模型；解不出来（旧 id、已移除）也不报错：计数只要一个
+    // 数字，按下面的常规路径继续，别让客户端退回付费探针。
+    let stack_target = match crate::mode::stack::resolve(
+        &state.db,
+        &crate::live::engine::DeviceStore::for_device(),
+        &app_type,
+        &requested_raw,
+    ) {
+        Ok(crate::mode::stack::Resolved::Hit(target)) => Some(*target),
+        _ => None,
+    };
+
+    // 候选供应商按顺序尝试：指定供应商 → 聚合/当前供应商。同一家只试一次。
+    let mut candidates: Vec<(crate::provider::Provider, String)> = Vec::new();
+    if let Some(configured_id) = count_tokens_provider_setting(&app_type) {
+        match state.db.get_provider_by_id(&configured_id, app_type_str) {
+            Ok(Some(provider)) => {
+                let model = count_model_for_provider(&provider, requested);
+                candidates.push((provider, model));
+            }
+            Ok(None) => {
+                log::warn!("[{tag}] 计数供应商 {configured_id} 已不存在，回落到当前供应商");
+            }
+            Err(error) => {
+                log::warn!("[{tag}] 读取计数供应商失败: {error}");
+            }
+        }
+    }
+    if let Some(target) = stack_target {
+        candidates.push((target.provider, target.upstream_model));
+    } else if let Ok(Some(provider)) = crate::mode::current::provider_in_use(&state.db, &app_type) {
+        let model = count_model_for_current_provider(&app_type, &provider, &body, requested);
+        candidates.push((provider, model));
+    }
+    candidates.dedup_by(|right, left| right.0.id == left.0.id);
+
+    for (provider, model) in candidates {
+        if get_claude_api_format(&provider) != "anthropic" {
+            log::debug!(
+                "[{tag}] 计数供应商 {} 不是 Anthropic 格式，跳过",
+                provider.name
+            );
+            continue;
+        }
+        match forward_count_tokens(
+            &state,
+            &app_type,
+            tag,
+            app_type_str,
+            &provider,
+            &model,
+            &requested_raw,
+            &body,
+            &headers,
+            extensions.clone(),
+        )
+        .await
+        {
+            Ok(Some(count)) => return Ok(Json(count).into_response()),
+            Ok(None) => continue,
+            Err(error) => {
+                log::debug!(
+                    "[{tag}] 计数请求转发到 {} 失败，尝试下一家或本地估算: {error}",
+                    provider.name
+                );
+                continue;
+            }
+        }
+    }
+
+    let estimate = estimate_anthropic_input_tokens(&body);
+    log::debug!("[{tag}] 计数接口不可用，本地估算 input_tokens={estimate}");
+    Ok(Json(json!({ "input_tokens": estimate })).into_response())
+}
+
+/// 计数供应商设置，只在 Claude Desktop 生效：Claude Code 的计数跟随它自己的路由。
+fn count_tokens_provider_setting(app_type: &AppType) -> Option<String> {
+    if !matches!(app_type, AppType::ClaudeDesktop) {
+        return None;
+    }
+    crate::settings::get_settings()
+        .claude_desktop_count_tokens_provider_id
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty())
+}
+
+/// 计数请求带什么模型：供应商认识一个模型即可，计数不生成内容。优先用它自己的第一档路由，
+/// 其次行里配置的默认模型，最后才用客户端发来的名字。
+fn count_model_for_provider(provider: &crate::provider::Provider, requested: &str) -> String {
+    if let Ok(routes) = crate::claude_desktop_config::proxy_model_routes(provider) {
+        if let Some(route) = routes.first() {
+            return route.upstream_model.clone();
+        }
+    }
+    provider
+        .settings_config
+        .get("env")
+        .and_then(|env| env.get("ANTHROPIC_MODEL"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| requested.to_string())
+}
+
+/// 当前供应商的计数模型：按正常的模型映射走（Desktop 用路由表，Claude 用档位映射），
+/// 映射失败就原样发，交给上游判断。
+fn count_model_for_current_provider(
+    app_type: &AppType,
+    provider: &crate::provider::Provider,
+    body: &Value,
+    requested: &str,
+) -> String {
+    let mapped = match app_type {
+        AppType::ClaudeDesktop => {
+            crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
+                .ok()
+                .and_then(|mapped| {
+                    mapped
+                        .get("model")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+        }
+        _ => {
+            let (mapped, _, _) =
+                crate::proxy::model_mapper::apply_model_mapping(body.clone(), provider);
+            mapped
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        }
+    };
+    mapped.unwrap_or_else(|| requested.to_string())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn forward_count_tokens(
+    state: &ProxyState,
+    app_type: &AppType,
+    tag: &'static str,
+    app_type_str: &'static str,
+    provider: &crate::provider::Provider,
+    model: &str,
+    original_model: &str,
+    body: &Value,
+    headers: &axum::http::HeaderMap,
+    extensions: axum::http::Extensions,
+) -> Result<Option<Value>, ProxyError> {
+    let mut body = body.clone();
+    body["model"] = json!(model);
+
+    // 供应商的 base URL 可能直接填到 `/v1/messages`（完整端点），这时只补 `/count_tokens`，
+    // 否则会拼成 `.../v1/messages/v1/messages/count_tokens`。
+    let base_url = provider
+        .settings_config
+        .get("env")
+        .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim_end_matches('/');
+    let endpoint = if base_url.ends_with("/v1/messages") {
+        "/count_tokens"
+    } else {
+        "/v1/messages/count_tokens"
+    };
+
+    // 借用 StackTarget 的「单家、不走路由状态」语义：计数请求不读也不写熔断器、故障转移和
+    // 「正在使用」，也不做二次模型映射（上面已经定好了要发的模型）。
+    let stack = crate::mode::stack::StackTarget {
+        provider: provider.clone(),
+        upstream_model: model.to_string(),
+        original_model: original_model.to_string(),
+    };
+    let ctx = RequestContext::new(
+        state,
+        &body,
+        headers,
+        app_type.clone(),
+        tag,
+        app_type_str,
+        Some(stack),
+    )
+    .await?;
+    let forwarder = ctx.create_forwarder(state);
+    let result = match tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        forwarder.forward_with_retry(
+            app_type,
+            axum::http::Method::POST,
+            endpoint,
+            &body,
+            headers.clone(),
+            extensions,
+            ctx.get_providers(),
+        ),
+    )
+    .await
+    {
+        Err(_) => return Err(ProxyError::Timeout("count_tokens 请求超时".to_string())),
+        Ok(Ok(result)) => result,
+        Ok(Err(error)) => return Err(error.error),
+    };
+
+    if !result.response.status().is_success() {
+        let status = result.response.status().as_u16();
+        let _ = result
+            .response
+            .bytes_with_limit(super::hyper_client::MAX_RESPONSE_BODY_BYTES)
+            .await;
+        return Err(ProxyError::UpstreamError { status, body: None });
+    }
+
+    let bytes = result
+        .response
+        .bytes_with_limit(super::hyper_client::MAX_RESPONSE_BODY_BYTES)
+        .await?;
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| ProxyError::Internal(format!("Invalid count_tokens response: {e}")))?;
+    match value.get("input_tokens").and_then(Value::as_u64) {
+        Some(tokens) if tokens > 0 => Ok(Some(json!({ "input_tokens": tokens }))),
+        _ => Ok(None),
+    }
+}
+
+/// 本地估算：只看文本、工具定义等能被 tokenizer 数进去的内容。
+///
+/// 图片和文档按单个条目的保守上限计，不把 base64 当文本数——那样一张 758KB 的图会被算成
+/// 二十多万 token（上游 PR #4999 的评审问题）。估算结果宁大勿小：偏小会让客户端的上下文
+/// 压缩触发太晚，直接撞上上下文上限。
+fn estimate_anthropic_input_tokens(body: &Value) -> u64 {
+    let mut tokens = 0u64;
+    if let Some(system) = body.get("system") {
+        tokens += estimate_content_tokens(system);
+    }
+    if let Some(messages) = body.get("messages").and_then(Value::as_array) {
+        for message in messages {
+            if let Some(content) = message.get("content") {
+                tokens += estimate_content_tokens(content);
+            }
+        }
+    }
+    if let Some(tools) = body.get("tools") {
+        tokens += estimate_json_tokens(tools);
+    }
+    tokens.max(1)
+}
+
+fn estimate_content_tokens(content: &Value) -> u64 {
+    match content {
+        Value::String(text) => estimate_text_tokens(text),
+        Value::Array(blocks) => blocks.iter().map(estimate_block_tokens).sum(),
+        Value::Object(_) => estimate_block_tokens(content),
+        _ => 0,
+    }
+}
+
+fn estimate_block_tokens(block: &Value) -> u64 {
+    // 图片在 Claude 里最多约 1600 token；PDF 等文档按每份 2500 的保守上限。没有可靠的页数/
+    // 分辨率信息时，这个上限比把 base64 当文本更接近真实值。
+    const IMAGE_TOKENS: u64 = 1600;
+    const DOCUMENT_TOKENS: u64 = 2500;
+    match block.get("type").and_then(Value::as_str) {
+        Some("text") => block
+            .get("text")
+            .and_then(Value::as_str)
+            .map(estimate_text_tokens)
+            .unwrap_or(0),
+        Some("image") => IMAGE_TOKENS,
+        Some("document") => DOCUMENT_TOKENS,
+        Some("tool_use") => {
+            block
+                .get("name")
+                .and_then(Value::as_str)
+                .map(estimate_text_tokens)
+                .unwrap_or(0)
+                + block.get("input").map(estimate_json_tokens).unwrap_or(0)
+        }
+        Some("tool_result") => block
+            .get("content")
+            .map(estimate_content_tokens)
+            .unwrap_or(0),
+        Some("thinking") => block
+            .get("thinking")
+            .and_then(Value::as_str)
+            .map(estimate_text_tokens)
+            .unwrap_or(0),
+        Some("redacted_thinking") => 0,
+        _ => estimate_json_tokens(block),
+    }
+}
+
+fn estimate_json_tokens(value: &Value) -> u64 {
+    serde_json::to_string(value)
+        .map(|text| estimate_text_tokens(&text))
+        .unwrap_or(0)
+}
+
+fn estimate_text_tokens(text: &str) -> u64 {
+    let mut cjk = 0u64;
+    let mut other = 0u64;
+    for ch in text.chars() {
+        if is_cjk(ch) {
+            cjk += 1;
+        } else {
+            other += 1;
+        }
+    }
+    // 中日韩字符约 1 token/字；拉丁文本约 4 字符/token。
+    cjk + other.div_ceil(4)
+}
+
+fn is_cjk(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x3040..=0x30FF       // 日文假名
+            | 0x3400..=0x4DBF // 扩展 A
+            | 0x4E00..=0x9FFF // 中日韩统一表意文字
+            | 0xAC00..=0xD7AF // 韩文音节
+            | 0xF900..=0xFAFF // 兼容表意文字
+            | 0xFF00..=0xFFEF // 全角字符
+    )
+}
+
 pub async fn handle_claude_desktop_models(
     State(state): State<ProxyState>,
     headers: axum::http::HeaderMap,
@@ -5626,5 +6013,92 @@ mod stack_tests {
         .await
         .expect("models");
         assert_eq!(body, json!({ "data": [], "has_more": false }));
+    }
+}
+
+#[cfg(test)]
+mod count_tokens_tests {
+    use super::*;
+
+    #[test]
+    fn local_estimate_counts_text_and_tools() {
+        let body = json!({
+            "model": "claude-opus-5",
+            "system": [{"type": "text", "text": "You are a helpful assistant."}],
+            "messages": [
+                {"role": "user", "content": [
+                    {"type": "text", "text": "你好，帮我看看这段代码"},
+                    {"type": "tool_result", "content": [
+                        {"type": "text", "text": "fn main() {}"}
+                    ]}
+                ]}
+            ],
+            "tools": [{"name": "read", "input_schema": {"type": "object"}}]
+        });
+        let tokens = estimate_anthropic_input_tokens(&body);
+        assert!(
+            tokens > 10,
+            "expected a sane positive estimate, got {tokens}"
+        );
+        assert!(tokens < 500);
+    }
+
+    #[test]
+    fn local_estimate_does_not_count_image_base64_as_text() {
+        let body = json!({
+            "model": "claude-opus-5",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": "A".repeat(758_559)
+                    }},
+                    {"type": "text", "text": "describe this image"}
+                ]
+            }]
+        });
+        let tokens = estimate_anthropic_input_tokens(&body);
+        // 图片按单条上限计，base64 长度不能参与文本计数（否则会是二十多万）
+        assert!(
+            tokens < 5_000,
+            "image base64 leaked into text count: {tokens}"
+        );
+        assert!(tokens >= 1_600);
+    }
+
+    #[test]
+    fn local_estimate_is_never_zero() {
+        assert_eq!(estimate_anthropic_input_tokens(&json!({})), 1);
+    }
+
+    #[tokio::test]
+    async fn count_tokens_route_answers_locally_without_any_provider() {
+        let state = ProxyState::for_test(std::sync::Arc::new(
+            crate::database::Database::memory().expect("memory db"),
+        ));
+        let request = axum::http::Request::builder()
+            .method("POST")
+            .uri("/v1/messages/count_tokens")
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(
+                json!({
+                    "model": "claude-opus-5",
+                    "messages": [{"role": "user", "content": "hello"}]
+                })
+                .to_string(),
+            ))
+            .unwrap();
+
+        let response = handle_count_tokens(State(state), request)
+            .await
+            .expect("count_tokens handler");
+        let status = response.status();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let body: Value = serde_json::from_slice(&bytes).unwrap();
+
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.get("input_tokens").and_then(Value::as_u64).unwrap() > 0);
     }
 }

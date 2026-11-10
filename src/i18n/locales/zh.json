@@ -4605,6 +4605,9 @@
     "exitAllTitle": "让所有应用回到直连？",
     "exitAllMessage": "在路由和聚合模式下的应用都会写回直连配置，然后停止路由服务。路由目标、队列和聚合名单会保留。",
     "exitAllConfirm": "全部回到直连",
+    "countTokens": "模型计数",
+    "countTokensFollowCurrent": "跟随当前供应商",
+    "countTokensHelp": "Claude Desktop 的上下文计数请求由这里选定的供应商回答；不选则跟随当前供应商。计数会把当前上下文发给该供应商、不生成内容；两边都不支持该接口时在本地估算。",
     "failoverHelp": "这里调各应用的超时、重试和熔断。队列在各应用页的「路由」页签里管理。"
   },
   "quota": {

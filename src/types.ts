@@ -476,6 +476,9 @@ export interface Settings {
   // Codex aggregation: Auto Review (approval reviewer) model, a published
   // `ccs-<key>/<model>` id. Unset = Codex's default reviewer.
   codexStackAutoReviewModel?: string;
+  // Claude Desktop: provider that answers `/v1/messages/count_tokens`.
+  // Unset = follow the current provider; both fall back to a local estimate.
+  claudeDesktopCountTokensProviderId?: string;
   // User has confirmed the failover toggle first-run notice
   failoverConfirmed?: boolean;
   // User has confirmed the first-run welcome notice

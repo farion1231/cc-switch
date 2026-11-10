@@ -6,7 +6,18 @@ import { toast } from "@/lib/toast";
 import { ChevronRight, Loader2 } from "lucide-react";
 import type { AppId } from "@/lib/api";
 import { proxyApi } from "@/lib/api/proxy";
-import { useProvidersQuery } from "@/lib/query";
+import {
+  useProvidersQuery,
+  useSaveSettingsMutation,
+  useSettingsQuery,
+} from "@/lib/query";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   useGlobalProxyConfig,
   useProxyClientHost,
@@ -144,6 +155,24 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
     return [{ app, mode: view.mode as AppMode, routeName }];
   });
   const usingCount = usingApps.length;
+
+  const settingsQuery = useSettingsQuery();
+  const saveSettings = useSaveSettingsMutation();
+  const countTokensProviderId =
+    settingsQuery.data?.claudeDesktopCountTokensProviderId ?? "";
+  const countTokensProviders = Object.entries(
+    providerQueries["claude-desktop"]?.providers ?? {},
+  ).map(([id, provider]) => ({ id, name: provider.name }));
+
+  const saveCountTokensProvider = (value: string) => {
+    const settings = settingsQuery.data;
+    if (!settings) return;
+    saveSettings.mutate({
+      ...settings,
+      claudeDesktopCountTokensProviderId:
+        value === "current" ? undefined : value,
+    });
+  };
 
   const saveListen = async () => {
     if (!config) return;
@@ -420,6 +449,44 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
             {t("routingSettings.exitAll")}
           </Button>
         )}
+      </SettingsBlock>
+
+      <SettingsBlock
+        title={t("routingSettings.countTokens")}
+        help={{
+          title: t("routingSettings.countTokens"),
+          body: t("routingSettings.countTokensHelp"),
+        }}
+      >
+        <SettingsCard>
+          <SettingsRow
+            label="Claude Desktop"
+            help={{
+              title: t("routingSettings.countTokens"),
+              body: t("routingSettings.countTokensHelp"),
+            }}
+            control={
+              <Select
+                value={countTokensProviderId || "current"}
+                onValueChange={saveCountTokensProvider}
+              >
+                <SelectTrigger className="h-9 w-[220px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="current">
+                    {t("routingSettings.countTokensFollowCurrent")}
+                  </SelectItem>
+                  {countTokensProviders.map((provider) => (
+                    <SelectItem key={provider.id} value={provider.id}>
+                      {provider.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            }
+          />
+        </SettingsCard>
       </SettingsBlock>
 
       <SettingsBlock

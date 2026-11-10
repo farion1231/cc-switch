@@ -578,6 +578,11 @@ pub struct AppSettings {
     /// slug 还在合并目录里时写进目录行，规则同子 agent 模型。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_stack_auto_review_model: Option<String>,
+    /// Claude Desktop 的 `count_tokens` 请求固定发给哪家供应商（provider id）。不设时跟随
+    /// 当前请求解析出的供应商；两者都不支持该端点时在本地估算。计数不生成内容，凭据和数据
+    /// 流向跟着所选供应商。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_desktop_count_tokens_provider_id: Option<String>,
     /// User has confirmed the failover toggle first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failover_confirmed: Option<bool>,
@@ -759,6 +764,7 @@ impl Default for AppSettings {
             codex_stack_subagent_model: None,
             codex_stack_subagent_reasoning_effort: None,
             codex_stack_auto_review_model: None,
+            claude_desktop_count_tokens_provider_id: None,
             failover_confirmed: None,
             first_run_notice_confirmed: None,
             new_layout_notice_confirmed: None,

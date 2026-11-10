@@ -4526,6 +4526,9 @@
     "exitAllTitle": "Tüm uygulamalar doğrudan bağlantıya döndürülsün mü?",
     "exitAllMessage": "Yönlendirme veya Birleştirme modundaki uygulamaların doğrudan yapılandırmaları geri yazılır, ardından yönlendirme hizmeti durur. Rota hedefleri, kuyruklar ve birleştirme listeleri tutulur.",
     "exitAllConfirm": "Tümünü doğrudan bağlantıya döndür",
+    "countTokens": "Token sayımı",
+    "countTokensFollowCurrent": "Geçerli sağlayıcıyı izle",
+    "countTokensHelp": "Claude Desktop bağlam token sayımlarını burada seçilen sağlayıcıdan ister; boş bırakılırsa geçerli sağlayıcıyı izler. Sayım bağlamı o sağlayıcıya gönderir, içerik üretmez; ikisi de desteklemiyorsa CC Switch yerel olarak tahmin eder.",
     "failoverHelp": "Her uygulamanın zaman aşımlarını, yeniden denemelerini ve devre kesicilerini buradan ayarlayın. Kuyruklar her uygulamanın Yönlendirme sekmesinde yönetilir."
   },
   "quota": {

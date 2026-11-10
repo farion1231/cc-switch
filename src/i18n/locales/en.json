@@ -4605,6 +4605,9 @@
     "exitAllTitle": "Switch every app back to direct?",
     "exitAllMessage": "Apps in routing or Aggregation mode get their direct config written back, then the routing service stops. Route targets, queues and aggregation lists are kept.",
     "exitAllConfirm": "Switch all back to direct",
+    "countTokens": "Token counting",
+    "countTokensFollowCurrent": "Follow the current provider",
+    "countTokensHelp": "Claude Desktop asks the provider selected here for its context-token counts; leave it unset to follow the current provider. Counting sends the context to that provider and generates nothing; when neither supports the endpoint, CC Switch estimates locally.",
     "failoverHelp": "Tune each app's timeouts, retries and circuit breaker here. Queues are managed on each app's Routing tab."
   },
   "quota": {

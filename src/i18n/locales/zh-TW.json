@@ -4606,6 +4606,9 @@
     "exitAllTitle": "讓所有應用回到直連？",
     "exitAllMessage": "在路由和聚合模式下的應用都會寫回直連設定，然後停止路由服務。路由目標、佇列和聚合名單會保留。",
     "exitAllConfirm": "全部回到直連",
+    "countTokens": "模型計數",
+    "countTokensFollowCurrent": "跟隨目前供應商",
+    "countTokensHelp": "Claude Desktop 的上下文計數請求由這裡選定的供應商回答；不選則跟隨目前供應商。計數會把目前上下文傳給該供應商、不產生內容；兩邊都不支援該介面時在本機估算。",
     "failoverHelp": "這裡調整各應用的逾時、重試和熔斷。佇列在各應用頁的「路由」分頁裡管理。"
   },
   "quota": {
