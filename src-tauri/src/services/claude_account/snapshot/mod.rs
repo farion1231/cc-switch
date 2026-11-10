@@ -124,11 +124,26 @@ pub fn default_owner(default: &Slot) -> Option<String> {
 
 /// 账号 `account` 现在的登录在哪个槽位，查额度用：它在默认槽位里就是默认槽位，否则是它自己
 /// 的账号目录。本机没有这个账号时为 `None`。
+///
+/// `is_live` 只看默认 `.claude.json` 的资料，默认凭据可能已经是别的号的（旧会话写回旧资料、
+/// 终端里 `/login` 过别的号）。所以认定在默认槽位之前还要核对默认凭据确实是这个号，对不上就
+/// 读它自己的账号目录，免得把别人的额度显示成它的。
 pub fn account_slot(data_dir: &Path, account: &str) -> Option<Slot> {
-    if is_live(account) {
+    if is_live(account) && default_login_is(account) {
         return Some(Slot::default_slot());
     }
     crate::services::claude_account::config_dir_on_disk(data_dir, account).map(Slot::Account)
+}
+
+/// 默认槽位里的凭据（加默认 `.claude.json` 的资料）认出来确实是 `account`。
+fn default_login_is(account: &str) -> bool {
+    let default = Slot::default_slot();
+    let secret = store::platform_store().read(&default).ok().flatten();
+    let profile = files::read_profile(&default.global_config());
+    creds::owner_of(secret.as_ref(), profile.as_ref())
+        .ok()
+        .flatten()
+        .is_some_and(|found| found.key == account)
 }
 
 /// 账号目录里有没有能用的登录（读凭据判断；钥匙串条目在、里面只剩 MCP 授权也算没有）。
