@@ -300,7 +300,8 @@ export function AddProviderDialog({
           appId === "kimi" ||
           appId === "dsh" ||
           appId === "omp" ||
-          appId === "codebuddy") &&
+          appId === "codebuddy" ||
+          appId === "copilot") &&
         values.providerKey
       ) {
         providerData.providerKey = values.providerKey;

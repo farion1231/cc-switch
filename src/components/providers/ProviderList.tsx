@@ -53,6 +53,7 @@ import { extractProviderBaseUrl } from "@/utils/providerConfigUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
 import { isPiFamilyApp } from "@/config/appConfig";
 import { useCodebuddyOfficialCards } from "@/lib/query/codebuddy";
+import { isOfficialAccount } from "@/utils/providerCapabilities";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import {
   DshAccountCard,
@@ -198,6 +199,7 @@ export function ProviderList({
         case "dsh":
         case "mcode":
         case "codebuddy":
+        case "copilot":
           return provider.meta?.liveConfigManaged === true;
         case "opencode":
           return opencodeLiveIds?.includes(provider.id) ?? false;
@@ -373,7 +375,7 @@ export function ProviderList({
         queue: switchMode.queue.filter((id) => known.has(id)),
       });
     }
-    if (appId === "agy" || appId === "copilot") {
+    if (appId === "agy") {
       return buildLaunchSections({
         app: appId,
         t,
@@ -421,6 +423,7 @@ export function ProviderList({
       piStateUnavailable: isPiFamilyApp(appId) && !isPiStateReady,
       kimiCurrentId: currentProviderId,
       codebuddyAccounts,
+      copilotDefaultId: appId === "copilot" ? currentProviderId : null,
       extraAdded: showDshAccountCard ? 1 : 0,
       actions: {
         add: onSwitch,
@@ -434,6 +437,7 @@ export function ProviderList({
             : onDisableOmo?.(),
         setDefault: (provider, modelId) => onSetAsDefault?.(provider, modelId),
         switchAccount: switchCodebuddyAccount,
+        openTerminal: (provider) => onOpenTerminal?.(provider),
       },
     });
   }, [
@@ -545,7 +549,7 @@ export function ProviderList({
   }
 
   // 「当前」只用来决定官方订阅 / OAuth 额度自动刷新：Pi 没有当前项，OMO / Hermes 各看自己的当前项；
-  // Antigravity 没有「启用」，每张卡都随时能打开，额度一律照常显示
+  // Antigravity 没有「启用」，每张卡都随时能打开，额度一律照常显示；Copilot CLI 只有官方卡有额度，同理
   const isCurrentFor = (provider: Provider) => {
     if (isPiFamilyApp(appId)) return false;
     if (appId === "agy" || appId === "copilot") return true;
@@ -570,9 +574,12 @@ export function ProviderList({
         onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
       }
       onOpenWebsite={onOpenWebsite}
-      // Antigravity 的「打开终端」已经是主按钮，「更多」菜单里不再重复
+      // Antigravity 和 Copilot CLI 官方卡的「打开终端」已经是主按钮，「更多」菜单里不再重复
       onOpenTerminal={
-        appId === "agy" || appId === "copilot" ? undefined : onOpenTerminal
+        appId === "agy" ||
+        (appId === "copilot" && isOfficialAccount(appId, provider))
+          ? undefined
+          : onOpenTerminal
       }
       onTest={handleTest}
       isTesting={isChecking(provider.id)}

@@ -311,6 +311,18 @@ fn normalize_anthropic_tool_thinking_history(body: &mut Value) -> bool {
 }
 
 fn should_preserve_reasoning_content_for_openai_chat(provider: &Provider, body: &Value) -> bool {
+    // Mistral hosts DeepSeek models but rejects the non-standard field on
+    // assistant history (HTTP 422). The endpoint contract takes precedence
+    // over model-name hints; retain the existing behavior for other gateways.
+    if ClaudeAdapter::new()
+        .extract_base_url(provider)
+        .ok()
+        .and_then(|base_url| url::Url::parse(&base_url).ok())
+        .is_some_and(|url| url.host_str() == Some("api.mistral.ai"))
+    {
+        return false;
+    }
+
     if body
         .get("model")
         .and_then(|m| m.as_str())
@@ -2501,6 +2513,86 @@ mod tests {
         let msg = &transformed["messages"][0];
         assert!(msg.get("tool_calls").is_some());
         assert!(msg.get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn test_transform_openai_chat_mistral_deepseek_tool_history() {
+        for settings in [
+            json!({"env": {"ANTHROPIC_BASE_URL": "https://api.mistral.ai"}}),
+            json!({"base_url": "https://api.mistral.ai/v1/"}),
+            json!({"baseURL": "https://API.MISTRAL.AI/v1"}),
+            json!({"apiEndpoint": "https://api.mistral.ai/v1/chat/completions"}),
+        ] {
+            let provider = create_provider_with_meta(
+                settings,
+                ProviderMeta {
+                    api_format: Some("openai_chat".to_string()),
+                    ..Default::default()
+                },
+            );
+            // Cover real thinking and the missing-thinking placeholder that
+            // previously broke the follow-up after a tool ran.
+            for with_thinking in [false, true] {
+                let mut content = vec![json!({
+                    "type": "tool_use", "id": "call_123",
+                    "name": "get_weather", "input": {"location": "Tokyo"}
+                })];
+                if with_thinking {
+                    content.insert(
+                        0,
+                        json!({"type": "thinking", "thinking": "I should call the tool."}),
+                    );
+                }
+                let body = json!({
+                    "model": "deepseek-v4-1-flash-1017",
+                    "max_tokens": 64,
+                    "messages": [
+                        {"role": "user", "content": "What is the weather in Tokyo?"},
+                        {"role": "assistant", "content": content},
+                        {"role": "user", "content": [{
+                            "type": "tool_result", "tool_use_id": "call_123",
+                            "content": "Sunny"
+                        }]}
+                    ]
+                });
+                let transformed = transform_claude_request_for_api_format(
+                    body,
+                    &provider,
+                    "openai_chat",
+                    None,
+                    None,
+                )
+                .unwrap();
+
+                let messages = transformed["messages"].as_array().unwrap();
+                assert_eq!(messages.len(), 3);
+                assert!(messages
+                    .iter()
+                    .all(|msg| msg.get("reasoning_content").is_none()));
+                let call = &messages[1]["tool_calls"][0];
+                assert_eq!(call["id"], "call_123");
+                assert_eq!(call["function"]["name"], "get_weather");
+                assert_eq!(call["function"]["arguments"], r#"{"location":"Tokyo"}"#);
+                assert_eq!(messages[2]["role"], "tool");
+                assert_eq!(messages[2]["tool_call_id"], "call_123");
+                assert_eq!(messages[2]["content"], "Sunny");
+            }
+        }
+    }
+
+    #[test]
+    fn test_reasoning_content_mistral_exception_does_not_match_other_gateways() {
+        for base_url in [
+            "https://relay.example/v1",
+            "https://api.mistral.ai.example/v1",
+            "https://relay.example/api.mistral.ai",
+        ] {
+            let provider = create_provider(json!({"env": {"ANTHROPIC_BASE_URL": base_url}}));
+            assert!(should_preserve_reasoning_content_for_openai_chat(
+                &provider,
+                &json!({"model": "deepseek-v4-1-flash-1017"}),
+            ));
+        }
     }
 
     #[test]

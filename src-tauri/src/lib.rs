@@ -882,7 +882,8 @@ pub fn run() {
                 app_state.db.is_providers_empty().unwrap_or(false);
 
             for app_type in
-                crate::app_config::AppType::all().filter(|t| !t.is_additive_mode())
+                crate::app_config::AppType::all()
+                    .filter(crate::services::provider::imports_default_config)
             {
                 if !crate::services::provider::should_import_default_config_on_startup(
                     &app_state,

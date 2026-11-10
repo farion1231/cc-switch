@@ -40,6 +40,7 @@ pub(crate) fn provider_exists_in_live_config(
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Omp => Ok(crate::omp_config::get_providers()?.contains_key(provider_id)),
         AppType::Codebuddy => crate::codebuddy_config::provider_key_exists(provider_id),
+        AppType::Copilot => crate::copilot_config::provider_key_exists(provider_id),
         _ => Ok(false),
     }
 }
@@ -437,7 +438,9 @@ pub(crate) fn write_live_for_state(
         return Ok(());
     }
     if matches!(app_type, AppType::Agy | AppType::Copilot) {
-        // 卡片只作用于它打开的终端，全量同步不写真实 settings.json。
+        // Antigravity 的卡只作用于它打开的终端，全量同步不写真实 settings.json。Copilot 自带
+        // 模型卡只经「添加 / 编辑」写进 providers.json（文件里的条目归 Copilot，列表从文件读回），
+        // 全量同步不重写它；官方卡从不写文件。
         return Ok(());
     }
 
@@ -747,7 +750,8 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         }
         AppType::Copilot => {
             return Err(AppError::Config(
-                "GitHub Copilot CLI cards only launch terminals and never write live config".into(),
+                "GitHub Copilot CLI providers are written through the Copilot provider service"
+                    .into(),
             ));
         }
     }
@@ -917,6 +921,7 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
                 | AppType::Dsh
                 | AppType::Omp
                 | AppType::Codebuddy
+                | AppType::Copilot
         ) {
             continue;
         }
@@ -1093,8 +1098,9 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
 /// `Ok(false)` if skipped (providers already exist for this app).
 pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
     // Additive mode apps (OpenCode, OpenClaw) should use their dedicated
-    // import_xxx_providers_from_live functions, not this generic default config import
-    if app_type.is_additive_mode() {
+    // import_xxx_providers_from_live functions, not this generic default config import.
+    // Copilot 例外：自带模型卡是累加式，官方登录卡仍从 settings.json 导入。
+    if !imports_default_config(&app_type) {
         return Ok(false);
     }
 
@@ -1210,6 +1216,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             live
         }
         // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
+        // (Copilot is additive too, but its official login card is imported above).
         AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
@@ -1267,10 +1274,13 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
     }
 
     state.db.save_provider(app_type.as_str(), &provider)?;
-    state
-        .db
-        .set_current_provider(app_type.as_str(), &provider.id)?;
-    crate::settings::set_current_provider(&app_type, Some(provider.id.as_str()))?;
+    // Copilot 是累加式，没有直连指针：「默认」看 Copilot 自己的 settings.json。
+    if !app_type.is_additive_mode() {
+        state
+            .db
+            .set_current_provider(app_type.as_str(), &provider.id)?;
+        crate::settings::set_current_provider(&app_type, Some(provider.id.as_str()))?;
+    }
 
     // 初次导入已有配置时随手补出官方入口，对齐其它应用"首启动 = 导入 default
     // + 播种官方条目"的观感。grokbuild 种子晚于 `official_providers_seeded`
@@ -1289,6 +1299,12 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
     Ok(true) // 真正导入了
 }
 
+/// 这个应用是否从 live 导入 `default` 供应商：切换式应用都导入；累加式应用里只有 Copilot
+/// （它的官方登录卡是启动式，从 settings.json 的模型导入，自带模型卡才是累加式）。
+pub(crate) fn imports_default_config(app_type: &AppType) -> bool {
+    !app_type.is_additive_mode() || matches!(app_type, AppType::Copilot)
+}
+
 /// Decide whether startup should auto-import the current live config as `default`.
 ///
 /// This is intentionally stricter than the manual import path:
@@ -1298,7 +1314,7 @@ pub fn should_import_default_config_on_startup(
     state: &AppState,
     app_type: &AppType,
 ) -> Result<bool, AppError> {
-    if app_type.is_additive_mode() {
+    if !imports_default_config(app_type) {
         return Ok(false);
     }
 
