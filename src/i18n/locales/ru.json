@@ -5201,6 +5201,33 @@
       "secondaryModelInUse": "Модель подагента Kimi Code использует модель этого провайдера. Сначала измените её с помощью /secondary-model в Kimi Code."
     }
   },
+  "qwen": {
+    "modelSelectionHint": "Чтобы сделать провайдера текущим, нажмите кнопку переключения на его карточке. Чтобы использовать другую модель, выполните /model в Qwen Code.",
+    "authTypes": {
+      "openai": "OpenAI Chat Completions",
+      "openai-responses": "OpenAI Responses",
+      "anthropic": "Anthropic",
+      "gemini": "Gemini",
+      "vertex-ai": "Vertex AI"
+    },
+    "baseUrlRequired": "Для протокола Anthropic требуется адрес запроса.",
+    "baseUrlInvalid": "Адрес запроса должен начинаться с http:// или https://.",
+    "envKey": "Переменная окружения",
+    "envKeyHint": "Этот провайдер читает ключ из этой переменной окружения. Она управляется в собственной конфигурации Qwen Code, и изменить её здесь нельзя.",
+    "modelOverride": "Протокол и адрес, используемые только этой моделью (из собственной конфигурации)",
+    "removeModel": "Удалить модель",
+    "contextWindowSize": "Контекстное окно",
+    "duplicateModelId": "Этот ID модели уже используется.",
+    "empty": {
+      "title": "Добавьте провайдера Qwen Code",
+      "description": "Настройте адрес, API-ключ и модели. Провайдеры, уже указанные в settings.json, появятся здесь автоматически."
+    },
+    "deleteSessionHint": "Удалите этот сеанс в Qwen Code (qwen sessions), чтобы одновременно обновить индекс и архив.",
+    "error": {
+      "currentModelInUse": "Qwen Code использует модель этого провайдера. Сначала переключитесь на другого провайдера или выберите другую модель через /model в Qwen Code.",
+      "modelOwnedByOther": "Эта модель с тем же адресом запроса уже принадлежит другому провайдеру. Измените ID модели или адрес запроса."
+    }
+  },
   "omp": {
     "empty": {
       "title": "Пока нет провайдеров с API-ключом",
