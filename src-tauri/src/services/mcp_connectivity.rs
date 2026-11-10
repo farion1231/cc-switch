@@ -54,8 +54,10 @@ static LOGIN_SHELL_PATH: Lazy<Option<String>> = Lazy::new(|| {
 #[serde(rename_all = "camelCase")]
 pub enum ConnectivityStatus {
     Connected,
-    /// The endpoint answered 401: reachable, but it wants the client's own
-    /// (often OAuth) sign-in, which CC Switch neither has nor reads.
+    /// The server answered 401 to a probe that carried no credentials (a 401 despite
+    /// configured credentials is `Failed`). OAuth servers (Notion, Sentry, ...) reject this
+    /// anonymous probe but work in clients that hold their own login, and CC Switch
+    /// never reads those clients' tokens, so this is not a connection failure.
     AuthRequired,
     Failed,
 }
@@ -69,8 +71,6 @@ pub struct ConnectivityResult {
 
 #[derive(Deserialize)]
 struct ConnectionSpec {
-    #[serde(rename = "type")]
-    transport: Option<String>,
     command: Option<String>,
     #[serde(default)]
     args: Vec<String>,
@@ -80,6 +80,8 @@ struct ConnectionSpec {
     url: Option<String>,
     #[serde(default)]
     headers: HashMap<String, String>,
+    /// Codex: name of an env var holding a bearer token for the remote server.
+    bearer_token_env_var: Option<String>,
 }
 
 pub fn start_checks(
@@ -134,15 +136,11 @@ async fn connect(
     value: serde_json::Value,
     unauthorized: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Probe the transport the apps are actually given: every projection uses this
+    // inference (a URL-only spec is HTTP even when mislabelled stdio).
+    let transport = crate::mcp::validation::spec_transport_type(&value).to_string();
     let spec: ConnectionSpec = serde_json::from_value(value)?;
-    let transport = spec.transport.as_deref().unwrap_or_else(|| {
-        if spec.url.is_some() && spec.command.is_none() {
-            "http"
-        } else {
-            "stdio"
-        }
-    });
-    match transport {
+    match transport.as_str() {
         "stdio" => {
             let program = spec
                 .command
@@ -199,6 +197,26 @@ async fn connect(
                     reqwest::header::HeaderValue::from_str(value)?,
                 );
             }
+            if !headers.contains_key(reqwest::header::AUTHORIZATION) {
+                if let Some(token) = spec
+                    .bearer_token_env_var
+                    .as_deref()
+                    .and_then(|name| std::env::var(name).ok())
+                    .filter(|token| !token.trim().is_empty())
+                {
+                    headers.insert(
+                        reqwest::header::AUTHORIZATION,
+                        reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))?,
+                    );
+                }
+            }
+            // A 401 only means "sign in" for an anonymous probe. When the configured
+            // credentials were sent, they are wrong or expired: a real failure.
+            let unauthorized = if headers.contains_key(reqwest::header::AUTHORIZATION) {
+                Arc::new(AtomicBool::new(false))
+            } else {
+                unauthorized
+            };
             let client = reqwest::Client::builder()
                 .default_headers(headers)
                 .connect_timeout(CHECK_TIMEOUT)

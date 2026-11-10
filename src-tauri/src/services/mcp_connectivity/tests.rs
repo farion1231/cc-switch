@@ -143,6 +143,82 @@ fn http_spec(url: &str, transport: &str) -> Value {
     json!({"type": transport, "url": url, "headers": {"x-mcp-test": "configured-header"}})
 }
 
+/// An OAuth-protected remote server as an anonymous client sees it (#9190).
+async fn mock_unauthorized(www_authenticate: bool) -> (String, tokio::task::JoinHandle<()>) {
+    let reply = move || async move {
+        let mut response = StatusCode::UNAUTHORIZED.into_response();
+        if www_authenticate {
+            response.headers_mut().insert(
+                "www-authenticate",
+                axum::http::HeaderValue::from_static(
+                    "Bearer resource_metadata=\"https://example.com/.well-known/oauth-protected-resource\"",
+                ),
+            );
+        }
+        response
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let router = Router::new()
+        .route("/mcp", post(reply))
+        .route("/sse", get(reply));
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    (url, task)
+}
+
+#[tokio::test]
+async fn unauthorized_without_www_authenticate_is_still_auth_required() {
+    // `unauthorized_endpoints_report_auth_required_not_failure` covers the
+    // challenge-carrying 401; some servers send a bare 401.
+    let (url, task) = mock_unauthorized(false).await;
+    for (path, transport) in [("mcp", "http"), ("sse", "sse")] {
+        assert_eq!(
+            check_server(
+                http_spec(&format!("{url}/{path}"), transport),
+                CHECK_TIMEOUT
+            )
+            .await,
+            AuthRequired,
+            "{transport}"
+        );
+    }
+    task.abort();
+}
+
+#[tokio::test]
+async fn unauthorized_with_configured_credentials_is_a_failure() {
+    // The probe sent the configured Authorization header: a 401 means the
+    // credentials are wrong or expired, not that the user still has to sign in.
+    let (url, task) = mock_unauthorized(true).await;
+    for (path, transport) in [("mcp", "http"), ("sse", "sse")] {
+        for header in ["Authorization", "authorization"] {
+            let spec = json!({
+                "type": transport,
+                "url": format!("{url}/{path}"),
+                "headers": { header: "Bearer expired" },
+            });
+            assert_eq!(
+                check_server(spec, CHECK_TIMEOUT).await,
+                Failed,
+                "{transport}, {header}"
+            );
+        }
+    }
+    task.abort();
+}
+
+#[tokio::test]
+async fn url_only_spec_labelled_stdio_is_probed_over_http_like_the_projections() {
+    let state = MockServer::default();
+    let (url, task) = mock_http(state).await;
+    let spec = json!({"type": "stdio", "url": format!("{url}/mcp"),
+        "headers": {"x-mcp-test": "configured-header"}});
+    assert_eq!(check_server(spec, CHECK_TIMEOUT).await, Connected);
+    task.abort();
+}
+
 #[tokio::test]
 async fn http_json_and_sse_responses_require_a_real_mcp_handshake() {
     for stream_response in [false, true] {

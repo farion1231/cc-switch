@@ -59,6 +59,117 @@ fn codex_entry_transport_type(entry_tbl: &toml::value::Table) -> &str {
     }
 }
 
+/// 单个 Codex `[mcp_servers.<id>]` 表 → 统一 JSON 规范（未知传输类型返回 None）。
+///
+/// Codex 原生字段原样保留（嵌套表如 `tools.<name>.approval_mode` 也保留），
+/// 再写回 Codex 时才不会丢字段。
+fn codex_entry_to_spec(id: &str, entry_tbl: &toml::value::Table) -> Option<Value> {
+    // 传输类型：显式 `type` 优先；缺失时由 command/url 推断（见 helper）
+    let typ = codex_entry_transport_type(entry_tbl);
+
+    let mut spec = serde_json::Map::new();
+    spec.insert("type".into(), json!(typ));
+
+    // 核心字段（需要手动处理的字段）
+    let core_fields: &[&str] = match typ {
+        "stdio" => &["type", "command", "args", "env", "cwd"],
+        // DB 中的统一规范使用 headers，Codex TOML 使用 http_headers。
+        // 两者都必须视为核心字段，避免鉴权值落入通用日志路径。
+        "http" | "sse" => &["type", "url", "headers", "http_headers"],
+        _ => {
+            log::warn!("跳过未知类型 '{typ}' 的 Codex MCP 项 '{id}'");
+            return None;
+        }
+    };
+
+    // 1. 处理核心字段（强类型）
+    if typ == "stdio" {
+        if let Some(cmd) = entry_tbl.get("command").and_then(|v| v.as_str()) {
+            spec.insert("command".into(), json!(cmd));
+        }
+        if let Some(args) = entry_tbl.get("args").and_then(|v| v.as_array()) {
+            let arr = args
+                .iter()
+                .filter_map(|x| x.as_str())
+                .map(|s| json!(s))
+                .collect::<Vec<_>>();
+            if !arr.is_empty() {
+                spec.insert("args".into(), Value::Array(arr));
+            }
+        }
+        if let Some(cwd) = entry_tbl.get("cwd").and_then(|v| v.as_str()) {
+            if !cwd.trim().is_empty() {
+                spec.insert("cwd".into(), json!(cwd));
+            }
+        }
+        if let Some(env_tbl) = entry_tbl.get("env").and_then(|v| v.as_table()) {
+            let env_json: serde_json::Map<String, Value> = env_tbl
+                .iter()
+                .filter_map(|(k, v)| Some((k.clone(), json!(v.as_str()?))))
+                .collect();
+            if !env_json.is_empty() {
+                spec.insert("env".into(), Value::Object(env_json));
+            }
+        }
+    } else {
+        if let Some(url) = entry_tbl.get("url").and_then(|v| v.as_str()) {
+            spec.insert("url".into(), json!(url));
+        }
+        // http_headers（Codex 正确格式）优先，兼容旧的 headers
+        let headers_tbl = entry_tbl
+            .get("http_headers")
+            .and_then(|v| v.as_table())
+            .or_else(|| entry_tbl.get("headers").and_then(|v| v.as_table()));
+        if let Some(headers_tbl) = headers_tbl {
+            let headers_json: serde_json::Map<String, Value> = headers_tbl
+                .iter()
+                .filter_map(|(k, v)| Some((k.clone(), json!(v.as_str()?))))
+                .collect();
+            if !headers_json.is_empty() {
+                spec.insert("headers".into(), Value::Object(headers_json));
+            }
+        }
+    }
+
+    // 2. 其他字段：通用 TOML → JSON 转换
+    for (key, toml_val) in entry_tbl.iter() {
+        if core_fields.contains(&key.as_str()) {
+            continue;
+        }
+        match toml_to_json_value(toml_val) {
+            // 空数组 / 空表沿用旧行为：不导入
+            Some(Value::Array(a)) if a.is_empty() => {}
+            Some(Value::Object(o)) if o.is_empty() => {}
+            Some(val) => {
+                spec.insert(key.clone(), val);
+                log::debug!("导入扩展字段 '{key}'（值已省略）");
+            }
+            None => log::debug!("跳过无法转换的字段 '{key}' (TOML → JSON)"),
+        }
+    }
+
+    Some(Value::Object(spec))
+}
+
+/// 递归的 TOML → JSON 值转换；日期时间没有 JSON 对应物，跳过。
+fn toml_to_json_value(value: &toml::Value) -> Option<Value> {
+    Some(match value {
+        toml::Value::String(s) => json!(s),
+        toml::Value::Integer(i) => json!(i),
+        toml::Value::Float(f) => json!(f),
+        toml::Value::Boolean(b) => json!(b),
+        toml::Value::Datetime(_) => return None,
+        toml::Value::Array(arr) => {
+            Value::Array(arr.iter().filter_map(toml_to_json_value).collect())
+        }
+        toml::Value::Table(tbl) => Value::Object(
+            tbl.iter()
+                .filter_map(|(k, v)| Some((k.clone(), toml_to_json_value(v)?)))
+                .collect(),
+        ),
+    })
+}
+
 /// 从 ~/.codex/config.toml 导入 MCP 到统一结构（v3.7.0+）
 ///
 /// 格式支持：
@@ -88,143 +199,9 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                 continue;
             };
 
-            // 传输类型：显式 `type` 优先；缺失时由 command/url 推断（见 helper）
-            let typ = codex_entry_transport_type(entry_tbl);
-
-            // 构建 JSON 规范
-            let mut spec = serde_json::Map::new();
-            spec.insert("type".into(), json!(typ));
-
-            // 核心字段（需要手动处理的字段）
-            let core_fields = match typ {
-                "stdio" => vec!["type", "command", "args", "env", "cwd"],
-                // DB 中的统一规范使用 headers，Codex TOML 使用 http_headers。
-                // 两者都必须视为核心字段，避免鉴权值落入通用日志路径。
-                "http" | "sse" => vec!["type", "url", "headers", "http_headers"],
-                _ => vec!["type"],
+            let Some(spec_v) = codex_entry_to_spec(id, entry_tbl) else {
+                continue;
             };
-
-            // 1. 处理核心字段（强类型）
-            match typ {
-                "stdio" => {
-                    if let Some(cmd) = entry_tbl.get("command").and_then(|v| v.as_str()) {
-                        spec.insert("command".into(), json!(cmd));
-                    }
-                    if let Some(args) = entry_tbl.get("args").and_then(|v| v.as_array()) {
-                        let arr = args
-                            .iter()
-                            .filter_map(|x| x.as_str())
-                            .map(|s| json!(s))
-                            .collect::<Vec<_>>();
-                        if !arr.is_empty() {
-                            spec.insert("args".into(), serde_json::Value::Array(arr));
-                        }
-                    }
-                    if let Some(cwd) = entry_tbl.get("cwd").and_then(|v| v.as_str()) {
-                        if !cwd.trim().is_empty() {
-                            spec.insert("cwd".into(), json!(cwd));
-                        }
-                    }
-                    if let Some(env_tbl) = entry_tbl.get("env").and_then(|v| v.as_table()) {
-                        let mut env_json = serde_json::Map::new();
-                        for (k, v) in env_tbl.iter() {
-                            if let Some(sv) = v.as_str() {
-                                env_json.insert(k.clone(), json!(sv));
-                            }
-                        }
-                        if !env_json.is_empty() {
-                            spec.insert("env".into(), serde_json::Value::Object(env_json));
-                        }
-                    }
-                }
-                "http" | "sse" => {
-                    if let Some(url) = entry_tbl.get("url").and_then(|v| v.as_str()) {
-                        spec.insert("url".into(), json!(url));
-                    }
-                    // Read from http_headers (correct Codex format) or headers (legacy) with priority to http_headers
-                    let headers_tbl = entry_tbl
-                        .get("http_headers")
-                        .and_then(|v| v.as_table())
-                        .or_else(|| entry_tbl.get("headers").and_then(|v| v.as_table()));
-
-                    if let Some(headers_tbl) = headers_tbl {
-                        let mut headers_json = serde_json::Map::new();
-                        for (k, v) in headers_tbl.iter() {
-                            if let Some(sv) = v.as_str() {
-                                headers_json.insert(k.clone(), json!(sv));
-                            }
-                        }
-                        if !headers_json.is_empty() {
-                            spec.insert("headers".into(), serde_json::Value::Object(headers_json));
-                        }
-                    }
-                }
-                _ => {
-                    log::warn!("跳过未知类型 '{typ}' 的 Codex MCP 项 '{id}'");
-                    return changed;
-                }
-            }
-
-            // 2. 处理扩展字段和其他未知字段（通用 TOML → JSON 转换）
-            for (key, toml_val) in entry_tbl.iter() {
-                // 跳过已处理的核心字段
-                if core_fields.contains(&key.as_str()) {
-                    continue;
-                }
-
-                // 通用 TOML 值到 JSON 值转换
-                let json_val = match toml_val {
-                    toml::Value::String(s) => Some(json!(s)),
-                    toml::Value::Integer(i) => Some(json!(i)),
-                    toml::Value::Float(f) => Some(json!(f)),
-                    toml::Value::Boolean(b) => Some(json!(b)),
-                    toml::Value::Array(arr) => {
-                        // 只支持简单类型数组
-                        let json_arr: Vec<serde_json::Value> = arr
-                            .iter()
-                            .filter_map(|item| match item {
-                                toml::Value::String(s) => Some(json!(s)),
-                                toml::Value::Integer(i) => Some(json!(i)),
-                                toml::Value::Float(f) => Some(json!(f)),
-                                toml::Value::Boolean(b) => Some(json!(b)),
-                                _ => None,
-                            })
-                            .collect();
-                        if !json_arr.is_empty() {
-                            Some(serde_json::Value::Array(json_arr))
-                        } else {
-                            log::debug!("跳过复杂数组字段 '{key}' (TOML → JSON)");
-                            None
-                        }
-                    }
-                    toml::Value::Table(tbl) => {
-                        // 浅层表转为 JSON 对象（仅支持字符串值）
-                        let mut json_obj = serde_json::Map::new();
-                        for (k, v) in tbl.iter() {
-                            if let Some(s) = v.as_str() {
-                                json_obj.insert(k.clone(), json!(s));
-                            }
-                        }
-                        if !json_obj.is_empty() {
-                            Some(serde_json::Value::Object(json_obj))
-                        } else {
-                            log::debug!("跳过复杂对象字段 '{key}' (TOML → JSON)");
-                            None
-                        }
-                    }
-                    toml::Value::Datetime(_) => {
-                        log::debug!("跳过日期时间字段 '{key}' (TOML → JSON)");
-                        None
-                    }
-                };
-
-                if let Some(val) = json_val {
-                    spec.insert(key.clone(), val);
-                    log::debug!("导入扩展字段 '{key}'（值已省略）");
-                }
-            }
-
-            let spec_v = serde_json::Value::Object(spec);
 
             // 校验：单项失败继续处理
             if let Err(e) = validate_server_spec(&spec_v) {
@@ -622,22 +599,160 @@ fn json_value_to_toml_item(value: &Value, field_name: &str) -> Option<toml_edit:
     }
 }
 
-/// 共享规范里其他客户端的字段，Codex 的 `[mcp_servers.*]` 不认识：
-/// `timeout`（Gemini CLI / Cline 等，单位各家不同）、`autoApprove`（Cline 等）。
-/// 写进去 Codex 会报 ignored-settings 警告，`--strict-config` 直接拒绝加载。
-/// 只在 Codex 输出里去掉，库里的共享规范不动，其他客户端照常使用。
+/// Codex `[mcp_servers.*]` 认识的字段（按 codex-cli 0.166 `--strict-config` 逐项实测）。
+///
+/// 共享规范里常带着其他客户端的字段：`timeout` / `autoApprove` / `disabled` /
+/// `alwaysAllow`（Cline、Roo）、`trust` / `includeTools` / `description` / `oauth`
+/// （Gemini CLI）、`transport`（Hermes、Kimi）等。Codex 对未知字段报 ignored-settings
+/// 警告，`--strict-config` 直接拒绝加载整份配置。黑名单永远列不全，所以按白名单写出；
+/// 库里的共享规范不动，其他客户端照常使用。
+///
 /// `timeout` 不换算成 `tool_timeout_sec`：各客户端单位不一，猜错会把超时放大或缩小
 /// 一千倍；需要时直接在规范里写 Codex 原生的 `tool_timeout_sec`，会原样写出。
-const NON_CODEX_SERVER_FIELDS: &[&str] = &["timeout", "autoApprove"];
+const CODEX_COMMON_FIELDS: &[&str] = &[
+    "enabled",
+    "required",
+    "startup_timeout_sec",
+    "startup_timeout_ms",
+    "tool_timeout_sec",
+    "enabled_tools",
+    "disabled_tools",
+    "scopes",
+    "tools",
+    "default_tools_approval_mode",
+    "environment_id",
+    "supports_parallel_tool_calls",
+    "tool_input_schema_max_bytes",
+    "startup_readiness",
+    "omit_tools_from",
+];
+/// 只属于 stdio 条目：写到 url 条目上 Codex 会拒绝加载。
+const CODEX_STDIO_FIELDS: &[&str] = &["command", "args", "env", "env_vars", "cwd"];
+/// 只属于 url（streamable HTTP）条目：`auth` / `oauth` 写到 stdio 条目上同样会被拒绝
+/// （`auth is not supported for stdio`）。
+const CODEX_HTTP_FIELDS: &[&str] = &[
+    "url",
+    "http_headers",
+    "env_http_headers",
+    "http_headers_helper",
+    "bearer_token_env_var",
+    "oauth_resource",
+    "auth",
+    "oauth",
+];
+/// Codex `[mcp_servers.*.oauth]` 认识的子字段。Gemini CLI 的 `oauth` 同名但字段不同
+/// （`clientId` / `enabled` / `scopes` …），原样写出会让 Codex 拒绝加载。
+const CODEX_OAUTH_FIELDS: &[&str] = &["client_id", "client_secret", "callback_url"];
+/// Codex `auth` 接受的值（codex-cli 0.166 实测）。
+const CODEX_AUTH_VALUES: &[&str] = &["oauth", "chatgpt", "ema_auth"];
 
-/// Codex 专用的 JSON → TOML 转换：在通用转换的基础上去掉 Codex 不认的字段。
+/// Codex 专用的 JSON → TOML 转换：在通用转换的基础上只保留 Codex 认识的字段。
 /// Grok Build 复用通用转换，不受影响。
 fn json_server_to_codex_toml_table(spec: &Value) -> Result<toml_edit::Table, AppError> {
     let mut table = json_server_to_toml_table(spec)?;
-    for key in NON_CODEX_SERVER_FIELDS {
+    let is_stdio = spec_transport_type(spec) == "stdio";
+    let transport_fields = if is_stdio {
+        CODEX_STDIO_FIELDS
+    } else {
+        CODEX_HTTP_FIELDS
+    };
+    let mut dropped: Vec<String> = table
+        .iter()
+        .map(|(key, _)| key.to_string())
+        .filter(|key| {
+            !CODEX_COMMON_FIELDS.contains(&key.as_str())
+                && !transport_fields.contains(&key.as_str())
+        })
+        .collect();
+    for key in &dropped {
         table.remove(key);
     }
+
+    // 下面两个字段 Codex 要求特定形状，通用转换给不出来（嵌套表）或会给错（数组），
+    // 直接从规范重建；形状不对就不写，否则 Codex 严格模式拒绝加载整份配置。
+    table.remove("tools");
+    if let Some(tools) = spec.get("tools") {
+        match codex_tools_table(tools) {
+            Some(tools) => {
+                table.insert("tools", toml_edit::Item::Table(tools));
+            }
+            None => dropped.push("tools".into()),
+        }
+    }
+    table.remove("oauth");
+    if let Some(oauth) = spec.get("oauth").filter(|_| !is_stdio) {
+        match codex_oauth_table(oauth) {
+            Some(oauth) => {
+                table.insert("oauth", toml_edit::Item::Table(oauth));
+            }
+            None => dropped.push("oauth".into()),
+        }
+    }
+    // `auth` 是枚举：值不认识时 Codex 连非严格模式也拒绝加载整份配置。别家同名字段
+    // （比如从 Pi 导入的 `auth`）取值不同，只写 Codex 认识的值。
+    let auth_ok = table
+        .get("auth")
+        .and_then(|item| item.as_str())
+        .is_some_and(|auth| CODEX_AUTH_VALUES.contains(&auth));
+    if table.contains_key("auth") && !auth_ok {
+        table.remove("auth");
+        dropped.push("auth".into());
+    }
+
+    if !dropped.is_empty() {
+        // 只记录字段名：值可能含 token。
+        log::debug!("写入 Codex 时跳过 Codex 不认识的字段: {dropped:?}");
+    }
     Ok(table)
+}
+
+/// `tools` 在 Codex 里是「工具名 → 该工具的设置表」（如 `approval_mode`）。
+/// 其他客户端常写成工具名数组（`["echo"]`），Codex 不接受，整项不写。
+fn codex_tools_table(tools: &Value) -> Option<toml_edit::Table> {
+    let mut out = toml_edit::Table::new();
+    for (name, settings) in tools.as_object()? {
+        let Some(toml_edit::Value::InlineTable(settings)) = json_to_toml_value(settings) else {
+            continue;
+        };
+        out.insert(name, toml_edit::Item::Table(settings.into_table()));
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+/// 只保留 Codex 认识的 oauth 子字段；一个都没有（比如纯 Gemini 的 oauth）就整项不写。
+fn codex_oauth_table(oauth: &Value) -> Option<toml_edit::Table> {
+    let mut out = toml_edit::Table::new();
+    for (key, value) in oauth.as_object()? {
+        if let (true, Some(s)) = (CODEX_OAUTH_FIELDS.contains(&key.as_str()), value.as_str()) {
+            out.insert(key, toml_edit::value(s));
+        }
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+/// 递归的 JSON → TOML 值转换（null 无法表示，跳过；数组里的 null 同样跳过）。
+fn json_to_toml_value(value: &Value) -> Option<toml_edit::Value> {
+    Some(match value {
+        Value::Null => return None,
+        Value::Bool(b) => (*b).into(),
+        Value::String(s) => s.as_str().into(),
+        Value::Number(n) => match n.as_i64() {
+            Some(i) => i.into(),
+            None => n.as_f64()?.into(),
+        },
+        Value::Array(items) => {
+            toml_edit::Value::Array(items.iter().filter_map(json_to_toml_value).collect())
+        }
+        Value::Object(obj) => {
+            let mut table = toml_edit::InlineTable::new();
+            for (k, v) in obj {
+                if let Some(v) = json_to_toml_value(v) {
+                    table.insert(k, v);
+                }
+            }
+            toml_edit::Value::InlineTable(table)
+        }
+    })
 }
 
 /// Helper: 将 JSON MCP 服务器规范转换为 toml_edit::Table
@@ -760,7 +875,13 @@ pub(super) fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table
             let url = spec.get("url").and_then(|v| v.as_str()).unwrap_or("");
             t["url"] = toml_edit::value(url);
 
-            if let Some(headers) = spec.get("headers").and_then(|v| v.as_object()) {
+            // 统一规范用 `headers`；只写了 Codex 原生 `http_headers` 的规范也要带上，
+            // 否则请求头（常含鉴权）会在写出时丢掉。
+            let headers = spec
+                .get("headers")
+                .and_then(|v| v.as_object())
+                .or_else(|| spec.get("http_headers").and_then(|v| v.as_object()));
+            if let Some(headers) = headers {
                 let mut h_tbl = Table::new();
                 for (k, v) in headers.iter() {
                     if let Some(s) = v.as_str() {
@@ -1094,6 +1215,272 @@ mod tests {
         let shared = json_server_to_toml_table(&spec).unwrap();
         assert!(shared.get("timeout").is_some());
         assert!(shared.get("autoApprove").is_some());
+    }
+
+    #[test]
+    fn codex_table_keeps_only_fields_codex_accepts() {
+        // 其他客户端写在共享规范里的字段，Codex --strict-config 全部拒绝加载。
+        let foreign = json!({
+            "disabled": false,
+            "alwaysAllow": ["a"],
+            "trust": true,
+            "includeTools": ["a"],
+            "excludeTools": ["b"],
+            "description": "d",
+            "transport": "sse",
+            "debug": true,
+        });
+        let native_common = json!({
+            "enabled": true,
+            "required": false,
+            "startup_timeout_ms": 900,
+            "enabled_tools": ["a"],
+            "disabled_tools": ["b"],
+            "default_tools_approval_mode": "approve",
+            "environment_id": "env",
+            "supports_parallel_tool_calls": true,
+            "tool_input_schema_max_bytes": 4096,
+            "startup_readiness": "connection",
+            "omit_tools_from": ["deferred"],
+            "tools": { "echo": { "approval_mode": "approve" } },
+        });
+        let mut stdio = json!({
+            "type": "stdio",
+            "command": "node",
+            "args": ["server.js"],
+            "env_vars": ["TOKEN"],
+            "cwd": "/srv",
+        });
+        let mut remote = json!({
+            "type": "http",
+            "url": "https://example.com/mcp",
+            "headers": { "X-Key": "k" },
+            "bearer_token_env_var": "TOKEN",
+            "env_http_headers": { "X-Env": "ENV" },
+            "oauth_resource": "https://example.com",
+            "auth": "oauth",
+        });
+        for spec in [&mut stdio, &mut remote] {
+            for source in [&foreign, &native_common] {
+                for (key, value) in source.as_object().unwrap() {
+                    spec[key] = value.clone();
+                }
+            }
+        }
+
+        for (spec, transport_keys) in [
+            (&stdio, &["command", "args", "env_vars", "cwd"][..]),
+            (
+                &remote,
+                &[
+                    "url",
+                    "http_headers",
+                    "bearer_token_env_var",
+                    "env_http_headers",
+                    "oauth_resource",
+                    "auth",
+                ][..],
+            ),
+        ] {
+            let table = json_server_to_codex_toml_table(spec).unwrap();
+            for key in foreign.as_object().unwrap().keys() {
+                assert!(table.get(key).is_none(), "foreign field {key} leaked");
+            }
+            for key in native_common
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .chain(transport_keys.iter().copied())
+            {
+                assert!(table.get(key).is_some(), "Codex field {key} was dropped");
+            }
+            assert!(table.get("type").is_none());
+            assert!(table.get("headers").is_none());
+        }
+    }
+
+    #[test]
+    fn codex_oauth_keeps_only_codex_subfields_and_only_on_url_entries() {
+        // Gemini CLI 的 oauth 与 Codex 同名不同字段：只留 Codex 认识的子字段，不整表删。
+        let oauth = json!({
+            "client_id": "cid",
+            "client_secret": "secret",
+            "callback_url": "http://localhost:1455/cb",
+            "clientId": "gemini-id",
+            "enabled": true,
+            "scopes": ["read"],
+        });
+        let remote = json_server_to_codex_toml_table(&json!({
+            "type": "http",
+            "url": "https://example.com/mcp",
+            "oauth": oauth,
+        }))
+        .unwrap();
+        let kept = remote
+            .get("oauth")
+            .and_then(|item| item.as_table_like())
+            .expect("Codex oauth subfields must survive");
+        let mut keys: Vec<_> = kept.iter().map(|(k, _)| k.to_string()).collect();
+        keys.sort();
+        assert_eq!(keys, ["callback_url", "client_id", "client_secret"]);
+
+        // 纯 Gemini 的 oauth：一个 Codex 子字段都没有，不写出空表
+        let gemini_only = json_server_to_codex_toml_table(&json!({
+            "type": "http",
+            "url": "https://example.com/mcp",
+            "oauth": { "enabled": true, "clientId": "x" },
+        }))
+        .unwrap();
+        assert!(gemini_only.get("oauth").is_none());
+
+        // stdio 条目：Codex 报 `oauth is not supported for stdio`
+        let stdio = json_server_to_codex_toml_table(&json!({
+            "type": "stdio",
+            "command": "node",
+            "oauth": { "client_id": "cid" },
+            "auth": "oauth",
+        }))
+        .unwrap();
+        assert!(stdio.get("oauth").is_none());
+        assert!(stdio.get("auth").is_none());
+    }
+
+    #[test]
+    fn codex_auth_is_written_only_with_a_value_codex_accepts() {
+        // 别家的 `auth`（如从 Pi 导入的 "bearer"）会让 Codex 整份配置加载失败。
+        let auth_of = |auth: Value| {
+            json_server_to_codex_toml_table(&json!({
+                "type": "http",
+                "url": "https://example.com/mcp",
+                "auth": auth,
+            }))
+            .unwrap()
+            .get("auth")
+            .and_then(|item| item.as_str())
+            .map(str::to_string)
+        };
+        for accepted in CODEX_AUTH_VALUES {
+            assert_eq!(auth_of(json!(accepted)).as_deref(), Some(*accepted));
+        }
+        for foreign in [
+            json!("bearer"),
+            json!("OAuth"),
+            json!(true),
+            json!({"type": "oauth"}),
+        ] {
+            assert_eq!(auth_of(foreign.clone()), None, "{foreign} leaked");
+        }
+    }
+
+    #[test]
+    fn codex_tools_must_be_a_table_of_tables() {
+        // 其他客户端写的工具名数组：Codex 报 `invalid type: sequence, expected a map`
+        let array = json_server_to_codex_toml_table(&json!({
+            "type": "stdio",
+            "command": "node",
+            "tools": ["echo"],
+        }))
+        .unwrap();
+        assert!(array.get("tools").is_none());
+
+        let table = json_server_to_codex_toml_table(&json!({
+            "type": "stdio",
+            "command": "node",
+            "tools": { "echo": { "approval_mode": "approve" }, "bad": true },
+        }))
+        .unwrap();
+        let tools = table
+            .get("tools")
+            .and_then(|item| item.as_table_like())
+            .expect("tools table");
+        assert!(
+            tools.get("bad").is_none(),
+            "non-table tool settings dropped"
+        );
+        assert_eq!(
+            tools
+                .get("echo")
+                .and_then(|item| item.as_table_like())
+                .and_then(|t| t.get("approval_mode"))
+                .and_then(|item| item.as_str()),
+            Some("approve")
+        );
+    }
+
+    #[test]
+    fn codex_native_http_headers_are_written_without_shared_headers() {
+        let table = json_server_to_codex_toml_table(&json!({
+            "url": "https://example.com/mcp",
+            "http_headers": { "Authorization": "Bearer t" },
+        }))
+        .unwrap();
+        assert_eq!(
+            table
+                .get("http_headers")
+                .and_then(|item| item.as_table_like())
+                .and_then(|t| t.get("Authorization"))
+                .and_then(|item| item.as_str()),
+            Some("Bearer t")
+        );
+    }
+
+    #[test]
+    fn codex_entries_survive_import_and_sync_back() {
+        // 从 Codex 导入的条目再同步回 Codex，Codex 自己的字段一个都不能丢。
+        let doc: toml::Table = toml::from_str(
+            r#"
+[mcp_servers.local]
+command = "node"
+args = ["server.js"]
+env = { TOKEN = "t" }
+env_vars = ["HOME"]
+cwd = "/srv"
+enabled = true
+required = false
+startup_timeout_sec = 20
+tool_timeout_sec = 120
+enabled_tools = ["a"]
+disabled_tools = ["b"]
+default_tools_approval_mode = "approve"
+environment_id = "env"
+supports_parallel_tool_calls = true
+tool_input_schema_max_bytes = 4096
+startup_readiness = "connection"
+omit_tools_from = ["deferred"]
+
+[mcp_servers.local.tools.echo]
+approval_mode = "approve"
+
+[mcp_servers.remote]
+url = "https://example.com/mcp"
+http_headers = { "X-Key" = "k" }
+env_http_headers = { "X-Env" = "ENV" }
+bearer_token_env_var = "TOKEN"
+oauth_resource = "https://example.com"
+scopes = ["read"]
+auth = "oauth"
+oauth = { client_id = "cid", client_secret = "secret", callback_url = "http://localhost:1455/cb" }
+"#,
+        )
+        .expect("fixture parses");
+        let servers = doc["mcp_servers"].as_table().unwrap();
+
+        for (id, original) in servers {
+            let original = original.as_table().unwrap();
+            let spec = codex_entry_to_spec(id, original).expect("known transport");
+            validate_server_spec(&spec).expect("imported spec is valid");
+            let written = json_server_to_codex_toml_table(&spec).unwrap();
+            // 经 toml_edit 输出再解析，按值比较（不受 inline/子表写法影响）
+            let mut out = toml_edit::DocumentMut::new();
+            out.insert(id, toml_edit::Item::Table(written));
+            let reparsed: toml::Table = toml::from_str(&out.to_string()).unwrap();
+            assert_eq!(
+                reparsed[id.as_str()].as_table().unwrap(),
+                original,
+                "{id} changed after an import/sync round trip"
+            );
+        }
     }
 
     #[test]
