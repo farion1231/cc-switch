@@ -95,6 +95,7 @@ struct UsageChart: View {
     var kind: Kind = .bars
     var showAxis = false
     @Environment(\.widgetRenderingMode) private var renderingMode
+    @Environment(\.locale) private var locale
 
     private var unit: Calendar.Component {
         switch granularity {
@@ -148,13 +149,21 @@ struct UsageChart: View {
         .widgetAccentable()
     }
 
+    /// 小时轴一律按 24 小时制写（0 / 6 / 12 / 18）：韩语、繁中、英语默认的「오전 12시」「凌晨12時」
+    /// 「12 AM」太长，中尺寸里会挤在一起。
+    private var hourFormat: Date.FormatStyle {
+        var components = Locale.Components(locale: locale)
+        components.hourCycle = .zeroToTwentyThree
+        return Date.FormatStyle(locale: Locale(components: components)).hour()
+    }
+
     /// 不画网格线，玻璃上太乱；标签数量控制在 4–7 个。
     @AxisContentBuilder
     private var axis: some AxisContent {
         switch granularity {
         case "hour":
             AxisMarks(preset: .aligned, values: .stride(by: .hour, count: 6)) { _ in
-                AxisValueLabel(format: .dateTime.hour())
+                AxisValueLabel(format: hourFormat)
             }
         case "month":
             AxisMarks(preset: .aligned, values: .stride(by: .month, count: max(1, points.count / 5))) { _ in

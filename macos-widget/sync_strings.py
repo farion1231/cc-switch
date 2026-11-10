@@ -11,7 +11,7 @@ import os
 ROOT = os.path.dirname(os.path.abspath(__file__))
 LOCALES = os.path.join(ROOT, "..", "src", "i18n", "locales")
 # app 的语言 → lproj 名
-LANGS = {"en": "en", "zh": "zh-Hans", "zh-TW": "zh-Hant", "ja": "ja", "tr": "tr"}
+LANGS = {"en": "en", "zh": "zh-Hans", "zh-TW": "zh-Hant", "ja": "ja", "ko": "ko", "ru": "ru", "tr": "tr"}
 
 KEYS = [
     # 档名（TIER_I18N_KEYS）

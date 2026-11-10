@@ -77,6 +77,38 @@ struct Strings {
                 previousPage: "上一页", nextPage: "下一页"
             )
         }
+        if lang.hasPrefix("ko") {
+            return Strings(
+                quotaTitle: "할당량", quotaGallery: "각 앱에서 사용 중인 공급자와 할당량을 페이지별로 보여줍니다.",
+                accountsTitle: "인증 센터", accountsGallery: "인증 센터 모든 계정의 할당량. 거의 소진되었거나 다시 로그인해야 하는 계정을 먼저 보여주며, 페이지를 넘길 수 있습니다.",
+                usageTitle: "사용량", usageGallery: "비용, 토큰, 요청 수. 기간은 위젯의 버튼으로, 차트 스타일은 「위젯 편집」에서 바꿉니다.",
+                off: "CC Switch 설정에서 「데스크톱 위젯」을 켜세요", outdated: "CC Switch를 업데이트하세요",
+                noQuota: "할당량 데이터 없음", noAccounts: "인증 센터에 계정이 없습니다",
+                inUse: "사용 중", reauth: "다시 로그인",
+                today: "오늘", last7Days: "지난 7일", last30Days: "지난 30일",
+                tokens: "토큰", requests: "요청 수", cacheHit: "캐시 적중",
+                accountCount: "계정 %d개", more: "%d개 더", needAction: "%d개 확인 필요",
+                stale: "데이터가 오래됨", cost: "비용", noUsage: "이 기간에 사용량이 없습니다", moreTiers: "%d개 더", loadingAccounts: "계정을 불러오는 중…",
+                previousPage: "이전 페이지", nextPage: "다음 페이지"
+            )
+        }
+        if lang.hasPrefix("ru") {
+            // 俄语数词变格多，带数字的句子都写成「名词: 数」的形式，避免「1 аккаунтов」这类错误
+            return Strings(
+                quotaTitle: "Квоты", quotaGallery: "Используемый поставщик и квота каждого приложения, по страницам.",
+                accountsTitle: "Аккаунты", accountsGallery: "Квоты всех аккаунтов: почти исчерпанные и требующие повторного входа — первыми. Листайте страницы.",
+                usageTitle: "Статистика", usageGallery: "Стоимость, токены и запросы. Период меняется кнопками на виджете, вид графика — в «Изменить виджет».",
+                off: "Включите «Виджеты рабочего стола» в настройках CC Switch", outdated: "Обновите CC Switch",
+                noQuota: "Нет данных о квотах", noAccounts: "Аккаунтов пока нет",
+                inUse: "Используется", reauth: "Войти снова",
+                today: "Сегодня", last7Days: "Последние 7 дней", last30Days: "Последние 30 дней",
+                tokens: "Токены", requests: "Запросы", cacheHit: "Попадания в кэш",
+                accountCount: "Аккаунтов: %d", more: "Ещё: %d", needAction: "Требуют внимания: %d",
+                stale: "Данные устарели", cost: "Стоимость", noUsage: "За этот период нет использования", moreTiers: "Ещё: %d",
+                loadingAccounts: "Загрузка аккаунтов…",
+                previousPage: "Предыдущая страница", nextPage: "Следующая страница"
+            )
+        }
         if lang.hasPrefix("tr") {
             return Strings(
                 quotaTitle: "Kota", quotaGallery: "Her uygulamanın etkin sağlayıcısı ve kotası; sayfalar arasında geçiş yapın.",
