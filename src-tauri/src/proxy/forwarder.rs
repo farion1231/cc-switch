@@ -2084,13 +2084,25 @@ impl RequestForwarder {
                         provider.id
                     );
                 }
-            } else if super::providers::codex_compaction::prepare_native_third_party_request(
-                &mut request_body,
-            ) {
-                log::debug!(
-                    "[Codex] Rewrote compaction items for a native Responses upstream (provider={})",
-                    provider.id
-                );
+            } else {
+                let page_context_items =
+                    super::providers::codex_desktop_context::normalize_page_context(
+                        &mut request_body,
+                    );
+                if page_context_items > 0 {
+                    log::debug!(
+                        "[Codex] Rewrote {page_context_items} desktop page context items (provider={})",
+                        provider.id
+                    );
+                }
+                if super::providers::codex_compaction::prepare_native_third_party_request(
+                    &mut request_body,
+                ) {
+                    log::debug!(
+                        "[Codex] Rewrote compaction items for a native Responses upstream (provider={})",
+                        provider.id
+                    );
+                }
             }
 
             // Kimi 会在工具调用后再吐一条空助手消息，下一轮又拒收这段历史；DeepSeek 同样
@@ -7673,6 +7685,45 @@ mod tests {
             .await;
             assert_eq!(seen.body["tools"], plain["tools"]);
             assert_eq!(seen.body["input"], plain["input"]);
+        }
+
+        #[tokio::test]
+        async fn native_third_party_desktop_page_context_is_not_an_orphan_tool_output() {
+            let upstream = upstream().await;
+            let call = json!({
+                "type": "function_call", "call_id": "call_status",
+                "name": "status", "arguments": "{}"
+            });
+            let result = json!({
+                "type": "function_call_output", "call_id": "call_status", "output": "OK"
+            });
+            for stack in [false, true] {
+                for endpoint in ["/responses", "/responses/compact"] {
+                    let mut request = body("listed", json!([]));
+                    request["input"] = json!([
+                        {"type": "function_call_output", "id": "fco_page", "namespace": "agent",
+                         "name": "codex_apps_open_page", "output": "{\"page_id\":null}"},
+                        call.clone(), result.clone(),
+                        {"type": "function_call_output", "namespace": "agent",
+                         "name": "codex_apps_selected_page_part_1_of_1", "output": "page snapshot"}
+                    ]);
+                    let seen = send(
+                        &forwarder(stack),
+                        &upstream,
+                        provider(&upstream, "openai_responses"),
+                        endpoint,
+                        request,
+                    )
+                    .await;
+                    assert_eq!(seen.body["input"][0]["type"], "message");
+                    assert_eq!(seen.body["input"][0]["role"], "user");
+                    assert_eq!(seen.body["input"][1], call);
+                    assert_eq!(seen.body["input"][2], result);
+                    assert_eq!(seen.body["input"][3]["type"], "message");
+                    assert_eq!(seen.body["input"][3]["content"][0]["text"],
+                        "[Codex Desktop context: codex_apps_selected_page_part_1_of_1]\npage snapshot");
+                }
+            }
         }
 
         /// 剥身份头只针对 Codex：Claude Code 的 Stack 请求照常带着 Anthropic SDK 的请求头。
