@@ -99,6 +99,10 @@ pub struct PanelTexts {
 }
 
 impl PanelTexts {
+    /// 按语言生成托盘面板文案。
+    ///
+    /// 社区翻译（ko、tr、ru）以英文为基础，只覆盖已翻译的字段，
+    /// 因此新增字段无需同步补齐社区翻译，补译前使用英文。
     pub fn from_language(language: &str) -> Self {
         match language {
             "en" => Self {
@@ -120,7 +124,6 @@ impl PanelTexts {
                 duration_sep: " ",
                 reset_credits: "{count} resets available",
             },
-            // 社区翻译从英文起步，只覆盖已翻译的项；新增字段在补译前显示英文。
             "tr" => {
                 let mut texts = Self::from_language("en");
                 texts.lightweight_mode = "Hafif mod";

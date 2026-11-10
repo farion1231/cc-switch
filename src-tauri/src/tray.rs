@@ -194,6 +194,10 @@ fn detect_system_tray_language() -> &'static str {
 }
 
 impl TrayTexts {
+    /// 按语言生成托盘文案。
+    ///
+    /// 社区翻译（ko、tr、ru）以英文为基础，只覆盖已翻译的字段，
+    /// 因此新增字段无需同步补齐社区翻译，补译前使用英文。
     pub fn from_language(language: &str) -> Self {
         match language {
             "en" => Self {
@@ -252,8 +256,6 @@ impl TrayTexts {
                 date_format: "%b %-d",
                 quota_used: false,
             },
-            // 土耳其语是社区翻译：从英文起步再覆盖已翻译的项，之后新增的托盘项
-            // 在有人翻译前显示英文，而不是让所有改托盘的提交都必须补土耳其语。
             "ko" => {
                 let mut texts = Self::from_language("en");
                 texts.show_main = "CC Switch 열기";
@@ -305,7 +307,6 @@ impl TrayTexts {
                 texts.date_format = "%-m월 %-d일";
                 texts
             },
-            // 俄语同为社区翻译：从英文起步，只覆盖已翻译的项。
             "ru" => {
                 let mut texts = Self::from_language("en");
                 texts.show_main = "Открыть главное окно";
