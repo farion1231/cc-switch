@@ -1973,6 +1973,16 @@
     }
   },
   "codexOauth": {
+    "pasteDescription": "auth.json の JSON 全文を貼り付けるか、ファイルを選択してください。",
+    "pasteLabel": "auth.json の内容",
+    "pastePlaceholder": "JSON 全文を貼り付け…",
+    "chooseAuthFile": "ファイルを選択",
+    "importPasted": "アカウントをインポート",
+    "importAuthJson": "auth.json をインポート",
+    "importHint": "インポート後、Codex 公式プロバイダーでアカウントを選択してください。",
+    "importSuccess": "{{login}} をインポートしました。公式カードで選択して有効にし、Codex を再起動してください。",
+    "importTooLarge": "auth.json は 1 MB 以下にしてください",
+    "importFailed": "インポート失敗: {{error}}",
     "authStatus": "認証状態",
     "notAuthenticated": "未認証",
     "loginRequired": "先に ChatGPT にログインしてください",

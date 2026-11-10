@@ -33,6 +33,7 @@ use uuid::Uuid;
 use super::copilot_auth::{GitHubAccount, GitHubDeviceCodeResponse};
 
 mod browser;
+mod import;
 
 /// OpenAI OAuth 客户端 ID（OpenCode 使用，与官方 Codex CLI 相同）
 const CODEX_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -1779,7 +1780,11 @@ impl CodexOAuthManager {
             refresh_token,
             authenticated_at: now,
             id_token,
-            token_updated_at_ms: now_ms,
+            // Retain imported token timestamps for live-auth freshness checks.
+            token_updated_at_ms: initial_access_token
+                .as_ref()
+                .map(|token| token.obtained_at_ms)
+                .unwrap_or(now_ms),
         };
 
         let account = GitHubAccount::from(&data);

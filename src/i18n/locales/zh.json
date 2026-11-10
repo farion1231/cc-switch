@@ -1973,6 +1973,16 @@
     }
   },
   "codexOauth": {
+    "pasteDescription": "直接粘贴 auth.json 的完整 JSON 内容，或选择本地文件。",
+    "pasteLabel": "auth.json 内容",
+    "pastePlaceholder": "在这里粘贴完整 JSON…",
+    "chooseAuthFile": "选择文件",
+    "importPasted": "导入账号",
+    "importAuthJson": "导入 auth.json",
+    "importHint": "导入官方账号，随后在 Codex 官方供应商的登录方式中选择该账号。",
+    "importSuccess": "已导入 {{login}}。请在 Codex 官方卡的登录方式中选择此账号，再启用卡片并重启 Codex。",
+    "importTooLarge": "auth.json 不能超过 1 MB",
+    "importFailed": "导入失败：{{error}}",
     "authStatus": "认证状态",
     "notAuthenticated": "未认证",
     "loginRequired": "请先登录 ChatGPT 账号",

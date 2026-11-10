@@ -1973,6 +1973,16 @@
     }
   },
   "codexOauth": {
+    "pasteDescription": "Paste the complete JSON from auth.json, or choose a local file.",
+    "pasteLabel": "auth.json contents",
+    "pastePlaceholder": "Paste the complete JSON here…",
+    "chooseAuthFile": "Choose file",
+    "importPasted": "Import account",
+    "importAuthJson": "Import auth.json",
+    "importHint": "Import an account, then select it in an official Codex provider.",
+    "importSuccess": "Imported {{login}}. Select this account in an official Codex provider, activate it, and restart Codex.",
+    "importTooLarge": "auth.json must be smaller than 1 MB",
+    "importFailed": "Import failed: {{error}}",
     "authStatus": "Auth status",
     "notAuthenticated": "Not authenticated",
     "loginRequired": "Please sign in to ChatGPT first",

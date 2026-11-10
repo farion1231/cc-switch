@@ -99,6 +99,31 @@ fn map_account(
     }
 }
 
+/// Import local credentials without logging them or changing the active login.
+#[tauri::command(rename_all = "camelCase")]
+pub async fn auth_import_codex_json(
+    content: String,
+    app_state: State<'_, AppState>,
+    codex_state: State<'_, CodexOAuthState>,
+) -> Result<ManagedAuthAccount, String> {
+    // Serialize imports with provider switches that also update this account store.
+    let _guard = app_state
+        .proxy_service
+        .lock_switch_for_app(AppType::Codex.as_str())
+        .await;
+    let manager = &codex_state.0;
+    let account = manager
+        .import_auth_json(&content)
+        .await
+        .map_err(|e| e.to_string())?;
+    let default_id = manager.get_status().await.default_account_id;
+    Ok(map_account(
+        AUTH_PROVIDER_CODEX_OAUTH,
+        account,
+        default_id.as_deref(),
+    ))
+}
+
 fn map_xai_account(
     account: XaiOAuthAccount,
     default_account_id: Option<&str>,

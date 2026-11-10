@@ -1973,6 +1973,16 @@
     }
   },
   "codexOauth": {
+    "pasteDescription": "直接貼上 auth.json 的完整 JSON 內容，或選擇本機檔案。",
+    "pasteLabel": "auth.json 內容",
+    "pastePlaceholder": "在此貼上完整 JSON…",
+    "chooseAuthFile": "選擇檔案",
+    "importPasted": "匯入帳號",
+    "importAuthJson": "匯入 auth.json",
+    "importHint": "匯入官方帳號後，請在 Codex 官方供應商的登入方式中選擇此帳號。",
+    "importSuccess": "已匯入 {{login}}。請在 Codex 官方卡片的登入方式中選擇此帳號，再啟用卡片並重新啟動 Codex。",
+    "importTooLarge": "auth.json 不能超過 1 MB",
+    "importFailed": "匯入失敗：{{error}}",
     "authStatus": "驗證狀態",
     "notAuthenticated": "未驗證",
     "loginRequired": "請先登入 ChatGPT 帳號",

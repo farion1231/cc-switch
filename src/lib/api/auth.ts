@@ -74,6 +74,12 @@ export async function authStartLogin(
   });
 }
 
+export async function authImportCodexJson(
+  content: string,
+): Promise<ManagedAuthAccount> {
+  return invoke<ManagedAuthAccount>("auth_import_codex_json", { content });
+}
+
 export async function authPollForAccount(
   authProvider: ManagedAuthProvider,
   deviceCode: string,
