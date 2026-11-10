@@ -490,6 +490,16 @@ impl StagedWrite {
         &self.tmp
     }
 
+    /// 提交时实际被替换的文件（目标是软链接时为它最终指向的文件）。
+    pub fn target(&self) -> &Path {
+        &self.path
+    }
+
+    /// 放弃这次写入，删掉临时文件。
+    pub fn discard(self) {
+        let _ = fs::remove_file(&self.tmp);
+    }
+
     /// 用临时文件替换目标（失败时删掉临时文件）。
     pub fn commit(self) -> Result<(), AppError> {
         commit_staged(&self.tmp, &self.path).inspect_err(|_| {

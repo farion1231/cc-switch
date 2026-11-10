@@ -10,7 +10,7 @@ import {
   copilotGetUsage,
   copilotGetUsageForAccount,
 } from "@/lib/api/copilot";
-import { isCopilotByok } from "@/config/copilotProviderPresets";
+import { isCopilotByok } from "@/config/copilotConfig";
 import { useSettingsQuery } from "@/lib/query";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";

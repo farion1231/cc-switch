@@ -64,6 +64,11 @@ import {
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { setZoom, stepZoom } from "@/lib/interfacePrefs";
 import { deepClone } from "@/utils/deepClone";
+import { isOfficialAccount } from "@/utils/providerCapabilities";
+import {
+  COPILOT_PROVIDER_ID_MAX,
+  normalizeCopilotProviderId,
+} from "@/config/copilotConfig";
 import { isLinux, isMac, isWindows } from "@/lib/platform";
 import {
   APP_STORAGE_KEY,
@@ -448,10 +453,11 @@ function App() {
     }
   };
 
-  // Kimi / TRAE CLI「添加」只写进配置文件、不改当前选中；「设为默认」走 switchProvider
+  // Kimi / TRAE CLI「添加」只写进配置文件、不改当前选中；「设为默认」走 switchProvider。
+  // Copilot CLI 的自带模型卡同理：「添加」只写进 providers.json，默认模型在 copilot 里用 /model 选
   const handleAddNativeProvider = async (
     provider: Provider,
-    app: "kimi" | "trae",
+    app: "kimi" | "trae" | "copilot",
   ) => {
     try {
       await providersApi.addToLiveConfig(provider.id, app);
@@ -1131,7 +1137,8 @@ function App() {
       app === "mcode" ||
       app === "dsh" ||
       app === "kimi" ||
-      app === "trae"
+      app === "trae" ||
+      app === "copilot"
     ) {
       await queryClient.invalidateQueries({ queryKey: ["providers", app] });
     }
@@ -1330,6 +1337,22 @@ function App() {
         // A copy starts outside traecli.toml until the user switches to it.
         duplicatedProvider.addToLive = false;
       }
+    } else if (activeApp === "copilot") {
+      // 自带模型卡的 id 就是 providers.json 里的供应商名，副本另起一个；官方卡仍用随机 id。
+      // 副本都先不写进 providers.json（官方卡本来就不写）
+      if (!isOfficialAccount(activeApp, provider)) {
+        // 后端要求供应商名不超过 64 个字符：给「-copy-N」留出位置再截断
+        const base =
+          normalizeCopilotProviderId(provider.id).slice(
+            0,
+            COPILOT_PROVIDER_ID_MAX - "-copy-999".length,
+          ) || "copilot";
+        duplicatedProvider.providerKey = generateUniqueProviderCopyKey(
+          base,
+          Object.keys(providers),
+        );
+      }
+      duplicatedProvider.addToLive = false;
     }
 
     if (provider.sortIndex !== undefined) {
@@ -1680,7 +1703,9 @@ function App() {
             onSwitch={(provider) =>
               void (isPiFamilyApp(activeApp)
                 ? handleEnablePiProvider(provider, activeApp)
-                : activeApp === "kimi" || activeApp === "trae"
+                : activeApp === "kimi" ||
+                    activeApp === "trae" ||
+                    activeApp === "copilot"
                   ? handleAddNativeProvider(provider, activeApp)
                   : switchProvider(provider))
             }
@@ -1693,7 +1718,8 @@ function App() {
               activeApp === "kimi" ||
               activeApp === "trae" ||
               activeApp === "dsh" ||
-              activeApp === "omp"
+              activeApp === "omp" ||
+              activeApp === "copilot"
                 ? (provider) => setConfirmAction({ provider, action: "remove" })
                 : undefined
             }
