@@ -3493,13 +3493,21 @@ impl RequestForwarder {
     }
 }
 
-/// Shared strict-Grok request pipeline, called only after native Responses
-/// transport selection. Keep the model-aware gate alongside its transforms.
+/// Shared request pipeline after native Responses transport selection.
+/// Normalize standalone receipts for third parties before the strict-Grok gate.
 fn apply_native_responses_request_compat(
     provider: &Provider,
     body: &mut Value,
     keep_resolved_model: bool,
 ) -> Result<(), ProxyError> {
+    if !super::providers::is_codex_official_provider(provider)
+        && super::providers::transform_codex_responses_xai_sanitize::rewrite_xai_call_id_less_tool_outputs(body)
+    {
+        log::info!(
+            "[Codex] Rewrote function_call_output items without call_id for native Responses upstream (provider={})",
+            provider.id
+        );
+    }
     if !super::providers::provider_needs_responses_namespace_flatten(
         provider,
         body.get("model").and_then(Value::as_str),
@@ -6734,6 +6742,75 @@ mod tests {
     }
 
     #[test]
+    fn native_responses_rewrites_call_id_less_outputs_for_non_xai_providers() {
+        let provider = test_provider_with_type(None);
+        for call_id in [None, Some(json!(null)), Some(json!("")), Some(json!("  "))] {
+            let mut receipt = json!({
+                "type": "function_call_output", "id": "fco_receipt",
+                "name": "send_message_to_thread", "namespace": "codex_app",
+                "output": "<codex_delegation>Review the diff.</codex_delegation>"
+            });
+            if let Some(call_id) = call_id {
+                receipt["call_id"] = call_id;
+            }
+            let mut body = json!({
+                "model": "gpt-example", "previous_response_id": "resp_previous",
+                "input": [receipt, {
+                    "type": "function_call_output", "call_id": "call_previous", "output": "kept"
+                }]
+            });
+            let previous_output = body["input"][1].clone();
+            apply_native_responses_request_compat(&provider, &mut body, false).unwrap();
+            assert_eq!(body["input"][0]["type"], "message");
+            assert_eq!(
+                body["input"][0]["content"][0]["text"],
+                "[tool_result without a matching tool_call]\n<codex_delegation>Review the diff.</codex_delegation>"
+            );
+            assert_eq!(body["input"][1], previous_output);
+            assert_eq!(body["model"], "gpt-example");
+            assert_eq!(body["previous_response_id"], "resp_previous");
+            let once = body.clone();
+            apply_native_responses_request_compat(&provider, &mut body, false).unwrap();
+            assert_eq!(body, once);
+        }
+    }
+
+    #[test]
+    fn native_responses_keeps_official_call_id_less_outputs() {
+        let mut provider = test_provider_with_type(None);
+        provider.category = Some("official".to_string());
+        provider.settings_config = json!({"auth": {}, "config": ""});
+        assert!(super::super::providers::is_codex_official_provider(
+            &provider
+        ));
+        let original = json!({
+            "model": "gpt-example",
+            "input": [{"type": "function_call_output", "name": "automation_update", "output": "receipt"}]
+        });
+        let mut body = original.clone();
+        apply_native_responses_request_compat(&provider, &mut body, false).unwrap();
+        assert_eq!(body, original);
+    }
+
+    #[test]
+    fn native_responses_keeps_hosted_search_and_async_history() {
+        let provider = test_provider_with_type(None);
+        let original = json!({"input": [
+            {"type": "tool_search_output", "execution": "server", "call_id": null,
+             "status": "completed", "tools": [{"type": "function", "name": "lookup"}]},
+            {"type": "function_call", "call_id": "slow", "name": "shell", "arguments": "{}", "async": true},
+            {"type": "message", "role": "assistant", "content": "Still working."},
+            {"type": "message", "role": "user", "content": "Query the flight as well."},
+            {"type": "function_call", "call_id": "fast", "name": "lookup", "arguments": "{}"},
+            {"type": "function_call_output", "call_id": "fast", "output": "flight"},
+            {"type": "function_call_output", "call_id": "slow", "output": "done"}
+        ]});
+        let mut body = original.clone();
+        apply_native_responses_request_compat(&provider, &mut body, false).unwrap();
+        assert_eq!(body, original);
+    }
+
+    #[test]
     fn copilot_grok_native_request_reuses_xai_compat_without_model_fallback() {
         let mut copilot = test_provider_with_type(Some("github_copilot"));
         copilot.settings_config = json!({
@@ -7593,6 +7670,42 @@ mod tests {
                 "openai-beta",
             ] {
                 assert!(!strip(key, false, true), "{key} is not account identity");
+            }
+        }
+
+        #[tokio::test]
+        async fn native_responses_forwarder_preserves_call_less_receipt_content() {
+            let upstream = upstream().await;
+            let mut request = body("listed", json!([]));
+            request["input"] = json!([
+                {"type": "function_call_output", "id": "fco_page", "namespace": "agent",
+                 "name": "codex_apps_open_page", "output": "{\"page_id\":null}"},
+                {"type": "function_call_output", "call_id": " ", "output": [
+                    {"type": "input_text", "text": "page selection"},
+                    {"type": "input_image", "image_url": "data:image/png;base64,AAAA"}
+                ]},
+                {"role": "user", "content": "Continue."}
+            ]);
+            for stack in [false, true] {
+                let seen = send(
+                    &forwarder(stack),
+                    &upstream,
+                    provider(&upstream, "openai_responses"),
+                    "/responses",
+                    request.clone(),
+                )
+                .await;
+                let input = seen.body["input"].as_array().unwrap();
+                assert_eq!(input.len(), 3);
+                assert_eq!(input[0]["type"], "message");
+                assert_eq!(
+                    input[0]["content"][0]["text"],
+                    "[tool_result without a matching tool_call]\n{\"page_id\":null}"
+                );
+                assert_eq!(input[1]["type"], "message");
+                assert_eq!(input[1]["content"][1], request["input"][1]["output"][0]);
+                assert_eq!(input[1]["content"][2], request["input"][1]["output"][1]);
+                assert_eq!(input[2], request["input"][2]);
             }
         }
 
