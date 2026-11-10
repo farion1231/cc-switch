@@ -204,7 +204,8 @@
       "extraArgsHint": "Added after the launch command, for this terminal only. Separate with spaces; quote values that contain spaces.",
       "agySwitchTitle": "This switches agy's sign-in",
       "agySwitchBody": "Before opening, agy's sign-in switches to {{account}}, and agy sessions started afterwards use this account.",
-      "agySwitchRunning": "agy is running: open agy sessions keep the previous account and may write it back. Quit them first if you can."
+      "agySwitchRunning": "agy is running: open agy sessions keep the previous account and may write it back. Quit them first if you can.",
+      "isolationBodyCopilot": "The endpoint, key and model of \"{{name}}\" go only to copilot in this terminal and are never written to a file; running copilot directly in another terminal still uses your GitHub sign-in."
     },
     "name": "Name",
     "namePlaceholder": "e.g., Claude Official",
@@ -391,7 +392,14 @@
     "windowControlFailed": "Window control failed: {{error}}",
     "officialBlockedByProxy": "Cannot switch to official provider while local routing is active. Using routing with official APIs may cause account bans.",
     "proxyOfficialWarning": "Current provider {{name}} is official. Consider switching to a third-party provider before using local routing.",
-    "proxyLoopbackHijacked": "Requests from {{app}} to the local route {{origin}} will be picked up by the system proxy, so {{app}} will fail with 502 errors. Make loopback addresses connect directly in your proxy tool (for example, add IP-CIDR,127.0.0.0/8,DIRECT,no-resolve at the top of your Clash rules), then fully quit and reopen {{app}}."
+    "proxyLoopbackHijacked": "Requests from {{app}} to the local route {{origin}} will be picked up by the system proxy, so {{app}} will fail with 502 errors. Make loopback addresses connect directly in your proxy tool (for example, add IP-CIDR,127.0.0.0/8,DIRECT,no-resolve at the top of your Clash rules), then fully quit and reopen {{app}}.",
+    "codexHistorySplit": {
+      "hint": "{{count}} sessions from {{previous}} are now read-only",
+      "officialBucket": "the official subscription",
+      "thirdPartyBucket": "third-party providers",
+      "migrationFinished": "Migrated {{count}} old sessions. Restart Codex to continue them.",
+      "migrationFailed": "Failed to migrate old sessions: {{error}}. CC Switch will retry on next launch."
+    }
   },
   "confirm": {
     "deleteProvider": "Delete Provider",
@@ -411,14 +419,14 @@
     },
     "unifyCodexHistory": {
       "title": "Unified Codex session history",
-      "message": "When enabled, the Codex CLI resume list shows official subscription and third-party sessions together (the Codex desktop app can show all sessions since a recent update and is unaffected). Note: resuming an old session across providers may fail because the other backend cannot decrypt its encrypted_content reasoning.\n\nYou can also migrate your existing official session history into the shared list (backed up to ~/.cc-switch/backups first; you can restore it when turning this off).",
+      "message": "When enabled, the official subscription runs under the shared \"custom\" provider id, so official and third-party sessions share one group: newer Codex can continue both, and the CLI resume list shows them together.\n\nYou can also migrate your existing official sessions; if you do, CC Switch also moves any official sessions left behind on every launch (backed up to ~/.cc-switch/backups first; you can restore them when turning this off). Sessions you don't migrate stay read-only in newer Codex. Restart Codex after the migration.\n\nNote: resuming an old session across providers may fail because the other backend cannot decrypt its encrypted_content reasoning.",
       "migrateExisting": "Also migrate existing official session history",
       "confirm": "I understand, enable"
     },
     "unifyCodexHistoryOff": {
       "title": "Turn off unified session history",
-      "message": "When turned off, the Codex CLI goes back to separate session lists for the official subscription and third-party providers (the desktop app still shows all sessions). Sessions created while this was on can't be told apart, so they stay in the third-party history and the CLI won't show them under the official subscription.",
-      "restoreBackup": "Restore the official sessions migrated at enable time back to the official history (exact restore from backup)",
+      "message": "When turned off, official and third-party sessions split into two groups again: newer Codex can only continue the current provider's group, and the other group becomes read-only. Sessions created while this was on can't be told apart, so they stay in the third-party group.",
+      "restoreBackup": "Restore the migrated official sessions to the official group (exact restore from backup)",
       "confirm": "Turn off"
     },
     "usage": {
@@ -439,6 +447,12 @@
       "quotaDisplay": "Quota display",
       "quotaDisplayLeft": "Left",
       "quotaDisplayUsed": "Used",
+      "density": "Density",
+      "densityHelp": "Comfortable uses larger text and taller controls. Compact keeps the original sizes.",
+      "densityComfortable": "Comfortable",
+      "densityCompact": "Compact",
+      "zoom": "Zoom",
+      "zoomHelp": "You can also press {{shortcut}} + / {{shortcut}} −, and {{shortcut}} 0 to reset.",
       "quotaDisplayHelp": "Whether each quota window on provider cards, in Accounts and in the tray shows how much is left or how much is used. Balances and Credits always show what is left.",
       "sidebarAndHeader": "Sidebar and header",
       "visibleApps": "Apps shown in the sidebar",
@@ -881,6 +895,8 @@
     "languageOptionEnglish": "English",
     "languageOptionJapanese": "日本語",
     "languageOptionTurkish": "Türkçe",
+    "languageOptionKorean": "한국어",
+    "languageOptionRussian": "Русский",
     "windowBehavior": "Window Behavior",
     "windowBehaviorHint": "Configure window minimize and Claude plugin integration policies.",
     "launchOnStartup": "Launch on Startup",
@@ -908,10 +924,18 @@
       "hint": "Pause at either cutoff. Defaults: 95% / 98%. Saved changes apply to new requests immediately.",
       "invalid": "Enter whole numbers from 1 to 99."
     },
+    "codexPauseOfficialLogin": {
+      "title": "Pause the official login",
+      "description": "Turn this on when the official quota is used up and Codex has locked the send button; third-party models in Aggregation and Routing keep working. Fully quit and reopen Codex after turning it on or off.",
+      "help": "Turn this on when the official quota is used up and Codex has locked the send button (even third-party models can't be sent). Codex then stops using the official login, so it no longer locks the send button over the official quota, and third-party models in Aggregation and Routing keep working. The login stays saved on this computer; you are not signed out. Applies only in Routing or Aggregation mode; Direct is unaffected. While it's on: official models can't be used and you'll be asked to pick a third-party model; Codex hides account and usage info and may show its onboarding questions on the first launch; your existing threads under Projects in the sidebar are hidden for now (not lost; they come back when you turn this off); new sessions are recorded under the custom group and become view-only after you switch back to official. Turn it off once the official quota is back. Fully quit and reopen Codex after turning it on or off.",
+      "pausedToast": "Official login paused. Fully quit and reopen Codex for it to take effect",
+      "resumedToast": "Official login resumed. Fully quit and reopen Codex for it to take effect",
+      "saveFailed": "Failed to save: {{error}}"
+    },
     "preserveCodexOfficialAuthOnSwitch": "Keep official login for direct switches",
     "preserveCodexOfficialAuthOnSwitchDescription": "Controls third-party switches when local routing is off. Takeover routing always preserves the Codex official login.",
     "unifyCodexSessionHistory": "Unified Codex session history",
-    "unifyCodexSessionHistoryDescription": "Affects the Codex CLI only: its resume list shows only the current provider's sessions. When enabled, the official subscription runs under the shared \"custom\" provider id so official and third-party sessions appear in one list. The Codex desktop app can show all sessions since a recent update, so desktop-only users don't need this. You can optionally migrate existing official sessions in (backed up first) and restore them from backup when turning it off. Note: resuming an old session across providers may fail because its encrypted_content reasoning can only be decrypted by the backend that created it.",
+    "unifyCodexSessionHistoryDescription": "Official subscriptions run under the same \"custom\" provider id as third-party providers, so all sessions share one group. Newer Codex (desktop 26.1103 / CLI 0.167 and later) can only continue sessions in the current provider's group; the other group becomes read-only, and the CLI resume list only shows the current group. Turn this on if you switch between official and third-party providers. You can optionally migrate official sessions into the shared group (backed up first) and restore them from backup when you turn it off. Note: resuming an old session across providers may fail because its encrypted_content reasoning can only be decrypted by the backend that created it.",
     "codexStackClassicSubagents": "Classic sub-agent tools in aggregation",
     "codexStackClassicSubagentsDescription": "Must be on when the main agent and a sub-agent use different providers, or the sub-agent cannot receive its task.",
     "codexStackClassicSubagentsForcedV2": "Codex config.toml turns on [features] multi_agent_v2, which takes precedence over this setting, so it has no effect.",
@@ -1158,6 +1182,7 @@
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
+    "copilot": "Copilot CLI",
     "omp": "Oh My Pi"
   },
   "mcode": {
@@ -1335,6 +1360,14 @@
   },
   "sessionManager": {
     "searchPlaceholder": "Search titles, folders, first/last messages or session IDs",
+    "searchPlaceholderContent": "Search titles, folders, message text or session IDs",
+    "emptySearchContent": "No session title, folder or message text contains “{{query}}”",
+    "contentSearchToggle": "Search message text",
+    "contentSearchToggleFailed": "Couldn’t change the message text search setting: {{error}}",
+    "contentIndexing": "Indexing message text ({{processed}}/{{total}}). Text matches may be incomplete",
+    "contentHitPrefix": "Text: ",
+    "contentHitMore": " ({{count}} messages match)",
+    "moreContentHits": "More text matches",
     "searchSessions": "Search sessions",
     "sessionList": "Sessions",
     "unknownDirectory": "Unknown directory",
@@ -1421,6 +1454,8 @@
     "emptyAppHint": "CC Switch reads session data from {{path}}",
     "emptySearch": "No session titles, folders or first/last messages match “{{query}}”",
     "clearSearchAction": "Clear search",
+    "emptySearchEnableContent": "Search message text",
+    "emptySearchEnableContentHint": "Turning this on builds a local index of message text",
     "backToList": "Back to sessions",
     "back": "Back",
     "sessionOf": "{{app}} session",
@@ -1607,7 +1642,8 @@
       "rawMatch": "Matches in source",
       "expandContent": "Show full content",
       "collapseContent": "Collapse"
-    }
+    },
+    "copilotDeleteHint": "Delete this session in GitHub Copilot CLI so its session store stays consistent"
   },
   "console": {
     "providerSwitchReceived": "Received provider switch event:",
@@ -1659,6 +1695,7 @@
     "providerKeyStatusLoading": "Provider identifier status is still loading. Please try again shortly.",
     "getApiKey": "Get API Key",
     "partnerPromotion": {
+      "tokenplus": "TokenPlus makes AI coding more reliable, affordable, and worry-free: access models from multiple providers with one key, maintain stability through intelligent switching, save with optimized pricing and caching, and manage billing, teams, and data security in one place.",
       "kimi": "New Kimi users get 10% of their first successful top-up back as bonus API credit, up to CNY ¥1,000.",
       "a6api": "A6API is a token aggregation platform with a built-in real-time price leaderboard that automatically picks the lowest price on the market. Smooth and stable, simple to operate, and no more tedious price comparisons. Register now to claim free trial credits!",
       "sudocode": "With one SudoCode key, Claude Code and Claude Desktop use Claude Opus 5, while Codex uses GPT-5.6. Sign up, join QQ group 726213516, and contact the group owner to claim CNY ¥10 in trial credit.",
@@ -1899,7 +1936,29 @@
     "deploymentType": "GitHub Deployment Type",
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Enterprise Server",
-    "enterpriseDomainPlaceholder": "e.g. company.ghe.com"
+    "enterpriseDomainPlaceholder": "e.g. company.ghe.com",
+    "form": {
+      "officialTitle": "Uses Copilot CLI's GitHub sign-in",
+      "officialHint": "Open Terminal starts copilot with this card's model. Bind an Auth Center account to start it with that account.",
+      "byokTitle": "Only applies in terminals opened from this card",
+      "byokHint": "Copilot CLI reads custom models only from its environment, so nothing is written to Copilot's own files.",
+      "apiFormat": "API format",
+      "baseUrl": "API endpoint",
+      "baseUrlHint": "OpenAI-compatible endpoints usually end in /v1 (e.g. Ollama http://localhost:11434/v1); Anthropic uses the host only (https://api.anthropic.com).",
+      "model": "Model",
+      "officialModelHint": "Leave empty to use Copilot's current model. Passed as --model for this session only; /model in copilot still works.",
+      "byokModelHint": "The model ID your endpoint expects (COPILOT_MODEL).",
+      "reasoningEffort": "Reasoning effort",
+      "reasoningEffortDefault": "Copilot default",
+      "reasoningEffortHint": "Passed as --reasoning-effort when the terminal opens. With none, Copilot doesn't send reasoning.summary on Responses requests, which some relays reject.",
+      "maxPromptTokens": "Max prompt tokens",
+      "maxOutputTokens": "Max output tokens",
+      "envJsonHint": "Advanced: any COPILOT_PROVIDER_* variable (for example COPILOT_PROVIDER_MODEL_ID or COPILOT_PROVIDER_BEARER_TOKEN) is passed to copilot as-is."
+    },
+    "quota": {
+      "accountNotInAuthCenter": "The Auth Center has no account for {{login}}, which Copilot CLI is signed in with. Add it in the Auth Center, or bind an account on this card.",
+      "notSignedIn": "Copilot CLI isn't signed in. Run copilot and use /login, or bind an Auth Center account on this card."
+    }
   },
   "codexOauth": {
     "authStatus": "Auth status",
@@ -2641,6 +2700,9 @@
       "byRequest": "Priced by request model",
       "edit": "Change",
       "tableTitle": "Model pricing · {{count}}",
+      "searchPlaceholder": "Search model ID or name",
+      "noSearchMatch": "No model matches \"{{query}}\"",
+      "addForQuery": "Add pricing for {{query}}",
       "costHelpTitle": "How cost is calculated",
       "costHelp": "Each request is priced by its model: fresh input, output, cache hits and cache writes are each multiplied by their unit price and added up.",
       "unit": "USD / 1M tokens",
@@ -4238,6 +4300,7 @@
       "geminiFlashLite": "Lite",
       "agyGeminiFiveHour": "Gemini 5h",
       "agyGeminiWeekly": "Gemini Wk",
+      "agyGeminiArgonWeekly": "Argon Wk",
       "agyThirdPartyFiveHour": "Claude 5h",
       "agyThirdPartyWeekly": "Claude Wk",
       "monthly": "Mo",
@@ -4257,6 +4320,7 @@
     "agyThirdParty": "Claude/GPT",
     "agyGeminiFiveHour": "Gemini 5-hour",
     "agyGeminiWeekly": "Gemini weekly",
+    "agyGeminiArgonWeekly": "Argon weekly",
     "agyThirdPartyFiveHour": "Claude/GPT 5-hour",
     "agyThirdPartyWeekly": "Claude/GPT weekly",
     "weeklyLimit": "Weekly",
@@ -4327,6 +4391,8 @@
     "notRunnable": "Can't run",
     "updateNeedsNode": "{{version}} requires Node {{required}}, but this installation runs on Node {{current}}. Upgrade Node first.",
     "otherInstalls": "{{count}} more install(s)",
+    "toolQueued": "Queued, waiting for another app to finish",
+    "toolElapsed": "{{time}} elapsed",
     "installsFound": "{{count}} installs found",
     "wslFlag": "Flag",
     "installHint": {
@@ -4340,6 +4406,7 @@
       "pi": "Installs with npm",
       "mcode": "Installs with the official script, falls back to npm",
       "agy": "Installs with the official script",
+      "copilot": "Installs with npm",
       "omp": "Installs with the official script"
     }
   },
@@ -4407,6 +4474,9 @@
       "serviceDown": "{{app}} is in {{mode}} mode but the routing service isn't running, so requests will fail.",
       "startService": "Start service",
       "backToDirect": "Back to direct",
+      "officialLoginPaused": "Codex official login is paused",
+      "officialLoginPausedBody": "Official models can't be used, and your existing threads under Projects in the Codex sidebar are hidden for now. Once the official quota is back, click “Resume official login”, then fully quit and reopen Codex.",
+      "resumeOfficialLogin": "Resume official login",
       "attachFailed": "{{mode}} couldn't reconnect last time, so {{app}} went back to direct."
     },
     "toast": {
@@ -4877,6 +4947,7 @@
     "rowFail": "Enabling in {{app}} failed: {{error}}",
     "fixSync": "Change sync method",
     "rowMoreAria": "More actions for {{name}}",
+    "rowUpdateAria": "Update {{name}}",
     "openDir": "Open folder",
     "uninstallEllipsis": "Uninstall",
     "listLabel": "Installed Skills",
@@ -4984,9 +5055,6 @@
       "discoverBody": "The list may be incomplete.",
       "updatesBody": "Skills from these repositories weren't checked, so the results may be incomplete."
     },
-    "headerUpdates": "{{count}} updates",
-    "headerUpdatesShow": "Show only Skills with updates",
-    "headerUpdatesClear": "Show all Skills",
     "updateAllCount": "Update all ({{count}})",
     "updatingProgress": "Updating {{done}}/{{total}}…"
   },

@@ -13,7 +13,10 @@ use std::sync::Arc;
 use tauri::AppHandle;
 use tauri::State;
 use tauri_plugin_opener::OpenerExt;
+use tool_lifecycle_progress::ToolLifecycleProgress;
 
+#[path = "tool_lifecycle_progress.rs"]
+mod tool_lifecycle_progress;
 #[path = "tool_node_requirement.rs"]
 mod tool_node_requirement;
 #[path = "tool_uninstall.rs"]
@@ -170,9 +173,9 @@ pub struct ToolVersion {
     update_blocked_by_node: Option<tool_node_requirement::NodeRequirementGap>,
 }
 
-const VALID_TOOLS: [&str; 13] = [
+const VALID_TOOLS: [&str; 14] = [
     "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "kimi",
-    "dsh", "agy", "omp",
+    "dsh", "agy", "omp", "copilot",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -257,8 +260,24 @@ impl Default for ToolLifecycleCoordinator {
 }
 
 impl ToolLifecycleCoordinator {
+    #[cfg(test)]
     async fn run<F>(&self, tools: Vec<&'static str>, operation: F) -> Result<(), String>
     where
+        F: FnOnce(&[&str]) -> Result<(), String> + Send + 'static,
+    {
+        self.run_with_queue_notice(tools, || {}, operation).await
+    }
+
+    /// 按工具加锁后串行执行 `operation`；要等前一个工具的写入结束时先调用
+    /// `on_queued`，让界面显示「排队中」而不是一直转圈。
+    async fn run_with_queue_notice<Q, F>(
+        &self,
+        tools: Vec<&'static str>,
+        on_queued: Q,
+        operation: F,
+    ) -> Result<(), String>
+    where
+        Q: FnOnce(),
         F: FnOnce(&[&str]) -> Result<(), String> + Send + 'static,
     {
         let tool_guards = tools
@@ -273,7 +292,13 @@ impl ToolLifecycleCoordinator {
                     .map_err(|_| "TOOL_ACTION_IN_PROGRESS".to_string())
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let execution_guard = self.execution.clone().lock_owned().await;
+        let execution_guard = match self.execution.clone().try_lock_owned() {
+            Ok(guard) => guard,
+            Err(_) => {
+                on_queued();
+                self.execution.clone().lock_owned().await
+            }
+        };
 
         // 必须把锁移进 blocking 任务：即使等待它的 IPC future 被取消，
         // 子进程仍会继续运行，直到它真正退出前都不能允许下一次写入。
@@ -332,6 +357,7 @@ pub async fn prepare_tool_uninstall(
 
 #[tauri::command]
 pub async fn run_tool_lifecycle_action(
+    app: AppHandle,
     tools: Vec<String>,
     action: String,
     wsl_shell_by_tool: Option<HashMap<String, WslShellPreferenceInput>>,
@@ -347,16 +373,23 @@ pub async fn run_tool_lifecycle_action(
         if requested.len() != 1 || requested[0] != plan.tool {
             return Err("The uninstall plan does not match the selected tool.".into());
         }
+        let progress = ToolLifecycleProgress::from_app(app, &requested);
+        let queued = progress.clone();
         return TOOL_LIFECYCLE
-            .run(requested, move |tools| {
-                for tool in tools {
-                    let pref = wsl_shell_by_tool
-                        .as_ref()
-                        .and_then(|prefs| prefs.get(*tool));
-                    tool_uninstall::uninstall(tool, pref, &plan)?;
-                }
-                Ok(())
-            })
+            .run_with_queue_notice(
+                requested,
+                move || queued.queued(),
+                move |tools| {
+                    progress.running();
+                    for tool in tools {
+                        let pref = wsl_shell_by_tool
+                            .as_ref()
+                            .and_then(|prefs| prefs.get(*tool));
+                        tool_uninstall::uninstall(tool, pref, &plan, &progress)?;
+                    }
+                    Ok(())
+                },
+            )
             .await;
     }
     let action = ToolLifecycleAction::from_str(&action)?;
@@ -372,12 +405,19 @@ pub async fn run_tool_lifecycle_action(
     };
 
     // 排队结束后再探测安装目标，与执行一起持锁，避免读到另一升级的中间状态。
+    let progress = ToolLifecycleProgress::from_app(app, &requested);
+    let queued = progress.clone();
     TOOL_LIFECYCLE
-        .run(requested, move |tools| {
-            let command_line =
-                build_tool_lifecycle_command(tools, action, wsl_shell_by_tool.as_ref())?;
-            run_tool_lifecycle_silently(&command_line, label)
-        })
+        .run_with_queue_notice(
+            requested,
+            move || queued.queued(),
+            move |tools| {
+                progress.running();
+                let command_line =
+                    build_tool_lifecycle_command(tools, action, wsl_shell_by_tool.as_ref())?;
+                run_tool_lifecycle_silently(&command_line, label, &progress)
+            },
+        )
         .await
 }
 
@@ -385,8 +425,13 @@ pub async fn run_tool_lifecycle_action(
 /// 不再弹出可见终端窗口（与 `launch_terminal_running` 的"开窗即返回"形成对比，
 /// 后者仍保留给 provider 切换等需要交互式终端的场景）。
 /// 失败时回传 stderr/stdout 末尾若干行，供前端 toast 提示。
+/// 不开终端窗口，但每行输出会经 `progress` 推给界面显示。
 #[cfg(not(target_os = "windows"))]
-fn run_tool_lifecycle_silently(command_line: &str, _label: &str) -> Result<(), String> {
+fn run_tool_lifecycle_silently(
+    command_line: &str,
+    _label: &str,
+    progress: &ToolLifecycleProgress,
+) -> Result<(), String> {
     use std::process::Command;
     // command_line 是 bash 风格脚本（含 `set -e` 与多行命令）；强制用 bash 执行，
     // 避免用户默认 shell 为 fish/zsh 时 `set -e` 等语义不一致。
@@ -399,14 +444,19 @@ fn run_tool_lifecycle_silently(command_line: &str, _label: &str) -> Result<(), S
         let inherited = std::env::var("PATH").unwrap_or_default();
         cmd.env("PATH", merge_path_segments(&login_path, &inherited));
     }
-    let output = cmd.output().map_err(|e| format!("启动安装进程失败: {e}"))?;
+    let output = tool_lifecycle_progress::run_with_progress(cmd, progress)
+        .map_err(|e| format!("启动安装进程失败: {e}"))?;
     finish_lifecycle_output(&output)
 }
 
 /// Windows 静默执行：command_line 是 .bat 内容（chcp 65001 + @echo off + call/wsl 行，CRLF 分隔），
 /// 写临时 .bat 后用 `cmd /C` 执行，`CREATE_NO_WINDOW` 抑制 console 窗口。
 #[cfg(target_os = "windows")]
-fn run_tool_lifecycle_silently(command_line: &str, label: &str) -> Result<(), String> {
+fn run_tool_lifecycle_silently(
+    command_line: &str,
+    label: &str,
+    progress: &ToolLifecycleProgress,
+) -> Result<(), String> {
     // 每次调用使用独立目录，避免同进程并发升级时覆盖或删除另一工具的脚本。
     let script_dir = tempfile::Builder::new()
         .prefix("cc_switch_lifecycle_")
@@ -415,7 +465,10 @@ fn run_tool_lifecycle_silently(command_line: &str, label: &str) -> Result<(), St
     let bat_file = script_dir.path().join(format!("{label}.bat"));
     std::fs::write(&bat_file, command_line).map_err(|e| format!("写入批处理文件失败: {e}"))?;
 
-    let output = windows_lifecycle_command(&bat_file, &effective_path_string()).output();
+    let output = tool_lifecycle_progress::run_with_progress(
+        windows_lifecycle_command(&bat_file, &effective_path_string()),
+        progress,
+    );
 
     finish_lifecycle_output(&output.map_err(|e| format!("启动安装进程失败: {e}"))?)
 }
@@ -671,6 +724,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "kimi" => "Kimi Code",
         "dsh" => "DeepSeek Harness",
         "agy" => "Antigravity CLI",
+        "copilot" => "GitHub Copilot CLI",
         _ => "Unknown",
     }
 }
@@ -959,6 +1013,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "openclaw" => Some("npm i -g openclaw@latest"),
         "pi" => Some("npm i -g @earendil-works/pi-coding-agent@latest"),
         "kimi" => Some("npm i -g @moonshot-ai/kimi-code@latest"),
+        "copilot" => Some("npm i -g @github/copilot@latest"),
         "dsh" => Some("npm i -g @deepseek-ai/dsh@latest --engine-strict"),
         "mcode" => Some(
             "npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
@@ -1384,6 +1439,7 @@ async fn get_single_tool_version_impl(
         "dsh" => fetch_npm_latest_for_tool(&client, "@deepseek-ai/dsh", tool, local).await,
         "agy" => fetch_agy_latest_version(&client).await,
         "omp" => fetch_npm_latest_for_tool(&client, "@oh-my-pi/pi-coding-agent", tool, local).await,
+        "copilot" => fetch_npm_latest_for_tool(&client, "@github/copilot", tool, local).await,
         _ => None,
     };
 
@@ -2867,12 +2923,32 @@ fn windows_runnable_sibling_for_extensionless_tool(path: &Path) -> Option<std::p
         .find(|candidate| candidate.is_file())
 }
 
+/// Pi ships only through npm, but PyPI has an unrelated Python 2 package also named
+/// `pi` whose console script lands in a Python `Scripts` dir as `pi.exe`. That file is
+/// never the Pi coding agent: probing it reports a Python traceback as "installed but
+/// broken", and uninstall would target it (#9267). Only pip's own layout is matched
+/// (`<tool>.exe` directly inside a `Scripts` dir); npm writes `.cmd` shims, so a custom
+/// npm prefix under some `Scripts` folder is left alone.
+#[cfg(any(target_os = "windows", test))]
+fn is_foreign_pip_launcher(tool: &str, path: &Path) -> bool {
+    tool == "pi"
+        && path
+            .to_string_lossy()
+            .replace('\\', "/")
+            .to_ascii_lowercase()
+            .ends_with(&format!("/scripts/{tool}.exe"))
+}
+
 /// OpenCode Desktop has shipped both root-level and Electron `resources/` CLI sidecars.
 /// Some Electron releases omitted the sidecar; `resources/app.asar` still identifies the
 /// Desktop bundle, so skip its GUI instead of probing `opencode.exe` with `--version`.
 /// A standalone OpenCode CLI install remains valid when no Desktop marker is present.
+/// Also skips launchers that only share the tool's name (`is_foreign_pip_launcher`).
 #[cfg(target_os = "windows")]
 fn windows_preferred_tool_executable(tool: &str, path: &Path) -> Option<std::path::PathBuf> {
+    if is_foreign_pip_launcher(tool, path) {
+        return None;
+    }
     if tool == "opencode"
         && path
             .file_name()
@@ -3529,6 +3605,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "mcode" => Some("@minimax-ai/code"),
         "kimi" => Some("@moonshot-ai/kimi-code"),
         "omp" => Some("@oh-my-pi/pi-coding-agent"),
+        "copilot" => Some("@github/copilot"),
         "dsh" => Some("@deepseek-ai/dsh"),
         _ => None,
     }
@@ -5244,11 +5321,12 @@ fn wsl_distro_from_path(path: &Path) -> Option<String> {
 ///
 /// 根据提供商配置的环境变量启动一个带有该提供商特定设置的终端
 /// 无需检查是否为当前激活的提供商，任何提供商都可以打开终端
-#[allow(non_snake_case)]
+#[allow(non_snake_case, clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn open_provider_terminal(
     state: State<'_, crate::store::AppState>,
     agy_accounts: State<'_, crate::commands::AgyAccountState>,
+    copilot_auth: State<'_, crate::commands::CopilotAuthState>,
     app: String,
     #[allow(non_snake_case)] providerId: String,
     cwd: Option<String>,
@@ -5273,7 +5351,12 @@ pub async fn open_provider_terminal(
             switch_agy_to_bound_account(&agy_accounts.0, provider).await?;
             agy_terminal_launch(provider)?
         }
+        AppType::Copilot => {
+            let account = copilot_bound_account(&copilot_auth, provider).await?;
+            copilot_terminal_launch(provider, account)?
+        }
         AppType::Codex => codex_terminal_launch(state.db.as_ref(), provider)?,
+        AppType::GrokBuild => grok_terminal_launch(state.db.as_ref(), provider)?,
         AppType::Claude => {
             use crate::services::provider::claude_official::{terminal_account, AccountTerminal};
             match terminal_account(provider).map_err(|e| e.to_string())? {
@@ -5428,9 +5511,12 @@ struct ProviderLaunch {
 impl ProviderLaunch {
     /// 用户在「打开终端」里勾了跳过权限确认：只加给这一次启动，不写进任何配置。
     fn skip_permissions(&mut self) {
-        // Claude Code 和 agy 的参数同名；Codex 跳过确认的同时也关掉沙箱。
+        // Claude Code 和 agy 的参数同名；Codex 跳过确认的同时也关掉沙箱；Grok Build 用自己的；
+        // Copilot CLI 的 `--allow-all` 放开工具、路径和 URL 三类确认。
         let flag = match self.program {
             "codex" => "--dangerously-bypass-approvals-and-sandbox",
+            "grok" => "--always-approve",
+            "copilot" => "--allow-all",
             _ => "--dangerously-skip-permissions",
         };
         self.args.push(flag.to_string());
@@ -5620,6 +5706,53 @@ fn codex_launch(
     })
 }
 
+/// Grok Build：直接跑 `grok`，读的就是 live 的 `config.toml`，所以只能打开当前供应商。
+///
+/// Grok CLI 没有只对一个进程换配置的办法：没有 `-c` 之类的覆盖参数，`GROK_CONFIG_PATH`
+/// 不生效（1.0.70 实测），`GROK_HOME` 会把会话、登录、技能一起换到别的目录。
+/// `GROK_HOME` 定到 CC Switch 管的目录（设置里可以改），Grok 读的就是这里写的那份。
+fn grok_terminal_launch(
+    db: &crate::database::Database,
+    provider: &crate::provider::Provider,
+) -> Result<ProviderLaunch, String> {
+    use crate::mode::current::{self, Purpose};
+    let in_use = current::provider_for(db, &AppType::GrokBuild, Purpose::InUse)
+        .map_err(|e| e.to_string())?;
+    if in_use.as_deref() != Some(provider.id.as_str()) {
+        return Err(crate::error::AppError::localized(
+            "grokbuild.terminal.not_current",
+            format!(
+                "Grok Build 不能只对一个终端换供应商：请先切换到「{}」，再打开终端",
+                provider.name
+            ),
+            format!(
+                "Grok Build can't use a different provider in a single terminal. Switch to \"{}\" first, then open the terminal",
+                provider.name
+            ),
+        )
+        .to_string());
+    }
+    Ok(grok_launch(
+        crate::grok_config::get_grok_config_dir()
+            .to_string_lossy()
+            .into_owned(),
+    ))
+}
+
+fn grok_launch(grok_home: String) -> ProviderLaunch {
+    ProviderLaunch {
+        title: "Starting Grok Build with its current config",
+        detail: None,
+        program: "grok",
+        args: Vec::new(),
+        // npm 装的是 grok.cmd：不加 `call` 跑完不回到启动 .bat，后面的清理就不执行了。
+        batch_command: "call grok".to_string(),
+        env: vec![("GROK_HOME", Some(grok_home))],
+        batch_vars: Vec::new(),
+        cleanup: Vec::new(),
+    }
+}
+
 /// Claude Code：把卡上的 env 和 `/model` 菜单写进临时 settings 文件，
 /// `claude --settings <文件>` 启动。`drops` 是切到这张卡时会从 live 清掉的键，在临时文件里
 /// 挡住（见 [`write_claude_config`]）。
@@ -5792,6 +5925,99 @@ pub(crate) fn open_agy_resume_terminal(
     let cwd = resolve_launch_cwd(cwd)?;
     launch_provider_terminal(&launch, cwd.as_deref()).map_err(|e| format!("启动终端失败: {e}"))
 }
+
+/// 官方卡绑定的授权中心 GitHub 账号的 Token 和域名；没绑时为 `None`，跟着 Copilot CLI 自己的登录走。
+async fn copilot_bound_account(
+    auth: &crate::commands::CopilotAuthState,
+    provider: &crate::provider::Provider,
+) -> Result<Option<(String, String)>, String> {
+    let Some(account_id) = crate::services::provider::copilot_direct::bound_account_id(provider)
+    else {
+        return Ok(None);
+    };
+    let credentials = auth
+        .0
+        .read()
+        .await
+        .github_credentials_for_account(&account_id)
+        .await;
+    match credentials {
+        Some(credentials) => Ok(Some(credentials)),
+        None => Err(crate::error::AppError::localized(
+            "copilot.account.bound_missing",
+            format!(
+                "「{}」绑定的 GitHub 账号不在授权中心里：请先在授权中心添加它，或编辑这张卡改选账号",
+                provider.name
+            ),
+            format!(
+                "The GitHub account bound to \"{}\" is not in the Auth Center. Add it there, or edit the card to choose another account.",
+                provider.name
+            ),
+        )
+        .to_string()),
+    }
+}
+
+/// GitHub Copilot CLI：官方卡跑 `copilot`，卡上设了模型就加 `--model`；绑了授权中心账号时
+/// 经 `COPILOT_GITHUB_TOKEN` 只给这一个进程。自带模型卡的 Key、地址和模型只经环境变量传入。
+fn copilot_terminal_launch(
+    provider: &crate::provider::Provider,
+    account: Option<(String, String)>,
+) -> Result<ProviderLaunch, String> {
+    let launch = crate::services::provider::copilot_direct::terminal_launch(provider)
+        .map_err(|e| e.to_string())?;
+    let mut env = launch.env;
+    if !launch.byok {
+        if let Some((token, domain)) = account {
+            env.push(("COPILOT_GITHUB_TOKEN", Some(token)));
+            env.push(("COPILOT_GH_HOST", Some(domain)));
+        }
+    }
+    // npm 装的是 copilot.cmd：不加 `call` 跑完不回到启动 .bat，后面删临时文件（含 Key、
+    // GitHub 令牌的 .bat 本身）的几行就不执行了。`call` 会把 `%` 再展开一遍、把引号里的 `^`
+    // 加倍，cmd 也不认 `\"`，所以模型名里有这些字符时不在 Windows 上启动。
+    if cfg!(target_os = "windows")
+        && launch
+            .model
+            .as_deref()
+            .is_some_and(|model| model.contains(['"', '%', '^']))
+    {
+        return Err(format!(
+            "「{}」的模型名里有 Windows 终端传不过去的字符（\" % ^）",
+            provider.name
+        ));
+    }
+    let (mut args, mut batch_command, batch_vars) = match launch.model {
+        Some(model) => (
+            vec![format!("--model={model}")],
+            format!("call copilot \"--model=%{COPILOT_MODEL_BATCH_VAR}%\""),
+            vec![(COPILOT_MODEL_BATCH_VAR, model)],
+        ),
+        None => (Vec::new(), "call copilot".to_string(), Vec::new()),
+    };
+    // 只会是 copilot_config::REASONING_EFFORTS 里的小写单词（已校验），可以直接写进命令。
+    if let Some(effort) = launch.reasoning_effort {
+        args.push(format!("--reasoning-effort={effort}"));
+        batch_command.push_str(&format!(" --reasoning-effort={effort}"));
+    }
+    Ok(ProviderLaunch {
+        title: if launch.byok {
+            "Starting GitHub Copilot CLI with this provider's model"
+        } else {
+            "Starting GitHub Copilot CLI with your GitHub sign-in"
+        },
+        detail: None,
+        program: "copilot",
+        args,
+        batch_command,
+        env,
+        batch_vars,
+        cleanup: Vec::new(),
+    })
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+const COPILOT_MODEL_BATCH_VAR: &str = "CC_SWITCH_COPILOT_MODEL";
 
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 const AGY_DIR_BATCH_VAR: &str = "CC_SWITCH_AGY_DIR";
@@ -7102,6 +7328,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn lifecycle_coordinator_reports_queue_only_while_waiting() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let coordinator = Arc::new(ToolLifecycleCoordinator::default());
+        let queued = Arc::new(AtomicUsize::new(0));
+        let notice = |count: &Arc<AtomicUsize>| {
+            let count = count.clone();
+            move || {
+                count.fetch_add(1, Ordering::SeqCst);
+            }
+        };
+
+        // 没有别的写入在跑时直接执行，不显示排队
+        coordinator
+            .run_with_queue_notice(vec!["codex"], notice(&queued), |_| Ok(()))
+            .await
+            .unwrap();
+        assert_eq!(queued.load(Ordering::SeqCst), 0);
+
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (finish_tx, finish_rx) = std::sync::mpsc::channel::<()>();
+        let first = {
+            let coordinator = coordinator.clone();
+            tokio::spawn(async move {
+                coordinator
+                    .run(vec!["codex"], move |_| {
+                        started_tx.send(()).unwrap();
+                        finish_rx.recv().unwrap();
+                        Ok(())
+                    })
+                    .await
+            })
+        };
+        started_rx.await.unwrap();
+        let second = coordinator.run_with_queue_notice(vec!["claude"], notice(&queued), |_| Ok(()));
+        tokio::pin!(second);
+        assert!(futures::poll!(second.as_mut()).is_pending());
+        assert_eq!(queued.load(Ordering::SeqCst), 1);
+
+        finish_tx.send(()).unwrap();
+        first.await.unwrap().unwrap();
+        second.await.unwrap();
+        assert_eq!(queued.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn lifecycle_coordinator_keeps_running_locks_when_caller_is_cancelled() {
         let coordinator = Arc::new(ToolLifecycleCoordinator::default());
         let (started_tx, started_rx) = tokio::sync::oneshot::channel();
@@ -7177,7 +7448,8 @@ mod tests {
                 scope.spawn(move || {
                     let command = format!("@echo off\r\n>\"{}\" echo %~f0\r\n", output.display());
                     barrier.wait();
-                    run_tool_lifecycle_silently(&command, "tool_update").unwrap();
+                    let progress = ToolLifecycleProgress::noop();
+                    run_tool_lifecycle_silently(&command, "tool_update", &progress).unwrap();
                 });
             }
         });
@@ -7680,6 +7952,28 @@ mod tests {
     }
 
     #[test]
+    fn grok_launch_runs_plain_grok_against_the_managed_home() {
+        let mut launch = grok_launch("/home/me/.grok".to_string());
+        launch.skip_permissions();
+        launch
+            .append_user_args(vec!["--model".to_string(), "grok-4.6".to_string()])
+            .unwrap();
+        assert_eq!(launch.program, "grok");
+        assert_eq!(launch.args, vec!["--always-approve", "--model", "grok-4.6"]);
+        assert_eq!(
+            launch.batch_command,
+            "call grok --always-approve \"%CC_SWITCH_ARG0%\" \"%CC_SWITCH_ARG1%\""
+        );
+        assert_eq!(
+            launch.env,
+            vec![("GROK_HOME", Some("/home/me/.grok".to_string()))]
+        );
+        assert!(unix_launch_command(&launch).starts_with(
+            "env -u CC_SWITCH_LAUNCH_ENV_0 GROK_HOME=\"$CC_SWITCH_LAUNCH_ENV_0\" grok "
+        ));
+    }
+
+    #[test]
     fn codex_launch_passes_overrides_as_separate_arguments() {
         let mut launch = codex_launch(
             "Kimi",
@@ -7746,6 +8040,124 @@ mod tests {
         let launch = agy_terminal_launch(&row).unwrap();
         assert_eq!(unix_launch_command(&launch), "agy");
         assert_eq!(launch.batch_command, "agy");
+    }
+
+    #[test]
+    fn copilot_byok_launch_passes_the_provider_only_through_the_environment() {
+        let row = crate::provider::Provider::with_id(
+            "relay".into(),
+            "Relay".into(),
+            serde_json::json!({"env":{
+                "COPILOT_PROVIDER_BASE_URL":"https://relay.test/v1",
+                "COPILOT_PROVIDER_API_KEY":"fixture-key",
+                "COPILOT_PROVIDER_WIRE_API":"responses",
+                "COPILOT_MODEL":"gpt-5.4"
+            }}),
+            None,
+        );
+        // A bound account never applies to bring-your-own-model cards.
+        let launch =
+            copilot_terminal_launch(&row, Some(("gho_x".into(), "github.com".into()))).unwrap();
+        let command = unix_launch_command(&launch);
+        assert!(command.ends_with(" copilot"), "{command}");
+        assert!(!command.contains("fixture-key"), "{command}");
+        assert!(!command.contains("gho_x"), "{command}");
+        assert!(
+            command.contains("-u COPILOT_PROVIDER_BEARER_TOKEN"),
+            "{command}"
+        );
+        let env_file = unix_launch_env_file(&launch);
+        assert!(env_file.contains("fixture-key"));
+        assert!(env_file.contains("gpt-5.4"));
+        assert!(!env_file.contains("gho_x"));
+        assert_eq!(launch.batch_command, "call copilot");
+    }
+
+    #[test]
+    fn copilot_launch_passes_the_card_reasoning_effort() {
+        let row = crate::provider::Provider::with_id(
+            "relay".into(),
+            "Relay".into(),
+            serde_json::json!({"env":{
+                "COPILOT_PROVIDER_BASE_URL":"https://relay.test/v1",
+                "COPILOT_PROVIDER_API_KEY":"fixture-key",
+                "COPILOT_PROVIDER_WIRE_API":"responses",
+                "COPILOT_MODEL":"deepseek-v4-flash"
+            },"reasoningEffort":"none"}),
+            None,
+        );
+        let mut launch = copilot_terminal_launch(&row, None).unwrap();
+        assert!(
+            unix_launch_command(&launch).ends_with(" copilot --reasoning-effort=none"),
+            "{}",
+            unix_launch_command(&launch)
+        );
+        assert_eq!(launch.batch_command, "call copilot --reasoning-effort=none");
+
+        launch.skip_permissions();
+        assert!(
+            unix_launch_command(&launch).ends_with(" copilot --reasoning-effort=none --allow-all"),
+            "{}",
+            unix_launch_command(&launch)
+        );
+        assert_eq!(
+            launch.batch_command,
+            "call copilot --reasoning-effort=none --allow-all"
+        );
+
+        // 「打开终端」里的附加参数接在 `--allow-all` 后面
+        launch
+            .append_user_args(vec!["--add-dir".into(), "/tmp/a b".into()])
+            .unwrap();
+        assert!(
+            unix_launch_command(&launch)
+                .ends_with(" copilot --reasoning-effort=none --allow-all --add-dir '/tmp/a b'"),
+            "{}",
+            unix_launch_command(&launch)
+        );
+        assert_eq!(
+            launch.batch_command,
+            "call copilot --reasoning-effort=none --allow-all \"%CC_SWITCH_ARG0%\" \"%CC_SWITCH_ARG1%\""
+        );
+    }
+
+    #[test]
+    fn copilot_login_launch_uses_the_model_flag_and_bound_account() {
+        let mut row = crate::provider::Provider::with_id(
+            "login".into(),
+            "GitHub".into(),
+            serde_json::json!({"env":{"COPILOT_MODEL":"claude-sonnet-4.6"}}),
+            None,
+        );
+        row.category = Some("official".into());
+        let launch = copilot_terminal_launch(&row, None).unwrap();
+        let command = unix_launch_command(&launch);
+        assert!(
+            command.ends_with(" copilot --model=claude-sonnet-4.6"),
+            "{command}"
+        );
+        assert!(
+            command.contains("-u COPILOT_PROVIDER_BASE_URL"),
+            "{command}"
+        );
+        assert_eq!(
+            launch.batch_command,
+            format!("call copilot \"--model=%{COPILOT_MODEL_BATCH_VAR}%\"")
+        );
+
+        let launch = copilot_terminal_launch(
+            &row,
+            Some(("gho_fixture".into(), "github.example.com".into())),
+        )
+        .unwrap();
+        assert!(!unix_launch_command(&launch).contains("gho_fixture"));
+        let env_file = unix_launch_env_file(&launch);
+        assert!(env_file.contains("gho_fixture"));
+        assert!(env_file.contains("github.example.com"));
+
+        row.settings_config = serde_json::json!({"env":{}});
+        let launch = copilot_terminal_launch(&row, None).unwrap();
+        assert!(unix_launch_command(&launch).ends_with(" copilot"));
     }
 
     #[cfg(unix)]
@@ -11787,6 +12199,64 @@ mod tests {
         assert_eq!(
             windows_preferred_tool_executable("opencode", &standalone),
             Some(standalone)
+        );
+    }
+
+    #[test]
+    fn foreign_pip_launcher_only_rejects_pi_exe_in_scripts_dir() {
+        let pip_pi = Path::new(r"D:\soft\Python\Python311\Scripts\pi.exe");
+        assert!(is_foreign_pip_launcher("pi", pip_pi));
+        assert!(is_foreign_pip_launcher(
+            "pi",
+            Path::new(r"C:\venvs\tools\SCRIPTS\PI.EXE")
+        ));
+        assert!(!is_foreign_pip_launcher(
+            "pi",
+            Path::new(r"C:\Users\me\AppData\Roaming\npm\pi.cmd")
+        ));
+        // A custom npm prefix under a `Scripts` folder writes `.cmd` shims.
+        assert!(!is_foreign_pip_launcher(
+            "pi",
+            Path::new(r"D:\Scripts\npm-global\pi.cmd")
+        ));
+        assert!(!is_foreign_pip_launcher(
+            "pi",
+            Path::new(r"D:\Scripts\pi.cmd")
+        ));
+        // Bun's global shims are `.exe` but live in `.bun\bin`.
+        assert!(!is_foreign_pip_launcher(
+            "pi",
+            Path::new(r"C:\Users\me\.bun\bin\pi.exe")
+        ));
+        // Hermes really is installed by pip.
+        assert!(!is_foreign_pip_launcher(
+            "hermes",
+            Path::new(r"D:\soft\Python\Python311\Scripts\hermes.exe")
+        ));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_path_default_skips_pip_pi_and_uses_npm_pi() {
+        let root = tempfile::tempdir().expect("temp dir should be created");
+        let scripts = root.path().join("Python311").join("Scripts");
+        std::fs::create_dir_all(&scripts).expect("Scripts dir should be created");
+        let pip_pi = scripts.join("pi.exe");
+        std::fs::write(&pip_pi, "").expect("pip launcher should be created");
+        assert!(tool_executable_candidates("pi", &scripts)
+            .iter()
+            .all(|candidate| candidate != &pip_pi));
+
+        let npm = root.path().join("npm");
+        std::fs::create_dir_all(&npm).expect("npm dir should be created");
+        let npm_pi = npm.join("pi.cmd");
+        std::fs::write(&npm_pi, "").expect("npm shim should be created");
+
+        let raw = format!("{}\r\n{}\r\n", pip_pi.display(), npm_pi.display());
+        assert_eq!(windows_preferred_path_default("pi", &raw), Some(npm_pi));
+        assert_eq!(
+            windows_preferred_path_default("pi", &format!("{}\r\n", pip_pi.display())),
+            None
         );
     }
 
