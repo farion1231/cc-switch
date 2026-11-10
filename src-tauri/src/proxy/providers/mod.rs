@@ -223,7 +223,8 @@ impl ProviderType {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Omp
-            | AppType::Agy => return None,
+            | AppType::Agy
+            | AppType::Copilot => return None,
         };
         Some(provider_type)
     }
@@ -284,7 +285,8 @@ pub fn get_adapter(app_type: &AppType) -> Option<Box<dyn ProviderAdapter>> {
         | AppType::Kimi
         | AppType::Dsh
         | AppType::Omp
-        | AppType::Agy => return None,
+        | AppType::Agy
+        | AppType::Copilot => return None,
     })
 }
 

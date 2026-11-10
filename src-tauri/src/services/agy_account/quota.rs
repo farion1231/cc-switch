@@ -10,6 +10,10 @@
 //!
 //! 没有使用资格的号（如 Google 判定未满 18 岁）同样回 403「没有有效许可」，这时再问一次
 //! `loadCodeAssist`，把 Google 给的不合格原因原样显示，免得看着像 CC Switch 的问题。
+//!
+//! 接口地址必须和 agy 用的一致：agy（1.5 起，见 `~/.gemini/antigravity-cli/log`）所有请求都发往
+//! `daily-cloudcode-pa`，Gemini 那组的用量也记在那边；`cloudcode-pa` 回的 Gemini 桶是另一份
+//! （重置时间、剩余比例都对不上，11-07 实测同一个号 0.94 对 1.0），Claude/GPT 那组两边相同。
 
 use std::time::Duration;
 
@@ -20,7 +24,8 @@ use tokio::sync::OnceCell;
 use crate::services::subscription::QuotaTier;
 use crate::services::subscription_agy::collect_tiers;
 
-const API_BASE: &str = "https://cloudcode-pa.googleapis.com/v1internal";
+/// agy 自己用的地址（不是 Gemini CLI 用的 `cloudcode-pa`），额度才和 agy 的 `/usage` 一致
+const API_BASE: &str = "https://daily-cloudcode-pa.googleapis.com/v1internal";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_BODY: usize = 256 * 1024;
 /// 本机读不到 agy 版本时写进 UA 的版本（实测过的发行版；服务端要 1.2.0 起才回 Gemini 那组）
@@ -261,14 +266,34 @@ pub(crate) fn code_assist_plan(body: &[u8]) -> Option<String> {
             .map(str::to_string)
     };
     if let Some(name) = name(&response.paid_tier) {
-        return Some(name);
+        let id = response
+            .paid_tier
+            .as_ref()
+            .and_then(|tier| tier.get("id")?.as_str());
+        return Some(with_ultra_variant(name, id));
     }
     let id = response.current_tier.as_ref()?.get("id")?.as_str()?;
     match id {
         "free-tier" => Some("Free".to_string()),
         "standard-tier" => Some("Paid".to_string()),
-        _ => name(&response.current_tier),
+        _ => name(&response.current_tier).map(|name| with_ultra_variant(name, Some(id))),
     }
+}
+
+/// Google AI Ultra 分 5x、20x 两档，`paidTier.name` 都只写「Google AI Ultra」，靠 id 区分
+/// （11-07 实测）：`g1-ultra-lite-tier` 是 5x（升级提示写「可升级到更高的 Ultra 方案」），
+/// `g1-ultra-tier` 是 20x（「已是最好的 Google AI 方案」）。名字里已带档位时不重复补。
+fn with_ultra_variant(name: String, tier_id: Option<&str>) -> String {
+    let variant = match tier_id {
+        Some("g1-ultra-lite-tier") => "5x",
+        Some("g1-ultra-tier") => "20x",
+        _ => return name,
+    };
+    let lower = name.to_ascii_lowercase();
+    if !lower.contains("ultra") || lower.contains("5x") || lower.contains("20x") {
+        return name;
+    }
+    format!("{name} {variant}")
 }
 
 /// 只有不合格档、没有当前档时才算没资格。
@@ -387,6 +412,46 @@ mod tests {
             Some("Free")
         );
         assert_eq!(plan(r#"{"ineligibleTiers":[]}"#), None);
+    }
+
+    #[test]
+    fn ultra_plans_show_their_5x_or_20x_variant() {
+        let plan = |body: &str| code_assist_plan(body.as_bytes());
+        // loadCodeAssist 的真实 paidTier（11-07），两档名字一样，只有 id 不同
+        assert_eq!(
+            plan(r#"{"currentTier":{"id":"free-tier","name":"Antigravity"},"paidTier":{"id":"g1-ultra-lite-tier","name":"Google AI Ultra"}}"#)
+                .as_deref(),
+            Some("Google AI Ultra 5x")
+        );
+        assert_eq!(
+            plan(r#"{"currentTier":{"id":"free-tier","name":"Antigravity"},"paidTier":{"id":"g1-ultra-tier","name":"Google AI Ultra"}}"#)
+                .as_deref(),
+            Some("Google AI Ultra 20x")
+        );
+        // 以后 Google 自己把档位写进名字时不重复补；别的套餐不动
+        assert_eq!(
+            plan(r#"{"paidTier":{"id":"g1-ultra-tier","name":"Google AI Ultra 20x"}}"#).as_deref(),
+            Some("Google AI Ultra 20x")
+        );
+        assert_eq!(
+            plan(r#"{"paidTier":{"id":"g1-ultra-lite-tier","name":"Google AI Ultra 5X"}}"#)
+                .as_deref(),
+            Some("Google AI Ultra 5X")
+        );
+        assert_eq!(
+            plan(r#"{"currentTier":{"id":"g1-ultra-lite-tier","name":"Google AI Ultra"}}"#)
+                .as_deref(),
+            Some("Google AI Ultra 5x")
+        );
+        assert_eq!(
+            plan(r#"{"paidTier":{"id":"g1-pro-tier","name":"Google AI Pro"}}"#).as_deref(),
+            Some("Google AI Pro")
+        );
+    }
+
+    #[test]
+    fn quota_is_read_from_the_endpoint_agy_uses() {
+        assert!(API_BASE.starts_with("https://daily-cloudcode-pa.googleapis.com/"));
     }
 
     #[test]

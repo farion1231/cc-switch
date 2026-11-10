@@ -13,6 +13,7 @@ export interface DeepLinkImportRequest {
     | "codex"
     | "gemini"
     | "agy"
+    | "copilot"
     | "grokbuild"
     | "opencode"
     | "openclaw"

@@ -19,6 +19,7 @@ import { ProviderIconBox } from "@/components/ProviderIconBox";
 import { HoverTip } from "@/components/ui/hover-tip";
 import UsageFooter from "@/components/UsageFooter";
 import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
+import CopilotCliQuotaFooter from "@/components/CopilotCliQuotaFooter";
 import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
 import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
 import XaiOauthQuotaFooter from "@/components/XaiOauthQuotaFooter";
@@ -38,6 +39,11 @@ import {
   extractCodexExperimentalBearerToken,
   extractProviderBaseUrl,
 } from "@/utils/providerConfigUtils";
+import {
+  copilotByokConfigOf,
+  copilotEnvOf,
+  isCopilotByok,
+} from "@/config/copilotConfig";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { isMac } from "@/lib/platform";
 import {
@@ -50,7 +56,11 @@ import { useUsageQuery } from "@/lib/query/queries";
 import { resolveProviderIcon } from "@/utils/providerIcon";
 import { isProxyAppId } from "@/config/appConfig";
 import { ProviderCardActions } from "./ProviderCardActions";
-import { terminalAvailable, terminalIsIsolated } from "./OpenTerminalDialog";
+import {
+  terminalAvailable,
+  terminalIsIsolated,
+  terminalNeedsRoute,
+} from "./OpenTerminalDialog";
 import type { CardChip, CardPresentation, CardTone } from "./presentation";
 
 const copilotPlan = (data: unknown) => (data as CopilotQuota).plan;
@@ -134,6 +144,7 @@ function isOfficialProvider(provider: Provider, appId: AppId): boolean {
   if (provider.category === "official") {
     return true;
   }
+  if (appId === "copilot") return !isCopilotByok(provider.settingsConfig);
 
   const config = provider.settingsConfig as Record<string, any>;
   if (appId === "claude") {
@@ -162,6 +173,22 @@ function isOfficialProvider(provider: Provider, appId: AppId): boolean {
     );
   }
   return false;
+}
+
+/** Copilot CLI 卡片显示模型（`COPILOT_MODEL`），自带模型卡再带上地址。 */
+function extractCopilotSummary(provider: Provider): string | null {
+  // 官方卡写的是 --model；自带模型卡写 providers.json 里的第一个模型（打开终端用它）和地址
+  if (!isCopilotByok(provider.settingsConfig)) {
+    return copilotEnvOf(provider.settingsConfig).COPILOT_MODEL?.trim() || null;
+  }
+  const { provider: node, models } = copilotByokConfigOf(
+    provider.settingsConfig,
+  );
+  const ids = models.map((model) => model.id.trim()).filter(Boolean);
+  const model = ids.length > 1 ? `${ids[0]} +${ids.length - 1}` : ids[0];
+  const baseUrl = node.baseUrl.trim();
+  if (model && baseUrl) return `${model} · ${baseUrl}`;
+  return model || baseUrl || null;
 }
 
 /** Antigravity 卡片直接显示当前模型，省得进编辑才知道。 */
@@ -246,7 +273,12 @@ export function ProviderCard({
   }, [provider, fallbackUrlText]);
 
   const agyModel = useMemo(
-    () => (appId === "agy" ? extractAgyModel(provider) : null),
+    () =>
+      appId === "agy"
+        ? extractAgyModel(provider)
+        : appId === "copilot"
+          ? extractCopilotSummary(provider)
+          : null,
     [appId, provider],
   );
 
@@ -297,9 +329,17 @@ export function ProviderCard({
       )
     : null;
 
+  // Copilot CLI 官方卡的 Premium 额度可在「配置用量查询」里开关；没设置过时，绑了授权中心
+  // 账号的卡默认显示，没绑的默认不显示（打开后跟着 Copilot CLI 当前登录的账号查）。
+  const isCopilotCliOfficial = appId === "copilot" && isOfficial;
+  const copilotCliQuotaEnabled =
+    isCopilotCliOfficial &&
+    (provider.meta?.usage_script?.enabled ??
+      Boolean(resolveManagedAccountId(provider.meta, "github_copilot")));
   const isCopilot =
-    provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
-    provider.meta?.usage_script?.templateType === "github_copilot";
+    appId !== "copilot" &&
+    (provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
+      provider.meta?.usage_script?.templateType === "github_copilot");
   const isCodexOauth =
     appId === "codex"
       ? isBoundCodexOfficial
@@ -580,7 +620,12 @@ export function ProviderCard({
           {/* 额度列 136 宽，带重置倒计时时 194 宽（见 QuotaLines） */}
           <div className="max-w-[208px] text-end">
             <div className="flex items-center justify-end gap-1">
-              {isCopilot ? (
+              {copilotCliQuotaEnabled ? (
+                <CopilotCliQuotaFooter
+                  meta={provider.meta}
+                  isCurrent={isCurrent}
+                />
+              ) : isCopilot ? (
                 <CopilotQuotaFooter
                   meta={provider.meta}
                   inline={true}
@@ -700,7 +745,9 @@ export function ProviderCard({
             }
             isTesting={isTesting}
             onConfigureUsage={
-              (isOfficial && !supportsOfficialSubscription) ||
+              (isOfficial &&
+                !supportsOfficialSubscription &&
+                !isCopilotCliOfficial) ||
               isCopilot ||
               (isCodexOauth && !isBoundCodexOfficial) ||
               isXaiOauth
@@ -713,6 +760,16 @@ export function ProviderCard({
                 : undefined
             }
             openTerminalIsolated={terminalIsIsolated(provider, appId)}
+            openTerminalDisabledReason={
+              terminalNeedsRoute(provider, appId)
+                ? t("provider.openTerminalNeedsRoute")
+                : // Copilot 自带模型卡要先写进 providers.json，终端才能用 --model 选到它
+                  appId === "copilot" &&
+                    !isOfficial &&
+                    provider.meta?.liveConfigManaged !== true
+                  ? t("copilot.terminalNeedsAdd")
+                  : undefined
+            }
           />
         </div>
       </div>
