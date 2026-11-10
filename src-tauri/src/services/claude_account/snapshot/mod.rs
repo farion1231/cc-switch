@@ -129,16 +129,32 @@ pub fn default_owner(default: &Slot) -> Option<String> {
 /// 终端里 `/login` 过别的号）。所以认定在默认槽位之前还要核对默认凭据确实是这个号，对不上就
 /// 读它自己的账号目录，免得把别人的额度显示成它的。
 pub fn account_slot(data_dir: &Path, account: &str) -> Option<Slot> {
-    if is_live(account) && default_login_is(account) {
-        return Some(Slot::default_slot());
+    resolve_slot(
+        account,
+        &Slot::default_slot(),
+        store::platform_store().as_ref(),
+        || crate::services::claude_account::config_dir_on_disk(data_dir, account),
+    )
+}
+
+/// [`account_slot`] 的判断本体：默认槽位、凭据存储、账号目录的查法都由调用方给，测试里换成假的。
+fn resolve_slot(
+    account: &str,
+    default: &Slot,
+    store: &dyn CredentialStore,
+    account_dir: impl FnOnce() -> Option<PathBuf>,
+) -> Option<Slot> {
+    if default_owner(default).as_deref() == Some(account)
+        && default_login_is(account, default, store)
+    {
+        return Some(default.clone());
     }
-    crate::services::claude_account::config_dir_on_disk(data_dir, account).map(Slot::Account)
+    account_dir().map(Slot::Account)
 }
 
 /// 默认槽位里的凭据（加默认 `.claude.json` 的资料）认出来确实是 `account`。
-fn default_login_is(account: &str) -> bool {
-    let default = Slot::default_slot();
-    let secret = store::platform_store().read(&default).ok().flatten();
+fn default_login_is(account: &str, default: &Slot, store: &dyn CredentialStore) -> bool {
+    let secret = store.read(default).ok().flatten();
     let profile = files::read_profile(&default.global_config());
     creds::owner_of(secret.as_ref(), profile.as_ref())
         .ok()
