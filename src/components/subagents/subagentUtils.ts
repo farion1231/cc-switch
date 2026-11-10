@@ -3,6 +3,7 @@ import type { Subagent, SubagentErrorCode } from "@/lib/api/subagents";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import {
   SUBAGENT_COLORS,
+  parseSubagentMarkdownLoose,
   safeParseSubagentMarkdown,
   type SubagentColor,
   type SubagentFields,
@@ -46,10 +47,14 @@ export function colorHexOf(color: string | undefined): string | undefined {
     : undefined;
 }
 
-/** 列表行用的字段；frontmatter 坏了就只剩后端给的 name / description */
+/**
+ * 列表行用的字段。严格解析不了时按后端同样的宽松规则取（/agents 生成的文件
+ * description 常常没加引号）；仍然取不出就只剩后端给的 name / description。
+ */
 export function fieldsOf(subagent: Pick<Subagent, "content">): SubagentFields {
   const parsed = safeParseSubagentMarkdown(subagent.content);
-  return parsed.ok ? parsed.value.fields : {};
+  if (parsed.ok) return parsed.value.fields;
+  return parseSubagentMarkdownLoose(subagent.content)?.fields ?? {};
 }
 
 /** `<目录>/<文件名>.md`；后端给的 fileName 带不带 .md 都能拼对 */

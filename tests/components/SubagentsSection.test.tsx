@@ -237,6 +237,40 @@ describe("SubagentsSection", () => {
       expect(mocks.import).toHaveBeenCalledWith(["helper.md"]),
     );
   });
+  it("reads model and tools from /agents files that strict YAML rejects", async () => {
+    // Claude Code /agents 生成的 description 没加引号、带 `Context:`
+    const content =
+      "---\nname: api-designer\ndescription: Use this agent when designing APIs. Examples: <example>Context: adding a resource</example>\ntools: Read, Grep\nmodel: sonnet\n---\n\nYou design APIs.\n";
+    mocks.list.mockResolvedValue([
+      { ...tester, id: "a4", name: "api-designer", enabled: true, content },
+    ]);
+    mocks.scanUnmanaged.mockResolvedValue([
+      {
+        fileName: "api-designer-2.md",
+        path: "/home/u/.claude/agents/api-designer-2.md",
+        name: "api-designer-2",
+        content,
+      },
+    ]);
+    const user = userEvent.setup();
+    await renderSection();
+
+    const row = await screen.findByTestId("subagent-row-a4");
+    expect(within(row).getByText("sonnet")).toBeInTheDocument();
+    expect(within(row).getByTitle("Read, Grep")).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: /^subagents\.import/ }),
+    );
+    const item = (
+      await screen.findByRole("checkbox", {
+        name: "subagents.unmanaged.selectAria:api-designer-2",
+      })
+    ).closest("li");
+    expect(item).not.toBeNull();
+    expect(within(item!).getByText("sonnet")).toBeInTheDocument();
+  });
+
   it("shows the count and pending issues while collapsed", async () => {
     await renderSection({}, { expand: false });
     const trigger = screen.getByRole("button", {

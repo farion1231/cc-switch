@@ -6,9 +6,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import type { PluginSubagent, UnmanagedSubagent } from "@/lib/api/subagents";
 import { renderSegs } from "@/components/prompts/promptUtils";
 import { cn } from "@/lib/utils";
-import { safeParseSubagentMarkdown } from "./frontmatter";
 import { ModelBadge, subagentBadgeClass } from "./SubagentListItem";
-import { matchesQuery } from "./subagentUtils";
+import { fieldsOf, matchesQuery } from "./subagentUtils";
 
 const listClass =
   "m-0 min-h-0 shrink list-none overflow-y-auto scroll-stable rounded-panel border border-border bg-surface p-0";
@@ -175,10 +174,7 @@ export function SubagentUnmanagedList({
       <ul aria-label={t("subagents.tabs.unmanaged")} className={listClass}>
         {visible.map((item, index) => {
           const broken = Boolean(item.parseError);
-          const parsed = broken
-            ? null
-            : safeParseSubagentMarkdown(item.content);
-          const model = parsed?.ok ? parsed.value.fields.model : undefined;
+          const model = broken ? undefined : fieldsOf(item).model;
           return (
             <li
               key={item.fileName}
