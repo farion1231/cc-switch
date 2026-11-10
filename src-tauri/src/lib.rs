@@ -35,6 +35,7 @@ mod mcp;
 pub mod mode;
 mod model_capabilities;
 mod omp_config;
+mod omp_logins;
 mod openclaw_config;
 mod opencode_config;
 mod panic_hook;
@@ -1696,6 +1697,7 @@ pub fn run() {
             commands::get_pi_session_discovery,
             // Oh My Pi native provider and session views
             commands::get_omp_current_state,
+            commands::omp_list_logins,
             // Profile management (项目配置方案)
             commands::list_profiles,
             commands::create_profile,
