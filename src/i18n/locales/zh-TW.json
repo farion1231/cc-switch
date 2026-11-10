@@ -80,6 +80,10 @@
     "disableArtifactHelp": "不把 Artifact 工具送給模型。部分第三方閘道會因它的 schema 對每個請求回報 400。隨供應商切換。",
     "disableAutoModeServer": "停用 auto mode 伺服器端檢查",
     "disableAutoModeServerHelp": "閘道不支援伺服器端檢查，auto mode 每個工作階段會先停下提示一次「不符合條件」，按 Enter 後改用本機檢查。勾選後直接用本機檢查，不再提示。官方端點不要勾選。",
+    "advisorModel": "Advisor 模型",
+    "advisorModelHelp": "讓 Claude 透過伺服器端 advisor 工具向更強的模型求助。留空即關閉 advisor。可填 opus、sonnet、fable 或完整模型 ID，advisor 至少要和主模型一樣強。只在 Anthropic 官方 API 上生效，其他端點會忽略。隨供應商切換。",
+    "advisorModelInput": "Advisor 模型名稱",
+    "advisorModelPresets": "Advisor 模型預設",
     "keyFieldsHint": "位址、Key、模型、上下文視窗和相容開關隨供應商切換；其餘欄位是 Claude Code 全域設定，儲存後對所有供應商生效。",
     "inactiveFieldsHint": "這些是舊版存進卡裡的設定，現在切換不會寫出去。點一下加入上方，儲存後對所有供應商生效。",
     "addToGlobalSettings": "加入全域設定"

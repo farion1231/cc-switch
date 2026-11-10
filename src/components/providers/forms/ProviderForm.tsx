@@ -3158,6 +3158,7 @@ function ProviderFormFull({
                 value={form.getValues("settingsConfig")}
                 onChange={handleSettingsConfigChange}
                 inactiveFields={inactiveFields}
+                showAdvisorModel={category === "official"}
               />
               {settingsConfigErrorField}
             </>

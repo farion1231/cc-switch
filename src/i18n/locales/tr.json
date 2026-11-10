@@ -80,6 +80,10 @@
     "disableArtifactHelp": "Artifact aracını isteklerin dışında bırakır. Bazı üçüncü taraf ağ geçitleri şemasını reddeder ve her istekte 400 değerini döndürür. Sağlayıcıyla geçiş yapar.",
     "disableAutoModeServer": "Otomatik Mod Sunucu Kontrollerini Devre Dışı Bırak",
     "disableAutoModeServerHelp": "Ağ geçitleri sunucu tarafındaki kontrolü çalıştıramaz. Bu nedenle otomatik mod, her oturumda bir kez “not eligible” bildirimiyle duraklar ve Enter’a bastığınızda yerel kontrole geçer. İşaretlendiğinde bildirim göstermeden doğrudan yerel kontrolü kullanır. Resmî uç noktalarda bu seçeneği işaretlemeyin.",
+    "advisorModel": "Advisor Modeli",
+    "advisorModelHelp": "Claude’un sunucu tarafındaki advisor aracı üzerinden daha güçlü bir modele danışmasını sağlar. Advisor’ı kapatmak için boş bırakın. opus, sonnet, fable veya tam bir model kimliği kabul edilir; advisor en az ana model kadar yetenekli olmalıdır. Yalnızca Anthropic API’de çalışır; diğer uç noktalar bunu yok sayar. Sağlayıcıyla birlikte değişir.",
+    "advisorModelInput": "Advisor model adı",
+    "advisorModelPresets": "Advisor model ön ayarları",
     "keyFieldsHint": "Uç nokta, anahtar, modeller, bağlam penceresi ve uyumluluk anahtarları sağlayıcıyı takip eder; geri kalan her şey genel bir Claude Code ayarıdır ve kaydedildiğinde her sağlayıcı için geçerlidir.",
     "inactiveFieldsHint": "Bu sağlayıcıya daha eski bir sürümle kaydedilmiş; geçiş artık bunları uygulamamaktadır. Yukarıya eklemek için birini tıklayın; kaydettikten sonra her sağlayıcı için geçerlidir.",
     "addToGlobalSettings": "Genel ayarlara ekle"
