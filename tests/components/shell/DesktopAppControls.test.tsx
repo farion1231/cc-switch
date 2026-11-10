@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   restart: vi.fn(),
   isWindows: vi.fn(() => true),
   isMac: vi.fn(() => false),
+  isLinux: vi.fn(() => false),
 }));
 
 vi.mock("react-i18next", () => ({
@@ -26,6 +27,7 @@ vi.mock("react-i18next", () => ({
 vi.mock("@/lib/platform", () => ({
   isWindows: mocks.isWindows,
   isMac: mocks.isMac,
+  isLinux: mocks.isLinux,
 }));
 
 vi.mock("@/lib/api/desktopApp", () => ({
@@ -65,6 +67,7 @@ describe("DesktopAppControls", () => {
     vi.clearAllMocks();
     mocks.isWindows.mockReturnValue(true);
     mocks.isMac.mockReturnValue(false);
+    mocks.isLinux.mockReturnValue(false);
     mocks.getStatus.mockResolvedValue({
       supported: true,
       installed: true,
@@ -122,7 +125,29 @@ describe("DesktopAppControls", () => {
     expect(mocks.restart).toHaveBeenCalledWith("codex");
   });
 
-  it("非 Windows/macOS 平台不渲染按钮，也不发检测请求", () => {
+  it.each(["codex", "claude-desktop", "opencode"] as const)(
+    "Linux 上为 %s 渲染按钮、请求后端，并在未安装时保持置灰",
+    async (app) => {
+      mocks.isWindows.mockReturnValue(false);
+      mocks.isLinux.mockReturnValue(true);
+      mocks.getStatus.mockResolvedValue({
+        supported: true,
+        installed: false,
+        running: false,
+      });
+      const { client } = renderControls(app);
+
+      await waitForStatus(client, app, { installed: false });
+
+      expect(mocks.getStatus).toHaveBeenCalledWith(app);
+      expect(screen.getByRole("button", { name: START_LABEL })).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: RESTART_LABEL }),
+      ).toBeDisabled();
+    },
+  );
+
+  it("未知平台不渲染按钮，也不发检测请求", () => {
     mocks.isWindows.mockReturnValue(false);
     const { container } = renderControls();
 
