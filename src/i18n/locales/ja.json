@@ -4889,7 +4889,9 @@
       "updates": "更新あり",
       "none": "どのアプリでも無効",
       "inApp": "{{app}} で有効",
-      "sourceButton": "ソース：{{source}}"
+      "sourceButton": "ソース：{{source}}",
+      "sourceButtonSome": "ソース：{{total}} 件中 {{count}}",
+      "selectAll": "すべて選択"
     },
     "source": {
       "local": "ローカル"

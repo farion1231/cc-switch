@@ -4889,7 +4889,9 @@
       "updates": "Has updates",
       "none": "Not enabled anywhere",
       "inApp": "Enabled in {{app}}",
-      "sourceButton": "Source: {{source}}"
+      "sourceButton": "Source: {{source}}",
+      "sourceButtonSome": "Source: {{count}} of {{total}}",
+      "selectAll": "Select all"
     },
     "source": {
       "local": "Local"

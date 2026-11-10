@@ -4809,7 +4809,9 @@
       "updates": "Güncellemeler var",
       "none": "Hiçbir yerde etkinleştirilmedi",
       "inApp": "{{app}}'de etkinleştirildi",
-      "sourceButton": "Kaynak: {{source}}"
+      "sourceButton": "Kaynak: {{source}}",
+      "sourceButtonSome": "Kaynak: {{count}} / {{total}}",
+      "selectAll": "Tümünü seç"
     },
     "source": {
       "local": "Yerel"

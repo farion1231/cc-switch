@@ -4889,7 +4889,9 @@
       "updates": "업데이트 있음",
       "none": "활성화된 앱 없음",
       "inApp": "{{app}}에서 활성화됨",
-      "sourceButton": "출처: {{source}}"
+      "sourceButton": "출처: {{source}}",
+      "sourceButtonSome": "출처: {{total}}개 중 {{count}}개",
+      "selectAll": "모두 선택"
     },
     "source": {
       "local": "로컬"
