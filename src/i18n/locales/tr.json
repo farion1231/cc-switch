@@ -1430,6 +1430,7 @@
     "selectSessionLabel": "{{title}}'yi seçin",
     "agyDeleteHint": "Çalışma zamanı durumunu da kaldırmak için bu oturumu Antigravity'de silin.",
     "mcodeDeleteHint": "MiniMax Code'de silin",
+    "codebuddyDeleteHint": "Bu oturumu CodeBuddy Code'da yönetin: arka plan işleri, ekip üyeleri ve dosya geçmişi bu kayda başvurur",
     "groupMeta": "{{count}} oturumları · {{time}}",
     "bucketToday": "Bugün",
     "bucketYesterday": "Dün",
@@ -1640,8 +1641,7 @@
       "expandContent": "İçeriğin tamamını göster",
       "collapseContent": "Daralt"
     },
-    "copilotDeleteHint": "Oturum deposunun tutarlı kalması için bu oturumu GitHub Copilot CLI içinde silin",
-    "codebuddyDeleteHint": "Bu oturumu CodeBuddy Code'da yönetin: arka plan işleri, ekip üyeleri ve dosya geçmişi bu kayda başvurur"
+    "copilotDeleteHint": "Oturum deposunun tutarlı kalması için bu oturumu GitHub Copilot CLI içinde silin"
   },
   "console": {
     "providerSwitchReceived": "Alınan sağlayıcı değiştirme etkinliği:",
@@ -4768,9 +4768,9 @@
       "failedTitle": "Bazı uygulamalar okunamadı",
       "filesTitle": "Hangi dosyalar okundu",
       "claudeNote": " (üst düzey mcpServers)",
+      "codebuddyNote": " (.mcp.json, mcp.json, ~/.codebuddy.json içinden ilk mevcut olan)",
       "dshNote": " (başlatılmış her profile yazılır: web, desktop, headless, acp)",
-      "ok": "Anladım",
-      "codebuddyNote": " (.mcp.json, mcp.json, ~/.codebuddy.json içinden ilk mevcut olan)"
+      "ok": "Anladım"
     },
     "templateLabels": {
       "sequential-thinking": "Sıralı düşünme"
@@ -5071,10 +5071,10 @@
       "chatgptHelp": "Claude Code ve Claude Desktop'deki ChatGPT ön ayarları ve Codex'nin resmi oturum açma bağlaması tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "xaiHelp": "Claude Code, Claude Desktop ve Codex'deki xAI ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "agyHelp": "Antigravity CLI (agy) için resmî oturum açma yöntemi. agy aynı anda yalnızca tek bir hesapta oturum açabilir. Hesabı Değiştir seçeneği agy'nin oturumunu seçilen hesapla değiştirir ve bundan sonra başlatılan agy oturumları bu hesabı kullanır. agy'nin hâlihazırda oturum açtığı hesap buraya otomatik olarak eklenir; böylece başka hesaba geçerken önceki hesabı kaybetmezsiniz.",
+      "codebuddyHelp": "CodeBuddy Code'un resmi oturumu (Çin ve uluslararası siteler). Hesap değiştirmek için sağlayıcı listesinde hesap için bir \"CodeBuddy Resmi Oturum\" kartı oluşturup Ekle'ye tıklayın. \"Hesap ekle\" codebuddy'yi bir terminalde açar ve bitince hesabı buraya ekler; CodeBuddy zaten oturum açmışsa oturum geçici olarak kapatılır, vazgeçerseniz geri yüklenebilir. Belirteçleri CodeBuddy kendisi yeniler.",
       "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings, so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",
       "claudeHelpWsl": "Official Claude Code subscription accounts (Pro / Max / Team). Not supported yet while the Claude config folder is in WSL.",
-      "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: after switching to the card, Claude Code's sign-in changes to it right away. To use several accounts at once, use Open Terminal on the card. Sign-in tokens stay on this computer and are never uploaded, refreshed or signed out. The first switch saves the account Claude Code is signed in to now; switching ends Remote Control and rebuilds the prompt cache.",
-      "codebuddyHelp": "CodeBuddy Code'un resmi oturumu (Çin ve uluslararası siteler). Hesap değiştirmek için sağlayıcı listesinde hesap için bir \"CodeBuddy Resmi Oturum\" kartı oluşturup Ekle'ye tıklayın. \"Hesap ekle\" codebuddy'yi bir terminalde açar ve bitince hesabı buraya ekler; CodeBuddy zaten oturum açmışsa oturum geçici olarak kapatılır, vazgeçerseniz geri yüklenebilir. Belirteçleri CodeBuddy kendisi yeniler."
+      "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: after switching to the card, Claude Code's sign-in changes to it right away. To use several accounts at once, use Open Terminal on the card. Sign-in tokens stay on this computer and are never uploaded, refreshed or signed out. The first switch saves the account Claude Code is signed in to now; switching ends Remote Control and rebuilds the prompt cache."
     },
     "addAccount": "Hesap ekle",
     "accountMenu": "{{login}} için daha fazla eylem",
@@ -5132,21 +5132,6 @@
       "switched": "Hesap değiştirildi. Yeni agy oturumları bu hesabı kullanacak.",
       "switchedWhileRunning": "Hesap değiştirildi. agy çalışıyor: açık agy oturumları önceki hesabı kullanmaya devam eder ve hesabı yeniden kaydedebilir. agy'yi kapatıp yeniden açın."
     },
-    "claude": {
-      "pasteSubmitted": "Submitted. Finishing sign-in…",
-      "pasteToggle": "Didn't come back here after authorizing?",
-      "pasteHint": "Paste the address from the browser's address bar after authorizing, or the code shown on the page.",
-      "pasteLabel": "Authorization code or address",
-      "pasteSubmit": "Submit",
-      "reauthNote": "Sign-in expired. Sign in again.",
-      "addedOn": "Added {{date}}",
-      "loginExpiresOn": "Sign-in expires around {{date}}; sign in again after that",
-      "loginMaybeExpired": "Sign-in may have expired. Sign in again before switching to it.",
-      "statusLoadFailed": "Couldn't read Claude accounts. Try again.",
-      "empty": "No Claude accounts yet. Sign in here to switch between multiple subscription accounts.",
-      "removeNote": "Only removes the sign-in CC Switch saved for this account; it isn't signed out anywhere else, and Claude Code's current sign-in (~/.claude) is untouched. Cards bound to it switch to Claude Code's current sign-in.",
-      "wslUnsupported": "The Claude config folder is in WSL. Adding and switching Claude accounts isn't supported there yet."
-    },
     "codebuddy": {
       "mainland": "Çin",
       "global": "Uluslararası",
@@ -5172,6 +5157,21 @@
         "usedDetail": "Bu dönemde {{used}} kredi kullanıldı",
         "refreshPending": "Belirteç CodeBuddy tarafından yenilenmeyi bekliyor. Bu hesaba geçip bir kez kullanın, sonra tekrar kontrol edin."
       }
+    },
+    "claude": {
+      "pasteSubmitted": "Submitted. Finishing sign-in…",
+      "pasteToggle": "Didn't come back here after authorizing?",
+      "pasteHint": "Paste the address from the browser's address bar after authorizing, or the code shown on the page.",
+      "pasteLabel": "Authorization code or address",
+      "pasteSubmit": "Submit",
+      "reauthNote": "Sign-in expired. Sign in again.",
+      "addedOn": "Added {{date}}",
+      "loginExpiresOn": "Sign-in expires around {{date}}; sign in again after that",
+      "loginMaybeExpired": "Sign-in may have expired. Sign in again before switching to it.",
+      "statusLoadFailed": "Couldn't read Claude accounts. Try again.",
+      "empty": "No Claude accounts yet. Sign in here to switch between multiple subscription accounts.",
+      "removeNote": "Only removes the sign-in CC Switch saved for this account; it isn't signed out anywhere else, and Claude Code's current sign-in (~/.claude) is untouched. Cards bound to it switch to Claude Code's current sign-in.",
+      "wslUnsupported": "The Claude config folder is in WSL. Adding and switching Claude accounts isn't supported there yet."
     },
     "openBrowser": {
       "title": "Oturum açarken tarayıcıyı aç",
@@ -5274,38 +5274,6 @@
       "legacyModelsJson": "Oh My Pi'de eski biçimde bir models.json dosyası var. omp, sonraki açılışında bunu models.yml biçimine geçirir. omp'yi bir kez çalıştırın, ardından sağlayıcıyı yeniden ekleyin."
     }
   },
-  "dsh": {
-    "empty": {
-      "title": "DeepSeek Harness sağlayıcısı ekle",
-      "description": "Bir uç nokta, API anahtarı ve modeller yapılandırın. Mevcut özel sağlayıcılar burada otomatik olarak görünür."
-    },
-    "sharedProviders": "Eklenen sağlayıcılar DeepSeek Harness'ın hem Web hem Desktop yapılandırmasına (ve başlatılmış headless, acp profillerine) yazılır; modeli DeepSeek Harness içinde seçin.",
-    "sharedProvidersNote": "Web ve Desktop ortak kullanır",
-    "account": {
-      "help": "DeepSeek hesabı tarayıcı üzerinden oturum açar (OAuth); burada veya DeepSeek Harness'ta oturum açabilirsiniz. Oturum $DSH_HOME/.credentials.yaml (varsayılan ~/.dsh/.credentials.yaml) içinde saklanır ve DeepSeek Harness Web ile Desktop tarafından paylaşılır: herhangi bir yerde oturum açmak veya kapatmak ikisine de uygulanır, çalışan DeepSeek Harness dosyayı otomatik olarak yeniden okur. Hesabın modellerinin kullanımı, Kullanım sayfasında ayrıca \"DeepSeek hesabı (OAuth)\" olarak görünür.",
-      "statusFailed": "DeepSeek hesabı oturumu okunamadı",
-      "empty": "DeepSeek hesabında oturum açılmamış",
-      "unnamed": "DeepSeek hesabı",
-      "expired": "Oturumun süresi doldu. Yeniden oturum açın",
-      "shared": "Web ve Desktop tarafından paylaşılır",
-      "signOut": "Oturumu kapat",
-      "signOutConfirm": "\"{{name}}\" DeepSeek hesabından çıkış yapılsın mı? DeepSeek Harness Web ve Desktop'ta birlikte oturum kapatılır. API anahtarı sağlayıcıları etkilenmez.",
-      "signOutFailed": "DeepSeek hesabından çıkış yapılamadı",
-      "balance": "Bakiye {{amount}}",
-      "bonus": "Bonus {{amount}}",
-      "balanceFailed": "Bakiye şu anda alınamıyor",
-      "signedIn": "DeepSeek hesabında hem Web hem Desktop için oturum açıldı",
-      "signInFailed": "DeepSeek hesabında oturum açılamadı",
-      "presetName": "DeepSeek resmi oturum açma",
-      "presetDescription": "DeepSeek hesabınızda tarayıcı üzerinden oturum açtıktan sonra DeepSeek Harness hesabın modellerini doğrudan sunar; sağlayıcı eklemeniz gerekmez. Web ve Desktop bu oturumu paylaşır. Oturum açma ve kapatma Yetkilendirme Merkezi'nde yönetilir; oturum açınca hesap Eklenenler altında görünür.",
-      "manageAccounts": "DeepSeek hesabını yönet",
-      "cardSubtitle": "Resmi hesap · Web ve Desktop ortak",
-      "expiredChip": "Oturum süresi doldu",
-      "editDisabled": "Bu hesabın modellerini DeepSeek Harness kendisi sağlar; düzenlenecek bir şey yok.",
-      "managedHint": "Hesap Yetkilendirme Merkezi'nde yönetilir; oturumu kapatınca bu kart kendiliğinden kaybolur."
-    },
-    "deleteSessionHint": "Geçmişin tutarlı kalması için bu oturumu DeepSeek Harness içinde silin."
-  },
   "codebuddy": {
     "empty": {
       "title": "Henüz özel model yok",
@@ -5346,5 +5314,37 @@
       "restored": "Özgün CodeBuddy oturumu geri yüklendi.",
       "restoreFailed": "Özgün oturum geri yüklenemedi (CodeBuddy oturum dosyasını yazıyor olabilir). Yetkilendirme Merkezi'nden veya bir terminalden yeniden oturum açın."
     }
+  },
+  "dsh": {
+    "empty": {
+      "title": "DeepSeek Harness sağlayıcısı ekle",
+      "description": "Bir uç nokta, API anahtarı ve modeller yapılandırın. Mevcut özel sağlayıcılar burada otomatik olarak görünür."
+    },
+    "sharedProviders": "Eklenen sağlayıcılar DeepSeek Harness'ın hem Web hem Desktop yapılandırmasına (ve başlatılmış headless, acp profillerine) yazılır; modeli DeepSeek Harness içinde seçin.",
+    "sharedProvidersNote": "Web ve Desktop ortak kullanır",
+    "account": {
+      "help": "DeepSeek hesabı tarayıcı üzerinden oturum açar (OAuth); burada veya DeepSeek Harness'ta oturum açabilirsiniz. Oturum $DSH_HOME/.credentials.yaml (varsayılan ~/.dsh/.credentials.yaml) içinde saklanır ve DeepSeek Harness Web ile Desktop tarafından paylaşılır: herhangi bir yerde oturum açmak veya kapatmak ikisine de uygulanır, çalışan DeepSeek Harness dosyayı otomatik olarak yeniden okur. Hesabın modellerinin kullanımı, Kullanım sayfasında ayrıca \"DeepSeek hesabı (OAuth)\" olarak görünür.",
+      "statusFailed": "DeepSeek hesabı oturumu okunamadı",
+      "empty": "DeepSeek hesabında oturum açılmamış",
+      "unnamed": "DeepSeek hesabı",
+      "expired": "Oturumun süresi doldu. Yeniden oturum açın",
+      "shared": "Web ve Desktop tarafından paylaşılır",
+      "signOut": "Oturumu kapat",
+      "signOutConfirm": "\"{{name}}\" DeepSeek hesabından çıkış yapılsın mı? DeepSeek Harness Web ve Desktop'ta birlikte oturum kapatılır. API anahtarı sağlayıcıları etkilenmez.",
+      "signOutFailed": "DeepSeek hesabından çıkış yapılamadı",
+      "balance": "Bakiye {{amount}}",
+      "bonus": "Bonus {{amount}}",
+      "balanceFailed": "Bakiye şu anda alınamıyor",
+      "signedIn": "DeepSeek hesabında hem Web hem Desktop için oturum açıldı",
+      "signInFailed": "DeepSeek hesabında oturum açılamadı",
+      "presetName": "DeepSeek resmi oturum açma",
+      "presetDescription": "DeepSeek hesabınızda tarayıcı üzerinden oturum açtıktan sonra DeepSeek Harness hesabın modellerini doğrudan sunar; sağlayıcı eklemeniz gerekmez. Web ve Desktop bu oturumu paylaşır. Oturum açma ve kapatma Yetkilendirme Merkezi'nde yönetilir; oturum açınca hesap Eklenenler altında görünür.",
+      "manageAccounts": "DeepSeek hesabını yönet",
+      "cardSubtitle": "Resmi hesap · Web ve Desktop ortak",
+      "expiredChip": "Oturum süresi doldu",
+      "editDisabled": "Bu hesabın modellerini DeepSeek Harness kendisi sağlar; düzenlenecek bir şey yok.",
+      "managedHint": "Hesap Yetkilendirme Merkezi'nde yönetilir; oturumu kapatınca bu kart kendiliğinden kaybolur."
+    },
+    "deleteSessionHint": "Geçmişin tutarlı kalması için bu oturumu DeepSeek Harness içinde silin."
   }
 }
