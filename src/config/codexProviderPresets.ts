@@ -5128,4 +5128,16 @@ requires_openai_auth = true`,
       },
     ],
   },
+  {
+    name: "超稳API (Stable API)",
+    websiteUrl: "https://apiniuma.com",
+    apiKeyUrl: "https://apiniuma.com",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "apiniuma",
+      "https://apiniuma.com/v1",
+      "gpt-6.1-sol",
+    ),
+  },
 ];
