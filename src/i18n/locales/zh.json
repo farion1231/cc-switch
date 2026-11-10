@@ -4624,6 +4624,7 @@
     },
     "updatedAt": "{{time}}更新",
     "clickToRefresh": "点击重新查询",
+    "manualIdle": "点刷新查询额度",
     "resetCredits": {
       "label": "重置",
       "left": "重置剩余 {{count}} 次",
@@ -5131,6 +5132,10 @@
     "openBrowser": {
       "title": "登录时自动打开浏览器",
       "description": "关掉后只复制登录链接，由你自己选浏览器打开，适合用独立的浏览器环境管理多个账号。"
+    },
+    "autoQuota": {
+      "title": "自动查询额度",
+      "description": "关掉后，官方账号的额度只在你点刷新时查询：打开授权中心、卡片定时刷新和悬停托盘都不会自动向官方服务发请求。"
     }
   },
   "kimi": {

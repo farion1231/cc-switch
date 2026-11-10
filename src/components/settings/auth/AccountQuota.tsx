@@ -59,6 +59,8 @@ interface AccountQuotaColumnProps {
   queriedAt?: number | null;
   loading: boolean;
   onRefresh: () => void;
+  /** 只手动查询、还没查过：写一句「点刷新查询额度」，留着 ↻ */
+  idle?: boolean;
 }
 
 /**
@@ -74,12 +76,17 @@ export function AccountQuotaColumn({
   queriedAt,
   loading,
   onRefresh,
+  idle = false,
 }: AccountQuotaColumnProps) {
   const { t } = useTranslation();
   const now = useNow(
     Boolean(queriedAt) ||
       (state?.kind === "rows" && state.rows.some(({ line }) => line.resetsAt)),
   );
+  // 只手动查询、还没查过：留一句提示和 ↻，不然这一行什么都没有，看不出能查
+  if (!state && idle) {
+    state = { kind: "note", text: t("quota.manualIdle") };
+  }
   if (!state) return null;
   // 倒计时格始终留着（没有重置时间就空着），别的号的条才不会因此变宽或挪位
   const resetCell = (line: QuotaLine) => (
@@ -340,6 +347,7 @@ export function CopilotAccountQuota({
     <AccountQuotaColumn
       login={login}
       state={state}
+      idle={query.manualIdle}
       queriedAt={quota?.queriedAt ?? null}
       loading={loading}
       onRefresh={() => void query.refetch()}
@@ -361,6 +369,7 @@ export function XaiAccountQuota({
     data: quota,
     isFetching: loading,
     refetch,
+    manualIdle,
   } = useXaiOauthQuotaByAccountId(accountId, {
     enabled: true,
     autoQuery: false,
@@ -372,6 +381,7 @@ export function XaiAccountQuota({
       queriedAt={quota?.queriedAt ?? null}
       loading={loading}
       onRefresh={() => void refetch()}
+      idle={manualIdle}
     />
   );
 }
@@ -390,6 +400,7 @@ export function KimiAccountQuota({
     data: quota,
     isFetching: loading,
     refetch,
+    manualIdle,
   } = useKimiAccountQuota(accountId, { enabled: true, autoQuery: false });
   const state = subscriptionQuotaState(
     t,
@@ -410,6 +421,7 @@ export function KimiAccountQuota({
       queriedAt={quota?.queriedAt ?? null}
       loading={loading}
       onRefresh={() => void refetch()}
+      idle={manualIdle}
     />
   );
 }
@@ -428,6 +440,7 @@ export function AgyAccountQuota({
     data: quota,
     isFetching: loading,
     refetch,
+    manualIdle,
   } = useAgyAccountQuota(accountId, { enabled: true, autoQuery: false });
   return (
     <AccountQuotaColumn
@@ -436,6 +449,7 @@ export function AgyAccountQuota({
       queriedAt={quota?.queriedAt ?? null}
       loading={loading}
       onRefresh={() => void refetch()}
+      idle={manualIdle}
     />
   );
 }
@@ -454,6 +468,7 @@ export function ClaudeAccountQuota({
     data: quota,
     isFetching: loading,
     refetch,
+    manualIdle,
   } = useClaudeAccountQuota(accountId, { enabled: true, autoQuery: false });
   return (
     <AccountQuotaColumn
@@ -462,6 +477,7 @@ export function ClaudeAccountQuota({
       queriedAt={quota?.queriedAt ?? null}
       loading={loading}
       onRefresh={() => void refetch()}
+      idle={manualIdle}
     />
   );
 }

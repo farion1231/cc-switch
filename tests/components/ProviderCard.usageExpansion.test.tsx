@@ -19,6 +19,9 @@ vi.mock("@/components/UsageFooter", () => ({
 vi.mock("@/components/SubscriptionQuotaFooter", () => ({
   default: () => <div>official-subscription-quota</div>,
 }));
+vi.mock("@/components/CopilotQuotaFooter", () => ({
+  default: () => <div>copilot-account-quota</div>,
+}));
 vi.mock("@/lib/query/failover", () => ({
   useProviderHealth: () => ({ data: undefined }),
 }));
@@ -53,7 +56,7 @@ function renderCard({
     ],
   });
 
-  return render(
+  render(
     <QueryClientProvider client={queryClient}>
       <ProviderCard
         provider={provider}
@@ -68,9 +71,21 @@ function renderCard({
       />
     </QueryClientProvider>,
   );
+  return queryClient;
 }
 
 describe("ProviderCard cached usage expansion", () => {
+  it("uses the Copilot quota footer without enabling the script query", () => {
+    const queryClient = renderCard({ templateType: "github_copilot" });
+
+    expect(screen.getByText("copilot-account-quota")).toBeInTheDocument();
+    expect(screen.queryByText("expanded-plan-details")).not.toBeInTheDocument();
+    const scriptQuery = queryClient.getQueryCache().find({
+      queryKey: usageKeys.script("cached-usage-provider", "claude"),
+    });
+    expect(scriptQuery?.isDisabled()).toBe(true);
+  });
+
   it("keeps official subscription quota inline despite cached script tiers", () => {
     renderCard({ official: true, templateType: "official_subscription" });
 
