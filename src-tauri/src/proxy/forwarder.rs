@@ -3500,6 +3500,15 @@ fn apply_native_responses_request_compat(
     body: &mut Value,
     keep_resolved_model: bool,
 ) -> Result<(), ProxyError> {
+    if !super::providers::is_codex_official_provider(provider)
+        && super::providers::transform_codex_responses_xai_sanitize::rewrite_call_id_less_tool_outputs(body)
+    {
+        log::info!(
+            "[Codex] Rewrote function_call_output items without call_id for Responses HTTP (provider={})",
+            provider.id
+        );
+    }
+
     if !super::providers::provider_needs_responses_namespace_flatten(
         provider,
         body.get("model").and_then(Value::as_str),
@@ -6790,6 +6799,36 @@ mod tests {
                 {"type": "agent_message", "content": [{"type": "input_text", "text": "Continue."}]}
             ]
         })
+    }
+
+    #[test]
+    fn native_responses_compat_rewrites_call_id_less_tool_output_for_third_party() {
+        let provider = test_provider_with_type(None);
+        let mut body = json!({
+            "input": [
+                {
+                    "type": "function_call_output",
+                    "id": "fco_1",
+                    "output": "Companion Page snapshot"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "kept as a real tool result"
+                }
+            ]
+        });
+
+        apply_native_responses_request_compat(&provider, &mut body, false).unwrap();
+
+        assert_eq!(body["input"][0]["type"], "message");
+        assert_eq!(body["input"][0]["role"], "user");
+        assert_eq!(
+            body["input"][0]["content"][0]["text"],
+            "[tool_result without a matching tool_call]\nCompanion Page snapshot"
+        );
+        assert_eq!(body["input"][1]["type"], "function_call_output");
+        assert_eq!(body["input"][1]["call_id"], "call_1");
     }
 
     #[test]

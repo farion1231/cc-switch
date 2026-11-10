@@ -538,6 +538,112 @@ mod tests {
         proxy.stop().await.expect("stop test proxy");
     }
 
+    /// Codex Desktop may inject `function_call_output` receipts with only an
+    /// `fco_` id. A strict third-party HTTP Responses gateway rejects that shape,
+    /// so the proxy must preserve the text as a user message before forwarding.
+    #[tokio::test]
+    async fn third_party_native_responses_rewrites_call_id_less_tool_output() {
+        async fn capture_upstream(
+            axum::extract::State(captured): axum::extract::State<Arc<Mutex<Vec<Value>>>>,
+            axum::Json(body): axum::Json<Value>,
+        ) -> axum::Json<Value> {
+            captured.lock().await.push(body);
+            axum::Json(json!({
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 0,
+                "status": "completed",
+                "model": "deepseek-flash",
+                "output": [],
+                "usage": {
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "total_tokens": 2
+                }
+            }))
+        }
+
+        let captured = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let mock_app = Router::new()
+            .route("/v1/responses", post(capture_upstream))
+            .with_state(captured.clone());
+        let mock_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind mock upstream");
+        let mock_addr = mock_listener.local_addr().expect("mock upstream address");
+        let mock_handle = tokio::spawn(async move {
+            axum::serve(mock_listener, mock_app)
+                .await
+                .expect("serve mock upstream");
+        });
+
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let provider = Provider::with_id(
+            "third-party-test".to_string(),
+            "Third-party test".to_string(),
+            json!({
+                "base_url": format!("http://{mock_addr}/v1"),
+                "api_format": "openai_responses",
+                "auth": {"OPENAI_API_KEY": "upstream-secret"}
+            }),
+            None,
+        );
+        db.save_provider("codex", &provider).unwrap();
+        db.set_current_provider("codex", &provider.id).unwrap();
+
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                ..ProxyConfig::default()
+            },
+            db,
+            None,
+        );
+        let info = proxy.start().await.expect("start test proxy");
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let response = client
+            .post(format!("http://127.0.0.1:{}/v1/responses", info.port))
+            .header(header::AUTHORIZATION, "Bearer client-secret")
+            .json(&json!({
+                "model": "deepseek-flash",
+                "stream": false,
+                "input": [
+                    {
+                        "type": "function_call_output",
+                        "id": "fco_test",
+                        "output": "Companion Page snapshot"
+                    },
+                    {
+                        "type": "function_call_output",
+                        "call_id": "call_1",
+                        "output": "real tool result"
+                    }
+                ]
+            }))
+            .send()
+            .await
+            .expect("send proxy request");
+        let status = response.status();
+        let response_body: Value = response.json().await.expect("decode proxy response");
+        assert_eq!(status, StatusCode::OK, "{response_body}");
+
+        let captured = captured.lock().await;
+        assert_eq!(captured.len(), 1);
+        let input = captured[0]["input"].as_array().expect("input array");
+        assert_eq!(input[0]["type"], "message");
+        assert_eq!(input[0]["role"], "user");
+        assert_eq!(
+            input[0]["content"][0]["text"],
+            "[tool_result without a matching tool_call]\nCompanion Page snapshot"
+        );
+        assert_eq!(input[1]["type"], "function_call_output");
+        assert_eq!(input[1]["call_id"], "call_1");
+        drop(captured);
+
+        proxy.stop().await.expect("stop test proxy");
+        mock_handle.abort();
+    }
+
     /// 网页发来的请求（no-cors POST、WebSocket、DNS rebinding）在读请求体之前就被拒绝。
     #[tokio::test]
     async fn browser_originated_requests_are_rejected() {

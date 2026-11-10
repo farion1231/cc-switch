@@ -697,11 +697,6 @@ pub(crate) fn apply_xai_native_responses_request_compat(
             "[Codex] Rewrote xAI-unsupported agent_message input items (provider={provider_id})"
         );
     }
-    if rewrite_xai_call_id_less_tool_outputs(body) {
-        log::info!(
-            "[Codex] Rewrote function_call_output items without call_id for xAI (provider={provider_id})"
-        );
-    }
 }
 
 /// Same marker the Responses→Chat bridge uses, so the model reads one wording
@@ -714,15 +709,15 @@ const MESSAGE_CONTENT_PART_TYPES: &[&str] = &["input_text", "input_image", "inpu
 /// Rewrite top-level `function_call_output` items that carry no `call_id` into
 /// user `message` items. Codex Desktop injects these receipts on its own
 /// (create_thread delegation, automation_update, heartbeat, cross-thread
-/// messages) with only an `fco_` id; xAI's strict deserializer 422s the whole
-/// request (`input[N]: invalid "function_call_output" item: missing field
-/// call_id`), and since the receipt stays in history the thread never recovers.
+/// messages) with only an `fco_` id. Strict HTTP Responses gateways reject the
+/// request when the receipt has no matching call. Rewriting keeps the receipt
+/// text without claiming an invalid tool relationship.
 ///
 /// Rewrite rather than drop: the receipt carries the delegated task text.
 /// Items with a `call_id` are left alone even if their call is not in `input`,
 /// because a `previous_response_id` continuation legitimately pairs them with
 /// a call from the stored response.
-pub(crate) fn rewrite_xai_call_id_less_tool_outputs(body: &mut Value) -> bool {
+pub(crate) fn rewrite_call_id_less_tool_outputs(body: &mut Value) -> bool {
     let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) else {
         return false;
     };
@@ -1844,7 +1839,7 @@ mod tests {
                 {"type": "function_call_output", "call_id": "call_1", "output": "ok"}
             ]
         });
-        assert!(rewrite_xai_call_id_less_tool_outputs(&mut body));
+        assert!(rewrite_call_id_less_tool_outputs(&mut body));
         assert_eq!(
             body["input"][2],
             json!({
@@ -1861,7 +1856,7 @@ mod tests {
             body["input"][3],
             json!({"type": "function_call_output", "call_id": "call_1", "output": "ok"})
         );
-        assert!(!rewrite_xai_call_id_less_tool_outputs(&mut body));
+        assert!(!rewrite_call_id_less_tool_outputs(&mut body));
     }
 
     #[test]
@@ -1874,7 +1869,7 @@ mod tests {
                 {"type": "function_call_output", "call_id": "call_prev", "output": "kept"}
             ]
         });
-        assert!(rewrite_xai_call_id_less_tool_outputs(&mut body));
+        assert!(rewrite_call_id_less_tool_outputs(&mut body));
         assert_eq!(body["input"][0]["type"], "message");
         assert_eq!(body["input"][1]["type"], "message");
         assert_eq!(body["input"][2]["type"], "function_call_output");
@@ -1893,7 +1888,7 @@ mod tests {
                 ]
             }]
         });
-        assert!(rewrite_xai_call_id_less_tool_outputs(&mut body));
+        assert!(rewrite_call_id_less_tool_outputs(&mut body));
         let content = body["input"][0]["content"].as_array().unwrap();
         assert_eq!(content.len(), 4);
         assert_eq!(
@@ -1919,19 +1914,22 @@ mod tests {
             ]
         });
         let before = body.clone();
-        assert!(!rewrite_xai_call_id_less_tool_outputs(&mut body));
+        assert!(!rewrite_call_id_less_tool_outputs(&mut body));
         assert_eq!(body, before);
     }
 
     #[test]
-    fn request_compat_rewrites_call_id_less_tool_output() {
+    fn call_id_less_tool_output_rewrite_preserves_receipt_text() {
         let mut body = json!({
-            "model": "grok-4.6",
             "input": [{"type": "function_call_output", "id": "fco_1", "output": "receipt"}]
         });
-        apply_xai_native_responses_request_compat(&mut body, "grok", None, &json!({}));
+        assert!(rewrite_call_id_less_tool_outputs(&mut body));
         assert_eq!(body["input"][0]["type"], "message");
         assert_eq!(body["input"][0]["role"], "user");
+        assert_eq!(
+            body["input"][0]["content"][0]["text"],
+            "[tool_result without a matching tool_call]\nreceipt"
+        );
     }
 
     #[test]
