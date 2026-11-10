@@ -46,14 +46,17 @@ pub fn import_provider_from_deeplink(
         .clone()
         .ok_or_else(|| AppError::InvalidInput("Missing 'app' field for provider".to_string()))?;
 
-    let api_key = merged_request.api_key.as_ref().ok_or_else(|| {
-        AppError::InvalidInput("API key is required (either in URL or config file)".to_string())
-    })?;
+    // Copilot also accepts a native bearerToken, checked in build_copilot_settings.
+    if app_str != "copilot" {
+        let api_key = merged_request.api_key.as_ref().ok_or_else(|| {
+            AppError::InvalidInput("API key is required (either in URL or config file)".to_string())
+        })?;
 
-    if api_key.is_empty() {
-        return Err(AppError::InvalidInput(
-            "API key cannot be empty".to_string(),
-        ));
+        if api_key.is_empty() {
+            return Err(AppError::InvalidInput(
+                "API key cannot be empty".to_string(),
+            ));
+        }
     }
 
     // Get endpoint: supports comma-separated multiple URLs (first is primary)
@@ -885,8 +888,7 @@ requires_openai_auth = true
     }))
 }
 
-/// Build Gemini settings configuration
-/// Copilot CLI 自带模型卡：`provider` 节点（接口格式换算成 `type` / `wireApi`）加一个模型。
+/// Copilot CLI 自带模型卡：链接指定首选模型，保留内嵌配置中的其他模型。
 /// Copilot 不调上游 `/models`，链接必须带模型。
 fn build_copilot_settings(
     request: &DeepLinkImportRequest,
@@ -904,10 +906,43 @@ fn build_copilot_settings(
         }
     }
     provider.insert("baseUrl".into(), json!(get_primary_endpoint(request)));
-    if let Some(key) = request.api_key.as_deref() {
-        provider.insert("apiKey".into(), json!(normalize_deeplink_api_key(key)));
+    let config = decode_link_config(request)?;
+    let inline = config
+        .as_ref()
+        .map(CopilotLinkConfig::parse)
+        .transpose()?
+        .unwrap_or_default();
+    let (key, value) = if let Some(key) = request.api_key.as_deref() {
+        ("apiKey", key.trim())
+    } else if let Some(token) = inline.bearer_token {
+        ("bearerToken", token)
+    } else {
+        return Err(AppError::InvalidInput(
+            "Copilot CLI needs an API key or bearer token".into(),
+        ));
+    };
+    if value.is_empty() || has_dynamic_reference(value, false) {
+        return Err(AppError::InvalidInput(
+            "Invalid Copilot CLI credential in link".into(),
+        ));
     }
-    Ok(json!({ "provider": provider, "models": [{ "id": model }] }))
+    provider.insert(key.into(), json!(value));
+
+    let mut models = vec![json!({"id": model})];
+    if config
+        .as_ref()
+        .and_then(|value| value.get("provider"))
+        .is_some()
+    {
+        models.extend(
+            inline
+                .models
+                .into_iter()
+                .filter(|id| *id != model)
+                .map(|id| json!({"id": id})),
+        );
+    }
+    Ok(json!({ "provider": provider, "models": models }))
 }
 
 fn build_gemini_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
@@ -1438,61 +1473,80 @@ fn merge_agy_config(
     merge_gemini_config(request, env)
 }
 
-/// Copilot CLI：`config` 是卡片形状 `{provider:{baseUrl,apiKey}, models:[{id}]}`，或旧版的
-/// `{env:{...}}` / 扁平 `COPILOT_*` 键；只取地址、Key、模型，其余字段不从链接导入。URL 参数优先。
+/// Only import literal credentials, the endpoint, and model IDs from inline configuration.
+#[derive(Default)]
+struct CopilotLinkConfig<'a> {
+    endpoint: Option<&'a str>,
+    api_key: Option<&'a str>,
+    bearer_token: Option<&'a str>,
+    models: Vec<&'a str>,
+}
+
+impl<'a> CopilotLinkConfig<'a> {
+    fn parse(config: &'a serde_json::Value) -> Result<Self, AppError> {
+        let native = config.get("provider");
+        let node = native
+            .or_else(|| config.get("env"))
+            .unwrap_or(config)
+            .as_object()
+            .ok_or_else(|| {
+                AppError::InvalidInput("Copilot CLI provider config must be an object".into())
+            })?;
+        let get = |field, legacy| {
+            node.get(if native.is_some() { field } else { legacy })
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        };
+        let mut models = Vec::new();
+        if native.is_some() {
+            if let Some(entries) = config.get("models") {
+                let entries = entries.as_array().ok_or_else(|| {
+                    AppError::InvalidInput("Copilot CLI models must be an array".into())
+                })?;
+                for entry in entries {
+                    let id = entry
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::trim)
+                        .filter(|id| !id.is_empty() && !has_dynamic_reference(id, false))
+                        .ok_or_else(|| {
+                            AppError::InvalidInput(
+                                "Each Copilot CLI model needs a literal model ID".into(),
+                            )
+                        })?;
+                    if !models.contains(&id) {
+                        models.push(id);
+                    }
+                }
+            }
+        } else if let Some(id) = get("id", "COPILOT_MODEL") {
+            models.push(id);
+        }
+        Ok(Self {
+            endpoint: get("baseUrl", "COPILOT_PROVIDER_BASE_URL"),
+            api_key: get("apiKey", "COPILOT_PROVIDER_API_KEY"),
+            bearer_token: get("bearerToken", "COPILOT_PROVIDER_BEARER_TOKEN"),
+            models,
+        })
+    }
+}
+
 fn merge_copilot_config(
     request: &mut DeepLinkImportRequest,
     config: &serde_json::Value,
 ) -> Result<(), AppError> {
-    if let Some(provider) = config.get("provider") {
-        let provider = provider.as_object().ok_or_else(|| {
-            AppError::InvalidInput("Copilot CLI config.provider must be an object".into())
-        })?;
-        let get = |key: &str| {
-            provider
-                .get(key)
-                .and_then(|value| value.as_str())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string)
-        };
-        if request.api_key.is_none() {
-            request.api_key = get("apiKey");
-        }
-        if request.endpoint.is_none() {
-            request.endpoint = get("baseUrl");
-        }
-        if request.model.is_none() {
-            request.model = config
-                .pointer("/models/0/id")
-                .and_then(|value| value.as_str())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string);
-        }
-        return Ok(());
-    }
-    let env = config.get("env").unwrap_or(config);
-    if !env.is_object() {
-        return Err(AppError::InvalidInput(
-            "Copilot CLI config/env must be an object".into(),
-        ));
-    }
-    let get = |key: &str| {
-        env.get(key)
-            .and_then(|value| value.as_str())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-    };
-    if request.api_key.is_none() {
-        request.api_key = get("COPILOT_PROVIDER_API_KEY");
+    let inline = CopilotLinkConfig::parse(config)?;
+    // A URL apiKey overrides either inline credential. Otherwise Copilot prefers
+    // bearerToken. Keep it in the inline config so a second merge retains its type.
+    if request.api_key.is_none() && inline.bearer_token.is_none() {
+        request.api_key = inline.api_key.map(str::to_owned);
     }
     if request.endpoint.is_none() {
-        request.endpoint = get("COPILOT_PROVIDER_BASE_URL");
+        request.endpoint = inline.endpoint.map(str::to_owned);
     }
     if request.model.is_none() {
-        request.model = get("COPILOT_MODEL");
+        request.model = inline.models.first().map(|id| (*id).to_owned());
     }
     Ok(())
 }

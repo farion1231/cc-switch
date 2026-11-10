@@ -211,3 +211,32 @@ it("previews Copilot providers.json entries and legacy env configs", () => {
     COPILOT_PROVIDER_BASE_URL: "https://relay.example/v1",
   });
 });
+
+it("shows the effective Copilot credential and ordered model IDs after overrides", () => {
+  const config = encodeBase64(
+    JSON.stringify({
+      provider: {
+        baseUrl: "https://example.org",
+        bearerToken: "token",
+        apiKey: "shadowed",
+      },
+      models: [{ id: "one" }, { id: "two" }],
+    }),
+  );
+  expect(parseDeepLinkConfigPreview({ app: "copilot", config })?.env).toEqual({
+    baseUrl: "https://example.org",
+    bearerToken: "token",
+  });
+  expect(
+    parseDeepLinkConfigPreview({
+      app: "copilot",
+      config,
+      apiKey: "url-key",
+      model: "two",
+    }),
+  ).toEqual({
+    type: "copilot",
+    env: { baseUrl: "https://example.org", apiKey: "url-key" },
+    model: "two, one",
+  });
+});

@@ -42,7 +42,10 @@ const sanitizeTomlForPreview = (configToml: string): string => {
 };
 
 export function parseDeepLinkConfigPreview(
-  request: Pick<DeepLinkImportRequest, "app" | "config" | "configFormat">,
+  request: Pick<
+    DeepLinkImportRequest,
+    "app" | "config" | "configFormat" | "apiKey" | "endpoint" | "model"
+  >,
 ): ParsedDeepLinkConfig | null {
   if (!request.config) return null;
 
@@ -91,47 +94,35 @@ export function parseDeepLinkConfigPreview(
       };
     }
     if (request.app === "copilot") {
-      // 新形状：providers.json 的供应商条目（provider）和模型列表（models）
-      const provider = parsed.provider;
-      if (
-        provider &&
-        typeof provider === "object" &&
-        !Array.isArray(provider)
-      ) {
-        const values = provider as Record<string, unknown>;
-        const models = Array.isArray(parsed.models) ? parsed.models : [];
-        const ids = models
-          .map((model) =>
-            model && typeof model === "object"
-              ? (model as Record<string, unknown>).id
-              : undefined,
-          )
-          .filter((id): id is string => typeof id === "string" && !!id);
-        return {
-          type: "copilot",
-          env: Object.fromEntries(
-            ["baseUrl", "apiKey", "bearerToken"]
-              .filter((key) => typeof values[key] === "string")
-              .map((key) => [key, values[key] as string]),
-          ),
-          model: ids.length ? ids.join(", ") : undefined,
-        };
+      const native = parsed.provider !== undefined;
+      const node = native ? parsed.provider : (parsed.env ?? parsed);
+      if (!node || typeof node !== "object" || Array.isArray(node)) return null;
+      const values = node as Record<string, unknown>;
+      const field = (key: string) =>
+        typeof values[key] === "string" ? values[key].trim() : undefined;
+      const endpoint = native ? "baseUrl" : "COPILOT_PROVIDER_BASE_URL";
+      const apiKey = native ? "apiKey" : "COPILOT_PROVIDER_API_KEY";
+      const bearer = native ? "bearerToken" : "COPILOT_PROVIDER_BEARER_TOKEN";
+      const env: Record<string, string> = {};
+      const url = request.endpoint ?? field(endpoint);
+      if (url) env[endpoint] = url;
+      const credentialKey =
+        request.apiKey === undefined && field(bearer) ? bearer : apiKey;
+      const credential = request.apiKey ?? field(credentialKey);
+      if (credential) env[credentialKey] = credential;
+
+      const ids = new Set<string>();
+      if (request.model?.trim()) ids.add(request.model.trim());
+      if (native && Array.isArray(parsed.models)) {
+        for (const model of parsed.models) {
+          if (typeof model?.id === "string" && model.id.trim())
+            ids.add(model.id.trim());
+        }
+      } else if (!native && !ids.size) {
+        const legacy = field("COPILOT_MODEL");
+        if (legacy) ids.add(legacy);
       }
-      const env = parsed.env ?? parsed;
-      if (!env || typeof env !== "object" || Array.isArray(env)) return null;
-      const values = env as Record<string, unknown>;
-      return {
-        type: "copilot",
-        env: Object.fromEntries(
-          ["COPILOT_PROVIDER_API_KEY", "COPILOT_PROVIDER_BASE_URL"]
-            .filter((key) => typeof values[key] === "string")
-            .map((key) => [key, values[key] as string]),
-        ),
-        model:
-          typeof values.COPILOT_MODEL === "string"
-            ? values.COPILOT_MODEL
-            : undefined,
-      };
+      return { type: "copilot", env, model: [...ids].join(", ") || undefined };
     }
     if (request.app === "gemini") {
       return {

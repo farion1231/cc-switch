@@ -2628,3 +2628,44 @@ fn test_copilot_link_writes_a_readable_card_into_providers_json() {
     assert_eq!(native["example"]["models"], json!([{"id":"example-model"}]));
     assert_eq!(native["example"]["provider"]["wireApi"], "completions");
 }
+
+#[test]
+#[serial_test::serial]
+fn copilot_inline_links_keep_credentials_and_all_model_ids_after_preview() {
+    use serde_json::json;
+    let home = TestHomeGuard::new();
+    let _copilot = crate::copilot_config::test_support::CopilotHomeGuard::new(
+        &home._dir.path().join(".copilot"),
+    );
+    let state = AppState::new(Arc::new(Database::memory().unwrap()));
+    let config = BASE64_STANDARD.encode(json!({
+        "provider":{"baseUrl":"https://relay.example/v1","bearerToken":"bearer-fixture","headers":{"ignored":"header"}},
+        "models":[{"id":"first","systemMessage":{"mode":"replace","content":"ignored"}},{"id":"second"}]
+    }).to_string());
+    for (suffix, key, value, models) in [
+        (
+            "",
+            "bearerToken",
+            "bearer-fixture",
+            json!([{"id":"first"},{"id":"second"}]),
+        ),
+        (
+            "&apiKey=url-key&model=second",
+            "apiKey",
+            "url-key",
+            json!([{"id":"second"},{"id":"first"}]),
+        ),
+    ] {
+        let url = format!(
+            "ccswitch://v1/import?resource=provider&app=copilot&name=Multi&config={config}{suffix}"
+        );
+        let preview = parse_and_merge_config(&parse_deeplink_url(&url).unwrap()).unwrap();
+        let id = super::import_provider_from_deeplink(&state, preview).unwrap();
+        let card = &crate::copilot_config::get_providers().unwrap()[&id];
+        assert_eq!(card["models"], models);
+        assert_eq!(
+            card["provider"],
+            json!({"type":"openai","wireApi":"completions","baseUrl":"https://relay.example/v1", (key):value})
+        );
+    }
+}
