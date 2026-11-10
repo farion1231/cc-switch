@@ -1955,7 +1955,7 @@
       "officialModelHint": "비워 두면 Copilot의 현재 모델을 사용합니다. 이번 세션에만 --model로 전달되며, copilot 안의 /model은 그대로 사용할 수 있습니다.",
       "reasoningEffort": "추론 수준",
       "reasoningEffortDefault": "Copilot 기본값",
-      "reasoningEffortHint": "터미널을 열 때 --reasoning-effort로 전달됩니다. none을 선택하면 Copilot이 Responses 요청에 reasoning.summary를 보내지 않으며, 일부 중계 서버는 이 필드를 거부합니다.",
+      "reasoningEffortHint": "터미널을 열 때 --reasoning-effort로 전달됩니다. none을 선택하면 Copilot이 Responses 요청에 reasoning.summary 필드를 더 이상 포함하지 않습니다. 일부 중계 서버는 이 필드를 인식하지 못합니다.",
       "maxPromptTokens": "최대 입력 토큰",
       "maxOutputTokens": "최대 출력 토큰",
       "byokModelsHint": "각 모델은 Copilot의 /model에 「{{id}}/모델 ID」로 표시되며 하나 이상 필요합니다. 모델 ID가 그대로 엔드포인트에 보내는 이름이 되며, 다르게 보내려면 행을 펼쳐 「업스트림 모델 이름」을 입력하세요. 이 카드로 터미널을 열면 첫 번째 모델을 사용합니다.",
