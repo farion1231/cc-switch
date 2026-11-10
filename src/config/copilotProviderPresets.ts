@@ -3,6 +3,7 @@ import {
   type CopilotByokConfig,
   type CopilotProviderNode,
   normalizeCopilotProviderId,
+  copilotCatalogOutputLimit,
 } from "./copilotConfig";
 
 export * from "./copilotConfig";
@@ -96,9 +97,10 @@ export const copilotProviderPresets: CopilotByokPreset[] =
             ...(model.contextWindow > 0
               ? { maxContextWindowTokens: model.contextWindow }
               : {}),
-            ...(model.maxTokens > 0
-              ? { maxOutputTokens: model.maxTokens }
-              : {}),
+            maxOutputTokens: copilotCatalogOutputLimit(
+              model.maxTokens,
+              model.contextWindow,
+            ),
           })),
         },
       },

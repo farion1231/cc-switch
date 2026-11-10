@@ -511,6 +511,69 @@ fn check_unknown_keys(
     Ok(())
 }
 
+fn validate_system_message(message: &Map<String, Value>, model: &str) -> Result<(), AppError> {
+    let path = format!("{model}.systemMessage");
+    let mode = match message.get("mode") {
+        None | Some(Value::Null) => "append",
+        Some(value) => value.as_str().unwrap_or(""),
+    };
+    let allowed: &[&str] = match mode {
+        "append" | "replace" => &["mode", "content"],
+        "customize" => &["mode", "content", "sections"],
+        _ => {
+            return Err(document_error(
+                format!("{path}.mode 必须是 append、replace 或 customize"),
+                format!("{path}.mode must be append, replace, or customize"),
+            ))
+        }
+    };
+    check_unknown_keys(message, &path, allowed)?;
+    if mode == "replace" && !message.get("content").is_some_and(Value::is_string) {
+        return Err(document_error(
+            format!("{path}.content 在 replace 模式下必须是字符串"),
+            format!("{path}.content must be a string in replace mode"),
+        ));
+    }
+    check_kind(message, &path, "content", "a string", |v| {
+        v.is_null() || v.is_string()
+    })?;
+    let Some(sections) = message.get("sections").filter(|v| !v.is_null()) else {
+        return Ok(());
+    };
+    let sections = sections.as_object().ok_or_else(|| {
+        document_error(
+            format!("{path}.sections 必须是对象"),
+            format!("{path}.sections must be an object"),
+        )
+    })?;
+    for (name, section) in sections {
+        let path = format!("{path}.sections.{name}");
+        let section = section.as_object().ok_or_else(|| {
+            document_error(
+                format!("{path} 必须是对象"),
+                format!("{path} must be an object"),
+            )
+        })?;
+        check_unknown_keys(section, &path, &["action", "content"])?;
+        if !section.contains_key("action") {
+            return Err(document_error(
+                format!("{path} 缺少 action"),
+                format!("{path} is missing action"),
+            ));
+        }
+        check_enum(
+            section,
+            &path,
+            "action",
+            &["append", "prepend", "replace", "remove"],
+        )?;
+        check_kind(section, &path, "content", "a string", |v| {
+            v.is_null() || v.is_string()
+        })?;
+    }
+    Ok(())
+}
+
 /// 按 Copilot 自己的规则校验整份 `providers.json`：供应商名必填、唯一、不含 `/`；模型的
 /// `provider` 必须引用存在的供应商，同一供应商下模型 id 唯一；websockets 只能配 responses；
 /// token 上限是 0..=u32::MAX 的整数（Copilot 1.0.107 实测：`128000.5` 整个起不来，`0` 和
@@ -686,6 +749,22 @@ pub(crate) fn validate_document(document: &Value, own: Option<&str>) -> Result<(
         }
         for key in ["capabilities", "systemMessage", "metadata"] {
             check_kind(entry, &where_en, key, "an object", Value::is_object)?;
+        }
+        if own == Some(provider) {
+            if let (Some(context), Some(output)) = (
+                entry.get("maxContextWindowTokens").and_then(Value::as_f64),
+                entry.get("maxOutputTokens").and_then(Value::as_f64),
+            ) {
+                if output >= context {
+                    return Err(document_error(
+                        format!("{where_en} 的最大输出必须小于上下文窗口，才能为输入留出空间"),
+                        format!("maxOutputTokens of {where_en} must be smaller than maxContextWindowTokens to leave room for input"),
+                    ));
+                }
+            }
+            if let Some(message) = entry.get("systemMessage").and_then(Value::as_object) {
+                validate_system_message(message, &where_en)?;
+            }
         }
     }
     Ok(())
@@ -1350,6 +1429,37 @@ mod tests {
         write(&path, &doc);
         assert!(update_at(&path, None, "deepseek", Some(&card()), true).is_err());
         assert_eq!(read_providers(&path).unwrap(), doc);
+    }
+
+    #[test]
+    fn reject_unusable_limits_and_system_messages_before_writing_a_card() {
+        let mut settings = card();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("providers.json");
+        let original = foreign_document();
+        write(&path, &original);
+        for message in [
+            json!({"mode":"unexpected"}),
+            json!({"mode":"replace"}),
+            json!({"mode":"replace","content":5}),
+            json!({"mode":"append","sections":{}}),
+            json!({"mode":"customize","sections":{"identity":{"action":"transform"}}}),
+        ] {
+            settings["models"][0]["systemMessage"] = message;
+            assert!(update_at(&path, None, "mine", Some(&settings), true).is_err());
+            assert_eq!(read_providers(&path).unwrap(), original);
+        }
+        for message in [
+            json!({}),
+            json!({"mode":"replace","content":""}),
+            json!({"mode":"customize","sections":{"identity":{"action":"prepend","content":"hello"}}}),
+        ] {
+            settings["models"][0]["systemMessage"] = message;
+            validate_provider("mine", &settings).unwrap();
+        }
+        settings["models"][0]["maxOutputTokens"] = json!(262144);
+        settings["models"][0]["maxContextWindowTokens"] = json!(262144);
+        assert!(validate_provider("mine", &settings).is_err());
     }
 
     #[test]

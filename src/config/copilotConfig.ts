@@ -39,6 +39,17 @@ export interface CopilotModel {
   [key: string]: unknown;
 }
 
+/** Copilot reserves output tokens before building the prompt. Let it choose its
+ * default when a catalog advertises the whole context window as output. */
+export function copilotCatalogOutputLimit(
+  output: number | undefined,
+  context: number | undefined,
+): number | undefined {
+  return output && output > 0 && (!context || output < context)
+    ? output
+    : undefined;
+}
+
 export interface CopilotByokConfig {
   provider: CopilotProviderNode;
   models: CopilotModel[];

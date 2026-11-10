@@ -36,6 +36,7 @@ import {
   COPILOT_REASONING_EFFORTS,
   applyCopilotApiFormat,
   copilotApiFormatOf,
+  copilotCatalogOutputLimit,
   copilotByokConfigOf,
   copilotEnvOf,
   copilotOfficialPreset,
@@ -503,8 +504,12 @@ export function CopilotProviderForm({
           metadata.contextWindow
         )
           patch.maxContextWindowTokens = metadata.contextWindow;
-        if (model.maxOutputTokens === undefined && metadata.maxOutputTokens)
-          patch.maxOutputTokens = metadata.maxOutputTokens;
+        const outputLimit = copilotCatalogOutputLimit(
+          metadata.maxOutputTokens,
+          model.maxContextWindowTokens ?? metadata.contextWindow,
+        );
+        if (model.maxOutputTokens === undefined && outputLimit !== undefined)
+          patch.maxOutputTokens = outputLimit;
         if (Object.keys(patch).length === 0) return false;
         updateModel(index, patch);
         return true;

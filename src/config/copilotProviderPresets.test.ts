@@ -45,6 +45,20 @@ describe("copilotProviderPresets", () => {
     );
     expect(withLimits.some((m) => m.maxContextWindowTokens! > 0)).toBe(true);
     expect(withLimits.some((m) => m.maxOutputTokens! > 0)).toBe(true);
+    const kimi = copilotProviderPresets.find(
+      (preset) => preset.providerKey === "kimi",
+    )!;
+    const code = kimi.settingsConfig.models.find(
+      ({ id }) => id === "kimi-k2.7-code",
+    );
+    expect(code?.maxContextWindowTokens).toBe(262144);
+    expect(code?.maxOutputTokens).toBeUndefined();
+    for (const model of withLimits) {
+      if (model.maxContextWindowTokens && model.maxOutputTokens)
+        expect(model.maxOutputTokens).toBeLessThan(
+          model.maxContextWindowTokens,
+        );
+    }
     expect(copilotPresetProviderId("cc-switch-deep-seek")).toBe("deep-seek");
   });
 
