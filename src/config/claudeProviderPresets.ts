@@ -3244,4 +3244,16 @@ export const providerPresets: ProviderPreset[] = [
     icon: "genesis",
     apiFormat: "openai_chat",
   },
+  {
+    name: "超稳API (Stable API)",
+    websiteUrl: "https://apiniuma.com",
+    apiKeyUrl: "https://apiniuma.com",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://apiniuma.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "aggregator",
+  },
 ];
