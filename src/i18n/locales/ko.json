@@ -1973,6 +1973,16 @@
     }
   },
   "codexOauth": {
+    "pasteDescription": "auth.json의 전체 JSON을 붙여넣거나 로컬 파일을 선택하세요.",
+    "pasteLabel": "auth.json 내용",
+    "pastePlaceholder": "여기에 전체 JSON을 붙여넣으세요…",
+    "chooseAuthFile": "파일 선택",
+    "importPasted": "계정 가져오기",
+    "importAuthJson": "auth.json 가져오기",
+    "importHint": "계정을 가져온 다음 Codex 공식 공급자에서 선택하세요.",
+    "importSuccess": "{{login}} 계정을 가져왔습니다. Codex 공식 공급자에서 이 계정을 선택하고 공급자를 활성화한 다음 Codex를 다시 시작하세요.",
+    "importTooLarge": "auth.json은 1 MB보다 작아야 합니다",
+    "importFailed": "가져오기 실패: {{error}}",
     "authStatus": "인증 상태",
     "notAuthenticated": "인증되지 않음",
     "loginRequired": "먼저 ChatGPT에 로그인하세요.",

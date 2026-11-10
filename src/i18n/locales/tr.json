@@ -1973,6 +1973,16 @@
     }
   },
   "codexOauth": {
+    "pasteDescription": "auth.json dosyasındaki JSON içeriğinin tamamını yapıştırın veya yerel bir dosya seçin.",
+    "pasteLabel": "auth.json içeriği",
+    "pastePlaceholder": "JSON içeriğinin tamamını buraya yapıştırın…",
+    "chooseAuthFile": "Dosya seç",
+    "importPasted": "Hesabı içe aktar",
+    "importAuthJson": "auth.json içe aktar",
+    "importHint": "Bir hesabı içe aktarın, ardından resmi bir Codex sağlayıcısında bu hesabı seçin.",
+    "importSuccess": "{{login}} içe aktarıldı. Resmi bir Codex sağlayıcısında bu hesabı seçin, sağlayıcıyı etkinleştirin ve Codex'i yeniden başlatın.",
+    "importTooLarge": "auth.json 1 MB'den küçük olmalıdır",
+    "importFailed": "İçe aktarma başarısız: {{error}}",
     "authStatus": "Kimlik doğrulama durumu",
     "notAuthenticated": "Kimliği doğrulanmadı",
     "loginRequired": "Lütfen önce ChatGPT'de oturum açın",

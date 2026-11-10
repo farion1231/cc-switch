@@ -1973,6 +1973,16 @@
     }
   },
   "codexOauth": {
+    "pasteDescription": "Вставьте полное содержимое JSON из auth.json или выберите локальный файл.",
+    "pasteLabel": "Содержимое auth.json",
+    "pastePlaceholder": "Вставьте полное содержимое JSON сюда…",
+    "chooseAuthFile": "Выбрать файл",
+    "importPasted": "Импортировать аккаунт",
+    "importAuthJson": "Импортировать auth.json",
+    "importHint": "Импортируйте аккаунт, затем выберите его у официального провайдера Codex.",
+    "importSuccess": "Аккаунт {{login}} импортирован. Выберите его у официального провайдера Codex, активируйте провайдера и перезапустите Codex.",
+    "importTooLarge": "Размер auth.json должен быть меньше 1 МБ",
+    "importFailed": "Ошибка импорта: {{error}}",
     "authStatus": "Статус авторизации",
     "notAuthenticated": "Не авторизован",
     "loginRequired": "Сначала войдите в ChatGPT",
