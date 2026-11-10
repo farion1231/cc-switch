@@ -12,7 +12,7 @@ There are many ways to contribute:
 - **Suggest features** — Have an idea? [Submit a feature request](https://github.com/farion1231/cc-switch/issues/new?template=feature_request.yml).
 - **Improve docs** — Spot a typo or missing info? [Report a doc issue](https://github.com/farion1231/cc-switch/issues/new?template=doc_issue.yml).
 - **Contribute code** — Fix bugs or implement features via pull requests.
-- **Translate** — Help us improve translations for Simplified Chinese, Traditional Chinese, English, and Japanese, as well as the community translations for Turkish and Korean.
+- **Translate** — Help us improve translations for Simplified Chinese, Traditional Chinese, English, Japanese, Korean, Turkish, and Russian.
 
 > **Security vulnerabilities**: Please do NOT use public issues. See our [Security Policy](./SECURITY.md) instead.
 
@@ -147,7 +147,7 @@ Backend (Tauri 2 + Rust)
 │   ├── config/               # Provider presets per tool (*ProviderPresets.ts), MCP presets
 │   ├── hooks/                # Custom hooks (business logic)
 │   ├── lib/api/              # Tauri invoke wrappers (lib/query/ holds the TanStack Query config)
-│   ├── i18n/locales/         # UI strings (zh / zh-TW / en / ja; community: tr / ko)
+│   ├── i18n/locales/         # UI strings (zh / zh-TW / en / ja / ko / tr / ru)
 │   ├── icons/                # Provider icons (index is maintained by hand)
 │   └── types/ utils/ contexts/
 ├── src-tauri/                # Backend (Rust)
@@ -236,19 +236,14 @@ PRs that add a relay or aggregator preset outside the sponsorship program will b
 
 ## Internationalization (i18n)
 
-The CC Switch UI supports Simplified Chinese, Traditional Chinese, English, and Japanese, plus community translations for Turkish and Korean. When modifying user-facing text:
+The CC Switch UI supports Simplified Chinese, Traditional Chinese, English, Japanese, Korean, Turkish, and Russian. When modifying user-facing text:
 
-1. Update **all four** locale files:
-   - `src/i18n/locales/zh.json`
-   - `src/i18n/locales/zh-TW.json`
-   - `src/i18n/locales/en.json`
-   - `src/i18n/locales/ja.json`
-2. Use the `t()` function from i18next for all UI text.
-3. Never hardcode user-facing strings.
+1. Update **all seven** locale files in `src/i18n/locales/`: `zh.json`, `zh-TW.json`, `en.json`, `ja.json`, `ko.json`, `tr.json`, `ru.json`. CI fails when a key is missing from any of them (`tests/config/localeParity.test.ts`). If you cannot write one of the languages, a careful machine translation is fine; say so in the PR description.
+2. Keep `{{variables}}`, `<1>` tags, file names, commands, and other technical literals unchanged in every language.
+3. Use the `t()` function from i18next for all UI text.
+4. Never hardcode user-facing strings.
 
-Korean (`ko.json`) is a community translation with English fallback; contributors are not required to update it. When editing it, preserve `{{variables}}`, file names, commands, and other technical literals. Native Korean tray texts are maintained in `src-tauri/src/tray.rs` and `src-tauri/src/tray_panel.rs`; the native menu in `tray.rs` starts from English and overrides translated entries.
-
-Turkish (`tr.json`) is a community translation and is optional: you do not need to add Turkish strings, and missing ones fall back to English. If you do edit `tr.json`, keep `{{variables}}`, file names, commands, and other technical literals unchanged. The tray's Turkish texts in `src-tauri/src/tray.rs` start from English in the same way.
+Tray texts are not in the JSON files: the native tray menu (`src-tauri/src/tray.rs`) and the tray panel (`src-tauri/src/tray_panel.rs`) have one block per language, and every block must set every field.
 
 > Forgetting to update a locale file does not fail the build: the missing strings fall back to English, and if the English file lacks them too, the UI shows the raw key.
 
@@ -273,7 +268,7 @@ Turkish (`tr.json`) is a community translation and is optional: you do not need 
 - **建议功能** — 有想法？[提交功能请求](https://github.com/farion1231/cc-switch/issues/new?template=feature_request.yml)。
 - **改进文档** — 发现错误或缺失？[报告文档问题](https://github.com/farion1231/cc-switch/issues/new?template=doc_issue.yml)。
 - **贡献代码** — 通过 Pull Request 修复 Bug 或实现新功能。
-- **翻译** — 帮助改进简体中文、繁体中文、英文和日文的翻译，以及土耳其语和韩语的社区翻译。
+- **翻译** — 帮助改进简体中文、繁体中文、英文、日文、韩语、土耳其语和俄语的翻译。
 
 > **安全漏洞**：请不要使用公开 Issue 报告。请参阅我们的[安全策略](./SECURITY.md)。
 
@@ -408,7 +403,7 @@ Backend (Tauri 2 + Rust)
 │   ├── config/               # 各工具的供应商预设（*ProviderPresets.ts）、MCP 预设
 │   ├── hooks/                # 自定义 hooks（业务逻辑）
 │   ├── lib/api/              # Tauri invoke 封装（lib/query/ 为 TanStack Query 配置）
-│   ├── i18n/locales/         # 界面文案（zh / zh-TW / en / ja；社区翻译：tr / ko）
+│   ├── i18n/locales/         # 界面文案（zh / zh-TW / en / ja / ko / tr / ru）
 │   ├── icons/                # 供应商图标（索引需手工维护）
 │   └── types/ utils/ contexts/
 ├── src-tauri/                # 后端（Rust）
@@ -497,19 +492,14 @@ chore(deps): update dependencies
 
 ## 国际化（i18n）
 
-CC Switch 的界面支持简体中文、繁体中文、英文和日文，另有土耳其语和韩语的社区翻译。修改用户可见文本时：
+CC Switch 的界面支持简体中文、繁体中文、英文、日文、韩语、土耳其语和俄语。修改用户可见文本时：
 
-1. **同时更新四个**语言文件：
-   - `src/i18n/locales/zh.json`
-   - `src/i18n/locales/zh-TW.json`
-   - `src/i18n/locales/en.json`
-   - `src/i18n/locales/ja.json`
-2. 所有 UI 文本使用 i18next 的 `t()` 函数。
-3. 不要硬编码用户可见的字符串。
+1. **七个**语言文件都要改，都在 `src/i18n/locales/`：`zh.json`、`zh-TW.json`、`en.json`、`ja.json`、`ko.json`、`tr.json`、`ru.json`。任何一个缺 key，CI 都会失败（`tests/config/localeParity.test.ts`）。不会写的语言可以用认真校对过的机器翻译，在 PR 说明里注明即可。
+2. 每种语言都要原样保留 `{{变量}}`、`<1>` 标签、文件名、命令等技术字面量。
+3. 所有界面文本使用 i18next 的 `t()` 函数。
+4. 不要硬编码用户可见文本。
 
-韩语（`ko.json`）属于社区翻译，缺失文案回退到英文，不要求其他贡献者同步更新。编辑时请保留 `{{变量}}`、文件名、命令等技术字面量。原生韩语托盘文案位于 `src-tauri/src/tray.rs` 和 `src-tauri/src/tray_panel.rs`；其中 `tray.rs` 的原生菜单从英文起步，再覆盖已翻译的条目。
-
-土耳其语（`tr.json`）是社区翻译，可以不改：新增文案不必补土耳其语，缺少的会回退显示英文。如果改了 `tr.json`，请保留 `{{变量}}`、文件名、命令等技术字面量不翻译。`src-tauri/src/tray.rs` 里托盘的土耳其语文案同样从英文起步。
+托盘文案不在 JSON 里：原生托盘菜单（`src-tauri/src/tray.rs`）和托盘快捷面板（`src-tauri/src/tray_panel.rs`）每种语言一整块，每块都要写全所有字段。
 
 > 漏掉某个语言文件不会导致构建失败：缺少的文案会回退显示英文，英文文件也缺时，界面上会直接显示 key 的字面量。
 

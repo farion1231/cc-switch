@@ -1,6 +1,7 @@
 import type { AppId } from "@/lib/api";
 import type { Provider } from "@/types";
 import { isOAuthProviderType } from "@/config/constants";
+import { isCopilotOfficialCard } from "@/config/copilotConfig";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import {
   extractCodexBaseUrl,
@@ -101,6 +102,8 @@ export function isOfficialAccount(
       | undefined;
     return config?.type === "kimi" && nonEmptyString(config?.oauth?.key);
   }
+  // Copilot CLI：没有自带模型（provider 节点）的卡用 Copilot 自己的 GitHub 登录
+  if (appId === "copilot") return isCopilotOfficialCard(provider);
   return (
     provider.category === "official" ||
     resolveCodexOfficialIdentity(appId, provider) !== null

@@ -203,13 +203,16 @@ impl StreamCheckService {
                 }
                 provider
                     .settings_config
-                    .pointer("/env/COPILOT_PROVIDER_BASE_URL")
+                    .pointer("/provider/baseUrl")
                     .and_then(serde_json::Value::as_str)
                     .map(str::trim)
                     .filter(|url| !url.is_empty())
                     .map(str::to_string)
                     .ok_or_else(|| {
-                        AppError::Message("COPILOT_PROVIDER_BASE_URL is empty".to_string())
+                        AppError::Message(
+                            "The bring-your-own-model endpoint (provider.baseUrl) is empty"
+                                .to_string(),
+                        )
                     })
             }
             _ => get_adapter(app_type)
@@ -656,10 +659,10 @@ mod tests {
 
     #[test]
     fn test_resolve_base_url_copilot_uses_byok_endpoint_only() {
-        let custom = make_provider(serde_json::json!({ "env": {
-            "COPILOT_PROVIDER_BASE_URL": "https://relay.example/v1",
-            "COPILOT_MODEL": "gpt-5.4"
-        } }));
+        let custom = make_provider(serde_json::json!({
+            "provider": { "baseUrl": "https://relay.example/v1" },
+            "models": [{ "id": "gpt-5.4" }]
+        }));
         assert_eq!(
             StreamCheckService::resolve_base_url(&AppType::Copilot, &custom).unwrap(),
             "https://relay.example/v1"
