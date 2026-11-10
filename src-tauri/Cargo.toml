@@ -1,6 +1,6 @@
 [package]
 name = "cc-switch"
-version = "4.0.27"
+version = "4.0.28"
 description = "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
 authors = ["Jason Young"]
 license = "MIT"
@@ -12,7 +12,9 @@ rust-version = "1.85.0"
 
 [lib]
 name = "cc_switch_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# 只出 rlib：模板里的 staticlib / cdylib 只给 Tauri 移动端（iOS / Android）用，本项目只发桌面版。
+# 带着它们每次构建（含 cargo test）都要多链一个 dylib、多写约 1 GB 的 .a 再复制一份到 target/。
+crate-type = ["rlib"]
 doctest = false
 
 [features]

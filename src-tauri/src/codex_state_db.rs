@@ -38,6 +38,39 @@ pub(crate) fn codex_state_db_paths(config_dir: &Path, config_text: &str) -> Vec<
     paths
 }
 
+/// How many threads the state DBs record under `provider_id`.
+///
+/// `None` when no state DB could be read at all (none on disk, all on WSL
+/// paths, or no `threads.model_provider` column), so callers can tell "nothing
+/// to do" apart from "can't tell".
+pub(crate) fn count_threads_with_model_provider(
+    config_dir: &Path,
+    config_text: &str,
+    provider_id: &str,
+) -> Option<usize> {
+    let mut total = None;
+    for path in codex_state_db_paths(config_dir, config_text) {
+        if !path.exists() || !codex_state_db_is_lockable(&path) {
+            continue;
+        }
+        // 普通方式打开（只做 SELECT）：Codex 退出后 WAL 库的 -shm 会被清掉，
+        // 只读连接在这种状态下能不能打开取决于 SQLite 版本，别赌。
+        let Ok(conn) = rusqlite::Connection::open(&path) else {
+            continue;
+        };
+        let _ = conn.busy_timeout(std::time::Duration::from_secs(2));
+        let count: rusqlite::Result<i64> = conn.query_row(
+            "SELECT COUNT(*) FROM threads WHERE model_provider = ?1",
+            [provider_id],
+            |row| row.get(0),
+        );
+        if let Ok(count) = count {
+            *total.get_or_insert(0) += usize::try_from(count).unwrap_or(0);
+        }
+    }
+    total
+}
+
 /// Whether CC Switch can open this state DB with SQLite locking intact.
 ///
 /// Windows reaches a WSL distro's files through the `\\wsl$` /

@@ -125,7 +125,7 @@ pub(crate) fn codex_url_host_matches_any(url_or_host: &str, hosts: &[&str]) -> b
 }
 
 /// Top-level `model` id from a Codex `config.toml`.
-fn codex_top_level_model(config_text: &str) -> Option<String> {
+pub(crate) fn codex_top_level_model(config_text: &str) -> Option<String> {
     let doc = config_text.parse::<toml::Value>().ok()?;
     doc.get("model")
         .and_then(|value| value.as_str())
