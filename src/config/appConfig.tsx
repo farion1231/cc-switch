@@ -32,6 +32,7 @@ export const APP_IDS: AppId[] = [
   "dsh",
   "agy",
   "omp",
+  "copilot",
 ];
 
 export const DEFAULT_VISIBLE_APPS: VisibleApps = {
@@ -49,6 +50,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   dsh: true,
   agy: true,
   omp: true,
+  copilot: true,
 };
 
 /**
@@ -88,6 +90,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "dsh",
   "agy",
   "omp",
+  "copilot",
 ];
 
 export type ProxyAppId = Extract<
@@ -192,6 +195,7 @@ export const MCP_APP_IDS: McpAppId[] = [
   "dsh",
   "agy",
   "omp",
+  "copilot",
 ];
 
 export function isMcpAppId(appId: string): appId is McpAppId {
@@ -341,6 +345,21 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-cyan-500/10 ring-1 ring-cyan-500/20 hover:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400",
     badgeClass:
       "bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 hover:bg-cyan-500/20 border-0 gap-1.5",
+  },
+  copilot: {
+    label: "Copilot CLI",
+    icon: (
+      <ProviderIcon
+        icon="githubcopilot"
+        name="GitHub Copilot CLI"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-slate-500/10 ring-1 ring-slate-500/20 hover:bg-slate-500/20 text-slate-700 dark:text-slate-300",
+    badgeClass:
+      "bg-slate-500/10 text-slate-700 dark:text-slate-300 hover:bg-slate-500/20 border-0 gap-1.5",
   },
 };
 

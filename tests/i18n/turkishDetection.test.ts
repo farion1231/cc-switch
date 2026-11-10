@@ -23,7 +23,7 @@ describe("Turkish language detection", () => {
     expect(i18n.language).toBe("tr");
     expect(i18n.t("common.save")).toBe("Kaydet");
   });
-  it.each(["de-DE", "fr", "ko-KR"])(
+  it.each(["de-DE", "fr", "es-ES"])(
     "uses English for unsupported system language %s",
     async (language) => {
       vi.stubGlobal("navigator", { language });

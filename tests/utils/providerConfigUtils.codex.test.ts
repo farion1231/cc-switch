@@ -251,6 +251,7 @@ describe("Codex TOML utils", () => {
       "[model_providers.'custom']",
       "[ model_providers . custom ]",
       '["model_providers".custom]',
+      "[model_providers.custom] # relay",
     ]) {
       const input = [
         'model_provider = "custom"',
@@ -655,6 +656,17 @@ describe("Codex [agents] subagent defaults", () => {
     expect(parsed.agents.reviewer.description).toBe("review");
   });
 
+  it("replaces a quoted key in place", () => {
+    const input = `[agents]\n"default_subagent_model" = "old"\n`;
+    const updated = setCodexAgentsString(input, "default_subagent_model", "m");
+    expect((parseToml(updated) as any).agents).toEqual({
+      default_subagent_model: "m",
+    });
+    expect(
+      extractCodexAgentsString(`${input}broken = [`, "default_subagent_model"),
+    ).toBe("old");
+  });
+
   it("leaves an inline agents table untouched instead of breaking the TOML", () => {
     const input = `agents = { max_threads = 4 }\n${base}\n`;
     expect(extractCodexAgentsString(input, "default_subagent_model")).toBe(
@@ -726,6 +738,61 @@ describe("Codex [agents] sub-agent concurrency limit", () => {
     expect(
       parsed.features.multi_agent_v2.max_concurrent_threads_per_session,
     ).toBe(6);
+  });
+
+  it("stops the [agents] table at a header with a trailing comment", () => {
+    const input = [
+      "[agents]",
+      "max_threads = 4",
+      "",
+      "[features.multi_agent_v2] # tools",
+      "max_concurrent_threads_per_session = 6",
+    ].join("\n");
+
+    const parsed = parseToml(setCodexAgentsMaxThreads(input, 8)) as any;
+    expect(parsed.agents).toEqual({ max_threads: 8 });
+    expect(
+      parsed.features.multi_agent_v2.max_concurrent_threads_per_session,
+    ).toBe(6);
+  });
+
+  it("finds an [agents] header that has a trailing comment", () => {
+    const input = "[agents] # mine\nmax_threads = 4\n";
+    const updated = setCodexAgentsMaxThreads(input, 8);
+    expect(updated).toContain("[agents] # mine");
+    expect((parseToml(updated) as any).agents).toEqual({ max_threads: 8 });
+    expect(
+      extractCodexAgentsMaxThreads(
+        "[agents] # mine\nmax_threads = 7\nbroken = [",
+      ),
+    ).toBe(7);
+  });
+
+  it("recognizes quoted key spellings instead of adding a second one", () => {
+    for (const quoted of [
+      '"max_concurrent_threads_per_session"',
+      "'max_concurrent_threads_per_session'",
+    ]) {
+      const input = `[agents]\n${quoted} = 3\n`;
+      const updated = setCodexAgentsMaxThreads(input, 8);
+      expect((parseToml(updated) as any).agents, quoted).toEqual({
+        max_concurrent_threads_per_session: 8,
+      });
+      expect(extractCodexAgentsMaxThreads(updated), quoted).toBe(8);
+
+      expect(setCodexAgentsMaxThreads(input, undefined), quoted).not.toContain(
+        "[agents]",
+      );
+      expect(extractCodexAgentsMaxThreads(`${input}broken = [`), quoted).toBe(
+        3,
+      );
+    }
+
+    const both =
+      '[agents]\n"max_threads" = 2\nmax_concurrent_threads_per_session = 3\n';
+    expect(
+      (parseToml(setCodexAgentsMaxThreads(both, 5)) as any).agents,
+    ).toEqual({ max_concurrent_threads_per_session: 5 });
   });
 
   it("reads half-edited TOML line by line and ignores 0", () => {

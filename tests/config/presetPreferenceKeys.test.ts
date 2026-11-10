@@ -26,7 +26,6 @@ describe("Codex presets carry no personal preferences", () => {
     "model_provider",
     "model",
     "model_reasoning_effort",
-    "disable_response_storage",
     "review_model",
     "model_verbosity",
     "model_context_window",

@@ -485,28 +485,25 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
-    // 接入文档 teamorouter.cn/zh/docs/install-gemini-cli（2026-10-31）：Key 以 Bearer 发送
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+    // 接入文档 teamorouter.com/zh/docs/install-gemini-cli（2026-10-31）：Key 以 Bearer 发送
     settingsConfig: {
       env: {
-        GOOGLE_GEMINI_BASE_URL: "https://api.teamorouter.cn",
+        GOOGLE_GEMINI_BASE_URL: "https://api.teamorouter.com",
         GEMINI_API_KEY: "",
         GEMINI_API_KEY_AUTH_MECHANISM: "bearer",
         GEMINI_MODEL: "gemini-3.8-flash",
       },
     },
-    baseURL: "https://api.teamorouter.cn",
+    baseURL: "https://api.teamorouter.com",
     model: "gemini-3.8-flash",
     description: "TeamoRouter",
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "teamorouter",
-    endpointCandidates: [
-      "https://api.teamorouter.cn",
-      "https://api.teamorouter.com",
-    ],
+    endpointCandidates: ["https://api.teamorouter.com"],
     icon: "teamorouter",
   },
   {

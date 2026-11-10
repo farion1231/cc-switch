@@ -343,6 +343,9 @@ mod tests {
 
     #[test]
     fn agy_index_only_entry_yields_to_a_later_root_with_the_transcript() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let home = tempfile::tempdir().unwrap();
         let cli = home.path().join("antigravity-cli");
         fs::create_dir_all(&cli).unwrap();

@@ -3,6 +3,7 @@ mod blocks;
 pub mod claude;
 pub mod codex;
 mod codex_items;
+pub mod copilot;
 pub mod gemini;
 pub mod grokbuild;
 pub mod hermes;
@@ -12,7 +13,7 @@ pub mod opencode;
 mod opencode_blocks;
 pub mod pi;
 mod pi_blocks;
-mod utils;
+pub(crate) mod utils;
 
 pub mod kimi;
 pub mod mcode;

@@ -149,8 +149,42 @@ const brandedRoutes = (
 
 export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   {
+    name: "TokenPlus",
+    websiteUrl: "https://www.tokenplus.cn/",
+    apiKeyUrl: "https://www.tokenplus.cn/workspace",
+    category: "aggregator",
+    partnerPromotionKey: "tokenplus",
+    icon: "tokenplus",
+    baseUrl: "https://api.tokenplus.cn",
+    apiKeyField: "ANTHROPIC_API_KEY",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: [
+      {
+        routeId: "claude-sonnet-5",
+        upstreamModel: "deepseek/deepseek-v4.1-flash-1017",
+        supports1m: false,
+      },
+      {
+        routeId: "claude-haiku-4-5",
+        upstreamModel: "z-ai/glm-5.3-flash",
+        supports1m: false,
+      },
+      {
+        routeId: "claude-opus-5",
+        upstreamModel: "moonshot-ai/kimi-k3.1-pro",
+        supports1m: false,
+      },
+      {
+        routeId: "claude-fable-5",
+        upstreamModel: "minimax/m3.1-flash",
+        supports1m: false,
+      },
+    ],
+  },
+  {
     name: "Claude Desktop Official",
-    websiteUrl: "https://claude.ai/download",
+    websiteUrl: "https://claude.com/download",
     category: "official",
     baseUrl: "",
     mode: "direct",
@@ -176,10 +210,12 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.moonshot.cn/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
+    // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+    // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文）
     modelRoutes: brandedRoutes(
-      "kimi-k2.7-code",
-      "kimi-k2.7-code",
-      "kimi-k2.7-code",
+      "kimi-k3.1-pro",
+      "kimi-k3.1-pro",
+      "kimi-k3.1-pro",
     ),
     partnerPromotionKey: "kimi",
     icon: "kimi",
@@ -197,10 +233,12 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.moonshot.ai/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
+    // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+    // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文）
     modelRoutes: brandedRoutes(
-      "kimi-k2.7-code",
-      "kimi-k2.7-code",
-      "kimi-k2.7-code",
+      "kimi-k3.1-pro",
+      "kimi-k3.1-pro",
+      "kimi-k3.1-pro",
     ),
     partnerPromotionKey: "kimi",
     icon: "kimi",
@@ -660,20 +698,17 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     category: "aggregator",
-    baseUrl: "https://api.teamorouter.cn",
+    baseUrl: "https://api.teamorouter.com",
     mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(true),
     isPartner: true,
     partnerPromotionKey: "teamorouter",
-    endpointCandidates: [
-      "https://api.teamorouter.cn",
-      "https://api.teamorouter.com",
-    ],
+    endpointCandidates: ["https://api.teamorouter.com"],
     icon: "teamorouter",
   },
   {
@@ -2289,24 +2324,25 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   {
     name: "Mistral AI",
     websiteUrl: "https://mistral.ai",
-    apiKeyUrl: "https://console.mistral.ai/api-keys",
+    // Vibe 订阅额度与 API 共用，Key 在 Code > Vibe CLI 页创建（同 Claude 预设）
+    apiKeyUrl: "https://chat.mistral.ai/code/extensions",
     category: "cn_official",
     // 同 Claude Code 预设：官方只文档化 OpenAI Chat 端点（docs.mistral.ai/
     // openapi.yaml，2026-10-14 核对），走 openai_chat 路由，base 不带 /v1。
-    // Medium 3.5 / Small 4 窗口均为 256k（docs.mistral.ai/models.md 同日），
-    // 不标 1M
+    // 主力 Large 4（窗口 1M）、haiku 档 Small 4（256k）（docs.mistral.ai/
+    // models.md，2026-11-06 核对；Medium 3.5 已弃用）。haiku 档不到 1M，
+    // 不整体标 1M。转换层风险同 Claude 预设，未经真 Key 冒烟，2026-11-06 起
+    // 照常展示（不再隐藏）
     baseUrl: "https://api.mistral.ai",
     mode: "proxy",
     apiFormat: "openai_chat",
     modelRoutes: brandedRoutes(
-      "mistral-medium-3-5",
-      "mistral-medium-3-5",
+      "mistral-large-4",
+      "mistral-large-4",
       "mistral-small-2603",
     ),
     endpointCandidates: ["https://api.mistral.ai"],
     icon: "mistral",
-    // 先隐藏：同 Claude 预设，转换层风险真 Key 冒烟通过前不展示
-    hidden: true,
   },
   {
     name: "Cloudflare AI Gateway",

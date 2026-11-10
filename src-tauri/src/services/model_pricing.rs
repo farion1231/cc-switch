@@ -362,7 +362,9 @@ pub fn record_models_dev_sync_result(
 }
 
 const MODELS_DEV_API_URL: &str = "https://models.dev/api.json";
-const MODELS_DEV_FETCH_TIMEOUT_SECS: u64 = 15;
+/// 整次请求（含读完响应体）的上限。gzip 后约 600KB，但跨境链路或代理慢时 15s 读不完，
+/// 读到一半超时 reqwest 只报「error decoding response body」（#9262），所以放宽到 60s。
+const MODELS_DEV_FETCH_TIMEOUT_SECS: u64 = 60;
 /// 响应大小上限：models.dev api.json 实际几 MB，超限视为异常响应
 const MODELS_DEV_MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 
@@ -375,7 +377,7 @@ fn is_models_dev_response_too_large(len: usize) -> bool {
 ///
 /// 必须走全局代理客户端：WebView 直连只跟随系统代理，代理环境下会超时。
 /// 全局客户端为透传禁用了自动解压，须显式声明 gzip——否则 5.9MB 的 api.json
-/// 原样传输，代理环境下 15s 超时不够用。
+/// 原样传输，代理环境下很容易在读响应体时超时。
 /// 返回解压后的 JSON 字符串，由前端解析为 ModelsDevResponse。
 pub async fn fetch_models_dev() -> Result<String, String> {
     let client = crate::proxy::http_client::get();
@@ -385,7 +387,12 @@ pub async fn fetch_models_dev() -> Result<String, String> {
         .timeout(Duration::from_secs(MODELS_DEV_FETCH_TIMEOUT_SECS))
         .send()
         .await
-        .map_err(|error| format!("Request to models.dev failed: {error}"))?;
+        .map_err(|error| {
+            format!(
+                "Request to models.dev failed: {}",
+                crate::proxy::error::describe_reqwest_error(error)
+            )
+        })?;
 
     let status = response.status();
     if !status.is_success() {
@@ -403,11 +410,12 @@ pub async fn fetch_models_dev() -> Result<String, String> {
     }
 
     let mut buf: Vec<u8> = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|error| format!("Failed to read models.dev response: {error}"))?
-    {
+    while let Some(chunk) = response.chunk().await.map_err(|error| {
+        format!(
+            "Failed to read models.dev response: {}",
+            crate::proxy::error::describe_reqwest_error(error)
+        )
+    })? {
         if append_models_dev_chunk(&mut buf, &chunk).is_err() {
             return Err(format!(
                 "models.dev response too large: {} bytes (max {MODELS_DEV_MAX_RESPONSE_BYTES})",

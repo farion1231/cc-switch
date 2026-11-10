@@ -109,10 +109,10 @@ Claude Code / Codex / Gemini 官方渠道低至 3.8 / 0.2 / 0.9 折，充值更�
 </tr>
 
 <tr>
-<td width="180"><a href="https://teamorouter.cn/zh?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory"><img src="assets/partners/logos/TeamoRouter-banner.png" alt="TeamoRouter" width="150"></a></td>
+<td width="180"><a href="https://teamorouter.com/zh?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory"><img src="assets/partners/logos/TeamoRouter-banner.png" alt="TeamoRouter" width="150"></a></td>
 <td>感谢 TeamoRouter 赞助本项目！TeamoRouter 是一款面向开发者、AI 团队和企业的企业级 Agentic LLM 网关。无需任何订阅，你就可以通过一个统一 API 访问 Claude Code、Codex、Gemini CLI、OpenAI Codex 以及其他热门 AI Agent，同时享受最高可达 90% 折扣的 API 价格。
 不同于常见的 API 中转服务，TeamoRouter 聚合了数百家官方模型提供商和可信基础设施合作伙伴，包括 OpenAI、Anthropic、Vertex、Azure 和 AWS Bedrock。每个提供商都经过验证，确保 100% 兼容 Agent 协议，并具备可靠的缓存性能和请求可追踪性，从而提供稳定质量，而不是反向工程或缩水后的接口。平台提供接近官方水平的 TTFT、99.6% SLA、最高 5,000 QPM 的企业级吞吐量，以及行业领先的缓存命中率，可大幅降低长时间运行的 Agent 工作流中的 token 成本。
-TeamoRouter 还提供企业级功能，包括集中账单、团队管理、BYOK、智能路由、用量分析、动态提供商优化和专属支持。为了获得更简单的使用体验，Teamo Desktop 支持你一键使用 Claude Code、Codex、Gemini CLI 和其他热门 AI Agent，无需管理 API Key，也无需手动配置网关。新用户通过<a href="https://teamorouter.cn/zh?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory">此链接</a>注册，首次充值可享受 10% 折扣。</td>
+TeamoRouter 还提供企业级功能，包括集中账单、团队管理、BYOK、智能路由、用量分析、动态提供商优化和专属支持。为了获得更简单的使用体验，Teamo Desktop 支持你一键使用 Claude Code、Codex、Gemini CLI 和其他热门 AI Agent，无需管理 API Key，也无需手动配置网关。新用户通过<a href="https://teamorouter.com/zh?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory">此链接</a>注册，首次充值可享受 10% 折扣。</td>
 </tr>
 
 <tr>
@@ -343,22 +343,23 @@ paru -S cc-switch-bin
 
 ### 各工具支持的功能
 
-| 工具                                          | 供应商 |  本地路由  | 聚合 | 托盘切换 | MCP | Skills | 提示词                           | 会话 |  用量统计  |
-| --------------------------------------------- | ------ | :--------: | :--: | :------: | :-: | :----: | -------------------------------- | :--: | :--------: |
-| Claude Code                                   | 切换   |     ✓      |  ✓   |    ✓     |  ✓  |   ✓    | CLAUDE.md                        |  ✓   |     ✓      |
-| Claude Desktop                                | 切换   | 模型映射时 |  –   |    ✓     |  –  |   –    | –                                |  –   | 模型映射时 |
-| Codex                                         | 切换   |     ✓      |  ✓   |    ✓     |  ✓  |   ✓    | AGENTS.md                        |  ✓   |     ✓      |
-| Gemini CLI                                    | 切换   |     ✓      |  –   |    ✓     |  ✓  |   ✓    | GEMINI.md                        |  ✓   |     ✓      |
-| Grok Build                                    | 切换   |     ✓      |  –   |    ✓     |  ✓  |   ✓    | AGENTS.md                        |  ✓   |     ✓      |
-| OpenCode                                      | 共存   |     –      |  –   |    –     |  ✓  |   ✓    | AGENTS.md                        |  ✓   |     ✓      |
-| OpenClaw                                      | 共存   |     –      |  –   |    –     |  –  |   –    | 工作区编辑器                     |  ✓   |     –      |
-| Hermes                                        | 共存   |     –      |  –   |    –     |  ✓  |   ✓    | 记忆管理                         |  ✓   |     –      |
-| Pi                                            | 共存   |     –      |  –   |    –     |  ✓  |   ✓    | AGENTS.md、SYSTEM.md、提示词模板 |  ✓   |     ✓      |
-| MiniMax Code                                  | 共存   |     –      |  –   |    –     |  ✓  |   ✓    | AGENTS.md                        |  ✓   |     ✓      |
-| [Kimi Code](docs/kimi-code-integration-zh.md) | 共存   |     –      |  –   |    –     |  ✓  |   ✓    | AGENTS.md                        |  ✓   |     ✓      |
-| Oh My Pi                                      | 共存   |     –      |  –   |    –     |  ✓  |   ✓    | AGENTS.md                        |  ✓   |     –      |
+| 工具                                                     | 供应商   |  本地路由  | 聚合 | 托盘切换 | MCP | Skills | 提示词                           | 会话 |  用量统计  |
+| -------------------------------------------------------- | -------- | :--------: | :--: | :------: | :-: | :----: | -------------------------------- | :--: | :--------: |
+| Claude Code                                              | 切换     |     ✓      |  ✓   |    ✓     |  ✓  |   ✓    | CLAUDE.md                        |  ✓   |     ✓      |
+| Claude Desktop                                           | 切换     | 模型映射时 |  –   |    ✓     |  –  |   –    | –                                |  –   | 模型映射时 |
+| Codex                                                    | 切换     |     ✓      |  ✓   |    ✓     |  ✓  |   ✓    | AGENTS.md                        |  ✓   |     ✓      |
+| Gemini CLI                                               | 切换     |     ✓      |  –   |    ✓     |  ✓  |   ✓    | GEMINI.md                        |  ✓   |     ✓      |
+| Grok Build                                               | 切换     |     ✓      |  –   |    ✓     |  ✓  |   ✓    | AGENTS.md                        |  ✓   |     ✓      |
+| OpenCode                                                 | 共存     |     –      |  –   |    –     |  ✓  |   ✓    | AGENTS.md                        |  ✓   |     ✓      |
+| OpenClaw                                                 | 共存     |     –      |  –   |    –     |  –  |   –    | 工作区编辑器                     |  ✓   |     –      |
+| Hermes                                                   | 共存     |     –      |  –   |    –     |  ✓  |   ✓    | 记忆管理                         |  ✓   |     –      |
+| Pi                                                       | 共存     |     –      |  –   |    –     |  ✓  |   ✓    | AGENTS.md、SYSTEM.md、提示词模板 |  ✓   |     ✓      |
+| MiniMax Code                                             | 共存     |     –      |  –   |    –     |  ✓  |   ✓    | AGENTS.md                        |  ✓   |     ✓      |
+| [Kimi Code](docs/kimi-code-integration-zh.md)            | 共存     |     –      |  –   |    –     |  ✓  |   ✓    | AGENTS.md                        |  ✓   |     ✓      |
+| Oh My Pi                                                 | 共存     |     –      |  –   |    –     |  ✓  |   ✓    | AGENTS.md                        |  ✓   |     –      |
+| [GitHub Copilot CLI](docs/copilot-cli-integration-zh.md) | 打开终端 |     –      |  –   |    –     |  ✓  |   ✓    | copilot-instructions.md          |  ✓   |     ✓      |
 
-- **切换**：同一时间只启用一个供应商；**共存**：多个供应商同时写入工具自身的配置，在工具里选择使用。
+- **切换**：同一时间只启用一个供应商；**共存**：多个供应商同时写入工具自身的配置，在工具里选择使用。**打开终端**：卡片不写工具配置，从卡片打开的终端按这张卡启动工具。
 - **本地路由**：由 CC Switch 在本机转发请求并转换接口格式，见下方[本地路由与故障转移](#本地路由与故障转移)。Claude Desktop 的供应商可选“直连”或“模型映射”，选“模型映射”时经本地路由转发。
 - **聚合**：把多家供应商的模型放进同一个模型列表，按所选模型分发请求，见下方[聚合模式](#聚合模式)。
 - **会话**：浏览、搜索会话历史，打开阅读页，复制恢复命令继续对话（OpenClaw、Hermes 的会话暂不支持恢复）。Hermes 只显示最近 500 个会话。
@@ -419,7 +420,7 @@ paru -S cc-switch-bin
 - **CLI 工具管理** — 在侧栏的「应用」页查看 Claude Code、Codex 等命令行工具的当前版本和最新版本，一键安装、升级或全部升级，并诊断重复安装；Windows 上还能管理 WSL 里的工具（见常见问题）
 - **Deep Link**（`ccswitch://`）— 通过链接一键导入供应商、MCP 服务器和提示词，或添加技能仓库。用 [在线生成器](https://ccswitch.io/deplink.html) 生成链接；站长想在网站上放导入按钮，见 [站长接入指南](https://github.com/farion1231/cc-switch/blob/main/docs/guides/deeplink-site-integration-guide-zh.md)
 - **小工具** — 跳过 Claude Code 初次安装确认、隐藏 AI 署名、让 VS Code 的 Claude Code 插件随本软件切换供应商等
-- 深色 / 浅色 / 跟随系统主题、开机自启、自动更新、原子写入、自动备份（「设置 → 数据」里可以看到所有备份的位置和占用空间）、国际化（简中/繁中/英/日，另有社区翻译的土耳其语）
+- 深色 / 浅色 / 跟随系统主题、开机自启、自动更新、原子写入、自动备份（「设置 → 数据」里可以看到所有备份的位置和占用空间）、国际化（简中/繁中/英/日，另有社区翻译的土耳其语和韩语）
 
 ## 常见问题
 
