@@ -526,6 +526,30 @@ export function ClaudeDesktopProviderForm({
     );
   };
 
+  // 菜单显示名仍等于原来的实际请求模型（保存时自动回落出来的）就跟着模型走，
+  // 否则编辑已有映射卡只换模型，Desktop 菜单和 profile 里仍是旧模型名（#9203）。
+  // 从下拉选模型时，留空的显示名也一并填上。
+  const updateRouteModel = (
+    index: number,
+    model: string,
+    fillEmptyLabel = false,
+  ) => {
+    setRoutes((current) =>
+      current.map((row, i) => {
+        if (i !== index) return row;
+        const label = row.labelOverride.trim();
+        const labelFollowsModel = label
+          ? label === row.model.trim()
+          : fillEmptyLabel;
+        return {
+          ...row,
+          model,
+          labelOverride: labelFollowsModel ? model : row.labelOverride,
+        };
+      }),
+    );
+  };
+
   const handleModelMappingChange = (checked: boolean) => {
     if (usesManagedOAuth) return;
     setMode(checked ? "proxy" : "direct");
@@ -1321,9 +1345,7 @@ export function ClaudeDesktopProviderForm({
                             <Input
                               value={route.model}
                               onChange={(event) =>
-                                updateRoute(index, {
-                                  model: event.target.value,
-                                })
+                                updateRouteModel(index, event.target.value)
                               }
                               placeholder={modelPlaceholder}
                               className="flex-1"
@@ -1332,10 +1354,7 @@ export function ClaudeDesktopProviderForm({
                               <ModelDropdown
                                 models={fetchedModels}
                                 onSelect={(id) =>
-                                  updateRoute(index, {
-                                    model: id,
-                                    labelOverride: route.labelOverride || id,
-                                  })
+                                  updateRouteModel(index, id, true)
                                 }
                               />
                             )}

@@ -35,6 +35,7 @@ pub mod fwd {
     pub const PROVIDER_FAILED_RETRY: &str = "FWD-001";
     pub const ALL_PROVIDERS_FAILED: &str = "FWD-002";
     pub const SINGLE_PROVIDER_FAILED: &str = "FWD-003";
+    pub const CIRCUIT_SKIPPED: &str = "FWD-004";
 }
 
 /// 故障转移日志码

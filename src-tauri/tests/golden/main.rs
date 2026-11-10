@@ -17,7 +17,7 @@
 //! 快照变了就意味着行为变了，要能说清楚为什么。
 
 #[allow(dead_code)]
-#[path = "../support.rs"]
+#[path = "../support/mod.rs"]
 mod support;
 
 mod claude_key_fields;

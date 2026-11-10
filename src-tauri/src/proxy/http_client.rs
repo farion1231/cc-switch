@@ -303,6 +303,19 @@ pub fn no_redirect() -> Result<Client, String> {
     )
 }
 
+/// 不跟随重定向、按目标地址选代理的客户端：本机地址直连，其余同 [`no_redirect`]。
+pub fn no_redirect_for_url(url: &str) -> Result<Client, String> {
+    if is_loopback_url(url) {
+        base_builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| format!("Failed to build HTTP client: {e}"))
+    } else {
+        no_redirect()
+    }
+}
+
 /// 构建 HTTP 客户端
 fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
     build_client_from(base_builder(), proxy_url)

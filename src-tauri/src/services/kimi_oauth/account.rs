@@ -386,6 +386,7 @@ fn quota_status(status: CredentialStatus, message: &str) -> SubscriptionQuota {
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
+        plan_name: None,
         error: None,
         queried_at: Some(chrono::Utc::now().timestamp_millis()),
     }
@@ -442,9 +443,31 @@ pub(super) async fn quota(
             }
         }
     }
-    let mut quota = crate::services::coding_plan::query_kimi_at(base_url, &token).await?;
+    // 套餐在 /me 里（/usages 不带），和额度并行问；问不到只是不显示
+    let (quota, plan) = tokio::join!(
+        crate::services::coding_plan::query_kimi_at(base_url, &token),
+        fetch_plan(base_url, &token, device_id),
+    );
+    let mut quota = quota?;
     quota.tool = "kimi_oauth".into();
+    if quota.success {
+        quota.plan_name = plan;
+    }
     Ok(quota)
+}
+
+/// 账号的 Kimi Code 套餐名：`/me` 的 `user_level_name`（实测「Free」「Allegretto」）。
+async fn fetch_plan(base_url: &str, access_token: &str, device_id: &str) -> Option<String> {
+    let endpoint = format!("{base_url}/me");
+    let response = identify(crate::proxy::http_client::get().get(&endpoint), device_id)
+        .bearer_auth(access_token)
+        .send()
+        .await
+        .ok()?;
+    let (status, payload) = response_json(response).await.ok()?;
+    (status == 200)
+        .then(|| string_field(&payload, "user_level_name"))
+        .flatten()
 }
 
 /// Fail early when a Kimi official card points at a login this machine does

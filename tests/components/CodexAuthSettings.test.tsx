@@ -195,6 +195,7 @@ describe("CodexAuthSettings session compression toggle", () => {
   });
 });
 
+
 describe("Codex managed history migration consent", () => {
   beforeEach(() => {
     hasBackupMock.mockReset().mockResolvedValue(false);
@@ -630,3 +631,87 @@ describe("Codex legacy official history repair consent", () => {
     expect(repairLegacyOfficialMock).toHaveBeenCalledTimes(1);
   });
 });
+
+
+describe("CodexAuthSettings unified session history toggle", () => {
+  const UNIFY = "settings.unifyCodexSessionHistory";
+
+  beforeEach(() => {
+    getCompressionMock.mockResolvedValue(false);
+    diskUsageMock.mockResolvedValue(0);
+  });
+
+  async function renderUnify(enabled: boolean, migrateExisting?: boolean) {
+    const onChange = vi.fn().mockResolvedValue(true);
+    await act(async () => {
+      render(
+        <CodexAuthSettings
+          settings={
+            {
+              unifyCodexSessionHistory: enabled,
+              unifyCodexMigrateExisting: migrateExisting,
+            } as SettingsFormState
+          }
+          onChange={onChange}
+        />,
+      );
+    });
+    return onChange;
+  }
+
+  // 新版 Codex 会锁住留在官方组的会话：迁入仍由用户决定，但默认勾上
+  it("offers migrating existing sessions, checked by default", async () => {
+    const onChange = await renderUnify(false);
+
+    fireEvent.click(screen.getByRole("switch", { name: UNIFY }));
+    const checkbox = await screen.findByRole("checkbox");
+    expect(
+      screen.getByText("confirm.unifyCodexHistory.migrateExisting"),
+    ).toBeInTheDocument();
+    expect(checkbox).toBeChecked();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "confirm.unifyCodexHistory.confirm" }),
+    );
+    expect(onChange).toHaveBeenCalledWith({
+      unifyCodexSessionHistory: true,
+      unifyCodexMigrateExisting: true,
+    });
+  });
+
+  it("lets the user enable without migrating", async () => {
+    const onChange = await renderUnify(false);
+
+    fireEvent.click(screen.getByRole("switch", { name: UNIFY }));
+    fireEvent.click(await screen.findByRole("checkbox"));
+    fireEvent.click(
+      screen.getByRole("button", { name: "confirm.unifyCodexHistory.confirm" }),
+    );
+    expect(onChange).toHaveBeenCalledWith({
+      unifyCodexSessionHistory: true,
+      unifyCodexMigrateExisting: false,
+    });
+  });
+
+  it("offers restore when turning off after opting into migration", async () => {
+    await renderUnify(true, true);
+
+    fireEvent.click(screen.getByRole("switch", { name: UNIFY }));
+    expect(
+      await screen.findByText("confirm.unifyCodexHistoryOff.restoreBackup"),
+    ).toBeInTheDocument();
+  });
+
+  it("has nothing to restore when migration was never opted into", async () => {
+    await renderUnify(true, false);
+
+    fireEvent.click(screen.getByRole("switch", { name: UNIFY }));
+    expect(
+      await screen.findByText("confirm.unifyCodexHistoryOff.message"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("confirm.unifyCodexHistoryOff.restoreBackup"),
+    ).not.toBeInTheDocument();
+  });
+});
+

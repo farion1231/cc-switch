@@ -667,7 +667,12 @@ fn model_catalog_pointer_ownership() {
     switch(&state, "owned").expect("switch to owned");
     assert_eq!(
         live_config()["model_catalog_json"].as_str(),
-        Some("cc-switch-model-catalog.json")
+        Some(
+            get_codex_config_path()
+                .with_file_name("cc-switch-model-catalog.json")
+                .to_string_lossy()
+                .as_ref()
+        )
     );
     assert!(get_codex_config_path()
         .with_file_name("cc-switch-model-catalog.json")
@@ -694,14 +699,19 @@ fn model_catalog_pointer_ownership() {
     switch(&state, "owned").expect("switch back to owned");
     assert_eq!(
         live_config()["model_catalog_json"].as_str(),
-        Some("cc-switch-model-catalog.json"),
+        Some(
+            get_codex_config_path()
+                .with_file_name("cc-switch-model-catalog.json")
+                .to_string_lossy()
+                .as_ref()
+        ),
         "a pointer written into config.toml by hand is replaced like any key field"
     );
-    let hand_written = live_config_text().replace(
-        "model_catalog_json = \"cc-switch-model-catalog.json\"",
-        "model_catalog_json = \"/Users/me/hand-written.json\"",
-    );
-    std::fs::write(get_codex_config_path(), hand_written).expect("hand-write a pointer");
+    let mut doc = live_config_text()
+        .parse::<toml_edit::DocumentMut>()
+        .expect("parse live config");
+    doc["model_catalog_json"] = toml_edit::value("/Users/me/hand-written.json");
+    std::fs::write(get_codex_config_path(), doc.to_string()).expect("hand-write a pointer");
     switch(&state, "plain").expect("switch to plain again");
     assert!(
         live_config().get("model_catalog_json").is_none(),

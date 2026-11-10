@@ -94,9 +94,17 @@ function renderCard(
     isCurrent?: boolean;
     onEdit?: (provider: Provider) => void;
     onConfigureUsage?: (provider: Provider) => void;
+    planName?: string;
   } = {},
 ) {
   const queryClient = createTestQueryClient();
+  if (options.planName) {
+    queryClient.setQueryData(["codex_oauth", "quota", "account-long"], {
+      success: true,
+      tiers: [],
+      planName: options.planName,
+    });
+  }
   if (options.status) {
     queryClient.setQueryData(
       ["managed-auth-status", "codex_oauth"],
@@ -122,6 +130,30 @@ function renderCard(
 }
 
 describe("ProviderCard Codex Official account identity", () => {
+  it("puts the bound account's plan after the login once its quota is in", () => {
+    renderCard(managedProvider("OpenAI Official"), {
+      status: authStatus("me@example.com"),
+      planName: "Pro 200",
+    });
+
+    expect(screen.getByText("me@example.com")).toBeInTheDocument();
+    expect(screen.getByText("· Pro 200")).toBeInTheDocument();
+  });
+
+  it("leaves the plan out when the card does not query quota", () => {
+    const provider = managedProvider("OpenAI Official");
+    provider.meta = {
+      ...provider.meta,
+      usage_script: { enabled: false },
+    } as Provider["meta"];
+    renderCard(provider, {
+      status: authStatus("me@example.com"),
+      planName: "Pro 200",
+    });
+
+    expect(screen.queryByText("· Pro 200")).not.toBeInTheDocument();
+  });
+
   it("lets the current provider open account selection after its account is deleted", async () => {
     const user = userEvent.setup();
     const onEdit = vi.fn();

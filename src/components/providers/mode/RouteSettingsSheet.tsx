@@ -13,6 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { AutoFailoverConfigPanel } from "@/components/proxy/AutoFailoverConfigPanel";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
+import { CodexPauseOfficialLoginSection } from "./CodexPauseOfficialLogin";
 
 interface RouteSettingsSheetProps {
   app: ProxyAppId;
@@ -21,7 +22,10 @@ interface RouteSettingsSheetProps {
   onOpenSettings: () => void;
 }
 
-/** 路由页签上的「路由设置 ›」：当前应用的超时、重试、熔断；更多在设置 → 本地路由。 */
+/**
+ * 路由页签上的「路由设置 ›」：当前应用的超时、重试、熔断（Codex 另有「暂停使用官方登录」）；
+ * 更多在设置 → 本地路由。
+ */
 export function RouteSettingsSheet({
   app,
   open,
@@ -36,7 +40,8 @@ export function RouteSettingsSheet({
           <SheetTitle>{t("mode.routeSettingsTitle")}</SheetTitle>
           <SheetDescription>{APP_DISPLAY_NAME[app]}</SheetDescription>
         </SheetHeader>
-        <SheetBody>
+        <SheetBody className="space-y-3">
+          {app === "codex" && <CodexPauseOfficialLoginSection />}
           <AutoFailoverConfigPanel appType={app} />
         </SheetBody>
         <SheetFooter className="justify-start">

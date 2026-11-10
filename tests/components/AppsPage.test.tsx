@@ -25,6 +25,7 @@ import type {
 } from "@/lib/api/settings";
 import type { DndContextProps, DragEndEvent } from "@dnd-kit/core";
 import { APP_IDS } from "@/config/appConfig";
+import { emitTauriEvent } from "../msw/tauriMocks";
 
 type ToolVersions = Awaited<ReturnType<typeof settingsApi.getToolVersions>>;
 
@@ -1898,6 +1899,48 @@ describe("AppsPage concurrent CLI upgrades", () => {
     );
     expect(updateButton("Claude Code")).toBeDisabled();
     await act(async () => claudeRun.resolve());
+  });
+
+  it("shows the queue, elapsed time and latest output on the running rows", async () => {
+    const claudeRun = deferred<void>();
+    const codexRun = deferred<void>();
+    mocks.runToolLifecycleAction.mockImplementation(
+      async ([tool]: string[]) => {
+        await (tool === "claude" ? claudeRun : codexRun).promise;
+        upgraded.add(tool);
+      },
+    );
+    await renderApps();
+    fireEvent.click(updateButton("Claude Code"));
+    fireEvent.click(updateButton("Codex"));
+    await waitFor(() =>
+      expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(2),
+    );
+
+    const progress = (tool: string, stage: string, line?: string) =>
+      emitTauriEvent("tool-lifecycle-progress", { tools: [tool], stage, line });
+    act(() => {
+      progress("claude", "running");
+      progress("claude", "output", "==> [4/5] Installing");
+      progress("codex", "queued");
+      // 没在执行的工具收到迟到的事件，不显示进度
+      progress("gemini", "output", "stray line");
+    });
+    expect(card("Claude Code").getByText("appsPage.toolElapsed")).toBeVisible();
+    expect(card("Claude Code").getByText("==> [4/5] Installing")).toBeVisible();
+    expect(card("Codex").getByText("appsPage.toolQueued")).toBeVisible();
+    expect(card("Gemini CLI").queryByText("stray line")).toBeNull();
+
+    await act(async () => claudeRun.resolve());
+    await waitFor(() => expect(isReady("Claude Code")).toBe(true));
+    expect(card("Claude Code").queryByText("==> [4/5] Installing")).toBeNull();
+    expect(card("Codex").getByText("appsPage.toolQueued")).toBeVisible();
+
+    act(() => progress("codex", "running"));
+    expect(card("Codex").queryByText("appsPage.toolQueued")).toBeNull();
+    expect(card("Codex").getByText("appsPage.toolElapsed")).toBeVisible();
+    await act(async () => codexRun.resolve());
+    await waitFor(() => expect(isReady("Codex")).toBe(true));
   });
 
   it("keeps a tool locked through version refresh and remount with an expired cache", async () => {

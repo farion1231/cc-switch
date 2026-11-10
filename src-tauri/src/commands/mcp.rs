@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use serde::Serialize;
 use tauri::State;
 
+use super::run_db_task;
 use crate::app_config::AppType;
 use crate::claude_mcp;
 use crate::services::McpService;
@@ -13,12 +14,15 @@ use crate::store::AppState;
 
 /// Start a bounded, one-shot batch only while the MCP page is mounted.
 #[tauri::command]
-pub fn start_mcp_connectivity_checks(
+pub async fn start_mcp_connectivity_checks(
     state: State<'_, AppState>,
     server_ids: Vec<String>,
     on_result: tauri::ipc::Channel<crate::services::mcp_connectivity::ConnectivityResult>,
 ) -> Result<String, String> {
-    let servers = McpService::get_all_servers(&state).map_err(|e| e.to_string())?;
+    let servers = run_db_task(&state, |state| {
+        McpService::get_all_servers(state).map_err(|e| e.to_string())
+    })
+    .await?;
     Ok(crate::services::mcp_connectivity::start_checks(
         // Use the page's enabled selection: app toggles update it optimistically,
         // so the database's enablement flags can still lag behind the UI.

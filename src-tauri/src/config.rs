@@ -509,6 +509,9 @@ pub(crate) fn stage_write(
     #[cfg(not(unix))]
     let _ = unix_mode;
 
+    let resolved = resolve_symlink_target(path);
+    let path = resolved.as_path();
+
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
     }
@@ -585,11 +588,76 @@ pub(crate) fn stage_write(
     })
 }
 
+/// 目标是软链接时返回它最终指向的文件（逐跳 `read_link`，相对目标按链接所在目录解析），
+/// 否则原样返回。原子写要替换的是这个最终文件：rename 到软链接本身会把链接换成普通
+/// 文件（Unix），Windows 的 `ReplaceFileW` 则直接报 os error 1464。只解析最后一段，
+/// 不碰路径里的目录软链；除相对目标带 `..` 外不做 `canonicalize`（Windows 上会把路径
+/// 改写成 `\\?\` 形式），普通文件原样返回。
+/// 悬空链接照样返回它指向的路径，写入时会在那里新建文件、链接保留。
+fn resolve_symlink_target(path: &Path) -> PathBuf {
+    // 与 Linux 的 MAXSYMLINKS 一致，防止链接成环时死循环。
+    const MAX_HOPS: usize = 40;
+    let mut current = path.to_path_buf();
+    for _ in 0..MAX_HOPS {
+        let is_link = fs::symlink_metadata(&current)
+            .map(|meta| meta.file_type().is_symlink())
+            .unwrap_or(false);
+        if !is_link {
+            return current;
+        }
+        let Ok(target) = fs::read_link(&current) else {
+            return current;
+        };
+        current = if target.is_absolute() {
+            target
+        } else {
+            match current.parent() {
+                Some(parent) => join_link_target(parent, &target),
+                None => target,
+            }
+        };
+    }
+    log::warn!("软链接层数过多，按原路径写入: {}", path.display());
+    path.to_path_buf()
+}
+
+/// 把相对链接目标接到链接所在目录上。目标里有 `..` 时先把目录解析成真实路径再逐段
+/// 回退：Windows 按字面折叠 `..`，链接所在目录本身是 junction / 目录软链时会退到
+/// 错误的上级目录（Unix 内核按真实路径解析，结果一样）。
+fn join_link_target(parent: &Path, target: &Path) -> PathBuf {
+    if !target
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return parent.join(target);
+    }
+    let Ok(mut resolved) = fs::canonicalize(parent) else {
+        return parent.join(target);
+    };
+    for component in target.components() {
+        match component {
+            Component::ParentDir => {
+                // 已走过的段里也可能有目录软链，回退前先解析成真实路径。
+                if let Ok(real) = fs::canonicalize(&resolved) {
+                    resolved = real;
+                }
+                resolved.pop();
+            }
+            Component::CurDir => {}
+            other => resolved.push(other.as_os_str()),
+        }
+    }
+    resolved
+}
+
 /// 原子写的后半步：用 `tmp` 替换 `path`。崩溃恢复也用它提交上次留下的临时文件。
+/// `path` 是软链接时替换它指向的文件，链接本身保留。
 ///
 /// 失败时临时文件留在原处：写入引擎的 pending 指着它，下次恢复要靠它前滚（目标文件被
 /// 占用、只读这类失败，过后多半能补完）。只做一次性原子写的调用方自己删。
 pub(crate) fn commit_staged(tmp: &Path, path: &Path) -> Result<(), AppError> {
+    let resolved = resolve_symlink_target(path);
+    let path = resolved.as_path();
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
@@ -750,6 +818,111 @@ mod tests {
         // 一次性的原子写不留临时文件。
         assert!(staged.commit().is_err());
         assert!(!tmp.exists());
+    }
+
+    /// dotfiles 用户把 settings.json 等配置软链到别的目录（#6764 / #9283）：原子写要
+    /// 写透到链接指向的文件，链接本身保留，临时文件建在目标旁边、不留残留。
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_writes_through_symlinks_and_keeps_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let dotfiles = dir.path().join("dotfiles");
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(&dotfiles).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        let real = dotfiles.join("settings.json");
+        std::fs::write(&real, b"old contents").unwrap();
+        // 相对链接 + 两跳：home/settings.json -> home/hop.json -> ../dotfiles/settings.json
+        let hop = home.join("hop.json");
+        let link = home.join("settings.json");
+        std::os::unix::fs::symlink("../dotfiles/settings.json", &hop).unwrap();
+        std::os::unix::fs::symlink("hop.json", &link).unwrap();
+
+        atomic_write_private(&link, b"new contents").unwrap();
+
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(std::fs::symlink_metadata(&hop)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(std::fs::read(&real).unwrap(), b"new contents");
+        for d in [&dotfiles, &home] {
+            let leftovers: Vec<_> = std::fs::read_dir(d)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+                .filter(|name| name.contains(".tmp."))
+                .collect();
+            assert!(
+                leftovers.is_empty(),
+                "temporary files remain: {leftovers:?}"
+            );
+        }
+
+        // 写入引擎的两步写（以及崩溃前滚）拿的也是链接路径。
+        let staged = stage_write(&link, b"engine contents", None, false).unwrap();
+        assert_eq!(
+            staged.tmp_path().parent().unwrap().canonicalize().unwrap(),
+            dotfiles.canonicalize().unwrap()
+        );
+        let tmp = staged.tmp_path().to_path_buf();
+        commit_staged(&tmp, &link).unwrap();
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(std::fs::read(&real).unwrap(), b"engine contents");
+    }
+
+    /// 链接所在目录本身是目录软链、相对目标带 `..` 时，`..` 要按真实目录回退。
+    #[cfg(unix)]
+    #[test]
+    fn symlink_parent_dir_is_resolved_before_walking_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let sync = dir.path().join("sync");
+        let real_dir = sync.join("claude");
+        std::fs::create_dir_all(&real_dir).unwrap();
+        let real = sync.join("settings.json");
+        std::fs::write(&real, b"old").unwrap();
+        std::os::unix::fs::symlink("../settings.json", real_dir.join("settings.json")).unwrap();
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        std::os::unix::fs::symlink(&real_dir, home.join(".claude")).unwrap();
+        let link = home.join(".claude").join("settings.json");
+
+        assert_eq!(resolve_symlink_target(&link), real.canonicalize().unwrap());
+        atomic_write(&link, b"new").unwrap();
+        assert_eq!(std::fs::read(&real).unwrap(), b"new");
+
+        // 目标里先经过一个目录软链再回退：`sub/../other.json`，sub -> sync/claude。
+        let other = sync.join("other.json");
+        std::fs::write(&other, b"old").unwrap();
+        std::os::unix::fs::symlink(&real_dir, home.join("sub")).unwrap();
+        let link2 = home.join("other.json");
+        std::os::unix::fs::symlink("sub/../other.json", &link2).unwrap();
+        assert_eq!(
+            resolve_symlink_target(&link2),
+            other.canonicalize().unwrap()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_creates_the_target_of_a_dangling_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real.json");
+        let link = dir.path().join("link.json");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        atomic_write(&link, b"contents").unwrap();
+
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(std::fs::read(&real).unwrap(), b"contents");
     }
 
     #[cfg(windows)]

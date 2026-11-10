@@ -125,6 +125,9 @@ pub const CODEX_FLOOR_TOP: &[&str] = &[
     "review_model",
     "model_reasoning_effort",
     "plan_mode_reasoning_effort",
+    // Codex 0.167 起不认（早在 2025-09 就恒发 `store: false`），留着每次开会话都报
+    // 「unrecognized configuration setting」。不再投影，留在这里是为了写入时把旧版写进
+    // live 的这一行清掉。
     "disable_response_storage",
     "model_catalog_json",
     // 兜底写法会把 Key 写在顶层。

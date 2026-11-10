@@ -78,6 +78,10 @@ pub struct SubscriptionQuota {
     /// ChatGPT 订阅买的 Codex Credits 余额（额度用完后才扣）；没有、不限量或为 0 时为 None
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credits_balance: Option<f64>,
+    /// 套餐显示名（「Pro 200」「Google AI Pro」「SuperGrok Heavy」…），授权中心的账号行显示；
+    /// 只有能顺带查到套餐的服务填，认不出或查不到时为 None
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_name: Option<String>,
     pub error: Option<String>,
     pub queried_at: Option<i64>,
 }
@@ -93,6 +97,7 @@ impl SubscriptionQuota {
             extra_usage: None,
             reset_credits: None,
             credits_balance: None,
+            plan_name: None,
             error: None,
             queried_at: None,
         }
@@ -108,6 +113,7 @@ impl SubscriptionQuota {
             extra_usage: None,
             reset_credits: None,
             credits_balance: None,
+            plan_name: None,
             error: Some(message),
             queried_at: Some(now_millis()),
         }
@@ -615,6 +621,7 @@ fn parse_claude_quota(body: &serde_json::Value) -> SubscriptionQuota {
         extra_usage,
         reset_credits: None,
         credits_balance: None,
+        plan_name: None,
         error: None,
         queried_at: Some(now_millis()),
     }
@@ -880,6 +887,46 @@ struct CodexUsageResponse {
     rate_limit: Option<CodexRateLimit>,
     /// 原样收下再挑字段：形状不对时只是不显示余额，不能让整份额度解析失败
     credits: Option<serde_json::Value>,
+    #[serde(default)]
+    plan_type: Option<String>,
+}
+
+/// `wham/usage` 的 `plan_type` → 套餐名，照 Codex 自己 `/status` 的叫法
+/// （codex-rs/tui/src/subscription.rs：`business` 在那里也叫 Enterprise）。认不出的首字母大写照写
+fn codex_plan_label(plan_type: &str) -> Option<String> {
+    let plan = plan_type.trim().to_ascii_lowercase();
+    let label = match plan.as_str() {
+        "" | "unknown" => return None,
+        "free" => "Free",
+        "go" => "Go",
+        "plus" => "Plus",
+        "prolite" => "Pro 100",
+        "pro" => "Pro 200",
+        "promax" => "Pro 500",
+        "team" | "self_serve_business_usage_based" => "Business",
+        "self_serve_business_prolite" => "Business Premium",
+        "edu" => "Edu",
+        "edu_plus" => "Edu Plus",
+        "edu_pro" => "Edu Pro",
+        p if p == "business" || p == "ent26" || p.starts_with("enterprise") => "Enterprise",
+        _ => return Some(title_case_words(&plan)),
+    };
+    Some(label.to_string())
+}
+
+/// `free_workspace` → `Free Workspace`
+pub(crate) fn title_case_words(raw: &str) -> String {
+    raw.split(['_', '-', ' '])
+        .filter(|word| !word.is_empty())
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().chain(chars).collect::<String>(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// `wham/usage` 的 `credits`：`{has_credits, unlimited, balance}`，balance 实测是字符串
@@ -1112,6 +1159,7 @@ pub(crate) async fn query_codex_usage(
         extra_usage: None,
         reset_credits: None,
         credits_balance: body.credits.as_ref().and_then(parse_codex_credits_balance),
+        plan_name: body.plan_type.as_deref().and_then(codex_plan_label),
         error: None,
         queried_at: Some(now_millis()),
     })
@@ -1577,6 +1625,7 @@ async fn query_gemini_quota(access_token: &str) -> Result<SubscriptionQuota, Str
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
+        plan_name: crate::services::agy_account::quota::code_assist_plan(&load_raw),
         error: None,
         queried_at: Some(now_millis()),
     })
@@ -1664,10 +1713,7 @@ pub async fn get_claude_account_quota(
         return Ok(with_plan(direct));
     }
 
-    let account_uuid = account
-        .split_once(':')
-        .map_or(account.as_str(), |(uuid, _)| uuid)
-        .to_string();
+    let account_uuid = account_uuid_of(&account).to_string();
     let profile = slot.global_config();
     let config_dir = match &slot {
         snapshot::store::Slot::Default { .. } => None,
@@ -1688,6 +1734,32 @@ pub async fn get_claude_account_quota(
         cached,
         now_millis(),
     )))
+}
+
+/// 跟随本地登录的 Claude 官方卡：按 `~/.claude` 现在的登录查额度。令牌过期了（几个小时没用
+/// Claude Code 就会这样）和绑号卡一样，在默认槽位里跑一次 `claude -p /usage`，读它缓存的额度。
+async fn get_local_claude_quota() -> Result<SubscriptionQuota, String> {
+    use crate::services::claude_account::{snapshot, usage};
+
+    let direct = claude_quota_from(read_claude_credentials()).await?;
+    // 改了配置目录时登录不一定在 ~/.claude，在那里跑会拿到别的号的额度
+    if !needs_cli_usage(&direct) || crate::settings::get_claude_override_dir().is_some() {
+        return Ok(direct);
+    }
+    let cached = tokio::task::spawn_blocking(|| {
+        let slot = snapshot::store::Slot::default_slot();
+        let account = snapshot::default_owner(&slot)?;
+        usage::refresh_via_cli(&account, None);
+        usage::read_cached(&slot.global_config(), account_uuid_of(&account))
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(account_quota_with_cache(direct, cached, now_millis()))
+}
+
+/// 账号 key（`<accountUuid>:<organizationUuid>`）里的 `accountUuid`。
+fn account_uuid_of(account: &str) -> &str {
+    account.split_once(':').map_or(account, |(uuid, _)| uuid)
 }
 
 /// 绑号卡的额度，带上这个号的套餐（凭据里记的；读不到时缺省）。
@@ -1741,7 +1813,7 @@ fn account_quota_with_cache(
 /// 否则一次网络抖动会被误报成确定性的凭据过期。
 pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, String> {
     match tool {
-        "claude" => claude_quota_from(read_claude_credentials()).await,
+        "claude" => get_local_claude_quota().await,
         "codex" => {
             let (token, account_id, status, message) = read_codex_credentials();
 
@@ -1912,6 +1984,13 @@ mod tests {
         assert!(!none.success);
     }
 
+    #[test]
+    fn account_uuid_is_the_part_before_the_organization() {
+        assert_eq!(account_uuid_of("acc-1:org-1"), "acc-1");
+        assert_eq!(account_uuid_of("acc-1:"), "acc-1");
+        assert_eq!(account_uuid_of("acc-1"), "acc-1");
+    }
+
     #[cfg(target_os = "macos")]
     fn claude_keychain_output(code: i32, secret: &str) -> std::process::Output {
         use std::os::unix::process::ExitStatusExt;
@@ -2065,6 +2144,37 @@ mod tests {
         .unwrap();
         assert!(quota.reset_credits.is_none());
         assert!(quota.credits_balance.is_none());
+    }
+
+    #[test]
+    fn codex_plan_label_follows_codex_status_names() {
+        let label = |raw: &str| {
+            let body: CodexUsageResponse = serde_json::from_str(raw).unwrap();
+            body.plan_type.as_deref().and_then(codex_plan_label)
+        };
+        assert_eq!(label(r#"{"plan_type":"pro"}"#).as_deref(), Some("Pro 200"));
+        assert_eq!(
+            label(r#"{"plan_type":"prolite"}"#).as_deref(),
+            Some("Pro 100")
+        );
+        assert_eq!(
+            label(r#"{"plan_type":"team"}"#).as_deref(),
+            Some("Business")
+        );
+        assert_eq!(
+            label(r#"{"plan_type":"business"}"#).as_deref(),
+            Some("Enterprise")
+        );
+        assert_eq!(
+            label(r#"{"plan_type":"enterprise_cbp_usage_based"}"#).as_deref(),
+            Some("Enterprise")
+        );
+        assert_eq!(
+            label(r#"{"plan_type":"free_workspace"}"#).as_deref(),
+            Some("Free Workspace")
+        );
+        assert_eq!(label(r#"{"plan_type":"unknown"}"#), None);
+        assert_eq!(label(r#"{"rate_limit":null}"#), None);
     }
 
     #[test]

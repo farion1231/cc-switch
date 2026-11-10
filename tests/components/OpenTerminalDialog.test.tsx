@@ -24,7 +24,10 @@ vi.mock("@/lib/api", () => ({
     agyAccountIsRunning: () => agyRunningMock(),
   },
 }));
-vi.mock("@/lib/platform", () => ({ isMac: () => true }));
+vi.mock("@/lib/platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/platform")>()),
+  isMac: () => true,
+}));
 
 vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
@@ -45,7 +48,7 @@ const provider = {
 function renderDialog(
   onClose = vi.fn(),
   target: Provider = provider,
-  appId: "claude" | "codex" | "agy" = "claude",
+  appId: "claude" | "codex" | "agy" | "grokbuild" = "claude",
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -365,5 +368,26 @@ describe("OpenTerminalDialog", () => {
     expect(terminalAvailable(official, "codex", true)).toBe(true);
     expect(terminalAvailable(routed, "codex", true)).toBe(false);
     expect(terminalAvailable(official, "claude", false)).toBe(true);
+  });
+
+  const grokRelay = {
+    id: "grok-relay",
+    name: "Grok Relay",
+    settingsConfig: {
+      config:
+        '[models]\ndefault = "relay"\n[model.relay]\nbase_url = "https://relay.example.com/v1"\napi_key = "sk-grok"\n',
+    },
+  } as Provider;
+
+  // Grok Build 没有只对一个进程换配置的办法：只有当前供应商能打开，跑的就是 live 配置
+  it("offers a Grok Build terminal only for the current card and never calls it isolated", () => {
+    expect(terminalAvailable(grokRelay, "grokbuild", true)).toBe(true);
+    expect(terminalAvailable(grokRelay, "grokbuild", false)).toBe(false);
+
+    renderDialog(vi.fn(), grokRelay, "grokbuild");
+    expect(screen.getByText("--always-approve")).toBeInTheDocument();
+    expect(
+      screen.queryByText("provider.openTerminalDialog.isolationTitle"),
+    ).not.toBeInTheDocument();
   });
 });

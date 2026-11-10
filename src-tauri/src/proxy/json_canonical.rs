@@ -1,51 +1,50 @@
 //! Stable JSON helpers for cache-sensitive request bodies.
 
+use serde::{ser::SerializeMap, ser::SerializeSeq, Serialize, Serializer};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-pub(crate) fn canonicalize_value(value: Value) -> Value {
-    match value {
-        Value::Array(values) => Value::Array(values.into_iter().map(canonicalize_value).collect()),
-        Value::Object(map) => {
-            let mut entries = map.into_iter().collect::<Vec<_>>();
-            entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+pub(crate) fn canonicalize_value(mut value: Value) -> Value {
+    value.sort_all_objects();
+    value
+}
 
-            let mut sorted = serde_json::Map::new();
-            for (key, value) in entries {
-                sorted.insert(key, canonicalize_value(value));
+/// Serialize sorted keys directly into the output, without a string per JSON node.
+struct CanonicalValue<'a>(&'a Value);
+
+impl Serialize for CanonicalValue<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.0 {
+            Value::Array(values) => {
+                let mut seq = serializer.serialize_seq(Some(values.len()))?;
+                for value in values {
+                    seq.serialize_element(&CanonicalValue(value))?;
+                }
+                seq.end()
             }
-            Value::Object(sorted)
+            Value::Object(map) => {
+                let mut output = serializer.serialize_map(Some(map.len()))?;
+                if map.keys().is_sorted() {
+                    for (key, value) in map {
+                        output.serialize_entry(key, &CanonicalValue(value))?;
+                    }
+                } else {
+                    let mut entries = map.iter().collect::<Vec<_>>();
+                    entries.sort_unstable_by_key(|(key, _)| *key);
+                    for (key, value) in entries {
+                        output.serialize_entry(key, &CanonicalValue(value))?;
+                    }
+                }
+                output.end()
+            }
+            value => value.serialize(serializer),
         }
-        other => other,
     }
 }
 
 pub(crate) fn canonical_json_string(value: &Value) -> String {
-    match value {
-        Value::Null => "null".to_string(),
-        Value::Bool(value) => value.to_string(),
-        Value::Number(value) => value.to_string(),
-        Value::String(value) => serde_json::to_string(value)
-            .expect("serializing a JSON string for canonical output should not fail"),
-        Value::Array(values) => {
-            let parts = values.iter().map(canonical_json_string).collect::<Vec<_>>();
-            format!("[{}]", parts.join(","))
-        }
-        Value::Object(map) => {
-            let mut entries = map.iter().collect::<Vec<_>>();
-            entries.sort_by_key(|(left, _)| *left);
-            let parts = entries
-                .into_iter()
-                .map(|(key, value)| {
-                    let key = serde_json::to_string(key).expect(
-                        "serializing a JSON object key for canonical output should not fail",
-                    );
-                    format!("{key}:{}", canonical_json_string(value))
-                })
-                .collect::<Vec<_>>();
-            format!("{{{}}}", parts.join(","))
-        }
-    }
+    serde_json::to_string(&CanonicalValue(value))
+        .expect("serializing a JSON value for canonical output should not fail")
 }
 
 pub(crate) fn canonicalize_json_string_if_parseable(value: &str) -> String {
@@ -91,16 +90,44 @@ pub(crate) fn short_value_hash(value: Option<&Value>) -> String {
     let Some(value) = value else {
         return "absent".to_string();
     };
-    short_sha256_hex(canonical_json_string(value).as_bytes())
+    let mut writer = HashWriter(Sha256::new());
+    {
+        use std::io::Write;
+
+        // Coalesce the serializer's small writes without keeping a full JSON copy.
+        let mut buffer = std::io::BufWriter::new(&mut writer);
+        serde_json::to_writer(&mut buffer, &CanonicalValue(value))
+            .expect("hashing a JSON value for canonical output should not fail");
+        buffer.flush().expect("writing to a hash cannot fail");
+    }
+    short_digest_hex(&writer.0.finalize())
 }
 
 pub(crate) fn short_sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    digest
-        .iter()
-        .take(8)
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>()
+    short_digest_hex(&Sha256::digest(bytes))
+}
+
+struct HashWriter(Sha256);
+
+impl std::io::Write for HashWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.update(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn short_digest_hex(digest: &[u8]) -> String {
+    use std::fmt::Write;
+
+    let mut hex = String::with_capacity(16);
+    for byte in &digest[..8] {
+        write!(&mut hex, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    hex
 }
 
 #[cfg(test)]
@@ -129,6 +156,33 @@ mod tests {
         assert_eq!(
             short_value_hash(Some(&left)),
             short_value_hash(Some(&right))
+        );
+    }
+
+    #[test]
+    fn canonical_serialization_preserves_wire_bytes_and_hashes() {
+        let value = json!({
+            "z": [null, true, false, -7, 1.25, "\u{0000}\n\"\\中"],
+            "a": {"z": [], "a": {}}
+        });
+        let expected = r#"{"a":{"a":{},"z":[]},"z":[null,true,false,-7,1.25,"\u0000\n\"\\中"]}"#;
+
+        assert_eq!(canonical_json_string(&value), expected);
+        assert_eq!(
+            short_value_hash(Some(&value)),
+            short_sha256_hex(expected.as_bytes())
+        );
+        assert_eq!(short_value_hash(None), "absent");
+    }
+
+    #[test]
+    fn canonical_hash_handles_values_larger_than_the_write_buffer() {
+        let value = json!({"z": "中\n\"\\".repeat(4096), "a": 1});
+        let canonical = canonical_json_string(&value);
+
+        assert_eq!(
+            short_value_hash(Some(&value)),
+            short_sha256_hex(canonical.as_bytes())
         );
     }
 

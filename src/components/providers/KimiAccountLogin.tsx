@@ -9,6 +9,7 @@ import {
 } from "@/components/settings/auth/ManagedAccountsGroup";
 import type { KimiOAuthAccount, KimiRegion } from "@/lib/api/kimiOAuth";
 import { KimiAccountQuota } from "@/components/settings/auth/AccountQuota";
+import { useAccountQuotaPlans } from "@/lib/query/accountPlans";
 import { useKimiOAuth } from "./forms/hooks/useKimiOAuth";
 
 interface KimiAccountLoginProps {
@@ -46,6 +47,11 @@ export function KimiAccountLogin({ helpSide }: KimiAccountLoginProps) {
     void auth.start(next, accountId);
   };
 
+  // 第二行的套餐（额度查到才有）
+  const plans = useAccountQuotaPlans(
+    "kimi_oauth",
+    accounts.map((account) => account.id),
+  );
   const rows: GroupAccountRow[] = accounts.map((account) => {
     const current = account.id === currentId;
     return {
@@ -54,6 +60,7 @@ export function KimiAccountLogin({ helpSide }: KimiAccountLoginProps) {
       avatarUrl: account.avatarUrl,
       details: account.authenticated
         ? [
+            plans[account.id],
             t(`kimi.oauth.${account.region}`),
             account.primary ? t("kimi.oauth.primaryShort") : null,
           ].filter(Boolean)

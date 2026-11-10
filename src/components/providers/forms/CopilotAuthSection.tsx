@@ -33,6 +33,8 @@ import {
 } from "@/components/settings/auth/ManagedAccountsGroup";
 import { CopilotAccountQuota } from "@/components/settings/auth/AccountQuota";
 import { signedInDate } from "@/components/settings/auth/accountDetails";
+import { useAccountQuotaPlans } from "@/lib/query/accountPlans";
+import type { CopilotQuota } from "@/lib/query/copilot";
 
 interface CopilotAuthSectionProps {
   className?: string;
@@ -171,6 +173,13 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
     </div>
   );
 
+  // 授权中心第二行的套餐（额度查到才有）
+  const plans = useAccountQuotaPlans(
+    "copilot",
+    accounts.map((account) => account.id),
+    (data) => (data as CopilotQuota).plan,
+  );
+
   if (mode === "select") {
     const accountSelect = isStatusSuccess && onAccountSelect && (
       <div className="space-y-2">
@@ -272,6 +281,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
       login: account.login,
       avatarUrl: account.avatar_url,
       details: [
+        plans[account.id],
         domain,
         enterprise
           ? t("authCenter.enterpriseServer", {

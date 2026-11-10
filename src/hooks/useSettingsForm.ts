@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useSettingsQuery } from "@/lib/query";
 import type { Settings } from "@/types";
 
-type Language = "zh" | "zh-TW" | "en" | "ja" | "tr";
+type Language = "zh" | "zh-TW" | "en" | "ja" | "tr" | "ko" | "ru";
 
 export type SettingsFormState = Omit<Settings, "language"> & {
   language: Language;
@@ -19,18 +19,28 @@ const normalizeLanguage = (lang?: string | null): Language => {
 
   if (
     normalized === "zh-tw" ||
-    normalized.startsWith("zh-hant") ||
-    normalized.startsWith("zh-hk") ||
-    normalized.startsWith("zh-mo")
+    normalized.startsWith("zh-tw-") ||
+    normalized === "zh-hant" ||
+    normalized.startsWith("zh-hant-") ||
+    normalized === "zh-hk" ||
+    normalized.startsWith("zh-hk-") ||
+    normalized === "zh-mo" ||
+    normalized.startsWith("zh-mo-")
   ) {
     return "zh-TW";
   }
 
-  if (normalized === "en" || normalized === "ja" || normalized === "tr") {
+  if (
+    normalized === "en" ||
+    normalized === "ja" ||
+    normalized === "tr" ||
+    normalized === "ko" ||
+    normalized === "ru"
+  ) {
     return normalized;
   }
 
-  if (normalized.startsWith("zh")) {
+  if (normalized === "zh" || normalized.startsWith("zh-")) {
     return "zh";
   }
 
@@ -44,7 +54,10 @@ const isSupportedLanguage = (lang?: string | null): boolean => {
     normalized === "en" ||
     normalized === "ja" ||
     normalized === "tr" ||
-    normalized.startsWith("zh")
+    normalized === "ko" ||
+    normalized === "ru" ||
+    normalized === "zh" ||
+    normalized.startsWith("zh-")
   );
 };
 
