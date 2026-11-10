@@ -780,6 +780,84 @@ describe("buildAdditiveSections", () => {
     expect(item(sections, "current").menuItems).toBeUndefined();
   });
 
+  it("keeps Copilot official cards as launchers and makes BYOK cards additive", () => {
+    const byokConfig = {
+      provider: { type: "openai", baseUrl: "https://api.example.com/v1" },
+      models: [{ id: "m" }],
+    };
+    const login = provider("login", {
+      settingsConfig: { env: { COPILOT_MODEL: "gpt-5.4" } },
+    });
+    const current = provider("current", { settingsConfig: byokConfig });
+    const other = provider("other", { settingsConfig: byokConfig });
+    const saved = provider("saved", { settingsConfig: byokConfig });
+    const actions = { ...additiveActions(), openTerminal: vi.fn() };
+    const sections = buildAdditiveSections({
+      app: "copilot",
+      t,
+      providers: [login, current, other, saved],
+      isInConfig: (p) => p.id === "current" || p.id === "other",
+      copilotDefaultId: "current",
+      actions,
+    });
+
+    // 官方卡单独一组排在最前，仍只有「打开终端」
+    expect(sections.map((section) => section.key)).toEqual([
+      "official",
+      "added",
+      "available",
+    ]);
+    expect(sections[0].items.map((entry) => entry.provider.id)).toEqual([
+      "login",
+    ]);
+    expect(item(sections, "login").buttons.map((b) => b.key)).toEqual([
+      "openTerminal",
+    ]);
+    button(sections, "login", "openTerminal").onClick();
+    expect(actions.openTerminal).toHaveBeenCalledWith(login);
+    expect(actions.add).not.toHaveBeenCalled();
+
+    expect(sections[1].items.map((entry) => entry.provider.id)).toEqual([
+      "current",
+      "other",
+    ]);
+    button(sections, "saved", "add").onClick();
+    expect(actions.add).toHaveBeenCalledWith(saved);
+    button(sections, "other", "remove").onClick();
+    expect(actions.remove).toHaveBeenCalledWith(other);
+    // Copilot 里没有「设为默认」：换默认模型在 copilot 的 /model 里
+    expect(item(sections, "other").menuItems).toBeUndefined();
+
+    // 默认那家：标「默认」，不能移除也不能删
+    expect(item(sections, "current").status?.label).toBe(
+      "providerCard.status.default",
+    );
+    expect(button(sections, "current", "remove").disabledReason).toBe(
+      "copilot.defaultCannotRemove",
+    );
+    expect(item(sections, "current").deleteDisabledReason).toBe(
+      "copilot.defaultCannotRemove",
+    );
+  });
+
+  it("omits the Copilot official group when there is no official card", () => {
+    const sections = buildAdditiveSections({
+      app: "copilot",
+      t,
+      providers: [
+        provider("relay", {
+          settingsConfig: { provider: { baseUrl: "http://x/v1" }, models: [] },
+        }),
+      ],
+      isInConfig: () => false,
+      actions: additiveActions(),
+    });
+    expect(sections.map((section) => section.key)).toEqual([
+      "added",
+      "available",
+    ]);
+  });
+
   it("blocks every Pi change while Pi's current state is unavailable", () => {
     const sections = buildAdditiveSections({
       app: "pi",

@@ -162,6 +162,8 @@
     "editClaudeProvider": "Claude Code Sağlayıcıyı Düzenle",
     "editCodexProvider": "Codex Sağlayıcıyı Düzenle",
     "configError": "Yapılandırma Hatası",
+    "liveConfigReadFailed": "{{app}} yapılandırma dosyası okunamadı",
+    "liveConfigReadFailedHint": "Yapılandırma dosyası düzeltilene kadar sağlayıcı ekleme ve kaldırma işlemleri başarısız olur.",
     "notConfigured": "Resmi web sitesi için yapılandırılmamış",
     "applyToClaudePlugin": "Claude eklentisine uygula",
     "removeFromClaudePlugin": "Claude eklentisinden kaldır",
@@ -181,6 +183,7 @@
     "managedByHermesHint": "Hermes' sağlayıcılarında tanımlanmıştır: dict. Hermes Web kullanıcı arayüzü aracılığıyla düzenleyin veya kaldırın.",
     "openTerminal": "Bu sağlayıcıyla terminal aç",
     "openTerminalIsolated": "Bu sağlayıcıyla terminal aç (yalıtılmış)",
+    "openTerminalNeedsRoute": "Bu kart yalnızca Yönlendirme üzerinden çalışır: terminal doğrudan kartın adresine bağlanır ve Yönlendirmenin sağladığı kimlik bilgilerini ve biçim dönüştürmeyi alamaz. Yönlendirmeyi açın, ardından istemciyi terminalde doğrudan çalıştırın",
     "openTerminalWithProvider": "Bu sağlayıcıyla terminal aç",
     "terminalOpened": "Terminal açıldı",
     "terminalOpenFailed": "Terminal açılamadı",
@@ -196,10 +199,14 @@
       "recent": "Son kullanılanlar",
       "forget": "Son kullanılanlardan kaldır",
       "confirm": "Terminali Aç",
+      "skipPermissions": "İzin onaylarını atla",
+      "extraArgs": "Ek argümanlar (isteğe bağlı)",
+      "extraArgsPlaceholder": "örn. --debug --append-system-prompt \"Kısa yanıt ver\"",
+      "extraArgsHint": "Başlatma komutunun sonuna eklenir ve yalnızca bu terminal için geçerlidir. Boşlukla ayırın; boşluk içeren değerleri tırnak içine alın.",
       "agySwitchTitle": "Bu işlem agy'nin oturum açma hesabını değiştirir",
       "agySwitchBody": "Terminal açılmadan önce agy'nin oturumu {{account}} hesabına geçirilir; bundan sonra başlatılan agy oturumları bu hesabı kullanır.",
       "agySwitchRunning": "agy çalışıyor: açık agy oturumları önceki hesabı kullanmaya devam eder ve hesabı yeniden kaydedebilir. Mümkünse önce agy oturumlarını kapatın.",
-      "isolationBodyCopilot": "\"{{name}}\" kartının uç noktası, anahtarı ve modeli yalnızca bu terminaldeki copilot'a iletilir ve hiçbir dosyaya yazılmaz; başka bir terminalde doğrudan copilot çalıştırmak yine GitHub oturumunuzu kullanır."
+      "isolationBodyCopilot": "Bu terminaldeki copilot, yalnızca bu oturum için --model ile \"{{name}}\" sağlayıcısının ilk modeliyle başlar. Uç nokta ve anahtar Copilot'un providers.json dosyasından okunur; diğer terminaller de /model ile seçebilir."
     },
     "name": "İsim",
     "namePlaceholder": "ör. Claude Resmi",
@@ -241,10 +248,12 @@
         "missing": "Account not on this computer",
         "manage": "Add or manage Claude accounts",
         "helpTerminal": "The Claude config folder is overridden in Settings, so switching to this card doesn't change Claude Code's sign-in. Use Open Terminal on the card to use the selected account.",
+        "helpWsl": "The Claude config folder is in WSL, where Claude accounts aren't supported yet. Switching to this card doesn't change Claude Code's sign-in.",
         "help": "Switching to this card changes Claude Code's sign-in to the selected account right away, including sessions already running. To use several accounts at once, use Open Terminal on the card.",
         "claudeAccount": "Claude account",
         "reauthBadge": "Re-login required",
         "terminalHint": "Use via Open Terminal",
+        "wslHint": "Not supported in WSL",
         "plan": {
           "pro": "Pro",
           "max": "Max",
@@ -253,9 +262,7 @@
           "team": "Team",
           "teamPremium": "Team Premium",
           "enterprise": "Enterprise"
-        },
-        "helpWsl": "The Claude config folder is in WSL, where Claude accounts aren't supported yet. Switching to this card doesn't change Claude Code's sign-in.",
-        "wslHint": "Not supported in WSL"
+        }
       }
     },
     "duplicateLiveIdsLoadFailed": "Sağlayıcı tanımlayıcıları yapılandırmadan okunamadı. Lütfen yapılandırmayı düzeltip tekrar deneyin.",
@@ -385,7 +392,15 @@
     "codexAuthCleanupFailed": "Başarılı bir şekilde geçiş yapıldı ancak auth.json kaldırılamadı; resmi oturum açma kimlik bilgileri hâlâ diskte; bunları kaldırmak için auth.json'u Codex yapılandırma dizininden silin",
     "windowControlFailed": "Pencere kontrolü başarısız oldu: {{error}}",
     "officialBlockedByProxy": "Yerel yönlendirme etkinken resmi sağlayıcıya geçilemez. Yönlendirmenin resmi API'lerle kullanılması hesabın yasaklanmasına neden olabilir.",
-    "proxyOfficialWarning": "Mevcut sağlayıcı {{name}} resmidir. Yerel yönlendirmeyi kullanmadan önce üçüncü taraf bir sağlayıcıya geçmeyi düşünün."
+    "proxyOfficialWarning": "Mevcut sağlayıcı {{name}} resmidir. Yerel yönlendirmeyi kullanmadan önce üçüncü taraf bir sağlayıcıya geçmeyi düşünün.",
+    "proxyLoopbackHijacked": "{{app}} uygulamasının {{origin}} yerel yönlendirmesine gönderdiği istekler sistem proxy'si tarafından yakalanacak ve {{app}} 502 hatası verecek. Proxy aracınızda yerel geri döngü adreslerinin doğrudan bağlanmasını sağlayın (örneğin Clash kurallarınızın en üstüne IP-CIDR,127.0.0.0/8,DIRECT,no-resolve ekleyin), ardından {{app}} uygulamasından tamamen çıkıp yeniden açın.",
+    "codexHistorySplit": {
+      "hint": "{{previous}} altındaki {{count}} oturum artık salt okunur",
+      "officialBucket": "resmî abonelik",
+      "thirdPartyBucket": "üçüncü taraf sağlayıcılar",
+      "migrationFinished": "{{count}} eski oturum taşındı. Devam etmek için Codex'i yeniden başlatın.",
+      "migrationFailed": "Eski oturumlar taşınamadı: {{error}}. CC Switch bir sonraki açılışta yeniden deneyecek."
+    }
   },
   "confirm": {
     "deleteProvider": "Sağlayıcıyı Sil",
@@ -734,6 +749,15 @@
       "saved": "Kaydedildi",
       "unsavedChanges": "Lütfen önce yapılandırmayı kaydedin",
       "saveBeforeSync": "Yüklemeyi/indirmeyi etkinleştirmek için önce yapılandırmayı kaydedin.",
+      "clear": "Yapılandırmayı temizle",
+      "clearing": "Temizleniyor...",
+      "clearSuccess": "Bu cihazdaki WebDAV yapılandırması temizlendi",
+      "clearFailed": "Yapılandırma temizlenemedi: {{error}}",
+      "clearConfirm": {
+        "title": "WebDAV yapılandırmasını temizle",
+        "message": "Kayıtlı WebDAV adresi, kullanıcı adı, parola ve uzak klasör bu cihazdan silinir ve otomatik eşitleme durdurulur. Sunucuya önceden yüklenmiş veriler silinmez.",
+        "confirm": "Temizle"
+      },
       "fetchingRemote": "Uzak bilgiler getiriliyor...",
       "fetchRemoteFailed": "Uzak bilgiler getirilemedi. Lütfen yapılandırmayı ve ağı kontrol edin.",
       "confirmDownload": {
@@ -897,6 +921,14 @@
       "hint": "Eşiklerden birinde duraklatır. Varsayılanlar: %95 / %98. Kaydedilen değişiklikler yeni isteklere hemen uygulanır.",
       "invalid": "1 ile 99 arasında tam sayılar girin."
     },
+    "codexPauseOfficialLogin": {
+      "title": "Resmî girişi duraklat",
+      "description": "Resmî kota tükendiğinde ve Codex gönder düğmesini kilitlediğinde açın; Birleştirme ve yönlendirmedeki üçüncü taraf modeller çalışmaya devam eder. Açtıktan veya kapattıktan sonra Codex'ten tamamen çıkıp yeniden açın.",
+      "help": "Resmî kota tükendiğinde ve Codex gönder düğmesini kilitlediğinde (üçüncü taraf modellerle bile gönderilemiyorsa) açın. Bu durumda Codex resmî girişi kullanmayı bırakır, böylece resmî kota nedeniyle gönder düğmesini artık kilitlemez ve Birleştirme ile yönlendirmedeki üçüncü taraf modeller çalışmaya devam eder. Giriş bilgileri bu bilgisayarda kayıtlı kalır; oturumunuz kapatılmaz. Yalnızca yönlendirme veya Birleştirme modunda geçerlidir; doğrudan mod etkilenmez. Açıkken: resmî modeller kullanılamaz ve bir üçüncü taraf model seçmeniz istenir; Codex hesap ve kullanım bilgilerini gizler ve ilk açılışta tanıtım sorularını gösterebilir; kenar çubuğundaki Projeler altında bulunan mevcut oturumlarınız şimdilik gizlenir (kaybolmaz; bunu kapattığınızda geri gelir); yeni oturumlar custom grubu altında kaydedilir ve resmîye geri döndükten sonra salt okunur olur. Resmî kota geri geldiğinde kapatın. Açtıktan veya kapattıktan sonra Codex'ten tamamen çıkıp yeniden açın.",
+      "pausedToast": "Resmî giriş duraklatıldı. Etkili olması için Codex'ten tamamen çıkıp yeniden açın",
+      "resumedToast": "Resmî giriş sürdürüldü. Etkili olması için Codex'ten tamamen çıkıp yeniden açın",
+      "saveFailed": "Kaydedilemedi: {{error}}"
+    },
     "preserveCodexOfficialAuthOnSwitch": "Doğrudan geçişler için resmi giriş bilgilerini koruyun",
     "preserveCodexOfficialAuthOnSwitchDescription": "Yerel yönlendirme kapalıyken üçüncü taraf anahtarları kontrol eder. Devralma yönlendirmesi her zaman Codex resmi giriş bilgilerini korur.",
     "unifyCodexSessionHistory": "Birleşik Codex oturum geçmişi",
@@ -986,6 +1018,7 @@
     "browsePlaceholderHermes": "ör. /home/<your-username>/.hermes",
     "browsePlaceholderPi": "ör. /home/<your-username>/.pi/agent",
     "browsePlaceholderOmp": "ör. /home/<your-username>/.omp/agent",
+    "browsePlaceholderDsh": "örn. /home/<kullanıcı-adınız>/.dsh",
     "browseDirectory": "Dizine Göz Atın",
     "resetDefault": "Varsayılan dizine sıfırla (kaydettikten sonra etkili olur)",
     "checkForUpdates": "Güncellemeleri Kontrol Et",
@@ -1045,6 +1078,7 @@
     "toolActionDone": "{{action}}, {{count}} takım(lar)ı için tamamlandı",
     "toolActionPartial": "{{action}}, {{succeeded}} için başarılı oldu, {{failed}} için başarısız oldu",
     "toolActionFailed": "Yükleme/güncelleme komutu başarısız oldu",
+    "toolActionBinCollision": "{{path}} konumunda zaten bir dosya var; büyük olasılıkla başka bir kurulum yönteminden geliyor ve npm bu dosyanın üzerine yazmaz. Ne olduğunu kontrol edin, yedek olarak yeniden adlandırın ve tekrar deneyin. npm'in --force seçeneğini kullanmayın: dosyanın doğrudan üzerine yazar.",
     "toolActionInProgress": "Kurulum veya güncelleme halen devam ediyor",
     "toolActionInProgressDetail": "{{tool}} için bir kurulum veya güncelleme zaten arka planda gerçekleştiriliyor. Lütfen bitmesini bekleyin; tekrar başlatmaya gerek yoktur.",
     "toolNotRunnable": "Yüklendi ancak çalıştırılamıyor (sürüm algılanmadı)",
@@ -1316,7 +1350,7 @@
     "defaultModelPlaceholder": "örneğin grok-4.5",
     "defaultModelHint": "Grok Build modeli varsayılan olarak talep eder; istediğiniz zaman değiştirin.",
     "reasoningEffortHint": "Yukarı akış, düşük/yüksek/maks. gibi düşünme derinliğini desteklediğinde açın. Ayrıca düşünme modunu açar ve isteğin akıl yürütme çabasını yukarı akış Sohbet parametresine eşler.",
-    "maxOutputTokensHint": "Varsayılan sınır olan 8192, uzun yanıtları veya derin düşünmeyi engelleyebilir. Bu değer Anthropic'nin max_tokens'ı olarak gönderilir.",
+    "maxOutputTokensHint": "Varsayılan sınır 32000'dir ve düşünme de buna dahildir. Ağ geçidinin çıkış sınırı daha düşükse 400 döner; burada desteklediği değeri girin. Bu değer Anthropic'nin max_tokens'ı olarak gönderilir.",
     "keyFieldsHint": "Sağlayıcıyı takip etmek için varsayılan model (models.default) ve işaret ettiği model tablosu; geri kalan her şey Grok Build genel ayarlarıdır ve kaydettikten sonra her sağlayıcı için geçerlidir.",
     "inactiveFieldsHint": "Bu sağlayıcıya daha eski bir sürümle kaydedilmiş; geçiş artık bunları uygulamamaktadır. TOML'yi kopyalamak ve ihtiyacınız varsa yukarıya yapıştırmak için birine tıklayın.",
     "inactiveFieldCopied": "Kopyalandı",
@@ -1324,6 +1358,14 @@
   },
   "sessionManager": {
     "searchPlaceholder": "Başlıkları, klasörleri, ilk/son mesajları veya oturum kimliklerini arayın",
+    "searchPlaceholderContent": "Başlıkları, klasörleri, mesaj metnini veya oturum kimliklerini arayın",
+    "emptySearchContent": "Başlığı, klasörü veya mesaj metni “{{query}}” içeren oturum yok",
+    "contentSearchToggle": "Mesaj metninde ara",
+    "contentSearchToggleFailed": "Mesaj metni arama ayarı değiştirilemedi: {{error}}",
+    "contentIndexing": "Mesaj metni dizinleniyor ({{processed}}/{{total}}). Metin eşleşmeleri eksik olabilir",
+    "contentHitPrefix": "Metin: ",
+    "contentHitMore": " ({{count}} mesaj eşleşiyor)",
+    "moreContentHits": "Daha fazla metin eşleşmesi",
     "searchSessions": "Oturumları ara",
     "sessionList": "Oturumlar",
     "unknownDirectory": "Bilinmeyen dizin",
@@ -1621,6 +1663,13 @@
     "openReleaseNotesFailed": "Sürüm notları açılamadı:"
   },
   "providerForm": {
+    "nativeConfig": {
+      "title": "Yapılandırma dosyası {{path}} (yalnızca bu sağlayıcı)",
+      "hint": "Bu sağlayıcının dosyadaki bölümünü uygulamanın kendi biçiminde gösterir ve kaydettiğinizde oraya yazar. Varsayılan model gibi genel ayarlar burada yer almaz. Buraya yazılan yorumlar kaydedilmez.",
+      "invalid": "Geçersiz {{format}}: {{error}}",
+      "scope": "Buraya yalnızca {{section}} düğümü yazılabilir. Sağlayıcı Anahtarı'nı yukarıdaki alandan değiştirin.",
+      "schema": "Bazı alanların türü yanlış. Yukarıdaki formla karşılaştırarak kontrol edin."
+    },
     "supplierName": "Sağlayıcı Adı",
     "supplierNameRequired": "Sağlayıcı Adı *",
     "supplierNamePlaceholder": "ör. Anthropic Resmi",
@@ -1689,7 +1738,8 @@
       "openmodel": "OpenModel, desteklenen modellerde Codex için %90'a, Claude Code için %60'a varan uygulamaya özel indirimler sunar. Bu bağlantıyla kaydolup \"cc-switch\" promosyon kodunu kullanan CC Switch kullanıcıları ilk yüklemelerinde %10 indirim kazanır!",
       "grooroute": "GrooRoute Pro; kullandıkça öde ve abonelik planlarıyla OpenAI, Claude, DeepSeek ve diğer yaygın modellere erişim sağlayan güvenilir bir yapay zekâ API aktarım hizmetidir. Bu bağlantı üzerinden kaydolan CC Switch kullanıcıları ¥5 deneme bakiyesi kazanır!",
       "buytoken": "BuyToken; Claude Code, Codex, DeepSeek ve daha fazlası için kurumsal düzeyde eşzamanlılık ve hızlı faturalandırma sunan, uzun süreli ve istikrarlı kullanım için tasarlanmış bir yönlendirme hizmetidir. CC Switch kullanıcıları bu bağlantı üzerinden kaydolduklarında 3 ¥ deneme kredisi ve ilk yüklemelerinde %10 indirim kazanır.",
-      "vapi": "V-API, bireyler, geliştiriciler ve işletmeler için kararlı, hızlı ve güvenli, yüksek kaliteli LLM API hizmetleri sunan üç yıllık bir markadır. Resmî sözleşmelerin yanı sıra genel ve özel KDV faturaları sağlar. Bu bağlantıdan kaydolan CC Switch kullanıcıları 2 ¥ indirim ve ilk siparişlerinde %10 indirim kazanır!"
+      "vapi": "V-API, bireyler, geliştiriciler ve işletmeler için kararlı, hızlı ve güvenli, yüksek kaliteli LLM API hizmetleri sunan üç yıllık bir markadır. Resmî sözleşmelerin yanı sıra genel ve özel KDV faturaları sağlar. Bu bağlantıdan kaydolan CC Switch kullanıcıları 2 ¥ indirim ve ilk siparişlerinde %10 indirim kazanır!",
+      "ospreyai": "ACS OspreyAI, geliştiriciler ve işletmeler için tek noktadan çoklu model API platformudur. Tek bir API anahtarıyla Claude, Gemini, GPT, GLM, Kimi, Qwen, DeepSeek ve Tencent Hunyuan dahil önde gelen Çin ve uluslararası modellere erişebilirsiniz. Platform, OpenAI, Anthropic ve diğer yaygın API protokolleriyle uyumludur; Claude Code, Codex, OpenCode, Pi ve Hermes gibi popüler yapay zekâ araçlarıyla çalışır. Uluslararası modeller resmî fiyatlardan %20–40, Çin modelleri ise %30–50 daha ucuzdur. Birleşik bakiye yükleme, birleşik faturalandırma, kullanım takibi ve esnek model geçişi sayesinde yapay zekâ uygulama geliştirme, içerik üretimi ve otomatik iş akışları için uygundur. Bu bağlantı üzerinden hesap oluşturarak indirim kazanın ve Çin'den ve dünyadan önde gelen modellere hızla bağlanın."
     },
     "presets": {
       "ucloud": "Compshare",
@@ -1838,10 +1888,17 @@
     "customUserAgentHelp": "Sağlayıcıya iletilen isteklerin Kullanıcı Aracısını değiştirir.",
     "localProxyRequestOverridesHelp": "Format dönüştürme sonrasındaki yukarı akış isteği için geçerlidir.",
     "apiFormatHelp": "Sağlayıcının yerel olarak desteklediği protokolü seçin: Anthropic Mesajlar, dönüştürme yapılmadan olduğu gibi iletilir; yönlendirme diğer üçünü Anthropic Mesajlarına dönüştürür.",
+    "reasoningEffort": "Akıl yürütme çabası",
+    "reasoningEffortHelp": "Yönlendirme istekleri OpenAI biçimine dönüştürdüğünde, istemcide seçilen düşünme düzeyinin yukarı akışa nasıl gönderileceği. Otomatik: yukarı akışın desteklediği bir düzeyde gönderilir; tanınmayan yukarı akışlara en fazla high gönderilir, düşünme kapalıyken hiçbir şey gönderilmez. Olduğu gibi gönder: istemci hangi düzeyi seçerse o gönderilir, bu nedenle xhigh veya max desteklemeyen yukarı akışlar hata döndürür. Gönderme: yukarı akış bu parametreyi reddediyorsa bunu kullanın.",
+    "reasoningEffortAuto": "Otomatik (önerilen)",
+    "reasoningEffortOff": "Gönderme",
+    "reasoningEffortPassthrough": "Olduğu gibi gönder",
     "directModeFormatInUse": "Bu kart doğrudan modda kullanılıyor: bu formatta kaydedilmesi isteklerin başarısız olmasına neden olur. Önce yönlendirmeye veya Birleştirme'ya geçin.",
     "directModeFormatSwitch": "Bu biçim doğrudan modda çalışmaz; Bu kartı kullanmak için yönlendirmeye veya Birleştirme'ya geçin."
   },
   "copilot": {
+    "automaticFormat": "Yönlendirme tarafından otomatik seçilir",
+    "automaticFormatHint": "Yönlendirme, her model için Copilot üst akış biçimini seçer; elle belirlenen biçim ayarları yok sayılır.",
     "authSection": "GitHub Copilot Kimlik Doğrulaması",
     "authStatus": "Kimlik Doğrulama Durumu",
     "authenticated": "{{username}} olarak kimliği doğrulandı",
@@ -1874,6 +1931,9 @@
     "copyCode": "Kodu kopyala",
     "migrationFailed": "Eski kimlik doğrulama geçişi başarısız oldu: {{error}}",
     "loadModelsFailed": "Copilot modelleri yüklenemedi",
+    "noPickerModels": "Bu GitHub hesabında kullanılabilir Copilot modeli yok. Bu durum Copilot Free hesaplarında olağandır; lütfen hesabın Copilot Pro veya daha üst bir plana sahip olduğundan emin olun.",
+    "noPickerModelsClaude": "Bu GitHub hesabında kullanılabilir Copilot modeli yok. Bu durum Copilot Free hesaplarında olağandır; lütfen hesabın Copilot Pro veya daha üst bir plana sahip olduğundan emin olun. Model alanına gpt-4.1 veya gpt-4o'yu elle de yazabilirsiniz.",
+    "noModelsForApiFormat": "Bu hesabın Copilot modellerinin hiçbiri seçilen yukarı akış biçimini desteklemiyor. Farklı bir yukarı akış biçimi deneyin.",
     "deploymentType": "GitHub Dağıtım Türü",
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Kurumsal Sunucu",
@@ -1881,27 +1941,37 @@
     "form": {
       "officialTitle": "Copilot CLI'nin GitHub oturumunu kullanır",
       "officialHint": "\"Terminal aç\", copilot'u bu kartın modeliyle başlatır; Yetki Merkezi'nden bir hesap bağlarsanız o hesapla başlatır.",
-      "byokTitle": "Yalnızca bu karttan açılan terminallerde geçerlidir",
-      "byokHint": "Copilot CLI özel modelleri yalnızca ortam değişkenlerinden okur; Copilot'un kendi dosyalarına hiçbir şey yazılmaz.",
+      "byokTitle": "Eklendiğinde Copilot'un providers.json dosyasına yazılır",
+      "byokHint": "Ekle, bu sağlayıcıyı ve modellerini Copilot'un kendi providers.json dosyasına yazar (yalnızca kullanıcı hesabınız okuyabilir). Ardından nasıl başlatılırsa başlatılsın copilot, /model içinde \"kart kimliği/model\" seçebilir. Kaldır yalnızca bu sağlayıcının girdilerini siler, dosyanın geri kalanına dokunmaz.",
       "apiFormat": "API biçimi",
       "baseUrl": "API uç noktası",
       "baseUrlHint": "OpenAI uyumlu uç noktalar genellikle /v1 ile biter (ör. Ollama http://localhost:11434/v1); Anthropic için yalnızca sunucu adresi (https://api.anthropic.com).",
       "model": "Model",
       "officialModelHint": "Boş bırakırsanız Copilot'un geçerli modeli kullanılır. Yalnızca bu oturum için --model olarak iletilir; copilot içindeki /model çalışmaya devam eder.",
-      "byokModelHint": "Uç noktanızın beklediği model kimliği (COPILOT_MODEL).",
       "reasoningEffort": "Akıl yürütme düzeyi",
       "reasoningEffortDefault": "Copilot varsayılanı",
       "reasoningEffortHint": "Terminal açılırken --reasoning-effort olarak iletilir. none seçildiğinde Copilot, Responses isteklerinde reasoning.summary göndermez; bazı aktarıcılar bu alanı kabul etmez.",
       "maxPromptTokens": "En fazla istem token'ı",
       "maxOutputTokens": "En fazla çıktı token'ı",
-      "envJsonHint": "Gelişmiş: her COPILOT_PROVIDER_* değişkeni (ör. COPILOT_PROVIDER_MODEL_ID veya COPILOT_PROVIDER_BEARER_TOKEN) copilot'a olduğu gibi iletilir."
+      "byokModelsHint": "Her model Copilot'un /model listesinde \"{{id}}/model kimliği\" olarak görünür; en az bir tane ekleyin. Satırı açıp bir üst akış model adı girmediğiniz sürece model kimliği uç noktaya gönderilen addır. Bu karttan terminal açıldığında ilk model kullanılır.",
+      "providerIdHint": "Copilot'taki sağlayıcı adıdır da; /model içinde \"{{id}}/model\" olarak görünür. Kaydettikten sonra değiştirilemez. Yalnızca harf, rakam, nokta, alt çizgi ve kısa çizgi kullanılabilir.",
+      "duplicateModelId": "Yinelenen model kimliği: {{model}}",
+      "wireModel": "Üst akış model adı",
+      "wireModelHint": "Uç noktaya gönderilen model adı (wireModel). Boş bırakılırsa model kimliği kullanılır.",
+      "maxContextWindowTokens": "Bağlam penceresi",
+      "azureApiVersion": "Azure API sürümü"
     },
     "quota": {
       "accountNotInAuthCenter": "Copilot CLI'nin oturum açtığı {{login}} hesabı Yetki Merkezi'nde yok. Yetki Merkezi'ne ekleyin veya bu kartta bir hesap bağlayın.",
       "notSignedIn": "Copilot CLI'de oturum açılmamış. copilot'u çalıştırıp /login ile oturum açın veya bu kartta bir Yetki Merkezi hesabı bağlayın."
     },
-    "automaticFormat": "Yönlendirme tarafından otomatik seçilir",
-    "automaticFormatHint": "Yönlendirme, her model için Copilot üst akış biçimini seçer; elle belirlenen biçim ayarları yok sayılır."
+    "defaultCannotRemove": "Copilot'un varsayılan modeli bu sağlayıcıya ait olduğundan kaldırılamaz veya silinemez. Önce copilot içinde /model ile başka bir sağlayıcının modelini seçin.",
+    "terminalNeedsAdd": "Terminalin modelini seçebilmesi için önce bu sağlayıcıyı Copilot'a ekleyin.",
+    "section": {
+      "official": "Resmi oturum · {{count}}",
+      "officialHelpTitle": "Resmi oturum",
+      "officialHelp": "Copilot CLI'nin kendi GitHub oturumunu kullanır ve hiçbir dosyaya yazmaz. Terminal Aç, copilot'u kartın modeli ve bağlı hesabıyla başlatır."
+    }
   },
   "codexOauth": {
     "authStatus": "Kimlik doğrulama durumu",
@@ -2044,8 +2114,8 @@
     "impersonateClaudeCodeLabel": "Claude Code istemcisini taklit edin",
     "impersonateClaudeCodeHint": "Ağ geçidi yalnızca Claude Code'yi kabul ettiğinde açılır: Claude Code'nin istek başlıklarını gönderir ve kimliğini sistem isteminin ilk satırına koyar.",
     "maxOutputTokensLabel": "Maksimum çıkış tokenları",
-    "maxOutputTokensPlaceholder": "Varsayılan 8192'yi kullanmak için boş bırakın",
-    "maxOutputTokensHint": "Codex hiçbir çıkış sınırı göndermez, dolayısıyla varsayılan 8192 uzun cevapları veya derin düşünmeyi kesebilir. Bu değer Anthropic'nin max_tokens'ı olarak gönderilir.",
+    "maxOutputTokensPlaceholder": "Varsayılan 32000'i kullanmak için boş bırakın",
+    "maxOutputTokensHint": "Codex hiçbir çıkış sınırı göndermez, bu yüzden varsayılan olarak 32000 gönderilir ve düşünme de buna dahildir. Ağ geçidinin çıkış sınırı daha düşükse 400 döner; burada desteklediği değeri girin. Bu değer Anthropic'nin max_tokens'ı olarak gönderilir.",
     "promptCacheRoutingLabel": "İstemi önbellek yönlendirmesi",
     "promptCacheRoutingAuto": "Otomatik (önerilir)",
     "promptCacheRoutingEnabled": "Etkin",
@@ -2073,6 +2143,8 @@
     "autoReviewModelCodexDefault": "Codex varsayılanı (codex-auto-review)",
     "autoReviewModelMainDefault": "Ana model kendini inceler (varsayılan)",
     "autoReviewModelNoList": "Bu kartta model listesi yok: Codex onayları yalnızca ChatGPT hesaplarına yönlendirme yapan bazı aktarım hizmetlerinin kabul ettiği resmî codex-auto-review modeliyle inceler; diğerleri 404 döndürür. Bir model seçmek için yukarıdaki listeye model ekleyin.",
+    "officialSpeedTiersLabel": "Resmî Fast katmanını koru",
+    "officialSpeedTiersHint": "Model listesindeki GPT modellerinde resmî Fast hız katmanını korur; böylece Codex'te Fast seçildiğinde service_tier=priority gönderilir. Bunu yalnızca resmî ChatGPT hesaplarına yönlendiren aktarım hizmetleri (CPA gibi) kabul eder ve kota daha hızlı tükenir; diğer yukarı akışlar reddedebilir veya daha yüksek fiyattan faturalandırabilir. Açıldığında, resmî kart altında yaptığınız Fast seçimi bu sağlayıcıda hemen geçerli olur. Birleştirme modunda kullanılmaz. Değiştirdikten sonra Codex'i yeniden başlatın.",
     "modelListHint": "Değişikliklerden sonra Codex uygulamasını yeniden başlatın.",
     "modelListDefaultHelp": "Bu modeller Codex'nin /model menüsünde görünür; ilk satır varsayılan modeldir. Adını resmi bir GPT modelinden alan satırlar resmi girişi kullanır, dolayısıyla görünen adları, pencereleri ve akıl yürütme düzeyleri göz ardı edilir.",
     "addCatalogModel": "Manuel olarak ekle",
@@ -2209,12 +2281,12 @@
     "loginWith": {
       "deepseek": "DeepSeek hesabıyla giriş yap",
       "workbuddy": "WorkBuddy hesabıyla giriş yap",
+      "kimi": "Kimi hesabıyla oturum aç",
       "claude": "Claude hesabıyla oturum açın",
       "chatgpt": "ChatGPT hesabıyla oturum açın",
       "github": "GitHub hesabıyla oturum açın",
       "xai": "Bir xAI hesabıyla oturum açın",
-      "google": "Google hesabıyla oturum açın",
-      "kimi": "Kimi hesabıyla oturum aç"
+      "google": "Google hesabıyla oturum açın"
     },
     "versionCount": "{{domain}} · {{n}} versiyonları",
     "matchedVersion": "{{name}} ile eşleşir",
@@ -2338,6 +2410,8 @@
       "actionEllipsis": "Codex Kullanımını Yeniden Oluşturun"
     },
     "totalRecords": "Toplam {{total}} kayıt",
+    "pageSize": "Sayfa başına {{count}} satır",
+    "pageSizeLabel": "Sayfa başına satır",
     "goToPage": "Git",
     "pageInputPlaceholder": "Sayfa",
     "modelPricing": "Model Fiyatlandırması",
@@ -2474,9 +2548,9 @@
     "syncStatus": {
       "justNow": "Oturum günlükleri · az önce eşitle edildi",
       "minutesAgo": "Oturum günlükleri · {{count}} dakika önce eşitle edildi",
-      "tipOff": "Oturum günlükleri yalnızca manuel olarak eşitlediğinizde taranır",
       "syncing": "Eşitleniyor…",
-      "tip": "Şimdi eşitlemek için tıklayın"
+      "tip": "Şimdi eşitlemek için tıklayın",
+      "tipOff": "Oturum günlükleri yalnızca manuel olarak eşitlediğinizde taranır"
     },
     "refreshMenu": {
       "label": "Her {{seconds}} saniyede tara"
@@ -2486,6 +2560,17 @@
       "title": "Görüntüleme",
       "currency": "Para birimi",
       "rate": "Döviz kuru",
+      "rateSource": "Kur kaynağı",
+      "rateSources": {
+        "auto": "Otomatik (günlük)",
+        "manual": "Elle"
+      },
+      "rateAutoHint": "Günde bir kez otomatik olarak alınır ve yalnızca görüntüleme amacıyla kullanılır; maliyetler USD olarak kaydedilmeye devam eder.",
+      "rateAutoUpdated": "Son güncelleme: {{time}}",
+      "rateAutoNever": "Henüz kur alınmadı",
+      "rateAutoFailed": "Yeni kur alınamadı; önceki kur kullanılmaya devam ediliyor.",
+      "rateAttribution": "Kurlar {{provider}} tarafından sağlanır.",
+      "rateRefresh": "Şimdi güncelle",
       "rateHint": "Elle girilir ve yalnızca görüntüleme amacıyla kullanılır; maliyetler USD olarak kaydedilmeye devam eder.",
       "rateInvalid": "0'dan büyük bir sayı girin",
       "approxNote": "Dönüştürülmüş tutarın üzerine gelerek USD karşılığını görün.",
@@ -2641,8 +2726,6 @@
     },
     "prevMonth": "Önceki ay",
     "nextMonth": "Gelecek ay",
-    "pageSize": "Sayfa başına {{count}} satır",
-    "pageSizeLabel": "Sayfa başına satır",
     "settings": {
       "title": "Kullanım ayarları",
       "pricingSummary": "Milyon token başına model fiyatlarını belirleyin veya models.dev üzerinden eşitleyin.",
@@ -2892,6 +2975,9 @@
       "tomlInvalid": "Geçersiz TOML biçimi",
       "commandRequired": "Lütfen komutu girin",
       "singleServerObjectRequired": "Lütfen tek bir MCP sunucu nesnesi yapıştırın (üst düzey mcpServers alanını dahil etmeyin)",
+      "piSseUnsupported": "Pi, SSE MCP sunucularını desteklemez. Bunun yerine HTTP (streamable HTTP) kullanın",
+      "piInvalidName": "Pi MCP sunucu adları yalnızca harf, rakam, _ ve - içerebilir: {{id}}",
+      "piNameConflict": "Pi, yalnızca - ve _ ile farklılaşan sunucu adlarını aynı sunucu olarak kabul eder: {{id}}, mevcut {{other}} ile çakışıyor",
       "saveFailed": "Kaydetme başarısız oldu",
       "deleteFailed": "Silinemedi"
     },
@@ -4226,11 +4312,16 @@
     "monthly": "Aylık",
     "credits": "Kredi",
     "copilotPremium": "Credits",
+    "copilotCompletions": "Kod tamamlama",
+    "copilotChat": "Sohbet",
+    "copilotCount": "{{remaining}} / {{total}} kaldı",
+    "copilotNotIncluded": "Planınızda yok",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}} sonra sıfırlanır",
     "extraUsage": "Ekstra Kullanım",
     "expired": "Oturumun süresi doldu",
     "expiredHint": "Giriş bilgilerinizi yenilemek için {{tool}} komutunu çalıştırın",
+    "expiredHintAccounts": "Bu hesapta Hesaplar bölümünden yeniden oturum açın",
     "queryFailed": "Sorgu başarısız oldu",
     "refresh": "Yenile"
   },
@@ -4271,6 +4362,9 @@
     "moreActions": "Daha fazla işlem",
     "manualCommands": "Manuel kurulum komutları",
     "columnApp": "Uygulama",
+    "sectionInstalled": "Yüklü · {{count}}",
+    "sectionNotInstalled": "Yüklü değil · {{count}}",
+    "dragHandle": "{{name}} öğesini yeniden sıralamak için sürükleyin",
     "columnVersion": "Sürüm",
     "columnVisible": "Göster",
     "visibleHelp": "Kapalıyken uygulama artık kenar çubuğunda, tepsi menüsünde, MCP / Skills uygulama sütunlarında veya İstemler ve Oturumlar'daki uygulama seçicilerde görünmez. Yalnızca gizlenir: sağlayıcıları, MCP sunucuları ve diğer ayarları yerinde kalır, kendi yapılandırma dosyalarına da dokunulmaz.",
@@ -4282,6 +4376,8 @@
     "notRunnable": "Çalıştırılamıyor",
     "updateNeedsNode": "{{version}} sürümü Node {{required}} gerektiriyor; bu kurulumda Node {{current}} çalışıyor. Önce Node'u yükseltin.",
     "otherInstalls": "{{count}} daha fazla yükleme",
+    "toolQueued": "Sırada, başka bir uygulamanın bitmesi bekleniyor",
+    "toolElapsed": "{{time}} geçti",
     "installsFound": "{{count}} kurulum bulundu",
     "wslFlag": "Bayrak",
     "installHint": {
@@ -4367,6 +4463,9 @@
       "serviceDown": "{{app}}, {{mode}} modundadır ancak yönlendirme hizmeti çalışmadığından istekler başarısız olur.",
       "startService": "Hizmeti başlat",
       "backToDirect": "Doğrudan bağlantıya dön",
+      "officialLoginPaused": "Codex resmî girişi duraklatıldı",
+      "officialLoginPausedBody": "Resmî modeller kullanılamaz ve Codex kenar çubuğundaki Projeler altında bulunan mevcut oturumlarınız şimdilik gizlenir. Resmî kota geri geldiğinde “Resmî girişi sürdür” düğmesine tıklayın, ardından Codex'ten tamamen çıkıp yeniden açın.",
+      "resumeOfficialLogin": "Resmî girişi sürdür",
       "attachFailed": "{{mode}} önceki başlangıçta yeniden bağlanamadığı için {{app}} doğrudan bağlantıya döndü."
     },
     "toast": {
@@ -4471,7 +4570,6 @@
       "defaultWhileRouting": "Yönlendirme sırasında varsayılan, yönlendirdiğiniz sağlayıcıdır. Birleştirme'ya geçerken başka bir tane seçebilirsiniz.",
       "needsRoute": "Yönlendirme gerekiyor: {{reason}}; doğrudan bağlanamıyorum.",
       "defaultCannotRemove": "Varsayılan kaldırılamaz. Önce başka bir sağlayıcıyı varsayılan yapın.",
-      "currentCannotRemove": "Kullanılan sağlayıcı kaldırılamaz. Önce başka birini etkinleştirin.",
       "inUseCannotDelete": "Kullanılan sağlayıcı silinemez. Önce diğerine geçin.",
       "directDefaultCannotDelete": "Yönlendirmeden çıkıldığında bu sağlayıcıya dönülür; bu nedenle silinemez. Önce doğrudan bağlantı sayfasında başka bir sağlayıcı için \"Doğrudan bağlantıya dön ve kullan\" seçeneğini seçin.",
       "noFailover": "Resmi hesaplar yedek sağlayıcıya geçiş kuyruğuna katılamaz: İstemcinin kendi oturum açma bilgilerini kullanırlar ve diğer sağlayıcılarla dönüşümlü olarak çalışamazlar."
@@ -4611,6 +4709,7 @@
     "connection": {
       "unchecked": "Kontrol edilmedi",
       "connected": "Bağlantı başarılı",
+      "authRequired": "Sunucuya ulaşılabiliyor ancak oturum açma gerektiriyor (örn. OAuth). CC Switch, istemcinizin kendi giriş bilgileri olmadan kontrol eder: istemciden oturum açtıysanız orada çalışır; başlıklarda bir token ayarladıysanız hâlâ geçerli olduğundan emin olun",
       "disconnected": "Bağlantı başarısız",
       "checking": "Bağlantı kontrol ediliyor",
       "disabled": "Etkin değil"
@@ -4763,6 +4862,10 @@
       "writeTo": "Şuraya yaz:",
       "writeToHelpTitle": "Uygulamalara nasıl yazılır?",
       "writeToHelp": "Aynı yapılandırma, işaretlenen her uygulamaya olduğu gibi yazılır; Bir uygulamanın farklı argümanlara ihtiyacı varsa onun için ayrı bir giriş oluşturun. MiniMax Code yalnızca bağlantı alanlarının yerini alır; mcp.json'daki diğer alanlar korunur.",
+      "sseAsHttpTitle": "{{apps}} doesn't support SSE and will connect over HTTP",
+      "sseAsHttpBody": "{{apps}} only supports stdio and HTTP (Streamable HTTP), so this URL will be used as an HTTP server; it won't connect if the server only speaks SSE. If the server also offers Streamable HTTP, switch to HTTP.",
+      "sseRejectedTitle": "SSE isn't supported by {{apps}}",
+      "sseRejectedBody": "These apps only support stdio and HTTP (Streamable HTTP), so writing to them will fail on save. Switch to HTTP, or untick these apps.",
       "meta": "Açıklama ve bağlantılar",
       "metaHint": "Görünen ad, açıklama, etiketler, ana sayfa, dokümanlar",
       "displayName": "Görünen ad",
@@ -4772,11 +4875,7 @@
       "tags": "Etiketler",
       "tagsPlaceholder": "Virgülle ayırın, ör. docs, web",
       "homepage": "Ana sayfa",
-      "docs": "Dokümanlar",
-      "sseAsHttpBody": "{{apps}} only supports stdio and HTTP (Streamable HTTP), so this URL will be used as an HTTP server; it won't connect if the server only speaks SSE. If the server also offers Streamable HTTP, switch to HTTP.",
-      "sseAsHttpTitle": "{{apps}} doesn't support SSE and will connect over HTTP",
-      "sseRejectedBody": "These apps only support stdio and HTTP (Streamable HTTP), so writing to them will fail on save. Switch to HTTP, or untick these apps.",
-      "sseRejectedTitle": "SSE isn't supported by {{apps}}"
+      "docs": "Dokümanlar"
     },
     "resync": "Bu anahtarlardan her uygulamanın yapılandırmasını yeniden yazın"
   },
@@ -4976,9 +5075,9 @@
       "chatgptHelp": "Claude Code ve Claude Desktop'deki ChatGPT ön ayarları ve Codex'nin resmi oturum açma bağlaması tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "xaiHelp": "Claude Code, Claude Desktop ve Codex'deki xAI ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "agyHelp": "Antigravity CLI (agy) için resmî oturum açma yöntemi. agy aynı anda yalnızca tek bir hesapta oturum açabilir. Hesabı Değiştir seçeneği agy'nin oturumunu seçilen hesapla değiştirir ve bundan sonra başlatılan agy oturumları bu hesabı kullanır. agy'nin hâlihazırda oturum açtığı hesap buraya otomatik olarak eklenir; böylece başka hesaba geçerken önceki hesabı kaybetmezsiniz.",
-      "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: after switching to the card, Claude Code's sign-in changes to it right away. To use several accounts at once, use Open Terminal on the card. Sign-in tokens stay on this computer and are never uploaded, refreshed or signed out. The first switch saves the account Claude Code is signed in to now; switching ends Remote Control and rebuilds the prompt cache.",
       "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings, so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",
       "claudeHelpWsl": "Official Claude Code subscription accounts (Pro / Max / Team). Not supported yet while the Claude config folder is in WSL.",
+      "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: after switching to the card, Claude Code's sign-in changes to it right away. To use several accounts at once, use Open Terminal on the card. Sign-in tokens stay on this computer and are never uploaded, refreshed or signed out. The first switch saves the account Claude Code is signed in to now; switching ends Remote Control and rebuilds the prompt cache.",
       "workbuddyHelp": "WorkBuddy masaüstü uygulamasının resmi oturumu. CC Switch sizin yerinize WorkBuddy'de oturum açamaz; yalnızca WorkBuddy'nin oturum açtığı hesabı (oturum dosyalarının anlık görüntüsü) kaydedebilir. Hesap değiştirmek için sağlayıcı listesinde bu hesaba bağlı WorkBuddy Resmi Oturum kartını ekleyin (aynı anda yalnızca bir resmi kart eklenmiş olur). Anlık görüntüler yalnızca bu bilgisayarda çalışır ve senkronize edilmez."
     },
     "addAccount": "Hesap ekle",
@@ -5009,7 +5108,11 @@
       "open": "Yetkilendirme sayfasını açın",
       "note": "Tarayıcınızda yetkilendirme sayfası açık; bitirdiğinizde bu kendi kendine güncellenir. {{service}}'nin kullanım koşullarına dikkat edin.",
       "browserNote": "{{service}} oturum açma sayfası tarayıcınızda açık. Oturum açıp erişim izni verin; bu bilgi otomatik olarak güncellenir.",
-      "reopen": "Oturum açma sayfasını yeniden aç"
+      "reopen": "Oturum açma sayfasını yeniden aç",
+      "copyLink": "Oturum açma bağlantısını kopyala",
+      "linkCopied": "Oturum açma bağlantısı kopyalandı.",
+      "linkNote": "Oturum açma bağlantısı kopyalandı. Kullanmak istediğiniz tarayıcıda açın, oturum açıp erişim izni verin; bu bilgi otomatik olarak güncellenir.",
+      "linkCodeNote": "Oturum açma bağlantısı kopyalandı. Kullanmak istediğiniz tarayıcıda açın ve kodu girin; bitirdiğinizde bu kendi kendine güncellenir. {{service}} kullanım koşullarına dikkat edin."
     },
     "toast": {
       "added": "{{service}} hesabı eklendi.",
@@ -5034,18 +5137,18 @@
       "switchedWhileRunning": "Hesap değiştirildi. agy çalışıyor: açık agy oturumları önceki hesabı kullanmaya devam eder ve hesabı yeniden kaydedebilir. agy'yi kapatıp yeniden açın."
     },
     "claude": {
-      "addedOn": "Added {{date}}",
-      "empty": "No Claude accounts yet. Sign in here to switch between multiple subscription accounts.",
-      "loginExpiresOn": "Sign-in expires around {{date}}; sign in again after that",
-      "loginMaybeExpired": "Sign-in may have expired. Sign in again before switching to it.",
+      "pasteSubmitted": "Submitted. Finishing sign-in…",
+      "pasteToggle": "Didn't come back here after authorizing?",
       "pasteHint": "Paste the address from the browser's address bar after authorizing, or the code shown on the page.",
       "pasteLabel": "Authorization code or address",
       "pasteSubmit": "Submit",
-      "pasteSubmitted": "Submitted. Finishing sign-in…",
-      "pasteToggle": "Didn't come back here after authorizing?",
       "reauthNote": "Sign-in expired. Sign in again.",
-      "removeNote": "Only removes the sign-in CC Switch saved for this account; it isn't signed out anywhere else, and Claude Code's current sign-in (~/.claude) is untouched. Cards bound to it switch to Claude Code's current sign-in.",
+      "addedOn": "Added {{date}}",
+      "loginExpiresOn": "Sign-in expires around {{date}}; sign in again after that",
+      "loginMaybeExpired": "Sign-in may have expired. Sign in again before switching to it.",
       "statusLoadFailed": "Couldn't read Claude accounts. Try again.",
+      "empty": "No Claude accounts yet. Sign in here to switch between multiple subscription accounts.",
+      "removeNote": "Only removes the sign-in CC Switch saved for this account; it isn't signed out anywhere else, and Claude Code's current sign-in (~/.claude) is untouched. Cards bound to it switch to Claude Code's current sign-in.",
       "wslUnsupported": "The Claude config folder is in WSL. Adding and switching Claude accounts isn't supported there yet."
     },
     "workbuddy": {
@@ -5082,6 +5185,10 @@
         "personal": "Kişisel",
         "_raw": "{{plan}}"
       }
+    },
+    "openBrowser": {
+      "title": "Oturum açarken tarayıcıyı aç",
+      "description": "Yalnızca oturum açma bağlantısını kopyalayıp istediğiniz tarayıcıda açmak için kapatın; hesapları ayrı tarayıcı profillerinde tutuyorsanız kullanışlıdır."
     }
   },
   "kimi": {
@@ -5093,29 +5200,31 @@
       "mainland-cn": "Çin ana karası",
       "global": "Küresel",
       "signIn": "Kimi'de oturum aç",
+      "removeAccount": "Hesabı kaldır",
+      "dismissAccount": "Listeden gizle",
       "signedOut": "Oturum kapatıldı",
+      "noSubscription": "Abonelik yok",
       "statusFailed": "Oturum açma durumu okunamıyor",
       "expired": "Yetkilendirme kodunun süresi doldu. Yeniden oturum açın.",
       "denied": "Yetkilendirme reddedildi. Yeniden oturum açın.",
       "cancelled": "Bu oturum açma işlemi iptal edildi veya başka bir işlemle değiştirildi. Yeniden oturum açın.",
       "success": "Kimi Code'da oturum açıldı ve resmî modeller eklendi.",
-      "manageAccounts": "Kimi hesaplarını yönet",
-      "managedHint": "Önce bu resmî hesabı kaldırın veya Yetkilendirme Merkezi'nde oturumuyla birlikte silin.",
-      "removeAccount": "Hesabı kaldır",
-      "dismissAccount": "Listeden gizle",
       "removeConfirm": "{{name}} kaldırılsın mı? Bu hesabın sağlayıcısı ve modelleri, yerel kimlik bilgileri ve kartıyla birlikte Kimi Code'dan kaldırılır. Diğer hesaplar etkilenmez.",
       "dismissConfirm": "{{name}} listeden gizlensin mi? Bu, Kimi Code'un kendi oturumudur; CC Switch oturumu kapatmaz ve kimlik bilgileriyle modelleri saklar. Oturumu kapatmak için Kimi Code'da /logout komutunu çalıştırın. Yeniden oturum açınca hesap listeye geri gelir.",
       "primaryHidden": "Kimi Code'un kendi oturumu listeden kaldırıldı; yeniden görünmesi için aynı hesapla oturum açın",
       "removeCurrentHint": "Bu hesap kullanımda. Kaldırmadan önce başka bir hesaba geçin.",
+      "manageAccounts": "Kimi hesaplarını yönet",
+      "managedHint": "Önce bu resmî hesabı kaldırın veya Yetkilendirme Merkezi'nde oturumuyla birlikte silin.",
+      "connectionManaged": "Bağlantı ve oturum açma, Yetkilendirme Merkezi'nden yönetilir; burada yalnızca modelleri düzenleyebilirsiniz. Modelleri getir seçeneği, bu hesap için şu anda kullanılabilen resmî modelleri listeler.",
       "current": "Kimi tarafından kullanılıyor",
       "primaryShort": "Kimi Code'un kendi oturumu",
       "empty": "Henüz Kimi hesabı yok. Kimi Code'da oturum açılmış hesap burada otomatik olarak görünür.",
-      "help": "Birden fazla Kimi kodlama planı hesabı ekleyin; her hesap için Kimi Code'da ayrı bir sağlayıcı ve model kümesi oluşturulur. “Bu hesabı kullan” seçeneği Kimi Code'un varsayılan modelini o hesaba geçirir ve bundan sonra açılan oturumlar bu hesabı kullanır. Kimi Code'un kendi oturum açtığı hesap burada otomatik olarak görünür ve web aramasıyla veri getirme işlemlerinde her zaman kullanılır. Bu hesabı buradan kaldırmak yalnızca listeden gizler; Kimi Code oturumunu kapatmaz.",
-      "noSubscription": "Abonelik yok",
-      "connectionManaged": "Bağlantı ve oturum açma, Yetkilendirme Merkezi'nden yönetilir; burada yalnızca modelleri düzenleyebilirsiniz. Modelleri getir seçeneği, bu hesap için şu anda kullanılabilen resmî modelleri listeler."
+      "help": "Birden fazla Kimi kodlama planı hesabı ekleyin; her hesap için Kimi Code'da ayrı bir sağlayıcı ve model kümesi oluşturulur. “Bu hesabı kullan” seçeneği Kimi Code'un varsayılan modelini o hesaba geçirir ve bundan sonra açılan oturumlar bu hesabı kullanır. Kimi Code'un kendi oturum açtığı hesap burada otomatik olarak görünür ve web aramasıyla veri getirme işlemlerinde her zaman kullanılır. Bu hesabı buradan kaldırmak yalnızca listeden gizler; Kimi Code oturumunu kapatmaz."
     },
     "modelSelectionHint": "Bir sağlayıcıyı seçmek için kartındaki geçiş düğmesini kullanın. Başka bir model seçmek için Kimi Code'da /model komutunu kullanın.",
     "contextSize": "Bağlam uzunluğu",
+    "configTomlScope": "Buraya yalnızca [providers.{{key}}] ve ona ait [models.*] tabloları yazılabilir. Sağlayıcı Anahtarı'nı yukarıdaki alandan değiştirin.",
+    "configTomlSchema": "Yapılandırma eksik: sağlayıcının type değerini ve her modelin model ile max_context_size (pozitif tam sayı) değerlerini kontrol edin.",
     "capabilities": {
       "image_in": "Görsel girdisi",
       "thinking": "Akıl yürütme",
@@ -5123,13 +5232,13 @@
       "tool_use": "Araç kullanımı",
       "dynamically_loaded_tools": "Araçları gerektiğinde yükle"
     },
-    "empty": {
-      "title": "Kimi Code sağlayıcısı ekle",
-      "description": "Bir uç nokta, API anahtarı ve modeller yapılandırın. Mevcut Kimi yapılandırması otomatik olarak içe aktarılır."
-    },
     "capabilityHints": {
       "always_thinking": "Modelin akıl yürütme özelliği kapatılamıyorsa işaretleyin: bu model seçildiğinde Kimi akıl yürütmeyi açar ve kapatma seçeneğini gizler.",
       "dynamically_loaded_tools": "İstekleri kısa tutmak için modelin araç açıklamalarını gerektiğinde yüklemesini sağlar. Yalnızca Kimi'nin kendi modelleri destekler; üçüncü taraf modellerde kapalı bırakın. KIMI_CODE_EXPERIMENTAL_TOOL_SELECT ayarının da etkin olması gerekir."
+    },
+    "empty": {
+      "title": "Kimi Code sağlayıcısı ekle",
+      "description": "Bir uç nokta, API anahtarı ve modeller yapılandırın. Mevcut Kimi yapılandırması otomatik olarak içe aktarılır."
     },
     "error": {
       "defaultModelInUse": "Kimi Code bu sağlayıcıdaki bir modeli kullanıyor. Önce Kimi Code'da /model komutuyla başka bir modele geçin.",
