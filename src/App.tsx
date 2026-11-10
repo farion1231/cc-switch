@@ -50,6 +50,11 @@ import {
   useTrayNavigation,
 } from "@/hooks/useTrayNavigation";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
+import {
+  CODEX_UNIFY_MIGRATION_FINISHED_EVENT,
+  showCodexUnifyMigrationFinished,
+  type CodexUnifyMigrationFinished,
+} from "@/utils/codexHistorySplitHint";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
 import {
   extractErrorMessage,
@@ -558,6 +563,12 @@ function App() {
     }
   });
 
+  // 开启统一会话历史后的后台迁入跑完了：提示用户现在可以重启 Codex
+  useTauriEvent<CodexUnifyMigrationFinished>(
+    CODEX_UNIFY_MIGRATION_FINISHED_EVENT,
+    (payload) => showCodexUnifyMigrationFinished(payload, t),
+  );
+
   // 应用项目后刷新相关缓存（providers 由既有 provider-switched 监听承接；
   // proxy 状态由后端直接改 DB，不走 mutation，必须显式刷新）
   useTauriEvent("profile-applied", async () => {
@@ -864,7 +875,8 @@ function App() {
           activeApp === "mcode" ||
           activeApp === "dsh" ||
           activeApp === "kimi" ||
-          activeApp === "agy"
+          activeApp === "agy" ||
+          activeApp === "copilot"
         )
           return;
         const conflicts = await checkEnvConflicts(activeApp);
@@ -1596,7 +1608,8 @@ function App() {
       activeApp === "claude" ||
       activeApp === "codex" ||
       activeApp === "agy" ||
-      activeApp === "grokbuild"
+      activeApp === "grokbuild" ||
+      activeApp === "copilot"
         ? setTerminalProvider
         : undefined,
     onCreate: () => openAddProvider(currentModeView),
