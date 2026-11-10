@@ -201,6 +201,42 @@ mod tests {
 
     #[test]
     #[serial]
+    fn broken_native_file_keeps_saved_cards_and_recovers_after_repair() {
+        with_copilot_home(|state, home| {
+            for (id, settings, live) in [
+                ("login", json!({"env":{}}), false),
+                ("draft", byok_settings(), false),
+                ("relay", byok_settings(), true),
+            ] {
+                ProviderService::add(
+                    state,
+                    AppType::Copilot,
+                    Provider::with_id(id.into(), id.into(), settings, None),
+                    live,
+                )
+                .unwrap();
+            }
+            let path = home.join("providers.json");
+            let original = std::fs::read(&path).unwrap();
+            std::fs::write(&path, b"{").unwrap();
+            let cards = ProviderService::list(state, AppType::Copilot).unwrap();
+            assert!(is_official(&cards["login"]));
+            for (id, live) in [("draft", false), ("relay", true)] {
+                assert_eq!(
+                    cards[id].meta.as_ref().unwrap().live_config_managed,
+                    Some(live)
+                );
+            }
+            assert!(ProviderService::add_to_live_config(state, AppType::Copilot, "draft").is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), b"{");
+            std::fs::write(&path, original).unwrap();
+            ProviderService::add_to_live_config(state, AppType::Copilot, "draft").unwrap();
+            assert!(copilot_config::provider_key_exists("draft").unwrap());
+        });
+    }
+
+    #[test]
+    #[serial]
     fn list_merges_native_entries_and_converts_legacy_rows() {
         with_copilot_home(|state, home| {
             std::fs::create_dir_all(home).unwrap();

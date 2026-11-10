@@ -5566,8 +5566,15 @@ impl ProviderService {
     /// 官方卡不参与合并，永远不是「已添加」。旧版环境变量形状的自带模型卡就地转成新形状。
     fn list_copilot(state: &AppState) -> Result<IndexMap<String, Provider>, AppError> {
         let app = AppType::Copilot.as_str();
-        let native = crate::copilot_config::get_providers()?;
         let mut saved = state.db.get_all_providers(app)?;
+        let native = match crate::copilot_config::get_providers() {
+            Ok(native) => native,
+            Err(error) => {
+                // Keep the last known membership. A read failure is not a removal.
+                log::warn!("Could not refresh Copilot providers.json: {error}");
+                return Ok(saved);
+            }
+        };
         for (id, config) in &native {
             if !saved.contains_key(id) {
                 saved.insert(
