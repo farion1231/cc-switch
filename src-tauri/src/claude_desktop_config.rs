@@ -2615,7 +2615,14 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            ["claude-sonnet-5", "claude-haiku-4-5", "claude-haiku-5-5"]
+            [
+                "claude-sonnet-5",
+                "claude-haiku-4-5",
+                "claude-haiku-5-5",
+                // 显式档保持 upstream 顺序；缺失 Opus / Fable 在末尾补位。
+                "claude-opus-5",
+                "claude-fable-5",
+            ]
         );
     }
 
