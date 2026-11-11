@@ -54,6 +54,7 @@ mod tray_compat;
 mod tray_panel;
 mod usage_events;
 mod usage_script;
+mod window_fit;
 
 pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps};
 pub use codex_config::{
@@ -1540,6 +1541,9 @@ pub fn run() {
                     let _ = window.set_decorations(false);
                     let _ = window.set_shadow(true);
                 }
+                // window-state 插件恢复的位置可能压在任务栏 / Dock 下面，首次显示前收回工作区。
+                // 放在装饰设置之后，按最终的窗口外框计算。
+                window_fit::fit_to_work_area(&window);
                 // 上次退出时在轻量模式：照旧只留托盘。由深链接冷启动的要给用户看导入对话框，正常启动。
                 if settings.lightweight_mode && !startup_deeplink {
                     if let Err(e) = crate::lightweight::enter_lightweight_mode(app.handle()) {
