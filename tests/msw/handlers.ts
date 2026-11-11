@@ -304,6 +304,11 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/restart_app`, () => success(true)),
 
   http.post(`${TAURI_ENDPOINT}/get_settings`, () => success(getSettings())),
+  http.post(`${TAURI_ENDPOINT}/get_copilot_vscode_targets`, () => success([])),
+  http.post(`${TAURI_ENDPOINT}/sync_copilot_vscode`, () => success(null)),
+  http.post(`${TAURI_ENDPOINT}/get_copilot_vscode_sync_status`, () =>
+    success({ pending: false, error: null }),
+  ),
 
   http.post(`${TAURI_ENDPOINT}/check_env_conflicts`, () => success([])),
 

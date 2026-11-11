@@ -912,6 +912,14 @@
     "minimizeToTrayDescription": "When checked, clicking the close button will hide to system tray, otherwise the app will exit directly.",
     "useAppWindowControls": "Enable app-level window controls",
     "useAppWindowControlsDescription": "Use built-in minimize, maximize/restore, and close buttons in the app header.",
+    "copilotVscode": {
+      "enable": "Apply to VS Code Copilot extension",
+      "description": "Automatically apply the CLI's added models and API keys to all detected VS Code profiles. Provider changes sync automatically.",
+      "pending": "VS Code model sync pending",
+      "pendingDescription": "VS Code may still use the previous configuration. Retry to sync the latest changes.",
+      "noTargets": "No VS Code configuration found. Start VS Code once, then try again.",
+      "failed": "Failed to sync VS Code Copilot"
+    },
     "enableClaudePluginIntegration": "Apply to Claude Code extension",
     "enableClaudePluginIntegrationDescription": "When enabled, the VS Code Claude Code extension provider will switch with this app",
     "skipClaudeOnboarding": "Skip Claude Code first-run confirmation",

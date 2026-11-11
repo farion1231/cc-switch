@@ -14,6 +14,7 @@ mod codex_state_db;
 mod commands;
 mod config;
 mod copilot_config;
+mod copilot_vscode;
 mod database;
 mod deeplink;
 mod dsh_config;
@@ -1647,6 +1648,9 @@ pub fn run() {
             commands::is_portable_mode,
             commands::copy_text_to_clipboard,
             commands::get_claude_plugin_status,
+            commands::get_copilot_vscode_targets,
+            commands::get_copilot_vscode_sync_status,
+            commands::sync_copilot_vscode,
             commands::read_claude_plugin_config,
             commands::apply_claude_plugin_config,
             commands::is_claude_plugin_applied,
