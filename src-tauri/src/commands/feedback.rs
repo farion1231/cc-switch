@@ -3,7 +3,10 @@
 //!
 //! 预填走 URL 参数，而浏览器 / GitHub 对 URL 长度有约 8 KB 的上限，整天的日志通常放不下，
 //! 所以从当日日志末尾往前取，在长度预算内尽量多放最近的行。
+//!
+//! Issue 是公开的，日志在放入链接前一律经过隐私过滤器（`proxy::privacy_filter`）脱敏。
 
+use crate::proxy::privacy_filter::{self, Placeholders};
 use chrono::{Local, TimeZone};
 use serde::Serialize;
 use std::collections::VecDeque;
@@ -27,6 +30,8 @@ const DEFAULT_ISSUE_REPO: &str = "farion1231/cc-switch";
 #[cfg(debug_assertions)]
 const ISSUE_REPO_OVERRIDE_ENV: &str = "CC_SWITCH_FEEDBACK_REPO";
 const ISSUE_TEMPLATE: &str = "bug_report.yml";
+/// 脱敏占位符语言：Issue 内容面向维护者，统一用英文（[EMAIL]、[SECRET] 等）
+const ISSUE_LANGUAGE: &str = "en";
 /// bug_report.yml 中「操作系统」下拉框的选项，需与 `os_display_name` 的输出一致
 const TEMPLATE_OS_OPTIONS: [&str; 3] = ["Windows", "macOS", "Linux"];
 
@@ -125,7 +130,15 @@ fn build_feedback_report(log_dir: &Path, env: &FeedbackEnv) -> FeedbackReport {
     let date = env.now.format("%Y-%m-%d").to_string();
     let files = todays_log_files(log_dir, start_of_local_day(&env.now));
     let collected = collect_day_tail(&files, &date, MAX_TAIL_BYTES);
-    let lines: Vec<String> = collected.lines.into_iter().collect();
+    // Issue 是公开的：无论代理侧隐私过滤开关是否打开，上传前都要脱敏。
+    // 先脱敏再按长度预算挑选行，占位符会改变行长。
+    let filter = privacy_filter::global();
+    let placeholders = Placeholders::for_language(ISSUE_LANGUAGE);
+    let lines: Vec<String> = collected
+        .lines
+        .into_iter()
+        .map(|line| filter.redact(&line, placeholders).redacted)
+        .collect();
     let (issue_url, included_lines) = build_issue_url(env, &date, &lines, collected.total_lines);
 
     FeedbackReport {
@@ -270,6 +283,9 @@ fn build_issue_context(env: &FeedbackEnv, date: &str, tail: &[String], total: us
     } else {
         ctx.push_str(&format!("- Log: all {total} lines from {date}\n"));
     }
+    ctx.push_str(
+        "- Privacy: emails, phone numbers, ID/bank card numbers, IPs and secrets in the log were replaced with placeholders\n",
+    );
     if !tail.is_empty() {
         ctx.push_str("\n```text\n");
         for line in tail {
@@ -514,6 +530,35 @@ mod tests {
         assert!(!context.contains("] old"));
         // 只读取原日志，不创建任何额外文件
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn log_is_privacy_filtered_before_prefill() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(CURRENT_LOG_FILE),
+            "[2026-11-11][08:00:00][INFO][a] user alice.zhang@corp-mail.com logged in\n\
+             [2026-11-11][08:00:01][WARN][a] request failed token=aB3xK9pLmN2qR7sT5vW1zYQwErTyUiOp\n\
+             [2026-11-11][08:00:02][INFO][a] opened /Users/alice/Documents/a.txt\n",
+        )
+        .unwrap();
+
+        let report = build_feedback_report(dir.path(), &test_env());
+        assert_eq!((report.total_lines, report.included_lines), (3, 3));
+        let context = context_of(&report.issue_url);
+        assert!(!context.contains("alice.zhang@corp-mail.com"), "{context}");
+        assert!(
+            !context.contains("aB3xK9pLmN2qR7sT5vW1zYQwErTyUiOp"),
+            "{context}"
+        );
+        assert!(context.contains("[EMAIL]"), "{context}");
+        assert!(context.contains("[SECRET]"), "{context}");
+        // 普通路径不受影响
+        assert!(
+            context.contains("/Users/alice/Documents/a.txt"),
+            "{context}"
+        );
+        assert!(context.contains("- Privacy: "), "{context}");
     }
 
     #[test]
