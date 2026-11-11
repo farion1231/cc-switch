@@ -40,6 +40,8 @@ body:
       required: true
 
   - type: dropdown
+    # id 供应用内「问题反馈」通过 URL 参数预填，勿改；选项文字需与应用传入的值一致
+    id: os
     attributes:
       label: Operating System / 操作系统
       multiple: false

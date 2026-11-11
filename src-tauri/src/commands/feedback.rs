@@ -27,6 +27,8 @@ const DEFAULT_ISSUE_REPO: &str = "farion1231/cc-switch";
 #[cfg(debug_assertions)]
 const ISSUE_REPO_OVERRIDE_ENV: &str = "CC_SWITCH_FEEDBACK_REPO";
 const ISSUE_TEMPLATE: &str = "bug_report.yml";
+/// bug_report.yml 中「操作系统」下拉框的选项，需与 `os_display_name` 的输出一致
+const TEMPLATE_OS_OPTIONS: [&str; 3] = ["Windows", "macOS", "Linux"];
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -283,16 +285,18 @@ fn build_issue_context(env: &FeedbackEnv, date: &str, tail: &[String], total: us
 fn issue_url_with(env: &FeedbackEnv, date: &str, tail: &[String], total: usize) -> String {
     let context = build_issue_context(env, date, tail, total);
     let issue_new_url = format!("https://github.com/{}/issues/new", env.issue_repo);
-    url::Url::parse_with_params(
-        &issue_new_url,
-        &[
-            ("template", ISSUE_TEMPLATE),
-            ("version", env.version.as_str()),
-            ("context", context.as_str()),
-        ],
-    )
-    .map(String::from)
-    .unwrap_or(issue_new_url)
+    let mut params = vec![
+        ("template", ISSUE_TEMPLATE),
+        ("version", env.version.as_str()),
+    ];
+    // 下拉框按选项文字预填，只传模板里存在的选项
+    if TEMPLATE_OS_OPTIONS.contains(&env.os) {
+        params.push(("os", env.os));
+    }
+    params.push(("context", context.as_str()));
+    url::Url::parse_with_params(&issue_new_url, &params)
+        .map(String::from)
+        .unwrap_or(issue_new_url)
 }
 
 /// 生成预填的 bug_report Issue 链接，在长度预算内放入尽可能多的末尾日志行。
@@ -339,6 +343,21 @@ mod tests {
         for bad in ["", "owner", "owner/", "/repo", "a/b/c", "a/b?x=1", "a b/c"] {
             assert!(!is_repo_slug(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn os_param_only_for_template_options() {
+        assert!(TEMPLATE_OS_OPTIONS
+            .iter()
+            .all(|o| ["windows", "macos", "linux"]
+                .iter()
+                .any(|raw| os_display_name(raw) == *o)));
+
+        let mut env = test_env();
+        env.os = "freebsd";
+        let (url, _) = build_issue_url(&env, "2026-11-11", &[], 0);
+        let parsed = url::Url::parse(&url).unwrap();
+        assert!(!parsed.query_pairs().any(|(k, _)| k == "os"));
     }
 
     #[test]
@@ -469,6 +488,7 @@ mod tests {
         let params: std::collections::HashMap<_, _> = parsed.query_pairs().collect();
         assert_eq!(params["template"], ISSUE_TEMPLATE);
         assert_eq!(params["version"], "9.9.9");
+        assert_eq!(params["os"], "Windows");
         let context = &params["context"];
         assert!(context.contains(&format!("last {included} of 1000 lines from 2026-11-11")));
         assert!(context.contains("line 299"));
