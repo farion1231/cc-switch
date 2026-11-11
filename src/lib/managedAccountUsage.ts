@@ -4,11 +4,16 @@ import type { Provider } from "@/types";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
 
-/** 能用托管账号（授权中心里的账号）的应用；其他应用的供应商不走代理注入的托管凭据。 */
+/**
+ * 能用托管账号（授权中心里的账号）的应用；其他应用的供应商不走代理注入的托管凭据。
+ * Antigravity 官方卡只算明确绑了号的（没绑的跟着 agy 自己的登录，不用授权中心的账号）。
+ */
 export const MANAGED_ACCOUNT_APPS = [
   "claude",
   "claude-desktop",
   "codex",
+  "agy",
+  "copilot",
 ] as const;
 
 export type ManagedAccountApp = (typeof MANAGED_ACCOUNT_APPS)[number];
@@ -48,6 +53,8 @@ function followsDefaultAccount(
   provider: Provider,
   authProvider: ManagedAuthProvider,
 ): boolean {
+  // Copilot CLI 官方卡没绑账号时用的是 Copilot CLI 自己的登录
+  if (appId === "copilot") return false;
   // Codex 官方卡没绑托管账号时用的是 Codex 自己的登录，不碰授权中心的默认账号
   if (
     appId === "codex" &&

@@ -34,14 +34,16 @@ base_url = "${CODEX_BASE_URL}"`,
     expect(codex.meta?.usage_script?.codingPlanProvider).toBe("command_code");
   });
 
-  it("does not extend Command Code into OpenCode", () => {
+  it("injects Command Code into other apps too", () => {
     const provider = injectCodingPlanUsageScript("opencode", {
       settingsConfig: {
         options: { baseURL: CODEX_BASE_URL },
       },
-    }) as { meta?: { usage_script?: unknown } };
+    }) as { meta?: { usage_script?: { codingPlanProvider?: string } } };
 
-    expect(provider.meta?.usage_script).toBeUndefined();
+    expect(provider.meta?.usage_script?.codingPlanProvider).toBe(
+      "command_code",
+    );
   });
 
   it("does not overwrite an existing usage script", () => {

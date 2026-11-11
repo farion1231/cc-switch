@@ -6,10 +6,39 @@ use std::collections::HashMap;
 use serde::Serialize;
 use tauri::State;
 
+use super::run_db_task;
 use crate::app_config::AppType;
 use crate::claude_mcp;
 use crate::services::McpService;
 use crate::store::AppState;
+
+/// Start a bounded, one-shot batch only while the MCP page is mounted.
+#[tauri::command]
+pub async fn start_mcp_connectivity_checks(
+    state: State<'_, AppState>,
+    server_ids: Vec<String>,
+    on_result: tauri::ipc::Channel<crate::services::mcp_connectivity::ConnectivityResult>,
+) -> Result<String, String> {
+    let servers = run_db_task(&state, |state| {
+        McpService::get_all_servers(state).map_err(|e| e.to_string())
+    })
+    .await?;
+    Ok(crate::services::mcp_connectivity::start_checks(
+        // Use the page's enabled selection: app toggles update it optimistically,
+        // so the database's enablement flags can still lag behind the UI.
+        servers
+            .into_iter()
+            .filter(|(id, _)| server_ids.contains(id))
+            .map(|(_, server)| server)
+            .collect(),
+        move |result| on_result.send(result).is_ok(),
+    ))
+}
+
+#[tauri::command]
+pub fn cancel_mcp_connectivity_checks(batch_id: String) {
+    crate::services::mcp_connectivity::cancel_checks(&batch_id);
+}
 
 /// 获取 Claude MCP 状态
 #[tauri::command]
@@ -140,9 +169,8 @@ pub async fn delete_mcp_server_in_config(
     McpService::delete_server(&state, &id).map_err(|e| e.to_string())
 }
 
-/// 设置启用状态并同步到客户端配置
+/// 设置启用状态并同步到客户端配置（兼容层命令，同 `toggle_mcp_app`）
 #[tauri::command]
-#[allow(deprecated)] // 兼容层命令，内部调用已废弃的 Service 方法
 pub async fn set_mcp_enabled(
     state: State<'_, AppState>,
     app: String,
@@ -150,7 +178,10 @@ pub async fn set_mcp_enabled(
     enabled: bool,
 ) -> Result<bool, String> {
     let app_ty = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    McpService::set_enabled(&state, app_ty, &id, enabled).map_err(|e| e.to_string())
+    McpService::toggle_app_locked(&state, &id, app_ty, enabled)
+        .await
+        .map(|_| true)
+        .map_err(|e| e.to_string())
 }
 
 // ============================================================================
@@ -191,7 +222,9 @@ pub async fn toggle_mcp_app(
     enabled: bool,
 ) -> Result<(), String> {
     let app_ty = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    McpService::toggle_app(&state, &server_id, app_ty, enabled).map_err(|e| e.to_string())
+    McpService::toggle_app_locked(&state, &server_id, app_ty, enabled)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// 从所有应用导入 MCP 服务器（复用已有的导入逻辑）

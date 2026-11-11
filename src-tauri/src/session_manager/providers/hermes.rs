@@ -12,7 +12,8 @@ use crate::session_manager::{SessionMessage, SessionMeta};
 use super::blocks::{assign_turn_ids, openai_tool_calls, thinking_block, tool_result_block};
 use super::utils::for_each_jsonl_value;
 use super::utils::{
-    extract_text, parse_timestamp_to_ms, read_head_tail_lines, truncate_summary, TITLE_MAX_CHARS,
+    extract_text, parse_timestamp_to_ms, read_head_tail_lines, truncate_summary, ScanStatus,
+    TITLE_MAX_CHARS,
 };
 
 const PROVIDER_ID: &str = "hermes";
@@ -28,8 +29,12 @@ fn get_hermes_sessions_dir() -> PathBuf {
 /// Scan sessions from both SQLite database and JSONL transcript files,
 /// with SQLite taking precedence on ID conflicts.
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    let sqlite_sessions = scan_sessions_sqlite();
-    let jsonl_sessions = scan_sessions_jsonl();
+    scan_sessions_with_status(&mut ScanStatus::default())
+}
+
+pub(crate) fn scan_sessions_with_status(status: &mut ScanStatus) -> Vec<SessionMeta> {
+    let sqlite_sessions = scan_sessions_sqlite_at_with_status(&get_hermes_db_path(), status);
+    let jsonl_sessions = scan_sessions_jsonl(status);
 
     if sqlite_sessions.is_empty() {
         return jsonl_sessions;
@@ -62,12 +67,24 @@ const SQLITE_SCAN_LIMIT: usize = 500;
 /// prefix followed by JSON (`SessionDB._encode_content`).
 const CONTENT_JSON_PREFIX: &str = "\u{0}json:";
 
-fn scan_sessions_sqlite() -> Vec<SessionMeta> {
-    scan_sessions_sqlite_at(&get_hermes_db_path())
+#[cfg(test)]
+fn scan_sessions_sqlite_at(db_path: &Path) -> Vec<SessionMeta> {
+    scan_sessions_sqlite_at_with_status(db_path, &mut ScanStatus::default())
 }
 
-fn scan_sessions_sqlite_at(db_path: &Path) -> Vec<SessionMeta> {
-    if !db_path.exists() {
+fn scan_sessions_sqlite_at_with_status(
+    db_path: &Path,
+    status: &mut ScanStatus,
+) -> Vec<SessionMeta> {
+    #[cfg(windows)]
+    if crate::session_manager::hermes_wsl::is_wsl(db_path) {
+        return scan_sessions_wsl(db_path).unwrap_or_else(|error| {
+            log::warn!("Failed to scan Hermes WSL database: {error}");
+            status.incomplete = true;
+            Vec::new()
+        });
+    }
+    if status.metadata(db_path).is_none() {
         return Vec::new();
     }
 
@@ -76,16 +93,19 @@ fn scan_sessions_sqlite_at(db_path: &Path) -> Vec<SessionMeta> {
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     ) {
         Ok(c) => c,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            status.record::<(), _>(Err(error));
+            return Vec::new();
+        }
     };
 
     // Check if sessions table exists
-    let has_sessions: bool = conn
-        .query_row(
+    let has_sessions: bool = status
+        .record(conn.query_row(
             "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='sessions'",
             [],
             |row| row.get(0),
-        )
+        ))
         .unwrap_or(false);
 
     if !has_sessions {
@@ -93,25 +113,35 @@ fn scan_sessions_sqlite_at(db_path: &Path) -> Vec<SessionMeta> {
     }
 
     // Query sessions — use flexible column access via pragma
-    let columns = get_table_columns(&conn, "sessions");
+    let columns = get_table_columns_with_status(&conn, "sessions", status);
+    if columns.is_empty() {
+        status.incomplete = true;
+        return Vec::new();
+    }
 
     let query = format!("SELECT * FROM sessions ORDER BY rowid DESC LIMIT {SQLITE_SCAN_LIMIT}");
     let mut stmt = match conn.prepare(&query) {
         Ok(s) => s,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            status.record::<(), _>(Err(error));
+            return Vec::new();
+        }
     };
 
     let mut sessions = Vec::new();
     let rows = match stmt.query_map([], |row| Ok(row_to_json(row, &columns))) {
         Ok(r) => r,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            status.record::<(), _>(Err(error));
+            return Vec::new();
+        }
     };
 
     let db_source = format!("sqlite:{}", db_path.display());
     let first_user_messages = first_user_messages(&conn);
     let last_messages = last_messages(&conn);
 
-    for row_result in rows.flatten() {
+    for row_result in rows.filter_map(|row| status.record(row)) {
         if let Some(mut meta) = sqlite_row_to_session_meta(&row_result, &db_source) {
             let first = first_user_messages.get(&meta.session_id);
             if meta.title.is_none() {
@@ -128,6 +158,49 @@ fn scan_sessions_sqlite_at(db_path: &Path) -> Vec<SessionMeta> {
     }
 
     sessions
+}
+
+#[cfg(windows)]
+fn scan_sessions_wsl(db_path: &Path) -> Result<Vec<SessionMeta>, String> {
+    let data =
+        crate::session_manager::hermes_wsl::read(db_path, serde_json::json!({"operation":"scan"}))?;
+    let edges = |name: &str| -> HashMap<String, String> {
+        data[name]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|row| {
+                let text = decode_content(row["content"].as_str()?);
+                (!text.trim().is_empty()).then(|| {
+                    (
+                        row["session_id"].as_str().unwrap_or_default().to_string(),
+                        text,
+                    )
+                })
+            })
+            .collect()
+    };
+    let first = edges("first");
+    let last = edges("last");
+    let source = format!("sqlite:{}", db_path.display());
+    Ok(data["sessions"]
+        .as_array()
+        .ok_or("Invalid Hermes session response")?
+        .iter()
+        .filter_map(|row| {
+            let mut meta = sqlite_row_to_session_meta(row, &source)?;
+            if meta.title.is_none() {
+                meta.title = first
+                    .get(&meta.session_id)
+                    .map(|text| truncate_summary(text, TITLE_MAX_CHARS));
+            }
+            meta.summary = last
+                .get(&meta.session_id)
+                .or_else(|| first.get(&meta.session_id))
+                .map(|text| truncate_summary(text, 160));
+            Some(meta)
+        })
+        .collect())
 }
 
 /// First displayable user message of each listed session, decoded to text.
@@ -250,19 +323,33 @@ fn sqlite_row_to_session_meta(row: &Value, db_source: &str) -> Option<SessionMet
 
 /// Get column names for a table.
 fn get_table_columns(conn: &Connection, table: &str) -> Vec<String> {
+    get_table_columns_with_status(conn, table, &mut ScanStatus::default())
+}
+
+fn get_table_columns_with_status(
+    conn: &Connection,
+    table: &str,
+    status: &mut ScanStatus,
+) -> Vec<String> {
     let query = format!("PRAGMA table_info({table})");
     let mut stmt = match conn.prepare(&query) {
         Ok(s) => s,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            status.record::<(), _>(Err(error));
+            return Vec::new();
+        }
     };
     let rows = match stmt.query_map([], |row| {
         let name: String = row.get(1)?;
         Ok(name)
     }) {
         Ok(r) => r,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            status.record::<(), _>(Err(error));
+            return Vec::new();
+        }
     };
-    rows.flatten().collect()
+    rows.filter_map(|row| status.record(row)).collect()
 }
 
 /// Convert a SQLite row to a JSON Value using known column names.
@@ -290,6 +377,34 @@ pub fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String>
     let (db_path, session_id) = parse_sqlite_source(source)
         .ok_or_else(|| format!("Invalid SQLite source reference: {source}"))?;
 
+    #[cfg(windows)]
+    if crate::session_manager::hermes_wsl::is_wsl(&db_path) {
+        let data = crate::session_manager::hermes_wsl::read(
+            &db_path,
+            serde_json::json!({"operation":"messages","session_id":session_id}),
+        )?;
+        let rows: Vec<MessageRow> = data
+            .as_array()
+            .ok_or("Invalid Hermes message response")?
+            .iter()
+            .filter_map(|row| {
+                let text = |name: &str| row[name].as_str().map(str::to_string);
+                Some(MessageRow {
+                    id: row["id"].as_i64()?,
+                    role: row["role"].as_str()?.to_string(),
+                    content: text("content"),
+                    timestamp: row["timestamp"].as_f64(),
+                    tool_call_id: text("tool_call_id"),
+                    tool_calls: text("tool_calls"),
+                    tool_name: text("tool_name"),
+                    active: row["active"].as_i64().unwrap_or(1),
+                    display_metadata: text("display_metadata"),
+                    reasoning: text("reasoning"),
+                })
+            })
+            .collect();
+        return messages_from_rows(rows);
+    }
     let conn = Connection::open_with_flags(
         &db_path,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -411,11 +526,17 @@ fn load_messages_from_conn(
         })
         .map_err(|e| format!("Failed to query messages: {e}"))?;
 
+    messages_from_rows(rows.flatten())
+}
+
+fn messages_from_rows(
+    rows: impl IntoIterator<Item = MessageRow>,
+) -> Result<Vec<SessionMessage>, String> {
     // Collapse duplicates the way Hermes' display projection does: keep the
     // first position, show the most live copy.
     let mut order: Vec<MessageRow> = Vec::new();
     let mut index: HashMap<DedupeKey, usize> = HashMap::new();
-    for row in rows.flatten() {
+    for row in rows {
         if row.is_model_only() {
             continue;
         }
@@ -553,25 +674,18 @@ pub(crate) fn parse_sqlite_source(source: &str) -> Option<(PathBuf, String)> {
 
 // ── JSONL scanning ──────────────────────────────────────────────────
 
-fn scan_sessions_jsonl() -> Vec<SessionMeta> {
+fn scan_sessions_jsonl(status: &mut ScanStatus) -> Vec<SessionMeta> {
     let sessions_dir = get_hermes_sessions_dir();
-    if !sessions_dir.exists() {
-        return Vec::new();
-    }
-
-    let entries = match std::fs::read_dir(&sessions_dir) {
-        Ok(e) => e,
-        Err(_) => return Vec::new(),
-    };
+    let entries = status.entries(&sessions_dir);
 
     let mut sessions = Vec::new();
-    for entry in entries.flatten() {
+    for entry in entries {
         let path = entry.path();
         let ext = path.extension().and_then(|e| e.to_str());
         if ext != Some("jsonl") && ext != Some("json") {
             continue;
         }
-        if let Some(meta) = parse_jsonl_session(&path) {
+        if let Some(meta) = parse_jsonl_session_with_status(&path, status) {
             sessions.push(meta);
         }
     }
@@ -594,9 +708,14 @@ fn jsonl_message(value: &Value) -> Option<(&str, String)> {
     Some((role, text))
 }
 
+#[cfg(test)]
 fn parse_jsonl_session(path: &Path) -> Option<SessionMeta> {
+    parse_jsonl_session_with_status(path, &mut ScanStatus::default())
+}
+
+fn parse_jsonl_session_with_status(path: &Path, status: &mut ScanStatus) -> Option<SessionMeta> {
     // Read head (metadata + first user message) and tail (last timestamp + last message)
-    let (head, tail) = read_head_tail_lines(path, 30, 10).ok()?;
+    let (head, tail) = status.record(read_head_tail_lines(path, 30, 10))?;
 
     let mut first_user_msg: Option<String> = None;
     let mut first_ts: Option<i64> = None;
@@ -942,6 +1061,28 @@ mod tests {
         (path, conn)
     }
 
+    #[test]
+    fn sqlite_scan_distinguishes_failure_missing_and_empty_database() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.db");
+        let mut missing = ScanStatus::default();
+        assert!(scan_sessions_sqlite_at_with_status(&path, &mut missing).is_empty());
+        assert!(!missing.incomplete);
+        std::fs::write(&path, "not a SQLite database").unwrap();
+        let mut failed = ScanStatus::default();
+        assert!(scan_sessions_sqlite_at_with_status(&path, &mut failed).is_empty());
+        assert!(failed.incomplete);
+        std::fs::remove_file(&path).unwrap();
+        let (_, conn) = hermes_db(dir.path());
+        drop(conn);
+        let mut recovered = ScanStatus::default();
+        assert!(scan_sessions_sqlite_at_with_status(&path, &mut recovered).is_empty());
+        assert!(!recovered.incomplete);
+    }
+
     fn insert_message(conn: &Connection, session: &str, role: &str, content: &str, ts: f64) {
         conn.execute(
             "INSERT INTO messages (session_id, role, content, timestamp) VALUES (?1, ?2, ?3, ?4)",
@@ -956,6 +1097,260 @@ mod tests {
             .into_iter()
             .map(|m| m.content)
             .collect()
+    }
+
+    // Native-filesystem reference for #8205; this does not exercise Windows
+    // access to WSL's UNC share or its locking/shared-memory implementation.
+    #[test]
+    fn readonly_reader_sees_committed_wal_without_immutable() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempdir().expect("tempdir");
+        let (path, writer) = hermes_db(dir.path());
+        writer
+            .execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;")
+            .expect("enable WAL");
+        writer
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+            .expect("checkpoint schema");
+        insert_message(&writer, "s1", "user", "committed in WAL", 1.0);
+
+        let reader = Connection::open_with_flags(
+            &path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .expect("open readonly reader");
+        assert_eq!(contents(&reader, "s1"), vec!["committed in WAL"]);
+        assert!(reader.execute("DELETE FROM messages", []).is_err());
+
+        writer.execute_batch("BEGIN IMMEDIATE;").unwrap();
+        insert_message(&writer, "s1", "assistant", "not yet committed", 2.0);
+        assert_eq!(contents(&reader, "s1"), vec!["committed in WAL"]);
+        writer.execute_batch("COMMIT;").unwrap();
+        assert_eq!(
+            contents(&reader, "s1"),
+            vec!["committed in WAL", "not yet committed"]
+        );
+
+        // immutable disables change detection and assumes the database is
+        // stable. It must not be a fallback for a live Hermes database.
+        let immutable = Connection::open_with_flags(
+            format!("file:{}?mode=ro&immutable=1", path.display()),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+        )
+        .expect("open immutable reader");
+        assert!(contents(&immutable, "s1").is_empty());
+        assert_eq!(
+            load_messages_sqlite(&format!("sqlite:{}#s1", path.display()))
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    // Diagnostic reference only: requires a real Windows host and WSL2 distro.
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn wsl2_live_wal_readonly_reference() {
+        use std::io::{BufRead, BufReader};
+        use std::process::{Command, Stdio};
+
+        let distro = std::env::var("CC_SWITCH_WSL_DISTRO").expect("WSL distro");
+        let native_path = format!("/tmp/ccswitch8205-{}.db", std::process::id());
+        let mut writer = Command::new("wsl.exe")
+            .args(["--distribution", &distro, "--exec", "python3", "-u", "-c"])
+            .arg(
+                r#"import sqlite3,sys,os
+p=sys.argv[1]
+c=sqlite3.connect(p,isolation_level=None)
+c.execute('CREATE TABLE sessions(id TEXT PRIMARY KEY,cwd TEXT,title TEXT,started_at REAL,last_activity_at REAL)')
+c.execute("INSERT INTO sessions VALUES('s1','/tmp',NULL,1,1)")
+c.execute('CREATE TABLE messages(id INTEGER PRIMARY KEY,session_id TEXT,role TEXT,content TEXT,timestamp REAL)')
+c.execute('PRAGMA journal_mode=WAL')
+c.execute('PRAGMA wal_autocheckpoint=0')
+c.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+c.execute("INSERT INTO messages VALUES(1,'s1','user','first',1)")
+print('ready',flush=True)
+for action in sys.stdin:
+    action=action.strip()
+    if action=='begin':
+        c.execute('BEGIN IMMEDIATE')
+        c.execute("INSERT INTO messages VALUES(2,'s1','assistant','second',2)")
+    elif action=='commit': c.execute('COMMIT')
+    elif action=='large':
+        import json
+        for i in range(9):
+            sid='image'+str(i)
+            c.execute("INSERT INTO sessions VALUES(?, '/tmp', NULL, 1, 1)",(sid,))
+            content='\0json:'+json.dumps([{'type':'image_url','image_url':{'url':'data:image/png;base64,'+'A'*(2*1024*1024)}},{'type':'text','text':'visible text'}])
+            c.execute("INSERT INTO messages(session_id,role,content,timestamp) VALUES(?,'user',?,1)",(sid,content))
+        c.execute("INSERT INTO sessions VALUES('tools','/tmp',NULL,1,1)")
+        for i in range(40):
+            # Distinct outputs preserve the native duplicate-selection semantics.
+            c.execute("INSERT INTO messages(session_id,role,content,timestamp) VALUES('tools','tool',?,?)",(str(i)+'\n'+('x'*1024*1024),i+1))
+    elif action=='exit': break
+    print(action,flush=True)
+c.close()
+for suffix in ('','-wal','-shm'):
+    try: os.unlink(p+suffix)
+    except FileNotFoundError: pass
+"#,
+            )
+            .arg(&native_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("WSL Python writer");
+        let mut output = BufReader::new(writer.stdout.take().unwrap());
+        let mut line = String::new();
+        output.read_line(&mut line).unwrap();
+        assert_eq!(line.trim(), "ready");
+
+        let read_native = || {
+            let result = Command::new("wsl.exe")
+                .args(["--distribution", &distro, "--exec", "python3", "-c"])
+                .arg(
+                    r#"import sqlite3,sys,json,pathlib
+c=sqlite3.connect(pathlib.Path(sys.argv[1]).as_uri()+'?mode=ro',uri=True,isolation_level=None)
+rows=c.execute('SELECT content FROM messages ORDER BY id').fetchall()
+try: c.execute('DELETE FROM messages'); raise AssertionError('write succeeded')
+except sqlite3.OperationalError as e: assert 'readonly' in str(e),str(e)
+print(json.dumps([row[0] for row in rows]))
+"#,
+                )
+                .arg(&native_path)
+                .output()
+                .expect("WSL native readonly query");
+            assert!(result.status.success(), "{:?}", result);
+            serde_json::from_slice::<Vec<String>>(&result.stdout).expect("reader JSON")
+        };
+        assert_eq!(read_native(), vec!["first"]);
+
+        let unc = PathBuf::from(format!(
+            r"\\wsl.localhost\{}{}",
+            distro,
+            native_path.replace('/', "\\")
+        ));
+        let direct = Connection::open_with_flags(
+            &unc,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        );
+        match direct {
+            Ok(conn) => println!(
+                "Windows rusqlite {} UNC query: {:?}",
+                rusqlite::version(),
+                conn.query_row("SELECT COUNT(*) FROM messages", [], |row| row
+                    .get::<_, i64>(0))
+            ),
+            Err(error) => println!(
+                "Windows rusqlite {} UNC open: {error:?}",
+                rusqlite::version()
+            ),
+        }
+        let source = format!("sqlite:{}#s1", unc.display());
+        let verify_production = |expected: &[&str]| {
+            let messages = load_messages_sqlite(&source).expect("production WSL message route");
+            assert_eq!(
+                messages
+                    .iter()
+                    .map(|m| m.content.as_str())
+                    .collect::<Vec<_>>(),
+                expected
+            );
+            let sessions = scan_sessions_sqlite_at(&unc);
+            assert_eq!(sessions.len(), 1);
+            assert_eq!(sessions[0].title.as_deref(), Some("first"));
+            assert_eq!(sessions[0].summary.as_deref(), expected.last().copied());
+            // Content validation canonicalizes paths to the extended UNC form.
+            let canonical = unc.canonicalize().expect("canonical WSL UNC path");
+            let value = crate::session_manager::hermes_wsl::read(&canonical, serde_json::json!({
+                "operation":"cell", "session_id":"s1", "id":"1", "column":"content", "max_bytes":1024,
+            })).expect("production canonical content route");
+            assert_eq!(value, "first");
+            let validated = crate::session_manager::content::ValidatedSource {
+                provider_id: "hermes".to_string(),
+                raw: source.clone(),
+                location: crate::session_manager::content::SourceLocation::Sqlite {
+                    db: canonical.clone(),
+                    session_id: "s1".to_string(),
+                },
+            };
+            let content_ref = ContentRef::Sqlite {
+                table: "messages".to_string(),
+                id: "1".to_string(),
+                column: "content".to_string(),
+                pointer: String::new(),
+            };
+            assert_eq!(
+                crate::session_manager::content::resolve_content_ref(&validated, &content_ref)
+                    .unwrap(),
+                "first"
+            );
+            let forbidden = ContentRef::Sqlite {
+                table: "sqlite_master".to_string(),
+                id: "1".to_string(),
+                column: "sql".to_string(),
+                pointer: String::new(),
+            };
+            assert!(
+                crate::session_manager::content::resolve_content_ref(&validated, &forbidden)
+                    .is_err()
+            );
+            assert!(crate::session_manager::hermes_wsl::read(&canonical, serde_json::json!({
+                "operation":"cell", "session_id":"wrong-session", "id":"1", "column":"content", "max_bytes":1024,
+            })).is_err());
+            assert!(crate::session_manager::hermes_wsl::read(&canonical, serde_json::json!({
+                "operation":"cell", "session_id":"s1", "id":"1", "column":"content", "max_bytes":1,
+            })).is_err());
+        };
+        verify_production(&["first"]);
+        for (action, expected) in [
+            ("begin", vec!["first"]),
+            ("commit", vec!["first", "second"]),
+        ] {
+            writeln!(writer.stdin.as_mut().unwrap(), "{action}").unwrap();
+            line.clear();
+            output.read_line(&mut line).unwrap();
+            assert_eq!(line.trim(), action);
+            assert_eq!(read_native(), expected);
+            verify_production(&expected);
+        }
+        // Review regression: small display projections must not disappear when
+        // the raw image edges or aggregate tool transcript exceed 32 MiB.
+        writeln!(writer.stdin.as_mut().unwrap(), "large").unwrap();
+        line.clear();
+        output.read_line(&mut line).unwrap();
+        assert_eq!(line.trim(), "large");
+        let sessions = scan_sessions_sqlite_at(&unc);
+        for i in 0..9 {
+            let session = sessions
+                .iter()
+                .find(|s| s.session_id == format!("image{i}"))
+                .unwrap();
+            assert_eq!(session.title.as_deref(), Some("visible text"));
+            assert_eq!(session.summary.as_deref(), Some("visible text"));
+        }
+        let tools = load_messages_sqlite(&format!("sqlite:{}#tools", unc.display())).unwrap();
+        assert_eq!(tools.len(), 40);
+        assert!(tools.iter().all(|m| m.content.chars().count() < 1300));
+        let tool_ref = messages_cell(12, "content", String::new());
+        let validated = crate::session_manager::content::ValidatedSource {
+            provider_id: "hermes".into(),
+            raw: format!("sqlite:{}#tools", unc.display()),
+            location: crate::session_manager::content::SourceLocation::Sqlite {
+                db: unc.canonicalize().unwrap(),
+                session_id: "tools".into(),
+            },
+        };
+        let expanded =
+            crate::session_manager::content::resolve_content_ref(&validated, &tool_ref).unwrap();
+        assert!(expanded.len() > 1024 * 1024);
+        assert!(expanded.starts_with("0\n"));
+        writeln!(writer.stdin.as_mut().unwrap(), "exit").unwrap();
+        assert!(writer.wait().unwrap().success());
     }
 
     #[test]

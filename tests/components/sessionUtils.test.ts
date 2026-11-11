@@ -53,6 +53,60 @@ describe("session utils", () => {
     expect(groups[2].projectDir).toBeNull();
   });
 
+  it("merges Windows project dirs that differ only in case or separators", () => {
+    const sessions: SessionMeta[] = [
+      {
+        providerId: "claude",
+        sessionId: "upper",
+        projectDir: "D:\\projects\\demo",
+        lastActiveAt: 30,
+      },
+      {
+        providerId: "claude",
+        sessionId: "lower",
+        projectDir: "d:\\Projects\\demo\\",
+        lastActiveAt: 20,
+      },
+      {
+        providerId: "codex",
+        sessionId: "slash",
+        projectDir: "d:/projects/demo",
+        lastActiveAt: 10,
+      },
+      {
+        providerId: "claude",
+        sessionId: "posix-a",
+        projectDir: "/work/App",
+        lastActiveAt: 5,
+      },
+      {
+        providerId: "claude",
+        sessionId: "posix-b",
+        projectDir: "/work/app/",
+        lastActiveAt: 4,
+      },
+      {
+        providerId: "claude",
+        sessionId: "posix-c",
+        projectDir: "/work/app",
+        lastActiveAt: 3,
+      },
+    ];
+
+    const groups = groupSessionsByProject(sessions, "未知目录");
+
+    expect(
+      groups.map((group) => [
+        group.projectDir,
+        group.sessions.map((session) => session.sessionId),
+      ]),
+    ).toEqual([
+      ["D:\\projects\\demo", ["upper", "lower", "slash"]],
+      ["/work/App", ["posix-a"]],
+      ["/work/app/", ["posix-b", "posix-c"]],
+    ]);
+  });
+
   it("buckets sessions into today / yesterday / this week / earlier", () => {
     // 2026-10-01 is a Thursday; the week starts on Monday 2026-09-28
     const now = new Date(2026, 9, 1, 8, 15).getTime();

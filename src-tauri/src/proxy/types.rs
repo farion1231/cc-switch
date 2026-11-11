@@ -114,6 +114,8 @@ pub struct ProxyTakeoverStatus {
     pub codex: bool,
     pub gemini: bool,
     pub grokbuild: bool,
+    #[serde(rename = "claude-desktop", default)]
+    pub claude_desktop: bool,
     pub opencode: bool,
     pub openclaw: bool,
 }
@@ -266,6 +268,21 @@ impl Default for OptimizerConfig {
             cache_injection: true,
         }
     }
+}
+
+/// 隐私过滤器配置
+///
+/// 存储在 settings 表中，key = "privacy_filter_config"
+/// 开启后代理在转发前脱敏请求文本里的 PII 与密钥（见 `proxy::privacy_filter`）
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrivacyFilterConfig {
+    /// 总开关（默认关闭，用户需手动启用）。只管用户输入和系统提示
+    #[serde(default)]
+    pub enabled: bool,
+    /// 同时过滤工具结果（默认关闭）。模型拿不到原文，改文件可能失败或写回占位符
+    #[serde(default)]
+    pub filter_tool_results: bool,
 }
 
 /// Copilot 优化器配置

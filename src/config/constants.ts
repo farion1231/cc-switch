@@ -26,6 +26,7 @@ export const TEMPLATE_TYPES = {
   CUSTOM: "custom",
   GENERAL: "general",
   NEW_API: "newapi",
+  SUB2API: "sub2api",
   GITHUB_COPILOT: "github_copilot",
   TOKEN_PLAN: "token_plan",
   BALANCE: "balance",

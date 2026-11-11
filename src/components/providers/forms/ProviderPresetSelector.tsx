@@ -15,7 +15,10 @@ import type { OpenCodeProviderPreset } from "@/config/opencodeProviderPresets";
 import type { OpenClawProviderPreset } from "@/config/openclawProviderPresets";
 import type { HermesProviderPreset } from "@/config/hermesProviderPresets";
 import type { McodeProviderPreset } from "@/config/mcodeProviderPresets";
+import type { KimiProviderPreset } from "@/config/kimiProviderPresets";
+import type { CopilotProviderPreset } from "@/config/copilotProviderPresets";
 import type { PiProviderPreset } from "@/config/piProviderPresets";
+import type { OmpProviderPreset } from "@/config/ompProviderPresets";
 import type { ProviderCategory } from "@/types";
 import type { AppId } from "@/lib/api";
 import {
@@ -71,7 +74,10 @@ export type AnyPreset =
   | OpenClawProviderPreset
   | HermesProviderPreset
   | PiProviderPreset
-  | McodeProviderPreset;
+  | McodeProviderPreset
+  | KimiProviderPreset
+  | OmpProviderPreset
+  | CopilotProviderPreset;
 
 export type PresetEntry = {
   id: string;
@@ -132,6 +138,7 @@ interface ProviderPresetSelectorProps {
   onUniversalPresetSelect?: (preset: UniversalProviderPreset) => void;
   onManageUniversalProviders?: () => void;
   category?: ProviderCategory;
+  barAction?: React.ReactNode;
 }
 
 /**
@@ -144,6 +151,7 @@ export function ProviderPresetSelector({
   onPresetChange,
   onUniversalPresetSelect,
   onManageUniversalProviders,
+  barAction,
 }: Readonly<ProviderPresetSelectorProps>) {
   const step = usePresetStep();
   const registerSelector = step?.registerSelector;
@@ -199,6 +207,7 @@ export function ProviderPresetSelector({
 
   return (
     <PresetBar
+      action={barAction}
       appId={step.appId}
       entry={entry}
       versions={entry ? presetVersions(presetEntries, entry) : []}
@@ -262,6 +271,7 @@ function PresetBar({
   versions,
   onChange,
   onVersionChange,
+  action,
 }: {
   appId: AppId;
   entry?: PresetEntry;
@@ -269,6 +279,7 @@ function PresetBar({
   versions: PresetEntry[];
   onChange: () => void;
   onVersionChange: (id: string) => void;
+  action?: React.ReactNode;
 }) {
   const { t } = useTranslation();
   const family = versions.length > 1 ? entry?.preset.family : undefined;
@@ -304,9 +315,16 @@ function PresetBar({
             </div>
           )}
         </div>
-        <Button type="button" variant="quiet" size="compact" onClick={onChange}>
-          {t("providerPreset.change")}
-        </Button>
+        {action ?? (
+          <Button
+            type="button"
+            variant="quiet"
+            size="compact"
+            onClick={onChange}
+          >
+            {t("providerPreset.change")}
+          </Button>
+        )}
       </div>
       {entry && family && (
         <VersionSwitch

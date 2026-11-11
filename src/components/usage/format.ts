@@ -1,3 +1,4 @@
+import type { UsageDisplaySettings } from "@/types";
 export function parseFiniteNumber(value: unknown): number | null {
   if (typeof value === "number") {
     return Number.isFinite(value) ? value : null;
@@ -21,14 +22,233 @@ export function fmtInt(
   return new Intl.NumberFormat(locale).format(Math.trunc(num));
 }
 
-export function fmtUsd(
-  value: unknown,
+/** 用量金额的显示币种。库里一律存美元，只在显示时按 `rate`（1 美元折多少）换算。 */
+/** 可选显示币种，与界面语言独立。 */
+export const DISPLAY_CURRENCIES = [
+  "USD",
+  "CNY",
+  "EUR",
+  "JPY",
+  "TWD",
+  "TRY",
+  "KRW",
+] as const;
+
+export type DisplayCurrency = (typeof DISPLAY_CURRENCIES)[number];
+
+/**
+ * 用户没填汇率、也还没自动取到时用的起点，按 2026-07~09 的报价取整。
+ * KRW 按 2026-10-23 的参考报价取整（1 USD ≈ 1325 KRW）。
+ * https://wise.com/au/currency-converter/usd-to-krw-rate/history/23-10-2026
+ * 改这里只影响手填和自动都没值的用户。
+ */
+export const DEFAULT_EXCHANGE_RATES: Record<
+  Exclude<DisplayCurrency, "USD">,
+  number
+> = { CNY: 6.8, EUR: 0.87, JPY: 158, TWD: 32, TRY: 48, KRW: 1325 };
+
+/** 汇率来源：自动获取（每日更新）或手动填写 */
+export const RATE_SOURCES = ["auto", "manual"] as const;
+
+export type RateSource = (typeof RATE_SOURCES)[number];
+
+/** 自动获取的汇率多久算旧：两个源都每天更新一次，半天刷一次足够跟上 */
+export const AUTO_RATE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+
+/**
+ * 汇率来源：显式设置优先，没设置过一律按手动。
+ * 用量页本来不联网，升级后不能一进页面就向第三方发请求；用户主动选「自动获取」才联网。
+ */
+export function resolveRateSource(
+  settings: UsageDisplaySettings | undefined,
+): RateSource {
+  return (
+    RATE_SOURCES.find((source) => source === settings?.rateSource) ?? "manual"
+  );
+}
+
+/**
+ * 自动汇率的实际数据源：open.er-api.com 按它的免费条款必须署名 ExchangeRate-API；
+ * 主源失败退到 floatrates.com 时署它自己的名字。没有记录（旧缓存）按主源处理。
+ */
+export function resolveRateProvider(source: string | undefined): {
+  name: string;
+  url: string;
+} {
+  return source === "floatrates.com"
+    ? { name: "FloatRates", url: "https://www.floatrates.com/" }
+    : { name: "ExchangeRate-API", url: "https://www.exchangerate-api.com/" };
+}
+
+/** 该不该去取新汇率：自动模式且没取过、或缓存已超过半天 */
+export function shouldRefreshRates(
+  settings: UsageDisplaySettings | undefined,
+  nowMs: number = Date.now(),
+): boolean {
+  if (resolveRateSource(settings) !== "auto") return false;
+  const fetchedAt = settings?.rateFetchedAt;
+  return (
+    typeof fetchedAt !== "number" ||
+    !Number.isFinite(fetchedAt) ||
+    nowMs - fetchedAt >= AUTO_RATE_MAX_AGE_MS
+  );
+}
+
+/** 侧栏「今日」可选的项，顺序即菜单和侧栏上的顺序 */
+export const SIDEBAR_TODAY_ITEMS = [
+  "cost",
+  "tokens",
+  "requests",
+  "hitRate",
+] as const;
+
+export type SidebarTodayItem = (typeof SIDEBAR_TODAY_ITEMS)[number];
+
+/** 侧栏那一格窄，两项已经是上下两行 */
+export const SIDEBAR_TODAY_MAX_ITEMS = 2;
+
+export const TREND_CHART_TYPES = ["bar", "area"] as const;
+
+export type TrendChartType = (typeof TREND_CHART_TYPES)[number];
+
+/** 趋势图样式：没设置或认不出的值按柱形图 */
+export function resolveTrendChartType(
+  settings: UsageDisplaySettings | undefined,
+): TrendChartType {
+  const saved = settings?.trendChartType;
+  return TREND_CHART_TYPES.find((type) => type === saved) ?? "bar";
+}
+
+/**
+ * 侧栏「今日」要显示的项：没设置过只显示金额；空列表＝不显示。
+ * 认不出的项忽略，按菜单顺序排，最多两项（手改设置文件多写了也只取前两项）。
+ */
+export function resolveSidebarToday(
+  settings: UsageDisplaySettings | undefined,
+): SidebarTodayItem[] {
+  const saved = settings?.sidebarTodayItems;
+  if (!Array.isArray(saved)) return ["cost"];
+  return SIDEBAR_TODAY_ITEMS.filter((item) => saved.includes(item)).slice(
+    0,
+    SIDEBAR_TODAY_MAX_ITEMS,
+  );
+}
+
+/** 命中率百分比：`98.6%`；四舍五入到 100.0 的写成 `100%` */
+export function formatHitRatePercent(rate: number): string {
+  const percent = Math.max(0, Math.min(100, rate * 100));
+  return `${percent.toFixed(percent >= 99.95 ? 0 : 1)}%`;
+}
+
+export interface MoneyDisplay {
+  currency: DisplayCurrency;
+  rate: number;
+}
+
+export const USD_DISPLAY: MoneyDisplay = { currency: "USD", rate: 1 };
+
+// 人民币和日元都写 ¥，两国各自就是这么写的；选的是哪种在设置里看得到
+const CURRENCY_SYMBOL: Record<DisplayCurrency, string> = {
+  USD: "$",
+  CNY: "¥",
+  EUR: "€",
+  JPY: "¥",
+  TWD: "NT$",
+  TRY: "₺",
+  KRW: "₩",
+};
+
+/** 日元和韩元面额大，同一处少显示两位小数：$0.0012 → ¥0.19 */
+const FEWER_DIGITS: Partial<Record<DisplayCurrency, number>> = {
+  JPY: 2,
+  KRW: 2,
+};
+
+/**
+ * 换算出来的金额是按手填汇率估的，再多位数也不更准：最多两位小数（日元、韩元再少两位）。
+ * 美元按调用方给的位数。
+ */
+function shownDigits(display: MoneyDisplay, digits: number): number {
+  if (display.currency === "USD") return digits;
+  return Math.max(
+    0,
+    Math.min(digits - (FEWER_DIGITS[display.currency] ?? 0), 2),
+  );
+}
+
+/** 整数部分加千位分隔：换成日元、里拉后动辄七位数 */
+function groupThousands(fixed: string): string {
+  const [whole, frac] = fixed.split(".");
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return frac == null ? grouped : `${grouped}.${frac}`;
+}
+
+export function isValidExchangeRate(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+/**
+ * 把设置文件里的值收成能用的显示方式：不认得的币种回落 USD，汇率不合法用下一个来源。
+ * 自动模式优先用自动取到的汇率，没取到才用手填值；手动模式只看手填值。
+ */
+export function resolveMoneyDisplay(
+  settings: UsageDisplaySettings | undefined,
+): MoneyDisplay {
+  const currency =
+    DISPLAY_CURRENCIES.find((c) => c === settings?.currency) ?? "USD";
+  if (currency === "USD") return USD_DISPLAY;
+  const manual = settings?.exchangeRates?.[currency];
+  const auto = settings?.autoExchangeRates?.[currency];
+  const candidates =
+    resolveRateSource(settings) === "auto" ? [auto, manual] : [manual];
+  const rate =
+    candidates.find(isValidExchangeRate) ?? DEFAULT_EXCHANGE_RATES[currency];
+  return { currency, rate };
+}
+
+/** 固定小数位：`$1.23` / `¥8.36`。组件里用 `useMoneyFormat()`，别直接传 display。 */
+export function formatMoney(
+  usd: unknown,
   digits: number,
+  display: MoneyDisplay,
   fallback: string = "--",
 ): string {
-  const num = parseFiniteNumber(value);
+  const num = parseFiniteNumber(usd);
   if (num == null) return fallback;
-  return `$${num.toFixed(digits)}`;
+  const value = num * display.rate;
+  const symbol = CURRENCY_SYMBOL[display.currency];
+  const shown = shownDigits(display, digits);
+  const fixed = value.toFixed(shown);
+  // 换算后位数少了，很小的一笔会四舍五入成 0：改写两位有效数字（¥0.0034），别像是免费
+  if (shown < digits && value !== 0 && Number(fixed) === 0) {
+    return `${symbol}${Number(value.toPrecision(2))}`;
+  }
+  return `${symbol}${groupThousands(fixed)}`;
+}
+
+/** 按大小取位数并去掉末尾的 0：`$0.0081` / `$0.012` / `$1.25` */
+export function formatMoneyCompact(usd: number, display: MoneyDisplay): string {
+  const value = usd * display.rate;
+  const prefix = CURRENCY_SYMBOL[display.currency];
+  if (value < 0.01) return `${prefix}${Number(value.toFixed(4))}`;
+  if (value < 1) return `${prefix}${Number(value.toFixed(3))}`;
+  return `${prefix}${groupThousands(value.toFixed(2))}`;
+}
+
+/** 侧栏这类窄处：100 以上不带小数（`¥280`），免得把旁边的标签挤成省略号。 */
+export function formatMoneyShort(usd: unknown, display: MoneyDisplay): string {
+  const num = parseFiniteNumber(usd);
+  if (num == null) return "--";
+  return formatMoney(num, Math.abs(num * display.rate) >= 100 ? 0 : 2, display);
+}
+
+/**
+ * 坐标轴刻度：画图前就把数据换算成显示币种（刻度才会是 ¥50 这种整数），
+ * 所以这里拿到的已是显示币种的值，只加符号，不定小数位。
+ */
+export function formatMoneyTick(value: unknown, display: MoneyDisplay): string {
+  const num = parseFiniteNumber(value) ?? 0;
+  return `${CURRENCY_SYMBOL[display.currency]}${groupThousands(String(num))}`;
 }
 
 /** 输出少于这个数的请求（工具调用这类）不算速度：0.1 秒回 15 个 token 会算出离谱的数。 */
@@ -43,12 +263,13 @@ interface OutputTokensPerSecondInput {
 
 /**
  * 一条请求的生成时间（毫秒）= 耗时 − 首字。缺耗时或首字、或差值不大于 0 时返回 null。
- * 会话日志没有首字计时，非流式请求也没有，这两类都不算精确速度
- * （会话日志另有估算，见 [getEstimatedTokensPerSecond]）。
+ * 只算路由服务记的请求：会话日志的耗时和首字都是按时间戳估的，不算精确速度
+ * （会话日志另有估算，见 [getEstimatedTokensPerSecond]）；非流式请求没有首字。
  */
 export function getGenerationMs(
   log: OutputTokensPerSecondInput,
 ): number | null {
+  if (isSessionLogRequest(log)) return null;
   const latencyMs = parseFiniteNumber(log.latencyMs);
   const firstTokenMs = parseFiniteNumber(log.firstTokenMs);
   if (latencyMs == null || firstTokenMs == null) return null;
@@ -103,7 +324,7 @@ export function isSessionLogRequest(log: { dataSource?: unknown }): boolean {
 
 /**
  * 这条请求能不能估速度（和后端 `speed_estimate_eligible_sql` 同口径）：会话日志导入、
- * 没有首字计时、输出不少于 200 token、估算耗时不短于 1 秒。
+ * 输出不少于 200 token、估算耗时不短于 1 秒。推出了首字的也照样按整段耗时算。
  */
 export function isSpeedEstimateEligible(
   log: OutputTokensPerSecondInput,
@@ -112,7 +333,6 @@ export function isSpeedEstimateEligible(
   const latencyMs = parseFiniteNumber(log.latencyMs);
   return (
     isSessionLogRequest(log) &&
-    parseFiniteNumber(log.firstTokenMs) == null &&
     outputTokens != null &&
     outputTokens >= SPEED_ESTIMATE_MIN_OUTPUT_TOKENS &&
     latencyMs != null &&
@@ -167,6 +387,13 @@ export function formatTokensPerSecond(tps: number | null): string | null {
   return tps >= 1 ? Math.round(tps).toString() : tps.toFixed(1);
 }
 
+/** 首字时间的显示：毫秒换成秒、一位小数；没有值返回 null（界面显示「—」）。 */
+export function formatFirstTokenSeconds(ms: unknown): string | null {
+  const value = parseFiniteNumber(ms);
+  if (value == null || value < 0) return null;
+  return `${(value / 1000).toFixed(1)}s`;
+}
+
 export function formatOutputTokensPerSecond(
   log: OutputTokensPerSecondInput,
 ): string | null {
@@ -217,9 +444,13 @@ function normalizeLanguageTag(language: string): string {
 function isTraditionalChineseLanguage(normalizedLanguage: string): boolean {
   return (
     normalizedLanguage === "zh-tw" ||
-    normalizedLanguage.startsWith("zh-hant") ||
-    normalizedLanguage.startsWith("zh-hk") ||
-    normalizedLanguage.startsWith("zh-mo")
+    normalizedLanguage.startsWith("zh-tw-") ||
+    normalizedLanguage === "zh-hant" ||
+    normalizedLanguage.startsWith("zh-hant-") ||
+    normalizedLanguage === "zh-hk" ||
+    normalizedLanguage.startsWith("zh-hk-") ||
+    normalizedLanguage === "zh-mo" ||
+    normalizedLanguage.startsWith("zh-mo-")
   );
 }
 
@@ -230,8 +461,11 @@ export function getLocaleFromLanguage(language: string): string {
   if (isTraditionalChineseLanguage(normalized)) {
     return "zh-TW";
   }
-  if (normalized.startsWith("zh")) return "zh-CN";
-  if (normalized.startsWith("ja")) return "ja-JP";
+  if (normalized === "zh" || normalized.startsWith("zh-")) return "zh-CN";
+  if (normalized === "ja" || normalized.startsWith("ja-")) return "ja-JP";
+  if (normalized === "ko" || normalized.startsWith("ko-")) return "ko-KR";
+  if (normalized === "tr" || normalized.startsWith("tr-")) return "tr-TR";
+  if (normalized === "ru" || normalized.startsWith("ru-")) return "ru-RU";
   return "en-US";
 }
 
@@ -244,25 +478,30 @@ export function getResolvedLang(i18n: I18nLike): string {
   return i18n.resolvedLanguage || i18n.language || "en";
 }
 
-function isCjkLanguage(lang: string): boolean {
+function usesChineseJapanesePunctuation(lang: string): boolean {
   const normalized = normalizeLanguageTag(lang);
-  return normalized.startsWith("zh") || normalized.startsWith("ja");
+  return (
+    normalized === "zh" ||
+    normalized.startsWith("zh-") ||
+    normalized === "ja" ||
+    normalized.startsWith("ja-")
+  );
 }
 
 /** 并列的名字：中日文用「、」，其他语言用逗号。 */
 export function joinNames(items: readonly string[], lang: string): string {
-  return items.join(isCjkLanguage(lang) ? "、" : ", ");
+  return items.join(usesChineseJapanesePunctuation(lang) ? "、" : ", ");
 }
 
 /** 并列的分句：中日文用「；」，其他语言用分号。 */
 export function joinClauses(items: readonly string[], lang: string): string {
-  return items.join(isCjkLanguage(lang) ? "；" : "; ");
+  return items.join(usesChineseJapanesePunctuation(lang) ? "；" : "; ");
 }
 
 /**
  * Token 数量的紧凑显示。
  *
- * Why: 中日文用户期待 "亿/万" 量纲；英文用户期待 K/M/B。共用同一份格式化
+ * Why: 中日文用户期待 "亿/万" 量纲，韩文使用 "억/만"；英文用户期待 K/M/B。共用同一份格式化
  * 逻辑避免 Hero 卡和分应用卡显示不一致。`compactDecimals=2` 用于 Hero
  * 大数副标（更精确），默认 1 位用于卡片副字段。
  */
@@ -279,10 +518,20 @@ export function formatTokensShort(
     if (value >= 1e4) return `${(value / 1e4).toFixed(decimals)} 萬`;
     return value.toLocaleString("zh-TW");
   }
-  if (normalizedLang.startsWith("zh") || normalizedLang.startsWith("ja")) {
+  if (
+    normalizedLang === "zh" ||
+    normalizedLang.startsWith("zh-") ||
+    normalizedLang === "ja" ||
+    normalizedLang.startsWith("ja-")
+  ) {
     if (value >= 1e8) return `${(value / 1e8).toFixed(2)} 亿`;
     if (value >= 1e4) return `${(value / 1e4).toFixed(decimals)} 万`;
     return value.toLocaleString();
+  }
+  if (normalizedLang === "ko" || normalizedLang.startsWith("ko-")) {
+    if (value >= 1e8) return `${(value / 1e8).toFixed(2)}억`;
+    if (value >= 1e4) return `${(value / 1e4).toFixed(decimals)}만`;
+    return value.toLocaleString("ko-KR");
   }
   if (value >= 1e9) return `${(value / 1e9).toFixed(2)}B`;
   if (value >= 1e6) return `${(value / 1e6).toFixed(2)}M`;

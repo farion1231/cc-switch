@@ -1,6 +1,8 @@
 import { render, screen, waitFor, within, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import i18n from "i18next";
+import en from "@/i18n/locales/en.json";
 
 import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
 import { settingsApi, skillsApi } from "@/lib/api";
@@ -110,6 +112,7 @@ vi.mock("@/hooks/useSkills", () => ({
     isPending: false,
   }),
   useDiscoverableSkills: () => ({ data: [], refetch: vi.fn() }),
+  useRefreshDiscoverableSkills: () => vi.fn(),
   useDiscoverableSkillsFailures: () => ({ data: [] }),
   useSkillRepos: () => ({ data: [], refetch: vi.fn() }),
   useAddSkillRepo: () => ({ mutateAsync: vi.fn() }),
@@ -284,6 +287,49 @@ describe("UnifiedSkillsPanel", () => {
     );
   });
 
+  it.each([true, false])(
+    "shows an error toast when every bulk toggle fails (enabled=%s)",
+    async (enabled) => {
+      m.visibleApps = ["hermes"];
+      m.installed = [
+        makeSkill({ id: "a", name: "A", apps: { hermes: !enabled } }),
+        makeSkill({ id: "b", name: "B", apps: { hermes: !enabled } }),
+      ];
+      m.bulkToggle.mockResolvedValueOnce({
+        succeeded: [],
+        failed: ["a", "b"].map((item) => ({
+          item,
+          error: new Error("Invalid skill directory"),
+        })),
+      });
+      renderPanel();
+      await userEvent.click(columns()[0]);
+      await userEvent.click(
+        screen.getByRole("button", {
+          name: enabled
+            ? "appMatrix.pop.enableRest"
+            : "appMatrix.pop.disableAll",
+        }),
+      );
+      await waitFor(() =>
+        expect(m.toastError).toHaveBeenCalledWith(
+          expect.stringContaining("appMatrix.toast.partialFail"),
+          { closeButton: true },
+        ),
+      );
+      expect(m.bulkToggle).toHaveBeenCalledWith({
+        ids: ["a", "b"],
+        app: "hermes",
+        enabled,
+      });
+      expect(
+        screen.getAllByRole("button", { name: "appMatrix.cell.fail" }),
+      ).toHaveLength(2);
+      expect(m.toastSuccess).not.toHaveBeenCalled();
+      expect(m.toastWarning).not.toHaveBeenCalled();
+    },
+  );
+
   it("marks partial bulk failures in the matrix", async () => {
     m.installed = [
       makeSkill({ id: "a", name: "A" }),
@@ -304,10 +350,130 @@ describe("UnifiedSkillsPanel", () => {
       ).toBeInTheDocument(),
     );
     expect(screen.getByText(/skillsPage.rowFail/)).toBeInTheDocument();
+    // 失败原因换掉那一行的描述，不接在描述后面被截掉；没失败的行照常显示描述
+    expect(screen.getAllByText("Alpha description")).toHaveLength(1);
+    expect(m.toastWarning).toHaveBeenCalledWith(
+      expect.stringContaining("appMatrix.toast.partialFail"),
+      expect.objectContaining({
+        closeButton: true,
+        duration: 8000,
+        action: expect.anything(),
+      }),
+    );
+    expect(m.toastSuccess).not.toHaveBeenCalled();
+    expect(m.toastError).not.toHaveBeenCalled();
+    const [, options] = m.toastWarning.mock.calls[0];
+    act(() => options.action.onClick());
+    await waitFor(() =>
+      expect(m.bulkToggle).toHaveBeenLastCalledWith({
+        ids: ["a"],
+        app: "claude",
+        enabled: false,
+      }),
+    );
     await userEvent.click(
       screen.getByRole("button", { name: "skillsPage.fixSync" }),
     );
     expect(screen.getByTestId("storage-sheet")).toBeInTheDocument();
+  });
+
+  describe.each([true, false])("bulk undo feedback (enabled=%s)", (enabled) => {
+    beforeEach(() => {
+      m.visibleApps = ["hermes"];
+      m.installed = ["a", "b"].map((id) =>
+        makeSkill({ id, name: id, apps: { hermes: !enabled } }),
+      );
+      // Check the actual outcome text and count without changing panel labels.
+      i18n.addResourceBundle("zh", "translation", {
+        common: { bulkToggleFailed: en.common.bulkToggleFailed },
+        appMatrix: { toast: { undone: en.appMatrix.toast.undone } },
+      });
+    });
+
+    afterEach(() => {
+      i18n.removeResourceBundle("zh", "translation");
+    });
+
+    it.each(["success", "partial", "total", "rejected"] as const)(
+      "reports %s undo results and preserves failed-cell retries",
+      async (outcome) => {
+        renderPanel();
+        await userEvent.click(columns()[0]);
+        await userEvent.click(
+          screen.getByRole("button", {
+            name: enabled
+              ? "appMatrix.pop.enableRest"
+              : "appMatrix.pop.disableAll",
+          }),
+        );
+        await waitFor(() => expect(m.toastSuccess).toHaveBeenCalledTimes(1));
+        const [, options] = m.toastSuccess.mock.calls[0];
+        m.toastSuccess.mockClear();
+
+        const failedIds =
+          outcome === "success"
+            ? []
+            : outcome === "partial"
+              ? ["b"]
+              : ["a", "b"];
+        if (outcome === "rejected") {
+          m.bulkToggle.mockRejectedValueOnce(new Error("undo failed"));
+        } else {
+          m.bulkToggle.mockResolvedValueOnce({
+            succeeded: ["a", "b"].filter((id) => !failedIds.includes(id)),
+            failed: failedIds.map((item) => ({
+              item,
+              error: new Error("undo failed"),
+            })),
+          });
+        }
+        act(() => options.action.onClick());
+
+        const expectedToast =
+          outcome === "success"
+            ? m.toastSuccess
+            : outcome === "partial"
+              ? m.toastWarning
+              : m.toastError;
+        await waitFor(() =>
+          expect(expectedToast).toHaveBeenCalledWith(
+            outcome === "success"
+              ? "Undone"
+              : `Failed to update ${failedIds.length} item(s)`,
+            { closeButton: true },
+          ),
+        );
+        for (const other of [m.toastSuccess, m.toastWarning, m.toastError]) {
+          if (other !== expectedToast) expect(other).not.toHaveBeenCalled();
+        }
+        expect(m.bulkToggle).toHaveBeenLastCalledWith({
+          ids: ["a", "b"],
+          app: "hermes",
+          enabled: !enabled,
+        });
+        const failedCells = screen.queryAllByRole("button", {
+          name: "appMatrix.cell.fail",
+        });
+        expect(failedCells).toHaveLength(failedIds.length);
+
+        if (failedIds.length > 0) {
+          // Undo releases the write lock and retry keeps the inverse target.
+          await userEvent.click(failedCells[0]);
+          await waitFor(() =>
+            expect(m.toggle).toHaveBeenCalledWith({
+              id: failedIds[0],
+              app: "hermes",
+              enabled: !enabled,
+            }),
+          );
+          await waitFor(() =>
+            expect(
+              screen.queryAllByRole("button", { name: "appMatrix.cell.fail" }),
+            ).toHaveLength(failedIds.length - 1),
+          );
+        }
+      },
+    );
   });
 
   it("enables the selected Skills in one app from the selection bar", async () => {
@@ -334,6 +500,30 @@ describe("UnifiedSkillsPanel", () => {
         ids: ["a", "c"],
         app: "codex",
         enabled: true,
+      }),
+    );
+  });
+
+  it("turns off only the selected Skills in one app from the selection bar", async () => {
+    m.installed = [
+      makeSkill({ id: "a", name: "A", apps: { codex: true } }),
+      makeSkill({ id: "b", name: "B", apps: { codex: true } }),
+    ];
+    renderPanel();
+    await userEvent.click(
+      screen.getAllByRole("checkbox", { name: "skillsPage.selectAria" })[1],
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /skillsPage.bulk.disable/ }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: /Codex/ }),
+    );
+    await waitFor(() =>
+      expect(m.bulkToggle).toHaveBeenCalledWith({
+        ids: ["b"],
+        app: "codex",
+        enabled: false,
       }),
     );
   });
@@ -387,7 +577,7 @@ describe("UnifiedSkillsPanel", () => {
     );
   });
 
-  it("filters to Skills with updates from the header count and updates them after confirming", async () => {
+  it("filters to Skills with updates from the status filter and updates them after confirming", async () => {
     m.installed = [
       makeSkill({ id: "a", name: "A" }),
       makeSkill({ id: "b", name: "B" }),
@@ -397,7 +587,7 @@ describe("UnifiedSkillsPanel", () => {
       { id: "gone", name: "Gone", remoteHash: "y" },
     ];
     renderPanel();
-    // 更新横幅已去掉：页头的「N 个可更新」、行上的徽标、「检查更新」按钮说的是同一件事
+    // 可更新的数量只说一次（工具栏按钮）；行上的「可更新」就是这一行的更新按钮
     expect(screen.getAllByText("skills.updateAvailable")).toHaveLength(1);
     expect(screen.getAllByRole("listitem")).toHaveLength(2);
     // 已知有更新时「检查更新」直接变成「全部更新」，不用先筛选
@@ -408,20 +598,23 @@ describe("UnifiedSkillsPanel", () => {
       screen.queryByRole("button", { name: "skills.checkUpdates" }),
     ).not.toBeInTheDocument();
 
-    const chip = screen.getByRole("button", {
-      name: "skillsPage.headerUpdates",
-    });
-    expect(chip).toHaveAttribute("aria-pressed", "false");
-    await userEvent.click(chip);
-    expect(chip).toHaveAttribute("aria-pressed", "true");
+    await openMenu("skillsPage.filter.all", "skillsPage.filter.updates");
     expect(screen.getAllByRole("listitem")).toHaveLength(1);
+    // 筛选按钮在工具栏，选中行时也一直看得见
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: "skillsPage.selectAria" }),
+    );
+    expect(screen.getByText("skillsPage.bulk.selected")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "skillsPage.filter.updates" }),
+    ).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "common.cancel" }),
+    );
 
-    // 再点一次恢复全部
-    await userEvent.click(chip);
-    expect(chip).toHaveAttribute("aria-pressed", "false");
+    await openMenu("skillsPage.filter.updates", "skillsPage.filter.all");
     expect(screen.getAllByRole("listitem")).toHaveLength(2);
 
-    await userEvent.click(chip);
     await userEvent.click(
       screen.getByRole("button", { name: "skillsPage.updateAllCount" }),
     );
@@ -449,6 +642,34 @@ describe("UnifiedSkillsPanel", () => {
     );
     await waitFor(() => expect(m.updateSkill).toHaveBeenCalledTimes(1));
     expect(m.updateSkill).toHaveBeenCalledWith("b");
+  });
+
+  it("updates one Skill from its row badge and opens its folder from the row menu", async () => {
+    m.installed = [
+      makeSkill({ id: "a", name: "A" }),
+      makeSkill({ id: "b", name: "B", directory: "b-dir" }),
+    ];
+    m.updates = [{ id: "b", name: "B", remoteHash: "x" }];
+    renderPanel();
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.rowUpdateAria" }),
+    );
+    await waitFor(() => expect(m.updateSkill).toHaveBeenCalledWith("b"));
+    expect(m.updateSkill).toHaveBeenCalledTimes(1);
+
+    // 更新已经在徽标上，行尾「⋯」里不再重复
+    const openDir = vi.spyOn(skillsApi, "openSkillDir").mockResolvedValue();
+    await userEvent.click(
+      screen.getAllByRole("button", { name: "skillsPage.rowMoreAria" })[1],
+    );
+    expect(
+      screen.queryByRole("menuitem", { name: "skills.update" }),
+    ).not.toBeInTheDocument();
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "skillsPage.openDir" }),
+    );
+    expect(openDir).toHaveBeenCalledWith("b-dir");
+    openDir.mockRestore();
   });
 
   it("switches Installed / Discover with page tabs", async () => {
@@ -484,7 +705,8 @@ describe("UnifiedSkillsPanel", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("highlights a column header and shows the app name while hovering its cells", async () => {
+  it("highlights a column for its cells but shows the app name only when hovering the header", async () => {
+    const user = userEvent.setup();
     m.installed = [makeSkill({ apps: { claude: true } })];
     renderPanel();
     const cells = screen.getAllByRole("button", { name: /appMatrix.cell/ });
@@ -494,16 +716,28 @@ describe("UnifiedSkillsPanel", () => {
     expect(cells[0].className).toBe(cells[1].className);
 
     expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
-    await userEvent.hover(cells[1]);
+    await user.hover(cells[1]);
     expect(columns()[1]).toHaveAttribute("data-highlighted");
     expect(columns()[0]).not.toHaveAttribute("data-highlighted");
-    expect(screen.getByTestId("matrix-column-name")).toHaveTextContent("Codex");
-    await userEvent.unhover(cells[1]);
+    expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "appMatrix.cell.off",
+    );
+    await user.click(cells[1]);
+    expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
+    await user.unhover(cells[1]);
     expect(columns()[1]).not.toHaveAttribute("data-highlighted");
     expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
 
-    await userEvent.hover(columns()[2]);
-    expect(screen.getByTestId("matrix-column-name")).toHaveTextContent("Pi");
+    await user.hover(columns()[1]);
+    expect(screen.getByTestId("matrix-column-name")).toHaveTextContent("Codex");
+    await user.unhover(columns()[1]);
+    expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
+
+    await user.hover(columns()[1]);
+    await user.hover(cells[1]);
+    expect(columns()[1]).toHaveAttribute("data-highlighted");
+    expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
   });
 
   it("ignores a second check-update click while one is running", async () => {
@@ -734,6 +968,10 @@ describe("UnifiedSkillsPanel", () => {
           hermes: false,
           pi: false,
           mcode: false,
+          kimi: false,
+          dsh: false,
+          agy: false,
+          copilot: false,
         },
       },
     ]);

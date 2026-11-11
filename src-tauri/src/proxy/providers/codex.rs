@@ -221,9 +221,24 @@ pub fn should_convert_codex_responses_to_anthropic(provider: &Provider, endpoint
 /// fires on native Responses passthrough.
 ///
 /// Covers managed xAI OAuth *and* API-key providers whose live upstream is
-/// `api.x.ai` with `wire_api = "responses"`. See farion1231/cc-switch#6815.
-pub fn provider_needs_responses_namespace_flatten(provider: &Provider) -> bool {
-    provider.is_xai_oauth() || provider_is_xai_native_responses(provider)
+/// `api.x.ai` with `wire_api = "responses"`, plus Grok models served by managed
+/// Copilot. Call only on native Responses paths, with the resolved outbound
+/// model: a Copilot card can serve both Grok and non-Grok models.
+/// See farion1231/cc-switch#6815.
+pub fn provider_needs_responses_namespace_flatten(
+    provider: &Provider,
+    outbound_model: Option<&str>,
+) -> bool {
+    provider.is_xai_oauth()
+        || provider_is_xai_native_responses(provider)
+        || (provider.is_github_copilot()
+            && outbound_model.is_some_and(|model| {
+                model
+                    .trim()
+                    .as_bytes()
+                    .get(..5)
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"grok-"))
+            }))
 }
 
 /// True when this Codex provider talks native Responses to first-party xAI
@@ -590,6 +605,39 @@ pub fn strip_codex_hosted_web_search(body: &mut JsonValue) -> bool {
     changed
 }
 
+/// Codex 客户端私有、第三方原生 Responses 网关普遍不认识的 `include` 标记。Codex 0.163+
+/// 起随请求下发（#8996 / #9042），ChatGPT 后端之外的网关会拿它整条 400。只删这一项，
+/// 其余标记原样保留。
+const CODEX_PRIVATE_INCLUDE_MARKERS: &[&str] = &["output.encrypted_content"];
+
+/// 去掉 `include` 里的 Codex 私有标记：去完为空时整个键删掉；缺键、非数组、非对象
+/// 请求一律不动；数组里的非字符串项原样留着。返回是否改了请求。和 xAI 侧的白名单各管
+/// 一段，重复删无副作用。
+pub fn strip_codex_private_include_markers(body: &mut JsonValue) -> bool {
+    let Some(obj) = body.as_object_mut() else {
+        return false;
+    };
+    let mut include_gone = false;
+    let changed = match obj.get_mut("include").and_then(JsonValue::as_array_mut) {
+        Some(include) => {
+            let before = include.len();
+            include.retain(|marker| {
+                !marker
+                    .as_str()
+                    .is_some_and(|marker| CODEX_PRIVATE_INCLUDE_MARKERS.contains(&marker))
+            });
+            let changed = include.len() != before;
+            include_gone = changed && include.is_empty();
+            changed
+        }
+        None => false,
+    };
+    if include_gone {
+        obj.remove("include");
+    }
+    changed
+}
+
 pub fn resolve_codex_chat_reasoning_config(
     provider: &Provider,
     body: &JsonValue,
@@ -650,8 +698,15 @@ fn zen_catalog_effort_levels(provider: &Provider, body: &JsonValue) -> Option<Ve
 fn normalize_codex_chat_reasoning_config(
     mut config: CodexChatReasoningConfig,
 ) -> CodexChatReasoningConfig {
-    if config.supports_effort.unwrap_or(false) && config.supports_thinking.is_none() {
-        config.supports_thinking = Some(true);
+    if config.supports_effort.unwrap_or(false) {
+        if config.supports_thinking.is_none() {
+            config.supports_thinking = Some(true);
+        }
+        if config.effort_param.as_deref().is_none_or(|value| {
+            value.trim().is_empty() || value.trim().eq_ignore_ascii_case("none")
+        }) {
+            config.effort_param = Some("reasoning_effort".to_string());
+        }
     }
     config
 }
@@ -665,8 +720,7 @@ fn infer_codex_chat_reasoning_config(
         .and_then(|value| value.as_str())
         .map(ToString::to_string)
         .or_else(|| codex_provider_upstream_model(provider))
-        .unwrap_or_default()
-        .to_ascii_lowercase();
+        .unwrap_or_default();
     let base_url = provider
         .settings_config
         .get("base_url")
@@ -680,9 +734,20 @@ fn infer_codex_chat_reasoning_config(
                 .and_then(|v| v.as_str())
                 .and_then(extract_codex_base_url_from_toml)
         })
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let name = provider.name.to_ascii_lowercase();
+        .unwrap_or_default();
+    infer_chat_reasoning_config(&provider.name, &base_url, &model)
+}
+
+/// 按供应商名、上游地址、上游模型名推断 Chat 兼容上游的 reasoning 接口。
+/// Codex Responses → Chat 与 Claude 路由（经 Chat / Responses 转发）共用这份判定。
+pub(crate) fn infer_chat_reasoning_config(
+    name: &str,
+    base_url: &str,
+    model: &str,
+) -> Option<CodexChatReasoningConfig> {
+    let name = name.to_ascii_lowercase();
+    let base_url = base_url.to_ascii_lowercase();
+    let model = model.to_ascii_lowercase();
 
     // 平台优先：聚合 / 托管平台的 reasoning 接口由平台的推理框架决定，而非模型官方实现，
     // 因此先按平台标识（仅 name + base_url，不含 model 名）判定并覆盖模型规则。
@@ -1064,6 +1129,12 @@ impl ProviderAdapter for CodexAdapter {
             // 尝试解析 TOML 字符串格式
             if let Some(config_str) = config.as_str() {
                 if let Some(url) = crate::grok_config::extract_base_url(config_str) {
+                    return Ok(url.trim_end_matches('/').to_string());
+                }
+                // The table `model_provider` selects, read the way Codex reads it. The text
+                // scans below remain for a top-level `openai_base_url` and for TOML that
+                // does not parse.
+                if let Some(url) = extract_codex_base_url_from_toml(config_str) {
                     return Ok(url.trim_end_matches('/').to_string());
                 }
                 if let Some(start) = config_str.find("base_url = \"") {
@@ -1559,6 +1630,49 @@ wire_api = "responses"
 
         let url = adapter.extract_base_url(&provider).unwrap();
         assert_eq!(url, "https://api.openai.com/v1");
+    }
+
+    #[test]
+    fn test_extract_base_url_from_selected_config_provider() {
+        let adapter = CodexAdapter::new();
+        let configs = [
+            // Another provider table comes first.
+            r#"model_provider = "relay"
+
+[model_providers.azure]
+name = "Azure"
+base_url = "https://azure.example.com/v1"
+env_key = "AZURE_OPENAI_API_KEY"
+
+[model_providers.relay]
+name = "Relay"
+base_url = "https://relay.example.com/v1"
+"#,
+            // The previous URL is commented out above the current one.
+            r#"model_provider = "relay"
+
+[model_providers.relay]
+name = "Relay"
+# base_url = "https://old-relay.example.com/v1"
+base_url = "https://relay.example.com/v1"
+"#,
+            // No spaces around `=`.
+            r#"model_provider = "relay"
+
+[model_providers.relay]
+name = "Relay"
+base_url="https://relay.example.com/v1/"
+"#,
+        ];
+
+        for config in configs {
+            let provider = create_provider(json!({ "config": config }));
+            assert_eq!(
+                adapter.extract_base_url(&provider).unwrap(),
+                "https://relay.example.com/v1",
+                "config:\n{config}"
+            );
+        }
     }
 
     #[test]
@@ -2157,6 +2271,49 @@ wire_api = "chat"
         assert_eq!(config.supports_thinking, Some(false));
         assert_eq!(config.supports_effort, Some(false));
         assert_eq!(config.thinking_param.as_deref(), Some("none"));
+        assert_eq!(config.effort_param.as_deref(), Some("none"));
+    }
+
+    #[test]
+    fn test_resolve_codex_chat_reasoning_repairs_enabled_none_effort_param() {
+        let mut provider = create_provider(json!({
+            "config": r#"
+model_provider = "copilot"
+model = "claude-opus-5.5"
+
+[model_providers.copilot]
+name = "GitHub Copilot"
+base_url = "https://api.githubcopilot.com"
+wire_api = "chat"
+"#
+        }));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            codex_chat_reasoning: Some(CodexChatReasoningConfig {
+                supports_thinking: Some(true),
+                supports_effort: Some(true),
+                thinking_param: Some("none".to_string()),
+                effort_param: Some("none".to_string()),
+                effort_value_mode: Some("passthrough".to_string()),
+                output_format: Some("auto".to_string()),
+                effort_levels: None,
+            }),
+            ..Default::default()
+        });
+        let request = json!({
+            "model": "claude-opus-5.5",
+            "input": "hello",
+            "reasoning": { "effort": "max" }
+        });
+
+        let config = resolve_codex_chat_reasoning_config(&provider, &request).unwrap();
+        assert_eq!(config.effort_param.as_deref(), Some("reasoning_effort"));
+
+        let transformed = crate::proxy::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+            request,
+            Some(&config),
+        )
+        .unwrap();
+        assert_eq!(transformed["reasoning_effort"], "max");
     }
 
     #[test]
@@ -2464,7 +2621,7 @@ wire_api = "responses"
             provider_type: Some("xai_oauth".to_string()),
             ..Default::default()
         });
-        assert!(provider_needs_responses_namespace_flatten(&xai));
+        assert!(provider_needs_responses_namespace_flatten(&xai, None));
 
         // API-key Grok cards (no xai_oauth meta) still talk to api.x.ai Responses.
         let grok_key = create_provider(json!({
@@ -2479,7 +2636,7 @@ base_url = "https://api.x.ai/v1"
 wire_api = "responses"
 "#
         }));
-        assert!(provider_needs_responses_namespace_flatten(&grok_key));
+        assert!(provider_needs_responses_namespace_flatten(&grok_key, None));
 
         // A non-xAI Responses provider must not be flattened.
         let other = create_provider(json!({
@@ -2490,6 +2647,103 @@ base_url = "https://api.deepseek.com"
 wire_api = "responses"
 "#
         }));
-        assert!(!provider_needs_responses_namespace_flatten(&other));
+        assert!(!provider_needs_responses_namespace_flatten(&other, None));
+        assert!(!provider_needs_responses_namespace_flatten(
+            &other,
+            Some("grok-4.7")
+        ));
+    }
+
+    #[test]
+    fn copilot_namespace_compat_uses_only_the_outbound_grok_model() {
+        let mut copilot = create_copilot_provider();
+        copilot.settings_config = json!({
+            "config": "model = \"grok-4.7\"",
+            "modelCatalog": {"models": [{"model": "grok-4.7"}, {"model": "gpt-6.1-sol"}]}
+        });
+        for (model, expected) in [
+            (Some("grok-4.7"), true),
+            (Some("grok-4.5"), true),
+            (Some(" GROK-4.7-fast "), true),
+            (Some("gpt-6.1-sol"), false),
+            (Some("claude-sonnet-4.6"), false),
+            (Some("grokker"), false),
+            (Some("模型"), false),
+            (Some(""), false),
+            (None, false),
+        ] {
+            assert_eq!(
+                provider_needs_responses_namespace_flatten(&copilot, model),
+                expected,
+                "{model:?}"
+            );
+        }
+
+        copilot.meta = None;
+        assert!(!provider_needs_responses_namespace_flatten(
+            &copilot,
+            Some("grok-4.7")
+        ));
+    }
+
+    #[test]
+    fn strip_private_include_markers_keeps_other_markers() {
+        let mut body = json!({
+            "include": ["reasoning.encrypted_content", "output.encrypted_content"]
+        });
+
+        assert!(strip_codex_private_include_markers(&mut body));
+        assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
+    }
+
+    #[test]
+    fn strip_private_include_markers_removes_empty_include() {
+        let mut body = json!({ "include": ["output.encrypted_content"] });
+
+        assert!(strip_codex_private_include_markers(&mut body));
+        assert!(body.get("include").is_none());
+    }
+
+    #[test]
+    fn strip_private_include_markers_leaves_unrelated_markers_alone() {
+        let mut body = json!({ "include": ["web_search_call.action.sources"] });
+
+        assert!(!strip_codex_private_include_markers(&mut body));
+        assert_eq!(body["include"], json!(["web_search_call.action.sources"]));
+    }
+
+    #[test]
+    fn strip_private_include_markers_ignores_shapes_it_does_not_own() {
+        // Missing key.
+        let mut body = json!({ "model": "m" });
+        assert!(!strip_codex_private_include_markers(&mut body));
+
+        // Not an array.
+        let mut body = json!({ "include": "output.encrypted_content" });
+        assert!(!strip_codex_private_include_markers(&mut body));
+        assert_eq!(body["include"], json!("output.encrypted_content"));
+
+        // Non-object body.
+        let mut body = json!(["output.encrypted_content"]);
+        assert!(!strip_codex_private_include_markers(&mut body));
+    }
+
+    #[test]
+    fn strip_private_include_markers_keeps_non_string_entries() {
+        // `include` should only ever hold strings; if something else shows up, the
+        // private marker still goes but the unknown entry is left where it was.
+        let mut body = json!({ "include": ["output.encrypted_content", 42] });
+
+        assert!(strip_codex_private_include_markers(&mut body));
+        assert_eq!(body["include"], json!([42]));
+    }
+
+    #[test]
+    fn strip_private_include_markers_is_idempotent() {
+        let mut body = json!({ "include": ["reasoning.encrypted_content"] });
+
+        assert!(!strip_codex_private_include_markers(&mut body));
+        assert!(!strip_codex_private_include_markers(&mut body));
+        assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
     }
 }

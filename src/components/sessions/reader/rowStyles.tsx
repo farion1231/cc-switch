@@ -2,7 +2,8 @@ import { memo, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 import type { StatusTone, StepMeta } from "./toolSummary";
-import { formatCost, formatDuration, formatTokens } from "./toolSummary";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
+import { formatDuration, formatTokens } from "./toolSummary";
 import { useReaderT } from "./i18n";
 
 /**
@@ -59,6 +60,7 @@ export const StepMetaText = memo(function StepMetaText({
   className?: string;
 }) {
   const rt = useReaderT();
+  const { moneyCompact } = useMoneyFormat();
   const parts: ReactNode[] = [];
   if (meta.exitCode !== undefined) {
     parts.push(
@@ -94,7 +96,7 @@ export const StepMetaText = memo(function StepMetaText({
     );
   }
   if (meta.costUsd !== undefined) {
-    parts.push(<span key="cost">{formatCost(meta.costUsd)}</span>);
+    parts.push(<span key="cost">{moneyCompact(meta.costUsd)}</span>);
   }
   if (parts.length === 0) return null;
   return (
