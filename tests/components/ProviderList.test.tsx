@@ -220,12 +220,14 @@ describe("ProviderList Component", () => {
     };
   }
 
-  it("should render skeleton placeholders when loading", () => {
-    const { container } = renderWithQueryClient(
+  it("should render skeleton placeholders when loading takes a while", async () => {
+    renderWithQueryClient(
       <ProviderList {...baseProps} providers={{}} appId="claude" isLoading />,
     );
 
-    expect(container.querySelectorAll(".border-dashed")).toHaveLength(3);
+    // 短加载不画占位，免得闪一下；过了延迟才出现
+    expect(screen.queryAllByTestId("provider-skeleton")).toHaveLength(0);
+    expect(await screen.findAllByTestId("provider-skeleton")).toHaveLength(3);
   });
 
   it("should show empty state and trigger create callback when no providers exist", () => {

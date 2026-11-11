@@ -35,6 +35,8 @@ import {
 } from "@/components/ui/dialog";
 import { settingsApi } from "@/lib/api";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Reveal } from "@/components/ui/reveal";
+import { EnterTransition } from "@/components/common/EnterTransition";
 import type { SettingsFormState } from "@/hooks/useSettings";
 import type {
   RemoteSnapshotInfo,
@@ -1032,554 +1034,567 @@ export function WebdavSyncSection({
         </Select>
       </div>
 
-      {/* ─── WebDAV form ──────────────────────────────────── */}
-      {syncType === "webdav" && (
-        <div className="space-y-4 rounded-lg border border-border bg-subtle p-6">
-          {/* Config fields */}
-          <div className="space-y-3">
-            {/* Service preset selector */}
-            <div className="flex items-center gap-4">
-              <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
-                {t("settings.webdavSync.presets.label")}
-              </label>
-              <Select
-                value={presetId}
-                onValueChange={handlePresetChange}
-                disabled={isLoading}
-              >
-                <SelectTrigger className="text-xs flex-1">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {WEBDAV_PRESETS.map((preset) => (
-                    <SelectItem key={preset.id} value={preset.id}>
-                      {t(preset.label)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Server URL */}
-            <div className="flex items-center gap-4">
-              <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
-                {t("settings.webdavSync.baseUrl")}
-              </label>
-              <Input
-                value={form.baseUrl}
-                onChange={(e) => updateField("baseUrl", e.target.value)}
-                onBlur={handleBaseUrlBlur}
-                placeholder={t("settings.webdavSync.baseUrlPlaceholder")}
-                className="text-xs flex-1"
-                disabled={isLoading}
-              />
-            </div>
-
-            {/* Username */}
-            <div className="flex items-center gap-4">
-              <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
-                {t("settings.webdavSync.username")}
-              </label>
-              <Input
-                value={form.username}
-                onChange={(e) => updateField("username", e.target.value)}
-                placeholder={t("settings.webdavSync.usernamePlaceholder")}
-                className="text-xs flex-1"
-                disabled={isLoading}
-              />
-            </div>
-
-            {/* Password */}
-            <div className="flex items-center gap-4">
-              <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
-                {t("settings.webdavSync.password")}
-              </label>
-              <Input
-                type="password"
-                value={form.password}
-                onChange={(e) => updateField("password", e.target.value)}
-                placeholder={t("settings.webdavSync.passwordPlaceholder")}
-                className="text-xs flex-1"
-                autoComplete="off"
-                disabled={isLoading}
-              />
-            </div>
-
-            {/* Preset hint */}
-            {activePreset?.hint && (
-              <div className="flex items-start gap-2 pl-44 text-xs text-fg-2">
-                <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                <span>{t(activePreset.hint)}</span>
+      {/* 换同步方式时下面的表单从下面浮上来，不是一下替换 */}
+      <EnterTransition transitionKey={syncType} from="below">
+        {/* ─── WebDAV form ──────────────────────────────────── */}
+        {syncType === "webdav" && (
+          <div className="space-y-4 rounded-lg border border-border bg-subtle p-6">
+            {/* Config fields */}
+            <div className="space-y-3">
+              {/* Service preset selector */}
+              <div className="flex items-center gap-4">
+                <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
+                  {t("settings.webdavSync.presets.label")}
+                </label>
+                <Select
+                  value={presetId}
+                  onValueChange={handlePresetChange}
+                  disabled={isLoading}
+                >
+                  <SelectTrigger className="text-xs flex-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {WEBDAV_PRESETS.map((preset) => (
+                      <SelectItem key={preset.id} value={preset.id}>
+                        {t(preset.label)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
-            )}
 
-            {/* Remote Root */}
-            <div className="flex items-center gap-4">
-              <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
-                {t("settings.webdavSync.remoteRoot")}
-              </label>
-              <Input
-                value={form.remoteRoot}
-                onChange={(e) => updateField("remoteRoot", e.target.value)}
-                placeholder="cc-switch-sync"
-                className="text-xs flex-1"
-                disabled={isLoading}
-              />
-            </div>
-
-            {/* Profile */}
-            <div className="flex items-center gap-4">
-              <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
-                {t("settings.webdavSync.profile")}
-              </label>
-              <Input
-                value={form.profile}
-                onChange={(e) => updateField("profile", e.target.value)}
-                placeholder="default"
-                className="text-xs flex-1"
-                disabled={isLoading}
-              />
-            </div>
-
-            <div className="flex items-start gap-4">
-              <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
-                {t("settings.webdavSync.autoSync")}
-                <span className="block text-badge font-normal text-fg-2">
-                  {t("settings.webdavSync.autoSyncHint")}
-                </span>
-              </label>
-              <div className="pt-1">
-                <Switch
-                  checked={form.autoSync}
-                  onCheckedChange={handleAutoSyncChange}
-                  aria-label={t("settings.webdavSync.autoSync")}
+              {/* Server URL */}
+              <div className="flex items-center gap-4">
+                <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
+                  {t("settings.webdavSync.baseUrl")}
+                </label>
+                <Input
+                  value={form.baseUrl}
+                  onChange={(e) => updateField("baseUrl", e.target.value)}
+                  onBlur={handleBaseUrlBlur}
+                  placeholder={t("settings.webdavSync.baseUrlPlaceholder")}
+                  className="text-xs flex-1"
                   disabled={isLoading}
                 />
               </div>
-            </div>
-          </div>
 
-          {/* Last sync time */}
-          {lastSyncDisplay && (
-            <p className="text-xs text-fg-2">
-              {t("settings.webdavSync.lastSync", { time: lastSyncDisplay })}
-            </p>
-          )}
-          {showAutoSyncError && (
-            <div className="rounded-lg border border-transparent bg-danger-soft px-3 py-2 text-xs text-danger-text">
-              <p className="font-medium">
-                {t("settings.webdavSync.autoSyncLastErrorTitle")}
-              </p>
-              <p className="mt-1 break-all whitespace-pre-wrap">{lastError}</p>
-              <p className="mt-1 text-[11px] text-danger-text">
-                {t("settings.webdavSync.autoSyncLastErrorHint")}
-              </p>
-            </div>
-          )}
+              {/* Username */}
+              <div className="flex items-center gap-4">
+                <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
+                  {t("settings.webdavSync.username")}
+                </label>
+                <Input
+                  value={form.username}
+                  onChange={(e) => updateField("username", e.target.value)}
+                  placeholder={t("settings.webdavSync.usernamePlaceholder")}
+                  className="text-xs flex-1"
+                  disabled={isLoading}
+                />
+              </div>
 
-          {/* Config buttons + save status */}
-          <div className="flex flex-wrap items-center gap-3 pt-2">
-            <ActionButton
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleTest}
-              actionState={actionState}
-              targetState="testing"
-              icon={Link2}
-              activeLabel={t("settings.webdavSync.testing")}
-              idleLabel={t("settings.webdavSync.test")}
-            />
-            <ActionButton
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleSave}
-              actionState={actionState}
-              targetState="saving"
-              icon={Save}
-              activeLabel={t("settings.webdavSync.saving")}
-              idleLabel={t("settings.webdavSync.save")}
-            />
-            {hasSavedConfig && (
+              {/* Password */}
+              <div className="flex items-center gap-4">
+                <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
+                  {t("settings.webdavSync.password")}
+                </label>
+                <Input
+                  type="password"
+                  value={form.password}
+                  onChange={(e) => updateField("password", e.target.value)}
+                  placeholder={t("settings.webdavSync.passwordPlaceholder")}
+                  className="text-xs flex-1"
+                  autoComplete="off"
+                  disabled={isLoading}
+                />
+              </div>
+
+              {/* Preset hint */}
+              {activePreset?.hint && (
+                <div className="flex items-start gap-2 pl-44 text-xs text-fg-2">
+                  <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                  <span>{t(activePreset.hint)}</span>
+                </div>
+              )}
+
+              {/* Remote Root */}
+              <div className="flex items-center gap-4">
+                <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
+                  {t("settings.webdavSync.remoteRoot")}
+                </label>
+                <Input
+                  value={form.remoteRoot}
+                  onChange={(e) => updateField("remoteRoot", e.target.value)}
+                  placeholder="cc-switch-sync"
+                  className="text-xs flex-1"
+                  disabled={isLoading}
+                />
+              </div>
+
+              {/* Profile */}
+              <div className="flex items-center gap-4">
+                <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
+                  {t("settings.webdavSync.profile")}
+                </label>
+                <Input
+                  value={form.profile}
+                  onChange={(e) => updateField("profile", e.target.value)}
+                  placeholder="default"
+                  className="text-xs flex-1"
+                  disabled={isLoading}
+                />
+              </div>
+
+              <div className="flex items-start gap-4">
+                <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
+                  {t("settings.webdavSync.autoSync")}
+                  <span className="block text-badge font-normal text-fg-2">
+                    {t("settings.webdavSync.autoSyncHint")}
+                  </span>
+                </label>
+                <div className="pt-1">
+                  <Switch
+                    checked={form.autoSync}
+                    onCheckedChange={handleAutoSyncChange}
+                    aria-label={t("settings.webdavSync.autoSync")}
+                    disabled={isLoading}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Last sync time */}
+            {/* 上次同步时间、自动同步出错：出现 / 消失时高度跟着动。外层 space-y 的间距挪到里面（!mt-0 + pt-4），
+              收起时间距跟着一起收，不会最后跳一下 */}
+            <Reveal show={Boolean(lastSyncDisplay)} className="!mt-0">
+              <p className="pt-4 text-xs text-fg-2">
+                {t("settings.webdavSync.lastSync", { time: lastSyncDisplay })}
+              </p>
+            </Reveal>
+            <Reveal show={Boolean(showAutoSyncError)} className="!mt-0">
+              <div className="pt-4">
+                <div className="rounded-lg border border-transparent bg-danger-soft px-3 py-2 text-xs text-danger-text">
+                  <p className="font-medium">
+                    {t("settings.webdavSync.autoSyncLastErrorTitle")}
+                  </p>
+                  <p className="mt-1 break-all whitespace-pre-wrap">
+                    {lastError}
+                  </p>
+                  <p className="mt-1 text-[11px] text-danger-text">
+                    {t("settings.webdavSync.autoSyncLastErrorHint")}
+                  </p>
+                </div>
+              </div>
+            </Reveal>
+
+            {/* Config buttons + save status */}
+            <div className="flex flex-wrap items-center gap-3 pt-2">
               <ActionButton
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => setShowClearConfirm(true)}
+                onClick={handleTest}
                 actionState={actionState}
-                targetState="clearing"
-                icon={Trash2}
-                activeLabel={t("settings.webdavSync.clearing")}
-                idleLabel={t("settings.webdavSync.clear")}
+                targetState="testing"
+                icon={Link2}
+                activeLabel={t("settings.webdavSync.testing")}
+                idleLabel={t("settings.webdavSync.test")}
               />
-            )}
+              <ActionButton
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleSave}
+                actionState={actionState}
+                targetState="saving"
+                icon={Save}
+                activeLabel={t("settings.webdavSync.saving")}
+                idleLabel={t("settings.webdavSync.save")}
+              />
+              {hasSavedConfig && (
+                <ActionButton
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowClearConfirm(true)}
+                  actionState={actionState}
+                  targetState="clearing"
+                  icon={Trash2}
+                  activeLabel={t("settings.webdavSync.clearing")}
+                  idleLabel={t("settings.webdavSync.clear")}
+                />
+              )}
 
-            {/* Save status indicator */}
-            {dirty && (
-              <span className="inline-flex items-center gap-1.5 text-xs text-warning-text animate-in fade-in duration-200">
-                <span className="h-1.5 w-1.5 rounded-full bg-warning" />
-                {t("settings.webdavSync.unsaved")}
-              </span>
-            )}
-            {!dirty && justSaved && (
-              <span className="inline-flex items-center gap-1.5 text-xs text-success-text animate-in fade-in duration-200">
-                <Check className="h-3 w-3" />
-                {t("settings.webdavSync.saved")}
-              </span>
-            )}
-          </div>
-
-          {/* Sync buttons */}
-          <div className="flex flex-wrap items-center gap-3 border-t border-border pt-4">
-            <ActionButton
-              type="button"
-              size="sm"
-              onClick={handleUploadClick}
-              disabled={!hasSavedConfig}
-              actionState={actionState}
-              targetState="uploading"
-              alsoActiveFor={["fetching_remote"]}
-              icon={UploadCloud}
-              activeLabel={
-                actionState === "fetching_remote"
-                  ? t("settings.webdavSync.fetchingRemote")
-                  : t("settings.webdavSync.uploading")
-              }
-              idleLabel={t("settings.webdavSync.upload")}
-            />
-            <ActionButton
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={handleDownloadClick}
-              disabled={!hasSavedConfig}
-              actionState={actionState}
-              targetState="downloading"
-              alsoActiveFor={["fetching_remote"]}
-              icon={DownloadCloud}
-              activeLabel={
-                actionState === "fetching_remote"
-                  ? t("settings.webdavSync.fetchingRemote")
-                  : t("settings.webdavSync.downloading")
-              }
-              idleLabel={t("settings.webdavSync.download")}
-            />
-          </div>
-          {!hasSavedConfig && (
-            <p className="text-xs text-fg-2">
-              {t("settings.webdavSync.saveBeforeSync")}
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* ─── S3 form ──────────────────────────────────────── */}
-      {syncType === "s3" && (
-        <div className="space-y-4 rounded-lg border border-border bg-subtle p-6">
-          <div className="space-y-3">
-            {/* S3 preset selector */}
-            <div className="flex items-center gap-4">
-              <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
-                {t("settings.s3Sync.presets.label")}
-              </label>
-              <Select
-                value={s3Preset}
-                onValueChange={handleS3PresetChange}
-                disabled={isS3Loading}
-              >
-                <SelectTrigger className="text-xs flex-1">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {S3_PRESETS.map((preset) => (
-                    <SelectItem key={preset.id} value={preset.id}>
-                      {t(preset.label)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {/* Save status indicator */}
+              {dirty && (
+                <span className="inline-flex items-center gap-1.5 text-xs text-warning-text animate-in fade-in duration-200">
+                  <span className="h-1.5 w-1.5 rounded-full bg-warning" />
+                  {t("settings.webdavSync.unsaved")}
+                </span>
+              )}
+              {!dirty && justSaved && (
+                <span className="inline-flex items-center gap-1.5 text-xs text-success-text animate-in fade-in duration-200">
+                  <Check className="h-3 w-3" />
+                  {t("settings.webdavSync.saved")}
+                </span>
+              )}
             </div>
 
-            {/* Preset hint */}
-            {activeS3Preset?.hint && (
-              <div className="flex items-start gap-2 pl-44 text-xs text-fg-2">
-                <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                <span>{t(activeS3Preset.hint)}</span>
+            {/* Sync buttons */}
+            <div className="flex flex-wrap items-center gap-3 border-t border-border pt-4">
+              <ActionButton
+                type="button"
+                size="sm"
+                onClick={handleUploadClick}
+                disabled={!hasSavedConfig}
+                actionState={actionState}
+                targetState="uploading"
+                alsoActiveFor={["fetching_remote"]}
+                icon={UploadCloud}
+                activeLabel={
+                  actionState === "fetching_remote"
+                    ? t("settings.webdavSync.fetchingRemote")
+                    : t("settings.webdavSync.uploading")
+                }
+                idleLabel={t("settings.webdavSync.upload")}
+              />
+              <ActionButton
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={handleDownloadClick}
+                disabled={!hasSavedConfig}
+                actionState={actionState}
+                targetState="downloading"
+                alsoActiveFor={["fetching_remote"]}
+                icon={DownloadCloud}
+                activeLabel={
+                  actionState === "fetching_remote"
+                    ? t("settings.webdavSync.fetchingRemote")
+                    : t("settings.webdavSync.downloading")
+                }
+                idleLabel={t("settings.webdavSync.download")}
+              />
+            </div>
+            {!hasSavedConfig && (
+              <p className="text-xs text-fg-2">
+                {t("settings.webdavSync.saveBeforeSync")}
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* ─── S3 form ──────────────────────────────────────── */}
+        {syncType === "s3" && (
+          <div className="space-y-4 rounded-lg border border-border bg-subtle p-6">
+            <div className="space-y-3">
+              {/* S3 preset selector */}
+              <div className="flex items-center gap-4">
+                <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
+                  {t("settings.s3Sync.presets.label")}
+                </label>
+                <Select
+                  value={s3Preset}
+                  onValueChange={handleS3PresetChange}
+                  disabled={isS3Loading}
+                >
+                  <SelectTrigger className="text-xs flex-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {S3_PRESETS.map((preset) => (
+                      <SelectItem key={preset.id} value={preset.id}>
+                        {t(preset.label)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
-            )}
 
-            {/* Region */}
-            <div className="flex items-center gap-4">
-              <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
-                {t("settings.s3Sync.region")}
-              </label>
-              <Input
-                value={s3Region}
-                onChange={(e) => {
-                  setS3Region(e.target.value);
-                  markS3Dirty();
-                }}
-                placeholder={activeS3Preset?.regionPlaceholder ?? "us-east-1"}
-                className="text-xs flex-1"
-                disabled={isS3Loading}
-              />
-            </div>
+              {/* Preset hint */}
+              {activeS3Preset?.hint && (
+                <div className="flex items-start gap-2 pl-44 text-xs text-fg-2">
+                  <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                  <span>{t(activeS3Preset.hint)}</span>
+                </div>
+              )}
 
-            {/* Bucket */}
-            <div className="flex items-center gap-4">
-              <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
-                {t("settings.s3Sync.bucket")}
-              </label>
-              <Input
-                value={s3Bucket}
-                onChange={(e) => {
-                  setS3Bucket(e.target.value);
-                  markS3Dirty();
-                }}
-                placeholder={t("settings.s3Sync.bucketPlaceholder")}
-                className="text-xs flex-1"
-                disabled={isS3Loading}
-              />
-            </div>
-
-            {/* Access Key ID */}
-            <div className="flex items-center gap-4">
-              <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
-                {t("settings.s3Sync.accessKeyId")}
-              </label>
-              <Input
-                value={s3AccessKeyId}
-                onChange={(e) => {
-                  setS3AccessKeyId(e.target.value);
-                  markS3Dirty();
-                }}
-                placeholder={t("settings.s3Sync.accessKeyIdPlaceholder")}
-                className="text-xs flex-1"
-                disabled={isS3Loading}
-              />
-            </div>
-
-            {/* Secret Access Key */}
-            <div className="flex items-center gap-4">
-              <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
-                {t("settings.s3Sync.secretAccessKey")}
-              </label>
-              <Input
-                type="password"
-                value={s3SecretAccessKey}
-                onChange={(e) => {
-                  setS3SecretAccessKey(e.target.value);
-                  setS3SecretTouched(true);
-                  markS3Dirty();
-                }}
-                placeholder={t("settings.s3Sync.secretAccessKeyPlaceholder")}
-                className="text-xs flex-1"
-                autoComplete="off"
-                disabled={isS3Loading}
-              />
-            </div>
-
-            {/* Endpoint (optional) */}
-            <div className="flex items-center gap-4">
-              <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
-                {t("settings.s3Sync.endpoint")}
-                <span className="block text-badge font-normal text-fg-2">
-                  {t("settings.s3Sync.endpointHint")}
-                </span>
-              </label>
-              <Input
-                value={s3Endpoint}
-                onChange={(e) => {
-                  setS3Endpoint(e.target.value);
-                  markS3Dirty();
-                }}
-                placeholder={t("settings.s3Sync.endpointPlaceholder")}
-                className="text-xs flex-1"
-                disabled={isS3Loading}
-              />
-            </div>
-
-            {/* Remote Root */}
-            <div className="flex items-center gap-4">
-              <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
-                {t("settings.s3Sync.remoteRoot")}
-              </label>
-              <Input
-                value={s3RemoteRoot}
-                onChange={(e) => {
-                  setS3RemoteRoot(e.target.value);
-                  markS3Dirty();
-                }}
-                placeholder="cc-switch-sync"
-                className="text-xs flex-1"
-                disabled={isS3Loading}
-              />
-            </div>
-
-            {/* Profile */}
-            <div className="flex items-center gap-4">
-              <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
-                {t("settings.s3Sync.profile")}
-              </label>
-              <Input
-                value={s3Profile}
-                onChange={(e) => {
-                  setS3Profile(e.target.value);
-                  markS3Dirty();
-                }}
-                placeholder="default"
-                className="text-xs flex-1"
-                disabled={isS3Loading}
-              />
-            </div>
-
-            {/* Auto Sync toggle */}
-            <div className="flex items-start gap-4">
-              <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
-                {t("settings.s3Sync.autoSync")}
-                <span className="block text-badge font-normal text-fg-2">
-                  {t("settings.s3Sync.autoSyncHint")}
-                </span>
-              </label>
-              <div className="pt-1">
-                <Switch
-                  checked={s3AutoSync}
-                  onCheckedChange={(checked) => {
-                    setS3AutoSync(checked);
+              {/* Region */}
+              <div className="flex items-center gap-4">
+                <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
+                  {t("settings.s3Sync.region")}
+                </label>
+                <Input
+                  value={s3Region}
+                  onChange={(e) => {
+                    setS3Region(e.target.value);
                     markS3Dirty();
                   }}
-                  aria-label={t("settings.s3Sync.autoSync")}
+                  placeholder={activeS3Preset?.regionPlaceholder ?? "us-east-1"}
+                  className="text-xs flex-1"
                   disabled={isS3Loading}
                 />
               </div>
-            </div>
 
-            {/* Enabled toggle */}
-            <div className="flex items-start gap-4">
-              <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
-                {t("settings.s3Sync.enabled")}
-                <span className="block text-badge font-normal text-fg-2">
-                  {t("settings.s3Sync.enabledHint")}
-                </span>
-              </label>
-              <div className="pt-1">
-                <Switch
-                  checked={s3Enabled}
-                  onCheckedChange={(checked) => {
-                    setS3Enabled(checked);
+              {/* Bucket */}
+              <div className="flex items-center gap-4">
+                <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
+                  {t("settings.s3Sync.bucket")}
+                </label>
+                <Input
+                  value={s3Bucket}
+                  onChange={(e) => {
+                    setS3Bucket(e.target.value);
                     markS3Dirty();
                   }}
-                  aria-label={t("settings.s3Sync.enabled")}
+                  placeholder={t("settings.s3Sync.bucketPlaceholder")}
+                  className="text-xs flex-1"
                   disabled={isS3Loading}
                 />
               </div>
+
+              {/* Access Key ID */}
+              <div className="flex items-center gap-4">
+                <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
+                  {t("settings.s3Sync.accessKeyId")}
+                </label>
+                <Input
+                  value={s3AccessKeyId}
+                  onChange={(e) => {
+                    setS3AccessKeyId(e.target.value);
+                    markS3Dirty();
+                  }}
+                  placeholder={t("settings.s3Sync.accessKeyIdPlaceholder")}
+                  className="text-xs flex-1"
+                  disabled={isS3Loading}
+                />
+              </div>
+
+              {/* Secret Access Key */}
+              <div className="flex items-center gap-4">
+                <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
+                  {t("settings.s3Sync.secretAccessKey")}
+                </label>
+                <Input
+                  type="password"
+                  value={s3SecretAccessKey}
+                  onChange={(e) => {
+                    setS3SecretAccessKey(e.target.value);
+                    setS3SecretTouched(true);
+                    markS3Dirty();
+                  }}
+                  placeholder={t("settings.s3Sync.secretAccessKeyPlaceholder")}
+                  className="text-xs flex-1"
+                  autoComplete="off"
+                  disabled={isS3Loading}
+                />
+              </div>
+
+              {/* Endpoint (optional) */}
+              <div className="flex items-center gap-4">
+                <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
+                  {t("settings.s3Sync.endpoint")}
+                  <span className="block text-badge font-normal text-fg-2">
+                    {t("settings.s3Sync.endpointHint")}
+                  </span>
+                </label>
+                <Input
+                  value={s3Endpoint}
+                  onChange={(e) => {
+                    setS3Endpoint(e.target.value);
+                    markS3Dirty();
+                  }}
+                  placeholder={t("settings.s3Sync.endpointPlaceholder")}
+                  className="text-xs flex-1"
+                  disabled={isS3Loading}
+                />
+              </div>
+
+              {/* Remote Root */}
+              <div className="flex items-center gap-4">
+                <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
+                  {t("settings.s3Sync.remoteRoot")}
+                </label>
+                <Input
+                  value={s3RemoteRoot}
+                  onChange={(e) => {
+                    setS3RemoteRoot(e.target.value);
+                    markS3Dirty();
+                  }}
+                  placeholder="cc-switch-sync"
+                  className="text-xs flex-1"
+                  disabled={isS3Loading}
+                />
+              </div>
+
+              {/* Profile */}
+              <div className="flex items-center gap-4">
+                <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
+                  {t("settings.s3Sync.profile")}
+                </label>
+                <Input
+                  value={s3Profile}
+                  onChange={(e) => {
+                    setS3Profile(e.target.value);
+                    markS3Dirty();
+                  }}
+                  placeholder="default"
+                  className="text-xs flex-1"
+                  disabled={isS3Loading}
+                />
+              </div>
+
+              {/* Auto Sync toggle */}
+              <div className="flex items-start gap-4">
+                <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
+                  {t("settings.s3Sync.autoSync")}
+                  <span className="block text-badge font-normal text-fg-2">
+                    {t("settings.s3Sync.autoSyncHint")}
+                  </span>
+                </label>
+                <div className="pt-1">
+                  <Switch
+                    checked={s3AutoSync}
+                    onCheckedChange={(checked) => {
+                      setS3AutoSync(checked);
+                      markS3Dirty();
+                    }}
+                    aria-label={t("settings.s3Sync.autoSync")}
+                    disabled={isS3Loading}
+                  />
+                </div>
+              </div>
+
+              {/* Enabled toggle */}
+              <div className="flex items-start gap-4">
+                <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
+                  {t("settings.s3Sync.enabled")}
+                  <span className="block text-badge font-normal text-fg-2">
+                    {t("settings.s3Sync.enabledHint")}
+                  </span>
+                </label>
+                <div className="pt-1">
+                  <Switch
+                    checked={s3Enabled}
+                    onCheckedChange={(checked) => {
+                      setS3Enabled(checked);
+                      markS3Dirty();
+                    }}
+                    aria-label={t("settings.s3Sync.enabled")}
+                    disabled={isS3Loading}
+                  />
+                </div>
+              </div>
             </div>
-          </div>
 
-          {/* Last sync time */}
-          {s3LastSyncDisplay && (
-            <p className="text-xs text-fg-2">
-              {t("settings.s3Sync.lastSync", { time: s3LastSyncDisplay })}
-            </p>
-          )}
-          {s3ShowAutoSyncError && (
-            <div className="rounded-lg border border-transparent bg-danger-soft px-3 py-2 text-xs text-danger-text">
-              <p className="font-medium">
-                {t("settings.s3Sync.autoSyncLastErrorTitle")}
+            {/* Last sync time */}
+            {/* 上次同步时间、自动同步出错：出现 / 消失时高度跟着动。外层 space-y 的间距挪到里面（!mt-0 + pt-4），
+              收起时间距跟着一起收，不会最后跳一下 */}
+            <Reveal show={Boolean(s3LastSyncDisplay)} className="!mt-0">
+              <p className="pt-4 text-xs text-fg-2">
+                {t("settings.s3Sync.lastSync", { time: s3LastSyncDisplay })}
               </p>
-              <p className="mt-1 break-all whitespace-pre-wrap">
-                {s3LastError}
-              </p>
-              <p className="mt-1 text-[11px] text-danger-text">
-                {t("settings.s3Sync.autoSyncLastErrorHint")}
-              </p>
+            </Reveal>
+            <Reveal show={Boolean(s3ShowAutoSyncError)} className="!mt-0">
+              <div className="pt-4">
+                <div className="rounded-lg border border-transparent bg-danger-soft px-3 py-2 text-xs text-danger-text">
+                  <p className="font-medium">
+                    {t("settings.s3Sync.autoSyncLastErrorTitle")}
+                  </p>
+                  <p className="mt-1 break-all whitespace-pre-wrap">
+                    {s3LastError}
+                  </p>
+                  <p className="mt-1 text-[11px] text-danger-text">
+                    {t("settings.s3Sync.autoSyncLastErrorHint")}
+                  </p>
+                </div>
+              </div>
+            </Reveal>
+
+            {/* Config buttons + save status */}
+            <div className="flex flex-wrap items-center gap-3 pt-2">
+              <ActionButton
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleS3Test}
+                actionState={s3ActionState}
+                targetState="testing"
+                icon={Link2}
+                activeLabel={t("settings.s3Sync.testing")}
+                idleLabel={t("settings.s3Sync.test")}
+              />
+              <ActionButton
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleS3Save}
+                actionState={s3ActionState}
+                targetState="saving"
+                icon={Save}
+                activeLabel={t("settings.s3Sync.saving")}
+                idleLabel={t("settings.s3Sync.save")}
+              />
+
+              {/* Save status indicator */}
+              {s3Dirty && (
+                <span className="inline-flex items-center gap-1.5 text-xs text-warning-text animate-in fade-in duration-200">
+                  <span className="h-1.5 w-1.5 rounded-full bg-warning" />
+                  {t("settings.s3Sync.unsaved")}
+                </span>
+              )}
+              {!s3Dirty && s3JustSaved && (
+                <span className="inline-flex items-center gap-1.5 text-xs text-success-text animate-in fade-in duration-200">
+                  <Check className="h-3 w-3" />
+                  {t("settings.s3Sync.saved")}
+                </span>
+              )}
             </div>
-          )}
 
-          {/* Config buttons + save status */}
-          <div className="flex flex-wrap items-center gap-3 pt-2">
-            <ActionButton
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleS3Test}
-              actionState={s3ActionState}
-              targetState="testing"
-              icon={Link2}
-              activeLabel={t("settings.s3Sync.testing")}
-              idleLabel={t("settings.s3Sync.test")}
-            />
-            <ActionButton
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleS3Save}
-              actionState={s3ActionState}
-              targetState="saving"
-              icon={Save}
-              activeLabel={t("settings.s3Sync.saving")}
-              idleLabel={t("settings.s3Sync.save")}
-            />
-
-            {/* Save status indicator */}
-            {s3Dirty && (
-              <span className="inline-flex items-center gap-1.5 text-xs text-warning-text animate-in fade-in duration-200">
-                <span className="h-1.5 w-1.5 rounded-full bg-warning" />
-                {t("settings.s3Sync.unsaved")}
-              </span>
-            )}
-            {!s3Dirty && s3JustSaved && (
-              <span className="inline-flex items-center gap-1.5 text-xs text-success-text animate-in fade-in duration-200">
-                <Check className="h-3 w-3" />
-                {t("settings.s3Sync.saved")}
-              </span>
+            {/* Sync buttons */}
+            <div className="flex flex-wrap items-center gap-3 border-t border-border pt-4">
+              <ActionButton
+                type="button"
+                size="sm"
+                onClick={handleS3UploadClick}
+                disabled={!hasS3SavedConfig}
+                actionState={s3ActionState}
+                targetState="uploading"
+                alsoActiveFor={["fetching_remote"]}
+                icon={UploadCloud}
+                activeLabel={
+                  s3ActionState === "fetching_remote"
+                    ? t("settings.s3Sync.fetchingRemote")
+                    : t("settings.s3Sync.uploading")
+                }
+                idleLabel={t("settings.s3Sync.upload")}
+              />
+              <ActionButton
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={handleS3DownloadClick}
+                disabled={!hasS3SavedConfig}
+                actionState={s3ActionState}
+                targetState="downloading"
+                alsoActiveFor={["fetching_remote"]}
+                icon={DownloadCloud}
+                activeLabel={
+                  s3ActionState === "fetching_remote"
+                    ? t("settings.s3Sync.fetchingRemote")
+                    : t("settings.s3Sync.downloading")
+                }
+                idleLabel={t("settings.s3Sync.download")}
+              />
+            </div>
+            {!hasS3SavedConfig && (
+              <p className="text-xs text-fg-2">
+                {t("settings.s3Sync.saveBeforeSync")}
+              </p>
             )}
           </div>
-
-          {/* Sync buttons */}
-          <div className="flex flex-wrap items-center gap-3 border-t border-border pt-4">
-            <ActionButton
-              type="button"
-              size="sm"
-              onClick={handleS3UploadClick}
-              disabled={!hasS3SavedConfig}
-              actionState={s3ActionState}
-              targetState="uploading"
-              alsoActiveFor={["fetching_remote"]}
-              icon={UploadCloud}
-              activeLabel={
-                s3ActionState === "fetching_remote"
-                  ? t("settings.s3Sync.fetchingRemote")
-                  : t("settings.s3Sync.uploading")
-              }
-              idleLabel={t("settings.s3Sync.upload")}
-            />
-            <ActionButton
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={handleS3DownloadClick}
-              disabled={!hasS3SavedConfig}
-              actionState={s3ActionState}
-              targetState="downloading"
-              alsoActiveFor={["fetching_remote"]}
-              icon={DownloadCloud}
-              activeLabel={
-                s3ActionState === "fetching_remote"
-                  ? t("settings.s3Sync.fetchingRemote")
-                  : t("settings.s3Sync.downloading")
-              }
-              idleLabel={t("settings.s3Sync.download")}
-            />
-          </div>
-          {!hasS3SavedConfig && (
-            <p className="text-xs text-fg-2">
-              {t("settings.s3Sync.saveBeforeSync")}
-            </p>
-          )}
-        </div>
-      )}
+        )}
+      </EnterTransition>
 
       {/* ─── WebDAV Upload confirmation dialog ───────────── */}
       <Dialog

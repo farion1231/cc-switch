@@ -53,6 +53,11 @@ import { extractErrorMessage } from "@/utils/errorUtils";
 import { isMac } from "@/lib/platform";
 import { SearchField } from "@/components/ui/search-field";
 import { cn } from "@/lib/utils";
+import { EnterTransition } from "@/components/common/EnterTransition";
+import {
+  directionByOrder,
+  useEnterTransition,
+} from "@/hooks/useEnterTransition";
 import {
   getSessionRowHeight,
   SessionItem,
@@ -133,7 +138,18 @@ type SessionListRow =
       group: ReturnType<typeof groupSessionsByProject>[number];
       first: boolean;
     }
-  | { kind: "session"; key: string; session: SessionMeta; bordered: boolean };
+  | {
+      kind: "session";
+      key: string;
+      session: SessionMeta;
+      bordered: boolean;
+      /** 按项目分组时所在的组：刚展开的组里的行淡入 */
+      groupKey?: string;
+    };
+
+const GROUP_MODES: GroupMode[] = ["time", "project"];
+// 展开 / 收起分组后，下面的行滑到新位置要多久；和折叠区动画同一条曲线
+const GROUP_REFLOW_MS = 240;
 
 /** 虚拟列表每种行的固定高度：时间分组标题 h-7、项目分组标题 h-9、会话行 h-14 */
 const LIST_ROW_HEIGHT = { time: 28, project: 36, session: 56 } as const;
@@ -169,6 +185,13 @@ export function SessionManagerPage({
   const [query, setQuery] = useState("");
   const [groupMode, setGroupMode] = useState<GroupMode>(readGroupMode);
   const [expanded, setExpanded] = useState<Set<string>>(readExpanded);
+  const [groupReflow, setGroupReflow] = useState<{
+    expanding: string | null;
+  } | null>(null);
+  const groupReflowTimer = useRef<number | undefined>(undefined);
+  // 开始滑动时吸顶的那一行：它没有 transform，要是这段时间里不再吸顶，别让它从顶上滑下来
+  const reflowStickyKey = useRef<string | null>(null);
+  useEffect(() => () => window.clearTimeout(groupReflowTimer.current), []);
   const [readerKey, setReaderKey] = useState<string | null>(null);
   // 点了行下方某条摘录打开的：跳到那条消息，而不是最相关的那条
   const [readerJump, setReaderJump] = useState<{
@@ -364,6 +387,16 @@ export function SessionManagerPage({
           null)
         : null,
     [sessions, readerKey],
+  );
+  // 打开会话像推进一层：阅读页从右边滑进；返回时列表从左边滑回（列表一直挂着，滚动位置还在）
+  const pageRef = useEnterTransition<HTMLDivElement, boolean>(
+    Boolean(readerSession),
+    {
+      skipInitial: true,
+      from: (_, reading) => (reading ? "end" : "start"),
+      // 页头那条栏不动，只换栏里的标题和操作（列表页头 ↔ 阅读页头）
+      preserveHeader: true,
+    },
   );
   const readerIndex = readerSession
     ? orderedSessions.findIndex(
@@ -680,6 +713,18 @@ export function SessionManagerPage({
   };
 
   const toggleGroup = (key: string) => {
+    // 展开 / 收起这一下，下面的行从原位置滑到新位置，刚展开的行淡入；
+    // 只在这一小段时间里开过渡，平时滚动、搜索时行的位置照常一步到位
+    window.clearTimeout(groupReflowTimer.current);
+    reflowStickyKey.current =
+      activeStickyRef.current !== null
+        ? (listRows[activeStickyRef.current]?.key ?? null)
+        : null;
+    setGroupReflow({ expanding: isGroupOpen(key) ? null : key });
+    groupReflowTimer.current = window.setTimeout(
+      () => setGroupReflow(null),
+      GROUP_REFLOW_MS,
+    );
     setExpanded((current) => {
       const next = new Set(current);
       if (next.has(key)) next.delete(key);
@@ -832,6 +877,7 @@ export function SessionManagerPage({
             key: getSessionKey(session),
             session,
             bordered: true,
+            groupKey: group.key,
           }),
         );
       });
@@ -965,12 +1011,24 @@ export function SessionManagerPage({
         const row = listRows[item.index];
         if (!row) return null;
         const sticky = activeStickyRef.current === item.index;
+        const reflowing =
+          groupReflow !== null &&
+          !sticky &&
+          row.key !== reflowStickyKey.current;
+        const revealed =
+          groupReflow?.expanding != null &&
+          row.kind === "session" &&
+          row.groupKey === groupReflow.expanding;
         return (
           <div
             key={item.key}
             className={cn(
               "inset-x-0 top-0",
               sticky ? "sticky z-[2]" : "absolute",
+              reflowing &&
+                "transition-transform duration-200 ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none",
+              revealed &&
+                "duration-200 animate-in fade-in-0 slide-in-from-top-1 motion-reduce:animate-none",
             )}
             style={
               sticky ? undefined : { transform: `translateY(${item.start}px)` }
@@ -1070,6 +1128,7 @@ export function SessionManagerPage({
 
   return (
     <div
+      ref={pageRef}
       className="flex min-h-0 flex-1 flex-col"
       onKeyDown={handleRootKeyDown}
       onWheel={(event) => event.stopPropagation()}
@@ -1178,34 +1237,49 @@ export function SessionManagerPage({
 
       <div id="main-content" className="flex min-h-0 flex-1 flex-col">
         {readerSession && (
-          <SessionReader
-            key={readerKey}
-            session={readerSession}
-            appName={appName(readerSession.providerId)}
-            transcript={transcript}
-            listQuery={trimmedQuery}
-            initialFind={readerInitialFind}
-            launchTerminal={terminalName}
-            hasPrev={readerIndex > 0}
-            hasNext={
-              readerIndex >= 0 && readerIndex < orderedSessions.length - 1
+          // 上一个 / 下一个：新会话从按钮那一侧滑进来（按钮是左右箭头，顺序按列表）
+          <EnterTransition
+            transitionKey={readerKey ?? ""}
+            preserveHeader
+            from={(prev, next) =>
+              directionByOrder(orderedSessions.map(getSessionKey), "x")(
+                prev,
+                next,
+              )
             }
-            onPrev={() =>
-              readerIndex > 0 &&
-              setReaderKey(getSessionKey(orderedSessions[readerIndex - 1]))
-            }
-            onNext={() =>
-              readerIndex >= 0 &&
-              readerIndex < orderedSessions.length - 1 &&
-              setReaderKey(getSessionKey(orderedSessions[readerIndex + 1]))
-            }
-            onBack={backToList}
-            onLaunch={() => void handleLaunch(readerSession)}
-            onCopy={handleCopy}
-            onOpenTerminalSettings={onOpenTerminalSettings ?? (() => undefined)}
-            onReload={() => void reloadMessages()}
-            onDelete={() => openDelete([readerSession], "reader")}
-          />
+            className="flex min-h-0 flex-1 flex-col"
+          >
+            <SessionReader
+              key={readerKey}
+              session={readerSession}
+              appName={appName(readerSession.providerId)}
+              transcript={transcript}
+              listQuery={trimmedQuery}
+              initialFind={readerInitialFind}
+              launchTerminal={terminalName}
+              hasPrev={readerIndex > 0}
+              hasNext={
+                readerIndex >= 0 && readerIndex < orderedSessions.length - 1
+              }
+              onPrev={() =>
+                readerIndex > 0 &&
+                setReaderKey(getSessionKey(orderedSessions[readerIndex - 1]))
+              }
+              onNext={() =>
+                readerIndex >= 0 &&
+                readerIndex < orderedSessions.length - 1 &&
+                setReaderKey(getSessionKey(orderedSessions[readerIndex + 1]))
+              }
+              onBack={backToList}
+              onLaunch={() => void handleLaunch(readerSession)}
+              onCopy={handleCopy}
+              onOpenTerminalSettings={
+                onOpenTerminalSettings ?? (() => undefined)
+              }
+              onReload={() => void reloadMessages()}
+              onDelete={() => openDelete([readerSession], "reader")}
+            />
+          </EnterTransition>
         )}
 
         {/* 列表在阅读页打开时只是藏起来，返回后滚动位置还在 */}
@@ -1363,156 +1437,172 @@ export function SessionManagerPage({
             />
           </div>
 
-          {trimmedQuery && indexStatus?.running && (
-            <p
-              role="status"
-              className="m-0 mx-6 mt-2 shrink-0 text-caption text-fg-2"
-            >
-              {t("sessionManager.contentIndexing", {
-                defaultValue:
-                  "正在建立正文索引（{{processed}}/{{total}}），正文结果可能还不全",
-                processed: indexStatus.processed,
-                total: indexStatus.total,
-              })}
-            </p>
-          )}
+          {/* 换应用、换分组方式时列表内容跟着进来；分组方式跟着分段控件的滑块左右走。打字搜索不播，免得每敲一个字都晃 */}
+          <EnterTransition
+            transitionKey={`${groupMode}|${appFilter}`}
+            from={(prev, next) => {
+              const [prevMode] = (prev ?? "").split("|");
+              const [nextMode] = next.split("|");
+              return prevMode !== nextMode
+                ? directionByOrder(GROUP_MODES, "x")(
+                    prevMode as GroupMode,
+                    nextMode as GroupMode,
+                  )
+                : "below";
+            }}
+            className="flex min-h-0 flex-1 flex-col"
+          >
+            {trimmedQuery && indexStatus?.running && (
+              <p
+                role="status"
+                className="m-0 mx-6 mt-2 shrink-0 text-caption text-fg-2"
+              >
+                {t("sessionManager.contentIndexing", {
+                  defaultValue:
+                    "正在建立正文索引（{{processed}}/{{total}}），正文结果可能还不全",
+                  processed: indexStatus.processed,
+                  total: indexStatus.total,
+                })}
+              </p>
+            )}
 
-          {fromApp === "claude-desktop" && appFilter === "claude" && (
-            <p className="m-0 mx-6 mt-2 shrink-0 text-caption text-fg-2">
-              {t("sessionManager.desktopNote", {
-                defaultValue:
-                  "Claude Desktop 没有单独的会话记录，这里显示 Claude Code 的会话。",
-              })}
-            </p>
-          )}
+            {fromApp === "claude-desktop" && appFilter === "claude" && (
+              <p className="m-0 mx-6 mt-2 shrink-0 text-caption text-fg-2">
+                {t("sessionManager.desktopNote", {
+                  defaultValue:
+                    "Claude Desktop 没有单独的会话记录，这里显示 Claude Code 的会话。",
+                })}
+              </p>
+            )}
 
-          {appFilter === "dsh" && (
-            <p className="m-0 mx-6 mt-2 shrink-0 text-caption text-fg-2">
-              {t("sessionManager.dshMergedNote", {
-                defaultValue:
-                  "DeepSeek Harness 的 Web 和 Desktop 共用同一份会话记录，这里合并显示。",
-              })}
-            </p>
-          )}
+            {appFilter === "dsh" && (
+              <p className="m-0 mx-6 mt-2 shrink-0 text-caption text-fg-2">
+                {t("sessionManager.dshMergedNote", {
+                  defaultValue:
+                    "DeepSeek Harness 的 Web 和 Desktop 共用同一份会话记录，这里合并显示。",
+                })}
+              </p>
+            )}
 
-          {appFilter === "pi" && piStatus === "requires_project_context" && (
-            <div role="status" className="mx-6 mt-3 shrink-0">
-              <Notice
-                tone="warning"
-                title={
-                  <>
-                    {t("sessionManager.piRelativeSessionDir")}{" "}
-                    <code className="font-mono text-caption">
-                      {piSessionDiscovery.data?.status ===
-                      "requires_project_context"
-                        ? piSessionDiscovery.data.configuredPath
-                        : ""}
-                    </code>
-                  </>
-                }
-              />
-            </div>
-          )}
-          {appFilter === "pi" &&
-            (piStatus === "unavailable" || piSessionDiscovery.isError) && (
-              <div role="alert" className="mx-6 mt-3 shrink-0">
+            {appFilter === "pi" && piStatus === "requires_project_context" && (
+              <div role="status" className="mx-6 mt-3 shrink-0">
                 <Notice
-                  tone="danger"
-                  title={t("sessionManager.piDiscoveryUnavailable", {
-                    error:
-                      piSessionDiscovery.data?.status === "unavailable"
-                        ? piSessionDiscovery.data.reason
-                        : extractErrorMessage(piSessionDiscovery.error),
-                  })}
+                  tone="warning"
+                  title={
+                    <>
+                      {t("sessionManager.piRelativeSessionDir")}{" "}
+                      <code className="font-mono text-caption">
+                        {piSessionDiscovery.data?.status ===
+                        "requires_project_context"
+                          ? piSessionDiscovery.data.configuredPath
+                          : ""}
+                      </code>
+                    </>
+                  }
                 />
               </div>
             )}
-
-          {selectionMode && (
-            <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap px-6 pt-2 text-caption text-fg-2">
-              <span className="tabular-nums">
-                {trimmedQuery
-                  ? t("sessionManager.matchCount", {
-                      defaultValue: "匹配 {{count}} 个会话",
-                      count: matches.length,
-                    })
-                  : t("sessionManager.totalCount", {
-                      defaultValue: "共 {{count}} 个会话",
-                      count: matches.length,
+            {appFilter === "pi" &&
+              (piStatus === "unavailable" || piSessionDiscovery.isError) && (
+                <div role="alert" className="mx-6 mt-3 shrink-0">
+                  <Notice
+                    tone="danger"
+                    title={t("sessionManager.piDiscoveryUnavailable", {
+                      error:
+                        piSessionDiscovery.data?.status === "unavailable"
+                          ? piSessionDiscovery.data.reason
+                          : extractErrorMessage(piSessionDiscovery.error),
                     })}
-              </span>
-              <span aria-hidden="true">·</span>
-              <button
-                type="button"
-                className={linkButton}
-                onClick={() =>
-                  setSelectedKeys((current) => {
-                    const next = new Set(current);
-                    matches
-                      .filter(canDeleteSession)
-                      .forEach((session) => next.add(getSessionKey(session)));
-                    return next;
-                  })
-                }
-              >
-                {t("sessionManager.selectAllMatches", {
-                  defaultValue: "全选匹配结果",
-                })}
-              </button>
-              <span aria-hidden="true">·</span>
-              <button
-                type="button"
-                className={linkButton}
-                onClick={() => setSelectedKeys(new Set())}
-              >
-                {t("sessionManager.clearSelectionShort", {
-                  defaultValue: "清空",
-                })}
-              </button>
-              <span aria-hidden="true">·</span>
-              <button
-                type="button"
-                className={linkButton}
-                onClick={exitSelection}
-              >
-                {t("sessionManager.exitSelection", {
-                  defaultValue: "退出选择",
-                })}
-              </button>
-            </div>
-          )}
-
-          {isLoading ? (
-            <div className="flex flex-1 items-center justify-center text-body text-fg-2">
-              {t("sessionManager.loadingSessions", {
-                defaultValue: "加载会话中...",
-              })}
-            </div>
-          ) : matches.length === 0 ? (
-            renderEmpty()
-          ) : (
-            <>
-              <div
-                role="region"
-                aria-label={t("sessionManager.sessionList", {
-                  defaultValue: "会话列表",
-                })}
-                ref={listScrollRef}
-                className="mx-6 mt-3 min-h-0 shrink overflow-y-auto scroll-stable overscroll-contain rounded-panel border border-border bg-surface"
-                style={{ scrollPaddingTop: groupMode === "project" ? 44 : 8 }}
-              >
-                {renderList()}
-              </div>
-              {appFilter === "hermes" && (
-                <p className="m-0 mx-6 mt-2 shrink-0 text-caption text-fg-3">
-                  {t("sessionManager.hermesLimit", {
-                    defaultValue: "Hermes 只显示最近 500 个会话",
-                  })}
-                </p>
+                  />
+                </div>
               )}
-              <div className="flex-1" />
-            </>
-          )}
+
+            {selectionMode && (
+              <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap px-6 pt-2 text-caption text-fg-2">
+                <span className="tabular-nums">
+                  {trimmedQuery
+                    ? t("sessionManager.matchCount", {
+                        defaultValue: "匹配 {{count}} 个会话",
+                        count: matches.length,
+                      })
+                    : t("sessionManager.totalCount", {
+                        defaultValue: "共 {{count}} 个会话",
+                        count: matches.length,
+                      })}
+                </span>
+                <span aria-hidden="true">·</span>
+                <button
+                  type="button"
+                  className={linkButton}
+                  onClick={() =>
+                    setSelectedKeys((current) => {
+                      const next = new Set(current);
+                      matches
+                        .filter(canDeleteSession)
+                        .forEach((session) => next.add(getSessionKey(session)));
+                      return next;
+                    })
+                  }
+                >
+                  {t("sessionManager.selectAllMatches", {
+                    defaultValue: "全选匹配结果",
+                  })}
+                </button>
+                <span aria-hidden="true">·</span>
+                <button
+                  type="button"
+                  className={linkButton}
+                  onClick={() => setSelectedKeys(new Set())}
+                >
+                  {t("sessionManager.clearSelectionShort", {
+                    defaultValue: "清空",
+                  })}
+                </button>
+                <span aria-hidden="true">·</span>
+                <button
+                  type="button"
+                  className={linkButton}
+                  onClick={exitSelection}
+                >
+                  {t("sessionManager.exitSelection", {
+                    defaultValue: "退出选择",
+                  })}
+                </button>
+              </div>
+            )}
+
+            {isLoading ? (
+              <div className="flex flex-1 items-center justify-center text-body text-fg-2">
+                {t("sessionManager.loadingSessions", {
+                  defaultValue: "加载会话中...",
+                })}
+              </div>
+            ) : matches.length === 0 ? (
+              renderEmpty()
+            ) : (
+              <>
+                <div
+                  role="region"
+                  aria-label={t("sessionManager.sessionList", {
+                    defaultValue: "会话列表",
+                  })}
+                  ref={listScrollRef}
+                  className="mx-6 mt-3 min-h-0 shrink overflow-y-auto scroll-stable overscroll-contain rounded-panel border border-border bg-surface"
+                  style={{ scrollPaddingTop: groupMode === "project" ? 44 : 8 }}
+                >
+                  {renderList()}
+                </div>
+                {appFilter === "hermes" && (
+                  <p className="m-0 mx-6 mt-2 shrink-0 text-caption text-fg-3">
+                    {t("sessionManager.hermesLimit", {
+                      defaultValue: "Hermes 只显示最近 500 个会话",
+                    })}
+                  </p>
+                )}
+                <div className="flex-1" />
+              </>
+            )}
+          </EnterTransition>
           <div className="h-4 shrink-0" />
 
           {selectionMode && (

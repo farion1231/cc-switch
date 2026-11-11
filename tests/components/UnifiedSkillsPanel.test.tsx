@@ -700,9 +700,12 @@ describe("UnifiedSkillsPanel", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "skillsPage.banner.ignore" }),
     );
-    expect(
-      screen.queryByText("skillsPage.banner.unmanaged"),
-    ).not.toBeInTheDocument();
+    // 通知条收起有高度动画，播完才从 DOM 里拿掉
+    await waitFor(() =>
+      expect(
+        screen.queryByText("skillsPage.banner.unmanaged"),
+      ).not.toBeInTheDocument(),
+    );
   });
 
   it("highlights a column for its cells but shows the app name only when hovering the header", async () => {

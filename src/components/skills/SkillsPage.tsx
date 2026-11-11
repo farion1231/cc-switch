@@ -16,6 +16,8 @@ import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
 import { Notice } from "@/components/ui/notice";
 import { SegmentedControl } from "@/components/ui/segmented-control";
+import { EnterTransition } from "@/components/common/EnterTransition";
+import { directionByOrder } from "@/hooks/useEnterTransition";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import {
@@ -61,8 +63,9 @@ type InstallRunner = <T extends { id: string }>(
 }>;
 
 const SKILLSSH_PAGE_SIZE = 20;
+const DISCOVER_SOURCES: SkillsPageSource[] = ["repos", "skillssh"];
 const POPOVER_CLASS =
-  "z-[110] rounded-panel border border-border bg-surface p-1 text-fg-1 shadow-v7-md outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2";
+  "z-[110] rounded-panel border border-border bg-surface p-1 text-fg-1 shadow-v7-md outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 origin-[--radix-popover-content-transform-origin] data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2";
 
 /** 仓库的增删和停用（发现段的「仓库」弹层和仓库管理抽屉共用） */
 export function useSkillRepoActions() {
@@ -660,188 +663,208 @@ export function SkillsPage({
             ref={listScrollRef}
             className="min-h-0 overflow-auto scroll-stable"
           >
-            {loadingList ? (
-              <div className="flex items-center justify-center gap-2 py-16 text-body text-fg-2">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                {isSkillsSh
-                  ? t("skills.skillssh.loading")
-                  : t("skills.loading")}
-              </div>
-            ) : visibleRows.length === 0 ? (
-              renderEmpty()
-            ) : (
-              <ul
-                aria-label={t("skillsPage.discover.listLabel")}
-                className="relative m-0 min-w-[520px] list-none p-0"
-                style={{ height: rowVirtualizer.getTotalSize() }}
-              >
-                {rowVirtualizer.getVirtualItems().map((item) => {
-                  const index = item.index;
-                  const row = visibleRows[index];
-                  const status = statusOf(row);
-                  const isInstalling = installing.has(row.key);
-                  const failure = failed[row.key];
-                  const line2Id = `sk-d-${index}-line2`;
-                  const repo = `${row.repoOwner}/${row.repoName}`;
-                  const docsUrl = discoverDocsUrl(row);
-                  return (
-                    <li
-                      key={item.key}
-                      aria-setsize={visibleRows.length}
-                      aria-posinset={index + 1}
-                      className={cn(
-                        "absolute inset-x-0 top-0 flex h-14 items-center gap-3 pe-3 ps-4",
-                        index > 0 && "border-t border-border",
-                      )}
-                      style={{ transform: `translateY(${item.start}px)` }}
-                    >
-                      <div className="flex min-w-0 flex-1 flex-col">
-                        <div className="flex min-w-0 items-center gap-1.5">
-                          <span className="min-w-0 truncate text-body font-medium">
-                            {row.name}
-                          </span>
-                          {!isSkillsSh && (
-                            <span
-                              title={repo}
-                              className="min-w-0 shrink truncate font-mono text-caption text-fg-3"
-                            >
-                              {repo}
+            {/* 换来源（仓库 / skills.sh）时列表跟着分段滑块左右进来；勾「只看未安装」时从下面浮上来 */}
+            <EnterTransition
+              transitionKey={`${effectiveSource}|${statusFilter}`}
+              from={(prev, next) => {
+                const [prevSource] = (prev ?? "").split("|");
+                const [nextSource] = next.split("|");
+                return prevSource !== nextSource
+                  ? directionByOrder(DISCOVER_SOURCES, "x")(
+                      prevSource as SkillsPageSource,
+                      nextSource as SkillsPageSource,
+                    )
+                  : "below";
+              }}
+            >
+              {loadingList ? (
+                <div className="flex items-center justify-center gap-2 py-16 text-body text-fg-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  {isSkillsSh
+                    ? t("skills.skillssh.loading")
+                    : t("skills.loading")}
+                </div>
+              ) : visibleRows.length === 0 ? (
+                renderEmpty()
+              ) : (
+                <ul
+                  aria-label={t("skillsPage.discover.listLabel")}
+                  className="relative m-0 min-w-[520px] list-none p-0"
+                  style={{ height: rowVirtualizer.getTotalSize() }}
+                >
+                  {rowVirtualizer.getVirtualItems().map((item) => {
+                    const index = item.index;
+                    const row = visibleRows[index];
+                    const status = statusOf(row);
+                    const isInstalling = installing.has(row.key);
+                    const failure = failed[row.key];
+                    const line2Id = `sk-d-${index}-line2`;
+                    const repo = `${row.repoOwner}/${row.repoName}`;
+                    const docsUrl = discoverDocsUrl(row);
+                    return (
+                      <li
+                        key={item.key}
+                        aria-setsize={visibleRows.length}
+                        aria-posinset={index + 1}
+                        className={cn(
+                          "absolute inset-x-0 top-0 flex h-14 items-center gap-3 pe-3 ps-4",
+                          index > 0 && "border-t border-border",
+                        )}
+                        style={{ transform: `translateY(${item.start}px)` }}
+                      >
+                        <div className="flex min-w-0 flex-1 flex-col">
+                          <div className="flex min-w-0 items-center gap-1.5">
+                            <span className="min-w-0 truncate text-body font-medium">
+                              {row.name}
                             </span>
-                          )}
-                          {typeof row.installs === "number" && (
-                            <span
-                              className="inline-flex shrink-0 items-center gap-0.5 text-caption text-fg-2"
-                              title={t("skills.skillssh.installs", {
-                                count: row.installs,
-                              })}
+                            {!isSkillsSh && (
+                              <span
+                                title={repo}
+                                className="min-w-0 shrink truncate font-mono text-caption text-fg-3"
+                              >
+                                {repo}
+                              </span>
+                            )}
+                            {typeof row.installs === "number" && (
+                              <span
+                                className="inline-flex shrink-0 items-center gap-0.5 text-caption text-fg-2"
+                                title={t("skills.skillssh.installs", {
+                                  count: row.installs,
+                                })}
+                              >
+                                <Download
+                                  aria-hidden="true"
+                                  className="h-3 w-3"
+                                  strokeWidth={2}
+                                />
+                                {formatInstalls(row.installs, i18n.language)}
+                              </span>
+                            )}
+                          </div>
+                          <span
+                            id={line2Id}
+                            className={cn(
+                              "truncate text-caption",
+                              failure ? "text-danger-text" : "text-fg-2",
+                            )}
+                            title={failure ?? row.description}
+                          >
+                            {failure
+                              ? t("skillsPage.discover.installFailed", {
+                                  reason: failure,
+                                })
+                              : isSkillsSh
+                                ? `skills.sh · ${repo}`
+                                : row.description}
+                          </span>
+                        </div>
+                        <div className="flex max-w-[180px] shrink-0 justify-end">
+                          {status.kind === "installed" ? (
+                            <button
+                              type="button"
+                              onClick={() => onShowInstalled(status.skill.id)}
+                              aria-label={t(
+                                "skillsPage.discover.installedAria",
+                                {
+                                  name: row.name,
+                                  count: enabledAppCount(status.skill),
+                                },
+                              )}
+                              className="inline-flex h-7 items-center gap-0.5 rounded-control px-2 text-body text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1"
                             >
-                              <Download
-                                aria-hidden="true"
-                                className="h-3 w-3"
+                              {t("skillsPage.discover.installed")}
+                              <ChevronRight
+                                className="h-3.5 w-3.5"
                                 strokeWidth={2}
                               />
-                              {formatInstalls(row.installs, i18n.language)}
-                            </span>
+                            </button>
+                          ) : status.kind === "conflict" ? (
+                            <button
+                              type="button"
+                              onClick={() => onShowInstalled(status.skill.id)}
+                              className="inline-flex min-w-0 items-center gap-0.5 rounded-control px-1 text-right text-caption text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1"
+                            >
+                              <span className="min-w-0 truncate">
+                                {t("skillsPage.discover.dirTaken", {
+                                  name: status.skill.name,
+                                  source: sourceLabel(status.skill),
+                                })}
+                              </span>
+                              <ChevronRight
+                                className="h-3.5 w-3.5 shrink-0"
+                                strokeWidth={2}
+                              />
+                            </button>
+                          ) : isInstalling ? (
+                            <Button
+                              type="button"
+                              variant="neutral"
+                              size="compact"
+                              aria-disabled="true"
+                              aria-label={t(
+                                "skillsPage.discover.installingAria",
+                                {
+                                  name: row.name,
+                                },
+                              )}
+                              className="cursor-not-allowed ps-2.5"
+                            >
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              {t("skillsPage.discover.installing")}
+                            </Button>
+                          ) : (
+                            <Button
+                              type="button"
+                              variant="neutral"
+                              size="compact"
+                              disabled={!row.repoOwner}
+                              aria-label={
+                                failure
+                                  ? t("skillsPage.discover.retryAria", {
+                                      name: row.name,
+                                    })
+                                  : t("skillsPage.discover.installAria", {
+                                      name: row.name,
+                                    })
+                              }
+                              aria-describedby={failure ? line2Id : undefined}
+                              onClick={() => void handleInstall(row)}
+                            >
+                              {failure
+                                ? t("common.retry")
+                                : t("skills.install")}
+                            </Button>
                           )}
                         </div>
-                        <span
-                          id={line2Id}
-                          className={cn(
-                            "truncate text-caption",
-                            failure ? "text-danger-text" : "text-fg-2",
-                          )}
-                          title={failure ?? row.description}
-                        >
-                          {failure
-                            ? t("skillsPage.discover.installFailed", {
-                                reason: failure,
-                              })
-                            : isSkillsSh
-                              ? `skills.sh · ${repo}`
-                              : row.description}
-                        </span>
-                      </div>
-                      <div className="flex max-w-[180px] shrink-0 justify-end">
-                        {status.kind === "installed" ? (
-                          <button
-                            type="button"
-                            onClick={() => onShowInstalled(status.skill.id)}
-                            aria-label={t("skillsPage.discover.installedAria", {
-                              name: row.name,
-                              count: enabledAppCount(status.skill),
-                            })}
-                            className="inline-flex h-7 items-center gap-0.5 rounded-control px-2 text-body text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1"
-                          >
-                            {t("skillsPage.discover.installed")}
-                            <ChevronRight
-                              className="h-3.5 w-3.5"
-                              strokeWidth={2}
-                            />
-                          </button>
-                        ) : status.kind === "conflict" ? (
-                          <button
-                            type="button"
-                            onClick={() => onShowInstalled(status.skill.id)}
-                            className="inline-flex min-w-0 items-center gap-0.5 rounded-control px-1 text-right text-caption text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1"
-                          >
-                            <span className="min-w-0 truncate">
-                              {t("skillsPage.discover.dirTaken", {
-                                name: status.skill.name,
-                                source: sourceLabel(status.skill),
-                              })}
-                            </span>
-                            <ChevronRight
-                              className="h-3.5 w-3.5 shrink-0"
-                              strokeWidth={2}
-                            />
-                          </button>
-                        ) : isInstalling ? (
-                          <Button
-                            type="button"
-                            variant="neutral"
-                            size="compact"
-                            aria-disabled="true"
-                            aria-label={t(
-                              "skillsPage.discover.installingAria",
-                              {
-                                name: row.name,
-                              },
-                            )}
-                            className="cursor-not-allowed ps-2.5"
-                          >
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            {t("skillsPage.discover.installing")}
-                          </Button>
+                        {docsUrl ? (
+                          <HoverTip content={t("mcpPage.openDocs")}>
+                            <Button
+                              type="button"
+                              variant="quiet"
+                              size="icon-compact"
+                              className="shrink-0"
+                              aria-label={t("mcpPage.openDocs")}
+                              onClick={() =>
+                                void settingsApi
+                                  .openExternal(docsUrl)
+                                  .catch(() => undefined)
+                              }
+                            >
+                              <ExternalLink
+                                className="h-[15px] w-[15px]"
+                                strokeWidth={1.5}
+                              />
+                            </Button>
+                          </HoverTip>
                         ) : (
-                          <Button
-                            type="button"
-                            variant="neutral"
-                            size="compact"
-                            disabled={!row.repoOwner}
-                            aria-label={
-                              failure
-                                ? t("skillsPage.discover.retryAria", {
-                                    name: row.name,
-                                  })
-                                : t("skillsPage.discover.installAria", {
-                                    name: row.name,
-                                  })
-                            }
-                            aria-describedby={failure ? line2Id : undefined}
-                            onClick={() => void handleInstall(row)}
-                          >
-                            {failure ? t("common.retry") : t("skills.install")}
-                          </Button>
+                          <span aria-hidden="true" className="w-7 shrink-0" />
                         )}
-                      </div>
-                      {docsUrl ? (
-                        <HoverTip content={t("mcpPage.openDocs")}>
-                          <Button
-                            type="button"
-                            variant="quiet"
-                            size="icon-compact"
-                            className="shrink-0"
-                            aria-label={t("mcpPage.openDocs")}
-                            onClick={() =>
-                              void settingsApi
-                                .openExternal(docsUrl)
-                                .catch(() => undefined)
-                            }
-                          >
-                            <ExternalLink
-                              className="h-[15px] w-[15px]"
-                              strokeWidth={1.5}
-                            />
-                          </Button>
-                        </HoverTip>
-                      ) : (
-                        <span aria-hidden="true" className="w-7 shrink-0" />
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </EnterTransition>
           </div>
         </div>
         {isSkillsSh && accumulated.length > 0 && (

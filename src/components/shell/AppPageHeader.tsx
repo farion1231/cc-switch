@@ -38,6 +38,8 @@ interface AppPageHeaderProps {
 
 /**
  * 内容区页头：高 52，整条可拖动窗口，左边是图标 + 标题，右边是操作。
+ * 换页时这条栏本身（底边线、窗口按钮）不动，只有里面的标题和操作跟着内容一起换（见 useEnterTransition 的 preserveHeader），
+ * 所以打上 data-page-header；窗口按钮那一组打上 data-window-controls，换页时也不动。
  */
 export function AppPageHeader({
   leading,
@@ -57,6 +59,7 @@ export function AppPageHeader({
     : DRAG_REGION_ATTR;
   return (
     <header
+      data-page-header=""
       className={cn(
         "flex h-[52px] shrink-0 items-center gap-5 border-b border-border pe-4 ps-6",
         className,
@@ -116,7 +119,11 @@ export function AppPageHeader({
         </div>
       )}
       {windowControls && (
-        <div className="flex shrink-0 items-center gap-1" style={NO_DRAG}>
+        <div
+          data-window-controls=""
+          className="flex shrink-0 items-center gap-1"
+          style={NO_DRAG}
+        >
           {windowControls}
         </div>
       )}

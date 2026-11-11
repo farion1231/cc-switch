@@ -3,6 +3,7 @@ import { ChevronRight, Monitor, Moon, Sun } from "lucide-react";
 import type { SettingsFormState } from "@/hooks/useSettings";
 import { useTheme } from "@/components/theme-provider";
 import { SegmentedControl } from "@/components/ui/segmented-control";
+import { Reveal } from "@/components/ui/reveal";
 import {
   Select,
   SelectContent,
@@ -249,7 +250,7 @@ export function GeneralSection({
               void onAutoSave({ launchOnStartup: value })
             }
           />
-          {settings.launchOnStartup && (
+          <Reveal show={!!settings.launchOnStartup}>
             <SettingsSwitchRow
               label={t("settings.silentStartup")}
               help={{
@@ -261,7 +262,7 @@ export function GeneralSection({
                 void onAutoSave({ silentStartup: value })
               }
             />
-          )}
+          </Reveal>
           <SettingsSwitchRow
             label={t("settings.minimizeToTray")}
             help={{

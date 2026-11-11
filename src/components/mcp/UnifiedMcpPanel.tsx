@@ -60,6 +60,7 @@ import {
 import { DisclosureButton, V7ConfirmDialog, V7Dialog } from "./formBits";
 import { summaryOf } from "./mcpDraft";
 import { useVisibleAppIds } from "./useVisibleAppIds";
+import { useEnterTransition } from "@/hooks/useEnterTransition";
 
 function getMcpSearchText(id: string, server: McpServer): string {
   const spec = server.server ?? {};
@@ -162,6 +163,12 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   );
   const [writePending, setWritePending] = useState(false);
   const writeLockRef = useRef(false);
+  // 编辑页打开时它自己从右边推进来；关掉后这页从左边滑回（和会话阅读页返回列表一样）
+  const pageRef = useEnterTransition<HTMLDivElement, boolean>(Boolean(drawer), {
+    skipInitial: true,
+    from: (_, editing) => (editing ? "none" : "start"),
+    preserveHeader: true,
+  });
 
   const {
     data: serversMap,
@@ -608,7 +615,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   const showList = !isLoading && !isError && hasServers;
 
   return (
-    <>
+    <div ref={pageRef} className="flex min-h-0 flex-1 flex-col">
       <AppPageHeader
         icon={<Server className="h-5 w-5" strokeWidth={1.5} />}
         title="MCP"
@@ -718,7 +725,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
           </div>
         )}
 
-        <NoticeSlot className={cn(failedApps.size > 0 && "px-6 pb-3")}>
+        <NoticeSlot className="px-6">
           {Array.from(failedApps.entries()).map(([app, error]) => (
             <Notice
               key={app}
@@ -1226,7 +1233,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
           </>
         )}
       </V7Dialog>
-    </>
+    </div>
   );
 };
 

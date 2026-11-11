@@ -127,6 +127,8 @@ export function AppConfigSection({
       <Button
         variant="solid"
         size="compact"
+        // 改了才出现的保存键：从自己的位置长出来，不是一下冒出来
+        className="motion-safe:duration-150 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:zoom-in-95"
         disabled={isSaving}
         onClick={() => void onSaveDirectories()}
       >

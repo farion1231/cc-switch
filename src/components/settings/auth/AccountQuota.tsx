@@ -5,8 +5,9 @@ import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { HoverTip } from "@/components/ui/hover-tip";
 import {
+  QuotaMeterFill,
+  QuotaMeterLoading,
   ResetSlot,
-  TONE_FILL,
   TONE_TEXT,
   TonedText,
   useNow,
@@ -136,9 +137,15 @@ export function AccountQuotaColumn({
           </span>
         )}
         {state.kind === "loading" && (
-          <span className="text-caption text-fg-3">
-            {t("authCenter.quota.loading", { defaultValue: "正在查询额度…" })}
-          </span>
+          // 和额度行同样的格子：文字在档名那一格，条的位置是扫光的轨道，查到后就在原地换成额度条
+          <div className={ROW_CLASS}>
+            <span className="w-[112px] shrink-0 truncate whitespace-nowrap text-fg-3">
+              {t("authCenter.quota.loading", { defaultValue: "正在查询额度…" })}
+            </span>
+            <QuotaMeterLoading className="min-w-0 flex-1" />
+            <span className="w-16 shrink-0" />
+            <ResetSlot countdown={null} className="" />
+          </div>
         )}
       </div>
       <QuotaRefreshCell
@@ -249,13 +256,7 @@ function QuotaRowCells({
           aria-valuenow={Math.round(width)}
           className="relative h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-chart-grid"
         >
-          <span
-            className={cn(
-              "absolute inset-y-0 start-0 rounded-full",
-              TONE_FILL[line.tone],
-            )}
-            style={{ width: `${width}%` }}
-          />
+          <QuotaMeterFill percent={width} tone={line.tone} />
         </span>
       )}
       {/* 旁边已有额度条，正常时数值不上色 */}

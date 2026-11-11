@@ -8,6 +8,7 @@ import {
   WindowControlsContext,
 } from "@/components/shell/AppPageHeader";
 import { Button } from "@/components/ui/button";
+import { EnterTransition } from "@/components/common/EnterTransition";
 import { DRAG_REGION_ATTR } from "@/lib/platform";
 import { useUnsavedChangesTracker } from "@/lib/unsavedChanges";
 import { cn } from "@/lib/utils";
@@ -134,28 +135,39 @@ const SheetPageContent = React.forwardRef<
       onInteractOutside={(event) => event.preventDefault()}
       {...props}
     >
-      <AppPageHeader
-        variant="app"
-        truncateTitle
-        title={
-          <DialogPrimitive.Title asChild>
-            <span {...DRAG_REGION_ATTR}>{title}</span>
-          </DialogPrimitive.Title>
-        }
-        leading={
-          <DialogPrimitive.Close asChild>
-            <Button
-              variant="quiet"
-              size="icon-compact"
-              className="h-8 w-8"
-              aria-label={closeLabel}
-            >
-              <ChevronLeft className="h-4 w-4" strokeWidth={1.5} />
-            </Button>
-          </DialogPrimitive.Close>
-        }
-      />
-      <UnsavedChangesScope>{children}</UnsavedChangesScope>
+      {/* 打开像推进一层：底色一下盖住（不让下面的页面透出来，也不做整页透明度过渡，#8159），
+          页头那条栏不动，栏里的标题和下面的内容从右边滑进来，和会话阅读页同一个动作。
+          关闭由调用方卸载，返回的页面自己从左边滑回 */}
+      <EnterTransition
+        transitionKey="open"
+        from="end"
+        skipInitial={false}
+        preserveHeader
+        className="flex min-h-0 flex-1 flex-col"
+      >
+        <AppPageHeader
+          variant="app"
+          truncateTitle
+          title={
+            <DialogPrimitive.Title asChild>
+              <span {...DRAG_REGION_ATTR}>{title}</span>
+            </DialogPrimitive.Title>
+          }
+          leading={
+            <DialogPrimitive.Close asChild>
+              <Button
+                variant="quiet"
+                size="icon-compact"
+                className="h-8 w-8"
+                aria-label={closeLabel}
+              >
+                <ChevronLeft className="h-4 w-4" strokeWidth={1.5} />
+              </Button>
+            </DialogPrimitive.Close>
+          }
+        />
+        <UnsavedChangesScope>{children}</UnsavedChangesScope>
+      </EnterTransition>
     </DialogPrimitive.Content>
   </DialogPrimitive.Portal>
 ));
