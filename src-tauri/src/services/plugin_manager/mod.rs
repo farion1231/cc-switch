@@ -343,8 +343,57 @@ fn parse_json_payload(stdout: &str) -> Option<Value> {
         .ok()
 }
 
+/// 给用户看的报错最多这么多行 / 字符，超出的截掉。
+const MAX_DETAIL_LINES: usize = 10;
+const MAX_DETAIL_CHARS: usize = 800;
+
 /// 失败时给用户看的那句话：去掉 Codex 的 `WARNING:` 提示行和 `Error:` / `✘` 前缀。
+/// CLI 自己崩溃时只留异常和 Node 版本；其余按行数、字符数截断。
 fn failure_detail(out: &CliOutput) -> String {
+    if let Some(summary) = node_crash_summary(&out.stderr) {
+        return summary;
+    }
+    truncate_detail(raw_failure_detail(out))
+}
+
+/// Node 未捕获异常的 stderr 是「出错位置 / 出错的那行源码 / `^` / `XxxError: …` / 调用栈 /
+/// `Node.js vX`」。打包压缩过的 CLI（如 Pi）那行源码能有上百 KB，只留异常那行和 Node 版本。
+fn node_crash_summary(stderr: &str) -> Option<String> {
+    let mut lines = stderr.lines().map(str::trim);
+    let node = lines
+        .clone()
+        .rev()
+        .find(|line| !line.is_empty())
+        .filter(|line| line.starts_with("Node.js v"))?;
+    let error = lines.find(|line| is_js_error_line(line))?;
+    Some(truncate_detail(format!("{error} ({node})")))
+}
+
+/// `TypeError: …`、`Error: …`、`Error [ERR_REQUIRE_ESM]: …` 这样的异常行。
+fn is_js_error_line(line: &str) -> bool {
+    let Some((head, _)) = line.split_once(':') else {
+        return false;
+    };
+    let name = head.split_once(" [").map_or(head, |(name, _)| name);
+    name.len() <= 40 && name.ends_with("Error") && name.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
+fn truncate_detail(text: String) -> String {
+    let mut lines: Vec<&str> = text.lines().collect();
+    let mut cut = lines.len() > MAX_DETAIL_LINES;
+    lines.truncate(MAX_DETAIL_LINES);
+    let mut detail = lines.join("\n");
+    if detail.chars().count() > MAX_DETAIL_CHARS {
+        detail = detail.chars().take(MAX_DETAIL_CHARS).collect();
+        cut = true;
+    }
+    if cut {
+        detail = format!("{}…", detail.trim_end());
+    }
+    detail
+}
+
+fn raw_failure_detail(out: &CliOutput) -> String {
     let pick = |text: &str| -> String {
         text.lines()
             .map(str::trim)
@@ -1488,6 +1537,64 @@ enabled = false
             stderr: "WARNING: proceeding\nError: plugin `nope` was not found\n".into(),
         };
         assert_eq!(failure_detail(&out), "plugin `nope` was not found");
+    }
+
+    fn failed_with_stderr(stderr: String) -> CliOutput {
+        CliOutput {
+            success: false,
+            stdout: String::new(),
+            stderr,
+        }
+    }
+
+    /// Pi 1.5.2 在 Node 22.12 上崩溃时的 stderr 形状：出错那行是整段压缩源码（实测约 118 KB）。
+    #[test]
+    fn failure_detail_summarizes_node_crash() {
+        let minified = "var a=1;".repeat(20_000);
+        let stderr = format!(
+            "file:///D:/npm/node_modules/@earendil-works/pi-coding-agent/dist/bundle/chunks/chunk.js:47\n\
+             {minified}\n\
+             \u{20}   ^\n\n\
+             TypeError: Cannot read properties of undefined (reading 'bind')\n\
+             \u{20}   at file:///D:/npm/chunk.js:277:6032\n\
+             \u{20}   at ModuleJobSync.runSync (node:internal/modules/esm/module_job:395:35)\n\n\
+             Node.js v22.12.0\n"
+        );
+        assert_eq!(
+            failure_detail(&failed_with_stderr(stderr)),
+            "TypeError: Cannot read properties of undefined (reading 'bind') (Node.js v22.12.0)"
+        );
+
+        let stderr = "node:internal/modules/cjs/loader:1228\n  throw err;\n  ^\n\n\
+                      Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'x'\n    at foo\n\nNode.js v24.20.0\n";
+        assert_eq!(
+            failure_detail(&failed_with_stderr(stderr.into())),
+            "Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'x' (Node.js v24.20.0)"
+        );
+    }
+
+    #[test]
+    fn failure_detail_truncates_long_output() {
+        // 不是 Node 崩溃：一行超长
+        let detail = failure_detail(&failed_with_stderr("x".repeat(5_000)));
+        assert_eq!(detail.chars().count(), MAX_DETAIL_CHARS + 1);
+        assert!(detail.ends_with('…'));
+
+        // 行数太多
+        let many: String = (0..50).map(|i| format!("line {i}\n")).collect();
+        let detail = failure_detail(&failed_with_stderr(many));
+        assert_eq!(detail.lines().count(), MAX_DETAIL_LINES);
+        assert!(detail.starts_with("line 0\n") && detail.ends_with("line 9…"));
+
+        // 短的原样保留（前端靠错误码匹配）
+        assert_eq!(
+            failure_detail(&failed_with_stderr("PLUGIN_AUTH_REQUIRED\n".into())),
+            "PLUGIN_AUTH_REQUIRED"
+        );
+        // 提到 Node 版本但不是崩溃的提示也原样保留
+        let mcode =
+            "Minimax Code supports Node.js 22.19+, 24, 25, or 26; current version is 22.12.0.";
+        assert_eq!(failure_detail(&failed_with_stderr(mcode.into())), mcode);
     }
 
     #[test]
