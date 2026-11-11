@@ -2014,6 +2014,7 @@
     "form": {
       "officialTitle": "Verwendet die GitHub-Anmeldung der Copilot CLI",
       "officialHint": "„Terminal öffnen“ startet copilot mit dem Modell dieser Karte. Verknüpfen Sie ein Konto aus der Kontoverwaltung, um es mit diesem Konto zu starten.",
+      "followCliLogin": "Eigener Anmeldung von Copilot CLI folgen",
       "byokTitle": "Zur providers.json von Copilot hinzugefügt",
       "byokHint": "„Hinzufügen“ schreibt diesen Anbieter und seine Modelle in die eigene providers.json von Copilot (nur für Ihr Benutzerkonto lesbar). Jeder von Ihnen gestartete copilot kann dann in /model „Karten-ID/Modell“ auswählen. „Entfernen“ löscht nur die Einträge dieses Anbieters und lässt den Rest der Datei unverändert.",
       "apiFormat": "API-Format",

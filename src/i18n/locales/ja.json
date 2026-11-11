@@ -2014,6 +2014,7 @@
     "form": {
       "officialTitle": "Copilot CLI 自身の GitHub ログインを使用",
       "officialHint": "「ターミナルを開く」はこのカードのモデルで copilot を起動します。認証センターのアカウントを紐付けると、そのアカウントで起動します。",
+      "followCliLogin": "Copilot CLI 自身のログインに従う",
       "byokTitle": "追加すると Copilot の providers.json に書き込まれます",
       "byokHint": "「追加」はこのプロバイダーとモデルを Copilot 自身の providers.json（このマシンの現在のユーザーのみ読み取り可）に書き込みます。以後どの方法で起動した copilot でも /model で「カード ID/モデル」を選べます。「削除」はこのプロバイダーのエントリだけを消し、ファイルのほかの内容はそのまま残します。",
       "apiFormat": "API 形式",

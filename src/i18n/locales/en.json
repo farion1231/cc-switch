@@ -2014,6 +2014,7 @@
     "form": {
       "officialTitle": "Uses Copilot CLI's GitHub sign-in",
       "officialHint": "Open Terminal starts copilot with this card's model. Bind an Auth Center account to start it with that account.",
+      "followCliLogin": "Follow Copilot CLI's own sign-in",
       "byokTitle": "Added to Copilot's providers.json",
       "byokHint": "Add writes this provider and its models to Copilot's own providers.json (readable only by your user account). Any copilot you start can then pick \"card ID/model\" in /model. Remove deletes only this provider's entries and leaves the rest of the file as is.",
       "apiFormat": "API format",

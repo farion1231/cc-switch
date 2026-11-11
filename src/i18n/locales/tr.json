@@ -1948,6 +1948,7 @@
     "form": {
       "officialTitle": "Copilot CLI'nin GitHub oturumunu kullanır",
       "officialHint": "\"Terminal aç\", copilot'u bu kartın modeliyle başlatır; Yetki Merkezi'nden bir hesap bağlarsanız o hesapla başlatır.",
+      "followCliLogin": "Copilot CLI'nin kendi oturumunu kullan",
       "byokTitle": "Eklendiğinde Copilot'un providers.json dosyasına yazılır",
       "byokHint": "Ekle, bu sağlayıcıyı ve modellerini Copilot'un kendi providers.json dosyasına yazar (yalnızca kullanıcı hesabınız okuyabilir). Ardından nasıl başlatılırsa başlatılsın copilot, /model içinde \"kart kimliği/model\" seçebilir. Kaldır yalnızca bu sağlayıcının girdilerini siler, dosyanın geri kalanına dokunmaz.",
       "apiFormat": "API biçimi",

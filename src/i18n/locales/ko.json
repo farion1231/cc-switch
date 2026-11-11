@@ -2014,6 +2014,7 @@
     "form": {
       "officialTitle": "Copilot CLI 자체의 GitHub 로그인 사용",
       "officialHint": "‘터미널 열기’는 이 카드의 모델로 copilot을 시작합니다. 인증 센터 계정을 연결하면 해당 계정으로 시작합니다.",
+      "followCliLogin": "Copilot CLI 자체 로그인 따르기",
       "byokTitle": "추가하면 Copilot의 providers.json에 기록됩니다",
       "byokHint": "「추가」는 이 공급자와 모델을 Copilot 자체 providers.json(이 컴퓨터의 현재 사용자만 읽을 수 있음)에 기록합니다. 이후 어떤 방식으로 실행한 copilot에서도 /model에서 「카드 ID/모델」을 선택할 수 있습니다. 「제거」는 이 공급자의 항목만 삭제하고 파일의 나머지 내용은 그대로 둡니다.",
       "apiFormat": "API 형식",

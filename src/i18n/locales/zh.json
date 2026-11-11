@@ -2014,6 +2014,7 @@
     "form": {
       "officialTitle": "使用 Copilot CLI 自己的 GitHub 登录",
       "officialHint": "「打开终端」以这张卡的模型启动 copilot；绑定授权中心的账号后改用该账号启动。",
+      "followCliLogin": "跟随 Copilot CLI 自己的登录",
       "byokTitle": "添加后写进 Copilot 的 providers.json",
       "byokHint": "「添加」把这一家和它的模型写进 Copilot 自己的 providers.json（仅本机当前用户可读），之后任何方式启动的 copilot 都能在 /model 里选到「卡片标识/模型」；「移除」只删这一家的条目，文件里的其他内容原样保留。",
       "apiFormat": "接口格式",
