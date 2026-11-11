@@ -254,7 +254,37 @@ fn import_records_with_cursor(
                 }
                 Err(error) => {
                     native_ok = false;
-                    log::debug!("Antigravity {session}: cannot read native models: {error}");
+                    log::warn!("Antigravity {session}: cannot read native models: {error}");
+                }
+            }
+        }
+        // Own transcript and own database still have no model. Use the parent's model
+        // from just before this session started (Model Selection, else the parent's
+        // database). Do not guess a tier the files do not name. A failed parent database
+        // read leaves the sync cursor unset so the next sync can try again.
+        if native_ok {
+            let missing: Vec<u64> = ordered
+                .iter()
+                .filter(|row| row["type"] == "PLANNER_RESPONSE" && row["status"] == "DONE")
+                .filter_map(|row| {
+                    let step = row["step_index"].as_u64()?;
+                    (known_model(row).is_none()
+                        && !model_by_step.contains_key(&step)
+                        && !native_model_by_step.contains_key(&step)
+                        && !pruned.contains(&step))
+                    .then_some(step)
+                })
+                .collect();
+            if !missing.is_empty() {
+                let child_start = ordered.iter().filter_map(|row| agy::timestamp(row)).min();
+                let (model, parent_native_ok) = parent_model(transcript, child_start);
+                if !parent_native_ok {
+                    native_ok = false;
+                }
+                if let Some(model) = model {
+                    for step in missing {
+                        model_by_step.entry(step).or_insert_with(|| model.clone());
+                    }
                 }
             }
         }
@@ -412,6 +442,89 @@ fn steps_with_timing(
         }
     }
     Ok((settled, pruned))
+}
+
+/// Parent model active at the latest moment that is not after `child_start`.
+///
+/// The bool is false only when the parent's conversation database exists but
+/// cannot be opened. The sync cursor stays unset in that case.
+fn parent_model(transcript: &Path, child_start: Option<i64>) -> (Option<String>, bool) {
+    let Some(parent) = agy::parent_session_id(transcript, child_start) else {
+        return (None, true);
+    };
+    let Some((root, _)) = agy::transcript_home(transcript) else {
+        return (None, true);
+    };
+    let parent_transcript = root
+        .join("brain")
+        .join(&parent)
+        .join(".system_generated/logs/transcript_full.jsonl");
+    if !parent_transcript.is_file() {
+        return (None, true);
+    }
+    let rows = match agy::records(&parent_transcript) {
+        Ok(rows) => rows,
+        Err(err) => {
+            log::warn!(
+                "Antigravity parent {parent}: cannot read transcript for model inheritance: {err}"
+            );
+            return (None, false);
+        }
+    };
+    let mut events = Vec::new();
+    let mut steps = Vec::new();
+    for row in &rows {
+        let Some(at) = agy::timestamp(row) else {
+            continue;
+        };
+        if row["type"] == "USER_INPUT" {
+            if let Some(model) = row["content"].as_str().and_then(model_from_settings_change) {
+                events.push((at, model));
+            }
+        } else if row["type"] == "PLANNER_RESPONSE" && row["status"] == "DONE" {
+            if let Some(step) = row["step_index"].as_u64() {
+                steps.push((step, at));
+            }
+        }
+    }
+    if !steps.is_empty() {
+        let wanted: Vec<u64> = steps.iter().map(|(step, _)| *step).collect();
+        match native_models::generations_for_transcript(&parent_transcript, &wanted) {
+            Ok(generations) => {
+                for (step, at) in steps {
+                    if let Some(model) = generations.get(&step).and_then(|item| item.model.clone())
+                    {
+                        events.push((at, model));
+                    }
+                }
+            }
+            Err(err) => {
+                log::warn!(
+                    "Antigravity parent {parent}: cannot read native models for inheritance: {err}"
+                );
+                return (model_active_before(&events, child_start), false);
+            }
+        }
+    }
+    (model_active_before(&events, child_start), true)
+}
+
+/// Latest explicit model at or before `child_start`. A later parent switch is ignored.
+/// With no child timestamp, the latest explicit model is the only one that can be placed.
+fn model_active_before(events: &[(i64, String)], child_start: Option<i64>) -> Option<String> {
+    let mut best: Option<(i64, &str)> = None;
+    for (at, model) in events {
+        if model.trim().is_empty() || model.eq_ignore_ascii_case("unknown") {
+            continue;
+        }
+        if child_start.is_some_and(|start| *at > start) {
+            continue;
+        }
+        if best.as_ref().is_none_or(|(best_at, _)| *at >= *best_at) {
+            best = Some((*at, model));
+        }
+    }
+    best.map(|(_, model)| model.to_string())
 }
 
 fn known_model(row: &Value) -> Option<&str> {
@@ -885,6 +998,12 @@ mod tests {
         assert_eq!(import_records(&db, "s", &[row], None).unwrap(), (1, 0));
     }
 
+    fn transcript(root: &std::path::Path, id: &str) -> std::path::PathBuf {
+        root.join("brain")
+            .join(id)
+            .join(".system_generated/logs/transcript_full.jsonl")
+    }
+
     #[test]
     fn sync_agy_usage_skips_unchanged_transcripts_and_reimports_on_native_or_transcript_update() {
         if crate::config::sqlite_unsupported_in_temp_dir() {
@@ -954,5 +1073,193 @@ mod tests {
         .unwrap();
         let r5 = sync_agy_usage_from_files(&db, agy::transcript_files_in_roots(&roots)).unwrap();
         assert_eq!((r5.files_scanned, r5.imported, r5.skipped), (1, 1, 1));
+    }
+
+    #[test]
+    fn child_transcript_without_a_model_uses_its_conversation_db_and_updates_unknown_rows() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let source = transcript(dir.path(), "child");
+        let rows = [json!({
+            "step_index": 1,
+            "type": "PLANNER_RESPONSE",
+            "status": "DONE",
+            "created_at": "2026-11-11T00:00:02Z",
+            "input_tokens": 80,
+            "output_tokens": 12
+        })];
+        let db = Database::memory().unwrap();
+        assert_eq!(
+            import_records(&db, "child", &rows, Some(&source)).unwrap(),
+            (1, 0)
+        );
+        let model = |db: &Database| -> (String, i64, Option<i64>) {
+            db.conn
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT model, latency_ms, first_token_ms FROM proxy_request_logs WHERE request_id='agy:child:1'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap()
+        };
+        assert_eq!(model(&db).0, "unknown");
+
+        std::fs::create_dir_all(dir.path().join("conversations")).unwrap();
+        let native = native_models::write_test_database(
+            &dir.path().join("conversations/child.db"),
+            &[(1, 0, "gemini-4-argon")],
+        );
+        native_models::set_test_generation(
+            &native,
+            0,
+            "gemini-4-argon",
+            &native_models::test_timing(1200, 800),
+        );
+        assert_eq!(
+            import_records(&db, "child", &rows, Some(&source)).unwrap(),
+            (1, 0)
+        );
+        assert_eq!(model(&db), ("gemini-4-argon".into(), 2000, Some(1200)));
+
+        // A parent model must not replace the child's own database model.
+        std::fs::create_dir_all(transcript(dir.path(), "parent").parent().unwrap()).unwrap();
+        std::fs::write(
+            transcript(dir.path(), "parent"),
+            r#"{"step_index":0,"type":"USER_INPUT","created_at":"2026-11-11T00:00:01Z","content":"changed setting `Model Selection` from None to Gemini 3.8 Flash (High)."}"#,
+        )
+        .unwrap();
+        let summaries =
+            rusqlite::Connection::open(dir.path().join("conversation_summaries.db")).unwrap();
+        summaries
+            .execute_batch(
+                "CREATE TABLE conversation_summaries(conversation_id TEXT, parent_conversation_id TEXT);
+                 INSERT INTO conversation_summaries VALUES ('child','parent');",
+            )
+            .unwrap();
+        assert_eq!(
+            import_records(&db, "child", &rows, Some(&source)).unwrap(),
+            (0, 1)
+        );
+        assert_eq!(model(&db).0, "gemini-4-argon");
+    }
+
+    #[test]
+    fn child_without_a_db_model_inherits_the_parent_model_from_before_it_started() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let parent = transcript(dir.path(), "parent");
+        std::fs::create_dir_all(parent.parent().unwrap()).unwrap();
+        std::fs::write(
+            &parent,
+            concat!(
+                r#"{"step_index":0,"type":"USER_INPUT","created_at":"2026-11-11T00:00:01Z","content":"changed setting `Model Selection` from None to Gemini 4 Argon (High)."}"#,
+                "\n",
+                r#"{"step_index":2,"type":"USER_INPUT","created_at":"2026-11-11T00:00:03Z","content":"changed setting `Model Selection` from Gemini 4 Argon (High) to Gemini 4 Argon (Low)."}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        std::fs::create_dir_all(transcript(dir.path(), "db-parent").parent().unwrap()).unwrap();
+        std::fs::write(
+            transcript(dir.path(), "db-parent"),
+            concat!(
+                r#"{"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-11T00:00:01Z","input_tokens":1,"output_tokens":1}"#,
+                "\n",
+                r#"{"step_index":2,"type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-11T00:00:03Z","input_tokens":1,"output_tokens":1}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("conversations")).unwrap();
+        native_models::write_test_database(
+            &dir.path().join("conversations/db-parent.db"),
+            &[(1, 0, "gemini-4-argon"), (2, 1, "gemini-3.8-flash-tiered")],
+        );
+
+        let at = "2026-11-11T00:00:02Z";
+        let row = |step| {
+            json!({
+                "step_index": step,
+                "type": "PLANNER_RESPONSE",
+                "status": "DONE",
+                "created_at": at,
+                "input_tokens": 10,
+                "output_tokens": 4
+            })
+        };
+        let db = Database::memory().unwrap();
+        let summary = transcript(dir.path(), "from-summary");
+        assert_eq!(
+            import_records(&db, "from-summary", &[row(1)], Some(&summary)).unwrap(),
+            (1, 0)
+        );
+        let stored = |db: &Database, id: &str| -> String {
+            db.conn
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT model FROM proxy_request_logs WHERE request_id=?1",
+                    [id],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(stored(&db, "agy:from-summary:1"), "unknown");
+
+        let summaries =
+            rusqlite::Connection::open(dir.path().join("conversation_summaries.db")).unwrap();
+        summaries
+            .execute_batch(
+                "CREATE TABLE conversation_summaries(conversation_id TEXT, parent_conversation_id TEXT);
+                 INSERT INTO conversation_summaries VALUES ('from-summary','parent');
+                 INSERT INTO conversation_summaries VALUES ('too-early','parent');
+                 INSERT INTO conversation_summaries VALUES ('from-db','db-parent');
+                 INSERT INTO conversation_summaries VALUES ('via-invoke', NULL);",
+            )
+            .unwrap();
+        std::fs::write(
+            &parent,
+            concat!(
+                r#"{"step_index":0,"type":"USER_INPUT","created_at":"2026-11-11T00:00:01Z","content":"changed setting `Model Selection` from None to Gemini 4 Argon (High)."}"#,
+                "\n",
+                r#"{"step_index":1,"type":"INVOKE_SUBAGENT","created_at":"2026-11-11T00:00:01Z","content":"started {\"conversationId\":\"via-invoke\",\"logAbsoluteUri\":\"file:///home/sean/.gemini/antigravity-cli/brain/via-invoke/.system_generated/logs/transcript_full.jsonl\"}"}"#,
+                "\n",
+                r#"{"step_index":2,"type":"USER_INPUT","created_at":"2026-11-11T00:00:03Z","content":"changed setting `Model Selection` from Gemini 4 Argon (High) to Gemini 4 Argon (Low)."}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(
+            import_records(&db, "from-summary", &[row(1)], Some(&summary)).unwrap(),
+            (1, 0)
+        );
+        assert_eq!(stored(&db, "agy:from-summary:1"), "gemini-4-argon-high");
+
+        let early = transcript(dir.path(), "too-early");
+        let early_row = json!({
+            "step_index": 1,
+            "type": "PLANNER_RESPONSE",
+            "status": "DONE",
+            "created_at": "2026-11-11T00:00:00Z",
+            "input_tokens": 10,
+            "output_tokens": 4
+        });
+        import_records(&db, "too-early", &[early_row], Some(&early)).unwrap();
+        assert_eq!(stored(&db, "agy:too-early:1"), "unknown");
+
+        let via = transcript(dir.path(), "via-invoke");
+        import_records(&db, "via-invoke", &[row(1)], Some(&via)).unwrap();
+        assert_eq!(stored(&db, "agy:via-invoke:1"), "gemini-4-argon-high");
+
+        let from_db = transcript(dir.path(), "from-db");
+        import_records(&db, "from-db", &[row(1)], Some(&from_db)).unwrap();
+        assert_eq!(stored(&db, "agy:from-db:1"), "gemini-4-argon");
     }
 }

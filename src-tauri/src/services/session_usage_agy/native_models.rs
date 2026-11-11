@@ -1,7 +1,9 @@
 //! Read per-generation model names from Antigravity's native conversation database.
 use prost::Message;
-use rusqlite::{Connection, OpenFlags, OptionalExtension};
-use std::{collections::HashMap, path::Path, time::Duration};
+#[cfg(test)]
+use rusqlite::Connection;
+use rusqlite::OptionalExtension;
+use std::{collections::HashMap, path::Path};
 
 // Only the fields needed for the step -> generation -> model association are decoded.
 #[derive(Clone, PartialEq, Message)]
@@ -121,9 +123,7 @@ fn native_database_path(transcript: &Path) -> Result<Option<std::path::PathBuf>,
     if !path.is_file() {
         return Ok(None);
     }
-    let root = root.canonicalize().map_err(|error| error.to_string())?;
-    let path = path.canonicalize().map_err(|error| error.to_string())?;
-    if !path.starts_with(root) {
+    if !database_stays_inside(root, &path)? {
         return Err("Conversation database is outside the Antigravity root".into());
     }
     Ok(Some(path))
@@ -160,20 +160,42 @@ pub(super) fn generations_for_transcript(
     let Some(path) = native_database_path(transcript)? else {
         return Ok(HashMap::new());
     };
-    read_generations(&path, steps).map_err(|error| error.to_string())
+    read_generations(&path, steps)
 }
 
-fn read_generations(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64, Generation>> {
-    let mut conn = Connection::open_with_flags(
-        path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
-    // A busy native writer must not hold up the usage refresh. Normal SQLite reads
-    // include the WAL; immutable mode would miss live generations.
-    conn.busy_timeout(Duration::ZERO)?;
-    let tx = conn.transaction()?;
-    let mut step_query = tx.prepare("SELECT metadata FROM steps WHERE idx=?1 AND step_type=15")?;
-    let mut generation_query = tx.prepare("SELECT data FROM gen_metadata WHERE idx=?1")?;
+/// Canonicalize when the platform can. A WSL UNC path often cannot, so compare the
+/// `\\wsl.localhost\<distro>` strings instead of refusing to read the database.
+fn database_stays_inside(root: &Path, path: &Path) -> Result<bool, String> {
+    if let (Ok(root), Ok(path)) = (root.canonicalize(), path.canonicalize()) {
+        return Ok(path.starts_with(root));
+    }
+    match (
+        crate::config::wsl_unc_to_linux(&root.to_string_lossy()),
+        crate::config::wsl_unc_to_linux(&path.to_string_lossy()),
+    ) {
+        (Some((root_distro, root_linux)), Some((path_distro, path_linux))) => Ok(root_distro
+            .eq_ignore_ascii_case(&path_distro)
+            && (path_linux == root_linux || path_linux.starts_with(&format!("{root_linux}/")))),
+        _ => Err(format!(
+            "cannot confirm {} stays inside {}",
+            path.display(),
+            root.display()
+        )),
+    }
+}
+
+fn read_generations(path: &Path, steps: &[u64]) -> Result<HashMap<u64, Generation>, String> {
+    let db = crate::agy_sqlite::open_read_only(path)?;
+    // A busy native writer must not hold up the usage refresh. The direct open keeps
+    // a zero timeout; a WSL snapshot is a private copy and uses its own timeout.
+    // Immutable mode would miss live generations, so the WAL is included.
+    let conn = db.conn();
+    let mut step_query = conn
+        .prepare("SELECT metadata FROM steps WHERE idx=?1 AND step_type=15")
+        .map_err(|err| err.to_string())?;
+    let mut generation_query = conn
+        .prepare("SELECT data FROM gen_metadata WHERE idx=?1")
+        .map_err(|err| err.to_string())?;
     let mut generations = HashMap::new();
     for &step in steps {
         let Ok(index) = i64::try_from(step) else {
@@ -181,7 +203,8 @@ fn read_generations(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64,
         };
         let metadata: Option<Vec<u8>> = step_query
             .query_row([index], |row| row.get(0))
-            .optional()?
+            .optional()
+            .map_err(|err| err.to_string())?
             .flatten();
         let Some(reference) = metadata
             .and_then(|bytes| StepMetadata::decode(bytes.as_slice()).ok())
@@ -194,7 +217,8 @@ fn read_generations(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64,
         };
         let data: Option<Vec<u8>> = generation_query
             .query_row([generation], |row| row.get(0))
-            .optional()?;
+            .optional()
+            .map_err(|err| err.to_string())?;
         let Some(bytes) = data else {
             continue;
         };
@@ -237,7 +261,7 @@ fn read_generations(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64,
 }
 
 #[cfg(test)]
-fn read_models(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64, String>> {
+fn read_models(path: &Path, steps: &[u64]) -> Result<HashMap<u64, String>, String> {
     Ok(read_generations(path, steps)?
         .into_iter()
         .filter_map(|(step, generation)| Some((step, generation.model?)))
@@ -313,6 +337,7 @@ pub(super) fn test_timing(first_token_ms: i64, streaming_ms: i64) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn orchestrator_native_aliases_use_generation_role_instead_of_generic_display() {

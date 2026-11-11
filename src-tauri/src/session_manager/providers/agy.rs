@@ -199,12 +199,20 @@ fn scan_root(root: &Path, gemini_dir: Option<&Path>) -> Vec<SessionMeta> {
 
 fn read_summaries(path: &Path, gemini_dir: Option<&Path>) -> BTreeMap<String, SessionMeta> {
     let mut result = BTreeMap::new();
-    let Ok(conn) =
-        rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-    else {
+    if !path.is_file() {
         return result;
+    }
+    let db = match crate::agy_sqlite::open_read_only(path) {
+        Ok(db) => db,
+        Err(err) => {
+            log::warn!(
+                "Cannot read Antigravity conversation summaries {}: {err}",
+                path.display()
+            );
+            return result;
+        }
     };
-    let Ok(mut query) = conn.prepare("SELECT conversation_id, title, workspace_uris, preview, last_modified_time FROM conversation_summaries") else { return result };
+    let Ok(mut query) = db.conn().prepare("SELECT conversation_id, title, workspace_uris, preview, last_modified_time FROM conversation_summaries") else { return result };
     let Ok(rows) = query.query_map([], |r| {
         Ok((
             r.get::<_, String>(0)?,
@@ -258,6 +266,141 @@ fn user_request(content: &str) -> &str {
         .map(|(inner, _)| inner.trim())
         .filter(|inner| !inner.is_empty())
         .unwrap_or(content)
+}
+
+/// Parent conversation of this transcript.
+///
+/// `conversation_summaries.parent_conversation_id` wins. When that column is empty
+/// or missing, the parent is the sibling transcript whose `INVOKE_SUBAGENT` result
+/// names this conversation. The chosen parent is the one whose spawn time is the
+/// latest at or before `child_start` (or the latest spawn, when the child has no time).
+pub(crate) fn parent_session_id(transcript: &Path, child_start: Option<i64>) -> Option<String> {
+    let (root, id) = transcript_home(transcript)?;
+    if let Some(parent) = summary_parent(&root.join("conversation_summaries.db"), &id) {
+        return Some(parent);
+    }
+    parent_from_invoke(&root.join("brain"), &id, child_start)
+}
+
+pub(crate) fn transcript_home(transcript: &Path) -> Option<(PathBuf, String)> {
+    let session = transcript.parent()?.parent()?.parent()?;
+    let brain = session.parent()?;
+    if brain.file_name()? != "brain" {
+        return None;
+    }
+    let id = session.file_name()?.to_str()?.to_string();
+    let root = brain.parent()?;
+    valid_session_id(&id).then(|| (root.to_path_buf(), id))
+}
+
+fn summary_parent(summaries: &Path, id: &str) -> Option<String> {
+    if !summaries.is_file() {
+        return None;
+    }
+    let db = match crate::agy_sqlite::open_read_only(summaries) {
+        Ok(db) => db,
+        Err(err) => {
+            log::warn!(
+                "Cannot read Antigravity conversation summaries {}: {err}",
+                summaries.display()
+            );
+            return None;
+        }
+    };
+    let mut query = match db.conn().prepare(
+        "SELECT parent_conversation_id FROM conversation_summaries WHERE conversation_id=?1",
+    ) {
+        Ok(query) => query,
+        Err(err) => {
+            // Older agy builds have no parent column. That is not a read failure.
+            if !err.to_string().contains("no such column") {
+                log::warn!(
+                    "Cannot read Antigravity parent conversation from {}: {err}",
+                    summaries.display()
+                );
+            }
+            return None;
+        }
+    };
+    let parent: Option<String> = match query.query_row([id], |row| row.get(0)) {
+        Ok(parent) => parent,
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(err) => {
+            log::warn!(
+                "Cannot read Antigravity parent conversation from {}: {err}",
+                summaries.display()
+            );
+            return None;
+        }
+    };
+    parent.filter(|parent| valid_session_id(parent) && parent != id)
+}
+
+fn parent_from_invoke(brain: &Path, child: &str, child_start: Option<i64>) -> Option<String> {
+    let mut best: Option<(i64, String)> = None;
+    for entry in fs::read_dir(brain).ok()?.flatten() {
+        let Some(id) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        if id == child || !valid_session_id(&id) {
+            continue;
+        }
+        let transcript = entry
+            .path()
+            .join(".system_generated/logs/transcript_full.jsonl");
+        if !transcript.is_file() {
+            continue;
+        }
+        let Ok(rows) = records(&transcript) else {
+            continue;
+        };
+        for row in &rows {
+            if !invoke_names_child(row, child) {
+                continue;
+            }
+            let at = timestamp(row).unwrap_or(i64::MIN);
+            if child_start.is_some_and(|start| at > start) {
+                continue;
+            }
+            if best.as_ref().is_none_or(|(best_at, _)| at >= *best_at) {
+                best = Some((at, id.clone()));
+            }
+        }
+    }
+    best.map(|(_, id)| id)
+}
+
+fn invoke_names_child(row: &Value, child: &str) -> bool {
+    let kind = row["type"].as_str().unwrap_or("");
+    let Some(content) = row["content"].as_str() else {
+        return false;
+    };
+    if kind != "INVOKE_SUBAGENT" && !content.contains("logAbsoluteUri") {
+        return false;
+    }
+    conversation_ids(content).iter().any(|id| id == child)
+}
+
+fn conversation_ids(content: &str) -> Vec<String> {
+    let mut ids = Vec::new();
+    let mut rest = content;
+    let key = "\"conversationId\"";
+    while let Some(start) = rest.find(key) {
+        rest = &rest[start + key.len()..];
+        let Some(opened) = rest.find('"') else {
+            break;
+        };
+        let value = &rest[opened + 1..];
+        let Some(end) = value.find('"') else {
+            break;
+        };
+        let id = &value[..end];
+        if valid_session_id(id) {
+            ids.push(id.to_string());
+        }
+        rest = &value[end + 1..];
+    }
+    ids
 }
 
 pub(crate) fn timestamp(value: &Value) -> Option<i64> {

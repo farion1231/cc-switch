@@ -1,6 +1,7 @@
 mod agy_config;
 #[cfg(all(test, unix))]
 mod agy_smoke_tests;
+mod agy_sqlite;
 mod app_config;
 mod app_store;
 mod app_update;
