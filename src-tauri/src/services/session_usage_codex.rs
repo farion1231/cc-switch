@@ -482,6 +482,9 @@ struct ParsedCodexFile {
     meta_thread_id: Option<String>,
     root_meta_seen: bool,
     bounded_history: Option<serde_json::Value>,
+    /// root meta 的 `ordinal` 正好等于 `forked_from_ordinal_exclusive`：分叉子
+    /// rollout 从父线程的截止序号接着编号，文件里只有分叉之后的记录。
+    starts_at_fork_ordinal: bool,
     root_timestamp: Option<DateTime<Utc>>,
     parent: ParentResolution,
     token_events: Vec<ParsedTokenEvent>,
@@ -1270,6 +1273,7 @@ fn parse_codex_file_with_index(
         .map_err(|e| AppError::Config(format!("无法打开文件: {e}")))?;
     let mut root_meta_seen = false;
     let mut bounded_history = None;
+    let mut starts_at_fork_ordinal = false;
     let mut root_timestamp = None;
     let mut meta_thread_id = None;
     let mut parent = ParentResolution::None;
@@ -1345,6 +1349,14 @@ fn parse_codex_file_with_index(
                 let payload = value.get("payload").unwrap_or(&serde_json::Value::Null);
                 parent = explicit_parent_from_meta(payload);
                 bounded_history = payload.get("history_base").cloned();
+                starts_at_fork_ordinal = payload
+                    .get("forked_from_ordinal_exclusive")
+                    .and_then(serde_json::Value::as_u64)
+                    .is_some_and(|boundary| {
+                        boundary > 0
+                            && value.get("ordinal").and_then(serde_json::Value::as_u64)
+                                == Some(boundary)
+                    });
 
                 meta_thread_id = non_empty_string(
                     payload
@@ -1654,6 +1666,7 @@ fn parse_codex_file_with_index(
         meta_thread_id,
         root_meta_seen,
         bounded_history,
+        starts_at_fork_ordinal,
         root_timestamp,
         parent,
         token_events,
@@ -2159,6 +2172,41 @@ fn update_codex_sync_state(
     Ok(())
 }
 
+/// Every billable event is the child's own request: exact `last_token_usage`
+/// and a timestamp after the fork. Copied parent history fails the time check.
+fn child_events_after_fork(parsed: &ParsedCodexFile) -> Option<()> {
+    let cutoff = parsed.root_timestamp?;
+    for event in parsed
+        .token_events
+        .iter()
+        .chain(&parsed.usage_record_events)
+    {
+        let last = event.signature.last.as_ref()?;
+        if last.input.is_none()
+            || last.output.is_none()
+            || DateTime::parse_from_rfc3339(event.timestamp.as_deref()?)
+                .ok()?
+                .with_timezone(&Utc)
+                <= cutoff
+        {
+            return None;
+        }
+    }
+    Some(())
+}
+
+// Codex 0.167+ forks/resumes of a finished thread number the child's records
+// from the parent's cutoff (`ordinal == forked_from_ordinal_exclusive`) and do
+// not copy the parent history, so there is nothing to replay. Accept them
+// without waiting for the parent to reach the fork time, which an idle parent
+// never does.
+fn verified_ordinal_fork(parsed: &ParsedCodexFile) -> bool {
+    matches!(parsed.parent, ParentResolution::Parent(_))
+        && parsed.starts_at_fork_ordinal
+        && !parsed.token_events.is_empty()
+        && child_events_after_fork(parsed).is_some()
+}
+
 // A bounded-reference fork stores only its own requests. Accept this narrow case
 // only with a complete physical prefix and an exact inherited counter baseline.
 // Otherwise retain the existing replay/deferred path. Never rewrite rollout data.
@@ -2178,26 +2226,11 @@ fn verified_bounded_fork(parsed: &ParsedCodexFile, index: &RolloutIndex) -> bool
         if end == 0 || end > 64 * 1024 * 1024 || count == 0 {
             return None;
         }
-        let cutoff = parsed.root_timestamp?;
         let first = parsed.token_events.first()?;
         // Reject copied/replayed history, cumulative-only accounting and invalid timestamps.
         // Fallback usage records also belong to this child only when their own
         // timestamps are after the fork. Keep their native response-based IDs.
-        for event in parsed
-            .token_events
-            .iter()
-            .chain(&parsed.usage_record_events)
-        {
-            if event.signature.last.as_ref()?.input.is_none()
-                || event.signature.last.as_ref()?.output.is_none()
-                || DateTime::parse_from_rfc3339(event.timestamp.as_deref()?)
-                    .ok()?
-                    .with_timezone(&Utc)
-                    <= cutoff
-            {
-                return None;
-            }
-        }
+        child_events_after_fork(parsed)?;
         let total = first.signature.total.as_ref()?;
         let last = first.signature.last.as_ref()?;
         let baseline = TokenCountersSignature {
@@ -2388,7 +2421,11 @@ fn sync_single_codex_file(
                 pending_reason,
             ));
         }
-        ParentResolution::Parent(_) if verified_bounded_fork(&parsed, rollout_index) => 0,
+        ParentResolution::Parent(_)
+            if verified_ordinal_fork(&parsed) || verified_bounded_fork(&parsed, rollout_index) =>
+        {
+            0
+        }
         ParentResolution::Parent(parent_id) => {
             let Some(cutoff) = parsed.root_timestamp else {
                 return Ok(mark_deferred(
@@ -3461,6 +3498,87 @@ mod tests {
             assert!(!verified_bounded_fork(&parsed, &index));
             parsed.usage_record_events[0].timestamp = None;
             assert!(!verified_bounded_fork(&parsed, &index));
+        }
+        Ok(())
+    }
+
+    // Codex 0.167 resume/fork of a finished thread: single-UUID child rollout
+    // whose records are numbered from the parent cutoff. The parent never
+    // reaches the child's session_meta time, so the timestamp-aligned path
+    // defers it forever. See #9420.
+    #[test]
+    #[serial_test::serial]
+    fn test_ordinal_fork_after_finished_parent_is_imported() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let dir = tempdir().unwrap();
+        let parent = rollout_path(dir.path(), PARENT_ID);
+        let child = rollout_path(dir.path(), CHILD_A_ID);
+        write_jsonl(
+            &parent,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(1000, 800, 100, "2026-07-10T03:00:01Z"),
+            ],
+        );
+        // The child numbers its own records from the parent cutoff and copies
+        // no parent history, so there is nothing to replay.
+        let mut meta = session_meta_at(CHILD_A_ID, Some(PARENT_ID), None, "2026-07-10T03:00:20Z");
+        meta["ordinal"] = serde_json::json!(5);
+        meta["payload"]["forked_from_ordinal_exclusive"] = serde_json::json!(5);
+        let event = token_count_with_last_at(
+            1200,
+            1000,
+            120,
+            200,
+            200,
+            20,
+            "default",
+            "2026-07-10T03:00:25Z",
+        );
+        write_jsonl(&child, &[meta.clone(), turn_context(), event.clone()]);
+        let files = [&parent as &Path, &child as &Path];
+        let result = sync_test_file(&db, &child, &files)?;
+        assert!(!result.deferred);
+        assert_eq!(result.imported, 1);
+        assert_eq!(
+            codex_usage_rows(&db)?,
+            vec![(
+                format!("{}:{}:{}", CODEX_THREAD_REQUEST_ID_PREFIX, CHILD_A_ID, 1),
+                200,
+                20
+            )]
+        );
+        assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+        clear_codex_replay_caches();
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute("DELETE FROM session_log_sync", [])?;
+        }
+        // A full replay must not bill the inherited total again.
+        assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+        // The parent must not be needed at all: an idle parent that never
+        // reaches the fork time no longer blocks the child.
+        assert_eq!(sync_test_file(&db, &child, &[&child as &Path])?.imported, 0);
+
+        // Any other shape keeps the timestamp-aligned path: no ordinal boundary.
+        let mut no_boundary = meta.clone();
+        no_boundary["payload"]
+            .as_object_mut()
+            .unwrap()
+            .remove("forked_from_ordinal_exclusive");
+        let mut copied = meta.clone();
+        copied["ordinal"] = serde_json::json!(0);
+        for (variant, records) in [
+            (no_boundary, vec![turn_context(), event.clone()]),
+            (copied, vec![turn_context(), event.clone()]),
+        ] {
+            let path = rollout_path(dir.path(), "00000000-0000-4000-8000-000000000009");
+            write_jsonl(
+                &path,
+                &std::iter::once(variant).chain(records).collect::<Vec<_>>(),
+            );
+            let result = sync_test_file(&db, &path, &[&parent as &Path, &path])?;
+            assert!(result.deferred, "unexpected import for {}", path.display());
         }
         Ok(())
     }
