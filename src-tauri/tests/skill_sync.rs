@@ -107,15 +107,15 @@ fn import_from_apps_does_not_rewrite_selected_app_directory() {
     );
     assert_eq!(
         fs::read_to_string(codex_skill_dir.join("prompt.md")).expect("read live codex prompt"),
-        "live codex",
-        "import should not replace the app skill directory with SSOT contents"
+        "stale ssot",
+        "import should rebuild the selected app directory from the SSOT"
     );
     assert!(
-        !fs::symlink_metadata(&codex_skill_dir)
+        fs::symlink_metadata(&codex_skill_dir)
             .expect("read codex skill metadata")
             .file_type()
             .is_symlink(),
-        "import should not replace the app skill directory with a managed symlink"
+        "selected app projection should be recreated as a managed symlink"
     );
 }
 

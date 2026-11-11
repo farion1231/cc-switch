@@ -166,6 +166,13 @@ export interface MigrationResult {
   errors: string[];
 }
 
+export interface SkillReconciliationCandidate {
+  app: string;
+  directory: string;
+  name: string;
+  path: string;
+}
+
 /** skills.sh 可发现的技能 */
 export interface SkillsShDiscoverableSkill {
   key: string;
@@ -201,6 +208,20 @@ export const skillsApi = {
   /** 获取所有已安装的 Skills */
   async getInstalled(): Promise<InstalledSkill[]> {
     return await invoke("get_installed_skills");
+  },
+
+  async getReconciliationCandidates(): Promise<SkillReconciliationCandidate[]> {
+    return await invoke("get_skill_reconciliation_candidates");
+  },
+
+  async removeReconciliationDuplicate(
+    app: string,
+    directory: string,
+  ): Promise<boolean> {
+    return await invoke("remove_skill_reconciliation_duplicate", {
+      app,
+      directory,
+    });
   },
 
   /** 获取可恢复的 Skill 备份列表 */

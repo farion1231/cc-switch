@@ -4876,6 +4876,14 @@
     "noun": "Skills",
     "helpTitle": "How Skills sync",
     "help": "The main copy lives in CC Switch's folder and is synced to the apps you tick. Claude Desktop and OpenClaw don't support Skills, so they have no column.",
+    "lockedInUnified": "{{app}} reads every Skill from ~/.agents/skills in Unified storage, so it cannot be toggled individually.",
+    "reconciliation": {
+      "title": "Duplicate Skills found",
+      "lead": "These managed Skills also exist in Agent or application Skills folders. Select the copies you want to remove; unselected copies will be kept.",
+      "path": "Duplicate path: {{path}}",
+      "remove": "Remove selected ({{count}})",
+      "success": "Selected duplicate Skills were removed."
+    },
     "add": "Add Skill",
     "addMenu": {
       "discover": "Browse in Discover",

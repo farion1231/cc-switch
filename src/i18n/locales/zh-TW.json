@@ -4876,6 +4876,14 @@
     "noun": "Skill",
     "helpTitle": "Skills 怎麼同步",
     "help": "主副本放在 CC Switch 的目錄裡，再同步到你勾選的應用。Claude Desktop、OpenClaw 不支援 Skills，所以表格裡沒有這兩欄。",
+    "lockedInUnified": "Unified 儲存模式下，{{app}} 會讀取 ~/.agents/skills 中的所有 Skill，無法單獨切換。",
+    "reconciliation": {
+      "title": "發現重複 Skill",
+      "lead": "這些已管理 Skill 同時存在於 Agent 或應用程式的 Skills 目錄。請選擇要刪除的副本，未選取的副本會保留。",
+      "path": "重複路徑：{{path}}",
+      "remove": "刪除選取項（{{count}}）",
+      "success": "已刪除選取的重複 Skill。"
+    },
     "add": "新增 Skill",
     "addMenu": {
       "discover": "在探索裡瀏覽",

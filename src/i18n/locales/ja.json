@@ -4876,6 +4876,14 @@
     "noun": "Skill",
     "helpTitle": "Skills の同期のしくみ",
     "help": "本体は CC Switch のフォルダーに置き、チェックしたアプリへ同期します。Claude Desktop と OpenClaw は Skills 非対応のため列がありません。",
+    "lockedInUnified": "Unified ストレージでは {{app}} が ~/.agents/skills のすべての Skill を読み込むため、個別に切り替えられません。",
+    "reconciliation": {
+      "title": "重複した Skill が見つかりました",
+      "lead": "管理対象の Skill が Agent またはアプリの Skills フォルダーにも存在します。削除するコピーを選択してください。選択しないコピーは保持されます。",
+      "path": "重複パス: {{path}}",
+      "remove": "選択項目を削除（{{count}}）",
+      "success": "選択した重複 Skill を削除しました。"
+    },
     "add": "Skill を追加",
     "addMenu": {
       "discover": "「見つける」で探す",

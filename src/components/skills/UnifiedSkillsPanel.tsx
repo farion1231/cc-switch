@@ -39,6 +39,8 @@ import {
   useDiscoverableSkills,
   useDiscoverableSkillsFailures,
   useImportSkillsFromApps,
+  useRemoveSkillReconciliationDuplicate,
+  useSkillReconciliationCandidates,
   useInstallSkillsFromZip,
   useInstalledSkills,
   useRestoreSkillBackup,
@@ -52,6 +54,7 @@ import {
 import type { AppId } from "@/lib/api/types";
 import { SKILLS_APP_IDS } from "@/config/appConfig";
 import { settingsApi, skillsApi } from "@/lib/api";
+import { useSettingsQuery } from "@/lib/query/queries";
 import { copyText } from "@/lib/clipboard";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { cn } from "@/lib/utils";
@@ -70,6 +73,7 @@ import { useVisibleAppIds } from "@/components/mcp/useVisibleAppIds";
 import { SkillsPage, useSkillRepoActions } from "./SkillsPage";
 import { RepoManagerPanel } from "./RepoManagerPanel";
 import { SkillImportDialog } from "./SkillImportDialog";
+import { SkillReconciliationDialog } from "./SkillReconciliationDialog";
 import { SkillRestoreDialog } from "./SkillRestoreDialog";
 import { SkillsStorageSheet } from "./SkillsStorageSheet";
 import { useSkillInstallTargets } from "./useSkillInstallTargets";
@@ -130,6 +134,11 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   onNavigationBlockedChange,
 }) => {
   const { t, i18n } = useTranslation();
+  const { data: settings } = useSettingsQuery();
+  const lockedApps: AppId[] =
+    settings?.skillStorageLocation === "unified"
+      ? ["codex", "gemini", "opencode", "openclaw"]
+      : [];
   const appIds = useVisibleAppIds(SKILLS_APP_IDS);
   const { targets, setTargets, installTo } = useSkillInstallTargets(appIds);
 
@@ -149,6 +158,8 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const [fails, setFails] = useState<Record<string, WriteFailure>>({});
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [reconciliationOpen, setReconciliationOpen] = useState(false);
+  const [reconciliationDismissed, setReconciliationDismissed] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [storageOpen, setStorageOpen] = useState(false);
   const [repoManagerOpen, setRepoManagerOpen] = useState(false);
@@ -191,6 +202,8 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const { data: unmanagedSkills, refetch: scanUnmanaged } =
     useScanUnmanagedSkills({ enabled: true });
   const importMutation = useImportSkillsFromApps();
+  const reconciliationQuery = useSkillReconciliationCandidates();
+  const reconciliationMutation = useRemoveSkillReconciliationDuplicate();
   const installFromZipMutation = useInstallSkillsFromZip();
   const {
     data: updateCheck,
@@ -209,11 +222,16 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     uninstallMutation.isPending ||
     restoreBackupMutation.isPending ||
     importMutation.isPending ||
+    reconciliationMutation.isPending ||
     installFromZipMutation.isPending ||
     updateSkillMutation.isPending ||
     isUpdatingMany;
   const dialogOpen =
-    importOpen || restoreOpen || confirm !== null || repoManagerOpen;
+    importOpen ||
+    reconciliationOpen ||
+    restoreOpen ||
+    confirm !== null ||
+    repoManagerOpen;
   const navigationBlocked = writePending || mutationPending || dialogOpen;
   const interactionBlocked = navigationBlocked || isCheckingUpdates;
   // 外观上的禁用晚 300ms 才出现：点一个格子写得很快时不让整页按钮闪一下变灰。
@@ -227,6 +245,16 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   useEffect(() => {
     onNavigationBlockedChange?.(navigationBlocked);
   }, [navigationBlocked, onNavigationBlockedChange]);
+
+  useEffect(() => {
+    if (
+      !reconciliationDismissed &&
+      !reconciliationOpen &&
+      (reconciliationQuery.data?.length ?? 0) > 0
+    ) {
+      setReconciliationOpen(true);
+    }
+  }, [reconciliationDismissed, reconciliationOpen, reconciliationQuery.data]);
 
   useEffect(
     () => () => {
@@ -257,6 +285,8 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   };
 
   const listSeparator = t("mcpPage.listSeparator");
+  const lockedMessage = (app: AppId) =>
+    t("skillsPage.lockedInUnified", { app: APP_DISPLAY_NAME[app] });
   const names = (apps: AppId[]) =>
     apps.map((app) => APP_DISPLAY_NAME[app]).join(listSeparator);
   const noun = t("skillsPage.noun");
@@ -423,6 +453,10 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   };
 
   const writeOne = async (id: string, app: AppId, enabled: boolean) => {
+    if (lockedApps.includes(app)) {
+      toast.info(lockedMessage(app));
+      return;
+    }
     if (!beginWrite()) return;
     try {
       await toggleAppMutation.mutateAsync({ id, app, enabled });
@@ -459,6 +493,10 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     enabled: boolean,
     toastKey: { on: string; off: string },
   ) => {
+    if (lockedApps.includes(app)) {
+      toast.info(lockedMessage(app));
+      return;
+    }
     if (!beginWrite()) return;
     try {
       const { succeeded, failed } = await writeMany(ids, app, enabled);
@@ -690,6 +728,23 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       toast.error(t("common.error"), { description: String(error) });
     } finally {
       endWrite();
+    }
+  };
+
+  const handleReconciliation = async (
+    candidates: Array<{ app: string; directory: string }>,
+  ) => {
+    try {
+      for (const candidate of candidates) {
+        await reconciliationMutation.mutateAsync(candidate);
+      }
+      setReconciliationOpen(false);
+      setReconciliationDismissed(true);
+      toast.success(t("skillsPage.reconciliation.success"), {
+        closeButton: true,
+      });
+    } catch (error) {
+      toast.error(t("common.error"), { description: String(error) });
     }
   };
 
@@ -1264,6 +1319,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                     highlighted={highlightId === skill.id}
                     onHighlightDone={() => setHighlightId(null)}
                     fails={fails}
+                    lockedApps={lockedApps}
                     disabled={controlsDisabled}
                     sourceText={
                       skill.repoOwner && skill.repoName
@@ -1710,6 +1766,18 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
         />
       )}
 
+      {reconciliationOpen && reconciliationQuery.data && (
+        <SkillReconciliationDialog
+          candidates={reconciliationQuery.data}
+          isRemoving={reconciliationMutation.isPending}
+          onRemove={(directories) => void handleReconciliation(directories)}
+          onClose={() => {
+            setReconciliationOpen(false);
+            setReconciliationDismissed(true);
+          }}
+        />
+      )}
+
       <SkillRestoreDialog
         open={restoreOpen}
         backups={skillBackups}
@@ -1767,6 +1835,7 @@ interface InstalledRowProps {
   /** 闪烁结束后清掉，下次跳到同一行还能再闪 */
   onHighlightDone: () => void;
   fails: Record<string, WriteFailure>;
+  lockedApps: AppId[];
   disabled: boolean;
   sourceText: string;
   onPick: (checked: boolean) => void;
@@ -1790,6 +1859,7 @@ function InstalledRow({
   highlighted,
   onHighlightDone,
   fails,
+  lockedApps,
   disabled,
   sourceText,
   onPick,
@@ -1931,18 +2001,34 @@ function InstalledRow({
         {appIds.map((app) => {
           const fail = fails[failKey(skill.id, app)];
           const on = Boolean(skill.apps[app]);
-          const state = fail ? "fail" : on ? "on" : "off";
+          const locked = lockedApps.includes(app);
+          const state = locked ? "on" : fail ? "fail" : on ? "on" : "off";
           return (
             <MatrixCell
               key={app}
               app={app}
               state={state}
               disabled={disabled}
-              label={t(`appMatrix.cell.${state}`, {
-                name: skill.name,
-                app: APP_DISPLAY_NAME[app],
-              })}
-              onClick={() => onCell(app)}
+              locked={locked}
+              label={
+                locked
+                  ? t("skillsPage.lockedInUnified", {
+                      app: APP_DISPLAY_NAME[app],
+                    })
+                  : t(`appMatrix.cell.${state}`, {
+                      name: skill.name,
+                      app: APP_DISPLAY_NAME[app],
+                    })
+              }
+              onClick={() =>
+                locked
+                  ? toast.info(
+                      t("skillsPage.lockedInUnified", {
+                        app: APP_DISPLAY_NAME[app],
+                      }),
+                    )
+                  : onCell(app)
+              }
             />
           );
         })}

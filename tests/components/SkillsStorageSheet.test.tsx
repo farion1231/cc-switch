@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { SkillsStorageSheet } from "@/components/skills/SkillsStorageSheet";
 
@@ -19,6 +20,10 @@ const m = vi.hoisted(() => ({
   toastWarning: vi.fn(),
   toastError: vi.fn(),
 }));
+
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { retry: false } },
+});
 
 vi.mock("sonner", () => ({
   toast: {
@@ -49,8 +54,12 @@ vi.mock("@/lib/api/skills", () => ({
   },
 }));
 
-const renderDialog = () =>
-  render(<SkillsStorageSheet open onOpenChange={vi.fn()} />);
+const renderDialog = (onOpenChange = vi.fn()) =>
+  render(
+    <QueryClientProvider client={queryClient}>
+      <SkillsStorageSheet open onOpenChange={onOpenChange} />
+    </QueryClientProvider>,
+  );
 
 const radio = (name: string | RegExp) => screen.getByRole("radio", { name });
 
@@ -59,6 +68,7 @@ const moveButton = () =>
 
 describe("SkillsStorageSheet", () => {
   beforeEach(() => {
+    queryClient.clear();
     m.settings = { skillStorageLocation: "cc_switch", skillSyncMethod: "auto" };
     m.installed = [];
     m.autoSaveSettings.mockResolvedValue(undefined);
@@ -130,6 +140,32 @@ describe("SkillsStorageSheet", () => {
       screen.queryByText("skills.storageSheet.moveConfirmTitle"),
     ).not.toBeInTheDocument();
     expect(m.migrate).not.toHaveBeenCalled();
+  });
+
+  it("refreshes the settings and installed Skills caches after moving storage", async () => {
+    m.migrate.mockResolvedValue({
+      migratedCount: 0,
+      skippedCount: 0,
+      errors: [],
+    });
+    queryClient.setQueryData(["settings"], {
+      skillStorageLocation: "cc_switch",
+    });
+    const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
+    renderDialog();
+
+    await userEvent.click(radio(/skills\.storageSheet\.locationUnified/));
+    await userEvent.click(moveButton());
+
+    await waitFor(() =>
+      expect(queryClient.getQueryData(["settings"])).toMatchObject({
+        skillStorageLocation: "unified",
+      }),
+    );
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["settings"] });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ["skills", "installed"],
+    });
   });
 
   it("confirms before moving Skills to the other location", async () => {
@@ -220,7 +256,7 @@ describe("SkillsStorageSheet", () => {
 
   it("closes from the solid Done button", async () => {
     const onOpenChange = vi.fn();
-    render(<SkillsStorageSheet open onOpenChange={onOpenChange} />);
+    renderDialog(onOpenChange);
 
     await userEvent.click(screen.getByRole("button", { name: "common.done" }));
 
