@@ -203,6 +203,11 @@ export const skillsApi = {
     return await invoke("get_installed_skills");
   },
 
+  /** 刷新本地 Skill 的过期元数据，返回实际更新的数量 */
+  async refreshLocalMetadata(): Promise<number> {
+    return await invoke("refresh_local_skill_metadata");
+  },
+
   /** 获取可恢复的 Skill 备份列表 */
   async getBackups(): Promise<SkillBackupEntry[]> {
     return await invoke("get_skill_backups");

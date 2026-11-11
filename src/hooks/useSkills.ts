@@ -40,6 +40,31 @@ export function useInstalledSkills() {
   });
 }
 
+/**
+ * 后台刷新本地 Skill 的过期元数据（手动编辑 SSOT 的 SKILL.md 后同步描述与哈希）。
+ *
+ * 与列表查询分离：列表只读数据库并立即渲染，目录哈希在 Tauri 阻塞线程池里
+ * 计算；切换应用开关、安装等导致的列表失效不会重复触发扫描。进入技能页时
+ * 自动执行（缓存保持期间不重复扫描），有更新时才刷新列表（issue #7848）。
+ */
+export function useRefreshLocalSkillMetadata() {
+  const queryClient = useQueryClient();
+  return useQuery({
+    queryKey: ["skills", "localMetadataRefresh"],
+    queryFn: async () => {
+      const refreshed = await skillsApi.refreshLocalMetadata();
+      if (refreshed > 0) {
+        await queryClient.invalidateQueries({
+          queryKey: ["skills", "installed"],
+        });
+      }
+      return refreshed;
+    },
+    staleTime: Infinity,
+    retry: false,
+  });
+}
+
 export function useSkillBackups() {
   return useQuery({
     queryKey: ["skills", "backups"],
