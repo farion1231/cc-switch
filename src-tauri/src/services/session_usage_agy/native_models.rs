@@ -1,7 +1,11 @@
 //! Read per-generation model names from Antigravity's native conversation database.
 use prost::Message;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
-use std::{collections::HashMap, path::Path, time::Duration};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 // Only the fields needed for the step -> generation -> model association are decoded.
 #[derive(Clone, PartialEq, Message)]
@@ -103,12 +107,29 @@ fn timing_of(bytes: &[u8]) -> Option<Timing> {
     })
 }
 
+pub(super) fn native_database_path(transcript: &Path) -> Option<PathBuf> {
+    let session = transcript
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)?;
+    let root = session
+        .parent()
+        .filter(|brain| brain.file_name().is_some_and(|name| name == "brain"))
+        .and_then(Path::parent)?;
+    let id = session.file_name()?;
+    Some(root.join("conversations").join(id).with_extension("db"))
+}
+
 pub(super) fn generations_for_transcript(
     transcript: &Path,
     steps: &[u64],
 ) -> Result<HashMap<u64, Generation>, String> {
     // brain/<id>/.system_generated/logs/transcript_full.jsonl and conversations/<id>.db
     // share the same CLI/IDE/private-profile root.
+    let path = native_database_path(transcript).ok_or("Missing Antigravity root")?;
+    if !path.is_file() {
+        return Ok(HashMap::new());
+    }
     let session = transcript
         .parent()
         .and_then(Path::parent)
@@ -119,11 +140,6 @@ pub(super) fn generations_for_transcript(
         .filter(|brain| brain.file_name().is_some_and(|name| name == "brain"))
         .and_then(Path::parent)
         .ok_or("Missing Antigravity root")?;
-    let id = session.file_name().ok_or("Missing session id")?;
-    let path = root.join("conversations").join(id).with_extension("db");
-    if !path.is_file() {
-        return Ok(HashMap::new());
-    }
     let root = root.canonicalize().map_err(|error| error.to_string())?;
     let path = path.canonicalize().map_err(|error| error.to_string())?;
     if !path.starts_with(root) {

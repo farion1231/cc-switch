@@ -1770,15 +1770,13 @@ static VERSION_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"\d+\.\d+\.\d+(-[\w.]+)?(\+[\w.-]+)?").expect("Invalid version regex")
 });
 
-/// WSL 版本探测载荷先打印的哨兵。用户 shell 的启动文件（Ubuntu 的 update-motd、
+/// Shell 版本探测载荷先打印的哨兵。用户 shell 的启动文件（Ubuntu 的 update-motd、
 /// `/etc/bash.bashrc` 的 sudo 提示、nvm 的 `Using Node vX.Y.Z` 等）输出都在它前面，
 /// 解析时只看它之后的内容（#7347）。
-#[cfg_attr(not(windows), allow(dead_code))]
 const VERSION_PROBE_SENTINEL: &str = "__CCSWITCH_VERSION__";
 
 /// 版本探测交给用户 shell 执行的命令：先打哨兵，再跑 `--version`。
 /// 不含单引号，可以直接嵌进外层 `'...'`。
-#[cfg_attr(not(windows), allow(dead_code))]
 fn version_probe_payload(tool: &str) -> String {
     format!("echo {VERSION_PROBE_SENTINEL}; {tool} --version")
 }
@@ -1811,7 +1809,6 @@ fn wsl_auto_shell_command(payload: &str, flag: Option<&str>) -> String {
 /// 取最后一次：兜底链 `-lic || -lc || -c` 失败重试时会多次打印哨兵。
 /// 按子串而非整行查找：OSC 序列可能没有换行、直接粘在哨兵前面。
 /// 找不到哨兵（shell 在执行载荷之前就失败）时原样返回，保持原有行为。
-#[cfg_attr(not(windows), allow(dead_code))]
 fn after_version_sentinel(output: &str) -> &str {
     match output.rfind(VERSION_PROBE_SENTINEL) {
         Some(i) => output[i + VERSION_PROBE_SENTINEL.len()..].trim(),
@@ -1822,7 +1819,6 @@ fn after_version_sentinel(output: &str) -> &str {
 /// 判断 shell 输出是否表示"找不到该命令"。
 /// 只认各 shell 的固定格式，避免把工具自身的 `module not found` 之类错误当成没装：
 /// bash/zsh `command not found`，dash/sh `<tool>: not found`，fish `Unknown command`。
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn is_shell_command_missing(err: &str, tool: &str) -> bool {
     err.contains("command not found")
         || err.contains(&format!("{tool}: not found"))
@@ -1889,7 +1885,7 @@ fn try_get_version(tool: &str) -> ShellProbe {
         let flag = default_flag_for_shell(&shell);
         let mut cmd = Command::new(shell);
         cmd.arg(flag)
-            .arg(format!("{tool} --version"))
+            .arg(version_probe_payload(tool))
             // 与 `resolve_path_default` 相同：交互式 shell（-lic）不能读到继承来的
             // stdin，也不能因持有控制终端被 SIGTTIN 停住（从终端启动时整个应用卡死）。
             .stdin(Stdio::null())
@@ -1908,8 +1904,14 @@ fn try_get_version(tool: &str) -> ShellProbe {
         Ok(out) => {
             let stdout = decode_command_output(&out.stdout).trim().to_string();
             let stderr = decode_command_output(&out.stderr).trim().to_string();
+            // 启动文件（如 Linux update-motd、.bashrc、Node 版本输出等）的输出都在哨兵之前，只看它之后（#7347）
+            let payload_out = after_version_sentinel(&stdout).to_string();
             if out.status.success() {
-                let raw = if stdout.is_empty() { &stderr } else { &stdout };
+                let raw = if payload_out.is_empty() {
+                    &stderr
+                } else {
+                    &payload_out
+                };
                 if raw.is_empty() {
                     ShellProbe::NotFound(NOT_INSTALLED.to_string())
                 } else {
@@ -1918,8 +1920,15 @@ fn try_get_version(tool: &str) -> ShellProbe {
             } else {
                 // exit 127 = shell 找不到命令（可放心 fallback 到搜索路径）；其它非零码
                 // = 命令存在但 --version 自身报错退出，须如实上报、不 fallback 掩盖。
-                let err = if stderr.is_empty() { stdout } else { stderr };
-                if out.status.code() == Some(127) || err.is_empty() {
+                let err = if stderr.is_empty() {
+                    payload_out
+                } else {
+                    stderr
+                };
+                let not_found = err.is_empty()
+                    || out.status.code() == Some(127)
+                    || is_shell_command_missing(&err, tool);
+                if not_found {
                     ShellProbe::NotFound(NOT_INSTALLED.to_string())
                 } else {
                     ShellProbe::FoundButFailed(last_lines(err.trim(), 4))
@@ -8479,9 +8488,16 @@ mod tests {
         );
 
         // Ubuntu 的 update-motd 在当天第一个交互式 login shell 里打印 MOTD，
-        // 整段取第一个版本号会拿到 24.04.4（#7347）
+        // 整段取第一个版本号会拿到 24.04.4 或 Linux 内核版本 6.6.138（#7347）
         let motd = "Welcome to Ubuntu 24.04.4 LTS (GNU/Linux 6.6.87.2-microsoft-standard-WSL2 x86_64)\n\n * Documentation:  https://help.ubuntu.com\n__CCSWITCH_VERSION__\n2.1.270 (Claude Code)";
         assert_eq!(after_version_sentinel(motd), "2.1.270 (Claude Code)");
+
+        let motd_wsl2 = "Welcome to Ubuntu 24.04 LTS (GNU/Linux 6.6.138-microsoft-standard-WSL2 x86_64)\n\n * Documentation:  https://help.ubuntu.com\n__CCSWITCH_VERSION__\n0.166.0";
+        assert_eq!(after_version_sentinel(motd_wsl2), "0.166.0");
+        assert_eq!(
+            extract_version(after_version_sentinel(motd_wsl2)),
+            "0.166.0"
+        );
 
         // 兜底链 `-lic || -lc || -c` 会多次打印哨兵：取最后一次之后
         let chained = "__CCSWITCH_VERSION__\nbash: warning\n__CCSWITCH_VERSION__\n1.2.3";
