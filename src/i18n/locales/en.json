@@ -1971,12 +1971,7 @@
       "notSignedIn": "Copilot CLI isn't signed in. Run copilot and use /login, or bind an Auth Center account on this card."
     },
     "defaultCannotRemove": "Copilot's default model belongs to this provider, so it can't be removed or deleted. Pick another provider's model with /model in copilot first.",
-    "terminalNeedsAdd": "Add this provider to Copilot first so the terminal can select its model.",
-    "section": {
-      "official": "Official sign-in · {{count}}",
-      "officialHelpTitle": "Official sign-in",
-      "officialHelp": "Uses Copilot CLI's own GitHub sign-in and writes no files. Open Terminal starts copilot with the card's model and bound account."
-    }
+    "terminalNeedsAdd": "Add this provider to Copilot first so the terminal can select its model."
   },
   "codexOauth": {
     "authStatus": "Auth status",

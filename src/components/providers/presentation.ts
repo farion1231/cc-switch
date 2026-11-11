@@ -720,7 +720,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
   const { app, t, providers, actions } = input;
   const added: ProviderSection["items"] = [];
   const available: ProviderSection["items"] = [];
-  // Copilot CLI 的官方卡：仍是启动式，单独一组排在最前
+  // Copilot CLI 的官方卡：仍是启动式（只有「打开终端」），并进「已添加」排在最前
   const official: ProviderSection["items"] = [];
   const piBlocked =
     isPiFamilyApp(app) && input.piStateUnavailable
@@ -1017,26 +1017,11 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
     });
   }
 
-  const officialSection: ProviderSection[] = official.length
-    ? [
-        {
-          key: "official",
-          title: t("copilot.section.official", { count: official.length }),
-          help: {
-            title: t("copilot.section.officialHelpTitle"),
-            body: t("copilot.section.officialHelp"),
-          },
-          items: official,
-        },
-      ]
-    : [];
-
   return [
-    ...officialSection,
     {
       key: "added",
       title: t("providerCard.section.added", {
-        count: added.length + (input.extraAdded ?? 0),
+        count: official.length + added.length + (input.extraAdded ?? 0),
       }),
       help: {
         title: t("providerCard.section.addedHelpTitle"),
@@ -1050,7 +1035,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
       },
       note: app === "dsh" ? t("dsh.sharedProvidersNote") : undefined,
       emptyText: t("providerCard.section.addedEmpty"),
-      items: added,
+      items: [...official, ...added],
     },
     {
       key: "available",

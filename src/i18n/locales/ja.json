@@ -1971,12 +1971,7 @@
       "notSignedIn": "Copilot CLI にログインしていません。copilot を実行して /login でログインするか、このカードで認証センターのアカウントを紐付けてください。"
     },
     "defaultCannotRemove": "Copilot の既定モデルがこのプロバイダーのものなので、削除できません。先に copilot の /model でほかのプロバイダーのモデルに切り替えてください。",
-    "terminalNeedsAdd": "ターミナルでモデルを選べるよう、先にこのプロバイダーを Copilot に追加してください。",
-    "section": {
-      "official": "公式ログイン · {{count}}",
-      "officialHelpTitle": "公式ログイン",
-      "officialHelp": "Copilot CLI 自身の GitHub ログインを使い、ファイルには何も書き込みません。「ターミナルを開く」はカードのモデルと紐付けたアカウントで copilot を起動します。"
-    }
+    "terminalNeedsAdd": "ターミナルでモデルを選べるよう、先にこのプロバイダーを Copilot に追加してください。"
   },
   "codexOauth": {
     "authStatus": "認証状態",

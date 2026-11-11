@@ -1971,12 +1971,7 @@
       "notSignedIn": "Copilot CLI에 로그인되어 있지 않습니다. copilot을 실행해 /login으로 로그인하거나 이 카드에 인증 센터 계정을 연결하세요."
     },
     "defaultCannotRemove": "Copilot의 기본 모델이 이 공급자의 것이라 제거하거나 삭제할 수 없습니다. 먼저 copilot에서 /model로 다른 공급자의 모델을 선택하세요.",
-    "terminalNeedsAdd": "터미널에서 모델을 선택할 수 있도록 먼저 이 공급자를 Copilot에 추가하세요.",
-    "section": {
-      "official": "공식 로그인 · {{count}}",
-      "officialHelpTitle": "공식 로그인",
-      "officialHelp": "Copilot CLI 자체 GitHub 로그인을 사용하며 파일에 아무것도 쓰지 않습니다. 「터미널 열기」는 카드의 모델과 연결된 계정으로 copilot을 실행합니다."
-    }
+    "terminalNeedsAdd": "터미널에서 모델을 선택할 수 있도록 먼저 이 공급자를 Copilot에 추가하세요."
   },
   "codexOauth": {
     "authStatus": "인증 상태",

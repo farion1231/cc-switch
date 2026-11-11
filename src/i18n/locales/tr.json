@@ -1971,12 +1971,7 @@
       "notSignedIn": "Copilot CLI'de oturum açılmamış. copilot'u çalıştırıp /login ile oturum açın veya bu kartta bir Yetki Merkezi hesabı bağlayın."
     },
     "defaultCannotRemove": "Copilot'un varsayılan modeli bu sağlayıcıya ait olduğundan kaldırılamaz veya silinemez. Önce copilot içinde /model ile başka bir sağlayıcının modelini seçin.",
-    "terminalNeedsAdd": "Terminalin modelini seçebilmesi için önce bu sağlayıcıyı Copilot'a ekleyin.",
-    "section": {
-      "official": "Resmi oturum · {{count}}",
-      "officialHelpTitle": "Resmi oturum",
-      "officialHelp": "Copilot CLI'nin kendi GitHub oturumunu kullanır ve hiçbir dosyaya yazmaz. Terminal Aç, copilot'u kartın modeli ve bağlı hesabıyla başlatır."
-    }
+    "terminalNeedsAdd": "Terminalin modelini seçebilmesi için önce bu sağlayıcıyı Copilot'a ekleyin."
   },
   "codexOauth": {
     "authStatus": "Kimlik doğrulama durumu",

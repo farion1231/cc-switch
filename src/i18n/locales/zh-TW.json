@@ -1971,12 +1971,7 @@
       "notSignedIn": "Copilot CLI 尚未登入。請執行 copilot 並用 /login 登入，或在卡片裡綁定授權中心的帳號。"
     },
     "defaultCannotRemove": "Copilot 的預設模型屬於這一家，不能移除或刪除。請先在 copilot 裡用 /model 換成別家的模型。",
-    "terminalNeedsAdd": "請先把這一家新增到 Copilot，終端機才能選到它的模型。",
-    "section": {
-      "official": "官方登入 · {{count}}",
-      "officialHelpTitle": "官方登入",
-      "officialHelp": "使用 Copilot CLI 自己的 GitHub 登入，不寫入任何檔案；「開啟終端機」以卡片上的模型和綁定的帳號啟動 copilot。"
-    }
+    "terminalNeedsAdd": "請先把這一家新增到 Copilot，終端機才能選到它的模型。"
   },
   "codexOauth": {
     "authStatus": "驗證狀態",

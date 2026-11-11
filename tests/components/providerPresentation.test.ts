@@ -801,14 +801,15 @@ describe("buildAdditiveSections", () => {
       actions,
     });
 
-    // 官方卡单独一组排在最前，仍只有「打开终端」
+    // 官方卡并进「已添加」排在最前，仍只有「打开终端」
     expect(sections.map((section) => section.key)).toEqual([
-      "official",
       "added",
       "available",
     ]);
     expect(sections[0].items.map((entry) => entry.provider.id)).toEqual([
       "login",
+      "current",
+      "other",
     ]);
     expect(item(sections, "login").buttons.map((b) => b.key)).toEqual([
       "openTerminal",
@@ -817,10 +818,6 @@ describe("buildAdditiveSections", () => {
     expect(actions.openTerminal).toHaveBeenCalledWith(login);
     expect(actions.add).not.toHaveBeenCalled();
 
-    expect(sections[1].items.map((entry) => entry.provider.id)).toEqual([
-      "current",
-      "other",
-    ]);
     button(sections, "saved", "add").onClick();
     expect(actions.add).toHaveBeenCalledWith(saved);
     button(sections, "other", "remove").onClick();
@@ -840,7 +837,7 @@ describe("buildAdditiveSections", () => {
     );
   });
 
-  it("omits the Copilot official group when there is no official card", () => {
+  it("keeps only the added and available groups when there is no Copilot official card", () => {
     const sections = buildAdditiveSections({
       app: "copilot",
       t,
