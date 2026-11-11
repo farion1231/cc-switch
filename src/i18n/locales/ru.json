@@ -1443,6 +1443,7 @@
     "searchSessions": "Поиск сессий",
     "sessionList": "Сессии",
     "unknownDirectory": "Неизвестный каталог",
+    "codexChats": "Чаты Codex",
     "batchDeleting": "Удаление...",
     "loadingSessions": "Загрузка сессий...",
     "piRelativeSessionDir": "Pi sessionDir задан относительно каталога запуска Pi, поэтому глобальный браузер не может безопасно перечислить сессии. Укажите абсолютный sessionDir, чтобы просматривать все сессии Pi здесь:",

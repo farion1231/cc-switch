@@ -1377,6 +1377,7 @@
     "searchSessions": "Oturumları ara",
     "sessionList": "Oturumlar",
     "unknownDirectory": "Bilinmeyen dizin",
+    "codexChats": "Codex sohbetleri",
     "batchDeleting": "Siliniyor...",
     "loadingSessions": "Oturumlar yükleniyor...",
     "piRelativeSessionDir": "Pi sessionDir, Pi'nin başlatıldığı dizine göredir, dolayısıyla genel bir tarayıcı onu güvenli bir şekilde numaralandıramaz. Burada tüm Pi oturumlarına göz atmak için mutlak bir sessionDir ayarlayın:",

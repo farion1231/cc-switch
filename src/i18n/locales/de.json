@@ -1443,6 +1443,7 @@
     "searchSessions": "Sitzungen durchsuchen",
     "sessionList": "Sitzungen",
     "unknownDirectory": "Unbekanntes Verzeichnis",
+    "codexChats": "Codex-Chats",
     "batchDeleting": "Wird gelöscht …",
     "loadingSessions": "Sitzungen werden geladen …",
     "piRelativeSessionDir": "Das sessionDir von Pi ist relativ zu dem Verzeichnis, in dem Pi gestartet wird, daher kann ein globaler Browser es nicht sicher auflisten. Legen Sie ein absolutes sessionDir fest, um alle Pi-Sitzungen hier zu durchsuchen:",

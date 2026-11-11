@@ -1443,6 +1443,7 @@
     "searchSessions": "搜索会话",
     "sessionList": "会话列表",
     "unknownDirectory": "未知目录",
+    "codexChats": "Codex 聊天",
     "batchDeleting": "删除中...",
     "loadingSessions": "加载会话中...",
     "piRelativeSessionDir": "Pi 的 sessionDir 相对于启动 Pi 时的目录，全局浏览器无法安全枚举。请改用绝对 sessionDir，之后即可在此浏览全部 Pi 会话：",

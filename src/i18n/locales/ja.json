@@ -1443,6 +1443,7 @@
     "searchSessions": "セッションを検索",
     "sessionList": "セッション一覧",
     "unknownDirectory": "不明なディレクトリ",
+    "codexChats": "Codex チャット",
     "batchDeleting": "削除中...",
     "loadingSessions": "セッションを読み込み中...",
     "piRelativeSessionDir": "Pi の sessionDir は Pi を起動したディレクトリからの相対パスであるため、グローバルブラウザーから安全に列挙できません。すべての Pi セッションをここで表示するには、sessionDir に絶対パスを設定してください:",

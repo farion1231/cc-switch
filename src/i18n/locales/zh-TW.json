@@ -1443,6 +1443,7 @@
     "searchSessions": "搜尋工作階段",
     "sessionList": "工作階段清單",
     "unknownDirectory": "未知目錄",
+    "codexChats": "Codex 聊天",
     "batchDeleting": "批次刪除中...",
     "loadingSessions": "載入工作階段中...",
     "piRelativeSessionDir": "Pi 的 sessionDir 是相對於啟動 Pi 時所在的目錄，因此全域瀏覽器無法安全列舉。請將 sessionDir 設為絕對路徑，之後即可在此瀏覽所有 Pi 工作階段：",

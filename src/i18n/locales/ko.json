@@ -1443,6 +1443,7 @@
     "searchSessions": "세션 검색",
     "sessionList": "세션 목록",
     "unknownDirectory": "알 수 없는 디렉터리",
+    "codexChats": "Codex 채팅",
     "batchDeleting": "삭제 중...",
     "loadingSessions": "세션 로드 중...",
     "piRelativeSessionDir": "Pi의 sessionDir이 상대 경로이면 Pi를 실행한 디렉터리에 따라 저장 위치가 달라져 CC Switch에서 세션 목록을 안전하게 확인할 수 없습니다. 모든 Pi 세션을 찾으려면 sessionDir을 절대 경로로 설정하세요.",

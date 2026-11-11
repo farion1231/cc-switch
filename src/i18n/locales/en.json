@@ -1443,6 +1443,7 @@
     "searchSessions": "Search sessions",
     "sessionList": "Sessions",
     "unknownDirectory": "Unknown directory",
+    "codexChats": "Codex chats",
     "batchDeleting": "Deleting...",
     "loadingSessions": "Loading sessions...",
     "piRelativeSessionDir": "Pi sessionDir is relative to the directory where Pi is launched, so a global browser cannot enumerate it safely. Set an absolute sessionDir to browse all Pi sessions here:",
