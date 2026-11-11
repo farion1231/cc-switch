@@ -1324,6 +1324,32 @@ fn model_pricing_seed_includes_gemini_4_argon() {
 }
 
 #[test]
+fn model_pricing_seed_includes_gemini_4_carbon() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'gemini-4-carbon'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query Gemini 4 Carbon price");
+
+    assert_eq!(
+        price,
+        (
+            "2.00".to_string(),
+            "10.00".to_string(),
+            "0.10".to_string(),
+            "0".to_string(),
+        )
+    );
+}
+
+#[test]
 fn model_pricing_seed_includes_gemini_3_8_flash() {
     let db = Database::memory().expect("create memory db");
     let conn = db.conn.lock().expect("lock conn");
