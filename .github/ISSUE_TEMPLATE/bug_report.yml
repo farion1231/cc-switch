@@ -70,6 +70,9 @@ body:
         - Hermes
         - Pi
         - MiniMax Code
+        - DeepSeek Harness
+        - Antigravity CLI
+        - Github Copilot
         - Other / 其他
     validations:
       required: true
