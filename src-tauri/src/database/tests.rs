@@ -618,6 +618,8 @@ fn migration_from_v3_8_schema_v1_to_current_schema_v3() {
         "limit_monthly_usd",
         "provider_type",
         "in_failover_queue",
+        // DB 列名保留历史名（改名只到代码标识符为止，不动 schema）
+        "in_classifier_queue",
     ] {
         assert!(
             Database::has_column(&conn, "providers", column).expect("check column"),

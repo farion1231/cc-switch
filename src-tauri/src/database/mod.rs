@@ -38,6 +38,7 @@ pub(crate) use dao::providers_seed::{
     GROKBUILD_OFFICIAL_PROVIDER_ID,
 };
 pub(crate) use dao::proxy::{PRICING_SOURCE_REQUEST, PRICING_SOURCE_RESPONSE};
+pub use dao::AuxiliaryQueueItem;
 pub use dao::FailoverQueueItem;
 pub use dao::Profile;
 
