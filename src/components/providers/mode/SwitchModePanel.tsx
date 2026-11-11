@@ -38,6 +38,8 @@ import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ProviderList } from "@/components/providers/ProviderList";
+import { EnterTransition } from "@/components/common/EnterTransition";
+import { directionByOrder } from "@/hooks/useEnterTransition";
 import { CodexStaleClientsNotice } from "@/components/providers/CodexStaleClientsNotice";
 import {
   blockedFromRouting,
@@ -634,21 +636,27 @@ export function SwitchModePanel({
         id="main-content"
         className="min-h-0 flex-1 overflow-y-auto scroll-stable overflow-x-hidden px-6 pb-12 pt-3"
       >
-        {notices.length > 0 && (
-          <div role="status" className="mb-3 flex flex-col gap-2">
-            {notices}
-          </div>
-        )}
-        <ProviderList
-          {...listCallbacks}
-          providers={providers}
-          currentProviderId={currentProviderId}
-          appId={app}
-          isLoading={isLoading}
-          onSwitch={(provider) => void onSwitch(provider)}
-          switchMode={switchMode}
-          searchSlot={searchSlot}
-        />
+        {/* 切模式时列表跟着模式滑块的方向滑进来 */}
+        <EnterTransition
+          transitionKey={view}
+          from={directionByOrder(modes, "x")}
+        >
+          {notices.length > 0 && (
+            <div role="status" className="mb-3 flex flex-col gap-2">
+              {notices}
+            </div>
+          )}
+          <ProviderList
+            {...listCallbacks}
+            providers={providers}
+            currentProviderId={currentProviderId}
+            appId={app}
+            isLoading={isLoading}
+            onSwitch={(provider) => void onSwitch(provider)}
+            switchMode={switchMode}
+            searchSlot={searchSlot}
+          />
+        </EnterTransition>
       </div>
 
       <ModeDialog

@@ -253,6 +253,8 @@ module.exports = {
         "pulse-slow": "pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite",
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
+        "collapsible-down": "collapsible-down 0.22s cubic-bezier(0.2, 0, 0, 1)",
+        "collapsible-up": "collapsible-up 0.18s cubic-bezier(0.4, 0, 1, 1)",
         "row-flash": "rowFlash 4s ease-in-out forwards",
         "row-fade": "rowFade 3s ease-out forwards",
       },
@@ -322,6 +324,23 @@ module.exports = {
           to: {
             height: "0",
           },
+        },
+        // overflow 只在动画期间裁：离散属性，首尾都是 hidden 就整段都是 hidden，播完自动撤掉
+        "collapsible-down": {
+          from: { height: "0", opacity: "0", overflow: "hidden" },
+          to: {
+            height: "var(--radix-collapsible-content-height)",
+            opacity: "1",
+            overflow: "hidden",
+          },
+        },
+        "collapsible-up": {
+          from: {
+            height: "var(--radix-collapsible-content-height)",
+            opacity: "1",
+            overflow: "hidden",
+          },
+          to: { height: "0", opacity: "0", overflow: "hidden" },
         },
       },
     },

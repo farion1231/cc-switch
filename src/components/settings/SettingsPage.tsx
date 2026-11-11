@@ -29,7 +29,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { settingsApi, type AppId } from "@/lib/api";
 import { useSettingsQuery } from "@/lib/query";
-import type { SettingsSection } from "@/lib/navigation";
+import { SETTINGS_SECTIONS, type SettingsSection } from "@/lib/navigation";
+import { EnterTransition } from "@/components/common/EnterTransition";
+import { directionByOrder } from "@/hooks/useEnterTransition";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
 import { DirectoryInput } from "@/components/settings/DirectorySettings";
 import { ImportExportSection } from "@/components/settings/ImportExportSection";
@@ -552,7 +554,13 @@ export function SettingsPage({
             <Loader2 className="h-8 w-8 animate-spin text-fg-3" />
           </div>
         ) : (
-          <SettingsBody>{renderSection()}</SettingsBody>
+          // 换分区时内容从设置目录里那一项的方向进来（目录是竖排的）
+          <EnterTransition
+            transitionKey={section}
+            from={directionByOrder(SETTINGS_SECTIONS, "y")}
+          >
+            <SettingsBody>{renderSection()}</SettingsBody>
+          </EnterTransition>
         )}
       </div>
 

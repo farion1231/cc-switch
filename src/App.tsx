@@ -138,6 +138,11 @@ import {
   orderAppIds,
 } from "@/config/appConfig";
 import type { PiFamilyAppId } from "@/lib/api/pi";
+import { EnterTransition } from "@/components/common/EnterTransition";
+import {
+  directionByOrder,
+  useEnterTransition,
+} from "@/hooks/useEnterTransition";
 
 // Keep the provider page and event listeners ready at startup. Editors, charts
 // and secondary pages are loaded when the user first opens them.
@@ -225,6 +230,25 @@ const getInitialApp = (): AppId => {
   return "claude";
 };
 
+// 侧栏里全局页的上下顺序（应用排在它们上面），换页时用来定新页面从哪边进来
+const SIDEBAR_GLOBAL_ORDER = [
+  "mcp",
+  "skills",
+  "prompts",
+  "sessions",
+  "auth",
+  "usage",
+  "apps",
+];
+// OpenClaw / Hermes 页面页签、OpenClaw 配置二级页签的左右顺序
+const APP_SUBPAGE_ORDER: View[] = [
+  "providers",
+  "workspace",
+  "openclawConfig",
+  "hermesMemory",
+];
+const OPENCLAW_CONFIG_TABS = ["env", "tools", "agents"] as const;
+
 function App() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -290,6 +314,35 @@ function App() {
       ...settingsData?.visibleApps,
     }),
     [settingsData?.visibleApps],
+  );
+
+  // 换页时新页面从侧栏里那一项的方向进来：点下面的项从下面浮上来，点上面的从上面落下；
+  // 进设置像推进一层（侧栏换成设置目录），从右边滑进，返回时从左边滑回
+  const pageTransitionKey =
+    currentView === "settings"
+      ? "settings"
+      : isAppPage(currentView)
+        ? `app:${activeApp}`
+        : currentView === "skillsDiscovery"
+          ? "skills"
+          : currentView;
+  const pageTransitionOrder = useMemo(
+    () => [
+      ...orderAppIds(settingsData?.appOrder).map((app) => `app:${app}`),
+      ...SIDEBAR_GLOBAL_ORDER,
+    ],
+    [settingsData?.appOrder],
+  );
+  const pageTransitionRef = useEnterTransition<HTMLDivElement, string>(
+    pageTransitionKey,
+    {
+      skipInitial: true,
+      from: (prev, next) => {
+        if (next === "settings") return "end";
+        if (prev === "settings") return "start";
+        return directionByOrder(pageTransitionOrder, "y")(prev, next);
+      },
+    },
   );
 
   const getFirstVisibleApp = (): AppId => {
@@ -1756,7 +1809,9 @@ function App() {
                   ]}
                 />
               </div>
-              <div
+              <EnterTransition
+                transitionKey={openclawConfigTab}
+                from={directionByOrder(OPENCLAW_CONFIG_TABS, "x")}
                 id="main-content"
                 role="tabpanel"
                 aria-labelledby={`openclaw-config-${openclawConfigTab}`}
@@ -1769,7 +1824,7 @@ function App() {
                 ) : (
                   <AgentsDefaultsPanel />
                 )}
-              </div>
+              </EnterTransition>
             </>
           );
         case "hermesMemory":
@@ -1793,7 +1848,15 @@ function App() {
         {isOpenClawView && openclawHealthWarnings.length > 0 && (
           <OpenClawHealthBanner warnings={openclawHealthWarnings} />
         )}
-        {body}
+        {/* OpenClaw / Hermes 的页面页签：内容跟着下划线的方向滑进来。换应用时整页已经在动，重新挂载、不再播 */}
+        <EnterTransition
+          key={activeApp}
+          transitionKey={currentView}
+          from={directionByOrder(APP_SUBPAGE_ORDER, "x")}
+          className="flex min-h-0 flex-1 flex-col"
+        >
+          {body}
+        </EnterTransition>
       </>
     );
   };
@@ -1961,6 +2024,7 @@ function App() {
                   ? "app"
                   : currentView
             }
+            ref={pageTransitionRef}
             className="flex min-h-0 flex-1 flex-col"
           >
             <Suspense fallback={<PageLoading />}>{renderContent()}</Suspense>

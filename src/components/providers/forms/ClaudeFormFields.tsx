@@ -8,6 +8,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { toast } from "@/lib/toast";
+import { cn } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
@@ -18,13 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  ChevronDown,
-  ChevronRight,
-  Download,
-  Loader2,
-  Wand2,
-} from "lucide-react";
+import { ChevronRight, Download, Loader2, Wand2 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import {
   ApiKeySection,
@@ -1070,11 +1065,12 @@ export function ClaudeFormFields({
                 size="sm"
                 className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70 active:scale-100"
               >
-                {stackAdvancedExpanded ? (
-                  <ChevronDown className="h-4 w-4" />
-                ) : (
-                  <ChevronRight className="h-4 w-4" />
-                )}
+                <ChevronRight
+                  className={cn(
+                    "h-4 w-4 transition-transform duration-200",
+                    stackAdvancedExpanded && "rotate-90",
+                  )}
+                />
                 {t("providerForm.advancedOptionsToggle")}
               </Button>
             </CollapsibleTrigger>
@@ -1114,11 +1110,12 @@ export function ClaudeFormFields({
               size="sm"
               className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70 active:scale-100"
             >
-              {advancedExpanded ? (
-                <ChevronDown className="h-4 w-4" />
-              ) : (
-                <ChevronRight className="h-4 w-4" />
-              )}
+              <ChevronRight
+                className={cn(
+                  "h-4 w-4 transition-transform duration-200",
+                  advancedExpanded && "rotate-90",
+                )}
+              />
               {t("providerForm.advancedOptionsToggle")}
             </Button>
           </CollapsibleTrigger>

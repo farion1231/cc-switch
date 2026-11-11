@@ -2229,11 +2229,12 @@ export function PiProviderForm({
                   size="sm"
                   className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70 active:scale-100"
                 >
-                  {advancedExpanded ? (
-                    <ChevronDown className="h-4 w-4" />
-                  ) : (
-                    <ChevronRight className="h-4 w-4" />
-                  )}
+                  <ChevronRight
+                    className={cn(
+                      "h-4 w-4 transition-transform duration-200",
+                      advancedExpanded && "rotate-90",
+                    )}
+                  />
                   {t("providerForm.advancedOptionsToggle")}
                 </Button>
               </CollapsibleTrigger>

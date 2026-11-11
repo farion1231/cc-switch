@@ -1,4 +1,10 @@
-import { useRef, type ComponentType } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  type ComponentType,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { getVersion } from "@tauri-apps/api/app";
@@ -44,6 +50,8 @@ import { useSidebarStatus, type AppNavStatus } from "@/hooks/useSidebarStatus";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { DRAG_REGION_ATTR, DRAG_REGION_STYLE, isMac } from "@/lib/platform";
 import { cn } from "@/lib/utils";
+import { useEnterTransition } from "@/hooks/useEnterTransition";
+import { LayoutGroup, motion } from "framer-motion";
 import ccswitchLogo from "@/assets/icons/logo.svg";
 import { APP_DISPLAY_NAME, AppGlyph } from "./AppGlyph";
 
@@ -78,6 +86,20 @@ export function Sidebar(props: SidebarProps) {
   const { collapsed, toggle } = useSidebarCollapsed(navRef);
   const { view } = props;
   const inSettings = view === "settings";
+  const directoryRef = useEnterTransition<HTMLDivElement, boolean>(inSettings, {
+    skipInitial: true,
+    from: (_, next) => (next ? "end" : "start"),
+  });
+  // 收起 / 展开、进出设置目录这一次渲染里选中块直接落位，不滑：
+  // 行的形状整个变了（整行 ↔ 48 宽的图标格），侧栏宽度又是一步排到位、边缘靠盖板动画画出来的，
+  // 选中块要是从旧行的框缩放到新行，会先错位再弹回来。framer 还记着进设置前那块的位置，
+  // 在设置里收起侧栏再返回也会出同样的错位，所以进出设置也算。
+  const layoutKey = `${collapsed}:${inSettings}`;
+  const lastLayoutKey = useRef(layoutKey);
+  const relayout = lastLayoutKey.current !== layoutKey;
+  useEffect(() => {
+    lastLayoutKey.current = layoutKey;
+  });
 
   return (
     <nav
@@ -95,11 +117,22 @@ export function Sidebar(props: SidebarProps) {
         {t("nav.skipToContent")}
       </a>
       <SidebarTopBar collapsed={collapsed} onToggle={toggle} />
-      {inSettings ? (
-        <SettingsDirectory {...props} collapsed={collapsed} />
-      ) : (
-        <MainDirectory {...props} collapsed={collapsed} />
-      )}
+      {/* 进设置目录像推进一层：从右边滑进；返回时主目录从左边滑回。两个目录的选中块各自一组，不互相飞 */}
+      <div ref={directoryRef} className="flex min-h-0 flex-1 flex-col">
+        <SelectionTransitionContext.Provider
+          value={relayout ? INSTANT_TRANSITION : SELECTION_TRANSITION}
+        >
+          {inSettings ? (
+            <LayoutGroup id="sidebar-settings">
+              <SettingsDirectory {...props} collapsed={collapsed} />
+            </LayoutGroup>
+          ) : (
+            <LayoutGroup id="sidebar-main">
+              <MainDirectory {...props} collapsed={collapsed} />
+            </LayoutGroup>
+          )}
+        </SelectionTransitionContext.Provider>
+      </div>
     </nav>
   );
 }
@@ -297,7 +330,9 @@ function MainDirectory({
 
   return (
     <>
-      <div
+      {/* layoutScroll：选中块在可滚动的应用列表和下面的全局项之间滑时，按滚动后的位置量 */}
+      <motion.div
+        layoutScroll
         className={cn(
           "flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden pb-2 pt-0.5",
           // 图标轨只有 72 宽，放不下滚动条
@@ -320,7 +355,7 @@ function MainDirectory({
             />
           ))}
         </div>
-      </div>
+      </motion.div>
 
       <div
         className={cn(
@@ -407,6 +442,34 @@ function modeTag(
   return null;
 }
 
+// 选中块和页签下划线、分段控件滑块同一条曲线、差不多的时长
+const SELECTION_TRANSITION = {
+  duration: 0.22,
+  ease: [0.2, 0, 0, 1],
+} as const;
+const INSTANT_TRANSITION = { duration: 0 } as const;
+const SelectionTransitionContext = createContext<
+  typeof SELECTION_TRANSITION | typeof INSTANT_TRANSITION
+>(SELECTION_TRANSITION);
+
+/**
+ * 侧栏选中项的底色：只有一块，换选中项时从上一项滑过去（layoutId），而不是这一行灭、那一行亮。
+ * 垫在行内容下面（行是 relative isolate，块是 -z-10）。圆角写在 style 里，
+ * framer 缩放过程中才会按比例修正，不然滑动时圆角会被拉扁。
+ */
+function SelectionPill() {
+  const transition = useContext(SelectionTransitionContext);
+  return (
+    <motion.span
+      aria-hidden="true"
+      layoutId="sidebar-selection"
+      transition={transition}
+      className="pointer-events-none absolute inset-0 -z-10 bg-selected"
+      style={{ borderRadius: 6 }}
+    />
+  );
+}
+
 function AppNavItem({
   app,
   collapsed,
@@ -452,10 +515,10 @@ function AppNavItem({
           aria-label={tip}
           aria-current={selected ? "page" : undefined}
           className={cn(
-            "mx-auto flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
-            selected && "bg-selected hover:bg-selected",
+            "relative isolate mx-auto flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
           )}
         >
+          {selected && <SelectionPill />}
           <span className="relative flex">
             <AppGlyph app={app} size={20} badgeClassName={badgeBg} />
             {marker && (
@@ -482,10 +545,11 @@ function AppNavItem({
       onClick={onSelect}
       aria-current={selected ? "page" : undefined}
       className={cn(
-        "mx-2 flex h-nav-row w-[184px] shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
-        selected && "bg-selected font-medium hover:bg-selected",
+        "relative isolate mx-2 flex h-nav-row w-[184px] shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
+        selected && "font-medium",
       )}
     >
+      {selected && <SelectionPill />}
       <AppGlyph app={app} size={16} badgeClassName={badgeBg} />
       <span className="min-w-0 flex-1 truncate">{name}</span>
       {status.alert ? (
@@ -613,10 +677,10 @@ function NavItem({
           aria-label={title ?? accessibleName}
           aria-current={selected ? "page" : undefined}
           className={cn(
-            "mx-auto flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
-            selected && "bg-selected hover:bg-selected",
+            "relative isolate mx-auto flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
           )}
         >
+          {selected && <SelectionPill />}
           {glyph(20)}
         </button>
       </HoverTip>
@@ -643,11 +707,12 @@ function NavItem({
         aria-label={trailingLabel ? accessibleName : undefined}
         aria-current={selected ? "page" : undefined}
         className={cn(
-          "flex h-nav-row shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
+          "relative isolate flex h-nav-row shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
           compact ? "min-w-0 flex-1" : "mx-2 w-[184px]",
-          selected && "bg-selected font-medium hover:bg-selected",
+          selected && "font-medium",
         )}
       >
+        {selected && <SelectionPill />}
         {glyph(18)}
         {trailingLines.length === 0 ? (
           <span className="min-w-0 flex-1 truncate">{label}</span>
