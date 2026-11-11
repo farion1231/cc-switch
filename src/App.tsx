@@ -75,6 +75,7 @@ import {
   appPageBelongsTo,
   isAppPage,
   readStoredView,
+  SETTINGS_SECTIONS,
   sharedFeatureAppOf,
   storeView,
   type GlobalPage,
@@ -139,10 +140,7 @@ import {
 } from "@/config/appConfig";
 import type { PiFamilyAppId } from "@/lib/api/pi";
 import { EnterTransition } from "@/components/common/EnterTransition";
-import {
-  directionByOrder,
-  useEnterTransition,
-} from "@/hooks/useEnterTransition";
+import { directionByOrder, type EnterFrom } from "@/hooks/useEnterTransition";
 
 // Keep the provider page and event listeners ready at startup. Editors, charts
 // and secondary pages are loaded when the user first opens them.
@@ -316,11 +314,12 @@ function App() {
     [settingsData?.visibleApps],
   );
 
-  // 换页时新页面从侧栏里那一项的方向进来：点下面的项从下面浮上来，点上面的从上面落下；
-  // 进设置像推进一层（侧栏换成设置目录），从右边滑进，返回时从左边滑回
+  // 换页时新页面和侧栏选中块往同一个方向动：点下面的项从上面落下，点上面的项从下面浮起；
+  // 进设置像推进一层（侧栏换成设置目录），从右边滑进，返回时从左边滑回。
+  // 设置里换分区也算换页（页头标题跟着换），按设置目录的上下顺序走
   const pageTransitionKey =
     currentView === "settings"
-      ? "settings"
+      ? `settings:${settingsSection}`
       : isAppPage(currentView)
         ? `app:${activeApp}`
         : currentView === "skillsDiscovery"
@@ -330,20 +329,32 @@ function App() {
     () => [
       ...orderAppIds(settingsData?.appOrder).map((app) => `app:${app}`),
       ...SIDEBAR_GLOBAL_ORDER,
+      ...SETTINGS_SECTIONS.map((section) => `settings:${section}`),
     ],
     [settingsData?.appOrder],
   );
-  const pageTransitionRef = useEnterTransition<HTMLDivElement, string>(
-    pageTransitionKey,
-    {
-      skipInitial: true,
-      from: (prev, next) => {
-        if (next === "settings") return "end";
-        if (prev === "settings") return "start";
-        return directionByOrder(pageTransitionOrder, "y")(prev, next);
-      },
-    },
+  // 方向在换页那一刻算好记下来（渲染中按 key 变化调整 state）：进场动画放在 Suspense 里面，
+  // 懒加载的页面要等代码到了才挂载，那时再播；不能在外层容器上播，否则播的是「加载中」，真页面出来时一下跳出
+  const [pageNav, setPageNav] = useState<{ key: string; from: EnterFrom }>(
+    () => ({ key: pageTransitionKey, from: "none" }),
   );
+  if (pageNav.key !== pageTransitionKey) {
+    const prev = pageNav.key;
+    const wasSettings = prev.startsWith("settings:");
+    const isSettings = pageTransitionKey.startsWith("settings:");
+    setPageNav({
+      key: pageTransitionKey,
+      from:
+        isSettings && !wasSettings
+          ? "end"
+          : wasSettings && !isSettings
+            ? "start"
+            : directionByOrder(pageTransitionOrder, "y")(
+                prev,
+                pageTransitionKey,
+              ),
+    });
+  }
 
   const getFirstVisibleApp = (): AppId => {
     return (
@@ -2024,10 +2035,19 @@ function App() {
                   ? "app"
                   : currentView
             }
-            ref={pageTransitionRef}
             className="flex min-h-0 flex-1 flex-col"
           >
-            <Suspense fallback={<PageLoading />}>{renderContent()}</Suspense>
+            <Suspense fallback={<PageLoading />}>
+              <EnterTransition
+                transitionKey={pageTransitionKey}
+                from={pageNav.from}
+                preserveHeader
+                skipInitial={false}
+                className="flex min-h-0 flex-1 flex-col"
+              >
+                {renderContent()}
+              </EnterTransition>
+            </Suspense>
           </div>
         </main>
       </div>

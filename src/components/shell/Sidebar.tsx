@@ -1,10 +1,4 @@
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useRef,
-  type ComponentType,
-} from "react";
+import { useEffect, useLayoutEffect, useRef, type ComponentType } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { getVersion } from "@tauri-apps/api/app";
@@ -50,8 +44,13 @@ import { useSidebarStatus, type AppNavStatus } from "@/hooks/useSidebarStatus";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { DRAG_REGION_ATTR, DRAG_REGION_STYLE, isMac } from "@/lib/platform";
 import { cn } from "@/lib/utils";
-import { useEnterTransition } from "@/hooks/useEnterTransition";
-import { LayoutGroup, motion } from "framer-motion";
+import {
+  ENTER_DURATION_MS,
+  ENTER_EASING,
+  playAfterPaint,
+  prefersReducedMotion,
+  useEnterTransition,
+} from "@/hooks/useEnterTransition";
 import ccswitchLogo from "@/assets/icons/logo.svg";
 import { APP_DISPLAY_NAME, AppGlyph } from "./AppGlyph";
 
@@ -92,14 +91,14 @@ export function Sidebar(props: SidebarProps) {
   });
   // 收起 / 展开、进出设置目录这一次渲染里选中块直接落位，不滑：
   // 行的形状整个变了（整行 ↔ 48 宽的图标格），侧栏宽度又是一步排到位、边缘靠盖板动画画出来的，
-  // 选中块要是从旧行的框缩放到新行，会先错位再弹回来。framer 还记着进设置前那块的位置，
-  // 在设置里收起侧栏再返回也会出同样的错位，所以进出设置也算。
+  // 选中块要是从旧行的框缩放到新行，会先错位再弹回来。
   const layoutKey = `${collapsed}:${inSettings}`;
   const lastLayoutKey = useRef(layoutKey);
   const relayout = lastLayoutKey.current !== layoutKey;
   useEffect(() => {
     lastLayoutKey.current = layoutKey;
   });
+  useSelectionSlide(navRef, selectionKeyOf(props), relayout);
 
   return (
     <nav
@@ -117,21 +116,14 @@ export function Sidebar(props: SidebarProps) {
         {t("nav.skipToContent")}
       </a>
       <SidebarTopBar collapsed={collapsed} onToggle={toggle} />
-      {/* 进设置目录像推进一层：从右边滑进；返回时主目录从左边滑回。两个目录的选中块各自一组，不互相飞 */}
-      <div ref={directoryRef} className="flex min-h-0 flex-1 flex-col">
-        <SelectionTransitionContext.Provider
-          value={relayout ? INSTANT_TRANSITION : SELECTION_TRANSITION}
-        >
-          {inSettings ? (
-            <LayoutGroup id="sidebar-settings">
-              <SettingsDirectory {...props} collapsed={collapsed} />
-            </LayoutGroup>
-          ) : (
-            <LayoutGroup id="sidebar-main">
-              <MainDirectory {...props} collapsed={collapsed} />
-            </LayoutGroup>
-          )}
-        </SelectionTransitionContext.Provider>
+      {/* 进设置目录像推进一层：从右边滑进；返回时主目录从左边滑回。
+          isolate：选中块垫在整个目录的所有行下面（见 SelectionPill） */}
+      <div ref={directoryRef} className="isolate flex min-h-0 flex-1 flex-col">
+        {inSettings ? (
+          <SettingsDirectory {...props} collapsed={collapsed} />
+        ) : (
+          <MainDirectory {...props} collapsed={collapsed} />
+        )}
       </div>
     </nav>
   );
@@ -330,9 +322,7 @@ function MainDirectory({
 
   return (
     <>
-      {/* layoutScroll：选中块在可滚动的应用列表和下面的全局项之间滑时，按滚动后的位置量 */}
-      <motion.div
-        layoutScroll
+      <div
         className={cn(
           "flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden pb-2 pt-0.5",
           // 图标轨只有 72 宽，放不下滚动条
@@ -355,7 +345,7 @@ function MainDirectory({
             />
           ))}
         </div>
-      </motion.div>
+      </div>
 
       <div
         className={cn(
@@ -442,30 +432,86 @@ function modeTag(
   return null;
 }
 
-// 选中块和页签下划线、分段控件滑块同一条曲线、差不多的时长
-const SELECTION_TRANSITION = {
-  duration: 0.22,
-  ease: [0.2, 0, 0, 1],
-} as const;
-const INSTANT_TRANSITION = { duration: 0 } as const;
-const SelectionTransitionContext = createContext<
-  typeof SELECTION_TRANSITION | typeof INSTANT_TRANSITION
->(SELECTION_TRANSITION);
+/** 现在选中的是哪一项：变了选中块才滑。 */
+function selectionKeyOf({
+  view,
+  activeApp,
+  settingsSection,
+}: SidebarProps): string {
+  if (view === "settings") return `settings:${settingsSection}`;
+  if (isAppPage(view)) return `app:${activeApp}`;
+  return view === "skillsDiscovery" ? "skills" : view;
+}
 
 /**
- * 侧栏选中项的底色：只有一块，换选中项时从上一项滑过去（layoutId），而不是这一行灭、那一行亮。
- * 垫在行内容下面（行是 relative isolate，块是 -z-10）。圆角写在 style 里，
- * framer 缩放过程中才会按比例修正，不然滑动时圆角会被拉扁。
+ * 侧栏选中项的底色只有一块，换选中项时从上一项滑过去，而不是这一行灭、那一行亮。
+ * 做法是 FLIP：换之前量旧块的位置，换完量新块的位置，让新块从旧位置用 transform 滑回原位。
+ * 不用 framer 的 layoutId：它的布局动画每帧在主线程上算，换页时新页面挂载占住主线程，选中块就卡住再跳；
+ * 这里用 Web Animations，交给合成器跑，也等新页面第一帧画完才开始（playAfterPaint）。
+ * 旧块的位置只能在提交前量（提交后旧块就没了），所以在渲染里、选中项刚变的那一次量一下。
+ */
+function useSelectionSlide(
+  navRef: React.RefObject<HTMLElement | null>,
+  selectionKey: string,
+  relayout: boolean,
+) {
+  const flip = useRef<{ key: string; from: DOMRect | null }>({
+    key: selectionKey,
+    from: null,
+  });
+  const stop = useRef<(() => void) | null>(null);
+  if (flip.current.key !== selectionKey) {
+    const old = navRef.current?.querySelector(PILL_SELECTOR);
+    flip.current = {
+      key: selectionKey,
+      from: !relayout && old ? old.getBoundingClientRect() : null,
+    };
+  }
+
+  useLayoutEffect(() => {
+    const from = flip.current.from;
+    flip.current.from = null;
+    if (!from) return;
+    const pill = navRef.current?.querySelector<HTMLElement>(PILL_SELECTOR);
+    if (!pill || typeof pill.animate !== "function" || prefersReducedMotion())
+      return;
+    const to = pill.getBoundingClientRect();
+    if (!to.width || !to.height) return;
+    const dx = from.left - to.left;
+    const dy = from.top - to.top;
+    const sx = from.width / to.width;
+    const sy = from.height / to.height;
+    if (dx === 0 && dy === 0 && sx === 1 && sy === 1) return;
+    stop.current?.();
+    stop.current = playAfterPaint(
+      pill.animate(
+        [
+          {
+            transformOrigin: "0 0",
+            transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`,
+          },
+          { transformOrigin: "0 0", transform: "none" },
+        ],
+        { duration: ENTER_DURATION_MS, easing: ENTER_EASING },
+      ),
+    );
+  }, [navRef, selectionKey]);
+
+  useEffect(() => () => stop.current?.(), []);
+}
+
+const PILL_SELECTOR = "[data-selection-pill]";
+
+/**
+ * 选中块本身。-z-10 落在目录容器（isolate）这一层里：垫在所有行的内容下面。
+ * 行本身不能再各自 isolate：那样选中块只垫在自己那一行下面，滑过前面几行时会盖住它们的文字。
  */
 function SelectionPill() {
-  const transition = useContext(SelectionTransitionContext);
   return (
-    <motion.span
+    <span
       aria-hidden="true"
-      layoutId="sidebar-selection"
-      transition={transition}
-      className="pointer-events-none absolute inset-0 -z-10 bg-selected"
-      style={{ borderRadius: 6 }}
+      data-selection-pill=""
+      className="pointer-events-none absolute inset-0 -z-10 rounded-control bg-selected"
     />
   );
 }
@@ -515,7 +561,8 @@ function AppNavItem({
           aria-label={tip}
           aria-current={selected ? "page" : undefined}
           className={cn(
-            "relative isolate mx-auto flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
+            "relative mx-auto flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
+            selected && "hover:bg-transparent",
           )}
         >
           {selected && <SelectionPill />}
@@ -545,8 +592,8 @@ function AppNavItem({
       onClick={onSelect}
       aria-current={selected ? "page" : undefined}
       className={cn(
-        "relative isolate mx-2 flex h-nav-row w-[184px] shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
-        selected && "font-medium",
+        "relative mx-2 flex h-nav-row w-[184px] shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
+        selected && "font-medium hover:bg-transparent",
       )}
     >
       {selected && <SelectionPill />}
@@ -677,7 +724,8 @@ function NavItem({
           aria-label={title ?? accessibleName}
           aria-current={selected ? "page" : undefined}
           className={cn(
-            "relative isolate mx-auto flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
+            "relative mx-auto flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
+            selected && "hover:bg-transparent",
           )}
         >
           {selected && <SelectionPill />}
@@ -707,9 +755,9 @@ function NavItem({
         aria-label={trailingLabel ? accessibleName : undefined}
         aria-current={selected ? "page" : undefined}
         className={cn(
-          "relative isolate flex h-nav-row shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
+          "relative flex h-nav-row shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
           compact ? "min-w-0 flex-1" : "mx-2 w-[184px]",
-          selected && "font-medium",
+          selected && "font-medium hover:bg-transparent",
         )}
       >
         {selected && <SelectionPill />}

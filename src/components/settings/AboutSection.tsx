@@ -18,6 +18,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { settingsApi } from "@/lib/api";
 import { useUpdate } from "@/contexts/UpdateContext";
 import { Badge } from "@/components/ui/badge";
+import { Reveal } from "@/components/ui/reveal";
 import { WhatsNewDialog } from "@/components/WhatsNewDialog";
 import { WHATS_NEW_ENTRIES, entriesUpTo } from "@/lib/whatsNew";
 import ccswitchLogo from "@/assets/icons/logo.svg";
@@ -229,47 +230,63 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
           onClick={handleCheckUpdate}
           disabled={isChecking || isDownloading}
         >
+          {/* 检查中 / 有更新 / 下载中换文字时淡入（每种状态一个 key，换了就重新挂载播一次），不是一下替换 */}
           {isDownloading ? (
-            <>
+            <span
+              key="downloading"
+              className="inline-flex items-center gap-1.5 motion-safe:duration-200 motion-safe:animate-in motion-safe:fade-in-0"
+            >
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
               {t("settings.updating")}
-            </>
+            </span>
           ) : hasUpdate ? (
-            <>
+            <span
+              key="update"
+              className="inline-flex items-center gap-1.5 motion-safe:duration-200 motion-safe:animate-in motion-safe:fade-in-0"
+            >
               <Download className="h-3.5 w-3.5" />
               {t("settings.updateTo", {
                 version: updateInfo?.availableVersion ?? "",
               })}
-            </>
+            </span>
           ) : isChecking ? (
-            <>
+            <span
+              key="checking"
+              className="inline-flex items-center gap-1.5 motion-safe:duration-200 motion-safe:animate-in motion-safe:fade-in-0"
+            >
               <RefreshCw className="h-3.5 w-3.5 animate-spin" />
               {t("settings.checking")}
-            </>
+            </span>
           ) : (
-            <>
+            <span
+              key="idle"
+              className="inline-flex items-center gap-1.5 motion-safe:duration-200 motion-safe:animate-in motion-safe:fade-in-0"
+            >
               <RefreshCw className="h-3.5 w-3.5" />
               {t("settings.checkForUpdates")}
-            </>
+            </span>
           )}
         </Button>
       </div>
 
-      {hasUpdate && updateInfo && (
-        <div className="space-y-1 px-5 py-4 text-body">
-          <p className="font-medium text-fg-1">
-            {t("settings.updateAvailable", {
-              version: updateInfo.availableVersion,
-            })}
-          </p>
-          {updateInfo.notes && (
-            <p className="line-clamp-3 text-fg-2">{updateInfo.notes}</p>
-          )}
-          {isPortable && (
-            <p className="text-fg-2">{t("settings.portableUpdateHint")}</p>
-          )}
-        </div>
-      )}
+      {/* 查到新版本后说明展开出来，下面的行被推开，而不是一下跳下去 */}
+      <Reveal show={Boolean(hasUpdate && updateInfo)}>
+        {updateInfo && (
+          <div className="space-y-1 px-5 py-4 text-body">
+            <p className="font-medium text-fg-1">
+              {t("settings.updateAvailable", {
+                version: updateInfo.availableVersion,
+              })}
+            </p>
+            {updateInfo.notes && (
+              <p className="line-clamp-3 text-fg-2">{updateInfo.notes}</p>
+            )}
+            {isPortable && (
+              <p className="text-fg-2">{t("settings.portableUpdateHint")}</p>
+            )}
+          </div>
+        )}
+      </Reveal>
 
       <div className="flex flex-wrap items-center gap-2 px-5 py-4">
         {starPromptDismissed && (

@@ -16,6 +16,8 @@ import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
 import { Notice, NoticeSlot } from "@/components/ui/notice";
 import { PageTabs } from "@/components/ui/page-tabs";
+import { EnterTransition } from "@/components/common/EnterTransition";
+import { directionByOrder } from "@/hooks/useEnterTransition";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -85,6 +87,7 @@ const matrixMinWidth = (appCount: number) =>
   8 + 24 + 8 + NAME_MIN_WIDTH + appCount * APP_COLUMN_WIDTH + 40 + 8;
 
 type SkillsView = "installed" | "discover";
+const SKILLS_VIEWS: SkillsView[] = ["installed", "discover"];
 type StatusFilter = "all" | "updates" | "none" | `app:${AppId}`;
 
 interface WriteFailure {
@@ -1323,299 +1326,329 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       {header}
       <div id="main-content" className="flex min-h-0 flex-1 flex-col">
         <div className="shrink-0 px-6 pt-1">{viewTabs}</div>
-        {/* 两段打开过就一直挂着，切回来不重新加载；不在看的那段只是隐藏 */}
-        {discoverMounted && (
+        {/* 两段打开过就一直挂着，切回来不重新加载；不在看的那段只是隐藏。
+            切段时内容跟着页签下划线的方向滑进来 */}
+        <EnterTransition
+          transitionKey={view}
+          from={directionByOrder(SKILLS_VIEWS, "x")}
+          className="flex min-h-0 flex-1 flex-col"
+        >
+          {discoverMounted && (
+            <div
+              className={cn(
+                "min-h-0 flex-1 flex-col",
+                view === "discover" ? "flex" : "hidden",
+              )}
+            >
+              <SkillsPage
+                key={discoverQuery}
+                initialQuery={discoverQuery}
+                renderViewTabs={(trailing) =>
+                  viewTabsTrailing("discover", trailing)
+                }
+                visibleAppIds={appIds}
+                installTargets={targets}
+                onInstallTargetsChange={setTargets}
+                installTo={installTo}
+                onShowInstalled={showInstalled}
+                onOpenRepoManager={() => setRepoManagerOpen(true)}
+                onEnableFailures={recordEnableFailures}
+              />
+            </div>
+          )}
           <div
             className={cn(
               "min-h-0 flex-1 flex-col",
-              view === "discover" ? "flex" : "hidden",
+              view === "installed" ? "flex" : "hidden",
             )}
           >
-            <SkillsPage
-              key={discoverQuery}
-              initialQuery={discoverQuery}
-              renderViewTabs={(trailing) =>
-                viewTabsTrailing("discover", trailing)
-              }
-              visibleAppIds={appIds}
-              installTargets={targets}
-              onInstallTargetsChange={setTargets}
-              installTo={installTo}
-              onShowInstalled={showInstalled}
-              onOpenRepoManager={() => setRepoManagerOpen(true)}
-              onEnableFailures={recordEnableFailures}
-            />
-          </div>
-        )}
-        <div
-          className={cn(
-            "min-h-0 flex-1 flex-col",
-            view === "installed" ? "flex" : "hidden",
-          )}
-        >
-          {viewTabsTrailing(
-            "installed",
-            showInstalledToolbar ? (
-              <MatrixSearch
-                className="w-[280px] min-w-[160px] shrink"
-                value={searchQuery}
-                onValueChange={setSearchQuery}
-                placeholder={t("skillsPage.searchPlaceholder")}
-                ariaLabel={t("skills.installedSearchAriaLabel")}
-                status={
-                  normalizedQuery
-                    ? t("appMatrix.found", {
-                        count: filteredSkills.length,
-                      })
-                    : ""
-                }
-              />
-            ) : null,
-          )}
-
-          {/* 页签下面一行，和「发现」段同高：左边筛选一直在，右边是更新入口；勾选了行就换成批量操作。
-              窄窗口 + 大缩放时两边放不下就把右边整组折到下一行，不叠在一起 */}
-          {showInstalledToolbar && (
-            <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 px-6 py-2">
-              <div className="-ms-2.5 flex min-w-0 items-center gap-0.5">
-                <FilterMenu
-                  label={statusLabel(statusFilter)}
-                  active={statusFilter !== "all"}
-                  items={(["all", "updates", "none"] as StatusFilter[]).map(
-                    (value) => ({
-                      key: value,
-                      label: statusLabel(value),
-                      checked: statusFilter === value,
-                      onSelect: () => setStatusFilter(value),
-                    }),
-                  )}
-                />
-                <FilterMenu
-                  label={t("skillsPage.filter.sourceButton", {
-                    source:
-                      sourceFilter === "all"
-                        ? t("skillsPage.filter.all")
-                        : sourceLabel(sourceFilter),
-                  })}
-                  active={sourceFilter !== "all"}
-                  items={[
-                    {
-                      key: "all",
-                      label: t("skillsPage.filter.all"),
-                      checked: sourceFilter === "all",
-                      onSelect: () => setSourceFilter("all"),
-                    },
-                    ...sourceOptions.map(([key, count]) => ({
-                      key,
-                      label: sourceLabel(key),
-                      mono: key !== "local",
-                      count,
-                      checked: sourceFilter === key,
-                      onSelect: () => setSourceFilter(key),
-                    })),
-                  ]}
-                />
-              </div>
-              <div className="flex-1" />
-              {updateProgress ? (
-                <Button
-                  type="button"
-                  variant="neutral"
-                  size="regular"
-                  className="shrink-0"
-                  disabled
-                >
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  {t("skillsPage.updatingProgress", {
-                    done: Math.min(
-                      updateProgress.done + 1,
-                      updateProgress.total,
-                    ),
-                    total: updateProgress.total,
-                  })}
-                </Button>
-              ) : selectionActive ? (
-                <div className="flex shrink-0 flex-wrap items-center gap-0.5">
-                  <span className="shrink-0 whitespace-nowrap pe-1.5 text-body font-medium tabular-nums">
-                    {t("skillsPage.bulk.selected", { count: selected.size })}
-                  </span>
-                  {/* 列头的批量只按筛选范围走；挑着勾的几行要一次启用到 / 停用某个应用，走这里 */}
-                  <AppMenuButton
-                    label={t("skillsPage.bulk.enableTo")}
-                    ariaLabel={t("skillsPage.bulk.enableToAria", {
-                      count: selected.size,
-                    })}
-                    apps={appIds}
-                    disabled={controlsDisabled}
-                    onPick={(app) => handleSelectionToggle(app, true)}
-                  />
-                  <AppMenuButton
-                    label={t("skillsPage.bulk.disable")}
-                    ariaLabel={t("skillsPage.bulk.disableAria", {
-                      count: selected.size,
-                    })}
-                    apps={appIds}
-                    disabled={controlsDisabled}
-                    onPick={(app) => handleSelectionToggle(app, false)}
-                  />
-                  <Button
-                    type="button"
-                    variant="quiet"
-                    size="compact"
-                    className="px-2"
-                    disabled={controlsDisabled}
-                    onClick={() => {
-                      const ids = [...selected].filter((id) => updatesMap[id]);
-                      if (ids.length === 0) {
-                        toast.info(t("skillsPage.toast.noUpdatesInSelection"), {
-                          closeButton: true,
-                        });
-                        return;
-                      }
-                      void updateIds(ids);
-                    }}
-                  >
-                    {t("skills.update")}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="quiet"
-                    size="compact"
-                    className="px-2 text-danger-text hover:text-danger-text"
-                    disabled={controlsDisabled}
-                    onClick={() =>
-                      setConfirm({ kind: "uninstall", ids: [...selected] })
-                    }
-                  >
-                    {t("skillsPage.bulk.uninstall")}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="quiet"
-                    size="compact"
-                    className="px-2 text-fg-2"
-                    onClick={() => setSelected(new Set())}
-                  >
-                    {t("common.cancel")}
-                  </Button>
-                </div>
-              ) : (
-                <HoverTip
-                  content={
-                    lastCheckedText
-                      ? t("skillsPage.lastChecked", {
-                          when: lastCheckedText,
+            {viewTabsTrailing(
+              "installed",
+              showInstalledToolbar ? (
+                <MatrixSearch
+                  className="w-[280px] min-w-[160px] shrink"
+                  value={searchQuery}
+                  onValueChange={setSearchQuery}
+                  placeholder={t("skillsPage.searchPlaceholder")}
+                  ariaLabel={t("skills.installedSearchAriaLabel")}
+                  status={
+                    normalizedQuery
+                      ? t("appMatrix.found", {
+                          count: filteredSkills.length,
                         })
-                      : undefined
+                      : ""
                   }
+                />
+              ) : null,
+            )}
+
+            {/* 页签下面一行，和「发现」段同高：左边筛选一直在，右边是更新入口；勾选了行就换成批量操作。
+              窄窗口 + 大缩放时两边放不下就把右边整组折到下一行，不叠在一起 */}
+            {showInstalledToolbar && (
+              <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 px-6 py-2">
+                <div className="-ms-2.5 flex min-w-0 items-center gap-0.5">
+                  <FilterMenu
+                    label={statusLabel(statusFilter)}
+                    active={statusFilter !== "all"}
+                    items={(["all", "updates", "none"] as StatusFilter[]).map(
+                      (value) => ({
+                        key: value,
+                        label: statusLabel(value),
+                        checked: statusFilter === value,
+                        onSelect: () => setStatusFilter(value),
+                      }),
+                    )}
+                  />
+                  <FilterMenu
+                    label={t("skillsPage.filter.sourceButton", {
+                      source:
+                        sourceFilter === "all"
+                          ? t("skillsPage.filter.all")
+                          : sourceLabel(sourceFilter),
+                    })}
+                    active={sourceFilter !== "all"}
+                    items={[
+                      {
+                        key: "all",
+                        label: t("skillsPage.filter.all"),
+                        checked: sourceFilter === "all",
+                        onSelect: () => setSourceFilter("all"),
+                      },
+                      ...sourceOptions.map(([key, count]) => ({
+                        key,
+                        label: sourceLabel(key),
+                        mono: key !== "local",
+                        count,
+                        checked: sourceFilter === key,
+                        onSelect: () => setSourceFilter(key),
+                      })),
+                    ]}
+                  />
+                </div>
+                <div className="flex-1" />
+                {/* 右边一组在「检查 / 全部更新」「批量操作」「更新进度」之间换：换的时候从下面浮上来，不是一下替换 */}
+                <EnterTransition
+                  transitionKey={
+                    updateProgress
+                      ? "progress"
+                      : selectionActive
+                        ? "selection"
+                        : "idle"
+                  }
+                  from="below"
+                  className="flex shrink-0"
                 >
-                  {/* 已知有更新时这颗按钮就是「全部更新」；想重新检查走「⋯」菜单 */}
-                  {nUpdates > 0 && !isCheckingUpdates ? (
+                  {updateProgress ? (
                     <Button
                       type="button"
                       variant="neutral"
                       size="regular"
                       className="shrink-0"
-                      disabled={controlsDisabled}
-                      onClick={() => setConfirm({ kind: "updateAll" })}
+                      disabled
                     >
-                      <ArrowUpCircle className="h-4 w-4" strokeWidth={2} />
-                      {t("skillsPage.updateAllCount", { count: nUpdates })}
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {t("skillsPage.updatingProgress", {
+                        done: Math.min(
+                          updateProgress.done + 1,
+                          updateProgress.total,
+                        ),
+                        total: updateProgress.total,
+                      })}
                     </Button>
+                  ) : selectionActive ? (
+                    <div className="flex shrink-0 flex-wrap items-center gap-0.5">
+                      <span className="shrink-0 whitespace-nowrap pe-1.5 text-body font-medium tabular-nums">
+                        {t("skillsPage.bulk.selected", {
+                          count: selected.size,
+                        })}
+                      </span>
+                      {/* 列头的批量只按筛选范围走；挑着勾的几行要一次启用到 / 停用某个应用，走这里 */}
+                      <AppMenuButton
+                        label={t("skillsPage.bulk.enableTo")}
+                        ariaLabel={t("skillsPage.bulk.enableToAria", {
+                          count: selected.size,
+                        })}
+                        apps={appIds}
+                        disabled={controlsDisabled}
+                        onPick={(app) => handleSelectionToggle(app, true)}
+                      />
+                      <AppMenuButton
+                        label={t("skillsPage.bulk.disable")}
+                        ariaLabel={t("skillsPage.bulk.disableAria", {
+                          count: selected.size,
+                        })}
+                        apps={appIds}
+                        disabled={controlsDisabled}
+                        onPick={(app) => handleSelectionToggle(app, false)}
+                      />
+                      <Button
+                        type="button"
+                        variant="quiet"
+                        size="compact"
+                        className="px-2"
+                        disabled={controlsDisabled}
+                        onClick={() => {
+                          const ids = [...selected].filter(
+                            (id) => updatesMap[id],
+                          );
+                          if (ids.length === 0) {
+                            toast.info(
+                              t("skillsPage.toast.noUpdatesInSelection"),
+                              {
+                                closeButton: true,
+                              },
+                            );
+                            return;
+                          }
+                          void updateIds(ids);
+                        }}
+                      >
+                        {t("skills.update")}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="quiet"
+                        size="compact"
+                        className="px-2 text-danger-text hover:text-danger-text"
+                        disabled={controlsDisabled}
+                        onClick={() =>
+                          setConfirm({ kind: "uninstall", ids: [...selected] })
+                        }
+                      >
+                        {t("skillsPage.bulk.uninstall")}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="quiet"
+                        size="compact"
+                        className="px-2 text-fg-2"
+                        onClick={() => setSelected(new Set())}
+                      >
+                        {t("common.cancel")}
+                      </Button>
+                    </div>
                   ) : (
+                    <HoverTip
+                      content={
+                        lastCheckedText
+                          ? t("skillsPage.lastChecked", {
+                              when: lastCheckedText,
+                            })
+                          : undefined
+                      }
+                    >
+                      {/* 已知有更新时这颗按钮就是「全部更新」；想重新检查走「⋯」菜单 */}
+                      {nUpdates > 0 && !isCheckingUpdates ? (
+                        <Button
+                          type="button"
+                          variant="neutral"
+                          size="regular"
+                          className="shrink-0"
+                          disabled={controlsDisabled}
+                          onClick={() => setConfirm({ kind: "updateAll" })}
+                        >
+                          <ArrowUpCircle className="h-4 w-4" strokeWidth={2} />
+                          {t("skillsPage.updateAllCount", { count: nUpdates })}
+                        </Button>
+                      ) : (
+                        <Button
+                          type="button"
+                          variant="quiet"
+                          size="regular"
+                          className="shrink-0"
+                          disabled={controlsDisabled}
+                          onClick={() => void handleCheckUpdates()}
+                        >
+                          {isCheckingUpdates ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <RefreshCw className="h-4 w-4" strokeWidth={2} />
+                          )}
+                          {isCheckingUpdates
+                            ? t("skills.checkingUpdates")
+                            : t("skills.checkUpdates")}
+                        </Button>
+                      )}
+                    </HoverTip>
+                  )}
+                </EnterTransition>
+              </div>
+            )}
+
+            <NoticeSlot
+              className={cn(
+                "px-6",
+                showNotices && !showInstalledToolbar && "pt-3",
+              )}
+            >
+              {showUpdateRepoFailBanner && (
+                <Notice
+                  tone="warning"
+                  title={t("skillsPage.repoFail.title", {
+                    count: updateRepoFailures.length,
+                    repos: describeRepoFailures(updateRepoFailures, t),
+                  })}
+                  actions={
                     <Button
                       type="button"
-                      variant="quiet"
-                      size="regular"
-                      className="shrink-0"
+                      variant="neutral"
+                      size="compact"
                       disabled={controlsDisabled}
                       onClick={() => void handleCheckUpdates()}
                     >
-                      {isCheckingUpdates ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <RefreshCw className="h-4 w-4" strokeWidth={2} />
-                      )}
-                      {isCheckingUpdates
-                        ? t("skills.checkingUpdates")
-                        : t("skills.checkUpdates")}
+                      {t("common.retry")}
                     </Button>
-                  )}
-                </HoverTip>
+                  }
+                  onDismiss={() => setDismissedRepoFailAt(updatesCheckedAt)}
+                  dismissLabel={t("skillsPage.banner.close")}
+                >
+                  {t("skillsPage.repoFail.updatesBody")}
+                </Notice>
               )}
-            </div>
-          )}
+              {showUnmanagedBanner && (
+                <Notice
+                  title={t("skillsPage.banner.unmanaged", {
+                    count: nUnmanaged,
+                  })}
+                  actions={
+                    <>
+                      <Button
+                        type="button"
+                        variant="quiet"
+                        size="compact"
+                        disabled={controlsDisabled}
+                        onClick={() => void handleOpenImport()}
+                      >
+                        {t("skillsPage.banner.reviewImport")}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="quiet"
+                        size="compact"
+                        className="text-fg-2"
+                        onClick={() => setDismissedUnmanaged(nUnmanaged)}
+                      >
+                        {t("skillsPage.banner.ignore")}
+                      </Button>
+                    </>
+                  }
+                />
+              )}
+            </NoticeSlot>
 
-          <NoticeSlot
-            className={cn(
-              showNotices && "px-6 pb-3",
-              showNotices && !showInstalledToolbar && "pt-3",
-            )}
-          >
-            {showUpdateRepoFailBanner && (
-              <Notice
-                tone="warning"
-                title={t("skillsPage.repoFail.title", {
-                  count: updateRepoFailures.length,
-                  repos: describeRepoFailures(updateRepoFailures, t),
-                })}
-                actions={
-                  <Button
-                    type="button"
-                    variant="neutral"
-                    size="compact"
-                    disabled={controlsDisabled}
-                    onClick={() => void handleCheckUpdates()}
-                  >
-                    {t("common.retry")}
-                  </Button>
-                }
-                onDismiss={() => setDismissedRepoFailAt(updatesCheckedAt)}
-                dismissLabel={t("skillsPage.banner.close")}
-              >
-                {t("skillsPage.repoFail.updatesBody")}
-              </Notice>
-            )}
-            {showUnmanagedBanner && (
-              <Notice
-                title={t("skillsPage.banner.unmanaged", {
-                  count: nUnmanaged,
-                })}
-                actions={
-                  <>
-                    <Button
-                      type="button"
-                      variant="quiet"
-                      size="compact"
-                      disabled={controlsDisabled}
-                      onClick={() => void handleOpenImport()}
-                    >
-                      {t("skillsPage.banner.reviewImport")}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="quiet"
-                      size="compact"
-                      className="text-fg-2"
-                      onClick={() => setDismissedUnmanaged(nUnmanaged)}
-                    >
-                      {t("skillsPage.banner.ignore")}
-                    </Button>
-                  </>
-                }
-              />
-            )}
-          </NoticeSlot>
-
-          <div
-            className={cn(
-              "flex min-h-0 flex-1 flex-col px-6 pb-5",
-              !showInstalledToolbar && !showNotices && "pt-3",
-            )}
-          >
-            {renderInstalledBody()}
+            {/* 换筛选条件时列表从下面浮上来；打字搜索不播 */}
+            <EnterTransition
+              transitionKey={`${statusFilter}|${sourceFilter}`}
+              from="below"
+              className={cn(
+                "flex min-h-0 flex-1 flex-col px-6 pb-5",
+                !showInstalledToolbar && !showNotices && "pt-3",
+              )}
+            >
+              {renderInstalledBody()}
+            </EnterTransition>
           </div>
-        </div>
+        </EnterTransition>
       </div>
 
       <V7ConfirmDialog

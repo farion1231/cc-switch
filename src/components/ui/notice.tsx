@@ -8,6 +8,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { cn } from "@/lib/utils";
 
 /**
@@ -112,6 +113,11 @@ export function Notice({
 /**
  * 通知槽：一直渲染的 role="status" 容器（R4），操作后出现的提示放进来才会被读出。
  * 页面一打开就在的提示不要用 role="alert"。
+ *
+ * 通知出现 / 消失时高度跟着动，下面的列表是被慢慢推开、慢慢收回的，不会一下跳过去。
+ * 间距写在每条通知自己身上（条与条之间 8，最后一条下面 12），跟着高度一起收；
+ * 容器只管横向内边距，空着的时候高度就是 0，不用按有没有通知切换内边距。
+ * 子元素要有稳定的 key（条件渲染的写法按位置也稳定）。
  */
 export function NoticeSlot({
   children,
@@ -120,12 +126,28 @@ export function NoticeSlot({
   children?: React.ReactNode;
   className?: string;
 }) {
+  const reduceMotion = useReducedMotion();
+  const items = React.Children.toArray(children).filter(React.isValidElement);
+  const transition = reduceMotion ? { duration: 0 } : NOTICE_TRANSITION;
   return (
-    <div
-      role="status"
-      className={cn("flex flex-col gap-2 empty:hidden", className)}
-    >
-      {children}
+    <div role="status" className={cn("flex flex-col", className)}>
+      <AnimatePresence initial={false}>
+        {items.map((child) => (
+          <motion.div
+            key={child.key}
+            className="group/notice overflow-hidden"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={transition}
+          >
+            <div className="pb-2 group-last/notice:pb-3">{child}</div>
+          </motion.div>
+        ))}
+      </AnimatePresence>
     </div>
   );
 }
+
+// 和折叠区同一条减速曲线
+const NOTICE_TRANSITION = { duration: 0.22, ease: [0.2, 0, 0, 1] } as const;

@@ -106,6 +106,60 @@ interface ProviderListProps {
   searchSlot?: HTMLElement | null;
 }
 
+// 读本地数据库通常几十毫秒就好：这么短的加载不画占位，免得占位闪一下又被列表换掉
+const SKELETON_DELAY_MS = 150;
+const SKELETON_LINES = [
+  ["40%", "58%"],
+  ["32%", "50%"],
+  ["46%", "62%"],
+] as const;
+
+/**
+ * 加载占位：和供应商卡片同样的格子（图标、名字、地址、右边的按钮），列表出来时就在原地换上，视线不用挪。
+ * 不做循环的闪光：只在少见的慢加载时出现，静态的形状就够，也不额外占绘制。
+ */
+function ProviderListSkeleton({ onReveal }: { onReveal: () => void }) {
+  const [visible, setVisible] = useState(false);
+  const onRevealRef = useRef(onReveal);
+  onRevealRef.current = onReveal;
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setVisible(true);
+      onRevealRef.current();
+    }, SKELETON_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  return (
+    <div className="space-y-2" aria-busy="true">
+      {visible &&
+        SKELETON_LINES.map(([title, subtitle], index) => (
+          <div
+            key={index}
+            data-testid="provider-skeleton"
+            className="rounded-panel border border-border bg-surface motion-safe:duration-200 motion-safe:animate-in motion-safe:fade-in-0"
+          >
+            <div className="flex min-h-card items-center gap-3 py-card-y pe-3 ps-2">
+              <span className="w-4 shrink-0" />
+              <span className="h-8 w-8 shrink-0 rounded-[8px] bg-subtle" />
+              <div className="min-w-0 flex-1 space-y-2">
+                <div
+                  className="h-3 rounded-full bg-subtle"
+                  style={{ width: title }}
+                />
+                <div
+                  className="h-2.5 rounded-full bg-subtle"
+                  style={{ width: subtitle }}
+                />
+              </div>
+              <span className="h-7 w-14 shrink-0 rounded-control bg-subtle" />
+            </div>
+          </div>
+        ))}
+    </div>
+  );
+}
+
 export function ProviderList({
   providers,
   currentProviderId,
@@ -499,16 +553,22 @@ export function ProviderList({
     </Notice>
   ) : null;
 
-  if (isLoading || (isLiveMembershipPending && sortedProviders.length > 0)) {
+  const showSkeleton =
+    isLoading || (isLiveMembershipPending && sortedProviders.length > 0);
+  // 占位真的露过面，列表出来时才在原地淡入；读得快、占位没出现的那次直接显示，不多一道动画
+  const skeletonShownRef = useRef(false);
+  const fadeInList = !showSkeleton && skeletonShownRef.current;
+  useEffect(() => {
+    if (!showSkeleton) skeletonShownRef.current = false;
+  });
+
+  if (showSkeleton) {
     return (
-      <div className="space-y-2">
-        {[0, 1, 2].map((index) => (
-          <div
-            key={index}
-            className="h-[60px] w-full rounded-panel border border-dashed border-border bg-subtle"
-          />
-        ))}
-      </div>
+      <ProviderListSkeleton
+        onReveal={() => {
+          skeletonShownRef.current = true;
+        }}
+      />
     );
   }
 
@@ -653,7 +713,13 @@ export function ProviderList({
 
   // 卡片列表铺满主区域，和页头同宽
   return (
-    <div className="space-y-4">
+    <div
+      className={cn(
+        "space-y-4",
+        fadeInList &&
+          "motion-safe:duration-200 motion-safe:animate-in motion-safe:fade-in-0",
+      )}
+    >
       {piStateErrorNotice}
       {liveConfigErrorNotice}
       {searchSlot && createPortal(searchField, searchSlot)}

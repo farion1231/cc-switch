@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { SettingsFormState } from "@/hooks/useSettings";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Reveal } from "@/components/ui/reveal";
 import { toast } from "@/lib/toast";
 import { SettingsRow, SettingsSwitchRow } from "./SettingsLayout";
 
@@ -65,7 +66,8 @@ export function CodexQuotaProtectionSettings({
         disabled={saving}
         onCheckedChange={(enabled) => void save({ ...config, enabled })}
       />
-      {config.enabled && (
+      {/* 打开保护后阈值这一行展开出来，关掉时收回去，下面的行跟着平滑移动 */}
+      <Reveal show={config.enabled}>
         <SettingsRow label={t("settings.codexQuotaProtection.thresholds")}>
           <div className="flex flex-wrap items-end gap-3">
             <label
@@ -146,7 +148,7 @@ export function CodexQuotaProtectionSettings({
             )}
           </p>
         </SettingsRow>
-      )}
+      </Reveal>
     </>
   );
 }
