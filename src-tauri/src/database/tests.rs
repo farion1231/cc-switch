@@ -1068,6 +1068,32 @@ fn model_pricing_seed_covers_deepseek_v41_flash_aliases() {
 }
 
 #[test]
+fn model_pricing_seed_includes_claude_fable_5_2() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'claude-fable-5-2'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query Fable 5.2 price");
+
+    assert_eq!(
+        price,
+        (
+            "8".to_string(),
+            "40".to_string(),
+            "0.20".to_string(),
+            "10".to_string(),
+        )
+    );
+}
+
+#[test]
 fn model_pricing_seed_includes_claude_5_1_and_standard_sonnet_5_prices() {
     let db = Database::memory().expect("create memory db");
     let conn = db.conn.lock().expect("lock conn");
