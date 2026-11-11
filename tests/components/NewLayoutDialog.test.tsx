@@ -24,7 +24,6 @@ vi.mock("@tauri-apps/api/app", () => ({
 }));
 
 import { NewLayoutDialog } from "@/components/shell/NewLayoutDialog";
-import { APP_IDS } from "@/config/appConfig";
 
 function renderDialog() {
   const client = new QueryClient({

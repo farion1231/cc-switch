@@ -677,7 +677,11 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
-            AppType::ClaudeDesktop | AppType::Mcode | AppType::DevEco | AppType::Kimi | AppType::Dsh
+            AppType::ClaudeDesktop
+            | AppType::Mcode
+            | AppType::DevEco
+            | AppType::Kimi
+            | AppType::Dsh
             | AppType::Copilot => {}
             AppType::Codex => {
                 if let Some(custom) = crate::settings::get_codex_override_dir() {

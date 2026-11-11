@@ -1008,7 +1008,12 @@
     "hermesConfigDirDescription": "Переопределение каталога конфигурации Hermes (config.yaml).",
     "piConfigDir": "Каталог конфигурации Pi",
     "piConfigDirDescription": "Переопределить каталог конфигурации Pi (models.json, файлы инструкций, промпты, skills и сессии).",
+    "devecoConfigDir": "Каталог конфигурации DevEco Code",
+    "devecoConfigDirDescription": "Переопределить каталог конфигурации DevEco Code (deveco.jsonc).",
     "ompConfigDir": "Каталог конфигурации Oh My Pi",
+    "ompConfigDirDescription": "Переопределить каталог конфигурации Oh My Pi (.omp).",
+    "dshConfigDir": "Каталог конфигурации DeepSeek Harness",
+    "dshConfigDirDescription": "Переопределить каталог конфигурации DeepSeek Harness (DSH_HOME).",
     "browsePlaceholderClaude": "например, /home/<your-username>/.claude",
     "browsePlaceholderCodex": "например, /home/<your-username>/.codex",
     "browsePlaceholderGemini": "например, /home/<your-username>/.gemini",
@@ -1017,6 +1022,7 @@
     "browsePlaceholderOpenclaw": "например, /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "например, /home/<your-username>/.hermes",
     "browsePlaceholderPi": "напр., /home/<your-username>/.pi/agent",
+    "browsePlaceholderDeveco": "например, /home/<your-username>/.config/deveco",
     "browsePlaceholderOmp": "например, /home/<your-username>/.omp/agent",
     "browsePlaceholderDsh": "например, /home/<your-username>/.dsh",
     "browseDirectory": "Выбрать каталог",
@@ -1178,9 +1184,12 @@
     "hermes": "Hermes",
     "pi": "Pi",
     "mcode": "MiniMax Code",
+    "deveco": "DevEco Code",
     "copilot": "Copilot CLI",
     "agy": "Antigravity",
-    "omp": "Oh My Pi"
+    "omp": "Oh My Pi",
+    "kimi": "Kimi Code",
+    "dsh": "DeepSeek Harness"
   },
   "mcode": {
     "empty": {
@@ -2384,6 +2393,7 @@
       "grokbuild": "Grok Build",
       "pi": "Pi",
       "mcode": "MiniMax Code",
+      "deveco": "DevEco Code",
       "label": "Фильтр по приложению"
     },
     "rawInputLabel": "Исходные",
@@ -2880,7 +2890,8 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
-        "mcode": "MiniMax Code"
+        "mcode": "MiniMax Code",
+        "deveco": "DevEco Code"
       }
     },
     "userLevelPath": "Путь к пользовательской конфигурации MCP",
