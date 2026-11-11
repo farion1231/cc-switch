@@ -1882,6 +1882,7 @@
     },
     "fetchModelsFailed": "モデル一覧の取得に失敗しました",
     "fetchModelsEmpty": "モデルが見つかりません",
+    "fetchModelsEndpointHint": "モデル一覧を取得しました。注意：モデル検出は {hint}/models に問い合わせた一方、Codex は {hint}/responses を呼び出します。リクエストが失敗する場合は、エンドポイントを {hint} に変更してみてください。",
     "fetchModelsNeedApiKey": "先に API Key を入力してください",
     "fetchModelsNeedEndpoint": "先に API エンドポイントを入力してください",
     "fetchModelsNeedConfig": "先に API エンドポイントと API Key を入力してください",

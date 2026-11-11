@@ -86,6 +86,7 @@ import {
   type CopilotModel,
 } from "@/lib/api/copilot";
 import {
+  codexBaseUrlEndpointHint,
   fetchModelsForConfig,
   fetchXaiOauthModels,
   modelFetchRequestHeaders,
@@ -1029,7 +1030,18 @@ export function CodexFormFields({
             requestHeaders: modelFetchRequestHeaders(localProxyHeadersOverride),
           },
         ),
-      receiveFetchedModels,
+      (models) => {
+        const count = receiveFetchedModels(models);
+        // #9432：仅在能确证分歧时提示（纯根地址 → 发现必命中 {base}/v1/models，
+        // 而 Codex 实际请求 {base}/responses）。不改写用户输入，只给建议。
+        const hint = isFullUrl
+          ? null
+          : codexBaseUrlEndpointHint(codexBaseUrl ?? "");
+        if (count > 0 && hint) {
+          toast.info(t("providerForm.fetchModelsEndpointHint", { hint }));
+        }
+        return count;
+      },
       "[ModelFetch] Failed:",
     );
   }, [

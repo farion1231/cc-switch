@@ -1882,6 +1882,7 @@
     },
     "fetchModelsFailed": "모델을 가져오지 못했습니다.",
     "fetchModelsEmpty": "모델을 찾을 수 없습니다.",
+    "fetchModelsEndpointHint": "모델 목록을 가져왔습니다. 참고: 모델 검색은 {hint}/models 를 조회했지만 Codex 는 {hint}/responses 를 호출합니다. 요청이 실패하면 엔드포인트를 {hint} 로 변경해 보세요.",
     "fetchModelsNeedApiKey": "먼저 API 키를 입력하세요.",
     "fetchModelsNeedEndpoint": "먼저 API 엔드포인트를 입력하세요.",
     "fetchModelsNeedConfig": "먼저 API 엔드포인트와 API 키를 입력하세요.",

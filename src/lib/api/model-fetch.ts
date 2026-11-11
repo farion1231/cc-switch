@@ -128,6 +128,33 @@ export async function fetchXaiOauthModels(
 }
 
 /**
+ * 判断显式 base_url 是否与模型发现的实际命中路径存在可验证的分歧，并给出
+ * 建议的端点（#9432）。
+ *
+ * 仅在「能确证分歧」的最窄场景下提示：base_url 是纯根地址（无路径、无查询、
+ * 无版本段）。此时后端 build_models_url_candidates() 的唯一候选是
+ * `{base}/v1/models`，而 Codex 实际请求的是 `{base}/responses` —— 分歧是确定的。
+ * 任何自定义路径（/api、/v4、/anthropic 等）一律返回 null，绝不建议盲目补 /v1。
+ *
+ * 返回建议的 base_url（如 `https://api.example.com/v1`），无分歧时返回 null。
+ */
+export function codexBaseUrlEndpointHint(baseUrl: string): string | null {
+  const trimmed = baseUrl.trim();
+  if (!trimmed) return null;
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  // 任何非空路径都可能是用户有意选择的自定义端点形态，不可验证、不去猜测。
+  if (url.pathname.replace(/\/+$/, "") !== "") return null;
+  if (url.search || url.hash) return null;
+  return `${url.origin}/v1`;
+}
+
+/**
  * 根据错误类型显示对应的 toast 提示
  */
 export function showFetchModelsError(

@@ -27,7 +27,8 @@ vi.mock("@/lib/api/copilot", () => ({
   copilotGetModels: vi.fn(),
   copilotGetModelsForAccount: vi.fn(),
 }));
-vi.mock("@/lib/api/model-fetch", () => ({
+vi.mock("@/lib/api/model-fetch", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api/model-fetch")>()),
   fetchModelsForConfig: vi.fn(),
   fetchXaiOauthModels: vi.fn(),
   modelFetchRequestHeaders: vi.fn(),
@@ -568,5 +569,66 @@ describe("Codex model-fetch lifecycle", () => {
       ),
     );
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  // 回归 #9432：模型发现成功但 base_url 与发现路径可能不一致时提示，
+  // 不改写用户输入；仅纯根地址（分歧可确证）才提示。
+  it("hints a suggested /v1 endpoint when fetching from a plain-root base URL", async () => {
+    vi.mocked(fetchModelsForConfig).mockResolvedValue([advertisedModel()]);
+    const props = {
+      ...makeProps("config"),
+      codexBaseUrl: "https://api.example.com",
+    };
+    render(<Harness {...props} />);
+    fireEvent.click(fetchButton());
+
+    // 测试用的 i18n stub 不做插值，toast 只带 key；建议值本身由
+    // tests/lib/codexEndpointHint.test.ts 覆盖。
+    await waitFor(() =>
+      expect(toast.info).toHaveBeenCalledWith(
+        "providerForm.fetchModelsEndpointHint",
+      ),
+    );
+    // 只提示，不改写用户输入
+    expect(props.onBaseUrlChange).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "https://api.example.com/v1",
+    "https://open.bigmodel.cn/api/coding/paas/v4",
+    "https://api.deepseek.com/anthropic",
+  ])(
+    "does not hint for already-versioned or custom-path base URLs (%s)",
+    async (baseUrl) => {
+      vi.mocked(fetchModelsForConfig).mockResolvedValue([advertisedModel()]);
+      render(
+        <Harness {...makeProps("config")} codexBaseUrl={baseUrl} />,
+      );
+      fireEvent.click(fetchButton());
+
+      await waitFor(() => expect(fetchButton()).toBeEnabled());
+      expect(toast.info).not.toHaveBeenCalledWith(
+        "providerForm.fetchModelsEndpointHint",
+        expect.anything(),
+      );
+    },
+  );
+
+  it("does not hint when the base URL is a full URL mode", async () => {
+    vi.mocked(fetchModelsForConfig).mockResolvedValue([advertisedModel()]);
+    render(
+      <Harness
+        {...makeProps("config")}
+        codexBaseUrl="https://api.example.com"
+        isFullUrl={true}
+      />,
+    );
+    fireEvent.click(fetchButton());
+
+    await waitFor(() => expect(fetchButton()).toBeEnabled());
+    expect(toast.info).not.toHaveBeenCalledWith(
+      "providerForm.fetchModelsEndpointHint",
+      expect.anything(),
+    );
   });
 });

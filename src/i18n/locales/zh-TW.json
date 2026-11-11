@@ -1882,6 +1882,7 @@
     },
     "fetchModelsFailed": "取得模型清單失敗",
     "fetchModelsEmpty": "未找到可用模型",
+    "fetchModelsEndpointHint": "已取得模型清單。注意：模型發現可能透過 {hint}/models 取得，而 Codex 實際請求的是 {hint}/responses。若請求失敗，可考慮將位址改為 {hint}。",
     "fetchModelsNeedApiKey": "請先填寫 API Key",
     "fetchModelsNeedEndpoint": "請先填寫 API 端點",
     "fetchModelsNeedConfig": "請先填寫 API 端點和 API Key",

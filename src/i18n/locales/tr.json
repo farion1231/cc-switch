@@ -1882,6 +1882,7 @@
     },
     "fetchModelsFailed": "Modeller getirilemedi",
     "fetchModelsEmpty": "Hiçbir model bulunamadı",
+    "fetchModelsEndpointHint": "Modeller alındı. Not: model keşfi {hint}/models adresini sorgulamış olabilirken Codex {hint}/responses adresini çağıracaktır. İstekler başarısız olursa uç noktayı {hint} olarak ayarlamayı deneyin.",
     "fetchModelsNeedApiKey": "Lütfen önce API Anahtarını doldurun",
     "fetchModelsNeedEndpoint": "Lütfen önce API uç noktasını doldurun",
     "fetchModelsNeedConfig": "Lütfen önce API uç noktasını ve API Anahtarını doldurun",

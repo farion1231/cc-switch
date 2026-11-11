@@ -1882,6 +1882,7 @@
     },
     "fetchModelsFailed": "Не удалось получить модели",
     "fetchModelsEmpty": "Модели не найдены",
+    "fetchModelsEndpointHint": "Модели получены. Примечание: обнаружение моделей могло использовать {hint}/models, тогда как Codex обращается к {hint}/responses. Если запросы не проходят, попробуйте указать адрес {hint}.",
     "fetchModelsNeedApiKey": "Сначала заполните API-ключ",
     "fetchModelsNeedEndpoint": "Сначала укажите конечную точку API",
     "fetchModelsNeedConfig": "Сначала укажите конечную точку API и API-ключ",

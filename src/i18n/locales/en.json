@@ -1882,6 +1882,7 @@
     },
     "fetchModelsFailed": "Failed to fetch models",
     "fetchModelsEmpty": "No models found",
+    "fetchModelsEndpointHint": "Models fetched. Note: model discovery may have queried {hint}/models while Codex will call {hint}/responses. If requests fail, consider setting the endpoint to {hint}.",
     "fetchModelsNeedApiKey": "Please fill in API Key first",
     "fetchModelsNeedEndpoint": "Please fill in API endpoint first",
     "fetchModelsNeedConfig": "Please fill in API endpoint and API Key first",
