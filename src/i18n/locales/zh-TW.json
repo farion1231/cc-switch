@@ -5021,9 +5021,10 @@
     },
     "pluginSkills": {
       "title": "由 Claude Code 外掛提供",
-      "lead": "這些 Skill 由 Claude Code 的外掛系統載入。CC Switch 只列出，不管理。",
+      "lead": "這些 Skill 透過 Claude Code 外掛系統安裝，由 Claude Code 管理。CC Switch 只列出，不管理。",
       "helpTitle": "為什麼不能匯入",
-      "help": "匯入一份會讓 Claude Code 載入兩次，外掛更新後副本還會過期。請在 Claude Code 中用 /plugin 管理。"
+      "help": "匯入一份會讓 Claude Code 載入兩次，外掛更新後副本還會過期。請在 Claude Code 中用 /plugin 管理。",
+      "noImportable": "未發現需要匯入的技能。來自 Claude Code 外掛的 Skill（{{count}}）由 Claude Code 管理。"
     },
     "import": {
       "title": "匯入本機已有的 Skill",

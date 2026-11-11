@@ -678,7 +678,14 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     try {
       const result = await scanUnmanaged();
       if (!result.data?.some((skill) => !skill.readOnly)) {
-        toast.success(t("skills.noUnmanagedFound"), { closeButton: true });
+        // 只扫到插件 skill 时不能说「都已由 CC Switch 管理」：它们归 Claude Code 管
+        const nPlugin = result.data?.length ?? 0;
+        toast.success(
+          nPlugin > 0
+            ? t("skillsPage.pluginSkills.noImportable", { count: nPlugin })
+            : t("skills.noUnmanagedFound"),
+          { closeButton: true },
+        );
         return;
       }
       setImportOpen(true);

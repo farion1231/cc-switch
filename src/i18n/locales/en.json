@@ -5021,9 +5021,10 @@
     },
     "pluginSkills": {
       "title": "Provided by Claude Code plugins",
-      "lead": "Claude Code loads these through its plugin system. CC Switch lists them but doesn't manage them.",
+      "lead": "These skills are installed through Claude Code's plugin system and managed by Claude Code. CC Switch only lists them.",
       "helpTitle": "Why these can't be imported",
-      "help": "A copy here would load twice in Claude Code. Use /plugin in Claude Code to enable or remove them."
+      "help": "A copy here would load twice in Claude Code. Use /plugin in Claude Code to enable or remove them.",
+      "noImportable": "No skills to import found. Skills from Claude Code plugins ({{count}}) are managed by Claude Code."
     },
     "import": {
       "title": "Import Skills from this computer",

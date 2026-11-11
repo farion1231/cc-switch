@@ -5021,9 +5021,10 @@
     },
     "pluginSkills": {
       "title": "Claude Code プラグインが提供",
-      "lead": "これらの Skill は Claude Code のプラグインシステムが読み込みます。CC Switch は一覧表示のみで、管理はしません。",
+      "lead": "これらの Skill は Claude Code のプラグインシステムでインストールされ、Claude Code が管理します。CC Switch は一覧表示のみです。",
       "helpTitle": "取り込めない理由",
-      "help": "取り込むと Claude Code で二重に読み込まれ、プラグイン更新後はコピーが古くなります。Claude Code の /plugin で管理してください。"
+      "help": "取り込むと Claude Code で二重に読み込まれ、プラグイン更新後はコピーが古くなります。Claude Code の /plugin で管理してください。",
+      "noImportable": "取り込む Skill は見つかりませんでした。Claude Code プラグインの Skill（{{count}}）は Claude Code が管理します。"
     },
     "import": {
       "title": "このコンピューターの Skill を取り込む",

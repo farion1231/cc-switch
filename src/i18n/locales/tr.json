@@ -5021,9 +5021,10 @@
     },
     "pluginSkills": {
       "title": "Claude Code eklentileri tarafından sağlanır",
-      "lead": "Bu beceriler Claude Code eklenti sistemi tarafından yüklenir. CC Switch bunları yalnızca listeler, yönetmez.",
+      "lead": "Bu beceriler Claude Code eklenti sistemiyle yüklenir ve Claude Code tarafından yönetilir. CC Switch bunları yalnızca listeler.",
       "helpTitle": "Bunlar neden içe aktarılamaz",
-      "help": "Bir kopya Claude Code’da iki kez yüklenir ve eklenti güncellendiğinde eskir. Bunları Claude Code’da /plugin ile yönetin."
+      "help": "Bir kopya Claude Code’da iki kez yüklenir ve eklenti güncellendiğinde eskir. Bunları Claude Code’da /plugin ile yönetin.",
+      "noImportable": "İçe aktarılacak beceri bulunamadı. Claude Code eklentilerinden gelen beceriler ({{count}}) Claude Code tarafından yönetilir."
     },
     "import": {
       "title": "Bu bilgisayardan Becerileri içe aktar",

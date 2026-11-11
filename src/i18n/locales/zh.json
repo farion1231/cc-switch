@@ -5021,9 +5021,10 @@
     },
     "pluginSkills": {
       "title": "由 Claude Code 插件提供",
-      "lead": "这些 Skill 由 Claude Code 的插件系统加载。CC Switch 只列出，不管理。",
+      "lead": "这些 Skill 通过 Claude Code 插件系统安装，由 Claude Code 管理。CC Switch 只列出，不管理。",
       "helpTitle": "为什么不能导入",
-      "help": "导入一份会让 Claude Code 加载两次，插件更新后副本还会过期。请在 Claude Code 里用 /plugin 管理。"
+      "help": "导入一份会让 Claude Code 加载两次，插件更新后副本还会过期。请在 Claude Code 里用 /plugin 管理。",
+      "noImportable": "未发现需要导入的技能。来自 Claude Code 插件的 Skill（{{count}}）由 Claude Code 管理。"
     },
     "import": {
       "title": "导入本机已有的 Skill",

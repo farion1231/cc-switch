@@ -1154,7 +1154,33 @@ describe("UnifiedSkillsPanel", () => {
         await screen.findByTestId("claude-plugin-skills"),
       ).toBeInTheDocument();
 
-      // 空状态的导入按钮不带数量，点了只提示「没有可导入的」，不打开对话框
+      // 空状态的导入按钮不带数量，点了只提示「没有可导入的」，不打开对话框；
+      // 提示不能说「都已由 CC Switch 管理」，这些归 Claude Code 管
+      await userEvent.click(
+        screen.getByRole("button", { name: "skillsPage.addMenu.import" }),
+      );
+      await waitFor(() =>
+        expect(m.toastSuccess).toHaveBeenCalledWith(
+          "skillsPage.pluginSkills.noImportable",
+          expect.anything(),
+        ),
+      );
+      expect(m.toastSuccess).not.toHaveBeenCalledWith(
+        "skills.noUnmanagedFound",
+        expect.anything(),
+      );
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("keeps the original message when the scan finds nothing at all", async () => {
+      m.installed = [];
+      m.unmanaged = [];
+      m.scanUnmanaged.mockResolvedValue({ data: [] });
+      renderPanel();
+
+      expect(
+        screen.queryByTestId("claude-plugin-skills"),
+      ).not.toBeInTheDocument();
       await userEvent.click(
         screen.getByRole("button", { name: "skillsPage.addMenu.import" }),
       );
@@ -1164,7 +1190,6 @@ describe("UnifiedSkillsPanel", () => {
           expect.anything(),
         ),
       );
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
 
     it("renders the section with the real English strings", async () => {
@@ -1191,6 +1216,38 @@ describe("UnifiedSkillsPanel", () => {
           within(section).getByText(en.skillsPage.pluginSkills.lead),
         ).toBeInTheDocument();
         expect(section).not.toHaveTextContent("skillsPage.pluginSkills");
+      } finally {
+        i18n.removeResourceBundle("zh", "translation");
+      }
+    });
+
+    it("words the nothing-to-import message with the real plugin count", async () => {
+      i18n.addResourceBundle(
+        "zh",
+        "translation",
+        { skillsPage: { pluginSkills: en.skillsPage.pluginSkills } },
+        true,
+        true,
+      );
+      try {
+        m.installed = [];
+        m.unmanaged = PLUGIN_SKILLS;
+        m.scanUnmanaged.mockResolvedValue({ data: PLUGIN_SKILLS });
+        renderPanel();
+        await screen.findByTestId("claude-plugin-skills");
+        await userEvent.click(
+          screen.getByRole("button", { name: "skillsPage.addMenu.import" }),
+        );
+        await waitFor(() => expect(m.toastSuccess).toHaveBeenCalled());
+        const message = m.toastSuccess.mock.calls[0][0] as string;
+        expect(message).toBe(
+          en.skillsPage.pluginSkills.noImportable.replace(
+            "{{count}}",
+            String(PLUGIN_SKILLS.length),
+          ),
+        );
+        expect(message).not.toContain("{{count}}");
+        expect(message).not.toMatch(/managed by CC Switch/);
       } finally {
         i18n.removeResourceBundle("zh", "translation");
       }
