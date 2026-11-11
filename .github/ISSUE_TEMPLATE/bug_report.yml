@@ -28,6 +28,8 @@ body:
       required: true
 
   - type: input
+    # id 供应用内「问题反馈」通过 URL 参数预填，勿改
+    id: version
     attributes:
       label: CC Switch Version / 版本号
       description: |
@@ -102,6 +104,8 @@ body:
       required: false
 
   - type: textarea
+    # id 供应用内「问题反馈」通过 URL 参数预填，勿改
+    id: context
     attributes:
       label: Additional Context / 补充信息
       description: |

@@ -1048,6 +1048,17 @@
     "github": "GitHub",
     "starPrompt": "CC Switch가 도움이 되었다면 GitHub에서 Star를 눌러 주세요. 개발에 큰 힘이 됩니다.",
     "starOnGithub": "GitHub에서 Star 누르기",
+    "feedback": {
+      "button": "버그 신고",
+      "title": "버그 신고",
+      "message": "앱 로그에서 오늘 내용을 가져와 버전, 시스템 정보와 함께 GitHub Issue 페이지에 채워 넣습니다. URL 길이 제한 때문에 오늘 로그 중 최근 일부만 포함할 수 있습니다.\n\n자동으로 제출되지 않습니다. 브라우저에서 내용을 확인하고 문제 설명을 추가한 뒤 직접 제출해 주세요.",
+      "confirm": "Issue 페이지 열기",
+      "opened": "오늘 로그 {{total}}줄 전체를 포함해 Issue 페이지를 열었습니다",
+      "openedPartial": "오늘 로그 {{total}}줄 중 최근 {{included}}줄을 포함해 Issue 페이지를 열었습니다",
+      "openedWithoutLog": "오늘은 아직 로그가 없습니다. Issue 페이지를 열었습니다",
+      "reviewHint": "내용을 확인하고 문제 설명을 추가한 뒤 제출해 주세요",
+      "failed": "버그 신고 준비에 실패했습니다"
+    },
     "manualInstallCommands": "수동 설치 명령",
     "manualUninstallCommands": "수동 제거 명령",
     "manualUninstallHint": "각 앱의 환경은 기본적으로 자동으로 감지되며, 다른 환경을 수동으로 선택할 수 있습니다. 원래 설치 방법을 선택한 다음, 제거하려는 앱에 대한 명령을 복사하여 터미널에서 실행하세요. 완료 후 “업데이트 확인”을 눌러 설치 상태를 새로 고치세요.",

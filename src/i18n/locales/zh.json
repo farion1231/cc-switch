@@ -1048,6 +1048,17 @@
     "github": "GitHub",
     "starPrompt": "如果 CC Switch 帮到了你，请在 GitHub 点个 Star，这对我们意义重大",
     "starOnGithub": "去点 Star",
+    "feedback": {
+      "button": "问题反馈",
+      "title": "问题反馈",
+      "message": "将从应用日志中截取今天的内容，连同版本和系统信息一起填入 GitHub Issue 页面。受链接长度限制，只能附带今天最近的一部分日志。\n\n不会自动提交，请在浏览器中检查内容、补充问题描述后再自行提交。",
+      "confirm": "打开 Issue 页面",
+      "opened": "已打开 Issue 页面，附带了今天全部 {{total}} 行日志",
+      "openedPartial": "已打开 Issue 页面，附带了今天最近 {{included}} 行日志（共 {{total}} 行）",
+      "openedWithoutLog": "今天还没有日志记录，已打开 Issue 页面",
+      "reviewHint": "请检查内容并补充问题描述后再提交",
+      "failed": "准备问题反馈失败"
+    },
     "manualInstallCommands": "手动安装命令",
     "manualUninstallCommands": "手动卸载命令",
     "manualUninstallHint": "默认自动侦测各应用的运行环境，也可手动切换。请选择安装时使用的方式，再复制所需应用的命令到终端执行。完成后点击“检查更新”刷新安装状态。",

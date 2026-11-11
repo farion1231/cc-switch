@@ -1611,6 +1611,7 @@ pub fn run() {
             commands::get_app_config_path,
             commands::open_app_config_folder,
             commands::reveal_app_log_file,
+            commands::prepare_feedback_report,
             commands::get_claude_common_config_snippet,
             commands::set_claude_common_config_snippet,
             commands::get_common_config_snippet,
