@@ -468,6 +468,56 @@ html[data-window-active="false"] .status-heartbeat {
   transition-duration: 0s;
 }
 
+/*
+ * 额度条（授权中心、供应商卡片展开的额度）：
+ * - 填充是整条宽、往行首平移露出 --quota-percent 那么长：只动 transform，交给合成器，不像改 width 那样每帧重排；
+ *   圆头也不会像 scaleX 那样被压扁。第一次出现时从 0 长出来，之后数值变了平滑过去。
+ * - 查询中：灰轨道里一小段高光来回扫，结果出来后就在同一个位置变成额度条。
+ *   只在查询时存在；窗口不在前台时暂停（data-window-active，同状态心跳），系统要求减少动态效果时不播。
+ */
+.quota-fill {
+  transform: translateX(calc(var(--quota-percent) - 100%));
+  transition: transform 500ms cubic-bezier(0.2, 0, 0, 1);
+  animation: quota-fill-in 600ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+[dir="rtl"] .quota-fill {
+  transform: translateX(calc(100% - var(--quota-percent)));
+  animation-name: quota-fill-in-rtl;
+}
+
+@keyframes quota-fill-in {
+  from {
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes quota-fill-in-rtl {
+  from {
+    transform: translateX(100%);
+  }
+}
+
+.quota-sweep {
+  background: linear-gradient(90deg, transparent, var(--chart-1), transparent);
+  opacity: 0.55;
+  animation: quota-sweep 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes quota-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    /* 高光宽是轨道的 1/3：挪自己宽度的 300% 正好扫过整条 */
+    transform: translateX(300%);
+  }
+}
+
+html[data-window-active="false"] .quota-sweep {
+  animation-play-state: paused;
+}
+
 @keyframes pi-thinking-popover-in {
   0% {
     opacity: 0;
@@ -508,6 +558,16 @@ html[data-window-active="false"] .status-heartbeat {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .quota-fill {
+    animation: none;
+    transition: none;
+  }
+
+  .quota-sweep {
+    animation: none;
+    opacity: 0;
+  }
+
   .status-heartbeat {
     opacity: 1;
     transition-property: color;

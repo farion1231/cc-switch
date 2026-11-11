@@ -1,4 +1,10 @@
-import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useState,
+  type CSSProperties,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import { Check, Clock, RefreshCw, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
@@ -33,6 +39,46 @@ export const TONE_FILL: Record<QuotaTone, string> = {
   danger: "bg-danger",
   plain: "bg-chart-1",
 };
+
+/**
+ * 额度条里的填充：整条宽、往行首平移露出 percent 那么长（见 index.css 的 .quota-fill）。
+ * 第一次出现从 0 长出来，数值变了平滑过去，只动 transform，不触发排版。放在 relative + overflow-hidden 的轨道里。
+ */
+export function QuotaMeterFill({
+  percent,
+  tone,
+}: {
+  percent: number;
+  tone: QuotaTone;
+}) {
+  return (
+    <span
+      className={cn(
+        "quota-fill absolute inset-0 rounded-full",
+        TONE_FILL[tone],
+      )}
+      style={{ "--quota-percent": `${percent}%` } as CSSProperties}
+    />
+  );
+}
+
+/**
+ * 查询中的额度条轨道：和额度条同样的灰轨道，里面一小段高光来回扫（.quota-sweep）。
+ * 结果出来后就在同一个位置换成真的额度条，视线不用挪。
+ */
+export function QuotaMeterLoading({ className }: { className?: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "relative h-1 overflow-hidden rounded-full bg-chart-grid",
+        className,
+      )}
+    >
+      <span className="quota-sweep absolute inset-y-0 start-0 w-1/3 rounded-full" />
+    </span>
+  );
+}
 
 /**
  * 只给数值上色（「5 小时剩余 88%」里的「88%」），档名和「剩余」跟外层的灰字；
@@ -693,13 +739,7 @@ export function QuotaBars({
                   aria-valuenow={Math.round(width)}
                   className="relative h-1 w-[120px] shrink-0 overflow-hidden rounded-full bg-chart-grid"
                 >
-                  <span
-                    className={cn(
-                      "absolute inset-y-0 start-0 rounded-full",
-                      TONE_FILL[line.tone],
-                    )}
-                    style={{ width: `${width}%` }}
-                  />
+                  <QuotaMeterFill percent={width} tone={line.tone} />
                 </span>
               )}
               {/* 旁边已有额度条，正常时数值不上色 */}
