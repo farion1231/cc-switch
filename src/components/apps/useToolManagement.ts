@@ -379,11 +379,21 @@ function mergeToolVersions(
   return merged;
 }
 
+// 进行中的后台检查：此时打开「应用」页直接等它，不再重复起一轮全量探测。
+let backgroundToolCheck: Promise<void> | null = null;
+
 /**
  * 设置里打开了「启动时检查应用更新」时，启动后在后台查一次（结果进同一个模块缓存）。
  * 不弹任何提示，只让侧栏「应用」上出现圆点。
  */
-export async function checkToolUpdatesInBackground(): Promise<void> {
+export function checkToolUpdatesInBackground(): Promise<void> {
+  backgroundToolCheck ??= runBackgroundToolCheck().finally(() => {
+    backgroundToolCheck = null;
+  });
+  return backgroundToolCheck;
+}
+
+async function runBackgroundToolCheck(): Promise<void> {
   const cache = toolManagementState.toolVersionsCache;
   if (cache && Date.now() - cache.at < TOOL_VERSIONS_CACHE_TTL_MS) return;
   const requestId = ++toolVersionRequestSequence;
@@ -544,6 +554,10 @@ export function useToolManagement() {
   const loadAllToolVersions = useCallback(
     async (options?: { force?: boolean }) => {
       const force = options?.force ?? false;
+      if (!force && backgroundToolCheck) {
+        setIsLoadingTools(true);
+        await backgroundToolCheck;
+      }
       const cache = toolManagementState.toolVersionsCache;
       // 命中新鲜缓存：切回「关于」Tab 触发的重挂直接复用上次结果，跳过 6 个 `--version`
       // 子进程 + 6 个 latest 版本网络请求。手动「刷新」传 force 绕过缓存强制重查。
