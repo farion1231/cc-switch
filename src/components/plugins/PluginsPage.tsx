@@ -66,7 +66,9 @@ import {
 import {
   PLUGIN_APP_FEATURES,
   PLUGIN_APPS,
+  PLUGIN_AUTH_REQUIRED,
   PLUGIN_CLI_NOT_INSTALLED,
+  PLUGIN_LOGIN_COMMAND,
   PLUGIN_NEEDS_TERMINAL_CONFIRM,
   pluginsApi,
   type PluginActionOutcome,
@@ -264,7 +266,14 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
     } else {
       const error = extractErrorMessage(result.error) || String(result.error);
       toast.error(messages.failure, {
-        description: messages.describeError?.(error) ?? error,
+        description:
+          messages.describeError?.(error) ??
+          (error === PLUGIN_AUTH_REQUIRED
+            ? t("pluginsPage.toast.authRequired", {
+                app: appName,
+                command: PLUGIN_LOGIN_COMMAND[app] ?? `${app} login`,
+              })
+            : error),
         closeButton: true,
       });
     }
