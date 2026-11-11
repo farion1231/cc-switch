@@ -183,6 +183,7 @@
     "managedByHermesHint": "该条目定义在 Hermes 的 providers: dict，请在 Hermes Web UI 中编辑或删除。",
     "openTerminal": "以此供应商打开终端",
     "openTerminalIsolated": "以此供应商打开终端（环境隔离）",
+    "openTerminalNeedsRoute": "这张卡只能经路由使用：终端会直连卡上的地址，拿不到路由提供的凭据和格式转换。请开启路由后，在终端里直接运行客户端",
     "openTerminalWithProvider": "使用此供应商打开终端",
     "terminalOpened": "终端已打开",
     "terminalOpenFailed": "打开终端失败",
@@ -205,7 +206,7 @@
       "agySwitchTitle": "会切换 agy 的登录",
       "agySwitchBody": "打开前把 agy 的登录切换到 {{account}}，之后新开的 agy 都用这个号。",
       "agySwitchRunning": "检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，最好先退出它们。",
-      "isolationBodyCopilot": "「{{name}}」的地址、Key 和模型只传给这个终端里的 copilot，不写进任何文件；在别的终端里直接运行 copilot 仍是 GitHub 登录。"
+      "isolationBodyCopilot": "这个终端里的 copilot 以 --model 选中「{{name}}」的第一个模型，只对这次会话生效；地址和 Key 读自 Copilot 的 providers.json，在别的终端里也能用 /model 选到它。"
     },
     "name": "名称",
     "namePlaceholder": "例如：Claude 官方",
@@ -534,6 +535,13 @@
         "mediaFallbackDescription": "当供应商不支持图片输入时（已声明纯文本能力，或上游返回不支持图片的错误），自动将图片块替换为 [Unsupported Image] 标记，使对话不中断",
         "mediaHeuristic": "纯文本模型预判",
         "mediaHeuristicDescription": "发送前根据内置的已确认纯文本模型注册表剥离图片。关闭仅停用代理的注册表预判；已声明纯文本模型的处理和上游报错兜底仍保留，且不会改变 Codex 模型目录的能力声明"
+      },
+      "privacyFilter": {
+        "title": "隐私过滤器",
+        "description": "开启后，代理转发请求前会把用户输入和系统提示中的个人信息（邮箱、手机号、身份证、银行卡、IP）和密钥（API Key、Token、密码、私钥等）替换为 [邮箱]、[密钥] 等占位符；关闭后请求原样转发。占位符跟随界面语言。本地规则匹配，替换不可逆，作用于路由和聚合模式；直连模式下请求不经过 CC Switch，不会被过滤。模型回复、思考块、工具调用参数和图片不受影响；工具结果默认不处理，可用下方子开关开启。回环地址（如 127.0.0.1）不算 IP。移植自 packyme/privacy-filter。",
+        "enabled": "启用隐私过滤",
+        "filterToolResults": "同时过滤工具结果",
+        "filterToolResultsDescription": "文件内容、命令输出等工具结果也会被替换。模型只能看到占位符：Edit / apply_patch 可能因对不上原文而失败，整文件重写时占位符可能被写回你的真实文件。请确认能接受后再开启。"
       },
       "optimizer": {
         "title": "Bedrock 请求优化器",
@@ -1348,7 +1356,7 @@
     "defaultModelPlaceholder": "例如: grok-4.5",
     "defaultModelHint": "Grok Build 默认请求的模型，随时可改。",
     "reasoningEffortHint": "上游支持 low/high/max 等思考深度时打开。会同时打开思考模式，并把请求中的 reasoning effort 转成上游 Chat 参数。",
-    "maxOutputTokensHint": "默认上限 8192，长回答或深度思考容易被截断。这里的值会作为 Anthropic 的 max_tokens 发出。",
+    "maxOutputTokensHint": "默认上限 32000，思考也算在内。网关的输出上限更低时会报 400，在这里填它支持的值。这里的值会作为 Anthropic 的 max_tokens 发出。",
     "keyFieldsHint": "默认模型（models.default）和它指向的模型表随供应商切换；其余是 Grok Build 全局设置，保存后对所有供应商生效。",
     "inactiveFieldsHint": "这些是旧版存进卡里的设置，现在切换不会写出去。点一下复制 TOML，需要时粘贴到上方。",
     "inactiveFieldCopied": "已复制",
@@ -1718,7 +1726,6 @@
       "volcengine_agentplan": "火山方舟 Agent Plan 为 CC Switch 的用户提供了专属福利：通过此链接订阅方舟 Agent Plan，新客户首两个月享 2.5 折优惠，再用专属邀请码 6J6FV5N2 领取奖励叠加 9.5 折，低至 9.4 元/月！",
       "volcengine_codingplan": "火山方舟 Coding Plan 为 CC Switch 的用户提供了专属福利：通过此链接订阅方舟 Coding Plan，新客户首两个月享 2.5 折优惠，再用专属邀请码 6J6FV5N2 领取奖励叠加 9.5 折，低至 9.4 元/月！",
       "byteplus": "通过此链接注册即可获取每个模型50万tokens的免费推理额度。",
-      "ccsub": "CCSub 是稳定、实惠的 AI API 中转平台，Claude Code 官方订阅的超强平替，一个 Key 覆盖全部模型，价格约为官方 1/3。",
       "subrouter": "SubRouter 是中转站聚合平台，一个 Key 可接入多个模型与供应商。",
       "qiniu": "七牛云是多协议 AI 中转平台，一个 Key 即可调用原生 Claude、GPT、Gemini 模型，兼容 Anthropic、OpenAI、Gemini 多种接口。",
       "haoai": "hao.ai 是面向开发者与团队的高速、稳定大模型统一 API 网关：一个 Key 即可接入 GPT、Claude、Grok 等主流模型，兼容 OpenAI、Anthropic 协议，提供模型路由、故障回退与完整调用日志，价格低至官方参考价的 1.5 折。CC Switch 用户通过此链接注册，首单可享 5% 赠送额度！",
@@ -1929,6 +1936,9 @@
     "copyCode": "复制代码",
     "migrationFailed": "旧认证数据迁移失败：{{error}}",
     "loadModelsFailed": "加载 Copilot 模型列表失败",
+    "noPickerModels": "这个 GitHub 账号没有可用的 Copilot 模型。Copilot Free 账号通常如此，请确认账号已开通 Copilot Pro 或更高套餐。",
+    "noPickerModelsClaude": "这个 GitHub 账号没有可用的 Copilot 模型。Copilot Free 账号通常如此，请确认账号已开通 Copilot Pro 或更高套餐；也可以在模型框中手动填写 gpt-4.1 或 gpt-4o 先用着。",
+    "noModelsForApiFormat": "这个账号的 Copilot 模型都不支持当前选择的上游格式，请换一种上游格式后重试。",
     "deploymentType": "GitHub 部署类型",
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Enterprise Server",
@@ -1936,24 +1946,36 @@
     "form": {
       "officialTitle": "使用 Copilot CLI 自己的 GitHub 登录",
       "officialHint": "「打开终端」以这张卡的模型启动 copilot；绑定授权中心的账号后改用该账号启动。",
-      "byokTitle": "只在从这张卡打开的终端里生效",
-      "byokHint": "Copilot CLI 只从进程环境读取自带模型，不会写进 Copilot 自己的文件。",
+      "byokTitle": "添加后写进 Copilot 的 providers.json",
+      "byokHint": "「添加」把这一家和它的模型写进 Copilot 自己的 providers.json（仅本机当前用户可读），之后任何方式启动的 copilot 都能在 /model 里选到「卡片标识/模型」；「移除」只删这一家的条目，文件里的其他内容原样保留。",
       "apiFormat": "接口格式",
       "baseUrl": "API 地址",
       "baseUrlHint": "OpenAI 兼容地址通常以 /v1 结尾（如 Ollama http://localhost:11434/v1）；Anthropic 只填主机（https://api.anthropic.com）。",
       "model": "模型",
       "officialModelHint": "留空则使用 Copilot 当前的模型。以 --model 传入，只对这次会话生效；copilot 里的 /model 照常可用。",
-      "byokModelHint": "接口要求的模型 ID（COPILOT_MODEL）。",
       "reasoningEffort": "推理强度",
       "reasoningEffortDefault": "Copilot 默认",
       "reasoningEffortHint": "打开终端时作为 --reasoning-effort 传入。选 none 时 Copilot 不再在 Responses 请求里带 reasoning.summary，部分中转不认这个字段。",
       "maxPromptTokens": "最大输入 Token",
       "maxOutputTokens": "最大输出 Token",
-      "envJsonHint": "高级：任意 COPILOT_PROVIDER_* 变量（如 COPILOT_PROVIDER_MODEL_ID、COPILOT_PROVIDER_BEARER_TOKEN）都会原样传给 copilot。"
+      "byokModelsHint": "每个模型在 Copilot 的 /model 里显示为「{{id}}/模型 ID」，至少填一个。模型 ID 默认就是发给接口的名字，需要不同时展开填「接口模型名」。从这张卡打开终端时用第一个模型。",
+      "providerIdHint": "也是 Copilot 里的供应商名，/model 里显示为「{{id}}/模型」；保存后不能修改。只能用字母、数字、点、下划线和连字符。",
+      "duplicateModelId": "模型 ID 重复：{{model}}",
+      "wireModel": "接口模型名",
+      "wireModelHint": "发给接口的模型名（wireModel）。留空则用模型 ID。",
+      "maxContextWindowTokens": "上下文窗口",
+      "azureApiVersion": "Azure API 版本"
     },
     "quota": {
       "accountNotInAuthCenter": "授权中心里没有 Copilot CLI 当前登录的账号 {{login}}。请在授权中心添加它，或在卡片里绑定账号。",
       "notSignedIn": "Copilot CLI 尚未登录。请运行 copilot 并用 /login 登录，或在卡片里绑定授权中心的账号。"
+    },
+    "defaultCannotRemove": "Copilot 的默认模型属于这一家，不能移除或删除。先在 copilot 里用 /model 换成别家的模型。",
+    "terminalNeedsAdd": "先把这一家添加到 Copilot，终端才能选到它的模型。",
+    "section": {
+      "official": "官方登录 · {{count}}",
+      "officialHelpTitle": "官方登录",
+      "officialHelp": "用 Copilot CLI 自己的 GitHub 登录，不写任何文件；「打开终端」以卡片上的模型和绑定的账号启动 copilot。"
     }
   },
   "codexOauth": {
@@ -2097,8 +2119,8 @@
     "impersonateClaudeCodeLabel": "模拟 Claude Code 客户端",
     "impersonateClaudeCodeHint": "网关只允许 Claude Code 使用时打开：伪装 Claude Code 的请求头，并在系统提示首行注入它的身份。",
     "maxOutputTokensLabel": "最大输出 tokens",
-    "maxOutputTokensPlaceholder": "留空则使用默认 8192",
-    "maxOutputTokensHint": "Codex 不带输出上限，默认 8192，长回答或深度思考容易被截断。这里的值会作为 Anthropic 的 max_tokens 发出。",
+    "maxOutputTokensPlaceholder": "留空则使用默认 32000",
+    "maxOutputTokensHint": "Codex 不带输出上限，默认按 32000 发出，思考也算在内。网关的输出上限更低时会报 400，在这里填它支持的值。这里的值会作为 Anthropic 的 max_tokens 发出。",
     "promptCacheRoutingLabel": "提示词缓存路由",
     "promptCacheRoutingAuto": "自动（推荐）",
     "promptCacheRoutingEnabled": "开启",

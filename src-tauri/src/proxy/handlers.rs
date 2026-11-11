@@ -95,15 +95,19 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
 /// cc-switch–owned `model_catalog_json`, using the same path ownership rules as
 /// Codex live-setting import.
 ///
+/// 没有 CC Switch 的目录、路由的是官方卡时，转给官方上游（见
+/// [`super::codex_models_passthrough`]）：官方列表按账号返回，Codex 自带的列表缺账号
+/// 专属的模型和 Daybreak 权限。
+///
 /// Claude Code 的模型发现（`CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY`）也打到这里：
 /// 按 [`is_claude_model_discovery`] 认出来，返回 Anthropic 形状的 Stack 模型列表。
 pub async fn handle_models(
     State(state): State<ProxyState>,
     uri: axum::http::Uri,
     headers: axum::http::HeaderMap,
-) -> Result<Json<Value>, ProxyError> {
+) -> Result<axum::response::Response, ProxyError> {
     if is_claude_model_discovery(&uri, &headers) {
-        return Ok(Json(claude_model_discovery(&state)));
+        return Ok(Json(claude_model_discovery(&state)).into_response());
     }
     let config_dir = crate::codex_config::get_codex_config_dir();
     let active_catalog_path = match crate::codex_config::read_codex_config_text() {
@@ -124,6 +128,12 @@ pub async fn handle_models(
             }
         }
     } else {
+        if let Some(response) =
+            super::codex_models_passthrough::forward_if_official_route(&state.db, &uri, &headers)
+                .await
+        {
+            return Ok(response);
+        }
         if active_catalog_path.is_none() {
             log::debug!(
                 "[models] stale guard: catalog not served (model_catalog_json not set to cc-switch catalog)"
@@ -131,7 +141,7 @@ pub async fn handle_models(
         }
         json!({"models": []})
     };
-    Ok(Json(catalog))
+    Ok(Json(catalog).into_response())
 }
 
 // ============================================================================
@@ -355,6 +365,7 @@ async fn handle_messages_for_app(
         stack,
     )
     .await?;
+    ctx.apply_privacy_filter(&mut body);
 
     let raw_endpoint = uri
         .path_and_query()
@@ -1009,6 +1020,7 @@ pub async fn handle_chat_completions(
         stack,
     )
     .await?;
+    ctx.apply_privacy_filter(&mut body);
     let endpoint = endpoint_with_query(&uri, "/chat/completions");
 
     let is_stream = body
@@ -1131,6 +1143,7 @@ async fn handle_responses_for_app(
         stack,
     )
     .await?;
+    ctx.apply_privacy_filter(&mut body);
     let endpoint = endpoint_with_query(&uri, "/responses");
 
     let is_stream = body
@@ -1385,7 +1398,7 @@ async fn handle_codex_standalone_passthrough(
         .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
         .to_bytes();
     let body_bytes = decode_codex_request_body(&mut headers, body_bytes)?;
-    let body: Value = serde_json::from_slice(&body_bytes)
+    let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::InvalidRequest(format!("Failed to parse request body: {e}")))?;
     drop(body_bytes);
 
@@ -1399,6 +1412,7 @@ async fn handle_codex_standalone_passthrough(
         None,
     )
     .await?;
+    ctx.apply_privacy_filter(&mut body);
     let endpoint = endpoint_with_query(&uri, canonical_endpoint);
 
     let forwarder = ctx.create_forwarder(&state);
@@ -1492,6 +1506,7 @@ async fn handle_responses_compact_for_app(
         stack,
     )
     .await?;
+    ctx.apply_privacy_filter(&mut body);
     let endpoint = endpoint_with_query(&uri, "/responses/compact");
 
     let is_stream = body
@@ -2633,7 +2648,7 @@ pub async fn handle_gemini(
         .to_bytes();
     // GET 类只读端点（/v1beta/models、/v1beta/models/<model> 等）没有请求体，
     // 不能强制 parse 为 JSON —— 否则空 body 会被拒绝。
-    let body: Value = if body_bytes.is_empty() {
+    let mut body: Value = if body_bytes.is_empty() {
         Value::Null
     } else {
         serde_json::from_slice(&body_bytes)
@@ -2654,6 +2669,7 @@ pub async fn handle_gemini(
     )
     .await?
     .with_model_from_uri(&uri);
+    ctx.apply_privacy_filter(&mut body);
 
     // 提取完整的路径和查询参数
     let endpoint = uri
@@ -5618,13 +5634,14 @@ mod stack_tests {
     async fn claude_model_discovery_lists_nothing_outside_proxy_mode() {
         let mut headers = axum::http::HeaderMap::new();
         headers.insert("anthropic-version", "2023-06-01".parse().unwrap());
-        let Json(body) = handle_models(
+        let response = handle_models(
             State(proxy_state()),
             "/v1/models?limit=1000".parse().unwrap(),
             headers,
         )
         .await
         .expect("models");
+        let (_, body) = json_of(response).await;
         assert_eq!(body, json!({ "data": [], "has_more": false }));
     }
 }

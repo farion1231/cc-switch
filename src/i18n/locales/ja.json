@@ -183,6 +183,7 @@
     "managedByHermesHint": "Hermes の providers: dict で定義されています。Hermes Web UI で編集または削除してください。",
     "openTerminal": "このプロバイダーでターミナルを開く",
     "openTerminalIsolated": "このプロバイダーでターミナルを開く（環境を分離）",
+    "openTerminalNeedsRoute": "このカードはルーティング経由でのみ使えます。ターミナルはカードのアドレスへ直接接続するため、ルーティングが提供する認証情報や形式変換を利用できません。ルーティングを有効にしてから、ターミナルでクライアントを直接起動してください",
     "openTerminalWithProvider": "このプロバイダーでターミナルを開く",
     "terminalOpened": "ターミナルを開きました",
     "terminalOpenFailed": "ターミナルを開けませんでした",
@@ -205,7 +206,7 @@
       "agySwitchTitle": "agy のログインを切り替えます",
       "agySwitchBody": "開く前に agy のログインを {{account}} に切り替えます。以降に起動する agy はこのアカウントを使います。",
       "agySwitchRunning": "agy が実行中です。開いている agy は元のアカウントのままで、元のアカウントを書き戻す可能性があります。できれば先に終了してください。",
-      "isolationBodyCopilot": "「{{name}}」のエンドポイント、キー、モデルはこのターミナルの copilot にだけ渡され、ファイルには書き込まれません。別のターミナルで直接 copilot を実行した場合は GitHub ログインのままです。"
+      "isolationBodyCopilot": "このターミナルの copilot は --model で「{{name}}」の先頭モデルを選んで起動し、このセッションにのみ有効です。エンドポイントとキーは Copilot の providers.json から読むので、ほかのターミナルでも /model で選べます。"
     },
     "name": "名前",
     "namePlaceholder": "例: Claude Official",
@@ -534,6 +535,13 @@
         "mediaFallbackDescription": "プロバイダーが画像入力に対応していない場合（テキストのみの能力が宣言されている、または上流が画像非対応エラーを返した場合）、画像ブロックを [Unsupported Image] マーカーに自動置換し、会話を中断させません",
         "mediaHeuristic": "テキスト専用モデルの事前判定",
         "mediaHeuristicDescription": "送信前に、内蔵の確認済みテキスト専用モデル登録に基づいて画像を除去します。オフにしても無効になるのはプロキシの登録ベース事前処理だけで、宣言済みテキスト専用モデルの処理と上流エラー時のフォールバックは残り、Codex モデルカタログの能力宣言は変わりません"
+      },
+      "privacyFilter": {
+        "title": "プライバシーフィルター",
+        "description": "オンにすると、プロキシはリクエストを転送する前に、ユーザー入力とシステムプロンプト内の個人情報（メール、電話番号、身分証番号、銀行カード、IP）とシークレット（API キー、トークン、パスワード、秘密鍵など）を [メール]、[シークレット] などのプレースホルダーに置き換えます。オフのときはそのまま転送します。プレースホルダーは表示言語に合わせて切り替わります。ローカルのルールベース処理で、置き換えは元に戻せません。ルーティングモードと集約モードで有効です。直接接続モードではリクエストが CC Switch を経由しないため、フィルタされません。モデルの応答・思考ブロック・ツール呼び出しの引数・画像は変更しません。ツールの実行結果は既定では変更せず、下のスイッチで対象に含められます。ループバックアドレス（127.0.0.1 など）は IP として扱いません。packyme/privacy-filter から移植。",
+        "enabled": "プライバシーフィルターを有効化",
+        "filterToolResults": "ツールの実行結果もフィルタする",
+        "filterToolResultsDescription": "ファイル内容やコマンド出力などのツール実行結果も置き換えます。モデルにはプレースホルダーしか見えないため、Edit / apply_patch が元のテキストと一致せず失敗したり、ファイル全体の書き直しでプレースホルダーが実際のファイルに書き込まれたりすることがあります。これを許容できる場合のみオンにしてください。"
       },
       "optimizer": {
         "title": "Bedrock リクエストオプティマイザー",
@@ -1348,7 +1356,7 @@
     "defaultModelPlaceholder": "例: grok-4.5",
     "defaultModelHint": "Grok Build がデフォルトでリクエストするモデルです。いつでも変更できます。",
     "reasoningEffortHint": "上流が low/high/max などの思考深度に対応しているときにオンにします。思考モードも同時にオンになり、リクエストの reasoning effort を上流の Chat パラメーターに変換します。",
-    "maxOutputTokensHint": "既定の上限 8192 では長い回答や深い思考が切れることがあります。この値が Anthropic の max_tokens として送られます。",
+    "maxOutputTokensHint": "既定の上限は 32000 で、思考もこれに含まれます。ゲートウェイの出力上限がこれより低いと 400 が返るので、対応する値をここに入力してください。この値が Anthropic の max_tokens として送られます。",
     "keyFieldsHint": "デフォルトモデル（models.default）とそれが指すモデルテーブルはプロバイダーに合わせて切り替わります。それ以外は Grok Build のグローバル設定で、保存するとすべてのプロバイダーに適用されます。",
     "inactiveFieldsHint": "旧バージョンがこのプロバイダーに保存した設定で、切り替えでは反映されなくなりました。クリックすると TOML をコピーできるので、必要なら上に貼り付けてください。",
     "inactiveFieldCopied": "コピーしました",
@@ -1718,7 +1726,6 @@
       "volcengine_agentplan": "火山方舟 Agent Plan は CC Switch ユーザーに専属特典を提供しています：このリンクから方舟 Agent Plan を購読すると、新規のお客様は最初の 2 か月が 75% オフ、さらに専用招待コード 6J6FV5N2 で 5% オフが加算され、月額 9.4 元から！",
       "volcengine_codingplan": "火山方舟 Coding Plan は CC Switch ユーザーに専属特典を提供しています：このリンクから方舟 Coding Plan を購読すると、新規のお客様は最初の 2 か月が 75% オフ、さらに専用招待コード 6J6FV5N2 で 5% オフが加算され、月額 9.4 元から！",
       "byteplus": "このリンクから登録すると、各モデルごとに50万トークンの無料推論クォータがもらえます。",
-      "ccsub": "CCSub は安定・低価格の AI API リレーサービスです。Claude Code の公式サブスクリプションの代替として、1つのキーで全モデルを公式比約1/3のコストで利用できます。",
       "subrouter": "SubRouter は、1つのキーで複数のモデルとプロバイダーにアクセスできる AI 中継アグリゲーターです。",
       "qiniu": "Qiniu Cloud（七牛云）はマルチプロトコル対応の AI 中継プラットフォームです。1つのキーでネイティブの Claude・GPT・Gemini モデルを利用でき、Anthropic／OpenAI／Gemini の各 API に対応します。",
       "haoai": "hao.ai は開発者とチーム向けの高速で安定した LLM 統合 API ゲートウェイです。1 つのキーで GPT、Claude、Grok などの主要モデルを OpenAI・Anthropic 互換 API で利用でき、モデルルーティング、フェイルオーバー、完全な呼び出しログを備え、価格は公式参考価格の最大 85% オフです。CC Switch ユーザーがこのリンクから登録すると、初回注文で 5% のボーナスクレジットを受け取れます！",
@@ -1929,6 +1936,9 @@
     "copyCode": "コードをコピー",
     "migrationFailed": "旧認証データの移行に失敗しました: {{error}}",
     "loadModelsFailed": "Copilot モデル一覧の読み込みに失敗しました",
+    "noPickerModels": "この GitHub アカウントで利用できる Copilot モデルがありません。Copilot Free アカウントでは通常このようになります。Copilot Pro 以上のプランが有効か確認してください。",
+    "noPickerModelsClaude": "この GitHub アカウントで利用できる Copilot モデルがありません。Copilot Free アカウントでは通常このようになります。Copilot Pro 以上のプランが有効か確認してください。モデル欄に gpt-4.1 または gpt-4o を手動で入力すれば、そのまま利用できます。",
+    "noModelsForApiFormat": "このアカウントの Copilot モデルはいずれも選択中のアップストリーム形式に対応していません。別のアップストリーム形式をお試しください。",
     "deploymentType": "GitHub デプロイメントタイプ",
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Enterprise Server",
@@ -1936,24 +1946,36 @@
     "form": {
       "officialTitle": "Copilot CLI 自身の GitHub ログインを使用",
       "officialHint": "「ターミナルを開く」はこのカードのモデルで copilot を起動します。認証センターのアカウントを紐付けると、そのアカウントで起動します。",
-      "byokTitle": "このカードから開いたターミナルでのみ有効",
-      "byokHint": "Copilot CLI は独自モデルをプロセス環境からのみ読み込むため、Copilot 自身のファイルには書き込みません。",
+      "byokTitle": "追加すると Copilot の providers.json に書き込まれます",
+      "byokHint": "「追加」はこのプロバイダーとモデルを Copilot 自身の providers.json（このマシンの現在のユーザーのみ読み取り可）に書き込みます。以後どの方法で起動した copilot でも /model で「カード ID/モデル」を選べます。「削除」はこのプロバイダーのエントリだけを消し、ファイルのほかの内容はそのまま残します。",
       "apiFormat": "API 形式",
       "baseUrl": "API エンドポイント",
       "baseUrlHint": "OpenAI 互換エンドポイントは通常 /v1 で終わります（例：Ollama http://localhost:11434/v1）。Anthropic はホストのみ（https://api.anthropic.com）。",
       "model": "モデル",
       "officialModelHint": "空欄なら Copilot の現在のモデルを使います。--model として渡され、このセッションにのみ適用されます。copilot 内の /model も使えます。",
-      "byokModelHint": "エンドポイントが要求するモデル ID（COPILOT_MODEL）。",
       "reasoningEffort": "推論の強さ",
       "reasoningEffortDefault": "Copilot の既定値",
       "reasoningEffortHint": "ターミナルを開くときに --reasoning-effort として渡します。none を選ぶと、Copilot は Responses リクエストに reasoning.summary を付けません（このフィールドを受け付けない中継があります）。",
       "maxPromptTokens": "最大入力トークン",
       "maxOutputTokens": "最大出力トークン",
-      "envJsonHint": "上級者向け：任意の COPILOT_PROVIDER_* 変数（COPILOT_PROVIDER_MODEL_ID、COPILOT_PROVIDER_BEARER_TOKEN など）はそのまま copilot に渡されます。"
+      "byokModelsHint": "各モデルは Copilot の /model に「{{id}}/モデル ID」として表示されます。少なくとも 1 つ必要です。モデル ID はそのままエンドポイントに送る名前になります。異なる場合は行を展開して「上流のモデル名」を入力してください。このカードからターミナルを開くと先頭のモデルを使います。",
+      "providerIdHint": "Copilot でのプロバイダー名でもあり、/model には「{{id}}/モデル」と表示されます。保存後は変更できません。英字、数字、ドット、アンダースコア、ハイフンのみ使用できます。",
+      "duplicateModelId": "モデル ID が重複しています：{{model}}",
+      "wireModel": "上流のモデル名",
+      "wireModelHint": "エンドポイントに送るモデル名（wireModel）。空欄ならモデル ID を使います。",
+      "maxContextWindowTokens": "コンテキストウィンドウ",
+      "azureApiVersion": "Azure API バージョン"
     },
     "quota": {
       "accountNotInAuthCenter": "Copilot CLI でログイン中のアカウント {{login}} が認証センターにありません。認証センターに追加するか、このカードでアカウントを紐付けてください。",
       "notSignedIn": "Copilot CLI にログインしていません。copilot を実行して /login でログインするか、このカードで認証センターのアカウントを紐付けてください。"
+    },
+    "defaultCannotRemove": "Copilot の既定モデルがこのプロバイダーのものなので、削除できません。先に copilot の /model でほかのプロバイダーのモデルに切り替えてください。",
+    "terminalNeedsAdd": "ターミナルでモデルを選べるよう、先にこのプロバイダーを Copilot に追加してください。",
+    "section": {
+      "official": "公式ログイン · {{count}}",
+      "officialHelpTitle": "公式ログイン",
+      "officialHelp": "Copilot CLI 自身の GitHub ログインを使い、ファイルには何も書き込みません。「ターミナルを開く」はカードのモデルと紐付けたアカウントで copilot を起動します。"
     }
   },
   "codexOauth": {
@@ -2097,8 +2119,8 @@
     "impersonateClaudeCodeLabel": "Claude Code クライアントを模倣",
     "impersonateClaudeCodeHint": "ゲートウェイが Claude Code しか受け付けないときにオンにします。Claude Code のリクエストヘッダーを送り、システムプロンプトの先頭行にその身元を挿入します。",
     "maxOutputTokensLabel": "最大出力トークン",
-    "maxOutputTokensPlaceholder": "空欄の場合はデフォルトの 8192 を使用",
-    "maxOutputTokensHint": "Codex は出力上限を送らないため、既定の 8192 では長い回答や深い思考が切れることがあります。この値が Anthropic の max_tokens として送られます。",
+    "maxOutputTokensPlaceholder": "空欄の場合はデフォルトの 32000 を使用",
+    "maxOutputTokensHint": "Codex は出力上限を送らないため、既定で 32000 を送ります。思考もこれに含まれます。ゲートウェイの出力上限がこれより低いと 400 が返るので、対応する値をここに入力してください。この値が Anthropic の max_tokens として送られます。",
     "promptCacheRoutingLabel": "プロンプトキャッシュルーティング",
     "promptCacheRoutingAuto": "自動（推奨）",
     "promptCacheRoutingEnabled": "有効",

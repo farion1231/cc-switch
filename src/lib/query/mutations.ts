@@ -65,8 +65,14 @@ export const useAddProviderMutation = (appId: AppId) => {
       }
 
       let id: string;
+      let liveTarget = addToLive;
 
-      if (
+      if (appId === "copilot") {
+        // Copilot CLI：自带模型卡的 id 就是 providers.json 里的供应商名（表单填的）；官方卡
+        // 没有 provider 节点，用随机 id，也从不写进 providers.json
+        id = providerInput.providerKey || generateUUID();
+        if (!providerInput.providerKey) liveTarget = false;
+      } else if (
         appId === "opencode" ||
         appId === "openclaw" ||
         appId === "hermes" ||
@@ -99,7 +105,7 @@ export const useAddProviderMutation = (appId: AppId) => {
       };
       delete (newProvider as any).providerKey;
 
-      await providersApi.add(newProvider, appId, addToLive, editorSave);
+      await providersApi.add(newProvider, appId, liveTarget, editorSave);
       return newProvider;
     },
     onSuccess: async () => {

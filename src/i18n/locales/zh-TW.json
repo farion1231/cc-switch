@@ -183,6 +183,7 @@
     "managedByHermesHint": "該專案定義於 Hermes 的 providers: dict，請在 Hermes Web UI 中編輯或刪除。",
     "openTerminal": "以此供應商開啟終端機",
     "openTerminalIsolated": "以此供應商開啟終端機（環境隔離）",
+    "openTerminalNeedsRoute": "這張卡只能經路由使用：終端機會直連卡上的位址，拿不到路由提供的憑證和格式轉換。請開啟路由後，在終端機裡直接執行用戶端",
     "openTerminalWithProvider": "使用此供應商開啟終端機",
     "terminalOpened": "終端機已開啟",
     "terminalOpenFailed": "開啟終端機失敗",
@@ -205,7 +206,7 @@
       "agySwitchTitle": "會切換 agy 的登入",
       "agySwitchBody": "開啟前把 agy 的登入切換到 {{account}}，之後新開的 agy 都用這個帳號。",
       "agySwitchRunning": "偵測到 agy 正在執行：已開啟的 agy 仍使用原帳號，還可能把原帳號寫回去，最好先結束它們。",
-      "isolationBodyCopilot": "「{{name}}」的位址、Key 和模型只傳給這個終端機裡的 copilot，不寫進任何檔案；在別的終端機裡直接執行 copilot 仍是 GitHub 登入。"
+      "isolationBodyCopilot": "這個終端機裡的 copilot 以 --model 選中「{{name}}」的第一個模型，只對這次工作階段生效；位址和 Key 讀自 Copilot 的 providers.json，在別的終端機裡也能用 /model 選到它。"
     },
     "name": "名稱",
     "namePlaceholder": "例如：Claude 官方",
@@ -534,6 +535,13 @@
         "mediaFallbackDescription": "當供應商不支援圖片輸入時（已宣告純文字能力，或上游回傳不支援圖片的錯誤），自動將圖片區塊替換為 [Unsupported Image] 標記，使對話不中斷",
         "mediaHeuristic": "純文字模型預判",
         "mediaHeuristicDescription": "傳送前依內建的已確認純文字模型登錄表移除圖片。關閉只會停用代理的登錄表預判；已宣告純文字模型的處理與上游錯誤兜底仍會保留，且不會改變 Codex 模型目錄的能力宣告"
+      },
+      "privacyFilter": {
+        "title": "隱私過濾器",
+        "description": "開啟後，代理轉發請求前會把使用者輸入和系統提示中的個人資訊（電子郵件、手機號碼、身分證、銀行卡、IP）和金鑰（API Key、Token、密碼、私鑰等）替換為 [電子郵件]、[金鑰] 等佔位符；關閉後請求原樣轉發。佔位符跟隨介面語言。本機規則比對，替換不可逆，作用於路由和聚合模式；直連模式下請求不經過 CC Switch，不會被過濾。模型回覆、思考區塊、工具呼叫參數和圖片不受影響；工具結果預設不處理，可用下方子開關開啟。迴環位址（如 127.0.0.1）不算 IP。移植自 packyme/privacy-filter。",
+        "enabled": "啟用隱私過濾",
+        "filterToolResults": "同時過濾工具結果",
+        "filterToolResultsDescription": "檔案內容、命令輸出等工具結果也會被替換。模型只能看到佔位符：Edit / apply_patch 可能因對不上原文而失敗，整檔重寫時佔位符可能被寫回你的真實檔案。請確認能接受後再開啟。"
       },
       "optimizer": {
         "title": "Bedrock 請求最佳化工具",
@@ -1052,7 +1060,6 @@
     "copyToolUninstallCommand": "複製 {{tool}} 的解除安裝指令",
     "uninstallCommandCopied": "解除安裝指令已複製",
     "uninstallCommandCopyFailed": "複製失敗，請手動選取並複製指令。",
-    "oneClickInstall": "一鍵安裝",
     "oneClickInstallHint": "安裝或更新 Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code / Oh My Pi",
     "localEnvCheck": "本地環境檢查",
     "updateAllTools": "全部更新（{{count}}）",
@@ -1349,7 +1356,7 @@
     "defaultModelPlaceholder": "例如: grok-4.5",
     "defaultModelHint": "Grok Build 預設請求的模型，隨時可改。",
     "reasoningEffortHint": "上游支援 low/high/max 等思考深度時開啟。會同時開啟思考模式，並把請求中的 reasoning effort 轉成上游 Chat 參數。",
-    "maxOutputTokensHint": "預設上限 8192，長回答或深度思考容易被截斷。這裡的值會作為 Anthropic 的 max_tokens 發出。",
+    "maxOutputTokensHint": "預設上限 32000，思考也算在內。閘道的輸出上限更低時會報 400，在這裡填它支援的值。這裡的值會作為 Anthropic 的 max_tokens 發出。",
     "keyFieldsHint": "預設模型（models.default）和它指向的模型表隨供應商切換；其餘是 Grok Build 全域設定，儲存後對所有供應商生效。",
     "inactiveFieldsHint": "這些是舊版存進卡裡的設定，現在切換不會寫出去。點一下複製 TOML，需要時貼到上方。",
     "inactiveFieldCopied": "已複製",
@@ -1719,7 +1726,6 @@
       "volcengine_agentplan": "火山方舟 Agent Plan 為 CC Switch 的使用者提供了專屬福利：透過此連結訂閱方舟 Agent Plan，新客戶首兩個月享 2.5 折優惠，再用專屬邀請碼 6J6FV5N2 領取獎勵疊加 9.5 折，低至 9.4 元/月！",
       "volcengine_codingplan": "火山方舟 Coding Plan 為 CC Switch 的使用者提供了專屬福利：透過此連結訂閱方舟 Coding Plan，新客戶首兩個月享 2.5 折優惠，再用專屬邀請碼 6J6FV5N2 領取獎勵疊加 9.5 折，低至 9.4 元/月！",
       "byteplus": "透過此連結註冊即可取得每個模型 50 萬 tokens 的免費推理額度。",
-      "ccsub": "CCSub 是穩定、實惠的 AI API 中轉平台，Claude Code 官方訂閱的超強平替，一個 Key 覆蓋全部模型，價格約為官方 1/3。",
       "subrouter": "SubRouter 是中轉站聚合平台，一個 Key 可接入多個模型與供應商。",
       "qiniu": "七牛雲是多協定 AI 中轉平台，一個 Key 即可呼叫原生 Claude、GPT、Gemini 模型，相容 Anthropic、OpenAI、Gemini 多種介面。",
       "haoai": "hao.ai 是面向開發者與團隊的高速、穩定大模型統一 API 閘道：一個 Key 即可接入 GPT、Claude、Grok 等主流模型，相容 OpenAI、Anthropic 協定，提供模型路由、故障回退與完整呼叫日誌，價格低至官方參考價的 1.5 折。CC Switch 使用者透過此連結註冊，首單可享 5% 贈送額度！",
@@ -1930,6 +1936,9 @@
     "copyCode": "複製程式碼",
     "migrationFailed": "舊驗證資料遷移失敗：{{error}}",
     "loadModelsFailed": "載入 Copilot 模型清單失敗",
+    "noPickerModels": "這個 GitHub 帳號沒有可用的 Copilot 模型。Copilot Free 帳號通常如此，請確認帳號已開通 Copilot Pro 或更高方案。",
+    "noPickerModelsClaude": "這個 GitHub 帳號沒有可用的 Copilot 模型。Copilot Free 帳號通常如此，請確認帳號已開通 Copilot Pro 或更高方案；也可以在模型欄位手動填寫 gpt-4.1 或 gpt-4o 先使用。",
+    "noModelsForApiFormat": "這個帳號的 Copilot 模型都不支援目前選擇的上游格式，請換一種上游格式後重試。",
     "deploymentType": "GitHub 部署類型",
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Enterprise Server",
@@ -1937,24 +1946,36 @@
     "form": {
       "officialTitle": "使用 Copilot CLI 自己的 GitHub 登入",
       "officialHint": "「開啟終端機」以這張卡的模型啟動 copilot；綁定授權中心的帳號後改用該帳號啟動。",
-      "byokTitle": "只在從這張卡開啟的終端機裡生效",
-      "byokHint": "Copilot CLI 只從程序環境讀取自帶模型，不會寫進 Copilot 自己的檔案。",
+      "byokTitle": "新增後寫入 Copilot 的 providers.json",
+      "byokHint": "「新增」會把這一家和它的模型寫入 Copilot 自己的 providers.json（僅本機目前使用者可讀），之後以任何方式啟動的 copilot 都能在 /model 裡選到「卡片識別碼/模型」；「移除」只刪除這一家的項目，檔案裡的其他內容原樣保留。",
       "apiFormat": "介面格式",
       "baseUrl": "API 位址",
       "baseUrlHint": "OpenAI 相容位址通常以 /v1 結尾（如 Ollama http://localhost:11434/v1）；Anthropic 只填主機（https://api.anthropic.com）。",
       "model": "模型",
       "officialModelHint": "留空則使用 Copilot 目前的模型。以 --model 傳入，只對這次工作階段生效；copilot 裡的 /model 照常可用。",
-      "byokModelHint": "介面要求的模型 ID（COPILOT_MODEL）。",
       "reasoningEffort": "推理強度",
       "reasoningEffortDefault": "Copilot 預設",
       "reasoningEffortHint": "開啟終端機時作為 --reasoning-effort 傳入。選 none 時 Copilot 不再在 Responses 請求裡帶 reasoning.summary，部分中轉不認這個欄位。",
       "maxPromptTokens": "最大輸入 Token",
       "maxOutputTokens": "最大輸出 Token",
-      "envJsonHint": "進階：任意 COPILOT_PROVIDER_* 變數（如 COPILOT_PROVIDER_MODEL_ID、COPILOT_PROVIDER_BEARER_TOKEN）都會原樣傳給 copilot。"
+      "byokModelsHint": "每個模型在 Copilot 的 /model 裡顯示為「{{id}}/模型 ID」，至少填一個。模型 ID 預設就是送給介面的名稱，需要不同時展開填「介面模型名稱」。從這張卡開啟終端機時使用第一個模型。",
+      "providerIdHint": "也是 Copilot 裡的供應商名稱，/model 裡顯示為「{{id}}/模型」；儲存後不能修改。只能使用字母、數字、點、底線和連字號。",
+      "duplicateModelId": "模型 ID 重複：{{model}}",
+      "wireModel": "介面模型名稱",
+      "wireModelHint": "送給介面的模型名稱（wireModel）。留空則使用模型 ID。",
+      "maxContextWindowTokens": "上下文視窗",
+      "azureApiVersion": "Azure API 版本"
     },
     "quota": {
       "accountNotInAuthCenter": "授權中心裡沒有 Copilot CLI 目前登入的帳號 {{login}}。請在授權中心新增它，或在卡片裡綁定帳號。",
       "notSignedIn": "Copilot CLI 尚未登入。請執行 copilot 並用 /login 登入，或在卡片裡綁定授權中心的帳號。"
+    },
+    "defaultCannotRemove": "Copilot 的預設模型屬於這一家，不能移除或刪除。請先在 copilot 裡用 /model 換成別家的模型。",
+    "terminalNeedsAdd": "請先把這一家新增到 Copilot，終端機才能選到它的模型。",
+    "section": {
+      "official": "官方登入 · {{count}}",
+      "officialHelpTitle": "官方登入",
+      "officialHelp": "使用 Copilot CLI 自己的 GitHub 登入，不寫入任何檔案；「開啟終端機」以卡片上的模型和綁定的帳號啟動 copilot。"
     }
   },
   "codexOauth": {
@@ -2101,8 +2122,8 @@
     "impersonateClaudeCodeLabel": "模擬 Claude Code 用戶端",
     "impersonateClaudeCodeHint": "閘道只允許 Claude Code 使用時開啟：偽裝 Claude Code 的請求標頭，並在系統提示首行注入它的身分。",
     "maxOutputTokensLabel": "最大輸出 tokens",
-    "maxOutputTokensPlaceholder": "留空則使用預設 8192",
-    "maxOutputTokensHint": "Codex 不帶輸出上限，預設 8192，長回答或深度思考容易被截斷。這裡的值會作為 Anthropic 的 max_tokens 發出。",
+    "maxOutputTokensPlaceholder": "留空則使用預設 32000",
+    "maxOutputTokensHint": "Codex 不帶輸出上限，預設以 32000 發出，思考也算在內。閘道的輸出上限更低時會報 400，在這裡填它支援的值。這裡的值會作為 Anthropic 的 max_tokens 發出。",
     "promptCacheRoutingLabel": "提示詞快取路由",
     "promptCacheRoutingAuto": "自動（建議）",
     "promptCacheRoutingEnabled": "開啟",

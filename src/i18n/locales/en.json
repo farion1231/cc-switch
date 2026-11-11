@@ -183,6 +183,7 @@
     "managedByHermesHint": "Defined in Hermes' providers: dict. Edit or remove it via Hermes Web UI.",
     "openTerminal": "Open Terminal with This Provider",
     "openTerminalIsolated": "Open Terminal with This Provider (Isolated)",
+    "openTerminalNeedsRoute": "This card only works through Routing: a terminal would connect straight to its address, without the credentials and format conversion Routing provides. Turn on Routing, then run the client in a terminal directly",
     "openTerminalWithProvider": "Open Terminal with This Provider",
     "terminalOpened": "Terminal opened",
     "terminalOpenFailed": "Failed to open terminal",
@@ -205,7 +206,7 @@
       "agySwitchTitle": "This switches agy's sign-in",
       "agySwitchBody": "Before opening, agy's sign-in switches to {{account}}, and agy sessions started afterwards use this account.",
       "agySwitchRunning": "agy is running: open agy sessions keep the previous account and may write it back. Quit them first if you can.",
-      "isolationBodyCopilot": "The endpoint, key and model of \"{{name}}\" go only to copilot in this terminal and are never written to a file; running copilot directly in another terminal still uses your GitHub sign-in."
+      "isolationBodyCopilot": "copilot in this terminal starts with --model set to the first model of \"{{name}}\", for this session only. The endpoint and key come from Copilot's providers.json, so other terminals can pick it with /model too."
     },
     "name": "Name",
     "namePlaceholder": "e.g., Claude Official",
@@ -534,6 +535,13 @@
         "mediaFallbackDescription": "When a provider does not support image input (it declares text-only capability, or the upstream returns an unsupported-image error), automatically replaces image blocks with an [Unsupported Image] marker so the conversation is not interrupted",
         "mediaHeuristic": "Text-Only Model Preflight",
         "mediaHeuristicDescription": "Before sending, strips images for models in the built-in confirmed text-only registry. Turning this off only disables the proxy's registry-based preflight; declared text-only handling and upstream-error fallback remain, and Codex model-catalog capability declarations are unchanged"
+      },
+      "privacyFilter": {
+        "title": "Privacy Filter",
+        "description": "When on, the proxy replaces personal data (email, phone number, national ID, bank card, IP) and secrets (API keys, tokens, passwords, private keys) in user input and system prompts with placeholders such as [EMAIL] and [SECRET] before forwarding. When off, requests are forwarded unchanged. Placeholders follow the interface language. This is a local, rule-based filter and replacements can't be undone. It applies in Routing and Aggregation modes; in Direct mode, requests don't pass through CC Switch and aren't filtered. Model replies, thinking blocks, tool-call arguments, and images are left unchanged; tool results are left unchanged by default and can be included with the switch below. Loopback addresses such as 127.0.0.1 don't count as IPs. Ported from packyme/privacy-filter.",
+        "enabled": "Enable privacy filter",
+        "filterToolResults": "Also filter tool results",
+        "filterToolResultsDescription": "Tool results such as file contents and command output are replaced too. The model then sees only placeholders: Edit / apply_patch can fail because they no longer match the original text, and a full-file rewrite can write placeholders into your real files. Turn this on only if you accept that."
       },
       "optimizer": {
         "title": "Bedrock Request Optimizer",
@@ -1348,7 +1356,7 @@
     "defaultModelPlaceholder": "e.g. grok-4.5",
     "defaultModelHint": "The model Grok Build requests by default; change it anytime.",
     "reasoningEffortHint": "Turn on when the upstream supports thinking depth such as low/high/max. Also turns on thinking mode and maps the request's reasoning effort to the upstream Chat parameter.",
-    "maxOutputTokensHint": "The default limit of 8192 can cut off long answers or deep thinking. This value is sent as Anthropic's max_tokens.",
+    "maxOutputTokensHint": "Defaults to 32000, and thinking counts toward it. If the gateway's output limit is lower it returns 400; enter a value it supports here. This value is sent as Anthropic's max_tokens.",
     "keyFieldsHint": "The default model (models.default) and the model table it points to follow the provider; everything else is Grok Build global settings and applies to every provider after saving.",
     "inactiveFieldsHint": "Saved in this provider by an older version; switching no longer applies them. Click one to copy its TOML and paste it above if you need it.",
     "inactiveFieldCopied": "Copied",
@@ -1718,7 +1726,6 @@
       "volcengine_agentplan": "Volcengine Ark Agent Plan offers exclusive benefits for CC Switch users: subscribe via this link and new customers get 75% off for the first two months, plus an extra 5% off with the exclusive invite code 6J6FV5N2 — as low as ¥9.4/month!",
       "volcengine_codingplan": "Volcengine Ark Coding Plan offers exclusive benefits for CC Switch users: subscribe via this link and new customers get 75% off for the first two months, plus an extra 5% off with the exclusive invite code 6J6FV5N2 — as low as ¥9.4/month!",
       "byteplus": "Register via this link to get 500,000 tokens of free inference quota per model.",
-      "ccsub": "CCSub is a stable, affordable AI API relay — a drop-in replacement for Claude.ai & OpenAI subscriptions, with one key for all models at ~30% of direct API cost.",
       "subrouter": "SubRouter is an AI relay aggregator that lets one key access multiple models and providers.",
       "qiniu": "Qiniu Cloud is a multi-protocol AI relay: one key for native Claude, GPT, and Gemini models, with the Anthropic, OpenAI, and Gemini APIs all supported.",
       "haoai": "hao.ai is a fast, stable unified LLM API gateway for developers and teams: one key reaches GPT, Claude, Grok, and other leading models over OpenAI- and Anthropic-compatible APIs, with model routing, failover, and full request logs, at prices as low as 15% of official reference rates. CC Switch users who register via this link get 5% bonus credit on their first order!",
@@ -1929,6 +1936,9 @@
     "copyCode": "Copy code",
     "migrationFailed": "Legacy auth migration failed: {{error}}",
     "loadModelsFailed": "Failed to load Copilot models",
+    "noPickerModels": "This GitHub account has no Copilot models available. This is typical for Copilot Free accounts; please make sure the account has Copilot Pro or a higher plan.",
+    "noPickerModelsClaude": "This GitHub account has no Copilot models available. This is typical for Copilot Free accounts; please make sure the account has Copilot Pro or a higher plan. You can still type gpt-4.1 or gpt-4o into the model field manually.",
+    "noModelsForApiFormat": "None of this account's Copilot models support the selected upstream format. Try a different upstream format.",
     "deploymentType": "GitHub Deployment Type",
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Enterprise Server",
@@ -1936,24 +1946,36 @@
     "form": {
       "officialTitle": "Uses Copilot CLI's GitHub sign-in",
       "officialHint": "Open Terminal starts copilot with this card's model. Bind an Auth Center account to start it with that account.",
-      "byokTitle": "Only applies in terminals opened from this card",
-      "byokHint": "Copilot CLI reads custom models only from its environment, so nothing is written to Copilot's own files.",
+      "byokTitle": "Added to Copilot's providers.json",
+      "byokHint": "Add writes this provider and its models to Copilot's own providers.json (readable only by your user account). Any copilot you start can then pick \"card ID/model\" in /model. Remove deletes only this provider's entries and leaves the rest of the file as is.",
       "apiFormat": "API format",
       "baseUrl": "API endpoint",
       "baseUrlHint": "OpenAI-compatible endpoints usually end in /v1 (e.g. Ollama http://localhost:11434/v1); Anthropic uses the host only (https://api.anthropic.com).",
       "model": "Model",
       "officialModelHint": "Leave empty to use Copilot's current model. Passed as --model for this session only; /model in copilot still works.",
-      "byokModelHint": "The model ID your endpoint expects (COPILOT_MODEL).",
       "reasoningEffort": "Reasoning effort",
       "reasoningEffortDefault": "Copilot default",
       "reasoningEffortHint": "Passed as --reasoning-effort when the terminal opens. With none, Copilot doesn't send reasoning.summary on Responses requests, which some relays reject.",
       "maxPromptTokens": "Max prompt tokens",
       "maxOutputTokens": "Max output tokens",
-      "envJsonHint": "Advanced: any COPILOT_PROVIDER_* variable (for example COPILOT_PROVIDER_MODEL_ID or COPILOT_PROVIDER_BEARER_TOKEN) is passed to copilot as-is."
+      "byokModelsHint": "Each model shows up in Copilot's /model as \"{{id}}/model ID\"; add at least one. The model ID is also the name sent to the endpoint unless you expand the row and set an upstream model name. Opening a terminal from this card uses the first model.",
+      "providerIdHint": "Also the provider name in Copilot; /model shows \"{{id}}/model\". Can't be changed after saving. Letters, numbers, dots, underscores and hyphens only.",
+      "duplicateModelId": "Duplicate model ID: {{model}}",
+      "wireModel": "Upstream model name",
+      "wireModelHint": "The model name sent to the endpoint (wireModel). Leave empty to use the model ID.",
+      "maxContextWindowTokens": "Context window",
+      "azureApiVersion": "Azure API version"
     },
     "quota": {
       "accountNotInAuthCenter": "The Auth Center has no account for {{login}}, which Copilot CLI is signed in with. Add it in the Auth Center, or bind an account on this card.",
       "notSignedIn": "Copilot CLI isn't signed in. Run copilot and use /login, or bind an Auth Center account on this card."
+    },
+    "defaultCannotRemove": "Copilot's default model belongs to this provider, so it can't be removed or deleted. Pick another provider's model with /model in copilot first.",
+    "terminalNeedsAdd": "Add this provider to Copilot first so the terminal can select its model.",
+    "section": {
+      "official": "Official sign-in · {{count}}",
+      "officialHelpTitle": "Official sign-in",
+      "officialHelp": "Uses Copilot CLI's own GitHub sign-in and writes no files. Open Terminal starts copilot with the card's model and bound account."
     }
   },
   "codexOauth": {
@@ -2097,8 +2119,8 @@
     "impersonateClaudeCodeLabel": "Emulate Claude Code client",
     "impersonateClaudeCodeHint": "Turn on when the gateway only accepts Claude Code: sends Claude Code's request headers and puts its identity on the first line of the system prompt.",
     "maxOutputTokensLabel": "Max output tokens",
-    "maxOutputTokensPlaceholder": "Leave empty to use the default 8192",
-    "maxOutputTokensHint": "Codex sends no output limit, so the default 8192 can cut off long answers or deep thinking. This value is sent as Anthropic's max_tokens.",
+    "maxOutputTokensPlaceholder": "Leave empty to use the default 32000",
+    "maxOutputTokensHint": "Codex sends no output limit, so 32000 is sent by default, and thinking counts toward it. If the gateway's output limit is lower it returns 400; enter a value it supports here. This value is sent as Anthropic's max_tokens.",
     "promptCacheRoutingLabel": "Prompt cache routing",
     "promptCacheRoutingAuto": "Auto (recommended)",
     "promptCacheRoutingEnabled": "Enabled",

@@ -2939,6 +2939,20 @@ fn is_foreign_pip_launcher(tool: &str, path: &Path) -> bool {
             .ends_with(&format!("/scripts/{tool}.exe"))
 }
 
+/// VS Code's `bin\copilot-shim\copilot.exe` is a placeholder that only prints
+/// "GitHub Copilot CLI was not found" when the real CLI is missing. It sits on PATH under
+/// the tool's own name but is never the CLI, so probing it reports "installed but broken"
+/// instead of "not installed". Matched by its directory, which covers `.exe` and `.cmd`.
+#[cfg(any(target_os = "windows", test))]
+fn is_vscode_copilot_shim(tool: &str, path: &Path) -> bool {
+    tool == "copilot"
+        && path
+            .to_string_lossy()
+            .replace('\\', "/")
+            .to_ascii_lowercase()
+            .contains("/copilot-shim/")
+}
+
 /// OpenCode Desktop has shipped both root-level and Electron `resources/` CLI sidecars.
 /// Some Electron releases omitted the sidecar; `resources/app.asar` still identifies the
 /// Desktop bundle, so skip its GUI instead of probing `opencode.exe` with `--version`.
@@ -2946,7 +2960,7 @@ fn is_foreign_pip_launcher(tool: &str, path: &Path) -> bool {
 /// Also skips launchers that only share the tool's name (`is_foreign_pip_launcher`).
 #[cfg(target_os = "windows")]
 fn windows_preferred_tool_executable(tool: &str, path: &Path) -> Option<std::path::PathBuf> {
-    if is_foreign_pip_launcher(tool, path) {
+    if is_foreign_pip_launcher(tool, path) || is_vscode_copilot_shim(tool, path) {
         return None;
     }
     if tool == "opencode"
@@ -5959,13 +5973,23 @@ async fn copilot_bound_account(
 }
 
 /// GitHub Copilot CLI：官方卡跑 `copilot`，卡上设了模型就加 `--model`；绑了授权中心账号时
-/// 经 `COPILOT_GITHUB_TOKEN` 只给这一个进程。自带模型卡的 Key、地址和模型只经环境变量传入。
+/// 经 `COPILOT_GITHUB_TOKEN` 只给这一个进程。自带模型卡要先添加进 providers.json，启动时
+/// `--model=<卡片 id>/<第一个模型>`，并清掉所有 `COPILOT_PROVIDER_*`（有它们 Copilot 就不读
+/// providers.json）。
 fn copilot_terminal_launch(
     provider: &crate::provider::Provider,
     account: Option<(String, String)>,
 ) -> Result<ProviderLaunch, String> {
     let launch = crate::services::provider::copilot_direct::terminal_launch(provider)
         .map_err(|e| e.to_string())?;
+    copilot_launch_command(&provider.name, launch, account)
+}
+
+fn copilot_launch_command(
+    provider_name: &str,
+    launch: crate::copilot_config::CopilotLaunch,
+    account: Option<(String, String)>,
+) -> Result<ProviderLaunch, String> {
     let mut env = launch.env;
     if !launch.byok {
         if let Some((token, domain)) = account {
@@ -5976,6 +6000,16 @@ fn copilot_terminal_launch(
     // npm 装的是 copilot.cmd：不加 `call` 跑完不回到启动 .bat，后面删临时文件（含 Key、
     // GitHub 令牌的 .bat 本身）的几行就不执行了。`call` 会把 `%` 再展开一遍、把引号里的 `^`
     // 加倍，cmd 也不认 `\"`，所以模型名里有这些字符时不在 Windows 上启动。
+    // 模型名会拼进启动命令：控制字符（换行）在任何平台都拒绝，保存时已经校验过，这里兜底。
+    if launch
+        .model
+        .as_deref()
+        .is_some_and(|model| model.chars().any(char::is_control))
+    {
+        return Err(format!(
+            "「{provider_name}」的模型名里有换行等控制字符，不能用来启动"
+        ));
+    }
     if cfg!(target_os = "windows")
         && launch
             .model
@@ -5983,8 +6017,7 @@ fn copilot_terminal_launch(
             .is_some_and(|model| model.contains(['"', '%', '^']))
     {
         return Err(format!(
-            "「{}」的模型名里有 Windows 终端传不过去的字符（\" % ^）",
-            provider.name
+            "「{provider_name}」的模型名里有 Windows 终端传不过去的字符（\" % ^）"
         ));
     }
     let (mut args, mut batch_command, batch_vars) = match launch.model {
@@ -8042,68 +8075,73 @@ mod tests {
         assert_eq!(launch.batch_command, "agy");
     }
 
+    fn copilot_byok_launch(settings: serde_json::Value) -> crate::copilot_config::CopilotLaunch {
+        crate::copilot_config::prepare_launch("relay", &settings).unwrap()
+    }
+
     #[test]
-    fn copilot_byok_launch_passes_the_provider_only_through_the_environment() {
-        let row = crate::provider::Provider::with_id(
-            "relay".into(),
-            "Relay".into(),
-            serde_json::json!({"env":{
-                "COPILOT_PROVIDER_BASE_URL":"https://relay.test/v1",
-                "COPILOT_PROVIDER_API_KEY":"fixture-key",
-                "COPILOT_PROVIDER_WIRE_API":"responses",
-                "COPILOT_MODEL":"gpt-5.4"
-            }}),
-            None,
-        );
+    fn copilot_byok_launch_selects_the_card_model_and_clears_byok_variables() {
+        let launch = copilot_byok_launch(serde_json::json!({
+            "provider": {"baseUrl":"https://relay.test/v1","apiKey":"fixture-key","wireApi":"responses"},
+            "models": [{"id":"gpt-5.4"}]
+        }));
         // A bound account never applies to bring-your-own-model cards.
         let launch =
-            copilot_terminal_launch(&row, Some(("gho_x".into(), "github.com".into()))).unwrap();
+            copilot_launch_command("Relay", launch, Some(("gho_x".into(), "github.com".into())))
+                .unwrap();
         let command = unix_launch_command(&launch);
-        assert!(command.ends_with(" copilot"), "{command}");
-        assert!(!command.contains("fixture-key"), "{command}");
-        assert!(!command.contains("gho_x"), "{command}");
         assert!(
-            command.contains("-u COPILOT_PROVIDER_BEARER_TOKEN"),
+            command.ends_with(" copilot --model=relay/gpt-5.4"),
             "{command}"
         );
+        assert!(!command.contains("fixture-key"), "{command}");
+        assert!(!command.contains("gho_x"), "{command}");
+        // providers.json is ignored while any COPILOT_PROVIDER_* is set, so all are cleared.
+        for key in crate::copilot_config::BYOK_ENV_KEYS {
+            assert!(command.contains(&format!("-u {key}")), "{key}: {command}");
+        }
+        assert!(command.contains("-u COPILOT_MODEL"), "{command}");
         let env_file = unix_launch_env_file(&launch);
-        assert!(env_file.contains("fixture-key"));
-        assert!(env_file.contains("gpt-5.4"));
+        assert!(!env_file.contains("fixture-key"));
         assert!(!env_file.contains("gho_x"));
-        assert_eq!(launch.batch_command, "call copilot");
+        assert_eq!(
+            launch.batch_command,
+            format!("call copilot \"--model=%{COPILOT_MODEL_BATCH_VAR}%\"")
+        );
+        assert_eq!(
+            launch.batch_vars,
+            vec![(COPILOT_MODEL_BATCH_VAR, "relay/gpt-5.4".to_string())]
+        );
     }
 
     #[test]
     fn copilot_launch_passes_the_card_reasoning_effort() {
-        let row = crate::provider::Provider::with_id(
-            "relay".into(),
-            "Relay".into(),
-            serde_json::json!({"env":{
-                "COPILOT_PROVIDER_BASE_URL":"https://relay.test/v1",
-                "COPILOT_PROVIDER_API_KEY":"fixture-key",
-                "COPILOT_PROVIDER_WIRE_API":"responses",
-                "COPILOT_MODEL":"deepseek-v4-flash"
-            },"reasoningEffort":"none"}),
-            None,
-        );
-        let mut launch = copilot_terminal_launch(&row, None).unwrap();
+        let launch = copilot_byok_launch(serde_json::json!({
+            "provider": {"baseUrl":"https://relay.test/v1","apiKey":"fixture-key","wireApi":"responses"},
+            "models": [{"id":"deepseek-v4-flash"}],
+            "reasoningEffort":"none"
+        }));
+        let mut launch = copilot_launch_command("Relay", launch, None).unwrap();
         assert!(
-            unix_launch_command(&launch).ends_with(" copilot --reasoning-effort=none"),
-            "{}",
             unix_launch_command(&launch)
-        );
-        assert_eq!(launch.batch_command, "call copilot --reasoning-effort=none");
-
-        launch.skip_permissions();
-        assert!(
-            unix_launch_command(&launch).ends_with(" copilot --reasoning-effort=none --allow-all"),
+                .ends_with(" copilot --model=relay/deepseek-v4-flash --reasoning-effort=none"),
             "{}",
             unix_launch_command(&launch)
         );
         assert_eq!(
             launch.batch_command,
-            "call copilot --reasoning-effort=none --allow-all"
+            format!("call copilot \"--model=%{COPILOT_MODEL_BATCH_VAR}%\" --reasoning-effort=none")
         );
+
+        launch.skip_permissions();
+        assert!(
+            unix_launch_command(&launch).ends_with(" --reasoning-effort=none --allow-all"),
+            "{}",
+            unix_launch_command(&launch)
+        );
+        assert!(launch
+            .batch_command
+            .ends_with(" --reasoning-effort=none --allow-all"));
 
         // 「打开终端」里的附加参数接在 `--allow-all` 后面
         launch
@@ -8111,14 +8149,13 @@ mod tests {
             .unwrap();
         assert!(
             unix_launch_command(&launch)
-                .ends_with(" copilot --reasoning-effort=none --allow-all --add-dir '/tmp/a b'"),
+                .ends_with(" --reasoning-effort=none --allow-all --add-dir '/tmp/a b'"),
             "{}",
             unix_launch_command(&launch)
         );
-        assert_eq!(
-            launch.batch_command,
-            "call copilot --reasoning-effort=none --allow-all \"%CC_SWITCH_ARG0%\" \"%CC_SWITCH_ARG1%\""
-        );
+        assert!(launch.batch_command.ends_with(
+            " --reasoning-effort=none --allow-all \"%CC_SWITCH_ARG0%\" \"%CC_SWITCH_ARG1%\""
+        ));
     }
 
     #[test]
@@ -12232,6 +12269,28 @@ mod tests {
         assert!(!is_foreign_pip_launcher(
             "hermes",
             Path::new(r"D:\soft\Python\Python311\Scripts\hermes.exe")
+        ));
+    }
+
+    #[test]
+    fn vscode_copilot_shim_is_rejected_but_real_copilot_is_kept() {
+        assert!(is_vscode_copilot_shim(
+            "copilot",
+            Path::new(r"D:\Microsoft VS Code\bin\copilot-shim\copilot.exe")
+        ));
+        assert!(is_vscode_copilot_shim(
+            "copilot",
+            Path::new(r"C:\Program Files\Microsoft VS Code\bin\COPILOT-SHIM\copilot.cmd")
+        ));
+        // npm's global shim is the real CLI.
+        assert!(!is_vscode_copilot_shim(
+            "copilot",
+            Path::new(r"C:\Users\me\AppData\Roaming\npm\copilot.cmd")
+        ));
+        // Only the copilot tool is affected.
+        assert!(!is_vscode_copilot_shim(
+            "codex",
+            Path::new(r"D:\x\copilot-shim\codex.exe")
         ));
     }
 
