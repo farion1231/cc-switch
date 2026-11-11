@@ -253,125 +253,168 @@ impl TrayTexts {
                 date_format: "%b %-d",
                 quota_used: false,
             },
-            // 土耳其语是社区翻译：从英文起步再覆盖已翻译的项，之后新增的托盘项
-            // 在有人翻译前显示英文，而不是让所有改托盘的提交都必须补土耳其语。
-            "ko" => {
-                let mut texts = Self::from_language("en");
-                texts.show_main = "CC Switch 열기";
-                texts.open_website = "공식 웹사이트 열기";
-                texts.lightweight_mode = "경량 모드";
-                texts.quit = "CC Switch 종료";
-                texts.quit_stops_routing = "CC Switch 종료 (라우팅 서비스 중지)";
-                texts.projects_label = "프로젝트";
-                texts.no_project_label = "프로젝트 없음";
-                texts.header_direct = "직접 연결";
-                texts.header_route = "라우팅";
-                texts.header_failover = "라우팅 · 장애 조치 켜짐";
-                texts.header_stack = "통합 · 기본 공급자";
-                texts.header_stack_default = "통합 · 기본값: {name}";
-                texts.failover_note = "대기열에서 자동으로 선택됩니다. 앱 페이지에서 변경하세요";
-                texts.mode_route = "라우팅";
-                texts.mode_stack = "통합";
-                texts.needs_routing_suffix = " (라우팅 필요)…";
-                texts.official_blocked_suffix = " (공식 요금제는 라우팅을 사용하지 않음)";
-                texts.open_app_page = "{app} 페이지 열기";
-                texts.add_provider = "공급자 추가…";
-                texts.almost_out = "거의 소진됨";
-                texts.needs_attention = "확인 필요";
-                texts.problem_service_down = "라우팅 서비스가 실행 중이 아닙니다 (포트 {port})";
-                texts.problem_attach_failed = "{app}: 이전 {mode} 연결에 실패하여 직접 연결로 돌아갔습니다";
-                texts.problem_switch_failed = "{app} 전환 실패: {reason}";
-                texts.problem_more = "문제 {count}개 더 있음 — CC Switch에서 확인하세요";
-                texts.tooltip_problem = "CC Switch · 확인 필요: {problem}";
-                texts.feedback_switched = "{app}의 공급자가 {name}(으)로 전환되었습니다. 적용하려면 {app}을(를) 다시 시작하세요";
-                texts.feedback_stack_default = "{app}의 기본 공급자가 {name}(으)로 변경되었습니다. 적용하려면 {app}을(를) 다시 시작하세요";
-                texts.feedback_profile = "{app}에 {name} 프로젝트를 적용했습니다";
-                texts.tier_five_hour = "5시간";
-                texts.tier_weekly = "주간";
-                texts.tier_monthly = "월간";
-                texts.tier_thirty_day = "30일";
-                texts.tier_credits = "크레딧";
-                texts.tier_premium = "프리미엄 요청";
-                texts.tier_left = "{label} {value}% 남음";
-                texts.tier_used = "{label} {value}% 사용";
-                texts.tier_used_up = "{label} 소진됨";
-                texts.balance = "잔액 {value}";
-                texts.plan_expired = "요금제 만료됨";
-                texts.used_amount = "{value} 사용";
-                texts.quota_failed = "할당량 조회 실패";
-                texts.quota_failed_login_expired = "할당량 조회 실패: 로그인 만료";
-                texts.quota_failed_token_refresh_pending = "할당량 조회 실패: 토큰 갱신 대기 중";
-                texts.reset_on_date = "{when}에 {label} 할당량 초기화";
-                texts.reset_at_time = "{when}에 {label} 할당량 초기화";
-                texts.date_format = "%-m월 %-d일";
-                texts
+            "ko" => Self {
+                show_main: "CC Switch 열기",
+                open_website: "공식 웹사이트 열기",
+                lightweight_mode: "경량 모드",
+                quit: "CC Switch 종료",
+                quit_stops_routing: "CC Switch 종료 (라우팅 서비스 중지)",
+                projects_label: "프로젝트",
+                no_project_label: "프로젝트 없음",
+                header_direct: "직접 연결",
+                header_route: "라우팅",
+                header_failover: "라우팅 · 장애 조치 켜짐",
+                header_stack: "통합 · 기본 공급자",
+                header_stack_default: "통합 · 기본값: {name}",
+                failover_note: "대기열에서 자동으로 선택됩니다. 앱 페이지에서 변경하세요",
+                mode_route: "라우팅",
+                mode_stack: "통합",
+                needs_routing_suffix: " (라우팅 필요)…",
+                official_blocked_suffix: " (공식 요금제는 라우팅을 사용하지 않음)",
+                open_app_page: "{app} 페이지 열기",
+                add_provider: "공급자 추가…",
+                almost_out: "거의 소진됨",
+                needs_attention: "확인 필요",
+                problem_service_down: "라우팅 서비스가 실행 중이 아닙니다 (포트 {port})",
+                problem_attach_failed: "{app}: 이전 {mode} 연결에 실패하여 직접 연결로 돌아갔습니다",
+                problem_switch_failed: "{app} 전환 실패: {reason}",
+                problem_more: "문제 {count}개 더 있음 — CC Switch에서 확인하세요",
+                tooltip_problem: "CC Switch · 확인 필요: {problem}",
+                feedback_switched: "{app}의 공급자가 {name}(으)로 전환되었습니다. 적용하려면 {app}을(를) 다시 시작하세요",
+                feedback_stack_default: "{app}의 기본 공급자가 {name}(으)로 변경되었습니다. 적용하려면 {app}을(를) 다시 시작하세요",
+                feedback_profile: "{app}에 {name} 프로젝트를 적용했습니다",
+                tier_five_hour: "5시간",
+                tier_weekly: "주간",
+                tier_fable: "Fable",
+                tier_monthly: "월간",
+                tier_thirty_day: "30일",
+                tier_credits: "크레딧",
+                tier_gemini_pro: "Pro",
+                tier_gemini_flash: "Flash",
+                tier_gemini_flash_lite: "Flash Lite",
+                tier_premium: "프리미엄 요청",
+                tier_left: "{label} {value}% 남음",
+                tier_used: "{label} {value}% 사용",
+                tier_used_up: "{label} 소진됨",
+                balance: "잔액 {value}",
+                plan_expired: "요금제 만료됨",
+                used_amount: "{value} 사용",
+                quota_failed: "할당량 조회 실패",
+                quota_failed_login_expired: "할당량 조회 실패: 로그인 만료",
+                quota_failed_token_refresh_pending: "할당량 조회 실패: 토큰 갱신 대기 중",
+                reset_on_date: "{when}에 {label} 할당량 초기화",
+                reset_at_time: "{when}에 {label} 할당량 초기화",
+                date_format: "%-m월 %-d일",
+                quota_used: false,
             },
-            // 俄语同为社区翻译：从英文起步，只覆盖已翻译的项。
-            "ru" => {
-                let mut texts = Self::from_language("en");
-                texts.show_main = "Открыть главное окно";
-                texts.open_website = "Открыть официальный сайт";
-                texts.lightweight_mode = "Облегчённый режим";
-                texts.quit = "Выйти из CC Switch";
-                texts.quit_stops_routing = "Выйти из CC Switch (служба маршрутизации остановится)";
-                texts.projects_label = "Проекты";
-                texts.no_project_label = "Без проекта";
-                texts
+            "ru" => Self {
+                show_main: "Открыть CC Switch",
+                open_website: "Открыть официальный сайт",
+                lightweight_mode: "Облегчённый режим",
+                quit: "Выйти из CC Switch",
+                quit_stops_routing: "Выйти из CC Switch (служба маршрутизации остановится)",
+                projects_label: "Проекты",
+                no_project_label: "Без проекта",
+                header_direct: "Напрямую",
+                header_route: "Маршрутизация",
+                header_failover: "Маршрутизация · резервное переключение включено",
+                header_stack: "Агрегация · провайдер по умолчанию",
+                header_stack_default: "Агрегация · по умолчанию: {name}",
+                failover_note: "Выбирается из очереди автоматически; изменить можно на странице приложения",
+                mode_route: "Маршрутизация",
+                mode_stack: "Агрегация",
+                needs_routing_suffix: " (нужна маршрутизация)…",
+                official_blocked_suffix: " (официальные планы не идут через маршрутизацию)",
+                open_app_page: "Открыть страницу {app}",
+                add_provider: "Добавить провайдера…",
+                almost_out: "почти исчерпано",
+                needs_attention: "требует внимания",
+                problem_service_down: "Служба маршрутизации не запущена (порт {port})",
+                problem_attach_failed: "{app}: не удалось переподключить {mode} при запуске; включено прямое подключение",
+                problem_switch_failed: "{app} не переключился: {reason}",
+                problem_more: "Ещё проблем: {count} — откройте CC Switch, чтобы посмотреть",
+                tooltip_problem: "CC Switch · Требует внимания: {problem}",
+                feedback_switched: "{app} переключён на {name}. Перезапустите {app}, чтобы применить",
+                feedback_stack_default: "Провайдер по умолчанию для {app} теперь {name}. Перезапустите {app}, чтобы применить",
+                feedback_profile: "Проект \u{00ab}{name}\u{00bb} применён к {app}",
+                tier_five_hour: "5 часов",
+                tier_weekly: "Неделя",
+                tier_fable: "Fable",
+                tier_monthly: "Месяц",
+                tier_thirty_day: "30 дней",
+                tier_credits: "Кредиты",
+                tier_gemini_pro: "Pro",
+                tier_gemini_flash: "Flash",
+                tier_gemini_flash_lite: "Flash Lite",
+                tier_premium: "Credits",
+                tier_left: "{label}: осталось {value}%",
+                tier_used: "{label}: использовано {value}%",
+                tier_used_up: "{label}: исчерпано",
+                balance: "Баланс {value}",
+                plan_expired: "Срок плана истёк",
+                used_amount: "Использовано {value}",
+                quota_failed: "Квота недоступна",
+                quota_failed_login_expired: "Квота недоступна: срок входа истёк",
+                quota_failed_token_refresh_pending: "Квота недоступна: ожидается обновление токена",
+                reset_on_date: "Квота {label} сбросится {when}",
+                reset_at_time: "Квота {label} сбросится в {when}",
+                date_format: "%d.%m",
+                quota_used: false,
             },
-            "tr" => {
-                let mut texts = Self::from_language("en");
-                texts.show_main = "CC Switch'i aç";
-                texts.open_website = "Resmî web sitesini aç";
-                texts.lightweight_mode = "Hafif mod";
-                texts.quit = "CC Switch'ten çık";
-                texts.quit_stops_routing = "CC Switch'ten çık (yönlendirme hizmeti durur)";
-                texts.projects_label = "Projeler";
-                texts.no_project_label = "Proje yok";
-                texts.header_direct = "Doğrudan";
-                texts.header_route = "Yönlendirme";
-                texts.header_failover = "Yönlendirme · Yedek sağlayıcıya geçiş açık";
-                texts.header_stack = "Birleştirme · Varsayılan sağlayıcı";
-                texts.header_stack_default = "Birleştirme · Varsayılan: {name}";
-                texts.failover_note = "Kuyruktan otomatik seçilir; uygulama sayfasından değiştirebilirsiniz";
-                texts.mode_route = "Yönlendirme";
-                texts.mode_stack = "Birleştirme";
-                texts.needs_routing_suffix = " (yönlendirme gerekir)…";
-                texts.official_blocked_suffix = " (resmî abonelikler yönlendirmeyi kullanmaz)";
-                texts.open_app_page = "{app} sayfasını aç";
-                texts.add_provider = "Sağlayıcı ekle…";
-                texts.almost_out = "bitmek üzere";
-                texts.needs_attention = "ilgilenilmesi gerekiyor";
-                texts.problem_service_down = "Yönlendirme hizmeti çalışmıyor (port {port})";
-                texts.problem_attach_failed = "{app}: {mode} başlangıçta yeniden bağlanamadı; doğrudan bağlantıya dönüldü";
-                texts.problem_switch_failed = "{app} geçiş yapamadı: {reason}";
-                texts.problem_more = "{count} sorun daha var — görmek için CC Switch'i açın";
-                texts.tooltip_problem = "CC Switch · İlgilenilmesi gerekiyor: {problem}";
-                texts.feedback_switched = "{app}, {name} sağlayıcısına geçti. Uygulamak için {app} uygulamasını yeniden başlatın";
-                texts.feedback_stack_default = "{app} için varsayılan sağlayıcı artık {name}. Uygulamak için {app} uygulamasını yeniden başlatın";
-                texts.feedback_profile = "{name} projesi {app} uygulamasına uygulandı";
-                texts.tier_five_hour = "5 saatlik";
-                texts.tier_weekly = "Haftalık";
-                texts.tier_fable = "Fable";
-                texts.tier_monthly = "Aylık";
-                texts.tier_thirty_day = "30 günlük";
-                texts.tier_credits = "Krediler";
-                texts.tier_gemini_pro = "Pro";
-                texts.tier_gemini_flash = "Flash";
-                texts.tier_gemini_flash_lite = "Flash Lite";
-                texts.tier_left = "{label} %{value} kaldı";
-                texts.tier_used = "{label} %{value} kullanıldı";
-                texts.tier_used_up = "{label} tükendi";
-                texts.balance = "Bakiye {value}";
-                texts.plan_expired = "Planın süresi doldu";
-                texts.used_amount = "Kullanılan: {value}";
-                texts.quota_failed = "Kota bilgisi alınamıyor";
-                texts.quota_failed_login_expired = "Kota bilgisi alınamıyor: oturumun süresi doldu";
-                texts.quota_failed_token_refresh_pending = "Kota bilgisi alınamıyor: token yenilenmesi bekleniyor";
-                texts.reset_on_date = "{label} kotası {when} tarihinde sıfırlanır";
-                texts.reset_at_time = "{label} kotası {when} saatinde sıfırlanır";
-                texts.date_format = "%d.%m";
-                texts
-            }
+            "tr" => Self {
+                show_main: "CC Switch'i aç",
+                open_website: "Resmî web sitesini aç",
+                lightweight_mode: "Hafif mod",
+                quit: "CC Switch'ten çık",
+                quit_stops_routing: "CC Switch'ten çık (yönlendirme hizmeti durur)",
+                projects_label: "Projeler",
+                no_project_label: "Proje yok",
+                header_direct: "Doğrudan",
+                header_route: "Yönlendirme",
+                header_failover: "Yönlendirme · Yedek sağlayıcıya geçiş açık",
+                header_stack: "Birleştirme · Varsayılan sağlayıcı",
+                header_stack_default: "Birleştirme · Varsayılan: {name}",
+                failover_note: "Kuyruktan otomatik seçilir; uygulama sayfasından değiştirebilirsiniz",
+                mode_route: "Yönlendirme",
+                mode_stack: "Birleştirme",
+                needs_routing_suffix: " (yönlendirme gerekir)…",
+                official_blocked_suffix: " (resmî abonelikler yönlendirmeyi kullanmaz)",
+                open_app_page: "{app} sayfasını aç",
+                add_provider: "Sağlayıcı ekle…",
+                almost_out: "bitmek üzere",
+                needs_attention: "ilgilenilmesi gerekiyor",
+                problem_service_down: "Yönlendirme hizmeti çalışmıyor (port {port})",
+                problem_attach_failed: "{app}: {mode} başlangıçta yeniden bağlanamadı; doğrudan bağlantıya dönüldü",
+                problem_switch_failed: "{app} geçiş yapamadı: {reason}",
+                problem_more: "{count} sorun daha var — görmek için CC Switch'i açın",
+                tooltip_problem: "CC Switch · İlgilenilmesi gerekiyor: {problem}",
+                feedback_switched: "{app}, {name} sağlayıcısına geçti. Uygulamak için {app} uygulamasını yeniden başlatın",
+                feedback_stack_default: "{app} için varsayılan sağlayıcı artık {name}. Uygulamak için {app} uygulamasını yeniden başlatın",
+                feedback_profile: "{name} projesi {app} uygulamasına uygulandı",
+                tier_five_hour: "5 saatlik",
+                tier_weekly: "Haftalık",
+                tier_fable: "Fable",
+                tier_monthly: "Aylık",
+                tier_thirty_day: "30 günlük",
+                tier_credits: "Krediler",
+                tier_gemini_pro: "Pro",
+                tier_gemini_flash: "Flash",
+                tier_gemini_flash_lite: "Flash Lite",
+                tier_premium: "Credits",
+                tier_left: "{label} %{value} kaldı",
+                tier_used: "{label} %{value} kullanıldı",
+                tier_used_up: "{label} tükendi",
+                balance: "Bakiye {value}",
+                plan_expired: "Planın süresi doldu",
+                used_amount: "Kullanılan: {value}",
+                quota_failed: "Kota bilgisi alınamıyor",
+                quota_failed_login_expired: "Kota bilgisi alınamıyor: oturumun süresi doldu",
+                quota_failed_token_refresh_pending: "Kota bilgisi alınamıyor: token yenilenmesi bekleniyor",
+                reset_on_date: "{label} kotası {when} tarihinde sıfırlanır",
+                reset_at_time: "{label} kotası {when} saatinde sıfırlanır",
+                date_format: "%d.%m",
+                quota_used: false,
+            },
             "ja" => Self {
                 show_main: "CC Switch を開く",
                 open_website: "公式サイトを開く",
