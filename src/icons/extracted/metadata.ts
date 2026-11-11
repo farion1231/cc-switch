@@ -656,6 +656,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["antigravity", "agy", "google"],
     defaultColor: "#3186FF",
   },
+  cursor: {
+    name: "cursor",
+    displayName: "Cursor",
+    category: "ai-provider",
+    keywords: ["cursor", "anysphere", "ide"],
+    defaultColor: "#000000",
+  },
   hermes: {
     name: "hermes",
     displayName: "Hermes",

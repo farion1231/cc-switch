@@ -1180,7 +1180,8 @@
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
     "copilot": "Copilot CLI",
-    "omp": "Oh My Pi"
+    "omp": "Oh My Pi",
+    "cursor": "Cursor"
   },
   "mcode": {
     "empty": {
@@ -4320,7 +4321,11 @@
     "expiredHint": "Run the {{tool}} command to refresh your login",
     "expiredHintAccounts": "Sign in to this account again in Accounts",
     "queryFailed": "Query failed",
-    "refresh": "Refresh"
+    "refresh": "Refresh",
+    "tiers": {
+      "fastRequests": "Fast"
+    },
+    "fastRequests": "Fast Requests"
   },
   "nav": {
     "mainLabel": "Main navigation",
@@ -4390,7 +4395,10 @@
       "agy": "Installs with the official script",
       "copilot": "Installs with npm",
       "omp": "Installs with the official script"
-    }
+    },
+    "cursorHelp": "Cursor is a desktop editor that cannot be installed or updated here; CC Switch monitors its subscription quota via local credentials.",
+    "cursorDetected": "Detected",
+    "cursorNotDetected": "Not detected"
   },
   "appPage": {
     "moreActions": "More actions for {{name}}",

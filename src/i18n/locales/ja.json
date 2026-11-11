@@ -1180,7 +1180,8 @@
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
     "copilot": "Copilot CLI",
-    "omp": "Oh My Pi"
+    "omp": "Oh My Pi",
+    "cursor": "Cursor"
   },
   "mcode": {
     "empty": {
@@ -4320,7 +4321,11 @@
     "expiredHint": "{{tool}}コマンドを実行してログインを更新してください",
     "expiredHintAccounts": "「アカウント」でこのアカウントに再ログインしてください",
     "queryFailed": "クエリに失敗しました",
-    "refresh": "更新"
+    "refresh": "更新",
+    "tiers": {
+      "fastRequests": "高速"
+    },
+    "fastRequests": "高速リクエスト"
   },
   "nav": {
     "mainLabel": "メインナビゲーション",
@@ -4390,7 +4395,10 @@
       "agy": "公式インストールスクリプトでインストール",
       "copilot": "npm でインストール",
       "omp": "公式インストールスクリプトでインストール"
-    }
+    },
+    "cursorHelp": "Cursor はデスクトップエディタのため、ここではインストールやアップグレードはできません。CC Switch はローカル認証情報を通じて公式のサブスクリプションと利用枠を監視します。",
+    "cursorDetected": "検出済み",
+    "cursorNotDetected": "未検出"
   },
   "appPage": {
     "moreActions": "{{name}} のその他の操作",

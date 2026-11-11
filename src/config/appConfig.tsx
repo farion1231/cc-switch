@@ -33,6 +33,7 @@ export const APP_IDS: AppId[] = [
   "agy",
   "omp",
   "copilot",
+  "cursor",
 ];
 
 export const DEFAULT_VISIBLE_APPS: VisibleApps = {
@@ -51,6 +52,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   agy: true,
   omp: true,
   copilot: true,
+  cursor: true,
 };
 
 /**
@@ -193,8 +195,8 @@ export function usesEditorView(appId: AppId): boolean {
   return EDITOR_VIEW_APP_IDS.includes(appId);
 }
 
-/** Claude Desktop、OpenClaw 不由 CC Switch 管理 MCP；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`） */
-export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw">;
+/** Claude Desktop、OpenClaw、Cursor 不由 CC Switch 管理 MCP；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`） */
+export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw" | "cursor">;
 export const MCP_APP_IDS: McpAppId[] = [
   "claude",
   "codex",
@@ -373,6 +375,21 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-slate-500/10 ring-1 ring-slate-500/20 hover:bg-slate-500/20 text-slate-700 dark:text-slate-300",
     badgeClass:
       "bg-slate-500/10 text-slate-700 dark:text-slate-300 hover:bg-slate-500/20 border-0 gap-1.5",
+  },
+  cursor: {
+    label: "Cursor",
+    icon: (
+      <ProviderIcon
+        icon="cursor"
+        name="Cursor"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-teal-500/10 ring-1 ring-teal-500/20 hover:bg-teal-500/20 text-teal-700 dark:text-teal-300",
+    badgeClass:
+      "bg-teal-500/10 text-teal-700 dark:text-teal-300 hover:bg-teal-500/20 border-0 gap-1.5",
   },
 };
 

@@ -1180,7 +1180,8 @@
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
     "omp": "Oh My Pi",
-    "copilot": "Copilot CLI"
+    "copilot": "Copilot CLI",
+    "cursor": "Cursor"
   },
   "mcode": {
     "empty": {
@@ -4320,7 +4321,11 @@
     "expiredHint": "Giriş bilgilerinizi yenilemek için {{tool}} komutunu çalıştırın",
     "expiredHintAccounts": "Bu hesapta Hesaplar bölümünden yeniden oturum açın",
     "queryFailed": "Sorgu başarısız oldu",
-    "refresh": "Yenile"
+    "refresh": "Yenile",
+    "tiers": {
+      "fastRequests": "Hızlı"
+    },
+    "fastRequests": "Hızlı İstekler"
   },
   "nav": {
     "mainLabel": "Ana gezinme",
@@ -4390,7 +4395,10 @@
       "agy": "Resmî kurulum betiğiyle yüklenir",
       "omp": "Resmi komut dosyasıyla yüklenir",
       "copilot": "npm ile kurulur"
-    }
+    },
+    "cursorHelp": "Cursor bir masaüstü düzenleyicisidir ve buradan yüklenemez veya yükseltilemez; CC Switch, yerel kimlik bilgileri aracılığıyla resmi aboneliğini ve kotasını izler.",
+    "cursorDetected": "Algılandı",
+    "cursorNotDetected": "Algılanmadı"
   },
   "appPage": {
     "moreActions": "{{name}} için diğer işlemler",

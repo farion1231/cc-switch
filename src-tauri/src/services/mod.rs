@@ -38,6 +38,7 @@ pub mod sql_helpers;
 pub mod stream_check;
 pub mod subscription;
 pub mod subscription_agy;
+pub mod subscription_cursor;
 pub mod subscription_grok;
 pub mod sync_protocol;
 pub mod usage_cache;

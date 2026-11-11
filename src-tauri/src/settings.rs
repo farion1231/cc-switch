@@ -63,6 +63,8 @@ pub struct VisibleApps {
     pub agy: bool,
     #[serde(default = "default_true")]
     pub copilot: bool,
+    #[serde(default = "default_true")]
+    pub cursor: bool,
 }
 
 impl Default for VisibleApps {
@@ -81,6 +83,7 @@ impl Default for VisibleApps {
             kimi: true,
             dsh: true,
             agy: true,
+            cursor: true,
             omp: true,
             copilot: true,
         }
@@ -104,6 +107,7 @@ impl VisibleApps {
             AppType::Kimi => self.kimi,
             AppType::Dsh => self.dsh,
             AppType::Agy => self.agy,
+            AppType::Cursor => self.cursor,
             AppType::Omp => self.omp,
             AppType::Copilot => self.copilot,
         }
@@ -661,6 +665,9 @@ pub struct AppSettings {
     /// 当前 GitHub Copilot CLI 供应商 ID（卡片只用于打开终端，保持结构一致）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_copilot: Option<String>,
+    /// 当前 Cursor 供应商 ID
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_cursor: Option<String>,
 
     // ===== 本地路由（设备级）=====
     /// 写给客户端的代理主机（IP 或主机名），空/未设时按监听地址推（`0.0.0.0` → `127.0.0.1`）。
@@ -788,6 +795,7 @@ impl Default for AppSettings {
             current_provider_hermes: None,
             current_provider_agy: None,
             current_provider_copilot: None,
+            current_provider_cursor: None,
             proxy_client_host: None,
             skill_sync_method: SyncMethod::default(),
             skill_storage_location: SkillStorageLocation::default(),
@@ -1507,6 +1515,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::Hermes => settings.current_provider_hermes.clone(),
         AppType::Agy => settings.current_provider_agy.clone(),
         AppType::Copilot => settings.current_provider_copilot.clone(),
+        AppType::Cursor => settings.current_provider_cursor.clone(),
         AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp => None,
     }
 }
@@ -1528,6 +1537,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
         AppType::Agy => settings.current_provider_agy = id_owned.clone(),
         AppType::Copilot => settings.current_provider_copilot = id_owned.clone(),
+        AppType::Cursor => settings.current_provider_cursor = id_owned.clone(),
         AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp => {}
     })
 }

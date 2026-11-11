@@ -205,7 +205,9 @@ function detectBalanceProvider(baseUrl: string | undefined): boolean {
 }
 
 function isOfficialSubscriptionProvider(provider: Provider, appId: AppId) {
-  if (!["claude", "codex", "gemini", "grokbuild", "agy"].includes(appId))
+  if (
+    !["claude", "codex", "gemini", "grokbuild", "agy", "cursor"].includes(appId)
+  )
     return false;
   if (provider.category === "official") return true;
 

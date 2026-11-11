@@ -6029,6 +6029,7 @@ impl ProviderService {
             AppType::Gemini => gemini_direct::is_official(&row),
             AppType::Agy => agy_direct::is_official(&row),
             AppType::Copilot => copilot_direct::is_official(&row),
+            AppType::Cursor => row.id == crate::database::CURSOR_OFFICIAL_PROVIDER_ID,
             _ => false,
         };
         Ok(if official {
@@ -6776,8 +6777,8 @@ impl ProviderService {
         }
 
         // For other apps: 本地记录、DB、代理路由任何一处指着它都不能删。Antigravity 没有
-        // 「启用」，旧版留下的直连指针不拦删除。
-        if !matches!(app_type, AppType::Agy)
+        // 「启用」，旧版留下的直连指针不拦删除。Cursor 卡主要用于额度追踪。
+        if !matches!(app_type, AppType::Agy | AppType::Cursor)
             && crate::mode::current::is_referenced(&state.db, &app_type, id)?
         {
             return Err(AppError::Message(
@@ -7039,6 +7040,14 @@ impl ProviderService {
         if app_type == AppType::Copilot {
             Self::add_copilot_to_live(state, id)?;
             return Ok(SwitchResult::default());
+        }
+
+        if app_type == AppType::Cursor {
+            return Err(AppError::localized(
+                "cursor.switch.unsupported",
+                "Cursor 的卡片主要用于额度追踪，不支持切换",
+                "Cursor cards are primarily for quota tracking and do not support switching",
+            ));
         }
 
         if app_type == AppType::Omp {
@@ -7511,6 +7520,7 @@ impl ProviderService {
             | AppType::Dsh
             | AppType::Omp
             | AppType::Agy
+            | AppType::Cursor
             | AppType::Copilot => Ok(String::new()),
         }
     }
@@ -7535,6 +7545,7 @@ impl ProviderService {
             | AppType::Dsh
             | AppType::Omp
             | AppType::Agy
+            | AppType::Cursor
             | AppType::Copilot => Ok(String::new()),
         }
     }
@@ -8231,6 +8242,15 @@ impl ProviderService {
             }
             AppType::Copilot => {
                 crate::copilot_config::validate_provider(&provider.id, &provider.settings_config)?
+            }
+            AppType::Cursor => {
+                if !provider.settings_config.is_object() {
+                    return Err(AppError::localized(
+                        "provider.cursor.settings.not_object",
+                        "Cursor 配置必须是 JSON 对象",
+                        "Cursor configuration must be a JSON object",
+                    ));
+                }
             }
             AppType::GrokBuild => {
                 let settings = provider.settings_config.as_object().ok_or_else(|| {

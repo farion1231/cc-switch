@@ -51,7 +51,7 @@ impl McpApps {
             AppType::Dsh => self.dsh,
             AppType::Pi => self.pi,
             AppType::Omp => self.omp,
-            AppType::ClaudeDesktop => false,
+            AppType::ClaudeDesktop | AppType::Cursor => false,
             AppType::Agy => self.agy,
             AppType::Copilot => self.copilot,
         }
@@ -71,7 +71,7 @@ impl McpApps {
             AppType::Kimi => self.kimi = enabled,
             AppType::Dsh => self.dsh = enabled,
             AppType::Pi => self.pi = enabled,
-            AppType::ClaudeDesktop => {}
+            AppType::ClaudeDesktop | AppType::Cursor => {}
             AppType::Agy => self.agy = enabled,
             AppType::Omp => self.omp = enabled,
             AppType::Copilot => self.copilot = enabled,
@@ -190,7 +190,7 @@ impl SkillApps {
             AppType::Agy => self.agy,
             AppType::Omp => self.omp,
             AppType::Copilot => self.copilot,
-            AppType::ClaudeDesktop => false,
+            AppType::ClaudeDesktop | AppType::Cursor => false,
         }
     }
 
@@ -211,7 +211,7 @@ impl SkillApps {
             AppType::Agy => self.agy = enabled,
             AppType::Omp => self.omp = enabled,
             AppType::Copilot => self.copilot = enabled,
-            AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
+            AppType::ClaudeDesktop | AppType::Cursor => {} // Claude Desktop 3P profiles and Cursor don't use CC Switch skill sync
         }
     }
 
@@ -498,6 +498,7 @@ pub enum AppType {
     Kimi,
     Dsh,
     Agy,
+    Cursor,
     Omp,
     Copilot,
 }
@@ -518,6 +519,7 @@ impl AppType {
             AppType::Kimi => "kimi",
             AppType::Dsh => "dsh",
             AppType::Agy => "agy",
+            AppType::Cursor => "cursor",
             AppType::Omp => "omp",
             AppType::Copilot => "copilot",
         }
@@ -577,6 +579,7 @@ impl AppType {
             AppType::Kimi,
             AppType::Dsh,
             AppType::Agy,
+            AppType::Cursor,
             AppType::Omp,
             AppType::Copilot,
         ]
@@ -603,14 +606,15 @@ impl FromStr for AppType {
             "kimi" | "kimi-code" => Ok(AppType::Kimi),
             "dsh" | "deepseek-harness" => Ok(AppType::Dsh),
             "agy" | "antigravity" | "antigravity-cli" => Ok(AppType::Agy),
+            "cursor" => Ok(AppType::Cursor),
             "omp" | "oh-my-pi" | "oh_my_pi" | "ohmypi" => Ok(AppType::Omp),
             "copilot" | "copilot-cli" | "github-copilot" | "github-copilot-cli" => {
                 Ok(AppType::Copilot)
             }
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, cursor, omp, copilot。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, cursor, omp, copilot."),
             )),
         }
     }
@@ -656,6 +660,7 @@ impl CommonConfigSnippets {
             | AppType::Dsh
             | AppType::Omp
             | AppType::Agy
+            | AppType::Cursor
             | AppType::Copilot => None,
         }
     }
@@ -677,6 +682,7 @@ impl CommonConfigSnippets {
             | AppType::Dsh
             | AppType::Omp
             | AppType::Agy
+            | AppType::Cursor
             | AppType::Copilot => {}
         }
     }
@@ -1011,6 +1017,7 @@ impl MultiAppConfig {
             | AppType::Dsh
             | AppType::Omp
             | AppType::Agy
+            | AppType::Cursor
             | AppType::Copilot => return Ok(false),
         };
 
@@ -1061,6 +1068,7 @@ impl MultiAppConfig {
                 | AppType::Dsh
                 | AppType::Omp
                 | AppType::Agy
+                | AppType::Cursor
                 | AppType::Copilot => continue, // Pi didn't exist in v3.6.x, skip
             };
 

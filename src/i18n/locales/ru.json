@@ -1180,7 +1180,8 @@
     "mcode": "MiniMax Code",
     "copilot": "Copilot CLI",
     "agy": "Antigravity",
-    "omp": "Oh My Pi"
+    "omp": "Oh My Pi",
+    "cursor": "Cursor"
   },
   "mcode": {
     "empty": {
@@ -4318,7 +4319,11 @@
     "expiredHint": "Выполните команду {{tool}}, чтобы обновить вход",
     "expiredHintAccounts": "Войдите в этот аккаунт снова в разделе «Аккаунты»",
     "queryFailed": "Запрос не выполнен",
-    "refresh": "Обновить"
+    "refresh": "Обновить",
+    "tiers": {
+      "fastRequests": "Быстрые"
+    },
+    "fastRequests": "Быстрые запросы"
   },
   "nav": {
     "mainLabel": "Основная навигация",
@@ -4388,7 +4393,10 @@
       "agy": "Устанавливается официальным скриптом",
       "omp": "Устанавливается официальным скриптом",
       "copilot": "Устанавливается через npm"
-    }
+    },
+    "cursorHelp": "Cursor — это десктопный редактор, который нельзя установить или обновить здесь; CC Switch отслеживает официальную подписку и квоту через локальные учетные данные.",
+    "cursorDetected": "Обнаружено",
+    "cursorNotDetected": "Не обнаружено"
   },
   "appPage": {
     "moreActions": "Другие действия для {{name}}",

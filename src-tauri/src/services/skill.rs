@@ -678,6 +678,7 @@ impl SkillService {
                 }
             }
             AppType::ClaudeDesktop
+            | AppType::Cursor
             | AppType::Mcode
             | AppType::Kimi
             | AppType::Dsh
