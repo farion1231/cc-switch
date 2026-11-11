@@ -34,6 +34,9 @@ pub fn parse_env_file(content: &str) -> HashMap<String, String> {
             continue;
         }
 
+        // Gemini CLI loads .env with dotenv, which reads `export KEY=VALUE` as `KEY=VALUE`
+        let line = line.strip_prefix("export ").unwrap_or(line);
+
         // 解析 KEY=VALUE
         if let Some((key, value)) = line.split_once('=') {
             let key = key.trim().to_string();
@@ -155,9 +158,12 @@ pub fn remove_env_entries_preserving_layout(
 
     for line in content.split('\n') {
         let trimmed = line.trim();
+        // 与 parse_env_file 同一口径：dotenv 把 `export KEY=VALUE` 读作 `KEY=VALUE`，
+        // 漏掉前缀会让带 export 的泄漏行永远匹配不上、清不掉
+        let entry = trimmed.strip_prefix("export ").unwrap_or(trimmed);
         let hit = !trimmed.is_empty()
             && !trimmed.starts_with('#')
-            && trimmed.split_once('=').is_some_and(|(key, value)| {
+            && entry.split_once('=').is_some_and(|(key, value)| {
                 doomed
                     .get(key.trim())
                     .is_some_and(|doomed_value| doomed_value == value.trim())
@@ -357,6 +363,22 @@ GEMINI_MODEL=gemini-3.5-flash
             map.get("GEMINI_MODEL"),
             Some(&"gemini-3.5-flash".to_string())
         );
+    }
+
+    #[test]
+    fn test_parse_env_file_reads_export_lines() {
+        let content = r#"# Gemini CLI
+export GEMINI_API_KEY=AIza-user-key
+export GEMINI_MODEL=gemini-2.5-pro
+"#;
+
+        let map = parse_env_file(content);
+
+        assert_eq!(
+            map.get("GEMINI_API_KEY"),
+            Some(&"AIza-user-key".to_string())
+        );
+        assert_eq!(map.get("GEMINI_MODEL"), Some(&"gemini-2.5-pro".to_string()));
     }
 
     #[test]
@@ -595,5 +617,30 @@ KEY_WITH-DASH=value";
         });
 
         assert!(validate_gemini_settings(&settings).is_err());
+    }
+
+    #[test]
+    fn test_remove_env_entries_matches_export_prefixed_lines() {
+        // dotenv（与 parse_env_file 一致）把 `export KEY=VALUE` 读作 KEY=VALUE；
+        // 定向清理必须同样剥掉前缀，否则 export 形式的泄漏行永远清不掉
+        let content = "# comment\nexport GEMINI_API_KEY=leaked\nGEMINI_API_KEY=keep_me\n";
+        let mut doomed = HashMap::new();
+        doomed.insert("GEMINI_API_KEY".to_string(), "leaked".to_string());
+
+        let result = remove_env_entries_preserving_layout(content, &doomed).unwrap();
+
+        assert_eq!(
+            result, "# comment\nGEMINI_API_KEY=keep_me\n",
+            "export 行应命中并删除，无前缀的同名不同值行保留"
+        );
+    }
+
+    #[test]
+    fn test_remove_env_entries_export_without_hit_is_none() {
+        let content = "export GEMINI_API_KEY=other\n";
+        let mut doomed = HashMap::new();
+        doomed.insert("GEMINI_API_KEY".to_string(), "leaked".to_string());
+
+        assert!(remove_env_entries_preserving_layout(content, &doomed).is_none());
     }
 }

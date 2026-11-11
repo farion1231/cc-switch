@@ -472,6 +472,12 @@ export function loginAccountKey(
       return "google";
     case "grokbuild":
       return "xai";
+    case "kimi":
+      return "kimi";
+    case "copilot":
+      return "github";
+    case "dsh":
+      return "deepseek";
     default:
       return "claude";
   }

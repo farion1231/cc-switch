@@ -78,6 +78,16 @@ const VERSION_SEGMENT = /^v\d+(?:(?:alpha|beta)\d*)?$/;
 const REQUEST_SEGMENTS = new Set(["responses", "messages"]);
 
 /**
+ * 同一个接口的新旧地址（归一后的写法）。OpenCode 的 Zen / Go 在 models.dev
+ * 里改成了 `/inference/...`（2026-10），预设和用户手里的仍是 `/zen/...`，两者
+ * 都能用、计费相同。
+ */
+const ENDPOINT_ALIASES: Record<string, string> = {
+  "opencode.ai/zen": "opencode.ai/inference/openai",
+  "opencode.ai/zen/go": "opencode.ai/inference/go/openai",
+};
+
+/**
  * 把地址归一成「域名 + 路径」，去掉末尾的版本号（`v1`、`v4`、`v1beta`）和请求
  * 路径（`chat/completions`、`responses`、`messages`）：这些写不写都是同一个接口。
  * 其余路径必须完全一致才算同一个接口——`opencode.ai/zen/v1` 和 `/zen/go/v1`、
@@ -109,7 +119,8 @@ function endpointKey(url: string): string | null {
       break;
     }
   }
-  return [parsed.hostname.toLowerCase(), ...segments].join("/");
+  const key = [parsed.hostname.toLowerCase(), ...segments].join("/");
+  return ENDPOINT_ALIASES[key] ?? key;
 }
 
 /** 挑出与地址是同一个接口的候选，保持原有顺序。 */
@@ -277,11 +288,14 @@ function findByProvider(
 }
 
 /**
- * 原厂兜底：同名条目指向的原厂条目；没有条目指向时，才用原厂自己名下的同名
- * 条目。指向不止一家原厂时说不清是哪个模型，放弃。
+ * 原厂兜底：同名条目指向的原厂条目；指向都落空（没写，或原厂名下没有这一条）
+ * 时，才用原厂自己名下的同名条目。指向不止一家原厂时说不清是哪个模型，放弃。
  *
  * 「原厂名下」只是退路：原厂也会托管别家的模型（NVIDIA 名下有
  * `minimaxai/minimax-m2.7`），和指向结果并列就会被当成第二家原厂。
+ * 自己指向别家的条目也不算自有：指向的条目缺失时（models.dev 的 deepseek 名下
+ * 没有 `deepseek-v4.1-flash-1017`），thinkingmachines 名下指回 deepseek 的 LoRA
+ * 微调条目只收文字、窗口 262144，不能冒充原厂资料（#8765）。
  */
 function findByVendor(
   index: ModelsDevIndex,
@@ -302,6 +316,7 @@ function findByVendor(
         pointed.set(canonical, vendorModel);
         continue;
       }
+      if (vendorId !== providerId) continue;
     }
     if (index.vendors.has(providerId)) {
       owned.set(`${providerId}/${model.id ?? normalized}`, model);

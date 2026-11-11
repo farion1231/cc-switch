@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -21,6 +23,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
 import { KNOWN_APP_TYPES, type AppTypeFilter } from "@/types/usage";
 import type { EnvConflict } from "@/types/env";
+import type { SubscriptionQuota } from "@/types/subscription";
 import {
   providersQueryOptions,
   proxyKeys,
@@ -48,13 +51,25 @@ import {
   useTrayNavigation,
 } from "@/hooks/useTrayNavigation";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
+import {
+  CODEX_UNIFY_MIGRATION_FINISHED_EVENT,
+  showCodexUnifyMigrationFinished,
+  type CodexUnifyMigrationFinished,
+} from "@/utils/codexHistorySplitHint";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
 import {
   extractErrorMessage,
+  translateKimiProviderMutationError,
   translatePiProviderMutationError,
 } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
+import { setZoom, stepZoom } from "@/lib/interfacePrefs";
 import { deepClone } from "@/utils/deepClone";
+import { isOfficialAccount } from "@/utils/providerCapabilities";
+import {
+  COPILOT_PROVIDER_ID_MAX,
+  normalizeCopilotProviderId,
+} from "@/config/copilotConfig";
 import { isLinux, isMac, isWindows } from "@/lib/platform";
 import {
   APP_STORAGE_KEY,
@@ -78,32 +93,23 @@ import { WindowControls } from "@/components/shell/WindowControls";
 import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
-import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import {
   hasOpencodeDefinition,
   isNativeOpencodeConfig,
 } from "@/components/providers/forms/helpers/opencodeFormUtils";
-import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { OpenTerminalDialog } from "@/components/providers/OpenTerminalDialog";
 import { discardUnsavedChanges, hasUnsavedChanges } from "@/lib/unsavedChanges";
-import { SettingsPage } from "@/components/settings/SettingsPage";
-import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
-import { AppsPage } from "@/components/apps/AppsPage";
+import { RefreshAllQuotaButton } from "@/components/settings/auth/RefreshAllQuotaButton";
 import {
   checkToolUpdatesInBackground,
   useToolUpdatesAvailable,
 } from "@/components/apps/useToolManagement";
-import { UsagePage } from "@/components/usage/UsagePage";
 import { EnvWarningBanner } from "@/components/env/EnvWarningBanner";
 import { SwitchModePanel } from "@/components/providers/mode/SwitchModePanel";
 import { proxyApi } from "@/lib/api/proxy";
 import type { AppMode, StartupAttachFailure } from "@/types/proxy";
-import UsageScriptModal from "@/components/UsageScriptModal";
-import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
-import PromptPanel from "@/components/prompts/PromptPanel";
 import { PROMPT_APP_IDS } from "@/lib/query/prompts";
-import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
 import { WhatsNewNotice } from "@/components/WhatsNewDialog";
@@ -119,21 +125,90 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
 import {
   useDisableCurrentOmo,
   useDisableCurrentOmoSlim,
 } from "@/lib/query/omo";
 import { invalidatePiProviderCaches, usePiCurrentState } from "@/lib/query/pi";
-import WorkspaceFilesPanel from "@/components/workspace/WorkspaceFilesPanel";
-import EnvPanel from "@/components/openclaw/EnvPanel";
-import ToolsPanel from "@/components/openclaw/ToolsPanel";
-import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
-import HermesMemoryPanel, {
-  HermesMemorySaveButton,
-} from "@/components/hermes/HermesMemoryPanel";
-import { APP_IDS, DEFAULT_VISIBLE_APPS, isModeAppId } from "@/config/appConfig";
+import {
+  APP_IDS,
+  DEFAULT_VISIBLE_APPS,
+  isModeAppId,
+  isPiFamilyApp,
+  orderAppIds,
+} from "@/config/appConfig";
+import type { PiFamilyAppId } from "@/lib/api/pi";
+
+// Keep the provider page and event listeners ready at startup. Editors, charts
+// and secondary pages are loaded when the user first opens them.
+const AddProviderDialog = lazy(() =>
+  import("@/components/providers/AddProviderDialog").then((m) => ({
+    default: m.AddProviderDialog,
+  })),
+);
+const EditProviderDialog = lazy(() =>
+  import("@/components/providers/EditProviderDialog").then((m) => ({
+    default: m.EditProviderDialog,
+  })),
+);
+const SettingsPage = lazy(() =>
+  import("@/components/settings/SettingsPage").then((m) => ({
+    default: m.SettingsPage,
+  })),
+);
+const AuthCenterPanel = lazy(() =>
+  import("@/components/settings/AuthCenterPanel").then((m) => ({
+    default: m.AuthCenterPanel,
+  })),
+);
+const AppsPage = lazy(() =>
+  import("@/components/apps/AppsPage").then((m) => ({ default: m.AppsPage })),
+);
+const UsagePage = lazy(() =>
+  import("@/components/usage/UsagePage").then((m) => ({
+    default: m.UsagePage,
+  })),
+);
+const SessionManagerPage = lazy(() =>
+  import("@/components/sessions/SessionManagerPage").then((m) => ({
+    default: m.SessionManagerPage,
+  })),
+);
+const UsageScriptModal = lazy(() => import("@/components/UsageScriptModal"));
+const UnifiedMcpPanel = lazy(() => import("@/components/mcp/UnifiedMcpPanel"));
+const PromptPanel = lazy(() => import("@/components/prompts/PromptPanel"));
+const UnifiedSkillsPanel = lazy(
+  () => import("@/components/skills/UnifiedSkillsPanel"),
+);
+const WorkspaceFilesPanel = lazy(
+  () => import("@/components/workspace/WorkspaceFilesPanel"),
+);
+const EnvPanel = lazy(() => import("@/components/openclaw/EnvPanel"));
+const ToolsPanel = lazy(() => import("@/components/openclaw/ToolsPanel"));
+const AgentsDefaultsPanel = lazy(
+  () => import("@/components/openclaw/AgentsDefaultsPanel"),
+);
+const HermesMemoryPanel = lazy(
+  () => import("@/components/hermes/HermesMemoryPanel"),
+);
+const HermesMemorySaveButton = lazy(() =>
+  import("@/components/hermes/HermesMemoryPanel").then((m) => ({
+    default: m.HermesMemorySaveButton,
+  })),
+);
+
+function PageLoading() {
+  const { t } = useTranslation();
+  return (
+    <div
+      role="status"
+      className="flex flex-1 items-center justify-center text-sm text-fg-2"
+    >
+      {t("common.loading")}
+    </div>
+  );
+}
 
 interface SyncStatusUpdatedPayload {
   source?: string;
@@ -170,6 +245,10 @@ function App() {
     PROMPT_APP_IDS.includes(sharedFeatureApp) ? sharedFeatureApp : "claude",
   );
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [hasOpenedAdd, setHasOpenedAdd] = useState(false);
+  useEffect(() => {
+    if (isAddOpen) setHasOpenedAdd(true);
+  }, [isAddOpen]);
   // 供应商搜索面板：页头按钮和 ⌘F 都能打开；换应用或离开供应商页就收起
   const [providerSearchOpen, setProviderSearchOpen] = useState(false);
   const [connectionStatusSlot, setConnectionStatusSlot] =
@@ -215,7 +294,10 @@ function App() {
   );
 
   const getFirstVisibleApp = (): AppId => {
-    return APP_IDS.find((app) => visibleApps[app]) ?? "claude";
+    return (
+      orderAppIds(settingsData?.appOrder).find((app) => visibleApps[app]) ??
+      "claude"
+    );
   };
 
   useEffect(() => {
@@ -268,6 +350,10 @@ function App() {
   }, [activeApp, currentView]);
 
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
+  const [hasOpenedEdit, setHasOpenedEdit] = useState(false);
+  useEffect(() => {
+    if (editingProvider) setHasOpenedEdit(true);
+  }, [editingProvider]);
   const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
   const [confirmAction, setConfirmAction] = useState<{
     provider: Provider;
@@ -334,10 +420,13 @@ function App() {
     activeApp,
     isProxyRunning && isCurrentAppTakeoverActive,
   );
-  const handleEnablePiProvider = async (provider: Provider) => {
+  const handleEnablePiProvider = async (
+    provider: Provider,
+    app: PiFamilyAppId,
+  ) => {
     try {
-      await providersApi.switch(provider.id, "pi");
-      await invalidatePiProviderCaches(queryClient);
+      await providersApi.switch(provider.id, app);
+      await invalidatePiProviderCaches(queryClient, app);
       await providersApi.updateTrayMenu().catch((error) => {
         console.error(
           "Failed to update tray menu after enabling Pi provider",
@@ -345,7 +434,7 @@ function App() {
         );
       });
       toast.success(
-        t("pi.provider.enabled", {
+        t(`${app}.provider.enabled`, {
           defaultValue: "已在 Pi 中启用",
         }),
         { closeButton: true },
@@ -353,7 +442,7 @@ function App() {
     } catch (error) {
       const detail = extractErrorMessage(error);
       toast.error(
-        t("pi.provider.enableFailed", {
+        t(`${app}.provider.enableFailed`, {
           defaultValue: "无法在 Pi 中启用此供应商",
         }),
         {
@@ -363,6 +452,31 @@ function App() {
         },
       );
     }
+  };
+
+  // Kimi「添加」只写进 config.toml、不改默认模型；「切换」走 switchProvider。
+  // Copilot CLI 的自带模型卡同理：「添加」只写进 providers.json，默认模型在 copilot 里用 /model 选
+  const handleAddNativeProvider = async (
+    provider: Provider,
+    app: "kimi" | "copilot",
+  ) => {
+    try {
+      await providersApi.addToLiveConfig(provider.id, app);
+    } catch (error) {
+      toast.error(
+        t("notifications.addFailed", {
+          error: extractErrorMessage(error) || t("common.unknown"),
+        }),
+        { closeButton: true },
+      );
+      return;
+    } finally {
+      await queryClient.invalidateQueries({ queryKey: ["providers", app] });
+    }
+    toast.success(
+      t("notifications.addToConfigSuccess", { defaultValue: "已添加到配置" }),
+      { closeButton: true },
+    );
   };
 
   const disableOmoMutation = useDisableCurrentOmo();
@@ -415,6 +529,22 @@ function App() {
             if (event.appType === "pi") {
               await invalidatePiProviderCaches(queryClient);
             }
+            if (event.appType === "claude") {
+              // 托盘切卡、应用项目同样可能把默认登录收成新账号
+              await queryClient.invalidateQueries({
+                queryKey: ["managed-auth-status", "claude_official"],
+              });
+            }
+            // 切换会顺带刷新托管 ChatGPT 账号的令牌（托盘切换也一样）：
+            // 重查停在失败上的账号额度，免得主界面一直显示旧的「登录过期」
+            await queryClient.invalidateQueries({
+              predicate: (query) =>
+                query.queryKey[0] === "codex_oauth" &&
+                query.queryKey[1] === "quota" &&
+                (query.state.status === "error" ||
+                  (query.state.data as SubscriptionQuota | undefined)
+                    ?.success === false),
+            });
           },
         );
         if (!active) {
@@ -442,6 +572,12 @@ function App() {
       console.error("[App] Failed to update tray menu", error);
     }
   });
+
+  // 开启统一会话历史后的后台迁入跑完了：提示用户现在可以重启 Codex
+  useTauriEvent<CodexUnifyMigrationFinished>(
+    CODEX_UNIFY_MIGRATION_FINISHED_EVENT,
+    (payload) => showCodexUnifyMigrationFinished(payload, t),
+  );
 
   // 应用项目后刷新相关缓存（providers 由既有 provider-switched 监听承接；
   // proxy 状态由后端直接改 DB，不走 mutation，必须显式刷新）
@@ -503,6 +639,22 @@ function App() {
     },
   );
 
+  // Codex / Grok Build 跟随系统代理发请求：发往本地路由的请求被系统代理接走时客户端只看到
+  // 空正文 502，CC Switch 这边没有日志（#9221），进入路由时后端自检一次，没回来就提示。
+  useTauriEvent<{ appType: AppId; origin: string }>(
+    "proxy-loopback-hijacked",
+    (payload) => {
+      const app = APP_DISPLAY_NAME[payload.appType] ?? payload.appType;
+      toast.warning(
+        t("notifications.proxyLoopbackHijacked", {
+          app,
+          origin: payload.origin,
+        }),
+        { duration: 15000 },
+      );
+    },
+  );
+
   useEffect(() => {
     // settingsData 未加载时跳过，避免用 fallback false 覆盖 Rust 侧已设好的装饰状态
     if (!settingsData) return;
@@ -517,6 +669,144 @@ function App() {
 
     void syncWindowDecorations();
   }, [useAppWindowControls, settingsData]);
+
+  useEffect(() => {
+    if (!isLinux() || !useAppWindowControls) return;
+
+    const win = getCurrentWindow();
+    let active = true;
+    let revision = 0;
+    let canResize = false;
+    let nativeScale = 1;
+    const unlisteners: (() => void)[] = [];
+    let cursor:
+      | {
+          target: HTMLElement | SVGElement;
+          value: string;
+          priority: string;
+          applied: string;
+        }
+      | undefined;
+    const restoreCursor = () => {
+      if (
+        cursor &&
+        cursor.target.style.cursor === cursor.applied &&
+        cursor.target.style.getPropertyPriority("cursor") === "important"
+      ) {
+        cursor.target.style.setProperty(
+          "cursor",
+          cursor.value,
+          cursor.priority,
+        );
+      }
+      cursor = undefined;
+    };
+    const refresh = async () => {
+      const current = ++revision;
+      canResize = false;
+      restoreCursor();
+      try {
+        const [maximized, fullscreen, resizable, scale] = await Promise.all([
+          win.isMaximized(),
+          win.isFullscreen(),
+          win.isResizable(),
+          win.scaleFactor(),
+        ]);
+        if (active && current === revision) {
+          canResize = resizable && !maximized && !fullscreen;
+          nativeScale = scale;
+        }
+      } catch (error) {
+        console.error("[App] Failed to read window resize state", error);
+      }
+    };
+    const edgeCursor = ({ clientX: x, clientY: y }: MouseEvent) => {
+      if (
+        !canResize ||
+        x < 0 ||
+        y < 0 ||
+        x >= window.innerWidth ||
+        y >= window.innerHeight
+      ) {
+        return "";
+      }
+      // 与 tauri-runtime-wry 的 GTK 边缘宽度（5 × scale，GDK 坐标）对齐，
+      // 再从 GDK 坐标转换为 CSS 像素，兼容显示缩放和 WebView 缩放。
+      const inset = (5 * nativeScale * nativeScale) / window.devicePixelRatio;
+      const horizontal =
+        x < inset ? -1 : x >= window.innerWidth - inset ? 1 : 0;
+      const vertical = y < inset ? -1 : y >= window.innerHeight - inset ? 1 : 0;
+      if (horizontal && vertical) {
+        return horizontal === vertical ? "nwse-resize" : "nesw-resize";
+      }
+      return horizontal ? "ew-resize" : vertical ? "ns-resize" : "";
+    };
+    const onMouseMove = (event: MouseEvent) => {
+      const value = edgeCursor(event);
+      const target = event.target;
+      if (
+        !value ||
+        !(target instanceof HTMLElement || target instanceof SVGElement)
+      ) {
+        restoreCursor();
+        return;
+      }
+      if (cursor?.target !== target) {
+        restoreCursor();
+        cursor = {
+          target,
+          value: target.style.cursor,
+          priority: target.style.getPropertyPriority("cursor"),
+          applied: "",
+        };
+      }
+      if (cursor.applied !== value) {
+        cursor.applied = value;
+        target.style.setProperty("cursor", value, "important");
+      }
+    };
+    const onMouseDown = (event: MouseEvent) => {
+      if (!(event.target instanceof Element)) return;
+      const drag = event.target.getAttribute("data-tauri-drag-region");
+      if (
+        event.button === 0 &&
+        drag !== null &&
+        drag !== "false" &&
+        edgeCursor(event)
+      ) {
+        // 保留 GTK 原生缩放，阻止 Tauri 的 document 冒泡监听再发起窗口移动。
+        event.stopPropagation();
+      }
+    };
+
+    document.addEventListener("mousemove", onMouseMove, true);
+    document.addEventListener("mousedown", onMouseDown, true);
+    document.documentElement.addEventListener("mouseleave", restoreCursor);
+    window.addEventListener("blur", restoreCursor);
+    for (const listener of [
+      win.onResized(refresh),
+      win.onScaleChanged(refresh),
+    ]) {
+      void listener
+        .then((unlisten) => {
+          if (active) unlisteners.push(unlisten);
+          else unlisten();
+        })
+        .catch((error) =>
+          console.error("[App] Failed to listen for window resize", error),
+        );
+    }
+    void refresh();
+    return () => {
+      active = false;
+      unlisteners.forEach((unlisten) => unlisten());
+      document.removeEventListener("mousemove", onMouseMove, true);
+      document.removeEventListener("mousedown", onMouseDown, true);
+      document.documentElement.removeEventListener("mouseleave", restoreCursor);
+      window.removeEventListener("blur", restoreCursor);
+      restoreCursor();
+    };
+  }, [useAppWindowControls]);
 
   useEffect(() => {
     const checkEnvOnStartup = async () => {
@@ -591,7 +881,14 @@ function App() {
   useEffect(() => {
     const checkEnvOnSwitch = async () => {
       try {
-        if (activeApp === "mcode" || activeApp === "agy") return;
+        if (
+          activeApp === "mcode" ||
+          activeApp === "dsh" ||
+          activeApp === "kimi" ||
+          activeApp === "agy" ||
+          activeApp === "copilot"
+        )
+          return;
         const conflicts = await checkEnvConflicts(activeApp);
 
         if (conflicts.length > 0) {
@@ -741,6 +1038,24 @@ function App() {
         openSettingsRef.current("general");
         return;
       }
+      // 界面缩放：= / +（含小键盘）放大、- 缩小、0 复原，档位见 ZOOM_LEVELS
+      if (mod && !event.altKey) {
+        if (event.key === "=" || event.key === "+") {
+          event.preventDefault();
+          stepZoom(1);
+          return;
+        }
+        if (event.key === "-") {
+          event.preventDefault();
+          stepZoom(-1);
+          return;
+        }
+        if (event.key === "0") {
+          event.preventDefault();
+          setZoom(1);
+          return;
+        }
+      }
 
       if (event.key !== "Escape" || event.defaultPrevented) return;
       if (document.body.style.overflow === "hidden") return;
@@ -794,6 +1109,40 @@ function App() {
     setEditingProvider(null);
   };
 
+  // 累加式应用的「已添加」和「默认」都现读客户端文件，移除前后重读一遍
+  const refreshAdditiveLiveState = async (app: AppId) => {
+    if (isPiFamilyApp(app)) {
+      await invalidatePiProviderCaches(queryClient, app);
+    } else if (app === "opencode") {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["opencodeLiveProviderIds"],
+        }),
+        queryClient.invalidateQueries({ queryKey: ["opencodeDefaultModel"] }),
+      ]);
+    } else if (app === "openclaw") {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: openclawKeys.liveProviderIds,
+        }),
+        queryClient.invalidateQueries({ queryKey: openclawKeys.defaultModel }),
+        queryClient.invalidateQueries({ queryKey: openclawKeys.health }),
+      ]);
+    } else if (app === "hermes") {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: hermesKeys.liveProviderIds }),
+        queryClient.invalidateQueries({ queryKey: hermesKeys.modelConfig }),
+      ]);
+    } else if (
+      app === "mcode" ||
+      app === "dsh" ||
+      app === "kimi" ||
+      app === "copilot"
+    ) {
+      await queryClient.invalidateQueries({ queryKey: ["providers", app] });
+    }
+  };
+
   const handleConfirmAction = async () => {
     if (!confirmAction) return;
     const { provider, action } = confirmAction;
@@ -806,47 +1155,27 @@ function App() {
       } catch (error) {
         const detail = extractErrorMessage(error);
         const description =
-          activeApp === "pi"
-            ? translatePiProviderMutationError(detail, t) || detail
-            : detail;
-        if (activeApp === "pi") {
-          void invalidatePiProviderCaches(queryClient).catch(() => undefined);
-        }
+          (isPiFamilyApp(activeApp)
+            ? translatePiProviderMutationError(detail, t)
+            : activeApp === "kimi"
+              ? translateKimiProviderMutationError(detail, t)
+              : "") || detail;
+        // 默认模型可能在客户端里改过、页面还是旧的：失败了也重读，让「默认」和移除按钮跟上
+        void refreshAdditiveLiveState(activeApp).catch(() => undefined);
         toast.error(t("notifications.removeFromConfigFailed"), {
           description: description || t("common.unknown"),
           closeButton: true,
         });
         return;
       }
-      if (activeApp === "pi") {
-        await invalidatePiProviderCaches(queryClient);
-      }
       // Invalidate queries to refresh the isInConfig state
-      if (activeApp === "opencode") {
-        await queryClient.invalidateQueries({
-          queryKey: ["opencodeLiveProviderIds"],
-        });
-      } else if (activeApp === "openclaw") {
-        await queryClient.invalidateQueries({
-          queryKey: openclawKeys.liveProviderIds,
-        });
-        await queryClient.invalidateQueries({
-          queryKey: openclawKeys.health,
-        });
-      } else if (activeApp === "hermes") {
-        await queryClient.invalidateQueries({
-          queryKey: hermesKeys.liveProviderIds,
-        });
-      } else if (activeApp === "mcode") {
-        await queryClient.invalidateQueries({
-          queryKey: ["providers", "mcode"],
-        });
-      } else if (activeApp === "deveco") {
+      await refreshAdditiveLiveState(activeApp);
+      if (activeApp === "deveco") {
         await invalidateDevEcoProviderCaches(queryClient);
       }
       toast.success(
-        activeApp === "pi"
-          ? t("pi.provider.removed", {
+        isPiFamilyApp(activeApp)
+          ? t(`${activeApp}.provider.removed`, {
               defaultValue: "已从 Pi 移除",
             })
           : t("notifications.removeFromConfigSuccess", {
@@ -931,7 +1260,8 @@ function App() {
       activeApp === "opencode" ||
       activeApp === "openclaw" ||
       activeApp === "hermes" ||
-      activeApp === "pi"
+      activeApp === "pi" ||
+      activeApp === "omp"
     ) {
       let liveProviderIds: string[] = [];
       try {
@@ -953,8 +1283,11 @@ function App() {
                   })
                 : (
                     await queryClient.ensureQueryData({
-                      queryKey: ["pi", "currentState"],
-                      queryFn: () => piApi.getCurrentState(),
+                      queryKey: [activeApp, "currentState"],
+                      queryFn: () =>
+                        piApi.getCurrentState(
+                          activeApp === "omp" ? "omp" : "pi",
+                        ),
                     })
                   ).enabledProviderIds;
       } catch (error) {
@@ -978,13 +1311,46 @@ function App() {
         existingKeys,
       );
       duplicatedProvider.addToLive = false;
-    } else if (activeApp === "mcode") {
+    } else if (
+      activeApp === "mcode" ||
+      activeApp === "dsh" ||
+      activeApp === "kimi"
+    ) {
       // The MCode list already includes its live custom nodes; the backend
       // rejects a key that MCode itself owns.
       duplicatedProvider.providerKey = generateUniqueProviderCopyKey(
         provider.id,
         Object.keys(providers),
       );
+      if (activeApp === "kimi") {
+        const models = duplicatedProvider.settingsConfig.models ?? {};
+        duplicatedProvider.settingsConfig.models = Object.fromEntries(
+          Object.entries(models).map(([key, value]) => [
+            `${duplicatedProvider.providerKey}/${key.startsWith(`${provider.id}/`) ? key.slice(provider.id.length + 1) : key}`,
+            {
+              ...(value as Record<string, unknown>),
+              provider: duplicatedProvider.providerKey,
+            },
+          ]),
+        );
+        duplicatedProvider.addToLive = false;
+      }
+    } else if (activeApp === "copilot") {
+      // 自带模型卡的 id 就是 providers.json 里的供应商名，副本另起一个；官方卡仍用随机 id。
+      // 副本都先不写进 providers.json（官方卡本来就不写）
+      if (!isOfficialAccount(activeApp, provider)) {
+        // 后端要求供应商名不超过 64 个字符：给「-copy-N」留出位置再截断
+        const base =
+          normalizeCopilotProviderId(provider.id).slice(
+            0,
+            COPILOT_PROVIDER_ID_MAX - "-copy-999".length,
+          ) || "copilot";
+        duplicatedProvider.providerKey = generateUniqueProviderCopyKey(
+          base,
+          Object.keys(providers),
+        );
+      }
+      duplicatedProvider.addToLive = false;
     }
 
     if (provider.sortIndex !== undefined) {
@@ -1081,7 +1447,7 @@ function App() {
 
   // 应用页 ⋯ →「查看此应用的用量」：带上这个应用的筛选（Claude Desktop 的流量并在 Claude 里）
   const usageAppOf = (app: AppId): AppTypeFilter | null => {
-    const type = app === "claude-desktop" ? "claude" : app;
+    const type = sharedFeatureAppOf(app);
     return (KNOWN_APP_TYPES as ReadonlyArray<string>).includes(type)
       ? (type as AppTypeFilter)
       : null;
@@ -1169,6 +1535,8 @@ function App() {
         <>
           {currentView === "providers" &&
             activeApp !== "mcode" &&
+            activeApp !== "dsh" &&
+            activeApp !== "kimi" &&
             (settingsData?.showProfileSwitcher ?? false) && (
               <ProfileSwitcher activeApp={activeApp} />
             )}
@@ -1211,7 +1579,11 @@ function App() {
               {t("provider.addProvider")}
             </Button>
           )}
-          {currentView === "hermesMemory" && <HermesMemorySaveButton />}
+          {currentView === "hermesMemory" && (
+            <Suspense fallback={null}>
+              <HermesMemorySaveButton />
+            </Suspense>
+          )}
           {appMenu}
         </>
       }
@@ -1268,7 +1640,11 @@ function App() {
     onConfigureUsage: setUsageProvider,
     onOpenWebsite: handleOpenWebsite,
     onOpenTerminal:
-      activeApp === "claude" || activeApp === "agy"
+      activeApp === "claude" ||
+      activeApp === "codex" ||
+      activeApp === "agy" ||
+      activeApp === "grokbuild" ||
+      activeApp === "copilot"
         ? setTerminalProvider
         : undefined,
     onCreate: () => openAddProvider(currentModeView),
@@ -1322,16 +1698,22 @@ function App() {
             appId={activeApp}
             isLoading={isLoading}
             onSwitch={(provider) =>
-              void (activeApp === "pi"
-                ? handleEnablePiProvider(provider)
-                : switchProvider(provider))
+              void (isPiFamilyApp(activeApp)
+                ? handleEnablePiProvider(provider, activeApp)
+                : activeApp === "kimi" || activeApp === "copilot"
+                  ? handleAddNativeProvider(provider, activeApp)
+                  : switchProvider(provider))
             }
             onRemoveFromConfig={
               activeApp === "opencode" ||
               activeApp === "openclaw" ||
               activeApp === "hermes" ||
               activeApp === "pi" ||
-              activeApp === "mcode"
+              activeApp === "mcode" ||
+              activeApp === "kimi" ||
+              activeApp === "dsh" ||
+              activeApp === "omp" ||
+              activeApp === "copilot"
                 ? (provider) => setConfirmAction({ provider, action: "remove" })
                 : undefined
             }
@@ -1345,7 +1727,7 @@ function App() {
               activeApp === "openclaw" || activeApp === "opencode"
                 ? (provider, modelId) =>
                     void setAsDefaultModel(provider, modelId)
-                : activeApp === "hermes"
+                : activeApp === "hermes" || activeApp === "kimi"
                   ? (provider) => void switchProvider(provider)
                   : undefined
             }
@@ -1451,6 +1833,7 @@ function App() {
                   </Badge>
                 </>
               }
+              actions={<RefreshAllQuotaButton />}
             />
             <div
               id="main-content"
@@ -1585,48 +1968,54 @@ function App() {
             }
             className="flex min-h-0 flex-1 flex-col"
           >
-            {renderContent()}
+            <Suspense fallback={<PageLoading />}>{renderContent()}</Suspense>
           </div>
         </main>
       </div>
 
-      <AddProviderDialog
-        open={isAddOpen}
-        onOpenChange={setIsAddOpen}
-        appId={activeApp}
-        onSubmit={addProvider}
-        modeView={formModeView}
-      />
+      <Suspense fallback={null}>
+        {(isAddOpen || hasOpenedAdd) && (
+          <AddProviderDialog
+            open={isAddOpen}
+            onOpenChange={setIsAddOpen}
+            appId={activeApp}
+            onSubmit={addProvider}
+            modeView={formModeView}
+          />
+        )}
 
-      <EditProviderDialog
-        open={Boolean(editingProvider)}
-        provider={effectiveEditingProvider}
-        onOpenChange={(open) => {
-          if (!open) {
-            setEditingProvider(null);
-          }
-        }}
-        onSubmit={handleEditProvider}
-        appId={activeApp}
-        isProxyTakeover={isCurrentAppTakeoverActive}
-        isCurrent={effectiveEditingProvider?.id === currentProviderId}
-        modeView={formModeView}
-      />
+        {(editingProvider || hasOpenedEdit) && (
+          <EditProviderDialog
+            open={Boolean(editingProvider)}
+            provider={effectiveEditingProvider}
+            onOpenChange={(open) => {
+              if (!open) {
+                setEditingProvider(null);
+              }
+            }}
+            onSubmit={handleEditProvider}
+            appId={activeApp}
+            isProxyTakeover={isCurrentAppTakeoverActive}
+            isCurrent={effectiveEditingProvider?.id === currentProviderId}
+            modeView={formModeView}
+          />
+        )}
 
-      {effectiveUsageProvider && (
-        <UsageScriptModal
-          key={effectiveUsageProvider.id}
-          provider={effectiveUsageProvider}
-          appId={activeApp}
-          isOpen={Boolean(usageProvider)}
-          onClose={() => setUsageProvider(null)}
-          onSave={(script) => {
-            if (usageProvider) {
-              void saveUsageScript(usageProvider, script);
-            }
-          }}
-        />
-      )}
+        {effectiveUsageProvider && (
+          <UsageScriptModal
+            key={effectiveUsageProvider.id}
+            provider={effectiveUsageProvider}
+            appId={activeApp}
+            isOpen={Boolean(usageProvider)}
+            onClose={() => setUsageProvider(null)}
+            onSave={(script) => {
+              if (usageProvider) {
+                void saveUsageScript(usageProvider, script);
+              }
+            }}
+          />
+        )}
+      </Suspense>
 
       <OpenTerminalDialog
         provider={terminalProvider}

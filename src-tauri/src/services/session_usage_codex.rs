@@ -42,6 +42,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::SystemTime;
 #[cfg(windows)]
+use windows_sys::Win32::Foundation::{ERROR_INVALID_PARAMETER, ERROR_NOT_SUPPORTED};
+#[cfg(windows)]
 use windows_sys::Win32::Storage::FileSystem::{
     FileIdInfo, GetFileInformationByHandleEx, FILE_ID_INFO,
 };
@@ -101,17 +103,18 @@ struct ParentFileStamp {
     device: u64,
     #[cfg(unix)]
     inode: u64,
+    /// 卷序列号 + 文件 ID。`None`：文件系统不提供文件 ID（Windows 访问
+    /// `\\wsl.localhost\...` 的 9P 共享时返回 ERROR_NOT_SUPPORTED），只凭
+    /// 修改时间和大小判断文件变没变，否则 WSL 上的父 rollout 永远验证不了。
     #[cfg(windows)]
-    volume_serial: u64,
-    #[cfg(windows)]
-    file_id: [u8; 16],
+    identity: Option<(u64, [u8; 16])>,
 }
 
 impl ParentFileStamp {
     fn from_file(file: &fs::File) -> Option<Self> {
         let metadata = file.metadata().ok()?;
         #[cfg(windows)]
-        let (volume_serial, file_id) = windows_file_identity(file)?;
+        let identity = windows_file_identity(file).ok()?;
         Some(Self {
             modified_nanos: metadata_modified_nanos(&metadata),
             size: metadata.len(),
@@ -120,15 +123,14 @@ impl ParentFileStamp {
             #[cfg(unix)]
             inode: metadata.ino(),
             #[cfg(windows)]
-            volume_serial,
-            #[cfg(windows)]
-            file_id,
+            identity,
         })
     }
 }
 
+/// `Ok(None)`：文件系统不支持查询文件 ID；其他失败照常报错。
 #[cfg(windows)]
-fn windows_file_identity(file: &fs::File) -> Option<(u64, [u8; 16])> {
+fn windows_file_identity(file: &fs::File) -> std::io::Result<Option<(u64, [u8; 16])>> {
     let mut information = FILE_ID_INFO::default();
     // SAFETY: `file` owns a live handle for this call, and `information` is a
     // valid writable FILE_ID_INFO buffer of the size passed to Windows.
@@ -140,10 +142,17 @@ fn windows_file_identity(file: &fs::File) -> Option<(u64, [u8; 16])> {
             std::mem::size_of::<FILE_ID_INFO>() as u32,
         )
     } != 0;
-    succeeded.then_some((
-        information.VolumeSerialNumber,
-        information.FileId.Identifier,
-    ))
+    if succeeded {
+        return Ok(Some((
+            information.VolumeSerialNumber,
+            information.FileId.Identifier,
+        )));
+    }
+    let error = std::io::Error::last_os_error();
+    match error.raw_os_error().map(|code| code as u32) {
+        Some(ERROR_NOT_SUPPORTED | ERROR_INVALID_PARAMETER) => Ok(None),
+        _ => Err(error),
+    }
 }
 
 #[derive(Debug)]
@@ -462,6 +471,7 @@ struct ParsedCodexFile {
     /// UUID 一致，revert/resume 的双段文件名对应前置 UUID。
     meta_thread_id: Option<String>,
     root_meta_seen: bool,
+    bounded_history: Option<serde_json::Value>,
     root_timestamp: Option<DateTime<Utc>>,
     parent: ParentResolution,
     token_events: Vec<ParsedTokenEvent>,
@@ -949,7 +959,6 @@ fn signature_for_last_usage(usage: &CumulativeTokens) -> TokenUsageSignature {
 struct PendingUsageRecord {
     key: String,
     usage: CumulativeTokens,
-    line_offset: i64,
     timestamp: Option<String>,
     model: String,
 }
@@ -957,6 +966,7 @@ struct PendingUsageRecord {
 fn push_unmatched_usage(
     events: &mut Vec<ParsedTokenEvent>,
     pending: PendingUsageRecord,
+    flush_line_offset: i64,
     has_billable_tokens: &mut bool,
 ) {
     let delta = delta_from_usage(&pending.usage);
@@ -964,8 +974,13 @@ fn push_unmatched_usage(
         return;
     }
     *has_billable_tokens = true;
+    // 事件挂在补偿它的 token_count 行上而不是记录行：记录行可能在更早的
+    // 同步轮就被游标越过（首轮无可计费内容也推进游标），挂回记录行会被
+    // `line_offset <= last_offset` 门永久丢弃。配对 token_count 行必然晚于
+    // 任何已有游标（每轮全量重解析、追加写文件），且 `usage:<key>` 请求 ID
+    // 保证重解析不重复入账。
     events.push(ParsedTokenEvent {
-        line_offset: pending.line_offset,
+        line_offset: flush_line_offset,
         signature: signature_for_last_usage(&pending.usage),
         delta,
         event_index: None,
@@ -1244,6 +1259,7 @@ fn parse_codex_file_with_index(
     let mut reader = codex_rollout_file::reader_from_file(file_path, file)
         .map_err(|e| AppError::Config(format!("无法打开文件: {e}")))?;
     let mut root_meta_seen = false;
+    let mut bounded_history = None;
     let mut root_timestamp = None;
     let mut meta_thread_id = None;
     let mut parent = ParentResolution::None;
@@ -1326,6 +1342,7 @@ fn parse_codex_file_with_index(
                 root_timestamp = parse_timestamp(value.get("timestamp"));
                 let payload = value.get("payload").unwrap_or(&serde_json::Value::Null);
                 parent = explicit_parent_from_meta(payload);
+                bounded_history = payload.get("history_base").cloned();
 
                 meta_thread_id = non_empty_string(
                     payload
@@ -1481,6 +1498,7 @@ fn parse_codex_file_with_index(
                         push_unmatched_usage(
                             &mut usage_record_events,
                             pending,
+                            line_offset,
                             &mut has_billable_tokens,
                         );
                     }
@@ -1618,7 +1636,6 @@ fn parse_codex_file_with_index(
                 pending_usage = Some(PendingUsageRecord {
                     key,
                     usage,
-                    line_offset,
                     timestamp: value
                         .get("timestamp")
                         .and_then(serde_json::Value::as_str)
@@ -1634,6 +1651,7 @@ fn parse_codex_file_with_index(
         root_thread_id,
         meta_thread_id,
         root_meta_seen,
+        bounded_history,
         root_timestamp,
         parent,
         token_events,
@@ -1979,6 +1997,124 @@ fn update_codex_sync_state(
     Ok(())
 }
 
+// A bounded-reference fork stores only its own requests. Accept this narrow case
+// only with a complete physical prefix and an exact inherited counter baseline.
+// Otherwise retain the existing replay/deferred path. Never rewrite rollout data.
+fn verified_bounded_fork(parsed: &ParsedCodexFile, index: &RolloutIndex) -> bool {
+    use std::io::Read;
+
+    (|| {
+        let ParentResolution::Parent(parent_id) = &parsed.parent else {
+            return None;
+        };
+        let hb = parsed.bounded_history.as_ref()?;
+        if hb.get("thread_id")?.as_str()? != parent_id {
+            return None;
+        }
+        let end = hb.get("end_byte_offset")?.as_u64()?;
+        let count = hb.get("end_ordinal_exclusive")?.as_u64()?;
+        if end == 0 || end > 64 * 1024 * 1024 || count == 0 {
+            return None;
+        }
+        let cutoff = parsed.root_timestamp?;
+        let first = parsed.token_events.first()?;
+        // Reject copied/replayed history, cumulative-only accounting and invalid timestamps.
+        // Fallback usage records also belong to this child only when their own
+        // timestamps are after the fork. Keep their native response-based IDs.
+        for event in parsed
+            .token_events
+            .iter()
+            .chain(&parsed.usage_record_events)
+        {
+            if event.signature.last.as_ref()?.input.is_none()
+                || event.signature.last.as_ref()?.output.is_none()
+                || DateTime::parse_from_rfc3339(event.timestamp.as_deref()?)
+                    .ok()?
+                    .with_timezone(&Utc)
+                    <= cutoff
+            {
+                return None;
+            }
+        }
+        let total = first.signature.total.as_ref()?;
+        let last = first.signature.last.as_ref()?;
+        let baseline = TokenCountersSignature {
+            input: Some(total.input?.checked_sub(last.input?)?),
+            cached_input: Some(total.cached_input?.checked_sub(last.cached_input?)?),
+            output: Some(total.output?.checked_sub(last.output?)?),
+            reasoning_output: Some(
+                total
+                    .reasoning_output?
+                    .checked_sub(last.reasoning_output?)?,
+            ),
+            total: Some(total.total?.checked_sub(last.total?)?),
+        };
+        let mut found = false;
+        for path in index.get(parent_id)? {
+            // The reference identifies one physical rollout, not all logical pages.
+            if thread_id_from_filename(path).as_deref() != Some(parent_id) {
+                continue;
+            }
+            let file = fs::File::open(path).ok()?;
+            let stamp = ParentFileStamp::from_file(&file)?;
+            let mut reader = codex_rollout_file::reader_from_file(path, file).ok()?;
+            let mut used = 0u64;
+            let mut ordinal = 0u64;
+            let mut first_record = true;
+            let mut parent_total = None;
+            while used < end {
+                let mut bytes = Vec::new();
+                let n = reader
+                    .by_ref()
+                    .take(end - used)
+                    .read_until(b'\n', &mut bytes)
+                    .ok()?;
+                if n == 0 || bytes.last() != Some(&b'\n') {
+                    return None;
+                }
+                used += n as u64;
+                let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+                if first_record {
+                    ordinal = value.get("ordinal")?.as_u64()?;
+                    let inherited = value
+                        .pointer("/payload/history_base/end_ordinal_exclusive")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    if ordinal != inherited
+                        || value.get("type")?.as_str()? != "session_meta"
+                        || value.pointer("/payload/id")?.as_str()? != parent_id
+                    {
+                        return None;
+                    }
+                    first_record = false;
+                }
+                if value.get("ordinal")?.as_u64()? != ordinal {
+                    return None;
+                }
+                ordinal = ordinal.checked_add(1)?;
+                if value.get("type").and_then(|v| v.as_str()) == Some("event_msg")
+                    && value.pointer("/payload/type").and_then(|v| v.as_str())
+                        == Some("token_count")
+                {
+                    if let Some(v) = value.pointer("/payload/info/total_token_usage") {
+                        parent_total = parse_signature_counters(Some(v));
+                    }
+                }
+            }
+            let after = fs::File::open(path).ok()?;
+            if ParentFileStamp::from_file(&after)? != stamp {
+                return None;
+            }
+            if used != end || ordinal != count || parent_total.as_ref() != Some(&baseline) {
+                return None;
+            }
+            found = true;
+        }
+        found.then_some(())
+    })()
+    .is_some()
+}
+
 /// 同步单个 Codex JSONL 文件。
 fn sync_single_codex_file(
     db: &Database,
@@ -2090,6 +2226,7 @@ fn sync_single_codex_file(
                 pending_reason,
             ));
         }
+        ParentResolution::Parent(_) if verified_bounded_fork(&parsed, rollout_index) => 0,
         ParentResolution::Parent(parent_id) => {
             let Some(cutoff) = parsed.root_timestamp else {
                 return Ok(mark_deferred(
@@ -2315,6 +2452,7 @@ fn insert_codex_session_entry_on_conn(
 
     let dedup_key = DedupKey {
         app_type: "codex",
+        data_source: "codex_session",
         model,
         input_tokens: delta.input,
         output_tokens: delta.output,
@@ -2722,6 +2860,60 @@ mod tests {
     }
 
     #[test]
+    fn remote_compaction_usage_record_survives_a_sync_pass_before_its_token_count(
+    ) -> Result<(), AppError> {
+        // The usage record and its compensating zero-last token_count can land
+        // in different sync passes (the token_count may lag by the whole tool
+        // execution window). The first pass has nothing billable and advances
+        // the cursor past the record; the compensating event must still be
+        // imported by the pass that finally sees the token_count.
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let path = rollout_path(temp.path(), PARENT_ID);
+        write_jsonl(
+            &path,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_usage_record_at("resp_compact", 26_705, 0, 491, "2026-07-10T03:00:02Z"),
+            ],
+        );
+
+        let first = sync_test_file(&db, &path, &[&path])?;
+        assert_eq!(first.imported, 0, "nothing billable yet");
+
+        append_jsonl(
+            &path,
+            token_count_with_last_at(0, 0, 0, 0, 0, 0, "default", "2026-07-10T03:05:02Z"),
+        );
+
+        let second = sync_test_file(&db, &path, &[&path])?;
+        assert_eq!(
+            second.imported, 1,
+            "compaction usage must be imported once its token_count arrives"
+        );
+        let rows = codex_usage_rows(&db)?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1, 26_705);
+        assert_eq!(rows[0].2, 491);
+        assert!(rows[0].0.ends_with(":usage:resp_compact"));
+
+        // A later pass that reparses the file (any new content) must not bill
+        // the compensating event again: the record is re-discovered on every
+        // reparse, so the line-offset gate plus the `usage:<key>` request id
+        // are what keep it at exactly one row.
+        append_jsonl(
+            &path,
+            token_count_with_last_at(0, 0, 0, 0, 0, 0, "default", "2026-07-10T03:06:02Z"),
+        );
+        let third = sync_test_file(&db, &path, &[&path])?;
+        assert_eq!(third.imported, 0, "compensating event must not re-import");
+        let rows = codex_usage_rows(&db)?;
+        assert_eq!(rows.len(), 1);
+        Ok(())
+    }
+
+    #[test]
     fn usage_record_covered_by_token_count_is_not_imported_twice() -> Result<(), AppError> {
         let db = Database::memory()?;
         let temp = tempdir().unwrap();
@@ -2825,6 +3017,132 @@ mod tests {
             changes_after, changes_before,
             "unchanged file rewrote its cursor"
         );
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_bounded_idle_fork_recovery_and_append() -> Result<(), AppError> {
+        for inherited in [0, 100] {
+            clear_codex_replay_caches();
+            let db = Database::memory()?;
+            let dir = tempdir().unwrap();
+            let parent = rollout_path(dir.path(), PARENT_ID);
+            let child = rollout_path(dir.path(), CHILD_A_ID);
+            let mut records = vec![
+                session_meta(PARENT_ID),
+                token_count_at(1000, 900, 100, "2026-07-10T03:00:01Z"),
+            ];
+            for (i, v) in records.iter_mut().enumerate() {
+                v["ordinal"] = serde_json::json!(i + inherited);
+            }
+            records[0]["payload"]["history_base"] =
+                serde_json::json!({"end_ordinal_exclusive":inherited});
+            write_jsonl(&parent, &records);
+            let mut meta = paginated_session_meta_at(
+                CHILD_A_ID,
+                Some(PARENT_ID),
+                None,
+                Some(PARENT_ID),
+                "2026-07-10T03:00:20Z",
+            );
+            meta["payload"]["history_base"]["end_byte_offset"] =
+                serde_json::json!(fs::metadata(&parent).unwrap().len());
+            meta["payload"]["history_base"]["end_ordinal_exclusive"] =
+                serde_json::json!(inherited + 2);
+            let mut event = token_count_at(1200, 1000, 120, "2026-07-10T03:00:25Z");
+            event["payload"]["info"]["last_token_usage"] = serde_json::json!({"input_tokens":200,"cached_input_tokens":100,"output_tokens":20,"reasoning_output_tokens":0,"total_tokens":220});
+            write_jsonl(&child, &[meta.clone(), turn_context(), event.clone()]);
+            let files = [&parent as &Path, &child as &Path];
+            let result = sync_test_file(&db, &child, &files)?;
+            assert!(!result.deferred);
+            assert_eq!(result.imported, 1);
+            clear_codex_replay_caches();
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+            {
+                let conn = lock_conn!(db.conn);
+                conn.execute("DELETE FROM session_log_sync", [])?;
+            }
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+            // A repeated quota snapshot is not a second request.
+            append_jsonl(&child, event.clone());
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+            event["timestamp"] = serde_json::json!("2026-07-10T03:00:30Z");
+            event["payload"]["info"]["total_token_usage"]["input_tokens"] = serde_json::json!(1400);
+            event["payload"]["info"]["total_token_usage"]["total_tokens"] = serde_json::json!(1520);
+            append_jsonl(&child, event);
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 1);
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+            // Invalid bounded references must retain the safe deferred behavior.
+            for key in ["end_byte_offset", "end_ordinal_exclusive"] {
+                let mut broken = meta.clone();
+                broken["payload"]["history_base"][key] = serde_json::json!(1);
+                let mut parsed = parse_codex_file(&child, Some(CHILD_A_ID.into()))?;
+                parsed.bounded_history = broken["payload"].get("history_base").cloned();
+                assert!(!verified_bounded_fork(
+                    &parsed,
+                    &build_rollout_index(&[parent.clone(), child.clone()])
+                ));
+            }
+            let index = build_rollout_index(&[parent.clone(), child.clone()]);
+            let mut parsed = parse_codex_file(&child, Some(CHILD_A_ID.into()))?;
+            parsed.token_events[0]
+                .signature
+                .last
+                .as_mut()
+                .unwrap()
+                .input = Some(999);
+            assert!(!verified_bounded_fork(&parsed, &index));
+            let mut parsed = parse_codex_file(&child, Some(CHILD_A_ID.into()))?;
+            parsed.token_events[0].timestamp = Some("2026-07-10T03:00:01Z".into());
+            assert!(!verified_bounded_fork(&parsed, &index));
+            let mut parsed = parse_codex_file(&child, Some(CHILD_A_ID.into()))?;
+            parsed.token_events[0].signature.last = None;
+            assert!(!verified_bounded_fork(&parsed, &index));
+            // Remote compaction uses a standalone record followed by a zero-last
+            // snapshot. It must not block the entire bounded fork or be counted twice.
+            let usage =
+                token_usage_record_at("bounded_compaction", 300, 100, 20, "2026-07-10T03:00:35Z");
+            let zero = token_count_with_last_at(
+                1400,
+                1000,
+                120,
+                0,
+                0,
+                0,
+                "default",
+                "2026-07-10T03:00:36Z",
+            );
+            append_jsonl(&child, usage.clone());
+            append_jsonl(&child, zero.clone());
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 1);
+            append_jsonl(&child, usage);
+            append_jsonl(&child, zero);
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+            {
+                let conn = lock_conn!(db.conn);
+                conn.execute("DELETE FROM session_log_sync", [])?;
+            }
+            clear_codex_replay_caches();
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+            // Only the child's two requests and one compaction are billable.
+            // Replaying the file must neither import the parent baseline nor rebill the child.
+            let totals: (i64, i64, i64, i64) = {
+                let conn = lock_conn!(db.conn);
+                conn.query_row(
+                    "SELECT count(*), sum(input_tokens), sum(cache_read_tokens), sum(output_tokens)
+                     FROM proxy_request_logs WHERE data_source = 'codex_session'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )?
+            };
+            assert_eq!(totals, (3, 700, 300, 60));
+            let mut parsed = parse_codex_file(&child, Some(CHILD_A_ID.into()))?;
+            parsed.usage_record_events[0].timestamp = Some("2026-07-10T03:00:01Z".into());
+            assert!(!verified_bounded_fork(&parsed, &index));
+            parsed.usage_record_events[0].timestamp = None;
+            assert!(!verified_bounded_fork(&parsed, &index));
+        }
         Ok(())
     }
 
@@ -4030,6 +4348,38 @@ mod tests {
         supported
     }
 
+    /// 能不能区分「大小、修改时间都相同的两个文件」：要文件系统提供文件身份。
+    /// Windows 访问 9P 共享（`\\wsl.localhost\...`）时没有文件 ID，只比较时间和大小。
+    fn same_size_same_mtime_replacement_detectable(path: &Path) -> bool {
+        let Some(stamp) = ParentFileStamp::from_file(&fs::File::open(path).unwrap()) else {
+            eprintln!("no file stamp for {}; skipping", path.display());
+            return false;
+        };
+        #[cfg(windows)]
+        if stamp.identity.is_none() {
+            eprintln!(
+                "no file ID for {}; same-size same-mtime replacement is undetectable, skipping",
+                path.display()
+            );
+            return false;
+        }
+        let _ = stamp;
+        true
+    }
+
+    /// 缓存是进程级的，`serial` 只互斥带标记的测试：不带标记的测试（如续写页
+    /// 解析会经 `load_parent_timeline` 缓存前序页）可能同时写入别的条目。
+    /// 数条目时只数本测试临时目录下的键，不数全局总数。
+    fn cached_parent_timelines_under(dir: &Path) -> usize {
+        replay_caches()
+            .lock()
+            .unwrap()
+            .parent_timelines
+            .keys()
+            .filter(|path| path.starts_with(dir))
+            .count()
+    }
+
     #[test]
     #[serial_test::serial]
     fn test_parent_malformed_lines_do_not_defer_child_or_prevent_warm_skip() -> Result<(), AppError>
@@ -4119,16 +4469,16 @@ mod tests {
         });
         assert_eq!(parent_signatures_before(&parent, late).unwrap().len(), 2);
 
-        let caches = replay_caches().lock().unwrap();
         match first_timeline {
             Some(first_timeline) => {
-                assert_eq!(caches.parent_timelines.len(), 1);
+                assert_eq!(cached_parent_timelines_under(temp.path()), 1);
+                let caches = replay_caches().lock().unwrap();
                 assert!(Arc::ptr_eq(
                     &first_timeline,
                     &caches.parent_timelines[&parent].timeline
                 ));
             }
-            None => assert!(caches.parent_timelines.is_empty()),
+            None => assert_eq!(cached_parent_timelines_under(temp.path()), 0),
         }
         Ok(())
     }
@@ -4162,10 +4512,7 @@ mod tests {
         assert_eq!(parent_signatures_before(&parent, cutoff).unwrap().len(), 2);
 
         let expected_entries = usize::from(parent_cache_supported(&parent));
-        assert_eq!(
-            replay_caches().lock().unwrap().parent_timelines.len(),
-            expected_entries
-        );
+        assert_eq!(cached_parent_timelines_under(temp.path()), expected_entries);
         Ok(())
     }
 
@@ -4232,10 +4579,7 @@ mod tests {
             .is_empty());
         assert_eq!(parent_signatures_before(&parent, after).unwrap().len(), 1);
         let expected_entries = usize::from(parent_cache_supported(&parent));
-        assert_eq!(
-            replay_caches().lock().unwrap().parent_timelines.len(),
-            expected_entries
-        );
+        assert_eq!(cached_parent_timelines_under(temp.path()), expected_entries);
     }
 
     #[cfg(any(unix, windows))]
@@ -4247,7 +4591,7 @@ mod tests {
         let values = [session_meta(PARENT_ID), token_count(100, 50, 10)];
         write_jsonl(&parent, &values);
         write_jsonl(&replacement, &values);
-        if !parent_cache_supported(&parent) {
+        if !same_size_same_mtime_replacement_detectable(&parent) {
             return;
         }
         let original_file = fs::File::open(&parent).unwrap();
@@ -5174,7 +5518,7 @@ mod tests {
         let db = Database::memory()?;
         let temp = tempdir().unwrap();
         let (parent, child) = retryable_parent_and_child(temp.path());
-        if !parent_cache_supported(&parent) {
+        if !same_size_same_mtime_replacement_detectable(&parent) {
             return Ok(());
         }
         assert!(sync_test_file(&db, &child, &[&parent, &child])?.deferred);
@@ -5295,7 +5639,7 @@ mod tests {
         let db = Database::memory()?;
         let temp = tempdir().unwrap();
         let (parent, child) = retryable_parent_and_child(temp.path());
-        if !parent_cache_supported(&child) {
+        if !same_size_same_mtime_replacement_detectable(&child) {
             return Ok(());
         }
         assert!(sync_test_file(&db, &child, &[&parent, &child])?.deferred);

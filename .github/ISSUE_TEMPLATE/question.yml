@@ -18,6 +18,15 @@ body:
             我已搜索过[已有的 Issue](https://github.com/farion1231/cc-switch/issues)，包括已关闭的。
           required: true
 
+  - type: textarea
+    attributes:
+      label: Human Note / 本人说明
+      description: |
+        In your own words, say what you want to do. No AI-generated text.
+        用你自己的话说清楚你想要做什么，不允许 AI 生成。
+    validations:
+      required: true
+
   - type: dropdown
     attributes:
       label: Related App / 涉及应用

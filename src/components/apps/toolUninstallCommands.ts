@@ -23,6 +23,7 @@ type UninstallCommand = {
 
 const COMMANDS: Record<UninstallMethod, UninstallCommand[]> = {
   npm: [
+    { tool: "dsh", command: "npm uninstall -g @deepseek-ai/dsh" },
     { tool: "claude", command: "npm uninstall -g @anthropic-ai/claude-code" },
     { tool: "codex", command: "npm uninstall -g @openai/codex" },
     { tool: "gemini", command: "npm uninstall -g @google/gemini-cli" },
@@ -31,6 +32,8 @@ const COMMANDS: Record<UninstallMethod, UninstallCommand[]> = {
     { tool: "openclaw", command: "npm uninstall -g openclaw" },
     { tool: "pi", command: "npm uninstall -g @earendil-works/pi-coding-agent" },
     { tool: "mcode", command: "npm uninstall -g @minimax-ai/code" },
+    { tool: "kimi", command: "npm uninstall -g @moonshot-ai/kimi-code" },
+    { tool: "copilot", command: "npm uninstall -g @github/copilot" },
   ],
   pnpm: [
     { tool: "opencode", command: "pnpm remove -g opencode-ai" },
@@ -43,6 +46,7 @@ const COMMANDS: Record<UninstallMethod, UninstallCommand[]> = {
       environments: ["macos", "linux"],
     },
     { tool: "openclaw", command: "bun remove -g openclaw" },
+    { tool: "omp", command: "bun remove -g @oh-my-pi/pi-coding-agent" },
   ],
   "brew-formula": [
     {
@@ -84,6 +88,11 @@ const COMMANDS: Record<UninstallMethod, UninstallCommand[]> = {
     {
       tool: "agy",
       command: "brew uninstall --cask antigravity-cli",
+      environments: ["macos"],
+    },
+    {
+      tool: "copilot",
+      command: "brew uninstall --cask copilot-cli",
       environments: ["macos"],
     },
   ],

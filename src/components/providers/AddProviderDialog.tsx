@@ -18,7 +18,7 @@ import type {
 } from "@/lib/api/providers";
 import { useLiveEditConflict } from "@/components/providers/LiveEditConflictDialog";
 import { toastEditorViewFailed } from "@/components/providers/forms/hooks/useDraftEditorProjection";
-import { usesEditorView } from "@/config/appConfig";
+import { isPiFamilyApp, usesEditorView } from "@/config/appConfig";
 import {
   ProviderForm,
   type ProviderFormValues,
@@ -35,7 +35,7 @@ import { extractGrokBuildBaseUrl } from "@/utils/grokBuildConfig";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
-import type { ManagedAuthProvider } from "@/lib/api";
+import type { AuthCenterTarget } from "@/lib/api";
 import type { AppMode } from "@/types/proxy";
 
 interface AddProviderDialogProps {
@@ -69,7 +69,11 @@ export function AddProviderDialog({
     appId !== "openclaw" &&
     appId !== "hermes" &&
     appId !== "pi" &&
+    appId !== "omp" &&
     appId !== "mcode" &&
+    appId !== "dsh" &&
+    appId !== "kimi" &&
+    appId !== "copilot" &&
     appId !== "grokbuild" &&
     appId !== "deveco" &&
     appId !== "claude-desktop";
@@ -97,11 +101,13 @@ export function AddProviderDialog({
   const [isFormSubmitting, setIsFormSubmitting] = useState(false);
   // 表单用了聚合的简化布局：页头应用名后标「聚合模式」
   const [stackLayout, setStackLayout] = useState(false);
+  const [accountLogin, setAccountLogin] = useState(false);
   const [authSettingsTarget, setAuthSettingsTarget] =
-    useState<ManagedAuthProvider | null>(null);
+    useState<AuthCenterTarget | null>(null);
 
   useEffect(() => {
     setAuthSettingsTarget(null);
+    setAccountLogin(false);
   }, [appId, open]);
 
   // Claude：预设的关键字段套在当前 live 上显示（去掉当前供应商的关键字段），保存时
@@ -181,12 +187,12 @@ export function AddProviderDialog({
   currentFormReadyToken.current = formReadyToken;
   const [formReadyState, setFormReadyState] = useState({
     token: formReadyToken,
-    ready: appId !== "pi",
+    ready: !isPiFamilyApp(appId),
   });
   const isFormReady =
     formReadyState.token === formReadyToken
       ? formReadyState.ready
-      : appId !== "pi";
+      : !isPiFamilyApp(appId);
   const handleSubmitReadyChange = useCallback(
     (ready: boolean) => {
       if (currentFormReadyToken.current === formReadyToken) {
@@ -291,7 +297,11 @@ export function AddProviderDialog({
           appId === "hermes" ||
           appId === "pi" ||
           appId === "mcode" ||
-          appId === "deveco") &&
+          appId === "deveco" ||
+          appId === "kimi" ||
+          appId === "dsh" ||
+          appId === "omp" ||
+          appId === "copilot") &&
         values.providerKey
       ) {
         providerData.providerKey = values.providerKey;
@@ -480,7 +490,7 @@ export function AddProviderDialog({
   }, [open, waitingForClaudeBase, appId]);
 
   const footer =
-    step === "form" ? (
+    step === "form" && !accountLogin ? (
       <>
         <Button
           type="button"
@@ -514,6 +524,7 @@ export function AddProviderDialog({
       onManageAuthAccounts={setAuthSettingsTarget}
       onSubmittingChange={setIsFormSubmitting}
       onSubmitReadyChange={handleSubmitReadyChange}
+      onAccountLoginChange={setAccountLogin}
       showButtons={false}
       claudeLiveBase={
         appId === "claude" ? (claudeLiveBase ?? undefined) : undefined
@@ -536,7 +547,7 @@ export function AddProviderDialog({
   return (
     <FullScreenPanel
       isOpen={open}
-      trackUnsavedChanges={step === "form"}
+      trackUnsavedChanges={step === "form" && !accountLogin}
       title={t("provider.addNewProvider")}
       subtitle={
         stackLayout
@@ -556,7 +567,7 @@ export function AddProviderDialog({
       contentClassName={
         step === "pick"
           ? "flex h-full flex-col space-y-0 p-0"
-          : appId === "pi"
+          : isPiFamilyApp(appId)
             ? "pb-0 pt-4"
             : "pt-4"
       }

@@ -9,7 +9,6 @@ import {
 const OPENCODE_GO_CODEX_TOML = `model_provider = "custom"
 model = "glm-5.2"
 model_reasoning_effort = "high"
-disable_response_storage = true
 
 [model_providers.custom]
 name = "opencode_go"
@@ -19,7 +18,14 @@ requires_openai_auth = true`;
 
 describe("detectCodingPlanProvider (OpenCode Go)", () => {
   it("matches both base variants across apps", () => {
-    // claude/claude-desktop 预设是 /zen/go，codex/opencode/pi 是 /zen/go/v1
+    // claude-desktop 预设是 /inference/go/anthropic，codex/opencode/pi 是
+    // /inference/go/v1；旧入口 /zen/go[/v1] 仍可用，同样命中
+    expect(
+      detectCodingPlanProvider("https://opencode.ai/inference/go/anthropic"),
+    ).toBe("opencode_go");
+    expect(
+      detectCodingPlanProvider("https://opencode.ai/inference/go/v1"),
+    ).toBe("opencode_go");
     expect(detectCodingPlanProvider("https://opencode.ai/zen/go")).toBe(
       "opencode_go",
     );
@@ -30,6 +36,9 @@ describe("detectCodingPlanProvider (OpenCode Go)", () => {
 
   it("does not match OpenCode Zen (pay-as-you-go, no usage API)", () => {
     expect(detectCodingPlanProvider("https://opencode.ai/zen/v1")).toBeNull();
+    expect(
+      detectCodingPlanProvider("https://opencode.ai/inference/v1"),
+    ).toBeNull();
   });
 });
 
@@ -81,6 +90,13 @@ describe("extractBaseUrlForUsageDetection", () => {
     ).toBe("https://opencode.ai/zen/go/v1");
     expect(
       extractBaseUrlForUsageDetection("pi", {
+        baseUrl: "https://opencode.ai/zen/go/v1",
+      }),
+    ).toBe("https://opencode.ai/zen/go/v1");
+    // Oh My Pi reads the same camelCase field shape as Pi; without this case
+    // the dialog cannot auto-pick a template from an omp provider's base URL.
+    expect(
+      extractBaseUrlForUsageDetection("omp", {
         baseUrl: "https://opencode.ai/zen/go/v1",
       }),
     ).toBe("https://opencode.ai/zen/go/v1");

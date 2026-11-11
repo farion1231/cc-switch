@@ -24,7 +24,9 @@ fn invalid_json_format_error(error: serde_json::Error) -> String {
 
     match lang.as_str() {
         "en" => format!("Invalid JSON format: {error}"),
+        "ko" => format!("잘못된 JSON 형식: {error}"),
         "tr" => format!("Geçersiz JSON biçimi: {error}"),
+        "ru" => format!("Неверный формат JSON: {error}"),
         "ja" => format!("JSON形式が無効です: {error}"),
         _ => format!("无效的 JSON 格式: {error}"),
     }
@@ -37,7 +39,9 @@ fn invalid_toml_format_error(error: toml_edit::TomlError) -> String {
 
     match lang.as_str() {
         "en" => format!("Invalid TOML format: {error}"),
+        "ko" => format!("잘못된 TOML 형식: {error}"),
         "tr" => format!("Geçersiz TOML biçimi: {error}"),
+        "ru" => format!("Неверный формат TOML: {error}"),
         "ja" => format!("TOML形式が無効です: {error}"),
         _ => format!("无效的 TOML 格式: {error}"),
     }
@@ -138,6 +142,20 @@ pub async fn get_config_status(
 
             Ok(ConfigStatus { exists, path })
         }
+        AppType::Dsh => {
+            let file = crate::dsh_config::config_path();
+            Ok(ConfigStatus {
+                exists: file.exists(),
+                path: file.to_string_lossy().to_string(),
+            })
+        }
+        AppType::Kimi => {
+            let file = crate::kimi_config::config_path();
+            Ok(ConfigStatus {
+                exists: file.exists(),
+                path: file.to_string_lossy().to_string(),
+            })
+        }
         AppType::Mcode => {
             let file = crate::mcode_config::config_path();
             Ok(ConfigStatus {
@@ -170,6 +188,25 @@ pub async fn get_config_status(
                 path: dir.to_string_lossy().into_owned(),
             })
         }
+        AppType::Omp => {
+            let config_path =
+                crate::omp_config::get_omp_models_path().map_err(|e| e.to_string())?;
+            let path = crate::omp_config::get_omp_agent_dir()
+                .map_err(|e| e.to_string())?
+                .to_string_lossy()
+                .to_string();
+            Ok(ConfigStatus {
+                exists: config_path.exists(),
+                path,
+            })
+        }
+        AppType::Copilot => {
+            let dir = crate::copilot_config::copilot_dir();
+            Ok(ConfigStatus {
+                exists: dir.exists(),
+                path: dir.to_string_lossy().into_owned(),
+            })
+        }
     }
 }
 
@@ -192,12 +229,16 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
+        AppType::Dsh => crate::dsh_config::data_dir(),
+        AppType::Kimi => crate::kimi_config::data_dir(),
+        AppType::Omp => crate::omp_config::get_omp_agent_dir().map_err(|e| e.to_string())?,
         AppType::Mcode => crate::mcode_config::config_path()
             .parent()
             .unwrap()
             .to_path_buf(),
         AppType::DevEco => crate::deveco_config::get_deveco_dir(),
         AppType::Agy => crate::agy_config::agy_dir(),
+        AppType::Copilot => crate::copilot_config::copilot_dir(),
     };
 
     Ok(dir.to_string_lossy().to_string())
@@ -217,12 +258,16 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
+        AppType::Dsh => crate::dsh_config::data_dir(),
+        AppType::Kimi => crate::kimi_config::data_dir(),
+        AppType::Omp => crate::omp_config::get_omp_agent_dir().map_err(|e| e.to_string())?,
         AppType::Mcode => crate::mcode_config::config_path()
             .parent()
             .unwrap()
             .to_path_buf(),
         AppType::DevEco => crate::deveco_config::get_deveco_dir(),
         AppType::Agy => crate::agy_config::agy_dir(),
+        AppType::Copilot => crate::copilot_config::copilot_dir(),
     };
 
     if !config_dir.exists() {

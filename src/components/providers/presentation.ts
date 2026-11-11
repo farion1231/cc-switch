@@ -2,6 +2,7 @@ import type { TFunction } from "i18next";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import type { AppMode } from "@/types/proxy";
+import { isPiFamilyApp } from "@/config/appConfig";
 import {
   isOfficialAccount,
   providerNeedsRouting,
@@ -13,7 +14,7 @@ import {
  * 供应商卡片怎么画（v7）：当前那张的模式色、状态文字或按钮、徽标。由列表按应用和正在查看的
  * 模式算好交给卡片，卡片本身不再判断模式。
  */
-export type CardTone = "direct" | "route" | "stack" | "neutral";
+export type CardTone = "direct" | "route" | "stack";
 
 export type ChipTone =
   | "outline"
@@ -45,6 +46,8 @@ export interface CardMenuItem {
   /** 不能点的原因：照常列出来，原因写在名字下面 */
   disabledReason?: string;
   onSelect: () => void;
+  /** 展开成子菜单选一项（OpenClaw / OpenCode 的「设为默认」选默认模型） */
+  submenu?: { title: string; options: CardMenuOption[] };
 }
 
 export interface CardButton {
@@ -53,17 +56,15 @@ export interface CardButton {
   onClick: () => void;
   /** 不能点的原因：按钮照常画出来，原因挂在按钮的说明卡上 */
   disabledReason?: string;
-  /** 点开选一项（OpenClaw 的「设为默认 ▾」选默认模型） */
-  menu?: { title: string; options: CardMenuOption[] };
 }
 
 export interface CardPresentation {
-  /** 当前那张：模式色边框 + 淡底；neutral（灰底）只给共存式应用的默认那家（OpenClaw 默认、Hermes 当前） */
+  /** 当前那张：模式色边框 + 淡底；共存式应用的默认那家（OpenClaw / OpenCode / Kimi 默认、Hermes 当前）也用 direct */
   tone?: CardTone;
   /** 主操作位换成状态文字（使用中 / 路由中 / 当前默认 / 已添加…） */
   status?: { label: string; dot: CardTone | "muted" };
   buttons: CardButton[];
-  /** 「更多」菜单最前面、跟当前模式有关的操作（聚合页的「设为默认」） */
+  /** 「更多」菜单最前面、跟当前模式有关的操作（聚合页、OpenClaw / OpenCode 的「设为默认」） */
   menuItems?: CardMenuItem[];
   chips: CardChip[];
   /** 整卡淡一些（不能用于当前模式的官方订阅、Hermes 托管） */
@@ -81,6 +82,8 @@ export interface ProviderSection {
   key: string;
   title?: string;
   help?: { title: string; body: string };
+  /** 标题后面一句常驻的灰字说明（DSH：Web 和 Desktop 共用这份列表） */
+  note?: string;
   emptyText?: string;
   items: { provider: Provider; presentation: CardPresentation }[];
 }
@@ -678,7 +681,7 @@ export function buildLaunchSections(input: LaunchInput): ProviderSection[] {
   ];
 }
 
-// ─── 共存式应用（OpenCode / OpenClaw / Hermes / Pi / MiniMax Code）───────────
+// ─── 共存式应用（OpenCode / OpenClaw / Hermes / Pi / MiniMax Code / Kimi）─────
 
 export interface AdditiveInput {
   app: AppId;
@@ -695,13 +698,21 @@ export interface AdditiveInput {
   /** Hermes：model.provider 指向的那家 */
   hermesCurrentId?: string | null;
   isHermesManaged?: (provider: Provider) => boolean;
-  /** Pi：读不到当前配置时一律不能改 */
+  /** Pi / Oh My Pi：读不到当前配置时一律不能改 */
   piStateUnavailable?: boolean;
+  /** Kimi：原生 default_model 别名所属的供应商。 */
+  kimiCurrentId?: string | null;
+  /** Copilot CLI：settings.json 的 `model`（`<卡片 id>/<模型>`）所属的自带模型卡。 */
+  copilotDefaultId?: string | null;
+  /** 「已添加」里列表外另画的卡（DSH 的 DeepSeek 账号卡），计入标题数字 */
+  extraAdded?: number;
   actions: {
     add: (provider: Provider) => void;
     remove: (provider: Provider) => void;
     disableOmo: (provider: Provider) => void;
     setDefault: (provider: Provider, modelId?: string) => void;
+    /** Copilot CLI 官方卡的主按钮 */
+    openTerminal?: (provider: Provider) => void;
   };
 }
 
@@ -709,13 +720,134 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
   const { app, t, providers, actions } = input;
   const added: ProviderSection["items"] = [];
   const available: ProviderSection["items"] = [];
+  // Copilot CLI 的官方卡：仍是启动式，单独一组排在最前
+  const official: ProviderSection["items"] = [];
   const piBlocked =
-    app === "pi" && input.piStateUnavailable
-      ? t("pi.current.stateUnavailableHint")
+    isPiFamilyApp(app) && input.piStateUnavailable
+      ? t(`${app}.current.stateUnavailableHint`)
       : undefined;
 
   for (const p of providers) {
     const chips: CardChip[] = [];
+    if (app === "copilot") {
+      if (isOfficialAccount(app, p)) {
+        // 官方卡用 Copilot CLI 自己的 GitHub 登录，不写任何文件：没有添加 / 移除，
+        // 主操作就是「打开终端」，哪张都能删
+        official.push({
+          provider: p,
+          presentation: {
+            chips: [
+              {
+                key: "official",
+                label: t("providerCard.chip.official"),
+                tone: "outline",
+              },
+            ],
+            buttons: [
+              {
+                key: "openTerminal",
+                label: t("provider.openTerminalWithProvider"),
+                onClick: () => actions.openTerminal?.(p),
+              },
+            ],
+          },
+        });
+        continue;
+      }
+      // 自带模型卡：「添加」写进 Copilot 的 providers.json，「移除」只删这一家的条目。
+      // 默认那家（settings.json 的 model 指向它）不能移除、不能删；Copilot 里换默认模型用 /model
+      const live = input.isInConfig(p);
+      const isDefault = live && p.id === input.copilotDefaultId;
+      (live ? added : available).push({
+        provider: p,
+        presentation: {
+          tone: isDefault ? "direct" : undefined,
+          status: isDefault
+            ? { label: t("providerCard.status.default"), dot: "direct" }
+            : undefined,
+          chips,
+          buttons: [
+            live
+              ? {
+                  key: "remove",
+                  label: t("providerCard.action.remove"),
+                  disabledReason: isDefault
+                    ? t("copilot.defaultCannotRemove")
+                    : undefined,
+                  onClick: () => actions.remove(p),
+                }
+              : {
+                  key: "add",
+                  label: t("providerCard.action.add"),
+                  onClick: () => actions.add(p),
+                },
+          ],
+          deleteDisabledReason: isDefault
+            ? t("copilot.defaultCannotRemove")
+            : undefined,
+        },
+      });
+      continue;
+    }
+    if (app === "kimi") {
+      const official = isOfficialAccount(app, p);
+      const live = input.isInConfig(p);
+      // 官方卡可以编辑模型、可以移出 config.toml（登录留着，能再添加）；仍在 Kimi 里的
+      // 官方卡不能直接删，删号在授权中心（连登录一起删）
+      const deleteProtectedReason =
+        official && live ? t("kimi.oauth.managedHint") : undefined;
+      if (official) {
+        chips.push({
+          key: "official",
+          label: t("providerCard.chip.official"),
+          tone: "outline",
+        });
+      }
+      const current = live && p.id === input.kimiCurrentId;
+      // 「添加」只写进 config.toml（模型出现在 Kimi 的 /model 列表），「移除」从 config.toml
+      // 拿掉、卡片留着；改 default_model 的「设为默认」和 OpenCode 一样收在「更多」菜单里
+      const buttons: CardButton[] = [];
+      const menuItems: CardMenuItem[] = [];
+      if (!live) {
+        buttons.push({
+          key: "add",
+          label: t("providerCard.action.add"),
+          onClick: () => actions.add(p),
+        });
+      } else {
+        if (!current) {
+          menuItems.push({
+            key: "setDefault",
+            label: t("providerCard.action.setDefault"),
+            onSelect: () => actions.setDefault(p),
+          });
+        }
+        buttons.push({
+          key: "remove",
+          label: t("providerCard.action.remove"),
+          disabledReason: current
+            ? t("providerCard.reason.defaultCannotRemove")
+            : undefined,
+          onClick: () => actions.remove(p),
+        });
+      }
+      (live ? added : available).push({
+        provider: p,
+        presentation: {
+          tone: current ? "direct" : undefined,
+          status: current
+            ? { label: t("providerCard.status.default"), dot: "direct" }
+            : undefined,
+          chips,
+          buttons,
+          menuItems: menuItems.length ? menuItems : undefined,
+          deleteDisabledReason:
+            deleteProtectedReason ??
+            (current ? t("providerCard.reason.inUseCannotDelete") : undefined),
+        },
+      });
+      continue;
+    }
     const isOmo = p.category === "omo";
     const isOmoSlim = p.category === "omo-slim";
     if (isOmo) chips.push({ key: "omo", label: "OMO", tone: "outline" });
@@ -783,10 +915,9 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
           buttons: [
             {
               key: "add",
-              label:
-                app === "pi"
-                  ? t("providerCard.action.enable")
-                  : t("providerCard.action.add"),
+              label: isPiFamilyApp(app)
+                ? t("providerCard.action.enable")
+                : t("providerCard.action.add"),
               onClick: () => actions.add(p),
               disabledReason: piBlocked,
             },
@@ -796,8 +927,9 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
       continue;
     }
 
-    // 已添加：白底、不写「● 已添加」（分组标题和「移除」已经说清楚）；灰底只给默认那一家
+    // 已添加：白底、不写「● 已添加」（分组标题和「移除」已经说清楚）；蓝底只给默认那一家
     const buttons: CardButton[] = [];
+    const menuItems: CardMenuItem[] = [];
     let status: CardPresentation["status"];
     let isDefault = false;
     let removeReason: string | undefined = piBlocked;
@@ -806,7 +938,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
     if (app === "openclaw" || app === "opencode") {
       isDefault = input.defaultModel?.providerId === p.id;
       if (isDefault) {
-        status = { label: t("providerCard.status.default"), dot: "muted" };
+        status = { label: t("providerCard.status.default"), dot: "direct" };
         chips.push({
           key: "defaultModel",
           label: t("providerCard.chip.defaultModel", {
@@ -819,13 +951,14 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
         }
       } else {
         const models = input.defaultModelOptions?.(p) ?? [];
+        // 「设为默认」放「更多」菜单，不占卡片上的主操作位；多个模型时展开子菜单选。
         // OpenCode 内置供应商可以不列模型（运行时才有），给不出选项就不显示
         if (app === "openclaw" || models.length > 0) {
-          buttons.push({
+          menuItems.push({
             key: "setDefault",
             label: t("providerCard.action.setDefault"),
-            onClick: () => actions.setDefault(p, models[0]?.id),
-            menu:
+            onSelect: () => actions.setDefault(p, models[0]?.id),
+            submenu:
               models.length > 1
                 ? {
                     title: t("openclaw.selectDefaultModel"),
@@ -845,16 +978,18 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
       }
     }
 
+    // Hermes 跟 OpenClaw / OpenCode 一样是累加式：model.provider 只是默认那家，
+    // 「设为默认」收在「更多」菜单里，主操作位只留「移除」
     if (app === "hermes") {
       if (p.id === input.hermesCurrentId) {
         isDefault = true;
-        status = { label: t("providerCard.status.current"), dot: "muted" };
-        removeReason = t("providerCard.reason.currentCannotRemove");
+        status = { label: t("providerCard.status.default"), dot: "direct" };
+        removeReason = t("providerCard.reason.defaultCannotRemove");
       } else {
-        buttons.push({
-          key: "use",
-          label: t("providerCard.action.enable"),
-          onClick: () => actions.setDefault(p),
+        menuItems.push({
+          key: "setDefault",
+          label: t("providerCard.action.setDefault"),
+          onSelect: () => actions.setDefault(p),
           disabledReason: readOnlyReason,
         });
       }
@@ -870,27 +1005,50 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
     added.push({
       provider: p,
       presentation: {
-        tone: isDefault ? "neutral" : undefined,
+        tone: isDefault ? "direct" : undefined,
         status,
         chips,
         dim: managed,
         editDisabledReason: readOnlyReason,
         deleteDisabledReason: readOnlyReason ?? piBlocked,
         buttons,
+        menuItems: menuItems.length ? menuItems : undefined,
       },
     });
   }
 
+  const officialSection: ProviderSection[] = official.length
+    ? [
+        {
+          key: "official",
+          title: t("copilot.section.official", { count: official.length }),
+          help: {
+            title: t("copilot.section.officialHelpTitle"),
+            body: t("copilot.section.officialHelp"),
+          },
+          items: official,
+        },
+      ]
+    : [];
+
   return [
+    ...officialSection,
     {
       key: "added",
-      title: t("providerCard.section.added", { count: added.length }),
+      title: t("providerCard.section.added", {
+        count: added.length + (input.extraAdded ?? 0),
+      }),
       help: {
         title: t("providerCard.section.addedHelpTitle"),
-        body: t("providerCard.section.addedHelp", {
-          app: t(`apps.${app}`),
-        }),
+        // DSH 的供应商一起写进 Web 和 Desktop 两份配置，在这里说明
+        body:
+          app === "dsh"
+            ? t("dsh.sharedProviders")
+            : t("providerCard.section.addedHelp", {
+                app: t(`apps.${app}`),
+              }),
       },
+      note: app === "dsh" ? t("dsh.sharedProvidersNote") : undefined,
       emptyText: t("providerCard.section.addedEmpty"),
       items: added,
     },

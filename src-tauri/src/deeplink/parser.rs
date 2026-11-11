@@ -88,11 +88,13 @@ fn parse_provider_deeplink(
         .ok_or_else(|| AppError::InvalidInput("Missing 'app' parameter".to_string()))?
         .clone();
 
-    // Validate app type
+    // Validate app type.
     if !matches!(
         app.as_str(),
         "agy"
+            | "copilot"
             | "claude"
+            | "claude-desktop"
             | "codex"
             | "gemini"
             | "grokbuild"
@@ -100,6 +102,10 @@ fn parse_provider_deeplink(
             | "openclaw"
             | "hermes"
             | "pi"
+            | "mcode"
+            | "kimi"
+            | "dsh"
+            | "omp"
     ) {
         return Err(AppError::InvalidInput(format!(
             "Invalid provider app type: '{app}'"
@@ -134,11 +140,13 @@ fn parse_provider_deeplink(
 
     // Extract optional fields
     let model = params.get("model").cloned();
-    // Pi 的节点没有模型就选不到任何模型（见 `provider::build_pi_settings`）
-    if app == "pi" && model.as_deref().is_none_or(|model| model.trim().is_empty()) {
-        return Err(AppError::InvalidInput(
-            "Pi providers need a model; add 'model' to the link".to_string(),
-        ));
+    // 这几家的节点没有模型就选不到任何模型（见 `provider::build_pi_family_settings`）
+    if matches!(app.as_str(), "pi" | "mcode" | "kimi" | "dsh" | "omp")
+        && model.as_deref().is_none_or(|model| model.trim().is_empty())
+    {
+        return Err(AppError::InvalidInput(format!(
+            "{app} providers need a model; add 'model' to the link"
+        )));
     }
     let notes = params.get("notes").cloned();
     let haiku_model = params.get("haikuModel").cloned();
@@ -256,9 +264,10 @@ fn parse_prompt_deeplink(
             | "hermes"
             | "pi"
             | "mcode"
+            | "copilot"
     ) {
         return Err(AppError::InvalidInput(format!(
-            "Invalid app type: must be 'claude', 'codex', 'gemini', 'agy', 'grokbuild', 'opencode', 'openclaw', 'hermes', 'pi', or 'mcode', got '{app}'"
+            "Invalid app type: must be 'claude', 'codex', 'gemini', 'agy', 'copilot', 'grokbuild', 'opencode', 'openclaw', 'hermes', 'pi', or 'mcode', got '{app}'"
         )));
     }
 
@@ -324,7 +333,9 @@ fn parse_mcp_deeplink(
         .ok_or_else(|| AppError::InvalidInput("Missing 'apps' parameter for MCP".to_string()))?
         .clone();
 
-    // Validate apps format
+    // Validate apps format. Keep this list in step with `parse_mcp_apps`
+    // (`deeplink/mcp.rs`), which is what actually maps the names onto `McpApps`:
+    // rejecting a name here makes the importer's arm for it unreachable.
     for app in apps.split(',') {
         let trimmed = app.trim();
         if !matches!(
@@ -338,11 +349,15 @@ fn parse_mcp_deeplink(
                 | "opencode"
                 | "openclaw"
                 | "hermes"
-                | "pi"
                 | "mcode"
+                | "pi"
+                | "kimi"
+                | "dsh"
+                | "omp"
+                | "copilot"
         ) {
             return Err(AppError::InvalidInput(format!(
-                "Invalid app in 'apps': must be 'claude', 'codex', 'gemini', 'agy', 'grokbuild', 'opencode', 'hermes', 'pi', or 'mcode', got '{trimmed}'"
+                "Invalid app in 'apps': must be 'claude', 'codex', 'gemini', 'agy', 'grokbuild', 'opencode', 'openclaw', 'hermes', 'pi', 'kimi', 'dsh', 'mcode', 'omp', or 'copilot', got '{trimmed}'"
             )));
         }
     }

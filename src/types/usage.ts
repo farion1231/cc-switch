@@ -217,7 +217,7 @@ export interface UsageRangeSelection {
  * only ever show a partial number and mislead users into reading it as the
  * Desktop's full usage. The backend collapses `claude-desktop → claude` in
  * every dashboard query (see `folded_app_type_sql`).
- * `opencode` and `pi` have no proxy handler; their usage reaches this
+ * `opencode`, `pi` and `omp` have no proxy handler; their usage reaches this
  * dashboard through session importers. `openclaw` / `hermes` appear only as
  * managed apps elsewhere.
  */
@@ -228,9 +228,13 @@ export type AppType =
   | "grokbuild"
   | "opencode"
   | "pi"
+  | "omp"
   | "mcode"
   | "deveco"
-  | "agy";
+  | "kimi"
+  | "dsh"
+  | "agy"
+  | "copilot";
 
 export type AppTypeFilter = "all" | AppType;
 
@@ -241,9 +245,13 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "grokbuild",
   "opencode",
   "pi",
+  "omp",
   "mcode",
   "deveco",
+  "kimi",
+  "dsh",
   "agy",
+  "copilot",
 ];
 
 /**
@@ -264,12 +272,14 @@ export const CACHE_INCLUSIVE_APP_TYPES: ReadonlySet<string> = new Set([
   "grokbuild",
 ]);
 
-// Pi sessions can mix Anthropic and OpenAI APIs, but the dashboard aggregates
-// only by app type. Treat cache-write coverage as partial without changing
-// Pi's fresh-input token semantics.
+// Pi and Oh My Pi sessions can mix Anthropic and OpenAI APIs, but the dashboard
+// aggregates only by app type. Treat cache-write coverage as partial without
+// changing their fresh-input token semantics.
 const PARTIAL_CACHE_WRITE_APP_TYPES: ReadonlySet<string> = new Set([
   "pi",
+  "omp",
   "mcode",
+  "kimi",
   // DevEco reports cache writes natively, so it is not partial.
 ]);
 

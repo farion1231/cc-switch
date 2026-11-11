@@ -61,6 +61,8 @@ const DIRECTORY_KEYS = [
   "openclawConfigDir",
   "hermesConfigDir",
   "piConfigDir",
+  "ompConfigDir",
+  "dshConfigDir",
 ] as const;
 
 const sanitizeDir = (value?: string | null): string | undefined => {
@@ -134,6 +136,8 @@ export function useSettings(): UseSettingsResult {
       hermes: sanitizeDir(data?.hermesConfigDir),
       pi: sanitizeDir(data?.piConfigDir),
       deveco: sanitizeDir(data?.devecoConfigDir),
+      omp: sanitizeDir(data?.ompConfigDir),
+      dsh: sanitizeDir(data?.dshConfigDir),
     });
     setRequiresRestart(false);
   }, [
@@ -221,6 +225,8 @@ export function useSettings(): UseSettingsResult {
           mergedSettings.openclawConfigDir,
         );
         const sanitizedPiDir = sanitizeDir(mergedSettings.piConfigDir);
+        const sanitizedOmpDir = sanitizeDir(mergedSettings.ompConfigDir);
+        const sanitizedDshDir = sanitizeDir(mergedSettings.dshConfigDir);
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
@@ -236,6 +242,8 @@ export function useSettings(): UseSettingsResult {
           opencodeConfigDir: sanitizedOpencodeDir,
           openclawConfigDir: sanitizedOpenclawDir,
           piConfigDir: sanitizedPiDir,
+          ompConfigDir: sanitizedOmpDir,
+          dshConfigDir: sanitizedDshDir,
           language: mergedSettings.language,
         };
 
@@ -356,6 +364,8 @@ export function useSettings(): UseSettingsResult {
           mergedSettings.openclawConfigDir,
         );
         const sanitizedPiDir = sanitizeDir(mergedSettings.piConfigDir);
+        const sanitizedOmpDir = sanitizeDir(mergedSettings.ompConfigDir);
+        const sanitizedDshDir = sanitizeDir(mergedSettings.dshConfigDir);
         const previousAppDir = initialAppConfigDir;
         const previousClaudeDir = sanitizeDir(data?.claudeConfigDir);
         const previousCodexDir = sanitizeDir(data?.codexConfigDir);
@@ -364,6 +374,8 @@ export function useSettings(): UseSettingsResult {
         const previousOpencodeDir = sanitizeDir(data?.opencodeConfigDir);
         const previousOpenclawDir = sanitizeDir(data?.openclawConfigDir);
         const previousPiDir = sanitizeDir(data?.piConfigDir);
+        const previousOmpDir = sanitizeDir(data?.ompConfigDir);
+        const previousDshDir = sanitizeDir(data?.dshConfigDir);
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
@@ -379,6 +391,8 @@ export function useSettings(): UseSettingsResult {
           opencodeConfigDir: sanitizedOpencodeDir,
           openclawConfigDir: sanitizedOpenclawDir,
           piConfigDir: sanitizedPiDir,
+          ompConfigDir: sanitizedOmpDir,
+          dshConfigDir: sanitizedDshDir,
           language: mergedSettings.language,
         };
 
@@ -469,6 +483,8 @@ export function useSettings(): UseSettingsResult {
         const opencodeDirChanged = sanitizedOpencodeDir !== previousOpencodeDir;
         const openclawDirChanged = sanitizedOpenclawDir !== previousOpenclawDir;
         const piDirChanged = sanitizedPiDir !== previousPiDir;
+        const ompDirChanged = sanitizedOmpDir !== previousOmpDir;
+        const dshDirChanged = sanitizedDshDir !== previousDshDir;
         if (
           !pluginSynced &&
           (claudeDirChanged ||
@@ -488,6 +504,22 @@ export function useSettings(): UseSettingsResult {
         }
         if (piDirChanged) {
           await invalidatePiDirectoryCaches(queryClient);
+        }
+        if (ompDirChanged) {
+          await invalidatePiDirectoryCaches(queryClient, "omp");
+        }
+        if (dshDirChanged) {
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: ["providers", "dsh"] }),
+            queryClient.invalidateQueries({
+              queryKey: ["skills", "installed"],
+            }),
+            queryClient.invalidateQueries({ queryKey: ["sessions"] }),
+            // DSH_ACCOUNT_STATUS_KEY：登录凭据也在 DSH 主目录里，不刷新会显示旧目录的账号
+            queryClient.invalidateQueries({
+              queryKey: ["dsh-account-status"],
+            }),
+          ]);
         }
 
         const appDirChanged = sanitizedAppDir !== (previousAppDir ?? undefined);

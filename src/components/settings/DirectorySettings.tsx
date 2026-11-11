@@ -8,7 +8,10 @@ import { useTranslation } from "react-i18next";
 import type { AppId } from "@/lib/api";
 import type { ResolvedDirectories } from "@/hooks/useSettings";
 
-export type DirectoryAppId = Exclude<AppId, "claude-desktop" | "mcode" | "agy">;
+export type DirectoryAppId = Exclude<
+  AppId,
+  "claude-desktop" | "mcode" | "agy" | "kimi" | "copilot"
+>;
 
 interface DirectorySettingsProps {
   appConfigDir?: string;
@@ -25,6 +28,7 @@ interface DirectorySettingsProps {
   hermesDir?: string;
   piDir?: string;
   devecoDir?: string;
+  ompDir?: string;
   onDirectoryChange: (app: DirectoryAppId, value?: string) => void;
   onBrowseDirectory: (app: DirectoryAppId) => Promise<void>;
   onResetDirectory: (app: DirectoryAppId) => Promise<void>;
@@ -45,6 +49,7 @@ export function DirectorySettings({
   hermesDir,
   piDir,
   devecoDir,
+  ompDir,
   onDirectoryChange,
   onBrowseDirectory,
   onResetDirectory,
@@ -202,6 +207,17 @@ export function DirectorySettings({
           onChange={(val) => onDirectoryChange("deveco", val)}
           onBrowse={() => onBrowseDirectory("deveco")}
           onReset={() => onResetDirectory("deveco")}
+        />
+
+        <DirectoryInput
+          label={t("settings.ompConfigDir")}
+          description={undefined}
+          value={ompDir}
+          resolvedValue={resolvedDirs.omp}
+          placeholder={t("settings.browsePlaceholderOmp")}
+          onChange={(val) => onDirectoryChange("omp", val)}
+          onBrowse={() => onBrowseDirectory("omp")}
+          onReset={() => onResetDirectory("omp")}
         />
       </section>
     </div>
