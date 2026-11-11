@@ -830,6 +830,35 @@ describe("PluginsPage", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("tells the user to sign in when MiniMax Code requires login", async () => {
+    m.listInstalled.mockResolvedValue([]);
+    m.listCatalog.mockResolvedValue([
+      catalogItem({
+        id: "frontend-design@official",
+        name: "frontend-design",
+        marketplace: "official",
+      }),
+    ]);
+    m.install.mockRejectedValue("PLUGIN_AUTH_REQUIRED");
+    renderPage({ apps: ["mcode"] });
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "pluginsPage.viewDiscoverCount" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "pluginsPage.install" }),
+    );
+    await waitFor(() =>
+      expect(m.toastError).toHaveBeenCalledWith(
+        "pluginsPage.toast.installFailed",
+        expect.objectContaining({
+          description: "pluginsPage.toast.authRequired",
+        }),
+      ),
+    );
+    // 没装上，条目留在「发现」里
+    expect(screen.getByText("frontend-design")).toBeInTheDocument();
+  });
+
   it("switches apps from a list when many apps are visible", async () => {
     renderPage({
       apps: ["claude", "codex", "grokbuild", "mcode", "openclaw"],

@@ -5112,6 +5112,7 @@
       "installed": "已安裝 {{name}}",
       "installFailed": "安裝 {{name}} 失敗",
       "installNeedsTerminal": "這個外掛安裝時要在本機執行市集宣告的命令，CC Switch 不會替你同意。請在終端機裡執行 {{command}}，確認後再回來重新整理。",
+      "authRequired": "{{app}} 需要先登入帳號。請在終端機裡執行 {{command}} 登入，再回來重試。",
       "uninstalled": "已解除安裝 {{name}}",
       "uninstallFailed": "解除安裝 {{name}} 失敗",
       "enabled": "已啟用 {{name}}",
