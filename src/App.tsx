@@ -138,17 +138,17 @@ import {
   orderAppIds,
 } from "@/config/appConfig";
 import type { PiFamilyAppId } from "@/lib/api/pi";
+import { EditProviderHost } from "@/components/providers/EditProviderHost";
+import { preloadOnIdle } from "@/lib/preloadOnIdle";
+import { useCreateEditProviderStore } from "@/components/providers/editProviderStore";
 
 // Keep the provider page and event listeners ready at startup. Editors, charts
 // and secondary pages are loaded when the user first opens them.
+const loadAddProviderDialog = () =>
+  import("@/components/providers/AddProviderDialog");
 const AddProviderDialog = lazy(() =>
-  import("@/components/providers/AddProviderDialog").then((m) => ({
+  loadAddProviderDialog().then((m) => ({
     default: m.AddProviderDialog,
-  })),
-);
-const EditProviderDialog = lazy(() =>
-  import("@/components/providers/EditProviderDialog").then((m) => ({
-    default: m.EditProviderDialog,
   })),
 );
 const SettingsPage = lazy(() =>
@@ -256,7 +256,8 @@ function App() {
     setProviderSearchOpen(false);
   }, [activeApp, currentView]);
   // 供应商页顶部正在看的那格（直连 / 路由 / 聚合），由 SwitchModePanel 报上来。打开新增、
-  // 编辑时记下当时那格，表单按它选布局：在聚合那格打开就是聚合的简化表单。
+  // 编辑时记下当时那格（新增记在 formModeView，编辑随供应商记进 editProviderStore），
+  // 表单按它选布局：在聚合那格打开就是聚合的简化表单。
   const [providerModeView, setProviderModeView] = useState<{
     app: AppId;
     view: AppMode;
@@ -348,11 +349,10 @@ function App() {
     }
   }, [activeApp, currentView]);
 
-  const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
-  const [hasOpenedEdit, setHasOpenedEdit] = useState(false);
-  useEffect(() => {
-    if (editingProvider) setHasOpenedEdit(true);
-  }, [editingProvider]);
+  // 正在编辑的供应商不放 App 的 state：开关编辑页时不让整个 App 和列表重渲染
+  const editProviderStore = useCreateEditProviderStore();
+  // 新增页和编辑页共用的表单很大，启动后空闲时先拉好（编辑页在 EditProviderHost 里预取）
+  useEffect(() => preloadOnIdle(loadAddProviderDialog), []);
   const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
   const [confirmAction, setConfirmAction] = useState<{
     provider: Provider;
@@ -364,7 +364,6 @@ function App() {
   const [envConflicts, setEnvConflicts] = useState<EnvConflict[]>([]);
   const [showEnvBanner, setShowEnvBanner] = useState(false);
 
-  const effectiveEditingProvider = useLastValidValue(editingProvider);
   const effectiveUsageProvider = useLastValidValue(usageProvider);
   const mainScrollRef = useRef<HTMLElement>(null);
   const providerScrollContainerRef = useRef<HTMLDivElement>(null);
@@ -933,7 +932,7 @@ function App() {
   // 面板的 appId 跟着 activeApp 走，开着切应用会把 A 应用的供应商保存进 B 应用
   const closeProviderPanels = () => {
     setIsAddOpen(false);
-    setEditingProvider(null);
+    editProviderStore.close();
     setUsageProvider(null);
   };
 
@@ -1105,7 +1104,7 @@ function App() {
     editorSave?: ProviderEditorSave;
   }) => {
     await updateProvider(provider, originalId, editorSave);
-    setEditingProvider(null);
+    editProviderStore.close();
   };
 
   // 累加式应用的「已添加」和「默认」都现读客户端文件，移除前后重读一遍
@@ -1625,10 +1624,8 @@ function App() {
   };
 
   const listCallbacks = {
-    onEdit: (provider: Provider) => {
-      setFormModeView(currentModeView);
-      setEditingProvider(provider);
-    },
+    onEdit: (provider: Provider) =>
+      editProviderStore.open(provider, currentModeView),
     onDelete: (provider: Provider) =>
       setConfirmAction({ provider, action: "delete" }),
     onDuplicate: handleDuplicateProvider,
@@ -1979,22 +1976,13 @@ function App() {
           />
         )}
 
-        {(editingProvider || hasOpenedEdit) && (
-          <EditProviderDialog
-            open={Boolean(editingProvider)}
-            provider={effectiveEditingProvider}
-            onOpenChange={(open) => {
-              if (!open) {
-                setEditingProvider(null);
-              }
-            }}
-            onSubmit={handleEditProvider}
-            appId={activeApp}
-            isProxyTakeover={isCurrentAppTakeoverActive}
-            isCurrent={effectiveEditingProvider?.id === currentProviderId}
-            modeView={formModeView}
-          />
-        )}
+        <EditProviderHost
+          store={editProviderStore}
+          appId={activeApp}
+          onSubmit={handleEditProvider}
+          isProxyTakeover={isCurrentAppTakeoverActive}
+          currentProviderId={currentProviderId}
+        />
 
         {effectiveUsageProvider && (
           <UsageScriptModal
