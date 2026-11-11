@@ -42,6 +42,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::SystemTime;
 #[cfg(windows)]
+use windows_sys::Win32::Foundation::{ERROR_INVALID_PARAMETER, ERROR_NOT_SUPPORTED};
+#[cfg(windows)]
 use windows_sys::Win32::Storage::FileSystem::{
     FileIdInfo, GetFileInformationByHandleEx, FILE_ID_INFO,
 };
@@ -101,17 +103,18 @@ struct ParentFileStamp {
     device: u64,
     #[cfg(unix)]
     inode: u64,
+    /// 卷序列号 + 文件 ID。`None`：文件系统不提供文件 ID（Windows 访问
+    /// `\\wsl.localhost\...` 的 9P 共享时返回 ERROR_NOT_SUPPORTED），只凭
+    /// 修改时间和大小判断文件变没变，否则 WSL 上的父 rollout 永远验证不了。
     #[cfg(windows)]
-    volume_serial: u64,
-    #[cfg(windows)]
-    file_id: [u8; 16],
+    identity: Option<(u64, [u8; 16])>,
 }
 
 impl ParentFileStamp {
     fn from_file(file: &fs::File) -> Option<Self> {
         let metadata = file.metadata().ok()?;
         #[cfg(windows)]
-        let (volume_serial, file_id) = windows_file_identity(file)?;
+        let identity = windows_file_identity(file).ok()?;
         Some(Self {
             modified_nanos: metadata_modified_nanos(&metadata),
             size: metadata.len(),
@@ -120,15 +123,14 @@ impl ParentFileStamp {
             #[cfg(unix)]
             inode: metadata.ino(),
             #[cfg(windows)]
-            volume_serial,
-            #[cfg(windows)]
-            file_id,
+            identity,
         })
     }
 }
 
+/// `Ok(None)`：文件系统不支持查询文件 ID；其他失败照常报错。
 #[cfg(windows)]
-fn windows_file_identity(file: &fs::File) -> Option<(u64, [u8; 16])> {
+fn windows_file_identity(file: &fs::File) -> std::io::Result<Option<(u64, [u8; 16])>> {
     let mut information = FILE_ID_INFO::default();
     // SAFETY: `file` owns a live handle for this call, and `information` is a
     // valid writable FILE_ID_INFO buffer of the size passed to Windows.
@@ -140,10 +142,17 @@ fn windows_file_identity(file: &fs::File) -> Option<(u64, [u8; 16])> {
             std::mem::size_of::<FILE_ID_INFO>() as u32,
         )
     } != 0;
-    succeeded.then_some((
-        information.VolumeSerialNumber,
-        information.FileId.Identifier,
-    ))
+    if succeeded {
+        return Ok(Some((
+            information.VolumeSerialNumber,
+            information.FileId.Identifier,
+        )));
+    }
+    let error = std::io::Error::last_os_error();
+    match error.raw_os_error().map(|code| code as u32) {
+        Some(ERROR_NOT_SUPPORTED | ERROR_INVALID_PARAMETER) => Ok(None),
+        _ => Err(error),
+    }
 }
 
 #[derive(Debug)]
@@ -2443,6 +2452,7 @@ fn insert_codex_session_entry_on_conn(
 
     let dedup_key = DedupKey {
         app_type: "codex",
+        data_source: "codex_session",
         model,
         input_tokens: delta.input,
         output_tokens: delta.output,
@@ -4338,6 +4348,25 @@ mod tests {
         supported
     }
 
+    /// 能不能区分「大小、修改时间都相同的两个文件」：要文件系统提供文件身份。
+    /// Windows 访问 9P 共享（`\\wsl.localhost\...`）时没有文件 ID，只比较时间和大小。
+    fn same_size_same_mtime_replacement_detectable(path: &Path) -> bool {
+        let Some(stamp) = ParentFileStamp::from_file(&fs::File::open(path).unwrap()) else {
+            eprintln!("no file stamp for {}; skipping", path.display());
+            return false;
+        };
+        #[cfg(windows)]
+        if stamp.identity.is_none() {
+            eprintln!(
+                "no file ID for {}; same-size same-mtime replacement is undetectable, skipping",
+                path.display()
+            );
+            return false;
+        }
+        let _ = stamp;
+        true
+    }
+
     /// 缓存是进程级的，`serial` 只互斥带标记的测试：不带标记的测试（如续写页
     /// 解析会经 `load_parent_timeline` 缓存前序页）可能同时写入别的条目。
     /// 数条目时只数本测试临时目录下的键，不数全局总数。
@@ -4562,7 +4591,7 @@ mod tests {
         let values = [session_meta(PARENT_ID), token_count(100, 50, 10)];
         write_jsonl(&parent, &values);
         write_jsonl(&replacement, &values);
-        if !parent_cache_supported(&parent) {
+        if !same_size_same_mtime_replacement_detectable(&parent) {
             return;
         }
         let original_file = fs::File::open(&parent).unwrap();
@@ -5489,7 +5518,7 @@ mod tests {
         let db = Database::memory()?;
         let temp = tempdir().unwrap();
         let (parent, child) = retryable_parent_and_child(temp.path());
-        if !parent_cache_supported(&parent) {
+        if !same_size_same_mtime_replacement_detectable(&parent) {
             return Ok(());
         }
         assert!(sync_test_file(&db, &child, &[&parent, &child])?.deferred);
@@ -5610,7 +5639,7 @@ mod tests {
         let db = Database::memory()?;
         let temp = tempdir().unwrap();
         let (parent, child) = retryable_parent_and_child(temp.path());
-        if !parent_cache_supported(&child) {
+        if !same_size_same_mtime_replacement_detectable(&child) {
             return Ok(());
         }
         assert!(sync_test_file(&db, &child, &[&parent, &child])?.deferred);

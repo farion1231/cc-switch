@@ -241,27 +241,6 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "grooroute",
   },
   {
-    name: "DIT.ai",
-    websiteUrl: "https://dit.ai",
-    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
-    // Gemini 原生 /v1beta 在站点根；网关也认 x-goog-api-key（2026-10-21 用假 Key
-    // 探测为 invalid_api_key 而非 missing_api_key）
-    settingsConfig: {
-      env: {
-        GOOGLE_GEMINI_BASE_URL: "https://api.dit.ai",
-        GEMINI_API_KEY: "",
-        GEMINI_MODEL: "gemini-3.8-flash",
-      },
-    },
-    baseURL: "https://api.dit.ai",
-    model: "gemini-3.8-flash",
-    description: "DIT.ai",
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "dit",
-    icon: "dit",
-  },
-  {
     name: "BuyToken",
     websiteUrl: "https://buytoken.work",
     apiKeyUrl: "https://buytoken.work/sign-up?aff=cc-switch",
@@ -506,28 +485,25 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
-    // 接入文档 teamorouter.cn/zh/docs/install-gemini-cli（2026-10-31）：Key 以 Bearer 发送
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+    // 接入文档 teamorouter.com/zh/docs/install-gemini-cli（2026-10-31）：Key 以 Bearer 发送
     settingsConfig: {
       env: {
-        GOOGLE_GEMINI_BASE_URL: "https://api.teamorouter.cn",
+        GOOGLE_GEMINI_BASE_URL: "https://api.teamorouter.com",
         GEMINI_API_KEY: "",
         GEMINI_API_KEY_AUTH_MECHANISM: "bearer",
         GEMINI_MODEL: "gemini-3.8-flash",
       },
     },
-    baseURL: "https://api.teamorouter.cn",
+    baseURL: "https://api.teamorouter.com",
     model: "gemini-3.8-flash",
     description: "TeamoRouter",
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "teamorouter",
-    endpointCandidates: [
-      "https://api.teamorouter.cn",
-      "https://api.teamorouter.com",
-    ],
+    endpointCandidates: ["https://api.teamorouter.com"],
     icon: "teamorouter",
   },
   {
@@ -606,7 +582,6 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     description: "CCSub",
     category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "ccsub",
     icon: "ccsub",
   },
   {

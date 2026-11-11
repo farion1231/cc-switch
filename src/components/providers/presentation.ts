@@ -702,6 +702,8 @@ export interface AdditiveInput {
   piStateUnavailable?: boolean;
   /** Kimi：原生 default_model 别名所属的供应商。 */
   kimiCurrentId?: string | null;
+  /** Copilot CLI：settings.json 的 `model`（`<卡片 id>/<模型>`）所属的自带模型卡。 */
+  copilotDefaultId?: string | null;
   /** 「已添加」里列表外另画的卡（DSH 的 DeepSeek 账号卡），计入标题数字 */
   extraAdded?: number;
   actions: {
@@ -709,6 +711,8 @@ export interface AdditiveInput {
     remove: (provider: Provider) => void;
     disableOmo: (provider: Provider) => void;
     setDefault: (provider: Provider, modelId?: string) => void;
+    /** Copilot CLI 官方卡的主按钮 */
+    openTerminal?: (provider: Provider) => void;
   };
 }
 
@@ -716,6 +720,8 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
   const { app, t, providers, actions } = input;
   const added: ProviderSection["items"] = [];
   const available: ProviderSection["items"] = [];
+  // Copilot CLI 的官方卡：仍是启动式，单独一组排在最前
+  const official: ProviderSection["items"] = [];
   const piBlocked =
     isPiFamilyApp(app) && input.piStateUnavailable
       ? t(`${app}.current.stateUnavailableHint`)
@@ -723,6 +729,66 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
 
   for (const p of providers) {
     const chips: CardChip[] = [];
+    if (app === "copilot") {
+      if (isOfficialAccount(app, p)) {
+        // 官方卡用 Copilot CLI 自己的 GitHub 登录，不写任何文件：没有添加 / 移除，
+        // 主操作就是「打开终端」，哪张都能删
+        official.push({
+          provider: p,
+          presentation: {
+            chips: [
+              {
+                key: "official",
+                label: t("providerCard.chip.official"),
+                tone: "outline",
+              },
+            ],
+            buttons: [
+              {
+                key: "openTerminal",
+                label: t("provider.openTerminalWithProvider"),
+                onClick: () => actions.openTerminal?.(p),
+              },
+            ],
+          },
+        });
+        continue;
+      }
+      // 自带模型卡：「添加」写进 Copilot 的 providers.json，「移除」只删这一家的条目。
+      // 默认那家（settings.json 的 model 指向它）不能移除、不能删；Copilot 里换默认模型用 /model
+      const live = input.isInConfig(p);
+      const isDefault = live && p.id === input.copilotDefaultId;
+      (live ? added : available).push({
+        provider: p,
+        presentation: {
+          tone: isDefault ? "direct" : undefined,
+          status: isDefault
+            ? { label: t("providerCard.status.default"), dot: "direct" }
+            : undefined,
+          chips,
+          buttons: [
+            live
+              ? {
+                  key: "remove",
+                  label: t("providerCard.action.remove"),
+                  disabledReason: isDefault
+                    ? t("copilot.defaultCannotRemove")
+                    : undefined,
+                  onClick: () => actions.remove(p),
+                }
+              : {
+                  key: "add",
+                  label: t("providerCard.action.add"),
+                  onClick: () => actions.add(p),
+                },
+          ],
+          deleteDisabledReason: isDefault
+            ? t("copilot.defaultCannotRemove")
+            : undefined,
+        },
+      });
+      continue;
+    }
     if (app === "kimi") {
       const official = isOfficialAccount(app, p);
       const live = input.isInConfig(p);
@@ -951,7 +1017,22 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
     });
   }
 
+  const officialSection: ProviderSection[] = official.length
+    ? [
+        {
+          key: "official",
+          title: t("copilot.section.official", { count: official.length }),
+          help: {
+            title: t("copilot.section.officialHelpTitle"),
+            body: t("copilot.section.officialHelp"),
+          },
+          items: official,
+        },
+      ]
+    : [];
+
   return [
+    ...officialSection,
     {
       key: "added",
       title: t("providerCard.section.added", {

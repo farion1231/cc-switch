@@ -82,7 +82,6 @@ export function generateThirdPartyConfig(
   return `model_provider = "custom"
 model = ${tomlString(modelName)}
 model_reasoning_effort = "high"
-disable_response_storage = true
 
 [model_providers.custom]
 name = ${tomlString(providerName)}
@@ -467,7 +466,6 @@ export const codexProviderPresets: CodexProviderPreset[] = [
 model = "gpt-6.1-sol"
 review_model = "gpt-6.1-sol"
 model_reasoning_effort = "high"
-disable_response_storage = true
 
 [model_providers.custom]
 name = "APINebula"
@@ -597,21 +595,6 @@ requires_openai_auth = true`,
     isPartner: true,
     partnerPromotionKey: "grooroute",
     icon: "grooroute",
-  },
-  {
-    name: "DIT.ai",
-    websiteUrl: "https://dit.ai",
-    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
-    category: "aggregator",
-    auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig(
-      "dit_ai",
-      "https://api.dit.ai/v1",
-      "gpt-5.6-sol",
-    ),
-    isPartner: true,
-    partnerPromotionKey: "dit",
-    icon: "dit",
   },
   {
     name: "BuyToken",
@@ -937,7 +920,6 @@ requires_openai_auth = true`,
 model = "gpt-6.1-sol"
 review_model = "gpt-6.1-sol"
 model_reasoning_effort = "high"
-disable_response_storage = true
 
 [model_providers.custom]
 name = "APIKEY.FUN"
@@ -990,20 +972,17 @@ requires_openai_auth = true`,
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     category: "aggregator",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "teamorouter",
-      "https://api.teamorouter.cn/v1",
+      "https://api.teamorouter.com/v1",
       "gpt-6.1-sol",
     ),
-    endpointCandidates: [
-      "https://api.teamorouter.cn/v1",
-      "https://api.teamorouter.com/v1",
-    ],
+    endpointCandidates: ["https://api.teamorouter.com/v1"],
     isPartner: true,
     partnerPromotionKey: "teamorouter",
     icon: "teamorouter",
@@ -1350,7 +1329,6 @@ requires_openai_auth = true`,
     ),
     endpointCandidates: ["https://www.ccsub.net/v1"],
     isPartner: true,
-    partnerPromotionKey: "ccsub",
     icon: "ccsub",
   },
   {
@@ -1488,7 +1466,6 @@ requires_openai_auth = true`,
 model = "gpt-6.1-sol"
 review_model = "gpt-6.1-sol"
 model_reasoning_effort = "high"
-disable_response_storage = true
 
 [model_providers.custom]
 name = "SudoCode"
@@ -1515,7 +1492,6 @@ requires_openai_auth = true`,
 model = "gpt-6.1-sol"
 review_model = "gpt-6.1-sol"
 model_reasoning_effort = "high"
-disable_response_storage = true
 model_verbosity = "high"
 
 [model_providers.custom]
@@ -1648,7 +1624,6 @@ requires_openai_auth = true`,
     auth: generateThirdPartyAuth(""),
     config: `model_provider = "custom"
 model = "zai-org/glm-5.3"
-disable_response_storage = true
 
 [model_providers.custom]
 name = "AtlasCloud"
@@ -1704,7 +1679,6 @@ requires_openai_auth = true`,
     config: `model_provider = "custom"
 model = "gpt-5.6-sol"
 model_reasoning_effort = "high"
-disable_response_storage = true
 
 [model_providers.custom]
 name = "Azure OpenAI"
@@ -2044,10 +2018,13 @@ requires_openai_auth = true`,
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "qianwenai",
-      "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "https://maas.qianwenaiapi.com/compatible-mode/v1",
       "qwen3.8-max",
     ),
-    endpointCandidates: ["https://dashscope.aliyuncs.com/compatible-mode/v1"],
+    endpointCandidates: [
+      "https://maas.qianwenaiapi.com/compatible-mode/v1",
+      "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    ],
     // DashScope 原生支持 OpenAI Responses API（/compatible-mode/v1/responses，同一 base_url），无需路由接管转换
     apiFormat: "openai_responses",
     // 档位与窗口照抄官方 Codex model-catalog.local.json——该元数据段落不分
@@ -2101,10 +2078,11 @@ requires_openai_auth = true`,
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "qianwenai_token_plan",
-      "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      "https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1",
       "qwen3.8-max",
     ),
     endpointCandidates: [
+      "https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1",
       "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
     ],
     apiFormat: "openai_responses",
@@ -2144,10 +2122,11 @@ requires_openai_auth = true`,
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "qwencloud",
-      "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+      "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1",
       "qwen3.8-max",
     ),
     endpointCandidates: [
+      "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1",
       "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     ],
     apiFormat: "openai_responses",
@@ -2250,10 +2229,11 @@ requires_openai_auth = true`,
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "qwencloud_token_plan",
-      "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+      "https://token-plan.maas.qwencloudapi.com/compatible-mode/v1",
       "qwen3.8-max",
     ),
     endpointCandidates: [
+      "https://token-plan.maas.qwencloudapi.com/compatible-mode/v1",
       "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
     ],
     apiFormat: "openai_responses",
@@ -2307,8 +2287,8 @@ requires_openai_auth = true`,
       "https://tokenhub.tencentmaas.cn/v1",
     ],
     // 腾讯 TokenHub 官方 Codex 文档（cloud.tencent.com/document/product/1823/133532）：
-    // hy3 原生 Responses（wire_api=responses；官方硬性要求的
-    // disable_response_storage=true 已由 generateThirdPartyConfig 输出）。
+    // hy3 原生 Responses（wire_api=responses；官方要求的
+    // disable_response_storage=true 在 Codex 里已是恒定行为，恒发 store:false）。
     // ⚠️ 须用 TokenHub API Key（创建时范围需勾选 Hy3）；Coding Plan / Token Plan
     // 订阅 Key 只能走各自 /plan 端点，对本预设的 /v1 不通。
     // hy3 在带 tools 的请求里会把 reasoning_effort=low 服务端自动升为 high
@@ -3505,14 +3485,15 @@ requires_openai_auth = true`,
     websiteUrl: "https://x.ai/api",
     apiKeyUrl: "https://console.x.ai",
     auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig("xai", "https://api.x.ai/v1", "grok-4.5"),
+    config: generateThirdPartyConfig("xai", "https://api.x.ai/v1", "grok-4.7"),
     endpointCandidates: ["https://api.x.ai/v1"],
     // xAI 官方以 /v1/responses 为一等端点（docs.x.ai api-reference）：Codex 硬依赖的
     // store:false / include=["reasoning.encrypted_content"] / reasoning effort 均支持，
     // 原生 Responses，无需路由接管转换
     apiFormat: "openai_responses",
     modelCatalog: modelCatalog([
-      // https://docs.x.ai/developers/models/grok-4.7 (2026-09-23)
+      // https://docs.x.ai/developers/models/grok-4.7（2026-09-23 收录；
+      // 2026-11-03 复核：官方默认 effort=high，子集最高档为 xhigh → 显式声明）
       {
         model: "grok-4.7",
         displayName: "Grok 4.7",
@@ -3520,6 +3501,7 @@ requires_openai_auth = true`,
         supportsParallelToolCalls: true,
         inputModalities: ["text", "image"],
         reasoningLevels: ["low", "medium", "high", "xhigh"],
+        defaultReasoningLevel: "high",
       },
       {
         model: "grok-4.5",
@@ -3548,13 +3530,23 @@ requires_openai_auth = true`,
     // api.x.ai；这里的 base_url / 空 auth 只是配置快照，转发时不生效。
     // requires_openai_auth 必须是 false：keyless + true 会被后端安全闸
     // 拒绝切换（后端写入层对存量卡也会强制归一为 false）。
-    config: generateThirdPartyConfig("xai", "https://api.x.ai/v1", "grok-4.5", {
+    config: generateThirdPartyConfig("xai", "https://api.x.ai/v1", "grok-4.7", {
       requiresOpenAiAuth: false,
     }),
     apiFormat: "openai_responses",
     providerType: "xai_oauth",
     requiresOAuth: true,
     modelCatalog: modelCatalog([
+      // 同 API-key 条目（docs.x.ai 2026-11-03 复核：官方默认 effort=high）
+      {
+        model: "grok-4.7",
+        displayName: "Grok 4.7",
+        contextWindow: 500000,
+        supportsParallelToolCalls: true,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "medium", "high", "xhigh"],
+        defaultReasoningLevel: "high",
+      },
       {
         model: "grok-4.5",
         displayName: "Grok 4.5",
@@ -3607,8 +3599,8 @@ requires_openai_auth = true`,
     auth: generateThirdPartyAuth(""),
     // 官方 OpenAI 兼容文档（docs.ollama.com/api/openai-compatibility，
     // 2026-10-14 核对）：云端 base 为 https://ollama.com/v1，/v1/responses
-    // 只支持无状态（不认 previous_response_id，disable_response_storage 下
-    // Codex 每轮发完整 input，不受影响）
+    // 只支持无状态（不认 previous_response_id；Codex 恒发 store:false、
+    // 每轮发完整 input，不受影响）
     config: generateThirdPartyConfig(
       "ollama_cloud",
       "https://ollama.com/v1",
@@ -3663,7 +3655,7 @@ requires_openai_auth = true`,
     auth: generateThirdPartyAuth("ollama"),
     // 本机 /v1/responses（docs.ollama.com/api/openai-compatibility，2026-10-14
     // 核对）：文档写 v0.13.3 起，Codex 自己对 --oss 要求 0.13.4+；只支持无状态
-    // 请求（不认 previous_response_id），disable_response_storage 下每轮发完整
+    // 请求（不认 previous_response_id）；Codex 恒发 store:false、每轮发完整
     // input，不受影响。默认只监听 127.0.0.1:11434。gpt-oss:20b 是 codex --oss
     // 的默认模型（docs.ollama.com/integrations/codex），需先 ollama pull，或换成
     // 自己已下载的模型 / 用「获取模型」从 /v1/models 拉取
@@ -3766,7 +3758,7 @@ requires_openai_auth = true`,
     // 本机 llama-server 的 /v1/responses（b7793 起，PR #18486；github.com/
     // ggml-org/llama.cpp/blob/master/tools/server/README.md，2026-10-14 核对），
     // base 带 /v1。只是部分实现：内部先转成 Chat 再处理，不认
-    // previous_response_id，disable_response_storage 下 Codex 每轮发完整 input，
+    // previous_response_id；Codex 恒发 store:false、每轮发完整 input，
     // 不受影响。默认端口 b11521（PR #30159）起为 9931，v0.6.0 及更早、Homebrew
     // 与 Docker 仍是 8080，见候选地址；只监听 IPv4 的 127.0.0.1。默认模型取
     // ggml-org 官方 GGUF 的 Qwen3-Coder 30B A3B，换成自己已下载的模型，或用
@@ -3811,8 +3803,8 @@ requires_openai_auth = true`,
     // 本机 vllm serve 的 /v1/responses（docs.vllm.ai/en/stable/serving/
     // integrations/codex，v0.31.0 源码，2026-10-14 核对），base 带 /v1，官方写法
     // 即 wire_api = "responses"；非 gpt-oss 模型的函数调用自 v0.11.1 起支持，
-    // 统一要求 vLLM ≥ 0.23.0。store 默认被静默关掉，disable_response_storage 下
-    // Codex 每轮发完整 input，不受影响。默认端口 8000，不带 --host 时监听全部
+    // 统一要求 vLLM ≥ 0.23.0。store 默认被静默关掉；Codex 恒发 store:false、
+    // 每轮发完整 input，不受影响。默认端口 8000，不带 --host 时监听全部
     // IPv4 网卡，建议加 --host 127.0.0.1；工具调用要启动时加
     // --enable-auto-tool-choice --tool-call-parser qwen3_coder（思考另加
     // --reasoning-parser qwen3）。默认模型取 Codex 接入页的示例
@@ -4498,7 +4490,8 @@ requires_openai_auth = true`,
   {
     name: "Mistral AI",
     websiteUrl: "https://mistral.ai",
-    apiKeyUrl: "https://console.mistral.ai/api-keys",
+    // Vibe 订阅额度与 API 共用，Key 在 Code > Vibe CLI 页创建（同 Claude 预设）
+    apiKeyUrl: "https://chat.mistral.ai/code/extensions",
     auth: generateThirdPartyAuth(""),
     // 官方 OpenAPI（docs.mistral.ai/openapi.yaml，2026-10-14 核对）只列
     // /v1/chat/completions，Bearer 鉴权；官方给 Codex 的只有 MCP 接法，没有模型
@@ -4506,7 +4499,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "mistral",
       "https://api.mistral.ai/v1",
-      "mistral-medium-3-5",
+      "mistral-large-4",
     ),
     endpointCandidates: ["https://api.mistral.ai/v1"],
     // /v1/responses 无 Key 实测 401（网关配了路由），但 OpenAPI、llms-full.txt
@@ -4514,16 +4507,19 @@ requires_openai_auth = true`,
     // 由转换层转成 function）。Chat 请求 schema 不收额外字段，转换层加的
     // stream_options 与透传的 user / logit_bias / seed 会不会被拒，未经真 Key 实测
     apiFormat: "openai_chat",
-    // 模型取官方模型表（docs.mistral.ai/models.md 同日）的固定版本 ID，均为 GA，
-    // 窗口官方写 256k、收文本与图片。两款都支持 reasoning_effort（官方只写
-    // none / high），但开推理后流式 content 是 thinking/text 分块数组，转换层
-    // 暂不解析，第一版不声明 codexChatReasoning、不下发推理参数，也不填档位。
-    // 首行 = 默认模型，须与 config 的 model 一致
+    // 模型取官方模型表（docs.mistral.ai/models.md，2026-11-06 核对）的 GA 型号：
+    // Medium 3.5 已于 10-31 弃用，主力改 Mistral Large 4（窗口官方写 1M，按
+    // 1000000 计），Small 4 窗口 256k，均收文本与图片。Large 4 档位只收
+    // low / medium / high（不收 none），Small 4 收 none / high；推理时流式
+    // content 是 thinking/text 分块数组，转换层暂不解析，第一版不声明
+    // codexChatReasoning、不下发推理参数，也不填档位（Large 4 不发档位时是否
+    // 仍推理官方未写）。首行 = 默认模型，须与 config 的 model 一致。以上风险
+    // 未经真 Key 冒烟，2026-11-06 起照常展示（不再隐藏）
     modelCatalog: modelCatalog([
       {
-        model: "mistral-medium-3-5",
-        displayName: "Mistral Medium 3.5",
-        contextWindow: 256000,
+        model: "mistral-large-4",
+        displayName: "Mistral Large 4",
+        contextWindow: 1000000,
         inputModalities: ["text", "image"],
       },
       {
@@ -4535,9 +4531,6 @@ requires_openai_auth = true`,
     ]),
     category: "cn_official",
     icon: "mistral",
-    // 先隐藏：上面的转换层风险（stream_options / 额外字段可能 422、推理分块
-    // 数组）真 Key 冒烟通过前不在列表里展示
-    hidden: true,
   },
   {
     name: "Cloudflare AI Gateway",
@@ -4671,6 +4664,24 @@ requires_openai_auth = true`,
     iconColor: "#006FFB",
   },
   {
+    name: "Genesis",
+    websiteUrl: "https://genesis.moi.matrixorigin.cn/taas/",
+    apiKeyUrl: "https://uc.moi.matrixorigin.cn/account/credentials?app=genesis",
+    category: "aggregator",
+    // 矩阵起源 TaaS 原生提供 /v1/responses（实测 kimi-k3 返回 200），直连不经
+    // 转换。起步模型 kimi-k3，「获取模型」按账号拉取对话模型（#9269）
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "genesis",
+      "https://token.moi.matrixorigin.cn/v1",
+      "kimi-k3",
+    ),
+    apiFormat: "openai_responses",
+    modelCatalog: modelCatalog(["kimi-k3"]),
+    endpointCandidates: ["https://token.moi.matrixorigin.cn/v1"],
+    icon: "genesis",
+  },
+  {
     name: "CherryIN",
     websiteUrl: "https://open.cherryin.ai",
     apiKeyUrl: "https://open.cherryin.ai/console/token",
@@ -4707,7 +4718,6 @@ requires_openai_auth = true`,
     config: `model_provider = "custom"
 model = "gpt-6.1-sol"
 model_reasoning_effort = "high"
-disable_response_storage = true
 
 [model_providers.custom]
 name = "E-FlowCode"
@@ -4731,7 +4741,6 @@ model_auto_compact_token_limit = 9000000`,
     config: `model_provider = "custom"
 model = "gpt-6.1-sol"
 model_reasoning_effort = "medium"
-disable_response_storage = true
 
 [model_providers.custom]
 name = "PIPELLM"
@@ -5081,5 +5090,41 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
       "gpt-6.1-sol",
     ),
     icon: "aicoming",
+  },
+  {
+    name: "TokenPlus",
+    websiteUrl: "https://www.tokenplus.cn/",
+    apiKeyUrl: "https://www.tokenplus.cn/workspace",
+    category: "aggregator",
+    partnerPromotionKey: "tokenplus",
+    icon: "tokenplus",
+    auth: generateThirdPartyAuth(""),
+    config: `model_provider = "custom"
+model = "deepseek/deepseek-v4.1-flash-1017"
+
+[model_providers.custom]
+name = "tokenplus"
+base_url = "https://api.tokenplus.cn/v1"
+wire_api = "responses"
+requires_openai_auth = true`,
+    apiFormat: "openai_chat",
+    modelCatalog: [
+      {
+        model: "deepseek/deepseek-v4.1-flash-1017",
+        displayName: "DeepSeek V4.1 Flash 1017",
+      },
+      {
+        model: "z-ai/glm-5.3-flash",
+        displayName: "GLM 5.3 Flash",
+      },
+      {
+        model: "moonshot-ai/kimi-k3.1-pro",
+        displayName: "Kimi K3.1 Pro",
+      },
+      {
+        model: "minimax/m3.1-flash",
+        displayName: "MiniMax M3.1 Flash",
+      },
+    ],
   },
 ];

@@ -185,6 +185,11 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
         "Kimi Code",
         crate::services::session_usage_kimi::sync_kimi_usage(db),
     );
+    merge_sync_step(
+        &mut result,
+        "GitHub Copilot CLI",
+        crate::services::session_usage_copilot::sync_copilot_usage(db),
+    );
     // Web 与 Desktop 共用 `$DSH_HOME/sessions`，一次扫描覆盖两端
     merge_sync_step(
         &mut result,
@@ -1307,6 +1312,7 @@ fn upsert_session_log_entry_on_conn(
 
     let dedup_key = DedupKey {
         app_type: "claude",
+        data_source: "session_log",
         model: &msg.model,
         input_tokens: msg.input_tokens,
         output_tokens: msg.output_tokens,

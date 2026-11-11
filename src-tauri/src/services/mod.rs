@@ -9,6 +9,7 @@ pub mod config;
 pub mod dsh_account;
 pub mod env_checker;
 pub mod env_manager;
+pub mod exchange_rates;
 pub mod kimi_oauth;
 pub mod mcp;
 pub mod mcp_connectivity;
@@ -61,6 +62,7 @@ pub use usage_stats::{
     RequestLogDetail, UsageSummary, UsageSummaryByApp,
 };
 
+pub mod session_usage_copilot;
 pub mod session_usage_kimi;
 pub mod session_usage_mcode;
 

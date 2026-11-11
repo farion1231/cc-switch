@@ -101,6 +101,39 @@ const KIMI_K3_COMPAT = {
  */
 const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
+    name: "TokenPlus",
+    websiteUrl: "https://www.tokenplus.cn/",
+    apiKeyUrl: "https://www.tokenplus.cn/workspace",
+    category: "aggregator",
+    partnerPromotionKey: "tokenplus",
+    icon: "tokenplus",
+    providerKey: "cc-switch-tokenplus",
+    settingsConfig: {
+      name: "TokenPlus",
+      baseUrl: "https://api.tokenplus.cn/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("deepseek/deepseek-v4.1-flash-1017", {
+          id: "deepseek/deepseek-v4.1-flash-1017",
+          name: "DeepSeek V4.1 Flash 1017",
+        }),
+        piModel("zai/glm-5.3-flash", {
+          id: "z-ai/glm-5.3-flash",
+          name: "GLM 5.3 Flash",
+        }),
+        piModel("moonshotai/kimi-k3.1-pro", {
+          id: "moonshot-ai/kimi-k3.1-pro",
+          name: "Kimi K3.1 Pro",
+        }),
+        piModel("minimax/minimax-m3.1-flash", {
+          id: "minimax/m3.1-flash",
+          name: "MiniMax M3.1 Flash",
+        }),
+      ],
+    },
+  },
+  {
     name: "Kimi",
     family: "kimi",
     planKey: "payg",
@@ -115,17 +148,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("moonshotai/kimi-k2.7-code", {
-          id: "kimi-k2.7-code",
-          thinkingProfile: "offUnsupported",
-        }),
-        {
-          ...piModel("moonshotai/kimi-k3", {
-            id: "kimi-k3",
-            thinkingProfile: "kimi3",
-          }),
-          compat: { ...KIMI_K3_COMPAT },
-        },
+        // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+        // 退役；K3.1 Pro 为现役旗舰（1M 上下文），置顶为默认
         // 官方文档：K3.1 Pro 同 K3 用顶层 reasoning_effort（low/high/max），
         // HighSpeed 与之能力相同
         {
@@ -142,6 +166,17 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           }),
           compat: { ...KIMI_K3_COMPAT },
         },
+        {
+          ...piModel("moonshotai/kimi-k3", {
+            id: "kimi-k3",
+            thinkingProfile: "kimi3",
+          }),
+          compat: { ...KIMI_K3_COMPAT },
+        },
+        piModel("moonshotai/kimi-k2.7-code", {
+          id: "kimi-k2.7-code",
+          thinkingProfile: "offUnsupported",
+        }),
         piModel("moonshotai/kimi-k2.7-code-highspeed", {
           id: "kimi-k2.7-code-highspeed",
           thinkingProfile: "offUnsupported",
@@ -171,17 +206,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("moonshotai/kimi-k2.7-code", {
-          id: "kimi-k2.7-code",
-          thinkingProfile: "offUnsupported",
-        }),
-        {
-          ...piModel("moonshotai/kimi-k3", {
-            id: "kimi-k3",
-            thinkingProfile: "kimi3",
-          }),
-          compat: { ...KIMI_K3_COMPAT },
-        },
+        // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+        // 退役；K3.1 Pro 为现役旗舰（1M 上下文），置顶为默认
         // 官方文档：K3.1 Pro 同 K3 用顶层 reasoning_effort（low/high/max），
         // HighSpeed 与之能力相同
         {
@@ -198,6 +224,17 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           }),
           compat: { ...KIMI_K3_COMPAT },
         },
+        {
+          ...piModel("moonshotai/kimi-k3", {
+            id: "kimi-k3",
+            thinkingProfile: "kimi3",
+          }),
+          compat: { ...KIMI_K3_COMPAT },
+        },
+        piModel("moonshotai/kimi-k2.7-code", {
+          id: "kimi-k2.7-code",
+          thinkingProfile: "offUnsupported",
+        }),
         piModel("moonshotai/kimi-k2.7-code-highspeed", {
           id: "kimi-k2.7-code-highspeed",
           thinkingProfile: "offUnsupported",
@@ -451,26 +488,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "grooroute",
     icon: "grooroute",
-  },
-  {
-    name: "DIT.ai",
-    providerKey: "cc-switch-dit-ai",
-    websiteUrl: "https://dit.ai",
-    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
-    settingsConfig: {
-      name: "DIT.ai",
-      baseUrl: "https://api.dit.ai",
-      api: "anthropic-messages",
-      apiKey: "",
-      models: [
-        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
-        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
-      ],
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "dit",
-    icon: "dit",
   },
   {
     name: "BuyToken",
@@ -844,12 +861,12 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "TeamoRouter",
     providerKey: "cc-switch-teamo-router",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     settingsConfig: {
       name: "TeamoRouter",
-      baseUrl: "https://api.teamorouter.cn/v1",
+      baseUrl: "https://api.teamorouter.com/v1",
       api: "openai-completions",
       apiKey: "",
       models: [
@@ -868,12 +885,12 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "TeamoRouter Claude",
     providerKey: "cc-switch-teamo-router-claude",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     settingsConfig: {
       name: "TeamoRouter Claude",
-      baseUrl: "https://api.teamorouter.cn",
+      baseUrl: "https://api.teamorouter.com",
       api: "anthropic-messages",
       apiKey: "",
       models: [
@@ -1091,7 +1108,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     },
     category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "ccsub",
     icon: "ccsub",
   },
   {
@@ -1526,7 +1542,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002972",
     settingsConfig: {
       name: "千问AI平台",
-      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      baseUrl: "https://maas.qianwenaiapi.com/compatible-mode/v1",
       api: "openai-completions",
       apiKey: "",
       models: [
@@ -1553,8 +1569,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002978",
     settingsConfig: {
       name: "千问AI平台 Token Plan",
-      baseUrl:
-        "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      baseUrl: "https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1",
       api: "openai-completions",
       apiKey: "",
       models: [
@@ -1584,7 +1599,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002975",
     settingsConfig: {
       name: "QwenCloud",
-      baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+      baseUrl:
+        "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1",
       api: "openai-completions",
       apiKey: "",
       models: [
@@ -1640,8 +1656,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002981",
     settingsConfig: {
       name: "QwenCloud Token Plan",
-      baseUrl:
-        "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+      baseUrl: "https://token-plan.maas.qwencloudapi.com/compatible-mode/v1",
       api: "openai-completions",
       apiKey: "",
       models: [
@@ -2049,6 +2064,28 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     category: "aggregator",
     icon: "aihubmix",
     iconColor: "#006FFB",
+  },
+  {
+    name: "Genesis",
+    providerKey: "cc-switch-genesis",
+    websiteUrl: "https://genesis.moi.matrixorigin.cn/taas/",
+    apiKeyUrl: "https://uc.moi.matrixorigin.cn/account/credentials?app=genesis",
+    // 矩阵起源 TaaS 走 Chat Completions，Pi 1.2.0 实测 kimi-k3 可用。Kimi Code /
+    // MiniMax Code / DeepSeek Harness / Oh My Pi 由这条派生，未逐个实测（#9269）
+    settingsConfig: {
+      name: "Genesis",
+      baseUrl: "https://token.moi.matrixorigin.cn/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        {
+          ...piModel("moonshotai/kimi-k3", { id: "kimi-k3" }),
+          compat: { ...OPENAI_COMPLETIONS_COMPAT },
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "genesis",
   },
   {
     name: "CherryIN",

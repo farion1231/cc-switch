@@ -70,7 +70,7 @@ describe("xAI OAuth provider presets", () => {
     expect(preset!.auth).toEqual({ OPENAI_API_KEY: "" });
     expect(extractCodexBaseUrl(preset!.config)).toBe("https://api.x.ai/v1");
     expect(extractCodexWireApi(preset!.config)).toBe("responses");
-    expect(extractCodexModelName(preset!.config)).toBe("grok-4.5");
+    expect(extractCodexModelName(preset!.config)).toBe("grok-4.7");
     expect(preset!.modelCatalog).toEqual([
       expect.objectContaining({
         model: "grok-4.7",
@@ -104,8 +104,14 @@ describe("xAI OAuth provider presets", () => {
     expect(preset!.auth).toEqual({ OPENAI_API_KEY: "" });
     expect(extractCodexBaseUrl(preset!.config)).toBe("https://api.x.ai/v1");
     expect(extractCodexWireApi(preset!.config)).toBe("responses");
-    expect(extractCodexModelName(preset!.config)).toBe("grok-4.5");
+    expect(extractCodexModelName(preset!.config)).toBe("grok-4.7");
     expect(preset!.modelCatalog).toEqual([
+      expect.objectContaining({
+        model: "grok-4.7",
+        contextWindow: 500000,
+        supportsParallelToolCalls: true,
+        inputModalities: ["text", "image"],
+      }),
       expect.objectContaining({
         model: "grok-4.5",
         contextWindow: 500000,

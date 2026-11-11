@@ -17,7 +17,7 @@ impl Database {
     pub fn get_setting(&self, key: &str) -> Result<Option<String>, AppError> {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
-            .prepare("SELECT value FROM settings WHERE key = ?1")
+            .prepare_cached("SELECT value FROM settings WHERE key = ?1")
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let mut rows = stmt
