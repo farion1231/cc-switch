@@ -855,6 +855,9 @@ mod tests {
 
     #[test]
     fn sqlite_sync_only_rebuilds_the_changed_session() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         for (provider, table) in [
             ("opencode", "part"),
             ("hermes", "messages"),
@@ -1632,6 +1635,9 @@ mod tests {
 
     #[test]
     fn reopening_with_another_version_rebuilds_the_index() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(INDEX_FILE);
         {

@@ -101,6 +101,39 @@ const KIMI_K3_COMPAT = {
  */
 const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
+    name: "TokenPlus",
+    websiteUrl: "https://www.tokenplus.cn/",
+    apiKeyUrl: "https://www.tokenplus.cn/workspace",
+    category: "aggregator",
+    partnerPromotionKey: "tokenplus",
+    icon: "tokenplus",
+    providerKey: "cc-switch-tokenplus",
+    settingsConfig: {
+      name: "TokenPlus",
+      baseUrl: "https://api.tokenplus.cn/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("deepseek/deepseek-v4.1-flash-1017", {
+          id: "deepseek/deepseek-v4.1-flash-1017",
+          name: "DeepSeek V4.1 Flash 1017",
+        }),
+        piModel("zai/glm-5.3-flash", {
+          id: "z-ai/glm-5.3-flash",
+          name: "GLM 5.3 Flash",
+        }),
+        piModel("moonshotai/kimi-k3.1-pro", {
+          id: "moonshot-ai/kimi-k3.1-pro",
+          name: "Kimi K3.1 Pro",
+        }),
+        piModel("minimax/minimax-m3.1-flash", {
+          id: "minimax/m3.1-flash",
+          name: "MiniMax M3.1 Flash",
+        }),
+      ],
+    },
+  },
+  {
     name: "Kimi",
     family: "kimi",
     planKey: "payg",
@@ -1075,7 +1108,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     },
     category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "ccsub",
     icon: "ccsub",
   },
   {

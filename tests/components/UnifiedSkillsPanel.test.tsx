@@ -63,6 +63,7 @@ vi.mock("@/hooks/useSkills", () => ({
     isError: false,
     refetch: vi.fn(),
   }),
+  useRefreshLocalSkillMetadata: () => ({}),
   useSkillBackups: () => ({
     data: m.backups,
     refetch: m.refetchBackups,
@@ -971,6 +972,7 @@ describe("UnifiedSkillsPanel", () => {
           kimi: false,
           dsh: false,
           agy: false,
+          copilot: false,
         },
       },
     ]);

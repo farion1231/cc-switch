@@ -183,6 +183,7 @@
     "managedByHermesHint": "Defined in Hermes' providers: dict. Edit or remove it via Hermes Web UI.",
     "openTerminal": "Open Terminal with This Provider",
     "openTerminalIsolated": "Open Terminal with This Provider (Isolated)",
+    "openTerminalNeedsRoute": "This card only works through Routing: a terminal would connect straight to its address, without the credentials and format conversion Routing provides. Turn on Routing, then run the client in a terminal directly",
     "openTerminalWithProvider": "Open Terminal with This Provider",
     "terminalOpened": "Terminal opened",
     "terminalOpenFailed": "Failed to open terminal",
@@ -204,7 +205,8 @@
       "extraArgsHint": "Added after the launch command, for this terminal only. Separate with spaces; quote values that contain spaces.",
       "agySwitchTitle": "This switches agy's sign-in",
       "agySwitchBody": "Before opening, agy's sign-in switches to {{account}}, and agy sessions started afterwards use this account.",
-      "agySwitchRunning": "agy is running: open agy sessions keep the previous account and may write it back. Quit them first if you can."
+      "agySwitchRunning": "agy is running: open agy sessions keep the previous account and may write it back. Quit them first if you can.",
+      "isolationBodyCopilot": "copilot in this terminal starts with --model set to the first model of \"{{name}}\", for this session only. The endpoint and key come from Copilot's providers.json, so other terminals can pick it with /model too."
     },
     "name": "Name",
     "namePlaceholder": "e.g., Claude Official",
@@ -391,7 +393,14 @@
     "windowControlFailed": "Window control failed: {{error}}",
     "officialBlockedByProxy": "Cannot switch to official provider while local routing is active. Using routing with official APIs may cause account bans.",
     "proxyOfficialWarning": "Current provider {{name}} is official. Consider switching to a third-party provider before using local routing.",
-    "proxyLoopbackHijacked": "Requests from {{app}} to the local route {{origin}} will be picked up by the system proxy, so {{app}} will fail with 502 errors. Make loopback addresses connect directly in your proxy tool (for example, add IP-CIDR,127.0.0.0/8,DIRECT,no-resolve at the top of your Clash rules), then fully quit and reopen {{app}}."
+    "proxyLoopbackHijacked": "Requests from {{app}} to the local route {{origin}} will be picked up by the system proxy, so {{app}} will fail with 502 errors. Make loopback addresses connect directly in your proxy tool (for example, add IP-CIDR,127.0.0.0/8,DIRECT,no-resolve at the top of your Clash rules), then fully quit and reopen {{app}}.",
+    "codexHistorySplit": {
+      "hint": "{{count}} sessions from {{previous}} are now read-only",
+      "officialBucket": "the official subscription",
+      "thirdPartyBucket": "third-party providers",
+      "migrationFinished": "Migrated {{count}} old sessions. Restart Codex to continue them.",
+      "migrationFailed": "Failed to migrate old sessions: {{error}}. CC Switch will retry on next launch."
+    }
   },
   "confirm": {
     "deleteProvider": "Delete Provider",
@@ -411,14 +420,14 @@
     },
     "unifyCodexHistory": {
       "title": "Unified Codex session history",
-      "message": "When enabled, the Codex CLI resume list shows official subscription and third-party sessions together (the Codex desktop app can show all sessions since a recent update and is unaffected). Note: resuming an old session across providers may fail because the other backend cannot decrypt its encrypted_content reasoning.\n\nYou can also migrate your existing official session history into the shared list (backed up to ~/.cc-switch/backups first; you can restore it when turning this off).",
+      "message": "When enabled, the official subscription runs under the shared \"custom\" provider id, so official and third-party sessions share one group: newer Codex can continue both, and the CLI resume list shows them together.\n\nYou can also migrate your existing official sessions; if you do, CC Switch also moves any official sessions left behind on every launch (backed up to ~/.cc-switch/backups first; you can restore them when turning this off). Sessions you don't migrate stay read-only in newer Codex. Restart Codex after the migration.\n\nNote: resuming an old session across providers may fail because the other backend cannot decrypt its encrypted_content reasoning.",
       "migrateExisting": "Also migrate existing official session history",
       "confirm": "I understand, enable"
     },
     "unifyCodexHistoryOff": {
       "title": "Turn off unified session history",
-      "message": "When turned off, the Codex CLI goes back to separate session lists for the official subscription and third-party providers (the desktop app still shows all sessions). Sessions created while this was on can't be told apart, so they stay in the third-party history and the CLI won't show them under the official subscription.",
-      "restoreBackup": "Restore the official sessions migrated at enable time back to the official history (exact restore from backup)",
+      "message": "When turned off, official and third-party sessions split into two groups again: newer Codex can only continue the current provider's group, and the other group becomes read-only. Sessions created while this was on can't be told apart, so they stay in the third-party group.",
+      "restoreBackup": "Restore the migrated official sessions to the official group (exact restore from backup)",
       "confirm": "Turn off"
     },
     "usage": {
@@ -526,6 +535,13 @@
         "mediaFallbackDescription": "When a provider does not support image input (it declares text-only capability, or the upstream returns an unsupported-image error), automatically replaces image blocks with an [Unsupported Image] marker so the conversation is not interrupted",
         "mediaHeuristic": "Text-Only Model Preflight",
         "mediaHeuristicDescription": "Before sending, strips images for models in the built-in confirmed text-only registry. Turning this off only disables the proxy's registry-based preflight; declared text-only handling and upstream-error fallback remain, and Codex model-catalog capability declarations are unchanged"
+      },
+      "privacyFilter": {
+        "title": "Privacy Filter",
+        "description": "When on, the proxy replaces personal data (email, phone number, national ID, bank card, IP) and secrets (API keys, tokens, passwords, private keys) in user input and system prompts with placeholders such as [EMAIL] and [SECRET] before forwarding. When off, requests are forwarded unchanged. Placeholders follow the interface language. This is a local, rule-based filter and replacements can't be undone. It applies in Routing and Aggregation modes; in Direct mode, requests don't pass through CC Switch and aren't filtered. Model replies, thinking blocks, tool-call arguments, and images are left unchanged; tool results are left unchanged by default and can be included with the switch below. Loopback addresses such as 127.0.0.1 don't count as IPs. Ported from packyme/privacy-filter.",
+        "enabled": "Enable privacy filter",
+        "filterToolResults": "Also filter tool results",
+        "filterToolResultsDescription": "Tool results such as file contents and command output are replaced too. The model then sees only placeholders: Edit / apply_patch can fail because they no longer match the original text, and a full-file rewrite can write placeholders into your real files. Turn this on only if you accept that."
       },
       "optimizer": {
         "title": "Bedrock Request Optimizer",
@@ -883,6 +899,8 @@
     "languageOptionEnglish": "English",
     "languageOptionJapanese": "日本語",
     "languageOptionTurkish": "Türkçe",
+    "languageOptionKorean": "한국어",
+    "languageOptionRussian": "Русский",
     "windowBehavior": "Window Behavior",
     "windowBehaviorHint": "Configure window minimize and Claude plugin integration policies.",
     "launchOnStartup": "Launch on Startup",
@@ -910,10 +928,18 @@
       "hint": "Pause at either cutoff. Defaults: 95% / 98%. Saved changes apply to new requests immediately.",
       "invalid": "Enter whole numbers from 1 to 99."
     },
+    "codexPauseOfficialLogin": {
+      "title": "Pause the official login",
+      "description": "Turn this on when the official quota is used up and Codex has locked the send button; third-party models in Aggregation and Routing keep working. Fully quit and reopen Codex after turning it on or off.",
+      "help": "Turn this on when the official quota is used up and Codex has locked the send button (even third-party models can't be sent). Codex then stops using the official login, so it no longer locks the send button over the official quota, and third-party models in Aggregation and Routing keep working. The login stays saved on this computer; you are not signed out. Applies only in Routing or Aggregation mode; Direct is unaffected. While it's on: official models can't be used and you'll be asked to pick a third-party model; Codex hides account and usage info and may show its onboarding questions on the first launch; your existing threads under Projects in the sidebar are hidden for now (not lost; they come back when you turn this off); new sessions are recorded under the custom group and become view-only after you switch back to official. Turn it off once the official quota is back. Fully quit and reopen Codex after turning it on or off.",
+      "pausedToast": "Official login paused. Fully quit and reopen Codex for it to take effect",
+      "resumedToast": "Official login resumed. Fully quit and reopen Codex for it to take effect",
+      "saveFailed": "Failed to save: {{error}}"
+    },
     "preserveCodexOfficialAuthOnSwitch": "Keep official login for direct switches",
     "preserveCodexOfficialAuthOnSwitchDescription": "Controls third-party switches when local routing is off. Takeover routing always preserves the Codex official login.",
     "unifyCodexSessionHistory": "Unified Codex session history",
-    "unifyCodexSessionHistoryDescription": "Affects the Codex CLI only: its resume list shows only the current provider's sessions. When enabled, the official subscription runs under the shared \"custom\" provider id so official and third-party sessions appear in one list. The Codex desktop app can show all sessions since a recent update, so desktop-only users don't need this. You can optionally migrate existing official sessions in (backed up first) and restore them from backup when turning it off. Note: resuming an old session across providers may fail because its encrypted_content reasoning can only be decrypted by the backend that created it.",
+    "unifyCodexSessionHistoryDescription": "Official subscriptions run under the same \"custom\" provider id as third-party providers, so all sessions share one group. Newer Codex (desktop 26.1103 / CLI 0.167 and later) can only continue sessions in the current provider's group; the other group becomes read-only, and the CLI resume list only shows the current group. Turn this on if you switch between official and third-party providers. You can optionally migrate official sessions into the shared group (backed up first) and restore them from backup when you turn it off. Note: resuming an old session across providers may fail because its encrypted_content reasoning can only be decrypted by the backend that created it.",
     "codexStackClassicSubagents": "Classic sub-agent tools in aggregation",
     "codexStackClassicSubagentsDescription": "Must be on when the main agent and a sub-agent use different providers, or the sub-agent cannot receive its task.",
     "codexStackClassicSubagentsForcedV2": "Codex config.toml turns on [features] multi_agent_v2, which takes precedence over this setting, so it has no effect.",
@@ -1160,6 +1186,7 @@
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
+    "copilot": "Copilot CLI",
     "omp": "Oh My Pi"
   },
   "mcode": {
@@ -1329,7 +1356,7 @@
     "defaultModelPlaceholder": "e.g. grok-4.5",
     "defaultModelHint": "The model Grok Build requests by default; change it anytime.",
     "reasoningEffortHint": "Turn on when the upstream supports thinking depth such as low/high/max. Also turns on thinking mode and maps the request's reasoning effort to the upstream Chat parameter.",
-    "maxOutputTokensHint": "The default limit of 8192 can cut off long answers or deep thinking. This value is sent as Anthropic's max_tokens.",
+    "maxOutputTokensHint": "Defaults to 32000, and thinking counts toward it. If the gateway's output limit is lower it returns 400; enter a value it supports here. This value is sent as Anthropic's max_tokens.",
     "keyFieldsHint": "The default model (models.default) and the model table it points to follow the provider; everything else is Grok Build global settings and applies to every provider after saving.",
     "inactiveFieldsHint": "Saved in this provider by an older version; switching no longer applies them. Click one to copy its TOML and paste it above if you need it.",
     "inactiveFieldCopied": "Copied",
@@ -1619,7 +1646,8 @@
       "rawMatch": "Matches in source",
       "expandContent": "Show full content",
       "collapseContent": "Collapse"
-    }
+    },
+    "copilotDeleteHint": "Delete this session in GitHub Copilot CLI so its session store stays consistent"
   },
   "console": {
     "providerSwitchReceived": "Received provider switch event:",
@@ -1671,6 +1699,7 @@
     "providerKeyStatusLoading": "Provider identifier status is still loading. Please try again shortly.",
     "getApiKey": "Get API Key",
     "partnerPromotion": {
+      "tokenplus": "TokenPlus makes AI coding more reliable, affordable, and worry-free: access models from multiple providers with one key, maintain stability through intelligent switching, save with optimized pricing and caching, and manage billing, teams, and data security in one place.",
       "kimi": "New Kimi users get 10% of their first successful top-up back as bonus API credit, up to CNY ¥1,000.",
       "a6api": "A6API is a token aggregation platform with a built-in real-time price leaderboard that automatically picks the lowest price on the market. Smooth and stable, simple to operate, and no more tedious price comparisons. Register now to claim free trial credits!",
       "sudocode": "With one SudoCode key, Claude Code and Claude Desktop use Claude Opus 5, while Codex uses GPT-5.6. Sign up, join QQ group 726213516, and contact the group owner to claim CNY ¥10 in trial credit.",
@@ -1697,7 +1726,6 @@
       "volcengine_agentplan": "Volcengine Ark Agent Plan offers exclusive benefits for CC Switch users: subscribe via this link and new customers get 75% off for the first two months, plus an extra 5% off with the exclusive invite code 6J6FV5N2 — as low as ¥9.4/month!",
       "volcengine_codingplan": "Volcengine Ark Coding Plan offers exclusive benefits for CC Switch users: subscribe via this link and new customers get 75% off for the first two months, plus an extra 5% off with the exclusive invite code 6J6FV5N2 — as low as ¥9.4/month!",
       "byteplus": "Register via this link to get 500,000 tokens of free inference quota per model.",
-      "ccsub": "CCSub is a stable, affordable AI API relay — a drop-in replacement for Claude.ai & OpenAI subscriptions, with one key for all models at ~30% of direct API cost.",
       "subrouter": "SubRouter is an AI relay aggregator that lets one key access multiple models and providers.",
       "qiniu": "Qiniu Cloud is a multi-protocol AI relay: one key for native Claude, GPT, and Gemini models, with the Anthropic, OpenAI, and Gemini APIs all supported.",
       "haoai": "hao.ai is a fast, stable unified LLM API gateway for developers and teams: one key reaches GPT, Claude, Grok, and other leading models over OpenAI- and Anthropic-compatible APIs, with model routing, failover, and full request logs, at prices as low as 15% of official reference rates. CC Switch users who register via this link get 5% bonus credit on their first order!",
@@ -1908,10 +1936,47 @@
     "copyCode": "Copy code",
     "migrationFailed": "Legacy auth migration failed: {{error}}",
     "loadModelsFailed": "Failed to load Copilot models",
+    "noPickerModels": "This GitHub account has no Copilot models available. This is typical for Copilot Free accounts; please make sure the account has Copilot Pro or a higher plan.",
+    "noPickerModelsClaude": "This GitHub account has no Copilot models available. This is typical for Copilot Free accounts; please make sure the account has Copilot Pro or a higher plan. You can still type gpt-4.1 or gpt-4o into the model field manually.",
+    "noModelsForApiFormat": "None of this account's Copilot models support the selected upstream format. Try a different upstream format.",
     "deploymentType": "GitHub Deployment Type",
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Enterprise Server",
-    "enterpriseDomainPlaceholder": "e.g. company.ghe.com"
+    "enterpriseDomainPlaceholder": "e.g. company.ghe.com",
+    "form": {
+      "officialTitle": "Uses Copilot CLI's GitHub sign-in",
+      "officialHint": "Open Terminal starts copilot with this card's model. Bind an Auth Center account to start it with that account.",
+      "byokTitle": "Added to Copilot's providers.json",
+      "byokHint": "Add writes this provider and its models to Copilot's own providers.json (readable only by your user account). Any copilot you start can then pick \"card ID/model\" in /model. Remove deletes only this provider's entries and leaves the rest of the file as is.",
+      "apiFormat": "API format",
+      "baseUrl": "API endpoint",
+      "baseUrlHint": "OpenAI-compatible endpoints usually end in /v1 (e.g. Ollama http://localhost:11434/v1); Anthropic uses the host only (https://api.anthropic.com).",
+      "model": "Model",
+      "officialModelHint": "Leave empty to use Copilot's current model. Passed as --model for this session only; /model in copilot still works.",
+      "reasoningEffort": "Reasoning effort",
+      "reasoningEffortDefault": "Copilot default",
+      "reasoningEffortHint": "Passed as --reasoning-effort when the terminal opens. With none, Copilot doesn't send reasoning.summary on Responses requests, which some relays reject.",
+      "maxPromptTokens": "Max prompt tokens",
+      "maxOutputTokens": "Max output tokens",
+      "byokModelsHint": "Each model shows up in Copilot's /model as \"{{id}}/model ID\"; add at least one. The model ID is also the name sent to the endpoint unless you expand the row and set an upstream model name. Opening a terminal from this card uses the first model.",
+      "providerIdHint": "Also the provider name in Copilot; /model shows \"{{id}}/model\". Can't be changed after saving. Letters, numbers, dots, underscores and hyphens only.",
+      "duplicateModelId": "Duplicate model ID: {{model}}",
+      "wireModel": "Upstream model name",
+      "wireModelHint": "The model name sent to the endpoint (wireModel). Leave empty to use the model ID.",
+      "maxContextWindowTokens": "Context window",
+      "azureApiVersion": "Azure API version"
+    },
+    "quota": {
+      "accountNotInAuthCenter": "The Auth Center has no account for {{login}}, which Copilot CLI is signed in with. Add it in the Auth Center, or bind an account on this card.",
+      "notSignedIn": "Copilot CLI isn't signed in. Run copilot and use /login, or bind an Auth Center account on this card."
+    },
+    "defaultCannotRemove": "Copilot's default model belongs to this provider, so it can't be removed or deleted. Pick another provider's model with /model in copilot first.",
+    "terminalNeedsAdd": "Add this provider to Copilot first so the terminal can select its model.",
+    "section": {
+      "official": "Official sign-in · {{count}}",
+      "officialHelpTitle": "Official sign-in",
+      "officialHelp": "Uses Copilot CLI's own GitHub sign-in and writes no files. Open Terminal starts copilot with the card's model and bound account."
+    }
   },
   "codexOauth": {
     "authStatus": "Auth status",
@@ -2054,8 +2119,8 @@
     "impersonateClaudeCodeLabel": "Emulate Claude Code client",
     "impersonateClaudeCodeHint": "Turn on when the gateway only accepts Claude Code: sends Claude Code's request headers and puts its identity on the first line of the system prompt.",
     "maxOutputTokensLabel": "Max output tokens",
-    "maxOutputTokensPlaceholder": "Leave empty to use the default 8192",
-    "maxOutputTokensHint": "Codex sends no output limit, so the default 8192 can cut off long answers or deep thinking. This value is sent as Anthropic's max_tokens.",
+    "maxOutputTokensPlaceholder": "Leave empty to use the default 32000",
+    "maxOutputTokensHint": "Codex sends no output limit, so 32000 is sent by default, and thinking counts toward it. If the gateway's output limit is lower it returns 400; enter a value it supports here. This value is sent as Anthropic's max_tokens.",
     "promptCacheRoutingLabel": "Prompt cache routing",
     "promptCacheRoutingAuto": "Auto (recommended)",
     "promptCacheRoutingEnabled": "Enabled",
@@ -4224,6 +4289,7 @@
       "geminiFlashLite": "Lite",
       "agyGeminiFiveHour": "Gemini 5h",
       "agyGeminiWeekly": "Gemini Wk",
+      "agyGeminiArgonWeekly": "Argon Wk",
       "agyThirdPartyFiveHour": "Claude 5h",
       "agyThirdPartyWeekly": "Claude Wk",
       "monthly": "Mo",
@@ -4243,6 +4309,7 @@
     "agyThirdParty": "Claude/GPT",
     "agyGeminiFiveHour": "Gemini 5-hour",
     "agyGeminiWeekly": "Gemini weekly",
+    "agyGeminiArgonWeekly": "Argon weekly",
     "agyThirdPartyFiveHour": "Claude/GPT 5-hour",
     "agyThirdPartyWeekly": "Claude/GPT weekly",
     "weeklyLimit": "Weekly",
@@ -4313,6 +4380,8 @@
     "notRunnable": "Can't run",
     "updateNeedsNode": "{{version}} requires Node {{required}}, but this installation runs on Node {{current}}. Upgrade Node first.",
     "otherInstalls": "{{count}} more install(s)",
+    "toolQueued": "Queued, waiting for another app to finish",
+    "toolElapsed": "{{time}} elapsed",
     "installsFound": "{{count}} installs found",
     "wslFlag": "Flag",
     "installHint": {
@@ -4326,6 +4395,7 @@
       "pi": "Installs with npm",
       "mcode": "Installs with the official script, falls back to npm",
       "agy": "Installs with the official script",
+      "copilot": "Installs with npm",
       "omp": "Installs with the official script"
     }
   },
@@ -4393,6 +4463,9 @@
       "serviceDown": "{{app}} is in {{mode}} mode but the routing service isn't running, so requests will fail.",
       "startService": "Start service",
       "backToDirect": "Back to direct",
+      "officialLoginPaused": "Codex official login is paused",
+      "officialLoginPausedBody": "Official models can't be used, and your existing threads under Projects in the Codex sidebar are hidden for now. Once the official quota is back, click “Resume official login”, then fully quit and reopen Codex.",
+      "resumeOfficialLogin": "Resume official login",
       "attachFailed": "{{mode}} couldn't reconnect last time, so {{app}} went back to direct."
     },
     "toast": {
