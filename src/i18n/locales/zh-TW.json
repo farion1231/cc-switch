@@ -4341,6 +4341,7 @@
     "usage": "用量統計",
     "auth": "授權中心",
     "authNeedsReauth": "有帳號需要重新登入",
+    "skills": "Skills",
     "prompts": "提示詞",
     "sessions": "工作階段",
     "apps": "應用",

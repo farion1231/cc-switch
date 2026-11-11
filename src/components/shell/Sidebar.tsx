@@ -274,7 +274,7 @@ function MainDirectory({
     alert?: string;
   }[] = [
     { page: "mcp", label: "MCP", icon: Server },
-    { page: "skills", label: "Skills", icon: SkillsIcon },
+    { page: "skills", label: t("nav.skills"), icon: SkillsIcon },
     { page: "prompts", label: t("nav.prompts"), icon: BookOpen },
     { page: "sessions", label: t("nav.sessions"), icon: History },
     {

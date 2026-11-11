@@ -4341,6 +4341,7 @@
     "usage": "사용량",
     "auth": "인증 센터",
     "authNeedsReauth": "다시 로그인해야 하는 계정이 있습니다.",
+    "skills": "스킬",
     "prompts": "프롬프트",
     "sessions": "세션",
     "apps": "앱",
