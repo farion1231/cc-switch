@@ -365,11 +365,9 @@ fn find_macos_desktop_app_target_in_roots(
 
 #[cfg(target_os = "linux")]
 fn find_desktop_app_target(app: &str) -> Result<Option<DesktopAppTarget>, String> {
-    if app == "codex" {
-        return Ok(None);
-    }
     let home = dirs::home_dir().ok_or_else(|| "无法获取用户目录".to_string())?;
     Ok(match app {
+        "codex" => find_linux_codex_desktop_application(&home).map(DesktopAppTarget::Application),
         "claude-desktop" => {
             find_linux_claude_desktop_executable(&home).map(DesktopAppTarget::Application)
         }
@@ -378,6 +376,22 @@ fn find_desktop_app_target(app: &str) -> Result<Option<DesktopAppTarget>, String
         }
         _ => None,
     })
+}
+
+#[cfg(target_os = "linux")]
+fn find_linux_codex_desktop_application(home: &Path) -> Option<PathBuf> {
+    let executable_directories = linux_agent_executable_directories(home);
+    let data_directories = linux_desktop_data_directories(home);
+    let package_executables = [
+        PathBuf::from("/usr/bin/chatgpt"),
+        PathBuf::from("/usr/lib/chatgpt/ChatGPT"),
+    ];
+    find_linux_codex_desktop_application_in_roots(
+        home,
+        &executable_directories,
+        &data_directories,
+        &package_executables,
+    )
 }
 
 #[cfg(target_os = "linux")]
@@ -404,6 +418,24 @@ fn find_linux_opencode_desktop_application(home: &Path) -> Option<PathBuf> {
         }
     }
 
+    let data_directories = linux_desktop_data_directories(home);
+
+    let appimage_directories = [
+        home.join("Applications"),
+        home.join(".local/Applications"),
+        home.join("Downloads"),
+        home.join("Desktop"),
+    ];
+    find_linux_opencode_desktop_application_in_roots(
+        home,
+        &executable_directories,
+        &data_directories,
+        &appimage_directories,
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn linux_desktop_data_directories(home: &Path) -> Vec<PathBuf> {
     let data_home = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .filter(|path| path.is_absolute())
@@ -423,19 +455,7 @@ fn find_linux_opencode_desktop_application(home: &Path) -> Option<PathBuf> {
             data_directories.push(directory);
         }
     }
-
-    let appimage_directories = [
-        home.join("Applications"),
-        home.join(".local/Applications"),
-        home.join("Downloads"),
-        home.join("Desktop"),
-    ];
-    find_linux_opencode_desktop_application_in_roots(
-        home,
-        &executable_directories,
-        &data_directories,
-        &appimage_directories,
-    )
+    data_directories
 }
 
 #[cfg(target_os = "linux")]
@@ -514,6 +534,122 @@ fn linux_agent_executable_directories_from_environment(
         push(PathBuf::from(path));
     }
     directories
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn find_linux_codex_desktop_application_in_roots(
+    home: &Path,
+    executable_directories: &[PathBuf],
+    data_directories: &[PathBuf],
+    package_executables: &[PathBuf],
+) -> Option<PathBuf> {
+    find_linux_codex_application_from_desktop_entries(
+        home,
+        executable_directories,
+        data_directories,
+    )
+    .or_else(|| {
+        package_executables
+            .iter()
+            .find(|path| path.is_file())
+            .cloned()
+    })
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn find_linux_codex_application_from_desktop_entries(
+    home: &Path,
+    executable_directories: &[PathBuf],
+    data_directories: &[PathBuf],
+) -> Option<PathBuf> {
+    for data_directory in data_directories {
+        let applications = data_directory.join("applications");
+        let mut entries = std::fs::read_dir(applications)
+            .ok()
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("desktop"))
+            })
+            .collect::<Vec<_>>();
+        entries.sort();
+
+        for entry in entries {
+            let Ok(content) = std::fs::read_to_string(&entry) else {
+                continue;
+            };
+            if !is_chatgpt_desktop_entry(&entry, &content) {
+                continue;
+            }
+            let Some(command) = linux_desktop_entry_command(&content) else {
+                continue;
+            };
+            if !is_chatgpt_desktop_command(&command) {
+                continue;
+            }
+            if let Some(application) =
+                resolve_linux_desktop_command(home, executable_directories, command.as_str())
+            {
+                return Some(application);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn is_chatgpt_desktop_entry(path: &Path, content: &str) -> bool {
+    let file_stem = path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if is_chatgpt_desktop_identifier(&file_stem) {
+        return true;
+    }
+
+    let mut in_desktop_entry = false;
+    content.lines().any(|line| {
+        let line = line.trim();
+        if line.starts_with('[') && line.ends_with(']') {
+            in_desktop_entry = line.eq_ignore_ascii_case("[Desktop Entry]");
+            return false;
+        }
+        if !in_desktop_entry {
+            return false;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            return false;
+        };
+        let key = key.trim().split('[').next().unwrap_or_default();
+        let value = value.trim().to_ascii_lowercase();
+        match key {
+            "Name" => value == "chatgpt" || value.starts_with("chatgpt "),
+            "Icon" | "StartupWMClass" => is_chatgpt_desktop_identifier(&value),
+            _ => false,
+        }
+    })
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn is_chatgpt_desktop_identifier(value: &str) -> bool {
+    matches!(
+        value,
+        "chatgpt" | "openai-chatgpt" | "openai.chatgpt" | "com.openai.chatgpt"
+    ) || value.starts_with("chatgpt-")
+        || value.starts_with("chatgpt.")
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn is_chatgpt_desktop_command(command: &str) -> bool {
+    Path::new(command)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("chatgpt"))
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -1831,12 +1967,103 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
-    fn linux_codex_is_supported_but_not_installed() {
-        let status = desktop_app_status("codex").unwrap();
-        assert!(status.supported);
-        assert!(!status.installed);
-        assert!(!status.running);
+    fn codex_linux_desktop_resolves_the_official_chatgpt_entry() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        let executable_directory = root.path().join("usr/bin");
+        let data_directory = root.path().join("usr/share");
+        let applications = data_directory.join("applications");
+        let application = executable_directory.join("chatgpt");
+        std::fs::create_dir_all(&executable_directory).unwrap();
+        std::fs::create_dir_all(&applications).unwrap();
+        std::fs::write(&application, []).unwrap();
+        std::fs::write(
+            applications.join("com.openai.chatgpt.desktop"),
+            format!(
+                "[Desktop Entry]\nName=ChatGPT\nIcon=com.openai.chatgpt\nExec=env CHATGPT_CHANNEL=stable \"{}\" %U\nType=Application\n",
+                application.to_string_lossy()
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(
+            find_linux_codex_desktop_application_in_roots(
+                &home,
+                &[executable_directory],
+                &[data_directory],
+                &[],
+            ),
+            Some(application)
+        );
+    }
+
+    #[test]
+    fn codex_linux_desktop_finds_the_official_package_binary() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        let application = root.path().join("usr/lib/chatgpt/ChatGPT");
+        std::fs::create_dir_all(application.parent().unwrap()).unwrap();
+        std::fs::write(&application, []).unwrap();
+
+        assert_eq!(
+            find_linux_codex_desktop_application_in_roots(&home, &[], &[], &[application.clone()],),
+            Some(application)
+        );
+    }
+
+    #[test]
+    fn codex_linux_desktop_does_not_confuse_cli_commands_with_the_desktop_app() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        let executable_directory = root.path().join("bin");
+        let data_directory = root.path().join("share");
+        let applications = data_directory.join("applications");
+        std::fs::create_dir_all(&executable_directory).unwrap();
+        std::fs::create_dir_all(&applications).unwrap();
+        std::fs::write(executable_directory.join("codex"), []).unwrap();
+        std::fs::write(executable_directory.join("chatgpt"), []).unwrap();
+        std::fs::write(
+            applications.join("other.desktop"),
+            "[Desktop Entry]\nName=Other\nExec=chatgpt\nType=Application\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            find_linux_codex_desktop_application_in_roots(
+                &home,
+                &[executable_directory],
+                &[data_directory],
+                &[],
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn codex_linux_desktop_entry_must_launch_chatgpt_not_the_codex_cli() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        let executable_directory = root.path().join("bin");
+        let data_directory = root.path().join("share");
+        let applications = data_directory.join("applications");
+        std::fs::create_dir_all(&executable_directory).unwrap();
+        std::fs::create_dir_all(&applications).unwrap();
+        std::fs::write(executable_directory.join("codex"), []).unwrap();
+        std::fs::write(
+            applications.join("chatgpt.desktop"),
+            "[Desktop Entry]\nName=ChatGPT\nExec=codex\nType=Application\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            find_linux_codex_desktop_application_in_roots(
+                &home,
+                &[executable_directory],
+                &[data_directory],
+                &[],
+            ),
+            None
+        );
     }
 }
