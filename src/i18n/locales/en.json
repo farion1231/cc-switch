@@ -5019,6 +5019,12 @@
       "removeAria": "Remove repository {{repo}}",
       "readFailed": "Read failed"
     },
+    "pluginSkills": {
+      "title": "Provided by Claude Code plugins",
+      "lead": "Claude Code loads these through its plugin system. CC Switch lists them but doesn't manage them.",
+      "helpTitle": "Why these can't be imported",
+      "help": "A copy here would load twice in Claude Code. Use /plugin in Claude Code to enable or remove them."
+    },
     "import": {
       "title": "Import Skills from this computer",
       "helpTitle": "What counts as already on this computer",
@@ -5029,7 +5035,6 @@
       "selectAll": "Select all",
       "selectNone": "Select none",
       "foundIn": "Found in: {{places}}",
-      "providedByPlugin": "Provided by plugin {{plugin}} — loaded by Claude Code, not importable",
       "foundCcSwitch": "CC Switch folder",
       "appsTitle": "Enable in these apps after importing",
       "appsHelpTitle": "Which apps are ticked by default",

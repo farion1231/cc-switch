@@ -5019,6 +5019,12 @@
       "removeAria": "リポジトリ {{repo}} を削除",
       "readFailed": "読み込み失敗"
     },
+    "pluginSkills": {
+      "title": "Claude Code プラグインが提供",
+      "lead": "これらの Skill は Claude Code のプラグインシステムが読み込みます。CC Switch は一覧表示のみで、管理はしません。",
+      "helpTitle": "取り込めない理由",
+      "help": "取り込むと Claude Code で二重に読み込まれ、プラグイン更新後はコピーが古くなります。Claude Code の /plugin で管理してください。"
+    },
     "import": {
       "title": "このコンピューターの Skill を取り込む",
       "helpTitle": "対象になるもの",
@@ -5029,7 +5035,6 @@
       "selectAll": "すべて選択",
       "selectNone": "選択を解除",
       "foundIn": "見つかった場所：{{places}}",
-      "providedByPlugin": "プラグイン {{plugin}} が提供 — Claude Code が読み込むためインポートできません",
       "foundCcSwitch": "CC Switch のフォルダー",
       "appsTitle": "取り込み後に有効にするアプリ",
       "appsHelpTitle": "既定でチェックされるアプリ",

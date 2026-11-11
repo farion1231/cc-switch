@@ -11,9 +11,11 @@ import type {
   SkillBackupEntry,
   SkillRepoFailure,
   SkillUpdateInfo,
+  UnmanagedSkill,
 } from "@/lib/api/skills";
 
 const m = vi.hoisted(() => ({
+  unmanaged: [] as UnmanagedSkill[],
   scanUnmanaged: vi.fn(),
   toggle: vi.fn(),
   bulkToggle: vi.fn(),
@@ -83,14 +85,7 @@ vi.mock("@/hooks/useSkills", () => ({
   }),
   useUninstallSkill: () => ({ mutateAsync: m.uninstall, isPending: false }),
   useScanUnmanagedSkills: () => ({
-    data: [
-      {
-        directory: "shared-skill",
-        name: "Shared Skill",
-        foundIn: ["grokbuild", "claude"],
-        path: "/tmp/shared-skill",
-      },
-    ],
+    data: m.unmanaged,
     refetch: m.scanUnmanaged,
   }),
   useImportSkillsFromApps: () => ({
@@ -152,6 +147,32 @@ const makeSkill = (overrides: Overrides = {}): InstalledSkill => {
   };
 };
 
+const SHARED_SKILL: UnmanagedSkill = {
+  directory: "shared-skill",
+  name: "Shared Skill",
+  foundIn: ["grokbuild", "claude"],
+  path: "/tmp/shared-skill",
+};
+
+const PLUGIN_A = "alpha-skills@market";
+const PLUGIN_B = "beta-skills@market";
+
+const pluginSkill = (name: string, pluginId: string): UnmanagedSkill => ({
+  directory: `${pluginId}/skills/${name}`,
+  name,
+  description: `${name} description`,
+  foundIn: ["claude-plugin"],
+  path: `/home/.claude/plugins/cache/market/${pluginId}/skills/${name}`,
+  readOnly: true,
+  pluginId,
+});
+
+const PLUGIN_SKILLS = [
+  pluginSkill("tdd", PLUGIN_A),
+  pluginSkill("code-review", PLUGIN_A),
+  pluginSkill("review", PLUGIN_B),
+];
+
 const renderPanel = (
   props: React.ComponentProps<typeof UnifiedSkillsPanel> = {},
 ) => render(<UnifiedSkillsPanel {...props} />);
@@ -172,16 +193,8 @@ describe("UnifiedSkillsPanel", () => {
     m.repoFailures = [];
     m.checking = false;
     m.visibleApps = ["claude", "codex", "pi"];
-    m.scanUnmanaged.mockReset().mockResolvedValue({
-      data: [
-        {
-          directory: "shared-skill",
-          name: "Shared Skill",
-          foundIn: ["grokbuild", "claude"],
-          path: "/tmp/shared-skill",
-        },
-      ],
-    });
+    m.unmanaged = [SHARED_SKILL];
+    m.scanUnmanaged.mockReset().mockResolvedValue({ data: [SHARED_SKILL] });
     m.toggle.mockReset().mockResolvedValue(true);
     m.bulkToggle
       .mockReset()
@@ -1030,5 +1043,157 @@ describe("UnifiedSkillsPanel", () => {
     );
     expect(m.toastError).not.toHaveBeenCalled();
     consoleErrorSpy.mockRestore();
+  });
+  describe("Skills provided by Claude Code plugins", () => {
+    it("lists them read-only, grouped by plugin, with no actions", async () => {
+      m.installed = [makeSkill()];
+      m.unmanaged = PLUGIN_SKILLS;
+      renderPanel();
+
+      const section = await screen.findByTestId("claude-plugin-skills");
+      expect(
+        within(section).getByRole("heading", {
+          name: "skillsPage.pluginSkills.title",
+        }),
+      ).toBeInTheDocument();
+
+      // 按插件分组、插件按 id 排序，组内 skill 按名字排序
+      const groups = within(section).getAllByRole("listitem");
+      expect(groups).toHaveLength(2);
+      expect(groups[0]).toHaveTextContent(PLUGIN_A);
+      expect(groups[1]).toHaveTextContent(PLUGIN_B);
+      expect(within(groups[0]).getByText("code-review")).toBeInTheDocument();
+      expect(within(groups[0]).getByText("tdd")).toBeInTheDocument();
+      expect(within(groups[1]).getByText("review")).toBeInTheDocument();
+      expect(within(groups[0]).getByText("2")).toBeInTheDocument();
+      expect(within(groups[1]).getByText("1")).toBeInTheDocument();
+
+      // 只读：没有勾选框，唯一的按钮是解释原因的「?」
+      expect(within(section).queryAllByRole("checkbox")).toHaveLength(0);
+      expect(
+        within(section)
+          .getAllByRole("button")
+          .map((button) => button.getAttribute("aria-label")),
+      ).toEqual(["skillsPage.pluginSkills.helpTitle"]);
+    });
+
+    it("keeps them out of every unmanaged count", async () => {
+      m.installed = [makeSkill()];
+      m.unmanaged = PLUGIN_SKILLS;
+      renderPanel();
+      await screen.findByTestId("claude-plugin-skills");
+
+      // 顶部「N 个 Skill 不在 CC Switch 管理中」不出现
+      expect(
+        screen.queryByText("skillsPage.banner.unmanaged"),
+      ).not.toBeInTheDocument();
+      // 「添加」菜单里的导入项没有数量徽标
+      await userEvent.click(
+        screen.getByRole("button", { name: "skillsPage.add" }),
+      );
+      const importItem = await screen.findByRole("menuitem", {
+        name: /skillsPage\.addMenu\.import/,
+      });
+      expect(within(importItem).queryByText(/^\d+$/)).not.toBeInTheDocument();
+    });
+
+    it("counts only the importable entries when both kinds are found", async () => {
+      m.installed = [makeSkill()];
+      m.unmanaged = [SHARED_SKILL, ...PLUGIN_SKILLS];
+      renderPanel();
+
+      expect(
+        await screen.findByText("skillsPage.banner.unmanaged"),
+      ).toBeInTheDocument();
+      await userEvent.click(
+        screen.getByRole("button", { name: "skillsPage.add" }),
+      );
+      const importItem = await screen.findByRole("menuitem", {
+        name: /skillsPage\.addMenu\.import/,
+      });
+      expect(within(importItem).getByText("1")).toBeInTheDocument();
+    });
+
+    it("opens the import dialog with importable Skills only", async () => {
+      m.installed = [makeSkill()];
+      m.unmanaged = [SHARED_SKILL, ...PLUGIN_SKILLS];
+      m.scanUnmanaged.mockResolvedValue({ data: m.unmanaged });
+      renderPanel();
+
+      await userEvent.click(
+        await screen.findByRole("button", {
+          name: "skillsPage.banner.reviewImport",
+        }),
+      );
+      const dialog = await screen.findByRole("dialog");
+      expect(within(dialog).getByText("Shared Skill")).toBeInTheDocument();
+      for (const skill of PLUGIN_SKILLS) {
+        expect(within(dialog).queryByText(skill.name)).not.toBeInTheDocument();
+      }
+
+      await userEvent.click(
+        within(dialog).getByRole("button", { name: "skillsPage.import.submit" }),
+      );
+      await waitFor(() => expect(m.importSkills).toHaveBeenCalled());
+      expect(
+        m.importSkills.mock.calls[0][0].map(
+          (selection: { directory: string }) => selection.directory,
+        ),
+      ).toEqual(["shared-skill"]);
+    });
+
+    it("still lists them when nothing is installed, and reports nothing to import", async () => {
+      // 只装了插件、没有任何托管 skill 的机器：页面走空状态，只读段仍要出现
+      m.installed = [];
+      m.unmanaged = PLUGIN_SKILLS;
+      m.scanUnmanaged.mockResolvedValue({ data: PLUGIN_SKILLS });
+      renderPanel();
+
+      expect(screen.getByText("skillsPage.emptyTitle")).toBeInTheDocument();
+      expect(
+        await screen.findByTestId("claude-plugin-skills"),
+      ).toBeInTheDocument();
+
+      // 空状态的导入按钮不带数量，点了只提示「没有可导入的」，不打开对话框
+      await userEvent.click(
+        screen.getByRole("button", { name: "skillsPage.addMenu.import" }),
+      );
+      await waitFor(() =>
+        expect(m.toastSuccess).toHaveBeenCalledWith(
+          "skills.noUnmanagedFound",
+          expect.anything(),
+        ),
+      );
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("renders the section with the real English strings", async () => {
+      // 测试环境的 i18n 默认没有资源、直接回显键名，键路径写错也照样通过；
+      // 这里装上真实的 en 文案，确认组件用的键在语言文件里确实存在
+      i18n.addResourceBundle(
+        "zh",
+        "translation",
+        { skillsPage: { pluginSkills: en.skillsPage.pluginSkills } },
+        true,
+        true,
+      );
+      try {
+        m.installed = [makeSkill()];
+        m.unmanaged = PLUGIN_SKILLS;
+        renderPanel();
+        const section = await screen.findByTestId("claude-plugin-skills");
+        expect(
+          within(section).getByRole("heading", {
+            name: en.skillsPage.pluginSkills.title,
+          }),
+        ).toBeInTheDocument();
+        expect(
+          within(section).getByText(en.skillsPage.pluginSkills.lead),
+        ).toBeInTheDocument();
+        expect(section).not.toHaveTextContent("skillsPage.pluginSkills");
+      } finally {
+        i18n.removeResourceBundle("zh", "translation");
+      }
+    });
   });
 });

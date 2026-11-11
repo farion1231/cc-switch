@@ -5019,6 +5019,12 @@
       "removeAria": "刪除倉庫 {{repo}}",
       "readFailed": "讀取失敗"
     },
+    "pluginSkills": {
+      "title": "由 Claude Code 外掛提供",
+      "lead": "這些 Skill 由 Claude Code 的外掛系統載入。CC Switch 只列出，不管理。",
+      "helpTitle": "為什麼不能匯入",
+      "help": "匯入一份會讓 Claude Code 載入兩次，外掛更新後副本還會過期。請在 Claude Code 中用 /plugin 管理。"
+    },
     "import": {
       "title": "匯入本機已有的 Skill",
       "helpTitle": "哪些算本機已有",
@@ -5029,7 +5035,6 @@
       "selectAll": "全選",
       "selectNone": "全不選",
       "foundIn": "發現於：{{places}}",
-      "providedByPlugin": "由外掛 {{plugin}} 提供，Claude Code 自行載入，不可匯入",
       "foundCcSwitch": "CC Switch 目錄",
       "appsTitle": "匯入後在這些應用裡啟用",
       "appsHelpTitle": "預設勾選哪些應用",

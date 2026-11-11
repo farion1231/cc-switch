@@ -6364,6 +6364,56 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
+    fn import_from_apps_never_copies_a_plugin_skill() {
+        // 前端不会把只读的插件 skill 交给导入，但后端不能依赖这一点：即使收到
+        // 扫描报出的插件键，也不能复制进 SSOT、更不能同步回 ~/.claude/skills/，
+        // 否则 Claude Code 会把同一个 skill 加载两次。
+        let temp = tempdir().expect("tempdir");
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+
+        let install = temp.path().join("plugin");
+        write_skill(&install.join("skills").join("alpha"), "alpha");
+        write_installed_plugins(temp.path(), &[("demo@m", &install)]);
+
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let scanned = SkillService::scan_unmanaged(&db).expect("scan");
+        assert_eq!(scanned.len(), 1);
+        assert!(scanned[0].read_only);
+        let key = scanned[0].directory.clone();
+
+        let imported = SkillService::import_from_apps(
+            &db,
+            vec![ImportSkillSelection {
+                directory: key,
+                apps: SkillApps {
+                    claude: true,
+                    ..Default::default()
+                },
+            }],
+        )
+        .expect("import returns Ok and skips the entry");
+
+        assert!(imported.is_empty(), "nothing may be imported");
+        assert!(db.get_all_installed_skills().expect("list").is_empty());
+        assert!(!SkillService::get_ssot_dir()
+            .expect("ssot")
+            .join("alpha")
+            .exists());
+        assert!(!SkillService::get_app_skills_dir(&AppType::Claude)
+            .expect("claude dir")
+            .join("alpha")
+            .exists());
+        // 插件自己的文件原样保留
+        assert!(install
+            .join("skills")
+            .join("alpha")
+            .join("SKILL.md")
+            .is_file());
+    }
+
+    #[test]
     fn plugin_manifest_skill_entries_reject_lexical_escapes() {
         // plugin.json 由插件作者提供，越界条目不能把扫描带出插件安装目录。
         let temp = tempdir().expect("tempdir");

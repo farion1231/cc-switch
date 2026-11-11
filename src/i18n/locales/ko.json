@@ -5019,6 +5019,12 @@
       "removeAria": "저장소 {{repo}} 제거",
       "readFailed": "읽기 실패"
     },
+    "pluginSkills": {
+      "title": "Claude Code 플러그인 제공",
+      "lead": "이 스킬은 Claude Code 플러그인 시스템이 로드합니다. CC Switch는 목록만 표시하며 관리하지 않습니다.",
+      "helpTitle": "가져올 수 없는 이유",
+      "help": "가져오면 Claude Code에서 두 번 로드되고, 플러그인이 업데이트되면 사본이 오래된 상태로 남습니다. Claude Code에서 /plugin으로 관리하세요."
+    },
     "import": {
       "title": "이 컴퓨터에서 스킬 가져오기",
       "helpTitle": "이 컴퓨터에 이미 있는 항목의 기준",

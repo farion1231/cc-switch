@@ -38,15 +38,8 @@ export function SkillImportDialog({
 }: SkillImportDialogProps) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
-  // 只读来源（Claude Code 插件提供的 skill）由插件系统自己加载：
-  // 不默认勾选、不参与全选、不进提交，否则导入会静默跳过并提示「成功导入 0 个」。
-  const importableDirectories = useMemo(
-    () =>
-      skills.filter((skill) => !skill.readOnly).map((skill) => skill.directory),
-    [skills],
-  );
   const [selected, setSelected] = useState<Set<string>>(
-    () => new Set(importableDirectories),
+    () => new Set(skills.map((skill) => skill.directory)),
   );
   const appChoices = IMPORT_APP_IDS.filter((app) =>
     visibleAppIds.includes(app),
@@ -92,7 +85,7 @@ export function SkillImportDialog({
     const extra = [...apps].filter((app) => !defaultApps.has(app));
     onImport(
       skills
-        .filter((skill) => selected.has(skill.directory) && !skill.readOnly)
+        .filter((skill) => selected.has(skill.directory))
         .map((skill) => {
           const chosen = new Set<AppId>(extra);
           for (const found of skill.foundIn) {
@@ -154,7 +147,9 @@ export function SkillImportDialog({
           type="button"
           variant="quiet"
           size="compact"
-          onClick={() => setSelected(new Set(importableDirectories))}
+          onClick={() =>
+            setSelected(new Set(skills.map((skill) => skill.directory)))
+          }
         >
           {t("skillsPage.import.selectAll")}
         </Button>
@@ -186,7 +181,6 @@ export function SkillImportDialog({
                 type="checkbox"
                 className={CHECKBOX_CLASS}
                 checked={selected.has(skill.directory)}
-                disabled={skill.readOnly}
                 onChange={(event) =>
                   toggle(skill.directory, event.target.checked)
                 }
@@ -206,15 +200,11 @@ export function SkillImportDialog({
                   className="truncate text-caption text-fg-2"
                   title={skill.path}
                 >
-                  {skill.readOnly
-                    ? t("skillsPage.import.providedByPlugin", {
-                        plugin: skill.pluginId ?? "",
-                      })
-                    : t("skillsPage.import.foundIn", {
-                        places: skill.foundIn
-                          .map(foundLabel)
-                          .join(t("mcpPage.listSeparator")),
-                      })}
+                  {t("skillsPage.import.foundIn", {
+                    places: skill.foundIn
+                      .map(foundLabel)
+                      .join(t("mcpPage.listSeparator")),
+                  })}
                 </span>
               </label>
             </li>

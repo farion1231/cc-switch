@@ -70,6 +70,7 @@ import { useVisibleAppIds } from "@/components/mcp/useVisibleAppIds";
 import { SkillsPage, useSkillRepoActions } from "./SkillsPage";
 import { RepoManagerPanel } from "./RepoManagerPanel";
 import { SkillImportDialog } from "./SkillImportDialog";
+import { ClaudePluginSkillsSection } from "./ClaudePluginSkillsSection";
 import { SkillRestoreDialog } from "./SkillRestoreDialog";
 import { SkillsStorageSheet } from "./SkillsStorageSheet";
 import { useSkillInstallTargets } from "./useSkillInstallTargets";
@@ -190,6 +191,16 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   // 进入页面时静默扫描一次「本机已有但未管理」的 Skill
   const { data: unmanagedSkills, refetch: scanUnmanaged } =
     useScanUnmanagedSkills({ enabled: true });
+  // 插件提供的 skill（readOnly）由 Claude Code 自行加载，CC Switch 只展示不管理：
+  // 不能算进「未管理 / 可导入」的数量，也不能进导入对话框，单独在只读段里列出
+  const importableSkills = useMemo(
+    () => (unmanagedSkills ?? []).filter((skill) => !skill.readOnly),
+    [unmanagedSkills],
+  );
+  const pluginSkills = useMemo(
+    () => (unmanagedSkills ?? []).filter((skill) => skill.readOnly),
+    [unmanagedSkills],
+  );
   const importMutation = useImportSkillsFromApps();
   const installFromZipMutation = useInstallSkillsFromZip();
   const {
@@ -666,7 +677,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     if (!beginWrite()) return;
     try {
       const result = await scanUnmanaged();
-      if (!result.data || result.data.length === 0) {
+      if (!result.data?.some((skill) => !skill.readOnly)) {
         toast.success(t("skills.noUnmanagedFound"), { closeButton: true });
         return;
       }
@@ -905,7 +916,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   // ─── 渲染：页头 ─────────────────────────────────────────────────────
   const nInstalled = installedSkills.length;
   const nUpdates = applicableSkillUpdates.length;
-  const nUnmanaged = unmanagedSkills?.length ?? 0;
+  const nUnmanaged = importableSkills.length;
   const loadOk = !isLoading && !isError;
   const selectionActive = selected.size > 0;
 
@@ -1614,6 +1625,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
             )}
           >
             {renderInstalledBody()}
+            {loadOk && <ClaudePluginSkillsSection skills={pluginSkills} />}
           </div>
         </div>
       </div>
@@ -1702,7 +1714,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
 
       {importOpen && unmanagedSkills && (
         <SkillImportDialog
-          skills={unmanagedSkills}
+          skills={importableSkills}
           visibleAppIds={appIds}
           isImporting={importMutation.isPending}
           onImport={(imports) => void handleImport(imports)}
