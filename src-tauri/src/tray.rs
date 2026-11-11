@@ -378,6 +378,7 @@ impl TrayTexts {
             },
             "ru" => Self {
                 show_main: "Открыть CC Switch",
+                reload_ui: "Обновить интерфейс",
                 open_website: "Открыть официальный сайт",
                 lightweight_mode: "Облегчённый режим",
                 quit: "Выйти из CC Switch",
@@ -433,6 +434,7 @@ impl TrayTexts {
             },
             "tr" => Self {
                 show_main: "CC Switch'i aç",
+                reload_ui: "Arayüzü yenile",
                 open_website: "Resmî web sitesini aç",
                 lightweight_mode: "Hafif mod",
                 quit: "CC Switch'ten çık",
