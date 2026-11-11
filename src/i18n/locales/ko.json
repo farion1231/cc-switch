@@ -2565,8 +2565,8 @@
         "manual": "수동 입력"
       },
       "rateAutoHint": "하루에 한 번 자동으로 가져오며, 표시 금액을 환산하는 데만 사용합니다. 비용은 계속 USD로 기록됩니다.",
-      "rateAutoUpdated": "마지막 업데이트: {{time}}",
-      "rateAutoNever": "아직 환율을 가져오지 않았습니다",
+      "rateAutoUpdated": "마지막 업데이트: {{time}}.",
+      "rateAutoNever": "아직 환율을 가져오지 않았습니다.",
       "rateAutoFailed": "새 환율을 가져오지 못해 이전 환율을 사용합니다.",
       "rateAttribution": "환율 제공: {{provider}}",
       "rateRefresh": "지금 업데이트",

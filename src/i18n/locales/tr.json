@@ -2570,8 +2570,8 @@
         "manual": "Elle"
       },
       "rateAutoHint": "Günde bir kez otomatik olarak alınır ve yalnızca görüntüleme amacıyla kullanılır; maliyetler USD olarak kaydedilmeye devam eder.",
-      "rateAutoUpdated": "Son güncelleme: {{time}}",
-      "rateAutoNever": "Henüz kur alınmadı",
+      "rateAutoUpdated": "Son güncelleme: {{time}}.",
+      "rateAutoNever": "Henüz kur alınmadı.",
       "rateAutoFailed": "Yeni kur alınamadı; önceki kur kullanılmaya devam ediliyor.",
       "rateAttribution": "Kurlar {{provider}} tarafından sağlanır.",
       "rateRefresh": "Şimdi güncelle",

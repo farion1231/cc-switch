@@ -2570,8 +2570,8 @@
         "manual": "Manual"
       },
       "rateAutoHint": "Fetched automatically once a day and used only for display; costs are still recorded in USD.",
-      "rateAutoUpdated": "Last updated: {{time}}",
-      "rateAutoNever": "No rate fetched yet",
+      "rateAutoUpdated": "Last updated: {{time}}.",
+      "rateAutoNever": "No rate fetched yet.",
       "rateAutoFailed": "Could not fetch a new rate; keeping the previous one.",
       "rateAttribution": "Rates by {{provider}}.",
       "rateRefresh": "Update now",
