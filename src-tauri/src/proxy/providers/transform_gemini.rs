@@ -315,11 +315,16 @@ fn build_system_instruction(
         collect_system_texts(system, &mut texts)?;
     }
 
+    // Only system messages that lead the conversation are hoisted. Ones that
+    // appear later (Claude Code's per-turn `<total_tokens>` budget, steer
+    // reminders) stay in place as contents: hoisting them would rewrite the
+    // instruction ahead of the whole history every turn and break the
+    // upstream prefix cache (same fix as #6941 for OpenAI Chat).
     if let Some(messages) = messages {
-        for message in messages {
-            if message.get("role").and_then(|value| value.as_str()) != Some("system") {
-                continue;
-            }
+        for message in messages
+            .iter()
+            .take_while(|message| is_system_message(message))
+        {
             if let Some(content) = message.get("content") {
                 collect_system_texts(content, &mut texts)?;
             }
@@ -333,6 +338,10 @@ fn build_system_instruction(
     Ok(Some(json!({
         "parts": [{ "text": texts.join("\n\n") }]
     })))
+}
+
+fn is_system_message(message: &Value) -> bool {
+    message.get("role").and_then(|value| value.as_str()) == Some("system")
 }
 
 fn collect_system_texts(value: &Value, texts: &mut Vec<String>) -> Result<(), ProxyError> {
@@ -602,13 +611,41 @@ fn convert_messages_to_contents(
 
     let shadow_start_index = total_assistant_messages.saturating_sub(effective_shadow_turns.len());
     let mut assistant_seen_index = 0usize;
+    // Leading system messages were hoisted into `systemInstruction`.
+    let leading_system_count = messages
+        .iter()
+        .take_while(|message| is_system_message(message))
+        .count();
 
-    for message in messages {
+    let mut deferred_system: Vec<Value> = Vec::new();
+
+    for message in &messages[leading_system_count..] {
+        // A function call turn must be followed directly by its function
+        // response turn, so a system message wedged between them is held
+        // back until the response has been emitted.
+        if !contents.last().is_some_and(has_function_call) {
+            contents.append(&mut deferred_system);
+        }
+
         let role = message
             .get("role")
             .and_then(|value| value.as_str())
             .unwrap_or("user");
         if role == "system" {
+            // Gemini contents have no system role; keep a later system message
+            // at its position as a user turn so the converted history stays
+            // append-only across requests (see `build_system_instruction`).
+            let mut texts = Vec::new();
+            if let Some(content) = message.get("content") {
+                collect_system_texts(content, &mut texts)?;
+            }
+            if !texts.is_empty() {
+                let parts: Vec<Value> = texts
+                    .into_iter()
+                    .map(|text| json!({ "text": text }))
+                    .collect();
+                deferred_system.push(json!({ "role": "user", "parts": parts }));
+            }
             continue;
         }
 
@@ -683,6 +720,7 @@ fn convert_messages_to_contents(
             "parts": parts
         }));
     }
+    contents.append(&mut deferred_system);
 
     Ok(contents)
 }
@@ -772,6 +810,13 @@ fn coalesce_split_tool_result_messages(messages: &[Value]) -> std::borrow::Cow<'
         Some(result) => std::borrow::Cow::Owned(result),
         None => std::borrow::Cow::Borrowed(messages),
     }
+}
+
+fn has_function_call(content: &Value) -> bool {
+    content
+        .get("parts")
+        .and_then(Value::as_array)
+        .is_some_and(|parts| parts.iter().any(|part| part.get("functionCall").is_some()))
 }
 
 fn find_matching_shadow_turn_for_assistant_message(
@@ -1963,6 +2008,90 @@ mod tests {
         assert_eq!(result["contents"].as_array().unwrap().len(), 1);
         assert_eq!(result["contents"][0]["role"], "user");
         assert_eq!(result["contents"][0]["parts"][0]["text"], "Hello");
+    }
+
+    #[test]
+    fn anthropic_to_gemini_keeps_mid_conversation_system_messages_in_place() {
+        // Claude Code appends a `<total_tokens>` system message every turn;
+        // hoisting it would change the instruction ahead of the whole history
+        // and break the prefix cache, so it must stay where it appears.
+        let first = json!({
+            "model": "gemini-3-pro",
+            "system": "Stable instructions",
+            "messages": [
+                { "role": "user", "content": "Existing history" },
+                { "role": "system", "content": "<total_tokens>99900000 tokens left</total_tokens>\n\n" }
+            ]
+        });
+        let mut second = first.clone();
+        second["messages"].as_array_mut().unwrap().extend([
+            json!({ "role": "assistant", "content": "Acknowledged" }),
+            json!({ "role": "user", "content": "Continue" }),
+            json!({
+                "role": "system",
+                "content": [{ "type": "text", "text": "<total_tokens>99899000 tokens left</total_tokens>\n\n" }]
+            }),
+        ]);
+
+        let first = anthropic_to_gemini(first).unwrap();
+        let second = anthropic_to_gemini(second).unwrap();
+
+        assert_eq!(
+            first["systemInstruction"]["parts"][0]["text"],
+            "Stable instructions"
+        );
+        assert_eq!(first["systemInstruction"], second["systemInstruction"]);
+
+        let first_contents = first["contents"].as_array().unwrap();
+        let second_contents = second["contents"].as_array().unwrap();
+        assert_eq!(first_contents.len(), 2);
+        assert_eq!(second_contents.len(), 5);
+        assert_eq!(&second_contents[..2], first_contents.as_slice());
+        assert_eq!(
+            first_contents[1],
+            json!({
+                "role": "user",
+                "parts": [{ "text": "<total_tokens>99900000 tokens left</total_tokens>\n\n" }]
+            })
+        );
+        assert_eq!(second_contents[2]["role"], "model");
+        assert_eq!(
+            second_contents[4],
+            json!({
+                "role": "user",
+                "parts": [{ "text": "<total_tokens>99899000 tokens left</total_tokens>\n\n" }]
+            })
+        );
+    }
+
+    #[test]
+    fn anthropic_to_gemini_moves_system_message_after_function_response() {
+        let input = json!({
+            "model": "gemini-3-pro",
+            "messages": [
+                { "role": "user", "content": "Read the file" },
+                {
+                    "role": "assistant",
+                    "content": [{ "type": "tool_use", "id": "toolu_1", "name": "Read", "input": {} }]
+                },
+                { "role": "system", "content": "<total_tokens>1 tokens left</total_tokens>" },
+                {
+                    "role": "user",
+                    "content": [{ "type": "tool_result", "tool_use_id": "toolu_1", "content": "ok" }]
+                }
+            ]
+        });
+
+        let result = anthropic_to_gemini(input).unwrap();
+        let contents = result["contents"].as_array().unwrap();
+
+        assert_eq!(contents.len(), 4);
+        assert!(contents[1]["parts"][0].get("functionCall").is_some());
+        assert!(contents[2]["parts"][0].get("functionResponse").is_some());
+        assert_eq!(
+            contents[3]["parts"][0]["text"],
+            "<total_tokens>1 tokens left</total_tokens>"
+        );
     }
 
     #[test]
