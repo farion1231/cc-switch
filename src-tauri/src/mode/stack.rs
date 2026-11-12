@@ -50,6 +50,9 @@ const KEY_MAX_LEN: usize = 24;
 /// Claude Code 在没有 `CLAUDE_CODE_MAX_CONTEXT_TOKENS` 时按这个窗口算。
 pub const CLAUDE_DEFAULT_WINDOW: u64 = 200_000;
 
+/// 带 `[1m]` 的模型 Claude Code 按这个窗口算。Stack 模型列表里配的窗口不小于它时按 1M 发布。
+const ONE_M_WINDOW: u64 = 1_000_000;
+
 /// 支持 Stack 模型的应用。
 pub fn supports_stack(app: &AppType) -> bool {
     matches!(
@@ -217,7 +220,8 @@ pub struct StackModel {
     pub description: String,
     /// 上游是 1M 窗口（id 带 `[1M]`）。
     pub one_m: bool,
-    /// 非 1M 模型的窗口：行里的 `CLAUDE_CODE_MAX_CONTEXT_TOKENS`，没有是 200K。
+    /// 非 1M 模型的窗口：模型自己配的窗口，没有是行里的 `CLAUDE_CODE_MAX_CONTEXT_TOKENS`，
+    /// 再没有是 200K。
     pub window: u64,
 }
 
@@ -244,11 +248,13 @@ struct Found {
     upstream: String,
     name: Option<String>,
     one_m: bool,
+    /// 模型自己配的窗口（Stack 模型列表里的「自定义」）。
+    window: Option<u64>,
 }
 
 /// 按去掉 1M 标记后的名字去重地加入 `found`。同一个模型有一处带 1M 标记就按 1M，发往上游的
-/// 也用带标记的那个写法；显示名取第一个有的。
-fn push_found(found: &mut Vec<Found>, upstream: &str, name: Option<String>) {
+/// 也用带标记的那个写法；显示名取第一个有的；配了几个窗口取最小的。
+fn push_found(found: &mut Vec<Found>, upstream: &str, name: Option<String>, window: Option<u64>) {
     let model = strip_one_m_suffix_for_upstream(upstream).trim().to_string();
     if model.is_empty() {
         return;
@@ -263,12 +269,17 @@ fn push_found(found: &mut Vec<Found>, upstream: &str, name: Option<String>) {
             if entry.name.is_none() {
                 entry.name = name;
             }
+            entry.window = match (entry.window, window) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
         }
         None => found.push(Found {
             model,
             upstream: upstream.to_string(),
             name,
             one_m,
+            window,
         }),
     }
 }
@@ -286,7 +297,11 @@ fn listed_models(list: &[ClaudeStackModel]) -> Vec<Found> {
     for entry in list {
         let raw = entry.model.trim();
         let model = strip_one_m_suffix_for_upstream(raw).trim();
-        let upstream = if entry.one_m || has_one_m_marker(raw) {
+        let window = entry.context_window.filter(|window| *window > 0);
+        let one_m = entry.one_m
+            || has_one_m_marker(raw)
+            || window.is_some_and(|window| window >= ONE_M_WINDOW);
+        let upstream = if one_m {
             format!("{model}{ONE_M_MARKER_FOR_CLIENT}")
         } else {
             model.to_string()
@@ -297,7 +312,7 @@ fn listed_models(list: &[ClaudeStackModel]) -> Vec<Found> {
             .map(str::trim)
             .filter(|name| !name.is_empty())
             .map(str::to_string);
-        push_found(&mut found, &upstream, name);
+        push_found(&mut found, &upstream, name, window);
     }
     found
 }
@@ -329,15 +344,16 @@ fn mapped_models(env: &Map<String, Value>) -> Vec<Found> {
             continue;
         };
         let name = name_key.and_then(|name_key| env_string(env, name_key).map(str::to_string));
-        push_found(&mut found, upstream, name);
+        push_found(&mut found, upstream, name, None);
     }
     found
 }
 
-/// 给找到的模型加上前缀、显示名和窗口。非 1M 模型的窗口是行里的
-/// `CLAUDE_CODE_MAX_CONTEXT_TOKENS`（Claude Code 只有一个全局窗口，没法按模型设），没有是 200K。
+/// 给找到的模型加上前缀、显示名和窗口。非 1M 模型的窗口是模型自己配的，没有是行里的
+/// `CLAUDE_CODE_MAX_CONTEXT_TOKENS`，再没有是 200K。Claude Code 只有一个全局窗口，契约里
+/// 取所有非 1M 模型里最小的（`mode::controller::with_stack_models`）。
 fn stack_models(key: &str, provider: &Provider, found: Vec<Found>) -> Vec<StackModel> {
-    let window = claude_env(provider)
+    let row_window = claude_env(provider)
         .and_then(|env| env.get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"))
         .and_then(|value| match value {
             Value::Number(number) => number.as_u64(),
@@ -350,7 +366,8 @@ fn stack_models(key: &str, provider: &Provider, found: Vec<Found>) -> Vec<StackM
         .into_iter()
         .map(|found| {
             let name = found.name.unwrap_or_else(|| found.model.clone());
-            let shown_window = if found.one_m { 1_000_000 } else { window };
+            let window = found.window.unwrap_or(row_window);
+            let shown_window = if found.one_m { ONE_M_WINDOW } else { window };
             StackModel {
                 id: encode(&AppType::Claude, key, &found.model, found.one_m),
                 display_name: display_name(&name, &provider.name),
@@ -1146,6 +1163,77 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn listed_models_carry_their_own_window() {
+        let row = with_stack_models(
+            provider(
+                "p",
+                "Relay",
+                None,
+                json!({ "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "128000" }),
+            ),
+            json!([
+                { "model": "kimi-k3", "contextWindow": 262_144 },
+                { "model": "glm-5.2", "contextWindow": 1_048_576 },
+                { "model": "qwen-4", "contextWindow": 0 },
+                { "model": "minimax-m3" },
+                { "model": "minimax-m3", "contextWindow": 500_000 },
+                { "model": "minimax-m3", "contextWindow": 384_000 }
+            ]),
+        );
+        let summary: Vec<(String, String, bool, u64, String)> = claude_models("relay", &row)
+            .into_iter()
+            .map(|model| {
+                (
+                    model.id,
+                    model.upstream,
+                    model.one_m,
+                    model.window,
+                    model.description,
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                (
+                    "ccs-claude-relay--kimi-k3".to_string(),
+                    "kimi-k3".to_string(),
+                    false,
+                    262_144,
+                    "Relay · kimi-k3 · 262K".to_string(),
+                ),
+                // 不小于 1M 的按 1M 发布：Claude Code 只认 `[1m]`。
+                (
+                    "ccs-claude-relay--glm-5.2[1M]".to_string(),
+                    "glm-5.2[1M]".to_string(),
+                    true,
+                    1_048_576,
+                    "Relay · glm-5.2 · 1M".to_string(),
+                ),
+                // 没配（或配了 0）跟着行里的 MAX。
+                (
+                    "ccs-claude-relay--qwen-4".to_string(),
+                    "qwen-4".to_string(),
+                    false,
+                    128_000,
+                    "Relay · qwen-4 · 128K".to_string(),
+                ),
+                // 同名的几行取最小的窗口。
+                (
+                    "ccs-claude-relay--minimax-m3".to_string(),
+                    "minimax-m3".to_string(),
+                    false,
+                    384_000,
+                    "Relay · minimax-m3 · 384K".to_string(),
+                ),
+            ]
+        );
+        let meta = serde_json::to_value(row.meta.as_ref().unwrap()).unwrap();
+        assert_eq!(meta["stackModels"][0]["contextWindow"], 262_144);
+        assert!(meta["stackModels"][3].get("contextWindow").is_none());
     }
 
     struct Fixture {

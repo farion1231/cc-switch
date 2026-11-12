@@ -128,7 +128,9 @@ describe("ProviderForm Stack layout (Claude Code)", () => {
     expect(screen.getByDisplayValue("m-s")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Model S")).toBeInTheDocument();
     // 没有 ★：第一行是默认模型，写在「模型列表」后面的「?」里。
-    expect(screen.getByRole("button", { name: "模型列表" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "模型列表" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("providerForm.modelMappingLabel")).toBeNull();
     expect(screen.queryByText("默认兜底模型")).toBeNull();
   });
@@ -136,10 +138,14 @@ describe("ProviderForm Stack layout (Claude Code)", () => {
   it("简化面板的说明收进「?」，高级选项折叠时不挂说明", () => {
     renderForm("claude", vi.fn());
 
-    expect(screen.getByRole("button", { name: "上游格式" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "上游格式" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/一般无需修改/)).toBeNull();
     fireEvent.click(
-      screen.getByRole("button", { name: "providerForm.advancedOptionsToggle" }),
+      screen.getByRole("button", {
+        name: "providerForm.advancedOptionsToggle",
+      }),
     );
     expect(
       screen.getByText("以下两项只在路由、聚合模式下生效。"),
@@ -192,6 +198,42 @@ describe("ProviderForm Stack layout (Claude Code)", () => {
       { model: "m-c", oneM: true },
     ]);
     expect(settings.env.ANTHROPIC_MODEL).toBe("m-a");
+  });
+
+  it("上下文窗口：1M 行不显示输入框，自定义窗口按数字保存，不小于 1M 的存成 1M", async () => {
+    const onSubmit = vi.fn();
+    renderForm("claude", onSubmit, {
+      meta: {
+        stackModels: [
+          { model: "m-b", contextWindow: 262144 },
+          { model: "m-c", oneM: true },
+        ],
+      },
+    });
+
+    const windows = () => screen.getAllByLabelText("窗口 token 数");
+    // m-c 是 1M：只有 m-b 一个窗口输入框
+    expect(windows()).toHaveLength(1);
+    expect(windows()[0]).toHaveValue("262144");
+    fireEvent.change(windows()[0], { target: { value: "384,000" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "手动添加" }));
+    const models = screen.getAllByPlaceholderText("例如 deepseek-v4-pro");
+    fireEvent.change(models[2], { target: { value: "m-d" } });
+    fireEvent.change(windows()[1], { target: { value: "1048576" } });
+    fireEvent.click(screen.getByRole("button", { name: "手动添加" }));
+    fireEvent.change(
+      screen.getAllByPlaceholderText("例如 deepseek-v4-pro")[3],
+      { target: { value: "m-e" } },
+    );
+
+    const { values } = await save(onSubmit);
+    expect(values.meta?.stackModels).toEqual([
+      { model: "m-b", contextWindow: 384000 },
+      { model: "m-c", oneM: true },
+      { model: "m-d", oneM: true },
+      { model: "m-e" },
+    ]);
   });
 
   it("清空列表后保存为空列表，不再回落到模型映射", async () => {
@@ -295,7 +337,9 @@ describe("ProviderForm Stack layout (Codex)", () => {
       ],
     });
 
-    expect(screen.getByRole("button", { name: "模型列表" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "模型列表" }),
+    ).toBeInTheDocument();
     // 有列表时第一行就是默认模型，不再单独显示默认模型框。
     expect(document.getElementById("codexDefaultModel")).toBeNull();
     fireEvent.change(screen.getByDisplayValue("m-1"), {

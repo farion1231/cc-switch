@@ -3,10 +3,16 @@ import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
 import { HoverTip } from "@/components/ui/hover-tip";
-import { Checkbox } from "@/components/ui/checkbox";
 import { FormLabel } from "@/components/ui/form";
 import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type { FetchedModel } from "@/lib/api/model-fetch";
 import type { ClaudeStackModel } from "@/types";
 import {
@@ -31,9 +37,20 @@ export function createClaudeStackModelRow(
   return { model: "", ...seed, rowId: `stack-model-${nextRowId}` };
 }
 
+/** 自定义窗口不小于它时按 1M 存：Claude Code 按模型只认 `[1m]` 一种窗口。 */
+const ONE_M_WINDOW = 1_000_000;
+
+/** 行里有效的自定义窗口：正整数才算。 */
+const customWindowOf = (row: ClaudeStackModel): number | undefined => {
+  const window = row.contextWindow;
+  return typeof window === "number" && Number.isInteger(window) && window > 0
+    ? window
+    : undefined;
+};
+
 /**
- * 存进 `meta.stackModels` 的样子：去掉空行，模型名里写的 `[1M]` 换成 `oneM`，同名的合并
- * （有一处勾了 1M 就按 1M，显示名取第一个填了的）。
+ * 存进 `meta.stackModels` 的样子：去掉空行，模型名里写的 `[1M]` 和不小于 1M 的自定义窗口
+ * 换成 `oneM`，同名的合并（有一处是 1M 就按 1M，显示名取第一个填了的，自定义窗口取最小的）。
  */
 export function normalizeClaudeStackModels(
   rows: ClaudeStackModel[],
@@ -43,11 +60,24 @@ export function normalizeClaudeStackModels(
     const raw = row.model.trim();
     const model = stripClaudeOneMMarker(raw).trim();
     if (!model) continue;
-    const oneM = row.oneM === true || hasClaudeOneMMarker(raw);
+    const customWindow = customWindowOf(row);
+    const oneM =
+      row.oneM === true ||
+      hasClaudeOneMMarker(raw) ||
+      (customWindow !== undefined && customWindow >= ONE_M_WINDOW);
+    const contextWindow = oneM ? undefined : customWindow;
     const displayName = row.displayName?.trim() || undefined;
     const existing = result.find((entry) => entry.model === model);
     if (existing) {
-      if (oneM) existing.oneM = true;
+      if (oneM) {
+        existing.oneM = true;
+        delete existing.contextWindow;
+      } else if (!existing.oneM && contextWindow !== undefined) {
+        existing.contextWindow = Math.min(
+          existing.contextWindow ?? contextWindow,
+          contextWindow,
+        );
+      }
       if (!existing.displayName && displayName) {
         existing.displayName = displayName;
       }
@@ -57,6 +87,7 @@ export function normalizeClaudeStackModels(
       model,
       ...(displayName ? { displayName } : {}),
       ...(oneM ? { oneM: true } : {}),
+      ...(contextWindow !== undefined ? { contextWindow } : {}),
     });
   }
   return result;
@@ -190,7 +221,7 @@ export function ClaudeStackModelsField({
         </p>
       ) : (
         <div className="space-y-2">
-          <div className="hidden grid-cols-[1fr_minmax(0,1fr)_64px_36px] gap-2 px-1 text-xs font-medium text-fg-2 md:grid">
+          <div className="hidden grid-cols-[1fr_minmax(0,1fr)_200px_36px] gap-2 px-1 text-xs font-medium text-fg-2 md:grid">
             <span>
               {t("providerForm.modelDisplayNameLabel", {
                 defaultValue: "显示名称",
@@ -201,17 +232,30 @@ export function ClaudeStackModelsField({
                 defaultValue: "实际请求模型",
               })}
             </span>
-            <span>
-              {t("providerForm.modelOneMLabel", { defaultValue: "1M" })}
+            <span className="flex items-center gap-0.5">
+              {t("providerForm.modelContextLabel", {
+                defaultValue: "上下文窗口",
+              })}
+              <HelpTip
+                title={t("providerForm.modelContextLabel", {
+                  defaultValue: "上下文窗口",
+                })}
+              >
+                {t("providerForm.modelContextHelp", {
+                  defaultValue:
+                    "Claude Code 只能给单个模型标 1M，其余模型共用一个窗口（CLAUDE_CODE_MAX_CONTEXT_TOKENS）。聚合时取所有非 1M 模型里最小的窗口。自定义留空时用这家的 CLAUDE_CODE_MAX_CONTEXT_TOKENS，没有是 200K；填不小于 1000000 时按 1M 保存。",
+                })}
+              </HelpTip>
             </span>
             <span />
           </div>
           {rows.map((row) => {
             const modelBase = stripClaudeOneMMarker(row.model).trim();
+            const isOneM = row.oneM === true || hasClaudeOneMMarker(row.model);
             return (
               <div
                 key={row.rowId}
-                className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_minmax(0,1fr)_64px_36px]"
+                className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_minmax(0,1fr)_200px_36px]"
               >
                 <ImeSafeInput
                   value={row.displayName ?? ""}
@@ -251,20 +295,60 @@ export function ClaudeStackModelsField({
                     />
                   )}
                 </div>
-                <label className="flex h-9 items-center gap-2 text-sm text-fg-2">
-                  <Checkbox
-                    checked={
-                      row.oneM === true || hasClaudeOneMMarker(row.model)
-                    }
-                    onCheckedChange={(checked) =>
+                <div className="flex gap-1">
+                  <Select
+                    value={isOneM ? "1m" : "custom"}
+                    onValueChange={(value) =>
                       updateRow(row.rowId, {
                         model: stripClaudeOneMMarker(row.model),
-                        oneM: checked === true,
+                        oneM: value === "1m",
+                        contextWindow: undefined,
                       })
                     }
-                  />
-                  {t("providerForm.modelOneMLabel", { defaultValue: "1M" })}
-                </label>
+                  >
+                    <SelectTrigger
+                      className="w-[84px] shrink-0"
+                      aria-label={t("providerForm.modelContextLabel", {
+                        defaultValue: "上下文窗口",
+                      })}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="1m">
+                        {t("providerForm.modelOneMLabel", {
+                          defaultValue: "1M",
+                        })}
+                      </SelectItem>
+                      <SelectItem value="custom">
+                        {t("providerForm.modelContextCustom", {
+                          defaultValue: "自定义",
+                        })}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {!isOneM && (
+                    <Input
+                      value={row.contextWindow?.toString() ?? ""}
+                      onChange={(event) => {
+                        const digits = event.target.value.replace(/\D/g, "");
+                        updateRow(row.rowId, {
+                          contextWindow: digits ? Number(digits) : undefined,
+                        });
+                      }}
+                      inputMode="numeric"
+                      placeholder={t(
+                        "providerForm.modelContextWindowPlaceholder",
+                        { defaultValue: "默认" },
+                      )}
+                      aria-label={t("providerForm.modelContextWindowLabel", {
+                        defaultValue: "窗口 token 数",
+                      })}
+                      autoComplete="off"
+                      className="min-w-0 flex-1"
+                    />
+                  )}
+                </div>
                 <HoverTip content={t("common.delete")}>
                   <Button
                     type="button"

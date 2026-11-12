@@ -252,6 +252,8 @@ export interface ClaudeStackModel {
   displayName?: string;
   // 上游是 1M 窗口
   oneM?: boolean;
+  // 上游的窗口（token 数）；没有时用这家的 CLAUDE_CODE_MAX_CONTEXT_TOKENS，再没有是 200K
+  contextWindow?: number;
 }
 
 // Skill 同步方式
