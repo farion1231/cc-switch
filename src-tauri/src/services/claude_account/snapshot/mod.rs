@@ -41,6 +41,7 @@ use store::{CredentialStore, Slot};
 
 pub use files::backup_dir;
 pub use recover::recover;
+pub(crate) use state::STATE_FILENAME;
 pub use state::{confirm, load_state, update_state, Journal, State, Step};
 pub use switch::{check_out, replace_live, vacate};
 

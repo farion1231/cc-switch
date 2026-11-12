@@ -1387,6 +1387,9 @@ pub fn run() {
                 });
             }
 
+            // 凭据写到一半崩溃、断电时留下的临时文件（里面是完整凭据）：超过 1 小时的删掉
+            std::thread::spawn(crate::services::credential_temp_cleanup::cleanup_on_startup);
+
             // 初始化全局出站代理 HTTP 客户端
             {
                 let db = &app.state::<AppState>().db;

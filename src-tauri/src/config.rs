@@ -469,6 +469,127 @@ pub fn atomic_write_private(path: &Path, data: &[u8]) -> Result<(), AppError> {
     atomic_write_with_unix_mode(path, data, Some(0o600))
 }
 
+/// 同 [`atomic_write_private`]，并保证替换结果落盘。用于保存 OAuth 凭据的文件：
+/// refresh token 每次刷新都会轮换，断电后留下空文件或旧 token，账号就得重新登录。
+///
+/// - 替换前把临时文件 fsync（标准库在 Apple 平台上用的是 `F_FULLFSYNC`）；
+/// - 替换在 Windows 上走 `ReplaceFileW`，不存在先删旧文件再 rename 的窗口；
+/// - Unix 上替换后再 fsync 所在目录，让 rename 本身也落盘。
+pub fn atomic_write_private_durable(path: &Path, data: &[u8]) -> Result<(), AppError> {
+    let staged = stage_write(path, data, Some(0o600), true)?;
+    let target = staged.target().to_path_buf();
+    staged.commit()?;
+    sync_parent_dir(&target);
+    Ok(())
+}
+
+/// rename 只改了目录项，目录没落盘时，断电后文件可能回到替换前的内容，而那份 refresh
+/// token 已经作废。
+///
+/// 文件此时已经替换成功，这一步失败只记日志，不返回错误：调用方会以为没写成，内存里的
+/// 状态就和磁盘对不上了。有的文件系统不支持对目录 fsync（返回 EINVAL 之类），同样忽略。
+#[cfg(unix)]
+fn sync_parent_dir(path: &Path) {
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    let parent = if parent.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        parent
+    };
+    if let Err(source) = fs::File::open(parent).and_then(|dir| dir.sync_all()) {
+        log::warn!("凭据文件所在目录落盘失败（{}）: {source}", parent.display());
+    }
+}
+
+/// Windows 不做：标准库打不开目录句柄来刷新，NTFS 自己用日志保护元数据。
+#[cfg(not(unix))]
+fn sync_parent_dir(_path: &Path) {}
+
+/// [`stage_write`] 给 `<base>` 起的临时文件名是 `<base>.tmp.<pid>.<纳秒>.<计数>`；`name` 是这种
+/// 名字时返回 `<base>`。`legacy` 为真时也认旧版 OAuth 存储用过的 `<base>.tmp.<纳秒>`。
+pub(crate) fn temp_file_base(name: &str, legacy: bool) -> Option<&str> {
+    fn strip_digit_segments(name: &str, count: usize) -> Option<&str> {
+        let mut rest = name;
+        for _ in 0..count {
+            let (head, segment) = rest.rsplit_once('.')?;
+            if segment.is_empty() || !segment.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            rest = head;
+        }
+        rest.strip_suffix(".tmp").filter(|base| !base.is_empty())
+    }
+    strip_digit_segments(name, 3).or_else(|| {
+        if legacy {
+            strip_digit_segments(name, 1)
+        } else {
+            None
+        }
+    })
+}
+
+/// 删掉 `dir` 下残留的临时文件：文件名是 [`temp_file_base`] 认得的、`owns(base)` 为真、
+/// 不在 `keep` 里、而且最后修改在 `max_age` 之前的普通文件。返回删掉的个数。
+///
+/// 写一次只要几毫秒，超过 `max_age` 还在的临时文件不会再有人用；修改时间读不到或在未来
+/// （时钟被调过）的一律保留。
+pub(crate) fn remove_stale_temp_files(
+    dir: &Path,
+    legacy: bool,
+    owns: impl Fn(&str) -> bool,
+    keep: &std::collections::HashSet<std::ffi::OsString>,
+    max_age: std::time::Duration,
+) -> usize {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let Some(base) = file_name
+            .to_str()
+            .and_then(|name| temp_file_base(name, legacy))
+        else {
+            continue;
+        };
+        if !owns(base) || keep.contains(&file_name) {
+            continue;
+        }
+        // 不跟随软链接：只删普通文件。
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        let stale = meta.is_file()
+            && meta
+                .modified()
+                .ok()
+                .and_then(|modified| modified.elapsed().ok())
+                .is_some_and(|age| age >= max_age);
+        if !stale {
+            continue;
+        }
+        let path = entry.path();
+        match fs::remove_file(&path) {
+            Ok(()) => {
+                removed += 1;
+                log::info!("已删除残留的临时文件: {}", path.display());
+            }
+            Err(source) => log::warn!("删除残留的临时文件失败（{}）: {source}", path.display()),
+        }
+    }
+    removed
+}
+
+/// 同 [`write_json_file_private`]，写入走 [`atomic_write_private_durable`]。
+pub fn write_json_file_private_durable<T: Serialize>(
+    path: &Path,
+    data: &T,
+) -> Result<(), AppError> {
+    atomic_write_private_durable(path, &sorted_json_bytes(data)?)
+}
+
 fn atomic_write_with_unix_mode(
     path: &Path,
     data: &[u8],
@@ -955,6 +1076,133 @@ mod tests {
         assert!(result.is_err());
         drop(held_file);
         assert_eq!(std::fs::read(&path).unwrap(), b"old contents");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn atomic_write_private_durable_replaces_credentials_owner_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("oauth_auth.json");
+        std::fs::write(&path, b"{\"refresh_token\":\"old\"}").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+
+        atomic_write_private_durable(&path, b"{\"refresh_token\":\"new\"}").unwrap();
+
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            b"{\"refresh_token\":\"new\"}"
+        );
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+    }
+
+    /// 凭据文件是软链接时，替换的是它指向的文件（落盘的也是那个目录），链接本身保留。
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_private_durable_writes_through_symlink_into_other_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let real_dir = dir.path().join("real");
+        std::fs::create_dir(&real_dir).unwrap();
+        let real = real_dir.join("auth.json");
+        std::fs::write(&real, b"old").unwrap();
+        let link = dir.path().join("auth.json");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        atomic_write_private_durable(&link, b"new").unwrap();
+
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(std::fs::read(&real).unwrap(), b"new");
+        assert_eq!(std::fs::read_dir(&real_dir).unwrap().count(), 1);
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&real).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    #[test]
+    fn temp_file_base_recognizes_only_stage_write_names() {
+        assert_eq!(
+            temp_file_base("auth.json.tmp.12.345.0", false),
+            Some("auth.json")
+        );
+        assert_eq!(
+            temp_file_base("a.b.json.tmp.1.2.3", false),
+            Some("a.b.json")
+        );
+        // 旧版 OAuth 存储的 `<base>.tmp.<纳秒>` 只在 `legacy` 时认
+        assert_eq!(temp_file_base("copilot_auth.json.tmp.17", false), None);
+        assert_eq!(
+            temp_file_base("copilot_auth.json.tmp.17", true),
+            Some("copilot_auth.json")
+        );
+        // 段数不对、带非数字、没有 base 的都不认
+        assert_eq!(temp_file_base("auth.json.tmp.1.2", true), None);
+        assert_eq!(temp_file_base("auth.json.tmp.1.x.3", true), None);
+        assert_eq!(temp_file_base("auth.json.tmp..2.3", true), None);
+        assert_eq!(temp_file_base(".tmp.1.2.3", true), None);
+        assert_eq!(temp_file_base("auth.json", true), None);
+        assert_eq!(temp_file_base("auth.json.tmp", true), None);
+    }
+
+    #[test]
+    fn stage_write_temp_names_are_recognized() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auth.json");
+        let staged = stage_write(&path, b"{}", Some(0o600), false).unwrap();
+        let name = staged
+            .tmp_path()
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        staged.discard();
+        assert_eq!(temp_file_base(&name, false), Some("auth.json"));
+    }
+
+    #[test]
+    fn atomic_write_private_durable_creates_missing_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("oauth_auth.json");
+
+        atomic_write_private_durable(&path, b"{}").unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"{}");
+    }
+
+    /// 凭据文件被别的进程占着、替换失败时，旧凭据必须原样留着，也不留下临时文件。
+    /// 早先 OAuth 存储在 Windows 上先删旧文件再 rename，中途失败或崩溃就丢了 refresh token。
+    #[cfg(windows)]
+    #[test]
+    fn atomic_write_private_durable_keeps_old_credentials_when_replace_fails() {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("oauth_auth.json");
+        std::fs::write(&path, b"old credentials").unwrap();
+        let held_file = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(&path)
+            .unwrap();
+
+        let result = atomic_write_private_durable(&path, b"new credentials");
+
+        assert!(result.is_err());
+        drop(held_file);
+        assert_eq!(std::fs::read(&path).unwrap(), b"old credentials");
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 

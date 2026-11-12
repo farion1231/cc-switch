@@ -323,6 +323,28 @@ pub fn load(store: &DeviceStore) -> Result<LiveState, AppError> {
     }
 }
 
+/// 各应用未完成操作还要用的临时文件（`pending` 里的 `staged`），崩溃恢复靠它们前滚。
+///
+/// 只读：状态文件坏了直接返回错误，不像 [`load`] 那样挪到一旁。调用方拿不到这份清单时，
+/// 就不能删这些目录里的临时文件。
+pub fn staged_temp_files(store: &DeviceStore) -> Result<Vec<PathBuf>, AppError> {
+    let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let path = store.state_path();
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(source) => return Err(AppError::io(&path, source)),
+    };
+    let state: LiveState = serde_json::from_slice(&bytes).map_err(|e| AppError::json(&path, e))?;
+    Ok(state
+        .apps
+        .values()
+        .filter_map(|app| app.pending.as_ref())
+        .flat_map(|pending| pending.files.iter())
+        .filter_map(|file| file.staged.clone())
+        .collect())
+}
+
 fn save(store: &DeviceStore, state: &LiveState) -> Result<(), AppError> {
     let bytes =
         serde_json::to_vec_pretty(state).map_err(|source| AppError::JsonSerialize { source })?;

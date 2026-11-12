@@ -144,7 +144,7 @@ impl CredentialStore for FileStore {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|source| AppError::io(parent, source))?;
         }
-        crate::config::atomic_write_private(&path, &secret.to_bytes())
+        crate::config::atomic_write_private_durable(&path, &secret.to_bytes())
     }
 
     fn delete(&self, slot: &Slot) -> Result<(), AppError> {

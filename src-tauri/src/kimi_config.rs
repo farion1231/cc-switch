@@ -1,6 +1,6 @@
 //! Kimi Code's native providers and models share one TOML configuration.
 //! A saved CCS provider contains `{ provider: LLMProvider, models: { key: LLMModel } }`.
-use crate::config::{atomic_write_private, get_home_dir};
+use crate::config::{atomic_write_private, atomic_write_private_durable, get_home_dir};
 use crate::error::AppError;
 use crate::provider::Provider;
 use indexmap::IndexMap;
@@ -772,7 +772,7 @@ pub(crate) fn save_oauth_login(
                         .map_err(|e| AppError::io(directory, e))?;
                 }
             }
-            atomic_write_private(token_path, token)
+            atomic_write_private_durable(token_path, token)
         },
     )
 }

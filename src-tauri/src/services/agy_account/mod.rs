@@ -30,8 +30,8 @@ use crate::error::AppError;
 use keychain::AgyLoginStore;
 use oauth::{AgyOAuthError, TokenResponse};
 
-const STORE_FILENAME: &str = "agy_accounts.json";
-const STASH_FILENAME: &str = "agy-login-stash.json";
+pub(crate) const STORE_FILENAME: &str = "agy_accounts.json";
+pub(crate) const STASH_FILENAME: &str = "agy-login-stash.json";
 /// 浏览器登录最多等这么久，过了就当放弃。
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// access token 剩不到这么久就先续期再查额度。
@@ -562,7 +562,7 @@ impl AgyAccountManager {
             "saved_at": chrono::Utc::now().timestamp_millis(),
         }))
         .map_err(|source| AppError::JsonSerialize { source })?;
-        crate::config::atomic_write_private(&self.data_dir.join(STASH_FILENAME), &content)
+        crate::config::atomic_write_private_durable(&self.data_dir.join(STASH_FILENAME), &content)
     }
 
     fn persist(&self, store: &StoreFile) -> Result<(), AppError> {
@@ -574,7 +574,7 @@ impl AgyAccountManager {
         };
         let content = serde_json::to_vec_pretty(&snapshot)
             .map_err(|source| AppError::JsonSerialize { source })?;
-        crate::config::atomic_write_private(&self.data_dir.join(STORE_FILENAME), &content)
+        crate::config::atomic_write_private_durable(&self.data_dir.join(STORE_FILENAME), &content)
     }
 }
 
