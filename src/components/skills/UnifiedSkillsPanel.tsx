@@ -41,6 +41,7 @@ import {
   useImportSkillsFromApps,
   useInstallSkillsFromZip,
   useInstalledSkills,
+  useRefreshLocalSkillMetadata,
   useRestoreSkillBackup,
   useScanUnmanagedSkills,
   useSkillBackups,
@@ -177,6 +178,9 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     error: loadError,
     refetch,
   } = useInstalledSkills();
+  // 列表先用数据库快照渲染；本地元数据在后台线程刷新，有新结果时才刷新列表。
+  // 独立 query 让开关/安装引起的列表失效不再重复扫描 SSOT 目录（issue #7848）。
+  useRefreshLocalSkillMetadata();
   const {
     data: skillBackups = [],
     refetch: refetchSkillBackups,

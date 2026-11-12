@@ -1185,6 +1185,7 @@
     "hermes": "Hermes",
     "pi": "Pi",
     "mcode": "MiniMax Code",
+    "workbuddy": "WorkBuddy",
     "agy": "Antigravity",
     "copilot": "Copilot CLI",
     "omp": "Oh My Pi"
@@ -1193,6 +1194,62 @@
     "empty": {
       "title": "아직 사용자 지정 공급자가 없습니다.",
       "description": "MiniMax 공식 계정 로그인은 MiniMax Code 자체에서 관리되므로 가져올 필요가 없습니다. 이미 config.yaml에 있는 사용자 지정 공급자가 여기에 자동으로 표시됩니다. 프리셋 또는 사용자 지정 공급자를 추가하려면 오른쪽 상단의 + 버튼을 사용하세요."
+    }
+  },
+  "workbuddy": {
+    "deleteSessionHint": "세션 목록과 기록이 함께 업데이트되도록 WorkBuddy에서 이 세션을 삭제하세요.",
+    "empty": {
+      "title": "아직 WorkBuddy 공급자가 없습니다",
+      "description": "CC Switch는 공급자를 ~/.workbuddy/models.json에 사용자 지정 모델로 기록하며, WorkBuddy에서 직접 추가한 모델은 건드리지 않으므로 가져올 항목이 없습니다. 오른쪽 위의 + 버튼으로 프리셋 또는 사용자 지정 공급자를 추가하세요."
+    },
+    "form": {
+      "providerKeyHint": "영문 소문자, 숫자, 하이픈만 사용할 수 있습니다. models.json의 어떤 항목이 이 공급자에 속하는지 표시합니다.",
+      "providerKeyLockedHint": "이 키는 models.json에서 이 공급자의 항목을 표시하므로 생성 후에는 변경할 수 없습니다.",
+      "url": "요청 URL",
+      "urlHint": "OpenAI 호환 Chat Completions 전체 URL로, 보통 /chat/completions로 끝납니다.",
+      "apiKeyHint": "이 컴퓨터의 models.json에 저장됩니다. ${ENV_VAR} 참조는 WorkBuddy가 확장합니다.",
+      "vendor": "공급업체 레이블",
+      "modelsHint": "모델을 하나 이상 추가하세요. 모델 ID는 그대로 API에 전송됩니다.",
+      "maxInputTokens": "최대 입력 토큰",
+      "maxOutputTokens": "최대 출력 토큰"
+    },
+    "official": {
+      "presetName": "WorkBuddy 공식 로그인",
+      "account": "WorkBuddy 계정",
+      "chooseAccount": "계정 선택",
+      "noAccounts": "저장된 계정이 아직 없습니다",
+      "accountHelp": "이 카드는 이 계정만 연결하며 WorkBuddy의 모델 구성에는 기록되지 않습니다. 공급자 목록에서 이 카드의 추가를 클릭하면 WorkBuddy가 이 계정으로 로그인됩니다. 공식 카드는 한 번에 하나만 추가됩니다.",
+      "accountDeleted": "계정이 삭제되었습니다. 다른 계정을 선택하세요",
+      "accountUnset": "선택된 계정이 없습니다",
+      "accountDeletedChip": "계정 삭제됨",
+      "accountUnsetChip": "계정 없음",
+      "emptyTitle": "아직 WorkBuddy 계정이 없습니다",
+      "emptyBody": "WorkBuddy를 열고 로그인하면 계정이 여기에 자동으로 추가됩니다.",
+      "addAnotherTitle": "다른 계정을 사용하시겠습니까?",
+      "addAnotherBody": "WorkBuddy를 완전히 종료한 다음 다른 계정으로 로그인을 클릭하고(WorkBuddy는 이 컴퓨터에서만 로그인 페이지로 열리며, 현재 계정은 서버에서 로그아웃되지 않습니다) WorkBuddy에서 로그인하세요. 계정이 목록에 자동으로 나타납니다.",
+      "addAnotherRunning": "WorkBuddy가 실행 중입니다. 메뉴 막대/트레이를 포함해 완전히 종료한 다음 다른 계정으로 로그인을 클릭하세요.",
+      "preparedNewLogin": "현재 계정이 저장되었습니다. WorkBuddy가 로그인 페이지로 열립니다. 다른 계정으로 로그인하면 계정 목록에 자동으로 나타납니다.",
+      "switching": "전환 중…",
+      "onlyOne": "WorkBuddy는 한 번에 하나의 계정에만 로그인할 수 있습니다. 전환하려면 다른 공식 카드를 추가하세요.",
+      "quitFirst": "추가하기 전에 WorkBuddy를 종료하세요",
+      "quitFirstBody": "메뉴 막대/트레이를 포함해 WorkBuddy를 완전히 종료한 다음 다시 추가를 클릭하세요. 그렇지 않으면 WorkBuddy가 현재 로그인 정보를 다시 기록합니다.",
+      "switched": "\"{{name}}\"(으)로 전환했습니다. 다음에 WorkBuddy를 열면 이 계정을 사용합니다.",
+      "switchFailed": "WorkBuddy 계정을 전환할 수 없습니다"
+    },
+    "quota": {
+      "title": "할당량",
+      "credits": "크레딧",
+      "leftOf": "{{remaining}} / {{total}} 남음",
+      "usedOf": "{{used}} / {{total}} 사용",
+      "usedUp": "모두 사용함 (총 {{total}})",
+      "detail": "크레딧 {{total}} 중 {{remaining}} 남음, {{used}} 사용",
+      "staleNotRunning": "WorkBuddy가 실행 중이 아니어서 마지막 결과를 표시합니다",
+      "staleNotCurrent": "WorkBuddy에 로그인된 계정이 아니어서 마지막 결과를 표시합니다",
+      "staleNotSignedIn": "WorkBuddy에 로그인되어 있지 않아 마지막 결과를 표시합니다",
+      "staleFailed": "이번 조회에 실패하여 마지막 결과를 표시합니다",
+      "openToQuery": "조회하려면 WorkBuddy를 여세요",
+      "onlyWhileRunning": "할당량은 WorkBuddy가 실행 중일 때만 WorkBuddy를 통해 조회할 수 있습니다",
+      "unavailable": "지금은 할당량을 확인할 수 없습니다"
     }
   },
   "pi": {
@@ -1971,12 +2028,7 @@
       "notSignedIn": "Copilot CLI에 로그인되어 있지 않습니다. copilot을 실행해 /login으로 로그인하거나 이 카드에 인증 센터 계정을 연결하세요."
     },
     "defaultCannotRemove": "Copilot의 기본 모델이 이 공급자의 것이라 제거하거나 삭제할 수 없습니다. 먼저 copilot에서 /model로 다른 공급자의 모델을 선택하세요.",
-    "terminalNeedsAdd": "터미널에서 모델을 선택할 수 있도록 먼저 이 공급자를 Copilot에 추가하세요.",
-    "section": {
-      "official": "공식 로그인 · {{count}}",
-      "officialHelpTitle": "공식 로그인",
-      "officialHelp": "Copilot CLI 자체 GitHub 로그인을 사용하며 파일에 아무것도 쓰지 않습니다. 「터미널 열기」는 카드의 모델과 연결된 계정으로 copilot을 실행합니다."
-    }
+    "terminalNeedsAdd": "터미널에서 모델을 선택할 수 있도록 먼저 이 공급자를 Copilot에 추가하세요."
   },
   "codexOauth": {
     "authStatus": "인증 상태",
@@ -2285,6 +2337,7 @@
     "manageUniversal": "기존 범용 공급자 관리 ›",
     "loginWith": {
       "deepseek": "DeepSeek 계정으로 로그인",
+      "workbuddy": "WorkBuddy 계정으로 로그인",
       "kimi": "Kimi 계정으로 로그인",
       "claude": "Claude 계정으로 로그인",
       "chatgpt": "ChatGPT 계정으로 로그인",
@@ -4374,6 +4427,7 @@
     "columnVisible": "표시",
     "visibleHelp": "끄면 앱이 사이드바, 트레이 메뉴, MCP / 스킬의 앱 열, 프롬프트 및 세션의 앱 선택기에 표시되지 않습니다. 화면에서만 숨겨지며, 공급자와 MCP 서버 등의 설정 및 앱 자체 설정 파일은 변경되지 않습니다.",
     "desktopHelp": "Claude Desktop은 데스크톱 앱이므로 여기에서 설치하거나 업그레이드할 수 없습니다. CC Switch는 설정 파일을 통해 연결됩니다.",
+    "workbuddyHelp": "WorkBuddy는 데스크톱 앱이므로 여기서 설치하거나 업그레이드할 수 없으며 스스로 업데이트됩니다. CC Switch는 구성 파일(~/.workbuddy/models.json)을 통해 연결합니다.",
     "desktopUnsupported": "이 시스템에서는 지원되지 않습니다",
     "desktopConnected": "연결됨",
     "desktopNotConnected": "연결되지 않음",
@@ -5076,6 +5130,7 @@
       "chatgptHelp": "Claude Code와 Claude Desktop의 ChatGPT 프리셋 및 Codex의 공식 로그인 연결에 사용합니다. 계정을 선택하지 않은 공급자는 기본 계정을 사용합니다.",
       "xaiHelp": "Claude Code, Claude Desktop 및 Codex의 xAI 프리셋에서 사용합니다. 계정을 선택하지 않은 공급자는 기본 계정을 사용합니다.",
       "agyHelp": "Antigravity CLI(agy)의 공식 로그인입니다. agy는 한 번에 하나의 계정에만 로그인할 수 있습니다. 전환하면 agy의 로그인이 선택한 계정으로 교체되며 이후 시작한 agy 세션에서 사용됩니다. 기존에 agy에 로그인된 계정은 자동으로 여기에 추가되므로 다른 계정으로 전환해도 사라지지 않습니다.",
+      "workbuddyHelp": "WorkBuddy 데스크톱 앱의 공식 로그인입니다. CC Switch는 대신 WorkBuddy에 로그인할 수 없으며, WorkBuddy에 로그인된 계정(로그인 파일의 스냅샷)만 저장할 수 있습니다. 계정을 전환하려면 공급자 목록에서 해당 계정에 연결된 WorkBuddy 공식 로그인 카드를 추가하세요(공식 카드는 한 번에 하나만 추가됩니다). 스냅샷은 이 컴퓨터에서만 작동하며 동기화되지 않습니다.",
       "claudeHelpTerminal": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. 설정에서 Claude 설정 디렉터리를 별도로 지정한 경우, 카드를 전환해도 Claude Code의 로그인 계정은 바뀌지 않습니다. Claude 공식 공급자 카드에서 계정을 선택한 다음, 해당 카드의 ‘터미널 열기’를 이용하세요.",
       "claudeHelpWsl": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. Claude 설정 디렉터리가 WSL에 있는 경우는 아직 지원하지 않습니다. 추후 지원할 예정입니다.",
       "claudeHelp": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. Claude 공식 공급자 카드에서 계정을 선택하고 해당 카드로 전환하면 Claude Code의 로그인 계정이 즉시 해당 계정으로 바뀝니다. 여러 계정을 동시에 사용하려면 각 카드의 ‘터미널 열기’를 이용하세요. 로그인 토큰은 이 컴퓨터에만 보관되며 업로드되거나 갱신되지 않고, 계정도 로그아웃되지 않습니다. 처음 전환할 때 Claude Code에 현재 로그인된 계정이 자동으로 추가됩니다. 계정을 전환하면 Remote Control 연결이 끊기며 프롬프트 캐시를 다시 생성해야 합니다."
@@ -5135,6 +5190,41 @@
       "removeNote": "agy의 로그인은 유지됩니다. 이 계정을 사용 중인 경우 여기서 제거해도 계속 작동합니다.",
       "switched": "전환했습니다. 새 agy 세션은 이 계정을 사용합니다.",
       "switchedWhileRunning": "전환했습니다. 실행 중인 agy가 감지되었습니다. 이미 실행 중인 agy는 기존 계정을 계속 사용하며 기존 계정 정보를 로그인 설정에 다시 저장할 수도 있습니다. agy를 모두 종료한 뒤 다시 실행하세요."
+    },
+    "workbuddy": {
+      "addedOn": "{{date}}에 추가됨",
+      "expiredNote": "로그인 정보가 만료되었습니다. 다시 로그인을 클릭한 다음 WorkBuddy에서 이 계정으로 로그인하세요",
+      "reauthPrepared": "WorkBuddy가 로그인 페이지로 열립니다. {{login}}(으)로 로그인하면 CC Switch가 스냅샷을 새 로그인 정보로 교체합니다.",
+      "reauthRunningTitle": "WorkBuddy가 실행 중이어서 로그인 페이지로 열 수 없습니다",
+      "reauthRunningBody": "메뉴 막대/트레이를 포함해 WorkBuddy를 완전히 종료하고 다시 로그인을 클릭하거나, WorkBuddy에서 로그아웃한 뒤 그곳에서 {{login}}(으)로 로그인하세요. CC Switch가 스냅샷을 자동으로 교체합니다.",
+      "reauthOtherAdded": "{{target}}이(가) 아닌 다른 계정으로 로그인했습니다. {{login}}이(가) 새 계정으로 추가되었습니다.",
+      "reauthOtherUpdated": "{{target}}이(가) 아닌 다른 계정으로 로그인했습니다. {{login}}은(는) 이미 목록에 있어 사본을 업데이트했습니다.",
+      "statusLoadFailed": "WorkBuddy 계정을 불러올 수 없습니다. 다시 시도해 주세요.",
+      "empty": "아직 WorkBuddy 계정이 없습니다. WorkBuddy에서 로그인한 다음 로그인된 계정을 추가하세요.",
+      "plan": {
+        "free": "무료",
+        "pro": "Pro",
+        "team": "팀",
+        "enterprise": "엔터프라이즈",
+        "personal": "개인",
+        "_raw": "{{plan}}"
+      },
+      "importNow": "추가",
+      "current": "WorkBuddy에서 사용 중",
+      "removeNote": "CC Switch의 스냅샷만 삭제하며 WorkBuddy는 로그인 상태로 유지됩니다.",
+      "localOnly": "스냅샷은 이 컴퓨터에서만 작동하며(로그인 정보가 이 기기에 묶여 있음) 동기화되지 않습니다. 다른 컴퓨터에서는 계정을 다시 추가하세요.",
+      "runningTitle": "WorkBuddy가 실행 중입니다",
+      "runningBody": "계정을 전환하거나 다른 계정으로 로그인하기 전에 메뉴 막대/트레이를 포함해 WorkBuddy를 완전히 종료하세요. 그렇지 않으면 WorkBuddy가 현재 로그인 정보를 다시 기록합니다.",
+      "unrecognizedTitle": "WorkBuddy의 현재 계정을 인식할 수 없습니다",
+      "unrecognizedBody": "로그인 파일 형식이 변경되었을 수 있어 아직 추가할 수 없습니다. 공급자 목록에서 다른 계정으로 전환하기 전에 그대로 보관해 둡니다.",
+      "notImportedTitle": "WorkBuddy의 현재 계정이 아직 추가되지 않았습니다",
+      "alreadyTitle": "현재 계정은 이미 목록에 있습니다(스냅샷 업데이트됨)",
+      "alreadyBody": "다른 계정을 추가하려면: WorkBuddy를 완전히 종료하고 다른 계정으로 로그인을 클릭한 다음(CC Switch는 이 컴퓨터에서 WorkBuddy가 로그인 페이지로 열리게만 하며, 현재 계정은 서버에서 로그아웃되지 않습니다) WorkBuddy에서 다른 계정으로 로그인하고 돌아와 계정 추가를 클릭하세요.",
+      "signedOutTitle": "WorkBuddy에 로그인되어 있지 않습니다",
+      "signedOutBody": "WorkBuddy에서 로그인한 다음 돌아와 계정 추가를 클릭하세요.",
+      "prepareNewLogin": "다른 계정으로 로그인",
+      "preparedNewLogin": "현재 계정이 저장되었습니다. WorkBuddy가 로그인 페이지로 열립니다. 다른 계정으로 로그인한 다음 돌아와 계정 추가를 클릭하세요.",
+      "openApp": "WorkBuddy 열기"
     },
     "claude": {
       "pasteSubmitted": "제출되었습니다. 로그인을 완료하는 중…",

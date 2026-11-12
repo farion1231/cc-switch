@@ -2146,17 +2146,17 @@ impl RequestForwarder {
             )?;
         }
 
-        // Codex 客户端私有的 `include` 标记只对官方 ChatGPT 后端有效：第三方与本地原生
-        // Responses 网关收到它会整条 400（#9042）。
-        if should_drop_codex_private_include_markers(
+        // Codex 以为在跟内置 openai 说话时才发的字段（ChatGPT 后端私有）：第三方与本地原生
+        // Responses 网关收到会整条 400（#9042），去掉后和 Codex 对自定义表发的一样。
+        if should_strip_codex_openai_only_fields(
             app_type,
             provider,
             codex_responses_to_chat,
             codex_responses_to_anthropic,
-        ) && super::providers::strip_codex_private_include_markers(&mut request_body)
+        ) && super::providers::strip_codex_openai_only_request_fields(&mut request_body)
         {
             log::debug!(
-                "[Codex] Dropped Codex-private include markers for a third-party upstream (provider={})",
+                "[Codex] Dropped OpenAI-only request fields for a third-party upstream (provider={})",
                 provider.id
             );
         }
@@ -3871,10 +3871,12 @@ fn is_chatgpt_identity_header(key_str: &str) -> bool {
         || key_str.starts_with("x-responsesapi-")
 }
 
-/// Codex 客户端私有的 `include` 标记（`output.encrypted_content`）只对官方 ChatGPT 后端
-/// 有效。第三方与本地原生 Responses 网关收到它会把整条请求 400 掉（#9042）。转 Chat /
-/// Anthropic 的路径本来就不带它，官方那条路逐字节不变。
-fn should_drop_codex_private_include_markers(
+/// Codex 只对内置 openai 发的字段（`output.encrypted_content`、
+/// `internal_chat_message_metadata_passthrough` 等，见
+/// `strip_codex_openai_only_request_fields`）只有 ChatGPT 后端认。第三方与本地原生
+/// Responses 网关收到会把整条请求 400 掉（#9042）。官方卡和 ChatGPT 托管账号那条路逐字节
+/// 不变；转 Chat / Anthropic 的路径重新组装请求，本来就不带这些字段。
+fn should_strip_codex_openai_only_fields(
     app_type: &AppType,
     provider: &Provider,
     codex_responses_to_chat: bool,
@@ -3884,6 +3886,7 @@ fn should_drop_codex_private_include_markers(
         && !codex_responses_to_chat
         && !codex_responses_to_anthropic
         && !super::providers::is_codex_official_provider(provider)
+        && !provider.is_codex_oauth()
 }
 
 fn codex_anthropic_error_envelope_message(body: &[u8]) -> Option<String> {
@@ -8008,10 +8011,86 @@ mod tests {
             assert!(seen.body.get("include").is_none(), "{}", seen.body);
         }
 
-        /// 官方 ChatGPT 后端认这个标记；转 Chat / Anthropic 的路径本来就不带它。三条都跳过。
+        /// 第三方路由写成内置 openai 后，Codex 把只发给 OpenAI 的字段也带进第三方请求：
+        /// 条目上的 `internal_chat_message_metadata_passthrough`、非推理条目的密文、
+        /// `configuration_update` 条目、`stream_options` 与 `access_programs`（#9042）。
+        /// 去掉后应与 Codex 对自定义表发的一样，推理与压缩的密文、其余字段原样留着。
+        #[tokio::test]
+        async fn third_party_requests_drop_openai_only_fields() {
+            let upstream = upstream().await;
+            let metadata = json!({ "turn_id": "t1" });
+            let mut request = body("listed", json!([]));
+            request["input"] = json!([
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{ "type": "input_text", "text": "hi" }],
+                        "internal_chat_message_metadata_passthrough": metadata
+                    },
+                    { "type": "configuration_update", "reasoning": { "effort": "high" } },
+                    {
+                        "type": "reasoning",
+                        "summary": [],
+                        "encrypted_content": "gAAAA-reasoning",
+                        "internal_chat_message_metadata_passthrough": metadata
+                    },
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{ "type": "output_text", "text": "ok" }],
+                        "encrypted_content": "gAAAA-message"
+                    },
+                    {
+                        "type": "function_call",
+                        "call_id": "c1",
+                        "name": "spawn_agent",
+                        "arguments": "{}",
+                        "encrypted_content": "gAAAA-call",
+                        "encrypted_function_args": ["message"]
+                    },
+                    { "type": "function_call_output", "call_id": "c1", "output": "done" }
+            ]);
+            request["include"] = json!(["reasoning.encrypted_content", "output.encrypted_content"]);
+            request["stream_options"] =
+                json!({ "reasoning_summary_delivery": "sequential_cutoff" });
+            request["access_programs"] = json!({ "cyber": "standard" });
+
+            let seen = send(
+                &forwarder(false),
+                &upstream,
+                provider(&upstream, "openai_responses"),
+                "/responses",
+                request,
+            )
+            .await;
+
+            assert_eq!(seen.body["include"], json!(["reasoning.encrypted_content"]));
+            assert!(seen.body.get("stream_options").is_none(), "{}", seen.body);
+            assert!(seen.body.get("access_programs").is_none(), "{}", seen.body);
+            assert_eq!(
+                seen.body["input"],
+                json!([
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{ "type": "input_text", "text": "hi" }]
+                    },
+                    { "type": "reasoning", "summary": [], "encrypted_content": "gAAAA-reasoning" },
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{ "type": "output_text", "text": "ok" }]
+                    },
+                    { "type": "function_call", "call_id": "c1", "name": "spawn_agent", "arguments": "{}" },
+                    { "type": "function_call_output", "call_id": "c1", "output": "done" }
+                ])
+            );
+        }
+
+        /// 官方 ChatGPT 后端认这些字段；转 Chat / Anthropic 的路径本来就不带它们。都跳过。
         /// 官方那条路实测只能打到 chatgpt.com，这里直接验门控。
         #[test]
-        fn private_include_marker_gate_skips_official_and_converted_requests() {
+        fn openai_only_fields_gate_skips_official_and_converted_requests() {
             let third_party = provider(
                 &Upstream {
                     base_url: "https://relay.example.com".to_string(),
@@ -8023,33 +8102,45 @@ mod tests {
             official.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
             official.category = Some("official".to_string());
 
-            assert!(should_drop_codex_private_include_markers(
+            assert!(should_strip_codex_openai_only_fields(
                 &AppType::Codex,
                 &third_party,
                 false,
                 false
             ));
-            assert!(!should_drop_codex_private_include_markers(
+            assert!(!should_strip_codex_openai_only_fields(
                 &AppType::Codex,
                 &official,
                 false,
                 false
             ));
+            // ChatGPT 托管账号发往 ChatGPT 后端，同样认这些字段。
+            let mut managed = third_party.clone();
+            managed.meta = Some(crate::provider::ProviderMeta {
+                provider_type: Some("codex_oauth".to_string()),
+                ..Default::default()
+            });
+            assert!(!should_strip_codex_openai_only_fields(
+                &AppType::Codex,
+                &managed,
+                false,
+                false
+            ));
             // 转 Chat / 转 Anthropic 的路径不带原生 Responses 字段。
-            assert!(!should_drop_codex_private_include_markers(
+            assert!(!should_strip_codex_openai_only_fields(
                 &AppType::Codex,
                 &third_party,
                 true,
                 false
             ));
-            assert!(!should_drop_codex_private_include_markers(
+            assert!(!should_strip_codex_openai_only_fields(
                 &AppType::Codex,
                 &third_party,
                 false,
                 true
             ));
             // Grok Build 走 xAI 自己的清洗，不归这里管。
-            assert!(!should_drop_codex_private_include_markers(
+            assert!(!should_strip_codex_openai_only_fields(
                 &AppType::GrokBuild,
                 &third_party,
                 false,

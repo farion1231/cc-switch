@@ -1187,7 +1187,8 @@
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
     "omp": "Oh My Pi",
-    "copilot": "Copilot CLI"
+    "copilot": "Copilot CLI",
+    "workbuddy": "WorkBuddy"
   },
   "mcode": {
     "empty": {
@@ -1971,12 +1972,7 @@
       "notSignedIn": "Copilot CLI'de oturum açılmamış. copilot'u çalıştırıp /login ile oturum açın veya bu kartta bir Yetki Merkezi hesabı bağlayın."
     },
     "defaultCannotRemove": "Copilot'un varsayılan modeli bu sağlayıcıya ait olduğundan kaldırılamaz veya silinemez. Önce copilot içinde /model ile başka bir sağlayıcının modelini seçin.",
-    "terminalNeedsAdd": "Terminalin modelini seçebilmesi için önce bu sağlayıcıyı Copilot'a ekleyin.",
-    "section": {
-      "official": "Resmi oturum · {{count}}",
-      "officialHelpTitle": "Resmi oturum",
-      "officialHelp": "Copilot CLI'nin kendi GitHub oturumunu kullanır ve hiçbir dosyaya yazmaz. Terminal Aç, copilot'u kartın modeli ve bağlı hesabıyla başlatır."
-    }
+    "terminalNeedsAdd": "Terminalin modelini seçebilmesi için önce bu sağlayıcıyı Copilot'a ekleyin."
   },
   "codexOauth": {
     "authStatus": "Kimlik doğrulama durumu",
@@ -2285,6 +2281,7 @@
     "manageUniversal": "Mevcut evrensel sağlayıcıları yönetin ›",
     "loginWith": {
       "deepseek": "DeepSeek hesabıyla giriş yap",
+      "workbuddy": "WorkBuddy hesabıyla giriş yap",
       "kimi": "Kimi hesabıyla oturum aç",
       "claude": "Claude hesabıyla oturum açın",
       "chatgpt": "ChatGPT hesabıyla oturum açın",
@@ -4398,7 +4395,8 @@
       "agy": "Resmî kurulum betiğiyle yüklenir",
       "omp": "Resmi komut dosyasıyla yüklenir",
       "copilot": "npm ile kurulur"
-    }
+    },
+    "workbuddyHelp": "WorkBuddy bir masaüstü uygulamasıdır; buradan kurulamaz veya yükseltilemez, kendini günceller. CC Switch ona yapılandırma dosyası (~/.workbuddy/models.json) üzerinden bağlanır."
   },
   "appPage": {
     "moreActions": "{{name}} için diğer işlemler",
@@ -5078,7 +5076,8 @@
       "agyHelp": "Antigravity CLI (agy) için resmî oturum açma yöntemi. agy aynı anda yalnızca tek bir hesapta oturum açabilir. Hesabı Değiştir seçeneği agy'nin oturumunu seçilen hesapla değiştirir ve bundan sonra başlatılan agy oturumları bu hesabı kullanır. agy'nin hâlihazırda oturum açtığı hesap buraya otomatik olarak eklenir; böylece başka hesaba geçerken önceki hesabı kaybetmezsiniz.",
       "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings, so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",
       "claudeHelpWsl": "Official Claude Code subscription accounts (Pro / Max / Team). Not supported yet while the Claude config folder is in WSL.",
-      "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: after switching to the card, Claude Code's sign-in changes to it right away. To use several accounts at once, use Open Terminal on the card. Sign-in tokens stay on this computer and are never uploaded, refreshed or signed out. The first switch saves the account Claude Code is signed in to now; switching ends Remote Control and rebuilds the prompt cache."
+      "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: after switching to the card, Claude Code's sign-in changes to it right away. To use several accounts at once, use Open Terminal on the card. Sign-in tokens stay on this computer and are never uploaded, refreshed or signed out. The first switch saves the account Claude Code is signed in to now; switching ends Remote Control and rebuilds the prompt cache.",
+      "workbuddyHelp": "WorkBuddy masaüstü uygulamasının resmi oturumu. CC Switch sizin yerinize WorkBuddy'de oturum açamaz; yalnızca WorkBuddy'nin oturum açtığı hesabı (oturum dosyalarının anlık görüntüsü) kaydedebilir. Hesap değiştirmek için sağlayıcı listesinde bu hesaba bağlı WorkBuddy Resmi Oturum kartını ekleyin (aynı anda yalnızca bir resmi kart eklenmiş olur). Anlık görüntüler yalnızca bu bilgisayarda çalışır ve senkronize edilmez."
     },
     "addAccount": "Hesap ekle",
     "accountMenu": "{{login}} için daha fazla eylem",
@@ -5150,6 +5149,41 @@
       "empty": "No Claude accounts yet. Sign in here to switch between multiple subscription accounts.",
       "removeNote": "Only removes the sign-in CC Switch saved for this account; it isn't signed out anywhere else, and Claude Code's current sign-in (~/.claude) is untouched. Cards bound to it switch to Claude Code's current sign-in.",
       "wslUnsupported": "The Claude config folder is in WSL. Adding and switching Claude accounts isn't supported there yet."
+    },
+    "workbuddy": {
+      "addedOn": "{{date}} eklendi",
+      "expiredNote": "Oturumun süresi doldu. Tekrar oturum açın'a tıklayın, ardından WorkBuddy'de bu hesapla oturum açın",
+      "reauthPrepared": "WorkBuddy oturum açma sayfasında açılacak. {{login}} olarak oturum açın; CC Switch anlık görüntüsünü yeni oturumla değiştirir.",
+      "reauthRunningTitle": "WorkBuddy çalışıyor, oturum açma sayfasında açılamıyor",
+      "reauthRunningBody": "WorkBuddy'den tamamen çıkıp (menü çubuğu / tepsi dahil) Tekrar oturum açın'a tıklayın ya da WorkBuddy'de oturumu kapatıp orada {{login}} olarak oturum açın. CC Switch anlık görüntüsünü otomatik olarak değiştirir.",
+      "reauthOtherAdded": "{{target}} yerine başka bir hesapla oturum açtınız. {{login}} yeni hesap olarak eklendi.",
+      "reauthOtherUpdated": "{{target}} yerine başka bir hesapla oturum açtınız. {{login}} zaten listede; kopyası güncellendi.",
+      "statusLoadFailed": "WorkBuddy hesapları yüklenemedi. Tekrar deneyin.",
+      "empty": "Henüz WorkBuddy hesabı yok. WorkBuddy'de oturum açın, ardından açık olan hesabı ekleyin.",
+      "importNow": "Ekle",
+      "current": "WorkBuddy kullanıyor",
+      "removeNote": "Yalnızca CC Switch'teki anlık görüntüyü siler; WorkBuddy oturumu açık kalır.",
+      "localOnly": "Anlık görüntüler yalnızca bu bilgisayarda çalışır (oturum bu cihaza bağlıdır) ve eşitlenmez. Başka bir bilgisayarda hesapları yeniden ekleyin.",
+      "runningTitle": "WorkBuddy çalışıyor",
+      "runningBody": "Hesap değiştirmeden veya başka bir hesapla oturum açmadan önce WorkBuddy'den tamamen çıkın (menü çubuğu / tepsi dahil); aksi halde mevcut oturumu geri yazar.",
+      "unrecognizedTitle": "WorkBuddy'nin geçerli hesabı tanınamadı",
+      "unrecognizedBody": "Oturum dosyası biçimi değişmiş olabilir, bu yüzden henüz eklenemiyor. Sağlayıcı listesinden başka bir hesaba geçmeden önce olduğu gibi saklanır.",
+      "notImportedTitle": "WorkBuddy'nin geçerli hesabı henüz eklenmedi",
+      "alreadyTitle": "Geçerli hesap zaten listede (anlık görüntü güncellendi)",
+      "alreadyBody": "Başka bir hesap eklemek için: WorkBuddy'den tamamen çıkın, Başka bir hesapla oturum aç'a tıklayın (CC Switch yalnızca bu bilgisayarda WorkBuddy'nin oturum açma sayfasında açılmasını sağlar; geçerli hesabın sunucudaki oturumu kapatılmaz), WorkBuddy'de diğer hesapla oturum açın, sonra buraya dönüp Hesap ekle'ye tıklayın.",
+      "signedOutTitle": "WorkBuddy'de oturum açık değil",
+      "signedOutBody": "WorkBuddy'de oturum açın, sonra buraya dönüp Hesap ekle'ye tıklayın.",
+      "prepareNewLogin": "Başka bir hesapla oturum aç",
+      "preparedNewLogin": "Geçerli hesap kaydedildi. WorkBuddy oturum açma sayfasında açılacak; başka bir hesapla oturum açıp buraya dönün ve Hesap ekle'ye tıklayın.",
+      "openApp": "WorkBuddy'yi aç",
+      "plan": {
+        "free": "Ücretsiz",
+        "pro": "Pro",
+        "team": "Ekip",
+        "enterprise": "Kurumsal",
+        "personal": "Kişisel",
+        "_raw": "{{plan}}"
+      }
     },
     "openBrowser": {
       "title": "Oturum açarken tarayıcıyı aç",
@@ -5283,5 +5317,61 @@
       "managedHint": "Hesap Yetkilendirme Merkezi'nde yönetilir; oturumu kapatınca bu kart kendiliğinden kaybolur."
     },
     "deleteSessionHint": "Geçmişin tutarlı kalması için bu oturumu DeepSeek Harness içinde silin."
+  },
+  "workbuddy": {
+    "deleteSessionHint": "Oturum listesi ve geçmişin birlikte güncellenmesi için oturumu WorkBuddy içinden silin.",
+    "empty": {
+      "title": "Henüz WorkBuddy sağlayıcısı yok",
+      "description": "CC Switch sağlayıcılarını WorkBuddy'nin ~/.workbuddy/models.json dosyasına özel model olarak yazar ve WorkBuddy'de eklediğiniz modellere dokunmaz; bu yüzden içe aktarılacak bir şey yoktur. Ön ayar veya özel sağlayıcı eklemek için sağ üst köşedeki + düğmesini kullanın."
+    },
+    "form": {
+      "providerKeyHint": "Yalnızca küçük harf, rakam ve kısa çizgi. models.json içindeki hangi girdilerin bu sağlayıcıya ait olduğunu işaretler.",
+      "providerKeyLockedHint": "Anahtar, bu sağlayıcının models.json içindeki girdilerini işaretler; bu yüzden oluşturulduktan sonra değiştirilemez.",
+      "url": "İstek URL'si",
+      "urlHint": "OpenAI uyumlu Chat Completions tam URL'si; genellikle /chat/completions ile biter.",
+      "apiKeyHint": "Bu bilgisayardaki models.json dosyasında saklanır. ${ENV_VAR} başvuruları WorkBuddy tarafından genişletilir.",
+      "vendor": "Sağlayıcı etiketi",
+      "modelsHint": "En az bir model ekleyin. Model kimliği API'ye olduğu gibi gönderilir.",
+      "maxInputTokens": "Maks. giriş token'ı",
+      "maxOutputTokens": "Maks. çıkış token'ı"
+    },
+    "official": {
+      "presetName": "WorkBuddy Resmi Oturum",
+      "account": "WorkBuddy hesabı",
+      "chooseAccount": "Hesap seçin",
+      "noAccounts": "Henüz kayıtlı hesap yok",
+      "accountHelp": "Kart yalnızca bu hesabı bağlar ve WorkBuddy model yapılandırmasına asla yazılmaz. Sağlayıcı listesinde bu kartta Ekle'ye tıklamak WorkBuddy'de bu hesapla oturum açar; aynı anda yalnızca bir resmi kart eklenmiş olur.",
+      "accountDeleted": "Hesap silindi. Başka bir hesap seçin",
+      "accountUnset": "Hesap seçilmedi",
+      "accountDeletedChip": "Hesap silindi",
+      "accountUnsetChip": "Hesap yok",
+      "emptyTitle": "Henüz WorkBuddy hesabı yok",
+      "emptyBody": "WorkBuddy'yi açıp oturum açın; hesap buraya otomatik eklenir.",
+      "addAnotherTitle": "Başka bir hesap mı kullanmak istiyorsunuz?",
+      "addAnotherBody": "WorkBuddy'den tamamen çıkın, Başka bir hesapla oturum aç'a tıklayın (WorkBuddy yalnızca bu bilgisayarda oturum açma sayfasında açılır; mevcut hesabın sunucudaki oturumu kapatılmaz), ardından WorkBuddy'de oturum açın. Hesap listede otomatik görünür.",
+      "addAnotherRunning": "WorkBuddy çalışıyor. Tamamen çıkın (menü çubuğu / tepsi dahil), sonra Başka bir hesapla oturum aç'a tıklayın.",
+      "preparedNewLogin": "Mevcut hesap kaydedildi. WorkBuddy oturum açma sayfasında açılacak; başka bir hesapla oturum açtığınızda hesap listesinde otomatik görünür.",
+      "switching": "Geçiş yapılıyor…",
+      "onlyOne": "WorkBuddy aynı anda yalnızca bir hesapla oturum açabilir. Geçiş yapmak için başka bir resmi kart ekleyin.",
+      "quitFirst": "Eklemeden önce WorkBuddy'den çıkın",
+      "quitFirstBody": "WorkBuddy'den tamamen çıkın (menü çubuğu / tepsi dahil), sonra tekrar Ekle'ye tıklayın; aksi halde mevcut oturumu geri yazar.",
+      "switched": "\"{{name}}\" hesabına geçildi. WorkBuddy bir sonraki açılışta bu hesabı kullanacak.",
+      "switchFailed": "WorkBuddy hesabı değiştirilemedi"
+    },
+    "quota": {
+      "title": "Kota",
+      "credits": "Kredi",
+      "leftOf": "{{remaining}} / {{total}} kaldı",
+      "usedOf": "{{used}} / {{total}} kullanıldı",
+      "usedUp": "Tükendi ({{total}} üzerinden)",
+      "detail": "{{total}} kredinin {{remaining}} kadarı kaldı, {{used}} kullanıldı",
+      "staleNotRunning": "WorkBuddy çalışmıyor; son sonuç gösteriliyor",
+      "staleNotCurrent": "WorkBuddy'nin oturum açtığı hesap değil; son sonuç gösteriliyor",
+      "staleNotSignedIn": "WorkBuddy'de oturum açılmamış; son sonuç gösteriliyor",
+      "staleFailed": "Bu sorgu başarısız oldu; son sonuç gösteriliyor",
+      "openToQuery": "Görmek için WorkBuddy'yi açın",
+      "onlyWhileRunning": "Kota yalnızca WorkBuddy çalışırken onun üzerinden sorgulanabilir",
+      "unavailable": "Kota şu anda alınamıyor"
+    }
   }
 }

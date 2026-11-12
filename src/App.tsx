@@ -884,7 +884,8 @@ function App() {
           activeApp === "dsh" ||
           activeApp === "kimi" ||
           activeApp === "agy" ||
-          activeApp === "copilot"
+          activeApp === "copilot" ||
+          activeApp === "workbuddy"
         )
           return;
         const conflicts = await checkEnvConflicts(activeApp);
@@ -1135,7 +1136,8 @@ function App() {
       app === "mcode" ||
       app === "dsh" ||
       app === "kimi" ||
-      app === "copilot"
+      app === "copilot" ||
+      app === "workbuddy"
     ) {
       await queryClient.invalidateQueries({ queryKey: ["providers", app] });
     }
@@ -1329,6 +1331,14 @@ function App() {
         );
         duplicatedProvider.addToLive = false;
       }
+    } else if (activeApp === "workbuddy") {
+      // WorkBuddy model IDs are unique across models.json, so a copy that kept
+      // the same models would collide; keep it out of the file until edited.
+      duplicatedProvider.providerKey = generateUniqueProviderCopyKey(
+        provider.id,
+        Object.keys(providers),
+      );
+      duplicatedProvider.addToLive = false;
     } else if (activeApp === "copilot") {
       // 自带模型卡的 id 就是 providers.json 里的供应商名，副本另起一个；官方卡仍用随机 id。
       // 副本都先不写进 providers.json（官方卡本来就不写）
@@ -1531,6 +1541,7 @@ function App() {
             activeApp !== "mcode" &&
             activeApp !== "dsh" &&
             activeApp !== "kimi" &&
+            activeApp !== "workbuddy" &&
             (settingsData?.showProfileSwitcher ?? false) && (
               <ProfileSwitcher activeApp={activeApp} />
             )}
@@ -1705,7 +1716,8 @@ function App() {
               activeApp === "kimi" ||
               activeApp === "dsh" ||
               activeApp === "omp" ||
-              activeApp === "copilot"
+              activeApp === "copilot" ||
+              activeApp === "workbuddy"
                 ? (provider) => setConfirmAction({ provider, action: "remove" })
                 : undefined
             }

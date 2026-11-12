@@ -3,7 +3,9 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ProviderCard } from "@/components/providers/ProviderCard";
-import type { ManagedAuthStatus } from "@/lib/api";
+import { http, HttpResponse } from "msw";
+import type { AppId, ManagedAuthStatus } from "@/lib/api";
+import { server } from "../msw/server";
 import type { Provider } from "@/types";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
@@ -90,6 +92,7 @@ const authStatus = (login: string): ManagedAuthStatus => ({
 function renderCard(
   provider: Provider,
   options: {
+    appId?: AppId;
     status?: ManagedAuthStatus;
     isCurrent?: boolean;
     onEdit?: (provider: Provider) => void;
@@ -99,11 +102,14 @@ function renderCard(
 ) {
   const queryClient = createTestQueryClient();
   if (options.planName) {
-    queryClient.setQueryData(["codex_oauth", "quota", "account-long"], {
-      success: true,
-      tiers: [],
-      planName: options.planName,
-    });
+    queryClient.setQueryData(
+      [
+        "codex_oauth",
+        "quota",
+        provider.meta?.authBinding?.accountId ?? "default",
+      ],
+      { success: true, tiers: [], planName: options.planName },
+    );
   }
   if (options.status) {
     queryClient.setQueryData(
@@ -116,7 +122,7 @@ function renderCard(
     <QueryClientProvider client={queryClient}>
       <ProviderCard
         provider={provider}
-        appId="codex"
+        appId={options.appId ?? "codex"}
         isCurrent={options.isCurrent ?? false}
         presentation={{ chips: [], buttons: [] }}
         onEdit={options.onEdit ?? vi.fn()}
@@ -130,6 +136,77 @@ function renderCard(
 }
 
 describe("ProviderCard Codex Official account identity", () => {
+  const proxyProvider = (): Provider => ({
+    ...managedProvider("Codex"),
+    category: "third_party",
+    websiteUrl: "https://openai.com/chatgpt/pricing",
+    settingsConfig: {
+      env: { ANTHROPIC_BASE_URL: "https://chatgpt.com/backend-api/codex" },
+    },
+  });
+
+  it.each(["claude", "claude-desktop"] as const)(
+    "shows the bound Codex account and plan instead of the website in %s",
+    async (appId) => {
+      server.use(
+        http.post("http://tauri.local/auth_get_status", () =>
+          HttpResponse.json(authStatus("me@example.com")),
+        ),
+      );
+      renderCard(proxyProvider(), { appId, planName: "Plus" });
+
+      expect(await screen.findByText("me@example.com")).toHaveClass("truncate");
+      expect(screen.getByText("· Plus")).toBeInTheDocument();
+      expect(
+        screen.queryByText("https://openai.com/chatgpt/pricing"),
+      ).not.toBeInTheDocument();
+    },
+  );
+
+  it("shows the default Codex account when the proxy has no explicit binding", () => {
+    const provider = proxyProvider();
+    delete provider.meta!.authBinding;
+    const status = authStatus("default@example.com");
+    status.accounts.unshift({
+      ...status.accounts[0],
+      id: "another-account",
+      login: "another@example.com",
+      is_default: false,
+    });
+    renderCard(provider, { appId: "claude", status, planName: "Plus" });
+
+    expect(screen.getByText("default@example.com")).toBeInTheDocument();
+    expect(screen.getByText("· Plus")).toBeInTheDocument();
+    expect(screen.queryByText("another@example.com")).not.toBeInTheDocument();
+  });
+
+  it("preserves manual notes on Codex proxy cards", () => {
+    renderCard(
+      { ...proxyProvider(), notes: "Work account" },
+      {
+        appId: "claude",
+        status: authStatus("me@example.com"),
+        planName: "Plus",
+      },
+    );
+
+    expect(screen.getByText("Work account")).toBeInTheDocument();
+    expect(screen.getByText("· Plus")).toBeInTheDocument();
+    expect(screen.queryByText("me@example.com")).not.toBeInTheDocument();
+  });
+
+  it("does not replace a missing bound proxy account with the default account", () => {
+    const provider = proxyProvider();
+    provider.meta!.authBinding!.accountId = "deleted-account";
+    renderCard(provider, {
+      appId: "claude",
+      status: authStatus("default@example.com"),
+    });
+
+    expect(screen.getByText("绑定的账号不可用")).toBeInTheDocument();
+    expect(screen.queryByText("default@example.com")).not.toBeInTheDocument();
+  });
+
   it("puts the bound account's plan after the login once its quota is in", () => {
     renderCard(managedProvider("OpenAI Official"), {
       status: authStatus("me@example.com"),

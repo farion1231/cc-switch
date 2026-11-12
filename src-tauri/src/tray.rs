@@ -58,6 +58,7 @@ fn app_display_name(app: &AppType) -> &'static str {
         AppType::Mcode => "MiniMax Code",
         AppType::Kimi => "Kimi Code",
         AppType::Dsh => "DeepSeek Harness",
+        AppType::WorkBuddy => "WorkBuddy",
         AppType::Agy => "Antigravity",
         AppType::Omp => "Oh My Pi",
         AppType::Copilot => "Copilot CLI",
@@ -2674,6 +2675,10 @@ fn icon_with_problem_dot(icon: &Image<'_>, template: bool) -> Image<'static> {
     Image::new_owned(rgba, width, height)
 }
 
+/// 托盘图标要不要设悬停提示。macOS 不设：提示框有时会卡在屏幕上，鼠标移开也不收起，之后还会
+/// 出现在鼠标停留的别处，只有退出应用才消失。macOS 上出问题时照样有图标圆点，点开面板能看到问题区。
+pub const TRAY_TOOLTIP_ENABLED: bool = cfg!(not(target_os = "macos"));
+
 /// 悬停提示：平时 `CC Switch`，出问题时 `CC Switch · 需要处理：<问题区第一条>`。额度不算问题。
 fn tray_tooltip(texts: &TrayTexts, problems: &[TrayProblem]) -> String {
     match problems.first() {
@@ -2691,15 +2696,20 @@ fn tray_tooltip(texts: &TrayTexts, problems: &[TrayProblem]) -> String {
 /// 现在托盘上的（有没有圆点，悬停提示）；`None` = 托盘图标还没建好，还是建图标时的样子。
 static APPLIED_INDICATOR: Lazy<Mutex<Option<(bool, String)>>> = Lazy::new(|| Mutex::new(None));
 
-/// 问题区有内容时托盘图标加圆点、悬停提示写第一条问题；问题都消失后换回原图标和提示。只在
-/// 变了时才动（Linux 每次换图标都要写临时文件）。
+/// 问题区有内容时托盘图标加圆点、悬停提示写第一条问题（macOS 不设提示，见
+/// `TRAY_TOOLTIP_ENABLED`）；问题都消失后换回原图标和提示。只在变了时才动（Linux 每次换图标
+/// 都要写临时文件）。
 fn update_problem_indicator(app: &tauri::AppHandle, texts: &TrayTexts, problems: &[TrayProblem]) {
     // 启动时第一次建菜单那会儿托盘图标还没建，等下一次重建。
     let Some(tray) = app.tray_by_id(TRAY_ID) else {
         return;
     };
     let has_dot = !problems.is_empty();
-    let tooltip = tray_tooltip(texts, problems);
+    let tooltip = if TRAY_TOOLTIP_ENABLED {
+        tray_tooltip(texts, problems)
+    } else {
+        String::new()
+    };
     // 只在锁里比对和记账：换图标要回主线程执行，不能拿着锁等。
     let icon_changed = {
         let mut applied = lock(&APPLIED_INDICATOR);
@@ -2729,8 +2739,10 @@ fn update_problem_indicator(app: &tauri::AppHandle, texts: &TrayTexts, problems:
         }
     }
     // Linux（AppIndicator）不显示悬停提示，设了也无害。
-    if let Err(e) = tray.set_tooltip(Some(&tooltip)) {
-        log::warn!("[Tray] 更新托盘悬停提示失败: {e}");
+    if TRAY_TOOLTIP_ENABLED {
+        if let Err(e) = tray.set_tooltip(Some(&tooltip)) {
+            log::warn!("[Tray] 更新托盘悬停提示失败: {e}");
+        }
     }
 }
 

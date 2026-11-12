@@ -4,6 +4,11 @@ import type { AppId } from "@/lib/api";
 import type { AppMode } from "@/types/proxy";
 import { isPiFamilyApp } from "@/config/appConfig";
 import {
+  boundWorkBuddyAccountId,
+  isWorkBuddyOfficial,
+  type WorkBuddyOfficialState,
+} from "@/components/providers/workbuddyOfficial";
+import {
   isOfficialAccount,
   providerNeedsRouting,
   supportsFailover,
@@ -702,6 +707,8 @@ export interface AdditiveInput {
   piStateUnavailable?: boolean;
   /** Kimi：原生 default_model 别名所属的供应商。 */
   kimiCurrentId?: string | null;
+  /** WorkBuddy 官方登录卡：已收录账号、当前登录、是否在运行 */
+  workbuddyOfficial?: WorkBuddyOfficialState;
   /** Copilot CLI：settings.json 的 `model`（`<卡片 id>/<模型>`）所属的自带模型卡。 */
   copilotDefaultId?: string | null;
   /** 「已添加」里列表外另画的卡（DSH 的 DeepSeek 账号卡），计入标题数字 */
@@ -711,8 +718,82 @@ export interface AdditiveInput {
     remove: (provider: Provider) => void;
     disableOmo: (provider: Provider) => void;
     setDefault: (provider: Provider, modelId?: string) => void;
+    /** WorkBuddy 官方登录卡的「添加」：把 WorkBuddy 的登录切到卡片绑定的账号 */
+    switchAccount?: (provider: Provider) => void;
     /** Copilot CLI 官方卡的主按钮 */
     openTerminal?: (provider: Provider) => void;
+  };
+}
+
+/**
+ * WorkBuddy 官方登录卡：和模型卡一样分进「已添加 / 可添加」，但同一时间只有一张在「已添加」——
+ * 绑定的账号就是 WorkBuddy 现在登着的号。「添加」= 把 WorkBuddy 的登录切到这张卡的账号（要先退出
+ * WorkBuddy），原来那张自动回到「可添加」。WorkBuddy 只能登一个号，在用的那张不能单独「移除」
+ * （不登出、不改凭据），按钮禁用并说明添加另一张即可切换。官方卡从不写进 models.json。
+ */
+function workbuddyOfficialCard(
+  input: AdditiveInput,
+  p: Provider,
+): { added: boolean; presentation: CardPresentation } {
+  const { t } = input;
+  const state = input.workbuddyOfficial;
+  const bound = boundWorkBuddyAccountId(p);
+  const missing =
+    !bound || (state?.accountIds != null && !state.accountIds.has(bound));
+  const current = !missing && bound === state?.currentAccountId;
+  const chips: CardChip[] = [
+    {
+      key: "official",
+      label: t("providerCard.chip.official"),
+      tone: "outline",
+    },
+  ];
+  if (missing) {
+    chips.push({
+      key: "accountMissing",
+      label: bound
+        ? t("workbuddy.official.accountDeletedChip")
+        : t("workbuddy.official.accountUnsetChip"),
+      tone: "warning",
+    });
+  }
+  if (current) {
+    return {
+      added: true,
+      presentation: {
+        chips,
+        buttons: [
+          {
+            key: "remove",
+            label: t("providerCard.action.remove"),
+            onClick: () => undefined,
+            disabledReason: t("workbuddy.official.onlyOne"),
+          },
+        ],
+      },
+    };
+  }
+  return {
+    added: false,
+    presentation: {
+      chips,
+      buttons: [
+        {
+          key: "add",
+          label: t("providerCard.action.add"),
+          onClick: () => input.actions.switchAccount?.(p),
+          disabledReason: missing
+            ? bound
+              ? t("workbuddy.official.accountDeleted")
+              : t("workbuddy.official.accountUnset")
+            : state?.running
+              ? t("workbuddy.official.quitFirst")
+              : state?.switching
+                ? t("workbuddy.official.switching")
+                : undefined,
+        },
+      ],
+    },
   };
 }
 
@@ -720,7 +801,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
   const { app, t, providers, actions } = input;
   const added: ProviderSection["items"] = [];
   const available: ProviderSection["items"] = [];
-  // Copilot CLI 的官方卡：仍是启动式，单独一组排在最前
+  // Copilot CLI 的官方卡：仍是启动式（只有「打开终端」），并进「已添加」排在最前
   const official: ProviderSection["items"] = [];
   const piBlocked =
     isPiFamilyApp(app) && input.piStateUnavailable
@@ -729,6 +810,14 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
 
   for (const p of providers) {
     const chips: CardChip[] = [];
+    if (app === "workbuddy" && isWorkBuddyOfficial(p)) {
+      const card = workbuddyOfficialCard(input, p);
+      (card.added ? added : available).push({
+        provider: p,
+        presentation: card.presentation,
+      });
+      continue;
+    }
     if (app === "copilot") {
       if (isOfficialAccount(app, p)) {
         // 官方卡用 Copilot CLI 自己的 GitHub 登录，不写任何文件：没有添加 / 移除，
@@ -1017,26 +1106,11 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
     });
   }
 
-  const officialSection: ProviderSection[] = official.length
-    ? [
-        {
-          key: "official",
-          title: t("copilot.section.official", { count: official.length }),
-          help: {
-            title: t("copilot.section.officialHelpTitle"),
-            body: t("copilot.section.officialHelp"),
-          },
-          items: official,
-        },
-      ]
-    : [];
-
   return [
-    ...officialSection,
     {
       key: "added",
       title: t("providerCard.section.added", {
-        count: added.length + (input.extraAdded ?? 0),
+        count: official.length + added.length + (input.extraAdded ?? 0),
       }),
       help: {
         title: t("providerCard.section.addedHelpTitle"),
@@ -1050,7 +1124,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
       },
       note: app === "dsh" ? t("dsh.sharedProvidersNote") : undefined,
       emptyText: t("providerCard.section.addedEmpty"),
-      items: added,
+      items: [...official, ...added],
     },
     {
       key: "available",
