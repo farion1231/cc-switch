@@ -429,7 +429,9 @@ export function SwitchModePanel({
         title={t(
           startupFailure.reason === "drift"
             ? "mode.notice.attachDrifted"
-            : "mode.notice.attachFailed",
+            : startupFailure.reason === "unreadable"
+              ? "mode.notice.attachUnreadable"
+              : "mode.notice.attachFailed",
           {
             app: appName,
             mode: t(`mode.names.${startupFailure.stack ? "stack" : "route"}`),

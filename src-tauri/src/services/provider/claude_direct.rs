@@ -151,6 +151,10 @@ pub(crate) fn record_picker(
 /// 当成关键字段：live 里的和上次的写入记录（`recorded`）对不上，就是用户自己写的，目标
 /// 没有菜单时原样留下。目标带着菜单（聚合模式、行里配了菜单）时照旧以目标为准。没有记录
 /// （升级前）按旧规矩当成 CC Switch 的。
+///
+/// 比 `model` 宽松：`model` 进入路由时只留契约下能用的值，用户的菜单不看里面的模型 id，
+/// 整份原样留下（其中直连那家专属的 id 到了路由那家可能用不了）。菜单是用户手写的整体
+/// 配置，挑着删会改坏它；选了用不了的行，报错也直接显示在 Claude Code 里。
 fn with_users_picker(
     patch: &JsonPatch,
     live_picker: Option<Value>,

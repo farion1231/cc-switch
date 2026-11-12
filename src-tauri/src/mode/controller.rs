@@ -521,6 +521,9 @@ async fn write_proxy(
 
 /// 写代理契约时留下的 `/model` 选择：启动时从分离状态接上，先用分离时暂存的（分离写回
 /// 直连时它被换成了直连那家的），用不了再看 live 里现在的。
+///
+/// 暂存值有意优先于 live：CC Switch 关着时用户直连用 Claude Code 又在 `/model` 里选过，
+/// 那是给直连那家选的，接回路由后还原的是路由模式下的选择（暂存值用不了时才用 live 的）。
 fn claude_model_to_keep(
     op_name: &str,
     live_now: &LiveNow,
@@ -1084,7 +1087,7 @@ pub async fn exit_all(state: &AppState) -> Result<(), String> {
 ///
 /// 不恢复时只停代理服务，客户端文件和模式状态都不动（仍是已接上）：下次启动接上时契约
 /// 没变，写入引擎发现内容相同就不落盘；CC Switch 关着时客户端被改过的，启动时不覆盖
-/// （见 [`drifted_while_closed`]）。
+/// （见 [`drift_while_closed`]）。
 pub async fn detach_on_exit(state: &AppState) {
     if crate::settings::get_settings().restore_clients_on_exit {
         detach_all(state).await;
@@ -1859,13 +1862,24 @@ async fn startup_app(state: &AppState, app: &AppType) -> Result<(), String> {
         mode.attached = true;
     }
 
-    if want_proxy && !legacy && drifted_while_closed(state, app, &mode) {
-        log::warn!(
-            "{} 的客户端配置在 CC Switch 关闭期间被改过（已经不指向本地路由），不覆盖，退回直连",
-            app.as_str()
-        );
-        record_startup_failure(app, StartupAttachReason::Drift, String::new());
-        // 只落定模式，不写客户端文件：现在的内容是用户（或别的工具）写的。
+    let drift = if want_proxy && !legacy {
+        drift_while_closed(state, app, &mode)
+    } else {
+        None
+    };
+    if let Some((reason, error)) = drift {
+        match reason {
+            StartupAttachReason::Unreadable => log::warn!(
+                "{} 上次退出时仍接着路由，现在读不到它的客户端配置（{error}），不接上，退回直连",
+                app.as_str()
+            ),
+            _ => log::warn!(
+                "{} 的客户端配置在 CC Switch 关闭期间被改过（已经不指向本地路由），不覆盖，退回直连",
+                app.as_str()
+            ),
+        }
+        record_startup_failure(app, reason, error);
+        // 只落定模式，不写客户端文件：现在的内容是用户（或别的工具）写的，或者读不到。
         return commit_state(
             state,
             app,
@@ -1932,11 +1946,22 @@ async fn startup_app(state: &AppState, app: &AppType) -> Result<(), String> {
 ///
 /// 只看占位符，不比整个文件：客户端自己会频繁改这些文件（Claude Code 的 `/model`、权限），
 /// 按文件比对会一直误报。Claude Desktop 退出时本来就不分离，它的契约里也没有占位符，不查。
-fn drifted_while_closed(state: &AppState, app: &AppType, mode: &ModeState) -> bool {
-    mode.is_proxy()
-        && mode.attached
-        && *app != AppType::ClaudeDesktop
-        && !state.proxy_service.live_has_proxy_placeholder(app)
+///
+/// 文件不存在或解析不了（`Unreadable`，带上读取错误）同样不接上：分不清是用户删的、写坏的
+/// 还是别的工具正在改，宁可留给用户决定；提示里如实说是读不到，不说成被改过。
+fn drift_while_closed(
+    state: &AppState,
+    app: &AppType,
+    mode: &ModeState,
+) -> Option<(StartupAttachReason, String)> {
+    if !mode.is_proxy() || !mode.attached || *app == AppType::ClaudeDesktop {
+        return None;
+    }
+    match state.proxy_service.probe_live_placeholder(app) {
+        Ok(true) => None,
+        Ok(false) => Some((StartupAttachReason::Drift, String::new())),
+        Err(error) => Some((StartupAttachReason::Unreadable, error)),
+    }
 }
 
 fn record_startup_failure(app: &AppType, reason: StartupAttachReason, error: String) {
@@ -2091,6 +2116,8 @@ pub enum StartupAttachReason {
     Error,
     /// 客户端配置在 CC Switch 关闭期间被改过，没有覆盖，客户端文件原样保留。
     Drift,
+    /// 上次退出时仍接着路由，现在读不到客户端配置（不存在或解析不了），没有接上。
+    Unreadable,
 }
 
 fn startup_attach_failures() -> &'static std::sync::Mutex<Vec<StartupAttachFailure>> {
@@ -6393,6 +6420,32 @@ model_provider = "c"
         detach_on_exit(&state).await;
         assert!(!mode(&AppType::Claude).attached);
         assert_eq!(settings()["env"]["ANTHROPIC_BASE_URL"], "https://a.example");
+    }
+
+    /// 上次退出没分离、现在客户端配置读不到（写坏了）：同样不接上、不写文件，但提示的原因
+    /// 是读不到，不是被改过。
+    #[tokio::test]
+    #[serial]
+    async fn an_unreadable_client_config_is_reported_as_such_on_startup() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(
+            AppType::Claude,
+            &[claude("a", "https://a.example", json!({}))],
+            "a",
+        )
+        .await;
+        enter(&state, &AppType::Claude, false).await.expect("enter");
+        take_startup_attach_failures();
+
+        seed_settings("{ not json");
+        startup(&state).await;
+        assert_eq!(fs::read_to_string(settings_path()).unwrap(), "{ not json");
+        assert!(!mode(&AppType::Claude).is_proxy());
+        let failures = take_startup_attach_failures();
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].reason, StartupAttachReason::Unreadable);
+        assert!(!failures[0].error.is_empty());
     }
 
     /// 直连那家专属的模型 id 到了代理会被原样转发给路由那家，进入代理时照旧清掉。

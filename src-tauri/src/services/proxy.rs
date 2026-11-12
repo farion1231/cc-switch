@@ -275,34 +275,34 @@ impl ProxyService {
     /// 客户端文件里有没有接管占位符 `PROXY_MANAGED`（旧版接管的遗留物，或新版接上代理
     /// 时写的契约）。Codex 的官方路由不带占位符，按指向本地代理的地址认。
     pub(crate) fn live_has_proxy_placeholder(&self, app_type: &AppType) -> bool {
+        self.probe_live_placeholder(app_type).unwrap_or(false)
+    }
+
+    /// 同 [`Self::live_has_proxy_placeholder`]，但分得清「读到了、没有占位符」和「读不到」
+    /// （文件不存在或解析不了，返回 `Err`）。
+    pub(crate) fn probe_live_placeholder(&self, app_type: &AppType) -> Result<bool, String> {
         match app_type {
-            AppType::Claude => match self.read_claude_live() {
-                Ok(config) => Self::is_claude_live_taken_over(&config),
-                Err(_) => false,
-            },
-            AppType::Codex => {
-                match self.read_codex_live() {
-                    Ok(config) => Self::is_codex_live_taken_over(&config)
-                        || config
-                            .get("config")
-                            .and_then(|v| v.as_str())
-                            .is_some_and(|text| {
-                                crate::services::provider::codex_direct::routes_official_to_proxy(
-                                    &self.db, text,
-                                )
-                            }),
-                    Err(_) => false,
-                }
-            }
-            AppType::Gemini => match self.read_gemini_live() {
-                Ok(config) => Self::is_gemini_live_taken_over(&config),
-                Err(_) => false,
-            },
-            AppType::GrokBuild => match self.read_grok_live() {
-                Ok(config) => Self::is_grok_live_taken_over(&config),
-                Err(_) => false,
-            },
-            _ => false,
+            AppType::Claude => self
+                .read_claude_live()
+                .map(|config| Self::is_claude_live_taken_over(&config)),
+            AppType::Codex => self.read_codex_live().map(|config| {
+                Self::is_codex_live_taken_over(&config)
+                    || config
+                        .get("config")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|text| {
+                            crate::services::provider::codex_direct::routes_official_to_proxy(
+                                &self.db, text,
+                            )
+                        })
+            }),
+            AppType::Gemini => self
+                .read_gemini_live()
+                .map(|config| Self::is_gemini_live_taken_over(&config)),
+            AppType::GrokBuild => self
+                .read_grok_live()
+                .map(|config| Self::is_grok_live_taken_over(&config)),
+            _ => Ok(false),
         }
     }
 

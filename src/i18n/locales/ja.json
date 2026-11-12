@@ -4469,7 +4469,8 @@
       "officialLoginPausedBody": "公式モデルは使えず、Codex のサイドバー「プロジェクト」にある既存のセッションは一時的に表示されません。公式クォータが回復したら「公式ログインを再開」をクリックし、Codex を完全に終了して開き直してください。",
       "resumeOfficialLogin": "公式ログインを再開",
       "attachFailed": "前回の{{mode}}モードに再接続できなかったため、{{app}} は直接接続に戻りました。",
-      "attachDrifted": "CC Switch が閉じている間に {{app}} の設定が変更されたため、{{mode}}モードには再接続せず、ファイルはそのままにしました。"
+      "attachDrifted": "CC Switch が閉じている間に {{app}} の設定が変更されたため、{{mode}}モードには再接続せず、ファイルはそのままにしました。",
+      "attachUnreadable": "{{app}} の設定ファイルを読み込めなかった（存在しないか解析できない）ため、{{mode}}モードには再接続せず、直接接続に戻りました。"
     },
     "toast": {
       "enteredRoute": "{{app}} のルーティングを開始しました → {{provider}}。",

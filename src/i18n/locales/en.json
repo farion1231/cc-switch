@@ -4469,7 +4469,8 @@
       "officialLoginPausedBody": "Official models can't be used, and your existing threads under Projects in the Codex sidebar are hidden for now. Once the official quota is back, click “Resume official login”, then fully quit and reopen Codex.",
       "resumeOfficialLogin": "Resume official login",
       "attachFailed": "{{mode}} couldn't reconnect last time, so {{app}} went back to direct.",
-      "attachDrifted": "{{app}}'s config was changed while CC Switch was closed, so {{mode}} was not reconnected and the file was left as is."
+      "attachDrifted": "{{app}}'s config was changed while CC Switch was closed, so {{mode}} was not reconnected and the file was left as is.",
+      "attachUnreadable": "Couldn't read {{app}}'s config file (missing or unparsable), so {{mode}} was not reconnected and {{app}} went back to direct."
     },
     "toast": {
       "enteredRoute": "{{app}} is now routing → {{provider}}.",

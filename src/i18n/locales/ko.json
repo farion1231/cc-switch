@@ -4469,7 +4469,8 @@
       "officialLoginPausedBody": "공식 모델을 사용할 수 없으며, Codex 사이드바의 ‘프로젝트’에 있던 기존 대화가 일시적으로 숨겨져 있습니다. 공식 할당량이 복구되면 ‘공식 로그인 사용 재개’를 누른 다음 Codex를 완전히 종료하고 다시 실행하세요.",
       "resumeOfficialLogin": "공식 로그인 사용 재개",
       "attachFailed": "이전에 {{mode}} 모드에 다시 연결하지 못하여 {{app}}을(를) 직접 연결로 되돌렸습니다.",
-      "attachDrifted": "CC Switch가 닫혀 있는 동안 {{app}} 설정이 변경되어 {{mode}} 모드에 다시 연결하지 않았고 파일은 그대로 두었습니다."
+      "attachDrifted": "CC Switch가 닫혀 있는 동안 {{app}} 설정이 변경되어 {{mode}} 모드에 다시 연결하지 않았고 파일은 그대로 두었습니다.",
+      "attachUnreadable": "{{app}} 설정 파일을 읽을 수 없어(없거나 구문 분석 불가) {{mode}} 모드에 다시 연결하지 않고 직접 연결로 되돌렸습니다."
     },
     "toast": {
       "enteredRoute": "{{app}}에서 라우팅을 시작했습니다 → {{provider}}",

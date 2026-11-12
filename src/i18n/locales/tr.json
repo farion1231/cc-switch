@@ -4469,7 +4469,8 @@
       "officialLoginPausedBody": "Resmî modeller kullanılamaz ve Codex kenar çubuğundaki Projeler altında bulunan mevcut oturumlarınız şimdilik gizlenir. Resmî kota geri geldiğinde “Resmî girişi sürdür” düğmesine tıklayın, ardından Codex'ten tamamen çıkıp yeniden açın.",
       "resumeOfficialLogin": "Resmî girişi sürdür",
       "attachFailed": "{{mode}} önceki başlangıçta yeniden bağlanamadığı için {{app}} doğrudan bağlantıya döndü.",
-      "attachDrifted": "CC Switch kapalıyken {{app}} yapılandırması değiştirildiği için {{mode}} yeniden bağlanmadı ve dosya olduğu gibi bırakıldı."
+      "attachDrifted": "CC Switch kapalıyken {{app}} yapılandırması değiştirildiği için {{mode}} yeniden bağlanmadı ve dosya olduğu gibi bırakıldı.",
+      "attachUnreadable": "{{app}} yapılandırma dosyası okunamadığı (yok ya da ayrıştırılamıyor) için {{mode}} yeniden bağlanmadı ve {{app}} doğrudan bağlantıya döndü."
     },
     "toast": {
       "enteredRoute": "{{app}} artık yönlendirme yapıyor → {{provider}}.",
