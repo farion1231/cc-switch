@@ -20,7 +20,7 @@
 
 ### 🌐 唯一官方网站：**[ccswitch.io](https://ccswitch.io)**
 
-[English](README.md) | 中文 | [日本語](README_JA.md) | [Deutsch](README_DE.md) | [更新日志](CHANGELOG.md)
+[English](README.md) | 简体中文 | [繁體中文](README_ZH-TW.md) | [日本語](README_JA.md) | [한국어](README_KO.md) | [Türkçe](README_TR.md) | [Русский](README_RU.md) | [Deutsch](README_DE.md) | [更新日志](CHANGELOG.md)
 
 **[下载安装](#下载安装) · [快速开始](#快速开始) · [功能特性](#功能特性) · [常见问题](#常见问题) · [用户手册](docs/user-manual/zh/README.md)**
 
@@ -419,7 +419,7 @@ paru -S cc-switch-bin
 - **CLI 工具管理** — 在侧栏的「应用」页查看 Claude Code、Codex 等命令行工具的当前版本和最新版本，一键安装、升级或全部升级，并诊断重复安装；Windows 上还能管理 WSL 里的工具（见常见问题）
 - **Deep Link**（`ccswitch://`）— 通过链接一键导入供应商、MCP 服务器和提示词，或添加技能仓库。用 [在线生成器](https://ccswitch.io/deplink.html) 生成链接；站长想在网站上放导入按钮，见 [站长接入指南](https://github.com/farion1231/cc-switch/blob/main/docs/guides/deeplink-site-integration-guide-zh.md)
 - **小工具** — 跳过 Claude Code 初次安装确认、隐藏 AI 署名、让 VS Code 的 Claude Code 插件随本软件切换供应商等
-- 深色 / 浅色 / 跟随系统主题、开机自启、自动更新、原子写入、自动备份（「设置 → 数据」里可以看到所有备份的位置和占用空间）、国际化（简中/繁中/英/日/韩/土耳其语/俄语）
+- 深色 / 浅色 / 跟随系统主题、开机自启、自动更新、原子写入、自动备份（「设置 → 数据」里可以看到所有备份的位置和占用空间）、国际化（简中/繁中/英/日/韩/土耳其语/俄语/德语）
 
 ## 常见问题
 

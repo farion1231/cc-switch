@@ -59,6 +59,7 @@ jobs:
               - "tailwind.config.cjs"
               - "postcss.config.cjs"
               - "components.json"
+              - "README*.md"
               - ".github/workflows/ci.yml"
             backend:
               - "src-tauri/**"

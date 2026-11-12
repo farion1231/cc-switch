@@ -20,7 +20,7 @@
 
 ### 🌐 唯一の公式サイト：**[ccswitch.io](https://ccswitch.io)**
 
-[English](README.md) | [中文](README_ZH.md) | 日本語 | [Deutsch](README_DE.md) | [Changelog](CHANGELOG.md)
+[English](README.md) | [简体中文](README_ZH.md) | [繁體中文](README_ZH-TW.md) | 日本語 | [한국어](README_KO.md) | [Türkçe](README_TR.md) | [Русский](README_RU.md) | [Deutsch](README_DE.md) | [Changelog](CHANGELOG.md)
 
 **[ダウンロード](#ダウンロード--インストール) · [クイックスタート](#クイックスタート) · [特長](#特長) · [よくある質問](#よくある質問) · [ユーザーマニュアル](docs/user-manual/ja/README.md)**
 
@@ -417,7 +417,7 @@ paru -S cc-switch-bin
 - **CLI ツール管理** — サイドバーの「アプリ」ページで Claude Code、Codex などのコマンドラインツールの現在のバージョンと最新バージョンを確認し、ワンクリックでインストール、アップグレード、一括アップグレード。重複インストールの診断にも対応。Windows では WSL 内のツールも管理可能（よくある質問を参照）
 - **Deep Link**（`ccswitch://`）— リンクからプロバイダ、MCP サーバー、プロンプトをワンクリックでインポート、またはスキルリポジトリを追加。リンクは [オンライン生成ツール](https://ccswitch.io/deplink.html) で作成可能。サイトにインポートボタンを置きたい運営者は [連携ガイド](https://github.com/farion1231/cc-switch/blob/main/docs/guides/deeplink-site-integration-guide-ja.md) を参照
 - **便利ツール** — Claude Code の初回確認のスキップ、AI 署名の非表示、VS Code の Claude Code 拡張を CC Switch のプロバイダ切り替えに追従させる機能など
-- ダーク / ライト / システムテーマ、自動起動、自動アップデーター、アトミック書き込み、自動バックアップ（「設定 → データ」ですべてのバックアップの場所と使用容量を確認可能）、多言語対応（簡体中文/繁體中文/英/日/韓/トルコ語/ロシア語）
+- ダーク / ライト / システムテーマ、自動起動、自動アップデーター、アトミック書き込み、自動バックアップ（「設定 → データ」ですべてのバックアップの場所と使用容量を確認可能）、多言語対応（簡体中文/繁體中文/英/日/韓/トルコ語/ロシア語/ドイツ語）
 
 ## よくある質問
 
