@@ -29,6 +29,9 @@ vi.mock("@/components/SubscriptionQuotaFooter", () => ({
   default: () => null,
 }));
 vi.mock("@/components/CopilotQuotaFooter", () => ({ default: () => null }));
+vi.mock("@/components/CopilotCliQuotaFooter", () => ({
+  default: () => null,
+}));
 vi.mock("@/components/CodexOauthQuotaFooter", () => ({ default: () => null }));
 vi.mock("@/components/XaiOauthQuotaFooter", () => ({ default: () => null }));
 
@@ -40,10 +43,16 @@ vi.mock("@/lib/query/queries", () => ({
   useUsageQuery: () => ({ data: undefined }),
 }));
 
-const copilotProvider = (accountId: string | null): Provider => ({
+const COPILOT_URL = "https://api.githubcopilot.com";
+
+const copilotProvider = (
+  accountId: string | null,
+  overrides: Partial<Provider> = {},
+): Provider => ({
   id: "copilot-x",
   name: "Copilot-X",
   category: "custom",
+  websiteUrl: COPILOT_URL,
   settingsConfig: {},
   meta: {
     providerType: "github_copilot",
@@ -57,6 +66,7 @@ const copilotProvider = (accountId: string | null): Provider => ({
         }
       : {}),
   },
+  ...overrides,
 });
 
 const account = (
@@ -103,12 +113,12 @@ function renderCard(provider: Provider) {
   );
 }
 
-describe("ProviderCard Copilot account chip", () => {
+describe("ProviderCard Copilot account subtitle", () => {
   beforeEach(() => {
     authGetStatus.mockReset();
   });
 
-  it("shows the GitHub account bound to the provider", async () => {
+  it("shows the bound GitHub account instead of the endpoint URL", async () => {
     authGetStatus.mockResolvedValue(
       status([account("acc-1", "abc@test.com")], "acc-1"),
     );
@@ -116,6 +126,7 @@ describe("ProviderCard Copilot account chip", () => {
     renderCard(copilotProvider("acc-1"));
 
     expect(await screen.findByText("abc@test.com")).toBeInTheDocument();
+    expect(screen.queryByText(COPILOT_URL)).not.toBeInTheDocument();
   });
 
   it("falls back to the default account when the provider is unbound", async () => {
@@ -128,7 +139,19 @@ describe("ProviderCard Copilot account chip", () => {
 
     renderCard(copilotProvider(null));
 
-    expect(await screen.findByText("abc@test.com · 默认")).toBeInTheDocument();
+    expect(await screen.findByText("abc@test.com")).toBeInTheDocument();
+    expect(screen.queryByText("abc@test.com-b")).not.toBeInTheDocument();
+  });
+
+  it("keeps manual notes on top of the account", async () => {
+    authGetStatus.mockResolvedValue(
+      status([account("acc-1", "abc@test.com")], "acc-1"),
+    );
+
+    renderCard(copilotProvider("acc-1", { notes: "Work account" }));
+
+    expect(await screen.findByText("Work account")).toBeInTheDocument();
+    expect(screen.queryByText("abc@test.com")).not.toBeInTheDocument();
   });
 
   it("warns when the bound account no longer exists", async () => {
@@ -138,18 +161,19 @@ describe("ProviderCard Copilot account chip", () => {
 
     renderCard(copilotProvider("deleted-account"));
 
-    expect(await screen.findByText("账号不可用")).toBeInTheDocument();
+    expect(await screen.findByText("状态不可用")).toBeInTheDocument();
   });
 
-  it("renders no account chip while the status is still loading", () => {
+  it("falls back to the endpoint URL while the account status is loading", () => {
     authGetStatus.mockReturnValue(new Promise(() => {}));
 
     renderCard(copilotProvider("acc-1"));
 
     expect(screen.queryByText(/abc@test\.com/)).not.toBeInTheDocument();
+    expect(screen.getByText(COPILOT_URL)).toBeInTheDocument();
   });
 
-  it("renders no account chip for a non-copilot provider", () => {
+  it("does not query account status for a non-copilot provider", () => {
     renderCard({
       id: "plain",
       name: "Plain Provider",
@@ -157,7 +181,6 @@ describe("ProviderCard Copilot account chip", () => {
       settingsConfig: {},
     });
 
-    expect(screen.queryByText("账号不可用")).not.toBeInTheDocument();
     expect(authGetStatus).not.toHaveBeenCalled();
   });
 });
