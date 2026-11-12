@@ -273,6 +273,9 @@ function ReasoningEffortsField({
 }
 
 interface OpenCodeFormFieldsProps {
+  /** Native OAuth providers only customize models; their connection is runtime-owned. */
+  modelsOnly?: boolean;
+  fetchModels?: () => Promise<FetchedModel[]>;
   allowBuiltinDefaults?: boolean;
   /** 模型字段方言：DeepSeek Harness 多出思考档位和接口兼容性。 */
   modelDialect?: OpenCodeModelDialect;
@@ -310,6 +313,8 @@ interface OpenCodeFormFieldsProps {
 }
 
 export function OpenCodeFormFields({
+  modelsOnly = false,
+  fetchModels,
   allowBuiltinDefaults = false,
   modelDialect = "opencode",
   presetModelSources = opencodePresetModelSources,
@@ -347,13 +352,13 @@ export function OpenCodeFormFields({
       // Ignore responses for a previous endpoint/key or an unmounted form.
       modelFetchGeneration.current += 1;
     };
-  }, [baseUrl, apiKey, headersKey]);
+  }, [baseUrl, apiKey, headersKey, fetchModels]);
 
   const handleFetchModels = useCallback(() => {
     const requestHeaders = normalizeRequestHeaders(headers);
     const hasCredentials =
       Boolean(apiKey) || Object.keys(requestHeaders).length > 0;
-    if (!baseUrl || !hasCredentials) {
+    if (!fetchModels && (!baseUrl || !hasCredentials)) {
       showFetchModelsError(null, t, {
         hasApiKey: hasCredentials,
         hasBaseUrl: Boolean(baseUrl),
@@ -369,13 +374,16 @@ export function OpenCodeFormFields({
     const generation = ++modelFetchGeneration.current;
     setFetchedModels([]);
     setIsFetchingModels(true);
-    fetchModelsForConfig(
-      baseUrl,
-      apiKey,
-      undefined,
-      undefined,
-      customUserAgent,
-      { requestHeaders },
+    (fetchModels
+      ? fetchModels()
+      : fetchModelsForConfig(
+          baseUrl,
+          apiKey,
+          undefined,
+          undefined,
+          customUserAgent,
+          { requestHeaders },
+        )
     )
       .then((result) => {
         if (generation !== modelFetchGeneration.current) return;
@@ -398,7 +406,7 @@ export function OpenCodeFormFields({
           setIsFetchingModels(false);
         }
       });
-  }, [baseUrl, apiKey, headers, t]);
+  }, [baseUrl, apiKey, headers, t, fetchModels]);
 
   // Track which models have expanded options panel
   const [expandedModels, setExpandedModels] = useState<Set<string>>(new Set());
@@ -714,150 +722,155 @@ export function OpenCodeFormFields({
 
   return (
     <>
-      {/* NPM Package Selector */}
-      <div className="space-y-2">
-        <FormLabel htmlFor="opencode-npm">
-          {t("opencode.npmPackage", {
-            defaultValue: "接口格式",
-          })}
-        </FormLabel>
-        <Select value={npm} onValueChange={onNpmChange}>
-          <SelectTrigger id="opencode-npm">
-            <SelectValue
-              placeholder={
-                allowBuiltinDefaults
-                  ? t("opencode.builtinDefaults")
-                  : t("opencode.selectPackage", {
-                      defaultValue: "Select a package",
-                    })
-              }
-            />
-          </SelectTrigger>
-          <SelectContent>
-            {apiFormats.map((pkg) => (
-              <SelectItem key={pkg.value} value={pkg.value}>
-                {pkg.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      {/* API Key */}
-      <ApiKeySection
-        value={apiKey}
-        onChange={onApiKeyChange}
-        category={category}
-        shouldShowLink={shouldShowApiKeyLink}
-        websiteUrl={websiteUrl}
-        isPartner={isPartner}
-        partnerPromotionKey={partnerPromotionKey}
-      />
-
-      {/* Base URL */}
-      <div className="space-y-2">
-        <FormLabel htmlFor="opencode-baseurl">
-          {t("opencode.baseUrl", { defaultValue: "Base URL" })}
-        </FormLabel>
-        <ImeSafeInput
-          id="opencode-baseurl"
-          value={baseUrl}
-          onValueChange={onBaseUrlChange}
-          placeholder="https://api.example.com/v1"
-        />
-      </div>
-
-      <RequestHeadersEditor
-        headers={headers}
-        onHeadersChange={onHeadersChange}
-      />
-
-      {/* Extra Options Editor */}
-      <div className="space-y-2 border-l border-border pl-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="space-y-1">
-            <FormLabel>
-              {t("opencode.extraOptions", {
-                defaultValue: "Extra SDK Options",
+      {!modelsOnly && (
+        <>
+          {/* NPM Package Selector */}
+          <div className="space-y-2">
+            <FormLabel htmlFor="opencode-npm">
+              {t("opencode.npmPackage", {
+                defaultValue: "接口格式",
               })}
             </FormLabel>
-            <p className="text-xs text-fg-2">
-              {t("opencode.extraOptionsHint", {
-                defaultValue:
-                  "Advanced SDK options not exposed by the structured fields.",
-              })}
-            </p>
+            <Select value={npm} onValueChange={onNpmChange}>
+              <SelectTrigger id="opencode-npm">
+                <SelectValue
+                  placeholder={
+                    allowBuiltinDefaults
+                      ? t("opencode.builtinDefaults")
+                      : t("opencode.selectPackage", {
+                          defaultValue: "Select a package",
+                        })
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {apiFormats.map((pkg) => (
+                  <SelectItem key={pkg.value} value={pkg.value}>
+                    {pkg.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleAddExtraOption}
-            className="h-7 gap-1"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            {t("opencode.addExtraOption", { defaultValue: "Add" })}
-          </Button>
-        </div>
 
-        <div>
-          {Object.keys(extraOptions).length === 0 ? (
-            <p className="text-sm text-fg-2 py-1">
-              {t("opencode.noExtraOptions", {
-                defaultValue: "No extra SDK options configured",
-              })}
-            </p>
-          ) : (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-xs text-fg-2 px-1 mb-1">
-                <span className="flex-1">
-                  {t("opencode.extraOptionKey", { defaultValue: "Key" })}
-                </span>
-                <span className="flex-1">
-                  {t("opencode.extraOptionValue", { defaultValue: "Value" })}
-                </span>
-                <span className="w-9" />
+          {/* API Key */}
+          <ApiKeySection
+            value={apiKey}
+            onChange={onApiKeyChange}
+            category={category}
+            shouldShowLink={shouldShowApiKeyLink}
+            websiteUrl={websiteUrl}
+            isPartner={isPartner}
+            partnerPromotionKey={partnerPromotionKey}
+          />
+
+          {/* Base URL */}
+          <div className="space-y-2">
+            <FormLabel htmlFor="opencode-baseurl">
+              {t("opencode.baseUrl", { defaultValue: "Base URL" })}
+            </FormLabel>
+            <ImeSafeInput
+              id="opencode-baseurl"
+              value={baseUrl}
+              onValueChange={onBaseUrlChange}
+              placeholder="https://api.example.com/v1"
+            />
+          </div>
+
+          <RequestHeadersEditor
+            headers={headers}
+            onHeadersChange={onHeadersChange}
+          />
+
+          {/* Extra Options Editor */}
+          <div className="space-y-2 border-l border-border pl-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-1">
+                <FormLabel>
+                  {t("opencode.extraOptions", {
+                    defaultValue: "Extra SDK Options",
+                  })}
+                </FormLabel>
+                <p className="text-xs text-fg-2">
+                  {t("opencode.extraOptionsHint", {
+                    defaultValue:
+                      "Advanced SDK options not exposed by the structured fields.",
+                  })}
+                </p>
               </div>
-              {Object.entries(extraOptions).map(([key, value]) => (
-                <div key={key} className="flex items-center gap-2">
-                  <ExtraOptionKeyInput
-                    optionKey={key}
-                    onChange={(newKey) =>
-                      handleExtraOptionKeyChange(key, newKey)
-                    }
-                    placeholder={t("opencode.extraOptionKeyPlaceholder", {
-                      defaultValue: "timeout",
-                    })}
-                  />
-                  <ImeSafeInput
-                    value={value}
-                    onValueChange={(nextValue) =>
-                      handleExtraOptionValueChange(key, nextValue)
-                    }
-                    placeholder={t("opencode.extraOptionValuePlaceholder", {
-                      defaultValue: "600000",
-                    })}
-                    className="flex-1"
-                  />
-                  <HoverTip content={t("common.delete")}>
-                    <Button
-                      aria-label={t("common.delete")}
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleRemoveExtraOption(key)}
-                      className="h-9 w-9 text-fg-2 hover:text-destructive"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </HoverTip>
-                </div>
-              ))}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleAddExtraOption}
+                className="h-7 gap-1"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                {t("opencode.addExtraOption", { defaultValue: "Add" })}
+              </Button>
             </div>
-          )}
-        </div>
-      </div>
 
+            <div>
+              {Object.keys(extraOptions).length === 0 ? (
+                <p className="text-sm text-fg-2 py-1">
+                  {t("opencode.noExtraOptions", {
+                    defaultValue: "No extra SDK options configured",
+                  })}
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-xs text-fg-2 px-1 mb-1">
+                    <span className="flex-1">
+                      {t("opencode.extraOptionKey", { defaultValue: "Key" })}
+                    </span>
+                    <span className="flex-1">
+                      {t("opencode.extraOptionValue", {
+                        defaultValue: "Value",
+                      })}
+                    </span>
+                    <span className="w-9" />
+                  </div>
+                  {Object.entries(extraOptions).map(([key, value]) => (
+                    <div key={key} className="flex items-center gap-2">
+                      <ExtraOptionKeyInput
+                        optionKey={key}
+                        onChange={(newKey) =>
+                          handleExtraOptionKeyChange(key, newKey)
+                        }
+                        placeholder={t("opencode.extraOptionKeyPlaceholder", {
+                          defaultValue: "timeout",
+                        })}
+                      />
+                      <ImeSafeInput
+                        value={value}
+                        onValueChange={(nextValue) =>
+                          handleExtraOptionValueChange(key, nextValue)
+                        }
+                        placeholder={t("opencode.extraOptionValuePlaceholder", {
+                          defaultValue: "600000",
+                        })}
+                        className="flex-1"
+                      />
+                      <HoverTip content={t("common.delete")}>
+                        <Button
+                          aria-label={t("common.delete")}
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleRemoveExtraOption(key)}
+                          className="h-9 w-9 text-fg-2 hover:text-destructive"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </HoverTip>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
       {/* Models Editor */}
       <div className="space-y-3 border-l border-border pl-3">
         <div className="flex items-center justify-between">

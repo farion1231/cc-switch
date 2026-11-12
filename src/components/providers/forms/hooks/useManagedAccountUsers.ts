@@ -18,6 +18,7 @@ export function useManagedAccountUsers(
   const { data: codex } = useProvidersQuery("codex");
   const { data: agy } = useProvidersQuery("agy");
   const { data: copilot } = useProvidersQuery("copilot");
+  const { data: dsh } = useProvidersQuery("dsh");
   const { data: workbuddy } = useProvidersQuery("workbuddy");
 
   return useCallback(
@@ -28,6 +29,7 @@ export function useManagedAccountUsers(
         codex: codex?.providers,
         agy: agy?.providers,
         copilot: copilot?.providers,
+        dsh: dsh?.providers,
         workbuddy: workbuddy?.providers,
       }),
     [
@@ -38,6 +40,7 @@ export function useManagedAccountUsers(
       codex,
       agy,
       copilot,
+      dsh,
       workbuddy,
     ],
   );

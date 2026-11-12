@@ -2890,7 +2890,8 @@
     "fieldExtra": "• extra: 문자열, 사용자 지정 표시 텍스트",
     "tip1": "• {{apiKey}} 및 {{baseUrl}} 변수는 자동으로 치환됩니다.",
     "tip2": "• extractor 함수는 샌드박스 환경에서 실행되며 ES2020+ 문법을 지원합니다",
-    "tip3": "• 객체 리터럴 표현식을 형성하려면 전체 설정을 ()로 묶어야 합니다."
+    "tip3": "• 객체 리터럴 표현식을 형성하려면 전체 설정을 ()로 묶어야 합니다.",
+    "managedCodexSubscriptionHint": "이 공급자에 연결된 ChatGPT 계정의 구독 한도를 조회합니다. 계정을 변경하려면 공급자를 편집하세요."
   },
   "dbUpgrade": {
     "title": "데이터베이스 버전이 너무 최신입니다.",
@@ -5381,6 +5382,13 @@
       "expiredChip": "로그인 만료",
       "editDisabled": "DeepSeek Harness가 이 계정으로 사용할 수 있는 모델을 자동으로 제공하므로 편집할 필요가 없습니다.",
       "managedHint": "이 계정은 인증 센터에서 관리합니다. 로그아웃하면 이 카드가 사라집니다."
+    },
+    "codex": {
+      "name": "OpenAI Codex 계정",
+      "selectAccount": "모델을 가져오기 전에 계정을 선택하세요.",
+      "help": "계정 페이지의 계정을 DSH Web 및 Desktop에서 기본 방식으로 사용합니다. DSH 홈마다 하나의 Codex 계정이 활성화됩니다.",
+      "apply": "이 계정 사용",
+      "confirm": "현재 DSH Codex 로그인을 대체합니다. 진행 중인 요청은 계속됩니다. 변경 사항이 반영되지 않으면 DSH를 다시 여세요."
     }
   }
 }
