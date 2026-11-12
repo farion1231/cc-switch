@@ -427,6 +427,8 @@ export interface Settings {
   launchOnStartup?: boolean;
   // 静默启动（程序启动时不显示主窗口）
   silentStartup?: boolean;
+  // 退出时把用路由 / 聚合的客户端指回直连（默认开启）
+  restoreClientsOnExit?: boolean;
   // 是否启用主页面本地代理功能（默认关闭）
   enableLocalProxy?: boolean;
   // 是否在主页面显示 Stack 模式开关（默认关闭）。和 enableLocalProxy 二选一，只影响 Claude Code、Codex

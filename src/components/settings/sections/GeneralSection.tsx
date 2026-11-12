@@ -263,6 +263,17 @@ export function GeneralSection({
             />
           )}
           <SettingsSwitchRow
+            label={t("settings.restoreClientsOnExit")}
+            help={{
+              title: t("settings.restoreClientsOnExit"),
+              body: t("settings.restoreClientsOnExitHelp"),
+            }}
+            checked={settings.restoreClientsOnExit ?? true}
+            onCheckedChange={(value) =>
+              void onAutoSave({ restoreClientsOnExit: value })
+            }
+          />
+          <SettingsSwitchRow
             label={t("settings.minimizeToTray")}
             help={{
               title: t("settings.minimizeToTray"),

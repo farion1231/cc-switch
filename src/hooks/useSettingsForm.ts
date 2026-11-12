@@ -131,6 +131,7 @@ export function useSettingsForm(): UseSettingsFormResult {
       enableClaudePluginIntegration:
         data.enableClaudePluginIntegration ?? false,
       silentStartup: data.silentStartup ?? false,
+      restoreClientsOnExit: data.restoreClientsOnExit ?? true,
       skipClaudeOnboarding: data.skipClaudeOnboarding ?? false,
       preserveCodexOfficialAuthOnSwitch:
         data.preserveCodexOfficialAuthOnSwitch ?? false,
@@ -201,6 +202,7 @@ export function useSettingsForm(): UseSettingsFormResult {
         enableClaudePluginIntegration:
           serverData.enableClaudePluginIntegration ?? false,
         silentStartup: serverData.silentStartup ?? false,
+        restoreClientsOnExit: serverData.restoreClientsOnExit ?? true,
         skipClaudeOnboarding: serverData.skipClaudeOnboarding ?? false,
         preserveCodexOfficialAuthOnSwitch:
           serverData.preserveCodexOfficialAuthOnSwitch ?? false,

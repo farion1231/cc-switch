@@ -907,6 +907,8 @@
     "launchOnStartupDescription": "Automatically run CC Switch when system starts",
     "silentStartup": "Silent Startup",
     "silentStartupDescription": "Start in background mode without showing main window",
+    "restoreClientsOnExit": "Restore clients on exit",
+    "restoreClientsOnExitHelp": "When CC Switch quits, point clients using Routing or Aggregation (Claude Code, Codex, Gemini CLI, Grok Build) back to their direct provider, and reconnect them on next launch.\n\nWhen off, clients keep pointing at the local router after CC Switch quits and cannot connect until it runs again. This suits keeping CC Switch running or launching it at startup: restarts no longer rewrite client configs back and forth, and choices like /model are kept. A client config you change while CC Switch is closed is not overwritten on next launch; that app goes back to direct and you get a notice.",
     "autoLaunchFailed": "Failed to set auto-launch",
     "minimizeToTray": "Minimize to tray on close",
     "minimizeToTrayDescription": "When checked, clicking the close button will hide to system tray, otherwise the app will exit directly.",

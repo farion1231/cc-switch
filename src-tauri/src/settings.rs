@@ -490,6 +490,11 @@ pub struct AppSettings {
     /// 只经 [`set_lightweight_mode`] 写，前端全量保存不透传。
     #[serde(default)]
     pub lightweight_mode: bool,
+    /// 退出 CC Switch 时把接上路由 / 聚合的客户端指回直连（默认开启）。关闭后客户端退出时
+    /// 仍指着本地路由，CC Switch 没运行就连不上；下次启动接上时内容没变就不写文件。
+    /// 设备级：别的设备上 CC Switch 是否常驻各不相同。
+    #[serde(default = "default_restore_clients_on_exit")]
+    pub restore_clients_on_exit: bool,
     /// 是否在主页面启用本地代理功能（默认关闭）
     #[serde(default)]
     pub enable_local_proxy: bool,
@@ -718,6 +723,10 @@ fn default_minimize_to_tray_on_close() -> bool {
     true
 }
 
+fn default_restore_clients_on_exit() -> bool {
+    true
+}
+
 fn default_session_auto_sync_enabled() -> bool {
     true
 }
@@ -737,6 +746,7 @@ impl Default for AppSettings {
             launch_on_startup: false,
             silent_startup: false,
             lightweight_mode: false,
+            restore_clients_on_exit: true,
             enable_local_proxy: false,
             enable_stack_mode: false,
             proxy_confirmed: None,

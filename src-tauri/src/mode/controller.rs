@@ -1080,6 +1080,24 @@ pub async fn exit_all(state: &AppState) -> Result<(), String> {
     }
 }
 
+/// 退出 CC Switch 时的清理：按「退出时恢复客户端」设置决定分离还是让客户端留在路由上。
+///
+/// 不恢复时只停代理服务，客户端文件和模式状态都不动（仍是已接上）：下次启动接上时契约
+/// 没变，写入引擎发现内容相同就不落盘；CC Switch 关着时客户端被改过的，启动时不覆盖
+/// （见 [`drifted_while_closed`]）。
+pub async fn detach_on_exit(state: &AppState) {
+    if crate::settings::get_settings().restore_clients_on_exit {
+        detach_all(state).await;
+        return;
+    }
+    log::info!("退出时不恢复客户端（设置已关闭）：客户端仍指着本地路由，只停止代理服务");
+    if state.proxy_service.is_running().await {
+        if let Err(error) = state.proxy_service.stop().await {
+            log::warn!("退出时停止代理服务失败: {error}");
+        }
+    }
+}
+
 /// 退出 CC Switch 时：把接上代理的客户端都指回直连（模式不变，下次启动再接上），再停掉
 /// 代理服务。
 ///
@@ -6285,6 +6303,48 @@ model_provider = "c"
         startup(&state).await;
         assert_eq!(fs::read(settings_path()).unwrap(), edited);
         assert!(take_startup_attach_failures().is_empty());
+    }
+
+    /// 「退出时恢复客户端」关闭：退出只停代理，客户端仍是契约；下次启动接上时内容没变，
+    /// 一个字节都不写。默认开启时照旧分离。
+    #[tokio::test]
+    #[serial]
+    async fn exit_leaves_clients_attached_when_restoring_is_off() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(
+            AppType::Claude,
+            &[claude("a", "https://a.example", json!({}))],
+            "a",
+        )
+        .await;
+        enter(&state, &AppType::Claude, false).await.expect("enter");
+        edit_settings(|live| live["model"] = json!("sonnet"));
+
+        crate::settings::update_settings(crate::settings::AppSettings {
+            restore_clients_on_exit: false,
+            ..crate::settings::get_settings()
+        })
+        .expect("save settings");
+        let attached = fs::read(settings_path()).unwrap();
+        detach_on_exit(&state).await;
+        assert!(!state.proxy_service.is_running().await);
+        assert!(mode(&AppType::Claude).attached);
+        assert_eq!(fs::read(settings_path()).unwrap(), attached);
+
+        startup(&state).await;
+        assert!(mode(&AppType::Claude).attached);
+        assert_eq!(fs::read(settings_path()).unwrap(), attached);
+        assert!(take_startup_attach_failures().is_empty());
+
+        crate::settings::update_settings(crate::settings::AppSettings {
+            restore_clients_on_exit: true,
+            ..crate::settings::get_settings()
+        })
+        .expect("save settings");
+        detach_on_exit(&state).await;
+        assert!(!mode(&AppType::Claude).attached);
+        assert_eq!(settings()["env"]["ANTHROPIC_BASE_URL"], "https://a.example");
     }
 
     /// 直连那家专属的模型 id 到了代理会被原样转发给路由那家，进入代理时照旧清掉。
