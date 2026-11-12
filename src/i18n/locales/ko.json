@@ -5136,7 +5136,7 @@
       "chatgptHelp": "Claude Code와 Claude Desktop의 ChatGPT 프리셋 및 Codex의 공식 로그인 연결에 사용합니다. 계정을 선택하지 않은 공급자는 기본 계정을 사용합니다.",
       "xaiHelp": "Claude Code, Claude Desktop 및 Codex의 xAI 프리셋에서 사용합니다. 계정을 선택하지 않은 공급자는 기본 계정을 사용합니다.",
       "agyHelp": "Antigravity CLI(agy)의 공식 로그인입니다. agy는 한 번에 하나의 계정에만 로그인할 수 있습니다. 전환하면 agy의 로그인이 선택한 계정으로 교체되며 이후 시작한 agy 세션에서 사용됩니다. 기존에 agy에 로그인된 계정은 자동으로 여기에 추가되므로 다른 계정으로 전환해도 사라지지 않습니다.",
-      "workbuddyHelp": "WorkBuddy 데스크톱 앱의 공식 로그인입니다. CC Switch는 대신 WorkBuddy에 로그인할 수 없으며, WorkBuddy에 로그인된 계정(로그인 파일의 스냅샷)만 저장할 수 있습니다. 계정을 전환하려면 공급자 목록에서 해당 계정에 연결된 WorkBuddy 공식 로그인 카드를 추가하세요(공식 카드는 한 번에 하나만 추가됩니다). 스냅샷은 이 컴퓨터에서만 작동하며 동기화되지 않습니다.",
+      "workbuddyHelp": "WorkBuddy 데스크톱 앱의 공식 로그인입니다. CC Switch는 대신 WorkBuddy에 로그인할 수 없으며, WorkBuddy에 로그인된 계정(로그인 파일의 스냅샷)만 저장할 수 있습니다. 계정을 전환하려면 계정의 … 메뉴에서 “WorkBuddy에서 이 계정 사용”을 선택하거나, 공급자 목록에서 해당 계정에 연결된 WorkBuddy 공식 로그인 카드를 추가하세요(공식 카드는 한 번에 하나만 추가됩니다). 스냅샷은 이 컴퓨터에서만 작동하며 동기화되지 않습니다.",
       "claudeHelpTerminal": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. 설정에서 Claude 설정 디렉터리를 별도로 지정한 경우, 카드를 전환해도 Claude Code의 로그인 계정은 바뀌지 않습니다. Claude 공식 공급자 카드에서 계정을 선택한 다음, 해당 카드의 ‘터미널 열기’를 이용하세요.",
       "claudeHelpWsl": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. Claude 설정 디렉터리가 WSL에 있는 경우는 아직 지원하지 않습니다. 추후 지원할 예정입니다.",
       "claudeHelp": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. Claude 공식 공급자 카드에서 계정을 선택하고 해당 카드로 전환하면 Claude Code의 로그인 계정이 즉시 해당 계정으로 바뀝니다. 여러 계정을 동시에 사용하려면 각 카드의 ‘터미널 열기’를 이용하세요. 로그인 토큰은 이 컴퓨터에만 보관되며 업로드되거나 갱신되지 않고, 계정도 로그아웃되지 않습니다. 처음 전환할 때 Claude Code에 현재 로그인된 계정이 자동으로 추가됩니다. 계정을 전환하면 Remote Control 연결이 끊기며 프롬프트 캐시를 다시 생성해야 합니다."
@@ -5145,6 +5145,8 @@
     "accountMenu": "{{login}}의 추가 작업",
     "removeAccount": "계정 삭제",
     "setDefault": "기본값으로 설정",
+    "inUseBy": "{{app}}에서 사용 중",
+    "switchAppTo": "{{app}}에서 이 계정 사용",
     "reauth": "다시 로그인",
     "busyHint": "먼저 진행 중인 로그인을 완료하거나 취소하세요",
     "default": "기본값",
@@ -5191,8 +5193,6 @@
       "addedOn": "{{date}}에 추가됨",
       "statusLoadFailed": "Antigravity 계정을 읽을 수 없습니다. 다시 시도하세요.",
       "empty": "아직 Antigravity 계정이 없습니다. agy에 로그인된 계정이 자동으로 여기에 표시됩니다.",
-      "current": "agy에서 사용 중",
-      "switchTo": "agy를 이 계정으로 전환",
       "removeNote": "agy의 로그인은 유지됩니다. 이 계정을 사용 중인 경우 여기서 제거해도 계속 작동합니다.",
       "switched": "전환했습니다. 새 agy 세션은 이 계정을 사용합니다.",
       "switchedWhileRunning": "전환했습니다. 실행 중인 agy가 감지되었습니다. 이미 실행 중인 agy는 기존 계정을 계속 사용하며 기존 계정 정보를 로그인 설정에 다시 저장할 수도 있습니다. agy를 모두 종료한 뒤 다시 실행하세요."
@@ -5216,7 +5216,6 @@
         "_raw": "{{plan}}"
       },
       "importNow": "추가",
-      "current": "WorkBuddy에서 사용 중",
       "removeNote": "CC Switch의 스냅샷만 삭제하며 WorkBuddy는 로그인 상태로 유지됩니다.",
       "localOnly": "스냅샷은 이 컴퓨터에서만 작동하며(로그인 정보가 이 기기에 묶여 있음) 동기화되지 않습니다. 다른 컴퓨터에서는 계정을 다시 추가하세요.",
       "runningTitle": "WorkBuddy가 실행 중입니다",
@@ -5254,7 +5253,6 @@
   },
   "kimi": {
     "oauth": {
-      "useAccount": "이 계정 사용",
       "title": "Kimi Code 공식 로그인",
       "description": "Kimi 코딩 요금제 계정을 여러 개 추가하고 각 계정의 자격 증명과 공급자를 별도로 저장할 수 있습니다. 여기에서 로그인을 관리한 다음 계정을 선택하여 해당 계정의 공식 모델을 사용하세요.",
       "region": "로그인 지역",
@@ -5277,7 +5275,6 @@
       "manageAccounts": "Kimi 계정 관리",
       "managedHint": "먼저 이 공식 계정을 제거하거나, 인증 센터에서 로그인 정보와 함께 삭제하세요.",
       "connectionManaged": "연결 및 로그인은 인증 센터에서 관리하며, 여기서는 모델만 편집합니다. ‘모델 목록 가져오기’를 누르면 이 계정에서 현재 사용할 수 있는 공식 모델 목록을 불러옵니다.",
-      "current": "Kimi에서 사용 중",
       "primaryShort": "Kimi Code 자체 로그인",
       "empty": "아직 Kimi 계정이 없습니다. Kimi Code에 로그인된 계정이 자동으로 여기에 표시됩니다.",
       "help": "Kimi 코딩 요금제 계정을 여러 개 추가할 수 있습니다. 각 계정에는 Kimi Code의 개별 공급자와 모델이 생깁니다. “이 계정 사용”을 누르면 Kimi Code의 기본 모델이 해당 계정의 모델로 변경되며 이후 새 세션에서 사용됩니다. Kimi Code 자체 로그인 계정은 자동으로 표시되며 웹 검색과 웹 페이지 가져오기에 항상 사용됩니다. 여기에서 제거해도 목록에서만 숨겨지며 Kimi Code에서 로그아웃되지 않습니다."

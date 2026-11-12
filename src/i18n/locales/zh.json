@@ -5136,7 +5136,7 @@
       "chatgptHelp": "用于 Claude Code、Claude Desktop 的 ChatGPT 预设，以及 Codex 官方登录绑定。没指定账号的供应商用「默认」账号。",
       "xaiHelp": "用于 Claude Code、Claude Desktop、Codex 的 xAI 预设。没指定账号的供应商用「默认」账号。",
       "agyHelp": "Antigravity CLI（agy）的官方登录。agy 同时只能登录一个号，「切换」会把 agy 的登录换成选中的账号，之后新开的 agy 都用它。agy 里原来登着的号会自动收进这里，切走也不会丢。",
-      "workbuddyHelp": "WorkBuddy 桌面端的官方登录。CC Switch 不能替 WorkBuddy 登录，只能收录它当前登着的账号（整组登录文件的快照）。要切换账号，在供应商列表里添加绑定了它的「WorkBuddy 官方登录」卡（同一时间只有一张在「已添加」）。快照只在这台电脑上有效，不会随云同步。",
+      "workbuddyHelp": "WorkBuddy 桌面端的官方登录。CC Switch 不能替 WorkBuddy 登录，只能收录它当前登着的账号（整组登录文件的快照）。要切换账号，在账号的「…」里选「切换 WorkBuddy 到这个账号」，或在供应商列表里添加绑定了它的「WorkBuddy 官方登录」卡（同一时间只有一张在「已添加」）。快照只在这台电脑上有效，不会随云同步。",
       "claudeHelpTerminal": "Claude Code 的官方订阅账号（Pro / Max / Team）。设置里覆盖了 Claude 配置目录，切卡不会切换 Claude Code 的登录；在官方卡上选一个账号，再从卡片「打开终端」使用。",
       "claudeHelpWsl": "Claude Code 的官方订阅账号（Pro / Max / Team）。Claude 配置目录在 WSL 里时暂不支持，后续会跟进。",
       "claudeHelp": "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 官方卡上选一个账号，切到这张卡后，Claude Code 的登录会实时换成这个号；想同时用几个号，从卡片「打开终端」。登录令牌只留在本机，不上传、不刷新、不登出。第一次切换会自动收进 Claude Code 现在登录的号；切号后 Remote Control 会断开，提示缓存要重建。"
@@ -5145,6 +5145,8 @@
     "accountMenu": "{{login}} 的更多操作",
     "removeAccount": "删除账号",
     "setDefault": "设为默认",
+    "inUseBy": "{{app}} 在用",
+    "switchAppTo": "切换 {{app}} 到这个账号",
     "reauth": "重新登录",
     "busyHint": "先完成或取消正在进行的登录",
     "default": "默认",
@@ -5191,8 +5193,6 @@
       "addedOn": "{{date}}添加",
       "statusLoadFailed": "无法读取 Antigravity 账号，请重试。",
       "empty": "还没有 Antigravity 账号。agy 里已登录的号会自动出现在这里。",
-      "current": "agy 在用",
-      "switchTo": "切换 agy 到这个账号",
       "removeNote": "不会让 agy 退出登录：agy 现在登着的号删掉后仍然可用。",
       "switched": "已切换，新开的 agy 会使用这个账号。",
       "switchedWhileRunning": "已切换。检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，请退出后重新打开。"
@@ -5216,7 +5216,6 @@
         "_raw": "{{plan}}"
       },
       "importNow": "收录",
-      "current": "WorkBuddy 在用",
       "removeNote": "只删除 CC Switch 里的快照，不会让 WorkBuddy 退出登录。",
       "localOnly": "快照只在这台电脑上有效（登录凭据绑定本机），不会随云同步，换电脑后需要重新收录。",
       "runningTitle": "WorkBuddy 正在运行",
@@ -5254,7 +5253,6 @@
   },
   "kimi": {
     "oauth": {
-      "useAccount": "使用此账号",
       "title": "Kimi Code 官方登录",
       "description": "可添加多个 Kimi 编程套餐账号，各自保存凭据和供应商。在此管理登录，再选择账号使用其官方模型。",
       "region": "登录区域",
@@ -5277,7 +5275,6 @@
       "manageAccounts": "管理 Kimi 账号",
       "managedHint": "先移除这个官方账号，或到授权中心删除它（连登录一起删）。",
       "connectionManaged": "连接和登录由授权中心管理，这里只编辑模型。拉取模型会读取这个账号当前可用的官方模型。",
-      "current": "Kimi 在用",
       "primaryShort": "Kimi Code 自己的登录",
       "empty": "还没有 Kimi 账号。Kimi Code 里已登录的号会自动出现在这里。",
       "help": "可添加多个 Kimi 编程套餐账号，每个号在 Kimi Code 里有自己的供应商和模型。「使用此账号」会把 Kimi Code 的默认模型换成这个号的，之后新开的会话都用它。Kimi Code 自己登着的号会自动出现在这里，联网搜索和网页抓取始终用它；在这里删掉它只会移出列表，不会让 Kimi Code 退出登录。"
