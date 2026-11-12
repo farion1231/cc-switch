@@ -419,16 +419,22 @@ pub(crate) fn write_live(
     } else {
         op::APPLY
     };
-    let patch = EditorPatch {
-        changes: &plan.changes,
-        on_conflict,
-        // 和切换一样：删掉的连接字段先写成空串，开着的会话才跟得上
-        key_fields: key_patch.map(|patch| claude_direct::for_live(op_name, &patch)),
-    };
 
     // 关键字段的补丁是按调用方读到的行算的：先补完上一次的操作。
     super::claude_official::with_login_switch(login_target, || {
         AppWrite::begin(db, AppType::Claude.as_str()).and_then(|write| {
+            let mut target = PendingTarget::pointer(pointer);
+            let key_fields = key_patch
+                .as_ref()
+                .map(|patch| {
+                    claude_direct::prepare_live_patch(&write.store, op_name, patch, &mut target)
+                })
+                .transpose()?;
+            let patch = EditorPatch {
+                changes: &plan.changes,
+                on_conflict,
+                key_fields,
+            };
             let tombstones =
                 claude_direct::note_tombstones(&write.store, patch.key_fields.as_ref());
             let result = write.run(
@@ -437,7 +443,7 @@ pub(crate) fn write_live(
                     file: claude_direct::settings_file(),
                     patch: &patch,
                 }],
-                PendingTarget::pointer(pointer),
+                target,
             );
             claude_direct::after_live_write(
                 &write.guard,
@@ -657,5 +663,77 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn saving_current_direct_provider_in_editor_keeps_user_model_picker() {
+        let _home = crate::test_support::TestHome::new();
+        let db = Database::memory().expect("db");
+        let path = crate::config::get_claude_settings_path();
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+
+        let a = Provider::with_id(
+            "a".into(),
+            "a".into(),
+            json!({ "env": { "ANTHROPIC_BASE_URL": "https://a.example", "ANTHROPIC_AUTH_TOKEN": "sk-a" } }),
+            None,
+        );
+        let b = Provider::with_id(
+            "b".into(),
+            "b".into(),
+            json!({ "env": { "ANTHROPIC_BASE_URL": "https://b.example", "ANTHROPIC_AUTH_TOKEN": "sk-b" } }),
+            None,
+        );
+        claude_direct::switch_to(&db, None, &a).expect("initial switch");
+
+        // 直连模式下用户在 settings.json 里手写了自定义 modelPicker。
+        let user_picker = json!({
+            "replaceBuiltInOptions": true,
+            "options": [{ "alias": "fast", "model": "claude-haiku" }]
+        });
+        let mut live: Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("read live")).expect("live json");
+        live["modelPicker"] = user_picker.clone();
+        std::fs::write(&path, serde_json::to_string_pretty(&live).unwrap()).expect("write picker");
+
+        // 编辑器打开当前供应商（a），修改了 BASE_URL 后保存。
+        let base = project_onto(
+            &path,
+            &live,
+            Some(&ClaudeProjection::of(&a.settings_config)),
+            &ClaudeProjection::of(&a.settings_config),
+        )
+        .expect("view projection");
+        assert!(base.get("modelPicker").is_none());
+
+        let mut edited = base.clone();
+        edited["env"]["ANTHROPIC_BASE_URL"] = json!("https://a2.example");
+        let plan = plan_save(Some(&a.settings_config), &edited, &base).expect("plan");
+        let updated = Provider::with_id("a".into(), "a".into(), plan.row_settings.clone(), None);
+
+        write_live(
+            &db,
+            &plan,
+            ConflictPolicy::Refuse,
+            Some(KeyFieldWrite {
+                prev: Some(&a),
+                target: &updated,
+                set_pointer: false,
+            }),
+        )
+        .expect("write live");
+
+        let saved: Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("read saved")).expect("saved json");
+        assert_eq!(saved["env"]["ANTHROPIC_BASE_URL"], "https://a2.example");
+        assert_eq!(saved["modelPicker"], user_picker);
+
+        // 下次切到别的供应商时，依然认得 live 里的是用户手写的菜单并保留下来。
+        claude_direct::switch_to(&db, Some(&updated), &b).expect("switch to b");
+        let after_switch: Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("read after")).expect("after json");
+        assert_eq!(after_switch["env"]["ANTHROPIC_BASE_URL"], "https://b.example");
+        assert_eq!(after_switch["modelPicker"], user_picker);
     }
 }
