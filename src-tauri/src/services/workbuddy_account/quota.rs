@@ -7,11 +7,12 @@
 //! - 握手是双向 HMAC-SHA256 证明、服务端先自证（`ticket` 本身从不上线，只发它的 sha256 前缀）；
 //! - `wb.request` pipe 的 `http.fetch`：WorkBuddy 用它当前登录的身份代为访问自己的后端。
 //!
-//! 这里只发一条请求：`POST /billing/meter/get-user-resource-summary`，空 body 的查询，和 WorkBuddy
-//! 自己定期刷新额度时一模一样。规矩：
+//! 这里只发 WorkBuddy 自己刷新额度时就会发的只读查询：`POST /billing/meter/get-user-resource-summary`
+//! （空 body，总量），再按汇总里有哪类套餐查 free / paid 两个套餐明细（各个资源包的到期时间，
+//! 请求体照抄 WorkBuddy 的 `fetchUserResources`）。规矩：
 //! - 只在 WorkBuddy 正在运行、且要查的正是它当前登着的号时查；别的号只给上次缓存的结果；
 //! - 不读 token、keyblob，不调用任何写操作 / 登出 / 续期接口；`ticket` 不进日志、不出这个模块；
-//! - 结果（套餐名和积分数，不敏感）缓存进 CC Switch 自己的账号表，WorkBuddy 没运行时显示上次结果。
+//! - 结果（套餐名、积分数和到期时间，不敏感）缓存进 CC Switch 自己的账号表，WorkBuddy 没运行时显示上次结果。
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -39,6 +40,45 @@ const PROTOCOL: u32 = 1;
 const PIPE: &str = "wb.request";
 const METHOD: &str = "http.fetch";
 pub(super) const SUMMARY_PATH: &str = "/billing/meter/get-user-resource-summary";
+pub(super) const FREE_PACKAGES_PATH: &str = "/billing/meter/get-user-resource-free-packages";
+pub(super) const PAID_PACKAGES_PATH: &str = "/billing/meter/get-user-resource-paid-packages";
+/// WorkBuddy 按套餐代码把资源分两个接口查，各自只认自己那组（它的 `Is` / `Fs` 两个列表）。
+pub(super) const FREE_PACKAGE_CODES: &[&str] = &[
+    "TCACA_code_001_PqouKr6QWV", // free
+    "TCACA_code_008_cfWoLwvjU4", // freeMon（体验版）
+    "TCACA_code_035_ArVxJcGDsm", // freeMonIntl
+    "TCACA_code_006_DbXS0lrypC", // gift
+    "TCACA_code_039_KRcQj7wUat", // proTrialMon
+    "TCACA_code_040_mi9rCYg46x", // proTrialYear
+    "TCACA_code_007_nzdH5h4Nl0", // activity
+    "TCACA_code_028_NtpWi0jzXs", // bonus28
+    "TCACA_code_037_WxOD3MpI2o", // bonusIntl
+    "TCACA_code_029_6wCGEWquYy", // bonus29
+    "TCACA_code_030_BjSt89qTvr", // bonus30（拉新权益包）
+];
+pub(super) const PAID_PACKAGE_CODES: &[&str] = &[
+    "TCACA_code_002_AkiJS3ZHF5", // proMon
+    "TCACA_code_005_maRGyrHhw1", // proMonPlus
+    "TCACA_code_003_FAnt7lcmRT", // proYear
+    "TCACA_code_023_4xbGhMrE6q", // youth
+    "TCACA_code_026_BaESVICNoi", // advanced
+    "TCACA_code_027_0FCGVA6vSa", // flagship
+    "TCACA_code_043_6oIkxT7Z0S", // buddyOneVip
+    "TCACA_code_009_0XmEQc2xOf", // extra（积分包）
+    "TCACA_code_038_OhvqZtiPKr", // extra38
+    "TCACA_code_036_lupO5WgNdG", // extraIntl
+];
+/// 一页取多少个资源包（同 WorkBuddy）。只取第一页：一个号两百个以上资源包时到期列表不全，总量不受影响
+const PACKAGES_PAGE_SIZE: u32 = 200;
+/// 资源状态：有效、已用完（同 WorkBuddy）
+const PACKAGE_STATUSES: [u32; 2] = [0, 3];
+/// 「切片」资源（按天切的额度，见 WorkBuddy `isSliceCapacityResource`）：当天的切片今晚就到期，
+/// 天天提醒没有意义，不进到期列表
+const SLICE_CAPACITY_TYPE: i64 = 4;
+/// 计费后端的日期时间串（`2026-11-30 23:59:59`）是北京时间
+const BILLING_UTC_OFFSET_SECS: i32 = 8 * 3600;
+/// 到期时间远于这么久（官方用 2035、2049 这类日期占位）当作不会过期
+const NEVER_EXPIRES_AFTER_MS: i64 = 10 * 365 * 24 * 3600 * 1000;
 
 /// 一次查询的结果（存进账号表，也原样给前端）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -55,6 +95,20 @@ pub struct WorkBuddyQuotaSnapshot {
     pub used: f64,
     /// 查询时刻（毫秒）
     pub queried_at: i64,
+    /// 还有剩余的各个资源包各自什么时候到期，按到期先后排（不会过期的在最后）；
+    /// `None` 表示套餐明细这次没查到（只有总量）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expiries: Option<Vec<WorkBuddyCreditExpiry>>,
+}
+
+/// 一个资源包的剩余积分和到期时间。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkBuddyCreditExpiry {
+    pub credits: f64,
+    /// 到期时刻（毫秒）；不会过期时为 `None`
+    #[serde(default)]
+    pub expires_at: Option<i64>,
 }
 
 /// 这次没能拿到新结果的原因。
@@ -471,28 +525,59 @@ async fn session<S: AsyncRead + AsyncWrite + Unpin>(
         return Err(FetchError::NotSignedIn);
     }
 
-    send(
+    let now = chrono::Utc::now().timestamp_millis();
+    let summary = fetch(
         &mut writer,
+        &mut reader,
+        &channel,
+        2,
+        SUMMARY_PATH,
+        json!({}),
+    )
+    .await?;
+    let mut snapshot = parse_summary(&summary, now)?;
+    // 套餐明细只用来补到期时间：查不到就只显示总量，不算这次失败
+    snapshot.expiries = match fetch_expiries(&mut writer, &mut reader, &channel, &summary).await {
+        Ok(expiries) => Some(expiries),
+        Err(error) => {
+            log::warn!("[WorkBuddyAccount] 查积分到期时间失败: {error:?}");
+            None
+        }
+    };
+    let _ = writer.shutdown().await;
+    Ok(snapshot)
+}
+
+/// 经 `http.fetch` 让 WorkBuddy 用它当前的身份 POST 一次，返回响应体。
+async fn fetch<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    reader: &mut BufReader<R>,
+    channel: &str,
+    id: u64,
+    path: &str,
+    body: Value,
+) -> Result<Vec<u8>, FetchError> {
+    let body = serde_json::to_vec(&body).map_err(|error| FetchError::Failed(error.to_string()))?;
+    send(
+        writer,
         &json!({
             "jsonrpc": "2.0",
-            "id": 2,
+            "id": id,
             "method": format!("{channel}/{METHOD}"),
             "mode": "call",
             "params": {
                 "method": "POST",
-                "path": SUMMARY_PATH,
+                "path": path,
                 "headers": {
                     "content-type": "application/json",
                     "accept": "application/json",
                 },
-                "body_b64": STANDARD.encode(b"{}"),
+                "body_b64": STANDARD.encode(body),
             },
         }),
     )
     .await?;
-    let result = response(&mut reader, 2).await?;
-    let _ = writer.shutdown().await;
-
+    let result = response(reader, id).await?;
     let status = result.get("status").and_then(Value::as_u64).unwrap_or(0);
     if status == 401 || status == 403 {
         return Err(FetchError::NotSignedIn);
@@ -500,12 +585,54 @@ async fn session<S: AsyncRead + AsyncWrite + Unpin>(
     if !(200..300).contains(&status) {
         return Err(FetchError::Failed(format!("额度接口返回 HTTP {status}")));
     }
-    let body = result
+    result
         .get("body_b64")
         .and_then(Value::as_str)
         .and_then(|body| STANDARD.decode(body).ok())
-        .ok_or_else(|| FetchError::Failed("额度接口回包为空".into()))?;
-    parse_summary(&body, chrono::Utc::now().timestamp_millis())
+        .ok_or_else(|| FetchError::Failed("额度接口回包为空".into()))
+}
+
+/// 汇总里出现了哪类套餐，就查哪个明细接口（WorkBuddy 对只有免费套餐的号也不查 paid）。
+async fn fetch_expiries<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    reader: &mut BufReader<R>,
+    channel: &str,
+    summary: &[u8],
+) -> Result<Vec<WorkBuddyCreditExpiry>, FetchError> {
+    let codes = summary_package_codes(summary);
+    let has_any = |group: &[&str]| codes.iter().any(|code| group.contains(&code.as_str()));
+    let mut bodies = Vec::new();
+    if has_any(FREE_PACKAGE_CODES) {
+        let (start, end) = slice_period(chrono::Local::now().naive_local().date());
+        let body = json!({
+            "PageNumber": 1,
+            "PageSize": PACKAGES_PAGE_SIZE,
+            "PackageCodes": FREE_PACKAGE_CODES,
+            "Status": PACKAGE_STATUSES,
+            "SlicePeriodStartTime": start,
+            "SlicePeriodEndTime": end,
+        });
+        bodies.push(fetch(writer, reader, channel, 3, FREE_PACKAGES_PATH, body).await?);
+    }
+    if has_any(PAID_PACKAGE_CODES) {
+        let body = json!({
+            "PageNumber": 1,
+            "PageSize": PACKAGES_PAGE_SIZE,
+            "PackageCodes": PAID_PACKAGE_CODES,
+            "Status": PACKAGE_STATUSES,
+            "NeedRenewInfo": true,
+        });
+        bodies.push(fetch(writer, reader, channel, 4, PAID_PACKAGES_PATH, body).await?);
+    }
+    parse_packages(&bodies, chrono::Utc::now().timestamp_millis())
+}
+
+/// 当天 0 点到 23:59:59（本地时间，同 WorkBuddy 的 `buildSlicePeriodRange`）。
+pub(super) fn slice_period(day: chrono::NaiveDate) -> (String, String) {
+    (
+        format!("{} 00:00:00", day.format("%Y-%m-%d")),
+        format!("{} 23:59:59", day.format("%Y-%m-%d")),
+    )
 }
 
 /// 积分数：字符串或数字，非有限 / 非正一律当 0（同 WorkBuddy 的 `toCount` + `sumSummaryCapacity`）。
@@ -524,18 +651,7 @@ pub(super) fn parse_summary(
 ) -> Result<WorkBuddyQuotaSnapshot, FetchError> {
     let doc: Value = serde_json::from_slice(body)
         .map_err(|_| FetchError::Failed("额度接口回了看不懂的数据".into()))?;
-    let code = doc.get("code").and_then(|code| match code {
-        Value::Number(number) => number.as_i64(),
-        Value::String(text) => text.trim().parse().ok(),
-        _ => None,
-    });
-    let data = doc.get("data").filter(|data| data.is_object());
-    let (Some(0), Some(data)) = (code, data) else {
-        return Err(FetchError::Failed(format!(
-            "额度接口返回错误（code={}）",
-            code.map_or_else(|| "?".to_string(), |code| code.to_string())
-        )));
-    };
+    let data = business_data(&doc)?;
     let (mut total, mut remaining, mut used) = (0.0, 0.0, 0.0);
     for package in data
         .get("Packages")
@@ -562,5 +678,125 @@ pub(super) fn parse_summary(
         remaining,
         used,
         queried_at,
+        expiries: None,
     })
+}
+
+/// 业务码为 0 时取 `data`，否则报错。
+fn business_data(doc: &Value) -> Result<&Value, FetchError> {
+    let code = doc.get("code").and_then(|code| match code {
+        Value::Number(number) => number.as_i64(),
+        Value::String(text) => text.trim().parse().ok(),
+        _ => None,
+    });
+    match (code, doc.get("data").filter(|data| data.is_object())) {
+        (Some(0), Some(data)) => Ok(data),
+        _ => Err(FetchError::Failed(format!(
+            "额度接口返回错误（code={}）",
+            code.map_or_else(|| "?".to_string(), |code| code.to_string())
+        ))),
+    }
+}
+
+fn summary_package_codes(body: &[u8]) -> Vec<String> {
+    let Ok(doc) = serde_json::from_slice::<Value>(body) else {
+        return Vec::new();
+    };
+    doc.pointer("/data/Packages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|package| package.get("PackageCode").and_then(Value::as_str))
+        .map(str::to_string)
+        .collect()
+}
+
+/// 计费时间：毫秒数（数字或数字串），或北京时间的 `YYYY-MM-DD HH:MM:SS`；空串、0 和认不出的为 `None`。
+fn billing_time(value: Option<&Value>) -> Option<i64> {
+    let ms = match value? {
+        Value::Number(number) => number.as_i64(),
+        Value::String(text) => {
+            let text = text.trim();
+            if !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit()) {
+                text.parse().ok()
+            } else {
+                let beijing = chrono::FixedOffset::east_opt(BILLING_UTC_OFFSET_SECS)?;
+                chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S")
+                    .ok()?
+                    .and_local_timezone(beijing)
+                    .single()
+                    .map(|time| time.timestamp_millis())
+            }
+        }
+        _ => None,
+    }?;
+    (ms > 0).then_some(ms)
+}
+
+/// 套餐明细 → 各资源包的剩余和到期时间。
+///
+/// 剩余照 WorkBuddy `resolvePackageCapacity`：有总容量（`CapacitySizePrecise`，一次性额度）就用
+/// `CapacityRemainPrecise`，否则用本周期的剩余。到期取「资源到期」（`DeductionEndTime`，没有时
+/// `ExpiredTime`）和「本周期结束」（`CycleEndTime`）里早的那个：按月发放的套餐资源要到 2035 年才
+/// 到期，但这个月没用完的积分月底就作废了。
+pub(super) fn parse_packages(
+    bodies: &[Vec<u8>],
+    now: i64,
+) -> Result<Vec<WorkBuddyCreditExpiry>, FetchError> {
+    let mut seen = std::collections::HashSet::new();
+    let mut expiries = Vec::new();
+    for body in bodies {
+        let doc: Value = serde_json::from_slice(body)
+            .map_err(|_| FetchError::Failed("套餐明细接口回了看不懂的数据".into()))?;
+        let data = business_data(&doc)?;
+        for package in data
+            .get("Accounts")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            // 两个接口可能都回同一个资源（同 WorkBuddy 按 ResourceId 去重）
+            if let Some(id) = package.get("ResourceId").filter(|id| !id.is_null()) {
+                if !seen.insert(id.to_string()) {
+                    continue;
+                }
+            }
+            let slice = package.get("CapacityType").and_then(Value::as_i64)
+                == Some(SLICE_CAPACITY_TYPE)
+                && package
+                    .get("SlicePeriodUsageDetails")
+                    .and_then(Value::as_array)
+                    .is_some_and(|details| !details.is_empty());
+            if slice {
+                continue;
+            }
+            let credits = if count(package.get("CapacitySizePrecise")) > 0.0 {
+                count(package.get("CapacityRemainPrecise"))
+            } else {
+                let precise = count(package.get("CycleCapacityRemainPrecise"));
+                if precise > 0.0 {
+                    precise
+                } else {
+                    count(package.get("CycleCapacityRemain"))
+                }
+            };
+            if credits <= 0.0 {
+                continue;
+            }
+            let resource_end = billing_time(package.get("DeductionEndTime"))
+                .or_else(|| billing_time(package.get("ExpiredTime")));
+            let cycle_end = billing_time(package.get("CycleEndTime"));
+            let expires_at = [resource_end, cycle_end]
+                .into_iter()
+                .flatten()
+                .min()
+                .filter(|at| at - now < NEVER_EXPIRES_AFTER_MS);
+            expiries.push(WorkBuddyCreditExpiry {
+                credits,
+                expires_at,
+            });
+        }
+    }
+    expiries.sort_by_key(|expiry| expiry.expires_at.unwrap_or(i64::MAX));
+    Ok(expiries)
 }

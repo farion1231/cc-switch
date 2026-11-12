@@ -514,6 +514,7 @@ fn parses_the_resource_summary_like_workbuddy_does() {
             remaining: 750.5,
             used: 749.5,
             queried_at: 42,
+            expiries: None,
         }
     );
 
@@ -522,6 +523,95 @@ fn parses_the_resource_summary_like_workbuddy_does() {
         quota::parse_summary(&serde_json::to_vec(&refused).unwrap(), 0),
         Err(quota::FetchError::Failed(_))
     ));
+}
+
+/// 字段形态取自 11-12 对真实账号（体验版 + 拉新权益包）抓到的套餐明细。
+#[test]
+fn parses_package_expiries_like_workbuddy_does() {
+    let now = 1_794_471_860_000; // 2026-11-12
+    let free = json!({
+        "code": 0,
+        "data": {
+            "TotalCount": 4,
+            "Accounts": [
+                {
+                    // 拉新权益包：资源到期 = 周期结束（12-12 11:43:24 北京时间）
+                    "ResourceId": "r-bonus",
+                    "PackageCode": "TCACA_code_030_BjSt89qTvr",
+                    "CapacityType": 1,
+                    "CycleEndTime": "2026-12-12 11:43:24",
+                    "DeductionEndTime": 1_797_047_004_000_i64,
+                    "ExpiredTime": "",
+                    "CapacitySizePrecise": "",
+                    "CycleCapacityRemainPrecise": "1500",
+                    "CycleCapacityRemain": 1500,
+                },
+                {
+                    // 体验版：资源占位到 2035 年，但本月没用完的月底作废
+                    "ResourceId": "r-monthly",
+                    "PackageCode": "TCACA_code_008_cfWoLwvjU4",
+                    "CapacityType": 4,
+                    "CycleEndTime": "2026-11-30 23:59:59",
+                    "DeductionEndTime": 2_054_864_603_000_i64,
+                    "ExpiredTime": "",
+                    "CycleCapacityRemainPrecise": "496.52",
+                    "CycleCapacityRemain": 496,
+                },
+                {
+                    // 按天切片的资源：今晚就到期，不进列表
+                    "ResourceId": "r-slice",
+                    "CapacityType": 4,
+                    "SlicePeriodUsageDetails": [{"SlicePeriodCapacityRemainPrecise": "20"}],
+                    "CycleEndTime": "2026-11-12 23:59:59",
+                    "CycleCapacityRemainPrecise": "20",
+                },
+                {
+                    // 用完的不提醒
+                    "ResourceId": "r-used-up",
+                    "CycleEndTime": "2026-11-20 00:00:00",
+                    "CycleCapacityRemainPrecise": "0",
+                },
+            ],
+        }
+    });
+    let paid = json!({
+        "code": 0,
+        "data": {
+            "Accounts": [
+                {
+                    // 一次性积分包：剩余看总容量那组字段；只有 ExpiredTime，且远在十年后 → 不会过期
+                    "ResourceId": "r-pack",
+                    "CapacitySizePrecise": "300",
+                    "CapacityRemainPrecise": "120.5",
+                    "CycleCapacityRemainPrecise": "999",
+                    "ExpiredTime": "2049-12-31 23:59:59",
+                },
+                // 两个接口都回了同一个资源：只算一次
+                {"ResourceId": "r-bonus", "CycleCapacityRemainPrecise": "1500", "CycleEndTime": "2026-12-12 11:43:24"},
+            ],
+        }
+    });
+    let bodies = [
+        serde_json::to_vec(&free).unwrap(),
+        serde_json::to_vec(&paid).unwrap(),
+    ];
+    let expiries = quota::parse_packages(&bodies, now).expect("parses");
+    let expiry = |credits, expires_at| quota::WorkBuddyCreditExpiry {
+        credits,
+        expires_at,
+    };
+    assert_eq!(
+        expiries,
+        vec![
+            // 2026-11-30 23:59:59 +08:00
+            expiry(496.52, Some(1_796_054_399_000)),
+            expiry(1500.0, Some(1_797_047_004_000)),
+            expiry(120.5, None),
+        ]
+    );
+
+    let refused = json!({"code": 11001, "data": null});
+    assert!(quota::parse_packages(&[serde_json::to_vec(&refused).unwrap()], now).is_err());
 }
 
 /// 已知答案：和 WorkBuddy 自带的 `workbuddy_ipc` 客户端算法逐字节一致（同一算法对真实 WorkBuddy 握手通过）。
@@ -554,6 +644,10 @@ fn quota_cache_survives_re_captures_of_the_login() {
         remaining: 4.0,
         used: 6.0,
         queried_at: 1,
+        expiries: Some(vec![quota::WorkBuddyCreditExpiry {
+            credits: 4.0,
+            expires_at: Some(2),
+        }]),
     };
     assert!(manager.save_quota("u-1", snapshot.clone()).unwrap());
     // WorkBuddy 刷新了 token：重新收回副本时额度缓存不能丢
@@ -580,7 +674,13 @@ mod wbipc {
 
     /// 起一个按 WorkBuddy 协议握手的假 broker，并写好发现文件。`server_ticket` 和发现文件里的
     /// ticket 不同时，它就证明不了自己。
-    pub fn start(fx: &Fixture, ticket: &str, server_ticket: &str, body: Value) -> FakeBroker {
+    /// `routes` 是各接口路径的回包；没列的路径回 404。
+    pub fn start(
+        fx: &Fixture,
+        ticket: &str,
+        server_ticket: &str,
+        routes: Vec<(&'static str, Value)>,
+    ) -> FakeBroker {
         let socket = fx.data_dir.join("b-test.sock");
         let endpoint = socket.to_string_lossy().to_string();
         std::fs::create_dir_all(fx.paths.wbipc_discovery.parent().unwrap()).unwrap();
@@ -644,15 +744,21 @@ mod wbipc {
                             "id": frame["id"],
                             "result": {"channel": "c:wb.request", "methods": ["http.fetch"]},
                         }),
-                        Some("c:wb.request/http.fetch") => json!({
-                            "jsonrpc": "2.0",
-                            "id": frame["id"],
-                            "result": {
-                                "status": 200,
-                                "headers": {"content-type": "application/json"},
-                                "body_b64": STANDARD.encode(serde_json::to_vec(&body).unwrap()),
-                            },
-                        }),
+                        Some("c:wb.request/http.fetch") => {
+                            let path = frame["params"]["path"].as_str().unwrap();
+                            let body = routes.iter().find(|(route, _)| *route == path);
+                            json!({
+                                "jsonrpc": "2.0",
+                                "id": frame["id"],
+                                "result": {
+                                    "status": if body.is_some() { 200 } else { 404 },
+                                    "headers": {"content-type": "application/json"},
+                                    "body_b64": STANDARD.encode(
+                                        serde_json::to_vec(&body.map(|(_, body)| body)).unwrap()
+                                    ),
+                                },
+                            })
+                        }
                         _ => continue,
                     },
                 };
@@ -673,10 +779,27 @@ mod wbipc {
         json!({
             "code": 0,
             "data": {
-                "Packages": [{"CycleTotalCapacity": "100", "CycleRemainCapacity": "40", "CycleUsedCapacity": "60"}],
+                "Packages": [{
+                    "PackageCode": "TCACA_code_008_cfWoLwvjU4",
+                    "CycleTotalCapacity": "100",
+                    "CycleRemainCapacity": "40",
+                    "CycleUsedCapacity": "60",
+                }],
                 "SubscriptionPackageName": "体验版",
                 "IsPaidUser": false,
             }
+        })
+    }
+
+    fn free_packages() -> Value {
+        json!({
+            "code": 0,
+            "data": {"Accounts": [{
+                "ResourceId": "r-1",
+                "CycleEndTime": "2026-11-30 23:59:59",
+                "DeductionEndTime": 2_054_864_603_000_i64,
+                "CycleCapacityRemainPrecise": "40",
+            }]}
         })
     }
 
@@ -687,7 +810,15 @@ mod wbipc {
         fx.running.store(true, Ordering::SeqCst);
         let manager = Arc::new(fx.manager());
         manager.import_current().unwrap();
-        let broker = start(&fx, "the-ticket", "the-ticket", summary());
+        let broker = start(
+            &fx,
+            "the-ticket",
+            "the-ticket",
+            vec![
+                (quota::SUMMARY_PATH, summary()),
+                (quota::FREE_PACKAGES_PATH, free_packages()),
+            ],
+        );
 
         let quota = account_quota(Arc::clone(&manager), "u-1".into(), false)
             .await
@@ -700,6 +831,13 @@ mod wbipc {
             (snapshot.total, snapshot.remaining, snapshot.used),
             (100.0, 40.0, 60.0)
         );
+        assert_eq!(
+            snapshot.expiries,
+            Some(vec![quota::WorkBuddyCreditExpiry {
+                credits: 40.0,
+                expires_at: Some(1_796_054_399_000),
+            }])
+        );
         broker.task.await.unwrap();
 
         let frames = broker.frames.lock().unwrap().clone();
@@ -711,18 +849,38 @@ mod wbipc {
             frames[0]["ticket_id"],
             json!(quota::ticket_id("the-ticket"))
         );
-        // 只有一次后端请求：空 body 的额度汇总查询
+        // 两次只读查询：空 body 的额度汇总，再查汇总里出现的免费套餐的明细；
+        // 没有付费套餐就不查 paid（同 WorkBuddy）
         let fetches: Vec<&Value> = frames
             .iter()
             .filter(|frame| frame["method"] == json!("c:wb.request/http.fetch"))
             .collect();
-        assert_eq!(fetches.len(), 1);
-        assert_eq!(fetches[0]["params"]["method"], json!("POST"));
+        assert_eq!(fetches.len(), 2);
+        assert!(fetches
+            .iter()
+            .all(|fetch| fetch["params"]["method"] == json!("POST")));
         assert_eq!(fetches[0]["params"]["path"], json!(quota::SUMMARY_PATH));
         assert_eq!(
             fetches[0]["params"]["body_b64"],
             json!(STANDARD.encode("{}"))
         );
+        assert_eq!(
+            fetches[1]["params"]["path"],
+            json!(quota::FREE_PACKAGES_PATH)
+        );
+        let body: Value = serde_json::from_slice(
+            &STANDARD
+                .decode(fetches[1]["params"]["body_b64"].as_str().unwrap())
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(body["PackageCodes"], json!(quota::FREE_PACKAGE_CODES));
+        assert_eq!(body["Status"], json!([0, 3]));
+        assert_eq!(body["PageSize"], json!(200));
+        assert!(body["SlicePeriodStartTime"]
+            .as_str()
+            .unwrap()
+            .ends_with(" 00:00:00"));
 
         // WorkBuddy 退出后：缓存还在，强制刷新说明是因为没在运行
         fx.running.store(false, Ordering::SeqCst);
@@ -745,7 +903,12 @@ mod wbipc {
         fx.running.store(true, Ordering::SeqCst);
         let manager = Arc::new(fx.manager());
         manager.import_current().unwrap();
-        let broker = start(&fx, "the-ticket", "someone-else", summary());
+        let broker = start(
+            &fx,
+            "the-ticket",
+            "someone-else",
+            vec![(quota::SUMMARY_PATH, summary())],
+        );
 
         let quota = account_quota(manager, "u-1".into(), true).await.unwrap();
         assert_eq!(quota.unavailable, Some(QuotaUnavailable::Failed));
@@ -755,6 +918,29 @@ mod wbipc {
         let frames = broker.frames.lock().unwrap().clone();
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0]["type"], json!("session_hello"));
+    }
+
+    #[tokio::test]
+    async fn keeps_the_totals_when_package_details_fail() {
+        let fx = Fixture::new();
+        fx.sign_in("u-1", 1);
+        fx.running.store(true, Ordering::SeqCst);
+        let manager = Arc::new(fx.manager());
+        manager.import_current().unwrap();
+        // 明细接口没配：回 404
+        let broker = start(
+            &fx,
+            "the-ticket",
+            "the-ticket",
+            vec![(quota::SUMMARY_PATH, summary())],
+        );
+
+        let quota = account_quota(manager, "u-1".into(), true).await.unwrap();
+        assert_eq!(quota.unavailable, None);
+        let snapshot = quota.snapshot.expect("totals still fresh");
+        assert_eq!(snapshot.remaining, 40.0);
+        assert_eq!(snapshot.expiries, None);
+        broker.task.await.unwrap();
     }
 }
 

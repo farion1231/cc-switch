@@ -5370,7 +5370,14 @@
       "staleFailed": "Bu sorgu başarısız oldu; son sonuç gösteriliyor",
       "openToQuery": "Görmek için WorkBuddy'yi açın",
       "onlyWhileRunning": "Kota yalnızca WorkBuddy çalışırken onun üzerinden sorgulanabilir",
-      "unavailable": "Kota şu anda alınamıyor"
+      "unavailable": "Kota şu anda alınamıyor",
+      "expiry": "Son kullanma",
+      "expiresOn": "{{credits}} kredinin süresi {{date}} doluyor",
+      "expiresOnShort": "Süresi doluyor {{date}}",
+      "noExpiry": "Son kullanma tarihi yok",
+      "expiryTitle": "Kredi son kullanma tarihleri",
+      "expiryShowAll": "Her kredi grubunun son kullanma tarihini göster",
+      "inTime": "{{time}}'de"
     }
   }
 }

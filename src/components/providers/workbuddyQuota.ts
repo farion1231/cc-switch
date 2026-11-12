@@ -4,9 +4,13 @@ import { useQuery } from "@tanstack/react-query";
 import { authApi } from "@/lib/api";
 import type { WorkBuddyQuota } from "@/lib/api/auth";
 import {
+  countdownStr,
   failedLines,
   formatRelativeTime,
+  RESET_EXPIRING_SOON_MS,
+  shortDate,
   toneForLeft,
+  type QuotaBreakdownItem,
   type QuotaDisplay,
   type QuotaLine,
 } from "@/components/quota/quotaRules";
@@ -130,7 +134,70 @@ export function workbuddyCreditsLine(
 }
 
 /**
- * 卡片右侧的额度列：积分一行；显示的是上次结果（WorkBuddy 没在运行等）时第二行写「xx 更新」。
+ * 积分最早哪天到期：「496 积分 11月30日到期」，三天内到期时标橙。按日期合并，不止一个日期时
+ * 可以点开逐条看。没有会到期的积分（或这次没查到套餐明细）时为 null。缓存的结果里已经过了
+ * 到期时间的那几笔不再算。
+ */
+export function workbuddyExpiryLine(
+  t: TFunction,
+  quota: WorkBuddyQuota,
+  locale: string,
+  now = Date.now(),
+): QuotaLine | null {
+  const groups: { key: string; at: number | null; credits: number }[] = [];
+  // 后端已按到期先后排好，不会过期的在最后
+  for (const { credits, expiresAt } of quota.snapshot?.expiries ?? []) {
+    if (expiresAt !== null && expiresAt <= now) continue;
+    const key =
+      expiresAt === null
+        ? "no_expiry"
+        : shortDate(new Date(expiresAt).toISOString(), locale);
+    const last = groups[groups.length - 1];
+    if (last?.key === key) last.credits += credits;
+    else groups.push({ key, at: expiresAt, credits });
+  }
+  const first = groups[0];
+  if (!first || first.at === null) return null;
+
+  const soon = (at: number | null) =>
+    at !== null && at - now < RESET_EXPIRING_SOON_MS;
+  const credits = formatCredits(first.credits, locale);
+  const date = first.key;
+  const items: QuotaBreakdownItem[] = groups.map(({ key, at, credits }) => {
+    const countdown =
+      at === null ? null : countdownStr(new Date(at).toISOString(), now);
+    return {
+      key,
+      label: at === null ? t("workbuddy.quota.noExpiry") : key,
+      hint: countdown
+        ? t("workbuddy.quota.inTime", { time: countdown })
+        : undefined,
+      value: formatCredits(credits, locale),
+      tone: soon(at) ? "warning" : "plain",
+    };
+  });
+  return {
+    key: "workbuddy_expiry",
+    left: Infinity,
+    tone: soon(first.at) ? "warning" : "plain",
+    emphasis: date,
+    text: t("workbuddy.quota.expiresOn", { credits, date }),
+    value: credits,
+    caption: t("workbuddy.quota.expiresOnShort", { date }),
+    breakdown:
+      groups.length > 1
+        ? {
+            title: t("workbuddy.quota.expiryTitle"),
+            openLabel: t("workbuddy.quota.expiryShowAll"),
+            items,
+          }
+        : undefined,
+  };
+}
+
+/**
+ * 卡片右侧的额度列：积分一行；第二行写最早到期的积分，显示的是上次结果（WorkBuddy 没在运行等）
+ * 时改写「xx 更新」，除非积分三天内就到期。
  * 还没有任何结果时：当前账号且 WorkBuddy 没运行 → 提示打开它；查询失败 → 「额度没查到」；其余不显示。
  */
 export function workbuddyCardLines(
@@ -144,7 +211,10 @@ export function workbuddyCardLines(
   const credits = workbuddyCreditsLine(t, quota, locale, display);
   if (credits) {
     const lines = [credits.line];
-    if (quota.unavailable && quota.snapshot) {
+    const expiry = workbuddyExpiryLine(t, quota, locale, now);
+    if (expiry && (expiry.tone === "warning" || !quota.unavailable)) {
+      lines.push(expiry);
+    } else if (quota.unavailable && quota.snapshot) {
       lines.push({
         key: "workbuddy_stale",
         left: Infinity,

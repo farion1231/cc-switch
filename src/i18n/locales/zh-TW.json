@@ -1249,7 +1249,14 @@
       "staleFailed": "這次沒查到，顯示的是上次查到的結果",
       "openToQuery": "開啟 WorkBuddy 後可查",
       "onlyWhileRunning": "額度只能在 WorkBuddy 執行時經由它查詢",
-      "unavailable": "暫時取不到額度"
+      "unavailable": "暫時取不到額度",
+      "expiry": "到期",
+      "expiresOn": "{{credits}} 積分 {{date}}到期",
+      "expiresOnShort": "{{date}}到期",
+      "noExpiry": "不會過期",
+      "expiryTitle": "積分到期時間",
+      "expiryShowAll": "查看每筆積分的到期時間",
+      "inTime": "{{time}}後"
     }
   },
   "pi": {

@@ -1249,7 +1249,14 @@
       "staleFailed": "这次没查到，显示的是上次查到的结果",
       "openToQuery": "打开 WorkBuddy 后可查",
       "onlyWhileRunning": "额度只能在 WorkBuddy 运行时经它查询",
-      "unavailable": "暂时取不到额度"
+      "unavailable": "暂时取不到额度",
+      "expiry": "到期",
+      "expiresOn": "{{credits}} 积分 {{date}}到期",
+      "expiresOnShort": "{{date}}到期",
+      "noExpiry": "不会过期",
+      "expiryTitle": "积分到期时间",
+      "expiryShowAll": "查看每笔积分的到期时间",
+      "inTime": "{{time}}后"
     }
   },
   "pi": {

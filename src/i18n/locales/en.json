@@ -1249,7 +1249,14 @@
       "staleFailed": "This check failed; showing the last result",
       "openToQuery": "Open WorkBuddy to check",
       "onlyWhileRunning": "Quota can only be checked through WorkBuddy while it is running",
-      "unavailable": "Quota is unavailable right now"
+      "unavailable": "Quota is unavailable right now",
+      "expiry": "Expires",
+      "expiresOn": "{{credits}} credits expire {{date}}",
+      "expiresOnShort": "Expires {{date}}",
+      "noExpiry": "No expiry",
+      "expiryTitle": "Credit expiry",
+      "expiryShowAll": "Show when each batch of credits expires",
+      "inTime": "in {{time}}"
     }
   },
   "pi": {

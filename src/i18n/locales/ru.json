@@ -1249,7 +1249,14 @@
       "staleFailed": "Эта проверка не удалась; показан последний результат",
       "openToQuery": "Откройте WorkBuddy, чтобы проверить",
       "onlyWhileRunning": "Квоту можно проверить только через WorkBuddy, пока он запущен",
-      "unavailable": "Квота сейчас недоступна"
+      "unavailable": "Квота сейчас недоступна",
+      "expiry": "Срок",
+      "expiresOn": "Кредиты ({{credits}}) истекают {{date}}",
+      "expiresOnShort": "Истекает {{date}}",
+      "noExpiry": "Без срока действия",
+      "expiryTitle": "Сроки действия кредитов",
+      "expiryShowAll": "Показать сроки действия всех кредитов",
+      "inTime": "через {{time}}"
     }
   },
   "pi": {

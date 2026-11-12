@@ -1249,7 +1249,14 @@
       "staleFailed": "今回は取得できなかったため、前回の結果を表示しています",
       "openToQuery": "WorkBuddy を開くと確認できます",
       "onlyWhileRunning": "クォータは WorkBuddy の起動中にのみ WorkBuddy 経由で確認できます",
-      "unavailable": "現在クォータを取得できません"
+      "unavailable": "現在クォータを取得できません",
+      "expiry": "期限",
+      "expiresOn": "{{credits}} クレジットが{{date}}に期限切れ",
+      "expiresOnShort": "{{date}}に期限切れ",
+      "noExpiry": "期限なし",
+      "expiryTitle": "クレジットの有効期限",
+      "expiryShowAll": "各クレジットの有効期限を表示",
+      "inTime": "{{time}}後"
     }
   },
   "pi": {

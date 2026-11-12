@@ -1249,7 +1249,14 @@
       "staleFailed": "이번 조회에 실패하여 마지막 결과를 표시합니다",
       "openToQuery": "조회하려면 WorkBuddy를 여세요",
       "onlyWhileRunning": "할당량은 WorkBuddy가 실행 중일 때만 WorkBuddy를 통해 조회할 수 있습니다",
-      "unavailable": "지금은 할당량을 확인할 수 없습니다"
+      "unavailable": "지금은 할당량을 확인할 수 없습니다",
+      "expiry": "만료",
+      "expiresOn": "{{credits}} 크레딧 {{date}} 만료",
+      "expiresOnShort": "{{date}} 만료",
+      "noExpiry": "만료 없음",
+      "expiryTitle": "크레딧 만료일",
+      "expiryShowAll": "크레딧별 만료일 보기",
+      "inTime": "{{time}} 후"
     }
   },
   "pi": {
