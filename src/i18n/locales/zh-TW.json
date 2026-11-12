@@ -1847,7 +1847,7 @@
     "modelContextCustom": "自訂",
     "modelContextWindowPlaceholder": "預設",
     "modelContextWindowLabel": "視窗 token 數",
-    "modelContextHelp": "Claude Code 只能給單個模型標 1M，其餘模型共用一個視窗（CLAUDE_CODE_MAX_CONTEXT_TOKENS）。聚合時取所有非 1M 模型裡最小的視窗。自訂留空時用這家的 CLAUDE_CODE_MAX_CONTEXT_TOKENS，沒有則為 200K；填不小於 1000000 時按 1M 儲存。",
+    "modelContextHelp": "Claude Code 只能給單個模型標 1M，其餘模型共用一個視窗（CLAUDE_CODE_MAX_CONTEXT_TOKENS）。聚合時取所有非 1M 模型裡最小的視窗。自訂填實際 token 數（例如 262144）；留空時用這家的 CLAUDE_CODE_MAX_CONTEXT_TOKENS，沒有則為 200K；填不小於 1000000 時按 1M 儲存。取得模型清單時會依 models.dev 補上沒填的視窗。",
     "fallbackModelLabel": "備用模型",
     "fallbackModelHelpDirect": "寫進 ANTHROPIC_MODEL，是 Claude Code 啟動時使用的主模型。背景任務另用 Haiku 那一檔。",
     "fallbackModelHelp": "沒落到 Sonnet、Opus、Fable、Haiku 任一檔的請求，改用這個模型發給上游。",

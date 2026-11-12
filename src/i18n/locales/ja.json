@@ -1847,7 +1847,7 @@
     "modelContextCustom": "カスタム",
     "modelContextWindowPlaceholder": "既定",
     "modelContextWindowLabel": "ウィンドウのトークン数",
-    "modelContextHelp": "Claude Code ではモデルごとに 1M を指定することしかできず、それ以外のモデルは 1 つのウィンドウ（CLAUDE_CODE_MAX_CONTEXT_TOKENS）を共有します。集約時は 1M 以外のモデルのうち最小のウィンドウを使います。カスタムを空欄にするとこのプロバイダーの CLAUDE_CODE_MAX_CONTEXT_TOKENS（未設定なら 200K）を使い、1000000 以上は 1M として保存します。",
+    "modelContextHelp": "Claude Code ではモデルごとに 1M を指定することしかできず、それ以外のモデルは 1 つのウィンドウ（CLAUDE_CODE_MAX_CONTEXT_TOKENS）を共有します。集約時は 1M 以外のモデルのうち最小のウィンドウを使います。カスタムには実際のトークン数（例: 262144）を入力します。空欄にするとこのプロバイダーの CLAUDE_CODE_MAX_CONTEXT_TOKENS（未設定なら 200K）を使い、1000000 以上は 1M として保存します。モデル一覧を取得すると、空欄のウィンドウを models.dev の値で補完します。",
     "fallbackModelLabel": "既定フォールバックモデル",
     "fallbackModelHelpDirect": "ANTHROPIC_MODEL に書き込まれ、Claude Code の起動時のメインモデルになります。バックグラウンドタスクは Haiku の枠を使います。",
     "fallbackModelHelp": "Sonnet・Opus・Fable・Haiku のどの枠にも当たらないリクエストは、このモデルで上流へ送ります。",

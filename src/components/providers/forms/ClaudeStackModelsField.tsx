@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -13,7 +14,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
+import { useCommittableRef } from "@/hooks/useLatestRef";
 import type { FetchedModel } from "@/lib/api/model-fetch";
+import type {
+  KnownModelMetadata,
+  PresetModelSource,
+} from "@/lib/modelMetadata";
 import type { ClaudeStackModel } from "@/types";
 import {
   FetchedModelPicker,
@@ -93,6 +100,29 @@ export function normalizeClaudeStackModels(
   return result;
 }
 
+/**
+ * 按查到的参数补这一行的窗口：已经是 1M 或填了自定义窗口的不动；查到的窗口不小于 1M
+ * 时标 1M（保存时也会这样换），否则填进自定义窗口。没有可补的返回 null。
+ */
+export function fillClaudeStackModelWindow(
+  row: ClaudeStackModelRow,
+  metadata: Pick<KnownModelMetadata, "contextWindow">,
+): ClaudeStackModelRow | null {
+  const window = metadata.contextWindow;
+  if (typeof window !== "number" || !Number.isInteger(window) || window <= 0) {
+    return null;
+  }
+  if (row.oneM === true || hasClaudeOneMMarker(row.model)) return null;
+  if (customWindowOf(row) !== undefined) return null;
+  return window >= ONE_M_WINDOW
+    ? { ...row, oneM: true, contextWindow: undefined }
+    : { ...row, contextWindow: window };
+}
+
+/** Claude 预设不带各模型的窗口，只靠 models.dev（和选择弹窗里显示的一致）。 */
+const NO_PRESET_SOURCES: readonly PresetModelSource[] = [];
+const noPresetSources = () => NO_PRESET_SOURCES;
+
 /** 模型映射里的字段：`ANTHROPIC_MODEL` 和各档，按后端 `mode::stack::mapped_models` 的顺序。 */
 const MAPPED_MODEL_FIELDS: Array<[string, string | null]> = [
   ["ANTHROPIC_MODEL", null],
@@ -147,14 +177,66 @@ export function ClaudeStackModelsField({
 }: ClaudeStackModelsFieldProps) {
   const { t } = useTranslation();
 
+  // 补窗口可能在 models.dev 晚到时才发生，要读到当时最新的行，所以经 ref 同步提交。
+  const [rowsRef, commitRows] = useCommittableRef(rows, onRowsChange);
+  const fillModelMetadata = useModelMetadataFill({
+    baseUrl,
+    presets: noPresetSources,
+    prefetch: fetchedModels.length > 0,
+  });
+
+  // 按模型名补这一行的上下文窗口（只补没设的）。
+  const fillRowWindow = useCallback(
+    (rowId: string, modelId: string, silent?: boolean) =>
+      fillModelMetadata(
+        modelId,
+        (metadata) => {
+          const current = rowsRef.current;
+          const row = current.find((entry) => entry.rowId === rowId);
+          if (!row || stripClaudeOneMMarker(row.model).trim() !== modelId) {
+            return false;
+          }
+          const filled = fillClaudeStackModelWindow(row, metadata);
+          if (!filled) return false;
+          commitRows(
+            current.map((entry) => (entry.rowId === rowId ? filled : entry)),
+          );
+          return true;
+        },
+        { silent },
+      ),
+    [commitRows, fillModelMetadata, rowsRef],
+  );
+
+  // 「获取模型列表」拿到新列表时，已在列表里、窗口没填的行也补上。按模型 ID
+  // 比较：Copilot 等的列表每次渲染都是新数组。
+  const fetchedKey = fetchedModels.map((model) => model.id).join("\n");
+  const lastFetchedKey = useRef(fetchedKey);
+  useEffect(() => {
+    if (fetchedKey === lastFetchedKey.current) return;
+    lastFetchedKey.current = fetchedKey;
+    if (!fetchedKey) return;
+    for (const row of rowsRef.current) {
+      const modelId = stripClaudeOneMMarker(row.model).trim();
+      if (modelId) fillRowWindow(row.rowId, modelId);
+    }
+  }, [fetchedKey, fillRowWindow, rowsRef]);
+
   const updateRow = (rowId: string, patch: Partial<ClaudeStackModel>) =>
-    onRowsChange(
-      rows.map((row) => (row.rowId === rowId ? { ...row, ...patch } : row)),
+    commitRows(
+      rowsRef.current.map((row) =>
+        row.rowId === rowId ? { ...row, ...patch } : row,
+      ),
     );
+
+  const selectFetchedModel = (rowId: string, modelId: string) => {
+    updateRow(rowId, { model: modelId });
+    fillRowWindow(rowId, modelId);
+  };
 
   const applyFetchedModels = ({ add, remove }: FetchedModelSelection) => {
     const removed = new Set(remove);
-    const kept = rows.filter(
+    const kept = rowsRef.current.filter(
       (row) => !removed.has(stripClaudeOneMMarker(row.model).trim()),
     );
     const configured = new Set(
@@ -163,7 +245,9 @@ export function ClaudeStackModelsField({
     const additions = add
       .filter((id) => !configured.has(id))
       .map((id) => createClaudeStackModelRow({ model: id }));
-    onRowsChange([...kept, ...additions]);
+    commitRows([...kept, ...additions]);
+    // 弹窗里已经显示过这些窗口，补完不再提示。
+    for (const row of additions) fillRowWindow(row.rowId, row.model, true);
   };
 
   return (
@@ -243,7 +327,7 @@ export function ClaudeStackModelsField({
               >
                 {t("providerForm.modelContextHelp", {
                   defaultValue:
-                    "Claude Code 只能给单个模型标 1M，其余模型共用一个窗口（CLAUDE_CODE_MAX_CONTEXT_TOKENS）。聚合时取所有非 1M 模型里最小的窗口。自定义留空时用这家的 CLAUDE_CODE_MAX_CONTEXT_TOKENS，没有是 200K；填不小于 1000000 时按 1M 保存。",
+                    "Claude Code 只能给单个模型标 1M，其余模型共用一个窗口（CLAUDE_CODE_MAX_CONTEXT_TOKENS）。聚合时取所有非 1M 模型里最小的窗口。自定义填实际 token 数（例如 262144）；留空时用这家的 CLAUDE_CODE_MAX_CONTEXT_TOKENS，没有是 200K；填不小于 1000000 时按 1M 保存。获取模型列表时会按 models.dev 补上没填的窗口。",
                 })}
               </HelpTip>
             </span>
@@ -291,7 +375,7 @@ export function ClaudeStackModelsField({
                   {fetchedModels.length > 0 && (
                     <ModelDropdown
                       models={fetchedModels}
-                      onSelect={(id) => updateRow(row.rowId, { model: id })}
+                      onSelect={(id) => selectFetchedModel(row.rowId, id)}
                     />
                   )}
                 </div>
