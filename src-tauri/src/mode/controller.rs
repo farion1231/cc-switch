@@ -1841,6 +1841,25 @@ async fn startup_app(state: &AppState, app: &AppType) -> Result<(), String> {
         mode.attached = true;
     }
 
+    if want_proxy && !legacy && drifted_while_closed(state, app, &mode) {
+        log::warn!(
+            "{} 的客户端配置在 CC Switch 关闭期间被改过（已经不指向本地路由），不覆盖，退回直连",
+            app.as_str()
+        );
+        record_startup_failure(app, StartupAttachReason::Drift, String::new());
+        // 只落定模式，不写客户端文件：现在的内容是用户（或别的工具）写的。
+        return commit_state(
+            state,
+            app,
+            &PendingTarget::mode(ModeState {
+                mode: Some(Mode::Direct),
+                attached: false,
+                proxy_route: mode.proxy_route,
+                contract: None,
+            }),
+        );
+    }
+
     if want_proxy {
         let mode = ModeState {
             mode: Some(Mode::Proxy),
@@ -1851,18 +1870,7 @@ async fn startup_app(state: &AppState, app: &AppType) -> Result<(), String> {
             Ok(()) => return Ok(()),
             Err(error) => {
                 log::error!("启动时接上 {} 的代理失败，退回直连: {error}", app.as_str());
-                let stack = stack::supports_stack(app)
-                    && settled_stack(app)
-                        .map(|stack| stack.enabled)
-                        .unwrap_or(false);
-                startup_attach_failures()
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .push(StartupAttachFailure {
-                        app_type: app.as_str().to_string(),
-                        stack,
-                        error: error.clone(),
-                    });
+                record_startup_failure(app, StartupAttachReason::Error, error.clone());
                 exit_locked(state, app, false)?;
                 return Err(error);
             }
@@ -1898,6 +1906,35 @@ async fn startup_app(state: &AppState, app: &AppType) -> Result<(), String> {
         )?;
     }
     Ok(())
+}
+
+/// 上次退出时没有分离（设置为退出时不恢复，或 CC Switch 被杀、崩溃），客户端文件按理还是
+/// 代理契约；现在里面已经没有本地路由的占位符，说明 CC Switch 关着的时候有人把它改了
+/// （多半是用户发现连不上、自己改回了别处）。这时接上会覆盖掉用户的改动。
+///
+/// 只看占位符，不比整个文件：客户端自己会频繁改这些文件（Claude Code 的 `/model`、权限），
+/// 按文件比对会一直误报。Claude Desktop 退出时本来就不分离，它的契约里也没有占位符，不查。
+fn drifted_while_closed(state: &AppState, app: &AppType, mode: &ModeState) -> bool {
+    mode.is_proxy()
+        && mode.attached
+        && *app != AppType::ClaudeDesktop
+        && !state.proxy_service.live_has_proxy_placeholder(app)
+}
+
+fn record_startup_failure(app: &AppType, reason: StartupAttachReason, error: String) {
+    let stack = stack::supports_stack(app)
+        && settled_stack(app)
+            .map(|stack| stack.enabled)
+            .unwrap_or(false);
+    startup_attach_failures()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(StartupAttachFailure {
+            app_type: app.as_str().to_string(),
+            stack,
+            reason,
+            error,
+        });
 }
 
 /// 旧版的 Desktop 映射卡拆成新版的三样：旧版给映射卡写的一律是本地路由地址，所以客户端
@@ -2024,7 +2061,18 @@ pub fn app_mode_view(state: &AppState, app: &AppType) -> Result<AppModeView, Str
 pub struct StartupAttachFailure {
     pub app_type: String,
     pub stack: bool,
+    pub reason: StartupAttachReason,
     pub error: String,
+}
+
+/// 启动时为什么没有接上。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StartupAttachReason {
+    /// 接上时出错，已写回直连配置。
+    Error,
+    /// 客户端配置在 CC Switch 关闭期间被改过，没有覆盖，客户端文件原样保留。
+    Drift,
 }
 
 fn startup_attach_failures() -> &'static std::sync::Mutex<Vec<StartupAttachFailure>> {
@@ -6190,6 +6238,53 @@ model_provider = "c"
         startup(&state).await;
         assert_eq!(fs::read(settings_path()).unwrap(), unchanged);
         exit(&state, &AppType::Claude).await.expect("exit");
+    }
+
+    /// 上次退出没分离（不恢复设置、被杀）：CC Switch 关着时用户把 Claude Code 改回了别处，
+    /// 启动时不覆盖，退回直连并提示；占位符还在（只是 `/model` 之类变了）照常接上。
+    #[tokio::test]
+    #[serial]
+    async fn a_client_changed_while_closed_is_not_overwritten_on_startup() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(
+            AppType::Claude,
+            &[
+                claude("a", "https://a.example", json!({})),
+                claude("b", "https://b.example", json!({})),
+            ],
+            "a",
+        )
+        .await;
+        enter(&state, &AppType::Claude, false).await.expect("enter");
+        set_route(&state, &AppType::Claude, "b").await.unwrap();
+        take_startup_attach_failures();
+
+        // 占位符还在：照常接上，没有提示。
+        edit_settings(|live| live["model"] = json!("haiku"));
+        startup(&state).await;
+        assert!(mode(&AppType::Claude).attached);
+        assert!(take_startup_attach_failures().is_empty());
+
+        edit_settings(|live| {
+            live["env"]["ANTHROPIC_BASE_URL"] = json!("https://elsewhere.example");
+            live["env"]["ANTHROPIC_AUTH_TOKEN"] = json!("sk-mine");
+        });
+        let edited = fs::read(settings_path()).unwrap();
+        startup(&state).await;
+        assert_eq!(fs::read(settings_path()).unwrap(), edited);
+        let after = mode(&AppType::Claude);
+        assert!(!after.is_proxy());
+        assert!(!after.attached);
+        assert_eq!(after.proxy_route.as_deref(), Some("b"), "route is kept");
+        let failures = take_startup_attach_failures();
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].reason, StartupAttachReason::Drift);
+
+        // 再启动一次也不碰：已经是直连。
+        startup(&state).await;
+        assert_eq!(fs::read(settings_path()).unwrap(), edited);
+        assert!(take_startup_attach_failures().is_empty());
     }
 
     /// 直连那家专属的模型 id 到了代理会被原样转发给路由那家，进入代理时照旧清掉。

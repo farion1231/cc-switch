@@ -4466,7 +4466,8 @@
       "officialLoginPaused": "Codex 已暂停使用官方登录",
       "officialLoginPausedBody": "官方模型发不出去，Codex 侧栏「项目」里原来的会话暂时看不到。官方额度恢复后点「恢复官方登录」，再彻底退出并重新打开 Codex。",
       "resumeOfficialLogin": "恢复官方登录",
-      "attachFailed": "上次的{{mode}}模式没能接上，{{app}} 已回到直连。"
+      "attachFailed": "上次的{{mode}}模式没能接上，{{app}} 已回到直连。",
+      "attachDrifted": "CC Switch 关闭期间 {{app}} 的配置被改过，没有接回{{mode}}模式，文件保持原样。"
     },
     "toast": {
       "enteredRoute": "{{app}} 已开始路由 → {{provider}}。",

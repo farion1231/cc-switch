@@ -426,10 +426,15 @@ export function SwitchModePanel({
       <Notice
         key="startup"
         tone="warning"
-        title={t("mode.notice.attachFailed", {
-          app: appName,
-          mode: t(`mode.names.${startupFailure.stack ? "stack" : "route"}`),
-        })}
+        title={t(
+          startupFailure.reason === "drift"
+            ? "mode.notice.attachDrifted"
+            : "mode.notice.attachFailed",
+          {
+            app: appName,
+            mode: t(`mode.names.${startupFailure.stack ? "stack" : "route"}`),
+          },
+        )}
         onDismiss={onDismissStartupFailure}
         dismissLabel={t("common.close")}
         actions={
