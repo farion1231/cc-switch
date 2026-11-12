@@ -11,8 +11,9 @@ use super::{
     json_canonical::{canonicalize_value, short_value_hash},
     log_codes::fwd as log_fwd,
     opaque_state_rectifier::{
-        carries_encrypted_agent_task, detect_opaque_state_rejection, rectify_opaque_state,
-        unreadable_agent_task_error, OpaqueStateRejection,
+        carries_encrypted_agent_task, detect_opaque_state_rejection,
+        rectify_claude_responses_replay, rectify_opaque_state, unreadable_agent_task_error,
+        OpaqueStateRejection,
     },
     provider_router::ProviderRouter,
     providers::{
@@ -447,6 +448,10 @@ impl RequestForwarder {
     /// 返回要去掉哪些状态，对同一供应商重试一次。
     ///
     /// 转成 Chat / Anthropic 的上游收不到这些密文，不参与。受整流器总开关管辖。
+    ///
+    /// Claude / Claude Desktop 转 Responses 时，上游的推理条目藏在 thinking 签名里回放
+    /// （#9424），请求体是 Anthropic Messages，整流用 [`rectify_claude_responses_replay`]。
+    /// 这条路径不看上游格式：只有 Responses 上游会签发推理信封，也只有它会用这些措辞拒绝。
     fn opaque_state_retry_rejection(
         &self,
         app_type: &AppType,
@@ -456,8 +461,13 @@ impl RequestForwarder {
         request: &Value,
         error: &ProxyError,
     ) -> Option<OpaqueStateRejection> {
-        if already_retried
-            || !matches!(app_type, AppType::Codex | AppType::GrokBuild)
+        if already_retried {
+            return None;
+        }
+        if matches!(app_type, AppType::Claude | AppType::ClaudeDesktop) {
+            return detect_opaque_state_rejection(error, &self.rectifier_config, request, false);
+        }
+        if !matches!(app_type, AppType::Codex | AppType::GrokBuild)
             || codex_upstream_format != Some(CodexUpstreamFormat::NativeResponses)
         {
             return None;
@@ -1194,7 +1204,12 @@ impl RequestForwarder {
                         // `opaque_state_rectifier`），去掉别家的状态后仍被拒，就是任务本身解不开。
                         let agent_task = carries_encrypted_agent_task(&provider_body);
                         let mut opaque_body = provider_body.as_ref().clone();
-                        let rectified = rectify_opaque_state(&mut opaque_body, rejection);
+                        let rectified =
+                            if matches!(app_type, AppType::Claude | AppType::ClaudeDesktop) {
+                                rectify_claude_responses_replay(&mut opaque_body, rejection)
+                            } else {
+                                rectify_opaque_state(&mut opaque_body, rejection)
+                            };
                         if !rectified.applied && agent_task {
                             log::warn!(
                                 "[{app_type_str}] [RECT-023] provider={} 解不开子 agent 任务的密文（主、子 agent 不在同一家），不重试",
@@ -1277,7 +1292,9 @@ impl RequestForwarder {
                         }
                     }
 
-                    if is_anthropic_provider {
+                    // 密文整流已经去掉推理块重试过一次：签名整流的「invalid request」兜底
+                    // 拿的还是没整流的请求体，再命中就会发第三次（#9424），这里不再叠加。
+                    if is_anthropic_provider && !opaque_rectifier_retried {
                         let error_message = extract_error_message(&e);
                         if should_rectify_thinking_signature(
                             error_message.as_deref(),
@@ -3203,6 +3220,9 @@ impl RequestForwarder {
         };
 
         if let Some(message) = responses_error_envelope_message(&decoded) {
+            if let Some(rejection) = responses_envelope_opaque_rejection(&decoded) {
+                return Err(rejection);
+            }
             return Err(ProxyError::TransformError(format!(
                 "Responses upstream returned a 2xx failure: {message}"
             )));
@@ -4081,11 +4101,29 @@ fn inspect_responses_json_document(buffer: &str) -> Option<Result<(), ProxyError
     }
     let _: Value = serde_json::from_str(trimmed).ok()?;
     if let Some(message) = responses_error_envelope_message(trimmed.as_bytes()) {
+        if let Some(rejection) = responses_envelope_opaque_rejection(trimmed.as_bytes()) {
+            return Some(Err(rejection));
+        }
         return Some(Err(ProxyError::TransformError(format!(
             "Responses upstream returned a 2xx failure: {message}"
         ))));
     }
     Some(Ok(()))
+}
+
+/// 有些网关先回 HTTP 200，再在输出前（或 2xx 的 Response 对象里）说验不了请求里的密文
+/// （#9424）。这种失败改成上游 400，回到重试循环和 HTTP 报错一样做密文整流；
+/// 其余失败照旧当转换错误，可以换下一家。
+fn opaque_rejection_before_output(error: &Value) -> Option<ProxyError> {
+    super::opaque_state_rectifier::in_stream_rejection(error, &Value::Null)
+}
+
+fn responses_envelope_opaque_rejection(body: &[u8]) -> Option<ProxyError> {
+    let value: Value = serde_json::from_slice(body).ok()?;
+    value
+        .get("error")
+        .filter(|error| !error.is_null())
+        .and_then(opaque_rejection_before_output)
 }
 
 /// Inspect one complete Responses SSE block while the response is still inside
@@ -4121,6 +4159,9 @@ fn inspect_responses_start_event(block: &str) -> Option<Result<(), ProxyError>> 
     ) || response.get("error").is_some_and(|error| !error.is_null())
     {
         let error = response.get("error").unwrap_or(response);
+        if let Some(rejection) = opaque_rejection_before_output(error) {
+            return Some(Err(rejection));
+        }
         let message = error
             .get("message")
             .and_then(Value::as_str)
@@ -4140,6 +4181,9 @@ fn inspect_responses_start_event(block: &str) -> Option<Result<(), ProxyError>> 
     match event {
         "response.failed" | "error" => {
             let error = response.get("error").unwrap_or(response);
+            if let Some(rejection) = opaque_rejection_before_output(error) {
+                return Some(Err(rejection));
+            }
             let message = error
                 .get("message")
                 .and_then(Value::as_str)
@@ -5937,6 +5981,39 @@ mod tests {
             "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}"
         );
         assert!(matches!(inspect_responses_start_event(delta), Some(Ok(()))));
+    }
+
+    /// 输出前说验不了密文（#9424）：改成上游 400，回到重试循环做密文整流，不当转换错误换家。
+    #[test]
+    fn responses_stream_start_opaque_rejection_becomes_upstream_error() {
+        let foreign_resource = concat!(
+            "event: response.failed\n",
+            "data: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"The requested item was created under a different Azure OpenAI resource.\"}}}"
+        );
+        let Some(Err(ProxyError::UpstreamError {
+            status: 400,
+            body: Some(body),
+        })) = inspect_responses_start_event(foreign_resource)
+        else {
+            panic!("expected an upstream 400");
+        };
+        assert!(body.contains("different Azure OpenAI resource"));
+
+        let error_event = concat!(
+            "event: error\n",
+            "data: {\"type\":\"error\",\"error\":{\"code\":\"invalid_encrypted_content\",\"message\":\"bad\"}}"
+        );
+        assert!(matches!(
+            inspect_responses_start_event(error_event),
+            Some(Err(ProxyError::UpstreamError { status: 400, .. }))
+        ));
+
+        assert!(matches!(
+            inspect_responses_json_document(
+                r#"{"status":"failed","error":{"code":"invalid_encrypted_content","message":"bad"}}"#
+            ),
+            Some(Err(ProxyError::UpstreamError { status: 400, .. }))
+        ));
     }
 
     #[test]
@@ -8781,6 +8858,115 @@ mod tests {
                 ),
                 None
             );
+        }
+
+        /// Claude Code 转 Responses（#9424）：上一轮的推理条目藏在 thinking 签名里回放，中转
+        /// 把会话分到另一个 Azure 资源、或换了一家解不开密文时，去掉这些 thinking 块对同一家
+        /// 只重试一次，正文照旧。
+        #[tokio::test]
+        async fn claude_responses_replay_is_retried_once_without_reasoning() {
+            use crate::proxy::providers::reasoning_bridge::encode_openai_reasoning_item;
+            let envelope = encode_openai_reasoning_item(&json!({
+                "type": "reasoning", "id": "rs_1", "summary": [],
+                "encrypted_content": "gAAAA-resource-a"
+            }))
+            .unwrap();
+            let request = json!({
+                "model": "gpt-6.1-sol",
+                "max_tokens": 64,
+                "stream": false,
+                "messages": [
+                    { "role": "user", "content": "hi" },
+                    { "role": "assistant", "content": [
+                        { "type": "thinking", "thinking": "", "signature": envelope },
+                        { "type": "text", "text": "a" }
+                    ] },
+                    { "role": "user", "content": "again" }
+                ]
+            });
+            let foreign_resource = (
+                400,
+                json!({ "error": { "type": "invalid_request_error", "param": "", "code": null,
+                    "message": "OpenAI Responses bad request: The requested item was created under a different Azure OpenAI resource. Use the same resource that created the item to access it. [trace_id=x]" } }),
+            );
+            let claude_provider = |upstream: &Upstream| {
+                let mut provider = test_provider_with_type(None);
+                provider.settings_config = json!({ "env": {
+                    "ANTHROPIC_BASE_URL": upstream.base_url,
+                    "ANTHROPIC_AUTH_TOKEN": "sk-third-party",
+                } });
+                provider.meta = Some(crate::provider::ProviderMeta {
+                    api_format: Some("openai_responses".to_string()),
+                    ..Default::default()
+                });
+                provider
+            };
+            let send = |upstream: &Upstream| {
+                let provider = claude_provider(upstream);
+                let request = request.clone();
+                async move {
+                    forwarder(false)
+                        .forward_with_retry(
+                            &AppType::Claude,
+                            http::Method::POST,
+                            "/v1/messages",
+                            &request,
+                            HeaderMap::new(),
+                            Extensions::new(),
+                            &[provider],
+                        )
+                        .await
+                }
+            };
+
+            for rejection in [foreign_resource.clone(), blob_rejection()] {
+                let upstream = scripted_upstream(vec![rejection, response_ok()]).await;
+                send(&upstream)
+                    .await
+                    .map_err(|error| error.error)
+                    .expect("retried");
+                let seen = upstream.seen.lock().await;
+                assert_eq!(seen.len(), 2);
+                assert!(carries_reasoning(&seen[0]));
+                assert_eq!(seen[0].body["input"][1]["id"], "rs_1");
+                assert!(!carries_reasoning(&seen[1]));
+                let retried = seen[1].body["input"].as_array().unwrap();
+                assert_eq!(retried.len(), 3);
+                assert_eq!(retried[1]["role"], "assistant");
+            }
+
+            // 先回 200、在 Response 对象里说验不了密文：同样整流重试一次。
+            let failed_ok = (
+                200,
+                json!({ "id": "r0", "object": "response", "status": "failed",
+                    "error": { "code": "invalid_encrypted_content", "message": "The encrypted content gAAAA could not be verified." } }),
+            );
+            let upstream = scripted_upstream(vec![failed_ok, response_ok()]).await;
+            send(&upstream)
+                .await
+                .map_err(|error| error.error)
+                .expect("retried after a 2xx failure");
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 2);
+            assert!(carries_reasoning(&seen[0]));
+            assert!(!carries_reasoning(&seen[1]));
+            drop(seen);
+
+            // 重试仍被拒：不再重试，把第二次的错误交回客户端。
+            let upstream =
+                scripted_upstream(vec![foreign_resource.clone(), foreign_resource]).await;
+            assert!(send(&upstream).await.is_err());
+            assert_eq!(upstream.seen.lock().await.len(), 2);
+
+            // 措辞同时命中签名整流的「invalid request」兜底：也只重试这一次，不发第三次。
+            let both = (
+                400,
+                json!({ "error": { "type": "invalid_request_error", "code": "invalid_encrypted_content",
+                    "message": "Invalid request: invalid encrypted content" } }),
+            );
+            let upstream = scripted_upstream(vec![both.clone(), both]).await;
+            assert!(send(&upstream).await.is_err());
+            assert_eq!(upstream.seen.lock().await.len(), 2);
         }
 
         /// 其他 400、转换成 Chat 的上游都不触发。
