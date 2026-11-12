@@ -1970,6 +1970,7 @@ pub fn run() {
             commands::test_proxy_url,
             commands::get_upstream_proxy_status,
             commands::scan_local_proxies,
+            commands::diagnose_ip,
             // Window theme control
             commands::set_window_theme,
             // Generic managed auth commands

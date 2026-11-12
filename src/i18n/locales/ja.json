@@ -1161,7 +1161,8 @@
       "routing": "ローカルルーティング",
       "network": "ネットワーク",
       "data": "データ",
-      "about": "情報"
+      "about": "情報",
+      "tools": "ツール"
     },
     "appConfig": {
       "configDir": "設定ディレクトリ"
@@ -1171,6 +1172,50 @@
     },
     "data": {
       "location": "保存場所"
+    },
+    "ipDiagnostics": {
+      "title": "IP 診断",
+      "scope": "選択した通信経路の出口情報を確認します。DNS やブラウザーの隔離を検証したり、アカウント制限を予測したりするものではありません。",
+      "route": "通信経路",
+      "saved": "保存済みのグローバルプロキシ",
+      "custom": "一時プロキシ",
+      "proxyUrl": "一時プロキシの URL",
+      "explicitRoute": "保存済みの設定を変更せず、このプロキシで検査します。プロキシが失敗しても直接接続には切り替えません。",
+      "systemRoute": "プロキシ未指定：CC Switch のシステムプロキシ動作に従います。システムプロキシまたは直接接続を使用します。",
+      "settingsError": "保存済みのプロキシを読み込めません。再試行するか、一時プロキシを選択してください。",
+      "privacy": "検査ボタンを押したときだけ実行します。icanhazip.com と ipify.org に接続し、観測した IP を ipwho.is に送信して位置とネットワーク情報を取得します。",
+      "run": "IP を検査",
+      "running": "検査中…",
+      "invalidProxy": "無効なプロキシ URL です。HTTP、HTTPS、SOCKS5、SOCKS5H を使用してください。",
+      "failed": "検査を実行できませんでした。再試行してください。",
+      "openError": "ブラウザーを開けませんでした。",
+      "unknown": "不明",
+      "checkedAt": "検査日時",
+      "incomplete": "出口の観測が不完全です。検査の失敗は経路の安全性を証明しません。",
+      "consistent": "両サービスで同じ出口 IP を観測しました。今回のリクエストのみの結果です。",
+      "different": "異なる IP を観測しました。経路ルールや動的プロキシが原因の可能性があります。プロキシ設定を確認してください。",
+      "locationError": "位置の照会に失敗",
+      "locationIp": "照会対象 IP",
+      "country": "国・地域",
+      "region": "州・省",
+      "city": "都市",
+      "asn": "ASN",
+      "isp": "ISP",
+      "organization": "組織",
+      "exitTimezone": "IP のタイムゾーン",
+      "utcOffset": "UTC オフセット",
+      "localTimezone": "ローカルタイムゾーン",
+      "locationSource": "位置とネットワーク情報：ipwho.is。データベースの推定には誤差があります。",
+      "community": "コミュニティ検査",
+      "browserRoute": "既定のブラウザーで開きます。ブラウザー自身の通信経路は上記と異なる場合があります。サイトにはブラウザーの出口 IP とブラウザー情報が送信されます。スコアは参考情報です。",
+      "ipQuality": "IP 品質・ASN・評判（ip.net.coffee）",
+      "browserCheck": "ブラウザー情報（LinXiaoTao の FuckClaude）",
+      "errors": {
+        "network": "接続失敗またはタイムアウト",
+        "http": "サービスが HTTP エラーを返しました",
+        "invalidResponse": "サービスが無効なデータを返しました",
+        "unavailable": "サービスからデータを取得できません"
+      }
     }
   },
   "apps": {

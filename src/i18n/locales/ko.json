@@ -1161,7 +1161,8 @@
       "routing": "로컬 라우팅",
       "network": "네트워크",
       "data": "데이터",
-      "about": "정보"
+      "about": "정보",
+      "tools": "도구"
     },
     "appConfig": {
       "configDir": "설정 디렉터리"
@@ -1171,6 +1172,50 @@
     },
     "data": {
       "location": "저장 위치"
+    },
+    "ipDiagnostics": {
+      "title": "IP 진단",
+      "scope": "선택한 네트워크 경로의 출구 정보를 확인합니다. DNS나 브라우저 격리를 검증하거나 계정 제한을 예측하지 않습니다.",
+      "route": "네트워크 경로",
+      "saved": "저장된 전역 프록시",
+      "custom": "임시 프록시",
+      "proxyUrl": "임시 프록시 URL",
+      "explicitRoute": "저장된 설정을 변경하지 않고 이 프록시로 요청합니다. 프록시 실패 시 직접 연결로 전환하지 않습니다.",
+      "systemRoute": "지정된 프록시가 없습니다. CC Switch의 시스템 프록시 동작에 따라 시스템 프록시 또는 직접 연결을 사용합니다.",
+      "settingsError": "저장된 프록시를 불러올 수 없습니다. 다시 시도하거나 임시 프록시를 선택하세요.",
+      "privacy": "검사 버튼을 누를 때만 실행됩니다. icanhazip.com과 ipify.org에 요청한 뒤 관측된 IP를 ipwho.is에 보내 위치 및 네트워크 정보를 조회합니다.",
+      "run": "IP 검사",
+      "running": "검사 중…",
+      "invalidProxy": "잘못된 프록시 URL입니다. HTTP, HTTPS, SOCKS5 또는 SOCKS5H를 사용하세요.",
+      "failed": "검사를 실행하지 못했습니다. 다시 시도하세요.",
+      "openError": "브라우저를 열 수 없습니다.",
+      "unknown": "알 수 없음",
+      "checkedAt": "검사 시간",
+      "incomplete": "출구 IP 관측이 불완전합니다. 검사 실패가 안전한 경로를 의미하지는 않습니다.",
+      "consistent": "두 서비스에서 같은 출구 IP가 관측되었습니다. 이번 요청에만 해당하는 결과입니다.",
+      "different": "서로 다른 IP가 관측되었습니다. 라우팅 규칙이나 동적 프록시 때문일 수 있으니 프록시 설정을 확인하세요.",
+      "locationError": "위치 조회 실패",
+      "locationIp": "조회한 IP",
+      "country": "국가 / 지역",
+      "region": "주 / 도",
+      "city": "도시",
+      "asn": "ASN",
+      "isp": "인터넷 서비스 제공자",
+      "organization": "조직",
+      "exitTimezone": "IP 시간대",
+      "utcOffset": "UTC 오프셋",
+      "localTimezone": "로컬 시간대",
+      "locationSource": "위치 및 네트워크 데이터: ipwho.is. 데이터베이스 추정에는 오차가 있을 수 있습니다.",
+      "community": "커뮤니티 검사",
+      "browserRoute": "기본 브라우저에서 열리며 브라우저 자체의 네트워크 경로를 사용합니다. 위 경로와 다를 수 있습니다. 사이트는 브라우저의 출구 IP와 브라우저 정보를 받습니다. 점수는 참고용입니다.",
+      "ipQuality": "IP 품질, ASN 및 평판 (ip.net.coffee)",
+      "browserCheck": "브라우저 정보 (LinXiaoTao의 FuckClaude)",
+      "errors": {
+        "network": "연결 실패 또는 시간 초과",
+        "http": "서비스가 HTTP 오류를 반환했습니다",
+        "invalidResponse": "서비스가 잘못된 데이터를 반환했습니다",
+        "unavailable": "서비스에서 데이터를 제공할 수 없습니다"
+      }
     }
   },
   "apps": {

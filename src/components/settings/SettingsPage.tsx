@@ -16,6 +16,7 @@ import {
   Loader2,
   Route,
   SlidersHorizontal,
+  Wrench,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { useTranslation } from "react-i18next";
@@ -39,6 +40,7 @@ import { AboutSection } from "@/components/settings/AboutSection";
 import { RoutingSection } from "@/components/settings/sections/RoutingSection";
 import { PrivacyFilterConfigPanel } from "@/components/settings/PrivacyFilterConfigPanel";
 import { GlobalProxySettings } from "@/components/settings/GlobalProxySettings";
+import { IpDiagnostics } from "@/components/settings/IpDiagnostics";
 import { LogConfigPanel } from "@/components/settings/LogConfigPanel";
 import { GeneralSection } from "@/components/settings/sections/GeneralSection";
 import { AppConfigSection } from "@/components/settings/sections/AppConfigSection";
@@ -61,6 +63,7 @@ const SECTION_ICON: Record<
   appConfig: Folder,
   routing: Route,
   network: Globe,
+  tools: Wrench,
   data: Database,
   about: Info,
 };
@@ -77,7 +80,7 @@ interface SettingsPageProps {
 }
 
 /**
- * 设置（v7）：侧栏换成设置目录，这里只渲染当前分组。设置里只放偏好，功能页都在侧栏。
+ * Settings (v7): render the selected preferences or utility group.
  * 开关类即时保存；路径类改完点本节的「保存」。
  */
 export function SettingsPage({
@@ -406,6 +409,8 @@ export function SettingsPage({
             </div>
           </SettingsBlock>
         );
+      case "tools":
+        return <IpDiagnostics />;
       case "data":
         return (
           <>

@@ -1161,7 +1161,8 @@
       "routing": "本地路由",
       "network": "网络",
       "data": "数据",
-      "about": "关于"
+      "about": "关于",
+      "tools": "小工具"
     },
     "appConfig": {
       "configDir": "配置目录"
@@ -1171,6 +1172,50 @@
     },
     "data": {
       "location": "存储位置"
+    },
+    "ipDiagnostics": {
+      "title": "IP 检测",
+      "scope": "检查所选网络路径的出口信息。采样不能验证 DNS 或浏览器隔离，也不能预测账号限制。",
+      "route": "检测网络",
+      "saved": "已保存的全局代理",
+      "custom": "临时代理",
+      "proxyUrl": "临时代理地址",
+      "explicitRoute": "检测通过此代理发送，不修改已保存的配置。代理失败时不会回退到直连。",
+      "systemRoute": "未指定代理：遵循 CC Switch 的系统代理行为，可能通过系统代理或直连。",
+      "settingsError": "无法读取已保存的代理，请重试或选择临时代理。",
+      "privacy": "仅点击检测后运行。请求 icanhazip.com 和 ipify.org，再将测得的 IP 提交给 ipwho.is 查询位置及网络信息。",
+      "run": "检测 IP",
+      "running": "检测中…",
+      "invalidProxy": "代理地址无效，请使用 HTTP、HTTPS、SOCKS5 或 SOCKS5H。",
+      "failed": "无法运行检测，请重试。",
+      "openError": "无法打开浏览器。",
+      "unknown": "未知",
+      "checkedAt": "检测时间",
+      "incomplete": "出口采样不完整。检测失败不能证明网络路径安全。",
+      "consistent": "两个服务测得相同的出口 IP，此结果仅代表本次请求。",
+      "different": "两个服务测得不同的 IP，可能由分流规则或动态代理造成，请检查代理配置。",
+      "locationError": "位置查询失败",
+      "locationIp": "查询的 IP",
+      "country": "国家或地区",
+      "region": "州或省",
+      "city": "城市",
+      "asn": "ASN",
+      "isp": "运营商",
+      "organization": "组织",
+      "exitTimezone": "IP 所在时区",
+      "utcOffset": "UTC 偏移",
+      "localTimezone": "本机时区",
+      "locationSource": "位置与网络数据来自 ipwho.is，数据库估算可能存在误差。",
+      "community": "社区检测",
+      "browserRoute": "链接在默认浏览器中打开，使用浏览器自身的网络路径，可能与上方检测路径不同。第三方站点会收到浏览器出口 IP 和浏览器信息，评分仅供参考。",
+      "ipQuality": "IP 质量、ASN 与信誉（ip.net.coffee）",
+      "browserCheck": "浏览器信号（LinXiaoTao 的 FuckClaude）",
+      "errors": {
+        "network": "连接失败或超时",
+        "http": "服务返回 HTTP 错误",
+        "invalidResponse": "服务返回无效数据",
+        "unavailable": "服务无法提供数据"
+      }
     }
   },
   "apps": {

@@ -20,6 +20,7 @@ import {
   Server,
   Settings,
   SlidersHorizontal,
+  Wrench,
 } from "lucide-react";
 import type { AppId } from "@/lib/api";
 import type { VisibleApps } from "@/types";
@@ -699,6 +700,7 @@ const SETTINGS_ITEMS: { section: SettingsSection; icon: IconComponent }[] = [
   { section: "appConfig", icon: Folder },
   { section: "routing", icon: Route },
   { section: "network", icon: Globe },
+  { section: "tools", icon: Wrench },
   { section: "data", icon: Database },
   { section: "about", icon: Info },
 ];

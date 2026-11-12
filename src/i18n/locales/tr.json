@@ -1161,7 +1161,8 @@
       "routing": "Yerel yönlendirme",
       "network": "Ağ",
       "data": "Veri",
-      "about": "Hakkında"
+      "about": "Hakkında",
+      "tools": "Araçlar"
     },
     "appConfig": {
       "configDir": "Yapılandırma dizini"
@@ -1171,6 +1172,50 @@
     },
     "data": {
       "location": "Konum"
+    },
+    "ipDiagnostics": {
+      "title": "IP tanılama",
+      "scope": "Seçilen ağ yolunun çıkış bilgilerini inceleyin. Bu örnekler DNS veya tarayıcı yalıtımını doğrulamaz ve hesap kısıtlamalarını öngörmez.",
+      "route": "Ağ yolu",
+      "saved": "Kayıtlı genel proxy",
+      "custom": "Geçici proxy",
+      "proxyUrl": "Geçici proxy URL’si",
+      "explicitRoute": "İstekler kayıtlı ayarlar değiştirilmeden bu proxy üzerinden gönderilir. Proxy başarısız olursa doğrudan bağlantıya geçilmez.",
+      "systemRoute": "Proxy belirtilmedi: CC Switch’in sistem proxy davranışı izlenir. Sistem proxy’si veya doğrudan bağlantı kullanılabilir.",
+      "settingsError": "Kayıtlı proxy yüklenemedi. Yeniden deneyin veya geçici proxy seçin.",
+      "privacy": "Yalnızca kontrol düğmesine tıkladığınızda çalışır. icanhazip.com ve ipify.org adreslerine istek gönderir, ardından konum ve ağ bilgileri için gözlemlenen IP’yi ipwho.is ile paylaşır.",
+      "run": "IP’yi kontrol et",
+      "running": "Kontrol ediliyor…",
+      "invalidProxy": "Geçersiz proxy URL’si. HTTP, HTTPS, SOCKS5 veya SOCKS5H kullanın.",
+      "failed": "Kontrol çalıştırılamadı. Yeniden deneyin.",
+      "openError": "Tarayıcı açılamadı.",
+      "unknown": "Bilinmiyor",
+      "checkedAt": "Kontrol zamanı",
+      "incomplete": "Çıkış örneklemesi eksik. Başarısız kontroller güvenli bir ağ yolunun kanıtı değildir.",
+      "consistent": "İki hizmet de aynı çıkış IP’sini gözlemledi. Bu sonuç yalnızca bu istekler için geçerlidir.",
+      "different": "Hizmetler farklı IP’ler gözlemledi. Yönlendirme kuralları veya değişken proxy adresleri buna neden olabilir. Proxy ayarlarınızı kontrol edin.",
+      "locationError": "Konum sorgusu başarısız",
+      "locationIp": "Konumu sorgulanan IP",
+      "country": "Ülke / bölge",
+      "region": "Eyalet / il",
+      "city": "Şehir",
+      "asn": "ASN",
+      "isp": "İnternet sağlayıcısı",
+      "organization": "Kuruluş",
+      "exitTimezone": "IP saat dilimi",
+      "utcOffset": "UTC farkı",
+      "localTimezone": "Yerel saat dilimi",
+      "locationSource": "Konum ve ağ verileri: ipwho.is. Veritabanı tahminleri hatalı olabilir.",
+      "community": "Topluluk kontrolleri",
+      "browserRoute": "Bağlantılar varsayılan tarayıcınızda, yukarıdakinden farklı olabilecek kendi ağ yolu kullanılarak açılır. Siteler tarayıcının çıkış IP’sini ve tarayıcı bilgilerini alır. Puanlar yalnızca referans amaçlıdır.",
+      "ipQuality": "IP kalitesi, ASN ve itibar (ip.net.coffee)",
+      "browserCheck": "Tarayıcı bilgileri (LinXiaoTao tarafından FuckClaude)",
+      "errors": {
+        "network": "Bağlantı başarısız veya zaman aşımına uğradı",
+        "http": "Hizmet bir HTTP hatası döndürdü",
+        "invalidResponse": "Hizmet geçersiz veri döndürdü",
+        "unavailable": "Hizmet veri sağlayamadı"
+      }
     }
   },
   "apps": {
