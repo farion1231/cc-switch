@@ -1847,6 +1847,7 @@
     "modelContextCustom": "Custom",
     "modelContextWindowPlaceholder": "Default",
     "modelContextWindowLabel": "Window tokens",
+    "modelContextWindowInvalid": "Enter a positive integer token count (e.g. 262144 or 262,144), without units, decimals, or scientific notation. Leave blank to inherit the default.",
     "modelContextHelp": "Claude Code can mark individual models as 1M; all other models share CLAUDE_CODE_MAX_CONTEXT_TOKENS across sessions. Aggregation uses the smallest non-1M window so sessions using --model, project settings, or a session-only selection stay within their model limits. Larger non-1M models share this lower limit. 200K is written explicitly to replace stale values in running sessions. Enter Custom as the actual token count (e.g. 262144); leave it empty to use this provider's value (200K if unset); values of 1000000 or more are saved as 1M. Fetching the model list fills empty windows from models.dev.",
     "fallbackModelLabel": "Default fallback model",
     "fallbackModelHelpDirect": "Written to ANTHROPIC_MODEL: the main model Claude Code starts with. Background tasks use the Haiku tier instead.",

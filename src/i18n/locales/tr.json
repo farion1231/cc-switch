@@ -1847,6 +1847,7 @@
     "modelContextCustom": "Özel",
     "modelContextWindowPlaceholder": "Varsayılan",
     "modelContextWindowLabel": "Pencere token sayısı",
+    "modelContextWindowInvalid": "Birim, ondalık veya bilimsel gösterim kullanmadan pozitif tam sayı token sayısı girin (ör. 262144 veya 262,144). Varsayılan değeri devralmak için boş bırakın.",
     "modelContextHelp": "Claude Code modelleri ayrı ayrı 1M olarak işaretleyebilir; diğer modeller tüm oturumlarda ortak CLAUDE_CODE_MAX_CONTEXT_TOKENS değerini kullanır. Birleştirmede, --model, proje ayarları veya yalnızca geçerli oturum için yapılan seçimle başka bir model kullanan oturumların sınırı aşmaması için 1M olmayan modellerin en küçük penceresi kullanılır. Daha büyük pencereli 1M olmayan modeller de bu küçük sınırı paylaşır. Çalışan oturumlardaki eski değeri değiştirmek için 200K da açıkça yazılır. Özel alana gerçek token sayısını girin (ör. 262144); boş bırakılırsa sağlayıcının değeri (yoksa 200K) kullanılır; 1000000 ve üzeri değerler 1M olarak kaydedilir. Model listesi alındığında boş pencereler models.dev değerleriyle doldurulur.",
     "fallbackModelLabel": "Varsayılan geri dönüş modeli",
     "fallbackModelHelpDirect": "ANTHROPIC_MODEL'e yazıldı: Claude Code ana modeliyle başlıyor. Arka plan görevleri bunun yerine Haiku katmanını kullanır.",
