@@ -239,7 +239,15 @@
         "model": "Model",
         "oauthTitle": "OAuth Kimlik Doğrulama Modu",
         "oauthHint": "Google’ın resmî hizmeti kişisel OAuth kimlik doğrulaması kullanır; API anahtarı girmeniz gerekmez. İlk kullanımda oturum açmanız için tarayıcı otomatik açılır.",
-        "apiKeyPlaceholder": "Gemini API Anahtarını girin"
+        "apiKeyPlaceholder": "Gemini API Anahtarını girin",
+        "apiFormat": "Yukarı Akış API Biçimi",
+        "apiFormatHelp": "Gemini (aktarım): yukarı akış Gemini API'sini destekler. OpenAI Chat: OpenAI uyumlu yukarı akış (ör. DeepSeek); vekil protokolü otomatik dönüştürür. Anthropic: yukarı akış Anthropic Messages konuşur. Yalnızca vekil yönlendirme modunda geçerlidir.",
+        "apiFormatGeminiNative": "Gemini (aktarım)",
+        "apiFormatOpenaiChat": "OpenAI Chat (otomatik dönüştürme)",
+        "apiFormatAnthropic": "Anthropic Messages (otomatik dönüştürme)",
+        "outboundModel": "Giden model",
+        "outboundModelHelp": "Protokol dönüştürmeden sonra yukarı akışa gönderilen model adı. İstemcinin istediği model adı (ör. agy görünen adı) yukarı akış tarafından tanınmayabilir; yukarı akışın gerçekten kabul ettiği bir model kimliği girin. Boş bırakılırsa istemcinin istediği model adı olduğu gibi gönderilir.",
+        "outboundModelPlaceholder": "Yukarı akış model kimliği, ör. deepseek-v4-pro"
       },
       "claudeAccount": {
         "label": "Sign-in method",
@@ -1774,6 +1782,7 @@
     "fillParameter": "Lütfen {{label}}'yi doldurun",
     "fillTemplateValue": "Lütfen {{label}}'yi doldurun",
     "endpointRequired": "Resmi olmayan sağlayıcılar için API uç noktası gereklidir",
+    "translationEndpointRequired": "Protokol dönüştürme (OpenAI Chat / Anthropic) için bir yukarı akış API uç noktası gerekli",
     "apiKeyRequired": "Resmi olmayan sağlayıcılar için API Anahtarı gereklidir",
     "softValidation": {
       "title": "Yapılandırmada aşağıdaki sorunlar var",

@@ -1849,6 +1849,14 @@ impl RequestForwarder {
                     .as_deref()
                     .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
                 rewrite_claude_transform_endpoint(endpoint, api_format, is_copilot, &mapped_body)
+            } else if needs_transform && adapter.name() == "Gemini" {
+                // Gemini 入口 + 非 Gemini 协议上游（openai_chat / anthropic）：
+                // generateContent endpoint 重写为上游协议 endpoint，?key=/alt=sse 不透传
+                let api_format = super::providers::get_upstream_api_format(provider);
+                (
+                    super::providers::rewrite_gemini_transform_endpoint(endpoint, api_format),
+                    None,
+                )
             } else {
                 (
                     endpoint.to_string(),
@@ -2054,6 +2062,33 @@ impl RequestForwarder {
                         .then_some(self.session_id.as_str()),
                     Some(self.gemini_shadow.as_ref()),
                 )?
+            } else if adapter.name() == "Gemini" {
+                // Gemini 入口 + 非 Gemini 协议上游（openai_chat / anthropic）。
+                // 模型名 / stream 标记按「当前这一家」供应商注入（forward() 每次
+                // 故障转移重试都会走到这里，各卡的 apiFormat / outboundModel 可能
+                // 不同）；native 卡不会进入 needs_transform 分支，body 保持原样。
+                let api_format = super::providers::get_upstream_api_format(provider);
+                let request_model =
+                    super::handler_context::extract_gemini_model_from_path(endpoint)
+                        .unwrap_or_else(|| "unknown".to_string());
+                let outbound_override = provider
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.outbound_model.as_deref());
+                let gemini_body = super::handlers::apply_gemini_transform_body(
+                    mapped_body,
+                    endpoint,
+                    &request_model,
+                    outbound_override,
+                );
+                let mut transformed = adapter.transform_request(gemini_body, provider)?;
+                // Anthropic Messages API 要求 max_tokens 必填；Gemini 请求默认不带
+                // generationConfig.maxOutputTokens，缺省时补保守默认值（客户端显式
+                // 指定时仍以客户端为准，转换器已透传）。
+                if api_format == "anthropic" && transformed.get("max_tokens").is_none() {
+                    transformed["max_tokens"] = Value::from(8192u64);
+                }
+                transformed
             } else {
                 adapter.transform_request(mapped_body, provider)?
             }
@@ -2522,8 +2557,13 @@ impl RequestForwarder {
             }
         }
 
-        let should_send_anthropic_headers = adapter.name() == "Claude"
-            && matches!(resolved_claude_api_format.as_deref(), Some("anthropic"));
+        // Gemini→Anthropic 转换路径同样需要 anthropic-version（由 x-api-key 认证
+        // 判定，不带 Claude Code 的 beta）；Claude→Anthropic 保持原逻辑。
+        let gemini_to_anthropic = adapter.name() == "Gemini"
+            && super::providers::get_upstream_api_format(provider) == "anthropic";
+        let should_send_anthropic_headers = (adapter.name() == "Claude"
+            && matches!(resolved_claude_api_format.as_deref(), Some("anthropic")))
+            || gemini_to_anthropic;
 
         // 预计算 anthropic-beta 值（仅 Claude）
         let anthropic_beta_value = if should_send_anthropic_headers {

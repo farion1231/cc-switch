@@ -15,7 +15,7 @@ use super::{
         claude_stream_usage_event_filter, codex_stream_usage_event_filter, CLAUDE_PARSER_CONFIG,
         CODEX_PARSER_CONFIG, GEMINI_PARSER_CONFIG, OPENAI_PARSER_CONFIG,
     },
-    handler_context::RequestContext,
+    handler_context::{extract_gemini_model_from_path, RequestContext},
     providers::{
         codex_chat_common::extract_reasoning_field_text,
         codex_chat_history::record_responses_sse_stream,
@@ -2658,7 +2658,7 @@ pub async fn handle_gemini(
     drop(body_bytes);
 
     // Gemini 的模型名称在 URI 中
-    let mut ctx = RequestContext::new(
+    let ctx = RequestContext::new(
         &state,
         &body,
         &headers,
@@ -2675,19 +2675,134 @@ pub async fn handle_gemini(
     let endpoint = uri
         .path_and_query()
         .map(|pq| pq.as_str())
-        .unwrap_or(uri.path());
+        .unwrap_or(uri.path())
+        .to_string();
 
+    handle_gemini_common(state, endpoint, method, headers, extensions, body, ctx).await
+}
+
+/// Antigravity CLI 的代理命名空间：`/agy/<provider_id>/<原始 gemini endpoint>`。
+///
+/// agy 的 Key 卡按「打开终端」逐卡启动，没有全局当前供应商，所以每张卡启动时把
+/// base_url 指到带自己 provider id 的命名空间：代理按 id 精确取卡（含它保存的上游
+/// 地址、Key 和 `meta.apiFormat`），两张卡各自并发互不干扰，也不参与故障转移选家。
+pub async fn handle_agy(
+    State(state): State<ProxyState>,
+    uri: axum::http::Uri,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    let (parts, req_body) = request.into_parts();
+    let method = parts.method.clone();
+    let headers = parts.headers;
+    let extensions = parts.extensions;
+
+    let (provider_id, sub_path) = split_agy_namespace(uri.path())
+        .ok_or_else(|| ProxyError::Internal("Invalid /agy namespace path".to_string()))?;
+    let endpoint = match uri.query() {
+        Some(query) if !query.is_empty() => format!("{sub_path}?{query}"),
+        _ => sub_path,
+    };
+
+    let body_bytes = req_body
+        .collect()
+        .await
+        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
+        .to_bytes();
+    let body: Value = if body_bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&body_bytes)
+            .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?
+    };
+
+    let provider = state
+        .db
+        .get_provider_by_id(&provider_id, AppType::Agy.as_str())
+        .map_err(|e| ProxyError::DatabaseError(e.to_string()))?
+        .ok_or(ProxyError::NoProvidersConfigured)?;
+
+    let mut ctx = RequestContext::fixed_provider(
+        &state,
+        &body,
+        &headers,
+        AppType::Agy,
+        "Agy",
+        "agy",
+        provider,
+    )
+    .await?;
+    // 模型名在（去掉命名空间前缀后的）endpoint 里，与 handle_gemini 一致
+    ctx.request_model =
+        extract_gemini_model_from_path(&endpoint).unwrap_or_else(|| "unknown".to_string());
+
+    handle_gemini_common(state, endpoint, method, headers, extensions, body, ctx).await
+}
+
+/// 协议转换请求的请求体注入：模型名（优先出站覆盖）+ 流式标记。
+///
+/// 由 forwarder 在选定具体供应商后调用：故障转移队列里各卡的 apiFormat /
+/// outboundModel 可能不同，必须按当前这一家改写，不能用队列第一家提前改。
+pub(crate) fn apply_gemini_transform_body(
+    mut body: Value,
+    endpoint: &str,
+    request_model: &str,
+    outbound_override: Option<&str>,
+) -> Value {
+    if !body.is_object() {
+        return body;
+    }
+    let model = outbound_override
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .unwrap_or(request_model);
+    if !model.is_empty() && model != "unknown" {
+        body["model"] = Value::from(model);
+    }
+    if endpoint.contains(":streamGenerateContent") {
+        body["stream"] = Value::from(true);
+    }
+    body
+}
+
+/// `/agy/<provider_id>/<rest...>` → `(provider_id, "/<rest>")`。
+/// 前缀后的剩余部分必须非空（至少要有 `v1beta/...`）。
+pub(crate) fn split_agy_namespace(path: &str) -> Option<(String, String)> {
+    let rest = path.strip_prefix("/agy/")?;
+    let (id, tail) = rest.split_once('/')?;
+    if id.is_empty() || tail.is_empty() {
+        return None;
+    }
+    Some((id.to_string(), format!("/{tail}")))
+}
+
+/// Gemini 协议入口的公共处理：透传（gemini_native）或按 `meta.apiFormat`
+/// 转换到 OpenAI Chat / Anthropic 再转换回 Gemini 格式。
+#[allow(clippy::too_many_arguments)]
+async fn handle_gemini_common(
+    state: ProxyState,
+    endpoint: String,
+    method: http::Method,
+    headers: http::HeaderMap,
+    extensions: http::Extensions,
+    body: Value,
+    mut ctx: RequestContext,
+) -> Result<axum::response::Response, ProxyError> {
     let is_stream = body
         .get("stream")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
+    // 上游为非 Gemini 协议（openai_chat / anthropic）时需要的请求体改写
+    // （注入模型名 / stream 标记、出站模型覆盖）在 forwarder 里按「实际选定的
+    // 这一家」供应商进行：故障转移队列里各卡的 apiFormat / outboundModel 可能
+    // 不同，在 handler 里按队列第一家提前改写会让后续供应商拿到错误的请求体。
     let forwarder = ctx.create_forwarder(&state);
+    let app_type = ctx.app_type.clone();
     let mut result = match forwarder
         .forward_with_retry(
-            &AppType::Gemini,
+            &app_type,
             method,
-            endpoint,
+            &endpoint,
             &body,
             headers,
             extensions,
@@ -2712,11 +2827,28 @@ pub async fn handle_gemini(
     ctx.provider = result.provider;
     let response = result.response;
 
-    process_response(
+    // 上游为 Gemini 协议：原样透传（原有行为）
+    if super::providers::get_upstream_api_format(&ctx.provider) == "gemini_native" {
+        return process_response(
+            response,
+            &ctx,
+            &state,
+            &GEMINI_PARSER_CONFIG,
+            is_stream,
+            connection_guard,
+        )
+        .await;
+    }
+
+    // 上游为 OpenAI/Anthropic 协议：响应转换回 Gemini 格式
+    // 流式判定：URI 用了 :streamGenerateContent（或上游返回 SSE）即为流式
+    let upstream_api_format = super::providers::get_upstream_api_format(&ctx.provider);
+    let is_stream = is_stream || endpoint.contains(":streamGenerateContent");
+    super::response_processor::handle_gemini_transform(
         response,
         &ctx,
         &state,
-        &GEMINI_PARSER_CONFIG,
+        upstream_api_format,
         is_stream,
         connection_guard,
     )
@@ -3489,11 +3621,12 @@ mod tests {
     }
 
     use super::{
-        body_looks_like_sse, chat_sse_to_response_value, classify_body_for_diagnostics,
-        codex_proxy_error_json, extract_gateway_token, responses_sse_stream_to_anthropic_message,
-        responses_sse_to_response_value, rewritten_sse_response_builder,
-        should_use_claude_transform_streaming, transform, upstream_body_parse_error,
-        validate_claude_desktop_gateway_auth_for_db, validate_claude_desktop_gateway_token,
+        apply_gemini_transform_body, body_looks_like_sse, chat_sse_to_response_value,
+        classify_body_for_diagnostics, codex_proxy_error_json, extract_gateway_token,
+        responses_sse_stream_to_anthropic_message, responses_sse_to_response_value,
+        rewritten_sse_response_builder, should_use_claude_transform_streaming, split_agy_namespace,
+        transform, upstream_body_parse_error, validate_claude_desktop_gateway_auth_for_db,
+        validate_claude_desktop_gateway_token,
     };
     use crate::database::Database;
     use crate::proxy::ProxyError;
@@ -3507,6 +3640,70 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
         Arc,
     };
+
+    #[test]
+    fn gemini_transform_body_prefers_outbound_model_override() {
+        // 无覆盖：用客户端请求的模型名（URI 里解析出来的）
+        let body = apply_gemini_transform_body(
+            serde_json::json!({"contents": []}),
+            "/v1beta/models/gemini-3.1-pro-preview:generateContent",
+            "gemini-3.1-pro-preview",
+            None,
+        );
+        assert_eq!(body["model"], "gemini-3.1-pro-preview");
+        assert!(body.get("stream").is_none());
+
+        // 有覆盖：换成上游认识的模型 id；流式 endpoint 补 stream 字段
+        let body = apply_gemini_transform_body(
+            serde_json::json!({"contents": []}),
+            "/v1beta/models/gemini-3.1-pro-preview:streamGenerateContent?alt=sse",
+            "gemini-3.1-pro-preview",
+            Some("deepseek-v4-pro"),
+        );
+        assert_eq!(body["model"], "deepseek-v4-pro");
+        assert_eq!(body["stream"], true);
+
+        // 覆盖为空串 / 空白：退回客户端模型名
+        let body = apply_gemini_transform_body(
+            serde_json::json!({"contents": []}),
+            "/v1beta/models/m:generateContent",
+            "m",
+            Some("   "),
+        );
+        assert_eq!(body["model"], "m");
+    }
+
+    #[test]
+    fn agy_namespace_splits_provider_id_and_gemini_endpoint() {
+        assert_eq!(
+            split_agy_namespace("/agy/relay-id/v1beta/models/gemini-3:generateContent"),
+            Some((
+                "relay-id".to_string(),
+                "/v1beta/models/gemini-3:generateContent".to_string()
+            ))
+        );
+        // 带 models/ 资源名形态的模型 id
+        assert_eq!(
+            split_agy_namespace(
+                "/agy/abc-123/v1beta/models/models/gemini-2.5-pro:streamGenerateContent"
+            ),
+            Some((
+                "abc-123".to_string(),
+                "/v1beta/models/models/gemini-2.5-pro:streamGenerateContent".to_string()
+            ))
+        );
+        // 命名空间后必须还有 endpoint
+        assert_eq!(split_agy_namespace("/agy/relay-id"), None);
+        assert_eq!(
+            split_agy_namespace("/agy//v1beta/models/x:generateContent"),
+            None
+        );
+        // 别的命名空间不认
+        assert_eq!(
+            split_agy_namespace("/gemini/v1beta/models/x:generateContent"),
+            None
+        );
+    }
 
     /// 补发了压缩条目的 SSE 比上游声明的长：留着上游的 Content-Length，客户端读到那个
     /// 长度就停，补上的 compaction 条目和 response.completed 都收不到。

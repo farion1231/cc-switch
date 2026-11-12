@@ -200,6 +200,10 @@ export interface ProviderMeta {
     | "openai_chat"
     | "openai_responses"
     | "gemini_native";
+  // 协议转换（Gemini / Antigravity 入口 → OpenAI Chat / Anthropic 上游）时的
+  // 出站模型名覆盖：发给上游的 model 用这个值，而不是客户端请求的模型名
+  // （客户端名可能是 agy 的显示名，上游并不认识）。不填则按客户端请求原样发送。
+  outboundModel?: string;
   // Managed Codex Copilot uses this instead of apiFormat. Missing/unknown means auto.
   // Keep the raw string so selections from newer versions survive an edit/save.
   codexCopilotApiFormat?: string;
