@@ -1845,7 +1845,7 @@ mod tests {
             CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID.to_string(),
             "Claude Desktop Official".to_string(),
             json!({"env": {}}),
-            Some("https://claude.ai/download".to_string()),
+            Some("https://claude.com/download".to_string()),
         );
         provider.category = Some("official".to_string());
         provider

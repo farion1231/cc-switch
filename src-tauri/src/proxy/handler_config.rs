@@ -52,7 +52,9 @@ pub fn codex_stream_usage_event_filter(data: &str) -> bool {
 }
 
 fn gemini_stream_usage_event_filter(data: &str) -> bool {
-    data.contains("\"usageMetadata\"")
+    // usageMetadata 只出现在尾 chunk，而回显模型名的 modelVersion 只出现在
+    // 首 chunk——两者都要收集，否则流式记录的模型归因会退化为 fallback。
+    data.contains("\"usageMetadata\"") || data.contains("\"modelVersion\"")
 }
 
 // ============================================================================

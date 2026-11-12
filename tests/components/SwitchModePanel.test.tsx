@@ -9,6 +9,7 @@ import type { ModeAppId } from "@/config/appConfig";
 import type { AppMode } from "@/types/proxy";
 import { SwitchModePanel } from "@/components/providers/mode/SwitchModePanel";
 import { server } from "../msw/server";
+import { getSettings, setSettings } from "../msw/state";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
 vi.mock("sonner", () => ({
@@ -952,5 +953,58 @@ describe("SwitchModePanel — tray needs-route request", () => {
       await screen.findByText("mode.dialog.needsRouteTitle"),
     ).toBeInTheDocument();
     expect(onHandled).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("SwitchModePanel — pause the Codex official login", () => {
+  const PAUSED_TITLE = "mode.notice.officialLoginPaused";
+  const TOGGLE = "settings.codexPauseOfficialLogin.title";
+
+  it("keeps a notice up while paused in route mode and resumes from it", async () => {
+    const user = userEvent.setup();
+    setSettings({ codexProxyWithoutOfficialLogin: true });
+    mockMode("route", "route");
+    renderPanel("codex", { route: provider("route") });
+
+    expect(await screen.findByText(PAUSED_TITLE)).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "mode.notice.resumeOfficialLogin" }),
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByText(PAUSED_TITLE)).not.toBeInTheDocument(),
+    );
+    expect(getSettings().codexProxyWithoutOfficialLogin).toBe(false);
+  });
+
+  it("shows no notice in direct mode, where the pause has no effect", async () => {
+    setSettings({ codexProxyWithoutOfficialLogin: true });
+    mockMode("direct", "route");
+    renderPanel("codex", { route: provider("route") });
+
+    await screen.findByTestId("card-route");
+    expect(screen.queryByText(PAUSED_TITLE)).not.toBeInTheDocument();
+  });
+
+  it("offers the switch in the route settings for Codex only", async () => {
+    const user = userEvent.setup();
+    mockMode("route", "route");
+    const codex = renderPanel("codex", { route: provider("route") });
+    await user.click(
+      await screen.findByRole("button", { name: "mode.routeSettings" }),
+    );
+    expect(
+      await screen.findByRole("switch", { name: TOGGLE }),
+    ).toBeInTheDocument();
+    codex.unmount();
+
+    renderPanel("claude", { route: provider("route") });
+    await user.click(
+      await screen.findByRole("button", { name: "mode.routeSettings" }),
+    );
+    await screen.findByText("mode.routeSettingsTitle");
+    expect(
+      screen.queryByRole("switch", { name: TOGGLE }),
+    ).not.toBeInTheDocument();
   });
 });

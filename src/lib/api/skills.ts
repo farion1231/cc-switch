@@ -16,7 +16,8 @@ export type AppType =
   | "kimi"
   | "dsh"
   | "agy"
-  | "omp";
+  | "omp"
+  | "copilot";
 
 /** Skill 应用启用状态 */
 export interface SkillApps {
@@ -34,6 +35,7 @@ export interface SkillApps {
   dsh?: boolean;
   agy?: boolean;
   omp?: boolean;
+  copilot?: boolean;
 }
 
 /** 已安装的 Skill（v3.10.0+ 统一结构） */
@@ -199,6 +201,11 @@ export const skillsApi = {
   /** 获取所有已安装的 Skills */
   async getInstalled(): Promise<InstalledSkill[]> {
     return await invoke("get_installed_skills");
+  },
+
+  /** 刷新本地 Skill 的过期元数据，返回实际更新的数量 */
+  async refreshLocalMetadata(): Promise<number> {
+    return await invoke("refresh_local_skill_metadata");
   },
 
   /** 获取可恢复的 Skill 备份列表 */

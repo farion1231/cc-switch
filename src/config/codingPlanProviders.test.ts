@@ -9,7 +9,6 @@ import {
 const OPENCODE_GO_CODEX_TOML = `model_provider = "custom"
 model = "glm-5.2"
 model_reasoning_effort = "high"
-disable_response_storage = true
 
 [model_providers.custom]
 name = "opencode_go"
