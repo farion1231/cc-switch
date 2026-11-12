@@ -26,8 +26,8 @@ use crate::claude_desktop_config::{self, DesktopTarget};
 use crate::error::AppError;
 use crate::live::engine::DeviceStore;
 use crate::live::project::claude::{
-    direct_patch, proxy_projection, ClaudeProjection, ProxyAuth, StackRoleModel,
-    PROXY_TOKEN_PLACEHOLDER,
+    direct_patch, keep_portable_model, portable_model, proxy_projection, ClaudeProjection,
+    ProxyAuth, StackRoleModel, MODEL_KEY, PROXY_TOKEN_PLACEHOLDER,
 };
 use crate::live::project::gemini::GeminiProjection;
 use crate::live::project::grok::GrokProjection;
@@ -43,7 +43,7 @@ use super::contract;
 use super::current::{self, Purpose};
 use super::operation;
 use super::stack::{self, StackModel, StackView};
-use super::state::{op, Contract, Mode, ModeState, PendingTarget, StackState};
+use super::state::{self, op, Contract, Mode, ModeState, PendingTarget, StackState};
 
 /// 有路由模式的应用（[`AppType::has_route_mode`]）。Claude Desktop 也在内：它经同一个路由
 /// 服务转发，只是没有故障转移。
@@ -418,6 +418,8 @@ async fn write_proxy(
             let unchanged = !force && live_now.has_contract(&contract.key);
             let mut patch = direct_patch(live_now.claude_exclusive_owner().as_ref(), &projection);
             crate::services::provider::claude_official::strip_from_patch(&mut patch);
+            let model = claude_model_to_keep(op_name, live_now, &projection);
+            keep_portable_model(&mut patch, model.as_ref(), &projection);
             target.contract = Some(contract);
             claude_direct::run(
                 &state.db,
@@ -515,6 +517,44 @@ async fn write_proxy(
         _ => return Err(format!("{} 不支持本地路由", app.as_str())),
     };
     Ok(!unchanged)
+}
+
+/// 写代理契约时留下的 `/model` 选择：启动时从分离状态接上，先用分离时暂存的（分离写回
+/// 直连时它被换成了直连那家的），用不了再看 live 里现在的。
+fn claude_model_to_keep(
+    op_name: &str,
+    live_now: &LiveNow,
+    projection: &ClaudeProjection,
+) -> Option<Value> {
+    let stashed = (op_name == op::ATTACH && matches!(live_now, LiveNow::Direct(_)))
+        .then(|| {
+            state::proxy_model(&DeviceStore::for_device(), AppType::Claude.as_str()).unwrap_or_else(
+                |error| {
+                    log::warn!("读取分离时暂存的 Claude Code 模型选择失败: {error}");
+                    None
+                },
+            )
+        })
+        .flatten()
+        .map(Value::String);
+    let live = claude_direct::read_settings().and_then(|live| live.get(MODEL_KEY).cloned());
+    [stashed, live].into_iter().flatten().find(|model| {
+        model
+            .as_str()
+            .is_some_and(|model| portable_model(model, projection))
+    })
+}
+
+/// 分离前记下代理模式下 `/model` 的选择，下次接上时还原。记不下来不拦着分离：最多是
+/// 选择丢了，和以前一样。
+fn stash_claude_proxy_model() {
+    let model = claude_direct::read_settings()
+        .and_then(|live| live.get(MODEL_KEY)?.as_str().map(str::to_string));
+    if let Err(error) =
+        state::set_proxy_model(&DeviceStore::for_device(), AppType::Claude.as_str(), model)
+    {
+        log::warn!("暂存 Claude Code 的模型选择失败: {error}");
+    }
 }
 
 /// 写回直连投影（直连指针的供应商）。
@@ -946,6 +986,9 @@ fn exit_locked(state: &AppState, app: &AppType, keep_mode: bool) -> Result<(), S
         return Ok(());
     }
     let op_name = if keep_mode { op::DETACH } else { op::EXIT };
+    if keep_mode && *app == AppType::Claude && mode.is_proxy() {
+        stash_claude_proxy_model();
+    }
     let was_stack = settled_stack(app).is_ok_and(|stack| stack.enabled);
     let result = write_direct_for_exit(state, app, op_name, keep_mode, &mode);
     match &result {
@@ -6097,6 +6140,108 @@ model_provider = "c"
         exit(&state, &AppType::Claude).await.expect("exit");
         assert!(settings().get(CLAUDE_MODEL_PICKER).is_none());
         assert_back_to_user_settings();
+    }
+
+    /// 模拟 Claude Code 自己改 `settings.json`（`/model`、手写菜单）。
+    fn edit_settings(change: impl FnOnce(&mut Value)) {
+        let mut live = settings();
+        change(&mut live);
+        seed_settings(&serde_json::to_string_pretty(&live).unwrap());
+    }
+
+    /// 代理模式下 `/model` 选的档位别名：换路由重写契约时留下；退出 CC Switch 分离写回直连
+    /// 会换成直连那家的，下次启动接上时还原。
+    #[tokio::test]
+    #[serial]
+    async fn the_proxy_model_choice_survives_route_rewrites_and_a_restart() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(
+            AppType::Claude,
+            &[
+                claude("a", "https://a.example", json!({})),
+                claude(
+                    "b",
+                    "https://b.example",
+                    json!({ "ANTHROPIC_MODEL": "claude-opus-4-7" }),
+                ),
+            ],
+            "a",
+        )
+        .await;
+        enter(&state, &AppType::Claude, false).await.expect("enter");
+        edit_settings(|live| live["model"] = json!("opus[1m]"));
+
+        let result = set_route(&state, &AppType::Claude, "b").await.unwrap();
+        assert!(result.client_config_changed, "b has another contract");
+        assert_eq!(settings()["model"], "opus[1m]");
+
+        detach_all(&state).await;
+        assert!(
+            settings().get("model").is_none(),
+            "direct a has no /model choice"
+        );
+        startup(&state).await;
+        assert!(mode(&AppType::Claude).attached);
+        assert_eq!(settings()["model"], "opus[1m]");
+
+        // 接上后 live 里没有暂存值以外的选择时，契约重写照样留下 live 里的。
+        let unchanged = fs::read(settings_path()).unwrap();
+        startup(&state).await;
+        assert_eq!(fs::read(settings_path()).unwrap(), unchanged);
+        exit(&state, &AppType::Claude).await.expect("exit");
+    }
+
+    /// 直连那家专属的模型 id 到了代理会被原样转发给路由那家，进入代理时照旧清掉。
+    #[tokio::test]
+    #[serial]
+    async fn a_model_only_the_direct_provider_knows_is_cleared_in_proxy_mode() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(
+            AppType::Claude,
+            &[claude("a", "https://a.example", json!({}))],
+            "a",
+        )
+        .await;
+        edit_settings(|live| live["model"] = json!("deepseek-chat"));
+        enter(&state, &AppType::Claude, false).await.expect("enter");
+        assert!(settings().get("model").is_none());
+
+        // 契约发布的别名（`/model` 里选了路由那档）留下。
+        let alias = settings()["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"].clone();
+        edit_settings(|live| live["model"] = alias.clone());
+        detach_all(&state).await;
+        startup(&state).await;
+        assert_eq!(settings()["model"], alias);
+        exit(&state, &AppType::Claude).await.expect("exit");
+    }
+
+    /// 用户自己写的 `modelPicker`（和 CC Switch 的写入记录对不上）：直连切换、进出路由模式都
+    /// 留下；聚合模式要列 Stack 模型，照旧换掉，退出聚合时清掉 CC Switch 写的那份。
+    #[tokio::test]
+    #[serial]
+    async fn a_users_own_model_picker_survives_switches_but_gives_way_to_stack_mode() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(AppType::Claude, &stack_rows(), "a").await;
+        // 新版写过一次，才有写入记录（升级前的菜单按旧规矩当成 CC Switch 的）。
+        ProviderService::switch(&state, AppType::Claude, "kimi").expect("switch");
+        let mine = json!({ "options": [{ "model": "mine" }] });
+        edit_settings(|live| live[CLAUDE_MODEL_PICKER] = mine.clone());
+
+        ProviderService::switch(&state, AppType::Claude, "a").expect("switch back");
+        assert_eq!(settings()[CLAUDE_MODEL_PICKER], mine);
+        enter(&state, &AppType::Claude, false).await.expect("route");
+        assert_eq!(settings()[CLAUDE_MODEL_PICKER], mine);
+        exit(&state, &AppType::Claude).await.expect("exit route");
+        assert_eq!(settings()[CLAUDE_MODEL_PICKER], mine);
+
+        enter(&state, &AppType::Claude, true).await.expect("stack");
+        assert_ne!(settings()[CLAUDE_MODEL_PICKER], mine);
+        assert!(picker().is_some());
+        exit(&state, &AppType::Claude).await.expect("exit stack");
+        assert!(settings().get(CLAUDE_MODEL_PICKER).is_none());
     }
 
     #[tokio::test]

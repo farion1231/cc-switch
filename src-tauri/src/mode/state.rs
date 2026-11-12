@@ -109,6 +109,11 @@ pub struct Written {
     /// Grok Build `config.toml` 里 CC Switch 写的 `[model."<名称>"]` 表。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tables: Vec<String>,
+    /// Claude Code `settings.json` 里 CC Switch 上次写的 `modelPicker` 的摘要；空串表示写的
+    /// 时候没有。live 里的 `modelPicker` 和它对不上，就是用户自己写的，切换时不清掉。
+    /// 没有值：新版还没写过（升级前），按旧规矩当成 CC Switch 的。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_picker: Option<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -168,6 +173,10 @@ pub struct AppLiveState {
     pub pending: Option<Pending>,
     #[serde(default, skip_serializing_if = "StackState::is_empty")]
     pub stack: StackState,
+    /// 退出 CC Switch 分离时，代理模式下 `/model` 的选择（Claude Code）。分离写回直连会
+    /// 把它换成直连那家的，下次启动接上时按它还原。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_model: Option<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -176,6 +185,7 @@ impl AppLiveState {
     fn is_empty(&self) -> bool {
         self.pending.is_none()
             && self.written.is_none()
+            && self.proxy_model.is_none()
             && self.stack.is_empty()
             && self.mode_state() == ModeState::default()
             && self.extra.is_empty()
@@ -389,6 +399,25 @@ pub fn written(store: &DeviceStore, app: &str) -> Result<Option<Written>, AppErr
         .apps
         .get(app)
         .and_then(|state| state.written.clone()))
+}
+
+/// 分离时暂存的代理模式 `/model` 选择。
+pub fn proxy_model(store: &DeviceStore, app: &str) -> Result<Option<String>, AppError> {
+    let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
+    Ok(load(store)?
+        .apps
+        .get(app)
+        .and_then(|state| state.proxy_model.clone()))
+}
+
+pub fn set_proxy_model(
+    store: &DeviceStore,
+    app: &str,
+    model: Option<String>,
+) -> Result<(), AppError> {
+    update(store, |state| {
+        state.apps.entry(app.to_string()).or_default().proxy_model = model;
+    })
 }
 
 /// 这个应用的 Stack 模型（成员和 key 登记簿）。
