@@ -912,6 +912,14 @@
     "minimizeToTrayDescription": "チェックすると閉じるボタンでトレイに隠し、オフならアプリを終了します。",
     "useAppWindowControls": "アプリ内ウィンドウボタンを有効化",
     "useAppWindowControlsDescription": "有効にすると、アプリヘッダーに最小化・最大化/復元・閉じるボタンを表示します。",
+    "copilotVscode": {
+      "enable": "VS Code Copilot 拡張機能に適用",
+      "description": "CLI に追加したモデルと API キーを、検出したすべての VS Code プロファイルに自動で適用します。プロバイダーの変更も自動で同期されます。",
+      "pending": "VS Code モデルの同期待ち",
+      "pendingDescription": "VS Code は前の設定を使用している可能性があります。再試行して最新の変更を同期してください。",
+      "noTargets": "VS Code の設定が見つかりません。VS Code を一度起動してから再試行してください。",
+      "failed": "VS Code Copilot への同期に失敗しました"
+    },
     "enableClaudePluginIntegration": "Claude Code 拡張に適用",
     "enableClaudePluginIntegrationDescription": "オンにすると VS Code の Claude Code 拡張のプロバイダーも同期します",
     "skipClaudeOnboarding": "Claude Code の初回確認をスキップ",

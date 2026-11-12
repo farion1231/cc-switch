@@ -912,6 +912,14 @@
     "minimizeToTrayDescription": "勾选后点击关闭按钮会隐藏到系统托盘，取消则直接退出应用。",
     "useAppWindowControls": "启用应用级窗口按钮",
     "useAppWindowControlsDescription": "开启后使用应用自建的最小化、最大化/还原、关闭按钮；关闭后沿用系统窗口模式。",
+    "copilotVscode": {
+      "enable": "应用到 VS Code Copilot 插件",
+      "description": "开启后自动将 CLI 中已添加的模型和密钥应用到检测到的全部 VS Code 配置，后续供应商改动自动同步。",
+      "pending": "VS Code 联动待同步",
+      "pendingDescription": "VS Code 可能仍使用上次配置，可重试同步最新改动。",
+      "noTargets": "未找到 VS Code 配置，请先启动一次 VS Code 后重试。",
+      "failed": "同步到 VS Code Copilot 失败"
+    },
     "enableClaudePluginIntegration": "应用到 Claude Code 插件",
     "enableClaudePluginIntegrationDescription": "开启后 VS Code Claude Code 插件的供应商将随本软件切换",
     "skipClaudeOnboarding": "跳过 Claude Code 初次安装确认",

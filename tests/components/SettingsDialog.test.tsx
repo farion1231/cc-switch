@@ -296,7 +296,18 @@ describe("SettingsPage", () => {
   });
 
   it("drives per-app directories and saves only after a change", async () => {
-    const { rerenderWith } = renderSettingsPage({ section: "appConfig" });
+    const { container, rerenderWith } = renderSettingsPage({
+      section: "appConfig",
+    });
+
+    const appSections = container.querySelectorAll(
+      'section[id^="app-config-"]',
+    );
+    expect(appSections[0]).toHaveAttribute("id", "app-config-claude");
+    expect(appSections[appSections.length - 1]).toHaveAttribute(
+      "id",
+      "app-config-copilot",
+    );
 
     expect(screen.getByText("codex-auth-settings")).toBeInTheDocument();
     // 没改过目录：没有保存按钮

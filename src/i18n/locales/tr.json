@@ -912,6 +912,14 @@
     "minimizeToTrayDescription": "İşaretlendiğinde kapat düğmesine basıldığında sistem tepsisinde gizlenir, aksi halde uygulama doğrudan çıkar.",
     "useAppWindowControls": "Uygulama düzeyinde pencere kontrollerini etkinleştir",
     "useAppWindowControlsDescription": "Uygulama başlığındaki yerleşik küçültme, büyütme/geri yükleme ve kapatma düğmelerini kullanın.",
+    "copilotVscode": {
+      "enable": "VS Code Copilot uzantısına uygula",
+      "description": "CLI'ye eklenen modelleri ve API anahtarlarını algılanan tüm VS Code profillerine otomatik uygular. Sağlayıcı değişiklikleri de otomatik eşitlenir.",
+      "pending": "VS Code model eşitlemesi bekliyor",
+      "pendingDescription": "VS Code önceki yapılandırmayı kullanıyor olabilir. Son değişiklikleri eşitlemek için yeniden deneyin.",
+      "noTargets": "VS Code yapılandırması bulunamadı. VS Code'u bir kez başlatıp yeniden deneyin.",
+      "failed": "VS Code Copilot eşitlenemedi"
+    },
     "enableClaudePluginIntegration": "Claude Code uzantısına uygula",
     "enableClaudePluginIntegrationDescription": "Etkinleştirildiğinde VS Code Claude Code uzantı sağlayıcısı bu uygulamayla geçiş yapacak",
     "skipClaudeOnboarding": "Claude Code ilk çalıştırma onayını atla",

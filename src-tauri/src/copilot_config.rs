@@ -98,6 +98,8 @@ const MAX_CARD_ID_CHARS: usize = 64;
 
 /// 进程内串行化 `providers.json` 的读改写。
 static WRITE_LOCK: Mutex<()> = Mutex::new(());
+static VSCODE_SYNC_FAILURE: Mutex<Option<(crate::copilot_vscode::SyncSettings, String)>> =
+    Mutex::new(None);
 
 /// `~/.copilot`；设置了 `COPILOT_HOME` 时跟随它（CC Switch 进程需要继承这个环境变量）。
 pub fn copilot_dir() -> PathBuf {
@@ -1189,7 +1191,7 @@ pub(crate) fn save_and_commit<T>(
         .lock()
         .map_err(|e| AppError::Message(e.to_string()))?;
     let path = providers_path();
-    transact(
+    let result = transact(
         &path,
         |before| {
             // 只有这家在文件里时才可能是默认：不在时不读 settings.json（它坏了也不挡删除
@@ -1204,7 +1206,9 @@ pub(crate) fn save_and_commit<T>(
             Ok((after != *before).then_some(after))
         },
         commit,
-    )
+    )?;
+    sync_vscode_after_save();
+    Ok(result)
 }
 
 /// 「添加」：文件里还没有这家时写进去；已经有了就是 Copilot 或用户的，原样保留（同 Kimi）。
@@ -1217,7 +1221,7 @@ pub(crate) fn add_and_commit<T>(
         .lock()
         .map_err(|e| AppError::Message(e.to_string()))?;
     let path = providers_path();
-    transact(
+    let result = transact(
         &path,
         |before| {
             if provider_names(before).contains(id) {
@@ -1226,7 +1230,112 @@ pub(crate) fn add_and_commit<T>(
             apply_provider(before, id, Some(settings), true).map(Some)
         },
         commit,
-    )
+    )?;
+    sync_vscode_after_save();
+    Ok(result)
+}
+
+/// CLI persistence has already committed. Projection failures are reported
+/// separately so a VS Code profile cannot roll back a successful CLI operation.
+fn sync_vscode_after_save() {
+    if let Err(error) = sync_vscode_locked() {
+        log::warn!("Copilot CLI saved; VS Code model synchronization pending: {error}");
+    }
+}
+
+fn sync_vscode_locked() -> Result<(), AppError> {
+    let options = crate::settings::get_settings().copilot_vscode;
+    if !options.enabled {
+        *VSCODE_SYNC_FAILURE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = None;
+        return Ok(());
+    }
+    let path = providers_path();
+    let result = read_providers(&path).and_then(|document| {
+        crate::copilot_vscode::apply(&options, &options, &document, || {
+            if read_providers(&path)? != document {
+                return Err(external_change(&path));
+            }
+            Ok(())
+        })
+    });
+    *VSCODE_SYNC_FAILURE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = result
+        .as_ref()
+        .err()
+        .map(|error| (options, error.to_string()));
+    result
+}
+
+pub(crate) fn vscode_sync_status() -> Result<crate::copilot_vscode::SyncStatus, AppError> {
+    let _guard = WRITE_LOCK
+        .lock()
+        .map_err(|e| AppError::Message(e.to_string()))?;
+    let options = crate::settings::get_settings().copilot_vscode;
+    if !options.enabled {
+        return Ok(Default::default());
+    }
+    let status = read_providers(&providers_path())
+        .and_then(|document| crate::copilot_vscode::inspect(&options, &document));
+    let mut status = match status {
+        Ok(status) => status,
+        Err(error) => crate::copilot_vscode::SyncStatus {
+            pending: true,
+            error: Some(error.to_string()),
+        },
+    };
+    let mut failure = VSCODE_SYNC_FAILURE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if !status.pending {
+        *failure = None;
+    } else if status.error.is_none() {
+        if let Some((failed_options, message)) = failure.as_ref() {
+            if failed_options == &options {
+                status.error = Some(message.clone());
+            }
+        }
+    }
+    Ok(status)
+}
+
+pub(crate) fn save_vscode_settings<T>(
+    previous: &crate::copilot_vscode::SyncSettings,
+    next: &crate::copilot_vscode::SyncSettings,
+    commit: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    if previous == next {
+        return commit();
+    }
+    let _guard = WRITE_LOCK
+        .lock()
+        .map_err(|e| AppError::Message(e.to_string()))?;
+    let document = if next.enabled {
+        read_providers(&providers_path())?
+    } else {
+        json!({})
+    };
+    let result = crate::copilot_vscode::apply(previous, next, &document, || {
+        if next.enabled && read_providers(&providers_path())? != document {
+            return Err(external_change(&providers_path()));
+        }
+        commit()
+    });
+    if result.is_ok() {
+        *VSCODE_SYNC_FAILURE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = None;
+    }
+    result
+}
+
+pub(crate) fn sync_vscode() -> Result<(), AppError> {
+    let _guard = WRITE_LOCK
+        .lock()
+        .map_err(|e| AppError::Message(e.to_string()))?;
+    sync_vscode_locked()
 }
 
 /// 旧版（PR 期间）自带模型卡的 `{env: {COPILOT_PROVIDER_*, COPILOT_MODEL}}` 转成新形状；

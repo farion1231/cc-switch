@@ -912,6 +912,14 @@
     "minimizeToTrayDescription": "켜면 닫기 버튼을 눌러도 앱이 종료되지 않고 시스템 트레이로 숨겨집니다. 끄면 앱이 바로 종료됩니다.",
     "useAppWindowControls": "앱 수준 창 컨트롤 활성화",
     "useAppWindowControlsDescription": "앱 상단에 내장된 최소화, 최대화/복원 및 닫기 버튼을 사용합니다. 끄면 시스템 창 모드를 사용합니다.",
+    "copilotVscode": {
+      "enable": "VS Code Copilot 확장에 적용",
+      "description": "CLI에 추가한 모델과 API 키를 감지된 모든 VS Code 프로필에 자동으로 적용합니다. 공급자 변경 사항도 자동으로 동기화됩니다.",
+      "pending": "VS Code 모델 동기화 대기 중",
+      "pendingDescription": "VS Code에서 이전 설정을 사용하고 있을 수 있습니다. 다시 시도하여 최신 변경 사항을 동기화하세요.",
+      "noTargets": "VS Code 설정을 찾을 수 없습니다. VS Code를 한 번 실행한 후 다시 시도하세요.",
+      "failed": "VS Code Copilot 동기화에 실패했습니다"
+    },
     "enableClaudePluginIntegration": "Claude Code 확장에 적용",
     "enableClaudePluginIntegrationDescription": "켜면 VS Code의 Claude Code 확장도 이 앱에서 선택한 공급자로 함께 전환됩니다",
     "skipClaudeOnboarding": "Claude Code 첫 실행 확인 건너뛰기",
