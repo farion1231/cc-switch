@@ -423,17 +423,23 @@ pub(crate) fn write_live(
     // 关键字段的补丁是按调用方读到的行算的：先补完上一次的操作。
     super::claude_official::with_login_switch(login_target, || {
         AppWrite::begin(db, AppType::Claude.as_str()).and_then(|write| {
+            let op_name = if pointer.is_some() {
+                op::SWITCH
+            } else {
+                op::APPLY
+            };
+            let mut target = PendingTarget::pointer(pointer);
+            // 关键字段换成了编辑器里的：菜单以它为准，记下这次写的（用户删了就是没有）。
+            if let Some(key_fields) = &patch.key_fields {
+                claude_direct::record_picker(&write.store, key_fields, &mut target)?;
+            }
             write.run(
-                if pointer.is_some() {
-                    op::SWITCH
-                } else {
-                    op::APPLY
-                },
+                op_name,
                 &[FileChange {
                     file: claude_direct::settings_file(),
                     patch: &patch,
                 }],
-                PendingTarget::pointer(pointer),
+                target,
             )
         })
     })?;

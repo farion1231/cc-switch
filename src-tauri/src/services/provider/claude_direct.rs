@@ -10,7 +10,7 @@ use crate::database::Database;
 use crate::error::AppError;
 use serde_json::Value;
 
-use crate::live::engine::{sha256_hex, LiveFile};
+use crate::live::engine::{sha256_hex, DeviceStore, LiveFile};
 use crate::live::patch::json::JsonPatch;
 use crate::live::patch::KeyPath;
 use crate::live::project::claude::{direct_patch, ClaudeProjection, MODEL_PICKER_KEY};
@@ -89,16 +89,11 @@ pub(crate) fn run(
     let write = AppWrite::begin(db, app())?;
     let patch = match patch {
         Some(patch) => {
-            let written = state::written(&write.store, app())?;
+            let recorded =
+                state::written(&write.store, app())?.and_then(|written| written.model_picker);
+            record_picker(&write.store, patch, &mut target)?;
             let live_picker = read_settings().and_then(|live| live.get(MODEL_PICKER_KEY).cloned());
-            let (patch, record) = with_users_picker(patch, live_picker, written.as_ref());
-            // 写入记录和文件在同一个操作里落定。
-            let base = target.written.take().or(written).unwrap_or_default();
-            target.written = Some(Written {
-                model_picker: Some(record),
-                ..base
-            });
-            Some(patch)
+            Some(with_users_picker(patch, live_picker, recorded.as_deref()))
         }
         None => None,
     };
@@ -122,27 +117,54 @@ fn picker_digest(picker: &Value) -> String {
     sha256_hex(&serde_json::to_vec(picker).expect("modelPicker serializes"))
 }
 
+fn picker_path() -> KeyPath {
+    KeyPath::root().child(MODEL_PICKER_KEY)
+}
+
+/// 把这次要写进去的 `modelPicker`（补丁里没有就是空串）记进写入记录，和文件在同一个操作
+/// 里落定。所有写关键字段的入口（切换、进出代理、编辑器保存当前供应商）都要记，否则
+/// 下次会把 CC Switch 自己写的菜单当成用户的留下。
+pub(crate) fn record_picker(
+    store: &DeviceStore,
+    patch: &JsonPatch,
+    target: &mut PendingTarget,
+) -> Result<(), AppError> {
+    let path = picker_path();
+    let record = patch
+        .set
+        .iter()
+        .find(|(key, _)| *key == path)
+        .map(|(_, picker)| picker_digest(picker))
+        .unwrap_or_default();
+    let base = match target.written.take() {
+        Some(written) => written,
+        None => state::written(store, app())?.unwrap_or_default(),
+    };
+    target.written = Some(Written {
+        model_picker: Some(record),
+        ..base
+    });
+    Ok(())
+}
+
 /// `modelPicker` 是关键字段，补丁默认清掉 live 里的再写目标的。这里只把 CC Switch 自己写的
-/// 当成关键字段：live 里的和写入记录对不上，就是用户自己写的，目标没有菜单时原样留下。
-/// 目标带着菜单（聚合模式、行里配了菜单）时照旧以目标为准。
-///
-/// 返回要用的补丁和新的写入记录（这次写进去的菜单摘要，没写就是空串）。
+/// 当成关键字段：live 里的和上次的写入记录（`recorded`）对不上，就是用户自己写的，目标
+/// 没有菜单时原样留下。目标带着菜单（聚合模式、行里配了菜单）时照旧以目标为准。没有记录
+/// （升级前）按旧规矩当成 CC Switch 的。
 fn with_users_picker(
     patch: &JsonPatch,
     live_picker: Option<Value>,
-    written: Option<&Written>,
-) -> (JsonPatch, String) {
-    let path = KeyPath::root().child(MODEL_PICKER_KEY);
+    recorded: Option<&str>,
+) -> JsonPatch {
+    let path = picker_path();
     let mut patch = patch.clone();
-    let target = patch.set.iter().find(|(key, _)| *key == path);
-    if let Some(digest) = target.map(|(_, picker)| picker_digest(picker)) {
-        return (patch, digest);
+    if patch.set.iter().any(|(key, _)| *key == path) {
+        return patch;
     }
-    let recorded = written.and_then(|written| written.model_picker.as_deref());
     if let (Some(live), Some(recorded)) = (live_picker, recorded) {
         if picker_digest(&live) != recorded {
             patch.set.push((path, live));
         }
     }
-    (patch, String::new())
+    patch
 }

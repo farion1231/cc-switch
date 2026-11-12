@@ -6258,6 +6258,54 @@ model_provider = "c"
         exit(&state, &AppType::Claude).await.expect("exit");
     }
 
+    /// 编辑器里给当前供应商配的菜单存进了行、由 CC Switch 写进 live：切到别家时照旧清掉，
+    /// 不能因为写入记录没跟上被当成用户的留下。
+    #[tokio::test]
+    #[serial]
+    async fn a_model_picker_saved_from_the_editor_still_leaves_with_its_provider() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(
+            AppType::Claude,
+            &[
+                claude("a", "https://a.example", json!({})),
+                claude("b", "https://b.example", json!({})),
+            ],
+            "a",
+        )
+        .await;
+        ProviderService::switch(&state, AppType::Claude, "b").expect("switch");
+        ProviderService::switch(&state, AppType::Claude, "a").expect("switch back");
+
+        let mut row = state.db.get_provider_by_id("a", "claude").unwrap().unwrap();
+        let base =
+            ProviderService::editor_view(&state, AppType::Claude, &row.settings_config, None)
+                .expect("view")
+                .settings;
+        let mut edited = base.clone();
+        let rows_picker = json!({ "options": [{ "model": "a-only" }] });
+        edited[CLAUDE_MODEL_PICKER] = rows_picker.clone();
+        row.settings_config = edited;
+        ProviderService::update_from_editor(
+            &state,
+            AppType::Claude,
+            None,
+            row,
+            Some(crate::services::provider::EditorSave {
+                base,
+                draft: None,
+                on_conflict: Default::default(),
+            }),
+        )
+        .expect("save from the editor");
+        assert_eq!(settings()[CLAUDE_MODEL_PICKER], rows_picker);
+
+        ProviderService::switch(&state, AppType::Claude, "b").expect("switch away");
+        assert!(settings().get(CLAUDE_MODEL_PICKER).is_none());
+        ProviderService::switch(&state, AppType::Claude, "a").expect("switch back again");
+        assert_eq!(settings()[CLAUDE_MODEL_PICKER], rows_picker);
+    }
+
     /// 上次退出没分离（不恢复设置、被杀）：CC Switch 关着时用户把 Claude Code 改回了别处，
     /// 启动时不覆盖，退回直连并提示；占位符还在（只是 `/model` 之类变了）照常接上。
     #[tokio::test]
