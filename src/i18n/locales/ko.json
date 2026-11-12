@@ -1231,8 +1231,8 @@
       "preparedNewLogin": "현재 계정이 저장되었습니다. WorkBuddy가 로그인 페이지로 열립니다. 다른 계정으로 로그인하면 계정 목록에 자동으로 나타납니다.",
       "switching": "전환 중…",
       "onlyOne": "WorkBuddy는 한 번에 하나의 계정에만 로그인할 수 있습니다. 전환하려면 다른 공식 카드를 추가하세요.",
-      "quitFirst": "추가하기 전에 WorkBuddy를 종료하세요",
-      "quitFirstBody": "메뉴 막대/트레이를 포함해 WorkBuddy를 완전히 종료한 다음 다시 추가를 클릭하세요. 그렇지 않으면 WorkBuddy가 현재 로그인 정보를 다시 기록합니다.",
+      "quitFirst": "계정을 전환하기 전에 WorkBuddy를 종료하세요",
+      "quitFirstBody": "메뉴 막대/트레이를 포함해 WorkBuddy를 완전히 종료한 다음 다시 전환하세요. 그렇지 않으면 WorkBuddy가 현재 로그인 정보를 다시 기록합니다.",
       "switched": "\"{{name}}\"(으)로 전환했습니다. 다음에 WorkBuddy를 열면 이 계정을 사용합니다.",
       "switchFailed": "WorkBuddy 계정을 전환할 수 없습니다"
     },

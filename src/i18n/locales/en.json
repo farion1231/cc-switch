@@ -1231,8 +1231,8 @@
       "preparedNewLogin": "Current account saved. WorkBuddy will open at its sign-in page; after you sign in to another account, it appears in the account list automatically.",
       "switching": "Switching…",
       "onlyOne": "WorkBuddy can only be signed in to one account at a time. Add another official card to switch.",
-      "quitFirst": "Quit WorkBuddy before adding",
-      "quitFirstBody": "Quit WorkBuddy completely (including the menu bar / tray), then click Add again, or it will write its current sign-in back.",
+      "quitFirst": "Quit WorkBuddy before switching accounts",
+      "quitFirstBody": "Quit WorkBuddy completely (including the menu bar / tray), then switch again, or it will write its current sign-in back.",
       "switched": "Switched to \"{{name}}\". WorkBuddy will use this account the next time it opens.",
       "switchFailed": "Couldn't switch the WorkBuddy account"
     },

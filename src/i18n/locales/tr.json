@@ -5349,8 +5349,8 @@
       "preparedNewLogin": "Mevcut hesap kaydedildi. WorkBuddy oturum açma sayfasında açılacak; başka bir hesapla oturum açtığınızda hesap listesinde otomatik görünür.",
       "switching": "Geçiş yapılıyor…",
       "onlyOne": "WorkBuddy aynı anda yalnızca bir hesapla oturum açabilir. Geçiş yapmak için başka bir resmi kart ekleyin.",
-      "quitFirst": "Eklemeden önce WorkBuddy'den çıkın",
-      "quitFirstBody": "WorkBuddy'den tamamen çıkın (menü çubuğu / tepsi dahil), sonra tekrar Ekle'ye tıklayın; aksi halde mevcut oturumu geri yazar.",
+      "quitFirst": "Hesap değiştirmeden önce WorkBuddy'den çıkın",
+      "quitFirstBody": "WorkBuddy'den tamamen çıkın (menü çubuğu / tepsi dahil), sonra yeniden deneyin; aksi halde mevcut oturumu geri yazar.",
       "switched": "\"{{name}}\" hesabına geçildi. WorkBuddy bir sonraki açılışta bu hesabı kullanacak.",
       "switchFailed": "WorkBuddy hesabı değiştirilemedi"
     },

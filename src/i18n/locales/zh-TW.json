@@ -1231,8 +1231,8 @@
       "preparedNewLogin": "已收錄目前帳號，WorkBuddy 開啟後會停在登入頁。登入另一個帳號後，它會自動出現在帳號列表裡。",
       "switching": "正在切換…",
       "onlyOne": "WorkBuddy 同時只能登入一個帳號，加入另一張官方卡即可切換",
-      "quitFirst": "請先結束 WorkBuddy 再加入",
-      "quitFirstBody": "完全結束 WorkBuddy（含選單列／系統匣）後再點「加入」，否則它會把目前的登入寫回去。",
+      "quitFirst": "請先結束 WorkBuddy 再切換帳號",
+      "quitFirstBody": "完全結束 WorkBuddy（含選單列／系統匣）後再切換，否則它會把目前的登入寫回去。",
       "switched": "已切換到「{{name}}」，下次開啟 WorkBuddy 會使用這個帳號。",
       "switchFailed": "切換 WorkBuddy 帳號失敗"
     },

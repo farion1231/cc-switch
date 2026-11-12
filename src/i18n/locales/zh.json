@@ -1231,8 +1231,8 @@
       "preparedNewLogin": "已收录当前账号，WorkBuddy 打开后会停在登录页。登录另一个账号后，它会自动出现在账号列表里。",
       "switching": "正在切换…",
       "onlyOne": "WorkBuddy 同时只能登录一个账号，添加另一张官方卡即可切换",
-      "quitFirst": "请先退出 WorkBuddy 再添加",
-      "quitFirstBody": "完全退出 WorkBuddy（含菜单栏/托盘）后再点「添加」，否则它会把当前登录写回去。",
+      "quitFirst": "请先退出 WorkBuddy 再切换账号",
+      "quitFirstBody": "完全退出 WorkBuddy（含菜单栏/托盘）后再切换，否则它会把当前登录写回去。",
       "switched": "已切换到「{{name}}」，下次打开 WorkBuddy 会使用这个账号。",
       "switchFailed": "切换 WorkBuddy 账号失败"
     },
