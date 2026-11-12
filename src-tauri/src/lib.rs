@@ -1451,8 +1451,6 @@ pub fn run() {
                 crate::services::provider::codex_official_models::start_background_checks(
                     state.inner().clone(),
                 );
-                // Claude Code 在 /model 里换了 Stack 模型：MAX 窗口跟着换。
-                crate::mode::controller::start_claude_selection_watch(state.inner().clone());
 
                 // Backup and log maintenance can hold the database lock for a
                 // long time. Keep disk work off both the UI and async workers.

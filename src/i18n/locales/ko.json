@@ -1847,7 +1847,7 @@
     "modelContextCustom": "사용자 지정",
     "modelContextWindowPlaceholder": "기본값",
     "modelContextWindowLabel": "창 토큰 수",
-    "modelContextHelp": "Claude Code는 모델별로 1M만 지정할 수 있고, 나머지 모델은 하나의 창(CLAUDE_CODE_MAX_CONTEXT_TOKENS)을 공유합니다. 통합 시 /model에서 선택한 모델의 창을 사용하며(Default는 기본 공급자의 첫 번째 모델), 다른 모델을 고르면 바뀝니다. 사용자 지정에는 실제 토큰 수(예: 262144)를 입력합니다. 비워 두면 이 공급자의 CLAUDE_CODE_MAX_CONTEXT_TOKENS(없으면 200K)를 사용하고, 1000000 이상은 1M으로 저장됩니다. 모델 목록을 가져오면 비어 있는 창을 models.dev 값으로 채웁니다.",
+    "modelContextHelp": "Claude Code는 모델별로 1M을 지정할 수 있지만, 나머지 모델은 세션 간에 CLAUDE_CODE_MAX_CONTEXT_TOKENS를 공유합니다. 통합 시 1M이 아닌 모델 중 가장 작은 창을 사용하여 --model, 프로젝트 설정 또는 현재 세션에서만 다른 모델을 선택해도 해당 모델의 한도를 넘지 않도록 합니다. 창이 더 큰 비 1M 모델도 이 작은 한도를 공유합니다. 실행 중인 세션에 남은 값을 덮어쓰도록 200K도 명시적으로 기록합니다. 사용자 지정에는 실제 토큰 수(예: 262144)를 입력합니다. 비워 두면 이 공급자의 값(없으면 200K)을 사용하고, 1000000 이상은 1M으로 저장합니다. 모델 목록을 가져오면 비어 있는 창을 models.dev 값으로 채웁니다.",
     "fallbackModelLabel": "기본 대체 모델",
     "fallbackModelHelpDirect": "ANTHROPIC_MODEL에 기록되며 Claude Code 시작 시 사용할 주 모델입니다. 백그라운드 작업은 별도로 Haiku 등급을 사용합니다.",
     "fallbackModelHelp": "Sonnet, Opus, Fable 또는 Haiku 계층에 매핑되지 않는 요청은 이 모델을 통해 업스트림으로 전송됩니다.",

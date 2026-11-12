@@ -351,7 +351,7 @@ fn mapped_models(env: &Map<String, Value>) -> Vec<Found> {
 
 /// 给找到的模型加上前缀、显示名和窗口。非 1M 模型的窗口是模型自己配的，没有是行里的
 /// `CLAUDE_CODE_MAX_CONTEXT_TOKENS`，再没有是 200K。Claude Code 只有一个全局窗口，契约里
-/// 取 `/model` 选中的那个模型的（`mode::controller::stack_max_context`）。
+/// 取所有非 1M 模型的最小值（`mode::controller::stack_max_context`）。
 fn stack_models(key: &str, provider: &Provider, found: Vec<Found>) -> Vec<StackModel> {
     let row_window = claude_env(provider)
         .and_then(|env| env.get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"))
