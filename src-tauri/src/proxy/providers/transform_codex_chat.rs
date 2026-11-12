@@ -1759,7 +1759,21 @@ fn responses_tool_name(tool: &Value) -> Option<String> {
         .map(ToString::to_string)
 }
 
-fn responses_custom_tool_description(tool: &Value) -> String {
+/// 从 [`responses_custom_tool_description`] 生成的说明里取回嵌入的原工具定义。
+///
+/// 只认这个函数的原样输出：嵌入的是 `type: "custom"` 的对象，且重新生成的说明与原文逐字节
+/// 相同。客户端写成同样排版的普通说明（里面是别的 JSON）返回 None，按普通文本处理。
+pub(crate) fn parse_custom_tool_description(description: &str) -> Option<Value> {
+    let embedded = description
+        .strip_prefix(CUSTOM_TOOL_PRESERVED_METADATA_HEADING)?
+        .strip_prefix("\n```json\n")?
+        .strip_suffix("\n```")?;
+    let tool: Value = serde_json::from_str(embedded).ok()?;
+    let is_custom = tool.get("type").and_then(Value::as_str) == Some("custom");
+    (is_custom && responses_custom_tool_description(&tool) == description).then_some(tool)
+}
+
+pub(crate) fn responses_custom_tool_description(tool: &Value) -> String {
     let mut description = String::new();
     description.push_str(CUSTOM_TOOL_PRESERVED_METADATA_HEADING);
     description.push_str("\n```json\n");

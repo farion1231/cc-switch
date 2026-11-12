@@ -306,15 +306,29 @@ pub fn merge_tool_results(mut body: Value) -> Value {
 /// - 相同内容产生相同 ID，可能帮助 Copilot 去重
 /// - 找不到用户内容时退化为随机 UUID
 /// - 使用 UUID v4 格式
+#[cfg(test)]
 pub fn deterministic_request_id(body: &Value, session_id: &str) -> String {
+    deterministic_request_id_with(body, session_id, |parts| {
+        let mut hasher = Sha256::new();
+        for part in parts {
+            hasher.update(part);
+        }
+        hasher.finalize().into()
+    })
+}
+
+/// 同 `deterministic_request_id`（普通 SHA-256），摘要函数由调用方提供（隐私过滤打开时用带密钥的摘要，
+/// 见 `privacy_filter::keyed_digest`）。`digest` 的输入依次是 session ID 和最后一条用户内容。
+pub fn deterministic_request_id_with(
+    body: &Value,
+    session_id: &str,
+    digest: impl FnOnce(&[&[u8]]) -> [u8; 32],
+) -> String {
     let last_user_content = find_last_user_content(body);
 
     match last_user_content {
         Some(content) => {
-            let mut hasher = Sha256::new();
-            hasher.update(session_id.as_bytes());
-            hasher.update(content.as_bytes());
-            let result = hasher.finalize();
+            let result = digest(&[session_id.as_bytes(), content.as_bytes()]);
 
             let mut bytes = [0u8; 16];
             bytes.copy_from_slice(&result[..16]);

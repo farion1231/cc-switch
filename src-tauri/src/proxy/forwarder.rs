@@ -23,7 +23,9 @@ use super::{
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
     },
-    types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
+    types::{
+        CopilotOptimizerConfig, OptimizerConfig, PrivacyFilterConfig, ProxyStatus, RectifierConfig,
+    },
     ProxyError,
 };
 use crate::commands::{CodexOAuthState, CopilotAuthState, XaiOAuthState};
@@ -72,12 +74,16 @@ fn is_opencode_upstream(upstream_host: Option<&str>) -> bool {
 /// it must not change between the turns of a conversation. Claude Desktop hands
 /// CC Switch a fresh id on every request, which defeats that; hashing the
 /// conversation prefix keeps the id stable while still separating conversations.
-fn conversation_fingerprint(body: &Value) -> Option<String> {
-    let mut hasher = Sha256::new();
-    let mut fed = false;
+///
+/// The digest function is supplied by the caller: plain SHA-256 normally, a keyed
+/// HMAC while the privacy filter is on (see `RequestForwarder::content_digest`).
+fn conversation_fingerprint_with(
+    body: &Value,
+    digest: impl FnOnce(&[&[u8]]) -> [u8; 32],
+) -> Option<String> {
+    let mut parts: Vec<String> = Vec::with_capacity(2);
     if let Some(system) = body.get("system") {
-        hasher.update(without_cache_control(system).to_string().as_bytes());
-        fed = true;
+        parts.push(without_cache_control(system).to_string());
     }
     if let Some(first_user) = body
         .get("messages")
@@ -88,14 +94,36 @@ fn conversation_fingerprint(body: &Value) -> Option<String> {
                 .find(|m| m.get("role").and_then(Value::as_str) == Some("user"))
         })
     {
-        hasher.update(without_cache_control(first_user).to_string().as_bytes());
-        fed = true;
+        parts.push(without_cache_control(first_user).to_string());
     }
-    if !fed {
+    if parts.is_empty() {
         return None;
     }
-    let digest = format!("{:x}", hasher.finalize());
-    Some(format!("ccsw-{}", &digest[..32]))
+    use std::fmt::Write as _;
+    let parts: Vec<&[u8]> = parts.iter().map(|part| part.as_bytes()).collect();
+    let digest = digest(&parts);
+    // 只要前 16 字节（32 个十六进制字符）
+    let mut hex = String::with_capacity(32);
+    for byte in &digest[..16] {
+        let _ = write!(hex, "{byte:02x}");
+    }
+    Some(format!("ccsw-{hex}"))
+}
+
+/// [`conversation_fingerprint_with`] with plain SHA-256 (the behaviour without the
+/// privacy filter).
+#[cfg(test)]
+fn conversation_fingerprint(body: &Value) -> Option<String> {
+    conversation_fingerprint_with(body, sha256_digest)
+}
+
+/// 普通 SHA-256，`parts` 依次拼接
+fn sha256_digest(parts: &[&[u8]]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    for part in parts {
+        hasher.update(part);
+    }
+    hasher.finalize().into()
 }
 
 /// A stable session header the client already sends and the gateway recognises
@@ -392,6 +420,8 @@ pub struct RequestForwarder {
     /// 最近一次 `forward()` 定下的出站模型名，失败时随 [`ForwardError`] 交给日志。
     /// 每次 `forward()` 开头清空，映射失败等没走到出站的尝试留 None（日志回落到请求名）。
     last_outbound_model: std::sync::Mutex<Option<String>>,
+    /// 隐私过滤配置。在 [`Self::forward`] 里对定稿的上游请求体执行，每次尝试都会执行。
+    privacy_filter: PrivacyFilterConfig,
 }
 
 impl RequestForwarder {
@@ -527,6 +557,116 @@ impl RequestForwarder {
             stack_request: false,
             failover_chain: false,
             last_outbound_model: std::sync::Mutex::new(None),
+            privacy_filter: PrivacyFilterConfig::default(),
+        }
+    }
+
+    /// 设置隐私过滤配置
+    pub fn privacy_filter(mut self, config: PrivacyFilterConfig) -> Self {
+        self.privacy_filter = config;
+        self
+    }
+
+    /// 隐私过滤：开关打开时脱敏请求体。[`Self::forward`] 每次尝试都会调用：
+    ///
+    /// 1. `client`：模型映射之后、主要的协议转换和 Copilot 分类 / 合并之前，请求体还是客户端
+    ///    格式，分得清用户文本和工具结果（Copilot 会把用户文本并进 tool_result）。更早的
+    ///    Bedrock 预处理、MiMo 历史整理、分类器重试检查只在本地读写，不外发内容。
+    /// 2. `copilot`（只有 Copilot 优化器运行时）：孤儿 tool_result 降级成文本、tool_result 合并
+    ///    之后，确定性请求 ID 之前，让降级出来的文本也先过滤再参与哈希。
+    /// 3. `override`（只有供应商配置了本地 body 覆写时）：合并前过滤覆写的临时副本，见
+    ///    [`Self::privacy_filtered_overrides`]。
+    /// 4. `upstream`：所有变换（格式转换、历史回填、压缩摘要回放、本地 body 覆写）之后、
+    ///    日志哈希和序列化之前，兜住代理自己补进请求的内容。转换会把孤儿工具结果降级成用户
+    ///    文本，这些内容在这一遍按用户文本过滤（宁可多脱敏）。
+    ///
+    /// 内容派生的标识另见 [`Self::content_digest`]：过滤只管正文，转换后才拼出来的命中
+    /// （例如多个 system 块拼在一起）无法回头改已经算好的指纹，所以指纹改用带密钥的摘要。
+    ///
+    /// `embedded_custom_tools` 只在出口那一遍、且做过 Responses → Chat / Anthropic 转换时为
+    /// true，见 [`super::privacy_filter::RedactOptions::embedded_custom_tools`]。
+    /// 替换结果与原文相同的命中不改写、不计数。占位符跟随界面语言（没设过语言时按系统区域，
+    /// 与托盘一致）。
+    fn apply_privacy_filter(
+        &self,
+        app_type: &AppType,
+        body: &mut Value,
+        stage: &str,
+        embedded_custom_tools: bool,
+    ) {
+        if !self.privacy_filter.enabled {
+            return;
+        }
+        let language = crate::tray::tray_language();
+        let placeholders = super::privacy_filter::Placeholders::for_language(&language);
+        let count = super::privacy_filter::redact_request_body_with(
+            body,
+            placeholders,
+            super::privacy_filter::RedactOptions {
+                tool_results: self.privacy_filter.filter_tool_results,
+                embedded_custom_tools,
+            },
+        );
+        if count > 0 {
+            log::info!(
+                "[{}] Privacy filter redacted {} item(s) in {} body, session: {}",
+                app_type.as_str(),
+                count,
+                stage,
+                self.session_id
+            );
+        }
+    }
+
+    /// 发往上游的内容派生标识（Copilot 确定性请求 ID、OpenCode 会话指纹）用的摘要。
+    /// 隐私过滤打开时用带进程内密钥的 HMAC，上游拿不到密钥，没法用它穷举被遮盖的短口令；
+    /// 代价是这些标识在应用重启后会变。关闭时保持原来的普通 SHA-256。
+    fn content_digest(&self, parts: &[&[u8]]) -> [u8; 32] {
+        if self.privacy_filter.enabled {
+            super::privacy_filter::keyed_digest(parts)
+        } else {
+            sha256_digest(parts)
+        }
+    }
+
+    /// OpenCode 网关的会话指纹，见 [`conversation_fingerprint_with`]
+    fn opencode_fingerprint(&self, body: &Value) -> Option<String> {
+        conversation_fingerprint_with(body, |parts| self.content_digest(parts))
+    }
+
+    /// Copilot 确定性请求 ID，见 [`super::copilot_optimizer::deterministic_request_id_with`]
+    fn copilot_request_id(&self, body: &Value, session_id: &str) -> String {
+        super::copilot_optimizer::deterministic_request_id_with(body, session_id, |parts| {
+            self.content_digest(parts)
+        })
+    }
+
+    /// Copilot 优化的第 2、3 步：清洗孤立 tool_result（降级成文本）、合并 tool_result 与文本，
+    /// 然后对结果再过滤一遍隐私，降级出来的文本在参与确定性请求 ID 之前就已经脱敏。
+    fn copilot_rewrite_tool_results(&self, app_type: &AppType, body: Value) -> Value {
+        let mut body = super::copilot_optimizer::sanitize_orphan_tool_results(body);
+        if self.copilot_optimizer_config.tool_result_merging {
+            body = super::copilot_optimizer::merge_tool_results(body);
+        }
+        self.apply_privacy_filter(app_type, &mut body, "copilot", false);
+        body
+    }
+
+    /// 本地 body 覆写是在客户端那一遍之后才合并进请求体的内容。合并前先把一份临时副本按普通文本
+    /// 过滤（不识别嵌入的 custom tool 定义），出口那一遍即使把其中排版相同的说明当成嵌入定义，
+    /// 原文也已经替换过了。持久化的供应商配置不改；只用到 body，headers 不参与合并。
+    fn privacy_filtered_overrides(
+        &self,
+        app_type: &AppType,
+        overrides: &LocalProxyRequestOverrides,
+    ) -> LocalProxyRequestOverrides {
+        let mut body = overrides.body.clone();
+        if let Some(body) = body.as_mut() {
+            self.apply_privacy_filter(app_type, body, "override", false);
+        }
+        LocalProxyRequestOverrides {
+            headers: Default::default(),
+            body,
         }
     }
 
@@ -1574,6 +1714,8 @@ impl RequestForwarder {
 
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
         let mut mapped_body = normalize_thinking_type(mapped_body);
+        // 隐私过滤第一遍：必须在 Copilot 分类 / 合并和内容派生的请求 ID 之前
+        self.apply_privacy_filter(app_type, &mut mapped_body, "client", false);
         let is_copilot_codex_responses = matches!(app_type, AppType::Codex)
             && is_copilot
             && super::providers::is_codex_responses_endpoint(endpoint);
@@ -1599,7 +1741,7 @@ impl RequestForwarder {
             && native_session_header(headers).is_none()
             && is_opencode_upstream(base_url_host.as_deref())
         {
-            conversation_fingerprint(&mapped_body)
+            self.opencode_fingerprint(&mapped_body)
         } else {
             None
         };
@@ -1663,12 +1805,9 @@ impl RequestForwarder {
 
             // 2. 孤立 tool_result 清理 — 分类完成后再清洗
             //    防止上游 API 因不匹配的 tool_result 报错导致重试/重复计费
-            mapped_body = super::copilot_optimizer::sanitize_orphan_tool_results(mapped_body);
-
             // 3. Tool result 合并 — 将 [tool_result, text] 变为 [tool_result(含text)]
-            if self.copilot_optimizer_config.tool_result_merging {
-                mapped_body = super::copilot_optimizer::merge_tool_results(mapped_body);
-            }
+            //    之后再过滤一遍隐私，降级出来的文本先脱敏再参与下面的确定性请求 ID
+            mapped_body = self.copilot_rewrite_tool_results(app_type, mapped_body);
 
             // 4. Warmup 小模型降级
             if self.copilot_optimizer_config.warmup_downgrade && classification.is_warmup {
@@ -1714,10 +1853,7 @@ impl RequestForwarder {
                 })
                 .unwrap_or_default();
             let det_request_id = if self.copilot_optimizer_config.deterministic_request_id {
-                Some(super::copilot_optimizer::deterministic_request_id(
-                    &mapped_body,
-                    &session_id,
-                ))
+                Some(self.copilot_request_id(&mapped_body, &session_id))
             } else {
                 None
             };
@@ -2215,11 +2351,25 @@ impl RequestForwarder {
                 .as_ref()
                 .and_then(|meta| meta.local_proxy_request_overrides.as_ref())
             {
+                let redacted_overrides;
+                let overrides = if self.privacy_filter.enabled && overrides.body.is_some() {
+                    redacted_overrides = self.privacy_filtered_overrides(app_type, overrides);
+                    &redacted_overrides
+                } else {
+                    overrides
+                };
                 if apply_local_proxy_body_overrides(&mut filtered_body, overrides) {
                     filtered_body = prepare_upstream_request_body(filtered_body);
                 }
             }
         }
+        // 请求体到这里定稿；之后只读不改（日志哈希、序列化）
+        self.apply_privacy_filter(
+            app_type,
+            &mut filtered_body,
+            "upstream",
+            codex_responses_to_chat || codex_responses_to_anthropic,
+        );
         // 出站 body 定稿后刷新真值（覆盖 Codex chat 上游模型覆写、转换层模型改写）
         if let Some(m) = filtered_body
             .get("model")
@@ -5045,6 +5195,7 @@ mod tests {
             stack_request: false,
             failover_chain: false,
             last_outbound_model: std::sync::Mutex::new(None),
+            privacy_filter: PrivacyFilterConfig::default(),
         }
     }
 
@@ -5072,6 +5223,81 @@ mod tests {
             );
         }
         assert!(!forwarder.maps_codex_failover_model(&AppType::GrokBuild, "/responses"));
+    }
+
+    /// 隐私过滤打开时，发往上游的内容派生标识用带进程内密钥的摘要：上游知道模板也没法离线
+    /// 穷举口令。这里的 system 拆成两块，各自都不命中，拼起来才是 `password =\n4937`，
+    /// 正文过滤只能在转换后遮住它，已经算好的指纹靠密钥保护。关闭时保持原来的 SHA-256。
+    #[test]
+    fn content_derived_ids_are_keyed_while_privacy_filter_is_on() {
+        let on =
+            test_forwarder(Duration::ZERO, Duration::ZERO).privacy_filter(PrivacyFilterConfig {
+                enabled: true,
+                filter_tool_results: false,
+            });
+        let off = test_forwarder(Duration::ZERO, Duration::ZERO);
+
+        let body = json!({
+            "system": [
+                { "type": "text", "text": "password =" },
+                { "type": "text", "text": "4937" }
+            ],
+            "messages": [{ "role": "user", "content": "hi" }]
+        });
+        let plain = conversation_fingerprint(&body).expect("fingerprint");
+        assert_eq!(
+            off.opencode_fingerprint(&body).as_deref(),
+            Some(plain.as_str())
+        );
+        let keyed = on.opencode_fingerprint(&body).expect("fingerprint");
+        assert_ne!(keyed, plain);
+        assert!(keyed.starts_with("ccsw-"), "{keyed}");
+        assert_eq!(keyed.len(), plain.len());
+        // 同一进程内稳定，会话内各轮仍然一致
+        assert_eq!(
+            on.opencode_fingerprint(&body).as_deref(),
+            Some(keyed.as_str())
+        );
+
+        let request = json!({ "messages": [{ "role": "user", "content": "password = 4937" }] });
+        assert_eq!(
+            off.copilot_request_id(&request, "s"),
+            super::super::copilot_optimizer::deterministic_request_id(&request, "s")
+        );
+        let keyed_id = on.copilot_request_id(&request, "s");
+        assert_ne!(keyed_id, off.copilot_request_id(&request, "s"));
+        assert_eq!(keyed_id, on.copilot_request_id(&request, "s"));
+    }
+
+    /// Copilot 清洗会把孤儿 tool_result 降级成用户文本。按 forward() 用的同一组函数、同一顺序：
+    /// 客户端那一遍（子开关关闭，工具结果保留）→ 清洗 / 合并并再过滤 → 确定性请求 ID。
+    /// 只差在被遮盖口令上的两个请求，ID 相同，正文里也没有口令。
+    #[test]
+    fn copilot_orphan_tool_results_are_redacted_before_the_request_id() {
+        let fwd =
+            test_forwarder(Duration::ZERO, Duration::ZERO).privacy_filter(PrivacyFilterConfig {
+                enabled: true,
+                filter_tool_results: false,
+            });
+        let id = |password: &str| {
+            let mut body = json!({
+                "metadata": { "session_id": "known-session" },
+                "messages": [
+                    { "role": "assistant", "content": [{ "type": "text", "text": "previous turn" }] },
+                    { "role": "user", "content": [
+                        { "type": "tool_result", "tool_use_id": "missing",
+                          "content": format!("password = {password}") }
+                    ]}
+                ]
+            });
+            fwd.apply_privacy_filter(&AppType::Claude, &mut body, "client", false);
+            // 子开关关闭：客户端那一遍不碰工具结果
+            assert!(body.to_string().contains(password), "{body}");
+            let body = fwd.copilot_rewrite_tool_results(&AppType::Claude, body);
+            assert!(!body.to_string().contains(password), "{body}");
+            fwd.copilot_request_id(&body, "known-session")
+        };
+        assert_eq!(id("4937"), id("4938"));
     }
 
     #[tokio::test]
@@ -7608,6 +7834,223 @@ mod tests {
             upstream.seen.lock().await.pop().expect("upstream request")
         }
 
+        /// 隐私过滤在转发器出口执行：转换成哪种上游格式都过滤，CC Switch 自己包装的
+        /// 压缩摘要和工具说明也过滤；工具结果仍跟随子开关。客户端请求体不受影响。
+        #[tokio::test]
+        async fn privacy_filter_runs_on_the_final_upstream_body() {
+            const SECRET: &str = "Hunter2xyz";
+            let upstream = upstream().await;
+            let request = json!({
+                "model": "listed",
+                "input": [
+                    { "role": "user", "content": [
+                        { "type": "input_text", "text": format!("我的密码是 {SECRET}") }
+                    ]},
+                    { "type": "compaction", "encrypted_content":
+                        crate::proxy::providers::codex_compaction::encode_compaction_summary(
+                            &format!("earlier: password = {SECRET}")
+                        ) },
+                    { "type": "function_call", "call_id": "c1", "name": "lookup", "arguments": "{}" },
+                    { "type": "function_call_output", "call_id": "c1",
+                      "output": format!("password: {SECRET}") }
+                ],
+                "tools": [{
+                    "type": "function",
+                    "name": "lookup",
+                    "description": format!("logs in with password = {SECRET}"),
+                    "parameters": { "type": "object", "properties": {} }
+                }],
+                "stream": false
+            });
+            let config = |filter_tool_results| PrivacyFilterConfig {
+                enabled: true,
+                filter_tool_results,
+            };
+            for api_format in ["openai_responses", "openai_chat", "anthropic"] {
+                // 总开关打开、子开关关闭：只剩工具结果里的原文
+                let seen = send(
+                    &forwarder(false).privacy_filter(config(false)),
+                    &upstream,
+                    provider(&upstream, api_format),
+                    "/responses",
+                    request.clone(),
+                )
+                .await;
+                let sent = seen.body.to_string();
+                let decoded = decoded_compaction_summaries(&seen.body).join("\n");
+                assert_eq!(
+                    format!("{sent}{decoded}").matches(SECRET).count(),
+                    1,
+                    "{api_format}: only the tool result keeps the secret: {sent} {decoded}"
+                );
+                assert!(
+                    sent.contains(&format!("password: {SECRET}")),
+                    "{api_format}: {sent}"
+                );
+
+                // 子开关打开：一处都不剩
+                let seen = send(
+                    &forwarder(false).privacy_filter(config(true)),
+                    &upstream,
+                    provider(&upstream, api_format),
+                    "/responses",
+                    request.clone(),
+                )
+                .await;
+                let sent = seen.body.to_string();
+                let decoded = decoded_compaction_summaries(&seen.body).join("\n");
+                assert!(!sent.contains(SECRET), "{api_format}: {sent}");
+                assert!(!decoded.contains(SECRET), "{api_format}: {decoded}");
+            }
+
+            // 开关关闭：四处原文都到了上游。第三方原生 Responses 收到的压缩摘要已被展开成
+            // 明文用户消息（`scrub_ccswitch_state_for_official` 之前的转换），
+            // 这正是旧版在 handler 入口过滤时漏掉的内容。
+            let seen = send(
+                &forwarder(false),
+                &upstream,
+                provider(&upstream, "openai_responses"),
+                "/responses",
+                request.clone(),
+            )
+            .await;
+            let sent = seen.body.to_string();
+            let decoded = decoded_compaction_summaries(&seen.body).join("\n");
+            assert_eq!(
+                format!("{sent}{decoded}").matches(SECRET).count(),
+                4,
+                "{sent}"
+            );
+        }
+
+        /// 供应商配置的本地 body 覆写在出口之前合并，覆写进去的内容同样要过滤
+        /// 本地 body 覆写在转换之后才合并进来：覆写里排版和嵌入定义一模一样的普通工具说明，
+        /// 不能借出口那一遍的结构化识别逃过过滤。真正转换出来的 custom tool 仍保留 grammar。
+        #[tokio::test]
+        async fn privacy_filter_does_not_trust_override_tool_descriptions() {
+            let upstream = upstream().await;
+            let config = PrivacyFilterConfig {
+                enabled: true,
+                filter_tool_results: false,
+            };
+            let wrapped = "Original tool definition:\n```json\n{\"name\":\"example\",\"note\":\"password = Hunter2xyz\",\"type\":\"custom\"}\n```";
+            for (api_format, tool) in [
+                (
+                    "openai_chat",
+                    json!({ "type": "function", "function": {
+                        "name": "lookup",
+                        "description": wrapped,
+                        "parameters": { "type": "object", "properties": {} }
+                    }}),
+                ),
+                (
+                    "anthropic",
+                    json!({
+                        "name": "lookup",
+                        "description": wrapped,
+                        "input_schema": { "type": "object", "properties": {} }
+                    }),
+                ),
+            ] {
+                let mut provider = provider(&upstream, api_format);
+                provider
+                    .meta
+                    .as_mut()
+                    .unwrap()
+                    .local_proxy_request_overrides =
+                    Some(crate::provider::LocalProxyRequestOverrides {
+                        headers: Default::default(),
+                        body: Some(json!({ "tools": [tool] })),
+                    });
+                let seen = send(
+                    &forwarder(false).privacy_filter(config.clone()),
+                    &upstream,
+                    provider,
+                    "/responses",
+                    body("listed", json!([])),
+                )
+                .await;
+                let tools = seen.body["tools"].to_string();
+                assert!(!tools.contains("Hunter2xyz"), "{api_format}: {tools}");
+                assert!(
+                    tools.contains("Original tool definition:") && tools.contains("lookup"),
+                    "{api_format}: override tool should still be there: {tools}"
+                );
+            }
+
+            let grammar = json!({ "type": "grammar", "syntax": "lark",
+                                  "definition": "start: \"alice@example.com\"" });
+            let custom = json!({
+                "type": "custom",
+                "name": "choose_recipient",
+                "description": "Choose the recipient. 我的密码是 Hunter2xyz",
+                "format": grammar
+            });
+            for api_format in ["openai_chat", "anthropic"] {
+                let seen = send(
+                    &forwarder(false).privacy_filter(config.clone()),
+                    &upstream,
+                    provider(&upstream, api_format),
+                    "/responses",
+                    body("listed", json!([custom.clone()])),
+                )
+                .await;
+                let tools = seen.body["tools"].to_string();
+                assert!(!tools.contains("Hunter2xyz"), "{api_format}: {tools}");
+                assert!(
+                    tools.contains("alice@example.com"),
+                    "{api_format}: grammar must survive: {tools}"
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn privacy_filter_covers_local_body_overrides() {
+            let upstream = upstream().await;
+            for api_format in ["openai_responses", "openai_chat", "anthropic"] {
+                let mut provider = provider(&upstream, api_format);
+                provider
+                    .meta
+                    .as_mut()
+                    .unwrap()
+                    .local_proxy_request_overrides =
+                    Some(crate::provider::LocalProxyRequestOverrides {
+                        headers: Default::default(),
+                        body: Some(json!({ "instructions": "我的密码是 Hunter2xyz" })),
+                    });
+                let seen = send(
+                    &forwarder(false).privacy_filter(PrivacyFilterConfig {
+                        enabled: true,
+                        filter_tool_results: false,
+                    }),
+                    &upstream,
+                    provider,
+                    "/responses",
+                    body("listed", json!([])),
+                )
+                .await;
+                let sent = seen.body.to_string();
+                assert!(!sent.contains("Hunter2xyz"), "{api_format}: {sent}");
+                // 占位符跟随系统语言，只断言结构
+                let instructions = seen.body["instructions"].as_str().unwrap_or_default();
+                assert!(
+                    instructions.starts_with("我的密码是 ["),
+                    "{api_format}: {sent}"
+                );
+            }
+        }
+
+        /// 请求体里 CC Switch 包装的压缩摘要解开后的正文
+        fn decoded_compaction_summaries(body: &Value) -> Vec<String> {
+            body["input"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|item| item["encrypted_content"].as_str())
+                .filter_map(crate::proxy::providers::codex_compaction::decode_compaction_summary)
+                .collect()
+        }
+
         #[tokio::test]
         async fn stacked_requests_drop_chatgpt_identity_but_keep_native_responses_beta_marker() {
             let upstream = upstream().await;
@@ -9080,6 +9523,94 @@ mod tests {
             );
             assert_eq!(breaker(&fwd, "p1").await, Some((1, 1)));
             assert_eq!(breaker(&fwd, "p2").await, Some((1, 0)));
+        }
+
+        /// 原生 Anthropic 供应商走 hyper 发送；第一家 500 后换第二家重发，两次发送都经过过滤，
+        /// 第二家的本地 body 覆写注入的内容也过滤。工具结果跟随子开关（关闭）原样保留。
+        #[tokio::test]
+        async fn privacy_filter_runs_on_every_attempt_over_hyper() {
+            let up1 = upstream(vec![error(500, "boom")]).await;
+            let up2 = upstream(vec![ok()]).await;
+            let first_provider = provider("p1", &up1);
+            for format in [None, Some("anthropic")] {
+                assert!(should_preserve_exact_header_case(
+                    "Claude",
+                    &first_provider,
+                    format,
+                    false
+                ));
+            }
+            let mut second_provider = provider("p2", &up2);
+            second_provider.meta = Some(crate::provider::ProviderMeta {
+                local_proxy_request_overrides: Some(crate::provider::LocalProxyRequestOverrides {
+                    headers: Default::default(),
+                    body: Some(json!({ "system": "我的密码是 Hunter2xyz" })),
+                }),
+                ..Default::default()
+            });
+            let fwd = forwarder(2, "p1").privacy_filter(PrivacyFilterConfig {
+                enabled: true,
+                filter_tool_results: false,
+            });
+            let body = json!({
+                "model": "claude-sonnet-4-5",
+                "max_tokens": 1000,
+                "messages": [
+                    { "role": "user", "content": "邮箱 alice@example.com" },
+                    { "role": "assistant", "content": [
+                        { "type": "tool_use", "id": "t1", "name": "read", "input": {} }
+                    ]},
+                    { "role": "user", "content": [
+                        { "type": "tool_result", "tool_use_id": "t1", "content": "password: Hunter2xyz" },
+                        { "type": "text", "text": "password = Qwer1234" }
+                    ]}
+                ]
+            });
+
+            let result = send(&fwd, vec![first_provider, second_provider], body).await;
+            assert_eq!(result.ok().map(|r| r.provider.id), Some("p2".into()));
+
+            assert_eq!(up1.requests.lock().await.len(), 1);
+            assert_eq!(up2.requests.lock().await.len(), 1);
+            let first = up1.requests.lock().await.pop().expect("first attempt");
+            let second = up2.requests.lock().await.pop().expect("second attempt");
+            for (attempt, sent) in [("p1", &first), ("p2", &second)] {
+                let text = sent.to_string();
+                assert!(!text.contains("alice@example.com"), "{attempt}: {text}");
+                assert!(!text.contains("Qwer1234"), "{attempt}: {text}");
+                assert!(
+                    sent["messages"][0].to_string().contains("邮箱 ["),
+                    "{attempt}: {text}"
+                );
+                assert_eq!(
+                    sent["messages"].as_array().map(Vec::len),
+                    Some(3),
+                    "{attempt}"
+                );
+                assert_eq!(sent["messages"][1]["content"][0]["id"], "t1", "{attempt}");
+                assert_eq!(
+                    sent["messages"][2]["content"][0]["tool_use_id"], "t1",
+                    "{attempt}"
+                );
+                let user_text = &sent["messages"][2]["content"][1];
+                assert_eq!(user_text["type"], "text", "{attempt}: {text}");
+                assert!(
+                    user_text["text"]
+                        .as_str()
+                        .is_some_and(|t| t.starts_with("password = [")),
+                    "{attempt}: {text}"
+                );
+                assert!(
+                    sent["messages"][2]["content"][0]
+                        .to_string()
+                        .contains("password: Hunter2xyz"),
+                    "{attempt}: tool result should be kept: {text}"
+                );
+            }
+            assert!(first.get("system").is_none(), "{first}");
+            let system = second["system"].to_string();
+            assert!(system.contains("我的密码是 ["), "{system}");
+            assert!(!system.contains("Hunter2xyz"), "{system}");
         }
 
         #[tokio::test]
