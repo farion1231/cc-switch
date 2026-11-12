@@ -351,7 +351,7 @@ fn mapped_models(env: &Map<String, Value>) -> Vec<Found> {
 
 /// 给找到的模型加上前缀、显示名和窗口。非 1M 模型的窗口是模型自己配的，没有是行里的
 /// `CLAUDE_CODE_MAX_CONTEXT_TOKENS`，再没有是 200K。Claude Code 只有一个全局窗口，契约里
-/// 取所有非 1M 模型里最小的（`mode::controller::with_stack_models`）。
+/// 取 `/model` 选中的那个模型的（`mode::controller::stack_max_context`）。
 fn stack_models(key: &str, provider: &Provider, found: Vec<Found>) -> Vec<StackModel> {
     let row_window = claude_env(provider)
         .and_then(|env| env.get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"))
@@ -594,6 +594,18 @@ pub fn claude_route_default(members: &[Member]) -> Option<StackModel> {
     claude_models(&route.key, &route.provider)
         .into_iter()
         .next()
+}
+
+/// `/model` 存下的选择 `selected` 对应的 Stack 模型。1M 标记的大小写不论（Claude Code 存的
+/// 可能是 `[1m]`）；不是发布的 Stack 模型（档位别名、别的模型名、已移除成员的 id）时没有。
+pub fn claude_selected<'a>(stack: &'a [StackModel], selected: &str) -> Option<&'a StackModel> {
+    let selected = strip_one_m_suffix_for_upstream(selected.trim());
+    if !selected.starts_with(CLAUDE_PREFIX) {
+        return None;
+    }
+    stack
+        .iter()
+        .find(|model| strip_one_m_suffix_for_upstream(&model.id) == selected)
 }
 
 /// 这个应用在 Stack 模式（代理模式且 Stack 模式开着）。读不出状态按不在处理。
