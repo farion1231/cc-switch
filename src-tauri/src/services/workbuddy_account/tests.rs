@@ -925,3 +925,50 @@ fn plain_new_login_and_removal_cancel_a_pending_reauth() {
     fixture.sign_in("u-4", 0);
     assert_eq!(manager.live_state().reauth, None);
 }
+
+#[test]
+fn user_data_dir_follows_the_signed_in_account() {
+    let fixture = Fixture::new();
+    let root = fixture.data_dir.join("workbuddy");
+    // 没登录：数据目录本身
+    assert_eq!(user_data_dir_in(&fixture.paths, &root), root);
+
+    fixture.sign_in("u-1", 0);
+    assert_eq!(
+        user_data_dir_in(&fixture.paths, &root),
+        root.join("user-u-1-personal")
+    );
+
+    // 企业账号按 enterpriseId 分目录
+    let mut doc: Value = serde_json::from_str(&info_doc("u-2", 0)).unwrap();
+    doc["account"]["enterpriseId"] = json!("ent-9");
+    std::fs::write(fixture.paths.info(), doc.to_string()).unwrap();
+    assert_eq!(
+        user_data_dir_in(&fixture.paths, &root),
+        root.join("user-u-2-ent-9")
+    );
+
+    // 登出标记在时 WorkBuddy 当没登录
+    std::fs::write(fixture.paths.logout_marker(), "{}").unwrap();
+    assert_eq!(user_data_dir_in(&fixture.paths, &root), root);
+}
+
+#[test]
+fn user_data_dir_falls_back_when_the_account_is_unreadable() {
+    let fixture = Fixture::new();
+    let root = fixture.data_dir.join("workbuddy");
+    for account in [
+        json!({"uid": envelope()}),
+        json!({"uid": "../escape"}),
+        json!({"uid": "a/b"}),
+    ] {
+        std::fs::write(
+            fixture.paths.info(),
+            json!({ "account": account }).to_string(),
+        )
+        .unwrap();
+        assert_eq!(user_data_dir_in(&fixture.paths, &root), root);
+    }
+    std::fs::write(fixture.paths.info(), "not json").unwrap();
+    assert_eq!(user_data_dir_in(&fixture.paths, &root), root);
+}

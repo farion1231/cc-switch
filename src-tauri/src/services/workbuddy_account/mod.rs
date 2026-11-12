@@ -1043,6 +1043,41 @@ fn identity(doc: &Value) -> Option<Identity> {
     })
 }
 
+/// WorkBuddy 当前账号的数据目录（WorkBuddy `WorkbuddyPathService.userDir`）：登录后是
+/// `<数据目录>/user-<uid>-<enterpriseId，没有就是 personal>`，没登录或认不出账号时就是数据目录
+/// 本身（WorkBuddy `resolveUserDataDir` 的回落）。用户级说明 `MEMORY.md` 放在这里，换号即换文件。
+pub fn user_data_dir() -> PathBuf {
+    user_data_dir_in(
+        &WorkBuddyPaths::system(),
+        &crate::workbuddy_config::data_dir(),
+    )
+}
+
+fn user_data_dir_in(paths: &WorkBuddyPaths, root: &Path) -> PathBuf {
+    if paths.logout_marker().exists() {
+        return root.to_path_buf();
+    }
+    let account = std::fs::read(paths.info())
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .and_then(|mut doc| doc.get_mut("account").map(Value::take));
+    let Some(account) = account else {
+        return root.to_path_buf();
+    };
+    let Some(uid) = plain(account.get("uid")).filter(|uid| is_path_segment(uid)) else {
+        return root.to_path_buf();
+    };
+    let scope = plain(account.get("enterpriseId"))
+        .filter(|scope| is_path_segment(scope))
+        .unwrap_or_else(|| "personal".to_string());
+    root.join(format!("user-{uid}-{scope}"))
+}
+
+/// 拼进目录名的明文字段：不能带路径分隔符或 `..`（`.info` 是外部文件）。
+fn is_path_segment(value: &str) -> bool {
+    !value.contains(['/', '\\']) && !value.contains("..")
+}
+
 fn is_observation_name(name: &str) -> bool {
     name.len() > OBSERVATION_PREFIX.len() + OBSERVATION_SUFFIX.len()
         && name.starts_with(OBSERVATION_PREFIX)

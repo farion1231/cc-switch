@@ -282,7 +282,7 @@ fn workbuddy_refuses_to_take_over_a_model_id_it_does_not_own() {
 }
 
 #[test]
-fn workbuddy_prompts_project_to_codebuddy_md() {
+fn workbuddy_prompts_project_to_user_memory_md() {
     let _guard = test_mutex().lock().unwrap();
     reset_test_fs();
     let state = create_test_state().unwrap();
@@ -290,8 +290,9 @@ fn workbuddy_prompts_project_to_codebuddy_md() {
         "id": "p", "name": "Rules", "content": "be brief", "enabled": true
     }))
     .unwrap();
+    // 没登录 WorkBuddy 时写数据目录本身的 MEMORY.md（登录后按账号分目录，见 workbuddy_account）
     PromptService::upsert_prompt(&state, AppType::WorkBuddy, "p", prompt).unwrap();
-    let path = ensure_test_home().join(".workbuddy/CODEBUDDY.md");
+    let path = ensure_test_home().join(".workbuddy/MEMORY.md");
     assert_eq!(fs::read_to_string(path).unwrap(), "be brief");
 }
 
