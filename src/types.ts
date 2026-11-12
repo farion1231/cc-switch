@@ -320,6 +320,7 @@ export interface VisibleApps {
   hermes: boolean;
   pi: boolean;
   mcode: boolean;
+  deveco: boolean;
   kimi: boolean;
   dsh?: boolean;
   agy: boolean;
@@ -515,6 +516,8 @@ export interface Settings {
   hermesConfigDir?: string;
   // 覆盖 Pi agent 配置目录（可选）
   piConfigDir?: string;
+  // 覆盖 DevEco Code 配置目录（可选）
+  devecoConfigDir?: string;
   // 覆盖 Oh My Pi agent 配置目录（可选）
   ompConfigDir?: string;
   // 覆盖 DeepSeek Harness 主目录（相当于 DSH_HOME，可选）
@@ -841,6 +844,7 @@ export interface McpServerSpec {
 // v3.7.0: MCP 服务器应用启用状态
 export interface McpApps {
   mcode?: boolean;
+  deveco?: boolean;
   kimi?: boolean;
   dsh?: boolean;
   agy?: boolean;

@@ -80,6 +80,27 @@ impl Database {
         &self,
         prompts: &IndexMap<String, Prompt>,
     ) -> Result<(), AppError> {
+        self.save_prompts_for_app("mcode", prompts)
+    }
+
+    // Same contract as `save_mcode_prompts`, for DevEco Code's live file.
+    pub(crate) fn save_deveco_prompts(
+        &self,
+        prompts: &IndexMap<String, Prompt>,
+    ) -> Result<(), AppError> {
+        self.save_prompts_for_app("deveco", prompts)
+    }
+
+    /// Replace every prompt row for one app in a single transaction.
+    ///
+    /// Callers hold their feature lock so the native write and this commit are
+    /// atomic with respect to each other: if the commit fails the native file is
+    /// restored, and if the native write fails nothing is committed.
+    pub(crate) fn save_prompts_for_app(
+        &self,
+        app_type: &str,
+        prompts: &IndexMap<String, Prompt>,
+    ) -> Result<(), AppError> {
         let mut conn = lock_conn!(self.conn);
         let transaction = conn
             .transaction()
@@ -89,9 +110,10 @@ impl Database {
                 .execute(
                     "INSERT OR REPLACE INTO prompts (
                     id, app_type, name, content, description, enabled, created_at, updated_at
-                ) VALUES (?1, 'mcode', ?2, ?3, ?4, ?5, ?6, ?7)",
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     params![
                         prompt.id,
+                        app_type,
                         prompt.name,
                         prompt.content,
                         prompt.description,

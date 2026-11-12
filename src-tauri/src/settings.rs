@@ -56,6 +56,8 @@ pub struct VisibleApps {
     #[serde(default = "default_true")]
     pub mcode: bool,
     #[serde(default = "default_true")]
+    pub deveco: bool,
+    #[serde(default = "default_true")]
     pub kimi: bool,
     #[serde(default = "default_true")]
     pub dsh: bool,
@@ -78,6 +80,7 @@ impl Default for VisibleApps {
             hermes: false, // 默认不显示，需用户手动启用
             pi: true,
             mcode: true,
+            deveco: true,
             kimi: true,
             dsh: true,
             agy: true,
@@ -101,6 +104,7 @@ impl VisibleApps {
             AppType::Hermes => self.hermes,
             AppType::Pi => self.pi,
             AppType::Mcode => self.mcode,
+            AppType::DevEco => self.deveco,
             AppType::Kimi => self.kimi,
             AppType::Dsh => self.dsh,
             AppType::Agy => self.agy,
@@ -625,6 +629,8 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pi_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deveco_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub omp_config_dir: Option<String>,
     /// DeepSeek Harness 主目录（相当于 `DSH_HOME`，优先于环境变量）
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -776,6 +782,7 @@ impl Default for AppSettings {
             openclaw_config_dir: None,
             hermes_config_dir: None,
             pi_config_dir: None,
+            deveco_config_dir: None,
             omp_config_dir: None,
             dsh_config_dir: None,
             current_provider_claude: None,
@@ -869,6 +876,13 @@ impl AppSettings {
 
         self.pi_config_dir = self
             .pi_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        self.deveco_config_dir = self
+            .deveco_config_dir
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
@@ -1375,6 +1389,14 @@ pub fn get_opencode_override_dir() -> Option<PathBuf> {
         .map(|p| resolve_override_path(p))
 }
 
+pub fn get_deveco_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .deveco_config_dir
+        .as_ref()
+        .map(|p| resolve_override_path(p))
+}
+
 pub fn get_openclaw_override_dir() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
     settings
@@ -1505,6 +1527,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::OpenCode => settings.current_provider_opencode.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
         AppType::Hermes => settings.current_provider_hermes.clone(),
+        AppType::DevEco => None,
         AppType::Agy => settings.current_provider_agy.clone(),
         AppType::Copilot => settings.current_provider_copilot.clone(),
         AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp => None,
@@ -1526,6 +1549,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::OpenCode => settings.current_provider_opencode = id_owned.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
+        AppType::DevEco => {}
         AppType::Agy => settings.current_provider_agy = id_owned.clone(),
         AppType::Copilot => settings.current_provider_copilot = id_owned.clone(),
         AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp => {}

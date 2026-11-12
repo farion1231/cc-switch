@@ -100,6 +100,7 @@ pub fn import_from_claude(config: &mut MultiAppConfig) -> Result<usize, AppError
                         copilot: false,
                         dsh: false,
                         pi: false,
+                        deveco: false,
                         omp: false,
                     },
                     description: None,

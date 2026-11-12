@@ -16,6 +16,7 @@ mod config;
 mod copilot_config;
 mod database;
 mod deeplink;
+mod deveco_config;
 mod dsh_config;
 mod error;
 mod gemini_config;
@@ -1055,6 +1056,13 @@ pub fn run() {
                 Ok(_) => log::debug!("○ No Pi provider changes from native config"),
                 Err(e) => log::warn!("✗ Failed to import Pi providers: {e}"),
             }
+            match crate::services::provider::import_deveco_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Synced {count} DevEco Code provider(s) from native config");
+                }
+                Ok(_) => log::debug!("○ No DevEco Code provider changes from native config"),
+                Err(e) => log::warn!("✗ Failed to import DevEco Code providers: {e}"),
+            }
             match crate::services::provider::import_omp_providers_from_live(&app_state) {
                 Ok(count) if count > 0 => {
                     log::info!("✓ Synced {count} Oh My Pi provider(s) from native config");
@@ -1913,6 +1921,8 @@ pub fn run() {
             // OpenCode specific
             commands::import_opencode_providers_from_live,
             commands::get_opencode_live_provider_ids,
+            commands::import_deveco_providers_from_live,
+            commands::get_deveco_live_provider_ids,
             commands::get_opencode_default_model,
             commands::set_opencode_default_model,
             // OpenClaw specific

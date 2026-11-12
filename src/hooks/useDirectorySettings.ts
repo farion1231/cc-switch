@@ -18,6 +18,7 @@ type AppDirectoryKey =
   | "openclaw"
   | "hermes"
   | "pi"
+  | "deveco"
   | "omp"
   | "dsh";
 type DirectoryKey = "appConfig" | AppDirectoryKey;
@@ -32,6 +33,7 @@ export interface ResolvedDirectories {
   openclaw: string;
   hermes: string;
   pi: string;
+  deveco: string;
   omp: string;
   dsh: string;
 }
@@ -49,6 +51,7 @@ const APP_DIRECTORY_META: Record<
   openclaw: { key: "openclaw", defaultFolder: ".openclaw" },
   hermes: { key: "hermes", defaultFolder: ".hermes" },
   pi: { key: "pi", defaultFolder: ".pi/agent" },
+  deveco: { key: "deveco", defaultFolder: ".config/deveco" },
   omp: { key: "omp", defaultFolder: ".omp/agent" },
   dsh: { key: "dsh", defaultFolder: ".dsh" },
 };
@@ -65,6 +68,7 @@ const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
   openclaw: "openclawConfigDir",
   hermes: "hermesConfigDir",
   pi: "piConfigDir",
+  deveco: "devecoConfigDir",
   omp: "ompConfigDir",
   dsh: "dshConfigDir",
 };
@@ -156,6 +160,7 @@ export function useDirectorySettings({
     openclaw: "",
     hermes: "",
     pi: "",
+    deveco: "",
     omp: "",
     dsh: "",
   });
@@ -171,6 +176,7 @@ export function useDirectorySettings({
     openclaw: "",
     hermes: "",
     pi: "",
+    deveco: "",
     omp: "",
     dsh: "",
   });
@@ -202,6 +208,7 @@ export function useDirectorySettings({
           openclawDir,
           hermesDir,
           piDir,
+          devecoDir,
           ompDir,
           dshDir,
           defaultAppConfig,
@@ -213,6 +220,7 @@ export function useDirectorySettings({
           defaultOpenclawDir,
           defaultHermesDir,
           defaultPiDir,
+          defaultDevecoDir,
           defaultOmpDir,
           defaultDshDir,
         ] = await Promise.all([
@@ -225,6 +233,7 @@ export function useDirectorySettings({
           settingsApi.getConfigDir("openclaw"),
           settingsApi.getConfigDir("hermes"),
           settingsApi.getConfigDir("pi"),
+          settingsApi.getConfigDir("deveco"),
           settingsApi.getConfigDir("omp"),
           settingsApi.getConfigDir("dsh"),
           computeDefaultAppConfigDir(),
@@ -236,6 +245,7 @@ export function useDirectorySettings({
           computeDefaultConfigDir("openclaw"),
           computeDefaultConfigDir("hermes"),
           computeDefaultConfigDir("pi"),
+          computeDefaultConfigDir("deveco"),
           computeDefaultConfigDir("omp"),
           computeDefaultConfigDir("dsh"),
         ]);
@@ -254,6 +264,7 @@ export function useDirectorySettings({
           openclaw: defaultOpenclawDir ?? "",
           hermes: defaultHermesDir ?? "",
           pi: defaultPiDir ?? "",
+          deveco: defaultDevecoDir ?? "",
           omp: defaultOmpDir ?? "",
           dsh: defaultDshDir ?? "",
         };
@@ -271,6 +282,7 @@ export function useDirectorySettings({
           openclaw: openclawDir || defaultsRef.current.openclaw,
           hermes: hermesDir || defaultsRef.current.hermes,
           pi: piDir || defaultsRef.current.pi,
+          deveco: devecoDir || defaultsRef.current.deveco,
           omp: ompDir || defaultsRef.current.omp,
           dsh: dshDir || defaultsRef.current.dsh,
         });
@@ -485,6 +497,7 @@ export function useDirectorySettings({
         openclaw: overrides?.openclaw ?? defaultsRef.current.openclaw,
         hermes: overrides?.hermes ?? defaultsRef.current.hermes,
         pi: overrides?.pi ?? defaultsRef.current.pi,
+        deveco: overrides?.deveco ?? defaultsRef.current.deveco,
         omp: overrides?.omp ?? defaultsRef.current.omp,
         dsh: overrides?.dsh ?? defaultsRef.current.dsh,
       });

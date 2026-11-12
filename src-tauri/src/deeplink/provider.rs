@@ -432,6 +432,11 @@ pub(crate) fn build_provider_from_request(
         AppType::Mcode | AppType::Dsh => {
             build_custom_provider_settings(app_type, request, api_format)?
         }
+        AppType::DevEco => {
+            return Err(AppError::InvalidInput(
+                "Add DevEco Code providers from the DevEco Code page".into(),
+            ))
+        }
         AppType::Kimi => build_kimi_settings(request, api_format)?,
         AppType::Copilot => build_copilot_settings(request, api_format)?,
         AppType::Agy => {

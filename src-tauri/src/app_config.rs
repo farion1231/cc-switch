@@ -10,6 +10,8 @@ pub struct McpApps {
     #[serde(default)]
     pub mcode: bool,
     #[serde(default)]
+    pub deveco: bool,
+    #[serde(default)]
     pub kimi: bool,
     #[serde(default)]
     pub dsh: bool,
@@ -47,6 +49,7 @@ impl McpApps {
             AppType::OpenClaw => false, // OpenClaw doesn't support MCP
             AppType::Hermes => self.hermes,
             AppType::Mcode => self.mcode,
+            AppType::DevEco => self.deveco,
             AppType::Kimi => self.kimi,
             AppType::Dsh => self.dsh,
             AppType::Pi => self.pi,
@@ -68,6 +71,7 @@ impl McpApps {
             AppType::OpenClaw => {} // OpenClaw doesn't support MCP, ignore
             AppType::Hermes => self.hermes = enabled,
             AppType::Mcode => self.mcode = enabled,
+            AppType::DevEco => self.deveco = enabled,
             AppType::Kimi => self.kimi = enabled,
             AppType::Dsh => self.dsh = enabled,
             AppType::Pi => self.pi = enabled,
@@ -111,6 +115,9 @@ impl McpApps {
         if self.mcode {
             apps.push(AppType::Mcode);
         }
+        if self.deveco {
+            apps.push(AppType::DevEco);
+        }
         if self.hermes {
             apps.push(AppType::Hermes);
         }
@@ -136,6 +143,7 @@ impl McpApps {
             && !self.kimi
             && !self.dsh
             && !self.mcode
+            && !self.deveco
             && !self.pi
             && !self.omp
     }
@@ -146,6 +154,8 @@ impl McpApps {
 pub struct SkillApps {
     #[serde(default)]
     pub mcode: bool,
+    #[serde(default)]
+    pub deveco: bool,
     #[serde(default)]
     pub kimi: bool,
     #[serde(default)]
@@ -184,9 +194,10 @@ impl SkillApps {
             AppType::Hermes => self.hermes,
             AppType::Pi => self.pi,
             AppType::Mcode => self.mcode,
+            AppType::DevEco => self.deveco,
             AppType::Kimi => self.kimi,
             AppType::Dsh => self.dsh,
-            AppType::OpenClaw => false,
+            AppType::OpenClaw => false, // OpenClaw doesn't support Skills
             AppType::Agy => self.agy,
             AppType::Omp => self.omp,
             AppType::Copilot => self.copilot,
@@ -205,9 +216,10 @@ impl SkillApps {
             AppType::Hermes => self.hermes = enabled,
             AppType::Pi => self.pi = enabled,
             AppType::Mcode => self.mcode = enabled,
+            AppType::DevEco => self.deveco = enabled,
             AppType::Kimi => self.kimi = enabled,
             AppType::Dsh => self.dsh = enabled,
-            AppType::OpenClaw => {}
+            AppType::OpenClaw => {} // OpenClaw doesn't support Skills, ignore
             AppType::Agy => self.agy = enabled,
             AppType::Omp => self.omp = enabled,
             AppType::Copilot => self.copilot = enabled,
@@ -248,6 +260,9 @@ impl SkillApps {
         if self.mcode {
             apps.push(AppType::Mcode);
         }
+        if self.deveco {
+            apps.push(AppType::DevEco);
+        }
         if self.hermes {
             apps.push(AppType::Hermes);
         }
@@ -273,6 +288,7 @@ impl SkillApps {
             && !self.kimi
             && !self.dsh
             && !self.mcode
+            && !self.deveco
             && !self.pi
             && !self.omp
     }
@@ -495,6 +511,7 @@ pub enum AppType {
     Hermes,
     Pi,
     Mcode,
+    DevEco,
     Kimi,
     Dsh,
     Agy,
@@ -515,6 +532,7 @@ impl AppType {
             AppType::Hermes => "hermes",
             AppType::Pi => "pi",
             AppType::Mcode => "mcode",
+            AppType::DevEco => "deveco",
             AppType::Kimi => "kimi",
             AppType::Dsh => "dsh",
             AppType::Agy => "agy",
@@ -540,6 +558,7 @@ impl AppType {
                 | AppType::Hermes
                 | AppType::Pi
                 | AppType::Mcode
+                | AppType::DevEco
                 | AppType::Kimi
                 | AppType::Dsh
                 | AppType::Omp
@@ -574,6 +593,7 @@ impl AppType {
             AppType::Hermes,
             AppType::Pi,
             AppType::Mcode,
+            AppType::DevEco,
             AppType::Kimi,
             AppType::Dsh,
             AppType::Agy,
@@ -600,6 +620,7 @@ impl FromStr for AppType {
             "hermes" => Ok(AppType::Hermes),
             "pi" => Ok(AppType::Pi),
             "mcode" => Ok(AppType::Mcode),
+            "deveco" | "deveco-code" | "deveco_code" => Ok(AppType::DevEco),
             "kimi" | "kimi-code" => Ok(AppType::Kimi),
             "dsh" | "deepseek-harness" => Ok(AppType::Dsh),
             "agy" | "antigravity" | "antigravity-cli" => Ok(AppType::Agy),
@@ -609,8 +630,8 @@ impl FromStr for AppType {
             }
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, deveco, kimi, dsh, agy, omp, copilot。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, deveco, kimi, dsh, agy, omp, copilot."),
             )),
         }
     }
@@ -652,6 +673,7 @@ impl CommonConfigSnippets {
             AppType::Hermes => self.hermes.as_ref(),
             AppType::Pi
             | AppType::Mcode
+            | AppType::DevEco
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Omp
@@ -673,6 +695,7 @@ impl CommonConfigSnippets {
             AppType::Hermes => self.hermes = snippet,
             AppType::Pi
             | AppType::Mcode
+            | AppType::DevEco
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Omp
@@ -1007,6 +1030,7 @@ impl MultiAppConfig {
             // this legacy config avoids a second, unused prompt state.
             AppType::Pi
             | AppType::Mcode
+            | AppType::DevEco
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Omp
@@ -1057,11 +1081,12 @@ impl MultiAppConfig {
                 AppType::Hermes => continue,   // Hermes didn't exist in v3.6.x, skip
                 AppType::Pi
                 | AppType::Mcode
+                | AppType::DevEco
                 | AppType::Kimi
                 | AppType::Dsh
                 | AppType::Omp
                 | AppType::Agy
-                | AppType::Copilot => continue, // Pi didn't exist in v3.6.x, skip
+                | AppType::Copilot => continue, // didn't exist in v3.6.x, skip
             };
 
             for (id, entry) in old_servers {

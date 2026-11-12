@@ -101,6 +101,13 @@ pub fn validate_source(provider_id: &str, source_path: &str) -> Result<Validated
             hermes::parse_sqlite_source(source_path),
             &crate::hermes_config::get_hermes_dir().join("state.db"),
         )?,
+        // DevEco Code keeps sessions in its own SQLite database, addressed with the
+        // same `sqlite:<db>:<session-id>` convention OpenCode uses.
+        "deveco" if source_path.starts_with("sqlite:") => validate_sqlite_source(
+            source_path,
+            opencode::parse_sqlite_source(source_path),
+            &crate::deveco_config::get_deveco_db_path(),
+        )?,
         _ => {
             let roots = provider_roots(provider_id)?;
             let source = codex_source_or_sibling(provider_id, Path::new(source_path));

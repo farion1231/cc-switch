@@ -15,6 +15,7 @@ import type { OpenCodeProviderPreset } from "@/config/opencodeProviderPresets";
 import type { OpenClawProviderPreset } from "@/config/openclawProviderPresets";
 import type { HermesProviderPreset } from "@/config/hermesProviderPresets";
 import type { McodeProviderPreset } from "@/config/mcodeProviderPresets";
+import type { DevEcoProviderPreset } from "@/config/devEcoProviderPresets";
 import type { KimiProviderPreset } from "@/config/kimiProviderPresets";
 import type { CopilotProviderPreset } from "@/config/copilotProviderPresets";
 import type { PiProviderPreset } from "@/config/piProviderPresets";
@@ -75,6 +76,7 @@ export type AnyPreset =
   | HermesProviderPreset
   | PiProviderPreset
   | McodeProviderPreset
+  | DevEcoProviderPreset
   | KimiProviderPreset
   | OmpProviderPreset
   | CopilotProviderPreset;

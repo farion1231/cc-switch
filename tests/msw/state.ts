@@ -17,7 +17,7 @@ type ProvidersByApp = Record<AppId, Record<string, Provider>>;
 type CurrentProviderState = Record<AppId, string>;
 type McpConfigState = Record<AppId, Record<string, McpServer>>;
 type LiveProviderIdsByApp = Record<
-  "opencode" | "openclaw" | "hermes",
+  "opencode" | "openclaw" | "hermes" | "deveco",
   string[]
 >;
 
@@ -80,6 +80,7 @@ const createDefaultProviders = (): ProvidersByApp => ({
   hermes: {},
   pi: {},
   mcode: {},
+  deveco: {},
   kimi: {},
   dsh: {},
   agy: {},
@@ -98,6 +99,7 @@ const createDefaultCurrent = (): CurrentProviderState => ({
   hermes: "",
   pi: "",
   mcode: "",
+  deveco: "",
   kimi: "",
   dsh: "",
   agy: "",
@@ -111,6 +113,7 @@ let liveProviderIds: LiveProviderIdsByApp = {
   opencode: [],
   openclaw: [],
   hermes: [],
+  deveco: [],
 };
 let settingsState: Settings = {
   showInTray: true,
@@ -218,6 +221,7 @@ let mcpConfigs: McpConfigState = {
   hermes: {},
   pi: {},
   mcode: {},
+  deveco: {},
   kimi: {},
   dsh: {},
   agy: {},
@@ -291,6 +295,7 @@ export const resetProviderState = () => {
     opencode: [],
     openclaw: [],
     hermes: [],
+    deveco: [],
   };
   sessionsState = createDefaultSessions();
   sessionMessagesState = createDefaultSessionMessages();
@@ -350,6 +355,7 @@ export const resetProviderState = () => {
     hermes: {},
     pi: {},
     mcode: {},
+    deveco: {},
     kimi: {},
     dsh: {},
     agy: {},
@@ -364,11 +370,11 @@ export const getProviders = (appType: AppId) =>
 export const getCurrentProviderId = (appType: AppId) => current[appType] ?? "";
 
 export const getLiveProviderIds = (
-  appType: "opencode" | "openclaw" | "hermes",
+  appType: "opencode" | "openclaw" | "hermes" | "deveco",
 ) => [...liveProviderIds[appType]];
 
 export const setLiveProviderIds = (
-  appType: "opencode" | "openclaw" | "hermes",
+  appType: "opencode" | "openclaw" | "hermes" | "deveco",
   ids: string[],
 ) => {
   liveProviderIds[appType] = [...ids];

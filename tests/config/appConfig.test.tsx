@@ -15,6 +15,7 @@ describe("appConfig provider lifecycle", () => {
     "hermes",
     "pi",
     "mcode",
+    "deveco",
     "kimi",
     "dsh",
     "omp",
@@ -55,8 +56,8 @@ describe("orderAppIds", () => {
   it("puts an app missing from the saved order after its default predecessor", () => {
     const saved = APP_IDS.filter((app) => app !== "kimi");
     const [first, ...rest] = saved;
-    // 把 mcode（kimi 默认的前一个）挪到最后，kimi 应跟着它
-    const moved = [first, ...rest.filter((app) => app !== "mcode"), "mcode"];
+    // 把 deveco（kimi 默认的前一个）挪到最后，kimi 应跟着它
+    const moved = [first, ...rest.filter((app) => app !== "deveco"), "deveco"];
     expect(orderAppIds(moved)).toEqual([...moved, "kimi"]);
     expect(orderAppIds(APP_IDS.filter((app) => app !== "claude"))[0]).toBe(
       "claude",

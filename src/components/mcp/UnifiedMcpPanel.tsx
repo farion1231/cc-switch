@@ -107,6 +107,7 @@ const IMPORT_SOURCE_FILES: Record<
   kimi: { file: "~/.kimi-code/mcp.json" },
   copilot: { file: "~/.copilot/mcp-config.json" },
   mcode: { file: "~/.minimax/mcp.json" },
+  deveco: { file: "~/.config/deveco/deveco.jsonc" },
   omp: { file: "~/.omp/agent/mcp.json" },
 };
 

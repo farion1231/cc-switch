@@ -196,6 +196,7 @@ export function EditProviderDialog({
         appId === "opencode" ||
         appId === "pi" ||
         appId === "mcode" ||
+        appId === "deveco" ||
         appId === "kimi" ||
         appId === "dsh" ||
         appId === "omp" ||

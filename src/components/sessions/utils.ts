@@ -5,7 +5,7 @@ import type { SessionMeta, SessionTextRange } from "@/types";
 
 export const UNKNOWN_PROJECT_DIR_KEY = "__unknown_project_dir__";
 
-/** 会话来源：10 个应用（Claude Desktop 没有自己的会话记录，用 Claude Code 的）。 */
+/** 会话来源：15 个应用（Claude Desktop 没有自己的会话记录，用 Claude Code 的）。 */
 export const SESSION_APP_IDS = [
   "claude",
   "codex",
@@ -17,6 +17,7 @@ export const SESSION_APP_IDS = [
   "grokbuild",
   "openclaw",
   "mcode",
+  "deveco",
   "kimi",
   "dsh",
   "agy",
@@ -40,6 +41,7 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
   pi: ["~/.pi/agent/sessions"],
   omp: ["~/.omp/agent/sessions"],
   mcode: ["~/.minimax"],
+  deveco: ["~/.local/share/deveco/deveco.db"],
   kimi: ["~/.kimi-code/sessions"],
   dsh: ["~/.dsh/sessions/<project>/<session>/session.v*.jsonl[.zstd]"],
   agy: [
@@ -48,10 +50,21 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
   copilot: ["~/.copilot/session-state"],
 };
 
-/** MiniMax Code 的会话只能在 MiniMax Code 里删（后端也会拒绝）。 */
+/**
+ * MiniMax Code 与 DevEco Code 的会话只能在各自的工具里删（后端也会拒绝）：
+ * 它们与运行态表（event / todos / projections）耦合，直接删行会留下悬挂状态。
+ */
+export const NO_DELETE_SESSION_APPS: readonly string[] = [
+  "mcode",
+  "deveco",
+  "agy",
+  "dsh",
+  "copilot",
+];
+
 export const canDeleteSession = (session: SessionMeta) =>
   Boolean(session.sourcePath) &&
-  !["mcode", "agy", "dsh", "copilot"].includes(session.providerId);
+  !NO_DELETE_SESSION_APPS.includes(session.providerId);
 
 export interface SessionProjectGroup {
   key: string;

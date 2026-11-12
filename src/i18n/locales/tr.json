@@ -1015,7 +1015,12 @@
     "hermesConfigDirDescription": "Hermes yapılandırma dizinini (config.yaml) geçersiz kılın.",
     "piConfigDir": "Pi Yapılandırma Dizini",
     "piConfigDirDescription": "Pi yapılandırma dizinini (models.json, talimat dosyaları, istemler, beceriler ve oturumlar) geçersiz kılın.",
+    "devecoConfigDir": "DevEco Code Yapılandırma Dizini",
+    "devecoConfigDirDescription": "DevEco Code yapılandırma dizinini (deveco.jsonc) geçersiz kılın.",
     "ompConfigDir": "Oh My Pi Yapılandırma Dizini",
+    "ompConfigDirDescription": "Oh My Pi yapılandırma dizinini (.omp) geçersiz kılın.",
+    "dshConfigDir": "DeepSeek Harness Yapılandırma Dizini",
+    "dshConfigDirDescription": "DeepSeek Harness yapılandırma dizinini (DSH_HOME) geçersiz kılın.",
     "browsePlaceholderClaude": "ör. /home/<your-username>/.claude",
     "browsePlaceholderCodex": "ör. /home/<your-username>/.codex",
     "browsePlaceholderGemini": "ör., /home/<your-username>/.gemini",
@@ -1024,6 +1029,7 @@
     "browsePlaceholderOpenclaw": "ör. /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "ör. /home/<your-username>/.hermes",
     "browsePlaceholderPi": "ör. /home/<your-username>/.pi/agent",
+    "browsePlaceholderDeveco": "ör. /home/<your-username>/.config/deveco",
     "browsePlaceholderOmp": "ör. /home/<your-username>/.omp/agent",
     "browsePlaceholderDsh": "örn. /home/<kullanıcı-adınız>/.dsh",
     "browseDirectory": "Dizine Göz Atın",
@@ -1185,9 +1191,12 @@
     "hermes": "Hermes",
     "pi": "Pi",
     "mcode": "MiniMax Code",
+    "deveco": "DevEco Code",
     "agy": "Antigravity",
     "omp": "Oh My Pi",
-    "copilot": "Copilot CLI"
+    "copilot": "Copilot CLI",
+    "kimi": "Kimi Code",
+    "dsh": "DeepSeek Harness"
   },
   "mcode": {
     "empty": {
@@ -2386,6 +2395,7 @@
       "grokbuild": "Grok Build",
       "pi": "Pi",
       "mcode": "MiniMax Code",
+      "deveco": "DevEco Code",
       "label": "Uygulamaya göre filtrele"
     },
     "rawInputLabel": "Ham",
@@ -2882,7 +2892,8 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
-        "mcode": "MiniMax Code"
+        "mcode": "MiniMax Code",
+        "deveco": "DevEco Code"
       }
     },
     "userLevelPath": "Kullanıcı düzeyinde MCP yapılandırma yolu",

@@ -115,6 +115,7 @@ import { AgyAccountSelect } from "./AgyOAuthSection";
 import { ClaudeAccountSelect } from "./ClaudeOfficialSection";
 import { isMac } from "@/lib/platform";
 import { McodeProviderForm } from "./McodeProviderForm";
+import { DevEcoProviderForm } from "./DevEcoProviderForm";
 import { PiProviderForm } from "./PiProviderForm";
 import { OmoFormFields } from "./OmoFormFields";
 import { parseOmoOtherFieldsObject } from "@/types/omo";
@@ -359,6 +360,7 @@ function CodexConfigEditorWithName({
 export function ProviderForm(props: ProviderFormProps) {
   if (props.appId === "kimi") return <KimiProviderForm {...props} />;
   if (props.appId === "copilot") return <CopilotProviderForm {...props} />;
+  if (props.appId === "deveco") return <DevEcoProviderForm {...props} />;
   if (props.appId === "mcode" || props.appId === "dsh")
     return <McodeProviderForm {...props} />;
   if (props.appId === "pi" || props.appId === "omp") {

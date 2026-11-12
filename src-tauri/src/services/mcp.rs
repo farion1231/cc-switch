@@ -392,6 +392,13 @@ impl McpService {
                 mcp::sync_single_server_to_hermes(&Default::default(), &server.id, &server.server)?;
             }
             AppType::Mcode => mcp::mcode::sync(&server.id, Some(&server.server))?,
+            AppType::DevEco => {
+                mcp::deveco::sync_single_server_to_deveco(
+                    &Default::default(),
+                    &server.id,
+                    &server.server,
+                )?;
+            }
             AppType::Kimi => mcp::kimi::sync(&server.id, Some(&server.server))?,
             AppType::Dsh => mcp::dsh::sync(&server.id, Some(&server.server))?,
             AppType::Copilot => mcp::copilot::sync(&server.id, Some(&server.server))?,
@@ -452,6 +459,7 @@ impl McpService {
                 mcp::remove_server_from_hermes(id)?;
             }
             AppType::Mcode => mcp::mcode::sync(id, None)?,
+            AppType::DevEco => mcp::deveco::remove_server_from_deveco(id)?,
             AppType::Kimi => mcp::kimi::sync(id, None)?,
             AppType::Dsh => mcp::dsh::sync(id, None)?,
             AppType::Copilot => mcp::copilot::sync(id, None)?,
@@ -881,7 +889,7 @@ impl McpService {
         let mut total = 0;
         let mut failures: Vec<String> = Vec::new();
 
-        let results: [(&str, Result<usize, AppError>); 13] = [
+        let results: [(&str, Result<usize, AppError>); 14] = [
             ("claude", Self::import_from_claude(state)),
             ("codex", Self::import_from_codex(state)),
             ("gemini", Self::import_from_gemini(state)),
@@ -893,6 +901,7 @@ impl McpService {
             ("dsh", mcp::dsh::import(state)),
             ("agy", mcp::agy::import(state)),
             ("pi", mcp::pi::import(state)),
+            ("deveco", mcp::deveco::import(state)),
             ("omp", Self::import_from_omp(state)),
             ("copilot", mcp::copilot::import(state)),
         ];

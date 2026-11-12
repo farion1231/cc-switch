@@ -260,6 +260,7 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                             copilot: false,
                             dsh: false,
                             pi: false,
+                            deveco: false,
                             omp: false,
                         },
                         description: None,

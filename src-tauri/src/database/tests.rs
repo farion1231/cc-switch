@@ -1602,8 +1602,8 @@ fn migration_v24_to_v25_adds_copilot_flags_without_changing_dsh_state() {
     Database::set_user_version(&conn, 24).expect("set user_version=24");
 
     Database::apply_schema_migrations_on_conn(&conn).expect("upgrade v24 database");
-    assert_eq!(Database::get_user_version(&conn).unwrap(), 25);
-    assert_eq!(SCHEMA_VERSION, 25);
+    assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
+    assert_eq!(SCHEMA_VERSION, 26);
     for table in ["mcp_servers", "skills"] {
         let flags: (bool, bool) = conn
             .query_row(

@@ -548,6 +548,7 @@ command = "say"
                 copilot: false,
                 dsh: false,
                 pi: false,
+                deveco: false,
                 omp: false,
             },
             description: None,

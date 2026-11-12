@@ -9,6 +9,7 @@
 //! - `codex` - Codex MCP 同步和导入（含 TOML 转换）
 //! - `gemini` - Gemini MCP 同步和导入
 //! - `opencode` - OpenCode MCP 同步和导入（含 local/remote 格式转换）
+//! - `deveco` - DevEco Code MCP 同步和导入（复用 OpenCode 的格式转换）
 //! - `hermes` - Hermes MCP 同步和导入
 //! - `omp` - Omp MCP 同步和导入
 
@@ -45,6 +46,7 @@ pub use opencode::{
 };
 
 pub(crate) mod copilot;
+pub(crate) mod deveco;
 pub(crate) mod kimi;
 pub(crate) mod mcode;
 pub(crate) mod pi;

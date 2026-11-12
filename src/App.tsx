@@ -41,6 +41,7 @@ import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
 import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
 import { hermesKeys, useOpenHermesWebUI } from "@/hooks/useHermes";
+import { invalidateDevEcoProviderCaches } from "@/hooks/useDevEco";
 import { hermesApi } from "@/lib/api/hermes";
 import type { ProviderEditorSave } from "@/lib/api/providers";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
@@ -1166,7 +1167,11 @@ function App() {
         });
         return;
       }
+      // Invalidate queries to refresh the isInConfig state
       await refreshAdditiveLiveState(activeApp);
+      if (activeApp === "deveco") {
+        await invalidateDevEcoProviderCaches(queryClient);
+      }
       toast.success(
         isPiFamilyApp(activeApp)
           ? t(`${activeApp}.provider.removed`, {

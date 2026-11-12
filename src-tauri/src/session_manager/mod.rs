@@ -17,8 +17,8 @@ use std::time::{Duration, Instant};
 // 其余模型类型从 `session_manager::model` 引用
 pub use model::SessionMessage;
 use providers::{
-    agy, claude, codex, copilot, dsh, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw,
-    opencode, pi,
+    agy, claude, codex, copilot, deveco, dsh, gemini, grokbuild, hermes, kimi, mcode, omp,
+    openclaw, opencode, pi,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -97,7 +97,7 @@ pub(crate) struct SessionScan {
 pub(crate) fn scan_sessions_with_status() -> SessionScan {
     use providers::utils::ScanStatus;
     type Scanner = fn(&mut ScanStatus) -> Vec<SessionMeta>;
-    let scanners: [(&str, Scanner); 14] = [
+    let scanners: [(&str, Scanner); 15] = [
         ("codex", codex::scan_sessions_with_status),
         ("claude", claude::scan_sessions_with_status),
         ("opencode", opencode::scan_sessions_with_status),
@@ -113,6 +113,7 @@ pub(crate) fn scan_sessions_with_status() -> SessionScan {
         ("kimi", |_| kimi::scan_sessions()),
         ("dsh", |_| dsh::scan_sessions()),
         ("agy", |_| agy::scan_sessions()),
+        ("deveco", |_| deveco::scan_sessions()),
     ];
     let mut scan = SessionScan {
         sessions: Vec::new(),
@@ -153,6 +154,9 @@ pub(crate) fn scan_sessions_with_status() -> SessionScan {
 pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<SessionMessage>, String> {
     if provider_id == "mcode" {
         return mcode::load_messages(source_path);
+    }
+    if provider_id == "deveco" {
+        return deveco::load_messages(source_path);
     }
     // SQLite sessions use a "sqlite:" prefixed source_path
     if provider_id == "opencode" && source_path.starts_with("sqlite:") {
@@ -245,6 +249,15 @@ fn delete_session_source(
     if provider_id == "mcode" {
         return Err(
             "Delete this session in MCode so its runtime state and history are removed together"
+                .into(),
+        );
+    }
+    if provider_id == "deveco" {
+        // DevEco Code keeps sessions in a shared SQLite database alongside the event
+        // log, todos and message projections. Deleting rows out from under it would
+        // leave dangling runtime state, so hand deletion back to DevEco Code itself.
+        return Err(
+            "Delete this session in DevEco Code so its runtime state and history are removed together"
                 .into(),
         );
     }

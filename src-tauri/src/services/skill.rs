@@ -693,6 +693,7 @@ impl SkillService {
             }
             AppType::ClaudeDesktop
             | AppType::Mcode
+            | AppType::DevEco
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Copilot => {}
@@ -747,6 +748,7 @@ impl SkillService {
 
         Ok(match app {
             AppType::Mcode => crate::mcode_config::data_dir().join("skills"),
+            AppType::DevEco => crate::deveco_config::get_deveco_dir().join("skills"),
             AppType::Dsh => crate::dsh_config::data_dir().join("skills"),
             AppType::Kimi => crate::kimi_config::data_dir().join("skills"),
             AppType::Copilot => crate::copilot_config::skills_dir(),
