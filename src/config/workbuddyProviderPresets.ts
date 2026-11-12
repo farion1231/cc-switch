@@ -1,4 +1,27 @@
 import { piProviderPresets, type PiProviderPreset } from "./piProviderPresets";
+import {
+  PI_THINKING_LEVELS,
+  clonePiThinkingLevelMap,
+  isPiThinkingLevelMap,
+  type PiThinkingLevelMap,
+} from "./piThinkingProfiles";
+
+/** WorkBuddy 模型选择器里的思考强度（WorkBuddy CLI 的 `low`…`max`，不含 `minimal`）。 */
+export const WORKBUDDY_EFFORTS = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+export type WorkBuddyEffort = (typeof WORKBUDDY_EFFORTS)[number];
+
+/** 模型条目的 `reasoning`：WorkBuddy 按它在模型选择器里列出思考强度。 */
+export interface WorkBuddyReasoning {
+  supportedEfforts: WorkBuddyEffort[];
+  defaultEffort: WorkBuddyEffort;
+  canDisableThinking: boolean;
+}
 
 /**
  * WorkBuddy 自定义模型（`~/.workbuddy/models.json`）里单个模型条目的字段，
@@ -12,7 +35,43 @@ export interface WorkBuddyModel {
   supportsToolCall?: boolean;
   supportsImages?: boolean;
   supportsReasoning?: boolean;
+  reasoning?: WorkBuddyReasoning;
+  /** WorkBuddy CLI 按它把所选强度翻译成上游认的 `reasoning_effort`（语义同 Pi） */
+  thinkingLevelMap?: PiThinkingLevelMap;
   [key: string]: unknown;
+}
+
+/**
+ * Pi 的思考映射换成 WorkBuddy 模型条目的思考字段。WorkBuddy CLI 内置的 pi-ai 用同一套语义
+ * （`deriveReasoningCapabilities`）：映射里 `null` 的档不支持，`xhigh` / `max` 要显式写出才支持，
+ * 其余档默认支持。空映射在 Pi 里表示「用 Pi 运行时的默认」，这里拿不到核对过的档位，不生成，
+ * WorkBuddy 只显示思考开关。
+ */
+export function workbuddyThinkingFields(
+  map: unknown,
+): Pick<WorkBuddyModel, "reasoning" | "thinkingLevelMap"> {
+  if (!isPiThinkingLevelMap(map) || Object.keys(map).length === 0) return {};
+  const supported = PI_THINKING_LEVELS.filter((level) => {
+    const value = map[level];
+    return (
+      value !== null &&
+      (level === "xhigh" || level === "max" ? value !== undefined : true)
+    );
+  });
+  const supportedEfforts = WORKBUDDY_EFFORTS.filter((effort) =>
+    supported.includes(effort),
+  );
+  if (supportedEfforts.length === 0) return {};
+  return {
+    reasoning: {
+      supportedEfforts,
+      defaultEffort: supportedEfforts.includes("high")
+        ? "high"
+        : supportedEfforts[supportedEfforts.length - 1],
+      canDisableThinking: supported.includes("off"),
+    },
+    thinkingLevelMap: clonePiThinkingLevelMap(map),
+  };
 }
 
 /**
@@ -74,6 +133,9 @@ export const workbuddyProviderPresets: WorkBuddyProviderPreset[] =
             supportsToolCall: true,
             supportsImages: model.input?.includes("image") ?? false,
             supportsReasoning: Boolean(model.reasoning),
+            ...(model.reasoning
+              ? workbuddyThinkingFields(model.thinkingLevelMap)
+              : {}),
           })),
         },
       },
