@@ -1936,6 +1936,7 @@ GEMINI_TIMEOUT_MS=30000
             value,
             json!({
                 "env": {
+                    "CLAUDE_CODE_SUBAGENT_MODEL_FORCE": "1",
                     "CLAUDE_CODE_USE_POWERSHELL_TOOL": "1",
                     "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
                     "DISABLE_TELEMETRY": "1"
