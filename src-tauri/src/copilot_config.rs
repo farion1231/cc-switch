@@ -456,9 +456,32 @@ fn model_entries(id: &str, settings: &Value) -> Result<Vec<Value>, AppError> {
                     entry.insert(key.clone(), value.clone());
                 }
             }
+            // Copilot 按 maxPromptTokens 限制输入（没写就是 128000），maxContextWindowTokens
+            // 只给它封顶。卡片只给了窗口和最大输出时补成「窗口 − 最大输出」；用户自己写的不动。
+            if !entry.contains_key("maxPromptTokens") {
+                if let Some(prompt) = derived_max_prompt_tokens(&entry) {
+                    entry.insert("maxPromptTokens".into(), json!(prompt));
+                }
+            }
             Ok(Value::Object(entry))
         })
         .collect()
+}
+
+/// 没写 `maxPromptTokens` 时的默认值：上下文窗口减最大输出（1.0.107 实测 Copilot 只按它限制
+/// 输入，缺省 128000，窗口只给它封顶）。窗口或最大输出缺一个、输出不小于窗口、结果不是
+/// `u32` 范围内的整数时不补。
+fn derived_max_prompt_tokens(model: &Map<String, Value>) -> Option<u64> {
+    let context = model.get("maxContextWindowTokens")?.as_f64()?;
+    let output = model.get("maxOutputTokens")?.as_f64()?;
+    let prompt = context - output;
+    (context.is_finite()
+        && output.is_finite()
+        && output >= 0.0
+        && prompt >= 1.0
+        && prompt.fract() == 0.0
+        && prompt <= u32::MAX as f64)
+        .then_some(prompt as u64)
 }
 
 fn document_error(zh: String, en: String) -> AppError {
@@ -860,6 +883,12 @@ fn providers_in(document: &Value) -> IndexMap<String, Value> {
                 .filter_map(|model| {
                     let mut model = model.as_object()?.clone();
                     model.shift_remove("provider");
+                    // 写入时补的默认值不算用户填的：读回去掉，窗口或最大输出改了才会跟着重算。
+                    if let Some(prompt) = model.get("maxPromptTokens").and_then(Value::as_f64) {
+                        if derived_max_prompt_tokens(&model).is_some_and(|d| d as f64 == prompt) {
+                            model.shift_remove("maxPromptTokens");
+                        }
+                    }
                     Some(Value::Object(model))
                 })
                 .collect();
@@ -1572,7 +1601,7 @@ mod tests {
         assert_eq!(models.len(), 4);
         assert_eq!(
             models[2],
-            json!({"id":"m1","provider":"deepseek","name":"Model 1","maxContextWindowTokens":128000,"maxOutputTokens":8192})
+            json!({"id":"m1","provider":"deepseek","name":"Model 1","maxContextWindowTokens":128000,"maxOutputTokens":8192,"maxPromptTokens":119808})
         );
         assert_eq!(models[3], json!({"id":"m2","provider":"deepseek"}));
         // 读回是卡片形状
@@ -1582,6 +1611,33 @@ mod tests {
         assert_eq!(back["models"][1], json!({"id":"m2"}));
         // 新建同名拒绝
         assert!(update_at(&path, None, "deepseek", Some(&card()), true).is_err());
+    }
+
+    #[test]
+    fn missing_prompt_limit_is_derived_from_window_and_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("providers.json");
+        let mut settings = card();
+        settings["models"] = json!([
+            {"id":"a","maxContextWindowTokens":1048576,"maxOutputTokens":393216},
+            {"id":"b","maxContextWindowTokens":1000000,"maxOutputTokens":384000,"maxPromptTokens":500000},
+            {"id":"c","maxContextWindowTokens":1000000},
+            {"id":"d","maxOutputTokens":8192}
+        ]);
+        update_at(&path, None, "deepseek", Some(&settings), true).unwrap();
+        let after = read_providers(&path).unwrap();
+        let models = after["models"].as_array().unwrap();
+        // 只给窗口和最大输出：补成窗口减输出。
+        assert_eq!(models[0]["maxPromptTokens"], json!(655360));
+        // 用户自己写了的不动。
+        assert_eq!(models[1]["maxPromptTokens"], json!(500000));
+        // 缺最大输出或缺窗口：不补。
+        assert!(models[2].get("maxPromptTokens").is_none());
+        assert!(models[3].get("maxPromptTokens").is_none());
+        // 读回卡片形状：补出来的默认值去掉，用户自己写的保留。
+        let back = &providers_in(&after)["deepseek"];
+        assert!(back["models"][0].get("maxPromptTokens").is_none());
+        assert_eq!(back["models"][1]["maxPromptTokens"], json!(500000));
     }
 
     #[test]

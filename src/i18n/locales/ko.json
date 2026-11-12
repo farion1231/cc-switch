@@ -536,6 +536,13 @@
         "mediaHeuristic": "텍스트 전용 모델 사전 검사",
         "mediaHeuristicDescription": "전송 전에, 내장 목록에서 텍스트 전용으로 확인된 모델의 요청에서 이미지를 제거합니다. 이 옵션을 꺼도 프록시의 목록 기반 사전 검사만 중지됩니다. 선언된 텍스트 전용 모델 처리와 업스트림 오류 시 대체 처리는 유지되며 Codex 모델 카탈로그의 기능 선언은 바뀌지 않습니다."
       },
+      "privacyFilter": {
+        "title": "개인정보 필터",
+        "description": "켜면 프록시가 요청을 전달하기 전에 사용자 입력과 시스템 프롬프트 속의 개인정보(이메일, 전화번호, 주민등록번호 등 신분증 번호, 은행 카드, IP)와 비밀 정보(API 키, 토큰, 비밀번호, 개인 키)를 [EMAIL], [SECRET] 같은 자리표시자로 바꿉니다. 끄면 요청을 그대로 전달합니다. 자리표시자는 인터페이스 언어를 따릅니다. 로컬 규칙 기반 필터이며 치환은 되돌릴 수 없습니다. 라우팅 모드와 집계 모드에서 적용되며, 직접 연결 모드에서는 요청이 CC Switch를 거치지 않으므로 필터링되지 않습니다. 모델 응답, thinking 블록, 도구 호출 인자, 이미지는 변경하지 않습니다. 도구 결과는 기본적으로 변경하지 않으며 아래 스위치로 포함할 수 있습니다. 127.0.0.1 같은 루프백 주소는 IP로 취급하지 않습니다. packyme/privacy-filter에서 이식했습니다.",
+        "enabled": "개인정보 필터 사용",
+        "filterToolResults": "도구 결과도 필터링",
+        "filterToolResultsDescription": "파일 내용이나 명령 출력 같은 도구 결과도 함께 치환합니다. 그러면 모델에는 자리표시자만 보이므로 Edit / apply_patch가 원본 텍스트와 맞지 않아 실패할 수 있고, 파일 전체를 다시 쓸 때 자리표시자가 실제 파일에 기록될 수 있습니다. 이를 감수할 수 있는 경우에만 켜세요."
+      },
       "optimizer": {
         "title": "Bedrock 요청 최적화",
         "description": "요청을 보내기 전에 Thinking 및 Cache 설정을 자동으로 최적화합니다(Bedrock 공급자에만 적용).",
@@ -1776,7 +1783,6 @@
       "volcengine_agentplan": "Volcengine Ark Agent Plan은 CC Switch 사용자에게 특별 혜택을 제공합니다. 이 링크로 구독하는 신규 고객은 첫 두 달 동안 75% 할인을 받고, 전용 초대 코드 6J6FV5N2로 추가 5% 할인을 적용하면 월 최저 9.4위안에 이용할 수 있습니다!",
       "volcengine_codingplan": "Volcengine Ark Coding Plan은 CC Switch 사용자에게 특별 혜택을 제공합니다. 이 링크로 구독하는 신규 고객은 첫 두 달 동안 75% 할인을 받고, 전용 초대 코드 6J6FV5N2로 추가 5% 할인을 적용하면 월 최저 9.4위안에 이용할 수 있습니다!",
       "byteplus": "이 링크를 통해 등록하면 모델당 추론에 사용할 수 있는 무료 토큰 500,000개를 받을 수 있습니다.",
-      "ccsub": "CCSub는 안정적이고 합리적인 가격의 AI API 중계 플랫폼으로, Claude Code 공식 구독을 대체할 수 있습니다. 키 하나로 모든 모델을 이용하며 가격은 공식 가격의 약 3분의 1입니다.",
       "subrouter": "SubRouter는 API 키 하나로 여러 모델과 공급자를 이용할 수 있는 통합 AI 중계 플랫폼입니다.",
       "qiniu": "Qiniu Cloud는 다중 프로토콜 AI 릴레이입니다. API 키 하나로 네이티브 Claude, GPT 및 Gemini 모델을 사용할 수 있으며, Anthropic, OpenAI 및 Gemini API를 모두 지원합니다.",
       "haoai": "hao.ai는 개발자와 팀을 위한 빠르고 안정적인 통합 LLM API 게이트웨이입니다. API 키 하나로 OpenAI 및 Anthropic 호환 API를 통해 GPT, Claude, Grok 등 주요 모델을 사용할 수 있으며, 모델 라우팅, 장애 조치 및 전체 요청 로그를 지원합니다. 요금은 공식 기준 요금의 최저 15% 수준입니다. 이 링크로 가입한 CC Switch 사용자는 첫 주문 시 5% 보너스 크레딧을 받습니다!",
@@ -2022,12 +2028,7 @@
       "notSignedIn": "Copilot CLI에 로그인되어 있지 않습니다. copilot을 실행해 /login으로 로그인하거나 이 카드에 인증 센터 계정을 연결하세요."
     },
     "defaultCannotRemove": "Copilot의 기본 모델이 이 공급자의 것이라 제거하거나 삭제할 수 없습니다. 먼저 copilot에서 /model로 다른 공급자의 모델을 선택하세요.",
-    "terminalNeedsAdd": "터미널에서 모델을 선택할 수 있도록 먼저 이 공급자를 Copilot에 추가하세요.",
-    "section": {
-      "official": "공식 로그인 · {{count}}",
-      "officialHelpTitle": "공식 로그인",
-      "officialHelp": "Copilot CLI 자체 GitHub 로그인을 사용하며 파일에 아무것도 쓰지 않습니다. 「터미널 열기」는 카드의 모델과 연결된 계정으로 copilot을 실행합니다."
-    }
+    "terminalNeedsAdd": "터미널에서 모델을 선택할 수 있도록 먼저 이 공급자를 Copilot에 추가하세요."
   },
   "codexOauth": {
     "authStatus": "인증 상태",

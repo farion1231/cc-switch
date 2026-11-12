@@ -536,6 +536,13 @@
         "mediaHeuristic": "純文字模型預判",
         "mediaHeuristicDescription": "傳送前依內建的已確認純文字模型登錄表移除圖片。關閉只會停用代理的登錄表預判；已宣告純文字模型的處理與上游錯誤兜底仍會保留，且不會改變 Codex 模型目錄的能力宣告"
       },
+      "privacyFilter": {
+        "title": "隱私過濾器",
+        "description": "開啟後，代理轉發請求前會把使用者輸入和系統提示中的個人資訊（電子郵件、手機號碼、身分證、銀行卡、IP）和金鑰（API Key、Token、密碼、私鑰等）替換為 [電子郵件]、[金鑰] 等佔位符；關閉後請求原樣轉發。佔位符跟隨介面語言。本機規則比對，替換不可逆，作用於路由和聚合模式；直連模式下請求不經過 CC Switch，不會被過濾。模型回覆、思考區塊、工具呼叫參數和圖片不受影響；工具結果預設不處理，可用下方子開關開啟。迴環位址（如 127.0.0.1）不算 IP。移植自 packyme/privacy-filter。",
+        "enabled": "啟用隱私過濾",
+        "filterToolResults": "同時過濾工具結果",
+        "filterToolResultsDescription": "檔案內容、命令輸出等工具結果也會被替換。模型只能看到佔位符：Edit / apply_patch 可能因對不上原文而失敗，整檔重寫時佔位符可能被寫回你的真實檔案。請確認能接受後再開啟。"
+      },
       "optimizer": {
         "title": "Bedrock 請求最佳化工具",
         "description": "在請求發送前自動最佳化 Thinking 和 Cache 設定（僅 Bedrock 供應商生效）",
@@ -1776,7 +1783,6 @@
       "volcengine_agentplan": "火山方舟 Agent Plan 為 CC Switch 的使用者提供了專屬福利：透過此連結訂閱方舟 Agent Plan，新客戶首兩個月享 2.5 折優惠，再用專屬邀請碼 6J6FV5N2 領取獎勵疊加 9.5 折，低至 9.4 元/月！",
       "volcengine_codingplan": "火山方舟 Coding Plan 為 CC Switch 的使用者提供了專屬福利：透過此連結訂閱方舟 Coding Plan，新客戶首兩個月享 2.5 折優惠，再用專屬邀請碼 6J6FV5N2 領取獎勵疊加 9.5 折，低至 9.4 元/月！",
       "byteplus": "透過此連結註冊即可取得每個模型 50 萬 tokens 的免費推理額度。",
-      "ccsub": "CCSub 是穩定、實惠的 AI API 中轉平台，Claude Code 官方訂閱的超強平替，一個 Key 覆蓋全部模型，價格約為官方 1/3。",
       "subrouter": "SubRouter 是中轉站聚合平台，一個 Key 可接入多個模型與供應商。",
       "qiniu": "七牛雲是多協定 AI 中轉平台，一個 Key 即可呼叫原生 Claude、GPT、Gemini 模型，相容 Anthropic、OpenAI、Gemini 多種介面。",
       "haoai": "hao.ai 是面向開發者與團隊的高速、穩定大模型統一 API 閘道：一個 Key 即可接入 GPT、Claude、Grok 等主流模型，相容 OpenAI、Anthropic 協定，提供模型路由、故障回退與完整呼叫日誌，價格低至官方參考價的 1.5 折。CC Switch 使用者透過此連結註冊，首單可享 5% 贈送額度！",
@@ -2022,12 +2028,7 @@
       "notSignedIn": "Copilot CLI 尚未登入。請執行 copilot 並用 /login 登入，或在卡片裡綁定授權中心的帳號。"
     },
     "defaultCannotRemove": "Copilot 的預設模型屬於這一家，不能移除或刪除。請先在 copilot 裡用 /model 換成別家的模型。",
-    "terminalNeedsAdd": "請先把這一家新增到 Copilot，終端機才能選到它的模型。",
-    "section": {
-      "official": "官方登入 · {{count}}",
-      "officialHelpTitle": "官方登入",
-      "officialHelp": "使用 Copilot CLI 自己的 GitHub 登入，不寫入任何檔案；「開啟終端機」以卡片上的模型和綁定的帳號啟動 copilot。"
-    }
+    "terminalNeedsAdd": "請先把這一家新增到 Copilot，終端機才能選到它的模型。"
   },
   "codexOauth": {
     "authStatus": "驗證狀態",
