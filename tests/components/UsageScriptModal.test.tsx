@@ -337,6 +337,70 @@ describe("UsageScriptModal DeepSeek Harness credentials", () => {
   });
 });
 
+describe("UsageScriptModal WorkBuddy credentials", () => {
+  const workbuddyProvider: Provider = {
+    id: "workbuddy-deepseek",
+    name: "DeepSeek",
+    settingsConfig: {
+      models: [
+        {
+          id: "deepseek-chat",
+          url: "https://api.deepseek.com/v1/chat/completions",
+          apiKey: "sk-test-workbuddy",
+        },
+      ],
+    },
+    meta: {
+      usage_script: {
+        enabled: true,
+        language: "javascript",
+        code: "",
+      },
+    },
+  };
+
+  it("passes the model's key and endpoint without /chat/completions to the balance test", async () => {
+    const { subscriptionApi } = await import("@/lib/api/subscription");
+    const getBalance = vi
+      .spyOn(subscriptionApi, "getBalance")
+      .mockResolvedValue({
+        success: true,
+        data: [{ isValid: true, remaining: 1, unit: "CNY" }],
+      });
+
+    try {
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      render(
+        <QueryClientProvider client={client}>
+          <UsageScriptModal
+            provider={workbuddyProvider}
+            appId="workbuddy"
+            isOpen
+            onClose={() => {}}
+            onSave={() => {}}
+          />
+        </QueryClientProvider>,
+      );
+      expect(screen.getByText("usageScript.balanceHint")).toBeInTheDocument();
+      await userEvent.click(
+        screen.getByRole("button", { name: "usageScript.templateBalance" }),
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "usageScript.testScript" }),
+      );
+
+      expect(getBalance).toHaveBeenCalledWith(
+        "https://api.deepseek.com/v1",
+        "sk-test-workbuddy",
+      );
+    } finally {
+      getBalance.mockRestore();
+    }
+  });
+});
+
 describe.each([
   {
     appId: "mcode" as const,

@@ -971,6 +971,7 @@ describe("UnifiedSkillsPanel", () => {
           mcode: false,
           kimi: false,
           dsh: false,
+          workbuddy: false,
           agy: false,
           copilot: false,
         },
