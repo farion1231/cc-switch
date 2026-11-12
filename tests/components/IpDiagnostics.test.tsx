@@ -5,9 +5,10 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { IpDiagnostics } from "@/components/settings/IpDiagnostics";
-import type { IpReport } from "@/lib/api/ipDiagnostics";
+import type { IpReport } from "@/lib/api/globalProxy";
 import { SETTINGS_SECTIONS, normalizeSettingsSection } from "@/lib/navigation";
 
 const mocks = vi.hoisted(() => ({
@@ -54,8 +55,18 @@ function report(): IpReport {
 const text = (key: string) => `settings.ipDiagnostics.${key}`;
 const check = () =>
   fireEvent.click(screen.getByRole("button", { name: text("run") }));
+const chooseCustomRoute = async () => {
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("combobox", { name: text("route") }));
+  await user.click(await screen.findByRole("option", { name: text("custom") }));
+};
 
 describe("IP diagnostics", () => {
+  beforeAll(() => {
+    // jsdom has no scrollIntoView, which the open Radix Select calls.
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+
   beforeEach(() => {
     mocks.invoke.mockReset().mockResolvedValue(report());
     mocks.openExternal.mockReset().mockResolvedValue(undefined);
@@ -102,7 +113,7 @@ describe("IP diagnostics", () => {
     expect(mocks.invoke).toHaveBeenCalledWith("diagnose_ip", { url: "" });
   });
 
-  it("does not silently run with missing saved settings", () => {
+  it("does not silently run with missing saved settings", async () => {
     mocks.proxy.data = undefined;
     mocks.proxy.isLoading = true;
     const view = render(<IpDiagnostics />);
@@ -112,17 +123,13 @@ describe("IP diagnostics", () => {
     view.rerender(<IpDiagnostics />);
     expect(screen.getByRole("alert")).toHaveTextContent(text("settingsError"));
     expect(screen.getByRole("button", { name: text("run") })).toBeDisabled();
-    fireEvent.change(screen.getByRole("combobox"), {
-      target: { value: "custom" },
-    });
+    await chooseCustomRoute();
     expect(screen.getByRole("button", { name: text("run") })).toBeEnabled();
   });
 
   it("uses the temporary proxy without writing settings", async () => {
     render(<IpDiagnostics />);
-    fireEvent.change(screen.getByRole("combobox"), {
-      target: { value: "custom" },
-    });
+    await chooseCustomRoute();
     const input = screen.getByLabelText(text("proxyUrl"));
     expect(input).toHaveAttribute("type", "password");
     fireEvent.change(input, {
@@ -150,9 +157,7 @@ describe("IP diagnostics", () => {
     expect(
       screen.getByRole("button", { name: text("running") }),
     ).toBeDisabled();
-    fireEvent.change(screen.getByRole("combobox"), {
-      target: { value: "custom" },
-    });
+    await chooseCustomRoute();
     await act(async () => {
       finish(report());
     });
@@ -228,17 +233,18 @@ describe("IP diagnostics", () => {
     },
   );
 
-  it("opens community checks only when clicked and reports browser errors", async () => {
+  it("opens the community check only when clicked and reports browser errors", async () => {
     render(<IpDiagnostics />);
     expect(screen.getByText(text("browserRoute"))).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: text("ipQuality") }));
+    const link = screen.getByRole("button", { name: text("ipQuality") });
+    fireEvent.click(link);
     await waitFor(() =>
       expect(mocks.openExternal).toHaveBeenCalledWith(
         "https://ip.net.coffee/claude/",
       ),
     );
     mocks.openExternal.mockRejectedValueOnce(new Error("No browser"));
-    fireEvent.click(screen.getByRole("button", { name: text("browserCheck") }));
+    fireEvent.click(link);
     expect(await screen.findByRole("alert")).toHaveTextContent(
       text("openError"),
     );
@@ -247,11 +253,9 @@ describe("IP diagnostics", () => {
 
   it("shows unknown when the runtime cannot report a local timezone", async () => {
     const options = new Intl.DateTimeFormat().resolvedOptions();
-    const formatter = vi
-      .spyOn(Intl, "DateTimeFormat")
-      .mockReturnValue({
-        resolvedOptions: () => ({ ...options, timeZone: "" }),
-      } as Intl.DateTimeFormat);
+    const formatter = vi.spyOn(Intl, "DateTimeFormat").mockReturnValue({
+      resolvedOptions: () => ({ ...options, timeZone: "" }),
+    } as Intl.DateTimeFormat);
     try {
       render(<IpDiagnostics />);
       check();

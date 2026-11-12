@@ -3,15 +3,22 @@ import { useTranslation } from "react-i18next";
 import { ExternalLink, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useGlobalProxyUrl } from "@/hooks/useGlobalProxy";
-import { diagnoseIp, type IpReport } from "@/lib/api/ipDiagnostics";
+import { diagnoseIp, type IpReport } from "@/lib/api/globalProxy";
 import { settingsApi } from "@/lib/api";
-import { SettingsBlock } from "./SettingsLayout";
+import { SettingsBlock, SettingsRow } from "./SettingsLayout";
 
-const COMMUNITY_CHECKS = [
-  { key: "ipQuality", url: "https://ip.net.coffee/claude/" },
-  { key: "browserCheck", url: "https://fuck-claude.vercel.app/" },
-] as const;
+const IP_QUALITY_URL = "https://ip.net.coffee/claude/";
+const key = (name: string) => `settings.ipDiagnostics.${name}`;
+
+type Field = [name: string, value: string | null | undefined];
 
 export function IpDiagnostics() {
   const { t } = useTranslation();
@@ -21,39 +28,40 @@ export function IpDiagnostics() {
   const url = route === "saved" ? (savedUrl ?? "") : customUrl;
 
   return (
-    <SettingsBlock title={t("settings.ipDiagnostics.title")}>
+    <SettingsBlock title={t(key("title"))}>
       <div className="space-y-4 rounded-panel border border-border bg-surface p-5">
-        <p className="text-sm text-fg-2">{t("settings.ipDiagnostics.scope")}</p>
-        <label className="block space-y-2 text-sm">
-          <span>{t("settings.ipDiagnostics.route")}</span>
-          <select
-            className="w-full rounded-control border border-border bg-surface p-2"
-            value={route}
-            onChange={(event) => setRoute(event.target.value)}
-          >
-            <option value="saved">{t("settings.ipDiagnostics.saved")}</option>
-            <option value="custom">{t("settings.ipDiagnostics.custom")}</option>
-          </select>
-        </label>
+        <p className="text-sm text-fg-2">{t(key("scope"))}</p>
+        <SettingsRow
+          className="p-0"
+          label={t(key("route"))}
+          htmlFor="ip-diagnostics-route"
+          control={
+            <Select value={route} onValueChange={setRoute}>
+              <SelectTrigger id="ip-diagnostics-route" className="w-[200px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="saved">{t(key("saved"))}</SelectItem>
+                <SelectItem value="custom">{t(key("custom"))}</SelectItem>
+              </SelectContent>
+            </Select>
+          }
+        />
         {route === "custom" && (
           <Input
             type="password"
             autoComplete="off"
-            aria-label={t("settings.ipDiagnostics.proxyUrl")}
+            aria-label={t(key("proxyUrl"))}
             placeholder="http://proxy.example:8080 / socks5h://proxy.example:1080"
             value={customUrl}
             onChange={(event) => setCustomUrl(event.target.value)}
           />
         )}
         <p className="text-sm text-fg-2">
-          {t(
-            url.trim()
-              ? "settings.ipDiagnostics.explicitRoute"
-              : "settings.ipDiagnostics.systemRoute",
-          )}
+          {t(key(url.trim() ? "explicitRoute" : "systemRoute"))}
         </p>
         {isError && route === "saved" && (
-          <p role="alert">{t("settings.ipDiagnostics.settingsError")}</p>
+          <p role="alert">{t(key("settingsError"))}</p>
         )}
         <DiagnosticRun
           key={`${route}:${url}`}
@@ -69,19 +77,21 @@ export function IpDiagnostics() {
 function DiagnosticRun({ url, disabled }: { url: string; disabled: boolean }) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
-  const [report, setReport] = useState<IpReport | null>(null);
-  const [checkedAt, setCheckedAt] = useState("");
+  const [result, setResult] = useState<{
+    report: IpReport;
+    checkedAt: string;
+  } | null>(null);
   const [error, setError] = useState("");
-  const label = (key: string) => t(`settings.ipDiagnostics.${key}`);
+  const label = (name: string) => t(key(name));
   const unknown = label("unknown");
 
   const run = async () => {
     setBusy(true);
-    setReport(null);
+    setResult(null);
     setError("");
     try {
-      setReport(await diagnoseIp(url));
-      setCheckedAt(new Date().toLocaleString());
+      const report = await diagnoseIp(url);
+      setResult({ report, checkedAt: new Date().toLocaleString() });
     } catch (reason) {
       setError(label(reason === "invalidProxy" ? "invalidProxy" : "failed"));
     } finally {
@@ -89,18 +99,19 @@ function DiagnosticRun({ url, disabled }: { url: string; disabled: boolean }) {
     }
   };
 
-  const openCommunityCheck = async (link: string) => {
+  const openIpQualityCheck = async () => {
     try {
-      await settingsApi.openExternal(link);
+      await settingsApi.openExternal(IP_QUALITY_URL);
     } catch {
       setError(label("openError"));
     }
   };
 
+  const report = result?.report;
   const location = report?.location;
   const observedIps =
     report?.samples.flatMap((sample) => sample.ip ?? []) ?? [];
-  const fields: [string, string | null | undefined][] = location
+  const locationFields: Field[] = location
     ? [
         ["locationIp", location.ip],
         ["country", location.country],
@@ -118,6 +129,10 @@ function DiagnosticRun({ url, disabled }: { url: string; disabled: boolean }) {
         ["utcOffset", location.timezone?.utc],
       ]
     : [];
+  const fields: Field[] = [
+    ...locationFields,
+    ["localTimezone", Intl.DateTimeFormat().resolvedOptions().timeZone],
+  ];
 
   return (
     <div className="space-y-4">
@@ -133,13 +148,13 @@ function DiagnosticRun({ url, disabled }: { url: string; disabled: boolean }) {
           {error}
         </p>
       )}
-      {report && (
+      {result && (
         <div className="space-y-3" aria-live="polite">
           <p className="text-xs text-fg-2">
-            {label("checkedAt")}: {checkedAt}
+            {label("checkedAt")}: {result.checkedAt}
           </p>
           <dl className="space-y-2 text-sm">
-            {report.samples.map((sample) => (
+            {result.report.samples.map((sample) => (
               <div
                 key={sample.source}
                 className="flex flex-wrap justify-between gap-2"
@@ -162,25 +177,19 @@ function DiagnosticRun({ url, disabled }: { url: string; disabled: boolean }) {
                   : "different",
             )}
           </p>
-          {report.locationError && (
+          {result.report.locationError && (
             <p role="status" className="text-sm">
               {label("locationError")}:{" "}
-              {label(`errors.${report.locationError}`)}
+              {label(`errors.${result.report.locationError}`)}
             </p>
           )}
           <dl className="space-y-2 text-sm">
-            {fields.map(([key, value]) => (
-              <div key={key} className="flex flex-wrap justify-between gap-2">
-                <dt>{label(key)}</dt>
+            {fields.map(([name, value]) => (
+              <div key={name} className="flex flex-wrap justify-between gap-2">
+                <dt>{label(name)}</dt>
                 <dd className="break-all">{value || unknown}</dd>
               </div>
             ))}
-            <div className="flex flex-wrap justify-between gap-2">
-              <dt>{label("localTimezone")}</dt>
-              <dd>
-                {Intl.DateTimeFormat().resolvedOptions().timeZone || unknown}
-              </dd>
-            </div>
           </dl>
           {location && (
             <p className="text-xs text-fg-2">{label("locationSource")}</p>
@@ -190,19 +199,14 @@ function DiagnosticRun({ url, disabled }: { url: string; disabled: boolean }) {
       <div className="space-y-2 border-t border-border pt-4">
         <h3 className="text-sm font-medium">{label("community")}</h3>
         <p className="text-sm text-fg-2">{label("browserRoute")}</p>
-        <div className="flex flex-wrap gap-2">
-          {COMMUNITY_CHECKS.map((check) => (
-            <Button
-              key={check.key}
-              variant="outline"
-              size="sm"
-              onClick={() => void openCommunityCheck(check.url)}
-            >
-              {label(check.key)}
-              <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-            </Button>
-          ))}
-        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void openIpQualityCheck()}
+        >
+          {label("ipQuality")}
+          <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+        </Button>
       </div>
     </div>
   );

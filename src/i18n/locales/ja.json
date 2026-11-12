@@ -1209,7 +1209,6 @@
       "community": "コミュニティ検査",
       "browserRoute": "既定のブラウザーで開きます。ブラウザー自身の通信経路は上記と異なる場合があります。サイトにはブラウザーの出口 IP とブラウザー情報が送信されます。スコアは参考情報です。",
       "ipQuality": "IP 品質・ASN・評判（ip.net.coffee）",
-      "browserCheck": "ブラウザー情報（LinXiaoTao の FuckClaude）",
       "errors": {
         "network": "接続失敗またはタイムアウト",
         "http": "サービスが HTTP エラーを返しました",

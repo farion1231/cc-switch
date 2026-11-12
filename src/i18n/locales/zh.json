@@ -1209,7 +1209,6 @@
       "community": "社区检测",
       "browserRoute": "链接在默认浏览器中打开，使用浏览器自身的网络路径，可能与上方检测路径不同。第三方站点会收到浏览器出口 IP 和浏览器信息，评分仅供参考。",
       "ipQuality": "IP 质量、ASN 与信誉（ip.net.coffee）",
-      "browserCheck": "浏览器信号（LinXiaoTao 的 FuckClaude）",
       "errors": {
         "network": "连接失败或超时",
         "http": "服务返回 HTTP 错误",

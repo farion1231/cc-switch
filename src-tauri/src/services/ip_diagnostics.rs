@@ -3,9 +3,14 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-const EXIT_URLS: [&str; 2] = ["https://ipv4.icanhazip.com/", "https://api.ipify.org/"];
+/// (source label, endpoint) pairs sampled concurrently.
+type ExitSources<'a> = [(&'static str, &'a str); 2];
+const EXIT_SOURCES: ExitSources<'static> = [
+    ("icanhazip.com", "https://ipv4.icanhazip.com/"),
+    ("ipify.org", "https://api.ipify.org/"),
+];
 const LOCATION_URL: &str = "https://ipwho.is/";
 const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 
@@ -58,9 +63,17 @@ pub struct IpReport {
     pub location_error: Option<DiagnosticError>,
 }
 
+/// An empty URL follows the system proxy; any build failure is reported as
+/// `invalidProxy` so the UI never echoes a URL that may carry credentials.
 pub async fn diagnose(proxy_url: &str) -> Result<IpReport, String> {
-    let client = crate::proxy::http_client::diagnostic_client(proxy_url)?;
-    Ok(observe(&client, EXIT_URLS, LOCATION_URL).await)
+    let client = diagnostic_client(proxy_url)?;
+    Ok(observe(&client, EXIT_SOURCES, LOCATION_URL).await)
+}
+
+fn diagnostic_client(proxy_url: &str) -> Result<Client, String> {
+    let proxy_url = Some(proxy_url.trim()).filter(|url| !url.is_empty());
+    crate::proxy::http_client::no_redirect_with_proxy(proxy_url, Duration::from_secs(10))
+        .map_err(|_| "invalidProxy".to_string())
 }
 
 async fn read_response(client: &Client, url: &str) -> Result<Vec<u8>, DiagnosticError> {
@@ -126,28 +139,47 @@ fn parse_location(body: &[u8], expected_ip: IpAddr) -> Result<IpLocation, Diagno
     Ok(location)
 }
 
-async fn observe(client: &Client, exit_urls: [&str; 2], location_url: &str) -> IpReport {
-    let (primary, secondary) = tokio::join!(
-        sample(client, "icanhazip.com", exit_urls[0]),
-        sample(client, "ipify.org", exit_urls[1]),
-    );
-    let mut report = IpReport {
-        samples: vec![primary, secondary],
-        location: None,
-        location_error: None,
-    };
-    // Query the observed address explicitly so a rotating proxy cannot silently
-    // attach another connection's location to this sample.
-    if let Some(ip) = report.samples.iter().find_map(|sample| sample.ip) {
-        let result = read_response(client, &format!("{location_url}{ip}"))
+// Query the observed address explicitly so a rotating proxy cannot silently
+// attach another connection's location to this sample.
+async fn locate(
+    client: &Client,
+    location_url: &str,
+    ip: Option<IpAddr>,
+) -> Option<Result<IpLocation, DiagnosticError>> {
+    let ip = ip?;
+    Some(
+        read_response(client, &format!("{location_url}{ip}"))
             .await
-            .and_then(|body| parse_location(&body, ip));
-        match result {
-            Ok(location) => report.location = Some(location),
-            Err(error) => report.location_error = Some(error),
-        }
+            .and_then(|body| parse_location(&body, ip)),
+    )
+}
+
+async fn observe(client: &Client, sources: ExitSources<'_>, location_url: &str) -> IpReport {
+    let [(primary_source, primary_url), (secondary_source, secondary_url)] = sources;
+    // Look up the primary IP as soon as it arrives instead of waiting for the
+    // slower sample; fall back to the secondary IP only if the primary failed.
+    let ((primary, lookup), secondary) = tokio::join!(
+        async {
+            let primary = sample(client, primary_source, primary_url).await;
+            let lookup = locate(client, location_url, primary.ip).await;
+            (primary, lookup)
+        },
+        sample(client, secondary_source, secondary_url),
+    );
+    let lookup = match lookup {
+        Some(lookup) => Some(lookup),
+        None => locate(client, location_url, secondary.ip).await,
+    };
+    let (location, location_error) = match lookup {
+        Some(Ok(location)) => (Some(location), None),
+        Some(Err(error)) => (None, Some(error)),
+        None => (None, None),
+    };
+    IpReport {
+        samples: vec![primary, secondary],
+        location,
+        location_error,
     }
-    report
 }
 
 #[cfg(test)]
@@ -256,8 +288,8 @@ mod tests {
         let report = observe(
             &client(),
             [
-                &format!("{}/primary", server.url),
-                &format!("{}/secondary", server.url),
+                ("primary", &format!("{}/primary", server.url)),
+                ("secondary", &format!("{}/secondary", server.url)),
             ],
             &format!("{}/geo/", server.url),
         )
@@ -281,19 +313,19 @@ mod tests {
         let bad = format!("{}/invalid", server.url);
         let good = format!("{}/primary", server.url);
         let geo = format!("{}/geo/", server.url);
-        let report = observe(&client(), [&bad, &good], &geo).await;
+        let report = observe(&client(), [("a", &bad), ("b", &good)], &geo).await;
         assert_eq!(
             report.samples[0].error,
             Some(DiagnosticError::InvalidResponse)
         );
         assert!(report.location.is_some());
-        let report = observe(&client(), [&bad, &bad], "invalid URL").await;
+        let report = observe(&client(), [("a", &bad), ("b", &bad)], "invalid URL").await;
         assert!(report.samples.iter().all(|sample| sample.ip.is_none()));
         assert!(report.location.is_none());
         assert!(report.location_error.is_none());
         let report = observe(
             &client(),
-            [&good, &good],
+            [("a", &good), ("b", &good)],
             &format!("{}/missing/", server.url),
         )
         .await;
@@ -301,7 +333,7 @@ mod tests {
         assert_eq!(report.location_error, Some(DiagnosticError::Http));
         let report = observe(
             &client(),
-            [&good, &good],
+            [("a", &good), ("b", &good)],
             &format!("{}/invalid-geo/", server.url),
         )
         .await;
@@ -369,7 +401,7 @@ mod tests {
         let blocked = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let proxy = format!("http://user:secret@{}", blocked.local_addr().unwrap());
         drop(blocked);
-        let client = crate::proxy::http_client::diagnostic_client(&proxy).unwrap();
+        let client = diagnostic_client(&proxy).unwrap();
         let sample = sample(&client, "test", &format!("{}/primary", server.url)).await;
         assert_eq!(sample.error, Some(DiagnosticError::Network));
         assert!(sample.ip.is_none());

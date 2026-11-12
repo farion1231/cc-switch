@@ -253,6 +253,21 @@ pub fn no_redirect() -> Result<Client, String> {
     )
 }
 
+/// A one-off no-redirect client for an explicit proxy (`None` follows the system
+/// proxy), leaving the saved global proxy untouched.
+pub(crate) fn no_redirect_with_proxy(
+    proxy_url: Option<&str>,
+    timeout: Duration,
+) -> Result<Client, String> {
+    build_client_from(
+        base_builder()
+            .timeout(timeout)
+            .connect_timeout(timeout.min(Duration::from_secs(5)))
+            .redirect(reqwest::redirect::Policy::none()),
+        proxy_url,
+    )
+}
+
 /// 不跟随重定向、按目标地址选代理的客户端：本机地址直连，其余同 [`no_redirect`]。
 pub fn no_redirect_for_url(url: &str) -> Result<Client, String> {
     if is_loopback_url(url) {
@@ -269,18 +284,6 @@ pub fn no_redirect_for_url(url: &str) -> Result<Client, String> {
 /// 构建 HTTP 客户端
 fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
     build_client_from(base_builder(), proxy_url)
-}
-
-/// Build an isolated diagnostic client without changing the saved proxy.
-pub(crate) fn diagnostic_client(proxy_url: &str) -> Result<Client, String> {
-    build_client_from(
-        base_builder()
-            .timeout(Duration::from_secs(10))
-            .connect_timeout(Duration::from_secs(5))
-            .redirect(reqwest::redirect::Policy::none()),
-        Some(proxy_url.trim()).filter(|url| !url.is_empty()),
-    )
-    .map_err(|_| "invalidProxy".to_string())
 }
 
 fn build_client_from(

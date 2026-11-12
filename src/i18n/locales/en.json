@@ -1206,10 +1206,9 @@
       "utcOffset": "UTC offset",
       "localTimezone": "Local timezone",
       "locationSource": "Location and network data: ipwho.is. Database estimates can be inaccurate.",
-      "community": "Community checks",
-      "browserRoute": "These links open in your default browser, using its own network route, which can differ from the route above. The sites receive the browser’s exit IP and browser information. Scores are community references.",
+      "community": "Community check",
+      "browserRoute": "This link opens in your default browser, using its own network route, which can differ from the route above. The site receives the browser’s exit IP and browser information. Its scores are community references.",
       "ipQuality": "IP quality, ASN and reputation (ip.net.coffee)",
-      "browserCheck": "Browser signals (FuckClaude by LinXiaoTao)",
       "errors": {
         "network": "Connection failed or timed out",
         "http": "Service returned an HTTP error",

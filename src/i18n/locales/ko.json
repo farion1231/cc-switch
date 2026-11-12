@@ -1209,7 +1209,6 @@
       "community": "커뮤니티 검사",
       "browserRoute": "기본 브라우저에서 열리며 브라우저 자체의 네트워크 경로를 사용합니다. 위 경로와 다를 수 있습니다. 사이트는 브라우저의 출구 IP와 브라우저 정보를 받습니다. 점수는 참고용입니다.",
       "ipQuality": "IP 품질, ASN 및 평판 (ip.net.coffee)",
-      "browserCheck": "브라우저 정보 (LinXiaoTao의 FuckClaude)",
       "errors": {
         "network": "연결 실패 또는 시간 초과",
         "http": "서비스가 HTTP 오류를 반환했습니다",
