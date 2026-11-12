@@ -99,66 +99,84 @@ export const mapCodexCatalogModelForForm = (item: any): CodexCatalogModel => {
   };
 };
 
+/** 编辑已有供应商时，从它的 settingsConfig 读出表单的初始值；没有可用的配置时为 null */
+function readCodexInitialState(
+  initialData: UseCodexConfigStateProps["initialData"],
+) {
+  const config = initialData?.settingsConfig;
+  if (typeof config !== "object" || config === null) return null;
+  const configStr =
+    typeof (config as any).config === "string" ? (config as any).config : "";
+  const auth = (config as any).auth || {};
+  const modelCatalog = (config as any).modelCatalog;
+  const rawCatalogModels = Array.isArray(modelCatalog?.models)
+    ? modelCatalog.models
+    : [];
+  return {
+    config: configStr as string,
+    auth: JSON.stringify(auth, null, 2),
+    catalogModels: rawCatalogModels
+      .map(mapCodexCatalogModelForForm)
+      .filter((item: CodexCatalogModel) =>
+        item.model.trim(),
+      ) as CodexCatalogModel[],
+    autoReviewModel:
+      typeof modelCatalog?.autoReviewModel === "string"
+        ? (modelCatalog.autoReviewModel.trim() as string)
+        : "",
+    officialSpeedTiers: modelCatalog?.officialSpeedTiers === true,
+    baseUrl: extractCodexBaseUrl(configStr) || "",
+    apiKey: pickCodexApiKey(auth, configStr),
+  };
+}
+
 /**
  * 管理 Codex 配置状态
  * Codex 配置包含两部分：auth.json (JSON) 和 config.toml (TOML 字符串)
  */
 export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
-  const [codexAuth, setCodexAuthState] = useState("");
-  const [codexConfig, setCodexConfigState] = useState("");
-  const [codexApiKey, setCodexApiKey] = useState("");
-  const [codexBaseUrl, setCodexBaseUrl] = useState("");
-  const [codexModel, setCodexModel] = useState("");
+  // 初始值直接按 initialData 算好，不在挂载后的 effect 里再设一遍：那样每次打开编辑页
+  // 整张表单都要多渲染几轮。
+  const [initial] = useState(() => readCodexInitialState(initialData));
+  const [codexAuth, setCodexAuthState] = useState(initial?.auth ?? "");
+  const [codexConfig, setCodexConfigState] = useState(initial?.config ?? "");
+  const [codexApiKey, setCodexApiKey] = useState(initial?.apiKey ?? "");
+  const [codexBaseUrl, setCodexBaseUrl] = useState(initial?.baseUrl ?? "");
+  const [codexModel, setCodexModel] = useState(
+    () => extractCodexModelName(initial?.config ?? "") || "",
+  );
   const [codexCatalogModels, setCodexCatalogModels] = useState<
     CodexCatalogModel[]
-  >([]);
+  >(initial?.catalogModels ?? []);
   // 自动审批（Auto Review）用的模型：`modelCatalog.autoReviewModel`，空串 = 用 Codex 的默认
-  const [codexAutoReviewModel, setCodexAutoReviewModel] = useState("");
+  const [codexAutoReviewModel, setCodexAutoReviewModel] = useState(
+    initial?.autoReviewModel ?? "",
+  );
+  // 保留官方 Fast 档：`modelCatalog.officialSpeedTiers`，默认关
+  const [codexOfficialSpeedTiers, setCodexOfficialSpeedTiers] = useState(
+    initial?.officialSpeedTiers ?? false,
+  );
   const [codexAuthError, setCodexAuthError] = useState("");
 
   const isUpdatingCodexBaseUrlRef = useRef(false);
   const isUpdatingCodexModelRef = useRef(false);
 
-  // 初始化 Codex 配置（编辑模式）
+  // initialData 之后换了（编辑模式）：重新读一遍。挂载时的那份已经用作初始值。
+  const initializedFor = useRef(initialData);
   useEffect(() => {
-    if (!initialData) return;
-
-    const config = initialData.settingsConfig;
-    if (typeof config === "object" && config !== null) {
-      // 设置 config.toml
-      const configStr =
-        typeof (config as any).config === "string"
-          ? (config as any).config
-          : "";
-      setCodexConfigState(configStr);
-
-      // 设置 auth.json
-      const auth = (config as any).auth || {};
-      setCodexAuthState(JSON.stringify(auth, null, 2));
-
-      const modelCatalog = (config as any).modelCatalog;
-      const rawCatalogModels = Array.isArray(modelCatalog?.models)
-        ? modelCatalog.models
-        : [];
-      setCodexCatalogModels(
-        rawCatalogModels
-          .map(mapCodexCatalogModelForForm)
-          .filter((item: CodexCatalogModel) => item.model.trim()),
-      );
-      setCodexAutoReviewModel(
-        typeof modelCatalog?.autoReviewModel === "string"
-          ? modelCatalog.autoReviewModel.trim()
-          : "",
-      );
-
-      // 提取 Base URL
-      const initialBaseUrl = extractCodexBaseUrl(configStr);
-      if (initialBaseUrl) {
-        setCodexBaseUrl(initialBaseUrl);
-      }
-
-      setCodexApiKey(pickCodexApiKey(auth, configStr));
+    if (initializedFor.current === initialData) return;
+    initializedFor.current = initialData;
+    const next = readCodexInitialState(initialData);
+    if (!next) return;
+    setCodexConfigState(next.config);
+    setCodexAuthState(next.auth);
+    setCodexCatalogModels(next.catalogModels);
+    setCodexAutoReviewModel(next.autoReviewModel);
+    setCodexOfficialSpeedTiers(next.officialSpeedTiers);
+    if (next.baseUrl) {
+      setCodexBaseUrl(next.baseUrl);
     }
+    setCodexApiKey(next.apiKey);
   }, [initialData]);
 
   // 与 TOML 配置保持基础 URL 同步
@@ -371,6 +389,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
       setCodexConfig(config);
       setCodexCatalogModels(modelCatalogModels);
       setCodexAutoReviewModel("");
+      setCodexOfficialSpeedTiers(false);
 
       const baseUrl = extractCodexBaseUrl(config);
       setCodexBaseUrl(baseUrl || "");
@@ -392,11 +411,13 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     codexMultiAgentV2Total,
     codexCatalogModels,
     codexAutoReviewModel,
+    codexOfficialSpeedTiers,
     codexAuthError,
     setCodexAuth,
     setCodexConfig,
     setCodexCatalogModels,
     setCodexAutoReviewModel,
+    setCodexOfficialSpeedTiers,
     handleCodexApiKeyChange,
     handleCodexBaseUrlChange,
     handleCodexModelChange,

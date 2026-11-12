@@ -1,4 +1,5 @@
 import App from "@/App";
+import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
 import "@/components/openclaw/EnvPanel";
 import "@/components/hermes/HermesMemoryPanel";
 import { Suspense, type ComponentType } from "react";
@@ -496,6 +497,32 @@ describe("App integration with MSW", () => {
       screen.queryByRole("button", { name: "provider.bulkImport.title" }),
     ).toBeInTheDocument();
   });
+
+  it.each(["DeepSeek Harness", "Copilot CLI"])(
+    "does not offer batch import for unsupported app %s",
+    async (appName) => {
+      setSettings({
+        firstRunNoticeConfirmed: true,
+        newLayoutNoticeConfirmed: true,
+        visibleApps: {
+          ...DEFAULT_VISIBLE_APPS,
+          dsh: true,
+          copilot: true,
+        },
+      });
+      renderApp(App);
+      await screen.findByTestId("provider-list");
+      fireEvent.click(sidebarApp(appName));
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("button", { name: "provider.bulkImport.title" }),
+        ).not.toBeInTheDocument(),
+      );
+      expect(
+        screen.queryByTestId("bulk-import-dialog"),
+      ).not.toBeInTheDocument();
+    },
+  );
 
   it.each(["add", "needsRoute"])(
     "blocks the complete tray %s intent while bulk import is busy",

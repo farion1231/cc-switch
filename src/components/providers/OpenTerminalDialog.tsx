@@ -23,6 +23,7 @@ import { toast } from "@/lib/toast";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { cn } from "@/lib/utils";
 import { providerNeedsRouting } from "@/utils/providerCapabilities";
+import { isCopilotOfficialCard } from "@/config/copilotConfig";
 
 const STORAGE_KEY = "cc-switch:terminal:recent-dirs";
 const MAX_RECENT = 5;
@@ -113,13 +114,16 @@ const TERMINAL_APP_NAMES: Partial<Record<AppId, string>> = {
   claude: "Claude Code",
   codex: "Codex",
   agy: "Antigravity CLI",
+  grokbuild: "Grok Build",
+  copilot: "GitHub Copilot CLI",
 };
 
-/** 跳过权限确认的参数：Claude Code 和 agy 同名，Codex 同时关掉沙箱 */
+/** 跳过权限确认的参数：Claude Code 和 agy 同名，Codex 同时关掉沙箱，Grok Build 用自己的，Copilot CLI 用 `--allow-all` */
 function skipPermissionsFlag(appId: AppId): string {
-  return appId === "codex"
-    ? "--dangerously-bypass-approvals-and-sandbox"
-    : "--dangerously-skip-permissions";
+  if (appId === "codex") return "--dangerously-bypass-approvals-and-sandbox";
+  if (appId === "grokbuild") return "--always-approve";
+  if (appId === "copilot") return "--allow-all";
+  return "--dangerously-skip-permissions";
 }
 
 /** Codex 卡自己带路由表（第三方地址），终端能只对这一次用 `-c` 换成它 */
@@ -133,16 +137,33 @@ function codexHasOwnRoute(provider: Provider): boolean {
 
 /**
  * 卡片上显示不显示「打开终端」。Codex 的官方卡、没有路由的卡跟着 Codex 自己的登录走，
- * 只有是当前供应商时才能打开（直接跑 `codex`）；要经本地路由的卡终端直连不了。
+ * 只有是当前供应商时才能打开（直接跑 `codex`）。
+ * Grok Build 没有只对一个进程换配置的办法（没有 `-c`，换 `GROK_HOME` 会连会话和登录一起换掉），
+ * 只有当前供应商能打开，直接跑 `grok` 读 live 的 config.toml。
+ * 要经本地路由的卡照样显示，但置灰（见 [`terminalNeedsRoute`]）。
  */
 export function terminalAvailable(
   provider: Provider,
   appId: AppId,
   isCurrent: boolean,
 ): boolean {
+  if (appId === "grokbuild") return isCurrent;
   if (appId !== "codex") return true;
-  if (providerNeedsRouting("codex", provider)) return false;
+  if (terminalNeedsRoute(provider, appId)) return true;
   return isCurrent || codexHasOwnRoute(provider);
+}
+
+/**
+ * 这张卡只能经本地路由用，卡片终端打不通，按钮置灰并说明原因。终端直连卡上的地址：托管账号卡
+ * （Copilot、Codex OAuth、xAI OAuth）没有 Key，凭据只能由路由注入；非原生格式的卡要路由做
+ * 格式转换。Claude Code 的临时 settings 还会把卡上没有的凭据键置空，Claude Code 便退回
+ * claude.ai 登录、提示 /login。与当前模式无关，直连、路由、聚合下一样置灰。
+ */
+export function terminalNeedsRoute(provider: Provider, appId: AppId): boolean {
+  return (
+    (appId === "claude" || appId === "codex") &&
+    providerNeedsRouting(appId, provider)
+  );
 }
 
 /**
@@ -156,12 +177,23 @@ export function terminalAvailable(
  *
  * Antigravity：带 Key 的卡用自己的私有 `--gemini_dir` 启动，Key 只给这个 agy 进程；官方
  * 登录卡直接跑原生 agy，跟着全局设置和登录走。
+ *
+ * Grok Build：只能打开当前供应商，跑的就是 live 配置，谈不上隔离。
+ *
+ * Copilot CLI：自带模型卡写在 providers.json 里，终端以 `--model=<卡片 id>/<模型>` 选中它，
+ * 只对这次会话生效；官方卡跟着 Copilot 自己的 GitHub 登录走。
  */
 export function terminalIsIsolated(
   provider: Provider,
   appId: AppId = "claude",
 ): boolean {
+  if (appId === "grokbuild") return false;
   if (appId === "codex") return codexHasOwnRoute(provider);
+  // Copilot CLI：自带模型卡以 --model=<卡片 id>/<模型> 启动，清掉进程环境里的 BYOK 变量，
+  // 只对这个 copilot 会话生效
+  if (appId === "copilot") {
+    return !isCopilotOfficialCard(provider);
+  }
   const env = (provider.settingsConfig as { env?: unknown } | undefined)?.env;
   if (!env || typeof env !== "object") return false;
   const filled = (key: string) => {
@@ -317,7 +349,9 @@ export function OpenTerminalDialog({
               {t(
                 appId === "agy"
                   ? "provider.openTerminalDialog.isolationBodyAgy"
-                  : "provider.openTerminalDialog.isolationBody",
+                  : appId === "copilot"
+                    ? "provider.openTerminalDialog.isolationBodyCopilot"
+                    : "provider.openTerminalDialog.isolationBody",
                 { name: provider.name },
               )}
             </Notice>

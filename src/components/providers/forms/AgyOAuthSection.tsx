@@ -21,6 +21,7 @@ import {
   type GroupAccountRow,
 } from "@/components/settings/auth/ManagedAccountsGroup";
 import { signedInDate } from "@/components/settings/auth/accountDetails";
+import { useAccountQuotaPlans } from "@/lib/query/accountPlans";
 import { AgyAccountQuota } from "@/components/settings/auth/AccountQuota";
 
 interface AgyOAuthSectionProps {
@@ -65,6 +66,11 @@ export const AgyOAuthSection: React.FC<AgyOAuthSectionProps> = ({
     if (target?.kind === "one") removeAccount(target.accountId);
   };
 
+  // 第二行的套餐（额度查到才有）
+  const plans = useAccountQuotaPlans(
+    "agy_oauth",
+    accounts.map((account) => account.id),
+  );
   const rows: GroupAccountRow[] = accounts.map((account) => {
     const date = signedInDate(account.authenticated_at, i18n.language);
     return {
@@ -77,14 +83,15 @@ export const AgyOAuthSection: React.FC<AgyOAuthSectionProps> = ({
               defaultValue: "登录凭据已失效，切不过去",
             }),
           ]
-        : date
-          ? [
-              t("authCenter.agy.addedOn", {
-                defaultValue: "{{date}}添加",
-                date,
-              }),
-            ]
-          : [],
+        : [
+            plans[account.id],
+            date
+              ? t("authCenter.agy.addedOn", {
+                  defaultValue: "{{date}}添加",
+                  date,
+                })
+              : null,
+          ].filter(Boolean),
       isDefault: defaultAccountId === account.id,
       needsReauth: account.requires_reauth,
       users: accountUsers([account.id]),

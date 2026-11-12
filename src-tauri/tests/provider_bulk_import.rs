@@ -2,38 +2,40 @@ use cc_switch_lib::{AppState, AppType, Database, Provider, ProviderService};
 use serde_json::{json, Value};
 use std::sync::{Arc, Barrier};
 
-#[path = "support.rs"]
+#[path = "support/mod.rs"]
 mod support;
 use support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
 
 fn bulk_apps() -> impl Iterator<Item = AppType> {
-    AppType::all().filter(|app| *app != AppType::Dsh)
+    AppType::all().filter(|app| !matches!(app, AppType::Dsh | AppType::Copilot))
 }
 
 #[test]
-fn unsupported_dsh_batch_preserves_database_and_native_files() {
+fn unsupported_apps_preserve_database_and_native_files() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     let _env = AgentEnvironment::isolated();
     let state = create_test_state().unwrap();
     let before = native_files();
-    let source = json!([agent_row(&AppType::Dsh, "Team", "synthetic-dsh-key")]).to_string();
-    let expected = "provider.bulkImport.errors.unsupportedApp";
-    assert_eq!(
-        ProviderService::preview_bulk_import(&state, AppType::Dsh, &source)
-            .err()
-            .unwrap()
-            .to_string(),
-        expected
-    );
-    assert_eq!(
-        ProviderService::import_bulk(&state, AppType::Dsh, &source, "forged")
-            .err()
-            .unwrap()
-            .to_string(),
-        expected
-    );
-    assert!(state.db.get_all_providers("dsh").unwrap().is_empty());
-    assert_eq!(native_files(), before);
+    for app in [AppType::Dsh, AppType::Copilot] {
+        let source = json!([agent_row(&app, "Team", "synthetic-unsupported-key")]).to_string();
+        let expected = "provider.bulkImport.errors.unsupportedApp";
+        assert_eq!(
+            ProviderService::preview_bulk_import(&state, app.clone(), &source)
+                .err()
+                .unwrap()
+                .to_string(),
+            expected
+        );
+        assert_eq!(
+            ProviderService::import_bulk(&state, app.clone(), &source, "forged")
+                .err()
+                .unwrap()
+                .to_string(),
+            expected
+        );
+        assert!(state.db.get_all_providers(app.as_str()).unwrap().is_empty());
+        assert_eq!(native_files(), before);
+    }
 }
 
 fn row(name: &str, key: &str) -> Value {

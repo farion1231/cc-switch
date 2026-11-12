@@ -22,6 +22,37 @@ impl Database {
 
     /// 在指定连接上创建表（供迁移和测试使用）
     pub(crate) fn create_tables_on_conn(conn: &Connection) -> Result<(), AppError> {
+        Self::in_savepoint(conn, "create_tables", || {
+            Self::create_tables_on_conn_unbatched(conn)
+        })
+    }
+
+    /// 在 SAVEPOINT 里执行一组写入：成功 RELEASE，失败 ROLLBACK TO 再 RELEASE。
+    ///
+    /// 自动提交模式下每条语句单独一个事务，都要建 / 删一次日志文件并落盘；建表和
+    /// 二百多条内置定价逐条提交，在 Windows 上新库要多花约 6 秒（首次启动、每个用到
+    /// 数据库的测试都会碰上）。合成一个事务只落一次盘。外面已有事务时 SAVEPOINT 会嵌套。
+    pub(crate) fn in_savepoint<T>(
+        conn: &Connection,
+        name: &str,
+        f: impl FnOnce() -> Result<T, AppError>,
+    ) -> Result<T, AppError> {
+        conn.execute_batch(&format!("SAVEPOINT {name};"))
+            .map_err(|e| AppError::Database(format!("开启 savepoint {name} 失败: {e}")))?;
+        match f() {
+            Ok(value) => {
+                conn.execute_batch(&format!("RELEASE {name};"))
+                    .map_err(|e| AppError::Database(format!("提交 savepoint {name} 失败: {e}")))?;
+                Ok(value)
+            }
+            Err(err) => {
+                let _ = conn.execute_batch(&format!("ROLLBACK TO {name}; RELEASE {name};"));
+                Err(err)
+            }
+        }
+    }
+
+    fn create_tables_on_conn_unbatched(conn: &Connection) -> Result<(), AppError> {
         // 1. Providers 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS providers (
@@ -71,6 +102,7 @@ impl Database {
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
+            enabled_copilot BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             enabled_pi BOOLEAN NOT NULL DEFAULT 0,
             enabled_omp BOOLEAN NOT NULL DEFAULT 0
@@ -106,6 +138,7 @@ impl Database {
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
+            enabled_copilot BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
@@ -647,6 +680,20 @@ impl Database {
                             )?;
                         }
                         Self::set_user_version(conn, 24)?;
+                    }
+                    24 => {
+                        // GitHub Copilot CLI：MCP 与 Skills 均在 SSOT 中保存独立开关。
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    "enabled_copilot",
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
+                            }
+                        }
+                        Self::set_user_version(conn, 25)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1703,6 +1750,16 @@ impl Database {
     /// 注意: model_id 使用短横线格式（如 claude-haiku-4-5），与 API 返回的模型名称标准化后一致
     fn seed_model_pricing(conn: &Connection) -> Result<(), AppError> {
         let pricing_data = [
+            // Claude Fable 5.2（2026-11-11 核对官方标准价；缓存写入为 5 分钟 TTL）
+            // 来源：https://www.anthropic.com/pricing#api；fast mode 为 2x 标准价，不入表。
+            (
+                "claude-fable-5-2",
+                "Claude Fable 5.2",
+                "8",
+                "40",
+                "0.20",
+                "10",
+            ),
             // Claude Fable 5.1 / Mythos 5.1（2026-09-01 发布；同 Fable 5 价，
             // 但缓存读为 0.025x = $0.25，非 Fable 5 的 $1）
             (
@@ -2150,6 +2207,18 @@ impl Database {
             (
                 "gemini-4-argon",
                 "Gemini 4 Argon",
+                "2.00",
+                "10.00",
+                "0.10",
+                "0",
+            ),
+            // Gemini 4 Carbon（2026-11-11 核对官方价页 + models.dev）：与 Argon 同口径录标准档介绍价
+            // 2.00/10.00/0.10/0（仅支持隐式缓存）；2026-11-30 到期，2026-12-01 起恢复挂牌价
+            // 4.00/20.00/0.20，刻意不进 audit-ignore.json。
+            // 来源：https://ai.google.dev/gemini-api/docs/pricing#gemini-4-carbon
+            (
+                "gemini-4-carbon",
+                "Gemini 4 Carbon",
                 "2.00",
                 "10.00",
                 "0.10",
@@ -3783,8 +3852,10 @@ impl Database {
 
     pub(crate) fn ensure_model_pricing_seeded_on_conn(conn: &Connection) -> Result<(), AppError> {
         // 每次启动都执行 INSERT OR IGNORE，增量追加新模型；仅修复仍等于旧内置值的定价。
-        Self::seed_model_pricing(conn)?;
-        Self::repair_current_model_pricing(conn)
+        Self::in_savepoint(conn, "seed_model_pricing", || {
+            Self::seed_model_pricing(conn)?;
+            Self::repair_current_model_pricing(conn)
+        })
     }
 
     // --- 辅助方法 ---
@@ -4104,6 +4175,62 @@ mod tests {
             assert_eq!(flags, (1, 0));
         }
         Database::apply_schema_migrations_on_conn(&conn)?;
+        Ok(())
+    }
+
+    #[test]
+    fn copilot_migration_preserves_existing_flags_and_defaults_to_disabled() -> Result<(), AppError>
+    {
+        // v23 先经 dsh 迁移（v23→v24）再经 copilot 迁移（v24→v25）；v24 只走后者。
+        for start in [23, 24] {
+            let conn = Connection::open_in_memory()?;
+            conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_claude BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+            if start == 24 {
+                conn.execute_batch("ALTER TABLE mcp_servers ADD COLUMN enabled_dsh BOOLEAN NOT NULL DEFAULT 0; ALTER TABLE skills ADD COLUMN enabled_dsh BOOLEAN NOT NULL DEFAULT 0; UPDATE mcp_servers SET enabled_dsh = 1;")?;
+            }
+            Database::set_user_version(&conn, start)?;
+            Database::apply_schema_migrations_on_conn(&conn)?;
+            assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+            for (table, flag, dsh) in [
+                ("mcp_servers", "enabled_kimi", i64::from(start == 24)),
+                ("skills", "enabled_claude", 0),
+            ] {
+                let flags = conn.query_row(
+                    &format!("SELECT {flag}, enabled_dsh, enabled_copilot FROM {table}"),
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, i64>(1)?,
+                            row.get::<_, i64>(2)?,
+                        ))
+                    },
+                )?;
+                assert_eq!(flags, (1, dsh, 0), "start version {start}, table {table}");
+            }
+            Database::apply_schema_migrations_on_conn(&conn)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn copilot_clean_database_persists_mcp_and_skill_flags_independently() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let server = serde_json::from_value(serde_json::json!({"id":"m", "name":"m", "server":{"command":"echo"}, "apps":{"copilot":true,"kimi":true}})).unwrap();
+        db.save_mcp_server(&server)?;
+        db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::Copilot, false)?;
+        let saved = db.get_all_mcp_servers()?;
+        assert!(!saved["m"].apps.copilot);
+        assert!(saved["m"].apps.kimi);
+        let skill = serde_json::from_value(serde_json::json!({"id":"s", "name":"s", "description":"", "directory":"s", "apps":{"copilot":true,"claude":true}, "installedAt":0})).unwrap();
+        db.save_skill(&skill)?;
+        let saved = db.get_installed_skill("s")?.unwrap();
+        assert!(saved.apps.copilot && saved.apps.claude);
+        let mut apps = saved.apps.clone();
+        apps.copilot = false;
+        db.update_skill_apps("s", &apps)?;
+        let saved = db.get_all_installed_skills()?;
+        assert!(!saved["s"].apps.copilot && saved["s"].apps.claude);
         Ok(())
     }
 

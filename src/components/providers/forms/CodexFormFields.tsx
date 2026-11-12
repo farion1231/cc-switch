@@ -241,6 +241,10 @@ interface CodexFormFieldsProps {
   // the catalog rows. Codex only; the Stack layout omits it (aggregation settings apply).
   autoReviewModel?: string;
   onAutoReviewModelChange?: (model: string) => void;
+  // Keep the official Fast speed tier on GPT rows mirrored from Codex's bundled
+  // entries: `modelCatalog.officialSpeedTiers`. Native Responses only.
+  officialSpeedTiers?: boolean;
+  onOfficialSpeedTiersChange?: (keep: boolean) => void;
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
@@ -697,6 +701,8 @@ export function CodexFormFields({
   catalogModels = [],
   autoReviewModel = "",
   onAutoReviewModelChange,
+  officialSpeedTiers = false,
+  onOfficialSpeedTiersChange,
   onCatalogModelsChange,
   speedTestEndpoints,
   customUserAgent,
@@ -883,6 +889,7 @@ export function CodexFormFields({
       fetchModels: () => Promise<T>,
       receiveModels: (models: T) => number,
       errorLogMessage: string,
+      getEmptyMessage?: (models: T) => string,
     ) => {
       const seq = ++fetchModelsSeqRef.current;
       setIsFetchingModels(true);
@@ -891,7 +898,9 @@ export function CodexFormFields({
           if (seq !== fetchModelsSeqRef.current) return;
           const count = receiveModels(models);
           if (count === 0) {
-            toast.info(t("providerForm.fetchModelsEmpty"));
+            toast.info(
+              getEmptyMessage?.(models) ?? t("providerForm.fetchModelsEmpty"),
+            );
           } else if (!canEditCatalog) {
             // 有模型列表时拉取成功会直接打开选择弹窗，不再提示成功。
             toast.success(t("providerForm.fetchModelsSuccess", { count }));
@@ -972,6 +981,12 @@ export function CodexFormFields({
           return usableModels.length;
         },
         "[Copilot] Failed to fetch models:",
+        // 后端返回 0 个＝账号本身无可选模型（Copilot Free 通常如此）；
+        // 否则是有模型但都不支持当前上游格式
+        (models) =>
+          models.length === 0
+            ? t("copilot.noPickerModels")
+            : t("copilot.noModelsForApiFormat"),
       );
       return;
     }
@@ -1398,6 +1413,34 @@ export function CodexFormFields({
     </div>
   );
 
+  // 保留官方 Fast 档：镜像官方的 GPT 行默认清空速度档，后面接官方账号的中转（如 CPA）才认
+  // service_tier=priority。Chat、Anthropic 转换会把它转给不认的上游，Copilot 走自己的目录，
+  // 都只给原生 Responses；聚合布局不显示（合并目录不看卡上的设置）。
+  const officialSpeedTiersToggle = onOfficialSpeedTiersChange &&
+    !isCopilotPreset &&
+    effectiveApiFormat === "openai_responses" && (
+      <div className="flex items-center justify-between gap-4">
+        {labelWithHelp(
+          t("codexConfig.officialSpeedTiersLabel", {
+            defaultValue: "保留官方 Fast 档",
+          }),
+          t("codexConfig.officialSpeedTiersHint", {
+            defaultValue:
+              "让模型列表里的 GPT 模型保留官方的 Fast 速度档，Codex 选了 Fast 后请求会带 service_tier=priority。只有转发官方 ChatGPT 账号的中转（如 CPA）才认，会更快消耗额度；其他上游可能报错或按更高价计费。打开后，之前在官方卡下选过的 Fast 会立刻在这家生效。聚合模式下不生效。改完需要重启 Codex。",
+          }),
+          "codexOfficialSpeedTiers",
+        )}
+        <Switch
+          id="codexOfficialSpeedTiers"
+          checked={officialSpeedTiers}
+          onCheckedChange={onOfficialSpeedTiersChange}
+          aria-label={t("codexConfig.officialSpeedTiersLabel", {
+            defaultValue: "保留官方 Fast 档",
+          })}
+        />
+      </div>
+    );
+
   const upstreamFormatSelect = (
     <div className="space-y-1.5">
       {labelWithHelp(
@@ -1538,11 +1581,11 @@ export function CodexFormFields({
         isGrokBuild
           ? t("grokBuild.maxOutputTokensHint", {
               defaultValue:
-                "默认上限 8192，长回答或深度思考容易被截断。这里的值会作为 Anthropic 的 max_tokens 发出。",
+                "默认上限 32000，思考也算在内。网关的输出上限更低时会报 400，在这里填它支持的值。这里的值会作为 Anthropic 的 max_tokens 发出。",
             })
           : t("codexConfig.maxOutputTokensHint", {
               defaultValue:
-                "Codex 不带输出上限，默认 8192，长回答或深度思考容易被截断。这里的值会作为 Anthropic 的 max_tokens 发出。",
+                "Codex 不带输出上限，默认按 32000 发出，思考也算在内。网关的输出上限更低时会报 400，在这里填它支持的值。这里的值会作为 Anthropic 的 max_tokens 发出。",
             }),
         "codex-anthropic-max-output-tokens",
       )}
@@ -1556,7 +1599,7 @@ export function CodexFormFields({
           onMaxOutputTokensChange(event.target.value.replace(/[^\d]/g, ""))
         }
         placeholder={t("codexConfig.maxOutputTokensPlaceholder", {
-          defaultValue: "留空则使用默认 8192",
+          defaultValue: "留空则使用默认 32000",
         })}
       />
       <p className="text-xs leading-relaxed text-fg-2">
@@ -2461,6 +2504,7 @@ export function CodexFormFields({
             {(shouldShowSpeedTest || isCopilotPreset) && !isXaiOauthPreset && (
               <div className="space-y-3">
                 {upstreamFormatSelect}
+                {officialSpeedTiersToggle}
                 {isAnthropicFormat && anthropicAuthFieldSelect}
                 {isAnthropicFormat && impersonateClaudeCodeToggle}
                 {isAnthropicFormat && maxOutputTokensField}

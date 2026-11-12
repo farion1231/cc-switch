@@ -127,7 +127,7 @@ describe("useAddProviderMutation", () => {
       id: "claude-desktop-official",
       name: "Claude Desktop Official",
       settingsConfig: { env: {} },
-      websiteUrl: "https://claude.ai/download",
+      websiteUrl: "https://claude.com/download",
       category: "official",
       icon: "anthropic",
       iconColor: "#D4915D",

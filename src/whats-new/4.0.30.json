@@ -1,0 +1,33 @@
+{
+  "version": "4.0.30",
+  "items": [
+    {
+      "type": "new",
+      "zh": "新增隐私过滤器，路由转发前替换个人信息和密钥",
+      "zh-TW": "新增隱私過濾器，路由轉發前替換個人資訊與金鑰",
+      "en": "Privacy filter: routing can mask personal data and secrets before forwarding",
+      "ja": "プライバシーフィルターを追加。転送前に個人情報とキーを置き換え"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 Codex 经路由连严格的第三方上游时报 400",
+      "zh-TW": "修正 Codex 經路由連嚴格的第三方上游時報 400",
+      "en": "Routed Codex no longer gets 400 from strict third-party Responses upstreams",
+      "ja": "ルーティング経由の Codex が厳格なサードパーティで 400 になる問題を修正"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 Windows 上主窗口被任务栏挡住、按钮点不到",
+      "zh-TW": "修正 Windows 上主視窗被工作列擋住、按鈕點不到",
+      "en": "The main window no longer opens under the Windows taskbar",
+      "ja": "Windows でメインウィンドウがタスクバーに隠れる問題を修正"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 Antigravity 免费账号额度报 403、用量同步占满 CPU",
+      "zh-TW": "修正 Antigravity 免費帳號額度報 403、用量同步佔滿 CPU",
+      "en": "Antigravity: quota works on free accounts, and usage sync no longer pins a CPU core",
+      "ja": "Antigravity の無料アカウントの 403 と使用量同期の CPU 高負荷を修正"
+    }
+  ]
+}
