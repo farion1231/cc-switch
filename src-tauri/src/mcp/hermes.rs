@@ -326,6 +326,7 @@ pub fn import_from_hermes(config: &mut MultiAppConfig) -> Result<usize, AppError
                         kimi: false,
                         copilot: false,
                         dsh: false,
+                        workbuddy: false,
                         pi: false,
                         omp: false,
                     },

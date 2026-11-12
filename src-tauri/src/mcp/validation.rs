@@ -20,6 +20,7 @@ pub(crate) fn validate_app_overrides(
         (AppType::Kimi, "mcp.error.invalidOverrideKimi"),
         (AppType::Dsh, "mcp.error.invalidOverrideDsh"),
         (AppType::Copilot, "mcp.error.invalidOverrideCopilot"),
+        (AppType::WorkBuddy, "mcp.error.invalidOverrideWorkbuddy"),
         (AppType::Agy, "mcp.error.invalidOverrideAgy"),
         (AppType::Omp, "mcp.error.invalidOverrideOmp"),
     ] {

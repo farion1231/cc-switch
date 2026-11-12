@@ -12,7 +12,7 @@ use std::{
     sync::Arc,
 };
 
-fn apps() -> [AppType; 13] {
+fn apps() -> [AppType; 14] {
     [
         AppType::Claude,
         AppType::Codex,
@@ -25,6 +25,7 @@ fn apps() -> [AppType; 13] {
         AppType::Kimi,
         AppType::Dsh,
         AppType::Copilot,
+        AppType::WorkBuddy,
         AppType::Agy,
         AppType::Omp,
     ]
@@ -47,6 +48,7 @@ impl Fixture {
             ".kimi-code",
             ".dsh",
             ".copilot",
+            ".workbuddy",
         ] {
             let path = home.join(directory);
             if path.exists() {
@@ -58,6 +60,7 @@ impl Fixture {
             "MINIMAX_DATA_DIR",
             "DSH_HOME",
             "COPILOT_HOME",
+            "WORKBUDDY_CONFIG_DIR",
         ]
         .into_iter()
         .map(|key| (key, std::env::var_os(key)))
@@ -66,6 +69,7 @@ impl Fixture {
         std::env::set_var("MINIMAX_DATA_DIR", home.join(".minimax"));
         std::env::set_var("DSH_HOME", home.join(".dsh"));
         std::env::set_var("COPILOT_HOME", home.join(".copilot"));
+        std::env::set_var("WORKBUDDY_CONFIG_DIR", home.join(".workbuddy"));
         update_settings(AppSettings {
             pi_config_dir: Some(home.join(".pi/agent").to_string_lossy().into_owned()),
             omp_config_dir: Some(home.join(".omp/agent").to_string_lossy().into_owned()),
@@ -95,6 +99,7 @@ impl Fixture {
             AppType::Kimi => ".kimi-code/mcp.json",
             AppType::Dsh => ".dsh/profiles/web/cordis.patch.yml",
             AppType::Copilot => ".copilot/mcp-config.json",
+            AppType::WorkBuddy => ".workbuddy/mcp.json",
             AppType::Agy => ".gemini/config/mcp_config.json",
             AppType::Omp => ".omp/agent/mcp.json",
             _ => unreachable!(),

@@ -82,6 +82,7 @@ fn native_connection(app: &AppType, spec: &Value) -> Option<Value> {
             value
         }
         AppType::Copilot => super::copilot::transport_spec(spec),
+        AppType::WorkBuddy => super::workbuddy::transport_spec(spec),
         AppType::ClaudeDesktop | AppType::OpenClaw => return None,
     };
     Some(without_empty_collections(native))

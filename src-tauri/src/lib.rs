@@ -54,6 +54,8 @@ mod tray_compat;
 mod tray_panel;
 mod usage_events;
 mod usage_script;
+mod window_fit;
+mod workbuddy_config;
 
 pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps};
 pub use codex_config::{
@@ -1180,6 +1182,7 @@ pub fn run() {
                     crate::app_config::AppType::Hermes,
                     crate::app_config::AppType::Pi,
                     crate::app_config::AppType::Mcode,
+                    crate::app_config::AppType::WorkBuddy,
                 ] {
                     match crate::services::prompt::PromptService::import_from_file_on_first_launch(
                         &app_state,
@@ -1287,12 +1290,15 @@ pub fn run() {
             // Linux（AppIndicator）不派发点击事件，只能出原生菜单，菜单里有一项打开面板。
             let native_menu = tray_panel::uses_native_menu();
             let mut tray_builder = TrayIconBuilder::with_id(tray::TRAY_ID)
-                .tooltip("CC Switch") // 鼠标悬停提示
                 .on_tray_icon_event(tray::handle_tray_icon_event)
                 .on_menu_event(|app, event| {
                     tray::handle_tray_menu_event(app, &event.id.0);
                 })
                 .show_menu_on_left_click(tray::native_menu_on_left_click(native_menu));
+            // 鼠标悬停提示（macOS 不设，见 `tray::TRAY_TOOLTIP_ENABLED`）
+            if tray::TRAY_TOOLTIP_ENABLED {
+                tray_builder = tray_builder.tooltip("CC Switch");
+            }
             if native_menu {
                 let menu = tray::create_tray_menu(app.handle(), &app_state)?;
                 tray_builder = tray_builder.menu(&menu);
@@ -1369,6 +1375,13 @@ pub fn run() {
                 use crate::services::agy_account::AgyAccountManager;
                 let manager = AgyAccountManager::new(crate::config::get_app_config_dir());
                 app.manage(commands::AgyAccountState(Arc::new(manager)));
+            }
+
+            // WorkBuddy 官方账号（授权中心收录、切换桌面端登录的快照）
+            {
+                use crate::services::workbuddy_account::WorkBuddyAccountManager;
+                let manager = WorkBuddyAccountManager::new(crate::config::get_app_config_dir());
+                app.manage(commands::WorkBuddyAccountState(Arc::new(manager)));
             }
 
             // Claude Code 官方订阅账号（授权中心加号；每个账号一个 CLAUDE_CONFIG_DIR）
@@ -1540,6 +1553,9 @@ pub fn run() {
                     let _ = window.set_decorations(false);
                     let _ = window.set_shadow(true);
                 }
+                // window-state 插件恢复的位置可能压在任务栏 / Dock 下面，首次显示前收回工作区。
+                // 放在装饰设置之后，按最终的窗口外框计算。
+                window_fit::fit_to_work_area(&window);
                 // 上次退出时在轻量模式：照旧只留托盘。由深链接冷启动的要给用户看导入对话框，正常启动。
                 if settings.lightweight_mode && !startup_deeplink {
                     if let Err(e) = crate::lightweight::enter_lightweight_mode(app.handle()) {
@@ -1763,6 +1779,7 @@ pub fn run() {
             commands::restore_env_backup,
             // Skill management (v3.10.0+ unified)
             commands::get_installed_skills,
+            commands::refresh_local_skill_metadata,
             commands::get_skill_backups,
             commands::delete_skill_backup,
             commands::install_skill_unified,
@@ -1955,6 +1972,11 @@ pub fn run() {
             commands::auth_logout,
             commands::agy_account_is_running,
             commands::agy_account_quota,
+            commands::workbuddy_account_live_state,
+            commands::workbuddy_account_import_current,
+            commands::workbuddy_account_prepare_new_login,
+            commands::workbuddy_account_open_app,
+            commands::workbuddy_account_quota,
             commands::claude_account_submit_paste,
             commands::get_claude_account_quota,
             commands::get_claude_default_plan,

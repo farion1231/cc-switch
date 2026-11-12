@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 pub use model::SessionMessage;
 use providers::{
     agy, claude, codex, copilot, dsh, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw,
-    opencode, pi,
+    opencode, pi, workbuddy,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -97,7 +97,7 @@ pub(crate) struct SessionScan {
 pub(crate) fn scan_sessions_with_status() -> SessionScan {
     use providers::utils::ScanStatus;
     type Scanner = fn(&mut ScanStatus) -> Vec<SessionMeta>;
-    let scanners: [(&str, Scanner); 14] = [
+    let scanners: [(&str, Scanner); 15] = [
         ("codex", codex::scan_sessions_with_status),
         ("claude", claude::scan_sessions_with_status),
         ("opencode", opencode::scan_sessions_with_status),
@@ -113,6 +113,7 @@ pub(crate) fn scan_sessions_with_status() -> SessionScan {
         ("kimi", |_| kimi::scan_sessions()),
         ("dsh", |_| dsh::scan_sessions()),
         ("agy", |_| agy::scan_sessions()),
+        ("workbuddy", |_| workbuddy::scan_sessions()),
     ];
     let mut scan = SessionScan {
         sessions: Vec::new(),
@@ -177,6 +178,7 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "omp" => omp::load_messages(path),
         "copilot" => copilot::load_messages(path),
         "dsh" => dsh::load_messages(path),
+        "workbuddy" => workbuddy::load_messages(path),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -233,6 +235,13 @@ fn delete_session_source(
     if provider_id == "copilot" {
         return Err(
             "Delete this session in GitHub Copilot CLI to keep its session store and history consistent"
+                .into(),
+        );
+    }
+    if provider_id == "workbuddy" {
+        // WorkBuddy 自己的会话列表在 workbuddy.db 和 sessions/ 里，只删 jsonl 会让它的索引失效。
+        return Err(
+            "Delete this session in WorkBuddy to keep its session list and history consistent"
                 .into(),
         );
     }
@@ -306,6 +315,7 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "pi" => pi::session_roots(),
         "kimi" => kimi::session_roots(),
         "dsh" => dsh::session_roots(),
+        "workbuddy" => workbuddy::session_roots(),
         "agy" => agy::session_roots(),
         "omp" => omp::session_roots(),
         "copilot" => copilot::session_roots(),
