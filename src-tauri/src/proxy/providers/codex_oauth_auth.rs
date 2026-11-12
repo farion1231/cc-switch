@@ -313,6 +313,16 @@ impl From<&CodexAccountData> for GitHubAccount {
                 .and_then(crate::codex_config::extract_codex_id_token_user_identity)
                 .is_none()
                 || data.chatgpt_account_id.is_none(),
+            // 套餐与凭据过期时间都从持久化的 id_token 里读：上游接口不提供订阅
+            // 续费到期日，`exp` 只是这组凭据自己的过期时间，账号刷新后会前移。
+            plan: data
+                .id_token
+                .as_deref()
+                .and_then(crate::codex_config::extract_codex_id_token_plan_type),
+            login_expires_at: data
+                .id_token
+                .as_deref()
+                .and_then(crate::codex_config::extract_codex_id_token_expiry_ms),
         }
     }
 }

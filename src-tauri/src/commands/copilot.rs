@@ -299,6 +299,8 @@ mod copilot_cli_login_tests {
             authenticated_at: 0,
             github_domain: domain.into(),
             reauth_required: false,
+            login_expires_at: None,
+            plan: None,
         }
     }
 
