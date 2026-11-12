@@ -32,7 +32,7 @@ use super::{
 use crate::commands::{CodexOAuthState, CopilotAuthState, XaiOAuthState};
 use crate::proxy::providers::copilot_auth::{CopilotAuthError, CopilotAuthManager};
 use crate::proxy::providers::copilot_model_map::{
-    CopilotProtocol, CopilotTransport, ResolvedCopilotModel,
+    transport_for, CopilotProtocol, CopilotTransport, ResolvedCopilotModel,
 };
 use crate::proxy::providers::xai_oauth_auth::XaiOAuthManager;
 use crate::{
@@ -4331,6 +4331,11 @@ fn copilot_api_format_for_model(
             .any(|endpoint| endpoint.trim_end_matches('/') == "/v1/messages")
     {
         "anthropic"
+    } else if transport_for(supported_endpoints, CodexCopilotApiFormat::OpenaiResponses).is_some()
+        && transport_for(supported_endpoints, CodexCopilotApiFormat::OpenaiChat).is_none()
+    {
+        // Copilot rejects these models on the chat endpoint (e.g. xAI grok)
+        "openai_responses"
     } else {
         "openai_chat"
     }
@@ -6772,6 +6777,18 @@ mod tests {
             "openai_chat"
         );
         assert_eq!(copilot_api_format_for_model(None, &messages), "openai_chat");
+        for responses_only in [["/responses"], ["/v1/responses"]] {
+            let endpoints = responses_only.map(String::from);
+            assert_eq!(
+                copilot_api_format_for_model(Some("xAI"), &endpoints),
+                "openai_responses"
+            );
+        }
+        let both = ["/v1/chat/completions", "/responses"].map(String::from);
+        assert_eq!(
+            copilot_api_format_for_model(Some("xAI"), &both),
+            "openai_chat"
+        );
     }
 
     #[test]
