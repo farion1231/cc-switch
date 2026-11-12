@@ -254,6 +254,21 @@ export interface CustomIconFixture {
 
 let customIconsState: CustomIconFixture[] = [];
 
+export interface WorkBuddyModelOwnerFixture {
+  id: string;
+  owner: string | null;
+}
+let workbuddyModelOwnersState: WorkBuddyModelOwnerFixture[] = [];
+
+export const getWorkBuddyModelOwners = () =>
+  deepClone(workbuddyModelOwnersState);
+
+export const setWorkBuddyModelOwners = (
+  owners: WorkBuddyModelOwnerFixture[],
+) => {
+  workbuddyModelOwnersState = deepClone(owners);
+};
+
 export const listCustomIcons = () => deepClone(customIconsState);
 
 export const setCustomIcons = (icons: CustomIconFixture[]) => {
@@ -288,6 +303,7 @@ export const deleteCustomIcon = (id: string) => {
 export const resetProviderState = () => {
   pendingDeepLink = null;
   customIconsState = [];
+  workbuddyModelOwnersState = [];
   providers = createDefaultProviders();
   current = createDefaultCurrent();
   liveProviderIds = {

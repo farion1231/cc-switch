@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { useQuery } from "@tanstack/react-query";
+import { providersApi, type WorkBuddyModelOwner } from "@/lib/api/providers";
 import { useTranslation } from "react-i18next";
 import { ChevronRight, Plus, Trash2 } from "lucide-react";
 import { toast } from "@/lib/toast";
@@ -53,6 +54,7 @@ import { ApiKeySection, EndpointField, ModelDropdown } from "./shared";
 import type { ProviderFormProps } from "./ProviderForm";
 
 const OFFICIAL_PRESET_ID = "official";
+const MODEL_OWNERS_KEY = ["workbuddy", "modelOwners"] as const;
 
 const PRESET_ENTRIES = [
   { id: OFFICIAL_PRESET_ID, preset: workbuddyOfficialPreset },
@@ -188,9 +190,25 @@ export function WorkBuddyProviderForm({
   const name = form.watch("name");
   const models = config.models ?? [];
   const modelIds = models.map((model) => model.id.trim());
+  // WorkBuddy 里模型 id 既是唯一键又是发给上游的模型名，一个 id 只能属于一张卡：
+  // 别的卡（或用户自己在 WorkBuddy 里加的）已经占用的 id，这里跳过或标出来。
+  const { data: modelOwners } = useQuery({
+    queryKey: MODEL_OWNERS_KEY,
+    queryFn: providersApi.getWorkBuddyModelOwners,
+    enabled: !isOfficial,
+    staleTime: 0,
+  });
+  const ownerLabel = (owner: string | null) =>
+    owner === null
+      ? t("workbuddy.form.modelOwnerUser")
+      : (existing?.providers?.[owner]?.name ?? owner);
+  // 编辑时自己的条目不算占用；用户自己加的（owner 为 null）总算占用。
+  const takenBy = (id: string): WorkBuddyModelOwner | undefined =>
+    modelOwners?.find((entry) => entry.id === id && entry.owner !== providerId);
+  const [skippedModels, setSkippedModels] = useState<string[]>([]);
   const modelsValid =
     models.length > 0 &&
-    modelIds.every(Boolean) &&
+    modelIds.every((id) => id && !takenBy(id)) &&
     new Set(modelIds).size === modelIds.length;
   const urlValid = /^https?:\/\/\S+$/.test(config.url?.trim() ?? "");
   // 和账号区共用缓存：绑定的号已被删掉时不能保存，要重新选
@@ -354,7 +372,21 @@ export function WorkBuddyProviderForm({
     setPresetId(id);
     const selected = presetById(id);
     const official = selected?.category === "official";
-    const next = selected?.settingsConfig ?? WORKBUDDY_DEFAULT_CONFIG;
+    const presetConfig = selected?.settingsConfig ?? WORKBUDDY_DEFAULT_CONFIG;
+    const skipped = presetConfig.models.filter((model) => takenBy(model.id));
+    setSkippedModels(
+      skipped.map(
+        (model) => `${model.id} (${ownerLabel(takenBy(model.id)!.owner)})`,
+      ),
+    );
+    const next = skipped.length
+      ? {
+          ...presetConfig,
+          models: presetConfig.models.filter(
+            (model) => !skipped.includes(model),
+          ),
+        }
+      : presetConfig;
     update(next);
     setProviderKey(official ? "" : (selected?.providerKey ?? ""));
     setAccountId(null);
@@ -581,6 +613,13 @@ export function WorkBuddyProviderForm({
                     </Button>
                   </div>
                 </div>
+                {skippedModels.length > 0 && (
+                  <p role="status" className="text-xs text-fg-2">
+                    {t("workbuddy.form.presetModelsSkipped", {
+                      models: skippedModels.join(", "),
+                    })}
+                  </p>
+                )}
                 {models.length === 0 ? (
                   <p role="status" className="py-2 text-sm text-fg-2">
                     {t("opencode.noModels")}
@@ -595,146 +634,173 @@ export function WorkBuddyProviderForm({
                       <span className="flex-1">{t("opencode.modelName")}</span>
                       <span className="w-9" />
                     </div>
-                    {models.map((model, index) => (
-                      <div key={index} className="space-y-2">
-                        <div className="flex items-center gap-2">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => toggleModelExpand(index)}
-                            aria-label={t("opencode.toggleModelDetails")}
-                            aria-expanded={expandedModels.has(index)}
-                            className="h-9 w-9 shrink-0"
-                          >
-                            <ChevronRight
-                              className={cn(
-                                "h-4 w-4 transition-transform motion-reduce:transition-none",
-                                expandedModels.has(index) && "rotate-90",
-                              )}
-                            />
-                          </Button>
-                          <div className="flex min-w-0 flex-1 gap-1">
-                            <Input
-                              id={`workbuddy-model-id-${index}`}
-                              value={model.id}
-                              onChange={(event) =>
-                                updateModel(index, { id: event.target.value })
-                              }
-                              placeholder="model-id"
-                              aria-label={t("opencode.modelId")}
-                              aria-required
-                              autoComplete="off"
-                              className="min-w-0 flex-1"
-                            />
-                            {fetchedModels.length > 0 && (
-                              <ModelDropdown
-                                models={fetchedModels}
-                                onSelect={(id) => {
-                                  updateModel(index, { id });
-                                  fillModelMetadataFor(id);
-                                }}
-                              />
-                            )}
-                          </div>
-                          <Input
-                            id={`workbuddy-model-name-${index}`}
-                            value={model.name ?? ""}
-                            onChange={(event) =>
-                              updateModel(index, {
-                                name: event.target.value || undefined,
-                              })
-                            }
-                            placeholder={t("opencode.modelName")}
-                            aria-label={t("opencode.modelName")}
-                            autoComplete="off"
-                            className="min-w-0 flex-1"
-                          />
-                          <HoverTip content={t("common.delete")}>
+                    {models.map((model, index) => {
+                      const taken = takenBy(model.id.trim());
+                      return (
+                        <div key={index} className="space-y-2">
+                          <div className="flex items-center gap-2">
                             <Button
                               type="button"
                               variant="ghost"
                               size="icon"
-                              aria-label={t("common.delete")}
-                              className="h-9 w-9 shrink-0 text-fg-2 hover:text-destructive"
-                              onClick={() => removeModel(index)}
+                              onClick={() => toggleModelExpand(index)}
+                              aria-label={t("opencode.toggleModelDetails")}
+                              aria-expanded={expandedModels.has(index)}
+                              className="h-9 w-9 shrink-0"
                             >
-                              <Trash2 className="h-4 w-4" />
+                              <ChevronRight
+                                className={cn(
+                                  "h-4 w-4 transition-transform motion-reduce:transition-none",
+                                  expandedModels.has(index) && "rotate-90",
+                                )}
+                              />
                             </Button>
-                          </HoverTip>
-                        </div>
-                        {expandedModels.has(index) && (
-                          <div className="ml-9 grid gap-3 border-l-2 border-muted pl-4 sm:grid-cols-2">
-                            <div className="flex min-h-9 flex-wrap items-center gap-x-8 gap-y-2 sm:col-span-2">
-                              {CAPABILITIES.map(([capability, label]) => (
-                                <div
-                                  key={capability}
-                                  className="flex items-center gap-2.5"
-                                >
-                                  <Label
-                                    htmlFor={`workbuddy-model-${capability}-${index}`}
-                                    className="cursor-pointer"
-                                  >
-                                    {t(label)}
-                                  </Label>
-                                  <Switch
-                                    id={`workbuddy-model-${capability}-${index}`}
-                                    checked={model[capability] === true}
-                                    onCheckedChange={(checked) =>
-                                      updateModel(index, {
-                                        [capability]: checked,
-                                      })
-                                    }
-                                  />
-                                </div>
-                              ))}
-                            </div>
-                            <div className="space-y-2">
-                              <Label htmlFor={`workbuddy-model-input-${index}`}>
-                                {t("workbuddy.form.maxInputTokens")}
-                              </Label>
+                            <div className="flex min-w-0 flex-1 gap-1">
                               <Input
-                                id={`workbuddy-model-input-${index}`}
-                                type="number"
-                                min={1}
-                                step={1}
-                                value={model.maxInputTokens ?? ""}
+                                id={`workbuddy-model-id-${index}`}
+                                value={model.id}
                                 onChange={(event) =>
-                                  updateModel(index, {
-                                    maxInputTokens: parseTokens(
-                                      event.target.value,
-                                    ),
-                                  })
+                                  updateModel(index, { id: event.target.value })
                                 }
-                                placeholder="128000"
+                                placeholder="model-id"
+                                aria-label={t("opencode.modelId")}
+                                aria-required
+                                aria-invalid={taken ? true : undefined}
+                                aria-describedby={
+                                  taken
+                                    ? `workbuddy-model-taken-${index}`
+                                    : undefined
+                                }
+                                autoComplete="off"
+                                className={cn(
+                                  "min-w-0 flex-1",
+                                  taken && "border-destructive",
+                                )}
                               />
+                              {fetchedModels.length > 0 && (
+                                <ModelDropdown
+                                  models={fetchedModels}
+                                  onSelect={(id) => {
+                                    updateModel(index, { id });
+                                    fillModelMetadataFor(id);
+                                  }}
+                                />
+                              )}
                             </div>
-                            <div className="space-y-2">
-                              <Label
-                                htmlFor={`workbuddy-model-output-${index}`}
+                            <Input
+                              id={`workbuddy-model-name-${index}`}
+                              value={model.name ?? ""}
+                              onChange={(event) =>
+                                updateModel(index, {
+                                  name: event.target.value || undefined,
+                                })
+                              }
+                              // 留空时写入用厂商标签，WorkBuddy 菜单显示「厂商:模型 ID」
+                              placeholder={
+                                config.vendor?.trim() || t("opencode.modelName")
+                              }
+                              aria-label={t("opencode.modelName")}
+                              autoComplete="off"
+                              className="min-w-0 flex-1"
+                            />
+                            <HoverTip content={t("common.delete")}>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                aria-label={t("common.delete")}
+                                className="h-9 w-9 shrink-0 text-fg-2 hover:text-destructive"
+                                onClick={() => removeModel(index)}
                               >
-                                {t("workbuddy.form.maxOutputTokens")}
-                              </Label>
-                              <Input
-                                id={`workbuddy-model-output-${index}`}
-                                type="number"
-                                min={1}
-                                step={1}
-                                value={model.maxOutputTokens ?? ""}
-                                onChange={(event) =>
-                                  updateModel(index, {
-                                    maxOutputTokens: parseTokens(
-                                      event.target.value,
-                                    ),
-                                  })
-                                }
-                                placeholder="16384"
-                              />
-                            </div>
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </HoverTip>
                           </div>
-                        )}
-                      </div>
-                    ))}
+                          {taken && (
+                            <p
+                              id={`workbuddy-model-taken-${index}`}
+                              className="ml-11 text-xs text-destructive"
+                            >
+                              {t("workbuddy.form.modelIdTaken", {
+                                owner: ownerLabel(taken.owner),
+                              })}
+                            </p>
+                          )}
+                          {expandedModels.has(index) && (
+                            <div className="ml-9 grid gap-3 border-l-2 border-muted pl-4 sm:grid-cols-2">
+                              <div className="flex min-h-9 flex-wrap items-center gap-x-8 gap-y-2 sm:col-span-2">
+                                {CAPABILITIES.map(([capability, label]) => (
+                                  <div
+                                    key={capability}
+                                    className="flex items-center gap-2.5"
+                                  >
+                                    <Label
+                                      htmlFor={`workbuddy-model-${capability}-${index}`}
+                                      className="cursor-pointer"
+                                    >
+                                      {t(label)}
+                                    </Label>
+                                    <Switch
+                                      id={`workbuddy-model-${capability}-${index}`}
+                                      checked={model[capability] === true}
+                                      onCheckedChange={(checked) =>
+                                        updateModel(index, {
+                                          [capability]: checked,
+                                        })
+                                      }
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="space-y-2">
+                                <Label
+                                  htmlFor={`workbuddy-model-input-${index}`}
+                                >
+                                  {t("workbuddy.form.maxInputTokens")}
+                                </Label>
+                                <Input
+                                  id={`workbuddy-model-input-${index}`}
+                                  type="number"
+                                  min={1}
+                                  step={1}
+                                  value={model.maxInputTokens ?? ""}
+                                  onChange={(event) =>
+                                    updateModel(index, {
+                                      maxInputTokens: parseTokens(
+                                        event.target.value,
+                                      ),
+                                    })
+                                  }
+                                  placeholder="128000"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label
+                                  htmlFor={`workbuddy-model-output-${index}`}
+                                >
+                                  {t("workbuddy.form.maxOutputTokens")}
+                                </Label>
+                                <Input
+                                  id={`workbuddy-model-output-${index}`}
+                                  type="number"
+                                  min={1}
+                                  step={1}
+                                  value={model.maxOutputTokens ?? ""}
+                                  onChange={(event) =>
+                                    updateModel(index, {
+                                      maxOutputTokens: parseTokens(
+                                        event.target.value,
+                                      ),
+                                    })
+                                  }
+                                  placeholder="16384"
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>

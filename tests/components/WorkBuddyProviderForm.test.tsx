@@ -8,7 +8,7 @@ import {
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkBuddyProviderForm } from "@/components/providers/forms/WorkBuddyProviderForm";
-import { setProviders } from "../msw/state";
+import { setProviders, setWorkBuddyModelOwners } from "../msw/state";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
 const modelFetchApiMock = vi.hoisted(() => ({
@@ -503,5 +503,86 @@ describe("WorkBuddyProviderForm", () => {
         { apiFormat: "openai-completions" },
       ),
     );
+  });
+  it("skips preset models another card already holds", async () => {
+    setProviders("workbuddy", {
+      kimi: { id: "kimi", name: "My Kimi", settingsConfig: existing },
+    });
+    setWorkBuddyModelOwners([
+      { id: "kimi-k3.1-pro", owner: "kimi" },
+      { id: "glm-5.3", owner: null },
+    ]);
+    const client = createTestQueryClient();
+    rtlRender(
+      <QueryClientProvider client={client}>
+        <WorkBuddyProviderForm
+          appId="workbuddy"
+          initialData={undefined}
+          submitLabel="Add"
+          onSubmit={vi.fn()}
+          onCancel={() => {}}
+        />
+      </QueryClientProvider>,
+    );
+    // 等占用列表到了再选预设
+    await waitFor(() =>
+      expect(client.getQueryData(["workbuddy", "modelOwners"])).toBeDefined(),
+    );
+    fireEvent.click(screen.getByText("OpenCode Go"));
+
+    expect(
+      await screen.findByText("workbuddy.form.presetModelsSkipped"),
+    ).toBeInTheDocument();
+    const ids = screen
+      .getAllByLabelText("opencode.modelId")
+      .map((input) => (input as HTMLInputElement).value);
+    expect(ids).not.toContain("kimi-k3.1-pro");
+    expect(ids).not.toContain("glm-5.3");
+    expect(ids).toContain("glm-5.3-flash");
+    // 名称留空，占位提示写的是厂商标签
+    expect(screen.getAllByLabelText("opencode.modelName")[0]).toHaveAttribute(
+      "placeholder",
+      "OpenCode Go",
+    );
+
+    fireEvent.change(screen.getByLabelText("API Key"), {
+      target: { value: "local-test-key" },
+    });
+    const save = screen.getByRole("button", { name: "Add" });
+    await waitFor(() => expect(save).toBeEnabled());
+  });
+
+  it("blocks a model ID another card already holds", async () => {
+    setProviders("workbuddy", {
+      kimi: { id: "kimi", name: "My Kimi", settingsConfig: existing },
+    });
+    setWorkBuddyModelOwners([
+      { id: "kimi-k3", owner: "kimi" },
+      { id: "deepseek-chat", owner: "deepseek" },
+    ]);
+    render(
+      <WorkBuddyProviderForm
+        appId="workbuddy"
+        providerId="deepseek"
+        initialData={{ name: "DeepSeek", settingsConfig: existing }}
+        submitLabel="Save"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    const save = screen.getByRole("button", { name: "Save" });
+    // 自己的条目不算占用
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.change(screen.getByLabelText("opencode.modelId"), {
+      target: { value: "kimi-k3" },
+    });
+    expect(
+      await screen.findByText("workbuddy.form.modelIdTaken"),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("opencode.modelId")).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    expect(save).toBeDisabled();
   });
 });

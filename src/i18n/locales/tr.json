@@ -5327,9 +5327,12 @@
       "urlHint": "OpenAI uyumlu Chat Completions tam URL'si; genellikle /chat/completions ile biter.",
       "apiKeyHint": "Bu bilgisayardaki models.json dosyasında saklanır. ${ENV_VAR} başvuruları WorkBuddy tarafından genişletilir.",
       "vendor": "Sağlayıcı etiketi",
-      "modelsHint": "En az bir model ekleyin. Model kimliği API'ye olduğu gibi gönderilir.",
+      "modelsHint": "En az bir model ekleyin. Model kimliği API'ye olduğu gibi gönderilir. WorkBuddy henüz aynı modelin birden fazla kez eklenmesini desteklemediğinden bir model kimliği yalnızca bir kartta olabilir. Ad boş bırakılırsa WorkBuddy menüsünde \"sağlayıcı etiketi:model kimliği\" gösterilir.",
       "maxInputTokens": "Maks. giriş token'ı",
-      "maxOutputTokens": "Maks. çıkış token'ı"
+      "maxOutputTokens": "Maks. çıkış token'ı",
+      "modelIdTaken": "WorkBuddy henüz aynı modelin birden fazla kez eklenmesini desteklemiyor ve bu model zaten \"{{owner}}\" içinde. Bu karta taşımak için önce oradan kaldırın.",
+      "modelOwnerUser": "WorkBuddy'nin kendisinde eklenen bir model",
+      "presetModelsSkipped": "WorkBuddy henüz aynı modelin birden fazla kez eklenmesini desteklemediğinden başka kartlarda zaten bulunan modeller atlandı: {{models}}. Birini bu karta taşımak için önce mevcut kartından kaldırın, sonra burada yeniden ekleyin."
     },
     "official": {
       "presetName": "WorkBuddy Resmi Oturum",

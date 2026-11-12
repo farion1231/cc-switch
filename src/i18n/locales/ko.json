@@ -1209,9 +1209,12 @@
       "urlHint": "OpenAI 호환 Chat Completions 전체 URL로, 보통 /chat/completions로 끝납니다.",
       "apiKeyHint": "이 컴퓨터의 models.json에 저장됩니다. ${ENV_VAR} 참조는 WorkBuddy가 확장합니다.",
       "vendor": "공급업체 레이블",
-      "modelsHint": "모델을 하나 이상 추가하세요. 모델 ID는 그대로 API에 전송됩니다.",
+      "modelsHint": "모델을 하나 이상 추가하세요. 모델 ID는 그대로 API에 전송됩니다. WorkBuddy는 아직 같은 모델을 여러 번 추가하는 것을 지원하지 않으므로, 모델 ID 하나는 카드 하나에만 넣을 수 있습니다. 이름을 비워 두면 WorkBuddy 메뉴에 \"공급업체 레이블:모델 ID\"로 표시됩니다.",
       "maxInputTokens": "최대 입력 토큰",
-      "maxOutputTokens": "최대 출력 토큰"
+      "maxOutputTokens": "최대 출력 토큰",
+      "modelIdTaken": "WorkBuddy는 아직 같은 모델을 여러 번 추가하는 것을 지원하지 않으며, 이 모델은 이미 \"{{owner}}\"에 있습니다. 이 카드로 옮기려면 먼저 그쪽에서 삭제하세요.",
+      "modelOwnerUser": "WorkBuddy에서 직접 추가한 모델",
+      "presetModelsSkipped": "WorkBuddy는 아직 같은 모델을 여러 번 추가하는 것을 지원하지 않아, 이미 다른 카드에 있는 모델은 건너뛰었습니다: {{models}}. 이 카드로 옮기려면 원래 카드에서 먼저 삭제한 뒤 여기에서 다시 추가하세요."
     },
     "official": {
       "presetName": "WorkBuddy 공식 로그인",

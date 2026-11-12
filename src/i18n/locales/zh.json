@@ -1209,9 +1209,12 @@
       "urlHint": "完整的 OpenAI 兼容 Chat Completions 地址，通常以 /chat/completions 结尾。",
       "apiKeyHint": "保存在本机的 models.json 里；${ENV_VAR} 形式的引用由 WorkBuddy 展开。",
       "vendor": "厂商标签",
-      "modelsHint": "至少添加一个模型。模型 ID 会原样发给接口。",
+      "modelsHint": "至少添加一个模型。模型 ID 会原样发给接口。WorkBuddy 暂时不支持同一个模型添加多次，同一个模型 ID 只能放在一张卡里。名称留空时，WorkBuddy 菜单显示「厂商标签:模型 ID」。",
       "maxInputTokens": "最大输入 Token",
-      "maxOutputTokens": "最大输出 Token"
+      "maxOutputTokens": "最大输出 Token",
+      "modelIdTaken": "WorkBuddy 暂时不支持同一个模型添加多次，这个模型已经在「{{owner}}」里了。想换到这张卡，先从那边删掉。",
+      "modelOwnerUser": "WorkBuddy 里自己加的模型",
+      "presetModelsSkipped": "WorkBuddy 暂时不支持同一个模型添加多次，这些模型已经在别的卡里，已跳过：{{models}}。想换到这张卡，先从原来的卡里删掉，再在这里加回来。"
     },
     "official": {
       "presetName": "WorkBuddy 官方登录",

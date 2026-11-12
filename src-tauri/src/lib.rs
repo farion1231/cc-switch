@@ -1973,6 +1973,7 @@ pub fn run() {
             commands::agy_account_is_running,
             commands::agy_account_quota,
             commands::workbuddy_account_live_state,
+            commands::workbuddy_model_owners,
             commands::workbuddy_account_import_current,
             commands::workbuddy_account_prepare_new_login,
             commands::workbuddy_account_open_app,

@@ -110,6 +110,8 @@ export function chatCompletionsUrl(baseUrl: string): string {
 
 // 复用 Pi 预设的端点与模型元数据。只取 OpenAI Chat Completions 协议的预设，其余协议跳过；
 // 依赖 Pi 供应商级兼容开关的预设 WorkBuddy 表达不了，也跳过。
+// 模型不带 `name`：WorkBuddy 菜单把自定义模型显示成 `name:id`，写入时用厂商标签补上名字，
+// 显示成「Kimi:kimi-k3.1-pro」，而不是「Kimi K3.1 Pro:kimi-k3.1-pro」把同一个模型说两遍。
 export const workbuddyProviderPresets: WorkBuddyProviderPreset[] =
   piProviderPresets.flatMap((preset) => {
     const config = preset.settingsConfig;
@@ -125,7 +127,6 @@ export const workbuddyProviderPresets: WorkBuddyProviderPreset[] =
           apiKey: "",
           models: config.models.map((model) => ({
             id: model.id,
-            ...(model.name ? { name: model.name } : {}),
             ...(model.contextWindow
               ? { maxInputTokens: model.contextWindow }
               : {}),

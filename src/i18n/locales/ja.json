@@ -1209,9 +1209,12 @@
       "urlHint": "OpenAI 互換 Chat Completions の完全な URL（通常 /chat/completions で終わる）。",
       "apiKeyHint": "このマシンの models.json に保存されます。${ENV_VAR} 形式の参照は WorkBuddy が展開します。",
       "vendor": "ベンダー表示名",
-      "modelsHint": "モデルを 1 つ以上追加してください。モデル ID はそのまま API に送られます。",
+      "modelsHint": "モデルを 1 つ以上追加してください。モデル ID はそのまま API に送られます。WorkBuddy は現在、同じモデルを複数回追加できないため、1 つのモデル ID は 1 枚のカードにしか入れられません。名前を空にすると、WorkBuddy のメニューには「ベンダー表示名:モデル ID」と表示されます。",
       "maxInputTokens": "最大入力トークン",
-      "maxOutputTokens": "最大出力トークン"
+      "maxOutputTokens": "最大出力トークン",
+      "modelIdTaken": "WorkBuddy は現在、同じモデルを複数回追加できません。このモデルはすでに「{{owner}}」にあります。このカードに移すには、先にそちらから削除してください。",
+      "modelOwnerUser": "WorkBuddy で自分で追加したモデル",
+      "presetModelsSkipped": "WorkBuddy は現在、同じモデルを複数回追加できないため、ほかのカードにすでにあるモデルはスキップしました：{{models}}。このカードに移すには、元のカードから削除してからここで追加し直してください。"
     },
     "official": {
       "presetName": "WorkBuddy 公式ログイン",

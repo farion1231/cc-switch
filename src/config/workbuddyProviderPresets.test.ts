@@ -17,6 +17,10 @@ describe("workbuddyProviderPresets", () => {
       expect(preset.settingsConfig.models.map((model) => model.id)).toEqual(
         pi.settingsConfig.models.map((model) => model.id),
       );
+      // 菜单显示「厂商:模型 ID」，名字由写入时的厂商标签补上
+      expect(preset.settingsConfig.vendor).toBe(preset.name);
+      for (const model of preset.settingsConfig.models)
+        expect(model).not.toHaveProperty("name");
     }
   });
 

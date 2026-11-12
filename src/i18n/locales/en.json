@@ -1209,9 +1209,12 @@
       "urlHint": "Full OpenAI-compatible Chat Completions URL, usually ending in /chat/completions.",
       "apiKeyHint": "Stored in models.json on this machine. ${ENV_VAR} references are expanded by WorkBuddy.",
       "vendor": "Vendor label",
-      "modelsHint": "Add at least one model. The model ID is sent to the API as-is.",
+      "modelsHint": "Add at least one model. The model ID is sent to the API as-is. WorkBuddy doesn't support adding the same model more than once yet, so a model ID can be in only one card. With the name left blank, WorkBuddy's menu shows \"vendor label:model ID\".",
       "maxInputTokens": "Max input tokens",
-      "maxOutputTokens": "Max output tokens"
+      "maxOutputTokens": "Max output tokens",
+      "modelIdTaken": "WorkBuddy doesn't support adding the same model more than once yet, and this model is already in \"{{owner}}\". To move it to this card, remove it there first.",
+      "modelOwnerUser": "a model added in WorkBuddy itself",
+      "presetModelsSkipped": "WorkBuddy doesn't support adding the same model more than once yet, so models already in other cards were skipped: {{models}}. To move one to this card, remove it from its current card first, then add it back here."
     },
     "official": {
       "presetName": "WorkBuddy Official Sign-in",
