@@ -359,8 +359,8 @@ impl McpService {
                     &crate::config::get_app_config_dir(),
                 );
             }
-            AppType::ClaudeDesktop => {
-                log::debug!("Claude Desktop 3P profiles do not use CC Switch MCP sync, skipping");
+            AppType::ClaudeDesktop | AppType::Cursor => {
+                log::debug!("Claude Desktop and Cursor do not use CC Switch MCP sync, skipping");
             }
             AppType::Codex => {
                 // Codex uses TOML format, must use the correct function
@@ -435,8 +435,8 @@ impl McpService {
                     &crate::config::get_app_config_dir(),
                 );
             }
-            AppType::ClaudeDesktop => {
-                log::debug!("Claude Desktop 3P profiles do not use CC Switch MCP sync, skipping");
+            AppType::ClaudeDesktop | AppType::Cursor => {
+                log::debug!("Claude Desktop and Cursor do not use CC Switch MCP sync, skipping");
             }
             AppType::Codex => mcp::remove_server_from_codex(id)?,
             AppType::Gemini => mcp::remove_server_from_gemini(id)?,
@@ -497,10 +497,15 @@ impl McpService {
         Self::project_servers_to_app(state, &servers, app)
     }
 
-    /// 由 CC Switch 管理 MCP 的应用（Claude Desktop、OpenClaw 不支持）
+    /// 由 CC Switch 管理 MCP 的应用（Claude Desktop、OpenClaw、Cursor 不支持）
     pub fn live_sync_apps() -> Vec<AppType> {
         AppType::all()
-            .filter(|app| !matches!(app, AppType::OpenClaw | AppType::ClaudeDesktop))
+            .filter(|app| {
+                !matches!(
+                    app,
+                    AppType::OpenClaw | AppType::ClaudeDesktop | AppType::Cursor
+                )
+            })
             .collect()
     }
 
@@ -552,7 +557,10 @@ impl McpService {
         servers: &IndexMap<String, McpServer>,
         app: &AppType,
     ) -> Result<(), AppError> {
-        if matches!(app, AppType::OpenClaw | AppType::ClaudeDesktop) {
+        if matches!(
+            app,
+            AppType::OpenClaw | AppType::ClaudeDesktop | AppType::Cursor
+        ) {
             return Ok(());
         }
 

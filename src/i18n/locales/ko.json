@@ -1187,7 +1187,8 @@
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
     "copilot": "Copilot CLI",
-    "omp": "Oh My Pi"
+    "omp": "Oh My Pi",
+    "cursor": "Cursor"
   },
   "mcode": {
     "empty": {
@@ -4322,7 +4323,11 @@
     "expiredHint": "{{tool}} 명령을 실행해 로그인을 갱신하세요.",
     "queryFailed": "조회 실패",
     "refresh": "새로 고침",
-    "expiredHintAccounts": "인증 센터에서 이 계정에 다시 로그인하세요"
+    "expiredHintAccounts": "인증 센터에서 이 계정에 다시 로그인하세요",
+    "tiers": {
+      "fastRequests": "빠른"
+    },
+    "fastRequests": "빠른 요청"
   },
   "nav": {
     "mainLabel": "메인 네비게이션",
@@ -4392,7 +4397,10 @@
       "agy": "공식 스크립트로 설치",
       "copilot": "npm으로 설치",
       "omp": "공식 스크립트로 설치"
-    }
+    },
+    "cursorHelp": "Cursor는 데스크톱 에디터이며 여기에서 설치하거나 업그레이드할 수 없습니다. CC Switch는 로컬 자격 증명을 통해 공식 구독 및 할당량을 모니터링합니다.",
+    "cursorDetected": "감지됨",
+    "cursorNotDetected": "감지되지 않음"
   },
   "appPage": {
     "moreActions": "{{name}}에 대한 추가 작업",

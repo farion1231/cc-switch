@@ -325,6 +325,7 @@ export interface VisibleApps {
   agy: boolean;
   omp: boolean;
   copilot: boolean;
+  cursor?: boolean;
 }
 
 // WebDAV 同步状态

@@ -46,7 +46,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Omp => crate::omp_config::get_omp_agent_dir()?,
         // Copilot CLI 的个人指令是 `~/.copilot/copilot-instructions.md`（`copilot instruction list`）。
         AppType::Copilot => crate::copilot_config::copilot_dir(),
-        AppType::ClaudeDesktop => unreachable!("handled above"),
+        AppType::ClaudeDesktop | AppType::Cursor => unreachable!("handled above"),
     };
 
     let filename = match app {
@@ -62,7 +62,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         | AppType::Dsh
         | AppType::Omp => "AGENTS.md",
         AppType::Copilot => "copilot-instructions.md",
-        AppType::ClaudeDesktop => unreachable!("handled above"),
+        AppType::ClaudeDesktop | AppType::Cursor => unreachable!("handled above"),
     };
 
     Ok(base_dir.join(filename))

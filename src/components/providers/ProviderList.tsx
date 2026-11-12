@@ -537,7 +537,8 @@ export function ProviderList({
   // Antigravity 没有「启用」，每张卡都随时能打开，额度一律照常显示；Copilot CLI 只有官方卡有额度，同理
   const isCurrentFor = (provider: Provider) => {
     if (isPiFamilyApp(appId)) return false;
-    if (appId === "agy" || appId === "copilot") return true;
+    if (appId === "agy" || appId === "copilot" || appId === "cursor")
+      return true;
     if (provider.category === "omo") return provider.id === currentOmoId;
     if (provider.category === "omo-slim")
       return provider.id === currentOmoSlimId;

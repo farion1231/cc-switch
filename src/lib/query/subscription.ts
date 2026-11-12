@@ -102,7 +102,9 @@ export function useSubscriptionQuota(
     queryFn: () => subscriptionApi.getQuota(appId),
     enabled:
       enabled &&
-      ["claude", "codex", "gemini", "grokbuild", "agy"].includes(appId),
+      ["claude", "codex", "gemini", "grokbuild", "agy", "cursor"].includes(
+        appId,
+      ),
     refetchInterval,
     refetchIntervalInBackground: Boolean(refetchInterval),
     refetchOnWindowFocus: Boolean(refetchInterval),

@@ -1187,7 +1187,8 @@
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
     "copilot": "Copilot CLI",
-    "omp": "Oh My Pi"
+    "omp": "Oh My Pi",
+    "cursor": "Cursor"
   },
   "mcode": {
     "empty": {
@@ -4322,7 +4323,11 @@
     "expiredHint": "請執行 {{tool}} 命令重新整理登入",
     "expiredHintAccounts": "請在授權中心重新登入這個帳號",
     "queryFailed": "查詢失敗",
-    "refresh": "重新整理"
+    "refresh": "重新整理",
+    "tiers": {
+      "fastRequests": "快速請求"
+    },
+    "fastRequests": "快速請求"
   },
   "nav": {
     "mainLabel": "主導覽",
@@ -4392,7 +4397,10 @@
       "agy": "安裝時執行官方安裝腳本",
       "copilot": "透過 npm 安裝",
       "omp": "安裝時執行官方安裝腳本"
-    }
+    },
+    "cursorHelp": "Cursor 是桌面編輯器，不能在此處安裝或升級；CC Switch 透過其本機認證憑證監控官方訂閱與額度。",
+    "cursorDetected": "已偵測到",
+    "cursorNotDetected": "未偵測到"
   },
   "appPage": {
     "moreActions": "{{name}} 的更多操作",

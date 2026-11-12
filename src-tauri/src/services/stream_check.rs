@@ -215,6 +215,9 @@ impl StreamCheckService {
                         )
                     })
             }
+            AppType::Cursor => Err(AppError::Message(
+                "Cursor providers do not expose a reachability-check target".to_string(),
+            )),
             _ => get_adapter(app_type)
                 .ok_or_else(|| {
                     AppError::InvalidInput(format!(

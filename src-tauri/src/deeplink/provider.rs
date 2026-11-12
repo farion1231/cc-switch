@@ -173,8 +173,8 @@ pub fn import_provider_from_deeplink(
         }
     }
 
-    // If enabled=true, set as current provider. Antigravity 没有「启用」，只导入。
-    if !additive && activate && !matches!(app_type, AppType::Agy) {
+    // If enabled=true, set as current provider. Antigravity/Cursor 没有「启用」，只导入。
+    if !additive && activate && !matches!(app_type, AppType::Agy | AppType::Cursor) {
         ProviderService::switch(state, app_type.clone(), &provider_id)?;
         log::info!("Provider '{provider_id}' set as current for {app_type:?}");
     }

@@ -104,7 +104,7 @@ impl Database {
             AppType::Copilot => Some("enabled_copilot"),
             AppType::Pi => Some("enabled_pi"),
             AppType::Omp => Some("enabled_omp"),
-            AppType::ClaudeDesktop | AppType::OpenClaw => None,
+            AppType::ClaudeDesktop | AppType::OpenClaw | AppType::Cursor => None,
             AppType::Agy => Some("enabled_agy"),
         };
 
@@ -278,7 +278,7 @@ mod tests {
         let original = test_server();
         db.save_mcp_server(&original).expect("seed server");
 
-        for app in [AppType::ClaudeDesktop, AppType::OpenClaw] {
+        for app in [AppType::ClaudeDesktop, AppType::OpenClaw, AppType::Cursor] {
             let returned = db
                 .update_mcp_server_app_enabled("shared-server", &app, true)
                 .expect("toggle unsupported app")

@@ -929,6 +929,25 @@ pub fn run() {
                 Err(e) => log::warn!("✗ Failed to seed official providers: {e}"),
             }
 
+            if !app_state
+                .db
+                .get_bool_flag("cursor_official_provider_seeded")
+                .unwrap_or(false)
+            {
+                if let Err(e) = app_state.db.ensure_official_seed_by_id(
+                    crate::database::CURSOR_OFFICIAL_PROVIDER_ID,
+                    crate::app_config::AppType::Cursor,
+                ) {
+                    log::debug!("Cursor official seed check: {e}");
+                }
+                if let Err(e) = app_state
+                    .db
+                    .set_setting("cursor_official_provider_seeded", "true")
+                {
+                    log::debug!("Cursor official seed flag set failed: {e}");
+                }
+            }
+
             {
                 let db_for_codex_history_migration = app_state.db.clone();
                 tauri::async_runtime::spawn_blocking(move || {
@@ -1602,6 +1621,7 @@ pub fn run() {
             commands::ensure_claude_desktop_official_provider,
             commands::ensure_codex_official_provider,
             commands::ensure_grokbuild_official_provider,
+            commands::ensure_cursor_official_provider,
             commands::get_claude_config_status,
             commands::get_config_status,
             commands::get_claude_code_config_path,
