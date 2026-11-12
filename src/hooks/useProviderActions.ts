@@ -101,7 +101,13 @@ export function useProviderActions(
           // 1. Merge model catalog (allowlist)
           if (modelCatalog && Object.keys(modelCatalog).length > 0) {
             const existingCatalog = (await openclawApi.getModelCatalog()) || {};
-            const mergedCatalog = { ...existingCatalog, ...modelCatalog };
+            // 新补的空条目不覆盖已有条目（别名、手加的字段）；预设条目照旧覆盖
+            const mergedCatalog = { ...existingCatalog };
+            for (const [ref, entry] of Object.entries(modelCatalog)) {
+              if (Object.keys(entry).length > 0 || !(ref in mergedCatalog)) {
+                mergedCatalog[ref] = entry;
+              }
+            }
             await openclawApi.setModelCatalog(mergedCatalog);
             await queryClient.invalidateQueries({
               queryKey: openclawKeys.health,

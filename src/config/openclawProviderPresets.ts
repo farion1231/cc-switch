@@ -53,6 +53,16 @@ function rebaseOpenClawModelRef(modelRef: string, providerKey: string): string {
     : `${providerKey}${modelRef.slice(slashIndex)}`;
 }
 
+/** 表单最终保存的模型 id：跳过空行；JSON 里没有模型列表时为空。 */
+export function savedOpenClawModelIds(settingsConfig: string): string[] {
+  const models = JSON.parse(settingsConfig)?.models;
+  return Array.isArray(models)
+    ? models
+        .map((model) => model?.id)
+        .filter((id): id is string => typeof id === "string" && !!id.trim())
+    : [];
+}
+
 /**
  * OpenClaw default model refs are stored as "<provider-key>/<model-id>".
  * Presets carry stable built-in keys for display/tests, but the real key is
@@ -61,9 +71,36 @@ function rebaseOpenClawModelRef(modelRef: string, providerKey: string): string {
 export function rebaseOpenClawSuggestedDefaults(
   defaults: OpenClawSuggestedDefaults,
   providerKey: string,
+  modelIds?: string[],
 ): OpenClawSuggestedDefaults {
   const key = providerKey.trim();
   if (!key) return defaults;
+
+  // 表单里删改过模型时，只登记最终保存的模型：预设里有的沿用条目（保留别名），
+  // 新加的补空条目；默认模型被删掉时改用第一个保存的模型
+  if (modelIds) {
+    const rebased = rebaseOpenClawSuggestedDefaults(defaults, key);
+    const refs = modelIds.map((id) => `${key}/${id}`);
+    const kept = rebased.model && refs.includes(rebased.model.primary);
+    const primary = kept ? rebased.model!.primary : refs[0];
+    return {
+      model:
+        rebased.model && primary
+          ? {
+              ...rebased.model,
+              primary,
+              fallbacks: rebased.model.fallbacks?.filter(
+                (ref) => ref !== primary && refs.includes(ref),
+              ),
+            }
+          : undefined,
+      modelCatalog: rebased.modelCatalog
+        ? Object.fromEntries(
+            refs.map((ref) => [ref, rebased.modelCatalog![ref] ?? {}]),
+          )
+        : undefined,
+    };
+  }
 
   return {
     model: defaults.model
