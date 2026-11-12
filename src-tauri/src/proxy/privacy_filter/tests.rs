@@ -604,49 +604,29 @@ fn kelvin_sign_activates_keyword_rules() {
     assert_eq!(count("sny\u{212A} value"), count("snyk value"));
 }
 
-#[test]
-fn cached_redaction_is_stable() {
-    let filler = "普通的一段对话内容，没有任何敏感信息。".repeat(20);
-    let text = format!("{filler} 我的密码是 Hunter2xyz 邮箱 a@b.com {filler}");
-    let first = global().redact(&text, ZH);
-    let second = global().redact(&text, ZH);
-    assert_eq!(first.redacted, second.redacted);
-    assert_eq!(first.count, 2);
-    // 缓存只存区间，换语言照样替换成对应语言的占位符
-    let en = global().redact(&text, Placeholders::for_language("en"));
-    assert!(en.redacted.contains("[SECRET]") && en.redacted.contains("[EMAIL]"));
-}
-
 // --- P2：新增的请求字段 ---
 
+/// 工具定义整体不碰：说明文字是客户端自带的固定文字，示例地址会被模型照抄
+/// （Claude Code 的 Bash 工具说明要求提交信息带 `Co-Authored-By: Claude <noreply@anthropic.com>`），
+/// 句点前的 `?token=abc.` 也不能被吞掉。
 #[test]
-fn tool_descriptions_are_redacted_but_values_are_kept() {
+fn tool_definitions_are_left_untouched() {
+    let coauthor = "Co-Authored-By: Claude <noreply@anthropic.com>";
+    let url = "Fetch https://example.com/api?token=abc. Then continue.";
     let mut body = json!({
+        "messages": [{ "role": "user", "content": "hi" }],
         "tools": [
-            { "name": "a", "description": SECRET, "input_schema": {
+            { "name": "Bash", "description": coauthor, "input_schema": {
                 "type": "object",
-                "properties": {
-                    "description": { "type": "string", "description": SECRET },
-                    "mode": { "type": "string", "enum": [SECRET], "default": SECRET },
-                    "default": { "type": "string", "description": SECRET }
-                }
+                "properties": { "url": { "type": "string", "description": url } }
             }},
             { "type": "function", "function": { "name": "b", "description": SECRET } },
             { "functionDeclarations": [{ "name": "c", "description": SECRET }] }
         ]
     });
-    assert_eq!(redact_request_body(&mut body, ZH, false), 5);
-    let tools = &body["tools"];
-    assert_eq!(tools[0]["description"], REDACTED);
-    let props = &tools[0]["input_schema"]["properties"];
-    assert_eq!(props["description"]["description"], REDACTED);
-    assert_eq!(props["default"]["description"], REDACTED);
-    assert_eq!(props["description"]["type"], "string");
-    assert_eq!(props["mode"]["enum"][0], SECRET);
-    assert_eq!(props["mode"]["default"], SECRET);
-    assert_eq!(tools[1]["function"]["description"], REDACTED);
-    assert_eq!(tools[2]["functionDeclarations"][0]["description"], REDACTED);
-    assert_eq!(tools[0]["name"], "a");
+    let original = body.clone();
+    assert_eq!(redact_request_body(&mut body, ZH, true), 0);
+    assert_eq!(body, original);
 }
 
 #[test]
@@ -736,139 +716,6 @@ fn deterministic_request_id_does_not_fingerprint_redacted_secrets() {
     assert_eq!(id("4937"), id("4938"));
 }
 
-/// 真实转换链：客户端那一遍（Responses）→ 转成 Chat / Anthropic → 出口那一遍。
-/// custom tool 的说明文字被替换，grammar 约束一路原样保留。
-#[test]
-fn custom_tool_grammar_survives_both_passes_through_real_conversions() {
-    use crate::proxy::providers::transform_codex_anthropic::{
-        responses_request_to_anthropic, DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS,
-    };
-    use crate::proxy::providers::transform_codex_chat::{
-        parse_custom_tool_description, responses_to_chat_completions,
-    };
-    let grammar = json!({ "type": "grammar", "syntax": "lark",
-                          "definition": "start: \"alice@example.com\"" });
-    let mut client = json!({
-        "model": "m",
-        "input": [{ "role": "user", "content": [{ "type": "input_text", "text": "hi" }] }],
-        "tools": [{
-            "type": "custom",
-            "name": "choose_recipient",
-            "description": format!("Choose the permitted recipient. {SECRET}"),
-            "format": grammar.clone()
-        }]
-    });
-    // 客户端那一遍：按结构处理，只改说明
-    assert_eq!(redact_request_body(&mut client, ZH, false), 1);
-    assert_eq!(client["tools"][0]["format"], grammar);
-
-    let upstream = RedactOptions {
-        tool_results: false,
-        embedded_custom_tools: true,
-    };
-    let chat = responses_to_chat_completions(client.clone()).expect("chat conversion");
-    let anthropic = responses_request_to_anthropic(client, DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS)
-        .expect("anthropic conversion");
-    for (format, mut body) in [("chat", chat), ("anthropic", anthropic)] {
-        let before = body.clone();
-        // 出口那一遍：嵌入的定义已经处理过，什么都不改
-        assert_eq!(
-            redact_request_body_with(&mut body, ZH, upstream),
-            0,
-            "{format}"
-        );
-        assert_eq!(body, before, "{format}");
-        let tool = body["tools"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|tool| {
-                tool["name"] == "choose_recipient" || tool["function"]["name"] == "choose_recipient"
-            })
-            .unwrap_or_else(|| panic!("{format}: tool missing in {body}"));
-        let description = tool["description"]
-            .as_str()
-            .or_else(|| tool["function"]["description"].as_str())
-            .unwrap_or_else(|| panic!("{format}: no description in {tool}"));
-        let definition = parse_custom_tool_description(description)
-            .unwrap_or_else(|| panic!("{format}: not an embedded definition: {description}"));
-        assert_eq!(definition["format"], grammar, "{format}");
-        assert_eq!(
-            definition["description"],
-            format!("Choose the permitted recipient. {REDACTED}"),
-            "{format}"
-        );
-    }
-}
-
-#[test]
-fn embedded_custom_tool_definitions_need_the_upstream_option() {
-    use crate::proxy::providers::transform_codex_chat::responses_custom_tool_description;
-    let description = responses_custom_tool_description(&json!({
-        "type": "custom",
-        "name": "x",
-        "description": SECRET,
-        "format": { "type": "grammar", "definition": "start: \"bob@example.com\"" }
-    }));
-    let body = || json!({ "tools": [{ "name": "x", "description": description }] });
-    let upstream = RedactOptions {
-        tool_results: false,
-        embedded_custom_tools: true,
-    };
-
-    // 出口那一遍识别出嵌入定义：只改说明，grammar 不动
-    let mut converted = body();
-    assert_eq!(redact_request_body_with(&mut converted, ZH, upstream), 1);
-    let text = converted["tools"][0]["description"].as_str().unwrap();
-    assert!(
-        text.contains("bob@example.com") && !text.contains("Hunter2xyz"),
-        "{text}"
-    );
-
-    // 客户端发来的说明（选项关闭）一律当普通文本：邮箱和密码都替换
-    let mut client = body();
-    assert_eq!(redact_request_body(&mut client, ZH, false), 2);
-    let text = client["tools"][0]["description"].as_str().unwrap();
-    assert!(
-        !text.contains("bob@example.com") && !text.contains("Hunter2xyz"),
-        "{text}"
-    );
-
-    // 没有命中时逐字节不变
-    let clean = responses_custom_tool_description(&json!({ "type": "custom", "name": "x",
-        "format": { "type": "grammar", "definition": "start: \"bob\"" } }));
-    let mut body = json!({ "tools": [{ "name": "x", "description": clean }] });
-    assert_eq!(redact_request_body_with(&mut body, ZH, upstream), 0);
-    assert_eq!(body["tools"][0]["description"], clean);
-}
-
-/// 排版和 CC Switch 生成的嵌入定义一样、内容却不是它原样输出的说明，按普通文本处理
-#[test]
-fn look_alike_embedded_definitions_are_plain_text() {
-    let upstream = RedactOptions {
-        tool_results: false,
-        embedded_custom_tools: true,
-    };
-    for embedded in [
-        r#"{"note":"password = Hunter2xyz"}"#,
-        r#""password = Hunter2xyz""#,
-        // type=custom 但不是规范序列化（多了空格），重新生成对不上
-        r#"{"type": "custom", "name": "x", "note": "password = Hunter2xyz"}"#,
-    ] {
-        let description = format!("Original tool definition:\n```json\n{embedded}\n```");
-        let mut body = json!({ "tools": [
-            { "name": "x", "description": description },
-            { "type": "function", "function": { "name": "y", "description": description } }
-        ]});
-        assert_eq!(
-            redact_request_body_with(&mut body, ZH, upstream),
-            2,
-            "{embedded}"
-        );
-        assert!(!body.to_string().contains("Hunter2xyz"), "{body}");
-    }
-}
-
 #[test]
 fn gemini_count_tokens_wrapper_is_redacted() {
     for key in ["generateContentRequest", "generate_content_request"] {
@@ -880,20 +727,22 @@ fn gemini_count_tokens_wrapper_is_redacted() {
                 "tools": [{ "functionDeclarations": [{ "name": "f", "description": SECRET }] }]
             }
         });
-        assert_eq!(redact_request_body(&mut body, ZH, false), 3, "{key}");
+        assert_eq!(redact_request_body(&mut body, ZH, false), 2, "{key}");
         let inner = &body[key];
         assert_eq!(inner["systemInstruction"]["parts"][0]["text"], REDACTED);
         assert_eq!(inner["contents"][0]["parts"][0]["text"], REDACTED);
         assert_eq!(
             inner["tools"][0]["functionDeclarations"][0]["description"],
-            REDACTED
+            SECRET
         );
         assert_eq!(inner["model"], "models/gemini-x");
     }
 }
 
+/// 写在 input 里的工具定义（additional_tools、工具搜索带出来的定义）同样不碰；
+/// 工具搜索的结果文本跟随子开关
 #[test]
-fn input_declared_tools_are_redacted() {
+fn input_declared_tools_are_left_untouched() {
     let tools = json!([{ "type": "function", "name": "lookup", "description": SECRET,
         "parameters": { "type": "object", "properties": {} } }]);
     let body = || {
@@ -906,55 +755,14 @@ fn input_declared_tools_are_redacted() {
         })
     };
     let mut off = body();
-    assert_eq!(redact_request_body(&mut off, ZH, false), 2);
-    assert_eq!(off["input"][0]["tools"][0]["description"], REDACTED);
-    assert_eq!(off["input"][1]["tools"][0]["description"], REDACTED);
-    assert_eq!(off["input"][1]["output"][0]["text"], SECRET);
-    assert_eq!(off["input"][0]["tools"][0]["name"], "lookup");
+    assert_eq!(redact_request_body(&mut off, ZH, false), 0);
+    assert_eq!(off, body());
 
     let mut on = body();
-    assert_eq!(redact_request_body(&mut on, ZH, true), 3);
+    assert_eq!(redact_request_body(&mut on, ZH, true), 1);
     assert_eq!(on["input"][1]["output"][0]["text"], REDACTED);
-}
-
-#[test]
-fn schema_maps_are_walked_by_value() {
-    let mut body = json!({
-        "tools": [{ "name": "a", "input_schema": {
-            "type": "object",
-            "$defs": { "default": { "type": "string", "description": SECRET } },
-            "definitions": { "enum": { "type": "string", "description": SECRET } },
-            "patternProperties": { "^x": { "description": SECRET } },
-            "dependencies": {
-                "default": { "description": SECRET },
-                "mode": ["default", "enum"]
-            },
-            "dependentSchemas": { "enum": { "description": SECRET } },
-            "properties": {
-                "recipient": { "$ref": "#/$defs/default" },
-                "mode": {
-                    "default": { "description": SECRET },
-                    "const": { "description": SECRET },
-                    "examples": [{ "description": SECRET }]
-                }
-            }
-        }}]
-    });
-    let original = body.clone();
-    assert_eq!(redact_request_body(&mut body, ZH, false), 5);
-    let schema = &body["tools"][0]["input_schema"];
-    assert_eq!(schema["dependencies"]["default"]["description"], REDACTED);
-    assert_eq!(schema["dependencies"]["mode"], json!(["default", "enum"]));
-    assert_eq!(schema["dependentSchemas"]["enum"]["description"], REDACTED);
-    assert_eq!(schema["$defs"]["default"]["description"], REDACTED);
-    assert_eq!(schema["definitions"]["enum"]["description"], REDACTED);
-    assert_eq!(schema["patternProperties"]["^x"]["description"], REDACTED);
-    // 取值位置（default / const / examples）里的内容整体不动
-    assert_eq!(
-        schema["properties"]["mode"],
-        original["tools"][0]["input_schema"]["properties"]["mode"]
-    );
-    assert_eq!(schema["properties"]["recipient"]["$ref"], "#/$defs/default");
+    assert_eq!(on["input"][0]["tools"], tools);
+    assert_eq!(on["input"][1]["tools"], tools);
 }
 
 const LANGUAGES: [&str; 5] = ["zh", "zh-TW", "en", "ja", "tr"];
@@ -980,13 +788,11 @@ fn literal_placeholders_in_source_text_are_not_exempt() {
     assert_eq!(res.count, 0);
 }
 
-/// P1 验收：与旧预筛三层对拍。① Route 1–3 原始命中 ② 合并区间（冷 / 热缓存）
+/// P1 验收：与旧预筛三层对拍。① Route 1–3 原始命中 ② 合并区间
 /// ③ 各语言最终字节（与 v1 的重建算法比：每个合并区间都换成占位符）
 #[test]
 fn detection_and_output_match_the_naive_gate() {
-    // 独立实例：缓存是空的，「cold」那一轮才真的是冷缓存
-    let owned = Filter::from_gitleaks_toml(GITLEAKS_TOML);
-    let filter = &owned;
+    let filter = global();
     let filler = " 普通的对话内容 plain text".repeat(12);
     let mut corpus = gate_corpus();
     for language in LANGUAGES {
@@ -994,7 +800,7 @@ fn detection_and_output_match_the_naive_gate() {
         corpus.push(format!("password = {}", ph.email));
         corpus.push(format!("密码是 {}", ph.secret));
     }
-    // 一部分加长到缓存阈值以上，覆盖缓存路径
+    // 一部分加长，命中落在长文本中间
     let long: Vec<String> = corpus
         .iter()
         .step_by(7)
@@ -1017,13 +823,11 @@ fn detection_and_output_match_the_naive_gate() {
         let mut spans = super::pii::detect(text);
         spans.extend(naive_raw);
         let naive_merged = merge_spans(spans);
-        for round in ["cold", "hot"] {
-            assert_eq!(
-                triples(&filter.detect(text)[..]),
-                triples(&naive_merged[..]),
-                "{round} merged spans differ for {text:?}"
-            );
-        }
+        assert_eq!(
+            triples(&filter.detect(text)[..]),
+            triples(&naive_merged[..]),
+            "merged spans differ for {text:?}"
+        );
         for language in LANGUAGES {
             let ph = Placeholders::for_language(language);
             let mut expected = String::with_capacity(text.len());

@@ -10,18 +10,19 @@
 //!
 //! 各层产出 `(start, end, label)` 区间 → 合并去重叠 → 单遍重建文本。占位符不可逆。
 //!
-//! 代理侧只改写用户输入、系统提示、工具定义的说明文字和搜索词，不碰 thinking 块、签名、
-//! 工具调用参数和图片等二进制内容，避免破坏协议语义。
+//! 代理侧只改写用户输入、系统提示和搜索词，不碰 thinking 块、签名、工具定义、
+//! 工具调用参数和图片等二进制内容，避免破坏协议语义。工具定义的说明文字是客户端自带的
+//! 固定文字，里面的示例地址（如 `noreply@anthropic.com`）会被模型照抄，不能换成占位符。
 //!
-//! 转发器里每次尝试过滤多遍（见 `forwarder::RequestForwarder::apply_privacy_filter`）：先在客户端
-//! 格式的请求体上过滤，此时还分得清用户文本和工具结果；Copilot 清洗 / 合并工具结果后、供应商的
-//! 本地 body 覆写合并前各补一遍；最后在定稿的上游请求体上过滤，兜住代理自己补进去的内容。替换结果与原文相同的命中（第一遍留下的
-//! 同类占位符）不改写、不计数；原文里写着的占位符字样不享受豁免，照常检测和替换。
+//! 转发器里每次尝试过滤多遍（见 `forwarder::RequestForwarder::apply_privacy_filter`）：
+//! 先在客户端格式的请求体上过滤，此时还分得清用户文本和工具结果；Copilot 清洗 / 合并工具结果后、
+//! 供应商的本地 body 覆写合并前各补一遍；最后在定稿的上游请求体上过滤，兜住代理自己补进去的内容。
+//! 替换结果与原文相同的命中（第一遍留下的同类占位符）不改写、不计数；原文里写着的占位符字样
+//! 不享受豁免，照常检测和替换。
 //!
 //! 模型回复和工具结果默认也不碰：模型只拿到占位符时，Edit / apply_patch 对不上原文，
 //! 整文件重写还会把占位符写回用户的真实文件。工具结果可由 `tool_results` 子开关单独打开。
 
-mod cache;
 mod pii;
 mod secrets;
 
@@ -139,10 +140,9 @@ pub struct RedactResult {
     pub count: usize,
 }
 
-/// 编译好的过滤器。规则创建后只读；检测缓存内部加锁，可并发安全地复用。
+/// 编译好的过滤器。创建后只读，可并发安全地复用。
 pub struct Filter {
     secrets: SecretDetector,
-    cache: cache::DetectionCache,
 }
 
 impl Filter {
@@ -150,19 +150,14 @@ impl Filter {
     fn from_gitleaks_toml(toml_text: &str) -> Self {
         Self {
             secrets: SecretDetector::from_gitleaks_toml(toml_text),
-            cache: cache::DetectionCache::new(),
         }
     }
 
-    /// 合并后的命中区间。长会话每轮重发全部历史，同一段文本的检测结果按原文缓存。
-    ///
-    /// 缓存属于这个 Filter 实例，规则在实例创建后不再变化，所以键里不需要规则版本。
-    fn detect(&self, text: &str) -> std::sync::Arc<[Span]> {
-        self.cache.get_or_detect(text, || {
-            let mut spans = pii::detect(text);
-            spans.extend(self.secrets.detect(text));
-            merge_spans(spans)
-        })
+    /// 合并后的命中区间（按起点升序、互不重叠）
+    fn detect(&self, text: &str) -> Vec<Span> {
+        let mut spans = pii::detect(text);
+        spans.extend(self.secrets.detect(text));
+        merge_spans(spans)
     }
 
     /// 检测并脱敏文本，命中处替换为 `placeholders` 里对应的占位符
@@ -189,7 +184,7 @@ impl Filter {
         let mut out: Option<String> = None;
         let mut prev = 0;
         let mut count = 0;
-        for s in merged.iter() {
+        for s in &merged {
             if placeholders.label(s.kind) == &text[s.start..s.end] {
                 continue;
             }
@@ -238,30 +233,6 @@ pub fn global() -> &'static Filter {
     &FILTER
 }
 
-/// 内容派生标识（Copilot 确定性请求 ID、OpenCode 会话指纹）用的进程内随机密钥，不落盘、不外发。
-static FINGERPRINT_KEY: Lazy<[u8; 32]> = Lazy::new(|| {
-    let mut key = [0u8; 32];
-    key[..16].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
-    key[16..].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
-    key
-});
-
-/// 带密钥的内容摘要：`HMAC-SHA256(进程内随机密钥, parts 依次拼接)`。
-///
-/// 隐私过滤打开时，发往上游的内容派生标识改用它。普通 SHA-256 的输入里只要还有一处没被遮盖的
-/// 短口令（转换后才拼出上下文、孤儿工具结果降级等），上游就能拿模板穷举反推；上游不知道这个
-/// 密钥，就没法离线验证猜测。同一进程内相同输入结果相同，重启后会变。
-pub fn keyed_digest(parts: &[&[u8]]) -> [u8; 32] {
-    use hmac::{Hmac, Mac};
-    type HmacSha256 = Hmac<sha2::Sha256>;
-    let mut mac = HmacSha256::new_from_slice(FINGERPRINT_KEY.as_slice())
-        .expect("HMAC accepts any key length");
-    for part in parts {
-        mac.update(part);
-    }
-    mac.finalize().into_bytes().into()
-}
-
 /// 预热：提前编译规则，避免开关打开后的第一个请求承担编译耗时
 pub fn warm_up() {
     Lazy::force(&FILTER);
@@ -276,56 +247,25 @@ struct Redactor<'a> {
     placeholders: &'a Placeholders,
     /// 是否同时脱敏工具结果
     tool_results: bool,
-    /// 见 [`RedactOptions::embedded_custom_tools`]
-    embedded_custom_tools: bool,
-}
-
-/// 请求体脱敏选项
-#[derive(Debug, Clone, Copy, Default)]
-pub struct RedactOptions {
-    /// 同时脱敏工具结果
-    pub tool_results: bool,
-    /// 请求体由 CC Switch 从 Responses 转成了 Chat / Anthropic：工具说明里可能嵌着它生成的
-    /// custom tool 原定义（含 grammar），只处理定义里的说明文字。只有转发器出口那一遍、且确实
-    /// 做过这种转换时才打开；客户端发来的说明一律按普通文本处理。
-    pub embedded_custom_tools: bool,
 }
 
 /// 脱敏请求体里的文本内容，返回命中数。
 ///
 /// 覆盖 Anthropic Messages / OpenAI Chat Completions / OpenAI Responses / Gemini
 /// （含 countTokens 的 `generateContentRequest` 包装）四种格式，图片生成的 `prompt`，
-/// Alpha Search 的搜索词，以及工具定义的说明文字。只改写用户输入、系统提示和说明文字，
-/// 选项见 [`RedactOptions`]。
-pub fn redact_request_body_with(
-    body: &mut Value,
-    placeholders: &Placeholders,
-    options: RedactOptions,
-) -> usize {
-    let r = Redactor {
-        filter: global(),
-        placeholders,
-        tool_results: options.tool_results,
-        embedded_custom_tools: options.embedded_custom_tools,
-    };
-    redact_body(&r, body)
-}
-
-/// 同 [`redact_request_body_with`]，不识别嵌入的 custom tool 定义（测试用）
-#[cfg(test)]
+/// 以及 Alpha Search 的搜索词。只改写用户输入和系统提示的纯文本字段，
+/// `tool_results` 为 true 时再加上工具结果。
 pub fn redact_request_body(
     body: &mut Value,
     placeholders: &Placeholders,
     tool_results: bool,
 ) -> usize {
-    redact_request_body_with(
-        body,
+    let r = Redactor {
+        filter: global(),
         placeholders,
-        RedactOptions {
-            tool_results,
-            embedded_custom_tools: false,
-        },
-    )
+        tool_results,
+    };
+    redact_body(&r, body)
 }
 
 fn redact_body(r: &Redactor, body: &mut Value) -> usize {
@@ -373,12 +313,6 @@ fn redact_body(r: &Redactor, body: &mut Value) -> usize {
     if let Some(prompt) = obj.get_mut("prompt") {
         count += redact_string(r, prompt);
     }
-    // 工具定义的说明文字（MCP / 用户自定义工具里可能写着地址、账号）
-    if let Some(Value::Array(tools)) = obj.get_mut("tools") {
-        for tool in tools {
-            count += redact_tool_descriptions(r, tool);
-        }
-    }
     // Codex Alpha Search：`commands.<命令>[].q`
     if let Some(Value::Object(commands)) = obj.get_mut("commands") {
         for command in commands.values_mut() {
@@ -392,72 +326,6 @@ fn redact_body(r: &Redactor, body: &mut Value) -> usize {
         }
     }
     count
-}
-
-/// 工具定义里所有键名为 `description` 的字符串：工具本身、函数声明和参数 schema 各层。
-/// 名称、类型、`enum` / `default` 等会约束模型输出的值不改，否则模型照着占位符调用会出错。
-fn redact_tool_descriptions(r: &Redactor, v: &mut Value) -> usize {
-    match v {
-        Value::Object(fields) => fields
-            .iter_mut()
-            .map(|(key, field)| match field {
-                Value::String(_) if key == "description" => redact_description(r, field),
-                // 「名称 → schema」字典：键是参数名或定义名（可能恰好叫 default / enum），值都是 schema
-                Value::Object(named) if is_schema_map_key(key) => named
-                    .values_mut()
-                    .map(|schema| redact_tool_descriptions(r, schema))
-                    .sum(),
-                Value::Object(_) | Value::Array(_) if !is_schema_value_key(key) => {
-                    redact_tool_descriptions(r, field)
-                }
-                _ => 0,
-            })
-            .sum(),
-        Value::Array(items) => items
-            .iter_mut()
-            .map(|i| redact_tool_descriptions(r, i))
-            .sum(),
-        _ => 0,
-    }
-}
-
-/// schema 里装的是取值而不是说明的键，不往里递归
-fn is_schema_value_key(key: &str) -> bool {
-    matches!(key, "enum" | "const" | "default" | "examples" | "example")
-}
-
-/// 值是「名称 → schema」字典的 JSON Schema 关键字
-fn is_schema_map_key(key: &str) -> bool {
-    matches!(
-        key,
-        "properties"
-            | "patternProperties"
-            | "dependentSchemas"
-            | "dependencies"
-            | "$defs"
-            | "definitions"
-    )
-}
-
-/// 工具的 `description`。Responses custom tool 转成 Chat / Anthropic 时，说明里嵌着完整的原工具
-/// 定义（含 grammar 等约束），只处理定义里的说明文字，约束原样保留。只在
-/// [`RedactOptions::embedded_custom_tools`] 打开时识别；这些定义在客户端那一遍已按结构处理过。
-fn redact_description(r: &Redactor, v: &mut Value) -> usize {
-    use crate::proxy::providers::transform_codex_chat::{
-        parse_custom_tool_description, responses_custom_tool_description,
-    };
-    if r.embedded_custom_tools {
-        if let Value::String(text) = v {
-            if let Some(mut definition) = parse_custom_tool_description(text) {
-                let count = redact_tool_descriptions(r, &mut definition);
-                if count > 0 {
-                    *text = responses_custom_tool_description(&definition);
-                }
-                return count;
-            }
-        }
-    }
-    redact_string(r, v)
 }
 
 fn redact_string(r: &Redactor, v: &mut Value) -> usize {
@@ -542,21 +410,9 @@ fn redact_responses_input(r: &Redactor, input: &mut Value) -> usize {
                     Some("function_call_output" | "custom_tool_call_output") if r.tool_results => {
                         obj.get_mut("output").map_or(0, |o| redact_content(r, o))
                     }
-                    // 写在 input 里的动态工具定义：说明文字按工具定义处理
-                    Some("additional_tools") => obj
-                        .get_mut("tools")
-                        .map_or(0, |t| redact_tool_descriptions(r, t)),
-                    // 工具搜索结果：带出来的工具定义同上，结果文本跟随子开关
-                    Some("tool_search_output") => {
-                        let tools = obj
-                            .get_mut("tools")
-                            .map_or(0, |t| redact_tool_descriptions(r, t));
-                        let output = if r.tool_results {
-                            obj.get_mut("output").map_or(0, |o| redact_content(r, o))
-                        } else {
-                            0
-                        };
-                        tools + output
+                    // 工具搜索结果：结果文本跟随子开关，带出来的工具定义不碰
+                    Some("tool_search_output") if r.tool_results => {
+                        obj.get_mut("output").map_or(0, |o| redact_content(r, o))
                     }
                     _ => 0,
                 }
