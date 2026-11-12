@@ -216,7 +216,7 @@ fn claude_contract(
     (projection, contract)
 }
 
-const CLAUDE_MAX_CONTEXT_ENV: &str = "CLAUDE_CODE_MAX_CONTEXT_TOKENS";
+pub(crate) const CLAUDE_MAX_CONTEXT_ENV: &str = "CLAUDE_CODE_MAX_CONTEXT_TOKENS";
 
 /// `/model` 选择器的配置（顶层关键字段）。`replaceBuiltInOptions` 让选择器只剩 Default 和
 /// 这里列的行：内置的 Opus / Sonnet / Haiku 行都指向默认那家的模型，留着就是几行重复，
@@ -269,9 +269,11 @@ fn with_stack_models(
     );
 }
 
-/// Stack 模式下共享的 `CLAUDE_CODE_MAX_CONTEXT_TOKENS`，取所有非 1M 模型的最小窗口。
-/// 用户级 `model` 只是新会话的默认选择；`--model`、项目配置、仅本会话的 `/model` 选择和
-/// 并行会话都可以用别的模型，不能据此提高所有会话共用的 MAX。1M 模型通过后缀声明窗口。
+/// Stack 模式下共享的 `CLAUDE_CODE_MAX_CONTEXT_TOKENS`，取所有非 1M 模型的最大窗口。
+/// Claude Code 只有这一个窗口，所有会话共用，不跟着哪个会话的 `/model` 走。窗口更小的模型
+/// 由代理按请求补齐：给它的响应 `input_tokens` 加上 `MAX − 它的窗口`（见
+/// `proxy::context_offset`），Claude Code 就在这个模型自己的窗口处自动压缩。这样并行会话、
+/// `--model`、项目配置、子代理和会话中途换模型都按各自的模型算，互不影响。
 ///
 /// 全是 1M 时也写回默认 200K，覆盖进程里可能残留的旧 MAX；带 1M 标记的模型不受它影响。
 fn stack_max_context(stack: &[StackModel]) -> u64 {
@@ -279,7 +281,7 @@ fn stack_max_context(stack: &[StackModel]) -> u64 {
         .iter()
         .filter(|model| !model.one_m)
         .map(|model| model.window)
-        .min()
+        .max()
         .unwrap_or(stack::CLAUDE_DEFAULT_WINDOW)
 }
 
@@ -2084,7 +2086,7 @@ mod tests {
     }
 
     #[test]
-    fn stack_custom_windows_bound_every_saved_selection_and_default_route() {
+    fn stack_max_window_is_the_widest_non_one_m_window_whatever_is_selected() {
         let wide = stack_member(
             "wide",
             json!({ "ANTHROPIC_MODEL": "wide-m", "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "400000" }),
@@ -2121,10 +2123,11 @@ mod tests {
                     &[],
                     selected,
                 );
+                // 小窗口的 small 由代理按请求补齐（`proxy::context_offset`）。
                 assert_env_str(
                     &projection.exclusive,
                     CLAUDE_MAX_CONTEXT_ENV,
-                    Some("128000"),
+                    Some("400000"),
                 );
             }
         }
@@ -6109,21 +6112,21 @@ model_provider = "c"
                 "ccs-claude-kimi--kimi-k3".to_string(),
             ])
         );
-        // 所有会话共用 MAX，默认模型是 200K 时也必须保护可能单独使用 kimi 的会话。
+        // 所有会话共用 MAX，取最大的非 1M 窗口；kimi 的 128K 由代理按请求补齐。
         let env = settings()["env"].clone();
-        assert_eq!(env[CLAUDE_MAX_CONTEXT_ENV], "128000");
+        assert_eq!(env[CLAUDE_MAX_CONTEXT_ENV], "200000");
         assert_eq!(
             env["ANTHROPIC_DEFAULT_SONNET_MODEL"],
             "ccs-claude-a--claude-sonnet-4-6"
         );
         assert_eq!(
             mode(&AppType::Claude).contract.unwrap().exclusive[CLAUDE_MAX_CONTEXT_ENV],
-            "128000"
+            "200000"
         );
 
         // 1M 的 Stack 模型不影响 MAX。
         set_member(&state, "zhipu", true).await;
-        assert_eq!(max_context().as_deref(), Some("128000"));
+        assert_eq!(max_context().as_deref(), Some("200000"));
         set_member(&state, "kimi", false).await;
         assert_eq!(
             picker(),
@@ -6169,10 +6172,11 @@ model_provider = "c"
             .map(|value| value.as_str().expect("string").to_string())
     }
 
-    /// 用户级选择不能提高共享 MAX；重写名单时保留有效选择，并规范化 1M 标记。
+    /// 共享 MAX 取最大的非 1M 窗口，和 `/model` 选了什么无关（小窗口由代理按请求补齐）；
+    /// 重写名单时保留有效选择，并规范化 1M 标记。
     #[tokio::test]
     #[serial]
-    async fn the_stack_max_window_is_safe_for_sessions_with_different_models() {
+    async fn the_stack_max_window_is_the_widest_and_ignores_the_selection() {
         let _home = Home::new();
         seed_settings(USER_SETTINGS);
         let [a, kimi, zhipu] = stack_rows();
@@ -6189,33 +6193,33 @@ model_provider = "c"
         assert_eq!(max_context().as_deref(), Some("200000"));
         set_member(&state, "kimi", true).await;
         set_member(&state, "wide", true).await;
-        assert_eq!(max_context().as_deref(), Some("128000"));
+        assert_eq!(max_context().as_deref(), Some("400000"));
 
-        // 选中 400K 模型也不能提高用 --model、项目配置等单独选中 kimi 的会话的 MAX。
+        // 选中别的模型不改 MAX：每个会话的窗口由代理按请求的模型补齐。
         pick_model(Some("ccs-claude-wide--wide-m"));
         set_member(&state, "zhipu", true).await;
         assert_eq!(settings()["model"], "ccs-claude-wide--wide-m");
-        assert_eq!(max_context().as_deref(), Some("128000"));
+        assert_eq!(max_context().as_deref(), Some("400000"));
 
-        // 选 1M 后重写，选择按当前发布的 id 规范化，MAX 仍然保护其它会话。
+        // 选 1M 后重写，选择按当前发布的 id 规范化；移除 wide 后 MAX 回到剩下最大的 a。
         pick_model(Some("ccs-claude-zhipu--glm-5.2[1m]"));
         set_member(&state, "wide", false).await;
         assert_eq!(settings()["model"], "ccs-claude-zhipu--glm-5.2[1M]");
-        assert_eq!(max_context().as_deref(), Some("128000"));
+        assert_eq!(max_context().as_deref(), Some("200000"));
 
         // 档位别名的窗口由默认那家的映射决定，去掉旧的显式 1M 后缀。
         pick_model(Some("sonnet[1m]"));
         set_member(&state, "wide", true).await;
         assert_eq!(settings()["model"], "sonnet");
-        assert_eq!(max_context().as_deref(), Some("128000"));
+        assert_eq!(max_context().as_deref(), Some("400000"));
 
-        // Default 没有顶层 model；移除小窗口成员后显式恢复 200K，覆盖进程内的旧 MAX。
+        // Default 没有顶层 model；移除小窗口成员不改 MAX。
         pick_model(None);
         set_member(&state, "kimi", false).await;
         assert!(settings().get("model").is_none());
-        assert_eq!(max_context().as_deref(), Some("200000"));
+        assert_eq!(max_context().as_deref(), Some("400000"));
 
-        // 已移除成员的选择不能保留。
+        // 已移除成员的选择不能保留；移除最大的 wide 后 MAX 显式回到 200K，覆盖进程内的旧值。
         pick_model(Some("ccs-claude-wide--wide-m"));
         set_member(&state, "wide", false).await;
         assert!(settings().get("model").is_none());
@@ -6321,7 +6325,7 @@ model_provider = "c"
 
         enter(&state, &AppType::Claude, true).await.expect("enter");
         assert!(picker().is_some());
-        assert_eq!(max_context().as_deref(), Some("128000"));
+        assert_eq!(max_context().as_deref(), Some("200000"));
 
         exit(&state, &AppType::Claude).await.expect("exit");
         assert_back_to_user_settings();
@@ -6355,7 +6359,7 @@ model_provider = "c"
         ProviderService::switch(&state, AppType::Claude, "kimi").expect("switch route");
         assert!(picker().is_some());
         let env = settings()["env"].clone();
-        assert_eq!(env[CLAUDE_MAX_CONTEXT_ENV], "128000");
+        assert_eq!(env[CLAUDE_MAX_CONTEXT_ENV], "200000");
         assert_eq!(
             env["ANTHROPIC_DEFAULT_OPUS_MODEL"],
             "ccs-claude-kimi--kimi-k3"
@@ -7289,16 +7293,16 @@ model_provider = "c"
         set_member(&state, "kimi", true).await;
         // 编辑和删除成员时，保留有效选择，清掉已移除成员的选择。
         pick_model(Some("ccs-claude-kimi--kimi-k3"));
-        assert_eq!(max_context().as_deref(), Some("128000"));
+        assert_eq!(max_context().as_deref(), Some("200000"));
 
         let mut kimi = state
             .db
             .get_provider_by_id("kimi", "claude")
             .unwrap()
             .unwrap();
-        kimi.settings_config["env"][CLAUDE_MAX_CONTEXT_ENV] = json!("64000");
+        kimi.settings_config["env"][CLAUDE_MAX_CONTEXT_ENV] = json!("300000");
         ProviderService::update(&state, AppType::Claude, None, kimi).expect("update kimi");
-        assert_eq!(settings()["env"][CLAUDE_MAX_CONTEXT_ENV], "64000");
+        assert_eq!(settings()["env"][CLAUDE_MAX_CONTEXT_ENV], "300000");
         assert_eq!(settings()["model"], "ccs-claude-kimi--kimi-k3");
 
         ProviderService::delete(&state, AppType::Claude, "kimi").expect("delete kimi");

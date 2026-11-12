@@ -350,7 +350,7 @@ export function ClaudeStackModelsField({
               >
                 {t("providerForm.modelContextHelp", {
                   defaultValue:
-                    "Claude Code 可给单个模型标 1M，其余模型跨会话共用 CLAUDE_CODE_MAX_CONTEXT_TOKENS。聚合时取所有非 1M 模型的最小窗口，保护通过 --model、项目设置或仅本会话选择使用其它模型的会话；较大窗口的非 1M 模型也受这个共同上限约束。200K 也会显式写入，以覆盖运行中会话的旧值。自定义填实际 token 数（例如 262144）；留空时用这家的值，没有是 200K；填不小于 1000000 时按 1M 保存。获取模型列表时会按 models.dev 补上没填的窗口。",
+                    "Claude Code 可给单个模型标 1M，其余模型共用一个 CLAUDE_CODE_MAX_CONTEXT_TOKENS。聚合时它取所有非 1M 模型里最大的窗口；窗口更小的模型由 CC Switch 代理按请求补齐用量，让 Claude Code 在这个模型自己的窗口处自动压缩，各会话、子代理和 /model 切换互不影响（Claude Code 显示的上下文用量会偏大）。自定义填实际 token 数（例如 262144）；留空时用这家的 CLAUDE_CODE_MAX_CONTEXT_TOKENS，没有是 200K；填不小于 1000000 时按 1M 保存。获取模型列表时会按 models.dev 补上没填的窗口。",
                 })}
               </HelpTip>
             </span>

@@ -351,7 +351,7 @@ fn mapped_models(env: &Map<String, Value>) -> Vec<Found> {
 
 /// 给找到的模型加上前缀、显示名和窗口。非 1M 模型的窗口是模型自己配的，没有是行里的
 /// `CLAUDE_CODE_MAX_CONTEXT_TOKENS`，再没有是 200K。Claude Code 只有一个全局窗口，契约里
-/// 取所有非 1M 模型的最小值（`mode::controller::stack_max_context`）。
+/// 取所有非 1M 模型的最大值（`mode::controller::stack_max_context`），更小的由代理按请求补齐。
 fn stack_models(key: &str, provider: &Provider, found: Vec<Found>) -> Vec<StackModel> {
     let row_window = claude_env(provider)
         .and_then(|env| env.get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"))
@@ -672,6 +672,10 @@ pub struct StackTarget {
     pub upstream_model: String,
     /// 客户端发来的带前缀 id（只用于日志展示）。
     pub original_model: String,
+    /// Claude Code 按 `CLAUDE_CODE_MAX_CONTEXT_TOKENS` 计算的这个模型的真实窗口。客户端发来的
+    /// id 带 1M 标记（Claude Code 按 1M 算、不看 MAX）、不是 Claude Code、或行里已经没有这个
+    /// 模型时没有。代理据此补齐上下文用量（`proxy::context_offset`）。
+    pub claude_window: Option<u64>,
 }
 
 /// 带保留前缀的 id 为什么解不出来。
@@ -746,26 +750,31 @@ pub fn resolve(
     }
     // Claude 发往上游的是行里配置的原值（可能带 1M 标记），和路由请求映射出来的一样；
     // 行里已经没有这个模型时照原样发（上游自己决定认不认）。Codex 的 id 就是行里的模型名。
-    let upstream_model = match app {
-        AppType::Claude => claude_models(key, &provider)
-            .into_iter()
-            .find(|published| {
-                strip_one_m_suffix_for_upstream(&published.upstream).trim() == model_part
-            })
-            .map(|published| published.upstream),
+    let published = match app {
+        AppType::Claude => claude_models(key, &provider).into_iter().find(|published| {
+            strip_one_m_suffix_for_upstream(&published.upstream).trim() == model_part
+        }),
         _ => None,
-    }
-    .unwrap_or_else(|| {
-        if one_m {
-            format!("{model_part}{ONE_M_MARKER_FOR_CLIENT}")
-        } else {
-            model_part.to_string()
-        }
-    });
+    };
+    // 上游是 1M 的模型窗口不小于 MAX，不用补；客户端 id 带 1M 标记时 Claude Code 不看 MAX。
+    let claude_window = published
+        .as_ref()
+        .filter(|published| !one_m && !published.one_m)
+        .map(|published| published.window);
+    let upstream_model = published
+        .map(|published| published.upstream)
+        .unwrap_or_else(|| {
+            if one_m {
+                format!("{model_part}{ONE_M_MARKER_FOR_CLIENT}")
+            } else {
+                model_part.to_string()
+            }
+        });
     Ok(Resolved::Hit(Box::new(StackTarget {
         provider,
         upstream_model,
         original_model: model.to_string(),
+        claude_window,
     })))
 }
 
@@ -798,6 +807,7 @@ fn resolve_desktop(
                 provider: member.provider.clone(),
                 upstream_model: found.upstream,
                 original_model: model.to_string(),
+                claude_window: None,
             })));
         }
     }
@@ -1415,6 +1425,25 @@ mod tests {
             hit(resolve_in(&fx, AppType::Claude, "ccs-claude-kimi--kimi-k9")).1,
             "kimi-k9"
         );
+    }
+
+    #[test]
+    fn stacked_ids_carry_the_window_claude_code_bounds_with_max() {
+        let fx = fixture();
+        let window = |id| match resolve_in(&fx, AppType::Claude, id) {
+            Resolved::Hit(target) => target.claude_window,
+            other => panic!("expected a hit, got {other:?}"),
+        };
+        // 非 1M 模型：行里没有 MAX，按 200K。
+        assert_eq!(
+            window("ccs-claude-kimi--kimi-k3"),
+            Some(CLAUDE_DEFAULT_WINDOW)
+        );
+        // 客户端 id 带 1M 标记（Claude Code 不看 MAX）、上游是 1M、行里已经没有：不补。
+        assert_eq!(window("ccs-claude-kimi--kimi-k3[1m]"), None);
+        assert_eq!(window("ccs-claude-zhipu--glm-5.2"), None);
+        assert_eq!(window("ccs-claude-zhipu--glm-5.2[1m]"), None);
+        assert_eq!(window("ccs-claude-kimi--kimi-k9"), None);
     }
 
     #[test]

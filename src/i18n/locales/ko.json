@@ -1848,7 +1848,7 @@
     "modelContextWindowPlaceholder": "기본값",
     "modelContextWindowLabel": "창 토큰 수",
     "modelContextWindowInvalid": "양의 정수 토큰 수(예: 262144 또는 262,144)를 입력하세요. 단위, 소수, 지수 표기는 사용할 수 없습니다. 비워 두면 기본값을 상속합니다.",
-    "modelContextHelp": "Claude Code는 모델별로 1M을 지정할 수 있지만, 나머지 모델은 세션 간에 CLAUDE_CODE_MAX_CONTEXT_TOKENS를 공유합니다. 통합 시 1M이 아닌 모델 중 가장 작은 창을 사용하여 --model, 프로젝트 설정 또는 현재 세션에서만 다른 모델을 선택해도 해당 모델의 한도를 넘지 않도록 합니다. 창이 더 큰 비 1M 모델도 이 작은 한도를 공유합니다. 실행 중인 세션에 남은 값을 덮어쓰도록 200K도 명시적으로 기록합니다. 사용자 지정에는 실제 토큰 수(예: 262144)를 입력합니다. 비워 두면 이 공급자의 값(없으면 200K)을 사용하고, 1000000 이상은 1M으로 저장합니다. 모델 목록을 가져오면 비어 있는 창을 models.dev 값으로 채웁니다.",
+    "modelContextHelp": "Claude Code는 모델별로 1M을 지정할 수 있지만, 나머지 모델은 하나의 CLAUDE_CODE_MAX_CONTEXT_TOKENS를 공유합니다. 통합 시 1M이 아닌 모델 중 가장 큰 창을 사용합니다. 창이 더 작은 모델은 CC Switch 프록시가 요청마다 사용량을 보정하여 Claude Code가 해당 모델 자체의 창에서 자동 압축하도록 합니다. 세션, 하위 에이전트, /model 전환은 서로 영향을 주지 않습니다(Claude Code에 표시되는 컨텍스트 사용량은 실제보다 커집니다). 사용자 지정에는 실제 토큰 수(예: 262144)를 입력합니다. 비워 두면 이 공급자의 CLAUDE_CODE_MAX_CONTEXT_TOKENS(없으면 200K)를 사용하고, 1000000 이상은 1M으로 저장됩니다. 모델 목록을 가져오면 비어 있는 창을 models.dev 값으로 채웁니다.",
     "fallbackModelLabel": "기본 대체 모델",
     "fallbackModelHelpDirect": "ANTHROPIC_MODEL에 기록되며 Claude Code 시작 시 사용할 주 모델입니다. 백그라운드 작업은 별도로 Haiku 등급을 사용합니다.",
     "fallbackModelHelp": "Sonnet, Opus, Fable 또는 Haiku 계층에 매핑되지 않는 요청은 이 모델을 통해 업스트림으로 전송됩니다.",

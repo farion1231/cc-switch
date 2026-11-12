@@ -10,6 +10,7 @@ mod classifier_guard;
 mod codex_models_passthrough;
 pub(crate) mod codex_quota_protection;
 pub(crate) mod content_encoding;
+pub(crate) mod context_offset;
 pub mod copilot_optimizer;
 pub mod error;
 pub mod error_mapper;

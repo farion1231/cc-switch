@@ -354,6 +354,8 @@ async fn handle_messages_for_app(
         Ok(stack) => stack,
         Err(rejected) => return Ok(*rejected),
     };
+    // Stack 模型窗口比共享 MAX 小时，发回 Claude Code 的用量要补上差值（见 `context_offset`）。
+    let context_offset = super::context_offset::claude_offset(&app_type, stack.as_ref());
 
     let mut ctx = RequestContext::new(
         &state,
@@ -429,8 +431,8 @@ async fn handle_messages_for_app(
     );
 
     // Claude 特有：格式转换处理
-    if needs_transform {
-        return handle_claude_transform(
+    let response = if needs_transform {
+        handle_claude_transform(
             response,
             &ctx,
             &state,
@@ -439,21 +441,23 @@ async fn handle_messages_for_app(
             &api_format,
             connection_guard,
         )
-        .await;
-    }
+        .await?
+    } else {
+        drop(body);
 
-    drop(body);
-
-    // 通用响应处理（透传模式）
-    process_response(
-        response,
-        &ctx,
-        &state,
-        &CLAUDE_PARSER_CONFIG,
-        is_stream,
-        connection_guard,
-    )
-    .await
+        // 通用响应处理（透传模式）
+        process_response(
+            response,
+            &ctx,
+            &state,
+            &CLAUDE_PARSER_CONFIG,
+            is_stream,
+            connection_guard,
+        )
+        .await?
+    };
+    // 用量已按真实值记录；只改发给客户端的。
+    Ok(super::context_offset::apply(response, context_offset, is_stream).await)
 }
 
 /// Whether a Claude upstream response must be converted back to Anthropic Messages.
@@ -4225,6 +4229,7 @@ data: [DONE]\n\n";
                 provider,
                 upstream_model: model.into(),
                 original_model: model.into(),
+                claude_window: None,
             }),
         )
         .await
@@ -4703,6 +4708,7 @@ mod copilot_native_responses_tests {
                 provider,
                 upstream_model: "gpt-test".to_string(),
                 original_model: "gpt-test".to_string(),
+                claude_window: None,
             }),
         )
         .await
@@ -5162,6 +5168,7 @@ mod copilot_grok_responses_tests {
                 provider,
                 upstream_model: "gpt-test".to_string(),
                 original_model: "gpt-test".to_string(),
+                claude_window: None,
             }),
         )
         .await
@@ -5435,6 +5442,7 @@ mod stack_tests {
                 provider,
                 upstream_model: "gemini-3.8-flash-high".into(),
                 original_model: model.into(),
+                claude_window: None,
             }),
         )
         .await
@@ -5575,6 +5583,7 @@ mod stack_tests {
             provider: kimi,
             upstream_model: "kimi-k3".to_string(),
             original_model: "ccs-claude-kimi--kimi-k3".to_string(),
+            claude_window: None,
         };
         let body = json!({ "model": "kimi-k3", "messages": [] });
 
