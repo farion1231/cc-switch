@@ -8,6 +8,7 @@ import {
 import type { ProviderCategory, ProviderMeta } from "@/types";
 import type { AppMode } from "@/types/proxy";
 import { createTestQueryClient } from "../utils/testQueryClient";
+import { toast } from "@/lib/toast";
 
 const settingsState = vi.hoisted(() => ({ enableStackMode: true }));
 
@@ -234,6 +235,80 @@ describe("ProviderForm Stack layout (Claude Code)", () => {
       { model: "m-d", oneM: true },
       { model: "m-e" },
     ]);
+  });
+
+  it.each([
+    "256K",
+    "8e5",
+    "800000.0",
+    "-128000",
+    "262,14",
+    "0",
+    "9007199254740993",
+  ])("无效窗口 %s 保留原文并阻止保存，修正后只保存整数", async (input) => {
+    const onSubmit = vi.fn();
+    const error = vi
+      .spyOn(toast, "error")
+      .mockImplementation(() => "window-error");
+    try {
+      renderForm("claude", onSubmit, {
+        meta: { stackModels: [{ model: "m-b", contextWindow: 262144 }] },
+      });
+      const window = screen.getByLabelText("窗口 token 数");
+      fireEvent.change(window, { target: { value: input } });
+      expect(window).toHaveValue(input);
+      expect(window).toHaveAttribute("aria-invalid", "true");
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "请输入正整数 token 数",
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
+      await waitFor(() => expect(error).toHaveBeenCalled());
+      expect(onSubmit).not.toHaveBeenCalled();
+
+      fireEvent.change(window, { target: { value: "800,000" } });
+      expect(window).toHaveAttribute("aria-invalid", "false");
+      expect(screen.queryByRole("alert")).toBeNull();
+      const { values } = await save(onSubmit);
+      expect(values.meta?.stackModels).toEqual([
+        { model: "m-b", contextWindow: 800000 },
+      ]);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("无效窗口清空后按继承保存，不保留旧值或草稿", async () => {
+    const onSubmit = vi.fn();
+    renderForm("claude", onSubmit, {
+      meta: { stackModels: [{ model: "m-b", contextWindow: 262144 }] },
+    });
+    const window = screen.getByLabelText("窗口 token 数");
+    fireEvent.change(window, { target: { value: "256K" } });
+    fireEvent.change(window, { target: { value: "" } });
+    expect(screen.queryByRole("alert")).toBeNull();
+    const { values } = await save(onSubmit);
+    expect(values.meta?.stackModels).toEqual([{ model: "m-b" }]);
+  });
+
+  it("删除包含无效窗口的行后可以保存其它模型", async () => {
+    const onSubmit = vi.fn();
+    renderForm("claude", onSubmit, {
+      meta: {
+        stackModels: [
+          { model: "m-b", contextWindow: 262144 },
+          { model: "m-c" },
+        ],
+      },
+    });
+    fireEvent.change(screen.getAllByLabelText("窗口 token 数")[0], {
+      target: { value: "256K" },
+    });
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "common.delete" })[0],
+    );
+    const { values } = await save(onSubmit);
+    expect(values.meta?.stackModels).toEqual([{ model: "m-c" }]);
   });
 
   it("清空列表后保存为空列表，不再回落到模型映射", async () => {

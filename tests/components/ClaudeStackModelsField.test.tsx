@@ -227,4 +227,17 @@ describe("ClaudeStackModelsField context window fill", () => {
       ),
     ).toBeNull();
   });
+
+  it.each(["256K", ""])(
+    "does not fill over the user's window draft %j",
+    (input) => {
+      const row = {
+        ...createClaudeStackModelRow({ model: "m" }),
+        contextWindowInput: input,
+      };
+      expect(
+        fillClaudeStackModelWindow(row, { contextWindow: 1000000 }),
+      ).toBeNull();
+    },
+  );
 });

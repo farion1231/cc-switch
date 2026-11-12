@@ -32,8 +32,11 @@ import {
   stripClaudeOneMMarker,
 } from "./hooks/useModelState";
 
-/** 表单里的一行：多一个只在前端用的行 id，删行时输入框不串位。 */
-export type ClaudeStackModelRow = ClaudeStackModel & { rowId: string };
+/** 行 id 和窗口输入草稿只用于表单；无效输入保留原文，不能改写已解析的窗口。 */
+export type ClaudeStackModelRow = ClaudeStackModel & {
+  rowId: string;
+  contextWindowInput?: string;
+};
 
 let nextRowId = 0;
 
@@ -46,6 +49,24 @@ export function createClaudeStackModelRow(
 
 /** 自定义窗口不小于它时按 1M 存：Claude Code 按模型只认 `[1m]` 一种窗口。 */
 const ONE_M_WINDOW = 1_000_000;
+
+/** 空白表示继承；只接受正整数或正确分组的千分位，null 表示无效输入。 */
+function parseContextWindowInput(input: string): number | undefined | null {
+  const text = input.trim();
+  if (!text) return undefined;
+  if (!/^(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)$/.test(text)) return null;
+  const window = Number(text.replace(/,/g, ""));
+  return Number.isSafeInteger(window) && window > 0 ? window : null;
+}
+
+export function hasInvalidClaudeStackWindow(row: ClaudeStackModelRow): boolean {
+  return (
+    row.oneM !== true &&
+    !hasClaudeOneMMarker(row.model) &&
+    row.contextWindowInput !== undefined &&
+    parseContextWindowInput(row.contextWindowInput) === null
+  );
+}
 
 /** 行里有效的自定义窗口：正整数才算。 */
 const customWindowOf = (row: ClaudeStackModel): number | undefined => {
@@ -113,6 +134,8 @@ export function fillClaudeStackModelWindow(
     return null;
   }
   if (row.oneM === true || hasClaudeOneMMarker(row.model)) return null;
+  // 用户已经编辑过窗口（包括无效草稿或主动清空）：晚到的补全不能覆盖其选择。
+  if (row.contextWindowInput !== undefined) return null;
   if (customWindowOf(row) !== undefined) return null;
   return window >= ONE_M_WINDOW
     ? { ...row, oneM: true, contextWindow: undefined }
@@ -222,7 +245,7 @@ export function ClaudeStackModelsField({
     }
   }, [fetchedKey, fillRowWindow, rowsRef]);
 
-  const updateRow = (rowId: string, patch: Partial<ClaudeStackModel>) =>
+  const updateRow = (rowId: string, patch: Partial<ClaudeStackModelRow>) =>
     commitRows(
       rowsRef.current.map((row) =>
         row.rowId === rowId ? { ...row, ...patch } : row,
@@ -336,6 +359,8 @@ export function ClaudeStackModelsField({
           {rows.map((row) => {
             const modelBase = stripClaudeOneMMarker(row.model).trim();
             const isOneM = row.oneM === true || hasClaudeOneMMarker(row.model);
+            const invalidWindow = hasInvalidClaudeStackWindow(row);
+            const windowErrorId = `${row.rowId}-window-error`;
             return (
               <div
                 key={row.rowId}
@@ -379,58 +404,85 @@ export function ClaudeStackModelsField({
                     />
                   )}
                 </div>
-                <div className="flex gap-1">
-                  <Select
-                    value={isOneM ? "1m" : "custom"}
-                    onValueChange={(value) =>
-                      updateRow(row.rowId, {
-                        model: stripClaudeOneMMarker(row.model),
-                        oneM: value === "1m",
-                        contextWindow: undefined,
-                      })
-                    }
-                  >
-                    <SelectTrigger
-                      className="w-[84px] shrink-0"
-                      aria-label={t("providerForm.modelContextLabel", {
-                        defaultValue: "上下文窗口",
-                      })}
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="1m">
-                        {t("providerForm.modelOneMLabel", {
-                          defaultValue: "1M",
-                        })}
-                      </SelectItem>
-                      <SelectItem value="custom">
-                        {t("providerForm.modelContextCustom", {
-                          defaultValue: "自定义",
-                        })}
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                  {!isOneM && (
-                    <Input
-                      value={row.contextWindow?.toString() ?? ""}
-                      onChange={(event) => {
-                        const digits = event.target.value.replace(/\D/g, "");
+                <div className="space-y-1">
+                  <div className="flex gap-1">
+                    <Select
+                      value={isOneM ? "1m" : "custom"}
+                      onValueChange={(value) =>
                         updateRow(row.rowId, {
-                          contextWindow: digits ? Number(digits) : undefined,
-                        });
-                      }}
-                      inputMode="numeric"
-                      placeholder={t(
-                        "providerForm.modelContextWindowPlaceholder",
-                        { defaultValue: "默认" },
-                      )}
-                      aria-label={t("providerForm.modelContextWindowLabel", {
-                        defaultValue: "窗口 token 数",
+                          model: stripClaudeOneMMarker(row.model),
+                          oneM: value === "1m",
+                          contextWindow: undefined,
+                          contextWindowInput: undefined,
+                        })
+                      }
+                    >
+                      <SelectTrigger
+                        className="w-[84px] shrink-0"
+                        aria-label={t("providerForm.modelContextLabel", {
+                          defaultValue: "上下文窗口",
+                        })}
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="1m">
+                          {t("providerForm.modelOneMLabel", {
+                            defaultValue: "1M",
+                          })}
+                        </SelectItem>
+                        <SelectItem value="custom">
+                          {t("providerForm.modelContextCustom", {
+                            defaultValue: "自定义",
+                          })}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {!isOneM && (
+                      <Input
+                        value={
+                          row.contextWindowInput ??
+                          row.contextWindow?.toString() ??
+                          ""
+                        }
+                        onChange={(event) => {
+                          const input = event.target.value;
+                          const window = parseContextWindowInput(input);
+                          updateRow(row.rowId, {
+                            contextWindowInput: input,
+                            ...(window !== null
+                              ? { contextWindow: window }
+                              : {}),
+                          });
+                        }}
+                        aria-invalid={invalidWindow}
+                        aria-describedby={
+                          invalidWindow ? windowErrorId : undefined
+                        }
+                        inputMode="numeric"
+                        placeholder={t(
+                          "providerForm.modelContextWindowPlaceholder",
+                          { defaultValue: "默认" },
+                        )}
+                        aria-label={t("providerForm.modelContextWindowLabel", {
+                          defaultValue: "窗口 token 数",
+                        })}
+                        autoComplete="off"
+                        className="min-w-0 flex-1"
+                      />
+                    )}
+                  </div>
+                  {invalidWindow && (
+                    <p
+                      id={windowErrorId}
+                      role="alert"
+                      className="text-xs text-danger"
+                    >
+                      {t("providerForm.modelContextWindowInvalid", {
+                        defaultValue:
+                          "请输入正整数 token 数（如 262144 或 262,144），不要使用单位、小数或科学计数法；留空则继承默认值。",
                       })}
-                      autoComplete="off"
-                      className="min-w-0 flex-1"
-                    />
+                    </p>
                   )}
                 </div>
                 <HoverTip content={t("common.delete")}>
