@@ -8,6 +8,7 @@ import {
   ProviderList,
   type SwitchModeProps,
 } from "@/components/providers/ProviderList";
+import { hermesKeys } from "@/hooks/useHermes";
 import { server } from "../msw/server";
 
 vi.mock("sonner", () => ({
@@ -135,9 +136,12 @@ function renderWithQueryClient(ui: ReactElement) {
     defaultOptions: { queries: { retry: false } },
   });
 
-  return render(
-    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
-  );
+  return {
+    ...render(
+      <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
+    ),
+    queryClient,
+  };
 }
 
 beforeEach(() => {
@@ -1297,6 +1301,105 @@ describe("ProviderList Component", () => {
       });
       expect(latestCardProps.presentation.deleteDisabledReason).toBe(
         "pi.current.stateUnavailableHint",
+      );
+    });
+  });
+
+  describe("Hermes providers from the providers: dict", () => {
+    const dictProvider = createProvider({
+      id: "dict-provider",
+      name: "Dict Provider",
+      settingsConfig: { _cc_source: "providers_dict" },
+    });
+    const latestPresentation = () =>
+      providerCardRenderSpy.mock.calls
+        .map(([props]) => props)
+        .filter((props) => props.provider.id === dictProvider.id)
+        .at(-1)?.presentation;
+
+    function renderHermes(liveIds: () => Response) {
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [dictProvider],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      server.use(
+        http.post(`${TAURI_ENDPOINT}/get_hermes_live_provider_ids`, liveIds),
+      );
+      return renderWithQueryClient(
+        <ProviderList
+          providers={{ [dictProvider.id]: dictProvider }}
+          currentProviderId=""
+          appId="hermes"
+          onSwitch={vi.fn()}
+          onEdit={vi.fn()}
+          onDelete={vi.fn()}
+          onDuplicate={vi.fn()}
+          onOpenWebsite={vi.fn()}
+        />,
+      );
+    }
+
+    it("can be deleted once Hermes no longer defines them", async () => {
+      renderHermes(() => HttpResponse.json([]));
+
+      await waitFor(() =>
+        expect(latestPresentation()).toMatchObject({
+          editDisabledReason: undefined,
+          deleteDisabledReason: undefined,
+        }),
+      );
+    });
+
+    it("stay read-only while Hermes still defines them", async () => {
+      renderHermes(() => HttpResponse.json([dictProvider.id]));
+
+      await waitFor(() =>
+        expect(latestPresentation()?.deleteDisabledReason).toBe(
+          "provider.managedByHermesHint",
+        ),
+      );
+    });
+
+    it("stay read-only when the Hermes config cannot be read", async () => {
+      renderHermes(() =>
+        HttpResponse.json("Failed to parse Hermes config as YAML", {
+          status: 500,
+        }),
+      );
+
+      await screen.findByText("无法读取 apps.hermes 配置文件");
+      await waitFor(() =>
+        expect(latestPresentation()?.deleteDisabledReason).toBe(
+          "provider.managedByHermesHint",
+        ),
+      );
+    });
+
+    it("lock again when re-reading the Hermes config fails", async () => {
+      const { queryClient } = renderHermes(() => HttpResponse.json([]));
+      await waitFor(() =>
+        expect(latestPresentation()).toMatchObject({
+          deleteDisabledReason: undefined,
+        }),
+      );
+
+      // 刷新失败时 React Query 保留旧的 []，不能据此继续放开
+      server.use(
+        http.post(`${TAURI_ENDPOINT}/get_hermes_live_provider_ids`, () =>
+          HttpResponse.json("Failed to parse Hermes config as YAML", {
+            status: 500,
+          }),
+        ),
+      );
+      await queryClient.invalidateQueries({
+        queryKey: hermesKeys.liveProviderIds,
+      });
+
+      await waitFor(() =>
+        expect(latestPresentation()?.deleteDisabledReason).toBe(
+          "provider.managedByHermesHint",
+        ),
       );
     });
   });
