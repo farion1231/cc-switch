@@ -901,6 +901,7 @@
     "languageOptionTurkish": "Türkçe",
     "languageOptionKorean": "한국어",
     "languageOptionRussian": "Русский",
+    "languageOptionGerman": "Deutsch",
     "windowBehavior": "Поведение окна",
     "windowBehaviorHint": "Настройте правила сворачивания окна и интеграции с плагином Claude.",
     "launchOnStartup": "Запускать при старте системы",

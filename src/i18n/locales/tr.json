@@ -901,6 +901,7 @@
     "languageOptionTurkish": "Türkçe",
     "languageOptionKorean": "한국어",
     "languageOptionRussian": "Русский",
+    "languageOptionGerman": "Deutsch",
     "windowBehavior": "Pencere Davranışı",
     "windowBehaviorHint": "Pencere simge durumuna küçültme ve Claude eklenti entegrasyon ilkelerini yapılandırın.",
     "launchOnStartup": "Sistem açılışında başlat",
