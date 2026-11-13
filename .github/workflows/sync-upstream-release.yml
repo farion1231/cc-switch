@@ -3,9 +3,11 @@
 #
 # - 上游有新 tag 才会合并 + 构建；没有新变化的日常运行直接跳过（除非手动触发勾选 force_build）。
 # - 合并不上（冲突）时整个 workflow 失败，run summary 里列出冲突文件，等人工解决后重新触发。
-# - 发布 tag 形如 v4.0.25-s3.1：原版 tag + s3 后缀 + 序号，同一上游 tag 重复构建时序号递增。
-# - 不做 updater 签名（本仓库没有 TAURI_SIGNING_PRIVATE_KEY），构建前把
-#   bundle.createUpdaterArtifacts 临时关掉，产物里没有 .sig；不构建 macOS（无 Apple 签名/公证 secrets）。
+# - 发布 tag 形如 v4.0.31-s3.1：原版 tag + s3 后缀 + 序号，同一上游 tag 重复构建时序号递增；
+#   同时把 tauri.conf.json / package.json 的 version 写成同一版本，供 latest.json 使用。
+# - 构建时用 TAURI_SIGNING_PRIVATE_KEY 签出 .sig，发布时生成 latest.json，
+#   供应用内自动更新（endpoints 指向本仓库 releases/latest）使用。
+#   不构建 macOS（无 Apple 签名/公证 secrets）。
 # - 发布和推送分支都用 GITHUB_TOKEN，这些事件不会再触发 release.yml 之类的其它 workflow。
 name: Sync upstream & release
 
@@ -113,11 +115,29 @@ jobs:
               git merge --abort || true
               exit 1
             fi
-            git push origin HEAD:feat/s3-addressing-style
           fi
 
-          # 6. 发布 tag：上游 tag + s3 序号
+          # 6. 发布 tag：上游 tag + s3 序号；应用版本号与 tag 保持一致
+          #    （tauri.conf.json 的 version 决定 latest.json 的版本，两者不一致会让
+          #     应用内更新反复提示或永不提示）
           release_tag="${UP_TAG}-s3.$((max_n + 1))"
+          app_version="${release_tag#v}"
+          node -e '
+            const fs = require("fs");
+            const v = process.argv[1];
+            for (const p of ["src-tauri/tauri.conf.json", "package.json"]) {
+              const s = fs.readFileSync(p, "utf8");
+              fs.writeFileSync(p, s.replace(/("version"\s*:\s*")[^"]*(")/, `$1${v}$2`));
+            }
+          ' "$app_version"
+
+          if [ -n "$(git status --porcelain)" ]; then
+            git add src-tauri/tauri.conf.json package.json
+            git commit -m "chore(release): $release_tag"
+          fi
+
+          git push origin HEAD:feat/s3-addressing-style
+
           {
             echo "has_update=true"
             echo "upstream_tag=$UP_TAG"
@@ -215,17 +235,33 @@ jobs:
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
-      # 本仓库没有 updater 签名私钥，createUpdaterArtifacts 为 true 时 tauri build 会因
-      # 找不到 TAURI_SIGNING_PRIVATE_KEY 直接失败。只在 CI 检出区临时改掉，不提交；
-      # 相应地产物没有 .sig，应用内自动更新对这些构建不可用（安装包手动下载安装不受影响）。
-      - name: Disable updater artifacts for unsigned build
-        shell: bash
-        run: |
-          node -e "const fs=require('fs');const p='src-tauri/tauri.conf.json';const c=JSON.parse(fs.readFileSync(p,'utf8'));c.bundle.createUpdaterArtifacts=false;fs.writeFileSync(p,JSON.stringify(c,null,2))"
+      # 应用内更新靠这里签出的 .sig 校验，私钥必须与 tauri.conf.json 的 pubkey 配对。
+      # 未配置 secret 时这一步会明确失败，避免发出无法通过校验的安装包。
+      - name: Prepare Tauri signing key
+        uses: ./.github/actions/prepare-tauri-signing-key
+        with:
+          private-key: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          password: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Build Tauri App (Windows)
         if: runner.os == 'Windows'
-        run: pnpm tauri build --bundles msi
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ needs.sync.outputs.release_tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # WiX 的 ProductVersion 只接受纯数字（major.minor.patch.build），
+          # 4.0.31-s3.1 这种 prerelease 会让 MSI 构建失败；这里把 s3 序号映射到
+          # 第 4 段：v4.0.31-s3.1 -> 4.0.31.1。应用内版本仍是 4.0.31-s3.1。
+          $ver = $env:RELEASE_TAG.TrimStart('v')
+          $parts = $ver.Split('-')
+          $base = $parts[0]
+          $n = $parts[1].Replace('s3.', '')
+          $wixVersion = "$base.$n"
+          @{ bundle = @{ windows = @{ wix = @{ version = $wixVersion } } } } |
+            ConvertTo-Json -Depth 10 | Set-Content -Path wix-version.json -Encoding utf8
+          Write-Host "MSI ProductVersion: $wixVersion"
+          pnpm tauri build --bundles msi --config wix-version.json
 
       - name: Build Tauri App (Linux)
         if: runner.os == 'Linux'
@@ -250,6 +286,14 @@ jobs:
           }
           Copy-Item $msi.FullName "release-assets/CC-Switch-$env:RELEASE_TAG-Windows.msi"
           Write-Host "Installer copied: CC-Switch-$env:RELEASE_TAG-Windows.msi"
+
+          # updater 签名（应用内更新用）
+          $sigPath = "$($msi.FullName).sig"
+          if (-not (Test-Path $sigPath)) {
+            throw "Updater signature not found: $sigPath"
+          }
+          Copy-Item $sigPath "release-assets/CC-Switch-$env:RELEASE_TAG-Windows.msi.sig"
+          Write-Host "Signature copied: CC-Switch-$env:RELEASE_TAG-Windows.msi.sig"
 
           # 绿色版（portable）：可执行文件打 zip
           $exePath = 'src-tauri/target/release/cc-switch.exe'
@@ -284,6 +328,11 @@ jobs:
             exit 1
           fi
           cp "$APPIMAGE" "release-assets/CC-Switch-${RELEASE_TAG}-Linux-x86_64.AppImage"
+          if [ ! -f "$APPIMAGE.sig" ]; then
+            echo "Updater signature not found: $APPIMAGE.sig" >&2
+            exit 1
+          fi
+          cp "$APPIMAGE.sig" "release-assets/CC-Switch-${RELEASE_TAG}-Linux-x86_64.AppImage.sig"
 
           DEB=$(find src-tauri/target/release/bundle -name "*.deb" | head -1 || true)
           if [ -z "$DEB" ]; then
@@ -326,6 +375,52 @@ jobs:
       - name: List downloaded release artifacts
         run: ls -la release-assets
 
+      # 应用内更新读取 latest.json：version 必须与 tauri.conf.json 里构建时写入的
+      # 版本一致，signature 是安装包旁的 .sig 内容，url 指向本次 release 的下载地址。
+      - name: Generate latest.json
+        env:
+          REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.sync.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          base_url="https://github.com/$REPO/releases/download/$RELEASE_TAG"
+          win_url=""; win_sig=""
+          linux_url=""; linux_sig=""
+          shopt -s nullglob
+          for sig in release-assets/*.sig; do
+            base=${sig%.sig}
+            fname=$(basename "$base")
+            url="$base_url/$fname"
+            content=$(cat "$sig")
+            case "$fname" in
+              *-Windows.msi)
+                win_url="$url"; win_sig="$content";;
+              *-Linux-x86_64.AppImage)
+                linux_url="$url"; linux_sig="$content";;
+            esac
+          done
+          missing=""
+          [ -n "$win_sig" ] || missing="$missing windows-x86_64"
+          [ -n "$linux_sig" ] || missing="$missing linux-x86_64"
+          if [ -n "$missing" ]; then
+            echo "Missing updater signatures for:$missing" >&2
+            exit 1
+          fi
+          cat > release-assets/latest.json <<EOF
+          {
+            "version": "$VERSION",
+            "notes": "Release $RELEASE_TAG",
+            "pub_date": "$PUB_DATE",
+            "platforms": {
+              "windows-x86_64": {"signature": "$win_sig", "url": "$win_url"},
+              "linux-x86_64": {"signature": "$linux_sig", "url": "$linux_url"}
+            }
+          }
+          EOF
+          cat release-assets/latest.json
+
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v3
         with:
@@ -342,7 +437,7 @@ jobs:
             - **Windows (x86_64)**: `CC-Switch-${{ needs.sync.outputs.release_tag }}-Windows.msi`（安装版）或 `CC-Switch-${{ needs.sync.outputs.release_tag }}-Windows-Portable.zip`（绿色版）
             - **Linux (x86_64)**: `CC-Switch-${{ needs.sync.outputs.release_tag }}-Linux-x86_64.AppImage` / `.deb` / `.rpm`
 
-            > 构建未做 updater 签名，应用内自动更新不可用，请手动下载安装。
+            > `latest.json` 与 `.sig` 为应用内自动更新使用，无需手动下载。
           files: release-assets/*
           fail_on_unmatched_files: true
         env:
