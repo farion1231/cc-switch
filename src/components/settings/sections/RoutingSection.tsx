@@ -29,6 +29,7 @@ import { AutoFailoverConfigPanel } from "@/components/proxy/AutoFailoverConfigPa
 import { RectifierConfigPanel } from "@/components/settings/RectifierConfigPanel";
 import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { MODE_TONE } from "@/components/providers/mode/ModeTabs";
+import { WslRouteHosts } from "@/components/settings/WslRouteHosts";
 import {
   SettingsBlock,
   SettingsCard,
@@ -443,6 +444,8 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
           <AutoFailoverConfigPanel key={failoverApp} appType={failoverApp} />
         </div>
       </SettingsBlock>
+
+      <WslRouteHosts />
 
       <SettingsBlock
         title={t("settings.advanced.rectifier.title")}

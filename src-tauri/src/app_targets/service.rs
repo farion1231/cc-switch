@@ -74,16 +74,24 @@ fn view(app: &AppType, inventory: &WslInventory) -> AppTargetsView {
         let spec = TargetSpec {
             id: id.clone(),
             enabled: false,
+            route: false,
             dir: None,
         };
         if let Some(dir) = sync::display_dir(app, &spec, false) {
             resolved_dirs.insert(id.key(), dir);
         }
     }
+    let mut records = status::records(app.as_str());
+    for spec in config.followers() {
+        let routed = sync::follower_routed(app, &spec.id);
+        if let Some(record) = records.get_mut(&spec.id.key()) {
+            record.routed = routed;
+        }
+    }
     AppTargetsView {
         app: app.as_str().to_string(),
         source,
-        records: status::records(app.as_str()),
+        records,
         config,
         resolved_dirs,
     }
@@ -157,8 +165,17 @@ struct Checked {
 }
 
 fn check(state: &AppState, app: &AppType, draft: AppTargetsConfig) -> Result<Checked, AppError> {
-    let config = draft.normalized();
+    let mut config = draft.normalized();
     let (previous, _) = sync::app_config(app);
+    // 「接入路由」只经 set_route 改，表单带来的值可能是旧的：沿用已保存的。
+    config.windows.route = previous.windows.route;
+    for target in &mut config.wsl {
+        target.route = previous
+            .wsl
+            .iter()
+            .find(|p| p.distro.eq_ignore_ascii_case(&target.distro))
+            .is_some_and(|p| p.route);
+    }
     // 已启用的目标允许为解析 HOME 启动发行版（写入时本来就要启动）。
     let resolved_dirs = sync::resolved_dirs(app, &config, &|spec| spec.enabled);
     let errors = model::validate(&config, &resolved_dirs);
@@ -603,4 +620,194 @@ pub fn sync_now(
     }
     out.targets = sync::sync_followers(state, &app, followers.as_deref(), SyncKind::Full);
     Ok(out)
+}
+
+/// 某个跟随环境是否接入共用的路由。保存偏好后立刻按应用当前的模式同步：应用在路由 /
+/// 聚合模式时接上或退回直连；在直连模式时只记下，下次进入路由时生效。
+pub fn set_route(
+    state: &AppState,
+    app: &str,
+    target: &str,
+    join: bool,
+) -> Result<TargetReport, AppError> {
+    let app = parse_app(app)?;
+    if !app.has_route_mode() {
+        return Err(AppError::localized(
+            "app_targets.route_unsupported",
+            format!("{} 不支持本地路由", app.as_str()),
+            format!("{} does not support local routing", app.as_str()),
+        ));
+    }
+    let id = TargetId::parse(target)
+        .ok_or_else(|| AppError::InvalidInput(format!("unknown target {target}")))?;
+    let _guard = save_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let (mut config, source) = sync::app_config(&app);
+    if source != ConfigSource::Saved || config.primary_id().is_some_and(|p| p.same(&id)) {
+        return Err(AppError::localized(
+            "app_targets.route_primary",
+            "主环境总是跟随应用的路由模式，不需要单独接入",
+            "The primary environment always follows the app's routing mode",
+        ));
+    }
+    match &id {
+        TargetId::Windows => config.windows.route = join,
+        TargetId::Wsl(distro) => {
+            let entry = config
+                .wsl
+                .iter_mut()
+                .find(|t| t.distro.eq_ignore_ascii_case(distro))
+                .ok_or_else(|| AppError::InvalidInput(format!("unknown target {target}")))?;
+            entry.route = join;
+        }
+    }
+    let legacy = match &app {
+        AppType::Claude => crate::settings::get_settings().claude_config_dir,
+        AppType::Codex => crate::settings::get_settings().codex_config_dir,
+        AppType::Gemini => crate::settings::get_settings().gemini_config_dir,
+        _ => None,
+    };
+    crate::settings::set_app_targets(&app, config, legacy)?;
+    let reports = sync::sync_follower_routes(state, &app, false);
+    Ok(reports
+        .into_iter()
+        .find(|r| TargetId::parse(&r.target).is_some_and(|t| t.same(&id)))
+        .unwrap_or_else(|| TargetReport {
+            target: id.key(),
+            record: TargetRecord::new(TargetStatus::Ok).reason(if join {
+                "route_when_proxy"
+            } else {
+                "direct"
+            }),
+        }))
+}
+
+/// 客户端主机：IP 或主机名，不带协议、端口、路径；不能是 0.0.0.0 / ::。
+pub fn validate_client_host(host: &str) -> Result<String, AppError> {
+    let host = host.trim();
+    let bare = host.trim_start_matches('[').trim_end_matches(']');
+    let invalid = || {
+        AppError::localized(
+            "app_targets.client_host_invalid",
+            "请填写 IP 或主机名，不要带协议、端口或路径，也不能是 0.0.0.0",
+            "Enter an IP or host name without scheme, port or path; 0.0.0.0 is not allowed",
+        )
+    };
+    if host.is_empty() {
+        return Ok(String::new());
+    }
+    if let Ok(ip) = bare.parse::<std::net::IpAddr>() {
+        if ip.is_unspecified() {
+            return Err(invalid());
+        }
+        return Ok(bare.to_string());
+    }
+    let ok = bare.len() <= 253
+        && bare.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+        });
+    if ok {
+        Ok(bare.to_string())
+    } else {
+        Err(invalid())
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WslRouteInfo {
+    pub distro: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub saved_host: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detected_host: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub networking_mode: Option<String>,
+    pub listen_address: String,
+    /// 监听只在回环上，而这个发行版要经 Windows 网关访问：连不上，要改成 0.0.0.0。
+    pub listen_unreachable: bool,
+}
+
+/// 各 WSL 发行版写给客户端的代理主机（保存的、自动推导的）和监听地址冲突提示。
+/// `probe` 为真时进发行版重新检测网络（会启动它）。
+pub fn wsl_route_info(state: &AppState, probe: bool) -> Vec<WslRouteInfo> {
+    let inventory = wsl::inventory(false);
+    let listen = futures::executor::block_on(state.db.get_proxy_config())
+        .map(|c| c.listen_address)
+        .unwrap_or_else(|_| "127.0.0.1".to_string());
+    let listen_loopback = listen == "127.0.0.1" || listen == "localhost" || listen == "::1";
+    inventory
+        .distros
+        .iter()
+        .map(|env| {
+            let linux = if probe {
+                wsl::probe(&env.distro).unwrap_or_else(|_| env.env.clone())
+            } else {
+                env.env.clone()
+            };
+            let saved_host = crate::settings::get_proxy_wsl_client_host(&env.distro);
+            let detected_host = sync::detected_client_host(&linux);
+            let effective = saved_host.clone().or(detected_host.clone());
+            let listen_unreachable = listen_loopback
+                && effective
+                    .as_deref()
+                    .is_some_and(|h| h != "127.0.0.1" && h != "localhost" && h != "::1");
+            WslRouteInfo {
+                distro: env.distro.clone(),
+                saved_host,
+                detected_host,
+                networking_mode: linux.networking_mode.clone(),
+                listen_address: listen.clone(),
+                listen_unreachable,
+            }
+        })
+        .collect()
+}
+
+/// 保存某个发行版的客户端主机，并让接入路由的环境用新地址重写。
+pub fn set_wsl_client_host(state: &AppState, distro: &str, host: &str) -> Result<(), AppError> {
+    if !model::is_valid_distro_name(distro) {
+        return Err(AppError::InvalidInput(format!(
+            "invalid distro name: {distro}"
+        )));
+    }
+    let host = validate_client_host(host)?;
+    crate::settings::set_proxy_wsl_client_host(distro, &host)?;
+    for app in model::supported_apps() {
+        sync::spawn_route_sync(state, &app);
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RouteTestResult {
+    pub ok: bool,
+    pub url: String,
+    pub detail: String,
+}
+
+/// 从发行版里访问路由服务的 /health，验证这个发行版真的连得上（自动检测只给候选地址）。
+pub fn test_wsl_route(state: &AppState, distro: &str) -> Result<RouteTestResult, AppError> {
+    let host = sync::client_host_for(&TargetId::Wsl(distro.to_string()))?
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+    let probe_scope = super::scope::TargetScope {
+        app: AppType::Claude,
+        key: format!("route-test:{distro}"),
+        dir: None,
+        store_root: crate::config::get_home_dir().join(".cc-switch"),
+        wsl: true,
+        direct: None,
+        client_host: Some(host),
+    };
+    let (urls, _) = super::scope::run(probe_scope, || {
+        futures::executor::block_on(state.proxy_service.build_proxy_urls())
+    });
+    let (origin, _) = urls.map_err(AppError::Message)?;
+    let url = format!("{}/health", origin.trim_end_matches('/'));
+    let (ok, detail) = wsl::fetch_from(distro, &url).map_err(AppError::Message)?;
+    Ok(RouteTestResult { ok, url, detail })
 }

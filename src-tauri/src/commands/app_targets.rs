@@ -79,3 +79,60 @@ pub async fn activate_app_target_provider(
     .map_err(|e| e.to_string())?
     .map_err(|e| e.to_string())
 }
+
+/// 某个环境是否接入共用的路由 / 聚合。
+#[tauri::command]
+pub async fn set_app_target_route(
+    state: tauri::State<'_, AppState>,
+    app: String,
+    target: String,
+    join: bool,
+) -> Result<crate::app_targets::sync::TargetReport, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || service::set_route(&state, &app, &target, join))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+/// 各 WSL 发行版的路由客户端地址。`probe` 为真时重新检测网络。
+#[tauri::command]
+pub async fn get_wsl_route_info(
+    state: tauri::State<'_, AppState>,
+    probe: Option<bool>,
+) -> Result<Vec<service::WslRouteInfo>, String> {
+    let state = state.inner().clone();
+    let probe = probe.unwrap_or(false);
+    tauri::async_runtime::spawn_blocking(move || service::wsl_route_info(&state, probe))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 保存某个 WSL 发行版的路由客户端主机（空字符串清除，回到自动）。
+#[tauri::command]
+pub async fn set_wsl_client_host(
+    state: tauri::State<'_, AppState>,
+    distro: String,
+    host: String,
+) -> Result<(), String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        service::set_wsl_client_host(&state, &distro, &host)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
+}
+
+/// 从发行版里测试能否连到路由服务。
+#[tauri::command]
+pub async fn test_wsl_route(
+    state: tauri::State<'_, AppState>,
+    distro: String,
+) -> Result<service::RouteTestResult, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || service::test_wsl_route(&state, &distro))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}

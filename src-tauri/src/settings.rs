@@ -678,6 +678,10 @@ pub struct AppSettings {
     /// 只对这台机器有意义，所以不放在会随云同步覆盖的 proxy_config 表里。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy_client_host: Option<String>,
+    /// 接入路由的 WSL 发行版各自写给客户端的代理主机（发行版 → 主机）。没设时按发行版的
+    /// 网络模式推导（mirrored 用 127.0.0.1，NAT 用它的默认网关）。只经设置命令修改。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_wsl_client_hosts: Option<std::collections::BTreeMap<String, String>>,
 
     // ===== Skill 同步设置 =====
     /// Skill 同步方式：auto（默认，优先 symlink）、symlink、copy
@@ -800,6 +804,7 @@ impl Default for AppSettings {
             current_provider_agy: None,
             current_provider_copilot: None,
             proxy_client_host: None,
+            proxy_wsl_client_hosts: None,
             skill_sync_method: SyncMethod::default(),
             skill_storage_location: SkillStorageLocation::default(),
             webdav_sync: None,
@@ -1321,10 +1326,41 @@ pub fn set_lightweight_mode(enabled: bool) -> Result<(), AppError> {
 
 /// 客户端地址（见 [`AppSettings::proxy_client_host`]），去掉首尾空白；没设或为空时是 `None`。
 pub fn get_proxy_client_host() -> Option<String> {
+    // 接入路由的 WSL 目标用它自己的地址（见 app_targets）。
+    if let Some(host) = crate::app_targets::scope::client_host() {
+        return Some(host);
+    }
     get_settings()
         .proxy_client_host
         .map(|host| host.trim().to_string())
         .filter(|host| !host.is_empty())
+}
+
+/// 某个 WSL 发行版保存的客户端主机（不区分大小写）。
+pub fn get_proxy_wsl_client_host(distro: &str) -> Option<String> {
+    get_settings()
+        .proxy_wsl_client_hosts?
+        .into_iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(distro))
+        .map(|(_, host)| host.trim().to_string())
+        .filter(|host| !host.is_empty())
+}
+
+/// 保存（`host` 为空时清除）某个 WSL 发行版的客户端主机。
+pub fn set_proxy_wsl_client_host(distro: &str, host: &str) -> Result<(), AppError> {
+    let host = host.trim().to_string();
+    mutate_settings(|settings| {
+        let map = settings
+            .proxy_wsl_client_hosts
+            .get_or_insert_with(Default::default);
+        map.retain(|name, _| !name.eq_ignore_ascii_case(distro));
+        if !host.is_empty() {
+            map.insert(distro.to_string(), host);
+        }
+        if map.is_empty() {
+            settings.proxy_wsl_client_hosts = None;
+        }
+    })
 }
 
 pub fn set_proxy_client_host(host: &str) -> Result<(), AppError> {

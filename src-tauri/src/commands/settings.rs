@@ -62,6 +62,7 @@ fn merge_settings_for_save(
     // 客户端地址只经 set_proxy_client_host 保存（它还要重写客户端）；全量保存带的是前端
     // 缓存里的旧值，透传会把刚保存的地址冲掉。
     incoming.proxy_client_host = existing.proxy_client_host.clone();
+    incoming.proxy_wsl_client_hosts = existing.proxy_wsl_client_hosts.clone();
     // 轻量模式状态只由进入 / 退出轻量模式时写，前端缓存里的值总是旧的。
     incoming.lightweight_mode = existing.lightweight_mode;
     // 多环境写入目标只经 save_app_targets 保存（它还要检查冲突、写客户端）。保存过目标的

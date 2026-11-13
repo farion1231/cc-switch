@@ -67,11 +67,13 @@ fn windows_plus_wsl(distro: &str, dir: &Path) -> AppTargetsConfig {
         primary: "windows".into(),
         windows: WindowsTarget {
             enabled: true,
+            route: false,
             dir: None,
         },
         wsl: vec![WslTarget {
             distro: distro.into(),
             enabled: true,
+            route: false,
             dir: Some(dir.to_string_lossy().into_owned()),
         }],
         extra: Default::default(),
@@ -424,6 +426,7 @@ fn conflicts_are_reported_and_import_deduplicates() {
         let spec = super::model::TargetSpec {
             id: TargetId::Wsl("Ubuntu".into()),
             enabled: true,
+            route: false,
             dir: Some(wsl_dir.to_string_lossy().into_owned()),
         };
         let conflict = sync::inspect_target(state, &AppType::Claude, &spec, Some(wsl_dir.clone()))
@@ -485,6 +488,7 @@ fn save_flow_resolves_conflicts_and_moves_the_primary() {
         draft.wsl.push(WslTarget {
             distro: "Debian".into(),
             enabled: false,
+            route: false,
             dir: Some(path_of(&debian)),
         });
 
@@ -666,5 +670,225 @@ fn legacy_single_directory_is_unchanged_without_saved_targets() {
             crate::settings::get_settings().app_targets.is_none(),
             "no write on read"
         );
+    });
+}
+
+#[test]
+#[serial]
+fn wsl_targets_join_the_shared_route_and_fall_back_to_their_own_direct_provider() {
+    with_home(|state, home| {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(
+            state
+                .db
+                .update_proxy_config(crate::proxy::types::ProxyConfig {
+                    listen_port: 0,
+                    ..Default::default()
+                }),
+        )
+        .unwrap();
+        seed_claude(state);
+        let wsl_dir = home.join("wsl").join(".claude");
+        let mut config = windows_plus_wsl("Ubuntu", &wsl_dir);
+        config.wsl[0].route = true;
+        set_targets(&AppType::Claude, config);
+        crate::settings::set_proxy_wsl_client_host("Ubuntu", "172.24.0.1").unwrap();
+        activate(state, "claude", "wsl:Ubuntu", "b");
+
+        // 直连模式下勾了接入也不写代理。
+        assert!(sync::sync_follower_routes(state, &AppType::Claude, false).is_empty());
+
+        rt.block_on(crate::mode::controller::enter(
+            state,
+            &AppType::Claude,
+            false,
+        ))
+        .expect("enter");
+        let reports = sync::sync_follower_routes(state, &AppType::Claude, false);
+        assert_eq!(reports.len(), 1, "{reports:?}");
+        assert_eq!(reports[0].record.status, TargetStatus::Ok, "{reports:?}");
+        assert!(reports[0].record.routed);
+        assert!(reports[0]
+            .record
+            .warnings
+            .contains(&"listen_loopback".to_string()));
+        let follower = read_json(&wsl_dir.join("settings.json"));
+        let base = follower["env"]["ANTHROPIC_BASE_URL"].as_str().unwrap();
+        assert!(base.starts_with("http://172.24.0.1:"), "{base}");
+        let primary = read_json(&home.join(".claude").join("settings.json"));
+        assert!(primary["env"]["ANTHROPIC_BASE_URL"]
+            .as_str()
+            .unwrap()
+            .starts_with("http://127.0.0.1:"));
+        assert!(sync::follower_routed(
+            &AppType::Claude,
+            &TargetId::Wsl("Ubuntu".into())
+        ));
+        // 跟随环境的模式不改应用级的路由开关。
+        assert!(state.db.get_proxy_flags_sync("claude").0);
+
+        // 接在路由上时换直连供应商：只记下，客户端仍是代理契约。
+        let report = activate(state, "claude", "wsl:Ubuntu", "a");
+        assert_eq!(report.record.reason.as_deref(), Some("routed"));
+        let follower = read_json(&wsl_dir.join("settings.json"));
+        assert_eq!(
+            follower["env"]["ANTHROPIC_BASE_URL"].as_str().unwrap(),
+            base
+        );
+
+        // 不接入：写回它自己的直连供应商（刚选的 a）。
+        let report = service::set_route(state, "claude", "wsl:Ubuntu", false).unwrap();
+        assert!(!report.record.routed, "{report:?}");
+        let follower = read_json(&wsl_dir.join("settings.json"));
+        assert_eq!(follower["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-a");
+        assert_eq!(
+            follower["env"]["ANTHROPIC_BASE_URL"],
+            "https://a.example/api"
+        );
+
+        // 再接入，然后应用退出路由：每个环境回到自己的直连供应商。
+        let report = service::set_route(state, "claude", "wsl:Ubuntu", true).unwrap();
+        assert!(report.record.routed, "{report:?}");
+        rt.block_on(crate::mode::controller::exit(state, &AppType::Claude))
+            .expect("exit");
+        sync::sync_follower_routes(state, &AppType::Claude, false);
+        let follower = read_json(&wsl_dir.join("settings.json"));
+        assert_eq!(follower["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-a");
+        let primary = read_json(&home.join(".claude").join("settings.json"));
+        assert_eq!(primary["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-a");
+        assert!(!sync::follower_routed(
+            &AppType::Claude,
+            &TargetId::Wsl("Ubuntu".into())
+        ));
+
+        // 退出 CC Switch 时的分离：接着路由的环境也指回直连。
+        rt.block_on(crate::mode::controller::enter(
+            state,
+            &AppType::Claude,
+            false,
+        ))
+        .expect("enter again");
+        sync::sync_follower_routes(state, &AppType::Claude, false);
+        assert!(sync::follower_routed(
+            &AppType::Claude,
+            &TargetId::Wsl("Ubuntu".into())
+        ));
+        let reports = sync::sync_follower_routes(state, &AppType::Claude, true);
+        assert!(!reports[0].record.routed, "{reports:?}");
+        let follower = read_json(&wsl_dir.join("settings.json"));
+        assert_eq!(follower["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-a");
+
+        rt.block_on(crate::mode::controller::exit(state, &AppType::Claude))
+            .expect("exit");
+        // 后台跟随同步线程可能还在跑：等它们落定再结束（临时目录随后删除）。
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    });
+}
+
+#[test]
+fn client_hosts_are_validated() {
+    assert_eq!(
+        service::validate_client_host(" 172.24.0.1 ").unwrap(),
+        "172.24.0.1"
+    );
+    assert_eq!(
+        service::validate_client_host("[fe80::1]").unwrap(),
+        "fe80::1"
+    );
+    assert_eq!(
+        service::validate_client_host("win-host.local").unwrap(),
+        "win-host.local"
+    );
+    assert_eq!(service::validate_client_host("").unwrap(), "");
+    for bad in ["0.0.0.0", "::", "http://x", "x:8080", "a/b", "-bad", "a..b"] {
+        assert!(service::validate_client_host(bad).is_err(), "{bad}");
+    }
+    let mut env = super::model::LinuxEnv {
+        gateway: Some("172.24.0.1".into()),
+        networking_mode: Some("nat".into()),
+        ..Default::default()
+    };
+    assert_eq!(
+        sync::detected_client_host(&env).as_deref(),
+        Some("172.24.0.1")
+    );
+    env.networking_mode = Some("mirrored".into());
+    assert_eq!(
+        sync::detected_client_host(&env).as_deref(),
+        Some("127.0.0.1")
+    );
+}
+
+#[test]
+#[serial]
+fn codex_wsl_target_joins_the_route_with_its_own_host() {
+    with_home(|state, home| {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(
+            state
+                .db
+                .update_proxy_config(crate::proxy::types::ProxyConfig {
+                    listen_port: 0,
+                    ..Default::default()
+                }),
+        )
+        .unwrap();
+        let codex = |id: &str, base: &str, key: &str| {
+            Provider::with_id(
+                id.into(),
+                id.into(),
+                json!({
+                    "auth": { "OPENAI_API_KEY": key },
+                    "config": format!(
+                        "model_provider = \"custom\"\nmodel = \"gpt-5\"\n\n[model_providers.custom]\nname = \"custom\"\nbase_url = \"{base}\"\nwire_api = \"responses\"\n"
+                    )
+                }),
+                None,
+            )
+        };
+        state
+            .db
+            .save_provider("codex", &codex("a", "https://a.example/v1", "sk-a"))
+            .unwrap();
+        state
+            .db
+            .save_provider("codex", &codex("b", "https://b.example/v1", "sk-b"))
+            .unwrap();
+        ProviderService::switch(state, AppType::Codex, "a").expect("initial");
+        let wsl_dir = home.join("wsl").join(".codex");
+        let mut config = windows_plus_wsl("Ubuntu", &wsl_dir);
+        config.wsl[0].route = true;
+        set_targets(&AppType::Codex, config);
+        crate::settings::set_proxy_wsl_client_host("Ubuntu", "172.24.0.1").unwrap();
+        activate(state, "codex", "wsl:Ubuntu", "b");
+
+        rt.block_on(crate::mode::controller::enter(
+            state,
+            &AppType::Codex,
+            false,
+        ))
+        .expect("enter");
+        let reports = sync::sync_follower_routes(state, &AppType::Codex, false);
+        assert_eq!(reports[0].record.status, TargetStatus::Ok, "{reports:?}");
+        let text = fs::read_to_string(wsl_dir.join("config.toml")).unwrap();
+        assert!(text.contains("http://172.24.0.1:"), "{text}");
+        assert!(!text.contains("https://b.example/v1"), "{text}");
+
+        rt.block_on(crate::mode::controller::exit(state, &AppType::Codex))
+            .expect("exit");
+        sync::sync_follower_routes(state, &AppType::Codex, false);
+        let text = fs::read_to_string(wsl_dir.join("config.toml")).unwrap();
+        assert!(
+            text.contains("https://b.example/v1"),
+            "own direct provider back: {text}"
+        );
+        assert!(!text.contains("172.24.0.1"), "{text}");
+        std::thread::sleep(std::time::Duration::from_millis(300));
     });
 }

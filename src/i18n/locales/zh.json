@@ -5476,7 +5476,12 @@
       "superseded": "已有更新的操作",
       "not_synced": "尚未同步供应商",
       "no_provider": "尚未选择供应商",
-      "provider_missing": "正在用的供应商已不存在"
+      "provider_missing": "正在用的供应商已不存在",
+      "routed": "已接入路由，直连供应商在退出路由后生效",
+      "direct": "直连",
+      "route_failed": "写入路由配置失败，原配置未改动",
+      "client_host_unresolved": "未获取到连接 Windows 的地址",
+      "route_when_proxy": "应用进入路由 / 聚合时接入"
     },
     "indicator": {
       "title": "写入目标",
@@ -5492,6 +5497,30 @@
       "enable": "在 {{target}} 启用",
       "done": "{{target}} 已切换到 {{provider}}",
       "failed": "{{target}} 未能切换到 {{provider}}，仍用原来的供应商"
+    },
+    "route": {
+      "join": "接入路由 / 聚合",
+      "joinFor": "{{target}} 接入路由",
+      "routed": "路由中",
+      "joined": "{{target}} 已接入路由",
+      "joinLater": "已记下：{{target}} 在应用进入路由 / 聚合时接入",
+      "left": "{{target}} 已退出路由，回到它自己的直连供应商",
+      "failed": "{{target}} 未能接入路由",
+      "listenLoopback": "路由只监听本机回环，这个环境可能连不上；在本地路由设置里把监听地址改为 0.0.0.0 并测试连接"
+    },
+    "routeHosts": {
+      "title": "WSL 客户端地址",
+      "help": "接入路由的 WSL 环境用这个地址连 Windows 上的路由服务。留空时自动推导：mirrored 网络用 127.0.0.1，NAT 网络用发行版的默认网关。自动检测只给候选地址，请用「测试连接」确认。NAT 网络下监听地址需要是 0.0.0.0，这会允许局域网其他设备连接，请自行确认。",
+      "detect": "重新检测",
+      "mode": "网络模式：{{mode}}",
+      "modeUnknown": "网络模式未检测",
+      "listenLoopback": "当前监听 {{listen}}，这个发行版经网关访问时连不上，需要把监听地址改为 0.0.0.0",
+      "testOk": "连接成功：{{url}}",
+      "testFailed": "连接失败：{{url}}（{{detail}}）",
+      "saved": "已保存 {{distro}} 的客户端地址",
+      "noHost": "未检测到，请填写",
+      "hostFor": "{{distro}} 的客户端地址",
+      "test": "测试连接"
     }
   }
 }

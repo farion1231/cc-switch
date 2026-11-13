@@ -5476,7 +5476,12 @@
       "superseded": "Replaced by a newer operation",
       "not_synced": "Provider not synced yet",
       "no_provider": "No provider picked yet",
-      "provider_missing": "The provider in use no longer exists"
+      "provider_missing": "The provider in use no longer exists",
+      "routed": "Joined routing; the direct provider applies after leaving routing",
+      "direct": "Direct",
+      "route_failed": "Writing the routing config failed; original config untouched",
+      "client_host_unresolved": "No address to reach Windows",
+      "route_when_proxy": "Joins when the app enters routing / aggregation"
     },
     "indicator": {
       "title": "Write targets",
@@ -5492,6 +5497,30 @@
       "enable": "Enable on {{target}}",
       "done": "{{target}} switched to {{provider}}",
       "failed": "{{target}} could not switch to {{provider}}; it keeps its previous provider"
+    },
+    "route": {
+      "join": "Join routing / aggregation",
+      "joinFor": "{{target}} joins routing",
+      "routed": "Routed",
+      "joined": "{{target}} joined routing",
+      "joinLater": "Saved: {{target}} joins when the app enters routing / aggregation",
+      "left": "{{target}} left routing and is back on its own direct provider",
+      "failed": "{{target}} could not join routing",
+      "listenLoopback": "Routing only listens on loopback, so this environment may not reach it; set the listen address to 0.0.0.0 in the routing settings and test the connection"
+    },
+    "routeHosts": {
+      "title": "WSL client addresses",
+      "help": "WSL environments that join routing use this address to reach the routing service on Windows. Left empty, it is derived: 127.0.0.1 for mirrored networking, the distro's default gateway for NAT. Detection only suggests a candidate; confirm with Test connection. With NAT the listen address must be 0.0.0.0, which also lets other devices on the network connect.",
+      "detect": "Detect again",
+      "mode": "Networking: {{mode}}",
+      "modeUnknown": "Networking mode not detected",
+      "listenLoopback": "Listening on {{listen}}; this distro cannot reach it through the gateway. Change the listen address to 0.0.0.0",
+      "testOk": "Connected: {{url}}",
+      "testFailed": "Connection failed: {{url}} ({{detail}})",
+      "saved": "Saved the client address for {{distro}}",
+      "noHost": "Not detected; enter one",
+      "hostFor": "Client address for {{distro}}",
+      "test": "Test connection"
     }
   }
 }

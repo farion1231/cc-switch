@@ -5476,7 +5476,12 @@
       "superseded": "已有較新的操作",
       "not_synced": "尚未同步供應商",
       "no_provider": "尚未選擇供應商",
-      "provider_missing": "正在使用的供應商已不存在"
+      "provider_missing": "正在使用的供應商已不存在",
+      "routed": "已接入路由，直連供應商在退出路由後生效",
+      "direct": "直連",
+      "route_failed": "寫入路由設定失敗，原設定未變更",
+      "client_host_unresolved": "未取得連到 Windows 的位址",
+      "route_when_proxy": "應用進入路由 / 聚合時接入"
     },
     "indicator": {
       "title": "寫入目標",
@@ -5492,6 +5497,30 @@
       "enable": "在 {{target}} 啟用",
       "done": "{{target}} 已切換到 {{provider}}",
       "failed": "{{target}} 未能切換到 {{provider}}，仍使用原來的供應商"
+    },
+    "route": {
+      "join": "接入路由 / 聚合",
+      "joinFor": "{{target}} 接入路由",
+      "routed": "路由中",
+      "joined": "{{target}} 已接入路由",
+      "joinLater": "已記下：{{target}} 在應用進入路由 / 聚合時接入",
+      "left": "{{target}} 已退出路由，回到它自己的直連供應商",
+      "failed": "{{target}} 未能接入路由",
+      "listenLoopback": "路由只監聽本機迴環，這個環境可能連不上；請在本地路由設定把監聽位址改為 0.0.0.0 並測試連線"
+    },
+    "routeHosts": {
+      "title": "WSL 用戶端位址",
+      "help": "接入路由的 WSL 環境用這個位址連到 Windows 上的路由服務。留空時自動推導：mirrored 網路用 127.0.0.1，NAT 網路用發行版的預設閘道。自動偵測只提供候選位址，請用「測試連線」確認。NAT 網路下監聽位址需要是 0.0.0.0，這會允許區域網路其他裝置連線，請自行確認。",
+      "detect": "重新偵測",
+      "mode": "網路模式：{{mode}}",
+      "modeUnknown": "網路模式未偵測",
+      "listenLoopback": "目前監聽 {{listen}}，這個發行版經閘道存取時連不上，需要把監聽位址改為 0.0.0.0",
+      "testOk": "連線成功：{{url}}",
+      "testFailed": "連線失敗：{{url}}（{{detail}}）",
+      "saved": "已儲存 {{distro}} 的用戶端位址",
+      "noHost": "未偵測到，請填寫",
+      "hostFor": "{{distro}} 的用戶端位址",
+      "test": "測試連線"
     }
   }
 }

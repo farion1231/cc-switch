@@ -514,7 +514,67 @@ async fn write_proxy(
         }
         _ => return Err(format!("{} 不支持本地路由", app.as_str())),
     };
+    // 主环境的契约落定后，接入路由的其他环境（WSL）在后台跟上。
+    if !crate::app_targets::scope::active() {
+        crate::app_targets::sync::spawn_route_sync(state, app);
+    }
     Ok(!unchanged)
+}
+
+/// 跟随环境接入 / 退出共用的路由（见 `app_targets`）。必须在那个目标的作用域里调用：
+/// 客户端文件、模式状态和写锁都是那个目标的，直连指针是它自己正在用的供应商，代理地址
+/// 用它的客户端主机。`main`、`main_stack` 是应用（主环境）的模式和聚合名单，进作用域前
+/// 读好。`join` 为真且主环境接着路由时写共用的代理契约；否则把接着路由的目标写回它自己
+/// 的直连供应商（`detach` 为真是退出 CC Switch 时的分离）。返回之后是否接在路由上。
+pub(crate) async fn reconcile_follower(
+    state: &AppState,
+    app: &AppType,
+    join: bool,
+    main: &ModeState,
+    main_stack: StackState,
+    detach: bool,
+) -> Result<bool, String> {
+    require_proxy_app(app)?;
+    let mine = current::mode_state(app);
+    if join && !detach && main.is_proxy() && main.attached {
+        let route = route_provider(state, app, main)?
+            .ok_or_else(|| format!("{} 的路由目标不存在", app.as_str()))?;
+        let live_now = LiveNow::of(state, app, &mine)?;
+        let op_name = if mine.attached { op::ROUTE } else { op::ATTACH };
+        write_proxy(
+            state,
+            app,
+            op_name,
+            &route,
+            &live_now,
+            ModeState {
+                mode: Some(Mode::Proxy),
+                attached: true,
+                proxy_route: Some(route.id.clone()),
+                contract: None,
+            },
+            Some(main_stack),
+        )
+        .await?;
+        return Ok(true);
+    }
+    if !mine.attached {
+        return Ok(false);
+    }
+    let live_now = LiveNow::of(state, app, &mine)?;
+    write_direct(
+        state,
+        app,
+        if detach { op::DETACH } else { op::EXIT },
+        &live_now,
+        ModeState {
+            mode: Some(Mode::Direct),
+            attached: false,
+            proxy_route: mine.proxy_route.clone(),
+            contract: None,
+        },
+    )?;
+    Ok(false)
 }
 
 /// 写回直连投影（直连指针的供应商）。
@@ -624,6 +684,11 @@ fn write_direct(
             claude_desktop_config::run(&state.db, op_name, write, pending_target).map_err(err)?;
         }
         _ => return Err(format!("{} 不支持本地路由", app.as_str())),
+    }
+    // 退出路由后，接在路由上的其他环境写回它们自己的直连供应商（退出 CC Switch 时的分离
+    // 由 detach_all 同步处理）。
+    if op_name == op::EXIT && !crate::app_targets::scope::active() {
+        crate::app_targets::sync::spawn_route_sync(state, app);
     }
     Ok(())
 }
@@ -1054,6 +1119,15 @@ pub async fn detach_all(state: &AppState) {
         };
         if let Err(error) = result {
             log::error!("退出时把 {} 指回直连失败: {error}", app.as_str());
+        }
+        // 接在路由上的 WSL 等环境也要指回直连，否则 CC Switch 关掉后它们连着不存在的代理。
+        if crate::app_targets::sync::has_followers(&app) {
+            let follower_state = state.clone();
+            let follower_app = app.clone();
+            let _ = tauri::async_runtime::spawn_blocking(move || {
+                crate::app_targets::sync::sync_follower_routes(&follower_state, &follower_app, true)
+            })
+            .await;
         }
     }
     if state.proxy_service.is_running().await {

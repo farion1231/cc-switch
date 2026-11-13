@@ -5476,7 +5476,12 @@
       "superseded": "더 새로운 작업으로 대체됨",
       "not_synced": "공급자가 아직 동기화되지 않음",
       "no_provider": "공급자 미선택",
-      "provider_missing": "사용 중인 공급자가 더 이상 없음"
+      "provider_missing": "사용 중인 공급자가 더 이상 없음",
+      "routed": "라우팅에 참여 중이며 직접 공급자는 라우팅을 떠난 뒤 적용됨",
+      "direct": "직접 연결",
+      "route_failed": "라우팅 설정 기록 실패, 원래 설정은 변경되지 않음",
+      "client_host_unresolved": "Windows에 연결할 주소가 없음",
+      "route_when_proxy": "앱이 라우팅 / 집계에 들어가면 참여"
     },
     "indicator": {
       "title": "기록 대상",
@@ -5492,6 +5497,30 @@
       "enable": "{{target}}에서 활성화",
       "done": "{{target}}을(를) {{provider}}(으)로 전환했습니다",
       "failed": "{{target}}을(를) {{provider}}(으)로 전환하지 못해 이전 공급자를 유지합니다"
+    },
+    "route": {
+      "join": "라우팅 / 집계 참여",
+      "joinFor": "{{target}} 라우팅 참여",
+      "routed": "라우팅 중",
+      "joined": "{{target}}이(가) 라우팅에 참여했습니다",
+      "joinLater": "저장됨: 앱이 라우팅 / 집계에 들어가면 {{target}}도 참여합니다",
+      "left": "{{target}}이(가) 라우팅을 떠나 자체 직접 공급자로 돌아갔습니다",
+      "failed": "{{target}}을(를) 라우팅에 참여시키지 못했습니다",
+      "listenLoopback": "라우팅이 루프백에서만 수신 중이라 이 환경에서 연결하지 못할 수 있습니다. 라우팅 설정에서 수신 주소를 0.0.0.0으로 바꾸고 연결을 테스트하세요"
+    },
+    "routeHosts": {
+      "title": "WSL 클라이언트 주소",
+      "help": "라우팅에 참여하는 WSL 환경은 이 주소로 Windows의 라우팅 서비스에 연결합니다. 비워 두면 자동으로 정해집니다(mirrored는 127.0.0.1, NAT는 배포판의 기본 게이트웨이). 자동 감지는 후보일 뿐이니 「연결 테스트」로 확인하세요. NAT에서는 수신 주소가 0.0.0.0이어야 하며, 이 경우 네트워크의 다른 기기도 연결할 수 있습니다.",
+      "detect": "다시 감지",
+      "mode": "네트워크 모드: {{mode}}",
+      "modeUnknown": "네트워크 모드 미감지",
+      "listenLoopback": "현재 {{listen}}에서 수신 중이라 이 배포판이 게이트웨이를 통해 연결할 수 없습니다. 수신 주소를 0.0.0.0으로 바꾸세요",
+      "testOk": "연결 성공: {{url}}",
+      "testFailed": "연결 실패: {{url}} ({{detail}})",
+      "saved": "{{distro}}의 클라이언트 주소를 저장했습니다",
+      "noHost": "감지되지 않음, 입력하세요",
+      "hostFor": "{{distro}}의 클라이언트 주소",
+      "test": "연결 테스트"
     }
   }
 }

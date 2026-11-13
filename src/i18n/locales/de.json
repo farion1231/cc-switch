@@ -5476,7 +5476,12 @@
       "superseded": "Durch einen neueren Vorgang ersetzt",
       "not_synced": "Anbieter noch nicht synchronisiert",
       "no_provider": "Noch kein Anbieter gewählt",
-      "provider_missing": "Der verwendete Anbieter existiert nicht mehr"
+      "provider_missing": "Der verwendete Anbieter existiert nicht mehr",
+      "routed": "Dem Routing beigetreten; der direkte Anbieter gilt nach dem Verlassen",
+      "direct": "Direkt",
+      "route_failed": "Routing-Konfiguration konnte nicht geschrieben werden; Original unverändert",
+      "client_host_unresolved": "Keine Adresse, um Windows zu erreichen",
+      "route_when_proxy": "Tritt bei, sobald die App Routing / Aggregation nutzt"
     },
     "indicator": {
       "title": "Schreibziele",
@@ -5492,6 +5497,30 @@
       "enable": "Auf {{target}} aktivieren",
       "done": "{{target}} auf {{provider}} umgestellt",
       "failed": "{{target}} konnte nicht auf {{provider}} umgestellt werden; der bisherige Anbieter bleibt"
+    },
+    "route": {
+      "join": "Routing / Aggregation beitreten",
+      "joinFor": "{{target}} dem Routing beitreten lassen",
+      "routed": "Über Routing",
+      "joined": "{{target}} ist dem Routing beigetreten",
+      "joinLater": "Gespeichert: {{target}} tritt bei, sobald die App Routing / Aggregation nutzt",
+      "left": "{{target}} hat das Routing verlassen und nutzt wieder den eigenen direkten Anbieter",
+      "failed": "{{target}} konnte dem Routing nicht beitreten",
+      "listenLoopback": "Das Routing lauscht nur auf Loopback, diese Umgebung erreicht es eventuell nicht; setzen Sie die Listen-Adresse in den Routing-Einstellungen auf 0.0.0.0 und testen Sie die Verbindung"
+    },
+    "routeHosts": {
+      "title": "WSL-Client-Adressen",
+      "help": "WSL-Umgebungen, die dem Routing beitreten, erreichen den Routing-Dienst unter Windows über diese Adresse. Leer gelassen wird sie abgeleitet: 127.0.0.1 bei mirrored, das Standard-Gateway der Distribution bei NAT. Die Erkennung liefert nur einen Vorschlag; bestätigen Sie mit Verbindung testen. Bei NAT muss die Listen-Adresse 0.0.0.0 sein, wodurch sich auch andere Geräte im Netz verbinden können.",
+      "detect": "Erneut erkennen",
+      "mode": "Netzwerkmodus: {{mode}}",
+      "modeUnknown": "Netzwerkmodus nicht erkannt",
+      "listenLoopback": "Derzeit wird auf {{listen}} gelauscht; diese Distribution erreicht es über das Gateway nicht. Ändern Sie die Listen-Adresse auf 0.0.0.0",
+      "testOk": "Verbunden: {{url}}",
+      "testFailed": "Verbindung fehlgeschlagen: {{url}} ({{detail}})",
+      "saved": "Client-Adresse für {{distro}} gespeichert",
+      "noHost": "Nicht erkannt; bitte eingeben",
+      "hostFor": "Client-Adresse für {{distro}}",
+      "test": "Verbindung testen"
     }
   }
 }

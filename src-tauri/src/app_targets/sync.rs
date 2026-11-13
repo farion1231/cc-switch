@@ -105,6 +105,8 @@ pub fn scope_for(app: &AppType, id: &TargetId, dir: Option<PathBuf>) -> TargetSc
         dir,
         store_root: store_root(app, id),
         wsl: matches!(id, TargetId::Wsl(_)),
+        direct: None,
+        client_host: None,
     }
 }
 
@@ -598,9 +600,11 @@ fn write_in_scope(
     kind: SyncKind,
     current: Option<&Provider>,
     prev: Option<&Provider>,
+    routed: bool,
 ) -> Result<(Option<String>, Vec<String>), AppError> {
     let mut warnings = Vec::new();
-    if kind.writes_provider() {
+    // 接在路由上的环境，客户端文件是代理契约：直连供应商等退出路由时再写。
+    if kind.writes_provider() && !routed {
         crate::services::provider::apply_to_follower(state, app, current, prev)?;
     }
     if kind.writes_mcp() {
@@ -723,6 +727,7 @@ pub fn sync_followers_with(
             .map(|d| d.to_string_lossy().into_owned())
             .or_else(|| display_dir(app, &spec, false));
         let prev = active_id.as_ref().and_then(|id| providers.get(id)).cloned();
+        let routed = follower_routed(app, &spec.id);
         let (tx, rx) = mpsc::channel();
         let done = Arc::new(Mutex::new(false));
         let worker_done = done.clone();
@@ -731,7 +736,8 @@ pub fn sync_followers_with(
         let worker_current = current.clone();
         let worker_key = key.clone();
         let worker_dir = shown_dir.clone();
-        let worker_scope = scope_for(app, &spec.id, dir);
+        let mut worker_scope = scope_for(app, &spec.id, dir);
+        worker_scope.direct = current.as_ref().map(|p| p.id.clone()).or(active_id.clone());
         let timeout = if matches!(spec.id, TargetId::Wsl(_)) {
             WSL_TIMEOUT
         } else {
@@ -745,13 +751,24 @@ pub fn sync_followers_with(
                     kind,
                     worker_current.as_ref(),
                     prev.as_ref(),
+                    routed,
                 )
             });
             let previous = status::get(worker_app.as_str(), &worker_key);
             let record = match result {
                 Ok((fingerprint, mut warnings)) => {
                     warnings.extend(notes);
-                    if kind.writes_provider() && worker_current.is_none() && !additive {
+                    if kind.writes_provider() && routed {
+                        // 接在路由上：只记下选了哪家，退出路由时写回。
+                        TargetRecord {
+                            provider_id: worker_current.as_ref().map(|p| p.id.clone()),
+                            fingerprint,
+                            dir: worker_dir,
+                            warnings,
+                            routed: true,
+                            ..TargetRecord::new(TargetStatus::Ok).reason("routed")
+                        }
+                    } else if kind.writes_provider() && worker_current.is_none() && !additive {
                         // 这个环境还没选供应商（暂不写入）：只同步了共享的 MCP 等。
                         TargetRecord {
                             dir: worker_dir,
@@ -990,4 +1007,268 @@ pub fn spawn_after_change(state: &AppState, apps: Vec<AppType>, kind: SyncKind) 
 /// 四个支持多环境的应用。
 pub fn all_supported() -> Vec<AppType> {
     model::supported_apps().to_vec()
+}
+
+/// 这个跟随环境的客户端文件现在是不是代理契约（以它自己的模式状态为准）。
+pub fn follower_routed(app: &AppType, id: &TargetId) -> bool {
+    app.has_route_mode()
+        && crate::mode::state::mode_state(
+            &crate::live::engine::DeviceStore::at(store_root(app, id)),
+            app.as_str(),
+        )
+        .is_ok_and(|mode| mode.attached)
+}
+
+/// 接入路由的 WSL 目标写给客户端的代理主机：保存的优先；否则 mirrored 网络用
+/// 127.0.0.1，NAT 用发行版的默认网关（Windows 主机）。Windows 目标沿用全局设置。
+pub fn client_host_for(id: &TargetId) -> Result<Option<String>, AppError> {
+    let TargetId::Wsl(distro) = id else {
+        return Ok(None);
+    };
+    if let Some(host) = crate::settings::get_proxy_wsl_client_host(distro) {
+        return Ok(Some(host));
+    }
+    let env = wsl::resolve_env(distro, true)?;
+    detected_client_host(&env).map(Some).ok_or_else(|| {
+        AppError::localized(
+            "app_targets.client_host_unresolved",
+            format!("未获取到 {distro} 连接 Windows 的地址，请在本地路由设置里填写"),
+            format!(
+                "Could not find how {distro} reaches Windows; enter it in the routing settings"
+            ),
+        )
+    })
+}
+
+pub fn detected_client_host(env: &model::LinuxEnv) -> Option<String> {
+    if env.networking_mode.as_deref() == Some("mirrored") {
+        return Some("127.0.0.1".to_string());
+    }
+    env.gateway.clone()
+}
+
+/// 让每个跟随环境的客户端和应用的路由状态一致：应用在路由 / 聚合模式、且这个环境勾了
+/// 「接入路由」时写共用的代理契约（地址用这个环境的客户端主机）；否则把接着路由的环境
+/// 写回它自己的直连供应商。`detach` 为真时（退出 CC Switch）一律写回直连，模式偏好不变。
+pub fn sync_follower_routes(state: &AppState, app: &AppType, detach: bool) -> Vec<TargetReport> {
+    if !app.has_route_mode() || !model::supports(app) || scope::active() {
+        return Vec::new();
+    }
+    let (config, source) = app_config(app);
+    if source != ConfigSource::Saved {
+        return Vec::new();
+    }
+    // 同一个应用的路由同步串行：后台触发的和用户点的不互相顶掉，后来的读到的是落定后的状态。
+    let lock = route_sync_lock(app);
+    let _serial = lock.lock().unwrap_or_else(|e| e.into_inner());
+    let main = crate::mode::current::mode_state(app);
+    let main_stack = crate::mode::state::stack(
+        &crate::live::engine::DeviceStore::for_device(),
+        app.as_str(),
+    )
+    .unwrap_or_default();
+    let attach = !detach && main.is_proxy() && main.attached;
+    let mut reports = Vec::new();
+    let mut jobs = Vec::new();
+    for spec in config.followers() {
+        let key = spec.id.key();
+        let join = attach && spec.route;
+        let routed = follower_routed(app, &spec.id);
+        if !join && !routed {
+            continue;
+        }
+        let generation = bump_generation(app, &key);
+        let dir = match resolve_dir(app, &spec, true) {
+            Ok(dir) => dir,
+            Err(err) => {
+                reports.push(record(
+                    app,
+                    &key,
+                    TargetRecord::new(TargetStatus::Error)
+                        .reason("home_unresolved")
+                        .detail(error_detail(&err)),
+                ));
+                continue;
+            }
+        };
+        let client_host = if join {
+            match client_host_for(&spec.id) {
+                Ok(host) => host,
+                Err(err) => {
+                    reports.push(record(
+                        app,
+                        &key,
+                        TargetRecord::new(TargetStatus::Error)
+                            .reason("client_host_unresolved")
+                            .detail(error_detail(&err)),
+                    ));
+                    continue;
+                }
+            }
+        } else {
+            None
+        };
+        let active = status::get(app.as_str(), &key).and_then(|r| r.provider_id);
+        let mut scope = scope_for(app, &spec.id, dir);
+        scope.direct = active;
+        scope.client_host = client_host.clone();
+        let (tx, rx) = mpsc::channel();
+        let done = Arc::new(Mutex::new(false));
+        let worker_done = done.clone();
+        let worker_state = state.clone();
+        let worker_app = app.clone();
+        let worker_key = key.clone();
+        let worker_main = main.clone();
+        let worker_stack = main_stack.clone();
+        std::thread::spawn(move || {
+            let (result, notes) = scope::run(scope, || {
+                let outcome =
+                    tauri::async_runtime::block_on(crate::mode::controller::reconcile_follower(
+                        &worker_state,
+                        &worker_app,
+                        join,
+                        &worker_main,
+                        worker_stack,
+                        detach,
+                    ));
+                (outcome, fingerprint_in_scope(&worker_app))
+            });
+            let (outcome, fingerprint) = result;
+            let record = match outcome {
+                Ok(routed) => {
+                    let mut warnings = notes;
+                    if routed
+                        && listen_is_loopback(&worker_state)
+                        && client_host
+                            .as_deref()
+                            .is_some_and(|host| !is_loopback_host(host))
+                    {
+                        warnings.push("listen_loopback".to_string());
+                    }
+                    TargetRecord {
+                        fingerprint,
+                        warnings,
+                        routed,
+                        ..TargetRecord::new(TargetStatus::Ok).reason(if routed {
+                            "routed"
+                        } else {
+                            "direct"
+                        })
+                    }
+                }
+                Err(err) => {
+                    log::warn!(
+                        "[app-targets] {} 的 {worker_key} 路由写入失败: {}",
+                        worker_app.as_str(),
+                        crate::error_for_log(&err)
+                    );
+                    TargetRecord::new(TargetStatus::Error)
+                        .reason("route_failed")
+                        .detail(
+                            err.lines()
+                                .next()
+                                .unwrap_or_default()
+                                .chars()
+                                .take(300)
+                                .collect::<String>(),
+                        )
+                }
+            };
+            let mut finished = worker_done.lock().unwrap_or_else(|e| e.into_inner());
+            let report = if is_latest(&worker_app, &worker_key, generation) {
+                record_report(&worker_app, &worker_key, record)
+            } else {
+                TargetReport {
+                    target: worker_key.clone(),
+                    record: TargetRecord::new(TargetStatus::Deferred).reason("superseded"),
+                }
+            };
+            *finished = true;
+            drop(finished);
+            let _ = tx.send(report);
+        });
+        let timeout = if matches!(spec.id, TargetId::Wsl(_)) {
+            WSL_TIMEOUT
+        } else {
+            WINDOWS_TIMEOUT
+        };
+        jobs.push(Job {
+            key,
+            timeout,
+            rx,
+            done,
+            generation,
+            dir: None,
+        });
+    }
+    let started = Instant::now();
+    for job in jobs {
+        let remaining = job.timeout.saturating_sub(started.elapsed());
+        match job.rx.recv_timeout(remaining) {
+            Ok(report) => reports.push(report),
+            Err(_) => {
+                let finished = job.done.lock().unwrap_or_else(|e| e.into_inner());
+                if *finished {
+                    drop(finished);
+                    if let Ok(report) = job.rx.recv() {
+                        reports.push(report);
+                    }
+                    continue;
+                }
+                let report = if is_latest(app, &job.key, job.generation) {
+                    record_report(
+                        app,
+                        &job.key,
+                        TargetRecord::new(TargetStatus::Error).reason("timeout"),
+                    )
+                } else {
+                    TargetReport {
+                        target: job.key.clone(),
+                        record: TargetRecord::new(TargetStatus::Deferred).reason("superseded"),
+                    }
+                };
+                drop(finished);
+                reports.push(report);
+            }
+        }
+    }
+    reports
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    let host = host.trim_matches(['[', ']']);
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+}
+
+fn listen_is_loopback(state: &AppState) -> bool {
+    tauri::async_runtime::block_on(state.db.get_proxy_config())
+        .map(|config| is_loopback_host(&config.listen_address))
+        .unwrap_or(false)
+}
+
+/// 应用的路由状态变了之后（进入 / 退出 / 换路由 / 聚合名单 / 启动接上），在后台同步跟随
+/// 环境，不让界面等 WSL。
+pub fn spawn_route_sync(state: &AppState, app: &AppType) {
+    if !has_followers(app) || !app.has_route_mode() || scope::active() {
+        return;
+    }
+    let state = state.clone();
+    let app = app.clone();
+    std::thread::spawn(move || {
+        sync_follower_routes(&state, &app, false);
+    });
+}
+
+fn route_sync_lock(app: &AppType) -> Arc<Mutex<()>> {
+    static LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
+    LOCKS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .entry(app.as_str().to_string())
+        .or_default()
+        .clone()
 }

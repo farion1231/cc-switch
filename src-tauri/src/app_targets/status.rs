@@ -44,7 +44,14 @@ pub struct TargetRecord {
     pub dir: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+    /// 这个环境现在接在共用的路由上（客户端文件是代理契约）。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub routed: bool,
     pub at: i64,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl TargetRecord {
@@ -57,6 +64,7 @@ impl TargetRecord {
             fingerprint: None,
             dir: None,
             warnings: Vec::new(),
+            routed: false,
             at: chrono::Utc::now().timestamp(),
         }
     }

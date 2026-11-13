@@ -88,7 +88,11 @@ function forSave(
 ): AppTargetsConfig {
   return {
     ...draft,
-    windows: { enabled: draft.windows.enabled, dir: clean(draft.windows.dir) },
+    windows: {
+      enabled: draft.windows.enabled,
+      dir: clean(draft.windows.dir),
+      route: draft.windows.route,
+    },
     wsl: draft.wsl
       .filter(
         (t) =>
@@ -102,6 +106,7 @@ function forSave(
         distro: t.distro,
         enabled: t.enabled,
         dir: clean(t.dir),
+        route: t.route,
       })),
   };
 }

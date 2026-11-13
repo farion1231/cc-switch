@@ -21,6 +21,10 @@ pub struct TargetScope {
     pub store_root: PathBuf,
     /// 目标在 WSL 里：Windows 专用的 MCP 命令等不能照搬。
     pub wsl: bool,
+    /// 这个目标自己正在用的直连供应商：作用域里「直连指针」读它，不读主环境的。
+    pub direct: Option<String>,
+    /// 接入路由时写给这个目标的代理主机（WSL 要用能连到 Windows 的地址）。
+    pub client_host: Option<String>,
 }
 
 thread_local! {
@@ -74,6 +78,20 @@ pub fn lock_key(app: &str) -> String {
     })
 }
 
+/// 作用域里的直连指针：`Some(id)` 表示在作用域里（`id` 为 `None` 时这个目标还没选供应商）。
+pub fn direct_provider() -> Option<Option<String>> {
+    CURRENT.with(|cell| cell.borrow().as_ref().map(|scope| scope.direct.clone()))
+}
+
+/// 作用域里给客户端用的代理主机。
+pub fn client_host() -> Option<String> {
+    CURRENT.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .and_then(|scope| scope.client_host.clone())
+    })
+}
+
 pub fn is_wsl() -> bool {
     CURRENT.with(|cell| cell.borrow().as_ref().is_some_and(|scope| scope.wsl))
 }
@@ -96,6 +114,8 @@ mod tests {
             dir: Some(PathBuf::from("/tmp/x")),
             store_root: PathBuf::from("/tmp/store"),
             wsl: true,
+            direct: Some("b".into()),
+            client_host: Some("172.20.0.1".into()),
         }
     }
 
@@ -111,6 +131,8 @@ mod tests {
             assert_eq!(override_dir(&AppType::Codex), None);
             assert_eq!(lock_key("claude"), "claude@wsl:Ubuntu");
             assert!(is_wsl());
+            assert_eq!(direct_provider(), Some(Some("b".to_string())));
+            assert_eq!(client_host().as_deref(), Some("172.20.0.1"));
             note("mcp_skipped:a");
             std::thread::spawn(|| assert!(!active())).join().unwrap();
         });

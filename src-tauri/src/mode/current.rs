@@ -58,6 +58,12 @@ pub fn provider_for(
             return Ok(Some(route.id));
         }
     }
+    // 跟随环境的写入作用域里，直连指针是那个环境自己正在用的供应商。
+    if crate::app_targets::scope::override_dir(app).is_some() {
+        if let Some(direct) = crate::app_targets::scope::direct_provider() {
+            return Ok(direct);
+        }
+    }
     crate::settings::get_effective_current_provider(db, app)
 }
 

@@ -37,6 +37,10 @@ pub fn supported_apps() -> [AppType; 4] {
 pub struct WindowsTarget {
     #[serde(default)]
     pub enabled: bool,
+    /// 应用在路由 / 聚合模式时，这个环境接入共用的路由（不是主环境时才有意义；主环境
+    /// 总是跟随应用的模式）。不接入的环境保持自己的直连供应商。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub route: bool,
     /// 自定义目录；`None` 用该应用现有的默认目录解析。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dir: Option<String>,
@@ -49,6 +53,9 @@ pub struct WslTarget {
     pub distro: String,
     #[serde(default)]
     pub enabled: bool,
+    /// 见 [`WindowsTarget::route`]。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub route: bool,
     /// 自定义 UNC 目录；`None` 按发行版的 HOME 和应用自己的规则推导。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dir: Option<String>,
@@ -74,6 +81,7 @@ impl Default for AppTargetsConfig {
             primary: WINDOWS.to_string(),
             windows: WindowsTarget {
                 enabled: true,
+                route: false,
                 dir: None,
             },
             wsl: Vec::new(),
@@ -148,6 +156,8 @@ pub struct TargetSpec {
     pub id: TargetId,
     pub enabled: bool,
     pub dir: Option<String>,
+    /// 接入路由（见 [`WindowsTarget::route`]）。
+    pub route: bool,
 }
 
 impl AppTargetsConfig {
@@ -156,11 +166,13 @@ impl AppTargetsConfig {
             id: TargetId::Windows,
             enabled: self.windows.enabled,
             dir: clean(self.windows.dir.as_deref()),
+            route: self.windows.route,
         }];
         out.extend(self.wsl.iter().map(|target| TargetSpec {
             id: TargetId::Wsl(target.distro.clone()),
             enabled: target.enabled,
             dir: clean(target.dir.as_deref()),
+            route: target.route,
         }));
         out
     }
@@ -232,6 +244,10 @@ impl AppTargetsConfig {
     }
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 fn clean(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
@@ -264,11 +280,13 @@ pub fn derive_from_legacy(legacy_dir: Option<&str>) -> (AppTargetsConfig, Config
                     primary: TargetId::Wsl(distro.clone()).key(),
                     windows: WindowsTarget {
                         enabled: false,
+                        route: false,
                         dir: None,
                     },
                     wsl: vec![WslTarget {
                         distro,
                         enabled: true,
+                        route: false,
                         dir: Some(dir.to_string()),
                     }],
                     extra: Map::new(),
@@ -279,6 +297,7 @@ pub fn derive_from_legacy(legacy_dir: Option<&str>) -> (AppTargetsConfig, Config
                 AppTargetsConfig {
                     windows: WindowsTarget {
                         enabled: true,
+                        route: false,
                         dir: legacy.clone(),
                     },
                     ..AppTargetsConfig::default()
@@ -290,6 +309,7 @@ pub fn derive_from_legacy(legacy_dir: Option<&str>) -> (AppTargetsConfig, Config
             AppTargetsConfig {
                 windows: WindowsTarget {
                     enabled: true,
+                    route: false,
                     dir: legacy,
                 },
                 ..AppTargetsConfig::default()
@@ -393,6 +413,12 @@ pub struct LinuxEnv {
     pub codex_home: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub xdg_config_home: Option<String>,
+    /// `wslinfo --networking-mode`（`nat` / `mirrored` …；旧版 WSL 没有这个命令时为空）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub networking_mode: Option<String>,
+    /// 发行版里的默认网关：NAT 模式下通常就是 Windows 主机的地址。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway: Option<String>,
 }
 
 fn absolute_linux(value: Option<&str>) -> Option<String> {
@@ -641,11 +667,13 @@ mod tests {
             primary: "wsl:ubuntu".into(),
             windows: WindowsTarget {
                 enabled: true,
+                route: false,
                 dir: Some("  ".into()),
             },
             wsl: vec![WslTarget {
                 distro: "Ubuntu".into(),
                 enabled: true,
+                route: false,
                 dir: None,
             }],
             extra: Map::new(),
@@ -664,6 +692,7 @@ mod tests {
         wsl_only.wsl.push(WslTarget {
             distro: "Debian".into(),
             enabled: true,
+            route: false,
             dir: None,
         });
         assert_eq!(wsl_only.normalized().primary, "wsl:Ubuntu");
@@ -673,6 +702,7 @@ mod tests {
         moved.wsl.push(WslTarget {
             distro: "Debian".into(),
             enabled: true,
+            route: false,
             dir: None,
         });
         assert_eq!(moved.normalized().primary, "wsl:Debian");
@@ -723,6 +753,7 @@ mod tests {
             codex_home: Some("/srv/codex".into()),
             xdg_config_home: Some("/x/cfg".into()),
             claude_config_dir: Some("relative/ignored".into()),
+            ..Default::default()
         };
         assert_eq!(
             linux_default_dir(&AppType::Codex, &env).as_deref(),
@@ -747,11 +778,13 @@ mod tests {
             primary: WINDOWS.into(),
             windows: WindowsTarget {
                 enabled: true,
+                route: false,
                 dir: None,
             },
             wsl: vec![WslTarget {
                 distro: "Ubuntu".into(),
                 enabled: true,
+                route: false,
                 dir: None,
             }],
             extra: Map::new(),
@@ -828,6 +861,7 @@ mod tests {
         config.wsl.push(WslTarget {
             distro: "Debian".into(),
             enabled: true,
+            route: false,
             dir: Some(r"\\wsl$\Debian\home\me\.claude".into()),
         });
         config.wsl[0].dir = Some(r"\\wsl$\Ubuntu\home\me\.claude".into());
@@ -838,6 +872,7 @@ mod tests {
         config.wsl.push(WslTarget {
             distro: "ubuntu".into(),
             enabled: false,
+            route: false,
             dir: None,
         });
         let errors = validate(&config, &auto);

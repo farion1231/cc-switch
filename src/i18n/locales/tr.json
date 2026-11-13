@@ -5476,7 +5476,12 @@
       "superseded": "Daha yeni bir işlemle değiştirildi",
       "not_synced": "Sağlayıcı henüz eşitlenmedi",
       "no_provider": "Henüz sağlayıcı seçilmedi",
-      "provider_missing": "Kullanılan sağlayıcı artık yok"
+      "provider_missing": "Kullanılan sağlayıcı artık yok",
+      "routed": "Yönlendirmeye katıldı; doğrudan sağlayıcı yönlendirmeden çıkınca uygulanır",
+      "direct": "Doğrudan",
+      "route_failed": "Yönlendirme yapılandırması yazılamadı; özgün yapılandırma değişmedi",
+      "client_host_unresolved": "Windows'a ulaşacak adres yok",
+      "route_when_proxy": "Uygulama yönlendirmeye / birleştirmeye girince katılır"
     },
     "indicator": {
       "title": "Yazma hedefleri",
@@ -5492,6 +5497,30 @@
       "enable": "{{target}} üzerinde etkinleştir",
       "done": "{{target}}, {{provider}} sağlayıcısına geçti",
       "failed": "{{target}}, {{provider}} sağlayıcısına geçemedi; önceki sağlayıcıyı kullanmaya devam ediyor"
+    },
+    "route": {
+      "join": "Yönlendirmeye / birleştirmeye katıl",
+      "joinFor": "{{target}} yönlendirmeye katılsın",
+      "routed": "Yönlendiriliyor",
+      "joined": "{{target}} yönlendirmeye katıldı",
+      "joinLater": "Kaydedildi: uygulama yönlendirmeye / birleştirmeye girdiğinde {{target}} katılır",
+      "left": "{{target}} yönlendirmeden ayrıldı ve kendi doğrudan sağlayıcısına döndü",
+      "failed": "{{target}} yönlendirmeye katılamadı",
+      "listenLoopback": "Yönlendirme yalnızca geri döngüde dinliyor, bu ortam ulaşamayabilir; yönlendirme ayarlarında dinleme adresini 0.0.0.0 yapıp bağlantıyı test edin"
+    },
+    "routeHosts": {
+      "title": "WSL istemci adresleri",
+      "help": "Yönlendirmeye katılan WSL ortamları Windows'taki yönlendirme hizmetine bu adresle bağlanır. Boş bırakılırsa otomatik belirlenir: mirrored ağda 127.0.0.1, NAT'ta dağıtımın varsayılan ağ geçidi. Otomatik algılama yalnızca aday verir; Bağlantıyı test et ile doğrulayın. NAT'ta dinleme adresi 0.0.0.0 olmalıdır; bu, ağdaki diğer cihazların da bağlanmasına izin verir.",
+      "detect": "Yeniden algıla",
+      "mode": "Ağ modu: {{mode}}",
+      "modeUnknown": "Ağ modu algılanmadı",
+      "listenLoopback": "Şu anda {{listen}} dinleniyor; bu dağıtım ağ geçidi üzerinden ulaşamaz. Dinleme adresini 0.0.0.0 yapın",
+      "testOk": "Bağlandı: {{url}}",
+      "testFailed": "Bağlantı başarısız: {{url}} ({{detail}})",
+      "saved": "{{distro}} için istemci adresi kaydedildi",
+      "noHost": "Algılanmadı; girin",
+      "hostFor": "{{distro}} için istemci adresi",
+      "test": "Bağlantıyı test et"
     }
   }
 }

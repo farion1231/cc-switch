@@ -160,7 +160,7 @@ const PROBE_MARKER: &str = "__CC_SWITCH_ENV__";
 /// profile 打印的其他内容不影响解析。
 pub fn probe_script() -> String {
     format!(
-        "printf '%s\\n' '{PROBE_MARKER}' \"$HOME\" \"${{CLAUDE_CONFIG_DIR:-}}\" \"${{CODEX_HOME:-}}\" \"${{XDG_CONFIG_HOME:-}}\""
+        "printf '%s\\n' '{PROBE_MARKER}' \"$HOME\" \"${{CLAUDE_CONFIG_DIR:-}}\" \"${{CODEX_HOME:-}}\" \"${{XDG_CONFIG_HOME:-}}\" \"$(wslinfo --networking-mode 2>/dev/null)\" \"$(ip route show default 2>/dev/null | awk '{{print $3; exit}}')\""
     )
 }
 
@@ -180,6 +180,8 @@ pub fn parse_probe_output(output: &str) -> Option<LinuxEnv> {
         claude_config_dir: field(),
         codex_home: field(),
         xdg_config_home: field(),
+        networking_mode: field().map(|mode| mode.to_ascii_lowercase()),
+        gateway: field().filter(|ip| ip.parse::<std::net::IpAddr>().is_ok()),
     };
     env.home
         .as_deref()
@@ -281,6 +283,41 @@ pub fn probe(distro: &str) -> Result<LinuxEnv, String> {
 
 #[cfg(not(windows))]
 pub fn probe(_distro: &str) -> Result<LinuxEnv, String> {
+    Err("WSL is only available on Windows".to_string())
+}
+
+/// 从发行版里访问一个 URL（路由连通性测试）。返回 HTTP 是否成功和输出摘要。
+pub fn connectivity_script(url: &str) -> String {
+    // URL 只由 CC Switch 生成（主机已校验、端口是数字），仍按单引号转义一遍。
+    let quoted = format!("'{}'", url.replace('\'', "'\\''"));
+    format!(
+        "if command -v curl >/dev/null 2>&1; then curl -fsS -m 5 {quoted}; \
+         elif command -v wget >/dev/null 2>&1; then wget -q -T 5 -O - {quoted}; \
+         else echo 'no curl or wget' >&2; exit 127; fi"
+    )
+}
+
+#[cfg(windows)]
+pub fn fetch_from(distro: &str, url: &str) -> Result<(bool, String), String> {
+    if !is_valid_distro_name(distro) {
+        return Err(format!("invalid distro name: {distro}"));
+    }
+    let script = connectivity_script(url);
+    let output = run_with_timeout(
+        wsl_command(&["-d", distro, "--exec", "sh", "-c", &script]),
+        Duration::from_secs(15),
+    )?;
+    let out = decode_wsl_output(&output.stdout);
+    let err = decode_wsl_output(&output.stderr);
+    let text = if out.trim().is_empty() { err } else { out };
+    Ok((
+        output.status.success(),
+        text.trim().chars().take(300).collect(),
+    ))
+}
+
+#[cfg(not(windows))]
+pub fn fetch_from(_distro: &str, _url: &str) -> Result<(bool, String), String> {
     Err("WSL is only available on Windows".to_string())
 }
 
@@ -406,14 +443,25 @@ mod tests {
 
     #[test]
     fn probe_output_ignores_profile_noise() {
-        let out = format!("Welcome!\n{PROBE_MARKER}\n/home/me\n\n/srv/codex\n/home/me/.cfg\n");
+        let out = format!(
+            "Welcome!\n{PROBE_MARKER}\n/home/me\n\n/srv/codex\n/home/me/.cfg\nNAT\n172.24.0.1\n"
+        );
         let env = parse_probe_output(&out).expect("parsed");
         assert_eq!(env.home.as_deref(), Some("/home/me"));
         assert_eq!(env.claude_config_dir, None);
         assert_eq!(env.codex_home.as_deref(), Some("/srv/codex"));
         assert_eq!(env.xdg_config_home.as_deref(), Some("/home/me/.cfg"));
+        assert_eq!(env.networking_mode.as_deref(), Some("nat"));
+        assert_eq!(env.gateway.as_deref(), Some("172.24.0.1"));
         assert_eq!(parse_probe_output("no marker"), None);
         assert_eq!(parse_probe_output(&format!("{PROBE_MARKER}\n\n")), None);
+    }
+
+    #[test]
+    fn connectivity_script_quotes_the_url() {
+        let script = connectivity_script("http://172.24.0.1:15721/health");
+        assert!(script.contains("curl -fsS -m 5 'http://172.24.0.1:15721/health'"));
+        assert!(connectivity_script("http://x/'a").contains("'http://x/'\\''a'"));
     }
 
     #[test]
