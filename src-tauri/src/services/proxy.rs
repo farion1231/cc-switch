@@ -23,6 +23,8 @@ pub struct ProxyService {
     /// AppHandle，用于传递给 ProxyServer 以支持故障转移时的 UI 更新
     app_handle: Arc<RwLock<Option<tauri::AppHandle>>>,
     switch_locks: SwitchLockManager,
+    /// Cursor 公网路由（BYOK）用的 cloudflared 隧道管理器。
+    cloudflared: crate::proxy::cloudflared::CloudflaredManager,
 }
 
 /// 重启失败时写回库的那份配置：设置页只动四个全局字段，旧接口是整份七个字段。
@@ -63,7 +65,65 @@ impl ProxyService {
             server: Arc::new(RwLock::new(None)),
             app_handle: Arc::new(RwLock::new(None)),
             switch_locks: SwitchLockManager::new(),
+            cloudflared: crate::proxy::cloudflared::CloudflaredManager::new(),
         }
+    }
+
+    /// 启动 公网路由（Cursor 经公网隧道接入）隧道：把本地代理暴露到公网，供 公网路由 使用。
+    /// 要求本地代理已在运行（接管了 Cursor）。
+    ///
+    /// 注意：Cursor 的 公网路由 设置走云端账户同步，本地写 state.vscdb 不会被读取
+    /// （2026-08-05 实测确认），公网地址需用户在 Cursor 中手动粘贴。
+    pub async fn start_public_route_tunnel(
+        &self,
+    ) -> Result<crate::proxy::cloudflared::TunnelStatus, String> {
+        let (proxy_url, _) = self.build_proxy_urls().await?;
+
+        // 隧道模式：默认免账号快速隧道；配置完整时用命名隧道（固定域名）
+        let settings = crate::settings::get_settings();
+        let named = settings.public_route_named_tunnel.clone();
+        let hostname = settings.public_route_named_hostname.clone();
+        let mode = if settings.public_route_tunnel_mode.as_deref() == Some("named") {
+            match (named, hostname) {
+                (Some(t), Some(h)) if !t.trim().is_empty() && !h.trim().is_empty() => {
+                    crate::proxy::cloudflared::TunnelMode::Named {
+                        tunnel: t.trim().to_string(),
+                        hostname: h.trim().to_string(),
+                    }
+                }
+                _ => {
+                    return Err(
+                        "命名隧道模式需要填写隧道名和域名（或在 公网路由 设置中改用快速隧道）"
+                            .to_string(),
+                    )
+                }
+            }
+        } else {
+            crate::proxy::cloudflared::TunnelMode::Quick
+        };
+
+        let status = self.cloudflared.start(&proxy_url, &mode).await?;
+        if let Some(public_url) = &status.public_url {
+            log::info!("[Tunnel] 隧道就绪: {public_url}（需在 Cursor 中手动粘贴 Base URL）");
+        }
+        Ok(status)
+    }
+
+    /// 停止 公网路由（Cursor 经公网隧道接入）隧道。
+    pub async fn stop_public_route_tunnel(&self) -> Result<(), String> {
+        self.cloudflared.stop().await
+    }
+
+    /// 列出 Cloudflare 账户下已有的命名隧道。
+    pub async fn list_named_tunnels(
+        &self,
+    ) -> Result<Vec<crate::proxy::cloudflared::NamedTunnel>, String> {
+        self.cloudflared.list_named_tunnels().await
+    }
+
+    /// 查询隧道状态。
+    pub async fn public_route_tunnel_status(&self) -> crate::proxy::cloudflared::TunnelStatus {
+        self.cloudflared.status().await
     }
 
     /// 设置 AppHandle（在应用初始化时调用）
@@ -182,13 +242,14 @@ impl ProxyService {
     /// 各应用是否处于代理模式（读设备本地的模式状态，不读会随云同步的
     /// `proxy_config.enabled`）。
     pub async fn get_takeover_status(&self) -> Result<ProxyTakeoverStatus, String> {
-        let [claude, codex, gemini, grokbuild, claude_desktop] =
+        let [claude, codex, gemini, grokbuild, claude_desktop, cursor] =
             crate::mode::current::proxy_flags([
                 AppType::Claude,
                 AppType::Codex,
                 AppType::Gemini,
                 AppType::GrokBuild,
                 AppType::ClaudeDesktop,
+                AppType::Cursor,
             ]);
         Ok(ProxyTakeoverStatus {
             claude,
@@ -196,6 +257,7 @@ impl ProxyService {
             gemini,
             grokbuild,
             claude_desktop,
+            cursor,
             // OpenCode and OpenClaw don't support proxy features
             opencode: false,
             openclaw: false,

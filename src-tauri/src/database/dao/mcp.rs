@@ -9,7 +9,7 @@ use indexmap::IndexMap;
 use rusqlite::{params, OptionalExtension, Row};
 
 const MCP_SERVER_SELECT: &str =
-    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_agy, enabled_kimi, enabled_omp, enabled_dsh, enabled_copilot, enabled_workbuddy FROM mcp_servers";
+    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_agy, enabled_kimi, enabled_omp, enabled_dsh, enabled_copilot, enabled_cursor, enabled_workbuddy FROM mcp_servers";
 
 fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
     let id: String = row.get(0)?;
@@ -49,7 +49,8 @@ fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
                 omp: row.get(17)?,
                 dsh: row.get(18)?,
                 copilot: row.get(19)?,
-                workbuddy: row.get(20)?,
+                cursor: row.get(20)?,
+                workbuddy: row.get(21)?,
             },
             description,
             homepage,
@@ -106,6 +107,7 @@ impl Database {
             AppType::WorkBuddy => Some("enabled_workbuddy"),
             AppType::Pi => Some("enabled_pi"),
             AppType::Omp => Some("enabled_omp"),
+            AppType::Cursor => Some("enabled_cursor"),
             AppType::ClaudeDesktop | AppType::OpenClaw => None,
             AppType::Agy => Some("enabled_agy"),
         };
@@ -136,8 +138,8 @@ impl Database {
         conn.execute(
             "INSERT OR REPLACE INTO mcp_servers (
                 id, name, server_config, description, homepage, docs, tags,
-                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_agy, enabled_kimi, enabled_omp, enabled_dsh, enabled_copilot, enabled_workbuddy
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_agy, enabled_kimi, enabled_omp, enabled_dsh, enabled_copilot, enabled_cursor, enabled_workbuddy
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
             params![
                 server.id,
                 server.name,
@@ -162,6 +164,7 @@ impl Database {
                 server.apps.omp,
                 server.apps.dsh,
                 server.apps.copilot,
+                server.apps.cursor,
                 server.apps.workbuddy,
             ],
         )
@@ -288,6 +291,37 @@ mod tests {
                 .expect("server exists");
             assert_eq!(returned.apps, original.apps);
         }
+    }
+
+    #[test]
+    fn cursor_and_workbuddy_mcp_flags_round_trip_independently() {
+        let db = Database::memory().expect("create memory db");
+        let mut server = test_server();
+        server.apps.cursor = true;
+        server.apps.workbuddy = false;
+        db.save_mcp_server(&server).expect("seed server");
+
+        let stored = db
+            .get_all_mcp_servers()
+            .expect("read servers")
+            .shift_remove("shared-server")
+            .expect("stored server");
+        assert!(stored.apps.cursor, "cursor 开关必须独立落库");
+        assert!(!stored.apps.workbuddy, "workbuddy 不能被 cursor 列串读");
+
+        let toggled = db
+            .update_mcp_server_app_enabled("shared-server", &AppType::WorkBuddy, true)
+            .expect("enable WorkBuddy")
+            .expect("server exists");
+        assert!(toggled.apps.workbuddy);
+        assert!(toggled.apps.cursor, "开启 workbuddy 不能清掉 cursor");
+
+        let toggled = db
+            .update_mcp_server_app_enabled("shared-server", &AppType::Cursor, false)
+            .expect("disable Cursor")
+            .expect("server exists");
+        assert!(!toggled.apps.cursor);
+        assert!(toggled.apps.workbuddy, "关闭 cursor 不能清掉 workbuddy");
     }
 
     #[test]

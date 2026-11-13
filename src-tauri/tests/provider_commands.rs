@@ -550,6 +550,7 @@ command = "say"
                 workbuddy: false,
                 pi: false,
                 omp: false,
+                cursor: false,
             },
             description: None,
             homepage: None,

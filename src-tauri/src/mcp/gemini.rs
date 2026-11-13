@@ -98,6 +98,7 @@ pub fn import_from_gemini(config: &mut MultiAppConfig) -> Result<usize, AppError
                         workbuddy: false,
                         pi: false,
                         omp: false,
+                        cursor: false,
                     },
                     description: None,
                     homepage: None,

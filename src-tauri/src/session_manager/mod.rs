@@ -17,8 +17,8 @@ use std::time::{Duration, Instant};
 // 其余模型类型从 `session_manager::model` 引用
 pub use model::SessionMessage;
 use providers::{
-    agy, claude, codex, copilot, dsh, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw,
-    opencode, pi, workbuddy,
+    agy, claude, codex, copilot, cursor, dsh, gemini, grokbuild, hermes, kimi, mcode, omp,
+    openclaw, opencode, pi, workbuddy,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -97,7 +97,7 @@ pub(crate) struct SessionScan {
 pub(crate) fn scan_sessions_with_status() -> SessionScan {
     use providers::utils::ScanStatus;
     type Scanner = fn(&mut ScanStatus) -> Vec<SessionMeta>;
-    let scanners: [(&str, Scanner); 15] = [
+    let scanners: [(&str, Scanner); 16] = [
         ("codex", codex::scan_sessions_with_status),
         ("claude", claude::scan_sessions_with_status),
         ("opencode", opencode::scan_sessions_with_status),
@@ -109,7 +109,8 @@ pub(crate) fn scan_sessions_with_status() -> SessionScan {
         ("omp", omp::scan_sessions_with_status),
         ("mcode", mcode::scan_sessions_with_status),
         ("copilot", copilot::scan_sessions_with_status),
-        // 以下来源的扫描还不报告读取失败，按完整处理
+        ("cursor", cursor::scan_sessions_with_status),
+        // Kimi Code、DeepSeek Harness、Antigravity、WorkBuddy 的扫描还不报告读取失败，按完整处理
         ("kimi", |_| kimi::scan_sessions()),
         ("dsh", |_| dsh::scan_sessions()),
         ("agy", |_| agy::scan_sessions()),
@@ -161,6 +162,9 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
     }
     if provider_id == "hermes" && source_path.starts_with("sqlite:") {
         return hermes::load_messages_sqlite(source_path);
+    }
+    if provider_id == "cursor" && source_path.starts_with("sqlite:") {
+        return cursor::load_messages_sqlite(source_path);
     }
 
     let path = Path::new(source_path);
@@ -263,6 +267,9 @@ fn delete_session_source(
     }
     if provider_id == "hermes" && source_path.starts_with("sqlite:") {
         return hermes::delete_session_sqlite(session_id, source_path);
+    }
+    if provider_id == "cursor" && source_path.starts_with("sqlite:") {
+        return cursor::delete_session_sqlite(session_id, source_path);
     }
 
     let roots = provider_roots(provider_id)?;

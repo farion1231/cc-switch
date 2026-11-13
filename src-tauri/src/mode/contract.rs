@@ -79,6 +79,20 @@ pub fn claude_desktop(profile: &Value) -> Contract {
     }
 }
 
+/// Cursor：Base URL / 模型设置走云端账户同步，本地写不进客户端文件，
+/// 所以接管契约只记录路由本身——同一路由重复进入时据此判定「不用重写」。
+pub fn cursor(route: &crate::provider::Provider) -> Contract {
+    Contract {
+        version: CONTRACT_VERSION,
+        key: key_of(&json!({
+            "app": "cursor",
+            "version": CONTRACT_VERSION,
+            "route": route.id,
+        })),
+        exclusive: Map::new(),
+    }
+}
+
 fn sorted(map: &Map<String, Value>) -> Value {
     let mut entries: Vec<_> = map.iter().collect();
     entries.sort_by(|a, b| a.0.cmp(b.0));

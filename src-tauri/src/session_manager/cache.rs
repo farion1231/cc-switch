@@ -83,7 +83,7 @@ impl Fingerprint {
     }
 
     /// 合并另一个文件：取较新的 mtime，长度累加
-    fn merge(&mut self, other: Fingerprint) {
+    pub(super) fn merge(&mut self, other: Fingerprint) {
         self.modified = match (self.modified, other.modified) {
             (Some(a), Some(b)) => Some(a.max(b)),
             (a, b) => a.or(b),

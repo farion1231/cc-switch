@@ -104,6 +104,7 @@ function renderPanel(
         isLoading={false}
         onSwitch={onSwitch}
         onOpenRoutingSettings={vi.fn()}
+        onOpenPublicRouteSettings={vi.fn()}
         onEdit={vi.fn()}
         onDelete={vi.fn()}
         onDuplicate={vi.fn()}
@@ -939,6 +940,7 @@ describe("SwitchModePanel — tray needs-route request", () => {
           isLoading={false}
           onSwitch={vi.fn()}
           onOpenRoutingSettings={vi.fn()}
+          onOpenPublicRouteSettings={vi.fn()}
           onEdit={vi.fn()}
           onDelete={vi.fn()}
           onDuplicate={vi.fn()}

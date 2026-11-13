@@ -66,9 +66,14 @@ import {
   type HermesProviderPreset,
 } from "@/config/hermesProviderPresets";
 import { isHermesBuiltinProviderId } from "@/config/hermesBuiltinProviderIds";
+import {
+  cursorProviderPresets,
+  type CursorProviderPreset,
+} from "@/config/cursorProviderPresets";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { OpenClawFormFields } from "./OpenClawFormFields";
 import { HermesFormFields } from "./HermesFormFields";
+import { CursorFormFields } from "./CursorFormFields";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import {
   applyTemplateValues,
@@ -138,6 +143,7 @@ import {
   useOmoDraftState,
   useOpenclawFormState,
   useHermesFormState,
+  useCursorFormState,
   useCopilotAuth,
   useCodexOauth,
   useXaiOauth,
@@ -153,6 +159,7 @@ import {
   isNativeOpencodeConfig,
 } from "./helpers/opencodeFormUtils";
 import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
+import { CURSOR_DEFAULT_CONFIG } from "./hooks/useCursorFormState";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
 import { useHermesLiveProviderIds } from "@/hooks/useHermes";
@@ -167,7 +174,8 @@ type PresetEntry = {
     | GeminiProviderPreset
     | OpenCodeProviderPreset
     | OpenClawProviderPreset
-    | HermesProviderPreset;
+    | HermesProviderPreset
+    | CursorProviderPreset;
 };
 
 function getPresetProviderType(
@@ -535,7 +543,9 @@ function ProviderFormFull({
                   ? OPENCLAW_DEFAULT_CONFIG
                   : appId === "hermes"
                     ? HERMES_DEFAULT_CONFIG
-                    : CLAUDE_DEFAULT_CONFIG,
+                    : appId === "cursor"
+                      ? CURSOR_DEFAULT_CONFIG
+                      : CLAUDE_DEFAULT_CONFIG,
       icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
     }),
@@ -1018,6 +1028,11 @@ function ProviderFormFull({
         id: `hermes-${index}`,
         preset,
       }));
+    } else if (appId === "cursor") {
+      return cursorProviderPresets.map<PresetEntry>((preset, index) => ({
+        id: `cursor-${index}`,
+        preset,
+      }));
     }
     return providerPresets
       .map<PresetEntry>((preset, index) => ({
@@ -1281,6 +1296,13 @@ function ProviderFormFull({
     isLoading: isHermesLiveProviderIdsLoading,
   } = useHermesLiveProviderIds(appId === "hermes");
 
+  const cursorForm = useCursorFormState({
+    initialData,
+    appId,
+    onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
+    getSettingsConfig: () => form.getValues("settingsConfig"),
+  });
+
   const additiveExistingProviderKeys = useMemo(() => {
     if (appId === "opencode" && !isAnyOmoCategory) {
       return Array.from(
@@ -1313,6 +1335,10 @@ function ProviderFormFull({
       );
     }
 
+    if (appId === "cursor") {
+      return [];
+    }
+
     return [];
   }, [
     appId,
@@ -1337,6 +1363,9 @@ function ProviderFormFull({
     if (appId === "hermes") {
       return isHermesLiveProviderIdsLoading;
     }
+    if (appId === "cursor") {
+      return false;
+    }
     return false;
   }, [
     appId,
@@ -1357,6 +1386,9 @@ function ProviderFormFull({
     }
     if (appId === "hermes") {
       return hermesLiveProviderIds.includes(providerId);
+    }
+    if (appId === "cursor") {
+      return false;
     }
     return false;
   }, [
@@ -1516,6 +1548,16 @@ function ProviderFormFull({
       ) {
         toast.error(t("hermes.form.providerKeyDuplicate"));
         return;
+      }
+    }
+
+    if (appId === "cursor") {
+      if (!values.name.trim()) {
+        issues.push(
+          t("providerForm.fillSupplierName", {
+            defaultValue: "请填写供应商名称",
+          }),
+        );
       }
     }
 
@@ -1920,6 +1962,8 @@ function ProviderFormFull({
       payload.providerKey = openclawForm.openclawProviderKey;
     } else if (appId === "hermes") {
       payload.providerKey = hermesForm.hermesProviderKey;
+    } else if (appId === "cursor") {
+      payload.providerKey = "cursor-" + crypto.randomUUID().slice(0, 8);
     }
 
     if (isAnyOmoCategory && !payload.presetCategory) {
@@ -2285,6 +2329,20 @@ function ProviderFormFull({
     formBaseUrl: hermesForm.hermesBaseUrl,
   });
 
+  // 使用 API Key 链接 hook (Cursor)
+  const {
+    shouldShowApiKeyLink: shouldShowCursorApiKeyLink,
+    websiteUrl: cursorWebsiteUrl,
+    isPartner: isCursorPartner,
+    partnerPromotionKey: cursorPartnerPromotionKey,
+  } = useApiKeyLink({
+    appId: "cursor",
+    category,
+    selectedPresetId,
+    presetEntries,
+    formWebsiteUrl: form.watch("websiteUrl") || "",
+  });
+
   // 使用端点测速候选 hook
   const speedTestEndpoints = useSpeedTestEndpoints({
     appId,
@@ -2329,6 +2387,9 @@ function ProviderFormFull({
       }
       if (appId === "hermes") {
         hermesForm.resetHermesState();
+      }
+      if (appId === "cursor") {
+        cursorForm.resetCursorState();
       }
       return;
     }
@@ -2458,6 +2519,28 @@ function ProviderFormFull({
       const config = preset.settingsConfig;
 
       hermesForm.resetHermesState(config, preset.providerKey);
+
+      form.reset({
+        name: preset.nameKey ? t(preset.nameKey) : preset.name,
+        websiteUrl: preset.websiteUrl ?? "",
+        settingsConfig: JSON.stringify(config, null, 2),
+        icon: preset.icon ?? "",
+        iconColor: preset.iconColor ?? "",
+      });
+      return;
+    }
+
+    // Cursor preset handling
+    if (appId === "cursor") {
+      const preset = entry.preset as CursorProviderPreset;
+      const config: Record<string, unknown> = {
+        ...preset.settingsConfig,
+      };
+      if (preset.modelCatalog?.length) {
+        config.modelCatalog = { models: preset.modelCatalog };
+      }
+
+      cursorForm.resetCursorState(config);
 
       form.reset({
         name: preset.nameKey ? t(preset.nameKey) : preset.name,
@@ -3065,6 +3148,25 @@ function ProviderFormFull({
             />
           )}
 
+          {/* Cursor 专属字段 */}
+          {appId === "cursor" && (
+            <CursorFormFields
+              baseUrl={cursorForm.cursorBaseUrl}
+              onBaseUrlChange={cursorForm.handleCursorBaseUrlChange}
+              apiKey={cursorForm.cursorApiKey}
+              onApiKeyChange={cursorForm.handleCursorApiKeyChange}
+              category={category}
+              shouldShowApiKeyLink={shouldShowCursorApiKeyLink}
+              websiteUrl={cursorWebsiteUrl}
+              isPartner={isCursorPartner}
+              partnerPromotionKey={cursorPartnerPromotionKey}
+              model={cursorForm.cursorModel}
+              onModelChange={cursorForm.handleCursorModelChange}
+              catalogModels={cursorForm.cursorCatalogModels}
+              onCatalogModelsChange={cursorForm.handleCursorCatalogModelsChange}
+            />
+          )}
+
           {/* 配置编辑器：Codex、Claude、Gemini 分别使用不同的编辑器 */}
           {useStackLayout ? (
             settingsConfigErrorField
@@ -3147,7 +3249,9 @@ function ProviderFormFull({
               </div>
               {settingsConfigErrorField}
             </>
-          ) : appId === "openclaw" || appId === "hermes" ? (
+          ) : appId === "openclaw" ||
+            appId === "hermes" ||
+            appId === "cursor" ? (
             <>
               <div className="space-y-2">
                 <Label htmlFor="settingsConfig">
@@ -3168,7 +3272,13 @@ function ProviderFormFull({
   "base_url": "https://api.example.com/v1",
   "api_key": ""
 }`
-                      : `{
+                      : appId === "cursor"
+                        ? `{
+  "baseUrl": "https://api.example.com/v1",
+  "apiKey": "",
+  "model": ""
+}`
+                        : `{
   "baseUrl": "https://api.example.com/v1",
   "apiKey": "your-api-key-here",
   "api": "openai-completions",

@@ -13,6 +13,48 @@ struct LegacySkillMigrationRow {
     app_type: String,
 }
 
+/// `mcp_servers` 上「按应用独立」的启用开关列，必须与 `create_tables_on_conn` 的
+/// CREATE TABLE 保持一致。
+///
+/// 迁移 28→29 用它修复「版本号已越过的缺口」：早期 fork 把 user_version 写高之后，
+/// 序号更低的补列臂永远不再执行，查询会直接 `no such column`。新增应用支持时
+/// 只需同步维护这两张列表与建表语句。
+const MCP_ENABLED_FLAG_COLUMNS: &[&str] = &[
+    "enabled_claude",
+    "enabled_codex",
+    "enabled_gemini",
+    "enabled_grokbuild",
+    "enabled_opencode",
+    "enabled_mcode",
+    "enabled_agy",
+    "enabled_kimi",
+    "enabled_dsh",
+    "enabled_copilot",
+    "enabled_workbuddy",
+    "enabled_hermes",
+    "enabled_pi",
+    "enabled_omp",
+    "enabled_cursor",
+];
+
+/// `skills` 的启用开关列。没有 pi / omp —— 这两个应用的 Skill 启用状态按原生
+/// 目录现算（见 19→20、22→23 迁移注释）。
+const SKILL_ENABLED_FLAG_COLUMNS: &[&str] = &[
+    "enabled_claude",
+    "enabled_codex",
+    "enabled_gemini",
+    "enabled_grokbuild",
+    "enabled_opencode",
+    "enabled_mcode",
+    "enabled_agy",
+    "enabled_kimi",
+    "enabled_dsh",
+    "enabled_copilot",
+    "enabled_workbuddy",
+    "enabled_hermes",
+    "enabled_cursor",
+];
+
 impl Database {
     /// 创建所有数据库表
     pub(crate) fn create_tables(&self) -> Result<(), AppError> {
@@ -106,7 +148,8 @@ impl Database {
             enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             enabled_pi BOOLEAN NOT NULL DEFAULT 0,
-            enabled_omp BOOLEAN NOT NULL DEFAULT 0
+            enabled_omp BOOLEAN NOT NULL DEFAULT 0,
+            enabled_cursor BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -142,6 +185,7 @@ impl Database {
             enabled_copilot BOOLEAN NOT NULL DEFAULT 0,
             enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            enabled_cursor BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
             updated_at INTEGER NOT NULL DEFAULT 0
@@ -169,7 +213,7 @@ impl Database {
 
         // 8. Proxy Config 表（三行结构，app_type 主键）
         conn.execute("CREATE TABLE IF NOT EXISTS proxy_config (
-            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild')),
+            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild','cursor')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
@@ -698,33 +742,24 @@ impl Database {
                         Self::set_user_version(conn, 25)?;
                     }
                     25 => {
-                        // WorkBuddy：MCP 与 Skills 都存开关。
-                        // 早期开发版曾把 enabled_workbuddy 记作 v23（缺 enabled_omp）、v24
-                        // （缺上游 v24 的 enabled_dsh）或 v25（缺上游 v25 的 enabled_copilot），
-                        // 这里顺带补齐这些列；所有列都按"缺失才加"处理，保证幂等。
-                        if Self::table_exists(conn, "mcp_servers")? {
-                            Self::add_column_if_missing(
-                                conn,
-                                "mcp_servers",
-                                "enabled_omp",
-                                "BOOLEAN NOT NULL DEFAULT 0",
-                            )?;
-                        }
-                        for table in ["mcp_servers", "skills"] {
-                            if Self::table_exists(conn, table)? {
-                                for column in
-                                    ["enabled_dsh", "enabled_copilot", "enabled_workbuddy"]
-                                {
-                                    Self::add_column_if_missing(
-                                        conn,
-                                        table,
-                                        column,
-                                        "BOOLEAN NOT NULL DEFAULT 0",
-                                    )?;
-                                }
-                            }
-                        }
+                        log::info!("迁移数据库从 v25 到 v26（添加 Cursor IDE 支持）");
+                        Self::migrate_v25_to_v26(conn)?;
                         Self::set_user_version(conn, 26)?;
+                    }
+                    26 => {
+                        log::info!("迁移数据库从 v26 到 v27（proxy_config 添加 Cursor 支持）");
+                        Self::migrate_v26_to_v27(conn)?;
+                        Self::set_user_version(conn, 27)?;
+                    }
+                    27 => {
+                        // Both fork histories used earlier version numbers differently;
+                        // the next migration repairs all application flags together.
+                        Self::set_user_version(conn, 28)?;
+                    }
+                    28 => {
+                        log::info!("迁移数据库从 v28 到 v29（幂等补齐越过的启用列）");
+                        Self::migrate_v28_to_v29(conn)?;
+                        Self::set_user_version(conn, 29)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1057,7 +1092,7 @@ impl Database {
         // 创建新表
         conn.execute("DROP TABLE IF EXISTS proxy_config_new", [])?;
         conn.execute("CREATE TABLE proxy_config_new (
-            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild')),
+            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild','cursor')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
@@ -1619,7 +1654,7 @@ impl Database {
             .map_err(|e| AppError::Database(e.to_string()))?;
         conn.execute(
             "CREATE TABLE proxy_config_v14 (
-                app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild')),
+                app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild','cursor')),
                 proxy_enabled INTEGER NOT NULL DEFAULT 0,
                 listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
                 listen_port INTEGER NOT NULL DEFAULT 15721,
@@ -1772,6 +1807,176 @@ impl Database {
                 "last_tail_fingerprint",
                 "INTEGER",
             )?;
+        }
+        Ok(())
+    }
+
+    /// v25 -> v26: 添加 Cursor IDE 支持（新增 enabled_cursor 列）
+    fn migrate_v25_to_v26(conn: &Connection) -> Result<(), AppError> {
+        // ALTER TABLE … ADD COLUMN 在 SQLite 中不能 IF NOT EXISTS，
+        // 手动检查 sqlite_master 中的列列表以避免重复运行报错。
+        fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool, AppError> {
+            let result: String = conn
+                .query_row(
+                    &format!("SELECT sql FROM sqlite_master WHERE type='table' AND name='{table}'"),
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|e| AppError::Database(format!("查询 {table} 表结构失败: {e}")))?;
+            Ok(result.contains(column))
+        }
+
+        // 为 mcp_servers 表添加 enabled_cursor 列（表不存在时跳过：
+        // 旧版本最小化测试夹具不建该表；真实库中表自 v1 起存在）
+        if Self::table_exists(conn, "mcp_servers")?
+            && !column_exists(conn, "mcp_servers", "enabled_cursor")?
+        {
+            conn.execute(
+                "ALTER TABLE mcp_servers ADD COLUMN enabled_cursor BOOLEAN NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|e| {
+                AppError::Database(format!("添加 mcp_servers.enabled_cursor 列失败: {e}"))
+            })?;
+            log::info!("Migration v26: Added enabled_cursor column to mcp_servers table");
+        }
+
+        // 为 skills 表添加 enabled_cursor 列
+        if Self::table_exists(conn, "skills")? && !column_exists(conn, "skills", "enabled_cursor")?
+        {
+            conn.execute(
+                "ALTER TABLE skills ADD COLUMN enabled_cursor BOOLEAN NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|e| AppError::Database(format!("添加 skills.enabled_cursor 列失败: {e}")))?;
+            log::info!("Migration v26: Added enabled_cursor column to skills table");
+        }
+
+        // 旧 cursor 线的库停在 v20 时，18→19（enabled_mcode）/19→20（enabled_pi）两臂已被跨过，
+        // 这两列会永久缺失；在链尾幂等补一次（全新库与上游线的库都是 no-op）。
+        for table in ["mcp_servers", "skills"] {
+            if Self::table_exists(conn, table)? && !column_exists(conn, table, "enabled_mcode")? {
+                conn.execute(
+                    &format!(
+                        "ALTER TABLE {table} ADD COLUMN enabled_mcode BOOLEAN NOT NULL DEFAULT 0"
+                    ),
+                    [],
+                )
+                .map_err(|e| {
+                    AppError::Database(format!("添加 {table}.enabled_mcode 列失败: {e}"))
+                })?;
+                log::info!("Migration v24: Added enabled_mcode column to {table} table");
+            }
+        }
+        if Self::table_exists(conn, "mcp_servers")?
+            && !column_exists(conn, "mcp_servers", "enabled_pi")?
+        {
+            conn.execute(
+                "ALTER TABLE mcp_servers ADD COLUMN enabled_pi BOOLEAN NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|e| AppError::Database(format!("添加 mcp_servers.enabled_pi 列失败: {e}")))?;
+            log::info!("Migration v24: Added enabled_pi column to mcp_servers table");
+        }
+
+        Ok(())
+    }
+
+    /// v26 -> v27: proxy_config 表添加 Cursor 支持
+    fn migrate_v26_to_v27(conn: &Connection) -> Result<(), AppError> {
+        // proxy_config 表不存在时跳过（旧版本最小化测试夹具不建该表）
+        if !Self::table_exists(conn, "proxy_config")? {
+            return Ok(());
+        }
+        // proxy_config 表的 CHECK 约束不包含 'cursor'，需要重建表来更新约束
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS proxy_config_v22 (
+                app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild','cursor')),
+                proxy_enabled INTEGER NOT NULL DEFAULT 0,
+                listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
+                listen_port INTEGER NOT NULL DEFAULT 15721,
+                enable_logging INTEGER NOT NULL DEFAULT 1,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
+                max_retries INTEGER NOT NULL DEFAULT 3,
+                streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
+                streaming_idle_timeout INTEGER NOT NULL DEFAULT 120,
+                non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
+                circuit_failure_threshold INTEGER NOT NULL DEFAULT 4,
+                circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
+                circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60,
+                circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
+                circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+                default_cost_multiplier TEXT NOT NULL DEFAULT '1',
+                pricing_model_source TEXT NOT NULL DEFAULT 'response',
+                live_takeover_active INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            -- 必须按列名拷贝：真实库里 live_takeover_active 是 ALTER 追加的（排在最后），
+            -- 与上面重建表声明的列序不同，用 SELECT * 会让 live_takeover_active /
+            -- created_at / updated_at 三列整体错位。
+            INSERT OR IGNORE INTO proxy_config_v22 (
+                app_type, proxy_enabled, listen_address, listen_port, enable_logging,
+                enabled, auto_failover_enabled, max_retries, streaming_first_byte_timeout,
+                streaming_idle_timeout, non_streaming_timeout, circuit_failure_threshold,
+                circuit_success_threshold, circuit_timeout_seconds, circuit_error_rate_threshold,
+                circuit_min_requests, default_cost_multiplier, pricing_model_source,
+                live_takeover_active, created_at, updated_at
+            ) SELECT
+                app_type, proxy_enabled, listen_address, listen_port, enable_logging,
+                enabled, auto_failover_enabled, max_retries, streaming_first_byte_timeout,
+                streaming_idle_timeout, non_streaming_timeout, circuit_failure_threshold,
+                circuit_success_threshold, circuit_timeout_seconds, circuit_error_rate_threshold,
+                circuit_min_requests, default_cost_multiplier, pricing_model_source,
+                live_takeover_active, created_at, updated_at
+            FROM proxy_config;
+
+            -- Insert Cursor default row
+            INSERT OR IGNORE INTO proxy_config_v22 (
+                app_type, max_retries,
+                streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+                circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
+                circuit_error_rate_threshold, circuit_min_requests
+            ) VALUES ('cursor', 3, 60, 120, 600, 4, 2, 60, 0.6, 10);
+
+            DROP TABLE proxy_config;
+            ALTER TABLE proxy_config_v22 RENAME TO proxy_config;"
+        )
+        .map_err(|e| AppError::Database(format!("迁移 proxy_config 支持 Cursor 失败: {e}")))?;
+
+        log::info!("Migration v27: Added Cursor support to proxy_config table");
+        Ok(())
+    }
+
+    /// v28 -> v29: 幂等补齐被跳过的启用列
+    ///
+    /// 真实现场：旧本地 fork 已写入 `user_version=28`，但它的 28 只有 Cursor 线的
+    /// `enabled_cursor`，从未执行上游 copilot 臂与 WorkBuddy 臂。新应用若只支持到 28，
+    /// `while version < SCHEMA_VERSION` 不进入，缺口永远不会被修复，MCP / Skills 查询
+    /// 直接 `no such column: enabled_copilot`。
+    ///
+    /// 只做「缺列才 ADD COLUMN」，不重建表：既有行与既有开关（cursor / mcode / dsh …）
+    /// 原样保留，新列取 DEFAULT 0。对上游 v28 库、全新库以及重复执行为 no-op。
+    fn migrate_v28_to_v29(conn: &Connection) -> Result<(), AppError> {
+        Self::ensure_enabled_flag_columns(conn, "mcp_servers", MCP_ENABLED_FLAG_COLUMNS)?;
+        Self::ensure_enabled_flag_columns(conn, "skills", SKILL_ENABLED_FLAG_COLUMNS)?;
+        Ok(())
+    }
+
+    /// 缺列才补（`BOOLEAN NOT NULL DEFAULT 0`，与建表语句一致）。表不存在时跳过：
+    /// 旧的最小化测试夹具不建这些表。
+    fn ensure_enabled_flag_columns(
+        conn: &Connection,
+        table: &str,
+        columns: &[&str],
+    ) -> Result<(), AppError> {
+        if !Self::table_exists(conn, table)? {
+            return Ok(());
+        }
+        for column in columns {
+            Self::add_column_if_missing(conn, table, column, "BOOLEAN NOT NULL DEFAULT 0")?;
         }
         Ok(())
     }
@@ -4256,7 +4461,7 @@ mod tests {
         Ok(())
     }
 
-    /// 上游 v24（DeepSeek Harness）形态：两张表已有 enabled_dsh，v24 → v25 补 enabled_copilot，v25 → v26 补 enabled_workbuddy。
+    /// 上游 v24（DeepSeek Harness）形态：两张表已有 enabled_dsh，v24 → v25 补 enabled_copilot，v27 → v28 补 enabled_workbuddy。
     #[test]
     fn workbuddy_migration_from_upstream_v24_keeps_dsh_and_omp_flags() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
@@ -4296,7 +4501,7 @@ mod tests {
     }
 
     /// 早期 WorkBuddy 开发版把 enabled_workbuddy 记作 v23：版本号是 23，但缺 enabled_omp。
-    /// v23 → v24 补 enabled_dsh，v25 → v26 补齐 enabled_omp，并保留已有的 WorkBuddy 开关。
+    /// v23 → v24 补 enabled_dsh，v27 → v28 补齐 enabled_omp，并保留已有的 WorkBuddy 开关。
     #[test]
     fn workbuddy_migration_from_dev_v23_backfills_missing_omp_column() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
@@ -4335,7 +4540,7 @@ mod tests {
     }
 
     /// 合并 DeepSeek Harness 之前的 WorkBuddy 开发版把 enabled_workbuddy 记作 v24：
-    /// 版本号是 24，但缺上游 v24 的 enabled_dsh。v25 → v26 需要补齐它。
+    /// 版本号是 24，但缺上游 v24 的 enabled_dsh。v27 → v28 需要补齐它。
     #[test]
     fn workbuddy_migration_from_dev_v24_backfills_missing_dsh_column() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
@@ -4373,7 +4578,7 @@ mod tests {
         Ok(())
     }
 
-    /// 上游 v25（GitHub Copilot CLI）形态：已有 enabled_copilot，v25 → v26 只补 enabled_workbuddy。
+    /// 上游 v25（GitHub Copilot CLI）形态：已有 enabled_copilot，v27 → v28 只补 enabled_workbuddy。
     #[test]
     fn workbuddy_migration_from_upstream_v25_keeps_copilot_flags() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
@@ -4412,7 +4617,7 @@ mod tests {
     }
 
     /// 合并 Copilot CLI 之前的 WorkBuddy 开发版把 enabled_workbuddy 记作 v25：
-    /// 版本号是 25，但缺上游 v25 的 enabled_copilot。v25 → v26 需要补齐它。
+    /// 版本号是 25，但缺上游 v25 的 enabled_copilot。v26 → v27 需要补齐它。
     #[test]
     fn workbuddy_migration_from_dev_v25_backfills_missing_copilot_column() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
@@ -4648,6 +4853,564 @@ mod tests {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
         assert_eq!(values, (1, 1, 0));
+        Ok(())
+    }
+
+    /// 回归（2026-10-28）：v25→v26 重建 proxy_config 时，原实现用 `SELECT *` 按**位置**拷贝。
+    /// 但真实库里 `live_takeover_active` 是后期 `ALTER TABLE` 追加的（SQLite 只能追加到末尾），
+    /// 因此实际列序是 `…, created_at, updated_at, live_takeover_active`，与重建表声明的
+    /// `…, live_takeover_active, created_at, updated_at` 不同 → 三列静默错位。
+    /// 迁移必须按列名拷贝，不能依赖列序。
+    #[test]
+    fn proxy_config_cursor_migration_preserves_column_values() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE proxy_config (
+                app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild')),
+                proxy_enabled INTEGER NOT NULL DEFAULT 0,
+                listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
+                listen_port INTEGER NOT NULL DEFAULT 15721,
+                enable_logging INTEGER NOT NULL DEFAULT 1,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
+                max_retries INTEGER NOT NULL DEFAULT 3,
+                streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
+                streaming_idle_timeout INTEGER NOT NULL DEFAULT 120,
+                non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
+                circuit_failure_threshold INTEGER NOT NULL DEFAULT 4,
+                circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
+                circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60,
+                circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
+                circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+                default_cost_multiplier TEXT NOT NULL DEFAULT '1',
+                pricing_model_source TEXT NOT NULL DEFAULT 'response',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            ALTER TABLE proxy_config ADD COLUMN live_takeover_active INTEGER NOT NULL DEFAULT 0;
+            INSERT INTO proxy_config (app_type, live_takeover_active, created_at, updated_at, max_retries)
+                VALUES ('claude', 1, '2026-01-01 00:00:00', '2026-01-02 00:00:00', 9);",
+        )?;
+        Database::set_user_version(&conn, 24)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let (live, created, updated, retries): (i64, String, String, i64) = conn.query_row(
+            "SELECT live_takeover_active, created_at, updated_at, max_retries
+             FROM proxy_config WHERE app_type = 'claude'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(live, 1, "live_takeover_active 不能被时间戳顶掉");
+        assert_eq!(created, "2026-01-01 00:00:00");
+        assert_eq!(updated, "2026-01-02 00:00:00");
+        assert_eq!(retries, 9);
+        let cursor_rows: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proxy_config WHERE app_type = 'cursor'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(cursor_rows, 1, "迁移后应有一条 cursor 默认行");
+        Ok(())
+    }
+
+    /// 回归（2026-10-09）：旧 **cursor 线**的库（该线 `SCHEMA_VERSION=20`，cursor 的迁移占了
+    /// 18→19 / 19→20）升到新链时，上游的 enabled_mcode / enabled_pi 补列排在 18/19 两臂 ——
+    /// 低于该库已到达的水位 20，于是被整段跳过，而版本号照样推进到 SCHEMA_VERSION。
+    /// 结果：mcp_servers 缺 enabled_mcode/enabled_pi、skills 缺 enabled_mcode，
+    /// MCP 列表查询直接 `no such column: enabled_mcode`（用户实测报错）。
+    /// 补列必须排在链尾才能覆盖这类库。
+    #[test]
+    fn migrating_a_cursor_line_db_backfills_mcode_and_pi_columns() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        // 旧 cursor 线的形态：有 enabled_cursor，但没有 mcode / pi。
+        conn.execute_batch(
+            "CREATE TABLE mcp_servers (
+                id TEXT PRIMARY KEY,
+                enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+                enabled_cursor BOOLEAN NOT NULL DEFAULT 0
+            );
+            CREATE TABLE skills (
+                id TEXT PRIMARY KEY,
+                enabled_cursor BOOLEAN NOT NULL DEFAULT 0
+            );
+            INSERT INTO mcp_servers (id, enabled_codex, enabled_cursor) VALUES ('mcp-1', 1, 1);",
+        )?;
+        Database::set_user_version(&conn, 20)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let values: (i64, i64, i64) = conn.query_row(
+            "SELECT enabled_cursor, enabled_mcode, enabled_pi FROM mcp_servers WHERE id = 'mcp-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(values, (1, 0, 0), "既有开关要保留，新列要有默认值");
+        let skills_mcode: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('skills') WHERE name = 'enabled_mcode'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(skills_mcode, 1, "skills 也必须有 enabled_mcode");
+        Ok(())
+    }
+
+    /// 兼容 **Cursor 预览线**（2026-11 合入上游前）：该线把 25/26 用在 cursor 列与
+    /// proxy_config 上，而合入上游后 copilot 迁移臂排在 24。版本已越过 24 的库不会
+    /// 再执行 copilot 臂，若只在链尾追加 cursor 迁移，mcp_servers/skills 会永久缺
+    /// `enabled_copilot`，MCP 列表查询直接 `no such column`。
+    /// 迁移必须在最终臂幂等补齐 copilot 列。
+    #[test]
+    fn migrating_cursor_line_v26_db_backfills_copilot_columns() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE mcp_servers (
+                id TEXT PRIMARY KEY,
+                enabled_cursor BOOLEAN NOT NULL DEFAULT 0
+            );
+            CREATE TABLE skills (
+                id TEXT PRIMARY KEY,
+                enabled_cursor BOOLEAN NOT NULL DEFAULT 0
+            );
+            CREATE TABLE proxy_config (
+                app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild','cursor')),
+                proxy_enabled INTEGER NOT NULL DEFAULT 0,
+                listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
+                listen_port INTEGER NOT NULL DEFAULT 15721,
+                enable_logging INTEGER NOT NULL DEFAULT 1,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
+                max_retries INTEGER NOT NULL DEFAULT 3,
+                streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
+                streaming_idle_timeout INTEGER NOT NULL DEFAULT 120,
+                non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
+                circuit_failure_threshold INTEGER NOT NULL DEFAULT 4,
+                circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
+                circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60,
+                circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
+                circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+                default_cost_multiplier TEXT NOT NULL DEFAULT '1',
+                pricing_model_source TEXT NOT NULL DEFAULT 'response',
+                live_takeover_active INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            INSERT INTO mcp_servers (id, enabled_cursor) VALUES ('mcp-1', 1);
+            INSERT INTO skills (id, enabled_cursor) VALUES ('skill-1', 1);
+            INSERT INTO proxy_config (app_type, max_retries) VALUES ('cursor', 7);",
+        )?;
+        Database::set_user_version(&conn, 26)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let mcp: (i64, i64) = conn.query_row(
+            "SELECT enabled_cursor, enabled_copilot FROM mcp_servers WHERE id = 'mcp-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(mcp, (1, 0), "既有 cursor 开关保留，copilot 列补默认值");
+        let skill: (i64, i64) = conn.query_row(
+            "SELECT enabled_cursor, enabled_copilot FROM skills WHERE id = 'skill-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(skill, (1, 0));
+        let retries: i64 = conn.query_row(
+            "SELECT max_retries FROM proxy_config WHERE app_type = 'cursor'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(retries, 7, "已有 cursor proxy 配置不能被重建丢掉");
+        Ok(())
+    }
+
+    /// 同上，覆盖预览线停在 v25（已加 cursor 列、proxy_config 尚未放开 cursor）的库。
+    #[test]
+    fn migrating_cursor_line_v25_db_backfills_copilot_columns() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE mcp_servers (
+                id TEXT PRIMARY KEY,
+                enabled_cursor BOOLEAN NOT NULL DEFAULT 0
+            );
+            CREATE TABLE skills (
+                id TEXT PRIMARY KEY,
+                enabled_cursor BOOLEAN NOT NULL DEFAULT 0
+            );
+            CREATE TABLE proxy_config (
+                app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild')),
+                proxy_enabled INTEGER NOT NULL DEFAULT 0,
+                listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
+                listen_port INTEGER NOT NULL DEFAULT 15721,
+                enable_logging INTEGER NOT NULL DEFAULT 1,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
+                max_retries INTEGER NOT NULL DEFAULT 3,
+                streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
+                streaming_idle_timeout INTEGER NOT NULL DEFAULT 120,
+                non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
+                circuit_failure_threshold INTEGER NOT NULL DEFAULT 4,
+                circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
+                circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60,
+                circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
+                circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+                default_cost_multiplier TEXT NOT NULL DEFAULT '1',
+                pricing_model_source TEXT NOT NULL DEFAULT 'response',
+                live_takeover_active INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            INSERT INTO mcp_servers (id, enabled_cursor) VALUES ('mcp-1', 1);
+            INSERT INTO skills (id, enabled_cursor) VALUES ('skill-1', 1);
+            INSERT INTO proxy_config (app_type, max_retries) VALUES ('claude', 9);",
+        )?;
+        Database::set_user_version(&conn, 25)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        for table in ["mcp_servers", "skills"] {
+            let flags: (i64, i64) = conn.query_row(
+                &format!("SELECT enabled_cursor, enabled_copilot FROM {table} LIMIT 1"),
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            assert_eq!(
+                flags,
+                (1, 0),
+                "{table} 应有 cursor 开关与补默认值的 copilot 列"
+            );
+        }
+        let claude_retries: i64 = conn.query_row(
+            "SELECT max_retries FROM proxy_config WHERE app_type = 'claude'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(claude_retries, 9, "重建 proxy_config 不能丢已有配置");
+        let cursor_rows: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proxy_config WHERE app_type = 'cursor'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(cursor_rows, 1, "升级后应补上 cursor 默认行");
+        Ok(())
+    }
+
+    /// 合并 WorkBuddy 线后：停在 v26 的 WorkBuddy 库已有 `enabled_workbuddy`、
+    /// 但从未执行 Cursor 的 25→26 臂，因此缺 `enabled_cursor`。升到链尾必须幂等补齐，
+    /// 且保留既有 WorkBuddy / OMP 开关与 proxy_config 配置。
+    #[test]
+    fn migrating_workbuddy_line_v26_db_adds_cursor_columns_without_losing_flags(
+    ) -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE mcp_servers (
+                id TEXT PRIMARY KEY,
+                enabled_omp BOOLEAN NOT NULL DEFAULT 0,
+                enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
+                enabled_copilot BOOLEAN NOT NULL DEFAULT 0,
+                enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0
+            );
+            CREATE TABLE skills (
+                id TEXT PRIMARY KEY,
+                enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
+                enabled_copilot BOOLEAN NOT NULL DEFAULT 0,
+                enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0
+            );
+            CREATE TABLE proxy_config (
+                app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild')),
+                proxy_enabled INTEGER NOT NULL DEFAULT 0,
+                listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
+                listen_port INTEGER NOT NULL DEFAULT 15721,
+                enable_logging INTEGER NOT NULL DEFAULT 1,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
+                max_retries INTEGER NOT NULL DEFAULT 3,
+                streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
+                streaming_idle_timeout INTEGER NOT NULL DEFAULT 120,
+                non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
+                circuit_failure_threshold INTEGER NOT NULL DEFAULT 4,
+                circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
+                circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60,
+                circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
+                circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+                default_cost_multiplier TEXT NOT NULL DEFAULT '1',
+                pricing_model_source TEXT NOT NULL DEFAULT 'response',
+                live_takeover_active INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            INSERT INTO mcp_servers (id, enabled_omp, enabled_workbuddy) VALUES ('mcp-1', 1, 1);
+            INSERT INTO skills (id, enabled_workbuddy) VALUES ('skill-1', 1);
+            INSERT INTO proxy_config (app_type, max_retries) VALUES ('claude', 9);",
+        )?;
+        Database::set_user_version(&conn, 26)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let mcp: (i64, i64, i64) = conn.query_row(
+            "SELECT enabled_cursor, enabled_workbuddy, enabled_omp FROM mcp_servers WHERE id = 'mcp-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(
+            mcp,
+            (0, 1, 1),
+            "补 cursor 列不能覆盖既有 WorkBuddy/OMP 开关"
+        );
+        let skill: (i64, i64) = conn.query_row(
+            "SELECT enabled_cursor, enabled_workbuddy FROM skills WHERE id = 'skill-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(skill, (0, 1));
+        let cursor_rows: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proxy_config WHERE app_type = 'cursor'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(cursor_rows, 1, "升级后应补上 cursor 默认行");
+        let claude_retries: i64 = conn.query_row(
+            "SELECT max_retries FROM proxy_config WHERE app_type = 'claude'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(claude_retries, 9, "重建 proxy_config 不能丢既有配置");
+        // 再跑一次是 no-op。
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        Ok(())
+    }
+
+    /// Cursor 线的库停在 v27（已有 `enabled_cursor` 与 `proxy_config.cursor`，
+    /// 没有 WorkBuddy 列）：合并后必须在链尾追加 WorkBuddy 迁移，且保留 cursor 开关。
+    #[test]
+    fn migrating_cursor_line_v27_db_adds_workbuddy_columns_without_losing_flags(
+    ) -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE mcp_servers (
+                id TEXT PRIMARY KEY,
+                enabled_cursor BOOLEAN NOT NULL DEFAULT 0
+            );
+            CREATE TABLE skills (
+                id TEXT PRIMARY KEY,
+                enabled_cursor BOOLEAN NOT NULL DEFAULT 0
+            );
+            CREATE TABLE proxy_config (
+                app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild','cursor')),
+                proxy_enabled INTEGER NOT NULL DEFAULT 0,
+                listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
+                listen_port INTEGER NOT NULL DEFAULT 15721,
+                enable_logging INTEGER NOT NULL DEFAULT 1,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
+                max_retries INTEGER NOT NULL DEFAULT 3,
+                streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
+                streaming_idle_timeout INTEGER NOT NULL DEFAULT 120,
+                non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
+                circuit_failure_threshold INTEGER NOT NULL DEFAULT 4,
+                circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
+                circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60,
+                circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
+                circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+                default_cost_multiplier TEXT NOT NULL DEFAULT '1',
+                pricing_model_source TEXT NOT NULL DEFAULT 'response',
+                live_takeover_active INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            INSERT INTO mcp_servers (id, enabled_cursor) VALUES ('mcp-1', 1);
+            INSERT INTO skills (id, enabled_cursor) VALUES ('skill-1', 1);
+            INSERT INTO proxy_config (app_type, max_retries) VALUES ('cursor', 7);",
+        )?;
+        Database::set_user_version(&conn, 27)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let mcp: (i64, i64) = conn.query_row(
+            "SELECT enabled_cursor, enabled_workbuddy FROM mcp_servers WHERE id = 'mcp-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(mcp, (1, 0), "既有 cursor 开关保留，workbuddy 列要有默认值");
+        let skill: (i64, i64) = conn.query_row(
+            "SELECT enabled_cursor, enabled_workbuddy FROM skills WHERE id = 'skill-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(skill, (1, 0));
+        let retries: i64 = conn.query_row(
+            "SELECT max_retries FROM proxy_config WHERE app_type = 'cursor'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(retries, 7, "已有 cursor proxy 配置不能被重建丢掉");
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        Ok(())
+    }
+
+    /// 回归（2026-11-13，真实用户库）：更早的本地 fork 已把 `user_version` 写成 28，
+    /// 但它的 28 只包含 Cursor 线（`enabled_cursor`），从未执行过 WorkBuddy / Copilot
+    /// 的补列臂。新版本只支持到 28 时，`while version < SCHEMA_VERSION` 直接不进入，
+    /// 迁移整段被跳过，MCP / Skills 查询随即 `no such column: enabled_copilot`。
+    ///
+    /// 现场（只读探测 `~/.cc-switch/cc-switch.db`）：
+    /// `user_version=28`，mcp_servers / skills 均缺 `enabled_copilot`、`enabled_workbuddy`，
+    /// 且两者都有 `enabled_cursor`。
+    ///
+    /// 修复策略：追加 28→29 的幂等补列臂，覆盖「版本号已越过的缺口」。
+    #[test]
+    fn migrating_legacy_fork_v28_db_repairs_missing_workbuddy_and_copilot_columns(
+    ) -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        // 按真实库的列集合建表：有 cursor / mcode / pi / omp / dsh，缺 copilot / workbuddy。
+        conn.execute_batch(
+            "CREATE TABLE mcp_servers (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL DEFAULT '',
+                enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+                enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+                enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+                enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+                enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+                enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
+                enabled_cursor BOOLEAN NOT NULL DEFAULT 0,
+                enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
+                enabled_pi BOOLEAN NOT NULL DEFAULT 0,
+                enabled_agy BOOLEAN NOT NULL DEFAULT 0,
+                enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
+                enabled_omp BOOLEAN NOT NULL DEFAULT 0,
+                enabled_dsh BOOLEAN NOT NULL DEFAULT 0
+            );
+            CREATE TABLE skills (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL DEFAULT '',
+                enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+                enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+                enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+                enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+                enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+                enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
+                enabled_cursor BOOLEAN NOT NULL DEFAULT 0,
+                enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
+                enabled_agy BOOLEAN NOT NULL DEFAULT 0,
+                enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
+                enabled_dsh BOOLEAN NOT NULL DEFAULT 0
+            );
+            INSERT INTO mcp_servers (id, name, enabled_cursor, enabled_mcode, enabled_dsh)
+                VALUES ('mcp-1', 'server one', 1, 1, 1);
+            INSERT INTO mcp_servers (id, name) VALUES ('mcp-2', 'server two');
+            INSERT INTO skills (id, name, enabled_cursor, enabled_dsh)
+                VALUES ('skill-1', 'skill one', 1, 1);
+            INSERT INTO skills (id, name) VALUES ('skill-2', 'skill two');",
+        )?;
+        Database::set_user_version(&conn, 28)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(
+            Database::get_user_version(&conn)?,
+            SCHEMA_VERSION,
+            "legacy v28 库必须被推进到当前版本，否则缺口永久留在库里"
+        );
+        for table in ["mcp_servers", "skills"] {
+            for column in ["enabled_copilot", "enabled_workbuddy"] {
+                assert!(
+                    Database::has_column(&conn, table, column)?,
+                    "{table} 缺少 {column}（真实用户库正是这个形态）"
+                );
+            }
+        }
+
+        // 既有行与既有开关必须原样保留，新列取默认值 0。
+        let rows: i64 = conn.query_row("SELECT COUNT(*) FROM mcp_servers", [], |r| r.get(0))?;
+        assert_eq!(rows, 2, "补列不能丢行");
+        let flags: (String, i64, i64, i64, i64, i64) = conn.query_row(
+            "SELECT name, enabled_cursor, enabled_mcode, enabled_dsh,
+                    enabled_copilot, enabled_workbuddy
+             FROM mcp_servers WHERE id = 'mcp-1'",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )?;
+        assert_eq!(
+            flags,
+            ("server one".to_string(), 1, 1, 1, 0, 0),
+            "既有 cursor/mcode/dsh 开关保持，新列为 0"
+        );
+        let skill_flags: (i64, i64, i64, i64) = conn.query_row(
+            "SELECT enabled_cursor, enabled_dsh, enabled_copilot, enabled_workbuddy
+             FROM skills WHERE id = 'skill-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(skill_flags, (1, 1, 0, 0));
+
+        // 幂等：再跑一次不改版本、不报错、不覆盖数据。
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let cursor_still: i64 = conn.query_row(
+            "SELECT enabled_cursor FROM mcp_servers WHERE id = 'mcp-1'",
+            [],
+            |r| r.get(0),
+        )?;
+        assert_eq!(cursor_still, 1);
+        Ok(())
+    }
+
+    /// 28→29 必须只做「缺列才加」：已经带 WorkBuddy / Copilot 开关的上游 v28 库，
+    /// 其非零开关在升级后不能被重置（重建表式的修复会丢掉用户设置）。
+    #[test]
+    fn migrating_upstream_v28_db_keeps_existing_copilot_and_workbuddy_flags() -> Result<(), AppError>
+    {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE mcp_servers (
+                id TEXT PRIMARY KEY,
+                enabled_cursor BOOLEAN NOT NULL DEFAULT 0,
+                enabled_copilot BOOLEAN NOT NULL DEFAULT 0,
+                enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0
+            );
+            CREATE TABLE skills (
+                id TEXT PRIMARY KEY,
+                enabled_copilot BOOLEAN NOT NULL DEFAULT 0,
+                enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0
+            );
+            INSERT INTO mcp_servers (id, enabled_copilot, enabled_workbuddy) VALUES ('mcp-1', 1, 1);
+            INSERT INTO skills (id, enabled_copilot, enabled_workbuddy) VALUES ('skill-1', 1, 1);",
+        )?;
+        Database::set_user_version(&conn, 28)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let mcp: (i64, i64) = conn.query_row(
+            "SELECT enabled_copilot, enabled_workbuddy FROM mcp_servers WHERE id = 'mcp-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(mcp, (1, 1), "已存在的开关不能被修复逻辑重置");
+        let skill: (i64, i64) = conn.query_row(
+            "SELECT enabled_copilot, enabled_workbuddy FROM skills WHERE id = 'skill-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(skill, (1, 1));
         Ok(())
     }
 

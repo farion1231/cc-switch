@@ -263,6 +263,139 @@ export function useSetProxyTakeoverForApp() {
   });
 }
 
+// ========== 公网路由 Hooks ==========
+
+/**
+ * 获取公网路由状态（隧道运行时轮询，用于拿到公网地址）
+ */
+export function usePublicRouteStatus() {
+  return useQuery({
+    queryKey: ["publicRouteStatus"],
+    queryFn: () => proxyApi.getPublicRouteStatus(),
+    // 启用期间持续轮询，等待隧道就绪（公网地址出现）
+    refetchInterval: (query) => (query.state.data?.enabled ? 2000 : false),
+    placeholderData: (previousData) => previousData,
+  });
+}
+
+/**
+ * 保存公网路由隧道配置（模式 + 命名隧道参数）
+ */
+export function useSetPublicRouteTunnelConfig() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (config: {
+      mode: string;
+      namedTunnel?: string | null;
+      namedHostname?: string | null;
+    }) => proxyApi.setPublicRouteTunnelConfig(config),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["publicRouteStatus"] });
+    },
+  });
+}
+
+/**
+ * 列出 Cloudflare 账户下已有的命名隧道
+ */
+export function useListNamedTunnels(enabled: boolean) {
+  return useQuery({
+    queryKey: ["namedTunnels"],
+    queryFn: () => proxyApi.listNamedTunnels(),
+    enabled,
+    retry: false,
+    staleTime: 60_000,
+  });
+}
+
+/**
+ * 启用公网路由
+ */
+export function useEnablePublicRoute() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => proxyApi.enablePublicRoute(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["publicRouteStatus"] });
+    },
+  });
+}
+
+/**
+ * 禁用公网路由
+ */
+export function useDisablePublicRoute() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => proxyApi.disablePublicRoute(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["publicRouteStatus"] });
+    },
+  });
+}
+
+/**
+ * 重新生成公网路由隧道鉴权密钥（ccsk-*）。
+ * 返回最新状态（含新 key）；Cursor 的 key 无法自动写入，前端负责复制并引导重新粘贴。
+ */
+export function useRegeneratePublicRouteApiKey() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => proxyApi.regeneratePublicRouteApiKey(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["publicRouteStatus"] });
+    },
+  });
+}
+
+// ========== Cursor 接入引导 Hooks ==========
+
+/**
+ * Cursor 是否在运行。运行中会把设置回写覆盖，写 BYOK 前必须完全退出。
+ */
+export function useCursorIsRunning() {
+  return useQuery({
+    queryKey: ["cursorIsRunning"],
+    queryFn: () => proxyApi.cursorIsRunning(),
+    staleTime: 0,
+  });
+}
+
+/**
+ * Cursor 本地 BYOK 三字段现状。写之前再查一次，避免重复写。
+ */
+export function useCursorByokStatus() {
+  return useQuery({
+    queryKey: ["cursorByokStatus"],
+    queryFn: () => proxyApi.cursorByokStatus(),
+    staleTime: 0,
+  });
+}
+
+/**
+ * 写 Cursor BYOK：Base URL + 可用模型列表（密钥是加密存储的，写不进，需手工粘）。
+ */
+export function useCursorWriteByok() {
+  return useMutation({
+    mutationFn: (params: { baseUrl: string; modelIds: string[] }) =>
+      proxyApi.cursorWriteByok(params),
+  });
+}
+
+/**
+ * 分层测公网路由连通性：先 local（本机代理）再 public（隧道地址），定位坏在哪一层。
+ */
+export function useTestPublicRouteConnectivity() {
+  return useMutation({
+    mutationFn: (scope: "local" | "public") =>
+      proxyApi.testPublicRouteConnectivity(scope),
+  });
+}
+
 // ========== v3+ 全局/应用级配置 Hooks ==========
 
 /**
