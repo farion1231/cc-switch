@@ -3049,7 +3049,21 @@
       "piInvalidName": "Pi-MCP-Servernamen dürfen nur Buchstaben, Ziffern, _ und - enthalten: {{id}}",
       "piNameConflict": "Pi behandelt Servernamen, die sich nur durch - und _ unterscheiden, als denselben Server: {{id}} steht im Konflikt mit dem vorhandenen {{other}}",
       "saveFailed": "Speichern fehlgeschlagen",
-      "deleteFailed": "Löschen fehlgeschlagen"
+      "deleteFailed": "Löschen fehlgeschlagen",
+      "invalidOverrideClaude": "Die separate MCP-Konfiguration für Claude Code ist ungültig. Geben Sie vollständige Verbindungseinstellungen an.",
+      "invalidOverrideCodex": "Die separate MCP-Konfiguration für Codex ist ungültig. Geben Sie vollständige Verbindungseinstellungen an.",
+      "invalidOverrideGemini": "Die separate MCP-Konfiguration für Gemini CLI ist ungültig. Geben Sie vollständige Verbindungseinstellungen an.",
+      "invalidOverrideGrokbuild": "Die separate MCP-Konfiguration für Grok Build ist ungültig. Geben Sie vollständige Verbindungseinstellungen an.",
+      "invalidOverrideOpencode": "Die separate MCP-Konfiguration für OpenCode ist ungültig. Geben Sie vollständige Verbindungseinstellungen an.",
+      "invalidOverrideHermes": "Die separate MCP-Konfiguration für Hermes ist ungültig. Geben Sie vollständige Verbindungseinstellungen an.",
+      "invalidOverridePi": "Die separate MCP-Konfiguration für Pi ist ungültig. Geben Sie vollständige Verbindungseinstellungen an.",
+      "invalidOverrideMcode": "Die separate MCP-Konfiguration für MiniMax Code ist ungültig. Geben Sie vollständige Verbindungseinstellungen an.",
+      "invalidOverrideKimi": "Die separate MCP-Konfiguration für Kimi Code ist ungültig. Geben Sie vollständige Verbindungseinstellungen an.",
+      "invalidOverrideDsh": "Die separate MCP-Konfiguration für DeepSeek Harness ist ungültig. Geben Sie vollständige Verbindungseinstellungen an.",
+      "invalidOverrideCopilot": "Die separate MCP-Konfiguration für GitHub Copilot CLI ist ungültig. Geben Sie vollständige Verbindungseinstellungen an.",
+      "invalidOverrideWorkbuddy": "Die separate MCP-Konfiguration für WorkBuddy ist ungültig. Geben Sie vollständige Verbindungseinstellungen an.",
+      "invalidOverrideAgy": "Die separate MCP-Konfiguration für Antigravity ist ungültig. Geben Sie vollständige Verbindungseinstellungen an.",
+      "invalidOverrideOmp": "Die separate MCP-Konfiguration für Oh My Pi ist ungültig. Geben Sie vollständige Verbindungseinstellungen an."
     },
     "validation": {
       "ok": "Befehl verfügbar",
@@ -4942,7 +4956,13 @@
       "tags": "Tags",
       "tagsPlaceholder": "Durch Komma getrennt, z. B. docs, web",
       "homepage": "Startseite",
-      "docs": "Doku"
+      "docs": "Doku",
+      "configScope": "Konfiguration für",
+      "sharedConfig": "Standardkonfiguration",
+      "useAppConfig": "Separate Konfiguration für {{app}} verwenden",
+      "sharedConfigHint": "Apps ohne separate Konfiguration verwenden diese Verbindung.",
+      "appConfigHint": "Diese vollständige Verbindungskonfiguration gilt nur für diese App. Deaktivieren Sie sie, um wieder die Standardkonfiguration zu verwenden.",
+      "followsSharedConfig": "Diese App verwendet die Standardkonfiguration. Aktivieren Sie eine separate Konfiguration, um ihre Verbindungseinstellungen zu ändern."
     },
     "resync": "Konfiguration jeder App anhand dieser Schalter neu schreiben"
   },

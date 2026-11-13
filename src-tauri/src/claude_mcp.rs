@@ -316,6 +316,44 @@ pub fn read_mcp_servers_map() -> Result<std::collections::HashMap<String, Value>
     Ok(servers)
 }
 
+/// Pure projection shared by the writer and native-import comparison.
+pub(crate) fn native_server_spec(
+    id: &str,
+    spec: &Value,
+    is_wsl_target: bool,
+) -> Result<Value, AppError> {
+    let mut obj = if let Some(map) = spec.as_object() {
+        map.clone()
+    } else {
+        return Err(AppError::McpValidation(format!(
+            "MCP 服务器 '{id}' 不是对象"
+        )));
+    };
+
+    if let Some(server_val) = obj.remove("server") {
+        let server_obj = server_val.as_object().cloned().ok_or_else(|| {
+            AppError::McpValidation(format!("MCP 服务器 '{id}' server 字段不是对象"))
+        })?;
+        obj = server_obj;
+    }
+
+    obj.remove("enabled");
+    obj.remove("source");
+    obj.remove("id");
+    obj.remove("name");
+    obj.remove("description");
+    obj.remove("tags");
+    obj.remove("homepage");
+    obj.remove("docs");
+
+    // Windows 平台自动包装 npx/npm 等命令为 cmd /c 格式（WSL 路径除外）
+    if !is_wsl_target {
+        wrap_command_for_windows(&mut obj);
+    }
+
+    Ok(Value::Object(obj))
+}
+
 /// 将给定的启用 MCP 服务器映射写入到用户级 ~/.claude.json 的 mcpServers 字段
 /// 仅覆盖 mcpServers，其他字段保持不变
 pub fn set_mcp_servers_map(
@@ -336,36 +374,7 @@ pub fn set_mcp_servers_map(
     }
     let mut out: Map<String, Value> = Map::new();
     for (id, spec) in servers.iter() {
-        let mut obj = if let Some(map) = spec.as_object() {
-            map.clone()
-        } else {
-            return Err(AppError::McpValidation(format!(
-                "MCP 服务器 '{id}' 不是对象"
-            )));
-        };
-
-        if let Some(server_val) = obj.remove("server") {
-            let server_obj = server_val.as_object().cloned().ok_or_else(|| {
-                AppError::McpValidation(format!("MCP 服务器 '{id}' server 字段不是对象"))
-            })?;
-            obj = server_obj;
-        }
-
-        obj.remove("enabled");
-        obj.remove("source");
-        obj.remove("id");
-        obj.remove("name");
-        obj.remove("description");
-        obj.remove("tags");
-        obj.remove("homepage");
-        obj.remove("docs");
-
-        // Windows 平台自动包装 npx/npm 等命令为 cmd /c 格式（WSL 路径除外）
-        if !is_wsl_target {
-            wrap_command_for_windows(&mut obj);
-        }
-
-        out.insert(id.clone(), Value::Object(obj));
+        out.insert(id.clone(), native_server_spec(id, spec, is_wsl_target)?);
     }
 
     {

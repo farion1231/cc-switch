@@ -2983,7 +2983,21 @@
       "piInvalidName": "Pi MCP sunucu adları yalnızca harf, rakam, _ ve - içerebilir: {{id}}",
       "piNameConflict": "Pi, yalnızca - ve _ ile farklılaşan sunucu adlarını aynı sunucu olarak kabul eder: {{id}}, mevcut {{other}} ile çakışıyor",
       "saveFailed": "Kaydetme başarısız oldu",
-      "deleteFailed": "Silinemedi"
+      "deleteFailed": "Silinemedi",
+      "invalidOverrideClaude": "Claude Code için ayrı MCP yapılandırması geçersiz. Eksiksiz bir bağlantı yapılandırması girin.",
+      "invalidOverrideCodex": "Codex için ayrı MCP yapılandırması geçersiz. Eksiksiz bir bağlantı yapılandırması girin.",
+      "invalidOverrideGemini": "Gemini CLI için ayrı MCP yapılandırması geçersiz. Eksiksiz bir bağlantı yapılandırması girin.",
+      "invalidOverrideGrokbuild": "Grok Build için ayrı MCP yapılandırması geçersiz. Eksiksiz bir bağlantı yapılandırması girin.",
+      "invalidOverrideOpencode": "OpenCode için ayrı MCP yapılandırması geçersiz. Eksiksiz bir bağlantı yapılandırması girin.",
+      "invalidOverrideHermes": "Hermes için ayrı MCP yapılandırması geçersiz. Eksiksiz bir bağlantı yapılandırması girin.",
+      "invalidOverridePi": "Pi için ayrı MCP yapılandırması geçersiz. Eksiksiz bir bağlantı yapılandırması girin.",
+      "invalidOverrideMcode": "MiniMax Code için ayrı MCP yapılandırması geçersiz. Eksiksiz bir bağlantı yapılandırması girin.",
+      "invalidOverrideKimi": "Kimi Code için ayrı MCP yapılandırması geçersiz. Eksiksiz bir bağlantı yapılandırması girin.",
+      "invalidOverrideDsh": "DeepSeek Harness için ayrı MCP yapılandırması geçersiz. Eksiksiz bir bağlantı yapılandırması girin.",
+      "invalidOverrideCopilot": "GitHub Copilot CLI için ayrı MCP yapılandırması geçersiz. Eksiksiz bir bağlantı yapılandırması girin.",
+      "invalidOverrideWorkbuddy": "WorkBuddy için bağımsız MCP yapılandırması geçersiz. Bağlantı ayarlarını eksiksiz girin.",
+      "invalidOverrideAgy": "Antigravity için ayrı MCP yapılandırması geçersiz. Eksiksiz bir bağlantı yapılandırması girin.",
+      "invalidOverrideOmp": "Oh My Pi için ayrı MCP yapılandırması geçersiz. Eksiksiz bir bağlantı yapılandırması girin."
     },
     "validation": {
       "ok": "Komut mevcut",
@@ -4876,7 +4890,13 @@
       "tags": "Etiketler",
       "tagsPlaceholder": "Virgülle ayırın, ör. docs, web",
       "homepage": "Ana sayfa",
-      "docs": "Dokümanlar"
+      "docs": "Dokümanlar",
+      "configScope": "Yapılandırma kapsamı",
+      "sharedConfig": "Varsayılan yapılandırma",
+      "useAppConfig": "{{app}} için ayrı yapılandırma kullan",
+      "sharedConfigHint": "Ayrı yapılandırması olmayan uygulamalar bu bağlantıyı kullanır.",
+      "appConfigHint": "Bu bağlantı yapılandırmasının tamamı yalnızca bu uygulama için geçerlidir. Varsayılana dönmek için kapatın.",
+      "followsSharedConfig": "Bu uygulama varsayılan yapılandırmayı kullanır. Bağlantı ayarlarını değiştirmek için ayrı yapılandırmayı etkinleştirin."
     },
     "resync": "Bu anahtarlardan her uygulamanın yapılandırmasını yeniden yazın"
   },

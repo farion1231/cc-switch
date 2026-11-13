@@ -160,6 +160,7 @@ fn copilot_mcp_skills_and_prompts_follow_the_native_home() {
     )
     .unwrap();
     let server = McpServer {
+        app_overrides: Default::default(),
         id: "test".into(),
         name: "Test".into(),
         server: json!({"type":"stdio","command":"npx","args":["-y","pkg"]}),

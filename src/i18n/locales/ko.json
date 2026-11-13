@@ -3049,7 +3049,21 @@
       "piInvalidName": "Pi MCP 서버 이름에는 영문자, 숫자, _ 및 -만 사용할 수 있습니다: {{id}}",
       "piNameConflict": "Pi는 -와 _만 다른 서버 이름을 같은 이름으로 처리합니다. {{id}}이(가) 기존 {{other}}와(과) 충돌합니다.",
       "saveFailed": "저장 실패",
-      "deleteFailed": "삭제 실패"
+      "deleteFailed": "삭제 실패",
+      "invalidOverrideClaude": "Claude Code의 별도 MCP 설정이 올바르지 않습니다. 전체 연결 설정을 입력하세요.",
+      "invalidOverrideCodex": "Codex의 별도 MCP 설정이 올바르지 않습니다. 전체 연결 설정을 입력하세요.",
+      "invalidOverrideGemini": "Gemini CLI의 별도 MCP 설정이 올바르지 않습니다. 전체 연결 설정을 입력하세요.",
+      "invalidOverrideGrokbuild": "Grok Build의 별도 MCP 설정이 올바르지 않습니다. 전체 연결 설정을 입력하세요.",
+      "invalidOverrideOpencode": "OpenCode의 별도 MCP 설정이 올바르지 않습니다. 전체 연결 설정을 입력하세요.",
+      "invalidOverrideHermes": "Hermes의 별도 MCP 설정이 올바르지 않습니다. 전체 연결 설정을 입력하세요.",
+      "invalidOverridePi": "Pi의 별도 MCP 설정이 올바르지 않습니다. 전체 연결 설정을 입력하세요.",
+      "invalidOverrideMcode": "MiniMax Code의 별도 MCP 설정이 올바르지 않습니다. 전체 연결 설정을 입력하세요.",
+      "invalidOverrideKimi": "Kimi Code의 별도 MCP 설정이 올바르지 않습니다. 전체 연결 설정을 입력하세요.",
+      "invalidOverrideDsh": "DeepSeek Harness의 별도 MCP 설정이 올바르지 않습니다. 전체 연결 설정을 입력하세요.",
+      "invalidOverrideCopilot": "GitHub Copilot CLI의 별도 MCP 설정이 올바르지 않습니다. 전체 연결 설정을 입력하세요.",
+      "invalidOverrideWorkbuddy": "WorkBuddy의 독립 MCP 구성이 유효하지 않습니다. 연결 설정을 모두 입력하세요.",
+      "invalidOverrideAgy": "Antigravity의 별도 MCP 설정이 올바르지 않습니다. 전체 연결 설정을 입력하세요.",
+      "invalidOverrideOmp": "Oh My Pi의 별도 MCP 설정이 올바르지 않습니다. 전체 연결 설정을 입력하세요."
     },
     "validation": {
       "ok": "사용 가능한 명령",
@@ -4942,7 +4956,13 @@
       "tags": "태그",
       "tagsPlaceholder": "쉼표로 구분 (예: docs, web)",
       "homepage": "홈페이지",
-      "docs": "문서"
+      "docs": "문서",
+      "configScope": "설정 대상",
+      "sharedConfig": "기본 설정",
+      "useAppConfig": "{{app}}에 별도 설정 사용",
+      "sharedConfigHint": "별도 설정이 없는 앱은 이 연결을 사용합니다.",
+      "appConfigHint": "이 전체 연결 설정은 이 앱에만 적용됩니다. 기본 설정으로 돌아가려면 별도 설정을 끄세요.",
+      "followsSharedConfig": "이 앱은 기본 설정을 사용합니다. 연결 설정을 변경하려면 별도 설정을 활성화하세요."
     },
     "resync": "이 스위치 상태에 따라 모든 앱의 설정 다시 쓰기"
   },

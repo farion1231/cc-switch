@@ -17,7 +17,7 @@
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-use crate::app_config::{McpApps, McpServer, MultiAppConfig};
+use crate::app_config::{AppType, McpApps, McpServer, MultiAppConfig};
 use crate::error::AppError;
 use crate::hermes_config;
 
@@ -58,7 +58,7 @@ fn should_sync_hermes_mcp() -> bool {
 /// - `stdio`: output `command`, `args`, `env` (strip `type` field)
 /// - `sse`/`http`: output `url`, `headers` (strip `type` field)
 /// - Always add `enabled: true`
-fn convert_to_hermes_format(spec: &Value) -> Result<Value, AppError> {
+pub(super) fn convert_to_hermes_format(spec: &Value) -> Result<Value, AppError> {
     let obj = spec
         .as_object()
         .ok_or_else(|| AppError::McpValidation("MCP spec must be a JSON object".into()))?;
@@ -298,7 +298,9 @@ pub fn import_from_hermes(config: &mut MultiAppConfig) -> Result<usize, AppError
 
         if let Some(existing) = servers.get_mut(&id) {
             // Existing server: just enable Hermes app
-            if !existing.apps.hermes {
+            let previous = existing.app_overrides.clone();
+            existing.import_app_server(&AppType::Hermes, unified_spec.clone());
+            if !existing.apps.hermes || existing.app_overrides != previous {
                 existing.apps.hermes = true;
                 changed += 1;
                 log::info!("MCP server '{id}' enabled for Hermes");
@@ -308,6 +310,7 @@ pub fn import_from_hermes(config: &mut MultiAppConfig) -> Result<usize, AppError
             servers.insert(
                 id.clone(),
                 McpServer {
+                    app_overrides: Default::default(),
                     id: id.clone(),
                     name: id.clone(),
                     server: unified_spec,

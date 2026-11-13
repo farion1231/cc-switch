@@ -1,4 +1,4 @@
-use crate::app_config::{McpApps, McpServer};
+use crate::app_config::{AppType, McpApps, McpServer};
 use crate::error::AppError;
 use crate::store::AppState;
 use serde_json::{json, Value};
@@ -42,14 +42,8 @@ pub(crate) fn import(state: &AppState) -> Result<usize, AppError> {
             continue;
         }
         let mut server = if let Some(server) = existing.shift_remove(id) {
-            // Import never overwrites a different server's transport or managed state.
-            let fields = ["type", "command", "args", "env", "cwd", "url", "headers"];
-            if fields
-                .iter()
-                .any(|field| server.server.get(*field) != spec.get(*field))
-            {
-                continue;
-            }
+            let mut server = server;
+            server.import_app_server(&AppType::Dsh, spec);
             server
         } else {
             count += 1;
@@ -58,6 +52,7 @@ pub(crate) fn import(state: &AppState) -> Result<usize, AppError> {
                 name: id.into(),
                 server: spec,
                 apps: McpApps::default(),
+                app_overrides: Default::default(),
                 description: None,
                 homepage: None,
                 docs: None,

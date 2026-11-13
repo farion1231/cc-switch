@@ -8,7 +8,7 @@
 //!
 //! 写入时只替换传输字段，条目上的其他字段（`timeout`、`description`、`defer_loading`、
 //! WorkBuddy 自己的标记等）、用户自己加的服务器和顶层其他字段都原样保留。
-use crate::app_config::{McpApps, McpServer};
+use crate::app_config::{AppType, McpApps, McpServer};
 use crate::config::atomic_write_private;
 use crate::error::AppError;
 use crate::store::AppState;
@@ -128,15 +128,13 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
         }
         let enabled = native.get("disabled").and_then(Value::as_bool) != Some(true);
         let server = if let Some(mut server) = existing.shift_remove(id) {
-            if transport_spec(&server.server) != spec {
-                skipped.push(format!("'{id}': conflicts with an existing server"));
-                continue;
-            }
+            server.import_app_server(&AppType::WorkBuddy, spec);
             server.apps.workbuddy = enabled;
             server
         } else {
             count += 1;
             McpServer {
+                app_overrides: Default::default(),
                 id: id.clone(),
                 name: id.clone(),
                 server: spec,
@@ -167,7 +165,7 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
 }
 
 /// 只保留传输相关字段的统一格式，用于导入和冲突比较。
-fn transport_spec(spec: &Value) -> Value {
+pub(crate) fn transport_spec(spec: &Value) -> Value {
     let mut spec = unified_spec(spec);
     if let Some(object) = spec.as_object_mut() {
         object.retain(|key, _| TRANSPORT_FIELDS.contains(&key.as_str()));

@@ -8,7 +8,7 @@
 //! `tools`、`timeout` 只有 Copilot 认，不进统一格式（Claude 等应用原样写出统一格式）。停用会删掉
 //! 整个条目，所以删之前把这两项记到本机的 `copilot-mcp-options.json`，再启用时还回去，免得工具
 //! 过滤被放宽成 `["*"]`。
-use crate::app_config::{McpApps, McpServer};
+use crate::app_config::{AppType, McpApps, McpServer};
 use crate::config::{atomic_write, atomic_write_private};
 use crate::error::AppError;
 use crate::store::AppState;
@@ -274,15 +274,13 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
         }
         let enabled = !disabled.iter().any(|name| name == id);
         let server = if let Some(mut server) = existing.shift_remove(id) {
-            if transport_spec(&server.server) != transport_spec(&spec) {
-                skipped.push(format!("'{id}': conflicts with an existing server"));
-                continue;
-            }
+            server.import_app_server(&AppType::Copilot, spec);
             server.apps.copilot = enabled;
             server
         } else {
             count += 1;
             McpServer {
+                app_overrides: Default::default(),
                 id: id.clone(),
                 name: id.clone(),
                 server: spec,
@@ -308,7 +306,7 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
     }
 }
 
-fn transport_spec(spec: &Value) -> Value {
+pub(crate) fn transport_spec(spec: &Value) -> Value {
     let mut spec = unified_spec(spec);
     if let Some(object) = spec.as_object_mut() {
         object.retain(|key, _| TRANSPORT_FIELDS.contains(&key.as_str()));
