@@ -1,6 +1,6 @@
 //! WorkBuddy 官方账号的状态与专用命令。列表、切换、删除走授权中心的通用 `auth_*` 命令
 //! （provider id `workbuddy_account`），这里只放 WorkBuddy 特有的：收录当前登录、准备登录
-//! 另一个账号、查运行状态、打开 WorkBuddy。
+//! 另一个账号、查运行状态、打开 WorkBuddy。另有自定义模型表单用的 models.json 占用查询。
 
 use std::sync::Arc;
 
@@ -26,6 +26,17 @@ pub(crate) async fn run_workbuddy<T: Send + 'static>(
 ) -> Result<T, String> {
     let manager = Arc::clone(manager);
     tokio::task::spawn_blocking(move || job(&manager))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())
+}
+
+/// models.json 里已有的模型 id 及归属：WorkBuddy 里一个模型 id 只能属于一张卡，
+/// 添加 / 编辑表单据此跳过或标出被别人占用的 id。
+#[tauri::command]
+pub async fn workbuddy_model_owners(
+) -> Result<Vec<crate::workbuddy_config::WorkBuddyModelOwner>, String> {
+    tokio::task::spawn_blocking(crate::workbuddy_config::model_owners)
         .await
         .map_err(|error| error.to_string())?
         .map_err(|error| error.to_string())

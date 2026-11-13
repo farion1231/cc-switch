@@ -73,6 +73,7 @@ import { RepoManagerPanel } from "./RepoManagerPanel";
 import { SkillImportDialog } from "./SkillImportDialog";
 import { SkillRestoreDialog } from "./SkillRestoreDialog";
 import { SkillsStorageSheet } from "./SkillsStorageSheet";
+import { useSkillsResync } from "./useSkillsResync";
 import { useSkillInstallTargets } from "./useSkillInstallTargets";
 import { describeRepoFailures } from "./repoFailures";
 import type { ZipSkippedSkill } from "@/lib/api/skills";
@@ -205,6 +206,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const skillUpdates = updateCheck?.updates;
   const updateRepoFailures = updateCheck?.failures ?? [];
   const updateSkillMutation = useUpdateSkill();
+  const { resync: resyncToApps, isPending: resyncPending } = useSkillsResync();
 
   const mutationPending =
     deleteBackupMutation.isPending ||
@@ -665,6 +667,16 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     }
   };
 
+  // 「立即重新同步」也放在 ⋯ 菜单（#9417）：不用每次打开「存储与同步」对话框
+  const handleResyncToApps = async () => {
+    if (resyncPending || !beginWrite()) return;
+    try {
+      await resyncToApps();
+    } finally {
+      endWrite();
+    }
+  };
+
   // ─── 导入 / ZIP / 备份 ───────────────────────────────────────────────
   const handleOpenImport = async () => {
     if (!beginWrite()) return;
@@ -984,6 +996,12 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                 onSelect={() => setRepoManagerOpen(true)}
               >
                 {t("skillsPage.moreMenu.repos")}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={controlsDisabled || resyncPending || nInstalled === 0}
+                onSelect={() => void handleResyncToApps()}
+              >
+                {t("skills.storageSheet.resync")}
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setStorageOpen(true)}>
                 {t("skills.storageSheet.open")}

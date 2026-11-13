@@ -901,6 +901,7 @@
     "languageOptionTurkish": "Türkçe",
     "languageOptionKorean": "한국어",
     "languageOptionRussian": "Русский",
+    "languageOptionGerman": "Deutsch",
     "windowBehavior": "창 동작",
     "windowBehaviorHint": "창 최소화 및 Claude 플러그인 통합 정책을 설정합니다.",
     "launchOnStartup": "시작 시 실행",
@@ -1209,9 +1210,12 @@
       "urlHint": "OpenAI 호환 Chat Completions 전체 URL로, 보통 /chat/completions로 끝납니다.",
       "apiKeyHint": "이 컴퓨터의 models.json에 저장됩니다. ${ENV_VAR} 형식의 참조는 WorkBuddy가 해당 환경 변수의 값으로 바꿉니다.",
       "vendor": "공급업체 레이블",
-      "modelsHint": "모델을 하나 이상 추가하세요. 모델 ID는 그대로 API에 전송됩니다.",
+      "modelsHint": "모델을 하나 이상 추가하세요. 모델 ID는 그대로 API에 전송됩니다. WorkBuddy는 아직 같은 모델을 여러 번 추가하는 것을 지원하지 않으므로, 모델 ID 하나는 카드 하나에만 넣을 수 있습니다. 이름을 비워 두면 WorkBuddy 메뉴에 \"공급업체 레이블:모델 ID\"로 표시됩니다.",
       "maxInputTokens": "최대 입력 토큰",
-      "maxOutputTokens": "최대 출력 토큰"
+      "maxOutputTokens": "최대 출력 토큰",
+      "modelIdTaken": "WorkBuddy는 아직 같은 모델을 여러 번 추가하는 것을 지원하지 않으며, 이 모델은 이미 \"{{owner}}\"에 있습니다. 이 카드로 옮기려면 먼저 그쪽에서 삭제하세요.",
+      "modelOwnerUser": "WorkBuddy에서 직접 추가한 모델",
+      "presetModelsSkipped": "WorkBuddy는 아직 같은 모델을 여러 번 추가하는 것을 지원하지 않아, 이미 다른 카드에 있는 모델은 건너뛰었습니다: {{models}}. 이 카드로 옮기려면 원래 카드에서 먼저 삭제한 뒤 여기에서 다시 추가하세요."
     },
     "official": {
       "presetName": "WorkBuddy 공식 로그인",
@@ -1231,8 +1235,8 @@
       "preparedNewLogin": "현재 계정을 저장했습니다. WorkBuddy가 실행되면 로그인 화면이 표시됩니다. 다른 계정으로 로그인하면 해당 계정이 목록에 자동으로 추가됩니다.",
       "switching": "전환 중…",
       "onlyOne": "WorkBuddy는 한 번에 하나의 계정에만 로그인할 수 있습니다. 전환하려면 다른 공식 카드를 추가하세요.",
-      "quitFirst": "추가하기 전에 WorkBuddy를 종료하세요",
-      "quitFirstBody": "메뉴 막대나 시스템 트레이에 남아 있는 WorkBuddy도 완전히 종료한 다음 ‘추가’를 다시 클릭하세요. 종료하지 않으면 WorkBuddy가 기존 로그인 정보를 다시 저장할 수 있습니다.",
+      "quitFirst": "계정을 전환하기 전에 WorkBuddy를 종료하세요",
+      "quitFirstBody": "메뉴 막대나 시스템 트레이에 남아 있는 WorkBuddy도 완전히 종료한 다음 계정을 다시 전환하세요. 종료하지 않으면 WorkBuddy가 기존 로그인 정보를 다시 저장할 수 있습니다.",
       "switched": "\"{{name}}\"(으)로 전환했습니다. 다음에 WorkBuddy를 열면 이 계정을 사용합니다.",
       "switchFailed": "WorkBuddy 계정을 전환할 수 없습니다"
     },
@@ -1249,7 +1253,14 @@
       "staleFailed": "이번에는 조회하지 못해 이전에 조회한 결과를 표시합니다",
       "openToQuery": "조회하려면 WorkBuddy를 여세요",
       "onlyWhileRunning": "할당량은 WorkBuddy가 실행 중일 때만 WorkBuddy를 통해 조회할 수 있습니다",
-      "unavailable": "지금은 할당량을 확인할 수 없습니다"
+      "unavailable": "지금은 할당량을 확인할 수 없습니다",
+      "expiry": "만료",
+      "expiresOn": "{{credits}} 크레딧 {{date}} 만료",
+      "expiresOnShort": "{{date}} 만료",
+      "noExpiry": "만료 없음",
+      "expiryTitle": "크레딧 만료일",
+      "expiryShowAll": "크레딧별 만료일 보기",
+      "inTime": "{{time}} 후"
     }
   },
   "pi": {
@@ -1432,6 +1443,7 @@
     "searchSessions": "세션 검색",
     "sessionList": "세션 목록",
     "unknownDirectory": "알 수 없는 디렉터리",
+    "codexChats": "Codex 채팅",
     "batchDeleting": "삭제 중...",
     "loadingSessions": "세션 로드 중...",
     "piRelativeSessionDir": "Pi의 sessionDir이 상대 경로이면 Pi를 실행한 디렉터리에 따라 저장 위치가 달라져 CC Switch에서 세션 목록을 안전하게 확인할 수 없습니다. 모든 Pi 세션을 찾으려면 sessionDir을 절대 경로로 설정하세요.",
@@ -2003,6 +2015,7 @@
     "form": {
       "officialTitle": "Copilot CLI 자체의 GitHub 로그인 사용",
       "officialHint": "‘터미널 열기’는 이 카드의 모델로 copilot을 시작합니다. 인증 센터 계정을 연결하면 해당 계정으로 시작합니다.",
+      "followCliLogin": "Copilot CLI 자체 로그인 따르기",
       "byokTitle": "추가하면 Copilot의 providers.json에 기록됩니다",
       "byokHint": "「추가」는 이 공급자와 모델을 Copilot 자체 providers.json(이 컴퓨터의 현재 사용자만 읽을 수 있음)에 기록합니다. 이후 어떤 방식으로 실행한 copilot에서도 /model에서 「카드 ID/모델」을 선택할 수 있습니다. 「제거」는 이 공급자의 항목만 삭제하고 파일의 나머지 내용은 그대로 둡니다.",
       "apiFormat": "API 형식",
@@ -5130,7 +5143,7 @@
       "chatgptHelp": "Claude Code와 Claude Desktop의 ChatGPT 프리셋 및 Codex의 공식 로그인 연결에 사용합니다. 계정을 선택하지 않은 공급자는 기본 계정을 사용합니다.",
       "xaiHelp": "Claude Code, Claude Desktop 및 Codex의 xAI 프리셋에서 사용합니다. 계정을 선택하지 않은 공급자는 기본 계정을 사용합니다.",
       "agyHelp": "Antigravity CLI(agy)의 공식 로그인입니다. agy는 한 번에 하나의 계정에만 로그인할 수 있습니다. 전환하면 agy의 로그인이 선택한 계정으로 교체되며 이후 시작한 agy 세션에서 사용됩니다. 기존에 agy에 로그인된 계정은 자동으로 여기에 추가되므로 다른 계정으로 전환해도 사라지지 않습니다.",
-      "workbuddyHelp": "WorkBuddy 데스크톱 앱의 공식 로그인입니다. CC Switch는 사용자를 대신해 WorkBuddy에 로그인할 수 없으며, 현재 로그인된 계정의 로그인 파일 전체를 스냅샷으로 저장합니다. 계정을 전환하려면 공급자 목록에서 해당 계정에 연결된 ‘WorkBuddy 공식 로그인’ 카드의 ‘추가’를 클릭하세요. ‘추가됨’ 상태인 공식 카드는 동시에 하나만 유지됩니다. 스냅샷은 이 컴퓨터에서만 사용할 수 있으며 클라우드로 동기화되지 않습니다.",
+      "workbuddyHelp": "WorkBuddy 데스크톱 앱의 공식 로그인입니다. CC Switch는 사용자를 대신해 WorkBuddy에 로그인할 수 없으며, 현재 로그인된 계정의 로그인 파일 전체를 스냅샷으로 저장합니다. 계정을 전환하려면 계정의 ‘…’ 메뉴에서 ‘WorkBuddy에서 이 계정 사용’을 선택하거나, 공급자 목록에서 해당 계정에 연결된 ‘WorkBuddy 공식 로그인’ 카드의 ‘추가’를 클릭하세요. ‘추가됨’ 상태인 공식 카드는 동시에 하나만 유지됩니다. 스냅샷은 이 컴퓨터에서만 사용할 수 있으며 클라우드로 동기화되지 않습니다.",
       "claudeHelpTerminal": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. 설정에서 Claude 설정 디렉터리를 별도로 지정한 경우, 카드를 전환해도 Claude Code의 로그인 계정은 바뀌지 않습니다. Claude 공식 공급자 카드에서 계정을 선택한 다음, 해당 카드의 ‘터미널 열기’를 이용하세요.",
       "claudeHelpWsl": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. Claude 설정 디렉터리가 WSL에 있는 경우는 아직 지원하지 않습니다. 추후 지원할 예정입니다.",
       "claudeHelp": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. Claude 공식 공급자 카드에서 계정을 선택하고 해당 카드로 전환하면 Claude Code의 로그인 계정이 즉시 해당 계정으로 바뀝니다. 여러 계정을 동시에 사용하려면 각 카드의 ‘터미널 열기’를 이용하세요. 로그인 토큰은 이 컴퓨터에만 보관되며 업로드되거나 갱신되지 않고, 계정도 로그아웃되지 않습니다. 처음 전환할 때 Claude Code에 현재 로그인된 계정이 자동으로 추가됩니다. 계정을 전환하면 Remote Control 연결이 끊기며 프롬프트 캐시를 다시 생성해야 합니다."
@@ -5139,6 +5152,8 @@
     "accountMenu": "{{login}}의 추가 작업",
     "removeAccount": "계정 삭제",
     "setDefault": "기본값으로 설정",
+    "inUseBy": "{{app}}에서 사용 중",
+    "switchAppTo": "{{app}}에서 이 계정 사용",
     "reauth": "다시 로그인",
     "busyHint": "먼저 진행 중인 로그인을 완료하거나 취소하세요",
     "default": "기본값",
@@ -5185,8 +5200,6 @@
       "addedOn": "{{date}}에 추가됨",
       "statusLoadFailed": "Antigravity 계정을 읽을 수 없습니다. 다시 시도하세요.",
       "empty": "아직 Antigravity 계정이 없습니다. agy에 로그인된 계정이 자동으로 여기에 표시됩니다.",
-      "current": "agy에서 사용 중",
-      "switchTo": "agy를 이 계정으로 전환",
       "removeNote": "agy의 로그인은 유지됩니다. 이 계정을 사용 중인 경우 여기서 제거해도 계속 작동합니다.",
       "switched": "전환했습니다. 새 agy 세션은 이 계정을 사용합니다.",
       "switchedWhileRunning": "전환했습니다. 실행 중인 agy가 감지되었습니다. 이미 실행 중인 agy는 기존 계정을 계속 사용하며 기존 계정 정보를 로그인 설정에 다시 저장할 수도 있습니다. agy를 모두 종료한 뒤 다시 실행하세요."
@@ -5210,7 +5223,6 @@
         "_raw": "{{plan}}"
       },
       "importNow": "추가",
-      "current": "WorkBuddy에서 사용 중",
       "removeNote": "CC Switch의 스냅샷만 삭제하며 WorkBuddy는 로그인 상태로 유지됩니다.",
       "localOnly": "로그인 정보가 이 기기에 연결되어 있으므로 스냅샷은 이 컴퓨터에서만 사용할 수 있으며 클라우드로 동기화되지 않습니다. 다른 컴퓨터에서는 계정을 다시 추가해야 합니다.",
       "runningTitle": "WorkBuddy가 실행 중입니다",
@@ -5248,7 +5260,6 @@
   },
   "kimi": {
     "oauth": {
-      "useAccount": "이 계정 사용",
       "title": "Kimi Code 공식 로그인",
       "description": "Kimi 코딩 요금제 계정을 여러 개 추가하고 각 계정의 자격 증명과 공급자를 별도로 저장할 수 있습니다. 여기에서 로그인을 관리한 다음 계정을 선택하여 해당 계정의 공식 모델을 사용하세요.",
       "region": "로그인 지역",
@@ -5271,7 +5282,6 @@
       "manageAccounts": "Kimi 계정 관리",
       "managedHint": "먼저 이 공식 계정을 제거하거나, 인증 센터에서 로그인 정보와 함께 삭제하세요.",
       "connectionManaged": "연결 및 로그인은 인증 센터에서 관리하며, 여기서는 모델만 편집합니다. ‘모델 목록 가져오기’를 누르면 이 계정에서 현재 사용할 수 있는 공식 모델 목록을 불러옵니다.",
-      "current": "Kimi에서 사용 중",
       "primaryShort": "Kimi Code 자체 로그인",
       "empty": "아직 Kimi 계정이 없습니다. Kimi Code에 로그인된 계정이 자동으로 여기에 표시됩니다.",
       "help": "Kimi 코딩 요금제 계정을 여러 개 추가할 수 있습니다. 각 계정에는 Kimi Code의 개별 공급자와 모델이 생깁니다. “이 계정 사용”을 누르면 Kimi Code의 기본 모델이 해당 계정의 모델로 변경되며 이후 새 세션에서 사용됩니다. Kimi Code 자체 로그인 계정은 자동으로 표시되며 웹 검색과 웹 페이지 가져오기에 항상 사용됩니다. 여기에서 제거해도 목록에서만 숨겨지며 Kimi Code에서 로그아웃되지 않습니다."

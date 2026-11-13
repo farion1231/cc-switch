@@ -2792,16 +2792,21 @@ impl SkillService {
     ///
     /// - Unix: 使用 std::os::unix::fs::symlink
     /// - Windows: 使用 std::os::windows::fs::symlink_dir
-    #[cfg(unix)]
+    ///
+    /// 命令层用 `to_string()` 把错误交给前端，只显示最外层 context，所以系统错误
+    /// （如 Windows 的 `os error 5`）必须写进消息本身，否则用户只看到「失败」。
     fn create_symlink(src: &Path, dest: &Path) -> Result<()> {
-        std::os::unix::fs::symlink(src, dest)
-            .with_context(|| format!("创建符号链接失败: {} -> {}", src.display(), dest.display()))
-    }
-
-    #[cfg(windows)]
-    fn create_symlink(src: &Path, dest: &Path) -> Result<()> {
-        std::os::windows::fs::symlink_dir(src, dest)
-            .with_context(|| format!("创建符号链接失败: {} -> {}", src.display(), dest.display()))
+        #[cfg(unix)]
+        let result = std::os::unix::fs::symlink(src, dest);
+        #[cfg(windows)]
+        let result = std::os::windows::fs::symlink_dir(src, dest);
+        result.map_err(|error| {
+            anyhow!(
+                "创建符号链接失败: {} -> {}: {error}",
+                src.display(),
+                dest.display()
+            )
+        })
     }
 
     /// 检查路径是否为符号链接
@@ -7716,6 +7721,23 @@ mod tests {
             !temp.path().join("pwned-restore").exists(),
             "restore must not write outside the SSOT dir"
         );
+    }
+
+    #[test]
+    fn create_symlink_error_message_keeps_the_os_error() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        let dest = temp.path().join("dest");
+        fs::create_dir_all(&source).expect("create source");
+        fs::create_dir_all(&dest).expect("occupy dest");
+
+        // 命令层用 to_string() 传给前端，系统错误必须在这一层就可见。
+        let message = SkillService::create_symlink(&source, &dest)
+            .expect_err("dest already exists")
+            .to_string();
+
+        assert!(message.contains("创建符号链接失败"), "{message}");
+        assert!(message.contains("os error"), "{message}");
     }
 
     #[test]

@@ -19,6 +19,7 @@ import { signedInDate } from "@/components/settings/auth/accountDetails";
 import { workbuddyPlanLabel } from "@/components/settings/auth/workbuddyPlan";
 import { useManagedAccountUsers } from "@/components/providers/forms/hooks/useManagedAccountUsers";
 import { WORKBUDDY_LIVE_KEY } from "@/components/providers/workbuddyOfficial";
+import { useWorkBuddySwitch } from "@/components/providers/useWorkBuddyOfficial";
 import { WORKBUDDY_QUOTA_KEY } from "@/components/providers/workbuddyQuota";
 import { WorkBuddyAccountQuota } from "@/components/settings/auth/AccountQuota";
 import type { WorkBuddyQuota } from "@/lib/api/auth";
@@ -49,7 +50,8 @@ const message = (error: unknown) =>
 
 /**
  * 授权中心的 WorkBuddy 账号组。WorkBuddy 的登录由桌面端完成，CC Switch 只能把当前登录的那组
- * 凭据文件收录成快照。切换账号在供应商列表里：「添加」绑定了这个账号的「WorkBuddy 官方登录」卡。
+ * 凭据文件收录成快照。切换账号：账号 ⋯ 里的「切换 WorkBuddy 到这个账号」，或供应商列表里「添加」
+ * 绑定了这个账号的「WorkBuddy 官方登录」卡（两边同一个切号命令）。
  * 「WorkBuddy 在用」就是它现在登着的号。快照只在本机有效；删账号只删 CC Switch 的副本，
  * 不让 WorkBuddy 登出。
  */
@@ -73,6 +75,7 @@ export function WorkBuddyAccountSection({
     queryFn: authApi.workbuddyAccountLiveState,
     refetchInterval: 5000,
   });
+  const { switchToAccount, switching } = useWorkBuddySwitch();
   const [addHint, setAddHint] = React.useState<AddHint>(null);
   const [removeTarget, setRemoveTarget] =
     React.useState<ManagedAccountRemoveTarget | null>(null);
@@ -376,7 +379,7 @@ export function WorkBuddyAccountSection({
       iconName="workbuddy"
       help={t("authCenter.group.workbuddyHelp", {
         defaultValue:
-          "WorkBuddy 桌面端的官方登录。CC Switch 不能替 WorkBuddy 登录，只能收录它当前登着的账号（整组登录文件的快照）。要切换账号，在供应商列表里添加绑定了它的「WorkBuddy 官方登录」卡（同一时间只有一张在「已添加」）。快照只在这台电脑上有效，不会随云同步。",
+          "WorkBuddy 桌面端的官方登录。CC Switch 不能替 WorkBuddy 登录，只能收录它当前登着的账号（整组登录文件的快照）。要切换账号，在账号的「…」里选「切换 WorkBuddy 到这个账号」，或在供应商列表里添加绑定了它的「WorkBuddy 官方登录」卡（同一时间只有一张在「已添加」）。快照只在这台电脑上有效，不会随云同步。",
       })}
       helpSide={helpSide}
       accounts={rows}
@@ -392,14 +395,25 @@ export function WorkBuddyAccountSection({
       })}
       onAdd={() => importMutation.mutate()}
       chooser={addHintPanel || undefined}
-      defaultLabel={t("authCenter.workbuddy.current", {
-        defaultValue: "WorkBuddy 在用",
+      defaultLabel={t("authCenter.inUseBy", {
+        defaultValue: "{{app}} 在用",
+        app: "WorkBuddy",
       })}
+      setDefaultLabel={t("authCenter.switchAppTo", {
+        defaultValue: "切换 {{app}} 到这个账号",
+        app: "WorkBuddy",
+      })}
+      onSetDefault={(accountId) => {
+        const login =
+          accounts.find((account) => account.id === accountId)?.login ??
+          accountId;
+        void switchToAccount(accountId, login);
+      }}
       canReauth
       onReauth={(accountId) => {
         if (!reauthMutation.isPending) reauthMutation.mutate(accountId);
       }}
-      settingDefault={false}
+      settingDefault={switching}
       onRemove={(accountId, login) =>
         setRemoveTarget({ kind: "one", accountId, login })
       }

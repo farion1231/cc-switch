@@ -153,7 +153,7 @@ describe("WorkBuddyAccountSection", () => {
     await waitFor(() => expect(mocks.quota).toHaveBeenCalledWith("u-1", true));
   });
 
-  it("marks the account WorkBuddy uses and leaves switching to the provider list", async () => {
+  it("marks the account WorkBuddy uses", async () => {
     const auth = baseAuth();
     auth.accounts = [
       account("u-1", { account_kind: "personal" }),
@@ -178,9 +178,9 @@ describe("WorkBuddyAccountSection", () => {
       screen.queryByRole("button", { name: "WorkBuddy 的更多操作" }),
     ).not.toBeInTheDocument();
 
-    // 授权中心不再切换：⋯ 菜单里只有重新登录和删除
+    // 在用的号 ⋯ 里没有切换项（已经在用），只有重新登录和删除
     await userEvent.click(
-      screen.getByRole("button", { name: "u-2 的更多操作" }),
+      screen.getByRole("button", { name: "u-1 的更多操作" }),
     );
     expect(
       await screen.findByRole("menuitem", { name: /删除/ }),
@@ -191,6 +191,59 @@ describe("WorkBuddyAccountSection", () => {
     expect(
       screen.queryByRole("menuitem", { name: /切换/ }),
     ).not.toBeInTheDocument();
+    expect(mocks.setDefault).not.toHaveBeenCalled();
+  });
+
+  it("switches WorkBuddy to another account from its menu", async () => {
+    const auth = baseAuth();
+    auth.accounts = [account("u-1"), account("u-2")];
+    auth.defaultAccountId = "u-1";
+    mocks.useManagedAuth.mockReturnValue(auth);
+    mocks.setDefault.mockResolvedValue(undefined);
+    renderWithClient(<WorkBuddyAccountSection />);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "u-2 的更多操作" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", {
+        name: "切换 WorkBuddy 到这个账号",
+      }),
+    );
+
+    // 和供应商列表的官方卡走同一个切号命令
+    await waitFor(() =>
+      expect(mocks.setDefault).toHaveBeenCalledWith("workbuddy_account", "u-2"),
+    );
+    expect(mocks.toastSuccess).toHaveBeenCalledWith(
+      "workbuddy.official.switched",
+      expect.anything(),
+    );
+  });
+
+  it("asks to quit WorkBuddy before switching while it runs", async () => {
+    const auth = baseAuth();
+    auth.accounts = [account("u-1"), account("u-2")];
+    auth.defaultAccountId = "u-1";
+    mocks.useManagedAuth.mockReturnValue(auth);
+    mocks.liveState.mockResolvedValue(live({ running: true }));
+    renderWithClient(<WorkBuddyAccountSection />);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "u-2 的更多操作" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", {
+        name: "切换 WorkBuddy 到这个账号",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(mocks.toastError).toHaveBeenCalledWith(
+        "workbuddy.official.quitFirst",
+        expect.anything(),
+      ),
+    );
     expect(mocks.setDefault).not.toHaveBeenCalled();
   });
 

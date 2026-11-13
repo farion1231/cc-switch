@@ -42,6 +42,7 @@ import type { WorkBuddyQuota } from "@/lib/api/auth";
 import {
   useWorkBuddyAccountQuota,
   workbuddyCreditsLine,
+  workbuddyExpiryLine,
 } from "@/components/providers/workbuddyQuota";
 
 export interface AccountQuotaRow {
@@ -487,6 +488,7 @@ export function workbuddyQuotaState(
   if (!quota) return loading ? { kind: "loading" } : null;
   const credits = workbuddyCreditsLine(t, quota, locale, display);
   if (credits) {
+    const expiry = workbuddyExpiryLine(t, quota, locale);
     return {
       kind: "rows",
       rows: [
@@ -496,6 +498,9 @@ export function workbuddyQuotaState(
             t("workbuddy.quota.credits"),
           line: credits.line,
         },
+        ...(expiry
+          ? [{ label: t("workbuddy.quota.expiry"), line: expiry }]
+          : []),
       ],
     };
   }

@@ -218,6 +218,14 @@ export interface WorkBuddyQuotaSnapshot {
   used: number;
   /** 查询时刻（毫秒） */
   queriedAt: number;
+  /** 还有剩余的各个资源包各自什么时候到期，按到期先后排；缺省表示这次没查到明细 */
+  expiries?: WorkBuddyCreditExpiry[] | null;
+}
+
+export interface WorkBuddyCreditExpiry {
+  credits: number;
+  /** 到期时刻（毫秒）；不会过期时为 null */
+  expiresAt: number | null;
 }
 
 /** 这次没刷新成的原因：WorkBuddy 没运行 / 不是它当前登着的号 / 它没登录 / 其他失败 */

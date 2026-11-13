@@ -12,6 +12,11 @@
 //! 每个模型条目自带 `url` / `apiKey`，没有「供应商」这一层。CC Switch 的一个供应商展开成
 //! 多条模型，条目上打 [`OWNER_FIELD`] 标记归属；没有标记的条目属于用户（或 WorkBuddy 自己
 //! 的设置界面），这里只读不改。WorkBuddy 会热加载这个文件。
+//!
+//! 模型 `id` 在 WorkBuddy 里身兼三职：查找条目的唯一键（取第一条匹配的）、发给上游的
+//! 模型名（去掉 `custom-local:` 前缀后原样发），以及模型菜单标签的后半段（自定义模型显示成
+//! `name:id`，`name` 为空或与 id 相同时只显示 id）。所以同一个 id 只能属于一张卡，也没法
+//! 改个 id 让两家共存；菜单上要分清是哪家，靠 `name` 写供应商名。
 use crate::config::{atomic_write_private, get_home_dir};
 use crate::error::AppError;
 use indexmap::IndexMap;
@@ -129,6 +134,10 @@ fn providers_at(path: &Path) -> Result<IndexMap<String, Value>, AppError> {
                 .into_iter()
                 .map(|mut entry| {
                     entry.remove(OWNER_FIELD);
+                    // 写入时补的名字（= 厂商标签）不读回，改厂商标签后跟着变。
+                    if entry.contains_key("name") && entry.get("name") == entry.get("vendor") {
+                        entry.remove("name");
+                    }
                     for field in SHARED_FIELDS {
                         if entry.get(field) == config.get(field) {
                             entry.remove(field);
@@ -217,6 +226,22 @@ fn expand_entries(id: &str, config: &Value) -> Vec<Value> {
                     entry.insert(field.into(), value.clone());
                 }
             }
+            // 没起名字的模型用厂商标签当名字，WorkBuddy 菜单显示成「厂商:模型 ID」，
+            // 不再是「模型名:模型 ID」两遍同一个模型。
+            if entry.get("name").is_none_or(is_blank) {
+                match entry
+                    .get("vendor")
+                    .filter(|value| !is_blank(value))
+                    .cloned()
+                {
+                    Some(vendor) => {
+                        entry.insert("name".into(), vendor);
+                    }
+                    None => {
+                        entry.remove("name");
+                    }
+                }
+            }
             entry.insert(OWNER_FIELD.into(), Value::String(id.to_string()));
             Some(Value::Object(entry))
         })
@@ -262,9 +287,14 @@ fn update(path: &Path, id: &str, config: Option<&Value>) -> Result<(), AppError>
         .filter_map(model_id)
         .find(|existing| new_ids.iter().any(|id| id == existing))
     {
-        return Err(AppError::InvalidInput(format!(
-            "WorkBuddy models.json already has a model with ID '{conflict}'"
-        )));
+        return Err(AppError::localized(
+            "workbuddy.model.duplicate",
+            format!("WorkBuddy 暂时不支持同一个模型添加多次，模型「{conflict}」已在别的卡里"),
+            format!(
+                "WorkBuddy doesn't support adding the same model more than once yet; \
+                 model '{conflict}' is already in another card"
+            ),
+        ));
     }
 
     if let Some(entries) = new_entries {
@@ -296,6 +326,31 @@ fn update(path: &Path, id: &str, config: Option<&Value>) -> Result<(), AppError>
     let json = serde_json::to_string_pretty(&Value::Object(document))
         .map_err(|e| AppError::JsonSerialize { source: e })?;
     atomic_write_private(path, format!("{json}\n").as_bytes())
+}
+
+/// models.json 里的一个模型 id 和它的归属（CC Switch 供应商 id；`None` 是用户自己加的）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct WorkBuddyModelOwner {
+    pub id: String,
+    pub owner: Option<String>,
+}
+
+/// 列出 models.json 里已有的模型 id 及归属，添加 / 编辑表单据此避开被占用的 id。
+pub(crate) fn model_owners() -> Result<Vec<WorkBuddyModelOwner>, AppError> {
+    model_owners_at(&config_path())
+}
+
+fn model_owners_at(path: &Path) -> Result<Vec<WorkBuddyModelOwner>, AppError> {
+    let document = read(path)?;
+    Ok(models_of(&document)?
+        .iter()
+        .filter_map(|model| {
+            Some(WorkBuddyModelOwner {
+                id: model_id(model)?.to_string(),
+                owner: owner_of(model).map(str::to_string),
+            })
+        })
+        .collect())
 }
 
 pub(crate) fn set_provider(id: &str, config: &Value) -> Result<(), AppError> {
@@ -355,6 +410,9 @@ mod tests {
         assert_eq!(models[1]["vendor"], "DeepSeek");
         assert_eq!(models[1][OWNER_FIELD], "ds");
         assert_eq!(models[2]["supportsReasoning"], true);
+        // 起了名字的保留，没起的用厂商标签
+        assert_eq!(models[1]["name"], "DeepSeek Chat");
+        assert_eq!(models[2]["name"], "DeepSeek");
         assert_eq!(doc["extra"], 1);
         // 没有白名单时不创建白名单
         assert!(doc.get("availableModels").is_none());
@@ -433,6 +491,58 @@ mod tests {
             "models": [{ "id": "m" }]
         }))
         .is_ok());
+    }
+
+    #[test]
+    fn blank_names_fall_back_to_vendor_only_when_there_is_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("models.json");
+        let config = json!({
+            "url": "https://a.test/v1/chat/completions",
+            "models": [
+                { "id": "a", "name": "  " },
+                { "id": "b", "vendor": "Own" }
+            ]
+        });
+        update(&path, "p", Some(&config)).unwrap();
+        let doc: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        // 没有厂商标签：不留空名字，WorkBuddy 只显示模型 id
+        assert!(doc["models"][0].get("name").is_none());
+        assert_eq!(doc["models"][1]["name"], "Own");
+        // 读回时补上的名字去掉
+        assert!(providers_at(&path).unwrap()["p"]["models"][1]
+            .get("name")
+            .is_none());
+    }
+
+    #[test]
+    fn lists_model_owners() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("models.json");
+        assert!(model_owners_at(&path).unwrap().is_empty());
+        fs::write(
+            &path,
+            r#"{"models":[{"id":"mine","url":"https://x.test"},{"id":" "}]}"#,
+        )
+        .unwrap();
+        update(&path, "ds", Some(&provider())).unwrap();
+        assert_eq!(
+            model_owners_at(&path).unwrap(),
+            vec![
+                WorkBuddyModelOwner {
+                    id: "mine".into(),
+                    owner: None
+                },
+                WorkBuddyModelOwner {
+                    id: "deepseek-chat".into(),
+                    owner: Some("ds".into())
+                },
+                WorkBuddyModelOwner {
+                    id: "deepseek-reasoner".into(),
+                    owner: Some("ds".into())
+                },
+            ]
+        );
     }
 
     #[test]

@@ -901,6 +901,7 @@
     "languageOptionTurkish": "Türkçe",
     "languageOptionKorean": "한국어",
     "languageOptionRussian": "Русский",
+    "languageOptionGerman": "Deutsch",
     "windowBehavior": "視窗行為",
     "windowBehaviorHint": "設定視窗最小化與 Claude 外掛程式連動策略。",
     "launchOnStartup": "開機自動啟動",
@@ -1209,9 +1210,12 @@
       "urlHint": "完整的 OpenAI 相容 Chat Completions 位址，通常以 /chat/completions 結尾。",
       "apiKeyHint": "儲存在本機的 models.json 裡；${ENV_VAR} 形式的參照由 WorkBuddy 展開。",
       "vendor": "廠商標籤",
-      "modelsHint": "至少新增一個模型。模型 ID 會原樣傳送給介面。",
+      "modelsHint": "至少新增一個模型。模型 ID 會原樣傳送給介面。WorkBuddy 暫時不支援同一個模型新增多次，同一個模型 ID 只能放在一張卡裡。名稱留空時，WorkBuddy 選單顯示「廠商標籤:模型 ID」。",
       "maxInputTokens": "最大輸入 Token",
-      "maxOutputTokens": "最大輸出 Token"
+      "maxOutputTokens": "最大輸出 Token",
+      "modelIdTaken": "WorkBuddy 暫時不支援同一個模型新增多次，這個模型已經在「{{owner}}」裡了。想換到這張卡，請先從那邊刪除。",
+      "modelOwnerUser": "WorkBuddy 裡自行新增的模型",
+      "presetModelsSkipped": "WorkBuddy 暫時不支援同一個模型新增多次，這些模型已經在別的卡裡，已略過：{{models}}。想換到這張卡，請先從原來的卡刪除，再在這裡加回來。"
     },
     "official": {
       "presetName": "WorkBuddy 官方登入",
@@ -1231,8 +1235,8 @@
       "preparedNewLogin": "已收錄目前帳號，WorkBuddy 開啟後會停在登入頁。登入另一個帳號後，它會自動出現在帳號列表裡。",
       "switching": "正在切換…",
       "onlyOne": "WorkBuddy 同時只能登入一個帳號，加入另一張官方卡即可切換",
-      "quitFirst": "請先結束 WorkBuddy 再加入",
-      "quitFirstBody": "完全結束 WorkBuddy（含選單列／系統匣）後再點「加入」，否則它會把目前的登入寫回去。",
+      "quitFirst": "請先結束 WorkBuddy 再切換帳號",
+      "quitFirstBody": "完全結束 WorkBuddy（含選單列／系統匣）後再切換，否則它會把目前的登入寫回去。",
       "switched": "已切換到「{{name}}」，下次開啟 WorkBuddy 會使用這個帳號。",
       "switchFailed": "切換 WorkBuddy 帳號失敗"
     },
@@ -1249,7 +1253,14 @@
       "staleFailed": "這次沒查到，顯示的是上次查到的結果",
       "openToQuery": "開啟 WorkBuddy 後可查",
       "onlyWhileRunning": "額度只能在 WorkBuddy 執行時經由它查詢",
-      "unavailable": "暫時取不到額度"
+      "unavailable": "暫時取不到額度",
+      "expiry": "到期",
+      "expiresOn": "{{credits}} 積分 {{date}}到期",
+      "expiresOnShort": "{{date}}到期",
+      "noExpiry": "不會過期",
+      "expiryTitle": "積分到期時間",
+      "expiryShowAll": "查看每筆積分的到期時間",
+      "inTime": "{{time}}後"
     }
   },
   "pi": {
@@ -1432,6 +1443,7 @@
     "searchSessions": "搜尋工作階段",
     "sessionList": "工作階段清單",
     "unknownDirectory": "未知目錄",
+    "codexChats": "Codex 聊天",
     "batchDeleting": "批次刪除中...",
     "loadingSessions": "載入工作階段中...",
     "piRelativeSessionDir": "Pi 的 sessionDir 是相對於啟動 Pi 時所在的目錄，因此全域瀏覽器無法安全列舉。請將 sessionDir 設為絕對路徑，之後即可在此瀏覽所有 Pi 工作階段：",
@@ -2003,6 +2015,7 @@
     "form": {
       "officialTitle": "使用 Copilot CLI 自己的 GitHub 登入",
       "officialHint": "「開啟終端機」以這張卡的模型啟動 copilot；綁定授權中心的帳號後改用該帳號啟動。",
+      "followCliLogin": "跟隨 Copilot CLI 自己的登入",
       "byokTitle": "新增後寫入 Copilot 的 providers.json",
       "byokHint": "「新增」會把這一家和它的模型寫入 Copilot 自己的 providers.json（僅本機目前使用者可讀），之後以任何方式啟動的 copilot 都能在 /model 裡選到「卡片識別碼/模型」；「移除」只刪除這一家的項目，檔案裡的其他內容原樣保留。",
       "apiFormat": "介面格式",
@@ -5130,7 +5143,7 @@
       "chatgptHelp": "用於 Claude Code、Claude Desktop 的 ChatGPT 預設，以及 Codex 官方登入綁定。沒指定帳號的供應商用「預設」帳號。",
       "xaiHelp": "用於 Claude Code、Claude Desktop、Codex 的 xAI 預設。沒指定帳號的供應商用「預設」帳號。",
       "agyHelp": "Antigravity CLI（agy）的官方登入。agy 同時只能登入一個帳號，「切換」會把 agy 的登入換成選中的帳號，之後新開的 agy 都用它。agy 裡原本登入的帳號會自動收進這裡，切走也不會遺失。",
-      "workbuddyHelp": "WorkBuddy 桌面端的官方登入。CC Switch 不能替 WorkBuddy 登入，只能收錄它目前登入的帳號（整組登入檔案的快照）。要切換帳號，請在供應商列表裡加入綁定它的「WorkBuddy 官方登入」卡（同一時間只有一張在「已加入」）。快照只在這台電腦上有效，不會隨雲端同步。",
+      "workbuddyHelp": "WorkBuddy 桌面端的官方登入。CC Switch 不能替 WorkBuddy 登入，只能收錄它目前登入的帳號（整組登入檔案的快照）。要切換帳號，請在帳號的「…」裡選「將 WorkBuddy 切換到這個帳號」，或在供應商列表裡加入綁定它的「WorkBuddy 官方登入」卡（同一時間只有一張在「已加入」）。快照只在這台電腦上有效，不會隨雲端同步。",
       "claudeHelpTerminal": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。設定裡覆寫了 Claude 設定目錄，切卡不會切換 Claude Code 的登入；在官方卡上選一個帳號，再從卡片「開啟終端機」使用。",
       "claudeHelpWsl": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。Claude 設定目錄在 WSL 裡時暫不支援，後續會跟進。",
       "claudeHelp": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。在 Claude 官方卡上選一個帳號，切到這張卡後，Claude Code 的登入會即時換成這個帳號；想同時用幾個帳號，從卡片「開啟終端機」。登入權杖只留在本機，不上傳、不重新整理、不登出。第一次切換會自動收進 Claude Code 目前登入的帳號；切換帳號後 Remote Control 會中斷，提示快取要重建。"
@@ -5139,6 +5152,8 @@
     "accountMenu": "{{login}} 的更多操作",
     "removeAccount": "刪除帳號",
     "setDefault": "設為預設",
+    "inUseBy": "{{app}} 使用中",
+    "switchAppTo": "將 {{app}} 切換到這個帳號",
     "reauth": "重新登入",
     "busyHint": "先完成或取消進行中的登入",
     "default": "預設",
@@ -5185,8 +5200,6 @@
       "addedOn": "{{date}}新增",
       "statusLoadFailed": "無法讀取 Antigravity 帳號，請重試。",
       "empty": "還沒有 Antigravity 帳號。agy 裡已登入的帳號會自動出現在這裡。",
-      "current": "agy 使用中",
-      "switchTo": "將 agy 切換到這個帳號",
       "removeNote": "不會讓 agy 登出：agy 目前登入的帳號刪除後仍然可用。",
       "switched": "已切換，新開的 agy 會使用這個帳號。",
       "switchedWhileRunning": "已切換。偵測到 agy 正在執行：已開啟的 agy 仍使用原帳號，還可能把原帳號寫回去，請結束後重新開啟。"
@@ -5210,7 +5223,6 @@
         "_raw": "{{plan}}"
       },
       "importNow": "收錄",
-      "current": "WorkBuddy 使用中",
       "removeNote": "只刪除 CC Switch 裡的快照，不會讓 WorkBuddy 登出。",
       "localOnly": "快照只在這台電腦上有效（登入憑證綁定本機），不會隨雲端同步，換電腦後需要重新收錄。",
       "runningTitle": "WorkBuddy 正在執行",
@@ -5248,7 +5260,6 @@
   },
   "kimi": {
     "oauth": {
-      "useAccount": "使用此帳號",
       "title": "Kimi Code 官方登入",
       "description": "可新增多個 Kimi 程式開發方案帳號，各自儲存憑證與供應商。在此管理登入，再選擇帳號使用其官方模型。",
       "region": "登入區域",
@@ -5271,7 +5282,6 @@
       "manageAccounts": "管理 Kimi 帳號",
       "managedHint": "先移除這個官方帳號，或到授權中心刪除它（連同登入一起刪）。",
       "connectionManaged": "連線和登入由授權中心管理，這裡只編輯模型。拉取模型會讀取這個帳號目前可用的官方模型。",
-      "current": "Kimi 使用中",
       "primaryShort": "Kimi Code 自己的登入",
       "empty": "還沒有 Kimi 帳號。Kimi Code 中已登入的帳號會自動出現在這裡。",
       "help": "可新增多個 Kimi 程式設計方案帳號，每個帳號在 Kimi Code 中有自己的供應商和模型。「使用此帳號」會把 Kimi Code 的預設模型換成這個帳號的，之後新開的對話都用它。Kimi Code 自己登入的帳號會自動出現在這裡，聯網搜尋和網頁擷取始終用它；在這裡刪除它只會移出列表，不會讓 Kimi Code 登出。"

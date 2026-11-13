@@ -896,7 +896,7 @@ impl AppSettings {
             .language
             .as_ref()
             .map(|s| s.trim())
-            .filter(|s| matches!(*s, "en" | "zh" | "zh-TW" | "ja" | "tr" | "ko" | "ru"))
+            .filter(|s| matches!(*s, "en" | "zh" | "zh-TW" | "de" | "ja" | "tr" | "ko" | "ru"))
             .map(|s| s.to_string());
 
         self.quota_display = self
@@ -1707,16 +1707,20 @@ mod tests {
 
     #[test]
     fn russian_language_survives_normalization() {
-        let mut settings = AppSettings::default();
-        settings.language = Some("ru".into());
+        let mut settings = AppSettings {
+            language: Some("ru".into()),
+            ..Default::default()
+        };
         settings.normalize_paths();
         assert_eq!(settings.language.as_deref(), Some("ru"));
     }
 
     #[test]
     fn korean_language_survives_normalization() {
-        let mut settings = AppSettings::default();
-        settings.language = Some("ko".into());
+        let mut settings = AppSettings {
+            language: Some("ko".into()),
+            ..Default::default()
+        };
         settings.normalize_paths();
         assert_eq!(settings.language.as_deref(), Some("ko"));
     }

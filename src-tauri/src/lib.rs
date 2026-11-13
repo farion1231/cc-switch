@@ -80,7 +80,10 @@ pub use prompt::Prompt;
 pub use provider::{Provider, ProviderMeta};
 pub use services::{
     profile::{ProfilePayload, ProfileScope, ProfileService, NO_ACTIVE_PROMPT},
-    provider::{reapply_current_codex_official_live, EditorSave, EditorView},
+    provider::{
+        reapply_current_codex_official_live, reapply_current_codex_third_party_live, EditorSave,
+        EditorView,
+    },
     skill::{migrate_skills_to_ssot, ImportSkillSelection},
     ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
     SkillService, SpeedtestService,
@@ -1973,6 +1976,7 @@ pub fn run() {
             commands::agy_account_is_running,
             commands::agy_account_quota,
             commands::workbuddy_account_live_state,
+            commands::workbuddy_model_owners,
             commands::workbuddy_account_import_current,
             commands::workbuddy_account_prepare_new_login,
             commands::workbuddy_account_open_app,
