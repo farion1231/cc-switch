@@ -63,6 +63,19 @@ const isCustomConfig = (value: unknown): value is CustomConfig =>
   typeof (value as { provider?: unknown }).provider === "object" &&
   (value as { provider?: unknown }).provider !== null;
 
+// Providers imported from traecli.toml that are not the selected one carry no
+// `model` (only the top-level `model` belongs to the active provider), so treat
+// a missing model as empty instead of crashing on `.trim()`.
+const normalizeInitialConfig = (value: unknown): TraeProviderConfig => {
+  if (isCustomConfig(value)) {
+    return {
+      ...value,
+      model: typeof value.model === "string" ? value.model : "",
+    };
+  }
+  return (value as TraeProviderConfig | undefined) ?? emptyConfig();
+};
+
 export function TraeProviderForm({
   providerId,
   initialData,
@@ -75,9 +88,8 @@ export function TraeProviderForm({
 }: ProviderFormProps) {
   const { t } = useTranslation();
   const isDarkMode = useDarkMode();
-  const [config, setConfig] = useState<TraeProviderConfig>(
-    (initialData?.settingsConfig as TraeProviderConfig | undefined) ??
-      emptyConfig(),
+  const [config, setConfig] = useState<TraeProviderConfig>(() =>
+    normalizeInitialConfig(initialData?.settingsConfig),
   );
   const [jsonText, setJsonText] = useState(JSON.stringify(config, null, 2));
   const [jsonValid, setJsonValid] = useState(true);

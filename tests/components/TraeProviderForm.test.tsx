@@ -75,6 +75,24 @@ describe("TraeProviderForm", () => {
     });
   });
 
+  it("edits an unselected native provider that has no model yet", async () => {
+    // Non-selected tables imported from traecli.toml carry no `model`.
+    const { model: _model, ...withoutModel } = custom;
+    const { container, onSubmit } = setup(withoutModel);
+    const model = container.querySelector<HTMLInputElement>("#trae-model")!;
+    expect(model.value).toBe("");
+    const save = screen.getByRole("button", { name: "Save" });
+    await waitFor(() => expect(save).toBeDisabled());
+    fireEvent.change(model, { target: { value: "gpt-5" } });
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(JSON.parse(onSubmit.mock.calls[0][0].settingsConfig)).toEqual({
+      provider: { ...custom.provider, name: "Example" },
+      model: "gpt-5",
+    });
+  });
+
   it("accepts an env_key instead of a stored API key", async () => {
     const { container, onSubmit } = setup();
     fireEvent.change(container.querySelector("#trae-api-key")!, {
