@@ -33,6 +33,7 @@ import { supportsOfficialProxyTakeover } from "@/utils/providerCapabilities";
 import { getRoutingReason } from "@/utils/routingReason";
 import { logFrontendInfo } from "@/lib/frontendLogger";
 import { codexHistorySplitToastExtras } from "@/utils/codexHistorySplitHint";
+import { restartCodexDesktop } from "@/lib/api/codexDesktop";
 
 /**
  * Hook for managing provider actions (add, update, delete, switch)
@@ -169,7 +170,10 @@ export function useProviderActions(
 
   // 切换供应商
   const switchProvider = useCallback(
-    async (provider: Provider, options?: { acknowledgedRouting?: boolean }) => {
+    async (
+      provider: Provider,
+      options?: { acknowledgedRouting?: boolean; restartDesktop?: boolean },
+    ) => {
       // 必须开启当前应用的 takeover（只看全局进程会漏判别的应用已接管的情况）。
       // 确认框 F 里选了「仍然直连切换」的不再重复提醒。
       const routingReady =
@@ -218,7 +222,6 @@ export function useProviderActions(
       try {
         const result = await switchProviderMutation.mutateAsync(provider.id);
         await syncClaudePlugin(provider);
-
         // Surface switch warnings by code — a generic "backfill failed"
         // message for an auth-cleanup warning would point the user at the
         // wrong problem entirely.
@@ -249,11 +252,46 @@ export function useProviderActions(
           }
         }
 
-        // 会话分组的提醒并进「切换成功」那条，不另弹
+        // Keep the session-history hint with the restart confirmation when possible.
         const splitExtras = result?.codexHistorySplit
           ? codexHistorySplitToastExtras(result.codexHistorySplit, t)
           : undefined;
 
+        if (activeApp === "codex" && options?.restartDesktop) {
+          try {
+            const restartResult = await restartCodexDesktop(provider.id);
+            const restartMessage = t(
+              restartResult.action === "started"
+                ? "codexDesktop.switchedAndOpened"
+                : "codexDesktop.switchedAndRestarted",
+            );
+            if (splitExtras) {
+              toast.success(restartMessage, {
+                closeButton: true,
+                ...splitExtras,
+              });
+            } else {
+              toast.success(restartMessage);
+            }
+          } catch (error) {
+            toast.error(
+              t("codexDesktop.switchRestartFailed", {
+                error: error instanceof Error ? error.message : String(error),
+              }),
+            );
+            if (splitExtras?.description) {
+              toast.info(splitExtras.description as string, {
+                closeButton: true,
+                duration: splitExtras.duration,
+              });
+            }
+          } finally {
+            void queryClient.invalidateQueries({
+              queryKey: ["codex-desktop-status"],
+            });
+          }
+          return;
+        }
         // 若已弹过 proxyRequired 警告则不再弹 success
         if (!proxyRequiredReason) {
           let messageKey = "notifications.switchSuccess";
@@ -298,7 +336,14 @@ export function useProviderActions(
         // 错误提示由 mutation 处理
       }
     },
-    [switchProviderMutation, syncClaudePlugin, activeApp, isProxyTakeover, t],
+    [
+      switchProviderMutation,
+      syncClaudePlugin,
+      activeApp,
+      isProxyTakeover,
+      queryClient,
+      t,
+    ],
   );
 
   // 删除供应商

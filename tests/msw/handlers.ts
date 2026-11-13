@@ -48,6 +48,9 @@ const withJson = async <T>(request: Request): Promise<T> => {
 const success = <T>(payload: T) => HttpResponse.json(payload as any);
 
 export const handlers = [
+  http.post(`${TAURI_ENDPOINT}/get_codex_desktop_status`, () =>
+    success({ supported: true, installed: false, running: false }),
+  ),
   http.post(`${TAURI_ENDPOINT}/fetch_models_dev`, () =>
     success(JSON.stringify({})),
   ),
