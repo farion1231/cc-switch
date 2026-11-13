@@ -7,6 +7,12 @@
 //! Files written before that event existed fall back to assistant
 //! `usageMetadata`. `input_token_count` includes cached tokens; rows are stored
 //! as fresh input.
+//!
+//! Whether `thoughts` are already part of the output count depends on the
+//! protocol: Qwen's OpenAI and Anthropic converters report the provider's
+//! completion/output tokens (which include reasoning) as candidates and copy
+//! the reasoning share into thoughts, while the native Gemini API reports
+//! candidates without thoughts. See [`thoughts_are_separate`].
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::{calculator::CostCalculator, parser::TokenUsage};
@@ -110,16 +116,53 @@ fn count(value: &Value, key: &str) -> u32 {
         .min(u32::MAX as u64) as u32
 }
 
+/// Whether `thoughts` must be added to `output` to get the billed output tokens.
+///
+/// Only the native Gemini protocol (`gemini` / `vertex-ai`) keeps thoughts out
+/// of `candidatesTokenCount`; the OpenAI (Chat Completions and Responses),
+/// Anthropic and Qwen OAuth converters map `completion_tokens` /
+/// `output_tokens`, which already include reasoning, to candidates. Telemetry
+/// records the request's `auth_type`. Assistant `usageMetadata` has no protocol,
+/// so the total decides: Gemini's total counts thoughts on top of prompt and
+/// candidates, the converters' total does not. Without either signal thoughts
+/// are not added — almost all Qwen Code providers are OpenAI-compatible, and
+/// undercounting a Gemini reasoning share is safer than double counting every
+/// OpenAI-compatible reply.
+fn thoughts_are_separate(
+    auth_type: Option<&str>,
+    input_total: u32,
+    output: u32,
+    thoughts: u32,
+    total: u32,
+) -> bool {
+    if thoughts == 0 {
+        return false;
+    }
+    match auth_type.filter(|auth_type| !auth_type.is_empty()) {
+        Some(auth_type) => matches!(auth_type, "gemini" | "vertex-ai"),
+        None => {
+            total > 0
+                && u64::from(total)
+                    >= u64::from(input_total) + u64::from(output) + u64::from(thoughts)
+        }
+    }
+}
+
 fn usage_from(
     model: &str,
     input_total: u32,
     output: u32,
     thoughts: u32,
     cached: u32,
+    thoughts_separate: bool,
 ) -> TokenUsage {
     TokenUsage {
         input_tokens: input_total.saturating_sub(cached),
-        output_tokens: output.saturating_add(thoughts),
+        output_tokens: if thoughts_separate {
+            output.saturating_add(thoughts)
+        } else {
+            output
+        },
         cache_read_tokens: cached,
         cache_creation_tokens: 0,
         cache_creation_1h_tokens: 0,
@@ -142,12 +185,23 @@ fn telemetry_entry(record: &Value) -> Option<Entry> {
         .and_then(Value::as_str)
         .filter(|model| !model.is_empty())
         .unwrap_or("unknown");
+    let input = count(event, "input_token_count");
+    let output = count(event, "output_token_count");
+    let thoughts = count(event, "thoughts_token_count");
+    let separate = thoughts_are_separate(
+        event.get("auth_type").and_then(Value::as_str),
+        input,
+        output,
+        thoughts,
+        count(event, "total_token_count"),
+    );
     let usage = usage_from(
         model,
-        count(event, "input_token_count"),
-        count(event, "output_token_count"),
-        count(event, "thoughts_token_count"),
+        input,
+        output,
+        thoughts,
         count(event, "cached_content_token_count"),
+        separate,
     );
     Some(Entry {
         request_id: String::new(),
@@ -185,13 +239,26 @@ fn assistant_entry(record: &Value) -> Option<Entry> {
         request_id: String::new(),
         session_id: String::new(),
         model: model.into(),
-        usage: usage_from(
-            model,
-            count(usage, "promptTokenCount"),
-            count(usage, "candidatesTokenCount"),
-            count(usage, "thoughtsTokenCount"),
-            count(usage, "cachedContentTokenCount"),
-        ),
+        usage: {
+            let input = count(usage, "promptTokenCount");
+            let output = count(usage, "candidatesTokenCount");
+            let thoughts = count(usage, "thoughtsTokenCount");
+            let separate = thoughts_are_separate(
+                None,
+                input,
+                output,
+                thoughts,
+                count(usage, "totalTokenCount"),
+            );
+            usage_from(
+                model,
+                input,
+                output,
+                thoughts,
+                count(usage, "cachedContentTokenCount"),
+                separate,
+            )
+        },
         created_ms: record.get("timestamp").and_then(timestamp_ms)?,
         latency_ms: 0,
         first_token_ms: None,
@@ -353,7 +420,8 @@ mod tests {
                 "event.name": API_RESPONSE, "event.timestamp": "2026-10-22T17:29:57.797Z",
                 "model": model, "status_code": 200, "duration_ms": 296, "ttft_ms": 293,
                 "input_token_count": input, "output_token_count": output,
-                "cached_content_token_count": cached, "thoughts_token_count": 2
+                "cached_content_token_count": cached, "thoughts_token_count": 2,
+                "total_token_count": input + output, "auth_type": "openai"
             }}
         })
         .to_string()
@@ -414,7 +482,7 @@ mod tests {
                 "qwen:s1:t1".into(),
                 "m".into(),
                 200,
-                36,
+                34,
                 1000,
                 296,
                 Some(293)
@@ -451,6 +519,59 @@ mod tests {
         fs::write(&path, format!("{ASSISTANT}\n")).unwrap();
         filetime_bump(&path);
         assert_eq!(sync_projects(&db, dir.path()).unwrap().imported, 0);
+    }
+
+    /// Qwen Code 0.26 OpenAI converter: `output_token_count` is
+    /// `completion_tokens`, which already includes `reasoning_tokens`.
+    #[test]
+    fn qwen_usage_does_not_add_thoughts_twice_for_openai_compatible_models() {
+        let event = |auth_type: Option<&str>, total: u64| {
+            let mut event = serde_json::json!({
+                "event.name": API_RESPONSE, "event.timestamp": "2026-11-03T19:04:25.477Z",
+                "model": "m", "input_token_count": 17784, "output_token_count": 88,
+                "cached_content_token_count": 17664, "thoughts_token_count": 31,
+                "total_token_count": total
+            });
+            if let Some(auth_type) = auth_type {
+                event["auth_type"] = auth_type.into();
+            }
+            serde_json::json!({
+                "subtype": "ui_telemetry", "systemPayload": {"uiEvent": event}
+            })
+        };
+        let output = |record: Value| telemetry_entry(&record).unwrap().usage.output_tokens;
+        for auth_type in ["openai", "openai-responses", "anthropic", "qwen-oauth"] {
+            assert_eq!(output(event(Some(auth_type), 17872)), 88, "{auth_type}");
+        }
+        // The native Gemini API keeps thoughts out of candidates.
+        for auth_type in ["gemini", "vertex-ai"] {
+            assert_eq!(output(event(Some(auth_type), 17903)), 119, "{auth_type}");
+        }
+        // Without auth_type the total tells the two apart.
+        assert_eq!(output(event(None, 17872)), 88);
+        assert_eq!(output(event(None, 17903)), 119);
+        assert_eq!(output(event(None, 0)), 88);
+
+        let assistant = |total: u64| {
+            serde_json::json!({
+                "uuid": "a1", "timestamp": "2026-11-03T19:04:25.479Z", "type": "assistant",
+                "model": "m", "usageMetadata": {
+                    "promptTokenCount": 17784, "candidatesTokenCount": 88,
+                    "thoughtsTokenCount": 31, "totalTokenCount": total,
+                    "cachedContentTokenCount": 17664
+                }
+            })
+        };
+        let assistant_output =
+            |record: Value| assistant_entry(&record).unwrap().usage.output_tokens;
+        assert_eq!(assistant_output(assistant(17872)), 88);
+        assert_eq!(assistant_output(assistant(17903)), 119);
+        let mut no_total = assistant(0);
+        no_total["usageMetadata"]
+            .as_object_mut()
+            .unwrap()
+            .remove("totalTokenCount");
+        assert_eq!(assistant_output(no_total), 88);
     }
 
     fn filetime_bump(path: &Path) {
