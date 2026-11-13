@@ -50,7 +50,8 @@
     "collapse": "접기",
     "more": "더 보기",
     "retry": "다시 시도",
-    "required": "필수"
+    "required": "필수",
+    "copyFailed": "복사에 실패했습니다. 직접 복사해 주세요."
   },
   "firstRunNotice": {
     "title": "CC Switch에 오신 것을 환영합니다",
@@ -575,6 +576,13 @@
           "debug": "SSE 스트림 및 요청/응답을 포함한 세부 정보",
           "trace": "모든 로그, 가장 자세한 로그"
         }
+      },
+      "publicRoute": {
+        "title": "퍼블릭 라우팅",
+        "description": "퍼블릭 터널을 통해 로컬 라우팅을 사용자 지정 Base URL을 지원하는 앱(예: Cursor)에 노출합니다.",
+        "enabled": "사용",
+        "disabled": "사용 안 함",
+        "proxyRequired": "퍼블릭 라우팅을 설정하려면 먼저 로컬 라우팅을 시작하세요."
       }
     },
     "language": "언어",
@@ -1159,6 +1167,7 @@
       "general": "일반",
       "appConfig": "앱 설정",
       "routing": "로컬 라우팅",
+      "publicRoute": "퍼블릭 라우팅",
       "network": "네트워크",
       "data": "데이터",
       "about": "정보"
@@ -1184,6 +1193,7 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
+    "cursor": "Cursor",
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "workbuddy": "WorkBuddy",
@@ -1467,6 +1477,11 @@
     "roleSystem": "시스템",
     "roleTool": "도구",
     "noResumeCommand": "이 세션을 이어갈 수 없습니다.",
+    "exportMarkdown": "Markdown 내보내기",
+    "exportMarkdownCopied": "Markdown이 복사되었습니다",
+    "exportMarkdownTooltip": "이 세션을 Markdown으로 클립보드에 내보내기",
+    "copyCommand": "명령 복사",
+    "copyMessage": "메시지 복사",
     "messageCopied": "메시지가 복사되었습니다.",
     "expandContent": "전체 콘텐츠 펼치기",
     "collapseContent": "접기",
@@ -2953,7 +2968,8 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
-        "mcode": "MiniMax Code"
+        "mcode": "MiniMax Code",
+        "cursor": "Cursor"
       }
     },
     "userLevelPath": "사용자 수준 MCP 설정 경로",
@@ -3457,6 +3473,78 @@
       "overLimitBy": "한도를 {{over}}자 초과했습니다. Hermes가 다음에 불러올 때 내용을 잘라냅니다",
       "toggledOn": "{{name}} 기능을 활성화했습니다. Hermes를 다시 시작하거나 새 세션을 만들면 적용됩니다.",
       "toggledOff": "{{name}} 기능을 비활성화했습니다. Hermes를 다시 시작하거나 새 세션을 만들면 적용됩니다."
+    }
+  },
+  "cursor": {
+    "needsRouting": "라우팅 필요",
+    "form": {
+      "baseUrl": "API 엔드포인트",
+      "baseUrlHint": "이 공급자의 API 엔드포인트 URL입니다.",
+      "model": "모델(선택 사항)",
+      "modelPlaceholder": "gpt-4o, claude-sonnet-4-20250514, ...",
+      "modelHint": "선택 사항입니다. 비워 두면 공급자의 기본 모델을 사용합니다."
+    },
+    "needsPublicRoute": "퍼블릭 라우팅 필요",
+    "needsPublicRouteHint": "설정에서 퍼블릭 라우팅 열기",
+    "restore": {
+      "title": "Cursor 설정을 복원할까요?",
+      "message": "라우팅 모드에서 나왔지만 Cursor는 여전히 이제 유효하지 않은 퍼블릭 URL을 가리키고 있습니다. 쓰기 전에 캡처한 설정을 복원할까요? (스냅샷: {{when}})",
+      "confirm": "복원",
+      "cancel": "나중에",
+      "done": "Cursor 설정이 복원되었습니다"
+    }
+  },
+  "cursorSetup": {
+    "title": "Cursor 연결 설정({{provider}})",
+    "lead": "Cursor 클라우드는 사용자 컴퓨터의 주소에 접근할 수 없으므로, 서드파티 공급자에는 로컬 라우팅과 퍼블릭 터널이 필요하며 그다음 Cursor가 해당 주소를 가리키도록 해야 합니다.",
+    "steps": {
+      "localRoute": "로컬 라우팅",
+      "publicRoute": "퍼블릭 라우팅",
+      "exitCursor": "Cursor 종료",
+      "pasteKey": "키 붙여넣기"
+    },
+    "checking": "설정 요구 사항 확인 중…",
+    "switching": "이 공급자로 전환 중…",
+    "writing": "Cursor 설정 기록 중…",
+    "cardA": {
+      "title": "먼저 로컬 라우팅을 켜세요",
+      "body": "서드파티 공급자로 가는 요청은 CC Switch의 로컬 프록시를 통과합니다. 로컬 라우팅이 꺼져 있으면 요청이 여기까지 오지 않습니다.",
+      "action": "라우팅 열기"
+    },
+    "cardB": {
+      "title": "그다음 퍼블릭 라우팅을 켜세요",
+      "body": "Cursor 클라우드는 로컬 주소에 접근할 수 없습니다(사설 주소로 거부됨). 따라서 로컬 프록시를 퍼블릭 터널로 노출해야 합니다.",
+      "action": "퍼블릭 라우팅 설정 열기"
+    },
+    "cardC": {
+      "title": "먼저 Cursor를 완전히 종료하세요",
+      "body": "Cursor가 실행 중이면 설정을 다시 기록해 덮어쓰므로 자동 기록이 사라집니다. Cursor를 종료하면 이 대화 상자가 자동으로 계속 진행됩니다.",
+      "waiting": "Cursor 종료 대기 중…",
+      "action": "나중에 하기"
+    },
+    "cardD": {
+      "title": "이제 API 키만 남았습니다",
+      "body": "Base URL과 '사용자 지정 API 키 사용'은 자동으로 기록되었습니다. 키는 Cursor에 암호화되어 저장되므로 읽을 수도 쓸 수도 없습니다. 한 번 직접 붙여넣어 주세요.",
+      "pathLabel": "여기에 붙여넣기:",
+      "copy": "키 복사",
+      "copied": "키가 복사되었습니다",
+      "copyFailed": "복사에 실패했습니다. 직접 복사해 주세요.",
+      "done": "붙여넣었습니다"
+    },
+    "writeFailed": {
+      "title": "Cursor 설정을 기록하지 못했습니다",
+      "body": "Base URL과 사용 가능한 모델 목록이 기록되지 않았습니다. Cursor가 완전히 종료되었는지 확인한 후 다시 시도하세요.",
+      "retry": "다시 시도"
+    },
+    "connectivity": {
+      "label": "연결 확인",
+      "testing": "로컬 라우팅 → 퍼블릭 터널 순으로 테스트 중…",
+      "localFailed": "로컬 라우팅에 연결할 수 없습니다. 요청이 CC Switch의 로컬 프록시에 도달하지 못했습니다.",
+      "publicFailed": "로컬 라우팅은 정상이지만 퍼블릭 터널에 연결할 수 없습니다. Cloudflare 엣지가 요청을 터널로 되돌려 보내지 못했습니다.",
+      "ok": "로컬 라우팅과 퍼블릭 터널 모두 연결되므로 Cursor를 사용할 수 있습니다.",
+      "keyReminder": "한 가지가 남았습니다. API 키를 Cursor에 한 번 붙여넣어야 합니다(위 참고).",
+      "detailLabel": "상세 정보:",
+      "retest": "다시 테스트"
     }
   },
   "env": {
@@ -4078,7 +4166,45 @@
       "stopFailed": "라우팅 서비스 중지 실패: {{detail}}"
     },
     "stoppedWithRestore": "라우팅 서비스가 중지되었습니다. 모든 앱이 다시 직접 연결로 돌아왔습니다",
-    "stopWithRestoreFailed": "중지 실패: {{detail}}"
+    "stopWithRestoreFailed": "중지 실패: {{detail}}",
+    "publicRoute": {
+      "title": "퍼블릭 라우팅",
+      "statusOff": "퍼블릭 터널을 통해 로컬 라우팅을 외부 앱에 노출",
+      "statusStarting": "터널 설정 중…",
+      "statusRunning": "터널이 설정되었습니다",
+      "enabled": "퍼블릭 라우팅이 활성화되었습니다. 터널 설정 중…",
+      "disabled": "퍼블릭 라우팅이 비활성화되었습니다",
+      "toggleFailed": "퍼블릭 라우팅 전환에 실패했습니다",
+      "waitingTunnel": "퍼블릭 터널(cloudflared) 설정 중입니다. 보통 몇 초 걸립니다…",
+      "publicUrl": "퍼블릭 URL",
+      "setupTitle": "예시: Cursor에서 설정 완료하기",
+      "stepBaseUrl": "Settings → Models → Override OpenAI Base URL 입력:",
+      "stepApiKey": "OpenAI API Key: CC Switch가 자동 생성한 터널 키를 붙여넣으세요(필수 — 퍼블릭 터널 인증에 사용됩니다):",
+      "stepModel": "모델을 추가하고 선택하세요. 공급자의 modelCatalog에 설정된 클라이언트 이름(Cursor Model Name)을 사용하면 프록시가 자동으로 업스트림 모델에 매핑합니다.",
+      "ephemeralHint": "빠른 터널 URL은 다시 만들 때마다 변경됩니다. 새 URL이 복사되었으니 Cursor에 다시 붙여넣으세요. 고정 주소가 필요하면 비활성화 상태에서 '고정 도메인' 모드로 전환하세요.",
+      "keyCopied": "키가 복사되었습니다",
+      "takeoverHint": "Cursor를 로컬 프록시를 통해 라우팅하려면 퍼블릭 라우팅(터널)이 필요합니다. 설정 → 라우팅 → 퍼블릭 라우팅에서 설정 방법을 확인하세요.",
+      "switching": "전환 중…",
+      "tunnelMode": "터널 모드",
+      "modeQuick": "빠른 터널",
+      "modeQuickHint": "계정이 필요 없으며, 다시 만들 때마다 URL이 변경됩니다",
+      "modeNamed": "고정 도메인",
+      "modeNamedHint": "Cloudflare 계정이 필요하며, URL은 변경되지 않습니다",
+      "namedTunnelName": "터널 이름",
+      "namedHostname": "퍼블릭 호스트 이름",
+      "namedSetupTitle": "일회성 설정(터미널에서 실행)",
+      "saveTunnelConfig": "터널 설정 저장",
+      "configSaved": "터널 설정이 저장되었습니다",
+      "configSaveFailed": "터널 설정 저장에 실패했습니다",
+      "baseUrlCopied": "Base URL이 복사되었습니다. Cursor → Settings → Models → Override OpenAI Base URL에 붙여넣으세요.",
+      "routePathsTitle": "앱별 라우팅 경로(필요에 따라 복사)",
+      "namedStableHint": "고정 도메인은 절대 변경되지 않습니다. Cursor에 한 번 붙여넣으면 끝입니다.",
+      "regenerateKey": "재생성",
+      "keyRegenerated": "새 키가 생성되어 복사되었습니다. Cursor → Settings → Models → OpenAI API Key에 붙여넣으세요.",
+      "keyRegenerateFailed": "키 재생성에 실패했습니다",
+      "keyRegeneratedNoCopy": "새 키가 생성되었습니다. 위의 복사 버튼을 눌러 Cursor에 직접 복사하세요.",
+      "routePathsGateHint": "로컬 라우팅이 활성화된 앱만 퍼블릭 라우팅으로 접근할 수 있으며, 비활성화된 앱에 대한 요청은 거부됩니다."
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}}에 연결할 수 있습니다({{responseTimeMs}}ms).",
@@ -4439,6 +4565,7 @@
     "columnVisible": "표시",
     "visibleHelp": "끄면 앱이 사이드바, 트레이 메뉴, MCP / 스킬의 앱 열, 프롬프트 및 세션의 앱 선택기에 표시되지 않습니다. 화면에서만 숨겨지며, 공급자와 MCP 서버 등의 설정 및 앱 자체 설정 파일은 변경되지 않습니다.",
     "desktopHelp": "Claude Desktop은 데스크톱 앱이므로 여기에서 설치하거나 업그레이드할 수 없습니다. CC Switch는 설정 파일을 통해 연결됩니다.",
+    "cursorHelp": "Cursor는 데스크톱 앱이므로 여기에서 설치하거나 업그레이드할 수 없습니다. CC Switch는 라우팅 모드를 통해 연결합니다.",
     "workbuddyHelp": "WorkBuddy는 데스크톱 앱이므로 여기서 설치하거나 업그레이드할 수 없으며 스스로 업데이트됩니다. CC Switch는 구성 파일(~/.workbuddy/models.json)을 통해 연결합니다.",
     "desktopUnsupported": "이 시스템에서는 지원되지 않습니다",
     "desktopConnected": "연결됨",

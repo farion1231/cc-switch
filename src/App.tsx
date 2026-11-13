@@ -1671,6 +1671,7 @@ function App() {
           scrollRef={providerScrollContainerRef}
           onSwitch={switchProvider}
           onOpenRoutingSettings={() => openSettings("routing")}
+          onOpenPublicRouteSettings={() => openSettings("publicRoute")}
           needsRouteRequest={
             trayNeedsRoute?.app === modeAppId ? trayNeedsRoute : undefined
           }
@@ -1707,6 +1708,7 @@ function App() {
                   ? handleAddNativeProvider(provider, activeApp)
                   : switchProvider(provider))
             }
+            onOpenPublicRouteSettings={() => openSettings("publicRoute")}
             onRemoveFromConfig={
               activeApp === "opencode" ||
               activeApp === "openclaw" ||

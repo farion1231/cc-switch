@@ -50,7 +50,8 @@
     "collapse": "Einklappen",
     "more": "Mehr",
     "retry": "Erneut versuchen",
-    "required": "erforderlich"
+    "required": "erforderlich",
+    "copyFailed": "Kopieren fehlgeschlagen. Bitte manuell kopieren."
   },
   "firstRunNotice": {
     "title": "Willkommen bei CC Switch",
@@ -575,6 +576,13 @@
           "debug": "Detaillierte Informationen inkl. SSE-Stream und Anfrage/Antwort",
           "trace": "Alle Protokolle, am ausführlichsten"
         }
+      },
+      "publicRoute": {
+        "description": "Lokales Routing über einen öffentlichen Tunnel für Apps bereitstellen, die benutzerdefinierte Basis-URLs unterstützen (z. B. Cursor)",
+        "disabled": "Deaktiviert",
+        "enabled": "Aktiviert",
+        "proxyRequired": "Starten Sie zuerst das lokale Routing, um öffentliches Routing zu konfigurieren",
+        "title": "Öffentliches Routing"
       }
     },
     "language": "Sprache",
@@ -1161,7 +1169,8 @@
       "routing": "Lokales Routing",
       "network": "Netzwerk",
       "data": "Daten",
-      "about": "Über"
+      "about": "Über",
+      "publicRoute": "Öffentliches Routing"
     },
     "appConfig": {
       "configDir": "Konfigurationsverzeichnis"
@@ -1189,7 +1198,8 @@
     "workbuddy": "WorkBuddy",
     "agy": "Antigravity",
     "copilot": "Copilot CLI",
-    "omp": "Oh My Pi"
+    "omp": "Oh My Pi",
+    "cursor": "Cursor"
   },
   "mcode": {
     "empty": {
@@ -1716,7 +1726,12 @@
       "expandContent": "Vollständigen Inhalt anzeigen",
       "collapseContent": "Einklappen"
     },
-    "copilotDeleteHint": "Löschen Sie diese Sitzung in GitHub Copilot CLI, damit dessen Sitzungsspeicher konsistent bleibt"
+    "copilotDeleteHint": "Löschen Sie diese Sitzung in GitHub Copilot CLI, damit dessen Sitzungsspeicher konsistent bleibt",
+    "copyCommand": "Befehl kopieren",
+    "copyMessage": "Nachricht kopieren",
+    "exportMarkdown": "Markdown exportieren",
+    "exportMarkdownCopied": "Markdown kopiert",
+    "exportMarkdownTooltip": "Diese Sitzung als Markdown in die Zwischenablage exportieren"
   },
   "console": {
     "providerSwitchReceived": "Ereignis zum Anbieterwechsel empfangen:",
@@ -2953,7 +2968,8 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
-        "mcode": "MiniMax Code"
+        "mcode": "MiniMax Code",
+        "cursor": "Cursor"
       }
     },
     "userLevelPath": "Pfad der MCP-Konfiguration auf Benutzerebene",
@@ -4078,7 +4094,45 @@
       "stopFailed": "Routing-Dienst konnte nicht angehalten werden: {{detail}}"
     },
     "stoppedWithRestore": "Routing-Dienst angehalten; alle Apps sind wieder direkt verbunden",
-    "stopWithRestoreFailed": "Anhalten fehlgeschlagen: {{detail}}"
+    "stopWithRestoreFailed": "Anhalten fehlgeschlagen: {{detail}}",
+    "publicRoute": {
+      "baseUrlCopied": "Basis-URL kopiert. Fügen Sie sie in Cursor → Einstellungen → Modelle → OpenAI-Basis-URL überschreiben ein",
+      "configSaveFailed": "Tunnel-Konfiguration konnte nicht gespeichert werden",
+      "configSaved": "Tunnel-Konfiguration gespeichert",
+      "disabled": "Öffentliches Routing deaktiviert",
+      "enabled": "Öffentliches Routing aktiviert, Tunnel wird aufgebaut…",
+      "ephemeralHint": "Schnell-Tunnel-URLs ändern sich bei jedem Neuaufbau; die neue URL wurde kopiert – fügen Sie sie erneut in Cursor ein. Für eine stabile Adresse wechseln Sie bei deaktiviertem Routing in den Modus „Feste Domain“.",
+      "keyCopied": "Schlüssel kopiert",
+      "keyRegenerateFailed": "Schlüssel konnte nicht neu erzeugt werden",
+      "keyRegenerated": "Neuer Schlüssel erzeugt und kopiert. Fügen Sie ihn in Cursor → Einstellungen → Modelle → OpenAI-API-Schlüssel ein",
+      "keyRegeneratedNoCopy": "Neuer Schlüssel erzeugt. Klicken Sie oben auf die Kopierschaltfläche, um ihn manuell in Cursor einzufügen.",
+      "modeNamed": "Feste Domain",
+      "modeNamedHint": "Erfordert ein Cloudflare-Konto; URL bleibt stabil",
+      "modeQuick": "Schnell-Tunnel",
+      "modeQuickHint": "Kein Konto nötig; URL ändert sich bei jedem Neuaufbau",
+      "namedHostname": "Öffentlicher Hostname",
+      "namedSetupTitle": "Einmalige Einrichtung (im Terminal ausführen)",
+      "namedStableHint": "Eine feste Domain ändert sich nie – einmal in Cursor einfügen und fertig.",
+      "namedTunnelName": "Tunnel-Name",
+      "publicUrl": "Öffentliche URL",
+      "regenerateKey": "Neu erzeugen",
+      "routePathsGateHint": "Nur Apps mit aktiviertem lokalem Routing sind über öffentliches Routing erreichbar; Anfragen an deaktivierte Apps werden abgelehnt",
+      "routePathsTitle": "Routenpfade pro App (nach Bedarf kopieren)",
+      "saveTunnelConfig": "Tunnel-Konfiguration speichern",
+      "setupTitle": "Beispiel: Einrichtung in Cursor abschließen",
+      "statusOff": "Lokales Routing über einen öffentlichen Tunnel für externe Apps bereitstellen",
+      "statusRunning": "Tunnel aufgebaut",
+      "statusStarting": "Tunnel wird aufgebaut…",
+      "stepApiKey": "OpenAI-API-Schlüssel: den von CC Switch automatisch erzeugten Tunnel-Schlüssel einfügen (erforderlich – der öffentliche Tunnel erzwingt Authentifizierung):",
+      "stepBaseUrl": "Einstellungen → Modelle → OpenAI-Basis-URL überschreiben:",
+      "stepModel": "Ein Modell hinzufügen und auswählen: den Client-Namen aus dem modelCatalog des Anbieters verwenden (Cursor-Modellname); der Proxy ordnet ihn automatisch dem Upstream-Modell zu",
+      "switching": "Wechsle…",
+      "takeoverHint": "Cursor über den lokalen Proxy erfordert öffentliches Routing (Tunnel). Einrichtung unter Einstellungen → Routing → Öffentliches Routing",
+      "title": "Öffentliches Routing",
+      "toggleFailed": "Öffentliches Routing konnte nicht umgeschaltet werden",
+      "tunnelMode": "Tunnel-Modus",
+      "waitingTunnel": "Öffentlicher Tunnel (cloudflared) wird aufgebaut, dauert normalerweise ein paar Sekunden…"
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}} ist erreichbar ({{responseTimeMs}} ms)",
@@ -4464,7 +4518,8 @@
       "agy": "Installiert mit dem offiziellen Skript",
       "copilot": "Installiert mit npm",
       "omp": "Installiert mit dem offiziellen Skript"
-    }
+    },
+    "cursorHelp": "Cursor ist eine Desktop-App und kann hier weder installiert noch aktualisiert werden; CC Switch verbindet sich über die Routing-Übernahme damit."
   },
   "appPage": {
     "moreActions": "Weitere Aktionen für {{name}}",
@@ -5382,5 +5437,77 @@
       "managedHint": "Dieses Konto wird in der Kontoverwaltung verwaltet; die Karte verschwindet nach der Abmeldung."
     },
     "deleteSessionHint": "Löschen Sie diese Sitzung in DeepSeek Harness, damit der Verlauf konsistent bleibt."
+  },
+  "cursor": {
+    "form": {
+      "baseUrl": "API-Endpunkt",
+      "baseUrlHint": "Die API-Endpunkt-URL für diesen Anbieter.",
+      "model": "Modell (optional)",
+      "modelHint": "Optional. Leer lassen, um das Standardmodell des Anbieters zu verwenden.",
+      "modelPlaceholder": "gpt-4o, claude-sonnet-4-20250514, ..."
+    },
+    "needsPublicRoute": "Öffentliches Routing erforderlich",
+    "needsPublicRouteHint": "Öffentliches Routing in den Einstellungen öffnen",
+    "needsRouting": "Routing erforderlich",
+    "restore": {
+      "cancel": "Jetzt nicht",
+      "confirm": "Wiederherstellen",
+      "done": "Cursor-Einstellungen wiederhergestellt",
+      "message": "Sie haben die Routing-Übernahme verlassen, aber Cursor zeigt noch auf die öffentliche URL, die jetzt tot ist. Die vor dem Schreiben gesicherten Einstellungen wiederherstellen? (Snapshot: {{when}})",
+      "title": "Cursor-Einstellungen wiederherstellen?"
+    }
+  },
+  "cursorSetup": {
+    "cardA": {
+      "action": "Routing öffnen",
+      "body": "Anfragen an einen Drittanbieter laufen über den lokalen Proxy von CC Switch; bei ausgeschaltetem lokalem Routing kommen sie nie dort an.",
+      "title": "Zuerst lokales Routing einschalten"
+    },
+    "cardB": {
+      "action": "Einstellungen für öffentliches Routing öffnen",
+      "body": "Die Cloud von Cursor kann Ihre lokale Adresse nicht erreichen (sie wird als privat abgelehnt), daher muss der lokale Proxy über einen öffentlichen Tunnel bereitgestellt werden.",
+      "title": "Dann öffentliches Routing einschalten"
+    },
+    "cardC": {
+      "action": "Später erledigen",
+      "body": "Solange Cursor läuft, schreibt es seine Einstellungen zurück und überschreibt unsere, sodass das automatische Schreiben verloren ginge. Dieser Dialog fährt von selbst fort, sobald Cursor beendet ist.",
+      "title": "Zuerst Cursor vollständig beenden",
+      "waiting": "Warte darauf, dass Cursor beendet wird…"
+    },
+    "cardD": {
+      "body": "Die Basis-URL und „einen benutzerdefinierten API-Schlüssel verwenden“ wurden automatisch geschrieben. Cursor speichert den Schlüssel verschlüsselt, daher kann er weder gelesen noch für Sie geschrieben werden – fügen Sie ihn einmal von Hand ein.",
+      "copied": "Schlüssel kopiert",
+      "copy": "Schlüssel kopieren",
+      "copyFailed": "Kopieren fehlgeschlagen, bitte manuell kopieren",
+      "done": "Ich habe ihn eingefügt",
+      "pathLabel": "Hier einfügen:",
+      "title": "Nur der API-Schlüssel fehlt noch"
+    },
+    "checking": "Setup-Voraussetzungen werden geprüft…",
+    "connectivity": {
+      "detailLabel": "Details:",
+      "keyReminder": "Eine Voraussetzung bleibt: Der API-Schlüssel muss noch einmal in Cursor eingefügt werden (siehe oben).",
+      "label": "Konnektivitätsprüfung",
+      "localFailed": "Lokales Routing ist nicht erreichbar: Die Anfrage hat den lokalen Proxy von CC Switch nie erreicht.",
+      "ok": "Lokales Routing und öffentlicher Tunnel sind beide erreichbar, Cursor kann verwendet werden.",
+      "publicFailed": "Lokales Routing funktioniert, aber der öffentliche Tunnel ist nicht erreichbar: Der Cloudflare-Edge konnte die Anfrage nicht zurück in den Tunnel zustellen.",
+      "retest": "Erneut testen",
+      "testing": "Lokales Routing wird getestet, dann der öffentliche Tunnel…"
+    },
+    "lead": "Die Cloud von Cursor kann die Adresse Ihres Rechners nicht erreichen, daher braucht ein Drittanbieter lokales Routing plus einen öffentlichen Tunnel; anschließend muss Cursor darauf zeigen.",
+    "steps": {
+      "exitCursor": "Cursor beenden",
+      "localRoute": "Lokales Routing",
+      "pasteKey": "Schlüssel einfügen",
+      "publicRoute": "Öffentliches Routing"
+    },
+    "switching": "Wechsle zu diesem Anbieter…",
+    "title": "Cursor einrichten ({{provider}})",
+    "writeFailed": {
+      "body": "Die Basis-URL und die verfügbare Modellliste wurden nicht geschrieben. Stellen Sie sicher, dass Cursor vollständig beendet ist, und versuchen Sie es erneut.",
+      "retry": "Erneut versuchen",
+      "title": "Cursor-Einstellungen konnten nicht geschrieben werden"
+    },
+    "writing": "Cursor-Einstellungen werden geschrieben…"
   }
 }

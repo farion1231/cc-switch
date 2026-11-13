@@ -685,11 +685,11 @@ fn migration_from_v3_8_schema_v1_to_current_schema_v3() {
         "skills migration snapshot should preserve legacy app mapping"
     );
 
-    // v3.9+ 新增：proxy_config 三行 seed 必须存在（否则 UI 会查不到默认值）
+    // v3.9+ 新增：proxy_config seed 必须存在（否则 UI 会查不到默认值）；当前 5 行（含 cursor）
     let proxy_rows: i64 = conn
         .query_row("SELECT COUNT(*) FROM proxy_config", [], |r| r.get(0))
         .expect("count proxy_config rows");
-    assert_eq!(proxy_rows, 4);
+    assert_eq!(proxy_rows, 5);
 
     // model_pricing 应具备默认数据（迁移时会 seed）
     let pricing_rows: i64 = conn
@@ -1604,9 +1604,8 @@ fn migration_from_v24_adds_copilot_and_workbuddy_flags_without_changing_dsh_stat
     Database::set_user_version(&conn, 24).expect("set user_version=24");
 
     Database::apply_schema_migrations_on_conn(&conn).expect("upgrade v24 database");
-    // v24 → v25（Copilot）→ v26（WorkBuddy）
-    assert_eq!(Database::get_user_version(&conn).unwrap(), 26);
-    assert_eq!(SCHEMA_VERSION, 26);
+    // v24 → v25（Copilot）→ v26（Cursor 列）→ v27（proxy cursor）→ v28（WorkBuddy）
+    assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
     for table in ["mcp_servers", "skills"] {
         let flags: (bool, bool, bool) = conn
             .query_row(

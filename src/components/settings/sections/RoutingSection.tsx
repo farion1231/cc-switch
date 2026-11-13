@@ -132,6 +132,7 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
     gemini: useProvidersQuery("gemini").data,
     grokbuild: useProvidersQuery("grokbuild").data,
     "claude-desktop": useProvidersQuery("claude-desktop").data,
+    cursor: useProvidersQuery("cursor").data,
   };
 
   const usingApps = MODE_APP_IDS.flatMap((app, index) => {

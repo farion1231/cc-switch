@@ -50,7 +50,8 @@
     "collapse": "Daralt",
     "more": "Diğer",
     "retry": "Yeniden dene",
-    "required": "gerekli"
+    "required": "gerekli",
+    "copyFailed": "Kopyalanamadı. Lütfen elle kopyalayın."
   },
   "firstRunNotice": {
     "title": "CC Switch’e hoş geldiniz",
@@ -575,6 +576,13 @@
           "debug": "SSE akışı ve istek/yanıt dahil ayrıntılı bilgi",
           "trace": "Tüm günlükler, çoğu ayrıntılı"
         }
+      },
+      "publicRoute": {
+        "title": "Genel Yönlendirme",
+        "description": "Yerel yönlendirmeyi genel tünel üzerinden özel Base URL destekleyen uygulamalara (ör. Cursor) açar.",
+        "enabled": "Etkin",
+        "disabled": "Devre dışı",
+        "proxyRequired": "Genel yönlendirmeyi yapılandırmak için önce yerel yönlendirmeyi başlatın."
       }
     },
     "language": "Dil",
@@ -1159,6 +1167,7 @@
       "general": "Genel",
       "appConfig": "Uygulama yapılandırması",
       "routing": "Yerel yönlendirme",
+      "publicRoute": "Genel Yönlendirme",
       "network": "Ağ",
       "data": "Veri",
       "about": "Hakkında"
@@ -1184,6 +1193,7 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
+    "cursor": "Cursor",
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
@@ -1401,6 +1411,11 @@
     "roleSystem": "Sistem",
     "roleTool": "Araç",
     "noResumeCommand": "Bu oturum sürdürülemez",
+    "exportMarkdown": "Markdown olarak dışa aktar",
+    "exportMarkdownCopied": "Markdown kopyalandı",
+    "exportMarkdownTooltip": "Bu oturumu Markdown olarak panoya aktar",
+    "copyCommand": "Komutu kopyala",
+    "copyMessage": "Mesajı kopyala",
     "messageCopied": "Mesaj kopyalandı",
     "expandContent": "Tüm içeriği genişlet",
     "collapseContent": "Daralt",
@@ -2887,7 +2902,8 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
-        "mcode": "MiniMax Code"
+        "mcode": "MiniMax Code",
+        "cursor": "Cursor"
       }
     },
     "userLevelPath": "Kullanıcı düzeyinde MCP yapılandırma yolu",
@@ -3391,6 +3407,78 @@
       "overLimitBy": "{{over}} karakterler sınırı aştı — Hermes bir sonraki yüklemede kesilecek",
       "toggledOn": "{{name}} etkinleştirildi. Hermes yeniden başlatıldığında veya yeni bir oturum başlatıldığında etkili olur.",
       "toggledOff": "{{name}} devre dışı. Hermes yeniden başlatıldığında veya yeni bir oturum başlatıldığında etkili olur."
+    }
+  },
+  "cursor": {
+    "needsRouting": "Yönlendirme Gerekiyor",
+    "form": {
+      "baseUrl": "API Uç Noktası",
+      "baseUrlHint": "Bu sağlayıcı için API uç noktası URL'si.",
+      "model": "Model (isteğe bağlı)",
+      "modelPlaceholder": "gpt-4o, claude-sonnet-4-20250514, ...",
+      "modelHint": "İsteğe bağlı. Sağlayıcının varsayılan modelini kullanmak için boş bırakın."
+    },
+    "needsPublicRoute": "Genel Yönlendirme Gerekiyor",
+    "needsPublicRouteHint": "Ayarlarda Genel Yönlendirmeyi aç",
+    "restore": {
+      "title": "Cursor ayarları geri yüklensin mi?",
+      "message": "Yönlendirme modundan çıktınız, ancak Cursor hâlâ artık geçersiz olan genel URL'yi gösteriyor. Yazma öncesinde alınan ayarlar geri yüklensin mi? (Anlık görüntü: {{when}})",
+      "confirm": "Geri yükle",
+      "cancel": "Şimdi değil",
+      "done": "Cursor ayarları geri yüklendi"
+    }
+  },
+  "cursorSetup": {
+    "title": "Cursor kurulumu ({{provider}})",
+    "lead": "Cursor'ın bulutu makinenizin adresine ulaşamaz; bu yüzden üçüncü taraf bir sağlayıcı için yerel yönlendirme ve genel tünel gerekir, ardından Cursor bu adrese yönlendirilmelidir.",
+    "steps": {
+      "localRoute": "Yerel yönlendirme",
+      "publicRoute": "Genel yönlendirme",
+      "exitCursor": "Cursor'dan çık",
+      "pasteKey": "Anahtarı yapıştır"
+    },
+    "checking": "Kurulum gereksinimleri denetleniyor…",
+    "switching": "Bu sağlayıcıya geçiliyor…",
+    "writing": "Cursor ayarları yazılıyor…",
+    "cardA": {
+      "title": "Önce yerel yönlendirmeyi açın",
+      "body": "Üçüncü taraf sağlayıcıya giden istekler CC Switch'in yerel proxysinden geçer; yerel yönlendirme kapalıyken buraya hiç ulaşmazlar.",
+      "action": "Yönlendirmeyi aç"
+    },
+    "cardB": {
+      "title": "Ardından genel yönlendirmeyi açın",
+      "body": "Cursor'ın bulutu yerel adresinize ulaşamaz (özel adres olarak reddedilir); bu nedenle yerel proxynin genel tünel üzerinden açılması gerekir.",
+      "action": "Genel Yönlendirme ayarlarını aç"
+    },
+    "cardC": {
+      "title": "Önce Cursor'dan tamamen çıkın",
+      "body": "Cursor çalışırken ayarlarını geri yazıp bizimkilerin üzerine yazar, bu yüzden otomatik yazma kaybolur. Cursor'dan çıkıldığında bu iletişim kutusu kendiliğinden devam eder.",
+      "waiting": "Cursor'ın kapanması bekleniyor…",
+      "action": "Daha sonra yap"
+    },
+    "cardD": {
+      "title": "Geriye yalnızca API anahtarı kaldı",
+      "body": "Base URL ve \"özel API anahtarı kullan\" otomatik olarak yazıldı. Cursor anahtarı şifreli sakladığı için sizin adınıza ne okunabilir ne yazılabilir — bir kez elle yapıştırın.",
+      "pathLabel": "Buraya yapıştırın:",
+      "copy": "Anahtarı kopyala",
+      "copied": "Anahtar kopyalandı",
+      "copyFailed": "Kopyalanamadı, lütfen elle kopyalayın",
+      "done": "Yapıştırdım"
+    },
+    "writeFailed": {
+      "title": "Cursor ayarları yazılamadı",
+      "body": "Base URL ve kullanılabilir model listesi yazılamadı. Cursor'ın tamamen kapalı olduğundan emin olup yeniden deneyin.",
+      "retry": "Yeniden dene"
+    },
+    "connectivity": {
+      "label": "Bağlantı denetimi",
+      "testing": "Önce yerel yönlendirme, sonra genel tünel deneniyor…",
+      "localFailed": "Yerel yönlendirmeye ulaşılamıyor: istek CC Switch'in yerel proxysine hiç ulaşmadı.",
+      "publicFailed": "Yerel yönlendirme çalışıyor, ancak genel tünele ulaşılamıyor: Cloudflare uç noktası isteği tünele geri iletemedi.",
+      "ok": "Yerel yönlendirme ve genel tünelin ikisine de ulaşılabiliyor, bu nedenle Cursor kullanılabilir.",
+      "keyReminder": "Bir gereksinim kaldı: API anahtarının yine de bir kez Cursor'a yapıştırılması gerekiyor (yukarıya bakın).",
+      "detailLabel": "Ayrıntılar:",
+      "retest": "Yeniden test et"
     }
   },
   "env": {
@@ -4012,7 +4100,45 @@
       "stopFailed": "Yönlendirme hizmeti durdurulamadı: {{detail}}"
     },
     "stoppedWithRestore": "Yönlendirme hizmeti durduruldu; tüm uygulamalar doğrudan bağlantılara geri döndü",
-    "stopWithRestoreFailed": "Durdurma başarısız oldu: {{detail}}"
+    "stopWithRestoreFailed": "Durdurma başarısız oldu: {{detail}}",
+    "publicRoute": {
+      "title": "Genel Yönlendirme",
+      "statusOff": "Yerel yönlendirmeyi genel tünel üzerinden dış uygulamalara aç",
+      "statusStarting": "Tünel kuruluyor…",
+      "statusRunning": "Tünel kuruldu",
+      "enabled": "Genel yönlendirme etkinleştirildi, tünel kuruluyor…",
+      "disabled": "Genel yönlendirme devre dışı bırakıldı",
+      "toggleFailed": "Genel yönlendirme değiştirilemedi",
+      "waitingTunnel": "Genel tünel (cloudflared) kuruluyor, genellikle birkaç saniye sürer…",
+      "publicUrl": "Genel URL",
+      "setupTitle": "Örnek: kurulumu Cursor'da tamamlayın",
+      "stepBaseUrl": "Settings → Models → Override OpenAI Base URL — şunu girin:",
+      "stepApiKey": "OpenAI API Key: CC Switch tarafından otomatik oluşturulan tünel anahtarını yapıştırın (zorunlu — genel tünel kimlik doğrulaması ister):",
+      "stepModel": "Bir model ekleyip seçin: sağlayıcının modelCatalog dosyasındaki istemci adını (Cursor Model Name) kullanın; proxy bunu otomatik olarak üst kaynak modele eşler.",
+      "ephemeralHint": "Hızlı tünel URL'leri her yeniden oluşturmada değişir; yeni URL kopyalandı — Cursor'a yeniden yapıştırın. Sabit bir adres için devre dışıyken \"Sabit Alan Adı\" moduna geçin.",
+      "keyCopied": "Anahtar kopyalandı",
+      "takeoverHint": "Cursor'ın yerel proxy üzerinden yönlendirilmesi için Genel Yönlendirme (tünel) gerekir. Kurulum için Ayarlar → Yönlendirme → Genel Yönlendirme bölümüne bakın.",
+      "switching": "Geçiliyor…",
+      "tunnelMode": "Tünel Modu",
+      "modeQuick": "Hızlı Tünel",
+      "modeQuickHint": "Hesap gerekmez; URL her yeniden oluşturmada değişir",
+      "modeNamed": "Sabit Alan Adı",
+      "modeNamedHint": "Cloudflare hesabı gerekir; URL sabit kalır",
+      "namedTunnelName": "Tünel Adı",
+      "namedHostname": "Genel Ana Bilgisayar Adı",
+      "namedSetupTitle": "Tek seferlik kurulum (terminalde çalıştırın)",
+      "saveTunnelConfig": "Tünel Yapılandırmasını Kaydet",
+      "configSaved": "Tünel yapılandırması kaydedildi",
+      "configSaveFailed": "Tünel yapılandırması kaydedilemedi",
+      "baseUrlCopied": "Base URL kopyalandı. Cursor → Settings → Models → Override OpenAI Base URL bölümüne yapıştırın",
+      "routePathsTitle": "Uygulama başına yönlendirme yolları (gerektiğinde kopyalayın)",
+      "namedStableHint": "Sabit alan adı asla değişmez — Cursor'a bir kez yapıştırın, işiniz biter.",
+      "regenerateKey": "Yeniden oluştur",
+      "keyRegenerated": "Yeni anahtar oluşturuldu ve kopyalandı. Cursor → Settings → Models → OpenAI API Key bölümüne yapıştırın",
+      "keyRegenerateFailed": "Anahtar yeniden oluşturulamadı",
+      "keyRegeneratedNoCopy": "Yeni anahtar oluşturuldu. Cursor'a elle kopyalamak için yukarıdaki kopyalama düğmesine tıklayın.",
+      "routePathsGateHint": "Genel Yönlendirme üzerinden yalnızca Yerel Yönlendirmesi etkin uygulamalara erişilebilir; devre dışı uygulamalara giden istekler reddedilir."
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}}'ye ulaşılabilir ({{responseTimeMs}}ms)",
@@ -4373,6 +4499,7 @@
     "columnVisible": "Göster",
     "visibleHelp": "Kapalıyken uygulama artık kenar çubuğunda, tepsi menüsünde, MCP / Skills uygulama sütunlarında veya İstemler ve Oturumlar'daki uygulama seçicilerde görünmez. Yalnızca gizlenir: sağlayıcıları, MCP sunucuları ve diğer ayarları yerinde kalır, kendi yapılandırma dosyalarına da dokunulmaz.",
     "desktopHelp": "Claude Desktop bir masaüstü uygulamasıdır ve buraya yüklenemez veya yükseltilemez; CC Switch, yapılandırma dosyası aracılığıyla ona bağlanır.",
+    "cursorHelp": "Cursor bir masaüstü uygulamasıdır ve buraya yüklenemez veya yükseltilemez; CC Switch, yönlendirme devralma aracılığıyla ona bağlanır.",
     "desktopUnsupported": "Bu sistemde desteklenmiyor",
     "desktopConnected": "Bağlı",
     "desktopNotConnected": "Bağlı değil",

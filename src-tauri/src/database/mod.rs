@@ -51,7 +51,15 @@ use std::sync::Mutex;
 
 /// 当前 Schema 版本号
 /// 每次修改表结构时递增，并在 schema.rs 中添加相应的迁移逻辑
-pub(crate) const SCHEMA_VERSION: i32 = 26;
+///
+/// 24 = GitHub Copilot CLI 在 mcp_servers/skills 上的启用列（上游）；
+/// 25 = Cursor 在 mcp_servers/skills 上的启用列；26 = proxy_config 放开 'cursor'；
+/// 27 = 保留的迁移版本；上游 WorkBuddy 线原本占用 26。
+/// 28 = Cursor 本地 fork 的「已到 28」水位（其 28 只有 cursor 列，没有 copilot/WorkBuddy）；
+/// 29 = 幂等补列修复：把任何越过补列臂的库（典型是 user_version=28 的旧 fork 库）补齐。
+/// 两条特性线都已在真实用户库中落盘，故只**追加**，不重排既有迁移号：
+/// Cursor 保留 25→26 / 26→27，27→28 预留，28→29 统一补齐各应用启用列。
+pub(crate) const SCHEMA_VERSION: i32 = 29;
 
 /// 安全地序列化 JSON，避免 unwrap panic
 pub(crate) fn to_json_string<T: Serialize>(value: &T) -> Result<String, AppError> {
