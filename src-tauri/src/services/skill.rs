@@ -5323,7 +5323,7 @@ mod tests {
     #[test]
     fn wsl_unc_skill_target_copies_for_every_app_in_auto_mode() {
         let unc =
-            PathBuf::from(r"\\wsl.localhost\Ubuntu-26.04\home\sean\.gemini\config\skills\demo");
+            PathBuf::from(r"\\wsl.localhost\Ubuntu-26.04\home\alice\.gemini\config\skills\demo");
         let local = PathBuf::from("/tmp/skills/demo");
         assert!(crate::config::is_wsl_path(&unc));
         assert!(!crate::config::is_wsl_path(&local));

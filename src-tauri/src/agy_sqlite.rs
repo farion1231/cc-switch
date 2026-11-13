@@ -120,7 +120,7 @@ mod tests {
     #[test]
     fn unc_conversation_database_is_copied_locally_before_it_is_read() {
         let unc = Path::new(
-            r"\\wsl.localhost\Ubuntu-26.04\home\sean\.gemini\antigravity-cli\conversations\0dbfa5d0.db",
+            r"\\wsl.localhost\Ubuntu-26.04\home\alice\.gemini\antigravity-cli\conversations\0dbfa5d0.db",
         );
         assert!(needs_local_snapshot(unc));
         let err = match open_read_only(unc) {
@@ -132,7 +132,7 @@ mod tests {
             "UNC open must try a local snapshot before SQLite, got {err}"
         );
         assert!(!crate::config::is_wsl_path(Path::new(
-            "/home/sean/.gemini/antigravity-cli/conversations/0dbfa5d0.db"
+            "/home/alice/.gemini/antigravity-cli/conversations/0dbfa5d0.db"
         )));
 
         if crate::config::sqlite_unsupported_in_temp_dir() {

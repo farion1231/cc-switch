@@ -74,8 +74,21 @@ fn sort_order(name: &str) -> usize {
     }
 }
 
+pub(crate) const USAGE_OUTPUT_SENTINEL: &str = "__CCSWITCH_AGY_USAGE__";
+
+fn after_usage_sentinel(stdout: &[u8]) -> &[u8] {
+    let needle = USAGE_OUTPUT_SENTINEL.as_bytes();
+    match stdout
+        .windows(needle.len())
+        .rposition(|window| window == needle)
+    {
+        Some(pos) => &stdout[pos + needle.len()..],
+        None => stdout,
+    }
+}
+
 fn parse_usage(stdout: &[u8]) -> Option<Vec<QuotaTier>> {
-    let output: UsageOutput = serde_json::from_slice(stdout).ok()?;
+    let output: UsageOutput = serde_json::from_slice(after_usage_sentinel(stdout)).ok()?;
     if output.status.as_deref() != Some("SUCCESS") {
         return None;
     }
@@ -134,6 +147,12 @@ pub(crate) async fn get_agy_subscription_quota() -> Result<SubscriptionQuota, St
         return Ok(SubscriptionQuota::not_found(TOOL));
     };
     let mut command = crate::agy_config::background_command(&bin);
+    if let Some(dir) = crate::agy_config::non_default_gemini_root(
+        &crate::agy_config::agy_gemini_root(),
+        &crate::config::get_home_dir(),
+    ) {
+        command.arg(format!("--gemini_dir={}", dir.to_string_lossy()));
+    }
     command
         .args(["--print", "/usage", "--output-format", "json"])
         // 只问官方登录：GUI 进程里残留的 Key 会让 agy 改走 Key 模式。
@@ -236,5 +255,31 @@ mod tests {
             br#"{"status":"SUCCESS","command":{"data":{"groups":[{"buckets":[{"id":"gemini-5h"}]}]}}}"#
         )
         .is_none());
+    }
+
+    #[test]
+    fn parses_usage_after_login_shell_startup_noise_and_sentinel() {
+        let mut noisy = Vec::new();
+        noisy.extend_from_slice(b"\x1b]0;user@host: ~\x07welcome to ubuntu\nnvm is ready\n");
+        noisy.extend_from_slice(USAGE_OUTPUT_SENTINEL.as_bytes());
+        noisy.push(b'\n');
+        noisy.extend_from_slice(SAMPLE.as_bytes());
+        assert_eq!(parse_usage(&noisy).unwrap().len(), 5);
+
+        let mut repeated = Vec::new();
+        repeated.extend_from_slice(b"banner ");
+        repeated.extend_from_slice(USAGE_OUTPUT_SENTINEL.as_bytes());
+        repeated.extend_from_slice(b"\nnot json\n");
+        repeated.extend_from_slice(USAGE_OUTPUT_SENTINEL.as_bytes());
+        repeated.push(b'\n');
+        repeated.extend_from_slice(SAMPLE.as_bytes());
+        assert_eq!(parse_usage(&repeated).unwrap().len(), 5);
+
+        let mut non_utf8 = Vec::new();
+        non_utf8.extend_from_slice(b"\xff\xfe\xfd\n");
+        non_utf8.extend_from_slice(USAGE_OUTPUT_SENTINEL.as_bytes());
+        non_utf8.push(b'\n');
+        non_utf8.extend_from_slice(SAMPLE.as_bytes());
+        assert_eq!(parse_usage(&non_utf8).unwrap().len(), 5);
     }
 }

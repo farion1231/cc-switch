@@ -93,7 +93,15 @@ pub async fn get_agy_models(
             }
             Some(dir)
         }
-        None => None,
+        None => {
+            if let Some(dir) = crate::agy_config::non_default_gemini_root(
+                &crate::agy_config::agy_gemini_root(),
+                &crate::config::get_home_dir(),
+            ) {
+                command.arg(format!("--gemini_dir={}", dir.to_string_lossy()));
+            }
+            None
+        }
     };
     command.arg("models");
     let output = tokio::time::timeout(std::time::Duration::from_secs(20), command.output())

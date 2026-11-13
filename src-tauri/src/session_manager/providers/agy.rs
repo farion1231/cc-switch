@@ -30,9 +30,20 @@ pub(crate) fn scan_gemini_root(root: &Path) -> Vec<SessionMeta> {
     scan_roots(&gemini_root_sources(root))
 }
 
+fn gemini_root_resume_dir(root: &Path, home: &Path) -> Option<PathBuf> {
+    if let Some((_, linux)) = crate::config::wsl_unc_to_linux(&root.to_string_lossy()) {
+        return Some(PathBuf::from(linux));
+    }
+    crate::agy_config::non_default_gemini_root(root, home)
+}
+
 fn gemini_root_sources(root: &Path) -> Vec<(PathBuf, Option<PathBuf>)> {
     let paths = crate::agy_config::agy_paths(root);
-    vec![(paths.sessions, None), (paths.ide_sessions, None)]
+    let resume_dir = gemini_root_resume_dir(root, &crate::config::get_home_dir());
+    vec![
+        (paths.sessions, resume_dir.clone()),
+        (paths.ide_sessions, resume_dir),
+    ]
 }
 
 /// Each root, with the private `--gemini_dir` its sessions must be resumed with.
@@ -629,6 +640,74 @@ mod tests {
         assert_eq!(
             messages[1].meta.as_ref().unwrap().cache_read_tokens,
             Some(20)
+        );
+    }
+
+    #[test]
+    fn gemini_root_sources_pass_gemini_dir_only_when_non_default_or_wsl_unc() {
+        let home = PathBuf::from("/home/alice");
+        assert_eq!(gemini_root_resume_dir(&home.join(".gemini"), &home), None);
+
+        let custom_home = tempfile::tempdir().unwrap();
+        let custom = custom_home.path().join("custom-gemini");
+        assert_eq!(gemini_root_resume_dir(&custom, &home), Some(custom.clone()));
+
+        let logs = custom.join("antigravity-cli/brain/abc-123/.system_generated/logs");
+        fs::create_dir_all(&logs).unwrap();
+        fs::write(
+            logs.join("transcript_full.jsonl"),
+            "{\"step_index\":0,\"type\":\"USER_INPUT\",\"content\":\"hi\"}\n",
+        )
+        .unwrap();
+        let sessions = scan_gemini_root(&custom);
+        assert_eq!(sessions.len(), 1);
+        let resume = sessions[0].resume_command.as_deref().unwrap();
+        let expected = format!(
+            "agy --gemini_dir={} --conversation=abc-123",
+            custom.display()
+        );
+        assert_eq!(resume, expected);
+
+        let db = crate::database::Database::memory().unwrap();
+        let key_provider = crate::provider::Provider::with_id(
+            "key-card".into(),
+            "Key".into(),
+            serde_json::json!({"env": {"GEMINI_API_KEY": "k"}}),
+            None,
+        );
+        db.save_provider("agy", &key_provider).unwrap();
+        assert!(
+            crate::services::provider::agy_direct::key_resume_target(&db, resume)
+                .unwrap()
+                .is_none()
+        );
+
+        let unc_ascii = Path::new(r"\\wsl.localhost\Ubuntu-26.04\home\alice\.gemini");
+        assert_eq!(
+            gemini_root_resume_dir(unc_ascii, &home),
+            Some(PathBuf::from("/home/alice/.gemini"))
+        );
+        let ascii_sources = gemini_root_sources(unc_ascii);
+        assert_eq!(
+            ascii_sources[0].1.as_deref(),
+            Some(Path::new("/home/alice/.gemini"))
+        );
+        assert_eq!(
+            ascii_sources[1].1.as_deref(),
+            Some(Path::new("/home/alice/.gemini"))
+        );
+
+        let unc_cjk = Path::new(r"\\wsl.localhost\Ubuntu-26.04\home\张三\.gemini");
+        assert_eq!(
+            gemini_root_resume_dir(unc_cjk, &home),
+            Some(PathBuf::from("/home/张三/.gemini"))
+        );
+        assert_eq!(
+            crate::agy_config::resume_command(
+                gemini_root_resume_dir(unc_cjk, &home).as_deref(),
+                "abc-123"
+            ),
+            "agy '--gemini_dir=/home/张三/.gemini' --conversation=abc-123"
         );
     }
 }

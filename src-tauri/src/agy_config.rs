@@ -38,6 +38,12 @@ pub(crate) fn agy_gemini_root_from(override_dir: Option<PathBuf>, home: PathBuf)
     override_dir.unwrap_or_else(|| home.join(".gemini"))
 }
 
+/// 当覆盖目录与默认 `~/.gemini` 在词法上不同时返回该目录，以便传给 `--gemini_dir`。
+pub(crate) fn non_default_gemini_root(root: &Path, home: &Path) -> Option<PathBuf> {
+    let default_root = home.join(".gemini");
+    (!crate::config::path_eq_lexical(root, &default_root)).then(|| root.to_path_buf())
+}
+
 /// 覆盖目录（或默认 `~/.gemini`）下 agy 会读写的路径。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AgyPaths {
@@ -228,7 +234,9 @@ pub(crate) fn release_model_provider(
 /// 在终端里启动这张卡要用的参数。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AgyLaunch {
-    /// Key 模式的私有 `--gemini_dir`；官方登录卡为 `None`，直接跑原生 `agy`。
+    /// 是否为 API Key 卡；为 `false` 时即使因非默认 `--gemini_dir` 带了 `gemini_dir`，仍走官方登录。
+    pub key_mode: bool,
+    /// Key 模式的私有 `--gemini_dir`，或官方登录卡的非默认 `.gemini` 覆盖根；默认 `~/.gemini` 时为 `None`。
     pub gemini_dir: Option<PathBuf>,
     /// 官方登录卡的 `--model`（显示名，只对这次会话生效）；Key 卡的模型写在私有目录里，为 `None`。
     pub model: Option<String>,
@@ -241,7 +249,8 @@ pub(crate) fn prepare_launch(provider_id: &str, settings: &Value) -> Result<AgyL
     let projection = AgyProjection::of(settings);
     if !projection.is_key_mode() {
         return Ok(AgyLaunch {
-            gemini_dir: None,
+            key_mode: false,
+            gemini_dir: non_default_gemini_root(&agy_gemini_root(), &get_home_dir()),
             model: projection.model,
             env: Vec::new(),
         });
@@ -249,6 +258,7 @@ pub(crate) fn prepare_launch(provider_id: &str, settings: &Value) -> Result<AgyL
     let dir = key_profile_dir(provider_id);
     prepare_key_profile(&dir, &projection)?;
     Ok(AgyLaunch {
+        key_mode: true,
         gemini_dir: Some(dir),
         model: None,
         env: vec![
@@ -600,7 +610,7 @@ mod tests {
 
     #[test]
     fn wsl_gemini_root_keeps_settings_mcp_skills_prompts_and_sessions_under_it() {
-        let root = PathBuf::from(r"\\wsl.localhost\Ubuntu-26.04\home\sean\.gemini");
+        let root = PathBuf::from(r"\\wsl.localhost\Ubuntu-26.04\home\alice\.gemini");
         let paths = agy_paths(&root);
         for path in [
             &paths.settings,
@@ -642,7 +652,7 @@ mod tests {
         assert!(crate::config::is_wsl_path(&paths.prompts));
         assert!(crate::config::is_wsl_path(&paths.settings));
 
-        let home = PathBuf::from("/home/sean");
+        let home = PathBuf::from("/home/alice");
         assert_eq!(
             agy_gemini_root_from(None, home.clone()),
             home.join(".gemini")
@@ -1217,5 +1227,58 @@ mod integration_tests {
         let real = fake_agy(&real_dir);
         let path = std::env::join_paths([&wrapper_dir, &plain, &real_dir]).unwrap();
         assert_eq!(resolve_real_agy(&path, &home, &[], false), Some(real));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn official_prepare_launch_only_passes_gemini_dir_for_non_default_root() {
+        struct ResetHome(Option<std::ffi::OsString>);
+        impl Drop for ResetHome {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                    None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+                }
+                let _ = crate::settings::reload_settings();
+            }
+        }
+
+        let home = tempfile::tempdir().unwrap();
+        let _reset = ResetHome(std::env::var_os("CC_SWITCH_TEST_HOME"));
+        std::env::set_var("CC_SWITCH_TEST_HOME", home.path());
+        crate::settings::reload_settings().unwrap();
+
+        let official_settings = json!({"config": {"model": {"name": "Gemini 3.8 Flash (High)"}}});
+
+        // 未覆盖（默认 ~/.gemini）
+        let default_launch = prepare_launch("official", &official_settings).unwrap();
+        assert!(!default_launch.key_mode);
+        assert_eq!(default_launch.gemini_dir, None);
+        assert_eq!(
+            default_launch.model.as_deref(),
+            Some("Gemini 3.8 Flash (High)")
+        );
+
+        // 显式指向默认 ~/.gemini（词法相等）同样不额外传 --gemini_dir
+        let mut settings = crate::settings::get_settings();
+        settings.agy_config_dir = Some(home.path().join(".gemini").to_string_lossy().into_owned());
+        crate::settings::update_settings(settings).unwrap();
+        let explicit_default = prepare_launch("official", &official_settings).unwrap();
+        assert!(!explicit_default.key_mode);
+        assert_eq!(explicit_default.gemini_dir, None);
+
+        // 指向自定义本地目录：走官方登录、带 --gemini_dir 与 --model、不建私有 Key 目录
+        let custom_root = home.path().join("custom-gemini");
+        let mut settings = crate::settings::get_settings();
+        settings.agy_config_dir = Some(custom_root.to_string_lossy().into_owned());
+        crate::settings::update_settings(settings).unwrap();
+        let custom_launch = prepare_launch("official", &official_settings).unwrap();
+        assert!(!custom_launch.key_mode);
+        assert_eq!(custom_launch.gemini_dir.as_ref(), Some(&custom_root));
+        assert_eq!(
+            custom_launch.model.as_deref(),
+            Some("Gemini 3.8 Flash (High)")
+        );
+        assert!(!key_profiles_root().exists());
     }
 }

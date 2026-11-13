@@ -1228,7 +1228,7 @@ mod tests {
             concat!(
                 r#"{"step_index":0,"type":"USER_INPUT","created_at":"2026-11-11T00:00:01Z","content":"changed setting `Model Selection` from None to Gemini 4 Argon (High)."}"#,
                 "\n",
-                r#"{"step_index":1,"type":"INVOKE_SUBAGENT","created_at":"2026-11-11T00:00:01Z","content":"started {\"conversationId\":\"via-invoke\",\"logAbsoluteUri\":\"file:///home/sean/.gemini/antigravity-cli/brain/via-invoke/.system_generated/logs/transcript_full.jsonl\"}"}"#,
+                r#"{"step_index":1,"type":"INVOKE_SUBAGENT","created_at":"2026-11-11T00:00:01Z","content":"started {\"conversationId\":\"via-invoke\",\"logAbsoluteUri\":\"file:///home/alice/.gemini/antigravity-cli/brain/via-invoke/.system_generated/logs/transcript_full.jsonl\"}"}"#,
                 "\n",
                 r#"{"step_index":2,"type":"USER_INPUT","created_at":"2026-11-11T00:00:03Z","content":"changed setting `Model Selection` from Gemini 4 Argon (High) to Gemini 4 Argon (Low)."}"#,
                 "\n",

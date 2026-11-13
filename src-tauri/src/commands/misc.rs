@@ -5888,26 +5888,35 @@ async fn switch_agy_to_bound_account(
 fn agy_terminal_launch(provider: &crate::provider::Provider) -> Result<ProviderLaunch, String> {
     let launch = crate::services::provider::agy_direct::terminal_launch(provider)
         .map_err(|e| e.to_string())?;
-    let Some(dir) = launch.gemini_dir else {
-        let (args, batch_command, batch_vars) = match launch.model {
-            Some(model) => (
-                vec![format!("--model={model}")],
-                format!("agy \"--model=%{AGY_MODEL_BATCH_VAR}%\""),
-                vec![(AGY_MODEL_BATCH_VAR, model)],
-            ),
-            None => (Vec::new(), "agy".to_string(), Vec::new()),
-        };
+    if !launch.key_mode {
+        let mut args = Vec::new();
+        let mut batch_parts = vec!["agy".to_string()];
+        let mut batch_vars = Vec::new();
+        if let Some(dir) = launch.gemini_dir {
+            let raw = dir.to_string_lossy().into_owned();
+            args.push(format!("--gemini_dir={raw}"));
+            batch_parts.push(format!("\"--gemini_dir=%{AGY_DIR_BATCH_VAR}%\""));
+            batch_vars.push((AGY_DIR_BATCH_VAR, raw));
+        }
+        if let Some(model) = launch.model {
+            args.push(format!("--model={model}"));
+            batch_parts.push(format!("\"--model=%{AGY_MODEL_BATCH_VAR}%\""));
+            batch_vars.push((AGY_MODEL_BATCH_VAR, model));
+        }
         return Ok(ProviderLaunch {
             title: "Starting Antigravity CLI with your signed-in account",
             detail: None,
             program: "agy",
             args,
-            batch_command,
+            batch_command: batch_parts.join(" "),
             env: launch.env,
             batch_vars,
             cleanup: Vec::new(),
         });
-    };
+    }
+    let dir = launch
+        .gemini_dir
+        .ok_or_else(|| "Antigravity API-key launch missing private directory".to_string())?;
     Ok(ProviderLaunch {
         title: "Using a private Antigravity profile for this provider:",
         detail: Some(dir.clone()),
@@ -6766,24 +6775,91 @@ fn wsl_login_command_line(distro: &str, payload: &str) -> Result<String, String>
     ))
 }
 
+#[cfg(any(target_os = "windows", test))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WslTerminalCommand {
+    line: String,
+    set_lines: String,
+    env: Vec<(String, String)>,
+}
+
+#[cfg(any(target_os = "windows", test))]
+#[derive(Default)]
+struct WslEnvCarrier {
+    entries: Vec<(String, String)>,
+}
+
+#[cfg(any(target_os = "windows", test))]
+impl WslEnvCarrier {
+    fn var_for(&mut self, value: &str) -> String {
+        if let Some((name, _)) = self.entries.iter().find(|(_, existing)| existing == value) {
+            return name.clone();
+        }
+        let name = format!("CC_SWITCH_INTERNAL_WSL_{}", self.entries.len());
+        self.entries.push((name.clone(), value.to_string()));
+        name
+    }
+
+    fn shell_arg(&mut self, value: &str) -> String {
+        if value.is_ascii() {
+            shell_single_quote(value)
+        } else {
+            format!("\"${}\"", self.var_for(value))
+        }
+    }
+
+    fn shell_word_or_env(&mut self, value: &str) -> String {
+        if value.is_ascii() {
+            shell_word(value)
+        } else {
+            format!("\"${}\"", self.var_for(value))
+        }
+    }
+
+    fn joined_subdir(&mut self, base: &str, suffix: &str) -> String {
+        if base.is_ascii() && suffix.is_ascii() {
+            shell_single_quote(&format!("{base}{suffix}"))
+        } else {
+            format!("\"${}\"{suffix}", self.var_for(base))
+        }
+    }
+
+    fn wslenv_set_lines(&self) -> String {
+        if self.entries.is_empty() {
+            return String::new();
+        }
+        let spec: String = self
+            .entries
+            .iter()
+            .map(|(name, _)| format!("{name}/u"))
+            .collect::<Vec<_>>()
+            .join(":");
+        format!(
+            "if defined WSLENV set \"WSLENV=%WSLENV%:{spec}\"\r\nif not defined WSLENV set \"WSLENV={spec}\"\r\n"
+        )
+    }
+}
+
 /// 打开终端时给 agy 的那段 Linux 命令（还没包 `wsl.exe`）。
 /// `gemini_root` 是覆盖目录（`.gemini`）。没有 `--gemini_dir` 时补上它的 Linux 路径，
 /// 这样发行版里的 agy 用的就是这块配置，而不是默认家目录。已有 `--gemini_dir`（Key 卡的
-/// 私有目录）时改成发行版能读的路径，并在 WSL 里把共享 `config` 链过去。
+/// 私有目录或官方卡的覆盖根）时改成发行版能读的路径；仅 Key 卡私有目录与 `shared` 不同时
+/// 才把共享 `config` 链过去。非 ASCII 值经 `WSLENV` 传入，免得被 Windows 控制台代码页损坏。
 #[cfg(any(target_os = "windows", test))]
 fn agy_wsl_terminal_payload(
     distro: &str,
     gemini_root: &str,
     launch: &ProviderLaunch,
     cwd: Option<&str>,
-) -> Result<String, String> {
+) -> Result<(String, WslEnvCarrier), String> {
     let shared = crate::config::path_into_wsl(gemini_root, distro)
         .ok_or_else(|| format!("Antigravity config directory is not inside WSL distro {distro}"))?;
+    let mut carrier = WslEnvCarrier::default();
     let mut steps = Vec::new();
     if let Some(cwd) = cwd.filter(|value| !value.is_empty()) {
         let linux = crate::config::path_into_wsl(cwd, distro)
             .ok_or_else(|| format!("Cannot use this folder inside WSL distro {distro}"))?;
-        steps.push(format!("cd {}", shell_single_quote(&linux)));
+        steps.push(format!("cd {}", carrier.shell_arg(&linux)));
     }
     for (name, value) in &launch.env {
         if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') || name.is_empty() {
@@ -6791,37 +6867,43 @@ fn agy_wsl_terminal_payload(
         }
         match value {
             None => steps.push(format!("unset {name}")),
-            Some(value) => steps.push(format!("export {name}={}", shell_single_quote(value))),
+            Some(value) => steps.push(format!("export {name}={}", carrier.shell_arg(value))),
         }
     }
     let mut args = Vec::new();
+    let mut has_gemini_dir = false;
     let mut private_dir = None;
     for arg in &launch.args {
         if let Some(path) = arg.strip_prefix("--gemini_dir=") {
+            has_gemini_dir = true;
             let linux = crate::config::path_into_wsl(path, distro).ok_or_else(|| {
                 format!("Cannot use this Antigravity profile inside WSL distro {distro}")
             })?;
-            private_dir = Some(linux.clone());
-            args.push(format!("--gemini_dir={}", shell_word(&linux)));
+            if linux != shared {
+                private_dir = Some(linux.clone());
+            }
+            args.push(format!(
+                "--gemini_dir={}",
+                carrier.shell_word_or_env(&linux)
+            ));
         } else {
-            args.push(shell_word(arg));
+            args.push(carrier.shell_word_or_env(arg));
         }
     }
     if let Some(private_dir) = private_dir {
-        let link = format!("{private_dir}/config");
-        let target = format!("{shared}/config");
+        let link = carrier.joined_subdir(&private_dir, "/config");
+        let target = carrier.joined_subdir(&shared, "/config");
         steps.push(format!(
-            "if [ ! -e {} ] && [ ! -L {} ]; then ln -sfn {} {}; fi",
-            shell_single_quote(&link),
-            shell_single_quote(&link),
-            shell_single_quote(&target),
-            shell_single_quote(&link)
+            "if [ ! -e {link} ] && [ ! -L {link} ]; then ln -sfn {target} {link}; fi"
         ));
-    } else {
-        args.insert(0, format!("--gemini_dir={}", shell_word(&shared)));
+    } else if !has_gemini_dir {
+        args.insert(
+            0,
+            format!("--gemini_dir={}", carrier.shell_word_or_env(&shared)),
+        );
     }
     steps.push(format!("agy {}", args.join(" ")));
-    Ok(steps.join(" && "))
+    Ok((steps.join(" && "), carrier))
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -6830,9 +6912,13 @@ fn agy_wsl_terminal_command(
     gemini_root: &str,
     launch: &ProviderLaunch,
     cwd: Option<&str>,
-) -> Result<String, String> {
-    let payload = agy_wsl_terminal_payload(distro, gemini_root, launch, cwd)?;
-    wsl_login_command_line(distro, &payload)
+) -> Result<WslTerminalCommand, String> {
+    let (payload, carrier) = agy_wsl_terminal_payload(distro, gemini_root, launch, cwd)?;
+    Ok(WslTerminalCommand {
+        line: wsl_login_command_line(distro, &payload)?,
+        set_lines: carrier.wslenv_set_lines(),
+        env: carrier.entries,
+    })
 }
 
 /// 安装 / 更新 agy 时跨进发行版的那一行（POSIX 安装脚本或 `agy update`，不是 Windows 的 ps1）。
@@ -6850,7 +6936,8 @@ fn agy_wsl_usage_payload(distro: &str, gemini_root: &str) -> Result<String, Stri
     let root = crate::config::path_into_wsl(gemini_root, distro)
         .ok_or_else(|| format!("Antigravity config directory is not inside WSL distro {distro}"))?;
     Ok(format!(
-        "unset GEMINI_API_KEY; unset GOOGLE_GEMINI_BASE_URL; agy --gemini_dir={} --print /usage --output-format json",
+        "unset GEMINI_API_KEY; unset GOOGLE_GEMINI_BASE_URL; echo {}; agy --gemini_dir={} --print /usage --output-format json",
+        crate::services::subscription_agy::USAGE_OUTPUT_SENTINEL,
         shell_word(&root)
     ))
 }
@@ -6968,7 +7055,7 @@ pub(crate) fn run_agy_wsl_models(
 fn agy_wsl_terminal_line(
     launch: &ProviderLaunch,
     cwd: Option<&Path>,
-) -> Result<Option<String>, String> {
+) -> Result<Option<WslTerminalCommand>, String> {
     if launch.program != "agy" {
         return Ok(None);
     }
@@ -6987,10 +7074,10 @@ fn launch_windows_terminal(launch: &ProviderLaunch, cwd: Option<&Path>) -> Resul
     let terminal = preferred.as_deref().unwrap_or("cmd");
 
     // 配置目录在 WSL 里时，bat 只负责拉起 `wsl.exe`。工作目录和 Key 都写进发行版里的
-    // 命令：`pushd` 到 UNC 进的是 9P 盘符，Windows 的 `set` 也不会进 Linux 进程。
-    let wsl_line = agy_wsl_terminal_line(launch, cwd)?;
+    // 命令（非 ASCII 值经 `WSLENV` 传入）：`pushd` 到 UNC 进的是 9P 盘符。
+    let wsl_command = agy_wsl_terminal_line(launch, cwd)?;
     let bat_file = unique_temp_path("cc_switch_launcher", "bat");
-    let (cwd_command, cwd_env) = if wsl_line.is_some() {
+    let (cwd_command, cwd_env) = if wsl_command.is_some() {
         (String::new(), None)
     } else {
         build_windows_cwd_command(cwd)
@@ -6999,10 +7086,9 @@ fn launch_windows_terminal(launch: &ProviderLaunch, cwd: Option<&Path>) -> Resul
         .map(|value| (WINDOWS_CWD_ENV.to_string(), value))
         .into_iter()
         .collect();
-    let (set_lines, extra_env) = if wsl_line.is_some() {
-        (String::new(), Vec::new())
-    } else {
-        build_windows_launch_env(launch)
+    let (set_lines, extra_env) = match &wsl_command {
+        Some(wsl) => (wsl.set_lines.clone(), wsl.env.clone()),
+        None => build_windows_launch_env(launch),
     };
     launch_env.extend(extra_env);
     let launch_env: Vec<(&str, &str)> = launch_env
@@ -7026,9 +7112,9 @@ fn launch_windows_terminal(launch: &ProviderLaunch, cwd: Option<&Path>) -> Resul
     let content = format!(
         "@echo off\r\n{cwd_command}setlocal DisableDelayedExpansion\r\n{set_lines}echo {title}\r\n{command}\r\nendlocal\r\n{cleanup}del \"%~f0\" >nul 2>&1\r\n",
         title = escape_windows_batch_value(launch.title),
-        command = wsl_line
-            .as_deref()
-            .map(|line| line.replace('%', "%%"))
+        command = wsl_command
+            .as_ref()
+            .map(|wsl| wsl.line.replace('%', "%%"))
             .unwrap_or_else(|| launch.batch_command.clone()),
     );
 
@@ -7478,19 +7564,19 @@ mod tests {
 
     #[test]
     fn agy_wsl_override_uses_the_distro_and_wsl_exe() {
-        let root = r"\\wsl.localhost\Ubuntu-26.04\home\sean\.gemini";
+        let root = r"\\wsl.localhost\Ubuntu-26.04\home\alice\.gemini";
         assert_eq!(
             wsl_distro_for_override("agy", root).as_deref(),
             Some("Ubuntu-26.04")
         );
         assert_eq!(
-            wsl_distro_for_override("agy", r"\\wsl$\Ubuntu-26.04\home\sean\.gemini").as_deref(),
+            wsl_distro_for_override("agy", r"\\wsl$\Ubuntu-26.04\home\alice\.gemini").as_deref(),
             Some("Ubuntu-26.04")
         );
-        assert!(wsl_distro_for_override("agy", r"C:\Users\sean\.gemini").is_none());
+        assert!(wsl_distro_for_override("agy", r"C:\Users\alice\.gemini").is_none());
         assert!(wsl_distro_for_override(
             "not-a-tool",
-            r"\\wsl.localhost\Ubuntu-26.04\home\sean\.gemini"
+            r"\\wsl.localhost\Ubuntu-26.04\home\alice\.gemini"
         )
         .is_none());
 
@@ -7538,28 +7624,69 @@ mod tests {
             "Ubuntu-26.04",
             root,
             &official,
-            Some(r"\\wsl.localhost\Ubuntu-26.04\home\sean\proj"),
+            Some(r"\\wsl.localhost\Ubuntu-26.04\home\alice\proj"),
         )
         .unwrap();
         assert!(
-            terminal.starts_with("wsl.exe -d Ubuntu-26.04 -- sh -c "),
-            "{terminal}"
-        );
-        assert!(terminal.contains("/home/sean/proj"), "{terminal}");
-        assert!(
-            terminal.contains("agy --gemini_dir=/home/sean/.gemini"),
-            "{terminal}"
+            terminal
+                .line
+                .starts_with("wsl.exe -d Ubuntu-26.04 -- sh -c "),
+            "{}",
+            terminal.line
         );
         assert!(
-            terminal.contains("--model=") && terminal.contains("Gemini 3.8 Flash"),
-            "{terminal}"
+            terminal.line.contains("/home/alice/proj"),
+            "{}",
+            terminal.line
+        );
+        assert!(
+            terminal
+                .line
+                .contains("agy --gemini_dir=/home/alice/.gemini"),
+            "{}",
+            terminal.line
+        );
+        assert!(
+            terminal.line.contains("--model=") && terminal.line.contains("Gemini 3.8 Flash"),
+            "{}",
+            terminal.line
+        );
+        assert!(terminal.set_lines.is_empty());
+        assert!(terminal.env.is_empty());
+
+        // 官方卡如果已经由 prepare_launch 带了与覆盖根相同的 --gemini_dir，不再重复也不自链。
+        let official_with_dir = ProviderLaunch {
+            title: "Starting Antigravity CLI with your signed-in account",
+            detail: None,
+            program: "agy",
+            args: vec![
+                format!("--gemini_dir={root}"),
+                "--model=Gemini 3.8 Flash (High)".to_string(),
+            ],
+            batch_command: "agy".to_string(),
+            env: Vec::new(),
+            batch_vars: Vec::new(),
+            cleanup: Vec::new(),
+        };
+        let official_with_dir_cmd =
+            agy_wsl_terminal_command("Ubuntu-26.04", root, &official_with_dir, None).unwrap();
+        assert_eq!(
+            official_with_dir_cmd.line.matches("--gemini_dir=").count(),
+            1,
+            "{}",
+            official_with_dir_cmd.line
+        );
+        assert!(
+            !official_with_dir_cmd.line.contains("ln -sfn"),
+            "{}",
+            official_with_dir_cmd.line
         );
 
         let key = ProviderLaunch {
             title: "Using a private Antigravity profile for this provider:",
             detail: None,
             program: "agy",
-            args: vec![r"--gemini_dir=C:\Users\sean\.cc-switch\agy\relay".to_string()],
+            args: vec![r"--gemini_dir=C:\Users\alice\.cc-switch\agy\relay".to_string()],
             batch_command: "agy".to_string(),
             env: vec![
                 ("GEMINI_API_KEY", Some("secret".to_string())),
@@ -7573,24 +7700,41 @@ mod tests {
         };
         let key_terminal = agy_wsl_terminal_command("Ubuntu-26.04", root, &key, None).unwrap();
         assert!(
-            key_terminal.contains("wsl.exe -d Ubuntu-26.04"),
-            "{key_terminal}"
+            key_terminal.line.contains("wsl.exe -d Ubuntu-26.04"),
+            "{}",
+            key_terminal.line
         );
         assert!(
-            key_terminal.contains("--gemini_dir=/mnt/c/Users/sean/.cc-switch/agy/relay"),
-            "{key_terminal}"
+            key_terminal
+                .line
+                .contains("--gemini_dir=/mnt/c/Users/alice/.cc-switch/agy/relay"),
+            "{}",
+            key_terminal.line
         );
-        assert!(key_terminal.contains("ln -sfn"), "{key_terminal}");
         assert!(
-            key_terminal.contains("/home/sean/.gemini/config"),
-            "{key_terminal}"
+            key_terminal.line.contains("ln -sfn"),
+            "{}",
+            key_terminal.line
         );
-        assert!(key_terminal.contains("GEMINI_API_KEY="), "{key_terminal}");
+        assert!(
+            key_terminal.line.contains("/home/alice/.gemini/config"),
+            "{}",
+            key_terminal.line
+        );
+        assert!(
+            key_terminal.line.contains("GEMINI_API_KEY="),
+            "{}",
+            key_terminal.line
+        );
 
         let usage = agy_wsl_usage_command("Ubuntu-26.04", root).unwrap();
         assert!(usage.starts_with("wsl.exe -d Ubuntu-26.04 -- "), "{usage}");
         assert!(
-            usage.contains("agy --gemini_dir=/home/sean/.gemini --print /usage"),
+            usage.contains(crate::services::subscription_agy::USAGE_OUTPUT_SENTINEL),
+            "{usage}"
+        );
+        assert!(
+            usage.contains("agy --gemini_dir=/home/alice/.gemini --print /usage"),
             "{usage}"
         );
 
@@ -7600,8 +7744,177 @@ mod tests {
             "{models}"
         );
         assert!(
-            models.contains("agy --gemini_dir=/home/sean/.gemini models"),
+            models.contains("agy --gemini_dir=/home/alice/.gemini models"),
             "{models}"
+        );
+    }
+
+    #[test]
+    fn agy_wsl_non_ascii_paths_stay_out_of_batch_bytes_and_pass_via_wslenv() {
+        let root = r"\\wsl.localhost\Ubuntu-26.04\home\张三\.gemini";
+        let cwd = r"\\wsl.localhost\Ubuntu-26.04\home\张三\我的 项目";
+        let profile = r"C:\Users\张三\.cc-switch\agy\relay";
+        let key = ProviderLaunch {
+            title: "Using a private Antigravity profile for this provider:",
+            detail: None,
+            program: "agy",
+            args: vec![
+                format!("--gemini_dir={profile}"),
+                "--model=中文 模型".to_string(),
+            ],
+            batch_command: "agy".to_string(),
+            env: vec![("GEMINI_API_KEY", Some("密钥-中文".to_string()))],
+            batch_vars: Vec::new(),
+            cleanup: Vec::new(),
+        };
+
+        let cmd = agy_wsl_terminal_command("Ubuntu-26.04", root, &key, Some(cwd)).unwrap();
+        assert!(cmd.line.is_ascii(), "line must be pure ASCII: {}", cmd.line);
+        assert!(
+            cmd.set_lines.is_ascii(),
+            "set_lines must be pure ASCII: {}",
+            cmd.set_lines
+        );
+        let values: Vec<&str> = cmd.env.iter().map(|(_, v)| v.as_str()).collect();
+        assert!(values.contains(&"/home/张三/.gemini"), "{values:?}");
+        assert!(values.contains(&"/home/张三/我的 项目"), "{values:?}");
+        assert!(
+            values.contains(&"/mnt/c/Users/张三/.cc-switch/agy/relay"),
+            "{values:?}"
+        );
+        assert!(values.contains(&"密钥-中文"), "{values:?}");
+        assert!(values.contains(&"--model=中文 模型"), "{values:?}");
+
+        let defined_pos = cmd.set_lines.find("if defined WSLENV ").unwrap();
+        let not_defined_pos = cmd.set_lines.find("if not defined WSLENV ").unwrap();
+        assert!(defined_pos < not_defined_pos, "{}", cmd.set_lines);
+        for (name, _) in &cmd.env {
+            assert!(
+                cmd.set_lines.contains(&format!("{name}/u")),
+                "missing {name}/u in {}",
+                cmd.set_lines
+            );
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let (payload, carrier) =
+                agy_wsl_terminal_payload("Ubuntu-26.04", root, &key, Some(cwd)).unwrap();
+            let tmp = tempfile::tempdir().unwrap();
+            let base = tmp.path();
+            let real_shared = base.join("home/张三/.gemini");
+            let real_cwd = base.join("home/张三/我的 项目");
+            let real_profile = base.join("mnt/c/Users/张三/.cc-switch/agy/relay");
+            std::fs::create_dir_all(real_shared.join("config")).unwrap();
+            std::fs::create_dir_all(&real_cwd).unwrap();
+            std::fs::create_dir_all(&real_profile).unwrap();
+
+            let bin_dir = base.join("bin");
+            std::fs::create_dir_all(&bin_dir).unwrap();
+            let out_file = base.join("agy-args.txt");
+            let fake_agy = bin_dir.join("agy");
+            std::fs::write(
+                &fake_agy,
+                format!(
+                    "#!/bin/sh\n{{ pwd; printf '%s\\n' \"$GEMINI_API_KEY\"; printf '%s\\n' \"$@\"; }} > \"{}\"\n",
+                    out_file.display()
+                ),
+            )
+            .unwrap();
+            std::fs::set_permissions(&fake_agy, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+            let mut proc_cmd = std::process::Command::new("sh");
+            proc_cmd.arg("-c").arg(&payload);
+            for (name, val) in &carrier.entries {
+                let mapped = val
+                    .replace("/home/张三", &base.join("home/张三").to_string_lossy())
+                    .replace(
+                        "/mnt/c/Users/张三",
+                        &base.join("mnt/c/Users/张三").to_string_lossy(),
+                    );
+                proc_cmd.env(name, mapped);
+            }
+            let path_env = format!(
+                "{}:{}",
+                bin_dir.display(),
+                std::env::var("PATH").unwrap_or_default()
+            );
+            proc_cmd.env("PATH", path_env);
+            let status = proc_cmd.status().unwrap();
+            assert!(status.success());
+
+            let recorded = std::fs::read_to_string(&out_file).unwrap();
+            let lines: Vec<&str> = recorded.lines().collect();
+            assert_eq!(lines[0], real_cwd.to_string_lossy());
+            assert_eq!(lines[1], "密钥-中文");
+            assert_eq!(
+                lines[2],
+                format!("--gemini_dir={}", real_profile.to_string_lossy())
+            );
+            assert_eq!(lines[3], "--model=中文 模型");
+            assert_eq!(
+                std::fs::read_link(real_profile.join("config")).unwrap(),
+                real_shared.join("config")
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn agy_terminal_launch_includes_custom_local_root_and_model_for_official_card() {
+        struct ResetHome(Option<std::ffi::OsString>);
+        impl Drop for ResetHome {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                    None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+                }
+                let _ = crate::settings::reload_settings();
+            }
+        }
+
+        let home = tempfile::tempdir().unwrap();
+        let _reset = ResetHome(std::env::var_os("CC_SWITCH_TEST_HOME"));
+        std::env::set_var("CC_SWITCH_TEST_HOME", home.path());
+        crate::settings::reload_settings().unwrap();
+
+        let custom_root = home.path().join("custom-agy-gemini");
+        let mut settings = crate::settings::get_settings();
+        settings.agy_config_dir = Some(custom_root.to_string_lossy().into_owned());
+        crate::settings::update_settings(settings).unwrap();
+
+        let provider = crate::provider::Provider::with_id(
+            "official".into(),
+            "Antigravity".into(),
+            serde_json::json!({"config": {"model": {"name": "Gemini 3.8 Flash (High)"}}}),
+            None,
+        );
+        let launch = agy_terminal_launch(&provider).unwrap();
+        assert_eq!(launch.detail, None);
+        assert_eq!(
+            launch.args,
+            vec![
+                format!("--gemini_dir={}", custom_root.to_string_lossy()),
+                "--model=Gemini 3.8 Flash (High)".to_string(),
+            ]
+        );
+        assert_eq!(
+            launch.batch_command,
+            format!(
+                "agy \"--gemini_dir=%{AGY_DIR_BATCH_VAR}%\" \"--model=%{AGY_MODEL_BATCH_VAR}%\""
+            )
+        );
+        assert_eq!(
+            launch.batch_vars,
+            vec![
+                (
+                    AGY_DIR_BATCH_VAR,
+                    custom_root.to_string_lossy().into_owned()
+                ),
+                (AGY_MODEL_BATCH_VAR, "Gemini 3.8 Flash (High)".to_string()),
+            ]
         );
     }
 

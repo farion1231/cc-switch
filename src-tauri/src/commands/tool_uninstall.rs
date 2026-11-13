@@ -1658,29 +1658,29 @@ mod tests {
     fn agy_wsl_uninstall_removes_only_the_official_binary() {
         let same = wsl_uninstall_command(
             "agy",
-            "/home/sean/.local/bin/agy",
-            "/home/sean/.local/bin/agy",
+            "/home/alice/.local/bin/agy",
+            "/home/alice/.local/bin/agy",
         )
         .unwrap();
         assert!(same.contains("rm -f --"), "{same}");
-        assert!(same.contains("/home/sean/.local/bin/agy"), "{same}");
+        assert!(same.contains("/home/alice/.local/bin/agy"), "{same}");
         assert!(!same.contains("npm"), "{same}");
         assert!(!same.contains(".gemini/config"), "{same}");
 
         let linked = wsl_uninstall_command(
             "agy",
-            "/home/sean/.local/bin/agy",
-            "/home/sean/.gemini/antigravity-cli/bin/agy",
+            "/home/alice/.local/bin/agy",
+            "/home/alice/.gemini/antigravity-cli/bin/agy",
         )
         .unwrap();
         assert!(
-            linked.contains("/home/sean/.gemini/antigravity-cli/bin/agy"),
+            linked.contains("/home/alice/.gemini/antigravity-cli/bin/agy"),
             "{linked}"
         );
 
         assert!(wsl_uninstall_command("agy", "/usr/bin/agy", "/usr/bin/agy").is_err());
         assert!(
-            wsl_uninstall_command("agy", "/home/sean/.local/bin/agy", "/usr/local/bin/agy")
+            wsl_uninstall_command("agy", "/home/alice/.local/bin/agy", "/usr/local/bin/agy")
                 .is_err()
         );
     }

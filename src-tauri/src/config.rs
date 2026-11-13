@@ -60,8 +60,10 @@ pub(crate) fn wsl_unc_to_linux(raw: &str) -> Option<(String, String)> {
     }
     let slashed = trimmed.replace('/', "\\");
     let verbatim = r"\\?\UNC\";
-    let normalized = if slashed.len() >= verbatim.len()
-        && slashed[..verbatim.len()].eq_ignore_ascii_case(verbatim)
+    let normalized = if slashed
+        .as_bytes()
+        .get(..verbatim.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(verbatim.as_bytes()))
     {
         format!(r"\\{}", &slashed[verbatim.len()..])
     } else {
@@ -111,7 +113,7 @@ pub(crate) fn path_into_wsl(raw: &str, distro: &str) -> Option<String> {
     if !drive.is_ascii_alphabetic() || chars.next() != Some(':') {
         return None;
     }
-    let rest = normalized[2..].trim_start_matches('\\');
+    let rest = chars.as_str().trim_start_matches('\\');
     let mut linux = format!("/mnt/{}", drive.to_ascii_lowercase());
     if !rest.is_empty() {
         linux.push('/');
@@ -207,7 +209,7 @@ fn comparable_path_key(path: &Path) -> String {
     key
 }
 
-fn path_eq_lexical(left: &Path, right: &Path) -> bool {
+pub(crate) fn path_eq_lexical(left: &Path, right: &Path) -> bool {
     comparable_path_key(left) == comparable_path_key(right)
 }
 
@@ -1277,6 +1279,40 @@ mod tests {
         assert_eq!(
             dir, expected,
             "测试 home 优先：不得回退到 HOME 下的旧库目录"
+        );
+    }
+
+    #[test]
+    fn non_ascii_paths_do_not_panic_and_parse_wsl_unc_roots() {
+        for path in [
+            "/Users/张三/.claude.json",
+            r"D:\开发\project",
+            "/home/用户/.gemini",
+            "中文路径",
+        ] {
+            assert!(
+                !is_wsl_path(Path::new(path)),
+                "unexpected WSL match: {path}"
+            );
+            assert_eq!(wsl_unc_to_linux(path), None);
+        }
+
+        for raw in [
+            r"\\wsl.localhost\Ubuntu\home\张三\.gemini",
+            r"\\wsl$\Ubuntu\home\张三\.gemini",
+            r"\\?\UNC\wsl.localhost\Ubuntu\home\张三\.gemini",
+        ] {
+            assert!(is_wsl_path(Path::new(raw)), "expected WSL match: {raw}");
+            assert_eq!(
+                wsl_unc_to_linux(raw),
+                Some(("Ubuntu".into(), "/home/张三/.gemini".into())),
+                "{raw}"
+            );
+        }
+
+        assert_eq!(
+            path_into_wsl(r"D:\开发\project", "Ubuntu"),
+            Some("/mnt/d/开发/project".into())
         );
     }
 }

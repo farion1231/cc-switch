@@ -1780,8 +1780,10 @@ mod tests {
             serde_json::json!(r"\\wsl.localhost\Ubuntu-26.04\home\alice\.gemini")
         );
 
-        let mut blank = AppSettings::default();
-        blank.agy_config_dir = Some("   ".into());
+        let mut blank = AppSettings {
+            agy_config_dir: Some("   ".into()),
+            ..Default::default()
+        };
         blank.normalize_paths();
         assert!(blank.agy_config_dir.is_none());
         assert!(serde_json::to_value(&blank)
