@@ -206,7 +206,24 @@ fn read_generations(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64,
             .ok()
             .and_then(|metadata| metadata.response)
             .map(|response| response.model);
-        let model = [tiered, base]
+        // Orchestrator's display field names the mode (or just "Gemini Flash"),
+        // while field 19 identifies the planner/worker that produced this step.
+        // Only these exact AGY aliases are mapped; unknown IDs keep their configured pricing.
+        // https://antigravity.google/docs/models#orchestrator
+        let orchestrator_model = match base.as_deref() {
+            Some("gemini-pro-orchestrator") => Some("gemini-4-carbon"),
+            Some("gemini-pro-orchestrator-argon") => Some("gemini-4-argon"),
+            Some("gemini-flash-worker-agy") => Some("gemini-4-hydrogen"),
+            _ => None,
+        };
+        let tiered = tiered.filter(|model| {
+            let id = super::model_id_of(model);
+            // Keep a concrete field-21 model/tier if a newer AGY build supplies one.
+            !(orchestrator_model.is_some()
+                && (super::is_orchestrator(&id)
+                    || matches!(id.as_str(), "gemini-flash" | "gemini-flash-worker-agy")))
+        });
+        let model = [tiered, orchestrator_model.map(str::to_string), base]
             .into_iter()
             .flatten()
             .map(|model| model.trim().to_string())
@@ -296,6 +313,52 @@ pub(super) fn test_timing(first_token_ms: i64, streaming_ms: i64) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn orchestrator_native_aliases_use_generation_role_instead_of_generic_display() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.db");
+        let conn = write_test_database(
+            &path,
+            &[
+                (1, 0, "gemini-pro-orchestrator"),
+                (3, 7, "gemini-flash-worker-agy"),
+                (5, 2, "gemini-pro-orchestrator-argon"),
+                (7, 3, "future-worker"),
+                (9, 4, "gemini-flash-worker-agy"),
+            ],
+        );
+        set_test_generation(
+            &conn,
+            0,
+            "gemini-pro-orchestrator",
+            &test_model_id("Orchestrator (Carbon)"),
+        );
+        set_test_generation(
+            &conn,
+            7,
+            "gemini-flash-worker-agy",
+            &test_model_id("Gemini Flash"),
+        );
+        set_test_generation(
+            &conn,
+            2,
+            "gemini-pro-orchestrator-argon",
+            &test_model_id("Orchestrator (Argon)"),
+        );
+        set_test_generation(
+            &conn,
+            4,
+            "gemini-flash-worker-agy",
+            &test_model_id("gemini-4-hydrogen-high"),
+        );
+        let models = read_models(&path, &[1, 3, 5, 7, 9]).unwrap();
+        assert_eq!(models[&1], "gemini-4-carbon");
+        assert_eq!(models[&3], "gemini-4-hydrogen");
+        assert_eq!(models[&5], "gemini-4-argon");
+        assert_eq!(models[&7], "future-worker");
+        assert_eq!(models[&9], "gemini-4-hydrogen-high");
+    }
 
     #[test]
     fn uses_step_references_including_zero_instead_of_generation_order() {

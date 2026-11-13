@@ -18,6 +18,9 @@ use std::path::{Path, PathBuf};
 
 mod native_models;
 
+#[cfg(test)]
+mod orchestrator_tests;
+
 struct AgySyncCursorUpdate<'a> {
     key: &'a str,
     modified: i64,
@@ -53,7 +56,8 @@ fn sync_agy_usage_from_files(
         };
         let modified = metadata_modified_nanos(&metadata);
         let size = metadata.len() as i64;
-        let native_state = native_models::native_state_fingerprint(&path);
+        // Invalidate pre-Orchestrator cursors once, including unchanged, already timed history.
+        let native_state = format!("v2:{}", native_models::native_state_fingerprint(&path));
         if cursor.is_some_and(|c| {
             c.last_modified == modified
                 && c.last_byte_offset == Some(size)
@@ -123,6 +127,17 @@ fn model_id_of(display: &str) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join("-")
+}
+
+/// These are multi-model modes, not evidence of the model used for an individual response.
+fn is_orchestrator(model: &str) -> bool {
+    matches!(
+        model_id_of(model).as_str(),
+        "orchestrator-carbon"
+            | "orchestrator-argon"
+            | "gemini-pro-orchestrator"
+            | "gemini-pro-orchestrator-argon"
+    )
 }
 
 /// 五个金额（输入、输出、缓存读、缓存写、合计）；查不到价格的记 0。
@@ -203,9 +218,10 @@ fn import_records_with_cursor(
         }
     }
 
-    // 子代理通常没有 Model Selection；按步骤关联原生生成记录，不推测档位映射。
+    // 子代理通常没有 Model Selection；Orchestrator 的选择只代表模式，需逐次读取实际模型。
     // 耗时和首字也只在原生库里有（transcript 的时间戳只到秒、没有完成时间）。
     let mut timing_by_step = std::collections::HashMap::new();
+    let mut native_model_by_step = HashMap::new();
     let mut native_ok = true;
     if let Some(transcript) = transcript {
         let settled = steps_with_timing(db, session, &ordered)?;
@@ -214,7 +230,9 @@ fn import_records_with_cursor(
             .filter(|row| row["type"] == "PLANNER_RESPONSE" && row["status"] == "DONE")
             .filter_map(|row| {
                 let step = row["step_index"].as_u64()?;
-                let needs_model = known_model(row).is_none() && !model_by_step.contains_key(&step);
+                let selected =
+                    known_model(row).or_else(|| model_by_step.get(&step).map(String::as_str));
+                let needs_model = selected.is_none_or(is_orchestrator);
                 (needs_model || !settled.contains(&step)).then_some(step)
             })
             .collect();
@@ -223,7 +241,7 @@ fn import_records_with_cursor(
                 Ok(generations) => {
                     for (step, generation) in generations {
                         if let Some(model) = generation.model {
-                            model_by_step.entry(step).or_insert(model);
+                            native_model_by_step.insert(step, model);
                         }
                         if let Some(timing) = generation.timing {
                             timing_by_step.insert(step, timing);
@@ -271,19 +289,32 @@ fn import_records_with_cursor(
         let display = known_model(row)
             .map(str::to_string)
             .or_else(|| model_by_step.get(&step).cloned())
+            .or_else(|| native_model_by_step.get(&step).cloned())
             .unwrap_or_else(|| "unknown".to_string());
-        let model = model_id_of(&display);
+        let actual = if is_orchestrator(&display) {
+            native_model_by_step.get(&step).unwrap_or(&display)
+        } else {
+            &display
+        };
+        let model = model_id_of(actual);
         // 原生库暂时不可读时，保留已恢复的模型；Token 仍按最新日志更新。
-        let (model, display) = if model == "unknown" && fresh == 0 {
-            tx.prepare_cached(
-                "SELECT model, COALESCE(request_model, model) FROM proxy_request_logs
+        let (model, display) = if (model == "unknown" || is_orchestrator(&model)) && fresh == 0 {
+            let previous = tx
+                .prepare_cached(
+                    "SELECT model, COALESCE(request_model, model) FROM proxy_request_logs
                   WHERE request_id=?1 AND model!='unknown'",
-            )?
-            .query_row([&id], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })
-            .optional()?
-            .unwrap_or((model, display))
+                )?
+                .query_row([&id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .optional()?;
+            previous
+                .filter(|(old_model, old_display)| {
+                    model == "unknown"
+                        || (!is_orchestrator(old_model)
+                            && model_id_of(old_display) == model_id_of(&display))
+                })
+                .unwrap_or((model, display))
         } else {
             (model, display)
         };

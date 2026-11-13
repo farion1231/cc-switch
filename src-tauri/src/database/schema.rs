@@ -2255,6 +2255,17 @@ impl Database {
                 "0.10",
                 "0",
             ),
+            // Hydrogen executes Orchestrator steps; standard API-equivalent estimate, not plan quota.
+            // https://aistudio.google.com/docs/pricing#gemini-4-hydrogen (2026-11-13)
+            // Output includes thinking; implicit cache only, so no cache-write charge.
+            (
+                "gemini-4-hydrogen",
+                "Gemini 4 Hydrogen",
+                "1.50",
+                "7.50",
+                "0.075",
+                "0",
+            ),
             // Gemini 3.8 系列（2026-09-02 发布，1M 窗口）
             // 介绍价 0.75/3.75/0.075 至 2026-12-31，2027-01-01 起挂牌价 1.50/7.50/0.15；口径同 3.7 Flash，勿加豁免。
             (
