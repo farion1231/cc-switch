@@ -30,6 +30,16 @@ export interface WebDavSyncResult {
   status: string;
 }
 
+export interface FeedbackReport {
+  /** 截取的日期（本地时区，YYYY-MM-DD） */
+  date: string;
+  /** 当日日志总行数 */
+  totalLines: number;
+  /** 实际预填进 Issue 的行数（受链接长度限制，取当日末尾部分） */
+  includedLines: number;
+  issueUrl: string;
+}
+
 export const settingsApi = {
   async get(): Promise<Settings> {
     return await invoke("get_settings");
@@ -125,6 +135,11 @@ export const settingsApi = {
 
   async revealAppLogFile(): Promise<void> {
     await invoke("reveal_app_log_file");
+  },
+
+  /** 截取当日日志，返回预填好日志与环境信息的 Issue 链接（不会自动提交） */
+  async prepareFeedbackReport(): Promise<FeedbackReport> {
+    return await invoke("prepare_feedback_report");
   },
 
   async getAppConfigDirOverride(): Promise<string | null> {

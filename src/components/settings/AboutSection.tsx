@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Bug,
   Download,
   ExternalLink,
   Github,
@@ -19,6 +20,7 @@ import { settingsApi } from "@/lib/api";
 import { useUpdate } from "@/contexts/UpdateContext";
 import { Badge } from "@/components/ui/badge";
 import { WhatsNewDialog } from "@/components/WhatsNewDialog";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { WHATS_NEW_ENTRIES, entriesUpTo } from "@/lib/whatsNew";
 import ccswitchLogo from "@/assets/icons/logo.svg";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -55,6 +57,8 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   );
   const [isDownloading, setIsDownloading] = useState(false);
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [isPreparingFeedback, setIsPreparingFeedback] = useState(false);
   const [starPromptDismissed, setStarPromptDismissed] = useState(
     readStarPromptDismissed,
   );
@@ -121,6 +125,37 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   const handleOpenGithub = useCallback(() => {
     void settingsApi.openExternal("https://github.com/farion1231/cc-switch");
   }, []);
+
+  // 问题反馈：后端截取当日日志，打开预填好日志与环境信息的 Issue 页面，由用户检查后自行提交
+  const handleConfirmFeedback = useCallback(async () => {
+    setIsPreparingFeedback(true);
+    try {
+      const report = await settingsApi.prepareFeedbackReport();
+      await settingsApi.openExternal(report.issueUrl);
+      setFeedbackOpen(false);
+      const title =
+        report.totalLines === 0
+          ? t("settings.feedback.openedWithoutLog")
+          : report.includedLines < report.totalLines
+            ? t("settings.feedback.openedPartial", {
+                included: report.includedLines,
+                total: report.totalLines,
+              })
+            : t("settings.feedback.opened", { total: report.totalLines });
+      toast.success(title, {
+        description: t("settings.feedback.reviewHint"),
+        closeButton: true,
+      });
+    } catch (error) {
+      console.error("[AboutSection] Failed to prepare feedback", error);
+      toast.error(t("settings.feedback.failed"), {
+        description: extractErrorMessage(error) || undefined,
+        closeButton: true,
+      });
+    } finally {
+      setIsPreparingFeedback(false);
+    }
+  }, [t]);
 
   const handleDismissStarPrompt = useCallback(() => {
     setStarPromptDismissed(true);
@@ -312,6 +347,15 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             {t("whatsNew.recentTitle")}
           </Button>
         )}
+        <Button
+          type="button"
+          variant="neutral"
+          size="compact"
+          onClick={() => setFeedbackOpen(true)}
+        >
+          <Bug className="h-3.5 w-3.5" />
+          {t("settings.feedback.button")}
+        </Button>
       </div>
 
       {/* 下载与更新都走 ccswitch.io，用户不再经过仓库页，邀 Star 单独占一行；按钮即 GitHub 入口。
@@ -355,6 +399,17 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         open={whatsNewOpen}
         onClose={() => setWhatsNewOpen(false)}
         entries={recentEntries}
+      />
+
+      <ConfirmDialog
+        isOpen={feedbackOpen}
+        variant="info"
+        title={t("settings.feedback.title")}
+        message={t("settings.feedback.message")}
+        confirmText={t("settings.feedback.confirm")}
+        pending={isPreparingFeedback}
+        onConfirm={() => void handleConfirmFeedback()}
+        onCancel={() => setFeedbackOpen(false)}
       />
     </div>
   );

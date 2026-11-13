@@ -1049,6 +1049,17 @@
     "github": "GitHub",
     "starPrompt": "If CC Switch has helped you, please star us on GitHub — it means a lot to us",
     "starOnGithub": "Star on GitHub",
+    "feedback": {
+      "button": "Report a Bug",
+      "title": "Report a Bug",
+      "message": "Today's entries from the app log, along with your version and system info, will be filled into a GitHub issue page. Because of URL length limits, only the most recent part of today's log can be included. Emails, phone numbers, ID and bank card numbers, IPs and secrets in the log are replaced with placeholders.\n\nNothing is submitted automatically. Review the content and describe the problem in your browser, then submit it yourself.",
+      "confirm": "Open Issue Page",
+      "opened": "Opened the issue page with all {{total}} log lines from today",
+      "openedPartial": "Opened the issue page with the latest {{included}} of today's {{total}} log lines",
+      "openedWithoutLog": "No log entries yet today. Opened the issue page",
+      "reviewHint": "Review the content and describe the problem before submitting",
+      "failed": "Failed to prepare the bug report"
+    },
     "manualInstallCommands": "Manual Install Commands",
     "manualUninstallCommands": "Manual uninstall commands",
     "manualUninstallHint": "Each app’s environment is detected automatically by default, and you can select a different environment manually. Select the original installation method, then copy the command for the app you want to remove and run it in a terminal. Click “Check for updates” afterwards to refresh its status.",
