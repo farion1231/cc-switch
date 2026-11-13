@@ -489,19 +489,66 @@ fn native_entries(config: &Value, env_key: &str) -> Vec<(String, Value)> {
         .collect()
 }
 
+/// The protocol Qwen Code uses for one `modelProviders` entry: its array key,
+/// unless an OpenAI entry picks the API with `wireApi`. Qwen's own `/auth`
+/// stores Responses models under `openai` with `wireApi: "responses"` and sets
+/// `selectedType` to `openai-responses`.
+fn effective_auth_type<'a>(bucket: &'a str, entry: &Value) -> &'a str {
+    if !matches!(bucket, "openai" | "openai-responses") {
+        return bucket;
+    }
+    match entry.get("wireApi").and_then(Value::as_str) {
+        Some("responses") => "openai-responses",
+        Some("chat-completions") => "openai",
+        _ => bucket,
+    }
+}
+
+/// All `modelProviders` entries with their effective protocol.
+fn entries_by_auth_type(document: &Value) -> Vec<(&str, &Value)> {
+    document
+        .get("modelProviders")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .flat_map(|(bucket, entries)| {
+            entries
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(move |entry| (effective_auth_type(bucket, entry), entry))
+        })
+        .collect()
+}
+
 fn current_provider_in(document: &Value) -> Option<String> {
     let selected = document
         .pointer("/security/auth/selectedType")
         .and_then(Value::as_str)?;
     let name = document.pointer("/model/name").and_then(Value::as_str)?;
     let base = document.pointer("/model/baseUrl").and_then(Value::as_str);
-    let entries = document.get("modelProviders")?.get(selected)?.as_array()?;
-    let matches_id = |entry: &&Value| entry.get("id").and_then(Value::as_str) == Some(name);
-    let entry = entries
-        .iter()
-        .filter(matches_id)
-        .find(|entry| base.is_none() || entry.get("baseUrl").and_then(Value::as_str) == base)
-        .or_else(|| entries.iter().find(matches_id))?;
+    let all = entries_by_auth_type(document);
+    let find = |auth_type: &str| {
+        let entries: Vec<&Value> = all
+            .iter()
+            .filter(|(effective, entry)| {
+                *effective == auth_type && entry.get("id").and_then(Value::as_str) == Some(name)
+            })
+            .map(|(_, entry)| *entry)
+            .collect();
+        entries
+            .iter()
+            .find(|entry| base.is_none() || entry.get("baseUrl").and_then(Value::as_str) == base)
+            .or_else(|| entries.first())
+            .copied()
+    };
+    // Like Qwen at startup, `openai` falls back to a Responses route of the
+    // same model when there is no Chat Completions one.
+    let entry = find(selected).or_else(|| {
+        (selected == "openai")
+            .then(|| find("openai-responses"))
+            .flatten()
+    })?;
     let env_key = entry.get("envKey").and_then(Value::as_str)?;
     groups(document)
         .into_iter()
@@ -528,19 +575,11 @@ fn select_provider_model(document: &mut Value, env_key: &str) -> Result<(), AppE
         .pointer("/model/baseUrl")
         .and_then(Value::as_str)
         .map(str::to_string);
-    let mut candidates: Vec<(String, Value)> = Vec::new();
-    for (auth_type, entries) in document
-        .get("modelProviders")
-        .and_then(Value::as_object)
+    let candidates: Vec<(String, Value)> = entries_by_auth_type(document)
         .into_iter()
-        .flatten()
-    {
-        for entry in entries.as_array().into_iter().flatten() {
-            if entry.get("envKey").and_then(Value::as_str) == Some(env_key) {
-                candidates.push((auth_type.clone(), entry.clone()));
-            }
-        }
-    }
+        .filter(|(_, entry)| entry.get("envKey").and_then(Value::as_str) == Some(env_key))
+        .map(|(auth_type, entry)| (auth_type.to_string(), entry.clone()))
+        .collect();
     let keep = candidates.iter().find(|(auth_type, entry)| {
         Some(auth_type) == selected.as_ref()
             && entry.get("id").and_then(Value::as_str) == name.as_deref()
@@ -925,6 +964,100 @@ mod tests {
                 .unwrap()
                 .len(),
             1
+        );
+    }
+
+    /// Qwen Code's own `/auth` stores a Responses model under `openai` with
+    /// `wireApi: "responses"` and selects `openai-responses`.
+    fn native_responses_settings() -> Value {
+        json!({
+            "env": {"OPENAI_API_KEY": "sk-native", "OTHER_KEY": "sk-other"},
+            "modelProviders": {
+                "openai": [
+                    {"id": "gpt-5", "wireApi": "responses", "baseUrl": "https://api.openai.com/v1", "envKey": "OPENAI_API_KEY"},
+                    {"id": "gpt-5", "baseUrl": "https://other.example/v1", "envKey": "OTHER_KEY"}
+                ]
+            },
+            "security": {"auth": {"selectedType": "openai-responses"}},
+            "model": {"name": "gpt-5", "baseUrl": "https://api.openai.com/v1"}
+        })
+    }
+
+    #[test]
+    fn current_provider_resolves_wire_api_responses_entries() {
+        assert_eq!(
+            effective_auth_type("openai", &json!({"wireApi": "responses"})),
+            "openai-responses"
+        );
+        assert_eq!(
+            effective_auth_type("openai-responses", &json!({"wireApi": "chat-completions"})),
+            "openai"
+        );
+        assert_eq!(
+            effective_auth_type("openai-responses", &json!({})),
+            "openai-responses"
+        );
+        assert_eq!(
+            effective_auth_type("anthropic", &json!({"wireApi": "responses"})),
+            "anthropic"
+        );
+
+        let settings = native_responses_settings();
+        assert_eq!(
+            current_provider_in(&settings).as_deref(),
+            Some("openai-api-key")
+        );
+
+        // A Chat Completions route of the same model is a different selection.
+        let mut chat = settings.clone();
+        chat["security"]["auth"]["selectedType"] = json!("openai");
+        chat["model"]["baseUrl"] = json!("https://other.example/v1");
+        assert_eq!(current_provider_in(&chat).as_deref(), Some("other-key"));
+
+        // `wireApi: "chat-completions"` under the legacy bucket is an OpenAI chat route.
+        let legacy = json!({
+            "modelProviders": {"openai-responses": [
+                {"id": "m", "wireApi": "chat-completions", "envKey": "LEGACY_KEY"}
+            ]},
+            "security": {"auth": {"selectedType": "openai"}},
+            "model": {"name": "m"}
+        });
+        assert_eq!(current_provider_in(&legacy).as_deref(), Some("legacy-key"));
+    }
+
+    #[test]
+    fn remove_refuses_provider_selected_through_wire_api_responses() {
+        let settings = native_responses_settings();
+        assert!(apply_provider(&settings, "openai-api-key", None, false).is_err());
+        let removed = apply_provider(&settings, "other-key", None, false).unwrap();
+        assert_eq!(
+            removed["modelProviders"]["openai"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+
+        // Editing the current provider keeps Qwen's Responses selection.
+        let config = groups(&settings)
+            .swap_remove("openai-api-key")
+            .unwrap()
+            .config;
+        let edited = apply_provider(&settings, "openai-api-key", Some(&config), false).unwrap();
+        assert_eq!(
+            edited["security"]["auth"]["selectedType"],
+            "openai-responses"
+        );
+        let native = edited["modelProviders"]["openai"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["envKey"] == "OPENAI_API_KEY")
+            .unwrap();
+        assert_eq!(native["wireApi"], "responses");
+        assert_eq!(
+            current_provider_in(&edited).as_deref(),
+            Some("openai-api-key")
         );
     }
 
