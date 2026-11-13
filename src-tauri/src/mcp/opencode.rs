@@ -268,6 +268,7 @@ pub fn import_from_opencode(config: &mut MultiAppConfig) -> Result<usize, AppErr
                         copilot: false,
                         codebuddy: false,
                         dsh: false,
+                        workbuddy: false,
                         pi: false,
                         omp: false,
                     },

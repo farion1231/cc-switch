@@ -31,6 +31,10 @@ type ToolVersions = Awaited<ReturnType<typeof settingsApi.getToolVersions>>;
 
 const mocks = vi.hoisted(() => ({
   getToolVersions: vi.fn(),
+  getConfigStatus: vi.fn(async () => ({
+    exists: true,
+    path: "/home/me/.workbuddy",
+  })),
   probeToolInstallations: vi.fn(),
   listToolInstallations: vi.fn(),
   runToolLifecycleAction: vi.fn(),
@@ -2070,7 +2074,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
       name.includes("CodeBuddy Code"),
     );
     expect(codebuddy).toBe(names.length - 1);
-    expect(names[codebuddy - 1]).toContain("GitHub Copilot CLI");
+    expect(names[codebuddy - 1]).toContain("WorkBuddy");
     expect(card("CodeBuddy Code").getByText("1.0.0")).toBeInTheDocument();
 
     fireEvent.click(updateButton("CodeBuddy Code"));
@@ -2197,6 +2201,30 @@ describe("AppsPage visibility column", () => {
     }
   });
 
+  it("gives WorkBuddy only the sidebar switch, like Claude Desktop", async () => {
+    vi.resetModules();
+    await renderApps();
+    const row = screen
+      .getByText("WorkBuddy", { selector: "span" })
+      .closest("[data-tool-row]") as HTMLElement;
+    expect(row).not.toBeNull();
+    expect(within(row).getByRole("switch")).toBeInTheDocument();
+    // 和 Claude Desktop 一样：接入状态 + 说明，没有操作按钮
+    expect(
+      await within(row).findByText("appsPage.desktopConnected"),
+    ).toBeInTheDocument();
+    expect(mocks.getConfigStatus).toHaveBeenCalledWith("workbuddy");
+    // 除了「已安装」组的拖动把手，唯一的按钮是说明的问号
+    expect(
+      within(row)
+        .getAllByRole("button")
+        .filter(
+          (button) =>
+            button.getAttribute("aria-label") !== "appsPage.dragHandle",
+        ),
+    ).toEqual([within(row).getByRole("button", { name: "WorkBuddy" })]);
+  });
+
   it("hides CodeBuddy Code from the sidebar with its own switch", async () => {
     vi.resetModules();
     mocks.updateSettings.mockReset();
@@ -2236,6 +2264,7 @@ describe("AppsPage visibility column", () => {
           "agy",
           "omp",
           "copilot",
+          "workbuddy",
         ].map((app) => [app, false]),
       ),
     };

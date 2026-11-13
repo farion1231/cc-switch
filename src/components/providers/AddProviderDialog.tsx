@@ -74,6 +74,7 @@ export function AddProviderDialog({
     appId !== "dsh" &&
     appId !== "kimi" &&
     appId !== "copilot" &&
+    appId !== "workbuddy" &&
     appId !== "codebuddy" &&
     appId !== "grokbuild" &&
     appId !== "claude-desktop";
@@ -300,8 +301,9 @@ export function AddProviderDialog({
           appId === "kimi" ||
           appId === "dsh" ||
           appId === "omp" ||
-          appId === "codebuddy" ||
-          appId === "copilot") &&
+          appId === "copilot" ||
+          appId === "workbuddy" ||
+          appId === "codebuddy") &&
         values.providerKey
       ) {
         providerData.providerKey = values.providerKey;

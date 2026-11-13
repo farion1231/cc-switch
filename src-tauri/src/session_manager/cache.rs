@@ -224,6 +224,7 @@ impl TranscriptCache {
         self.entries.lock().unwrap_or_else(|poisoned| {
             let mut guard = poisoned.into_inner();
             guard.clear();
+            self.entries.clear_poison();
             guard
         })
     }
@@ -480,6 +481,23 @@ mod tests {
     use crate::session_manager::model::{ToolKind, ToolStatus};
     use std::time::Duration;
     use tempfile::tempdir;
+
+    #[test]
+    fn cache_recovers_after_poison_and_retains_new_entries() {
+        let cache = TranscriptCache::new(8, 1024);
+        cache.insert(key("old"), fp(1), Arc::new(transcript_of_bytes(100)));
+        assert!(std::panic::catch_unwind(|| {
+            let _guard = cache.entries.lock().unwrap();
+            panic!("interrupted cache update");
+        })
+        .is_err());
+
+        assert!(cache.get(&key("old"), fp(1)).is_none());
+        let fresh = Arc::new(transcript_of_bytes(100));
+        cache.insert(key("new"), fp(2), fresh.clone());
+        assert!(Arc::ptr_eq(&cache.get(&key("new"), fp(2)).unwrap(), &fresh));
+        assert!(!cache.entries.is_poisoned());
+    }
 
     fn transcript_of_bytes(bytes: usize) -> Transcript {
         Transcript {

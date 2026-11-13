@@ -49,6 +49,10 @@ vi.mock("@/components/providers/forms/CodebuddyAccountSection", () => ({
   CodebuddyAccountSection: () => <div />,
 }));
 
+vi.mock("@/components/settings/auth/WorkBuddyAccountSection", () => ({
+  WorkBuddyAccountSection: () => <div />,
+}));
+
 vi.mock("@/components/providers/DshAccount", () => ({
   DshAccountLogin: () => <div />,
 }));

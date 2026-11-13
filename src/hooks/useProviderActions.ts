@@ -275,6 +275,7 @@ export function useProviderActions(
             activeApp === "opencode" ||
             activeApp === "openclaw" ||
             activeApp === "mcode" ||
+            activeApp === "workbuddy" ||
             activeApp === "codebuddy"
           ) {
             messageKey = "notifications.addToConfigSuccess";

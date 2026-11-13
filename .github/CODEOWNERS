@@ -1,14 +1,11 @@
 # Code owners for cc-switch
 #
-# Branch protection on `main` has "Require review from Code Owners" enabled.
-# With this file present, a PR cannot merge to `main` without an approval from
-# the owner below. This closes the gap where two collaborators could approve
-# each other's malicious PRs (a single non-owner approval is no longer enough).
-
-# Global fallback: every PR needs owner approval before merging to main.
-*                 @farion1231
-
-# Most sensitive paths — CI/signing/release and the Rust backend. Listed
-# explicitly so they stay locked even if the global rule above is relaxed later.
+# Merging to `main` needs two approving reviews from maintainers (branch
+# protection), and any maintainer may then press merge. Branch protection also
+# has "Require review from Code Owners" enabled, so a PR touching a path below
+# additionally needs the owner's approval.
+#
+# `.github/` stays locked because it holds this file, the branch-protection-
+# facing CI gate, and the release / signing workflows: without the lock, a PR
+# could rewrite the rules that govern its own merge.
 /.github/         @farion1231
-/src-tauri/       @farion1231

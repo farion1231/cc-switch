@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import de from "@/i18n/locales/de.json";
 import en from "@/i18n/locales/en.json";
 import ja from "@/i18n/locales/ja.json";
 import ko from "@/i18n/locales/ko.json";
@@ -7,7 +8,7 @@ import tr from "@/i18n/locales/tr.json";
 import zhTW from "@/i18n/locales/zh-TW.json";
 import zh from "@/i18n/locales/zh.json";
 
-// All seven UI languages are maintained together: every English key must exist
+// All eight UI languages are maintained together: every English key must exist
 // in every other locale, with the same interpolation variables and tags.
 const locales = [
   ["zh", zh],
@@ -16,6 +17,7 @@ const locales = [
   ["ko", ko],
   ["tr", tr],
   ["ru", ru],
+  ["de", de],
 ] as const;
 
 function flattenStrings(

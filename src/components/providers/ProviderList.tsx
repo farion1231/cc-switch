@@ -55,6 +55,8 @@ import { isPiFamilyApp } from "@/config/appConfig";
 import { useCodebuddyOfficialCards } from "@/lib/query/codebuddy";
 import { isOfficialAccount } from "@/utils/providerCapabilities";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
+import { isWorkBuddyOfficial } from "@/components/providers/workbuddyOfficial";
+import { useWorkBuddyOfficial } from "@/components/providers/useWorkBuddyOfficial";
 import {
   DshAccountCard,
   accountName as dshAccountName,
@@ -175,6 +177,12 @@ export function ProviderList({
     error: piCurrentStateError,
   } = usePiCurrentState(isPiFamilyApp(appId), appId === "omp" ? "omp" : "pi");
   const isPiStateReady = !isPiFamilyApp(appId) || isPiCurrentStateSuccess;
+  // WorkBuddy 官方登录卡：有这种卡时才去读账号和运行状态
+  const hasWorkBuddyOfficial =
+    appId === "workbuddy" &&
+    Object.values(providers).some((provider) => isWorkBuddyOfficial(provider));
+  const { state: workbuddyOfficial, switchTo: switchWorkBuddyAccount } =
+    useWorkBuddyOfficial(hasWorkBuddyOfficial);
   // CodeBuddy 官方登录卡：绑定的账号是不是 CodeBuddy 现在登着的号（决定「已添加 / 可添加」）、卡片上的「添加」
   const hasCodebuddyOfficial =
     appId === "codebuddy" &&
@@ -200,6 +208,7 @@ export function ProviderList({
         case "mcode":
         case "codebuddy":
         case "copilot":
+        case "workbuddy":
           return provider.meta?.liveConfigManaged === true;
         case "opencode":
           return opencodeLiveIds?.includes(provider.id) ?? false;
@@ -422,6 +431,7 @@ export function ProviderList({
         isHermesReadOnlyProvider(provider.settingsConfig),
       piStateUnavailable: isPiFamilyApp(appId) && !isPiStateReady,
       kimiCurrentId: currentProviderId,
+      workbuddyOfficial,
       codebuddyAccounts,
       copilotDefaultId: appId === "copilot" ? currentProviderId : null,
       extraAdded: showDshAccountCard ? 1 : 0,
@@ -436,7 +446,10 @@ export function ProviderList({
             ? onDisableOmoSlim?.()
             : onDisableOmo?.(),
         setDefault: (provider, modelId) => onSetAsDefault?.(provider, modelId),
-        switchAccount: switchCodebuddyAccount,
+        switchAccount: (provider) =>
+          appId === "codebuddy"
+            ? switchCodebuddyAccount(provider)
+            : void switchWorkBuddyAccount(provider),
         openTerminal: (provider) => onOpenTerminal?.(provider),
       },
     });
@@ -464,6 +477,8 @@ export function ProviderList({
     onDisableOmo,
     onDisableOmoSlim,
     onSetAsDefault,
+    workbuddyOfficial,
+    switchWorkBuddyAccount,
   ]);
 
   const piStateRawError =
@@ -539,6 +554,7 @@ export function ProviderList({
             appId === "mcode" ||
             appId === "kimi" ||
             appId === "dsh" ||
+            appId === "workbuddy" ||
             appId === "codebuddy"
               ? undefined
               : () => importMutation.mutate()

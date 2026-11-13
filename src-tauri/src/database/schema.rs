@@ -103,6 +103,7 @@ impl Database {
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
             enabled_copilot BOOLEAN NOT NULL DEFAULT 0,
+            enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0,
             enabled_codebuddy BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             enabled_pi BOOLEAN NOT NULL DEFAULT 0,
@@ -140,6 +141,7 @@ impl Database {
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
             enabled_copilot BOOLEAN NOT NULL DEFAULT 0,
+            enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0,
             enabled_codebuddy BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
@@ -698,11 +700,40 @@ impl Database {
                         Self::set_user_version(conn, 25)?;
                     }
                     25 => {
-                        log::info!(
-                            "迁移数据库从 v25 到 v26（MCP/Skills 添加 CodeBuddy Code 支持）"
-                        );
-                        Self::migrate_v25_to_v26(conn)?;
+                        // WorkBuddy：MCP 与 Skills 都存开关。
+                        // 早期开发版曾把 enabled_workbuddy 记作 v23（缺 enabled_omp）、v24
+                        // （缺上游 v24 的 enabled_dsh）或 v25（缺上游 v25 的 enabled_copilot），
+                        // 这里顺带补齐这些列；所有列都按"缺失才加"处理，保证幂等。
+                        if Self::table_exists(conn, "mcp_servers")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "mcp_servers",
+                                "enabled_omp",
+                                "BOOLEAN NOT NULL DEFAULT 0",
+                            )?;
+                        }
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                for column in
+                                    ["enabled_dsh", "enabled_copilot", "enabled_workbuddy"]
+                                {
+                                    Self::add_column_if_missing(
+                                        conn,
+                                        table,
+                                        column,
+                                        "BOOLEAN NOT NULL DEFAULT 0",
+                                    )?;
+                                }
+                            }
+                        }
                         Self::set_user_version(conn, 26)?;
+                    }
+                    26 => {
+                        log::info!(
+                            "迁移数据库从 v26 到 v27（MCP/Skills 添加 CodeBuddy Code 支持）"
+                        );
+                        Self::migrate_v26_to_v27(conn)?;
+                        Self::set_user_version(conn, 27)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -729,13 +760,13 @@ impl Database {
         }
     }
 
-    /// v25 -> v26 迁移：CodeBuddy Code 的 MCP 与 Skills 开关。
+    /// v26 -> v27 迁移：CodeBuddy Code 的 MCP 与 Skills 开关。
     ///
     /// CodeBuddy 早期开发版曾把 `enabled_codebuddy` 作为 v23（无 `enabled_omp`）、
-    /// v24（无 `enabled_dsh`）或 v25（无 `enabled_copilot`）发布，这些库会跳过
-    /// 上游对应的迁移步骤；这里各列都按“缺失才加”补齐，上游与任一开发版来源的库
-    /// 都能升到 v26，且不会改动已有开关。
-    fn migrate_v25_to_v26(conn: &Connection) -> Result<(), AppError> {
+    /// v24（无 `enabled_dsh`）、v25（无 `enabled_copilot`）或 v26（无上游 v26 的
+    /// `enabled_workbuddy`）发布，这些库会跳过上游对应的迁移步骤；这里各列都按
+    /// “缺失才加”补齐，上游与任一开发版来源的库都能升到 v27，且不会改动已有开关。
+    fn migrate_v26_to_v27(conn: &Connection) -> Result<(), AppError> {
         if Self::table_exists(conn, "mcp_servers")? {
             Self::add_column_if_missing(
                 conn,
@@ -746,7 +777,12 @@ impl Database {
         }
         for table in ["mcp_servers", "skills"] {
             if Self::table_exists(conn, table)? {
-                for column in ["enabled_dsh", "enabled_copilot", "enabled_codebuddy"] {
+                for column in [
+                    "enabled_dsh",
+                    "enabled_copilot",
+                    "enabled_workbuddy",
+                    "enabled_codebuddy",
+                ] {
                     Self::add_column_if_missing(conn, table, column, "BOOLEAN NOT NULL DEFAULT 0")?;
                 }
             }
@@ -1784,6 +1820,16 @@ impl Database {
     /// 注意: model_id 使用短横线格式（如 claude-haiku-4-5），与 API 返回的模型名称标准化后一致
     fn seed_model_pricing(conn: &Connection) -> Result<(), AppError> {
         let pricing_data = [
+            // Claude Fable 5.2（2026-11-11 核对官方标准价；缓存写入为 5 分钟 TTL）
+            // 来源：https://www.anthropic.com/pricing#api；fast mode 为 2x 标准价，不入表。
+            (
+                "claude-fable-5-2",
+                "Claude Fable 5.2",
+                "8",
+                "40",
+                "0.20",
+                "10",
+            ),
             // Claude Fable 5.1 / Mythos 5.1（2026-09-01 发布；同 Fable 5 价，
             // 但缓存读为 0.025x = $0.25，非 Fable 5 的 $1）
             (
@@ -2231,6 +2277,18 @@ impl Database {
             (
                 "gemini-4-argon",
                 "Gemini 4 Argon",
+                "2.00",
+                "10.00",
+                "0.10",
+                "0",
+            ),
+            // Gemini 4 Carbon（2026-11-11 核对官方价页 + models.dev）：与 Argon 同口径录标准档介绍价
+            // 2.00/10.00/0.10/0（仅支持隐式缓存）；2026-11-30 到期，2026-12-01 起恢复挂牌价
+            // 4.00/20.00/0.20，刻意不进 audit-ignore.json。
+            // 来源：https://ai.google.dev/gemini-api/docs/pricing#gemini-4-carbon
+            (
+                "gemini-4-carbon",
+                "Gemini 4 Carbon",
                 "2.00",
                 "10.00",
                 "0.10",
@@ -4360,19 +4418,20 @@ mod tests {
         let conn = Connection::open_in_memory()?;
         Database::create_tables_on_conn(&conn)?;
         Database::apply_schema_migrations_on_conn(&conn)?;
-        assert_eq!(Database::get_user_version(&conn)?, 26);
-        assert_eq!(SCHEMA_VERSION, 26);
+        assert_eq!(Database::get_user_version(&conn)?, 27);
+        assert_eq!(SCHEMA_VERSION, 27);
         assert!(Database::has_column(&conn, "mcp_servers", "enabled_omp")?);
         for table in ["mcp_servers", "skills"] {
             assert!(Database::has_column(&conn, table, "enabled_dsh")?);
             assert!(Database::has_column(&conn, table, "enabled_copilot")?);
+            assert!(Database::has_column(&conn, table, "enabled_workbuddy")?);
             assert!(Database::has_column(&conn, table, "enabled_codebuddy")?);
         }
         Ok(())
     }
 
     /// CodeBuddy dev builds that predated Copilot CLI shipped `enabled_codebuddy` as
-    /// v25 without `enabled_copilot`; the v25 -> v26 step must add it.
+    /// v25 without `enabled_copilot`; the migration ladder must add it.
     #[test]
     fn codebuddy_dev_v25_database_gains_copilot_column_and_keeps_codebuddy_flags(
     ) -> Result<(), AppError> {
@@ -4435,6 +4494,65 @@ mod tests {
         Ok(())
     }
 
+    /// Upstream v26 (WorkBuddy): `enabled_workbuddy` exists, CodeBuddy columns do not.
+    #[test]
+    fn codebuddy_upstream_v26_database_upgrades_and_keeps_workbuddy_flags() -> Result<(), AppError>
+    {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        for table in ["mcp_servers", "skills"] {
+            conn.execute_batch(&format!(
+                "ALTER TABLE {table} DROP COLUMN enabled_codebuddy;"
+            ))?;
+        }
+        conn.execute_batch("INSERT INTO mcp_servers (id, name, server_config, enabled_workbuddy) VALUES ('m', 'm', '{\"command\":\"echo\"}', 1); INSERT INTO skills (id, name, directory, enabled_workbuddy) VALUES ('s', 's', 's', 1);")?;
+        Database::set_user_version(&conn, 26)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        for (table, id) in [("mcp_servers", "m"), ("skills", "s")] {
+            let flags = conn.query_row(
+                &format!(
+                    "SELECT enabled_workbuddy, enabled_codebuddy FROM {table} WHERE id = '{id}'"
+                ),
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )?;
+            assert_eq!(flags, (1, 0), "{table}");
+        }
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Ok(())
+    }
+
+    /// Earlier CodeBuddy builds shipped `enabled_codebuddy` as v26 before upstream
+    /// claimed v26 for WorkBuddy; the v26 -> v27 step must add `enabled_workbuddy`.
+    #[test]
+    fn codebuddy_dev_v26_database_gains_workbuddy_column_and_keeps_codebuddy_flags(
+    ) -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        for table in ["mcp_servers", "skills"] {
+            conn.execute_batch(&format!(
+                "ALTER TABLE {table} DROP COLUMN enabled_workbuddy;"
+            ))?;
+        }
+        conn.execute_batch("INSERT INTO mcp_servers (id, name, server_config, enabled_codebuddy) VALUES ('m', 'm', '{\"command\":\"echo\"}', 1); INSERT INTO skills (id, name, directory, enabled_codebuddy) VALUES ('s', 's', 's', 1);")?;
+        Database::set_user_version(&conn, 26)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        for (table, id) in [("mcp_servers", "m"), ("skills", "s")] {
+            let flags = conn.query_row(
+                &format!(
+                    "SELECT enabled_workbuddy, enabled_codebuddy FROM {table} WHERE id = '{id}'"
+                ),
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )?;
+            assert_eq!(flags, (0, 1), "{table}");
+        }
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Ok(())
+    }
+
     #[test]
     fn codebuddy_clean_database_persists_mcp_and_skill_flags_independently() -> Result<(), AppError>
     {
@@ -4492,6 +4610,308 @@ mod tests {
         db.save_skill(&skill)?;
         assert!(db.get_installed_skill("s")?.unwrap().apps.dsh);
         assert!(db.get_all_installed_skills()?["s"].apps.claude);
+        Ok(())
+    }
+
+    #[test]
+    fn workbuddy_migration_from_v22_preserves_flags_and_defaults_to_disabled(
+    ) -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+        Database::set_user_version(&conn, 22)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        for table in ["mcp_servers", "skills"] {
+            let flags = conn.query_row(
+                &format!("SELECT enabled_kimi, enabled_dsh, enabled_workbuddy FROM {table}"),
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )?;
+            assert_eq!(flags, (1, 0, 0));
+        }
+        assert!(Database::has_column(&conn, "mcp_servers", "enabled_omp")?);
+        assert!(!Database::has_column(&conn, "skills", "enabled_omp")?);
+        // Re-running is a no-op.
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        Ok(())
+    }
+
+    /// 上游 v23（Oh My Pi）形态：mcp_servers 已有 enabled_omp，两张表都还没有 enabled_dsh / enabled_workbuddy。
+    #[test]
+    fn workbuddy_migration_from_upstream_v23_keeps_omp_flag() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN, enabled_omp BOOLEAN NOT NULL DEFAULT 0); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1,1); INSERT INTO skills VALUES ('s',1);")?;
+        Database::set_user_version(&conn, 23)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let mcp = conn.query_row(
+            "SELECT enabled_kimi, enabled_omp, enabled_dsh, enabled_workbuddy FROM mcp_servers",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
+        )?;
+        assert_eq!(mcp, (1, 1, 0, 0));
+        let skill = conn.query_row(
+            "SELECT enabled_kimi, enabled_dsh, enabled_workbuddy FROM skills",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
+        )?;
+        assert_eq!(skill, (1, 0, 0));
+        assert!(!Database::has_column(&conn, "skills", "enabled_omp")?);
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        Ok(())
+    }
+
+    /// 上游 v24（DeepSeek Harness）形态：两张表已有 enabled_dsh，v24 → v25 补 enabled_copilot，v25 → v26 补 enabled_workbuddy。
+    #[test]
+    fn workbuddy_migration_from_upstream_v24_keeps_dsh_and_omp_flags() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN, enabled_omp BOOLEAN NOT NULL DEFAULT 0, enabled_dsh BOOLEAN NOT NULL DEFAULT 0); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN, enabled_dsh BOOLEAN NOT NULL DEFAULT 0); INSERT INTO mcp_servers VALUES ('m',1,1,1); INSERT INTO skills VALUES ('s',0,1);")?;
+        Database::set_user_version(&conn, 24)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let mcp = conn.query_row(
+            "SELECT enabled_kimi, enabled_omp, enabled_dsh, enabled_workbuddy FROM mcp_servers",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
+        )?;
+        assert_eq!(mcp, (1, 1, 1, 0));
+        let skill = conn.query_row(
+            "SELECT enabled_kimi, enabled_dsh, enabled_workbuddy FROM skills",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
+        )?;
+        assert_eq!(skill, (0, 1, 0));
+        assert!(!Database::has_column(&conn, "skills", "enabled_omp")?);
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        Ok(())
+    }
+
+    /// 早期 WorkBuddy 开发版把 enabled_workbuddy 记作 v23：版本号是 23，但缺 enabled_omp。
+    /// v23 → v24 补 enabled_dsh，v25 → v26 补齐 enabled_omp，并保留已有的 WorkBuddy 开关。
+    #[test]
+    fn workbuddy_migration_from_dev_v23_backfills_missing_omp_column() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN, enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN, enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0); INSERT INTO mcp_servers VALUES ('m',1,1); INSERT INTO skills VALUES ('s',0,1);")?;
+        Database::set_user_version(&conn, 23)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let mcp = conn.query_row(
+            "SELECT enabled_kimi, enabled_omp, enabled_dsh, enabled_workbuddy FROM mcp_servers",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
+        )?;
+        assert_eq!(mcp, (1, 0, 0, 1));
+        let skill = conn.query_row(
+            "SELECT enabled_kimi, enabled_dsh, enabled_workbuddy FROM skills",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
+        )?;
+        assert_eq!(skill, (0, 0, 1));
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        Ok(())
+    }
+
+    /// 合并 DeepSeek Harness 之前的 WorkBuddy 开发版把 enabled_workbuddy 记作 v24：
+    /// 版本号是 24，但缺上游 v24 的 enabled_dsh。v25 → v26 需要补齐它。
+    #[test]
+    fn workbuddy_migration_from_dev_v24_backfills_missing_dsh_column() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN, enabled_omp BOOLEAN NOT NULL DEFAULT 0, enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN, enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0); INSERT INTO mcp_servers VALUES ('m',1,1,1); INSERT INTO skills VALUES ('s',0,1);")?;
+        Database::set_user_version(&conn, 24)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let mcp = conn.query_row(
+            "SELECT enabled_kimi, enabled_omp, enabled_dsh, enabled_workbuddy FROM mcp_servers",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
+        )?;
+        assert_eq!(mcp, (1, 1, 0, 1));
+        let skill = conn.query_row(
+            "SELECT enabled_kimi, enabled_dsh, enabled_workbuddy FROM skills",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
+        )?;
+        assert_eq!(skill, (0, 0, 1));
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        Ok(())
+    }
+
+    /// 上游 v25（GitHub Copilot CLI）形态：已有 enabled_copilot，v25 → v26 只补 enabled_workbuddy。
+    #[test]
+    fn workbuddy_migration_from_upstream_v25_keeps_copilot_flags() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN, enabled_omp BOOLEAN NOT NULL DEFAULT 0, enabled_dsh BOOLEAN NOT NULL DEFAULT 0, enabled_copilot BOOLEAN NOT NULL DEFAULT 0); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN, enabled_dsh BOOLEAN NOT NULL DEFAULT 0, enabled_copilot BOOLEAN NOT NULL DEFAULT 0); INSERT INTO mcp_servers VALUES ('m',1,1,1,1); INSERT INTO skills VALUES ('s',0,1,1);")?;
+        Database::set_user_version(&conn, 25)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let mcp = conn.query_row(
+            "SELECT enabled_omp, enabled_dsh, enabled_copilot, enabled_workbuddy FROM mcp_servers",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
+        )?;
+        assert_eq!(mcp, (1, 1, 1, 0));
+        let skill = conn.query_row(
+            "SELECT enabled_dsh, enabled_copilot, enabled_workbuddy FROM skills",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
+        )?;
+        assert_eq!(skill, (1, 1, 0));
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        Ok(())
+    }
+
+    /// 合并 Copilot CLI 之前的 WorkBuddy 开发版把 enabled_workbuddy 记作 v25：
+    /// 版本号是 25，但缺上游 v25 的 enabled_copilot。v25 → v26 需要补齐它。
+    #[test]
+    fn workbuddy_migration_from_dev_v25_backfills_missing_copilot_column() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_omp BOOLEAN NOT NULL DEFAULT 0, enabled_dsh BOOLEAN NOT NULL DEFAULT 0, enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_dsh BOOLEAN NOT NULL DEFAULT 0, enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0); INSERT INTO mcp_servers VALUES ('m',1,1,1); INSERT INTO skills VALUES ('s',1,1);")?;
+        Database::set_user_version(&conn, 25)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        for table in ["mcp_servers", "skills"] {
+            let flags = conn.query_row(
+                &format!("SELECT enabled_dsh, enabled_copilot, enabled_workbuddy FROM {table}"),
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )?;
+            assert_eq!(flags, (1, 0, 1), "table {table}");
+        }
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        Ok(())
+    }
+
+    #[test]
+    fn workbuddy_fresh_install_has_columns_and_persists_flags_independently() -> Result<(), AppError>
+    {
+        let db = Database::memory()?;
+        {
+            let conn = db.conn.lock().unwrap();
+            for table in ["mcp_servers", "skills"] {
+                assert!(Database::has_column(&conn, table, "enabled_workbuddy")?);
+                assert!(Database::has_column(&conn, table, "enabled_dsh")?);
+            }
+            assert!(Database::has_column(&conn, "mcp_servers", "enabled_omp")?);
+        }
+        let server = serde_json::from_value(serde_json::json!({"id":"m", "name":"m", "server":{"command":"echo"}, "apps":{"workbuddy":true,"dsh":true,"omp":true,"kimi":true}})).unwrap();
+        db.save_mcp_server(&server)?;
+        let saved = db.get_all_mcp_servers()?;
+        assert!(saved["m"].apps.workbuddy && saved["m"].apps.dsh && saved["m"].apps.omp);
+        db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::WorkBuddy, false)?;
+        let saved = db.get_all_mcp_servers()?;
+        assert!(!saved["m"].apps.workbuddy);
+        assert!(saved["m"].apps.dsh);
+        assert!(saved["m"].apps.omp);
+        assert!(saved["m"].apps.kimi);
+        db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::Dsh, false)?;
+        db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::Omp, false)?;
+        db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::WorkBuddy, true)?;
+        let saved = db.get_all_mcp_servers()?;
+        assert!(
+            saved["m"].apps.workbuddy
+                && !saved["m"].apps.dsh
+                && !saved["m"].apps.omp
+                && saved["m"].apps.kimi
+        );
+        let skill = serde_json::from_value(serde_json::json!({"id":"s", "name":"s", "description":"", "directory":"s", "apps":{"workbuddy":true,"dsh":true,"claude":true}, "installedAt":0})).unwrap();
+        db.save_skill(&skill)?;
+        let saved = db.get_installed_skill("s")?.unwrap();
+        assert!(saved.apps.workbuddy && saved.apps.dsh && saved.apps.claude);
+        let mut apps = saved.apps.clone();
+        apps.workbuddy = false;
+        db.update_skill_apps("s", &apps)?;
+        let saved = &db.get_all_installed_skills()?["s"];
+        assert!(!saved.apps.workbuddy && saved.apps.dsh && saved.apps.claude);
+        let mut apps = saved.apps.clone();
+        apps.dsh = false;
+        apps.workbuddy = true;
+        db.update_skill_apps("s", &apps)?;
+        let saved = &db.get_all_installed_skills()?["s"];
+        assert!(saved.apps.workbuddy && !saved.apps.dsh && saved.apps.claude);
         Ok(())
     }
 
