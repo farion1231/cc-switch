@@ -3943,14 +3943,18 @@ command = "fs-server"
         let doc = codex_doc();
         assert!(doc.get("model_provider").is_none(), "{text}");
         let dormant = &doc["model_providers"]["custom"];
-        assert_eq!(
-            dormant["base_url"].as_str(),
-            Some("http://127.0.0.1:15721/v1"),
-            "the dormant table points at the configured local proxy: {text}"
+        assert!(
+            dormant.get("base_url").is_none(),
+            "the dormant table sends old routed sessions to the official endpoint: {text}"
         );
         assert_eq!(
-            dormant["experimental_bearer_token"].as_str(),
-            Some(PROXY_TOKEN_PLACEHOLDER)
+            dormant["requires_openai_auth"].as_bool(),
+            Some(true),
+            "the dormant table goes through the official login: {text}"
+        );
+        assert!(
+            dormant.get("experimental_bearer_token").is_none(),
+            "no proxy placeholder stays behind: {text}"
         );
         assert!(dormant.get("name").is_some(), "Codex loads it: {text}");
         assert!(!text.contains("sk-a"), "no real key stays behind: {text}");
