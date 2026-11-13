@@ -1004,6 +1004,7 @@
     "browsePlaceholderOpencode": "예: /home/<사용자 이름>/.config/opencode",
     "browsePlaceholderOpenclaw": "예: /home/<사용자 이름>/.openclaw",
     "browsePlaceholderHermes": "예: /home/<사용자 이름>/.hermes",
+    "browsePlaceholderCursor": "예: /home/<사용자 이름>/.cursor",
     "browsePlaceholderPi": "예: /home/<사용자 이름>/.pi/agent",
     "browsePlaceholderOmp": "예: /home/<사용자 이름>/.omp/agent",
     "browsePlaceholderDsh": "예: /home/<사용자 이름>/.dsh",
@@ -1202,6 +1203,7 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
+    "cursor": "Cursor",
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "workbuddy": "WorkBuddy",
@@ -2959,7 +2961,8 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
-        "mcode": "MiniMax Code"
+        "mcode": "MiniMax Code",
+        "cursor": "Cursor"
       }
     },
     "userLevelPath": "사용자 수준 MCP 설정 경로",
@@ -4379,6 +4382,7 @@
     "columnVisible": "표시",
     "visibleHelp": "끄면 앱이 사이드바, 트레이 메뉴, MCP / 스킬의 앱 열, 프롬프트 및 세션의 앱 선택기에 표시되지 않습니다. 화면에서만 숨겨지며, 공급자와 MCP 서버 등의 설정 및 앱 자체 설정 파일은 변경되지 않습니다.",
     "desktopHelp": "Claude Desktop은 데스크톱 앱이므로 여기에서 설치하거나 업그레이드할 수 없습니다. CC Switch는 설정 파일을 통해 연결됩니다.",
+    "cursorHelp": "Cursor는 데스크톱 앱이므로 여기에서 설치하거나 업데이트할 수 없습니다.",
     "workbuddyHelp": "WorkBuddy는 데스크톱 앱이므로 여기에서 설치하거나 업그레이드할 수 없으며, 자체 업데이트 기능을 사용합니다. CC Switch는 설정 파일(~/.workbuddy/models.json)을 통해 WorkBuddy와 연동됩니다.",
     "desktopUnsupported": "이 시스템에서는 지원되지 않습니다",
     "desktopConnected": "연결됨",
@@ -4578,7 +4582,8 @@
       "defaultCannotRemove": "기본값은 제거할 수 없습니다. 먼저 다른 공급자를 기본값으로 설정하세요.",
       "inUseCannotDelete": "사용 중인 공급자는 삭제할 수 없습니다. 먼저 다른 것으로 전환하세요.",
       "directDefaultCannotDelete": "라우팅을 종료하면 이 공급자로 돌아오므로 삭제할 수 없습니다. 먼저 직접 연결 페이지에서 다른 공급자의 ‘직접 연결로 돌아가서 사용’을 선택하세요.",
-      "noFailover": "공식 계정은 장애 조치 대기열에 참여할 수 없습니다. 클라이언트 자체 로그인을 사용하고 다른 공급자와 순환할 수 없습니다."
+      "noFailover": "공식 계정은 장애 조치 대기열에 참여할 수 없습니다. 클라이언트 자체 로그인을 사용하고 다른 공급자와 순환할 수 없습니다.",
+      "cursorReadOnly": "Cursor 항목은 CC Switch가 관리하므로 읽기 전용입니다"
     },
     "section": {
       "queue": "대기열 · 우선순위별({{count}})",

@@ -11,10 +11,12 @@
 //! - `opencode` - OpenCode MCP 同步和导入（含 local/remote 格式转换）
 //! - `hermes` - Hermes MCP 同步和导入
 //! - `omp` - Omp MCP 同步和导入
+//! - `cursor` - Cursor MCP 同步和导入
 
 pub mod agy;
 mod claude;
 mod codex;
+mod cursor;
 pub(crate) mod dsh;
 mod gemini;
 mod grokbuild;
@@ -27,6 +29,7 @@ pub(crate) mod validation;
 // 重新导出公共 API
 pub use claude::{import_from_claude, remove_server_from_claude, sync_single_server_to_claude};
 pub use codex::{import_from_codex, remove_server_from_codex, sync_single_server_to_codex};
+pub use cursor::{import_from_cursor, remove_server_from_cursor, sync_single_server_to_cursor};
 pub use gemini::{import_from_gemini, remove_server_from_gemini, sync_single_server_to_gemini};
 pub use grokbuild::{
     import_from_grokbuild, remove_server_from_grokbuild, sync_single_server_to_grokbuild,

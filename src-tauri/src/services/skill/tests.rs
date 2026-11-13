@@ -4196,3 +4196,31 @@ fn resync_all_apps_leaves_openclaw_skills_dir_alone() {
     SkillService::sync_to_app(&db, &AppType::OpenClaw).expect("no-op sync");
     assert!(own_skill.exists());
 }
+
+/// 回归（PR #8270 拆分）：Cursor 的 Skill 目录是 `~/.cursor/skills`（Cursor 官方文档
+/// 的 user-level skills 位置），**不是** `~/.cursor/rules` —— `rules` 放的是规则文件
+/// （`*.mdc`），把 Skill 同步进去既不会被 Cursor 当 Skill 加载，也会和用户自己的
+/// 规则文件混在一起。自定义 Cursor 配置目录同理取其 `skills` 子目录。
+#[test]
+#[serial_test::serial]
+fn cursor_skills_live_in_the_skills_dir_not_rules() {
+    let home = crate::test_support::TestHome::new();
+
+    let dir =
+        SkillService::get_app_skills_dir(&AppType::Cursor).expect("resolve cursor skills dir");
+    assert_eq!(dir, home.path().join(".cursor").join("skills"));
+    assert!(
+        !dir.ends_with("rules"),
+        "Skill 不能写进规则目录，实际：{}",
+        dir.display()
+    );
+
+    let mut settings = crate::settings::get_settings();
+    let custom = home.path().join("custom-cursor");
+    settings.cursor_config_dir = Some(custom.to_string_lossy().into_owned());
+    crate::settings::update_settings(settings).expect("save custom cursor config dir");
+
+    let custom_dir = SkillService::get_app_skills_dir(&AppType::Cursor)
+        .expect("resolve custom cursor skills dir");
+    assert_eq!(custom_dir, custom.join("skills"));
+}

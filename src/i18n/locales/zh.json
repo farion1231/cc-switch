@@ -1004,6 +1004,7 @@
     "browsePlaceholderOpencode": "例如：/home/<你的用户名>/.config/opencode",
     "browsePlaceholderOpenclaw": "例如：/home/<你的用户名>/.openclaw",
     "browsePlaceholderHermes": "例如：/home/<你的用户名>/.hermes",
+    "browsePlaceholderCursor": "例如：/home/<你的用户名>/.cursor",
     "browsePlaceholderPi": "例如：/home/<你的用户名>/.pi/agent",
     "browsePlaceholderOmp": "例如：/home/<你的用户名>/.omp/agent",
     "browsePlaceholderDsh": "例如：/home/<你的用户名>/.dsh",
@@ -1202,6 +1203,7 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
+    "cursor": "Cursor",
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "workbuddy": "WorkBuddy",
@@ -2959,7 +2961,8 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
-        "mcode": "MiniMax Code"
+        "mcode": "MiniMax Code",
+        "cursor": "Cursor"
       }
     },
     "userLevelPath": "用户级 MCP 配置路径",
@@ -4379,6 +4382,7 @@
     "columnVisible": "显示",
     "visibleHelp": "关掉后，这个应用不再出现在侧栏、托盘菜单、MCP / Skills 的应用列，以及提示词和会话的应用下拉里。只是不显示：它的供应商、MCP 等配置都还在，它自己的配置文件也不会被改动。",
     "desktopHelp": "Claude Desktop 是桌面应用，不能在这里安装或升级；CC Switch 通过它的配置文件接入。",
+    "cursorHelp": "Cursor 是桌面应用，不能在这里安装或更新。",
     "workbuddyHelp": "WorkBuddy 是桌面应用，不能在这里安装或升级，它会自己更新；CC Switch 通过它的配置文件（~/.workbuddy/models.json）接入。",
     "desktopUnsupported": "当前系统不支持",
     "desktopConnected": "已接入",
@@ -4578,7 +4582,8 @@
       "defaultCannotRemove": "默认那家不能移除，先把别家设为默认。",
       "inUseCannotDelete": "正在用的这家不能删除，先切到别家。",
       "directDefaultCannotDelete": "退出路由后会回到这家，所以不能删除。先在直连页对别家点「回到直连并使用」，再删除。",
-      "noFailover": "官方账号不进故障转移队列：它用客户端自己的登录，不能和别家轮换。"
+      "noFailover": "官方账号不进故障转移队列：它用客户端自己的登录，不能和别家轮换。",
+      "cursorReadOnly": "Cursor 条目由 CC Switch 管理，只读"
     },
     "section": {
       "queue": "队列 · 按优先级（{{count}}）",

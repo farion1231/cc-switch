@@ -1004,6 +1004,7 @@
     "browsePlaceholderOpencode": "z. B. /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "z. B. /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "z. B. /home/<your-username>/.hermes",
+    "browsePlaceholderCursor": "z. B. /home/<your-username>/.cursor",
     "browsePlaceholderPi": "z. B. /home/<your-username>/.pi/agent",
     "browsePlaceholderOmp": "z. B. /home/<your-username>/.omp/agent",
     "browsePlaceholderDsh": "z. B. /home/<your-username>/.dsh",
@@ -1207,7 +1208,8 @@
     "workbuddy": "WorkBuddy",
     "agy": "Antigravity",
     "copilot": "Copilot CLI",
-    "omp": "Oh My Pi"
+    "omp": "Oh My Pi",
+    "cursor": "Cursor"
   },
   "mcode": {
     "empty": {
@@ -2959,7 +2961,8 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
-        "mcode": "MiniMax Code"
+        "mcode": "MiniMax Code",
+        "cursor": "Cursor"
       }
     },
     "userLevelPath": "Pfad der MCP-Konfiguration auf Benutzerebene",
@@ -4404,7 +4407,8 @@
       "agy": "Installiert mit dem offiziellen Skript",
       "copilot": "Installiert mit npm",
       "omp": "Installiert mit dem offiziellen Skript"
-    }
+    },
+    "cursorHelp": "Cursor ist eine Desktop-App und kann hier weder installiert noch aktualisiert werden."
   },
   "appPage": {
     "moreActions": "Weitere Aktionen für {{name}}",
@@ -4578,7 +4582,8 @@
       "defaultCannotRemove": "Der Standard kann nicht entfernt werden. Legen Sie zuerst einen anderen Anbieter als Standard fest.",
       "inUseCannotDelete": "Der verwendete Anbieter kann nicht gelöscht werden. Wechseln Sie zuerst zu einem anderen.",
       "directDefaultCannotDelete": "Beim Verlassen des Routings wird zu diesem Anbieter zurückgewechselt, daher kann er nicht gelöscht werden. Wählen Sie auf der Direkt-Seite zuerst bei einem anderen Anbieter „Zurück zu Direkt und verwenden“.",
-      "noFailover": "Offizielle Konten können nicht in die Failover-Warteschlange aufgenommen werden: Sie verwenden die eigene Anmeldung des Clients und können nicht mit anderen Anbietern rotieren."
+      "noFailover": "Offizielle Konten können nicht in die Failover-Warteschlange aufgenommen werden: Sie verwenden die eigene Anmeldung des Clients und können nicht mit anderen Anbietern rotieren.",
+      "cursorReadOnly": "Der Cursor-Eintrag wird von CC Switch verwaltet und ist schreibgeschützt"
     },
     "section": {
       "queue": "Warteschlange · nach Priorität ({{count}})",

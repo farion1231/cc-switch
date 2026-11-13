@@ -1006,7 +1006,10 @@ function App() {
       if (!navigation.app) return;
       selectApp(navigation.app);
       // 托盘先换应用：新应用那格还没报上来，按它实际生效的模式
-      if (navigation.intent === "add") openAddProvider(undefined);
+      // Cursor 没有第三方供应商编辑器，托盘的「添加供应商」在这里没有落点
+      if (navigation.intent === "add" && navigation.app !== "cursor") {
+        openAddProvider(undefined);
+      }
       if (navigation.intent === "needsRoute" && navigation.providerId) {
         setTrayNeedsRoute({
           app: navigation.app,
@@ -1577,7 +1580,8 @@ function App() {
                 </Button>
               </HoverTip>
             )}
-          {currentView === "providers" && (
+          {/* Cursor 只有后端种下的官方条目：没有第三方供应商编辑器，就不给「添加」入口 */}
+          {currentView === "providers" && activeApp !== "cursor" && (
             <Button
               variant="solid"
               size="regular"
@@ -1653,7 +1657,10 @@ function App() {
       activeApp === "copilot"
         ? setTerminalProvider
         : undefined,
-    onCreate: () => openAddProvider(currentModeView),
+    onCreate:
+      activeApp === "cursor"
+        ? undefined
+        : () => openAddProvider(currentModeView),
     searchOpen: providerSearchOpen,
     onSearchOpenChange: setProviderSearchOpen,
   };
@@ -1980,7 +1987,8 @@ function App() {
       </div>
 
       <Suspense fallback={null}>
-        {(isAddOpen || hasOpenedAdd) && (
+        {/* Cursor 没有第三方供应商编辑器：切换应用后别把上一个应用的添加表单留在页面上 */}
+        {(isAddOpen || hasOpenedAdd) && activeApp !== "cursor" && (
           <AddProviderDialog
             open={isAddOpen}
             onOpenChange={setIsAddOpen}

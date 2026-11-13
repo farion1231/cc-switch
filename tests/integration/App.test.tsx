@@ -20,6 +20,7 @@ import {
 } from "../msw/state";
 import { emitTauriEvent } from "../msw/tauriMocks";
 import { server } from "../msw/server";
+import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
 
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
@@ -308,6 +309,85 @@ describe("App integration with MSW", () => {
 
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
+  }, 10_000);
+
+  it("keeps the Cursor page add-free while other apps can still add", async () => {
+    setSettings({ visibleApps: { ...DEFAULT_VISIBLE_APPS, cursor: true } });
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "claude-1",
+      ),
+    );
+    const header = document.querySelector("header") as HTMLElement;
+    const addButton = () =>
+      within(header).queryByRole("button", {
+        name: "provider.addProvider",
+        hidden: true,
+      });
+    expect(addButton()).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(sidebarApp("Cursor")).toBeInTheDocument();
+    });
+    fireEvent.click(sidebarApp("Cursor"));
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).not.toContain(
+        "claude-1",
+      ),
+    );
+
+    // Cursor 只有后端种下的官方条目：页头不给「添加」，列表的空状态也不会开表单
+    expect(addButton()).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("create"));
+    expect(screen.queryByTestId("add-provider-dialog")).not.toBeInTheDocument();
+
+    fireEvent.click(sidebarApp("Claude Code"));
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "claude-1",
+      ),
+    );
+    expect(addButton()).toBeInTheDocument();
+  }, 10_000);
+
+  it("drops the tray add intent for Cursor but keeps it for other apps", async () => {
+    setSettings({ visibleApps: { ...DEFAULT_VISIBLE_APPS, cursor: true } });
+    let trayRequests = 0;
+    let navigation: { app: string; intent: string } | null = null;
+    server.use(
+      http.post("http://tauri.local/take_tray_navigation", () => {
+        trayRequests += 1;
+        return HttpResponse.json(navigation);
+      }),
+    );
+
+    const { default: App } = await import("@/App");
+    renderApp(App);
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "claude-1",
+      ),
+    );
+    // 挂载时的那次 take 已经跑完，之后的导航才由测试推入
+    await waitFor(() => expect(trayRequests).toBe(1));
+
+    navigation = { app: "cursor", intent: "add" };
+    emitTauriEvent("tray-navigate", null);
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).not.toContain(
+        "claude-1",
+      ),
+    );
+    expect(screen.queryByTestId("add-provider-dialog")).not.toBeInTheDocument();
+
+    navigation = { app: "codex", intent: "add" };
+    emitTauriEvent("tray-navigate", null);
+    expect(
+      await screen.findByTestId("add-provider-dialog"),
+    ).toBeInTheDocument();
   }, 10_000);
 
   it("refreshes the route pointer when the proxy fails over to another provider", async () => {

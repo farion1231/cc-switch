@@ -1004,6 +1004,7 @@
     "browsePlaceholderOpencode": "例: /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "例: /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "例: /home/<your-username>/.hermes",
+    "browsePlaceholderCursor": "例: /home/<your-username>/.cursor",
     "browsePlaceholderPi": "例: /home/<your-username>/.pi/agent",
     "browsePlaceholderOmp": "例: /home/<your-username>/.omp/agent",
     "browsePlaceholderDsh": "例: /home/<your-username>/.dsh",
@@ -1202,6 +1203,7 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
+    "cursor": "Cursor",
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "workbuddy": "WorkBuddy",
@@ -2959,7 +2961,8 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
-        "mcode": "MiniMax Code"
+        "mcode": "MiniMax Code",
+        "cursor": "Cursor"
       }
     },
     "userLevelPath": "ユーザーレベルの MCP 設定パス",
@@ -4379,6 +4382,7 @@
     "columnVisible": "表示",
     "visibleHelp": "オフにすると、このアプリはサイドバー、トレイメニュー、MCP / Skills のアプリ列、プロンプトとセッションのアプリ選択に表示されなくなります。表示しないだけで、プロバイダーや MCP などの設定はそのまま残り、アプリ自身の設定ファイルも変更されません。",
     "desktopHelp": "Claude Desktop はデスクトップアプリのため、ここではインストールやアップグレードはできません。CC Switch は設定ファイル経由で接続します。",
+    "cursorHelp": "Cursor はデスクトップアプリのため、ここではインストールやアップデートはできません。",
     "workbuddyHelp": "WorkBuddy はデスクトップアプリのため、ここではインストールやアップグレードはできません（自動で更新されます）。CC Switch は設定ファイル（~/.workbuddy/models.json）を通じて連携します。",
     "desktopUnsupported": "このシステムには対応していません",
     "desktopConnected": "接続済み",
@@ -4578,7 +4582,8 @@
       "defaultCannotRemove": "既定のプロバイダーは削除できません。先にほかを既定にしてください。",
       "inUseCannotDelete": "使用中のプロバイダーは削除できません。先にほかへ切り替えてください。",
       "directDefaultCannotDelete": "ルーティングを終了するとこのプロバイダーに戻るため、削除できません。先に直接接続ページでほかのプロバイダーの「直接接続に戻して使う」を選んでください。",
-      "noFailover": "公式アカウントはフェイルオーバーキューに入れられません。クライアント自身のログインを使うため、ほかと交代できません。"
+      "noFailover": "公式アカウントはフェイルオーバーキューに入れられません。クライアント自身のログインを使うため、ほかと交代できません。",
+      "cursorReadOnly": "Cursor のエントリは CC Switch が管理しているため読み取り専用です"
     },
     "section": {
       "queue": "キュー · 優先順（{{count}}）",

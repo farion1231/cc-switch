@@ -15,6 +15,7 @@ mod codex_state_db;
 mod commands;
 mod config;
 mod copilot_config;
+mod cursor_config;
 mod database;
 mod deeplink;
 mod dsh_config;
@@ -1110,6 +1111,7 @@ pub fn run() {
                     (crate::app_config::AppType::GrokBuild, "Grok Build"),
                     (crate::app_config::AppType::OpenCode, "OpenCode"),
                     (crate::app_config::AppType::Hermes, "Hermes"),
+                    (crate::app_config::AppType::Cursor, "Cursor"),
                 ] {
                     match crate::services::mcp::McpService::import_from_app(&app_state, &app) {
                         Ok(count) if count > 0 => {
@@ -1133,6 +1135,7 @@ pub fn run() {
                     crate::app_config::AppType::OpenCode,
                     crate::app_config::AppType::OpenClaw,
                     crate::app_config::AppType::Hermes,
+                    crate::app_config::AppType::Cursor,
                     crate::app_config::AppType::Pi,
                     crate::app_config::AppType::Mcode,
                     crate::app_config::AppType::WorkBuddy,

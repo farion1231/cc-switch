@@ -989,9 +989,13 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
         title: t("provider.managedByHermesHint"),
       });
     }
+    // Cursor 只有后端种下的官方条目，本地路由与第三方编辑器都随路由能力拆走了：
+    // 编辑 / 删除一律关掉，免得存出一份没有后端消费方的配置。
     const readOnlyReason = managed
       ? t("provider.managedByHermesHint")
-      : undefined;
+      : app === "cursor"
+        ? t("providerCard.reason.cursorReadOnly")
+        : undefined;
 
     if (!input.isInConfig(p)) {
       available.push({

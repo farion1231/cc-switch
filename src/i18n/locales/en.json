@@ -1004,6 +1004,7 @@
     "browsePlaceholderOpencode": "e.g., /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
+    "browsePlaceholderCursor": "e.g., /home/<your-username>/.cursor",
     "browsePlaceholderPi": "e.g., /home/<your-username>/.pi/agent",
     "browsePlaceholderOmp": "e.g., /home/<your-username>/.omp/agent",
     "browsePlaceholderDsh": "e.g., /home/<your-username>/.dsh",
@@ -1202,6 +1203,7 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
+    "cursor": "Cursor",
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "workbuddy": "WorkBuddy",
@@ -2959,7 +2961,8 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
-        "mcode": "MiniMax Code"
+        "mcode": "MiniMax Code",
+        "cursor": "Cursor"
       }
     },
     "userLevelPath": "User-level MCP config path",
@@ -4379,6 +4382,7 @@
     "columnVisible": "Show",
     "visibleHelp": "When off, the app no longer appears in the sidebar, the tray menu, the MCP / Skills app columns, or the app pickers on Prompts and Sessions. It is only hidden: its providers, MCP servers and other settings stay, and its own config files are left untouched.",
     "desktopHelp": "Claude Desktop is a desktop app and can't be installed or upgraded here; CC Switch connects to it through its config file.",
+    "cursorHelp": "Cursor is a desktop app and can't be installed or updated here.",
     "workbuddyHelp": "WorkBuddy is a desktop app and can't be installed or upgraded here; it updates itself. CC Switch connects to it through its config file (~/.workbuddy/models.json).",
     "desktopUnsupported": "Not supported on this system",
     "desktopConnected": "Connected",
@@ -4578,7 +4582,8 @@
       "defaultCannotRemove": "The default can't be removed. Make another provider the default first.",
       "inUseCannotDelete": "The provider in use can't be deleted. Switch to another one first.",
       "directDefaultCannotDelete": "Leaving routing switches back to this provider, so it can't be deleted. On the direct page, choose \"Back to direct and use\" on another provider first.",
-      "noFailover": "Official accounts can't join the failover queue: they use the client's own login and can't rotate with other providers."
+      "noFailover": "Official accounts can't join the failover queue: they use the client's own login and can't rotate with other providers.",
+      "cursorReadOnly": "The Cursor entry is managed by CC Switch and is read-only"
     },
     "section": {
       "queue": "Queue · by priority ({{count}})",

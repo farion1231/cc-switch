@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { APP_IDS, APP_SPECS, ROUTE_MODE_APP_IDS } from "@/config/appSpecs";
+import type { AppCaps } from "@/config/appSpecs";
 import backendSpecs from "./appSpecs.json";
 
 // appSpecs.json 由后端测试 app_specs_match_shared_fixture 从 AppType::spec 生成。
@@ -30,4 +31,23 @@ it("orders route-mode apps with Claude Desktop last", () => {
     "grokbuild",
     "claude-desktop",
   ]);
+});
+
+// Cursor 不走本地路由/路由接管，也没有 Stack，也不走累加式写入。
+it("declares the Cursor capability set", () => {
+  const caps = (APP_SPECS as Record<string, AppCaps | undefined>).cursor;
+  expect(caps).toEqual({
+    localProxy: false,
+    routeMode: false,
+    stack: false,
+    additive: false,
+    skills: true,
+    mcp: true,
+    prompts: true,
+    plugins: false,
+    managedAccount: false,
+    piFamily: false,
+    editorView: false,
+    officialSubscription: false,
+  });
 });

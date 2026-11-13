@@ -557,6 +557,7 @@ export function ProviderList({
           onCreate={appHas(appId, "piFamily") ? undefined : onCreate}
           onImport={
             appHas(appId, "piFamily") ||
+            appId === "cursor" ||
             appId === "mcode" ||
             appId === "kimi" ||
             appId === "dsh" ||

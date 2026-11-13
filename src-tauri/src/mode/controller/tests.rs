@@ -623,3 +623,16 @@ fn normal_claude_takeover_keeps_api_key_rows_off_the_local_hop() {
     assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
     assert_env_str(env, "ANTHROPIC_API_KEY", None);
 }
+
+/// 回归（PR #8270 拆分）：旧 Cursor 预览库的 `proxy_config` 里可能还留着
+/// `enabled = 1` / `live_takeover_active = 1`。启动、退出与切换都只遍历
+/// `route_mode_apps()`，因此 Cursor 必须不在其中——否则旧库会让应用启动时
+/// 重新接上 Cursor 的本地代理，退出时又去还原一个从未写入过的接管态。
+#[test]
+fn route_mode_apps_exclude_cursor_so_legacy_proxy_flags_cannot_attach_it() {
+    assert!(!AppType::Cursor.spec().route_mode);
+    assert!(
+        route_mode_apps().all(|app| app != AppType::Cursor),
+        "Cursor 只做受管应用，不得进入启动 / 退出 / 切换的接管遍历"
+    );
+}

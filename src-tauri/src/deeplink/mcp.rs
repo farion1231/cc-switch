@@ -168,6 +168,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
         workbuddy: false,
         pi: false,
         omp: false,
+        cursor: false,
     };
 
     for app in apps_str.split(',') {
@@ -178,6 +179,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
             "agy" => apps.agy = true,
             "grokbuild" | "grok" => apps.grokbuild = true,
             "opencode" => apps.opencode = true,
+            "cursor" => apps.cursor = true,
             "openclaw" => {
                 // OpenClaw doesn't support MCP, ignore silently
                 log::debug!("OpenClaw doesn't support MCP, ignoring in apps parameter");

@@ -5767,6 +5767,202 @@ wire_api = "responses"
             );
         });
     }
+
+    fn cursor_provider(id: &str, official: bool) -> Provider {
+        let mut provider = Provider::with_id(
+            id.to_string(),
+            "Cursor".to_string(),
+            json!({
+                "baseUrl": "https://api.kimi.com/v1",
+                "apiKey": "sk-kimi",
+            }),
+            None,
+        );
+        if official {
+            provider.category = Some("official".to_string());
+        }
+        provider
+    }
+
+    /// 回归（PR #8270 拆分）：Cursor 在本分支只有官方供应商卡（只展示、不写 Cursor
+    /// 供应商设置）。第三方供应商没有可用接入路径（本地路由 / 公网隧道 / BYOK 都已移除），
+    /// 任何入口（托盘、深链、导入、命令）都不能把它激活成「当前供应商」。
+    #[test]
+    #[serial]
+    fn switching_a_third_party_cursor_provider_is_rejected() {
+        with_test_home(|state, home| {
+            let provider = cursor_provider("cursor-tp", false);
+            state
+                .db
+                .save_provider(&AppType::Cursor, &provider)
+                .expect("save cursor provider");
+
+            let error = ProviderService::switch(state, AppType::Cursor, "cursor-tp")
+                .expect_err("非官方 Cursor 供应商必须拒绝切换");
+            assert!(
+                error.to_string().contains("官方"),
+                "错误信息应说明只支持官方供应商，实际：{error}"
+            );
+
+            assert_eq!(
+                state
+                    .db
+                    .get_current_provider(&AppType::Cursor)
+                    .expect("read current provider"),
+                None,
+                "被拒绝的切换不能改变当前供应商"
+            );
+            assert!(
+                !home.join(".cursor").join("env.json").exists(),
+                "拒绝切换不得写 Cursor 供应商设置"
+            );
+        });
+    }
+
+    /// 回归（PR #8270 拆分）：官方卡只展示，不写 Cursor 的供应商设置（env.json）——
+    /// Base URL / 模型由 Cursor 自己的登录与管理流程负责。
+    #[test]
+    #[serial]
+    fn switching_the_official_cursor_provider_writes_no_cursor_settings() {
+        with_test_home(|state, home| {
+            let provider = cursor_provider("cursor-official", true);
+            state
+                .db
+                .save_provider(&AppType::Cursor, &provider)
+                .expect("save cursor official provider");
+
+            ProviderService::switch(state, AppType::Cursor, "cursor-official")
+                .expect("官方 Cursor 供应商切换应成功");
+
+            assert_eq!(
+                ProviderService::current(state, AppType::Cursor).expect("read effective provider"),
+                "cursor-official"
+            );
+            assert_eq!(
+                state
+                    .db
+                    .get_current_provider(&AppType::Cursor)
+                    .expect("read db pointer"),
+                None,
+                "the built-in card is already effective without updating a provider pointer"
+            );
+            assert!(
+                !home.join(".cursor").join("env.json").exists(),
+                "官方卡不得写 Cursor 供应商设置"
+            );
+        });
+    }
+
+    /// 回归（PR #8270）：首次 add 自定义卡不能借 `add` 的「第一家自动生效」路径
+    /// 绕过 switch guard 写当前指针。
+    #[test]
+    #[serial]
+    fn adding_a_first_custom_cursor_provider_does_not_write_current_pointer() {
+        with_test_home(|state, home| {
+            let provider = cursor_provider("cursor-custom", false);
+            let error = ProviderService::add(state, AppType::Cursor, provider, true)
+                .expect_err("首次 add 自定义 Cursor 卡也必须被拒绝");
+            assert!(
+                error.to_string().contains("官方卡"),
+                "错误信息应说明只支持内置官方卡，实际：{error}"
+            );
+
+            assert!(
+                state
+                    .db
+                    .get_provider_by_id("cursor-custom", &AppType::Cursor)
+                    .expect("read row")
+                    .is_none(),
+                "被拒绝的 add 不能留下供应商行"
+            );
+            assert_eq!(
+                state
+                    .db
+                    .get_current_provider(&AppType::Cursor)
+                    .expect("read db current"),
+                None,
+                "首次 add 被拒绝不能写数据库当前指针"
+            );
+            assert_eq!(
+                crate::settings::get_current_provider(&AppType::Cursor),
+                None,
+                "首次 add 被拒绝不能写本地当前指针"
+            );
+            assert!(
+                !home.join(".cursor").join("env.json").exists(),
+                "首次 add 被拒绝不得写 Cursor 供应商设置"
+            );
+        });
+    }
+
+    /// 回归（PR #8270）：旧 preview 可在本地留下指向自定义 Cursor 卡的活动指针；
+    /// 有效当前供应商必须忽略它，只认内置官方 seed，且不改写 legacy 数据。
+    #[test]
+    #[serial]
+    fn effective_cursor_provider_ignores_legacy_preview_pointer() {
+        with_test_home(|state, _home| {
+            let legacy = cursor_provider("cursor-legacy", false);
+            state
+                .db
+                .save_provider(&AppType::Cursor, &legacy)
+                .expect("save legacy cursor row");
+            state
+                .db
+                .set_current_provider(&AppType::Cursor, "cursor-legacy")
+                .expect("set legacy db pointer");
+            crate::settings::set_current_provider(&AppType::Cursor, Some("cursor-legacy"))
+                .expect("set legacy local pointer");
+
+            // 官方 seed 不在库：没有有效当前供应商。
+            assert_eq!(
+                crate::settings::get_effective_current_provider(&state.db, &AppType::Cursor)
+                    .expect("effective current"),
+                None,
+                "官方 seed 不存在时不能回落到 legacy 自定义指针"
+            );
+
+            let official = cursor_provider(crate::cursor_config::CURSOR_OFFICIAL_PROVIDER_ID, true);
+            state
+                .db
+                .save_provider(&AppType::Cursor, &official)
+                .expect("save official cursor row");
+
+            // 官方 seed 在库：有效当前供应商固定为官方卡。
+            assert_eq!(
+                crate::settings::get_effective_current_provider(&state.db, &AppType::Cursor)
+                    .expect("effective current"),
+                Some("cursor-official".to_string()),
+                "官方 seed 存在时必须返回官方卡"
+            );
+
+            let providers =
+                ProviderService::list(state, AppType::Cursor).expect("list Cursor providers");
+            assert_eq!(
+                providers.keys().map(String::as_str).collect::<Vec<_>>(),
+                ["cursor-official"]
+            );
+            assert!(state
+                .db
+                .provider_exists("cursor-legacy", &AppType::Cursor)
+                .expect("read legacy row"));
+
+            // legacy 数据与 official 指针存储都原样保留。
+            assert_eq!(
+                crate::settings::get_current_provider(&AppType::Cursor).as_deref(),
+                Some("cursor-legacy"),
+                "不得清理本地 legacy 指针"
+            );
+            assert_eq!(
+                state
+                    .db
+                    .get_current_provider(&AppType::Cursor)
+                    .expect("read db current")
+                    .as_deref(),
+                Some("cursor-legacy"),
+                "不得覆写数据库 legacy 指针"
+            );
+        });
+    }
 }
 
 impl ProviderService {
@@ -5952,7 +6148,14 @@ impl ProviderService {
             }
             return Ok(saved);
         }
-        Ok(state.db.get_provider_rows(&app_type)?.readable)
+        let mut providers = state.db.get_provider_rows(&app_type)?.readable;
+        if app_type == AppType::Cursor {
+            providers.retain(|id, provider| {
+                id == crate::cursor_config::CURSOR_OFFICIAL_PROVIDER_ID
+                    && provider.has_official_category()
+            });
+        }
+        Ok(providers)
     }
 
     /// 库里读不出来的供应商：界面单独列出，只能删除。
@@ -5960,7 +6163,13 @@ impl ProviderService {
         state: &AppState,
         app_type: AppType,
     ) -> Result<Vec<UnreadableEntry>, AppError> {
-        Ok(state.db.get_provider_rows(&app_type)?.unreadable)
+        let mut providers = state.db.get_provider_rows(&app_type)?.unreadable;
+        if app_type == AppType::Cursor {
+            providers.retain(|provider| {
+                provider.id == crate::cursor_config::CURSOR_OFFICIAL_PROVIDER_ID
+            });
+        }
+        Ok(providers)
     }
 
     /// GitHub Copilot CLI 的列表：自带模型卡和 `providers.json` 合并（文件里有、库里没有的
@@ -7499,6 +7708,21 @@ impl ProviderService {
             ));
         }
 
+        // Cursor 在本分支只有官方供应商卡：卡片只展示、不写 Cursor 供应商设置。
+        // 第三方供应商没有可用接入路径（本地路由 / 公网隧道 / BYOK 都已移除），
+        // 托盘、深链、导入与命令都不能把它激活成「当前供应商」。
+        // 只认稳定官方 seed ID + official category，不单凭 category。
+        if app_type == AppType::Cursor
+            && (id != crate::cursor_config::CURSOR_OFFICIAL_PROVIDER_ID
+                || !_provider.has_official_category())
+        {
+            return Err(AppError::localized(
+                "cursor.switch.unsupported",
+                "Cursor 目前只支持官方供应商，第三方供应商暂不可用",
+                "Cursor only supports the official provider; third-party providers are not available",
+            ));
+        }
+
         if matches!(app_type, AppType::Dsh) {
             let mut provider = _provider.clone();
             Self::set_provider_live_config_managed(&mut provider, true);
@@ -7941,6 +8165,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
+            AppType::Cursor => Ok(String::new()), // Cursor doesn't use common config snippets
             AppType::Pi
             | AppType::Mcode
             | AppType::Kimi
@@ -7966,6 +8191,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
+            AppType::Cursor => Ok(String::new()), // Cursor doesn't use common config snippets
             AppType::Pi
             | AppType::Mcode
             | AppType::Kimi
@@ -8738,6 +8964,27 @@ impl ProviderService {
             }
             AppType::Kimi => {
                 crate::kimi_config::validate_provider(&provider.id, &provider.settings_config)?
+            }
+            AppType::Cursor => {
+                // 受管应用只有官方卡：官方 seed 由 DAO 直接写入，不经过 add/update。
+                // 任何自定义卡的创建 / 编辑都拒绝；ID 与 category 任一不符即拒绝，
+                // 不能只凭 category 放行。
+                if provider.id != crate::cursor_config::CURSOR_OFFICIAL_PROVIDER_ID
+                    || !provider.has_official_category()
+                {
+                    return Err(AppError::localized(
+                        "provider.cursor.custom_unsupported",
+                        "Cursor 只支持内置官方卡，不能创建或编辑自定义供应商",
+                        "Cursor only supports the built-in official card; custom providers cannot be created or edited",
+                    ));
+                }
+                if !provider.settings_config.is_object() {
+                    return Err(AppError::localized(
+                        "provider.cursor.settings.not_object",
+                        "Cursor 配置必须是 JSON 对象",
+                        "Cursor configuration must be a JSON object",
+                    ));
+                }
             }
             AppType::Mcode => {
                 crate::mcode_config::validate_provider(&provider.id, &provider.settings_config)?

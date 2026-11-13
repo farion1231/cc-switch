@@ -17,9 +17,11 @@ export interface AppConfig {
   badgeClass: string;
 }
 
-export const DEFAULT_VISIBLE_APPS = Object.fromEntries(
-  APP_IDS.map((app) => [app, true]),
-) as VisibleApps;
+export const DEFAULT_VISIBLE_APPS = {
+  ...(Object.fromEntries(APP_IDS.map((app) => [app, true])) as VisibleApps),
+  // Cursor 是被接入的桌面应用，默认不在侧栏里；用户自己打开
+  cursor: false,
+};
 
 /**
  * 应用页和侧栏的应用顺序：先按用户拖出来的顺序（`settings.appOrder`，不认识的 ID 忽略），
@@ -210,6 +212,21 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-slate-500/10 ring-1 ring-slate-500/20 hover:bg-slate-500/20 text-slate-700 dark:text-slate-300",
     badgeClass:
       "bg-slate-500/10 text-slate-700 dark:text-slate-300 hover:bg-slate-500/20 border-0 gap-1.5",
+  },
+  cursor: {
+    label: "Cursor",
+    icon: (
+      <ProviderIcon
+        icon="cursor"
+        name="Cursor"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-purple-500/10 ring-1 ring-purple-500/20 hover:bg-purple-500/20 text-purple-600 dark:text-purple-400",
+    badgeClass:
+      "bg-purple-500/10 text-purple-700 dark:text-purple-300 hover:bg-purple-500/20 border-0 gap-1.5",
   },
 };
 

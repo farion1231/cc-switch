@@ -424,6 +424,12 @@ pub(crate) fn build_provider_from_request(
     check_link_values(app_type, request)?;
     let settings_config = match app_type {
         AppType::Claude | AppType::ClaudeDesktop => build_claude_settings(request),
+        // Cursor 只保留官方供应商卡：深链不能创建（更无法激活）非官方 Cursor 供应商。
+        AppType::Cursor => {
+            return Err(AppError::InvalidInput(
+                "Cursor only supports the built-in official provider".into(),
+            ))
+        }
         AppType::Codex => build_codex_settings(request)?,
         AppType::Gemini => build_gemini_settings(request),
         AppType::GrokBuild => build_grokbuild_settings(request)?,

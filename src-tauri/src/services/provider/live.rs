@@ -29,6 +29,9 @@ pub(crate) fn provider_exists_in_live_config(
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Hermes => crate::hermes_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
+        // Cursor is a managed app with an official-only card: nothing is written to
+        // Cursor's provider settings, so it never has a provider in the live config.
+        AppType::Cursor => Ok(false),
         AppType::Pi => crate::pi_config::pi_provider_exists(provider_id),
         AppType::Dsh => {
             crate::dsh_config::get_providers().map(|providers| providers.contains_key(provider_id))
@@ -76,7 +79,8 @@ pub(crate) fn remove_provider_from_live(
         | AppType::Dsh
         | AppType::Agy
         | AppType::Omp
-        | AppType::Copilot => Err(AppError::Message(format!(
+        | AppType::Copilot
+        | AppType::Cursor => Err(AppError::Message(format!(
             "App {} does not support remove from live config",
             app_type.as_str()
         ))),
@@ -353,6 +357,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Agy
         | AppType::Omp
         | AppType::Copilot
+        | AppType::Cursor
         | AppType::WorkBuddy
         | AppType::ClaudeDesktop => false,
     }
@@ -436,6 +441,7 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Agy
         | AppType::Omp
         | AppType::Copilot
+        | AppType::Cursor
         | AppType::WorkBuddy => Ok(settings.clone()),
     }
 }
@@ -770,6 +776,8 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         AppType::Mcode => {
             crate::mcode_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
+        // Managed app with an official-only card: never write Cursor settings.
+        AppType::Cursor => {}
         AppType::WorkBuddy => {
             // 官方登录卡只绑定账号，没有模型条目：任何写 live 的路径（全量同步等）都跳过它
             if crate::workbuddy_config::is_official_provider(provider) {
@@ -1155,6 +1163,13 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         AppType::Mcode => Ok(json!(crate::mcode_config::get_providers()?)),
         AppType::Kimi => Ok(json!(crate::kimi_config::get_providers()?)),
         AppType::Dsh => Ok(json!(crate::dsh_config::get_providers()?)),
+        // Cursor has no provider settings of its own to read back; the official card
+        // comes from the built-in seed, never from a live config.
+        AppType::Cursor => Err(AppError::localized(
+            "cursor.live.read_unsupported",
+            "Cursor 没有可导入的通用供应商配置；官方卡由内置 seed 提供",
+            "Cursor has no generic provider configuration to import; the official card is provided by the built-in seed",
+        )),
         AppType::WorkBuddy => Ok(json!(crate::workbuddy_config::get_providers()?)),
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
@@ -1303,6 +1318,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         | AppType::WorkBuddy => {
             unreachable!("additive mode apps are handled by early return")
         }
+        // Unreachable: `imports_default_config` already returns false for Cursor.
+        AppType::Cursor => return Ok(false),
     };
 
     let mut provider = Provider::with_id(
@@ -1374,8 +1391,12 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
 
 /// 这个应用是否从 live 导入 `default` 供应商：切换式应用都导入；累加式应用里只有 Copilot
 /// （它的官方登录卡是启动式，从 settings.json 的模型导入，自带模型卡才是累加式）。
+/// Cursor 是受管应用，只有内置官方卡，没有可导入的 live 配置。
 pub(crate) fn imports_default_config(app_type: &AppType) -> bool {
-    !app_type.spec().additive || matches!(app_type, AppType::Copilot)
+    match app_type {
+        AppType::Cursor => false,
+        _ => !app_type.spec().additive || matches!(app_type, AppType::Copilot),
+    }
 }
 
 /// Decide whether startup should auto-import the current live config as `default`.

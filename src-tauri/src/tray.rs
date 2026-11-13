@@ -63,6 +63,8 @@ fn app_display_name(app: &AppType) -> &'static str {
         AppType::Agy => "Antigravity",
         AppType::Omp => "Oh My Pi",
         AppType::Copilot => "Copilot CLI",
+        // Cursor 是受管应用，不进托盘（见 TRAY_APPS）；这里只为穷尽匹配保留名字。
+        AppType::Cursor => "Cursor",
     }
 }
 

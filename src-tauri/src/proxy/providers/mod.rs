@@ -135,7 +135,9 @@ pub fn get_adapter(app_type: &AppType) -> Option<Box<dyn ProviderAdapter>> {
         | AppType::Agy
         | AppType::Omp
         | AppType::Copilot
-        | AppType::WorkBuddy => return None,
+        | AppType::WorkBuddy
+        // Cursor 是受管应用，不经本地路由，没有代理适配器。
+        | AppType::Cursor => return None,
     })
 }
 

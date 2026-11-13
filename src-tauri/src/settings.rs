@@ -49,6 +49,8 @@ pub struct VisibleApps {
     pub openclaw: bool,
     #[serde(default)]
     pub hermes: bool,
+    #[serde(default)]
+    pub cursor: bool,
     #[serde(default = "default_true")]
     pub pi: bool,
     #[serde(default)]
@@ -78,6 +80,7 @@ impl Default for VisibleApps {
             opencode: true,
             openclaw: true,
             hermes: false, // 默认不显示，需用户手动启用
+            cursor: false, // 默认不显示，需用户手动启用
             pi: true,
             mcode: true,
             kimi: true,
@@ -102,6 +105,7 @@ impl VisibleApps {
             AppType::OpenCode => self.opencode,
             AppType::OpenClaw => self.openclaw,
             AppType::Hermes => self.hermes,
+            AppType::Cursor => self.cursor,
             AppType::Pi => self.pi,
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
@@ -641,6 +645,8 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hermes_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pi_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub omp_config_dir: Option<String>,
@@ -679,6 +685,9 @@ pub struct AppSettings {
     /// 当前 GitHub Copilot CLI 供应商 ID（卡片只用于打开终端，保持结构一致）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_copilot: Option<String>,
+    /// 当前 Cursor 供应商 ID（本地存储，保持结构一致）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_cursor: Option<String>,
 
     // ===== 本地路由（设备级）=====
     /// 写给客户端的代理主机（IP 或主机名），空/未设时按监听地址推（`0.0.0.0` → `127.0.0.1`）。
@@ -797,6 +806,7 @@ impl Default for AppSettings {
             opencode_config_dir: None,
             openclaw_config_dir: None,
             hermes_config_dir: None,
+            cursor_config_dir: None,
             pi_config_dir: None,
             omp_config_dir: None,
             dsh_config_dir: None,
@@ -810,6 +820,7 @@ impl Default for AppSettings {
             current_provider_hermes: None,
             current_provider_agy: None,
             current_provider_copilot: None,
+            current_provider_cursor: None,
             proxy_client_host: None,
             skill_sync_method: SyncMethod::default(),
             skill_storage_location: SkillStorageLocation::default(),
@@ -849,6 +860,7 @@ impl AppSettings {
             &mut self.opencode_config_dir,
             &mut self.openclaw_config_dir,
             &mut self.hermes_config_dir,
+            &mut self.cursor_config_dir,
             &mut self.pi_config_dir,
             &mut self.omp_config_dir,
             &mut self.dsh_config_dir,
@@ -1317,6 +1329,7 @@ pub fn get_override_dir(app: &AppType) -> Option<PathBuf> {
         AppType::OpenCode => &settings.opencode_config_dir,
         AppType::OpenClaw => &settings.openclaw_config_dir,
         AppType::Hermes => &settings.hermes_config_dir,
+        AppType::Cursor => &settings.cursor_config_dir,
         AppType::Pi => &settings.pi_config_dir,
         AppType::Omp => &settings.omp_config_dir,
         AppType::Dsh => &settings.dsh_config_dir,
@@ -1391,6 +1404,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::Hermes => settings.current_provider_hermes.clone(),
         AppType::Agy => settings.current_provider_agy.clone(),
         AppType::Copilot => settings.current_provider_copilot.clone(),
+        AppType::Cursor => settings.current_provider_cursor.clone(),
         AppType::Pi
         | AppType::Mcode
         | AppType::Kimi
@@ -1417,6 +1431,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
         AppType::Agy => settings.current_provider_agy = id_owned.clone(),
         AppType::Copilot => settings.current_provider_copilot = id_owned.clone(),
+        AppType::Cursor => settings.current_provider_cursor = id_owned.clone(),
         AppType::Pi
         | AppType::Mcode
         | AppType::Kimi
@@ -1439,6 +1454,17 @@ pub fn get_effective_current_provider(
     db: &crate::database::Database,
     app_type: &AppType,
 ) -> Result<Option<String>, AppError> {
+    // Cursor 只有内置官方卡：旧 preview 可能在本地留下指向自定义供应商的活动指针，
+    // 这里既不读它、也不清理/覆写（legacy 数据原样保留），只看官方 seed 是否在库。
+    if matches!(app_type, AppType::Cursor) {
+        let official_id = crate::cursor_config::CURSOR_OFFICIAL_PROVIDER_ID;
+        return Ok(if db.provider_exists(official_id, app_type)? {
+            Some(official_id.to_string())
+        } else {
+            None
+        });
+    }
+
     // 1. 从本地 settings 读取
     if let Some(local_id) = get_current_provider(app_type) {
         // 2. 验证该 ID 在数据库中存在
@@ -1676,6 +1702,7 @@ mod tests {
             "opencodeConfigDir",
             "openclawConfigDir",
             "hermesConfigDir",
+            "cursorConfigDir",
             "piConfigDir",
             "ompConfigDir",
             "dshConfigDir",
