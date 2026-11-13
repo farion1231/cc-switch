@@ -715,6 +715,7 @@ function AppRow({
   app,
   name,
   meta,
+  envLabel,
   version,
   action,
   visibility,
@@ -725,6 +726,8 @@ function AppRow({
   app: AppId;
   name: React.ReactNode;
   meta?: React.ReactNode;
+  /** 有其他环境（WSL）的安装时，主行这一处的环境标签：单独一行，和下面 WSL 子行的标签对齐 */
+  envLabel?: React.ReactNode;
   version?: React.ReactNode;
   action?: React.ReactNode;
   visibility: React.ReactNode;
@@ -753,12 +756,22 @@ function AppRow({
         </button>
       )}
       <div className={cn(APP_ROW_GRID, "min-h-10")}>
-        <div className="flex min-w-0 items-center gap-4">
+        <div
+          className={cn(
+            "flex min-w-0 gap-4",
+            envLabel ? "items-start" : "items-center",
+          )}
+        >
           <AppGlyph app={app} size={20} badgeClassName="bg-surface" />
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-1.5 text-strong text-fg-1">
               {name}
             </div>
+            {envLabel && (
+              <div className="mt-2 flex min-w-0 items-center gap-1.5">
+                {envLabel}
+              </div>
+            )}
             {meta && (
               <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-caption text-fg-2">
                 {meta}
@@ -1052,10 +1065,10 @@ function ToolRow({
           <span className="truncate">{toolDisplayName(tool)}</span>
           {sourceLabel && <Pill>{sourceLabel}</Pill>}
           {envBadge && <Pill>{envBadge}</Pill>}
-          {windowsBadge && <Pill>{windowsBadge}</Pill>}
         </>
       }
       meta={meta}
+      envLabel={windowsBadge ? <Pill>{windowsBadge}</Pill> : undefined}
       version={version}
       action={actionButton}
       visibility={visibility}

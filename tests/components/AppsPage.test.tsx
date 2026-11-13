@@ -769,6 +769,9 @@ describe("AppsPage concurrent CLI upgrades", () => {
       ).getByRole("button", { name: /settings\.toolInstall/ }),
     ).toBeInTheDocument();
     expect(screen.queryByText("appTargets.installs.detect")).toBeNull();
+    // Windows 标签单独一行（不挤在名称后面），和 WSL 子行的标签对齐
+    const windowsPill = card("Codex").getByText("Windows");
+    expect(windowsPill.closest(".text-strong")).toBeNull();
 
     // 「检查更新」顺带重新检测运行中的 WSL，不另设按钮
     fireEvent.click(screen.getByText("appsPage.checkUpdates"));
