@@ -21,7 +21,6 @@ import {
   countdownStr,
   formatRelativeTime,
   lineHint,
-  tierLine,
   type QuotaDisplay,
   type QuotaLine,
 } from "@/components/quota/quotaRules";
@@ -31,19 +30,27 @@ import {
 } from "@/components/SubscriptionQuotaFooter";
 import type { SubscriptionQuota } from "@/types/subscription";
 import { useCopilotQuota } from "@/lib/query/copilot";
+import { copilotQuotaRows } from "@/components/CopilotQuotaFooter";
 import {
   useAgyAccountQuota,
+  useClaudeAccountQuota,
   useKimiAccountQuota,
   useXaiOauthQuotaByAccountId,
 } from "@/lib/query/subscription";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import type { WorkBuddyQuota } from "@/lib/api/auth";
+import {
+  useWorkBuddyAccountQuota,
+  workbuddyCreditsLine,
+  workbuddyExpiryLine,
+} from "@/components/providers/workbuddyQuota";
 
 export interface AccountQuotaRow {
   label: string;
   line: QuotaLine;
 }
 
-/** 额度列要画的东西：成功按档画条；查询失败写「额度没查到」+ 原因；查成功但没有额度时写一句灰字；null 表示不显示 */
+/** 额度列要画的东西：成功按档画条；查询失败写「额度查询失败」+ 原因；查成功但没有额度时写一句灰字；null 表示不显示 */
 export type AccountQuotaState =
   | { kind: "rows"; rows: AccountQuotaRow[] }
   | { kind: "failed"; reason: string }
@@ -61,8 +68,10 @@ interface AccountQuotaColumnProps {
 }
 
 /**
- * 授权中心账号行右侧的额度（v7 Auth 画板）：212 宽的额度条（条和数字按设置写剩余或已用，
+ * 授权中心账号行右侧的额度（v7 Auth 画板）：额度条（条和数字按设置写剩余或已用，
  * 平时 --chart-1；不到 20% 换 warning，用完换 danger）+ 84 宽的「x 分钟前 ↻」。
+ * 档名、数值、倒计时三格定宽，倒计时格没有也留着；整列宽度只随分组卡片宽度变
+ * （.auth-quota-col，见 index.css），各账号、各分组的条起点和长度一致。
  * 打开页面时查一次，不轮询；↻ 手动重查。
  */
 export function AccountQuotaColumn({
@@ -77,30 +86,15 @@ export function AccountQuotaColumn({
     Boolean(queriedAt) ||
       (state?.kind === "rows" && state.rows.some(({ line }) => line.resetsAt)),
   );
-  const agoId = useId();
   if (!state) return null;
-  // 有一档带重置时间，每行数值后面都留出倒计时那一格（各行对齐），整列加宽
-  const showReset =
-    state.kind === "rows" &&
-    state.rows.some(({ line }) => countdownStr(line.resetsAt, now));
-  const resetCell = (line: QuotaLine) =>
-    showReset ? (
-      <ResetSlot countdown={countdownStr(line.resetsAt, now)} className="" />
-    ) : null;
-
-  const ago = queriedAt ? formatRelativeTime(queriedAt, now, t) : "";
-  const agoText = loading
-    ? t("authCenter.quota.updating", { defaultValue: "更新中…" })
-    : ago;
+  // 倒计时格始终留着（没有重置时间就空着），别的号的条才不会因此变宽或挪位
+  const resetCell = (line: QuotaLine) => (
+    <ResetSlot countdown={countdownStr(line.resetsAt, now)} className="" />
+  );
 
   return (
     <>
-      <div
-        className={cn(
-          "flex shrink-0 flex-col gap-0.5",
-          showReset ? "w-[272px]" : "w-[212px]",
-        )}
-      >
+      <div className="auth-quota-col flex shrink-0 flex-col gap-0.5">
         {state.kind === "rows" &&
           state.rows.map(({ label, line }) =>
             line.breakdown ? (
@@ -131,7 +125,7 @@ export function AccountQuotaColumn({
         {state.kind === "failed" && (
           <>
             <span className="h-[18px] text-caption font-medium text-danger-text">
-              {t("quota.failed", { defaultValue: "额度没查到" })}
+              {t("quota.failed", { defaultValue: "额度查询失败" })}
             </span>
             <span
               className="truncate text-caption text-fg-3"
@@ -142,8 +136,10 @@ export function AccountQuotaColumn({
           </>
         )}
         {state.kind === "note" && (
-          // 写在额度行数值（「剩余 91%」）那一格：靠右，和别的号的数值对齐
-          <span className="self-end text-caption text-fg-3">{state.text}</span>
+          // 写在额度行数值（「剩余 91%」）那一格：右边让出倒计时格（52）和间距（8），和别的号的数值对齐
+          <span className="me-[60px] self-end text-caption text-fg-3">
+            {state.text}
+          </span>
         )}
         {state.kind === "loading" && (
           <span className="text-caption text-fg-3">
@@ -151,37 +147,73 @@ export function AccountQuotaColumn({
           </span>
         )}
       </div>
-      <div className="flex w-[84px] shrink-0 items-center justify-end gap-0.5 whitespace-nowrap text-caption text-fg-3">
-        <span id={agoId} className="truncate">
-          {agoText}
-        </span>
-        <HoverTip
-          content={t("authCenter.quota.refresh", { defaultValue: "刷新额度" })}
-        >
-          <button
-            type="button"
-            aria-label={t("authCenter.quota.refreshAria", {
-              defaultValue: "刷新 {{login}} 的额度",
-              login,
-            })}
-            aria-disabled={loading}
-            aria-describedby={loading ? agoId : undefined}
-            onClick={() => {
-              if (!loading) onRefresh();
-            }}
-            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1 aria-disabled:opacity-45 aria-disabled:hover:bg-transparent"
-          >
-            <RefreshCw
-              className={cn(
-                "h-[13px] w-[13px]",
-                loading && "motion-safe:animate-spin",
-              )}
-              strokeWidth={1.5}
-            />
-          </button>
-        </HoverTip>
-      </div>
+      <QuotaRefreshCell
+        login={login}
+        queriedAt={queriedAt}
+        loading={loading}
+        onRefresh={onRefresh}
+      />
     </>
+  );
+}
+
+interface QuotaRefreshCellProps {
+  /** 账号名，拼进刷新按钮的无障碍名字 */
+  login: string;
+  queriedAt?: number | null;
+  loading: boolean;
+  onRefresh: () => void;
+}
+
+/**
+ * 额度列右边 84 宽的「x 分钟前 ↻」。各服务的账号行共用，刷新按钮的位置和样式一致；
+ * 不是额度条的服务（DeepSeek 账号的余额）也直接用它。
+ */
+export function QuotaRefreshCell({
+  login,
+  queriedAt,
+  loading,
+  onRefresh,
+}: QuotaRefreshCellProps) {
+  const { t } = useTranslation();
+  const now = useNow(Boolean(queriedAt));
+  const agoId = useId();
+  const ago = queriedAt ? formatRelativeTime(queriedAt, now, t) : "";
+  const agoText = loading
+    ? t("authCenter.quota.updating", { defaultValue: "更新中…" })
+    : ago;
+
+  return (
+    <div className="flex w-[84px] shrink-0 items-center justify-end gap-0.5 whitespace-nowrap text-caption text-fg-3">
+      <span id={agoId} className="truncate">
+        {agoText}
+      </span>
+      <HoverTip
+        content={t("authCenter.quota.refresh", { defaultValue: "刷新额度" })}
+      >
+        <button
+          type="button"
+          aria-label={t("authCenter.quota.refreshAria", {
+            defaultValue: "刷新 {{login}} 的额度",
+            login,
+          })}
+          aria-disabled={loading}
+          aria-describedby={loading ? agoId : undefined}
+          onClick={() => {
+            if (!loading) onRefresh();
+          }}
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1 aria-disabled:opacity-45 aria-disabled:hover:bg-transparent"
+        >
+          <RefreshCw
+            className={cn(
+              "h-[13px] w-[13px]",
+              loading && "motion-safe:animate-spin",
+            )}
+            strokeWidth={1.5}
+          />
+        </button>
+      </HoverTip>
+    </div>
   );
 }
 
@@ -202,7 +234,11 @@ function QuotaRowCells({
   const value = line.value ?? line.text;
   return (
     <>
-      <span className="min-w-[52px] shrink-0 whitespace-nowrap text-fg-2">
+      {/* 定宽：「Claude/GPT 每周」这类长档名不再把条挤短；更长的截断，悬停看全名 */}
+      <span
+        title={label}
+        className="w-[112px] shrink-0 truncate whitespace-nowrap text-fg-2"
+      >
         {label}
       </span>
       {line.caption ? (
@@ -229,7 +265,8 @@ function QuotaRowCells({
         </span>
       )}
       {/* 旁边已有额度条，正常时数值不上色 */}
-      <span className="w-14 shrink-0 whitespace-nowrap text-end tabular-nums text-fg-1">
+      {/* 64 宽放得下「剩余 100%」，和「剩余 99%」右边对齐 */}
+      <span className="w-16 shrink-0 whitespace-nowrap text-end tabular-nums text-fg-1">
         <TonedText
           text={value}
           line={line}
@@ -266,7 +303,7 @@ export function subscriptionQuotaState(
   return rows.length > 0 ? { kind: "rows", rows } : null;
 }
 
-/** GitHub Copilot 账号的高级请求额度（copilot_get_usage_for_account） */
+/** GitHub Copilot 账号的额度：高级请求，Free 另有代码补全（copilot_get_usage_for_account） */
 export function CopilotAccountQuota({
   accountId,
   login,
@@ -274,22 +311,21 @@ export function CopilotAccountQuota({
   accountId: string;
   login: string;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const display = useQuotaDisplay();
   const query = useCopilotQuota(accountId, { enabled: true, autoQuery: false });
   const { data: quota, isFetching: loading } = query;
 
   let state: AccountQuotaState;
   if (quota?.success) {
-    const label = t("subscription.copilotPremium");
     state =
       quota.tiers.length > 0
         ? {
             kind: "rows",
-            rows: quota.tiers.map((tier) => ({
-              label,
-              line: tierLine(t, tier, label, { display }),
-            })),
+            rows: copilotQuotaRows(t, quota.tiers, {
+              display,
+              locale: i18n.language,
+            }),
           }
         : null;
   } else if (quota) {
@@ -406,6 +442,139 @@ export function AgyAccountQuota({
       queriedAt={quota?.queriedAt ?? null}
       loading={loading}
       onRefresh={() => void refetch()}
+    />
+  );
+}
+
+/** Claude 官方账号的订阅额度（get_claude_account_quota(accountId)，不用先切号） */
+export function ClaudeAccountQuota({
+  accountId,
+  login,
+}: {
+  accountId: string;
+  login: string;
+}) {
+  const { t, i18n } = useTranslation();
+  const display = useQuotaDisplay();
+  const {
+    data: quota,
+    isFetching: loading,
+    refetch,
+  } = useClaudeAccountQuota(accountId, { enabled: true, autoQuery: false });
+  return (
+    <AccountQuotaColumn
+      login={login}
+      state={subscriptionQuotaState(t, quota, loading, i18n.language, display)}
+      queriedAt={quota?.queriedAt ?? null}
+      loading={loading}
+      onRefresh={() => void refetch()}
+    />
+  );
+}
+
+/**
+ * WorkBuddyQuota → 额度列状态：一行「套餐名  额度条  剩余积分」，悬停写全剩余 / 总量 / 已用；
+ * 显示的是上次结果时悬停说明原因。还没有结果时：当前号且 WorkBuddy 没运行给一句提示，
+ * 查询失败写「额度没查到」，其余不显示。
+ */
+export function workbuddyQuotaState(
+  t: TFunction,
+  quota: WorkBuddyQuota | undefined,
+  loading: boolean,
+  locale: string,
+  display: QuotaDisplay = "left",
+  planInLabel = true,
+): AccountQuotaState {
+  if (!quota) return loading ? { kind: "loading" } : null;
+  const credits = workbuddyCreditsLine(t, quota, locale, display);
+  if (credits) {
+    const expiry = workbuddyExpiryLine(t, quota, locale);
+    return {
+      kind: "rows",
+      rows: [
+        {
+          label:
+            (planInLabel ? credits.planName : undefined) ??
+            t("workbuddy.quota.credits"),
+          line: credits.line,
+        },
+        ...(expiry
+          ? [{ label: t("workbuddy.quota.expiry"), line: expiry }]
+          : []),
+      ],
+    };
+  }
+  if (quota.unavailable === "not_running" && quota.current) {
+    const caption = t("workbuddy.quota.openToQuery");
+    return {
+      kind: "rows",
+      rows: [
+        {
+          label: t("workbuddy.quota.credits"),
+          line: {
+            key: "workbuddy_not_running",
+            left: Infinity,
+            tone: "muted",
+            text: caption,
+            caption,
+            value: "",
+            detail: t("workbuddy.quota.onlyWhileRunning"),
+          },
+        },
+      ],
+    };
+  }
+  if (quota.unavailable === "failed") {
+    return {
+      kind: "failed",
+      reason: quota.error || t("workbuddy.quota.unavailable"),
+    };
+  }
+  return null;
+}
+
+/** WorkBuddy 账号的套餐与积分（workbuddy_account_quota(accountId)）：只有当前号能经运行中的 WorkBuddy 刷新 */
+export function WorkBuddyAccountQuota({
+  accountId,
+  login,
+  planInLabel = true,
+}: {
+  accountId: string;
+  login: string;
+  /** 额度行标签用套餐名；授权中心把套餐放在账号第二行，这里就只写「积分」 */
+  planInLabel?: boolean;
+}) {
+  const { t, i18n } = useTranslation();
+  const display = useQuotaDisplay();
+  const {
+    data: quota,
+    isFetching: loading,
+    isError,
+    error,
+    refresh,
+  } = useWorkBuddyAccountQuota(accountId);
+  const state: AccountQuotaState =
+    !quota && isError
+      ? {
+          kind: "failed",
+          reason:
+            extractErrorMessage(error) || t("workbuddy.quota.unavailable"),
+        }
+      : workbuddyQuotaState(
+          t,
+          quota,
+          loading,
+          i18n.language,
+          display,
+          planInLabel,
+        );
+  return (
+    <AccountQuotaColumn
+      login={login}
+      state={state}
+      queriedAt={quota?.snapshot?.queriedAt ?? null}
+      loading={loading}
+      onRefresh={() => void refresh()}
     />
   );
 }

@@ -87,9 +87,9 @@ async function setup(status = signedOut) {
   return { ...view, client };
 }
 
-// 空状态的「登录 Kimi」先打开区域选择，再点选择块里的「登录 Kimi」
+// 「添加账号」先打开区域选择，再点选择块里的「登录 Kimi」
 async function start() {
-  fireEvent.click(screen.getByRole("button", { name: "kimi.oauth.signIn" }));
+  fireEvent.click(screen.getByRole("button", { name: "添加账号" }));
   fireEvent.click(screen.getByRole("button", { name: "kimi.oauth.signIn" }));
   await flush();
 }
@@ -133,9 +133,9 @@ describe("Kimi official account login", () => {
       currentAccountId: account.id,
       primaryHidden: false,
     });
-    expect(screen.getByText("kimi.oauth.current")).toBeInTheDocument();
+    expect(screen.getByText("Kimi 在用")).toBeInTheDocument();
     await openMenu(second.name);
-    fireEvent.click(menuItem("kimi.oauth.useAccount"));
+    fireEvent.click(menuItem("切换 Kimi 到这个账号"));
     await flush();
     expect(kimiOAuthApi.useAccount).toHaveBeenCalledWith(second.id);
     await openMenu(second.name);
@@ -156,7 +156,7 @@ describe("Kimi official account login", () => {
 
   it("signs in to the region chosen before starting", async () => {
     await setup();
-    fireEvent.click(screen.getByRole("button", { name: "kimi.oauth.signIn" }));
+    fireEvent.click(screen.getByRole("button", { name: "添加账号" }));
     fireEvent.click(screen.getByRole("button", { name: "kimi.oauth.global" }));
     fireEvent.click(screen.getByRole("button", { name: "kimi.oauth.signIn" }));
     await flush();
@@ -245,7 +245,7 @@ describe("Kimi official account login", () => {
     });
     expect(screen.queryByText(device.userCode)).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "kimi.oauth.signIn" }),
+      screen.getByRole("button", { name: "添加账号" }),
     ).toBeEnabled();
   });
 
@@ -319,7 +319,7 @@ describe("Kimi official account login", () => {
     await openMenu(account.name);
     // 正在用的号菜单里没有「使用此账号」，删除项置灰并说明原因
     expect(
-      screen.queryByRole("menuitem", { name: "kimi.oauth.useAccount" }),
+      screen.queryByRole("menuitem", { name: "切换 Kimi 到这个账号" }),
     ).not.toBeInTheDocument();
     expect(menuItem(/kimi\.oauth\.removeAccount/)).toHaveAttribute(
       "aria-disabled",

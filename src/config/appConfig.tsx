@@ -29,8 +29,11 @@ export const APP_IDS: AppId[] = [
   "pi",
   "mcode",
   "kimi",
+  "dsh",
   "agy",
   "omp",
+  "copilot",
+  "workbuddy",
 ];
 
 export const DEFAULT_VISIBLE_APPS: VisibleApps = {
@@ -45,9 +48,35 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   pi: true,
   mcode: true,
   kimi: true,
+  dsh: true,
   agy: true,
   omp: true,
+  copilot: true,
+  workbuddy: true,
 };
+
+/**
+ * 应用页和侧栏的应用顺序：先按用户拖出来的顺序（`settings.appOrder`，不认识的 ID 忽略），
+ * 没在里面的应用（比如新版本加的）插回默认顺序里它前一个应用的后面。
+ */
+export function orderAppIds(saved: readonly string[] | undefined): AppId[] {
+  if (!saved?.length) return [...APP_IDS];
+  const known = new Set<string>(APP_IDS);
+  const ordered: AppId[] = [];
+  for (const id of saved) {
+    if (known.has(id) && !ordered.includes(id as AppId)) {
+      ordered.push(id as AppId);
+    }
+  }
+  APP_IDS.forEach((app, index) => {
+    if (ordered.includes(app)) return;
+    const previous = APP_IDS.slice(0, index)
+      .reverse()
+      .find((id) => ordered.includes(id));
+    ordered.splice(previous ? ordered.indexOf(previous) + 1 : 0, 0, app);
+  });
+  return ordered;
+}
 
 /** App IDs shown in Skills panels. */
 export const SKILLS_APP_IDS: AppId[] = [
@@ -60,8 +89,11 @@ export const SKILLS_APP_IDS: AppId[] = [
   "pi",
   "mcode",
   "kimi",
+  "dsh",
   "agy",
   "omp",
+  "copilot",
+  "workbuddy",
 ];
 
 export type ProxyAppId = Extract<
@@ -109,19 +141,35 @@ export function isStackAppId(appId: string): appId is StackAppId {
   return (STACK_APP_IDS as string[]).includes(appId);
 }
 
+/**
+ * 累加式应用（后端 `AppType::is_additive_mode`）。Copilot CLI 是混合的：自带模型卡累加写进
+ * providers.json，官方卡仍是启动式（只有「打开终端」）。
+ */
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "kimi" | "omp"
+  | "opencode"
+  | "openclaw"
+  | "hermes"
+  | "pi"
+  | "mcode"
+  | "kimi"
+  | "dsh"
+  | "omp"
+  | "copilot"
+  | "workbuddy"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
   "mcode",
   "kimi",
+  "dsh",
   "opencode",
   "openclaw",
   "hermes",
   "pi",
   "omp",
+  "copilot",
+  "workbuddy",
 ];
 
 export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
@@ -162,8 +210,11 @@ export const MCP_APP_IDS: McpAppId[] = [
   "pi",
   "mcode",
   "kimi",
+  "dsh",
   "agy",
   "omp",
+  "copilot",
+  "workbuddy",
 ];
 
 export function isMcpAppId(appId: string): appId is McpAppId {
@@ -260,6 +311,13 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
     badgeClass:
       "bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 border-0 gap-1.5",
   },
+  dsh: {
+    label: "DeepSeek Harness",
+    icon: <ProviderIcon icon="deepseek" name="DeepSeek Harness" size={14} />,
+    activeClass: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+    badgeClass:
+      "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-0 gap-1.5",
+  },
   kimi: {
     label: "Kimi Code",
     icon: <ProviderIcon icon="kimi" name="Kimi Code" size={14} />,
@@ -281,6 +339,14 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-fuchsia-500/10 ring-1 ring-fuchsia-500/20 hover:bg-fuchsia-500/20 text-fuchsia-600 dark:text-fuchsia-400",
     badgeClass:
       "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300 hover:bg-fuchsia-500/20 border-0 gap-1.5",
+  },
+  workbuddy: {
+    label: "WorkBuddy",
+    icon: <ProviderIcon icon="workbuddy" name="WorkBuddy" size={14} />,
+    activeClass:
+      "bg-teal-500/10 ring-1 ring-teal-500/20 hover:bg-teal-500/20 text-teal-600 dark:text-teal-400",
+    badgeClass:
+      "bg-teal-500/10 text-teal-700 dark:text-teal-300 hover:bg-teal-500/20 border-0 gap-1.5",
   },
   agy: {
     label: "Antigravity",
@@ -306,6 +372,21 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-cyan-500/10 ring-1 ring-cyan-500/20 hover:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400",
     badgeClass:
       "bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 hover:bg-cyan-500/20 border-0 gap-1.5",
+  },
+  copilot: {
+    label: "Copilot CLI",
+    icon: (
+      <ProviderIcon
+        icon="githubcopilot"
+        name="GitHub Copilot CLI"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-slate-500/10 ring-1 ring-slate-500/20 hover:bg-slate-500/20 text-slate-700 dark:text-slate-300",
+    badgeClass:
+      "bg-slate-500/10 text-slate-700 dark:text-slate-300 hover:bg-slate-500/20 border-0 gap-1.5",
   },
 };
 

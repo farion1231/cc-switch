@@ -134,10 +134,18 @@ describe("quota lines", () => {
       tone: "normal",
       left: 5,
     });
+    // 用完也写金额：欠费是负数，-0 和舍入后的 -0.00 归成 0.00（#8812）
     expect(balanceLine(t, { remaining: 0 })).toMatchObject({
-      text: "quota.balanceUsedUp",
+      text: "余额 0.00",
+      tone: "danger",
+      emphasis: undefined,
+    });
+    expect(balanceLine(t, { remaining: -24.96, unit: "CNY" })).toMatchObject({
+      text: "余额 -24.96 CNY",
       tone: "danger",
     });
+    expect(balanceLine(t, { remaining: -0 }).text).toBe("余额 0.00");
+    expect(balanceLine(t, { remaining: -0.004 }).text).toBe("余额 0.00");
   });
 
   it("shows a failed query as a red line plus a gray reason", () => {

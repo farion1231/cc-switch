@@ -1,6 +1,8 @@
+import _tokenplus from "./tokenplus.png";
 // Hand-curated icon index with optimized SVG content and custom name mappings.
 // Update entries deliberately; automatic regeneration is intentionally unsupported.
 
+import { getIconMetadata, isTileIcon } from "./metadata";
 import _88api from "./88api.png";
 import _alltokens from "./alltokens.png";
 import _alltokensSi from "./alltokens-si.png";
@@ -23,6 +25,7 @@ import _etok from "./etok.png";
 import _everyapi from "./everyapi.svg?url";
 import _fenno from "./fenno-icon.png";
 import _fluxa from "./fluxa.png";
+import _genesis from "./genesis.svg?url";
 import _grooroute from "./grooroute.jpg";
 import _hermes from "./hermes.png";
 import _huoshan from "./huoshan.png";
@@ -30,6 +33,7 @@ import _ikuncode from "./ikuncode.jpg";
 import _modelflare from "./modelflare.jpg";
 import _nekocode from "./nekocode-icon.png";
 import _openmodel from "./openmodel.jpg";
+import _ospreyai from "./ospreyai.png";
 import _pateway from "./pateway.jpg";
 import _pipellm from "./pipellm.png";
 import _qiniu from "./qiniu.png";
@@ -109,6 +113,7 @@ export const icons: Record<string, string> = {
   tencent: `<svg height="1em" style="flex:none;line-height:1" viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg"><title>Tencent</title><path d="M9.976 1L24 9.8l-10.587.015L10.723 23H5.489L8.18 9.8H3.244L1 5.4h8.077L9.976 1z" fill="#0052D9" fill-rule="evenodd"></path></svg>`,
   vercel: `<svg fill="currentColor" fill-rule="evenodd" height="1em" style="flex:none;line-height:1" viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg"><title>Vercel</title><path d="M12 0l12 20.785H0L12 0z"></path></svg>`,
   wenxin: `<svg height="1em" style="flex:none;line-height:1" viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg"><title>Wenxin</title><path d="M11.32 1.176a1.4 1.4 0 011.36 0l8.64 4.843c.421.234.68.67.68 1.141v9.68c0 .472-.259.908-.68 1.143l-8.64 4.84a1.4 1.4 0 01-1.36 0l-8.64-4.84A1.31 1.31 0 012 16.84V7.159c0-.471.259-.907.68-1.142l8.64-4.84zm7.42 13.839V8.227L12.002 12 12 19.551l6.059-3.394a1.31 1.31 0 00.68-1.142zM12.68 4.833a1.393 1.393 0 00-1.36 0L5.944 7.846c-.421.235-.68.67-.68 1.142v6.027c0 .47.259.905.68 1.142l2.795 1.566V11.09a1.546 1.546 0 00.221.79 1.527 1.527 0 01-.216-.834l.004-.094.02-.15.018-.084.017-.062.039-.117.062-.142.035-.065.081-.13.094-.122.084-.091.08-.075.125-.1.071-.048.134-.076 5.87-3.29-2.796-1.566z" fill="url(#lobe-icons-wenxin-fill)"></path><path d="M12 11.088c0-.875-.73-1.584-1.631-1.584a1.66 1.66 0 00-.855.237c-.027.016-.055.033-.08.05a2.361 2.361 0 00-.123.093c-.022.02-.045.038-.066.059l-.048.045-.063.067c-.014.016-.028.031-.04.048a2.303 2.303 0 00-.094.125l-.042.069a1.7 1.7 0 00-.07.13l-.036.081a.764.764 0 00-.022.06c-.01.03-.02.058-.028.087l-.017.062a.883.883 0 00-.03.16c-.002.025-.007.05-.008.074a1.527 1.527 0 00.213.929c.302.508.85.792 1.414.792.277 0 .558-.068.814-.212l.815-.457v-.914L12 11.088z" fill="#012F8D"></path><defs><linearGradient id="lobe-icons-wenxin-fill" x1="9.155%" x2="90.531%" y1="75.177%" y2="25.028%"><stop offset="0%" stop-color="#0A51C3"></stop><stop offset="100%" stop-color="#23A4FB"></stop></linearGradient></defs></svg>`,
+  workbuddy: `<svg height="1em" style="flex:none;line-height:1" viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg"><title>WorkBuddy</title><g clip-path="url(#lobe-icons-workbuddy-0)"><mask height="24" id="lobe-icons-workbuddy-1" maskUnits="userSpaceOnUse" style="mask-type:luminance" width="24" x="0" y="0"><path d="M18.821 0H5.179A5.18 5.18 0 0 0 0 5.179v13.642A5.18 5.18 0 0 0 5.179 24h13.642A5.18 5.18 0 0 0 24 18.821V5.179A5.18 5.18 0 0 0 18.821 0" fill="#fff"></path></mask><g mask="url(#lobe-icons-workbuddy-1)"><path d="M18.821 0H5.179A5.18 5.18 0 0 0 0 5.179v13.642A5.18 5.18 0 0 0 5.179 24h13.642A5.18 5.18 0 0 0 24 18.821V5.179A5.18 5.18 0 0 0 18.821 0" fill="url(#lobe-icons-workbuddy-2)"></path><g filter="url(#lobe-icons-workbuddy-3)"><path d="M18.804 33.894a7.722 7.722 0 1 0 0-15.445 7.722 7.722 0 0 0 0 15.445" fill="#ffe355" fill-opacity=".49"></path></g><path d="M18.456 2.031c.235-.21.25-.219.422-.23.28-.02.535.115.971.512 1.019.925 2.437 2.827 3.318 4.452l.34.63.482.24c.464.235 1.226.715 1.544.973.144.12.165.122.315.064.675-.263 1.642.086 2.495.904.768.736 1.504 1.994 1.786 3.044.041.17.096.533.116.803.064.95-.24 1.708-.827 2.052-.12.069-.128.088-.125.386.027 1.423-.356 2.842-1.126 4.227-.87 1.555-2.418 3.163-4.513 4.679-1.126.819-3.788 2.37-4.991 2.915-2.884 1.298-5.196 1.795-7.204 1.55-1.197-.146-2.553-.613-3.355-1.156-.211-.146-.245-.155-.406-.109-.859.247-1.983-.26-2.938-1.32-.381-.424-.996-1.465-1.196-2.022-.461-1.303-.37-2.48.245-3.182.159-.181.164-.189.129-.493a12 12 0 0 1-.057-1.71l.02-.445-.666-1.18c-1.033-1.838-1.69-3.381-1.943-4.56-.133-.647-.125-.934.039-1.146.1-.128.428-.261.823-.335.994-.174 3.162-.016 5.575.41l.25.044.551-.488c.914-.81 1.522-1.263 2.642-1.962 1.166-.73 2.483-1.33 3.967-1.806l.475-.152.262-.687c.937-2.473 1.896-4.295 2.58-4.902m-7.845 12.67c-1.059.61-1.588.916-1.977 1.259a5.21 5.21 0 0 0-1.494 5.57c.165.491.47 1.02 1.082 2.08.61 1.058.917 1.587 1.26 1.976a5.21 5.21 0 0 0 5.571 1.493c.491-.165 1.02-.471 2.079-1.082l6.09-3.516c1.058-.611 1.587-.916 1.976-1.259a5.21 5.21 0 0 0 1.492-5.572c-.165-.491-.47-1.02-1.082-2.079-.611-1.058-.916-1.588-1.259-1.976a5.21 5.21 0 0 0-5.571-1.493c-.491.165-1.02.47-2.08 1.082z" fill="url(#lobe-icons-workbuddy-4)"></path><path d="M13.882 18.795a1.203 1.203 0 0 0-2.083 1.203l1.295 2.243a1.203 1.203 0 1 0 2.083-1.203zm6.49-3.747a1.203 1.203 0 1 0-2.083 1.203l1.295 2.243a1.203 1.203 0 0 0 2.083-1.203z" fill="#fff"></path></g></g><defs><linearGradient gradientUnits="userSpaceOnUse" id="lobe-icons-workbuddy-2" x1="12" x2="12" y1="0" y2="24"><stop stop-color="#0ec8a9"></stop><stop offset="1" stop-color="#01c886"></stop></linearGradient><linearGradient gradientUnits="userSpaceOnUse" id="lobe-icons-workbuddy-4" x1="10.098" x2="21.325" y1="6.802" y2="26.248"><stop stop-color="#fff" stop-opacity=".8"></stop><stop offset=".438" stop-color="#fff"></stop></linearGradient><clipPath id="lobe-icons-workbuddy-0"><path d="M0 0h24v24H0z" fill="#fff"></path></clipPath><filter color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse" height="37.445" id="lobe-icons-workbuddy-3" width="37.446" x=".082" y="7.449"><feFlood flood-opacity="0" result="BackgroundImageFix"></feFlood><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"></feBlend><feGaussianBlur result="effect1_foregroundBlur_726_24" stdDeviation="5.5"></feGaussianBlur></filter></defs></svg>`,
   xai: `<svg fill="currentColor" fill-rule="evenodd" height="1em" style="flex:none;line-height:1" viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg"><title>Grok</title><path d="M6.469 8.776L16.512 23h-4.464L2.005 8.776H6.47zm-.004 7.9l2.233 3.164L6.467 23H2l4.465-6.324zM22 2.582V23h-3.659V7.764L22 2.582zM22 1l-9.952 14.095-2.233-3.163L17.533 1H22z"></path></svg>`,
   xiaomimimo: `<svg height="1em" style="flex:none;line-height:1" viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg"><title>Xiaomi MiMo</title><rect width="24" height="24" fill="#000"/><path fill="#fff" fill-rule="evenodd" transform="translate(2.4 2.18) scale(.8)" d="M.958 15.936a.459.459 0 01.459.44v2.729a.46.46 0 01-.918 0v-2.729a.459.459 0 01.459-.44zm4.814-2.035a.46.46 0 01.553.45v4.754a.458.458 0 11-.918 0V15.48L3.74 17.202a.462.462 0 01-.655.016.462.462 0 01-.065-.082L.628 14.67a.459.459 0 01.658-.637l2.124 2.187 2.127-2.188a.46.46 0 01.235-.13zm2.068.004a.46.46 0 01.458.445v4.755a.46.46 0 01-.458.458.459.459 0 01-.458-.458V14.35a.459.459 0 01.458-.445zm1.973 2.014a.46.46 0 01.46.457v2.729a.46.46 0 01-.784.324.46.46 0 01-.134-.324v-2.729a.46.46 0 01.458-.458zm.002-2.045a.458.458 0 01.328.157l2.127 2.19 2.125-2.19a.459.459 0 01.784.318v4.756a.46.46 0 01-.455.458.46.46 0 01-.458-.458V15.48l-1.667 1.723a.46.46 0 01-.65.008l-.005-.005c0-.002-.002-.002-.004-.003l-2.455-2.534a.46.46 0 01-.008-.667.461.461 0 01.338-.128zm6.797 1.206a.46.46 0 01.53.651A1.966 1.966 0 0019.81 18.4a.462.462 0 01.623.18.46.46 0 01-.181.624 2.863 2.863 0 01-1.38.353l-.142-.004a2.88 2.88 0 01-2.393-4.263.461.461 0 01.274-.21zm.864-.931a2.884 2.884 0 013.915 3.914.46.46 0 01-.402.24l-.057-.004a.458.458 0 01-.164-.055.46.46 0 01-.182-.622 1.967 1.967 0 00-2.669-2.67.459.459 0 11-.441-.803zM9.59 6.368c1.481 0 1.696 1.202 1.696 1.654v2.648h-.917v-.432c-.26.346-.792.535-1.36.535-.133 0-1.289-.03-1.384-1.136-.082-.932.675-1.61 2.053-1.61h.691c0-.563-.367-.886-.983-.886-.44.013-.864.174-1.2.458l-.36-.664c.484-.379 1.012-.567 1.764-.567zm4.427.1c1.263 0 2.082.97 2.083 2.15 0 1.181-.824 2.154-2.083 2.154-1.26 0-2.084-.972-2.084-2.152 0-1.18.82-2.153 2.084-2.153zm6.801.015c.68 0 1.202.465 1.197 1.548v2.642H21.1V8.29c0-.312-.002-.98-.63-.98s-.628.667-.628.838v2.524h-.89V8.148c0-.17-.001-.838-.63-.838-.628 0-.628.668-.628.98v2.383h-.917v-4.03h.917V7a1.22 1.22 0 01.947-.516c.398 0 .76.193.982.686a1.321 1.321 0 011.195-.686zm-18.093.872l1.457-1.772H5.32L3.311 8.07l2.14 2.602H4.24L2.725 8.796 1.21 10.672H0L2.138 8.07.13 5.583h1.138l1.458 1.772zm4.149 3.317h-.916V6.644h.916v4.028zm16.99 0h-.916V6.644h.916v4.028zM9.925 8.71c-1.055 0-1.359.412-1.326.742.032.329.324.537.757.537a1.013 1.013 0 001.014-.968l.002-.31h-.447zM14.018 7.3c-.663 0-1.184.487-1.184 1.32 0 .832.52 1.32 1.184 1.32.662 0 1.182-.49 1.182-1.32 0-.832-.52-1.32-1.182-1.32zM6.417 5.001a.568.568 0 01.587.582.588.588 0 01-1.175 0A.57.57 0 016.417 5zm16.991 0a.57.57 0 01.592.582.588.588 0 01-1.174 0 .57.57 0 01.357-.542.572.572 0 01.225-.04z"/></svg>`,
   yi: `<svg fill="currentColor" fill-rule="evenodd" height="1em" style="flex:none;line-height:1" viewBox="1.92 1.92 20.16 20.16" width="1em" xmlns="http://www.w3.org/2000/svg"><title>Yi</title><path d="M18.62 13.927c.611 0 1.107.505 1.107 1.128v5.817c0 .623-.496 1.128-1.108 1.128a1.118 1.118 0 01-1.108-1.128v-5.817c0-.623.496-1.128 1.108-1.128zM16.59 3.052a1.094 1.094 0 011.562-.129c.466.404.522 1.116.126 1.59l-5.938 7.111v9.147c0 .624-.496 1.129-1.108 1.129a1.118 1.118 0 01-1.108-1.129v-9.477l.003-.088.01-.087c.015-.232.102-.462.261-.654l6.192-7.413zM2.906 2.256a1.094 1.094 0 011.559.157l4.387 5.45a1.142 1.142 0 01-.155 1.587 1.094 1.094 0 01-1.559-.157l-4.387-5.45a1.144 1.144 0 01.06-1.498l.095-.09z"></path><ellipse cx="20.146" cy="10.692" fill="#00FF25" rx="1.354" ry="1.379"></ellipse></svg>`,
@@ -154,6 +159,7 @@ export const icons: Record<string, string> = {
   haoai: `<svg height="1em" style="flex:none;line-height:1" viewBox="0 0 160 160" width="1em" xmlns="http://www.w3.org/2000/svg"><title>hao.ai</title><rect width="160" height="160" rx="35" fill="#1DB954"/><path d="M49 30C42.3726 30 37 35.3726 37 42V118C37 124.627 42.3726 130 49 130C55.6274 130 61 124.627 61 118V42C61 35.3726 55.6274 30 49 30ZM111 30C104.373 30 99 35.3726 99 42V118C99 124.627 104.373 130 111 130C117.627 130 123 124.627 123 118V42C123 35.3726 117.627 30 111 30ZM80 92.5C86.9036 92.5 92.5 86.9036 92.5 80C92.5 73.0964 86.9036 67.5 80 67.5C73.0964 67.5 67.5 73.0964 67.5 80C67.5 86.9036 73.0964 92.5 80 92.5Z" fill="#f8f8f6" fill-rule="evenodd" clip-rule="evenodd"/></svg>`,
   buytoken: `<svg height="1em" style="flex:none;line-height:1" viewBox="0 0 64 64" width="1em" xmlns="http://www.w3.org/2000/svg"><title>BuyToken</title><rect width="64" height="64" rx="14" fill="#087f6a"/><path fill="#fff" d="M14 13h20.3c10.3 0 16.8 5 16.8 13 0 4.3-2.3 7.7-6.3 9.7 5.3 1.8 8.4 5.6 8.4 10.8C53.2 55 46.3 59 34.5 59H14V13Z"/><path fill="#087f6a" d="M14 32.2h19v5.6H14z"/><circle cx="33" cy="35" r="9.4" fill="#087f6a"/><circle cx="33" cy="35" r="4.7" fill="#fff"/></svg>`,
   vapi: `<svg height="1em" style="flex:none;line-height:1" viewBox="0 0 32 32" width="1em" xmlns="http://www.w3.org/2000/svg"><title>V-API</title><ellipse cx="16" cy="16" rx="16" ry="16" fill="#FFF"/><path d="M18.162 10.791L12.89 24.077c-.891 2.247 2.099 1.783 4.37 1.326 2.27-.458 3.579-1.697 4.186-3.228l4.818-12.37c.298-.75-.276-1.555-1.11-1.555-2.576 0-5.823-.406-6.992 2.541zM5.677 13.374C5.28 10.344 7.21 8.857 9.311 8.57c2.1-.285 5.905.915 4.769 5.031q-.809 2.648-2.698 7.29a.762.762 0 0 1-1.298.195q-4.044-4.95-4.407-7.713z" fill-rule="evenodd" fill="#2C2C2C"/></svg>`,
+  cline: `<svg fill="currentColor" height="1em" style="flex:none;line-height:1" viewBox="0 0 113 113" width="1em" xmlns="http://www.w3.org/2000/svg"><title>Cline</title><path d="M56.4998 8.99805L56.4999 5.29805H56.4998V8.99805ZM68.4998 20.708L72.1998 20.7081V20.708H68.4998ZM67.9929 25L64.3662 24.2671L63.4704 28.7H67.9929V25ZM84.4998 25L84.4998 21.3H84.4998V25ZM95.7 49.7998H92V51.2066L92.9346 52.258L95.7 49.7998ZM108.027 63.667L110.793 61.2088L110.792 61.2088L108.027 63.667ZM108.027 64.7305L110.792 67.1887L110.793 67.1883L108.027 64.7305ZM95.7 78.5977L92.9346 76.1394L92 77.1909V78.5977H95.7ZM95.7 92.2002L99.3999 92.2002V92.2002H95.7ZM84.4998 103.4V107.1H84.4998L84.4998 103.4ZM17.2996 92.2002H13.5996V92.2002L17.2996 92.2002ZM17.2996 78.5986H20.9996V77.1918L20.0649 76.1404L17.2996 78.5986ZM4.97144 64.7305L2.20602 67.1886L2.20611 67.1887L4.97144 64.7305ZM4.97144 63.667L7.73685 66.1251L7.73685 66.1251L4.97144 63.667ZM17.2996 49.7979L20.065 52.256L20.9996 51.2046V49.7979H17.2996ZM45.0066 25V28.7H49.5292L48.6333 24.267L45.0066 25ZM44.4998 20.708H40.7998V20.7081L44.4998 20.708ZM56.4998 8.99805L56.4996 12.698C61.1812 12.6982 64.7998 16.3247 64.7998 20.708H68.4998H72.1998C72.1998 12.0452 65.0728 5.29829 56.4999 5.29805L56.4998 8.99805ZM68.4998 20.708L64.7998 20.7079C64.7997 21.6154 64.6614 22.8066 64.3662 24.2671L67.9929 25L71.6196 25.7329C71.969 24.004 72.1997 22.2864 72.1998 20.7081L68.4998 20.708ZM67.9929 25V28.7H84.4998V25V21.3H67.9929V25ZM84.4998 25L84.4997 28.7C88.6419 28.7001 92 32.0582 92 36.2002H95.7H99.3999C99.3999 27.9712 92.7287 21.3001 84.4998 21.3L84.4998 25ZM95.7 36.2002H92V49.7998H95.7H99.3999V36.2002H95.7ZM95.7 49.7998L92.9346 52.258L105.262 66.1252L108.027 63.667L110.792 61.2088L98.4653 47.3416L95.7 49.7998ZM108.027 63.667L105.262 66.1251C104.285 65.026 104.285 63.371 105.261 62.2727L108.027 64.7305L110.793 67.1883C112.308 65.4837 112.308 62.9141 110.793 61.2088L108.027 63.667ZM108.027 64.7305L105.262 62.2722L92.9346 76.1394L95.7 78.5977L98.4653 81.0559L110.792 67.1887L108.027 64.7305ZM95.7 78.5977H92V92.2002H95.7H99.3999V78.5977H95.7ZM95.7 92.2002L92 92.2002C91.9999 96.3422 88.6418 99.7003 84.4997 99.7004L84.4998 103.4L84.4998 107.1C92.7287 107.1 99.3999 100.429 99.3999 92.2002L95.7 92.2002ZM84.4998 103.4V99.7004H28.4998V103.4V107.1H84.4998V103.4ZM28.4998 103.4V99.7004C24.3577 99.7004 20.9996 96.3423 20.9996 92.2002L17.2996 92.2002L13.5996 92.2002C13.5996 100.429 20.2707 107.1 28.4998 107.1V103.4ZM17.2996 92.2002H20.9996V78.5986H17.2996H13.5996V92.2002H17.2996ZM17.2996 78.5986L20.0649 76.1404L7.73676 62.2722L4.97144 64.7305L2.20611 67.1887L14.5342 81.0569L17.2996 78.5986ZM4.97144 64.7305L7.73685 62.2723C8.71353 63.3711 8.71353 65.0264 7.73685 66.1251L4.97144 63.667L2.20602 61.2088C0.690476 62.9138 0.690476 65.4836 2.20602 67.1886L4.97144 64.7305ZM4.97144 63.667L7.73685 66.1251L20.065 52.256L17.2996 49.7979L14.5341 47.3397L2.20602 61.2088L4.97144 63.667ZM17.2996 49.7979H20.9996V36.2002H17.2996H13.5996V49.7979H17.2996ZM17.2996 36.2002H20.9996C20.9996 32.0581 24.3576 28.7 28.4998 28.7V25V21.3C20.2707 21.3 13.5996 27.9712 13.5996 36.2002H17.2996ZM28.4998 25V28.7H45.0066V25V21.3H28.4998V25ZM45.0066 25L48.6333 24.267C48.3381 22.8066 48.1998 21.6154 48.1998 20.7079L44.4998 20.708L40.7998 20.7081C40.7998 22.2864 41.0305 24.0039 41.3799 25.733L45.0066 25ZM44.4998 20.708H48.1998C48.1998 16.3244 51.8182 12.698 56.4998 12.698V8.99805V5.29805C47.9264 5.29805 40.7998 12.0451 40.7998 20.708H44.4998Z"/><rect x="66.1001" y="49.8008" width="9.6" height="28.8" rx="4.8"/><rect x="37.3" y="49.8008" width="9.6" height="28.8" rx="4.8"/></svg>`,
 };
 
 export const iconUrls: Record<string, string> = {
@@ -179,6 +185,7 @@ export const iconUrls: Record<string, string> = {
   everyapi: _everyapi,
   fenno: _fenno,
   fluxa: _fluxa,
+  genesis: _genesis,
   grooroute: _grooroute,
   hermes: _hermes,
   huoshan: _huoshan,
@@ -186,12 +193,14 @@ export const iconUrls: Record<string, string> = {
   modelflare: _modelflare,
   nekocode: _nekocode,
   openmodel: _openmodel,
+  ospreyai: _ospreyai,
   pateway: _pateway,
   pipellm: _pipellm,
   qiniu: _qiniu,
   relaxcode: _relaxcode,
   runapi: _runapi,
   runtoken: _runtoken,
+  tokenplus: _tokenplus,
   tokenflux: _tokenflux,
   shengsuanyun: _shengsuanyun,
   soruxgpt: _soruxgpt,
@@ -226,8 +235,89 @@ export function hasIcon(name: string): boolean {
   return key in icons || key in iconUrls;
 }
 
+function hexChannels(hex: string): [number, number, number] | null {
+  let h = hex.slice(1);
+  if (h.length === 3 || h.length === 4) {
+    h = [...h.slice(0, 3)].map((c) => c + c).join("");
+  }
+  if (!/^[0-9a-f]{6}([0-9a-f]{2})?$/.test(h)) return null;
+  const n = parseInt(h.slice(0, 6), 16);
+  return [n >> 16, (n >> 8) & 255, n & 255];
+}
+
+/** 近黑色：三个通道都很低（深红、深蓝这类有色的深色不算）。 */
+export function isDarkInk(color?: string): boolean {
+  const c = color?.trim().toLowerCase();
+  if (!c) return false;
+  if (c === "black") return true;
+  if (!c.startsWith("#")) return false;
+  const rgb = hexChannels(c);
+  return rgb !== null && Math.max(...rgb) <= 0x50;
+}
+
+// <defs> / <clipPath> / <mask> 里的颜色是遮罩语义，不是画出来的墨色
+const MASK_BLOCK = /(<(defs|clipPath|mask)\b[\s\S]*?<\/\2>)/g;
+const PAINT_ATTR = /\b(fill|stroke)="([^"]+)"/g;
+
+function paintedColors(svg: string): string[] {
+  return [...svg.replace(MASK_BLOCK, "").matchAll(PAINT_ATTR)].map((m) => m[2]);
+}
+
+const adaptedSvgCache = new Map<string, string>();
+
+/**
+ * 深色模式适配：只处理单墨色图标——画出来的颜色全是近黑色时，换成 currentColor 跟随文字色。
+ * 多色图标里的近黑细节（Hugging Face 的眼睛、LionCC 的线稿）画在彩色形状上，
+ * 换成浅色文字色反而糊掉，保持原样。遮罩里的颜色不参与判断。
+ */
+export function adaptSvgToTheme(svg: string): string {
+  const cached = adaptedSvgCache.get(svg);
+  if (cached !== undefined) return cached;
+  const paints = paintedColors(svg).filter((c) => c.trim() !== "none");
+  const singleInk = paints.length > 0 && paints.every(isDarkInk);
+  const result = !singleInk
+    ? svg
+    : svg
+        .split(MASK_BLOCK)
+        // split 带捕获组：[正文, 整块, 标签名, 正文, ...]，丢掉标签名后只改正文
+        .filter((_, i) => i % 3 !== 2)
+        .map((part, i) =>
+          i % 2 === 0
+            ? part.replace(PAINT_ATTR, (whole, attr, color) =>
+                isDarkInk(color) ? `${attr}="currentColor"` : whole,
+              )
+            : part,
+        )
+        .join("");
+  adaptedSvgCache.set(svg, result);
+  return result;
+}
+
+const lightBackingCache = new Map<string, boolean>();
+
+/**
+ * 深色卡片上需要浅色衬底的图标（tile 图标自带底色，不算）：
+ * - 位图 / 外链图标：可能是透明底上的深色墨；
+ * - 适配后仍带近黑笔画的内联 SVG：多色图标的近黑部分不改色（如 OpenCode 的外框、
+ *   Cubence 的深灰顶面），直接画在透明底上，深色卡片上看不清。
+ * 全是近黑的单色图标已经换成 currentColor 跟随文字色，不需要。
+ */
+export function needsLightBacking(name?: string): boolean {
+  if (!name) return false;
+  const key = name.toLowerCase();
+  if (isTileIcon(key)) return false;
+  if (key in iconUrls) return true;
+  const svg = icons[key];
+  if (!svg) return false;
+  const cached = lightBackingCache.get(key);
+  if (cached !== undefined) return cached;
+  const result = paintedColors(adaptSvgToTheme(svg)).some(isDarkInk);
+  lightBackingCache.set(key, result);
+  return result;
+}
+
 export function isUrlIcon(name: string): boolean {
   return name.toLowerCase() in iconUrls;
 }
 
-export { getIconMetadata, isTileIcon } from "./metadata";
+export { getIconMetadata, isTileIcon };

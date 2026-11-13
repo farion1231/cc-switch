@@ -1,11 +1,12 @@
 use serde_json::json;
 
 use cc_switch_lib::{
-    get_claude_settings_path, read_json_file, write_codex_live_atomic, AppError, AppType, McpApps,
-    McpServer, MultiAppConfig, Provider, ProviderMeta, ProviderService,
+    get_claude_settings_path, import_default_config_test_hook, read_json_file,
+    write_codex_live_atomic, AppError, AppType, McpApps, McpServer, MultiAppConfig, Provider,
+    ProviderMeta, ProviderService,
 };
 
-#[path = "support.rs"]
+#[path = "support/mod.rs"]
 mod support;
 use support::{
     create_test_state, create_test_state_with_config, enable_codex_official_auth_preservation,
@@ -170,6 +171,9 @@ command = "say"
                 hermes: false,
                 mcode: false,
                 kimi: false,
+                copilot: false,
+                dsh: false,
+                workbuddy: false,
                 pi: false,
                 omp: false,
             },
@@ -511,6 +515,83 @@ requires_openai_auth = true
     assert_eq!(
         bridge_after.settings_config, bridge_before.settings_config,
         "switching away never writes live content back into the row"
+    );
+}
+
+/// 当前是直连第三方时关掉「非接管切换时保留官方登录」：立即把官方登录暂存走、
+/// `requires_openai_auth` 改成 false，不必先切回官方卡再切回来（#9367）。
+#[test]
+fn turning_off_login_preservation_reapplies_the_current_third_party_codex_provider() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    enable_codex_official_auth_preservation();
+    let _home = ensure_test_home();
+
+    let live_auth = json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": null,
+        "tokens": {
+            "access_token": "oauth-token",
+            "account_id": "acct-1"
+        }
+    });
+    write_codex_live_atomic(&live_auth, Some("model = \"gpt-5.4\"\n"))
+        .expect("seed Codex OAuth live config");
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.providers.insert(
+            "third-party".to_string(),
+            Provider::with_id(
+                "third-party".to_string(),
+                "Third Party".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "third-party-key"},
+                    "config": r#"model_provider = "tp"
+model = "gpt-5.4"
+
+[model_providers.tp]
+name = "Third Party"
+base_url = "https://third-party.example/v1"
+wire_api = "responses"
+"#
+                }),
+                None,
+            ),
+        );
+    }
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+    ProviderService::switch(&state, AppType::Codex, "third-party")
+        .expect("switch to the third-party provider");
+
+    let requires_openai_auth = || {
+        let text = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+            .expect("read config.toml");
+        let doc: toml::Value = toml::from_str(&text).expect("parse live config");
+        doc.get("model_providers")
+            .and_then(|v| v.get("custom"))
+            .and_then(|v| v.get("requires_openai_auth"))
+            .and_then(|v| v.as_bool())
+    };
+    assert_eq!(requires_openai_auth(), Some(true));
+    assert!(cc_switch_lib::get_codex_auth_path().exists());
+
+    cc_switch_lib::update_settings(cc_switch_lib::AppSettings::default())
+        .expect("turn login preservation off");
+    let reapplied = cc_switch_lib::reapply_current_codex_third_party_live(&state)
+        .expect("reapply the current third-party provider");
+
+    assert!(
+        reapplied,
+        "the current direct third-party provider is rewritten"
+    );
+    assert_eq!(requires_openai_auth(), Some(false));
+    assert!(
+        !cc_switch_lib::get_codex_auth_path().exists(),
+        "the official login is stashed away instead of staying next to the third-party route"
     );
 }
 
@@ -1583,6 +1664,9 @@ fn switch_codex_ignores_a_broken_claude_json() {
                 hermes: false,
                 mcode: false,
                 kimi: false,
+                copilot: false,
+                dsh: false,
+                workbuddy: false,
                 pi: false,
                 omp: false,
             },
@@ -1649,6 +1733,9 @@ fn sync_all_enabled_reports_broken_app_but_projects_the_rest() {
                 hermes: false,
                 mcode: false,
                 kimi: false,
+                copilot: false,
+                dsh: false,
+                workbuddy: false,
                 pi: false,
                 omp: false,
             },
@@ -2278,6 +2365,41 @@ fn packycode_partner_meta_triggers_security_flag_even_without_keywords() {
             .and_then(|v| v.as_str()),
         Some("gemini-api-key"),
         "Partner meta should set security.auth.selectedType even without packy keywords"
+    );
+}
+
+#[test]
+fn switching_back_to_imported_gemini_default_keeps_an_export_line_key() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let env_path = ensure_test_home().join(".gemini").join(".env");
+    std::fs::create_dir_all(env_path.parent().expect("env dir")).expect("create ~/.gemini");
+    std::fs::write(&env_path, "export GEMINI_API_KEY=AIza-user-key\n").expect("write .env");
+
+    let state = create_test_state().expect("create test state");
+    import_default_config_test_hook(&state, AppType::Gemini).expect("import live .env");
+    let relay = Provider::with_id(
+        "relay".to_string(),
+        "Relay".to_string(),
+        json!({
+            "env": {
+                "GEMINI_API_KEY": "relay-key",
+                "GOOGLE_GEMINI_BASE_URL": "https://relay.example"
+            }
+        }),
+        None,
+    );
+    state
+        .db
+        .save_provider("gemini", &relay)
+        .expect("save relay");
+
+    ProviderService::switch(&state, AppType::Gemini, "relay").expect("switch to relay");
+    ProviderService::switch(&state, AppType::Gemini, "default").expect("switch back");
+
+    assert_eq!(
+        std::fs::read_to_string(&env_path).expect("read .env"),
+        "export GEMINI_API_KEY=AIza-user-key\n"
     );
 }
 
@@ -3171,6 +3293,55 @@ fn claude_editor_global_settings_go_to_live() {
         json!("https://b.example")
     );
     assert!(live.get("hooks").is_some(), "the hook survives the switch");
+}
+
+/// 编辑器里改的全局设置也要到 Claude 官方账号的目录：账号目录里的 settings.json 是默认
+/// settings.json 的镜像，写入之后要再同步一次，不能等到下次切换。
+#[test]
+fn claude_editor_global_settings_reach_account_dirs() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let a = json!({ "env": { "ANTHROPIC_BASE_URL": "https://a.example" } });
+    let state = seed_claude_switch_state(
+        &[("a", a.clone())],
+        "a",
+        &serde_json::to_string_pretty(&a).expect("serialize"),
+    );
+
+    // 本机账号表里有一个账号，目录已经建好
+    let app_dir = home.join(".cc-switch");
+    let local_id = "0123456789abcdef0123456789abcdef";
+    let config_dir = app_dir
+        .join("claude-accounts")
+        .join(local_id)
+        .join("config");
+    std::fs::create_dir_all(&config_dir).expect("account dir");
+    std::fs::write(
+        app_dir.join("claude_accounts.json"),
+        serde_json::to_vec(&json!({
+            "version": 1,
+            "accounts": { "acc:org": { "localId": local_id, "addedAt": 1 } }
+        }))
+        .expect("serialize"),
+    )
+    .expect("write account store");
+
+    let (row, base) = open_claude_editor(&state, "a");
+    let mut edited = base.clone();
+    edited["hooks"] =
+        json!({ "Stop": [{ "hooks": [{ "type": "command", "command": "say done" }] }] });
+    save_claude_editor(&state, &row, &base, edited, "refuse").expect("save");
+
+    let mirrored: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(config_dir.join("settings.json")).expect("account settings"),
+    )
+    .expect("parse account settings");
+    assert!(
+        mirrored.get("hooks").is_some(),
+        "the account dir sees the hook right after saving: {mirrored}"
+    );
 }
 
 /// 关键字段、独有字段存进供应商行：非当前供应商改地址、写窗口值，live 不变；

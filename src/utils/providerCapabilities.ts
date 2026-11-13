@@ -1,6 +1,7 @@
 import type { AppId } from "@/lib/api";
 import type { Provider } from "@/types";
 import { isOAuthProviderType } from "@/config/constants";
+import { isCopilotOfficialCard } from "@/config/copilotConfig";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import {
   extractCodexBaseUrl,
@@ -99,6 +100,8 @@ export function isOfficialAccount(
       | undefined;
     return config?.type === "kimi" && nonEmptyString(config?.oauth?.key);
   }
+  // Copilot CLI：没有自带模型（provider 节点）的卡用 Copilot 自己的 GitHub 登录
+  if (appId === "copilot") return isCopilotOfficialCard(provider);
   return (
     provider.category === "official" ||
     resolveCodexOfficialIdentity(appId, provider) !== null
@@ -114,6 +117,33 @@ export function supportsFailover(
   provider: Pick<Provider, "id" | "category" | "meta" | "settingsConfig">,
 ): boolean {
   return !supportsOfficialProxyTakeover(appId, provider);
+}
+
+/**
+ * 能否做「检测连通」（对 base_url 的可达性探测）。
+ *
+ * 探测需要一个真实的上游地址，所以两类卡片不参与：
+ * - 官方账号卡：base_url 故意留空，走客户端默认 / OAuth 端点；
+ * - OMO / OMO Slim：`settings_config` 里只有 agents / categories 的模型映射，
+ *   没有 `npm` 与 `options.baseURL`，后端无从解析探测目标。要测上游请到它引用的
+ *   OpenCode 供应商卡片上测。
+ */
+export function supportsConnectivityCheck(
+  appId: AppId,
+  provider: Pick<Provider, "category">,
+): boolean {
+  if (
+    appId === "mcode" ||
+    appId === "dsh" ||
+    appId === "kimi" ||
+    appId === "workbuddy"
+  )
+    return false;
+  return (
+    provider.category !== "official" &&
+    provider.category !== "omo" &&
+    provider.category !== "omo-slim"
+  );
 }
 
 /** Keep the UI capability rule aligned with the Rust takeover policy. */

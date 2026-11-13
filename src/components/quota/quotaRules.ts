@@ -104,6 +104,7 @@ const TIER_WINDOW_ORDER: Record<string, number> = {
   seven_day_fable: 2,
   seven_day_opus: 2,
   seven_day_sonnet: 2,
+  agy_gemini_argon_weekly: 2,
   weekly_limit: 2,
   "30_day": 3,
   monthly: 3,
@@ -185,7 +186,8 @@ export const RESET_EXPIRING_SOON_MS = 3 * 24 * 60 * 60 * 1000;
 /** 排在所有档位之后：卡片合并时跟在每周那档后面（「每周 64% · 重置 1 次」） */
 const RESET_CREDITS_WINDOW = UNKNOWN_WINDOW + 1;
 
-function shortDate(iso: string, locale: string): string {
+/** 「11月30日」；不是今年时带年份 */
+export function shortDate(iso: string, locale: string): string {
   const date = new Date(iso);
   const sameYear = date.getFullYear() === new Date().getFullYear();
   try {
@@ -373,14 +375,15 @@ export function balanceLine(
   const hasTotal = typeof total === "number" && total > 0;
   const left =
     remaining <= 0 ? 0 : hasTotal ? (remaining / total) * 100 : Infinity;
-  const value = `${remaining.toFixed(2)}${unit ? ` ${unit}` : ""}`;
+  // 用完也照写金额（欠费就是负数，#8812），整行变红；`|| 0` 把 -0 归成 0，免得显示 -0.00
+  const amount = Number(remaining.toFixed(2)) || 0;
+  const value = `${amount.toFixed(2)}${unit ? ` ${unit}` : ""}`;
   return {
     key,
     left,
     tone: remaining <= 0 ? "danger" : "normal",
     emphasis: remaining <= 0 ? undefined : value,
-    text:
-      remaining <= 0 ? t("quota.balanceUsedUp") : t("quota.balance", { value }),
+    text: t("quota.balance", { value }),
     detail,
   };
 }

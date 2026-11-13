@@ -62,7 +62,6 @@ pub async fn stop_proxy_with_restore(state: tauri::State<'_, AppState>) -> Resul
     crate::mode::controller::exit_all(state.inner()).await
 }
 
-/// 获取各应用接管状态
 #[tauri::command]
 pub async fn get_proxy_takeover_status(
     state: tauri::State<'_, AppState>,
@@ -97,12 +96,17 @@ pub async fn set_proxy_takeover_for_app(
 
 /// 应用页模式行用：生效的模式、路由目标（直连时是上次路由的那家）、直连那家。
 #[tauri::command]
-pub fn get_app_mode(
+pub async fn get_app_mode(
     state: tauri::State<'_, AppState>,
     app_type: String,
 ) -> Result<crate::mode::controller::AppModeView, String> {
     let app = require_mode_app(&app_type)?;
-    crate::mode::controller::app_mode_view(state.inner(), &app)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::mode::controller::app_mode_view(&state, &app)
+    })
+    .await
+    .map_err(|e| format!("读取应用模式任务失败: {e}"))?
 }
 
 /// 指定路由目标（聚合模式下是默认那家）。直连模式下只记下来，下次进入路由 / 聚合模式时用它；
@@ -139,12 +143,17 @@ pub async fn exit_proxy_apps_in_mode(
 
 /// 直连指针：代理模式下退出代理时写回的供应商
 #[tauri::command]
-pub fn get_direct_provider(
+pub async fn get_direct_provider(
     state: tauri::State<'_, AppState>,
     app_type: String,
 ) -> Result<Option<String>, String> {
     let app = require_mode_app(&app_type)?;
-    crate::mode::controller::direct_provider_id(state.inner(), &app).map_err(|e| e.to_string())
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::mode::controller::direct_provider_id(&state, &app).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("读取直连供应商任务失败: {e}"))?
 }
 
 /// Stack 模型：名单里的每一家和它发布的模型 id，以及还在用旧模型列表的 Codex 客户端
@@ -211,19 +220,16 @@ pub async fn adopt_codex_stack_catalog(
     crate::mode::controller::adopt_codex_stack_catalog(state.inner()).await
 }
 
-/// 获取代理服务器状态
 #[tauri::command]
 pub async fn get_proxy_status(state: tauri::State<'_, AppState>) -> Result<ProxyStatus, String> {
     state.proxy_service.get_status().await
 }
 
-/// 获取代理配置
 #[tauri::command]
 pub async fn get_proxy_config(state: tauri::State<'_, AppState>) -> Result<ProxyConfig, String> {
     state.proxy_service.get_config().await
 }
 
-/// 更新代理配置
 #[tauri::command]
 pub async fn update_proxy_config(
     state: tauri::State<'_, AppState>,
@@ -354,7 +360,6 @@ pub async fn get_pricing_model_source_test_hook(
     get_pricing_model_source_internal(state, app_type).await
 }
 
-/// 获取计费模式来源
 #[tauri::command]
 pub async fn get_pricing_model_source(
     state: tauri::State<'_, AppState>,
@@ -383,7 +388,6 @@ pub async fn set_pricing_model_source_test_hook(
     set_pricing_model_source_internal(state, app_type, value).await
 }
 
-/// 设置计费模式来源
 #[tauri::command]
 pub async fn set_pricing_model_source(
     state: tauri::State<'_, AppState>,
@@ -395,13 +399,11 @@ pub async fn set_pricing_model_source(
         .map_err(|e| e.to_string())
 }
 
-/// 检查代理服务器是否正在运行
 #[tauri::command]
 pub async fn is_proxy_running(state: tauri::State<'_, AppState>) -> Result<bool, String> {
     Ok(state.proxy_service.is_running().await)
 }
 
-/// 检查是否处于 Live 接管模式
 #[tauri::command]
 pub async fn is_live_takeover_active(state: tauri::State<'_, AppState>) -> Result<bool, String> {
     state.proxy_service.is_takeover_active().await
@@ -420,7 +422,6 @@ pub async fn switch_proxy_provider(
 
 // ==================== 故障转移相关命令 ====================
 
-/// 获取供应商健康状态
 #[tauri::command]
 pub async fn get_provider_health(
     state: tauri::State<'_, AppState>,
@@ -524,7 +525,6 @@ pub async fn reset_circuit_breaker(
     Ok(())
 }
 
-/// 获取熔断器配置
 #[tauri::command]
 pub async fn get_circuit_breaker_config(
     state: tauri::State<'_, AppState>,
@@ -535,7 +535,6 @@ pub async fn get_circuit_breaker_config(
         .map_err(|e| e.to_string())
 }
 
-/// 更新熔断器配置
 #[tauri::command]
 pub async fn update_circuit_breaker_config(
     state: tauri::State<'_, AppState>,

@@ -12,6 +12,7 @@ import {
   SheetFooter,
 } from "@/components/ui/sheet";
 import { HoverTip } from "@/components/ui/hover-tip";
+import { Notice } from "@/components/ui/notice";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import type { McpServer, McpServerSpec } from "@/types";
 import type { McpAppId } from "@/config/appConfig";
@@ -41,6 +42,7 @@ import {
   recognizePaste,
   secretCountOf,
   specOf,
+  transportOf,
   uniqueId,
   validateDraft,
   type JsonParseError,
@@ -53,6 +55,14 @@ import {
 } from "./mcpDraft";
 
 type AppsState = Record<McpAppId, boolean>;
+
+/**
+ * 不支持 SSE 的应用。Codex 的 `[mcp_servers.*]` 只有 stdio / Streamable HTTP，
+ * 写进去的 SSE 地址会被当成 Streamable HTTP 连接（#8882）；Pi、Antigravity 的
+ * 写入直接拒绝 SSE（`mcp/pi.rs`、`mcp/agy.rs`）。
+ */
+const SSE_AS_HTTP_APPS: readonly McpAppId[] = ["codex"];
+const SSE_REJECTED_APPS: readonly McpAppId[] = ["pi", "agy"];
 
 interface MetaDraft {
   name: string;
@@ -174,6 +184,22 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     : errors.name === "nameExists"
       ? { name: errors.name }
       : {};
+
+  // JSON 页签里的改动要到切回表单才进草稿，这里按当前文字判断
+  const isSse = useMemo(() => {
+    if (tab === "json") {
+      const parsed = parseJsonText(jsonText, conn);
+      return parsed.ok && transportOf(parsed.spec) === "sse";
+    }
+    return conn.transport === "sse";
+  }, [conn, jsonText, tab]);
+  // 隐藏的应用编辑时原样保留、照样写入，所以按全部启用状态判断
+  const sseAppsIn = (list: readonly McpAppId[]) =>
+    isSse && !batch ? list.filter((app) => apps[app]) : [];
+  const sseAsHttpApps = sseAppsIn(SSE_AS_HTTP_APPS);
+  const sseRejectedApps = sseAppsIn(SSE_REJECTED_APPS);
+  const appNames = (list: McpAppId[]) =>
+    list.map((app) => APP_DISPLAY_NAME[app]).join(t("mcpPage.listSeparator"));
 
   const fieldErrorText = (code?: string) => {
     if (!code) return "";
@@ -509,6 +535,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                 value={row.key}
                 autoComplete="off"
                 spellCheck={false}
+                autoCorrect="off"
+                autoCapitalize="off"
                 onChange={(event) =>
                   updateRows(field, (list) =>
                     list.map((item, i) =>
@@ -528,6 +556,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                 value={row.value}
                 autoComplete="off"
                 spellCheck={false}
+                autoCorrect="off"
+                autoCapitalize="off"
                 onChange={(event) =>
                   updateRows(field, (list) =>
                     list.map((item, i) =>
@@ -659,6 +689,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                   aria-invalid={paste?.ok === false}
                   aria-describedby={paste ? "mcp-paste-hint" : undefined}
                   spellCheck={false}
+                  autoCorrect="off"
+                  autoCapitalize="off"
                   rows={3}
                   className={cn(
                     MONO_FIELD_CLASS,
@@ -842,6 +874,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                   }
                   autoComplete="off"
                   spellCheck={false}
+                  autoCorrect="off"
+                  autoCapitalize="off"
                   onChange={(event) => setName(event.target.value)}
                 />
                 {visibleErrors.name && (
@@ -941,6 +975,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                             }
                             autoComplete="off"
                             spellCheck={false}
+                            autoCorrect="off"
+                            autoCapitalize="off"
                             onChange={(event) =>
                               patchConn({ command: event.target.value })
                             }
@@ -974,6 +1010,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                                 value={arg}
                                 autoComplete="off"
                                 spellCheck={false}
+                                autoCorrect="off"
+                                autoCapitalize="off"
                                 onChange={(event) =>
                                   patchConn({
                                     args: conn.args.map((item, i) =>
@@ -1035,6 +1073,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                             placeholder={t("mcpPage.drawer.cwdPlaceholder")}
                             autoComplete="off"
                             spellCheck={false}
+                            autoCorrect="off"
+                            autoCapitalize="off"
                             onChange={(event) =>
                               patchConn({ cwd: event.target.value })
                             }
@@ -1064,6 +1104,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                             }
                             autoComplete="off"
                             spellCheck={false}
+                            autoCorrect="off"
+                            autoCapitalize="off"
                             onChange={(event) =>
                               patchConn({ url: event.target.value })
                             }
@@ -1138,6 +1180,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                       aria-invalid={jsonError !== null}
                       aria-describedby={jsonError ? "mcp-json-hint" : undefined}
                       spellCheck={false}
+                      autoCorrect="off"
+                      autoCapitalize="off"
                       wrap="off"
                       className={cn(
                         MONO_FIELD_CLASS,
@@ -1201,6 +1245,28 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                 </label>
               ))}
             </div>
+            {sseAsHttpApps.length > 0 && (
+              <Notice
+                tone="warning"
+                title={t("mcpPage.drawer.sseAsHttpTitle", {
+                  apps: appNames(sseAsHttpApps),
+                })}
+              >
+                {t("mcpPage.drawer.sseAsHttpBody", {
+                  apps: appNames(sseAsHttpApps),
+                })}
+              </Notice>
+            )}
+            {sseRejectedApps.length > 0 && (
+              <Notice
+                tone="warning"
+                title={t("mcpPage.drawer.sseRejectedTitle", {
+                  apps: appNames(sseRejectedApps),
+                })}
+              >
+                {t("mcpPage.drawer.sseRejectedBody")}
+              </Notice>
+            )}
           </div>
 
           {!batch && (
@@ -1230,6 +1296,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                       className={FIELD_CLASS}
                       value={meta.name}
                       autoComplete="off"
+                      autoCorrect="off"
+                      autoCapitalize="off"
                       onChange={(event) =>
                         setMeta((prev) => ({
                           ...prev,
@@ -1253,6 +1321,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                           description: event.target.value,
                         }))
                       }
+                      autoCorrect="off"
+                      autoCapitalize="off"
                     />
                   </div>
                   <div className="flex flex-col gap-1.5">
@@ -1266,6 +1336,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                       value={meta.tags}
                       placeholder={t("mcpPage.drawer.tagsPlaceholder")}
                       autoComplete="off"
+                      autoCorrect="off"
+                      autoCapitalize="off"
                       onChange={(event) =>
                         setMeta((prev) => ({
                           ...prev,
@@ -1287,6 +1359,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                       placeholder="https://"
                       autoComplete="off"
                       spellCheck={false}
+                      autoCorrect="off"
+                      autoCapitalize="off"
                       onChange={(event) =>
                         setMeta((prev) => ({
                           ...prev,
@@ -1308,6 +1382,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                       placeholder="https://"
                       autoComplete="off"
                       spellCheck={false}
+                      autoCorrect="off"
+                      autoCapitalize="off"
                       onChange={(event) =>
                         setMeta((prev) => ({
                           ...prev,

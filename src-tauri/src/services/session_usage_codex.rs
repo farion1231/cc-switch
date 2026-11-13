@@ -31,6 +31,7 @@ use crate::services::usage_stats::{
 };
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
 use std::io::BufRead;
@@ -41,6 +42,8 @@ use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::SystemTime;
+#[cfg(windows)]
+use windows_sys::Win32::Foundation::{ERROR_INVALID_PARAMETER, ERROR_NOT_SUPPORTED};
 #[cfg(windows)]
 use windows_sys::Win32::Storage::FileSystem::{
     FileIdInfo, GetFileInformationByHandleEx, FILE_ID_INFO,
@@ -101,17 +104,18 @@ struct ParentFileStamp {
     device: u64,
     #[cfg(unix)]
     inode: u64,
+    /// 卷序列号 + 文件 ID。`None`：文件系统不提供文件 ID（Windows 访问
+    /// `\\wsl.localhost\...` 的 9P 共享时返回 ERROR_NOT_SUPPORTED），只凭
+    /// 修改时间和大小判断文件变没变，否则 WSL 上的父 rollout 永远验证不了。
     #[cfg(windows)]
-    volume_serial: u64,
-    #[cfg(windows)]
-    file_id: [u8; 16],
+    identity: Option<(u64, [u8; 16])>,
 }
 
 impl ParentFileStamp {
     fn from_file(file: &fs::File) -> Option<Self> {
         let metadata = file.metadata().ok()?;
         #[cfg(windows)]
-        let (volume_serial, file_id) = windows_file_identity(file)?;
+        let identity = windows_file_identity(file).ok()?;
         Some(Self {
             modified_nanos: metadata_modified_nanos(&metadata),
             size: metadata.len(),
@@ -120,15 +124,14 @@ impl ParentFileStamp {
             #[cfg(unix)]
             inode: metadata.ino(),
             #[cfg(windows)]
-            volume_serial,
-            #[cfg(windows)]
-            file_id,
+            identity,
         })
     }
 }
 
+/// `Ok(None)`：文件系统不支持查询文件 ID；其他失败照常报错。
 #[cfg(windows)]
-fn windows_file_identity(file: &fs::File) -> Option<(u64, [u8; 16])> {
+fn windows_file_identity(file: &fs::File) -> std::io::Result<Option<(u64, [u8; 16])>> {
     let mut information = FILE_ID_INFO::default();
     // SAFETY: `file` owns a live handle for this call, and `information` is a
     // valid writable FILE_ID_INFO buffer of the size passed to Windows.
@@ -140,10 +143,17 @@ fn windows_file_identity(file: &fs::File) -> Option<(u64, [u8; 16])> {
             std::mem::size_of::<FILE_ID_INFO>() as u32,
         )
     } != 0;
-    succeeded.then_some((
-        information.VolumeSerialNumber,
-        information.FileId.Identifier,
-    ))
+    if succeeded {
+        return Ok(Some((
+            information.VolumeSerialNumber,
+            information.FileId.Identifier,
+        )));
+    }
+    let error = std::io::Error::last_os_error();
+    match error.raw_os_error().map(|code| code as u32) {
+        Some(ERROR_NOT_SUPPORTED | ERROR_INVALID_PARAMETER) => Ok(None),
+        _ => Err(error),
+    }
 }
 
 #[derive(Debug)]
@@ -219,16 +229,25 @@ struct ParsedTokenEvent {
 /// 后面的正文（工具输出可能上百 KB）不用解析。
 const LINE_HEAD_BYTES: usize = 512;
 
+fn is_usage_line(line: &str) -> bool {
+    if line.contains("\"event_msg\"") {
+        return line.contains("\"token_count\"") || line.contains("\"thread_settings_applied\"");
+    }
+    line.contains("\"turn_context\"")
+        || line.contains("\"session_meta\"")
+        || line.contains("\"token_usage_record\"")
+}
+
 fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
         .position(|window| window == needle)
 }
 
-/// 从行头里取 `"key":"value"` 的值。只用于时间戳、类型名、角色这类不含转义的短值。
-fn head_str<'a>(head: &'a [u8], key: &str) -> Option<&'a str> {
-    let needle = format!("\"{key}\":\"");
-    let start = find_bytes(head, needle.as_bytes())? + needle.len();
+/// 从行头里取 `"key":"value"` 的值，needle 是静态的 `"key":"` 字节串。
+/// 只用于时间戳、类型名、角色这类不含转义的短值，避免逐行分配搜索串。
+fn head_str<'a>(head: &'a [u8], needle: &[u8]) -> Option<&'a str> {
+    let start = find_bytes(head, needle)? + needle.len();
     let len = head[start..].iter().position(|b| *b == b'"')?;
     std::str::from_utf8(&head[start..start + len]).ok()
 }
@@ -258,11 +277,11 @@ fn classify_timing_line(line: &str) -> Option<(i64, TimingLine)> {
         Some(at) => head.split_at(at),
         None => (head, &[][..]),
     };
-    let kind = match head_str(envelope, "type")? {
+    let kind = match head_str(envelope, b"\"type\":\"")? {
         "turn_context" => TimingLine::Boundary,
         "token_usage_record" => TimingLine::UsageRecord,
-        "response_item" => match head_str(payload, "type")? {
-            "message" => match head_str(payload, "role")? {
+        "response_item" => match head_str(payload, b"\"type\":\"")? {
+            "message" => match head_str(payload, b"\"role\":\"")? {
                 "assistant" => TimingLine::ModelOutput,
                 _ => TimingLine::Boundary,
             },
@@ -271,14 +290,14 @@ fn classify_timing_line(line: &str) -> Option<(i64, TimingLine)> {
             item if item.ends_with("_call") => TimingLine::ModelOutput,
             _ => return None,
         },
-        "event_msg" => match head_str(payload, "type")? {
+        "event_msg" => match head_str(payload, b"\"type\":\"")? {
             "task_started" | "turn_aborted" => TimingLine::TurnReset,
             "item_completed" => output_item_started_ms(line, payload)?,
             _ => return None,
         },
         _ => return None,
     };
-    let timestamp_ms = head_str(envelope, "timestamp").and_then(parse_timestamp_millis)?;
+    let timestamp_ms = head_str(envelope, b"\"timestamp\":\"").and_then(parse_timestamp_millis)?;
     Some((timestamp_ms, kind))
 }
 
@@ -287,7 +306,7 @@ fn classify_timing_line(line: &str) -> Option<(i64, TimingLine)> {
 /// 要解析整行；这类行很短（实测中位数约 400 字节）。
 fn output_item_started_ms(line: &str, payload_head: &[u8]) -> Option<TimingLine> {
     let item_at = find_bytes(payload_head, b"\"item\":{")?;
-    match head_str(&payload_head[item_at..], "type")? {
+    match head_str(&payload_head[item_at..], b"\"type\":\"")? {
         "Reasoning" | "AgentMessage" => {}
         _ => return None,
     }
@@ -462,6 +481,10 @@ struct ParsedCodexFile {
     /// UUID 一致，revert/resume 的双段文件名对应前置 UUID。
     meta_thread_id: Option<String>,
     root_meta_seen: bool,
+    bounded_history: Option<serde_json::Value>,
+    /// root meta 的 `ordinal` 正好等于 `forked_from_ordinal_exclusive`：分叉子
+    /// rollout 从父线程的截止序号接着编号，文件里只有分叉之后的记录。
+    starts_at_fork_ordinal: bool,
     root_timestamp: Option<DateTime<Utc>>,
     parent: ParentResolution,
     token_events: Vec<ParsedTokenEvent>,
@@ -949,7 +972,6 @@ fn signature_for_last_usage(usage: &CumulativeTokens) -> TokenUsageSignature {
 struct PendingUsageRecord {
     key: String,
     usage: CumulativeTokens,
-    line_offset: i64,
     timestamp: Option<String>,
     model: String,
 }
@@ -957,6 +979,7 @@ struct PendingUsageRecord {
 fn push_unmatched_usage(
     events: &mut Vec<ParsedTokenEvent>,
     pending: PendingUsageRecord,
+    flush_line_offset: i64,
     has_billable_tokens: &mut bool,
 ) {
     let delta = delta_from_usage(&pending.usage);
@@ -964,8 +987,13 @@ fn push_unmatched_usage(
         return;
     }
     *has_billable_tokens = true;
+    // 事件挂在补偿它的 token_count 行上而不是记录行：记录行可能在更早的
+    // 同步轮就被游标越过（首轮无可计费内容也推进游标），挂回记录行会被
+    // `line_offset <= last_offset` 门永久丢弃。配对 token_count 行必然晚于
+    // 任何已有游标（每轮全量重解析、追加写文件），且 `usage:<key>` 请求 ID
+    // 保证重解析不重复入账。
     events.push(ParsedTokenEvent {
-        line_offset: pending.line_offset,
+        line_offset: flush_line_offset,
         signature: signature_for_last_usage(&pending.usage),
         delta,
         event_index: None,
@@ -1244,6 +1272,8 @@ fn parse_codex_file_with_index(
     let mut reader = codex_rollout_file::reader_from_file(file_path, file)
         .map_err(|e| AppError::Config(format!("无法打开文件: {e}")))?;
     let mut root_meta_seen = false;
+    let mut bounded_history = None;
+    let mut starts_at_fork_ordinal = false;
     let mut root_timestamp = None;
     let mut meta_thread_id = None;
     let mut parent = ParentResolution::None;
@@ -1269,9 +1299,10 @@ fn parse_codex_file_with_index(
     let mut observed_bytes = 0i64;
     let mut has_billable_tokens = false;
     let mut timer = RequestTimer::default();
+    let mut bytes = Vec::new();
 
     loop {
-        let mut bytes = Vec::new();
+        bytes.clear();
         let read = reader
             .read_until(b'\n', &mut bytes)
             .map_err(|e| AppError::Config(format!("无法读取 Codex 日志: {e}")))?;
@@ -1281,14 +1312,15 @@ fn parse_codex_file_with_index(
         // A live writer may have only written part of the final JSON record.
         // Leave its line cursor unconsumed for the next file change, but retain
         // support for a complete final JSON record without a newline.
+        // Validate it without allocating a Value tree for a potentially huge body.
         if read == 0
             || (bytes.last() != Some(&b'\n')
-                && serde_json::from_slice::<serde_json::Value>(&bytes).is_err())
+                && serde_json::from_slice::<IgnoredJsonValue>(&bytes).is_err())
         {
             break;
         }
         line_offset += 1;
-        let line = match String::from_utf8(bytes) {
+        let line = match std::str::from_utf8(&bytes) {
             Ok(line) => line,
             Err(_) => continue,
         };
@@ -1296,23 +1328,13 @@ fn parse_codex_file_with_index(
             continue;
         }
 
-        timer.observe_line(&line);
+        timer.observe_line(line);
 
-        let is_event_msg = line.contains("\"event_msg\"");
-        let is_turn_context = line.contains("\"turn_context\"");
-        let is_session_meta = line.contains("\"session_meta\"");
-        let is_usage_record = line.contains("\"token_usage_record\"");
-        if !is_event_msg && !is_turn_context && !is_session_meta && !is_usage_record {
-            continue;
-        }
-        if is_event_msg
-            && !line.contains("\"token_count\"")
-            && !line.contains("\"thread_settings_applied\"")
-        {
+        if !is_usage_line(line) {
             continue;
         }
 
-        let value: serde_json::Value = match serde_json::from_str(&line) {
+        let value: serde_json::Value = match serde_json::from_str(line) {
             Ok(value) => value,
             Err(_) => continue,
         };
@@ -1326,6 +1348,15 @@ fn parse_codex_file_with_index(
                 root_timestamp = parse_timestamp(value.get("timestamp"));
                 let payload = value.get("payload").unwrap_or(&serde_json::Value::Null);
                 parent = explicit_parent_from_meta(payload);
+                bounded_history = payload.get("history_base").cloned();
+                starts_at_fork_ordinal = payload
+                    .get("forked_from_ordinal_exclusive")
+                    .and_then(serde_json::Value::as_u64)
+                    .is_some_and(|boundary| {
+                        boundary > 0
+                            && value.get("ordinal").and_then(serde_json::Value::as_u64)
+                                == Some(boundary)
+                    });
 
                 meta_thread_id = non_empty_string(
                     payload
@@ -1481,6 +1512,7 @@ fn parse_codex_file_with_index(
                         push_unmatched_usage(
                             &mut usage_record_events,
                             pending,
+                            line_offset,
                             &mut has_billable_tokens,
                         );
                     }
@@ -1618,7 +1650,6 @@ fn parse_codex_file_with_index(
                 pending_usage = Some(PendingUsageRecord {
                     key,
                     usage,
-                    line_offset,
                     timestamp: value
                         .get("timestamp")
                         .and_then(serde_json::Value::as_str)
@@ -1634,6 +1665,8 @@ fn parse_codex_file_with_index(
         root_thread_id,
         meta_thread_id,
         root_meta_seen,
+        bounded_history,
+        starts_at_fork_ordinal,
         root_timestamp,
         parent,
         token_events,
@@ -1676,6 +1709,160 @@ fn parent_signatures_before(
     load_parent_timeline(parent_path)?
         .signatures_before(parent_path, cutoff)
         .map_err(ParentSignatureError::content)
+}
+
+#[derive(Default)]
+struct ParentRecord {
+    timestamp: Option<serde_json::Value>,
+    event_type: Option<serde_json::Value>,
+    payload: Option<ParentPayload>,
+}
+
+#[derive(Default)]
+struct ParentPayload {
+    event_type: Option<serde_json::Value>,
+    info: Option<serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(field_identifier, rename_all = "snake_case")]
+enum ParentField {
+    Timestamp,
+    #[serde(rename = "type")]
+    EventType,
+    Payload,
+    Info,
+    #[serde(other)]
+    Other,
+}
+
+// Deserialize ignored values normally so invalid Unicode escapes, numeric
+// overflow, and excessive nesting retain Value's validation without its allocations.
+struct IgnoredJsonValue;
+
+impl<'de> Deserialize<'de> for IgnoredJsonValue {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(ObjectOrIgnored(Self))
+    }
+}
+
+// Preserve Value::get's permissive handling of non-object records/payloads.
+// Validate and discard them in one pass instead of rebuilding a full Value.
+struct ObjectOrIgnored<T>(T);
+
+impl<'de, T: serde::de::Visitor<'de, Value = T>> serde::de::Visitor<'de> for ObjectOrIgnored<T> {
+    type Value = T;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a JSON value")
+    }
+
+    fn visit_unit<E>(self) -> Result<T, E> {
+        Ok(self.0)
+    }
+
+    fn visit_bool<E>(self, _: bool) -> Result<T, E> {
+        Ok(self.0)
+    }
+
+    fn visit_i64<E>(self, _: i64) -> Result<T, E> {
+        Ok(self.0)
+    }
+
+    fn visit_u64<E>(self, _: u64) -> Result<T, E> {
+        Ok(self.0)
+    }
+
+    fn visit_f64<E>(self, _: f64) -> Result<T, E> {
+        Ok(self.0)
+    }
+
+    fn visit_str<E>(self, _: &str) -> Result<T, E> {
+        Ok(self.0)
+    }
+
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut sequence: A) -> Result<T, A::Error> {
+        while sequence.next_element::<IgnoredJsonValue>()?.is_some() {}
+        Ok(self.0)
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, map: A) -> Result<T, A::Error> {
+        self.0.visit_map(map)
+    }
+}
+
+impl<'de> serde::de::Visitor<'de> for IgnoredJsonValue {
+    type Value = Self;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a JSON value")
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self, A::Error> {
+        while map.next_key::<Self>()?.is_some() {
+            map.next_value::<Self>()?;
+        }
+        Ok(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for ParentRecord {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(ObjectOrIgnored(Self::default()))
+    }
+}
+
+impl<'de> serde::de::Visitor<'de> for ParentRecord {
+    type Value = Self;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a rollout record")
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(mut self, mut map: A) -> Result<Self, A::Error> {
+        while let Some(field) = map.next_key::<ParentField>()? {
+            match field {
+                ParentField::Timestamp => self.timestamp = map.next_value()?,
+                ParentField::EventType => self.event_type = map.next_value()?,
+                ParentField::Payload => self.payload = map.next_value()?,
+                _ => {
+                    map.next_value::<IgnoredJsonValue>()?;
+                }
+            }
+        }
+        Ok(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for ParentPayload {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(ObjectOrIgnored(Self::default()))
+    }
+}
+
+impl<'de> serde::de::Visitor<'de> for ParentPayload {
+    type Value = Self;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a rollout payload")
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(mut self, mut map: A) -> Result<Self, A::Error> {
+        while let Some(field) = map.next_key::<ParentField>()? {
+            match field {
+                ParentField::EventType => self.event_type = map.next_value()?,
+                ParentField::Info => self.info = map.next_value()?,
+                _ => {
+                    map.next_value::<IgnoredJsonValue>()?;
+                }
+            }
+        }
+        Ok(self)
+    }
+}
+
+fn parse_parent_record(line: &str) -> Result<ParentRecord, serde_json::Error> {
+    serde_json::from_str(line)
 }
 
 /// 读取（或命中缓存）父 rollout 单个文件的完整 token 时间线。
@@ -1734,25 +1921,31 @@ fn load_parent_timeline(
         let Ok(line) = std::str::from_utf8(&bytes) else {
             continue;
         };
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+        let Ok(record) = parse_parent_record(line) else {
             continue;
         };
-        let timestamp = parse_timestamp(value.get("timestamp"));
+        let timestamp = parse_timestamp(record.timestamp.as_ref());
         if let Some(timestamp) = timestamp {
             max_timestamp = Some(max_timestamp.map_or(timestamp, |current| current.max(timestamp)));
         }
-        if value.get("type").and_then(serde_json::Value::as_str) != Some("event_msg")
-            || value
-                .get("payload")
-                .and_then(|payload| payload.get("type"))
+        if record
+            .event_type
+            .as_ref()
+            .and_then(serde_json::Value::as_str)
+            != Some("event_msg")
+            || record
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.event_type.as_ref())
                 .and_then(serde_json::Value::as_str)
                 != Some("token_count")
         {
             continue;
         }
-        let Some(info) = value
-            .get("payload")
-            .and_then(|payload| payload.get("info"))
+        let Some(info) = record
+            .payload
+            .as_ref()
+            .and_then(|payload| payload.info.as_ref())
             .filter(|info| !info.is_null())
         else {
             continue;
@@ -1979,6 +2172,144 @@ fn update_codex_sync_state(
     Ok(())
 }
 
+/// Every billable event is the child's own request: exact `last_token_usage`
+/// and a timestamp after the fork. Copied parent history fails the time check.
+fn child_events_after_fork(parsed: &ParsedCodexFile) -> Option<()> {
+    let cutoff = parsed.root_timestamp?;
+    for event in parsed
+        .token_events
+        .iter()
+        .chain(&parsed.usage_record_events)
+    {
+        let last = event.signature.last.as_ref()?;
+        if last.input.is_none()
+            || last.output.is_none()
+            || DateTime::parse_from_rfc3339(event.timestamp.as_deref()?)
+                .ok()?
+                .with_timezone(&Utc)
+                <= cutoff
+        {
+            return None;
+        }
+    }
+    Some(())
+}
+
+// Codex 0.167+ forks/resumes of a finished thread number the child's records
+// from the parent's cutoff (`ordinal == forked_from_ordinal_exclusive`) and do
+// not copy the parent history, so there is nothing to replay. Accept them
+// without waiting for the parent to reach the fork time, which an idle parent
+// never does.
+fn verified_ordinal_fork(parsed: &ParsedCodexFile) -> bool {
+    matches!(parsed.parent, ParentResolution::Parent(_))
+        && parsed.starts_at_fork_ordinal
+        && !parsed.token_events.is_empty()
+        && child_events_after_fork(parsed).is_some()
+}
+
+// A bounded-reference fork stores only its own requests. Accept this narrow case
+// only with a complete physical prefix and an exact inherited counter baseline.
+// Otherwise retain the existing replay/deferred path. Never rewrite rollout data.
+fn verified_bounded_fork(parsed: &ParsedCodexFile, index: &RolloutIndex) -> bool {
+    use std::io::Read;
+
+    (|| {
+        let ParentResolution::Parent(parent_id) = &parsed.parent else {
+            return None;
+        };
+        let hb = parsed.bounded_history.as_ref()?;
+        if hb.get("thread_id")?.as_str()? != parent_id {
+            return None;
+        }
+        let end = hb.get("end_byte_offset")?.as_u64()?;
+        let count = hb.get("end_ordinal_exclusive")?.as_u64()?;
+        if end == 0 || end > 64 * 1024 * 1024 || count == 0 {
+            return None;
+        }
+        let first = parsed.token_events.first()?;
+        // Reject copied/replayed history, cumulative-only accounting and invalid timestamps.
+        // Fallback usage records also belong to this child only when their own
+        // timestamps are after the fork. Keep their native response-based IDs.
+        child_events_after_fork(parsed)?;
+        let total = first.signature.total.as_ref()?;
+        let last = first.signature.last.as_ref()?;
+        let baseline = TokenCountersSignature {
+            input: Some(total.input?.checked_sub(last.input?)?),
+            cached_input: Some(total.cached_input?.checked_sub(last.cached_input?)?),
+            output: Some(total.output?.checked_sub(last.output?)?),
+            reasoning_output: Some(
+                total
+                    .reasoning_output?
+                    .checked_sub(last.reasoning_output?)?,
+            ),
+            total: Some(total.total?.checked_sub(last.total?)?),
+        };
+        let mut found = false;
+        for path in index.get(parent_id)? {
+            // The reference identifies one physical rollout, not all logical pages.
+            if thread_id_from_filename(path).as_deref() != Some(parent_id) {
+                continue;
+            }
+            let file = fs::File::open(path).ok()?;
+            let stamp = ParentFileStamp::from_file(&file)?;
+            let mut reader = codex_rollout_file::reader_from_file(path, file).ok()?;
+            let mut used = 0u64;
+            let mut ordinal = 0u64;
+            let mut first_record = true;
+            let mut parent_total = None;
+            while used < end {
+                let mut bytes = Vec::new();
+                let n = reader
+                    .by_ref()
+                    .take(end - used)
+                    .read_until(b'\n', &mut bytes)
+                    .ok()?;
+                if n == 0 || bytes.last() != Some(&b'\n') {
+                    return None;
+                }
+                used += n as u64;
+                let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+                if first_record {
+                    ordinal = value.get("ordinal")?.as_u64()?;
+                    let inherited = value
+                        .pointer("/payload/history_base/end_ordinal_exclusive")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    if ordinal != inherited
+                        || value.get("type")?.as_str()? != "session_meta"
+                        || value.pointer("/payload/id")?.as_str()? != parent_id
+                    {
+                        return None;
+                    }
+                    first_record = false;
+                }
+                if value.get("ordinal")?.as_u64()? != ordinal {
+                    return None;
+                }
+                ordinal = ordinal.checked_add(1)?;
+                if value.get("type").and_then(|v| v.as_str()) == Some("event_msg")
+                    && value.pointer("/payload/type").and_then(|v| v.as_str())
+                        == Some("token_count")
+                {
+                    if let Some(v) = value.pointer("/payload/info/total_token_usage") {
+                        parent_total = parse_signature_counters(Some(v));
+                    }
+                }
+            }
+            let after = fs::File::open(path).ok()?;
+            if ParentFileStamp::from_file(&after)? != stamp {
+                return None;
+            }
+            if used != end || ordinal != count || parent_total.as_ref() != Some(&baseline) {
+                return None;
+            }
+            found = true;
+        }
+        found.then_some(())
+    })()
+    .is_some()
+}
+
 /// 同步单个 Codex JSONL 文件。
 fn sync_single_codex_file(
     db: &Database,
@@ -2089,6 +2420,11 @@ fn sync_single_codex_file(
                 file_size,
                 pending_reason,
             ));
+        }
+        ParentResolution::Parent(_)
+            if verified_ordinal_fork(&parsed) || verified_bounded_fork(&parsed, rollout_index) =>
+        {
+            0
         }
         ParentResolution::Parent(parent_id) => {
             let Some(cutoff) = parsed.root_timestamp else {
@@ -2315,6 +2651,7 @@ fn insert_codex_session_entry_on_conn(
 
     let dedup_key = DedupKey {
         app_type: "codex",
+        data_source: "codex_session",
         model,
         input_tokens: delta.input,
         output_tokens: delta.output,
@@ -2425,6 +2762,163 @@ mod tests {
     use crate::services::session_usage::get_sync_state;
     use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_LEGACY;
     use tempfile::tempdir;
+
+    #[test]
+    fn test_usage_line_filter_preserves_existing_predicate() {
+        let tags = [
+            "\"event_msg\"",
+            "\"turn_context\"",
+            "\"session_meta\"",
+            "\"token_usage_record\"",
+            "\"token_count\"",
+            "\"thread_settings_applied\"",
+        ];
+        for mask in 0..(1 << tags.len()) {
+            let line = tags
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| mask & (1 << index) != 0)
+                .map(|(_, tag)| *tag)
+                .collect::<Vec<_>>()
+                .join(" ");
+            let event = line.contains(tags[0]);
+            let expected = (event
+                || line.contains(tags[1])
+                || line.contains(tags[2])
+                || line.contains(tags[3]))
+                && (!event || line.contains(tags[4]) || line.contains(tags[5]));
+            assert_eq!(is_usage_line(&line), expected, "tag mask {mask}");
+        }
+    }
+
+    #[test]
+    fn test_parent_record_preserves_value_projection() {
+        let records = [
+            r#"{"timestamp":"2026-07-10T03:00:01Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100}}}}"#,
+            r#"{"payload":{"info":{"last_token_usage":{"output_tokens":10}},"type":"token_count"},"type":"event_msg","timestamp":"2026-07-10T03:00:01Z"}"#,
+            r#"{"timestamp":1,"type":false,"payload":{"type":[],"info":{}}}"#,
+            r#"{"timestamp":"2026-07-10T03:00:01Z","payload":"legacy payload"}"#,
+            r#"{"timestamp":"2026-07-10T03:00:01Z","payload":[]}"#,
+            r#"{"timestamp":"2026-07-10T03:00:01Z","payload":[{"type":"token_count","info":{}},true,1.5,"text",null]}"#,
+            r#"{"payload":false,"payload":{"type":"token_count","info":{}}}"#,
+            r#"{"payload":[1,2,3],"payload":{"type":"token_count","info":{}}}"#,
+            r#"{"payload":{"type":"token_count","info":{}},"payload":42}"#,
+            r#"{"payload":{"type":"token_count","info":{}},"payload":[{"type":"token_count","info":{}}]}"#,
+            r#"{"type":"response_item","type":"event_msg","timestamp":null,"timestamp":"2026-07-10T03:00:01Z","payload":{"type":"token_count","info":{}}}"#,
+            r#"{"payload":{"type":"message","type":"token_count","info":{"old":1},"info":{"last_token_usage":{}}},"type":"event_msg"}"#,
+            r#"{"payload":{"type":"token_count","info":{}},"payload":null}"#,
+            r#"{"payload":null,"payload":{"type":"token_count","info":{}}}"#,
+            r#"{"timestamp":null,"type":null,"payload":{"type":null,"info":null}}"#,
+            r#"{"unknown":{"nested":[1,true,null,"text"]}}"#,
+            "[]",
+            r#"[{"timestamp":"2026-07-10T03:00:01Z","payload":{"type":"token_count","info":{}}}]"#,
+            r#""legacy record""#,
+            "true",
+            "-1",
+            "18446744073709551615",
+            "1.5",
+            "null",
+        ];
+        for line in records {
+            let value: serde_json::Value = serde_json::from_str(line).unwrap();
+            let record = parse_parent_record(line).unwrap();
+            assert_eq!(
+                parse_timestamp(record.timestamp.as_ref()),
+                parse_timestamp(value.get("timestamp"))
+            );
+            assert_eq!(
+                record
+                    .event_type
+                    .as_ref()
+                    .and_then(serde_json::Value::as_str),
+                value.get("type").and_then(serde_json::Value::as_str)
+            );
+            assert_eq!(
+                record
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.event_type.as_ref())
+                    .and_then(serde_json::Value::as_str),
+                value
+                    .get("payload")
+                    .and_then(|payload| payload.get("type"))
+                    .and_then(serde_json::Value::as_str)
+            );
+            assert_eq!(
+                record
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.info.as_ref())
+                    .filter(|info| !info.is_null()),
+                value
+                    .get("payload")
+                    .and_then(|payload| payload.get("info"))
+                    .filter(|info| !info.is_null())
+            );
+        }
+        for line in [
+            r#"{"timestamp":"2026-07-10T03:00:01Z","payload":{ "#,
+            r#"{"timestamp":"2026-07-10T03:00:01Z","ignored":{"text":"\ud800"}}"#,
+            r#"{"timestamp":"2026-07-10T03:00:01Z","payload":{"text":"\udc00"}}"#,
+            r#"{"timestamp":"2026-07-10T03:00:01Z","ignored":[1e999]}"#,
+            r#"{"payload":["\ud800"],"payload":{"type":"token_count","info":{}}}"#,
+            r#"{"payload":[1e999],"payload":null}"#,
+            r#"{"payload":[{"\udc00":null}]}"#,
+            r#"["\ud800"]"#,
+            "{} {}",
+        ] {
+            assert!(serde_json::from_str::<serde_json::Value>(line).is_err());
+            assert!(parse_parent_record(line).is_err());
+        }
+    }
+
+    #[test]
+    fn test_projected_json_preserves_value_validation() {
+        // Exercise all three validation paths: a top-level non-object, a legacy
+        // payload, and an ignored field. Even overwritten values must be valid.
+        let values = [
+            "null",
+            "true",
+            "false",
+            "0",
+            "-1",
+            "1.5",
+            "1e300",
+            "1e999",
+            "18446744073709551616",
+            r#""\ud83d\ude00""#,
+            r#""\ud800""#,
+            r#""\udc00""#,
+            r#"{"\ud800":0}"#,
+            "[1,]",
+            "{\"a\":}",
+            "01",
+            "",
+        ];
+        let nested =
+            (125..=130).map(|depth| format!("{}0{}", "[".repeat(depth), "]".repeat(depth)));
+        for value in values.iter().map(|value| value.to_string()).chain(nested) {
+            for line in [
+                value.clone(),
+                format!(r#"{{"payload":{value},"payload":null}}"#),
+                format!(r#"{{"ignored":{value}}}"#),
+                format!(r#"{{"payload":{{"ignored":{value}}}}}"#),
+            ] {
+                let expected = serde_json::from_str::<serde_json::Value>(&line).is_ok();
+                assert_eq!(parse_parent_record(&line).is_ok(), expected, "{line}");
+                assert_eq!(
+                    serde_json::from_slice::<IgnoredJsonValue>(line.as_bytes()).is_ok(),
+                    expected,
+                    "{line}"
+                );
+            }
+        }
+        // from_slice must reject invalid UTF-8 too, including object keys.
+        for line in [b"\"\xff\"".as_slice(), b"{\"\xff\":0}", b"[\"\xff\"]"] {
+            assert!(serde_json::from_slice::<serde_json::Value>(line).is_err());
+            assert!(serde_json::from_slice::<IgnoredJsonValue>(line).is_err());
+        }
+    }
 
     const PARENT_ID: &str = "00000000-0000-4000-8000-000000000001";
     const CHILD_A_ID: &str = "00000000-0000-4000-8000-000000000002";
@@ -2722,6 +3216,60 @@ mod tests {
     }
 
     #[test]
+    fn remote_compaction_usage_record_survives_a_sync_pass_before_its_token_count(
+    ) -> Result<(), AppError> {
+        // The usage record and its compensating zero-last token_count can land
+        // in different sync passes (the token_count may lag by the whole tool
+        // execution window). The first pass has nothing billable and advances
+        // the cursor past the record; the compensating event must still be
+        // imported by the pass that finally sees the token_count.
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let path = rollout_path(temp.path(), PARENT_ID);
+        write_jsonl(
+            &path,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_usage_record_at("resp_compact", 26_705, 0, 491, "2026-07-10T03:00:02Z"),
+            ],
+        );
+
+        let first = sync_test_file(&db, &path, &[&path])?;
+        assert_eq!(first.imported, 0, "nothing billable yet");
+
+        append_jsonl(
+            &path,
+            token_count_with_last_at(0, 0, 0, 0, 0, 0, "default", "2026-07-10T03:05:02Z"),
+        );
+
+        let second = sync_test_file(&db, &path, &[&path])?;
+        assert_eq!(
+            second.imported, 1,
+            "compaction usage must be imported once its token_count arrives"
+        );
+        let rows = codex_usage_rows(&db)?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1, 26_705);
+        assert_eq!(rows[0].2, 491);
+        assert!(rows[0].0.ends_with(":usage:resp_compact"));
+
+        // A later pass that reparses the file (any new content) must not bill
+        // the compensating event again: the record is re-discovered on every
+        // reparse, so the line-offset gate plus the `usage:<key>` request id
+        // are what keep it at exactly one row.
+        append_jsonl(
+            &path,
+            token_count_with_last_at(0, 0, 0, 0, 0, 0, "default", "2026-07-10T03:06:02Z"),
+        );
+        let third = sync_test_file(&db, &path, &[&path])?;
+        assert_eq!(third.imported, 0, "compensating event must not re-import");
+        let rows = codex_usage_rows(&db)?;
+        assert_eq!(rows.len(), 1);
+        Ok(())
+    }
+
+    #[test]
     fn usage_record_covered_by_token_count_is_not_imported_twice() -> Result<(), AppError> {
         let db = Database::memory()?;
         let temp = tempdir().unwrap();
@@ -2825,6 +3373,213 @@ mod tests {
             changes_after, changes_before,
             "unchanged file rewrote its cursor"
         );
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_bounded_idle_fork_recovery_and_append() -> Result<(), AppError> {
+        for inherited in [0, 100] {
+            clear_codex_replay_caches();
+            let db = Database::memory()?;
+            let dir = tempdir().unwrap();
+            let parent = rollout_path(dir.path(), PARENT_ID);
+            let child = rollout_path(dir.path(), CHILD_A_ID);
+            let mut records = vec![
+                session_meta(PARENT_ID),
+                token_count_at(1000, 900, 100, "2026-07-10T03:00:01Z"),
+            ];
+            for (i, v) in records.iter_mut().enumerate() {
+                v["ordinal"] = serde_json::json!(i + inherited);
+            }
+            records[0]["payload"]["history_base"] =
+                serde_json::json!({"end_ordinal_exclusive":inherited});
+            write_jsonl(&parent, &records);
+            let mut meta = paginated_session_meta_at(
+                CHILD_A_ID,
+                Some(PARENT_ID),
+                None,
+                Some(PARENT_ID),
+                "2026-07-10T03:00:20Z",
+            );
+            meta["payload"]["history_base"]["end_byte_offset"] =
+                serde_json::json!(fs::metadata(&parent).unwrap().len());
+            meta["payload"]["history_base"]["end_ordinal_exclusive"] =
+                serde_json::json!(inherited + 2);
+            let mut event = token_count_at(1200, 1000, 120, "2026-07-10T03:00:25Z");
+            event["payload"]["info"]["last_token_usage"] = serde_json::json!({"input_tokens":200,"cached_input_tokens":100,"output_tokens":20,"reasoning_output_tokens":0,"total_tokens":220});
+            write_jsonl(&child, &[meta.clone(), turn_context(), event.clone()]);
+            let files = [&parent as &Path, &child as &Path];
+            let result = sync_test_file(&db, &child, &files)?;
+            assert!(!result.deferred);
+            assert_eq!(result.imported, 1);
+            clear_codex_replay_caches();
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+            {
+                let conn = lock_conn!(db.conn);
+                conn.execute("DELETE FROM session_log_sync", [])?;
+            }
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+            // A repeated quota snapshot is not a second request.
+            append_jsonl(&child, event.clone());
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+            event["timestamp"] = serde_json::json!("2026-07-10T03:00:30Z");
+            event["payload"]["info"]["total_token_usage"]["input_tokens"] = serde_json::json!(1400);
+            event["payload"]["info"]["total_token_usage"]["total_tokens"] = serde_json::json!(1520);
+            append_jsonl(&child, event);
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 1);
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+            // Invalid bounded references must retain the safe deferred behavior.
+            for key in ["end_byte_offset", "end_ordinal_exclusive"] {
+                let mut broken = meta.clone();
+                broken["payload"]["history_base"][key] = serde_json::json!(1);
+                let mut parsed = parse_codex_file(&child, Some(CHILD_A_ID.into()))?;
+                parsed.bounded_history = broken["payload"].get("history_base").cloned();
+                assert!(!verified_bounded_fork(
+                    &parsed,
+                    &build_rollout_index(&[parent.clone(), child.clone()])
+                ));
+            }
+            let index = build_rollout_index(&[parent.clone(), child.clone()]);
+            let mut parsed = parse_codex_file(&child, Some(CHILD_A_ID.into()))?;
+            parsed.token_events[0]
+                .signature
+                .last
+                .as_mut()
+                .unwrap()
+                .input = Some(999);
+            assert!(!verified_bounded_fork(&parsed, &index));
+            let mut parsed = parse_codex_file(&child, Some(CHILD_A_ID.into()))?;
+            parsed.token_events[0].timestamp = Some("2026-07-10T03:00:01Z".into());
+            assert!(!verified_bounded_fork(&parsed, &index));
+            let mut parsed = parse_codex_file(&child, Some(CHILD_A_ID.into()))?;
+            parsed.token_events[0].signature.last = None;
+            assert!(!verified_bounded_fork(&parsed, &index));
+            // Remote compaction uses a standalone record followed by a zero-last
+            // snapshot. It must not block the entire bounded fork or be counted twice.
+            let usage =
+                token_usage_record_at("bounded_compaction", 300, 100, 20, "2026-07-10T03:00:35Z");
+            let zero = token_count_with_last_at(
+                1400,
+                1000,
+                120,
+                0,
+                0,
+                0,
+                "default",
+                "2026-07-10T03:00:36Z",
+            );
+            append_jsonl(&child, usage.clone());
+            append_jsonl(&child, zero.clone());
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 1);
+            append_jsonl(&child, usage);
+            append_jsonl(&child, zero);
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+            {
+                let conn = lock_conn!(db.conn);
+                conn.execute("DELETE FROM session_log_sync", [])?;
+            }
+            clear_codex_replay_caches();
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+            // Only the child's two requests and one compaction are billable.
+            // Replaying the file must neither import the parent baseline nor rebill the child.
+            let totals: (i64, i64, i64, i64) = {
+                let conn = lock_conn!(db.conn);
+                conn.query_row(
+                    "SELECT count(*), sum(input_tokens), sum(cache_read_tokens), sum(output_tokens)
+                     FROM proxy_request_logs WHERE data_source = 'codex_session'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )?
+            };
+            assert_eq!(totals, (3, 700, 300, 60));
+            let mut parsed = parse_codex_file(&child, Some(CHILD_A_ID.into()))?;
+            parsed.usage_record_events[0].timestamp = Some("2026-07-10T03:00:01Z".into());
+            assert!(!verified_bounded_fork(&parsed, &index));
+            parsed.usage_record_events[0].timestamp = None;
+            assert!(!verified_bounded_fork(&parsed, &index));
+        }
+        Ok(())
+    }
+
+    // Codex 0.167 resume/fork of a finished thread: single-UUID child rollout
+    // whose records are numbered from the parent cutoff. The parent never
+    // reaches the child's session_meta time, so the timestamp-aligned path
+    // defers it forever. See #9420.
+    #[test]
+    #[serial_test::serial]
+    fn test_ordinal_fork_after_finished_parent_is_imported() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let dir = tempdir().unwrap();
+        let parent = rollout_path(dir.path(), PARENT_ID);
+        let child = rollout_path(dir.path(), CHILD_A_ID);
+        write_jsonl(
+            &parent,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(1000, 800, 100, "2026-07-10T03:00:01Z"),
+            ],
+        );
+        // The child numbers its own records from the parent cutoff and copies
+        // no parent history, so there is nothing to replay.
+        let mut meta = session_meta_at(CHILD_A_ID, Some(PARENT_ID), None, "2026-07-10T03:00:20Z");
+        meta["ordinal"] = serde_json::json!(5);
+        meta["payload"]["forked_from_ordinal_exclusive"] = serde_json::json!(5);
+        let event = token_count_with_last_at(
+            1200,
+            1000,
+            120,
+            200,
+            200,
+            20,
+            "default",
+            "2026-07-10T03:00:25Z",
+        );
+        write_jsonl(&child, &[meta.clone(), turn_context(), event.clone()]);
+        let files = [&parent as &Path, &child as &Path];
+        let result = sync_test_file(&db, &child, &files)?;
+        assert!(!result.deferred);
+        assert_eq!(result.imported, 1);
+        assert_eq!(
+            codex_usage_rows(&db)?,
+            vec![(
+                format!("{}:{}:{}", CODEX_THREAD_REQUEST_ID_PREFIX, CHILD_A_ID, 1),
+                200,
+                20
+            )]
+        );
+        assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+        clear_codex_replay_caches();
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute("DELETE FROM session_log_sync", [])?;
+        }
+        // A full replay must not bill the inherited total again.
+        assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+        // The parent must not be needed at all: an idle parent that never
+        // reaches the fork time no longer blocks the child.
+        assert_eq!(sync_test_file(&db, &child, &[&child as &Path])?.imported, 0);
+
+        // Any other shape keeps the timestamp-aligned path: no ordinal boundary.
+        let mut no_boundary = meta.clone();
+        no_boundary["payload"]
+            .as_object_mut()
+            .unwrap()
+            .remove("forked_from_ordinal_exclusive");
+        let mut copied = meta.clone();
+        copied["ordinal"] = serde_json::json!(0);
+        for (variant, records) in [
+            (no_boundary, vec![turn_context(), event.clone()]),
+            (copied, vec![turn_context(), event.clone()]),
+        ] {
+            let path = rollout_path(dir.path(), "00000000-0000-4000-8000-000000000009");
+            write_jsonl(
+                &path,
+                &std::iter::once(variant).chain(records).collect::<Vec<_>>(),
+            );
+            let result = sync_test_file(&db, &path, &[&parent as &Path, &path])?;
+            assert!(result.deferred, "unexpected import for {}", path.display());
+        }
         Ok(())
     }
 
@@ -2947,6 +3702,52 @@ mod tests {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )?;
         assert_eq!(totals, (2, 250, 30));
+        Ok(())
+    }
+
+    #[test]
+    fn test_final_record_validation_preserves_cursor() -> Result<(), AppError> {
+        let large_body = format!(
+            r#"{{"type":"response_item","payload":{{"content":[{}]}}}}"#,
+            vec![r#"{"text":"tool output","nested":[1,true,null]}"#; 2048].join(",")
+        );
+        let cases: &[(&[u8], bool)] = &[
+            (large_body.as_bytes(), true),
+            (br#"{"ignored":"\ud83d\ude00"} "#, true),
+            (br#"{"ignored":"\ud800"}"#, false),
+            (br#"{"ignored":[1e999]}"#, false),
+            (b"{\"ignored\":\"\xff\"}", false),
+            (br#"{"ignored":[1,"#, false),
+        ];
+        for compressed in [false, true] {
+            for &(tail, complete) in cases {
+                let dir = tempdir().unwrap();
+                let file = rollout_path(dir.path(), PARENT_ID);
+                write_jsonl(
+                    &file,
+                    &[
+                        session_meta(PARENT_ID),
+                        turn_context(),
+                        token_count(100, 50, 10),
+                    ],
+                );
+                let mut contents = fs::read(&file).unwrap();
+                contents.extend_from_slice(tail);
+                fs::write(&file, contents).unwrap();
+                let file = if compressed {
+                    compress_rollout(&file)
+                } else {
+                    file
+                };
+                let parsed = parse_codex_file(&file, Some(PARENT_ID.into()))?;
+                assert_eq!(parsed.line_offset, 3 + i64::from(complete));
+                assert_eq!(
+                    parsed.observed_bytes as u64,
+                    fs::metadata(&file).unwrap().len()
+                );
+                assert_eq!(parsed.token_events.len(), 1);
+            }
+        }
         Ok(())
     }
 
@@ -4030,6 +4831,25 @@ mod tests {
         supported
     }
 
+    /// 能不能区分「大小、修改时间都相同的两个文件」：要文件系统提供文件身份。
+    /// Windows 访问 9P 共享（`\\wsl.localhost\...`）时没有文件 ID，只比较时间和大小。
+    fn same_size_same_mtime_replacement_detectable(path: &Path) -> bool {
+        let Some(stamp) = ParentFileStamp::from_file(&fs::File::open(path).unwrap()) else {
+            eprintln!("no file stamp for {}; skipping", path.display());
+            return false;
+        };
+        #[cfg(windows)]
+        if stamp.identity.is_none() {
+            eprintln!(
+                "no file ID for {}; same-size same-mtime replacement is undetectable, skipping",
+                path.display()
+            );
+            return false;
+        }
+        let _ = stamp;
+        true
+    }
+
     /// 缓存是进程级的，`serial` 只互斥带标记的测试：不带标记的测试（如续写页
     /// 解析会经 `load_parent_timeline` 缓存前序页）可能同时写入别的条目。
     /// 数条目时只数本测试临时目录下的键，不数全局总数。
@@ -4254,7 +5074,7 @@ mod tests {
         let values = [session_meta(PARENT_ID), token_count(100, 50, 10)];
         write_jsonl(&parent, &values);
         write_jsonl(&replacement, &values);
-        if !parent_cache_supported(&parent) {
+        if !same_size_same_mtime_replacement_detectable(&parent) {
             return;
         }
         let original_file = fs::File::open(&parent).unwrap();
@@ -5181,7 +6001,7 @@ mod tests {
         let db = Database::memory()?;
         let temp = tempdir().unwrap();
         let (parent, child) = retryable_parent_and_child(temp.path());
-        if !parent_cache_supported(&parent) {
+        if !same_size_same_mtime_replacement_detectable(&parent) {
             return Ok(());
         }
         assert!(sync_test_file(&db, &child, &[&parent, &child])?.deferred);
@@ -5302,7 +6122,7 @@ mod tests {
         let db = Database::memory()?;
         let temp = tempdir().unwrap();
         let (parent, child) = retryable_parent_and_child(temp.path());
-        if !parent_cache_supported(&child) {
+        if !same_size_same_mtime_replacement_detectable(&child) {
             return Ok(());
         }
         assert!(sync_test_file(&db, &child, &[&parent, &child])?.deferred);
@@ -5917,9 +6737,10 @@ mod tests {
 
     /// 真实语料回放验收 harness（仅手动运行，勿在 CI 跑）。
     ///
-    /// 把真实 `~/.codex/sessions` 语料在内存库上做一次全量重导，输出计时与
+    /// 把真实 `~/.codex/sessions` 和 `archived_sessions` 在内存库上全量重导，输出计时与
     /// 结果快照。用于性能改动的行为等价验证：改动前后各跑一次，两侧
     /// `CODEX_REPLAY_OUT` 文件必须逐字节相同。
+    /// `CODEX_REPLAY_ROOT` 可指定包含这两个目录的固定语料快照。
     ///
     /// ```bash
     /// CODEX_REPLAY_OUT=/tmp/replay.tsv \
@@ -5932,7 +6753,10 @@ mod tests {
             eprintln!("[REPLAY] no home dir, skipping");
             return Ok(());
         };
-        let real_sessions = real_home.join(".codex").join("sessions");
+        let real_codex = std::env::var_os("CODEX_REPLAY_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| real_home.join(".codex"));
+        let real_sessions = real_codex.join("sessions");
         if !real_sessions.is_dir() {
             eprintln!("[REPLAY] {} not found, skipping", real_sessions.display());
             return Ok(());
@@ -5943,8 +6767,13 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp home");
         fs::create_dir_all(temp.path().join(".codex")).expect("mkdir .codex");
         #[cfg(unix)]
-        std::os::unix::fs::symlink(&real_sessions, temp.path().join(".codex").join("sessions"))
-            .expect("symlink sessions");
+        for directory in ["sessions", "archived_sessions"] {
+            let source = real_codex.join(directory);
+            if source.is_dir() {
+                std::os::unix::fs::symlink(&source, temp.path().join(".codex").join(directory))
+                    .expect("symlink rollout directory");
+            }
+        }
         let previous_home = std::env::var_os("CC_SWITCH_TEST_HOME");
         std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
 

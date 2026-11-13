@@ -21,10 +21,10 @@ describe("TheRouter OpenCode and OpenClaw presets", () => {
       "https://api.therouter.ai/v1",
     );
     expect(preset?.settingsConfig.options?.setCacheKey).toBe(true);
-    expect(models).toHaveProperty("openai/gpt-5.3-codex");
-    expect(models).toHaveProperty("anthropic/claude-sonnet-5");
-    expect(models).toHaveProperty("google/gemini-3.6-flash");
-    expect(models["google/gemini-3.6-flash"]?.name).toBe("Gemini 3.6 Flash");
+    expect(models).toHaveProperty("openai/gpt-6.1-sol");
+    expect(models).toHaveProperty("anthropic/claude-sonnet-5-5");
+    expect(models).toHaveProperty("google/gemini-3.8-flash");
+    expect(models["google/gemini-3.8-flash"]?.name).toBe("Gemini 3.8 Flash");
   });
 
   it("uses OpenAI completions config for OpenClaw", () => {
@@ -42,23 +42,23 @@ describe("TheRouter OpenCode and OpenClaw presets", () => {
     expect(preset?.settingsConfig.api).toBe("openai-completions");
     expect(modelIds).toEqual(
       expect.arrayContaining([
-        "anthropic/claude-sonnet-5",
-        "openai/gpt-5.3-codex",
-        "openai/gpt-5.2",
-        "google/gemini-3.6-flash",
+        "anthropic/claude-sonnet-5-5",
+        "openai/gpt-6.1-sol",
+        "openai/gpt-6-astra",
+        "google/gemini-3.8-flash",
       ]),
     );
     expect(
-      openClawModels.find((model) => model.id === "google/gemini-3.6-flash"),
+      openClawModels.find((model) => model.id === "google/gemini-3.8-flash"),
     ).toMatchObject({
-      name: "Gemini 3.6 Flash",
+      name: "Gemini 3.8 Flash",
       cost: { input: 1.5, output: 9, cacheRead: 0.15 },
     });
     expect(preset?.suggestedDefaults?.model).toEqual({
-      primary: "therouter/anthropic/claude-sonnet-5",
+      primary: "therouter/anthropic/claude-sonnet-5-5",
       fallbacks: [
-        "therouter/openai/gpt-5.2",
-        "therouter/google/gemini-3.6-flash",
+        "therouter/openai/gpt-6-astra",
+        "therouter/google/gemini-3.8-flash",
       ],
     });
   });

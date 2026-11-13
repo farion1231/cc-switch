@@ -32,7 +32,6 @@ pub const CLAUDE_FLOOR_ENV_PREFIXES: &[&str] = &["ANTHROPIC_", "AWS_", "VERTEX_R
 /// `env` 里按名字列出的关键字段（协议选择器之外）。
 pub const CLAUDE_FLOOR_ENV_KEYS: &[&str] = &[
     "CLAUDE_CODE_SUBAGENT_MODEL",
-    "CLAUDE_CODE_SUBAGENT_MODEL_FORCE",
     "CLOUD_ML_REGION",
     // Vertex 的凭据路径。
     "GOOGLE_APPLICATION_CREDENTIALS",
@@ -98,6 +97,8 @@ pub const CLAUDE_EXCLUSIVE_ENV: &[&str] = &[
     "CLAUDE_CODE_ALWAYS_ENABLE_EFFORT",
     "CLAUDE_CODE_EXTRA_BODY",
     "CLAUDE_CODE_ENABLE_FINE_GRAINED_TOOL_STREAMING",
+    // 调整子代理模型的选取顺序。
+    "CLAUDE_CODE_SUBAGENT_MODEL_FORCE",
     // auto mode 的服务端分类器只有官方端点支持；网关场景要设 0，否则会话被
     // 阻断式提示卡住（官方文档给代理、网关的兼容选项）。
     "CLAUDE_CODE_AUTO_MODE_SERVER",
@@ -125,6 +126,9 @@ pub const CODEX_FLOOR_TOP: &[&str] = &[
     "review_model",
     "model_reasoning_effort",
     "plan_mode_reasoning_effort",
+    // Codex 0.167 起不认（早在 2025-09 就恒发 `store: false`），留着每次开会话都报
+    // 「unrecognized configuration setting」。不再投影，留在这里是为了写入时把旧版写进
+    // live 的这一行清掉。
     "disable_response_storage",
     "model_catalog_json",
     // 兜底写法会把 Key 写在顶层。
@@ -191,7 +195,7 @@ pub const DESKTOP_PROFILE_FLOOR: &[&str] = &[
     "inferenceGatewayApiKey",
     "inferenceGatewayAuthScheme",
     "inferenceModels",
-    // 聚合模式写 false（列表完全由 CC Switch 决定），其余模式清掉
+    // 路由 / 聚合模式写 true（只为让本地 /v1/models 补上模型说明），直连模式清掉
     "modelDiscoveryEnabled",
 ];
 
