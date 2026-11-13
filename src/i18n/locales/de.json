@@ -5382,5 +5382,16 @@
       "managedHint": "Dieses Konto wird in der Kontoverwaltung verwaltet; die Karte verschwindet nach der Abmeldung."
     },
     "deleteSessionHint": "Löschen Sie diese Sitzung in DeepSeek Harness, damit der Verlauf konsistent bleibt."
+  },
+  "autoUpdate": {
+    "toggle": "Updates automatisch herunterladen",
+    "toggleHelp": "Lädt neue Versionen im Hintergrund herunter und fragt vor der Installation nach. Ohne Ihre Bestätigung wird nichts installiert.",
+    "unsupported": "Nicht verfügbar für die portable Version und Linux-deb-/rpm-Pakete",
+    "readyTitle": "v{{version}} wurde heruntergeladen",
+    "readyBody": "Jetzt installieren? CC Switch wird neu gestartet.",
+    "readyBodyRouting": "Jetzt installieren? CC Switch wird neu gestartet, laufende Anfragen über das lokale Routing werden abgebrochen.",
+    "later": "Später",
+    "installNow": "Installieren und neu starten",
+    "installFailed": "Update-Installation fehlgeschlagen"
   }
 }

@@ -532,7 +532,13 @@ export function SettingsPage({
           </>
         );
       case "about":
-        return <AboutSection isPortable={isPortable} />;
+        return (
+          <AboutSection
+            isPortable={isPortable}
+            autoUpdateEnabled={settings?.autoUpdateEnabled ?? false}
+            onAutoSave={handleAutoSave}
+          />
+        );
     }
   };
 

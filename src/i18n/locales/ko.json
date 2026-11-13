@@ -5382,5 +5382,16 @@
       "editDisabled": "DeepSeek Harness가 이 계정으로 사용할 수 있는 모델을 자동으로 제공하므로 편집할 필요가 없습니다.",
       "managedHint": "이 계정은 인증 센터에서 관리합니다. 로그아웃하면 이 카드가 사라집니다."
     }
+  },
+  "autoUpdate": {
+    "toggle": "업데이트 자동 다운로드",
+    "toggleHelp": "새 버전을 백그라운드에서 다운로드하고 설치 전에 확인합니다. 확인 없이 설치하지 않습니다.",
+    "unsupported": "포터블 버전과 Linux deb / rpm 패키지에서는 사용할 수 없습니다",
+    "readyTitle": "새 버전 v{{version}} 다운로드가 완료되었습니다",
+    "readyBody": "지금 설치할까요? CC Switch가 다시 시작됩니다.",
+    "readyBodyRouting": "지금 설치할까요? CC Switch가 다시 시작되며, 로컬 라우팅을 거쳐 진행 중인 요청이 중단됩니다.",
+    "later": "나중에",
+    "installNow": "설치 후 다시 시작",
+    "installFailed": "업데이트 설치에 실패했습니다"
   }
 }

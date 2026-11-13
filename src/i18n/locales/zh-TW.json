@@ -5382,5 +5382,16 @@
       "managedHint": "帳號在授權中心管理：登出後這張卡會自動消失。"
     },
     "deleteSessionHint": "請在 DeepSeek Harness 中刪除此工作階段，以保持原生歷史記錄一致。"
+  },
+  "autoUpdate": {
+    "toggle": "自動下載更新",
+    "toggleHelp": "在背景下載新版本，下載完成後詢問是否安裝，不會未經確認就安裝。",
+    "unsupported": "可攜版和 Linux 的 deb / rpm 安裝套件不支援自動更新",
+    "readyTitle": "新版本 v{{version}} 已下載完成",
+    "readyBody": "現在安裝嗎？CC Switch 會重新啟動。",
+    "readyBodyRouting": "現在安裝嗎？CC Switch 會重新啟動，正在經本地路由的請求會中斷。",
+    "later": "稍後",
+    "installNow": "安裝並重新啟動",
+    "installFailed": "安裝更新失敗"
   }
 }

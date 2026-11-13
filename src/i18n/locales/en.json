@@ -5382,5 +5382,16 @@
       "managedHint": "This account is managed in the Auth Center; the card disappears after you sign out."
     },
     "deleteSessionHint": "Delete this session in DeepSeek Harness to keep its history consistent."
+  },
+  "autoUpdate": {
+    "toggle": "Download updates automatically",
+    "toggleHelp": "Downloads new versions in the background and asks before installing. Nothing is installed without your confirmation.",
+    "unsupported": "Not available for the portable build or Linux deb / rpm packages",
+    "readyTitle": "v{{version}} has been downloaded",
+    "readyBody": "Install it now? CC Switch will restart.",
+    "readyBodyRouting": "Install it now? CC Switch will restart, and requests in progress through local routing will be cut off.",
+    "later": "Later",
+    "installNow": "Install and restart",
+    "installFailed": "Update installation failed"
   }
 }

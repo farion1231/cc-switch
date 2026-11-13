@@ -5382,5 +5382,16 @@
       "managedHint": "アカウントは認証センターで管理します。ログアウトするとこのカードは自動で消えます。"
     },
     "deleteSessionHint": "履歴の整合性を保つため、DeepSeek Harness でこのセッションを削除してください。"
+  },
+  "autoUpdate": {
+    "toggle": "アップデートを自動でダウンロード",
+    "toggleHelp": "新しいバージョンをバックグラウンドでダウンロードし、インストール前に確認します。確認なしにインストールすることはありません。",
+    "unsupported": "ポータブル版と Linux の deb / rpm パッケージでは利用できません",
+    "readyTitle": "新しいバージョン v{{version}} のダウンロードが完了しました",
+    "readyBody": "今すぐインストールしますか？CC Switch が再起動します。",
+    "readyBodyRouting": "今すぐインストールしますか？CC Switch が再起動し、ローカルルーティングを経由中のリクエストは中断されます。",
+    "later": "後で",
+    "installNow": "インストールして再起動",
+    "installFailed": "アップデートのインストールに失敗しました"
   }
 }

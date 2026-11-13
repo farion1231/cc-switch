@@ -5382,5 +5382,16 @@
       "expiryShowAll": "Her kredi grubunun son kullanma tarihini göster",
       "inTime": "{{time}}'de"
     }
+  },
+  "autoUpdate": {
+    "toggle": "Güncellemeleri otomatik indir",
+    "toggleHelp": "Yeni sürümleri arka planda indirir ve kurmadan önce sorar. Onayınız olmadan hiçbir şey kurulmaz.",
+    "unsupported": "Taşınabilir sürümde ve Linux deb / rpm paketlerinde kullanılamaz",
+    "readyTitle": "v{{version}} sürümü indirildi",
+    "readyBody": "Şimdi kurulsun mu? CC Switch yeniden başlatılacak.",
+    "readyBodyRouting": "Şimdi kurulsun mu? CC Switch yeniden başlatılacak ve yerel yönlendirme üzerinden devam eden istekler kesilecek.",
+    "later": "Daha sonra",
+    "installNow": "Kur ve yeniden başlat",
+    "installFailed": "Güncelleme kurulamadı"
   }
 }
