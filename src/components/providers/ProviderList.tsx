@@ -195,6 +195,7 @@ export function ProviderList({
     (provider: Provider): boolean => {
       switch (appId) {
         case "kimi":
+        case "cline":
         case "dsh":
         case "mcode":
         case "copilot":
@@ -420,7 +421,7 @@ export function ProviderList({
       isHermesManaged: (provider) =>
         isHermesReadOnlyProvider(provider.settingsConfig),
       piStateUnavailable: isPiFamilyApp(appId) && !isPiStateReady,
-      kimiCurrentId: currentProviderId,
+      nativeCurrentId: currentProviderId,
       workbuddyOfficial,
       copilotDefaultId: appId === "copilot" ? currentProviderId : null,
       extraAdded: showDshAccountCard ? 1 : 0,
@@ -537,6 +538,7 @@ export function ProviderList({
             isPiFamilyApp(appId) ||
             appId === "mcode" ||
             appId === "kimi" ||
+            appId === "cline" ||
             appId === "dsh" ||
             appId === "workbuddy"
               ? undefined

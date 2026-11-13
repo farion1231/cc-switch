@@ -172,9 +172,9 @@ pub struct ToolVersion {
     update_blocked_by_node: Option<tool_node_requirement::NodeRequirementGap>,
 }
 
-const VALID_TOOLS: [&str; 14] = [
+const VALID_TOOLS: [&str; 15] = [
     "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "kimi",
-    "dsh", "agy", "omp", "copilot",
+    "dsh", "agy", "cline", "omp", "copilot",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -723,6 +723,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "kimi" => "Kimi Code",
         "dsh" => "DeepSeek Harness",
         "agy" => "Antigravity CLI",
+        "cline" => "Cline CLI",
         "copilot" => "GitHub Copilot CLI",
         _ => "Unknown",
     }
@@ -1012,6 +1013,8 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "openclaw" => Some("npm i -g openclaw@latest"),
         "pi" => Some("npm i -g @earendil-works/pi-coding-agent@latest"),
         "kimi" => Some("npm i -g @moonshot-ai/kimi-code@latest"),
+        // The postinstall sets aside a running cline-hub's discovery record during upgrades.
+        "cline" => Some("npm i -g cline@latest --ignore-scripts=false --allow-scripts=cline"),
         "copilot" => Some("npm i -g @github/copilot@latest"),
         "dsh" => Some("npm i -g @deepseek-ai/dsh@latest --engine-strict"),
         "mcode" => Some(
@@ -1046,6 +1049,7 @@ fn npm_install_extra_args(tool: &str) -> &'static str {
         "mcode" => {
             " --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\""
         }
+        "cline" => " --ignore-scripts=false --allow-scripts=cline",
         _ => "",
     }
 }
@@ -1435,6 +1439,7 @@ async fn get_single_tool_version_impl(
         }
         "mcode" => fetch_npm_latest_for_tool(&client, "@minimax-ai/code", tool, local).await,
         "kimi" => fetch_npm_latest_for_tool(&client, "@moonshot-ai/kimi-code", tool, local).await,
+        "cline" => fetch_npm_latest_for_tool(&client, "cline", tool, local).await,
         "dsh" => fetch_npm_latest_for_tool(&client, "@deepseek-ai/dsh", tool, local).await,
         "agy" => fetch_agy_latest_version(&client).await,
         "omp" => fetch_npm_latest_for_tool(&client, "@oh-my-pi/pi-coding-agent", tool, local).await,
@@ -3617,6 +3622,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "pi" => Some("@earendil-works/pi-coding-agent"),
         "mcode" => Some("@minimax-ai/code"),
         "kimi" => Some("@moonshot-ai/kimi-code"),
+        "cline" => Some("cline"),
         "omp" => Some("@oh-my-pi/pi-coding-agent"),
         "copilot" => Some("@github/copilot"),
         "dsh" => Some("@deepseek-ai/dsh"),
@@ -8843,6 +8849,19 @@ mod tests {
             wsl_tool_action_shell_command("kimi", ToolLifecycleAction::Install).as_deref(),
             Some(KIMI_INSTALL_UNIX)
         );
+    }
+
+    #[test]
+    fn cline_lifecycle_uses_npm_with_its_postinstall_allowed() {
+        let requested = vec!["cline".to_string()];
+        assert_eq!(normalize_requested_tools(&requested), vec!["cline"]);
+        assert_eq!(tool_display_name("cline"), "Cline CLI");
+        assert_eq!(npm_package_for("cline"), Some("cline"));
+        let install = npm_install_command_for("cline").unwrap();
+        assert!(install.starts_with("npm i -g cline@latest"));
+        assert!(install.ends_with(npm_install_extra_args("cline")));
+        // `cline update` is interactive; upgrades reinstall through npm instead.
+        assert_eq!(official_update_args("cline"), None);
     }
 
     #[test]

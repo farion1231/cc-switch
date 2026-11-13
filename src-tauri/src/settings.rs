@@ -62,6 +62,8 @@ pub struct VisibleApps {
     #[serde(default = "default_true")]
     pub agy: bool,
     #[serde(default = "default_true")]
+    pub cline: bool,
+    #[serde(default = "default_true")]
     pub copilot: bool,
     #[serde(default = "default_true")]
     pub workbuddy: bool,
@@ -83,6 +85,7 @@ impl Default for VisibleApps {
             kimi: true,
             dsh: true,
             agy: true,
+            cline: true,
             omp: true,
             copilot: true,
             workbuddy: true,
@@ -107,6 +110,7 @@ impl VisibleApps {
             AppType::Kimi => self.kimi,
             AppType::Dsh => self.dsh,
             AppType::Agy => self.agy,
+            AppType::Cline => self.cline,
             AppType::Omp => self.omp,
             AppType::Copilot => self.copilot,
             AppType::WorkBuddy => self.workbuddy,
@@ -1488,6 +1492,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::Pi
         | AppType::Mcode
         | AppType::Kimi
+        | AppType::Cline
         | AppType::Dsh
         | AppType::Omp
         | AppType::WorkBuddy => None,
@@ -1514,6 +1519,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::Pi
         | AppType::Mcode
         | AppType::Kimi
+        | AppType::Cline
         | AppType::Dsh
         | AppType::Omp
         | AppType::WorkBuddy => {}

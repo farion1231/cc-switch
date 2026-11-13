@@ -183,6 +183,12 @@ pub async fn get_config_status(
                 path: dir.to_string_lossy().into_owned(),
             })
         }
+        AppType::Cline => Ok(ConfigStatus {
+            exists: crate::cline_config::providers_path().exists(),
+            path: crate::cline_config::cline_dir()
+                .to_string_lossy()
+                .into_owned(),
+        }),
         AppType::Omp => {
             let config_path =
                 crate::omp_config::get_omp_models_path().map_err(|e| e.to_string())?;
@@ -238,6 +244,7 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
             .unwrap()
             .to_path_buf(),
         AppType::Agy => crate::agy_config::agy_dir(),
+        AppType::Cline => crate::cline_config::cline_dir(),
         AppType::Copilot => crate::copilot_config::copilot_dir(),
         AppType::WorkBuddy => crate::workbuddy_config::data_dir(),
     };
@@ -267,6 +274,7 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
             .unwrap()
             .to_path_buf(),
         AppType::Agy => crate::agy_config::agy_dir(),
+        AppType::Cline => crate::cline_config::cline_dir(),
         AppType::Copilot => crate::copilot_config::copilot_dir(),
         AppType::WorkBuddy => crate::workbuddy_config::data_dir(),
     };

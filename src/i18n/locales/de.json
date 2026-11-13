@@ -5309,6 +5309,65 @@
       "secondaryModelInUse": "Das Subagent-Modell von Kimi Code verwendet ein Modell dieses Anbieters. Ändern Sie es zuerst in Kimi Code mit /secondary-model."
     }
   },
+  "cline": {
+    "providerId": "Cline-Anbieter-ID",
+    "customIdHint": "Wird aus dem Namen erzeugt und nach dem Speichern nicht mehr geändert.",
+    "builtinIdHint": "Dies ist ein eigener Anbieterplatz von Cline; Cline führt je integriertem Anbieter genau einen Eintrag.",
+    "builtinExists": "Cline hat bereits einen Anbieter „{{id}}“. Bearbeiten Sie diese Karte, statt einen weiteren hinzuzufügen.",
+    "protocol": "Protokoll",
+    "baseUrl": "Basis-URL",
+    "baseUrlHint": "Cline hängt nur /chat/completions bzw. /messages an und ergänzt kein /v1. Geben Sie /v1 mit an, wenn Ihr Endpunkt es benötigt.",
+    "baseUrlOverride": "Basis-URL (optional)",
+    "baseUrlOverridePlaceholder": "Leer lassen, um den Standard-Endpunkt von Cline zu verwenden",
+    "model": "Modell",
+    "builtinModelHint": "Leer lassen, um das Standardmodell von Cline für diesen Anbieter zu verwenden.",
+    "models": "Modelle",
+    "addModel": "Modell hinzufügen",
+    "removeModel": "Modell entfernen",
+    "modelId": "Modell-ID",
+    "modelName": "Anzeigename",
+    "contextWindow": "Kontextfenster",
+    "maxTokens": "Max. Ausgabe-Token",
+    "inputPrice": "Eingabepreis ($/M Token)",
+    "outputPrice": "Ausgabepreis ($/M Token)",
+    "selectedModel": "Dieses Modell verwenden",
+    "useModel": "Modell {{model}} verwenden",
+    "restartHint": "Neue oder geänderte benutzerdefinierte Anbieter werden erst geladen, nachdem der Hintergrunddienst von Cline (cline-hub) neu gestartet wurde: Führen Sie `cline doctor fix` aus und starten Sie dann cline oder die Cline-Desktop-App erneut. Das Beenden der Desktop-App allein stoppt den Dienst nicht. Für das Festlegen eines Standards ist kein Neustart nötig.",
+    "oauthReadOnly": "Dieser Anbieter meldet sich über Cline an. Seine Zugangsdaten werden in Cline verwaltet und hier nicht bearbeitet; Sie können trotzdem zu ihm wechseln.",
+    "duplicateBuiltinUnsupported": "Integrierte Cline-Anbieter können nicht dupliziert werden. Fügen Sie stattdessen einen benutzerdefinierten Anbieter hinzu.",
+    "preset": {
+      "customOpenAI": "Benutzerdefiniert (OpenAI-kompatibel)",
+      "customAnthropic": "Benutzerdefiniert (Anthropic-kompatibel)"
+    },
+    "validation": {
+      "name": "Geben Sie einen Anbieternamen ein.",
+      "baseUrl": "Geben Sie eine gültige http(s)-Basis-URL ein.",
+      "headers": "Werte von Request-Headern müssen Text sein.",
+      "protocol": "Wählen Sie ein unterstütztes Protokoll.",
+      "protocolClient": "Die Protokolle Anthropic und Gemini benötigen den passenden Client („anthropic“ / „gemini“).",
+      "models": "Fügen Sie mindestens ein Modell hinzu.",
+      "modelId": "Jedes Modell benötigt eine Modell-ID.",
+      "duplicateModel": "Modell-IDs müssen eindeutig sein.",
+      "modelNumber": "Kontextfenster, Token- und Preisfelder müssen Zahlen sein.",
+      "selectedModel": "Wählen Sie eines der angegebenen Modelle."
+    },
+    "empty": {
+      "title": "Cline-Anbieter hinzufügen",
+      "description": "Fügen Sie einen integrierten Cline-Anbieter oder einen benutzerdefinierten OpenAI- bzw. Anthropic-kompatiblen Endpunkt hinzu. Bereits in Cline konfigurierte Anbieter werden automatisch importiert."
+    },
+    "deleteSessionHint": "Löschen Sie diese Sitzung in Cline (cline history delete --session-id).",
+    "hub": {
+      "staleTitle": "Der Hintergrunddienst von Cline nutzt noch die alten benutzerdefinierten Anbieter",
+      "staleBody": "cline-hub (PID {{pid}}) wurde gestartet, bevor sich die benutzerdefinierten Anbieter geändert haben, daher sind neue oder geänderte noch nicht geladen. Das Beenden der Cline-Desktop-App stoppt ihn nicht. Führen Sie `{{command}}` aus, um ihn zu stoppen (laufende Cline-Sitzungen werden dabei beendet), und starten Sie dann cline oder die Cline-Desktop-App erneut.",
+      "copyCommand": "Befehl kopieren",
+      "copied": "{{command}} kopiert",
+      "copyFailed": "Kopieren in die Zwischenablage nicht möglich"
+    },
+    "cliModel": {
+      "title": "/model in der Cline CLI listet keine Modelle benutzerdefinierter Anbieter auf",
+      "body": "Dies ist eine Einschränkung der Cline CLI (die Desktop-App listet sie auf). Übergeben Sie in der CLI `cline -m <Modell-ID>` oder wählen Sie in /model „Create custom model ID“ und geben Sie die Modell-ID ein. Ohne beides wird das hier festgelegte Modell verwendet."
+    }
+  },
   "omp": {
     "empty": {
       "title": "Noch keine Anbieter mit API-Schlüssel",

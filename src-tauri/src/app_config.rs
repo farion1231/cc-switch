@@ -12,6 +12,8 @@ pub struct McpApps {
     #[serde(default)]
     pub kimi: bool,
     #[serde(default)]
+    pub cline: bool,
+    #[serde(default)]
     pub dsh: bool,
     #[serde(default)]
     pub workbuddy: bool,
@@ -50,6 +52,7 @@ impl McpApps {
             AppType::Hermes => self.hermes,
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
+            AppType::Cline => self.cline,
             AppType::Dsh => self.dsh,
             AppType::Pi => self.pi,
             AppType::Omp => self.omp,
@@ -72,6 +75,7 @@ impl McpApps {
             AppType::Hermes => self.hermes = enabled,
             AppType::Mcode => self.mcode = enabled,
             AppType::Kimi => self.kimi = enabled,
+            AppType::Cline => self.cline = enabled,
             AppType::Dsh => self.dsh = enabled,
             AppType::Pi => self.pi = enabled,
             AppType::ClaudeDesktop => {}
@@ -112,6 +116,9 @@ impl McpApps {
         if self.kimi {
             apps.push(AppType::Kimi);
         }
+        if self.cline {
+            apps.push(AppType::Cline);
+        }
         if self.workbuddy {
             apps.push(AppType::WorkBuddy);
         }
@@ -141,6 +148,7 @@ impl McpApps {
             && !self.agy
             && !self.copilot
             && !self.kimi
+            && !self.cline
             && !self.dsh
             && !self.workbuddy
             && !self.mcode
@@ -156,6 +164,8 @@ pub struct SkillApps {
     pub mcode: bool,
     #[serde(default)]
     pub kimi: bool,
+    #[serde(default)]
+    pub cline: bool,
     #[serde(default)]
     pub dsh: bool,
     #[serde(default)]
@@ -195,6 +205,7 @@ impl SkillApps {
             AppType::Pi => self.pi,
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
+            AppType::Cline => self.cline,
             AppType::Dsh => self.dsh,
             AppType::OpenClaw => false,
             AppType::Agy => self.agy,
@@ -217,6 +228,7 @@ impl SkillApps {
             AppType::Pi => self.pi = enabled,
             AppType::Mcode => self.mcode = enabled,
             AppType::Kimi => self.kimi = enabled,
+            AppType::Cline => self.cline = enabled,
             AppType::Dsh => self.dsh = enabled,
             AppType::OpenClaw => {}
             AppType::Agy => self.agy = enabled,
@@ -257,6 +269,9 @@ impl SkillApps {
         if self.kimi {
             apps.push(AppType::Kimi);
         }
+        if self.cline {
+            apps.push(AppType::Cline);
+        }
         if self.workbuddy {
             apps.push(AppType::WorkBuddy);
         }
@@ -286,6 +301,7 @@ impl SkillApps {
             && !self.agy
             && !self.copilot
             && !self.kimi
+            && !self.cline
             && !self.dsh
             && !self.workbuddy
             && !self.mcode
@@ -514,6 +530,7 @@ pub enum AppType {
     Kimi,
     Dsh,
     Agy,
+    Cline,
     Omp,
     Copilot,
     #[serde(rename = "workbuddy", alias = "work-buddy")]
@@ -536,6 +553,7 @@ impl AppType {
             AppType::Kimi => "kimi",
             AppType::Dsh => "dsh",
             AppType::Agy => "agy",
+            AppType::Cline => "cline",
             AppType::Omp => "omp",
             AppType::Copilot => "copilot",
             AppType::WorkBuddy => "workbuddy",
@@ -560,6 +578,7 @@ impl AppType {
                 | AppType::Pi
                 | AppType::Mcode
                 | AppType::Kimi
+                | AppType::Cline
                 | AppType::Dsh
                 | AppType::Omp
                 | AppType::Copilot
@@ -597,6 +616,7 @@ impl AppType {
             AppType::Kimi,
             AppType::Dsh,
             AppType::Agy,
+            AppType::Cline,
             AppType::Omp,
             AppType::Copilot,
             AppType::WorkBuddy,
@@ -624,6 +644,7 @@ impl FromStr for AppType {
             "kimi" | "kimi-code" => Ok(AppType::Kimi),
             "dsh" | "deepseek-harness" => Ok(AppType::Dsh),
             "agy" | "antigravity" | "antigravity-cli" => Ok(AppType::Agy),
+            "cline" | "cline-cli" => Ok(AppType::Cline),
             "omp" | "oh-my-pi" | "oh_my_pi" | "ohmypi" => Ok(AppType::Omp),
             "copilot" | "copilot-cli" | "github-copilot" | "github-copilot-cli" => {
                 Ok(AppType::Copilot)
@@ -631,8 +652,8 @@ impl FromStr for AppType {
             "workbuddy" | "work-buddy" | "work_buddy" => Ok(AppType::WorkBuddy),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, cline, omp, copilot, workbuddy。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, cline, omp, copilot, workbuddy."),
             )),
         }
     }
@@ -675,8 +696,9 @@ impl CommonConfigSnippets {
             AppType::Pi
             | AppType::Mcode
             | AppType::Kimi
-            | AppType::Dsh
             | AppType::Agy
+            | AppType::Cline
+            | AppType::Dsh
             | AppType::Omp
             | AppType::Copilot
             | AppType::WorkBuddy => None,
@@ -697,8 +719,9 @@ impl CommonConfigSnippets {
             AppType::Pi
             | AppType::Mcode
             | AppType::Kimi
-            | AppType::Dsh
             | AppType::Agy
+            | AppType::Cline
+            | AppType::Dsh
             | AppType::Omp
             | AppType::Copilot
             | AppType::WorkBuddy => {}
@@ -1032,8 +1055,9 @@ impl MultiAppConfig {
             AppType::Pi
             | AppType::Mcode
             | AppType::Kimi
-            | AppType::Dsh
             | AppType::Agy
+            | AppType::Cline
+            | AppType::Dsh
             | AppType::Omp
             | AppType::Copilot
             | AppType::WorkBuddy => return Ok(false),
@@ -1083,8 +1107,9 @@ impl MultiAppConfig {
                 AppType::Pi
                 | AppType::Mcode
                 | AppType::Kimi
-                | AppType::Dsh
                 | AppType::Agy
+                | AppType::Cline
+                | AppType::Dsh
                 | AppType::Omp
                 | AppType::Copilot
                 | AppType::WorkBuddy => continue, // Pi didn't exist in v3.6.x, skip

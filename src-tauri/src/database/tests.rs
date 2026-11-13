@@ -1586,8 +1586,54 @@ fn migration_v23_to_v24_adds_dsh_flags_without_changing_omp_or_skill_state() {
         .unwrap());
 }
 
+/// Upstream v23 (before DeepSeek Harness, Copilot, WorkBuddy and Cline): v23→v24,
+/// v24→v25, v25→v26 and v26→v27 all run.
 #[test]
-fn migration_from_v24_adds_copilot_and_workbuddy_flags_without_changing_dsh_state() {
+fn migration_v23_to_v27_adds_dsh_copilot_workbuddy_and_cline_flags() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    conn.execute_batch(
+        "ALTER TABLE mcp_servers DROP COLUMN enabled_dsh;
+         ALTER TABLE mcp_servers DROP COLUMN enabled_copilot;
+         ALTER TABLE mcp_servers DROP COLUMN enabled_cline;
+         ALTER TABLE mcp_servers DROP COLUMN enabled_workbuddy;
+         ALTER TABLE skills DROP COLUMN enabled_dsh;
+         ALTER TABLE skills DROP COLUMN enabled_copilot;
+         ALTER TABLE skills DROP COLUMN enabled_cline;
+         ALTER TABLE skills DROP COLUMN enabled_workbuddy;
+         INSERT INTO mcp_servers (id, name, server_config, enabled_omp)
+         VALUES ('shared', 'Shared MCP', '{}', 1);
+         INSERT INTO skills (id, name, directory, enabled_kimi)
+         VALUES ('skill', 'Skill', 'skill', 1);",
+    )
+    .expect("seed v23 database");
+    Database::set_user_version(&conn, 23).expect("set user_version=23");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("upgrade v23 database");
+    assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
+    let mcp_flags: (bool, bool, bool, bool) = conn
+        .query_row(
+            "SELECT enabled_omp, enabled_dsh, enabled_copilot, enabled_cline FROM mcp_servers WHERE id = 'shared'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("read migrated MCP flags");
+    let skill_flags: (bool, bool, bool, bool) = conn
+        .query_row(
+            "SELECT enabled_kimi, enabled_dsh, enabled_copilot, enabled_cline FROM skills WHERE id = 'skill'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("read migrated skill flags");
+    assert_eq!(mcp_flags, (true, false, false, false));
+    assert_eq!(skill_flags, (true, false, false, false));
+}
+
+/// Upstream v24 (DeepSeek Harness, no Copilot, WorkBuddy or Cline): v24→v25 adds
+/// `enabled_copilot`, v25→v26 adds `enabled_workbuddy`, v26→v27 adds
+/// `enabled_cline`, and the DeepSeek Harness flags are kept.
+#[test]
+fn migration_from_v24_adds_copilot_workbuddy_and_cline_flags_without_changing_dsh_state() {
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn).expect("create tables");
     conn.execute_batch(
@@ -1595,6 +1641,8 @@ fn migration_from_v24_adds_copilot_and_workbuddy_flags_without_changing_dsh_stat
          ALTER TABLE skills DROP COLUMN enabled_copilot;
          ALTER TABLE mcp_servers DROP COLUMN enabled_workbuddy;
          ALTER TABLE skills DROP COLUMN enabled_workbuddy;
+         ALTER TABLE mcp_servers DROP COLUMN enabled_cline;
+         ALTER TABLE skills DROP COLUMN enabled_cline;
          INSERT INTO mcp_servers (id, name, server_config, enabled_dsh)
          VALUES ('shared', 'Shared MCP', '{}', 1);
          INSERT INTO skills (id, name, directory, enabled_dsh)
@@ -1604,18 +1652,20 @@ fn migration_from_v24_adds_copilot_and_workbuddy_flags_without_changing_dsh_stat
     Database::set_user_version(&conn, 24).expect("set user_version=24");
 
     Database::apply_schema_migrations_on_conn(&conn).expect("upgrade v24 database");
-    // v24 → v25（Copilot）→ v26（WorkBuddy）
-    assert_eq!(Database::get_user_version(&conn).unwrap(), 26);
-    assert_eq!(SCHEMA_VERSION, 26);
+    // v24 → v25（Copilot）→ v26（WorkBuddy）→ v27（Cline）
+    assert_eq!(Database::get_user_version(&conn).unwrap(), 27);
+    assert_eq!(SCHEMA_VERSION, 27);
     for table in ["mcp_servers", "skills"] {
-        let flags: (bool, bool, bool) = conn
+        let flags: (bool, bool, bool, bool) = conn
             .query_row(
-                &format!("SELECT enabled_dsh, enabled_copilot, enabled_workbuddy FROM {table}"),
+                &format!(
+                    "SELECT enabled_dsh, enabled_copilot, enabled_workbuddy, enabled_cline FROM {table}"
+                ),
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .expect("read migrated flags");
-        assert_eq!(flags, (true, false, false), "{table}");
+        assert_eq!(flags, (true, false, false, false), "{table}");
     }
 
     conn.execute("UPDATE skills SET enabled_copilot = 1", [])
@@ -1627,21 +1677,110 @@ fn migration_from_v24_adds_copilot_and_workbuddy_flags_without_changing_dsh_stat
         .unwrap());
 }
 
+/// Upstream v26 (WorkBuddy, no Cline): v26→v27 adds `enabled_cline` and keeps the
+/// existing DeepSeek Harness / Copilot / Oh My Pi / WorkBuddy flags.
 #[test]
-fn fresh_install_has_dsh_copilot_and_workbuddy_flags_at_current_version() {
+fn migration_v26_to_v27_adds_cline_flags_without_changing_workbuddy_state() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    conn.execute_batch(
+        "ALTER TABLE mcp_servers DROP COLUMN enabled_cline;
+         ALTER TABLE skills DROP COLUMN enabled_cline;
+         INSERT INTO mcp_servers (id, name, server_config, enabled_dsh, enabled_omp, enabled_copilot, enabled_workbuddy)
+         VALUES ('shared', 'Shared MCP', '{}', 1, 1, 1, 1);
+         INSERT INTO skills (id, name, directory, enabled_dsh, enabled_copilot, enabled_workbuddy)
+         VALUES ('skill', 'Skill', 'skill', 1, 1, 1);",
+    )
+    .expect("seed v26 database");
+    Database::set_user_version(&conn, 26).expect("set user_version=26");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("upgrade v26 database");
+    assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
+    let mcp_flags: (bool, bool, bool, bool, bool) = conn
+        .query_row(
+            "SELECT enabled_dsh, enabled_omp, enabled_copilot, enabled_workbuddy, enabled_cline FROM mcp_servers WHERE id = 'shared'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        )
+        .expect("read migrated MCP flags");
+    let skill_flags: (bool, bool, bool, bool) = conn
+        .query_row(
+            "SELECT enabled_dsh, enabled_copilot, enabled_workbuddy, enabled_cline FROM skills WHERE id = 'skill'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("read migrated skill flags");
+    assert_eq!(mcp_flags, (true, true, true, true, false));
+    assert_eq!(skill_flags, (true, true, true, false));
+
+    conn.execute("UPDATE skills SET enabled_cline = 1", [])
+        .unwrap();
+    Database::apply_schema_migrations_on_conn(&conn).expect("reopen migrated database");
+    assert!(conn
+        .query_row("SELECT enabled_cline FROM skills", [], |row| row
+            .get::<_, bool>(0))
+        .unwrap());
+}
+
+/// A Cline development build stamped v26 with `enabled_cline` but without the
+/// upstream v26 `enabled_workbuddy`; v26→v27 must fill in the WorkBuddy columns
+/// and keep the Cline flags.
+#[test]
+fn migration_from_cline_dev_v26_adds_workbuddy_flags_and_keeps_cline_state() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    conn.execute_batch(
+        "ALTER TABLE mcp_servers DROP COLUMN enabled_workbuddy;
+         ALTER TABLE skills DROP COLUMN enabled_workbuddy;
+         INSERT INTO mcp_servers (id, name, server_config, enabled_cline)
+         VALUES ('shared', 'Shared MCP', '{}', 1);
+         INSERT INTO skills (id, name, directory, enabled_cline)
+         VALUES ('skill', 'Skill', 'skill', 1);",
+    )
+    .expect("seed Cline dev v26 database");
+    Database::set_user_version(&conn, 26).expect("set user_version=26");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("upgrade Cline dev v26 database");
+    assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
+    for table in ["mcp_servers", "skills"] {
+        let flags: (bool, bool) = conn
+            .query_row(
+                &format!("SELECT enabled_cline, enabled_workbuddy FROM {table}"),
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("read migrated flags");
+        assert_eq!(flags, (true, false), "{table}");
+    }
+}
+
+/// Fresh install: the created tables already carry the DeepSeek Harness, Copilot,
+/// WorkBuddy and Cline flags, and the migration only stamps the current version.
+#[test]
+fn fresh_install_has_dsh_copilot_workbuddy_and_cline_flags_at_current_version() {
+    assert_eq!(SCHEMA_VERSION, 27);
     // 与 Database::init 的全新安装路径一致：先建表，再从 user_version=0 跑迁移。
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn).expect("create tables");
     Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
     assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
     for table in ["mcp_servers", "skills"] {
-        for column in ["enabled_dsh", "enabled_copilot", "enabled_workbuddy"] {
+        for column in [
+            "enabled_dsh",
+            "enabled_copilot",
+            "enabled_workbuddy",
+            "enabled_cline",
+        ] {
             assert!(
                 Database::has_column(&conn, table, column).expect("inspect column"),
                 "{table}.{column} missing on fresh install"
             );
+            let info = get_column_info(&conn, table, column);
+            assert_eq!(info.notnull, 1, "{table}.{column} should be NOT NULL");
+            assert_eq!(normalize_default(&info.default).as_deref(), Some("0"));
         }
     }
+    assert!(Database::has_column(&conn, "mcp_servers", "enabled_omp").unwrap());
 }
 
 #[test]

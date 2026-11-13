@@ -27,6 +27,7 @@ export function ProviderEmptyState({
     appId === "pi" ||
     appId === "mcode" ||
     appId === "kimi" ||
+    appId === "cline" ||
     appId === "omp" ||
     appId === "workbuddy"
       ? appId

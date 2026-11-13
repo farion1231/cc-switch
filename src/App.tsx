@@ -93,6 +93,11 @@ import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
 import {
+  ClineHubNotice,
+  clineHubStatusKey,
+} from "@/components/providers/ClineHubNotice";
+import { ClineCliModelNotice } from "@/components/providers/ClineCliModelNotice";
+import {
   hasOpencodeDefinition,
   isNativeOpencodeConfig,
 } from "@/components/providers/forms/helpers/opencodeFormUtils";
@@ -138,6 +143,7 @@ import {
   orderAppIds,
 } from "@/config/appConfig";
 import type { PiFamilyAppId } from "@/lib/api/pi";
+import { isClineCustomConfig } from "@/config/clineProviderPresets";
 import { EditProviderHost } from "@/components/providers/EditProviderHost";
 import { preloadOnIdle } from "@/lib/preloadOnIdle";
 import { useCreateEditProviderStore } from "@/components/providers/editProviderStore";
@@ -452,11 +458,11 @@ function App() {
     }
   };
 
-  // Kimi「添加」只写进 config.toml、不改默认模型；「切换」走 switchProvider。
+  // Kimi / Cline「添加」只写进客户端配置、不改默认；「设为默认」走 switchProvider。
   // Copilot CLI 的自带模型卡同理：「添加」只写进 providers.json，默认模型在 copilot 里用 /model 选
   const handleAddNativeProvider = async (
     provider: Provider,
-    app: "kimi" | "copilot",
+    app: "kimi" | "cline" | "copilot",
   ) => {
     try {
       await providersApi.addToLiveConfig(provider.id, app);
@@ -883,6 +889,7 @@ function App() {
           activeApp === "mcode" ||
           activeApp === "dsh" ||
           activeApp === "kimi" ||
+          activeApp === "cline" ||
           activeApp === "agy" ||
           activeApp === "copilot" ||
           activeApp === "workbuddy"
@@ -1136,10 +1143,14 @@ function App() {
       app === "mcode" ||
       app === "dsh" ||
       app === "kimi" ||
+      app === "cline" ||
       app === "copilot" ||
       app === "workbuddy"
     ) {
       await queryClient.invalidateQueries({ queryKey: ["providers", app] });
+      if (app === "cline") {
+        await queryClient.invalidateQueries({ queryKey: clineHubStatusKey });
+      }
     }
   };
 
@@ -1310,7 +1321,8 @@ function App() {
     } else if (
       activeApp === "mcode" ||
       activeApp === "dsh" ||
-      activeApp === "kimi"
+      activeApp === "kimi" ||
+      activeApp === "cline"
     ) {
       // The MCode list already includes its live custom nodes; the backend
       // rejects a key that MCode itself owns.
@@ -1329,6 +1341,16 @@ function App() {
             },
           ]),
         );
+        duplicatedProvider.addToLive = false;
+      }
+      if (activeApp === "cline") {
+        const config = duplicatedProvider.settingsConfig;
+        // A built-in Cline provider owns its id; only custom ones can be copied.
+        if (!isClineCustomConfig(config)) {
+          toast.error(t("cline.duplicateBuiltinUnsupported"));
+          return;
+        }
+        config.provider = { ...config.provider, name: duplicatedProvider.name };
         duplicatedProvider.addToLive = false;
       }
     } else if (activeApp === "workbuddy") {
@@ -1541,6 +1563,7 @@ function App() {
             activeApp !== "mcode" &&
             activeApp !== "dsh" &&
             activeApp !== "kimi" &&
+            activeApp !== "cline" &&
             activeApp !== "workbuddy" &&
             (settingsData?.showProfileSwitcher ?? false) && (
               <ProfileSwitcher activeApp={activeApp} />
@@ -1694,6 +1717,10 @@ function App() {
         className="min-h-0 flex-1 overflow-y-auto scroll-stable overflow-x-hidden px-6 pb-12 pt-4"
       >
         <div className="space-y-4">
+          {activeApp === "cline" && <ClineHubNotice />}
+          {activeApp === "cline" && (
+            <ClineCliModelNotice providers={providers} />
+          )}
           <ProviderList
             {...listCallbacks}
             providers={providers}
@@ -1703,7 +1730,9 @@ function App() {
             onSwitch={(provider) =>
               void (isPiFamilyApp(activeApp)
                 ? handleEnablePiProvider(provider, activeApp)
-                : activeApp === "kimi" || activeApp === "copilot"
+                : activeApp === "kimi" ||
+                    activeApp === "cline" ||
+                    activeApp === "copilot"
                   ? handleAddNativeProvider(provider, activeApp)
                   : switchProvider(provider))
             }
@@ -1714,6 +1743,7 @@ function App() {
               activeApp === "pi" ||
               activeApp === "mcode" ||
               activeApp === "kimi" ||
+              activeApp === "cline" ||
               activeApp === "dsh" ||
               activeApp === "omp" ||
               activeApp === "copilot" ||
@@ -1731,7 +1761,9 @@ function App() {
               activeApp === "openclaw" || activeApp === "opencode"
                 ? (provider, modelId) =>
                     void setAsDefaultModel(provider, modelId)
-                : activeApp === "hermes" || activeApp === "kimi"
+                : activeApp === "hermes" ||
+                    activeApp === "kimi" ||
+                    activeApp === "cline"
                   ? (provider) => void switchProvider(provider)
                   : undefined
             }

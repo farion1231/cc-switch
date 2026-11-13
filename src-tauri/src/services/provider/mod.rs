@@ -189,7 +189,12 @@ fn lock_native_provider_operations(
 ) -> Option<tokio::sync::OwnedMutexGuard<()>> {
     matches!(
         app_type,
-        AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Copilot | AppType::WorkBuddy
+        AppType::Mcode
+            | AppType::Kimi
+            | AppType::Dsh
+            | AppType::Cline
+            | AppType::Copilot
+            | AppType::WorkBuddy
     )
     .then(|| {
         futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()))
@@ -5546,13 +5551,15 @@ impl ProviderService {
         if app_type == AppType::Copilot {
             return Self::list_copilot(state);
         }
-        if matches!(app_type, AppType::Mcode | AppType::Kimi | AppType::Dsh) {
-            let native = if matches!(app_type, AppType::Dsh) {
-                crate::dsh_config::get_providers()?
-            } else if app_type == AppType::Kimi {
-                crate::kimi_config::get_providers()?
-            } else {
-                crate::mcode_config::get_providers()?
+        if matches!(
+            app_type,
+            AppType::Mcode | AppType::Kimi | AppType::Cline | AppType::Dsh
+        ) {
+            let native = match app_type {
+                AppType::Kimi => crate::kimi_config::get_providers()?,
+                AppType::Cline => crate::cline_config::get_providers()?,
+                AppType::Dsh => crate::dsh_config::get_providers()?,
+                _ => crate::mcode_config::get_providers()?,
             };
             let mut saved = state.db.get_all_providers(app_type.as_str())?;
             let nicknames = if app_type == AppType::Kimi {
@@ -5562,21 +5569,37 @@ impl ProviderService {
             };
             for (id, config) in &native {
                 if !saved.contains_key(id) {
-                    let name = config.get("name").and_then(Value::as_str).unwrap_or(id);
+                    let name = if app_type == AppType::Cline {
+                        crate::cline_config::display_name(id, config)
+                    } else {
+                        config
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or(id)
+                            .to_string()
+                    };
                     saved.insert(
                         id.clone(),
-                        Provider::with_id(id.clone(), name.into(), config.clone(), None),
+                        Provider::with_id(id.clone(), name, config.clone(), None),
                     );
                 }
             }
             for (id, provider) in &mut saved {
                 if let Some(config) = native.get(id) {
-                    if let Some(name) = config.get("name").and_then(Value::as_str) {
+                    if app_type == AppType::Cline {
+                        if crate::cline_config::is_custom(config) {
+                            provider.name = crate::cline_config::display_name(id, config);
+                        }
+                    } else if let Some(name) = config.get("name").and_then(Value::as_str) {
                         provider.name = name.into();
                     }
                     provider.settings_config = config.clone();
                 }
                 Self::set_provider_live_config_managed(provider, native.contains_key(id));
+                if app_type == AppType::Cline {
+                    // Also clears login tokens that rows saved by earlier builds still hold.
+                    crate::cline_config::strip_credentials(&mut provider.settings_config);
+                }
                 if app_type == AppType::Kimi {
                     crate::kimi_config::normalize_provider_identity(
                         provider,
@@ -5655,6 +5678,9 @@ impl ProviderService {
         if app_type == AppType::Kimi {
             return crate::kimi_config::current_provider();
         }
+        if app_type == AppType::Cline {
+            return crate::cline_config::current_provider();
+        }
         if app_type == AppType::Copilot {
             // 读不了 Copilot 的设置或供应商文件时不影响列表显示，只是没有「默认」。
             return Ok(
@@ -5684,7 +5710,27 @@ impl ProviderService {
         write_live: bool,
         create: bool,
     ) -> Result<bool, AppError> {
-        if matches!(app_type, AppType::Dsh) {
+        if app_type == &AppType::Cline {
+            // Cline login tokens never enter the (synced, exported) providers table.
+            let mut stored = provider.clone();
+            crate::cline_config::strip_credentials(&mut stored.settings_config);
+            let provider = &stored;
+            return if write_live {
+                crate::cline_config::save_and_commit(
+                    &provider.id,
+                    Some(provider.settings_config.clone()),
+                    create,
+                    || {
+                        state.db.save_provider("cline", provider)?;
+                        Ok(true)
+                    },
+                )
+            } else {
+                state.db.save_provider("cline", provider)?;
+                Ok(true)
+            };
+        }
+        if app_type == &AppType::Dsh {
             return if write_live {
                 crate::dsh_config::save_and_commit(
                     &provider.id,
@@ -5823,7 +5869,7 @@ impl ProviderService {
 
         if matches!(
             app_type,
-            AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Copilot
+            AppType::Mcode | AppType::Kimi | AppType::Cline | AppType::Dsh | AppType::Copilot
         ) {
             // The key is user-chosen, and saving would overwrite an existing row or live node.
             // The per-app lock also serializes native list refreshes and other mutations;
@@ -5832,14 +5878,12 @@ impl ProviderService {
                 .db
                 .get_provider_by_id(&provider.id, app_type.as_str())?
                 .is_some()
-                || if matches!(app_type, AppType::Dsh) {
-                    crate::dsh_config::provider_key_exists(&provider.id)?
-                } else if app_type == AppType::Kimi {
-                    crate::kimi_config::provider_key_exists(&provider.id)?
-                } else if app_type == AppType::Copilot {
-                    crate::copilot_config::provider_key_exists(&provider.id)?
-                } else {
-                    crate::mcode_config::provider_key_exists(&provider.id)?
+                || match app_type {
+                    AppType::Kimi => crate::kimi_config::provider_key_exists(&provider.id)?,
+                    AppType::Cline => crate::cline_config::provider_key_exists(&provider.id)?,
+                    AppType::Dsh => crate::dsh_config::provider_key_exists(&provider.id)?,
+                    AppType::Copilot => crate::copilot_config::provider_key_exists(&provider.id)?,
+                    _ => crate::mcode_config::provider_key_exists(&provider.id)?,
                 }
             {
                 return Err(AppError::InvalidInput(format!(
@@ -6595,7 +6639,7 @@ impl ProviderService {
 
             if matches!(
                 app_type,
-                AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Copilot
+                AppType::Mcode | AppType::Kimi | AppType::Cline | AppType::Dsh | AppType::Copilot
             ) {
                 return Self::save_native_provider(
                     state,
@@ -6786,6 +6830,11 @@ impl ProviderService {
             }
             return Ok(());
         }
+        if app_type == AppType::Cline {
+            return crate::cline_config::save_and_commit(id, None, false, || {
+                state.db.delete_provider("cline", id)
+            });
+        }
 
         if app_type == AppType::Omp {
             return omp::delete(state, id);
@@ -6838,6 +6887,7 @@ impl ProviderService {
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
                     AppType::Mcode => crate::mcode_config::remove_provider(id)?,
                     AppType::Kimi => crate::kimi_config::remove_provider(id)?,
+                    AppType::Cline => crate::cline_config::remove_provider(id)?,
                     AppType::Dsh => crate::dsh_config::remove_provider(id)?,
                     AppType::WorkBuddy => crate::workbuddy_config::remove_provider(id)?,
                     _ => {}
@@ -6870,7 +6920,8 @@ impl ProviderService {
         Ok(())
     }
 
-    /// Kimi「添加」：把卡片写进 config.toml，但不改 default_model（「切换」才改）。
+    /// Kimi / Cline「添加」：把卡片写进客户端配置，但不改 default_model / lastUsedProvider
+    /// （「设为默认」才改）。
     /// Copilot「添加」：把自带模型卡写进 providers.json（不改 Copilot 的默认模型）。
     /// 其他累加式应用的添加就是 `switch`，不走这里。
     pub fn add_to_live_config(
@@ -6879,6 +6930,19 @@ impl ProviderService {
         id: &str,
     ) -> Result<(), AppError> {
         let _native_guard = lock_native_provider_operations(state, &app_type);
+        if app_type == AppType::Cline {
+            let mut provider = state
+                .db
+                .get_provider_by_id(id, "cline")?
+                .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+            crate::cline_config::strip_credentials(&mut provider.settings_config);
+            Self::set_provider_live_config_managed(&mut provider, true);
+            return crate::cline_config::add_and_commit(
+                id,
+                provider.settings_config.clone(),
+                || state.db.save_provider("cline", &provider),
+            );
+        }
         if app_type == AppType::Copilot {
             return Self::add_copilot_to_live(state, id);
         }
@@ -6966,6 +7030,16 @@ impl ProviderService {
                 Ok(())
             });
         }
+        if app_type == AppType::Cline {
+            return crate::cline_config::save_and_commit(id, None, false, || {
+                if let Some(mut provider) = state.db.get_provider_by_id(id, "cline")? {
+                    crate::cline_config::strip_credentials(&mut provider.settings_config);
+                    Self::set_provider_live_config_managed(&mut provider, false);
+                    state.db.save_provider("cline", &provider)?;
+                }
+                Ok(())
+            });
+        }
 
         if app_type == AppType::Omp {
             return omp::remove(state, id);
@@ -7018,6 +7092,7 @@ impl ProviderService {
             }
             AppType::Mcode => crate::mcode_config::remove_provider(id)?,
             AppType::Kimi => crate::kimi_config::remove_provider(id)?,
+            AppType::Cline => crate::cline_config::remove_provider(id)?,
             AppType::Dsh => crate::dsh_config::remove_provider(id)?,
             AppType::WorkBuddy => crate::workbuddy_config::remove_provider(id)?,
             _ => {
@@ -7144,7 +7219,21 @@ impl ProviderService {
             ));
         }
 
-        if matches!(app_type, AppType::Dsh) {
+        if app_type == AppType::Cline {
+            let mut provider = _provider.clone();
+            Self::set_provider_live_config_managed(&mut provider, true);
+            crate::cline_config::switch_and_commit(
+                id,
+                provider.settings_config.clone(),
+                |config| {
+                    provider.settings_config = config;
+                    state.db.save_provider("cline", &provider)
+                },
+            )?;
+            return Ok(SwitchResult::default());
+        }
+
+        if app_type == AppType::Dsh {
             let mut provider = _provider.clone();
             Self::set_provider_live_config_managed(&mut provider, true);
             crate::dsh_config::save_and_commit(
@@ -7334,6 +7423,7 @@ impl ProviderService {
                     AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
                     AppType::Mcode => crate::mcode_config::remove_provider(&provider.id),
                     AppType::Kimi => crate::kimi_config::remove_provider(&provider.id),
+                    AppType::Cline => crate::cline_config::remove_provider(&provider.id),
                     AppType::Dsh => crate::dsh_config::remove_provider(&provider.id),
                     AppType::WorkBuddy => crate::workbuddy_config::remove_provider(&provider.id),
                     _ => Ok(()),
@@ -7602,8 +7692,9 @@ impl ProviderService {
             AppType::Pi
             | AppType::Mcode
             | AppType::Kimi
-            | AppType::Dsh
             | AppType::Agy
+            | AppType::Cline
+            | AppType::Dsh
             | AppType::Omp
             | AppType::Copilot
             | AppType::WorkBuddy => Ok(String::new()),
@@ -7627,8 +7718,9 @@ impl ProviderService {
             AppType::Pi
             | AppType::Mcode
             | AppType::Kimi
-            | AppType::Dsh
             | AppType::Agy
+            | AppType::Cline
+            | AppType::Dsh
             | AppType::Omp
             | AppType::Copilot
             | AppType::WorkBuddy => Ok(String::new()),
@@ -8404,6 +8496,9 @@ impl ProviderService {
             AppType::Kimi => {
                 crate::kimi_config::validate_provider(&provider.id, &provider.settings_config)?
             }
+            AppType::Cline => {
+                crate::cline_config::validate_provider(&provider.id, &provider.settings_config)?
+            }
             AppType::Mcode => {
                 crate::mcode_config::validate_provider(&provider.id, &provider.settings_config)?
             }
@@ -8646,6 +8741,11 @@ impl ProviderService {
                     .unwrap_or("")
                     .to_string();
 
+                Ok((api_key, base_url))
+            }
+            AppType::Cline => {
+                let (base_url, api_key) =
+                    crate::cline_config::endpoint_and_key(&provider.settings_config);
                 Ok((api_key, base_url))
             }
             AppType::Dsh => Ok((

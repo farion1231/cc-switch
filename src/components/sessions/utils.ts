@@ -18,6 +18,7 @@ export const SESSION_APP_IDS = [
   "openclaw",
   "mcode",
   "kimi",
+  "cline",
   "dsh",
   "agy",
   "copilot",
@@ -42,6 +43,7 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
   omp: ["~/.omp/agent/sessions"],
   mcode: ["~/.minimax"],
   kimi: ["~/.kimi-code/sessions"],
+  cline: ["~/.cline/data/db/sessions.db", "~/.cline/data/sessions"],
   dsh: ["~/.dsh/sessions/<project>/<session>/session.v*.jsonl[.zstd]"],
   workbuddy: ["~/.workbuddy/projects"],
   agy: [
@@ -54,6 +56,7 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
 const NATIVE_DELETE_HINT_KEYS: Record<string, string> = {
   mcode: "sessionManager.mcodeDeleteHint",
   agy: "sessionManager.agyDeleteHint",
+  cline: "cline.deleteSessionHint",
   dsh: "dsh.deleteSessionHint",
   copilot: "sessionManager.copilotDeleteHint",
   workbuddy: "workbuddy.deleteSessionHint",
