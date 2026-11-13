@@ -4477,7 +4477,18 @@
     "openclawConfig": "配置",
     "memory": "记忆",
     "webUi": "Web UI",
-    "viewUsage": "查看此应用的用量"
+    "viewUsage": "查看此应用的用量",
+    "desktopApp": {
+      "startApp": "启动应用",
+      "restartApp": "重启应用",
+      "checking": "正在检测 {{name}} 桌面应用",
+      "notInstalled": "未检测到 {{name}} 桌面应用",
+      "alreadyRunning": "{{name}} 正在运行",
+      "started": "已启动 {{name}}",
+      "restarted": "已重启 {{name}}",
+      "startFailed": "启动 {{name}} 失败：{{error}}",
+      "restartFailed": "重启 {{name}} 失败：{{error}}"
+    }
   },
   "mode": {
     "tabsLabel": "连接模式",

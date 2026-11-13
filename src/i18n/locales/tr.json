@@ -4411,7 +4411,18 @@
     "openclawConfig": "Yapılandırma",
     "memory": "Bellek",
     "webUi": "Web kullanıcı arayüzü",
-    "viewUsage": "Bu uygulamanın kullanımını görüntüle"
+    "viewUsage": "Bu uygulamanın kullanımını görüntüle",
+    "desktopApp": {
+      "startApp": "Uygulamayı başlat",
+      "restartApp": "Uygulamayı yeniden başlat",
+      "checking": "{{name}} masaüstü uygulaması denetleniyor",
+      "notInstalled": "{{name}} masaüstü uygulaması bulunamadı",
+      "alreadyRunning": "{{name}} zaten çalışıyor",
+      "started": "{{name}} başlatıldı",
+      "restarted": "{{name}} yeniden başlatıldı",
+      "startFailed": "{{name}} başlatılamadı: {{error}}",
+      "restartFailed": "{{name}} yeniden başlatılamadı: {{error}}"
+    }
   },
   "mode": {
     "tabsLabel": "Bağlantı modu",

@@ -4477,7 +4477,18 @@
     "openclawConfig": "設定",
     "memory": "メモリ",
     "webUi": "Web UI",
-    "viewUsage": "このアプリの使用量を見る"
+    "viewUsage": "このアプリの使用量を見る",
+    "desktopApp": {
+      "startApp": "アプリを起動",
+      "restartApp": "アプリを再起動",
+      "checking": "{{name}} デスクトップアプリを検出しています",
+      "notInstalled": "{{name}} デスクトップアプリが見つかりません",
+      "alreadyRunning": "{{name}} は実行中です",
+      "started": "{{name}} を起動しました",
+      "restarted": "{{name}} を再起動しました",
+      "startFailed": "{{name}} の起動に失敗しました：{{error}}",
+      "restartFailed": "{{name}} の再起動に失敗しました：{{error}}"
+    }
   },
   "mode": {
     "tabsLabel": "接続モード",
