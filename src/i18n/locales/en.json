@@ -249,6 +249,7 @@
         "manage": "Add or manage Claude accounts",
         "helpTerminal": "The Claude config folder is overridden in Settings, so switching to this card doesn't change Claude Code's sign-in. Use Open Terminal on the card to use the selected account.",
         "helpWsl": "The Claude config folder is in WSL, where Claude accounts aren't supported yet. Switching to this card doesn't change Claude Code's sign-in.",
+        "helpWslAccounts": "The Claude config folder is in WSL. After you pick an account, switching to this card makes claude inside that distro use it. Follow Claude Code login leaves the distro's current sign-in unchanged. Open Terminal still enters only this account's own directory. Quota is not shown yet.",
         "help": "Switching to this card changes Claude Code's sign-in to the selected account right away, including sessions already running. To use several accounts at once, use Open Terminal on the card.",
         "claudeAccount": "Claude account",
         "reauthBadge": "Re-login required",
@@ -5145,6 +5146,7 @@
       "workbuddyHelp": "The official sign-in of the WorkBuddy desktop app. CC Switch can't sign in to WorkBuddy for you; it can only save the account WorkBuddy is signed in with (a snapshot of its sign-in files). To switch accounts, choose “Switch WorkBuddy to this account” in the account's … menu, or add the WorkBuddy Official Sign-in card linked to it in the provider list (only one official card is added at a time). Snapshots only work on this computer and are not synced.",
       "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings, so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",
       "claudeHelpWsl": "Official Claude Code subscription accounts (Pro / Max / Team). Not supported yet while the Claude config folder is in WSL.",
+      "claudeHelpWslAccounts": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is in WSL: pick an account and switch to the official card bound to it, and plain claude inside that distro switches to that account. Follow Claude Code login leaves the current sign-in unchanged. Open Terminal still enters that account's own directory, so several accounts can stay open. Quota is not shown yet. Sign-in tokens stay on this computer.",
       "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: after switching to the card, Claude Code's sign-in changes to it right away. To use several accounts at once, use Open Terminal on the card. Sign-in tokens stay on this computer and are never uploaded, refreshed or signed out. The first switch saves the account Claude Code is signed in to now; switching ends Remote Control and rebuilds the prompt cache."
     },
     "addAccount": "Add account",

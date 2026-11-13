@@ -15,6 +15,7 @@ pub mod cc_lock;
 pub mod identity;
 pub mod layout;
 pub mod login;
+pub mod run_target;
 pub mod shared;
 pub mod snapshot;
 pub mod usage;
@@ -255,7 +256,7 @@ impl ClaudeAccountManager {
         let home = layout::account_home(&self.data_dir, &local_id);
         let config_dir = layout::config_dir(&self.data_dir, &local_id);
         layout::assert_config_dir(&self.data_dir, &config_dir)?;
-        create_private_dir(&config_dir)?;
+        create_private_dir(&config_dir).map_err(clarify_wsl_dir_error)?;
         {
             // 登录前先接好共享目录，Claude Code 首次启动就写进共享的位置
             let config_dir = config_dir.clone();
@@ -608,6 +609,18 @@ fn create_private_dir(dir: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
+fn adopted_profile_is_written_in_wsl(config_dir: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        crate::config::is_wsl_path(config_dir)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = config_dir;
+        false
+    }
+}
+
 /// 按磁盘上的账号表找账号目录、收录新账号：切换路径上用（拿不到 Tauri 状态）。
 pub struct DiskAccounts {
     pub data_dir: PathBuf,
@@ -636,7 +649,10 @@ impl snapshot::Adopter for DiskAccounts {
         });
         let bytes =
             serde_json::to_vec_pretty(&doc).map_err(|source| AppError::JsonSerialize { source })?;
-        crate::config::atomic_write_private(&config_dir.join(".claude.json"), &bytes)?;
+        // WSL 家目录里的资料由切换脚本在发行版内写入（9P 上改文件不可靠）。
+        if !adopted_profile_is_written_in_wsl(&config_dir) {
+            crate::config::atomic_write_private(&config_dir.join(".claude.json"), &bytes)?;
+        }
         sync_shared(&config_dir);
 
         let _file = store_file_guard();
@@ -730,6 +746,10 @@ fn delete_keychain_entry(_config_dir: &Path) {}
 /// 在账号目录里跑一次 `claude auth status --json`（只在刚登录完时调用：令牌是新的，
 /// 不会触发刷新）。
 fn auth_status(config_dir: &Path) -> Option<identity::AuthStatus> {
+    #[cfg(windows)]
+    if let Some(wsl) = run_target::current_wsl() {
+        return auth_status_wsl(&wsl, config_dir);
+    }
     let mut cmd = crate::commands::detected_tool_command(
         "claude",
         &["auth", "status", "--json"],
@@ -758,6 +778,40 @@ fn auth_status(config_dir: &Path) -> Option<identity::AuthStatus> {
     }
     let mut output = String::new();
     child.stdout.take()?.read_to_string(&mut output).ok()?;
+    identity::parse_auth_status(&output)
+}
+
+/// 发行版还没起来、或 UNC 写不进去时，把系统错误说成人能看懂的话。
+fn clarify_wsl_dir_error(error: AppError) -> AppError {
+    let Some(wsl) = run_target::current_wsl() else {
+        return error;
+    };
+    AppError::localized(
+        "claude.account.wsl_dir",
+        format!(
+            "无法在 WSL 发行版 {} 里创建账号目录（{error}）。请确认该发行版已安装并能启动（wsl -d {}）。",
+            wsl.distro, wsl.distro
+        ),
+        format!(
+            "Couldn't create the account directory in WSL distro {} ({error}). Make sure that distro is installed and can start (wsl -d {}).",
+            wsl.distro, wsl.distro
+        ),
+    )
+}
+
+#[cfg(windows)]
+fn auth_status_wsl(wsl: &run_target::WslTarget, config_dir: &Path) -> Option<identity::AuthStatus> {
+    let linux_config = run_target::linux_config_dir(config_dir, &wsl.distro)?;
+    let user = run_target::wsl_user(&wsl.linux_home).ok()?;
+    let output = login::capture_wsl_claude(
+        &wsl.distro,
+        &user,
+        &wsl.linux_home,
+        &linux_config,
+        &["auth", "status", "--json"],
+        STATUS_TIMEOUT,
+    )
+    .ok()?;
     identity::parse_auth_status(&output)
 }
 

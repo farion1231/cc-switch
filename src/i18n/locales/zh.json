@@ -249,6 +249,7 @@
         "manage": "添加或管理 Claude 账号",
         "helpTerminal": "设置里覆盖了 Claude 配置目录，切到这张卡不会切换 Claude Code 的登录，请从卡片「打开终端」使用选中的账号。",
         "helpWsl": "Claude 配置目录在 WSL 里，暂不支持 Claude 账号，切到这张卡不会切换 Claude Code 的登录。",
+        "helpWslAccounts": "Claude 配置目录在 WSL 里。选中一个账号后，切到这张卡会把该发行版里的 claude 换成这个号；「跟随 Claude Code 登录」不改发行版里现有的登录。从卡片「打开终端」仍只进入这个账号自己的目录。额度还不会显示。",
         "help": "切到这张卡后，Claude Code 的登录会实时换成选中的账号，正在运行的会话也一样。想同时用几个号，从卡片「打开终端」。",
         "claudeAccount": "Claude 账号",
         "reauthBadge": "需要重新登录",
@@ -5145,6 +5146,7 @@
       "workbuddyHelp": "WorkBuddy 桌面端的官方登录。CC Switch 不能替 WorkBuddy 登录，只能收录它当前登着的账号（整组登录文件的快照）。要切换账号，在账号的「…」里选「切换 WorkBuddy 到这个账号」，或在供应商列表里添加绑定了它的「WorkBuddy 官方登录」卡（同一时间只有一张在「已添加」）。快照只在这台电脑上有效，不会随云同步。",
       "claudeHelpTerminal": "Claude Code 的官方订阅账号（Pro / Max / Team）。设置里覆盖了 Claude 配置目录，切卡不会切换 Claude Code 的登录；在官方卡上选一个账号，再从卡片「打开终端」使用。",
       "claudeHelpWsl": "Claude Code 的官方订阅账号（Pro / Max / Team）。Claude 配置目录在 WSL 里时暂不支持，后续会跟进。",
+      "claudeHelpWslAccounts": "Claude Code 的官方订阅账号（Pro / Max / Team）。Claude 配置目录在 WSL 里：选中一个账号并切到对应的官方卡后，该发行版里直接运行的 claude 会换成这个号。选「跟随 Claude Code 登录」则不改现有登录。从卡片「打开终端」仍进入这个账号自己的目录，可同时开几个号。额度还不会显示。登录令牌只留在本机。",
       "claudeHelp": "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 官方卡上选一个账号，切到这张卡后，Claude Code 的登录会实时换成这个号；想同时用几个号，从卡片「打开终端」。登录令牌只留在本机，不上传、不刷新、不登出。第一次切换会自动收进 Claude Code 现在登录的号；切号后 Remote Control 会断开，提示缓存要重建。"
     },
     "addAccount": "添加账号",

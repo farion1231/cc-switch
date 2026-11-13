@@ -18,15 +18,36 @@ use crate::error::AppError;
 
 const ROOT_DIRNAME: &str = "claude-accounts";
 const CONFIG_DIRNAME: &str = "config";
-#[cfg(unix)]
+/// 登录时交给 Claude Code 的 `BROWSER` 脚本名。Windows 上只有 WSL 里的登录会写这个文件。
 pub const OPENER_FILENAME: &str = ".open-url";
 pub const OPENED_URL_FILENAME: &str = ".opened-url";
 /// 不自动打开浏览器时 Windows 上交给 Claude Code 的 `BROWSER`：故意不建这个文件，让它打不开浏览器。
 pub const NO_BROWSER_FILENAME: &str = ".no-browser";
 
 /// 所有账号目录的根。
+///
+/// Windows 上 Claude 配置目录指向 WSL 的家目录（`/home/<user>` 或 `/root`）时，根在该发行版里，
+/// Windows 通过 `\\wsl.localhost\<distro>\...\.cc-switch\claude-accounts` 读元数据。
+/// 登录、「打开终端」和切卡再把这个 UNC 转成 Linux 路径，在发行版里操作。
+/// 其他情况仍是 `<data_dir>/claude-accounts`（Windows 本机、macOS、Linux 不变）。
 pub fn accounts_root(data_dir: &Path) -> PathBuf {
+    if let Some(root) = wsl_accounts_root() {
+        return root;
+    }
     data_dir.join(ROOT_DIRNAME)
+}
+
+fn wsl_accounts_root() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        let dir = crate::settings::get_claude_override_dir()?;
+        let unc = super::run_target::account_root_unc(&dir.to_string_lossy())?;
+        Some(PathBuf::from(unc))
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
 }
 
 /// 一个账号的外层目录（放 `config/` 和登录用的小文件）。
