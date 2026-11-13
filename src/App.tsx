@@ -151,6 +151,11 @@ const AddProviderDialog = lazy(() =>
     default: m.AddProviderDialog,
   })),
 );
+const BulkProviderImportDialog = lazy(() =>
+  import("@/components/providers/BulkProviderImportDialog").then((m) => ({
+    default: m.BulkProviderImportDialog,
+  })),
+);
 const SettingsPage = lazy(() =>
   import("@/components/settings/SettingsPage").then((m) => ({
     default: m.SettingsPage,
@@ -244,6 +249,8 @@ function App() {
     PROMPT_APP_IDS.includes(sharedFeatureApp) ? sharedFeatureApp : "claude",
   );
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [bulkImportApp, setBulkImportApp] = useState<AppId | null>(null);
+  const [bulkImportBusy, setBulkImportBusy] = useState(false);
   const [hasOpenedAdd, setHasOpenedAdd] = useState(false);
   useEffect(() => {
     if (isAddOpen) setHasOpenedAdd(true);
@@ -918,7 +925,10 @@ function App() {
 
   const currentViewRef = useRef(currentView);
   const managementBusy =
-    mcpManagementBusy || skillsNavigationBusy || promptNavigationBusy;
+    mcpManagementBusy ||
+    skillsNavigationBusy ||
+    promptNavigationBusy ||
+    bulkImportBusy;
   const managementBusyRef = useRef(false);
   managementBusyRef.current = managementBusy;
 
@@ -933,6 +943,7 @@ function App() {
   // 面板的 appId 跟着 activeApp 走，开着切应用会把 A 应用的供应商保存进 B 应用
   const closeProviderPanels = () => {
     setIsAddOpen(false);
+    setBulkImportApp(null);
     editProviderStore.close();
     setUsageProvider(null);
   };
@@ -994,6 +1005,7 @@ function App() {
   useTrayAppPageSeen(currentView === "providers" ? activeApp : null);
 
   useTrayNavigation((navigation) => {
+    if (managementBusyRef.current) return;
     const navigate = () => {
       if (navigation.section) {
         openSettings(navigation.section);
@@ -1011,7 +1023,7 @@ function App() {
         });
       }
     };
-    if (managementBusyRef.current || !confirmLeave(navigate)) navigate();
+    if (!confirmLeave(navigate)) navigate();
   });
 
   // 侧栏、⌘K 进用量统计看全部应用；只有应用页 ⋯ 进来时带应用筛选
@@ -1584,6 +1596,18 @@ function App() {
               {t("provider.addProvider")}
             </Button>
           )}
+          {currentView === "providers" &&
+            activeApp !== "dsh" &&
+            activeApp !== "copilot" &&
+            activeApp !== "workbuddy" && (
+              <Button
+                variant="quiet"
+                size="regular"
+                onClick={() => setBulkImportApp(activeApp)}
+              >
+                {t("provider.bulkImport.title")}
+              </Button>
+            )}
           {currentView === "hermesMemory" && (
             <Suspense fallback={null}>
               <HermesMemorySaveButton />
@@ -1987,6 +2011,18 @@ function App() {
             modeView={formModeView}
           />
         )}
+
+        {bulkImportApp &&
+          bulkImportApp !== "dsh" &&
+          bulkImportApp !== "copilot" &&
+          bulkImportApp !== "workbuddy" && (
+            <BulkProviderImportDialog
+              key={bulkImportApp}
+              appId={bulkImportApp}
+              onClose={() => setBulkImportApp(null)}
+              onNavigationBlockedChange={setBulkImportBusy}
+            />
+          )}
 
         <EditProviderHost
           store={editProviderStore}
