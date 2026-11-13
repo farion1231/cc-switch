@@ -81,6 +81,54 @@ pub(crate) fn apply_to_follower(
     Ok(())
 }
 
+/// 跟随环境不再用 CC Switch 的供应商（供应商页取消那个环境的开关）：在目标作用域里清掉
+/// `prev` 写进去的关键字段和独有字段，其余设置不动，客户端回到它自己的登录或配置。
+pub(crate) fn clear_follower(
+    state: &AppState,
+    app: &AppType,
+    prev: Option<&Provider>,
+) -> Result<(), AppError> {
+    use crate::mode::state::{op, PendingTarget};
+    match app {
+        AppType::Claude => {
+            let prev = prev
+                .map(|p| crate::live::project::claude::ClaudeProjection::of(&p.settings_config));
+            let mut patch = crate::live::project::claude::direct_patch(
+                prev.as_ref(),
+                &crate::live::project::claude::ClaudeProjection::default(),
+            );
+            claude_official::strip_from_patch(&mut patch);
+            claude_direct::run(
+                state.db.as_ref(),
+                op::APPLY,
+                Some(&patch),
+                PendingTarget::default(),
+            )?;
+        }
+        AppType::Codex => {
+            let owner = prev.map_or(codex_direct::Owner::None, codex_direct::Owner::Provider);
+            codex_direct::write_direct(
+                state.db.as_ref(),
+                &state.codex_oauth_manager,
+                op::APPLY,
+                owner,
+                None,
+                PendingTarget::default(),
+            )?;
+        }
+        AppType::Gemini => {
+            gemini_direct::run(
+                state.db.as_ref(),
+                op::APPLY,
+                Some(&crate::live::project::gemini::GeminiProjection::empty()),
+                PendingTarget::default(),
+            )?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 pub fn import_pi_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     pi::import_from_live(state)
 }

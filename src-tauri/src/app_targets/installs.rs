@@ -2,7 +2,7 @@
 //!
 //! 只有检测到某个客户端装在某个发行版里，才在设置页和供应商页给出那个发行版的配置入口
 //! （已经保存过的目标照常显示）。探测要进发行版跑一次登录 shell，结果缓存在
-//! `~/.cc-switch/wsl-tool-installs.json`：运行中的发行版缓存过期后重新探测，停止的发行版
+//! `~/.cc-switch/wsl-tool-installs-v2.json`（v1 会把经 WSL 互操作找到的 Windows 安装算成已装，换文件名让旧结果作废）：运行中的发行版缓存过期后重新探测，停止的发行版
 //! 只用上次结果（不为此启动它），用户点「重新检测」时才全部重新探测。
 
 use std::collections::BTreeMap;
@@ -60,7 +60,7 @@ pub type Installs = BTreeMap<String, BTreeMap<String, ToolInstall>>;
 fn cache_path() -> PathBuf {
     crate::config::get_home_dir()
         .join(".cc-switch")
-        .join("wsl-tool-installs.json")
+        .join("wsl-tool-installs-v2.json")
 }
 
 fn lock() -> &'static Mutex<()> {

@@ -5410,11 +5410,7 @@
       "noHome": "未获取到用户目录，请填写自定义目录",
       "cached": "上次检测",
       "willStart": "写入时将启动",
-      "probeFailed": "本次探测失败",
-      "installed": "已装 {{app}} {{version}}",
-      "broken": "已装 {{app}}，但无法运行",
-      "notInstalled": "未检测到 {{app}}",
-      "installUnknown": "{{app}} 安装情况未检测"
+      "probeFailed": "本次探测失败"
     },
     "legacyWsl": "已保留原来的 WSL 目录。勾选 Windows 并保存后，两边可以各自启用不同的供应商。",
     "legacyUnresolved": "无法识别原目录对应的 WSL 发行版，暂时保留原单目录行为。请在对应发行版一行填写目录后保存。",
@@ -5480,7 +5476,7 @@
       "managed_fields_changed": "下次切换将覆盖托管字段",
       "superseded": "已有更新的操作",
       "not_synced": "尚未同步供应商",
-      "no_provider": "尚未选择供应商",
+      "no_provider": "保持原配置 · 未选择供应商",
       "provider_missing": "正在用的供应商已不存在",
       "routed": "已接入路由，直连供应商在退出路由后生效",
       "direct": "直连",
@@ -5498,7 +5494,6 @@
     },
     "switch": {
       "group": "在各环境启用",
-      "inUse": "{{target}} 正在使用",
       "enable": "在 {{target}} 启用",
       "done": "{{target}} 已切换到 {{provider}}",
       "failed": "{{target}} 未能切换到 {{provider}}，仍用原来的供应商",
@@ -5506,7 +5501,14 @@
       "addTitle": "在 {{target}} 启用",
       "addMessage": "{{target}} 里装了这个客户端，但还没加入写入环境。确认后会把它加入写入环境，先备份它现有的配置，再在那里启用 {{provider}}。",
       "addConfirm": "加入并启用",
-      "addAndEnable": "加入 {{target}} 并启用"
+      "addAndEnable": "加入 {{target}} 并启用",
+      "inUseMain": "{{target}} 正在使用（切换到其他供应商即可更换）",
+      "inUseRelease": "{{target}} 正在使用，点击取消",
+      "releaseTitle": "在 {{target}} 取消",
+      "releaseMessage": "{{target}} 将不再使用 {{provider}}：CC Switch 会清掉写进该环境的地址、Key 和模型，其他设置不动，它回到自己的登录或配置。之后可以随时再启用。",
+      "releaseConfirm": "取消使用",
+      "released": "{{target}} 已不再使用 {{provider}}",
+      "releaseFailed": "{{target}} 取消失败，仍在使用原来的供应商"
     },
     "route": {
       "join": "接入路由 / 聚合",

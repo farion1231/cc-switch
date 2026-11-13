@@ -139,3 +139,17 @@ pub async fn test_wsl_route(
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())
 }
+
+/// 取消某个环境正在用的供应商（供应商页取消环境开关）。
+#[tauri::command]
+pub async fn deactivate_app_target_provider(
+    state: tauri::State<'_, AppState>,
+    app: String,
+    target: String,
+) -> Result<crate::app_targets::sync::TargetReport, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || service::deactivate(&state, &app, &target))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}

@@ -5410,11 +5410,7 @@
       "noHome": "Home-Verzeichnis nicht gefunden; eigenes Verzeichnis eingeben",
       "cached": "letzte Erkennung",
       "willStart": "wird beim Schreiben gestartet",
-      "probeFailed": "Erkennung diesmal fehlgeschlagen",
-      "installed": "{{app}} {{version}} installiert",
-      "broken": "{{app}} installiert, aber nicht lauffähig",
-      "notInstalled": "{{app}} nicht gefunden",
-      "installUnknown": "Installation von {{app}} nicht geprüft"
+      "probeFailed": "Erkennung diesmal fehlgeschlagen"
     },
     "legacyWsl": "Ihr bisheriges WSL-Verzeichnis bleibt erhalten. Markieren Sie Windows und speichern Sie; danach kann jede Seite ihren eigenen Anbieter aktivieren.",
     "legacyUnresolved": "Die WSL-Distribution des bisherigen Verzeichnisses wurde nicht erkannt, daher bleibt das Verhalten mit einem Verzeichnis erhalten. Geben Sie das Verzeichnis in der passenden Distributionszeile ein und speichern Sie.",
@@ -5480,7 +5476,7 @@
       "managed_fields_changed": "Der nächste Wechsel überschreibt die verwalteten Felder",
       "superseded": "Durch einen neueren Vorgang ersetzt",
       "not_synced": "Anbieter noch nicht synchronisiert",
-      "no_provider": "Noch kein Anbieter gewählt",
+      "no_provider": "Eigene Konfiguration; kein Anbieter gewählt",
       "provider_missing": "Der verwendete Anbieter existiert nicht mehr",
       "routed": "Dem Routing beigetreten; der direkte Anbieter gilt nach dem Verlassen",
       "direct": "Direkt",
@@ -5498,7 +5494,6 @@
     },
     "switch": {
       "group": "Pro Umgebung aktivieren",
-      "inUse": "In Verwendung auf {{target}}",
       "enable": "Auf {{target}} aktivieren",
       "done": "{{target}} auf {{provider}} umgestellt",
       "failed": "{{target}} konnte nicht auf {{provider}} umgestellt werden; der bisherige Anbieter bleibt",
@@ -5506,7 +5501,14 @@
       "addTitle": "Auf {{target}} aktivieren",
       "addMessage": "Auf {{target}} ist dieser Client installiert, aber noch kein Schreibziel. Nach der Bestätigung wird es als Schreibziel hinzugefügt, die vorhandene Konfiguration gesichert und dort {{provider}} aktiviert.",
       "addConfirm": "Hinzufügen und aktivieren",
-      "addAndEnable": "{{target}} hinzufügen und aktivieren"
+      "addAndEnable": "{{target}} hinzufügen und aktivieren",
+      "inUseMain": "In Verwendung auf {{target}} (zum Ändern auf einen anderen Anbieter wechseln)",
+      "inUseRelease": "In Verwendung auf {{target}}; klicken zum Beenden",
+      "releaseTitle": "Auf {{target}} nicht mehr verwenden",
+      "releaseMessage": "{{target}} verwendet {{provider}} nicht mehr: CC Switch entfernt die dort geschriebene Adresse, den Schlüssel und das Modell und lässt andere Einstellungen unverändert; die Umgebung nutzt wieder ihre eigene Anmeldung oder Konfiguration. Sie können es jederzeit wieder aktivieren.",
+      "releaseConfirm": "Nicht mehr verwenden",
+      "released": "{{target}} verwendet {{provider}} nicht mehr",
+      "releaseFailed": "Konnte auf {{target}} nicht beendet werden; der bisherige Anbieter bleibt"
     },
     "route": {
       "join": "Routing / Aggregation beitreten",

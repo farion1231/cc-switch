@@ -778,7 +778,7 @@ pub fn sync_followers_with(
                         TargetRecord {
                             dir: worker_dir,
                             warnings,
-                            ..TargetRecord::new(TargetStatus::Deferred).reason("no_provider")
+                            ..TargetRecord::new(TargetStatus::Skipped).reason("no_provider")
                         }
                     } else if kind.writes_provider() {
                         TargetRecord {
@@ -1276,4 +1276,68 @@ fn route_sync_lock(app: &AppType) -> Arc<Mutex<()>> {
         .entry(app.as_str().to_string())
         .or_default()
         .clone()
+}
+
+/// 一个跟随环境不再用 CC Switch 的供应商：清掉上次写进去的关键字段（接在路由上时只记下，
+/// 退出路由时写回空的直连），记为「保持原配置 · 未选择供应商」。
+pub fn deactivate_follower(
+    state: &AppState,
+    app: &AppType,
+    spec: &TargetSpec,
+) -> Result<TargetReport, AppError> {
+    let key = spec.id.key();
+    let providers = state.db.get_all_providers(app.as_str())?;
+    let prev = status::get(app.as_str(), &key)
+        .and_then(|r| r.provider_id)
+        .and_then(|id| providers.get(&id).cloned());
+    let routed = follower_routed(app, &spec.id);
+    let generation = bump_generation(app, &key);
+    let dir = resolve_dir(app, spec, true)?;
+    let shown_dir = dir.as_ref().map(|d| d.to_string_lossy().into_owned());
+    let mut scope = scope_for(app, &spec.id, dir);
+    scope.direct = None;
+    let worker_state = state.clone();
+    let worker_app = app.clone();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let (result, _) = scope::run(scope, || {
+            if !routed {
+                crate::services::provider::clear_follower(
+                    &worker_state,
+                    &worker_app,
+                    prev.as_ref(),
+                )?;
+            }
+            Ok::<_, AppError>(fingerprint_in_scope(&worker_app))
+        });
+        let _ = tx.send(result);
+    });
+    let timeout = if matches!(spec.id, TargetId::Wsl(_)) {
+        WSL_TIMEOUT
+    } else {
+        WINDOWS_TIMEOUT
+    };
+    let fingerprint = match rx.recv_timeout(timeout) {
+        Ok(result) => result?,
+        Err(_) => {
+            return Ok(record(
+                app,
+                &key,
+                TargetRecord::new(TargetStatus::Error).reason("timeout"),
+            ))
+        }
+    };
+    let record = TargetRecord {
+        fingerprint,
+        dir: shown_dir,
+        routed,
+        ..TargetRecord::new(TargetStatus::Skipped).reason("no_provider")
+    };
+    if is_latest(app, &key, generation) {
+        status::replace(app.as_str(), &key, record.clone());
+    }
+    Ok(TargetReport {
+        target: key,
+        record,
+    })
 }

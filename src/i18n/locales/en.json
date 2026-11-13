@@ -5410,11 +5410,7 @@
       "noHome": "Home directory not found; enter a custom directory",
       "cached": "last detection",
       "willStart": "will be started when writing",
-      "probeFailed": "detection failed this time",
-      "installed": "{{app}} {{version}} installed",
-      "broken": "{{app}} installed but cannot run",
-      "notInstalled": "{{app}} not found",
-      "installUnknown": "{{app}} installation not checked"
+      "probeFailed": "detection failed this time"
     },
     "legacyWsl": "Your existing WSL directory is kept. Check Windows and save, then each side can enable its own provider.",
     "legacyUnresolved": "The WSL distro of the existing directory could not be recognised, so the single-directory behaviour is kept. Enter the directory on the matching distro row and save.",
@@ -5480,7 +5476,7 @@
       "managed_fields_changed": "The next switch will overwrite managed fields",
       "superseded": "Replaced by a newer operation",
       "not_synced": "Provider not synced yet",
-      "no_provider": "No provider picked yet",
+      "no_provider": "Own config kept; no provider picked",
       "provider_missing": "The provider in use no longer exists",
       "routed": "Joined routing; the direct provider applies after leaving routing",
       "direct": "Direct",
@@ -5498,7 +5494,6 @@
     },
     "switch": {
       "group": "Enable per environment",
-      "inUse": "In use on {{target}}",
       "enable": "Enable on {{target}}",
       "done": "{{target}} switched to {{provider}}",
       "failed": "{{target}} could not switch to {{provider}}; it keeps its previous provider",
@@ -5506,7 +5501,14 @@
       "addTitle": "Enable on {{target}}",
       "addMessage": "{{target}} has this client installed but is not a write target yet. Confirming adds it as a write target, backs up its current config, then enables {{provider}} there.",
       "addConfirm": "Add and enable",
-      "addAndEnable": "Add {{target}} and enable"
+      "addAndEnable": "Add {{target}} and enable",
+      "inUseMain": "In use on {{target}} (switch to another provider to change)",
+      "inUseRelease": "In use on {{target}}; click to stop using it",
+      "releaseTitle": "Stop using on {{target}}",
+      "releaseMessage": "{{target}} will stop using {{provider}}: CC Switch removes the address, key and model it wrote there and leaves other settings alone, so it falls back to its own sign-in or config. You can enable it again anytime.",
+      "releaseConfirm": "Stop using",
+      "released": "{{target}} no longer uses {{provider}}",
+      "releaseFailed": "Could not stop using the provider on {{target}}; it keeps the previous provider"
     },
     "route": {
       "join": "Join routing / aggregation",

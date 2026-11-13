@@ -5410,11 +5410,7 @@
       "noHome": "홈 디렉터리를 찾을 수 없습니다. 사용자 지정 디렉터리를 입력하세요",
       "cached": "마지막 감지",
       "willStart": "기록할 때 시작됨",
-      "probeFailed": "이번 감지에 실패함",
-      "installed": "{{app}} {{version}} 설치됨",
-      "broken": "{{app}}이(가) 설치되었지만 실행할 수 없음",
-      "notInstalled": "{{app}}을(를) 찾을 수 없음",
-      "installUnknown": "{{app}} 설치 여부 미확인"
+      "probeFailed": "이번 감지에 실패함"
     },
     "legacyWsl": "기존 WSL 디렉터리는 그대로 유지됩니다. Windows를 체크하고 저장하면 양쪽에서 각각 다른 공급자를 활성화할 수 있습니다.",
     "legacyUnresolved": "기존 디렉터리의 WSL 배포판을 알 수 없어 단일 디렉터리 동작을 유지합니다. 해당 배포판 행에 디렉터리를 입력하고 저장하세요.",
@@ -5480,7 +5476,7 @@
       "managed_fields_changed": "다음 전환 시 관리 필드를 덮어씀",
       "superseded": "더 새로운 작업으로 대체됨",
       "not_synced": "공급자가 아직 동기화되지 않음",
-      "no_provider": "공급자 미선택",
+      "no_provider": "기존 설정 유지 · 공급자 미선택",
       "provider_missing": "사용 중인 공급자가 더 이상 없음",
       "routed": "라우팅에 참여 중이며 직접 공급자는 라우팅을 떠난 뒤 적용됨",
       "direct": "직접 연결",
@@ -5498,7 +5494,6 @@
     },
     "switch": {
       "group": "환경별 활성화",
-      "inUse": "{{target}}에서 사용 중",
       "enable": "{{target}}에서 활성화",
       "done": "{{target}}을(를) {{provider}}(으)로 전환했습니다",
       "failed": "{{target}}을(를) {{provider}}(으)로 전환하지 못해 이전 공급자를 유지합니다",
@@ -5506,7 +5501,14 @@
       "addTitle": "{{target}}에서 활성화",
       "addMessage": "{{target}}에 이 클라이언트가 설치되어 있지만 아직 기록 대상이 아닙니다. 확인하면 기록 대상에 추가하고 현재 설정을 백업한 뒤 {{provider}}을(를) 활성화합니다.",
       "addConfirm": "추가하고 활성화",
-      "addAndEnable": "{{target}} 추가 후 활성화"
+      "addAndEnable": "{{target}} 추가 후 활성화",
+      "inUseMain": "{{target}}에서 사용 중(다른 공급자로 전환하면 바뀜)",
+      "inUseRelease": "{{target}}에서 사용 중, 클릭하면 사용 해제",
+      "releaseTitle": "{{target}}에서 사용 해제",
+      "releaseMessage": "{{target}}은(는) 더 이상 {{provider}}을(를) 사용하지 않습니다. CC Switch가 이 환경에 기록한 주소, 키, 모델을 지우고 다른 설정은 그대로 두므로 자체 로그인이나 설정으로 돌아갑니다. 언제든 다시 활성화할 수 있습니다.",
+      "releaseConfirm": "사용 해제",
+      "released": "{{target}}이(가) 더 이상 {{provider}}을(를) 사용하지 않습니다",
+      "releaseFailed": "{{target}}에서 사용 해제하지 못해 이전 공급자를 유지합니다"
     },
     "route": {
       "join": "라우팅 / 집계 참여",

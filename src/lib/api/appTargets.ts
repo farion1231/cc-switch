@@ -201,6 +201,14 @@ export const appTargetsApi = {
     });
   },
 
+  /** 取消某个环境正在用的供应商（清掉 CC Switch 写进去的关键字段） */
+  async deactivate(
+    app: AppTargetAppId,
+    target: TargetKey,
+  ): Promise<TargetReport> {
+    return await invoke("deactivate_app_target_provider", { app, target });
+  },
+
   /** 某个环境是否接入共用的路由 / 聚合 */
   async setRoute(
     app: AppTargetAppId,

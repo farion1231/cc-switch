@@ -585,6 +585,36 @@ pub fn activate(
     Ok(report)
 }
 
+/// 取消一个环境正在用的供应商（供应商页取消环境开关）。主环境总要有一家供应商（切到别的
+/// 即可），不能取消；跟随环境清掉 CC Switch 写进去的关键字段，回到它自己的配置。
+pub fn deactivate(state: &AppState, app: &str, target: &str) -> Result<TargetReport, AppError> {
+    let app = parse_app(app)?;
+    let id = TargetId::parse(target)
+        .ok_or_else(|| AppError::InvalidInput(format!("unknown target {target}")))?;
+    let (config, _) = sync::app_config(&app);
+    if config.primary_id().is_some_and(|p| p.same(&id)) {
+        return Err(AppError::localized(
+            "app_targets.primary_needs_provider",
+            format!(
+                "{} 总要使用一家供应商，切换到其他供应商即可",
+                sync::env_label(&id)
+            ),
+            format!(
+                "{} always uses a provider; switch to another one instead",
+                sync::env_label(&id)
+            ),
+        ));
+    }
+    let spec = config.target(&id).filter(|t| t.enabled).ok_or_else(|| {
+        AppError::localized(
+            "app_targets.target_disabled",
+            format!("{} 没有勾选为写入环境", sync::env_label(&id)),
+            format!("{} is not a write target", sync::env_label(&id)),
+        )
+    })?;
+    sync::deactivate_follower(state, &app, &spec)
+}
+
 /// 把一个 WSL 发行版加入这个应用的写入环境（目录用它已保存的自定义目录或自动目录），并在
 /// 写入前备份它原有的托管文件。不写客户端配置，由调用方接着写。
 fn enable_wsl_target(

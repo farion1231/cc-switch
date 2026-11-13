@@ -1607,6 +1607,7 @@ pub fn run() {
             commands::save_app_targets,
             commands::sync_app_targets,
             commands::activate_app_target_provider,
+            commands::deactivate_app_target_provider,
             commands::set_app_target_route,
             commands::get_wsl_route_info,
             commands::set_wsl_client_host,

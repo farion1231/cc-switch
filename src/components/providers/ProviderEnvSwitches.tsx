@@ -68,6 +68,41 @@ export function ProviderEnvSwitches({
   const invalidate = useInvalidateAppTargets();
   const [busy, setBusy] = useState<TargetKey | null>(null);
   const [confirming, setConfirming] = useState<TargetKey | null>(null);
+  const [releasing, setReleasing] = useState<TargetKey | null>(null);
+
+  // 取消一个 WSL 环境正在用的这家：清掉 CC Switch 写进去的地址和 Key，回到它自己的配置。
+  const release = async (key: TargetKey) => {
+    setBusy(key);
+    try {
+      const report = await appTargetsApi.deactivate(app, key);
+      if (report.status === "error") {
+        toast.warning(
+          t("appTargets.switch.releaseFailed", { target: targetLabel(key) }),
+          {
+            description: [reasonLabel(t, report.reason), report.detail]
+              .filter(Boolean)
+              .join(" · "),
+            duration: 8000,
+          },
+        );
+      } else {
+        toast.success(
+          t("appTargets.switch.released", {
+            target: targetLabel(key),
+            provider: provider.name,
+          }),
+        );
+      }
+    } catch (error) {
+      toast.error(
+        t("appTargets.switch.releaseFailed", { target: targetLabel(key) }),
+        { description: String(error), duration: 8000 },
+      );
+    } finally {
+      setBusy(null);
+      await invalidate();
+    }
+  };
   const managed = isManagedLogin(app, provider);
   const candidateKeys = candidates.map(wslTargetKey);
 
@@ -129,7 +164,9 @@ export function ProviderEnvSwitches({
             : undefined;
         const label = distroOf(key) ?? "Windows";
         const tip = active
-          ? t("appTargets.switch.inUse", { target: targetLabel(key) })
+          ? isMain
+            ? t("appTargets.switch.inUseMain", { target: targetLabel(key) })
+            : t("appTargets.switch.inUseRelease", { target: targetLabel(key) })
           : disabledReason ||
             (isCandidate
               ? t("appTargets.switch.addAndEnable", {
@@ -145,7 +182,11 @@ export function ProviderEnvSwitches({
               aria-label={tip}
               disabled={busy !== null || (!active && Boolean(disabledReason))}
               onClick={() => {
-                if (active) return;
+                if (active) {
+                  // 主环境总要有一家供应商（切到别家即可）；其他环境可以取消
+                  if (!isMain) setReleasing(key);
+                  return;
+                }
                 if (isMain) mainAction?.onClick();
                 else if (isCandidate) setConfirming(key);
                 else void activate(key);
@@ -154,7 +195,10 @@ export function ProviderEnvSwitches({
                 "inline-flex h-6 max-w-[104px] items-center gap-1 rounded-full border px-2 text-badge transition-colors",
                 isCandidate && "border-dashed",
                 active
-                  ? "cursor-default border-direct-border bg-direct-soft text-direct-text"
+                  ? cn(
+                      "border-direct-border bg-direct-soft text-direct-text",
+                      isMain ? "cursor-default" : "hover:brightness-95",
+                    )
                   : "border-border-strong text-fg-2 hover:bg-subtle hover:text-fg-1",
                 "disabled:opacity-60",
               )}
@@ -174,6 +218,25 @@ export function ProviderEnvSwitches({
           </HoverTip>
         );
       })}
+      <ConfirmDialog
+        isOpen={releasing !== null}
+        variant="info"
+        zIndex="top"
+        title={t("appTargets.switch.releaseTitle", {
+          target: releasing ? targetLabel(releasing) : "",
+        })}
+        message={t("appTargets.switch.releaseMessage", {
+          target: releasing ? targetLabel(releasing) : "",
+          provider: provider.name,
+        })}
+        confirmText={t("appTargets.switch.releaseConfirm")}
+        onConfirm={() => {
+          const key = releasing;
+          setReleasing(null);
+          if (key) void release(key);
+        }}
+        onCancel={() => setReleasing(null)}
+      />
       <ConfirmDialog
         isOpen={confirming !== null}
         variant="info"

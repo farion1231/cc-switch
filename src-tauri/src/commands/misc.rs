@@ -1392,6 +1392,23 @@ pub(crate) enum WslToolState {
     Unknown(String),
 }
 
+/// WSL 里指向 Windows 盘符挂载点的路径（默认 `/mnt/<盘符>/…`，也认 automount 根改成
+/// `/` 时的 `/<盘符>/…`）。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn is_windows_mount_path(path: &str) -> bool {
+    let rest = path
+        .strip_prefix("/mnt/")
+        .unwrap_or(path.trim_start_matches('/'));
+    let mut parts = rest.splitn(2, '/');
+    let drive = parts.next().unwrap_or_default();
+    let looks_like_drive = drive.len() == 1 && drive.chars().all(|c| c.is_ascii_alphabetic());
+    let lower = path.to_ascii_lowercase();
+    (looks_like_drive && parts.next().is_some())
+        || lower.ends_with(".exe")
+        || lower.ends_with(".cmd")
+        || lower.ends_with(".bat")
+}
+
 /// 哨兵之后的输出拆成（`command -v` 的路径, 其余输出）。
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn split_probe_path(output: &str) -> (Option<String>, String) {
@@ -1428,6 +1445,11 @@ pub(crate) fn wsl_tool_state(tool: &str, distro: &str) -> WslToolState {
     let stdout = decode_command_output(&out.stdout).trim().to_string();
     let stderr = decode_command_output(&out.stderr).trim().to_string();
     let (path, rest) = split_probe_path(after_version_sentinel(&stdout));
+    // WSL 默认把 Windows 的 PATH 接在后面：发行版里没装时，`command -v` 会找到 Windows 上
+    // 那一份（/mnt/c/...），跑出来的是 Windows 的版本。那不算装在这个发行版里。
+    if path.as_deref().is_some_and(is_windows_mount_path) {
+        return WslToolState::NotInstalled;
+    }
     if out.status.success() {
         let raw = if rest.is_empty() { &stderr } else { &rest };
         if raw.is_empty() {
@@ -7368,6 +7390,22 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
 #[cfg(test)]
 mod wsl_tool_state_tests {
     use super::split_probe_path;
+
+    #[test]
+    fn windows_installs_seen_through_wsl_interop_do_not_count() {
+        use super::is_windows_mount_path;
+        assert!(is_windows_mount_path(
+            "/mnt/c/Users/76760/AppData/Roaming/npm/codex"
+        ));
+        assert!(is_windows_mount_path("/mnt/d/nodejs/node_global/codex"));
+        assert!(is_windows_mount_path(
+            "/c/Users/me/AppData/Roaming/npm/codex"
+        ));
+        assert!(is_windows_mount_path("/usr/bin/codex.exe"));
+        assert!(!is_windows_mount_path("/usr/local/bin/codex"));
+        assert!(!is_windows_mount_path("/root/.npm-global/bin/codex"));
+        assert!(!is_windows_mount_path("/mnt/wsl/shared/codex"));
+    }
 
     #[test]
     fn probe_output_carries_the_install_path() {

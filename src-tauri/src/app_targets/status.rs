@@ -144,6 +144,18 @@ pub fn set(app: &str, target: &str, mut record: TargetRecord) {
     write(&state);
 }
 
+/// 整条替换，不沿用旧记录的供应商（取消一个环境的供应商时用）。
+pub fn replace(app: &str, target: &str, record: TargetRecord) {
+    let _guard = lock().lock().unwrap_or_else(|e| e.into_inner());
+    let mut state = read();
+    state
+        .apps
+        .entry(app.to_string())
+        .or_default()
+        .insert(target.to_string(), record);
+    write(&state);
+}
+
 /// 只改状态（比如发现外部修改），其余字段不动。
 pub fn mark(app: &str, target: &str, status: TargetStatus, reason: Option<&str>) {
     let _guard = lock().lock().unwrap_or_else(|e| e.into_inner());

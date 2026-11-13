@@ -5410,11 +5410,7 @@
       "noHome": "未取得使用者目錄，請填寫自訂目錄",
       "cached": "上次偵測",
       "willStart": "寫入時將啟動",
-      "probeFailed": "本次偵測失敗",
-      "installed": "已安裝 {{app}} {{version}}",
-      "broken": "已安裝 {{app}}，但無法執行",
-      "notInstalled": "未偵測到 {{app}}",
-      "installUnknown": "{{app}} 安裝情況未偵測"
+      "probeFailed": "本次偵測失敗"
     },
     "legacyWsl": "已保留原本的 WSL 目錄。勾選 Windows 並儲存後，兩邊可以各自啟用不同的供應商。",
     "legacyUnresolved": "無法辨識原目錄對應的 WSL 發行版，暫時保留原單目錄行為。請在對應發行版一列填寫目錄後儲存。",
@@ -5480,7 +5476,7 @@
       "managed_fields_changed": "下次切換將覆寫託管欄位",
       "superseded": "已有較新的操作",
       "not_synced": "尚未同步供應商",
-      "no_provider": "尚未選擇供應商",
+      "no_provider": "保持原設定 · 未選擇供應商",
       "provider_missing": "正在使用的供應商已不存在",
       "routed": "已接入路由，直連供應商在退出路由後生效",
       "direct": "直連",
@@ -5498,7 +5494,6 @@
     },
     "switch": {
       "group": "在各環境啟用",
-      "inUse": "{{target}} 正在使用",
       "enable": "在 {{target}} 啟用",
       "done": "{{target}} 已切換到 {{provider}}",
       "failed": "{{target}} 未能切換到 {{provider}}，仍使用原來的供應商",
@@ -5506,7 +5501,14 @@
       "addTitle": "在 {{target}} 啟用",
       "addMessage": "{{target}} 裡安裝了這個用戶端，但還沒加入寫入環境。確認後會把它加入寫入環境，先備份它現有的設定，再在那裡啟用 {{provider}}。",
       "addConfirm": "加入並啟用",
-      "addAndEnable": "加入 {{target}} 並啟用"
+      "addAndEnable": "加入 {{target}} 並啟用",
+      "inUseMain": "{{target}} 正在使用（切換到其他供應商即可更換）",
+      "inUseRelease": "{{target}} 正在使用，點擊取消",
+      "releaseTitle": "在 {{target}} 取消",
+      "releaseMessage": "{{target}} 將不再使用 {{provider}}：CC Switch 會清掉寫進該環境的位址、Key 和模型，其他設定不動，它回到自己的登入或設定。之後可以隨時再啟用。",
+      "releaseConfirm": "取消使用",
+      "released": "{{target}} 已不再使用 {{provider}}",
+      "releaseFailed": "{{target}} 取消失敗，仍在使用原來的供應商"
     },
     "route": {
       "join": "接入路由 / 聚合",

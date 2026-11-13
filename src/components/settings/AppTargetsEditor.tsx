@@ -20,8 +20,6 @@ import {
   appTargetsApi,
   enabledTargetKeys,
   sameTarget,
-  distroOf,
-  installOf,
   wslCandidates,
   WINDOWS_TARGET,
   wslTargetKey,
@@ -397,22 +395,6 @@ export function AppTargetsEditor({
     else if (env.cached) parts.push(t("appTargets.env.cached"));
     if (rowEnabled && !env.running) parts.push(t("appTargets.env.willStart"));
     if (env.error) parts.push(t("appTargets.env.probeFailed"));
-    const distro = distroOf(key);
-    const install = distro ? installOf(installs, distro, app) : undefined;
-    if (install?.status === "installed") {
-      parts.push(
-        t("appTargets.env.installed", {
-          app: appName,
-          version: install.version ?? "",
-        }),
-      );
-    } else if (install?.status === "broken") {
-      parts.push(t("appTargets.env.broken", { app: appName }));
-    } else if (install?.status === "notInstalled") {
-      parts.push(t("appTargets.env.notInstalled", { app: appName }));
-    } else {
-      parts.push(t("appTargets.env.installUnknown", { app: appName }));
-    }
     return { tone: env.running ? "ok" : "off", text: parts.join(" · ") };
   };
 

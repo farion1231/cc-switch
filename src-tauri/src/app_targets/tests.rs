@@ -397,9 +397,10 @@ fn wsl_followers_skip_windows_only_mcp_commands() {
         set_targets(&AppType::Claude, windows_plus_wsl("Ubuntu", &wsl_dir));
         let reports = sync::sync_followers(state, &AppType::Claude, None, SyncKind::Full);
         // 这个环境还没选供应商：只同步共享的 MCP，标「待选择」。
+        // 这个环境还没选供应商：只同步共享的 MCP，标「保持原配置 · 未选择供应商」。
         assert_eq!(
             reports[0].record.status,
-            TargetStatus::Deferred,
+            TargetStatus::Skipped,
             "{reports:?}"
         );
         assert_eq!(reports[0].record.reason.as_deref(), Some("no_provider"));
@@ -979,5 +980,52 @@ fn enabling_a_provider_in_a_new_wsl_environment_adds_it_and_backs_up_first() {
         // Windows 不受影响。
         let primary = read_json(&home.join(".claude").join("settings.json"));
         assert_eq!(primary["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-a");
+    });
+}
+
+#[test]
+#[serial]
+fn a_wsl_environment_can_stop_using_its_provider() {
+    with_home(|state, home| {
+        seed_claude(state);
+        let wsl_dir = home.join("wsl").join(".claude");
+        write(
+            &wsl_dir.join("settings.json"),
+            r#"{ "permissions": { "allow": ["Bash(ls)"] } }"#,
+        );
+        set_targets(&AppType::Claude, windows_plus_wsl("Ubuntu", &wsl_dir));
+        activate(state, "claude", "wsl:Ubuntu", "b");
+        assert_eq!(
+            read_json(&wsl_dir.join("settings.json"))["env"]["ANTHROPIC_AUTH_TOKEN"],
+            "sk-b"
+        );
+
+        let report = service::deactivate(state, "claude", "wsl:Ubuntu").unwrap();
+        assert_eq!(report.record.status, TargetStatus::Skipped);
+        assert_eq!(report.record.reason.as_deref(), Some("no_provider"));
+        let follower = read_json(&wsl_dir.join("settings.json"));
+        assert!(
+            follower["env"].get("ANTHROPIC_AUTH_TOKEN").is_none(),
+            "{follower}"
+        );
+        assert!(
+            follower["env"].get("ANTHROPIC_BASE_URL").is_none(),
+            "{follower}"
+        );
+        assert_eq!(follower["permissions"]["allow"][0], "Bash(ls)");
+        assert_eq!(
+            status::get("claude", "wsl:Ubuntu").unwrap().provider_id,
+            None
+        );
+        assert!(sync::followers_using(&AppType::Claude, "b").is_empty());
+
+        // Windows 主环境不能取消，只能切到别家。
+        assert!(service::deactivate(state, "claude", "windows").is_err());
+        // 再启用照常写入。
+        activate(state, "claude", "wsl:Ubuntu", "a");
+        assert_eq!(
+            read_json(&wsl_dir.join("settings.json"))["env"]["ANTHROPIC_AUTH_TOKEN"],
+            "sk-a"
+        );
     });
 }

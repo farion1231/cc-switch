@@ -5410,11 +5410,7 @@
       "noHome": "Ana dizin bulunamadı; özel bir dizin girin",
       "cached": "son algılama",
       "willStart": "yazarken başlatılacak",
-      "probeFailed": "bu kez algılama başarısız",
-      "installed": "{{app}} {{version}} kurulu",
-      "broken": "{{app}} kurulu ama çalışmıyor",
-      "notInstalled": "{{app}} bulunamadı",
-      "installUnknown": "{{app}} kurulumu kontrol edilmedi"
+      "probeFailed": "bu kez algılama başarısız"
     },
     "legacyWsl": "Mevcut WSL dizininiz korunuyor. Windows'u işaretleyip kaydedin; ardından her iki taraf kendi sağlayıcısını etkinleştirebilir.",
     "legacyUnresolved": "Mevcut dizinin WSL dağıtımı tanınamadı, tek dizin davranışı korunuyor. Dizini ilgili dağıtım satırına girip kaydedin.",
@@ -5480,7 +5476,7 @@
       "managed_fields_changed": "Bir sonraki geçiş yönetilen alanların üzerine yazacak",
       "superseded": "Daha yeni bir işlemle değiştirildi",
       "not_synced": "Sağlayıcı henüz eşitlenmedi",
-      "no_provider": "Henüz sağlayıcı seçilmedi",
+      "no_provider": "Kendi yapılandırması korundu; sağlayıcı seçilmedi",
       "provider_missing": "Kullanılan sağlayıcı artık yok",
       "routed": "Yönlendirmeye katıldı; doğrudan sağlayıcı yönlendirmeden çıkınca uygulanır",
       "direct": "Doğrudan",
@@ -5498,7 +5494,6 @@
     },
     "switch": {
       "group": "Ortam başına etkinleştir",
-      "inUse": "{{target}} üzerinde kullanımda",
       "enable": "{{target}} üzerinde etkinleştir",
       "done": "{{target}}, {{provider}} sağlayıcısına geçti",
       "failed": "{{target}}, {{provider}} sağlayıcısına geçemedi; önceki sağlayıcıyı kullanmaya devam ediyor",
@@ -5506,7 +5501,14 @@
       "addTitle": "{{target}} üzerinde etkinleştir",
       "addMessage": "{{target}} üzerinde bu istemci kurulu ama henüz yazma hedefi değil. Onaylarsanız yazma hedefi olarak eklenir, mevcut yapılandırması yedeklenir ve ardından orada {{provider}} etkinleştirilir.",
       "addConfirm": "Ekle ve etkinleştir",
-      "addAndEnable": "{{target}} ekle ve etkinleştir"
+      "addAndEnable": "{{target}} ekle ve etkinleştir",
+      "inUseMain": "{{target}} üzerinde kullanımda (değiştirmek için başka sağlayıcıya geçin)",
+      "inUseRelease": "{{target}} üzerinde kullanımda; bırakmak için tıklayın",
+      "releaseTitle": "{{target}} üzerinde kullanmayı bırak",
+      "releaseMessage": "{{target}} artık {{provider}} kullanmayacak: CC Switch oraya yazdığı adresi, anahtarı ve modeli kaldırır, diğer ayarlara dokunmaz; ortam kendi oturumuna veya yapılandırmasına döner. İstediğiniz zaman yeniden etkinleştirebilirsiniz.",
+      "releaseConfirm": "Kullanmayı bırak",
+      "released": "{{target}} artık {{provider}} kullanmıyor",
+      "releaseFailed": "{{target}} üzerinde bırakılamadı; önceki sağlayıcı kullanılmaya devam ediyor"
     },
     "route": {
       "join": "Yönlendirmeye / birleştirmeye katıl",

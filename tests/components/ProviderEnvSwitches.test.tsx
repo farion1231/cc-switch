@@ -14,12 +14,14 @@ vi.mock("react-i18next", () => ({
 }));
 
 const activateMock = vi.fn();
+const deactivateMock = vi.fn();
 vi.mock("@/lib/api/appTargets", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api/appTargets")>();
   return {
     ...actual,
     appTargetsApi: {
       activate: (...args: unknown[]) => activateMock(...args),
+      deactivate: (...args: unknown[]) => deactivateMock(...args),
     },
   };
 });
@@ -172,5 +174,27 @@ describe("ProviderEnvSwitches", () => {
     const [windows, alpine] = screen.getAllByRole("button");
     expect(windows).not.toBeDisabled();
     expect(alpine).toBeDisabled();
+  });
+
+  it("lets an active WSL toggle be unchecked after confirming, but not Windows", async () => {
+    deactivateMock.mockResolvedValue({
+      target: "wsl:Alpine",
+      status: "skipped",
+      reason: "no_provider",
+      at: 2,
+    });
+    const onMain = renderSwitches("b", true);
+    const [windows, alpine] = screen.getAllByRole("button");
+    fireEvent.click(windows);
+    expect(onMain).not.toHaveBeenCalled();
+    expect(deactivateMock).not.toHaveBeenCalled();
+
+    fireEvent.click(alpine);
+    expect(deactivateMock).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.click(screen.getByText("appTargets.switch.releaseConfirm"));
+    });
+    expect(deactivateMock).toHaveBeenCalledWith("claude", "wsl:Alpine");
+    expect(toastMock.success).toHaveBeenCalled();
   });
 });

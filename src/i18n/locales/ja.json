@@ -5410,11 +5410,7 @@
       "noHome": "ホームディレクトリを取得できません。カスタムディレクトリを入力してください",
       "cached": "前回の検出",
       "willStart": "書き込み時に起動します",
-      "probeFailed": "今回の検出に失敗しました",
-      "installed": "{{app}} {{version}} インストール済み",
-      "broken": "{{app}} はインストール済みですが実行できません",
-      "notInstalled": "{{app}} が見つかりません",
-      "installUnknown": "{{app}} のインストール状況は未確認"
+      "probeFailed": "今回の検出に失敗しました"
     },
     "legacyWsl": "既存の WSL ディレクトリはそのまま保持されています。Windows をチェックして保存すると、それぞれで別のプロバイダーを有効にできます。",
     "legacyUnresolved": "既存ディレクトリの WSL ディストリビューションを特定できないため、単一ディレクトリの動作を維持しています。対応するディストリビューションの行にディレクトリを入力して保存してください。",
@@ -5480,7 +5476,7 @@
       "managed_fields_changed": "次回の切り替えで管理対象のフィールドを上書きします",
       "superseded": "新しい操作に置き換えられました",
       "not_synced": "プロバイダーはまだ同期されていません",
-      "no_provider": "プロバイダーは未選択",
+      "no_provider": "元の設定のまま · プロバイダー未選択",
       "provider_missing": "使用中のプロバイダーが存在しません",
       "routed": "ルーティングに参加中。直結プロバイダーはルーティングを抜けた後に反映されます",
       "direct": "直結",
@@ -5498,7 +5494,6 @@
     },
     "switch": {
       "group": "環境ごとに有効化",
-      "inUse": "{{target}} で使用中",
       "enable": "{{target}} で有効にする",
       "done": "{{target}} を {{provider}} に切り替えました",
       "failed": "{{target}} を {{provider}} に切り替えられませんでした。以前のプロバイダーのままです",
@@ -5506,7 +5501,14 @@
       "addTitle": "{{target}} で有効にする",
       "addMessage": "{{target}} にはこのクライアントがインストールされていますが、まだ書き込み先ではありません。確認すると書き込み先に追加し、現在の設定をバックアップしてから {{provider}} を有効にします。",
       "addConfirm": "追加して有効にする",
-      "addAndEnable": "{{target}} を追加して有効にする"
+      "addAndEnable": "{{target}} を追加して有効にする",
+      "inUseMain": "{{target}} で使用中（別のプロバイダーに切り替えると変更できます）",
+      "inUseRelease": "{{target}} で使用中。クリックで使用をやめます",
+      "releaseTitle": "{{target}} で使用をやめる",
+      "releaseMessage": "{{target}} は {{provider}} を使わなくなります。CC Switch がこの環境に書き込んだアドレス、キー、モデルを削除し、その他の設定はそのままにするため、その環境自身のログインや設定に戻ります。いつでも再度有効にできます。",
+      "releaseConfirm": "使用をやめる",
+      "released": "{{target}} は {{provider}} を使わなくなりました",
+      "releaseFailed": "{{target}} で使用をやめられませんでした。以前のプロバイダーのままです"
     },
     "route": {
       "join": "ルーティング / 集約に参加",
