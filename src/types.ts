@@ -321,6 +321,7 @@ export interface VisibleApps {
   pi: boolean;
   mcode: boolean;
   kimi: boolean;
+  qwen: boolean;
   dsh?: boolean;
   agy: boolean;
   omp: boolean;
@@ -843,6 +844,7 @@ export interface McpServerSpec {
 export interface McpApps {
   mcode?: boolean;
   kimi?: boolean;
+  qwen?: boolean;
   dsh?: boolean;
   workbuddy?: boolean;
   agy?: boolean;

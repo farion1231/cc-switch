@@ -1550,6 +1550,8 @@ fn migration_v23_to_v24_adds_dsh_flags_without_changing_omp_or_skill_state() {
          ALTER TABLE skills DROP COLUMN enabled_dsh;
          ALTER TABLE mcp_servers DROP COLUMN enabled_copilot;
          ALTER TABLE skills DROP COLUMN enabled_copilot;
+         ALTER TABLE mcp_servers DROP COLUMN enabled_qwen;
+         ALTER TABLE skills DROP COLUMN enabled_qwen;
          INSERT INTO mcp_servers (id, name, server_config, enabled_omp)
          VALUES ('shared', 'Shared MCP', '{}', 1);
          INSERT INTO skills (id, name, directory, enabled_kimi)
@@ -1587,12 +1589,14 @@ fn migration_v23_to_v24_adds_dsh_flags_without_changing_omp_or_skill_state() {
 }
 
 #[test]
-fn migration_from_v24_adds_copilot_and_workbuddy_flags_without_changing_dsh_state() {
+fn migration_from_v24_adds_copilot_workbuddy_and_qwen_flags_without_changing_dsh_state() {
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn).expect("create tables");
     conn.execute_batch(
         "ALTER TABLE mcp_servers DROP COLUMN enabled_copilot;
          ALTER TABLE skills DROP COLUMN enabled_copilot;
+         ALTER TABLE mcp_servers DROP COLUMN enabled_qwen;
+         ALTER TABLE skills DROP COLUMN enabled_qwen;
          ALTER TABLE mcp_servers DROP COLUMN enabled_workbuddy;
          ALTER TABLE skills DROP COLUMN enabled_workbuddy;
          INSERT INTO mcp_servers (id, name, server_config, enabled_dsh)
@@ -1604,18 +1608,18 @@ fn migration_from_v24_adds_copilot_and_workbuddy_flags_without_changing_dsh_stat
     Database::set_user_version(&conn, 24).expect("set user_version=24");
 
     Database::apply_schema_migrations_on_conn(&conn).expect("upgrade v24 database");
-    // v24 → v25（Copilot）→ v26（WorkBuddy）
-    assert_eq!(Database::get_user_version(&conn).unwrap(), 26);
-    assert_eq!(SCHEMA_VERSION, 26);
+    // v24 → v25（Copilot）→ v26（WorkBuddy）→ v27（Qwen）
+    assert_eq!(Database::get_user_version(&conn).unwrap(), 27);
+    assert_eq!(SCHEMA_VERSION, 27);
     for table in ["mcp_servers", "skills"] {
-        let flags: (bool, bool, bool) = conn
+        let flags: (bool, bool, bool, bool) = conn
             .query_row(
-                &format!("SELECT enabled_dsh, enabled_copilot, enabled_workbuddy FROM {table}"),
+                &format!("SELECT enabled_dsh, enabled_copilot, enabled_workbuddy, enabled_qwen FROM {table}"),
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .expect("read migrated flags");
-        assert_eq!(flags, (true, false, false), "{table}");
+        assert_eq!(flags, (true, false, false, false), "{table}");
     }
 
     conn.execute("UPDATE skills SET enabled_copilot = 1", [])
@@ -1627,21 +1631,136 @@ fn migration_from_v24_adds_copilot_and_workbuddy_flags_without_changing_dsh_stat
         .unwrap());
 }
 
+fn read_dsh_copilot_workbuddy_qwen_flags(
+    conn: &Connection,
+    table: &str,
+) -> (bool, bool, bool, bool) {
+    conn.query_row(
+        &format!(
+            "SELECT enabled_dsh, enabled_copilot, enabled_workbuddy, enabled_qwen FROM {table} WHERE id = 'row'"
+        ),
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )
+    .expect("read dsh/copilot/workbuddy/qwen flags")
+}
+
 #[test]
-fn fresh_install_has_dsh_copilot_and_workbuddy_flags_at_current_version() {
+fn fresh_install_has_dsh_copilot_workbuddy_and_qwen_flags_at_current_version() {
     // 与 Database::init 的全新安装路径一致：先建表，再从 user_version=0 跑迁移。
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn).expect("create tables");
     Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+    assert_eq!(SCHEMA_VERSION, 27);
     assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
     for table in ["mcp_servers", "skills"] {
-        for column in ["enabled_dsh", "enabled_copilot", "enabled_workbuddy"] {
+        for column in [
+            "enabled_dsh",
+            "enabled_copilot",
+            "enabled_workbuddy",
+            "enabled_qwen",
+        ] {
             assert!(
                 Database::has_column(&conn, table, column).expect("inspect column"),
                 "{table}.{column} missing on fresh install"
             );
         }
     }
+}
+
+#[test]
+fn migration_v23_to_v27_adds_dsh_copilot_workbuddy_then_qwen_flags() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    conn.execute_batch(
+        "ALTER TABLE mcp_servers DROP COLUMN enabled_dsh;
+         ALTER TABLE mcp_servers DROP COLUMN enabled_copilot;
+         ALTER TABLE mcp_servers DROP COLUMN enabled_workbuddy;
+         ALTER TABLE mcp_servers DROP COLUMN enabled_qwen;
+         ALTER TABLE skills DROP COLUMN enabled_dsh;
+         ALTER TABLE skills DROP COLUMN enabled_copilot;
+         ALTER TABLE skills DROP COLUMN enabled_workbuddy;
+         ALTER TABLE skills DROP COLUMN enabled_qwen;
+         INSERT INTO mcp_servers (id, name, server_config, enabled_kimi) VALUES ('row', 'MCP', '{}', 1);
+         INSERT INTO skills (id, name, directory, enabled_kimi) VALUES ('row', 'Skill', 'row', 1);",
+    )
+    .expect("seed v23 database");
+    Database::set_user_version(&conn, 23).expect("set user_version=23");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("upgrade v23 database");
+    assert_eq!(Database::get_user_version(&conn).unwrap(), 27);
+    for table in ["mcp_servers", "skills"] {
+        assert_eq!(
+            read_dsh_copilot_workbuddy_qwen_flags(&conn, table),
+            (false, false, false, false)
+        );
+        let kimi: bool = conn
+            .query_row(&format!("SELECT enabled_kimi FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert!(kimi);
+    }
+}
+
+#[test]
+fn migration_v26_to_v27_adds_qwen_flag_and_keeps_existing_app_state() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    conn.execute_batch(
+        "ALTER TABLE mcp_servers DROP COLUMN enabled_qwen;
+         ALTER TABLE skills DROP COLUMN enabled_qwen;
+         INSERT INTO mcp_servers (id, name, server_config, enabled_dsh, enabled_copilot, enabled_workbuddy) VALUES ('row', 'MCP', '{}', 1, 1, 1);
+         INSERT INTO skills (id, name, directory, enabled_dsh, enabled_copilot, enabled_workbuddy) VALUES ('row', 'Skill', 'row', 1, 1, 1);",
+    )
+    .expect("seed v26 database");
+    Database::set_user_version(&conn, 26).expect("set user_version=26");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("upgrade v26 database");
+    assert_eq!(Database::get_user_version(&conn).unwrap(), 27);
+    for table in ["mcp_servers", "skills"] {
+        assert_eq!(
+            read_dsh_copilot_workbuddy_qwen_flags(&conn, table),
+            (true, true, true, false)
+        );
+    }
+
+    conn.execute("UPDATE skills SET enabled_qwen = 1", [])
+        .unwrap();
+    Database::apply_schema_migrations_on_conn(&conn).expect("reopen migrated database");
+    assert_eq!(
+        read_dsh_copilot_workbuddy_qwen_flags(&conn, "skills"),
+        (true, true, true, true)
+    );
+}
+
+/// Qwen Code 开发版曾把 enabled_qwen 记作 v26（缺上游 v26 的 enabled_workbuddy）。
+/// v26 → v27 需要补齐 enabled_workbuddy，同时保留已有的 enabled_qwen 状态。
+#[test]
+fn migration_from_qwen_dev_v26_backfills_missing_workbuddy_column() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    conn.execute_batch(
+        "ALTER TABLE mcp_servers DROP COLUMN enabled_workbuddy;
+         ALTER TABLE skills DROP COLUMN enabled_workbuddy;
+         INSERT INTO mcp_servers (id, name, server_config, enabled_dsh, enabled_copilot, enabled_qwen) VALUES ('row', 'MCP', '{}', 1, 1, 1);
+         INSERT INTO skills (id, name, directory, enabled_dsh, enabled_copilot, enabled_qwen) VALUES ('row', 'Skill', 'row', 1, 0, 1);",
+    )
+    .expect("seed qwen dev v26 database");
+    Database::set_user_version(&conn, 26).expect("set user_version=26");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("upgrade qwen dev v26 database");
+    assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
+    assert_eq!(
+        read_dsh_copilot_workbuddy_qwen_flags(&conn, "mcp_servers"),
+        (true, true, false, true)
+    );
+    assert_eq!(
+        read_dsh_copilot_workbuddy_qwen_flags(&conn, "skills"),
+        (true, false, false, true)
+    );
+    Database::apply_schema_migrations_on_conn(&conn).expect("re-run migrations");
+    assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
 }
 
 #[test]

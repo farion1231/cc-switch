@@ -5309,6 +5309,33 @@
       "secondaryModelInUse": "Das Subagent-Modell von Kimi Code verwendet ein Modell dieses Anbieters. Ändern Sie es zuerst in Kimi Code mit /secondary-model."
     }
   },
+  "qwen": {
+    "modelSelectionHint": "Mit der Umschalttaste auf einer Anbieterkarte machen Sie diesen Anbieter zum aktuellen. Für ein anderes Modell führen Sie /model in Qwen Code aus.",
+    "authTypes": {
+      "openai": "OpenAI Chat Completions",
+      "openai-responses": "OpenAI Responses",
+      "anthropic": "Anthropic",
+      "gemini": "Gemini",
+      "vertex-ai": "Vertex AI"
+    },
+    "baseUrlRequired": "Das Anthropic-Protokoll benötigt eine Basis-URL.",
+    "baseUrlInvalid": "Die Basis-URL muss mit http:// oder https:// beginnen.",
+    "envKey": "Umgebungsvariable",
+    "envKeyHint": "Dieser Anbieter liest seinen Schlüssel aus dieser Umgebungsvariable. Sie wird in der nativen Qwen-Code-Konfiguration verwaltet und kann hier nicht geändert werden.",
+    "modelOverride": "Protokoll und Endpunkt nur für dieses Modell (aus der nativen Konfiguration)",
+    "removeModel": "Modell entfernen",
+    "contextWindowSize": "Kontextfenster",
+    "duplicateModelId": "Diese Modell-ID wird bereits verwendet.",
+    "empty": {
+      "title": "Qwen-Code-Anbieter hinzufügen",
+      "description": "Konfigurieren Sie Endpunkt, API-Schlüssel und Modelle. Anbieter, die bereits in settings.json stehen, erscheinen hier automatisch."
+    },
+    "deleteSessionHint": "Löschen Sie diese Sitzung in Qwen Code (qwen sessions), damit Index und Archiv gemeinsam aktualisiert werden.",
+    "error": {
+      "currentModelInUse": "Qwen Code verwendet ein Modell dieses Anbieters. Wechseln Sie zuerst zu einem anderen Anbieter oder wählen Sie mit /model in Qwen Code ein anderes Modell.",
+      "modelOwnedByOther": "Dieses Modell gehört unter derselben Basis-URL bereits zu einem anderen Anbieter. Ändern Sie die Modell-ID oder die Basis-URL."
+    }
+  },
   "omp": {
     "empty": {
       "title": "Noch keine Anbieter mit API-Schlüssel",

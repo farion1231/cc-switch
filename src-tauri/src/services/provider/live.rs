@@ -36,6 +36,9 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Kimi => {
             crate::kimi_config::get_providers().map(|providers| providers.contains_key(provider_id))
         }
+        AppType::Qwen => {
+            crate::qwen_config::get_providers().map(|providers| providers.contains_key(provider_id))
+        }
         AppType::Mcode => crate::mcode_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Omp => Ok(crate::omp_config::get_providers()?.contains_key(provider_id)),
@@ -312,6 +315,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Pi
         | AppType::Mcode
         | AppType::Kimi
+        | AppType::Qwen
         | AppType::Dsh
         | AppType::Agy
         | AppType::Omp
@@ -394,6 +398,7 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Pi
         | AppType::Mcode
         | AppType::Kimi
+        | AppType::Qwen
         | AppType::Dsh
         | AppType::ClaudeDesktop
         | AppType::Agy
@@ -722,6 +727,9 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         AppType::Kimi => {
             crate::kimi_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
+        AppType::Qwen => {
+            crate::qwen_config::set_provider(&provider.id, provider.settings_config.clone())?
+        }
         AppType::Mcode => {
             crate::mcode_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
@@ -917,6 +925,7 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
             AppType::Pi
                 | AppType::Mcode
                 | AppType::Kimi
+                | AppType::Qwen
                 | AppType::Dsh
                 | AppType::Omp
                 | AppType::Copilot
@@ -1077,6 +1086,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         }
         AppType::Mcode => Ok(json!(crate::mcode_config::get_providers()?)),
         AppType::Kimi => Ok(json!(crate::kimi_config::get_providers()?)),
+        AppType::Qwen => Ok(json!(crate::qwen_config::get_providers()?)),
         AppType::Dsh => Ok(json!(crate::dsh_config::get_providers()?)),
         AppType::WorkBuddy => Ok(json!(crate::workbuddy_config::get_providers()?)),
         AppType::Pi => Err(AppError::InvalidInput(
@@ -1221,6 +1231,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         | AppType::Pi
         | AppType::Mcode
         | AppType::Kimi
+        | AppType::Qwen
         | AppType::Dsh
         | AppType::Omp
         | AppType::WorkBuddy => {

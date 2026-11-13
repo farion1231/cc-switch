@@ -58,6 +58,8 @@ pub struct VisibleApps {
     #[serde(default = "default_true")]
     pub kimi: bool,
     #[serde(default = "default_true")]
+    pub qwen: bool,
+    #[serde(default = "default_true")]
     pub dsh: bool,
     #[serde(default = "default_true")]
     pub agy: bool,
@@ -81,6 +83,7 @@ impl Default for VisibleApps {
             pi: true,
             mcode: true,
             kimi: true,
+            qwen: true,
             dsh: true,
             agy: true,
             omp: true,
@@ -105,6 +108,7 @@ impl VisibleApps {
             AppType::Pi => self.pi,
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
+            AppType::Qwen => self.qwen,
             AppType::Dsh => self.dsh,
             AppType::Agy => self.agy,
             AppType::Omp => self.omp,
@@ -1488,6 +1492,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::Pi
         | AppType::Mcode
         | AppType::Kimi
+        | AppType::Qwen
         | AppType::Dsh
         | AppType::Omp
         | AppType::WorkBuddy => None,
@@ -1514,6 +1519,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::Pi
         | AppType::Mcode
         | AppType::Kimi
+        | AppType::Qwen
         | AppType::Dsh
         | AppType::Omp
         | AppType::WorkBuddy => {}

@@ -5309,6 +5309,33 @@
       "secondaryModelInUse": "Kimi Code의 서브에이전트가 이 공급자의 모델을 사용 중입니다. 먼저 Kimi Code에서 /secondary-model로 변경하세요."
     }
   },
+  "qwen": {
+    "modelSelectionHint": "공급자 카드의 전환 버튼으로 현재 공급자를 선택하세요. 다른 모델을 사용하려면 Qwen Code에서 /model을 실행하세요.",
+    "authTypes": {
+      "openai": "OpenAI Chat Completions",
+      "openai-responses": "OpenAI Responses",
+      "anthropic": "Anthropic",
+      "gemini": "Gemini",
+      "vertex-ai": "Vertex AI"
+    },
+    "baseUrlRequired": "Anthropic 프로토콜에는 요청 주소가 필요합니다.",
+    "baseUrlInvalid": "요청 주소는 http:// 또는 https://로 시작해야 합니다.",
+    "envKey": "환경 변수",
+    "envKeyHint": "이 공급자는 이 환경 변수에서 키를 읽습니다. Qwen Code 기본 설정에서 관리되므로 여기서는 변경할 수 없습니다.",
+    "modelOverride": "이 모델만 사용하는 프로토콜 및 엔드포인트(기본 설정에서 가져옴)",
+    "removeModel": "모델 제거",
+    "contextWindowSize": "컨텍스트 창",
+    "duplicateModelId": "이미 사용 중인 모델 ID입니다.",
+    "empty": {
+      "title": "Qwen Code 공급자 추가",
+      "description": "요청 주소, API 키, 모델을 설정하세요. settings.json에 이미 있는 공급자는 여기에 자동으로 표시됩니다."
+    },
+    "deleteSessionHint": "인덱스와 아카이브를 함께 업데이트하려면 Qwen Code에서(qwen sessions) 이 세션을 삭제하세요.",
+    "error": {
+      "currentModelInUse": "Qwen Code가 이 공급자의 모델을 사용 중입니다. 먼저 다른 공급자로 전환하거나 Qwen Code에서 /model로 다른 모델을 선택하세요.",
+      "modelOwnedByOther": "같은 요청 주소의 이 모델은 이미 다른 공급자에 속해 있습니다. 모델 ID나 요청 주소를 변경하세요."
+    }
+  },
   "omp": {
     "empty": {
       "title": "아직 API 키 공급자가 없습니다.",

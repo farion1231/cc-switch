@@ -110,6 +110,7 @@ import { GrokBuildProviderForm } from "./GrokBuildProviderForm";
 import { CodexFormFields } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
 import { KimiProviderForm } from "./KimiProviderForm";
+import { QwenProviderForm } from "./QwenProviderForm";
 import { CopilotProviderForm } from "./CopilotProviderForm";
 import { AgyAccountSelect } from "./AgyOAuthSection";
 import { ClaudeAccountSelect } from "./ClaudeOfficialSection";
@@ -359,6 +360,7 @@ function CodexConfigEditorWithName({
 
 export function ProviderForm(props: ProviderFormProps) {
   if (props.appId === "kimi") return <KimiProviderForm {...props} />;
+  if (props.appId === "qwen") return <QwenProviderForm {...props} />;
   if (props.appId === "copilot") return <CopilotProviderForm {...props} />;
   if (props.appId === "mcode" || props.appId === "dsh")
     return <McodeProviderForm {...props} />;
