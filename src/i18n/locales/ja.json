@@ -3210,6 +3210,216 @@
       "copied": "「{{name}}」を {{apps}} にコピーしました"
     }
   },
+  "subagents": {
+    "helpTitle": "Subagents",
+    "helpText": "Subagent は Claude Code がタスクを委任できる専用アシスタントです。それぞれが独自のシステムプロンプト、ツール権限、モデルを持ちます。ここではユーザーレベルの subagent（~/.claude/agents）を管理し、すべてのプロジェクトで利用できます。有効にするとディレクトリに書き込み、無効にするとファイルを削除します（ライブラリには残ります）。",
+    "copyDir": "ディレクトリのパスをコピー",
+    "copyDirAria": "ディレクトリのパス {{path}} をコピー",
+    "dirNotExists": "ディレクトリはまだありません。最初の subagent を有効にしたときに作成されます",
+    "import": "インポート",
+    "new": "新規作成",
+    "clearSearch": "検索をクリア",
+    "noSearchResults": "「{{query}}」に一致する subagent はありません",
+    "loadFailed": "subagent を読み込めませんでした",
+    "tabs": {
+      "managed": "管理中",
+      "unmanaged": "未管理",
+      "plugins": "プラグイン"
+    },
+    "empty": {
+      "body": "Subagent は説明に基づいて Claude Code が自動的にタスクを委任する専用アシスタントで、独自のコンテキスト、プロンプト、ツール権限を持ちます。有効にすると {{path}} に書き込まれ、すべてのプロジェクトで使えます。",
+      "importCount": "既存の {{count}} 件をインポート"
+    },
+    "status": {
+      "drifted": "ディスク上で変更あり",
+      "missing": "ファイルなし"
+    },
+    "actions": {
+      "resolve": "対処",
+      "rewrite": "再書き込み",
+      "enableTip": "有効化：agents ディレクトリに書き込みます",
+      "disableTip": "無効化：agents ディレクトリからファイルを削除します（ライブラリには残ります）",
+      "enableAria": "{{name}} を有効化",
+      "disableAria": "{{name}} を無効化",
+      "rowMore": "{{name}} のその他の操作",
+      "duplicate": "新しい agent として複製",
+      "export": ".md をエクスポート（クリップボードにコピー）",
+      "copyPath": "ファイルパスをコピー"
+    },
+    "confirmDelete": {
+      "title": "「{{name}}」を削除しますか？",
+      "message": "cc-switch のライブラリからのみ削除されます。agents ディレクトリにファイルはありません。",
+      "messageEnabled": "{{path}} も削除されます。元に戻せません。"
+    },
+    "conflict": {
+      "driftedTitle": "ディスク上のファイルが変更されています",
+      "driftedMessage": "このファイルは cc-switch の外部で変更されています：{{detail}}\n続行すると、ディスク上の変更を cc-switch の版で上書き（または削除）します。",
+      "driftedConfirm": "続行する",
+      "fileExistsTitle": "対象ファイルが既に存在します",
+      "fileExistsMessage": "agents ディレクトリに cc-switch が管理していない同名のファイルがあります：{{detail}}\n続行すると上書きします。",
+      "fileExistsConfirm": "上書き"
+    },
+    "errors": {
+      "invalid": "内容が不正です：{{detail}}",
+      "nameTaken": "名前は既に使われています：{{detail}}",
+      "notFound": "この subagent は既に存在しません。一覧を更新しました",
+      "drifted": "ディスク上のファイルが変更されています：{{detail}}",
+      "fileExists": "対象ファイルが既に存在します：{{detail}}"
+    },
+    "toast": {
+      "created": "「{{name}}」を作成しました",
+      "saved": "「{{name}}」を保存しました",
+      "writtenTo": "{{path}} に書き込みました",
+      "removedFrom": "{{path}} を削除しました",
+      "saveFailed": "保存できませんでした",
+      "enabled": "「{{name}}」を有効にしました",
+      "disabled": "「{{name}}」を無効にしました",
+      "enableFailed": "「{{name}}」を有効にできませんでした",
+      "disableFailed": "「{{name}}」を無効にできませんでした",
+      "rewritten": "「{{name}}」を再書き込みしました",
+      "rewriteFailed": "「{{name}}」を書き込めませんでした",
+      "deleted": "「{{name}}」を削除しました",
+      "deleteFailed": "「{{name}}」を削除できませんでした",
+      "adoptedDisk": "ディスク上の「{{name}}」を採用しました",
+      "overwroteDisk": "「{{name}}」を cc-switch の版で上書きしました",
+      "resolveFailed": "「{{name}}」を処理できませんでした",
+      "imported": "{{count}} 件の subagent をインポートしました",
+      "importFailed": "インポートに失敗しました",
+      "exported": "「{{name}}」の Markdown をコピーしました",
+      "pathCopied": "ファイルパスをコピーしました",
+      "dirCopied": "ディレクトリのパスをコピーしました",
+      "copyFailed": "コピーできませんでした"
+    },
+    "drift": {
+      "title": "「{{name}}」のファイルが変更されています",
+      "body": "{{path}} は cc-switch の外部で変更されました。残す版を選んでください：",
+      "ccSwitchVersion": "cc-switch の版",
+      "diskVersion": "ディスク上の版",
+      "diskMissing": "ディスク上にこのファイルはもうありません。",
+      "loadFailed": "ディスク上のファイルを読み込めませんでした：{{error}}",
+      "adoptDisk": "ディスク上の版を採用",
+      "overwriteDisk": "cc-switch の版で上書き"
+    },
+    "unmanaged": {
+      "emptyTitle": "未管理の subagent はありません",
+      "emptyBody": "{{path}} のファイルはすべて cc-switch で管理されています。このディレクトリに手動で置いた .md ファイルがここに表示されます。",
+      "hint": "{{path}} にあり、cc-switch がまだ管理していないファイル",
+      "selectAll": "すべて選択",
+      "selectAria": "{{name}} を選択",
+      "importSelected": "選択した項目をインポート（{{count}}）",
+      "importing": "インポート中…",
+      "parseError": "インポートできません：{{error}}"
+    },
+    "plugins": {
+      "emptyTitle": "プラグインの subagent はありません",
+      "emptyBody": "インストール済みの Claude Code プラグインに含まれる subagent がここに表示されます。",
+      "hint": "これらの subagent はプラグインが提供する読み取り専用のものです。変更はプラグイン側で行ってください。",
+      "fromPlugin": "プラグイン {{plugin}} より"
+    },
+    "form": {
+      "newTitle": "subagent を新規作成",
+      "editTitle": "「{{name}}」を編集",
+      "sheetDescription": "subagent を編集し、{{path}} に保存します",
+      "viewAria": "編集方法",
+      "viewForm": "フォーム",
+      "viewSource": "ソース",
+      "enabled": "有効",
+      "enabledHint": "保存すると {{path}} に書き込みます",
+      "disabledHint": "cc-switch のライブラリにのみ保存し、ファイルは書き込みません",
+      "saveAndWrite": "保存して書き込む",
+      "saveFailed": "保存できませんでした",
+      "name": "名前",
+      "nameHint": "小文字、数字、ハイフン。保存先",
+      "nameRequired": "名前を入力してください",
+      "nameInvalid": "小文字、数字、ハイフンのみ使用でき、先頭は英字か数字、最大 64 文字です",
+      "nameTaken": "「{{name}}」という subagent は既にあります",
+      "description": "説明",
+      "descriptionPlaceholder": "例：Expert code reviewer. Use proactively after writing or modifying code.",
+      "descriptionHint": "Claude はこの説明をもとに委任するタイミングを判断します。どんな場面で使うかを明確に書いてください。“use proactively” と書くとより積極的に呼び出されます。",
+      "descRequired": "説明を入力してください",
+      "model": "モデル",
+      "tools": "ツール",
+      "color": "色",
+      "colorNone": "色なし",
+      "body": "システムプロンプト",
+      "bodyHint": "frontmatter の後の本文が、この subagent のシステムプロンプトになります。",
+      "bodyPlaceholder": "You are a ...",
+      "sourceHint": "Markdown 全体（YAML frontmatter + 本文）を直接編集します。フォームが認識しないフィールドはそのまま残ります。",
+      "fixSourceFirst": "frontmatter を解析できません。先にソースモードで修正してください",
+      "looseTitle": "このファイルのフィールドはフォームでは読み取り専用です",
+      "looseHint": "このファイルの frontmatter は厳密な YAML ではありません（例：Claude Code の /agents が生成した、引用符なしで「Context:」を含む description）。Claude Code は問題なく読み込めるため、そのまま保持します。システムプロンプトはここで編集でき、フィールドはソースモードで変更してください。",
+      "parseError": {
+        "unclosed": "frontmatter の終わりの --- がありません",
+        "yaml": "YAML の構文エラー：{{detail}}",
+        "not_map": "frontmatter は「キー: 値」の形式である必要があります"
+      }
+    },
+    "model": {
+      "inherit": "メインのモデルを継承",
+      "inheritShort": "継承",
+      "inheritHint": "メインの会話で使っているモデルに従います",
+      "loading": "現在のプロバイダーを読み込み中…",
+      "loadFailed": "モデルの候補を読み込めませんでした。共通の候補のみ表示します",
+      "contextDirect": "現在：直接接続 · {{provider}}",
+      "contextDirectNone": "現在：直接接続",
+      "contextRoute": "ルート · {{provider}}",
+      "contextStack": "スタックモード",
+      "unknownProvider": "不明なプロバイダー",
+      "searchPlaceholder": "モデルを検索",
+      "searchEmpty": "一致するモデルはありません",
+      "groupCurrent": "現在の値",
+      "groupAlias": "エイリアス",
+      "groupModels": "モデル",
+      "groupModelsOf": "モデル · {{provider}}",
+      "custom": "カスタム…",
+      "customPlaceholder": "モデル id を入力（例：claude-sonnet-4-5）",
+      "notInList": "現在のモードでは選択できません",
+      "notInListHint": "「{{value}}」は現在のモードの候補にありません。プロバイダーやモードを切り替えると使えなくなる可能性があります。",
+      "aliasUnmappedShort": "現在のプロバイダーで未設定",
+      "aliasUnmapped": "現在のプロバイダーはこの階層を設定していません。Claude Code は公式のモデル id をそのままサードパーティに送るため、失敗する可能性があります。",
+      "notice": {
+        "routeAliasesOnly": "ルートモードではプロキシはエイリアスのみを対応付けます。完全なモデル id はデフォルトモデルに置き換えられます。",
+        "stackAliasesShareDefault": "スタックモードではすべてのエイリアスがデフォルトプロバイダーの最初のモデルを指します。特定の ccs- モデルを選ぶと、そのプロバイダーに直接届きます。",
+        "noProvider": "Claude Code に現在のプロバイダーがありません。共通の候補のみ選べます。",
+        "override": "CLAUDE_CODE_SUBAGENT_MODEL={{value}} が設定されており、ここでの設定より優先されます。"
+      }
+    },
+    "tools": {
+      "modeAria": "ツール権限",
+      "inherit": "すべてのツールを継承",
+      "allow": "許可するものだけ",
+      "inheritHint": "tools を書かない場合、メインの会話のすべてのツール（MCP ツールを含む）を使えます。",
+      "all": "すべてのツール",
+      "none": "ツールなし",
+      "summaryMore": "{{head}} +{{count}}",
+      "builtinAria": "組み込みツール",
+      "custom": "カスタムツール",
+      "customPlaceholder": "例：mcp__github__search_code（カンマ区切り）",
+      "add": "追加",
+      "remove": "{{tool}} を削除",
+      "emptyError": "ツールを 1 つ以上選ぶか、すべてのツールを継承に切り替えてください"
+    },
+    "colors": {
+      "red": "赤",
+      "blue": "青",
+      "green": "緑",
+      "yellow": "黄",
+      "purple": "紫",
+      "orange": "オレンジ",
+      "pink": "ピンク",
+      "cyan": "シアン"
+    },
+    "section": {
+      "title": "Subagents",
+      "summary": "{{count}} 件",
+      "summaryEmpty": "未登録",
+      "needsAttention": "{{count}} 件要対応",
+      "sharedHint": "すべての Claude プロバイダーで共有されます。ここでの変更はすぐにファイルへ書き込まれ、このページの「保存 / キャンセル」の影響を受けません。",
+      "overrideWarning": "このプロバイダーには Subagent モデル（{{model}}）が設定されています。CLAUDE_CODE_SUBAGENT_MODEL として適用され、下の各 Subagent が自分で設定した model より優先されます。",
+      "pluginsToggle": "プラグイン提供の Subagent {{count}} 件（読み取り専用）",
+      "backToList": "Subagent 一覧に戻る"
+    }
+  },
   "profiles": {
     "switcherAriaLabel": "プロジェクト：{{name}}",
     "switcherTooltip": {

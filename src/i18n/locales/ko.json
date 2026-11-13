@@ -3210,6 +3210,216 @@
       "copied": "\"{{name}}\"을(를) {{apps}}에 복사했습니다."
     }
   },
+  "subagents": {
+    "helpTitle": "서브에이전트",
+    "helpText": "서브에이전트는 Claude Code가 작업을 위임할 수 있는 전문 어시스턴트입니다. 각각 자체 시스템 프롬프트, 도구 권한, 모델을 가집니다. 이 페이지에서는 모든 프로젝트에서 사용할 수 있는 사용자 수준 서브에이전트(~/.claude/agents)를 관리합니다. 활성화하면 파일이 디렉터리에 기록되고, 비활성화하면 파일은 삭제되지만 라이브러리에는 남아 있습니다.",
+    "copyDir": "디렉터리 경로 복사",
+    "copyDirAria": "디렉터리 경로 {{path}} 복사",
+    "dirNotExists": "디렉터리가 아직 없습니다. 첫 서브에이전트를 활성화하면 생성됩니다.",
+    "import": "가져오기",
+    "new": "새로 만들기",
+    "clearSearch": "검색 지우기",
+    "noSearchResults": "\"{{query}}\"와(과) 일치하는 서브에이전트가 없습니다",
+    "loadFailed": "서브에이전트를 불러오지 못했습니다",
+    "tabs": {
+      "managed": "관리됨",
+      "unmanaged": "관리되지 않음",
+      "plugins": "플러그인"
+    },
+    "empty": {
+      "body": "서브에이전트는 Claude Code가 설명을 보고 작업을 위임하는 전문 어시스턴트로, 각각 자체 컨텍스트, 프롬프트, 도구 권한을 가집니다. 활성화된 서브에이전트는 {{path}}에 기록되며 모든 프로젝트에서 동작합니다.",
+      "importCount": "기존 파일 {{count}}개 가져오기"
+    },
+    "status": {
+      "drifted": "디스크에서 수정됨",
+      "missing": "파일 없음"
+    },
+    "actions": {
+      "resolve": "해결",
+      "rewrite": "다시 쓰기",
+      "enableTip": "활성화: agents 디렉터리에 기록",
+      "disableTip": "비활성화: agents 디렉터리에서 파일 삭제(라이브러리에는 유지)",
+      "enableAria": "{{name}} 활성화",
+      "disableAria": "{{name}} 비활성화",
+      "rowMore": "{{name}} 추가 작업",
+      "duplicate": "새 에이전트로 복제",
+      "export": ".md 내보내기(클립보드에 복사)",
+      "copyPath": "파일 경로 복사"
+    },
+    "confirmDelete": {
+      "title": "\"{{name}}\"을(를) 삭제할까요?",
+      "message": "cc-switch 라이브러리에서만 삭제됩니다. agents 디렉터리에는 해당 파일이 없습니다.",
+      "messageEnabled": "{{path}}도 함께 삭제됩니다. 이 작업은 되돌릴 수 없습니다."
+    },
+    "conflict": {
+      "driftedTitle": "디스크의 파일이 수정되었습니다",
+      "driftedMessage": "이 파일은 cc-switch 외부에서 변경되었습니다: {{detail}}\n계속하면 해당 변경 사항을 cc-switch 버전으로 덮어씁니다(또는 삭제합니다).",
+      "driftedConfirm": "그래도 계속",
+      "fileExistsTitle": "대상 파일이 이미 있습니다",
+      "fileExistsMessage": "agents 디렉터리에 cc-switch가 관리하지 않는 같은 이름의 파일이 이미 있습니다: {{detail}}\n계속하면 덮어씁니다.",
+      "fileExistsConfirm": "덮어쓰기"
+    },
+    "errors": {
+      "invalid": "내용이 올바르지 않습니다: {{detail}}",
+      "nameTaken": "이미 사용 중인 이름입니다: {{detail}}",
+      "notFound": "이 서브에이전트가 더 이상 존재하지 않습니다. 목록을 새로 고쳤습니다.",
+      "drifted": "디스크의 파일이 수정되었습니다: {{detail}}",
+      "fileExists": "대상 파일이 이미 있습니다: {{detail}}"
+    },
+    "toast": {
+      "created": "\"{{name}}\"을(를) 만들었습니다",
+      "saved": "\"{{name}}\"을(를) 저장했습니다",
+      "writtenTo": "{{path}}에 기록했습니다",
+      "removedFrom": "{{path}}을(를) 삭제했습니다",
+      "saveFailed": "저장하지 못했습니다",
+      "enabled": "\"{{name}}\"을(를) 활성화했습니다",
+      "disabled": "\"{{name}}\"을(를) 비활성화했습니다",
+      "enableFailed": "\"{{name}}\"을(를) 활성화하지 못했습니다",
+      "disableFailed": "\"{{name}}\"을(를) 비활성화하지 못했습니다",
+      "rewritten": "\"{{name}}\"을(를) 다시 기록했습니다",
+      "rewriteFailed": "\"{{name}}\"을(를) 기록하지 못했습니다",
+      "deleted": "\"{{name}}\"을(를) 삭제했습니다",
+      "deleteFailed": "\"{{name}}\"을(를) 삭제하지 못했습니다",
+      "adoptedDisk": "\"{{name}}\"의 디스크 버전을 채택했습니다",
+      "overwroteDisk": "\"{{name}}\"을(를) cc-switch 버전으로 덮어썼습니다",
+      "resolveFailed": "\"{{name}}\"을(를) 해결하지 못했습니다",
+      "imported": "서브에이전트 {{count}}개를 가져왔습니다",
+      "importFailed": "가져오기 실패",
+      "exported": "\"{{name}}\"의 Markdown을 복사했습니다",
+      "pathCopied": "파일 경로를 복사했습니다",
+      "dirCopied": "디렉터리 경로를 복사했습니다",
+      "copyFailed": "복사하지 못했습니다"
+    },
+    "drift": {
+      "title": "\"{{name}}\" 파일이 수정되었습니다",
+      "body": "{{path}}이(가) cc-switch 외부에서 변경되었습니다. 유지할 버전을 선택하세요:",
+      "ccSwitchVersion": "cc-switch 버전",
+      "diskVersion": "디스크 버전",
+      "diskMissing": "디스크에 파일이 더 이상 없습니다.",
+      "loadFailed": "디스크의 파일을 읽지 못했습니다: {{error}}",
+      "adoptDisk": "디스크 버전 채택",
+      "overwriteDisk": "cc-switch 버전으로 덮어쓰기"
+    },
+    "unmanaged": {
+      "emptyTitle": "관리되지 않는 서브에이전트가 없습니다",
+      "emptyBody": "{{path}}의 모든 파일을 cc-switch가 관리하고 있습니다. 이 디렉터리에 직접 넣은 .md 파일이 여기에 표시됩니다.",
+      "hint": "{{path}}에서 cc-switch가 아직 관리하지 않는 파일",
+      "selectAll": "모두 선택",
+      "selectAria": "{{name}} 선택",
+      "importSelected": "선택 항목 가져오기({{count}})",
+      "importing": "가져오는 중…",
+      "parseError": "가져올 수 없음: {{error}}"
+    },
+    "plugins": {
+      "emptyTitle": "플러그인의 서브에이전트가 없습니다",
+      "emptyBody": "설치된 Claude Code 플러그인에 포함된 서브에이전트가 여기에 표시됩니다.",
+      "hint": "이 서브에이전트는 플러그인에서 제공되며 읽기 전용입니다. 플러그인에서 변경하세요.",
+      "fromPlugin": "{{plugin}} 플러그인 제공"
+    },
+    "form": {
+      "newTitle": "새 서브에이전트",
+      "editTitle": "\"{{name}}\" 편집",
+      "sheetDescription": "서브에이전트를 편집하면 {{path}}에 저장됩니다",
+      "viewAria": "편집 모드",
+      "viewForm": "양식",
+      "viewSource": "소스",
+      "enabled": "활성화",
+      "enabledHint": "저장하면 {{path}}에 기록됩니다",
+      "disabledHint": "cc-switch 라이브러리에만 보관되며 파일은 기록되지 않습니다",
+      "saveAndWrite": "저장 및 기록",
+      "saveFailed": "저장하지 못했습니다",
+      "name": "이름",
+      "nameHint": "소문자, 숫자, 하이픈만 사용할 수 있습니다. 저장 위치:",
+      "nameRequired": "이름을 입력하세요",
+      "nameInvalid": "소문자, 숫자, 하이픈만 사용하고 문자나 숫자로 시작해야 하며 최대 64자입니다",
+      "nameTaken": "\"{{name}}\"이라는 이름의 서브에이전트가 이미 있습니다",
+      "description": "설명",
+      "descriptionPlaceholder": "예: 전문 코드 리뷰어. 코드를 작성하거나 수정한 뒤 적극적으로 사용하세요.",
+      "descriptionHint": "Claude는 이 설명을 보고 위임 여부를 결정하므로 언제 사용해야 하는지 설명하세요. \"use proactively\"를 넣으면 호출될 가능성이 높아집니다.",
+      "descRequired": "설명을 입력하세요",
+      "model": "모델",
+      "tools": "도구",
+      "color": "색상",
+      "colorNone": "색상 없음",
+      "body": "시스템 프롬프트",
+      "bodyHint": "frontmatter 뒤의 텍스트가 이 서브에이전트의 시스템 프롬프트입니다.",
+      "bodyPlaceholder": "당신은 ...입니다",
+      "sourceHint": "Markdown 파일 전체(YAML frontmatter + 본문)를 편집합니다. 양식이 인식하지 못하는 필드는 그대로 유지됩니다.",
+      "fixSourceFirst": "frontmatter를 해석할 수 없습니다. 먼저 소스 모드에서 수정하세요.",
+      "looseTitle": "이 파일의 필드는 양식에서 읽기 전용입니다",
+      "looseHint": "이 파일의 frontmatter는 엄격한 YAML이 아닙니다(예: Claude Code /agents가 작성한, 따옴표 없이 \"Context:\"를 포함하는 description). Claude Code는 이 파일을 정상적으로 불러오므로 그대로 유지합니다. 시스템 프롬프트는 여기에서 편집하고, 필드는 소스 모드에서 변경하세요.",
+      "parseError": {
+        "unclosed": "frontmatter에 닫는 ---가 없습니다",
+        "yaml": "YAML 구문 오류: {{detail}}",
+        "not_map": "frontmatter는 key: value 쌍이어야 합니다"
+      }
+    },
+    "model": {
+      "inherit": "메인 모델 상속",
+      "inheritShort": "상속",
+      "inheritHint": "메인 대화의 모델을 사용합니다",
+      "loading": "현재 공급자를 읽는 중…",
+      "loadFailed": "모델 옵션을 불러오지 못해 일반 옵션만 표시합니다",
+      "contextDirect": "현재: 직접 연결 · {{provider}}",
+      "contextDirectNone": "현재: 직접 연결",
+      "contextRoute": "라우팅 · {{provider}}",
+      "contextStack": "스택 모드",
+      "unknownProvider": "알 수 없는 공급자",
+      "searchPlaceholder": "모델 검색",
+      "searchEmpty": "일치하는 모델이 없습니다",
+      "groupCurrent": "현재 값",
+      "groupAlias": "별칭",
+      "groupModels": "모델",
+      "groupModelsOf": "모델 · {{provider}}",
+      "custom": "사용자 지정…",
+      "customPlaceholder": "모델 ID 입력, 예: claude-sonnet-4-5",
+      "notInList": "현재 모드에서 사용할 수 없음",
+      "notInListHint": "\"{{value}}\"은(는) 현재 모드의 목록에 없습니다. 공급자나 모드를 전환하면 동작하지 않을 수 있습니다.",
+      "aliasUnmappedShort": "현재 공급자가 설정하지 않음",
+      "aliasUnmapped": "현재 공급자가 이 등급을 설정하지 않았습니다. Claude Code는 공식 모델 ID를 그대로 서드파티 공급자에게 보내므로 실패할 수 있습니다.",
+      "notice": {
+        "routeAliasesOnly": "라우팅 모드에서는 프록시가 별칭만 매핑하며, 전체 모델 ID는 기본 모델로 대체됩니다.",
+        "stackAliasesShareDefault": "스택 모드에서는 모든 별칭이 기본 공급자의 첫 번째 모델을 가리킵니다. 특정 ccs- 모델을 선택하면 해당 공급자로 직접 연결됩니다.",
+        "noProvider": "Claude Code에 아직 현재 공급자가 없어 일반 옵션만 사용할 수 있습니다.",
+        "override": "CLAUDE_CODE_SUBAGENT_MODEL={{value}}이(가) 설정되어 있어 이 설정보다 우선합니다."
+      }
+    },
+    "tools": {
+      "modeAria": "도구 권한",
+      "inherit": "모든 도구 상속",
+      "allow": "지정한 도구만 허용",
+      "inheritHint": "tools 필드 없음: 서브에이전트가 MCP 도구를 포함해 메인 대화의 모든 도구를 사용할 수 있습니다.",
+      "all": "모든 도구",
+      "none": "도구 없음",
+      "summaryMore": "{{head}} +{{count}}",
+      "builtinAria": "기본 제공 도구",
+      "custom": "사용자 지정 도구",
+      "customPlaceholder": "예: mcp__github__search_code, 쉼표로 구분",
+      "add": "추가",
+      "remove": "{{tool}} 제거",
+      "emptyError": "도구를 하나 이상 선택하거나 모든 도구 상속으로 전환하세요"
+    },
+    "colors": {
+      "red": "빨강",
+      "blue": "파랑",
+      "green": "초록",
+      "yellow": "노랑",
+      "purple": "보라",
+      "orange": "주황",
+      "pink": "분홍",
+      "cyan": "청록"
+    },
+    "section": {
+      "title": "서브에이전트",
+      "summary": "{{count}}개 구성됨",
+      "summaryEmpty": "아직 없음",
+      "needsAttention": "{{count}}개 확인 필요",
+      "sharedHint": "모든 Claude 공급자가 공유합니다. 여기서 변경한 내용은 즉시 디스크에 기록되며, 이 페이지의 저장 / 취소와는 관계없습니다.",
+      "overrideWarning": "이 공급자는 서브에이전트 모델({{model}})을 설정합니다. 이 값은 CLAUDE_CODE_SUBAGENT_MODEL로 적용되어 아래 각 서브에이전트가 직접 지정한 모델보다 우선합니다.",
+      "pluginsToggle": "플러그인 제공 {{count}}개(읽기 전용)",
+      "backToList": "서브에이전트로 돌아가기"
+    }
+  },
   "profiles": {
     "switcherAriaLabel": "프로젝트: {{name}}",
     "switcherTooltip": {

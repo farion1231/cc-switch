@@ -3210,6 +3210,216 @@
       "copied": "Copied \"{{name}}\" to {{apps}}"
     }
   },
+  "subagents": {
+    "helpTitle": "Subagents",
+    "helpText": "Subagents are specialized assistants Claude Code can delegate tasks to. Each has its own system prompt, tool permissions and model. This page manages user-level subagents (~/.claude/agents), available in every project. Enabling writes the file into the directory; disabling removes the file but keeps it in the library.",
+    "copyDir": "Copy directory path",
+    "copyDirAria": "Copy directory path {{path}}",
+    "dirNotExists": "The directory doesn't exist yet. It will be created when you enable your first subagent.",
+    "import": "Import",
+    "new": "New",
+    "clearSearch": "Clear search",
+    "noSearchResults": "No subagents match \"{{query}}\"",
+    "loadFailed": "Couldn't load subagents",
+    "tabs": {
+      "managed": "Managed",
+      "unmanaged": "Unmanaged",
+      "plugins": "Plugins"
+    },
+    "empty": {
+      "body": "Subagents are specialized assistants that Claude Code delegates to based on their description, each with its own context, prompt and tool permissions. Enabled subagents are written to {{path}} and work in every project.",
+      "importCount": "Import {{count}} existing files"
+    },
+    "status": {
+      "drifted": "Modified on disk",
+      "missing": "File missing"
+    },
+    "actions": {
+      "resolve": "Resolve",
+      "rewrite": "Write again",
+      "enableTip": "Enable: write it into the agents directory",
+      "disableTip": "Disable: remove the file from the agents directory (kept in the library)",
+      "enableAria": "Enable {{name}}",
+      "disableAria": "Disable {{name}}",
+      "rowMore": "More actions for {{name}}",
+      "duplicate": "Duplicate as new agent",
+      "export": "Export .md (copy to clipboard)",
+      "copyPath": "Copy file path"
+    },
+    "confirmDelete": {
+      "title": "Delete \"{{name}}\"?",
+      "message": "It is only removed from the cc-switch library; there is no file for it in the agents directory.",
+      "messageEnabled": "{{path}} will be deleted as well. This can't be undone."
+    },
+    "conflict": {
+      "driftedTitle": "The file was modified on disk",
+      "driftedMessage": "This file was changed outside cc-switch: {{detail}}\nContinuing will overwrite (or delete) those changes with the cc-switch version.",
+      "driftedConfirm": "Continue anyway",
+      "fileExistsTitle": "The target file already exists",
+      "fileExistsMessage": "A file with the same name already exists in the agents directory and isn't managed by cc-switch: {{detail}}\nContinuing will overwrite it.",
+      "fileExistsConfirm": "Overwrite"
+    },
+    "errors": {
+      "invalid": "Invalid content: {{detail}}",
+      "nameTaken": "Name already in use: {{detail}}",
+      "notFound": "This subagent no longer exists. The list has been refreshed.",
+      "drifted": "The file was modified on disk: {{detail}}",
+      "fileExists": "The target file already exists: {{detail}}"
+    },
+    "toast": {
+      "created": "Created \"{{name}}\"",
+      "saved": "Saved \"{{name}}\"",
+      "writtenTo": "Written to {{path}}",
+      "removedFrom": "Removed {{path}}",
+      "saveFailed": "Couldn't save",
+      "enabled": "Enabled \"{{name}}\"",
+      "disabled": "Disabled \"{{name}}\"",
+      "enableFailed": "Couldn't enable \"{{name}}\"",
+      "disableFailed": "Couldn't disable \"{{name}}\"",
+      "rewritten": "Wrote \"{{name}}\" again",
+      "rewriteFailed": "Couldn't write \"{{name}}\"",
+      "deleted": "Deleted \"{{name}}\"",
+      "deleteFailed": "Couldn't delete \"{{name}}\"",
+      "adoptedDisk": "Adopted the on-disk version of \"{{name}}\"",
+      "overwroteDisk": "Overwrote \"{{name}}\" with the cc-switch version",
+      "resolveFailed": "Couldn't resolve \"{{name}}\"",
+      "imported": "Imported {{count}} subagents",
+      "importFailed": "Import failed",
+      "exported": "Copied the Markdown of \"{{name}}\"",
+      "pathCopied": "File path copied",
+      "dirCopied": "Directory path copied",
+      "copyFailed": "Couldn't copy"
+    },
+    "drift": {
+      "title": "The file of \"{{name}}\" was modified",
+      "body": "{{path}} was changed outside cc-switch. Choose which version to keep:",
+      "ccSwitchVersion": "cc-switch version",
+      "diskVersion": "On-disk version",
+      "diskMissing": "The file no longer exists on disk.",
+      "loadFailed": "Couldn't read the file on disk: {{error}}",
+      "adoptDisk": "Adopt on-disk version",
+      "overwriteDisk": "Overwrite with cc-switch version"
+    },
+    "unmanaged": {
+      "emptyTitle": "No unmanaged subagents",
+      "emptyBody": "Every file in {{path}} is managed by cc-switch. .md files you put in that directory by hand will show up here.",
+      "hint": "Files in {{path}} that cc-switch doesn't manage yet",
+      "selectAll": "Select all",
+      "selectAria": "Select {{name}}",
+      "importSelected": "Import selected ({{count}})",
+      "importing": "Importing…",
+      "parseError": "Can't import: {{error}}"
+    },
+    "plugins": {
+      "emptyTitle": "No subagents from plugins",
+      "emptyBody": "Subagents bundled with installed Claude Code plugins are listed here.",
+      "hint": "These subagents come from plugins and are read-only. Change them in the plugin.",
+      "fromPlugin": "From plugin {{plugin}}"
+    },
+    "form": {
+      "newTitle": "New subagent",
+      "editTitle": "Edit \"{{name}}\"",
+      "sheetDescription": "Edit the subagent, saved to {{path}}",
+      "viewAria": "Editing mode",
+      "viewForm": "Form",
+      "viewSource": "Source",
+      "enabled": "Enabled",
+      "enabledHint": "Written to {{path}} when saved",
+      "disabledHint": "Kept in the cc-switch library only; no file is written",
+      "saveAndWrite": "Save and write",
+      "saveFailed": "Couldn't save",
+      "name": "Name",
+      "nameHint": "Lowercase letters, digits and hyphens. Saved to",
+      "nameRequired": "Enter a name",
+      "nameInvalid": "Use lowercase letters, digits and hyphens, starting with a letter or digit, up to 64 characters",
+      "nameTaken": "A subagent named \"{{name}}\" already exists",
+      "description": "Description",
+      "descriptionPlaceholder": "e.g. Expert code reviewer. Use proactively after writing or modifying code.",
+      "descriptionHint": "Claude decides when to delegate based on this description, so describe when it should be used. Adding \"use proactively\" makes it more likely to be invoked.",
+      "descRequired": "Enter a description",
+      "model": "Model",
+      "tools": "Tools",
+      "color": "Color",
+      "colorNone": "No color",
+      "body": "System prompt",
+      "bodyHint": "The text after the frontmatter is this subagent's system prompt.",
+      "bodyPlaceholder": "You are a ...",
+      "sourceHint": "Edit the whole Markdown file (YAML frontmatter + body). Fields the form doesn't know about are kept as-is.",
+      "fixSourceFirst": "The frontmatter can't be parsed. Fix it in source mode first.",
+      "looseTitle": "Fields are read-only for this file",
+      "looseHint": "This file's frontmatter isn't strict YAML (for example, an unquoted description containing \"Context:\", as written by Claude Code /agents). Claude Code still loads it, so it's kept as-is. Edit the system prompt here, or change the fields in Source mode.",
+      "parseError": {
+        "unclosed": "The frontmatter has no closing ---",
+        "yaml": "YAML syntax error: {{detail}}",
+        "not_map": "The frontmatter must be key: value pairs"
+      }
+    },
+    "model": {
+      "inherit": "Inherit main model",
+      "inheritShort": "Inherit",
+      "inheritHint": "Use the model of the main conversation",
+      "loading": "Reading the current provider…",
+      "loadFailed": "Couldn't load model options; showing generic options only",
+      "contextDirect": "Current: Direct · {{provider}}",
+      "contextDirectNone": "Current: Direct",
+      "contextRoute": "Route · {{provider}}",
+      "contextStack": "Stack mode",
+      "unknownProvider": "unknown provider",
+      "searchPlaceholder": "Search models",
+      "searchEmpty": "No matching models",
+      "groupCurrent": "Current value",
+      "groupAlias": "Aliases",
+      "groupModels": "Models",
+      "groupModelsOf": "Models · {{provider}}",
+      "custom": "Custom…",
+      "customPlaceholder": "Enter a model id, e.g. claude-sonnet-4-5",
+      "notInList": "Not available in the current mode",
+      "notInListHint": "\"{{value}}\" isn't in the list for the current mode. It may stop working after switching providers or modes.",
+      "aliasUnmappedShort": "Not configured by the current provider",
+      "aliasUnmapped": "The current provider doesn't configure this tier. Claude Code will send the official model id to the third-party provider as-is, which may fail.",
+      "notice": {
+        "routeAliasesOnly": "In route mode the proxy only maps aliases; full model ids are replaced with the default model.",
+        "stackAliasesShareDefault": "In stack mode every alias points to the first model of the default provider. Pick a specific ccs- model to reach its provider directly.",
+        "noProvider": "Claude Code has no current provider yet; only generic options are available.",
+        "override": "CLAUDE_CODE_SUBAGENT_MODEL={{value}} is set and takes precedence over this setting."
+      }
+    },
+    "tools": {
+      "modeAria": "Tool permissions",
+      "inherit": "Inherit all tools",
+      "allow": "Allow only",
+      "inheritHint": "No tools field: the subagent can use every tool of the main conversation, including MCP tools.",
+      "all": "All tools",
+      "none": "No tools",
+      "summaryMore": "{{head}} +{{count}}",
+      "builtinAria": "Built-in tools",
+      "custom": "Custom tool",
+      "customPlaceholder": "e.g. mcp__github__search_code, comma-separated",
+      "add": "Add",
+      "remove": "Remove {{tool}}",
+      "emptyError": "Select at least one tool, or switch to inherit all tools"
+    },
+    "colors": {
+      "red": "Red",
+      "blue": "Blue",
+      "green": "Green",
+      "yellow": "Yellow",
+      "purple": "Purple",
+      "orange": "Orange",
+      "pink": "Pink",
+      "cyan": "Cyan"
+    },
+    "section": {
+      "title": "Subagents",
+      "summary": "{{count}} configured",
+      "summaryEmpty": "None yet",
+      "needsAttention": "{{count}} need attention",
+      "sharedHint": "Shared by all Claude providers. Changes here are written to disk immediately and are not affected by this page's Save / Cancel.",
+      "overrideWarning": "This provider sets a Subagent model ({{model}}). It applies through CLAUDE_CODE_SUBAGENT_MODEL and overrides the model each subagent below sets for itself.",
+      "pluginsToggle": "{{count}} from plugins (read-only)",
+      "backToList": "Back to subagents"
+    }
+  },
   "profiles": {
     "switcherAriaLabel": "Project: {{name}}",
     "switcherTooltip": {

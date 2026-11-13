@@ -13,6 +13,7 @@ pub mod proxy;
 pub mod settings;
 pub mod skills;
 pub mod stream_check;
+pub mod subagents;
 pub mod universal_providers;
 pub mod usage_rollup;
 
@@ -20,3 +21,4 @@ pub mod usage_rollup;
 // 导出 FailoverQueueItem / Profile 供外部使用
 pub use failover::FailoverQueueItem;
 pub use profiles::Profile;
+pub use subagents::SubagentRecord;

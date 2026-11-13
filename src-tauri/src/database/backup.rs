@@ -104,6 +104,17 @@ const SYNC_PRESERVE_TABLES: &[&str] = &[
     "session_usage_dedup",
 ];
 
+/// Tables added after the first release whose local rows are kept when an
+/// imported snapshot does not contain them at all.
+///
+/// A snapshot without such a table comes from a version that predates the
+/// feature (a cloud snapshot uploaded by an older install, a pre-feature
+/// backup or SQL export), so it carries no opinion about that data. Letting
+/// `create_tables_on_conn` fill in an empty table would wipe the local rows —
+/// for `subagents` the post-import reconciliation would then also delete every
+/// CC Switch-managed file under `~/.claude/agents`.
+const KEEP_LOCAL_WHEN_ABSENT_TABLES: &[&str] = &["subagents"];
+
 /// A database backup entry for the UI
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -218,6 +229,8 @@ impl Database {
         // Validate the schema produced by the input itself before migrations
         // can create missing tables and accidentally make a truncated file look valid.
         Self::validate_imported_schema(&temp_conn)?;
+        // 必须在补表之前判断：补表后就分不清“快照里本来就是空表”还是“快照没有这张表”
+        let keep_local_tables = Self::tables_absent_from_import(&temp_conn)?;
 
         // 补齐缺失表/索引并执行迁移
         Self::create_tables_on_conn(&temp_conn)?;
@@ -234,8 +247,13 @@ impl Database {
             let mut main_conn = lock_conn!(self.conn);
             let backup_path =
                 Self::backup_database_file_from_conn(&backup_file_guard, &main_conn, &[])?;
-            if !preserve_tables.is_empty() {
-                Self::restore_tables(&main_conn, &temp_conn, preserve_tables)?;
+            let tables_to_restore: Vec<&str> = preserve_tables
+                .iter()
+                .chain(keep_local_tables.iter())
+                .copied()
+                .collect();
+            if !tables_to_restore.is_empty() {
+                Self::restore_tables(&main_conn, &temp_conn, &tables_to_restore)?;
             }
             let backup = Backup::new(&temp_conn, &mut main_conn)
                 .map_err(|e| AppError::Database(e.to_string()))?;
@@ -291,6 +309,18 @@ impl Database {
             "仅支持导入由 CC Switch 导出的 SQL 备份文件。",
             "Only SQL backups exported by CC Switch are supported.",
         ))
+    }
+
+    /// [`KEEP_LOCAL_WHEN_ABSENT_TABLES`] 中导入内容里没有的表。必须在
+    /// `create_tables_on_conn` 补表之前调用。
+    fn tables_absent_from_import(conn: &Connection) -> Result<Vec<&'static str>, AppError> {
+        let mut absent = Vec::new();
+        for table in KEEP_LOCAL_WHEN_ABSENT_TABLES {
+            if !Self::table_exists(conn, table)? {
+                absent.push(*table);
+            }
+        }
+        Ok(absent)
     }
 
     fn restore_tables(
@@ -1056,6 +1086,7 @@ impl Database {
 
         Self::validate_sqlite_integrity(&staging_conn)?;
         Self::validate_imported_schema(&staging_conn)?;
+        let keep_local_tables = Self::tables_absent_from_import(&staging_conn)?;
         Self::ensure_incremental_auto_vacuum_on_conn(&staging_conn)?;
         Self::create_tables_on_conn(&staging_conn)?;
         Self::apply_schema_migrations_on_conn(&staging_conn)?;
@@ -1072,6 +1103,9 @@ impl Database {
                 &[backup_path.as_path()],
             )?;
             before_replace(safety_backup.as_deref())?;
+            if !keep_local_tables.is_empty() {
+                Self::restore_tables(&main_conn, &staging_conn, &keep_local_tables)?;
+            }
             let backup = Backup::new(&staging_conn, &mut main_conn)
                 .map_err(|e| AppError::Database(e.to_string()))?;
             Self::complete_backup(&backup, "恢复主数据库")?;
@@ -2677,6 +2711,106 @@ mod tests {
             },
         )?;
         assert_eq!(preserved_counts, (1, 1, 1, 1, 1));
+        Ok(())
+    }
+
+    /// 还没有子代理功能的版本：库里没有 subagents 表
+    fn pre_subagents_database() -> Result<Database, AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute("DROP TABLE subagents", [])?;
+        }
+        Ok(db)
+    }
+
+    fn create_subagent(
+        db: &Database,
+        dir: &std::path::Path,
+        name: &str,
+    ) -> Result<String, AppError> {
+        let input = crate::services::subagent::SubagentInput {
+            id: None,
+            file_name: None,
+            content: format!("---\nname: {name}\ndescription: Reviews code\n---\nbody\n"),
+            enabled: true,
+        };
+        Ok(crate::services::SubagentService::upsert(db, dir, input, false)?.id)
+    }
+
+    #[test]
+    #[serial]
+    fn sync_import_of_pre_subagents_snapshot_keeps_local_subagents() -> Result<(), AppError> {
+        use crate::services::SubagentService;
+
+        let test_home = TestHomeGuard::new();
+        let agents_dir = test_home.path().join(".claude").join("agents");
+        let remote_sql = pre_subagents_database()?.export_sql_string_for_sync()?;
+        let local_db = Database::memory()?;
+        let id = create_subagent(&local_db, &agents_dir, "reviewer")?;
+
+        let before = SubagentService::capture_local_ownership(&local_db)?;
+        local_db.import_sql_string_for_sync(&remote_sql)?;
+        SubagentService::sync_after_restore(&local_db, &agents_dir, &before)?;
+
+        let records = local_db.list_subagents()?;
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].id, id);
+        assert!(agents_dir.join("reviewer.md").exists());
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn sync_import_of_snapshot_with_empty_subagents_table_removes_local_ones(
+    ) -> Result<(), AppError> {
+        use crate::services::SubagentService;
+
+        let test_home = TestHomeGuard::new();
+        let agents_dir = test_home.path().join(".claude").join("agents");
+        // 远端认识子代理功能，只是全删了：这是明确的意见，照常收敛
+        let remote_sql = Database::memory()?.export_sql_string_for_sync()?;
+        let local_db = Database::memory()?;
+        create_subagent(&local_db, &agents_dir, "reviewer")?;
+
+        let before = SubagentService::capture_local_ownership(&local_db)?;
+        local_db.import_sql_string_for_sync(&remote_sql)?;
+        SubagentService::sync_after_restore(&local_db, &agents_dir, &before)?;
+
+        assert!(local_db.list_subagents()?.is_empty());
+        assert!(!agents_dir.join("reviewer.md").exists());
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn restore_of_pre_subagents_backup_keeps_local_subagents() -> Result<(), AppError> {
+        use crate::services::SubagentService;
+
+        let test_home = TestHomeGuard::new();
+        let agents_dir = test_home.path().join(".claude").join("agents");
+        let backup_dir = crate::config::get_app_config_dir().join("backups");
+        std::fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
+        let legacy_path = backup_dir.join("legacy.db");
+        {
+            let legacy = pre_subagents_database()?;
+            let conn = crate::database::lock_conn!(legacy.conn);
+            conn.execute(
+                "VACUUM INTO ?1",
+                [legacy_path.to_string_lossy().into_owned()],
+            )?;
+        }
+
+        let db = Database::init()?;
+        let id = create_subagent(&db, &agents_dir, "reviewer")?;
+        let before = SubagentService::capture_local_ownership(&db)?;
+        db.restore_from_backup("legacy.db")?;
+        SubagentService::sync_after_restore(&db, &agents_dir, &before)?;
+
+        let records = db.list_subagents()?;
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].id, id);
+        assert!(agents_dir.join("reviewer.md").exists());
         Ok(())
     }
 

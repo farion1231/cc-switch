@@ -1,11 +1,33 @@
 use serde_json::{json, Value};
 
+use crate::database::Database;
 use crate::error::AppError;
-use crate::services::{model_pricing, PromptService, ProviderService};
+use crate::services::{
+    model_pricing, PromptService, ProviderService, SubagentOwnership, SubagentService,
+};
 use crate::settings;
 use crate::store::AppState;
 
-pub(crate) fn run_post_import_sync(app_state: &AppState) -> Result<(), AppError> {
+/// 导入（备份恢复、云同步下载）替换数据库之前留存的本机状态，供导入后的同步使用
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PreImportState {
+    subagents: SubagentOwnership,
+}
+
+/// 在替换数据库之前调用。读失败只记日志：子代理按“本机一个文件都不归我们”保守处理，
+/// 只补写缺失文件，不删不改已有文件。
+pub(crate) fn capture_pre_import_state(db: &Database) -> PreImportState {
+    let subagents = SubagentService::capture_local_ownership(db).unwrap_or_else(|error| {
+        log::warn!("[Import] failed to capture local subagent ownership: {error}");
+        SubagentOwnership::default()
+    });
+    PreImportState { subagents }
+}
+
+pub(crate) fn run_post_import_sync(
+    app_state: &AppState,
+    pre_import: &PreImportState,
+) -> Result<(), AppError> {
     let mut failures = Vec::new();
 
     if let Err(error) = ProviderService::sync_current_to_live(app_state) {
@@ -13,6 +35,14 @@ pub(crate) fn run_post_import_sync(app_state: &AppState) -> Result<(), AppError>
     }
     if let Err(error) = PromptService::sync_all_to_live(app_state) {
         failures.push(format!("prompts: {error}"));
+    }
+    // 按导入前留存的本机归属收敛子代理文件；外部改过的文件不碰
+    if let Err(error) = SubagentService::sync_after_restore(
+        &app_state.db,
+        &SubagentService::agents_dir(),
+        &pre_import.subagents,
+    ) {
+        failures.push(format!("subagents: {error}"));
     }
     if let Err(error) = model_pricing::sync_local_model_pricing(&app_state.db) {
         failures.push(format!("model pricing: {error}"));

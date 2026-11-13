@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
@@ -81,6 +88,11 @@ import {
 interface EndpointCandidate {
   url: string;
 }
+
+// 子代理区块带着 yaml 解析和 Markdown 编辑器，只在编辑 Claude 供应商、展开到它时才需要
+const SubagentsSection = lazy(
+  () => import("@/components/subagents/SubagentsSection"),
+);
 
 interface ClaudeFormFieldsProps {
   providerId?: string;
@@ -1372,6 +1384,14 @@ export function ClaudeFormFields({
             )}
           </CollapsibleContent>
         </Collapsible>
+      )}
+
+      {/* 子代理是全局的（~/.claude/agents，所有 Claude 供应商共用）：只在编辑已有供应商时
+          给入口，新增供应商时不打扰。官方供应商也显示，所以不放进上面的高级选项里。 */}
+      {providerId && (
+        <Suspense fallback={null}>
+          <SubagentsSection subagentModelOverride={subagentModel} />
+        </Suspense>
       )}
     </>
   );
