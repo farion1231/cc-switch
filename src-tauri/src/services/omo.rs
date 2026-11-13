@@ -397,7 +397,7 @@ impl OmoService {
                 (previous_contents, expected_contents)
             }
         };
-        if let Err(err) = crate::opencode_config::add_plugin(v.plugin_name) {
+        let rollback = || {
             if expected_contents.is_some() {
                 if let Err(rollback_err) = Self::restore_config_file_if_unchanged(
                     &config_path,
@@ -411,6 +411,13 @@ impl OmoService {
                     );
                 }
             }
+            Ok(())
+        };
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::opencode_config::add_plugin(v.plugin_name)
+        }));
+        if let Err(err) = crate::sync_utils::resume_after_rollback(outcome, rollback) {
+            rollback()?;
             return Err(err);
         }
         if expected_contents.is_some() {
@@ -441,28 +448,33 @@ impl OmoService {
 
         let mut applied_changes = Vec::new();
 
-        let result = (|| -> Result<(), AppError> {
-            if let Some(path) = &unified_path {
-                if let Some((snapshot, expected_contents)) =
-                    Self::remove_unified_config_section(path)?
-                {
-                    applied_changes.push((path.clone(), Some(snapshot), Some(expected_contents)));
+        let outcome =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<(), AppError> {
+                if let Some(path) = &unified_path {
+                    if let Some((snapshot, expected_contents)) =
+                        Self::remove_unified_config_section(path)?
+                    {
+                        applied_changes.push((
+                            path.clone(),
+                            Some(snapshot),
+                            Some(expected_contents),
+                        ));
+                    }
                 }
-            }
-            for path in &legacy_paths {
-                let _guard = crate::sync_utils::lock_file_operation(omo_write_lock());
-                let snapshot = Self::snapshot_config_file(path)?;
-                if snapshot.is_none() {
-                    continue;
+                for path in &legacy_paths {
+                    let _guard = crate::sync_utils::lock_file_operation(omo_write_lock());
+                    let snapshot = Self::snapshot_config_file(path)?;
+                    if snapshot.is_none() {
+                        continue;
+                    }
+                    std::fs::remove_file(path).map_err(|e| AppError::io(path, e))?;
+                    applied_changes.push((path.clone(), snapshot, None));
                 }
-                std::fs::remove_file(path).map_err(|e| AppError::io(path, e))?;
-                applied_changes.push((path.clone(), snapshot, None));
-            }
-            crate::opencode_config::remove_plugins_by_prefixes(v.plugin_prefixes)?;
-            Ok(())
-        })();
+                crate::opencode_config::remove_plugins_by_prefixes(v.plugin_prefixes)?;
+                Ok(())
+            }));
 
-        if let Err(err) = result {
+        let rollback = || {
             for (path, snapshot, expected_contents) in applied_changes.iter().rev() {
                 if let Err(rollback_err) = Self::restore_config_file_if_unchanged(
                     path,
@@ -474,6 +486,10 @@ impl OmoService {
                     );
                 }
             }
+            Ok(())
+        };
+        if let Err(err) = crate::sync_utils::resume_after_rollback(outcome, rollback) {
+            rollback()?;
             return Err(err);
         }
 

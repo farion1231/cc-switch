@@ -496,8 +496,11 @@ fn update_model_pricing_batch_inner(
         for entry in &entries {
             changed += upsert_pricing(&transaction, entry)?;
         }
-        write_file_unlocked(&file)?;
-        transaction.commit()?;
+        crate::mcode_config::write_and_commit(
+            &model_pricing_file_path(),
+            || write_file_unlocked(&file),
+            || transaction.commit().map_err(AppError::from),
+        )?;
         changed
     };
 
@@ -553,9 +556,11 @@ pub fn delete_model_pricing(db: &Database, model_id: &str) -> Result<(), AppErro
         "DELETE FROM model_pricing WHERE model_id = ?1",
         params![model_id],
     )?;
-    write_file_unlocked(&file)?;
-    transaction.commit()?;
-    Ok(())
+    crate::mcode_config::write_and_commit(
+        &model_pricing_file_path(),
+        || write_file_unlocked(&file),
+        || transaction.commit().map_err(AppError::from),
+    )
 }
 
 #[cfg(test)]
@@ -587,6 +592,31 @@ mod tests {
             cache_read_cost_per_million: "0.1".to_string(),
             cache_creation_cost_per_million: "1.5".to_string(),
         }
+    }
+
+    #[test]
+    #[serial]
+    fn failed_sql_commit_restores_pricing_file_for_update_and_delete() {
+        with_test_home(|db, path| {
+            update_model_pricing(db, sample_pricing()).unwrap();
+            let original = fs::read(path).unwrap();
+            let expected = original.clone();
+            let checked_path = path.clone();
+            // Let the initial file-to-DB sync commit, but reject the later
+            // mutation once its new file is visible to SQLite's commit hook.
+            db.conn
+                .lock()
+                .unwrap()
+                .commit_hook(Some(move || fs::read(&checked_path).unwrap() != expected));
+            let mut changed = sample_pricing();
+            changed.input_cost_per_million = "9".into();
+            assert!(update_model_pricing(db, changed).is_err());
+            assert_eq!(fs::read(path).unwrap(), original);
+            assert!(delete_model_pricing(db, "custom-model").is_err());
+            assert_eq!(fs::read(path).unwrap(), original);
+            let conn = db.conn.lock().unwrap();
+            assert_eq!(conn.query_row("SELECT input_cost_per_million FROM model_pricing WHERE model_id = 'custom-model'", [], |row| row.get::<_, String>(0)).unwrap(), "1.25");
+        });
     }
 
     #[test]

@@ -242,16 +242,20 @@ pub(crate) fn write_and_commit<T>(
         return Err(AppError::Conflict("omp.errors.externalChange".into()));
     }
     atomic_write_private(path, after)?;
-    match commit() {
+    let rollback = || {
+        if read_bytes(path)?.as_deref() != Some(after) {
+            return Err(AppError::Conflict("omp.errors.rollbackConflict".into()));
+        }
+        match before {
+            Some(bytes) => atomic_write_private(path, bytes),
+            None => fs::remove_file(path).map_err(|e| AppError::io(path, e)),
+        }
+    };
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(commit));
+    match crate::sync_utils::resume_after_rollback(outcome, rollback) {
         Ok(result) => Ok(result),
         Err(error) => {
-            if read_bytes(path)?.as_deref() != Some(after) {
-                return Err(AppError::Conflict("omp.errors.rollbackConflict".into()));
-            }
-            match before {
-                Some(bytes) => atomic_write_private(path, bytes)?,
-                None => fs::remove_file(path).map_err(|e| AppError::io(path, e))?,
-            }
+            rollback()?;
             Err(error)
         }
     }
@@ -1305,6 +1309,32 @@ mod tests {
         }
         fs::write(&path, vec![b' '; MAX_FILE_BYTES as usize + 1]).unwrap();
         assert!(read_bytes(&path).is_err());
+    }
+
+    #[test]
+    fn panicking_commit_restores_ours_but_preserves_external_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("models.yml");
+        for before in [None, Some(b"original".as_slice())] {
+            if let Some(bytes) = before {
+                fs::write(&path, bytes).unwrap();
+            }
+            assert!(std::panic::catch_unwind(|| {
+                let _: Result<(), AppError> =
+                    write_and_commit(&path, before, b"ours", || panic!("commit interrupted"));
+            })
+            .is_err());
+            assert_eq!(read_bytes(&path).unwrap().as_deref(), before);
+        }
+        assert!(std::panic::catch_unwind(|| {
+            let _: Result<(), AppError> =
+                write_and_commit(&path, Some(b"original"), b"ours", || {
+                    fs::write(&path, b"external edit").unwrap();
+                    panic!("commit interrupted");
+                });
+        })
+        .is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"external edit");
     }
 
     #[test]

@@ -85,18 +85,19 @@ fn with_file_rollback<T>(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => return Err(AppError::io(path, error)),
     };
-    let result = run();
+    let rollback = || match previous.as_deref() {
+        Some(bytes) => atomic_write(path, bytes),
+        None => match fs::remove_file(path) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                Err(AppError::io(path, error))
+            }
+            _ => Ok(()),
+        },
+    };
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run));
+    let result = crate::sync_utils::resume_after_rollback(outcome, rollback);
     if result.is_err() {
-        let restored = match previous {
-            Some(bytes) => atomic_write(path, &bytes),
-            None => match fs::remove_file(path) {
-                Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
-                    Err(AppError::io(path, error))
-                }
-                _ => Ok(()),
-            },
-        };
-        if let Err(error) = restored {
+        if let Err(error) = rollback() {
             log::error!("恢复 {} 失败: {error}", path.display());
         }
     }
@@ -493,6 +494,33 @@ mod tests {
         });
         assert!(result.is_err());
         assert!(!fresh.exists());
+    }
+
+    #[test]
+    fn panicking_commit_restores_both_mcp_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp-config.json");
+        let options = dir.path().join("options.json");
+        let original =
+            json!({"mcpServers":{"limited":{"command":"node","tools":["only_this"]}}}).to_string();
+        fs::write(&path, &original).unwrap();
+        for saved_options in [None, Some(b"{}".as_slice())] {
+            if let Some(bytes) = saved_options {
+                fs::write(&options, bytes).unwrap();
+            }
+            assert!(std::panic::catch_unwind(|| {
+                let _: Result<(), AppError> = with_file_rollback(&options, || {
+                    crate::mcode_config::write_and_commit(
+                        &path,
+                        || sync_file(&path, &options, "limited", Change::Disable),
+                        || panic!("commit interrupted"),
+                    )
+                });
+            })
+            .is_err());
+            assert_eq!(fs::read_to_string(&path).unwrap(), original);
+            assert_eq!(fs::read(&options).ok().as_deref(), saved_options);
+        }
     }
 
     #[test]
