@@ -60,10 +60,12 @@ pub(crate) fn in_isolated_process(test_name: &str) -> bool {
         .env("CC_SWITCH_TEST_HOME", home.path())
         .output()
         .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // --exact 匹配不到测试时 libtest 也返回 0，测试改名后不能空跑通过。
     assert!(
-        output.status.success(),
-        "isolated poison test failed:\n{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
+        output.status.success() && stdout.contains("test result: ok. 1 passed"),
+        "isolated poison test failed or did not run:\n{}\n{}",
+        stdout,
         String::from_utf8_lossy(&output.stderr)
     );
     false

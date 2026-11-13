@@ -600,6 +600,11 @@ mod tests {
         with_test_home(|db, path| {
             update_model_pricing(db, sample_pricing()).unwrap();
             let original = fs::read(path).unwrap();
+            #[cfg(unix)]
+            let original_mode = {
+                use std::os::unix::fs::PermissionsExt;
+                fs::metadata(path).unwrap().permissions().mode()
+            };
             let expected = original.clone();
             let checked_path = path.clone();
             // Let the initial file-to-DB sync commit, but reject the later
@@ -614,6 +619,14 @@ mod tests {
             assert_eq!(fs::read(path).unwrap(), original);
             assert!(delete_model_pricing(db, "custom-model").is_err());
             assert_eq!(fs::read(path).unwrap(), original);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                assert_eq!(
+                    fs::metadata(path).unwrap().permissions().mode(),
+                    original_mode
+                );
+            }
             let conn = db.conn.lock().unwrap();
             assert_eq!(conn.query_row("SELECT input_cost_per_million FROM model_pricing WHERE model_id = 'custom-model'", [], |row| row.get::<_, String>(0)).unwrap(), "1.25");
         });

@@ -1117,8 +1117,8 @@ fn settings_store() -> &'static RwLock<AppSettings> {
     SETTINGS_STORE.get_or_init(|| RwLock::new(AppSettings::load_from_file()))
 }
 
-// Writers build a new value separately and replace the cached snapshot only
-// after it is ready. A panic cannot expose a partially mutated AppSettings, so
+// Writers hold the write lock while writing settings.json, build a new value
+// separately and replace the cached snapshot only after it is ready. A panic cannot expose a partially mutated AppSettings, so
 // every reader can recover the same committed value instead of using defaults.
 fn read_settings() -> RwLockReadGuard<'static, AppSettings> {
     settings_store().read().unwrap_or_else(|poisoned| {
@@ -1182,9 +1182,9 @@ pub fn get_settings_for_frontend() -> AppSettings {
 pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
     new_settings.codex_quota_protection.validate()?;
     new_settings.normalize_paths();
-    save_settings_file(&new_settings)?;
-
+    // 写文件也在写锁内，并发保存时文件和内存的先后顺序一致。
     let mut guard = write_settings();
+    save_settings_file(&new_settings)?;
     *guard = new_settings;
     Ok(())
 }
@@ -1339,9 +1339,9 @@ pub fn set_proxy_client_host(host: &str) -> Result<(), AppError> {
 /// 从文件重新加载设置到内存缓存
 /// 用于导入配置等场景，确保内存缓存与文件同步
 pub fn reload_settings() -> Result<(), AppError> {
-    let fresh_settings = AppSettings::load_from_file();
+    // 在写锁内读文件，避免读到旧文件后覆盖并发写入的新值。
     let mut guard = write_settings();
-    *guard = fresh_settings;
+    *guard = AppSettings::load_from_file();
     Ok(())
 }
 

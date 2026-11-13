@@ -69,6 +69,8 @@ pub(crate) fn write_and_commit<T>(
             }
         }
         match previous.as_deref() {
+            // 沿用文件现有权限：私有写入已是 0600，定价文件这类仍是 0644。
+            Some(bytes) if target.exists() => crate::config::atomic_write(path, bytes),
             Some(bytes) => atomic_write_private(path, bytes),
             None => match fs::remove_file(&target) {
                 Err(error) if error.kind() != std::io::ErrorKind::NotFound => {

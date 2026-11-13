@@ -146,9 +146,11 @@ impl FileParseCache {
             );
         }
 
-        if let Ok(mut guard) = self.entries.lock() {
-            *guard = next;
-        }
+        let mut guard = self.entries.lock().unwrap_or_else(|poisoned| {
+            self.entries.clear_poison();
+            poisoned.into_inner()
+        });
+        *guard = next;
         sessions
     }
 }

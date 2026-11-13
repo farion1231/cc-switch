@@ -417,7 +417,8 @@ impl OmoService {
             crate::opencode_config::add_plugin(v.plugin_name)
         }));
         if let Err(err) = crate::sync_utils::resume_after_rollback(outcome, rollback) {
-            rollback()?;
+            // 回滚失败只记日志，不覆盖原错误。
+            let _ = rollback();
             return Err(err);
         }
         if expected_contents.is_some() {
@@ -489,7 +490,8 @@ impl OmoService {
             Ok(())
         };
         if let Err(err) = crate::sync_utils::resume_after_rollback(outcome, rollback) {
-            rollback()?;
+            // 回滚失败只记日志，不覆盖原错误。
+            let _ = rollback();
             return Err(err);
         }
 
