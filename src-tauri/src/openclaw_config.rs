@@ -322,7 +322,7 @@ impl OpenClawConfigDocument {
     }
 
     fn save(self) -> Result<OpenClawWriteOutcome, AppError> {
-        let _guard = openclaw_write_lock().lock()?;
+        let _guard = crate::sync_utils::lock_file_operation(openclaw_write_lock());
 
         let current_source = if self.path.exists() {
             Some(fs::read_to_string(&self.path).map_err(|e| AppError::io(&self.path, e))?)

@@ -89,7 +89,7 @@ impl UnifiedConfigDocument {
     }
 
     fn save(self) -> Result<Vec<u8>, AppError> {
-        let _guard = omo_write_lock().lock()?;
+        let _guard = crate::sync_utils::lock_file_operation(omo_write_lock());
         let next_source = self.document.validated_source()?;
         let current_source =
             std::fs::read_to_string(&self.path).map_err(|e| AppError::io(&self.path, e))?;
@@ -349,7 +349,7 @@ impl OmoService {
         expected_contents: Option<&[u8]>,
         snapshot: Option<&[u8]>,
     ) -> Result<(), AppError> {
-        let _guard = omo_write_lock().lock()?;
+        let _guard = crate::sync_utils::lock_file_operation(omo_write_lock());
         let current_contents = Self::snapshot_config_file(path)?;
         if current_contents.as_deref() != expected_contents {
             return Err(AppError::Config(format!(
@@ -364,7 +364,7 @@ impl OmoService {
         v: &OmoVariant,
         profile_data: Option<&OmoProfileData>,
     ) -> Result<(), AppError> {
-        let _operation_guard = omo_operation_lock().lock()?;
+        let _operation_guard = crate::sync_utils::lock_file_operation(omo_operation_lock());
         let plugin_config_path = crate::opencode_config::get_opencode_config_path()?;
         let legacy_dir = plugin_config_path.parent().ok_or_else(|| {
             AppError::Config("OpenCode config path has no parent directory".to_string())
@@ -391,7 +391,7 @@ impl OmoService {
                 }
             }
             OmoConfigLocation::Legacy(path) => {
-                let _guard = omo_write_lock().lock()?;
+                let _guard = crate::sync_utils::lock_file_operation(omo_write_lock());
                 let previous_contents = Self::snapshot_config_file(path)?;
                 let expected_contents = Some(write_json_file_with_contents(path, &merged)?);
                 (previous_contents, expected_contents)
@@ -422,7 +422,7 @@ impl OmoService {
     // ── Public API (variant-parameterized) ─────────────────
 
     pub fn delete_config_file(v: &OmoVariant) -> Result<(), AppError> {
-        let _operation_guard = omo_operation_lock().lock()?;
+        let _operation_guard = crate::sync_utils::lock_file_operation(omo_operation_lock());
         let plugin_config_path = crate::opencode_config::get_opencode_config_path()?;
         let base_dir = plugin_config_path
             .parent()
@@ -450,7 +450,7 @@ impl OmoService {
                 }
             }
             for path in &legacy_paths {
-                let _guard = omo_write_lock().lock()?;
+                let _guard = crate::sync_utils::lock_file_operation(omo_write_lock());
                 let snapshot = Self::snapshot_config_file(path)?;
                 if snapshot.is_none() {
                     continue;

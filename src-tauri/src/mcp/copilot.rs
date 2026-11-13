@@ -115,9 +115,7 @@ fn read(path: &Path) -> Result<Value, AppError> {
 }
 
 pub fn sync(id: &str, spec: Option<&Value>) -> Result<(), AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let options = options_path();
     with_file_rollback(&options, || {
         sync_file(
@@ -151,9 +149,7 @@ pub(crate) fn forget_options_and_commit<T>(
     id: &str,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let path = options_path();
     with_file_rollback(&path, || {
         let mut options = read_options(&path)?;
@@ -169,9 +165,7 @@ fn commit_change<T>(
     change: Change<'_>,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let path = crate::copilot_config::mcp_config_path();
     let options = options_path();
     with_file_rollback(&options, || {

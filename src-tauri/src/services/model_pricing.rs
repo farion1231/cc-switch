@@ -297,9 +297,7 @@ fn apply_file_to_database(
 /// the file contains only explicit overrides and deletion tombstones.
 pub fn sync_local_model_pricing(db: &Database) -> Result<usize, AppError> {
     let (upserted, deleted) = {
-        let _file_guard = file_lock()
-            .lock()
-            .map_err(|error| AppError::Config(format!("模型定价文件锁失败: {error}")))?;
+        let _file_guard = crate::sync_utils::lock_file_operation(file_lock());
         let file = load_or_create_file_unlocked()?;
         apply_file_to_database(db, &file)?
     };
@@ -317,9 +315,7 @@ pub fn sync_local_model_pricing(db: &Database) -> Result<usize, AppError> {
 
 pub fn get_models_dev_sync_state(db: &Database) -> Result<ModelsDevSyncState, AppError> {
     sync_local_model_pricing(db)?;
-    let _file_guard = file_lock()
-        .lock()
-        .map_err(|error| AppError::Config(format!("模型定价文件锁失败: {error}")))?;
+    let _file_guard = crate::sync_utils::lock_file_operation(file_lock());
     let file = load_or_create_file_unlocked()?;
     Ok(ModelsDevSyncState {
         config: file.models_dev_sync,
@@ -332,9 +328,7 @@ pub fn save_models_dev_sync_config(
     config: ModelsDevSyncConfig,
 ) -> Result<(), AppError> {
     sync_local_model_pricing(db)?;
-    let _file_guard = file_lock()
-        .lock()
-        .map_err(|error| AppError::Config(format!("模型定价文件锁失败: {error}")))?;
+    let _file_guard = crate::sync_utils::lock_file_operation(file_lock());
     let mut file = load_or_create_file_unlocked()?;
     file.models_dev_sync = normalize_sync_config(config);
     write_file_unlocked(&file)
@@ -349,9 +343,7 @@ pub fn record_models_dev_sync_result(
     error: Option<String>,
 ) -> Result<(), AppError> {
     sync_local_model_pricing(db)?;
-    let _file_guard = file_lock()
-        .lock()
-        .map_err(|lock_error| AppError::Config(format!("模型定价文件锁失败: {lock_error}")))?;
+    let _file_guard = crate::sync_utils::lock_file_operation(file_lock());
     let mut file = load_or_create_file_unlocked()?;
     if let Some(synced_at) = synced_at {
         file.models_dev_sync.last_sync_at = Some(synced_at);
@@ -480,9 +472,7 @@ fn update_model_pricing_batch_inner(
 
     sync_local_model_pricing(db)?;
     let changed = {
-        let _file_guard = file_lock()
-            .lock()
-            .map_err(|error| AppError::Config(format!("模型定价文件锁失败: {error}")))?;
+        let _file_guard = crate::sync_utils::lock_file_operation(file_lock());
         let mut file = load_or_create_file_unlocked()?;
         let mut file_models = file
             .models
@@ -549,9 +539,7 @@ pub fn delete_model_pricing(db: &Database, model_id: &str) -> Result<(), AppErro
     }
 
     sync_local_model_pricing(db)?;
-    let _file_guard = file_lock()
-        .lock()
-        .map_err(|error| AppError::Config(format!("模型定价文件锁失败: {error}")))?;
+    let _file_guard = crate::sync_utils::lock_file_operation(file_lock());
     let mut file = load_or_create_file_unlocked()?;
     file.models.retain(|entry| entry.model_id != model_id);
     if !file.deleted_model_ids.iter().any(|entry| entry == model_id) {

@@ -34,7 +34,7 @@ pub(crate) struct PiAgentsFileGuard {
 impl PiAgentsFileGuard {
     pub(crate) fn acquire() -> Result<Self, AppError> {
         Ok(Self {
-            _guard: lock_prompt_files()?,
+            _guard: lock_prompt_files(),
             path: get_pi_agent_dir()?.join("AGENTS.md"),
         })
     }
@@ -107,7 +107,7 @@ pub struct PiPromptFileService;
 
 impl PiPromptFileService {
     pub fn read(kind: PiPromptFileKind) -> Result<PiPromptFileSnapshot, AppError> {
-        let _guard = lock_prompt_files()?;
+        let _guard = lock_prompt_files();
         read_prompt_file(&get_pi_agent_dir()?, kind)
     }
 
@@ -118,7 +118,7 @@ impl PiPromptFileService {
     ) -> Result<PiPromptFileSnapshot, AppError> {
         validate_instruction_content(content)?;
 
-        let _guard = lock_prompt_files()?;
+        let _guard = lock_prompt_files();
         let root = get_pi_agent_dir()?;
         let path = root.join(kind.filename());
         ensure_revision(&path, expected_revision, "Pi prompt file")?;
@@ -127,7 +127,7 @@ impl PiPromptFileService {
     }
 
     pub fn delete(kind: PiPromptFileKind, expected_revision: &str) -> Result<bool, AppError> {
-        let _guard = lock_prompt_files()?;
+        let _guard = lock_prompt_files();
         let path = get_pi_agent_dir()?.join(kind.filename());
         ensure_revision(&path, expected_revision, "Pi prompt file")?;
         match fs::remove_file(&path) {
@@ -150,7 +150,7 @@ pub struct PiPromptTemplateService;
 
 impl PiPromptTemplateService {
     pub fn list() -> Result<Vec<PiPromptTemplate>, AppError> {
-        let _guard = lock_prompt_files()?;
+        let _guard = lock_prompt_files();
         let dir = get_pi_agent_dir()?.join("prompts");
         let entries = match fs::read_dir(&dir) {
             Ok(entries) => entries,
@@ -199,7 +199,7 @@ impl PiPromptTemplateService {
             validate_template_slug(original_slug)?;
         }
         validate_content_size(content, "Pi prompt template")?;
-        let _guard = lock_prompt_files()?;
+        let _guard = lock_prompt_files();
         let dir = get_pi_agent_dir()?.join("prompts");
         let path = template_path(&dir, slug);
 
@@ -232,7 +232,7 @@ impl PiPromptTemplateService {
 
     pub fn delete(slug: &str, expected_revision: &str) -> Result<bool, AppError> {
         validate_template_slug(slug)?;
-        let _guard = lock_prompt_files()?;
+        let _guard = lock_prompt_files();
         let path = template_path(&get_pi_agent_dir()?.join("prompts"), slug);
         ensure_revision(&path, expected_revision, "Pi prompt template")?;
         match fs::remove_file(&path) {
@@ -243,10 +243,8 @@ impl PiPromptTemplateService {
     }
 }
 
-fn lock_prompt_files() -> Result<MutexGuard<'static, ()>, AppError> {
-    PROMPT_FILE_LOCK
-        .lock()
-        .map_err(|error| AppError::Config(format!("Pi prompt file lock is poisoned: {error}")))
+fn lock_prompt_files() -> MutexGuard<'static, ()> {
+    crate::sync_utils::lock_file_operation(&PROMPT_FILE_LOCK)
 }
 
 fn read_prompt_file(root: &Path, kind: PiPromptFileKind) -> Result<PiPromptFileSnapshot, AppError> {

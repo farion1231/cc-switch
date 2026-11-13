@@ -1185,9 +1185,7 @@ pub(crate) fn save_and_commit<T>(
     create: bool,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let path = providers_path();
     transact(
         &path,
@@ -1213,9 +1211,7 @@ pub(crate) fn add_and_commit<T>(
     settings: &Value,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let path = providers_path();
     transact(
         &path,

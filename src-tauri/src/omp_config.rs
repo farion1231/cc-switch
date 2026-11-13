@@ -290,7 +290,7 @@ fn providers(document: &serde_yaml::Value) -> Result<IndexMap<String, Value>, Ap
 // ============================================================================
 
 pub(crate) fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
-    let _guard = MODELS_LOCK.lock()?;
+    let _guard = crate::sync_utils::lock_file_operation(&MODELS_LOCK);
     providers(&parse(&read_text(&get_omp_models_path()?)?.1)?)
 }
 
@@ -821,7 +821,7 @@ pub(crate) fn change_and_commit<T>(
     change: Change,
     commit: impl FnOnce(Option<Value>) -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    let _guard = MODELS_LOCK.lock()?;
+    let _guard = crate::sync_utils::lock_file_operation(&MODELS_LOCK);
     let path = get_omp_models_path()?;
     let (before, text) = read_text(&path)?;
     let native = providers(&parse(&text).map_err(|_| manual_edit())?)?;
@@ -968,7 +968,7 @@ pub(crate) fn read_default_provider_id() -> Result<Option<String>, AppError> {
 pub(crate) fn update_omp_mcp_document(
     update: impl FnOnce(&mut Value) -> Result<bool, AppError>,
 ) -> Result<(), AppError> {
-    let _guard = MCP_LOCK.lock()?;
+    let _guard = crate::sync_utils::lock_file_operation(&MCP_LOCK);
     let path = get_omp_mcp_path()?;
     let before = read_bytes(&path)?;
     let mut document: Value = match &before {

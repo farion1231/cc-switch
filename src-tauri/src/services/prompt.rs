@@ -127,11 +127,7 @@ impl PromptService {
             return delete_pi_prompt(state, id);
         }
         let _guard = if app == AppType::Mcode {
-            Some(
-                MCODE_PROMPT_LOCK
-                    .lock()
-                    .map_err(|error| AppError::Message(error.to_string()))?,
-            )
+            Some(crate::sync_utils::lock_file_operation(&MCODE_PROMPT_LOCK))
         } else {
             None
         };
@@ -286,11 +282,7 @@ impl PromptService {
         }
 
         let _guard = if app == AppType::Mcode {
-            Some(
-                MCODE_PROMPT_LOCK
-                    .lock()
-                    .map_err(|error| AppError::Message(error.to_string()))?,
-            )
+            Some(crate::sync_utils::lock_file_operation(&MCODE_PROMPT_LOCK))
         } else {
             None
         };
@@ -409,9 +401,7 @@ fn upsert_mcode_prompt(
     prompt: Prompt,
     target_path: &Path,
 ) -> Result<(), AppError> {
-    let _guard = MCODE_PROMPT_LOCK
-        .lock()
-        .map_err(|error| AppError::Message(error.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&MCODE_PROMPT_LOCK);
     validate_prompt_content(&AppType::Mcode, &prompt.content)?;
     let prompts = state.db.get_prompts("mcode")?;
     let clear_live = !prompt.enabled
@@ -431,9 +421,7 @@ fn upsert_mcode_prompt(
 }
 
 fn enable_mcode_prompt(state: &AppState, id: &str, target_path: &Path) -> Result<(), AppError> {
-    let _guard = MCODE_PROMPT_LOCK
-        .lock()
-        .map_err(|error| AppError::Message(error.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&MCODE_PROMPT_LOCK);
     let mut prompts = state.db.get_prompts("mcode")?;
     let target = prompts
         .get(id)
