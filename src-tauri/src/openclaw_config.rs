@@ -159,16 +159,6 @@ pub struct OpenClawAgentsDefaults {
     pub extra: HashMap<String, Value>,
 }
 
-/// OpenClaw agents 顶层配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(dead_code)]
-pub struct OpenClawAgents {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub defaults: Option<OpenClawAgentsDefaults>,
-    #[serde(flatten)]
-    pub extra: HashMap<String, Value>,
-}
-
 /// OpenClaw env 配置（openclaw.json 的 env 节点）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenClawEnvConfig {
