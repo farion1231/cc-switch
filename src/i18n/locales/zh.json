@@ -536,6 +536,13 @@
         "mediaHeuristic": "纯文本模型预判",
         "mediaHeuristicDescription": "发送前根据内置的已确认纯文本模型注册表剥离图片。关闭仅停用代理的注册表预判；已声明纯文本模型的处理和上游报错兜底仍保留，且不会改变 Codex 模型目录的能力声明"
       },
+      "privacyFilter": {
+        "title": "隐私过滤器",
+        "description": "开启后，代理转发请求前会把用户输入和系统提示中的个人信息（邮箱、手机号、身份证、银行卡、IP）和密钥（API Key、Token、密码、私钥等）替换为 [邮箱]、[密钥] 等占位符；关闭后请求原样转发。占位符跟随界面语言。本地规则匹配，替换不可逆，作用于路由和聚合模式；直连模式下请求不经过 CC Switch，不会被过滤。模型回复、思考块、工具调用参数和图片不受影响；工具结果默认不处理，可用下方子开关开启。回环地址（如 127.0.0.1）不算 IP。移植自 packyme/privacy-filter。",
+        "enabled": "启用隐私过滤",
+        "filterToolResults": "同时过滤工具结果",
+        "filterToolResultsDescription": "文件内容、命令输出等工具结果也会被替换。模型只能看到占位符：Edit / apply_patch 可能因对不上原文而失败，整文件重写时占位符可能被写回你的真实文件。请确认能接受后再开启。"
+      },
       "optimizer": {
         "title": "Bedrock 请求优化器",
         "description": "在请求发送前自动优化 Thinking 和 Cache 配置（仅 Bedrock 供应商生效）",
@@ -894,6 +901,7 @@
     "languageOptionTurkish": "Türkçe",
     "languageOptionKorean": "한국어",
     "languageOptionRussian": "Русский",
+    "languageOptionGerman": "Deutsch",
     "windowBehavior": "窗口行为",
     "windowBehaviorHint": "配置窗口最小化与 Claude 插件联动策略。",
     "launchOnStartup": "开机自启",
@@ -1178,6 +1186,7 @@
     "hermes": "Hermes",
     "pi": "Pi",
     "mcode": "MiniMax Code",
+    "workbuddy": "WorkBuddy",
     "agy": "Antigravity",
     "copilot": "Copilot CLI",
     "omp": "Oh My Pi"
@@ -1186,6 +1195,72 @@
     "empty": {
       "title": "还没有添加自定义供应商",
       "description": "MiniMax 官方账号登录由 MiniMax Code 自行管理，无需导入；config.yaml 里已有的自定义供应商会自动显示在这里。点击右上角 +，从预设或自定义配置添加供应商。"
+    }
+  },
+  "workbuddy": {
+    "deleteSessionHint": "请在 WorkBuddy 中删除，以同时更新它的会话列表和历史记录。",
+    "empty": {
+      "title": "还没有添加 WorkBuddy 供应商",
+      "description": "CC Switch 把供应商作为自定义模型写进 ~/.workbuddy/models.json，不会改动你在 WorkBuddy 里添加的模型，因此无需导入。点击右上角 +，从预设或自定义配置添加供应商。"
+    },
+    "form": {
+      "providerKeyHint": "只能用小写字母、数字和连字符，用来标记 models.json 里哪些条目属于这个供应商。",
+      "providerKeyLockedHint": "标识写在 models.json 的条目上，创建后不能再改。",
+      "url": "请求地址",
+      "urlHint": "完整的 OpenAI 兼容 Chat Completions 地址，通常以 /chat/completions 结尾。",
+      "apiKeyHint": "保存在本机的 models.json 里；${ENV_VAR} 形式的引用由 WorkBuddy 展开。",
+      "vendor": "厂商标签",
+      "modelsHint": "至少添加一个模型。模型 ID 会原样发给接口。WorkBuddy 暂时不支持同一个模型添加多次，同一个模型 ID 只能放在一张卡里。名称留空时，WorkBuddy 菜单显示「厂商标签:模型 ID」。",
+      "maxInputTokens": "最大输入 Token",
+      "maxOutputTokens": "最大输出 Token",
+      "modelIdTaken": "WorkBuddy 暂时不支持同一个模型添加多次，这个模型已经在「{{owner}}」里了。想换到这张卡，先从那边删掉。",
+      "modelOwnerUser": "WorkBuddy 里自己加的模型",
+      "presetModelsSkipped": "WorkBuddy 暂时不支持同一个模型添加多次，这些模型已经在别的卡里，已跳过：{{models}}。想换到这张卡，先从原来的卡里删掉，再在这里加回来。"
+    },
+    "official": {
+      "presetName": "WorkBuddy 官方登录",
+      "account": "WorkBuddy 账号",
+      "chooseAccount": "选择账号",
+      "noAccounts": "还没有收录的账号",
+      "accountHelp": "卡片只绑定这个账号，不写进 WorkBuddy 的模型配置。在供应商列表点这张卡的「添加」，WorkBuddy 的登录会换成这个号；同一时间只有一张官方卡在「已添加」。",
+      "accountDeleted": "账号已删除，请重新选择",
+      "accountUnset": "还没有选择账号",
+      "accountDeletedChip": "账号已删除",
+      "accountUnsetChip": "未选账号",
+      "emptyTitle": "还没有 WorkBuddy 账号",
+      "emptyBody": "打开 WorkBuddy 登录后，账号会自动收录到这里。",
+      "addAnotherTitle": "要用另一个账号？",
+      "addAnotherBody": "先完全退出 WorkBuddy，点「登录另一个账号」（只在本机让 WorkBuddy 停在登录页，不会在服务端登出当前账号），在 WorkBuddy 里登录后它会自动出现在列表里。",
+      "addAnotherRunning": "WorkBuddy 正在运行：先完全退出它（含菜单栏/托盘），再点「登录另一个账号」。",
+      "preparedNewLogin": "已收录当前账号，WorkBuddy 打开后会停在登录页。登录另一个账号后，它会自动出现在账号列表里。",
+      "switching": "正在切换…",
+      "onlyOne": "WorkBuddy 同时只能登录一个账号，添加另一张官方卡即可切换",
+      "quitFirst": "请先退出 WorkBuddy 再切换账号",
+      "quitFirstBody": "完全退出 WorkBuddy（含菜单栏/托盘）后再切换，否则它会把当前登录写回去。",
+      "switched": "已切换到「{{name}}」，下次打开 WorkBuddy 会使用这个账号。",
+      "switchFailed": "切换 WorkBuddy 账号失败"
+    },
+    "quota": {
+      "title": "额度",
+      "credits": "积分",
+      "leftOf": "剩余 {{remaining}} / {{total}}",
+      "usedOf": "已用 {{used}} / {{total}}",
+      "usedUp": "已用完（共 {{total}}）",
+      "detail": "积分剩余 {{remaining}} / 共 {{total}}，已用 {{used}}",
+      "staleNotRunning": "WorkBuddy 没在运行，显示的是上次查到的结果",
+      "staleNotCurrent": "不是 WorkBuddy 当前登录的账号，显示的是上次查到的结果",
+      "staleNotSignedIn": "WorkBuddy 没有登录，显示的是上次查到的结果",
+      "staleFailed": "这次没查到，显示的是上次查到的结果",
+      "openToQuery": "打开 WorkBuddy 后可查",
+      "onlyWhileRunning": "额度只能在 WorkBuddy 运行时经它查询",
+      "unavailable": "暂时取不到额度",
+      "expiry": "到期",
+      "expiresOn": "{{credits}} 积分 {{date}}到期",
+      "expiresOnShort": "{{date}}到期",
+      "noExpiry": "不会过期",
+      "expiryTitle": "积分到期时间",
+      "expiryShowAll": "查看每笔积分的到期时间",
+      "inTime": "{{time}}后"
     }
   },
   "pi": {
@@ -1368,6 +1443,7 @@
     "searchSessions": "搜索会话",
     "sessionList": "会话列表",
     "unknownDirectory": "未知目录",
+    "codexChats": "Codex 聊天",
     "batchDeleting": "删除中...",
     "loadingSessions": "加载会话中...",
     "piRelativeSessionDir": "Pi 的 sessionDir 相对于启动 Pi 时的目录，全局浏览器无法安全枚举。请改用绝对 sessionDir，之后即可在此浏览全部 Pi 会话：",
@@ -1719,7 +1795,6 @@
       "volcengine_agentplan": "火山方舟 Agent Plan 为 CC Switch 的用户提供了专属福利：通过此链接订阅方舟 Agent Plan，新客户首两个月享 2.5 折优惠，再用专属邀请码 6J6FV5N2 领取奖励叠加 9.5 折，低至 9.4 元/月！",
       "volcengine_codingplan": "火山方舟 Coding Plan 为 CC Switch 的用户提供了专属福利：通过此链接订阅方舟 Coding Plan，新客户首两个月享 2.5 折优惠，再用专属邀请码 6J6FV5N2 领取奖励叠加 9.5 折，低至 9.4 元/月！",
       "byteplus": "通过此链接注册即可获取每个模型50万tokens的免费推理额度。",
-      "ccsub": "CCSub 是稳定、实惠的 AI API 中转平台，Claude Code 官方订阅的超强平替，一个 Key 覆盖全部模型，价格约为官方 1/3。",
       "subrouter": "SubRouter 是中转站聚合平台，一个 Key 可接入多个模型与供应商。",
       "qiniu": "七牛云是多协议 AI 中转平台，一个 Key 即可调用原生 Claude、GPT、Gemini 模型，兼容 Anthropic、OpenAI、Gemini 多种接口。",
       "haoai": "hao.ai 是面向开发者与团队的高速、稳定大模型统一 API 网关：一个 Key 即可接入 GPT、Claude、Grok 等主流模型，兼容 OpenAI、Anthropic 协议，提供模型路由、故障回退与完整调用日志，价格低至官方参考价的 1.5 折。CC Switch 用户通过此链接注册，首单可享 5% 赠送额度！",
@@ -1940,6 +2015,7 @@
     "form": {
       "officialTitle": "使用 Copilot CLI 自己的 GitHub 登录",
       "officialHint": "「打开终端」以这张卡的模型启动 copilot；绑定授权中心的账号后改用该账号启动。",
+      "followCliLogin": "跟随 Copilot CLI 自己的登录",
       "byokTitle": "添加后写进 Copilot 的 providers.json",
       "byokHint": "「添加」把这一家和它的模型写进 Copilot 自己的 providers.json（仅本机当前用户可读），之后任何方式启动的 copilot 都能在 /model 里选到「卡片标识/模型」；「移除」只删这一家的条目，文件里的其他内容原样保留。",
       "apiFormat": "接口格式",
@@ -1965,12 +2041,7 @@
       "notSignedIn": "Copilot CLI 尚未登录。请运行 copilot 并用 /login 登录，或在卡片里绑定授权中心的账号。"
     },
     "defaultCannotRemove": "Copilot 的默认模型属于这一家，不能移除或删除。先在 copilot 里用 /model 换成别家的模型。",
-    "terminalNeedsAdd": "先把这一家添加到 Copilot，终端才能选到它的模型。",
-    "section": {
-      "official": "官方登录 · {{count}}",
-      "officialHelpTitle": "官方登录",
-      "officialHelp": "用 Copilot CLI 自己的 GitHub 登录，不写任何文件；「打开终端」以卡片上的模型和绑定的账号启动 copilot。"
-    }
+    "terminalNeedsAdd": "先把这一家添加到 Copilot，终端才能选到它的模型。"
   },
   "codexOauth": {
     "authStatus": "认证状态",
@@ -2279,6 +2350,7 @@
     "manageUniversal": "管理已有的统一供应商 ›",
     "loginWith": {
       "deepseek": "用 DeepSeek 账号登录",
+      "workbuddy": "用 WorkBuddy 账号登录",
       "kimi": "使用 Kimi 账号登录",
       "claude": "用 Claude 账号登录",
       "chatgpt": "用 ChatGPT 账号登录",
@@ -4367,6 +4439,7 @@
     "columnVisible": "显示",
     "visibleHelp": "关掉后，这个应用不再出现在侧栏、托盘菜单、MCP / Skills 的应用列，以及提示词和会话的应用下拉里。只是不显示：它的供应商、MCP 等配置都还在，它自己的配置文件也不会被改动。",
     "desktopHelp": "Claude Desktop 是桌面应用，不能在这里安装或升级；CC Switch 通过它的配置文件接入。",
+    "workbuddyHelp": "WorkBuddy 是桌面应用，不能在这里安装或升级，它会自己更新；CC Switch 通过它的配置文件（~/.workbuddy/models.json）接入。",
     "desktopUnsupported": "当前系统不支持",
     "desktopConnected": "已接入",
     "desktopNotConnected": "未接入",
@@ -5069,6 +5142,7 @@
       "chatgptHelp": "用于 Claude Code、Claude Desktop 的 ChatGPT 预设，以及 Codex 官方登录绑定。没指定账号的供应商用「默认」账号。",
       "xaiHelp": "用于 Claude Code、Claude Desktop、Codex 的 xAI 预设。没指定账号的供应商用「默认」账号。",
       "agyHelp": "Antigravity CLI（agy）的官方登录。agy 同时只能登录一个号，「切换」会把 agy 的登录换成选中的账号，之后新开的 agy 都用它。agy 里原来登着的号会自动收进这里，切走也不会丢。",
+      "workbuddyHelp": "WorkBuddy 桌面端的官方登录。CC Switch 不能替 WorkBuddy 登录，只能收录它当前登着的账号（整组登录文件的快照）。要切换账号，在账号的「…」里选「切换 WorkBuddy 到这个账号」，或在供应商列表里添加绑定了它的「WorkBuddy 官方登录」卡（同一时间只有一张在「已添加」）。快照只在这台电脑上有效，不会随云同步。",
       "claudeHelpTerminal": "Claude Code 的官方订阅账号（Pro / Max / Team）。设置里覆盖了 Claude 配置目录，切卡不会切换 Claude Code 的登录；在官方卡上选一个账号，再从卡片「打开终端」使用。",
       "claudeHelpWsl": "Claude Code 的官方订阅账号（Pro / Max / Team）。Claude 配置目录在 WSL 里时暂不支持，后续会跟进。",
       "claudeHelp": "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 官方卡上选一个账号，切到这张卡后，Claude Code 的登录会实时换成这个号；想同时用几个号，从卡片「打开终端」。登录令牌只留在本机，不上传、不刷新、不登出。第一次切换会自动收进 Claude Code 现在登录的号；切号后 Remote Control 会断开，提示缓存要重建。"
@@ -5077,6 +5151,8 @@
     "accountMenu": "{{login}} 的更多操作",
     "removeAccount": "删除账号",
     "setDefault": "设为默认",
+    "inUseBy": "{{app}} 在用",
+    "switchAppTo": "切换 {{app}} 到这个账号",
     "reauth": "重新登录",
     "busyHint": "先完成或取消正在进行的登录",
     "default": "默认",
@@ -5123,11 +5199,43 @@
       "addedOn": "{{date}}添加",
       "statusLoadFailed": "无法读取 Antigravity 账号，请重试。",
       "empty": "还没有 Antigravity 账号。agy 里已登录的号会自动出现在这里。",
-      "current": "agy 在用",
-      "switchTo": "切换 agy 到这个账号",
       "removeNote": "不会让 agy 退出登录：agy 现在登着的号删掉后仍然可用。",
       "switched": "已切换，新开的 agy 会使用这个账号。",
       "switchedWhileRunning": "已切换。检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，请退出后重新打开。"
+    },
+    "workbuddy": {
+      "addedOn": "{{date}}收录",
+      "expiredNote": "登录已过期，点「重新登录」后在 WorkBuddy 里登录这个号",
+      "reauthPrepared": "WorkBuddy 打开后会停在登录页。请登录 {{login}}，登录后 CC Switch 会用新的登录替换它的快照。",
+      "reauthRunningTitle": "WorkBuddy 正在运行，没法让它停在登录页",
+      "reauthRunningBody": "可以先完全退出 WorkBuddy（含菜单栏/托盘）再点「重新登录」；也可以直接在 WorkBuddy 里退出当前账号、重新登录 {{login}}，CC Switch 会自动替换它的快照。",
+      "reauthOtherAdded": "登录的不是 {{target}}，已把 {{login}} 作为新账号收录。",
+      "reauthOtherUpdated": "登录的不是 {{target}}，{{login}} 已在列表里，副本已更新。",
+      "statusLoadFailed": "无法读取 WorkBuddy 账号，请重试。",
+      "empty": "还没有 WorkBuddy 账号。先在 WorkBuddy 里登录，再收录当前登录的账号。",
+      "plan": {
+        "free": "免费版",
+        "pro": "专业版",
+        "team": "团队版",
+        "enterprise": "企业版",
+        "personal": "个人版",
+        "_raw": "{{plan}}"
+      },
+      "importNow": "收录",
+      "removeNote": "只删除 CC Switch 里的快照，不会让 WorkBuddy 退出登录。",
+      "localOnly": "快照只在这台电脑上有效（登录凭据绑定本机），不会随云同步，换电脑后需要重新收录。",
+      "runningTitle": "WorkBuddy 正在运行",
+      "runningBody": "切换账号或登录另一个账号前，请先完全退出 WorkBuddy（含菜单栏/托盘），否则它会把当前登录写回去。",
+      "unrecognizedTitle": "认不出 WorkBuddy 当前登录的账号",
+      "unrecognizedBody": "登录文件的格式可能变了，暂时不能收录。在供应商列表切换到别的账号前会把它原样暂存。",
+      "notImportedTitle": "WorkBuddy 当前登录的账号还没收录",
+      "alreadyTitle": "当前登录的账号已在列表里（副本已更新）",
+      "alreadyBody": "要添加另一个账号：先完全退出 WorkBuddy，点「登录另一个账号」（CC Switch 只在本机让 WorkBuddy 停在登录页，不会在服务端登出当前账号），在 WorkBuddy 里登录另一个账号，再回来点「添加账号」。",
+      "signedOutTitle": "WorkBuddy 当前没有登录",
+      "signedOutBody": "在 WorkBuddy 里登录后，回到这里点「添加账号」收录。",
+      "prepareNewLogin": "登录另一个账号",
+      "preparedNewLogin": "已收录当前账号，WorkBuddy 打开后会停在登录页。登录另一个账号后回到这里点「添加账号」。",
+      "openApp": "打开 WorkBuddy"
     },
     "claude": {
       "pasteSubmitted": "已提交，正在完成登录…",
@@ -5151,7 +5259,6 @@
   },
   "kimi": {
     "oauth": {
-      "useAccount": "使用此账号",
       "title": "Kimi Code 官方登录",
       "description": "可添加多个 Kimi 编程套餐账号，各自保存凭据和供应商。在此管理登录，再选择账号使用其官方模型。",
       "region": "登录区域",
@@ -5174,7 +5281,6 @@
       "manageAccounts": "管理 Kimi 账号",
       "managedHint": "先移除这个官方账号，或到授权中心删除它（连登录一起删）。",
       "connectionManaged": "连接和登录由授权中心管理，这里只编辑模型。拉取模型会读取这个账号当前可用的官方模型。",
-      "current": "Kimi 在用",
       "primaryShort": "Kimi Code 自己的登录",
       "empty": "还没有 Kimi 账号。Kimi Code 里已登录的号会自动出现在这里。",
       "help": "可添加多个 Kimi 编程套餐账号，每个号在 Kimi Code 里有自己的供应商和模型。「使用此账号」会把 Kimi Code 的默认模型换成这个号的，之后新开的会话都用它。Kimi Code 自己登着的号会自动出现在这里，联网搜索和网页抓取始终用它；在这里删掉它只会移出列表，不会让 Kimi Code 退出登录。"

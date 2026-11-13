@@ -465,7 +465,7 @@ describe("supportsConnectivityCheck", () => {
     },
   );
 
-  it.each(["mcode", "dsh", "kimi", "qwen"] as const)(
+  it.each(["mcode", "dsh", "kimi", "qwen", "workbuddy"] as const)(
     "%s 不支持连通检测",
     (appId) => {
       expect(supportsConnectivityCheck(appId, mkProvider())).toBe(false);

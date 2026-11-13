@@ -548,6 +548,7 @@ command = "say"
                 qwen: false,
                 copilot: false,
                 dsh: false,
+                workbuddy: false,
                 pi: false,
                 omp: false,
             },

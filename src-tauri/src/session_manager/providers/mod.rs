@@ -15,8 +15,8 @@ pub mod pi;
 mod pi_blocks;
 pub(crate) mod utils;
 
+pub mod dsh;
 pub mod kimi;
 pub mod mcode;
 pub mod qwen;
-
-pub mod dsh;
+pub mod workbuddy;

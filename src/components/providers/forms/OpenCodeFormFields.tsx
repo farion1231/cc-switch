@@ -1054,31 +1054,33 @@ export function OpenCodeFormFields({
                         />
                       )}
 
-                    {modelDialect === "dsh" && isPlainObject(model.compat) && (
-                      <StructuredOptionsEditor
-                        id={`opencode-${key}-compat`}
-                        title={t("pi.form.compatibility")}
-                        hint={t("pi.form.compatibilityHint")}
-                        addLabel={t("pi.form.addCompatibilityOption")}
-                        emptyLabel={t("pi.form.noCompatibilityOptions")}
-                        keyLabel={t("pi.form.optionKey")}
-                        valueLabel={t("pi.form.optionValue")}
-                        keyPlaceholder="supportsDeveloperRole"
-                        valuePlaceholder="false"
-                        removeLabel={t("pi.form.removeCompatibilityOption")}
-                        options={model.compat}
-                        onOptionsChange={(compat) => {
-                          const { compat: _previous, ...rest } = model;
-                          updateModel(
-                            key,
-                            Object.keys(compat).length > 0
-                              ? { ...rest, compat }
-                              : (rest as OpenCodeModel),
-                          );
-                        }}
-                        className="sm:col-span-2"
-                      />
-                    )}
+                    {modelDialect === "dsh" &&
+                      (model.compat === undefined ||
+                        isPlainObject(model.compat)) && (
+                        <StructuredOptionsEditor
+                          id={`opencode-${key}-compat`}
+                          title={t("pi.form.compatibility")}
+                          hint={t("pi.form.compatibilityHint")}
+                          addLabel={t("pi.form.addCompatibilityOption")}
+                          emptyLabel={t("pi.form.noCompatibilityOptions")}
+                          keyLabel={t("pi.form.optionKey")}
+                          valueLabel={t("pi.form.optionValue")}
+                          keyPlaceholder="supportsDeveloperRole"
+                          valuePlaceholder="false"
+                          removeLabel={t("pi.form.removeCompatibilityOption")}
+                          options={model.compat ?? {}}
+                          onOptionsChange={(compat) => {
+                            const { compat: _previous, ...rest } = model;
+                            updateModel(
+                              key,
+                              Object.keys(compat).length > 0
+                                ? { ...rest, compat }
+                                : (rest as OpenCodeModel),
+                            );
+                          }}
+                          className="sm:col-span-2"
+                        />
+                      )}
 
                     {/* Model Properties (extra fields like variants, cost) */}
                     <div className="space-y-2 sm:col-span-2">

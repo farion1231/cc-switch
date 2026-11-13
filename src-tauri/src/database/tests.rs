@@ -1068,6 +1068,32 @@ fn model_pricing_seed_covers_deepseek_v41_flash_aliases() {
 }
 
 #[test]
+fn model_pricing_seed_includes_claude_fable_5_2() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'claude-fable-5-2'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query Fable 5.2 price");
+
+    assert_eq!(
+        price,
+        (
+            "8".to_string(),
+            "40".to_string(),
+            "0.20".to_string(),
+            "10".to_string(),
+        )
+    );
+}
+
+#[test]
 fn model_pricing_seed_includes_claude_5_1_and_standard_sonnet_5_prices() {
     let db = Database::memory().expect("create memory db");
     let conn = db.conn.lock().expect("lock conn");
@@ -1285,6 +1311,32 @@ fn model_pricing_seed_includes_gemini_4_argon() {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .expect("query Gemini 4 Argon price");
+
+    assert_eq!(
+        price,
+        (
+            "2.00".to_string(),
+            "10.00".to_string(),
+            "0.10".to_string(),
+            "0".to_string(),
+        )
+    );
+}
+
+#[test]
+fn model_pricing_seed_includes_gemini_4_carbon() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'gemini-4-carbon'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query Gemini 4 Carbon price");
 
     assert_eq!(
         price,
@@ -1537,7 +1589,7 @@ fn migration_v23_to_v24_adds_dsh_flags_without_changing_omp_or_skill_state() {
 }
 
 #[test]
-fn migration_v24_to_v25_adds_copilot_flags_without_changing_dsh_state() {
+fn migration_from_v24_adds_copilot_workbuddy_and_qwen_flags_without_changing_dsh_state() {
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn).expect("create tables");
     conn.execute_batch(
@@ -1545,6 +1597,8 @@ fn migration_v24_to_v25_adds_copilot_flags_without_changing_dsh_state() {
          ALTER TABLE skills DROP COLUMN enabled_copilot;
          ALTER TABLE mcp_servers DROP COLUMN enabled_qwen;
          ALTER TABLE skills DROP COLUMN enabled_qwen;
+         ALTER TABLE mcp_servers DROP COLUMN enabled_workbuddy;
+         ALTER TABLE skills DROP COLUMN enabled_workbuddy;
          INSERT INTO mcp_servers (id, name, server_config, enabled_dsh)
          VALUES ('shared', 'Shared MCP', '{}', 1);
          INSERT INTO skills (id, name, directory, enabled_dsh)
@@ -1554,17 +1608,18 @@ fn migration_v24_to_v25_adds_copilot_flags_without_changing_dsh_state() {
     Database::set_user_version(&conn, 24).expect("set user_version=24");
 
     Database::apply_schema_migrations_on_conn(&conn).expect("upgrade v24 database");
-    assert_eq!(SCHEMA_VERSION, 26);
-    assert_eq!(Database::get_user_version(&conn).unwrap(), 26);
+    // v24 → v25（Copilot）→ v26（WorkBuddy）→ v27（Qwen）
+    assert_eq!(Database::get_user_version(&conn).unwrap(), 27);
+    assert_eq!(SCHEMA_VERSION, 27);
     for table in ["mcp_servers", "skills"] {
-        let flags: (bool, bool, bool) = conn
+        let flags: (bool, bool, bool, bool) = conn
             .query_row(
-                &format!("SELECT enabled_dsh, enabled_copilot, enabled_qwen FROM {table}"),
+                &format!("SELECT enabled_dsh, enabled_copilot, enabled_workbuddy, enabled_qwen FROM {table}"),
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .expect("read migrated flags");
-        assert_eq!(flags, (true, false, false), "{table}");
+        assert_eq!(flags, (true, false, false, false), "{table}");
     }
 
     conn.execute("UPDATE skills SET enabled_copilot = 1", [])
@@ -1576,25 +1631,35 @@ fn migration_v24_to_v25_adds_copilot_flags_without_changing_dsh_state() {
         .unwrap());
 }
 
-fn read_dsh_copilot_qwen_flags(conn: &Connection, table: &str) -> (bool, bool, bool) {
+fn read_dsh_copilot_workbuddy_qwen_flags(
+    conn: &Connection,
+    table: &str,
+) -> (bool, bool, bool, bool) {
     conn.query_row(
-        &format!("SELECT enabled_dsh, enabled_copilot, enabled_qwen FROM {table} WHERE id = 'row'"),
+        &format!(
+            "SELECT enabled_dsh, enabled_copilot, enabled_workbuddy, enabled_qwen FROM {table} WHERE id = 'row'"
+        ),
         [],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
     )
-    .expect("read dsh/copilot/qwen flags")
+    .expect("read dsh/copilot/workbuddy/qwen flags")
 }
 
 #[test]
-fn fresh_install_has_dsh_copilot_and_qwen_flags_at_current_version() {
+fn fresh_install_has_dsh_copilot_workbuddy_and_qwen_flags_at_current_version() {
     // 与 Database::init 的全新安装路径一致：先建表，再从 user_version=0 跑迁移。
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn).expect("create tables");
     Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
-    assert_eq!(SCHEMA_VERSION, 26);
+    assert_eq!(SCHEMA_VERSION, 27);
     assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
     for table in ["mcp_servers", "skills"] {
-        for column in ["enabled_dsh", "enabled_copilot", "enabled_qwen"] {
+        for column in [
+            "enabled_dsh",
+            "enabled_copilot",
+            "enabled_workbuddy",
+            "enabled_qwen",
+        ] {
             assert!(
                 Database::has_column(&conn, table, column).expect("inspect column"),
                 "{table}.{column} missing on fresh install"
@@ -1604,15 +1669,17 @@ fn fresh_install_has_dsh_copilot_and_qwen_flags_at_current_version() {
 }
 
 #[test]
-fn migration_v23_to_v26_adds_dsh_copilot_then_qwen_flags() {
+fn migration_v23_to_v27_adds_dsh_copilot_workbuddy_then_qwen_flags() {
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn).expect("create tables");
     conn.execute_batch(
         "ALTER TABLE mcp_servers DROP COLUMN enabled_dsh;
          ALTER TABLE mcp_servers DROP COLUMN enabled_copilot;
+         ALTER TABLE mcp_servers DROP COLUMN enabled_workbuddy;
          ALTER TABLE mcp_servers DROP COLUMN enabled_qwen;
          ALTER TABLE skills DROP COLUMN enabled_dsh;
          ALTER TABLE skills DROP COLUMN enabled_copilot;
+         ALTER TABLE skills DROP COLUMN enabled_workbuddy;
          ALTER TABLE skills DROP COLUMN enabled_qwen;
          INSERT INTO mcp_servers (id, name, server_config, enabled_kimi) VALUES ('row', 'MCP', '{}', 1);
          INSERT INTO skills (id, name, directory, enabled_kimi) VALUES ('row', 'Skill', 'row', 1);",
@@ -1621,11 +1688,11 @@ fn migration_v23_to_v26_adds_dsh_copilot_then_qwen_flags() {
     Database::set_user_version(&conn, 23).expect("set user_version=23");
 
     Database::apply_schema_migrations_on_conn(&conn).expect("upgrade v23 database");
-    assert_eq!(Database::get_user_version(&conn).unwrap(), 26);
+    assert_eq!(Database::get_user_version(&conn).unwrap(), 27);
     for table in ["mcp_servers", "skills"] {
         assert_eq!(
-            read_dsh_copilot_qwen_flags(&conn, table),
-            (false, false, false)
+            read_dsh_copilot_workbuddy_qwen_flags(&conn, table),
+            (false, false, false, false)
         );
         let kimi: bool = conn
             .query_row(&format!("SELECT enabled_kimi FROM {table}"), [], |row| {
@@ -1637,24 +1704,24 @@ fn migration_v23_to_v26_adds_dsh_copilot_then_qwen_flags() {
 }
 
 #[test]
-fn migration_v25_to_v26_adds_qwen_flag_and_keeps_dsh_and_copilot_state() {
+fn migration_v26_to_v27_adds_qwen_flag_and_keeps_existing_app_state() {
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn).expect("create tables");
     conn.execute_batch(
         "ALTER TABLE mcp_servers DROP COLUMN enabled_qwen;
          ALTER TABLE skills DROP COLUMN enabled_qwen;
-         INSERT INTO mcp_servers (id, name, server_config, enabled_dsh, enabled_copilot) VALUES ('row', 'MCP', '{}', 1, 1);
-         INSERT INTO skills (id, name, directory, enabled_dsh, enabled_copilot) VALUES ('row', 'Skill', 'row', 1, 1);",
+         INSERT INTO mcp_servers (id, name, server_config, enabled_dsh, enabled_copilot, enabled_workbuddy) VALUES ('row', 'MCP', '{}', 1, 1, 1);
+         INSERT INTO skills (id, name, directory, enabled_dsh, enabled_copilot, enabled_workbuddy) VALUES ('row', 'Skill', 'row', 1, 1, 1);",
     )
-    .expect("seed v25 database");
-    Database::set_user_version(&conn, 25).expect("set user_version=25");
+    .expect("seed v26 database");
+    Database::set_user_version(&conn, 26).expect("set user_version=26");
 
-    Database::apply_schema_migrations_on_conn(&conn).expect("upgrade v25 database");
-    assert_eq!(Database::get_user_version(&conn).unwrap(), 26);
+    Database::apply_schema_migrations_on_conn(&conn).expect("upgrade v26 database");
+    assert_eq!(Database::get_user_version(&conn).unwrap(), 27);
     for table in ["mcp_servers", "skills"] {
         assert_eq!(
-            read_dsh_copilot_qwen_flags(&conn, table),
-            (true, true, false)
+            read_dsh_copilot_workbuddy_qwen_flags(&conn, table),
+            (true, true, true, false)
         );
     }
 
@@ -1662,7 +1729,144 @@ fn migration_v25_to_v26_adds_qwen_flag_and_keeps_dsh_and_copilot_state() {
         .unwrap();
     Database::apply_schema_migrations_on_conn(&conn).expect("reopen migrated database");
     assert_eq!(
-        read_dsh_copilot_qwen_flags(&conn, "skills"),
-        (true, true, true)
+        read_dsh_copilot_workbuddy_qwen_flags(&conn, "skills"),
+        (true, true, true, true)
+    );
+}
+
+/// Qwen Code 开发版曾把 enabled_qwen 记作 v26（缺上游 v26 的 enabled_workbuddy）。
+/// v26 → v27 需要补齐 enabled_workbuddy，同时保留已有的 enabled_qwen 状态。
+#[test]
+fn migration_from_qwen_dev_v26_backfills_missing_workbuddy_column() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    conn.execute_batch(
+        "ALTER TABLE mcp_servers DROP COLUMN enabled_workbuddy;
+         ALTER TABLE skills DROP COLUMN enabled_workbuddy;
+         INSERT INTO mcp_servers (id, name, server_config, enabled_dsh, enabled_copilot, enabled_qwen) VALUES ('row', 'MCP', '{}', 1, 1, 1);
+         INSERT INTO skills (id, name, directory, enabled_dsh, enabled_copilot, enabled_qwen) VALUES ('row', 'Skill', 'row', 1, 0, 1);",
+    )
+    .expect("seed qwen dev v26 database");
+    Database::set_user_version(&conn, 26).expect("set user_version=26");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("upgrade qwen dev v26 database");
+    assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
+    assert_eq!(
+        read_dsh_copilot_workbuddy_qwen_flags(&conn, "mcp_servers"),
+        (true, true, false, true)
+    );
+    assert_eq!(
+        read_dsh_copilot_workbuddy_qwen_flags(&conn, "skills"),
+        (true, false, false, true)
+    );
+    Database::apply_schema_migrations_on_conn(&conn).expect("re-run migrations");
+    assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
+}
+
+#[test]
+fn recovers_after_a_panic_poisons_the_connection_lock() {
+    let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+    db.set_setting("kept", "1").expect("seed");
+
+    let poisoner = std::sync::Arc::clone(&db);
+    let joined = std::thread::spawn(move || {
+        let conn = poisoner.conn.lock().expect("lock conn");
+        conn.execute_batch("BEGIN; INSERT INTO settings (key, value) VALUES ('lost', '1');")
+            .expect("open transaction");
+        panic!("task panics while holding the lock");
+    })
+    .join();
+    assert!(joined.is_err());
+    assert!(db.conn.is_poisoned());
+
+    // 中毒后仍能读写，半截事务被回滚
+    assert_eq!(
+        db.get_setting("kept")
+            .expect("read after poison")
+            .as_deref(),
+        Some("1")
+    );
+    assert_eq!(db.get_setting("lost").expect("read after poison"), None);
+    db.set_setting("after", "1").expect("write after poison");
+    assert!(!db.conn.is_poisoned());
+}
+
+#[test]
+fn keeps_the_lock_poisoned_when_rollback_fails() {
+    use rusqlite::hooks::{AuthAction, AuthContext, Authorization, TransactionOperation};
+    let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+
+    let poisoner = std::sync::Arc::clone(&db);
+    let joined = std::thread::spawn(move || {
+        let conn = poisoner.conn.lock().expect("lock conn");
+        conn.execute_batch("BEGIN").expect("open transaction");
+        conn.authorizer(Some(|ctx: AuthContext<'_>| match ctx.action {
+            AuthAction::Transaction {
+                operation: TransactionOperation::Rollback,
+            } => Authorization::Deny,
+            _ => Authorization::Allow,
+        }));
+        panic!("task panics while holding the lock");
+    })
+    .join();
+    assert!(joined.is_err());
+
+    assert!(db.get_setting("kept").is_err());
+    assert!(db.conn.is_poisoned());
+}
+
+#[tokio::test]
+async fn proxy_dao_calls_survive_a_poisoned_lock() {
+    let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+    db.set_proxy_flags_sync("claude", true, true)
+        .expect("set flags");
+    db.update_proxy_config(crate::proxy::types::ProxyConfig {
+        listen_port: 25721,
+        ..Default::default()
+    })
+    .await
+    .expect("set port");
+
+    // 每次调用前都重新毒化，确保每个调用点自己完成恢复
+    let poison = || {
+        let poisoner = std::sync::Arc::clone(&db);
+        let joined = std::thread::spawn(move || {
+            let _conn = poisoner.conn.lock().expect("lock conn");
+            panic!("task panics while holding the lock");
+        })
+        .join();
+        assert!(joined.is_err());
+        assert!(db.conn.is_poisoned());
+    };
+
+    poison();
+    db.set_proxy_flags_sync("claude", true, false)
+        .expect("set flags after poison");
+    poison();
+    assert_eq!(
+        db.get_proxy_flags_sync("claude"),
+        (true, false),
+        "get_proxy_flags_sync after poison"
+    );
+    poison();
+    assert!(
+        db.is_live_takeover_active_sync(),
+        "is_live_takeover_active_sync after poison"
+    );
+    poison();
+    assert_eq!(
+        db.get_proxy_client_endpoint_sync().1,
+        25721,
+        "get_proxy_client_endpoint_sync after poison"
+    );
+    poison();
+    db.set_pricing_model_source("claude", "request")
+        .await
+        .expect("set pricing source after poison");
+    assert_eq!(
+        db.get_pricing_model_source("claude")
+            .await
+            .expect("read pricing source"),
+        "request"
     );
 }

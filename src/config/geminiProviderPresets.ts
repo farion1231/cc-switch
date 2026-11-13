@@ -582,7 +582,6 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     description: "CCSub",
     category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "ccsub",
     icon: "ccsub",
   },
   {

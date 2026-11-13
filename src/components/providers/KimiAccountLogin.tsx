@@ -144,8 +144,14 @@ export function KimiAccountLogin({ helpSide }: KimiAccountLoginProps) {
       }
       onAdd={() => setChoosing(true)}
       chooser={chooser || undefined}
-      defaultLabel={t("kimi.oauth.current")}
-      setDefaultLabel={t("kimi.oauth.useAccount")}
+      defaultLabel={t("authCenter.inUseBy", {
+        defaultValue: "{{app}} 在用",
+        app: "Kimi",
+      })}
+      setDefaultLabel={t("authCenter.switchAppTo", {
+        defaultValue: "切换 {{app}} 到这个账号",
+        app: "Kimi",
+      })}
       canReauth
       onReauth={(accountId) => {
         const account = accounts.find((a) => a.id === accountId);
