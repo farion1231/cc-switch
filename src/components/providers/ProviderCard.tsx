@@ -347,6 +347,29 @@ export function ProviderCard({
     appId !== "copilot" &&
     (provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
       provider.meta?.usage_script?.templateType === "github_copilot");
+  // Copilot 反代卡和 Codex OAuth 卡同一套写法：副标题（官网地址的位置）写绑定的
+  // GitHub 账号，未绑定时回落授权中心的默认账号；账号读不到就保留原来的网址。
+  const copilotAccountId = isCopilot
+    ? resolveManagedAccountId(
+        provider.meta,
+        PROVIDER_TYPES.GITHUB_COPILOT,
+      )?.trim() || undefined
+    : undefined;
+  const { data: copilotAuthStatus, isSuccess: isCopilotAuthStatusSuccess } =
+    useQuery({
+      queryKey: ["managed-auth-status", "github_copilot"],
+      queryFn: () => authApi.authGetStatus("github_copilot"),
+      enabled: isCopilot,
+      staleTime: 30_000,
+    });
+  const copilotAccount = copilotAuthStatus?.accounts.find(
+    (account) =>
+      account.id ===
+      (copilotAccountId ?? copilotAuthStatus?.default_account_id),
+  );
+  const providerNameIncludesCopilotLogin = Boolean(
+    copilotAccount?.login && provider.name.includes(copilotAccount.login),
+  );
   // xAI OAuth (SuperGrok 反代)：额度经自管 OAuth token 自动显示，与 codex_oauth 同构
   const isXaiOauth = provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH;
   // Antigravity 官方卡绑了授权中心的账号：额度查绑定的号（只有 macOS 能切号，其他平台忽略绑定）
@@ -584,6 +607,30 @@ export function ProviderCard({
                 {agyModel}
               </span>
               {planSuffix("-ms-0.5")}
+            </div>
+          ) : isCopilot && copilotAccount ? (
+            <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
+              <span
+                className="min-w-0 truncate"
+                title={manualNote ?? copilotAccount.login}
+              >
+                {manualNote ??
+                  (providerNameIncludesCopilotLogin
+                    ? t("copilot.githubAccount", {
+                        defaultValue: "GitHub 账号",
+                      })
+                    : copilotAccount.login)}
+              </span>
+              {planSuffix()}
+            </div>
+          ) : isCopilot && copilotAccountId && isCopilotAuthStatusSuccess ? (
+            <div className="mt-0.5 flex min-w-0 items-center gap-1 text-caption text-warning-text">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              <span className="min-w-0 truncate">
+                {t("copilot.statusUnavailable", {
+                  defaultValue: "状态不可用",
+                })}
+              </span>
             </div>
           ) : displayUrl && subtitlePlan ? (
             <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
