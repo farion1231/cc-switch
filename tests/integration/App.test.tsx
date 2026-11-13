@@ -11,6 +11,7 @@ import {
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { providersApi } from "@/lib/api/providers";
+import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
 import {
   resetProviderState,
   setCurrentProviderId,
@@ -309,6 +310,41 @@ describe("App integration with MSW", () => {
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
   }, 10_000);
+
+  it("shows the configured failover toggle only for supported provider pages", async () => {
+    setSettings({
+      enableFailoverToggle: true,
+      visibleApps: { ...DEFAULT_VISIBLE_APPS, cursor: true },
+    });
+    const { default: App } = await import("@/App");
+    const { container } = renderApp(App);
+
+    await screen.findByTestId("provider-list");
+    const header = container.querySelector<HTMLElement>(
+      "#content-area header",
+    );
+    expect(header).not.toBeNull();
+    const toggle = await within(header!).findByTitle(/请先接管 Claude/);
+    expect(toggle.querySelector("button")).toBeDisabled();
+
+    fireEvent.click(sidebarApp("Cursor"));
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toBe("{}"),
+    );
+    expect(within(header!).queryByTitle(/请先接管/)).not.toBeInTheDocument();
+  });
+
+  it("hides the main-page failover toggle when the setting is disabled", async () => {
+    const { default: App } = await import("@/App");
+    const { container } = renderApp(App);
+
+    await screen.findByTestId("provider-list");
+    const header = container.querySelector<HTMLElement>(
+      "#content-area header",
+    );
+    expect(header).not.toBeNull();
+    expect(within(header!).queryByTitle(/请先接管/)).not.toBeInTheDocument();
+  });
 
   it("refreshes the route pointer when the proxy fails over to another provider", async () => {
     let routeProviderId = "claude-1";

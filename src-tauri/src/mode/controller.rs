@@ -48,6 +48,7 @@ use super::state::{op, Contract, Mode, ModeState, PendingTarget, StackState};
 
 /// 有路由模式的应用（[`AppSpec::route_mode`](crate::app_config::AppSpec::route_mode)）：本地路由的
 /// 在前，Claude Desktop 在最后（它经同一个路由服务转发，只是没有故障转移）。
+/// Cursor 经公网路由接入，在 `AppSpec` 里同为 `local_proxy` + `route_mode`，随表自动在内。
 fn route_mode_apps() -> impl Iterator<Item = AppType> {
     let apps = || AppType::all().filter(|app| app.spec().route_mode);
     apps()
@@ -512,6 +513,16 @@ async fn write_proxy(
             .map_err(err)?;
             unchanged
         }
+        AppType::Cursor => {
+            // BYOK 的 Base URL / 模型由显式接入引导写入 state.vscdb；这里的接管操作只落模式状态。
+            // 公网路由（开关 / 密钥 / 隧道）**不在此静默开启**：Cursor 云端拒绝私网地址，
+            // 需由用户显式引导开启公网路由（对话框 / 设置页），否则会越权开一条公网隧道。
+            let contract = contract::cursor(route);
+            let unchanged = !force && live_now.has_contract(&contract.key);
+            target.contract = Some(contract);
+            commit_state(state, app, &pending(target))?;
+            unchanged
+        }
         _ => return Err(format!("{} 不支持本地路由", app.as_str())),
     };
     Ok(!unchanged)
@@ -622,6 +633,10 @@ fn write_direct(
                 None => DesktopTarget::Official,
             });
             claude_desktop_config::run(&state.db, op_name, write, pending_target).map_err(err)?;
+        }
+        AppType::Cursor => {
+            // Cursor 接管不写客户端文件，退出代理只需落定模式状态（写回直连指针）。
+            commit_state(state, app, &pending_target)?;
         }
         _ => return Err(format!("{} 不支持本地路由", app.as_str())),
     }
@@ -2014,6 +2029,7 @@ mod tests {
                 AppType::Codex,
                 AppType::Gemini,
                 AppType::GrokBuild,
+                AppType::Cursor,
                 AppType::ClaudeDesktop,
             ]
         );

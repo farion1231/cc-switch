@@ -104,6 +104,15 @@ pub async fn get_config_status(
                 path: file.parent().unwrap().to_string_lossy().into_owned(),
             })
         }
+        AppType::Cursor => {
+            let config_path = crate::cursor_config::get_cursor_env_path();
+            let exists = config_path.exists();
+            let path = crate::cursor_config::get_cursor_dir()
+                .to_string_lossy()
+                .to_string();
+
+            Ok(ConfigStatus { exists, path })
+        }
         AppType::Pi => {
             let config_path = crate::pi_config::get_pi_models_path()?;
             let path = crate::pi_config::get_pi_agent_dir()?
@@ -163,6 +172,7 @@ fn app_config_dir(app: &str) -> Result<std::path::PathBuf, String> {
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
+        AppType::Cursor => crate::cursor_config::get_cursor_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir()?,
         AppType::Dsh => crate::dsh_config::data_dir(),
         AppType::Kimi => crate::kimi_config::data_dir(),

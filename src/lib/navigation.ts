@@ -31,6 +31,7 @@ export type SettingsSection =
   | "general"
   | "appConfig"
   | "routing"
+  | "publicRoute"
   | "network"
   | "data"
   | "about";
@@ -39,6 +40,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   "general",
   "appConfig",
   "routing",
+  "publicRoute",
   "network",
   "data",
   "about",

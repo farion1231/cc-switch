@@ -315,7 +315,7 @@ export interface CodexCatalogModel {
 // Claude 认证字段类型
 export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
 
-// 主页面显示的应用配置
+// 主页面显示的应用配置（`AppId` 已含 cursor，增删应用只改 `AppId`）
 export type VisibleApps = Record<AppId, boolean>;
 
 // WebDAV 同步状态
@@ -508,6 +508,8 @@ export interface Settings {
   openclawConfigDir?: string;
   // 覆盖 Hermes 配置目录（可选）
   hermesConfigDir?: string;
+  // 覆盖 Cursor 配置目录（可选）
+  cursorConfigDir?: string;
   // 覆盖 Pi agent 配置目录（可选）
   piConfigDir?: string;
   // 覆盖 Oh My Pi agent 配置目录（可选）
@@ -852,6 +854,7 @@ export interface McpApps {
   hermes: boolean;
   pi?: boolean;
   omp?: boolean;
+  cursor?: boolean;
 }
 
 // MCP 服务器条目（v3.7.0 统一结构）

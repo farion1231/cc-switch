@@ -23,7 +23,7 @@ impl Database {
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
                         readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
-                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode, enabled_agy, enabled_kimi, enabled_dsh, enabled_copilot, enabled_workbuddy, repo_host
+                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode, enabled_agy, enabled_kimi, enabled_dsh, enabled_copilot, enabled_workbuddy, enabled_cursor, repo_host
                  FROM skills ORDER BY name ASC",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -35,7 +35,7 @@ impl Database {
                     name: row.get(1)?,
                     description: row.get(2)?,
                     directory: row.get(3)?,
-                    repo_host: row.get(23)?,
+                    repo_host: row.get(24)?,
                     repo_owner: row.get(4)?,
                     repo_name: row.get(5)?,
                     repo_branch: row.get(6)?,
@@ -47,6 +47,7 @@ impl Database {
                         grokbuild: row.get(11)?,
                         opencode: row.get(12)?,
                         hermes: row.get(13)?,
+                        cursor: row.get(23)?,
                         pi: false,
                         omp: false,
                         mcode: row.get(17)?,
@@ -78,7 +79,7 @@ impl Database {
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
                         readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
-                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode, enabled_agy, enabled_kimi, enabled_dsh, enabled_copilot, enabled_workbuddy, repo_host
+                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode, enabled_agy, enabled_kimi, enabled_dsh, enabled_copilot, enabled_workbuddy, enabled_cursor, repo_host
                  FROM skills WHERE id = ?1",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -89,7 +90,7 @@ impl Database {
                 name: row.get(1)?,
                 description: row.get(2)?,
                 directory: row.get(3)?,
-                repo_host: row.get(23)?,
+                repo_host: row.get(24)?,
                 repo_owner: row.get(4)?,
                 repo_name: row.get(5)?,
                 repo_branch: row.get(6)?,
@@ -101,6 +102,7 @@ impl Database {
                     grokbuild: row.get(11)?,
                     opencode: row.get(12)?,
                     hermes: row.get(13)?,
+                    cursor: row.get(23)?,
                     pi: false,
                     omp: false,
                     mcode: row.get(17)?,
@@ -130,8 +132,8 @@ impl Database {
             "INSERT OR REPLACE INTO skills
              (id, name, description, directory, repo_owner, repo_name, repo_branch,
               readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes,
-              installed_at, content_hash, updated_at, enabled_mcode, enabled_agy, enabled_kimi, enabled_dsh, enabled_copilot, enabled_workbuddy, repo_host)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+              installed_at, content_hash, updated_at, enabled_mcode, enabled_agy, enabled_kimi, enabled_dsh, enabled_copilot, enabled_workbuddy, enabled_cursor, repo_host)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
             params![
                 skill.id,
                 skill.name,
@@ -156,6 +158,7 @@ impl Database {
                 skill.apps.dsh,
                 skill.apps.copilot,
                 skill.apps.workbuddy,
+                skill.apps.cursor,
                 skill.repo_host,
             ],
         )
@@ -225,8 +228,8 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let affected = conn
             .execute(
-                "UPDATE skills SET enabled_claude = ?1, enabled_codex = ?2, enabled_gemini = ?3, enabled_grokbuild = ?4, enabled_opencode = ?5, enabled_hermes = ?6, enabled_mcode = ?8, enabled_agy = ?9, enabled_kimi = ?10, enabled_dsh = ?11, enabled_copilot = ?12, enabled_workbuddy = ?13 WHERE id = ?7",
-                params![apps.claude, apps.codex, apps.gemini, apps.grokbuild, apps.opencode, apps.hermes, id, apps.mcode, apps.agy, apps.kimi, apps.dsh, apps.copilot, apps.workbuddy],
+                "UPDATE skills SET enabled_claude = ?1, enabled_codex = ?2, enabled_gemini = ?3, enabled_grokbuild = ?4, enabled_opencode = ?5, enabled_hermes = ?6, enabled_mcode = ?8, enabled_agy = ?9, enabled_kimi = ?10, enabled_dsh = ?11, enabled_copilot = ?12, enabled_cursor = ?13, enabled_workbuddy = ?14 WHERE id = ?7",
+                params![apps.claude, apps.codex, apps.gemini, apps.grokbuild, apps.opencode, apps.hermes, id, apps.mcode, apps.agy, apps.kimi, apps.dsh, apps.copilot, apps.cursor, apps.workbuddy],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(affected > 0)
@@ -389,6 +392,38 @@ mod tests {
                 .as_deref(),
             Some("gitlab.example.com:8443")
         );
+    }
+
+    #[test]
+    fn cursor_and_workbuddy_skill_flags_round_trip_independently() {
+        let db = Database::memory().expect("memory db");
+        let apps = SkillApps {
+            cursor: true,
+            ..SkillApps::default()
+        };
+        let original = skill("owner/repo:skill", "skill", apps);
+        db.save_skill(&original).expect("seed skill");
+
+        let stored = db
+            .get_installed_skill(&original.id)
+            .expect("query skill")
+            .expect("skill installed");
+        assert!(stored.apps.cursor, "cursor 开关必须独立落库");
+        assert!(!stored.apps.workbuddy, "workbuddy 不能被 cursor 列串读");
+
+        let mut apps = stored.apps.clone();
+        apps.workbuddy = true;
+        assert!(db
+            .update_skill_apps(&original.id, &apps)
+            .expect("update apps"));
+
+        for stored in [
+            db.get_installed_skill(&original.id).unwrap().unwrap(),
+            db.get_all_installed_skills().unwrap()[&original.id].clone(),
+        ] {
+            assert!(stored.apps.cursor, "写 workbuddy 不能清掉 cursor");
+            assert!(stored.apps.workbuddy, "workbuddy 必须落库");
+        }
     }
 
     #[test]

@@ -4,7 +4,10 @@ import { toast } from "@/lib/toast";
 import { useTranslation } from "react-i18next";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { proxyKeys } from "@/lib/query/proxy";
+import { providersQueryOptions } from "@/lib/query/queries";
 import { getAppLabel } from "@/config/appConfig";
+import { supportsFailover } from "@/utils/providerCapabilities";
+import type { AppId } from "@/lib/api/types";
 
 // ========== 熔断器 Hooks ==========
 
@@ -34,6 +37,25 @@ export function useFailoverQueue(appType: string, enabled = true) {
   return useQuery({
     queryKey: ["failoverQueue", appType],
     queryFn: () => failoverApi.getFailoverQueue(appType),
+    enabled: enabled && !!appType,
+  });
+}
+
+/**
+ * 获取可添加到故障转移队列的供应商：不在队列中，且后端允许参与轮换。
+ * 直接复用供应商列表缓存，顺序与首页供应商列表一致。
+ */
+export function useAvailableProvidersForFailover(
+  appType: AppId,
+  enabled = true,
+) {
+  return useQuery({
+    ...providersQueryOptions(appType),
+    select: ({ providers }) =>
+      Object.values(providers).filter(
+        (provider) =>
+          !provider.inFailoverQueue && supportsFailover(appType, provider),
+      ),
     enabled: enabled && !!appType,
   });
 }

@@ -52,7 +52,14 @@ use std::sync::{Mutex, MutexGuard};
 
 /// 当前 Schema 版本号
 /// 每次修改表结构时递增，并在 schema.rs 中添加相应的迁移逻辑
-pub(crate) const SCHEMA_VERSION: i32 = 27;
+///
+/// v26 = WorkBuddy 启用列（含跨版本补齐）；v27 = 技能仓库 GitLab（`host` / `repo_host`）；
+/// v28 = Cursor 启用列 + `proxy_config` 放开 `'cursor'`；v29 = 幂等补齐被越过的启用列。
+///
+/// 旧 Cursor 预览线把 25/26 用在 cursor 列与 proxy_config 上，且个别 fork 已把
+/// `user_version` 写成 28，因此 cursor 的改动放在 27→28、链尾 28→29 只做「缺列才加」：
+/// 版本号已越过的库也能补齐，新库与重复执行为 no-op。
+pub(crate) const SCHEMA_VERSION: i32 = 29;
 
 /// 安全地序列化 JSON，避免 unwrap panic
 pub(crate) fn to_json_string<T: Serialize>(value: &T) -> Result<String, AppError> {

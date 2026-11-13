@@ -1,16 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCdResumeCommand,
+  buildSessionMarkdown,
   canDeleteSession,
+  formatMessageTime,
   getSessionLastText,
   getSessionTimeBucket,
   groupSessionsByProject,
   groupSessionsByTime,
   isArchivedSession,
-  formatMessageTime,
   nativeDeleteHintKey,
 } from "@/components/sessions/utils";
-import type { SessionMeta } from "@/types";
+import type { SessionMessage, SessionMeta } from "@/types";
 
 describe("session utils", () => {
   it("lets Antigravity CLI sessions be deleted but keeps IDE and index-only ones native", () => {
@@ -258,5 +259,71 @@ describe("session utils", () => {
     // 往年：带上年份
     expect(formatMessageTime(older)).toContain(String(thisYear - 1));
     expect(formatMessageTime(older)).toMatch(/30/);
+  });
+
+  it("builds markdown with title and user/assistant sections", () => {
+    const session: SessionMeta = {
+      providerId: "cursor",
+      sessionId: "abc-123",
+      title: "权限排查",
+    };
+    const messages: SessionMessage[] = [
+      { role: "user", content: "帮我查一下权限" },
+      { role: "assistant", content: "已查出如下结果" },
+    ];
+
+    expect(buildSessionMarkdown(session, messages)).toBe(
+      "# 权限排查\n\n## User\n\n帮我查一下权限\n\n## Assistant\n\n已查出如下结果\n",
+    );
+  });
+
+  it("buildSessionMarkdown falls back to provider id for empty title", () => {
+    const session: SessionMeta = {
+      providerId: "cursor",
+      sessionId: "abc-123",
+    };
+    const messages: SessionMessage[] = [{ role: "user", content: "hello" }];
+
+    const markdown = buildSessionMarkdown(session, messages);
+    expect(markdown).toContain("# cursor\n");
+    expect(markdown).toContain("## User\n\nhello\n");
+  });
+
+  it("buildSessionMarkdown skips empty-content messages", () => {
+    const session: SessionMeta = {
+      providerId: "cursor",
+      sessionId: "abc-123",
+      title: "T",
+    };
+    const messages: SessionMessage[] = [
+      { role: "user", content: "" },
+      { role: "assistant", content: "   " },
+      { role: "user", content: "real" },
+    ];
+
+    const markdown = buildSessionMarkdown(session, messages);
+    expect(markdown).not.toContain("## User\n\n\n");
+    expect(markdown).toContain("## User\n\nreal\n");
+  });
+
+  it("buildSessionMarkdown uses raw role for unknown roles", () => {
+    const session: SessionMeta = {
+      providerId: "cursor",
+      sessionId: "abc-123",
+      title: "T",
+    };
+    const messages: SessionMessage[] = [{ role: "tool", content: "ls -la" }];
+
+    const markdown = buildSessionMarkdown(session, messages);
+    expect(markdown).toContain("## Tool\n\nls -la\n");
+  });
+
+  it("buildSessionMarkdown returns just the title for empty messages", () => {
+    const session: SessionMeta = {
+      providerId: "cursor",
+      sessionId: "abc-123",
+      title: "T",
+    };
+    expect(buildSessionMarkdown(session, [])).toBe("# T\n");
   });
 });

@@ -15,6 +15,7 @@ mod codex_state_db;
 mod commands;
 mod config;
 mod copilot_config;
+mod cursor_config;
 mod database;
 mod deeplink;
 mod dsh_config;
@@ -1142,6 +1143,7 @@ pub fn run() {
                     (crate::app_config::AppType::GrokBuild, "Grok Build"),
                     (crate::app_config::AppType::OpenCode, "OpenCode"),
                     (crate::app_config::AppType::Hermes, "Hermes"),
+                    (crate::app_config::AppType::Cursor, "Cursor"),
                 ] {
                     match crate::services::mcp::McpService::import_from_app(&app_state, &app) {
                         Ok(count) if count > 0 => {
@@ -1151,6 +1153,7 @@ pub fn run() {
                         Err(e) => log::warn!("✗ Failed to import {label} MCP: {e}"),
                     }
                 }
+
             }
 
             // 4. 导入提示词文件（表空时触发）
@@ -1165,6 +1168,7 @@ pub fn run() {
                     crate::app_config::AppType::OpenCode,
                     crate::app_config::AppType::OpenClaw,
                     crate::app_config::AppType::Hermes,
+                    crate::app_config::AppType::Cursor,
                     crate::app_config::AppType::Pi,
                     crate::app_config::AppType::Mcode,
                     crate::app_config::AppType::WorkBuddy,
@@ -1451,6 +1455,26 @@ pub fn run() {
                     state.inner().clone(),
                 );
 
+                // 公网路由（Cursor 经公网隧道接入）：若上次退出时处于启用状态且代理已恢复运行，
+                // 自动重建 cloudflared 公网隧道（快速隧道 URL 每次都会变化）。
+                if crate::settings::get_settings().public_route_enabled
+                    && state.proxy_service.is_running().await
+                {
+                    match state.proxy_service.start_public_route_tunnel().await {
+                        Ok(status) => log::info!(
+                            "✓ 公网路由 隧道已自动恢复: {}",
+                            status.public_url.as_deref().unwrap_or("(无公网地址)")
+                        ),
+                        Err(e) => log::error!("✗ 自动恢复 公网路由 隧道失败: {e}"),
+                    }
+                }
+
+                // Periodic backup check (on startup)
+                if let Err(e) = state.db.periodic_backup_if_needed() {
+                    log::warn!("Periodic backup failed on startup: {e}");
+                }
+
+                // Periodic maintenance timer: run once per day while the app is running
                 // Backup and log maintenance can hold the database lock for a
                 // long time. Keep disk work off both the UI and async workers.
                 // The first interval tick runs startup maintenance; later ticks
@@ -1817,6 +1841,19 @@ pub fn run() {
             commands::acknowledge_codex_stale_clients,
             // Proxy failover commands
             commands::get_provider_health,
+            // 公网路由 takeover (third-party provider via public tunnel)
+            commands::get_public_route_status,
+            commands::enable_public_route,
+            commands::disable_public_route,
+            commands::set_public_route_tunnel_config,
+            commands::regenerate_public_route_api_key,
+            // Cursor 接入引导（运行检测 / 本地 BYOK 读写 / 分层连通性）
+            commands::cursor_is_running,
+            commands::cursor_byok_status,
+            commands::cursor_write_byok,
+            commands::cursor_byok_backup,
+            commands::cursor_restore_byok,
+            commands::test_public_route_connectivity,
             // Failover queue management
             commands::get_failover_queue,
             commands::add_to_failover_queue,

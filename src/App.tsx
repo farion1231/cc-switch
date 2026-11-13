@@ -92,6 +92,7 @@ import {
 import { WindowControls } from "@/components/shell/WindowControls";
 import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
+import { FailoverToggle } from "@/components/proxy/FailoverToggle";
 import { ProviderList } from "@/components/providers/ProviderList";
 import {
   hasOpencodeDefinition,
@@ -130,7 +131,11 @@ import {
 } from "@/lib/query/omo";
 import { invalidatePiProviderCaches, usePiCurrentState } from "@/lib/query/pi";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
-import { DEFAULT_VISIBLE_APPS, orderAppIds } from "@/config/appConfig";
+import {
+  DEFAULT_VISIBLE_APPS,
+  isFailoverProxyAppId,
+  orderAppIds,
+} from "@/config/appConfig";
 import { EditProviderHost } from "@/components/providers/EditProviderHost";
 import { preloadOnIdle } from "@/lib/preloadOnIdle";
 import { useCreateEditProviderStore } from "@/components/providers/editProviderStore";
@@ -1542,6 +1547,11 @@ function App() {
       actions={
         <>
           {currentView === "providers" &&
+            settingsData?.enableFailoverToggle &&
+            isFailoverProxyAppId(activeApp) && (
+              <FailoverToggle activeApp={activeApp} />
+            )}
+          {currentView === "providers" &&
             activeApp !== "mcode" &&
             activeApp !== "dsh" &&
             activeApp !== "kimi" &&
@@ -1675,6 +1685,7 @@ function App() {
           scrollRef={providerScrollContainerRef}
           onSwitch={switchProvider}
           onOpenRoutingSettings={() => openSettings("routing")}
+          onOpenPublicRouteSettings={() => openSettings("publicRoute")}
           needsRouteRequest={
             trayNeedsRoute?.app === modeAppId ? trayNeedsRoute : undefined
           }
@@ -1711,6 +1722,7 @@ function App() {
                   ? handleAddNativeProvider(provider, activeApp)
                   : switchProvider(provider))
             }
+            onOpenPublicRouteSettings={() => openSettings("publicRoute")}
             onRemoveFromConfig={
               appHas(activeApp, "additive")
                 ? (provider) => setConfirmAction({ provider, action: "remove" })

@@ -166,7 +166,6 @@ impl McpService {
                 Self::remove_server_from_app(&server.id, &app)?;
             }
         }
-
         // 同步到各个启用的应用
         Self::sync_server_to_apps(&server)?;
 
@@ -396,6 +395,9 @@ impl McpService {
             AppType::Kimi => mcp::kimi::sync(&server.id, Some(&server.server))?,
             AppType::Dsh => mcp::dsh::sync(&server.id, Some(&server.server))?,
             AppType::Copilot => mcp::copilot::sync(&server.id, Some(&server.server))?,
+            AppType::Cursor => {
+                mcp::sync_single_server_to_cursor(&Default::default(), &server.id, &server.server)?;
+            }
             AppType::Pi => mcp::pi::sync(&server.id, Some(&server.server))?,
             AppType::Agy => mcp::agy::sync(&server.id, Some(&server.server))?,
             AppType::Omp => mcp::sync_single_server_to_omp(&server.id, &server.server)?,
@@ -444,6 +446,9 @@ impl McpService {
             AppType::Kimi => mcp::kimi::sync(id, None)?,
             AppType::Dsh => mcp::dsh::sync(id, None)?,
             AppType::Copilot => mcp::copilot::sync(id, None)?,
+            AppType::Cursor => {
+                mcp::remove_server_from_cursor(id)?;
+            }
             AppType::Pi => mcp::pi::sync(id, None)?,
             AppType::Agy => mcp::agy::sync(id, None)?,
             AppType::Omp => mcp::remove_server_from_omp(id)?,
@@ -602,6 +607,7 @@ impl McpService {
             AppType::Pi => return mcp::pi::import(state),
             AppType::Omp => return mcp::omp::import(state),
             AppType::Copilot => return mcp::copilot::import(state),
+            AppType::Cursor => mcp::import_from_cursor,
             AppType::ClaudeDesktop | AppType::OpenClaw => return Ok(0),
         };
 
@@ -665,6 +671,7 @@ impl McpService {
             AppType::Pi,
             AppType::Omp,
             AppType::Copilot,
+            AppType::Cursor,
         ] {
             match Self::import_from_app(state, &app) {
                 Ok(count) => total += count,

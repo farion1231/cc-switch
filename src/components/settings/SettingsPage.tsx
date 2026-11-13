@@ -8,6 +8,7 @@ import {
   type ComponentType,
 } from "react";
 import {
+  Cloud,
   Database,
   Folder,
   FolderOpen,
@@ -40,6 +41,7 @@ import { RoutingSection } from "@/components/settings/sections/RoutingSection";
 import { PrivacyFilterConfigPanel } from "@/components/settings/PrivacyFilterConfigPanel";
 import { GlobalProxySettings } from "@/components/settings/GlobalProxySettings";
 import { IpDiagnostics } from "@/components/settings/IpDiagnostics";
+import { PublicRoutePanel } from "@/components/proxy/PublicRoutePanel";
 import { LogConfigPanel } from "@/components/settings/LogConfigPanel";
 import { GeneralSection } from "@/components/settings/sections/GeneralSection";
 import { AppConfigSection } from "@/components/settings/sections/AppConfigSection";
@@ -61,6 +63,7 @@ const SECTION_ICON: Record<
   general: SlidersHorizontal,
   appConfig: Folder,
   routing: Route,
+  publicRoute: Cloud,
   network: Globe,
   data: Database,
   about: Info,
@@ -393,6 +396,22 @@ export function SettingsPage({
         );
       case "routing":
         return <RoutingSection onOpenApp={onOpenApp} />;
+      // 公网路由与「本地路由」同级（2026-10-09：先是被上游重写后变成孤儿，再被
+      // 暂塞进 RoutingSection，用户要求恢复成独立分组）。
+      case "publicRoute":
+        return (
+          <SettingsBlock
+            title={t("settings.advanced.publicRoute.title")}
+            help={{
+              title: t("settings.advanced.publicRoute.title"),
+              body: t("settings.advanced.publicRoute.description"),
+            }}
+          >
+            <div className="rounded-panel border border-border bg-surface p-5">
+              <PublicRoutePanel />
+            </div>
+          </SettingsBlock>
+        );
       case "network":
         return (
           <>

@@ -1,11 +1,14 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  DEFAULT_SOURCES,
   PricingConfigPanel,
   filterPricingByPrefix,
 } from "@/components/usage/PricingConfigPanel";
+import { APP_IDS_WITH } from "@/config/appSpecs";
+import { proxyApi } from "@/lib/api/proxy";
 import type { ModelPricing } from "@/types/usage";
 
 // t 必须是稳定引用：useBillingSources 的 effect 依赖 [t]，每次渲染换新函数会无限重跑。
@@ -119,6 +122,32 @@ describe("filterPricingByPrefix", () => {
       "gpt-5",
       "gpt-5-mini",
     ]);
+  });
+});
+
+describe("billing model source defaults", () => {
+  it("covers every localProxy app", () => {
+    expect(Object.keys(DEFAULT_SOURCES).sort()).toEqual(
+      [...APP_IDS_WITH.localProxy].sort(),
+    );
+  });
+
+  it("defaults cursor to the response model", () => {
+    expect(DEFAULT_SOURCES.cursor).toBe("response");
+  });
+
+  it("loads the source for every localProxy app, including cursor", async () => {
+    render(<PricingConfigPanel />);
+
+    await waitFor(() =>
+      expect(proxyApi.getPricingModelSource).toHaveBeenCalledTimes(
+        APP_IDS_WITH.localProxy.length,
+      ),
+    );
+    expect(
+      vi.mocked(proxyApi.getPricingModelSource).mock.calls.map(([app]) => app),
+    ).toEqual(APP_IDS_WITH.localProxy);
+    expect(proxyApi.getPricingModelSource).toHaveBeenCalledWith("cursor");
   });
 });
 

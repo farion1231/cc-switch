@@ -45,11 +45,13 @@ type PricingModelSource = "request" | "response";
 
 type SourceState = Record<AppIdWith<"localProxy">, PricingModelSource>;
 
-const DEFAULT_SOURCES: SourceState = {
+/** 后端 `proxy_config.pricing_model_source` 的列默认值是 `response`，Cursor 同此默认。 */
+export const DEFAULT_SOURCES: SourceState = {
   claude: "response",
   codex: "response",
   gemini: "response",
   grokbuild: "response",
+  cursor: "response",
 };
 
 const errorText = (error: unknown) =>

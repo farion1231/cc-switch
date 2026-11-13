@@ -87,11 +87,11 @@ pub use claude::{
 pub use codex::CodexAdapter;
 pub use codex::{
     apply_codex_chat_upstream_model, apply_codex_upstream_model, codex_provider_upstream_model,
-    codex_stack_upstream_rejects_web_search, inject_codex_chat_prompt_cache_key,
-    is_codex_official_provider, is_codex_responses_endpoint,
+    codex_provider_uses_chat_completions, codex_stack_upstream_rejects_web_search,
+    inject_codex_chat_prompt_cache_key, is_codex_official_provider, is_codex_responses_endpoint,
     provider_needs_responses_late_arguments_repair, provider_needs_responses_namespace_flatten,
     resolve_codex_catalog_tool_profile, resolve_codex_chat_reasoning_config,
-    should_convert_codex_responses_to_anthropic, should_convert_codex_responses_to_chat,
+    should_convert_codex_responses_to_anthropic, should_convert_responses_to_chat_for_app,
     strip_codex_hosted_web_search, strip_codex_openai_only_request_fields,
 };
 pub use gemini::GeminiAdapter;
@@ -127,7 +127,9 @@ pub fn get_adapter(app_type: &AppType) -> Option<Box<dyn ProviderAdapter>> {
         AppType::Codex => Box::new(CodexAdapter::new()),
         AppType::Gemini => Box::new(GeminiAdapter::new()),
         AppType::GrokBuild => Box::new(CodexAdapter::new()),
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => Box::new(CodexAdapter::new()),
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Cursor => {
+            Box::new(CodexAdapter::new())
+        }
         AppType::Pi
         | AppType::Mcode
         | AppType::Kimi
@@ -158,5 +160,29 @@ mod tests {
         assert!(!is_mistral_api("https://mistral-relay.example/v1"));
         assert!(!is_mistral_api("not a url"));
         assert!(!is_mistral_api(""));
+    }
+}
+
+#[cfg(test)]
+mod providers_reexport_tests {
+    use crate::app_config::AppType;
+    use crate::provider::Provider;
+
+    /// 回归：`handlers` / `forwarder` 以 `super::providers::should_convert_responses_to_chat_for_app`
+    /// 调用该判定，因此它必须能从 `crate::proxy::providers` 这一公共路径取到。
+    #[test]
+    fn providers_publicly_reexports_responses_chat_predicate() {
+        let predicate: fn(&AppType, &Provider, &str) -> bool =
+            crate::proxy::providers::should_convert_responses_to_chat_for_app;
+
+        let provider = Provider::with_id(
+            "third-party-cursor".to_string(),
+            "Third Party Cursor".to_string(),
+            serde_json::json!({ "baseUrl": "https://api.kimi.com/coding/v1" }),
+            None,
+        );
+
+        // 公网路由场景：非 official 且未声明 api_format 的 Cursor 供应商走 Chat Completions
+        assert!(predicate(&AppType::Cursor, &provider, "/v1/responses"));
     }
 }

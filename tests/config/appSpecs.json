@@ -56,6 +56,13 @@
     "stack": false
   },
   {
+    "id": "cursor",
+    "additive": false,
+    "localProxy": true,
+    "routeMode": true,
+    "stack": false
+  },
+  {
     "id": "pi",
     "additive": true,
     "localProxy": false,

@@ -17,9 +17,11 @@ export interface AppConfig {
   badgeClass: string;
 }
 
-export const DEFAULT_VISIBLE_APPS = Object.fromEntries(
-  APP_IDS.map((app) => [app, true]),
-) as VisibleApps;
+export const DEFAULT_VISIBLE_APPS = {
+  ...Object.fromEntries(APP_IDS.map((app) => [app, true])),
+  // Cursor 要先接公网路由、填好 BYOK key 才能用，默认不在侧栏显示
+  cursor: false,
+} as VisibleApps;
 
 /**
  * 应用页和侧栏的应用顺序：先按用户拖出来的顺序（`settings.appOrder`，不认识的 ID 忽略），
@@ -42,6 +44,29 @@ export function orderAppIds(saved: readonly string[] | undefined): AppId[] {
     ordered.splice(previous ? ordered.indexOf(previous) + 1 : 0, 0, app);
   });
   return ordered;
+}
+
+export const PROXY_APP_IDS = [
+  "claude",
+  "codex",
+  "gemini",
+  "grokbuild",
+] as const;
+
+export type FailoverProxyAppId = (typeof PROXY_APP_IDS)[number];
+
+export type ProxyAppId = FailoverProxyAppId | "cursor";
+
+/** Apps exposed in proxy takeover toggles (includes Cursor local routing). */
+export const PROXY_TAKEOVER_APP_IDS: ProxyAppId[] = [
+  ...PROXY_APP_IDS,
+  "cursor",
+];
+
+export function isFailoverProxyAppId(
+  appId: string,
+): appId is FailoverProxyAppId {
+  return (PROXY_APP_IDS as readonly string[]).includes(appId);
 }
 
 export function usesGeminiStyleForm(appId: string): boolean {
@@ -154,6 +179,21 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
     activeClass: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
     badgeClass:
       "bg-orange-500/10 text-orange-700 dark:text-orange-300 border-0 gap-1.5",
+  },
+  cursor: {
+    label: "Cursor",
+    icon: (
+      <ProviderIcon
+        icon="cursor"
+        name="Cursor"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-purple-500/10 ring-1 ring-purple-500/20 hover:bg-purple-500/20 text-purple-600 dark:text-purple-400",
+    badgeClass:
+      "bg-purple-500/10 text-purple-700 dark:text-purple-300 hover:bg-purple-500/20 border-0 gap-1.5",
   },
   pi: {
     label: "Pi",

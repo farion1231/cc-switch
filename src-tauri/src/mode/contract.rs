@@ -79,6 +79,20 @@ pub fn claude_desktop(profile: &Value) -> Contract {
     }
 }
 
+/// Cursor：供应商启用时的 BYOK 写入由显式接入引导处理，不属于模式切换契约；
+/// 这里记录路由本身，同一路由重复进入时据此判定「不用重写」。
+pub fn cursor(route: &crate::provider::Provider) -> Contract {
+    Contract {
+        version: CONTRACT_VERSION,
+        key: key_of(&json!({
+            "app": "cursor",
+            "version": CONTRACT_VERSION,
+            "route": route.id,
+        })),
+        exclusive: Map::new(),
+    }
+}
+
 fn sorted(map: &Map<String, Value>) -> Value {
     let mut entries: Vec<_> = map.iter().collect();
     entries.sort_by(|a, b| a.0.cmp(b.0));

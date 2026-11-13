@@ -38,6 +38,8 @@ macro_rules! app_flags {
             #[serde(default)]
             pub hermes: bool,
             #[serde(default)]
+            pub cursor: bool,
+            #[serde(default)]
             pub pi: bool,
             #[serde(default)]
             pub omp: bool,
@@ -45,7 +47,7 @@ macro_rules! app_flags {
 
         impl $name {
             /// [`Self::enabled_apps`] 的顺序：同步、移除都按它走，不要随意调整
-            const ORDER: [AppType; 14] = [
+            const ORDER: [AppType; 15] = [
                 AppType::Claude,
                 AppType::Codex,
                 AppType::Gemini,
@@ -60,6 +62,7 @@ macro_rules! app_flags {
                 AppType::Hermes,
                 AppType::Pi,
                 AppType::Omp,
+                AppType::Cursor,
             ];
 
             fn slot(&mut self, app: &AppType) -> Option<&mut bool> {
@@ -78,13 +81,14 @@ macro_rules! app_flags {
                     AppType::Agy => Some(&mut self.agy),
                     AppType::Copilot => Some(&mut self.copilot),
                     AppType::WorkBuddy => Some(&mut self.workbuddy),
+                    AppType::Cursor => Some(&mut self.cursor),
                     AppType::OpenClaw | AppType::ClaudeDesktop => None,
                 }
             }
 
             /// 检查指定应用是否启用
             pub fn is_enabled_for(&self, app: &AppType) -> bool {
-                // 只维护一张 `slot` 映射表；读取时复制 14 个 bool 换取不写第二张表
+                // 只维护一张 `slot` 映射表；读取时复制 15 个 bool 换取不写第二张表
                 self.clone().slot(app).is_some_and(|enabled| *enabled)
             }
 
@@ -249,6 +253,9 @@ pub struct McpRoot {
     /// Hermes MCP 配置（实际使用 config.yaml）
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
     pub hermes: McpConfig,
+    /// Cursor MCP 配置（实际使用 .cursor/mcp.json）
+    #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
+    pub cursor: McpConfig,
 }
 
 impl Default for McpRoot {
@@ -265,6 +272,7 @@ impl Default for McpRoot {
             opencode: McpConfig::default(),
             openclaw: McpConfig::default(),
             hermes: McpConfig::default(),
+            cursor: McpConfig::default(),
         }
     }
 }
@@ -300,6 +308,8 @@ pub struct PromptRoot {
     pub openclaw: PromptConfig,
     #[serde(default)]
     pub hermes: PromptConfig,
+    #[serde(default)]
+    pub cursor: PromptConfig,
 }
 
 use crate::config::{copy_file, get_app_config_dir, get_app_config_path, write_json_file};
@@ -318,6 +328,7 @@ pub enum AppType {
     OpenCode,
     OpenClaw,
     Hermes,
+    Cursor,
     Pi,
     Mcode,
     Kimi,
@@ -410,6 +421,13 @@ impl AppType {
                 route_mode: false,
                 stack: false,
             },
+            AppType::Cursor => AppSpec {
+                id: "cursor",
+                additive: false,
+                local_proxy: true,
+                route_mode: true,
+                stack: false,
+            },
             AppType::Pi => AppSpec {
                 id: "pi",
                 additive: true,
@@ -473,8 +491,14 @@ impl AppType {
         self.spec().id
     }
 
+    /// 有完整的本地路由和故障转移（`AppSpec::local_proxy`）。Cursor 经公网路由接入，
+    /// 同样落 `proxy_config` 行走本地代理，所以也算在内。
+    pub fn supports_local_proxy(&self) -> bool {
+        self.spec().local_proxy
+    }
+
     /// 所有应用，按默认顺序
-    pub const ALL: [AppType; 16] = [
+    pub const ALL: [AppType; 17] = [
         AppType::Claude,
         AppType::ClaudeDesktop,
         AppType::Codex,
@@ -483,6 +507,7 @@ impl AppType {
         AppType::OpenCode,
         AppType::OpenClaw,
         AppType::Hermes,
+        AppType::Cursor,
         AppType::Pi,
         AppType::Mcode,
         AppType::Kimi,
@@ -518,6 +543,7 @@ impl FromStr for AppType {
             "opencode" => Ok(AppType::OpenCode),
             "openclaw" => Ok(AppType::OpenClaw),
             "hermes" => Ok(AppType::Hermes),
+            "cursor" => Ok(AppType::Cursor),
             "pi" => Ok(AppType::Pi),
             "mcode" => Ok(AppType::Mcode),
             "kimi" | "kimi-code" => Ok(AppType::Kimi),
@@ -530,8 +556,8 @@ impl FromStr for AppType {
             "workbuddy" | "work-buddy" | "work_buddy" => Ok(AppType::WorkBuddy),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, cursor, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, cursor, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy."),
             )),
         }
     }
@@ -557,6 +583,9 @@ pub struct CommonConfigSnippets {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hermes: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
 }
 
 /// 多应用配置结构（向后兼容）
@@ -600,6 +629,7 @@ impl Default for MultiAppConfig {
         apps.insert("openclaw".to_string(), ProviderManager::default());
         apps.insert("hermes".to_string(), ProviderManager::default());
         apps.insert("agy".to_string(), ProviderManager::default());
+        apps.insert("cursor".to_string(), ProviderManager::default());
         apps.insert("copilot".to_string(), ProviderManager::default());
 
         Self {
@@ -767,6 +797,7 @@ impl MultiAppConfig {
         Self::auto_import_prompt_if_exists(&mut config, AppType::OpenCode)?;
         Self::auto_import_prompt_if_exists(&mut config, AppType::OpenClaw)?;
         Self::auto_import_prompt_if_exists(&mut config, AppType::Hermes)?;
+        Self::auto_import_prompt_if_exists(&mut config, AppType::Cursor)?;
 
         Ok(config)
     }
@@ -791,6 +822,7 @@ impl MultiAppConfig {
             || !self.prompts.opencode.prompts.is_empty()
             || !self.prompts.openclaw.prompts.is_empty()
             || !self.prompts.hermes.prompts.is_empty()
+            || !self.prompts.cursor.prompts.is_empty()
         {
             return Ok(false);
         }
@@ -806,6 +838,7 @@ impl MultiAppConfig {
             AppType::OpenCode,
             AppType::OpenClaw,
             AppType::Hermes,
+            AppType::Cursor,
         ] {
             // 复用已有的单应用导入逻辑
             if Self::auto_import_prompt_if_exists(self, app)? {
@@ -880,6 +913,7 @@ impl MultiAppConfig {
             AppType::OpenCode => &mut config.prompts.opencode.prompts,
             AppType::OpenClaw => &mut config.prompts.openclaw.prompts,
             AppType::Hermes => &mut config.prompts.hermes.prompts,
+            AppType::Cursor => &mut config.prompts.cursor.prompts,
             // Pi was added after prompts moved to SQLite. Keeping it out of
             // this legacy config avoids a second, unused prompt state.
             AppType::Pi
@@ -933,6 +967,7 @@ impl MultiAppConfig {
                 AppType::OpenCode => &self.mcp.opencode.servers,
                 AppType::OpenClaw => continue, // OpenClaw MCP is still in development, skip
                 AppType::Hermes => continue,   // Hermes didn't exist in v3.6.x, skip
+                AppType::Cursor => continue,   // Cursor didn't exist in v3.6.x, skip
                 AppType::Pi
                 | AppType::Mcode
                 | AppType::Kimi

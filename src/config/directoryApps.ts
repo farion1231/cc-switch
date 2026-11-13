@@ -57,6 +57,13 @@ export const DIRECTORY_APPS = [
     syncsLive: true,
   },
   {
+    app: "cursor",
+    field: "cursorConfigDir",
+    defaultFolder: ".cursor",
+    placeholderKey: "settings.browsePlaceholderCursor",
+    syncsLive: true,
+  },
+  {
     app: "pi",
     field: "piConfigDir",
     defaultFolder: ".pi/agent",
