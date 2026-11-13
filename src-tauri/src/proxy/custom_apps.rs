@@ -1,6 +1,12 @@
 //! Local OpenAI Chat Completions routes for user-defined app profiles.
 
-use crate::{database::Database, error::AppError, provider::Provider, store::AppState};
+use crate::{
+    database::Database,
+    error::AppError,
+    mode::current::{custom_app_namespace, custom_app_provider_in_use},
+    provider::Provider,
+    store::AppState,
+};
 use axum::{
     body::Body,
     extract::{Path, State},
@@ -68,10 +74,6 @@ fn profiles(db: &Database) -> Result<Vec<StoredApp>, AppError> {
         .map_err(|_| AppError::Config("Could not read custom app profiles.".into()))
 }
 
-fn app_namespace(id: &str) -> String {
-    format!("custom:{id}")
-}
-
 fn create_app(db: &Database, name: String) -> Result<CustomApp, AppError> {
     let name = name.trim().to_string();
     if name.is_empty() || name.chars().count() > 80 {
@@ -123,7 +125,7 @@ fn require_app(db: &Database, id: &str) -> Result<String, AppError> {
     profiles(db)?
         .iter()
         .any(|profile| profile.id == id)
-        .then(|| app_namespace(id))
+        .then(|| custom_app_namespace(id))
         .ok_or_else(|| AppError::Config("Custom app profile was not found.".into()))
 }
 
@@ -211,7 +213,7 @@ pub(crate) fn list_custom_providers(
 ) -> Result<ProviderList, String> {
     let read = || -> Result<ProviderList, AppError> {
         let namespace = require_app(&state.db, &app_id)?;
-        let selected = state.db.get_current_provider(&namespace)?;
+        let selected = custom_app_provider_in_use(&state.db, &app_id)?;
         let providers = state
             .db
             .get_all_providers(&namespace)?
@@ -333,14 +335,12 @@ async fn forward(
     if !bool::from(app.token_hash.ct_eq(&token_hash)) {
         return Err((StatusCode::UNAUTHORIZED, "Invalid custom app token."));
     }
-    let namespace = app_namespace(id);
+    let namespace = custom_app_namespace(id);
     let missing_provider = (
         StatusCode::SERVICE_UNAVAILABLE,
         "Select a provider for this custom app.",
     );
-    let provider_id = state
-        .db
-        .get_current_provider(&namespace)
+    let provider_id = custom_app_provider_in_use(&state.db, id)
         .map_err(|_| STORAGE_ERROR)?
         .ok_or(missing_provider)?;
     let row = state

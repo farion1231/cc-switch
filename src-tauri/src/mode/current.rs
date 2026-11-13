@@ -61,6 +61,18 @@ pub fn provider_for(
     crate::settings::get_effective_current_provider(db, app)
 }
 
+pub(crate) fn custom_app_namespace(profile_id: &str) -> String {
+    format!("custom:{profile_id}")
+}
+
+/// Custom profiles have one active proxy provider stored in their own namespace.
+pub(crate) fn custom_app_provider_in_use(
+    db: &Database,
+    profile_id: &str,
+) -> Result<Option<String>, AppError> {
+    db.get_current_provider(&custom_app_namespace(profile_id))
+}
+
 /// 正在用的那一行（见 [`Purpose::InUse`]）。
 pub fn provider_in_use(db: &Database, app: &AppType) -> Result<Option<Provider>, AppError> {
     match proxy_route_row(db, app)? {
