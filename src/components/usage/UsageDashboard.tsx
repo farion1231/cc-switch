@@ -95,7 +95,10 @@ const isRefreshIntervalOption = (
 const normalizeRefreshInterval = (value: number | undefined) =>
   isRefreshIntervalOption(value) ? value : DEFAULT_REFRESH_INTERVAL_MS;
 
-const STATUS_CODE_OPTIONS = [200, 400, 401, 429, 500] as const;
+// 常见的网关 / 上游错误码也列上（520/529 是 Cloudflare、Anthropic 自己返回的）
+const STATUS_CODE_OPTIONS = [
+  200, 400, 401, 403, 404, 429, 500, 502, 503, 504, 520, 529,
+] as const;
 
 // 页签只放数据视图；显示和定价设置在「用量设置」抽屉里
 type UsageTab = "logs" | "providers" | "models";

@@ -186,7 +186,8 @@ export const RESET_EXPIRING_SOON_MS = 3 * 24 * 60 * 60 * 1000;
 /** 排在所有档位之后：卡片合并时跟在每周那档后面（「每周 64% · 重置 1 次」） */
 const RESET_CREDITS_WINDOW = UNKNOWN_WINDOW + 1;
 
-function shortDate(iso: string, locale: string): string {
+/** 「11月30日」；不是今年时带年份 */
+export function shortDate(iso: string, locale: string): string {
   const date = new Date(iso);
   const sameYear = date.getFullYear() === new Date().getFullYear();
   try {

@@ -69,3 +69,5 @@ pub mod session_usage_trae;
 
 pub mod session_usage_agy;
 pub mod session_usage_dsh;
+pub mod session_usage_workbuddy;
+pub mod workbuddy_account;

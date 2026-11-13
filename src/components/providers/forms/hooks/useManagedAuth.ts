@@ -7,6 +7,7 @@ import { CODEX_OAUTH_DUPLICATE_ACCOUNT_ERROR } from "@/lib/api/auth";
 import type { CodexLoginMethod, ManagedLoginMethod } from "@/lib/api/auth";
 import { deliverLoginLink, readAuthOpenBrowser } from "@/lib/authLoginLink";
 import { copyText } from "@/lib/clipboard";
+import { subscriptionKeys } from "@/lib/query/subscription";
 import type {
   ManagedAuthProvider,
   ManagedAuthStatus,
@@ -56,7 +57,15 @@ export function useManagedAuth(
     // A rejected xAI refresh token is persisted as `requires_reauth` by the
     // proxy hot path. Periodically refresh local status so an already-open Auth
     // Center stops showing the account as logged in without requiring a reload.
-    refetchInterval: authProvider === "xai_oauth" ? 15_000 : false,
+    // WorkBuddy auto-absorbs the desktop app's current sign-in on every status
+    // read, so poll while the Auth Center is open to surface a freshly logged-in
+    // account (and refresh its snapshot) without a manual "import" click.
+    refetchInterval:
+      authProvider === "xai_oauth"
+        ? 15_000
+        : authProvider === "workbuddy_account"
+          ? 5_000
+          : false,
   });
 
   const stopPolling = useCallback(() => {
@@ -338,6 +347,12 @@ export function useManagedAuth(
       }
       await refetchStatus();
       await queryClient.invalidateQueries({ queryKey });
+      // 没绑账号的 Antigravity 官方卡查的是「agy 现在登着的号」，切完重查，别留着上个号的额度
+      if (authProvider === "agy_oauth") {
+        await queryClient.invalidateQueries({
+          queryKey: subscriptionKeys.quota("agy"),
+        });
+      }
     },
     onError: (e) => {
       console.error("[ManagedAuth] Failed to set default account:", e);

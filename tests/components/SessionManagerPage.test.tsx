@@ -583,6 +583,7 @@ describe("SessionManagerPage", () => {
         agy: false,
         omp: false,
         copilot: false,
+        workbuddy: false,
       },
     });
     renderPage("codex");
