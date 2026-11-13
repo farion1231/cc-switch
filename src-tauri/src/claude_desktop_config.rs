@@ -17,6 +17,7 @@ use crate::mode::operation::{self, FileChange};
 use crate::mode::stack::DesktopStackModel;
 use crate::mode::state::{self, PendingTarget};
 use crate::provider::{ClaudeDesktopMode, Provider};
+use crate::provider_kind::ProviderKind;
 
 pub const PROFILE_ID: &str = "00000000-0000-4000-8000-000000157210";
 pub const PROFILE_NAME: &str = "CC Switch";
@@ -325,7 +326,7 @@ pub fn is_official_provider(provider: &Provider) -> bool {
 pub fn needs_routing(provider: &Provider) -> bool {
     !is_official_provider(provider)
         && (matches!(provider_mode(provider), ClaudeDesktopMode::Proxy)
-            || is_managed_oauth_proxy_provider(provider))
+            || ProviderKind::declared(provider).is_some())
 }
 
 /// 升级前旧版的状态：直连指针是模型映射卡（旧版按卡片决定模式，这张卡生效时 Desktop 指着
@@ -490,10 +491,7 @@ pub fn validate_direct_provider(provider: &Provider) -> Result<(), AppError> {
             ));
         }
 
-        if matches!(
-            meta.provider_type.as_deref(),
-            Some("github_copilot") | Some("codex_oauth") | Some("xai_oauth")
-        ) {
+        if ProviderKind::declared(provider).is_some() {
             return Err(AppError::localized(
                 "claude_desktop.provider.type_unsupported",
                 "Claude Desktop 直连模式不支持需要本地代理转换的供应商",
@@ -567,7 +565,7 @@ fn has_proxy_base_url_and_key(provider: &Provider) -> bool {
         .map(str::trim)
         .is_some_and(|value| !value.is_empty());
 
-    if is_managed_oauth_proxy_provider(provider) {
+    if ProviderKind::declared(provider).is_some() {
         return has_base_url;
     }
 
@@ -590,19 +588,6 @@ fn has_proxy_base_url_and_key(provider: &Provider) -> bool {
         .is_some_and(|value| !value.is_empty());
 
     has_base_url && has_key
-}
-
-fn is_managed_oauth_proxy_provider(provider: &Provider) -> bool {
-    provider
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.provider_type.as_deref())
-        .is_some_and(|provider_type| {
-            matches!(
-                provider_type,
-                "github_copilot" | "codex_oauth" | "xai_oauth"
-            )
-        })
 }
 
 pub fn validate_provider(provider: &Provider) -> Result<(), AppError> {

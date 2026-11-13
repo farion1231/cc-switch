@@ -7,6 +7,7 @@ use crate::commands::copilot::CopilotAuthState;
 use crate::commands::xai_oauth::XaiOAuthState;
 use crate::error::AppError;
 use crate::provider::{ClaudeDesktopMode, Provider, ProviderMeta};
+use crate::provider_kind::ProviderKind;
 use crate::services::provider::{EditorSave, EditorView};
 use crate::services::{
     EndpointLatency, ProviderService, ProviderSortUpdate, SpeedtestService, SwitchResult,
@@ -466,13 +467,7 @@ pub(crate) fn suggested_claude_desktop_routes(
         .get("env")
         .and_then(|value| value.as_object())?;
     let mut routes = std::collections::HashMap::new();
-    let supports_1m_default = !matches!(
-        provider
-            .meta
-            .as_ref()
-            .and_then(|meta| meta.provider_type.as_deref()),
-        Some("github_copilot") | Some("codex_oauth") | Some("xai_oauth")
-    );
+    let supports_1m_default = ProviderKind::declared(provider).is_none();
 
     fn add_route(
         routes: &mut std::collections::HashMap<String, crate::provider::ClaudeDesktopModelRoute>,

@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
+use crate::provider_kind::ProviderKind;
+
 // SSOT 模式：不再写供应商副本文件
 
 /// 供应商结构体
@@ -68,16 +70,15 @@ impl Provider {
     }
 
     pub fn is_codex_oauth(&self) -> bool {
-        self.provider_type() == Some("codex_oauth")
+        ProviderKind::declared(self) == Some(ProviderKind::CodexOAuth)
     }
 
     pub fn is_xai_oauth(&self) -> bool {
-        self.provider_type() == Some("xai_oauth")
+        ProviderKind::declared(self) == Some(ProviderKind::XaiOAuth)
     }
 
     pub fn is_github_copilot(&self) -> bool {
-        self.provider_type() == Some("github_copilot")
-            || self.claude_base_url_contains("githubcopilot.com")
+        ProviderKind::of(self) == Some(ProviderKind::GitHubCopilot)
     }
 
     pub fn uses_managed_account_auth(&self) -> bool {
@@ -106,10 +107,6 @@ impl Provider {
             .and_then(|m| m.api_key_field.as_deref())
             .map(|field| field.eq_ignore_ascii_case("ANTHROPIC_API_KEY"))
             .unwrap_or(false)
-    }
-
-    fn provider_type(&self) -> Option<&str> {
-        self.meta.as_ref().and_then(|m| m.provider_type.as_deref())
     }
 
     /// The stored OpenCode source format; only native declarations record one.

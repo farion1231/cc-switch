@@ -18,7 +18,7 @@ use super::{
     provider_router::ProviderRouter,
     providers::{
         codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore, get_adapter,
-        AuthInfo, AuthStrategy, ProviderAdapter, ProviderType,
+        AuthInfo, AuthStrategy, ClaudeAdapter, ProviderAdapter, ProviderType,
     },
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
     thinking_rectifier::{
@@ -30,6 +30,7 @@ use super::{
     ProxyError,
 };
 use crate::commands::{CodexOAuthState, CopilotAuthState, XaiOAuthState};
+use crate::provider_kind::{is_copilot_url, ProviderKind};
 use crate::proxy::providers::copilot_auth::{CopilotAuthError, CopilotAuthManager};
 use crate::proxy::providers::copilot_model_map::{
     transport_for, CopilotProtocol, CopilotTransport, ResolvedCopilotModel,
@@ -1061,7 +1062,8 @@ impl RequestForwarder {
                 Err(mut e) => {
                     // 检测是否需要触发整流器（上游为 Anthropic Messages 的供应商）
                     let is_anthropic_provider = uses_anthropic_rectifiers(
-                        ProviderType::from_app_type_and_config(app_type, provider),
+                        matches!(app_type, AppType::Claude | AppType::ClaudeDesktop)
+                            .then(|| ClaudeAdapter::new().provider_type(provider)),
                     );
                     let mut signature_rectifier_non_retryable_client_error = false;
 
@@ -4220,13 +4222,12 @@ fn rewrite_codex_responses_endpoint_to_anthropic(endpoint: &str) -> (String, Opt
     (rewritten, passthrough_query)
 }
 
+/// Only the declared type counts for Codex: a Codex provider may point a custom
+/// `base_url` at Copilot without being a managed Copilot account. Other apps also
+/// accept the resolved request URL, which `Provider::is_github_copilot` never reads.
 fn is_managed_copilot_request(app_type: &AppType, provider: &Provider, base_url: &str) -> bool {
-    provider
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.provider_type.as_deref())
-        == Some("github_copilot")
-        || (!matches!(app_type, AppType::Codex) && base_url.contains("githubcopilot.com"))
+    ProviderKind::declared(provider) == Some(ProviderKind::GitHubCopilot)
+        || (!matches!(app_type, AppType::Codex) && is_copilot_url(base_url))
 }
 
 fn codex_copilot_lookup_error(model_id: &str, error: CopilotAuthError) -> ProxyError {
@@ -6746,11 +6747,7 @@ mod tests {
         ] {
             assert!(uses_anthropic_rectifiers(Some(provider_type)));
         }
-        for provider_type in [
-            ProviderType::Codex,
-            ProviderType::OpenRouter,
-            ProviderType::CodexOAuth,
-        ] {
+        for provider_type in [ProviderType::OpenRouter, ProviderType::CodexOAuth] {
             assert!(!uses_anthropic_rectifiers(Some(provider_type)));
         }
         assert!(!uses_anthropic_rectifiers(None));
@@ -7373,6 +7370,23 @@ mod tests {
             &ordinary,
             "https://api.anthropic.com"
         ));
+    }
+
+    /// 请求路径只看 providerType 和解析后的请求 URL：旧数据的 env.ANTHROPIC_BASE_URL
+    /// 让 `Provider::is_github_copilot` 为真，但这里不算。
+    #[test]
+    fn copilot_request_detection_ignores_legacy_env_url() {
+        let mut legacy = test_provider_with_type(None);
+        legacy.settings_config =
+            json!({ "env": { "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com" } });
+        assert!(legacy.is_github_copilot());
+        for app_type in [AppType::Claude, AppType::Codex] {
+            assert!(!is_managed_copilot_request(
+                &app_type,
+                &legacy,
+                "https://relay.example.com"
+            ));
+        }
     }
 
     /// 验证动态 endpoint 替换条件
