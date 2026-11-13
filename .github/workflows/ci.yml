@@ -324,3 +324,25 @@ jobs:
           if ($testList -notcontains "${testName}: test") { throw "Hermes WSL test not discovered" }
           & $env:CC_SWITCH_TEST_EXE $testName --ignored --exact --nocapture
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  # 分支保护里唯一的必过检查。各 job 按路径分流会被跳过，不能逐个设成必过（被跳过的永远等不到结果），
+  # 所以由这个 job 汇总：每个上游 job 要么成功、要么被跳过，失败或取消即拦下。
+  # if: always() 不能去掉：没有它，上游一失败这里就被跳过，而跳过在 GitHub 看来等于通过。
+  ci-gate:
+    name: CI gate
+    runs-on: ubuntu-latest
+    needs: [changes, frontend, frontend-tests, backend, backend-windows-wsl2]
+    if: always()
+    permissions: {}
+    steps:
+      - name: Require every job to pass or be skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Upstream results: $RESULTS"
+          for r in $RESULTS; do
+            case "$r" in
+              success|skipped) ;;
+              *) echo "::error::a required job ended as '$r'"; exit 1 ;;
+            esac
+          done
