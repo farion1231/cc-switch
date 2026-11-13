@@ -5,6 +5,7 @@ use indexmap::IndexMap;
 use serde_json::Value;
 use std::{
     fs,
+    panic::{catch_unwind, AssertUnwindSafe},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -26,26 +27,65 @@ fn explicit_data_dir(minimax: Option<&str>, mavis: Option<&str>) -> Option<PathB
         .map(PathBuf::from)
 }
 
-// Callers hold their feature lock across the native write and database commit.
+// Callers hold their feature lock across the native write, database commit and
+// rollback. A commit callback must return immediately after committing; an
+// already committed database transaction cannot be undone by file rollback.
 pub(crate) fn write_and_commit<T>(
     path: &Path,
     write: impl FnOnce() -> Result<(), AppError>,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    let previous = match fs::read(path) {
-        Ok(bytes) => Some(bytes),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => return Err(AppError::io(path, error)),
+    fn snapshot(path: &Path) -> Result<Option<Vec<u8>>, AppError> {
+        match fs::read(path) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(AppError::io(path, error)),
+        }
+    }
+    let target = crate::config::resolve_symlink_target(path);
+    let previous = snapshot(path)?;
+    let mut written = None;
+    // The write callback can itself publish one file before a later step panics.
+    // Keep the existing error behavior, but protect both callbacks on unwind.
+    let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<_, AppError> {
+        write()?;
+        written = match snapshot(path) {
+            Ok(snapshot) => Some(snapshot),
+            // The write already succeeded. A failed revision read must also
+            // restore the file instead of skipping the database commit alone.
+            Err(error) => return Ok(Err(error)),
+        };
+        Ok(commit())
+    }));
+    let rollback = || {
+        // Once write returned, do not overwrite a later external edit made
+        // during commit. A panicking write has no returned revision to compare.
+        if let Some(expected) = &written {
+            if snapshot(path)? != *expected {
+                return Err(AppError::Conflict(format!(
+                    "Config changed after CC Switch wrote it; refusing to roll back {}",
+                    path.display()
+                )));
+            }
+        }
+        match previous.as_deref() {
+            // 沿用文件现有权限：私有写入已是 0600，定价文件这类仍是 0644。
+            Some(bytes) if target.exists() => crate::config::atomic_write(path, bytes),
+            Some(bytes) => atomic_write_private(path, bytes),
+            None => match fs::remove_file(&target) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                    Err(AppError::io(&target, error))
+                }
+                _ => Ok(()),
+            },
+        }
     };
-    write()?;
-    match commit() {
+    // The inner result separates write validation errors from commit errors.
+    let result = crate::sync_utils::resume_after_rollback(outcome, rollback)?;
+    match result {
         Ok(result) => Ok(result),
         Err(error) => {
-            let rollback = match previous {
-                Some(bytes) => atomic_write_private(path, &bytes),
-                None => fs::remove_file(path).map_err(|error| AppError::io(path, error)),
-            };
-            if let Err(rollback_error) = rollback {
+            if let Err(rollback_error) = rollback() {
                 return Err(AppError::Message(format!(
                     "Config update failed ({error}); restoring {} also failed: {rollback_error}",
                     path.display()
@@ -289,6 +329,126 @@ pub(crate) fn remove_provider(id: &str) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn panic_after_file_write_rolls_back_file_and_sql_transaction_and_allows_retry() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        fs::write(&path, "original").unwrap();
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE value (content TEXT); INSERT INTO value VALUES ('original');",
+        )
+        .unwrap();
+        let gate = std::sync::Mutex::new(());
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = crate::sync_utils::lock_file_operation(&gate);
+            let _: Result<(), AppError> = write_and_commit(
+                &path,
+                || atomic_write_private(&path, b"interrupted"),
+                || {
+                    let transaction = conn.transaction().unwrap();
+                    transaction
+                        .execute("UPDATE value SET content = 'interrupted'", [])
+                        .unwrap();
+                    panic!("commit interrupted");
+                },
+            );
+        }));
+        assert_eq!(
+            panic.unwrap_err().downcast_ref::<&str>(),
+            Some(&"commit interrupted")
+        );
+        assert_eq!(fs::read(&path).unwrap(), b"original");
+        assert!(conn.is_autocommit());
+        assert_eq!(
+            conn.query_row("SELECT content FROM value", [], |row| row
+                .get::<_, String>(0))
+                .unwrap(),
+            "original"
+        );
+        assert!(gate.is_poisoned());
+
+        let _guard = crate::sync_utils::lock_file_operation(&gate);
+        write_and_commit(
+            &path,
+            || atomic_write_private(&path, b"retried"),
+            || {
+                let transaction = conn.transaction()?;
+                transaction.execute("UPDATE value SET content = 'retried'", [])?;
+                transaction.commit()?;
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"retried");
+        assert_eq!(
+            conn.query_row("SELECT content FROM value", [], |row| row
+                .get::<_, String>(0))
+                .unwrap(),
+            "retried"
+        );
+    }
+
+    #[test]
+    fn panic_during_write_removes_a_new_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("new.yaml");
+        assert!(std::panic::catch_unwind(|| {
+            let _: Result<(), AppError> = write_and_commit(
+                &path,
+                || {
+                    atomic_write_private(&path, b"unfinished")?;
+                    panic!("write interrupted");
+                },
+                || Ok(()),
+            );
+        })
+        .is_err());
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn panicking_commit_preserves_external_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        fs::write(&path, "original").unwrap();
+        assert!(std::panic::catch_unwind(|| {
+            let _: Result<(), AppError> = write_and_commit(
+                &path,
+                || atomic_write_private(&path, b"ours"),
+                || {
+                    fs::write(&path, "external edit").unwrap();
+                    panic!("commit interrupted");
+                },
+            );
+        })
+        .is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"external edit");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn panicking_first_write_keeps_dangling_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        let target = dir.path().join("target.yaml");
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        assert!(std::panic::catch_unwind(|| {
+            let _: Result<(), AppError> = write_and_commit(
+                &path,
+                || atomic_write_private(&path, b"ours"),
+                || panic!("commit interrupted"),
+            );
+        })
+        .is_err());
+        assert!(fs::symlink_metadata(&path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(!target.exists());
+    }
+
     #[test]
     fn native_data_directory_precedence_and_blank_values() {
         assert_eq!(
