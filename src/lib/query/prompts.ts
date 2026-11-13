@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { promptsApi, type AppId, type Prompt } from "@/lib/api";
+import { appIdsWith } from "@/config/appSpecs";
 
 /**
  * 提示词页之外读提示词的地方（应用页页头的「提示词：X ›」、提示词页应用下拉里的条数）。
@@ -11,23 +12,8 @@ export const promptKeys = {
   location: (app: AppId) => ["prompts", "location", app] as const,
 };
 
-/** 支持提示词的应用，按侧栏顺序。Claude Desktop 用 Claude Code 的；OpenClaw 在自己的「工作区」里管理。 */
-export const PROMPT_APP_IDS: AppId[] = [
-  "claude",
-  "codex",
-  "gemini",
-  "grokbuild",
-  "opencode",
-  "hermes",
-  "pi",
-  "mcode",
-  "kimi",
-  "dsh",
-  "agy",
-  "omp",
-  "copilot",
-  "workbuddy",
-];
+/** 支持提示词的应用，按侧栏顺序（`APP_SPECS` 的 `prompts`）。 */
+export const PROMPT_APP_IDS: AppId[] = appIdsWith("prompts");
 
 /** 应用页对应的提示词应用；不支持提示词的返回 null。 */
 export function promptAppOf(app: AppId): AppId | null {

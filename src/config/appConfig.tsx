@@ -2,6 +2,7 @@ import React from "react";
 import type { AppId } from "@/lib/api/types";
 import type { PiFamilyAppId } from "@/lib/api/pi";
 import type { VisibleApps } from "@/types";
+import { APP_IDS, APP_SPECS, appIdsWith, type AppIdWith } from "./appSpecs";
 import {
   ClaudeIcon,
   CodexIcon,
@@ -17,24 +18,7 @@ export interface AppConfig {
   badgeClass: string;
 }
 
-export const APP_IDS: AppId[] = [
-  "claude",
-  "claude-desktop",
-  "codex",
-  "gemini",
-  "grokbuild",
-  "opencode",
-  "openclaw",
-  "hermes",
-  "pi",
-  "mcode",
-  "kimi",
-  "dsh",
-  "agy",
-  "omp",
-  "copilot",
-  "workbuddy",
-];
+export { APP_IDS };
 
 export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   claude: true,
@@ -78,144 +62,65 @@ export function orderAppIds(saved: readonly string[] | undefined): AppId[] {
   return ordered;
 }
 
-/** App IDs shown in Skills panels. */
-export const SKILLS_APP_IDS: AppId[] = [
-  "claude",
-  "codex",
-  "gemini",
-  "grokbuild",
-  "opencode",
-  "hermes",
-  "pi",
-  "mcode",
-  "kimi",
-  "dsh",
-  "agy",
-  "omp",
-  "copilot",
-  "workbuddy",
-];
+// 下面的应用列表都从 `APP_SPECS`（`./appSpecs`）派生，要改某个应用支持什么功能，改那张表。
 
-export type ProxyAppId = Extract<
-  AppId,
-  "claude" | "codex" | "gemini" | "grokbuild"
->;
+/** App IDs shown in Skills panels. */
+export const SKILLS_APP_IDS: AppId[] = appIdsWith("skills");
+
+export type ProxyAppId = AppIdWith<"localProxy">;
 
 /** Apps with a complete local gateway + failover data plane. */
-export const PROXY_APP_IDS: ProxyAppId[] = [
-  "claude",
-  "codex",
-  "gemini",
-  "grokbuild",
-];
+export const PROXY_APP_IDS = appIdsWith("localProxy");
 
 export function isProxyAppId(appId: string): appId is ProxyAppId {
   return (PROXY_APP_IDS as string[]).includes(appId);
 }
 
-/**
- * 有直连 / 路由模式的应用（后端 `AppType::has_route_mode`）：上面四个，加上 Claude Desktop。
- * Desktop 经同一个路由服务转发，但没有故障转移和路由设置（不在 `PROXY_APP_IDS` 里）。
- */
-export type ModeAppId = ProxyAppId | "claude-desktop";
+/** 有直连 / 路由模式的应用（后端 `AppType::has_route_mode`）。 */
+export type ModeAppId = AppIdWith<"routeMode">;
 
-export const MODE_APP_IDS: ModeAppId[] = [...PROXY_APP_IDS, "claude-desktop"];
+/** 本地路由的应用在前，Claude Desktop 这类只有路由模式的排在后面。 */
+export const MODE_APP_IDS: ModeAppId[] = [
+  ...PROXY_APP_IDS,
+  ...appIdsWith("routeMode").filter((app) => !APP_SPECS[app].localProxy),
+];
 
 export function isModeAppId(appId: string): appId is ModeAppId {
   return (MODE_APP_IDS as string[]).includes(appId);
 }
 
-/** 支持 Stack 模式的应用（后端 `mode::stack::supports_stack` 的镜像）。 */
-export type StackAppId = Extract<
-  ModeAppId,
-  "claude" | "codex" | "claude-desktop"
->;
+/** 支持 Stack 模式的应用（后端 `mode::stack::supports_stack`）。 */
+export type StackAppId = AppIdWith<"stack">;
 
-export const STACK_APP_IDS: StackAppId[] = [
-  "claude",
-  "codex",
-  "claude-desktop",
-];
+export const STACK_APP_IDS = appIdsWith("stack");
 
 export function isStackAppId(appId: string): appId is StackAppId {
   return (STACK_APP_IDS as string[]).includes(appId);
 }
 
-/**
- * 累加式应用（后端 `AppType::is_additive_mode`）。Copilot CLI 是混合的：自带模型卡累加写进
- * providers.json，官方卡仍是启动式（只有「打开终端」）。
- */
-export type AdditiveAppId = Extract<
-  AppId,
-  | "opencode"
-  | "openclaw"
-  | "hermes"
-  | "pi"
-  | "mcode"
-  | "kimi"
-  | "dsh"
-  | "omp"
-  | "copilot"
-  | "workbuddy"
->;
+/** 累加式应用（后端 `AppType::is_additive_mode`）。 */
+export type AdditiveAppId = AppIdWith<"additive">;
 
-export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
-  "mcode",
-  "kimi",
-  "dsh",
-  "opencode",
-  "openclaw",
-  "hermes",
-  "pi",
-  "omp",
-  "copilot",
-  "workbuddy",
-];
+export const ADDITIVE_APP_IDS = appIdsWith("additive");
 
 export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
   return (ADDITIVE_APP_IDS as string[]).includes(appId);
 }
 
-/** Oh My Pi 是 Pi 的分支：供应商表单、启用状态和用量脚本命令与 Pi 共用。 */
-export const PI_FAMILY_APP_IDS: PiFamilyAppId[] = ["pi", "omp"];
+export const PI_FAMILY_APP_IDS: PiFamilyAppId[] = appIdsWith("piFamily");
 
 export function isPiFamilyApp(appId: string): appId is PiFamilyAppId {
   return (PI_FAMILY_APP_IDS as string[]).includes(appId);
 }
 
-/**
- * 切换只替换关键字段的应用：供应商编辑器显示「切到这个供应商之后配置文件的样子」，由后端
- * `ProviderService::editor_view` 投影。
- */
-export const EDITOR_VIEW_APP_IDS: AppId[] = [
-  "claude",
-  "codex",
-  "gemini",
-  "grokbuild",
-];
+export const EDITOR_VIEW_APP_IDS: AppId[] = appIdsWith("editorView");
 
 export function usesEditorView(appId: AppId): boolean {
   return EDITOR_VIEW_APP_IDS.includes(appId);
 }
 
-/** Claude Desktop、OpenClaw 不由 CC Switch 管理 MCP；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`） */
-export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw">;
-export const MCP_APP_IDS: McpAppId[] = [
-  "claude",
-  "codex",
-  "gemini",
-  "grokbuild",
-  "opencode",
-  "hermes",
-  "pi",
-  "mcode",
-  "kimi",
-  "dsh",
-  "agy",
-  "omp",
-  "copilot",
-  "workbuddy",
-];
+export type McpAppId = AppIdWith<"mcp">;
+export const MCP_APP_IDS = appIdsWith("mcp");
 
 export function isMcpAppId(appId: string): appId is McpAppId {
   return (MCP_APP_IDS as string[]).includes(appId);

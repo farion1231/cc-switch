@@ -52,10 +52,7 @@ pub const CLAUDE_DEFAULT_WINDOW: u64 = 200_000;
 
 /// 支持 Stack 模型的应用。
 pub fn supports_stack(app: &AppType) -> bool {
-    matches!(
-        app,
-        AppType::Claude | AppType::Codex | AppType::ClaudeDesktop
-    )
+    app.spec().stack
 }
 
 /// 给 `provider` 一个 key：登记过就用原来的（移除后重新加入，旧会话里的 id 继续有效），
