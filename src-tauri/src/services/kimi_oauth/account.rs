@@ -80,7 +80,7 @@ impl Store {
 
 /// Apply one change to the cache under the store lock.
 pub(super) fn update_store(path: &Path, change: impl FnOnce(&mut Store)) -> Result<(), String> {
-    let _guard = STORE_LOCK.lock().map_err(|e| e.to_string())?;
+    let _guard = crate::sync_utils::lock_file_operation(&STORE_LOCK);
     let mut store = Store::load(path);
     store.version = 1;
     change(&mut store);
