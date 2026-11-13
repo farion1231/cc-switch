@@ -19,7 +19,7 @@ use super::{
     account_provider, account_region, credential_path, identify, lock, network_error,
     parse_credential, read_config, request, response_json, Endpoints, KimiRegion, PROVIDER_ID,
 };
-use crate::config::atomic_write_private;
+use crate::config::{atomic_write_private, atomic_write_private_durable};
 use crate::services::subscription::{CredentialStatus, SubscriptionQuota};
 
 const STORE_FILENAME: &str = "kimi_accounts.json";
@@ -237,7 +237,7 @@ fn tombstone(prior: &Value) -> Value {
 
 fn write_credential(path: &Path, credential: &Value) -> Result<(), String> {
     let bytes = serde_json::to_vec_pretty(credential).map_err(|e| e.to_string())?;
-    atomic_write_private(path, &bytes).map_err(|e| e.to_string())
+    atomic_write_private_durable(path, &bytes).map_err(|e| e.to_string())
 }
 
 /// A usable access token for `provider`, refreshing it under Kimi's lock with

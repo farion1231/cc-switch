@@ -69,7 +69,8 @@ pub fn load_state(data_dir: &Path) -> State {
 pub(super) fn save_state(data_dir: &Path, state: &State) -> Result<(), AppError> {
     let bytes =
         serde_json::to_vec_pretty(state).map_err(|source| AppError::JsonSerialize { source })?;
-    crate::config::atomic_write(&state_path(data_dir), &bytes)
+    // 切换日志是崩溃恢复的依据：默认槽位的凭据已落盘、日志却没落盘时，重启后认不出切到了哪一步。
+    crate::config::atomic_write_private_durable(&state_path(data_dir), &bytes)
 }
 
 /// 状态文件的读改写互斥：切换、恢复和登录完成各改各的字段，不能拿旧的整份覆盖对方。
