@@ -1,0 +1,349 @@
+# 定时（每天）从原版 farion1231/cc-switch 拉取最新 release tag，合并进
+# feat/s3-addressing-style，合并成功后构建 Windows / Linux 安装包并发布 GitHub Release。
+#
+# - 上游有新 tag 才会合并 + 构建；没有新变化的日常运行直接跳过（除非手动触发勾选 force_build）。
+# - 合并不上（冲突）时整个 workflow 失败，run summary 里列出冲突文件，等人工解决后重新触发。
+# - 发布 tag 形如 v4.0.25-s3.1：原版 tag + s3 后缀 + 序号，同一上游 tag 重复构建时序号递增。
+# - 不做 updater 签名（本仓库没有 TAURI_SIGNING_PRIVATE_KEY），构建前把
+#   bundle.createUpdaterArtifacts 临时关掉，产物里没有 .sig；不构建 macOS（无 Apple 签名/公证 secrets）。
+# - 发布和推送分支都用 GITHUB_TOKEN，这些事件不会再触发 release.yml 之类的其它 workflow。
+name: Sync upstream & release
+
+on:
+  schedule:
+    # 每天 UTC 02:00（北京时间 10:00）检查一次原版新 tag
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: '即使上游没有新 tag 也重新构建并发布'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+# 同一时间只跑一个，排队而不是取消，避免半路取消打断发布
+concurrency:
+  group: sync-upstream-release
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Merge latest upstream tag
+    runs-on: ubuntu-22.04
+    outputs:
+      has_update: ${{ steps.merge.outputs.has_update }}
+      upstream_tag: ${{ steps.merge.outputs.upstream_tag }}
+      release_tag: ${{ steps.merge.outputs.release_tag }}
+      sha: ${{ steps.merge.outputs.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: feat/s3-addressing-style
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge latest upstream tag
+        id: merge
+        env:
+          UPSTREAM_URL: https://github.com/farion1231/cc-switch.git
+          FORCE_BUILD: ${{ inputs.force_build || false }}
+        run: |
+          set -euo pipefail
+
+          git remote add upstream "$UPSTREAM_URL" 2>/dev/null || true
+
+          # 1. 原版最新的 vX.Y.Z 正式 tag（排除 rc/beta 之类带后缀的 tag）
+          UP_TAG=$(git ls-remote --tags --refs "$UPSTREAM_URL" 'v*' \
+            | awk '{print $2}' \
+            | sed 's#^refs/tags/##' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | sort -V | tail -1)
+          if [ -z "$UP_TAG" ]; then
+            echo "::error::No upstream vX.Y.Z tag found in $UPSTREAM_URL"
+            exit 1
+          fi
+          echo "Latest upstream tag: $UP_TAG"
+
+          # 2. 把该 tag 的 commit 拉到专用 ref，不动本地已有的同名 tag
+          git fetch --no-tags "$UPSTREAM_URL" "+refs/tags/$UP_TAG:refs/upstream-tags/$UP_TAG"
+
+          # 3. 本仓库已有的 v4.0.25-s3.N 发布 tag，取最大序号
+          max_n=0
+          for ref in $(git ls-remote --tags --refs origin "refs/tags/${UP_TAG}-s3.*" | awk '{print $2}'); do
+            n="${ref##*.}"
+            if [ "$n" -gt "$max_n" ] 2>/dev/null; then
+              max_n="$n"
+            fi
+          done
+
+          # 4. 上游 tag 已合并且已发布过，又没勾选强制构建 → 无事可做
+          merged=no
+          if git merge-base --is-ancestor "refs/upstream-tags/$UP_TAG" HEAD; then
+            merged=yes
+          fi
+          if [ "$merged" = yes ] && [ "$max_n" -ge 1 ] && [ "$FORCE_BUILD" != "true" ]; then
+            echo "Upstream tag $UP_TAG already merged and released (s3.$max_n); nothing to do."
+            echo "has_update=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # 5. 合并上游 tag；冲突时失败并列出冲突文件
+          if [ "$merged" = no ]; then
+            echo "Merging $UP_TAG into feat/s3-addressing-style ..."
+            if ! git merge --no-ff -m "Merge upstream tag $UP_TAG into feat/s3-addressing-style" "refs/upstream-tags/$UP_TAG"; then
+              conflicted=$(git diff --name-only --diff-filter=U)
+              {
+                echo "### 合并原版 tag $UP_TAG 出现冲突"
+                echo
+                echo '```'
+                echo "$conflicted"
+                echo '```'
+                echo
+                echo "请在本地 feat/s3-addressing-style 上手动合并 \`$UP_TAG\` 解决冲突后推送，再重新触发本 workflow。"
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "::error title=Merge conflict::合并原版 tag $UP_TAG 时出现冲突，冲突文件见 run summary"
+              git merge --abort || true
+              exit 1
+            fi
+            git push origin HEAD:feat/s3-addressing-style
+          fi
+
+          # 6. 发布 tag：上游 tag + s3 序号
+          release_tag="${UP_TAG}-s3.$((max_n + 1))"
+          {
+            echo "has_update=true"
+            echo "upstream_tag=$UP_TAG"
+            echo "release_tag=$release_tag"
+            echo "sha=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+          echo "Release tag: $release_tag (commit $(git rev-parse HEAD))"
+
+  build:
+    name: Build (${{ matrix.os }})
+    needs: sync
+    if: needs.sync.outputs.has_update == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+          - os: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.sync.outputs.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      # rust-toolchain.toml 是编译器版本的唯一来源：直接装它，免得先装 stable 再被 rustup 换掉
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        shell: bash
+        run: |
+          channel=$(sed -nE 's/^channel *= *"([^"]+)".*/\1/p' rust-toolchain.toml)
+          test -n "$channel"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - name: Install Linux system deps
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          # Core build tools and pkg-config
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            pkg-config \
+            curl \
+            wget \
+            file \
+            patchelf \
+            libssl-dev \
+            rpm
+          # GTK/GLib stack for gdk-3.0, glib-2.0, gio-2.0
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libayatana-appindicator3-dev
+          # WebKit2GTK (version differs across Ubuntu images; try 4.1 then 4.0)
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev \
+            || sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.0-dev
+          # libsoup also changed major version; prefer 3.0 with fallback to 2.4
+          sudo apt-get install -y --no-install-recommends libsoup-3.0-dev \
+            || sudo apt-get install -y --no-install-recommends libsoup2.4-dev
+
+      - name: Setup pnpm
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+        run: |
+          corepack enable
+          corepack install
+          node --version
+          pnpm --version
+
+      - name: Get pnpm store directory
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      # 本仓库没有 updater 签名私钥，createUpdaterArtifacts 为 true 时 tauri build 会因
+      # 找不到 TAURI_SIGNING_PRIVATE_KEY 直接失败。只在 CI 检出区临时改掉，不提交；
+      # 相应地产物没有 .sig，应用内自动更新对这些构建不可用（安装包手动下载安装不受影响）。
+      - name: Disable updater artifacts for unsigned build
+        shell: bash
+        run: |
+          node -e "const fs=require('fs');const p='src-tauri/tauri.conf.json';const c=JSON.parse(fs.readFileSync(p,'utf8'));c.bundle.createUpdaterArtifacts=false;fs.writeFileSync(p,JSON.stringify(c,null,2))"
+
+      - name: Build Tauri App (Windows)
+        if: runner.os == 'Windows'
+        run: pnpm tauri build --bundles msi
+
+      - name: Build Tauri App (Linux)
+        if: runner.os == 'Linux'
+        run: pnpm tauri build --bundles appimage,deb,rpm
+
+      - name: Prepare Windows Assets
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ needs.sync.outputs.release_tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+
+          # MSI 安装包
+          $msi = Get-ChildItem -Path 'src-tauri/target/release/bundle/msi' -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($null -eq $msi) {
+            $msi = Get-ChildItem -Path 'src-tauri/target/release/bundle' -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if ($null -eq $msi) {
+            throw 'No Windows MSI installer found'
+          }
+          Copy-Item $msi.FullName "release-assets/CC-Switch-$env:RELEASE_TAG-Windows.msi"
+          Write-Host "Installer copied: CC-Switch-$env:RELEASE_TAG-Windows.msi"
+
+          # 绿色版（portable）：可执行文件打 zip
+          $exePath = 'src-tauri/target/release/cc-switch.exe'
+          if (Test-Path $exePath) {
+            $portableDir = 'release-assets/CC-Switch-Portable'
+            New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
+            Copy-Item $exePath $portableDir
+            $portableIniPath = Join-Path $portableDir 'portable.ini'
+            @(
+              '# CC Switch portable build marker',
+              'portable=true'
+            ) | Set-Content -Path $portableIniPath -Encoding UTF8
+            Compress-Archive -Path "$portableDir/*" -DestinationPath "release-assets/CC-Switch-$env:RELEASE_TAG-Windows-Portable.zip" -Force
+            Remove-Item -Recurse -Force $portableDir
+            Write-Host "Windows portable zip created: CC-Switch-$env:RELEASE_TAG-Windows-Portable.zip"
+          } else {
+            throw "Portable exe not found: $exePath"
+          }
+
+      - name: Prepare Linux Assets
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.sync.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+
+          APPIMAGE=$(find src-tauri/target/release/bundle -name "*.AppImage" | head -1 || true)
+          if [ -z "$APPIMAGE" ]; then
+            echo "No AppImage found under target/release/bundle" >&2
+            exit 1
+          fi
+          cp "$APPIMAGE" "release-assets/CC-Switch-${RELEASE_TAG}-Linux-x86_64.AppImage"
+
+          DEB=$(find src-tauri/target/release/bundle -name "*.deb" | head -1 || true)
+          if [ -z "$DEB" ]; then
+            echo "No .deb found under target/release/bundle" >&2
+            exit 1
+          fi
+          cp "$DEB" "release-assets/CC-Switch-${RELEASE_TAG}-Linux-x86_64.deb"
+
+          RPM=$(find src-tauri/target/release/bundle -name "*.rpm" | head -1 || true)
+          if [ -z "$RPM" ]; then
+            echo "No .rpm found under target/release/bundle" >&2
+            exit 1
+          fi
+          cp "$RPM" "release-assets/CC-Switch-${RELEASE_TAG}-Linux-x86_64.rpm"
+
+          ls -la release-assets
+
+      - name: Upload release artifacts to workflow
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-assets-${{ runner.os }}
+          path: release-assets/*
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-22.04
+    needs: [sync, build]
+    if: needs.sync.outputs.has_update == 'true'
+    permissions:
+      contents: write
+    steps:
+      - name: Download built release artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-assets-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: List downloaded release artifacts
+        run: ls -la release-assets
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.sync.outputs.release_tag }}
+          target_commitish: ${{ needs.sync.outputs.sha }}
+          name: CC Switch ${{ needs.sync.outputs.release_tag }}
+          body: |
+            ## CC Switch ${{ needs.sync.outputs.release_tag }}
+
+            基于原版 [farion1231/cc-switch](https://github.com/farion1231/cc-switch) 的 tag `${{ needs.sync.outputs.upstream_tag }}` 与本仓库 `feat/s3-addressing-style` 分支自动构建。
+
+            ### 下载
+
+            - **Windows (x86_64)**: `CC-Switch-${{ needs.sync.outputs.release_tag }}-Windows.msi`（安装版）或 `CC-Switch-${{ needs.sync.outputs.release_tag }}-Windows-Portable.zip`（绿色版）
+            - **Linux (x86_64)**: `CC-Switch-${{ needs.sync.outputs.release_tag }}-Linux-x86_64.AppImage` / `.deb` / `.rpm`
+
+            > 构建未做 updater 签名，应用内自动更新不可用，请手动下载安装。
+          files: release-assets/*
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
