@@ -254,6 +254,12 @@ export const APP_IDS_WITH = Object.fromEntries(
   ]),
 ) as { [Cap in keyof AppCaps]: AppIdWith<Cap>[] };
 
+/** 有路由模式的应用，本地路由的在前、Claude Desktop 在最后（后端 `route_mode_apps` 同序） */
+export const ROUTE_MODE_APP_IDS: AppIdWith<"routeMode">[] = [
+  ...APP_IDS_WITH.localProxy,
+  ...APP_IDS_WITH.routeMode.filter((app) => !APP_SPECS[app].localProxy),
+];
+
 /** `app` 支持 `cap`；不认识的应用 ID 为 false */
 export function appHas<Cap extends keyof AppCaps>(
   app: string,

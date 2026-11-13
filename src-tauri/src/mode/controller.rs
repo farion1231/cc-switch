@@ -45,10 +45,13 @@ use super::operation;
 use super::stack::{self, StackModel, StackView};
 use super::state::{op, Contract, Mode, ModeState, PendingTarget, StackState};
 
-/// 有路由模式的应用（[`AppSpec::route_mode`](crate::app_config::AppSpec::route_mode)），含 Claude Desktop：
-/// 它经同一个路由服务转发，只是没有故障转移。
+/// 有路由模式的应用（[`AppSpec::route_mode`](crate::app_config::AppSpec::route_mode)）：本地路由的
+/// 在前，Claude Desktop 在最后（它经同一个路由服务转发，只是没有故障转移）。
 fn route_mode_apps() -> impl Iterator<Item = AppType> {
-    AppType::all().filter(|app| app.spec().route_mode)
+    let apps = || AppType::all().filter(|app| app.spec().route_mode);
+    apps()
+        .filter(|app| app.spec().local_proxy)
+        .chain(apps().filter(|app| !app.spec().local_proxy))
 }
 
 fn err(error: impl std::fmt::Display) -> String {
@@ -2007,6 +2010,21 @@ mod tests {
     use crate::provider::ProviderMeta;
     use serde_json::Map;
     use std::path::Path;
+
+    /// 启动、退出、重写路由按这个顺序处理各应用，Claude Desktop 在最后。
+    #[test]
+    fn route_mode_apps_keep_desktop_last() {
+        assert_eq!(
+            route_mode_apps().collect::<Vec<_>>(),
+            [
+                AppType::Claude,
+                AppType::Codex,
+                AppType::Gemini,
+                AppType::GrokBuild,
+                AppType::ClaudeDesktop,
+            ]
+        );
+    }
 
     fn assert_env_str(env: &Map<String, Value>, key: &str, expected: Option<&str>) {
         assert_eq!(env.get(key).and_then(Value::as_str), expected, "{key}");
