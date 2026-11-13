@@ -665,42 +665,28 @@ impl AppType {
         self.spec().id
     }
 
-    /// 累加式应用，见 [`AppSpec::additive`]
-    pub fn is_additive_mode(&self) -> bool {
-        self.spec().additive
-    }
+    /// 所有应用，按默认顺序
+    pub const ALL: [AppType; 16] = [
+        AppType::Claude,
+        AppType::ClaudeDesktop,
+        AppType::Codex,
+        AppType::Gemini,
+        AppType::GrokBuild,
+        AppType::OpenCode,
+        AppType::OpenClaw,
+        AppType::Hermes,
+        AppType::Pi,
+        AppType::Mcode,
+        AppType::Kimi,
+        AppType::Dsh,
+        AppType::Agy,
+        AppType::Omp,
+        AppType::Copilot,
+        AppType::WorkBuddy,
+    ];
 
-    /// 见 [`AppSpec::local_proxy`]
-    pub fn supports_local_proxy(&self) -> bool {
-        self.spec().local_proxy
-    }
-
-    /// 见 [`AppSpec::route_mode`]
-    pub fn has_route_mode(&self) -> bool {
-        self.spec().route_mode
-    }
-
-    /// Return an iterator over all app types
     pub fn all() -> impl Iterator<Item = AppType> {
-        [
-            AppType::Claude,
-            AppType::ClaudeDesktop,
-            AppType::Codex,
-            AppType::Gemini,
-            AppType::GrokBuild,
-            AppType::OpenCode,
-            AppType::OpenClaw,
-            AppType::Hermes,
-            AppType::Pi,
-            AppType::Mcode,
-            AppType::Kimi,
-            AppType::Dsh,
-            AppType::Agy,
-            AppType::Omp,
-            AppType::Copilot,
-            AppType::WorkBuddy,
-        ]
-        .into_iter()
+        Self::ALL.into_iter()
     }
 }
 

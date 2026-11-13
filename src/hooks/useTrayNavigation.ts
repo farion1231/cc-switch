@@ -2,8 +2,8 @@ import { useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { AppId } from "@/lib/api/types";
-import { APP_IDS } from "@/config/appConfig";
 import { SETTINGS_SECTIONS, type SettingsSection } from "@/lib/navigation";
+import { APP_IDS } from "@/config/appSpecs";
 
 /** 托盘让主界面去的地方（后端 `tray::TrayNavigation`）。 */
 export interface TrayNavigation {

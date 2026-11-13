@@ -1,8 +1,7 @@
 import React from "react";
 import type { AppId } from "@/lib/api/types";
-import type { PiFamilyAppId } from "@/lib/api/pi";
 import type { VisibleApps } from "@/types";
-import { APP_IDS, APP_SPECS, appIdsWith, type AppIdWith } from "./appSpecs";
+import { APP_IDS } from "./appSpecs";
 import {
   ClaudeIcon,
   CodexIcon,
@@ -18,26 +17,9 @@ export interface AppConfig {
   badgeClass: string;
 }
 
-export { APP_IDS };
-
-export const DEFAULT_VISIBLE_APPS: VisibleApps = {
-  claude: true,
-  "claude-desktop": true,
-  codex: true,
-  gemini: true,
-  grokbuild: true,
-  opencode: true,
-  openclaw: true,
-  hermes: true,
-  pi: true,
-  mcode: true,
-  kimi: true,
-  dsh: true,
-  agy: true,
-  omp: true,
-  copilot: true,
-  workbuddy: true,
-};
+export const DEFAULT_VISIBLE_APPS = Object.fromEntries(
+  APP_IDS.map((app) => [app, true]),
+) as VisibleApps;
 
 /**
  * 应用页和侧栏的应用顺序：先按用户拖出来的顺序（`settings.appOrder`，不认识的 ID 忽略），
@@ -60,70 +42,6 @@ export function orderAppIds(saved: readonly string[] | undefined): AppId[] {
     ordered.splice(previous ? ordered.indexOf(previous) + 1 : 0, 0, app);
   });
   return ordered;
-}
-
-// 下面的应用列表都从 `APP_SPECS`（`./appSpecs`）派生，要改某个应用支持什么功能，改那张表。
-
-/** App IDs shown in Skills panels. */
-export const SKILLS_APP_IDS: AppId[] = appIdsWith("skills");
-
-export type ProxyAppId = AppIdWith<"localProxy">;
-
-/** Apps with a complete local gateway + failover data plane. */
-export const PROXY_APP_IDS = appIdsWith("localProxy");
-
-export function isProxyAppId(appId: string): appId is ProxyAppId {
-  return (PROXY_APP_IDS as string[]).includes(appId);
-}
-
-/** 有直连 / 路由模式的应用（后端 `AppType::has_route_mode`）。 */
-export type ModeAppId = AppIdWith<"routeMode">;
-
-/** 本地路由的应用在前，Claude Desktop 这类只有路由模式的排在后面。 */
-export const MODE_APP_IDS: ModeAppId[] = [
-  ...PROXY_APP_IDS,
-  ...appIdsWith("routeMode").filter((app) => !APP_SPECS[app].localProxy),
-];
-
-export function isModeAppId(appId: string): appId is ModeAppId {
-  return (MODE_APP_IDS as string[]).includes(appId);
-}
-
-/** 支持 Stack 模式的应用（后端 `mode::stack::supports_stack`）。 */
-export type StackAppId = AppIdWith<"stack">;
-
-export const STACK_APP_IDS = appIdsWith("stack");
-
-export function isStackAppId(appId: string): appId is StackAppId {
-  return (STACK_APP_IDS as string[]).includes(appId);
-}
-
-/** 累加式应用（后端 `AppType::is_additive_mode`）。 */
-export type AdditiveAppId = AppIdWith<"additive">;
-
-export const ADDITIVE_APP_IDS = appIdsWith("additive");
-
-export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
-  return (ADDITIVE_APP_IDS as string[]).includes(appId);
-}
-
-export const PI_FAMILY_APP_IDS: PiFamilyAppId[] = appIdsWith("piFamily");
-
-export function isPiFamilyApp(appId: string): appId is PiFamilyAppId {
-  return (PI_FAMILY_APP_IDS as string[]).includes(appId);
-}
-
-export const EDITOR_VIEW_APP_IDS: AppId[] = appIdsWith("editorView");
-
-export function usesEditorView(appId: AppId): boolean {
-  return EDITOR_VIEW_APP_IDS.includes(appId);
-}
-
-export type McpAppId = AppIdWith<"mcp">;
-export const MCP_APP_IDS = appIdsWith("mcp");
-
-export function isMcpAppId(appId: string): appId is McpAppId {
-  return (MCP_APP_IDS as string[]).includes(appId);
 }
 
 export function usesGeminiStyleForm(appId: string): boolean {

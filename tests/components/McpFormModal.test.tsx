@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { McpServer } from "@/types";
 import McpFormModal from "@/components/mcp/McpFormModal";
-import { MCP_APP_IDS } from "@/config/appConfig";
+import { APP_IDS_WITH } from "@/config/appSpecs";
 
 const mocks = vi.hoisted(() => ({
   upsert: vi.fn(),
@@ -35,7 +35,7 @@ vi.mock("@/hooks/useMcp", () => ({
   useUpsertMcpServer: () => ({ mutateAsync: mocks.upsert }),
 }));
 
-const ALL_ON = Object.fromEntries(MCP_APP_IDS.map((app) => [app, true]));
+const ALL_ON = Object.fromEntries(APP_IDS_WITH.mcp.map((app) => [app, true]));
 
 function renderForm(
   props: Partial<React.ComponentProps<typeof McpFormModal>> = {},

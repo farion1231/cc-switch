@@ -45,15 +45,11 @@ use super::operation;
 use super::stack::{self, StackModel, StackView};
 use super::state::{op, Contract, Mode, ModeState, PendingTarget, StackState};
 
-/// 有路由模式的应用（[`AppType::has_route_mode`]）。Claude Desktop 也在内：它经同一个路由
-/// 服务转发，只是没有故障转移。
-pub const PROXY_APPS: [AppType; 5] = [
-    AppType::Claude,
-    AppType::Codex,
-    AppType::Gemini,
-    AppType::GrokBuild,
-    AppType::ClaudeDesktop,
-];
+/// 有路由模式的应用（[`AppSpec::route_mode`](crate::app_config::AppSpec::route_mode)），含 Claude Desktop：
+/// 它经同一个路由服务转发，只是没有故障转移。
+fn route_mode_apps() -> impl Iterator<Item = AppType> {
+    AppType::all().filter(|app| app.spec().route_mode)
+}
 
 fn err(error: impl std::fmt::Display) -> String {
     error.to_string()
@@ -668,7 +664,7 @@ fn usable_direct<'a>(app: &AppType, direct: Option<&'a Provider>) -> Option<&'a 
 }
 
 fn require_proxy_app(app: &AppType) -> Result<(), String> {
-    if app.has_route_mode() {
+    if app.spec().route_mode {
         Ok(())
     } else {
         Err(format!("{} 不支持本地路由", app.as_str()))
@@ -708,7 +704,7 @@ pub(crate) fn lock_settled_blocking(
     state: &AppState,
     app: &AppType,
 ) -> Result<Option<OwnedMutexGuard<()>>, AppError> {
-    if !app.has_route_mode() {
+    if !app.spec().route_mode {
         return Ok(None);
     }
     futures::executor::block_on(lock_settled(state, app)).map(Some)
@@ -750,7 +746,7 @@ async fn try_enter_with_route(
     route: Option<&str>,
 ) -> Result<(), String> {
     require_proxy_app(app)?;
-    if stack_mode && !stack::supports_stack(app) {
+    if stack_mode && !app.spec().stack {
         return Err(format!(
             "{} 不支持聚合模式 ({} does not support the Aggregation mode)",
             app.as_str(),
@@ -915,7 +911,7 @@ pub async fn exit(state: &AppState, app: &AppType) -> Result<(), String> {
 /// Codex 退回直连，名单留着。返回退回直连的应用。
 pub async fn exit_apps_in_mode(state: &AppState, stack: bool) -> Result<Vec<String>, String> {
     let mut exited = Vec::new();
-    for app in PROXY_APPS.into_iter().filter(stack::supports_stack) {
+    for app in route_mode_apps().filter(|app| app.spec().stack) {
         {
             let _guard = lock_settled(state, &app).await.map_err(|e| e.to_string())?;
             if !current::is_proxy(&app) || settled_stack(&app)?.enabled != stack {
@@ -1000,7 +996,7 @@ fn write_direct_for_exit(
 
 /// 没有应用在代理模式（含 Claude Desktop 的路由模式）时，停掉代理服务。
 async fn stop_server_if_unused(state: &AppState) {
-    if current::proxy_flags(PROXY_APPS).contains(&true) {
+    if current::any_proxy() {
         return;
     }
     if state.proxy_service.is_running().await {
@@ -1013,7 +1009,7 @@ async fn stop_server_if_unused(state: &AppState) {
 /// 「关闭本地路由」：全部退回直连，再停掉代理服务。
 pub async fn exit_all(state: &AppState) -> Result<(), String> {
     let mut errors = Vec::new();
-    for app in PROXY_APPS {
+    for app in route_mode_apps() {
         let result = match lock_settled(state, &app).await {
             Ok(_guard) => exit_locked(state, &app, false),
             Err(error) => Err(error.to_string()),
@@ -1044,10 +1040,7 @@ pub async fn exit_all(state: &AppState) -> Result<(), String> {
 /// 分离反而会在 CC Switch 关着时把 Desktop 换成直连那家（映射卡写不进去时是官方登录），
 /// 下次打开 CC Switch 又换回来，每次都要重启 Desktop。
 pub async fn detach_all(state: &AppState) {
-    for app in PROXY_APPS
-        .into_iter()
-        .filter(|app| *app != AppType::ClaudeDesktop)
-    {
+    for app in route_mode_apps().filter(|app| *app != AppType::ClaudeDesktop) {
         let result = match lock_settled(state, &app).await {
             Ok(_guard) => exit_locked(state, &app, true),
             Err(error) => Err(error.to_string()),
@@ -1319,7 +1312,7 @@ pub async fn set_stack_member(
     provider_id: &str,
     enabled: bool,
 ) -> Result<Option<&'static str>, StackWriteError> {
-    if !stack::supports_stack(app) {
+    if !app.spec().stack {
         return Err(StackWriteError::unchanged(format!(
             "{} 不支持聚合的模型 ({} does not support aggregated models)",
             app.as_str(),
@@ -1403,7 +1396,7 @@ async fn publish_stack(state: &AppState, app: &AppType, next: StackState) -> Res
 /// 模型目录等），界面「已添加」却按 `sort_index` 排。只重排已有成员，不增删；顺序没变就什么
 /// 都不写。不在库里的成员（理论上不会有）排到最后，保持原相对顺序。
 pub async fn sync_stack_order(state: &AppState, app: &AppType) -> Result<(), String> {
-    if !stack::supports_stack(app) {
+    if !app.spec().stack {
         return Ok(());
     }
     let _guard = lock_settled(state, app).await.map_err(err)?;
@@ -1428,7 +1421,7 @@ pub async fn sync_stack_order(state: &AppState, app: &AppType) -> Result<(), Str
 
 /// Stack 模式的状态、名单里的每一家和它发布的模型 id（给前端）。
 pub fn stack_views(state: &AppState, app: &AppType) -> Result<StackView, String> {
-    if !stack::supports_stack(app) {
+    if !app.spec().stack {
         return Ok(StackView::default());
     }
     let stack = settled_stack(app)?;
@@ -1685,7 +1678,7 @@ fn codex_official_login_now(
 /// 不了）不影响其余应用：旧地址已经没人监听，跳过的应用会一直连不上。失败的汇总报错。
 pub async fn resync_routes(state: &AppState) -> Result<(), String> {
     let mut failures = Vec::new();
-    for app in PROXY_APPS {
+    for app in route_mode_apps() {
         if let Err(error) = resync_route(state, &app).await {
             log::warn!("按新的代理地址重写 {} 失败: {error}", app.as_str());
             failures.push(format!("{}: {error}", app.as_str()));
@@ -1751,7 +1744,7 @@ pub async fn record_failover_route(
 /// 有遗留物时以 `enabled` 为准（旧版是最后一个写入者）；没有时以 `live-state.json`
 /// 为准，它还没有值就按 `enabled` 定。
 pub async fn startup(state: &AppState) {
-    for app in PROXY_APPS {
+    for app in route_mode_apps() {
         let result = match lock_settled(state, &app).await {
             Ok(_guard) => startup_app(state, &app).await,
             Err(error) => Err(error.to_string()),
@@ -1808,7 +1801,7 @@ async fn startup_app(state: &AppState, app: &AppType) -> Result<(), String> {
             Ok(()) => return Ok(()),
             Err(error) => {
                 log::error!("启动时接上 {} 的代理失败，退回直连: {error}", app.as_str());
-                let stack = stack::supports_stack(app)
+                let stack = app.spec().stack
                     && settled_stack(app)
                         .map(|stack| stack.enabled)
                         .unwrap_or(false);
@@ -1962,7 +1955,7 @@ pub fn app_mode_view(state: &AppState, app: &AppType) -> Result<AppModeView, Str
     let mode = current::mode_state(app);
     let name = if !mode.is_proxy() {
         "direct"
-    } else if stack::supports_stack(app) && settled_stack(app)?.enabled {
+    } else if app.spec().stack && settled_stack(app)?.enabled {
         "stack"
     } else {
         "route"

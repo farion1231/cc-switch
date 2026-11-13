@@ -32,13 +32,14 @@ import {
 } from "@/utils/deeplinkRisk";
 import { decodeBase64Utf8 } from "@/lib/utils/base64";
 import { Switch } from "@/components/ui/switch";
-import { getAppLabel, isAdditiveAppId } from "@/config/appConfig";
+import { getAppLabel } from "@/config/appConfig";
 import { normalizeIconDataUri } from "@/utils/customIcon";
 import {
   CODING_PLAN_PROVIDERS,
   codingPlanEnabledByDefault,
   detectCodingPlanProvider,
 } from "@/config/codingPlanProviders";
+import { appHas } from "@/config/appSpecs";
 
 const API_FORMAT_LABELS: Record<
   NonNullable<DeepLinkImportRequest["apiFormat"]>,
@@ -76,7 +77,7 @@ function initialActivation(request: DeepLinkImportRequest): boolean {
   if (
     request.resource === "provider" &&
     request.app &&
-    isAdditiveAppId(request.app)
+    appHas(request.app, "additive")
   ) {
     return request.enabled ?? true;
   }
@@ -987,7 +988,7 @@ export function DeepLinkImportDialog() {
                           htmlFor="deeplink-activate-after-import"
                           className="text-sm font-medium"
                         >
-                          {request.app && isAdditiveAppId(request.app)
+                          {request.app && appHas(request.app, "additive")
                             ? request.app === "pi"
                               ? t("deeplink.enableInPiAfterImport")
                               : t("deeplink.addToAppAfterImport", {
@@ -1002,7 +1003,7 @@ export function DeepLinkImportDialog() {
                         />
                       </div>
                       {activateAfterImport &&
-                        !(request.app && isAdditiveAppId(request.app)) && (
+                        !(request.app && appHas(request.app, "additive")) && (
                           <div className="text-warning-text text-sm flex items-start gap-2">
                             <span aria-hidden="true">⚠️</span>
                             <span>{t("deeplink.providerEnabledWarning")}</span>

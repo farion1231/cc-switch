@@ -142,7 +142,7 @@ pub fn import_provider_from_deeplink(
     // 初始值）。累加式应用（OpenCode、OpenClaw、Hermes、Pi）没有「切换」：开关决定这家要不要
     // 写进应用的配置文件；旧链接没写时照旧写进去。切换式应用开关关闭时只存进列表：`add` 在
     // 还没有当前供应商时会让这家直接生效，所以走不写客户端配置的路径。
-    let additive = app_type.is_additive_mode();
+    let additive = app_type.spec().additive;
     let activate = if additive {
         merged_request.enabled.unwrap_or(true)
     } else {
@@ -354,7 +354,7 @@ pub(super) fn check_link_values(
     app_type: &AppType,
     request: &DeepLinkImportRequest,
 ) -> Result<(), AppError> {
-    if !app_type.is_additive_mode() {
+    if !app_type.spec().additive {
         return Ok(());
     }
     let is_pi = matches!(app_type, AppType::Pi);

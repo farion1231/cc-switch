@@ -1,6 +1,5 @@
 import { useTranslation } from "react-i18next";
 import { ChevronRight } from "lucide-react";
-import type { ProxyAppId } from "@/config/appConfig";
 import {
   Sheet,
   SheetBody,
@@ -14,9 +13,10 @@ import { Button } from "@/components/ui/button";
 import { AutoFailoverConfigPanel } from "@/components/proxy/AutoFailoverConfigPanel";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { CodexPauseOfficialLoginSection } from "./CodexPauseOfficialLogin";
+import type { AppIdWith } from "@/config/appSpecs";
 
 interface RouteSettingsSheetProps {
-  app: ProxyAppId;
+  app: AppIdWith<"localProxy">;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onOpenSettings: () => void;

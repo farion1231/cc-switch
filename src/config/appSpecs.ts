@@ -246,9 +246,21 @@ export type AppIdWith<Cap extends keyof AppCaps> = {
 /** 所有应用，按默认顺序 */
 export const APP_IDS = Object.keys(APP_SPECS) as AppId[];
 
-/** `cap` 为 true 的应用，按默认顺序 */
-export function appIdsWith<Cap extends keyof AppCaps>(
+/** 每项功能为 true 的应用，按默认顺序 */
+export const APP_IDS_WITH = Object.fromEntries(
+  (Object.keys(APP_SPECS.claude) as (keyof AppCaps)[]).map((cap) => [
+    cap,
+    APP_IDS.filter((app) => APP_SPECS[app][cap]),
+  ]),
+) as { [Cap in keyof AppCaps]: AppIdWith<Cap>[] };
+
+/** `app` 支持 `cap`；不认识的应用 ID 为 false */
+export function appHas<Cap extends keyof AppCaps>(
+  app: string,
   cap: Cap,
-): AppIdWith<Cap>[] {
-  return APP_IDS.filter((app) => APP_SPECS[app][cap]) as AppIdWith<Cap>[];
+): app is AppIdWith<Cap> {
+  return (
+    Object.prototype.hasOwnProperty.call(APP_SPECS, app) &&
+    APP_SPECS[app as AppId][cap]
+  );
 }

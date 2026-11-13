@@ -449,7 +449,7 @@ pub fn mirror_proxy_flag(
     // Claude Desktop 没有 `proxy_config` 行（表的 CHECK 也不允许），旧版不认它的模式。
     if !app
         .parse::<crate::app_config::AppType>()
-        .is_ok_and(|app| app.supports_local_proxy())
+        .is_ok_and(|app| app.spec().local_proxy)
     {
         return Ok(());
     }
