@@ -6,6 +6,11 @@ import { describe, expect, it, vi } from "vitest";
 import { CodexFormFields } from "@/components/providers/forms/CodexFormFields";
 import { Form } from "@/components/ui/form";
 
+vi.mock("@/hooks/useGlobalProxy", () => ({
+  useGlobalProxyUrl: () => ({ data: null }),
+  useTestProxy: () => ({ mutate: vi.fn(), isPending: false }),
+}));
+
 vi.mock("@/hooks/useModelMetadataFill", () => ({
   useModelMetadataFill: () => () => {},
 }));
@@ -51,6 +56,8 @@ function codexFormProps(
     speedTestEndpoints: [],
     customUserAgent: "",
     onCustomUserAgentChange: vi.fn(),
+    proxyUrl: "",
+    onProxyUrlChange: vi.fn(),
     localProxyHeadersOverride: "",
     onLocalProxyHeadersOverrideChange: vi.fn(),
     localProxyBodyOverride: "",

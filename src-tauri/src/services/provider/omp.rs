@@ -15,6 +15,7 @@ fn prepare(provider: &mut Provider) -> Result<(), AppError> {
         usage_script: meta.usage_script,
         is_partner: meta.is_partner,
         partner_promotion_key: meta.partner_promotion_key,
+        proxy_url: meta.proxy_url,
         ..Default::default()
     });
     Ok(())
@@ -269,6 +270,53 @@ mod tests {
             defaults
         );
         assert_eq!(fs::read(dir.join("agent.db")).unwrap(), b"native login");
+    }
+    #[test]
+    #[serial_test::serial]
+    fn provider_proxy_survives_add_update_and_usage_metadata_save() {
+        let _agent = TestAgentDir::new();
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        let proxy = "http://127.0.0.1:7890";
+        let saved_proxy = |state: &AppState| {
+            state
+                .db
+                .get_provider_by_id("cc-switch-test", "omp")
+                .unwrap()
+                .unwrap()
+                .meta
+                .and_then(|meta| meta.proxy_url)
+        };
+
+        let mut provider = provider();
+        provider.meta = Some(ProviderMeta {
+            proxy_url: Some(proxy.into()),
+            custom_user_agent: Some("dropped".into()),
+            ..Default::default()
+        });
+        ProviderService::add(&state, AppType::Omp, provider.clone(), true).unwrap();
+        assert_eq!(saved_proxy(&state).as_deref(), Some(proxy));
+
+        provider.settings_config["models"][0]["id"] = json!("b");
+        ProviderService::update(&state, AppType::Omp, None, provider).unwrap();
+        assert_eq!(saved_proxy(&state).as_deref(), Some(proxy));
+
+        let script = serde_json::from_value(json!({
+            "enabled": true,
+            "language": "javascript",
+            "code": "return {}",
+        }))
+        .unwrap();
+        ProviderService::update_pi_usage_script(&state, AppType::Omp, "cc-switch-test", script)
+            .unwrap();
+        assert_eq!(saved_proxy(&state).as_deref(), Some(proxy));
+        let meta = state
+            .db
+            .get_provider_by_id("cc-switch-test", "omp")
+            .unwrap()
+            .unwrap()
+            .meta
+            .unwrap();
+        assert_eq!(meta.custom_user_agent, None);
     }
     #[test]
     #[serial_test::serial]

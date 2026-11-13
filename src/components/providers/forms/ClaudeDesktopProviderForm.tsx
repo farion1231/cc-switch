@@ -25,6 +25,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { BasicFormFields } from "./BasicFormFields";
+import { ProviderProxyField } from "./ProviderProxyField";
 import { CodexOAuthSection } from "./CodexOAuthSection";
 import { CopilotAuthSection } from "./CopilotAuthSection";
 import { XaiOAuthSection } from "./XaiOAuthSection";
@@ -295,6 +296,9 @@ export function ClaudeDesktopProviderForm({
   >(() => resolveManagedAccountId(initialData?.meta, "xai_oauth"));
   const [codexFastMode, setCodexFastMode] = useState<boolean>(
     () => initialData?.meta?.codexFastMode ?? false,
+  );
+  const [proxyUrl, setProxyUrl] = useState(
+    () => initialData?.meta?.proxyUrl ?? "",
   );
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(
     "custom",
@@ -697,7 +701,14 @@ export function ClaudeDesktopProviderForm({
 
     setIsFetchingModels(true);
     try {
-      const models = await fetchModelsForConfig(baseUrl.trim(), apiKey.trim());
+      const models = await fetchModelsForConfig(
+        baseUrl.trim(),
+        apiKey.trim(),
+        undefined,
+        undefined,
+        undefined,
+        { proxyUrl },
+      );
       setFetchedModels(models);
       toast.success(
         t("providerForm.fetchModelsSuccess", {
@@ -737,6 +748,7 @@ export function ClaudeDesktopProviderForm({
       delete meta.claudeReasoningEffort;
       delete meta.endpointAutoSelect;
       delete meta.isFullUrl;
+      delete meta.proxyUrl;
       await onSubmit({
         ...values,
         name: values.name.trim(),
@@ -940,6 +952,8 @@ export function ClaudeDesktopProviderForm({
     };
 
     meta.claudeDesktopModelRoutes = routeMap;
+    if (proxyUrl.trim()) meta.proxyUrl = proxyUrl.trim();
+    else delete meta.proxyUrl;
     if (
       effectiveMode === "proxy" &&
       (meta.apiFormat === "openai_chat" ||
@@ -1478,6 +1492,15 @@ export function ClaudeDesktopProviderForm({
                 </div>
               )}
             </div>
+
+            {activeProviderType !== "github_copilot" && (
+              <ProviderProxyField
+                id="claude-desktop-provider-proxy-url"
+                value={proxyUrl}
+                onChange={setProxyUrl}
+                directOnly={effectiveMode !== "proxy"}
+              />
+            )}
 
             <FormField
               control={form.control}

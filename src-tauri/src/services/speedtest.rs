@@ -22,10 +22,12 @@ pub struct EndpointLatency {
 pub struct SpeedtestService;
 
 impl SpeedtestService {
-    /// 测试一组端点的响应延迟。
+    /// 测试一组端点的响应延迟。`provider_proxy` 为表单里当前填写的供应商代理，
+    /// 按 [`get_for_provider`](crate::proxy::http_client::get_for_provider) 的优先级生效。
     pub async fn test_endpoints(
         urls: Vec<String>,
         timeout_secs: Option<u64>,
+        provider_proxy: Option<&str>,
     ) -> Result<Vec<EndpointLatency>, AppError> {
         if urls.is_empty() {
             return Ok(vec![]);
@@ -67,10 +69,23 @@ impl SpeedtestService {
         let timeout = Self::sanitize_timeout(timeout_secs);
         let request_timeout = std::time::Duration::from_secs(timeout);
 
-        let tasks = valid_targets.into_iter().map(|(idx, trimmed, parsed_url)| {
-            // 使用全局 HTTP 客户端（已包含代理配置）；本机地址直连
-            let client = crate::proxy::http_client::get_for_url(&trimmed);
-            async move {
+        let mut tasks = Vec::with_capacity(valid_targets.len());
+        for (idx, trimmed, parsed_url) in valid_targets {
+            // 本机地址直连 > 全局代理 > 供应商代理 > 系统代理
+            let client = match crate::proxy::http_client::get_for_provider(&trimmed, provider_proxy)
+            {
+                Ok(client) => client,
+                Err(err) => {
+                    results[idx] = Some(EndpointLatency {
+                        url: trimmed,
+                        latency: None,
+                        status: None,
+                        error: Some(err),
+                    });
+                    continue;
+                }
+            };
+            tasks.push(async move {
                 // 先进行一次热身请求，忽略结果，仅用于复用连接/绕过首包惩罚。
                 let _ = client
                     .get(parsed_url.clone())
@@ -107,8 +122,8 @@ impl SpeedtestService {
                 };
 
                 (idx, latency)
-            }
-        });
+            });
+        }
 
         for (idx, latency) in join_all(tasks).await {
             results[idx] = Some(latency);
@@ -149,9 +164,12 @@ mod tests {
 
     #[test]
     fn test_endpoints_handles_empty_list() {
-        let result =
-            tauri::async_runtime::block_on(SpeedtestService::test_endpoints(Vec::new(), Some(5)))
-                .expect("empty list should succeed");
+        let result = tauri::async_runtime::block_on(SpeedtestService::test_endpoints(
+            Vec::new(),
+            Some(5),
+            None,
+        ))
+        .expect("empty list should succeed");
         assert!(result.is_empty());
     }
 
@@ -159,6 +177,7 @@ mod tests {
     fn test_endpoints_reports_invalid_url() {
         let result = tauri::async_runtime::block_on(SpeedtestService::test_endpoints(
             vec!["not a url".into(), "".into()],
+            None,
             None,
         ))
         .expect("invalid inputs should still succeed");
@@ -176,6 +195,41 @@ mod tests {
             result[1].error.as_deref(),
             Some("URL 不能为空"),
             "empty url should report validation error"
+        );
+    }
+
+    #[test]
+    fn test_endpoints_uses_provider_proxy() {
+        // 供应商代理无效时，远端地址应报代理错误（说明确实用了供应商代理），
+        // 本机地址不受影响、仍然直连。
+        let result = tauri::async_runtime::block_on(SpeedtestService::test_endpoints(
+            vec![
+                "https://api.example.com".into(),
+                "http://127.0.0.1:9".into(),
+            ],
+            Some(2),
+            Some("ftp://127.0.0.1:1"),
+        ))
+        .expect("speedtest should succeed");
+
+        assert_eq!(result.len(), 2);
+        assert!(
+            result[0]
+                .error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Invalid proxy scheme"),
+            "remote endpoint should go through the provider proxy: {:?}",
+            result[0].error
+        );
+        assert!(
+            !result[1]
+                .error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("proxy"),
+            "loopback endpoint should bypass the provider proxy: {:?}",
+            result[1].error
         );
     }
 }

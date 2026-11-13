@@ -212,16 +212,121 @@ pub fn get_for_url(url: &str) -> Client {
     }
 }
 
-/// 发往 `url` 时应使用的上游代理：本机地址返回 None（直连），其余返回当前全局代理
-pub fn proxy_url_for(url: &str) -> Option<String> {
-    upstream_proxy_for(url, get_current_proxy_url())
+/// 供应商级代理地址：trim 后为空视为未设置
+fn normalize_provider_proxy(provider_proxy: Option<&str>) -> Option<&str> {
+    provider_proxy.map(str::trim).filter(|s| !s.is_empty())
 }
 
-fn upstream_proxy_for(url: &str, current: Option<String>) -> Option<String> {
+/// 发往 `url` 时应使用的上游代理，考虑供应商级代理。
+///
+/// 优先级：本机地址直连 > 全局代理 > 供应商代理 > 无（跟随系统代理）。
+/// 全局代理启用时供应商代理不生效（前端同时把供应商代理输入置灰）。
+pub fn proxy_url_for_provider(url: &str, provider_proxy: Option<&str>) -> Option<String> {
+    resolve_upstream_proxy(url, get_current_proxy_url(), provider_proxy)
+}
+
+fn resolve_upstream_proxy(
+    url: &str,
+    global: Option<String>,
+    provider_proxy: Option<&str>,
+) -> Option<String> {
     if is_loopback_url(url) {
-        None
-    } else {
-        current
+        return None;
+    }
+    global.or_else(|| normalize_provider_proxy(provider_proxy).map(str::to_owned))
+}
+
+/// 供应商代理只在「非本机目标且未启用全局代理」时生效；返回此时该用的代理地址
+fn provider_proxy_in_effect<'a>(url: &str, provider_proxy: Option<&'a str>) -> Option<&'a str> {
+    let proxy = normalize_provider_proxy(provider_proxy)?;
+    if is_loopback_url(url) || get_current_proxy_url().is_some() {
+        return None;
+    }
+    Some(proxy)
+}
+
+/// 按供应商代理缓存的客户端：同一代理地址复用连接池
+static PROVIDER_CLIENTS: OnceCell<std::sync::Mutex<std::collections::HashMap<String, Client>>> =
+    OnceCell::new();
+
+/// 按目标地址和供应商代理取客户端。
+///
+/// 本机地址直连；启用了全局代理或供应商没配代理时同 [`get_for_url`]；
+/// 否则返回走供应商代理的客户端（按代理地址缓存）。
+pub fn get_for_provider(url: &str, provider_proxy: Option<&str>) -> Result<Client, String> {
+    match provider_proxy_in_effect(url, provider_proxy) {
+        Some(proxy) => cached_provider_client(proxy),
+        None => Ok(get_for_url(url)),
+    }
+}
+
+/// 走指定代理的客户端，按代理地址缓存
+fn cached_provider_client(proxy: &str) -> Result<Client, String> {
+    let cache = PROVIDER_CLIENTS.get_or_init(Default::default);
+    if let Ok(clients) = cache.lock() {
+        if let Some(client) = clients.get(proxy) {
+            return Ok(client.clone());
+        }
+    }
+
+    let client = build_client(Some(proxy))?;
+    if let Ok(mut clients) = cache.lock() {
+        clients.insert(proxy.to_string(), client.clone());
+    }
+    Ok(client)
+}
+
+tokio::task_local! {
+    /// 当前任务所属供应商的代理地址。用量 / 余额查询经过好几层通用函数才发请求，
+    /// 不逐层传参，而是在入口用 [`scope_provider_proxy`] 设好，由 [`provider_scoped`] 读取。
+    static SCOPED_PROVIDER_PROXY: Option<String>;
+}
+
+/// 在 `fut` 内把供应商代理设为 `provider_proxy`（空白视为未设置）。
+///
+/// 只对 `fut` 所在任务生效；`fut` 里 `tokio::spawn` 出去的任务读不到。
+pub async fn scope_provider_proxy<F: std::future::Future>(
+    provider_proxy: Option<&str>,
+    fut: F,
+) -> F::Output {
+    let proxy = normalize_provider_proxy(provider_proxy).map(str::to_owned);
+    SCOPED_PROVIDER_PROXY.scope(proxy, fut).await
+}
+
+/// 按当前任务的供应商代理取客户端（用量、余额查询用）。
+///
+/// 启用了全局代理、或不在 [`scope_provider_proxy`] 里、或供应商没配代理时同 [`get`]；
+/// 否则走供应商代理。与 [`get`] 一样不区分本机地址。
+pub fn provider_scoped() -> Client {
+    match scoped_provider_proxy() {
+        Some(proxy) if get_current_proxy_url().is_none() => cached_provider_client(&proxy)
+            .unwrap_or_else(|e| {
+                log::warn!(
+                    "[GlobalProxy] Provider proxy {} unusable, falling back: {e}",
+                    mask_url(&proxy)
+                );
+                get()
+            }),
+        _ => get(),
+    }
+}
+
+/// 当前任务的供应商代理；不在 [`scope_provider_proxy`] 里时为 None
+fn scoped_provider_proxy() -> Option<String> {
+    SCOPED_PROVIDER_PROXY
+        .try_with(|proxy| proxy.clone())
+        .ok()
+        .flatten()
+}
+
+/// 不跟随重定向、考虑供应商代理的客户端：规则同 [`get_for_provider`]
+pub fn no_redirect_for_provider(url: &str, provider_proxy: Option<&str>) -> Result<Client, String> {
+    match provider_proxy_in_effect(url, provider_proxy) {
+        Some(proxy) => build_client_from(
+            base_builder().redirect(reqwest::redirect::Policy::none()),
+            Some(proxy),
+        ),
+        None => no_redirect_for_url(url),
     }
 }
 
@@ -440,6 +545,48 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_upstream_proxy_precedence() {
+        let global = Some("http://127.0.0.1:7890".to_string());
+        let provider = Some("socks5://10.0.0.2:1080");
+        let remote = "https://api.example.com/v1/messages";
+
+        // 全局代理优先于供应商代理
+        assert_eq!(
+            resolve_upstream_proxy(remote, global.clone(), provider),
+            global
+        );
+        // 无全局代理时使用供应商代理
+        assert_eq!(
+            resolve_upstream_proxy(remote, None, provider),
+            Some("socks5://10.0.0.2:1080".to_string())
+        );
+        // 空白供应商代理视为未设置
+        assert_eq!(resolve_upstream_proxy(remote, None, Some("  ")), None);
+        // 本机地址始终直连
+        assert_eq!(
+            resolve_upstream_proxy("http://localhost:11434/v1", None, provider),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn test_scope_provider_proxy_is_task_local() {
+        assert_eq!(scoped_provider_proxy(), None);
+        scope_provider_proxy(Some(" socks5://10.0.0.2:1080 "), async {
+            assert_eq!(
+                scoped_provider_proxy(),
+                Some("socks5://10.0.0.2:1080".to_string())
+            );
+        })
+        .await;
+        scope_provider_proxy(Some("  "), async {
+            assert_eq!(scoped_provider_proxy(), None);
+        })
+        .await;
+        assert_eq!(scoped_provider_proxy(), None);
+    }
+
+    #[test]
     fn test_mask_url() {
         assert_eq!(mask_url("http://127.0.0.1:7890"), "http://127.0.0.1:7890");
         assert_eq!(
@@ -501,22 +648,26 @@ mod tests {
     }
 
     #[test]
-    fn test_upstream_proxy_for_skips_loopback() {
+    fn test_resolve_upstream_proxy_skips_loopback() {
         let current = Some("http://127.0.0.1:7890".to_string());
         assert_eq!(
-            upstream_proxy_for("http://localhost:11434/v1/messages", current.clone()),
+            resolve_upstream_proxy("http://localhost:11434/v1/messages", current.clone(), None),
             None
         );
         assert_eq!(
-            upstream_proxy_for("http://127.0.0.1:1234/v1/chat/completions", current.clone()),
+            resolve_upstream_proxy(
+                "http://127.0.0.1:1234/v1/chat/completions",
+                current.clone(),
+                None
+            ),
             None
         );
         assert_eq!(
-            upstream_proxy_for("https://api.example.com/v1/messages", current.clone()),
+            resolve_upstream_proxy("https://api.example.com/v1/messages", current.clone(), None),
             current
         );
         assert_eq!(
-            upstream_proxy_for("https://api.example.com/v1/messages", None),
+            resolve_upstream_proxy("https://api.example.com/v1/messages", None, None),
             None
         );
     }

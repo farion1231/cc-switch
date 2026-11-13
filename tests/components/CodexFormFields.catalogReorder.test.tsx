@@ -47,6 +47,8 @@ function makeProps(overrides: Partial<Props> = {}): Props {
     speedTestEndpoints: [],
     customUserAgent: "",
     onCustomUserAgentChange: vi.fn(),
+    proxyUrl: "",
+    onProxyUrlChange: vi.fn(),
     localProxyHeadersOverride: "",
     onLocalProxyHeadersOverrideChange: vi.fn(),
     localProxyBodyOverride: "",

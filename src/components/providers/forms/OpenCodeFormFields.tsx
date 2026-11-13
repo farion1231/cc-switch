@@ -307,6 +307,9 @@ interface OpenCodeFormFieldsProps {
   // Extra Options
   extraOptions: Record<string, string>;
   onExtraOptionsChange: (options: Record<string, string>) => void;
+
+  /** 供应商级代理，获取模型列表时使用（后端在启用全局代理时忽略） */
+  proxyUrl?: string;
 }
 
 export function OpenCodeFormFields({
@@ -331,6 +334,7 @@ export function OpenCodeFormFields({
   onModelsChange,
   extraOptions,
   onExtraOptionsChange,
+  proxyUrl,
 }: OpenCodeFormFieldsProps) {
   const { t } = useTranslation();
 
@@ -375,7 +379,7 @@ export function OpenCodeFormFields({
       undefined,
       undefined,
       customUserAgent,
-      { requestHeaders },
+      { requestHeaders, proxyUrl },
     )
       .then((result) => {
         if (generation !== modelFetchGeneration.current) return;
@@ -398,7 +402,7 @@ export function OpenCodeFormFields({
           setIsFetchingModels(false);
         }
       });
-  }, [baseUrl, apiKey, headers, t]);
+  }, [baseUrl, apiKey, headers, proxyUrl, t]);
 
   // Track which models have expanded options panel
   const [expandedModels, setExpandedModels] = useState<Set<string>>(new Set());

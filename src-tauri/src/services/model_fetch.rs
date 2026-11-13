@@ -86,6 +86,7 @@ const KNOWN_COMPAT_SUFFIXES: &[&str] = &[
 /// 获取供应商的可用模型列表
 ///
 /// 使用 OpenAI 兼容的 GET /v1/models 端点，按候选列表顺序尝试。
+#[allow(clippy::too_many_arguments)]
 pub async fn fetch_models(
     base_url: &str,
     api_key: &str,
@@ -94,6 +95,7 @@ pub async fn fetch_models(
     user_agent: Option<HeaderValue>,
     api_format: Option<&str>,
     request_headers: Option<&BTreeMap<String, String>>,
+    proxy_url: Option<&str>,
 ) -> Result<Vec<FetchedModel>, String> {
     let candidates = if api_format == Some("google-generative-ai")
         && models_url_override.is_none()
@@ -121,7 +123,7 @@ pub async fn fetch_models(
             "[ModelFetch] Trying endpoint: {}",
             crate::url_for_log_with_secrets(url, &known_secrets)
         );
-        let request = crate::proxy::http_client::get_for_url(url)
+        let request = crate::proxy::http_client::get_for_provider(url, proxy_url)?
             .get(url)
             .headers(headers.clone())
             .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS));

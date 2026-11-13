@@ -15,6 +15,11 @@ const modelFetchApiMock = vi.hoisted(() => ({
   showFetchModelsError: vi.fn(),
 }));
 
+vi.mock("@/hooks/useGlobalProxy", () => ({
+  useGlobalProxyUrl: () => ({ data: null }),
+  useTestProxy: () => ({ mutate: vi.fn(), isPending: false }),
+}));
+
 vi.mock("@/lib/api/model-fetch", () => ({
   fetchModelsForConfig: modelFetchApiMock.fetchModelsForConfig,
   fetchXaiOauthModels: modelFetchApiMock.fetchXaiOauthModels,
@@ -75,6 +80,8 @@ function baseCodexProps(): CodexFormFieldsProps {
     speedTestEndpoints: [],
     customUserAgent: "",
     onCustomUserAgentChange: vi.fn(),
+    proxyUrl: "",
+    onProxyUrlChange: vi.fn(),
     localProxyHeadersOverride: "",
     onLocalProxyHeadersOverrideChange: vi.fn(),
     localProxyBodyOverride: "",
