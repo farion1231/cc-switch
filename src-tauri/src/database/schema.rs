@@ -4178,10 +4178,10 @@ mod tests {
 
     #[test]
     fn trae_migration_preserves_existing_flags_and_defaults_to_disabled() -> Result<(), AppError> {
-        // v22 / v23 / v24 / v25 → v26：v23 补 enabled_omp，v24 补 enabled_dsh，
-        // v25 补 enabled_copilot（main 的 GitHub Copilot CLI），v26 补 enabled_trae；
-        // 已有开关保持不变，新开关默认关闭。
-        for start in [22, 23, 24, 25] {
+        // v22..v26 → v27：v23 补 enabled_omp，v24 补 enabled_dsh，
+        // v25 补 enabled_copilot（GitHub Copilot CLI），v26 补 enabled_workbuddy，
+        // v27 补 enabled_trae；已有开关保持不变，新开关默认关闭。
+        for start in [22, 23, 24, 25, 26] {
             let conn = Connection::open_in_memory()?;
             let mut mcp_extra = String::new();
             let mut skill_extra = String::new();
@@ -4198,15 +4198,21 @@ mod tests {
                 mcp_extra.push_str(", enabled_copilot BOOLEAN NOT NULL DEFAULT 1");
                 skill_extra.push_str(", enabled_copilot BOOLEAN NOT NULL DEFAULT 1");
             }
+            let workbuddy_default = i64::from(start >= 26);
+            if start >= 26 {
+                // 已在 v26 的库里 WorkBuddy 开关可能已被打开，迁移到 v27 不能动它
+                mcp_extra.push_str(", enabled_workbuddy BOOLEAN NOT NULL DEFAULT 1");
+                skill_extra.push_str(", enabled_workbuddy BOOLEAN NOT NULL DEFAULT 1");
+            }
             conn.execute_batch(&format!("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN{mcp_extra}); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN{skill_extra}); INSERT INTO mcp_servers (id, enabled_kimi) VALUES ('m',1); INSERT INTO skills (id, enabled_kimi) VALUES ('s',1);"))?;
             Database::set_user_version(&conn, start)?;
             Database::apply_schema_migrations_on_conn(&conn)?;
-            assert_eq!(Database::get_user_version(&conn)?, 26);
+            assert_eq!(Database::get_user_version(&conn)?, 27);
             assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
             for table in ["mcp_servers", "skills"] {
                 let flags = conn.query_row(
                     &format!(
-                        "SELECT enabled_kimi, enabled_dsh, enabled_copilot, enabled_trae FROM {table}"
+                        "SELECT enabled_kimi, enabled_dsh, enabled_copilot, enabled_workbuddy, enabled_trae FROM {table}"
                     ),
                     [],
                     |row| {
@@ -4215,18 +4221,19 @@ mod tests {
                             row.get::<_, i64>(1)?,
                             row.get::<_, i64>(2)?,
                             row.get::<_, i64>(3)?,
+                            row.get::<_, i64>(4)?,
                         ))
                     },
                 )?;
                 assert_eq!(
                     flags,
-                    (1, 0, copilot_default, 0),
+                    (1, 0, copilot_default, workbuddy_default, 0),
                     "start={start} table={table}"
                 );
             }
             assert!(Database::has_column(&conn, "mcp_servers", "enabled_omp")?);
             Database::apply_schema_migrations_on_conn(&conn)?;
-            assert_eq!(Database::get_user_version(&conn)?, 26);
+            assert_eq!(Database::get_user_version(&conn)?, 27);
         }
 
         // 全新安装：建表直接包含双方新增的列，无需迁移
