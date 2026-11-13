@@ -109,10 +109,25 @@ fn supports_max_reasoning_effort(model: &str) -> bool {
     }
 }
 
+/// Detect models whose OpenAI reasoning effort accepts an explicit `none` tier.
+///
+/// The GPT 5.6+ family that accepts `max` also accepts `none`; older
+/// whitelisted models (o-series, GPT-5 through 5.5, Grok) do not, so they keep
+/// the previous low/omitted behavior when thinking is disabled.
+fn supports_none_reasoning_effort(model: &str) -> bool {
+    supports_max_reasoning_effort(model)
+}
+
 /// Resolve the appropriate OpenAI `reasoning_effort` from an Anthropic request body.
 ///
 /// Priority:
-/// 1. Explicit `output_config.effort` — preserves the user's intent directly.
+/// 1. Explicit `thinking.type = disabled` on a model that accepts `none`
+///    (GPT 5.6+): return `none`. This takes precedence over
+///    `output_config.effort` (Workflow subagents send both fields) and is what
+///    Claude Code's Auto-mode classifier needs to avoid spending its small
+///    output budget on reasoning. Older models do not accept `none`, so they
+///    keep the low/omitted behavior described below.
+/// 2. Explicit `output_config.effort` — preserves the user's intent directly.
 ///    `low`/`medium`/`high`/`xhigh` map 1:1 (`xhigh` is what Claude Code's
 ///    `/effort xhigh` sends); `max` stays `max` for models that support a
 ///    distinct max tier, otherwise it falls back to `xhigh`. Unknown values are ignored.
@@ -125,7 +140,7 @@ fn supports_max_reasoning_effort(model: &str) -> bool {
 ///    made explicit before the transform by
 ///    [`make_default_adaptive_thinking_explicit`], since the mapped model name no
 ///    longer carries that default.
-/// 2. Fallback: `thinking.type` + `budget_tokens`:
+/// 3. Fallback: `thinking.type` + `budget_tokens`:
 ///    - `adaptive` → `xhigh` (adaptive = maximum reasoning effort)
 ///    - `enabled` with budget → `low` (<4 000) / `medium` (4 000–15 999) / `high` (≥16 000)
 ///    - `enabled` without budget → `high` (conservative default)
@@ -143,7 +158,14 @@ pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
 }
 
 fn resolve_requested_reasoning_effort(body: &Value, model: &str) -> Option<&'static str> {
-    // --- Priority 1: explicit output_config.effort ---
+    // --- Priority 1: explicitly disabled thinking on a `none`-capable model ---
+    if body.pointer("/thinking/type").and_then(|t| t.as_str()) == Some("disabled")
+        && supports_none_reasoning_effort(model)
+    {
+        return Some("none");
+    }
+
+    // --- Priority 2: explicit output_config.effort ---
     if let Some(effort) = body
         .pointer("/output_config/effort")
         .and_then(|v| v.as_str())
@@ -168,7 +190,7 @@ fn resolve_requested_reasoning_effort(body: &Value, model: &str) -> Option<&'sta
         };
     }
 
-    // --- Priority 2: thinking.type + budget_tokens fallback ---
+    // --- Priority 3: thinking.type + budget_tokens fallback ---
     effort_from_thinking(body)
 }
 
@@ -2219,10 +2241,22 @@ mod tests {
     }
 
     #[test]
-    fn test_output_config_with_thinking_disabled_clamps_to_low() {
+    fn test_output_config_with_thinking_disabled_maps_to_none_for_none_capable_models() {
         // Workflow subagents send `thinking: disabled` alongside an effort.
+        // `none` wins so the classifier does not spend its budget on reasoning.
         let body = json!({
             "model": "gpt-6-sol",
+            "thinking": {"type": "disabled"},
+            "output_config": {"effort": "max"}
+        });
+        assert_eq!(resolve_reasoning_effort(&body), Some("none"));
+    }
+
+    #[test]
+    fn test_output_config_with_thinking_disabled_clamps_to_low_for_older_models() {
+        // Models without a `none` tier keep the previous floor.
+        let body = json!({
+            "model": "gpt-5.4",
             "thinking": {"type": "disabled"},
             "output_config": {"effort": "max"}
         });
@@ -2383,6 +2417,18 @@ mod tests {
     #[test]
     fn test_thinking_disabled_no_reasoning_effort() {
         let body = json!({"thinking": {"type": "disabled"}});
+        assert_eq!(resolve_reasoning_effort(&body), None);
+    }
+
+    #[test]
+    fn test_thinking_disabled_maps_to_none_for_none_capable_models() {
+        let body = json!({"model": "gpt-6-luna", "thinking": {"type": "disabled"}});
+        assert_eq!(resolve_reasoning_effort(&body), Some("none"));
+    }
+
+    #[test]
+    fn test_thinking_disabled_keeps_no_effort_for_older_models() {
+        let body = json!({"model": "gpt-5.4", "thinking": {"type": "disabled"}});
         assert_eq!(resolve_reasoning_effort(&body), None);
     }
 
