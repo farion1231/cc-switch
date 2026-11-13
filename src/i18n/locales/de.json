@@ -2820,6 +2820,7 @@
     "copilotAutoAuth": "Automatische OAuth-Authentifizierung, keine manuellen Zugangsdaten nötig",
     "tokenPlanHint": "Verwendet automatisch den API-Schlüssel und die Base-URL des Anbieters, um das Token-Plan-Kontingent abzufragen",
     "balanceHint": "Verwendet automatisch den API-Schlüssel des Anbieters, um das Kontoguthaben abzufragen",
+    "managedCodexSubscriptionHint": "Fragen Sie das Abonnementkontingent des mit diesem Anbieter verknüpften ChatGPT-Kontos ab. Ändern Sie das Konto, indem Sie den Anbieter bearbeiten.",
     "officialSubscriptionHint": "Liest die lokalen OAuth-Zugangsdaten der CLI und ruft die offizielle API auf, um das Abo-Kontingent abzufragen. Standardmäßig deaktiviert; Anfragen erfolgen erst nach der Aktivierung.",
     "officialSubscriptionHintAgy": "Führt den integrierten Befehl /usage von agy aus, um das Kontingent des angemeldeten Kontos abzufragen. Anmeldedaten werden nicht gelesen; jede Abfrage dauert etwa 10 Sekunden. Standardmäßig deaktiviert und wird erst nach der Aktivierung ausgeführt.",
     "resetDate": "Zurücksetzungsdatum",
@@ -5352,6 +5353,13 @@
     }
   },
   "dsh": {
+    "codex": {
+      "name": "OpenAI-Codex-Konto",
+      "selectAccount": "Wählen Sie ein Konto aus, bevor Sie Modelle abrufen.",
+      "help": "Verwenden Sie ein Konto aus der Kontoverwaltung direkt in DSH Web und Desktop. Pro DSH-Home ist ein Codex-Konto aktiv.",
+      "apply": "Dieses Konto verwenden",
+      "confirm": "Dies ersetzt die aktuelle Codex-Anmeldung in DSH. Laufende Anfragen werden fortgesetzt. Öffnen Sie DSH erneut, falls die Änderung nicht angezeigt wird."
+    },
     "empty": {
       "title": "DeepSeek-Harness-Anbieter hinzufügen",
       "description": "Konfigurieren Sie einen Endpunkt, einen API-Schlüssel und Modelle. Vorhandene benutzerdefinierte Anbieter erscheinen hier automatisch."

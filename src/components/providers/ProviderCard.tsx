@@ -44,7 +44,10 @@ import {
   copilotEnvOf,
   isCopilotByok,
 } from "@/config/copilotConfig";
-import { resolveManagedAccountId } from "@/lib/authBinding";
+import {
+  resolveManagedAccountId,
+  resolveDshCodexAccountId,
+} from "@/lib/authBinding";
 import { isMac } from "@/lib/platform";
 import {
   isOfficialAccount,
@@ -235,10 +238,14 @@ export function ProviderCard({
   const { t } = useTranslation();
   const codexOfficialIdentity = resolveCodexOfficialIdentity(appId, provider);
   const isBoundCodexOfficial = codexOfficialIdentity === "managed_account";
+  const dshCodexAccountId = resolveDshCodexAccountId(appId, provider);
+  const hasManagedCodexQuota =
+    isBoundCodexOfficial || Boolean(dshCodexAccountId);
   const isCodexOauth =
-    appId === "codex"
+    Boolean(dshCodexAccountId) ||
+    (appId === "codex"
       ? isBoundCodexOfficial
-      : provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
+      : provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH);
   const managedCodexAccountId = resolveManagedAccountId(
     provider.meta,
     "codex_oauth",
@@ -310,10 +317,11 @@ export function ProviderCard({
   // 绑了账号的官方卡（Codex / Claude）默认查额度，和 Kimi、agy 的账号卡一样
   const usageEnabled =
     provider.meta?.usage_script?.enabled ??
-    (isBoundCodexOfficial || Boolean(claudeBoundAccountId));
+    (hasManagedCodexQuota || Boolean(claudeBoundAccountId));
   const supportsOfficialSubscription =
-    isOfficial &&
-    ["claude", "codex", "gemini", "grokbuild", "agy"].includes(appId);
+    Boolean(dshCodexAccountId) ||
+    (isOfficial &&
+      ["claude", "codex", "gemini", "grokbuild", "agy"].includes(appId));
   const isOfficialSubscriptionUsage =
     provider.meta?.usage_script?.templateType ===
     TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;
@@ -387,7 +395,7 @@ export function ProviderCard({
           "default",
       ]
     : isCodexOauth
-      ? !isBoundCodexOfficial || usageEnabled
+      ? !hasManagedCodexQuota || usageEnabled
         ? [
             "codex_oauth",
             "quota",
@@ -426,7 +434,10 @@ export function ProviderCard({
   // 脚本用量只在「已启用 + 非官方 + 非官方订阅模板」时才查询；展开判定必须复用同一谓词，
   // 因为禁用的 React Query observer 仍会返回同 key 的旧缓存。
   const scriptUsageActive =
-    usageEnabled && !isOfficial && !isOfficialSubscriptionUsage;
+    usageEnabled &&
+    !dshCodexAccountId &&
+    !isOfficial &&
+    !isOfficialSubscriptionUsage;
   const { data: usage } = useUsageQuery(provider.id, appId, {
     enabled: scriptUsageActive,
     autoQueryInterval,
@@ -684,13 +695,13 @@ export function ProviderCard({
                   isCurrent={isCurrent}
                 />
               ) : isCodexOauth ? (
-                !isBoundCodexOfficial || usageEnabled ? (
+                !hasManagedCodexQuota || usageEnabled ? (
                   <CodexOauthQuotaFooter
                     meta={provider.meta}
                     inline={true}
-                    isCurrent={isCurrent}
+                    isCurrent={isCurrent || Boolean(dshCodexAccountId)}
                     autoQueryInterval={
-                      isBoundCodexOfficial
+                      hasManagedCodexQuota
                         ? (provider.meta?.usage_script?.autoQueryInterval ?? 5)
                         : undefined
                     }
@@ -804,7 +815,7 @@ export function ProviderCard({
                 !supportsOfficialSubscription &&
                 !isCopilotCliOfficial) ||
               isCopilot ||
-              (isCodexOauth && !isBoundCodexOfficial) ||
+              (isCodexOauth && !hasManagedCodexQuota) ||
               isXaiOauth
                 ? undefined
                 : () => onConfigureUsage(provider)
