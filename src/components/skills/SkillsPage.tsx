@@ -61,7 +61,7 @@ type InstallRunner = <T extends { id: string }>(
 }>;
 
 const SKILLSSH_PAGE_SIZE = 20;
-const POPOVER_CLASS =
+export const POPOVER_CLASS =
   "z-[110] rounded-panel border border-border bg-surface p-1 text-fg-1 shadow-v7-md outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2";
 
 /** 仓库的增删和停用（发现段的「仓库」弹层和仓库管理抽屉共用） */

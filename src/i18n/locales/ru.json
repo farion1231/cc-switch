@@ -1,4 +1,10 @@
 {
+  "skillsPage": {
+    "filter": {
+      "sourceButtonSome": "Источник: {{count}} из {{total}}",
+      "selectAll": "Выбрать все"
+    }
+  },
   "app": {
     "title": "CC Switch",
     "description": "Универсальный помощник для Claude Code, Codex и Gemini CLI"

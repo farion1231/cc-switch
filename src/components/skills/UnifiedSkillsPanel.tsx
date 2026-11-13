@@ -17,6 +17,11 @@ import { HelpTip } from "@/components/ui/help-tip";
 import { Notice, NoticeSlot } from "@/components/ui/notice";
 import { PageTabs } from "@/components/ui/page-tabs";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -66,9 +71,9 @@ import {
   resolveBulkScope,
   showUndoToast,
 } from "@/components/mcp/AppMatrix";
-import { V7ConfirmDialog } from "@/components/mcp/formBits";
+import { CHECKBOX_CLASS, V7ConfirmDialog } from "@/components/mcp/formBits";
 import { useVisibleAppIds } from "@/components/mcp/useVisibleAppIds";
-import { SkillsPage, useSkillRepoActions } from "./SkillsPage";
+import { SkillsPage, POPOVER_CLASS, useSkillRepoActions } from "./SkillsPage";
 import { RepoManagerPanel } from "./RepoManagerPanel";
 import { SkillImportDialog } from "./SkillImportDialog";
 import { SkillRestoreDialog } from "./SkillRestoreDialog";
@@ -146,7 +151,8 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const [discoverQuery, setDiscoverQuery] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [sourceFilter, setSourceFilter] = useState("all");
+  // 只记录未勾选的来源，新出现的来源默认勾选。
+  const [excludedSources, setExcludedSources] = useState<string[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [fails, setFails] = useState<Record<string, WriteFailure>>({});
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
@@ -318,6 +324,19 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     });
   }, [installedSkills]);
 
+  const selectedSources = sourceOptions
+    .map(([key]) => key)
+    .filter((key) => !excludedSources.includes(key));
+  const allSourcesSelected = selectedSources.length === sourceOptions.length;
+  const sourceFilterLabel = allSourcesSelected
+    ? t("skillsPage.filter.sourceButton", {
+        source: t("skillsPage.filter.all"),
+      })
+    : t("skillsPage.filter.sourceButtonSome", {
+        count: selectedSources.length,
+        total: sourceOptions.length,
+      });
+
   const enabledCount = (skill: InstalledSkill) =>
     SKILLS_APP_IDS.filter((app) => skill.apps[app]).length;
 
@@ -330,7 +349,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
         const app = statusFilter.slice(4) as AppId;
         if (!skill.apps[app]) return false;
       }
-      if (sourceFilter !== "all" && sourceKey(skill) !== sourceFilter) {
+      if (excludedSources.includes(sourceKey(skill))) {
         return false;
       }
       if (!normalizedQuery) return true;
@@ -349,7 +368,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   }, [
     installedSkills,
     statusFilter,
-    sourceFilter,
+    excludedSources,
     normalizedQuery,
     updatesMap,
   ]);
@@ -368,7 +387,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     prevUpdatesRef.current = nApplicableUpdates;
   }, [nApplicableUpdates, statusFilter]);
 
-  const filtersActive = statusFilter !== "all" || sourceFilter !== "all";
+  const filtersActive = statusFilter !== "all" || !allSourcesSelected;
   const scope = resolveBulkScope(
     installedSkills,
     filteredSkills,
@@ -913,7 +932,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const showInstalled = (skillId: string) => {
     setSearchQuery("");
     setStatusFilter("all");
-    setSourceFilter("all");
+    setExcludedSources([]);
     setView("installed");
     setHighlightId(skillId);
   };
@@ -1258,7 +1277,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                       size="regular"
                       onClick={() => {
                         setStatusFilter("all");
-                        setSourceFilter("all");
+                        setExcludedSources([]);
                       }}
                     >
                       {t("skillsPage.clearFilters")}
@@ -1412,28 +1431,34 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                     }),
                   )}
                 />
-                <FilterMenu
-                  label={t("skillsPage.filter.sourceButton", {
-                    source:
-                      sourceFilter === "all"
-                        ? t("skillsPage.filter.all")
-                        : sourceLabel(sourceFilter),
-                  })}
-                  active={sourceFilter !== "all"}
+                <SourceFilterPopover
+                  label={sourceFilterLabel}
                   items={[
                     {
                       key: "all",
-                      label: t("skillsPage.filter.all"),
-                      checked: sourceFilter === "all",
-                      onSelect: () => setSourceFilter("all"),
+                      label: t("skillsPage.filter.selectAll"),
+                      checked: allSourcesSelected,
+                      indeterminate:
+                        !allSourcesSelected && selectedSources.length > 0,
+                      onSelect: () =>
+                        setExcludedSources(
+                          allSourcesSelected
+                            ? sourceOptions.map(([key]) => key)
+                            : [],
+                        ),
                     },
                     ...sourceOptions.map(([key, count]) => ({
                       key,
                       label: sourceLabel(key),
                       mono: key !== "local",
                       count,
-                      checked: sourceFilter === key,
-                      onSelect: () => setSourceFilter(key),
+                      checked: selectedSources.includes(key),
+                      onSelect: () =>
+                        setExcludedSources((values) =>
+                          values.includes(key)
+                            ? values.filter((id) => id !== key)
+                            : [...values, key],
+                        ),
                     })),
                   ]}
                 />
@@ -2012,6 +2037,80 @@ function InstalledRow({
 }
 
 // ─── 列头左侧的筛选按钮 ──────────────────────────────────────────────────
+interface SourceFilterItem {
+  key: string;
+  label: string;
+  checked: boolean;
+  indeterminate?: boolean;
+  onSelect: () => void;
+  count?: number;
+  mono?: boolean;
+}
+
+function SourceFilterPopover({
+  label,
+  items,
+}: {
+  label: string;
+  items: SourceFilterItem[];
+}) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="quiet"
+          size="compact"
+          className="pe-1.5 ps-2.5 text-fg-2"
+        >
+          {label}
+          <ChevronDown className="h-3.5 w-3.5" strokeWidth={2} />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        sideOffset={6}
+        collisionPadding={8}
+        aria-label={label}
+        className={cn(POPOVER_CLASS, "flex w-[300px] flex-col")}
+      >
+        <div className="flex max-h-[280px] flex-col overflow-y-auto">
+          {items.map((item) => (
+            <label
+              key={item.key}
+              className="flex min-h-8 cursor-pointer items-center gap-2 rounded-control px-2 py-1 transition-colors hover:bg-subtle"
+            >
+              <input
+                type="checkbox"
+                className={CHECKBOX_CLASS}
+                checked={item.checked}
+                aria-label={item.label}
+                onChange={item.onSelect}
+                ref={(input) => {
+                  if (input) input.indeterminate = Boolean(item.indeterminate);
+                }}
+              />
+              <span
+                className={cn(
+                  "min-w-0 flex-1 truncate text-caption",
+                  item.mono && "font-mono",
+                )}
+              >
+                {item.label}
+              </span>
+              {item.count !== undefined && (
+                <span className="w-12 shrink-0 text-right text-caption tabular-nums text-fg-2">
+                  {item.count}
+                </span>
+              )}
+            </label>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function FilterMenu({
   label,
   active,

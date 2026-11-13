@@ -4978,7 +4978,9 @@
       "updates": "可更新",
       "none": "未在任何应用启用",
       "inApp": "在 {{app}} 启用",
-      "sourceButton": "来源：{{source}}"
+      "sourceButton": "来源：{{source}}",
+      "sourceButtonSome": "来源：{{count}} / {{total}}",
+      "selectAll": "全选"
     },
     "source": {
       "local": "本地"

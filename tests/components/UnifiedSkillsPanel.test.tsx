@@ -582,6 +582,187 @@ describe("UnifiedSkillsPanel", () => {
     );
   });
 
+  it("selects multiple sources with checkboxes in a popover and can deselect or clear them", async () => {
+    m.installed = [
+      makeSkill({ id: "a", name: "A", repoName: "first" }),
+      makeSkill({ id: "b", name: "B", repoName: "second" }),
+      makeSkill({ id: "c", name: "C", repoName: "third" }),
+    ];
+    renderPanel();
+    const openSources = async () =>
+      userEvent.click(
+        screen.getByRole("button", {
+          name: /^skillsPage\.filter\.sourceButton(Some)?$/,
+        }),
+      );
+    await openSources();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("dialog")).getAllByRole("checkbox"),
+    ).toHaveLength(4);
+    for (const checkbox of within(screen.getByRole("dialog")).getAllByRole(
+      "checkbox",
+    )) {
+      expect(checkbox).toBeChecked();
+    }
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: "owner/third" }),
+    );
+    expect(screen.getByRole("checkbox", { name: "owner/first" })).toBeChecked();
+    expect(
+      screen.getByRole("checkbox", { name: "owner/second" }),
+    ).toBeChecked();
+    expect(
+      within(screen.getByRole("dialog")).getByRole("checkbox", {
+        name: "skillsPage.filter.selectAll",
+      }),
+    ).toBePartiallyChecked();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    expect(screen.queryByText("C")).not.toBeInTheDocument();
+
+    await openSources();
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: "owner/first" }),
+    );
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+    expect(screen.getByText("B")).toBeInTheDocument();
+
+    await openSources();
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: "owner/second" }),
+    );
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryAllByRole("listitem")).toHaveLength(0);
+
+    await openSources();
+    for (const checkbox of within(screen.getByRole("dialog")).getAllByRole(
+      "checkbox",
+    )) {
+      expect(checkbox).not.toBeChecked();
+    }
+    await userEvent.click(
+      within(screen.getByRole("dialog")).getByRole("checkbox", {
+        name: "skillsPage.filter.selectAll",
+      }),
+    );
+    for (const checkbox of within(screen.getByRole("dialog")).getAllByRole(
+      "checkbox",
+    )) {
+      expect(checkbox).toBeChecked();
+    }
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getAllByRole("listitem")).toHaveLength(3);
+
+    await openSources();
+    await userEvent.click(
+      within(screen.getByRole("dialog")).getByRole("checkbox", {
+        name: "skillsPage.filter.selectAll",
+      }),
+    );
+    for (const checkbox of within(screen.getByRole("dialog")).getAllByRole(
+      "checkbox",
+    )) {
+      expect(checkbox).not.toBeChecked();
+    }
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryAllByRole("listitem")).toHaveLength(0);
+  });
+
+  it.each(["all", "some", "none"] as const)(
+    "selects new sources by default when %s existing sources are selected",
+    async (selection) => {
+      const existing = [
+        makeSkill({ id: "a", name: "A", repoName: "first" }),
+        makeSkill({ id: "b", name: "B", repoName: "second" }),
+      ];
+      m.installed = existing;
+      const { rerender } = renderPanel();
+      await userEvent.click(
+        screen.getByRole("button", {
+          name: /^skillsPage\.filter\.sourceButton(Some)?$/,
+        }),
+      );
+      await userEvent.click(
+        screen.getByRole("checkbox", { name: "owner/first" }),
+      );
+      if (selection === "all") {
+        await userEvent.click(
+          screen.getByRole("checkbox", { name: "owner/first" }),
+        );
+      } else if (selection === "none") {
+        await userEvent.click(
+          screen.getByRole("checkbox", { name: "owner/second" }),
+        );
+      }
+
+      m.installed = [
+        ...existing,
+        makeSkill({ id: "c", name: "C", repoName: "third" }),
+      ];
+      rerender(<UnifiedSkillsPanel />);
+      expect(
+        screen.getByRole("checkbox", { name: "owner/third" }),
+      ).toBeChecked();
+      const selectAll = screen.getByRole("checkbox", {
+        name: "skillsPage.filter.selectAll",
+      });
+      if (selection === "all") expect(selectAll).toBeChecked();
+      else expect(selectAll).toBePartiallyChecked();
+      await userEvent.keyboard("{Escape}");
+      expect(screen.getByText("C")).toBeInTheDocument();
+      expect(screen.queryByText("A") !== null).toBe(selection === "all");
+      expect(screen.queryByText("B") !== null).toBe(selection !== "none");
+
+      m.installed = existing;
+      rerender(<UnifiedSkillsPanel />);
+      expect(screen.queryByText("C")).not.toBeInTheDocument();
+      expect(screen.queryAllByRole("listitem")).toHaveLength(
+        selection === "all" ? 2 : selection === "some" ? 1 : 0,
+      );
+    },
+  );
+
+  it("intersects selected sources with the status filter", async () => {
+    m.installed = [
+      makeSkill({ id: "a", name: "A", apps: { claude: true } }),
+      makeSkill({ id: "b", name: "B" }),
+      makeSkill({
+        id: "c",
+        name: "C",
+        repoName: "other",
+        apps: { claude: true },
+      }),
+      makeSkill({ id: "d", name: "D", apps: { claude: true } }),
+    ];
+    m.updates = [
+      { id: "a", name: "A", remoteHash: "x" },
+      { id: "c", name: "C", remoteHash: "y" },
+    ];
+    renderPanel();
+    await openMenu("skillsPage.filter.all", "skillsPage.filter.updates");
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    expect(screen.queryByText("B")).not.toBeInTheDocument();
+    expect(screen.queryByText("D")).not.toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.filter.sourceButton" }),
+    );
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: "owner/other" }),
+    );
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+    expect(screen.getByText("A")).toBeInTheDocument();
+    expect(screen.queryByText("C")).not.toBeInTheDocument();
+
+    await openMenu("skillsPage.filter.updates", "skillsPage.filter.none");
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+    expect(screen.getByText("B")).toBeInTheDocument();
+    expect(screen.queryByText("A")).not.toBeInTheDocument();
+  });
+
   it("filters to Skills with updates from the status filter and updates them after confirming", async () => {
     m.installed = [
       makeSkill({ id: "a", name: "A" }),

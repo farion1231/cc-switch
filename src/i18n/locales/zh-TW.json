@@ -4978,7 +4978,9 @@
       "updates": "可更新",
       "none": "未在任何應用啟用",
       "inApp": "在 {{app}} 啟用",
-      "sourceButton": "來源：{{source}}"
+      "sourceButton": "來源：{{source}}",
+      "sourceButtonSome": "來源：{{count}} / {{total}}",
+      "selectAll": "全選"
     },
     "source": {
       "local": "本機"
