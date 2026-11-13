@@ -11,7 +11,7 @@ use super::{
     json_canonical::{canonicalize_value, short_value_hash},
     log_codes::fwd as log_fwd,
     opaque_state_rectifier::{
-        carries_encrypted_agent_task, detect_opaque_state_rejection,
+        carries_encrypted_agent_task, carries_opaque_state, detect_opaque_state_rejection,
         rectify_claude_responses_replay, rectify_opaque_state, unreadable_agent_task_error,
         OpaqueStateRejection,
     },
@@ -2974,13 +2974,13 @@ impl RequestForwarder {
             short_value_hash(Some(&filtered_body))
         );
 
-        // 序列化后释放工作副本；只有加密子任务的流式判错还需要保留请求体。
-        let encrypted_agent_request = (matches!(app_type, AppType::Codex | AppType::GrokBuild)
+        // 序列化后释放工作副本；只有带着上游签发状态的流式请求，判流内拒绝时还要用请求体。
+        let opaque_state_request = (matches!(app_type, AppType::Codex | AppType::GrokBuild)
             && !codex_responses_to_chat
             && !codex_responses_to_anthropic
             && request_is_streaming
             && self.rectifier_config.enabled
-            && carries_encrypted_agent_task(&filtered_body))
+            && carries_opaque_state(&filtered_body))
         .then_some(filtered_body);
 
         // 确定超时
@@ -3100,13 +3100,11 @@ impl RequestForwarder {
                     // A response.failed/error before output remains failover-safe.
                     response = self.validate_responses_stream_start(response).await?;
                 }
-            } else if let Some(request) = encrypted_agent_request
+            } else if let Some(request) = opaque_state_request
                 .as_ref()
                 .filter(|_| !response.is_json())
             {
-                response = self
-                    .hold_encrypted_agent_task_stream(response, request)
-                    .await?;
+                response = self.hold_opaque_state_stream(response, request).await?;
             }
             Ok((response, resolved_claude_api_format, outbound_model))
         } else {
@@ -3312,16 +3310,17 @@ impl RequestForwarder {
         }
     }
 
-    /// 原样转发的 Responses 请求末尾是一条带密文的子 agent 任务时（见
-    /// `opaque_state_rectifier::carries_encrypted_agent_task`），先看到第一个不是生命周期的事件
-    /// 再交出流：上游解不开密文时会在流里、输出之前回 `response.failed`，这时改成上游错误，
-    /// 回到重试循环里和 HTTP 报错一样整流或说明原因。其余情况（有输出、别的失败、到了截止
+    /// 原样转发的 Responses 请求带着上游签发的状态时（推理条目、加密片段、压缩条目，见
+    /// `opaque_state_rectifier::carries_opaque_state`），先看到第一个不是生命周期的事件
+    /// 再交出流：上游解不开密文时会先回 HTTP 200、再在输出之前回 `response.failed`（#9476：
+    /// 换了一家续接旧会话），这时改成上游错误，回到重试循环里和 HTTP 报错一样整流后重试，
+    /// 子 agent 任务解不开时说明原因。其余情况（有输出、别的失败、到了截止
     /// 时间、缓冲太多）把读过的字节原样接回去，客户端看到的流和没经过这里一样。
     ///
     /// 整个缓冲阶段只有一个截止时间（不是每读一块重新计时）：上游在输出前一直发心跳时，流
     /// 也得按时交出去。解不开密文是上游一收到请求就报的错，不用等到生成，所以最多压
     /// [`MAX_HOLD`]，首包超时更短时按首包超时。
-    async fn hold_encrypted_agent_task_stream(
+    async fn hold_opaque_state_stream(
         &self,
         response: ProxyResponse,
         request: &Value,
@@ -3356,7 +3355,7 @@ impl RequestForwarder {
             replay_chunks.push(chunk);
 
             while let Some(block) = sse.next_block() {
-                match encrypted_task_stream_start(block, request) {
+                match opaque_state_stream_start(block, request) {
                     StreamStart::Pending => {}
                     StreamStart::Commit => break 'hold,
                     StreamStart::Rejected(error) => return Err(error),
@@ -4049,7 +4048,7 @@ fn codex_anthropic_cache_config(config: &OptimizerConfig) -> OptimizerConfig {
     }
 }
 
-/// [`Forwarder::hold_encrypted_agent_task_stream`] 看到一个完整 SSE 块之后怎么做。
+/// [`Forwarder::hold_opaque_state_stream`] 看到一个完整 SSE 块之后怎么做。
 enum StreamStart {
     /// 生命周期事件（或不是 JSON），接着读。
     Pending,
@@ -4059,7 +4058,7 @@ enum StreamStart {
     Rejected(ProxyError),
 }
 
-fn encrypted_task_stream_start(block: &str, request: &Value) -> StreamStart {
+fn opaque_state_stream_start(block: &str, request: &Value) -> StreamStart {
     let mut named_event = None;
     let mut data_lines = Vec::new();
     for line in block.lines() {
@@ -9186,6 +9185,62 @@ mod tests {
             let seen = upstream.seen.lock().await;
             assert_eq!(seen.len(), 2);
             assert_eq!(task_ciphertext(&seen[1]), "gAAAAB-task-from-main");
+        }
+
+        /// 普通会话换了一家续接（#9476）：历史里有别家签发的推理和函数输出密文，上游先回 200、
+        /// 再在输出前说解不开。压住流改成上游错误，整流后对同一家重试一次，不把失败流交给
+        /// Codex（它会拿同一段历史重连到底）。
+        #[tokio::test]
+        async fn resumed_thread_rejected_in_stream_is_rectified_and_retried() {
+            let request = json!({
+                "model": "listed",
+                "stream": true,
+                "input": [
+                    { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "hi" }] },
+                    { "type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "gAAAA-provider-a" },
+                    { "type": "function_call", "call_id": "call_1", "name": "shell", "arguments": "{}" },
+                    { "type": "function_call_output", "call_id": "call_1", "output": [
+                        { "type": "input_text", "text": "ok" },
+                        { "type": "encrypted_content", "encrypted_content": "enc-provider-a" }
+                    ] },
+                    { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "again" }] }
+                ]
+            });
+            // 中转转述时加了自己的前缀，照样认。
+            let relayed = format!("OpenAI Responses bad request: {ENCRYPTED_TASK_REJECTION}");
+            let upstream = raw_upstream(vec![failed_stream(&relayed), completed_stream()]).await;
+            let result = forward_sub_agent(&upstream, request)
+                .await
+                .map_err(|error| error.error)
+                .expect("retried");
+            assert!(body_text(result).await.contains("response.completed"));
+
+            let seen = upstream.seen.lock().await;
+            assert_eq!(seen.len(), 2);
+            assert!(carries_reasoning(&seen[0]));
+            assert!(!carries_reasoning(&seen[1]));
+            let output = &seen[1].body["input"][2]["output"];
+            assert_eq!(output[0]["text"], "ok");
+            assert_eq!(output[1]["type"], "input_text");
+        }
+
+        /// 请求里没有别家签发的状态（新会话）：不压流，失败流原样交给客户端，只发一次。
+        #[tokio::test]
+        async fn fresh_thread_streams_are_not_held() {
+            let request = json!({
+                "model": "listed",
+                "stream": true,
+                "input": [{ "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "hi" }] }]
+            });
+            let step = failed_stream(ENCRYPTED_TASK_REJECTION);
+            let expected = step.2.clone();
+            let upstream = raw_upstream(vec![step]).await;
+            let result = forward_sub_agent(&upstream, request)
+                .await
+                .map_err(|error| error.error)
+                .expect("committed");
+            assert_eq!(body_text(result).await, expected);
+            assert_eq!(upstream.seen.lock().await.len(), 1);
         }
 
         /// HTTP 报错同样处理。
