@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSettingsQuery } from "@/lib/query";
+import { isLinux } from "@/lib/platform";
 import type { Settings } from "@/types";
 
 type Language = "zh" | "zh-TW" | "en" | "de" | "ja" | "tr" | "ko" | "ru";
@@ -129,6 +130,15 @@ export function useSettingsForm(): UseSettingsFormResult {
       ...data,
       showInTray: data.showInTray ?? true,
       minimizeToTrayOnClose: data.minimizeToTrayOnClose ?? true,
+      closeWindowAction:
+        data.closeWindowAction ??
+        (data.minimizeToTrayOnClose === false
+          ? "exit"
+          : data.minimizeToTrayOnClose === true
+            ? "minimize_to_tray"
+            : isLinux()
+              ? "minimize_to_taskbar"
+              : "minimize_to_tray"),
       useAppWindowControls: data.useAppWindowControls ?? false,
       enableClaudePluginIntegration:
         data.enableClaudePluginIntegration ?? false,
@@ -161,6 +171,9 @@ export function useSettingsForm(): UseSettingsFormResult {
           ({
             showInTray: true,
             minimizeToTrayOnClose: true,
+            closeWindowAction: isLinux()
+              ? "minimize_to_taskbar"
+              : "minimize_to_tray",
             useAppWindowControls: false,
             enableClaudePluginIntegration: false,
             skipClaudeOnboarding: false,
@@ -199,6 +212,15 @@ export function useSettingsForm(): UseSettingsFormResult {
         ...serverData,
         showInTray: serverData.showInTray ?? true,
         minimizeToTrayOnClose: serverData.minimizeToTrayOnClose ?? true,
+        closeWindowAction:
+          serverData.closeWindowAction ??
+          (serverData.minimizeToTrayOnClose === false
+            ? "exit"
+            : serverData.minimizeToTrayOnClose === true
+              ? "minimize_to_tray"
+              : isLinux()
+                ? "minimize_to_taskbar"
+                : "minimize_to_tray"),
         useAppWindowControls: serverData.useAppWindowControls ?? false,
         enableClaudePluginIntegration:
           serverData.enableClaudePluginIntegration ?? false,

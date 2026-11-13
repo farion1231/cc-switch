@@ -467,6 +467,7 @@
       "trayStyleMenu": "菜单",
       "trayStyleHelp": "点托盘图标时弹出什么（Windows 上左键始终打开主界面，右键弹出所选样式）。面板：各应用在用的供应商、额度和用量，可以搜索、切换。菜单：系统原生菜单。切换后立即生效。",
       "minimizeToTrayHelp": "打开时，点关闭按钮只隐藏窗口，CC Switch 留在系统托盘里继续运行（轻量模式在托盘菜单里）；关闭时点关闭按钮直接退出。",
+      "closeWindowActionHelp": "点击窗口右上角关闭按钮时执行的动作。最小化到任务栏：窗口收起到任务栏，随时可恢复（Linux/GNOME 环境推荐）；最小化到系统托盘：隐藏窗口并在托盘后台运行；直接退出应用：结束程序进程。",
       "terminalHelp": "点供应商卡片上的「打开终端」时用哪个终端。选的终端不可用时，改用系统默认终端。"
     },
     "tabGeneral": "通用",
@@ -909,6 +910,10 @@
     "silentStartup": "静默启动",
     "silentStartupDescription": "程序启动时不显示主窗口，仅在系统托盘运行",
     "autoLaunchFailed": "设置开机自启失败",
+    "closeWindowAction": "关闭窗口动作",
+    "closeWindowActionMinimizeToTaskbar": "最小化到任务栏",
+    "closeWindowActionMinimizeToTray": "最小化到系统托盘",
+    "closeWindowActionExit": "直接退出应用",
     "minimizeToTray": "关闭时最小化到托盘",
     "minimizeToTrayDescription": "勾选后点击关闭按钮会隐藏到系统托盘，取消则直接退出应用。",
     "useAppWindowControls": "启用应用级窗口按钮",

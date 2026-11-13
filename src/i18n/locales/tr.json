@@ -467,6 +467,7 @@
       "trayStyleMenu": "Menü",
       "trayStyleHelp": "Tepsi simgesine tıkladığınızda ne açılacağını belirler (Windows'ta sol tıklama her zaman ana pencereyi, sağ tıklama ise seçilen görünümü açar). Panel: her uygulamanın etkin sağlayıcısını, kotasını ve kullanımını arama ve geçiş seçenekleriyle gösterir. Menü: sistemin yerel menüsünü açar. Değişiklik hemen uygulanır.",
       "minimizeToTrayHelp": "Açık olduğunda, kapat düğmesi yalnızca pencereyi gizler ve CC Switch sistem tepsisinde çalışmaya devam eder (hafif mod tepsi menüsündedir). Kapatıldığında kapatma düğmesi kapanır.",
+      "closeWindowActionHelp": "Pencere kapatma düğmesine tıklandığında yapılacak işlem. Görev çubuğuna küçült: pencereyi görev çubuğuna katlar ve kolayca geri yüklenebilir tutar (Linux/GNOME ortamında önerilir); Sistem tepsisine küçült: pencereyi gizler ve CC Switch'i arka plan tepsisinde çalışır durumda tutar; Uygulamadan çık: işlemi tamamen sonlandırır.",
       "terminalHelp": "Sağlayıcı kartlarındaki “Açık terminal”in kullandığı terminal. Mevcut değilse sistemin varsayılan terminali kullanılır."
     },
     "tabGeneral": "Genel",
@@ -909,6 +910,10 @@
     "silentStartup": "Sessiz Başlangıç",
     "silentStartupDescription": "Ana pencereyi göstermeden arka plan modunda başlat",
     "autoLaunchFailed": "Otomatik başlatma ayarlanamadı",
+    "closeWindowAction": "Pencereyi kapatma eylemi",
+    "closeWindowActionMinimizeToTaskbar": "Görev çubuğuna küçült",
+    "closeWindowActionMinimizeToTray": "Sistem tepsisine küçült",
+    "closeWindowActionExit": "Uygulamadan çık",
     "minimizeToTray": "Kapatıldığında tepsiye küçült",
     "minimizeToTrayDescription": "İşaretlendiğinde kapat düğmesine basıldığında sistem tepsisinde gizlenir, aksi halde uygulama doğrudan çıkar.",
     "useAppWindowControls": "Uygulama düzeyinde pencere kontrollerini etkinleştir",

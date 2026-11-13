@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { ChevronRight, Monitor, Moon, Sun } from "lucide-react";
 import type { SettingsFormState } from "@/hooks/useSettings";
+import type { CloseWindowAction } from "@/types";
 import { useTheme } from "@/components/theme-provider";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
@@ -263,15 +264,43 @@ export function GeneralSection({
               }
             />
           )}
-          <SettingsSwitchRow
-            label={t("settings.minimizeToTray")}
+          <SettingsRow
+            label={t("settings.closeWindowAction")}
             help={{
-              title: t("settings.minimizeToTray"),
-              body: t("settings.general.minimizeToTrayHelp"),
+              title: t("settings.closeWindowAction"),
+              body: t("settings.general.closeWindowActionHelp"),
             }}
-            checked={settings.minimizeToTrayOnClose}
-            onCheckedChange={(value) =>
-              void onAutoSave({ minimizeToTrayOnClose: value })
+            control={
+              <Select
+                value={
+                  settings.closeWindowAction ??
+                  (settings.minimizeToTrayOnClose ? "minimize_to_tray" : "exit")
+                }
+                onValueChange={(value: CloseWindowAction) =>
+                  void onAutoSave({
+                    closeWindowAction: value,
+                    minimizeToTrayOnClose: value === "minimize_to_tray",
+                  })
+                }
+              >
+                <SelectTrigger
+                  className="h-8 w-[190px]"
+                  aria-label={t("settings.closeWindowAction")}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="minimize_to_taskbar">
+                    {t("settings.closeWindowActionMinimizeToTaskbar")}
+                  </SelectItem>
+                  <SelectItem value="minimize_to_tray">
+                    {t("settings.closeWindowActionMinimizeToTray")}
+                  </SelectItem>
+                  <SelectItem value="exit">
+                    {t("settings.closeWindowActionExit")}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
             }
           />
           {/* Linux（AppIndicator）只能出原生菜单，没得选 */}
