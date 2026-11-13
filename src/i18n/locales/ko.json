@@ -1210,12 +1210,12 @@
       "urlHint": "OpenAI 호환 Chat Completions 전체 URL로, 보통 /chat/completions로 끝납니다.",
       "apiKeyHint": "이 컴퓨터의 models.json에 저장됩니다. ${ENV_VAR} 형식의 참조는 WorkBuddy가 해당 환경 변수의 값으로 바꿉니다.",
       "vendor": "공급업체 레이블",
-      "modelsHint": "모델을 하나 이상 추가하세요. 모델 ID는 그대로 API에 전송됩니다. WorkBuddy는 아직 같은 모델을 여러 번 추가하는 것을 지원하지 않으므로, 모델 ID 하나는 카드 하나에만 넣을 수 있습니다. 이름을 비워 두면 WorkBuddy 메뉴에 \"공급업체 레이블:모델 ID\"로 표시됩니다.",
+      "modelsHint": "모델을 하나 이상 추가하세요. 모델 ID는 그대로 API에 전송됩니다. WorkBuddy는 아직 같은 모델을 중복으로 추가할 수 없으므로, 같은 모델 ID는 하나의 카드에만 추가할 수 있습니다. 이름을 비워 두면 WorkBuddy 메뉴에 \"공급업체 레이블:모델 ID\"로 표시됩니다.",
       "maxInputTokens": "최대 입력 토큰",
       "maxOutputTokens": "최대 출력 토큰",
-      "modelIdTaken": "WorkBuddy는 아직 같은 모델을 여러 번 추가하는 것을 지원하지 않으며, 이 모델은 이미 \"{{owner}}\"에 있습니다. 이 카드로 옮기려면 먼저 그쪽에서 삭제하세요.",
+      "modelIdTaken": "WorkBuddy는 아직 같은 모델을 중복으로 추가할 수 없습니다. 이 모델은 이미 등록되어 있습니다({{owner}}). 이 카드로 옮기려면 먼저 기존 위치에서 삭제하세요.",
       "modelOwnerUser": "WorkBuddy에서 직접 추가한 모델",
-      "presetModelsSkipped": "WorkBuddy는 아직 같은 모델을 여러 번 추가하는 것을 지원하지 않아, 이미 다른 카드에 있는 모델은 건너뛰었습니다: {{models}}. 이 카드로 옮기려면 원래 카드에서 먼저 삭제한 뒤 여기에서 다시 추가하세요."
+      "presetModelsSkipped": "WorkBuddy는 아직 같은 모델을 중복으로 추가할 수 없어, 이미 다른 카드에 있는 모델은 건너뛰었습니다: {{models}}. 이 카드로 옮기려면 원래 카드에서 먼저 삭제한 뒤 여기에서 다시 추가하세요."
     },
     "official": {
       "presetName": "WorkBuddy 공식 로그인",
@@ -1257,7 +1257,7 @@
       "expiry": "만료",
       "expiresOn": "{{credits}} 크레딧 {{date}} 만료",
       "expiresOnShort": "{{date}} 만료",
-      "noExpiry": "만료 없음",
+      "noExpiry": "유효기간 없음",
       "expiryTitle": "크레딧 만료일",
       "expiryShowAll": "크레딧별 만료일 보기",
       "inTime": "{{time}} 후"
@@ -2015,7 +2015,7 @@
     "form": {
       "officialTitle": "Copilot CLI 자체의 GitHub 로그인 사용",
       "officialHint": "‘터미널 열기’는 이 카드의 모델로 copilot을 시작합니다. 인증 센터 계정을 연결하면 해당 계정으로 시작합니다.",
-      "followCliLogin": "Copilot CLI 자체 로그인 따르기",
+      "followCliLogin": "Copilot CLI에 로그인된 계정 사용",
       "byokTitle": "추가하면 Copilot의 providers.json에 기록됩니다",
       "byokHint": "「추가」는 이 공급자와 모델을 Copilot 자체 providers.json(이 컴퓨터의 현재 사용자만 읽을 수 있음)에 기록합니다. 이후 어떤 방식으로 실행한 copilot에서도 /model에서 「카드 ID/모델」을 선택할 수 있습니다. 「제거」는 이 공급자의 항목만 삭제하고 파일의 나머지 내용은 그대로 둡니다.",
       "apiFormat": "API 형식",
