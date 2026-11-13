@@ -4659,6 +4659,16 @@ fn apply_extra_env(cmd: &mut std::process::Command, extra_env: &[(&str, String)]
     }
 }
 
+/// 参数会经过 `cmd /C call`（双引号包裹）或 WSL 里的 `sh -c '…'`（单引号包裹后再分词），
+/// 只放行在两边都不会被解释的字符。`@ / : +` 给插件 id（`name@marketplace`）和
+/// 市场来源（`owner/repo`、`https://…`）用；空格、引号、`%`、`&`、`\`、`~` 一律不放。
+pub(crate) fn is_safe_tool_command_arg(arg: &str) -> bool {
+    !arg.is_empty()
+        && arg.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '@' | '/' | ':' | '+')
+        })
+}
+
 pub(crate) fn run_detected_tool_command_with_timeout(
     tool: &str,
     args: &[&str],
@@ -4669,12 +4679,7 @@ pub(crate) fn run_detected_tool_command_with_timeout(
     if !VALID_TOOLS.contains(&tool) {
         return Err(format!("Unsupported tool: {tool}"));
     }
-    if args.iter().any(|arg| {
-        arg.is_empty()
-            || !arg
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
-    }) {
+    if args.iter().any(|arg| !is_safe_tool_command_arg(arg)) {
         return Err("Invalid tool command arguments".to_string());
     }
 
@@ -4725,9 +4730,11 @@ pub(crate) fn run_detected_tool_command_with_timeout(
         use std::process::{Command, Stdio};
 
         let mut cmd = Command::new(&tool_path);
+        // stdin 置 null：继承来的终端（`pnpm dev`）会让要确认的 CLI 一直等到超时。
         cmd.args(args)
             .env("PATH", format!("{}:{current_path}", dir.display()))
             .current_dir(working_dir)
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         apply_extra_env(&mut cmd, extra_env);
@@ -4801,6 +4808,7 @@ fn run_windows_tool_command_capture(
     let mut cmd = build_windows_tool_command(tool_path, args, new_path);
     apply_extra_env(&mut cmd, extra_env);
     cmd.current_dir(working_dir)
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let child = cmd
@@ -4859,7 +4867,18 @@ fn build_wsl_env_argv(extra_env: &[(&str, String)]) -> Result<Vec<String>, Strin
             return Err(format!("invalid env for {key}"));
         }
 
-        let linux_value = if *key == "OPENCODE_CONFIG_DIR" {
+        // 配置目录类的变量是 Windows 侧的 `\\wsl$\…` 路径，进发行版前换成 Linux 路径；
+        // 换不了（不是 WSL 路径）就不传，让工具用它自己的默认目录。
+        let linux_value = if matches!(
+            *key,
+            "OPENCODE_CONFIG_DIR"
+                | "CODEX_HOME"
+                | "CLAUDE_CONFIG_DIR"
+                | "GROK_HOME"
+                | "OPENCLAW_STATE_DIR"
+                | "OPENCLAW_CONFIG_PATH"
+                | "PI_CODING_AGENT_DIR"
+        ) {
             let Some(value) = wsl_unc_path_to_linux(Path::new(value)) else {
                 continue;
             };
@@ -4934,6 +4953,7 @@ fn run_wsl_tool_command(
     }
     cmd.args(["sh", "-c", &command])
         .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let child = cmd
@@ -7783,6 +7803,69 @@ mod tests {
             build_wsl_env_argv(&extra_env).unwrap(),
             vec!["OPENCODE_DISABLE_PROJECT_CONFIG=true".to_string()]
         );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn wsl_env_translates_codex_and_claude_config_dirs() {
+        let extra_env = [
+            ("CODEX_HOME", r"\\wsl$\Ubuntu\home\jane\.codex".to_string()),
+            (
+                "CLAUDE_CONFIG_DIR",
+                r"\\wsl.localhost\Ubuntu\home\jane\claude-alt".to_string(),
+            ),
+        ];
+        assert_eq!(
+            build_wsl_env_argv(&extra_env).unwrap(),
+            vec![
+                "CODEX_HOME=/home/jane/.codex".to_string(),
+                "CLAUDE_CONFIG_DIR=/home/jane/claude-alt".to_string(),
+            ]
+        );
+
+        let host_only = [("CODEX_HOME", r"C:\Users\jane\.codex".to_string())];
+        assert!(build_wsl_env_argv(&host_only).unwrap().is_empty());
+
+        let plugin_dirs = [
+            ("GROK_HOME", r"\\wsl$\Ubuntu\home\jane\.grok".to_string()),
+            (
+                "OPENCLAW_STATE_DIR",
+                r"\\wsl$\Ubuntu\home\jane\.openclaw".to_string(),
+            ),
+            (
+                "OPENCLAW_CONFIG_PATH",
+                r"\\wsl$\Ubuntu\home\jane\.openclaw\openclaw.json".to_string(),
+            ),
+        ];
+        assert_eq!(
+            build_wsl_env_argv(&plugin_dirs).unwrap(),
+            vec![
+                "GROK_HOME=/home/jane/.grok".to_string(),
+                "OPENCLAW_STATE_DIR=/home/jane/.openclaw".to_string(),
+                "OPENCLAW_CONFIG_PATH=/home/jane/.openclaw/openclaw.json".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn tool_command_args_allow_plugin_ids_and_reject_shell_syntax() {
+        for ok in [
+            "plugin",
+            "--json",
+            "frontend-design@claude-plugins-official",
+            "anthropics/claude-plugins-official",
+            "https://github.com/owner/repo.git",
+            "git@github.com:owner/repo.git",
+            "c++",
+        ] {
+            assert!(is_safe_tool_command_arg(ok), "{ok}");
+        }
+        for bad in [
+            "", "a b", "a&b", "a|b", "%PATH%", "$(id)", "a'b", "a\"b", r"C:\path", "~/x", "a;b",
+            "a#b",
+        ] {
+            assert!(!is_safe_tool_command_arg(bad), "{bad}");
+        }
     }
 
     #[cfg(unix)]

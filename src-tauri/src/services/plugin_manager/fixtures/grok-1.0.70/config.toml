@@ -1,0 +1,7 @@
+[[marketplace.sources]]
+name = "gmkt"
+path = 'C:\fixture\gmkt'
+
+[plugins]
+enabled = []
+disabled = ["hello"]
