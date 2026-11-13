@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 pub use model::SessionMessage;
 use providers::{
     agy, claude, codex, copilot, dsh, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw,
-    opencode, pi, workbuddy,
+    opencode, pi, trae, workbuddy,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -97,7 +97,7 @@ pub(crate) struct SessionScan {
 pub(crate) fn scan_sessions_with_status() -> SessionScan {
     use providers::utils::ScanStatus;
     type Scanner = fn(&mut ScanStatus) -> Vec<SessionMeta>;
-    let scanners: [(&str, Scanner); 15] = [
+    let scanners: [(&str, Scanner); 16] = [
         ("codex", codex::scan_sessions_with_status),
         ("claude", claude::scan_sessions_with_status),
         ("opencode", opencode::scan_sessions_with_status),
@@ -113,6 +113,7 @@ pub(crate) fn scan_sessions_with_status() -> SessionScan {
         ("kimi", |_| kimi::scan_sessions()),
         ("dsh", |_| dsh::scan_sessions()),
         ("agy", |_| agy::scan_sessions()),
+        ("trae", |_| trae::scan_sessions()),
         ("workbuddy", |_| workbuddy::scan_sessions()),
     ];
     let mut scan = SessionScan {
@@ -175,6 +176,7 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "hermes" => hermes::load_messages(path),
         "pi" => pi::load_messages(path),
         "kimi" => kimi::load_messages(path),
+        "trae" => trae::load_messages(path),
         "omp" => omp::load_messages(path),
         "copilot" => copilot::load_messages(path),
         "dsh" => dsh::load_messages(path),
@@ -227,6 +229,11 @@ fn delete_session_source(
     session_id: &str,
     source_path: &str,
 ) -> Result<bool, String> {
+    if provider_id == "trae" {
+        return Err(format!(
+            "Delete this session with `traecli delete {session_id}` to keep TRAE CLI's thread index consistent"
+        ));
+    }
     if provider_id == "dsh" {
         return Err(
             "Delete this session in DeepSeek Harness to keep its native history consistent".into(),
@@ -314,6 +321,7 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "hermes" => vec![crate::hermes_config::get_hermes_dir().join("sessions")],
         "pi" => pi::session_roots(),
         "kimi" => kimi::session_roots(),
+        "trae" => trae::session_roots(),
         "dsh" => dsh::session_roots(),
         "workbuddy" => workbuddy::session_roots(),
         "agy" => agy::session_roots(),

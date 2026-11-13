@@ -5309,6 +5309,27 @@
       "secondaryModelInUse": "Das Subagent-Modell von Kimi Code verwendet ein Modell dieses Anbieters. Ändern Sie es zuerst in Kimi Code mit /secondary-model."
     }
   },
+  "trae": {
+    "officialPresetName": "TRAE-Kontoanmeldung",
+    "officialHint": "Verwendet die in TRAE CLI integrierte Kontoanmeldung (traecli /login). Beim Wechsel darauf werden model_provider und model aus traecli.toml entfernt, sodass das Konto das Modell bereitstellt.",
+    "officialExists": "Die TRAE-Kontoanmeldung wurde bereits hinzugefügt.",
+    "providerKeyHint": "Wird in traecli.toml zu [model_providers.<key>]. Nur Buchstaben, Ziffern, - und _",
+    "providerKeyInvalid": "Verwenden Sie nur Buchstaben, Ziffern, - und _ und vermeiden Sie integrierte Namen wie openai, oss, ollama und lmstudio",
+    "responsesOnlyHint": "TRAE CLI unterstützt nur die OpenAI Responses API (wire_api = \"responses\"). Tragen Sie einen mit /v1/responses kompatiblen Endpunkt ein.",
+    "envKey": "Umgebungsvariable für den API-Schlüssel (optional)",
+    "envKeyHint": "TRAE CLI liest den Schlüssel aus dieser Variable (env_key), sodass der API-Schlüssel nicht in der Konfigurationsdatei gespeichert werden muss.",
+    "model": "Modell",
+    "models": "Verfügbare Modelle",
+    "modelsHint": "Diese Modelle werden zusammen mit dem Standardmodell in den Modellkatalog von TRAE CLI geschrieben, sodass Sie in traecli mit /model zwischen ihnen wechseln können.",
+    "modelsEmpty": "Keine weiteren Modelle hinzugefügt; traecli listet nur das Standardmodell auf.",
+    "removeModel": "{{model}} entfernen",
+    "empty": {
+      "title": "TRAE-CLI-Anbieter hinzufügen",
+      "description": "Konfigurieren Sie einen Responses-API-Endpunkt, einen API-Schlüssel und ein Modell. Anbieter, die bereits in traecli.toml stehen, werden automatisch importiert."
+    },
+    "deleteSessionHint": "Führen Sie traecli delete <Sitzungs-ID> in einem Terminal aus, damit TRAE CLI auch seinen Sitzungsindex aktualisiert.",
+    "switchNeedsModel": "Bearbeiten Sie zuerst diesen Anbieter und legen Sie ein Modell fest"
+  },
   "omp": {
     "empty": {
       "title": "Noch keine Anbieter mit API-Schlüssel",

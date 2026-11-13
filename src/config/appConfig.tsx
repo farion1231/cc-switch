@@ -29,6 +29,7 @@ export const APP_IDS: AppId[] = [
   "pi",
   "mcode",
   "kimi",
+  "trae",
   "dsh",
   "agy",
   "omp",
@@ -48,6 +49,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   pi: true,
   mcode: true,
   kimi: true,
+  trae: true,
   dsh: true,
   agy: true,
   omp: true,
@@ -89,6 +91,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "pi",
   "mcode",
   "kimi",
+  "trae",
   "dsh",
   "agy",
   "omp",
@@ -154,6 +157,7 @@ export type AdditiveAppId = Extract<
   | "mcode"
   | "kimi"
   | "dsh"
+  | "trae"
   | "omp"
   | "copilot"
   | "workbuddy"
@@ -162,6 +166,7 @@ export type AdditiveAppId = Extract<
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
   "mcode",
   "kimi",
+  "trae",
   "dsh",
   "opencode",
   "openclaw",
@@ -210,6 +215,7 @@ export const MCP_APP_IDS: McpAppId[] = [
   "pi",
   "mcode",
   "kimi",
+  "trae",
   "dsh",
   "agy",
   "omp",
@@ -324,6 +330,13 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
     activeClass: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
     badgeClass:
       "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-0 gap-1.5",
+  },
+  trae: {
+    label: "TRAE CLI",
+    icon: <ProviderIcon icon="trae" name="TRAE CLI" size={14} />,
+    activeClass: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    badgeClass:
+      "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-0 gap-1.5",
   },
   mcode: {
     label: "MiniMax Code",

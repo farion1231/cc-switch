@@ -545,8 +545,8 @@ describe("SessionManagerPage", () => {
     await openAppMenu();
     const menu = await screen.findByRole("menu");
     const items = within(menu).getAllByRole("menuitemradio");
-    // 全部应用 + 15 个来源，按会话数从多到少
-    expect(items).toHaveLength(16);
+    // 全部应用 + 16 个来源，按会话数从多到少
+    expect(items).toHaveLength(17);
     expect(items[0]).toHaveTextContent("全部应用5");
     expect(items[1]).toHaveTextContent("Codex3");
     expect(items[items.length - 1]).toHaveTextContent("无会话");
@@ -578,6 +578,7 @@ describe("SessionManagerPage", () => {
         pi: false,
         mcode: false,
         kimi: false,
+        trae: false,
         dsh: false,
         agy: false,
         omp: false,

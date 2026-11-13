@@ -13,6 +13,7 @@ import {
   providerNeedsRouting,
   supportsFailover,
   supportsOfficialProxyTakeover,
+  TRAE_OFFICIAL_PROVIDER_ID,
 } from "@/utils/providerCapabilities";
 
 /**
@@ -705,7 +706,7 @@ export interface AdditiveInput {
   isHermesManaged?: (provider: Provider) => boolean;
   /** Pi / Oh My Pi：读不到当前配置时一律不能改 */
   piStateUnavailable?: boolean;
-  /** Kimi：原生 default_model 别名所属的供应商。 */
+  /** Kimi / TRAE CLI：原生配置当前选中的供应商（Kimi 的 default_model、TRAE 的 model_provider）。 */
   kimiCurrentId?: string | null;
   /** WorkBuddy 官方登录卡：已收录账号、当前登录、是否在运行 */
   workbuddyOfficial?: WorkBuddyOfficialState;
@@ -878,13 +879,18 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
       });
       continue;
     }
-    if (app === "kimi") {
-      const official = isOfficialAccount(app, p);
+    if (app === "kimi" || app === "trae") {
+      const official =
+        app === "kimi"
+          ? isOfficialAccount(app, p)
+          : p.id === TRAE_OFFICIAL_PROVIDER_ID;
       const live = input.isInConfig(p);
       // 官方卡可以编辑模型、可以移出 config.toml（登录留着，能再添加）；仍在 Kimi 里的
       // 官方卡不能直接删，删号在授权中心（连登录一起删）
       const deleteProtectedReason =
-        official && live ? t("kimi.oauth.managedHint") : undefined;
+        official && live
+          ? t(app === "kimi" ? "kimi.oauth.managedHint" : "trae.officialHint")
+          : undefined;
       if (official) {
         chips.push({
           key: "official",
@@ -908,6 +914,16 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
           menuItems.push({
             key: "setDefault",
             label: t("providerCard.action.setDefault"),
+            // TRAE CLI 选中一家需要模型：从 traecli.toml 导入的非当前供应商没有模型
+            disabledReason:
+              app === "trae" &&
+              !official &&
+              !(
+                typeof p.settingsConfig?.model === "string" &&
+                p.settingsConfig.model.trim()
+              )
+                ? t("trae.switchNeedsModel")
+                : undefined,
             onSelect: () => actions.setDefault(p),
           });
         }

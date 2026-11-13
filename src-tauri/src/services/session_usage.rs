@@ -187,6 +187,11 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
     );
     merge_sync_step(
         &mut result,
+        "TRAE CLI",
+        crate::services::session_usage_trae::sync_trae_usage(db),
+    );
+    merge_sync_step(
+        &mut result,
         "GitHub Copilot CLI",
         crate::services::session_usage_copilot::sync_copilot_usage(db),
     );

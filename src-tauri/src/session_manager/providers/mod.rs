@@ -18,4 +18,5 @@ pub(crate) mod utils;
 pub mod dsh;
 pub mod kimi;
 pub mod mcode;
+pub mod trae;
 pub mod workbuddy;

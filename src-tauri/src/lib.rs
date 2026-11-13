@@ -49,6 +49,7 @@ mod settings;
 mod store;
 mod sync_utils;
 
+mod trae_config;
 mod tray;
 #[cfg(target_os = "windows")]
 mod tray_compat;

@@ -452,11 +452,11 @@ function App() {
     }
   };
 
-  // Kimi「添加」只写进 config.toml、不改默认模型；「切换」走 switchProvider。
+  // Kimi / TRAE CLI「添加」只写进配置文件、不改当前选中；「设为默认」走 switchProvider。
   // Copilot CLI 的自带模型卡同理：「添加」只写进 providers.json，默认模型在 copilot 里用 /model 选
   const handleAddNativeProvider = async (
     provider: Provider,
-    app: "kimi" | "copilot",
+    app: "kimi" | "trae" | "copilot",
   ) => {
     try {
       await providersApi.addToLiveConfig(provider.id, app);
@@ -883,6 +883,7 @@ function App() {
           activeApp === "mcode" ||
           activeApp === "dsh" ||
           activeApp === "kimi" ||
+          activeApp === "trae" ||
           activeApp === "agy" ||
           activeApp === "copilot" ||
           activeApp === "workbuddy"
@@ -1136,6 +1137,7 @@ function App() {
       app === "mcode" ||
       app === "dsh" ||
       app === "kimi" ||
+      app === "trae" ||
       app === "copilot" ||
       app === "workbuddy"
     ) {
@@ -1310,7 +1312,8 @@ function App() {
     } else if (
       activeApp === "mcode" ||
       activeApp === "dsh" ||
-      activeApp === "kimi"
+      activeApp === "kimi" ||
+      activeApp === "trae"
     ) {
       // The MCode list already includes its live custom nodes; the backend
       // rejects a key that MCode itself owns.
@@ -1329,6 +1332,10 @@ function App() {
             },
           ]),
         );
+        duplicatedProvider.addToLive = false;
+      }
+      if (activeApp === "trae") {
+        // A copy starts outside traecli.toml until the user switches to it.
         duplicatedProvider.addToLive = false;
       }
     } else if (activeApp === "workbuddy") {
@@ -1541,6 +1548,7 @@ function App() {
             activeApp !== "mcode" &&
             activeApp !== "dsh" &&
             activeApp !== "kimi" &&
+            activeApp !== "trae" &&
             activeApp !== "workbuddy" &&
             (settingsData?.showProfileSwitcher ?? false) && (
               <ProfileSwitcher activeApp={activeApp} />
@@ -1703,7 +1711,9 @@ function App() {
             onSwitch={(provider) =>
               void (isPiFamilyApp(activeApp)
                 ? handleEnablePiProvider(provider, activeApp)
-                : activeApp === "kimi" || activeApp === "copilot"
+                : activeApp === "kimi" ||
+                    activeApp === "trae" ||
+                    activeApp === "copilot"
                   ? handleAddNativeProvider(provider, activeApp)
                   : switchProvider(provider))
             }
@@ -1714,6 +1724,7 @@ function App() {
               activeApp === "pi" ||
               activeApp === "mcode" ||
               activeApp === "kimi" ||
+              activeApp === "trae" ||
               activeApp === "dsh" ||
               activeApp === "omp" ||
               activeApp === "copilot" ||
@@ -1731,7 +1742,9 @@ function App() {
               activeApp === "openclaw" || activeApp === "opencode"
                 ? (provider, modelId) =>
                     void setAsDefaultModel(provider, modelId)
-                : activeApp === "hermes" || activeApp === "kimi"
+                : activeApp === "hermes" ||
+                    activeApp === "kimi" ||
+                    activeApp === "trae"
                   ? (provider) => void switchProvider(provider)
                   : undefined
             }

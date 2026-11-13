@@ -16,6 +16,7 @@ describe("appConfig provider lifecycle", () => {
     "pi",
     "mcode",
     "kimi",
+    "trae",
     "dsh",
     "omp",
     "copilot",

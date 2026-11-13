@@ -5307,6 +5307,27 @@
       "secondaryModelInUse": "Модель подагента Kimi Code использует модель этого провайдера. Сначала измените её с помощью /secondary-model в Kimi Code."
     }
   },
+  "trae": {
+    "officialPresetName": "Вход через аккаунт TRAE",
+    "officialHint": "Использует встроенный в TRAE CLI вход через аккаунт (traecli /login). При переключении на него из traecli.toml удаляются model_provider и model, а модель предоставляет аккаунт.",
+    "officialExists": "Вход через аккаунт TRAE уже добавлен.",
+    "providerKeyHint": "Станет [model_providers.<ключ>] в traecli.toml. Только буквы, цифры, - и _",
+    "providerKeyInvalid": "Используйте только буквы, цифры, - и _ и не используйте встроенные имена, такие как openai, oss, ollama и lmstudio",
+    "responsesOnlyHint": "TRAE CLI поддерживает только OpenAI Responses API (wire_api = \"responses\"). Укажите эндпоинт, совместимый с /v1/responses.",
+    "envKey": "Переменная окружения с API-ключом (необязательно)",
+    "envKeyHint": "TRAE CLI читает ключ из этой переменной (env_key), поэтому API-ключ не нужно хранить в файле конфигурации.",
+    "model": "Модель",
+    "models": "Доступные модели",
+    "modelsHint": "Эти модели записываются в каталог моделей TRAE CLI вместе с моделью по умолчанию, и между ними можно переключаться через /model в traecli.",
+    "modelsEmpty": "Другие модели не добавлены; traecli покажет только модель по умолчанию.",
+    "removeModel": "Удалить {{model}}",
+    "empty": {
+      "title": "Добавить провайдера TRAE CLI",
+      "description": "Настройте эндпоинт Responses API, API-ключ и модель. Провайдеры, уже указанные в traecli.toml, импортируются автоматически."
+    },
+    "deleteSessionHint": "Выполните в терминале traecli delete <ID сеанса>, чтобы TRAE CLI также обновил свой индекс сеансов.",
+    "switchNeedsModel": "Сначала отредактируйте этого провайдера и укажите модель"
+  },
   "omp": {
     "empty": {
       "title": "Пока нет провайдеров с API-ключом",

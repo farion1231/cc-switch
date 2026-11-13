@@ -655,6 +655,38 @@ describe("buildAdditiveSections", () => {
     ).toBe("provider.managedByHermesHint");
   });
 
+  it("lets a TRAE card set itself as default only once it has a model", () => {
+    const current = provider("current", {
+      settingsConfig: { provider: {}, model: "gpt-5" },
+    });
+    const withModel = provider("with-model", {
+      settingsConfig: { provider: {}, model: "gpt-5.1" },
+    });
+    // Non-selected tables imported from traecli.toml carry no model.
+    const imported = provider("imported", { settingsConfig: { provider: {} } });
+    const actions = additiveActions();
+    const sections = buildAdditiveSections({
+      app: "trae",
+      t,
+      providers: [current, withModel, imported],
+      isInConfig: () => true,
+      kimiCurrentId: "current",
+      actions,
+    });
+
+    expect(item(sections, "current").menuItems).toBeUndefined();
+    const setDefault = (id: string) =>
+      item(sections, id).menuItems?.find(
+        (action) => action.key === "setDefault",
+      );
+    expect(setDefault("with-model")?.disabledReason).toBeUndefined();
+    setDefault("with-model")?.onSelect();
+    expect(actions.setDefault).toHaveBeenCalledWith(withModel);
+    expect(setDefault("imported")?.disabledReason).toBe(
+      "trae.switchNeedsModel",
+    );
+  });
+
   it("puts Hermes set-default in the more menu like other additive apps", () => {
     const other = provider("other");
     const actions = additiveActions();

@@ -55,6 +55,10 @@ export const getApiKeyFromConfig = (
       return typeof config?.provider?.api_key === "string"
         ? config.provider.api_key
         : "";
+    if (appType === "trae")
+      return typeof config?.provider?.experimental_bearer_token === "string"
+        ? config.provider.experimental_bearer_token
+        : "";
     const env = config?.env;
 
     if (!env) return "";

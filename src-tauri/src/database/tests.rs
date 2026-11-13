@@ -1550,6 +1550,8 @@ fn migration_v23_to_v24_adds_dsh_flags_without_changing_omp_or_skill_state() {
          ALTER TABLE skills DROP COLUMN enabled_dsh;
          ALTER TABLE mcp_servers DROP COLUMN enabled_copilot;
          ALTER TABLE skills DROP COLUMN enabled_copilot;
+         ALTER TABLE mcp_servers DROP COLUMN enabled_trae;
+         ALTER TABLE skills DROP COLUMN enabled_trae;
          INSERT INTO mcp_servers (id, name, server_config, enabled_omp)
          VALUES ('shared', 'Shared MCP', '{}', 1);
          INSERT INTO skills (id, name, directory, enabled_kimi)
@@ -1595,6 +1597,8 @@ fn migration_from_v24_adds_copilot_and_workbuddy_flags_without_changing_dsh_stat
          ALTER TABLE skills DROP COLUMN enabled_copilot;
          ALTER TABLE mcp_servers DROP COLUMN enabled_workbuddy;
          ALTER TABLE skills DROP COLUMN enabled_workbuddy;
+         ALTER TABLE mcp_servers DROP COLUMN enabled_trae;
+         ALTER TABLE skills DROP COLUMN enabled_trae;
          INSERT INTO mcp_servers (id, name, server_config, enabled_dsh)
          VALUES ('shared', 'Shared MCP', '{}', 1);
          INSERT INTO skills (id, name, directory, enabled_dsh)
@@ -1604,18 +1608,20 @@ fn migration_from_v24_adds_copilot_and_workbuddy_flags_without_changing_dsh_stat
     Database::set_user_version(&conn, 24).expect("set user_version=24");
 
     Database::apply_schema_migrations_on_conn(&conn).expect("upgrade v24 database");
-    // v24 → v25（Copilot）→ v26（WorkBuddy）
-    assert_eq!(Database::get_user_version(&conn).unwrap(), 26);
-    assert_eq!(SCHEMA_VERSION, 26);
+    // v24 → v25（Copilot）→ v26（WorkBuddy）→ v27（TRAE）一次走完
+    assert_eq!(Database::get_user_version(&conn).unwrap(), 27);
+    assert_eq!(SCHEMA_VERSION, 27);
     for table in ["mcp_servers", "skills"] {
-        let flags: (bool, bool, bool) = conn
+        let flags: (bool, bool, bool, bool) = conn
             .query_row(
-                &format!("SELECT enabled_dsh, enabled_copilot, enabled_workbuddy FROM {table}"),
+                &format!(
+                    "SELECT enabled_dsh, enabled_copilot, enabled_workbuddy, enabled_trae FROM {table}"
+                ),
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .expect("read migrated flags");
-        assert_eq!(flags, (true, false, false), "{table}");
+        assert_eq!(flags, (true, false, false, false), "{table}");
     }
 
     conn.execute("UPDATE skills SET enabled_copilot = 1", [])
@@ -1628,14 +1634,84 @@ fn migration_from_v24_adds_copilot_and_workbuddy_flags_without_changing_dsh_stat
 }
 
 #[test]
-fn fresh_install_has_dsh_copilot_and_workbuddy_flags_at_current_version() {
+fn migration_v26_to_v27_adds_trae_flags_without_changing_workbuddy_state() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    conn.execute_batch(
+        "ALTER TABLE mcp_servers DROP COLUMN enabled_trae;
+         ALTER TABLE skills DROP COLUMN enabled_trae;
+         INSERT INTO mcp_servers (id, name, server_config, enabled_workbuddy)
+         VALUES ('shared', 'Shared MCP', '{}', 1);
+         INSERT INTO skills (id, name, directory, enabled_workbuddy)
+         VALUES ('skill', 'Skill', 'skill', 1);",
+    )
+    .expect("seed v26 database");
+    Database::set_user_version(&conn, 26).expect("set user_version=26");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("upgrade v26 database");
+    assert_eq!(Database::get_user_version(&conn).unwrap(), 27);
+    for table in ["mcp_servers", "skills"] {
+        let flags: (bool, bool) = conn
+            .query_row(
+                &format!("SELECT enabled_workbuddy, enabled_trae FROM {table}"),
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("read migrated flags");
+        assert_eq!(flags, (true, false), "{table}");
+    }
+
+    conn.execute("UPDATE mcp_servers SET enabled_trae = 1", [])
+        .unwrap();
+    Database::apply_schema_migrations_on_conn(&conn).expect("reopen migrated database");
+    assert!(conn
+        .query_row("SELECT enabled_trae FROM mcp_servers", [], |row| row
+            .get::<_, bool>(0))
+        .unwrap());
+}
+
+#[test]
+fn migration_from_early_trae_v26_backfills_missing_workbuddy_flags() {
+    // 早期 TRAE 开发版把 enabled_trae 记作 v26，库里没有 enabled_workbuddy。
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    conn.execute_batch(
+        "ALTER TABLE mcp_servers DROP COLUMN enabled_workbuddy;
+         ALTER TABLE skills DROP COLUMN enabled_workbuddy;
+         INSERT INTO mcp_servers (id, name, server_config, enabled_trae)
+         VALUES ('shared', 'Shared MCP', '{}', 1);",
+    )
+    .expect("seed early TRAE v26 database");
+    Database::set_user_version(&conn, 26).expect("set user_version=26");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("upgrade early TRAE database");
+    assert_eq!(Database::get_user_version(&conn).unwrap(), 27);
+    for table in ["mcp_servers", "skills"] {
+        assert!(
+            Database::has_column(&conn, table, "enabled_workbuddy").expect("inspect column"),
+            "{table}.enabled_workbuddy missing"
+        );
+    }
+    assert!(conn
+        .query_row("SELECT enabled_trae FROM mcp_servers", [], |row| row
+            .get::<_, bool>(0))
+        .unwrap());
+}
+
+#[test]
+fn fresh_install_has_dsh_copilot_workbuddy_and_trae_flags_at_current_version() {
     // 与 Database::init 的全新安装路径一致：先建表，再从 user_version=0 跑迁移。
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn).expect("create tables");
     Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
     assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
     for table in ["mcp_servers", "skills"] {
-        for column in ["enabled_dsh", "enabled_copilot", "enabled_workbuddy"] {
+        for column in [
+            "enabled_dsh",
+            "enabled_copilot",
+            "enabled_workbuddy",
+            "enabled_trae",
+        ] {
             assert!(
                 Database::has_column(&conn, table, column).expect("inspect column"),
                 "{table}.{column} missing on fresh install"

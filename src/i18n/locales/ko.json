@@ -5309,6 +5309,27 @@
       "secondaryModelInUse": "Kimi Code의 서브에이전트가 이 공급자의 모델을 사용 중입니다. 먼저 Kimi Code에서 /secondary-model로 변경하세요."
     }
   },
+  "trae": {
+    "officialPresetName": "TRAE 계정 로그인",
+    "officialHint": "TRAE CLI에 내장된 계정 로그인(traecli /login)을 사용합니다. 이 항목으로 전환하면 traecli.toml에서 model_provider와 model이 제거되고 모델은 계정에서 제공됩니다.",
+    "officialExists": "TRAE 계정 로그인이 이미 추가되어 있습니다.",
+    "providerKeyHint": "traecli.toml의 [model_providers.<키>]가 됩니다. 영문자, 숫자, - 및 _만 사용할 수 있습니다",
+    "providerKeyInvalid": "영문자, 숫자, - 및 _만 사용할 수 있으며 openai, oss, ollama, lmstudio 같은 기본 제공 이름은 사용할 수 없습니다",
+    "responsesOnlyHint": "TRAE CLI는 OpenAI Responses API(wire_api = \"responses\")만 지원합니다. /v1/responses와 호환되는 엔드포인트를 입력하세요.",
+    "envKey": "API 키 환경 변수(선택 사항)",
+    "envKeyHint": "TRAE CLI가 이 환경 변수(env_key)에서 키를 읽으므로 API 키를 설정 파일에 저장하지 않아도 됩니다.",
+    "model": "모델",
+    "models": "사용 가능한 모델",
+    "modelsHint": "이 모델들은 기본 모델과 함께 TRAE CLI 모델 카탈로그에 기록되며, traecli에서 /model로 전환할 수 있습니다.",
+    "modelsEmpty": "추가된 다른 모델이 없습니다. traecli에는 기본 모델만 표시됩니다.",
+    "removeModel": "{{model}} 제거",
+    "empty": {
+      "title": "TRAE CLI 공급자 추가",
+      "description": "Responses API 엔드포인트, API 키, 모델을 설정하세요. traecli.toml에 이미 있는 공급자는 자동으로 가져옵니다."
+    },
+    "deleteSessionHint": "TRAE CLI가 세션 색인도 업데이트하도록 터미널에서 traecli delete <세션 ID>를 실행하세요.",
+    "switchNeedsModel": "먼저 이 공급자를 편집하여 모델을 설정하세요"
+  },
   "omp": {
     "empty": {
       "title": "아직 API 키 공급자가 없습니다.",

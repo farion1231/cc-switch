@@ -73,6 +73,7 @@ export function AddProviderDialog({
     appId !== "mcode" &&
     appId !== "dsh" &&
     appId !== "kimi" &&
+    appId !== "trae" &&
     appId !== "copilot" &&
     appId !== "workbuddy" &&
     appId !== "grokbuild" &&
@@ -298,6 +299,7 @@ export function AddProviderDialog({
           appId === "pi" ||
           appId === "mcode" ||
           appId === "kimi" ||
+          appId === "trae" ||
           appId === "dsh" ||
           appId === "omp" ||
           appId === "copilot" ||

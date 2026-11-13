@@ -93,15 +93,26 @@ impl McpService {
                 save_with_workbuddy()
             }
         };
+        let save_with_trae = || {
+            if server.apps.trae || prev_apps.trae {
+                mcp::trae::sync_and_commit(
+                    &server.id,
+                    server.apps.trae.then_some(&server.server),
+                    save_with_dsh,
+                )
+            } else {
+                save_with_dsh()
+            }
+        };
         let save_with_kimi = || {
             if server.apps.kimi || prev_apps.kimi {
                 mcp::kimi::sync_and_commit(
                     &server.id,
                     server.apps.kimi.then_some(&server.server),
-                    save_with_dsh,
+                    save_with_trae,
                 )
             } else {
-                save_with_dsh()
+                save_with_trae()
             }
         };
         let save_with_agy = || {
@@ -189,11 +200,18 @@ impl McpService {
                     delete_with_workbuddy()
                 }
             };
-            let delete_with_kimi = || {
-                if server.apps.kimi {
-                    mcp::kimi::sync_and_commit(id, None, delete_with_dsh)
+            let delete_with_trae = || {
+                if server.apps.trae {
+                    mcp::trae::sync_and_commit(id, None, delete_with_dsh)
                 } else {
                     delete_with_dsh()
+                }
+            };
+            let delete_with_kimi = || {
+                if server.apps.kimi {
+                    mcp::kimi::sync_and_commit(id, None, delete_with_trae)
+                } else {
+                    delete_with_trae()
                 }
             };
             let delete_with_omp = || {
@@ -279,9 +297,10 @@ impl McpService {
             app,
             AppType::Mcode
                 | AppType::Kimi
+                | AppType::Trae
+                | AppType::Dsh
                 | AppType::Pi
                 | AppType::Agy
-                | AppType::Dsh
                 | AppType::Omp
                 | AppType::Copilot
                 | AppType::WorkBuddy
@@ -303,6 +322,8 @@ impl McpService {
                     mcp::dsh::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::Kimi {
                     mcp::kimi::sync_and_commit(server_id, spec, commit)?;
+                } else if app == AppType::Trae {
+                    mcp::trae::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::Copilot {
                     mcp::copilot::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::WorkBuddy {
@@ -348,9 +369,10 @@ impl McpService {
                 app,
                 AppType::Mcode
                     | AppType::Kimi
+                    | AppType::Trae
+                    | AppType::Dsh
                     | AppType::Pi
                     | AppType::Agy
-                    | AppType::Dsh
                     | AppType::Omp
                     | AppType::Copilot
                     | AppType::WorkBuddy
@@ -415,6 +437,7 @@ impl McpService {
             }
             AppType::Mcode => mcp::mcode::sync(&server.id, Some(&server.server))?,
             AppType::Kimi => mcp::kimi::sync(&server.id, Some(&server.server))?,
+            AppType::Trae => mcp::trae::sync(&server.id, Some(&server.server))?,
             AppType::Dsh => mcp::dsh::sync(&server.id, Some(&server.server))?,
             AppType::Copilot => mcp::copilot::sync(&server.id, Some(&server.server))?,
             AppType::Pi => mcp::pi::sync(&server.id, Some(&server.server))?,
@@ -437,9 +460,10 @@ impl McpService {
                 app,
                 AppType::Mcode
                     | AppType::Kimi
+                    | AppType::Trae
+                    | AppType::Dsh
                     | AppType::Pi
                     | AppType::Agy
-                    | AppType::Dsh
                     | AppType::Omp
                     | AppType::Copilot
                     | AppType::WorkBuddy
@@ -477,6 +501,7 @@ impl McpService {
             }
             AppType::Mcode => mcp::mcode::sync(id, None)?,
             AppType::Kimi => mcp::kimi::sync(id, None)?,
+            AppType::Trae => mcp::trae::sync(id, None)?,
             AppType::Dsh => mcp::dsh::sync(id, None)?,
             AppType::Copilot => mcp::copilot::sync(id, None)?,
             AppType::Pi => mcp::pi::sync(id, None)?,
@@ -592,9 +617,10 @@ impl McpService {
                 app,
                 AppType::Mcode
                     | AppType::Kimi
+                    | AppType::Trae
+                    | AppType::Dsh
                     | AppType::Pi
                     | AppType::Agy
-                    | AppType::Dsh
                     | AppType::Omp
                     | AppType::Copilot
                     | AppType::WorkBuddy
@@ -907,7 +933,7 @@ impl McpService {
         let mut total = 0;
         let mut failures: Vec<String> = Vec::new();
 
-        let results: [(&str, Result<usize, AppError>); 14] = [
+        let results: [(&str, Result<usize, AppError>); 15] = [
             ("claude", Self::import_from_claude(state)),
             ("codex", Self::import_from_codex(state)),
             ("gemini", Self::import_from_gemini(state)),
@@ -916,6 +942,7 @@ impl McpService {
             ("hermes", Self::import_from_hermes(state)),
             ("mcode", mcp::mcode::import(state)),
             ("kimi", mcp::kimi::import(state)),
+            ("trae", mcp::trae::import(state)),
             ("dsh", mcp::dsh::import(state)),
             ("workbuddy", mcp::workbuddy::import(state)),
             ("agy", mcp::agy::import(state)),
