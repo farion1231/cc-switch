@@ -1604,9 +1604,9 @@ fn migration_from_v24_adds_copilot_and_workbuddy_flags_without_changing_dsh_stat
     Database::set_user_version(&conn, 24).expect("set user_version=24");
 
     Database::apply_schema_migrations_on_conn(&conn).expect("upgrade v24 database");
-    // v24 → v25（Copilot）→ v26（WorkBuddy）
-    assert_eq!(Database::get_user_version(&conn).unwrap(), 26);
-    assert_eq!(SCHEMA_VERSION, 26);
+    // v24 → v25（Copilot）→ v26（WorkBuddy）→ v27（截断超长 error_message）
+    assert_eq!(Database::get_user_version(&conn).unwrap(), 27);
+    assert_eq!(SCHEMA_VERSION, 27);
     for table in ["mcp_servers", "skills"] {
         let flags: (bool, bool, bool) = conn
             .query_row(
