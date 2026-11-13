@@ -34,6 +34,8 @@ import {
 import { useQuotaPlan } from "@/lib/query/accountPlans";
 import type { CopilotQuota } from "@/lib/query/copilot";
 import KimiAccountQuotaFooter from "@/components/KimiAccountQuotaFooter";
+import CodebuddyAccountQuotaFooter from "@/components/CodebuddyAccountQuotaFooter";
+import { codebuddyRegion } from "@/components/providers/forms/CodebuddyLogin";
 import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import {
   extractCodexExperimentalBearerToken,
@@ -258,6 +260,33 @@ export function ProviderCard({
       account.id ===
       (managedCodexAccountId ?? codexAuthStatus?.default_account_id),
   );
+  // CodeBuddy 官方登录卡：第二行写绑定的账号，右侧写这个号的套餐积分
+  const isCodebuddyOfficial =
+    appId === "codebuddy" && provider.category === "official";
+  const codebuddyAccountId = isCodebuddyOfficial
+    ? resolveManagedAccountId(provider.meta, "codebuddy_oauth")?.trim() || null
+    : null;
+  const {
+    data: codebuddyAuthStatus,
+    isSuccess: isCodebuddyStatusSuccess,
+    isError: isCodebuddyStatusError,
+  } = useQuery({
+    queryKey: ["managed-auth-status", "codebuddy_oauth"],
+    queryFn: () => authApi.authGetStatus("codebuddy_oauth"),
+    enabled: isCodebuddyOfficial,
+    staleTime: 30_000,
+  });
+  const codebuddyAccount = codebuddyAuthStatus?.accounts.find(
+    (account) => account.id === codebuddyAccountId,
+  );
+  const codebuddyRegionLabel = (() => {
+    const region = codebuddyRegion(codebuddyAccount?.github_domain);
+    if (region === "mainland")
+      return t("authCenter.codebuddy.mainland", { defaultValue: "国内版" });
+    if (region === "global")
+      return t("authCenter.codebuddy.global", { defaultValue: "国际版" });
+    return codebuddyAccount?.github_domain || null;
+  })();
   const manualNote = provider.notes?.trim() || undefined;
   const providerNameIncludesAccountLogin = Boolean(
     managedCodexAccount?.login &&
@@ -522,7 +551,70 @@ export function ProviderCard({
             )}
           </div>
 
-          {appId === "workbuddy" && isWorkBuddyOfficial(provider) ? (
+          {isCodebuddyOfficial ? (
+            <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
+              {codebuddyAccount ? (
+                <>
+                  <span
+                    className="min-w-0 truncate"
+                    title={manualNote ?? codebuddyAccount.login}
+                  >
+                    {manualNote ??
+                      [codebuddyAccount.login, codebuddyRegionLabel]
+                        .filter(Boolean)
+                        .join(" · ")}
+                  </span>
+                  {codebuddyAccount.requires_reauth && (
+                    <span className="inline-flex shrink-0 items-center gap-1 text-warning-text">
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                      {t("authCenter.needsReauth", {
+                        defaultValue: "需要重新登录",
+                      })}
+                    </span>
+                  )}
+                </>
+              ) : isCodebuddyStatusError ? (
+                <span className="inline-flex min-w-0 items-center gap-1 text-warning-text">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">
+                    {t("authCenter.codebuddy.statusLoadFailed", {
+                      defaultValue: "无法读取 CodeBuddy 账号，请重试。",
+                    })}
+                  </span>
+                </span>
+              ) : isCodebuddyStatusSuccess || !codebuddyAccountId ? (
+                <>
+                  <span className="inline-flex min-w-0 items-center gap-1 text-warning-text">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate">
+                      {codebuddyAccountId
+                        ? t("codebuddy.official.accountDeleted", {
+                            defaultValue: "账号已删除，请重新选择",
+                          })
+                        : t("codebuddy.official.unbound", {
+                            defaultValue: "还没有选择账号，请编辑卡片选择一个",
+                          })}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    className="shrink-0 text-body font-medium text-action-text hover:underline"
+                    onClick={() => onEdit(provider)}
+                  >
+                    {t("codex.chooseAccount", {
+                      defaultValue: "选择账号",
+                    })}
+                  </button>
+                </>
+              ) : (
+                <span className="min-w-0 truncate">
+                  {t("codebuddy.official.statusLoading", {
+                    defaultValue: "正在读取账号…",
+                  })}
+                </span>
+              )}
+            </div>
+          ) : appId === "workbuddy" && isWorkBuddyOfficial(provider) ? (
             <WorkBuddyOfficialAccountLine provider={provider} onEdit={onEdit} />
           ) : codexOfficialIdentity === "native_login" || isCodexOauth ? (
             <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
@@ -705,6 +797,12 @@ export function ProviderCard({
               ) : appId === "workbuddy" && isWorkBuddyOfficial(provider) ? (
                 // 官方登录卡的额度按卡上绑定的账号查（只有 WorkBuddy 运行时当前账号能刷新）
                 <WorkBuddyQuotaFooter provider={provider} />
+              ) : isCodebuddyOfficial ? (
+                codebuddyAccount && !codebuddyAccount.requires_reauth ? (
+                  <CodebuddyAccountQuotaFooter
+                    accountId={codebuddyAccount.id}
+                  />
+                ) : null
               ) : appId === "kimi" && isOfficial ? (
                 // 每张 Kimi 官方卡就是授权中心里的一个账号，额度按卡上那个号查
                 <KimiAccountQuotaFooter
@@ -789,7 +887,11 @@ export function ProviderCard({
             onEdit={() => onEdit(provider)}
             onDelete={() => onDelete(provider)}
             onDuplicate={
-              onDuplicate && !(appId === "kimi" && isOfficial)
+              // CodeBuddy 的卡片 ID 就是 models.json 里的模型 id（发给上游的模型名），副本只能换一个
+              // 不存在的 id 且编辑时改不了；官方登录卡另建即可，所以 CodeBuddy 不提供复制
+              onDuplicate &&
+              !(appId === "kimi" && isOfficial) &&
+              appId !== "codebuddy"
                 ? () => onDuplicate(provider)
                 : undefined
             }

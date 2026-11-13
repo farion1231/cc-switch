@@ -1505,6 +1505,7 @@
     "selectSessionLabel": "{{title}} 선택",
     "agyDeleteHint": "런타임 상태도 제거하려면 Antigravity에서 이 세션을 삭제하세요.",
     "mcodeDeleteHint": "MiniMax Code에서 삭제하세요.",
+    "codebuddyDeleteHint": "이 세션은 CodeBuddy Code에서 관리하세요. 백그라운드 작업, 팀원, 파일 기록이 해당 대화 기록을 참조합니다",
     "groupMeta": "세션 {{count}}개 · {{time}}",
     "bucketToday": "오늘",
     "bucketYesterday": "어제",
@@ -4840,6 +4841,7 @@
       "failedTitle": "일부 앱을 읽을 수 없습니다",
       "filesTitle": "읽은 파일",
       "claudeNote": " (최상위 mcpServers)",
+      "codebuddyNote": " (.mcp.json, mcp.json, ~/.codebuddy.json 중 처음 존재하는 파일)",
       "ok": "확인",
       "dshNote": " (초기화된 모든 프로필에 기록: web, desktop, headless, acp)"
     },
@@ -5142,6 +5144,7 @@
       "chatgptHelp": "Claude Code와 Claude Desktop의 ChatGPT 프리셋 및 Codex의 공식 로그인 연결에 사용합니다. 계정을 선택하지 않은 공급자는 기본 계정을 사용합니다.",
       "xaiHelp": "Claude Code, Claude Desktop 및 Codex의 xAI 프리셋에서 사용합니다. 계정을 선택하지 않은 공급자는 기본 계정을 사용합니다.",
       "agyHelp": "Antigravity CLI(agy)의 공식 로그인입니다. agy는 한 번에 하나의 계정에만 로그인할 수 있습니다. 전환하면 agy의 로그인이 선택한 계정으로 교체되며 이후 시작한 agy 세션에서 사용됩니다. 기존에 agy에 로그인된 계정은 자동으로 여기에 추가되므로 다른 계정으로 전환해도 사라지지 않습니다.",
+      "codebuddyHelp": "CodeBuddy Code의 공식 로그인입니다(중국 사이트와 국제 사이트 모두). 계정을 전환하려면 공급자 목록에서 해당 계정용 \"CodeBuddy 공식 로그인\" 카드를 만들고 추가를 클릭하세요. \"계정 추가\"는 터미널에서 codebuddy를 열고, 로그인을 마치면 계정을 여기에 추가합니다. CodeBuddy가 이미 로그인되어 있으면 잠시 로그아웃되며, 중단하면 원래 로그인을 복원할 수 있습니다. 토큰은 CodeBuddy가 직접 갱신합니다.",
       "workbuddyHelp": "WorkBuddy 데스크톱 앱의 공식 로그인입니다. CC Switch는 대신 WorkBuddy에 로그인할 수 없으며, WorkBuddy에 로그인된 계정(로그인 파일의 스냅샷)만 저장할 수 있습니다. 계정을 전환하려면 계정의 … 메뉴에서 “WorkBuddy에서 이 계정 사용”을 선택하거나, 공급자 목록에서 해당 계정에 연결된 WorkBuddy 공식 로그인 카드를 추가하세요(공식 카드는 한 번에 하나만 추가됩니다). 스냅샷은 이 컴퓨터에서만 작동하며 동기화되지 않습니다.",
       "claudeHelpTerminal": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. 설정에서 Claude 설정 디렉터리를 별도로 지정한 경우, 카드를 전환해도 Claude Code의 로그인 계정은 바뀌지 않습니다. Claude 공식 공급자 카드에서 계정을 선택한 다음, 해당 카드의 ‘터미널 열기’를 이용하세요.",
       "claudeHelpWsl": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. Claude 설정 디렉터리가 WSL에 있는 경우는 아직 지원하지 않습니다. 추후 지원할 예정입니다.",
@@ -5202,6 +5205,32 @@
       "removeNote": "agy의 로그인은 유지됩니다. 이 계정을 사용 중인 경우 여기서 제거해도 계속 작동합니다.",
       "switched": "전환했습니다. 새 agy 세션은 이 계정을 사용합니다.",
       "switchedWhileRunning": "전환했습니다. 실행 중인 agy가 감지되었습니다. 이미 실행 중인 agy는 기존 계정을 계속 사용하며 기존 계정 정보를 로그인 설정에 다시 저장할 수도 있습니다. agy를 모두 종료한 뒤 다시 실행하세요."
+    },
+    "codebuddy": {
+      "mainland": "중국",
+      "global": "국제",
+      "expiredNote": "로그인이 만료되었습니다. 다시 로그인하세요",
+      "addedOn": "{{date}}에 추가됨",
+      "imported": "{{login}}을(를) 추가했습니다.",
+      "uncollected": "CodeBuddy가 {{login}}(으)로 로그인되어 있지만 이 계정은 아직 목록에 없습니다.",
+      "importCurrent": "현재 계정 추가",
+      "unrecognized": "CodeBuddy 로그인 파일의 형식을 인식할 수 없습니다",
+      "unrecognizedNote": "WorkBuddy가 암호화했을 수 있습니다. CC Switch는 파일을 건드리지 않으며 계정을 전환할 수 없습니다.",
+      "statusLoadFailed": "CodeBuddy 계정을 읽지 못했습니다. 다시 시도하세요.",
+      "empty": "아직 CodeBuddy 계정이 없습니다. 계정 추가를 클릭해 로그인하거나 CodeBuddy에 현재 로그인된 계정을 추가하세요.",
+      "login": "새 계정으로 로그인",
+      "current": "CodeBuddy에서 사용 중",
+      "pendingNote": "터미널에서 codebuddy를 열었습니다. 안내에 따라 로그인하세요(로그인 화면이 나타나지 않으면 /login 입력). 완료되면 계정이 여기에 추가됩니다.",
+      "reopenTerminal": "터미널 다시 열기",
+      "removeNote": "CC Switch의 사본만 삭제합니다. CodeBuddy는 로그인 상태로 유지됩니다.",
+      "quota": {
+        "credits": "크레딧",
+        "enterprise": "엔터프라이즈",
+        "unlimited": "무제한",
+        "detail": "{{total}} 크레딧 중 {{remaining}} 남음, {{used}} 사용",
+        "usedDetail": "이번 주기에 {{used}} 크레딧 사용",
+        "refreshPending": "토큰이 CodeBuddy의 갱신을 기다리고 있습니다. 이 계정으로 전환해 한 번 사용한 뒤 다시 확인하세요."
+      }
     },
     "workbuddy": {
       "addedOn": "{{date}}에 추가됨",
@@ -5349,6 +5378,47 @@
       "renameProvider": "Oh My Pi 공급자 키는 변경할 수 없습니다.",
       "providerMissing": "이 Oh My Pi 공급자는 더 이상 저장된 목록에 없습니다.",
       "legacyModelsJson": "Oh My Pi 디렉터리에 이전 형식의 models.json이 남아 있습니다. omp를 다음에 실행하면 models.yml로 마이그레이션됩니다. omp를 한 번 실행한 후 공급자를 다시 추가하세요."
+    }
+  },
+  "codebuddy": {
+    "empty": {
+      "title": "아직 사용자 지정 모델이 없습니다",
+      "description": "CodeBuddy의 공식 모델은 CodeBuddy Code가 직접 관리합니다. 공식 계정을 전환하려면 해당 계정용 \"CodeBuddy 공식 로그인\" 카드를 만들고 여기에서 추가를 클릭하세요. ~/.codebuddy/models.json에 이미 있는 사용자 지정 모델은 자동으로 여기에 표시됩니다. 오른쪽 위의 + 버튼으로 프리셋 또는 사용자 지정 모델을 추가하세요."
+    },
+    "modelsHint": "모델 ID는 models.json에 기록되는 id이자 /model에서 선택하는 이름으로, 보통 엔드포인트의 모델 이름입니다. 추가한 후에는 변경할 수 없습니다. 표시 이름은 위의 이름과 같은 값입니다.",
+    "modelIdDuplicate": "이 모델 ID는 이미 사용 중입니다",
+    "modelIdInvalid": "모델 ID는 공백으로 시작하거나 끝날 수 없습니다.",
+    "vendor": "공급업체 라벨",
+    "urlHint": "전체 경로를 사용하세요. 보통 /chat/completions로 끝납니다. ${VAR} 환경 변수 참조를 사용할 수 있습니다.",
+    "urlInvalid": "올바른 http(s) URL을 입력하세요.",
+    "apiKeyPlaceholder": "API 키를 입력하거나 ${MY_API_KEY} 형식으로 환경 변수를 참조하세요",
+    "maxInputTokens": "최대 입력 토큰",
+    "maxOutputTokens": "최대 출력 토큰",
+    "jsonHint": "models.json의 모델 항목 하나입니다(id는 위의 모델 ID에서 가져옵니다). 저장하면 CodeBuddy Code가 파일을 자동으로 다시 불러옵니다.",
+    "official": {
+      "presetName": "CodeBuddy 공식 로그인",
+      "account": "계정",
+      "accountHint": "이 카드가 사용할 CodeBuddy 계정을 선택하세요. CodeBuddy는 한 번에 한 계정만 로그인할 수 있습니다. 공급자 목록에서 이 카드의 추가를 클릭하면 CodeBuddy가 이 계정으로 로그인되며, 실행 중인 CodeBuddy도 자동으로 적용합니다.",
+      "accountDeleted": "계정이 삭제되었습니다. 다른 계정을 선택하세요.",
+      "accountDeletedChip": "계정 삭제됨",
+      "unbound": "아직 계정을 선택하지 않았습니다. 카드를 편집해 계정을 선택하세요.",
+      "statusLoading": "계정을 불러오는 중…",
+      "expired": "이 계정의 로그인이 만료되었습니다. 인증 센터에서 다시 로그인한 후 추가하세요.",
+      "importCurrent": "현재 로그인 추가({{login}})",
+      "adding": "추가하는 중…",
+      "added": "{{name}}을(를) 추가했습니다. 이제 CodeBuddy가 이 계정으로 로그인되어 있습니다. 실행 중인 CodeBuddy는 자동으로 전환되며 새 세션도 이 계정을 사용합니다.",
+      "addFailed": "추가하지 못했습니다: {{error}}",
+      "removeHint": "CodeBuddy는 한 번에 한 계정만 로그인할 수 있습니다. 전환하려면 다른 공식 카드를 추가하세요."
+    },
+    "login": {
+      "confirmTitle": "다른 CodeBuddy 계정으로 로그인",
+      "confirmMessage": "CodeBuddy가 {{login}}(으)로 로그인되어 있으며 한 번에 한 계정만 사용할 수 있습니다. 계속하면 먼저 이 계정을 인증 센터에 추가한 다음 CodeBuddy를 잠시 로그아웃하고(로그인 정보는 보존되며 서버에 연결하지 않음), 새 계정에 로그인할 터미널을 엽니다.\n\n이후 로그인을 마칠 때까지 실행 중인 CodeBuddy 세션은 로그아웃 상태로 표시됩니다. 중단하면 클릭 한 번으로 원래 로그인을 복원할 수 있습니다.",
+      "confirm": "계속",
+      "signedInHint": "CodeBuddy가 로그인되어 있는 동안 새 계정으로 로그인하면 먼저 현재 계정에서 로그아웃됩니다. 로그인을 마칠 때까지 실행 중인 CodeBuddy 세션은 로그아웃 상태로 표시됩니다.",
+      "pendingReplacing": "CodeBuddy를 현재 계정에서 잠시 로그아웃하고 터미널에서 codebuddy를 열었습니다. 안내에 따라 새 계정으로 로그인하세요. 완료되면 여기에 추가됩니다.",
+      "restore": "원래 로그인 복원",
+      "restored": "원래 CodeBuddy 로그인을 복원했습니다.",
+      "restoreFailed": "원래 로그인을 복원하지 못했습니다(CodeBuddy가 로그인 파일을 쓰는 중일 수 있습니다). 인증 센터나 터미널에서 다시 로그인하세요."
     }
   },
   "dsh": {

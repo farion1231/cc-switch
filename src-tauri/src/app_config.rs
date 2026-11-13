@@ -16,6 +16,8 @@ pub struct McpApps {
     #[serde(default)]
     pub workbuddy: bool,
     #[serde(default)]
+    pub codebuddy: bool,
+    #[serde(default)]
     pub agy: bool,
     #[serde(default)]
     pub copilot: bool,
@@ -47,6 +49,7 @@ impl McpApps {
             AppType::GrokBuild => self.grokbuild,
             AppType::OpenCode => self.opencode,
             AppType::OpenClaw => false, // OpenClaw doesn't support MCP
+            AppType::Codebuddy => self.codebuddy,
             AppType::Hermes => self.hermes,
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
@@ -69,6 +72,7 @@ impl McpApps {
             AppType::GrokBuild => self.grokbuild = enabled,
             AppType::OpenCode => self.opencode = enabled,
             AppType::OpenClaw => {} // OpenClaw doesn't support MCP, ignore
+            AppType::Codebuddy => self.codebuddy = enabled,
             AppType::Hermes => self.hermes = enabled,
             AppType::Mcode => self.mcode = enabled,
             AppType::Kimi => self.kimi = enabled,
@@ -115,6 +119,9 @@ impl McpApps {
         if self.workbuddy {
             apps.push(AppType::WorkBuddy);
         }
+        if self.codebuddy {
+            apps.push(AppType::Codebuddy);
+        }
         if self.mcode {
             apps.push(AppType::Mcode);
         }
@@ -141,6 +148,7 @@ impl McpApps {
             && !self.agy
             && !self.copilot
             && !self.kimi
+            && !self.codebuddy
             && !self.dsh
             && !self.workbuddy
             && !self.mcode
@@ -160,6 +168,8 @@ pub struct SkillApps {
     pub dsh: bool,
     #[serde(default)]
     pub workbuddy: bool,
+    #[serde(default)]
+    pub codebuddy: bool,
     #[serde(default)]
     pub agy: bool,
     #[serde(default)]
@@ -197,6 +207,7 @@ impl SkillApps {
             AppType::Kimi => self.kimi,
             AppType::Dsh => self.dsh,
             AppType::OpenClaw => false,
+            AppType::Codebuddy => self.codebuddy,
             AppType::Agy => self.agy,
             AppType::Omp => self.omp,
             AppType::Copilot => self.copilot,
@@ -219,6 +230,7 @@ impl SkillApps {
             AppType::Kimi => self.kimi = enabled,
             AppType::Dsh => self.dsh = enabled,
             AppType::OpenClaw => {}
+            AppType::Codebuddy => self.codebuddy = enabled,
             AppType::Agy => self.agy = enabled,
             AppType::Omp => self.omp = enabled,
             AppType::Copilot => self.copilot = enabled,
@@ -260,6 +272,9 @@ impl SkillApps {
         if self.workbuddy {
             apps.push(AppType::WorkBuddy);
         }
+        if self.codebuddy {
+            apps.push(AppType::Codebuddy);
+        }
         if self.mcode {
             apps.push(AppType::Mcode);
         }
@@ -286,6 +301,7 @@ impl SkillApps {
             && !self.agy
             && !self.copilot
             && !self.kimi
+            && !self.codebuddy
             && !self.dsh
             && !self.workbuddy
             && !self.mcode
@@ -518,6 +534,7 @@ pub enum AppType {
     Copilot,
     #[serde(rename = "workbuddy", alias = "work-buddy")]
     WorkBuddy,
+    Codebuddy,
 }
 
 impl AppType {
@@ -539,6 +556,7 @@ impl AppType {
             AppType::Omp => "omp",
             AppType::Copilot => "copilot",
             AppType::WorkBuddy => "workbuddy",
+            AppType::Codebuddy => "codebuddy",
         }
     }
 
@@ -562,6 +580,7 @@ impl AppType {
                 | AppType::Kimi
                 | AppType::Dsh
                 | AppType::Omp
+                | AppType::Codebuddy
                 | AppType::Copilot
                 | AppType::WorkBuddy
         )
@@ -600,6 +619,7 @@ impl AppType {
             AppType::Omp,
             AppType::Copilot,
             AppType::WorkBuddy,
+            AppType::Codebuddy,
         ]
         .into_iter()
     }
@@ -629,10 +649,11 @@ impl FromStr for AppType {
                 Ok(AppType::Copilot)
             }
             "workbuddy" | "work-buddy" | "work_buddy" => Ok(AppType::WorkBuddy),
+            "codebuddy" | "codebuddy-code" | "codebuddy_code" => Ok(AppType::Codebuddy),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy, codebuddy。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy, codebuddy."),
             )),
         }
     }
@@ -679,7 +700,8 @@ impl CommonConfigSnippets {
             | AppType::Agy
             | AppType::Omp
             | AppType::Copilot
-            | AppType::WorkBuddy => None,
+            | AppType::WorkBuddy
+            | AppType::Codebuddy => None,
         }
     }
 
@@ -701,7 +723,8 @@ impl CommonConfigSnippets {
             | AppType::Agy
             | AppType::Omp
             | AppType::Copilot
-            | AppType::WorkBuddy => {}
+            | AppType::WorkBuddy
+            | AppType::Codebuddy => {}
         }
     }
 }
@@ -1036,7 +1059,8 @@ impl MultiAppConfig {
             | AppType::Agy
             | AppType::Omp
             | AppType::Copilot
-            | AppType::WorkBuddy => return Ok(false),
+            | AppType::WorkBuddy
+            | AppType::Codebuddy => return Ok(false),
         };
 
         prompts.insert(id, prompt);
@@ -1087,7 +1111,8 @@ impl MultiAppConfig {
                 | AppType::Agy
                 | AppType::Omp
                 | AppType::Copilot
-                | AppType::WorkBuddy => continue, // Pi didn't exist in v3.6.x, skip
+                | AppType::WorkBuddy
+                | AppType::Codebuddy => continue, // Pi didn't exist in v3.6.x, skip
             };
 
             for (id, entry) in old_servers {

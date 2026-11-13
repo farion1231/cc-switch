@@ -1506,6 +1506,7 @@
     "selectSessionLabel": "{{title}} auswählen",
     "agyDeleteHint": "Löschen Sie diese Sitzung in Antigravity, um auch ihren Laufzeitstatus zu entfernen",
     "mcodeDeleteHint": "In MiniMax Code löschen",
+    "codebuddyDeleteHint": "Verwalten Sie diese Sitzung in CodeBuddy Code: Hintergrundaufgaben, Teammitglieder und der Dateiverlauf verweisen auf ihr Transkript",
     "groupMeta": "{{count}} Sitzungen · {{time}}",
     "bucketToday": "Heute",
     "bucketYesterday": "Gestern",
@@ -4840,6 +4841,7 @@
       "failedTitle": "Einige Apps konnten nicht gelesen werden",
       "filesTitle": "Welche Dateien gelesen wurden",
       "claudeNote": " (mcpServers auf oberster Ebene)",
+      "codebuddyNote": " (die erste vorhandene von .mcp.json, mcp.json, ~/.codebuddy.json)",
       "dshNote": " (in jedes initialisierte Profil geschrieben: web, desktop, headless, acp)",
       "ok": "Verstanden"
     },
@@ -5142,6 +5144,7 @@
       "chatgptHelp": "Wird von ChatGPT-Vorlagen in Claude Code und Claude Desktop sowie von der Bindung an die offizielle Codex-Anmeldung verwendet. Anbieter ohne ausgewähltes Konto verwenden das Standardkonto.",
       "xaiHelp": "Wird von xAI-Vorlagen in Claude Code, Claude Desktop und Codex verwendet. Anbieter ohne ausgewähltes Konto verwenden das Standardkonto.",
       "agyHelp": "Die offizielle Anmeldung der Antigravity CLI (agy). agy kann nur mit einem Konto gleichzeitig angemeldet sein; „Wechseln“ ersetzt die Anmeldung von agy durch das ausgewählte Konto, und danach gestartete agy-Sitzungen verwenden es. Das Konto, mit dem agy bereits angemeldet war, wird hier automatisch hinzugefügt, sodass es beim Wechseln nie verloren geht.",
+      "codebuddyHelp": "Die offizielle Anmeldung für CodeBuddy Code (China- und internationale Website). Um das Konto zu wechseln, legen Sie in der Anbieterliste eine Karte „CodeBuddy-Offizielle-Anmeldung“ für das Konto an und klicken Sie auf „Hinzufügen“. „Konto hinzufügen“ öffnet ein Terminal mit codebuddy und fügt das Konto hier hinzu, sobald Sie fertig sind; ist CodeBuddy bereits angemeldet, wird es vorübergehend abgemeldet und kann wiederhergestellt werden, falls Sie abbrechen. CodeBuddy erneuert seine Tokens selbst.",
       "workbuddyHelp": "Die offizielle Anmeldung der WorkBuddy-Desktop-App. CC Switch kann sich nicht für Sie bei WorkBuddy anmelden; es kann nur das Konto speichern, mit dem WorkBuddy angemeldet ist (ein Snapshot seiner Anmeldedateien). Um das Konto zu wechseln, wählen Sie im …-Menü des Kontos „WorkBuddy auf dieses Konto umstellen“ oder fügen Sie in der Anbieterliste die damit verknüpfte Karte „WorkBuddy Official Sign-in“ hinzu (es wird jeweils nur eine offizielle Karte hinzugefügt). Snapshots funktionieren nur auf diesem Computer und werden nicht synchronisiert.",
       "claudeHelpTerminal": "Offizielle Claude-Code-Abonnementkonten (Pro / Max / Team). Der Claude-Konfigurationsordner ist in den Optionen überschrieben, daher ändert der Kartenwechsel die Anmeldung von Claude Code nicht. Wählen Sie ein Konto auf einer offiziellen Karte und verwenden Sie „Terminal öffnen“ auf der Karte.",
       "claudeHelpWsl": "Offizielle Claude-Code-Abonnementkonten (Pro / Max / Team). Wird noch nicht unterstützt, solange der Claude-Konfigurationsordner in WSL liegt.",
@@ -5202,6 +5205,32 @@
       "removeNote": "agy bleibt angemeldet: Wenn agy dieses Konto verwendet, funktioniert es nach dem Entfernen weiter.",
       "switched": "Gewechselt. Neue agy-Sitzungen verwenden dieses Konto.",
       "switchedWhileRunning": "Gewechselt. agy läuft: Geöffnete agy-Sitzungen verwenden weiter das vorherige Konto und schreiben es möglicherweise zurück. Beenden Sie agy und öffnen Sie es erneut."
+    },
+    "codebuddy": {
+      "mainland": "China",
+      "global": "International",
+      "expiredNote": "Anmeldung abgelaufen, bitte erneut anmelden",
+      "addedOn": "Hinzugefügt am {{date}}",
+      "imported": "{{login}} hinzugefügt.",
+      "uncollected": "CodeBuddy ist als {{login}} angemeldet; dieses Konto steht noch nicht in dieser Liste.",
+      "importCurrent": "Aktuelles Konto hinzufügen",
+      "unrecognized": "Die Anmeldedatei von CodeBuddy hat ein unbekanntes Format",
+      "unrecognizedNote": "Sie ist möglicherweise von WorkBuddy verschlüsselt. CC Switch lässt sie unverändert und kann keine Konten wechseln.",
+      "statusLoadFailed": "CodeBuddy-Konten konnten nicht gelesen werden. Versuchen Sie es erneut.",
+      "empty": "Noch keine CodeBuddy-Konten. Klicken Sie auf „Konto hinzufügen“, um sich anzumelden, oder fügen Sie das Konto hinzu, mit dem CodeBuddy angemeldet ist.",
+      "login": "Mit neuem Konto anmelden",
+      "current": "Von CodeBuddy verwendet",
+      "pendingNote": "codebuddy wurde in einem Terminal geöffnet. Folgen Sie den Anweisungen zur Anmeldung (geben Sie /login ein, falls kein Anmeldebildschirm erscheint); das Konto wird hier hinzugefügt, sobald Sie fertig sind.",
+      "reopenTerminal": "Terminal erneut öffnen",
+      "removeNote": "Entfernt nur die Kopie in CC Switch. CodeBuddy bleibt angemeldet.",
+      "quota": {
+        "credits": "Credits",
+        "enterprise": "Enterprise",
+        "unlimited": "Unbegrenzt",
+        "detail": "{{remaining}} von {{total}} Credits übrig, {{used}} verbraucht",
+        "usedDetail": "{{used}} Credits in diesem Zeitraum verbraucht",
+        "refreshPending": "Das Token wartet auf die Erneuerung durch CodeBuddy. Wechseln Sie zu diesem Konto, verwenden Sie es einmal und prüfen Sie dann erneut."
+      }
     },
     "workbuddy": {
       "addedOn": "Hinzugefügt am {{date}}",
@@ -5349,6 +5378,47 @@
       "renameProvider": "Oh-My-Pi-Anbieterschlüssel können nicht umbenannt werden.",
       "providerMissing": "Dieser Oh-My-Pi-Anbieter ist nicht mehr gespeichert.",
       "legacyModelsJson": "Oh My Pi hat noch eine alte models.json, die omp beim nächsten Start nach models.yml migriert. Führen Sie omp einmal aus und fügen Sie den Anbieter dann erneut hinzu."
+    }
+  },
+  "codebuddy": {
+    "empty": {
+      "title": "Noch keine benutzerdefinierten Modelle",
+      "description": "Die offiziellen Modelle von CodeBuddy verwaltet CodeBuddy Code selbst. Um offizielle Konten zu wechseln, legen Sie eine Karte „CodeBuddy-Offizielle-Anmeldung“ für das Konto an und klicken Sie hier auf „Hinzufügen“. Benutzerdefinierte Modelle, die bereits in ~/.codebuddy/models.json stehen, erscheinen hier automatisch. Mit der Schaltfläche + oben rechts fügen Sie eine Vorlage oder ein benutzerdefiniertes Modell hinzu."
+    },
+    "modelsHint": "Die Modell-ID ist die id, die in models.json geschrieben wird, und der Name, den Sie in /model auswählen – meist der Modellname des Endpunkts. Sie lässt sich nach dem Hinzufügen nicht mehr ändern. Der Anzeigename entspricht dem Namen oben.",
+    "modelIdDuplicate": "Diese Modell-ID wird bereits verwendet",
+    "modelIdInvalid": "Die Modell-ID darf nicht mit einem Leerzeichen beginnen oder enden.",
+    "vendor": "Anbieterbezeichnung",
+    "urlHint": "Verwenden Sie den vollständigen Pfad, meist mit /chat/completions am Ende. Umgebungsverweise wie ${VAR} funktionieren.",
+    "urlInvalid": "Geben Sie eine gültige http(s)-URL ein.",
+    "apiKeyPlaceholder": "API-Schlüssel eingeben oder eine Umgebungsvariable als ${MY_API_KEY} referenzieren",
+    "maxInputTokens": "Max. Eingabe-Tokens",
+    "maxOutputTokens": "Max. Ausgabe-Tokens",
+    "jsonHint": "Ein Modelleintrag in models.json (seine id stammt aus der Modell-ID oben). CodeBuddy Code lädt die Datei nach dem Speichern selbst neu.",
+    "official": {
+      "presetName": "CodeBuddy-Offizielle-Anmeldung",
+      "account": "Konto",
+      "accountHint": "Wählen Sie das CodeBuddy-Konto, das diese Karte verwendet. CodeBuddy kann nur mit einem Konto gleichzeitig angemeldet sein: Klicken Sie in der Anbieterliste bei dieser Karte auf „Hinzufügen“, um CodeBuddy damit anzumelden; ein laufendes CodeBuddy übernimmt es automatisch.",
+      "accountDeleted": "Konto entfernt. Wählen Sie ein anderes aus.",
+      "accountDeletedChip": "Konto entfernt",
+      "unbound": "Noch kein Konto ausgewählt. Bearbeiten Sie die Karte, um eines auszuwählen.",
+      "statusLoading": "Konten werden geladen …",
+      "expired": "Die Anmeldung dieses Kontos ist abgelaufen. Melden Sie sich in der Kontoverwaltung erneut an, bevor Sie es hinzufügen.",
+      "importCurrent": "Aktuelle Anmeldung hinzufügen ({{login}})",
+      "adding": "Wird hinzugefügt …",
+      "added": "{{name}} hinzugefügt. CodeBuddy ist jetzt mit diesem Konto angemeldet; ein laufendes CodeBuddy wechselt automatisch, und neue Sitzungen verwenden es ebenfalls.",
+      "addFailed": "Hinzufügen fehlgeschlagen: {{error}}",
+      "removeHint": "CodeBuddy kann nur mit einem Konto gleichzeitig angemeldet sein. Fügen Sie eine andere offizielle Karte hinzu, um zu wechseln."
+    },
+    "login": {
+      "confirmTitle": "Mit einem anderen CodeBuddy-Konto anmelden",
+      "confirmMessage": "CodeBuddy ist als {{login}} angemeldet und kann nur ein Konto gleichzeitig verwenden. Wenn Sie fortfahren, wird dieses Konto zuerst zur Kontoverwaltung hinzugefügt, CodeBuddy dann vorübergehend abgemeldet (die Anmeldung bleibt erhalten, kein Server wird kontaktiert) und ein Terminal zur Anmeldung mit dem neuen Konto geöffnet.\n\nDanach erscheinen laufende CodeBuddy-Sitzungen als abgemeldet, bis Sie die Anmeldung abgeschlossen haben. Brechen Sie ab, können Sie die ursprüngliche Anmeldung mit einem Klick wiederherstellen.",
+      "confirm": "Fortfahren",
+      "signedInHint": "Solange CodeBuddy angemeldet ist, wird es bei der Anmeldung mit einem neuen Konto zuerst vom aktuellen abgemeldet: Laufende CodeBuddy-Sitzungen erscheinen als abgemeldet, bis Sie die Anmeldung abgeschlossen haben.",
+      "pendingReplacing": "CodeBuddy wurde vorübergehend vom aktuellen Konto abgemeldet und codebuddy in einem Terminal geöffnet. Folgen Sie den Anweisungen, um sich mit dem neuen Konto anzumelden; es wird hier hinzugefügt, sobald Sie fertig sind.",
+      "restore": "Ursprüngliche Anmeldung wiederherstellen",
+      "restored": "Die ursprüngliche CodeBuddy-Anmeldung wurde wiederhergestellt.",
+      "restoreFailed": "Die ursprüngliche Anmeldung konnte nicht wiederhergestellt werden (CodeBuddy schreibt möglicherweise gerade seine Anmeldedatei). Melden Sie sich in der Kontoverwaltung oder in einem Terminal erneut an."
     }
   },
   "dsh": {

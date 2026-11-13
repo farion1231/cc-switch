@@ -98,6 +98,7 @@ pub fn import_from_claude(config: &mut MultiAppConfig) -> Result<usize, AppError
                         mcode: false,
                         kimi: false,
                         copilot: false,
+                        codebuddy: false,
                         dsh: false,
                         workbuddy: false,
                         pi: false,

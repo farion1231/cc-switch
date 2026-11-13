@@ -25,6 +25,7 @@ const PROMPT_FILE_NAME: Partial<Record<AppId, string>> = {
   omp: "AGENTS.md",
   copilot: "copilot-instructions.md",
   workbuddy: "MEMORY.md",
+  codebuddy: "CODEBUDDY.md",
 };
 
 export function promptFileName(app: AppId): string {

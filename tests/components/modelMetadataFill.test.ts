@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  fillCodebuddyModel,
   fillCodexCatalogModel,
   fillHermesModel,
   fillKimiModel,
@@ -332,6 +333,27 @@ describe("piPresetThinkingFor", () => {
         compat: { supportsReasoningEffort: false },
       }),
     ).toBeNull();
+  });
+
+  it("fills blank CodeBuddy token limits and only turns capabilities on", () => {
+    expect(
+      fillCodebuddyModel(
+        { url: "https://e.example", maxOutputTokens: 4096 },
+        metadata,
+      ),
+    ).toEqual({
+      url: "https://e.example",
+      maxInputTokens: 262144,
+      maxOutputTokens: 4096,
+      supportsImages: true,
+      supportsReasoning: true,
+    });
+    expect(
+      fillCodebuddyModel(
+        { supportsImages: true, supportsReasoning: true },
+        { reasoning: false, inputModalities: ["text"] },
+      ),
+    ).toEqual({ supportsImages: true, supportsReasoning: true });
   });
 });
 

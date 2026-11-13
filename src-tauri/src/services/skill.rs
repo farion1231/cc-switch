@@ -696,7 +696,8 @@ impl SkillService {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Copilot
-            | AppType::WorkBuddy => {}
+            | AppType::WorkBuddy
+            | AppType::Codebuddy => {}
             AppType::Codex => {
                 if let Some(custom) = crate::settings::get_codex_override_dir() {
                     return Ok(custom.join("skills"));
@@ -752,6 +753,7 @@ impl SkillService {
             AppType::Kimi => crate::kimi_config::data_dir().join("skills"),
             AppType::Copilot => crate::copilot_config::skills_dir(),
             AppType::WorkBuddy => crate::workbuddy_config::data_dir().join("skills"),
+            AppType::Codebuddy => crate::codebuddy_config::data_dir().join("skills"),
             AppType::Claude => home.join(".claude").join("skills"),
             AppType::ClaudeDesktop => home.join(".claude-desktop").join("skills"),
             AppType::Codex => home.join(".codex").join("skills"),
@@ -1121,6 +1123,7 @@ impl SkillService {
                         AppType::Dsh,
                         AppType::Copilot,
                         AppType::WorkBuddy,
+                        AppType::Codebuddy,
                     ] {
                         if skill.apps.is_enabled_for(&app) {
                             let destination = Self::get_distinct_app_skills_dir(&ssot_dir, &app)?
@@ -1208,6 +1211,7 @@ impl SkillService {
                             app,
                             AppType::Pi
                                 | AppType::WorkBuddy
+                                | AppType::Codebuddy
                                 | AppType::Mcode
                                 | AppType::Agy
                                 | AppType::Kimi
@@ -1737,6 +1741,7 @@ impl SkillService {
             AppType::Agy,
             AppType::Kimi,
             AppType::Dsh,
+            AppType::Codebuddy,
             AppType::Omp,
             AppType::Copilot,
             AppType::WorkBuddy,
@@ -1760,7 +1765,8 @@ impl SkillService {
             || skill.apps.kimi
             || skill.apps.dsh
             || skill.apps.copilot
-            || skill.apps.workbuddy)
+            || skill.apps.workbuddy
+            || skill.apps.codebuddy)
         {
             if dest.exists() {
                 fs::remove_dir_all(&dest)?;
@@ -1775,6 +1781,7 @@ impl SkillService {
             || skill.apps.dsh
             || skill.apps.copilot
             || skill.apps.workbuddy
+            || skill.apps.codebuddy
         {
             &source
         } else {
@@ -1813,6 +1820,7 @@ impl SkillService {
             || skill.apps.dsh
             || skill.apps.copilot
             || skill.apps.workbuddy
+            || skill.apps.codebuddy
         {
             Self::update_managed_skill_files(
                 &source,
@@ -1826,6 +1834,7 @@ impl SkillService {
                     AppType::Dsh,
                     AppType::Copilot,
                     AppType::WorkBuddy,
+                    AppType::Codebuddy,
                 ]
                 .iter()
                 .filter(|app| skill.apps.is_enabled_for(app))
@@ -1861,6 +1870,7 @@ impl SkillService {
                     | AppType::Agy
                     | AppType::Kimi
                     | AppType::Dsh
+                    | AppType::Codebuddy
                     | AppType::Omp
                     | AppType::Copilot
                     | AppType::WorkBuddy
@@ -2216,6 +2226,7 @@ impl SkillService {
                 AppType::Dsh,
                 AppType::Copilot,
                 AppType::WorkBuddy,
+                AppType::Codebuddy,
             ] {
                 if skill.apps.is_enabled_for(&app) {
                     let destination = Self::get_app_skills_dir(&app)?.join(&directory);
@@ -2447,7 +2458,12 @@ impl SkillService {
 
         if matches!(
             app,
-            AppType::Agy | AppType::Kimi | AppType::Dsh | AppType::Copilot | AppType::WorkBuddy
+            AppType::Agy
+                | AppType::Kimi
+                | AppType::Dsh
+                | AppType::Copilot
+                | AppType::WorkBuddy
+                | AppType::Codebuddy
         ) {
             if !enabled && !skill.apps.is_enabled_for(app) {
                 return Ok(());
@@ -2668,6 +2684,7 @@ impl SkillService {
                 AppType::Dsh,
                 AppType::Copilot,
                 AppType::WorkBuddy,
+                AppType::Codebuddy,
             ] {
                 if apps.is_enabled_for(&app) {
                     let projection = (|| -> Result<()> {
@@ -2717,6 +2734,7 @@ impl SkillService {
                         | AppType::Agy
                         | AppType::Kimi
                         | AppType::Dsh
+                        | AppType::Codebuddy
                         | AppType::Omp
                         | AppType::Copilot
                         | AppType::WorkBuddy
@@ -2836,6 +2854,7 @@ impl SkillService {
                 | AppType::Agy
                 | AppType::Kimi
                 | AppType::Dsh
+                | AppType::Codebuddy
                 | AppType::Omp
                 | AppType::Copilot
                 | AppType::WorkBuddy
@@ -3020,6 +3039,7 @@ impl SkillService {
                 | AppType::Agy
                 | AppType::Kimi
                 | AppType::Dsh
+                | AppType::Codebuddy
                 | AppType::Omp
                 | AppType::Copilot
                 | AppType::WorkBuddy
@@ -3230,6 +3250,7 @@ impl SkillService {
                     | AppType::Agy
                     | AppType::Kimi
                     | AppType::Dsh
+                    | AppType::Codebuddy
                     | AppType::Omp
                     | AppType::Copilot
                     | AppType::WorkBuddy
@@ -3302,7 +3323,7 @@ impl SkillService {
             .map(|skill| (skill.directory.to_lowercase(), skill))
             .collect();
 
-        // Unselected MCode, Agy, Kimi, Copilot and WorkBuddy directories may have been installed outside CC Switch.
+        // Unselected MCode, Agy, Kimi, Copilot, WorkBuddy and CodeBuddy directories may have been installed outside CC Switch.
         // Explicit disable/uninstall handles removal of managed deployments.
         if app_dir.exists()
             && !matches!(
@@ -3313,6 +3334,7 @@ impl SkillService {
                     | AppType::Dsh
                     | AppType::Copilot
                     | AppType::WorkBuddy
+                    | AppType::Codebuddy
             )
         {
             for entry in fs::read_dir(&app_dir)? {
@@ -4469,6 +4491,7 @@ impl SkillService {
                     | AppType::Dsh
                     | AppType::Copilot
                     | AppType::WorkBuddy
+                    | AppType::Codebuddy
             ) && !skill.apps.is_enabled_for(&app)
             {
                 continue;
@@ -6357,6 +6380,7 @@ mod tests {
             AppType::Kimi,
             AppType::Dsh,
             AppType::WorkBuddy,
+            AppType::Codebuddy,
         ] {
             let temp = tempdir().unwrap();
             let _home = TestHomeGuard::set(temp.path());
@@ -6451,12 +6475,14 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn kimi_and_workbuddy_unmanaged_copy_survives_resync_migration_and_uninstall() {
+    fn kimi_workbuddy_and_codebuddy_unmanaged_copy_survives_resync_migration_and_uninstall() {
         for (app, native_content) in [
             (AppType::Kimi, "same-content"),
             (AppType::Kimi, "external"),
             (AppType::WorkBuddy, "same-content"),
             (AppType::WorkBuddy, "external"),
+            (AppType::Codebuddy, "same-content"),
+            (AppType::Codebuddy, "external"),
         ] {
             let temp = tempdir().unwrap();
             let _home = TestHomeGuard::set(temp.path());
@@ -6494,9 +6520,9 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn kimi_and_workbuddy_skill_enable_rejects_external_directory_without_changing_files_or_flags()
-    {
-        for app in [AppType::Kimi, AppType::WorkBuddy] {
+    fn kimi_workbuddy_and_codebuddy_skill_enable_rejects_external_directory_without_changing_files_or_flags(
+    ) {
+        for app in [AppType::Kimi, AppType::WorkBuddy, AppType::Codebuddy] {
             let temp = tempdir().unwrap();
             let _home = TestHomeGuard::set(temp.path());
             let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
@@ -7144,6 +7170,7 @@ mod tests {
             AppType::Kimi,
             AppType::Dsh,
             AppType::WorkBuddy,
+            AppType::Codebuddy,
         ] {
             let temp = tempdir().unwrap();
             let _home = TestHomeGuard::set(temp.path());
@@ -7904,6 +7931,7 @@ mod tests {
             AppType::Kimi,
             AppType::Dsh,
             AppType::WorkBuddy,
+            AppType::Codebuddy,
         ] {
             let temp = tempdir().expect("tempdir");
             let _home = TestHomeGuard::set(temp.path());
