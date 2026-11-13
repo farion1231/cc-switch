@@ -227,14 +227,15 @@ export function CodebuddyProviderForm({
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const fetchGeneration = useRef(0);
   const apiKey = config.apiKey ?? "";
+  const api = config.api ?? "";
   useEffect(() => {
     setFetchedModels((prev) => (prev.length === 0 ? prev : []));
     setIsFetchingModels(false);
     return () => {
-      // 地址或 Key 变了，旧请求的结果不再适用。
+      // 地址、Key、接口类型或预设变了，已获取的列表和在途请求的结果都不再适用。
       fetchGeneration.current += 1;
     };
-  }, [url, apiKey]);
+  }, [url, apiKey, api, presetId]);
   const handleFetchModels = useCallback(() => {
     const endpoint = url.trim();
     const key = apiKey.trim();

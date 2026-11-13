@@ -216,6 +216,88 @@ describe("CodebuddyProviderForm", () => {
     );
   });
 
+  describe("fetched model list", () => {
+    const renderForm = () =>
+      render(
+        <CodebuddyProviderForm
+          appId="codebuddy"
+          submitLabel="Add"
+          onSubmit={vi.fn()}
+          onCancel={() => {}}
+        />,
+      );
+    const fillEndpoint = (url: string, key = "local-test-key") => {
+      fireEvent.change(screen.getByLabelText("providerForm.apiEndpoint"), {
+        target: { value: url },
+      });
+      fireEvent.change(screen.getByLabelText("API Key"), {
+        target: { value: key },
+      });
+    };
+    const fetchModels = () =>
+      fireEvent.click(
+        screen.getByRole("button", { name: "providerForm.fetchModels" }),
+      );
+    const modelPicker = () =>
+      screen.queryByRole("button", { name: "Select model" });
+
+    it("drops the list when the endpoint, key or preset changes", async () => {
+      vi.mocked(fetchModelsForConfig).mockResolvedValue([
+        { id: "model-x", ownedBy: null },
+      ]);
+      renderForm();
+      fillEndpoint("https://api.example.com/v1/chat/completions");
+      fetchModels();
+      expect(await screen.findByRole("button", { name: "Select model" }));
+
+      fireEvent.change(screen.getByLabelText("providerForm.apiEndpoint"), {
+        target: { value: "https://other.example.com/v1/chat/completions" },
+      });
+      await waitFor(() => expect(modelPicker()).not.toBeInTheDocument());
+
+      fetchModels();
+      expect(await screen.findByRole("button", { name: "Select model" }));
+      fireEvent.change(screen.getByLabelText("API Key"), {
+        target: { value: "another-test-key" },
+      });
+      await waitFor(() => expect(modelPicker()).not.toBeInTheDocument());
+
+      fetchModels();
+      expect(await screen.findByRole("button", { name: "Select model" }));
+      const preset = codebuddyProviderPresets.find(
+        (item) => item.category !== "official",
+      )!;
+      fireEvent.click(
+        screen.getByRole("button", { name: new RegExp(preset.name) }),
+      );
+      await waitFor(() => expect(modelPicker()).not.toBeInTheDocument());
+    });
+
+    it("ignores a response that arrives after the endpoint changed", async () => {
+      let resolve!: (models: { id: string; ownedBy: null }[]) => void;
+      vi.mocked(fetchModelsForConfig).mockImplementationOnce(
+        () =>
+          new Promise((done) => {
+            resolve = done;
+          }),
+      );
+      renderForm();
+      fillEndpoint("https://api.example.com/v1/chat/completions");
+      fetchModels();
+      await waitFor(() => expect(fetchModelsForConfig).toHaveBeenCalled());
+
+      fireEvent.change(screen.getByLabelText("providerForm.apiEndpoint"), {
+        target: { value: "https://other.example.com/v1/chat/completions" },
+      });
+      resolve([{ id: "stale-model", ownedBy: null }]);
+      await new Promise((done) => setTimeout(done, 0));
+      expect(modelPicker()).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "providerForm.fetchModels" }),
+      ).toBeEnabled();
+    });
+  });
+
   it("fills the picked model's parameters from models.dev", async () => {
     const user = userEvent.setup();
     vi.mocked(fetchModelsForConfig).mockResolvedValue([
