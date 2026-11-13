@@ -1,5 +1,7 @@
 use crate::database::Database;
-use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
+use crate::proxy::providers::codex_oauth_auth::{
+    ChatgptProxyConfig, CodexOAuthManager, CHATGPT_PROXY_CONFIG_KEY,
+};
 use crate::services::{ProxyService, UsageCache};
 use std::sync::Arc;
 
@@ -19,6 +21,18 @@ impl AppState {
     pub fn new(db: Arc<Database>) -> Self {
         let codex_oauth_manager =
             Arc::new(CodexOAuthManager::new(crate::config::get_app_config_dir()));
+        match db.get_setting(CHATGPT_PROXY_CONFIG_KEY) {
+            Ok(Some(value)) => match serde_json::from_str::<ChatgptProxyConfig>(&value) {
+                Ok(config) => {
+                    if let Err(error) = codex_oauth_manager.set_account_proxy(&config) {
+                        log::warn!("[CodexOAuth] Invalid saved account proxy: {error}");
+                    }
+                }
+                Err(error) => log::warn!("[CodexOAuth] Invalid saved proxy config: {error}"),
+            },
+            Err(error) => log::warn!("[CodexOAuth] Failed to load proxy config: {error}"),
+            Ok(None) => {}
+        }
         let proxy_service = ProxyService::new(db.clone());
 
         Self {

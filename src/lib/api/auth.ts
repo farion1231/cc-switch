@@ -9,6 +9,16 @@ export type ManagedAuthProvider =
   | "claude_official";
 
 export type CodexLoginMethod = "browser" | "device_code";
+export interface ChatgptProxyConfig {
+  enabled: boolean;
+  url: string;
+}
+
+export const getChatgptProxyConfig = () =>
+  invoke<ChatgptProxyConfig>("get_chatgpt_proxy_config");
+
+export const setChatgptProxyConfig = (config: ChatgptProxyConfig) =>
+  invoke<void>("set_chatgpt_proxy_config", { config });
 /**
  * 传给 `auth_start_login` 的登录方式（不传＝各服务的默认方式）。`copy_link` 只给 Claude 官方账号：
  * 授权中心关了「自动打开浏览器」时，让 Windows 上的 Claude Code 也别自己开浏览器。
@@ -68,12 +78,14 @@ export async function authStartLogin(
   githubDomain?: string,
   targetAccountId?: string,
   loginMethod?: ManagedLoginMethod,
+  loginProxyUrl?: string,
 ): Promise<ManagedAuthDeviceCodeResponse> {
   return invoke<ManagedAuthDeviceCodeResponse>("auth_start_login", {
     authProvider,
     githubDomain: githubDomain || null,
     targetAccountId: targetAccountId || null,
     ...(loginMethod ? { loginMethod } : {}),
+    loginProxyUrl: loginProxyUrl ?? null,
   });
 }
 

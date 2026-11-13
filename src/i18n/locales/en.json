@@ -5136,6 +5136,16 @@
   },
   "authCenter": {
     "helpTitle": "What is Accounts?",
+    "loginProxy": {
+      "label": "Proxy ChatGPT account requests",
+      "url": "ChatGPT account proxy URL",
+      "hint": "After saving, this proxy handles ChatGPT sign-in, token refresh, quota and account model-list queries. When off, sign-in connects directly and later queries use the existing global setting. Browser authorization follows browser proxy settings. Model requests and other accounts are unaffected.",
+      "required": "Enter a ChatGPT account proxy URL.",
+      "save": "Save proxy settings",
+      "saved": "ChatGPT proxy settings saved",
+      "saveFirst": "Save proxy settings before signing in.",
+      "loading": "Loading proxy settings. Try again shortly."
+    },
     "group": {
       "helpTitle": "How {{service}} accounts are used",
       "copilotHelp": "Used by GitHub Copilot presets in Claude Code and Claude Desktop. Providers without a chosen account use the Default one.",
