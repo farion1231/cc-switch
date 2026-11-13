@@ -28,7 +28,9 @@ export function ProviderEmptyState({
       ? appId
       : appId === "dsh"
         ? "dsh"
-        : null;
+        : appId === "atomcode"
+          ? "atomcode"
+          : null;
   // Antigravity 没有切换，这句「切换只替换关键字段」对它不成立
   const showKeyFieldsHint =
     appId === "claude" ||

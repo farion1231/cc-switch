@@ -52,6 +52,7 @@ import {
 import type { AppId } from "@/lib/api/types";
 import { SKILLS_APP_IDS } from "@/config/appConfig";
 import { settingsApi, skillsApi } from "@/lib/api";
+import { skillAppEnabled } from "@/lib/api/skills";
 import { copyText } from "@/lib/clipboard";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { cn } from "@/lib/utils";
@@ -313,7 +314,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   }, [installedSkills]);
 
   const enabledCount = (skill: InstalledSkill) =>
-    SKILLS_APP_IDS.filter((app) => skill.apps[app]).length;
+    SKILLS_APP_IDS.filter((app) => skillAppEnabled(skill.apps, app)).length;
 
   const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
   const filteredSkills = useMemo(() => {
@@ -322,7 +323,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       if (statusFilter === "none" && enabledCount(skill) > 0) return false;
       if (statusFilter.startsWith("app:")) {
         const app = statusFilter.slice(4) as AppId;
-        if (!skill.apps[app]) return false;
+        if (!skillAppEnabled(skill.apps, app)) return false;
       }
       if (sourceFilter !== "all" && sourceKey(skill) !== sourceFilter) {
         return false;
@@ -502,7 +503,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
 
   const handleColumnBulk = (app: AppId, enabled: boolean) => {
     const ids = scope.rows
-      .filter((skill) => Boolean(skill.apps[app]) !== enabled)
+      .filter((skill) => skillAppEnabled(skill.apps, app) !== enabled)
       .map((skill) => skill.id);
     if (ids.length === 0) return;
     void bulkToggle(ids, app, enabled, {
@@ -514,7 +515,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const handleSelectionToggle = (app: AppId, enabled: boolean) => {
     const chosen = installedSkills.filter((skill) => selected.has(skill.id));
     const ids = chosen
-      .filter((skill) => Boolean(skill.apps[app]) !== enabled)
+      .filter((skill) => skillAppEnabled(skill.apps, app) !== enabled)
       .map((skill) => skill.id);
     if (ids.length === 0) {
       toast.info(
@@ -1142,8 +1143,8 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
               <div className="flex shrink-0">
                 {appIds.map((app) => {
                   const isPi = app === "pi";
-                  const onInScope = scope.rows.filter(
-                    (skill) => skill.apps[app],
+                  const onInScope = scope.rows.filter((skill) =>
+                    skillAppEnabled(skill.apps, app),
                   ).length;
                   const appFilter: StatusFilter = `app:${app}`;
                   return (
@@ -1151,8 +1152,9 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                       key={app}
                       app={app}
                       enabledCount={
-                        installedSkills.filter((skill) => skill.apps[app])
-                          .length
+                        installedSkills.filter((skill) =>
+                          skillAppEnabled(skill.apps, app),
+                        ).length
                       }
                       totalCount={nInstalled}
                       scopeTotal={scope.rows.length}
@@ -1283,7 +1285,9 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                       void writeOne(
                         skill.id,
                         app,
-                        failure ? failure.desired : !skill.apps[app],
+                        failure
+                          ? failure.desired
+                          : !skillAppEnabled(skill.apps, app),
                       );
                     }}
                     onOpenSource={() => void openDocs(skill)}
@@ -1803,7 +1807,9 @@ function InstalledRow({
   onUninstall,
 }: InstalledRowProps) {
   const { t } = useTranslation();
-  const enabled = SKILLS_APP_IDS.some((app) => skill.apps[app]);
+  const enabled = SKILLS_APP_IDS.some((app) =>
+    skillAppEnabled(skill.apps, app),
+  );
   const failedApp = appIds.find((app) => fails[failKey(skill.id, app)]);
   const failure = failedApp ? fails[failKey(skill.id, failedApp)] : undefined;
   const failId = `sk-fail-${skill.id}`;
@@ -1930,7 +1936,7 @@ function InstalledRow({
       <div className="flex shrink-0">
         {appIds.map((app) => {
           const fail = fails[failKey(skill.id, app)];
-          const on = Boolean(skill.apps[app]);
+          const on = skillAppEnabled(skill.apps, app);
           const state = fail ? "fail" : on ? "on" : "off";
           return (
             <MatrixCell

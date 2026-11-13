@@ -849,7 +849,8 @@
     "hermes": "Hermes",
     "pi": "Pi",
     "mcode": "MiniMax Code",
-    "copilot": "Copilot CLI"
+    "copilot": "Copilot CLI",
+    "atomcode": "AtomCode"
   },
   "mcode": {
     "empty": {

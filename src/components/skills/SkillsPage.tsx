@@ -30,12 +30,13 @@ import {
   useSkillRepos,
 } from "@/hooks/useSkills";
 import type { AppId } from "@/lib/api/types";
-import type {
-  DiscoverableSkill,
-  InstalledSkill,
-  SkillRepo,
-  SkillRepoFailure,
-  SkillsShDiscoverableSkill,
+import {
+  skillAppEnabled,
+  type DiscoverableSkill,
+  type InstalledSkill,
+  type SkillRepo,
+  type SkillRepoFailure,
+  type SkillsShDiscoverableSkill,
 } from "@/lib/api/skills";
 import { SKILLS_APP_IDS } from "@/config/appConfig";
 import {
@@ -273,7 +274,7 @@ export function SkillsPage({
   }, [installedSkills]);
 
   const enabledAppCount = (skill: InstalledSkill) =>
-    SKILLS_APP_IDS.filter((app) => skill.apps[app]).length;
+    SKILLS_APP_IDS.filter((app) => skillAppEnabled(skill.apps, app)).length;
 
   const sourceLabel = (skill: InstalledSkill) =>
     skill.repoOwner && skill.repoName

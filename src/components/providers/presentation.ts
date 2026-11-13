@@ -964,9 +964,11 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
         body:
           app === "dsh"
             ? t("dsh.sharedProviders")
-            : t("providerCard.section.addedHelp", {
-                app: t(`apps.${app}`),
-              }),
+            : app === "atomcode"
+              ? t("atomcode.sharedProviders")
+              : t("providerCard.section.addedHelp", {
+                  app: t(`apps.${app}`),
+                }),
       },
       note: app === "dsh" ? t("dsh.sharedProvidersNote") : undefined,
       emptyText: t("providerCard.section.addedEmpty"),

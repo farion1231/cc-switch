@@ -1146,7 +1146,8 @@
     "mcode": "MiniMax Code",
     "agy": "Antigravity",
     "omp": "Oh My Pi",
-    "copilot": "Copilot CLI"
+    "copilot": "Copilot CLI",
+    "atomcode": "AtomCode"
   },
   "mcode": {
     "empty": {
