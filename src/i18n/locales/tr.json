@@ -5384,7 +5384,7 @@
     }
   },
   "appTargets": {
-    "help": "Sağlayıcılar, MCP, istemler ve Skills işaretlenen her ortama yazılır. Birincil ortam içe aktarma, geri doldurma, dış değişiklik tespiti ve oturumlar için kullanılır. İşareti kaldırmak o ortamdaki dosyaları silmez.",
+    "help": "Sağlayıcılar sağlayıcılar sayfasında ortam başına etkinleştirilir; Windows ve her WSL dağıtımı farklı yapılandırma kullanabilir. MCP, istemler ve Skills işaretli tüm ortamlara yazılır. Oturumlar ve kullanım Windows'tan okunur (Windows işaretli değilse ilk WSL ortamından). İşareti kaldırmak o ortamdaki dosyaları silmez.",
     "summaryOne": "Yalnızca {{target}} ortamına yazar",
     "summaryMany": "{{targets}} ortamlarına yazar",
     "detect": "Yeniden algıla",
@@ -5394,7 +5394,6 @@
     "undo": "Geri al",
     "syncing": "Eşitleniyor…",
     "keepOne": "En az bir yazma hedefi bırakın",
-    "primaryMoved": "Birincil ortam {{target}} olarak değiştirildi",
     "writeTo": "{{app}} uygulamasını {{target}} ortamına yaz",
     "placeholderDefault": "Varsayılan dizini kullan",
     "placeholderUnc": "\\\\wsl.localhost\\dağıtım\\… dizini girin",
@@ -5412,10 +5411,7 @@
       "willStart": "yazarken başlatılacak",
       "probeFailed": "bu kez algılama başarısız"
     },
-    "primaryTag": "Birincil",
-    "primary": "Birincil ortam",
-    "primaryHelp": "İçe aktarma, geri doldurma, dış değişiklik tespiti ve oturumlar için kullanılır. Değiştirmek sağlayıcıları içe aktarmaz; kaydetmek geçerli sağlayıcıyı yeni birincil ortama yazar.",
-    "legacyWsl": "Mevcut WSL dizininiz korunuyor. Her ikisine de yazmak için Windows'u işaretleyip kaydedin.",
+    "legacyWsl": "Mevcut WSL dizininiz korunuyor. Windows'u işaretleyip kaydedin; ardından her iki taraf kendi sağlayıcısını etkinleştirebilir.",
     "legacyUnresolved": "Mevcut dizinin WSL dağıtımı tanınamadı, tek dizin davranışı korunuyor. Dizini ilgili dağıtım satırına girip kaydedin.",
     "errors": {
       "noTarget": "En az bir yazma hedefi bırakın.",
@@ -5432,27 +5428,27 @@
       "duplicateDestination": "İşaretli başka bir ortam aynı dizine yazıyor."
     },
     "blocked": {
-      "managed_login_requires_windows_primary": "Yönetilen resmi oturum kullanılıyor. WSL'yi birincil yapmadan önce API anahtarlı bir sağlayıcıya geçin. Taslağınız korunuyor."
+      "managed_login_requires_windows_primary": "Yönetilen resmi oturum kullanılıyor ve yalnızca Windows'ta çalışır. Windows işaretini kaldırmadan önce Windows'u API anahtarlı bir sağlayıcıya geçirin. Taslağınız korunuyor."
     },
     "conflict": {
       "title": "{{target}} ortamında zaten bir {{app}} yapılandırması var",
-      "body": "Şu anda {{existing}} kullanılıyor; {{incoming}} yazılacak.",
+      "body": "Bu ortam şu anda {{existing}} kullanıyor. Yeni ortamlar varsayılan olarak {{incoming}} kullanır ya da kendi yapılandırmasını koruyabilir.",
       "unknownWithHost": "tanınmayan bir yapılandırma ({{host}})",
       "unknown": "tanınmayan bir yapılandırma",
       "progress": "Çakışma {{index}} / {{total}}",
-      "defer": "Şimdilik yazma",
-      "deferHint": "Hedefi kaydeder ve beklemede olarak işaretler; bir sonraki geçişte veya eşitlemede yazılır.",
-      "overwrite": "Yedekle, sonra geçerli sağlayıcıyı eşitle",
-      "overwriteHint": "Bu ortamın dosyalarını yedekler, yalnızca yönetilen alanları günceller.",
-      "import": "Sağlayıcı kartı olarak içe aktar, sonra eşitle",
-      "importHint": "{{existing}} yapılandırmasını sağlayıcı kartı olarak kaydeder (aynısı varsa yeniden kullanır), sonra yönetilen alanları günceller.",
+      "defer": "Yapılandırmasını koru; henüz sağlayıcı seçme",
+      "deferHint": "Bu ortamın sağlayıcı ayarlarına dokunulmaz; daha sonra sağlayıcılar sayfasından istediğiniz sağlayıcıyı etkinleştirin.",
+      "overwrite": "Yedekle, sonra geçerli sağlayıcıyı kullan",
+      "overwriteHint": "Bu ortamın dosyalarını yedekler, sonra geçerli sağlayıcının yönetilen alanlarını yazar; diğer ayarlar kalır.",
+      "import": "Sağlayıcı kartı olarak içe aktar ve burada kullanmaya devam et",
+      "importHint": "{{existing}} yapılandırmasını sağlayıcı kartı olarak kaydeder (aynısı varsa yeniden kullanır); bu ortam onu değiştirmeden kullanmaya devam eder.",
       "confirm": "Kaydet",
       "next": "İleri"
     },
     "toast": {
       "primaryFailed": "Dizinler kaydedildi ancak birincil ortama yazılamadı; hiçbir şey eşitlenmedi.",
       "partial": "Dizinler kaydedildi; {{targets}} eşitlenmedi.",
-      "deferred": "Dizinler kaydedildi; yeni hedefler beklemede. Sağlayıcılar sayfasındaki yazma hedeflerinden eşitleyebilirsiniz.",
+      "deferred": "Dizinler kaydedildi. Yapılandırmasını koruyan ortamlar için sağlayıcılar sayfasından bir sağlayıcı etkinleştirin.",
       "savedAndSynced": "Dizinler kaydedildi ve {{targets}} ile eşitlendi.",
       "saved": "Dizinler kaydedildi.",
       "mcpSkipped": "WSL için yalnızca Windows'a özgü MCP sunucuları atlandı: {{servers}}",
@@ -5461,9 +5457,7 @@
       "conflictChanged": "Hedef yapılandırma az önce değişti; yeniden kaydedin.",
       "saveFailed": "Yazma hedefleri kaydedilemedi",
       "synced": "Eşitlendi.",
-      "syncFailed": "Eşitleme başarısız",
-      "switchPartial": "Birincil ortam {{provider}} sağlayıcısına geçti; {{targets}} eşitlenmedi.",
-      "keptOriginal": "Yönetilen resmi oturum yalnızca Windows birincil ortamına yazılır; {{targets}} olduğu gibi bırakıldı."
+      "syncFailed": "Eşitleme başarısız"
     },
     "status": {
       "ok": "Eşitlendi",
@@ -5473,25 +5467,31 @@
       "external": "Dışarıda değişti"
     },
     "reason": {
-      "primary_failed": "Birincil yazma başarısız; başlatılmadı",
-      "primary_deferred": "Birincil ertelendi; başlatılmadı",
-      "user_deferred": "Hedef kaydedildi; mevcut yapılandırma henüz üzerine yazılmadı",
+      "user_deferred": "Kendi yapılandırması korundu; henüz sağlayıcı seçilmedi",
       "managed_login": "Yönetilen resmi oturum şimdilik yalnızca Windows birincil ortamını destekler",
-      "proxy_mode": "Yönlendirme modunda takip eden ortamlar henüz eşitlenmez",
       "write_failed": "Yazma başarısız; özgün yapılandırma değişmedi",
       "timeout": "Zaman aşımı; sonuç bilinmiyor (arka planda tamamlanabilir)",
       "home_unresolved": "Ana dizin bulunamadı",
       "managed_fields_changed": "Bir sonraki geçiş yönetilen alanların üzerine yazacak",
       "superseded": "Daha yeni bir işlemle değiştirildi",
-      "not_synced": "Sağlayıcı henüz eşitlenmedi"
+      "not_synced": "Sağlayıcı henüz eşitlenmedi",
+      "no_provider": "Henüz sağlayıcı seçilmedi",
+      "provider_missing": "Kullanılan sağlayıcı artık yok"
     },
     "indicator": {
       "title": "Yazma hedefleri",
-      "primary": "Birincil: {{target}}",
-      "inUse": "Kullanımda",
-      "provider": "Son yazılan: {{name}}",
+      "provider": "Kullanımda: {{name}}",
       "syncAll": "Tümünü şimdi eşitle",
-      "retry": "Bekleyenleri yeniden dene ({{count}})"
+      "retry": "Bekleyenleri yeniden dene ({{count}})",
+      "subtitle": "Her ortam kendi sağlayıcısını etkinleştirir; kartlardaki ortam anahtarlarıyla değiştirin",
+      "noProvider": "Henüz sağlayıcı seçilmedi"
+    },
+    "switch": {
+      "group": "Ortam başına etkinleştir",
+      "inUse": "{{target}} üzerinde kullanımda",
+      "enable": "{{target}} üzerinde etkinleştir",
+      "done": "{{target}}, {{provider}} sağlayıcısına geçti",
+      "failed": "{{target}}, {{provider}} sağlayıcısına geçemedi; önceki sağlayıcıyı kullanmaya devam ediyor"
     }
   }
 }

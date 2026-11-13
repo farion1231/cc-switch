@@ -116,27 +116,75 @@ describe("AppTargetsEditor", () => {
     expect(screen.getByText("common.save").closest("button")).toBeDisabled();
   });
 
-  it("offers a primary choice and moves it when the primary is unchecked", () => {
+  it("has no primary picker and derives the primary environment", async () => {
+    inspectMock.mockResolvedValue({
+      errors: [],
+      resolvedDirs: {},
+      conflicts: [],
+      primaryTarget: "wsl:Ubuntu",
+    });
+    saveMock.mockResolvedValue({
+      saved: true,
+      needsResolution: false,
+      errors: [],
+      resolvedDirs: {},
+      conflicts: [],
+      primaryTarget: "wsl:Ubuntu",
+      imported: [],
+      targets: [],
+    });
     renderEditor();
     const boxes = screen.getAllByRole("checkbox");
     fireEvent.click(boxes[1]);
-    const radios = screen.getAllByRole("radio");
-    expect(radios).toHaveLength(2);
-    fireEvent.click(radios[1]);
-    expect(radios[1]).toBeChecked();
-
-    // 取消当前主环境（Ubuntu）：回到已启用的 Windows 并提示
-    fireEvent.click(boxes[1]);
-    expect(
-      screen.getByText("appTargets.primaryMoved:Windows"),
-    ).toBeInTheDocument();
     expect(screen.queryAllByRole("radio")).toHaveLength(0);
+    // 取消 Windows：主环境自动落到 Ubuntu，不再提示用户选择
+    fireEvent.click(boxes[0]);
+    await act(async () => {
+      fireEvent.click(screen.getByText("common.save"));
+    });
+    await waitFor(() => expect(saveMock).toHaveBeenCalled());
+    expect(saveMock.mock.calls[0][1].primary).toBe("wsl:Ubuntu");
+  });
+
+  it("offers import or overwrite (no defer) for the new primary", async () => {
+    inspectMock.mockResolvedValue({
+      errors: [],
+      resolvedDirs: {},
+      primaryTarget: "wsl:Ubuntu",
+      conflicts: [
+        { target: "wsl:Ubuntu", dir: "x", existingHost: "other.example" },
+      ],
+    });
+    renderEditor();
+    const boxes = screen.getAllByRole("checkbox");
+    fireEvent.click(boxes[1]);
+    fireEvent.click(boxes[0]);
+    await act(async () => {
+      fireEvent.click(screen.getByText("common.save"));
+    });
+    await screen.findByText(/appTargets.conflict.title/);
+    expect(
+      screen.getByRole("radio", { name: /^appTargets.conflict.import / }),
+    ).toBeChecked();
+    expect(
+      screen.queryByRole("radio", { name: /^appTargets.conflict.defer / }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("wraps truncated names and paths in the shared hover tip", () => {
+    renderEditor();
+    const pill = screen.getAllByText("WSL · Ubuntu")[0];
+    // HoverTip（Radix Tooltip）的触发器带 data-state
+    expect(pill.closest("[data-state]")).not.toBeNull();
+    const input = screen.getAllByRole("textbox")[1];
+    expect(input.closest("[data-state]")).not.toBeNull();
   });
 
   it("asks per conflict and cancelling saves nothing", async () => {
     inspectMock.mockResolvedValue({
       errors: [],
       resolvedDirs: {},
+      primaryTarget: "windows",
       conflicts: [
         {
           target: "wsl:Ubuntu",
@@ -167,6 +215,7 @@ describe("AppTargetsEditor", () => {
     inspectMock.mockResolvedValue({
       errors: [],
       resolvedDirs: {},
+      primaryTarget: "windows",
       conflicts: [
         { target: "wsl:Ubuntu", dir: "x", incomingProviderName: "A" },
       ],

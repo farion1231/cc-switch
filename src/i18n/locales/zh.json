@@ -5384,7 +5384,7 @@
     "deleteSessionHint": "请在 DeepSeek Harness 中删除此会话，以保持原生历史记录一致。"
   },
   "appTargets": {
-    "help": "供应商、MCP、提示词和 Skills 写入已勾选的环境。「以哪个为准」的主环境负责导入、回填、外部修改检测和会话读取。取消勾选不会删除该环境里的文件。",
+    "help": "供应商在供应商页按环境分别启用，Windows 和各个 WSL 可以用不同的配置；MCP、提示词和 Skills 写入所有勾选的环境。会话与用量从 Windows 读取（未勾选 Windows 时读第一个 WSL 环境）。取消勾选不会删除该环境里的文件。",
     "summaryOne": "只写入 {{target}}",
     "summaryMany": "同时写入 {{targets}}",
     "detect": "重新检测",
@@ -5394,7 +5394,6 @@
     "undo": "撤销",
     "syncing": "同步中…",
     "keepOne": "至少保留一个写入环境",
-    "primaryMoved": "主环境已改为 {{target}}",
     "writeTo": "{{app}} 写入 {{target}}",
     "placeholderDefault": "使用默认目录",
     "placeholderUnc": "填写 \\\\wsl.localhost\\发行版\\… 目录",
@@ -5412,10 +5411,7 @@
       "willStart": "写入时将启动",
       "probeFailed": "本次探测失败"
     },
-    "primaryTag": "主环境",
-    "primary": "以哪个为准",
-    "primaryHelp": "导入、回填、外部修改检测及会话读取的主环境；改变它不会自动导入供应商，保存后会把当前供应商写入新的主环境。",
-    "legacyWsl": "已保留原来的 WSL 目录。勾选 Windows 并保存，即可同时写入两边。",
+    "legacyWsl": "已保留原来的 WSL 目录。勾选 Windows 并保存后，两边可以各自启用不同的供应商。",
     "legacyUnresolved": "无法识别原目录对应的 WSL 发行版，暂时保留原单目录行为。请在对应发行版一行填写目录后保存。",
     "errors": {
       "noTarget": "至少保留一个写入环境。",
@@ -5432,27 +5428,27 @@
       "duplicateDestination": "和另一个已勾选环境写入同一个目录。"
     },
     "blocked": {
-      "managed_login_requires_windows_primary": "当前使用托管官方登录。请先启用 API Key 供应商，再将 WSL 设为主环境。草稿已保留。"
+      "managed_login_requires_windows_primary": "当前使用托管官方登录，它只能在 Windows 使用。取消 Windows 前请先在 Windows 切换到 API Key 供应商。草稿已保留。"
     },
     "conflict": {
       "title": "{{target}} 已有 {{app}} 配置",
-      "body": "当前为 {{existing}}，将同步的是 {{incoming}}。",
+      "body": "该环境当前为 {{existing}}。新环境默认使用 {{incoming}}，也可以保留它自己的配置。",
       "unknownWithHost": "未识别的配置（{{host}}）",
       "unknown": "未识别的配置",
       "progress": "第 {{index}} / {{total}} 个冲突目标",
-      "defer": "暂不写入",
-      "deferHint": "保存目标并标为待同步，下次主动切换供应商或立即同步时写入。",
-      "overwrite": "备份后同步当前供应商",
-      "overwriteHint": "先备份该环境的配置文件，只更新托管字段，其他设置保留。",
-      "import": "先导入成供应商卡，再同步",
-      "importHint": "先把 {{existing}} 保存为供应商卡（已有相同的卡则复用），再更新该环境的托管字段。",
+      "defer": "保留原配置，暂不选择供应商",
+      "deferHint": "不改动该环境的供应商设置；之后可在供应商页为这个环境启用任意供应商。",
+      "overwrite": "备份后使用当前供应商",
+      "overwriteHint": "先备份该环境的配置文件，再写入当前供应商的托管字段，其他设置保留。",
+      "import": "导入为供应商卡，并在该环境继续使用",
+      "importHint": "把 {{existing}} 保存为供应商卡（已有相同的卡则复用），该环境就用这张卡，配置不变。",
       "confirm": "保存设置",
       "next": "下一项"
     },
     "toast": {
       "primaryFailed": "目录已保存，主环境写入失败，配置未同步。",
       "partial": "目录已保存，{{targets}} 未同步。",
-      "deferred": "目录已保存，新目标待同步。可在供应商页的写入目标里立即同步。",
+      "deferred": "目录已保存。保留原配置的环境可在供应商页为它启用供应商。",
       "savedAndSynced": "目录已保存并同步到 {{targets}}。",
       "saved": "目录设置已保存。",
       "mcpSkipped": "WSL 环境跳过了 Windows 专用的 MCP：{{servers}}",
@@ -5461,9 +5457,7 @@
       "conflictChanged": "目标里的配置刚刚变了，请再保存一次。",
       "saveFailed": "保存写入目标失败",
       "synced": "已同步。",
-      "syncFailed": "同步失败",
-      "switchPartial": "主环境已切换到 {{provider}}，{{targets}} 未同步。",
-      "keptOriginal": "托管官方登录只写 Windows 主环境，{{targets}} 保持原配置。"
+      "syncFailed": "同步失败"
     },
     "status": {
       "ok": "已同步",
@@ -5473,25 +5467,31 @@
       "external": "外部已修改"
     },
     "reason": {
-      "primary_failed": "主环境写入失败，本次未开始写入",
-      "primary_deferred": "主环境暂缓同步，本次未开始写入",
-      "user_deferred": "已保存目标，暂未覆盖原有配置",
+      "user_deferred": "保留原配置，尚未选择供应商",
       "managed_login": "本阶段托管官方登录仅支持 Windows 主环境",
-      "proxy_mode": "路由模式下暂不同步跟随环境",
       "write_failed": "写入失败，原配置未改动",
       "timeout": "超时，结果未知（后台可能仍在写入）",
       "home_unresolved": "未获取到用户目录",
       "managed_fields_changed": "下次切换将覆盖托管字段",
       "superseded": "已有更新的操作",
-      "not_synced": "尚未同步供应商"
+      "not_synced": "尚未同步供应商",
+      "no_provider": "尚未选择供应商",
+      "provider_missing": "正在用的供应商已不存在"
     },
     "indicator": {
       "title": "写入目标",
-      "primary": "以 {{target}} 为准",
-      "inUse": "使用中",
-      "provider": "上次写入：{{name}}",
+      "provider": "正在使用：{{name}}",
       "syncAll": "全部立即同步",
-      "retry": "重试未同步 ({{count}})"
+      "retry": "重试未同步 ({{count}})",
+      "subtitle": "各环境独立启用供应商，在卡片上的环境开关切换",
+      "noProvider": "尚未选择供应商"
+    },
+    "switch": {
+      "group": "在各环境启用",
+      "inUse": "{{target}} 正在使用",
+      "enable": "在 {{target}} 启用",
+      "done": "{{target}} 已切换到 {{provider}}",
+      "failed": "{{target}} 未能切换到 {{provider}}，仍用原来的供应商"
     }
   }
 }

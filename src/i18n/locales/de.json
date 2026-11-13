@@ -5384,7 +5384,7 @@
     "deleteSessionHint": "Löschen Sie diese Sitzung in DeepSeek Harness, damit der Verlauf konsistent bleibt."
   },
   "appTargets": {
-    "help": "Anbieter, MCP, Prompts und Skills werden in jede markierte Umgebung geschrieben. Die primäre Umgebung dient für Import, Rückübernahme, Erkennung externer Änderungen und Sitzungen. Das Abwählen löscht keine Dateien in dieser Umgebung.",
+    "help": "Anbieter werden auf der Anbieterseite pro Umgebung aktiviert, sodass Windows und jede WSL-Distribution unterschiedliche Konfigurationen nutzen können; MCP, Prompts und Skills werden in jede markierte Umgebung geschrieben. Sitzungen und Nutzung werden aus Windows gelesen (oder aus der ersten WSL-Umgebung, wenn Windows nicht markiert ist). Das Abwählen löscht keine Dateien in dieser Umgebung.",
     "summaryOne": "Schreibt nur nach {{target}}",
     "summaryMany": "Schreibt nach {{targets}}",
     "detect": "Erneut erkennen",
@@ -5394,7 +5394,6 @@
     "undo": "Rückgängig",
     "syncing": "Wird synchronisiert…",
     "keepOne": "Mindestens ein Schreibziel behalten",
-    "primaryMoved": "Primäre Umgebung auf {{target}} geändert",
     "writeTo": "{{app}} nach {{target}} schreiben",
     "placeholderDefault": "Standardverzeichnis verwenden",
     "placeholderUnc": "Verzeichnis \\\\wsl.localhost\\Distribution\\… eingeben",
@@ -5412,10 +5411,7 @@
       "willStart": "wird beim Schreiben gestartet",
       "probeFailed": "Erkennung diesmal fehlgeschlagen"
     },
-    "primaryTag": "Primär",
-    "primary": "Primäre Umgebung",
-    "primaryHelp": "Dient für Import, Rückübernahme, Erkennung externer Änderungen und Sitzungen. Ein Wechsel importiert keine Anbieter; beim Speichern wird der aktuelle Anbieter in die neue primäre Umgebung geschrieben.",
-    "legacyWsl": "Ihr bisheriges WSL-Verzeichnis bleibt erhalten. Markieren Sie Windows und speichern Sie, um in beide zu schreiben.",
+    "legacyWsl": "Ihr bisheriges WSL-Verzeichnis bleibt erhalten. Markieren Sie Windows und speichern Sie; danach kann jede Seite ihren eigenen Anbieter aktivieren.",
     "legacyUnresolved": "Die WSL-Distribution des bisherigen Verzeichnisses wurde nicht erkannt, daher bleibt das Verhalten mit einem Verzeichnis erhalten. Geben Sie das Verzeichnis in der passenden Distributionszeile ein und speichern Sie.",
     "errors": {
       "noTarget": "Mindestens ein Schreibziel behalten.",
@@ -5432,27 +5428,27 @@
       "duplicateDestination": "Eine andere markierte Umgebung schreibt in dasselbe Verzeichnis."
     },
     "blocked": {
-      "managed_login_requires_windows_primary": "Eine verwaltete offizielle Anmeldung ist aktiv. Wechseln Sie zu einem API-Key-Anbieter, bevor Sie WSL zur primären Umgebung machen. Ihr Entwurf bleibt erhalten."
+      "managed_login_requires_windows_primary": "Eine verwaltete offizielle Anmeldung ist aktiv und funktioniert nur unter Windows. Stellen Sie Windows auf einen API-Key-Anbieter um, bevor Sie Windows abwählen. Ihr Entwurf bleibt erhalten."
     },
     "conflict": {
       "title": "{{target}} hat bereits eine {{app}}-Konfiguration",
-      "body": "Aktuell wird {{existing}} verwendet; {{incoming}} würde geschrieben.",
+      "body": "Diese Umgebung verwendet derzeit {{existing}}. Neue Umgebungen verwenden standardmäßig {{incoming}} oder behalten ihre eigene Konfiguration.",
       "unknownWithHost": "eine unbekannte Konfiguration ({{host}})",
       "unknown": "eine unbekannte Konfiguration",
       "progress": "Konflikt {{index}} von {{total}}",
-      "defer": "Noch nicht schreiben",
-      "deferHint": "Ziel speichern und als ausstehend markieren; geschrieben wird beim nächsten Wechsel oder Synchronisieren.",
-      "overwrite": "Sichern, dann aktuellen Anbieter synchronisieren",
-      "overwriteHint": "Sichert die Dateien dieser Umgebung und aktualisiert nur die verwalteten Felder.",
-      "import": "Als Anbieterkarte importieren, dann synchronisieren",
-      "importHint": "Speichert {{existing}} als Anbieterkarte (eine identische wird wiederverwendet) und aktualisiert dann die verwalteten Felder.",
+      "defer": "Konfiguration behalten; noch keinen Anbieter wählen",
+      "deferHint": "Die Anbietereinstellungen dieser Umgebung bleiben unverändert; aktivieren Sie später auf der Anbieterseite einen beliebigen Anbieter dafür.",
+      "overwrite": "Sichern, dann aktuellen Anbieter verwenden",
+      "overwriteHint": "Sichert die Dateien dieser Umgebung und schreibt dann die verwalteten Felder des aktuellen Anbieters; andere Einstellungen bleiben.",
+      "import": "Als Anbieterkarte importieren und hier weiterverwenden",
+      "importHint": "Speichert {{existing}} als Anbieterkarte (eine identische wird wiederverwendet); diese Umgebung verwendet sie unverändert weiter.",
       "confirm": "Speichern",
       "next": "Weiter"
     },
     "toast": {
       "primaryFailed": "Verzeichnisse gespeichert, aber das Schreiben in die primäre Umgebung ist fehlgeschlagen; nichts wurde synchronisiert.",
       "partial": "Verzeichnisse gespeichert; {{targets}} nicht synchronisiert.",
-      "deferred": "Verzeichnisse gespeichert; neue Ziele stehen aus. Synchronisieren Sie sie über die Schreibziele auf der Anbieterseite.",
+      "deferred": "Verzeichnisse gespeichert. Aktivieren Sie für Umgebungen, die ihre Konfiguration behalten haben, einen Anbieter auf der Anbieterseite.",
       "savedAndSynced": "Verzeichnisse gespeichert und mit {{targets}} synchronisiert.",
       "saved": "Verzeichnisse gespeichert.",
       "mcpSkipped": "Nur für Windows bestimmte MCP-Server wurden für WSL übersprungen: {{servers}}",
@@ -5461,9 +5457,7 @@
       "conflictChanged": "Die Zielkonfiguration hat sich gerade geändert; bitte erneut speichern.",
       "saveFailed": "Schreibziele konnten nicht gespeichert werden",
       "synced": "Synchronisiert.",
-      "syncFailed": "Synchronisierung fehlgeschlagen",
-      "switchPartial": "Primäre Umgebung auf {{provider}} umgestellt; {{targets}} nicht synchronisiert.",
-      "keptOriginal": "Verwaltete offizielle Anmeldung wird nur in die primäre Windows-Umgebung geschrieben; {{targets}} bleiben unverändert."
+      "syncFailed": "Synchronisierung fehlgeschlagen"
     },
     "status": {
       "ok": "Synchronisiert",
@@ -5473,25 +5467,31 @@
       "external": "Extern geändert"
     },
     "reason": {
-      "primary_failed": "Schreiben in die primäre Umgebung fehlgeschlagen; nicht gestartet",
-      "primary_deferred": "Primäre Umgebung zurückgestellt; nicht gestartet",
-      "user_deferred": "Ziel gespeichert; vorhandene Konfiguration noch nicht überschrieben",
+      "user_deferred": "Eigene Konfiguration behalten; noch kein Anbieter gewählt",
       "managed_login": "Verwaltete offizielle Anmeldung unterstützt vorerst nur die primäre Windows-Umgebung",
-      "proxy_mode": "Im Routing-Modus werden folgende Umgebungen noch nicht synchronisiert",
       "write_failed": "Schreiben fehlgeschlagen; ursprüngliche Konfiguration unverändert",
       "timeout": "Zeitüberschreitung; Ergebnis unbekannt (kann im Hintergrund noch abschließen)",
       "home_unresolved": "Home-Verzeichnis nicht gefunden",
       "managed_fields_changed": "Der nächste Wechsel überschreibt die verwalteten Felder",
       "superseded": "Durch einen neueren Vorgang ersetzt",
-      "not_synced": "Anbieter noch nicht synchronisiert"
+      "not_synced": "Anbieter noch nicht synchronisiert",
+      "no_provider": "Noch kein Anbieter gewählt",
+      "provider_missing": "Der verwendete Anbieter existiert nicht mehr"
     },
     "indicator": {
       "title": "Schreibziele",
-      "primary": "Primär: {{target}}",
-      "inUse": "In Verwendung",
-      "provider": "Zuletzt geschrieben: {{name}}",
+      "provider": "In Verwendung: {{name}}",
       "syncAll": "Alle jetzt synchronisieren",
-      "retry": "Ausstehende wiederholen ({{count}})"
+      "retry": "Ausstehende wiederholen ({{count}})",
+      "subtitle": "Jede Umgebung aktiviert ihren eigenen Anbieter; umschalten über die Umgebungsschalter auf den Karten",
+      "noProvider": "Noch kein Anbieter gewählt"
+    },
+    "switch": {
+      "group": "Pro Umgebung aktivieren",
+      "inUse": "In Verwendung auf {{target}}",
+      "enable": "Auf {{target}} aktivieren",
+      "done": "{{target}} auf {{provider}} umgestellt",
+      "failed": "{{target}} konnte nicht auf {{provider}} umgestellt werden; der bisherige Anbieter bleibt"
     }
   }
 }

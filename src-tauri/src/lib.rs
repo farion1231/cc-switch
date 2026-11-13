@@ -1606,6 +1606,7 @@ pub fn run() {
             commands::inspect_app_targets,
             commands::save_app_targets,
             commands::sync_app_targets,
+            commands::activate_app_target_provider,
             commands::get_providers,
             commands::get_current_provider,
             commands::add_provider,

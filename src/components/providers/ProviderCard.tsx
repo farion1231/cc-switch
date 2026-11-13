@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, type ReactNode } from "react";
 import {
   AlertTriangle,
   GripVertical,
@@ -90,6 +90,8 @@ interface ProviderCardProps {
   onOpenTerminal?: (provider: Provider) => void;
   isTesting?: boolean;
   dragHandleProps?: DragHandleProps;
+  /** 主操作位前面的额外控件（多环境时每个环境的启用开关） */
+  extraActions?: ReactNode;
 }
 
 /** 当前那张：模式色边框 + 淡底；共存式应用的默认那家同直连色。 */
@@ -222,6 +224,7 @@ export function ProviderCard({
   appId,
   presentation,
   isCurrent,
+  extraActions,
   onEdit,
   onDelete,
   onConfigureUsage,
@@ -736,6 +739,7 @@ export function ProviderCard({
               )}
             </div>
           </div>
+          {extraActions}
           <ProviderCardActions
             providerName={provider.name}
             presentation={presentation}

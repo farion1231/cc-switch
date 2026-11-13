@@ -631,13 +631,25 @@ fn write_in_scope(
     Ok((fingerprint_in_scope(app), warnings))
 }
 
-/// 把当前选择写进跟随环境。`only` 限定目标（重试、新目标），`None` 为全部跟随目标。
-/// 主环境不在这里写。
+/// 把每个跟随环境自己正在用的供应商（及共享的 MCP / 提示词 / Skills）重新写进去。
+/// `only` 限定目标（重试、新目标），`None` 为全部跟随目标。主环境不在这里写。
 pub fn sync_followers(
     state: &AppState,
     app: &AppType,
     only: Option<&[TargetId]>,
     kind: SyncKind,
+) -> Vec<TargetReport> {
+    sync_followers_with(state, app, only, kind, &BTreeMap::new())
+}
+
+/// 同上；`activate` 给出要在某些目标上改用的供应商（目标键 → 供应商 ID）。写入成功后
+/// 它才成为那个目标正在用的供应商；失败时目标保持原来那家。
+pub fn sync_followers_with(
+    state: &AppState,
+    app: &AppType,
+    only: Option<&[TargetId]>,
+    kind: SyncKind,
+    activate: &BTreeMap<String, String>,
 ) -> Vec<TargetReport> {
     if !model::supports(app) || scope::active() {
         return Vec::new();
@@ -656,38 +668,34 @@ pub fn sync_followers(
     }
 
     let mut reports = Vec::new();
-    if kind.writes_provider() && crate::mode::current::is_proxy(app) {
-        // 路由模式下主环境写的是代理契约；跟随环境的接管和恢复尚未接入，暂不写。
-        for spec in &followers {
-            reports.push(record(
-                app,
-                &spec.id.key(),
-                TargetRecord::new(TargetStatus::Deferred).reason("proxy_mode"),
-            ));
-        }
-        return reports;
-    }
-
-    let current = match current_provider(state, app) {
-        Ok(current) => current,
-        Err(err) => {
-            for spec in &followers {
-                reports.push(record(
-                    app,
-                    &spec.id.key(),
-                    TargetRecord::new(TargetStatus::Error)
-                        .reason("write_failed")
-                        .detail(error_detail(&err)),
-                ));
-            }
-            return reports;
-        }
-    };
     let providers = state.db.get_all_providers(app.as_str()).unwrap_or_default();
+    let additive = matches!(app, AppType::OpenCode);
 
     let mut jobs = Vec::new();
     for spec in followers {
         let key = spec.id.key();
+        let previous = status::get(app.as_str(), &key);
+        let active_id = previous.as_ref().and_then(|r| r.provider_id.clone());
+        let wanted_id = activate
+            .iter()
+            .find(|(k, _)| TargetId::parse(k).is_some_and(|id| id.same(&spec.id)))
+            .map(|(_, id)| id.clone())
+            .or_else(|| active_id.clone());
+        let current = match wanted_id.as_deref() {
+            Some(id) if !additive => match providers.get(id) {
+                Some(provider) => Some(provider.clone()),
+                None => {
+                    reports.push(TargetReport {
+                        target: key.clone(),
+                        record: TargetRecord::new(TargetStatus::Error)
+                            .reason("provider_missing")
+                            .detail(id.to_string()),
+                    });
+                    continue;
+                }
+            },
+            _ => None,
+        };
         if kind.writes_provider() && current.as_ref().is_some_and(|p| is_managed_login(app, p)) {
             reports.push(record(
                 app,
@@ -714,12 +722,7 @@ pub fn sync_followers(
             .as_ref()
             .map(|d| d.to_string_lossy().into_owned())
             .or_else(|| display_dir(app, &spec, false));
-        let previous = status::get(app.as_str(), &key);
-        let prev = previous
-            .as_ref()
-            .and_then(|r| r.provider_id.as_ref())
-            .and_then(|id| providers.get(id))
-            .cloned();
+        let prev = active_id.as_ref().and_then(|id| providers.get(id)).cloned();
         let (tx, rx) = mpsc::channel();
         let done = Arc::new(Mutex::new(false));
         let worker_done = done.clone();
@@ -748,7 +751,14 @@ pub fn sync_followers(
             let record = match result {
                 Ok((fingerprint, mut warnings)) => {
                     warnings.extend(notes);
-                    if kind.writes_provider() {
+                    if kind.writes_provider() && worker_current.is_none() && !additive {
+                        // 这个环境还没选供应商（暂不写入）：只同步了共享的 MCP 等。
+                        TargetRecord {
+                            dir: worker_dir,
+                            warnings,
+                            ..TargetRecord::new(TargetStatus::Deferred).reason("no_provider")
+                        }
+                    } else if kind.writes_provider() {
                         TargetRecord {
                             provider_id: worker_current.as_ref().map(|p| p.id.clone()),
                             fingerprint,
@@ -924,25 +934,43 @@ pub fn refresh_external(
     }
 }
 
-/// 供应商新增、编辑、删除之后：累加式的 OpenCode 总要同步；切换式应用只在改的是当前
-/// 那家时才需要（别的卡不在客户端文件里）。
+/// 供应商新增、编辑、删除之后：累加式的 OpenCode 总要同步全部环境；切换式应用只重写
+/// 正在用这家的跟随环境（主环境由现有链路负责）。
 pub fn after_provider_edit(state: &AppState, app: &AppType, provider_id: Option<&str>) {
     if !has_followers(app) {
         return;
     }
-    if !matches!(app, AppType::OpenCode) {
-        let current = crate::mode::current::provider_for(
-            &state.db,
-            app,
-            crate::mode::current::Purpose::Direct,
-        )
-        .ok()
-        .flatten();
-        if provider_id.is_none() || current.as_deref() != provider_id {
-            return;
-        }
+    if matches!(app, AppType::OpenCode) {
+        after_change(state, app, SyncKind::Provider);
+        return;
     }
-    after_change(state, app, SyncKind::Provider);
+    let Some(provider_id) = provider_id else {
+        return;
+    };
+    let using = followers_using(app, provider_id);
+    if !using.is_empty() {
+        sync_followers(state, app, Some(&using), SyncKind::Provider);
+    }
+}
+
+/// 正在用 `provider_id` 的已启用跟随环境。
+pub fn followers_using(app: &AppType, provider_id: &str) -> Vec<TargetId> {
+    let (config, source) = app_config(app);
+    if source != ConfigSource::Saved {
+        return Vec::new();
+    }
+    let records = status::records(app.as_str());
+    config
+        .followers()
+        .into_iter()
+        .filter(|spec| {
+            records
+                .get(&spec.id.key())
+                .and_then(|r| r.provider_id.as_deref())
+                == Some(provider_id)
+        })
+        .map(|spec| spec.id)
+        .collect()
 }
 
 /// 在后台尽力同步跟随环境（MCP、提示词、Skills 改动后），不让界面等 WSL。

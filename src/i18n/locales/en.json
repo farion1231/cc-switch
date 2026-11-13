@@ -5384,7 +5384,7 @@
     "deleteSessionHint": "Delete this session in DeepSeek Harness to keep its history consistent."
   },
   "appTargets": {
-    "help": "Providers, MCP, prompts and Skills are written to every checked environment. The primary environment is used for import, backfill, external-change detection and sessions. Unchecking never deletes files in that environment.",
+    "help": "Providers are enabled per environment on the providers page, so Windows and each WSL distro can use different configs; MCP, prompts and Skills are written to every checked environment. Sessions and usage are read from Windows (or the first WSL environment when Windows is unchecked). Unchecking never deletes files in that environment.",
     "summaryOne": "Writes to {{target}} only",
     "summaryMany": "Writes to {{targets}}",
     "detect": "Detect again",
@@ -5394,7 +5394,6 @@
     "undo": "Undo",
     "syncing": "Syncing…",
     "keepOne": "Keep at least one write target",
-    "primaryMoved": "Primary environment changed to {{target}}",
     "writeTo": "Write {{app}} to {{target}}",
     "placeholderDefault": "Use the default directory",
     "placeholderUnc": "Enter a \\\\wsl.localhost\\distro\\… directory",
@@ -5412,10 +5411,7 @@
       "willStart": "will be started when writing",
       "probeFailed": "detection failed this time"
     },
-    "primaryTag": "Primary",
-    "primary": "Primary environment",
-    "primaryHelp": "Used for import, backfill, external-change detection and sessions. Changing it never imports providers; saving writes the current provider to the new primary.",
-    "legacyWsl": "Your existing WSL directory is kept. Check Windows and save to write to both.",
+    "legacyWsl": "Your existing WSL directory is kept. Check Windows and save, then each side can enable its own provider.",
     "legacyUnresolved": "The WSL distro of the existing directory could not be recognised, so the single-directory behaviour is kept. Enter the directory on the matching distro row and save.",
     "errors": {
       "noTarget": "Keep at least one write target.",
@@ -5432,27 +5428,27 @@
       "duplicateDestination": "Another checked environment writes to the same directory."
     },
     "blocked": {
-      "managed_login_requires_windows_primary": "A managed official sign-in is in use. Switch to an API key provider before making WSL the primary environment. Your draft is kept."
+      "managed_login_requires_windows_primary": "A managed official sign-in is in use, and it only works on Windows. Switch Windows to an API key provider before unchecking Windows. Your draft is kept."
     },
     "conflict": {
       "title": "{{target}} already has a {{app}} config",
-      "body": "It currently uses {{existing}}; {{incoming}} would be written.",
+      "body": "This environment currently uses {{existing}}. New environments use {{incoming}} by default, or can keep their own config.",
       "unknownWithHost": "an unrecognised config ({{host}})",
       "unknown": "an unrecognised config",
       "progress": "Conflict {{index}} of {{total}}",
-      "defer": "Don't write yet",
-      "deferHint": "Save the target and mark it pending; it is written on the next switch or sync.",
-      "overwrite": "Back up, then sync the current provider",
-      "overwriteHint": "Back up this environment's files, then update only the managed fields.",
-      "import": "Import as a provider card, then sync",
-      "importHint": "Save {{existing}} as a provider card (reusing an identical one), then update the managed fields.",
+      "defer": "Keep its config; don't pick a provider yet",
+      "deferHint": "Leave this environment's provider settings alone; enable any provider for it later on the providers page.",
+      "overwrite": "Back up, then use the current provider",
+      "overwriteHint": "Back up this environment's files, then write the current provider's managed fields; other settings stay.",
+      "import": "Import as a provider card and keep using it here",
+      "importHint": "Save {{existing}} as a provider card (reusing an identical one); this environment keeps using it unchanged.",
       "confirm": "Save",
       "next": "Next"
     },
     "toast": {
       "primaryFailed": "Directories saved, but writing the primary environment failed; nothing was synced.",
       "partial": "Directories saved; {{targets}} not synced.",
-      "deferred": "Directories saved; new targets are pending. Sync them from Write targets on the providers page.",
+      "deferred": "Directories saved. Enable a provider for the environments that kept their config on the providers page.",
       "savedAndSynced": "Directories saved and synced to {{targets}}.",
       "saved": "Directories saved.",
       "mcpSkipped": "Windows-only MCP servers were skipped for WSL: {{servers}}",
@@ -5461,9 +5457,7 @@
       "conflictChanged": "The target config just changed; save again.",
       "saveFailed": "Failed to save write targets",
       "synced": "Synced.",
-      "syncFailed": "Sync failed",
-      "switchPartial": "Primary switched to {{provider}}; {{targets}} not synced.",
-      "keptOriginal": "Managed official sign-in is written to the Windows primary only; {{targets}} kept as is."
+      "syncFailed": "Sync failed"
     },
     "status": {
       "ok": "Synced",
@@ -5473,25 +5467,31 @@
       "external": "Changed externally"
     },
     "reason": {
-      "primary_failed": "Primary write failed; not started",
-      "primary_deferred": "Primary deferred; not started",
-      "user_deferred": "Target saved; existing config not overwritten yet",
+      "user_deferred": "Own config kept; no provider picked yet",
       "managed_login": "Managed official sign-in supports the Windows primary only for now",
-      "proxy_mode": "Followers are not synced in routing mode yet",
       "write_failed": "Write failed; original config untouched",
       "timeout": "Timed out; result unknown (may still finish in background)",
       "home_unresolved": "Home directory not found",
       "managed_fields_changed": "The next switch will overwrite managed fields",
       "superseded": "Replaced by a newer operation",
-      "not_synced": "Provider not synced yet"
+      "not_synced": "Provider not synced yet",
+      "no_provider": "No provider picked yet",
+      "provider_missing": "The provider in use no longer exists"
     },
     "indicator": {
       "title": "Write targets",
-      "primary": "Primary: {{target}}",
-      "inUse": "In use",
-      "provider": "Last written: {{name}}",
+      "provider": "In use: {{name}}",
       "syncAll": "Sync all now",
-      "retry": "Retry pending ({{count}})"
+      "retry": "Retry pending ({{count}})",
+      "subtitle": "Each environment enables its own provider; switch with the environment toggles on the cards",
+      "noProvider": "No provider picked yet"
+    },
+    "switch": {
+      "group": "Enable per environment",
+      "inUse": "In use on {{target}}",
+      "enable": "Enable on {{target}}",
+      "done": "{{target}} switched to {{provider}}",
+      "failed": "{{target}} could not switch to {{provider}}; it keeps its previous provider"
     }
   }
 }

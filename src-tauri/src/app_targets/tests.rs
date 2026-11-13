@@ -92,9 +92,13 @@ fn seed_claude(state: &AppState) {
     ProviderService::switch(state, AppType::Claude, "a").expect("initial switch");
 }
 
+fn activate(state: &AppState, app: &str, target: &str, id: &str) -> super::sync::TargetReport {
+    service::activate(state, app, target, id).expect("activate")
+}
+
 #[test]
 #[serial]
-fn switch_writes_primary_then_followers_and_keeps_unmanaged_fields() {
+fn each_environment_keeps_its_own_provider_and_unmanaged_fields() {
     with_home(|state, home| {
         seed_claude(state);
         let wsl_dir = home.join("wsl").join(".claude");
@@ -104,17 +108,10 @@ fn switch_writes_primary_then_followers_and_keeps_unmanaged_fields() {
         );
         set_targets(&AppType::Claude, windows_plus_wsl("Ubuntu", &wsl_dir));
 
-        let result = ProviderService::switch(state, AppType::Claude, "b").expect("switch");
-        assert_eq!(result.targets.len(), 1, "{:?}", result.targets);
-        assert_eq!(result.targets[0].target, "wsl:Ubuntu");
-        assert_eq!(result.targets[0].record.status, TargetStatus::Ok);
-        assert!(result.warnings.is_empty(), "{:?}", result.warnings);
-
-        let primary = read_json(&home.join(".claude").join("settings.json"));
-        assert_eq!(
-            primary["env"]["ANTHROPIC_BASE_URL"],
-            "https://b.example/api"
-        );
+        // WSL 用 b，Windows 仍是 a。
+        let report = activate(state, "claude", "wsl:Ubuntu", "b");
+        assert_eq!(report.target, "wsl:Ubuntu");
+        assert_eq!(report.record.status, TargetStatus::Ok);
         let follower = read_json(&wsl_dir.join("settings.json"));
         assert_eq!(
             follower["env"]["ANTHROPIC_BASE_URL"],
@@ -123,10 +120,27 @@ fn switch_writes_primary_then_followers_and_keeps_unmanaged_fields() {
         assert_eq!(follower["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-b");
         assert_eq!(follower["env"]["FOO"], "1", "unmanaged env kept");
         assert_eq!(follower["permissions"]["allow"][0], "Bash(ls)");
+        let primary = read_json(&home.join(".claude").join("settings.json"));
+        assert_eq!(primary["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-a");
+
+        // 主环境切换只改 Windows，WSL 继续用 b。
+        let result = ProviderService::switch(state, AppType::Claude, "b").expect("switch");
+        assert!(result.targets.is_empty());
+        ProviderService::switch(state, AppType::Claude, "a").expect("switch back");
+        let follower = read_json(&wsl_dir.join("settings.json"));
+        assert_eq!(follower["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-b");
+        let primary = read_json(&home.join(".claude").join("settings.json"));
+        assert_eq!(primary["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-a");
 
         let record = status::get("claude", "wsl:Ubuntu").expect("record");
         assert_eq!(record.provider_id.as_deref(), Some("b"));
-        assert!(record.fingerprint.is_some());
+        assert_eq!(sync::followers_using(&AppType::Claude, "b").len(), 1);
+
+        // 主环境入口也能用同一个接口。
+        let report = activate(state, "claude", "windows", "b");
+        assert_eq!(report.record.status, TargetStatus::Ok);
+        let primary = read_json(&home.join(".claude").join("settings.json"));
+        assert_eq!(primary["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-b");
 
         // 跟随环境的写前意图和首写备份在它自己的状态目录里，主环境的状态不受影响。
         let target_store = home
@@ -144,82 +158,52 @@ fn switch_writes_primary_then_followers_and_keeps_unmanaged_fields() {
         )
         .unwrap()
         .is_none());
-
-        // 再切回去：跟随环境跟着走。
-        let result = ProviderService::switch(state, AppType::Claude, "a").expect("switch back");
-        assert_eq!(result.targets[0].record.status, TargetStatus::Ok);
-        let follower = read_json(&wsl_dir.join("settings.json"));
-        assert_eq!(follower["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-a");
     });
 }
 
 #[test]
 #[serial]
-fn primary_failure_does_not_start_follower_writes() {
+fn failed_activation_keeps_the_previous_provider_and_retry_reapplies_it() {
     with_home(|state, home| {
         seed_claude(state);
         let wsl_dir = home.join("wsl").join(".claude");
         set_targets(&AppType::Claude, windows_plus_wsl("Ubuntu", &wsl_dir));
-        ProviderService::switch(state, AppType::Claude, "a").expect("sync follower");
-        let before = fs::read_to_string(wsl_dir.join("settings.json")).unwrap();
+        activate(state, "claude", "wsl:Ubuntu", "a");
 
-        write(&home.join(".claude").join("settings.json"), "{ broken");
-        ProviderService::switch(state, AppType::Claude, "b").expect_err("primary broken");
-
-        assert_eq!(
-            fs::read_to_string(wsl_dir.join("settings.json")).unwrap(),
-            before,
-            "follower untouched"
-        );
-        let record = status::get("claude", "wsl:Ubuntu").unwrap();
-        assert_eq!(record.status, TargetStatus::Ok);
-        assert_eq!(record.provider_id.as_deref(), Some("a"));
-    });
-}
-
-#[test]
-#[serial]
-fn follower_failure_keeps_the_switch_and_retry_uses_the_latest_choice() {
-    with_home(|state, home| {
-        seed_claude(state);
-        let wsl_dir = home.join("wsl").join(".claude");
         write(&wsl_dir.join("settings.json"), "{ broken");
-        set_targets(&AppType::Claude, windows_plus_wsl("Ubuntu", &wsl_dir));
-
-        let result = ProviderService::switch(state, AppType::Claude, "b").expect("switch");
-        assert!(result
-            .warnings
-            .contains(&"targets_partial_failed".to_string()));
-        assert_eq!(result.targets[0].record.status, TargetStatus::Error);
-        assert_eq!(
-            result.targets[0].record.reason.as_deref(),
-            Some("write_failed")
-        );
-        let primary = read_json(&home.join(".claude").join("settings.json"));
-        assert_eq!(
-            primary["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-b",
-            "primary switched"
-        );
+        let report = activate(state, "claude", "wsl:Ubuntu", "b");
+        assert_eq!(report.record.status, TargetStatus::Error);
+        assert_eq!(report.record.reason.as_deref(), Some("write_failed"));
         assert_eq!(
             fs::read_to_string(wsl_dir.join("settings.json")).unwrap(),
             "{ broken",
-            "broken follower left as is"
+            "broken file left as is"
         );
+        let record = status::get("claude", "wsl:Ubuntu").unwrap();
+        assert_eq!(record.provider_id.as_deref(), Some("a"), "not switched");
 
-        // 修好之后重试：用当前选择（b），不是失败那一次的旧参数。
+        // 修好之后重试：写回这个环境正在用的那家。
         write(&wsl_dir.join("settings.json"), "{}");
         let retried =
             service::sync_now(state, "claude", Some(vec!["wsl:Ubuntu".into()])).expect("retry");
         assert!(retried.primary.is_none());
         assert_eq!(retried.targets[0].record.status, TargetStatus::Ok);
         let follower = read_json(&wsl_dir.join("settings.json"));
-        assert_eq!(follower["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-b");
+        assert_eq!(follower["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-a");
+
+        // 编辑正在用的那家：只重写用它的环境。
+        let mut edited = claude("a", "https://a2.example/api", "sk-a2");
+        edited.name = "A".into();
+        state.db.save_provider("claude", &edited).unwrap();
+        sync::after_provider_edit(state, &AppType::Claude, Some("a"));
+        let follower = read_json(&wsl_dir.join("settings.json"));
+        assert_eq!(follower["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-a2");
     });
 }
 
 #[test]
 #[serial]
-fn managed_login_cards_keep_the_follower_as_is() {
+fn managed_login_cards_cannot_be_enabled_in_wsl() {
     with_home(|state, home| {
         seed_claude(state);
         let mut official = Provider::with_id(
@@ -242,18 +226,22 @@ fn managed_login_cards_keep_the_follower_as_is() {
 
         let wsl_dir = home.join("wsl").join(".claude");
         set_targets(&AppType::Claude, windows_plus_wsl("Ubuntu", &wsl_dir));
-        ProviderService::switch(state, AppType::Claude, "a").expect("sync");
+        activate(state, "claude", "wsl:Ubuntu", "a");
         let before = fs::read_to_string(wsl_dir.join("settings.json")).unwrap();
 
-        // 只模拟跟随写入：主环境的账号切换需要真实账号目录，这里不验证它。
-        crate::settings::set_current_provider(&AppType::Claude, Some("official")).unwrap();
-        state.db.set_current_provider("claude", "official").unwrap();
-        let reports = sync::sync_followers(state, &AppType::Claude, None, SyncKind::Provider);
-        assert_eq!(reports[0].record.status, TargetStatus::Skipped);
-        assert_eq!(reports[0].record.reason.as_deref(), Some("managed_login"));
+        let err = service::activate(state, "claude", "wsl:Ubuntu", "official")
+            .expect_err("managed login is Windows-only");
+        assert!(err.to_string().contains("Windows"), "{err}");
         assert_eq!(
             fs::read_to_string(wsl_dir.join("settings.json")).unwrap(),
             before
+        );
+        assert_eq!(
+            status::get("claude", "wsl:Ubuntu")
+                .unwrap()
+                .provider_id
+                .as_deref(),
+            Some("a")
         );
     });
 }
@@ -299,13 +287,8 @@ fn codex_follower_keeps_its_own_login_when_switching_to_a_key() {
         );
         set_targets(&AppType::Codex, windows_plus_wsl("Ubuntu", &wsl_dir));
 
-        let result = ProviderService::switch(state, AppType::Codex, "b").expect("switch");
-        assert_eq!(
-            result.targets[0].record.status,
-            TargetStatus::Ok,
-            "{:?}",
-            result.targets
-        );
+        let report = activate(state, "codex", "wsl:Ubuntu", "b");
+        assert_eq!(report.record.status, TargetStatus::Ok, "{report:?}");
         let config = fs::read_to_string(wsl_dir.join("config.toml")).unwrap();
         assert!(config.contains("https://b.example/v1"), "{config}");
         assert!(
@@ -343,8 +326,8 @@ fn gemini_and_opencode_followers_are_written() {
         ProviderService::switch(state, AppType::Gemini, "a").expect("initial");
         let gemini_dir = home.join("wsl").join(".gemini");
         set_targets(&AppType::Gemini, windows_plus_wsl("Ubuntu", &gemini_dir));
-        let result = ProviderService::switch(state, AppType::Gemini, "b").expect("switch");
-        assert_eq!(result.targets[0].record.status, TargetStatus::Ok);
+        let report = activate(state, "gemini", "wsl:Ubuntu", "b");
+        assert_eq!(report.record.status, TargetStatus::Ok);
         let env = fs::read_to_string(gemini_dir.join(".env")).unwrap();
         assert!(env.contains("GEMINI_API_KEY=gb"), "{env}");
 
@@ -408,9 +391,16 @@ fn wsl_followers_skip_windows_only_mcp_commands() {
                 .unwrap();
         }
         let wsl_dir = home.join("wsl").join(".claude");
+        fs::create_dir_all(&wsl_dir).unwrap();
         set_targets(&AppType::Claude, windows_plus_wsl("Ubuntu", &wsl_dir));
         let reports = sync::sync_followers(state, &AppType::Claude, None, SyncKind::Full);
-        assert_eq!(reports[0].record.status, TargetStatus::Ok, "{reports:?}");
+        // 这个环境还没选供应商：只同步共享的 MCP，标「待选择」。
+        assert_eq!(
+            reports[0].record.status,
+            TargetStatus::Deferred,
+            "{reports:?}"
+        );
+        assert_eq!(reports[0].record.reason.as_deref(), Some("no_provider"));
         assert!(reports[0]
             .record
             .warnings
@@ -560,23 +550,43 @@ fn save_flow_resolves_conflicts_and_moves_the_primary() {
             foreign
         );
 
-        // 5. 主环境换成 Ubuntu（之前暂缓）：写当前供应商进去，旧单目录投影指向它。
+        // 5. 取消 Windows：主环境自动落到 Ubuntu。它里面原有的配置要先问；选导入就直接
+        //    用导入的卡，旧单目录投影指向它。Debian 继续用自己的那家。
         let mut ubuntu_primary = with_debian.clone();
-        ubuntu_primary.primary = "wsl:Ubuntu".into();
-        let result = service::save(state, "claude", ubuntu_primary, BTreeMap::new()).unwrap();
+        ubuntu_primary.windows.enabled = false;
+        let result =
+            service::save(state, "claude", ubuntu_primary.clone(), BTreeMap::new()).unwrap();
+        assert!(result.needs_resolution, "{result:?}");
+        assert_eq!(result.inspect.primary_target, "wsl:Ubuntu");
+        assert_eq!(result.inspect.conflicts[0].target, "wsl:Ubuntu");
+        let resolutions = BTreeMap::from([("wsl:Ubuntu".to_string(), Resolution::Import)]);
+        let result = service::save(state, "claude", ubuntu_primary, resolutions).unwrap();
         assert!(result.saved, "{result:?}");
+        let primary = result.primary.as_ref().unwrap();
+        assert_eq!(primary.record.status, TargetStatus::Ok, "{primary:?}");
+        let imported = primary.record.provider_id.clone().unwrap();
+        assert_eq!(result.imported, vec![imported.clone()]);
         assert_eq!(
-            result.primary.as_ref().unwrap().record.status,
-            TargetStatus::Ok
+            crate::mode::current::provider_for(
+                &state.db,
+                &AppType::Claude,
+                crate::mode::current::Purpose::Direct
+            )
+            .unwrap()
+            .as_deref(),
+            Some(imported.as_str())
         );
         assert_eq!(
             crate::settings::get_settings().claude_config_dir.as_deref(),
             Some(path_of(&ubuntu).as_str())
         );
         let written = read_json(&ubuntu.join("settings.json"));
+        assert_eq!(
+            written["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-o",
+            "own config kept"
+        );
+        let written = read_json(&debian.join("settings.json"));
         assert_eq!(written["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-a");
-        let windows = status::get("claude", "windows").expect("old primary recorded");
-        assert_eq!(windows.provider_id.as_deref(), Some("a"));
 
         // 6. 取消最后一个目标：校验拒绝，设置不变。
         let mut none = with_debian;
@@ -596,7 +606,7 @@ fn external_changes_are_detected_without_overwriting() {
         let wsl_dir = home.join("wsl").join(".claude");
         let config = windows_plus_wsl("Ubuntu", &wsl_dir);
         set_targets(&AppType::Claude, config.clone());
-        ProviderService::switch(state, AppType::Claude, "b").expect("switch");
+        activate(state, "claude", "wsl:Ubuntu", "b");
 
         write(
             &wsl_dir.join("settings.json"),

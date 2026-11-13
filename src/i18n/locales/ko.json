@@ -5384,7 +5384,7 @@
     }
   },
   "appTargets": {
-    "help": "공급자, MCP, 프롬프트, Skills는 체크한 환경에 기록됩니다. 기본 환경은 가져오기, 백필, 외부 변경 감지, 세션 읽기에 사용됩니다. 체크를 해제해도 해당 환경의 파일은 삭제되지 않습니다.",
+    "help": "공급자는 공급자 페이지에서 환경별로 활성화하므로 Windows와 각 WSL이 서로 다른 설정을 쓸 수 있습니다. MCP, 프롬프트, Skills는 체크한 모든 환경에 기록됩니다. 세션과 사용량은 Windows에서 읽습니다(Windows를 해제하면 첫 번째 WSL 환경). 체크를 해제해도 해당 환경의 파일은 삭제되지 않습니다.",
     "summaryOne": "{{target}}에만 기록",
     "summaryMany": "{{targets}}에 기록",
     "detect": "다시 감지",
@@ -5394,7 +5394,6 @@
     "undo": "되돌리기",
     "syncing": "동기화 중…",
     "keepOne": "기록 대상을 하나 이상 유지하세요",
-    "primaryMoved": "기본 환경이 {{target}}(으)로 변경되었습니다",
     "writeTo": "{{app}}을(를) {{target}}에 기록",
     "placeholderDefault": "기본 디렉터리 사용",
     "placeholderUnc": "\\\\wsl.localhost\\배포판\\… 디렉터리 입력",
@@ -5412,10 +5411,7 @@
       "willStart": "기록할 때 시작됨",
       "probeFailed": "이번 감지에 실패함"
     },
-    "primaryTag": "기본",
-    "primary": "기본 환경",
-    "primaryHelp": "가져오기, 백필, 외부 변경 감지, 세션 읽기에 사용됩니다. 변경해도 공급자를 자동으로 가져오지 않으며, 저장하면 현재 공급자를 새 기본 환경에 기록합니다.",
-    "legacyWsl": "기존 WSL 디렉터리는 그대로 유지됩니다. Windows를 체크하고 저장하면 양쪽에 모두 기록합니다.",
+    "legacyWsl": "기존 WSL 디렉터리는 그대로 유지됩니다. Windows를 체크하고 저장하면 양쪽에서 각각 다른 공급자를 활성화할 수 있습니다.",
     "legacyUnresolved": "기존 디렉터리의 WSL 배포판을 알 수 없어 단일 디렉터리 동작을 유지합니다. 해당 배포판 행에 디렉터리를 입력하고 저장하세요.",
     "errors": {
       "noTarget": "기록 대상을 하나 이상 유지하세요.",
@@ -5432,27 +5428,27 @@
       "duplicateDestination": "체크된 다른 환경과 같은 디렉터리에 기록합니다."
     },
     "blocked": {
-      "managed_login_requires_windows_primary": "관리되는 공식 로그인을 사용 중입니다. WSL을 기본 환경으로 만들기 전에 API 키 공급자로 전환하세요. 초안은 유지됩니다."
+      "managed_login_requires_windows_primary": "관리되는 공식 로그인을 사용 중이며 이는 Windows에서만 동작합니다. Windows 체크를 해제하기 전에 Windows를 API 키 공급자로 전환하세요. 초안은 유지됩니다."
     },
     "conflict": {
       "title": "{{target}}에 이미 {{app}} 설정이 있습니다",
-      "body": "현재 {{existing}}을(를) 사용 중이며 {{incoming}}이(가) 기록됩니다.",
+      "body": "이 환경은 현재 {{existing}}을(를) 사용 중입니다. 새 환경은 기본으로 {{incoming}}을(를) 쓰며, 자체 설정을 유지할 수도 있습니다.",
       "unknownWithHost": "알 수 없는 설정({{host}})",
       "unknown": "알 수 없는 설정",
       "progress": "충돌 {{index}} / {{total}}",
-      "defer": "지금은 기록하지 않음",
-      "deferHint": "대상을 저장하고 동기화 대기로 표시합니다. 다음 전환 또는 동기화 시 기록합니다.",
-      "overwrite": "백업 후 현재 공급자 동기화",
-      "overwriteHint": "이 환경의 파일을 백업한 뒤 관리 필드만 업데이트합니다.",
-      "import": "공급자 카드로 가져온 뒤 동기화",
-      "importHint": "{{existing}}을(를) 공급자 카드로 저장하고(같은 카드가 있으면 재사용) 관리 필드를 업데이트합니다.",
+      "defer": "기존 설정 유지, 공급자는 아직 선택 안 함",
+      "deferHint": "이 환경의 공급자 설정을 건드리지 않습니다. 나중에 공급자 페이지에서 원하는 공급자를 활성화하세요.",
+      "overwrite": "백업 후 현재 공급자 사용",
+      "overwriteHint": "이 환경의 파일을 백업한 뒤 현재 공급자의 관리 필드를 기록합니다. 다른 설정은 유지됩니다.",
+      "import": "공급자 카드로 가져와 이 환경에서 계속 사용",
+      "importHint": "{{existing}}을(를) 공급자 카드로 저장하고(같은 카드가 있으면 재사용) 이 환경은 그 카드를 그대로 사용합니다.",
       "confirm": "저장",
       "next": "다음"
     },
     "toast": {
       "primaryFailed": "디렉터리는 저장했지만 기본 환경 기록에 실패하여 동기화하지 않았습니다.",
       "partial": "디렉터리를 저장했습니다. {{targets}}은(는) 동기화되지 않았습니다.",
-      "deferred": "디렉터리를 저장했습니다. 새 대상은 동기화 대기 중입니다. 공급자 페이지의 기록 대상에서 동기화하세요.",
+      "deferred": "디렉터리를 저장했습니다. 기존 설정을 유지한 환경은 공급자 페이지에서 공급자를 활성화하세요.",
       "savedAndSynced": "디렉터리를 저장하고 {{targets}}에 동기화했습니다.",
       "saved": "디렉터리를 저장했습니다.",
       "mcpSkipped": "WSL에서는 Windows 전용 MCP를 건너뛰었습니다: {{servers}}",
@@ -5461,9 +5457,7 @@
       "conflictChanged": "대상 설정이 방금 변경되었습니다. 다시 저장하세요.",
       "saveFailed": "기록 대상 저장 실패",
       "synced": "동기화했습니다.",
-      "syncFailed": "동기화 실패",
-      "switchPartial": "기본 환경을 {{provider}}(으)로 전환했습니다. {{targets}}은(는) 동기화되지 않았습니다.",
-      "keptOriginal": "관리되는 공식 로그인은 Windows 기본 환경에만 기록합니다. {{targets}}은(는) 원래 설정을 유지합니다."
+      "syncFailed": "동기화 실패"
     },
     "status": {
       "ok": "동기화됨",
@@ -5473,25 +5467,31 @@
       "external": "외부에서 변경됨"
     },
     "reason": {
-      "primary_failed": "기본 환경 기록 실패로 시작하지 않음",
-      "primary_deferred": "기본 환경이 보류되어 시작하지 않음",
-      "user_deferred": "대상을 저장했으며 기존 설정은 아직 덮어쓰지 않음",
+      "user_deferred": "기존 설정 유지, 공급자 미선택",
       "managed_login": "관리되는 공식 로그인은 현재 Windows 기본 환경만 지원",
-      "proxy_mode": "라우팅 모드에서는 아직 따라가는 환경을 동기화하지 않음",
       "write_failed": "기록 실패, 원래 설정은 변경되지 않음",
       "timeout": "시간 초과, 결과 알 수 없음(백그라운드에서 완료될 수 있음)",
       "home_unresolved": "홈 디렉터리를 찾을 수 없음",
       "managed_fields_changed": "다음 전환 시 관리 필드를 덮어씀",
       "superseded": "더 새로운 작업으로 대체됨",
-      "not_synced": "공급자가 아직 동기화되지 않음"
+      "not_synced": "공급자가 아직 동기화되지 않음",
+      "no_provider": "공급자 미선택",
+      "provider_missing": "사용 중인 공급자가 더 이상 없음"
     },
     "indicator": {
       "title": "기록 대상",
-      "primary": "기본: {{target}}",
-      "inUse": "사용 중",
-      "provider": "마지막 기록: {{name}}",
+      "provider": "사용 중: {{name}}",
       "syncAll": "모두 지금 동기화",
-      "retry": "미동기화 재시도 ({{count}})"
+      "retry": "미동기화 재시도 ({{count}})",
+      "subtitle": "환경마다 공급자를 따로 활성화합니다. 카드의 환경 스위치로 전환하세요",
+      "noProvider": "공급자 미선택"
+    },
+    "switch": {
+      "group": "환경별 활성화",
+      "inUse": "{{target}}에서 사용 중",
+      "enable": "{{target}}에서 활성화",
+      "done": "{{target}}을(를) {{provider}}(으)로 전환했습니다",
+      "failed": "{{target}}을(를) {{provider}}(으)로 전환하지 못해 이전 공급자를 유지합니다"
     }
   }
 }

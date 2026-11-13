@@ -12,6 +12,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
@@ -56,6 +57,9 @@ import { isOfficialAccount } from "@/utils/providerCapabilities";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import { isWorkBuddyOfficial } from "@/components/providers/workbuddyOfficial";
 import { useWorkBuddyOfficial } from "@/components/providers/useWorkBuddyOfficial";
+import { ProviderEnvSwitches } from "@/components/providers/ProviderEnvSwitches";
+import { useAppTargetView } from "@/hooks/useAppTargets";
+import { isAppTargetApp, isWindowsOnly } from "@/lib/api/appTargets";
 import {
   DshAccountCard,
   accountName as dshAccountName,
@@ -131,6 +135,17 @@ export function ProviderList({
   searchSlot,
 }: ProviderListProps) {
   const { t } = useTranslation();
+  const targetView = useAppTargetView(appId);
+  // 多环境（Windows + WSL）时，直连页的每张卡用环境开关代替单个「切换」：各环境独立选。
+  // OpenCode 是累加式（所有环境同一组供应商），不用开关。
+  const envSwitchView =
+    isAppTargetApp(appId) &&
+    appId !== "opencode" &&
+    switchMode?.view === "direct" &&
+    targetView?.source === "saved" &&
+    !isWindowsOnly(targetView.config)
+      ? targetView
+      : undefined;
   const { checkProvider, isChecking } = useStreamCheck(appId);
   const { sortedProviders, sensors, handleDragEnd } = useDragSort(
     providers,
@@ -564,7 +579,22 @@ export function ProviderList({
       key={provider.id}
       provider={provider}
       appId={appId}
-      presentation={presentation}
+      presentation={
+        envSwitchView
+          ? { ...presentation, status: undefined, buttons: [] }
+          : presentation
+      }
+      extraActions={
+        envSwitchView && isAppTargetApp(appId) ? (
+          <ProviderEnvSwitches
+            app={appId}
+            provider={provider}
+            view={envSwitchView}
+            mainActive={provider.id === switchMode?.directId}
+            mainAction={presentation.buttons[0]}
+          />
+        ) : undefined
+      }
       isCurrent={isCurrentFor(provider)}
       onEdit={onEdit}
       onDelete={onDelete}
@@ -737,6 +767,7 @@ interface SortableProviderCardProps {
   appId: AppId;
   presentation: CardPresentation;
   isCurrent: boolean;
+  extraActions?: ReactNode;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onDuplicate: (provider: Provider) => void;

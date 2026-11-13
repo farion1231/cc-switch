@@ -35,9 +35,12 @@ const NEEDS_SYNC = ["error", "deferred", "external"];
 export function AppTargetsIndicator({
   app,
   providers,
+  currentProviderId,
 }: {
   app: string;
   providers?: Record<string, Provider>;
+  /** 主环境（Windows）正在用的那家 */
+  currentProviderId?: string;
 }) {
   const { t } = useTranslation();
   const view = useAppTargetView(app);
@@ -107,9 +110,7 @@ export function AppTargetsIndicator({
             {t("appTargets.indicator.title")}
           </div>
           <div className="text-caption text-fg-2">
-            {t("appTargets.indicator.primary", {
-              target: targetLabel(view.config.primary),
-            })}
+            {t("appTargets.indicator.subtitle")}
           </div>
         </div>
         <ul className="max-h-[320px] divide-y divide-border overflow-auto">
@@ -123,27 +124,29 @@ export function AppTargetsIndicator({
                   <span className="inline-flex h-[18px] shrink-0 items-center rounded-full border border-border-strong px-1.5 text-badge text-fg-2">
                     {targetLabel(key)}
                   </span>
-                  {primary && (
-                    <span className="text-caption text-fg-2">
-                      {t("appTargets.primaryTag")}
-                    </span>
-                  )}
                   <span className="ms-auto inline-flex items-center gap-1.5 text-caption text-fg-1">
                     <Dot tone={toneOf(status)} />
-                    {primary
-                      ? t("appTargets.indicator.inUse")
-                      : statusLabel(t, status)}
+                    {statusLabel(t, status)}
                   </span>
                 </div>
                 <div className="break-all text-caption text-fg-2">
                   {view.resolvedDirs[key] ?? record?.dir ?? "—"}
                 </div>
-                {!primary && (
-                  <div className="text-caption text-fg-2">
-                    {record?.providerId &&
-                      t("appTargets.indicator.provider", {
-                        name: providerName(record.providerId),
+                {primary ? (
+                  currentProviderId && (
+                    <div className="text-caption text-fg-2">
+                      {t("appTargets.indicator.provider", {
+                        name: providerName(currentProviderId),
                       })}
+                    </div>
+                  )
+                ) : (
+                  <div className="text-caption text-fg-2">
+                    {record?.providerId
+                      ? t("appTargets.indicator.provider", {
+                          name: providerName(record.providerId),
+                        })
+                      : t("appTargets.indicator.noProvider")}
                     {record?.reason && ` · ${reasonLabel(t, record.reason)}`}
                     {record?.at
                       ? ` · ${new Date(record.at * 1000).toLocaleString()}`

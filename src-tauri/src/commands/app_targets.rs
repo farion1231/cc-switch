@@ -62,3 +62,20 @@ pub async fn sync_app_targets(
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())
 }
+
+/// 在某个环境里启用供应商（供应商页的环境开关）。
+#[tauri::command]
+pub async fn activate_app_target_provider(
+    state: tauri::State<'_, AppState>,
+    app: String,
+    target: String,
+    provider_id: String,
+) -> Result<crate::app_targets::sync::TargetReport, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        service::activate(&state, &app, &target, &provider_id)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
+}

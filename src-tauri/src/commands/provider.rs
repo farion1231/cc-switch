@@ -155,6 +155,18 @@ pub async fn delete_provider(
     id: String,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    // 其他环境（WSL）还在用这家时不能删：删了那个环境就没有对应的卡可以管理了。
+    let using = crate::app_targets::sync::followers_using(&app_type, &id);
+    if !using.is_empty() && !matches!(app_type, AppType::OpenCode) {
+        let names = using
+            .iter()
+            .map(crate::app_targets::sync::env_label)
+            .collect::<Vec<_>>()
+            .join("、");
+        return Err(format!(
+            "{names} 正在使用这个供应商，请先在那个环境切换到其他供应商再删除 ({names} is using this provider; switch it to another provider first)"
+        ));
+    }
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         ProviderService::delete(&state, app_type.clone(), &id).map_err(|e| e.to_string())?;

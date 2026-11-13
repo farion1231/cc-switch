@@ -208,7 +208,27 @@ impl AppTargetsConfig {
                 self.primary = TargetId::Wsl(target.distro.clone()).key();
             }
         }
+        self.primary = self.derived_primary();
         self
+    }
+
+    /// 主环境不再由用户选：每个环境各用各的供应商，主环境只决定旧单目录投影（会话、用量、
+    /// 导入从哪读）和托管登录写到哪。勾选了 Windows 就是 Windows；否则保留原来的 WSL 主环境
+    /// （旧 UNC 用户升级后不变）；它也取消了就用第一个勾选的环境。
+    pub fn derived_primary(&self) -> String {
+        if self.windows.enabled {
+            return WINDOWS.to_string();
+        }
+        let enabled = self.enabled_targets();
+        if let Some(current) = self.primary_id() {
+            if let Some(target) = enabled.iter().find(|t| t.id.same(&current)) {
+                return target.id.key();
+            }
+        }
+        enabled
+            .first()
+            .map(|t| t.id.key())
+            .unwrap_or_else(|| self.primary.clone())
     }
 }
 
@@ -633,10 +653,29 @@ mod tests {
         all.insert("claude".to_string(), saved);
         let (config, source) = effective(Some(&all), &AppType::Claude, Some(r"D:\x"));
         assert_eq!(source, ConfigSource::Saved);
-        assert_eq!(config.primary, "wsl:Ubuntu", "primary key normalised");
+        assert_eq!(config.primary, "windows", "Windows is primary when checked");
         assert_eq!(config.windows.dir, None, "blank dir dropped");
         assert_eq!(config.followers().len(), 1);
-        assert_eq!(config.followers()[0].id, TargetId::Windows);
+        assert_eq!(config.followers()[0].id, TargetId::Wsl("Ubuntu".into()));
+
+        // 没勾 Windows：保留原来的 WSL 主环境（大小写按配置里的发行版名）。
+        let mut wsl_only = all["claude"].clone();
+        wsl_only.windows.enabled = false;
+        wsl_only.wsl.push(WslTarget {
+            distro: "Debian".into(),
+            enabled: true,
+            dir: None,
+        });
+        assert_eq!(wsl_only.normalized().primary, "wsl:Ubuntu");
+        let mut moved = all["claude"].clone();
+        moved.windows.enabled = false;
+        moved.wsl[0].enabled = false;
+        moved.wsl.push(WslTarget {
+            distro: "Debian".into(),
+            enabled: true,
+            dir: None,
+        });
+        assert_eq!(moved.normalized().primary, "wsl:Debian");
     }
 
     #[test]

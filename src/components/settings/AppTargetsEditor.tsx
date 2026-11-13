@@ -56,9 +56,20 @@ function withDetectedDistros(
 
 const clean = (dir?: string | null) => (dir && dir.trim() ? dir.trim() : null);
 
+/** 主环境不再由用户选（与后端 derived_primary 一致）：勾选了 Windows 就是 Windows，
+ * 否则保留原来的 WSL 主环境，它也取消了就用第一个勾选的环境。 */
+export function derivePrimary(config: AppTargetsConfig): TargetKey {
+  if (config.windows.enabled) return WINDOWS_TARGET;
+  const enabled = enabledTargetKeys(config);
+  return (
+    enabled.find((key) => sameTarget(key, config.primary)) ??
+    enabled[0] ??
+    config.primary
+  );
+}
+
 const comparable = (config: AppTargetsConfig) =>
   JSON.stringify({
-    primary: config.primary,
     windows: {
       enabled: config.windows.enabled,
       dir: clean(config.windows.dir),
@@ -97,6 +108,8 @@ function forSave(
 
 interface ConflictPrompt {
   conflicts: TargetConflict[];
+  /** 保存后的主环境：它的冲突只能「导入」或「覆盖」（主环境总要有一家供应商） */
+  primary: TargetKey;
   index: number;
   choices: Record<TargetKey, Resolution>;
   current: Resolution;
@@ -119,7 +132,7 @@ interface AppTargetsEditorProps {
 
 /**
  * 设置 → 应用配置 → 配置目录（多环境）：Windows 和每个 WSL 发行版一行，勾选写入目标，
- * 两个以上目标时选主环境。每个应用独立保存 / 撤销，草稿只在本节。
+ * 每个环境在供应商页各自启用供应商。每个应用独立保存 / 撤销，草稿只在本节。
  */
 export function AppTargetsEditor({
   app,
@@ -210,18 +223,7 @@ export function AppTargetsEditor({
       );
       if (target) target.enabled = checked;
     }
-    // 取消了主环境：优先改成已启用的 Windows，否则第一个已启用环境，并提示。
-    if (!checked && sameTarget(next.primary, key)) {
-      const remaining = enabledTargetKeys(next);
-      const primary = remaining.includes(WINDOWS_TARGET)
-        ? WINDOWS_TARGET
-        : remaining[0];
-      next = { ...next, primary };
-      setNotice(t("appTargets.primaryMoved", { target: targetLabel(primary) }));
-    }
-    // 只剩一个目标时它就是主环境。
-    const remaining = enabledTargetKeys(next);
-    if (remaining.length === 1) next = { ...next, primary: remaining[0] };
+    next = { ...next, primary: derivePrimary(next) };
     setErrors([]);
     setDraft(next);
   };
@@ -233,13 +235,17 @@ export function AppTargetsEditor({
     if (picked) update(key, { dir: picked });
   };
 
-  const askConflicts = (conflicts: TargetConflict[]) =>
+  const firstChoice = (conflict: TargetConflict, primary: TargetKey) =>
+    sameTarget(conflict.target, primary) ? "import" : "defer";
+
+  const askConflicts = (conflicts: TargetConflict[], primary: TargetKey) =>
     new Promise<Record<TargetKey, Resolution> | null>((resolve) => {
       setPrompt({
         conflicts,
+        primary,
         index: 0,
         choices: {},
-        current: "defer",
+        current: firstChoice(conflicts[0], primary),
         resolve,
       });
     });
@@ -311,7 +317,10 @@ export function AppTargetsEditor({
       }
       let resolutions: Record<TargetKey, Resolution> = {};
       if (inspected.conflicts.length) {
-        const chosen = await askConflicts(inspected.conflicts);
+        const chosen = await askConflicts(
+          inspected.conflicts,
+          inspected.primaryTarget,
+        );
         if (!chosen) {
           toast.info(t("appTargets.toast.cancelled"));
           return;
@@ -376,7 +385,6 @@ export function AppTargetsEditor({
     return { tone: env.running ? "ok" : "off", text: parts.join(" · ") };
   };
 
-  const primaryKey = draft.primary;
   const summary =
     enabled.length === 1
       ? t("appTargets.summaryOne", { target: targetLabel(enabled[0]) })
@@ -443,7 +451,7 @@ export function AppTargetsEditor({
           const error = errorFor(row.key);
           const info = detection(row.key, row.enabled);
           const record = view.records[row.key];
-          const isPrimary = sameTarget(row.key, primaryKey) && row.enabled;
+          const isPrimary = sameTarget(row.key, base.primary) && row.enabled;
           const auto = view.resolvedDirs[row.key];
           return (
             <div
@@ -464,33 +472,39 @@ export function AppTargetsEditor({
                   })}
                   onCheckedChange={(checked) => toggle(row.key, checked)}
                 />
-                <span className="inline-flex h-[18px] w-[124px] shrink-0 items-center truncate rounded-full border border-border-strong px-1.5 text-badge text-fg-2">
-                  {targetLabel(row.key)}
-                </span>
-                <div className="relative min-w-0 flex-1">
-                  <Input
-                    value={row.dir ?? ""}
-                    placeholder={
-                      auto ??
-                      (row.key === WINDOWS_TARGET
-                        ? t("appTargets.placeholderDefault")
-                        : t("appTargets.placeholderUnc"))
-                    }
-                    disabled={busy}
-                    aria-invalid={Boolean(error)}
-                    className="pe-14 text-xs"
-                    onChange={(event) =>
-                      update(row.key, { dir: event.target.value || null })
-                    }
-                  />
-                  <span className="pointer-events-none absolute end-2 top-1/2 -translate-y-1/2 text-badge text-fg-3">
-                    {row.dir
-                      ? t("appTargets.tag.custom")
-                      : row.key === WINDOWS_TARGET
-                        ? t("appTargets.tag.default")
-                        : t("appTargets.tag.auto")}
+                <HoverTip content={targetLabel(row.key)}>
+                  <span className="inline-flex h-[18px] w-[124px] shrink-0 items-center rounded-full border border-border-strong px-1.5 text-badge text-fg-2">
+                    <span className="min-w-0 truncate">
+                      {targetLabel(row.key)}
+                    </span>
                   </span>
-                </div>
+                </HoverTip>
+                <HoverTip content={row.dir ?? auto} disableHoverableContent>
+                  <div className="relative min-w-0 flex-1">
+                    <Input
+                      value={row.dir ?? ""}
+                      placeholder={
+                        auto ??
+                        (row.key === WINDOWS_TARGET
+                          ? t("appTargets.placeholderDefault")
+                          : t("appTargets.placeholderUnc"))
+                      }
+                      disabled={busy}
+                      aria-invalid={Boolean(error)}
+                      className="pe-14 text-xs"
+                      onChange={(event) =>
+                        update(row.key, { dir: event.target.value || null })
+                      }
+                    />
+                    <span className="pointer-events-none absolute end-2 top-1/2 -translate-y-1/2 text-badge text-fg-3">
+                      {row.dir
+                        ? t("appTargets.tag.custom")
+                        : row.key === WINDOWS_TARGET
+                          ? t("appTargets.tag.default")
+                          : t("appTargets.tag.auto")}
+                    </span>
+                  </div>
+                </HoverTip>
                 <HoverTip content={t("settings.browseDirectory")}>
                   <Button
                     type="button"
@@ -516,16 +530,13 @@ export function AppTargetsEditor({
                   </Button>
                 </HoverTip>
               </div>
-              {(info || record || isPrimary) && (
+              {(info || record) && (
                 <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 ps-7 text-caption text-fg-2">
                   {info && (
                     <span className="inline-flex items-center gap-1.5">
                       <Dot tone={info.tone} />
                       {info.text}
                     </span>
-                  )}
-                  {isPrimary && enabled.length > 1 && (
-                    <span>{t("appTargets.primaryTag")}</span>
                   )}
                   {!isPrimary && row.enabled && record && (
                     <span className="inline-flex items-center gap-1.5">
@@ -549,35 +560,6 @@ export function AppTargetsEditor({
           );
         })}
       </div>
-
-      {enabled.length > 1 && (
-        <fieldset className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1">
-          <legend className="mb-1 flex items-center gap-1 text-body font-medium text-fg-1">
-            {t("appTargets.primary")}
-            <HelpTip title={t("appTargets.primary")}>
-              {t("appTargets.primaryHelp")}
-            </HelpTip>
-          </legend>
-          {enabled.map((key) => (
-            <label
-              key={key}
-              className="flex items-center gap-1.5 text-body text-fg-1"
-            >
-              <input
-                type="radio"
-                name={`primary-${app}`}
-                checked={sameTarget(primaryKey, key)}
-                disabled={busy}
-                onChange={() => {
-                  setErrors([]);
-                  setDraft((current) => ({ ...current, primary: key }));
-                }}
-              />
-              {targetLabel(key)}
-            </label>
-          ))}
-        </fieldset>
-      )}
 
       {view.source === "legacy" && view.config.primary !== WINDOWS_TARGET && (
         <p className="mt-3 text-caption text-fg-2">
@@ -639,38 +621,39 @@ export function AppTargetsEditor({
                   total: prompt.conflicts.length,
                 })}
               </p>
-              {(["defer", "overwrite", "import"] as Resolution[]).map(
-                (option) => (
-                  <label
-                    key={option}
-                    className={cn(
-                      "flex cursor-pointer gap-2 rounded-control border border-border p-2.5",
-                      prompt.current === option &&
-                        "border-border-strong bg-subtle",
-                    )}
-                  >
-                    <input
-                      type="radio"
-                      name="app-target-resolution"
-                      checked={prompt.current === option}
-                      onChange={() => setPrompt({ ...prompt, current: option })}
-                    />
-                    <span>
-                      <span className="block text-body font-medium text-fg-1">
-                        {t(`appTargets.conflict.${option}`)}
-                      </span>
-                      <span className="block text-caption text-fg-2">
-                        {t(`appTargets.conflict.${option}Hint`, {
-                          existing:
-                            conflict.existingProviderName ??
-                            conflict.existingHost ??
-                            t("appTargets.conflict.unknown"),
-                        })}
-                      </span>
+              {(sameTarget(conflict.target, prompt.primary)
+                ? (["import", "overwrite"] as Resolution[])
+                : (["defer", "overwrite", "import"] as Resolution[])
+              ).map((option) => (
+                <label
+                  key={option}
+                  className={cn(
+                    "flex cursor-pointer gap-2 rounded-control border border-border p-2.5",
+                    prompt.current === option &&
+                      "border-border-strong bg-subtle",
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="app-target-resolution"
+                    checked={prompt.current === option}
+                    onChange={() => setPrompt({ ...prompt, current: option })}
+                  />
+                  <span>
+                    <span className="block text-body font-medium text-fg-1">
+                      {t(`appTargets.conflict.${option}`)}
                     </span>
-                  </label>
-                ),
-              )}
+                    <span className="block text-caption text-fg-2">
+                      {t(`appTargets.conflict.${option}Hint`, {
+                        existing:
+                          conflict.existingProviderName ??
+                          conflict.existingHost ??
+                          t("appTargets.conflict.unknown"),
+                      })}
+                    </span>
+                  </span>
+                </label>
+              ))}
             </div>
             <DialogFooter>
               <Button
@@ -697,7 +680,10 @@ export function AppTargetsEditor({
                       ...prompt,
                       index: prompt.index + 1,
                       choices,
-                      current: "defer",
+                      current: firstChoice(
+                        prompt.conflicts[prompt.index + 1],
+                        prompt.primary,
+                      ),
                     });
                   }
                 }}

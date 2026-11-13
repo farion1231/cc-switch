@@ -33,8 +33,6 @@ import { supportsOfficialProxyTakeover } from "@/utils/providerCapabilities";
 import { getRoutingReason } from "@/utils/routingReason";
 import { logFrontendInfo } from "@/lib/frontendLogger";
 import { codexHistorySplitToastExtras } from "@/utils/codexHistorySplitHint";
-import { notifyTargetResults } from "@/utils/appTargetsNotification";
-import { APP_TARGETS_QUERY_KEY } from "@/hooks/useAppTargets";
 
 /**
  * Hook for managing provider actions (add, update, delete, switch)
@@ -229,9 +227,7 @@ export function useProviderActions(
             warning.startsWith("codex_auth_cleanup_failed"),
           );
           const hasOtherWarnings = result.warnings.some(
-            (warning) =>
-              !warning.startsWith("codex_auth_cleanup_failed") &&
-              warning !== "targets_partial_failed",
+            (warning) => !warning.startsWith("codex_auth_cleanup_failed"),
           );
           if (authCleanupFailed) {
             toast.warning(
@@ -251,14 +247,6 @@ export function useProviderActions(
               { duration: 5000 },
             );
           }
-        }
-
-        // 多环境：主环境已切换，跟随环境有未同步的单独说明是哪几个、为什么。
-        if (result?.targets?.length) {
-          notifyTargetResults(result.targets, provider.name, t);
-          void queryClient.invalidateQueries({
-            queryKey: APP_TARGETS_QUERY_KEY,
-          });
         }
 
         // 会话分组的提醒并进「切换成功」那条，不另弹
@@ -310,14 +298,7 @@ export function useProviderActions(
         // 错误提示由 mutation 处理
       }
     },
-    [
-      switchProviderMutation,
-      syncClaudePlugin,
-      activeApp,
-      isProxyTakeover,
-      queryClient,
-      t,
-    ],
+    [switchProviderMutation, syncClaudePlugin, activeApp, isProxyTakeover, t],
   );
 
   // 删除供应商

@@ -100,6 +100,8 @@ export interface TargetConflict {
 
 export interface InspectResult {
   errors: FieldError[];
+  /** 保存后的主环境（自动：勾选了 Windows 就是 Windows） */
+  primaryTarget: TargetKey;
   resolvedDirs: Record<TargetKey, string>;
   conflicts: TargetConflict[];
   blocked?: string;
@@ -138,6 +140,19 @@ export const appTargetsApi = {
     resolutions: Record<TargetKey, Resolution>,
   ): Promise<SaveResult> {
     return await invoke("save_app_targets", { app, config, resolutions });
+  },
+
+  /** 在某个环境里启用供应商（供应商页的环境开关）。 */
+  async activate(
+    app: AppTargetAppId,
+    target: TargetKey,
+    providerId: string,
+  ): Promise<TargetReport> {
+    return await invoke("activate_app_target_provider", {
+      app,
+      target,
+      providerId,
+    });
   },
 
   async sync(app: AppTargetAppId, targets?: TargetKey[]): Promise<SyncResult> {

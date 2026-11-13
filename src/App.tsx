@@ -1557,7 +1557,11 @@ function App() {
             </Button>
           )}
           {currentView === "providers" && (
-            <AppTargetsIndicator app={activeApp} providers={providers} />
+            <AppTargetsIndicator
+              app={activeApp}
+              providers={providers}
+              currentProviderId={currentProviderId}
+            />
           )}
           {currentView === "providers" &&
             (settingsData?.showProviderSearch ?? true) && (

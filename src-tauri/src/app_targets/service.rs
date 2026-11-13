@@ -108,6 +108,9 @@ pub fn overview(probe_stopped: bool) -> AppTargetsOverview {
 #[serde(rename_all = "camelCase")]
 pub struct InspectResult {
     pub errors: Vec<FieldError>,
+    /// 保存后的主环境（自动推导：勾选了 Windows 就是 Windows）。主环境的冲突没有
+    /// 「暂不写入以外」的独立供应商，前端据此调整选项。
+    pub primary_target: String,
     pub resolved_dirs: BTreeMap<String, String>,
     pub conflicts: Vec<TargetConflict>,
     /// 整个保存被规则挡住的原因（比如托管官方登录要求 Windows 主环境）。
@@ -162,6 +165,7 @@ fn check(state: &AppState, app: &AppType, draft: AppTargetsConfig) -> Result<Che
     let mut result = InspectResult {
         errors,
         resolved_dirs,
+        primary_target: config.primary.clone(),
         ..Default::default()
     };
     if !result.errors.is_empty() {
@@ -179,7 +183,18 @@ fn check(state: &AppState, app: &AppType, draft: AppTargetsConfig) -> Result<Che
         result.blocked = Some("managed_login_requires_windows_primary".to_string());
     }
     let changed = changed_targets(&previous, &config);
-    for spec in &changed {
+    let mut inspected: Vec<TargetSpec> = changed.clone();
+    // 主环境换了（比如取消了 Windows）：新主环境里原有的配置也要先问，不能悄悄覆盖。
+    if primary_changed(&previous, &config) {
+        if let Some(primary) = config
+            .primary_id()
+            .and_then(|id| config.target(&id))
+            .filter(|p| !inspected.iter().any(|t| t.id.same(&p.id)))
+        {
+            inspected.push(primary);
+        }
+    }
+    for spec in &inspected {
         let dir = sync::resolve_dir(app, spec, true)?;
         if let Some(conflict) = sync::inspect_target(state, app, spec, dir)? {
             result.conflicts.push(conflict);
@@ -318,6 +333,7 @@ pub fn save(
 
     // 导入、备份都在保存之前：失败时什么都不保存，目标原配置不动。
     let mut imported = Vec::new();
+    let mut imported_for: BTreeMap<String, String> = BTreeMap::new();
     let mut deferred: Vec<TargetId> = Vec::new();
     for conflict in &inspect.conflicts {
         let Some(id) = TargetId::parse(&conflict.target) else {
@@ -341,6 +357,7 @@ pub fn save(
             Resolution::Import => {
                 sync::backup_target(&app, &spec, dir.clone())?;
                 if let Some(provider_id) = sync::import_target(state, &app, &spec, dir)? {
+                    imported_for.insert(id.key(), provider_id.clone());
                     imported.push(provider_id);
                 }
             }
@@ -411,45 +428,138 @@ pub fn save(
             TargetRecord::new(TargetStatus::Deferred).reason("user_deferred"),
         ));
     }
+
+    // 主环境：沿用现有链路。导入的卡直接切过去（它就是那个环境里原有的配置）；暂缓则不写。
     if primary_deferred {
-        // 主环境暂缓：本次什么都不写。
         out.primary = Some(TargetReport {
             target: new_primary.key(),
             record: TargetRecord::new(TargetStatus::Deferred).reason("user_deferred"),
         });
-        for id in &follower_writes {
-            out.targets.push(sync::record(
-                &app,
-                &id.key(),
-                TargetRecord::new(TargetStatus::Deferred).reason("primary_deferred"),
-            ));
-        }
-        return Ok(out);
+    } else if let Some(imported_id) = imported_for.get(&new_primary.key()) {
+        out.primary = Some(
+            match crate::services::ProviderService::switch(state, app.clone(), imported_id) {
+                Ok(_) => TargetReport {
+                    target: new_primary.key(),
+                    record: TargetRecord {
+                        provider_id: Some(imported_id.clone()),
+                        ..TargetRecord::new(TargetStatus::Ok)
+                    },
+                },
+                Err(err) => TargetReport {
+                    target: new_primary.key(),
+                    record: TargetRecord::new(TargetStatus::Error)
+                        .reason("write_failed")
+                        .detail(
+                            err.to_string()
+                                .lines()
+                                .next()
+                                .unwrap_or_default()
+                                .to_string(),
+                        ),
+                },
+            },
+        );
+    } else if needs_primary {
+        out.primary = Some(write_primary(state, &app, &new_primary.key()));
     }
-    if needs_primary {
-        let report = write_primary(state, &app, &new_primary.key());
-        let failed = report.record.status == TargetStatus::Error;
-        out.primary = Some(report);
-        if failed {
-            for id in &follower_writes {
-                out.targets.push(sync::record(
-                    &app,
-                    &id.key(),
-                    TargetRecord::new(TargetStatus::Deferred).reason("primary_failed"),
-                ));
-            }
-            return Ok(out);
-        }
-    }
+
+    // 跟随环境各用各的：导入的卡用导入的那张；已经在用某家的继续用它；新环境默认用主环境
+    // 当前这家（托管登录除外，那样就先不选，只同步 MCP 等共享内容）。
     if !follower_writes.is_empty() {
-        out.targets.extend(sync::sync_followers(
+        let main_current = crate::mode::current::provider_for(
+            &state.db,
+            &app,
+            crate::mode::current::Purpose::Direct,
+        )
+        .ok()
+        .flatten()
+        .filter(|id| {
+            state
+                .db
+                .get_all_providers(app.as_str())
+                .ok()
+                .and_then(|all| all.get(id).cloned())
+                .is_some_and(|p| !sync::is_managed_login(&app, &p))
+        });
+        let mut activate = BTreeMap::new();
+        for id in &follower_writes {
+            let key = id.key();
+            if let Some(imported_id) = imported_for.get(&key) {
+                activate.insert(key, imported_id.clone());
+                continue;
+            }
+            let active = status::get(app.as_str(), &key).and_then(|r| r.provider_id);
+            if active.is_none() {
+                if let Some(main) = &main_current {
+                    activate.insert(key, main.clone());
+                }
+            }
+        }
+        out.targets.extend(sync::sync_followers_with(
             state,
             &app,
             Some(&follower_writes),
             SyncKind::Full,
+            &activate,
         ));
     }
     Ok(out)
+}
+
+/// 在一个环境里改用 `provider_id`（供应商页的环境开关）。主环境走现有切换；跟随环境
+/// 只写那个环境，成功后才算换过去，失败时保持原来那家。
+pub fn activate(
+    state: &AppState,
+    app: &str,
+    target: &str,
+    provider_id: &str,
+) -> Result<TargetReport, AppError> {
+    let app = parse_app(app)?;
+    let id = TargetId::parse(target)
+        .ok_or_else(|| AppError::InvalidInput(format!("unknown target {target}")))?;
+    let (config, _) = sync::app_config(&app);
+    let spec = config.target(&id).filter(|t| t.enabled).ok_or_else(|| {
+        AppError::localized(
+            "app_targets.target_disabled",
+            format!("{} 没有勾选为写入环境", sync::env_label(&id)),
+            format!("{} is not a write target", sync::env_label(&id)),
+        )
+    })?;
+    if config.primary_id().is_some_and(|p| p.same(&spec.id)) {
+        crate::services::ProviderService::switch(state, app.clone(), provider_id)?;
+        return Ok(TargetReport {
+            target: spec.id.key(),
+            record: TargetRecord {
+                provider_id: Some(provider_id.to_string()),
+                ..TargetRecord::new(TargetStatus::Ok)
+            },
+        });
+    }
+    let provider = state
+        .db
+        .get_all_providers(app.as_str())?
+        .get(provider_id)
+        .cloned()
+        .ok_or_else(|| AppError::Message(format!("供应商 {provider_id} 不存在")))?;
+    if sync::is_managed_login(&app, &provider) {
+        return Err(AppError::localized(
+            "app_targets.managed_login_windows_only",
+            "托管官方登录目前只能在 Windows 主环境启用，WSL 请使用 API Key 供应商或它自己的登录",
+            "Managed official sign-in can only be enabled in the Windows primary for now; use an API key provider or its own sign-in in WSL",
+        ));
+    }
+    let activate = BTreeMap::from([(spec.id.key(), provider_id.to_string())]);
+    let report = sync::sync_followers_with(
+        state,
+        &app,
+        Some(std::slice::from_ref(&spec.id)),
+        SyncKind::Provider,
+        &activate,
+    )
+    .into_iter()
+    .next()
+    .ok_or_else(|| AppError::Message("没有可写入的目标".to_string()))?;
+    Ok(report)
 }
 
 #[derive(Debug, Clone, Default, Serialize)]

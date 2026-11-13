@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use super::model::{is_valid_distro_name, LinuxEnv};
 use crate::error::AppError;
 
-/// Docker Desktop 等自带的系统发行版，不作为写入目标。
+/// Docker Desktop、Rancher Desktop、Podman 等工具自带的系统发行版，不作为写入目标。
 const SYSTEM_DISTROS: &[&str] = &[
     "docker-desktop",
     "docker-desktop-data",
@@ -142,6 +142,7 @@ pub fn parse_distro_list(output: &str) -> Vec<String> {
         if name.is_empty()
             || !is_valid_distro_name(name)
             || SYSTEM_DISTROS.iter().any(|s| s.eq_ignore_ascii_case(name))
+            || name.to_ascii_lowercase().starts_with("podman-machine")
             || out
                 .iter()
                 .any(|existing| existing.eq_ignore_ascii_case(name))
@@ -396,7 +397,9 @@ mod tests {
             vec!["Ubuntu-24.04", "Debian"]
         );
         assert_eq!(
-            parse_distro_list(&decode_wsl_output(b"Alpine\ndocker-desktop\nalpine\n\n")),
+            parse_distro_list(&decode_wsl_output(
+                b"Alpine\ndocker-desktop\npodman-machine-default\nalpine\n\n"
+            )),
             vec!["Alpine"]
         );
     }
