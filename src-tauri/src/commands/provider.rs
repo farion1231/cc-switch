@@ -61,7 +61,6 @@ pub async fn import_provider_bulk(
     .map_err(|_| "provider.bulkImport.errors.storageFailed".to_string())?
 }
 
-/// 获取所有供应商
 #[tauri::command]
 pub async fn get_providers(
     state: State<'_, AppState>,

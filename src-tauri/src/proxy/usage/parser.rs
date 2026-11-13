@@ -280,6 +280,36 @@ impl TokenUsage {
         }
     }
 
+    /// 从本地转换层（如 Gemini Native → Anthropic）生成的 Claude SSE 解析。
+    ///
+    /// 转换层的 `message_delta.usage` 是整次请求的最终快照（由上游最后一帧 usage 换算而来），
+    /// 比 `message_start` 里的首帧数字更权威：Gemini 的 promptTokenCount 会在末帧变大，
+    /// 缓存命中数也可能只在末帧出现。通用解析只接受更小的 delta input，会把偏小的首帧值留下，
+    /// 所以这里以最后一个带 input_tokens 的 message_delta 为准覆盖 input / cache_read / output。
+    pub fn from_converted_claude_stream_events(events: &[Value]) -> Option<Self> {
+        let mut usage = Self::from_claude_stream_events(events)?;
+        let final_usage = events.iter().rev().find_map(|event| {
+            (event.get("type").and_then(|v| v.as_str()) == Some("message_delta"))
+                .then(|| event.get("usage"))
+                .flatten()
+                .filter(|u| u.get("input_tokens").and_then(|v| v.as_u64()).is_some())
+        });
+        if let Some(final_usage) = final_usage {
+            let read = |key: &str| {
+                final_usage
+                    .get(key)
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32)
+            };
+            usage.input_tokens = read("input_tokens").unwrap_or(0);
+            usage.cache_read_tokens = read("cache_read_input_tokens").unwrap_or(0);
+            if let Some(output) = read("output_tokens") {
+                usage.output_tokens = output;
+            }
+        }
+        usage.has_billable_tokens().then_some(usage)
+    }
+
     /// 从 Codex API 非流式响应解析
     pub fn from_codex_response(body: &Value) -> Option<Self> {
         let usage = body.get("usage");
@@ -1032,6 +1062,49 @@ mod tests {
         assert_eq!(usage.cache_read_tokens, 120_000);
         assert_eq!(usage.cache_creation_tokens, 500);
         assert_eq!(usage.model, Some("qwen-max".to_string()));
+    }
+
+    #[test]
+    fn test_converted_stream_takes_final_delta_input_even_when_larger() {
+        let events = vec![
+            json!({
+                "type": "message_start",
+                "message": {
+                    "id": "resp_g",
+                    "model": "gemini-pro",
+                    "usage": {"input_tokens": 10000, "output_tokens": 1}
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {"input_tokens": 12000, "output_tokens": 10}
+            }),
+        ];
+
+        let usage = TokenUsage::from_converted_claude_stream_events(&events).unwrap();
+        assert_eq!(usage.input_tokens, 12000);
+        assert_eq!(usage.output_tokens, 10);
+        assert_eq!(usage.cache_read_tokens, 0);
+        assert_eq!(usage.model.as_deref(), Some("gemini-pro"));
+    }
+
+    #[test]
+    fn test_converted_stream_final_delta_owns_cache_split() {
+        let events = vec![
+            json!({
+                "type": "message_start",
+                "message": {"usage": {"input_tokens": 10000, "output_tokens": 0}}
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {"input_tokens": 25000, "output_tokens": 10, "cache_read_input_tokens": 5000}
+            }),
+        ];
+
+        let usage = TokenUsage::from_converted_claude_stream_events(&events).unwrap();
+        assert_eq!(usage.input_tokens, 25000);
+        assert_eq!(usage.cache_read_tokens, 5000);
+        assert_eq!(usage.output_tokens, 10);
     }
 
     #[test]

@@ -31,7 +31,11 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
               ? "ko-KR"
               : language === "ru" || language?.startsWith("ru-")
                 ? "ru-RU"
-                : "en-US";
+                : language === "tr" || language?.startsWith("tr-")
+                  ? "tr-TR"
+                  : language === "de" || language?.startsWith("de-")
+                    ? "de-DE"
+                    : "en-US";
     return Object.values(providers).sort((a, b) => {
       if (a.sortIndex !== undefined && b.sortIndex !== undefined) {
         return a.sortIndex - b.sortIndex;

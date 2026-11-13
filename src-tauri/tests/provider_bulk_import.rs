@@ -7,7 +7,8 @@ mod support;
 use support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
 
 fn bulk_apps() -> impl Iterator<Item = AppType> {
-    AppType::all().filter(|app| !matches!(app, AppType::Dsh | AppType::Copilot))
+    AppType::all()
+        .filter(|app| !matches!(app, AppType::Dsh | AppType::Copilot | AppType::WorkBuddy))
 }
 
 #[test]
@@ -15,8 +16,11 @@ fn unsupported_apps_preserve_database_and_native_files() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     let _env = AgentEnvironment::isolated();
     let state = create_test_state().unwrap();
+    let native = ensure_test_home().join(".workbuddy/models.json");
+    std::fs::create_dir_all(native.parent().unwrap()).unwrap();
+    std::fs::write(native, b"untouched WorkBuddy configuration").unwrap();
     let before = native_files();
-    for app in [AppType::Dsh, AppType::Copilot] {
+    for app in [AppType::Dsh, AppType::Copilot, AppType::WorkBuddy] {
         let source = json!([agent_row(&app, "Team", "synthetic-unsupported-key")]).to_string();
         let expected = "provider.bulkImport.errors.unsupportedApp";
         assert_eq!(

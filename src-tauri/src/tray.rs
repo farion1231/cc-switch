@@ -58,6 +58,7 @@ fn app_display_name(app: &AppType) -> &'static str {
         AppType::Mcode => "MiniMax Code",
         AppType::Kimi => "Kimi Code",
         AppType::Dsh => "DeepSeek Harness",
+        AppType::WorkBuddy => "WorkBuddy",
         AppType::Agy => "Antigravity",
         AppType::Omp => "Oh My Pi",
         AppType::Copilot => "Copilot CLI",
@@ -153,7 +154,7 @@ pub struct TrayTexts {
 /// 镜像前端 `i18n/getInitialLanguage` 的判定顺序，确保首次安装
 /// （`settings.language` 尚未写入）时托盘语言与界面语言一致：
 /// 繁中系统（zh-TW/HK/MO/Hant）→ `zh-TW`，其余 zh → `zh`，
-/// 日文 → `ja`，韩文 → `ko`，土耳其文 → `tr`，英文 → `en`，其他语言回退到 `en`，
+/// 日文 → `ja`，韩文 → `ko`，土耳其文 → `tr`，俄文 → `ru`，德文 → `de`，英文 → `en`，其他语言回退到 `en`，
 /// 区域为空时回退到 `zh`（与前端默认一致）。
 fn map_locale_to_tray_language(locale: &str) -> &'static str {
     let locale = locale.to_lowercase();
@@ -179,6 +180,8 @@ fn map_locale_to_tray_language(locale: &str) -> &'static str {
         "tr"
     } else if locale == "ru" || locale.starts_with("ru-") {
         "ru"
+    } else if locale == "de" || locale.starts_with("de-") {
+        "de"
     } else if locale.is_empty() {
         "zh"
     } else {
@@ -305,6 +308,62 @@ impl TrayTexts {
                 reset_on_date: "{when}에 {label} 할당량 초기화",
                 reset_at_time: "{when}에 {label} 할당량 초기화",
                 date_format: "%-m월 %-d일",
+                quota_used: false,
+            },
+            "de" => Self {
+                show_main: "CC Switch öffnen",
+                open_website: "Offizielle Website öffnen",
+                lightweight_mode: "Lightweight-Modus",
+                quit: "CC Switch beenden",
+                quit_stops_routing: "CC Switch beenden (Routing-Dienst wird gestoppt)",
+                projects_label: "Projekte",
+                no_project_label: "Kein Projekt",
+                header_direct: "Direkt",
+                header_route: "Routing",
+                header_failover: "Routing · Failover aktiv",
+                header_stack: "Aggregation · Standardanbieter",
+                header_stack_default: "Aggregation · Standard: {name}",
+                failover_note: "Wird automatisch aus der Warteschlange gewählt; änderbar auf der App-Seite",
+                mode_route: "Routing",
+                mode_stack: "Aggregation",
+                needs_routing_suffix: " (benötigt Routing)…",
+                official_blocked_suffix: " (offizielle Tarife laufen nicht über Routing)",
+                open_app_page: "Seite von {app} öffnen",
+                add_provider: "Anbieter hinzufügen…",
+                almost_out: "fast aufgebraucht",
+                needs_attention: "erfordert Aufmerksamkeit",
+                problem_service_down: "Der Routing-Dienst läuft nicht (Port {port})",
+                problem_attach_failed:
+                    "{app}: {mode} konnte beim Start nicht wieder verbunden werden; zurück auf Direkt",
+                problem_switch_failed: "{app} wurde nicht umgeschaltet: {reason}",
+                problem_more: "{count} weitere Probleme – zum Ansehen CC Switch öffnen",
+                tooltip_problem: "CC Switch · Erfordert Aufmerksamkeit: {problem}",
+                feedback_switched: "{app} auf {name} umgeschaltet. {app} neu starten, um es zu übernehmen",
+                feedback_stack_default:
+                    "Standardanbieter von {app} ist jetzt {name}. {app} neu starten, um es zu übernehmen",
+                feedback_profile: "Projekt \u{201e}{name}\u{201c} auf {app} angewendet",
+                tier_five_hour: "5 Stunden",
+                tier_weekly: "Woche",
+                tier_fable: "Fable",
+                tier_monthly: "Monat",
+                tier_thirty_day: "30 Tage",
+                tier_credits: "Credits",
+                tier_gemini_pro: "Pro",
+                tier_gemini_flash: "Flash",
+                tier_gemini_flash_lite: "Flash Lite",
+                tier_premium: "Credits",
+                tier_left: "{label}: {value} % übrig",
+                tier_used: "{label}: {value} % verbraucht",
+                tier_used_up: "{label}: aufgebraucht",
+                balance: "Guthaben {value}",
+                plan_expired: "Tarif abgelaufen",
+                used_amount: "{value} verbraucht",
+                quota_failed: "Kontingent unbekannt",
+                quota_failed_login_expired: "Kontingent unbekannt: Anmeldung abgelaufen",
+                quota_failed_token_refresh_pending: "Kontingent unbekannt: Token-Aktualisierung ausstehend",
+                reset_on_date: "Kontingent {label} wird am {when} zurückgesetzt",
+                reset_at_time: "Kontingent {label} wird um {when} zurückgesetzt",
+                date_format: "%-d.%-m.",
                 quota_used: false,
             },
             "ru" => Self {
@@ -2674,6 +2733,10 @@ fn icon_with_problem_dot(icon: &Image<'_>, template: bool) -> Image<'static> {
     Image::new_owned(rgba, width, height)
 }
 
+/// 托盘图标要不要设悬停提示。macOS 不设：提示框有时会卡在屏幕上，鼠标移开也不收起，之后还会
+/// 出现在鼠标停留的别处，只有退出应用才消失。macOS 上出问题时照样有图标圆点，点开面板能看到问题区。
+pub const TRAY_TOOLTIP_ENABLED: bool = cfg!(not(target_os = "macos"));
+
 /// 悬停提示：平时 `CC Switch`，出问题时 `CC Switch · 需要处理：<问题区第一条>`。额度不算问题。
 fn tray_tooltip(texts: &TrayTexts, problems: &[TrayProblem]) -> String {
     match problems.first() {
@@ -2691,15 +2754,20 @@ fn tray_tooltip(texts: &TrayTexts, problems: &[TrayProblem]) -> String {
 /// 现在托盘上的（有没有圆点，悬停提示）；`None` = 托盘图标还没建好，还是建图标时的样子。
 static APPLIED_INDICATOR: Lazy<Mutex<Option<(bool, String)>>> = Lazy::new(|| Mutex::new(None));
 
-/// 问题区有内容时托盘图标加圆点、悬停提示写第一条问题；问题都消失后换回原图标和提示。只在
-/// 变了时才动（Linux 每次换图标都要写临时文件）。
+/// 问题区有内容时托盘图标加圆点、悬停提示写第一条问题（macOS 不设提示，见
+/// `TRAY_TOOLTIP_ENABLED`）；问题都消失后换回原图标和提示。只在变了时才动（Linux 每次换图标
+/// 都要写临时文件）。
 fn update_problem_indicator(app: &tauri::AppHandle, texts: &TrayTexts, problems: &[TrayProblem]) {
     // 启动时第一次建菜单那会儿托盘图标还没建，等下一次重建。
     let Some(tray) = app.tray_by_id(TRAY_ID) else {
         return;
     };
     let has_dot = !problems.is_empty();
-    let tooltip = tray_tooltip(texts, problems);
+    let tooltip = if TRAY_TOOLTIP_ENABLED {
+        tray_tooltip(texts, problems)
+    } else {
+        String::new()
+    };
     // 只在锁里比对和记账：换图标要回主线程执行，不能拿着锁等。
     let icon_changed = {
         let mut applied = lock(&APPLIED_INDICATOR);
@@ -2729,8 +2797,10 @@ fn update_problem_indicator(app: &tauri::AppHandle, texts: &TrayTexts, problems:
         }
     }
     // Linux（AppIndicator）不显示悬停提示，设了也无害。
-    if let Err(e) = tray.set_tooltip(Some(&tooltip)) {
-        log::warn!("[Tray] 更新托盘悬停提示失败: {e}");
+    if TRAY_TOOLTIP_ENABLED {
+        if let Err(e) = tray.set_tooltip(Some(&tooltip)) {
+            log::warn!("[Tray] 更新托盘悬停提示失败: {e}");
+        }
     }
 }
 
@@ -3625,6 +3695,17 @@ mod tests {
     }
 
     #[test]
+    fn locale_maps_german_without_matching_other_language_subtags() {
+        for locale in ["de", "de-DE", "de-AT", "de-CH", "DE-de"] {
+            assert_eq!(map_locale_to_tray_language(locale), "de");
+        }
+        // 下索布语 dsb、Delaware 语 del 等不是德语，按不支持的语言回落英文
+        for locale in ["dsb", "del", "den-CA"] {
+            assert_eq!(map_locale_to_tray_language(locale), "en");
+        }
+    }
+
+    #[test]
     fn locale_maps_japanese_and_english() {
         assert_eq!(map_locale_to_tray_language("ko-KR"), "ko");
         assert_eq!(map_locale_to_tray_language("ko"), "ko");
@@ -3639,7 +3720,7 @@ mod tests {
     #[test]
     fn locale_unknown_falls_back_to_en() {
         // 与前端 getInitialLanguage 保持一致：认不出的语言用英文，区域为空才用默认的 zh。
-        for locale in ["de-DE", "fr", "es-ES"] {
+        for locale in ["it-IT", "fr", "es-ES"] {
             assert_eq!(
                 map_locale_to_tray_language(locale),
                 "en",
@@ -4899,7 +4980,7 @@ mod tests {
             quit_text(&en(), true),
             "Quit CC Switch (stops the routing service)"
         );
-        for language in ["zh", "zh-TW", "en", "ja", "tr", "ko", "ru"] {
+        for language in ["zh", "zh-TW", "en", "de", "ja", "tr", "ko", "ru"] {
             let texts = TrayTexts::from_language(language);
             assert_ne!(texts.quit, texts.quit_stops_routing, "{language}");
             assert!(

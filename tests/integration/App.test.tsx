@@ -498,7 +498,7 @@ describe("App integration with MSW", () => {
     ).toBeInTheDocument();
   });
 
-  it.each(["DeepSeek Harness", "Copilot CLI"])(
+  it.each(["DeepSeek Harness", "Copilot CLI", "WorkBuddy"])(
     "does not offer batch import for unsupported app %s",
     async (appName) => {
       setSettings({
@@ -508,6 +508,7 @@ describe("App integration with MSW", () => {
           ...DEFAULT_VISIBLE_APPS,
           dsh: true,
           copilot: true,
+          workbuddy: true,
         },
       });
       renderApp(App);

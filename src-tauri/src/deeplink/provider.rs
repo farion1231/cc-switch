@@ -434,6 +434,11 @@ pub(crate) fn build_provider_from_request(
         }
         AppType::Kimi => build_kimi_settings(request, api_format)?,
         AppType::Copilot => build_copilot_settings(request, api_format)?,
+        AppType::WorkBuddy => {
+            return Err(AppError::InvalidInput(
+                "Add WorkBuddy providers from the WorkBuddy page".into(),
+            ))
+        }
         AppType::Agy => {
             let mut settings = build_gemini_settings(request);
             settings["env"]
