@@ -7,7 +7,11 @@ import {
   APP_TARGETS_QUERY_KEY,
   useAppTargetsOverview,
 } from "@/hooks/useAppTargets";
-import { appTargetsApi, isAppTargetApp } from "@/lib/api/appTargets";
+import {
+  appTargetsApi,
+  isAppTargetApp,
+  wslCandidates,
+} from "@/lib/api/appTargets";
 import type {
   ResolvedDirectories,
   SettingsFormState,
@@ -206,9 +210,14 @@ export function AppConfigSection({
   return (
     <>
       {DIRECTORY_APPS.map((app) => {
-        const view =
+        // 某个 WSL 里装了这个客户端（或已经保存过 WSL 目标）才显示多环境表单，否则单目录。
+        const found =
           multiEnv && isAppTargetApp(app)
             ? targets.data?.apps.find((item) => item.app === app)
+            : undefined;
+        const view =
+          found && wslCandidates(found.config, targets.data, app).length > 0
+            ? found
             : undefined;
         if (view && targets.data && isAppTargetApp(app)) {
           return (
@@ -218,6 +227,7 @@ export function AppConfigSection({
               appName={APP_DISPLAY_NAME[app]}
               view={view}
               inventory={targets.data.inventory}
+              installs={targets.data.installs}
               detecting={detecting}
               onDetect={() => void detect()}
               renderBlock={(actions, body) => (

@@ -5409,7 +5409,11 @@
       "noHome": "Home-Verzeichnis nicht gefunden; eigenes Verzeichnis eingeben",
       "cached": "letzte Erkennung",
       "willStart": "wird beim Schreiben gestartet",
-      "probeFailed": "Erkennung diesmal fehlgeschlagen"
+      "probeFailed": "Erkennung diesmal fehlgeschlagen",
+      "installed": "{{app}} {{version}} installiert",
+      "broken": "{{app}} installiert, aber nicht lauffähig",
+      "notInstalled": "{{app}} nicht gefunden",
+      "installUnknown": "Installation von {{app}} nicht geprüft"
     },
     "legacyWsl": "Ihr bisheriges WSL-Verzeichnis bleibt erhalten. Markieren Sie Windows und speichern Sie; danach kann jede Seite ihren eigenen Anbieter aktivieren.",
     "legacyUnresolved": "Die WSL-Distribution des bisherigen Verzeichnisses wurde nicht erkannt, daher bleibt das Verhalten mit einem Verzeichnis erhalten. Geben Sie das Verzeichnis in der passenden Distributionszeile ein und speichern Sie.",
@@ -5496,7 +5500,12 @@
       "inUse": "In Verwendung auf {{target}}",
       "enable": "Auf {{target}} aktivieren",
       "done": "{{target}} auf {{provider}} umgestellt",
-      "failed": "{{target}} konnte nicht auf {{provider}} umgestellt werden; der bisherige Anbieter bleibt"
+      "failed": "{{target}} konnte nicht auf {{provider}} umgestellt werden; der bisherige Anbieter bleibt",
+      "managedLogin": "An ein verwaltetes Konto gebundene offizielle Karten funktionieren nur unter Windows; nutzen Sie in WSL eine ungebundene offizielle Karte (eigene Anmeldung) oder einen API-Key-Anbieter",
+      "addTitle": "Auf {{target}} aktivieren",
+      "addMessage": "Auf {{target}} ist dieser Client installiert, aber noch kein Schreibziel. Nach der Bestätigung wird es als Schreibziel hinzugefügt, die vorhandene Konfiguration gesichert und dort {{provider}} aktiviert.",
+      "addConfirm": "Hinzufügen und aktivieren",
+      "addAndEnable": "{{target}} hinzufügen und aktivieren"
     },
     "route": {
       "join": "Routing / Aggregation beitreten",
@@ -5521,6 +5530,16 @@
       "noHost": "Nicht erkannt; bitte eingeben",
       "hostFor": "Client-Adresse für {{distro}}",
       "test": "Verbindung testen"
+    },
+    "installs": {
+      "installed": "{{app}} in WSL · {{distro}} installiert",
+      "updated": "{{app}} in WSL · {{distro}} aktualisiert",
+      "failed": "Installation / Update von {{app}} in WSL · {{distro}} fehlgeschlagen",
+      "versionUnknown": "Installiert · Version unbekannt",
+      "notChecked": "Nicht geprüft",
+      "cached": "letzte Prüfung",
+      "stoppedCached": "gestoppt · letzte Prüfung",
+      "detect": "WSL erneut erkennen"
     }
   }
 }

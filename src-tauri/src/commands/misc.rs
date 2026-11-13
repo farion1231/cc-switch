@@ -1374,6 +1374,77 @@ fn probe_local_version(
     }
 }
 
+/// 某个 WSL 发行版里一个工具的安装情况（多环境写入用，见 `app_targets::installs`）。
+pub(crate) enum WslToolState {
+    Installed(String),
+    /// 找到了但 `--version` 跑不起来。
+    Broken(String),
+    NotInstalled,
+    /// 探测本身失败（超时、shell 不可用等），不能当成「未安装」。
+    Unknown(String),
+}
+
+pub(crate) fn wsl_tool_state(tool: &str, distro: &str) -> WslToolState {
+    if !VALID_TOOLS.contains(&tool) {
+        return WslToolState::Unknown(format!("unsupported tool {tool}"));
+    }
+    match try_get_version_wsl(tool, distro, None, None) {
+        ShellProbe::Found(version) => WslToolState::Installed(version),
+        ShellProbe::FoundButFailed(error) => WslToolState::Broken(error),
+        ShellProbe::NotFound(error) if error.ends_with(NOT_INSTALLED) => WslToolState::NotInstalled,
+        ShellProbe::NotFound(error) => WslToolState::Unknown(error),
+    }
+}
+
+/// 在指定的 WSL 发行版里安装 / 更新一个工具（应用页的 WSL 安装条目）。卸载要先预览计划，
+/// 这里不提供。
+#[tauri::command]
+pub async fn run_wsl_tool_lifecycle_action(
+    app: AppHandle,
+    tool: String,
+    distro: String,
+    action: String,
+) -> Result<(), String> {
+    let requested = normalize_requested_tools(std::slice::from_ref(&tool));
+    if requested.len() != 1 {
+        return Err(format!("Unsupported tool: {tool}"));
+    }
+    if !crate::app_targets::model::is_valid_distro_name(&distro) {
+        return Err(format!("Invalid WSL distro name: {distro}"));
+    }
+    let action = ToolLifecycleAction::from_str(&action)?;
+    #[cfg(target_os = "windows")]
+    {
+        let command = wsl_tool_action_shell_command(requested[0], action)
+            .ok_or_else(|| format!("Unsupported tool action target: {tool}"))?;
+        let line = build_wsl_tool_action_line(&distro, &command, None, None)?;
+        let label = match action {
+            ToolLifecycleAction::Install => "tool_install",
+            ToolLifecycleAction::Update => "tool_update",
+        };
+        let progress = ToolLifecycleProgress::from_app(app, &requested);
+        let queued = progress.clone();
+        TOOL_LIFECYCLE
+            .run_with_queue_notice(
+                requested,
+                move || queued.queued(),
+                move |_| {
+                    progress.running();
+                    let result = run_tool_lifecycle_silently(&line, label, &progress);
+                    // 下次多环境概览重新探测这个发行版的安装情况。
+                    crate::app_targets::installs::invalidate(&distro);
+                    result
+                },
+            )
+            .await
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app, requested, action);
+        Err("WSL is only available on Windows".to_string())
+    }
+}
+
 /// 本机实际安装的工具版本（和「关于」页探测的是同一个）；拿不到为 `None`。
 pub(crate) fn local_tool_version(tool: &str) -> Option<String> {
     let (_, wsl_distro) = tool_env_type_and_wsl_distro(tool);

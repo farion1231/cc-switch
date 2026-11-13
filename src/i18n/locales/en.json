@@ -5409,7 +5409,11 @@
       "noHome": "Home directory not found; enter a custom directory",
       "cached": "last detection",
       "willStart": "will be started when writing",
-      "probeFailed": "detection failed this time"
+      "probeFailed": "detection failed this time",
+      "installed": "{{app}} {{version}} installed",
+      "broken": "{{app}} installed but cannot run",
+      "notInstalled": "{{app}} not found",
+      "installUnknown": "{{app}} installation not checked"
     },
     "legacyWsl": "Your existing WSL directory is kept. Check Windows and save, then each side can enable its own provider.",
     "legacyUnresolved": "The WSL distro of the existing directory could not be recognised, so the single-directory behaviour is kept. Enter the directory on the matching distro row and save.",
@@ -5496,7 +5500,12 @@
       "inUse": "In use on {{target}}",
       "enable": "Enable on {{target}}",
       "done": "{{target}} switched to {{provider}}",
-      "failed": "{{target}} could not switch to {{provider}}; it keeps its previous provider"
+      "failed": "{{target}} could not switch to {{provider}}; it keeps its previous provider",
+      "managedLogin": "Official cards bound to a managed account only work on Windows; in WSL use an unbound official card (its own sign-in) or an API key provider",
+      "addTitle": "Enable on {{target}}",
+      "addMessage": "{{target}} has this client installed but is not a write target yet. Confirming adds it as a write target, backs up its current config, then enables {{provider}} there.",
+      "addConfirm": "Add and enable",
+      "addAndEnable": "Add {{target}} and enable"
     },
     "route": {
       "join": "Join routing / aggregation",
@@ -5521,6 +5530,16 @@
       "noHost": "Not detected; enter one",
       "hostFor": "Client address for {{distro}}",
       "test": "Test connection"
+    },
+    "installs": {
+      "installed": "Installed {{app}} in WSL · {{distro}}",
+      "updated": "Updated {{app}} in WSL · {{distro}}",
+      "failed": "Installing / updating {{app}} in WSL · {{distro}} failed",
+      "versionUnknown": "Installed · version unknown",
+      "notChecked": "Not checked",
+      "cached": "last check",
+      "stoppedCached": "stopped · last check",
+      "detect": "Detect WSL again"
     }
   }
 }

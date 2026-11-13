@@ -5409,7 +5409,11 @@
       "noHome": "未获取到用户目录，请填写自定义目录",
       "cached": "上次检测",
       "willStart": "写入时将启动",
-      "probeFailed": "本次探测失败"
+      "probeFailed": "本次探测失败",
+      "installed": "已装 {{app}} {{version}}",
+      "broken": "已装 {{app}}，但无法运行",
+      "notInstalled": "未检测到 {{app}}",
+      "installUnknown": "{{app}} 安装情况未检测"
     },
     "legacyWsl": "已保留原来的 WSL 目录。勾选 Windows 并保存后，两边可以各自启用不同的供应商。",
     "legacyUnresolved": "无法识别原目录对应的 WSL 发行版，暂时保留原单目录行为。请在对应发行版一行填写目录后保存。",
@@ -5496,7 +5500,12 @@
       "inUse": "{{target}} 正在使用",
       "enable": "在 {{target}} 启用",
       "done": "{{target}} 已切换到 {{provider}}",
-      "failed": "{{target}} 未能切换到 {{provider}}，仍用原来的供应商"
+      "failed": "{{target}} 未能切换到 {{provider}}，仍用原来的供应商",
+      "managedLogin": "绑定了托管账号的官方卡只能在 Windows 使用；WSL 可用没绑账号的官方卡（用它自己的登录）或 API Key 供应商",
+      "addTitle": "在 {{target}} 启用",
+      "addMessage": "{{target}} 里装了这个客户端，但还没加入写入环境。确认后会把它加入写入环境，先备份它现有的配置，再在那里启用 {{provider}}。",
+      "addConfirm": "加入并启用",
+      "addAndEnable": "加入 {{target}} 并启用"
     },
     "route": {
       "join": "接入路由 / 聚合",
@@ -5521,6 +5530,16 @@
       "noHost": "未检测到，请填写",
       "hostFor": "{{distro}} 的客户端地址",
       "test": "测试连接"
+    },
+    "installs": {
+      "installed": "已在 WSL · {{distro}} 安装 {{app}}",
+      "updated": "已更新 WSL · {{distro}} 里的 {{app}}",
+      "failed": "WSL · {{distro}} 里的 {{app}} 安装 / 更新失败",
+      "versionUnknown": "已安装 · 版本未知",
+      "notChecked": "未检测",
+      "cached": "上次检测",
+      "stoppedCached": "未运行 · 上次检测",
+      "detect": "重新检测 WSL"
     }
   }
 }

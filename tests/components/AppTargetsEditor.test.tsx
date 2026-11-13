@@ -9,7 +9,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import { AppTargetsEditor } from "@/components/settings/AppTargetsEditor";
-import type { AppTargetsView, WslInventory } from "@/lib/api/appTargets";
+import type {
+  AppTargetsView,
+  ToolInstall,
+  WslInventory,
+} from "@/lib/api/appTargets";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -55,6 +59,18 @@ const inventory: WslInventory = {
   ],
 };
 
+let installs: Record<string, Record<string, ToolInstall>> = {};
+const claudeInstalled = () => ({
+  Ubuntu: {
+    claude: {
+      status: "installed" as const,
+      version: "2.1.0",
+      detectedAt: 1,
+      cached: false,
+    },
+  },
+});
+
 const legacyView: AppTargetsView = {
   app: "claude",
   source: "legacy",
@@ -81,6 +97,7 @@ function renderEditor(view: AppTargetsView = legacyView) {
       appName="Claude Code"
       view={view}
       inventory={inventory}
+      installs={installs}
       detecting={false}
       onDetect={vi.fn()}
       renderBlock={(actions, body) => (
@@ -96,9 +113,20 @@ function renderEditor(view: AppTargetsView = legacyView) {
 
 describe("AppTargetsEditor", () => {
   beforeEach(() => {
+    installs = claudeInstalled();
     inspectMock.mockReset();
     saveMock.mockReset();
     Object.values(toastMock).forEach((fn) => fn.mockReset());
+  });
+
+  it("only lists WSL distros where the client is installed", () => {
+    installs = {
+      Ubuntu: {
+        claude: { status: "notInstalled", detectedAt: 1, cached: false },
+      },
+    };
+    renderEditor();
+    expect(screen.getAllByRole("checkbox")).toHaveLength(1);
   });
 
   it("lists detected distros unchecked and keeps the last target", () => {

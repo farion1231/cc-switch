@@ -49,6 +49,8 @@ import type { VisibleApps } from "@/types";
 import { DEFAULT_VISIBLE_APPS, orderAppIds } from "@/config/appConfig";
 import { useSettings } from "@/hooks/useSettings";
 import { isUpdateAvailable } from "@/lib/version";
+import { WslInstallList } from "@/components/apps/WslInstallList";
+import { isAppTargetApp } from "@/lib/api/appTargets";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -959,13 +961,23 @@ function ToolRow({
       </div>
     ) : null;
 
+  // 四个支持多环境的客户端：列出各 WSL 发行版里的安装（Windows 上才有）。
+  const wslInstalls = isAppTargetApp(tool) ? (
+    <WslInstallList
+      tool={tool}
+      appName={toolDisplayName(tool)}
+      latestVersion={info?.latest_version}
+    />
+  ) : null;
+
   const footer =
-    wslControls || errorLine || nodeLine || conflictList ? (
+    wslControls || errorLine || nodeLine || conflictList || wslInstalls ? (
       <div className="space-y-2">
         {errorLine}
         {nodeLine}
         {wslControls}
         {conflictList}
+        {wslInstalls}
       </div>
     ) : undefined;
 

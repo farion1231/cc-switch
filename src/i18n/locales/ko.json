@@ -5409,7 +5409,11 @@
       "noHome": "홈 디렉터리를 찾을 수 없습니다. 사용자 지정 디렉터리를 입력하세요",
       "cached": "마지막 감지",
       "willStart": "기록할 때 시작됨",
-      "probeFailed": "이번 감지에 실패함"
+      "probeFailed": "이번 감지에 실패함",
+      "installed": "{{app}} {{version}} 설치됨",
+      "broken": "{{app}}이(가) 설치되었지만 실행할 수 없음",
+      "notInstalled": "{{app}}을(를) 찾을 수 없음",
+      "installUnknown": "{{app}} 설치 여부 미확인"
     },
     "legacyWsl": "기존 WSL 디렉터리는 그대로 유지됩니다. Windows를 체크하고 저장하면 양쪽에서 각각 다른 공급자를 활성화할 수 있습니다.",
     "legacyUnresolved": "기존 디렉터리의 WSL 배포판을 알 수 없어 단일 디렉터리 동작을 유지합니다. 해당 배포판 행에 디렉터리를 입력하고 저장하세요.",
@@ -5496,7 +5500,12 @@
       "inUse": "{{target}}에서 사용 중",
       "enable": "{{target}}에서 활성화",
       "done": "{{target}}을(를) {{provider}}(으)로 전환했습니다",
-      "failed": "{{target}}을(를) {{provider}}(으)로 전환하지 못해 이전 공급자를 유지합니다"
+      "failed": "{{target}}을(를) {{provider}}(으)로 전환하지 못해 이전 공급자를 유지합니다",
+      "managedLogin": "관리 계정에 연결된 공식 카드는 Windows에서만 쓸 수 있습니다. WSL에서는 연결되지 않은 공식 카드(자체 로그인)나 API 키 공급자를 쓰세요",
+      "addTitle": "{{target}}에서 활성화",
+      "addMessage": "{{target}}에 이 클라이언트가 설치되어 있지만 아직 기록 대상이 아닙니다. 확인하면 기록 대상에 추가하고 현재 설정을 백업한 뒤 {{provider}}을(를) 활성화합니다.",
+      "addConfirm": "추가하고 활성화",
+      "addAndEnable": "{{target}} 추가 후 활성화"
     },
     "route": {
       "join": "라우팅 / 집계 참여",
@@ -5521,6 +5530,16 @@
       "noHost": "감지되지 않음, 입력하세요",
       "hostFor": "{{distro}}의 클라이언트 주소",
       "test": "연결 테스트"
+    },
+    "installs": {
+      "installed": "WSL · {{distro}}에 {{app}}을(를) 설치했습니다",
+      "updated": "WSL · {{distro}}의 {{app}}을(를) 업데이트했습니다",
+      "failed": "WSL · {{distro}}의 {{app}} 설치 / 업데이트 실패",
+      "versionUnknown": "설치됨 · 버전 알 수 없음",
+      "notChecked": "확인 안 됨",
+      "cached": "마지막 확인",
+      "stoppedCached": "중지됨 · 마지막 확인",
+      "detect": "WSL 다시 감지"
     }
   }
 }

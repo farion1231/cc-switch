@@ -20,10 +20,14 @@ import {
   appTargetsApi,
   enabledTargetKeys,
   sameTarget,
+  distroOf,
+  installOf,
+  wslCandidates,
   WINDOWS_TARGET,
   wslTargetKey,
   type AppTargetAppId,
   type AppTargetsConfig,
+  type AppTargetsOverview,
   type AppTargetsView,
   type FieldError,
   type Resolution,
@@ -41,14 +45,17 @@ import {
 import { cn } from "@/lib/utils";
 
 /** 已保存配置 + 本次检测到、还不在配置里的发行版（未勾选）。 */
+/** 已保存配置 + 检测到装了这个客户端、还不在配置里的发行版（未勾选）。没装的不列。 */
 function withDetectedDistros(
   config: AppTargetsConfig,
   inventory: WslInventory,
+  installs: AppTargetsOverview["installs"],
+  app: string,
 ): AppTargetsConfig {
   const wsl = [...config.wsl];
-  for (const env of inventory.distros) {
-    if (!wsl.some((t) => t.distro.toLowerCase() === env.distro.toLowerCase())) {
-      wsl.push({ distro: env.distro, enabled: false, dir: null });
+  for (const distro of wslCandidates(config, { inventory, installs }, app)) {
+    if (!wsl.some((t) => t.distro.toLowerCase() === distro.toLowerCase())) {
+      wsl.push({ distro, enabled: false, dir: null });
     }
   }
   return { ...config, wsl };
@@ -126,6 +133,8 @@ interface AppTargetsEditorProps {
   appName: string;
   view: AppTargetsView;
   inventory: WslInventory;
+  /** 各发行版里客户端的安装情况 */
+  installs: AppTargetsOverview["installs"];
   detecting: boolean;
   onDetect: () => void;
   /** 本节的标题区（名称 + 保存 / 撤销按钮由这里渲染） */
@@ -144,6 +153,7 @@ export function AppTargetsEditor({
   appName,
   view,
   inventory,
+  installs,
   detecting,
   onDetect,
   renderBlock,
@@ -151,8 +161,8 @@ export function AppTargetsEditor({
   const { t } = useTranslation();
   const invalidate = useInvalidateAppTargets();
   const base = useMemo(
-    () => withDetectedDistros(view.config, inventory),
-    [view.config, inventory],
+    () => withDetectedDistros(view.config, inventory, installs, app),
+    [view.config, inventory, installs, app],
   );
   const [draft, setDraft] = useState<AppTargetsConfig>(base);
   const [errors, setErrors] = useState<FieldError[]>([]);
@@ -387,6 +397,22 @@ export function AppTargetsEditor({
     else if (env.cached) parts.push(t("appTargets.env.cached"));
     if (rowEnabled && !env.running) parts.push(t("appTargets.env.willStart"));
     if (env.error) parts.push(t("appTargets.env.probeFailed"));
+    const distro = distroOf(key);
+    const install = distro ? installOf(installs, distro, app) : undefined;
+    if (install?.status === "installed") {
+      parts.push(
+        t("appTargets.env.installed", {
+          app: appName,
+          version: install.version ?? "",
+        }),
+      );
+    } else if (install?.status === "broken") {
+      parts.push(t("appTargets.env.broken", { app: appName }));
+    } else if (install?.status === "notInstalled") {
+      parts.push(t("appTargets.env.notInstalled", { app: appName }));
+    } else {
+      parts.push(t("appTargets.env.installUnknown", { app: appName }));
+    }
     return { tone: env.running ? "ok" : "off", text: parts.join(" · ") };
   };
 

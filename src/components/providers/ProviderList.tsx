@@ -58,8 +58,12 @@ import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import { isWorkBuddyOfficial } from "@/components/providers/workbuddyOfficial";
 import { useWorkBuddyOfficial } from "@/components/providers/useWorkBuddyOfficial";
 import { ProviderEnvSwitches } from "@/components/providers/ProviderEnvSwitches";
-import { useAppTargetView } from "@/hooks/useAppTargets";
-import { isAppTargetApp, isWindowsOnly } from "@/lib/api/appTargets";
+import { useAppTargetsOverview } from "@/hooks/useAppTargets";
+import {
+  isAppTargetApp,
+  isWindowsOnly,
+  wslCandidates,
+} from "@/lib/api/appTargets";
 import {
   DshAccountCard,
   accountName as dshAccountName,
@@ -135,15 +139,29 @@ export function ProviderList({
   searchSlot,
 }: ProviderListProps) {
   const { t } = useTranslation();
-  const targetView = useAppTargetView(appId);
+  const targetsOverview = useAppTargetsOverview(isAppTargetApp(appId));
+  const targetView = targetsOverview.data?.apps.find(
+    (item) => item.app === appId,
+  );
+  // 装了这个客户端、还没加入写入环境的 WSL：卡片上也给开关，点了确认后加入并启用。
+  const envCandidates =
+    targetView && targetsOverview.data?.inventory.hostWindows
+      ? wslCandidates(targetView.config, targetsOverview.data, appId).filter(
+          (distro) =>
+            !targetView.config.wsl.some(
+              (t) => t.distro.toLowerCase() === distro.toLowerCase(),
+            ),
+        )
+      : [];
   // 多环境（Windows + WSL）时，直连页的每张卡用环境开关代替单个「切换」：各环境独立选。
   // OpenCode 是累加式（所有环境同一组供应商），不用开关。
   const envSwitchView =
     isAppTargetApp(appId) &&
     appId !== "opencode" &&
     switchMode?.view === "direct" &&
-    targetView?.source === "saved" &&
-    !isWindowsOnly(targetView.config)
+    targetView &&
+    ((targetView.source === "saved" && !isWindowsOnly(targetView.config)) ||
+      envCandidates.length > 0)
       ? targetView
       : undefined;
   const { checkProvider, isChecking } = useStreamCheck(appId);
@@ -592,6 +610,7 @@ export function ProviderList({
             view={envSwitchView}
             mainActive={provider.id === switchMode?.directId}
             mainAction={presentation.buttons[0]}
+            candidates={envCandidates}
           />
         ) : undefined
       }

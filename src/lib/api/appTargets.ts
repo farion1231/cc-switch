@@ -85,8 +85,21 @@ export interface AppTargetsView {
   records: Record<TargetKey, TargetRecord>;
 }
 
+export type InstallStatus = "installed" | "broken" | "notInstalled" | "unknown";
+
+export interface ToolInstall {
+  status: InstallStatus;
+  version?: string;
+  error?: string;
+  detectedAt: number;
+  /** 发行版没在运行，用的是上次检测结果 */
+  cached: boolean;
+}
+
 export interface AppTargetsOverview {
   inventory: WslInventory;
+  /** 发行版 → 应用 → 安装情况 */
+  installs: Record<string, Record<string, ToolInstall>>;
   multiEnv: boolean;
   apps: AppTargetsView[];
 }
@@ -200,6 +213,19 @@ export const appTargetsApi = {
     return await invoke("test_wsl_route", { distro });
   },
 
+  /** 在某个 WSL 发行版里安装 / 更新客户端（应用页的 WSL 安装条目） */
+  async wslToolAction(
+    tool: AppTargetAppId,
+    distro: string,
+    action: "install" | "update",
+  ): Promise<void> {
+    return await invoke("run_wsl_tool_lifecycle_action", {
+      tool,
+      distro,
+      action,
+    });
+  },
+
   async sync(app: AppTargetAppId, targets?: TargetKey[]): Promise<SyncResult> {
     return await invoke("sync_app_targets", { app, targets });
   },
@@ -225,3 +251,45 @@ export const routeFlag = (config: AppTargetsConfig, key: TargetKey) => {
       ?.route,
   );
 };
+
+/** 某个发行版里装没装这个应用：`undefined` 表示还没检测出来。 */
+export function installedIn(
+  installs: AppTargetsOverview["installs"] | undefined,
+  distro: string,
+  app: string,
+): boolean | undefined {
+  const entry = Object.entries(installs ?? {}).find(
+    ([name]) => name.toLowerCase() === distro.toLowerCase(),
+  )?.[1]?.[app];
+  if (!entry || entry.status === "unknown") return undefined;
+  return entry.status !== "notInstalled";
+}
+
+export function installOf(
+  installs: AppTargetsOverview["installs"] | undefined,
+  distro: string,
+  app: string,
+): ToolInstall | undefined {
+  return Object.entries(installs ?? {}).find(
+    ([name]) => name.toLowerCase() === distro.toLowerCase(),
+  )?.[1]?.[app];
+}
+
+/**
+ * 应用的 WSL 配置入口里列哪些发行版：已经保存在目标配置里的，加上检测到装了这个客户端的。
+ */
+export function wslCandidates(
+  config: AppTargetsConfig,
+  overview: Pick<AppTargetsOverview, "installs" | "inventory"> | undefined,
+  app: string,
+): string[] {
+  const saved = config.wsl.map((t) => t.distro);
+  const detected = (overview?.inventory.distros ?? [])
+    .map((env) => env.distro)
+    .filter(
+      (distro) =>
+        installedIn(overview?.installs, distro, app) === true &&
+        !saved.some((s) => s.toLowerCase() === distro.toLowerCase()),
+    );
+  return [...saved, ...detected];
+}

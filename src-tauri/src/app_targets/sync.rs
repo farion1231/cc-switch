@@ -355,13 +355,18 @@ fn host_of(identity: &Value) -> Option<String> {
         .filter(|host| !host.is_empty())
 }
 
-/// 托管登录：本阶段只写 Windows 主环境，不跨环境复制登录材料。
+/// 托管登录（绑了 CC Switch 托管账号的官方卡）：本阶段只写 Windows 主环境，不跨环境复制
+/// 登录材料。没绑账号的官方卡用各环境自己的登录，照常写。
 pub fn is_managed_login(app: &AppType, provider: &Provider) -> bool {
     match app {
         AppType::Claude => {
             crate::services::provider::claude_official::bound_account(provider).is_some()
         }
-        AppType::Codex => crate::services::provider::codex_direct::is_official(provider),
+        // 没绑托管账号的官方卡用那个环境自己的登录（auth.json），可以在 WSL 用。
+        AppType::Codex => {
+            crate::services::provider::ProviderService::managed_codex_oauth_account_id(provider)
+                .is_some()
+        }
         _ => false,
     }
 }

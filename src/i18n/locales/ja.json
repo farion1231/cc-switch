@@ -5409,7 +5409,11 @@
       "noHome": "ホームディレクトリを取得できません。カスタムディレクトリを入力してください",
       "cached": "前回の検出",
       "willStart": "書き込み時に起動します",
-      "probeFailed": "今回の検出に失敗しました"
+      "probeFailed": "今回の検出に失敗しました",
+      "installed": "{{app}} {{version}} インストール済み",
+      "broken": "{{app}} はインストール済みですが実行できません",
+      "notInstalled": "{{app}} が見つかりません",
+      "installUnknown": "{{app}} のインストール状況は未確認"
     },
     "legacyWsl": "既存の WSL ディレクトリはそのまま保持されています。Windows をチェックして保存すると、それぞれで別のプロバイダーを有効にできます。",
     "legacyUnresolved": "既存ディレクトリの WSL ディストリビューションを特定できないため、単一ディレクトリの動作を維持しています。対応するディストリビューションの行にディレクトリを入力して保存してください。",
@@ -5496,7 +5500,12 @@
       "inUse": "{{target}} で使用中",
       "enable": "{{target}} で有効にする",
       "done": "{{target}} を {{provider}} に切り替えました",
-      "failed": "{{target}} を {{provider}} に切り替えられませんでした。以前のプロバイダーのままです"
+      "failed": "{{target}} を {{provider}} に切り替えられませんでした。以前のプロバイダーのままです",
+      "managedLogin": "管理アカウントに紐づく公式カードは Windows でのみ使えます。WSL では紐づけのない公式カード（その環境のログイン）か API キーのプロバイダーを使ってください",
+      "addTitle": "{{target}} で有効にする",
+      "addMessage": "{{target}} にはこのクライアントがインストールされていますが、まだ書き込み先ではありません。確認すると書き込み先に追加し、現在の設定をバックアップしてから {{provider}} を有効にします。",
+      "addConfirm": "追加して有効にする",
+      "addAndEnable": "{{target}} を追加して有効にする"
     },
     "route": {
       "join": "ルーティング / 集約に参加",
@@ -5521,6 +5530,16 @@
       "noHost": "未検出です。入力してください",
       "hostFor": "{{distro}} のクライアントアドレス",
       "test": "接続テスト"
+    },
+    "installs": {
+      "installed": "WSL · {{distro}} に {{app}} をインストールしました",
+      "updated": "WSL · {{distro}} の {{app}} を更新しました",
+      "failed": "WSL · {{distro}} の {{app}} のインストール / 更新に失敗しました",
+      "versionUnknown": "インストール済み · バージョン不明",
+      "notChecked": "未確認",
+      "cached": "前回の検出",
+      "stoppedCached": "停止中 · 前回の検出",
+      "detect": "WSL を再検出"
     }
   }
 }

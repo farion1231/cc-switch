@@ -892,3 +892,92 @@ fn codex_wsl_target_joins_the_route_with_its_own_host() {
         std::thread::sleep(std::time::Duration::from_millis(300));
     });
 }
+
+#[test]
+#[serial]
+fn codex_official_card_uses_the_wsl_environments_own_login() {
+    with_home(|state, home| {
+        state
+            .db
+            .ensure_official_seed_by_id(crate::database::CODEX_OFFICIAL_PROVIDER_ID, AppType::Codex)
+            .unwrap();
+        let official_id = crate::database::CODEX_OFFICIAL_PROVIDER_ID;
+        let official = state
+            .db
+            .get_provider_by_id(official_id, "codex")
+            .unwrap()
+            .unwrap();
+        assert!(!sync::is_managed_login(&AppType::Codex, &official));
+        let relay = Provider::with_id(
+            "relay".into(),
+            "Relay".into(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-r" },
+                "config": "model_provider = \"custom\"\nmodel = \"gpt-5\"\n\n[model_providers.custom]\nname = \"custom\"\nbase_url = \"https://r.example/v1\"\nwire_api = \"responses\"\n"
+            }),
+            None,
+        );
+        state.db.save_provider("codex", &relay).unwrap();
+        ProviderService::switch(state, AppType::Codex, "relay").expect("initial");
+
+        let wsl_dir = home.join("wsl").join(".codex");
+        let login = json!({
+            "auth_mode": "chatgpt",
+            "OPENAI_API_KEY": null,
+            "tokens": { "id_token": "id", "access_token": "at", "refresh_token": "rt", "account_id": "acct" },
+            "last_refresh": "2026-11-01T00:00:00Z"
+        });
+        write(&wsl_dir.join("auth.json"), &login.to_string());
+        set_targets(&AppType::Codex, windows_plus_wsl("Ubuntu", &wsl_dir));
+        activate(state, "codex", "wsl:Ubuntu", "relay");
+        let report = activate(state, "codex", "wsl:Ubuntu", official_id);
+        assert_eq!(report.record.status, TargetStatus::Ok, "{report:?}");
+        let config = fs::read_to_string(wsl_dir.join("config.toml")).unwrap();
+        assert!(!config.contains("r.example"), "{config}");
+        let auth = read_json(&wsl_dir.join("auth.json"));
+        assert_eq!(auth["tokens"]["refresh_token"], "rt", "{auth}");
+        // Windows 主环境不受影响。
+        let main = fs::read_to_string(home.join(".codex").join("config.toml")).unwrap();
+        assert!(main.contains("r.example"), "{main}");
+    });
+}
+
+#[test]
+#[serial]
+fn enabling_a_provider_in_a_new_wsl_environment_adds_it_and_backs_up_first() {
+    with_home(|state, home| {
+        seed_claude(state);
+        let wsl_dir = home.join("wsl").join(".claude");
+        let foreign = r#"{ "env": { "ANTHROPIC_BASE_URL": "https://own.example", "ANTHROPIC_AUTH_TOKEN": "sk-own" } }"#;
+        write(&wsl_dir.join("settings.json"), foreign);
+        let mut config = windows_plus_wsl("Ubuntu", &wsl_dir);
+        config.wsl[0].enabled = false;
+        set_targets(&AppType::Claude, config);
+        assert!(!sync::has_followers(&AppType::Claude));
+
+        let report = activate(state, "claude", "wsl:Ubuntu", "b");
+        assert_eq!(report.record.status, TargetStatus::Ok, "{report:?}");
+        assert!(sync::has_followers(&AppType::Claude));
+        let written = read_json(&wsl_dir.join("settings.json"));
+        assert_eq!(written["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-b");
+        let backups = home
+            .join(".cc-switch")
+            .join("targets")
+            .join("claude")
+            .join("wsl-ubuntu")
+            .join("backups");
+        let saved: Vec<_> = fs::read_dir(&backups)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name() != "live-first-write")
+            .collect();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(
+            fs::read_to_string(saved[0].path().join("settings.json")).unwrap(),
+            foreign
+        );
+        // Windows 不受影响。
+        let primary = read_json(&home.join(".claude").join("settings.json"));
+        assert_eq!(primary["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-a");
+    });
+}

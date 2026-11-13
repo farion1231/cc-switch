@@ -10,6 +10,7 @@
 //! - 默认仍只有 Windows；旧 WSL UNC 目录升级后只写原目录（[`model::derive_from_legacy`]）；
 //!   取消目标不删文件。
 
+pub mod installs;
 pub mod model;
 pub mod scope;
 pub mod service;

@@ -2,6 +2,8 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, Loader2 } from "lucide-react";
 import { HoverTip } from "@/components/ui/hover-tip";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { resolveManagedAccountId } from "@/lib/authBinding";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import {
@@ -9,6 +11,7 @@ import {
   distroOf,
   enabledTargetKeys,
   sameTarget,
+  wslTargetKey,
   type AppTargetAppId,
   type AppTargetsView,
   type TargetKey,
@@ -29,6 +32,24 @@ interface ProviderEnvSwitchesProps {
   mainActive: boolean;
   /** 主环境原来的主操作（切换 / 回到直连并使用），没有时表示已在用或不可用 */
   mainAction?: CardButton;
+  /** 装了这个客户端、还没加入写入环境的 WSL 发行版：点了先确认，再加入并启用 */
+  candidates?: string[];
+}
+
+/** 绑了 CC Switch 托管账号的官方卡：只能在 Windows 用（与后端 is_managed_login 一致）。 */
+export function isManagedLogin(app: string, provider: Provider): boolean {
+  if (app === "claude") {
+    return (
+      provider.category === "official" &&
+      Boolean(resolveManagedAccountId(provider.meta, "claude_official")?.trim())
+    );
+  }
+  if (app === "codex") {
+    return Boolean(
+      resolveManagedAccountId(provider.meta, "codex_oauth")?.trim(),
+    );
+  }
+  return false;
 }
 
 /**
@@ -41,10 +62,14 @@ export function ProviderEnvSwitches({
   view,
   mainActive,
   mainAction,
+  candidates = [],
 }: ProviderEnvSwitchesProps) {
   const { t } = useTranslation();
   const invalidate = useInvalidateAppTargets();
   const [busy, setBusy] = useState<TargetKey | null>(null);
+  const [confirming, setConfirming] = useState<TargetKey | null>(null);
+  const managed = isManagedLogin(app, provider);
+  const candidateKeys = candidates.map(wslTargetKey);
 
   const activate = async (key: TargetKey) => {
     setBusy(key);
@@ -91,17 +116,26 @@ export function ProviderEnvSwitches({
       role="group"
       aria-label={t("appTargets.switch.group")}
     >
-      {enabledTargetKeys(view.config).map((key) => {
+      {[...enabledTargetKeys(view.config), ...candidateKeys].map((key) => {
         const isMain = sameTarget(key, view.config.primary);
+        const isCandidate = candidateKeys.some((c) => sameTarget(c, key));
         const active = isMain
           ? mainActive
-          : view.records[key]?.providerId === provider.id;
-        const disabledReason = isMain ? mainAction?.disabledReason : undefined;
+          : !isCandidate && view.records[key]?.providerId === provider.id;
+        const disabledReason = isMain
+          ? mainAction?.disabledReason
+          : managed
+            ? t("appTargets.switch.managedLogin")
+            : undefined;
         const label = distroOf(key) ?? "Windows";
         const tip = active
           ? t("appTargets.switch.inUse", { target: targetLabel(key) })
           : disabledReason ||
-            t("appTargets.switch.enable", { target: targetLabel(key) });
+            (isCandidate
+              ? t("appTargets.switch.addAndEnable", {
+                  target: targetLabel(key),
+                })
+              : t("appTargets.switch.enable", { target: targetLabel(key) }));
         const loading = busy !== null && sameTarget(busy, key);
         return (
           <HoverTip key={key} content={tip}>
@@ -113,10 +147,12 @@ export function ProviderEnvSwitches({
               onClick={() => {
                 if (active) return;
                 if (isMain) mainAction?.onClick();
+                else if (isCandidate) setConfirming(key);
                 else void activate(key);
               }}
               className={cn(
                 "inline-flex h-6 max-w-[104px] items-center gap-1 rounded-full border px-2 text-badge transition-colors",
+                isCandidate && "border-dashed",
                 active
                   ? "cursor-default border-direct-border bg-direct-soft text-direct-text"
                   : "border-border-strong text-fg-2 hover:bg-subtle hover:text-fg-1",
@@ -138,6 +174,25 @@ export function ProviderEnvSwitches({
           </HoverTip>
         );
       })}
+      <ConfirmDialog
+        isOpen={confirming !== null}
+        variant="info"
+        zIndex="top"
+        title={t("appTargets.switch.addTitle", {
+          target: confirming ? targetLabel(confirming) : "",
+        })}
+        message={t("appTargets.switch.addMessage", {
+          target: confirming ? targetLabel(confirming) : "",
+          provider: provider.name,
+        })}
+        confirmText={t("appTargets.switch.addConfirm")}
+        onConfirm={() => {
+          const key = confirming;
+          setConfirming(null);
+          if (key) void activate(key);
+        }}
+        onCancel={() => setConfirming(null)}
+      />
     </div>
   );
 }

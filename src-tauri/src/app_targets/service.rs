@@ -31,7 +31,9 @@ pub struct AppTargetsView {
 #[serde(rename_all = "camelCase")]
 pub struct AppTargetsOverview {
     pub inventory: WslInventory,
-    /// 显示多环境界面：宿主是 Windows，且检测到发行版或已有 WSL 目标。
+    /// 各发行版里四个客户端的安装情况（只有装了的才给出 WSL 配置入口）。
+    pub installs: super::installs::Installs,
+    /// 显示多环境界面：宿主是 Windows，且某个 WSL 里装了支持的客户端或已有 WSL 目标。
     pub multi_env: bool,
     pub apps: Vec<AppTargetsView>,
 }
@@ -100,13 +102,18 @@ fn view(app: &AppType, inventory: &WslInventory) -> AppTargetsView {
 /// 设置页概览。`probe_stopped` 为真时（用户点「重新检测」）连停止的发行版也启动探测。
 pub fn overview(probe_stopped: bool) -> AppTargetsOverview {
     let inventory = wsl::inventory(probe_stopped);
+    let installs = super::installs::detect(&inventory, probe_stopped);
     let apps: Vec<AppTargetsView> = model::supported_apps()
         .iter()
         .map(|app| view(app, &inventory))
         .collect();
     let has_wsl_targets = apps.iter().any(|v| !v.config.wsl.is_empty());
+    let any_installed = installs
+        .values()
+        .any(|tools| tools.values().any(|t| t.present()));
     AppTargetsOverview {
-        multi_env: inventory.host_windows && (!inventory.distros.is_empty() || has_wsl_targets),
+        multi_env: inventory.host_windows && (any_installed || has_wsl_targets),
+        installs,
         inventory,
         apps,
     }
@@ -524,7 +531,8 @@ pub fn save(
 }
 
 /// 在一个环境里改用 `provider_id`（供应商页的环境开关）。主环境走现有切换；跟随环境
-/// 只写那个环境，成功后才算换过去，失败时保持原来那家。
+/// 只写那个环境，成功后才算换过去，失败时保持原来那家。装了客户端、还没加入写入环境的
+/// WSL 发行版会先加入（写入前备份它原有的配置）。
 pub fn activate(
     state: &AppState,
     app: &str,
@@ -535,17 +543,10 @@ pub fn activate(
     let id = TargetId::parse(target)
         .ok_or_else(|| AppError::InvalidInput(format!("unknown target {target}")))?;
     let (config, _) = sync::app_config(&app);
-    let spec = config.target(&id).filter(|t| t.enabled).ok_or_else(|| {
-        AppError::localized(
-            "app_targets.target_disabled",
-            format!("{} 没有勾选为写入环境", sync::env_label(&id)),
-            format!("{} is not a write target", sync::env_label(&id)),
-        )
-    })?;
-    if config.primary_id().is_some_and(|p| p.same(&spec.id)) {
+    if config.primary_id().is_some_and(|p| p.same(&id)) {
         crate::services::ProviderService::switch(state, app.clone(), provider_id)?;
         return Ok(TargetReport {
-            target: spec.id.key(),
+            target: id.key(),
             record: TargetRecord {
                 provider_id: Some(provider_id.to_string()),
                 ..TargetRecord::new(TargetStatus::Ok)
@@ -561,10 +562,14 @@ pub fn activate(
     if sync::is_managed_login(&app, &provider) {
         return Err(AppError::localized(
             "app_targets.managed_login_windows_only",
-            "托管官方登录目前只能在 Windows 主环境启用，WSL 请使用 API Key 供应商或它自己的登录",
-            "Managed official sign-in can only be enabled in the Windows primary for now; use an API key provider or its own sign-in in WSL",
+            "绑定了托管账号的官方卡目前只能在 Windows 使用；WSL 可以用没绑账号的官方卡（用它自己的登录）或 API Key 供应商",
+            "Official cards bound to a managed account only work on Windows for now; in WSL use an unbound official card (its own sign-in) or an API key provider",
         ));
     }
+    let spec = match config.target(&id).filter(|t| t.enabled) {
+        Some(spec) => spec,
+        None => enable_wsl_target(&app, &config, &id)?,
+    };
     let activate = BTreeMap::from([(spec.id.key(), provider_id.to_string())]);
     let report = sync::sync_followers_with(
         state,
@@ -577,6 +582,68 @@ pub fn activate(
     .next()
     .ok_or_else(|| AppError::Message("没有可写入的目标".to_string()))?;
     Ok(report)
+}
+
+/// 把一个 WSL 发行版加入这个应用的写入环境（目录用它已保存的自定义目录或自动目录），并在
+/// 写入前备份它原有的托管文件。不写客户端配置，由调用方接着写。
+fn enable_wsl_target(
+    app: &AppType,
+    config: &AppTargetsConfig,
+    id: &TargetId,
+) -> Result<TargetSpec, AppError> {
+    let TargetId::Wsl(distro) = id else {
+        return Err(AppError::localized(
+            "app_targets.target_disabled",
+            format!("{} 没有勾选为写入环境", sync::env_label(id)),
+            format!("{} is not a write target", sync::env_label(id)),
+        ));
+    };
+    let _guard = save_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let mut next = config.clone();
+    match next
+        .wsl
+        .iter_mut()
+        .find(|t| t.distro.eq_ignore_ascii_case(distro))
+    {
+        Some(target) => target.enabled = true,
+        None => next.wsl.push(model::WslTarget {
+            distro: distro.clone(),
+            enabled: true,
+            route: false,
+            dir: None,
+        }),
+    }
+    let next = next.normalized();
+    let resolved = sync::resolved_dirs(app, &next, &|spec| spec.enabled);
+    if let Some(error) = model::validate(&next, &resolved).first() {
+        return Err(AppError::localized(
+            "app_targets.enable_failed",
+            format!(
+                "没能把 {} 加入写入环境（{}）",
+                sync::env_label(id),
+                error.code
+            ),
+            format!(
+                "Could not add {} as a write target ({})",
+                sync::env_label(id),
+                error.code
+            ),
+        ));
+    }
+    let spec = next
+        .target(id)
+        .ok_or_else(|| AppError::Message("target missing after enabling".to_string()))?;
+    let dir = sync::resolve_dir(app, &spec, true)?;
+    let backup = sync::backup_target(app, &spec, dir)?;
+    log::info!(
+        "[app-targets] {} 加入 {} 的写入环境，原配置已备份到 {}",
+        sync::env_label(id),
+        app.as_str(),
+        backup.display()
+    );
+    let legacy = model::legacy_projection(&next, &resolved);
+    crate::settings::set_app_targets(app, next, legacy)?;
+    Ok(spec)
 }
 
 #[derive(Debug, Clone, Default, Serialize)]

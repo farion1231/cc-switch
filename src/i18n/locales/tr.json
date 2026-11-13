@@ -5409,7 +5409,11 @@
       "noHome": "Ana dizin bulunamadı; özel bir dizin girin",
       "cached": "son algılama",
       "willStart": "yazarken başlatılacak",
-      "probeFailed": "bu kez algılama başarısız"
+      "probeFailed": "bu kez algılama başarısız",
+      "installed": "{{app}} {{version}} kurulu",
+      "broken": "{{app}} kurulu ama çalışmıyor",
+      "notInstalled": "{{app}} bulunamadı",
+      "installUnknown": "{{app}} kurulumu kontrol edilmedi"
     },
     "legacyWsl": "Mevcut WSL dizininiz korunuyor. Windows'u işaretleyip kaydedin; ardından her iki taraf kendi sağlayıcısını etkinleştirebilir.",
     "legacyUnresolved": "Mevcut dizinin WSL dağıtımı tanınamadı, tek dizin davranışı korunuyor. Dizini ilgili dağıtım satırına girip kaydedin.",
@@ -5496,7 +5500,12 @@
       "inUse": "{{target}} üzerinde kullanımda",
       "enable": "{{target}} üzerinde etkinleştir",
       "done": "{{target}}, {{provider}} sağlayıcısına geçti",
-      "failed": "{{target}}, {{provider}} sağlayıcısına geçemedi; önceki sağlayıcıyı kullanmaya devam ediyor"
+      "failed": "{{target}}, {{provider}} sağlayıcısına geçemedi; önceki sağlayıcıyı kullanmaya devam ediyor",
+      "managedLogin": "Yönetilen hesaba bağlı resmi kartlar yalnızca Windows'ta çalışır; WSL'de bağlı olmayan resmi kart (kendi oturumu) veya API anahtarlı sağlayıcı kullanın",
+      "addTitle": "{{target}} üzerinde etkinleştir",
+      "addMessage": "{{target}} üzerinde bu istemci kurulu ama henüz yazma hedefi değil. Onaylarsanız yazma hedefi olarak eklenir, mevcut yapılandırması yedeklenir ve ardından orada {{provider}} etkinleştirilir.",
+      "addConfirm": "Ekle ve etkinleştir",
+      "addAndEnable": "{{target}} ekle ve etkinleştir"
     },
     "route": {
       "join": "Yönlendirmeye / birleştirmeye katıl",
@@ -5521,6 +5530,16 @@
       "noHost": "Algılanmadı; girin",
       "hostFor": "{{distro}} için istemci adresi",
       "test": "Bağlantıyı test et"
+    },
+    "installs": {
+      "installed": "{{app}}, WSL · {{distro}} üzerine kuruldu",
+      "updated": "WSL · {{distro}} üzerindeki {{app}} güncellendi",
+      "failed": "WSL · {{distro}} üzerinde {{app}} kurulumu / güncellemesi başarısız",
+      "versionUnknown": "Kurulu · sürüm bilinmiyor",
+      "notChecked": "Kontrol edilmedi",
+      "cached": "son kontrol",
+      "stoppedCached": "durdu · son kontrol",
+      "detect": "WSL'yi yeniden algıla"
     }
   }
 }

@@ -5409,7 +5409,11 @@
       "noHome": "未取得使用者目錄，請填寫自訂目錄",
       "cached": "上次偵測",
       "willStart": "寫入時將啟動",
-      "probeFailed": "本次偵測失敗"
+      "probeFailed": "本次偵測失敗",
+      "installed": "已安裝 {{app}} {{version}}",
+      "broken": "已安裝 {{app}}，但無法執行",
+      "notInstalled": "未偵測到 {{app}}",
+      "installUnknown": "{{app}} 安裝情況未偵測"
     },
     "legacyWsl": "已保留原本的 WSL 目錄。勾選 Windows 並儲存後，兩邊可以各自啟用不同的供應商。",
     "legacyUnresolved": "無法辨識原目錄對應的 WSL 發行版，暫時保留原單目錄行為。請在對應發行版一列填寫目錄後儲存。",
@@ -5496,7 +5500,12 @@
       "inUse": "{{target}} 正在使用",
       "enable": "在 {{target}} 啟用",
       "done": "{{target}} 已切換到 {{provider}}",
-      "failed": "{{target}} 未能切換到 {{provider}}，仍使用原來的供應商"
+      "failed": "{{target}} 未能切換到 {{provider}}，仍使用原來的供應商",
+      "managedLogin": "綁定了託管帳號的官方卡只能在 Windows 使用；WSL 可用沒綁帳號的官方卡（用它自己的登入）或 API Key 供應商",
+      "addTitle": "在 {{target}} 啟用",
+      "addMessage": "{{target}} 裡安裝了這個用戶端，但還沒加入寫入環境。確認後會把它加入寫入環境，先備份它現有的設定，再在那裡啟用 {{provider}}。",
+      "addConfirm": "加入並啟用",
+      "addAndEnable": "加入 {{target}} 並啟用"
     },
     "route": {
       "join": "接入路由 / 聚合",
@@ -5521,6 +5530,16 @@
       "noHost": "未偵測到，請填寫",
       "hostFor": "{{distro}} 的用戶端位址",
       "test": "測試連線"
+    },
+    "installs": {
+      "installed": "已在 WSL · {{distro}} 安裝 {{app}}",
+      "updated": "已更新 WSL · {{distro}} 裡的 {{app}}",
+      "failed": "WSL · {{distro}} 裡的 {{app}} 安裝 / 更新失敗",
+      "versionUnknown": "已安裝 · 版本未知",
+      "notChecked": "未偵測",
+      "cached": "上次偵測",
+      "stoppedCached": "未執行 · 上次偵測",
+      "detect": "重新偵測 WSL"
     }
   }
 }
