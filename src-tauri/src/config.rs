@@ -30,27 +30,94 @@ pub fn get_home_dir() -> PathBuf {
     })
 }
 
-/// 检测路径是否为 WSL 网络路径（如 \\wsl$\Ubuntu\... 或 \\wsl.localhost\Ubuntu\...）
-/// 注意：仅检测直接 UNC 路径，映射磁盘符（如 Z: -> \\wsl$\...）无法检测
-#[cfg(windows)]
+/// 检测路径是否为 WSL 网络路径（如 `\\wsl$\Ubuntu\...` 或 `\\wsl.localhost\Ubuntu\...`）。
+/// 映射盘符（如 `Z:` → `\\wsl$\...`）认不出来。字符串形态在非 Windows 上也能认，
+/// 这样技能同步对 UNC 目标走复制，测试不必真的挂载 WSL。
 pub(crate) fn is_wsl_path(path: &Path) -> bool {
-    use std::path::Prefix;
-    if let Some(Component::Prefix(prefix)) = path.components().next() {
-        match prefix.kind() {
-            Prefix::UNC(server, _) | Prefix::VerbatimUNC(server, _) => {
-                let s = server.to_string_lossy();
-                s.eq_ignore_ascii_case("wsl$") || s.eq_ignore_ascii_case("wsl.localhost")
-            }
-            _ => false,
-        }
-    } else {
-        false
+    if wsl_unc_to_linux(&path.to_string_lossy()).is_some() {
+        return true;
     }
+    #[cfg(windows)]
+    {
+        use std::path::Prefix;
+        if let Some(Component::Prefix(prefix)) = path.components().next() {
+            if let Prefix::UNC(server, _) | Prefix::VerbatimUNC(server, _) = prefix.kind() {
+                let server = server.to_string_lossy();
+                return server.eq_ignore_ascii_case("wsl$")
+                    || server.eq_ignore_ascii_case("wsl.localhost");
+            }
+        }
+    }
+    false
 }
 
-#[cfg(not(windows))]
-pub(crate) fn is_wsl_path(_path: &Path) -> bool {
-    false
+/// `\\wsl.localhost\<distro>\home\...`, `\\wsl$\<distro>\...`, `//wsl.localhost/...`,
+/// and `\\?\UNC\wsl.localhost\...`. Returns `(distro, /linux/path)`.
+pub(crate) fn wsl_unc_to_linux(raw: &str) -> Option<(String, String)> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let slashed = trimmed.replace('/', "\\");
+    let verbatim = r"\\?\UNC\";
+    let normalized = if slashed.len() >= verbatim.len()
+        && slashed[..verbatim.len()].eq_ignore_ascii_case(verbatim)
+    {
+        format!(r"\\{}", &slashed[verbatim.len()..])
+    } else {
+        slashed
+    };
+    let rest = normalized.strip_prefix(r"\\")?;
+    let mut parts = rest.split('\\').filter(|part| !part.is_empty());
+    let server = parts.next()?;
+    if !server.eq_ignore_ascii_case("wsl.localhost") && !server.eq_ignore_ascii_case("wsl$") {
+        return None;
+    }
+    let distro = parts.next()?.to_string();
+    if !is_wsl_distro_name(&distro) {
+        return None;
+    }
+    let mut linux = String::new();
+    for part in parts {
+        if part == "." || part == ".." {
+            return None;
+        }
+        linux.push('/');
+        linux.push_str(part);
+    }
+    if linux.is_empty() {
+        return None;
+    }
+    Some((distro, linux))
+}
+
+fn is_wsl_distro_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+/// A WSL UNC path in `distro`, or a Windows drive path (`C:\...` → `/mnt/c/...`).
+#[cfg(any(windows, test))]
+pub(crate) fn path_into_wsl(raw: &str, distro: &str) -> Option<String> {
+    if let Some((found, linux)) = wsl_unc_to_linux(raw) {
+        return found.eq_ignore_ascii_case(distro).then_some(linux);
+    }
+    let normalized = raw.trim().replace('/', "\\");
+    let mut chars = normalized.chars();
+    let drive = chars.next()?;
+    if !drive.is_ascii_alphabetic() || chars.next() != Some(':') {
+        return None;
+    }
+    let rest = normalized[2..].trim_start_matches('\\');
+    let mut linux = format!("/mnt/{}", drive.to_ascii_lowercase());
+    if !rest.is_empty() {
+        linux.push('/');
+        linux.push_str(&rest.replace('\\', "/"));
+    }
+    Some(linux)
 }
 
 /// 临时目录在 WSL 共享路径上时（WSL2 夜间测试），SQLite 拿不到文件锁，

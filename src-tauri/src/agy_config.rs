@@ -27,18 +27,56 @@ use crate::error::AppError;
 use crate::live::patch::json::JsonPatch;
 use crate::live::patch::{KeyPath, LivePatch};
 
-/// `~/.gemini/antigravity-cli`
+/// Antigravity 的 `.gemini` 根。设置里的覆盖就是这个目录：下面同时有
+/// `antigravity-cli/`（settings、会话、用量）和 `config/`（MCP、Skills、提示词）。
+/// 不设时仍是本机 `~/.gemini`，和 Gemini CLI 自己的覆盖互不影响。
+pub fn agy_gemini_root() -> PathBuf {
+    agy_gemini_root_from(crate::settings::get_agy_override_dir(), get_home_dir())
+}
+
+pub(crate) fn agy_gemini_root_from(override_dir: Option<PathBuf>, home: PathBuf) -> PathBuf {
+    override_dir.unwrap_or_else(|| home.join(".gemini"))
+}
+
+/// 覆盖目录（或默认 `~/.gemini`）下 agy 会读写的路径。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AgyPaths {
+    pub settings: PathBuf,
+    pub mcp: PathBuf,
+    pub skills: PathBuf,
+    pub prompts: PathBuf,
+    pub sessions: PathBuf,
+    pub ide_sessions: PathBuf,
+    pub summaries: PathBuf,
+}
+
+pub(crate) fn agy_paths(root: &Path) -> AgyPaths {
+    let cli = root.join("antigravity-cli");
+    let config = root.join("config");
+    AgyPaths {
+        settings: cli.join("settings.json"),
+        mcp: config.join("mcp_config.json"),
+        skills: config.join("skills"),
+        prompts: config.join("AGENTS.md"),
+        sessions: cli.join("brain"),
+        ide_sessions: root.join("antigravity").join("brain"),
+        summaries: cli.join("conversation_summaries.db"),
+    }
+}
+
+/// `~/.gemini/antigravity-cli`，或覆盖根下的同名目录。
 pub fn agy_dir() -> PathBuf {
-    get_home_dir().join(".gemini").join("antigravity-cli")
+    agy_gemini_root().join("antigravity-cli")
 }
 
 /// `~/.gemini/config`：CLI、桌面版和 IDE 共用的 MCP / Skills / 提示词目录。
+/// 跟随 Antigravity 自己的覆盖，不跟随 Gemini CLI 的覆盖。
 pub fn customizations_dir() -> PathBuf {
-    get_home_dir().join(".gemini").join("config")
+    agy_gemini_root().join("config")
 }
 
 pub fn settings_path() -> PathBuf {
-    agy_dir().join("settings.json")
+    agy_paths(&agy_gemini_root()).settings
 }
 
 /// Key 模式各供应商私有 `--gemini_dir` 的上级目录。
@@ -243,6 +281,11 @@ fn prepare_key_profile(dir: &Path, projection: &AgyProjection) -> Result<(), App
 /// 那是 agy 自己建的，里面可能有用户的东西。
 fn link_shared_config(link: &Path, target: &Path) -> Result<(), AppError> {
     fs::create_dir_all(target).map_err(|e| AppError::io(target, e))?;
+    // Windows 到 `\\wsl.localhost\...` 的 junction 建不成。目录在发行版里时，打开终端的
+    // 命令会在 WSL 里 `ln -sfn`，这里不再尝试从 Windows 连过去。
+    if crate::config::wsl_unc_to_linux(&target.to_string_lossy()).is_some() {
+        return Ok(());
+    }
     match fs::symlink_metadata(link) {
         Ok(meta) if meta.file_type().is_symlink() => {
             if fs::read_link(link).ok().as_deref() == Some(target) {
@@ -553,6 +596,151 @@ mod tests {
             .apply(Path::new("settings.json"), Some(before.as_bytes()))
             .unwrap();
         serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[test]
+    fn wsl_gemini_root_keeps_settings_mcp_skills_prompts_and_sessions_under_it() {
+        let root = PathBuf::from(r"\\wsl.localhost\Ubuntu-26.04\home\sean\.gemini");
+        let paths = agy_paths(&root);
+        for path in [
+            &paths.settings,
+            &paths.mcp,
+            &paths.skills,
+            &paths.prompts,
+            &paths.sessions,
+            &paths.ide_sessions,
+            &paths.summaries,
+        ] {
+            assert!(
+                path.starts_with(&root),
+                "{} is not under {}",
+                path.display(),
+                root.display()
+            );
+        }
+        assert!(paths
+            .settings
+            .ends_with(Path::new("antigravity-cli").join("settings.json")));
+        assert!(paths
+            .mcp
+            .ends_with(Path::new("config").join("mcp_config.json")));
+        assert!(paths.skills.ends_with(Path::new("config").join("skills")));
+        assert!(paths
+            .prompts
+            .ends_with(Path::new("config").join("AGENTS.md")));
+        assert!(paths
+            .sessions
+            .ends_with(Path::new("antigravity-cli").join("brain")));
+        assert!(paths
+            .ide_sessions
+            .ends_with(Path::new("antigravity").join("brain")));
+        assert!(paths
+            .summaries
+            .ends_with(Path::new("antigravity-cli").join("conversation_summaries.db")));
+        assert!(crate::config::is_wsl_path(&paths.mcp));
+        assert!(crate::config::is_wsl_path(&paths.skills));
+        assert!(crate::config::is_wsl_path(&paths.prompts));
+        assert!(crate::config::is_wsl_path(&paths.settings));
+
+        let home = PathBuf::from("/home/sean");
+        assert_eq!(
+            agy_gemini_root_from(None, home.clone()),
+            home.join(".gemini")
+        );
+        assert_eq!(agy_gemini_root_from(Some(root.clone()), home), root);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn override_directory_receives_mcp_prompts_and_skills() {
+        let home = tempfile::tempdir().unwrap();
+        let previous = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", home.path());
+        crate::settings::reload_settings().unwrap();
+        let restore = || {
+            match &previous {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+            let _ = crate::settings::reload_settings();
+        };
+
+        let run = || {
+            let root = home.path().join("gemini-root");
+            let mut settings = crate::settings::get_settings();
+            settings.agy_config_dir = Some(root.to_string_lossy().into_owned());
+            crate::settings::update_settings(settings).unwrap();
+
+            crate::mcp::agy::sync("srv", Some(&json!({"command":"echo","args":["hi"]}))).unwrap();
+            let mcp_path = root.join("config").join("mcp_config.json");
+            let mcp = fs::read_to_string(&mcp_path).unwrap();
+            assert!(mcp.contains("echo"), "{mcp}");
+            crate::mcp::agy::sync("srv", None).unwrap();
+            let disabled: Value =
+                serde_json::from_str(&fs::read_to_string(&mcp_path).unwrap()).unwrap();
+            assert_eq!(disabled["mcpServers"]["srv"]["disabled"], json!(true));
+            crate::mcp::agy::sync_and_commit("srv", crate::mcp::agy::AgyChange::Remove, || {
+                Ok::<(), crate::error::AppError>(())
+            })
+            .unwrap();
+            let removed: Value =
+                serde_json::from_str(&fs::read_to_string(&mcp_path).unwrap()).unwrap();
+            assert!(removed["mcpServers"].get("srv").is_none());
+
+            let state = crate::store::AppState::new(std::sync::Arc::new(
+                crate::database::Database::memory().unwrap(),
+            ));
+            fs::write(
+                &mcp_path,
+                r#"{"mcpServers":{"imported":{"command":"tool","disabled":false}}}"#,
+            )
+            .unwrap();
+            assert_eq!(crate::mcp::agy::import(&state).unwrap(), 1);
+
+            let prompt_path =
+                crate::prompt_files::prompt_file_path(&crate::app_config::AppType::Agy).unwrap();
+            assert_eq!(prompt_path, root.join("config").join("AGENTS.md"));
+            crate::services::prompt::PromptService::upsert_prompt(
+                &state,
+                crate::app_config::AppType::Agy,
+                "p1",
+                crate::prompt::Prompt {
+                    id: "p1".into(),
+                    name: "Note".into(),
+                    content: "hello agy".into(),
+                    description: None,
+                    enabled: true,
+                    created_at: Some(1),
+                    updated_at: Some(1),
+                },
+            )
+            .unwrap();
+            assert_eq!(fs::read_to_string(&prompt_path).unwrap(), "hello agy");
+
+            let ssot = crate::services::skill::SkillService::get_ssot_dir()
+                .unwrap()
+                .join("wsl-skill");
+            fs::create_dir_all(&ssot).unwrap();
+            fs::write(ssot.join("SKILL.md"), "name: wsl-skill\n").unwrap();
+            crate::services::skill::SkillService::sync_to_app_dir(
+                "wsl-skill",
+                &crate::app_config::AppType::Agy,
+            )
+            .unwrap();
+            let installed = root
+                .join("config")
+                .join("skills")
+                .join("wsl-skill")
+                .join("SKILL.md");
+            let body = fs::read_to_string(&installed).unwrap();
+            assert!(body.contains("wsl-skill"), "{body}");
+        };
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run));
+        restore();
+        if let Err(panic) = result {
+            std::panic::resume_unwind(panic);
+        }
     }
 
     #[test]

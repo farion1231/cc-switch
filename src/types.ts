@@ -506,6 +506,8 @@ export interface Settings {
   ompConfigDir?: string;
   // 覆盖 DeepSeek Harness 主目录（相当于 DSH_HOME，可选）
   dshConfigDir?: string;
+  // 覆盖 Antigravity 的 .gemini 根目录（antigravity-cli 与 config 都在其下，可选）
+  agyConfigDir?: string;
 
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）

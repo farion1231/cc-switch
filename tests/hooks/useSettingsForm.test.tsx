@@ -207,6 +207,7 @@ describe("useSettingsForm Hook", () => {
         claudeConfigDir: "  /reset  ",
         codexConfigDir: "   ",
         piConfigDir: "  /pi-reset  ",
+        agyConfigDir: "  \\\\wsl.localhost\\Ubuntu-26.04\\home\\sean\\.gemini  ",
         language: "zh",
       });
     });
@@ -218,6 +219,9 @@ describe("useSettingsForm Hook", () => {
     expect(settings.claudeConfigDir).toBe("/reset");
     expect(settings.codexConfigDir).toBeUndefined();
     expect(settings.piConfigDir).toBe("/pi-reset");
+    expect(settings.agyConfigDir).toBe(
+      "\\\\wsl.localhost\\Ubuntu-26.04\\home\\sean\\.gemini",
+    );
     expect(settings.language).toBe("zh");
     expect(result.current.initialLanguage).toBe("en");
     expect(changeLanguageSpy).toHaveBeenCalledWith("en");

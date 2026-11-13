@@ -24,11 +24,20 @@ pub fn session_roots() -> Vec<PathBuf> {
         .collect()
 }
 
+/// Sessions under one `.gemini` root (the CLI brain and the IDE brain).
+#[cfg(test)]
+pub(crate) fn scan_gemini_root(root: &Path) -> Vec<SessionMeta> {
+    scan_roots(&gemini_root_sources(root))
+}
+
+fn gemini_root_sources(root: &Path) -> Vec<(PathBuf, Option<PathBuf>)> {
+    let paths = crate::agy_config::agy_paths(root);
+    vec![(paths.sessions, None), (paths.ide_sessions, None)]
+}
+
 /// Each root, with the private `--gemini_dir` its sessions must be resumed with.
 fn session_sources() -> Vec<(PathBuf, Option<PathBuf>)> {
-    let cli = crate::agy_config::agy_dir();
-    let ide = cli.with_file_name("antigravity");
-    let mut sources = vec![(cli.join("brain"), None), (ide.join("brain"), None)];
+    let mut sources = gemini_root_sources(&crate::agy_config::agy_gemini_root());
     let mut profiles: Vec<PathBuf> = fs::read_dir(crate::agy_config::key_profiles_root())
         .into_iter()
         .flatten()

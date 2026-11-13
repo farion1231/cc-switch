@@ -734,10 +734,7 @@ impl SkillService {
                 return Ok(crate::omp_config::get_omp_agent_dir()?.join("skills"));
             }
             AppType::Agy => {
-                return Ok(crate::config::get_home_dir()
-                    .join(".gemini")
-                    .join("config")
-                    .join("skills"));
+                return Ok(crate::agy_config::customizations_dir().join("skills"));
             }
         }
 
@@ -762,7 +759,7 @@ impl SkillService {
             AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
             AppType::Pi => crate::pi_config::get_pi_agent_dir()?.join("skills"),
             AppType::Omp => crate::omp_config::get_omp_agent_dir()?.join("skills"),
-            AppType::Agy => home.join(".gemini").join("config").join("skills"),
+            AppType::Agy => crate::agy_config::customizations_dir().join("skills"),
         })
     }
 
@@ -1915,7 +1912,10 @@ impl SkillService {
         }
         for native in native_targets {
             if !native.exists() && !Self::is_symlink(native) {
-                targets.push((native.clone(), Self::get_sync_method() != SyncMethod::Copy));
+                targets.push((
+                    native.clone(),
+                    Self::effective_sync_method(native) != SyncMethod::Copy,
+                ));
             }
         }
 
@@ -2989,6 +2989,20 @@ impl SkillService {
         crate::settings::get_skill_sync_method()
     }
 
+    /// Auto copies onto a WSL UNC directory. Symlink and Copy stay as configured,
+    /// matching Claude, Gemini, and Pi.
+    fn effective_sync_method(dest: &Path) -> SyncMethod {
+        Self::sync_method_for(Self::get_sync_method(), dest)
+    }
+
+    fn sync_method_for(configured: SyncMethod, dest: &Path) -> SyncMethod {
+        if matches!(configured, SyncMethod::Auto) && crate::config::is_wsl_path(dest) {
+            SyncMethod::Copy
+        } else {
+            configured
+        }
+    }
+
     /// 同步 Skill 到应用目录（使用 symlink 或 copy）
     ///
     /// 根据配置和平台选择最佳同步方式：
@@ -3028,15 +3042,11 @@ impl SkillService {
             Self::ensure_pi_skill_destination_matches(&source, &dest, &directory)?;
         }
 
-        let sync_method = Self::get_sync_method();
         // WSL targets reject directory symlinks outright (ERROR_ACCESS_DENIED),
-        // so Auto skips the doomed symlink attempt and goes straight to copy.
-        let sync_method =
-            if matches!(sync_method, SyncMethod::Auto) && crate::config::is_wsl_path(&dest) {
-                SyncMethod::Copy
-            } else {
-                sync_method
-            };
+        // and a Windows symlink into the WSL tree would point at the NTFS skill
+        // store, which agy inside the distro cannot follow. Auto copies instead.
+        // The same rule applies to every app, including Antigravity.
+        let sync_method = Self::effective_sync_method(&dest);
 
         match sync_method {
             SyncMethod::Auto => {
@@ -5309,6 +5319,34 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn wsl_unc_skill_target_copies_for_every_app_in_auto_mode() {
+        let unc =
+            PathBuf::from(r"\\wsl.localhost\Ubuntu-26.04\home\sean\.gemini\config\skills\demo");
+        let local = PathBuf::from("/tmp/skills/demo");
+        assert!(crate::config::is_wsl_path(&unc));
+        assert!(!crate::config::is_wsl_path(&local));
+        // Claude, Gemini, Pi, and Antigravity share this decision. The app only
+        // changes the destination directory; a UNC destination is always a copy
+        // in Auto mode so the file exists inside the distro.
+        assert_eq!(
+            SkillService::sync_method_for(SyncMethod::Auto, &unc),
+            SyncMethod::Copy
+        );
+        assert_eq!(
+            SkillService::sync_method_for(SyncMethod::Auto, &local),
+            SyncMethod::Auto
+        );
+        assert_eq!(
+            SkillService::sync_method_for(SyncMethod::Symlink, &unc),
+            SyncMethod::Symlink
+        );
+        assert_eq!(
+            SkillService::sync_method_for(SyncMethod::Copy, &local),
+            SyncMethod::Copy
+        );
+    }
 
     #[test]
     fn skill_state_lock_allows_snapshots_but_excludes_writers() {

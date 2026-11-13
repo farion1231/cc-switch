@@ -117,6 +117,16 @@ pub(crate) fn collect_tiers(
 /// 由 `subscription::get_subscription_quota("agy")` 分发。没装 agy 时按「没有凭据」处理（卡片不显示）；
 /// 超时、没登录或输出看不懂都写成查询失败，错误里不带 agy 的原始输出。
 pub(crate) async fn get_agy_subscription_quota() -> Result<SubscriptionQuota, String> {
+    // 配置目录在 WSL 里时，额度属于那个发行版里已登录的 agy，不能问 Windows 上的另一份。
+    #[cfg(target_os = "windows")]
+    if crate::commands::tool_runs_in_wsl(TOOL) {
+        let output =
+            tokio::task::spawn_blocking(|| crate::commands::run_agy_wsl_usage(Some(TIMEOUT)))
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?;
+        return quota_from_usage_output(&output);
+    }
     let Some(bin) = tokio::task::spawn_blocking(crate::agy_config::real_agy_bin)
         .await
         .map_err(|e| e.to_string())?
@@ -136,6 +146,10 @@ pub(crate) async fn get_agy_subscription_quota() -> Result<SubscriptionQuota, St
         Ok(Err(_)) => return Ok(SubscriptionQuota::not_found(TOOL)),
         Err(_) => return Err("Antigravity quota query timed out".to_string()),
     };
+    quota_from_usage_output(&output)
+}
+
+fn quota_from_usage_output(output: &std::process::Output) -> Result<SubscriptionQuota, String> {
     let tiers = output
         .status
         .success()

@@ -426,6 +426,81 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn gemini_root_fixture_scans_sessions_and_imports_usage() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let paths = crate::agy_config::agy_paths(dir.path());
+        let logs = paths.sessions.join("conv-1").join(".system_generated/logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        std::fs::write(
+            logs.join("transcript_full.jsonl"),
+            concat!(
+                r#"{"step_index":0,"type":"USER_INPUT","content":"<USER_REQUEST>hello from wsl</USER_REQUEST>","created_at":"2026-11-01T00:00:00Z"}"#,
+                "\n",
+                r#"{"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","input_tokens":12,"output_tokens":3,"created_at":"2026-11-01T00:00:01Z"}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        std::fs::create_dir_all(paths.settings.parent().unwrap()).unwrap();
+        std::fs::write(&paths.settings, r#"{"model":"Gemini 3.8 Flash (High)"}"#).unwrap();
+        std::fs::create_dir_all(paths.mcp.parent().unwrap()).unwrap();
+        std::fs::write(&paths.mcp, r#"{"mcpServers":{}}"#).unwrap();
+        std::fs::create_dir_all(&paths.skills).unwrap();
+        std::fs::write(&paths.prompts, "agents\n").unwrap();
+        let summaries = rusqlite::Connection::open(&paths.summaries).unwrap();
+        summaries
+            .execute_batch(
+                "CREATE TABLE conversation_summaries(conversation_id TEXT,title TEXT,workspace_uris TEXT,preview TEXT,last_modified_time TEXT);",
+            )
+            .unwrap();
+        summaries
+            .execute(
+                "INSERT INTO conversation_summaries VALUES (?1,?2,?3,?4,?5)",
+                rusqlite::params![
+                    "conv-1",
+                    "WSL chat",
+                    "[]",
+                    "hello from wsl",
+                    "2026-11-01T00:00:02Z"
+                ],
+            )
+            .unwrap();
+        drop(summaries);
+
+        let sessions = agy::scan_gemini_root(dir.path());
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session_id, "conv-1");
+        assert_eq!(sessions[0].title.as_deref(), Some("WSL chat"));
+        let source = sessions[0].source_path.clone().expect("transcript");
+        assert!(source.contains("antigravity-cli"));
+        assert!(paths.settings.is_file());
+        assert!(paths.mcp.is_file());
+        assert!(paths.prompts.is_file());
+        assert!(paths.skills.is_dir());
+
+        let rows = agy::records(std::path::Path::new(&source)).unwrap();
+        let db = Database::memory().unwrap();
+        assert_eq!(
+            import_records(&db, "conv-1", &rows, Some(std::path::Path::new(&source))).unwrap(),
+            (1, 0)
+        );
+        let got: (i64, i64) = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT input_tokens, output_tokens FROM proxy_request_logs WHERE request_id='agy:conv-1:1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(got, (12, 3));
+    }
+
+    #[test]
     fn native_models_backfill_unknown_rows_without_changing_tokens_or_deduplication() {
         if crate::config::sqlite_unsupported_in_temp_dir() {
             return;

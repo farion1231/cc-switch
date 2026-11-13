@@ -734,6 +734,35 @@ fn wsl_process(distro: &str, shell_args: &[&str]) -> Result<std::process::Comman
     Ok(process)
 }
 
+/// Official `install.sh` puts the binary at `~/.local/bin/agy` (sometimes a symlink into
+/// `~/.gemini/antigravity-cli/`). Remove only those files. Config, sessions and skills stay.
+#[cfg(any(target_os = "windows", test))]
+fn agy_wsl_removal(path: &str, real: &str) -> Result<String, String> {
+    let safe = |value: &str| {
+        value.starts_with('/')
+            && !value.contains('\n')
+            && !value.contains('\0')
+            && !value.split('/').any(|part| part == "..")
+    };
+    if !safe(path) || !path.ends_with("/.local/bin/agy") || !safe(real) {
+        return Err(
+            "Use the original installer to uninstall this WSL Antigravity CLI.".to_string(),
+        );
+    }
+    let real_ok =
+        real == path || real.contains("/.local/") || real.contains("/.gemini/antigravity-cli/");
+    if !real_ok {
+        return Err(
+            "Use the original installer to uninstall this WSL Antigravity CLI.".to_string(),
+        );
+    }
+    let mut command = format!("rm -f -- {}", shell_single_quote(path));
+    if real != path {
+        command.push_str(&format!(" && rm -f -- {}", shell_single_quote(real)));
+    }
+    Ok(command)
+}
+
 #[cfg(any(target_os = "windows", test))]
 fn parse_wsl_installation(stdout: &str) -> Result<(String, String), String> {
     let mut lines = stdout
@@ -759,6 +788,8 @@ fn wsl_uninstall_command(tool: &str, path: &str, real: &str) -> Result<String, S
     }
     let removal = if tool == "hermes" {
         format!("{} uninstall --yes", shell_single_quote(path))
+    } else if tool == "agy" {
+        agy_wsl_removal(path, real)?
     } else {
         let package = npm_package_for(tool)
             .ok_or("Use the original installer to uninstall this WSL application.")?;
@@ -1621,6 +1652,37 @@ mod tests {
         assert!(verify_removed("codex", &entry.to_string_lossy()).is_err());
         std::fs::remove_file(&entry).unwrap();
         assert!(verify_removed("codex", &entry.to_string_lossy()).is_ok());
+    }
+
+    #[test]
+    fn agy_wsl_uninstall_removes_only_the_official_binary() {
+        let same = wsl_uninstall_command(
+            "agy",
+            "/home/sean/.local/bin/agy",
+            "/home/sean/.local/bin/agy",
+        )
+        .unwrap();
+        assert!(same.contains("rm -f --"), "{same}");
+        assert!(same.contains("/home/sean/.local/bin/agy"), "{same}");
+        assert!(!same.contains("npm"), "{same}");
+        assert!(!same.contains(".gemini/config"), "{same}");
+
+        let linked = wsl_uninstall_command(
+            "agy",
+            "/home/sean/.local/bin/agy",
+            "/home/sean/.gemini/antigravity-cli/bin/agy",
+        )
+        .unwrap();
+        assert!(
+            linked.contains("/home/sean/.gemini/antigravity-cli/bin/agy"),
+            "{linked}"
+        );
+
+        assert!(wsl_uninstall_command("agy", "/usr/bin/agy", "/usr/bin/agy").is_err());
+        assert!(
+            wsl_uninstall_command("agy", "/home/sean/.local/bin/agy", "/usr/local/bin/agy")
+                .is_err()
+        );
     }
 
     #[test]
