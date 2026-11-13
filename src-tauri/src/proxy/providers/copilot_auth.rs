@@ -209,8 +209,11 @@ pub fn build_copilot_request_headers(
 /// Copilot 使用量响应
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CopilotUsageResponse {
-    /// Copilot 计划类型
+    /// Copilot 计划类型（Free 也报 `individual`，认套餐要先看 `access_type_sku`）
     pub copilot_plan: String,
+    /// 订阅 SKU：`free_limited_copilot`（Free）、`max_monthly_subscriber_quota`（Max）…
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_type_sku: Option<String>,
     /// 配额重置日期
     pub quota_reset_date: String,
     /// 配额快照
@@ -252,6 +255,10 @@ pub struct QuotaDetail {
     pub percent_remaining: f64,
     /// 是否无限
     pub unlimited: bool,
+    /// 当前计划是否含这一项：Free 的 premium_interactions 是 false（总额 0，不是用完了）；
+    /// 旧响应没有这个字段
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_quota: Option<bool>,
 }
 
 /// Copilot 可用模型
@@ -617,6 +624,18 @@ impl CopilotAuthManager {
         accounts.get(account_id).map(GitHubAccount::from)
     }
 
+    /// 指定账号的 GitHub OAuth Token 和域名，给 Copilot CLI 的 `COPILOT_GITHUB_TOKEN` 用。
+    /// 只在打开终端时经子进程环境传出，不写进任何文件或命令行。
+    pub async fn github_credentials_for_account(
+        &self,
+        account_id: &str,
+    ) -> Option<(String, String)> {
+        let accounts = self.accounts.read().await;
+        accounts
+            .get(account_id)
+            .map(|account| (account.github_token.clone(), account.github_domain.clone()))
+    }
+
     /// 移除指定账号
     pub async fn remove_account(&self, account_id: &str) -> Result<(), CopilotAuthError> {
         log::info!("[CopilotAuth] 移除账号: {account_id}");
@@ -938,12 +957,18 @@ impl CopilotAuthManager {
         &self,
         account_id: &str,
     ) -> Result<Vec<CopilotModel>, CopilotAuthError> {
-        Ok(self
-            .fetch_all_models_for_account(account_id)
-            .await?
+        let all_models = self.fetch_all_models_for_account(account_id).await?;
+        let total = all_models.len();
+        let picker_models: Vec<CopilotModel> = all_models
             .into_iter()
             .filter(|model| model.model_picker_enabled)
-            .collect())
+            .collect();
+        // Copilot Free 账号的模型通常全部 model_picker_enabled=false，这里记录两个数便于排查
+        log::info!(
+            "[CopilotAuth] 账号 {account_id} 共 {total} 个模型，其中可在模型选择器使用的 {} 个",
+            picker_models.len()
+        );
+        Ok(picker_models)
     }
 
     async fn fetch_all_models_for_account(
@@ -1025,7 +1050,10 @@ impl CopilotAuthManager {
             })
             .collect();
 
-        log::info!("[CopilotAuth] 获取到 {} 个可用模型", models.len());
+        log::info!(
+            "[CopilotAuth] 从 /models 获取到 {} 个模型（未按模型选择器过滤）",
+            models.len()
+        );
 
         Ok(models)
     }

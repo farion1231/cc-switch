@@ -19,7 +19,7 @@ const SelectTrigger = React.forwardRef<
     className={cn(
       // 和 Input 同一套外观（fieldClass）；展开时也保持聚焦态
       fieldClass,
-      "flex h-8 items-center justify-between whitespace-nowrap text-start data-[placeholder]:text-fg-3 data-[state=open]:border-ring data-[state=open]:ring-[3px] data-[state=open]:ring-ring/20 [&>span]:truncate",
+      "flex h-control items-center justify-between whitespace-nowrap text-start data-[placeholder]:text-fg-3 data-[state=open]:border-ring data-[state=open]:ring-[3px] data-[state=open]:ring-ring/20 [&>span]:truncate",
       className,
     )}
     {...props}

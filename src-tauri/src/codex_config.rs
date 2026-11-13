@@ -125,7 +125,7 @@ pub(crate) fn codex_url_host_matches_any(url_or_host: &str, hosts: &[&str]) -> b
 }
 
 /// Top-level `model` id from a Codex `config.toml`.
-fn codex_top_level_model(config_text: &str) -> Option<String> {
+pub(crate) fn codex_top_level_model(config_text: &str) -> Option<String> {
     let doc = config_text.parse::<toml::Value>().ok()?;
     doc.get("model")
         .and_then(|value| value.as_str())
@@ -2183,7 +2183,60 @@ fn codex_model_catalog_from_settings(
     if let Some(model) = codex_card_auto_review_model(settings) {
         apply_codex_auto_review_model(&mut catalog, model);
     }
+    if codex_card_keeps_official_speed_tiers(settings) {
+        apply_codex_official_speed_tiers(&mut catalog, config_text, profile);
+    }
     Ok(Some(catalog))
+}
+
+/// 卡上的「保留官方 Fast 档」（`modelCatalog.officialSpeedTiers`）。和自动审批模型一样只在
+/// 直连、路由下生效，聚合下不看。
+fn codex_card_keeps_official_speed_tiers(settings: &Value) -> bool {
+    settings
+        .get("modelCatalog")
+        .and_then(|catalog| catalog.get("officialSpeedTiers"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+/// 把官方的速度档还给镜像官方的 GPT 行（[`codex_official_model_entry`] 默认清空）。
+///
+/// Codex 只在目录行声明了这一档时才发 `service_tier`：没声明时 `config.toml` 里的
+/// `service_tier = "fast"` 会被略过并打一条警告，声明了就照发 `"priority"`（0.166 实测）。
+/// 所以只有后面接官方账号的中转（如 CPA）才该打开，而且打开后之前在官方卡下选过的 Fast
+/// 会立刻在这家生效。只认原生 Responses：Chat 转换会把这个字段原样转给不认识它的上游。
+fn apply_codex_official_speed_tiers(
+    catalog: &mut Value,
+    config_text: &str,
+    profile: CodexCatalogToolProfile,
+) {
+    if profile != CodexCatalogToolProfile::NativeResponses
+        || codex_official_vendor_catalog_models(config_text, profile).is_some()
+    {
+        return;
+    }
+    let Some(entries) = catalog.get_mut("models").and_then(Value::as_array_mut) else {
+        return;
+    };
+    let official = codex_openai_official_models();
+    for entry in entries.iter_mut() {
+        let Some(slug) = entry.get("slug").and_then(Value::as_str) else {
+            continue;
+        };
+        // 生成时按同一规则找官方条目：找得到的行就是镜像出来的那些。
+        let Some(found) = find_codex_official_model(slug, &official) else {
+            continue;
+        };
+        let tiers =
+            ["service_tiers", "additional_speed_tiers"].map(|key| (key, found.get(key).cloned()));
+        if let Some(obj) = entry.as_object_mut() {
+            for (key, value) in tiers {
+                if let Some(value) = value {
+                    obj.insert(key.to_string(), value);
+                }
+            }
+        }
+    }
 }
 
 /// 卡上选的自动审批模型（`modelCatalog.autoReviewModel`），空串当作没选。只在直连、路由
@@ -2298,13 +2351,17 @@ fn codex_official_model_entry(
     priority: usize,
     profile: CodexCatalogToolProfile,
     context_window: Option<u64>,
+    display_name: Option<&str>,
 ) -> Value {
     let mut entry = official.clone();
     let Some(obj) = entry.as_object_mut() else {
         return json!({});
     };
-    // 前缀、命名空间命中的别名（`gpt-5.5-high`）不冒用官方的显示名。
-    if obj.get("slug").and_then(Value::as_str) != Some(model) {
+    // 前缀、命名空间命中的别名（`gpt-5.5-high`）不冒用官方的显示名；用户填的显示名只影响
+    // 选择器里的文字，照用。
+    if let Some(name) = display_name {
+        obj.insert("display_name".to_string(), json!(name));
+    } else if obj.get("slug").and_then(Value::as_str) != Some(model) {
         obj.insert("display_name".to_string(), json!(model));
     }
     obj.insert("slug".to_string(), json!(model));
@@ -2331,23 +2388,30 @@ fn codex_official_model_entry(
     entry
 }
 
-/// 除窗口外，反向解析会保留的显示名、模态、并行工具调用是否和官方镜像一致。
-/// 镜像的官方能力不用存回表单，显式窗口另行还原。
-fn is_codex_official_mirror(entry: &Value, model: &str, official: &Value) -> bool {
-    let expected = codex_official_model_entry(
+/// 官方镜像在没有用户覆盖时的样子（反向解析拿它比对）。
+fn codex_official_mirror_baseline(official: &Value, model: &str) -> Value {
+    codex_official_model_entry(
         official,
         model,
         0,
         CodexCatalogToolProfile::NativeResponses,
         None,
-    );
-    [
-        "display_name",
-        "input_modalities",
-        "supports_parallel_tool_calls",
-    ]
-    .iter()
-    .all(|key| entry.get(*key) == expected.get(*key))
+        None,
+    )
+}
+
+/// 除窗口外，反向解析会保留的显示名、模态、并行工具调用是否和官方镜像一致。
+/// 镜像的官方能力不用存回表单，显式窗口、显示名另行还原。用户改过显示名的镜像
+/// 仍带官方的 `description`；旧版 ProxyChat 克隆模板时把 `description` 写成显示名，
+/// 靠这一点区分，免得把旧行误当镜像、丢掉用户填的窗口。
+fn is_codex_official_mirror(entry: &Value, model: &str, official: &Value) -> bool {
+    let expected = codex_official_mirror_baseline(official, model);
+    let renamed_mirror = entry.get("description") == expected.get("description")
+        && entry.get("description") != entry.get("display_name");
+    (renamed_mirror || entry.get("display_name") == expected.get("display_name"))
+        && ["input_modalities", "supports_parallel_tool_calls"]
+            .iter()
+            .all(|key| entry.get(*key) == expected.get(*key))
 }
 
 /// The catalog for one provider's models: its official vendor catalog when the
@@ -2418,6 +2482,7 @@ fn codex_catalog_from_specs_for_row(
                     // Match Codex's global override and Stack's sink_row_windows:
                     // a provider-wide window takes precedence over a model's.
                     configured_context_window.or(spec.context_window),
+                    spec.display_name.as_deref(),
                 ),
                 None => codex_catalog_model_entry(
                     &template,
@@ -2839,8 +2904,7 @@ pub(crate) fn resolve_cc_switch_catalog_path(
     // 注意（有意的行为变更）：Windows 上 `/…` 形式的旧 WSL 风格 Linux 路径也会
     // 被视为绝对路径，从而在下方的包含性校验中失败——此前这类路径会因无法匹配
     // 生成文件名而回退为按文件名解析、碰巧能工作。可接受：下一次切换供应商时
-    // 写入侧会重新落一个裸文件名，配置自愈（见
-    // `set_catalog_json_none_removes_cc_switch_owned_by_filename` 的场景注释）。
+    // 写入侧会重写指针（原生目录写绝对路径、WSL 形态目录写裸文件名），配置自愈。
     let is_unix_absolute = catalog_path_str.starts_with('/');
     let resolved = if referenced_path.is_absolute() || is_unix_absolute {
         referenced_path.to_path_buf()
@@ -2902,6 +2966,8 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
         extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
 
     let mut official: Option<Vec<Value>> = None;
+    // 镜像行默认清空速度档，带着就是卡上开了「保留官方 Fast 档」。
+    let mut official_speed_tiers = false;
     let mut entries = Vec::with_capacity(models.len());
     for entry in models {
         let Some(model) = entry
@@ -2942,6 +3008,24 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
                 {
                     restored["contextWindow"] = json!(window);
                 }
+                let mirrored_name = codex_official_mirror_baseline(found, model);
+                if let Some(name) = entry
+                    .get("display_name")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|name| {
+                        !name.is_empty()
+                            && *name != model
+                            && mirrored_name.get("display_name").and_then(Value::as_str)
+                                != Some(*name)
+                    })
+                {
+                    restored["displayName"] = json!(name);
+                }
+                official_speed_tiers |= entry
+                    .get("additional_speed_tiers")
+                    .and_then(Value::as_array)
+                    .is_some_and(|tiers| !tiers.is_empty());
                 entries.push(restored);
                 continue;
             }
@@ -3018,6 +3102,9 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
     let mut simplified = json!({ "models": entries });
     if let Some(model) = auto_review {
         simplified["autoReviewModel"] = json!(model);
+    }
+    if official_speed_tiers {
+        simplified["officialSpeedTiers"] = json!(true);
     }
     Some(simplified)
 }
@@ -5190,6 +5277,61 @@ wire_api = "responses"
     }
 
     #[test]
+    fn card_can_keep_official_speed_tiers_on_native_gpt_rows() {
+        let catalog = |keep: bool, profile| {
+            let settings = json!({ "modelCatalog": {
+                "models": [{ "model": "gpt-6-sol" }, { "model": "glm-5" }],
+                "officialSpeedTiers": keep
+            }});
+            with_official_models(official_gpt_rows(), || {
+                codex_model_catalog_from_settings(&settings, "", profile)
+                    .unwrap()
+                    .unwrap()
+            })
+        };
+        let tiers = |catalog: &Value, row: usize| {
+            (
+                catalog["models"][row]["additional_speed_tiers"].clone(),
+                catalog["models"][row]["service_tiers"].clone(),
+            )
+        };
+        let official = (
+            json!(["fast"]),
+            json!([{ "id": "priority", "name": "Fast" }]),
+        );
+        let cleared = (json!([]), json!([]));
+
+        let kept = catalog(true, CodexCatalogToolProfile::NativeResponses);
+        assert_eq!(tiers(&kept, 0), official);
+        // 模板生成的非 GPT 行没有官方档可还。
+        assert_eq!(tiers(&kept, 1), cleared);
+        // 默认关；Chat 转换会把 service_tier 转给不认它的上游，开了也不还。
+        assert_eq!(
+            tiers(&catalog(false, CodexCatalogToolProfile::NativeResponses), 0),
+            cleared
+        );
+        assert_eq!(
+            tiers(&catalog(true, CodexCatalogToolProfile::ProxyChat), 0),
+            cleared
+        );
+
+        // 反向解析把开关还原到卡上，镜像行照旧只还原模型名。
+        let restored = |catalog: &Value| {
+            with_official_models(official_gpt_rows(), || {
+                build_simplified_catalog_from_texts("", &catalog.to_string()).expect("entries")
+            })
+        };
+        let simplified = restored(&kept);
+        assert_eq!(simplified["officialSpeedTiers"], true);
+        assert_eq!(simplified["models"][0], json!({ "model": "gpt-6-sol" }));
+        assert!(
+            restored(&catalog(false, CodexCatalogToolProfile::NativeResponses))
+                .get("officialSpeedTiers")
+                .is_none()
+        );
+    }
+
+    #[test]
     fn official_models_match_like_codex() {
         let rows = official_gpt_rows();
         let found = |model: &str| {
@@ -5598,12 +5740,66 @@ wire_api = "responses"
     }
 
     #[test]
+    fn mirrored_rows_use_and_round_trip_the_configured_display_name() {
+        let (catalog, simplified) = with_official_models(official_gpt_rows(), || {
+            let catalog = json!({
+                "models": catalog_for(
+                    json!([
+                        // 精确命中和前缀命中的别名都用用户填的显示名（#9380）。
+                        { "model": "gpt-6-sol", "displayName": "My Sol" },
+                        { "model": "gpt-6-sol-special", "displayName": "gpt-6-sol" }
+                    ]),
+                    "",
+                    CodexCatalogToolProfile::NativeResponses,
+                )
+            });
+            let simplified = build_simplified_catalog_from_texts("", &catalog.to_string());
+            (catalog, simplified)
+        });
+        let models = catalog["models"].as_array().unwrap();
+        assert_eq!(models[0]["display_name"], "My Sol");
+        assert_eq!(models[1]["display_name"], "gpt-6-sol");
+        // 显示名不影响照搬官方的提示词。
+        assert_eq!(
+            models[1]["model_messages"]["instructions_template"],
+            "GPT-6 Sol prompt"
+        );
+        let rows = simplified.unwrap()["models"].as_array().unwrap().clone();
+        assert_eq!(
+            rows[0],
+            json!({ "model": "gpt-6-sol", "displayName": "My Sol" })
+        );
+        assert_eq!(
+            rows[1],
+            json!({ "model": "gpt-6-sol-special", "displayName": "gpt-6-sol" })
+        );
+    }
+
+    #[test]
+    fn renamed_mirror_is_told_apart_from_an_old_clone_by_description() {
+        let rows = official_gpt_rows();
+        let official = &rows[2];
+        let mut mirror = codex_official_mirror_baseline(official, "gpt-5.5");
+        mirror["description"] = json!("Official description");
+        let mut official = official.clone();
+        official["description"] = json!("Official description");
+        mirror["display_name"] = json!("My GPT");
+        assert!(is_codex_official_mirror(&mirror, "gpt-5.5", &official));
+        // 旧版克隆模板时 description 跟着显示名走。
+        let mut clone = mirror.clone();
+        clone["description"] = json!("My GPT");
+        assert!(!is_codex_official_mirror(&clone, "gpt-5.5", &official));
+    }
+
+    #[test]
     fn old_proxy_chat_clones_keep_their_user_values_on_round_trip() {
         // 旧版 ProxyChat 克隆 gpt-5.5 模板（带 model_messages），再叠用户填的值。
         let rows = official_gpt_rows();
         let settings = json!({ "modelCatalog": { "models": [
             { "model": "gpt-5.5", "displayName": "My GPT", "contextWindow": 200_000 },
-            { "model": "gpt-6-sol" }
+            { "model": "gpt-6-sol" },
+            // 窗口恰好等于官方默认、模态和并行也和官方一致：只有显示名能认出是旧克隆。
+            { "model": "gpt-6", "displayName": "Old Six", "contextWindow": 272_000 }
         ] } });
         let old = codex_model_catalog_from_specs(
             &codex_catalog_model_specs(&settings),
@@ -5621,6 +5817,8 @@ wire_api = "responses"
         // 克隆 gpt-5.5 的 gpt-6-sol 行：显示名、窗口都不是官方的，照旧还原，不当成镜像。
         assert_eq!(models[1]["model"], "gpt-6-sol");
         assert_ne!(models[1], json!({ "model": "gpt-6-sol" }));
+        assert_eq!(models[2]["displayName"], "Old Six");
+        assert_eq!(models[2]["contextWindow"], 272_000);
     }
 
     fn native_row(slug: &str, extra: Value) -> Value {

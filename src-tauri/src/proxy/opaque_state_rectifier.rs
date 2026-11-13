@@ -9,6 +9,9 @@
 //! 推理条目也可能不带密文、直接把思考原文放在 `content` 里（MiniMax），OpenAI 系上游同样不收，
 //! 按同一套规则去掉推理条目重发。
 //!
+//! Claude Code 转 Responses 也会回放上游的推理条目（藏在 thinking 签名里），同一套识别，
+//! 整流在 Anthropic Messages 上做（[`rectify_claude_responses_replay`]，#9424）。
+//!
 //! 主要认上游自证的错误（错误码或固定措辞，取自 opencodex 的实测）。唯一的例外是 Codex 的
 //! 原生 Responses 第三方：它们对不认识的压缩条目怎么报错没法枚举，请求里带着看不出来源的
 //! 压缩条目时，400 / 422 也重试一次，只换掉压缩条目。
@@ -22,6 +25,7 @@ use super::providers::codex_compaction::{
     compaction_item_replay_text, is_compaction_item, is_unrecognized_compaction_item,
     strip_mismatched_item_id, user_message_item,
 };
+use super::providers::reasoning_bridge::openai_reasoning_item_from_anthropic_block;
 use super::types::RectifierConfig;
 use serde_json::{json, Value};
 
@@ -352,6 +356,60 @@ pub fn rectify_opaque_state(
         + result.removed_foreign_ids
         > 0;
     result
+}
+
+/// Claude Code 走「API 格式 = Responses」时，请求体还是 Anthropic Messages：上游签发的
+/// 推理条目（`rs_…` id + 密文）藏在 thinking 签名里，转发时才还原进 `input`
+/// （`providers::reasoning_bridge`）；托管网页搜索的 `ws_…` id 留在 `server_tool_use` 上。
+/// 只有这两样带着上游签发的状态，消息和工具调用都是转换时新造的条目，不带 id。
+///
+/// [`rectify_opaque_state`] 的 Anthropic Messages 版本，供 Claude 转 Responses 的路径用：
+/// - 推理条目被拒（`reasoning`）：去掉所有能还原成推理条目的 thinking 块。和 Codex 一样
+///   整段去掉，同一段历史每次整流结果相同，重试之间的缓存前缀也稳定。普通 thinking 块
+///   （没有推理信封）转换时本来就不发，留着不动。
+/// - 条目属于别的 Azure 资源（`item_ids`）：托管网页搜索的调用和结果一起去掉，转换后的
+///   `web_search_call` 只能带着上游签发的 id 发出去，没法单独去 id。
+///
+/// 去掉后变空的消息整条去掉。
+pub fn rectify_claude_responses_replay(
+    body: &mut Value,
+    rejection: OpaqueStateRejection,
+) -> OpaqueStateRectifyResult {
+    let mut result = OpaqueStateRectifyResult::default();
+    let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
+        return result;
+    };
+
+    messages.retain_mut(|message| {
+        let Some(content) = message.get_mut("content").and_then(Value::as_array_mut) else {
+            return true;
+        };
+        let before = content.len();
+        content.retain(|block| {
+            if rejection.reasoning && is_responses_reasoning_block(block) {
+                result.removed_reasoning_items += 1;
+                return false;
+            }
+            if rejection.item_ids
+                && matches!(
+                    block.get("type").and_then(Value::as_str),
+                    Some("server_tool_use" | "web_search_tool_result")
+                )
+            {
+                result.removed_foreign_ids += 1;
+                return false;
+            }
+            true
+        });
+        !(before > 0 && content.is_empty())
+    });
+
+    result.applied = result.removed_reasoning_items + result.removed_foreign_ids > 0;
+    result
+}
+
+fn is_responses_reasoning_block(block: &Value) -> bool {
+    openai_reasoning_item_from_anthropic_block(block).is_some()
 }
 
 fn is_encrypted_part(part: &Value) -> bool {
@@ -863,6 +921,69 @@ mod tests {
         assert_eq!(input[2]["call_id"], "call_9");
         assert_eq!(input[2]["output"], "{\"id\":1}");
         assert_eq!(input[4]["id"], "msg_01a3");
+    }
+
+    /// Claude 转 Responses（#9424）：只去掉带推理信封的 thinking 块；普通 thinking 转换时
+    /// 本来就不发，留着。托管网页搜索只在条目属于别的资源时才去掉。
+    #[test]
+    fn claude_replay_drops_reasoning_envelopes_and_foreign_search_items() {
+        use crate::proxy::providers::reasoning_bridge::encode_openai_reasoning_item;
+        let envelope = encode_openai_reasoning_item(&json!({
+            "type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "gAAAA"
+        }))
+        .unwrap();
+        let body = json!({ "messages": [
+            { "role": "user", "content": "hi" },
+            { "role": "assistant", "content": [
+                { "type": "thinking", "thinking": "plain", "signature": "anthropic-sig" },
+                { "type": "thinking", "thinking": "", "signature": envelope },
+                { "type": "server_tool_use", "id": "ws_1", "name": "web_search", "input": {} },
+                { "type": "web_search_tool_result", "tool_use_id": "ws_1", "content": [] },
+                { "type": "tool_use", "id": "call_1", "name": "Read", "input": {} }
+            ] },
+            { "role": "assistant", "content": [{ "type": "redacted_thinking", "data": envelope }] },
+            { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "call_1", "content": "ok" }] }
+        ] });
+
+        let mut reasoning_only = body.clone();
+        let result = rectify_claude_responses_replay(&mut reasoning_only, REASONING_ONLY);
+        assert!(result.applied);
+        assert_eq!(result.removed_reasoning_items, 2);
+        assert_eq!(result.removed_foreign_ids, 0);
+        let messages = reasoning_only["messages"].as_array().unwrap();
+        // 只剩推理信封的那条 assistant 消息整条去掉。
+        assert_eq!(messages.len(), 3);
+        let blocks = messages[1]["content"].as_array().unwrap();
+        assert_eq!(blocks.len(), 4);
+        assert_eq!(blocks[0]["signature"], "anthropic-sig");
+        assert_eq!(blocks[1]["type"], "server_tool_use");
+
+        let mut azure = body.clone();
+        let result = rectify_claude_responses_replay(
+            &mut azure,
+            OpaqueStateRejection {
+                reasoning: true,
+                compaction: false,
+                item_ids: true,
+            },
+        );
+        assert_eq!(result.removed_reasoning_items, 2);
+        assert_eq!(result.removed_foreign_ids, 2);
+        let blocks = azure["messages"][1]["content"].as_array().unwrap();
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[1]["id"], "call_1");
+        assert_eq!(azure["messages"][0]["content"], "hi");
+
+        // 没有上游签发的状态：原样不动，不重试。
+        let mut plain = json!({ "messages": [
+            { "role": "assistant", "content": [
+                { "type": "thinking", "thinking": "plain", "signature": "anthropic-sig" },
+                { "type": "text", "text": "a" }
+            ] }
+        ] });
+        let before = plain.clone();
+        assert!(!rectify_claude_responses_replay(&mut plain, ALL_STATE).applied);
+        assert_eq!(plain, before);
     }
 
     #[test]

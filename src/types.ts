@@ -224,8 +224,8 @@ export interface ProviderMeta {
   impersonateClaudeCode?: boolean;
   // Codex → Anthropic path: override the Anthropic max_tokens (output ceiling).
   // Codex does not forward model_max_output_tokens in the request body; without
-  // this the path falls back to a conservative 8192 default, which can truncate
-  // long/thinking-heavy responses. When set (>0) it takes precedence over the
+  // this the path falls back to a 32000 default (DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS),
+  // which a low-ceiling gateway may reject. When set (>0) it takes precedence over the
   // request value and the default.
   maxOutputTokens?: number;
   // Custom User-Agent for local proxy routing. Only applied by the local proxy.
@@ -324,6 +324,8 @@ export interface VisibleApps {
   dsh?: boolean;
   agy: boolean;
   omp: boolean;
+  copilot: boolean;
+  workbuddy: boolean;
 }
 
 // WebDAV 同步状态
@@ -443,6 +445,8 @@ export interface Settings {
   usageDisplay?: UsageDisplaySettings;
   // 会话用量自动扫描开关（默认开启=自动模式；关闭后仅手动同步时扫描会话日志，代理记账不受影响）
   sessionAutoSyncEnabled?: boolean;
+  // 会话页搜索消息正文（默认关闭；开启后在本地建 session-index.db 索引，关闭时删除索引）
+  sessionContentSearchEnabled?: boolean;
   // Whether to show the failover toggle independently on the main page
   enableFailoverToggle?: boolean;
   // Whether to show the project profile switcher on the main page header
@@ -460,6 +464,8 @@ export interface Settings {
     fiveHourThreshold: number;
     weeklyThreshold: number;
   };
+  // 路由 / 聚合模式下暂停使用 Codex 官方登录（官方额度用完、发送键被锁时的应急开关；默认关）
+  codexProxyWithoutOfficialLogin?: boolean;
   // Run official Codex under the shared "custom" provider id so future
   // sessions share one resume-history bucket with third-party providers
   unifyCodexSessionHistory?: boolean;
@@ -488,7 +494,7 @@ export interface Settings {
   // User has confirmed the common config first-run notice
   commonConfigConfirmed?: boolean;
   // 首选语言（可选，默认中文）
-  language?: "en" | "zh" | "zh-TW" | "ja" | "tr";
+  language?: "en" | "zh" | "zh-TW" | "de" | "ja" | "tr" | "ko" | "ru";
   // 按档的额度百分比写剩余还是已用（默认剩余；余额、Credits 不受影响）
   quotaDisplay?: "left" | "used";
 
@@ -516,6 +522,8 @@ export interface Settings {
   piConfigDir?: string;
   // 覆盖 Oh My Pi agent 配置目录（可选）
   ompConfigDir?: string;
+  // 覆盖 DeepSeek Harness 主目录（相当于 DSH_HOME，可选）
+  dshConfigDir?: string;
 
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）
@@ -562,6 +570,43 @@ export interface Settings {
       migratedStateRows?: number;
     };
   };
+}
+
+/** 原文 UTF-16 坐标，左闭右开；不得切开代理对。 */
+export interface SessionTextRange {
+  start: number;
+  end: number;
+}
+
+/** 一条命中消息的摘录 */
+export interface SessionContentSnippet {
+  /** 摘录所在消息在会话里的序号 */
+  messageIndex: number;
+  /** 命中词附近的纯文本，空白已压缩 */
+  text: string;
+  /** 按完整消息匹配后映射到最终 text 的位置，避免截断改变上下文小写规则。 */
+  highlights: SessionTextRange[];
+}
+
+/** 会话正文搜索的命中（search_session_content）：最多 3 条摘录，第一条最相关 */
+export interface SessionContentHit {
+  providerId: string;
+  sourcePath: string;
+  snippets: SessionContentSnippet[];
+  /** 命中的消息条数 */
+  matchCount: number;
+}
+
+/** 正文索引的进度；running 为 false 且 processed === total 时索引已是最新 */
+export interface SessionIndexStatus {
+  running: boolean;
+  processed: number;
+  total: number;
+}
+
+export interface SessionContentSearchResult {
+  hits: SessionContentHit[];
+  status: SessionIndexStatus;
 }
 
 export interface SessionMeta {
@@ -803,7 +848,9 @@ export interface McpApps {
   mcode?: boolean;
   kimi?: boolean;
   dsh?: boolean;
+  workbuddy?: boolean;
   agy?: boolean;
+  copilot?: boolean;
   claude: boolean;
   "claude-desktop"?: boolean;
   codex: boolean;

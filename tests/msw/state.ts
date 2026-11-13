@@ -2,11 +2,16 @@ import type { AppId } from "@/lib/api/types";
 import type {
   McpServer,
   Provider,
+  SessionContentHit,
   SessionMessage,
   SessionMeta,
   Settings,
 } from "@/types";
 import { deepClone } from "@/utils/deepClone";
+import {
+  createHighlightedSnippet,
+  findTextMatches,
+} from "@/components/sessions/utils";
 
 type ProvidersByApp = Record<AppId, Record<string, Provider>>;
 type CurrentProviderState = Record<AppId, string>;
@@ -79,6 +84,8 @@ const createDefaultProviders = (): ProvidersByApp => ({
   dsh: {},
   agy: {},
   omp: {},
+  copilot: {},
+  workbuddy: {},
 });
 
 const createDefaultCurrent = (): CurrentProviderState => ({
@@ -96,6 +103,8 @@ const createDefaultCurrent = (): CurrentProviderState => ({
   dsh: "",
   agy: "",
   omp: "",
+  copilot: "",
+  workbuddy: "",
 });
 
 let providers = createDefaultProviders();
@@ -215,6 +224,8 @@ let mcpConfigs: McpConfigState = {
   dsh: {},
   agy: {},
   omp: {},
+  copilot: {},
+  workbuddy: {},
 };
 
 const cloneProviders = (value: ProvidersByApp) =>
@@ -242,6 +253,21 @@ export interface CustomIconFixture {
 }
 
 let customIconsState: CustomIconFixture[] = [];
+
+export interface WorkBuddyModelOwnerFixture {
+  id: string;
+  owner: string | null;
+}
+let workbuddyModelOwnersState: WorkBuddyModelOwnerFixture[] = [];
+
+export const getWorkBuddyModelOwners = () =>
+  deepClone(workbuddyModelOwnersState);
+
+export const setWorkBuddyModelOwners = (
+  owners: WorkBuddyModelOwnerFixture[],
+) => {
+  workbuddyModelOwnersState = deepClone(owners);
+};
 
 export const listCustomIcons = () => deepClone(customIconsState);
 
@@ -277,6 +303,7 @@ export const deleteCustomIcon = (id: string) => {
 export const resetProviderState = () => {
   pendingDeepLink = null;
   customIconsState = [];
+  workbuddyModelOwnersState = [];
   providers = createDefaultProviders();
   current = createDefaultCurrent();
   liveProviderIds = {
@@ -346,6 +373,8 @@ export const resetProviderState = () => {
     dsh: {},
     agy: {},
     omp: {},
+    copilot: {},
+    workbuddy: {},
   };
 };
 
@@ -487,6 +516,53 @@ export const getSessionMessages = (providerId: string, sourcePath: string) =>
   deepClone(
     sessionMessagesState[sessionMessageKey(providerId, sourcePath)] ?? [],
   ) as SessionMessage[];
+
+/** 模拟后端正文搜索：用户 / Agent 的 Text 块按子串（不区分大小写）匹配 */
+export const searchSessionContent = (
+  query: string,
+  providerIds?: string[],
+): SessionContentHit[] => {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [];
+  return sessionsState.flatMap((session) => {
+    if (providerIds && !providerIds.includes(session.providerId)) return [];
+    const messages =
+      sessionMessagesState[
+        sessionMessageKey(session.providerId, session.sourcePath ?? "")
+      ] ?? [];
+    const matched = messages
+      .map((message, index) => ({
+        index,
+        text:
+          message.injected ||
+          (message.role !== "user" && message.role !== "assistant")
+            ? ""
+            : message.blocks?.length
+              ? message.blocks
+                  .map((block) => (block.type === "text" ? block.text : ""))
+                  .join("\n")
+              : (message.content ?? ""),
+      }))
+      .filter(({ text }) => text.toLowerCase().includes(needle));
+    if (matched.length === 0) return [];
+    return [
+      {
+        providerId: session.providerId,
+        sourcePath: session.sourcePath ?? "",
+        snippets: matched.slice(0, 3).map(({ index, text }) => {
+          const source = text.trim();
+          return {
+            messageIndex: index,
+            ...createHighlightedSnippet(source, [
+              ...findTextMatches(source, query),
+            ]),
+          };
+        }),
+        matchCount: matched.length,
+      },
+    ];
+  });
+};
 
 export const deleteSession = (
   providerId: string,

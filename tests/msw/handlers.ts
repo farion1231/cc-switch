@@ -9,8 +9,10 @@ import {
   getLiveProviderIds,
   getSessionMessages,
   getProviders,
+  getWorkBuddyModelOwners,
   listProviders,
   listSessions,
+  searchSessionContent,
   resetProviderState,
   setCurrentProviderId,
   ackPendingDeepLink,
@@ -58,6 +60,10 @@ export const handlers = [
     const { app } = await withJson<{ app: AppId }>(request);
     return success(getProviders(app));
   }),
+
+  http.post(`${TAURI_ENDPOINT}/workbuddy_model_owners`, () =>
+    success(getWorkBuddyModelOwners()),
+  ),
 
   http.post(`${TAURI_ENDPOINT}/get_current_provider`, async ({ request }) => {
     const { app } = await withJson<{ app: AppId }>(request);
@@ -174,6 +180,25 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/open_external`, () => success(true)),
 
   http.post(`${TAURI_ENDPOINT}/list_sessions`, () => success(listSessions())),
+
+  http.post(`${TAURI_ENDPOINT}/sync_session_index`, () => {
+    const total = listSessions().length;
+    return success({ running: false, processed: total, total });
+  }),
+
+  http.post(`${TAURI_ENDPOINT}/search_session_content`, async ({ request }) => {
+    const { query, providerIds } = await withJson<{
+      query: string;
+      providerIds?: string[];
+    }>(request);
+    const total = listSessions().length;
+    return success({
+      hits: searchSessionContent(query, providerIds),
+      status: { running: false, processed: total, total },
+    });
+  }),
+
+  http.post(`${TAURI_ENDPOINT}/clear_session_index`, () => success(true)),
 
   http.post(`${TAURI_ENDPOINT}/get_session_messages`, async ({ request }) => {
     const { providerId, sourcePath } = await withJson<{

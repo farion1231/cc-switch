@@ -207,6 +207,8 @@ const MemoryTabPane: React.FC<MemoryTabPaneProps> = ({
           }
           placeholder={loaded ? t(meta.placeholderKey) : t("prompts.loading")}
           spellCheck={false}
+          autoCorrect="off"
+          autoCapitalize="off"
           className={cn(
             fieldClass,
             "min-h-[200px] flex-1 resize-none px-3.5 py-3 font-mono leading-[21px]",

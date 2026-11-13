@@ -105,6 +105,8 @@ const IMPORT_SOURCE_FILES: Record<
     noteKey: "mcpPage.import.dshNote",
   },
   kimi: { file: "~/.kimi-code/mcp.json" },
+  copilot: { file: "~/.copilot/mcp-config.json" },
+  workbuddy: { file: "~/.workbuddy/mcp.json" },
   mcode: { file: "~/.minimax/mcp.json" },
   omp: { file: "~/.omp/agent/mcp.json" },
 };
@@ -114,9 +116,11 @@ const WRITE_THEN_SAVE_APPS: ReadonlySet<McpAppId> = new Set([
   "mcode",
   "kimi",
   "dsh",
+  "workbuddy",
   "pi",
   "agy",
   "omp",
+  "copilot",
 ]);
 
 /** 写入失败：记下想要的状态，「重试」按这个值再写一次 */
@@ -906,11 +910,13 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                                     "h-2 w-2 shrink-0 rounded-full",
                                     connection === "connected"
                                       ? "bg-success"
-                                      : connection === "disconnected"
-                                        ? "bg-danger"
-                                        : connection === "checking"
-                                          ? "animate-pulse bg-fg-3"
-                                          : "bg-fg-3",
+                                      : connection === "authRequired"
+                                        ? "bg-warning"
+                                        : connection === "disconnected"
+                                          ? "bg-danger"
+                                          : connection === "checking"
+                                            ? "animate-pulse bg-fg-3"
+                                            : "bg-fg-3",
                                   )}
                                 />
                                 <span

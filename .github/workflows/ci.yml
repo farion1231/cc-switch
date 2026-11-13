@@ -11,9 +11,15 @@ on:
   workflow_dispatch:
 
 concurrency:
-  # 带上事件名：定时全量和 push 到 main 都在 refs/heads/main 上，别互相取消
-  group: ci-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
+  # PR：同一个 PR 连推几次只跑最新一次，旧的直接取消。
+  # main（push / 定时 / 手动）：每次运行单独一组、从不取消，发版要求 main 上每个提交都完整跑过。
+  # 不能让它们共用一个组再关掉 cancel：一个组只留一个排队中的运行，连推时中间的提交照样会被挤掉。
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # 测试失败时有文件名和行号就够了。完整调试信息让链接变慢（Windows 尤甚）、target 和缓存变大。
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   changes:
@@ -53,11 +59,12 @@ jobs:
               - "tailwind.config.cjs"
               - "postcss.config.cjs"
               - "components.json"
-              - ".github/workflows/**"
+              - "README*.md"
+              - ".github/workflows/ci.yml"
             backend:
               - "src-tauri/**"
               - "rust-toolchain.toml"
-              - ".github/workflows/**"
+              - ".github/workflows/ci.yml"
 
   frontend:
     name: Frontend Checks
@@ -70,30 +77,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      # 版本取 package.json 的 packageManager。先装 pnpm，setup-node 才能按 pnpm-lock 缓存 store。
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: "20"
-
-      - name: Setup pnpm
-        env:
-          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
-        run: |
-          corepack enable
-          corepack install
-          pnpm --version
-
-      - name: Get pnpm store directory
-        id: pnpm-store
-        shell: bash
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache pnpm store
-        uses: actions/cache@v5
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: ${{ runner.os }}-pnpm-store-
+          cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -104,17 +96,46 @@ jobs:
       - name: Check formatting
         run: pnpm format:check
 
-      - name: Unit tests
-        run: pnpm test:unit
-
       - name: Build frontend
         run: pnpm build:renderer
+
+  # 单元测试是前端最慢的一段：4 核上约 5 分钟，几乎全是每个文件起 jsdom、跑 setup 的 CPU。
+  # 按文件分到四台机器上跑。
+  frontend-tests:
+    name: Frontend Tests (${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      # 版本取 package.json 的 packageManager。先装 pnpm，setup-node 才能按 pnpm-lock 缓存 store。
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Unit tests
+        run: pnpm test:unit --shard=${{ matrix.shard }}/4
 
   backend:
     name: Backend Checks
     runs-on: ${{ matrix.os }}
     needs: changes
     if: needs.changes.outputs.backend == 'true'
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -136,7 +157,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
-          components: rustfmt, clippy
+          components: ${{ runner.os == 'Linux' && 'rustfmt, clippy' || 'clippy' }}
+
+      # 格式和系统无关，只在 Linux 上查一次；放在装依赖、恢复缓存之前，格式不对几秒就报错
+      - name: Check Rust formatting
+        if: runner.os == 'Linux'
+        run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
 
       - name: Install Linux system deps
         if: runner.os == 'Linux'
@@ -152,11 +178,14 @@ jobs:
 
       # 只缓存依赖：本仓库的 crate 每次都要重编，缓存它只会让缓存变大、恢复变慢。
       # key 自带 OS、rustc 版本和 Cargo.lock；shared-key 让 WSL2 job 能读到 Windows 这份。
+      # 只有 main 保存：PR 能读 main 的缓存，PR 自己存的别人读不到，三个系统一份 3 GB 多，
+      # 存下来只会把 main 的缓存挤出仓库 10 GB 的配额。
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: src-tauri -> target
           shared-key: backend
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
@@ -166,9 +195,6 @@ jobs:
       - name: Create frontend dist placeholder
         shell: bash
         run: mkdir -p dist
-
-      - name: Check Rust formatting
-        run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
 
       - name: Clippy
         run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings

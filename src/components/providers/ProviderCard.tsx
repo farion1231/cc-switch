@@ -6,7 +6,7 @@ import {
   ChevronUp,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, type QueryKey } from "@tanstack/react-query";
 import type {
   DraggableAttributes,
   DraggableSyntheticListeners,
@@ -19,6 +19,7 @@ import { ProviderIconBox } from "@/components/ProviderIconBox";
 import { HoverTip } from "@/components/ui/hover-tip";
 import UsageFooter from "@/components/UsageFooter";
 import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
+import CopilotCliQuotaFooter from "@/components/CopilotCliQuotaFooter";
 import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
 import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
 import XaiOauthQuotaFooter from "@/components/XaiOauthQuotaFooter";
@@ -26,13 +27,23 @@ import AgyAccountQuotaFooter from "@/components/AgyAccountQuotaFooter";
 import { ClaudeBoundAccountLine } from "@/components/providers/forms/ClaudeOfficialSection";
 import ClaudeAccountQuotaFooter from "@/components/ClaudeAccountQuotaFooter";
 import { claudePlanLabel } from "@/lib/claudePlan";
-import { useClaudeDefaultPlan } from "@/lib/query/subscription";
+import {
+  subscriptionKeys,
+  useClaudeDefaultPlan,
+} from "@/lib/query/subscription";
+import { useQuotaPlan } from "@/lib/query/accountPlans";
+import type { CopilotQuota } from "@/lib/query/copilot";
 import KimiAccountQuotaFooter from "@/components/KimiAccountQuotaFooter";
 import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import {
   extractCodexExperimentalBearerToken,
   extractProviderBaseUrl,
 } from "@/utils/providerConfigUtils";
+import {
+  copilotByokConfigOf,
+  copilotEnvOf,
+  isCopilotByok,
+} from "@/config/copilotConfig";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { isMac } from "@/lib/platform";
 import {
@@ -44,9 +55,18 @@ import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 import { resolveProviderIcon } from "@/utils/providerIcon";
 import { isProxyAppId } from "@/config/appConfig";
+import { isWorkBuddyOfficial } from "@/components/providers/workbuddyOfficial";
+import { WorkBuddyOfficialAccountLine } from "@/components/providers/WorkBuddyOfficialAccountLine";
+import { WorkBuddyQuotaFooter } from "@/components/providers/WorkBuddyQuotaFooter";
 import { ProviderCardActions } from "./ProviderCardActions";
-import { terminalAvailable, terminalIsIsolated } from "./OpenTerminalDialog";
+import {
+  terminalAvailable,
+  terminalIsIsolated,
+  terminalNeedsRoute,
+} from "./OpenTerminalDialog";
 import type { CardChip, CardPresentation, CardTone } from "./presentation";
+
+const copilotPlan = (data: unknown) => (data as CopilotQuota).plan;
 
 interface DragHandleProps {
   attributes: DraggableAttributes;
@@ -127,6 +147,7 @@ function isOfficialProvider(provider: Provider, appId: AppId): boolean {
   if (provider.category === "official") {
     return true;
   }
+  if (appId === "copilot") return !isCopilotByok(provider.settingsConfig);
 
   const config = provider.settingsConfig as Record<string, any>;
   if (appId === "claude") {
@@ -155,6 +176,22 @@ function isOfficialProvider(provider: Provider, appId: AppId): boolean {
     );
   }
   return false;
+}
+
+/** Copilot CLI 卡片显示模型（`COPILOT_MODEL`），自带模型卡再带上地址。 */
+function extractCopilotSummary(provider: Provider): string | null {
+  // 官方卡写的是 --model；自带模型卡写 providers.json 里的第一个模型（打开终端用它）和地址
+  if (!isCopilotByok(provider.settingsConfig)) {
+    return copilotEnvOf(provider.settingsConfig).COPILOT_MODEL?.trim() || null;
+  }
+  const { provider: node, models } = copilotByokConfigOf(
+    provider.settingsConfig,
+  );
+  const ids = models.map((model) => model.id.trim()).filter(Boolean);
+  const model = ids.length > 1 ? `${ids[0]} +${ids.length - 1}` : ids[0];
+  const baseUrl = node.baseUrl.trim();
+  if (model && baseUrl) return `${model} · ${baseUrl}`;
+  return model || baseUrl || null;
 }
 
 /** Antigravity 卡片直接显示当前模型，省得进编辑才知道。 */
@@ -197,6 +234,11 @@ export function ProviderCard({
 }: ProviderCardProps) {
   const { t } = useTranslation();
   const codexOfficialIdentity = resolveCodexOfficialIdentity(appId, provider);
+  const isBoundCodexOfficial = codexOfficialIdentity === "managed_account";
+  const isCodexOauth =
+    appId === "codex"
+      ? isBoundCodexOfficial
+      : provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
   const managedCodexAccountId = resolveManagedAccountId(
     provider.meta,
     "codex_oauth",
@@ -208,13 +250,13 @@ export function ProviderCard({
   } = useQuery({
     queryKey: ["managed-auth-status", "codex_oauth"],
     queryFn: () => authApi.authGetStatus("codex_oauth"),
-    enabled:
-      codexOfficialIdentity === "managed_account" &&
-      Boolean(managedCodexAccountId),
+    enabled: isCodexOauth,
     staleTime: 30_000,
   });
   const managedCodexAccount = codexAuthStatus?.accounts.find(
-    (account) => account.id === managedCodexAccountId,
+    (account) =>
+      account.id ===
+      (managedCodexAccountId ?? codexAuthStatus?.default_account_id),
   );
   const manualNote = provider.notes?.trim() || undefined;
   const providerNameIncludesAccountLogin = Boolean(
@@ -239,7 +281,12 @@ export function ProviderCard({
   }, [provider, fallbackUrlText]);
 
   const agyModel = useMemo(
-    () => (appId === "agy" ? extractAgyModel(provider) : null),
+    () =>
+      appId === "agy"
+        ? extractAgyModel(provider)
+        : appId === "copilot"
+          ? extractCopilotSummary(provider)
+          : null,
     [appId, provider],
   );
 
@@ -253,7 +300,6 @@ export function ProviderCard({
     return true;
   }, [provider.notes, displayUrl, fallbackUrlText]);
 
-  const isBoundCodexOfficial = codexOfficialIdentity === "managed_account";
   const isOfficial = isOfficialProvider(provider, appId);
   // Claude 官方卡绑了 Claude 官方账号：副标题写账号，额度按这个号查
   const claudeBoundAccountId =
@@ -290,13 +336,40 @@ export function ProviderCard({
       )
     : null;
 
+  // Copilot CLI 官方卡的 Premium 额度可在「配置用量查询」里开关；没设置过时，绑了授权中心
+  // 账号的卡默认显示，没绑的默认不显示（打开后跟着 Copilot CLI 当前登录的账号查）。
+  const isCopilotCliOfficial = appId === "copilot" && isOfficial;
+  const copilotCliQuotaEnabled =
+    isCopilotCliOfficial &&
+    (provider.meta?.usage_script?.enabled ??
+      Boolean(resolveManagedAccountId(provider.meta, "github_copilot")));
   const isCopilot =
-    provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
-    provider.meta?.usage_script?.templateType === "github_copilot";
-  const isCodexOauth =
-    appId === "codex"
-      ? isBoundCodexOfficial
-      : provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
+    appId !== "copilot" &&
+    (provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
+      provider.meta?.usage_script?.templateType === "github_copilot");
+  // Copilot 反代卡和 Codex OAuth 卡同一套写法：副标题（官网地址的位置）写绑定的
+  // GitHub 账号，未绑定时回落授权中心的默认账号；账号读不到就保留原来的网址。
+  const copilotAccountId = isCopilot
+    ? resolveManagedAccountId(
+        provider.meta,
+        PROVIDER_TYPES.GITHUB_COPILOT,
+      )?.trim() || undefined
+    : undefined;
+  const { data: copilotAuthStatus, isSuccess: isCopilotAuthStatusSuccess } =
+    useQuery({
+      queryKey: ["managed-auth-status", "github_copilot"],
+      queryFn: () => authApi.authGetStatus("github_copilot"),
+      enabled: isCopilot,
+      staleTime: 30_000,
+    });
+  const copilotAccount = copilotAuthStatus?.accounts.find(
+    (account) =>
+      account.id ===
+      (copilotAccountId ?? copilotAuthStatus?.default_account_id),
+  );
+  const providerNameIncludesCopilotLogin = Boolean(
+    copilotAccount?.login && provider.name.includes(copilotAccount.login),
+  );
   // xAI OAuth (SuperGrok 反代)：额度经自管 OAuth token 自动显示，与 codex_oauth 同构
   const isXaiOauth = provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH;
   // Antigravity 官方卡绑了授权中心的账号：额度查绑定的号（只有 macOS 能切号，其他平台忽略绑定）
@@ -304,6 +377,49 @@ export function ProviderCard({
     appId === "agy" && isOfficial && isMac()
       ? resolveManagedAccountId(provider.meta, "agy_oauth")?.trim() || null
       : null;
+  // 副标题末尾的套餐：读右边额度那个查询的缓存（键和各额度 footer 一致），额度查到才有。
+  // Claude 官方卡另有写法（claudeDefaultPlanLabel / ClaudeBoundAccountLine）
+  const quotaPlanKey: QueryKey | null = isCopilot
+    ? [
+        "copilot",
+        "quota",
+        resolveManagedAccountId(provider.meta, PROVIDER_TYPES.GITHUB_COPILOT) ??
+          "default",
+      ]
+    : isCodexOauth
+      ? !isBoundCodexOfficial || usageEnabled
+        ? [
+            "codex_oauth",
+            "quota",
+            resolveManagedAccountId(
+              provider.meta,
+              PROVIDER_TYPES.CODEX_OAUTH,
+            ) ?? "default",
+          ]
+        : null
+      : isXaiOauth
+        ? [
+            "xai_oauth",
+            "quota",
+            resolveManagedAccountId(provider.meta, PROVIDER_TYPES.XAI_OAUTH) ??
+              "default",
+          ]
+        : appId === "kimi" && isOfficial
+          ? ["kimi_oauth", "quota", provider.id]
+          : isOfficial && officialSubscriptionEnabled && appId !== "claude"
+            ? agyBoundAccountId
+              ? ["agy_oauth", "quota", agyBoundAccountId]
+              : subscriptionKeys.quota(appId)
+            : null;
+  const quotaPlan = useQuotaPlan(
+    quotaPlanKey,
+    isCopilot ? copilotPlan : undefined,
+  );
+  const subtitlePlan = claudeDefaultPlanLabel ?? quotaPlan;
+  const planSuffix = (className = "-ms-1") =>
+    subtitlePlan ? (
+      <span className={cn("shrink-0", className)}>· {subtitlePlan}</span>
+    ) : null;
   // 获取用量数据以判断是否有多套餐，按用户配置刷新，不依赖供应商启用状态。
   const autoQueryInterval = provider.meta?.usage_script?.autoQueryInterval ?? 0;
 
@@ -353,7 +469,7 @@ export function ProviderCard({
         dragHandleProps?.isDragging && "cursor-grabbing shadow-v7-md",
       )}
     >
-      <div className="flex min-h-[58px] items-center gap-3 py-2.5 pe-3 ps-2">
+      <div className="flex min-h-card items-center gap-3 py-card-y pe-3 ps-2">
         {dragHandleProps ? (
           <button
             type="button"
@@ -376,12 +492,12 @@ export function ProviderCard({
           name={provider.name}
           color={provider.iconColor}
           className={cn(
-            // 底色固定为白，图标颜色也要固定：单色（currentColor）图标和首字母
-            // fallback 不能继承深色模式下的浅色文字
-            "bg-white text-neutral-900",
+            // 不再垫白底：单色 / 近黑笔画的图标跟随文字色（ProviderIcon 里换成 currentColor），
+            // 自带底色的 tile 图标铺满整框
+            "bg-transparent text-fg-1",
             presentation.dim && "opacity-60",
           )}
-          fallbackClassName="bg-transparent text-neutral-600"
+          fallbackClassName="bg-transparent text-fg-2"
         />
 
         <div className="min-w-0 flex-1">
@@ -406,15 +522,20 @@ export function ProviderCard({
             )}
           </div>
 
-          {codexOfficialIdentity && codexOfficialIdentity !== "api_key" ? (
+          {appId === "workbuddy" && isWorkBuddyOfficial(provider) ? (
+            <WorkBuddyOfficialAccountLine provider={provider} onEdit={onEdit} />
+          ) : codexOfficialIdentity === "native_login" || isCodexOauth ? (
             <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
               {codexOfficialIdentity === "native_login" ? (
-                <span className="min-w-0 truncate" title={manualNote}>
-                  {manualNote ??
-                    t("codex.followCodexLoginDescription", {
-                      defaultValue: "账号会随 Codex CLI 当前登录变化",
-                    })}
-                </span>
+                <>
+                  <span className="min-w-0 truncate" title={manualNote}>
+                    {manualNote ??
+                      t("codex.followCodexLoginDescription", {
+                        defaultValue: "账号会随 Codex CLI 当前登录变化",
+                      })}
+                  </span>
+                  {planSuffix()}
+                </>
               ) : managedCodexAccount ? (
                 <>
                   <span
@@ -428,6 +549,7 @@ export function ProviderCard({
                           })
                         : managedCodexAccount.login)}
                   </span>
+                  {planSuffix()}
                   {managedCodexAccount.reauth_required && (
                     <span className="inline-flex shrink-0 items-center gap-1 text-warning-text">
                       <AlertTriangle className="h-3.5 w-3.5" />
@@ -484,8 +606,33 @@ export function ProviderCard({
               <span className="min-w-0 truncate" title={agyModel}>
                 {agyModel}
               </span>
+              {planSuffix("-ms-0.5")}
             </div>
-          ) : displayUrl && claudeDefaultPlanLabel ? (
+          ) : isCopilot && copilotAccount ? (
+            <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
+              <span
+                className="min-w-0 truncate"
+                title={manualNote ?? copilotAccount.login}
+              >
+                {manualNote ??
+                  (providerNameIncludesCopilotLogin
+                    ? t("copilot.githubAccount", {
+                        defaultValue: "GitHub 账号",
+                      })
+                    : copilotAccount.login)}
+              </span>
+              {planSuffix()}
+            </div>
+          ) : isCopilot && copilotAccountId && isCopilotAuthStatusSuccess ? (
+            <div className="mt-0.5 flex min-w-0 items-center gap-1 text-caption text-warning-text">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              <span className="min-w-0 truncate">
+                {t("copilot.statusUnavailable", {
+                  defaultValue: "状态不可用",
+                })}
+              </span>
+            </div>
+          ) : displayUrl && subtitlePlan ? (
             <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
               <button
                 type="button"
@@ -501,7 +648,7 @@ export function ProviderCard({
               >
                 <span className="min-w-0 truncate">{displayUrl}</span>
               </button>
-              <span className="-ms-1 shrink-0">· {claudeDefaultPlanLabel}</span>
+              {planSuffix()}
             </div>
           ) : displayUrl ? (
             <button
@@ -525,7 +672,12 @@ export function ProviderCard({
           {/* 额度列 136 宽，带重置倒计时时 194 宽（见 QuotaLines） */}
           <div className="max-w-[208px] text-end">
             <div className="flex items-center justify-end gap-1">
-              {isCopilot ? (
+              {copilotCliQuotaEnabled ? (
+                <CopilotCliQuotaFooter
+                  meta={provider.meta}
+                  isCurrent={isCurrent}
+                />
+              ) : isCopilot ? (
                 <CopilotQuotaFooter
                   meta={provider.meta}
                   inline={true}
@@ -550,6 +702,9 @@ export function ProviderCard({
                   inline={true}
                   isCurrent={isCurrent}
                 />
+              ) : appId === "workbuddy" && isWorkBuddyOfficial(provider) ? (
+                // 官方登录卡的额度按卡上绑定的账号查（只有 WorkBuddy 运行时当前账号能刷新）
+                <WorkBuddyQuotaFooter provider={provider} />
               ) : appId === "kimi" && isOfficial ? (
                 // 每张 Kimi 官方卡就是授权中心里的一个账号，额度按卡上那个号查
                 <KimiAccountQuotaFooter
@@ -645,7 +800,9 @@ export function ProviderCard({
             }
             isTesting={isTesting}
             onConfigureUsage={
-              (isOfficial && !supportsOfficialSubscription) ||
+              (isOfficial &&
+                !supportsOfficialSubscription &&
+                !isCopilotCliOfficial) ||
               isCopilot ||
               (isCodexOauth && !isBoundCodexOfficial) ||
               isXaiOauth
@@ -658,6 +815,16 @@ export function ProviderCard({
                 : undefined
             }
             openTerminalIsolated={terminalIsIsolated(provider, appId)}
+            openTerminalDisabledReason={
+              terminalNeedsRoute(provider, appId)
+                ? t("provider.openTerminalNeedsRoute")
+                : // Copilot 自带模型卡要先写进 providers.json，终端才能用 --model 选到它
+                  appId === "copilot" &&
+                    !isOfficial &&
+                    provider.meta?.liveConfigManaged !== true
+                  ? t("copilot.terminalNeedsAdd")
+                  : undefined
+            }
           />
         </div>
       </div>
