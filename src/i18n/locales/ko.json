@@ -5382,5 +5382,23 @@
       "editDisabled": "DeepSeek Harness가 이 계정으로 사용할 수 있는 모델을 자동으로 제공하므로 편집할 필요가 없습니다.",
       "managedHint": "이 계정은 인증 센터에서 관리합니다. 로그아웃하면 이 카드가 사라집니다."
     }
+  },
+  "customApps": {
+    "title": "사용자 지정 앱",
+    "addApp": "사용자 지정 앱 추가",
+    "appName": "앱 이름",
+    "endpoint": "로컬 API 기본 URL",
+    "token": "클라이언트 토큰 (지금 복사)",
+    "replaceToken": "새 토큰 생성",
+    "confirmReplaceToken": "새 토큰을 생성하면 현재 토큰이 무효화됩니다. 계속하시겠습니까?",
+    "startProxy": "로컬 라우팅 시작",
+    "loopbackRequired": "사용자 지정 앱에는 루프백 주소가 필요합니다. 로컬 라우팅 설정에서 주소를 변경하세요.",
+    "providerName": "공급자 이름",
+    "baseUrl": "공급자 API 기본 URL",
+    "model": "모델 ID",
+    "apiKey": "API 키 (선택 사항)",
+    "addProvider": "공급자 추가",
+    "inUse": "사용 중",
+    "switch": "전환"
   }
 }

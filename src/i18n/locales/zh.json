@@ -5382,5 +5382,23 @@
       "managedHint": "账号在授权中心管理：退出登录后这张卡会自动消失。"
     },
     "deleteSessionHint": "请在 DeepSeek Harness 中删除此会话，以保持原生历史记录一致。"
+  },
+  "customApps": {
+    "title": "自定义应用",
+    "addApp": "添加自定义应用",
+    "appName": "应用名称",
+    "endpoint": "本地 API 基础地址",
+    "token": "客户端令牌（请立即复制）",
+    "replaceToken": "生成新令牌",
+    "confirmReplaceToken": "生成新令牌会使当前令牌失效。是否继续？",
+    "startProxy": "启动本地路由",
+    "loopbackRequired": "自定义应用需要回环监听地址。请在本地路由设置中修改地址。",
+    "providerName": "供应商名称",
+    "baseUrl": "供应商 API 基础地址",
+    "model": "模型 ID",
+    "apiKey": "API 密钥（可选）",
+    "addProvider": "添加供应商",
+    "inUse": "使用中",
+    "switch": "切换"
   }
 }

@@ -5382,5 +5382,23 @@
       "managedHint": "Dieses Konto wird in der Kontoverwaltung verwaltet; die Karte verschwindet nach der Abmeldung."
     },
     "deleteSessionHint": "Löschen Sie diese Sitzung in DeepSeek Harness, damit der Verlauf konsistent bleibt."
+  },
+  "customApps": {
+    "title": "Benutzerdefinierte Apps",
+    "addApp": "Eigene App hinzufügen",
+    "appName": "App-Name",
+    "endpoint": "Lokale API-Basis-URL",
+    "token": "Client-Token (jetzt kopieren)",
+    "replaceToken": "Neues Token erzeugen",
+    "confirmReplaceToken": "Ein neues Token macht das aktuelle ungültig. Fortfahren?",
+    "startProxy": "Lokales Routing starten",
+    "loopbackRequired": "Eigene Apps benötigen eine Loopback-Adresse. Ändern Sie die Adresse in den Einstellungen für lokales Routing.",
+    "providerName": "Anbietername",
+    "baseUrl": "API-Basis-URL des Anbieters",
+    "model": "Modell-ID",
+    "apiKey": "API-Schlüssel (optional)",
+    "addProvider": "Anbieter hinzufügen",
+    "inUse": "Aktiv",
+    "switch": "Wechseln"
   }
 }

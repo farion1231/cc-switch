@@ -56,6 +56,40 @@ impl Database {
         Ok(())
     }
 
+    pub(crate) fn update_json_setting<T>(
+        &self,
+        key: &str,
+        update: impl FnOnce(&mut T) -> Result<(), AppError>,
+    ) -> Result<(), AppError>
+    where
+        T: serde::de::DeserializeOwned + serde::Serialize + Default,
+    {
+        use rusqlite::OptionalExtension;
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let raw: Option<String> = tx
+            .query_row("SELECT value FROM settings WHERE key = ?1", [key], |row| {
+                row.get(0)
+            })
+            .optional()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let mut value = raw
+            .map(|json| serde_json::from_str(&json))
+            .transpose()
+            .map_err(|e| AppError::Config(e.to_string()))?
+            .unwrap_or_default();
+        update(&mut value)?;
+        let json = crate::database::to_json_string(&value)?;
+        tx.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
+            params![key, json],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))
+    }
+
     // --- 通用配置片段 (Common Config Snippet) ---
 
     /// 获取通用配置片段

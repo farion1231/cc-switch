@@ -5382,5 +5382,23 @@
       "managedHint": "This account is managed in the Auth Center; the card disappears after you sign out."
     },
     "deleteSessionHint": "Delete this session in DeepSeek Harness to keep its history consistent."
+  },
+  "customApps": {
+    "title": "Custom apps",
+    "addApp": "Add custom app",
+    "appName": "App name",
+    "endpoint": "Local API base URL",
+    "token": "Client token (copy now)",
+    "replaceToken": "Generate new token",
+    "confirmReplaceToken": "Generating a new token will invalidate the current one. Continue?",
+    "startProxy": "Start local routing",
+    "loopbackRequired": "Custom apps need a loopback listener. Change the address in Local routing settings.",
+    "providerName": "Provider name",
+    "baseUrl": "Provider API base URL",
+    "model": "Model ID",
+    "apiKey": "API key (optional)",
+    "addProvider": "Add provider",
+    "inUse": "In use",
+    "switch": "Switch"
   }
 }

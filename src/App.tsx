@@ -1,3 +1,4 @@
+import { CustomAppsPage } from "@/components/custom-apps/CustomAppsPage";
 import {
   lazy,
   Suspense,
@@ -231,6 +232,7 @@ function App() {
   const { hasUpdate } = useUpdate();
 
   const [activeApp, setActiveApp] = useState<AppId>(getInitialApp);
+  const [customAppId, setCustomAppId] = useState<string | null>(null);
   const sharedFeatureApp = sharedFeatureAppOf(activeApp);
   const [currentView, setCurrentView] = useState<View>(readStoredView);
   const [settingsSection, setSettingsSection] =
@@ -1013,6 +1015,14 @@ function App() {
     };
     if (managementBusyRef.current || !confirmLeave(navigate)) navigate();
   });
+
+  const openCustomApp = (id: string | null) => {
+    if (managementBusyRef.current) return;
+    if (confirmLeave(() => openCustomApp(id))) return;
+    closeProviderPanels();
+    setCustomAppId(id);
+    setCurrentView("customApps");
+  };
 
   // 侧栏、⌘K 进用量统计看全部应用；只有应用页 ⋯ 进来时带应用筛选
   const openPageFromNav = (page: GlobalPage | "settings") => {
@@ -1891,7 +1901,11 @@ function App() {
           />
         );
       case "apps":
-        return <AppsPage />;
+        return <AppsPage onAddCustomApp={() => openCustomApp(null)} />;
+      case "customApps":
+        return (
+          <CustomAppsPage appId={customAppId} onSelectApp={setCustomAppId} />
+        );
       default:
         return null;
     }
@@ -1918,6 +1932,8 @@ function App() {
     >
       <div className="flex h-screen overflow-hidden bg-app text-fg-1 selection:bg-action/25">
         <Sidebar
+          customAppId={customAppId}
+          onSelectCustomApp={openCustomApp}
           activeApp={activeApp}
           view={currentView}
           visibleApps={visibleApps}
