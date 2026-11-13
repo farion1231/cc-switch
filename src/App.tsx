@@ -1209,6 +1209,10 @@ function App() {
   };
 
   const handleDuplicateProvider = async (provider: Provider) => {
+    // CodeBuddy's provider key is the model id sent upstream and is locked in
+    // the editor, so a "-copy" key would be an unusable model. Cards hide the
+    // action; this guards any other caller.
+    if (activeApp === "codebuddy") return;
     if (
       activeApp === "opencode" &&
       provider.category !== "omo" &&
@@ -1312,8 +1316,7 @@ function App() {
     } else if (
       activeApp === "mcode" ||
       activeApp === "dsh" ||
-      activeApp === "kimi" ||
-      activeApp === "codebuddy"
+      activeApp === "kimi"
     ) {
       // The MCode list already includes its live custom nodes; the backend
       // rejects a key that MCode itself owns.

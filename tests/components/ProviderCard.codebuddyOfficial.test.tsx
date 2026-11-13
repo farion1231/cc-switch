@@ -10,7 +10,10 @@ import { createTestQueryClient } from "../utils/testQueryClient";
 const quotaFooter = vi.hoisted(() => vi.fn());
 
 vi.mock("@/components/providers/ProviderCardActions", () => ({
-  ProviderCardActions: () => null,
+  ProviderCardActions: (props: { onDuplicate?: () => void }) =>
+    props.onDuplicate ? (
+      <button onClick={props.onDuplicate}>duplicate-provider</button>
+    ) : null,
 }));
 vi.mock("@/components/ProviderIcon", () => ({ ProviderIcon: () => null }));
 vi.mock("@/components/UsageFooter", () => ({ default: () => null }));
@@ -59,7 +62,11 @@ const status: ManagedAuthStatus = {
   ],
 };
 
-function renderCard(provider: Provider, onEdit = vi.fn()) {
+function renderCard(
+  provider: Provider,
+  onEdit = vi.fn(),
+  onDuplicate?: (provider: Provider) => void,
+) {
   const queryClient = createTestQueryClient();
   queryClient.setQueryData(["managed-auth-status", "codebuddy_oauth"], status);
   return render(
@@ -73,6 +80,7 @@ function renderCard(provider: Provider, onEdit = vi.fn()) {
         onDelete={vi.fn()}
         onConfigureUsage={vi.fn()}
         onOpenWebsite={vi.fn()}
+        onDuplicate={onDuplicate}
       />
     </QueryClientProvider>,
   );
@@ -96,5 +104,35 @@ describe("ProviderCard CodeBuddy official sign-in", () => {
     expect(screen.queryByText("codebuddy-quota")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "选择账号" }));
     expect(onEdit).toHaveBeenCalledWith(provider);
+  });
+
+  // The card ID is the models.json model id; a "-copy" key would be an
+  // upstream model that does not exist and could not be renamed afterwards.
+  it("does not offer Duplicate on official sign-in or model cards", () => {
+    const onDuplicate = vi.fn();
+    const { unmount } = renderCard(
+      card("1@www.codebuddy.cn"),
+      vi.fn(),
+      onDuplicate,
+    );
+    expect(
+      screen.queryByRole("button", { name: "duplicate-provider" }),
+    ).not.toBeInTheDocument();
+    unmount();
+
+    renderCard(
+      {
+        id: "glm-4.6",
+        name: "GLM 4.6",
+        category: "custom",
+        settingsConfig: { id: "glm-4.6", url: "https://example.com" },
+      },
+      vi.fn(),
+      onDuplicate,
+    );
+    expect(
+      screen.queryByRole("button", { name: "duplicate-provider" }),
+    ).not.toBeInTheDocument();
+    expect(onDuplicate).not.toHaveBeenCalled();
   });
 });

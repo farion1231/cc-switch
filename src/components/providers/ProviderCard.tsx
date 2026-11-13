@@ -887,7 +887,11 @@ export function ProviderCard({
             onEdit={() => onEdit(provider)}
             onDelete={() => onDelete(provider)}
             onDuplicate={
-              onDuplicate && !(appId === "kimi" && isOfficial)
+              // CodeBuddy 的卡片 ID 就是 models.json 里的模型 id（发给上游的模型名），副本只能换一个
+              // 不存在的 id 且编辑时改不了；官方登录卡另建即可，所以 CodeBuddy 不提供复制
+              onDuplicate &&
+              !(appId === "kimi" && isOfficial) &&
+              appId !== "codebuddy"
                 ? () => onDuplicate(provider)
                 : undefined
             }
