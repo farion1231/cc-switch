@@ -133,9 +133,9 @@ describe("Kimi official account login", () => {
       currentAccountId: account.id,
       primaryHidden: false,
     });
-    expect(screen.getByText("kimi.oauth.current")).toBeInTheDocument();
+    expect(screen.getByText("Kimi 在用")).toBeInTheDocument();
     await openMenu(second.name);
-    fireEvent.click(menuItem("kimi.oauth.useAccount"));
+    fireEvent.click(menuItem("切换 Kimi 到这个账号"));
     await flush();
     expect(kimiOAuthApi.useAccount).toHaveBeenCalledWith(second.id);
     await openMenu(second.name);
@@ -319,7 +319,7 @@ describe("Kimi official account login", () => {
     await openMenu(account.name);
     // 正在用的号菜单里没有「使用此账号」，删除项置灰并说明原因
     expect(
-      screen.queryByRole("menuitem", { name: "kimi.oauth.useAccount" }),
+      screen.queryByRole("menuitem", { name: "切换 Kimi 到这个账号" }),
     ).not.toBeInTheDocument();
     expect(menuItem(/kimi\.oauth\.removeAccount/)).toHaveAttribute(
       "aria-disabled",

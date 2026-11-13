@@ -107,6 +107,7 @@ const IMPORT_SOURCE_FILES: Record<
   kimi: { file: "~/.kimi-code/mcp.json" },
   cline: { file: "~/.cline/data/settings/cline_mcp_settings.json" },
   copilot: { file: "~/.copilot/mcp-config.json" },
+  workbuddy: { file: "~/.workbuddy/mcp.json" },
   mcode: { file: "~/.minimax/mcp.json" },
   omp: { file: "~/.omp/agent/mcp.json" },
 };
@@ -117,6 +118,7 @@ const WRITE_THEN_SAVE_APPS: ReadonlySet<McpAppId> = new Set([
   "kimi",
   "cline",
   "dsh",
+  "workbuddy",
   "pi",
   "agy",
   "omp",

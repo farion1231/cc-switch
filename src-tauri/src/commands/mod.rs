@@ -42,6 +42,7 @@ mod lightweight;
 mod s3_sync;
 mod usage;
 mod webdav_sync;
+mod workbuddy_account;
 mod workspace;
 
 #[cfg(test)]
@@ -90,6 +91,7 @@ pub use lightweight::*;
 pub use s3_sync::*;
 pub use usage::*;
 pub use webdav_sync::*;
+pub use workbuddy_account::*;
 pub use workspace::*;
 
 /// 同步命令在 Tauri 2 里跑在主线程上：要等数据库连接锁（或等切换锁，切换时要拿库）的

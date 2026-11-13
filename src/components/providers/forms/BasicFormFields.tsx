@@ -14,7 +14,7 @@ import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { ProviderIconBox } from "@/components/ProviderIconBox";
 import { IconPicker } from "@/components/IconPicker";
 import { getIconMetadata } from "@/icons/extracted/metadata";
-import type { UseFormReturn } from "react-hook-form";
+import { useWatch, type UseFormReturn } from "react-hook-form";
 import type { ProviderFormData } from "@/lib/schemas/provider";
 
 /**
@@ -36,9 +36,12 @@ export function BasicFormFields({
   const { t } = useTranslation();
   const [iconDialogOpen, setIconDialogOpen] = useState(false);
 
-  const currentIcon = form.watch("icon");
-  const currentIconColor = form.watch("iconColor");
-  const providerName = form.watch("name") || "Provider";
+  // useWatch 只让这里重渲染；form.watch 会让整张表单（ProviderForm）跟着每次按键重渲染
+  const [currentIcon, currentIconColor, watchedName] = useWatch({
+    control: form.control,
+    name: ["icon", "iconColor", "name"],
+  });
+  const providerName = watchedName || "Provider";
   const effectiveIconColor =
     currentIconColor ||
     (currentIcon ? getIconMetadata(currentIcon)?.defaultColor : undefined);
@@ -89,7 +92,7 @@ export function BasicFormFields({
           value={currentIcon}
           onValueChange={handleIconSelect}
           color={effectiveIconColor}
-          defaultName={form.watch("name") ?? ""}
+          defaultName={watchedName ?? ""}
         />
       </FullScreenPanel>
     </>

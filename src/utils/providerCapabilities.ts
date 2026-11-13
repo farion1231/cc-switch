@@ -138,7 +138,8 @@ export function supportsConnectivityCheck(
     appId === "mcode" ||
     appId === "dsh" ||
     appId === "kimi" ||
-    appId === "cline"
+    appId === "cline" ||
+    appId === "workbuddy"
   )
     return false;
   return (

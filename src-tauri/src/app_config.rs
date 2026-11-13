@@ -16,6 +16,8 @@ pub struct McpApps {
     #[serde(default)]
     pub dsh: bool,
     #[serde(default)]
+    pub workbuddy: bool,
+    #[serde(default)]
     pub agy: bool,
     #[serde(default)]
     pub copilot: bool,
@@ -57,6 +59,7 @@ impl McpApps {
             AppType::ClaudeDesktop => false,
             AppType::Agy => self.agy,
             AppType::Copilot => self.copilot,
+            AppType::WorkBuddy => self.workbuddy,
         }
     }
 
@@ -79,6 +82,7 @@ impl McpApps {
             AppType::Agy => self.agy = enabled,
             AppType::Omp => self.omp = enabled,
             AppType::Copilot => self.copilot = enabled,
+            AppType::WorkBuddy => self.workbuddy = enabled,
         }
     }
 
@@ -115,6 +119,9 @@ impl McpApps {
         if self.cline {
             apps.push(AppType::Cline);
         }
+        if self.workbuddy {
+            apps.push(AppType::WorkBuddy);
+        }
         if self.mcode {
             apps.push(AppType::Mcode);
         }
@@ -143,6 +150,7 @@ impl McpApps {
             && !self.kimi
             && !self.cline
             && !self.dsh
+            && !self.workbuddy
             && !self.mcode
             && !self.pi
             && !self.omp
@@ -160,6 +168,8 @@ pub struct SkillApps {
     pub cline: bool,
     #[serde(default)]
     pub dsh: bool,
+    #[serde(default)]
+    pub workbuddy: bool,
     #[serde(default)]
     pub agy: bool,
     #[serde(default)]
@@ -202,6 +212,7 @@ impl SkillApps {
             AppType::Omp => self.omp,
             AppType::Copilot => self.copilot,
             AppType::ClaudeDesktop => false,
+            AppType::WorkBuddy => self.workbuddy,
         }
     }
 
@@ -224,6 +235,7 @@ impl SkillApps {
             AppType::Omp => self.omp = enabled,
             AppType::Copilot => self.copilot = enabled,
             AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
+            AppType::WorkBuddy => self.workbuddy = enabled,
         }
     }
 
@@ -260,6 +272,9 @@ impl SkillApps {
         if self.cline {
             apps.push(AppType::Cline);
         }
+        if self.workbuddy {
+            apps.push(AppType::WorkBuddy);
+        }
         if self.mcode {
             apps.push(AppType::Mcode);
         }
@@ -288,6 +303,7 @@ impl SkillApps {
             && !self.kimi
             && !self.cline
             && !self.dsh
+            && !self.workbuddy
             && !self.mcode
             && !self.pi
             && !self.omp
@@ -517,6 +533,8 @@ pub enum AppType {
     Cline,
     Omp,
     Copilot,
+    #[serde(rename = "workbuddy", alias = "work-buddy")]
+    WorkBuddy,
 }
 
 impl AppType {
@@ -538,6 +556,7 @@ impl AppType {
             AppType::Cline => "cline",
             AppType::Omp => "omp",
             AppType::Copilot => "copilot",
+            AppType::WorkBuddy => "workbuddy",
         }
     }
 
@@ -563,6 +582,7 @@ impl AppType {
                 | AppType::Dsh
                 | AppType::Omp
                 | AppType::Copilot
+                | AppType::WorkBuddy
         )
     }
 
@@ -599,6 +619,7 @@ impl AppType {
             AppType::Cline,
             AppType::Omp,
             AppType::Copilot,
+            AppType::WorkBuddy,
         ]
         .into_iter()
     }
@@ -628,10 +649,11 @@ impl FromStr for AppType {
             "copilot" | "copilot-cli" | "github-copilot" | "github-copilot-cli" => {
                 Ok(AppType::Copilot)
             }
+            "workbuddy" | "work-buddy" | "work_buddy" => Ok(AppType::WorkBuddy),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, cline, omp, copilot。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, cline, omp, copilot."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, cline, omp, copilot, workbuddy。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, cline, omp, copilot, workbuddy."),
             )),
         }
     }
@@ -678,7 +700,8 @@ impl CommonConfigSnippets {
             | AppType::Cline
             | AppType::Dsh
             | AppType::Omp
-            | AppType::Copilot => None,
+            | AppType::Copilot
+            | AppType::WorkBuddy => None,
         }
     }
 
@@ -700,7 +723,8 @@ impl CommonConfigSnippets {
             | AppType::Cline
             | AppType::Dsh
             | AppType::Omp
-            | AppType::Copilot => {}
+            | AppType::Copilot
+            | AppType::WorkBuddy => {}
         }
     }
 }
@@ -1035,7 +1059,8 @@ impl MultiAppConfig {
             | AppType::Cline
             | AppType::Dsh
             | AppType::Omp
-            | AppType::Copilot => return Ok(false),
+            | AppType::Copilot
+            | AppType::WorkBuddy => return Ok(false),
         };
 
         prompts.insert(id, prompt);
@@ -1086,7 +1111,8 @@ impl MultiAppConfig {
                 | AppType::Cline
                 | AppType::Dsh
                 | AppType::Omp
-                | AppType::Copilot => continue, // Pi didn't exist in v3.6.x, skip
+                | AppType::Copilot
+                | AppType::WorkBuddy => continue, // Pi didn't exist in v3.6.x, skip
             };
 
             for (id, entry) in old_servers {

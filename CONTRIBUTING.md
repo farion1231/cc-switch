@@ -113,7 +113,7 @@ Backend (Tauri 2 + Rust)
 
 - **SSOT** (single source of truth): providers, MCP, prompts, Skills, projects, usage, and other data are all stored in `~/.cc-switch/cc-switch.db` (SQLite)
 - **Device-level settings**: settings that belong to this machine only, such as directory overrides and backup policy, are stored in `~/.cc-switch/settings.json` and are not cloud-synced
-- **Two write modes**: for switch-mode tools (Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build), switching first backfills the current live config into the current provider (except for Claude Desktop), then writes the new provider; for coexist-mode tools (OpenCode, OpenClaw, Hermes, Pi, MiniMax Code), all providers coexist in a single live file and nothing is backfilled
+- **Two write modes**: for switch-mode tools (Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build), direct switching updates provider-owned fields in the live config while preserving unrelated settings, without backfilling the previous live config into the previous provider; for coexist-mode tools (OpenCode, OpenClaw, Hermes, Pi, MiniMax Code), all providers coexist in a single live file and nothing is backfilled
 - **Atomic writes**: all live configs are written via "temp file + rename" to avoid corruption
 - **Concurrency safety**: the database connection is protected by a Mutex to avoid race conditions
 - **Layered architecture**: Commands (parameter validation and forwarding) → Services (business logic) → DAO → Database; the Commands layer stays thin
@@ -121,7 +121,7 @@ Backend (Tauri 2 + Rust)
 
 ### Core Components
 
-- **ProviderService**: provider CRUD, switching, backfill, and sorting
+- **ProviderService**: provider CRUD, switching, live config writes, and sorting
 - **McpService**: MCP server management, importing from each tool, and syncing to live files
 - **SkillService / PromptService**: installing and syncing Skills, and each tool's prompt files
 - **ProfileService**: saving and switching project snapshots
@@ -369,7 +369,7 @@ Backend (Tauri 2 + Rust)
 
 - **SSOT**（单一事实源）：供应商、MCP、提示词、Skills、项目和用量等数据都存储在 `~/.cc-switch/cc-switch.db`（SQLite）
 - **设备级设置**：目录覆盖、备份策略等只属于本机的设置存放在 `~/.cc-switch/settings.json`，不参与云同步
-- **两种写入模式**：切换式工具（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build）切换时，先把当前 live 配置回填到当前供应商（Claude Desktop 除外），再写入新供应商；共存式工具（OpenCode、OpenClaw、Hermes、Pi、MiniMax Code）的所有供应商共存于同一个 live 文件，不做回填
+- **两种写入模式**：切换式工具（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build）在直连模式下切换时，只更新 live 配置中归供应商所有的字段，保留其他设置，不再把原 live 配置回填到原供应商；共存式工具（OpenCode、OpenClaw、Hermes、Pi、MiniMax Code）的所有供应商共存于同一个 live 文件，不做回填
 - **原子写入**：所有 live 配置都通过“临时文件 + 重命名”写入，避免配置损坏
 - **并发安全**：数据库连接由 Mutex 保护，避免竞态条件
 - **分层架构**：Commands（参数校验与转发）→ Services（业务逻辑）→ DAO → Database，Commands 层保持精简
@@ -377,7 +377,7 @@ Backend (Tauri 2 + Rust)
 
 ### 核心组件
 
-- **ProviderService**：供应商增删改查、切换、回填、排序
+- **ProviderService**：供应商增删改查、切换、写入 live 配置、排序
 - **McpService**：MCP 服务器管理、从各工具导入、同步到 live 文件
 - **SkillService / PromptService**：Skills 的安装与同步、各工具的提示词文件
 - **ProfileService**：项目快照的保存与切换
