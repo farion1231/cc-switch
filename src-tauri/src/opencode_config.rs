@@ -104,11 +104,6 @@ fn get_opencode_data_dir() -> PathBuf {
         .join("opencode")
 }
 
-#[allow(dead_code)]
-pub fn get_opencode_env_path() -> PathBuf {
-    get_opencode_dir().join(".env")
-}
-
 struct OpenCodeDocument {
     path: PathBuf,
     previous_contents: Option<Vec<u8>>,

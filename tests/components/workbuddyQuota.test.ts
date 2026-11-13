@@ -131,3 +131,89 @@ describe("workbuddyQuotaState", () => {
     });
   });
 });
+
+describe("workbuddyExpiryLine", () => {
+  const DAY = 24 * 3600_000;
+  // 本地时间中午：显示日期按本机时区算，测试不随时区变
+  const now = new Date(2026, 10, 12, 12).getTime();
+  // 后端按到期先后排好；同一天的合并，过期的（缓存里留下的）不算
+  const expiries = [
+    { credits: 50, expiresAt: now - DAY },
+    { credits: 496.52, expiresAt: now + 18 * DAY },
+    { credits: 3.48, expiresAt: now + 18 * DAY + 60_000 },
+    { credits: 1500, expiresAt: now + 30 * DAY },
+    { credits: 120, expiresAt: null },
+  ];
+  const withExpiries = (
+    list: typeof expiries | undefined,
+    patch: Partial<WorkBuddyQuota> = {},
+  ) => quota({ snapshot: { ...snapshot, expiries: list }, ...patch });
+
+  it("writes the earliest date as the second card line and lists every date", () => {
+    const lines = workbuddyCardLines(
+      t,
+      withExpiries(expiries),
+      "en",
+      "left",
+      now,
+    )!;
+    expect(lines.map((line) => line.key)).toEqual([
+      "workbuddy_credits",
+      "workbuddy_expiry",
+    ]);
+    const expiry = lines[1];
+    expect(expiry.text).toBe(
+      'workbuddy.quota.expiresOn:{"credits":"500","date":"Nov 30"}',
+    );
+    expect(expiry.tone).toBe("plain");
+    expect(
+      expiry.breakdown?.items.map((item) => [item.label, item.value]),
+    ).toEqual([
+      ["Nov 30", "500"],
+      ["Dec 12", "1,500"],
+      ["workbuddy.quota.noExpiry", "120"],
+    ]);
+  });
+
+  it("turns orange within three days and then beats the stale note", () => {
+    const soon = [{ credits: 10, expiresAt: now + 2 * DAY }];
+    const lines = workbuddyCardLines(
+      t,
+      withExpiries(soon, { unavailable: "not_running" }),
+      "en",
+      "left",
+      now,
+    )!;
+    expect(lines[1].key).toBe("workbuddy_expiry");
+    expect(lines[1].tone).toBe("warning");
+    expect(lines[1].breakdown).toBeUndefined();
+  });
+
+  it("keeps the stale note when nothing expires soon, and shows nothing without dates", () => {
+    const stale = workbuddyCardLines(
+      t,
+      withExpiries(expiries, { unavailable: "not_running" }),
+      "en",
+      "left",
+      now,
+    )!;
+    expect(stale[1].key).toBe("workbuddy_stale");
+    for (const list of [undefined, [], [{ credits: 5, expiresAt: null }]]) {
+      const lines = workbuddyCardLines(
+        t,
+        withExpiries(list),
+        "en",
+        "left",
+        now,
+      )!;
+      expect(lines.map((line) => line.key)).toEqual(["workbuddy_credits"]);
+    }
+  });
+
+  it("adds an expiry row in the auth center", () => {
+    const state = workbuddyQuotaState(t, withExpiries(expiries), false, "en");
+    expect(
+      state?.kind === "rows" && state.rows.map((row) => row.label),
+    ).toEqual(["体验版", "workbuddy.quota.expiry"]);
+  });
+});

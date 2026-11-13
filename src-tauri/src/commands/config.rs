@@ -27,6 +27,7 @@ fn invalid_json_format_error(error: serde_json::Error) -> String {
         "ko" => format!("잘못된 JSON 형식: {error}"),
         "tr" => format!("Geçersiz JSON biçimi: {error}"),
         "ru" => format!("Неверный формат JSON: {error}"),
+        "de" => format!("Ungültiges JSON-Format: {error}"),
         "ja" => format!("JSON形式が無効です: {error}"),
         _ => format!("无效的 JSON 格式: {error}"),
     }
@@ -42,6 +43,7 @@ fn invalid_toml_format_error(error: toml_edit::TomlError) -> String {
         "ko" => format!("잘못된 TOML 형식: {error}"),
         "tr" => format!("Geçersiz TOML biçimi: {error}"),
         "ru" => format!("Неверный формат TOML: {error}"),
+        "de" => format!("Ungültiges TOML-Format: {error}"),
         "ja" => format!("TOML形式が無効です: {error}"),
         _ => format!("无效的 TOML 格式: {error}"),
     }

@@ -40,6 +40,7 @@ vi.mock("@/hooks/useSkills", () => ({
   useInstalledSkills: () => ({ data: m.installed }),
   useCcSwitchSkillsDir: () => ({ data: "/Users/jason/.cc-switch/skills" }),
   useResyncSkillsToApps: () => ({ mutateAsync: m.resync, isPending: false }),
+  useIsResyncingSkills: () => false,
 }));
 
 vi.mock("@/lib/api/skills", () => ({

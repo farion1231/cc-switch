@@ -108,6 +108,34 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
     Ok(true)
 }
 
+/// 「非接管切换时保留官方登录」开关变更后，立即按新开关重写当前直连的第三方 Codex 供应商：
+/// 关掉时把 `auth.json` 里的官方登录暂存走、`requires_openai_auth` 改写成 false，和重新切换
+/// 一次一样，不必先切回官方卡再切回来（#9367）。开关只管直连切到第三方：代理模式、当前是
+/// 官方卡或没有当前供应商时为 no-op。
+pub fn reapply_current_codex_third_party_live(state: &AppState) -> Result<bool, AppError> {
+    let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &AppType::Codex)?;
+    if crate::mode::current::is_proxy(&AppType::Codex) {
+        return Ok(false);
+    }
+    let Some(current_id) = crate::mode::current::provider_for(
+        &state.db,
+        &AppType::Codex,
+        crate::mode::current::Purpose::Direct,
+    )?
+    else {
+        return Ok(false);
+    };
+    let providers = state.db.get_all_providers(AppType::Codex.as_str())?;
+    let Some(provider) = providers.get(&current_id) else {
+        return Ok(false);
+    };
+    if codex_direct::is_official(provider) {
+        return Ok(false);
+    }
+    live::write_live_for_state(state, &AppType::Codex, provider)?;
+    Ok(true)
+}
+
 /// 新版不再读通用配置片段，但旧设备经云同步拿到新建的行时仍按这个标记合并片段；不写的
 /// 话，旧版切到它会把 hooks、MCP 等共享设置整份抹掉。
 fn keep_common_config_for_old_versions(provider: &mut Provider) {

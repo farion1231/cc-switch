@@ -901,6 +901,7 @@
     "languageOptionTurkish": "Türkçe",
     "languageOptionKorean": "한국어",
     "languageOptionRussian": "Русский",
+    "languageOptionGerman": "Deutsch",
     "windowBehavior": "Pencere Davranışı",
     "windowBehaviorHint": "Pencere simge durumuna küçültme ve Claude eklenti entegrasyon ilkelerini yapılandırın.",
     "launchOnStartup": "Sistem açılışında başlat",
@@ -1376,6 +1377,7 @@
     "searchSessions": "Oturumları ara",
     "sessionList": "Oturumlar",
     "unknownDirectory": "Bilinmeyen dizin",
+    "codexChats": "Codex sohbetleri",
     "batchDeleting": "Siliniyor...",
     "loadingSessions": "Oturumlar yükleniyor...",
     "piRelativeSessionDir": "Pi sessionDir, Pi'nin başlatıldığı dizine göredir, dolayısıyla genel bir tarayıcı onu güvenli bir şekilde numaralandıramaz. Burada tüm Pi oturumlarına göz atmak için mutlak bir sessionDir ayarlayın:",
@@ -1947,6 +1949,7 @@
     "form": {
       "officialTitle": "Copilot CLI'nin GitHub oturumunu kullanır",
       "officialHint": "\"Terminal aç\", copilot'u bu kartın modeliyle başlatır; Yetki Merkezi'nden bir hesap bağlarsanız o hesapla başlatır.",
+      "followCliLogin": "Copilot CLI'nin kendi oturumunu kullan",
       "byokTitle": "Eklendiğinde Copilot'un providers.json dosyasına yazılır",
       "byokHint": "Ekle, bu sağlayıcıyı ve modellerini Copilot'un kendi providers.json dosyasına yazar (yalnızca kullanıcı hesabınız okuyabilir). Ardından nasıl başlatılırsa başlatılsın copilot, /model içinde \"kart kimliği/model\" seçebilir. Kaldır yalnızca bu sağlayıcının girdilerini siler, dosyanın geri kalanına dokunmaz.",
       "apiFormat": "API biçimi",
@@ -5096,12 +5099,14 @@
       "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings, so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",
       "claudeHelpWsl": "Official Claude Code subscription accounts (Pro / Max / Team). Not supported yet while the Claude config folder is in WSL.",
       "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: after switching to the card, Claude Code's sign-in changes to it right away. To use several accounts at once, use Open Terminal on the card. Sign-in tokens stay on this computer and are never uploaded, refreshed or signed out. The first switch saves the account Claude Code is signed in to now; switching ends Remote Control and rebuilds the prompt cache.",
-      "workbuddyHelp": "WorkBuddy masaüstü uygulamasının resmi oturumu. CC Switch sizin yerinize WorkBuddy'de oturum açamaz; yalnızca WorkBuddy'nin oturum açtığı hesabı (oturum dosyalarının anlık görüntüsü) kaydedebilir. Hesap değiştirmek için sağlayıcı listesinde bu hesaba bağlı WorkBuddy Resmi Oturum kartını ekleyin (aynı anda yalnızca bir resmi kart eklenmiş olur). Anlık görüntüler yalnızca bu bilgisayarda çalışır ve senkronize edilmez."
+      "workbuddyHelp": "WorkBuddy masaüstü uygulamasının resmi oturumu. CC Switch sizin yerinize WorkBuddy'de oturum açamaz; yalnızca WorkBuddy'nin oturum açtığı hesabı (oturum dosyalarının anlık görüntüsü) kaydedebilir. Hesap değiştirmek için hesabın … menüsünden “WorkBuddy için bu hesaba geç” seçeneğini kullanın ya da sağlayıcı listesinde bu hesaba bağlı WorkBuddy Resmi Oturum kartını ekleyin (aynı anda yalnızca bir resmi kart eklenmiş olur). Anlık görüntüler yalnızca bu bilgisayarda çalışır ve senkronize edilmez."
     },
     "addAccount": "Hesap ekle",
     "accountMenu": "{{login}} için daha fazla eylem",
     "removeAccount": "Hesabı sil",
     "setDefault": "Varsayılan olarak ayarla",
+    "inUseBy": "{{app}} tarafından kullanılıyor",
+    "switchAppTo": "{{app}} için bu hesaba geç",
     "reauth": "Tekrar oturum açın",
     "busyHint": "Öncelikle devam eden oturum açma işlemini tamamlayın veya iptal edin",
     "default": "Varsayılan",
@@ -5148,8 +5153,6 @@
       "addedOn": "{{date}} tarihinde eklendi",
       "statusLoadFailed": "Antigravity hesapları okunamadı. Yeniden deneyin.",
       "empty": "Henüz Antigravity hesabı yok. agy'nin oturum açtığı hesap burada otomatik olarak görünür.",
-      "current": "agy tarafından kullanılıyor",
-      "switchTo": "agy'yi bu hesaba geçir",
       "removeNote": "agy'nin oturumu açık kalır: agy bu hesabı kullanıyorsa kaldırdıktan sonra da çalışmaya devam eder.",
       "switched": "Hesap değiştirildi. Yeni agy oturumları bu hesabı kullanacak.",
       "switchedWhileRunning": "Hesap değiştirildi. agy çalışıyor: açık agy oturumları önceki hesabı kullanmaya devam eder ve hesabı yeniden kaydedebilir. agy'yi kapatıp yeniden açın."
@@ -5180,7 +5183,6 @@
       "statusLoadFailed": "WorkBuddy hesapları yüklenemedi. Tekrar deneyin.",
       "empty": "Henüz WorkBuddy hesabı yok. WorkBuddy'de oturum açın, ardından açık olan hesabı ekleyin.",
       "importNow": "Ekle",
-      "current": "WorkBuddy kullanıyor",
       "removeNote": "Yalnızca CC Switch'teki anlık görüntüyü siler; WorkBuddy oturumu açık kalır.",
       "localOnly": "Anlık görüntüler yalnızca bu bilgisayarda çalışır (oturum bu cihaza bağlıdır) ve eşitlenmez. Başka bir bilgisayarda hesapları yeniden ekleyin.",
       "runningTitle": "WorkBuddy çalışıyor",
@@ -5211,7 +5213,6 @@
   },
   "kimi": {
     "oauth": {
-      "useAccount": "Bu hesabı kullan",
       "title": "Kimi Code resmî oturumu",
       "description": "Her Kimi kodlama planı hesabı için ayrı kimlik bilgileri ve sağlayıcılar ekleyin. Oturum açma işlemlerini buradan yönetin; resmî modelleri kullanmak için bir hesap seçin.",
       "region": "Oturum açma bölgesi",
@@ -5234,7 +5235,6 @@
       "manageAccounts": "Kimi hesaplarını yönet",
       "managedHint": "Önce bu resmî hesabı kaldırın veya Yetkilendirme Merkezi'nde oturumuyla birlikte silin.",
       "connectionManaged": "Bağlantı ve oturum açma, Yetkilendirme Merkezi'nden yönetilir; burada yalnızca modelleri düzenleyebilirsiniz. Modelleri getir seçeneği, bu hesap için şu anda kullanılabilen resmî modelleri listeler.",
-      "current": "Kimi tarafından kullanılıyor",
       "primaryShort": "Kimi Code'un kendi oturumu",
       "empty": "Henüz Kimi hesabı yok. Kimi Code'da oturum açılmış hesap burada otomatik olarak görünür.",
       "help": "Birden fazla Kimi kodlama planı hesabı ekleyin; her hesap için Kimi Code'da ayrı bir sağlayıcı ve model kümesi oluşturulur. “Bu hesabı kullan” seçeneği Kimi Code'un varsayılan modelini o hesaba geçirir ve bundan sonra açılan oturumlar bu hesabı kullanır. Kimi Code'un kendi oturum açtığı hesap burada otomatik olarak görünür ve web aramasıyla veri getirme işlemlerinde her zaman kullanılır. Bu hesabı buradan kaldırmak yalnızca listeden gizler; Kimi Code oturumunu kapatmaz."
@@ -5350,9 +5350,12 @@
       "urlHint": "OpenAI uyumlu Chat Completions tam URL'si; genellikle /chat/completions ile biter.",
       "apiKeyHint": "Bu bilgisayardaki models.json dosyasında saklanır. ${ENV_VAR} başvuruları WorkBuddy tarafından genişletilir.",
       "vendor": "Sağlayıcı etiketi",
-      "modelsHint": "En az bir model ekleyin. Model kimliği API'ye olduğu gibi gönderilir.",
+      "modelsHint": "En az bir model ekleyin. Model kimliği API'ye olduğu gibi gönderilir. WorkBuddy henüz aynı modelin birden fazla kez eklenmesini desteklemediğinden bir model kimliği yalnızca bir kartta olabilir. Ad boş bırakılırsa WorkBuddy menüsünde \"sağlayıcı etiketi:model kimliği\" gösterilir.",
       "maxInputTokens": "Maks. giriş token'ı",
-      "maxOutputTokens": "Maks. çıkış token'ı"
+      "maxOutputTokens": "Maks. çıkış token'ı",
+      "modelIdTaken": "WorkBuddy henüz aynı modelin birden fazla kez eklenmesini desteklemiyor ve bu model zaten \"{{owner}}\" içinde. Bu karta taşımak için önce oradan kaldırın.",
+      "modelOwnerUser": "WorkBuddy'nin kendisinde eklenen bir model",
+      "presetModelsSkipped": "WorkBuddy henüz aynı modelin birden fazla kez eklenmesini desteklemediğinden başka kartlarda zaten bulunan modeller atlandı: {{models}}. Birini bu karta taşımak için önce mevcut kartından kaldırın, sonra burada yeniden ekleyin."
     },
     "official": {
       "presetName": "WorkBuddy Resmi Oturum",
@@ -5372,8 +5375,8 @@
       "preparedNewLogin": "Mevcut hesap kaydedildi. WorkBuddy oturum açma sayfasında açılacak; başka bir hesapla oturum açtığınızda hesap listesinde otomatik görünür.",
       "switching": "Geçiş yapılıyor…",
       "onlyOne": "WorkBuddy aynı anda yalnızca bir hesapla oturum açabilir. Geçiş yapmak için başka bir resmi kart ekleyin.",
-      "quitFirst": "Eklemeden önce WorkBuddy'den çıkın",
-      "quitFirstBody": "WorkBuddy'den tamamen çıkın (menü çubuğu / tepsi dahil), sonra tekrar Ekle'ye tıklayın; aksi halde mevcut oturumu geri yazar.",
+      "quitFirst": "Hesap değiştirmeden önce WorkBuddy'den çıkın",
+      "quitFirstBody": "WorkBuddy'den tamamen çıkın (menü çubuğu / tepsi dahil), sonra yeniden deneyin; aksi halde mevcut oturumu geri yazar.",
       "switched": "\"{{name}}\" hesabına geçildi. WorkBuddy bir sonraki açılışta bu hesabı kullanacak.",
       "switchFailed": "WorkBuddy hesabı değiştirilemedi"
     },
@@ -5390,7 +5393,14 @@
       "staleFailed": "Bu sorgu başarısız oldu; son sonuç gösteriliyor",
       "openToQuery": "Görmek için WorkBuddy'yi açın",
       "onlyWhileRunning": "Kota yalnızca WorkBuddy çalışırken onun üzerinden sorgulanabilir",
-      "unavailable": "Kota şu anda alınamıyor"
+      "unavailable": "Kota şu anda alınamıyor",
+      "expiry": "Son kullanma",
+      "expiresOn": "{{credits}} kredinin süresi {{date}} doluyor",
+      "expiresOnShort": "Süresi doluyor {{date}}",
+      "noExpiry": "Son kullanma tarihi yok",
+      "expiryTitle": "Kredi son kullanma tarihleri",
+      "expiryShowAll": "Her kredi grubunun son kullanma tarihini göster",
+      "inTime": "{{time}}'de"
     }
   }
 }

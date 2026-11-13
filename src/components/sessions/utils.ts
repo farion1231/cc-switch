@@ -197,28 +197,45 @@ const getProjectDirKey = (projectDir: string) => {
 };
 
 /**
+ * Codex 桌面版不带项目的聊天，工作目录建在 `<Documents>/Codex/<YYYY-MM-DD>/<slug>`，
+ * 一次一个目录；桌面端侧栏把它们统一放在「最近」里。捕获组是 `<Documents>/Codex`。
+ */
+const CODEX_CHAT_DIR_RE =
+  /^(.*[\\/]Documents[\\/]Codex)[\\/]\d{4}-\d{2}-\d{2}[\\/][^\\/]+[\\/]*$/i;
+
+const CODEX_CHATS_KEY_PREFIX = "__codex_chats__:";
+
+/**
  * 按项目目录分组（选了「全部应用」时跨应用合并）。组按组内最近一条排序，未知目录排最后；
- * 组内保持传入顺序。
+ * 组内保持传入顺序。Codex 桌面版不带项目的聊天合成一组（和桌面端一致），组目录显示
+ * `<Documents>/Codex`。
  */
 export const groupSessionsByProject = (
   sessions: SessionMeta[],
   unknownDirectoryLabel: string,
+  codexChatsLabel: string,
 ): SessionProjectGroup[] => {
   const groups = new Map<string, SessionProjectGroup>();
 
   sessions.forEach((session) => {
-    const projectDir = session.projectDir?.trim() || null;
-    const key = projectDir
-      ? getProjectDirKey(projectDir)
-      : UNKNOWN_PROJECT_DIR_KEY;
+    const rawDir = session.projectDir?.trim() || null;
+    const codexChatsRoot = rawDir?.match(CODEX_CHAT_DIR_RE)?.[1] ?? null;
+    const projectDir = codexChatsRoot ?? rawDir;
+    const key = codexChatsRoot
+      ? CODEX_CHATS_KEY_PREFIX + getProjectDirKey(codexChatsRoot)
+      : projectDir
+        ? getProjectDirKey(projectDir)
+        : UNKNOWN_PROJECT_DIR_KEY;
     let group = groups.get(key);
     if (!group) {
       group = {
         key,
         projectDir,
-        label: projectDir
-          ? getBaseName(projectDir) || projectDir
-          : unknownDirectoryLabel,
+        label: codexChatsRoot
+          ? codexChatsLabel
+          : projectDir
+            ? getBaseName(projectDir) || projectDir
+            : unknownDirectoryLabel,
         sessions: [],
         latest: 0,
       };

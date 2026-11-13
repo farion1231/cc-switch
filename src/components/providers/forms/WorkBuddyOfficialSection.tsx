@@ -127,7 +127,7 @@ export function WorkBuddyOfficialSection({
               >
                 {accountLabel(account)}
                 {account.id === currentId
-                  ? ` (${t("authCenter.workbuddy.current")})`
+                  ? ` (${t("authCenter.inUseBy", { app: "WorkBuddy" })})`
                   : ""}
               </SelectItem>
             ))}

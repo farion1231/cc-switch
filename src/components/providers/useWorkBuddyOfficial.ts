@@ -20,26 +20,14 @@ export const openWorkBuddyApp = () =>
   });
 
 /**
- * 官方卡的「添加」（= 切号）：沿用授权中心的通用切号命令（还原绑定账号的整组登录文件，要求 WorkBuddy
- * 已退出、凭据锁不新鲜，出错回滚）。WorkBuddy 在运行时先拦下来提示退出。
+ * 把 WorkBuddy 的登录切到某个已收录账号：沿用授权中心的通用切号命令（还原该账号的整组登录文件，
+ * 要求 WorkBuddy 已退出、凭据锁不新鲜，出错回滚）。WorkBuddy 在运行时先拦下来提示退出。
+ * 供应商列表的官方卡「添加」和授权中心账号的「切换 WorkBuddy 到这个账号」共用这一条路径；
+ * 官方卡是否「已添加」按当前登录的账号现算，所以从哪边切，两边都会跟着变。
  */
-export function useWorkBuddyOfficial(enabled: boolean) {
+export function useWorkBuddySwitch() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  // 读状态时后端会顺手收录 WorkBuddy 当前登录的号，轮询让「当前在用」跟得上
-  const { data: status } = useQuery({
-    queryKey: WORKBUDDY_STATUS_KEY,
-    queryFn: () => authApi.authGetStatus(WORKBUDDY_ACCOUNT_AUTH_PROVIDER),
-    enabled,
-    staleTime: 30_000,
-    refetchInterval: enabled ? 5_000 : false,
-  });
-  const { data: live } = useQuery({
-    queryKey: WORKBUDDY_LIVE_KEY,
-    queryFn: authApi.workbuddyAccountLiveState,
-    enabled,
-    refetchInterval: enabled ? 5_000 : false,
-  });
 
   const refresh = useCallback(
     () =>
@@ -59,10 +47,10 @@ export function useWorkBuddyOfficial(enabled: boolean) {
   // 连点时只切一次
   const busy = useRef(false);
 
-  const switchTo = useCallback(
-    async (provider: Provider) => {
-      const accountId = boundWorkBuddyAccountId(provider);
-      if (!accountId || busy.current) return;
+  /** `name` 是成功提示里的名字：官方卡用卡名，授权中心用账号名 */
+  const switchToAccount = useCallback(
+    async (accountId: string, name: string) => {
+      if (busy.current) return;
       busy.current = true;
       const state = await authApi.workbuddyAccountLiveState().catch(() => null);
       if (state?.running) {
@@ -76,17 +64,14 @@ export function useWorkBuddyOfficial(enabled: boolean) {
       }
       try {
         await mutateAsync(accountId);
-        toast.success(
-          t("workbuddy.official.switched", { name: provider.name }),
-          {
-            duration: 8000,
-            closeButton: true,
-            action: {
-              label: t("authCenter.workbuddy.openApp"),
-              onClick: () => void openWorkBuddyApp(),
-            },
+        toast.success(t("workbuddy.official.switched", { name }), {
+          duration: 8000,
+          closeButton: true,
+          action: {
+            label: t("authCenter.workbuddy.openApp"),
+            onClick: () => void openWorkBuddyApp(),
           },
-        );
+        });
       } catch (error) {
         toast.error(t("workbuddy.official.switchFailed"), {
           description: extractErrorMessage(error) || String(error),
@@ -98,6 +83,36 @@ export function useWorkBuddyOfficial(enabled: boolean) {
       }
     },
     [mutateAsync, refresh, t],
+  );
+
+  return { switchToAccount, switching: isPending };
+}
+
+/** 供应商列表上的官方卡：读账号与运行状态，「添加」= 切到卡上绑定的账号。 */
+export function useWorkBuddyOfficial(enabled: boolean) {
+  const queryClient = useQueryClient();
+  // 读状态时后端会顺手收录 WorkBuddy 当前登录的号，轮询让「当前在用」跟得上
+  const { data: status } = useQuery({
+    queryKey: WORKBUDDY_STATUS_KEY,
+    queryFn: () => authApi.authGetStatus(WORKBUDDY_ACCOUNT_AUTH_PROVIDER),
+    enabled,
+    staleTime: 30_000,
+    refetchInterval: enabled ? 5_000 : false,
+  });
+  const { data: live } = useQuery({
+    queryKey: WORKBUDDY_LIVE_KEY,
+    queryFn: authApi.workbuddyAccountLiveState,
+    enabled,
+    refetchInterval: enabled ? 5_000 : false,
+  });
+  const { switchToAccount, switching } = useWorkBuddySwitch();
+
+  const switchTo = useCallback(
+    async (provider: Provider) => {
+      const accountId = boundWorkBuddyAccountId(provider);
+      if (accountId) await switchToAccount(accountId, provider.name);
+    },
+    [switchToAccount],
   );
 
   const running = live?.running ?? false;
@@ -116,9 +131,9 @@ export function useWorkBuddyOfficial(enabled: boolean) {
         : null,
       currentAccountId: status?.default_account_id ?? null,
       running,
-      switching: isPending,
+      switching,
     }),
-    [status, running, isPending],
+    [status, running, switching],
   );
   return { state, switchTo };
 }

@@ -901,6 +901,7 @@
     "languageOptionTurkish": "Türkçe",
     "languageOptionKorean": "한국어",
     "languageOptionRussian": "Русский",
+    "languageOptionGerman": "Deutsch",
     "windowBehavior": "Window Behavior",
     "windowBehaviorHint": "Configure window minimize and Claude plugin integration policies.",
     "launchOnStartup": "Launch on Startup",
@@ -1209,9 +1210,12 @@
       "urlHint": "Full OpenAI-compatible Chat Completions URL, usually ending in /chat/completions.",
       "apiKeyHint": "Stored in models.json on this machine. ${ENV_VAR} references are expanded by WorkBuddy.",
       "vendor": "Vendor label",
-      "modelsHint": "Add at least one model. The model ID is sent to the API as-is.",
+      "modelsHint": "Add at least one model. The model ID is sent to the API as-is. WorkBuddy doesn't support adding the same model more than once yet, so a model ID can be in only one card. With the name left blank, WorkBuddy's menu shows \"vendor label:model ID\".",
       "maxInputTokens": "Max input tokens",
-      "maxOutputTokens": "Max output tokens"
+      "maxOutputTokens": "Max output tokens",
+      "modelIdTaken": "WorkBuddy doesn't support adding the same model more than once yet, and this model is already in \"{{owner}}\". To move it to this card, remove it there first.",
+      "modelOwnerUser": "a model added in WorkBuddy itself",
+      "presetModelsSkipped": "WorkBuddy doesn't support adding the same model more than once yet, so models already in other cards were skipped: {{models}}. To move one to this card, remove it from its current card first, then add it back here."
     },
     "official": {
       "presetName": "WorkBuddy Official Sign-in",
@@ -1231,8 +1235,8 @@
       "preparedNewLogin": "Current account saved. WorkBuddy will open at its sign-in page; after you sign in to another account, it appears in the account list automatically.",
       "switching": "Switching…",
       "onlyOne": "WorkBuddy can only be signed in to one account at a time. Add another official card to switch.",
-      "quitFirst": "Quit WorkBuddy before adding",
-      "quitFirstBody": "Quit WorkBuddy completely (including the menu bar / tray), then click Add again, or it will write its current sign-in back.",
+      "quitFirst": "Quit WorkBuddy before switching accounts",
+      "quitFirstBody": "Quit WorkBuddy completely (including the menu bar / tray), then switch again, or it will write its current sign-in back.",
       "switched": "Switched to \"{{name}}\". WorkBuddy will use this account the next time it opens.",
       "switchFailed": "Couldn't switch the WorkBuddy account"
     },
@@ -1249,7 +1253,14 @@
       "staleFailed": "This check failed; showing the last result",
       "openToQuery": "Open WorkBuddy to check",
       "onlyWhileRunning": "Quota can only be checked through WorkBuddy while it is running",
-      "unavailable": "Quota is unavailable right now"
+      "unavailable": "Quota is unavailable right now",
+      "expiry": "Expires",
+      "expiresOn": "{{credits}} credits expire {{date}}",
+      "expiresOnShort": "Expires {{date}}",
+      "noExpiry": "No expiry",
+      "expiryTitle": "Credit expiry",
+      "expiryShowAll": "Show when each batch of credits expires",
+      "inTime": "in {{time}}"
     }
   },
   "pi": {
@@ -1432,6 +1443,7 @@
     "searchSessions": "Search sessions",
     "sessionList": "Sessions",
     "unknownDirectory": "Unknown directory",
+    "codexChats": "Codex chats",
     "batchDeleting": "Deleting...",
     "loadingSessions": "Loading sessions...",
     "piRelativeSessionDir": "Pi sessionDir is relative to the directory where Pi is launched, so a global browser cannot enumerate it safely. Set an absolute sessionDir to browse all Pi sessions here:",
@@ -2003,6 +2015,7 @@
     "form": {
       "officialTitle": "Uses Copilot CLI's GitHub sign-in",
       "officialHint": "Open Terminal starts copilot with this card's model. Bind an Auth Center account to start it with that account.",
+      "followCliLogin": "Follow Copilot CLI's own sign-in",
       "byokTitle": "Added to Copilot's providers.json",
       "byokHint": "Add writes this provider and its models to Copilot's own providers.json (readable only by your user account). Any copilot you start can then pick \"card ID/model\" in /model. Remove deletes only this provider's entries and leaves the rest of the file as is.",
       "apiFormat": "API format",
@@ -5149,7 +5162,7 @@
       "chatgptHelp": "Used by ChatGPT presets in Claude Code and Claude Desktop, and by Codex's official-login binding. Providers without a chosen account use the Default one.",
       "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex. Providers without a chosen account use the Default one.",
       "agyHelp": "The official sign-in for Antigravity CLI (agy). agy can only be signed in to one account at a time; Switch replaces agy's sign-in with the selected account, and agy sessions started afterwards use it. The account agy was already signed in with is added here automatically, so switching away never loses it.",
-      "workbuddyHelp": "The official sign-in of the WorkBuddy desktop app. CC Switch can't sign in to WorkBuddy for you; it can only save the account WorkBuddy is signed in with (a snapshot of its sign-in files). To switch accounts, add the WorkBuddy Official Sign-in card linked to it in the provider list (only one official card is added at a time). Snapshots only work on this computer and are not synced.",
+      "workbuddyHelp": "The official sign-in of the WorkBuddy desktop app. CC Switch can't sign in to WorkBuddy for you; it can only save the account WorkBuddy is signed in with (a snapshot of its sign-in files). To switch accounts, choose “Switch WorkBuddy to this account” in the account's … menu, or add the WorkBuddy Official Sign-in card linked to it in the provider list (only one official card is added at a time). Snapshots only work on this computer and are not synced.",
       "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings, so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",
       "claudeHelpWsl": "Official Claude Code subscription accounts (Pro / Max / Team). Not supported yet while the Claude config folder is in WSL.",
       "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: after switching to the card, Claude Code's sign-in changes to it right away. To use several accounts at once, use Open Terminal on the card. Sign-in tokens stay on this computer and are never uploaded, refreshed or signed out. The first switch saves the account Claude Code is signed in to now; switching ends Remote Control and rebuilds the prompt cache."
@@ -5158,6 +5171,8 @@
     "accountMenu": "More actions for {{login}}",
     "removeAccount": "Delete account",
     "setDefault": "Set as default",
+    "inUseBy": "In use by {{app}}",
+    "switchAppTo": "Switch {{app}} to this account",
     "reauth": "Sign in again",
     "busyHint": "Finish or cancel the sign-in in progress first",
     "default": "Default",
@@ -5204,8 +5219,6 @@
       "addedOn": "Added {{date}}",
       "statusLoadFailed": "Couldn't read Antigravity accounts. Try again.",
       "empty": "No Antigravity accounts yet. The account agy is signed in with appears here automatically.",
-      "current": "In use by agy",
-      "switchTo": "Switch agy to this account",
       "removeNote": "agy stays signed in: if agy is using this account, it keeps working after removal.",
       "switched": "Switched. New agy sessions will use this account.",
       "switchedWhileRunning": "Switched. agy is running: open agy sessions keep using the previous account and may write it back. Quit agy and open it again."
@@ -5229,7 +5242,6 @@
         "_raw": "{{plan}}"
       },
       "importNow": "Add",
-      "current": "In use by WorkBuddy",
       "removeNote": "Only deletes the snapshot in CC Switch; WorkBuddy stays signed in.",
       "localOnly": "Snapshots only work on this computer (the sign-in is bound to this device) and are not synced. Add accounts again on another computer.",
       "runningTitle": "WorkBuddy is running",
@@ -5267,7 +5279,6 @@
   },
   "kimi": {
     "oauth": {
-      "useAccount": "Use this account",
       "title": "Kimi Code official sign-in",
       "description": "Add Kimi coding plan accounts with separate credentials and providers. Manage sign-in here, then select an account to use its official models.",
       "region": "Sign-in region",
@@ -5290,7 +5301,6 @@
       "manageAccounts": "Manage Kimi accounts",
       "managedHint": "Remove this official account first, or delete it (with its login) in the Authorization Center.",
       "connectionManaged": "The connection and login are managed in the Authorization Center; edit only the models here. Fetching models reads the official models currently available to this account.",
-      "current": "In use by Kimi",
       "primaryShort": "Kimi Code's own login",
       "empty": "No Kimi accounts yet. The account signed in to Kimi Code shows up here automatically.",
       "help": "Add several Kimi coding plan accounts; each gets its own provider and models in Kimi Code. \"Use this account\" switches Kimi Code's default model to that account, and new sessions use it from then on. The account Kimi Code itself is signed in with shows up here automatically and is always used for web search and fetch; removing it here only hides it from the list and never signs Kimi Code out."
