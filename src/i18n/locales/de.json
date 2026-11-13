@@ -5382,5 +5382,116 @@
       "managedHint": "Dieses Konto wird in der Kontoverwaltung verwaltet; die Karte verschwindet nach der Abmeldung."
     },
     "deleteSessionHint": "Löschen Sie diese Sitzung in DeepSeek Harness, damit der Verlauf konsistent bleibt."
+  },
+  "appTargets": {
+    "help": "Anbieter, MCP, Prompts und Skills werden in jede markierte Umgebung geschrieben. Die primäre Umgebung dient für Import, Rückübernahme, Erkennung externer Änderungen und Sitzungen. Das Abwählen löscht keine Dateien in dieser Umgebung.",
+    "summaryOne": "Schreibt nur nach {{target}}",
+    "summaryMany": "Schreibt nach {{targets}}",
+    "detect": "Erneut erkennen",
+    "detecting": "Wird erkannt…",
+    "unsaved": "Nicht gespeichert",
+    "saved": "Gespeichert",
+    "undo": "Rückgängig",
+    "syncing": "Wird synchronisiert…",
+    "keepOne": "Mindestens ein Schreibziel behalten",
+    "primaryMoved": "Primäre Umgebung auf {{target}} geändert",
+    "writeTo": "{{app}} nach {{target}} schreiben",
+    "placeholderDefault": "Standardverzeichnis verwenden",
+    "placeholderUnc": "Verzeichnis \\\\wsl.localhost\\Distribution\\… eingeben",
+    "tag": {
+      "custom": "Eigenes",
+      "default": "Standard",
+      "auto": "Auto"
+    },
+    "env": {
+      "unavailable": "Distribution nicht verfügbar · ursprüngliches Verzeichnis bleibt erhalten; erneut erkennen oder abwählen",
+      "running": "Läuft",
+      "stopped": "Gestoppt",
+      "noHome": "Home-Verzeichnis nicht gefunden; eigenes Verzeichnis eingeben",
+      "cached": "letzte Erkennung",
+      "willStart": "wird beim Schreiben gestartet",
+      "probeFailed": "Erkennung diesmal fehlgeschlagen"
+    },
+    "primaryTag": "Primär",
+    "primary": "Primäre Umgebung",
+    "primaryHelp": "Dient für Import, Rückübernahme, Erkennung externer Änderungen und Sitzungen. Ein Wechsel importiert keine Anbieter; beim Speichern wird der aktuelle Anbieter in die neue primäre Umgebung geschrieben.",
+    "legacyWsl": "Ihr bisheriges WSL-Verzeichnis bleibt erhalten. Markieren Sie Windows und speichern Sie, um in beide zu schreiben.",
+    "legacyUnresolved": "Die WSL-Distribution des bisherigen Verzeichnisses wurde nicht erkannt, daher bleibt das Verhalten mit einem Verzeichnis erhalten. Geben Sie das Verzeichnis in der passenden Distributionszeile ein und speichern Sie.",
+    "errors": {
+      "noTarget": "Mindestens ein Schreibziel behalten.",
+      "primaryNotEnabled": "Die primäre Umgebung muss markiert sein.",
+      "invalidDistro": "Ungültiger Distributionsname.",
+      "duplicateDistro": "Doppelte Distribution.",
+      "homeUnresolved": "Home-Verzeichnis von {{distro}} nicht gefunden; eigenes Verzeichnis eingeben.",
+      "controlChar": "Das Verzeichnis enthält Steuerzeichen.",
+      "parentSegment": "Ein vollständiges Verzeichnis ohne \"..\" verwenden.",
+      "windowsRejectsWsl": "WSL-Verzeichnisse in der passenden Distributionszeile eingeben.",
+      "windowsNotAbsolute": "Ein absolutes Windows-Verzeichnis eingeben.",
+      "windowsInvalidChar": "Das Windows-Verzeichnis enthält ungültige Zeichen.",
+      "wslDistroMismatch": "Ein vollständiges WSL-UNC-Verzeichnis in {{distro}} eingeben.",
+      "duplicateDestination": "Eine andere markierte Umgebung schreibt in dasselbe Verzeichnis."
+    },
+    "blocked": {
+      "managed_login_requires_windows_primary": "Eine verwaltete offizielle Anmeldung ist aktiv. Wechseln Sie zu einem API-Key-Anbieter, bevor Sie WSL zur primären Umgebung machen. Ihr Entwurf bleibt erhalten."
+    },
+    "conflict": {
+      "title": "{{target}} hat bereits eine {{app}}-Konfiguration",
+      "body": "Aktuell wird {{existing}} verwendet; {{incoming}} würde geschrieben.",
+      "unknownWithHost": "eine unbekannte Konfiguration ({{host}})",
+      "unknown": "eine unbekannte Konfiguration",
+      "progress": "Konflikt {{index}} von {{total}}",
+      "defer": "Noch nicht schreiben",
+      "deferHint": "Ziel speichern und als ausstehend markieren; geschrieben wird beim nächsten Wechsel oder Synchronisieren.",
+      "overwrite": "Sichern, dann aktuellen Anbieter synchronisieren",
+      "overwriteHint": "Sichert die Dateien dieser Umgebung und aktualisiert nur die verwalteten Felder.",
+      "import": "Als Anbieterkarte importieren, dann synchronisieren",
+      "importHint": "Speichert {{existing}} als Anbieterkarte (eine identische wird wiederverwendet) und aktualisiert dann die verwalteten Felder.",
+      "confirm": "Speichern",
+      "next": "Weiter"
+    },
+    "toast": {
+      "primaryFailed": "Verzeichnisse gespeichert, aber das Schreiben in die primäre Umgebung ist fehlgeschlagen; nichts wurde synchronisiert.",
+      "partial": "Verzeichnisse gespeichert; {{targets}} nicht synchronisiert.",
+      "deferred": "Verzeichnisse gespeichert; neue Ziele stehen aus. Synchronisieren Sie sie über die Schreibziele auf der Anbieterseite.",
+      "savedAndSynced": "Verzeichnisse gespeichert und mit {{targets}} synchronisiert.",
+      "saved": "Verzeichnisse gespeichert.",
+      "mcpSkipped": "Nur für Windows bestimmte MCP-Server wurden für WSL übersprungen: {{servers}}",
+      "fixErrors": "Verzeichnisse korrigieren und dann speichern.",
+      "cancelled": "Speichern abgebrochen; Ihre Änderungen bleiben erhalten.",
+      "conflictChanged": "Die Zielkonfiguration hat sich gerade geändert; bitte erneut speichern.",
+      "saveFailed": "Schreibziele konnten nicht gespeichert werden",
+      "synced": "Synchronisiert.",
+      "syncFailed": "Synchronisierung fehlgeschlagen",
+      "switchPartial": "Primäre Umgebung auf {{provider}} umgestellt; {{targets}} nicht synchronisiert.",
+      "keptOriginal": "Verwaltete offizielle Anmeldung wird nur in die primäre Windows-Umgebung geschrieben; {{targets}} bleiben unverändert."
+    },
+    "status": {
+      "ok": "Synchronisiert",
+      "error": "Nicht synchronisiert",
+      "deferred": "Ausstehend",
+      "skipped": "Unverändert",
+      "external": "Extern geändert"
+    },
+    "reason": {
+      "primary_failed": "Schreiben in die primäre Umgebung fehlgeschlagen; nicht gestartet",
+      "primary_deferred": "Primäre Umgebung zurückgestellt; nicht gestartet",
+      "user_deferred": "Ziel gespeichert; vorhandene Konfiguration noch nicht überschrieben",
+      "managed_login": "Verwaltete offizielle Anmeldung unterstützt vorerst nur die primäre Windows-Umgebung",
+      "proxy_mode": "Im Routing-Modus werden folgende Umgebungen noch nicht synchronisiert",
+      "write_failed": "Schreiben fehlgeschlagen; ursprüngliche Konfiguration unverändert",
+      "timeout": "Zeitüberschreitung; Ergebnis unbekannt (kann im Hintergrund noch abschließen)",
+      "home_unresolved": "Home-Verzeichnis nicht gefunden",
+      "managed_fields_changed": "Der nächste Wechsel überschreibt die verwalteten Felder",
+      "superseded": "Durch einen neueren Vorgang ersetzt",
+      "not_synced": "Anbieter noch nicht synchronisiert"
+    },
+    "indicator": {
+      "title": "Schreibziele",
+      "primary": "Primär: {{target}}",
+      "inUse": "In Verwendung",
+      "provider": "Zuletzt geschrieben: {{name}}",
+      "syncAll": "Alle jetzt synchronisieren",
+      "retry": "Ausstehende wiederholen ({{count}})"
+    }
   }
 }

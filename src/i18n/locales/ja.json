@@ -5382,5 +5382,116 @@
       "managedHint": "アカウントは認証センターで管理します。ログアウトするとこのカードは自動で消えます。"
     },
     "deleteSessionHint": "履歴の整合性を保つため、DeepSeek Harness でこのセッションを削除してください。"
+  },
+  "appTargets": {
+    "help": "プロバイダー、MCP、プロンプト、Skills はチェックした環境に書き込まれます。プライマリ環境はインポート、バックフィル、外部変更の検出、セッションの読み取りに使われます。チェックを外してもその環境のファイルは削除されません。",
+    "summaryOne": "{{target}} のみに書き込み",
+    "summaryMany": "{{targets}} に書き込み",
+    "detect": "再検出",
+    "detecting": "検出中…",
+    "unsaved": "未保存",
+    "saved": "保存済み",
+    "undo": "元に戻す",
+    "syncing": "同期中…",
+    "keepOne": "書き込み先を少なくとも 1 つ残してください",
+    "primaryMoved": "プライマリ環境を {{target}} に変更しました",
+    "writeTo": "{{app}} を {{target}} に書き込む",
+    "placeholderDefault": "既定のディレクトリを使用",
+    "placeholderUnc": "\\\\wsl.localhost\\ディストリビューション\\… のディレクトリを入力",
+    "tag": {
+      "custom": "カスタム",
+      "default": "既定",
+      "auto": "自動"
+    },
+    "env": {
+      "unavailable": "ディストリビューションを利用できません · 元のディレクトリは保持されます。再検出するかチェックを外してください",
+      "running": "実行中",
+      "stopped": "停止中",
+      "noHome": "ホームディレクトリを取得できません。カスタムディレクトリを入力してください",
+      "cached": "前回の検出",
+      "willStart": "書き込み時に起動します",
+      "probeFailed": "今回の検出に失敗しました"
+    },
+    "primaryTag": "プライマリ",
+    "primary": "プライマリ環境",
+    "primaryHelp": "インポート、バックフィル、外部変更の検出、セッションの読み取りに使います。変更してもプロバイダーは自動インポートされず、保存すると現在のプロバイダーを新しいプライマリに書き込みます。",
+    "legacyWsl": "既存の WSL ディレクトリはそのまま保持されています。Windows をチェックして保存すると両方に書き込みます。",
+    "legacyUnresolved": "既存ディレクトリの WSL ディストリビューションを特定できないため、単一ディレクトリの動作を維持しています。対応するディストリビューションの行にディレクトリを入力して保存してください。",
+    "errors": {
+      "noTarget": "書き込み先を少なくとも 1 つ残してください。",
+      "primaryNotEnabled": "プライマリ環境はチェックされている必要があります。",
+      "invalidDistro": "ディストリビューション名が無効です。",
+      "duplicateDistro": "ディストリビューションが重複しています。",
+      "homeUnresolved": "{{distro}} のホームディレクトリを取得できません。カスタムディレクトリを入力してください。",
+      "controlChar": "ディレクトリに制御文字が含まれています。",
+      "parentSegment": ".. を含まない完全なディレクトリを指定してください。",
+      "windowsRejectsWsl": "WSL のディレクトリは対応するディストリビューションの行に入力してください。",
+      "windowsNotAbsolute": "Windows の絶対パスを入力してください。",
+      "windowsInvalidChar": "Windows のディレクトリに無効な文字が含まれています。",
+      "wslDistroMismatch": "{{distro}} 内の完全な WSL UNC ディレクトリを入力してください。",
+      "duplicateDestination": "チェックされた別の環境と同じディレクトリに書き込みます。"
+    },
+    "blocked": {
+      "managed_login_requires_windows_primary": "管理された公式ログインを使用中です。WSL をプライマリにする前に API キーのプロバイダーに切り替えてください。下書きは保持されています。"
+    },
+    "conflict": {
+      "title": "{{target}} には既に {{app}} の設定があります",
+      "body": "現在は {{existing}} です。{{incoming}} が書き込まれます。",
+      "unknownWithHost": "不明な設定（{{host}}）",
+      "unknown": "不明な設定",
+      "progress": "競合 {{index}} / {{total}}",
+      "defer": "今は書き込まない",
+      "deferHint": "書き込み先を保存して同期待ちにします。次回の切り替えまたは同期時に書き込みます。",
+      "overwrite": "バックアップしてから現在のプロバイダーを同期",
+      "overwriteHint": "この環境のファイルをバックアップし、管理対象のフィールドのみ更新します。",
+      "import": "プロバイダーカードとしてインポートしてから同期",
+      "importHint": "{{existing}} をプロバイダーカードとして保存し（同じカードがあれば再利用）、管理対象のフィールドを更新します。",
+      "confirm": "保存",
+      "next": "次へ"
+    },
+    "toast": {
+      "primaryFailed": "ディレクトリは保存しましたが、プライマリ環境への書き込みに失敗したため同期していません。",
+      "partial": "ディレクトリを保存しました。{{targets}} は未同期です。",
+      "deferred": "ディレクトリを保存しました。新しい書き込み先は同期待ちです。プロバイダーページの書き込み先から同期できます。",
+      "savedAndSynced": "ディレクトリを保存し、{{targets}} に同期しました。",
+      "saved": "ディレクトリを保存しました。",
+      "mcpSkipped": "WSL では Windows 専用の MCP をスキップしました：{{servers}}",
+      "fixErrors": "ディレクトリを修正してから保存してください。",
+      "cancelled": "保存をキャンセルしました。編集内容は保持されています。",
+      "conflictChanged": "書き込み先の設定が変更されました。もう一度保存してください。",
+      "saveFailed": "書き込み先の保存に失敗しました",
+      "synced": "同期しました。",
+      "syncFailed": "同期に失敗しました",
+      "switchPartial": "プライマリを {{provider}} に切り替えました。{{targets}} は未同期です。",
+      "keptOriginal": "管理された公式ログインは Windows のプライマリにのみ書き込みます。{{targets}} は元の設定のままです。"
+    },
+    "status": {
+      "ok": "同期済み",
+      "error": "未同期",
+      "deferred": "同期待ち",
+      "skipped": "元の設定を保持",
+      "external": "外部で変更"
+    },
+    "reason": {
+      "primary_failed": "プライマリへの書き込みに失敗したため開始していません",
+      "primary_deferred": "プライマリが保留のため開始していません",
+      "user_deferred": "書き込み先を保存済み。既存の設定はまだ上書きしていません",
+      "managed_login": "管理された公式ログインは現在 Windows のプライマリのみ対応しています",
+      "proxy_mode": "ルーティングモードではフォロー環境をまだ同期しません",
+      "write_failed": "書き込みに失敗しました。元の設定は変更されていません",
+      "timeout": "タイムアウト。結果は不明です（バックグラウンドで完了する可能性があります）",
+      "home_unresolved": "ホームディレクトリを取得できません",
+      "managed_fields_changed": "次回の切り替えで管理対象のフィールドを上書きします",
+      "superseded": "新しい操作に置き換えられました",
+      "not_synced": "プロバイダーはまだ同期されていません"
+    },
+    "indicator": {
+      "title": "書き込み先",
+      "primary": "プライマリ：{{target}}",
+      "inUse": "使用中",
+      "provider": "前回の書き込み：{{name}}",
+      "syncAll": "すべて今すぐ同期",
+      "retry": "未同期を再試行 ({{count}})"
+    }
   }
 }

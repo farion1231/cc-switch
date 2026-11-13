@@ -5382,5 +5382,116 @@
       "managedHint": "帳號在授權中心管理：登出後這張卡會自動消失。"
     },
     "deleteSessionHint": "請在 DeepSeek Harness 中刪除此工作階段，以保持原生歷史記錄一致。"
+  },
+  "appTargets": {
+    "help": "供應商、MCP、提示詞和 Skills 會寫入已勾選的環境。「以哪個為準」的主環境負責匯入、回填、外部修改偵測和工作階段讀取。取消勾選不會刪除該環境裡的檔案。",
+    "summaryOne": "只寫入 {{target}}",
+    "summaryMany": "同時寫入 {{targets}}",
+    "detect": "重新偵測",
+    "detecting": "偵測中…",
+    "unsaved": "未儲存",
+    "saved": "已儲存",
+    "undo": "復原",
+    "syncing": "同步中…",
+    "keepOne": "至少保留一個寫入環境",
+    "primaryMoved": "主環境已改為 {{target}}",
+    "writeTo": "{{app}} 寫入 {{target}}",
+    "placeholderDefault": "使用預設目錄",
+    "placeholderUnc": "填寫 \\\\wsl.localhost\\發行版\\… 目錄",
+    "tag": {
+      "custom": "自訂",
+      "default": "預設",
+      "auto": "自動"
+    },
+    "env": {
+      "unavailable": "發行版無法使用 · 保留原目錄，請重新偵測或取消勾選",
+      "running": "執行中",
+      "stopped": "未執行",
+      "noHome": "未取得使用者目錄，請填寫自訂目錄",
+      "cached": "上次偵測",
+      "willStart": "寫入時將啟動",
+      "probeFailed": "本次偵測失敗"
+    },
+    "primaryTag": "主環境",
+    "primary": "以哪個為準",
+    "primaryHelp": "匯入、回填、外部修改偵測及工作階段讀取的主環境；變更它不會自動匯入供應商，儲存後會把目前供應商寫入新的主環境。",
+    "legacyWsl": "已保留原本的 WSL 目錄。勾選 Windows 並儲存，即可同時寫入兩邊。",
+    "legacyUnresolved": "無法辨識原目錄對應的 WSL 發行版，暫時保留原單目錄行為。請在對應發行版一列填寫目錄後儲存。",
+    "errors": {
+      "noTarget": "至少保留一個寫入環境。",
+      "primaryNotEnabled": "主環境必須是已勾選的環境。",
+      "invalidDistro": "發行版名稱無效。",
+      "duplicateDistro": "發行版重複。",
+      "homeUnresolved": "未取得 {{distro}} 的使用者目錄，請填寫自訂目錄。",
+      "controlChar": "目錄包含無效控制字元。",
+      "parentSegment": "請使用不包含 .. 的完整目錄。",
+      "windowsRejectsWsl": "WSL 目錄請填寫在對應發行版一列。",
+      "windowsNotAbsolute": "請輸入 Windows 絕對目錄。",
+      "windowsInvalidChar": "Windows 目錄包含無效字元。",
+      "wslDistroMismatch": "請輸入指向 {{distro}} 的完整 WSL UNC 目錄。",
+      "duplicateDestination": "與另一個已勾選環境寫入同一個目錄。"
+    },
+    "blocked": {
+      "managed_login_requires_windows_primary": "目前使用託管官方登入。請先啟用 API Key 供應商，再將 WSL 設為主環境。草稿已保留。"
+    },
+    "conflict": {
+      "title": "{{target}} 已有 {{app}} 設定",
+      "body": "目前為 {{existing}}，將同步的是 {{incoming}}。",
+      "unknownWithHost": "未辨識的設定（{{host}}）",
+      "unknown": "未辨識的設定",
+      "progress": "第 {{index}} / {{total}} 個衝突目標",
+      "defer": "暫不寫入",
+      "deferHint": "儲存目標並標為待同步，下次主動切換供應商或立即同步時寫入。",
+      "overwrite": "備份後同步目前供應商",
+      "overwriteHint": "先備份該環境的設定檔，只更新託管欄位，其他設定保留。",
+      "import": "先匯入成供應商卡，再同步",
+      "importHint": "先把 {{existing}} 儲存為供應商卡（已有相同的卡則重用），再更新該環境的託管欄位。",
+      "confirm": "儲存設定",
+      "next": "下一項"
+    },
+    "toast": {
+      "primaryFailed": "目錄已儲存，主環境寫入失敗，設定未同步。",
+      "partial": "目錄已儲存，{{targets}} 未同步。",
+      "deferred": "目錄已儲存，新目標待同步。可在供應商頁的寫入目標中立即同步。",
+      "savedAndSynced": "目錄已儲存並同步到 {{targets}}。",
+      "saved": "目錄設定已儲存。",
+      "mcpSkipped": "WSL 環境略過了 Windows 專用的 MCP：{{servers}}",
+      "fixErrors": "請修正目錄，再儲存。",
+      "cancelled": "已取消儲存，表單修改仍保留。",
+      "conflictChanged": "目標中的設定剛剛變了，請再儲存一次。",
+      "saveFailed": "儲存寫入目標失敗",
+      "synced": "已同步。",
+      "syncFailed": "同步失敗",
+      "switchPartial": "主環境已切換到 {{provider}}，{{targets}} 未同步。",
+      "keptOriginal": "託管官方登入只寫入 Windows 主環境，{{targets}} 保持原設定。"
+    },
+    "status": {
+      "ok": "已同步",
+      "error": "未同步",
+      "deferred": "待同步",
+      "skipped": "保持原設定",
+      "external": "外部已修改"
+    },
+    "reason": {
+      "primary_failed": "主環境寫入失敗，本次未開始寫入",
+      "primary_deferred": "主環境暫緩同步，本次未開始寫入",
+      "user_deferred": "已儲存目標，暫未覆寫原有設定",
+      "managed_login": "本階段託管官方登入僅支援 Windows 主環境",
+      "proxy_mode": "路由模式下暫不同步跟隨環境",
+      "write_failed": "寫入失敗，原設定未變更",
+      "timeout": "逾時，結果未知（背景可能仍在寫入）",
+      "home_unresolved": "未取得使用者目錄",
+      "managed_fields_changed": "下次切換將覆寫託管欄位",
+      "superseded": "已有較新的操作",
+      "not_synced": "尚未同步供應商"
+    },
+    "indicator": {
+      "title": "寫入目標",
+      "primary": "以 {{target}} 為準",
+      "inUse": "使用中",
+      "provider": "上次寫入：{{name}}",
+      "syncAll": "全部立即同步",
+      "retry": "重試未同步 ({{count}})"
+    }
   }
 }

@@ -47,6 +47,40 @@ pub use live::{
     should_import_default_config_on_startup, sync_current_to_live,
 };
 
+/// 跟随环境（见 `app_targets`）：在当前线程的目标作用域里把 `target` 写进那个目标的
+/// 客户端文件，不改指针、不回填。`prev` 是这个目标上次写入的那家，用来删它带进来的独有
+/// 字段；`None` 表示不知道（第一次写入）。OpenCode 是累加式应用，同步全部受管供应商。
+pub(crate) fn apply_to_follower(
+    state: &AppState,
+    app: &AppType,
+    target: Option<&Provider>,
+    prev: Option<&Provider>,
+) -> Result<(), AppError> {
+    use crate::mode::state::{op, PendingTarget};
+    match (app, target) {
+        (AppType::Claude, Some(target)) => {
+            claude_direct::reapply(state.db.as_ref(), prev, target)?;
+        }
+        (AppType::Codex, Some(target)) => {
+            let owner = prev.map_or(codex_direct::Owner::None, codex_direct::Owner::Provider);
+            codex_direct::write_direct(
+                state.db.as_ref(),
+                &state.codex_oauth_manager,
+                op::APPLY,
+                owner,
+                Some(target),
+                PendingTarget::default(),
+            )?;
+        }
+        (AppType::Gemini, Some(target)) => {
+            gemini_direct::reapply(state.db.as_ref(), target)?;
+        }
+        (AppType::OpenCode, _) => live::sync_all_providers_to_live(state, app)?,
+        _ => {}
+    }
+    Ok(())
+}
+
 pub fn import_pi_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     pi::import_from_live(state)
 }
@@ -217,6 +251,9 @@ pub struct SwitchResult {
     /// while unified history is off, so newer Codex locks the old bucket.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub codex_history_split: Option<crate::codex_history_migration::CodexHistorySplitHint>,
+    /// 多环境写入：主环境切换成功后各跟随环境的结果（没有跟随环境时为空）。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub targets: Vec<crate::app_targets::sync::TargetReport>,
 }
 
 #[cfg(test)]
@@ -7073,7 +7110,22 @@ impl ProviderService {
     ///   操作里提交；累加式应用按各自的规则写入。
     pub fn switch(state: &AppState, app_type: AppType, id: &str) -> Result<SwitchResult, AppError> {
         let app = app_type.as_str().to_string();
-        let result = Self::switch_inner(state, app_type, id);
+        let mut result = Self::switch_inner(state, app_type.clone(), id);
+        // 主环境切换成功后才写跟随环境；主环境失败时本次不启动跟随写入，保留它们的原状态。
+        if let Ok(switched) = &mut result {
+            switched.targets = crate::app_targets::sync::after_change(
+                state,
+                &app_type,
+                crate::app_targets::sync::SyncKind::Provider,
+            );
+            if switched
+                .targets
+                .iter()
+                .any(|t| t.record.status == crate::app_targets::status::TargetStatus::Error)
+            {
+                switched.warnings.push("targets_partial_failed".to_string());
+            }
+        }
         match &result {
             Ok(result) if result.warnings.is_empty() => {
                 log::info!("[SWITCH] {app} 切到 {id} 完成");

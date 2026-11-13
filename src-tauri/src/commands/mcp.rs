@@ -154,9 +154,13 @@ pub async fn upsert_mcp_server_in_config(
         new_server.apps.opencode = true;
     }
 
-    McpService::upsert_server(&state, new_server)
-        .map(|_| true)
-        .map_err(|e| e.to_string())
+    McpService::upsert_server(&state, new_server).map_err(|e| e.to_string())?;
+    crate::app_targets::sync::spawn_after_change(
+        &state,
+        crate::app_targets::sync::all_supported(),
+        crate::app_targets::sync::SyncKind::Mcp,
+    );
+    Ok(true)
 }
 
 /// 在 config.json 中删除一个 MCP 服务器定义
@@ -166,7 +170,13 @@ pub async fn delete_mcp_server_in_config(
     _app: String, // 参数保留用于向后兼容，但在统一结构中不再需要
     id: String,
 ) -> Result<bool, String> {
-    McpService::delete_server(&state, &id).map_err(|e| e.to_string())
+    let deleted = McpService::delete_server(&state, &id).map_err(|e| e.to_string())?;
+    crate::app_targets::sync::spawn_after_change(
+        &state,
+        crate::app_targets::sync::all_supported(),
+        crate::app_targets::sync::SyncKind::Mcp,
+    );
+    Ok(deleted)
 }
 
 /// 设置启用状态并同步到客户端配置（兼容层命令，同 `toggle_mcp_app`）
@@ -180,8 +190,13 @@ pub async fn set_mcp_enabled(
     let app_ty = AppType::from_str(&app).map_err(|e| e.to_string())?;
     McpService::toggle_app_locked(&state, &id, app_ty, enabled)
         .await
-        .map(|_| true)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    crate::app_targets::sync::spawn_after_change(
+        &state,
+        crate::app_targets::sync::all_supported(),
+        crate::app_targets::sync::SyncKind::Mcp,
+    );
+    Ok(true)
 }
 
 // ============================================================================
@@ -204,13 +219,25 @@ pub async fn upsert_mcp_server(
     state: State<'_, AppState>,
     server: McpServer,
 ) -> Result<(), String> {
-    McpService::upsert_server(&state, server).map_err(|e| e.to_string())
+    McpService::upsert_server(&state, server).map_err(|e| e.to_string())?;
+    crate::app_targets::sync::spawn_after_change(
+        &state,
+        crate::app_targets::sync::all_supported(),
+        crate::app_targets::sync::SyncKind::Mcp,
+    );
+    Ok(())
 }
 
 /// 删除 MCP 服务器
 #[tauri::command]
 pub async fn delete_mcp_server(state: State<'_, AppState>, id: String) -> Result<bool, String> {
-    McpService::delete_server(&state, &id).map_err(|e| e.to_string())
+    let deleted = McpService::delete_server(&state, &id).map_err(|e| e.to_string())?;
+    crate::app_targets::sync::spawn_after_change(
+        &state,
+        crate::app_targets::sync::all_supported(),
+        crate::app_targets::sync::SyncKind::Mcp,
+    );
+    Ok(deleted)
 }
 
 /// 切换 MCP 服务器在指定应用的启用状态
@@ -224,7 +251,13 @@ pub async fn toggle_mcp_app(
     let app_ty = AppType::from_str(&app).map_err(|e| e.to_string())?;
     McpService::toggle_app_locked(&state, &server_id, app_ty, enabled)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    crate::app_targets::sync::spawn_after_change(
+        &state,
+        crate::app_targets::sync::all_supported(),
+        crate::app_targets::sync::SyncKind::Mcp,
+    );
+    Ok(())
 }
 
 /// 从所有应用导入 MCP 服务器（复用已有的导入逻辑）

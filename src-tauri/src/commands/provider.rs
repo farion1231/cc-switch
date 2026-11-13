@@ -65,8 +65,17 @@ pub async fn add_provider(
         let state = app_handle
             .try_state::<AppState>()
             .ok_or_else(|| "应用状态不可用".to_string())?;
-        ProviderService::add_from_editor(state.inner(), app_type, provider, add_to_live, editorSave)
-            .map_err(|e| e.to_string())
+        let provider_id = provider.id.clone();
+        let added = ProviderService::add_from_editor(
+            state.inner(),
+            app_type.clone(),
+            provider,
+            add_to_live,
+            editorSave,
+        )
+        .map_err(|e| e.to_string())?;
+        crate::app_targets::sync::after_provider_edit(state.inner(), &app_type, Some(&provider_id));
+        Ok(added)
     })
     .await
     .map_err(|e| format!("供应商添加任务执行失败: {e}"))?
@@ -85,14 +94,17 @@ pub async fn update_provider(
         let state = app_handle
             .try_state::<AppState>()
             .ok_or_else(|| "应用状态不可用".to_string())?;
-        ProviderService::update_from_editor(
+        let provider_id = provider.id.clone();
+        let updated = ProviderService::update_from_editor(
             state.inner(),
-            app_type,
+            app_type.clone(),
             originalId.as_deref(),
             provider,
             editorSave,
         )
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+        crate::app_targets::sync::after_provider_edit(state.inner(), &app_type, Some(&provider_id));
+        Ok(updated)
     })
     .await
     .map_err(|e| format!("供应商更新任务执行失败: {e}"))?
@@ -145,9 +157,9 @@ pub async fn delete_provider(
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        ProviderService::delete(&state, app_type, &id)
-            .map(|_| true)
-            .map_err(|e| e.to_string())
+        ProviderService::delete(&state, app_type.clone(), &id).map_err(|e| e.to_string())?;
+        crate::app_targets::sync::after_provider_edit(&state, &app_type, None);
+        Ok(true)
     })
     .await
     .map_err(|e| format!("供应商删除任务失败: {e}"))?
@@ -162,9 +174,10 @@ pub async fn add_provider_to_live_config(
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        ProviderService::add_to_live_config(&state, app_type, &id)
-            .map(|_| true)
-            .map_err(|e| e.to_string())
+        ProviderService::add_to_live_config(&state, app_type.clone(), &id)
+            .map_err(|e| e.to_string())?;
+        crate::app_targets::sync::after_provider_edit(&state, &app_type, None);
+        Ok(true)
     })
     .await
     .map_err(|e| format!("供应商添加到应用任务失败: {e}"))?
@@ -179,9 +192,10 @@ pub async fn remove_provider_from_live_config(
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        ProviderService::remove_from_live_config(&state, app_type, &id)
-            .map(|_| true)
-            .map_err(|e| e.to_string())
+        ProviderService::remove_from_live_config(&state, app_type.clone(), &id)
+            .map_err(|e| e.to_string())?;
+        crate::app_targets::sync::after_provider_edit(&state, &app_type, None);
+        Ok(true)
     })
     .await
     .map_err(|e| format!("供应商从应用移除任务失败: {e}"))?

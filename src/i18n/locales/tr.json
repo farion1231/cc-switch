@@ -5382,5 +5382,116 @@
       "expiryShowAll": "Her kredi grubunun son kullanma tarihini göster",
       "inTime": "{{time}}'de"
     }
+  },
+  "appTargets": {
+    "help": "Sağlayıcılar, MCP, istemler ve Skills işaretlenen her ortama yazılır. Birincil ortam içe aktarma, geri doldurma, dış değişiklik tespiti ve oturumlar için kullanılır. İşareti kaldırmak o ortamdaki dosyaları silmez.",
+    "summaryOne": "Yalnızca {{target}} ortamına yazar",
+    "summaryMany": "{{targets}} ortamlarına yazar",
+    "detect": "Yeniden algıla",
+    "detecting": "Algılanıyor…",
+    "unsaved": "Kaydedilmedi",
+    "saved": "Kaydedildi",
+    "undo": "Geri al",
+    "syncing": "Eşitleniyor…",
+    "keepOne": "En az bir yazma hedefi bırakın",
+    "primaryMoved": "Birincil ortam {{target}} olarak değiştirildi",
+    "writeTo": "{{app}} uygulamasını {{target}} ortamına yaz",
+    "placeholderDefault": "Varsayılan dizini kullan",
+    "placeholderUnc": "\\\\wsl.localhost\\dağıtım\\… dizini girin",
+    "tag": {
+      "custom": "Özel",
+      "default": "Varsayılan",
+      "auto": "Otomatik"
+    },
+    "env": {
+      "unavailable": "Dağıtım kullanılamıyor · özgün dizin korunur; yeniden algılayın veya işareti kaldırın",
+      "running": "Çalışıyor",
+      "stopped": "Durdu",
+      "noHome": "Ana dizin bulunamadı; özel bir dizin girin",
+      "cached": "son algılama",
+      "willStart": "yazarken başlatılacak",
+      "probeFailed": "bu kez algılama başarısız"
+    },
+    "primaryTag": "Birincil",
+    "primary": "Birincil ortam",
+    "primaryHelp": "İçe aktarma, geri doldurma, dış değişiklik tespiti ve oturumlar için kullanılır. Değiştirmek sağlayıcıları içe aktarmaz; kaydetmek geçerli sağlayıcıyı yeni birincil ortama yazar.",
+    "legacyWsl": "Mevcut WSL dizininiz korunuyor. Her ikisine de yazmak için Windows'u işaretleyip kaydedin.",
+    "legacyUnresolved": "Mevcut dizinin WSL dağıtımı tanınamadı, tek dizin davranışı korunuyor. Dizini ilgili dağıtım satırına girip kaydedin.",
+    "errors": {
+      "noTarget": "En az bir yazma hedefi bırakın.",
+      "primaryNotEnabled": "Birincil ortam işaretli olmalıdır.",
+      "invalidDistro": "Geçersiz dağıtım adı.",
+      "duplicateDistro": "Yinelenen dağıtım.",
+      "homeUnresolved": "{{distro}} için ana dizin bulunamadı; özel bir dizin girin.",
+      "controlChar": "Dizin denetim karakterleri içeriyor.",
+      "parentSegment": "\"..\" içermeyen tam bir dizin kullanın.",
+      "windowsRejectsWsl": "WSL dizinlerini ilgili dağıtım satırına girin.",
+      "windowsNotAbsolute": "Mutlak bir Windows dizini girin.",
+      "windowsInvalidChar": "Windows dizini geçersiz karakterler içeriyor.",
+      "wslDistroMismatch": "{{distro}} içinde tam bir WSL UNC dizini girin.",
+      "duplicateDestination": "İşaretli başka bir ortam aynı dizine yazıyor."
+    },
+    "blocked": {
+      "managed_login_requires_windows_primary": "Yönetilen resmi oturum kullanılıyor. WSL'yi birincil yapmadan önce API anahtarlı bir sağlayıcıya geçin. Taslağınız korunuyor."
+    },
+    "conflict": {
+      "title": "{{target}} ortamında zaten bir {{app}} yapılandırması var",
+      "body": "Şu anda {{existing}} kullanılıyor; {{incoming}} yazılacak.",
+      "unknownWithHost": "tanınmayan bir yapılandırma ({{host}})",
+      "unknown": "tanınmayan bir yapılandırma",
+      "progress": "Çakışma {{index}} / {{total}}",
+      "defer": "Şimdilik yazma",
+      "deferHint": "Hedefi kaydeder ve beklemede olarak işaretler; bir sonraki geçişte veya eşitlemede yazılır.",
+      "overwrite": "Yedekle, sonra geçerli sağlayıcıyı eşitle",
+      "overwriteHint": "Bu ortamın dosyalarını yedekler, yalnızca yönetilen alanları günceller.",
+      "import": "Sağlayıcı kartı olarak içe aktar, sonra eşitle",
+      "importHint": "{{existing}} yapılandırmasını sağlayıcı kartı olarak kaydeder (aynısı varsa yeniden kullanır), sonra yönetilen alanları günceller.",
+      "confirm": "Kaydet",
+      "next": "İleri"
+    },
+    "toast": {
+      "primaryFailed": "Dizinler kaydedildi ancak birincil ortama yazılamadı; hiçbir şey eşitlenmedi.",
+      "partial": "Dizinler kaydedildi; {{targets}} eşitlenmedi.",
+      "deferred": "Dizinler kaydedildi; yeni hedefler beklemede. Sağlayıcılar sayfasındaki yazma hedeflerinden eşitleyebilirsiniz.",
+      "savedAndSynced": "Dizinler kaydedildi ve {{targets}} ile eşitlendi.",
+      "saved": "Dizinler kaydedildi.",
+      "mcpSkipped": "WSL için yalnızca Windows'a özgü MCP sunucuları atlandı: {{servers}}",
+      "fixErrors": "Dizinleri düzeltip kaydedin.",
+      "cancelled": "Kaydetme iptal edildi; düzenlemeleriniz korunuyor.",
+      "conflictChanged": "Hedef yapılandırma az önce değişti; yeniden kaydedin.",
+      "saveFailed": "Yazma hedefleri kaydedilemedi",
+      "synced": "Eşitlendi.",
+      "syncFailed": "Eşitleme başarısız",
+      "switchPartial": "Birincil ortam {{provider}} sağlayıcısına geçti; {{targets}} eşitlenmedi.",
+      "keptOriginal": "Yönetilen resmi oturum yalnızca Windows birincil ortamına yazılır; {{targets}} olduğu gibi bırakıldı."
+    },
+    "status": {
+      "ok": "Eşitlendi",
+      "error": "Eşitlenmedi",
+      "deferred": "Beklemede",
+      "skipped": "Olduğu gibi",
+      "external": "Dışarıda değişti"
+    },
+    "reason": {
+      "primary_failed": "Birincil yazma başarısız; başlatılmadı",
+      "primary_deferred": "Birincil ertelendi; başlatılmadı",
+      "user_deferred": "Hedef kaydedildi; mevcut yapılandırma henüz üzerine yazılmadı",
+      "managed_login": "Yönetilen resmi oturum şimdilik yalnızca Windows birincil ortamını destekler",
+      "proxy_mode": "Yönlendirme modunda takip eden ortamlar henüz eşitlenmez",
+      "write_failed": "Yazma başarısız; özgün yapılandırma değişmedi",
+      "timeout": "Zaman aşımı; sonuç bilinmiyor (arka planda tamamlanabilir)",
+      "home_unresolved": "Ana dizin bulunamadı",
+      "managed_fields_changed": "Bir sonraki geçiş yönetilen alanların üzerine yazacak",
+      "superseded": "Daha yeni bir işlemle değiştirildi",
+      "not_synced": "Sağlayıcı henüz eşitlenmedi"
+    },
+    "indicator": {
+      "title": "Yazma hedefleri",
+      "primary": "Birincil: {{target}}",
+      "inUse": "Kullanımda",
+      "provider": "Son yazılan: {{name}}",
+      "syncAll": "Tümünü şimdi eşitle",
+      "retry": "Bekleyenleri yeniden dene ({{count}})"
+    }
   }
 }

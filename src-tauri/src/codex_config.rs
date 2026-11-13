@@ -281,6 +281,10 @@ pub fn get_codex_auth_path() -> PathBuf {
 }
 
 pub(crate) fn get_codex_managed_oauth_live_auth_marker_path() -> PathBuf {
+    // 托管登录标记描述的是主环境的 auth.json；跟随环境有自己的（通常不存在）标记。
+    if let Some(root) = crate::app_targets::scope::store_root() {
+        return root.join(CODEX_MANAGED_OAUTH_LIVE_AUTH_MARKER_FILENAME);
+    }
     crate::config::get_app_config_dir().join(CODEX_MANAGED_OAUTH_LIVE_AUTH_MARKER_FILENAME)
 }
 

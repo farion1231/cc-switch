@@ -633,6 +633,12 @@ pub struct AppSettings {
     /// DeepSeek Harness 主目录（相当于 `DSH_HOME`，优先于环境变量）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dsh_config_dir: Option<String>,
+    /// Windows / WSL 多环境写入目标（按应用 ID，见 `app_targets`）。只经
+    /// `save_app_targets` 保存；有这一项的应用，旧 `*ConfigDir` 是主环境目录的兼容投影，
+    /// 也只由后端写。设备本地，不进数据库和云同步。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_targets:
+        Option<std::collections::BTreeMap<String, crate::app_targets::model::AppTargetsConfig>>,
 
     // ===== 当前供应商 ID（设备级）=====
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
@@ -782,6 +788,7 @@ impl Default for AppSettings {
             pi_config_dir: None,
             omp_config_dir: None,
             dsh_config_dir: None,
+            app_targets: None,
             current_provider_claude: None,
             current_provider_claude_desktop: None,
             current_provider_codex: None,
@@ -1340,6 +1347,12 @@ pub fn reload_settings() -> Result<(), AppError> {
 }
 
 pub fn get_claude_override_dir() -> Option<PathBuf> {
+    // 跟随环境的写入作用域里用那个目标的目录（见 app_targets::scope）。
+    if let Some(scoped) =
+        crate::app_targets::scope::override_dir(&crate::app_config::AppType::Claude)
+    {
+        return scoped;
+    }
     let settings = settings_store().read().ok()?;
     settings
         .claude_config_dir
@@ -1348,6 +1361,12 @@ pub fn get_claude_override_dir() -> Option<PathBuf> {
 }
 
 pub fn get_codex_override_dir() -> Option<PathBuf> {
+    // 跟随环境的写入作用域里用那个目标的目录（见 app_targets::scope）。
+    if let Some(scoped) =
+        crate::app_targets::scope::override_dir(&crate::app_config::AppType::Codex)
+    {
+        return scoped;
+    }
     let settings = settings_store().read().ok()?;
     settings
         .codex_config_dir
@@ -1356,6 +1375,12 @@ pub fn get_codex_override_dir() -> Option<PathBuf> {
 }
 
 pub fn get_gemini_override_dir() -> Option<PathBuf> {
+    // 跟随环境的写入作用域里用那个目标的目录（见 app_targets::scope）。
+    if let Some(scoped) =
+        crate::app_targets::scope::override_dir(&crate::app_config::AppType::Gemini)
+    {
+        return scoped;
+    }
     let settings = settings_store().read().ok()?;
     settings
         .gemini_config_dir
@@ -1372,6 +1397,12 @@ pub fn get_grok_override_dir() -> Option<PathBuf> {
 }
 
 pub fn get_opencode_override_dir() -> Option<PathBuf> {
+    // 跟随环境的写入作用域里用那个目标的目录（见 app_targets::scope）。
+    if let Some(scoped) =
+        crate::app_targets::scope::override_dir(&crate::app_config::AppType::OpenCode)
+    {
+        return scoped;
+    }
     let settings = settings_store().read().ok()?;
     settings
         .opencode_config_dir
@@ -1418,7 +1449,33 @@ pub fn get_dsh_override_dir() -> Option<PathBuf> {
         .map(|path| resolve_override_path(path))
 }
 
+/// 保存一个应用的写入目标，同时把旧 `*ConfigDir` 更新成主环境目录（兼容投影）。
+pub fn set_app_targets(
+    app: &crate::app_config::AppType,
+    config: crate::app_targets::model::AppTargetsConfig,
+    legacy_dir: Option<String>,
+) -> Result<(), AppError> {
+    use crate::app_config::AppType;
+    mutate_settings(|settings| {
+        settings
+            .app_targets
+            .get_or_insert_with(Default::default)
+            .insert(app.as_str().to_string(), config);
+        match app {
+            AppType::Claude => settings.claude_config_dir = legacy_dir,
+            AppType::Codex => settings.codex_config_dir = legacy_dir,
+            AppType::Gemini => settings.gemini_config_dir = legacy_dir,
+            AppType::OpenCode => settings.opencode_config_dir = legacy_dir,
+            _ => {}
+        }
+    })
+}
+
 pub fn preserve_codex_official_auth_on_switch() -> bool {
+    // 跟随环境里的官方登录不归 CC Switch 管：切到第三方时一律保留，不迁走、不删除。
+    if crate::app_targets::scope::active() {
+        return true;
+    }
     settings_store()
         .read()
         .unwrap_or_else(|e| {

@@ -3,6 +3,7 @@ mod agy_config;
 mod agy_smoke_tests;
 mod app_config;
 mod app_store;
+pub mod app_targets;
 mod auto_launch;
 mod claude_desktop_config;
 mod claude_mcp;
@@ -1601,6 +1602,10 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::get_app_targets_overview,
+            commands::inspect_app_targets,
+            commands::save_app_targets,
+            commands::sync_app_targets,
             commands::get_providers,
             commands::get_current_provider,
             commands::add_provider,

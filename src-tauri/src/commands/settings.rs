@@ -64,6 +64,23 @@ fn merge_settings_for_save(
     incoming.proxy_client_host = existing.proxy_client_host.clone();
     // 轻量模式状态只由进入 / 退出轻量模式时写，前端缓存里的值总是旧的。
     incoming.lightweight_mode = existing.lightweight_mode;
+    // 多环境写入目标只经 save_app_targets 保存（它还要检查冲突、写客户端）。保存过目标的
+    // 应用，旧目录字段是主环境的兼容投影，同样由后端拥有。
+    incoming.app_targets = existing.app_targets.clone();
+    if let Some(targets) = &existing.app_targets {
+        if targets.contains_key("claude") {
+            incoming.claude_config_dir = existing.claude_config_dir.clone();
+        }
+        if targets.contains_key("codex") {
+            incoming.codex_config_dir = existing.codex_config_dir.clone();
+        }
+        if targets.contains_key("gemini") {
+            incoming.gemini_config_dir = existing.gemini_config_dir.clone();
+        }
+        if targets.contains_key("opencode") {
+            incoming.opencode_config_dir = existing.opencode_config_dir.clone();
+        }
+    }
     incoming
 }
 
@@ -488,6 +505,40 @@ mod tests {
         let merged = merge_settings_for_save(AppSettings::default(), &existing);
 
         assert!(merged.lightweight_mode);
+    }
+
+    #[test]
+    fn save_settings_should_keep_backend_owned_app_targets_and_projections() {
+        let mut targets = std::collections::BTreeMap::new();
+        targets.insert(
+            "claude".to_string(),
+            crate::app_targets::model::AppTargetsConfig::default(),
+        );
+        let existing = crate::settings::AppSettings {
+            app_targets: Some(targets),
+            claude_config_dir: Some(r"\\wsl$\Ubuntu\home\me\.claude".to_string()),
+            codex_config_dir: Some("/old/codex".to_string()),
+            ..Default::default()
+        };
+        let incoming = crate::settings::AppSettings {
+            claude_config_dir: None,
+            codex_config_dir: Some("/new/codex".to_string()),
+            ..Default::default()
+        };
+        let merged = merge_settings_for_save(incoming, &existing);
+        assert!(
+            merged.app_targets.is_some(),
+            "targets only change through save_app_targets"
+        );
+        assert_eq!(
+            merged.claude_config_dir, existing.claude_config_dir,
+            "projection of an app with saved targets is backend-owned"
+        );
+        assert_eq!(
+            merged.codex_config_dir.as_deref(),
+            Some("/new/codex"),
+            "apps without saved targets keep the single-directory save"
+        );
     }
 
     #[test]

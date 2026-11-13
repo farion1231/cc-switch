@@ -761,7 +761,10 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
 ///
 /// Writes all providers from the database to the live configuration file.
 /// Used for OpenCode and other additive mode applications.
-fn sync_all_providers_to_live(state: &AppState, app_type: &AppType) -> Result<(), AppError> {
+pub(crate) fn sync_all_providers_to_live(
+    state: &AppState,
+    app_type: &AppType,
+) -> Result<(), AppError> {
     let providers = state.db.get_all_providers(app_type.as_str())?;
     let mut synced_count = 0usize;
 

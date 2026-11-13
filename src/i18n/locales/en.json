@@ -5382,5 +5382,116 @@
       "managedHint": "This account is managed in the Auth Center; the card disappears after you sign out."
     },
     "deleteSessionHint": "Delete this session in DeepSeek Harness to keep its history consistent."
+  },
+  "appTargets": {
+    "help": "Providers, MCP, prompts and Skills are written to every checked environment. The primary environment is used for import, backfill, external-change detection and sessions. Unchecking never deletes files in that environment.",
+    "summaryOne": "Writes to {{target}} only",
+    "summaryMany": "Writes to {{targets}}",
+    "detect": "Detect again",
+    "detecting": "Detecting…",
+    "unsaved": "Unsaved",
+    "saved": "Saved",
+    "undo": "Undo",
+    "syncing": "Syncing…",
+    "keepOne": "Keep at least one write target",
+    "primaryMoved": "Primary environment changed to {{target}}",
+    "writeTo": "Write {{app}} to {{target}}",
+    "placeholderDefault": "Use the default directory",
+    "placeholderUnc": "Enter a \\\\wsl.localhost\\distro\\… directory",
+    "tag": {
+      "custom": "Custom",
+      "default": "Default",
+      "auto": "Auto"
+    },
+    "env": {
+      "unavailable": "Distro unavailable · original directory kept; detect again or uncheck it",
+      "running": "Running",
+      "stopped": "Stopped",
+      "noHome": "Home directory not found; enter a custom directory",
+      "cached": "last detection",
+      "willStart": "will be started when writing",
+      "probeFailed": "detection failed this time"
+    },
+    "primaryTag": "Primary",
+    "primary": "Primary environment",
+    "primaryHelp": "Used for import, backfill, external-change detection and sessions. Changing it never imports providers; saving writes the current provider to the new primary.",
+    "legacyWsl": "Your existing WSL directory is kept. Check Windows and save to write to both.",
+    "legacyUnresolved": "The WSL distro of the existing directory could not be recognised, so the single-directory behaviour is kept. Enter the directory on the matching distro row and save.",
+    "errors": {
+      "noTarget": "Keep at least one write target.",
+      "primaryNotEnabled": "The primary environment must be checked.",
+      "invalidDistro": "Invalid distro name.",
+      "duplicateDistro": "Duplicate distro.",
+      "homeUnresolved": "Could not find the home directory of {{distro}}; enter a custom directory.",
+      "controlChar": "The directory contains control characters.",
+      "parentSegment": "Use a full directory without \"..\".",
+      "windowsRejectsWsl": "Enter WSL directories on the matching distro row.",
+      "windowsNotAbsolute": "Enter an absolute Windows directory.",
+      "windowsInvalidChar": "The Windows directory contains invalid characters.",
+      "wslDistroMismatch": "Enter a full WSL UNC directory inside {{distro}}.",
+      "duplicateDestination": "Another checked environment writes to the same directory."
+    },
+    "blocked": {
+      "managed_login_requires_windows_primary": "A managed official sign-in is in use. Switch to an API key provider before making WSL the primary environment. Your draft is kept."
+    },
+    "conflict": {
+      "title": "{{target}} already has a {{app}} config",
+      "body": "It currently uses {{existing}}; {{incoming}} would be written.",
+      "unknownWithHost": "an unrecognised config ({{host}})",
+      "unknown": "an unrecognised config",
+      "progress": "Conflict {{index}} of {{total}}",
+      "defer": "Don't write yet",
+      "deferHint": "Save the target and mark it pending; it is written on the next switch or sync.",
+      "overwrite": "Back up, then sync the current provider",
+      "overwriteHint": "Back up this environment's files, then update only the managed fields.",
+      "import": "Import as a provider card, then sync",
+      "importHint": "Save {{existing}} as a provider card (reusing an identical one), then update the managed fields.",
+      "confirm": "Save",
+      "next": "Next"
+    },
+    "toast": {
+      "primaryFailed": "Directories saved, but writing the primary environment failed; nothing was synced.",
+      "partial": "Directories saved; {{targets}} not synced.",
+      "deferred": "Directories saved; new targets are pending. Sync them from Write targets on the providers page.",
+      "savedAndSynced": "Directories saved and synced to {{targets}}.",
+      "saved": "Directories saved.",
+      "mcpSkipped": "Windows-only MCP servers were skipped for WSL: {{servers}}",
+      "fixErrors": "Fix the directories, then save.",
+      "cancelled": "Save cancelled; your edits are kept.",
+      "conflictChanged": "The target config just changed; save again.",
+      "saveFailed": "Failed to save write targets",
+      "synced": "Synced.",
+      "syncFailed": "Sync failed",
+      "switchPartial": "Primary switched to {{provider}}; {{targets}} not synced.",
+      "keptOriginal": "Managed official sign-in is written to the Windows primary only; {{targets}} kept as is."
+    },
+    "status": {
+      "ok": "Synced",
+      "error": "Not synced",
+      "deferred": "Pending",
+      "skipped": "Kept as is",
+      "external": "Changed externally"
+    },
+    "reason": {
+      "primary_failed": "Primary write failed; not started",
+      "primary_deferred": "Primary deferred; not started",
+      "user_deferred": "Target saved; existing config not overwritten yet",
+      "managed_login": "Managed official sign-in supports the Windows primary only for now",
+      "proxy_mode": "Followers are not synced in routing mode yet",
+      "write_failed": "Write failed; original config untouched",
+      "timeout": "Timed out; result unknown (may still finish in background)",
+      "home_unresolved": "Home directory not found",
+      "managed_fields_changed": "The next switch will overwrite managed fields",
+      "superseded": "Replaced by a newer operation",
+      "not_synced": "Provider not synced yet"
+    },
+    "indicator": {
+      "title": "Write targets",
+      "primary": "Primary: {{target}}",
+      "inUse": "In use",
+      "provider": "Last written: {{name}}",
+      "syncAll": "Sync all now",
+      "retry": "Retry pending ({{count}})"
+    }
   }
 }

@@ -79,11 +79,17 @@ pub async fn install_skill_unified(
 ) -> Result<InstalledSkill, String> {
     let app_type = parse_app_type(&current_app)?;
 
-    service
+    let installed = service
         .0
         .install(&app_state.db, &skill, &app_type)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    crate::app_targets::sync::spawn_after_change(
+        &app_state,
+        crate::app_targets::sync::all_supported(),
+        crate::app_targets::sync::SyncKind::Skills,
+    );
+    Ok(installed)
 }
 
 /// 卸载 Skill（新版统一卸载）
@@ -92,10 +98,16 @@ pub async fn uninstall_skill_unified(
     id: String,
     app_state: State<'_, AppState>,
 ) -> Result<SkillUninstallResult, String> {
-    run_db_task(&app_state, move |state| {
+    let result = run_db_task(&app_state, move |state| {
         SkillService::uninstall(&state.db, &id).map_err(|e| e.to_string())
     })
-    .await
+    .await?;
+    crate::app_targets::sync::spawn_after_change(
+        &app_state,
+        crate::app_targets::sync::all_supported(),
+        crate::app_targets::sync::SyncKind::Skills,
+    );
+    Ok(result)
 }
 
 #[tauri::command]
@@ -125,7 +137,13 @@ pub async fn toggle_skill_app(
         SkillService::toggle_app(&state.db, &id, &app_type, enabled).map_err(|e| e.to_string())?;
         Ok(true)
     })
-    .await
+    .await?;
+    crate::app_targets::sync::spawn_after_change(
+        &app_state,
+        crate::app_targets::sync::all_supported(),
+        crate::app_targets::sync::SyncKind::Skills,
+    );
+    Ok(true)
 }
 
 /// 扫描未管理的 Skills
@@ -209,9 +227,15 @@ pub async fn resync_skills_to_apps(
     app_state: State<'_, AppState>,
 ) -> Result<Vec<SkillAppSyncOutcome>, String> {
     let db = app_state.db.clone();
-    tauri::async_runtime::spawn_blocking(move || SkillService::resync_all_apps(&db))
+    let outcomes = tauri::async_runtime::spawn_blocking(move || SkillService::resync_all_apps(&db))
         .await
-        .map_err(|e| format!("重新同步 Skill 失败: {e}"))
+        .map_err(|e| format!("重新同步 Skill 失败: {e}"))?;
+    crate::app_targets::sync::spawn_after_change(
+        &app_state,
+        crate::app_targets::sync::all_supported(),
+        crate::app_targets::sync::SyncKind::Skills,
+    );
+    Ok(outcomes)
 }
 
 /// 更新单个 Skill
