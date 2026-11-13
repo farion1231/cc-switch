@@ -2372,7 +2372,6 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "ccsub",
     icon: "ccsub",
     templateValues: {
       apiKey: {

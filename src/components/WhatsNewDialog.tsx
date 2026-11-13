@@ -95,7 +95,9 @@ export function WhatsNewDialog({
             </DialogDescription>
           )}
         </DialogHeader>
-        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-4">
+        {/* flex-auto 而不是 flex-1：DialogContent 是 h-fit，WebKit（macOS / Linux）算高度时把
+            flex-basis: 0% 的正文按 0 计，弹窗只剩标题和按钮那么高，日志被截成一行 */}
+        <div className="min-h-0 flex-auto space-y-5 overflow-y-auto px-6 py-4">
           {visible.map((entry) => (
             <section key={entry.version}>
               <div className="flex items-center justify-between gap-3">

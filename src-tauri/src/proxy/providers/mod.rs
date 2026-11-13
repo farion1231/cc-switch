@@ -21,6 +21,7 @@ pub mod codex_chat_history;
 mod codex_chat_tool_history;
 pub(crate) mod codex_compaction;
 pub mod codex_oauth_auth;
+pub(crate) mod codex_responses_arguments;
 pub(crate) mod codex_responses_sse;
 pub mod copilot_auth;
 pub mod copilot_model_map;
@@ -71,7 +72,7 @@ pub use codex::{
     provider_needs_responses_late_arguments_repair, provider_needs_responses_namespace_flatten,
     resolve_codex_catalog_tool_profile, resolve_codex_chat_reasoning_config,
     should_convert_codex_responses_to_anthropic, should_convert_codex_responses_to_chat,
-    strip_codex_hosted_web_search,
+    strip_codex_hosted_web_search, strip_codex_openai_only_request_fields,
 };
 pub use gemini::GeminiAdapter;
 
@@ -222,9 +223,10 @@ impl ProviderType {
             | AppType::Mcode
             | AppType::Kimi
             | AppType::Dsh
-            | AppType::Omp
             | AppType::Agy
-            | AppType::Copilot => return None,
+            | AppType::Omp
+            | AppType::Copilot
+            | AppType::WorkBuddy => return None,
         };
         Some(provider_type)
     }
@@ -284,9 +286,10 @@ pub fn get_adapter(app_type: &AppType) -> Option<Box<dyn ProviderAdapter>> {
         | AppType::Mcode
         | AppType::Kimi
         | AppType::Dsh
-        | AppType::Omp
         | AppType::Agy
-        | AppType::Copilot => return None,
+        | AppType::Omp
+        | AppType::Copilot
+        | AppType::WorkBuddy => return None,
     })
 }
 

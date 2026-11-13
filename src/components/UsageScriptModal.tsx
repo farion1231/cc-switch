@@ -10,7 +10,7 @@ import {
   copilotGetUsage,
   copilotGetUsageForAccount,
 } from "@/lib/api/copilot";
-import { isCopilotByok } from "@/config/copilotProviderPresets";
+import { isCopilotByok } from "@/config/copilotConfig";
 import { useSettingsQuery } from "@/lib/query";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
@@ -346,6 +346,20 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           return {
             apiKey: root.apiKey,
             baseUrl: firstModel?.baseUrl || root.baseUrl,
+          };
+        } else if (appId === "workbuddy") {
+          // WorkBuddy models.json: shared url / apiKey, or the first model's overrides.
+          // url is the full chat/completions endpoint, same trim as the backend resolver.
+          const root = config as any;
+          const firstModel = Array.isArray(root.models)
+            ? root.models[0]
+            : undefined;
+          const url: string | undefined = root.url || firstModel?.url;
+          return {
+            apiKey: root.apiKey || firstModel?.apiKey,
+            baseUrl: url
+              ?.replace(/\/+$/, "")
+              .replace(/\/chat\/completions$/, ""),
           };
         } else if (appId === "openclaw") {
           // OpenClaw: settingsConfig 顶层扁平（camelCase，对应 openclaw.json）

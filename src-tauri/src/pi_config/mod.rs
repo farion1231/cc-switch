@@ -100,19 +100,19 @@ pub(crate) fn read_pi_native_defaults() -> Result<PiNativeDefaults, AppError> {
 }
 
 pub(crate) fn read_pi_native_providers() -> Result<IndexMap<String, Value>, AppError> {
-    let _guard = lock_models_file()?;
+    let _guard = lock_models_file();
     read_pi_native_providers_locked(&get_pi_models_path()?)
 }
 
 pub(crate) fn read_pi_native_provider(provider_key: &str) -> Result<Option<Value>, AppError> {
-    let _guard = lock_models_file()?;
+    let _guard = lock_models_file();
     let path = get_pi_models_path()?;
     let document = read_models_document(&path)?;
     Ok(providers(&document, &path)?.get(provider_key).cloned())
 }
 
 pub(crate) fn pi_provider_exists(provider_key: &str) -> Result<bool, AppError> {
-    let _guard = lock_models_file()?;
+    let _guard = lock_models_file();
     let path = get_pi_models_path()?;
     let document = read_models_document(&path)?;
     Ok(providers(&document, &path)?.contains_key(provider_key))
@@ -120,7 +120,7 @@ pub(crate) fn pi_provider_exists(provider_key: &str) -> Result<bool, AppError> {
 
 pub(crate) fn insert_pi_provider(provider_key: &str, config: &Value) -> Result<bool, AppError> {
     validate_provider_node(provider_key, config)?;
-    let _guard = lock_models_file()?;
+    let _guard = lock_models_file();
     let path = get_pi_models_path()?;
     let (mut document, expected_revision) = read_models_document_with_revision(&path)?;
     let providers = providers_mut(&mut document, &path)?;
@@ -146,7 +146,7 @@ pub(crate) fn replace_pi_provider(
     replacement: &Value,
 ) -> Result<(), AppError> {
     validate_provider_node(provider_key, replacement)?;
-    let _guard = lock_models_file()?;
+    let _guard = lock_models_file();
     let path = get_pi_models_path()?;
     let (mut document, expected_revision) = read_models_document_with_revision(&path)?;
     let providers = providers_mut(&mut document, &path)?;
@@ -172,7 +172,7 @@ pub(crate) fn replace_pi_provider_if_present(
     replacement: &Value,
 ) -> Result<Option<Value>, AppError> {
     validate_provider_node(provider_key, replacement)?;
-    let _guard = lock_models_file()?;
+    let _guard = lock_models_file();
     let path = get_pi_models_path()?;
     let (mut document, expected_revision) = read_models_document_with_revision(&path)?;
     let providers = providers_mut(&mut document, &path)?;
@@ -202,7 +202,7 @@ fn remove_pi_provider_inner(
     provider_key: &str,
     expected: Option<&Value>,
 ) -> Result<Option<Value>, AppError> {
-    let _guard = lock_models_file()?;
+    let _guard = lock_models_file();
     let path = get_pi_models_path()?;
     let (mut document, expected_revision) = read_models_document_with_revision(&path)?;
     let providers = providers_mut(&mut document, &path)?;
@@ -223,7 +223,7 @@ pub(crate) fn restore_pi_provider_if_missing(
     provider_key: &str,
     config: &Value,
 ) -> Result<(), AppError> {
-    let _guard = lock_models_file()?;
+    let _guard = lock_models_file();
     let path = get_pi_models_path()?;
     let (mut document, expected_revision) = read_models_document_with_revision(&path)?;
     let providers = providers_mut(&mut document, &path)?;
@@ -343,10 +343,8 @@ fn resolve_usage_api_key_with(value: &str, env: impl Fn(&str) -> Option<String>)
     resolved
 }
 
-fn lock_models_file() -> Result<MutexGuard<'static, ()>, AppError> {
-    MODELS_FILE_LOCK
-        .lock()
-        .map_err(|error| AppError::Config(format!("Pi models file lock is poisoned: {error}")))
+fn lock_models_file() -> MutexGuard<'static, ()> {
+    crate::sync_utils::lock_file_operation(&MODELS_FILE_LOCK)
 }
 
 fn read_pi_native_providers_locked(path: &Path) -> Result<IndexMap<String, Value>, AppError> {

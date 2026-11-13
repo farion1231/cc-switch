@@ -41,9 +41,7 @@ impl<'a> AgyChange<'a> {
 }
 
 pub fn sync(id: &str, spec: Option<&Value>) -> Result<(), AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     sync_file(
         &crate::agy_config::customizations_dir().join("mcp_config.json"),
         id,
@@ -56,9 +54,7 @@ pub(crate) fn sync_and_commit<T>(
     change: AgyChange<'_>,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let path = crate::agy_config::customizations_dir().join("mcp_config.json");
     crate::mcode_config::write_and_commit(&path, || sync_file(&path, id, change), commit)
 }

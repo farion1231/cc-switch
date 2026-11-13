@@ -242,16 +242,20 @@ pub(crate) fn write_and_commit<T>(
         return Err(AppError::Conflict("omp.errors.externalChange".into()));
     }
     atomic_write_private(path, after)?;
-    match commit() {
+    let rollback = || {
+        if read_bytes(path)?.as_deref() != Some(after) {
+            return Err(AppError::Conflict("omp.errors.rollbackConflict".into()));
+        }
+        match before {
+            Some(bytes) => atomic_write_private(path, bytes),
+            None => fs::remove_file(path).map_err(|e| AppError::io(path, e)),
+        }
+    };
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(commit));
+    match crate::sync_utils::resume_after_rollback(outcome, rollback) {
         Ok(result) => Ok(result),
         Err(error) => {
-            if read_bytes(path)?.as_deref() != Some(after) {
-                return Err(AppError::Conflict("omp.errors.rollbackConflict".into()));
-            }
-            match before {
-                Some(bytes) => atomic_write_private(path, bytes)?,
-                None => fs::remove_file(path).map_err(|e| AppError::io(path, e))?,
-            }
+            rollback()?;
             Err(error)
         }
     }
@@ -290,7 +294,7 @@ fn providers(document: &serde_yaml::Value) -> Result<IndexMap<String, Value>, Ap
 // ============================================================================
 
 pub(crate) fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
-    let _guard = MODELS_LOCK.lock()?;
+    let _guard = crate::sync_utils::lock_file_operation(&MODELS_LOCK);
     providers(&parse(&read_text(&get_omp_models_path()?)?.1)?)
 }
 
@@ -821,7 +825,7 @@ pub(crate) fn change_and_commit<T>(
     change: Change,
     commit: impl FnOnce(Option<Value>) -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    let _guard = MODELS_LOCK.lock()?;
+    let _guard = crate::sync_utils::lock_file_operation(&MODELS_LOCK);
     let path = get_omp_models_path()?;
     let (before, text) = read_text(&path)?;
     let native = providers(&parse(&text).map_err(|_| manual_edit())?)?;
@@ -968,7 +972,7 @@ pub(crate) fn read_default_provider_id() -> Result<Option<String>, AppError> {
 pub(crate) fn update_omp_mcp_document(
     update: impl FnOnce(&mut Value) -> Result<bool, AppError>,
 ) -> Result<(), AppError> {
-    let _guard = MCP_LOCK.lock()?;
+    let _guard = crate::sync_utils::lock_file_operation(&MCP_LOCK);
     let path = get_omp_mcp_path()?;
     let before = read_bytes(&path)?;
     let mut document: Value = match &before {
@@ -1305,6 +1309,32 @@ mod tests {
         }
         fs::write(&path, vec![b' '; MAX_FILE_BYTES as usize + 1]).unwrap();
         assert!(read_bytes(&path).is_err());
+    }
+
+    #[test]
+    fn panicking_commit_restores_ours_but_preserves_external_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("models.yml");
+        for before in [None, Some(b"original".as_slice())] {
+            if let Some(bytes) = before {
+                fs::write(&path, bytes).unwrap();
+            }
+            assert!(std::panic::catch_unwind(|| {
+                let _: Result<(), AppError> =
+                    write_and_commit(&path, before, b"ours", || panic!("commit interrupted"));
+            })
+            .is_err());
+            assert_eq!(read_bytes(&path).unwrap().as_deref(), before);
+        }
+        assert!(std::panic::catch_unwind(|| {
+            let _: Result<(), AppError> =
+                write_and_commit(&path, Some(b"original"), b"ours", || {
+                    fs::write(&path, b"external edit").unwrap();
+                    panic!("commit interrupted");
+                });
+        })
+        .is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"external edit");
     }
 
     #[test]
