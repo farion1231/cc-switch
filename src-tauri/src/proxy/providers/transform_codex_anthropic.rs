@@ -18,7 +18,7 @@ use super::transform_codex_chat::{
 use super::transform_responses::{sanitize_anthropic_tool_use_input, TOOL_RESULT_ERROR_MARKER};
 use crate::proxy::error::ProxyError;
 use crate::proxy::json_canonical::canonical_json_string;
-use crate::proxy::sse::{strip_sse_field, take_sse_block};
+use crate::proxy::sse::{strip_sse_field, SseBlocks};
 use crate::proxy::tool_media::{
     strip_and_clamp_media_from_tool_value, ToolMediaScope, TOOL_RESULT_MEDIA_ATTACHED_MARKER,
 };
@@ -28,6 +28,19 @@ use std::collections::{BTreeMap, HashSet};
 
 pub(crate) const ANTHROPIC_THINKING_ENCRYPTED_PREFIX: &str = "ccswitch-anthropic-thinking-v1:";
 const TOOL_SEARCH_PROXY_NAME: &str = "tool_search";
+
+/// Anthropic `max_tokens` used when neither the request nor the provider sets an
+/// output ceiling. Codex never sends `max_output_tokens`, so in practice this is
+/// the ceiling for every Codex → Anthropic request without a provider override.
+///
+/// Thinking tokens count against `max_tokens` (adaptive thinking included), so the
+/// old 8192 left too little room: one long file write in a tool call would stop at
+/// `max_tokens` and Codex would drop the turn as an incomplete response. 32000 is
+/// at or below the output ceiling of every Claude 4+ model (Opus 4 / 4.1 are the
+/// lowest at 32K) and of the current Anthropic-compatible endpoints (Kimi, GLM,
+/// MiniMax, DeepSeek). A gateway with a lower ceiling needs the provider's
+/// "max output tokens" setting.
+pub(crate) const DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS: u64 = 32000;
 
 /// Maps Codex's reasoning.effort to the token budget for Anthropic thinking.
 ///
@@ -1417,7 +1430,7 @@ pub fn anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
     let mut delta_usage: Option<Value> = None;
     let mut saw_message_stop = false;
 
-    let mut buffer = body.to_string();
+    let mut sse_blocks = SseBlocks::new(body);
     let process_block = |block: &str,
                          message: &mut Option<Value>,
                          blocks: &mut BTreeMap<u64, Value>,
@@ -1560,9 +1573,9 @@ pub fn anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
         Ok(())
     };
 
-    while let Some(block) = take_sse_block(&mut buffer) {
+    for block in sse_blocks.by_ref() {
         process_block(
-            &block,
+            block,
             &mut message,
             &mut blocks,
             &mut json_accum,
@@ -1572,9 +1585,10 @@ pub fn anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
         )?;
     }
     // Tolerate the last event missing a trailing blank line (truncated stream).
-    if !buffer.trim().is_empty() {
+    let tail = sse_blocks.remainder();
+    if !tail.trim().is_empty() {
         process_block(
-            &buffer.clone(),
+            tail,
             &mut message,
             &mut blocks,
             &mut json_accum,
@@ -2380,6 +2394,23 @@ mod tests {
         assert_eq!(result["thinking"]["type"], "enabled");
         assert_eq!(result["thinking"]["budget_tokens"], 2500);
         assert_eq!(result["max_tokens"], 5000);
+    }
+
+    #[test]
+    fn test_request_shipped_default_leaves_room_for_long_tool_calls() {
+        // Codex never sends max_output_tokens, so the shipped default is the real
+        // ceiling. Even with the deepest effort, a large tool call (e.g. writing a
+        // whole file) must keep at least 16000 tokens after the thinking budget.
+        let input = json!({
+            "model": "claude-sonnet-4-5",
+            "reasoning": { "effort": "xhigh" },
+            "input": [{ "role": "user", "content": "write the file" }]
+        });
+        let result =
+            responses_request_to_anthropic(input, DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS).unwrap();
+        assert_eq!(result["max_tokens"], DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS);
+        let budget = result["thinking"]["budget_tokens"].as_u64().unwrap();
+        assert!(DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS - budget >= 16000);
     }
 
     #[test]

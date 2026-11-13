@@ -12,10 +12,23 @@ vi.mock("recharts", async (importOriginal) => {
   const recharts = await importOriginal<typeof import("recharts")>();
   return {
     ...recharts,
-    // jsdom has no layout; keep the actual charts with fixed container dimensions.
-    ResponsiveContainer: (
-      props: ComponentProps<typeof recharts.ResponsiveContainer>,
-    ) => <recharts.ResponsiveContainer {...props} width={640} height={132} />,
+    // jsdom has no layout; keep the actual charts with fixed dimensions.
+    AreaChart: (props: ComponentProps<typeof recharts.AreaChart>) => (
+      <recharts.AreaChart
+        {...props}
+        responsive={false}
+        width={640}
+        height={132}
+      />
+    ),
+    BarChart: (props: ComponentProps<typeof recharts.BarChart>) => (
+      <recharts.BarChart
+        {...props}
+        responsive={false}
+        width={640}
+        height={132}
+      />
+    ),
   };
 });
 

@@ -4,6 +4,11 @@ import type { AppId } from "@/lib/api";
 import type { AppMode } from "@/types/proxy";
 import { isPiFamilyApp } from "@/config/appConfig";
 import {
+  boundWorkBuddyAccountId,
+  isWorkBuddyOfficial,
+  type WorkBuddyOfficialState,
+} from "@/components/providers/workbuddyOfficial";
+import {
   isOfficialAccount,
   providerNeedsRouting,
   supportsFailover,
@@ -82,6 +87,8 @@ export interface ProviderSection {
   key: string;
   title?: string;
   help?: { title: string; body: string };
+  /** 标题后面一句常驻的灰字说明（DSH：Web 和 Desktop 共用这份列表） */
+  note?: string;
   emptyText?: string;
   items: { provider: Provider; presentation: CardPresentation }[];
 }
@@ -700,11 +707,93 @@ export interface AdditiveInput {
   piStateUnavailable?: boolean;
   /** Kimi：原生 default_model 别名所属的供应商。 */
   kimiCurrentId?: string | null;
+  /** WorkBuddy 官方登录卡：已收录账号、当前登录、是否在运行 */
+  workbuddyOfficial?: WorkBuddyOfficialState;
+  /** Copilot CLI：settings.json 的 `model`（`<卡片 id>/<模型>`）所属的自带模型卡。 */
+  copilotDefaultId?: string | null;
+  /** 「已添加」里列表外另画的卡（DSH 的 DeepSeek 账号卡），计入标题数字 */
+  extraAdded?: number;
   actions: {
     add: (provider: Provider) => void;
     remove: (provider: Provider) => void;
     disableOmo: (provider: Provider) => void;
     setDefault: (provider: Provider, modelId?: string) => void;
+    /** WorkBuddy 官方登录卡的「添加」：把 WorkBuddy 的登录切到卡片绑定的账号 */
+    switchAccount?: (provider: Provider) => void;
+    /** Copilot CLI 官方卡的主按钮 */
+    openTerminal?: (provider: Provider) => void;
+  };
+}
+
+/**
+ * WorkBuddy 官方登录卡：和模型卡一样分进「已添加 / 可添加」，但同一时间只有一张在「已添加」——
+ * 绑定的账号就是 WorkBuddy 现在登着的号。「添加」= 把 WorkBuddy 的登录切到这张卡的账号（要先退出
+ * WorkBuddy），原来那张自动回到「可添加」。WorkBuddy 只能登一个号，在用的那张不能单独「移除」
+ * （不登出、不改凭据），按钮禁用并说明添加另一张即可切换。官方卡从不写进 models.json。
+ */
+function workbuddyOfficialCard(
+  input: AdditiveInput,
+  p: Provider,
+): { added: boolean; presentation: CardPresentation } {
+  const { t } = input;
+  const state = input.workbuddyOfficial;
+  const bound = boundWorkBuddyAccountId(p);
+  const missing =
+    !bound || (state?.accountIds != null && !state.accountIds.has(bound));
+  const current = !missing && bound === state?.currentAccountId;
+  const chips: CardChip[] = [
+    {
+      key: "official",
+      label: t("providerCard.chip.official"),
+      tone: "outline",
+    },
+  ];
+  if (missing) {
+    chips.push({
+      key: "accountMissing",
+      label: bound
+        ? t("workbuddy.official.accountDeletedChip")
+        : t("workbuddy.official.accountUnsetChip"),
+      tone: "warning",
+    });
+  }
+  if (current) {
+    return {
+      added: true,
+      presentation: {
+        chips,
+        buttons: [
+          {
+            key: "remove",
+            label: t("providerCard.action.remove"),
+            onClick: () => undefined,
+            disabledReason: t("workbuddy.official.onlyOne"),
+          },
+        ],
+      },
+    };
+  }
+  return {
+    added: false,
+    presentation: {
+      chips,
+      buttons: [
+        {
+          key: "add",
+          label: t("providerCard.action.add"),
+          onClick: () => input.actions.switchAccount?.(p),
+          disabledReason: missing
+            ? bound
+              ? t("workbuddy.official.accountDeleted")
+              : t("workbuddy.official.accountUnset")
+            : state?.running
+              ? t("workbuddy.official.quitFirst")
+              : state?.switching
+                ? t("workbuddy.official.switching")
+                : undefined,
+        },
+      ],
+    },
   };
 }
 
@@ -712,6 +801,8 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
   const { app, t, providers, actions } = input;
   const added: ProviderSection["items"] = [];
   const available: ProviderSection["items"] = [];
+  // Copilot CLI 的官方卡：仍是启动式（只有「打开终端」），并进「已添加」排在最前
+  const official: ProviderSection["items"] = [];
   const piBlocked =
     isPiFamilyApp(app) && input.piStateUnavailable
       ? t(`${app}.current.stateUnavailableHint`)
@@ -719,6 +810,74 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
 
   for (const p of providers) {
     const chips: CardChip[] = [];
+    if (app === "workbuddy" && isWorkBuddyOfficial(p)) {
+      const card = workbuddyOfficialCard(input, p);
+      (card.added ? added : available).push({
+        provider: p,
+        presentation: card.presentation,
+      });
+      continue;
+    }
+    if (app === "copilot") {
+      if (isOfficialAccount(app, p)) {
+        // 官方卡用 Copilot CLI 自己的 GitHub 登录，不写任何文件：没有添加 / 移除，
+        // 主操作就是「打开终端」，哪张都能删
+        official.push({
+          provider: p,
+          presentation: {
+            chips: [
+              {
+                key: "official",
+                label: t("providerCard.chip.official"),
+                tone: "outline",
+              },
+            ],
+            buttons: [
+              {
+                key: "openTerminal",
+                label: t("provider.openTerminalWithProvider"),
+                onClick: () => actions.openTerminal?.(p),
+              },
+            ],
+          },
+        });
+        continue;
+      }
+      // 自带模型卡：「添加」写进 Copilot 的 providers.json，「移除」只删这一家的条目。
+      // 默认那家（settings.json 的 model 指向它）不能移除、不能删；Copilot 里换默认模型用 /model
+      const live = input.isInConfig(p);
+      const isDefault = live && p.id === input.copilotDefaultId;
+      (live ? added : available).push({
+        provider: p,
+        presentation: {
+          tone: isDefault ? "direct" : undefined,
+          status: isDefault
+            ? { label: t("providerCard.status.default"), dot: "direct" }
+            : undefined,
+          chips,
+          buttons: [
+            live
+              ? {
+                  key: "remove",
+                  label: t("providerCard.action.remove"),
+                  disabledReason: isDefault
+                    ? t("copilot.defaultCannotRemove")
+                    : undefined,
+                  onClick: () => actions.remove(p),
+                }
+              : {
+                  key: "add",
+                  label: t("providerCard.action.add"),
+                  onClick: () => actions.add(p),
+                },
+          ],
+          deleteDisabledReason: isDefault
+            ? t("copilot.defaultCannotRemove")
+            : undefined,
+        },
+      });
+      continue;
+    }
     if (app === "kimi") {
       const official = isOfficialAccount(app, p);
       const live = input.isInConfig(p);
@@ -756,7 +915,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
           key: "remove",
           label: t("providerCard.action.remove"),
           disabledReason: current
-            ? t("providerCard.reason.currentCannotRemove")
+            ? t("providerCard.reason.defaultCannotRemove")
             : undefined,
           onClick: () => actions.remove(p),
         });
@@ -908,16 +1067,18 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
       }
     }
 
+    // Hermes 跟 OpenClaw / OpenCode 一样是累加式：model.provider 只是默认那家，
+    // 「设为默认」收在「更多」菜单里，主操作位只留「移除」
     if (app === "hermes") {
       if (p.id === input.hermesCurrentId) {
         isDefault = true;
-        status = { label: t("providerCard.status.current"), dot: "direct" };
-        removeReason = t("providerCard.reason.currentCannotRemove");
+        status = { label: t("providerCard.status.default"), dot: "direct" };
+        removeReason = t("providerCard.reason.defaultCannotRemove");
       } else {
-        buttons.push({
-          key: "use",
-          label: t("providerCard.action.enable"),
-          onClick: () => actions.setDefault(p),
+        menuItems.push({
+          key: "setDefault",
+          label: t("providerCard.action.setDefault"),
+          onSelect: () => actions.setDefault(p),
           disabledReason: readOnlyReason,
         });
       }
@@ -948,15 +1109,22 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
   return [
     {
       key: "added",
-      title: t("providerCard.section.added", { count: added.length }),
+      title: t("providerCard.section.added", {
+        count: official.length + added.length + (input.extraAdded ?? 0),
+      }),
       help: {
         title: t("providerCard.section.addedHelpTitle"),
-        body: t("providerCard.section.addedHelp", {
-          app: t(`apps.${app}`),
-        }),
+        // DSH 的供应商一起写进 Web 和 Desktop 两份配置，在这里说明
+        body:
+          app === "dsh"
+            ? t("dsh.sharedProviders")
+            : t("providerCard.section.addedHelp", {
+                app: t(`apps.${app}`),
+              }),
       },
+      note: app === "dsh" ? t("dsh.sharedProvidersNote") : undefined,
       emptyText: t("providerCard.section.addedEmpty"),
-      items: added,
+      items: [...official, ...added],
     },
     {
       key: "available",

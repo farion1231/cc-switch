@@ -22,7 +22,7 @@ use super::transform_codex_chat::{
 };
 use super::transform_responses::sanitize_anthropic_tool_use_input_json;
 use crate::proxy::json_canonical::canonicalize_tool_arguments_str;
-use crate::proxy::sse::{strip_sse_field, take_sse_block};
+use crate::proxy::sse::{strip_sse_field, SseBuffer};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Map, Value};
@@ -728,8 +728,7 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
     tool_context: CodexToolContext,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
-        let mut buffer = String::new();
-        let mut utf8_remainder: Vec<u8> = Vec::new();
+        let mut sse = SseBuffer::new();
         let mut state = AnthropicToResponsesState::with_tool_context(tool_context);
         let mut stream_failed = false;
 
@@ -738,14 +737,14 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
+                    sse.push_bytes(&bytes);
 
                     // A few compatible gateways ignore stream:true and return one
                     // JSON document. Hold that body intact (including pretty-printed
                     // blank lines) until EOF instead of discarding it as SSE blocks.
-                    if json_document_candidate(&buffer).is_none() {
-                        while let Some(block) = take_sse_block(&mut buffer) {
-                            let (events, failed) = process_anthropic_sse_block(&mut state, &block);
+                    if json_document_candidate(sse.pending()).is_none() {
+                        while let Some(block) = sse.next_block() {
+                            let (events, failed) = process_anthropic_sse_block(&mut state, block);
                             for event in events {
                                 yield Ok(event);
                             }
@@ -776,9 +775,9 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
         // Process a final event even when the upstream omitted the trailing blank
         // line. This is common with buffering reverse proxies and must not discard
         // the last delta or terminal message_stop.
-        if !stream_failed && !buffer.trim().is_empty() {
+        if !stream_failed && !sse.pending().trim().is_empty() {
             if !state.response_started {
-                if let Some(candidate) = json_document_candidate(&buffer) {
+                if let Some(candidate) = json_document_candidate(sse.pending()) {
                     if let Ok(body) = serde_json::from_str::<Value>(candidate) {
                         for event in responses_sse_events_from_anthropic_message(
                             &body,
@@ -791,7 +790,7 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
                 }
             }
             if !state.completed {
-                let (events, failed) = process_anthropic_sse_block(&mut state, &buffer);
+                let (events, failed) = process_anthropic_sse_block(&mut state, sse.pending());
                 for event in events {
                     yield Ok(event);
                 }

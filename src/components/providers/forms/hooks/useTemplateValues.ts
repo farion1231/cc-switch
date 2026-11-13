@@ -20,6 +20,11 @@ interface UseTemplateValuesProps {
   presetEntries: PresetEntry[];
   settingsConfig: string;
   onConfigChange: (config: string) => void;
+  /**
+   * 现读当前配置。`settingsConfig` 是调用方渲染期取的快照，可能早于别处（如
+   * JSON 编辑器）的写入，套用模板变量时基于旧快照重建整份配置会覆盖那些改动。
+   */
+  getSettingsConfig?: () => string;
 }
 
 /**
@@ -168,6 +173,7 @@ export function useTemplateValues({
   presetEntries,
   settingsConfig,
   onConfigChange,
+  getSettingsConfig,
 }: UseTemplateValuesProps) {
   const [templateValues, setTemplateValues] = useState<TemplateValueMap>({});
 
@@ -208,7 +214,8 @@ export function useTemplateValues({
       );
       setTemplateValues(initialValues);
     } else {
-      setTemplateValues({});
+      // 已经是空的就保留原对象，免得挂载时多渲染一轮
+      setTemplateValues((prev) => (Object.keys(prev).length === 0 ? prev : {}));
     }
   }, [selectedPreset]);
 
@@ -240,7 +247,7 @@ export function useTemplateValues({
         try {
           const configString = applyTemplateValuesToConfigString(
             selectedPreset.settingsConfig,
-            settingsConfig,
+            getSettingsConfig?.() ?? settingsConfig,
             nextValues,
           );
           onConfigChange(configString);
@@ -251,7 +258,7 @@ export function useTemplateValues({
         return nextValues;
       });
     },
-    [selectedPreset, settingsConfig, onConfigChange],
+    [selectedPreset, getSettingsConfig, settingsConfig, onConfigChange],
   );
 
   // 验证所有模板值是否已填写

@@ -10,6 +10,17 @@ struct UpdateDownloadProgress {
     total: Option<u64>,
 }
 
+/// 开启统一会话历史后，后台把官方会话迁进共享组的那一轮跑完了（或失败）。
+const CODEX_UNIFY_MIGRATION_FINISHED_EVENT: &str = "codex-unify-migration-finished";
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexUnifyMigrationFinished {
+    migrated_state_rows: usize,
+    migrated_jsonl_files: usize,
+    error: Option<String>,
+}
+
 fn merge_settings_for_save(
     mut incoming: crate::settings::AppSettings,
     existing: &crate::settings::AppSettings,
@@ -54,16 +65,16 @@ fn merge_settings_for_save(
     // 用量同步设置只经 usage_sync_* 命令修改（其中 status 由后台任务持续写入）；
     // 全量保存带的是前端缓存里的旧值，透传会回滚同步状态或刚改的开关。
     incoming.usage_sync = existing.usage_sync.clone();
+    // 轻量模式状态只由进入 / 退出轻量模式时写，前端缓存里的值总是旧的。
+    incoming.lightweight_mode = existing.lightweight_mode;
     incoming
 }
 
-/// 获取设置
 #[tauri::command]
 pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
     Ok(crate::settings::get_settings_for_frontend())
 }
 
-/// 保存设置
 #[tauri::command]
 pub async fn save_settings(
     app: tauri::AppHandle,
@@ -84,6 +95,10 @@ pub async fn save_settings(
             != existing.codex_stack_subagent_reasoning_effort
         || merged.codex_stack_auto_review_model != existing.codex_stack_auto_review_model;
     let tray_style_changed = merged.native_tray_menu != existing.native_tray_menu;
+    let without_login_changed =
+        merged.codex_proxy_without_official_login != existing.codex_proxy_without_official_login;
+    let preserve_login_changed = merged.preserve_codex_official_auth_on_switch
+        != existing.preserve_codex_official_auth_on_switch;
     crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
 
     // 原生托盘菜单 / 托盘面板当场切换，不用重启。
@@ -110,6 +125,41 @@ pub async fn save_settings(
         }
     }
 
+    // 「暂停使用官方登录」只影响路由 / 聚合模式下写给 Codex 的内容：立即重写，失败回滚。
+    if without_login_changed {
+        if let Err(err) = crate::mode::controller::resync_codex_proxy(state.inner()).await {
+            log::warn!("「暂停使用官方登录」变更后重写 Codex 配置失败，回滚设置: {err}");
+            let mut rollback = crate::settings::get_settings();
+            rollback.codex_proxy_without_official_login =
+                existing.codex_proxy_without_official_login;
+            if let Err(rollback_err) = crate::settings::update_settings(rollback) {
+                log::error!("回滚「暂停使用官方登录」设置失败: {rollback_err}");
+            }
+            return Err(format!(
+                "「暂停使用官方登录」未生效（Codex 配置重写失败） (\"Pause the official login\" did not take effect: rewriting the Codex config failed): {err}"
+            ));
+        }
+    }
+
+    // 「非接管切换时保留官方登录」只影响直连切到第三方：当前就是直连第三方时立即重写，
+    // 不必先切回官方卡再切回来；失败回滚。
+    if preserve_login_changed {
+        if let Err(err) =
+            crate::services::provider::reapply_current_codex_third_party_live(state.inner())
+        {
+            log::warn!("「非接管切换时保留官方登录」变更后重写 Codex 配置失败，回滚设置: {err}");
+            let mut rollback = crate::settings::get_settings();
+            rollback.preserve_codex_official_auth_on_switch =
+                existing.preserve_codex_official_auth_on_switch;
+            if let Err(rollback_err) = crate::settings::update_settings(rollback) {
+                log::error!("回滚「非接管切换时保留官方登录」设置失败: {rollback_err}");
+            }
+            return Err(format!(
+                "「非接管切换时保留官方登录」未生效（Codex 配置重写失败） (\"Keep official login for direct switches\" did not take effect: rewriting the Codex config failed): {err}"
+            ));
+        }
+    }
+
     // 统一会话开关变更时立即重写当前官方 Codex 供应商的 live 配置，
     // 不必等下一次切换才生效。
     if unify_codex_changed {
@@ -131,24 +181,43 @@ pub async fn save_settings(
         }
 
         if unify_codex_enabled {
-            // 后台执行存量迁移（openai 桶 → custom 桶；仅当用户勾选了迁入既有
+            // 后台把留在 openai 桶的会话迁进 custom 桶（仅当用户勾选了迁入既有
             // 会话，函数内部自门控）。大会话目录可能要读数秒，不能阻塞设置保存；
-            // 失败时不写完成标记，下次启动自动重试。
-            tauri::async_runtime::spawn_blocking(|| {
-                match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {
+            // 失败时下次启动自动重试。
+            // 迁完（或失败）发事件给前端提示：「开启统一」时前端只说了“后台迁入中”，
+            // 用户要等到这一刻再重启 Codex，旧会话才会解锁。
+            let app = app.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let finished = match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {
                     Ok(outcome) => {
                         if let Some(reason) = outcome.skipped_reason {
                             log::debug!("○ Codex official history unify migration skipped: {reason}");
+                            None
                         } else {
                             log::info!(
                                 "✓ Codex official history unify migration completed: jsonl_files={}, state_rows={}",
                                 outcome.migrated_jsonl_files,
                                 outcome.migrated_state_rows
                             );
+                            Some(CodexUnifyMigrationFinished {
+                                migrated_state_rows: outcome.migrated_state_rows,
+                                migrated_jsonl_files: outcome.migrated_jsonl_files,
+                                error: None,
+                            })
                         }
                     }
                     Err(e) => {
                         log::warn!("✗ Codex official history unify migration failed: {e}");
+                        Some(CodexUnifyMigrationFinished {
+                            migrated_state_rows: 0,
+                            migrated_jsonl_files: 0,
+                            error: Some(e.to_string()),
+                        })
+                    }
+                };
+                if let Some(payload) = finished {
+                    if let Err(e) = app.emit(CODEX_UNIFY_MIGRATION_FINISHED_EVENT, payload) {
+                        log::warn!("发送 Codex 统一迁移完成事件失败: {e}");
                     }
                 }
             });
@@ -390,7 +459,6 @@ pub async fn set_app_config_dir_override(
     Ok(true)
 }
 
-/// 设置开机自启
 #[tauri::command]
 pub async fn set_auto_launch(enabled: bool) -> Result<bool, String> {
     if enabled {
@@ -409,6 +477,18 @@ mod tests {
         CodexThirdPartyHistoryProviderBucketMigration, LocalMigrations, S3SyncSettings,
         WebDavSyncSettings,
     };
+
+    #[test]
+    fn save_settings_should_keep_the_existing_lightweight_mode() {
+        let existing = AppSettings {
+            lightweight_mode: true,
+            ..AppSettings::default()
+        };
+
+        let merged = merge_settings_for_save(AppSettings::default(), &existing);
+
+        assert!(merged.lightweight_mode);
+    }
 
     #[test]
     fn save_settings_should_keep_the_existing_proxy_client_host() {
@@ -723,13 +803,11 @@ mod tests {
     }
 }
 
-/// 获取开机自启状态
 #[tauri::command]
 pub async fn get_auto_launch_status() -> Result<bool, String> {
     crate::auto_launch::is_auto_launch_enabled().map_err(|e| format!("获取开机自启状态失败: {e}"))
 }
 
-/// 获取整流器配置
 #[tauri::command]
 pub async fn get_rectifier_config(
     state: tauri::State<'_, crate::AppState>,
@@ -737,7 +815,6 @@ pub async fn get_rectifier_config(
     state.db.get_rectifier_config().map_err(|e| e.to_string())
 }
 
-/// 设置整流器配置
 #[tauri::command]
 pub async fn set_rectifier_config(
     state: tauri::State<'_, crate::AppState>,
@@ -750,7 +827,6 @@ pub async fn set_rectifier_config(
     Ok(true)
 }
 
-/// 获取优化器配置
 #[tauri::command]
 pub async fn get_optimizer_config(
     state: tauri::State<'_, crate::AppState>,
@@ -758,7 +834,6 @@ pub async fn get_optimizer_config(
     state.db.get_optimizer_config().map_err(|e| e.to_string())
 }
 
-/// 设置优化器配置
 #[tauri::command]
 pub async fn set_optimizer_config(
     state: tauri::State<'_, crate::AppState>,
@@ -771,7 +846,32 @@ pub async fn set_optimizer_config(
     Ok(true)
 }
 
-/// 获取 Copilot 优化器配置
+#[tauri::command]
+pub async fn get_privacy_filter_config(
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<crate::proxy::types::PrivacyFilterConfig, String> {
+    state
+        .db
+        .get_privacy_filter_config()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn set_privacy_filter_config(
+    state: tauri::State<'_, crate::AppState>,
+    config: crate::proxy::types::PrivacyFilterConfig,
+) -> Result<bool, String> {
+    state
+        .db
+        .set_privacy_filter_config(&config)
+        .map_err(|e| e.to_string())?;
+    if config.enabled {
+        // 规则编译有一次性耗时，开关打开时在后台预热，不压到第一个请求上
+        std::thread::spawn(crate::proxy::privacy_filter::warm_up);
+    }
+    Ok(true)
+}
+
 #[tauri::command]
 pub async fn get_copilot_optimizer_config(
     state: tauri::State<'_, crate::AppState>,
@@ -782,7 +882,6 @@ pub async fn get_copilot_optimizer_config(
         .map_err(|e| e.to_string())
 }
 
-/// 设置 Copilot 优化器配置
 #[tauri::command]
 pub async fn set_copilot_optimizer_config(
     state: tauri::State<'_, crate::AppState>,
@@ -795,7 +894,6 @@ pub async fn set_copilot_optimizer_config(
     Ok(true)
 }
 
-/// 获取日志配置
 #[tauri::command]
 pub async fn get_log_config(
     state: tauri::State<'_, crate::AppState>,
@@ -803,7 +901,6 @@ pub async fn get_log_config(
     state.db.get_log_config().map_err(|e| e.to_string())
 }
 
-/// 设置日志配置
 #[tauri::command]
 pub async fn set_log_config(
     state: tauri::State<'_, crate::AppState>,

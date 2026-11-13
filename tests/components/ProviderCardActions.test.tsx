@@ -116,3 +116,75 @@ describe("ProviderCardActions — mode items in the more menu", () => {
     ).toEqual(["provider.duplicate", "common.delete"]);
   });
 });
+
+describe("ProviderCardActions — open terminal", () => {
+  it("is a button on the card, not an item in the more menu", async () => {
+    const user = userEvent.setup();
+    const onOpenTerminal = vi.fn();
+    render(
+      <ProviderCardActions
+        providerName="Claude Official"
+        presentation={{ buttons: [], chips: [] }}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenTerminal={onOpenTerminal}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "providerCard.action.openTerminal" }),
+    );
+    expect(onOpenTerminal).toHaveBeenCalledTimes(1);
+
+    await user.click(
+      screen.getByRole("button", { name: "providerCard.action.more" }),
+    );
+    const menu = await screen.findByRole("menu");
+    expect(
+      within(menu).queryByRole("menuitem", { name: "provider.openTerminal" }),
+    ).not.toBeInTheDocument();
+  });
+
+  // 只能经路由用的卡：按钮留着（卡片对齐），置灰、点了不开终端，原因挂在按钮上
+  it("stays on the card but is disabled with its reason", async () => {
+    const user = userEvent.setup();
+    const onOpenTerminal = vi.fn();
+    render(
+      <ProviderCardActions
+        providerName="GitHub Copilot"
+        presentation={{ buttons: [], chips: [] }}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onOpenTerminal={onOpenTerminal}
+        openTerminalDisabledReason="provider.openTerminalNeedsRoute"
+      />,
+    );
+
+    const button = screen.getByRole("button", {
+      name: "providerCard.action.openTerminal",
+    });
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    await user.click(button);
+    expect(onOpenTerminal).not.toHaveBeenCalled();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "provider.openTerminalNeedsRoute",
+    );
+  });
+
+  it("isn't shown for apps without it", () => {
+    render(
+      <ProviderCardActions
+        providerName="Kimi"
+        presentation={{ buttons: [], chips: [] }}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", {
+        name: "providerCard.action.openTerminal",
+      }),
+    ).not.toBeInTheDocument();
+  });
+});

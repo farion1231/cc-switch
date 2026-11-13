@@ -16,7 +16,7 @@ use super::transform_responses::{
     web_search_max_uses_exceeded_error, web_search_results_from_action,
     web_search_results_from_output_item, web_search_tool_result_error,
 };
-use crate::proxy::sse::{strip_sse_field, take_sse_block};
+use crate::proxy::sse::{strip_sse_field, SseBuffer};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Value};
@@ -2403,8 +2403,7 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
     can_preserve_web_search_citations: bool,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
-        let mut buffer = String::new();
-        let mut utf8_remainder: Vec<u8> = Vec::new();
+        let mut sse = SseBuffer::new();
         let mut message_id: Option<String> = None;
         let mut current_model: Option<String> = None;
         let mut has_sent_message_start = false;
@@ -2454,13 +2453,13 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
         'stream_loop: while let Some((chunk, is_eof)) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
+                    sse.push_bytes(&bytes);
 
                     // A few compatible gateways ignore stream:true and return one
                     // JSON document. Hold it intact until EOF, including any pretty-
                     // printed blank lines that would otherwise look like SSE separators.
                     let looks_like_json = matches!(
-                        buffer
+                        sse.pending()
                             .trim_start_matches(|ch: char| ch.is_whitespace() || ch == '\u{feff}')
                             .as_bytes()
                             .first(),
@@ -2470,7 +2469,7 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                         continue;
                     }
                     if looks_like_json && is_eof {
-                        match serde_json::from_str::<Value>(buffer.trim()) {
+                        match serde_json::from_str::<Value>(sse.pending().trim()) {
                             Ok(body) => {
                                 for event in responses_json_to_anthropic_sse(
                                     body,
@@ -2489,16 +2488,16 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                 terminated = true;
                             }
                         }
-                        buffer.clear();
+                        sse.clear();
                         continue;
                     }
 
-                    if is_eof && !buffer.trim().is_empty() {
-                        buffer.push_str("\n\n");
+                    if is_eof && !sse.pending().trim().is_empty() {
+                        sse.push_str("\n\n");
                     }
 
                     // SSE 事件由 \n\n 分隔
-                    while let Some(block) = take_sse_block(&mut buffer) {
+                    while let Some(block) = sse.next_block() {
                         if block.trim().is_empty() {
                             continue;
                         }

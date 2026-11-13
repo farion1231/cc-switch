@@ -1210,7 +1210,7 @@ fn migration_from_v20_creates_usage_sync_tables() -> Result<(), AppError> {
         Database::get_user_version(&conn)?,
         crate::database::SCHEMA_VERSION
     );
-    assert_eq!(crate::database::SCHEMA_VERSION, 24);
+    assert_eq!(crate::database::SCHEMA_VERSION, 27);
     for table in [
         "usage_sync_identity",
         "usage_sync_devices",
@@ -4120,7 +4120,23 @@ async fn identities_keep_being_recorded_only_where_the_identity_already_publishe
     assert_eq!(identities, 0);
 }
 
-// ─── Schema v24: upstream v21 (AGY) / v22 (Kimi) / v23 (OMP) + usage sync ─
+// ─── Schema v27: upstream v21–v26 (AGY, Kimi, OMP, DSH, Copilot, WorkBuddy) + usage sync ─
+
+/// Per-app flag columns added by upstream steps v21–v26, with their tables.
+const FLAG_COLUMNS: [(&str, &[&str]); 6] = [
+    ("enabled_agy", &["mcp_servers", "skills"]),
+    ("enabled_kimi", &["mcp_servers", "skills"]),
+    ("enabled_omp", &["mcp_servers"]),
+    ("enabled_dsh", &["mcp_servers", "skills"]),
+    ("enabled_copilot", &["mcp_servers", "skills"]),
+    ("enabled_workbuddy", &["mcp_servers", "skills"]),
+];
+const AGY: &str = "enabled_agy";
+const KIMI: &str = "enabled_kimi";
+const OMP: &str = "enabled_omp";
+const DSH: &str = "enabled_dsh";
+const COPILOT: &str = "enabled_copilot";
+const WORKBUDDY: &str = "enabled_workbuddy";
 
 const USAGE_SYNC_TABLES: [&str; 15] = [
     "usage_sync_identity",
@@ -4146,9 +4162,10 @@ struct SchemaFixture {
     user_version: i32,
     /// Usage sync tables present (pre-release builds of this change).
     usage_sync: bool,
-    agy: bool,
-    kimi: bool,
-    omp: bool,
+    /// Flag columns from `FLAG_COLUMNS` that exist.
+    flags: &'static [&'static str],
+    /// `session_log_sync.parser_state` (upstream v24, DSH usage import).
+    parser_state: bool,
     /// Version triggers with the pre-R4 body.
     old_triggers: bool,
 }
@@ -4287,17 +4304,17 @@ fn shape_fixture(conn: &rusqlite::Connection, fixture: SchemaFixture) {
             conn.execute_batch(&format!("DROP TABLE {table};")).unwrap();
         }
     }
-    for (column, keep, tables) in [
-        ("enabled_agy", fixture.agy, &["mcp_servers", "skills"][..]),
-        ("enabled_kimi", fixture.kimi, &["mcp_servers", "skills"][..]),
-        ("enabled_omp", fixture.omp, &["mcp_servers"][..]),
-    ] {
-        if !keep {
+    for (column, tables) in FLAG_COLUMNS {
+        if !fixture.flags.contains(&column) {
             for table in tables {
                 conn.execute_batch(&format!("ALTER TABLE {table} DROP COLUMN {column};"))
                     .unwrap();
             }
         }
+    }
+    if !fixture.parser_state {
+        conn.execute_batch("ALTER TABLE session_log_sync DROP COLUMN parser_state;")
+            .unwrap();
     }
     Database::set_user_version(conn, fixture.user_version).unwrap();
 }
@@ -4321,19 +4338,24 @@ fn schema_text(conn: &rusqlite::Connection) -> String {
 
 fn assert_latest(conn: &rusqlite::Connection, fixture: Option<SchemaFixture>) {
     let label = format!("{fixture:?}");
-    assert_eq!(Database::get_user_version(conn).unwrap(), 24, "{label}");
-    assert!(
-        column_exists(conn, "mcp_servers", "enabled_omp"),
-        "{label}: mcp_servers.enabled_omp"
-    );
-    for table in ["mcp_servers", "skills"] {
-        for column in ["enabled_agy", "enabled_kimi", "enabled_claude"] {
+    assert_eq!(Database::get_user_version(conn).unwrap(), 27, "{label}");
+    for (column, tables) in FLAG_COLUMNS {
+        for table in tables {
             assert!(
                 column_exists(conn, table, column),
                 "{label}: {table}.{column}"
             );
         }
     }
+    // Flags are scoped exactly as upstream adds them.
+    assert!(
+        !column_exists(conn, "skills", OMP),
+        "{label}: skills.enabled_omp"
+    );
+    assert!(
+        column_exists(conn, "session_log_sync", "parser_state"),
+        "{label}: session_log_sync.parser_state"
+    );
     for table in USAGE_SYNC_TABLES {
         assert!(
             Database::table_exists(conn, table).unwrap(),
@@ -4375,25 +4397,25 @@ fn assert_latest(conn: &rusqlite::Connection, fixture: Option<SchemaFixture>) {
         "{label}"
     );
     for (table, id) in [("mcp_servers", "mcp-1"), ("skills", "skill-1")] {
-        let flags: (i64, i64, i64) = conn
+        let claude: i64 = conn
             .query_row(
-                &format!(
-                    "SELECT enabled_claude, enabled_agy, enabled_kimi FROM {table} WHERE id = ?1"
-                ),
+                &format!("SELECT enabled_claude FROM {table} WHERE id = ?1"),
                 [id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(flags, (1, 0, 0), "{label}: {table} flags");
-        if table == "mcp_servers" {
-            let omp: i64 = conn
-                .query_row(
-                    "SELECT enabled_omp FROM mcp_servers WHERE id = ?1",
-                    [id],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            assert_eq!(omp, 0, "{label}: omp flag");
+        assert_eq!(claude, 1, "{label}: {table}.enabled_claude");
+        for (column, tables) in FLAG_COLUMNS {
+            if tables.contains(&table) {
+                let value: i64 = conn
+                    .query_row(
+                        &format!("SELECT {column} FROM {table} WHERE id = ?1"),
+                        [id],
+                        |r| r.get(0),
+                    )
+                    .unwrap();
+                assert_eq!(value, 0, "{label}: {table}.{column}");
+            }
         }
     }
     if fixture.usage_sync {
@@ -4431,8 +4453,36 @@ fn assert_latest(conn: &rusqlite::Connection, fixture: Option<SchemaFixture>) {
     }
 }
 
+fn official(
+    user_version: i32,
+    flags: &'static [&'static str],
+    parser_state: bool,
+) -> SchemaFixture {
+    SchemaFixture {
+        user_version,
+        usage_sync: false,
+        flags,
+        parser_state,
+        old_triggers: false,
+    }
+}
+
+fn pre_release(
+    user_version: i32,
+    flags: &'static [&'static str],
+    old_triggers: bool,
+) -> SchemaFixture {
+    SchemaFixture {
+        user_version,
+        usage_sync: true,
+        flags,
+        parser_state: false,
+        old_triggers,
+    }
+}
+
 #[test]
-fn schema_v24_migration_matrix() {
+fn schema_v27_migration_matrix() {
     // A brand-new database, through the same start-up as `Database::init`.
     {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
@@ -4441,64 +4491,24 @@ fn schema_v24_migration_matrix() {
     }
     let cases = [
         // Official releases.
-        SchemaFixture {
-            user_version: 20,
-            usage_sync: false,
-            agy: false,
-            kimi: false,
-            omp: false,
-            old_triggers: false,
-        },
-        SchemaFixture {
-            user_version: 21,
-            usage_sync: false,
-            agy: true,
-            kimi: false,
-            omp: false,
-            old_triggers: false,
-        },
-        SchemaFixture {
-            user_version: 22,
-            usage_sync: false,
-            agy: true,
-            kimi: true,
-            omp: false,
-            old_triggers: false,
-        },
-        SchemaFixture {
-            user_version: 23,
-            usage_sync: false,
-            agy: true,
-            kimi: true,
-            omp: true,
-            old_triggers: false,
-        },
+        official(20, &[], false),
+        official(21, &[AGY], false),
+        official(22, &[AGY, KIMI], false),
+        official(23, &[AGY, KIMI, OMP], false),
+        official(24, &[AGY, KIMI, OMP, DSH], true),
+        official(25, &[AGY, KIMI, OMP, DSH, COPILOT], true),
+        official(26, &[AGY, KIMI, OMP, DSH, COPILOT, WORKBUDDY], true),
         // Pre-release builds of this change (their v21 = usage sync, no AGY / Kimi / OMP).
-        SchemaFixture {
-            user_version: 21,
-            usage_sync: true,
-            agy: false,
-            kimi: false,
-            omp: false,
-            old_triggers: true,
-        },
-        SchemaFixture {
-            user_version: 21,
-            usage_sync: true,
-            agy: false,
-            kimi: false,
-            omp: false,
-            old_triggers: false,
-        },
+        pre_release(21, &[], true),
+        pre_release(21, &[], false),
         // The build at 232a80a0 used v23 for usage sync (after AGY / Kimi, no OMP).
-        SchemaFixture {
-            user_version: 23,
-            usage_sync: true,
-            agy: true,
-            kimi: true,
-            omp: false,
-            old_triggers: false,
-        },
+        pre_release(23, &[AGY, KIMI], false),
+        // A pre-release v21 database later opened by 232a80a0: that build's
+        // v21 -> v22 step added Kimi only, so AGY and OMP are still missing.
+        pre_release(23, &[KIMI], false),
+        // The build at b89f6e79 used v24 for usage sync (after OMP; no DSH,
+        // so also no `parser_state`).
+        pre_release(24, &[AGY, KIMI, OMP], false),
     ];
     for fixture in cases {
         let db = Database::memory().unwrap();
@@ -4532,18 +4542,11 @@ fn schema_v24_migration_matrix() {
 
 #[test]
 #[serial]
-fn sql_backups_and_snapshots_cross_the_v24_boundary() {
+fn sql_backups_and_snapshots_cross_the_v27_boundary() {
     // A SQL backup of a pre-release v21 database (usage sync, no AGY/Kimi)
-    // restores into this build as v24 with its usage sync state.
+    // restores into this build as v27 with its usage sync state.
     let old = Database::memory().unwrap();
-    let fixture = SchemaFixture {
-        user_version: 21,
-        usage_sync: true,
-        agy: false,
-        kimi: false,
-        omp: false,
-        old_triggers: true,
-    };
+    let fixture = pre_release(21, &[], true);
     {
         let conn = old.conn.lock().unwrap();
         shape_fixture(&conn, fixture);
@@ -4556,7 +4559,7 @@ fn sql_backups_and_snapshots_cross_the_v24_boundary() {
         assert_latest(&conn, Some(fixture));
     }
 
-    // Round trip of a v24 backup keeps everything.
+    // Round trip of a v27 backup keeps everything.
     let dump = restored.export_sql_string().unwrap();
     let again = Database::memory().unwrap();
     again.import_sql_string(&dump).unwrap();
@@ -4573,21 +4576,14 @@ fn sql_backups_and_snapshots_cross_the_v24_boundary() {
         assert_eq!(count(&conn, "SELECT COUNT(*) FROM usage_sync_identity"), 1);
     }
 
-    // A Cloud Sync snapshot from an official v23 client applies to a v24
+    // A Cloud Sync snapshot from an official v26 client applies to a v27
     // database and keeps its local usage sync state.
     let upstream = Database::memory().unwrap();
     {
         let conn = upstream.conn.lock().unwrap();
         shape_fixture(
             &conn,
-            SchemaFixture {
-                user_version: 23,
-                usage_sync: false,
-                agy: true,
-                kimi: true,
-                omp: true,
-                old_triggers: false,
-            },
+            official(26, &[AGY, KIMI, OMP, DSH, COPILOT, WORKBUDDY], true),
         );
     }
     let snapshot = upstream.export_sql_string_for_sync().unwrap();

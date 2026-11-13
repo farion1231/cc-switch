@@ -278,7 +278,7 @@ chooses:
   republishes its own data under the same id. If both copies keep running they
   overwrite each other, which the dialog states.
 
-## Local storage (schema v24)
+## Local storage (schema v27)
 
 | Table                            | Purpose                                                                                   |
 | -------------------------------- | ----------------------------------------------------------------------------------------- |
@@ -322,16 +322,20 @@ chooses:
   session row). Kind 2 is never published, because a heuristic guess must not
   become a fleet-wide alias that drops another device's copy; locally it
   behaves like before.
-- Migration v23 → v24 creates these tables (idempotent DDL shared with fresh
-  databases) after upstream's v20 → v21 (AGY flags), v21 → v22 (Kimi flags)
-  and v22 → v23 (Oh My Pi flag); existing data is untouched, and the usual
-  pre-migration backup runs. History rolled up before the upgrade has no
+- Migration v26 → v27 creates these tables (idempotent DDL shared with fresh
+  databases) after upstream's v20 → v21 (AGY flags), v21 → v22 (Kimi flags),
+  v22 → v23 (Oh My Pi flag), v23 → v24 (DSH flags and
+  `session_log_sync.parser_state`), v24 → v25 (Copilot flags) and v25 → v26
+  (WorkBuddy flags); existing data is untouched, and the usual pre-migration
+  backup runs. History rolled up before the upgrade has no
   ledger entries.
-- Pre-release builds of this change used v21 and later v23 for the usage sync
-  tables. Such a database continues through the upstream steps above its own
-  number and may never have run the earlier ones, so v23 → v24 adds any
-  missing `enabled_agy` / `enabled_kimi` / `enabled_omp` columns by checking
-  the actual schema rather than `user_version`. Its usage sync tables,
+- Pre-release builds of this change used v21, later v23 and then v24 for the
+  usage sync tables. Such a database continues through the upstream steps
+  above its own number and may never have run the earlier ones, so v26 → v27
+  adds any missing per-app flag column (`enabled_agy`, `enabled_kimi`,
+  `enabled_dsh`, `enabled_copilot`, `enabled_workbuddy` on both tables,
+  `enabled_omp` on `mcp_servers` only) and `session_log_sync.parser_state`
+  by checking the actual schema rather than `user_version`. Its usage sync tables,
   identity and ledger are kept.
 - All fifteen tables are in `SYNC_SKIP_TABLES` (rows never enter `db.sql`);
   all but `usage_sync_export_cache` are in `SYNC_PRESERVE_TABLES` (a snapshot
@@ -362,18 +366,19 @@ milliseconds of lock time; one corrected month costs only that month.
 
 ## Compatibility
 
-- **Schema bump (v23 → v24)**: like every upstream schema bump, a CC Switch
-  build with schema v23 or older refuses a configuration snapshot (`db.sql`) uploaded by
+- **Schema bump (v26 → v27)**: like every upstream schema bump, a CC Switch
+  build with schema v26 or older refuses a configuration snapshot (`db.sql`) uploaded by
   this build with "database version too new". This applies to ordinary Cloud
   Sync between devices even when usage sync is never enabled: update all
   devices that share a Cloud Sync profile together. `DB_COMPAT_VERSION` (the
-  remote snapshot directory `v2/db-v6`) is unchanged; downloading v23 and
+  remote snapshot directory `v2/db-v6`) is unchanged; downloading v26 and
   older snapshots into this build works.
 - Downgrading the app after the upgrade is refused by the existing
   "database version too new" check; restore the pre-migration backup instead.
-- Databases of pre-release builds of this change (their v21 or v23 = usage
-  sync tables) must only move forward to this build. A stock release would
-  read them as its own v21 / v23 and never add the flags it skipped; restore the
+- Databases of pre-release builds of this change (their v21, v23 or v24 =
+  usage sync tables) must only move forward to this build. A stock release
+  would read them as its own v21 / v23 / v24 and never add the columns it
+  skipped; restore the
   pre-migration backup instead of switching such a database to a stock
   release. That backup is taken after start-up has already replaced outdated
   version triggers and cleared the export cache (device-local, rebuilt by the
@@ -495,8 +500,9 @@ cargo test --lib usage_sync::tests_http::live -- --ignored --test-threads=1
   rollup transition, GC (+ retry), cost/model corrections, daily mode privacy,
   sensitive-field leak check, cloned identity + resolution, newer protocol,
   stale manifests, hidden/vanished devices, injection-safe scope, viewer-local
-  bucketing, config snapshot isolation, the v24 migration matrix (fresh, v20,
-  v21, v22, v23, pre-release v21 and v23, re-runs, SQL backups and snapshots).
+  bucketing, config snapshot isolation, the v27 migration matrix (fresh,
+  official v20–v26, pre-release v21, v23 and v24, re-runs, SQL backups and
+  snapshots).
 - `usage_sync::tests_http`: real reqwest transport against fake WebDAV and
   S3 servers (Basic auth, MKCOL, PROPFIND, ListObjectsV2 pagination, DELETE).
 

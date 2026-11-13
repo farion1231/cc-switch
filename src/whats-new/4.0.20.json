@@ -1,0 +1,33 @@
+{
+  "version": "4.0.20",
+  "items": [
+    {
+      "type": "new",
+      "zh": "支持 Oh My Pi，供应商、MCP、Skills、提示词和会话都能管理",
+      "zh-TW": "支援 Oh My Pi，供應商、MCP、Skills、提示詞和會話都能管理",
+      "en": "Oh My Pi support: providers, MCP, Skills, prompts and sessions",
+      "ja": "Oh My Pi に対応。プロバイダー、MCP、Skills、プロンプト、セッションを管理"
+    },
+    {
+      "type": "improve",
+      "zh": "「应用」页按已安装和未安装分组，可拖动排序，侧栏跟随",
+      "zh-TW": "「應用」頁按已安裝和未安裝分組，可拖動排序，側欄跟隨",
+      "en": "The Apps page groups installed and missing apps; drag to reorder the sidebar",
+      "ja": "「アプリ」ページをインストール済みと未インストールに分け、ドラッグで並べ替え"
+    },
+    {
+      "type": "improve",
+      "zh": "Kimi 官方账号的卡片可以编辑模型、从 Kimi Code 移除",
+      "zh-TW": "Kimi 官方帳號的卡片可以編輯模型、從 Kimi Code 移除",
+      "en": "Official Kimi cards can now edit models and be removed from Kimi Code",
+      "ja": "Kimi 公式アカウントのカードでモデル編集と Kimi Code からの削除が可能に"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 DeepSeek 余额用完后显示成「套餐已过期」",
+      "zh-TW": "修正 DeepSeek 餘額用完後顯示成「套餐已過期」",
+      "en": "Fixed a used-up DeepSeek balance showing as an expired plan",
+      "ja": "DeepSeek の残高切れが「プラン期限切れ」と表示される問題を修正"
+    }
+  ]
+}

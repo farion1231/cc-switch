@@ -45,6 +45,8 @@ pub async fn kimi_oauth_remove(
     state: State<'_, KimiOAuthManager>,
     app_state: State<'_, AppState>,
 ) -> Result<(), String> {
+    // Listing Kimi providers writes native entries back to the database too.
+    let _guard = app_state.proxy_service.lock_switch_for_app("kimi").await;
     state
         .remove(&account_id, || {
             app_state.db.delete_provider("kimi", &account_id)?;
