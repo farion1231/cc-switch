@@ -908,6 +908,8 @@
     "launchOnStartupDescription": "随系统启动自动运行 CC Switch",
     "silentStartup": "静默启动",
     "silentStartupDescription": "程序启动时不显示主窗口，仅在系统托盘运行",
+    "restoreClientsOnExit": "退出时恢复客户端配置",
+    "restoreClientsOnExitHelp": "退出 CC Switch 时，把正在用路由或聚合的客户端（Claude Code、Codex、Gemini CLI、Grok Build）指回直连供应商，下次启动再接上。\n\n关闭后，客户端在 CC Switch 退出后仍指着本地路由，CC Switch 没运行时连不上，适合常驻或开机自启的用户。重启时配置不会被来回改写，/model 等选择也不会丢。CC Switch 关闭期间你改过的客户端配置，下次启动不会被覆盖，该应用会退回直连并提示。",
     "autoLaunchFailed": "设置开机自启失败",
     "minimizeToTray": "关闭时最小化到托盘",
     "minimizeToTrayDescription": "勾选后点击关闭按钮会隐藏到系统托盘，取消则直接退出应用。",
@@ -4533,7 +4535,9 @@
       "officialLoginPaused": "Codex 已暂停使用官方登录",
       "officialLoginPausedBody": "官方模型发不出去，Codex 侧栏「项目」里原来的会话暂时看不到。官方额度恢复后点「恢复官方登录」，再彻底退出并重新打开 Codex。",
       "resumeOfficialLogin": "恢复官方登录",
-      "attachFailed": "上次的{{mode}}模式没能接上，{{app}} 已回到直连。"
+      "attachFailed": "上次的{{mode}}模式没能接上，{{app}} 已回到直连。",
+      "attachDrifted": "CC Switch 关闭期间 {{app}} 的配置被改过，没有接回{{mode}}模式，文件保持原样。",
+      "attachUnreadable": "读不到 {{app}} 的配置文件（不存在或无法解析），没有接回{{mode}}模式，已回到直连。"
     },
     "toast": {
       "enteredRoute": "{{app}} 已开始路由 → {{provider}}。",

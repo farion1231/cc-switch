@@ -76,6 +76,11 @@ export interface AppModeView {
 export interface StartupAttachFailure {
   appType: string;
   stack: boolean;
+  /**
+   * error：接上出错、已写回直连；drift：客户端配置在 CC Switch 关闭期间被改过，没有覆盖；
+   * unreadable：读不到客户端配置（不存在或无法解析），没有接上
+   */
+  reason: "error" | "drift" | "unreadable";
   error: string;
 }
 

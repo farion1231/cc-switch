@@ -908,6 +908,8 @@
     "launchOnStartupDescription": "Sistem başlatıldığında CC Switch'yi otomatik olarak çalıştır",
     "silentStartup": "Sessiz Başlangıç",
     "silentStartupDescription": "Ana pencereyi göstermeden arka plan modunda başlat",
+    "restoreClientsOnExit": "Çıkışta istemcileri geri yükle",
+    "restoreClientsOnExitHelp": "CC Switch kapatılırken Yönlendirme veya Birleştirme kullanan istemcileri (Claude Code, Codex, Gemini CLI, Grok Build) doğrudan sağlayıcılarına geri yönlendirir ve bir sonraki açılışta yeniden bağlar.\n\nKapalıyken istemciler CC Switch kapandıktan sonra da yerel yönlendiriciyi gösterir ve CC Switch çalışmıyorken bağlanamaz. CC Switch sürekli açık tutuluyorsa veya başlangıçta açılıyorsa uygundur: yeniden başlatmalarda yapılandırmalar ileri geri yeniden yazılmaz ve /model gibi seçimler korunur. CC Switch kapalıyken değiştirdiğiniz istemci yapılandırmasının üzerine bir sonraki açılışta yazılmaz; o uygulama doğrudan bağlantıya döner ve bir bildirim gösterilir.",
     "autoLaunchFailed": "Otomatik başlatma ayarlanamadı",
     "minimizeToTray": "Kapatıldığında tepsiye küçült",
     "minimizeToTrayDescription": "İşaretlendiğinde kapat düğmesine basıldığında sistem tepsisinde gizlenir, aksi halde uygulama doğrudan çıkar.",
@@ -4467,7 +4469,9 @@
       "officialLoginPaused": "Codex resmî girişi duraklatıldı",
       "officialLoginPausedBody": "Resmî modeller kullanılamaz ve Codex kenar çubuğundaki Projeler altında bulunan mevcut oturumlarınız şimdilik gizlenir. Resmî kota geri geldiğinde “Resmî girişi sürdür” düğmesine tıklayın, ardından Codex'ten tamamen çıkıp yeniden açın.",
       "resumeOfficialLogin": "Resmî girişi sürdür",
-      "attachFailed": "{{mode}} önceki başlangıçta yeniden bağlanamadığı için {{app}} doğrudan bağlantıya döndü."
+      "attachFailed": "{{mode}} önceki başlangıçta yeniden bağlanamadığı için {{app}} doğrudan bağlantıya döndü.",
+      "attachDrifted": "CC Switch kapalıyken {{app}} yapılandırması değiştirildiği için {{mode}} yeniden bağlanmadı ve dosya olduğu gibi bırakıldı.",
+      "attachUnreadable": "{{app}} yapılandırma dosyası okunamadığı (yok ya da ayrıştırılamıyor) için {{mode}} yeniden bağlanmadı ve {{app}} doğrudan bağlantıya döndü."
     },
     "toast": {
       "enteredRoute": "{{app}} artık yönlendirme yapıyor → {{provider}}.",

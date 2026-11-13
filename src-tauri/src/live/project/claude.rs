@@ -286,6 +286,66 @@ pub fn proxy_projection(
     }
 }
 
+/// 顶层 `model`：`/model` 保存的选择。
+pub const MODEL_KEY: &str = "model";
+/// 顶层 `modelPicker`：`/model` 选择器的行。
+pub const MODEL_PICKER_KEY: &str = "modelPicker";
+
+/// Claude Code 认的档位别名（`/model`、`--model` 都能用），不区分大小写，可带 `[1m]`。
+const MODEL_TIER_ALIASES: &[&str] = &[
+    "default", "best", "opus", "fable", "sonnet", "haiku", "opusplan",
+];
+
+/// `/model` 选的值在代理契约下照样能用：档位别名，或契约自己发布给客户端的模型 id
+/// （四档别名、子代理模型、聚合模式 `modelPicker` 里的 Stack id）。别的值（直连那家的专属
+/// id、Bedrock ARN）到了代理会被当成普通模型名转发，不能留。
+pub fn portable_model(model: &str, projection: &ClaudeProjection) -> bool {
+    let bare = crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(model.trim());
+    if MODEL_TIER_ALIASES
+        .iter()
+        .any(|alias| alias.eq_ignore_ascii_case(bare))
+    {
+        return true;
+    }
+    let from_env = projection
+        .env
+        .iter()
+        .filter(|(key, _)| key.ends_with("_MODEL"))
+        .filter_map(|(_, value)| value.as_str());
+    let from_picker = projection
+        .top
+        .get(MODEL_PICKER_KEY)
+        .and_then(|picker| picker.get("options"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|option| option.get("model").and_then(Value::as_str));
+    from_env
+        .chain(from_picker)
+        .any(|published| published == model)
+}
+
+/// 代理契约的补丁清空关键字段时，留下 `/model` 的选择（`model` 是能在契约下用的值时）：
+/// 每次重写契约（换路由、重启后接上）都清掉的话，用户每次都要重新选。`model` 不进契约
+/// 摘要，留下它不会让契约看起来变了。
+pub fn keep_portable_model(
+    patch: &mut JsonPatch,
+    model: Option<&Value>,
+    projection: &ClaudeProjection,
+) {
+    let path = KeyPath::root().child(MODEL_KEY);
+    if patch.set.iter().any(|(key, _)| *key == path) {
+        return;
+    }
+    if let Some(model) = model.filter(|model| {
+        model
+            .as_str()
+            .is_some_and(|model| portable_model(model, projection))
+    }) {
+        patch.set.push((path, model.clone()));
+    }
+}
+
 /// Claude Code 的四个档位。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Tier {
@@ -605,6 +665,71 @@ fn is_truthy(value: &Value) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn portable_models_are_tier_aliases_or_ids_the_contract_publishes() {
+        let route = ClaudeProjection::of(&json!({ "env": {
+            "ANTHROPIC_BASE_URL": "https://r.example",
+            "ANTHROPIC_MODEL": "deepseek-chat",
+        }}));
+        let contract = proxy_projection(
+            &route,
+            "Route",
+            "http://127.0.0.1:1",
+            ProxyAuth::AuthToken,
+            None,
+        );
+        for model in [
+            "opus",
+            "Sonnet",
+            "haiku[1m]",
+            "opus[1M]",
+            "default",
+            "opusplan",
+        ] {
+            assert!(portable_model(model, &contract), "{model}");
+        }
+        assert!(portable_model(PROXY_SONNET_ALIAS, &contract));
+        for model in ["deepseek-chat", "claude-opus-4-7", "arn:aws:bedrock:x", ""] {
+            assert!(!portable_model(model, &contract), "{model}");
+        }
+
+        let mut stack = contract.clone();
+        stack.top.insert(
+            MODEL_PICKER_KEY.to_string(),
+            json!({ "options": [{ "model": "ccs-claude-k--m" }] }),
+        );
+        assert!(portable_model("ccs-claude-k--m", &stack));
+        assert!(!portable_model("ccs-claude-k--m", &contract));
+    }
+
+    #[test]
+    fn keeping_the_model_leaves_it_in_place_and_skips_unusable_values() {
+        let contract = proxy_projection(
+            &ClaudeProjection::default(),
+            "Route",
+            "http://127.0.0.1:1",
+            ProxyAuth::AuthToken,
+            None,
+        );
+        let live = json!({ "model": "sonnet", "env": { "ANTHROPIC_BASE_URL": "x" }, "z": 1 });
+        let mut patch = direct_patch(None, &contract);
+        keep_portable_model(&mut patch, live.get("model"), &contract);
+        let mut doc = live.clone();
+        patch
+            .apply_to(Path::new("settings.json"), &mut doc)
+            .unwrap();
+        assert_eq!(doc["model"], "sonnet");
+        assert_eq!(doc.as_object().unwrap().keys().next().unwrap(), "model");
+
+        let mut patch = direct_patch(None, &contract);
+        keep_portable_model(&mut patch, Some(&json!("deepseek-chat")), &contract);
+        let mut doc = json!({ "model": "deepseek-chat" });
+        patch
+            .apply_to(Path::new("settings.json"), &mut doc)
+            .unwrap();
+        assert!(doc.get("model").is_none());
+    }
 
     fn project(live: &Value, prev: Option<&Value>, target: &Value) -> Value {
         let prev = prev.map(ClaudeProjection::of);

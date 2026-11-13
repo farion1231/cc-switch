@@ -908,6 +908,8 @@
     "launchOnStartupDescription": "시스템 시작 시 자동으로 CC Switch 실행",
     "silentStartup": "백그라운드 시작",
     "silentStartupDescription": "앱 시작 시 메인 창을 표시하지 않고 시스템 트레이에서만 실행합니다.",
+    "restoreClientsOnExit": "종료 시 클라이언트 복원",
+    "restoreClientsOnExitHelp": "CC Switch를 종료할 때 라우팅 또는 집계를 사용 중인 클라이언트(Claude Code, Codex, Gemini CLI, Grok Build)를 직접 연결 공급자로 되돌리고, 다음 실행 시 다시 연결합니다.\n\n끄면 CC Switch 종료 후에도 클라이언트가 로컬 라우터를 가리키므로 CC Switch가 실행 중이 아닐 때는 연결할 수 없습니다. 상시 실행하거나 시작 시 실행하는 경우에 적합합니다. 재시작할 때 설정이 반복해서 다시 쓰이지 않고 /model 등의 선택도 유지됩니다. CC Switch가 닫혀 있는 동안 변경한 클라이언트 설정은 다음 실행 시 덮어쓰지 않으며, 해당 앱은 직접 연결로 돌아가고 알림이 표시됩니다.",
     "autoLaunchFailed": "자동 실행을 설정하지 못했습니다.",
     "minimizeToTray": "닫을 때 트레이로 최소화",
     "minimizeToTrayDescription": "켜면 닫기 버튼을 눌러도 앱이 종료되지 않고 시스템 트레이로 숨겨집니다. 끄면 앱이 바로 종료됩니다.",
@@ -4533,7 +4535,9 @@
       "officialLoginPaused": "Codex 공식 로그인 사용이 일시 중지되었습니다",
       "officialLoginPausedBody": "공식 모델을 사용할 수 없으며, Codex 사이드바의 ‘프로젝트’에 있던 기존 대화가 일시적으로 숨겨져 있습니다. 공식 할당량이 복구되면 ‘공식 로그인 사용 재개’를 누른 다음 Codex를 완전히 종료하고 다시 실행하세요.",
       "resumeOfficialLogin": "공식 로그인 사용 재개",
-      "attachFailed": "이전에 {{mode}} 모드에 다시 연결하지 못하여 {{app}}을(를) 직접 연결로 되돌렸습니다."
+      "attachFailed": "이전에 {{mode}} 모드에 다시 연결하지 못하여 {{app}}을(를) 직접 연결로 되돌렸습니다.",
+      "attachDrifted": "CC Switch가 닫혀 있는 동안 {{app}} 설정이 변경되어 {{mode}} 모드에 다시 연결하지 않았고 파일은 그대로 두었습니다.",
+      "attachUnreadable": "{{app}} 설정 파일을 읽을 수 없어(없거나 구문 분석 불가) {{mode}} 모드에 다시 연결하지 않고 직접 연결로 되돌렸습니다."
     },
     "toast": {
       "enteredRoute": "{{app}}에서 라우팅을 시작했습니다 → {{provider}}",

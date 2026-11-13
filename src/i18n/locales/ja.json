@@ -908,6 +908,8 @@
     "launchOnStartupDescription": "システム起動時に CC Switch を自動起動します",
     "silentStartup": "サイレント起動",
     "silentStartupDescription": "起動時にメインウィンドウを表示せず、トレイのみで起動",
+    "restoreClientsOnExit": "終了時にクライアントを元に戻す",
+    "restoreClientsOnExitHelp": "CC Switch の終了時に、ルーティングまたは集約を使っているクライアント（Claude Code、Codex、Gemini CLI、Grok Build）を直接接続のプロバイダーに戻し、次回起動時に再接続します。\n\nオフにすると、CC Switch の終了後もクライアントはローカルルーターを指したままになり、CC Switch が動いていない間は接続できません。常駐やログイン時起動で使う場合に向いています。再起動のたびに設定が書き換えられず、/model などの選択も保持されます。CC Switch が閉じている間に変更したクライアント設定は次回起動時に上書きされず、そのアプリは直接接続に戻って通知が表示されます。",
     "autoLaunchFailed": "自動起動の設定に失敗しました",
     "minimizeToTray": "閉じるときトレイへ最小化",
     "minimizeToTrayDescription": "チェックすると閉じるボタンでトレイに隠し、オフならアプリを終了します。",
@@ -4533,7 +4535,9 @@
       "officialLoginPaused": "Codex の公式ログインを一時停止中です",
       "officialLoginPausedBody": "公式モデルは使えず、Codex のサイドバー「プロジェクト」にある既存のセッションは一時的に表示されません。公式クォータが回復したら「公式ログインを再開」をクリックし、Codex を完全に終了して開き直してください。",
       "resumeOfficialLogin": "公式ログインを再開",
-      "attachFailed": "前回の{{mode}}モードに再接続できなかったため、{{app}} は直接接続に戻りました。"
+      "attachFailed": "前回の{{mode}}モードに再接続できなかったため、{{app}} は直接接続に戻りました。",
+      "attachDrifted": "CC Switch が閉じている間に {{app}} の設定が変更されたため、{{mode}}モードには再接続せず、ファイルはそのままにしました。",
+      "attachUnreadable": "{{app}} の設定ファイルを読み込めなかった（存在しないか解析できない）ため、{{mode}}モードには再接続せず、直接接続に戻りました。"
     },
     "toast": {
       "enteredRoute": "{{app}} のルーティングを開始しました → {{provider}}。",
