@@ -213,14 +213,13 @@ impl Provider {
                 (base_url, api_key)
             }
             // Hermes (config.yaml) flattens credentials at the top level, snake_case.
+            // Copilot CLI 自带模型卡：provider 节点（旧版环境变量形状兜底）。
             AppType::Copilot => {
-                let env = settings.get("env");
+                let converted = crate::copilot_config::convert_legacy_settings(settings);
+                let provider = converted.as_ref().unwrap_or(settings).get("provider");
                 (
-                    str_at(env.and_then(|e| e.get("COPILOT_PROVIDER_BASE_URL"))),
-                    first_non_empty(
-                        env,
-                        &["COPILOT_PROVIDER_API_KEY", "COPILOT_PROVIDER_BEARER_TOKEN"],
-                    ),
+                    str_at(provider.and_then(|p| p.get("baseUrl"))),
+                    first_non_empty(provider, &["apiKey", "bearerToken"]),
                 )
             }
             AppType::Dsh => (
@@ -246,6 +245,28 @@ impl Provider {
                 crate::pi_config::provider_base_url(settings).unwrap_or_default(),
                 crate::pi_config::resolve_usage_api_key(&str_at(settings.get("apiKey"))),
             ),
+            // WorkBuddy models.json: shared `url` / `apiKey`, or per-model overrides.
+            AppType::WorkBuddy => {
+                let first_model = settings
+                    .get("models")
+                    .and_then(Value::as_array)
+                    .and_then(|models| models.first());
+                let pick = |field: &str| {
+                    let shared = str_at(settings.get(field));
+                    if shared.is_empty() {
+                        str_at(first_model.and_then(|model| model.get(field)))
+                    } else {
+                        shared
+                    }
+                };
+                let url = pick("url");
+                let base_url = url
+                    .trim_end_matches('/')
+                    .strip_suffix("/chat/completions")
+                    .map(str::to_string)
+                    .unwrap_or(url);
+                (base_url, pick("apiKey"))
+            }
             // OpenCode (OMO) nests credentials under `options` (the SDK options object).
             AppType::OpenCode | AppType::Mcode => {
                 let options = settings.get("options");

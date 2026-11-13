@@ -360,28 +360,6 @@ pub fn get_app_config_path() -> PathBuf {
     get_app_config_dir().join("config.json")
 }
 
-/// 清理供应商名称，确保文件名安全
-#[allow(dead_code)]
-pub fn sanitize_provider_name(name: &str) -> String {
-    name.chars()
-        .map(|c| match c {
-            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '-',
-            _ => c,
-        })
-        .collect::<String>()
-        .to_lowercase()
-}
-
-/// 获取供应商配置文件路径
-#[allow(dead_code)]
-pub fn get_provider_config_path(provider_id: &str, provider_name: Option<&str>) -> PathBuf {
-    let base_name = provider_name
-        .map(sanitize_provider_name)
-        .unwrap_or_else(|| sanitize_provider_name(provider_id));
-
-    get_claude_config_dir().join(format!("settings-{base_name}.json"))
-}
-
 /// 读取 JSON 配置文件
 pub fn read_json_file<T: for<'a> Deserialize<'a>>(path: &Path) -> Result<T, AppError> {
     if !path.exists() {
@@ -488,6 +466,16 @@ pub struct StagedWrite {
 impl StagedWrite {
     pub fn tmp_path(&self) -> &Path {
         &self.tmp
+    }
+
+    /// 提交时实际被替换的文件（目标是软链接时为它最终指向的文件）。
+    pub fn target(&self) -> &Path {
+        &self.path
+    }
+
+    /// 放弃这次写入，删掉临时文件。
+    pub fn discard(self) {
+        let _ = fs::remove_file(&self.tmp);
     }
 
     /// 用临时文件替换目标（失败时删掉临时文件）。

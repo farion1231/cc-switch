@@ -63,6 +63,8 @@ pub struct VisibleApps {
     pub agy: bool,
     #[serde(default = "default_true")]
     pub copilot: bool,
+    #[serde(default = "default_true")]
+    pub workbuddy: bool,
 }
 
 impl Default for VisibleApps {
@@ -83,6 +85,7 @@ impl Default for VisibleApps {
             agy: true,
             omp: true,
             copilot: true,
+            workbuddy: true,
         }
     }
 }
@@ -106,6 +109,7 @@ impl VisibleApps {
             AppType::Agy => self.agy,
             AppType::Omp => self.omp,
             AppType::Copilot => self.copilot,
+            AppType::WorkBuddy => self.workbuddy,
         }
     }
 }
@@ -892,7 +896,7 @@ impl AppSettings {
             .language
             .as_ref()
             .map(|s| s.trim())
-            .filter(|s| matches!(*s, "en" | "zh" | "zh-TW" | "ja" | "tr" | "ko" | "ru"))
+            .filter(|s| matches!(*s, "en" | "zh" | "zh-TW" | "de" | "ja" | "tr" | "ko" | "ru"))
             .map(|s| s.to_string());
 
         self.quota_display = self
@@ -1507,7 +1511,12 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::Hermes => settings.current_provider_hermes.clone(),
         AppType::Agy => settings.current_provider_agy.clone(),
         AppType::Copilot => settings.current_provider_copilot.clone(),
-        AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp => None,
+        AppType::Pi
+        | AppType::Mcode
+        | AppType::Kimi
+        | AppType::Dsh
+        | AppType::Omp
+        | AppType::WorkBuddy => None,
     }
 }
 
@@ -1528,7 +1537,12 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
         AppType::Agy => settings.current_provider_agy = id_owned.clone(),
         AppType::Copilot => settings.current_provider_copilot = id_owned.clone(),
-        AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp => {}
+        AppType::Pi
+        | AppType::Mcode
+        | AppType::Kimi
+        | AppType::Dsh
+        | AppType::Omp
+        | AppType::WorkBuddy => {}
     })
 }
 
@@ -1693,16 +1707,20 @@ mod tests {
 
     #[test]
     fn russian_language_survives_normalization() {
-        let mut settings = AppSettings::default();
-        settings.language = Some("ru".into());
+        let mut settings = AppSettings {
+            language: Some("ru".into()),
+            ..Default::default()
+        };
         settings.normalize_paths();
         assert_eq!(settings.language.as_deref(), Some("ru"));
     }
 
     #[test]
     fn korean_language_survives_normalization() {
-        let mut settings = AppSettings::default();
-        settings.language = Some("ko".into());
+        let mut settings = AppSettings {
+            language: Some("ko".into()),
+            ..Default::default()
+        };
         settings.normalize_paths();
         assert_eq!(settings.language.as_deref(), Some("ko"));
     }

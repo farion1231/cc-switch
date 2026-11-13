@@ -101,7 +101,7 @@ pub struct PanelTexts {
 impl PanelTexts {
     pub fn from_language(language: &str) -> Self {
         match language {
-            "en" | "tr" | "ru" => Self {
+            "en" => Self {
                 switch_provider: "Switch provider",
                 search_placeholder: "Search providers…",
                 in_use: "In use",
@@ -109,11 +109,7 @@ impl PanelTexts {
                 open_main: "Open main window",
                 quit: "Quit",
                 settings: "Settings",
-                lightweight_mode: match language {
-                    "tr" => "Hafif mod",
-                    "ru" => "Облегчённый режим",
-                    _ => "Lightweight mode",
-                },
+                lightweight_mode: "Lightweight mode",
                 open_panel: "Open quick panel",
                 config_tab: "Configuration",
                 usage_tab: "Usage",
@@ -123,6 +119,63 @@ impl PanelTexts {
                 duration_minutes: "{n}m",
                 duration_sep: " ",
                 reset_credits: "{count} resets available",
+            },
+            "tr" => Self {
+                switch_provider: "Sağlayıcı değiştir",
+                search_placeholder: "Sağlayıcı ara…",
+                in_use: "Kullanımda",
+                no_match: "Eşleşen sağlayıcı yok",
+                open_main: "Ana pencereyi aç",
+                quit: "Çık",
+                settings: "Ayarlar",
+                lightweight_mode: "Hafif mod",
+                open_panel: "Hızlı paneli aç",
+                config_tab: "Yapılandırma",
+                usage_tab: "Kullanım",
+                resets_in: "{when} içinde sıfırlanır",
+                duration_days: "{n} g",
+                duration_hours: "{n} sa",
+                duration_minutes: "{n} dk",
+                duration_sep: " ",
+                reset_credits: "{count} sıfırlama hakkı var",
+            },
+            "de" => Self {
+                switch_provider: "Anbieter wechseln",
+                search_placeholder: "Anbieter suchen…",
+                in_use: "Aktiv",
+                no_match: "Keine passenden Anbieter",
+                open_main: "Hauptfenster öffnen",
+                quit: "Beenden",
+                settings: "Optionen",
+                lightweight_mode: "Lightweight-Modus",
+                open_panel: "Schnellpanel öffnen",
+                config_tab: "Konfiguration",
+                usage_tab: "Nutzung",
+                resets_in: "Zurückgesetzt in {when}",
+                duration_days: "{n} T.",
+                duration_hours: "{n} Std.",
+                duration_minutes: "{n} Min.",
+                duration_sep: " ",
+                reset_credits: "{count} Zurücksetzungen verfügbar",
+            },
+            "ru" => Self {
+                switch_provider: "Сменить провайдера",
+                search_placeholder: "Поиск провайдеров…",
+                in_use: "Используется",
+                no_match: "Нет подходящих провайдеров",
+                open_main: "Открыть главное окно",
+                quit: "Выйти",
+                settings: "Настройки",
+                lightweight_mode: "Облегчённый режим",
+                open_panel: "Открыть быструю панель",
+                config_tab: "Конфигурация",
+                usage_tab: "Использование",
+                resets_in: "Сброс через {when}",
+                duration_days: "{n} д",
+                duration_hours: "{n} ч",
+                duration_minutes: "{n} мин",
+                duration_sep: " ",
+                reset_credits: "Доступно сбросов: {count}",
             },
             "ko" => Self {
                 switch_provider: "공급자 전환",
@@ -626,7 +679,7 @@ mod platform {
         NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
         NSGlassEffectView, NSGlassEffectViewStyle, NSScreen, NSView, NSVisualEffectBlendingMode,
         NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
-        NSWindowOrderingMode,
+        NSWindowCollectionBehavior, NSWindowOrderingMode,
     };
     use objc2_foundation_03::{NSPoint, NSRect, NSSize};
     use tauri::WebviewWindow;
@@ -646,8 +699,19 @@ mod platform {
     /// macOS 26 上还会描一圈深色边。阴影由网页给每块卡片画（窗口四周留了边距）。
     pub fn init(window: &WebviewWindow) {
         let _ = window.set_shadow(false);
-        // 轻量模式下面板会销毁重建：旧窗口的玻璃挂在已销毁的视图上，丢掉，按新窗口重新垫。
-        let _ = window.run_on_main_thread(|| GLASS.with(|glass| glass.borrow_mut().clear()));
+        let target = window.clone();
+        let _ = window.run_on_main_thread(move || {
+            // 轻量模式下面板会销毁重建：旧窗口的玻璃挂在已销毁的视图上，丢掉，按新窗口重新垫。
+            GLASS.with(|glass| glass.borrow_mut().clear());
+            // `visible_on_all_workspaces` 只加 CanJoinAllSpaces，进不了别的应用的全屏 Space：
+            // 在全屏应用里点托盘图标，面板会显示在别的桌面上、看不见（#9331）。
+            if let Some(ns_window) = ns_window(&target) {
+                ns_window.setCollectionBehavior(
+                    ns_window.collectionBehavior()
+                        | NSWindowCollectionBehavior::FullScreenAuxiliary,
+                );
+            }
+        });
     }
 
     fn ns_window(window: &WebviewWindow) -> Option<&NSWindow> {

@@ -26,7 +26,7 @@ Protected providers show a notice in the editor, and the shared API key input is
 
 The comparison handles the standard inline-key shapes for Claude Code/Desktop, Codex, Gemini CLI, Grok Build, OpenCode V1/V2, OpenClaw, Hermes, Pi and MiniMax Code. JSON and the active Codex/Grok TOML profile are compared semantically, so TOML comments/formatting do not constitute a credential change. Credentials are never resolved from environment variables, files or commands for this check. Official or managed OAuth accounts and external credential sources are not supported by this guard.
 
-Kimi Code, DeepSeek Harness, Antigravity and Oh My Pi remain outside this guard's supported configuration shapes. Their ordinary import/edit paths keep working where supported upstream. The import dialog disables the protection option with an explanation, and native writes reject a protected record for these apps instead of claiming to protect unrecognized credential fields.
+Kimi Code, DeepSeek Harness, GitHub Copilot CLI, WorkBuddy, Antigravity and Oh My Pi remain outside this guard's supported configuration shapes. Their ordinary import/edit paths keep working where supported upstream. The import dialog disables the protection option with an explanation, and native writes reject a protected record for these apps instead of claiming to protect unrecognized credential fields.
 
 Protected fields include recognized keys, auth helpers/selectors, provider auth headers and gateway addresses. Provider ID/auth binding changes and silently dropping the protection flag are rejected. Custom endpoint membership is guarded separately; usage timestamps are not locked. Usage-script configuration is outside the model-request credential guard.
 

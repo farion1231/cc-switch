@@ -1068,6 +1068,32 @@ fn model_pricing_seed_covers_deepseek_v41_flash_aliases() {
 }
 
 #[test]
+fn model_pricing_seed_includes_claude_fable_5_2() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'claude-fable-5-2'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query Fable 5.2 price");
+
+    assert_eq!(
+        price,
+        (
+            "8".to_string(),
+            "40".to_string(),
+            "0.20".to_string(),
+            "10".to_string(),
+        )
+    );
+}
+
+#[test]
 fn model_pricing_seed_includes_claude_5_1_and_standard_sonnet_5_prices() {
     let db = Database::memory().expect("create memory db");
     let conn = db.conn.lock().expect("lock conn");
@@ -1285,6 +1311,32 @@ fn model_pricing_seed_includes_gemini_4_argon() {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .expect("query Gemini 4 Argon price");
+
+    assert_eq!(
+        price,
+        (
+            "2.00".to_string(),
+            "10.00".to_string(),
+            "0.10".to_string(),
+            "0".to_string(),
+        )
+    );
+}
+
+#[test]
+fn model_pricing_seed_includes_gemini_4_carbon() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'gemini-4-carbon'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query Gemini 4 Carbon price");
 
     assert_eq!(
         price,
@@ -1535,12 +1587,14 @@ fn migration_v23_to_v24_adds_dsh_flags_without_changing_omp_or_skill_state() {
 }
 
 #[test]
-fn migration_v24_to_v25_adds_copilot_flags_without_changing_dsh_state() {
+fn migration_from_v24_adds_copilot_and_workbuddy_flags_without_changing_dsh_state() {
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn).expect("create tables");
     conn.execute_batch(
         "ALTER TABLE mcp_servers DROP COLUMN enabled_copilot;
          ALTER TABLE skills DROP COLUMN enabled_copilot;
+         ALTER TABLE mcp_servers DROP COLUMN enabled_workbuddy;
+         ALTER TABLE skills DROP COLUMN enabled_workbuddy;
          INSERT INTO mcp_servers (id, name, server_config, enabled_dsh)
          VALUES ('shared', 'Shared MCP', '{}', 1);
          INSERT INTO skills (id, name, directory, enabled_dsh)
@@ -1550,17 +1604,18 @@ fn migration_v24_to_v25_adds_copilot_flags_without_changing_dsh_state() {
     Database::set_user_version(&conn, 24).expect("set user_version=24");
 
     Database::apply_schema_migrations_on_conn(&conn).expect("upgrade v24 database");
-    assert_eq!(Database::get_user_version(&conn).unwrap(), 25);
-    assert_eq!(SCHEMA_VERSION, 25);
+    // v24 → v25（Copilot）→ v26（WorkBuddy）
+    assert_eq!(Database::get_user_version(&conn).unwrap(), 26);
+    assert_eq!(SCHEMA_VERSION, 26);
     for table in ["mcp_servers", "skills"] {
-        let flags: (bool, bool) = conn
+        let flags: (bool, bool, bool) = conn
             .query_row(
-                &format!("SELECT enabled_dsh, enabled_copilot FROM {table}"),
+                &format!("SELECT enabled_dsh, enabled_copilot, enabled_workbuddy FROM {table}"),
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .expect("read migrated flags");
-        assert_eq!(flags, (true, false), "{table}");
+        assert_eq!(flags, (true, false, false), "{table}");
     }
 
     conn.execute("UPDATE skills SET enabled_copilot = 1", [])
@@ -1573,14 +1628,14 @@ fn migration_v24_to_v25_adds_copilot_flags_without_changing_dsh_state() {
 }
 
 #[test]
-fn fresh_install_has_both_dsh_and_copilot_flags_at_current_version() {
+fn fresh_install_has_dsh_copilot_and_workbuddy_flags_at_current_version() {
     // 与 Database::init 的全新安装路径一致：先建表，再从 user_version=0 跑迁移。
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn).expect("create tables");
     Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
     assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
     for table in ["mcp_servers", "skills"] {
-        for column in ["enabled_dsh", "enabled_copilot"] {
+        for column in ["enabled_dsh", "enabled_copilot", "enabled_workbuddy"] {
             assert!(
                 Database::has_column(&conn, table, column).expect("inspect column"),
                 "{table}.{column} missing on fresh install"

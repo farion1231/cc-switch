@@ -2272,7 +2272,7 @@ mod tests {
         let web = profile_path("web");
         // Existing users only had Web when these rows were written.
         save_paths_and_commit(
-            &[web.clone()],
+            std::slice::from_ref(&web),
             &credentials_path(),
             "gateway",
             Some(editor_config()),
