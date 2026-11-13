@@ -104,6 +104,7 @@ const PI_API_FORMATS = [
   { value: "anthropic-messages", label: "Anthropic Messages" },
   { value: "google-generative-ai", label: "Google Generative AI" },
   { value: "bedrock-converse-stream", label: "Amazon Bedrock" },
+  { value: "mistral-conversations", label: "Mistral" },
 ] as const satisfies ReadonlyArray<{ value: PiApiFormat; label: string }>;
 
 const ROOT_CONTROLLED_KEYS = new Set([

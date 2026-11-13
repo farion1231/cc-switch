@@ -45,8 +45,11 @@ describe("kimiProviderPresets", () => {
     ).toHaveLength(4);
   });
   it("provides the compatible catalog across vendors, platforms, cloud and local groups", () => {
+    // Bedrock and Mistral's native protocol have no Kimi Code equivalent.
     const compatible = piProviderPresets.filter(
-      (preset) => preset.settingsConfig.api !== "bedrock-converse-stream",
+      (preset) =>
+        preset.settingsConfig.api !== "bedrock-converse-stream" &&
+        preset.settingsConfig.api !== "mistral-conversations",
     );
     expect(kimiProviderPresets.map((preset) => preset.name)).toEqual(
       compatible.map((preset) => preset.name),
