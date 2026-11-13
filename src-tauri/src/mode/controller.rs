@@ -26,8 +26,8 @@ use crate::claude_desktop_config::{self, DesktopTarget};
 use crate::error::AppError;
 use crate::live::engine::DeviceStore;
 use crate::live::project::claude::{
-    direct_patch, proxy_projection, ClaudeProjection, ProxyAuth, StackRoleModel,
-    PROXY_TOKEN_PLACEHOLDER,
+    self as claude_project, direct_patch, proxy_projection, ClaudeProjection, ProxyAuth,
+    StackRoleModel, PROXY_TOKEN_PLACEHOLDER,
 };
 use crate::live::project::gemini::GeminiProjection;
 use crate::live::project::grok::GrokProjection;
@@ -184,13 +184,15 @@ fn claude_proxy_auth(provider: &Provider) -> ProxyAuth {
 
 /// `stack` 是发布的 Stack 模型，`stack_default` 是四档别名指向的模型（Stack 模式下默认那家
 /// 列表里的第一个，见 [`stack::claude_route_default`]；路由模式为 `None`）。`others` 是其余
-/// 发布模型的成员，它们的兼容开关按 [`with_member_switches`] 并进契约。
+/// 发布模型的成员，它们的兼容开关按 [`with_member_switches`] 并进契约。`selected` 是
+/// `settings.json` 里 `/model` 存下的选择（[`live_claude_model`]）。
 fn claude_contract(
     route: &Provider,
     proxy_url: &str,
     stack: &[StackModel],
     stack_default: Option<&StackModel>,
     others: &[&Provider],
+    selected: Option<&str>,
 ) -> (ClaudeProjection, Contract) {
     let mut projection = proxy_projection(
         &ClaudeProjection::of(&route.settings_config),
@@ -202,7 +204,7 @@ fn claude_contract(
             name: &model.name,
         }),
     );
-    with_stack_models(&mut projection, stack);
+    with_stack_models(&mut projection, stack, selected);
     if !stack.is_empty() {
         let others: Vec<_> = others
             .iter()
@@ -214,7 +216,7 @@ fn claude_contract(
     (projection, contract)
 }
 
-const CLAUDE_MAX_CONTEXT_ENV: &str = "CLAUDE_CODE_MAX_CONTEXT_TOKENS";
+pub(crate) const CLAUDE_MAX_CONTEXT_ENV: &str = "CLAUDE_CODE_MAX_CONTEXT_TOKENS";
 
 /// `/model` 选择器的配置（顶层关键字段）。`replaceBuiltInOptions` 让选择器只剩 Default 和
 /// 这里列的行：内置的 Opus / Sonnet / Haiku 行都指向默认那家的模型，留着就是几行重复，
@@ -222,11 +224,30 @@ const CLAUDE_MAX_CONTEXT_ENV: &str = "CLAUDE_CODE_MAX_CONTEXT_TOKENS";
 const CLAUDE_MODEL_PICKER: &str = "modelPicker";
 
 /// 发布了 Stack 模型时：`/model` 换成 Stack 模型列表；`CLAUDE_CODE_MAX_CONTEXT_TOKENS` 改由
-/// Stack 模型决定，取非 1M 模型里最小的窗口（等于默认 200K 时不写）。四档别名也写成 Stack id，
-/// 同样受 MAX 约束；1M 的 Stack 模型不受 MAX 影响。没有发布 Stack 模型时契约和原来逐字节一致。
-fn with_stack_models(projection: &mut ClaudeProjection, stack: &[StackModel]) {
+/// Stack 模型决定（[`stack_max_context`]）。200K 也显式写入：Claude Code 热加载时只覆盖
+/// 环境变量，删除设置里的键不会清掉运行中进程的旧值。没有发布 Stack 模型时契约和原来一致。
+///
+/// `selected` 是 `/model` 存下的选择：保留有效选择，但按当前发布的 id 更新 1M 标记，避免
+/// 编辑窗口后旧标记继续生效。档位别名由对应的环境变量决定窗口，不保留显式的 1M 后缀。
+/// 补丁会清掉顶层的 `model`；已移除成员的 Stack id 不保留（发出去只会报错）。
+fn with_stack_models(
+    projection: &mut ClaudeProjection,
+    stack: &[StackModel],
+    selected: Option<&str>,
+) {
     if stack.is_empty() {
         return;
+    }
+    let picked = selected.and_then(|selected| stack::claude_selected(stack, selected));
+    let selected = picked.map(|model| model.id.as_str()).or_else(|| {
+        selected
+            .filter(|selected| claude_project::is_tier_alias(selected))
+            .map(crate::proxy::model_mapper::strip_one_m_suffix_for_upstream)
+    });
+    if let Some(selected) = selected {
+        projection
+            .top
+            .insert("model".to_string(), Value::String(selected.to_string()));
     }
     let options: Vec<Value> = stack
         .iter()
@@ -242,18 +263,38 @@ fn with_stack_models(projection: &mut ClaudeProjection, stack: &[StackModel]) {
         CLAUDE_MODEL_PICKER.to_string(),
         json!({ "replaceBuiltInOptions": true, "options": options }),
     );
-    projection.exclusive.shift_remove(CLAUDE_MAX_CONTEXT_ENV);
-    let smallest = stack
+    projection.exclusive.insert(
+        CLAUDE_MAX_CONTEXT_ENV.to_string(),
+        Value::String(stack_max_context(stack).to_string()),
+    );
+}
+
+/// Stack 模式下共享的 `CLAUDE_CODE_MAX_CONTEXT_TOKENS`，取所有非 1M 模型的最大窗口。
+/// Claude Code 只有这一个窗口，所有会话共用，不跟着哪个会话的 `/model` 走。窗口更小的模型
+/// 由代理按请求补齐：给它的响应 `input_tokens` 加上 `MAX − 它的窗口`（见
+/// `proxy::context_offset`），Claude Code 就在这个模型自己的窗口处自动压缩。这样并行会话、
+/// `--model`、项目配置、子代理和会话中途换模型都按各自的模型算，互不影响。
+///
+/// 全是 1M 时也写回默认 200K，覆盖进程里可能残留的旧 MAX；带 1M 标记的模型不受它影响。
+fn stack_max_context(stack: &[StackModel]) -> u64 {
+    stack
         .iter()
         .filter(|model| !model.one_m)
         .map(|model| model.window)
-        .min();
-    if let Some(window) = smallest.filter(|window| *window != stack::CLAUDE_DEFAULT_WINDOW) {
-        projection.exclusive.insert(
-            CLAUDE_MAX_CONTEXT_ENV.to_string(),
-            Value::String(window.to_string()),
-        );
-    }
+        .max()
+        .unwrap_or(stack::CLAUDE_DEFAULT_WINDOW)
+}
+
+/// `settings.json` 顶层的 `model`（`/model` 存下的选择）。读不出、没有时为 `None`。
+fn live_claude_model() -> Option<String> {
+    let path = crate::config::get_claude_settings_path();
+    let text = std::fs::read_to_string(path).ok()?;
+    let doc: Value = serde_json::from_str(&text).ok()?;
+    doc.get("model")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .map(str::to_string)
 }
 
 /// 关掉某个功能的兼容开关：任何一家要关，契约就关（值取第一个要关的那家的）。上游不支持的
@@ -408,12 +449,14 @@ async fn write_proxy(
                 .filter(|member| !member.route)
                 .map(|member| &member.provider)
                 .collect();
+            let selected = live_claude_model();
             let (projection, contract) = claude_contract(
                 route,
                 &proxy_url,
                 &published,
                 stack_default.as_ref(),
                 &others,
+                selected.as_deref(),
             );
             let unchanged = !force && live_now.has_contract(&contract.key);
             let mut patch = direct_patch(live_now.claude_exclusive_owner().as_ref(), &projection);
@@ -2036,9 +2079,58 @@ mod tests {
             &stack,
             default.as_ref(),
             others,
+            None,
         );
         assert_eq!(contract.exclusive, projection.exclusive);
         projection.exclusive
+    }
+
+    #[test]
+    fn stack_max_window_is_the_widest_non_one_m_window_whatever_is_selected() {
+        let wide = stack_member(
+            "wide",
+            json!({ "ANTHROPIC_MODEL": "wide-m", "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "400000" }),
+        );
+        let mut small = stack_member(
+            "small",
+            json!({ "ANTHROPIC_MODEL": "small-m", "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "500000" }),
+        );
+        small.meta = Some(
+            serde_json::from_value(json!({
+                "stackModels": [{ "model": "small-m", "contextWindow": 128000 }]
+            }))
+            .unwrap(),
+        );
+        let million = stack_member("million", json!({ "ANTHROPIC_MODEL": "million-m[1M]" }));
+        let providers = [&wide, &small, &million];
+        let stack: Vec<_> = providers
+            .iter()
+            .flat_map(|provider| stack::claude_models(&provider.id, provider))
+            .collect();
+        for (route, default) in providers.iter().zip(&stack) {
+            for selected in [
+                None,
+                Some("sonnet"),
+                Some("ccs-claude-wide--wide-m"),
+                Some("ccs-claude-small--small-m"),
+                Some("ccs-claude-million--million-m[1m]"),
+            ] {
+                let (projection, _) = claude_contract(
+                    route,
+                    "http://127.0.0.1:15721",
+                    &stack,
+                    Some(default),
+                    &[],
+                    selected,
+                );
+                // 小窗口的 small 由代理按请求补齐（`proxy::context_offset`）。
+                assert_env_str(
+                    &projection.exclusive,
+                    CLAUDE_MAX_CONTEXT_ENV,
+                    Some("400000"),
+                );
+            }
+        }
     }
 
     #[test]
@@ -2123,7 +2215,7 @@ mod tests {
         );
         // 没有发布 Stack 模型（路由模式）时契约和原来一样，不看别家。
         let (projection, _) =
-            claude_contract(&route, "http://127.0.0.1:15721", &[], None, &[&other]);
+            claude_contract(&route, "http://127.0.0.1:15721", &[], None, &[&other], None);
         assert_env_str(&projection.exclusive, "ENABLE_TOOL_SEARCH", Some("true"));
         assert_env_str(
             &projection.exclusive,
@@ -2134,7 +2226,8 @@ mod tests {
 
     /// 以 `live` 为底写入 `provider` 的代理契约，和进入代理时的补丁相同。
     fn takeover(live: &Value, provider: &Provider) -> Value {
-        let (projection, _) = claude_contract(provider, "http://127.0.0.1:15721", &[], None, &[]);
+        let (projection, _) =
+            claude_contract(provider, "http://127.0.0.1:15721", &[], None, &[], None);
         let mut doc = live.clone();
         direct_patch(None, &projection)
             .apply_to(Path::new("settings.json"), &mut doc)
@@ -6019,20 +6112,21 @@ model_provider = "c"
                 "ccs-claude-kimi--kimi-k3".to_string(),
             ])
         );
+        // 所有会话共用 MAX，取最大的非 1M 窗口；kimi 的 128K 由代理按请求补齐。
         let env = settings()["env"].clone();
-        assert_eq!(env[CLAUDE_MAX_CONTEXT_ENV], "128000");
+        assert_eq!(env[CLAUDE_MAX_CONTEXT_ENV], "200000");
         assert_eq!(
             env["ANTHROPIC_DEFAULT_SONNET_MODEL"],
             "ccs-claude-a--claude-sonnet-4-6"
         );
         assert_eq!(
             mode(&AppType::Claude).contract.unwrap().exclusive[CLAUDE_MAX_CONTEXT_ENV],
-            "128000"
+            "200000"
         );
 
         // 1M 的 Stack 模型不影响 MAX。
         set_member(&state, "zhipu", true).await;
-        assert_eq!(settings()["env"][CLAUDE_MAX_CONTEXT_ENV], "128000");
+        assert_eq!(max_context().as_deref(), Some("200000"));
         set_member(&state, "kimi", false).await;
         assert_eq!(
             picker(),
@@ -6042,7 +6136,7 @@ model_provider = "c"
             ])
         );
         let env = settings()["env"].clone();
-        assert!(env.get(CLAUDE_MAX_CONTEXT_ENV).is_none(), "{env}");
+        assert_eq!(env[CLAUDE_MAX_CONTEXT_ENV], "200000");
 
         // 只剩默认那家：客户端文件和契约回到刚进入时的样子，登记簿保留。
         set_member(&state, "zhipu", false).await;
@@ -6058,6 +6152,124 @@ model_provider = "c"
 
         exit(&state, &AppType::Claude).await.expect("exit");
         assert_back_to_user_settings();
+    }
+
+    /// Claude Code 在 `/model` 里选模型时把选择存进 `settings.json` 的 `model`。
+    fn pick_model(model: Option<&str>) {
+        let mut doc = settings();
+        match model {
+            Some(model) => doc["model"] = json!(model),
+            None => {
+                doc.as_object_mut().unwrap().remove("model");
+            }
+        }
+        fs::write(settings_path(), serde_json::to_vec_pretty(&doc).unwrap()).unwrap();
+    }
+
+    fn max_context() -> Option<String> {
+        settings()["env"]
+            .get(CLAUDE_MAX_CONTEXT_ENV)
+            .map(|value| value.as_str().expect("string").to_string())
+    }
+
+    /// 共享 MAX 取最大的非 1M 窗口，和 `/model` 选了什么无关（小窗口由代理按请求补齐）；
+    /// 重写名单时保留有效选择，并规范化 1M 标记。
+    #[tokio::test]
+    #[serial]
+    async fn the_stack_max_window_is_the_widest_and_ignores_the_selection() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let [a, kimi, zhipu] = stack_rows();
+        let wide = claude(
+            "wide",
+            "https://wide.example",
+            json!({
+                "ANTHROPIC_MODEL": "wide-m",
+                "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "400000"
+            }),
+        );
+        let state = state_with(AppType::Claude, &[a, kimi, zhipu, wide], "a").await;
+        enter(&state, &AppType::Claude, true).await.expect("enter");
+        assert_eq!(max_context().as_deref(), Some("200000"));
+        set_member(&state, "kimi", true).await;
+        set_member(&state, "wide", true).await;
+        assert_eq!(max_context().as_deref(), Some("400000"));
+
+        // 选中别的模型不改 MAX：每个会话的窗口由代理按请求的模型补齐。
+        pick_model(Some("ccs-claude-wide--wide-m"));
+        set_member(&state, "zhipu", true).await;
+        assert_eq!(settings()["model"], "ccs-claude-wide--wide-m");
+        assert_eq!(max_context().as_deref(), Some("400000"));
+
+        // 选 1M 后重写，选择按当前发布的 id 规范化；移除 wide 后 MAX 回到剩下最大的 a。
+        pick_model(Some("ccs-claude-zhipu--glm-5.2[1m]"));
+        set_member(&state, "wide", false).await;
+        assert_eq!(settings()["model"], "ccs-claude-zhipu--glm-5.2[1M]");
+        assert_eq!(max_context().as_deref(), Some("200000"));
+
+        // 档位别名的窗口由默认那家的映射决定，去掉旧的显式 1M 后缀。
+        pick_model(Some("sonnet[1m]"));
+        set_member(&state, "wide", true).await;
+        assert_eq!(settings()["model"], "sonnet");
+        assert_eq!(max_context().as_deref(), Some("400000"));
+
+        // Default 没有顶层 model；移除小窗口成员不改 MAX。
+        pick_model(None);
+        set_member(&state, "kimi", false).await;
+        assert!(settings().get("model").is_none());
+        assert_eq!(max_context().as_deref(), Some("400000"));
+
+        // 已移除成员的选择不能保留；移除最大的 wide 后 MAX 显式回到 200K，覆盖进程内的旧值。
+        pick_model(Some("ccs-claude-wide--wide-m"));
+        set_member(&state, "wide", false).await;
+        assert!(settings().get("model").is_none());
+        assert_eq!(max_context().as_deref(), Some("200000"));
+
+        exit(&state, &AppType::Claude).await.expect("exit");
+        assert_back_to_user_settings();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn editing_a_stack_window_updates_the_saved_one_m_marker_and_resets_max() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let route = claude(
+            "a",
+            "https://a.example",
+            json!({ "ANTHROPIC_MODEL": "wide-m", "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "400000" }),
+        );
+        let state = state_with(AppType::Claude, &[route], "a").await;
+        enter(&state, &AppType::Claude, true).await.expect("enter");
+        assert_eq!(max_context().as_deref(), Some("400000"));
+        pick_model(Some("ccs-claude-a--wide-m"));
+
+        let mut route = state.db.get_provider_by_id("a", "claude").unwrap().unwrap();
+        for (window, selected, max) in [
+            (1_000_000, "ccs-claude-a--wide-m[1M]", "200000"),
+            (128_000, "ccs-claude-a--wide-m", "128000"),
+            (200_000, "ccs-claude-a--wide-m", "200000"),
+            (400_000, "ccs-claude-a--wide-m", "400000"),
+            (200_000, "ccs-claude-a--wide-m", "200000"),
+        ] {
+            route.meta.get_or_insert_with(Default::default).stack_models =
+                serde_json::from_value(json!([{ "model": "wide-m", "contextWindow": window }]))
+                    .unwrap();
+            ProviderService::update(&state, AppType::Claude, None, route.clone()).expect("update");
+            assert_eq!(settings()["model"], selected, "window {window}");
+            assert_eq!(picker(), Some(vec![selected.to_string()]));
+            assert_eq!(max_context().as_deref(), Some(max), "window {window}");
+            assert_eq!(
+                mode(&AppType::Claude).contract.unwrap().exclusive[CLAUDE_MAX_CONTEXT_ENV],
+                max
+            );
+        }
+
+        exit(&state, &AppType::Claude).await.expect("exit");
+        // 退出后恢复供应商自己的直连配置，Stack 自定义窗口只用于聚合。
+        assert_eq!(settings()["env"]["ANTHROPIC_MODEL"], "wide-m");
+        assert_eq!(max_context().as_deref(), Some("400000"));
+        assert!(settings().get("model").is_none());
     }
 
     #[tokio::test]
@@ -6113,7 +6325,7 @@ model_provider = "c"
 
         enter(&state, &AppType::Claude, true).await.expect("enter");
         assert!(picker().is_some());
-        assert_eq!(settings()["env"][CLAUDE_MAX_CONTEXT_ENV], "128000");
+        assert_eq!(max_context().as_deref(), Some("200000"));
 
         exit(&state, &AppType::Claude).await.expect("exit");
         assert_back_to_user_settings();
@@ -6147,7 +6359,7 @@ model_provider = "c"
         ProviderService::switch(&state, AppType::Claude, "kimi").expect("switch route");
         assert!(picker().is_some());
         let env = settings()["env"].clone();
-        assert_eq!(env[CLAUDE_MAX_CONTEXT_ENV], "128000");
+        assert_eq!(env[CLAUDE_MAX_CONTEXT_ENV], "200000");
         assert_eq!(
             env["ANTHROPIC_DEFAULT_OPUS_MODEL"],
             "ccs-claude-kimi--kimi-k3"
@@ -7079,24 +7291,32 @@ model_provider = "c"
         let state = state_with(AppType::Claude, &stack_rows(), "a").await;
         enter(&state, &AppType::Claude, true).await.expect("enter");
         set_member(&state, "kimi", true).await;
+        // 编辑和删除成员时，保留有效选择，清掉已移除成员的选择。
+        pick_model(Some("ccs-claude-kimi--kimi-k3"));
+        assert_eq!(max_context().as_deref(), Some("200000"));
 
         let mut kimi = state
             .db
             .get_provider_by_id("kimi", "claude")
             .unwrap()
             .unwrap();
-        kimi.settings_config["env"][CLAUDE_MAX_CONTEXT_ENV] = json!("64000");
+        kimi.settings_config["env"][CLAUDE_MAX_CONTEXT_ENV] = json!("300000");
         ProviderService::update(&state, AppType::Claude, None, kimi).expect("update kimi");
-        assert_eq!(settings()["env"][CLAUDE_MAX_CONTEXT_ENV], "64000");
+        assert_eq!(settings()["env"][CLAUDE_MAX_CONTEXT_ENV], "300000");
+        assert_eq!(settings()["model"], "ccs-claude-kimi--kimi-k3");
 
         ProviderService::delete(&state, AppType::Claude, "kimi").expect("delete kimi");
         let env = settings()["env"].clone();
+        assert!(
+            settings().get("model").is_none(),
+            "a removed member's id goes"
+        );
         assert_eq!(
             picker(),
             Some(vec!["ccs-claude-a--claude-sonnet-4-6".to_string()]),
             "a still publishes"
         );
-        assert!(env.get(CLAUDE_MAX_CONTEXT_ENV).is_none(), "{env}");
+        assert_eq!(env[CLAUDE_MAX_CONTEXT_ENV], "200000");
         assert!(state
             .db
             .get_provider_by_id("kimi", "claude")

@@ -362,6 +362,15 @@ impl Tier {
     }
 }
 
+/// `model` 是档位别名（`opus`、`sonnet[1m]` 这类）。Stack 模式下四档别名都指向默认那家的
+/// 模型，`/model` 存下的别名换了哪家做默认都还有效。
+pub(crate) fn is_tier_alias(model: &str) -> bool {
+    let model = crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(model.trim());
+    Tier::MENU_ORDER
+        .iter()
+        .any(|tier| model.eq_ignore_ascii_case(tier.alias()))
+}
+
 /// 一个档位实际用的上游模型和显示名。
 struct TierModel<'a> {
     tier: Tier,

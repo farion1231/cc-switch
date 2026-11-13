@@ -100,6 +100,7 @@ import type { DirectModeFormatNotice } from "./shared";
 import {
   claudeStackModelsFromEnv,
   createClaudeStackModelRow,
+  hasInvalidClaudeStackWindow,
   normalizeClaudeStackModels,
   type ClaudeStackModelRow,
 } from "./ClaudeStackModelsField";
@@ -1373,6 +1374,19 @@ function ProviderFormFull({
     (appId === "claude" || appId === "codex") && category !== "official";
 
   const handleSubmit = async (values: ProviderFormData) => {
+    if (
+      appId === "claude" &&
+      category !== "official" &&
+      claudeStackRows?.some(hasInvalidClaudeStackWindow)
+    ) {
+      toast.error(
+        t("providerForm.modelContextWindowInvalid", {
+          defaultValue:
+            "请输入正整数 token 数（如 262144 或 262,144），不要使用单位、小数或科学计数法；留空则继承默认值。",
+        }),
+      );
+      return;
+    }
     const overridesResult = shouldApplyLocalProxyRequestOverrides
       ? buildLocalProxyRequestOverrides(
           localProxyHeadersOverride,
