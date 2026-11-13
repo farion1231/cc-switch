@@ -255,10 +255,7 @@ pub(crate) fn write_and_commit<T>(
     match crate::sync_utils::resume_after_rollback(outcome, rollback) {
         Ok(result) => Ok(result),
         Err(error) => {
-            if let Err(rollback_error) = rollback() {
-                // 前端取第一个 omp.errors.* key，回滚冲突放前面，提交错误也保留。
-                return Err(AppError::Message(format!("{rollback_error}; {error}")));
-            }
+            rollback()?;
             Err(error)
         }
     }
