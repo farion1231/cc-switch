@@ -5382,5 +5382,16 @@
       "managedHint": "Dieses Konto wird in der Kontoverwaltung verwaltet; die Karte verschwindet nach der Abmeldung."
     },
     "deleteSessionHint": "Löschen Sie diese Sitzung in DeepSeek Harness, damit der Verlauf konsistent bleibt."
+  },
+  "credentialProtection": {
+    "unsupportedApp": "Der Bearbeitungsschutz für Zugangsdaten ist für diese App nicht verfügbar.",
+    "importLabel": "Diese Zugangsdaten vor versehentlichen Änderungen schützen",
+    "importHint": "Dieser Link fordert einen Bearbeitungsschutz an. Wählen Sie diese Option, damit der Schlüssel und sein Ziel bei normalen Änderungen unverändert bleiben. Sie können den Schutz später ausdrücklich aufheben.",
+    "title": "Der Bearbeitungsschutz für Zugangsdaten ist aktiviert",
+    "description": "Sie können Modelle und andere Einstellungen bearbeiten. Um den Schlüssel, seine Quelle oder sein Ziel manuell zu ändern, heben Sie zuerst den Schutz auf.",
+    "remove": "Schutz aufheben",
+    "confirmTitle": "Bearbeitungsschutz für Zugangsdaten aufheben?",
+    "confirmMessage": "Der vorhandene Schlüssel und die Client-Konfiguration bleiben unverändert. Der Editor wird geschlossen, ohne ungespeicherte Änderungen anzuwenden. Öffnen Sie ihn erneut, um die Zugangsdaten manuell zu bearbeiten.",
+    "removeFailed": "Der Bearbeitungsschutz für Zugangsdaten konnte nicht aufgehoben werden. Ihre Änderungen wurden nicht angewendet."
   }
 }

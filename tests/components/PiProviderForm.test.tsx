@@ -762,37 +762,22 @@ describe("PiProviderForm", () => {
       />,
     );
 
-    await user.click(
-      screen.getByRole("button", { name: "providerPreset.custom" }),
-    );
-    fireEvent.change(screen.getByPlaceholderText("my-provider"), {
+    fireEvent.change(screen.getByLabelText("pi.form.providerKey"), {
       target: { value: "identity-provider" },
     });
     fireEvent.change(screen.getByLabelText("provider.name"), {
       target: { value: "Identity provider" },
     });
-    await user.click(document.querySelector("#pi-provider-api-select")!);
-    await user.click(
-      await screen.findByRole("option", { name: "Anthropic Messages" }),
-    );
-    fireEvent.change(
-      screen.getByPlaceholderText("https://api.example.com/v1"),
-      {
-        target: { value: "https://api.example.com" },
+    // Prepare unrelated model settings through the existing JSON editor.
+    fireEvent.change(screen.getByLabelText("provider.configJson"), {
+      target: {
+        value: JSON.stringify({
+          name: "Identity provider",
+          api: "anthropic-messages",
+          baseUrl: "https://api.example.com",
+          models: [completeModel("identity-model")],
+        }),
       },
-    );
-    fireEvent.click(screen.getByRole("button", { name: "pi.form.addModel" }));
-    fireEvent.change(screen.getByPlaceholderText("model-id"), {
-      target: { value: "identity-model" },
-    });
-    await user.click(
-      screen.getByRole("button", { name: "展开或收起模型详情" }),
-    );
-    fireEvent.change(screen.getByLabelText("pi.form.contextWindow"), {
-      target: { value: "128000" },
-    });
-    fireEvent.change(screen.getByLabelText("pi.form.maxTokens"), {
-      target: { value: "16384" },
     });
 
     openAdvancedOptions();
