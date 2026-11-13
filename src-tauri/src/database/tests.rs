@@ -1643,3 +1643,111 @@ fn fresh_install_has_dsh_copilot_and_workbuddy_flags_at_current_version() {
         }
     }
 }
+
+#[test]
+fn recovers_after_a_panic_poisons_the_connection_lock() {
+    let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+    db.set_setting("kept", "1").expect("seed");
+
+    let poisoner = std::sync::Arc::clone(&db);
+    let joined = std::thread::spawn(move || {
+        let conn = poisoner.conn.lock().expect("lock conn");
+        conn.execute_batch("BEGIN; INSERT INTO settings (key, value) VALUES ('lost', '1');")
+            .expect("open transaction");
+        panic!("task panics while holding the lock");
+    })
+    .join();
+    assert!(joined.is_err());
+    assert!(db.conn.is_poisoned());
+
+    // 中毒后仍能读写，半截事务被回滚
+    assert_eq!(
+        db.get_setting("kept")
+            .expect("read after poison")
+            .as_deref(),
+        Some("1")
+    );
+    assert_eq!(db.get_setting("lost").expect("read after poison"), None);
+    db.set_setting("after", "1").expect("write after poison");
+    assert!(!db.conn.is_poisoned());
+}
+
+#[test]
+fn keeps_the_lock_poisoned_when_rollback_fails() {
+    use rusqlite::hooks::{AuthAction, AuthContext, Authorization, TransactionOperation};
+    let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+
+    let poisoner = std::sync::Arc::clone(&db);
+    let joined = std::thread::spawn(move || {
+        let conn = poisoner.conn.lock().expect("lock conn");
+        conn.execute_batch("BEGIN").expect("open transaction");
+        conn.authorizer(Some(|ctx: AuthContext<'_>| match ctx.action {
+            AuthAction::Transaction {
+                operation: TransactionOperation::Rollback,
+            } => Authorization::Deny,
+            _ => Authorization::Allow,
+        }));
+        panic!("task panics while holding the lock");
+    })
+    .join();
+    assert!(joined.is_err());
+
+    assert!(db.get_setting("kept").is_err());
+    assert!(db.conn.is_poisoned());
+}
+
+#[tokio::test]
+async fn proxy_dao_calls_survive_a_poisoned_lock() {
+    let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+    db.set_proxy_flags_sync("claude", true, true)
+        .expect("set flags");
+    db.update_proxy_config(crate::proxy::types::ProxyConfig {
+        listen_port: 25721,
+        ..Default::default()
+    })
+    .await
+    .expect("set port");
+
+    // 每次调用前都重新毒化，确保每个调用点自己完成恢复
+    let poison = || {
+        let poisoner = std::sync::Arc::clone(&db);
+        let joined = std::thread::spawn(move || {
+            let _conn = poisoner.conn.lock().expect("lock conn");
+            panic!("task panics while holding the lock");
+        })
+        .join();
+        assert!(joined.is_err());
+        assert!(db.conn.is_poisoned());
+    };
+
+    poison();
+    db.set_proxy_flags_sync("claude", true, false)
+        .expect("set flags after poison");
+    poison();
+    assert_eq!(
+        db.get_proxy_flags_sync("claude"),
+        (true, false),
+        "get_proxy_flags_sync after poison"
+    );
+    poison();
+    assert!(
+        db.is_live_takeover_active_sync(),
+        "is_live_takeover_active_sync after poison"
+    );
+    poison();
+    assert_eq!(
+        db.get_proxy_client_endpoint_sync().1,
+        25721,
+        "get_proxy_client_endpoint_sync after poison"
+    );
+    poison();
+    db.set_pricing_model_source("claude", "request")
+        .await
+        .expect("set pricing source after poison");
+    assert_eq!(
+        db.get_pricing_model_source("claude")
+            .await
+            .expect("read pricing source"),
+        "request"
+    );
+}
