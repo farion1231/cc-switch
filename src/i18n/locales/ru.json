@@ -4432,6 +4432,7 @@
     "columnApp": "Приложение",
     "sectionInstalled": "Установлено · {{count}}",
     "sectionNotInstalled": "Не установлено · {{count}}",
+    "sectionUnchecked": "Не проверено · {{count}}",
     "dragHandle": "Перетащите, чтобы изменить порядок {{name}}",
     "columnVersion": "Версия",
     "columnVisible": "Показ",

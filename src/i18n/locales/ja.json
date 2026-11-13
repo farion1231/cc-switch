@@ -4434,6 +4434,7 @@
     "columnApp": "アプリ",
     "sectionInstalled": "インストール済み · {{count}}",
     "sectionNotInstalled": "未インストール · {{count}}",
+    "sectionUnchecked": "未確認 · {{count}}",
     "dragHandle": "ドラッグして {{name}} の順序を変更",
     "columnVersion": "バージョン",
     "columnVisible": "表示",

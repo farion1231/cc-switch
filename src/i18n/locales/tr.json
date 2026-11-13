@@ -4368,6 +4368,7 @@
     "columnApp": "Uygulama",
     "sectionInstalled": "Yüklü · {{count}}",
     "sectionNotInstalled": "Yüklü değil · {{count}}",
+    "sectionUnchecked": "Kontrol edilmedi · {{count}}",
     "dragHandle": "{{name}} öğesini yeniden sıralamak için sürükleyin",
     "columnVersion": "Sürüm",
     "columnVisible": "Göster",

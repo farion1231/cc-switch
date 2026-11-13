@@ -4434,6 +4434,7 @@
     "columnApp": "앱",
     "sectionInstalled": "설치됨 · {{count}}",
     "sectionNotInstalled": "설치되지 않음 · {{count}}",
+    "sectionUnchecked": "확인 안 됨 · {{count}}",
     "dragHandle": "드래그하여 {{name}} 순서 변경",
     "columnVersion": "버전",
     "columnVisible": "표시",

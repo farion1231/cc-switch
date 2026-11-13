@@ -26,6 +26,8 @@ import type {
 import type { DndContextProps, DragEndEvent } from "@dnd-kit/core";
 import { APP_IDS } from "@/config/appConfig";
 import { emitTauriEvent } from "../msw/tauriMocks";
+import { http, HttpResponse } from "msw";
+import { server } from "../msw/server";
 
 type ToolVersions = Awaited<ReturnType<typeof settingsApi.getToolVersions>>;
 
@@ -696,6 +698,55 @@ describe("AppsPage concurrent CLI upgrades", () => {
     expect(installed.queryByText("Codex")).toBeNull();
     expect(notInstalled.getByText("Codex")).toBeInTheDocument();
     expect(notInstalled.queryByText("Claude Code")).toBeNull();
+  });
+
+  it("counts WSL installs when grouping and keeps undetected WSL apart", async () => {
+    missing.add("codex");
+    missing.add("gemini");
+    missing.add("opencode");
+    server.use(
+      http.post("http://tauri.local/get_app_targets_overview", () =>
+        HttpResponse.json({
+          inventory: {
+            hostWindows: true,
+            wslAvailable: true,
+            distros: [
+              {
+                distro: "Alpine",
+                available: true,
+                running: true,
+                cached: false,
+              },
+            ],
+          },
+          installs: {
+            Alpine: {
+              codex: {
+                status: "installed",
+                version: "0.167.2",
+                detectedAt: 1,
+                cached: false,
+              },
+              gemini: { status: "unknown", detectedAt: 1, cached: false },
+              opencode: {
+                status: "notInstalled",
+                detectedAt: 1,
+                cached: false,
+              },
+            },
+          },
+          multiEnv: true,
+          apps: [],
+        }),
+      ),
+    );
+    await renderApps();
+    await waitFor(() =>
+      expect(rowApps("appsPage.sectionInstalled")).toContain("codex"),
+    );
+    expect(rowApps("appsPage.sectionUnchecked")).toEqual(["gemini"]);
+    expect(rowApps("appsPage.sectionNotInstalled")).toContain("opencode");
+    expect(card("Codex").getByText("0.167.2")).toBeInTheDocument();
   });
 
   it("groups Claude Desktop by whether it is installed, not whether it is connected", async () => {

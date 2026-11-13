@@ -4434,6 +4434,7 @@
     "columnApp": "應用",
     "sectionInstalled": "已安裝 · {{count}}",
     "sectionNotInstalled": "未安裝 · {{count}}",
+    "sectionUnchecked": "未偵測 · {{count}}",
     "dragHandle": "拖曳調整 {{name}} 的順序",
     "columnVersion": "版本",
     "columnVisible": "顯示",

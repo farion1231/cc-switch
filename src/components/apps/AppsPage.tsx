@@ -50,7 +50,8 @@ import { DEFAULT_VISIBLE_APPS, orderAppIds } from "@/config/appConfig";
 import { useSettings } from "@/hooks/useSettings";
 import { isUpdateAvailable } from "@/lib/version";
 import { WslInstallList } from "@/components/apps/WslInstallList";
-import { isAppTargetApp } from "@/lib/api/appTargets";
+import { installedIn, isAppTargetApp } from "@/lib/api/appTargets";
+import { useAppTargetsOverview } from "@/hooks/useAppTargets";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -150,6 +151,9 @@ type DragHandle = {
   isDragging: boolean;
 };
 
+/** 一行的安装状态：`null` 还没探测完（暂不分组），`"unchecked"` 某个 WSL 还没检测出来。 */
+type RowInstallState = boolean | "unchecked" | null;
+
 /** 可拖动的行把拖动把手交给里面的 `AppRow`（ToolRow 自己渲染 AppRow，不必逐层传参）。 */
 const DragHandleContext = createContext<DragHandle | null>(null);
 
@@ -200,9 +204,14 @@ export function AppsPage() {
       staleTime: 30_000,
     });
 
-  // 按「已安装 / 未安装」分两组。Claude Desktop 没有命令可探，用后端按数据目录 / 应用包推断的结果。
-  // 首次探测还没出结果时不分组，免得各行探完一个跳一个；之后重新检查时沿用上次结果，位置不动。
-  const rowInstalled = (row: Row): boolean | null => {
+  // 各 WSL 发行版里四个客户端的安装情况（只有 Windows 上才有发行版）。
+  const targetsOverview = useAppTargetsOverview();
+
+  // 按「已安装 / 未安装 / 未检测」分组。Claude Desktop 没有命令可探，用后端按数据目录 / 应用包
+  // 推断的结果。首次探测还没出结果时不分组，免得各行探完一个跳一个；之后重新检查时沿用上次
+  // 结果，位置不动。支持多环境的客户端：任一环境（Windows 或某个 WSL）装了就算已安装；所有
+  // 环境都确认没装才算未安装；某个 WSL 还没检测出来（或探测失败）时归「未检测」。
+  const rowInstalled = (row: Row): RowInstallState => {
     if (row.kind === "desktop") {
       return isDesktopStatusPending ? null : Boolean(desktopStatus?.installed);
     }
@@ -212,7 +221,21 @@ export function AppsPage() {
     }
     const info = tools.toolVersionByName.get(row.tool);
     if (!info && tools.isLoadingTools) return null;
-    return isToolPresent(info, tools.installReports?.[row.tool]);
+    const windowsPresent = isToolPresent(
+      info,
+      tools.installReports?.[row.tool],
+    );
+    if (windowsPresent || !isAppTargetApp(row.tool)) return windowsPresent;
+    if (targetsOverview.isPending) return null;
+    const overview = targetsOverview.data;
+    if (!overview?.inventory.hostWindows) return false;
+    const wsl = overview.inventory.distros.map((env) =>
+      installedIn(overview.installs, env.distro, row.tool),
+    );
+    if (wsl.some((installed) => installed === true)) return true;
+    return wsl.some((installed) => installed === undefined)
+      ? "unchecked"
+      : false;
   };
   // 两组共用一份顺序（拖动后写进设置，侧栏也按它排），每组只是按装没装过滤
   const appOrder = orderAppIds(settings?.appOrder);
@@ -225,24 +248,28 @@ export function AppsPage() {
     ? [{ key: "all", title: t("appsPage.columnApp"), rows: orderedRows }]
     : (
         [
-          { key: "installed", installed: true },
-          { key: "notInstalled", installed: false },
+          {
+            key: "installed",
+            installed: true,
+            title: "appsPage.sectionInstalled",
+          },
+          {
+            key: "notInstalled",
+            installed: false,
+            title: "appsPage.sectionNotInstalled",
+          },
+          {
+            key: "unchecked",
+            installed: "unchecked",
+            title: "appsPage.sectionUnchecked",
+          },
         ] as const
       )
-        .map(({ key, installed }) => {
+        .map(({ key, installed, title }) => {
           const rows = rowStates
             .filter((s) => s.installed === installed)
             .map((s) => s.row);
-          return {
-            key,
-            title: t(
-              installed
-                ? "appsPage.sectionInstalled"
-                : "appsPage.sectionNotInstalled",
-              { count: rows.length },
-            ),
-            rows,
-          };
+          return { key, title: t(title, { count: rows.length }), rows };
         })
         .filter((section) => section.rows.length > 0);
   // 行换组会重新挂载，操作列的量宽要跟着重新观察新节点
@@ -782,6 +809,14 @@ function ToolRow({
   const sourceLabel = defaultInstall
     ? SOURCE_LABEL[defaultInstall.source]
     : undefined;
+  // 这个客户端在某个 WSL 里也有条目时，主行标明是 Windows（版本列说的是 Windows 这一处）
+  const wslOverview = useAppTargetsOverview(isAppTargetApp(tool));
+  const windowsBadge =
+    isAppTargetApp(tool) &&
+    info?.env_type === "windows" &&
+    (wslOverview.data?.inventory.distros.length ?? 0) > 0
+      ? "Windows"
+      : null;
   const envBadge =
     info?.env_type === "wsl" && ENV_BADGE_CONFIG.wsl
       ? `${t(ENV_BADGE_CONFIG.wsl.labelKey)}${info.wsl_distro ? ` · ${info.wsl_distro}` : ""}`
@@ -989,6 +1024,7 @@ function ToolRow({
           <span className="truncate">{toolDisplayName(tool)}</span>
           {sourceLabel && <Pill>{sourceLabel}</Pill>}
           {envBadge && <Pill>{envBadge}</Pill>}
+          {windowsBadge && <Pill>{windowsBadge}</Pill>}
         </>
       }
       meta={meta}

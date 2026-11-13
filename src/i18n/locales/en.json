@@ -4434,6 +4434,7 @@
     "columnApp": "App",
     "sectionInstalled": "Installed · {{count}}",
     "sectionNotInstalled": "Not installed · {{count}}",
+    "sectionUnchecked": "Not checked · {{count}}",
     "dragHandle": "Drag to reorder {{name}}",
     "columnVersion": "Version",
     "columnVisible": "Show",
