@@ -1204,6 +1204,7 @@
       "description": "CC Switch writes providers into ~/.workbuddy/models.json as custom models and leaves models you added in WorkBuddy untouched, so there is nothing to import. Use the + button in the top-right corner to add a preset or custom provider."
     },
     "form": {
+      "grokOAuthHint": "Use your Grok subscription through CC Switch local routing. No API key is needed. Keep CC Switch running while using this model.",
       "providerKeyHint": "Lowercase letters, numbers, and hyphens only. Marks which models.json entries belong to this provider.",
       "providerKeyLockedHint": "The key marks this provider's entries in models.json, so it can't be changed after creation.",
       "url": "Request URL",

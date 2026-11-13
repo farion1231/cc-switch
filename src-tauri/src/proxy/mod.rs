@@ -42,6 +42,7 @@ pub(crate) mod tool_media;
 pub(crate) mod types;
 mod upstream_guard;
 pub mod usage;
+mod workbuddy;
 
 #[cfg(test)]
 mod tests_issue_7271;

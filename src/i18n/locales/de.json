@@ -1204,6 +1204,7 @@
       "description": "CC Switch schreibt Anbieter als benutzerdefinierte Modelle in ~/.workbuddy/models.json und lässt Modelle, die Sie in WorkBuddy hinzugefügt haben, unberührt – es gibt also nichts zu importieren. Verwenden Sie die Schaltfläche + oben rechts, um ein Preset oder einen benutzerdefinierten Anbieter hinzuzufügen."
     },
     "form": {
+      "grokOAuthHint": "Nutzen Sie Ihr Grok-Abonnement über das lokale Routing von CC Switch. Kein API-Schlüssel erforderlich. Lassen Sie CC Switch während der Nutzung laufen.",
       "providerKeyHint": "Nur Kleinbuchstaben, Ziffern und Bindestriche. Kennzeichnet, welche Einträge in models.json zu diesem Anbieter gehören.",
       "providerKeyLockedHint": "Der Schlüssel kennzeichnet die Einträge dieses Anbieters in models.json und kann nach dem Erstellen nicht mehr geändert werden.",
       "url": "Anfrage-URL",

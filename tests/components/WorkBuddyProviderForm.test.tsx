@@ -11,6 +11,18 @@ import { WorkBuddyProviderForm } from "@/components/providers/forms/WorkBuddyPro
 import { setProviders, setWorkBuddyModelOwners } from "../msw/state";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
+vi.mock("@/components/providers/forms/XaiOAuthSection", () => ({
+  XaiOAuthSection: ({
+    onAccountSelect,
+  }: {
+    onAccountSelect: (id: string) => void;
+  }) => (
+    <button type="button" onClick={() => onAccountSelect("xai-test-account")}>
+      Select Grok account
+    </button>
+  ),
+}));
+
 const modelFetchApiMock = vi.hoisted(() => ({
   fetchModelsForConfig: vi.fn(),
   showFetchModelsError: vi.fn(),
@@ -118,6 +130,37 @@ describe("WorkBuddyProviderForm", () => {
       imported: true,
     });
     authMocks.openApp.mockResolvedValue(undefined);
+  });
+
+  it("creates a Grok OAuth model with a local key and xhigh effort", async () => {
+    setProviders("workbuddy", {});
+    setWorkBuddyModelOwners([]);
+    const submit = vi.fn();
+    render(
+      <WorkBuddyProviderForm
+        appId="workbuddy"
+        submitLabel="Add"
+        onSubmit={submit}
+        onCancel={() => {}}
+      />,
+    );
+    fireEvent.click(await screen.findByText("xAI (Grok) OAuth"));
+    expect(screen.queryByLabelText(/workbuddy.form.url/)).toBeNull();
+    const save = screen.getByRole("button", { name: "Add" });
+    expect(save).toBeDisabled();
+    fireEvent.click(screen.getByText("Select Grok account"));
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    const call = submit.mock.calls[0][0];
+    expect(call.meta).toMatchObject({
+      providerType: "xai_oauth",
+      authBinding: { authProvider: "xai_oauth", accountId: "xai-test-account" },
+    });
+    const config = JSON.parse(call.settingsConfig);
+    expect(config.apiKey.length).toBeGreaterThanOrEqual(32);
+    expect(config.models[0].reasoning.defaultEffort).toBe("xhigh");
+    expect(config.models[0].id).toBe("grok-4.7-build-fast");
   });
 
   it("creates an official sign-in card bound to the current account", async () => {

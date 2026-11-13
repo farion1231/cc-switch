@@ -1119,6 +1119,17 @@ async fn handle_responses_for_app(
     tag: &'static str,
     app_type_str: &'static str,
 ) -> Result<axum::response::Response, ProxyError> {
+    handle_responses_for_target(state, request, app_type, tag, app_type_str, None).await
+}
+
+pub(super) async fn handle_responses_for_target(
+    state: ProxyState,
+    request: axum::extract::Request,
+    app_type: AppType,
+    tag: &'static str,
+    app_type_str: &'static str,
+    target: Option<crate::mode::stack::StackTarget>,
+) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
     let method = parts.method.clone();
     let uri = parts.uri;
@@ -1133,9 +1144,13 @@ async fn handle_responses_for_app(
     let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
     drop(body_bytes);
-    let stack = match resolve_stack_target(&state, &app_type, &mut body) {
-        Ok(stack) => stack,
-        Err(rejected) => return Ok(*rejected),
+    let stack = if target.is_some() {
+        target
+    } else {
+        match resolve_stack_target(&state, &app_type, &mut body) {
+            Ok(stack) => stack,
+            Err(rejected) => return Ok(*rejected),
+        }
     };
 
     let mut ctx = RequestContext::new(

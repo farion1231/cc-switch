@@ -8415,6 +8415,9 @@ impl ProviderService {
                     ));
                 }
             }
+            AppType::WorkBuddy if provider.is_xai_oauth() => {
+                crate::workbuddy_config::oauth_live_config(provider, "http://127.0.0.1")?;
+            }
             AppType::WorkBuddy => {
                 crate::workbuddy_config::validate_provider(&provider.settings_config)?
             }

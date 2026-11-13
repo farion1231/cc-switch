@@ -30,6 +30,7 @@ import {
   WORKBUDDY_ACCOUNT_AUTH_PROVIDER,
   WORKBUDDY_DEFAULT_CONFIG,
   workbuddyOfficialPreset,
+  workbuddyGrokOAuthPreset,
   workbuddyProviderPresets,
   type WorkBuddyModel,
   type WorkBuddyProviderPreset,
@@ -39,6 +40,7 @@ import { resolveManagedAccountId } from "@/lib/authBinding";
 import type { ManagedAuthAccount } from "@/lib/api";
 import { authApi } from "@/lib/api";
 import { WORKBUDDY_STATUS_KEY } from "@/components/providers/workbuddyOfficial";
+import { XaiOAuthSection } from "./XaiOAuthSection";
 import { WorkBuddyOfficialSection } from "./WorkBuddyOfficialSection";
 import { BasicFormFields, REQUIRED_LABEL } from "./BasicFormFields";
 import {
@@ -57,6 +59,7 @@ const OFFICIAL_PRESET_ID = "official";
 const MODEL_OWNERS_KEY = ["workbuddy", "modelOwners"] as const;
 
 const PRESET_ENTRIES = [
+  { id: "grok-oauth", preset: workbuddyGrokOAuthPreset },
   { id: OFFICIAL_PRESET_ID, preset: workbuddyOfficialPreset },
   ...workbuddyProviderPresets.map((preset, index) => ({
     id: String(index),
@@ -65,11 +68,13 @@ const PRESET_ENTRIES = [
 ];
 
 const presetById = (id: string): WorkBuddyProviderPreset | undefined =>
-  id === "custom"
-    ? undefined
-    : id === OFFICIAL_PRESET_ID
-      ? workbuddyOfficialPreset
-      : workbuddyProviderPresets[Number(id)];
+  id === "grok-oauth"
+    ? workbuddyGrokOAuthPreset
+    : id === "custom"
+      ? undefined
+      : id === OFFICIAL_PRESET_ID
+        ? workbuddyOfficialPreset
+        : workbuddyProviderPresets[Number(id)];
 
 /** 官方登录卡的 key 自动生成，不让用户填（它不写进 models.json）。 */
 const officialKey = (taken: Record<string, unknown>) => {
@@ -152,6 +157,12 @@ export function WorkBuddyProviderForm({
   const category = initialData?.category ?? preset?.category ?? "custom";
   // 官方登录卡：只绑定授权中心的一个 WorkBuddy 账号，没有接口地址、Key、模型
   const isOfficial = category === "official";
+  const isGrokOAuth =
+    initialData?.meta?.providerType === "xai_oauth" ||
+    presetId === "grok-oauth";
+  const [grokAccountId, setGrokAccountId] = useState<string | null>(
+    () => resolveManagedAccountId(initialData?.meta, "xai_oauth") ?? null,
+  );
   const [accountId, setAccountId] = useState<string | null>(
     () =>
       resolveManagedAccountId(
@@ -228,7 +239,7 @@ export function WorkBuddyProviderForm({
         jsonValid &&
           name.trim() &&
           (isEdit || (providerKey && !keyInvalid && !keyTaken)) &&
-          urlValid &&
+          (isGrokOAuth ? Boolean(grokAccountId) : urlValid) &&
           modelsValid,
       );
   const chooseAccount = (account: ManagedAuthAccount) => {
@@ -387,7 +398,9 @@ export function WorkBuddyProviderForm({
           ),
         }
       : presetConfig;
-    update(next);
+    update(
+      id === "grok-oauth" ? { ...next, apiKey: crypto.randomUUID() } : next,
+    );
     setProviderKey(official ? "" : (selected?.providerKey ?? ""));
     setAccountId(null);
     autoName.current = null;
@@ -446,7 +459,17 @@ export function WorkBuddyProviderForm({
             await onSubmit({
               ...identity,
               name: identity.name.trim(),
-              meta: initialData?.meta,
+              meta: isGrokOAuth
+                ? {
+                    ...initialData?.meta,
+                    providerType: "xai_oauth",
+                    authBinding: {
+                      source: "managed_account",
+                      authProvider: "xai_oauth",
+                      accountId: grokAccountId ?? undefined,
+                    },
+                  }
+                : initialData?.meta,
               providerKey: isEdit ? providerId : providerKey,
               presetCategory: category,
               settingsConfig: JSON.stringify(cleaned),
@@ -535,28 +558,41 @@ export function WorkBuddyProviderForm({
             />
           ) : (
             <>
-              <ApiKeySection
-                id="workbuddy-api-key"
-                value={config.apiKey}
-                onChange={(apiKey) => update({ ...config, apiKey })}
-                category={category}
-                shouldShowLink={Boolean(preset?.apiKeyUrl)}
-                websiteUrl={preset?.apiKeyUrl ?? ""}
-                isPartner={preset?.isPartner}
-                partnerPromotionKey={preset?.partnerPromotionKey}
-                hint={t("workbuddy.form.apiKeyHint")}
-              />
+              {isGrokOAuth ? (
+                <>
+                  <XaiOAuthSection
+                    selectedAccountId={grokAccountId}
+                    onAccountSelect={setGrokAccountId}
+                  />
+                  <p className="text-sm text-fg-2">
+                    {t("workbuddy.form.grokOAuthHint")}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <ApiKeySection
+                    id="workbuddy-api-key"
+                    value={config.apiKey}
+                    onChange={(apiKey) => update({ ...config, apiKey })}
+                    category={category}
+                    shouldShowLink={Boolean(preset?.apiKeyUrl)}
+                    websiteUrl={preset?.apiKeyUrl ?? ""}
+                    isPartner={preset?.isPartner}
+                    partnerPromotionKey={preset?.partnerPromotionKey}
+                    hint={t("workbuddy.form.apiKeyHint")}
+                  />
 
-              <EndpointField
-                id="workbuddy-url"
-                label={t("workbuddy.form.url")}
-                value={config.url}
-                onChange={(url) => update({ ...config, url })}
-                placeholder="https://api.example.com/v1/chat/completions"
-                hint={t("workbuddy.form.urlHint")}
-                showManageButton={false}
-              />
-
+                  <EndpointField
+                    id="workbuddy-url"
+                    label={t("workbuddy.form.url")}
+                    value={config.url}
+                    onChange={(url) => update({ ...config, url })}
+                    placeholder="https://api.example.com/v1/chat/completions"
+                    hint={t("workbuddy.form.urlHint")}
+                    showManageButton={false}
+                  />
+                </>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="workbuddy-vendor">
                   {t("workbuddy.form.vendor")}
@@ -581,17 +617,19 @@ export function WorkBuddyProviderForm({
                     </HelpTip>
                   </div>
                   <div className="flex gap-1">
-                    <FetchedModelPicker
-                      models={fetchedModels}
-                      configuredModelIds={modelIds}
-                      onApply={applyFetchedModels}
-                      onFetch={handleFetchModels}
-                      isFetching={isFetchingModels}
-                      metadataSource={{
-                        baseUrl,
-                        presets: piPresetModelSources,
-                      }}
-                    />
+                    {!isGrokOAuth && (
+                      <FetchedModelPicker
+                        models={fetchedModels}
+                        configuredModelIds={modelIds}
+                        onApply={applyFetchedModels}
+                        onFetch={handleFetchModels}
+                        isFetching={isFetchingModels}
+                        metadataSource={{
+                          baseUrl,
+                          presets: piPresetModelSources,
+                        }}
+                      />
+                    )}
                     <Button
                       type="button"
                       variant="outline"
