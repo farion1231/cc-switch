@@ -507,81 +507,6 @@ fn sync_parent_dir(path: &Path) {
 #[cfg(not(unix))]
 fn sync_parent_dir(_path: &Path) {}
 
-/// [`stage_write`] 给 `<base>` 起的临时文件名是 `<base>.tmp.<pid>.<纳秒>.<计数>`；`name` 是这种
-/// 名字时返回 `<base>`。`legacy` 为真时也认旧版 OAuth 存储用过的 `<base>.tmp.<纳秒>`。
-pub(crate) fn temp_file_base(name: &str, legacy: bool) -> Option<&str> {
-    fn strip_digit_segments(name: &str, count: usize) -> Option<&str> {
-        let mut rest = name;
-        for _ in 0..count {
-            let (head, segment) = rest.rsplit_once('.')?;
-            if segment.is_empty() || !segment.bytes().all(|b| b.is_ascii_digit()) {
-                return None;
-            }
-            rest = head;
-        }
-        rest.strip_suffix(".tmp").filter(|base| !base.is_empty())
-    }
-    strip_digit_segments(name, 3).or_else(|| {
-        if legacy {
-            strip_digit_segments(name, 1)
-        } else {
-            None
-        }
-    })
-}
-
-/// 删掉 `dir` 下残留的临时文件：文件名是 [`temp_file_base`] 认得的、`owns(base)` 为真、
-/// 不在 `keep` 里、而且最后修改在 `max_age` 之前的普通文件。返回删掉的个数。
-///
-/// 写一次只要几毫秒，超过 `max_age` 还在的临时文件不会再有人用；修改时间读不到或在未来
-/// （时钟被调过）的一律保留。
-pub(crate) fn remove_stale_temp_files(
-    dir: &Path,
-    legacy: bool,
-    owns: impl Fn(&str) -> bool,
-    keep: &std::collections::HashSet<std::ffi::OsString>,
-    max_age: std::time::Duration,
-) -> usize {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return 0;
-    };
-    let mut removed = 0;
-    for entry in entries.flatten() {
-        let file_name = entry.file_name();
-        let Some(base) = file_name
-            .to_str()
-            .and_then(|name| temp_file_base(name, legacy))
-        else {
-            continue;
-        };
-        if !owns(base) || keep.contains(&file_name) {
-            continue;
-        }
-        // 不跟随软链接：只删普通文件。
-        let Ok(meta) = entry.metadata() else {
-            continue;
-        };
-        let stale = meta.is_file()
-            && meta
-                .modified()
-                .ok()
-                .and_then(|modified| modified.elapsed().ok())
-                .is_some_and(|age| age >= max_age);
-        if !stale {
-            continue;
-        }
-        let path = entry.path();
-        match fs::remove_file(&path) {
-            Ok(()) => {
-                removed += 1;
-                log::info!("已删除残留的临时文件: {}", path.display());
-            }
-            Err(source) => log::warn!("删除残留的临时文件失败（{}）: {source}", path.display()),
-        }
-    }
-    removed
-}
-
 /// 同 [`write_json_file_private`]，写入走 [`atomic_write_private_durable`]。
 pub fn write_json_file_private_durable<T: Serialize>(
     path: &Path,
@@ -621,11 +546,10 @@ impl StagedWrite {
         let _ = fs::remove_file(&self.tmp);
     }
 
-    /// 用临时文件替换目标（失败时删掉临时文件）。
+    /// 用临时文件替换目标。失败时保留临时文件：Windows 部分替换错误可能已移走旧文件，
+    /// 这时临时文件是唯一的新凭据，不能删除。
     pub fn commit(self) -> Result<(), AppError> {
-        commit_staged(&self.tmp, &self.path).inspect_err(|_| {
-            let _ = fs::remove_file(&self.tmp);
-        })
+        commit_staged(&self.tmp, &self.path)
     }
 }
 
@@ -725,7 +649,7 @@ pub(crate) fn stage_write(
 /// 不碰路径里的目录软链；除相对目标带 `..` 外不做 `canonicalize`（Windows 上会把路径
 /// 改写成 `\\?\` 形式），普通文件原样返回。
 /// 悬空链接照样返回它指向的路径，写入时会在那里新建文件、链接保留。
-pub(crate) fn resolve_symlink_target(path: &Path) -> PathBuf {
+fn resolve_symlink_target(path: &Path) -> PathBuf {
     // 与 Linux 的 MAXSYMLINKS 一致，防止链接成环时死循环。
     const MAX_HOPS: usize = 40;
     let mut current = path.to_path_buf();
@@ -785,7 +709,7 @@ fn join_link_target(parent: &Path, target: &Path) -> PathBuf {
 /// `path` 是软链接时替换它指向的文件，链接本身保留。
 ///
 /// 失败时临时文件留在原处：写入引擎的 pending 指着它，下次恢复要靠它前滚（目标文件被
-/// 占用、只读这类失败，过后多半能补完）。只做一次性原子写的调用方自己删。
+/// 占用、只读这类失败，过后多半能补完）。一次性原子写同样保留，避免丢掉唯一的新凭据。
 pub(crate) fn commit_staged(tmp: &Path, path: &Path) -> Result<(), AppError> {
     let resolved = resolve_symlink_target(path);
     let path = resolved.as_path();
@@ -812,10 +736,7 @@ pub(crate) fn commit_staged(tmp: &Path, path: &Path) -> Result<(), AppError> {
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
-        let mut completed = false;
-        let mut last_error = None;
-
-        for _ in 0..3 {
+        commit_staged_windows(tmp, path, || {
             // SAFETY: both path buffers are NUL-terminated UTF-16 and remain alive for the
             // duration of the call. Backup, exclusion, and reserved pointers are intentionally null.
             let replaced_ok = if skip_replace {
@@ -833,59 +754,76 @@ pub(crate) fn commit_staged(tmp: &Path, path: &Path) -> Result<(), AppError> {
                 }
             };
             if replaced_ok != 0 {
-                completed = true;
-                break;
+                Ok(())
+            } else if skip_replace {
+                Err(std::io::Error::from_raw_os_error(
+                    ERROR_NOT_SUPPORTED as i32,
+                ))
+            } else {
+                Err(std::io::Error::last_os_error())
             }
-
-            let replace_error = std::io::Error::last_os_error();
-            // WSL UNC paths reject ReplaceFileW with ERROR_NOT_SUPPORTED (50).
-            // std::fs::rename uses a different replace-existing API on Windows.
-            let replace_not_supported =
-                skip_replace || replace_error.raw_os_error() == Some(ERROR_NOT_SUPPORTED as i32);
-            if replace_error.kind() != std::io::ErrorKind::NotFound && !replace_not_supported {
-                last_error = Some(replace_error);
-                break;
-            }
-
-            match fs::rename(tmp, path) {
-                Ok(()) => {
-                    completed = true;
-                    break;
-                }
-                Err(source)
-                    if matches!(
-                        source.kind(),
-                        std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::PermissionDenied
-                    ) =>
-                {
-                    last_error = Some(source);
-                }
-                Err(source) => {
-                    last_error = Some(source);
-                    break;
-                }
-            }
-        }
-
-        if !completed {
-            let source = last_error.unwrap_or_else(std::io::Error::last_os_error);
-            return Err(AppError::IoContext {
-                context: format!("原子替换失败: {} -> {}", tmp.display(), path.display()),
-                source,
-            });
-        }
+        })
     }
 
     #[cfg(not(windows))]
-    {
-        if let Err(source) = fs::rename(tmp, path) {
-            return Err(AppError::IoContext {
-                context: format!("原子替换失败: {} -> {}", tmp.display(), path.display()),
-                source,
-            });
+    fs::rename(tmp, path).map_err(|source| AppError::IoContext {
+        context: format!("原子替换失败: {} -> {}", tmp.display(), path.display()),
+        source,
+    })
+}
+
+#[cfg(windows)]
+fn commit_staged_windows(
+    tmp: &Path,
+    path: &Path,
+    mut replace: impl FnMut() -> std::io::Result<()>,
+) -> Result<(), AppError> {
+    use windows_sys::Win32::Foundation::{
+        ERROR_NOT_SUPPORTED, ERROR_UNABLE_TO_MOVE_REPLACEMENT, ERROR_UNABLE_TO_MOVE_REPLACEMENT_2,
+    };
+
+    let mut last_error = None;
+    for _ in 0..3 {
+        let replace_error = match replace() {
+            Ok(()) => return Ok(()),
+            Err(source) => source,
+        };
+        // 1176 / 1177 可能已移走旧文件，新内容仍在 tmp；尝试 rename 把它放回正式路径。
+        // WSL UNC 不支持 ReplaceFileW (50)，同样走使用不同 Windows API 的 fs::rename。
+        let can_rename = matches!(
+            replace_error.raw_os_error().map(|code| code as u32),
+            Some(
+                ERROR_NOT_SUPPORTED
+                    | ERROR_UNABLE_TO_MOVE_REPLACEMENT
+                    | ERROR_UNABLE_TO_MOVE_REPLACEMENT_2
+            )
+        ) || replace_error.kind() == std::io::ErrorKind::NotFound;
+        if !can_rename {
+            last_error = Some(replace_error);
+            break;
+        }
+
+        match fs::rename(tmp, path) {
+            Ok(()) => return Ok(()),
+            Err(source)
+                if matches!(
+                    source.kind(),
+                    std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::PermissionDenied
+                ) =>
+            {
+                last_error = Some(source);
+            }
+            Err(source) => {
+                last_error = Some(source);
+                break;
+            }
         }
     }
-    Ok(())
+
+    Err(AppError::IoContext {
+        context: format!("原子替换失败: {} -> {}", tmp.display(), path.display()),
+        source: last_error.expect("failed replacement must provide an error"),
+    })
 }
 
 #[cfg(test)]
@@ -946,9 +884,9 @@ mod tests {
         assert!(commit_staged(&tmp, &path).is_err());
         assert_eq!(std::fs::read(&tmp).unwrap(), b"new contents");
 
-        // 一次性的原子写不留临时文件。
+        // 一次性原子写失败时也保留新内容，供后续恢复。
         assert!(staged.commit().is_err());
-        assert!(!tmp.exists());
+        assert_eq!(std::fs::read(&tmp).unwrap(), b"new contents");
     }
 
     /// dotfiles 用户把 settings.json 等配置软链到别的目录（#6764 / #9283）：原子写要
@@ -1076,7 +1014,98 @@ mod tests {
         assert!(result.is_err());
         drop(held_file);
         assert_eq!(std::fs::read(&path).unwrap(), b"old contents");
-        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|entry| entry != &path)
+            .collect();
+        assert_eq!(leftovers.len(), 1);
+        assert_eq!(std::fs::read(&leftovers[0]).unwrap(), b"new contents");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_partial_replace_recovers_credentials_with_rename() {
+        use windows_sys::Win32::Foundation::{
+            ERROR_UNABLE_TO_MOVE_REPLACEMENT, ERROR_UNABLE_TO_MOVE_REPLACEMENT_2,
+        };
+
+        for code in [
+            ERROR_UNABLE_TO_MOVE_REPLACEMENT,
+            ERROR_UNABLE_TO_MOVE_REPLACEMENT_2,
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("auth.json");
+            let old = dir.path().join("auth.old");
+            std::fs::write(&path, b"old credentials").unwrap();
+            let staged = stage_write(&path, b"new credentials", Some(0o600), true).unwrap();
+            let tmp = staged.tmp_path();
+
+            commit_staged_windows(tmp, &path, || {
+                // 模拟 ReplaceFileW 已删除旧文件（1176）或把它移到别处（1177）。
+                if code == ERROR_UNABLE_TO_MOVE_REPLACEMENT {
+                    std::fs::remove_file(&path).unwrap();
+                } else {
+                    std::fs::rename(&path, &old).unwrap();
+                }
+                Err(std::io::Error::from_raw_os_error(code as i32))
+            })
+            .unwrap();
+
+            assert_eq!(std::fs::read(&path).unwrap(), b"new credentials");
+            assert!(!tmp.exists());
+            if code == ERROR_UNABLE_TO_MOVE_REPLACEMENT_2 {
+                assert_eq!(std::fs::read(&old).unwrap(), b"old credentials");
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_partial_replace_keeps_credentials_when_rename_also_fails() {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::{
+            Foundation::{ERROR_UNABLE_TO_MOVE_REPLACEMENT, ERROR_UNABLE_TO_MOVE_REPLACEMENT_2},
+            Storage::FileSystem::FILE_SHARE_READ,
+        };
+
+        for code in [
+            ERROR_UNABLE_TO_MOVE_REPLACEMENT,
+            ERROR_UNABLE_TO_MOVE_REPLACEMENT_2,
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("auth.json");
+            let old = dir.path().join("auth.old");
+            std::fs::write(&path, b"old credentials").unwrap();
+            let staged = stage_write(&path, b"new credentials", Some(0o600), true).unwrap();
+            let tmp = staged.tmp_path().to_path_buf();
+            // 保留一个不共享删除权限的句柄，真实的 fs::rename 必须失败。
+            let held_file = std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(FILE_SHARE_READ)
+                .open(&tmp)
+                .unwrap();
+
+            let result = commit_staged_windows(&tmp, &path, || {
+                if path.exists() {
+                    if code == ERROR_UNABLE_TO_MOVE_REPLACEMENT {
+                        std::fs::remove_file(&path).unwrap();
+                    } else {
+                        std::fs::rename(&path, &old).unwrap();
+                    }
+                }
+                Err(std::io::Error::from_raw_os_error(code as i32))
+            });
+
+            assert!(result.is_err());
+            assert!(!path.exists());
+            drop(held_file);
+            assert_eq!(std::fs::read(&tmp).unwrap(), b"new credentials");
+            // 占用解除后，可用保留下来的临时文件补完提交。
+            staged.commit().unwrap();
+            assert_eq!(std::fs::read(&path).unwrap(), b"new credentials");
+            assert!(!tmp.exists());
+        }
     }
 
     #[test]
@@ -1131,47 +1160,6 @@ mod tests {
     }
 
     #[test]
-    fn temp_file_base_recognizes_only_stage_write_names() {
-        assert_eq!(
-            temp_file_base("auth.json.tmp.12.345.0", false),
-            Some("auth.json")
-        );
-        assert_eq!(
-            temp_file_base("a.b.json.tmp.1.2.3", false),
-            Some("a.b.json")
-        );
-        // 旧版 OAuth 存储的 `<base>.tmp.<纳秒>` 只在 `legacy` 时认
-        assert_eq!(temp_file_base("copilot_auth.json.tmp.17", false), None);
-        assert_eq!(
-            temp_file_base("copilot_auth.json.tmp.17", true),
-            Some("copilot_auth.json")
-        );
-        // 段数不对、带非数字、没有 base 的都不认
-        assert_eq!(temp_file_base("auth.json.tmp.1.2", true), None);
-        assert_eq!(temp_file_base("auth.json.tmp.1.x.3", true), None);
-        assert_eq!(temp_file_base("auth.json.tmp..2.3", true), None);
-        assert_eq!(temp_file_base(".tmp.1.2.3", true), None);
-        assert_eq!(temp_file_base("auth.json", true), None);
-        assert_eq!(temp_file_base("auth.json.tmp", true), None);
-    }
-
-    #[test]
-    fn stage_write_temp_names_are_recognized() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("auth.json");
-        let staged = stage_write(&path, b"{}", Some(0o600), false).unwrap();
-        let name = staged
-            .tmp_path()
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_owned();
-        staged.discard();
-        assert_eq!(temp_file_base(&name, false), Some("auth.json"));
-    }
-
-    #[test]
     fn atomic_write_private_durable_creates_missing_parent() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nested").join("oauth_auth.json");
@@ -1181,7 +1169,7 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"{}");
     }
 
-    /// 凭据文件被别的进程占着、替换失败时，旧凭据必须原样留着，也不留下临时文件。
+    /// 凭据文件被别的进程占着、替换失败时，旧凭据原样留着，新凭据保留在临时文件中。
     /// 早先 OAuth 存储在 Windows 上先删旧文件再 rename，中途失败或崩溃就丢了 refresh token。
     #[cfg(windows)]
     #[test]
@@ -1203,7 +1191,13 @@ mod tests {
         assert!(result.is_err());
         drop(held_file);
         assert_eq!(std::fs::read(&path).unwrap(), b"old credentials");
-        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|entry| entry != &path)
+            .collect();
+        assert_eq!(leftovers.len(), 1);
+        assert_eq!(std::fs::read(&leftovers[0]).unwrap(), b"new credentials");
     }
 
     #[cfg(windows)]

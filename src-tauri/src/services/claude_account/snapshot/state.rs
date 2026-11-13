@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
 
-pub(crate) const STATE_FILENAME: &str = "claude-account-snapshot.json";
+const STATE_FILENAME: &str = "claude-account-snapshot.json";
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

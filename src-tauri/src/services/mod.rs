@@ -6,7 +6,6 @@ pub mod codex_oauth_models;
 pub mod codex_session_compression;
 pub mod coding_plan;
 pub mod config;
-pub mod credential_temp_cleanup;
 pub mod dsh_account;
 pub mod env_checker;
 pub mod env_manager;
