@@ -40,7 +40,6 @@ pub fn cancel_mcp_connectivity_checks(batch_id: String) {
     crate::services::mcp_connectivity::cancel_checks(&batch_id);
 }
 
-/// 获取 Claude MCP 状态
 #[tauri::command]
 pub async fn get_claude_mcp_status() -> Result<claude_mcp::McpStatus, String> {
     claude_mcp::get_mcp_status().map_err(|e| e.to_string())
@@ -58,7 +57,6 @@ pub async fn upsert_claude_mcp_server(id: String, spec: serde_json::Value) -> Re
     claude_mcp::upsert_mcp_server(&id, spec).map_err(|e| e.to_string())
 }
 
-/// 删除一个 MCP 服务器条目
 #[tauri::command]
 pub async fn delete_claude_mcp_server(id: String) -> Result<bool, String> {
     claude_mcp::delete_mcp_server(&id).map_err(|e| e.to_string())
@@ -203,14 +201,12 @@ pub async fn get_mcp_servers(
 pub async fn scan_unmanaged_mcp_servers(
     state: State<'_, AppState>,
 ) -> Result<crate::services::mcp::McpDiscoveryResult, String> {
-    let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || McpService::scan_unmanaged(&state))
-        .await
-        .map_err(|_| "MCP discovery failed".to_string())?
-        .map_err(|_| "MCP discovery failed".to_string())
+    run_db_task(&state, |state| {
+        McpService::scan_unmanaged(state).map_err(|_| "MCP discovery failed".to_string())
+    })
+    .await
 }
 
-/// 添加或更新 MCP 服务器
 #[tauri::command]
 pub async fn upsert_mcp_server(
     state: State<'_, AppState>,
@@ -219,7 +215,6 @@ pub async fn upsert_mcp_server(
     McpService::upsert_server(&state, server).map_err(|e| e.to_string())
 }
 
-/// 删除 MCP 服务器
 #[tauri::command]
 pub async fn delete_mcp_server(state: State<'_, AppState>, id: String) -> Result<bool, String> {
     McpService::delete_server(&state, &id).map_err(|e| e.to_string())

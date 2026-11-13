@@ -5,11 +5,10 @@ use std::path::Path;
 use cc_switch_lib::{hermes_config, update_settings, AppSettings, McpServer, McpService};
 use serde_json::json;
 
-#[path = "support.rs"]
 mod support;
 use support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
 
-const SOURCES: [&str; 12] = [
+const SOURCES: [&str; 14] = [
     ".claude.json",
     ".codex/config.toml",
     ".gemini/settings.json",
@@ -22,10 +21,29 @@ const SOURCES: [&str; 12] = [
     ".gemini/config/mcp_config.json",
     ".omp/agent/mcp.json",
     ".dsh/profiles/web/cordis.patch.yml",
+    ".copilot/mcp-config.json",
+    ".workbuddy/mcp.json",
 ];
 
 fn reset_sources() {
     reset_test_fs();
+    // Do not let inherited tool overrides redirect fixtures into real configs.
+    for var in [
+        "DSH_HOME",
+        "KIMI_CODE_HOME",
+        "MINIMAX_DATA_DIR",
+        "MAVIS_DATA_DIR",
+        "PI_CONFIG_DIR",
+        "OMP_PROFILE",
+        "PI_PROFILE",
+    ] {
+        std::env::remove_var(var);
+    }
+    std::env::set_var("COPILOT_HOME", ensure_test_home().join(".copilot"));
+    std::env::set_var(
+        "WORKBUDDY_CONFIG_DIR",
+        ensure_test_home().join(".workbuddy"),
+    );
     // Pin the reader to the fixture directory on every OS, independently of
     // LOCALAPPDATA, HERMES_HOME and the platform's default Hermes location.
     let hermes_config = ensure_test_home().join(SOURCES[5]);
@@ -63,7 +81,7 @@ fn snapshots(home: &Path) -> BTreeMap<&'static str, Option<Vec<u8>>> {
 }
 
 #[test]
-fn discovery_deduplicates_twelve_apps_is_read_only_and_import_keeps_flat_ids() {
+fn discovery_deduplicates_fourteen_apps_is_read_only_and_import_keeps_flat_ids() {
     let _guard = test_mutex().lock().unwrap();
     reset_sources();
     let state = create_test_state().unwrap();
@@ -109,12 +127,20 @@ fn discovery_deduplicates_twelve_apps_is_read_only_and_import_keeps_flat_ids() {
         r#"{"mcpServers":{"omp-only":{"command":"node"}}}"#,
     );
     write_source(SOURCES[11], "- id: dsh-only\n  name: '@deepseek-ai/dsh-mcp-client'\n  config: {serverName: dsh-only, transport: stdio, command: node}\n");
+    write_source(
+        SOURCES[12],
+        r#"{"mcpServers":{"copilot-only":{"type":"local","command":"node","tools":["*"]}}}"#,
+    );
+    write_source(
+        SOURCES[13],
+        r#"{"mcpServers":{"workbuddy-only":{"command":"node","disabled":true},"connector":{"command":"node","managedBy":"connector"}}}"#,
+    );
     let before = snapshots(ensure_test_home());
     let rows_before = serde_json::to_value(state.db.get_all_mcp_servers().unwrap()).unwrap();
 
     for _ in 0..2 {
         let discovery = McpService::scan_unmanaged(&state).unwrap();
-        assert_eq!(discovery.unmanaged_count, 7);
+        assert_eq!(discovery.unmanaged_count, 9);
         assert!(
             discovery.failed_apps.is_empty(),
             "{:?}",
@@ -127,11 +153,14 @@ fn discovery_deduplicates_twelve_apps_is_read_only_and_import_keeps_flat_ids() {
         assert_eq!(snapshots(ensure_test_home()), before);
     }
 
-    assert_eq!(McpService::import_from_all_apps(&state).unwrap(), 7);
+    assert_eq!(McpService::import_from_all_apps(&state).unwrap(), 9);
     let servers = state.db.get_all_mcp_servers().unwrap();
-    assert_eq!(servers.len(), 8);
+    assert_eq!(servers.len(), 10);
     assert_eq!(servers["managed"].name, "Keep my name");
     assert_eq!(servers["managed"].server, managed.server);
+    assert!(servers["copilot-only"].apps.copilot);
+    assert!(!servers["workbuddy-only"].apps.workbuddy);
+    assert!(!servers.contains_key("connector"));
     assert!(!servers["pi-disabled"].apps.pi);
     assert!(!servers["mini-disabled"].apps.mcode);
     assert!(servers["shared"].apps.claude && servers["shared"].apps.codex);

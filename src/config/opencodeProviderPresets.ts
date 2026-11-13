@@ -1841,7 +1841,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
     category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "ccsub",
     icon: "ccsub",
     templateValues: {
       apiKey: {

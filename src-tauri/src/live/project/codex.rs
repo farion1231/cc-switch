@@ -55,7 +55,6 @@ pub(crate) const ROW_TOP_FIELDS: &[&str] = &[
     "review_model",
     "model_reasoning_effort",
     "plan_mode_reasoning_effort",
-    "disable_response_storage",
 ];
 
 fn is_built_in_id(id: &str) -> bool {
@@ -105,7 +104,7 @@ pub enum Route {
 #[derive(Debug, Clone)]
 pub struct CodexProjection {
     pub route: Route,
-    /// 顶层关键字段（模型名、推理档位、`disable_response_storage`）。
+    /// 顶层关键字段（模型名、推理档位）。
     pub top: Vec<(String, TomlValue)>,
     /// 嵌在用户表里的模型名（`agents.default_subagent_model` 等）。
     pub nested: Vec<(Vec<String>, TomlValue)>,
@@ -587,6 +586,29 @@ pub(crate) fn catalog_pointer_value(config_dir: &Path) -> String {
     text.into_owned()
 }
 
+/// Codex 桌面端「在 WSL 中运行 Codex」的开关（`[desktop]` 表，桌面端自己写）。
+const DESKTOP_RUNS_CODEX_IN_WSL: &str = "runCodexInWindowsSubsystemForLinux";
+
+/// 按 live 文档决定指针值：桌面端开了「在 WSL 中运行」时，Windows 目录里的这份配置由
+/// WSL 里的 Linux 版 Codex 读（`CODEX_HOME` 经 `WSLENV` 转成 `/mnt/c/...`），
+/// `C:\...` 在那边是相对路径，拼到配置目录后找不到文件，桌面端启动即报 os error 2
+/// （#9375）。没有对两边都绝对的写法，只能保裸文件名；其余情况见 [`catalog_pointer_value`]。
+/// 只在 Windows 宿主上看这个开关：别的系统上没有 WSL 侧读取方，从 Windows 同步来的配置
+/// 带着开关也照写绝对指针，免得重新撞上 #7294。
+fn catalog_pointer_for(config_dir: &Path, doc: &DocumentMut) -> String {
+    let runs_in_wsl = cfg!(windows)
+        && doc
+            .get("desktop")
+            .and_then(Item::as_table_like)
+            .and_then(|desktop| desktop.get(DESKTOP_RUNS_CODEX_IN_WSL))
+            .and_then(Item::as_bool)
+            .unwrap_or(false);
+    if runs_in_wsl {
+        return CATALOG_FILENAME.to_string();
+    }
+    catalog_pointer_value(config_dir)
+}
+
 /// 去掉行里自己指定的模型目录指针（[`row_catalog_pointer`]），其余内容原样；行里没有时为
 /// `None`。
 pub fn without_row_catalog(config_text: &str) -> Option<String> {
@@ -718,11 +740,17 @@ impl CodexConfigPatch {
         }
         let row_pointer = self.top.iter().any(|(key, _)| key == MODEL_CATALOG_JSON);
         if self.catalog && !row_pointer {
-            // 见 [`catalog_pointer_value`]：原生绝对目录写绝对指针，WSL 形态保裸文件名。
-            let pointer = path
-                .parent()
-                .map_or_else(|| CATALOG_FILENAME.to_string(), catalog_pointer_value);
-            put_value(root, MODEL_CATALOG_JSON, &TomlValue::from(pointer));
+            // 见 [`catalog_pointer_for`]：原生绝对目录写绝对指针，WSL 形态或桌面端在 WSL 里
+            // 跑 Codex 时保裸文件名。
+            let pointer = path.parent().map_or_else(
+                || CATALOG_FILENAME.to_string(),
+                |dir| catalog_pointer_for(dir, doc),
+            );
+            put_value(
+                doc.as_table_mut(),
+                MODEL_CATALOG_JSON,
+                &TomlValue::from(pointer),
+            );
         }
 
         check_effective_route(doc, selector)
@@ -1042,6 +1070,22 @@ mod tests {
     }
 
     #[test]
+    fn disable_response_storage_from_old_rows_is_not_projected_and_is_cleared_from_live() {
+        // Codex 0.167 删了这个键，旧预设写进行里的那一行不再投影；它仍是关键字段，写入时
+        // live 里旧版留下的同名行会被清掉。
+        let settings = row(
+            json!({ "OPENAI_API_KEY": "sk" }),
+            &format!("disable_response_storage = true\n{RELAY}"),
+        );
+        let projection = project(&settings).unwrap();
+        assert!(projection
+            .top
+            .iter()
+            .all(|(key, _)| key != "disable_response_storage"));
+        assert!(floor::CODEX_FLOOR_TOP.contains(&"disable_response_storage"));
+    }
+
+    #[test]
     fn a_table_with_its_own_credentials_gets_no_key() {
         for extra in [
             "env_key = \"RELAY_KEY\"",
@@ -1195,6 +1239,54 @@ mod tests {
         assert_eq!(
             catalog_pointer(&doc),
             r"C:\Users\user\.codex\cc-switch-model-catalog.json"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn catalog_pointer_keeps_the_bare_filename_when_the_desktop_runs_codex_in_wsl() {
+        // #9375：Windows 目录里的配置由 WSL 里的 Codex 读，`C:\...` 在那边是相对路径，
+        // 桌面端启动即报 os error 2。目录本身是原生绝对路径也要保裸文件名。
+        let live = "[desktop]\nrunCodexInWindowsSubsystemForLinux = true\n";
+        let doc = apply_catalog(live, Path::new(r"C:\Users\user\.codex\config.toml"));
+        assert_eq!(catalog_pointer(&doc), CATALOG_FILENAME);
+        assert_eq!(
+            doc["desktop"]["runCodexInWindowsSubsystemForLinux"].as_bool(),
+            Some(true),
+            "开关本身不动"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn catalog_pointer_rewrites_an_absolute_pointer_to_the_bare_filename_in_wsl_mode() {
+        // 4.0.27/4.0.28 已写下的绝对指针，下次写入时改回裸文件名。
+        let live = "model_catalog_json = 'C:\\Users\\user\\.codex\\cc-switch-model-catalog.json'\n\n[desktop]\nrunCodexInWindowsSubsystemForLinux = true\n";
+        let doc = apply_catalog(live, Path::new(r"C:\Users\user\.codex\config.toml"));
+        assert_eq!(catalog_pointer(&doc), CATALOG_FILENAME);
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn catalog_pointer_stays_absolute_on_windows_when_the_wsl_switch_is_off() {
+        let live = "[desktop]\nrunCodexInWindowsSubsystemForLinux = false\n";
+        let doc = apply_catalog(live, Path::new(r"C:\Users\user\.codex\config.toml"));
+        assert_eq!(
+            catalog_pointer(&doc),
+            r"C:\Users\user\.codex\cc-switch-model-catalog.json"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn catalog_pointer_ignores_the_wsl_switch_on_a_non_windows_host() {
+        // 从 Windows 同步来的配置可能带着这个开关；本机没有 WSL 侧读取方，仍写绝对指针，
+        // 否则配了自定义权限档位的用户会重新撞上 #7294。
+        let live = "[desktop]\nrunCodexInWindowsSubsystemForLinux = true\n";
+        let doc = apply_catalog(live, Path::new("/home/user/.codex/config.toml"));
+        assert_eq!(
+            catalog_pointer(&doc),
+            "/home/user/.codex/cc-switch-model-catalog.json"
         );
     }
 

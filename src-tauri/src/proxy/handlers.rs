@@ -95,15 +95,19 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
 /// cc-switch–owned `model_catalog_json`, using the same path ownership rules as
 /// Codex live-setting import.
 ///
+/// 没有 CC Switch 的目录、路由的是官方卡时，转给官方上游（见
+/// [`super::codex_models_passthrough`]）：官方列表按账号返回，Codex 自带的列表缺账号
+/// 专属的模型和 Daybreak 权限。
+///
 /// Claude Code 的模型发现（`CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY`）也打到这里：
 /// 按 [`is_claude_model_discovery`] 认出来，返回 Anthropic 形状的 Stack 模型列表。
 pub async fn handle_models(
     State(state): State<ProxyState>,
     uri: axum::http::Uri,
     headers: axum::http::HeaderMap,
-) -> Result<Json<Value>, ProxyError> {
+) -> Result<axum::response::Response, ProxyError> {
     if is_claude_model_discovery(&uri, &headers) {
-        return Ok(Json(claude_model_discovery(&state)));
+        return Ok(Json(claude_model_discovery(&state)).into_response());
     }
     let config_dir = crate::codex_config::get_codex_config_dir();
     let active_catalog_path = match crate::codex_config::read_codex_config_text() {
@@ -124,6 +128,12 @@ pub async fn handle_models(
             }
         }
     } else {
+        if let Some(response) =
+            super::codex_models_passthrough::forward_if_official_route(&state.db, &uri, &headers)
+                .await
+        {
+            return Ok(response);
+        }
         if active_catalog_path.is_none() {
             log::debug!(
                 "[models] stale guard: catalog not served (model_catalog_json not set to cc-switch catalog)"
@@ -131,7 +141,7 @@ pub async fn handle_models(
         }
         json!({"models": []})
     };
-    Ok(Json(catalog))
+    Ok(Json(catalog).into_response())
 }
 
 // ============================================================================
@@ -685,12 +695,19 @@ async fn handle_claude_transform(
             // 用 ctx 的 app_type：Claude Desktop 网关也走此转换路径，硬编码
             // "claude" 会把 claude-desktop 的行错记到 claude 名下
             let app_type_str = ctx.app_type_str;
+            // Gemini 转换出的 message_delta 是最终 usage 快照，按它记账（见 parser 注释）。
+            let final_delta_authoritative = api_format == "gemini_native";
 
             Some(SseUsageCollector::new(
                 start_time,
                 Some(claude_stream_usage_event_filter),
                 move |events, first_token_ms| {
-                    if let Some(usage) = TokenUsage::from_claude_stream_events(&events) {
+                    let parsed = if final_delta_authoritative {
+                        TokenUsage::from_converted_claude_stream_events(&events)
+                    } else {
+                        TokenUsage::from_claude_stream_events(&events)
+                    };
+                    if let Some(usage) = parsed {
                         let model = usage
                             .model
                             .clone()
@@ -2573,6 +2590,7 @@ fn codex_proxy_error_json(
 fn codex_proxy_error_code(error: &ProxyError) -> &'static str {
     match error {
         ProxyError::CodexQuotaProtection(_) => "cc_switch_codex_quota_protection",
+        ProxyError::CodexOfficialLoginPaused => "cc_switch_codex_official_login_paused",
         ProxyError::ForwardFailed(_) => "cc_switch_forward_failed",
         ProxyError::Timeout(_) | ProxyError::StreamIdleTimeout(_) => "cc_switch_timeout",
         ProxyError::NoAvailableProvider => "cc_switch_no_available_provider",
@@ -2764,8 +2782,9 @@ async fn responses_sse_stream_to_anthropic_message(
 /// 把 OpenAI Responses SSE 流聚合成一个完整的 Responses JSON 对象，供下游转成 Anthropic
 /// 非流响应。用于上游把 `stream:false` 强制升级为 SSE 的场景。
 ///
-/// 复用 `proxy::sse` 的 `SseBlocks`/`strip_sse_field`：`SseBlocks` 同时支持
-/// `\n\n` 与 `\r\n\r\n` 两种分隔符，`strip_sse_field` 兼容带/不带空格的字段写法。
+/// 复用 `proxy::sse` 的 `SseBlocks`/`strip_sse_field`：`SseBlocks` 支持
+/// `\n\n`、`\r\n\r\n`、`\n\r\n` 和 `\r\n\n` 四种分隔符；
+/// `strip_sse_field` 兼容带/不带空格的字段写法。
 fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
     let mut sse_blocks = SseBlocks::new(body.trim_start_matches('\u{feff}'));
     let mut completed_response: Option<Value> = None;
@@ -4415,8 +4434,8 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
 
     #[test]
     fn responses_sse_to_response_value_handles_crlf_delimiters() {
-        // 真实 HTTP SSE 按规范使用 \r\n\r\n 分隔事件；SseBlocks 必须同时处理两种分隔符，
-        // 否则此路径在任何标准上游（含 Codex OAuth HTTPS 后端）下都会 TransformError。
+        // SseBlocks 支持 LF/CRLF 任意组合形成的四种事件分隔符；
+        // 此处覆盖 \r\n\r\n，避免 CRLF 上游响应触发 TransformError。
         let sse = "event: response.output_item.done\r\n\
 data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\r\n\
 \r\n\
@@ -5616,13 +5635,14 @@ mod stack_tests {
     async fn claude_model_discovery_lists_nothing_outside_proxy_mode() {
         let mut headers = axum::http::HeaderMap::new();
         headers.insert("anthropic-version", "2023-06-01".parse().unwrap());
-        let Json(body) = handle_models(
+        let response = handle_models(
             State(proxy_state()),
             "/v1/models?limit=1000".parse().unwrap(),
             headers,
         )
         .await
         .expect("models");
+        let (_, body) = json_of(response).await;
         assert_eq!(body, json!({ "data": [], "has_more": false }));
     }
 }

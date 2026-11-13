@@ -1,12 +1,16 @@
 import { createInstance } from "i18next";
 import { describe, expect, it } from "vitest";
+import de from "@/i18n/locales/de.json";
+import ko from "@/i18n/locales/ko.json";
+import ru from "@/i18n/locales/ru.json";
+import tr from "@/i18n/locales/tr.json";
 import en from "@/i18n/locales/en.json";
 import zh from "@/i18n/locales/zh.json";
 import zhTW from "@/i18n/locales/zh-TW.json";
 import ja from "@/i18n/locales/ja.json";
 
 describe("MCP discovery messages", () => {
-  it.each(Object.entries({ en, zh, "zh-TW": zhTW, ja }))(
+  it.each(Object.entries({ en, zh, "zh-TW": zhTW, ja, de, ko, ru, tr }))(
     "resolves the real %s resources and interpolates counts and app names",
     async (lng, translation) => {
       const i18n = createInstance();

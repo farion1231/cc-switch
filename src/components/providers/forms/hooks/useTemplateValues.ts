@@ -214,7 +214,8 @@ export function useTemplateValues({
       );
       setTemplateValues(initialValues);
     } else {
-      setTemplateValues({});
+      // 已经是空的就保留原对象，免得挂载时多渲染一轮
+      setTemplateValues((prev) => (Object.keys(prev).length === 0 ? prev : {}));
     }
   }, [selectedPreset]);
 

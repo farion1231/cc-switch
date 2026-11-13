@@ -29,12 +29,27 @@ fn parse_app_type(app: &str) -> Result<AppType, String> {
 // ========== 统一管理命令 ==========
 
 /// 获取所有已安装的 Skills
+///
+/// 只读数据库，不扫描 SSOT 目录；元数据刷新由
+/// [`refresh_local_skill_metadata`] 单独在后台完成（issue #7848）。
 #[tauri::command]
 pub async fn get_installed_skills(
     app_state: State<'_, AppState>,
 ) -> Result<Vec<InstalledSkill>, String> {
     run_db_task(&app_state, |state| {
         SkillService::get_all_installed(&state.db).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+/// 刷新本地 Skill 的过期元数据（手动编辑 SKILL.md 后同步名称/描述/哈希）。
+///
+/// 全目录哈希可能读入较大的资源文件，放到阻塞线程池执行，避免占用同步命令
+/// 线程；返回实际更新的数量，前端仅在大于 0 时刷新列表。
+#[tauri::command]
+pub async fn refresh_local_skill_metadata(app_state: State<'_, AppState>) -> Result<usize, String> {
+    run_db_task(&app_state, |state| {
+        SkillService::refresh_local_skill_metadata(&state.db).map_err(|e| e.to_string())
     })
     .await
 }
@@ -97,7 +112,6 @@ pub async fn restore_skill_backup(
     .await
 }
 
-/// 切换 Skill 的应用启用状态
 #[tauri::command]
 pub async fn toggle_skill_app(
     id: String,
@@ -113,7 +127,6 @@ pub async fn toggle_skill_app(
     .await
 }
 
-/// 扫描未管理的 Skills
 #[tauri::command]
 pub async fn scan_unmanaged_skills(
     app_state: State<'_, AppState>,
@@ -199,7 +212,6 @@ pub async fn resync_skills_to_apps(
         .map_err(|e| format!("重新同步 Skill 失败: {e}"))
 }
 
-/// 更新单个 Skill
 #[tauri::command]
 pub async fn update_skill(
     id: String,
@@ -390,7 +402,6 @@ pub async fn uninstall_skill_for_app(
 
 // ========== 仓库管理命令 ==========
 
-/// 获取技能仓库列表
 #[tauri::command]
 pub async fn get_skill_repos(app_state: State<'_, AppState>) -> Result<Vec<SkillRepo>, String> {
     run_db_task(&app_state, |state| {
@@ -399,7 +410,6 @@ pub async fn get_skill_repos(app_state: State<'_, AppState>) -> Result<Vec<Skill
     .await
 }
 
-/// 添加技能仓库
 #[tauri::command]
 pub async fn add_skill_repo(
     repo: SkillRepo,
@@ -416,7 +426,6 @@ pub async fn add_skill_repo(
     .await
 }
 
-/// 删除技能仓库
 #[tauri::command]
 pub async fn remove_skill_repo(
     owner: String,
