@@ -1506,6 +1506,12 @@ pub async fn run_wsl_tool_lifecycle_action(
     let action = ToolLifecycleAction::from_str(&action)?;
     #[cfg(target_os = "windows")]
     {
+        // 没在运行的发行版里执行会卡在启动上（界面上也不给按钮），直接拒绝。
+        if !crate::app_targets::wsl::is_running(&distro) {
+            return Err(format!(
+                "WSL · {distro} 没有在运行，请先在终端里启动它 (WSL · {distro} is not running; start it in a terminal first)"
+            ));
+        }
         let command = wsl_tool_action_shell_command(requested[0], action)
             .ok_or_else(|| format!("Unsupported tool action target: {tool}"))?;
         let line = build_wsl_tool_action_line(&distro, &command, None, None)?;

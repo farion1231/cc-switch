@@ -5542,6 +5542,15 @@
       "notChecked": "未检测",
       "cached": "上次检测",
       "stoppedCached": "未运行 · 上次检测"
+    },
+    "installTargets": {
+      "title": "安装 {{app}}",
+      "description": "已检测各 WSL 发行版的安装情况。勾选要安装到的环境；已安装的不能勾，未运行的发行版请先在终端里启动。",
+      "detecting": "正在检测 WSL…",
+      "installed": "已安装 {{version}}",
+      "stopped": "未运行，请先启动",
+      "confirm": "安装（{{count}}）",
+      "menu": "安装到其他环境…"
     }
   }
 }

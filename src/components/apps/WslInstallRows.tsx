@@ -35,8 +35,16 @@ export function WslInstallRows({
   const supported = isAppTargetApp(tool);
   const overview = useAppTargetsOverview(supported);
   const [busy, setBusy] = useState<string | null>(null);
+  // 只列出装在 WSL 里的（含装了跑不起来的）；没装的不占行，安装时在确认框里选环境。
   const distros = overview.data?.inventory.hostWindows
-    ? overview.data.inventory.distros
+    ? overview.data.inventory.distros.filter((env) => {
+        const status = installOf(
+          overview.data?.installs,
+          env.distro,
+          tool,
+        )?.status;
+        return status === "installed" || status === "broken";
+      })
     : [];
   if (!supported || distros.length === 0) return null;
 
@@ -72,8 +80,10 @@ export function WslInstallRows({
         const outdated =
           installed &&
           isUpdateAvailable(install.version, latestVersion ?? undefined);
-        const action =
-          install?.status === "notInstalled"
+        // 没在运行的发行版里执行安装 / 升级会卡在启动上：不给按钮，先在终端里启动它。
+        const action = !env.running
+          ? null
+          : install?.status === "notInstalled"
             ? "install"
             : outdated
               ? "update"

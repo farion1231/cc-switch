@@ -50,9 +50,11 @@ import { DEFAULT_VISIBLE_APPS, orderAppIds } from "@/config/appConfig";
 import { useSettings } from "@/hooks/useSettings";
 import { isUpdateAvailable } from "@/lib/version";
 import { WslInstallRows } from "@/components/apps/WslInstallRows";
+import { InstallTargetsDialog } from "@/components/apps/InstallTargetsDialog";
 import {
   appTargetsApi,
   installedIn,
+  installOf,
   isAppTargetApp,
 } from "@/lib/api/appTargets";
 import {
@@ -852,10 +854,23 @@ function ToolRow({
     : undefined;
   // 这个客户端在某个 WSL 里也有条目时，主行标明是 Windows（版本列说的是 Windows 这一处）
   const wslOverview = useAppTargetsOverview(isAppTargetApp(tool));
+  // 有 WSL 发行版时，安装先确认装到哪些环境（Windows / 各发行版）
+  const hasWsl =
+    isAppTargetApp(tool) &&
+    Boolean(wslOverview.data?.inventory.hostWindows) &&
+    (wslOverview.data?.inventory.distros.length ?? 0) > 0;
+  const [installTargetsOpen, setInstallTargetsOpen] = useState(false);
   const windowsBadge =
     isAppTargetApp(tool) &&
     info?.env_type === "windows" &&
-    (wslOverview.data?.inventory.distros.length ?? 0) > 0
+    (wslOverview.data?.inventory.distros ?? []).some((env) => {
+      const status = installOf(
+        wslOverview.data?.installs,
+        env.distro,
+        tool,
+      )?.status;
+      return status === "installed" || status === "broken";
+    })
       ? "Windows"
       : null;
   const envBadge =
@@ -895,7 +910,11 @@ function ToolRow({
     <Button
       variant="neutral"
       size="compact"
-      onClick={() => void tools.handleRunToolAction([tool], action)}
+      onClick={() =>
+        action === "install" && hasWsl
+          ? setInstallTargetsOpen(true)
+          : void tools.handleRunToolAction([tool], action)
+      }
       disabled={isVersionLoading || isBusy}
       aria-busy={isBusy}
     >
@@ -1058,57 +1077,80 @@ function ToolRow({
   ) : null;
 
   return (
-    <AppRow
-      app={TOOL_APP_IDS[tool]}
-      name={
-        <>
-          <span className="truncate">{toolDisplayName(tool)}</span>
-          {sourceLabel && <Pill>{sourceLabel}</Pill>}
-          {envBadge && <Pill>{envBadge}</Pill>}
-        </>
-      }
-      meta={meta}
-      envLabel={windowsBadge ? <Pill>{windowsBadge}</Pill> : undefined}
-      version={version}
-      action={actionButton}
-      visibility={visibility}
-      menu={
-        (canUninstall || busyAction === "uninstall") && (
-          <DropdownMenu>
-            <HoverTip content={t("common.more")}>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="quiet"
-                  size="icon-compact"
-                  aria-label={t("appPage.moreActions", {
-                    name: toolDisplayName(tool),
-                  })}
-                  disabled={isVersionLoading || isBusy}
-                  aria-busy={busyAction === "uninstall"}
-                >
-                  {busyAction === "uninstall" ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <MoreHorizontal className="h-4 w-4" strokeWidth={1.5} />
-                  )}
-                </Button>
-              </DropdownMenuTrigger>
-            </HoverTip>
-            <DropdownMenuContent align="end" className="min-w-[160px]">
-              <DropdownMenuItem
-                onSelect={onUninstall}
-                className="text-danger-text focus:text-danger-text"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                {t("settings.toolUninstall")}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )
-      }
-      footer={footer}
-      subRows={subRows}
-    />
+    <>
+      <AppRow
+        app={TOOL_APP_IDS[tool]}
+        name={
+          <>
+            <span className="truncate">{toolDisplayName(tool)}</span>
+            {sourceLabel && <Pill>{sourceLabel}</Pill>}
+            {envBadge && <Pill>{envBadge}</Pill>}
+          </>
+        }
+        meta={meta}
+        envLabel={windowsBadge ? <Pill>{windowsBadge}</Pill> : undefined}
+        version={version}
+        action={actionButton}
+        visibility={visibility}
+        menu={
+          (canUninstall || busyAction === "uninstall" || hasWsl) && (
+            <DropdownMenu>
+              <HoverTip content={t("common.more")}>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="quiet"
+                    size="icon-compact"
+                    aria-label={t("appPage.moreActions", {
+                      name: toolDisplayName(tool),
+                    })}
+                    disabled={isVersionLoading || isBusy}
+                    aria-busy={busyAction === "uninstall"}
+                  >
+                    {busyAction === "uninstall" ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <MoreHorizontal className="h-4 w-4" strokeWidth={1.5} />
+                    )}
+                  </Button>
+                </DropdownMenuTrigger>
+              </HoverTip>
+              <DropdownMenuContent align="end" className="min-w-[160px]">
+                {hasWsl && (
+                  <DropdownMenuItem
+                    onSelect={() => setInstallTargetsOpen(true)}
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    {t("appTargets.installTargets.menu")}
+                  </DropdownMenuItem>
+                )}
+                {(canUninstall || busyAction === "uninstall") && (
+                  <DropdownMenuItem
+                    onSelect={onUninstall}
+                    className="text-danger-text focus:text-danger-text"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    {t("settings.toolUninstall")}
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )
+        }
+        footer={footer}
+        subRows={subRows}
+      />
+      {isAppTargetApp(tool) && (
+        <InstallTargetsDialog
+          open={installTargetsOpen}
+          tool={tool}
+          appName={toolDisplayName(tool)}
+          windowsInstalled={Boolean(info?.version || broken)}
+          windowsVersion={info?.version}
+          onClose={() => setInstallTargetsOpen(false)}
+          onInstallWindows={() => tools.handleRunToolAction([tool], "install")}
+        />
+      )}
+    </>
   );
 }
 

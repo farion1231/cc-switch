@@ -28,6 +28,10 @@ const SYSTEM_DISTROS: &[&str] = &[
 #[cfg(windows)]
 const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// HOME 等环境信息多久重新探测一次（运行中的发行版）。
+#[cfg(windows)]
+const ENV_MAX_AGE_SECS: i64 = 6 * 60 * 60;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CachedEnv {
@@ -261,6 +265,17 @@ fn list(running_only: bool) -> Result<Vec<String>, String> {
     Ok(parse_distro_list(&text))
 }
 
+/// 这个发行版现在是否在运行（不启动它）。
+#[cfg(windows)]
+pub fn is_running(distro: &str) -> bool {
+    list(true).is_ok_and(|running| running.iter().any(|r| r.eq_ignore_ascii_case(distro)))
+}
+
+#[cfg(not(windows))]
+pub fn is_running(_distro: &str) -> bool {
+    false
+}
+
 /// 进发行版里读 HOME 等环境变量。发行版没在运行时会被启动。
 #[cfg(windows)]
 pub fn probe(distro: &str) -> Result<LinuxEnv, String> {
@@ -346,7 +361,13 @@ pub fn inventory(probe_stopped: bool) -> WslInventory {
                     .iter()
                     .find(|(name, _)| name.eq_ignore_ascii_case(&distro))
                     .map(|(_, env)| env.clone());
-                if is_running || probe_stopped {
+                // 运行中的发行版有新近的 HOME 结果就不再进去探测：每次概览都进发行版跑命令，
+                // 会一直重置它的空闲计时，让本该自动停下的发行版停不下来。
+                let fresh = cached.as_ref().is_some_and(|c| {
+                    c.env.home.is_some()
+                        && chrono::Utc::now().timestamp() - c.detected_at < ENV_MAX_AGE_SECS
+                });
+                if probe_stopped || (is_running && !fresh) {
                     match probe(&distro) {
                         Ok(env) => WslEnvironment {
                             distro,
@@ -371,9 +392,9 @@ pub fn inventory(probe_stopped: bool) -> WslInventory {
                     WslEnvironment {
                         distro,
                         available: true,
-                        running: false,
+                        running: is_running,
                         env: cached.as_ref().map(|c| c.env.clone()).unwrap_or_default(),
-                        cached: cached.is_some(),
+                        cached: !is_running && cached.is_some(),
                         detected_at: cached.map(|c| c.detected_at),
                         error: None,
                     }

@@ -5542,6 +5542,15 @@
       "notChecked": "Nicht geprüft",
       "cached": "letzte Prüfung",
       "stoppedCached": "gestoppt · letzte Prüfung"
+    },
+    "installTargets": {
+      "title": "{{app}} installieren",
+      "description": "Die WSL-Distributionen wurden geprüft. Wählen Sie die Ziele; bereits installierte Umgebungen sind nicht wählbar, gestoppte Distributionen zuerst in einem Terminal starten.",
+      "detecting": "WSL wird geprüft…",
+      "installed": "Installiert {{version}}",
+      "stopped": "Läuft nicht; zuerst starten",
+      "confirm": "Installieren ({{count}})",
+      "menu": "In weitere Umgebungen installieren…"
     }
   }
 }

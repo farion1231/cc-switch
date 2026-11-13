@@ -5542,6 +5542,15 @@
       "notChecked": "확인 안 됨",
       "cached": "마지막 확인",
       "stoppedCached": "중지됨 · 마지막 확인"
+    },
+    "installTargets": {
+      "title": "{{app}} 설치",
+      "description": "각 WSL 배포판의 설치 여부를 확인했습니다. 설치할 환경을 선택하세요. 이미 설치된 환경은 선택할 수 없고, 중지된 배포판은 먼저 터미널에서 시작하세요.",
+      "detecting": "WSL 확인 중…",
+      "installed": "설치됨 {{version}}",
+      "stopped": "실행 중 아님, 먼저 시작하세요",
+      "confirm": "설치 ({{count}})",
+      "menu": "다른 환경에 설치…"
     }
   }
 }

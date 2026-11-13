@@ -5542,6 +5542,15 @@
       "notChecked": "Not checked",
       "cached": "last check",
       "stoppedCached": "stopped · last check"
+    },
+    "installTargets": {
+      "title": "Install {{app}}",
+      "description": "WSL distros were checked. Choose where to install; installed environments can't be selected, and stopped distros must be started in a terminal first.",
+      "detecting": "Checking WSL…",
+      "installed": "Installed {{version}}",
+      "stopped": "Not running; start it first",
+      "confirm": "Install ({{count}})",
+      "menu": "Install to other environments…"
     }
   }
 }

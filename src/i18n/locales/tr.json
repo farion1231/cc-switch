@@ -5542,6 +5542,15 @@
       "notChecked": "Kontrol edilmedi",
       "cached": "son kontrol",
       "stoppedCached": "durdu · son kontrol"
+    },
+    "installTargets": {
+      "title": "{{app}} kur",
+      "description": "WSL dağıtımları kontrol edildi. Nereye kurulacağını seçin; kurulu ortamlar seçilemez, durmuş dağıtımları önce bir terminalde başlatın.",
+      "detecting": "WSL kontrol ediliyor…",
+      "installed": "Kurulu {{version}}",
+      "stopped": "Çalışmıyor; önce başlatın",
+      "confirm": "Kur ({{count}})",
+      "menu": "Diğer ortamlara kur…"
     }
   }
 }

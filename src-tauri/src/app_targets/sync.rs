@@ -933,7 +933,7 @@ pub fn refresh_external(
         let Some(expected) = record.fingerprint.clone() else {
             continue;
         };
-        if !can_read(&spec) {
+        if !can_read(&spec) || !external_check_due(app, &key) {
             continue;
         }
         let Ok(dir) = resolve_dir(app, &spec, false) else {
@@ -1340,4 +1340,28 @@ pub fn deactivate_follower(
         target: key,
         record,
     })
+}
+
+/// 外部修改检查限频：概览每 30 秒刷新一次，每次都读 WSL 里的文件会一直重置发行版的空闲
+/// 计时，让它停不下来。同一个目标 5 分钟内只读一次。
+fn external_check_due(app: &AppType, key: &str) -> bool {
+    const INTERVAL: Duration = Duration::from_secs(5 * 60);
+    if cfg!(test) {
+        return true;
+    }
+    static LAST: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+    let mut last = LAST
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let id = format!("{}@{key}", app.as_str());
+    let now = Instant::now();
+    if last
+        .get(&id)
+        .is_some_and(|at| now.duration_since(*at) < INTERVAL)
+    {
+        return false;
+    }
+    last.insert(id, now);
+    true
 }

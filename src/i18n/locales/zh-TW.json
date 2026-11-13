@@ -5542,6 +5542,15 @@
       "notChecked": "未偵測",
       "cached": "上次偵測",
       "stoppedCached": "未執行 · 上次偵測"
+    },
+    "installTargets": {
+      "title": "安裝 {{app}}",
+      "description": "已偵測各 WSL 發行版的安裝情況。勾選要安裝到的環境；已安裝的不能勾，未執行的發行版請先在終端裡啟動。",
+      "detecting": "正在偵測 WSL…",
+      "installed": "已安裝 {{version}}",
+      "stopped": "未執行，請先啟動",
+      "confirm": "安裝（{{count}}）",
+      "menu": "安裝到其他環境…"
     }
   }
 }
