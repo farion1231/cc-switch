@@ -1,30 +1,35 @@
 # AtomCode 适配 PR 评审意见逐条核验报告
 
-- **核验对象**：分支 `feat/atomcode-provider`，HEAD `7b5b5771`
+- **核验对象**：分支 `feat/atomcode-provider`
+  - **主体核验快照**：HEAD `7b5b5771`（§2–§10 的判定与证据以此为准）
+  - **增量修订复核**：HEAD `5843fe16`（含 `8941b0ae` 修复提交，见 §11；判定统计已按该时点更新）
 - **对照基线**：`upstream/main` = `bd487e83`（含 GitHub Copilot CLI 支持 `#8753`）
-- **核验日期**：2026-11-13
-- **核验方式**：只读。源码逐行核对 + `git diff upstream/main...HEAD` + 前端/后端实测 + 联网核实 AtomCode 官方文档；**未修改任何仓库文件**（`git status --short` 首尾均为空）
-- **协作方式**：三路并行核验后交叉复核 —— 代码事实（9 条）、架构一致性 / Skills·MCP / 出处 / SSOT、i18n / 截图 / 检查清单 / 测试，主理人汇总并对关键结论独立复验
+- **核验日期**：2026-11-13（初版 20:24；增量修订 21:05，复核 HEAD `5843fe16`）
+- **核验方式**：只读。源码逐行核对 + `git diff upstream/main...HEAD` + 前端/后端实测 + 联网核实 AtomCode 官方文档；核验阶段未修改任何源码（`git status --short` 首尾均为空）。本报告文件由提交 `5843fe16` 入库，本次增量修订仅编辑本报告
+- **协作方式**：三路并行核验后交叉复核 —— 代码事实（9 条）、架构一致性 / Skills·MCP / 出处 / SSOT、i18n / 截图 / 检查清单 / 测试，主理人汇总并对关键结论独立复验；增量修订由 QA 对 `8941b0ae` 独立回归核验后汇编
 - **关联文档**：[2026-11-11 代码审查](./2026-11-11-code-review-211aff9a.md)、`../atomcode-fixes-summary.md`、`../atomcode-integration.md`、`../atomcode-provider-integration-zh.md`
+
+> **修订说明（重要）**：本报告主体是对 `7b5b5771` 的快照核验。其后分支新增 `8941b0ae`（修复）与 `5843fe16`（报告入库）两条提交，**§1 判定统计与 §2 中 #2 / #4 的判定已按截至 `5843fe16` 的状态更新**；§3–§10 保留原始快照证据并在受影响的结论处标注「已修订，见 §11」。完整增量差异见 **§11**。
 
 ---
 
 ## 1. 结论摘要
 
-> **评审意见未全部满足。** 13 个判定项中，真正闭环的 **4 项**（全部是代码层具体缺陷），**5 项部分满足**，**4 项未满足**（其中 1 项含因原文截断无法确认的部分）。
+> **评审意见仍未全部满足。** 截至 `5843fe16`，13 个判定项中闭环 **5 项**、部分满足 **4 项**、未满足 **4 项**（其中 1 项含因原文截断无法确认的部分）。初版（`7b5b5771`）为 ✅4 / ⚠️5 / ❌4；`8941b0ae` 使「多语言」由 ⚠️ 升为 ✅。
 
-| 判定 | 数量 | 条目 |
+| 判定 | 数量（截至 `5843fe16`） | 条目 |
 |---|---|---|
-| ✅ 已满足 | 4 | App.tsx 未改、`isInConfig` 默认分支、默认模型删改保护、更新路径写序 |
-| ⚠️ 部分满足 | 5 | CLI 参考既有实现、多语言、白名单、`current_provider`、模型键失焦 |
+| ✅ 已满足 | 5 | App.tsx 未改、`isInConfig` 默认分支、默认模型删改保护、更新路径写序、**多语言补全（增量修订）** |
+| ⚠️ 部分满足 | 4 | CLI 参考既有实现、白名单、`current_provider`、模型键失焦 |
 | ❌ 未满足 | 4 | 截图、检查清单、Skills / MCP、官方文档格式·导入·版本出处 |
 
 **可合并的核心判断**：
 
 1. 上一轮 `docs/atomcode-fixes-summary.md` 声称"已修复"的**代码类**问题，绝大多数属实且有回归测试支撑；
 2. 但**能力类**（Skills / MCP / 工具管理 / deeplink）、**交付物类**（截图）、**依据类**（适配版本、配置格式源码出处、官方格式导入）基本没有实质推进，部分被文档明确标注为"未接线 / 留待合并前补齐"；
-3. 核验中**新发现一个本分支引入的用户可见缺陷**：`apps.atomcode` 在 7 个语言文件中全部缺失，界面会渲染裸 i18n key；
-4. `docs/atomcode-fixes-summary.md` 自身存在多处与源码不符的表述（详见 §7），PR 描述中"全部勾选"的检查清单因此缺乏可信基础。
+3. 核验中**新发现一个本分支引入的用户可见缺陷**：`apps.atomcode` 在 7 个语言文件中全部缺失，界面会渲染裸 i18n key —— **该缺陷已于 `8941b0ae` 修复**（见 §11）；
+4. `docs/atomcode-fixes-summary.md` 自身存在多处与源码不符的表述（详见 §7），PR 描述中"全部勾选"的检查清单因此缺乏可信基础；
+5. `8941b0ae` 采取的是「移除前端类型声称」而非接线后端，消除了"前端可选、后端必拒"的矛盾，但 **Skills / MCP 能力整体仍未落地**，故按严格口径 #4 仍判 ❌（见 §11.3）。
 
 ---
 
@@ -33,10 +38,10 @@
 | # | 评审意见 | 判定 | 一句话依据 |
 |---|---|:--:|---|
 | 1 | 新增 CLI 类型应参考项目内既有实现，而非只指定几个供应商；前端不要自做一套，确保一致性 | ⚠️ | 枚举 / 表单 / 呈现层 / 图标 / IPC 注册复用了既有扩展点；但工具安装卸载、目录设置、MCP/Skills、deeplink 缺口明显，预设清单为自建 517 行，`AppsPage` 用 `Partial<Record>` 容忍缺失代替接入 |
-| 2 | 多语言支持缺失，请补全 | ⚠️ | 5 个核心语言 22/22 新增 key 齐全，ko/ru 靠 `fallbackLng: "en"`（符合约定）；但 `apps.atomcode` **7 语言全缺**，动态插值渲染裸 key；另有 3 个定义未被引用的死 key |
+| 2 | 多语言支持缺失，请补全 | ✅ **（增量修订，原 ⚠️）** | 5 个核心语言 22/22 齐全，ko/ru 靠 `fallbackLng: "en"`（AGENTS.md 明确豁免）；`8941b0ae` 补齐 7 语言 `apps.atomcode`、把 `sharedProviders` 接入 `presentation.ts` 的 atomcode 分支、`empty.*` 接入 `ProviderEmptyState` 的 `emptyCopyNs`，裸 key 与 3 个死 key 全部消除并经 QA 实测（见 §11.2）。剩余仅硬编码英文 preset label，属专有名词 / 既有惯例，低优先级 |
 | 3a | 缺少截图示例 | ❌ | 分支 0 张图片、`docs/images` 无 atomcode 目录、PR 模板截图表为空，中文集成文档自承"留待合并前补齐" |
 | 3b | 检查清单默认全勾选仍保留"如修改了 rust 代码"的提示，不可信 | ❌ | `.github/pull_request_template.md` 本分支 **blob 与基线完全一致（未改）**，4 项仍为 `- [ ]`，`:29` 条件提示仍在；本分支实际改了 19 个 `src-tauri/` 文件 |
-| 4 | 需要考虑已有的 Skills / MCP 支持 | ❌ | 后端多处显式 `false` / `None` / `log::debug!("...not wired yet, skipping")`，中文文档自承"未接线"；前端类型却声称支持 |
+| 4 | 需要考虑已有的 Skills / MCP 支持 | ❌ **（判定不变，依据已重写）** | `8941b0ae` 落实了 §9 P0-2 的「选项二」：删除 `McpApps.atomcode?` / `SkillApps.atomcode?` / `AppType` 的 atomcode、`deeplink.ts` 移除可选 app，并加 `skillAppEnabled()` 安全索引 → **"前端可选、后端必拒"的矛盾已消除**。但后端 `app_config.rs`、`dao/mcp.rs`、`services/mcp.rs`、`deeplink/provider.rs` 仍全部 `false` / `None` / `skip` / `unsupported`，`services/skill.rs:752` 仍半接线，且**无新增 schema 列 / 迁移 / 测试 / 明确不支持决策记录**。属"负向的诚实性修复"，非评审诉求（能力或明确处置）的实质满足 → 严格口径维持 ❌（见 §11.3） |
 | 5 | `App.tsx` 一行都没改 | ✅ | 相对基线 +33/-10（43 行），切换 / 添加 / 移除 / 复制四处 atomcode 分支全部在列 |
 | 6 | `ProviderList.tsx` 判断"在不在配置里"时 AtomCode 走默认分支直接返回 `true` | ✅ | 改为穷举 switch，atomcode 与 kimi/dsh/mcode 同走 `meta.liveConfigManaged`，`default` 返回 `false` |
 | 7 | "设为默认"和"从配置移除"的白名单都没有 atomcode | ⚠️ | 核心动作白名单已补齐并复用共存型逻辑；但若干 kimi 专属硬编码（失败重读、错误翻译、env 冲突跳过列表）未同步 |
@@ -154,7 +159,7 @@ if app_type == &AppType::AtomCode {
 
 ### 4.1 CLI 接入一致性（评审 #1）
 
-以 `bd487e83`（Copilot CLI）为项目内既有范例逐点对比，22 个扩展点中 **12 项复用、5 项半接、5 项缺失**：
+以 `bd487e83`（Copilot CLI）为项目内既有范例逐点对比，下表 18 个扩展点中 **8 项复用、6 项半接、4 项缺失**（deeplink 一行已按 `8941b0ae` 由 ❌ 调整为 ⚠️）：
 
 | 扩展点 | 既有范例 | AtomCode @ HEAD | 判定 |
 |---|---|---|:--:|
@@ -173,7 +178,7 @@ if app_type == &AppType::AtomCode {
 | **工具安装/卸载管理** | `TOOL_NAMES` / `TOOL_APP_IDS` / 安装脚本 / `tool_uninstall.rs` | **全无**；`AppsPage.tsx:112-115` 改 `Partial<Record<AppId, Row>>` + filter 容忍缺失（提交 `71137177` 自承） | ❌ |
 | **MCP / Skills 后端** | schema 列 + 迁移 + `mcp/copilot.rs` + dao + sync | 全部 `false` / `None` / skip（见 §6.1） | ❌ |
 | prompt files | 后端 + 前端各改 | 后端加 `AGENTS.md` 但注释"管理页暂不接入"，`promptUtils.tsx` 未加 | ⚠️ |
-| **deeplink** | `build_settings` + `merge_config` + preview + dialog | 后端返回 `atomcode.deeplink_unsupported`，前端 `deeplink.ts:26` 反而允许 atomcode | ❌ |
+| **deeplink** | `build_settings` + `merge_config` + preview + dialog | 后端返回 `atomcode.deeplink_unsupported`；**已修订**：`8941b0ae` 从 `deeplink.ts` 的可选 app 中移除 atomcode，前后端一致，但能力仍未接线 | ⚠️（原 ❌） |
 | 会话管理 / 用量 / 打开终端 / 额度卡 | 均有 | 未接（共存型未必全需） | ❌ |
 | 文档 | README + 带实测依据的 integration-zh | 3 份 docs，无可验证版本/源码依据 | ❌ |
 
@@ -268,13 +273,13 @@ Ok(account_id.to_string())
 | `src-tauri/src/services/mcp.rs:398-405,462-470` | sync / remove 两处 `log::debug!("AtomCode MCP sync is not wired yet, skipping")` |
 | `src-tauri/src/services/skill.rs:685-686` | 外部目录保护 `AppType::AtomCode => {}`；`:752` 却给出 `data_dir().join("skills")` → 目录映射给了、开关恒 false |
 | `src-tauri/src/prompt_files.rs:44-48,62-66` | 已映射 `AGENTS.md`，但注释「管理页暂不接入」；前端 `promptUtils.tsx` 无 atomcode |
-| `src-tauri/src/deeplink/provider.rs:408-417` | 明确返回 `atomcode.deeplink_unsupported`；而 `src/lib/api/deeplink.ts:22-27` 把 atomcode 加入可选 app |
-| `src/types.ts:855-860`、`src/lib/api/skills.ts:17-42` | 前端类型新增 `McpApps.atomcode?` / `SkillApps.atomcode?` → **声称支持，后端恒 false** |
-| `docs/atomcode-provider-integration-zh.md:16-17` | 表格自承「MCP 未接线：需要数据库 schema 新列…静默跳过」「Skills 未接线」 |
+| `src-tauri/src/deeplink/provider.rs:408-417` | 明确返回 `atomcode.deeplink_unsupported`（**未变**）；~~`src/lib/api/deeplink.ts` 把 atomcode 加入可选 app~~ → **已修订**：`8941b0ae` 已移除，前后端不再矛盾 |
+| `src/types.ts:855-860`、`src/lib/api/skills.ts:17-42` | ~~前端类型新增 `McpApps.atomcode?` / `SkillApps.atomcode?` → 声称支持，后端恒 false~~ → **已修订**：`8941b0ae` 删除这两处类型声称与 `AppType` 中的 atomcode，新增 `skillAppEnabled()` helper（`skills.ts:42`）做安全索引；`SkillsPage` / `UnifiedSkillsPanel` 共 10 处调用点改走 helper。**后端仍恒 false** |
+| `docs/atomcode-provider-integration-zh.md:16-17` | 表格自承「MCP 未接线：需要数据库 schema 新列…静默跳过」「Skills 未接线」（**未变**） |
 
 `git grep` 确认以下文件在 HEAD 中完全不含 atomcode：`deepLinkConfigPreview.ts`、`promptUtils.tsx`、`DeepLinkImportDialog.tsx`、`UnifiedMcpPanel.tsx`、`SkillImportDialog.tsx`、`src-tauri/src/deeplink/mcp.rs`、`src-tauri/src/database/dao/skills.rs`、`presetGroups.ts`、`ProviderPresetSelector.tsx`。
 
-对照 `bd487e83` 的既有正确做法：`database/schema.rs` 新增 `enabled_copilot` 列 + `24 => 25` 迁移 + 2 个测试、新增 `mcp/copilot.rs`(519 行)、`services/mcp.rs` +37、`services/skill.rs` +142、`deeplink/provider.rs` +72，且文档用 `copilot help providers/environment/config` 实测逐项给出原生格式依据。`AGENTS.md` 禁止随意改 `SCHEMA_VERSION` 是合理约束，但该提交演示了"与维护者协作加列 + 迁移 + 测试"的解法；本分支选择了"前端类型加了、后端恒 false"。
+对照 `bd487e83` 的既有正确做法：`database/schema.rs` 新增 `enabled_copilot` 列 + `24 => 25` 迁移 + 2 个测试、新增 `mcp/copilot.rs`(519 行)、`services/mcp.rs` +37、`services/skill.rs` +142、`deeplink/provider.rs` +72，且文档用 `copilot help providers/environment/config` 实测逐项给出原生格式依据。`AGENTS.md` 禁止随意改 `SCHEMA_VERSION` 是合理约束，但该提交演示了"与维护者协作加列 + 迁移 + 测试"的解法；本分支初版选择了"前端类型加了、后端恒 false"，**`8941b0ae` 已把前者改为"前端类型也移除"，使声称与实现一致，但能力缺口本身不变**——这正是 #4 维持 ❌ 的理由。
 
 ### 6.2 截图（评审 #3a）
 
@@ -316,17 +321,19 @@ Ok(account_id.to_string())
 | `form.baseUrl`、`baseUrlHint`、`apiKey`、`apiKeyPlaceholder`、`apiKeyHint` | ✅×5 | ✅×5 | ✅×5 | ✅×5 | ✅×5 | ⤵en | ⤵en |
 | `form.models`、`addModel`、`noModels`、`modelKey`、`modelKeyPlaceholder`、`modelId`、`modelName`、`contextWindow`、`contextWindowPlaceholder`、`removeModel` | ✅×10 | ✅×10 | ✅×10 | ✅×10 | ✅×10 | ⤵en | ⤵en |
 | **`form.modelKeyDuplicate`** | ✅ | ✅ | ✅ | ✅ | ✅ | **✅** | **✅** |
+| **`apps.atomcode`（增量修订，`8941b0ae` 新增）** | **✅** | **✅** | **✅** | **✅** | **✅** | **✅** | **✅** |
 
-> 口径说明：按 `git diff -U0 | grep -c '^+'` 计为 28 行（含 `"atomcode": {`、`"form": {`、`},` 等 6 行结构行），按扁平化叶子 key 计为 22 个，两者不矛盾。
+> 口径说明：主体快照（`7b5b5771`）按 `git diff -U0 | grep -c '^+'` 计为 28 行（含 `"atomcode": {`、`"form": {`、`},` 等 6 行结构行），按扁平化叶子 key 计为 22 个，两者不矛盾。`8941b0ae` 另在 7 个语言文件的 `apps` 段各新增 `apps.atomcode: "AtomCode"`，故截至 `5843fe16` 为 23 个 key（均 7 语言齐全，ko/ru 的 `atomcode.form.*` 仍靠 fallback）。
 
 **符合约定的部分**：`AGENTS.md` 明确「ko / ru 为社区翻译，允许缺失并走 `fallbackLng: "en"`」，ko/ru 唯一新增的 `modelKeyDuplicate` 恰是 `docs/atomcode-provider-pr-audit-zh.md:118-121 (M5)` 要求补的那条 → M5 已修复。`ru.json` 整体仅 2556 个 key（en 为 4556），本就长期不完整。静态扫描 28 个改动的 `src/**/*.ts(x)` 提取 415 个不同 `t("字面量")` key，**0 个未在 `en.json` 定义**；新增行中无硬编码中文用户可见文案。
 
-**⚠️ 新发现的本分支引入缺陷**：
+**⚠️ 新发现的本分支引入缺陷（主体快照 `7b5b5771`；第 1、2 项已由 `8941b0ae` 修复，见 §11.2）**：
 
-1. **`apps.atomcode` 在 7 个语言文件中全部缺失**（`en.json` 的 `apps` 段仅 15 个 key）。动态调用点 `presentation.ts:968` → `t("providerCard.section.addedHelp", { app: t(\`apps.${app}\`) })` 与 `ProviderList.tsx:499` → `t("provider.liveConfigReadFailed", { app: t(\`apps.${appId}\`) })`。实测 i18next：`t("apps.atomcode") === "apps.atomcode"`，插值后用户看到 "…written into **apps.atomcode**'s config…" → **裸 key 泄漏**。
-2. **3 个死 key**：`atomcode.sharedProviders`、`empty.title`、`empty.description` 定义后从未引用。`presentation.ts:966` 只对 `app === "dsh"` 特判 `t("dsh.sharedProviders")`，atomcode 落到通用分支（正是裸 key 成因）；`ProviderEmptyState.tsx:25-31` 的 `emptyCopyNs` 不含 atomcode。22 个 key 中仅 19 个真正被 `AtomCodeProviderForm.tsx` 使用。
-3. **硬编码英文（低风险 / 有既有惯例）**：`atomcodeProviderPresets.ts` 的协议与厂商显示名在 `AtomCodeProviderForm.tsx:453` 直接 `{type.label}` 渲染；但 `copilotProviderPresets.ts:48-67` 等基线文件同样如此，属既有惯例。
-4. `AGENTS.md` 被 `.gitignore:11` 忽略、`git ls-files AGENTS.md` 为空 → 它是本机 agent 指南，**"ko/ru 允许 fallback"的约定无法被 CI 或 PR 评审者从仓库引用**。
+1. ~~**`apps.atomcode` 在 7 个语言文件中全部缺失**~~ → **已修复**。原状态：`en.json` 的 `apps` 段仅 15 个 key；动态调用点 `presentation.ts:968` → `t("providerCard.section.addedHelp", { app: t(\`apps.${app}\`) })` 与 `ProviderList.tsx:499` → `t("provider.liveConfigReadFailed", { app: t(\`apps.${appId}\`) })`；实测 `t("apps.atomcode") === "apps.atomcode"` → 裸 key 泄漏。`8941b0ae` 补齐 7 语言后，QA 实测均返回 `"AtomCode"`。
+2. ~~**3 个死 key**~~ → **已修复**。原状态：`atomcode.sharedProviders`、`empty.title`、`empty.description` 定义后从未引用（`presentation.ts:966` 只对 dsh 特判；`ProviderEmptyState.tsx:25-31` 的 `emptyCopyNs` 不含 atomcode），22 个 key 中仅 19 个真正被使用。现调用链：`sharedProviders` ← `presentation.ts:967-968` ← `buildAdditiveSections` ← `ProviderList.tsx:393`；`empty.*` ← `ProviderEmptyState.tsx:30-31,48,53` ← `ProviderList.tsx:522-528`。
+3. **硬编码英文（低风险 / 有既有惯例，未变）**：`atomcodeProviderPresets.ts` 的协议与厂商显示名在 `AtomCodeProviderForm.tsx:453` 直接 `{type.label}` 渲染；但 `copilotProviderPresets.ts:48-67` 等基线文件同样如此，属既有惯例。此项是 #2 升 ✅ 后唯一的残留，属专有名词、不足以维持 ⚠️。
+4. `AGENTS.md` 被 `.gitignore:11` 忽略、`git ls-files AGENTS.md` 为空 → 它是本机 agent 指南，**"ko/ru 允许 fallback"的约定无法被 CI 或 PR 评审者从仓库引用**（未变）。
+5. **新增残留风险（QA 建议，P1）**：`apps.<id>` 属动态模板 key，静态 `t("字面量")` 扫描与 TypeScript 都查不到 JSON 缺键，`typecheck` 退出码 0 无法拦截；`apps.kimi` / `apps.dsh` 基线即缺失，属系统性风险。建议补一条「所有 `APP_IDS` 在 en 及 5 核心语言都存在 `apps.<id>` 且 `t()` 不返回 key 本身」的断言（比只断言 `t("apps.atomcode")` 更有价值），并可顺带断言 `skillAppEnabled({}, "atomcode") === false`。`tests/i18n/` 现有 4 个测试均不做 locale key 一致性检测，无现成保护网。
 
 ### 7.2 文档中"声称已修复"但源码不支持的条目
 
@@ -340,7 +347,7 @@ Ok(account_id.to_string())
 | 6 | `:5-11` | isInConfig「**now** correctly checks `meta.liveConfigManaged`」 | `211aff9a` 时 atomcode 已有专属 case；`78ed827e` 实际改的是 `default: true→false` |
 | 7 | `:23-35` | Documentation「✅ Fixed – Supported AtomCode version (v0.11.0)」 | 只新增了一份自证文档，链接不可达、版本查无出处、截图未补，见 §5 |
 | 8 | `docs/atomcode-integration.md` | `:5/:92` 声称基于 v0.11.0 | `:113` Future Improvements 却写「尚未记录确切版本/commit」；`:33-39` 类型清单与 `PROVIDER_IDS` 不符；`:43` 的 `ATOMCODE_HOME` 无出处 |
-| 9 | `docs/reviews/2026-11-11-code-review-211aff9a.md:55` | 「i18n 七语言同步未发现问题」 | 与本次实测的 `apps.atomcode` 裸 key 冲突——该审查只扫静态 key，漏了动态 `t(\`apps.${app}\`)` |
+| 9 | `docs/reviews/2026-11-11-code-review-211aff9a.md:55` | 「i18n 七语言同步未发现问题」 | **已修订**：与 `apps.atomcode` 裸 key 的冲突随 `8941b0ae` 消失（该审查只扫静态 key，漏了动态 `t(\`apps.${app}\`)` 的历史事实仍成立）；但 ko/ru 仍缺 21 个 `atomcode.form.*`，严格按"七语言同步"字面口径该结论仍不完全成立 |
 | 10 | `docs/atomcode-integration.md:90/:114` | Known Limitation / Future Improvement | **诚实记录**，与源码一致，恰是评审 #10「导入为 0」的直接证据 |
 
 ---
@@ -362,8 +369,23 @@ Ok(account_id.to_string())
 | `cargo fmt --check` | 0 | 无差异 |
 | `cargo clippy -- -D warnings`（AGENTS.md 标准口径） | 0 | `Finished dev profile` |
 | `cargo clippy --lib --tests -- -D warnings`（更严） | 101 | 4 errors：`dsh_config.rs:2275`、`settings.rs:1711/1719` → **既有测试代码 lint，非本分支引入** |
-| node + i18next 实跑 `t("apps.atomcode")` | — | 返回 `"apps.atomcode"` → 裸 key 泄漏实证 |
+| node + i18next 实跑 `t("apps.atomcode")`（主体快照 `7b5b5771`） | — | 返回 `"apps.atomcode"` → 裸 key 泄漏实证 |
 | `git status --short`（首/尾各一次） | — | 均为空 |
+
+**增量修订复核（`5843fe16`，QA 独立回归，见 §11.4）**：
+
+| 命令 | 退出码 | 关键输出 |
+|---|:--:|---|
+| `pnpm typecheck` | 0 | `tsc --noEmit` 无输出 |
+| `pnpm format:check` | 0 | `All matched files use Prettier code style!` |
+| `pnpm exec vitest run src/config/atomcodeProviderPresets.test.ts` | 0 | **11 passed** |
+| `pnpm exec vitest run tests/components/AtomCodeProviderForm.test.tsx` | 0 | **4 passed** |
+| `pnpm exec vitest run tests/components/ProviderList.test.tsx` | 0 | **39 passed**（三个文件合计 54 passed） |
+| 三文件合并跑 | 1 | 断言全绿，但 2 个 `EPERM …\Temp\…\web\40b9f1…` unhandled error 拉红进程码，与主体快照同因的环境噪音 |
+| node + i18next 实跑 `t("apps.atomcode")` × 7 语言 | — | 7 语言均返回 `"AtomCode"`，无一返回裸 key |
+| `git show --name-only 8941b0ae \| grep -iE 'test\|spec'` | — | **无新增/修改测试**；`5843fe16` 仅新增 1 份报告 md |
+
+> 增量复核边界（QA 按约定）：**未跑**全量 `pnpm test:unit`、任何 cargo 命令、`pnpm build:renderer`；`ProviderEmptyState` 组件无对应测试文件；PR 描述正文与真机 `/model` 验证仍未执行。故「全量 `pnpm test:unit` 通过」依然不能宣称已验证。
 
 **新增/修改测试文件共 9 个（+1209 行）**：`tests/components/AtomCodeProviderForm.test.tsx`(A, 156)、`src/config/atomcodeProviderPresets.test.ts`(A, 205)、`tests/components/ProviderList.test.tsx`(M, +75)、`src-tauri/src/atomcode_config.rs`(A, 763，含 7 个 `#[test]`)、`src-tauri/tests/mcp_commands.rs`(M, +2)、`tests/msw/state.ts`(M, +4)、`AppsPage.test.tsx` / `SessionManagerPage.test.tsx` / `UsageDashboard.test.tsx`(M)；另有 `services/provider/mod.rs` 内 4 个写序测试。
 
@@ -382,8 +404,8 @@ Ok(account_id.to_string())
 
 ### P0 — 用户可见 / 声称与实现矛盾 / 评审主体
 
-1. **补 `apps.atomcode` 到 7 个语言文件**（至少 5 个核心语言），或让 `presentation.ts:968` / `ProviderList.tsx:499` 改用 `appConfig` 的 `label`；把 `atomcode.sharedProviders` 接进 `presentation.ts` 的 atomcode 分支；`atomcode.empty.*` 接进 `ProviderEmptyState.tsx` 的 `emptyCopyNs` 或删除冗余。
-2. **Skills / MCP 二选一**：按 `bd487e83` 模式与维护者协作新增 `enabled_atomcode` 列 + 迁移 + 测试并全量接线（McpApps/SkillApps get/set、dao、services、deeplink）；或**移除** `src/types.ts` 的 `McpApps.atomcode?` 与 `src/lib/api/skills.ts` 的 `SkillApps.atomcode?`，并把 `deeplink.ts` 的 atomcode 从可选 app 移除，消除"前端可选、后端必拒"。
+1. ✅ **已完成（`8941b0ae`）**：补 `apps.atomcode` 到 7 个语言文件；`presentation.ts:967-968` 新增 atomcode 分支走 `t("atomcode.sharedProviders")`；`ProviderEmptyState.tsx:30-31` 的 `emptyCopyNs` 加入 atomcode 使 `empty.*` 生效。QA 实测 7 语言 `t("apps.atomcode")` 均返回 `"AtomCode"`。**遗留 P1**：补一条覆盖所有 `APP_IDS` 的 `apps.<id>` 一致性断言（见 §7.1 第 5 点）。
+2. ⚠️ **选项二已落实、选项一未做（`8941b0ae`）**：已移除 `src/types.ts` 的 `McpApps.atomcode?`、`src/lib/api/skills.ts` 的 `SkillApps.atomcode?` / `AppType` 中的 atomcode、`src/lib/api/deeplink.ts` 的可选 app，并新增 `skillAppEnabled()` helper 覆盖 10 处调用点 → 矛盾消除。**但能力仍未接线**：需与维护者协作新建 issue 明确记录「AtomCode 暂不支持 Skills / MCP / deeplink 导入」的决策与后续计划，或按 `bd487e83` 模式补 `enabled_atomcode` 列 + 迁移 + 测试全量接线。此项未完成前 #4 维持 ❌。
 3. **导入与配置格式依据**：实现官方 `[providers.*]` 格式导入，或在 UI 明确提示「仅支持 v5.x `/provider` 生成的账号格式」，并删除/兑现 Known Limitation 第 1 条。
 4. **由贡献者给出可验证凭据**（而非再写一份自证文档）：确切版本号 + commit SHA + 仓库 URL，修正/删除 v0.11.0；把 404 链接换成 `https://atomcode.atomgit.com/docs/zh/configuration.html` 并标注文档版本；替换 `some-repo` / `example` 占位链接；对 `[provider_accounts.*]` / `[models.*]` 字段规范、`default_provider` 与 `default_model` 的语义及优先级（含本分支把两者写成同一模型键与官方定义的冲突）给出源码依据；逐项标注 `deepseek` / `gemini` / `openai_responses` 等 id 的来源与归一化理由；为 `ATOMCODE_HOME` 补 `distribution.rs` 的源码依据。
 5. **补交付物**：真实截图（PR 模板表 + `docs/images/`），附 `/provider` 实际写出的 config.toml 样例与真机 `/model` 验证结果。
@@ -405,12 +427,74 @@ Ok(account_id.to_string())
 
 ## 10. 核验范围与局限
 
-- 全程只读：`git status --short` 首尾均为空，未写入 / 编辑 / 提交任何仓库文件（本报告除外）。
-- 基线 `upstream/main` = `bd487e83`；分支 `upstream/main..HEAD` 共 15 个提交、65 个改动文件（+3534/-68）；对照 `git show bd487e83`（Copilot CLI，105 文件 +4753/-179）。
+- 全程只读：`git status --short` 首尾均为空，未写入 / 编辑 / 提交任何**源码**文件；本报告文件由 `5843fe16` 入库，本次增量修订仅编辑本报告。
+- 基线 `upstream/main` = `bd487e83`。主体快照 `7b5b5771` 时 `upstream/main..HEAD` 共 15 个提交、65 个改动文件（+3534/-68）；**截至 `5843fe16` 实测为 17 个提交、68 个文件（+3996/-96）**（`git rev-list --count` / `git diff --shortstat`）。对照 `git show bd487e83`（Copilot CLI，105 文件 +4753/-179）。
 - AGENTS.md 为被 gitignore 的本机指南，不在仓库内，其约定无法被 CI / PR 评审者引用；本报告按其内容作为判断依据并已标注。
 - 联网核实仅覆盖公开可检索范围，未登录克隆 AtomCode 官方仓库逐行核对 `provider_preset.rs`；对版本号、第三方链接的结论已标注来源与局限，不作超出可检索范围的推断。
 - PR 描述正文、GitHub PR 页面、真机 AtomCode 客户端均不在本次核验范围内。
+- 增量修订复核按约定**有意收窄边界**：未跑全量 `pnpm test:unit`、任何 cargo 命令、`pnpm build:renderer`；结论不与主体快照的实测结果混用。
 
 ---
 
-*报告由软件团队三路并行核验（代码事实 / 架构一致性 / QA）后汇总，主理人对关键结论另行交叉复验。*
+## 11. 后续提交状态（截至 `5843fe16`）
+
+### 11.1 提交时间线
+
+| 提交 | 时间（2026-11-13） | 内容 | 影响范围 |
+|---|---|---|---|
+| `7b5b5771` | 11-11 21:10 | `fix(atomcode): fall back to default protocol for empty provider string` | 报告主体核验快照 |
+| `8941b0ae` | 11-13 20:37 | `fix(atomcode): add missing apps.atomcode i18n and drop unwired skills/MCP/deeplink types` | 14 文件，+52/-34；修复报告 §9 P0-1，落实 P0-2 的选项二 |
+| `5843fe16` | 11-13 20:44 | `docs(atomcode): add PR review verification report` | 416 行报告入库，无其他改动 |
+
+`5843fe16` 之后工作区干净、HEAD 未变。`git diff --name-status 7b5b5771..HEAD` 共 15 个条目（1 个新增文档 + 14 个修改源码/语言文件），**不含图片、PR 模板、Rust 后端、集成文档或测试文件**。
+
+### 11.2 `8941b0ae` 修了什么（对应评审 #2）
+
+| 改动 | 位置 | 效果 |
+|---|---|---|
+| 7 个语言文件各加 `apps.atomcode: "AtomCode"` | `zh/zh-TW/en/ja/tr/ko/ru.json`（`apps` 段，en 等约 `:1183`、ru 约 `:853`） | QA 用 i18next 实测 7 语言均返回 `"AtomCode"`，裸 key 泄漏消除 |
+| `presentation.ts:967-968` 新增 atomcode 分支 | `app === "atomcode" ? t("atomcode.sharedProviders")` | 调用链 `buildAdditiveSections()`(`:715`) ← `ProviderList.tsx:393` → `added` 区块 help.body；`atomcode.sharedProviders` 由死 key 变为生效 |
+| `ProviderEmptyState.tsx:30-31` 的 `emptyCopyNs` 加入 atomcode | → `:48` `t(\`${emptyCopyNs}.empty.title\`)` / `:53` `…description\`)` ← `ProviderList.tsx:522-528` | `atomcode.empty.*` 两个死 key 生效 |
+| 删除三处前端类型声称 | `src/types.ts`（`McpApps.atomcode?`）、`src/lib/api/skills.ts`（`AppType` / `SkillApps.atomcode?`）、`src/lib/api/deeplink.ts`（`DeepLinkImportRequest.app` 的 atomcode） | 消除「前端可选、后端必拒」矛盾 |
+| 新增 `skillAppEnabled()` helper | `skills.ts:42`：`Boolean((apps as Partial<Record<AppId, boolean \| undefined>>)[app])` | 共 **10 处** `skill.apps[app]` 改走它（`SkillsPage.tsx:277` 1 处 + `UnifiedSkillsPanel.tsx:317/326/506/518/1147/1156/1290/1811/1939` 9 处）；能兜住 `statusFilter.slice(4) as AppId` 的任意字符串，缺失键返回 `false` |
+
+> **计数勘误（21:41，由用户指出）**：本报告初版在 §6.1、§9 P0-2、§11.2 三处写作「14 处调用点」，系笔误，现统一更正为 **10 处**。用户推测「14」可能误计了 import 行或 lint/报错总数；从数字对应关系看更可能是与 `8941b0ae` 的改动文件数（14 files changed）混淆 —— 但无论成因，精确的调用点计数只有 10，且任何计数口径都得不到 14：调用 10 → 含 2 处 import 为 12 → 再含定义为 13；被替换的直接索引行数也是 10。精确依据：`grep -rn 'skillAppEnabled(' src/ | grep -vc 'export const'` = **10**；`git show --format='' 8941b0ae | grep -E '^-\s*.*skill\.apps\[app\]' | wc -l` = **10**（被替换的直接索引行数，与调用点一一对应）；`skillAppEnabled` 全仓共出现 13 次 = 10 次调用 + 2 次 import（`SkillsPage.tsx:34`、`UnifiedSkillsPanel.tsx:55`）+ 1 次定义（`skills.ts:42`）。此数字仅是改动规模描述，**不影响任何判定结论**（#2 ✅、#4 ❌ 及 ✅5/⚠️4/❌4 统计均不变）。
+
+**QA 类型安全核验**：全仓 `grep -rn "\.apps\[" src/` 剩余 **9 处**全部是 `server.apps[app]`（MCP 侧），`skill.apps[` 为 0。其中 `UnifiedMcpPanel.tsx` 占 8 处（`:326/433/486/599/818/821/869/980`）、`src/hooks/useMcpConnectivity.ts:20` 占 1 处。它们因 `McpAppId = Exclude<AppId, "claude-desktop" \| "openclaw" \| "atomcode">`（`appConfig.tsx:190-193`）、`MCP_APP_IDS: McpAppId[]`（`:199-214`，13 项）与 `isMcpAppId` 守卫而天然安全，**无需**再加 helper。全仓 grep 已删除类型 × atomcode 仅命中 `skills.ts:41` 的说明性注释；`src/types.ts:327` 的 `atomcode: boolean` 属 `VisibleApps`（`:312`），是应用可见性配置、合法保留。`typecheck` 退出码 0 佐证。
+
+### 11.3 判定升降与口径说明
+
+| 判定项 | 主体快照 | 截至 `5843fe16` | 理由 |
+|---|:--:|:--:|---|
+| #2 多语言 | ⚠️ | **✅** | 两个硬缺陷（7 语言缺 `apps.atomcode`、3 个死 key）均修复并实测；5 核心语言 22/22 + `apps.atomcode` 齐全；ko/ru fallback 是 AGENTS.md 明确豁免；硬编码英文 preset label 属专有名词 / 既有惯例，低优先级，不足以维持 ⚠️ |
+| #4 Skills / MCP | ❌ | **❌（不变）** | 本次走的是 §9 P0-2「二选一」之**移除前端类型声称**，只消除一条**矛盾证据**；后端 `app_config.rs` / `dao/mcp.rs` / `services/mcp.rs` / `deeplink/provider.rs` 仍全部 `false` / `None` / `skip` / `unsupported`，`services/skill.rs:752` 仍半接线，且无新增 schema 列 / 迁移 / 测试 / 决策记录或 issue。属「负向的诚实性修复」，不是对评审原话「需要考虑已有的 Skills / MCP 支持」的实质满足；升 ⚠️ 会把「能力完全未落地」粉饰成「部分满足」 |
+| #1 CLI 一致性 | ⚠️ | ⚠️（不变） | 工具安装/卸载全无、`AppsPage` 用 `Partial<Record>` 容忍缺失、目录设置未接等缺口仍在；仅 §4.1 的 deeplink 子项由 ❌ 调为 ⚠️（前后端已一致，能力仍未接） |
+| 其余 10 项 | — | 不变 | `8941b0ae` 的 14 个文件不涉及图片、PR 模板、Rust 后端、集成文档或其余判定项代码 |
+
+**统计变化**：✅4 / ⚠️5 / ❌4 → **✅5 / ⚠️4 / ❌4**（#2 由 ⚠️ 升 ✅）。QA 另给出宽松口径备选（若认为「矛盾已消除即算部分满足」则 #4 升 ⚠️，统计为 ✅5 / ⚠️5 / ❌3）；**本报告采用严格口径**，因为评审诉求是能力或明确处置，而非仅消除自相矛盾。
+
+### 11.4 独立回归验证（QA，只读，约 2 分钟）
+
+| 命令 | 退出码 | 结果 |
+|---|:--:|---|
+| `pnpm typecheck` | 0 | 无输出 |
+| `pnpm format:check` | 0 | `All matched files use Prettier code style!` |
+| `pnpm exec vitest run src/config/atomcodeProviderPresets.test.ts` | 0 | 11 passed |
+| `pnpm exec vitest run tests/components/AtomCodeProviderForm.test.tsx` | 0 | 4 passed |
+| `pnpm exec vitest run tests/components/ProviderList.test.tsx` | 0 | 39 passed（合计 54 passed） |
+| 三文件合并跑 | 1 | 断言全绿，2 个 `EPERM …\Temp\…\web\40b9f1…` unhandled error 拉红进程码（baseline-browser-mapping 缓存写被拒），与主体快照同因的环境噪音 |
+
+**未跑**（按约定边界）：全量 `pnpm test:unit`、所有 cargo 命令、`pnpm build:renderer`、PR 描述正文 / `gh pr view`、真机 `/model` 验证。`8941b0ae` **未新增/修改任何测试**；`ProviderEmptyState` 组件在仓库内也没有对应测试文件。
+
+### 11.5 仍未处理的缺口（截至 `5843fe16`，原样保留）
+
+- `docs/atomcode-integration.md:5/92` 的 `v0.11.0`、`:9-10` 的 `some-repo` / `example` 占位链接 → 评审 #10 依据类缺口未动；
+- `src-tauri/src/atomcode_config.rs:64` 仍只解析 `[provider_accounts.*]`，官方 `[providers.*]` 格式导入仍为 0；
+- 截图 0 张、`docs/images/` 无 atomcode 目录、PR 模板截图表为空；
+- `.github/pull_request_template.md` 未被修改，`:29` 的 `(if Rust code changed) / 如修改了 Rust 代码` 条件提示仍在，而分支已改 19 个 Rust 文件；
+- CLI 工具安装/卸载、目录设置、kimi 专属硬编码同步、JSON 编辑路径 `keyConflict`、启动回填的 SSOT 冲突窗口均未处理；
+- **新增 P1 建议**：补一条覆盖所有 `APP_IDS` 的 `apps.<id>` 一致性断言（动态模板 key 无法被静态扫描或 TypeScript 拦截，`apps.kimi` / `apps.dsh` 基线即缺失），并可断言 `skillAppEnabled({}, "atomcode") === false`；`tests/i18n/` 现有 4 个测试不做 locale key 一致性检测，无现成保护网。
+
+---
+
+*报告由软件团队三路并行核验（代码事实 / 架构一致性 / QA）后汇总，主理人对关键结论另行交叉复验；§11 增量修订由 QA 对 `8941b0ae` 独立回归核验后汇编。*
