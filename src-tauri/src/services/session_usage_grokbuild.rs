@@ -227,11 +227,13 @@ fn sync_single_grok_file(
     };
 
     let start_byte = last_byte_offset.unwrap_or(0);
-    if start_byte > file_size {
-        log::warn!(
-            "[GROK-SYNC] 文件被截断，游标钉至 EOF、不重放旧区间: {}",
-            file_path.display()
-        );
+    if start_byte >= file_size {
+        if start_byte > file_size {
+            log::warn!(
+                "[GROK-SYNC] 文件被截断，游标钉至 EOF、不重放旧区间: {}",
+                file_path.display()
+            );
+        }
         update_byte_sync_state(db, &file_path_str, file_modified, file_size)?;
         return Ok(SessionSyncResult::default());
     }
@@ -251,6 +253,8 @@ fn sync_single_grok_file(
 
     let mut result = SessionSyncResult::default();
     let mut deferred = false;
+    let mut read_error = false;
+    let mut has_incomplete_tail = false;
     let mut committed_offset = start_byte;
     let mut event_idx: i64 = 0;
 
@@ -265,6 +269,7 @@ fn sync_single_grok_file(
                     file_path.display(),
                     line_start
                 );
+                read_error = true;
                 break;
             }
         };
@@ -286,6 +291,7 @@ fn sync_single_grok_file(
 
         if !buf.ends_with(b"\n") {
             // 未写完的尾行：游标停在行首，下一轮补全后再解析。
+            has_incomplete_tail = true;
             break;
         }
 
@@ -336,19 +342,34 @@ fn sync_single_grok_file(
             // 前移时，幸存轮次仍命中原行不会双算；被移除轮次的行保留——
             // rewind 不退还已消耗的 token，留存即正确记账。若上游对同一
             // prompt_id 写多条 turn_completed（未观测到），UPSERT 取后者，
-            // 方向是少记不双算。prompt_id 缺失时回退 "idx{N}"（UUID 形态的
-            // prompt_id 不可能与之撞名）。增量续读时全局序号未知，改用行首
-            // 字节偏移，避免与文件前部的 idx 撞键。
+            // 方向是少记不双算。prompt_id 缺失时统一回退到 "off{line_start}"：
+            // 行首字节偏移在文件中完全稳定，无论从 byte 0 扫描还是从游标续读，
+            // 均生成完全一致的幂等键，避免了 idx{N} 随起点变化而漂移。
             let turn_key = if event.prompt_id.is_empty() {
-                if start_byte == 0 {
-                    format!("idx{}", event_idx - 1)
-                } else {
-                    format!("off{line_start}")
-                }
+                format!("off{line_start}")
             } else {
                 event.prompt_id.clone()
             };
             let request_id = format!("grok_session:{session_id}:{turn_key}:{model}");
+
+            if start_byte == 0 && event.prompt_id.is_empty() {
+                // 兼容老版本：老版本 start_byte == 0 全量扫描时生成 idx{N} 幂等键。
+                // 当老会话归档到 archived_sessions（游标按路径隔离，归档后触发全量重扫）
+                // 或库中已有历史 idx 记录时，新版本统一使用 off{offset}。
+                // 将既有 idx 行迁移至新的 off 键，避免两行共存导致用量与费用双算；
+                // 若新键行已先一步存在，则清理历史遗留行。
+                let legacy_id = format!("grok_session:{session_id}:idx{}:{model}", event_idx - 1);
+                let conn = lock_conn!(db.conn);
+                let _ = conn.execute(
+                    "UPDATE OR IGNORE proxy_request_logs SET request_id = ?1 WHERE request_id = ?2 AND data_source = 'grok_session'",
+                    rusqlite::params![&request_id, &legacy_id],
+                );
+                let _ = conn.execute(
+                    "DELETE FROM proxy_request_logs WHERE request_id = ?1 AND data_source = 'grok_session'",
+                    rusqlite::params![&legacy_id],
+                );
+            }
+
             match insert_grok_session_entry(
                 db,
                 &request_id,
@@ -370,9 +391,13 @@ fn sync_single_grok_file(
         committed_offset = line_start + consumed;
     }
 
-    if deferred {
-        result.deferred_files += 1;
-        // 推进字节游标、保留旧 mtime：文件不再增长时沉降窗到期仍能续读。
+    if deferred || read_error || has_incomplete_tail {
+        if deferred {
+            result.deferred_files += 1;
+        }
+        // 推进字节游标、保留旧 mtime：未完全沉降、发生读取错误或遇到未写完尾行时，
+        // 保持旧 mtime，以便下一轮（文件不再写入或错误恢复后）仍能续读，
+        // 避免因 file_modified <= last_modified 而永久跳过未读完的内容。
         update_byte_sync_state(db, &file_path_str, last_modified, committed_offset)?;
     } else {
         update_byte_sync_state(db, &file_path_str, file_modified, committed_offset)?;
@@ -1308,7 +1333,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_prompt_id_falls_back_to_index_key() -> Result<(), AppError> {
+    fn empty_prompt_id_falls_back_to_offset_key() -> Result<(), AppError> {
         let db = Database::memory()?;
         let temp = tempdir().expect("tempdir");
         let lines = vec![usage_event_line(
@@ -1328,7 +1353,168 @@ mod tests {
             1
         );
         let rows = query_rows(&db)?;
-        assert!(rows[0].0.contains(":idx0:"), "空 prompt_id 回退序号键");
+        assert!(rows[0].0.contains(":off0:"), "空 prompt_id 回退绝对偏移键");
+        Ok(())
+    }
+
+    #[test]
+    fn empty_prompt_id_key_is_identical_when_resumed_from_offset() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().expect("tempdir");
+        let line1 = usage_event_line(
+            OLD_EPOCH,
+            "",
+            &model_counters("grok-4.5-build", 100, 10, 0, 1),
+        );
+        let line2 = usage_event_line(
+            OLD_EPOCH + 10,
+            "",
+            &model_counters("grok-4.5-build", 200, 20, 0, 1),
+        );
+        let line2_offset = (line1.len() + 1) as i64;
+        let path = write_session_file(temp.path(), "sess-offset-stability", &[line1, line2]);
+
+        // 全量首次同步两行
+        assert_eq!(
+            sync_single_grok_file(
+                &db,
+                &path,
+                &crate::services::session_usage::load_sync_cursors(&db).unwrap()
+            )?
+            .imported,
+            2
+        );
+        let rows = query_rows(&db)?;
+        let expected_key_line2 = format!(":off{line2_offset}:");
+        assert!(
+            rows.iter().any(|r| r.0.contains(&expected_key_line2)),
+            "line2 应该以其在文件中的字节偏移命名: {expected_key_line2}"
+        );
+
+        // 如果光标原本就停在 line2_offset，续读单跑该行也必须生成完全相同的 request_id
+        update_byte_sync_state(&db, &path.to_string_lossy(), 0, line2_offset)?;
+        let cursors = crate::services::session_usage::load_sync_cursors(&db).unwrap();
+        let second_sync = sync_single_grok_file(&db, &path, &cursors)?;
+        // 因为 key 完全一致，UPSERT 判定为已存在，不会被重复导入
+        assert_eq!(second_sync.imported, 0);
+        assert_eq!(second_sync.skipped, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn incomplete_tail_preserves_last_modified_cursor() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("sess-tail").join("updates.jsonl");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+
+        // 写入一行完整事件（带换行符）加上一行未写完的尾部（缺少换行符）
+        let full_line = usage_event_line(
+            OLD_EPOCH,
+            "p1",
+            &model_counters("grok-4.5-build", 100, 10, 0, 1),
+        );
+        let incomplete_line =
+            r#"{"timestamp":"2026-07-20T13:26:24Z","method":"_x.ai/session/update""#;
+        std::fs::write(&path, format!("{full_line}\n{incomplete_line}")).unwrap();
+
+        let initial_cursors = std::collections::HashMap::new();
+        let res = sync_single_grok_file(&db, &path, &initial_cursors)?;
+        assert_eq!(res.imported, 1);
+
+        // 验证 session_log_sync 中记录的 last_modified 仍保留 0（未推进到文件的 mtime），
+        // 且 byte offset 正好停在第一行末尾（包含换行符）
+        let full_line_len = (full_line.len() + 1) as i64;
+        let cursors = crate::services::session_usage::load_sync_cursors(&db).unwrap();
+        let cursor = cursors.get(&path.to_string_lossy().to_string()).unwrap();
+        assert_eq!(cursor.last_modified, 0, "遇到未写完尾行时保留旧 mtime");
+        assert_eq!(cursor.last_byte_offset, Some(full_line_len));
+
+        // 补全第二行（带换行符）
+        let full_line2 = usage_event_line(
+            OLD_EPOCH + 10,
+            "p2",
+            &model_counters("grok-4.5-build", 200, 20, 0, 1),
+        );
+        std::fs::write(&path, format!("{full_line}\n{full_line2}\n")).unwrap();
+
+        // 次轮同步能够顺利续读第二行并推进 mtime
+        let res2 = sync_single_grok_file(&db, &path, &cursors)?;
+        assert_eq!(res2.imported, 1);
+        let rows = query_rows(&db)?;
+        assert_eq!(rows.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn upgrade_plus_archive_deduplicates_legacy_index_keys() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().expect("tempdir");
+
+        let session_id = "sess-archived-upgrade";
+        let line1 = usage_event_line(
+            OLD_EPOCH,
+            "",
+            &model_counters("grok-4.5-build", 100, 10, 0, 1),
+        );
+        let line2 = usage_event_line(
+            OLD_EPOCH + 10,
+            "",
+            &model_counters("grok-4.5-build", 200, 20, 0, 1),
+        );
+
+        // 模拟升级前：会话位于 sessions 目录，全量扫描时老版本落库了 idx0 / idx1 键
+        let sessions_dir = temp.path().join("sessions").join("cwd").join(session_id);
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let session_file = sessions_dir.join("updates.jsonl");
+        std::fs::write(&session_file, format!("{line1}\n{line2}\n")).unwrap();
+
+        // 人工插入模拟老版本（PR #9026 以前）全量扫描入库的两条记录
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, input_tokens, output_tokens,
+                    cache_read_tokens, latency_ms, status_code, session_id, created_at, data_source
+                ) VALUES
+                (?1, 'grok', 'grokbuild', 'grok-4.5-build', 100, 10, 0, 1000, 200, ?3, ?4, 'grok_session'),
+                (?2, 'grok', 'grokbuild', 'grok-4.5-build', 200, 20, 0, 1000, 200, ?3, ?5, 'grok_session')",
+                rusqlite::params![
+                    format!("grok_session:{session_id}:idx0:grok-4.5-build"),
+                    format!("grok_session:{session_id}:idx1:grok-4.5-build"),
+                    session_id,
+                    OLD_EPOCH,
+                    OLD_EPOCH + 10,
+                ],
+            )?;
+        }
+
+        // 模拟 Grok 将会话移动到 archived_sessions 目录（原游标不随路径迁移，触发新路径全量重扫）
+        let archived_dir = temp
+            .path()
+            .join("archived_sessions")
+            .join("cwd")
+            .join(session_id);
+        std::fs::create_dir_all(&archived_dir).unwrap();
+        let archived_file = archived_dir.join("updates.jsonl");
+        std::fs::rename(&session_file, &archived_file).unwrap();
+
+        // 在新代码下对归档文件进行扫描
+        let cursors = std::collections::HashMap::new();
+        let res = sync_single_grok_file(&db, &archived_file, &cursors)?;
+
+        // 应该全部命中旧记录并迁移为 off 键，不应该双算或产生额外导入
+        assert_eq!(res.imported, 0, "旧 idx 记录已存在，不应重复导入");
+        assert_eq!(res.skipped, 2, "2 条记录命中并跳过");
+
+        let rows = query_rows(&db)?;
+        assert_eq!(rows.len(), 2, "总记录数保持 2 条，未产生重复行");
+        assert!(
+            rows.iter().all(|r| r.0.contains(":off")),
+            "既有记录的 request_id 已迁移为 off 偏移键: {:?}",
+            rows
+        );
+
         Ok(())
     }
 
