@@ -90,6 +90,8 @@ export type InstallStatus = "installed" | "broken" | "notInstalled" | "unknown";
 export interface ToolInstall {
   status: InstallStatus;
   version?: string;
+  /** 发行版里的可执行文件路径 */
+  path?: string;
   error?: string;
   detectedAt: number;
   /** 发行版没在运行，用的是上次检测结果 */
@@ -160,8 +162,15 @@ export interface SyncResult {
 }
 
 export const appTargetsApi = {
-  async overview(probeStopped = false): Promise<AppTargetsOverview> {
-    return await invoke("get_app_targets_overview", { probeStopped });
+  /** `refreshInstalls`：运行中的发行版重新检测客户端安装（应用页「检查更新」） */
+  async overview(
+    probeStopped = false,
+    refreshInstalls = false,
+  ): Promise<AppTargetsOverview> {
+    return await invoke("get_app_targets_overview", {
+      probeStopped,
+      refreshInstalls,
+    });
   },
 
   async inspect(

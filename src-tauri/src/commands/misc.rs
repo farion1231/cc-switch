@@ -1375,25 +1375,94 @@ fn probe_local_version(
 }
 
 /// 某个 WSL 发行版里一个工具的安装情况（多环境写入用，见 `app_targets::installs`）。
+/// `path` 是 `command -v` 找到的可执行文件路径（和应用页 Windows 行显示的安装路径对应）。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub(crate) enum WslToolState {
-    Installed(String),
+    Installed {
+        version: String,
+        path: Option<String>,
+    },
     /// 找到了但 `--version` 跑不起来。
-    Broken(String),
+    Broken {
+        error: String,
+        path: Option<String>,
+    },
     NotInstalled,
     /// 探测本身失败（超时、shell 不可用等），不能当成「未安装」。
     Unknown(String),
 }
 
+/// 哨兵之后的输出拆成（`command -v` 的路径, 其余输出）。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn split_probe_path(output: &str) -> (Option<String>, String) {
+    let mut lines = output.lines();
+    match lines.next().map(str::trim) {
+        Some(first) if first.starts_with('/') => (
+            Some(first.to_string()),
+            lines.collect::<Vec<_>>().join("\n").trim().to_string(),
+        ),
+        _ => (None, output.trim().to_string()),
+    }
+}
+
+#[cfg(target_os = "windows")]
 pub(crate) fn wsl_tool_state(tool: &str, distro: &str) -> WslToolState {
+    use std::process::Command;
     if !VALID_TOOLS.contains(&tool) {
         return WslToolState::Unknown(format!("unsupported tool {tool}"));
     }
-    match try_get_version_wsl(tool, distro, None, None) {
-        ShellProbe::Found(version) => WslToolState::Installed(version),
-        ShellProbe::FoundButFailed(error) => WslToolState::Broken(error),
-        ShellProbe::NotFound(error) if error.ends_with(NOT_INSTALLED) => WslToolState::NotInstalled,
-        ShellProbe::NotFound(error) => WslToolState::Unknown(error),
+    if !is_valid_wsl_distro_name(distro) {
+        return WslToolState::Unknown(format!("invalid distro name: {distro}"));
     }
+    // 和版本检测同一套 shell 兜底（交互式初始化优先），多打一行 `command -v` 拿路径。
+    let payload = format!("echo {VERSION_PROBE_SENTINEL}; command -v {tool}; {tool} --version");
+    let cmd = wsl_auto_shell_command(&payload, None);
+    let output = Command::new("wsl.exe")
+        .args(["-d", distro, "--", "sh", "-c", &cmd])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+    let out = match output {
+        Ok(out) => out,
+        Err(error) => return WslToolState::Unknown(format!("exec failed: {error}")),
+    };
+    let stdout = decode_command_output(&out.stdout).trim().to_string();
+    let stderr = decode_command_output(&out.stderr).trim().to_string();
+    let (path, rest) = split_probe_path(after_version_sentinel(&stdout));
+    if out.status.success() {
+        let raw = if rest.is_empty() { &stderr } else { &rest };
+        if raw.is_empty() {
+            return if path.is_some() {
+                WslToolState::Installed {
+                    version: String::new(),
+                    path,
+                }
+            } else {
+                WslToolState::NotInstalled
+            };
+        }
+        return WslToolState::Installed {
+            version: extract_version(raw),
+            path,
+        };
+    }
+    let err = if stderr.is_empty() { rest } else { stderr };
+    let not_found = path.is_none()
+        && (err.is_empty()
+            || out.status.code() == Some(127)
+            || is_shell_command_missing(&err, tool));
+    if not_found {
+        WslToolState::NotInstalled
+    } else {
+        WslToolState::Broken {
+            error: last_lines(err.trim(), 4),
+            path,
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn wsl_tool_state(_tool: &str, _distro: &str) -> WslToolState {
+    WslToolState::Unknown("WSL check not supported on this platform".to_string())
 }
 
 /// 在指定的 WSL 发行版里安装 / 更新一个工具（应用页的 WSL 安装条目）。卸载要先预览计划，
@@ -7294,6 +7363,26 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
     };
 
     window.set_theme(tauri_theme).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod wsl_tool_state_tests {
+    use super::split_probe_path;
+
+    #[test]
+    fn probe_output_carries_the_install_path() {
+        assert_eq!(
+            split_probe_path("/usr/local/bin/codex\ncodex-cli 0.167.2"),
+            (
+                Some("/usr/local/bin/codex".to_string()),
+                "codex-cli 0.167.2".to_string()
+            )
+        );
+        assert_eq!(
+            split_probe_path("codex: not found"),
+            (None, "codex: not found".to_string())
+        );
+    }
 }
 
 #[cfg(test)]

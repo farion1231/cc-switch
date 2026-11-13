@@ -11,9 +11,12 @@ use crate::store::AppState;
 #[tauri::command]
 pub async fn get_app_targets_overview(
     probe_stopped: Option<bool>,
+    refresh_installs: Option<bool>,
 ) -> Result<service::AppTargetsOverview, String> {
     let probe = probe_stopped.unwrap_or(false);
-    tauri::async_runtime::spawn_blocking(move || service::overview(probe))
+    // 应用页「检查更新」：运行中的发行版重新探测安装情况（不启动停止的）。
+    let refresh = refresh_installs.unwrap_or(false);
+    tauri::async_runtime::spawn_blocking(move || service::overview(probe, refresh))
         .await
         .map_err(|e| e.to_string())
 }

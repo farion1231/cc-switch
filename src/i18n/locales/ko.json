@@ -5539,8 +5539,7 @@
       "versionUnknown": "설치됨 · 버전 알 수 없음",
       "notChecked": "확인 안 됨",
       "cached": "마지막 확인",
-      "stoppedCached": "중지됨 · 마지막 확인",
-      "detect": "WSL 다시 감지"
+      "stoppedCached": "중지됨 · 마지막 확인"
     }
   }
 }

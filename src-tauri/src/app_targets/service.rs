@@ -100,9 +100,10 @@ fn view(app: &AppType, inventory: &WslInventory) -> AppTargetsView {
 }
 
 /// 设置页概览。`probe_stopped` 为真时（用户点「重新检测」）连停止的发行版也启动探测。
-pub fn overview(probe_stopped: bool) -> AppTargetsOverview {
+pub fn overview(probe_stopped: bool, refresh_installs: bool) -> AppTargetsOverview {
     let inventory = wsl::inventory(probe_stopped);
-    let installs = super::installs::detect(&inventory, probe_stopped);
+    let installs =
+        super::installs::detect(&inventory, refresh_installs || probe_stopped, probe_stopped);
     let apps: Vec<AppTargetsView> = model::supported_apps()
         .iter()
         .map(|app| view(app, &inventory))

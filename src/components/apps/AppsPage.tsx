@@ -8,7 +8,7 @@ import {
   type CSSProperties,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   closestCenter,
   DndContext,
@@ -49,9 +49,16 @@ import type { VisibleApps } from "@/types";
 import { DEFAULT_VISIBLE_APPS, orderAppIds } from "@/config/appConfig";
 import { useSettings } from "@/hooks/useSettings";
 import { isUpdateAvailable } from "@/lib/version";
-import { WslInstallList } from "@/components/apps/WslInstallList";
-import { installedIn, isAppTargetApp } from "@/lib/api/appTargets";
-import { useAppTargetsOverview } from "@/hooks/useAppTargets";
+import { WslInstallRows } from "@/components/apps/WslInstallRows";
+import {
+  appTargetsApi,
+  installedIn,
+  isAppTargetApp,
+} from "@/lib/api/appTargets";
+import {
+  APP_TARGETS_QUERY_KEY,
+  useAppTargetsOverview,
+} from "@/hooks/useAppTargets";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -206,6 +213,19 @@ export function AppsPage() {
 
   // 各 WSL 发行版里四个客户端的安装情况（只有 Windows 上才有发行版）。
   const targetsOverview = useAppTargetsOverview();
+  const queryClient = useQueryClient();
+  // 「检查更新」顺带重新检测运行中的 WSL 发行版（不启动停止的），不另设按钮。
+  const refreshWslInstalls = async () => {
+    if (!targetsOverview.data?.inventory.hostWindows) return;
+    try {
+      queryClient.setQueryData(
+        APP_TARGETS_QUERY_KEY,
+        await appTargetsApi.overview(false, true),
+      );
+    } catch (error) {
+      console.warn("[AppsPage] Failed to refresh WSL installs", error);
+    }
+  };
 
   // 按「已安装 / 未安装 / 未检测」分组。Claude Desktop 没有命令可探，用后端按数据目录 / 应用包
   // 推断的结果。首次探测还没出结果时不分组，免得各行探完一个跳一个；之后重新检查时沿用上次
@@ -273,9 +293,10 @@ export function AppsPage() {
         })
         .filter((section) => section.rows.length > 0);
   // 行换组会重新挂载，操作列的量宽要跟着重新观察新节点
-  const sectionLayoutKey = sections
+  // WSL 子行的操作按钮也参与量宽：检测结果变了要重新观察
+  const sectionLayoutKey = `${sections
     .map((section) => `${section.key}:${section.rows.map(rowKey).join(",")}`)
-    .join("|");
+    .join("|")}#${targetsOverview.dataUpdatedAt}`;
 
   useLayoutEffect(() => {
     const table = tableRef.current;
@@ -480,7 +501,10 @@ export function AppsPage() {
               variant="neutral"
               size="regular"
               disabled={tools.isLoadingTools || tools.isAnyBusy}
-              onClick={() => void tools.checkForUpdates()}
+              onClick={() => {
+                void tools.checkForUpdates();
+                void refreshWslInstalls();
+              }}
             >
               <RefreshCw
                 className={cn(
@@ -696,6 +720,7 @@ function AppRow({
   visibility,
   menu,
   footer,
+  subRows,
 }: {
   app: AppId;
   name: React.ReactNode;
@@ -705,6 +730,8 @@ function AppRow({
   visibility: React.ReactNode;
   menu?: React.ReactNode;
   footer?: React.ReactNode;
+  /** 同一个应用的其他安装位置（各 WSL 发行版），和主行同一套列 */
+  subRows?: React.ReactNode;
 }) {
   const { t } = useTranslation();
   const dragHandle = useContext(DragHandleContext);
@@ -749,6 +776,7 @@ function AppRow({
         <div className="flex justify-end">{visibility}</div>
         <div className="flex justify-end">{menu}</div>
       </div>
+      {subRows}
       {footer && <div className="ms-9 mt-2">{footer}</div>}
     </div>
   );
@@ -996,25 +1024,25 @@ function ToolRow({
       </div>
     ) : null;
 
-  // 四个支持多环境的客户端：列出各 WSL 发行版里的安装（Windows 上才有）。
-  const wslInstalls = isAppTargetApp(tool) ? (
-    <WslInstallList
-      tool={tool}
-      appName={toolDisplayName(tool)}
-      latestVersion={info?.latest_version}
-    />
-  ) : null;
-
   const footer =
-    wslControls || errorLine || nodeLine || conflictList || wslInstalls ? (
+    wslControls || errorLine || nodeLine || conflictList ? (
       <div className="space-y-2">
         {errorLine}
         {nodeLine}
         {wslControls}
         {conflictList}
-        {wslInstalls}
       </div>
     ) : undefined;
+
+  // 四个支持多环境的客户端：各 WSL 发行版里的安装作为子行，和 Windows 那一处同一套列。
+  const subRows = isAppTargetApp(tool) ? (
+    <WslInstallRows
+      tool={tool}
+      appName={toolDisplayName(tool)}
+      latestVersion={info?.latest_version}
+      gridClassName={APP_ROW_GRID}
+    />
+  ) : null;
 
   return (
     <AppRow
@@ -1066,6 +1094,7 @@ function ToolRow({
         )
       }
       footer={footer}
+      subRows={subRows}
     />
   );
 }

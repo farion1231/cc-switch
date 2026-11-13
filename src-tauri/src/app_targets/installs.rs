@@ -34,6 +34,9 @@ pub struct ToolInstall {
     pub status: InstallStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    /// 发行版里 `command -v` 找到的可执行文件路径。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub detected_at: i64,
@@ -101,17 +104,25 @@ fn probe_distro(distro: &str) -> BTreeMap<String, ToolInstall> {
         .filter_map(|handle| handle.join().ok())
         .map(|(tool, state)| {
             use crate::commands::WslToolState;
-            let (status, version, error) = match state {
-                WslToolState::Installed(version) => (InstallStatus::Installed, Some(version), None),
-                WslToolState::Broken(error) => (InstallStatus::Broken, None, Some(error)),
-                WslToolState::NotInstalled => (InstallStatus::NotInstalled, None, None),
-                WslToolState::Unknown(error) => (InstallStatus::Unknown, None, Some(error)),
+            let (status, version, path, error) = match state {
+                WslToolState::Installed { version, path } => (
+                    InstallStatus::Installed,
+                    Some(version).filter(|v| !v.is_empty()),
+                    path,
+                    None,
+                ),
+                WslToolState::Broken { error, path } => {
+                    (InstallStatus::Broken, None, path, Some(error))
+                }
+                WslToolState::NotInstalled => (InstallStatus::NotInstalled, None, None, None),
+                WslToolState::Unknown(error) => (InstallStatus::Unknown, None, None, Some(error)),
             };
             (
                 tool,
                 ToolInstall {
                     status,
                     version,
+                    path,
                     error: error.map(|e| e.chars().take(300).collect()),
                     detected_at: now,
                     cached: false,
@@ -121,9 +132,9 @@ fn probe_distro(distro: &str) -> BTreeMap<String, ToolInstall> {
         .collect()
 }
 
-/// 当前的安装情况。运行中的发行版在缓存过期（或 `force`）时重新探测；停止的发行版只在
-/// `force` 时探测（会启动它），否则用上次结果并标 `cached`。
-pub fn detect(inventory: &WslInventory, force: bool) -> Installs {
+/// 当前的安装情况。运行中的发行版在缓存过期或 `refresh` 时重新探测（应用页「检查更新」）；
+/// 停止的发行版只在 `start_stopped` 时探测（会启动它），否则用上次结果并标 `cached`。
+pub fn detect(inventory: &WslInventory, refresh: bool, start_stopped: bool) -> Installs {
     if !inventory.host_windows {
         return Installs::new();
     }
@@ -143,7 +154,7 @@ pub fn detect(inventory: &WslInventory, force: bool) -> Installs {
                     tools.len() == model::supported_apps().len()
                         && tools.values().all(|t| now - t.detected_at < MAX_AGE_SECS)
                 });
-            force || (env.running && !fresh)
+            start_stopped || (env.running && (refresh || !fresh))
         })
         .map(|env| {
             let distro = env.distro.clone();
@@ -208,6 +219,7 @@ mod tests {
         ToolInstall {
             status,
             version: None,
+            path: None,
             error: None,
             detected_at: 0,
             cached: false,
@@ -241,6 +253,6 @@ mod tests {
             distros: Vec::new(),
             error: None,
         };
-        assert!(detect(&inventory, true).is_empty());
+        assert!(detect(&inventory, true, true).is_empty());
     }
 }

@@ -5539,8 +5539,7 @@
       "versionUnknown": "Kurulu · sürüm bilinmiyor",
       "notChecked": "Kontrol edilmedi",
       "cached": "son kontrol",
-      "stoppedCached": "durdu · son kontrol",
-      "detect": "WSL'yi yeniden algıla"
+      "stoppedCached": "durdu · son kontrol"
     }
   }
 }

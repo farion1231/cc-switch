@@ -704,40 +704,47 @@ describe("AppsPage concurrent CLI upgrades", () => {
     missing.add("codex");
     missing.add("gemini");
     missing.add("opencode");
+    const refreshCalls: unknown[] = [];
     server.use(
-      http.post("http://tauri.local/get_app_targets_overview", () =>
-        HttpResponse.json({
-          inventory: {
-            hostWindows: true,
-            wslAvailable: true,
-            distros: [
-              {
-                distro: "Alpine",
-                available: true,
-                running: true,
-                cached: false,
-              },
-            ],
-          },
-          installs: {
-            Alpine: {
-              codex: {
-                status: "installed",
-                version: "0.167.2",
-                detectedAt: 1,
-                cached: false,
-              },
-              gemini: { status: "unknown", detectedAt: 1, cached: false },
-              opencode: {
-                status: "notInstalled",
-                detectedAt: 1,
-                cached: false,
+      http.post(
+        "http://tauri.local/get_app_targets_overview",
+        async ({ request }) => {
+          const body = (await request.json()) as { refreshInstalls?: boolean };
+          refreshCalls.push(body.refreshInstalls);
+          return HttpResponse.json({
+            inventory: {
+              hostWindows: true,
+              wslAvailable: true,
+              distros: [
+                {
+                  distro: "Alpine",
+                  available: true,
+                  running: true,
+                  cached: false,
+                },
+              ],
+            },
+            installs: {
+              Alpine: {
+                codex: {
+                  status: "installed",
+                  version: "0.167.2",
+                  path: "/usr/local/bin/codex",
+                  detectedAt: 1,
+                  cached: false,
+                },
+                gemini: { status: "unknown", detectedAt: 1, cached: false },
+                opencode: {
+                  status: "notInstalled",
+                  detectedAt: 1,
+                  cached: false,
+                },
               },
             },
-          },
-          multiEnv: true,
-          apps: [],
-        }),
+            multiEnv: true,
+            apps: [],
+          });
+        },
       ),
     );
     await renderApps();
@@ -746,7 +753,26 @@ describe("AppsPage concurrent CLI upgrades", () => {
     );
     expect(rowApps("appsPage.sectionUnchecked")).toEqual(["gemini"]);
     expect(rowApps("appsPage.sectionNotInstalled")).toContain("opencode");
-    expect(card("Codex").getByText("0.167.2")).toBeInTheDocument();
+    // WSL 条目是应用行里的子行：环境标签 + 路径 / 版本，和 Windows 那一处同一套列
+    const wslRow = card("Codex")
+      .getByText("WSL · Alpine")
+      .closest("[data-wsl-install]") as HTMLElement;
+    expect(
+      within(wslRow).getByText("/usr/local/bin/codex"),
+    ).toBeInTheDocument();
+    expect(within(wslRow).getByText("0.167.2")).toBeInTheDocument();
+    expect(
+      within(
+        card("OpenCode")
+          .getByText("WSL · Alpine")
+          .closest("[data-wsl-install]") as HTMLElement,
+      ).getByRole("button", { name: /settings\.toolInstall/ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("appTargets.installs.detect")).toBeNull();
+
+    // 「检查更新」顺带重新检测运行中的 WSL，不另设按钮
+    fireEvent.click(screen.getByText("appsPage.checkUpdates"));
+    await waitFor(() => expect(refreshCalls).toContainEqual(true));
   });
 
   it("groups Claude Desktop by whether it is installed, not whether it is connected", async () => {
