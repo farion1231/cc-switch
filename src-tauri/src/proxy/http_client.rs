@@ -253,6 +253,21 @@ pub fn no_redirect() -> Result<Client, String> {
     )
 }
 
+/// A one-off no-redirect client for an explicit proxy (`None` follows the system
+/// proxy), leaving the saved global proxy untouched.
+pub(crate) fn no_redirect_with_proxy(
+    proxy_url: Option<&str>,
+    timeout: Duration,
+) -> Result<Client, String> {
+    build_client_from(
+        base_builder()
+            .timeout(timeout)
+            .connect_timeout(timeout.min(Duration::from_secs(5)))
+            .redirect(reqwest::redirect::Policy::none()),
+        proxy_url,
+    )
+}
+
 /// 不跟随重定向、按目标地址选代理的客户端：本机地址直连，其余同 [`no_redirect`]。
 pub fn no_redirect_for_url(url: &str) -> Result<Client, String> {
     if is_loopback_url(url) {
