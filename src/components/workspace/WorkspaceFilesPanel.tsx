@@ -57,6 +57,7 @@ const WorkspaceFilesPanel: React.FC = () => {
   const [editingFile, setEditingFile] = useState<string | null>(null);
   const [fileExists, setFileExists] = useState<Record<string, boolean>>({});
   const [showDailyMemory, setShowDailyMemory] = useState(false);
+  const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
 
   const checkFileExistence = async () => {
     const results: Record<string, boolean> = {};
@@ -77,6 +78,22 @@ const WorkspaceFilesPanel: React.FC = () => {
     void checkFileExistence();
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    void workspaceApi
+      .getRootDirectory()
+      .then((root) => {
+        if (!cancelled) setWorkspaceRoot(root);
+      })
+      .catch((error) => {
+        if (!cancelled) setWorkspaceRoot(null);
+        console.error("Failed to resolve workspace directory:", error);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const handleEditorClose = () => {
     setEditingFile(null);
     // Re-check file existence after closing editor (file may have been created)
@@ -90,7 +107,7 @@ const WorkspaceFilesPanel: React.FC = () => {
           className="text-sm text-fg-2 mb-6 cursor-pointer hover:text-fg-1 transition-colors inline-flex items-center gap-1"
           onClick={() => workspaceApi.openDirectory("workspace")}
         >
-          ~/.openclaw/workspace/
+          {workspaceRoot ? `${workspaceRoot}/` : "…"}
           <FolderOpen className="w-3.5 h-3.5" />
         </p>
       </HoverTip>
