@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   runningWslDistros,
+  isTargetRunning,
   visibleTargetKeys,
   wslCandidates,
   type AppTargetsConfig,
@@ -82,6 +83,40 @@ describe("WSL visibility", () => {
     const data = overview(["ubuntu"]);
     data.inventory.wslAvailable = false;
     expect(visibleTargetKeys(config, data.inventory)).toEqual(["windows"]);
-    expect(wslCandidates(config, undefined, "claude")).toEqual([]);
+    expect(wslCandidates(config, data, "claude")).toEqual([]);
+  });
+
+  it.each(["macOS", "Linux"])(
+    "preserves saved targets and primary-directory visibility on %s",
+    () => {
+      const data = overview([]);
+      data.inventory = { hostWindows: false, wslAvailable: false, distros: [] };
+      const saved: AppTargetsConfig = {
+        ...config,
+        primary: "wsl:Ubuntu",
+        windows: { enabled: false },
+      };
+      expect(isTargetRunning(saved.primary, data.inventory)).toBe(true);
+      expect(visibleTargetKeys(saved, data.inventory)).toEqual([
+        "wsl:Ubuntu",
+        "wsl:Debian",
+      ]);
+      expect(wslCandidates(saved, data, "claude")).toEqual([
+        "Ubuntu",
+        "Debian",
+      ]);
+    },
+  );
+
+  it("does not apply a Windows-only filter before the host platform is known", () => {
+    expect(visibleTargetKeys(config)).toEqual([
+      "windows",
+      "wsl:Ubuntu",
+      "wsl:Debian",
+    ]);
+    expect(wslCandidates(config, undefined, "claude")).toEqual([
+      "Ubuntu",
+      "Debian",
+    ]);
   });
 });

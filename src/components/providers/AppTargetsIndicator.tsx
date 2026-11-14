@@ -56,7 +56,11 @@ export function AppTargetsIndicator({
   if (isWindowsOnly(view.config)) return null;
 
   const enabled = visibleTargetKeys(view.config, overview.data?.inventory);
-  if (!enabled.some((key) => key !== "windows")) return null;
+  if (
+    overview.data?.inventory.hostWindows &&
+    !enabled.some((key) => key !== "windows")
+  )
+    return null;
   const followers = enabled.filter(
     (key) => !sameTarget(key, view.config.primary),
   );

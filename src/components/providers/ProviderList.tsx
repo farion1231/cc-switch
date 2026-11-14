@@ -60,6 +60,7 @@ import { ProviderEnvSwitches } from "@/components/providers/ProviderEnvSwitches"
 import { useAppTargetsOverview } from "@/hooks/useAppTargets";
 import {
   isAppTargetApp,
+  isWindowsOnly,
   wslCandidates,
   visibleTargetKeys,
 } from "@/lib/api/appTargets";
@@ -161,11 +162,13 @@ export function ProviderList({
     switchMode?.view === "direct" &&
     targetView &&
     ((targetView.source === "saved" &&
-      (!targetView.config.windows.enabled ||
-        visibleTargetKeys(
-          targetView.config,
-          targetsOverview.data?.inventory,
-        ).some((key) => key !== "windows"))) ||
+      (targetsOverview.data?.inventory.hostWindows
+        ? !targetView.config.windows.enabled ||
+          visibleTargetKeys(
+            targetView.config,
+            targetsOverview.data?.inventory,
+          ).some((key) => key !== "windows")
+        : !isWindowsOnly(targetView.config))) ||
       envCandidates.length > 0)
       ? targetView
       : undefined;

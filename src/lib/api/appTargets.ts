@@ -266,7 +266,7 @@ export const enabledTargetKeys = (config: AppTargetsConfig): TargetKey[] => [
   ...config.wsl.filter((t) => t.enabled).map((t) => wslTargetKey(t.distro)),
 ];
 
-/** 页面只展示当前运行中的 WSL；保存的目标配置保持完整。 */
+/** Windows 页面只展示当前运行中的 WSL；保存的目标配置保持完整。 */
 export const runningWslDistros = (
   inventory?: WslInventory,
 ): WslEnvironment[] =>
@@ -275,6 +275,8 @@ export const runningWslDistros = (
     : [];
 
 export const isTargetRunning = (key: TargetKey, inventory?: WslInventory) => {
+  // 运行状态筛选仅适用于 Windows；其他平台和尚未确定平台时沿用原显示。
+  if (inventory?.hostWindows !== true) return true;
   const distro = distroOf(key);
   return (
     !distro ||

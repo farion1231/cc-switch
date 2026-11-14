@@ -106,7 +106,9 @@ fn view(app: &AppType, inventory: &WslInventory) -> AppTargetsView {
 pub fn overview(probe_stopped: bool, refresh_installs: bool) -> AppTargetsOverview {
     let mut inventory = wsl::inventory(probe_stopped);
     // 缓存只供恢复配置使用；概览不能把已经关闭的发行版当成当前环境。
-    inventory.distros.retain(|env| env.available && env.running);
+    if inventory.host_windows {
+        inventory.distros.retain(|env| env.available && env.running);
+    }
     let installs =
         super::installs::detect(&inventory, refresh_installs || probe_stopped, probe_stopped);
     let apps: Vec<AppTargetsView> = model::supported_apps()
@@ -940,7 +942,7 @@ pub fn wsl_route_info(state: &AppState, probe: bool) -> Vec<WslRouteInfo> {
     inventory
         .distros
         .iter()
-        .filter(|env| env.available && env.running)
+        .filter(|env| !inventory.host_windows || (env.available && env.running))
         .map(|env| {
             let linux = if probe {
                 wsl::probe(&env.distro).unwrap_or_else(|_| env.env.clone())

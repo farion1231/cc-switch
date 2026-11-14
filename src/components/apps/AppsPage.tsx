@@ -877,11 +877,12 @@ function ToolRow({
   const envBadge =
     info?.env_type === "wsl" &&
     ENV_BADGE_CONFIG.wsl &&
-    runningWslDistros(wslOverview.data?.inventory).some(
-      (env) =>
-        !info.wsl_distro ||
-        env.distro.toLowerCase() === info.wsl_distro.toLowerCase(),
-    )
+    (!wslOverview.data?.inventory.hostWindows ||
+      runningWslDistros(wslOverview.data?.inventory).some(
+        (env) =>
+          !info.wsl_distro ||
+          env.distro.toLowerCase() === info.wsl_distro.toLowerCase(),
+      ))
       ? `${t(ENV_BADGE_CONFIG.wsl.labelKey)}${info.wsl_distro ? ` · ${info.wsl_distro}` : ""}`
       : null;
 
