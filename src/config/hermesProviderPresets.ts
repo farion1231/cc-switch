@@ -8,8 +8,9 @@ import type { PresetFamilyFields } from "./presetFamilies";
 
 /**
  * Marker field and source values that `hermes_config.rs::get_providers`
- * injects onto each settings payload. Kept in sync with the Rust constants
- * `PROVIDER_SOURCE_FIELD` / `PROVIDER_SOURCE_CUSTOM_LIST` / `PROVIDER_SOURCE_DICT`.
+ * injects onto each settings payload. Same values as the Rust constants
+ * `PROVIDER_SOURCE_FIELD` / `PROVIDER_SOURCE_CUSTOM_LIST` / `PROVIDER_SOURCE_DICT`;
+ * tests/config/backendConstants.test.ts checks both.
  */
 export const HERMES_PROVIDER_SOURCE_FIELD = "_cc_source";
 export const HERMES_PROVIDER_SOURCE_CUSTOM_LIST = "custom_providers";
