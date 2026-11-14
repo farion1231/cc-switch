@@ -5433,5 +5433,23 @@
     "later": "後で",
     "installNow": "インストールして再起動",
     "installFailed": "アップデートのインストールに失敗しました"
+  },
+  "customApps": {
+    "title": "カスタムアプリ",
+    "addApp": "カスタムアプリを追加",
+    "appName": "アプリ名",
+    "endpoint": "ローカル API のベース URL",
+    "token": "クライアントトークン（今すぐコピー）",
+    "replaceToken": "新しいトークンを生成",
+    "confirmReplaceToken": "新しいトークンを生成すると、現在のトークンは無効になります。続行しますか？",
+    "startProxy": "ローカルルーティングを開始",
+    "loopbackRequired": "カスタムアプリにはループバックアドレスが必要です。ローカルルーティングの設定でアドレスを変更してください。",
+    "providerName": "プロバイダー名",
+    "baseUrl": "プロバイダー API のベース URL",
+    "model": "モデル ID",
+    "apiKey": "API キー（任意）",
+    "addProvider": "プロバイダーを追加",
+    "inUse": "使用中",
+    "switch": "切り替え"
   }
 }

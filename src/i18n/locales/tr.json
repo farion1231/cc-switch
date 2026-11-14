@@ -5433,5 +5433,23 @@
     "later": "Daha sonra",
     "installNow": "Kur ve yeniden başlat",
     "installFailed": "Güncelleme kurulamadı"
+  },
+  "customApps": {
+    "title": "Özel uygulamalar",
+    "addApp": "Özel uygulama ekle",
+    "appName": "Uygulama adı",
+    "endpoint": "Yerel API temel URL’si",
+    "token": "İstemci belirteci (şimdi kopyalayın)",
+    "replaceToken": "Yeni belirteç oluştur",
+    "confirmReplaceToken": "Yeni belirteç mevcut belirteci geçersiz kılacak. Devam edilsin mi?",
+    "startProxy": "Yerel yönlendirmeyi başlat",
+    "loopbackRequired": "Özel uygulamalar bir geri döngü adresi gerektirir. Adresi yerel yönlendirme ayarlarından değiştirin.",
+    "providerName": "Sağlayıcı adı",
+    "baseUrl": "Sağlayıcı API temel URL’si",
+    "model": "Model kimliği",
+    "apiKey": "API anahtarı (isteğe bağlı)",
+    "addProvider": "Sağlayıcı ekle",
+    "inUse": "Kullanımda",
+    "switch": "Geçiş yap"
   }
 }

@@ -1,3 +1,4 @@
+import { useCustomApps } from "@/lib/api/customApps";
 import { useRef, type ComponentType } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
@@ -53,6 +54,8 @@ type IconComponent = ComponentType<{ className?: string }>;
 
 interface SidebarProps {
   activeApp: AppId;
+  customAppId?: string | null;
+  onSelectCustomApp?: (id: string) => void;
   view: View;
   visibleApps: VisibleApps;
   settingsSection: SettingsSection;
@@ -210,6 +213,8 @@ function SidebarTopBar({
 function MainDirectory({
   collapsed,
   activeApp,
+  customAppId,
+  onSelectCustomApp,
   view,
   visibleApps,
   onSelectApp,
@@ -265,6 +270,7 @@ function MainDirectory({
       : undefined;
   const todayTrailing = todayValues.length > 1 ? todayValues : todayText;
 
+  const { data: customApps } = useCustomApps();
   const globals: {
     page: GlobalPage;
     label: string;
@@ -317,6 +323,16 @@ function MainDirectory({
               selected={onAppPage && activeApp === app}
               status={appStatus(app)}
               onSelect={() => onSelectApp(app)}
+            />
+          ))}
+          {customApps?.map((app) => (
+            <NavItem
+              key={app.id}
+              collapsed={collapsed}
+              selected={view === "customApps" && customAppId === app.id}
+              icon={LayoutGrid}
+              label={app.name}
+              onClick={() => onSelectCustomApp?.(app.id)}
             />
           ))}
         </div>

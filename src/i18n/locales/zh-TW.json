@@ -5433,5 +5433,23 @@
     "later": "稍後",
     "installNow": "安裝並重新啟動",
     "installFailed": "安裝更新失敗"
+  },
+  "customApps": {
+    "title": "自訂應用程式",
+    "addApp": "新增自訂應用程式",
+    "appName": "應用程式名稱",
+    "endpoint": "本機 API 基礎網址",
+    "token": "用戶端權杖（請立即複製）",
+    "replaceToken": "產生新權杖",
+    "confirmReplaceToken": "產生新權杖會使目前的權杖失效。是否繼續？",
+    "startProxy": "啟動本機路由",
+    "loopbackRequired": "自訂應用程式需要回送位址。請在本機路由設定中變更位址。",
+    "providerName": "供應商名稱",
+    "baseUrl": "供應商 API 基礎網址",
+    "model": "模型 ID",
+    "apiKey": "API 金鑰（選填）",
+    "addProvider": "新增供應商",
+    "inUse": "使用中",
+    "switch": "切換"
   }
 }
