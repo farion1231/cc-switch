@@ -2,8 +2,18 @@ import { fireEvent, screen } from "@testing-library/react";
 import { renderWithQueryClient as render } from "../utils/testQueryClient";
 import userEvent from "@testing-library/user-event";
 import { parse as parseToml } from "smol-toml";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GrokBuildProviderForm } from "@/components/providers/forms/GrokBuildProviderForm";
+
+const mockUseXaiOauth = vi.hoisted(() => vi.fn());
+
+vi.mock("@/components/providers/forms/hooks/useXaiOauth", () => ({
+  useXaiOauth: mockUseXaiOauth,
+}));
+
+vi.mock("@/components/providers/forms/hooks/useManagedAccountUsers", () => ({
+  useManagedAccountUsers: () => () => [],
+}));
 
 vi.mock("@/components/JsonEditor", () => ({
   default: ({
@@ -22,6 +32,34 @@ vi.mock("@/components/JsonEditor", () => ({
 }));
 
 describe("GrokBuildProviderForm", () => {
+  beforeEach(() => {
+    mockUseXaiOauth.mockReturnValue({
+      accounts: [
+        {
+          id: "xai-account-1",
+          login: "user1@x.ai",
+          avatar_url: null,
+          authenticated_at: 1,
+          github_domain: "x.ai",
+          requires_reauth: false,
+        },
+        {
+          id: "xai-account-2",
+          login: "user2@x.ai",
+          avatar_url: null,
+          authenticated_at: 2,
+          github_domain: "x.ai",
+          requires_reauth: false,
+        },
+      ],
+      defaultAccountId: "xai-account-1",
+      hasAnyAccount: true,
+      isAuthenticated: true,
+      isStatusSuccess: true,
+      pollingState: "idle",
+    });
+  });
+
   it("offers curated Grok Build presets and applies one", async () => {
     const user = userEvent.setup();
     const { container } = render(
@@ -323,5 +361,72 @@ context_window = 500000
     expect(
       screen.getByText("不要超过模型或网关的真实输出上限，否则会返回 400。"),
     ).toBeInTheDocument();
+  });
+
+  it("renders XaiOAuthSection when official preset is selected and submits with authBinding", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(
+      <GrokBuildProviderForm
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+      />,
+    );
+
+    // Click Grok Official preset
+    await user.click(screen.getByRole("button", { name: /Grok Official/ }));
+
+    // XaiOAuthSection should be rendered showing the xAI accounts
+    expect(screen.getAllByText("user1@x.ai").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("user2@x.ai").length).toBeGreaterThanOrEqual(1);
+
+    // Save
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const submitted = onSubmit.mock.calls[0][0];
+    expect(submitted.presetCategory).toBe("official");
+    expect(submitted.meta.authBinding).toBeUndefined();
+  });
+
+  it("loads existing authBinding when editing an official Grok provider", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(
+      <GrokBuildProviderForm
+        providerId="grokbuild-official"
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+        initialData={{
+          name: "My Official Grok",
+          category: "official",
+          settingsConfig: { config: "" },
+          meta: {
+            authBinding: {
+              source: "managed_account",
+              authProvider: "xai_oauth",
+              accountId: "xai-account-1",
+            },
+          },
+        }}
+      />,
+    );
+
+    // Verify account 1 is rendered
+    expect(screen.getAllByText("user1@x.ai").length).toBeGreaterThanOrEqual(1);
+
+    // Save directly
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const submitted = onSubmit.mock.calls[0][0];
+    expect(submitted.presetCategory).toBe("official");
+    expect(submitted.meta.authBinding).toEqual({
+      source: "managed_account",
+      authProvider: "xai_oauth",
+      accountId: "xai-account-1",
+    });
   });
 });

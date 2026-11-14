@@ -55,13 +55,31 @@ export const useAddProviderMutation = (appId: AppId) => {
       }
 
       if (appId === "grokbuild" && ensureGrokBuildOfficialSeed) {
-        await providersApi.ensureGrokBuildOfficialProvider();
-        const providers = await providersApi.getAll(appId);
-        const officialProvider = providers[GROKBUILD_OFFICIAL_PROVIDER_ID];
-        if (!officialProvider) {
-          throw new Error("Grok Build official provider was not created");
+        const existingProviders = await providersApi.getAll(appId);
+        if (!existingProviders[GROKBUILD_OFFICIAL_PROVIDER_ID]) {
+          await providersApi.ensureGrokBuildOfficialProvider();
+          const providers = await providersApi.getAll(appId);
+          const officialProvider = providers[GROKBUILD_OFFICIAL_PROVIDER_ID];
+          if (officialProvider) {
+            if (
+              (providerInput.name &&
+                providerInput.name !== officialProvider.name) ||
+              providerInput.meta ||
+              providerInput.websiteUrl
+            ) {
+              const updated = {
+                ...officialProvider,
+                name: providerInput.name || officialProvider.name,
+                meta: providerInput.meta ?? officialProvider.meta,
+                websiteUrl:
+                  providerInput.websiteUrl ?? officialProvider.websiteUrl,
+              };
+              await providersApi.update(updated, appId);
+              return updated;
+            }
+            return officialProvider;
+          }
         }
-        return officialProvider;
       }
 
       let id: string;

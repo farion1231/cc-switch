@@ -73,6 +73,11 @@ impl Provider {
 
     pub fn is_xai_oauth(&self) -> bool {
         self.provider_type() == Some("xai_oauth")
+            || self
+                .meta
+                .as_ref()
+                .and_then(|m| m.auth_binding.as_ref())
+                .is_some_and(|b| b.auth_provider.as_deref() == Some("xai_oauth"))
     }
 
     pub fn is_github_copilot(&self) -> bool {

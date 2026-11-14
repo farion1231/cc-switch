@@ -77,26 +77,31 @@ impl GrokProjection {
     }
 
     /// 代理契约：路由供应商的表，地址、Key、接口类型换成本地代理的。`env_key` 原样保留：
-    /// Grok 优先用表里的 `api_key`。官方卡没有模型表，不能作为路由（xAI 登录不经本地
-    /// 代理）。
+    /// Grok 优先用表里的 `api_key`。官方卡生成默认模型表指向本地代理。
     pub fn proxy_contract(
         route: &Self,
         proxy_base_url: &str,
         placeholder: &str,
     ) -> Result<Self, AppError> {
-        let (name, table) = route.table.as_ref().ok_or_else(|| {
-            AppError::localized(
-                "provider.grokbuild.proxy.official",
-                "Grok Build 官方账号不能经本地路由使用",
-                "The official Grok Build account cannot be used through local routing",
-            )
-        })?;
-        let mut table = table.clone();
+        let (name, table) = match &route.table {
+            Some((name, table)) => (name.clone(), table.clone()),
+            None => {
+                let mut default_table = toml_edit::Table::new();
+                default_table.insert("model", toml_edit::value(crate::grok_config::DEFAULT_MODEL));
+                default_table.insert("name", toml_edit::value("Grok Official (Proxy)"));
+                default_table.insert(
+                    "context_window",
+                    toml_edit::value(crate::grok_config::DEFAULT_CONTEXT_WINDOW),
+                );
+                ("grok-official".to_string(), default_table)
+            }
+        };
+        let mut table = table;
         table.insert("base_url", toml_edit::value(proxy_base_url));
         table.insert("api_key", toml_edit::value(placeholder));
         table.insert("api_backend", toml_edit::value(PROXY_API_BACKEND));
         Ok(Self {
-            table: Some((name.clone(), table)),
+            table: Some((name, table)),
         })
     }
 
@@ -587,6 +592,26 @@ api_key = "PROXY_MANAGED"
         assert_eq!(name, "b");
         assert_eq!(table["api_key"].as_str(), Some(PLACEHOLDER));
         assert_eq!(table["env_key"].as_str(), Some("B_KEY"));
+        assert_eq!(table["api_backend"].as_str(), Some("responses"));
+    }
+
+    #[test]
+    fn proxy_contract_supports_official_grok_by_generating_default_proxy_table() {
+        let official = GrokProjection::of(&serde_json::json!({ "config": "" }), true).unwrap();
+        let contract = GrokProjection::proxy_contract(
+            &official,
+            "http://127.0.0.1:15721/grokbuild/v1",
+            PLACEHOLDER,
+        )
+        .unwrap();
+        let (name, table) = contract.table.unwrap();
+        assert_eq!(name, "grok-official");
+        assert_eq!(table["model"].as_str(), Some("grok-4.7"));
+        assert_eq!(
+            table["base_url"].as_str(),
+            Some("http://127.0.0.1:15721/grokbuild/v1")
+        );
+        assert_eq!(table["api_key"].as_str(), Some(PLACEHOLDER));
         assert_eq!(table["api_backend"].as_str(), Some("responses"));
     }
 

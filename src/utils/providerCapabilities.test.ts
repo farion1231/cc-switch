@@ -128,6 +128,28 @@ describe("providerNeedsRouting", () => {
     expect(supportsOfficialProxyTakeover("codex", native)).toBe(true);
     expect(supportsOfficialProxyTakeover("codex", managed)).toBe(true);
     expect(supportsOfficialProxyTakeover("codex", unbound)).toBe(true);
+
+    const grokOfficialBound = mkProvider({
+      id: "grokbuild-official",
+      category: "official",
+      meta: {
+        authBinding: {
+          source: "managed_account",
+          authProvider: "xai_oauth",
+          accountId: "xai-123",
+        },
+      },
+    });
+    const grokOfficialUnbound = mkProvider({
+      id: "grokbuild-official",
+      category: "official",
+    });
+    expect(supportsOfficialProxyTakeover("grokbuild", grokOfficialBound)).toBe(
+      true,
+    );
+    expect(
+      supportsOfficialProxyTakeover("grokbuild", grokOfficialUnbound),
+    ).toBe(false);
   });
 
   it("does not infer Codex login identity from a stale Official category", () => {

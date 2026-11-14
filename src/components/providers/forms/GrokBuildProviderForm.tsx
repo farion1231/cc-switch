@@ -54,6 +54,8 @@ import {
 import { resolveProviderIcon } from "@/utils/providerIcon";
 import { useDraftEditorProjection } from "./hooks/useDraftEditorProjection";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
+import { XaiOAuthSection } from "./XaiOAuthSection";
+import { resolveManagedAccountId } from "@/lib/authBinding";
 
 type GrokBuildProviderFormProps = Omit<ProviderFormProps, "appId">;
 
@@ -98,6 +100,9 @@ export function GrokBuildProviderForm({
   const [category, setCategory] = useState<ProviderCategory | undefined>(
     initialData?.category ?? "custom",
   );
+  const [selectedXaiAccountId, setSelectedXaiAccountId] = useState<
+    string | null
+  >(() => resolveManagedAccountId(initialData?.meta, "xai_oauth") ?? null);
   const [isPartner, setIsPartner] = useState(
     initialData?.meta?.isPartner ?? false,
   );
@@ -331,6 +336,20 @@ export function GrokBuildProviderForm({
     // 官方条目：config 快照原样透传（新增时为空），不做自定义模型字段校验，
     // 也不重建 config —— 新增走 ensure seed，编辑只允许改名称/图标等元信息。
     if (category === "official") {
+      const initialMeta = { ...(initialData?.meta ?? {}) };
+      const meta: ProviderMeta = {
+        ...initialMeta,
+        authBinding: selectedXaiAccountId
+          ? {
+              source: "managed_account",
+              authProvider: "xai_oauth",
+              accountId: selectedXaiAccountId,
+            }
+          : undefined,
+      };
+      if (!selectedXaiAccountId) {
+        delete meta.authBinding;
+      }
       await onSubmit({
         ...values,
         name,
@@ -340,7 +359,7 @@ export function GrokBuildProviderForm({
         presetId: selectedPresetId ?? undefined,
         presetCategory: "official",
         isPartner: false,
-        meta: initialData?.meta,
+        meta,
       });
       return;
     }
@@ -463,6 +482,16 @@ export function GrokBuildProviderForm({
         )}
 
         <BasicFormFields form={form} />
+
+        {category === "official" && (
+          <div className="space-y-4 rounded-lg border bg-surface p-4">
+            <XaiOAuthSection
+              mode="select"
+              selectedAccountId={selectedXaiAccountId}
+              onAccountSelect={setSelectedXaiAccountId}
+            />
+          </div>
+        )}
 
         {category !== "official" && (
           <>
