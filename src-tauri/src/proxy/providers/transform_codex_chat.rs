@@ -268,14 +268,22 @@ pub(crate) fn build_codex_tool_context_from_request(body: &Value) -> CodexToolCo
 /// Convert an OpenAI Responses request into an OpenAI Chat Completions request.
 #[allow(dead_code)]
 pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
-    responses_to_chat_completions_with_reasoning(body, None)
+    responses_to_chat_completions_with_reasoning(body, None, true)
 }
 
 /// Convert an OpenAI Responses request into an OpenAI Chat Completions request,
 /// using provider-declared Codex Chat reasoning capabilities when available.
+///
+/// `preserve_reasoning_content` mirrors the Claude → Chat path
+/// (`should_preserve_reasoning_content_for_openai_chat`): `reasoning_content`
+/// is a DeepSeek / Kimi compatibility field that third-party gateways expect on
+/// assistant history, and strict OpenAI-compatible upstreams such as Mistral
+/// reject it with HTTP 422 (`extra_forbidden`). Callers pass `false` for those
+/// upstreams so the field never reaches them.
 pub fn responses_to_chat_completions_with_reasoning(
     body: Value,
     reasoning_config: Option<&CodexChatReasoningConfig>,
+    preserve_reasoning_content: bool,
 ) -> Result<Value, ProxyError> {
     let mut result = json!({});
     let tool_context = build_codex_tool_context_from_request(&body);
@@ -312,6 +320,14 @@ pub fn responses_to_chat_completions_with_reasoning(
         coalesce_replayed_tool_turn_messages(&mut messages);
     }
     backfill_tool_call_reasoning_placeholders(&mut messages);
+    if !preserve_reasoning_content {
+        let stripped = strip_assistant_reasoning_content(&mut messages);
+        if stripped > 0 {
+            log::debug!(
+                "[Codex Chat] Dropped reasoning_content from {stripped} assistant message(s)"
+            );
+        }
+    }
     let messages = collapse_system_messages_to_head(messages);
     result["messages"] = json!(messages);
 
@@ -1560,6 +1576,29 @@ fn ensure_tool_call_reasoning_content(message: &mut Value) {
             Value::String("tool call".to_string()),
         );
     }
+}
+
+/// 移除 assistant 历史里的 `reasoning_content`，返回被移除的消息条数。
+///
+/// 该字段是 DeepSeek / Kimi 经第三方网关时的兼容约定，严格校验的
+/// OpenAI 兼容上游（Mistral）会以 `extra_forbidden` 整条 422 拒收。所有注入点
+/// （真实思考回填、`"tool call"` 占位）都在本模块内，出口统一剥离比逐个给注入点
+/// 加门控更不容易漏。与 `claude.rs` 的
+/// `should_preserve_reasoning_content_for_openai_chat` 同口径。
+fn strip_assistant_reasoning_content(messages: &mut [Value]) -> usize {
+    let mut stripped = 0;
+    for message in messages.iter_mut() {
+        let is_assistant = message.get("role").and_then(Value::as_str) == Some("assistant");
+        if !is_assistant {
+            continue;
+        }
+        if let Some(obj) = message.as_object_mut() {
+            if obj.remove("reasoning_content").is_some() {
+                stripped += 1;
+            }
+        }
+    }
+    stripped
 }
 
 /// 将仍未消费的 pending reasoning 回溯附挂到上一条 assistant 消息。
@@ -3698,11 +3737,85 @@ mod tests {
             effort_levels: None,
         };
 
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
 
         assert_eq!(result["thinking"]["type"], "enabled");
         // DeepSeek 官方服务端把 xhigh 当 high。
         assert_eq!(result["reasoning_effort"], "high");
+    }
+
+    /// 严格上游（Mistral）拒收 assistant 历史里的 `reasoning_content`：转换出口按
+    /// `preserve_reasoning_content` 剥离，真实思考回填与 `"tool call"` 占位两种来源
+    /// 都要覆盖。回归锁：issue #9507。
+    #[test]
+    fn responses_request_to_chat_drops_reasoning_content_for_strict_upstream() {
+        let input = json!({
+            "model": "deepseek-v4-1-flash-1017",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "list files"}]
+                },
+                {
+                    "type": "reasoning",
+                    "summary": [],
+                    "content": [{"type": "reasoning_text", "text": "need ls"}]
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "c1",
+                    "name": "shell",
+                    "arguments": "{\"cmd\":\"ls\"}"
+                },
+                {"type": "function_call_output", "call_id": "c1", "output": "a.txt"},
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "thanks"}]
+                }
+            ],
+            "reasoning": {"effort": "high"}
+        });
+        let config = CodexChatReasoningConfig {
+            supports_thinking: Some(false),
+            supports_effort: Some(true),
+            thinking_param: Some("none".to_string()),
+            effort_param: Some("reasoning_effort".to_string()),
+            effort_value_mode: Some("deepseek".to_string()),
+            output_format: Some("reasoning_content".to_string()),
+            effort_levels: None,
+        };
+
+        // 保持原行为：第三方网关仍要这个字段。
+        let preserved =
+            responses_to_chat_completions_with_reasoning(input.clone(), Some(&config), true)
+                .unwrap();
+        let preserved_has_reasoning = result_messages(&preserved)
+            .iter()
+            .any(|message| message.get("reasoning_content").is_some());
+        assert!(
+            preserved_has_reasoning,
+            "preserve=true 时应保留 reasoning_content: {preserved}"
+        );
+
+        // 严格上游：assistant 消息上不得残留该字段，其余内容不变。
+        let stripped =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), false).unwrap();
+        let stripped_has_reasoning = result_messages(&stripped)
+            .iter()
+            .any(|message| message.get("reasoning_content").is_some());
+        assert!(
+            !stripped_has_reasoning,
+            "preserve=false 时应剥离 reasoning_content: {stripped}"
+        );
+        let stripped_has_tool_calls = result_messages(&stripped)
+            .iter()
+            .any(|message| message.get("tool_calls").is_some());
+        assert!(stripped_has_tool_calls, "工具调用本身不能被剥离: {stripped}");
+        // 非 assistant 消息不受影响。
+        assert_eq!(result_messages(&stripped)[0]["role"], "user");
     }
 
     #[test]
@@ -3767,7 +3880,8 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "max"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
 
         assert_eq!(result["reasoning"]["effort"], "xhigh");
         assert!(result.get("reasoning_effort").is_none());
@@ -3782,7 +3896,7 @@ mod tests {
             "reasoning": {"effort": "high"}
         });
         let result_high =
-            responses_to_chat_completions_with_reasoning(input_high, Some(&config)).unwrap();
+            responses_to_chat_completions_with_reasoning(input_high, Some(&config), true).unwrap();
         assert_eq!(result_high["reasoning"]["effort"], "high");
         assert!(result_high.get("reasoning_effort").is_none());
     }
@@ -3807,7 +3921,8 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "none"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
 
         assert_eq!(result["reasoning"]["effort"], "none");
         // none 不是 OpenAI 顶层 reasoning_effort 的合法枚举，不写顶层别名；也不写 thinking。
@@ -3835,7 +3950,8 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "none"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
 
         // thinking 关闭信号照发；但不写 reasoning_effort，也不写原生 reasoning 对象。
         assert_eq!(result["thinking"]["type"], "disabled");
@@ -3874,7 +3990,7 @@ mod tests {
                 "reasoning": {"effort": input_effort}
             });
             let result =
-                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+                responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
             assert_eq!(
                 result["reasoning_effort"], expected,
                 "effort={input_effort}"
@@ -3916,7 +4032,7 @@ mod tests {
                 "reasoning": {"effort": input_effort}
             });
             let result =
-                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+                responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
             assert_eq!(
                 result["reasoning_effort"], expected,
                 "effort={input_effort}"
@@ -3945,7 +4061,7 @@ mod tests {
                 "reasoning": {"effort": input_effort}
             });
             let result =
-                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+                responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
             assert_eq!(result["reasoning_effort"], "max", "effort={input_effort}");
         }
     }
@@ -3969,7 +4085,8 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "medium"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
 
         assert!(result.get("reasoning_effort").is_none());
         assert!(result.get("thinking").is_none());
@@ -3992,7 +4109,8 @@ mod tests {
             effort_levels: None,
         };
 
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
 
         assert_eq!(result["thinking"]["type"], "enabled");
         assert!(result.get("reasoning_effort").is_none());
@@ -4015,7 +4133,8 @@ mod tests {
             effort_levels: None,
         };
 
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
 
         assert_eq!(result["enable_thinking"], true);
         assert!(result.get("reasoning_effort").is_none());

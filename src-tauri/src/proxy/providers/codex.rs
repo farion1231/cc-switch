@@ -540,6 +540,20 @@ pub fn apply_codex_upstream_model(provider: &Provider, body: &mut JsonValue) -> 
     Some(upstream_model)
 }
 
+/// 上游 Chat 端点是否拒收 assistant 历史里的 `reasoning_content`。
+///
+/// Mistral 托管了 DeepSeek / GLM 等第三方模型，但它的 Chat 端点对未知字段是
+/// `extra_forbidden`：assistant 历史里带 `reasoning_content` 会整条 422。该字段
+/// 只是 DeepSeek / Kimi 经第三方网关时的兼容约定，所以按端点契约优先于模型名，
+/// 与 Claude → Chat 路径的 `should_preserve_reasoning_content_for_openai_chat`
+/// 同口径，只认官方域名。
+pub fn codex_chat_upstream_rejects_reasoning_content(base_url: &str) -> bool {
+    url::Url::parse(base_url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_string))
+        .is_some_and(|host| host == "api.mistral.ai")
+}
+
 /// Stack 请求的上游拒收 Codex 的托管 `web_search`：按这家的地址和模型品牌判断，和它做
 /// 路由时写 `web_search = "disabled"` 的依据相同（归一化后的配置，旧形态的行也认得出
 /// 地址）；另看这次请求的模型：行里配了多个模型时，选中的不一定是行的 `model`。
@@ -2904,5 +2918,32 @@ wire_api = "responses"
         assert!(!strip_codex_openai_only_request_fields(&mut body));
         assert_eq!(body, once);
         assert_eq!(body, json!({ "input": [] }));
+    }
+
+    #[test]
+    fn chat_upstream_rejects_reasoning_content_only_for_mistral_host() {
+        // 官方域名（含带路径 / 大小写差异的写法）判为拒收。
+        assert!(codex_chat_upstream_rejects_reasoning_content(
+            "https://api.mistral.ai/v1"
+        ));
+        assert!(codex_chat_upstream_rejects_reasoning_content(
+            "https://api.mistral.ai"
+        ));
+        assert!(codex_chat_upstream_rejects_reasoning_content(
+            "https://API.MISTRAL.AI/v1/chat/completions"
+        ));
+
+        // 其他网关、相似域名、非法 URL 一律保持原行为。
+        assert!(!codex_chat_upstream_rejects_reasoning_content(
+            "https://api.deepseek.com"
+        ));
+        assert!(!codex_chat_upstream_rejects_reasoning_content(
+            "https://api.mistral.ai.example/v1"
+        ));
+        assert!(!codex_chat_upstream_rejects_reasoning_content(
+            "https://relay.example/api.mistral.ai"
+        ));
+        assert!(!codex_chat_upstream_rejects_reasoning_content("not a url"));
+        assert!(!codex_chat_upstream_rejects_reasoning_content(""));
     }
 }
