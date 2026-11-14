@@ -161,6 +161,21 @@ export function validateGrokBuildConfig(configToml: string): string | null {
   }
 }
 
+/**
+ * 官方条目（Grok Official）走 Grok CLI 自带的 OAuth 登录：config 里不需要自定义模型表，
+ * 只要求 TOML 语法合法（空文档也合法）。与后端 `validate_config_toml_syntax` 同语义。
+ */
+export function validateGrokBuildConfigSyntax(
+  configToml: string,
+): string | null {
+  try {
+    parseToml(configToml);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : "Invalid TOML";
+  }
+}
+
 export function extractGrokBuildBaseUrl(configToml: string): string {
   return parseGrokBuildConfig(configToml).baseUrl;
 }
