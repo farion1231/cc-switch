@@ -810,6 +810,7 @@ dependencies = [
  "sha2",
  "subtle",
  "sys-locale",
+ "system-configuration",
  "tauri",
  "tauri-build",
  "tauri-plugin-deep-link",
