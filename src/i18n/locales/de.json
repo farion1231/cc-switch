@@ -4771,6 +4771,14 @@
     }
   },
   "mcpPage": {
+    "discovery": {
+      "available": "Nicht verwaltete lokale MCP-Server: {{count}}.",
+      "import": "Lokale MCP-Server importieren",
+      "readOnly": "Die Erkennung liest nur Benutzerkonfigurationen der Apps. Erst beim Import werden Einträge übernommen.",
+      "partial": "MCP-Konfigurationen konnten für folgende Apps nicht gelesen werden: {{apps}}. Andere Quellen wurden geprüft.",
+      "failed": "Lokale MCP-Konfigurationen konnten nicht geprüft werden.",
+      "retry": "Erneut prüfen"
+    },
     "checkConnectivity": "Konnektivität prüfen",
     "testConnection": "Verbindung testen",
     "connection": {

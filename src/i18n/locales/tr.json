@@ -4705,6 +4705,14 @@
     }
   },
   "mcpPage": {
+    "discovery": {
+      "available": "Yönetilmeyen yerel MCP sunucusu sayısı: {{count}}.",
+      "import": "Yerel MCP sunucularını içe aktar",
+      "readOnly": "Keşif yalnızca uygulamaların kullanıcı düzeyindeki yapılandırmasını okur. Kayıtlar ancak içe aktarmayı seçtiğinizde eklenir.",
+      "partial": "Şu uygulamaların MCP yapılandırması okunamadı: {{apps}}. Diğer kaynaklar kontrol edildi.",
+      "failed": "Yerel MCP yapılandırmaları kontrol edilemedi.",
+      "retry": "Yeniden kontrol et"
+    },
     "checkConnectivity": "Bağlantıyı kontrol et",
     "testConnection": "Bağlantıyı test et",
     "connection": {

@@ -197,6 +197,19 @@ fn native_enabled(document: &Value, id: &str, spec: &Value) -> bool {
     !disabled || listed("enabledServers")
 }
 
+pub(crate) fn discover_ids() -> Result<Vec<String>, AppError> {
+    let document = read_document()?;
+    Ok(document["mcpServers"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(_, native)| {
+            super::validation::validate_server_spec(&unified_spec(native)).is_ok()
+        })
+        .map(|(id, _)| id.clone())
+        .collect())
+}
+
 pub(crate) fn import(state: &AppState) -> Result<usize, AppError> {
     let document = read_document()?;
     let mut existing = state.db.get_all_mcp_servers()?;

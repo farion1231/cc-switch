@@ -8,6 +8,11 @@ import type {
 } from "@/types";
 import type { AppId } from "./types";
 
+export interface McpDiscoveryResult {
+  unmanagedCount: number;
+  failedApps: string[];
+}
+
 export interface McpConnectivityResult {
   serverId: string;
   /** `authRequired`: the server answered 401 and wants the client's own sign-in. */
@@ -15,6 +20,9 @@ export interface McpConnectivityResult {
 }
 
 export const mcpApi = {
+  async scanUnmanaged(): Promise<McpDiscoveryResult> {
+    return await invoke("scan_unmanaged_mcp_servers");
+  },
   async startConnectivityChecks(
     serverIds: string[],
     onResult: (result: McpConnectivityResult) => void,

@@ -104,6 +104,19 @@ fn sync_file(path: &Path, id: &str, change: AgyChange<'_>) -> Result<(), AppErro
     )
 }
 
+pub(crate) fn discover_ids() -> Result<Vec<String>, AppError> {
+    let document = read(&crate::agy_config::customizations_dir().join("mcp_config.json"))?;
+    Ok(document["mcpServers"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(_, native)| {
+            super::validation::validate_server_spec(&unified_spec(native)).is_ok()
+        })
+        .map(|(id, _)| id.clone())
+        .collect())
+}
+
 pub fn import(state: &AppState) -> Result<usize, AppError> {
     let document = read(&crate::agy_config::customizations_dir().join("mcp_config.json"))?;
     let mut existing = state.db.get_all_mcp_servers()?;

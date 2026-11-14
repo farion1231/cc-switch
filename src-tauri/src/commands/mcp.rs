@@ -196,6 +196,17 @@ pub async fn get_mcp_servers(
     McpService::get_all_servers(&state).map_err(|e| e.to_string())
 }
 
+/// Discover unmanaged user-level MCPs without importing or writing live config.
+#[tauri::command]
+pub async fn scan_unmanaged_mcp_servers(
+    state: State<'_, AppState>,
+) -> Result<crate::services::mcp::McpDiscoveryResult, String> {
+    run_db_task(&state, |state| {
+        McpService::scan_unmanaged(state).map_err(|_| "MCP discovery failed".to_string())
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn upsert_mcp_server(
     state: State<'_, AppState>,

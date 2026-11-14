@@ -105,6 +105,21 @@ fn sync_file(path: &Path, id: &str, spec: Option<&Value>) -> Result<(), AppError
     atomic_write_private(path, format!("{json}\n").as_bytes())
 }
 
+/// Read importable names without modifying the native file or database.
+pub(crate) fn discover_ids() -> Result<Vec<String>, AppError> {
+    let document = read(&config_path())?;
+    Ok(document["mcpServers"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(_, native)| {
+            !is_connector(native)
+                && super::validation::validate_server_spec(&transport_spec(native)).is_ok()
+        })
+        .map(|(id, _)| id.clone())
+        .collect())
+}
+
 pub fn import(state: &AppState) -> Result<usize, AppError> {
     let document = read(&config_path())?;
     let mut existing = state.db.get_all_mcp_servers()?;

@@ -4771,6 +4771,14 @@
     }
   },
   "mcpPage": {
+    "discovery": {
+      "available": "Unmanaged local MCP servers: {{count}}.",
+      "import": "Import local MCPs",
+      "readOnly": "Discovery only reads user-level app configurations. Nothing is imported until you choose to import.",
+      "partial": "Could not read MCP configurations for: {{apps}}. Other sources were checked.",
+      "failed": "Could not check local MCP configurations.",
+      "retry": "Check again"
+    },
     "checkConnectivity": "Check connectivity",
     "testConnection": "Test connection",
     "connection": {

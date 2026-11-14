@@ -14,6 +14,17 @@ export function useAllMcpServers() {
   });
 }
 
+/** Only mounted on the MCP page; no background polling or automatic import. */
+export function useMcpDiscovery(enabled = true) {
+  return useQuery({
+    queryKey: ["mcp", "discovery"],
+    queryFn: () => mcpApi.scanUnmanaged(),
+    enabled,
+    staleTime: 30_000,
+    retry: false,
+  });
+}
+
 /**
  * 添加或更新 MCP 服务器
  */
@@ -28,7 +39,10 @@ export function useUpsertMcpServer() {
     // The database is updated before live configs are synchronized, so an
     // error can still leave a persisted change that the list must reflect.
     onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: ["mcp", "all"] }),
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["mcp", "all"] }),
+        queryClient.invalidateQueries({ queryKey: ["mcp", "discovery"] }),
+      ]),
   });
 }
 
@@ -103,7 +117,10 @@ export function useDeleteMcpServer() {
     // Deletion reaches the database before live-config cleanup, so refresh
     // after both success and failure to avoid operating on a removed entry.
     onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: ["mcp", "all"] }),
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["mcp", "all"] }),
+        queryClient.invalidateQueries({ queryKey: ["mcp", "discovery"] }),
+      ]),
   });
 }
 
@@ -129,6 +146,9 @@ export function useImportMcpFromApps() {
     // 后端是 best-effort 导入：部分应用失败会返回错误，但其余应用的
     // 服务器已经入库，失败时也要刷新列表。
     onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: ["mcp", "all"] }),
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["mcp", "all"] }),
+        queryClient.invalidateQueries({ queryKey: ["mcp", "discovery"] }),
+      ]),
   });
 }

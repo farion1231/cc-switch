@@ -15,6 +15,30 @@ pub(crate) fn sync_and_commit<T>(
     crate::dsh_config::sync_mcp_and_commit(id, spec, commit)
 }
 
+pub(crate) fn discover_ids() -> Result<Vec<String>, AppError> {
+    Ok(crate::dsh_config::mcp_entries()?
+        .into_iter()
+        .filter_map(|entry| {
+            let config = entry.get("config")?;
+            let id = config.get("serverName")?.as_str()?.to_owned();
+            let mut spec = serde_json::to_value(config).ok()?;
+            let object = spec.as_object_mut()?;
+            let transport = object.remove("transport")?;
+            object.remove("serverName");
+            object.insert(
+                "type".into(),
+                match transport.as_str()? {
+                    "stdio" => json!("stdio"),
+                    "streamable-http" => json!("http"),
+                    _ => return None,
+                },
+            );
+            super::validation::validate_server_spec(&spec).ok()?;
+            Some(id)
+        })
+        .collect())
+}
+
 pub(crate) fn import(state: &AppState) -> Result<usize, AppError> {
     let mut existing = state.db.get_all_mcp_servers()?;
     let mut count = 0;
