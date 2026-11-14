@@ -93,6 +93,12 @@ export const settingsApi = {
     return await invoke("get_config_dir", { app: appId });
   },
 
+  async getConfigStatus(
+    appId: AppId,
+  ): Promise<{ exists: boolean; path: string }> {
+    return await invoke("get_config_status", { app: appId });
+  },
+
   async openConfigFolder(appId: AppId): Promise<void> {
     await invoke("open_config_folder", { app: appId });
   },
@@ -345,6 +351,14 @@ export const settingsApi = {
     return await invoke("set_optimizer_config", { config });
   },
 
+  async getPrivacyFilterConfig(): Promise<PrivacyFilterConfig> {
+    return await invoke("get_privacy_filter_config");
+  },
+
+  async setPrivacyFilterConfig(config: PrivacyFilterConfig): Promise<boolean> {
+    return await invoke("set_privacy_filter_config", { config });
+  },
+
   async getLogConfig(): Promise<LogConfig> {
     return await invoke("get_log_config");
   },
@@ -411,6 +425,11 @@ export interface OptimizerConfig {
   enabled: boolean;
   thinkingOptimizer: boolean;
   cacheInjection: boolean;
+}
+
+export interface PrivacyFilterConfig {
+  enabled: boolean;
+  filterToolResults: boolean;
 }
 
 export interface LogConfig {

@@ -180,7 +180,7 @@ describe("Kimi account entry in the add-provider dialog", () => {
       { key: "Enter" },
     );
     fireEvent.click(
-      await screen.findByRole("menuitem", { name: "kimi.oauth.useAccount" }),
+      await screen.findByRole("menuitem", { name: "切换 Kimi 到这个账号" }),
     );
     await waitFor(() =>
       expect(kimiOAuthApi.useAccount).toHaveBeenCalledWith(account.id),

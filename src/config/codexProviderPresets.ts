@@ -1329,7 +1329,6 @@ requires_openai_auth = true`,
     ),
     endpointCandidates: ["https://www.ccsub.net/v1"],
     isPartner: true,
-    partnerPromotionKey: "ccsub",
     icon: "ccsub",
   },
   {

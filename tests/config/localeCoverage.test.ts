@@ -96,9 +96,8 @@ describe("locale coverage", () => {
   );
 });
 
-// Turkish is a community translation: keys it does not have yet fall back to
-// English, so new English strings must never fail CI here. These checks only
-// look at strings that already exist in tr.json.
+// Key coverage and interpolation for every locale live in localeParity.test.ts;
+// these blocks pin literals that must survive translation verbatim.
 describe("Turkish locale", () => {
   it("keeps every existing translation non-empty", () => {
     expect(
@@ -269,9 +268,6 @@ describe("Korean locale", () => {
   });
 });
 
-// Russian is a community translation too: it covers only part of en.json and
-// missing keys fall back to English, so every check here only looks at strings
-// that already exist in ru.json.
 describe("Russian locale", () => {
   const translations = flattenStrings(ru);
 

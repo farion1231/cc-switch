@@ -957,12 +957,18 @@ impl CopilotAuthManager {
         &self,
         account_id: &str,
     ) -> Result<Vec<CopilotModel>, CopilotAuthError> {
-        Ok(self
-            .fetch_all_models_for_account(account_id)
-            .await?
+        let all_models = self.fetch_all_models_for_account(account_id).await?;
+        let total = all_models.len();
+        let picker_models: Vec<CopilotModel> = all_models
             .into_iter()
             .filter(|model| model.model_picker_enabled)
-            .collect())
+            .collect();
+        // Copilot Free 账号的模型通常全部 model_picker_enabled=false，这里记录两个数便于排查
+        log::info!(
+            "[CopilotAuth] 账号 {account_id} 共 {total} 个模型，其中可在模型选择器使用的 {} 个",
+            picker_models.len()
+        );
+        Ok(picker_models)
     }
 
     async fn fetch_all_models_for_account(
@@ -1044,7 +1050,10 @@ impl CopilotAuthManager {
             })
             .collect();
 
-        log::info!("[CopilotAuth] 获取到 {} 个可用模型", models.len());
+        log::info!(
+            "[CopilotAuth] 从 /models 获取到 {} 个模型（未按模型选择器过滤）",
+            models.len()
+        );
 
         Ok(models)
     }

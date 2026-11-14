@@ -105,6 +105,7 @@ impl FileParseCache {
             Err(poisoned) => {
                 let mut guard = poisoned.into_inner();
                 guard.clear();
+                self.entries.clear_poison();
                 HashMap::new()
             }
         };
@@ -145,9 +146,11 @@ impl FileParseCache {
             );
         }
 
-        if let Ok(mut guard) = self.entries.lock() {
-            *guard = next;
-        }
+        let mut guard = self.entries.lock().unwrap_or_else(|poisoned| {
+            self.entries.clear_poison();
+            poisoned.into_inner()
+        });
+        *guard = next;
         sessions
     }
 }
@@ -407,6 +410,33 @@ pub fn path_basename(value: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn file_parse_cache_recovers_after_poison_and_caches_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.jsonl");
+        std::fs::write(&path, "alpha").unwrap();
+        let cache = super::FileParseCache::new();
+        assert!(std::panic::catch_unwind(|| {
+            let _guard = cache.entries.lock().unwrap();
+            panic!("interrupted scan cache update");
+        })
+        .is_err());
+
+        let calls = std::cell::Cell::new(0);
+        for _ in 0..2 {
+            let sessions = cache.scan(vec![path.clone()], |path| {
+                calls.set(calls.get() + 1);
+                Ok(meta_from_file(path))
+            });
+            assert_eq!(sessions.len(), 1);
+        }
+        assert_eq!(
+            calls.get(),
+            1,
+            "the second scan should reuse the recovered cache"
+        );
+        assert!(!cache.entries.is_poisoned());
+    }
     use super::*;
     use serde_json::json;
 

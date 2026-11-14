@@ -1453,7 +1453,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
     category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "ccsub",
     icon: "ccsub",
     suggestedDefaults: {
       model: { default: "gpt-6.1-sol", provider: "ccsub" },
