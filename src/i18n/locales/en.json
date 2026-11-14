@@ -1171,6 +1171,46 @@
     },
     "data": {
       "location": "Location"
+    },
+    "ipDiagnostics": {
+      "title": "IP diagnostics",
+      "scope": "Inspect the selected outbound route. These samples do not verify DNS or browser isolation and do not predict account restrictions.",
+      "exitScope": "This shows the exit CC Switch uses to reach the check services over the selected route, which may differ from other apps: in Direct mode, clients such as Claude Code and Codex use their own proxy settings, and a proxy tool with domain-based rules may send AI services and these check services through different nodes.",
+      "route": "Network route",
+      "saved": "Saved global proxy",
+      "custom": "Temporary proxy",
+      "proxyUrl": "Temporary proxy URL",
+      "explicitRoute": "Requests use this proxy without changing the saved configuration. A failed proxy does not fall back to a direct connection.",
+      "systemRoute": "No explicit proxy: follow CC Switch’s system proxy behavior. This may use a system proxy or a direct connection.",
+      "settingsError": "Could not load the saved proxy. Retry or choose a temporary proxy.",
+      "privacy": "Only runs when you click Check. Sends requests to icanhazip.com and ipify.org, then submits the observed IP to ipwho.is for location and network details.",
+      "run": "Check IP",
+      "running": "Checking…",
+      "invalidProxy": "Invalid proxy URL. Use HTTP, HTTPS, SOCKS5 or SOCKS5H.",
+      "failed": "Could not run the checks. Please retry.",
+      "unknown": "Unknown",
+      "checkedAt": "Checked at",
+      "incomplete": "Exit sampling is incomplete. Failed checks are not evidence of a safe route.",
+      "consistent": "Both services observed the same exit IP. This only describes these requests.",
+      "different": "The services observed different IPs. Routing rules or a rotating proxy may explain this; check your proxy configuration.",
+      "locationError": "Location lookup failed",
+      "locationIp": "Location queried for",
+      "country": "Country / region",
+      "region": "State / province",
+      "city": "City",
+      "asn": "ASN",
+      "isp": "ISP",
+      "organization": "Organization",
+      "exitTimezone": "IP timezone",
+      "utcOffset": "UTC offset",
+      "localTimezone": "Local timezone",
+      "locationSource": "Location and network data: ipwho.is. Database estimates can be inaccurate.",
+      "errors": {
+        "network": "Connection failed or timed out",
+        "http": "Service returned an HTTP error",
+        "invalidResponse": "Service returned invalid data",
+        "unavailable": "Service could not provide data"
+      }
     }
   },
   "apps": {
@@ -2636,8 +2676,8 @@
         "manual": "Manual"
       },
       "rateAutoHint": "Fetched automatically once a day and used only for display; costs are still recorded in USD.",
-      "rateAutoUpdated": "Last updated: {{time}}",
-      "rateAutoNever": "No rate fetched yet",
+      "rateAutoUpdated": "Last updated: {{time}}.",
+      "rateAutoNever": "No rate fetched yet.",
       "rateAutoFailed": "Could not fetch a new rate; keeping the previous one.",
       "rateAttribution": "Rates by {{provider}}.",
       "rateRefresh": "Update now",
@@ -5552,5 +5592,16 @@
       "confirm": "Install ({{count}})",
       "menu": "Install to other environments…"
     }
+  },
+  "autoUpdate": {
+    "toggle": "Download updates automatically",
+    "toggleHelp": "Downloads new versions in the background and asks before installing. Nothing is installed without your confirmation.",
+    "unsupported": "Not available for the portable build or Linux deb / rpm packages",
+    "readyTitle": "v{{version}} has been downloaded",
+    "readyBody": "Install it now? CC Switch will restart.",
+    "readyBodyRouting": "Install it now? CC Switch will restart, and requests in progress through local routing will be cut off.",
+    "later": "Later",
+    "installNow": "Install and restart",
+    "installFailed": "Update installation failed"
   }
 }

@@ -52,7 +52,6 @@ import { cn } from "@/lib/utils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { extractProviderBaseUrl } from "@/utils/providerConfigUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
-import { isPiFamilyApp } from "@/config/appConfig";
 import { isOfficialAccount } from "@/utils/providerCapabilities";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import { isWorkBuddyOfficial } from "@/components/providers/workbuddyOfficial";
@@ -77,6 +76,7 @@ import {
   type ProviderSection,
   type SwitchModeInput,
 } from "@/components/providers/presentation";
+import { appHas } from "@/config/appSpecs";
 
 /** 切换式应用（Claude Code / Codex / Gemini CLI / Grok Build）的模式状态和动作，由供应商页传入。 */
 export type SwitchModeProps = Omit<SwitchModeInput, "app" | "t" | "providers">;
@@ -207,8 +207,11 @@ export function ProviderList({
     isPending: isPiCurrentStatePending,
     isError: isPiCurrentStateError,
     error: piCurrentStateError,
-  } = usePiCurrentState(isPiFamilyApp(appId), appId === "omp" ? "omp" : "pi");
-  const isPiStateReady = !isPiFamilyApp(appId) || isPiCurrentStateSuccess;
+  } = usePiCurrentState(
+    appHas(appId, "piFamily"),
+    appId === "omp" ? "omp" : "pi",
+  );
+  const isPiStateReady = !appHas(appId, "piFamily") || isPiCurrentStateSuccess;
   // WorkBuddy 官方登录卡：有这种卡时才去读账号和运行状态
   const hasWorkBuddyOfficial =
     appId === "workbuddy" &&
@@ -222,7 +225,7 @@ export function ProviderList({
     (appId === "opencode" && isOpencodeLiveIdsPending) ||
     (appId === "openclaw" && isOpenclawLiveIdsPending) ||
     (appId === "hermes" && isHermesLiveIdsPending) ||
-    (isPiFamilyApp(appId) && isPiCurrentStatePending);
+    (appHas(appId, "piFamily") && isPiCurrentStatePending);
 
   const isInConfig = useCallback(
     (provider: Provider): boolean => {
@@ -450,9 +453,14 @@ export function ProviderList({
           .map((model) => ({ id: model.id, name: model.name }));
       },
       hermesCurrentId: hermesModelConfig?.provider ?? null,
+      // Hermes 删掉的 dict 条目不再归它管（导入不会清理，只读就删不掉）；
+      // 读不到 Hermes 配置时无从判断，仍按托管处理
       isHermesManaged: (provider) =>
-        isHermesReadOnlyProvider(provider.settingsConfig),
-      piStateUnavailable: isPiFamilyApp(appId) && !isPiStateReady,
+        isHermesReadOnlyProvider(provider.settingsConfig) &&
+        (!hermesLiveIds ||
+          !!hermesLiveIdsError ||
+          hermesLiveIds.includes(provider.id)),
+      piStateUnavailable: appHas(appId, "piFamily") && !isPiStateReady,
       kimiCurrentId: currentProviderId,
       workbuddyOfficial,
       copilotDefaultId: appId === "copilot" ? currentProviderId : null,
@@ -485,6 +493,8 @@ export function ProviderList({
     isInConfig,
     currentOmoId,
     currentOmoSlimId,
+    hermesLiveIds,
+    hermesLiveIdsError,
     hermesModelConfig?.provider,
     isPiStateReady,
     currentProviderId,
@@ -499,13 +509,13 @@ export function ProviderList({
   ]);
 
   const piStateRawError =
-    isPiFamilyApp(appId) && isPiCurrentStateError
+    appHas(appId, "piFamily") && isPiCurrentStateError
       ? extractErrorMessage(piCurrentStateError)
       : "";
   const piStateError =
     translatePiProviderMutationError(piStateRawError, t) || piStateRawError;
   const piStateErrorNotice =
-    isPiFamilyApp(appId) && isPiCurrentStateError ? (
+    appHas(appId, "piFamily") && isPiCurrentStateError ? (
       <Notice
         tone="warning"
         title={t(`${appId}.current.readFailed`, {
@@ -565,9 +575,9 @@ export function ProviderList({
         {liveConfigErrorNotice}
         <ProviderEmptyState
           appId={appId}
-          onCreate={isPiFamilyApp(appId) ? undefined : onCreate}
+          onCreate={appHas(appId, "piFamily") ? undefined : onCreate}
           onImport={
-            isPiFamilyApp(appId) ||
+            appHas(appId, "piFamily") ||
             appId === "mcode" ||
             appId === "kimi" ||
             appId === "dsh" ||
@@ -583,7 +593,7 @@ export function ProviderList({
   // 「当前」只用来决定官方订阅 / OAuth 额度自动刷新：Pi 没有当前项，OMO / Hermes 各看自己的当前项；
   // Antigravity 没有「启用」，每张卡都随时能打开，额度一律照常显示；Copilot CLI 只有官方卡有额度，同理
   const isCurrentFor = (provider: Provider) => {
-    if (isPiFamilyApp(appId)) return false;
+    if (appHas(appId, "piFamily")) return false;
     if (appId === "agy" || appId === "copilot") return true;
     if (provider.category === "omo") return provider.id === currentOmoId;
     if (provider.category === "omo-slim")

@@ -1171,6 +1171,46 @@
     },
     "data": {
       "location": "Speicherort"
+    },
+    "ipDiagnostics": {
+      "title": "IP-Diagnose",
+      "scope": "Prüft die Ausgangsinformationen der gewählten Netzwerkroute. Diese Stichproben bestätigen keine DNS- oder Browser-Isolation und sagen keine Kontosperren voraus.",
+      "exitScope": "Angezeigt wird der Ausgang, den CC Switch über die gewählte Route zu den Prüfdiensten nutzt; bei anderen Apps kann er abweichen: Im Direktmodus verwenden Clients wie Claude Code und Codex ihre eigenen Proxy-Einstellungen, und ein Proxy-Tool mit domainbasierten Regeln kann KI-Dienste und diese Prüfdienste über unterschiedliche Knoten leiten.",
+      "route": "Netzwerkroute",
+      "saved": "Gespeicherter globaler Proxy",
+      "custom": "Temporärer Proxy",
+      "proxyUrl": "Adresse des temporären Proxys",
+      "explicitRoute": "Anfragen laufen über diesen Proxy, die gespeicherte Konfiguration bleibt unverändert. Schlägt der Proxy fehl, wird nicht auf eine Direktverbindung zurückgefallen.",
+      "systemRoute": "Kein Proxy angegeben: Es gilt das Systemproxy-Verhalten von CC Switch. Dabei kann ein Systemproxy oder eine Direktverbindung verwendet werden.",
+      "settingsError": "Der gespeicherte Proxy konnte nicht geladen werden. Bitte erneut versuchen oder einen temporären Proxy wählen.",
+      "privacy": "Läuft nur nach einem Klick auf IP prüfen. Sendet Anfragen an icanhazip.com und ipify.org und übermittelt die ermittelte IP anschließend an ipwho.is, um Standort- und Netzwerkdaten abzufragen.",
+      "run": "IP prüfen",
+      "running": "Wird geprüft…",
+      "invalidProxy": "Ungültige Proxy-Adresse. Bitte HTTP, HTTPS, SOCKS5 oder SOCKS5H verwenden.",
+      "failed": "Die Prüfung konnte nicht ausgeführt werden. Bitte erneut versuchen.",
+      "unknown": "Unbekannt",
+      "checkedAt": "Geprüft am",
+      "incomplete": "Die Ausgangsstichproben sind unvollständig. Fehlgeschlagene Prüfungen belegen keine sichere Route.",
+      "consistent": "Beide Dienste haben dieselbe Ausgangs-IP ermittelt. Das gilt nur für diese Anfragen.",
+      "different": "Die Dienste haben unterschiedliche IPs ermittelt. Ursache können Routing-Regeln oder ein rotierender Proxy sein; bitte die Proxy-Konfiguration prüfen.",
+      "locationError": "Standortabfrage fehlgeschlagen",
+      "locationIp": "Abgefragte IP",
+      "country": "Land / Region",
+      "region": "Bundesland / Provinz",
+      "city": "Stadt",
+      "asn": "ASN",
+      "isp": "Internetanbieter",
+      "organization": "Organisation",
+      "exitTimezone": "Zeitzone der IP",
+      "utcOffset": "UTC-Versatz",
+      "localTimezone": "Lokale Zeitzone",
+      "locationSource": "Standort- und Netzwerkdaten: ipwho.is. Datenbankschätzungen können ungenau sein.",
+      "errors": {
+        "network": "Verbindung fehlgeschlagen oder Zeitüberschreitung",
+        "http": "Der Dienst hat einen HTTP-Fehler zurückgegeben",
+        "invalidResponse": "Der Dienst hat ungültige Daten zurückgegeben",
+        "unavailable": "Der Dienst konnte keine Daten liefern"
+      }
     }
   },
   "apps": {
@@ -2636,8 +2676,8 @@
         "manual": "Manuell"
       },
       "rateAutoHint": "Wird einmal täglich automatisch abgerufen und nur zur Anzeige verwendet; Kosten werden weiterhin in USD erfasst.",
-      "rateAutoUpdated": "Zuletzt aktualisiert: {{time}}",
-      "rateAutoNever": "Noch kein Kurs abgerufen",
+      "rateAutoUpdated": "Zuletzt aktualisiert: {{time}}.",
+      "rateAutoNever": "Noch kein Kurs abgerufen.",
       "rateAutoFailed": "Neuer Kurs konnte nicht abgerufen werden; der vorherige bleibt erhalten.",
       "rateAttribution": "Kurse von {{provider}}.",
       "rateRefresh": "Jetzt aktualisieren",
@@ -5552,5 +5592,16 @@
       "confirm": "Installieren ({{count}})",
       "menu": "In weitere Umgebungen installieren…"
     }
+  },
+  "autoUpdate": {
+    "toggle": "Updates automatisch herunterladen",
+    "toggleHelp": "Lädt neue Versionen im Hintergrund herunter und fragt vor der Installation nach. Ohne Ihre Bestätigung wird nichts installiert.",
+    "unsupported": "Nicht verfügbar für die portable Version und Linux-deb-/rpm-Pakete",
+    "readyTitle": "v{{version}} wurde heruntergeladen",
+    "readyBody": "Jetzt installieren? CC Switch wird neu gestartet.",
+    "readyBodyRouting": "Jetzt installieren? CC Switch wird neu gestartet, laufende Anfragen über das lokale Routing werden abgebrochen.",
+    "later": "Später",
+    "installNow": "Installieren und neu starten",
+    "installFailed": "Update-Installation fehlgeschlagen"
   }
 }

@@ -24,10 +24,10 @@ import type {
   ToolUninstallPlan,
 } from "@/lib/api/settings";
 import type { DndContextProps, DragEndEvent } from "@dnd-kit/core";
-import { APP_IDS } from "@/config/appConfig";
 import { emitTauriEvent } from "../msw/tauriMocks";
 import { http, HttpResponse } from "msw";
 import { server } from "../msw/server";
+import { APP_IDS } from "@/config/appSpecs";
 
 type ToolVersions = Awaited<ReturnType<typeof settingsApi.getToolVersions>>;
 

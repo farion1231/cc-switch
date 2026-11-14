@@ -4,6 +4,7 @@ mod agy_smoke_tests;
 mod app_config;
 mod app_store;
 pub mod app_targets;
+mod app_update;
 mod auto_launch;
 mod claude_desktop_config;
 mod claude_mcp;
@@ -43,11 +44,13 @@ mod pi_config;
 mod prompt;
 mod prompt_files;
 mod provider;
+mod provider_kind;
 mod proxy;
 mod services;
 mod session_manager;
 mod settings;
 mod store;
+mod sync_utils;
 
 mod tray;
 #[cfg(target_os = "windows")]
@@ -1434,6 +1437,9 @@ pub fn run() {
                 }
             }
 
+            // 自动更新：开关打开时后台定时检查并下载新版本（装不装由用户确认）
+            crate::app_update::spawn_background_loop(app.handle().clone());
+
             // 异常退出恢复 + 代理状态自动恢复
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -1668,6 +1674,8 @@ pub fn run() {
             commands::set_log_config,
             commands::restart_app,
             commands::install_update_and_restart,
+            commands::get_auto_update_status,
+            commands::download_app_update,
             commands::check_app_update_available,
             commands::check_for_updates,
             commands::open_portable_update_download,
@@ -1974,6 +1982,7 @@ pub fn run() {
             commands::test_proxy_url,
             commands::get_upstream_proxy_status,
             commands::scan_local_proxies,
+            commands::diagnose_ip,
             // Window theme control
             commands::set_window_theme,
             // Generic managed auth commands

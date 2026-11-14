@@ -5751,7 +5751,7 @@ impl ProviderService {
             );
         }
         // Additive mode apps have no "current" provider concept
-        if app_type.is_additive_mode() {
+        if app_type.spec().additive {
             return Ok(String::new());
         }
         // 代理模式下界面上的「当前」是代理路由到的那家。
@@ -5860,7 +5860,7 @@ impl ProviderService {
         app_type: AppType,
         provider: Provider,
     ) -> Result<bool, AppError> {
-        if app_type.is_additive_mode() {
+        if app_type.spec().additive {
             return Self::add(state, app_type, provider, false);
         }
         let mut provider = provider;
@@ -5899,7 +5899,7 @@ impl ProviderService {
         // Copilot 官方卡只存行、不写文件：前端新增默认带 addToLive=true，不当错误。
         let add_to_live = add_to_live
             && !(app_type == AppType::Copilot && copilot_direct::is_official(&provider));
-        if app_type.is_additive_mode() {
+        if app_type.spec().additive {
             Self::set_provider_live_config_managed(&mut provider, add_to_live);
         }
 
@@ -5963,7 +5963,7 @@ impl ProviderService {
         }
 
         // 累加式写 live 失败（如配置文件解析不了）时要撤回这一行，先记下原来的
-        let existing_row = if app_type.is_additive_mode() {
+        let existing_row = if app_type.spec().additive {
             state
                 .db
                 .get_provider_by_id(&provider.id, app_type.as_str())?
@@ -5975,7 +5975,7 @@ impl ProviderService {
         state.db.save_provider(app_type.as_str(), &provider)?;
 
         // Additive mode apps (OpenCode, OpenClaw, Hermes): optionally write to live config.
-        if app_type.is_additive_mode() {
+        if app_type.spec().additive {
             // OMO / OMO Slim providers use exclusive mode and write to dedicated config file.
             if matches!(app_type, AppType::OpenCode)
                 && matches!(provider.category.as_deref(), Some("omo") | Some("omo-slim"))
@@ -6549,7 +6549,7 @@ impl ProviderService {
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
 
         if provider_id_changed {
-            if !app_type.is_additive_mode() {
+            if !app_type.spec().additive {
                 return Err(AppError::Message(
                     "Only additive-mode providers support changing provider key".to_string(),
                 ));
@@ -6623,7 +6623,7 @@ impl ProviderService {
 
         // Additive mode apps (OpenCode, OpenClaw): only sync to live when the provider
         // already exists in live config. Editing a DB-only provider must not auto-add it.
-        if app_type.is_additive_mode() {
+        if app_type.spec().additive {
             let omo_variant = if matches!(app_type, AppType::OpenCode) {
                 match provider.category.as_deref() {
                     Some("omo") => Some(&crate::services::omo::STANDARD),
@@ -6878,7 +6878,7 @@ impl ProviderService {
         }
 
         // Additive mode apps - no current provider concept
-        if app_type.is_additive_mode() {
+        if app_type.spec().additive {
             // Single DB read shared across all additive-mode sub-paths below.
             let existing = state.db.get_provider_by_id(id, app_type.as_str())?;
 
@@ -7320,7 +7320,7 @@ impl ProviderService {
             .get(id)
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
 
-        if app_type.is_additive_mode() {
+        if app_type.spec().additive {
             log::info!("[SWITCH] {} 写入 {id}（累加式应用）", app_type.as_str());
         } else {
             let previous = crate::mode::current::provider_for(
@@ -7376,7 +7376,7 @@ impl ProviderService {
         let mut result = SwitchResult::default();
 
         // Additive mode apps skip setting is_current (no such concept).
-        if !app_type.is_additive_mode() {
+        if !app_type.spec().additive {
             crate::settings::set_current_provider(&app_type, Some(id))?;
             state.db.set_current_provider(app_type.as_str(), id)?;
         }
@@ -7409,8 +7409,7 @@ impl ProviderService {
         //
         // If persisting the marker fails, roll back the just-written live config so we don't leave
         // the provider in a silent inconsistent state (present in live, but still marked DB-only).
-        if app_type.is_additive_mode() && Self::provider_live_config_managed(provider) != Some(true)
-        {
+        if app_type.spec().additive && Self::provider_live_config_managed(provider) != Some(true) {
             let mut updated = provider.clone();
             Self::set_provider_live_config_managed(&mut updated, true);
             if let Err(e) = state.db.save_provider(app_type.as_str(), &updated) {
@@ -7573,7 +7572,7 @@ impl ProviderService {
         state: &AppState,
         app_type: AppType,
     ) -> Result<(), AppError> {
-        if app_type.is_additive_mode() {
+        if app_type.spec().additive {
             return sync_additive_app_to_live(state, &app_type);
         }
         // 没有正在用的那家、或者在代理模式（客户端文件没按直连重写）时不重投影 MCP。
@@ -7589,7 +7588,7 @@ impl ProviderService {
         app_type: AppType,
         legacy_snippet: &str,
     ) -> Result<(), AppError> {
-        if app_type.is_additive_mode() || legacy_snippet.trim().is_empty() {
+        if app_type.spec().additive || legacy_snippet.trim().is_empty() {
             return Ok(());
         }
 
@@ -7642,7 +7641,7 @@ impl ProviderService {
         state: &AppState,
         app_type: AppType,
     ) -> Result<(), AppError> {
-        if app_type.is_additive_mode() {
+        if app_type.spec().additive {
             return Ok(());
         }
 

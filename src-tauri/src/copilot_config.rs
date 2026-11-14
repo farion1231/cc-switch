@@ -1116,37 +1116,31 @@ fn transact<T>(
     if read_providers(path)? != after {
         return Err(external_change(path));
     }
-    match commit() {
+    let rollback = || {
+        let restore = original
+            .as_deref()
+            .map(|bytes| stage_write(path, bytes, Some(0o600), false))
+            .transpose()?;
+        if read_raw(path)?.as_deref() != Some(text.as_bytes()) {
+            if let Some(restore) = restore {
+                restore.discard();
+            }
+            log::warn!(
+                "{} changed after CC Switch wrote it; not rolling back",
+                path.display()
+            );
+            return Ok(());
+        }
+        match restore {
+            Some(restore) => restore.commit(),
+            None => fs::remove_file(&target).map_err(|e| AppError::io(&target, e)),
+        }
+    };
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(commit));
+    match crate::sync_utils::resume_after_rollback(outcome, rollback) {
         Ok(result) => Ok(result),
         Err(error) => {
-            let restore = match original
-                .as_deref()
-                .map(|bytes| stage_write(path, bytes, Some(0o600), false))
-                .transpose()
-            {
-                Ok(restore) => restore,
-                Err(stage_error) => {
-                    return Err(AppError::Message(format!(
-                        "Config update failed ({error}); restoring {} also failed: {stage_error}",
-                        path.display()
-                    )))
-                }
-            };
-            if read_raw(path)?.as_deref() != Some(text.as_bytes()) {
-                if let Some(restore) = restore {
-                    restore.discard();
-                }
-                log::warn!(
-                    "{} changed after CC Switch wrote it; not rolling back",
-                    path.display()
-                );
-                return Err(error);
-            }
-            let rollback = match restore {
-                Some(restore) => restore.commit(),
-                None => fs::remove_file(&target).map_err(|e| AppError::io(&target, e)),
-            };
-            if let Err(rollback_error) = rollback {
+            if let Err(rollback_error) = rollback() {
                 return Err(AppError::Message(format!(
                     "Config update failed ({error}); restoring {} also failed: {rollback_error}",
                     path.display()
@@ -1185,9 +1179,7 @@ pub(crate) fn save_and_commit<T>(
     create: bool,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let path = providers_path();
     transact(
         &path,
@@ -1213,9 +1205,7 @@ pub(crate) fn add_and_commit<T>(
     settings: &Value,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let path = providers_path();
     transact(
         &path,
@@ -1554,6 +1544,37 @@ mod tests {
         );
         assert!(result.is_err());
         assert_eq!(read_providers(&path).unwrap(), changed);
+    }
+
+    #[test]
+    fn panicking_commit_restores_ours_but_preserves_external_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("providers.json");
+        write(&path, &foreign_document());
+        let original = fs::read(&path).unwrap();
+        for external_edit in [false, true] {
+            let caught = std::panic::catch_unwind(|| {
+                let _: Result<(), AppError> = transact(
+                    &path,
+                    |before| apply_provider(before, "deepseek", Some(&card()), true).map(Some),
+                    || {
+                        if external_edit {
+                            fs::write(&path, b"external edit").unwrap();
+                        }
+                        panic!("commit interrupted");
+                    },
+                );
+            });
+            assert!(caught.is_err());
+            assert_eq!(
+                fs::read(&path).unwrap(),
+                if external_edit {
+                    b"external edit".to_vec()
+                } else {
+                    original.clone()
+                }
+            );
+        }
     }
 
     #[cfg(unix)]
