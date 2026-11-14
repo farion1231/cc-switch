@@ -2636,8 +2636,8 @@
         "manual": "Manuell"
       },
       "rateAutoHint": "Wird einmal täglich automatisch abgerufen und nur zur Anzeige verwendet; Kosten werden weiterhin in USD erfasst.",
-      "rateAutoUpdated": "Zuletzt aktualisiert: {{time}}",
-      "rateAutoNever": "Noch kein Kurs abgerufen",
+      "rateAutoUpdated": "Zuletzt aktualisiert: {{time}}.",
+      "rateAutoNever": "Noch kein Kurs abgerufen.",
       "rateAutoFailed": "Neuer Kurs konnte nicht abgerufen werden; der vorherige bleibt erhalten.",
       "rateAttribution": "Kurse von {{provider}}.",
       "rateRefresh": "Jetzt aktualisieren",
