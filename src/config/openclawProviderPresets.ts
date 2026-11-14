@@ -1591,8 +1591,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "9527CODE",
-    websiteUrl: "https://9527.codes",
-    apiKeyUrl: "https://9527.codes/register?aff=e5zI",
+    websiteUrl: "https://9527.codes/register?channel=ccs",
+    apiKeyUrl: "https://9527.codes/register?channel=ccs",
     settingsConfig: {
       baseUrl: "https://9527.codes",
       apiKey: "",
