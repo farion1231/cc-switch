@@ -50,14 +50,6 @@ const KEY_MAX_LEN: usize = 24;
 /// Claude Code 在没有 `CLAUDE_CODE_MAX_CONTEXT_TOKENS` 时按这个窗口算。
 pub const CLAUDE_DEFAULT_WINDOW: u64 = 200_000;
 
-/// 支持 Stack 模型的应用。
-pub fn supports_stack(app: &AppType) -> bool {
-    matches!(
-        app,
-        AppType::Claude | AppType::Codex | AppType::ClaudeDesktop
-    )
-}
-
 /// 给 `provider` 一个 key：登记过就用原来的（移除后重新加入，旧会话里的 id 继续有效），
 /// 没有就按图标、名称生成一个新的写进登记簿。
 ///
@@ -552,7 +544,7 @@ pub fn published_members(
     stack: &StackState,
     route: Option<&str>,
 ) -> Result<Vec<Member>, AppError> {
-    if !stack.enabled || stack.members.is_empty() || !supports_stack(app) {
+    if !stack.enabled || stack.members.is_empty() || !app.spec().stack {
         return Ok(Vec::new());
     }
     let mut members = members(db, app, stack, route)?;
@@ -581,7 +573,7 @@ pub fn claude_route_default(members: &[Member]) -> Option<StackModel> {
 
 /// 这个应用在 Stack 模式（代理模式且 Stack 模式开着）。读不出状态按不在处理。
 pub fn stack_mode_now(app: &AppType) -> bool {
-    if !supports_stack(app) {
+    if !app.spec().stack {
         return false;
     }
     state::stack_mode(&DeviceStore::for_device(), app.as_str()).unwrap_or_else(|error| {
@@ -595,7 +587,7 @@ pub fn stack_mode_now(app: &AppType) -> bool {
 
 /// 在 Stack 名单里（不管什么模式）。
 pub fn is_member(app: &AppType, provider_id: &str) -> Result<bool, AppError> {
-    if !supports_stack(app) {
+    if !app.spec().stack {
         return Ok(false);
     }
     Ok(state::stack(&DeviceStore::for_device(), app.as_str())?.is_member(provider_id))

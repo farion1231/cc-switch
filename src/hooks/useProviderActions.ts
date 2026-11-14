@@ -33,6 +33,7 @@ import { supportsOfficialProxyTakeover } from "@/utils/providerCapabilities";
 import { getRoutingReason } from "@/utils/routingReason";
 import { logFrontendInfo } from "@/lib/frontendLogger";
 import { codexHistorySplitToastExtras } from "@/utils/codexHistorySplitHint";
+import { appHas } from "@/config/appSpecs";
 
 /**
  * Hook for managing provider actions (add, update, delete, switch)
@@ -321,7 +322,7 @@ export function useProviderActions(
           },
         };
 
-        if (activeApp === "pi" || activeApp === "omp") {
+        if (appHas(activeApp, "piFamily")) {
           await piApi.updateProviderUsageScript(provider.id, script, activeApp);
         } else {
           await providersApi.update(updatedProvider, activeApp);

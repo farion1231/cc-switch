@@ -50,6 +50,7 @@ export interface EndpointCandidate {
   isCustom?: boolean;
 }
 
+import type { AppId } from "./lib/api/types";
 import type { TemplateType } from "./config/constants";
 
 // 用量查询脚本配置
@@ -309,24 +310,7 @@ export interface CodexCatalogModel {
 export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
 
 // 主页面显示的应用配置
-export interface VisibleApps {
-  claude: boolean;
-  "claude-desktop": boolean;
-  codex: boolean;
-  gemini: boolean;
-  grokbuild: boolean;
-  opencode: boolean;
-  openclaw: boolean;
-  hermes: boolean;
-  pi: boolean;
-  mcode: boolean;
-  kimi: boolean;
-  dsh?: boolean;
-  agy: boolean;
-  omp: boolean;
-  copilot: boolean;
-  workbuddy: boolean;
-}
+export type VisibleApps = Record<AppId, boolean>;
 
 // WebDAV 同步状态
 export interface WebDavSyncStatus {

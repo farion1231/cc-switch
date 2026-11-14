@@ -2254,8 +2254,7 @@ fn collect_model(app_state: &AppState, texts: &TrayTexts) -> Result<TrayModel, A
 /// 退出会让它们断开的情况：路由服务在跑，且有应用在路由 / 聚合模式（含 Claude Desktop；和
 /// `controller::stop_server_if_unused` 的「在用」同一口径，隐藏的应用也算）。
 fn routing_in_use(app_state: &AppState) -> bool {
-    app_state.proxy_service.running_now() == Some(true)
-        && crate::mode::current::proxy_flags(crate::mode::controller::PROXY_APPS).contains(&true)
+    app_state.proxy_service.running_now() == Some(true) && crate::mode::current::any_proxy()
 }
 
 // ─── 模型 → 托盘面板 ───────────────────────────────────────────────────────────
@@ -3627,7 +3626,7 @@ mod tests {
             ]
         );
         for app in TRAY_APPS {
-            assert!(!app.is_additive_mode(), "{app:?} 是累加式应用，不进托盘");
+            assert!(!app.spec().additive, "{app:?} 是累加式应用，不进托盘");
         }
     }
 
