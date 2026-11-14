@@ -1103,6 +1103,8 @@ enum TrayUsageSource {
     ManagedCodex(String),
     /// 绑了账号的 Claude 官方卡：按绑定的账号取，不读客户端默认登录的应用级缓存。
     ClaudeAccount(String),
+    /// 绑了授权中心 xAI 账号的 Grok 官方卡：按绑定的账号取，不读 Grok CLI 登录的应用级缓存。
+    XaiAccount(String),
     /// 客户端自己登录的官方订阅：和供应商卡片读写同一份应用级订阅缓存。
     Subscription,
     Script,
@@ -1110,28 +1112,24 @@ enum TrayUsageSource {
 
 /// Keep the tray's refresh and display paths on the same credentials and toggle.
 fn tray_usage_source(app_type: &AppType, provider: &Provider) -> Option<TrayUsageSource> {
-    if *app_type == AppType::Codex {
-        if let Some(account_id) = managed_codex_account_id(provider) {
-            // Match ProviderCard: managed accounts query by default until the
-            // user explicitly disables usage, including older saved providers.
-            let enabled = provider
-                .meta
-                .as_ref()
-                .and_then(|meta| meta.usage_script.as_ref())
-                .map(|script| script.enabled)
-                .unwrap_or(true);
-            return enabled.then_some(TrayUsageSource::ManagedCodex(account_id));
-        }
-    }
-    if let Some(account_id) = claude_bound_account_id(app_type, provider) {
-        // 同卡片：绑了账号的 Claude 官方卡没保存过开关时默认查额度，用户关掉才不查。
+    // 绑了托管账号的卡（Codex、Claude 官方、Grok 官方）按账号取额度
+    let bound = match app_type {
+        AppType::Codex => managed_codex_account_id(provider).map(TrayUsageSource::ManagedCodex),
+        // Grok 官方卡绑了授权中心的 xAI 账号（同前端 ProviderCard 的 `grokBoundAccountId`）
+        AppType::GrokBuild => crate::services::provider::grok_direct::bound_account(provider)
+            .map(TrayUsageSource::XaiAccount),
+        _ => claude_bound_account_id(app_type, provider).map(TrayUsageSource::ClaudeAccount),
+    };
+    if let Some(source) = bound {
+        // Match ProviderCard: bound accounts query by default until the user
+        // explicitly disables usage, including older saved providers.
         let enabled = provider
             .meta
             .as_ref()
             .and_then(|meta| meta.usage_script.as_ref())
             .map(|script| script.enabled)
             .unwrap_or(true);
-        return enabled.then_some(TrayUsageSource::ClaudeAccount(account_id));
+        return enabled.then_some(source);
     }
     // xAI OAuth 的额度属于绑定的 SuperGrok 账号，不是所在应用的客户端登录，仍走脚本路径。
     if provider_uses_official_subscription(provider) && !provider.is_xai_oauth() {
@@ -1189,6 +1187,12 @@ fn cached_usage_view(
         // 同上：没查到这个号就不显示，不回落到默认登录的应用级缓存。
         return usage_cache
             .with_claude_account(account_id, |quota| format_subscription_quota(texts, quota))
+            .flatten();
+    }
+    if let Some(TrayUsageSource::XaiAccount(account_id)) = source {
+        // 同上：没查到这个号就不显示，不回落到 Grok CLI 登录的应用级缓存。
+        return usage_cache
+            .with_xai_account(account_id, |quota| format_subscription_quota(texts, quota))
             .flatten();
     }
     if source == Some(&TrayUsageSource::Subscription) {
@@ -2413,7 +2417,9 @@ fn cached_reset_credits(
             usage_cache.with_codex_oauth(account_id, count).flatten()
         }
         TrayUsageSource::Subscription => usage_cache.with_subscription(app_type, count).flatten(),
-        TrayUsageSource::ClaudeAccount(_) | TrayUsageSource::Script => None,
+        TrayUsageSource::ClaudeAccount(_)
+        | TrayUsageSource::XaiAccount(_)
+        | TrayUsageSource::Script => None,
     }
 }
 
@@ -3516,6 +3522,18 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
                             .await
                             .map(|_| ())
                     }
+                    TrayUsageSource::XaiAccount(account_id) => {
+                        // 托盘不显示套餐，不多问那一次
+                        crate::commands::query_and_cache_xai_account(
+                            &app_clone,
+                            &state,
+                            &xai_state,
+                            Some(account_id),
+                            false,
+                        )
+                        .await
+                        .map(|_| ())
+                    }
                     TrayUsageSource::Subscription => {
                         crate::commands::get_subscription_quota(app_clone, state, app_str)
                             .await
@@ -4255,6 +4273,76 @@ mod tests {
             }
         }))
         .unwrap()
+    }
+
+    fn grok_official_provider(account_id: Option<&str>, enabled: Option<bool>) -> Provider {
+        serde_json::from_value(serde_json::json!({
+            "id": "grok-bound",
+            "name": "Grok Official",
+            "settingsConfig": {"config": ""},
+            "category": "official",
+            "meta": {
+                "authBinding": account_id.map(|id| serde_json::json!({
+                    "source": "managed_account",
+                    "authProvider": "xai_oauth",
+                    "accountId": id
+                })),
+                "usage_script": enabled.map(|enabled| serde_json::json!({
+                    "enabled": enabled,
+                    "language": "javascript",
+                    "code": "",
+                    "templateType": "official_subscription"
+                }))
+            }
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn grok_bound_card_tray_usage_defaults_on_and_reads_its_account() {
+        for enabled in [Some(true), None] {
+            assert_eq!(
+                tray_usage_source(
+                    &AppType::GrokBuild,
+                    &grok_official_provider(Some(" user-1 "), enabled)
+                ),
+                Some(TrayUsageSource::XaiAccount("user-1".to_string()))
+            );
+        }
+        assert_eq!(
+            tray_usage_source(
+                &AppType::GrokBuild,
+                &grok_official_provider(Some("user-1"), Some(false))
+            ),
+            None
+        );
+        // 没绑账号的官方卡照旧读 Grok CLI 登录的订阅缓存
+        assert_eq!(
+            tray_usage_source(
+                &AppType::GrokBuild,
+                &grok_official_provider(None, Some(true))
+            ),
+            Some(TrayUsageSource::Subscription)
+        );
+    }
+
+    #[test]
+    fn grok_bound_card_tray_quota_comes_from_the_account_cache_only() {
+        let cache = UsageCache::new();
+        let texts = TrayTexts::from_language("zh");
+        let source = TrayUsageSource::XaiAccount("user-1".to_string());
+        // 应用级订阅缓存里有别人的额度，也不能拿来显示
+        let mut other = crate::services::subscription::SubscriptionQuota::not_found("grokbuild");
+        other.success = true;
+        cache.put_subscription(AppType::GrokBuild, other);
+        assert!(cached_usage_view(
+            &cache,
+            &texts,
+            &AppType::GrokBuild,
+            "grok-bound",
+            Some(&source)
+        )
+        .is_none());
     }
 
     #[test]

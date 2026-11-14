@@ -1,21 +1,16 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Loader2, Plus } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { authApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectSeparator,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { useManagedAuth } from "./hooks/useManagedAuth";
+import {
+  ManagedAccountSelect,
+  ManagedBoundAccountLine,
+} from "./shared/ManagedAccountSelect";
 import { useManagedAccountUsers } from "./hooks/useManagedAccountUsers";
 import {
   ManagedAccountRemoveDialog,
@@ -339,9 +334,6 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
 
 export default ClaudeOfficialSection;
 
-const DEFAULT_LOGIN = "__default__";
-const MANAGE_ACCOUNTS = "__manage_accounts__";
-
 interface ClaudeAccountSelectProps {
   value: string | null;
   onChange: (accountId: string | null) => void;
@@ -360,130 +352,25 @@ export function ClaudeAccountSelect({
 }: ClaudeAccountSelectProps) {
   const { t } = useTranslation();
   const blocked = useClaudeLoginBlocked();
-  const { data } = useQuery({
-    queryKey: ["managed-auth-status", "claude_official"],
-    queryFn: () => authApi.authGetStatus("claude_official"),
-    staleTime: 30000,
-  });
-  const accounts = data?.accounts ?? [];
-  const selected = accounts.find((a) => a.id === value);
-  // 绑的号不在这台电脑上（别的设备同步来的、或已删掉）时也要显示出来，别悄悄改成跟随登录
-  const missing = value !== null && !selected;
-  const followLabel = t("provider.form.claudeAccount.default", {
-    defaultValue: "跟随 Claude Code 登录",
-  });
-  const missingLabel = t("provider.form.claudeAccount.missing", {
-    defaultValue: "不在这台电脑上的账号",
-  });
-  const label = t("provider.form.claudeAccount.label", {
-    defaultValue: "登录方式",
-  });
-  const itemClass =
-    "min-w-0 overflow-hidden py-2 pl-6 [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1 [&>span:last-child]:overflow-hidden";
-
   return (
-    <div className="space-y-2.5">
-      <Label className="text-sm font-medium text-fg-1">{label}</Label>
-      <Select
-        value={value ?? DEFAULT_LOGIN}
-        onValueChange={(next) => {
-          // Radix Select 在表单里可能回报空串，忽略
-          if (!next) return;
-          if (next === MANAGE_ACCOUNTS) {
-            onManageAccounts?.();
-            return;
-          }
-          onChange(next === DEFAULT_LOGIN ? null : next);
-        }}
-      >
-        <SelectTrigger
-          className="h-10 min-w-0 rounded-lg bg-surface px-3 shadow-sm"
-          aria-label={label}
-        >
-          <span
-            className="min-w-0 flex-1 truncate text-left text-sm font-medium tracking-tight"
-            title={selected?.login}
-          >
-            <SelectValue>
-              {value === null
-                ? followLabel
-                : (selected?.login ?? (data ? missingLabel : undefined))}
-            </SelectValue>
-          </span>
-        </SelectTrigger>
-        <SelectContent className="w-[var(--radix-select-trigger-width)] max-w-[var(--radix-select-content-available-width)]">
-          {accounts.map((account, index) => (
-            <React.Fragment key={account.id}>
-              <SelectItem
-                value={account.id}
-                disabled={account.requires_reauth}
-                className={itemClass}
-              >
-                <div className="flex min-w-0 items-center gap-2">
-                  <span aria-hidden className="h-4 w-4 shrink-0" />
-                  <span
-                    className="min-w-0 truncate text-sm font-medium leading-5"
-                    title={account.login}
-                  >
-                    {account.login}
-                  </span>
-                  {account.requires_reauth && (
-                    <span className="ml-1 inline-flex shrink-0 items-center gap-1 text-xs text-warning-text">
-                      <AlertTriangle className="h-3 w-3" />
-                      {t("provider.form.claudeAccount.reauthBadge", {
-                        defaultValue: "需要重新登录",
-                      })}
-                    </span>
-                  )}
-                </div>
-              </SelectItem>
-              {(index < accounts.length - 1 || onManageAccounts) && (
-                <SelectSeparator className="mx-2 my-0 bg-border/60" />
-              )}
-            </React.Fragment>
-          ))}
-          {missing && (
-            <SelectItem value={value} className={itemClass}>
-              <div className="flex min-w-0 items-center gap-2">
-                <span aria-hidden className="h-4 w-4 shrink-0" />
-                <span className="min-w-0 truncate text-sm font-medium leading-5 text-warning-text">
-                  {missingLabel}
-                </span>
-              </div>
-            </SelectItem>
-          )}
-          {onManageAccounts && (
-            <SelectItem value={MANAGE_ACCOUNTS} className="py-2 pl-6">
-              <div className="flex items-center gap-2">
-                <Plus className="h-4 w-4 shrink-0 text-fg-2" />
-                <span className="truncate text-sm font-medium leading-5">
-                  {t("provider.form.claudeAccount.manage", {
-                    defaultValue: "添加或管理 Claude 账号",
-                  })}
-                </span>
-              </div>
-            </SelectItem>
-          )}
-          {(accounts.length > 0 || missing || onManageAccounts) && (
-            <SelectSeparator className="my-1.5 bg-border" />
-          )}
-          <SelectItem value={DEFAULT_LOGIN} className={itemClass}>
-            <div className="flex min-w-0 items-center gap-2">
-              <span aria-hidden className="h-4 w-4 shrink-0" />
-              <span className="shrink-0 text-sm font-medium leading-5">
-                {followLabel}
-              </span>
-              <span className="min-w-0 truncate text-sm leading-5 text-fg-2">
-                {t("provider.form.claudeAccount.defaultDescription", {
-                  defaultValue: "账号会随 Claude Code 当前登录变化",
-                })}
-              </span>
-            </div>
-          </SelectItem>
-        </SelectContent>
-      </Select>
-      <p className="text-caption text-fg-2">
-        {blocked === "wsl"
+    <ManagedAccountSelect
+      authProvider="claude_official"
+      value={value}
+      onChange={(accountId) => onChange(accountId)}
+      onManageAccounts={onManageAccounts}
+      labels={{
+        follow: t("provider.form.claudeAccount.default", {
+          defaultValue: "跟随 Claude Code 登录",
+        }),
+        followDescription: t("provider.form.claudeAccount.defaultDescription", {
+          defaultValue: "账号会随 Claude Code 当前登录变化",
+        }),
+        manage: t("provider.form.claudeAccount.manage", {
+          defaultValue: "添加或管理 Claude 账号",
+        }),
+      }}
+      help={
+        blocked === "wsl"
           ? t("provider.form.claudeAccount.helpWsl", {
               defaultValue:
                 "Claude 配置目录在 WSL 里，暂不支持 Claude 账号，切到这张卡不会切换 Claude Code 的登录。",
@@ -496,22 +383,10 @@ export function ClaudeAccountSelect({
             : t("provider.form.claudeAccount.help", {
                 defaultValue:
                   "切到这张卡后，Claude Code 的登录会实时换成选中的账号，正在运行的会话也一样。想同时用几个号，从卡片「打开终端」。",
-              })}
-      </p>
-    </div>
+              })
+      }
+    />
   );
-}
-
-function useClaudeAccount(accountId: string) {
-  const { data, isSuccess } = useQuery({
-    queryKey: ["managed-auth-status", "claude_official"],
-    queryFn: () => authApi.authGetStatus("claude_official"),
-    staleTime: 30000,
-  });
-  return {
-    isSuccess,
-    account: data?.accounts.find((a) => a.id === accountId),
-  };
 }
 
 /**
@@ -533,61 +408,39 @@ export function ClaudeBoundAccountLine({
 }) {
   const { t } = useTranslation();
   const blocked = useClaudeLoginBlocked();
-  const { isSuccess, account } = useClaudeAccount(accountId);
-  if (!isSuccess) return null;
-  if (!account) {
-    return (
-      <div className="mt-0.5 flex min-w-0 items-center gap-1 text-caption text-warning-text">
-        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-        <span className="min-w-0 truncate">
-          {t("provider.form.claudeAccount.missing", {
-            defaultValue: "不在这台电脑上的账号",
-          })}
-        </span>
-      </div>
-    );
-  }
-  const expiresAt = account.login_expires_at ?? null;
-  const needsReauth =
-    account.requires_reauth || (expiresAt !== null && expiresAt <= Date.now());
-  const plan = showPlan
-    ? claudePlanLabel(t, account.plan, account.rate_limit_tier)
-    : null;
-  const name = providerName.trim();
-  const label =
-    note ??
-    (name === account.login || name.includes(account.login)
-      ? t("provider.form.claudeAccount.claudeAccount", {
-          defaultValue: "Claude 账号",
-        })
-      : account.login);
   return (
-    <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
-      <span className="min-w-0 truncate" title={note ?? account.login}>
-        {label}
-      </span>
-      {/* 跟在账号后面：「me@example.com · Max 20x」（抵掉一半间距，和「 · 」一样宽） */}
-      {plan && <span className="-ms-1 shrink-0">· {plan}</span>}
-      {needsReauth ? (
-        <span className="inline-flex shrink-0 items-center gap-1 text-warning-text">
-          <AlertTriangle className="h-3.5 w-3.5" />
-          {t("provider.form.claudeAccount.reauthBadge", {
-            defaultValue: "需要重新登录",
-          })}
-        </span>
-      ) : blocked === "wsl" ? (
-        <span className="shrink-0">
-          {t("provider.form.claudeAccount.wslHint", {
-            defaultValue: "WSL 暂不支持",
-          })}
-        </span>
-      ) : blocked === "overrideDir" ? (
-        <span className="shrink-0">
-          {t("provider.form.claudeAccount.terminalHint", {
-            defaultValue: "从卡片打开终端使用",
-          })}
-        </span>
-      ) : null}
-    </div>
+    <ManagedBoundAccountLine
+      authProvider="claude_official"
+      accountId={accountId}
+      providerName={providerName}
+      note={note}
+      accountNoun={t("provider.form.claudeAccount.claudeAccount", {
+        defaultValue: "Claude 账号",
+      })}
+      needsReauth={(account) => {
+        const expiresAt = account.login_expires_at ?? null;
+        return (
+          account.requires_reauth ||
+          (expiresAt !== null && expiresAt <= Date.now())
+        );
+      }}
+      plan={
+        showPlan
+          ? (account) =>
+              claudePlanLabel(t, account.plan, account.rate_limit_tier)
+          : undefined
+      }
+      hint={
+        blocked === "wsl"
+          ? t("provider.form.claudeAccount.wslHint", {
+              defaultValue: "WSL 暂不支持",
+            })
+          : blocked === "overrideDir"
+            ? t("provider.form.claudeAccount.terminalHint", {
+                defaultValue: "从卡片打开终端使用",
+              })
+            : undefined
+      }
+    />
   );
 }

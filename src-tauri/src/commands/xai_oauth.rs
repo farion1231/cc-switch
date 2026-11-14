@@ -12,6 +12,21 @@ use tokio::sync::RwLock;
 
 pub struct XaiOAuthState(pub Arc<RwLock<XaiOAuthManager>>);
 
+/// 要用的账号：显式指定的 > 默认账号 > 没有
+async fn resolve_account_id(
+    manager: &XaiOAuthManager,
+    account_id: Option<String>,
+) -> Option<String> {
+    match account_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        Some(id) => Some(id.to_string()),
+        None => manager.default_account_id().await,
+    }
+}
+
 /// 查询 xAI OAuth (SuperGrok 反代) 订阅额度的共享核心
 ///
 /// 与 `get_codex_oauth_quota` 平行：数据走 cc-switch 自管的 xAI OAuth token，
@@ -34,16 +49,7 @@ pub(crate) async fn query_xai_oauth_quota_for(
 ) -> Result<SubscriptionQuota, String> {
     let manager = state.0.read().await;
 
-    // 解析最终使用的账号 ID：显式 > 默认账号 > 无账号 (not_found)
-    let resolved = match account_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|id| !id.is_empty())
-    {
-        Some(id) => Some(id.to_string()),
-        None => manager.default_account_id().await,
-    };
-    let Some(id) = resolved else {
+    let Some(id) = resolve_account_id(&manager, account_id).await else {
         return Ok(SubscriptionQuota::not_found("xai_oauth"));
     };
 
@@ -81,13 +87,61 @@ pub(crate) async fn query_xai_oauth_quota_for(
     Ok(quota)
 }
 
+/// Grok Build 官方卡的订阅额度：先读 Grok CLI 凭据，查不到时用授权中心的同一账号兜底
+///
+/// Grok CLI 只在自己运行时刷新 ~/.grok/auth.json 的访问令牌（约 6 小时过期），
+/// 几天不用 Grok 卡片就会一直「令牌待刷新」。授权中心的 xAI 账号与 Grok CLI 是
+/// 同一个 OAuth client，令牌由 cc-switch 自己刷新；只要账号 id 与 Grok CLI 登录的
+/// `user_id` 一致，查到的就是同一份订阅额度。只读，不改 Grok CLI 的凭据文件。
+/// 瞬时失败（`Err`）不兜底，保持前端 retry + 保留上次成功值的语义。
+pub(crate) async fn query_grokbuild_quota_with_managed_fallback(
+    state: Option<&XaiOAuthState>,
+) -> Result<SubscriptionQuota, String> {
+    let primary = crate::services::subscription_grok::get_grok_subscription_quota().await?;
+    if primary.success {
+        return Ok(primary);
+    }
+    let (Some(state), Some(live)) = (state, crate::grok_auth::read_live_login_from_disk()) else {
+        return Ok(primary);
+    };
+    // 授权中心没有这个号或要重新登录时查不成功，照样回到 Grok CLI 凭据的结果
+    match query_xai_oauth_quota_for(state, Some(live.user_id), false).await {
+        Ok(mut quota) if quota.success => {
+            quota.tool = "grokbuild".to_string();
+            Ok(quota)
+        }
+        _ => Ok(primary),
+    }
+}
+
+/// 查一个账号的额度，按账号存进托盘缓存（绑了账号的 Grok 官方卡在托盘上读它）
+pub(crate) async fn query_and_cache_xai_account(
+    app: &tauri::AppHandle,
+    app_state: &crate::store::AppState,
+    state: &XaiOAuthState,
+    account_id: Option<String>,
+    with_plan: bool,
+) -> Result<SubscriptionQuota, String> {
+    let resolved = resolve_account_id(&*state.0.read().await, account_id).await;
+    let quota = query_xai_oauth_quota_for(state, resolved.clone(), with_plan).await?;
+    if let Some(account_id) = resolved {
+        app_state
+            .usage_cache
+            .put_xai_account(account_id, quota.clone());
+        crate::tray::schedule_tray_refresh(app);
+    }
+    Ok(quota)
+}
+
 /// 查询 xAI OAuth (SuperGrok 反代) 订阅额度
 #[tauri::command(rename_all = "camelCase")]
 pub async fn get_xai_oauth_quota(
+    app: tauri::AppHandle,
+    app_state: State<'_, crate::store::AppState>,
     account_id: Option<String>,
     state: State<'_, XaiOAuthState>,
 ) -> Result<SubscriptionQuota, String> {
-    query_xai_oauth_quota_for(&state, account_id, true).await
+    query_and_cache_xai_account(&app, &app_state, &state, account_id, true).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -109,15 +163,9 @@ pub async fn get_xai_oauth_models(
     state: State<'_, XaiOAuthState>,
 ) -> Result<Vec<FetchedModel>, String> {
     let manager = state.0.read().await;
-    let resolved = match account_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|id| !id.is_empty())
-    {
-        Some(id) => Some(id.to_string()),
-        None => manager.default_account_id().await,
-    };
-    let account_id = resolved.ok_or_else(|| "No usable xAI account available".to_string())?;
+    let account_id = resolve_account_id(&manager, account_id)
+        .await
+        .ok_or_else(|| "No usable xAI account available".to_string())?;
     let token = manager
         .get_valid_token_for_account(&account_id)
         .await

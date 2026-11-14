@@ -241,17 +241,19 @@
         "oauthHint": "Google official uses OAuth personal authentication, no need to fill in API Key. The browser will automatically open for login on first use.",
         "apiKeyPlaceholder": "Enter Gemini API Key"
       },
-      "claudeAccount": {
+      "managedAccount": {
         "label": "Sign-in method",
+        "missing": "Account not on this computer",
+        "reauthBadge": "Re-login required"
+      },
+      "claudeAccount": {
         "default": "Follow Claude Code login",
         "defaultDescription": "The account changes with the current Claude Code login",
-        "missing": "Account not on this computer",
         "manage": "Add or manage Claude accounts",
         "helpTerminal": "The Claude config folder is overridden in Settings, so switching to this card doesn't change Claude Code's sign-in. Use Open Terminal on the card to use the selected account.",
         "helpWsl": "The Claude config folder is in WSL, where Claude accounts aren't supported yet. Switching to this card doesn't change Claude Code's sign-in.",
         "help": "Switching to this card changes Claude Code's sign-in to the selected account right away, including sessions already running. To use several accounts at once, use Open Terminal on the card.",
         "claudeAccount": "Claude account",
-        "reauthBadge": "Re-login required",
         "terminalHint": "Use via Open Terminal",
         "wslHint": "Not supported in WSL",
         "plan": {
@@ -263,6 +265,13 @@
           "teamPremium": "Team Premium",
           "enterprise": "Enterprise"
         }
+      },
+      "grokAccount": {
+        "default": "Follow Grok CLI sign-in",
+        "defaultDescription": "Uses whichever account Grok CLI is signed in to",
+        "manage": "Add or manage xAI accounts",
+        "help": "When you switch to this card, Grok CLI's sign-in (~/.grok/auth.json) changes to the selected account. The account signed in before is saved to the auth center first and comes back when you switch to the \"Follow Grok CLI sign-in\" card.",
+        "xaiAccount": "xAI account"
       }
     },
     "duplicateLiveIdsLoadFailed": "Failed to read provider identifiers from config, please fix the config and try again",

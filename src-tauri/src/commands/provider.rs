@@ -845,12 +845,25 @@ async fn query_provider_usage_inner(
         // xAI OAuth 托管供应商的额度属绑定的 SuperGrok 账号，而非所在 app 的
         // CLI 凭据（对 codex/claude 而言 CLI 凭据是 ChatGPT/Claude 订阅，跨了
         // 订阅体系，查出来的数字张冠李戴）。
-        let quota = if provider.map(Provider::is_xai_oauth).unwrap_or(false) {
-            let account_id = provider
-                .and_then(|p| p.meta.as_ref())
-                .and_then(|m| m.managed_account_id_for("xai_oauth"));
+        // 绑了授权中心账号的 Grok 官方卡同理：额度就是这个号的。
+        let xai_account = match provider {
+            Some(p) if p.is_xai_oauth() => Some(
+                p.meta
+                    .as_ref()
+                    .and_then(|m| m.managed_account_id_for("xai_oauth")),
+            ),
+            Some(p) if matches!(app_type, AppType::GrokBuild) => {
+                crate::services::provider::grok_direct::bound_account(p).map(Some)
+            }
+            _ => None,
+        };
+        let quota = if let Some(account_id) = xai_account {
             crate::commands::xai_oauth::query_xai_oauth_quota_for(xai_state, account_id, false)
                 .await?
+        } else if matches!(app_type, AppType::GrokBuild) {
+            crate::commands::xai_oauth::query_grokbuild_quota_with_managed_fallback(Some(xai_state))
+                .await
+                .map_err(|e| format!("Failed to query subscription quota: {e}"))?
         } else {
             crate::services::subscription::get_subscription_quota(app_type.as_str())
                 .await
