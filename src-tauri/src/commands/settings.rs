@@ -92,6 +92,8 @@ pub async fn save_settings(
             != existing.codex_stack_subagent_reasoning_effort
         || merged.codex_stack_auto_review_model != existing.codex_stack_auto_review_model;
     let tray_style_changed = merged.native_tray_menu != existing.native_tray_menu;
+    let widget_changed = merged.macos_widget_enabled != existing.macos_widget_enabled;
+    let widget_enabled = merged.macos_widget_enabled;
     let without_login_changed =
         merged.codex_proxy_without_official_login != existing.codex_proxy_without_official_login;
     let preserve_login_changed = merged.preserve_codex_official_auth_on_switch
@@ -228,6 +230,11 @@ pub async fn save_settings(
                 log::warn!("清除统一会话迁移意愿失败: {err}");
             }
         }
+    }
+
+    // 放在所有可能回滚设置的分支之后：保存整体失败时不该已经清掉或开始刷新小组件
+    if widget_changed {
+        crate::services::widget_snapshot::on_setting_changed(&app, widget_enabled);
     }
     Ok(true)
 }

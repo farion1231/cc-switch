@@ -1,0 +1,19 @@
+/* 小组件自己的文案：「用量」的时间范围名（和 CC Switch 用量页同名）和图表样式配置项（UsageIntent.swift）、翻页意图名（Pager.swift）。 */
+"usage.range.today" = "Сегодня";
+"usage.range.1d" = "Последние 24 часа";
+"usage.range.7d" = "Последние 7 дней";
+"usage.range.14d" = "Последние 14 дней";
+"usage.range.30d" = "Последние 30 дней";
+"usage.range.all" = "Всё время";
+"pager.intent.title" = "Перелистнуть";
+"usage.range.short.today" = "Сегодня";
+"usage.range.short.1d" = "24 ч";
+"usage.range.short.7d" = "7 д";
+"usage.range.short.14d" = "14 д";
+"usage.range.short.30d" = "30 д";
+"usage.range.short.all" = "Всё";
+"usage.chart" = "Вид графика";
+"usage.chart.bars" = "Столбцы";
+"usage.chart.line" = "Линия";
+"usage.intent.title" = "Использование";
+"usage.intent.description" = "Выберите вид графика. Период меняется кнопками на самом виджете.";
