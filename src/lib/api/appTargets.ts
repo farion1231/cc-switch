@@ -1,0 +1,388 @@
+import { invoke } from "@tauri-apps/api/core";
+import type { Provider } from "@/types";
+
+/** 第一阶段支持多环境写入的应用；其他应用沿用单目录。 */
+export const APP_TARGET_APPS = [
+  "claude",
+  "codex",
+  "gemini",
+  "opencode",
+] as const;
+export type AppTargetAppId = (typeof APP_TARGET_APPS)[number];
+
+export const isAppTargetApp = (app: string): app is AppTargetAppId =>
+  (APP_TARGET_APPS as readonly string[]).includes(app);
+
+/** `windows` 或 `wsl:<发行版>` */
+export type TargetKey = string;
+export const WINDOWS_TARGET = "windows";
+export const wslTargetKey = (distro: string): TargetKey => `wsl:${distro}`;
+export const distroOf = (key: TargetKey): string | undefined =>
+  key.startsWith("wsl:") ? key.slice(4) : undefined;
+export const sameTarget = (a: TargetKey, b: TargetKey) =>
+  a === b ||
+  (distroOf(a) !== undefined &&
+    distroOf(a)!.toLowerCase() === distroOf(b)?.toLowerCase());
+
+export interface AppTargetsConfig {
+  primary: TargetKey;
+  /** `route`：应用在路由 / 聚合模式时这个环境接入共用的路由（主环境总是跟随） */
+  windows: { enabled: boolean; dir?: string | null; route?: boolean };
+  wsl: {
+    distro: string;
+    enabled: boolean;
+    dir?: string | null;
+    route?: boolean;
+  }[];
+  [extra: string]: unknown;
+}
+
+export type ConfigSource = "saved" | "legacy" | "legacyUnresolved";
+
+export type TargetStatus =
+  | "ok"
+  | "partial"
+  | "error"
+  | "deferred"
+  | "skipped"
+  | "external";
+
+export interface TargetRecord {
+  status: TargetStatus;
+  reason?: string;
+  detail?: string;
+  providerId?: string;
+  fingerprint?: string;
+  dir?: string;
+  warnings?: string[];
+  /** 客户端文件现在是共用路由的代理配置 */
+  routed?: boolean;
+  at: number;
+}
+
+export interface TargetReport extends TargetRecord {
+  target: TargetKey;
+}
+
+export interface WslEnvironment {
+  distro: string;
+  available: boolean;
+  running: boolean;
+  home?: string;
+  claudeConfigDir?: string;
+  codexHome?: string;
+  xdgConfigHome?: string;
+  cached: boolean;
+  detectedAt?: number;
+  error?: string;
+}
+
+export interface WslInventory {
+  hostWindows: boolean;
+  wslAvailable: boolean;
+  distros: WslEnvironment[];
+  error?: string;
+}
+
+export interface AppTargetsView {
+  app: AppTargetAppId;
+  source: ConfigSource;
+  config: AppTargetsConfig;
+  resolvedDirs: Record<TargetKey, string>;
+  records: Record<TargetKey, TargetRecord>;
+}
+
+export type InstallStatus = "installed" | "broken" | "notInstalled" | "unknown";
+
+export interface ToolInstall {
+  status: InstallStatus;
+  version?: string;
+  /** 发行版里的可执行文件路径 */
+  path?: string;
+  error?: string;
+  probeError?: string;
+  detectedAt: number;
+  /** 使用上次结果（发行版停止、缓存过期或本次探测失败） */
+  cached: boolean;
+}
+
+export interface AppTargetsOverview {
+  inventory: WslInventory;
+  /** 发行版 → 应用 → 安装情况 */
+  installs: Record<string, Record<string, ToolInstall>>;
+  multiEnv: boolean;
+  apps: AppTargetsView[];
+}
+
+export interface FieldError {
+  target?: TargetKey;
+  code: string;
+}
+
+export interface TargetConflict {
+  target: TargetKey;
+  dir: string;
+  existingProviderId?: string;
+  existingProviderName?: string;
+  existingHost?: string;
+  incomingProviderId?: string;
+  incomingProviderName?: string;
+}
+
+export interface InspectResult {
+  errors: FieldError[];
+  /** 保存后的主环境（自动：勾选了 Windows 就是 Windows） */
+  primaryTarget: TargetKey;
+  resolvedDirs: Record<TargetKey, string>;
+  conflicts: TargetConflict[];
+  blocked?: string;
+}
+
+export type Resolution = "defer" | "overwrite" | "import";
+
+export interface SaveResult extends InspectResult {
+  saved: boolean;
+  needsResolution: boolean;
+  imported: string[];
+  primary?: TargetReport;
+  targets: TargetReport[];
+}
+
+export interface WslRouteInfo {
+  distro: string;
+  savedHost?: string;
+  detectedHost?: string;
+  networkingMode?: string;
+  listenAddress: string;
+  /** 监听只在回环上而这个发行版要经 Windows 网关访问：连不上 */
+  listenUnreachable: boolean;
+}
+
+export interface RouteTestResult {
+  ok: boolean;
+  url: string;
+  detail: string;
+}
+
+export interface SyncResult {
+  primary?: TargetReport;
+  targets: TargetReport[];
+}
+
+export const appTargetsApi = {
+  /** `refreshInstalls`：运行中的发行版重新检测客户端安装（应用页「检查更新」） */
+  async overview(
+    probeStopped = false,
+    refreshInstalls = false,
+  ): Promise<AppTargetsOverview> {
+    return await invoke("get_app_targets_overview", {
+      probeStopped,
+      refreshInstalls,
+    });
+  },
+
+  async inspect(
+    app: AppTargetAppId,
+    config: AppTargetsConfig,
+  ): Promise<InspectResult> {
+    return await invoke("inspect_app_targets", { app, config });
+  },
+
+  async save(
+    app: AppTargetAppId,
+    config: AppTargetsConfig,
+    resolutions: Record<TargetKey, Resolution>,
+  ): Promise<SaveResult> {
+    return await invoke("save_app_targets", { app, config, resolutions });
+  },
+
+  /** 在某个环境里启用供应商（供应商页的环境开关）。 */
+  async activate(
+    app: AppTargetAppId,
+    target: TargetKey,
+    providerId: string,
+  ): Promise<TargetReport> {
+    return await invoke("activate_app_target_provider", {
+      app,
+      target,
+      providerId,
+    });
+  },
+
+  /** 取消某个环境正在用的供应商（清掉 CC Switch 写进去的关键字段） */
+  async deactivate(
+    app: AppTargetAppId,
+    target: TargetKey,
+  ): Promise<TargetReport> {
+    return await invoke("deactivate_app_target_provider", { app, target });
+  },
+
+  /** 某个环境是否接入共用的路由 / 聚合 */
+  async setRoute(
+    app: AppTargetAppId,
+    target: TargetKey,
+    join: boolean,
+  ): Promise<TargetReport> {
+    return await invoke("set_app_target_route", { app, target, join });
+  },
+
+  async wslRouteInfo(probe = false): Promise<WslRouteInfo[]> {
+    return await invoke("get_wsl_route_info", { probe });
+  },
+
+  async setWslClientHost(distro: string, host: string): Promise<void> {
+    return await invoke("set_wsl_client_host", { distro, host });
+  },
+
+  async testWslRoute(distro: string): Promise<RouteTestResult> {
+    return await invoke("test_wsl_route", { distro });
+  },
+
+  /** 在某个 WSL 发行版里安装 / 更新客户端（应用页的 WSL 安装条目） */
+  async wslToolAction(
+    tool: AppTargetAppId,
+    distro: string,
+    action: "install" | "update",
+  ): Promise<void> {
+    return await invoke("run_wsl_tool_lifecycle_action", {
+      tool,
+      distro,
+      action,
+    });
+  },
+
+  async sync(app: AppTargetAppId, targets?: TargetKey[]): Promise<SyncResult> {
+    return await invoke("sync_app_targets", { app, targets });
+  },
+};
+
+/** 只启用 Windows、Windows 为主环境：和旧单目录行为一样，主页不显示写入目标入口。 */
+export const isWindowsOnly = (config: AppTargetsConfig) =>
+  config.primary === WINDOWS_TARGET &&
+  config.windows.enabled &&
+  config.wsl.every((target) => !target.enabled);
+
+export const enabledTargetKeys = (config: AppTargetsConfig): TargetKey[] => [
+  ...(config.windows.enabled ? [WINDOWS_TARGET] : []),
+  ...config.wsl.filter((t) => t.enabled).map((t) => wslTargetKey(t.distro)),
+];
+
+/** Windows 页面只展示当前运行中的 WSL；保存的目标配置保持完整。 */
+export const runningWslDistros = (
+  inventory?: WslInventory,
+): WslEnvironment[] =>
+  inventory?.hostWindows && inventory.wslAvailable
+    ? inventory.distros.filter((env) => env.available && env.running)
+    : [];
+
+export const isTargetRunning = (key: TargetKey, inventory?: WslInventory) => {
+  // 运行状态筛选仅适用于 Windows；其他平台和尚未确定平台时沿用原显示。
+  if (inventory?.hostWindows !== true) return true;
+  const distro = distroOf(key);
+  return (
+    !distro ||
+    runningWslDistros(inventory).some(
+      (env) => env.distro.toLowerCase() === distro.toLowerCase(),
+    )
+  );
+};
+
+export const visibleTargetKeys = (
+  config: AppTargetsConfig,
+  inventory?: WslInventory,
+) => enabledTargetKeys(config).filter((key) => isTargetRunning(key, inventory));
+
+/** 隐藏已关闭 WSL 导入的卡片，保留本机及其他运行中环境仍使用的共享卡片。 */
+export function isTargetProviderVisible(
+  provider: Provider,
+  view: AppTargetsView | undefined,
+  inventory: WslInventory | undefined,
+  sharedProviderIds: ReadonlySet<string>,
+): boolean {
+  if (inventory?.hostWindows !== true || !view) return true;
+
+  let source = provider.meta?.importedFromTarget;
+  if (!source) {
+    // 兼容尚未记录导入来源的旧卡片：只识别已保存发行版的自动导入名称。
+    const distro = /^WSL · ([A-Za-z0-9_.-]{1,64})(?: · |$)/.exec(
+      provider.name,
+    )?.[1];
+    if (
+      !distro ||
+      !view.config.wsl.some(
+        (target) => target.distro.toLowerCase() === distro.toLowerCase(),
+      )
+    )
+      return true;
+    source = wslTargetKey(distro);
+  }
+  if (
+    !distroOf(source) ||
+    isTargetRunning(source, inventory) ||
+    sharedProviderIds.has(provider.id)
+  )
+    return true;
+
+  return visibleTargetKeys(view.config, inventory).some((key) =>
+    Object.entries(view.records).some(
+      ([recordKey, record]) =>
+        sameTarget(recordKey, key) && record.providerId === provider.id,
+    ),
+  );
+}
+
+/** 跟随环境的「接入路由」偏好 */
+export const routeFlag = (config: AppTargetsConfig, key: TargetKey) => {
+  const distro = distroOf(key);
+  if (!distro) return Boolean(config.windows.route);
+  return Boolean(
+    config.wsl.find((t) => t.distro.toLowerCase() === distro.toLowerCase())
+      ?.route,
+  );
+};
+
+/** 某个发行版里装没装这个应用：`undefined` 表示还没检测出来。 */
+export function installedIn(
+  installs: AppTargetsOverview["installs"] | undefined,
+  distro: string,
+  app: string,
+): boolean | undefined {
+  const entry = Object.entries(installs ?? {}).find(
+    ([name]) => name.toLowerCase() === distro.toLowerCase(),
+  )?.[1]?.[app];
+  if (!entry || entry.status === "unknown") return undefined;
+  return entry.status !== "notInstalled";
+}
+
+export function installOf(
+  installs: AppTargetsOverview["installs"] | undefined,
+  distro: string,
+  app: string,
+): ToolInstall | undefined {
+  return Object.entries(installs ?? {}).find(
+    ([name]) => name.toLowerCase() === distro.toLowerCase(),
+  )?.[1]?.[app];
+}
+
+/**
+ * 只列运行中的发行版：已保存的目标，加上检测到装了这个客户端的。
+ */
+export function wslCandidates(
+  config: AppTargetsConfig,
+  overview: Pick<AppTargetsOverview, "installs" | "inventory"> | undefined,
+  app: string,
+): string[] {
+  const saved = config.wsl
+    .filter((target) =>
+      isTargetRunning(wslTargetKey(target.distro), overview?.inventory),
+    )
+    .map((target) => target.distro);
+  const detected = runningWslDistros(overview?.inventory)
+    .map((env) => env.distro)
+    .filter(
+      (distro) =>
+        installedIn(overview?.installs, distro, app) === true &&
+        !saved.some((s) => s.toLowerCase() === distro.toLowerCase()),
+    );
+  return [...saved, ...detected];
+}

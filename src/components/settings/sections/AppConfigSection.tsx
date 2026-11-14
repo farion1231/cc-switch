@@ -1,5 +1,18 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
+import { AppTargetsEditor } from "@/components/settings/AppTargetsEditor";
+import {
+  APP_TARGETS_QUERY_KEY,
+  useAppTargetsOverview,
+} from "@/hooks/useAppTargets";
+import {
+  appTargetsApi,
+  isAppTargetApp,
+  isTargetRunning,
+  wslCandidates,
+} from "@/lib/api/appTargets";
 import type {
   ResolvedDirectories,
   SettingsFormState,
@@ -89,6 +102,21 @@ export function AppConfigSection({
   onSaveDirectories,
 }: AppConfigSectionProps) {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const targets = useAppTargetsOverview();
+  const [detecting, setDetecting] = useState(false);
+  // 多环境界面只展示运行中的 WSL；缓存和保存的目标不会使停止的环境继续显示。
+  const multiEnv = targets.data?.multiEnv ?? false;
+
+  const detect = async () => {
+    setDetecting(true);
+    try {
+      const overview = await appTargetsApi.overview(false, true);
+      queryClient.setQueryData(APP_TARGETS_QUERY_KEY, overview);
+    } finally {
+      setDetecting(false);
+    }
+  };
 
   const isDirty = (app: DirectoryAppId) => {
     const field = DIRECTORY_FIELD[app];
@@ -142,56 +170,102 @@ export function AppConfigSection({
     </span>
   );
 
+  const appRows = (app: DirectoryAppId) => (
+    <>
+      {app === "claude" && (
+        <>
+          <SettingsSwitchRow
+            label={t("settings.enableClaudePluginIntegration")}
+            help={{
+              title: t("settings.enableClaudePluginIntegration"),
+              body: t("settings.enableClaudePluginIntegrationDescription"),
+            }}
+            checked={!!settings.enableClaudePluginIntegration}
+            onCheckedChange={(value) =>
+              void onAutoSave({ enableClaudePluginIntegration: value })
+            }
+          />
+          <SettingsSwitchRow
+            label={t("settings.skipClaudeOnboarding")}
+            help={{
+              title: t("settings.skipClaudeOnboarding"),
+              body: t("settings.skipClaudeOnboardingDescription"),
+            }}
+            checked={!!settings.skipClaudeOnboarding}
+            onCheckedChange={(value) =>
+              void onAutoSave({ skipClaudeOnboarding: value })
+            }
+          />
+        </>
+      )}
+      {app === "codex" && (
+        <CodexAuthSettings
+          settings={settings}
+          onChange={onAutoSave}
+          codexConfigDir={savedSettings?.codexConfigDir}
+        />
+      )}
+    </>
+  );
+
   return (
     <>
-      {DIRECTORY_APPS.map((app) => (
-        <SettingsBlock
-          key={app}
-          id={`app-config-${app}`}
-          className="rounded-panel"
-          title={blockTitle(app)}
-          actions={saveButton(app)}
-        >
-          <SettingsCard>
-            {app === "claude" && (
-              <>
-                <SettingsSwitchRow
-                  label={t("settings.enableClaudePluginIntegration")}
-                  help={{
-                    title: t("settings.enableClaudePluginIntegration"),
-                    body: t(
-                      "settings.enableClaudePluginIntegrationDescription",
-                    ),
-                  }}
-                  checked={!!settings.enableClaudePluginIntegration}
-                  onCheckedChange={(value) =>
-                    void onAutoSave({ enableClaudePluginIntegration: value })
-                  }
-                />
-                <SettingsSwitchRow
-                  label={t("settings.skipClaudeOnboarding")}
-                  help={{
-                    title: t("settings.skipClaudeOnboarding"),
-                    body: t("settings.skipClaudeOnboardingDescription"),
-                  }}
-                  checked={!!settings.skipClaudeOnboarding}
-                  onCheckedChange={(value) =>
-                    void onAutoSave({ skipClaudeOnboarding: value })
-                  }
-                />
-              </>
-            )}
-            {app === "codex" && (
-              <CodexAuthSettings
-                settings={settings}
-                onChange={onAutoSave}
-                codexConfigDir={savedSettings?.codexConfigDir}
-              />
-            )}
-            {directoryRow(app)}
-          </SettingsCard>
-        </SettingsBlock>
-      ))}
+      {DIRECTORY_APPS.map((app) => {
+        const configured = targets.data?.apps.find((item) => item.app === app);
+        const primaryRunning =
+          !configured ||
+          isTargetRunning(configured.config.primary, targets.data?.inventory);
+        // 某个 WSL 里装了这个客户端（或已经保存过 WSL 目标）才显示多环境表单，否则单目录。
+        const found =
+          multiEnv && isAppTargetApp(app)
+            ? targets.data?.apps.find((item) => item.app === app)
+            : undefined;
+        const view =
+          found && wslCandidates(found.config, targets.data, app).length > 0
+            ? found
+            : undefined;
+        if (view && targets.data && isAppTargetApp(app)) {
+          return (
+            <AppTargetsEditor
+              key={app}
+              app={app}
+              appName={APP_DISPLAY_NAME[app]}
+              view={view}
+              inventory={targets.data.inventory}
+              installs={targets.data.installs}
+              detecting={detecting}
+              onDetect={() => void detect()}
+              renderBlock={(actions, body) => (
+                <SettingsBlock
+                  id={`app-config-${app}`}
+                  className="rounded-panel"
+                  title={blockTitle(app)}
+                  actions={actions}
+                >
+                  <SettingsCard>
+                    {appRows(app)}
+                    {body}
+                  </SettingsCard>
+                </SettingsBlock>
+              )}
+            />
+          );
+        }
+        return (
+          <SettingsBlock
+            key={app}
+            id={`app-config-${app}`}
+            className="rounded-panel"
+            title={blockTitle(app)}
+            actions={primaryRunning ? saveButton(app) : undefined}
+          >
+            <SettingsCard>
+              {appRows(app)}
+              {primaryRunning && directoryRow(app)}
+            </SettingsCard>
+          </SettingsBlock>
+        );
+      })}
     </>
   );
 }

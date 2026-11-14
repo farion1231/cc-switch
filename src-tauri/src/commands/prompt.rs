@@ -29,7 +29,14 @@ pub async fn upsert_prompt(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    PromptService::upsert_prompt(&state, app_type, &id, prompt).map_err(|e| e.to_string())
+    PromptService::upsert_prompt(&state, app_type.clone(), &id, prompt)
+        .map_err(|e| e.to_string())?;
+    crate::app_targets::sync::spawn_after_change(
+        &state,
+        vec![app_type],
+        crate::app_targets::sync::SyncKind::Prompt,
+    );
+    Ok(())
 }
 
 #[tauri::command]
@@ -39,7 +46,13 @@ pub async fn delete_prompt(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    PromptService::delete_prompt(&state, app_type, &id).map_err(|e| e.to_string())
+    PromptService::delete_prompt(&state, app_type.clone(), &id).map_err(|e| e.to_string())?;
+    crate::app_targets::sync::spawn_after_change(
+        &state,
+        vec![app_type],
+        crate::app_targets::sync::SyncKind::Prompt,
+    );
+    Ok(())
 }
 
 #[tauri::command]
@@ -49,7 +62,13 @@ pub async fn enable_prompt(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    PromptService::enable_prompt(&state, app_type, &id).map_err(|e| e.to_string())
+    PromptService::enable_prompt(&state, app_type.clone(), &id).map_err(|e| e.to_string())?;
+    crate::app_targets::sync::spawn_after_change(
+        &state,
+        vec![app_type],
+        crate::app_targets::sync::SyncKind::Prompt,
+    );
+    Ok(())
 }
 
 #[tauri::command]

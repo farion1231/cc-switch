@@ -47,6 +47,88 @@ pub use live::{
     should_import_default_config_on_startup, sync_current_to_live,
 };
 
+/// 跟随环境（见 `app_targets`）：在当前线程的目标作用域里把 `target` 写进那个目标的
+/// 客户端文件，不改指针、不回填。`prev` 是这个目标上次写入的那家，用来删它带进来的独有
+/// 字段；`None` 表示不知道（第一次写入）。OpenCode 是累加式应用，同步全部受管供应商。
+pub(crate) fn apply_to_follower(
+    state: &AppState,
+    app: &AppType,
+    target: Option<&Provider>,
+    prev: Option<&Provider>,
+) -> Result<(), AppError> {
+    use crate::mode::state::{op, PendingTarget};
+    match (app, target) {
+        (AppType::Claude, Some(target)) => {
+            claude_direct::reapply(state.db.as_ref(), prev, target)?;
+        }
+        (AppType::Codex, Some(target)) => {
+            let owner = prev.map_or(codex_direct::Owner::None, codex_direct::Owner::Provider);
+            codex_direct::write_direct(
+                state.db.as_ref(),
+                &state.codex_oauth_manager,
+                op::APPLY,
+                owner,
+                Some(target),
+                PendingTarget::default(),
+            )?;
+        }
+        (AppType::Gemini, Some(target)) => {
+            gemini_direct::reapply(state.db.as_ref(), target)?;
+        }
+        (AppType::OpenCode, _) => live::sync_all_providers_to_live(state, app)?,
+        _ => {}
+    }
+    Ok(())
+}
+
+/// 跟随环境不再用 CC Switch 的供应商（供应商页取消那个环境的开关）：在目标作用域里清掉
+/// `prev` 写进去的关键字段和独有字段，其余设置不动，客户端回到它自己的登录或配置。
+pub(crate) fn clear_follower(
+    state: &AppState,
+    app: &AppType,
+    prev: Option<&Provider>,
+) -> Result<(), AppError> {
+    use crate::mode::state::{op, PendingTarget};
+    match app {
+        AppType::Claude => {
+            let prev = prev
+                .map(|p| crate::live::project::claude::ClaudeProjection::of(&p.settings_config));
+            let mut patch = crate::live::project::claude::direct_patch(
+                prev.as_ref(),
+                &crate::live::project::claude::ClaudeProjection::default(),
+            );
+            claude_official::strip_from_patch(&mut patch);
+            claude_direct::run(
+                state.db.as_ref(),
+                op::APPLY,
+                Some(&patch),
+                PendingTarget::default(),
+            )?;
+        }
+        AppType::Codex => {
+            let owner = prev.map_or(codex_direct::Owner::None, codex_direct::Owner::Provider);
+            codex_direct::write_direct(
+                state.db.as_ref(),
+                &state.codex_oauth_manager,
+                op::APPLY,
+                owner,
+                None,
+                PendingTarget::default(),
+            )?;
+        }
+        AppType::Gemini => {
+            gemini_direct::run(
+                state.db.as_ref(),
+                op::APPLY,
+                Some(&crate::live::project::gemini::GeminiProjection::empty()),
+                PendingTarget::default(),
+            )?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 pub fn import_pi_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     pi::import_from_live(state)
 }
@@ -217,6 +299,10 @@ pub struct SwitchResult {
     /// while unified history is off, so newer Codex locks the old bucket.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub codex_history_split: Option<crate::codex_history_migration::CodexHistorySplitHint>,
+    /// 多环境写入：这次切换写到的其他环境的结果（各环境用自己的供应商，切换只改主环境，
+    /// 目前恒为空，保留给前端兼容）。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub targets: Vec<crate::app_targets::sync::TargetReport>,
 }
 
 #[cfg(test)]
