@@ -24,7 +24,7 @@ Kimi Code 是独立应用，应用 ID 为 `kimi`。接入面向当前的 [Moonsh
 | 全局提示词 | `~/.kimi-code/AGENTS.md`，通过统一提示词页面管理 |
 | 会话 | `~/.kimi-code/sessions/<workDirKey>/<sessionId>/state.json` 和 `agents/main/wire.jsonl` |
 | 恢复会话 | `kimi --session <id>`，保留原工作目录和数据目录 |
-| 用量 | 从已提交的 assistant 消息导入输入／输出和缓存 token，按 `step.end.messageId` 关联 `llm.request` 中的实际模型；使用项目价格表估算费用 |
+| 用量 | 旧格式从已提交的 assistant 消息导入输入／输出和缓存 token；新格式从带用量的 `step.end` 导入，并用前置 `usage.record.model` 补全模型。旧格式仍按 `step.end.messageId` 关联 `llm.request` 中的实际模型；使用项目价格表估算费用 |
 
 设置环境变量 `KIMI_CODE_HOME` 后，上述位置全部跟随该目录。CC Switch 进程需要继承这个环境变量。
 
