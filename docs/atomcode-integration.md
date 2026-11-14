@@ -2,12 +2,45 @@
 
 ## Supported AtomCode Version
 
-This implementation is based on **AtomCode v0.11.0** configuration format as documented in:
+This implementation targets the AtomCode **new-schema** configuration format
+(`[provider_accounts.*]` + `[models.*]`, design §3.3 / §14.1). Verified against
+the AtomCode source tree at workspace version **v5.2.7**, commit `0c0512143`
+(2026-11-13):
 
-- Official Configuration Reference: https://github.com/atomcode-ai/atomcode/blob/main/docs/configuration.md
-- Third-party Integration Examples:
-  - magpie PR #736: https://github.com/some-repo/magpie/pull/736
-  - dsh-connect-atomcode: https://github.com/example/dsh-connect-atomcode
+- Source: https://atomgit.com/atomgit_atomcode/atomcode (GitHub mirror:
+  https://github.com/atomgit-atomcode/atomcode)
+- Official Configuration Reference: https://atomcode.atomgit.com/docs/zh/configuration.html
+  (en: `/docs/en/configuration.html`)
+
+Key sources behind the selection semantics (see *Selection Semantics* below;
+design section numbers are cited as in AtomCode's own source comments):
+
+- `crates/atomcode-config/src/config/mod.rs:633-637` — `default_provider` is the
+  **legacy** field (a `[providers.*]` key), superseded by `default_model`.
+- `crates/atomcode-config/src/config/mod.rs:661-665` — `default_model` is the
+  canonical selection (`[models.<id>]` selection id).
+- `crates/atomcode-config/src/config/mod.rs:1448-1457` — `effective_model_selection()`
+  resolves `default_model` first, then falls back to `default_provider`.
+- `crates/atomcode-cli/src/main.rs:3215-3219` — on a programmatic selection the
+  CLI writes **both** fields to the same selection id ("`default_model` is
+  canonical; sync the legacy field too").
+- `crates/atomcode-coding/src/config.rs:534-540` — the authoritative field
+  reference: `default_model` names a `[models.<id>]` entry whose `account` is a
+  `[provider_accounts.<id>]` entry; the legacy form is `default_provider` naming
+  a `[providers.<name>]` entry, and `default_model` wins.
+- `ATOMCODE_HOME`: `crates/atomcode-config/src/distribution.rs`
+  (`HOME_ENV = "ATOMCODE_HOME"`, `HOME_DIR_NAME = ".atomcode"`).
+
+## Selection Semantics
+
+`default_provider` and `default_model` hold the **same model key** (selection
+id) after a switch. This intentionally mirrors AtomCode's own CLI behavior
+(`main.rs:3215-3219`): `default_model` is the canonical field, and the legacy
+`default_provider` field is kept in sync for compatibility. `default_provider`
+is **not** a `provider_accounts` id — the account is reached through
+`models[<selection id>].account`. AtomCode recommends the selection id format
+`<account>/<model>` (`config/mod.rs:657-660`); CC Switch writes the model key
+as entered in its form, which AtomCode accepts as-is.
 
 ## Configuration Format
 
@@ -30,13 +63,13 @@ context_window = 262144  # Optional
 
 ### Supported Provider Types
 
-According to official documentation:
-- `openai` - OpenAI-compatible APIs
-- `claude` / `anthropic` (legacy alias) - Anthropic Claude
-- `deepseek` - DeepSeek
-- `gemini` - Google Gemini
-- `ollama` - Ollama
-- `openai_responses` (third-party extension)
+`provider_accounts.<id>.provider` accepts AtomCode's built-in preset ids from
+`crates/atomcode-config/src/config/provider_preset.rs` (`PRESETS`). The
+canonical set lives in `src-tauri/src/atomcode_config.rs` (`PROVIDER_IDS`) and
+is the source of truth for this integration; unknown ids fall back to
+`openai-compatible` inside AtomCode. Older wire names written by earlier
+versions of this integration (`claude` / `openai_responses` / `gemini`) are
+normalized on write.
 
 ### Environment Variables
 
@@ -87,9 +120,19 @@ CREATE TABLE providers (
 
 ## Known Limitations
 
-1. **Import from Official Config**: Users who configured AtomCode following only the official documentation (using `[providers.*]` tables instead of `[provider_accounts.*]`) will get zero imports. The `provider_accounts` format appears only in third-party integration examples.
+1. **Import from Legacy Config**: Users who configured AtomCode with only the
+   legacy format (top-level `default_provider` naming a `[providers.*]` table,
+   as in the official configuration reference) will get zero imports — the
+   import path only reads the new schema (`[provider_accounts.*]` +
+   `[models.*]`). AtomCode itself migrates legacy entries to the new schema in
+   place (`crates/atomcode-config/src/config/mod.rs:1459`, design §5 rule 5/6);
+   until CC Switch reuses that projection, such users should first run
+   AtomCode's own `/provider` flow (or any AtomCode start) so the config is
+   migrated, then import.
 
-2. **Version Compatibility**: This implementation is tested against AtomCode v0.11.0. Future versions may introduce breaking changes to the configuration format.
+2. **Version Compatibility**: Verified against AtomCode source at v5.2.7
+   (`0c0512143`, 2026-11-13). Future versions may introduce breaking changes to
+   the configuration format.
 
 3. **OAuth Accounts**: AtomCode's native OAuth (stored in `auth.toml`) is not directly managed by CC Switch - only the API key-based accounts in `provider_accounts`.
 
@@ -110,7 +153,7 @@ pnpm test:unit atomcode
 
 ## Future Improvements
 
-1. Document the exact AtomCode version/commit this integration targets
-2. Add support for official `[providers.*]` format import
+1. ~~Document the exact AtomCode version/commit this integration targets~~ — done: v5.2.7 (`0c0512143`), see *Supported AtomCode Version*.
+2. ~~Add support for official `[providers.*]` format import~~ — narrowed: legacy configs are migrated in place by AtomCode itself (`config/mod.rs:1459`); CC Switch import stays new-schema-only and points legacy users to AtomCode's own migration (see Known Limitations 1).
 3. Improve OAuth account detection and display
 4. Add config validation against AtomCode's schema
