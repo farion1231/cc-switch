@@ -230,6 +230,7 @@ fn creds_for(settings: &S3SyncSettings) -> S3Credentials {
         region: settings.region.clone(),
         bucket: settings.bucket.clone(),
         endpoint: settings.endpoint.clone(),
+        addressing_style: settings.addressing_style.clone(),
     }
 }
 
@@ -296,6 +297,7 @@ mod tests {
             region: "us-west-2".to_string(),
             bucket: "my-bucket".to_string(),
             endpoint: "minio.local:9000".to_string(),
+            addressing_style: "path".to_string(),
             ..S3SyncSettings::default()
         };
         let creds = creds_for(&settings);
@@ -304,5 +306,6 @@ mod tests {
         assert_eq!(creds.region, "us-west-2");
         assert_eq!(creds.bucket, "my-bucket");
         assert_eq!(creds.endpoint, "minio.local:9000");
+        assert_eq!(creds.addressing_style, "path");
     }
 }
