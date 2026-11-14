@@ -31,6 +31,41 @@ pub async fn get_agy_models(
     if api_key.is_none() && crate::agy_config::settings_path().exists() {
         crate::agy_config::read_live_settings().map_err(|e| e.to_string())?;
     }
+    #[cfg(target_os = "windows")]
+    if crate::commands::tool_runs_in_wsl("agy") {
+        let scratch = match &api_key {
+            Some(_) => {
+                let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
+                let settings = dir.path().join("antigravity-cli").join("settings.json");
+                std::fs::create_dir_all(settings.parent().unwrap()).map_err(|e| e.to_string())?;
+                std::fs::write(&settings, br#"{"modelProvider":"gemini"}"#)
+                    .map_err(|e| e.to_string())?;
+                Some(dir)
+            }
+            None => None,
+        };
+        let profile = scratch
+            .as_ref()
+            .map(|dir| dir.path().to_string_lossy().into_owned());
+        let key = api_key.clone();
+        let url = base_url.clone();
+        let output = tokio::task::spawn_blocking(move || {
+            crate::commands::run_agy_wsl_models(
+                profile.as_deref(),
+                key.as_deref(),
+                url.as_deref(),
+                Some(std::time::Duration::from_secs(20)),
+            )
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|_| "Antigravity CLI not found; install agy first".to_string())?;
+        drop(scratch);
+        if !output.status.success() {
+            return Err("Antigravity could not list models. Check the API key and endpoint, or sign in with agy for official models.".into());
+        }
+        return Ok(parse_agy_models(&String::from_utf8_lossy(&output.stdout)));
+    }
     let path = tokio::task::spawn_blocking(crate::agy_config::real_agy_bin)
         .await
         .map_err(|e| e.to_string())?
@@ -58,7 +93,15 @@ pub async fn get_agy_models(
             }
             Some(dir)
         }
-        None => None,
+        None => {
+            if let Some(dir) = crate::agy_config::non_default_gemini_root(
+                &crate::agy_config::agy_gemini_root(),
+                &crate::config::get_home_dir(),
+            ) {
+                command.arg(format!("--gemini_dir={}", dir.to_string_lossy()));
+            }
+            None
+        }
     };
     command.arg("models");
     let output = tokio::time::timeout(std::time::Duration::from_secs(20), command.output())

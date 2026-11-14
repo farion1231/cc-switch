@@ -530,8 +530,10 @@ mod tests {
 
         #[cfg(not(windows))]
         {
-            // 非 Windows 平台始终返回 false
-            assert!(!is_wsl_path(Path::new(r"\\wsl$\Ubuntu\home\user\.claude")));
+            // 字符串形态的 UNC 在非 Windows 上也认得出。技能同步靠这个决定对
+            // `\\wsl$\...` 目标走复制，测试不必真的挂载 WSL。普通 Linux/macOS
+            // 路径不会长成这样。
+            assert!(is_wsl_path(Path::new(r"\\wsl$\Ubuntu\home\user\.claude")));
         }
     }
 

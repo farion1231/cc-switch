@@ -27,18 +27,62 @@ use crate::error::AppError;
 use crate::live::patch::json::JsonPatch;
 use crate::live::patch::{KeyPath, LivePatch};
 
-/// `~/.gemini/antigravity-cli`
+/// Antigravity 的 `.gemini` 根。设置里的覆盖就是这个目录：下面同时有
+/// `antigravity-cli/`（settings、会话、用量）和 `config/`（MCP、Skills、提示词）。
+/// 不设时仍是本机 `~/.gemini`，和 Gemini CLI 自己的覆盖互不影响。
+pub fn agy_gemini_root() -> PathBuf {
+    agy_gemini_root_from(crate::settings::get_agy_override_dir(), get_home_dir())
+}
+
+pub(crate) fn agy_gemini_root_from(override_dir: Option<PathBuf>, home: PathBuf) -> PathBuf {
+    override_dir.unwrap_or_else(|| home.join(".gemini"))
+}
+
+/// 当覆盖目录与默认 `~/.gemini` 在词法上不同时返回该目录，以便传给 `--gemini_dir`。
+pub(crate) fn non_default_gemini_root(root: &Path, home: &Path) -> Option<PathBuf> {
+    let default_root = home.join(".gemini");
+    (!crate::config::path_eq_lexical(root, &default_root)).then(|| root.to_path_buf())
+}
+
+/// 覆盖目录（或默认 `~/.gemini`）下 agy 会读写的路径。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AgyPaths {
+    pub settings: PathBuf,
+    pub mcp: PathBuf,
+    pub skills: PathBuf,
+    pub prompts: PathBuf,
+    pub sessions: PathBuf,
+    pub ide_sessions: PathBuf,
+    pub summaries: PathBuf,
+}
+
+pub(crate) fn agy_paths(root: &Path) -> AgyPaths {
+    let cli = root.join("antigravity-cli");
+    let config = root.join("config");
+    AgyPaths {
+        settings: cli.join("settings.json"),
+        mcp: config.join("mcp_config.json"),
+        skills: config.join("skills"),
+        prompts: config.join("AGENTS.md"),
+        sessions: cli.join("brain"),
+        ide_sessions: root.join("antigravity").join("brain"),
+        summaries: cli.join("conversation_summaries.db"),
+    }
+}
+
+/// `~/.gemini/antigravity-cli`，或覆盖根下的同名目录。
 pub fn agy_dir() -> PathBuf {
-    get_home_dir().join(".gemini").join("antigravity-cli")
+    agy_gemini_root().join("antigravity-cli")
 }
 
 /// `~/.gemini/config`：CLI、桌面版和 IDE 共用的 MCP / Skills / 提示词目录。
+/// 跟随 Antigravity 自己的覆盖，不跟随 Gemini CLI 的覆盖。
 pub fn customizations_dir() -> PathBuf {
-    get_home_dir().join(".gemini").join("config")
+    agy_gemini_root().join("config")
 }
 
 pub fn settings_path() -> PathBuf {
-    agy_dir().join("settings.json")
+    agy_paths(&agy_gemini_root()).settings
 }
 
 /// Key 模式各供应商私有 `--gemini_dir` 的上级目录。
@@ -190,7 +234,9 @@ pub(crate) fn release_model_provider(
 /// 在终端里启动这张卡要用的参数。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AgyLaunch {
-    /// Key 模式的私有 `--gemini_dir`；官方登录卡为 `None`，直接跑原生 `agy`。
+    /// 是否为 API Key 卡；为 `false` 时即使因非默认 `--gemini_dir` 带了 `gemini_dir`，仍走官方登录。
+    pub key_mode: bool,
+    /// Key 模式的私有 `--gemini_dir`，或官方登录卡的非默认 `.gemini` 覆盖根；默认 `~/.gemini` 时为 `None`。
     pub gemini_dir: Option<PathBuf>,
     /// 官方登录卡的 `--model`（显示名，只对这次会话生效）；Key 卡的模型写在私有目录里，为 `None`。
     pub model: Option<String>,
@@ -203,7 +249,8 @@ pub(crate) fn prepare_launch(provider_id: &str, settings: &Value) -> Result<AgyL
     let projection = AgyProjection::of(settings);
     if !projection.is_key_mode() {
         return Ok(AgyLaunch {
-            gemini_dir: None,
+            key_mode: false,
+            gemini_dir: non_default_gemini_root(&agy_gemini_root(), &get_home_dir()),
             model: projection.model,
             env: Vec::new(),
         });
@@ -211,6 +258,7 @@ pub(crate) fn prepare_launch(provider_id: &str, settings: &Value) -> Result<AgyL
     let dir = key_profile_dir(provider_id);
     prepare_key_profile(&dir, &projection)?;
     Ok(AgyLaunch {
+        key_mode: true,
         gemini_dir: Some(dir),
         model: None,
         env: vec![
@@ -243,6 +291,11 @@ fn prepare_key_profile(dir: &Path, projection: &AgyProjection) -> Result<(), App
 /// 那是 agy 自己建的，里面可能有用户的东西。
 fn link_shared_config(link: &Path, target: &Path) -> Result<(), AppError> {
     fs::create_dir_all(target).map_err(|e| AppError::io(target, e))?;
+    // Windows 到 `\\wsl.localhost\...` 的 junction 建不成。目录在发行版里时，打开终端的
+    // 命令会在 WSL 里 `ln -sfn`，这里不再尝试从 Windows 连过去。
+    if crate::config::wsl_unc_to_linux(&target.to_string_lossy()).is_some() {
+        return Ok(());
+    }
     match fs::symlink_metadata(link) {
         Ok(meta) if meta.file_type().is_symlink() => {
             if fs::read_link(link).ok().as_deref() == Some(target) {
@@ -553,6 +606,151 @@ mod tests {
             .apply(Path::new("settings.json"), Some(before.as_bytes()))
             .unwrap();
         serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[test]
+    fn wsl_gemini_root_keeps_settings_mcp_skills_prompts_and_sessions_under_it() {
+        let root = PathBuf::from(r"\\wsl.localhost\Ubuntu-26.04\home\alice\.gemini");
+        let paths = agy_paths(&root);
+        for path in [
+            &paths.settings,
+            &paths.mcp,
+            &paths.skills,
+            &paths.prompts,
+            &paths.sessions,
+            &paths.ide_sessions,
+            &paths.summaries,
+        ] {
+            assert!(
+                path.starts_with(&root),
+                "{} is not under {}",
+                path.display(),
+                root.display()
+            );
+        }
+        assert!(paths
+            .settings
+            .ends_with(Path::new("antigravity-cli").join("settings.json")));
+        assert!(paths
+            .mcp
+            .ends_with(Path::new("config").join("mcp_config.json")));
+        assert!(paths.skills.ends_with(Path::new("config").join("skills")));
+        assert!(paths
+            .prompts
+            .ends_with(Path::new("config").join("AGENTS.md")));
+        assert!(paths
+            .sessions
+            .ends_with(Path::new("antigravity-cli").join("brain")));
+        assert!(paths
+            .ide_sessions
+            .ends_with(Path::new("antigravity").join("brain")));
+        assert!(paths
+            .summaries
+            .ends_with(Path::new("antigravity-cli").join("conversation_summaries.db")));
+        assert!(crate::config::is_wsl_path(&paths.mcp));
+        assert!(crate::config::is_wsl_path(&paths.skills));
+        assert!(crate::config::is_wsl_path(&paths.prompts));
+        assert!(crate::config::is_wsl_path(&paths.settings));
+
+        let home = PathBuf::from("/home/alice");
+        assert_eq!(
+            agy_gemini_root_from(None, home.clone()),
+            home.join(".gemini")
+        );
+        assert_eq!(agy_gemini_root_from(Some(root.clone()), home), root);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn override_directory_receives_mcp_prompts_and_skills() {
+        let home = tempfile::tempdir().unwrap();
+        let previous = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", home.path());
+        crate::settings::reload_settings().unwrap();
+        let restore = || {
+            match &previous {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+            let _ = crate::settings::reload_settings();
+        };
+
+        let run = || {
+            let root = home.path().join("gemini-root");
+            let mut settings = crate::settings::get_settings();
+            settings.agy_config_dir = Some(root.to_string_lossy().into_owned());
+            crate::settings::update_settings(settings).unwrap();
+
+            crate::mcp::agy::sync("srv", Some(&json!({"command":"echo","args":["hi"]}))).unwrap();
+            let mcp_path = root.join("config").join("mcp_config.json");
+            let mcp = fs::read_to_string(&mcp_path).unwrap();
+            assert!(mcp.contains("echo"), "{mcp}");
+            crate::mcp::agy::sync("srv", None).unwrap();
+            let disabled: Value =
+                serde_json::from_str(&fs::read_to_string(&mcp_path).unwrap()).unwrap();
+            assert_eq!(disabled["mcpServers"]["srv"]["disabled"], json!(true));
+            crate::mcp::agy::sync_and_commit("srv", crate::mcp::agy::AgyChange::Remove, || {
+                Ok::<(), crate::error::AppError>(())
+            })
+            .unwrap();
+            let removed: Value =
+                serde_json::from_str(&fs::read_to_string(&mcp_path).unwrap()).unwrap();
+            assert!(removed["mcpServers"].get("srv").is_none());
+
+            let state = crate::store::AppState::new(std::sync::Arc::new(
+                crate::database::Database::memory().unwrap(),
+            ));
+            fs::write(
+                &mcp_path,
+                r#"{"mcpServers":{"imported":{"command":"tool","disabled":false}}}"#,
+            )
+            .unwrap();
+            assert_eq!(crate::mcp::agy::import(&state).unwrap(), 1);
+
+            let prompt_path =
+                crate::prompt_files::prompt_file_path(&crate::app_config::AppType::Agy).unwrap();
+            assert_eq!(prompt_path, root.join("config").join("AGENTS.md"));
+            crate::services::prompt::PromptService::upsert_prompt(
+                &state,
+                crate::app_config::AppType::Agy,
+                "p1",
+                crate::prompt::Prompt {
+                    id: "p1".into(),
+                    name: "Note".into(),
+                    content: "hello agy".into(),
+                    description: None,
+                    enabled: true,
+                    created_at: Some(1),
+                    updated_at: Some(1),
+                },
+            )
+            .unwrap();
+            assert_eq!(fs::read_to_string(&prompt_path).unwrap(), "hello agy");
+
+            let ssot = crate::services::skill::SkillService::get_ssot_dir()
+                .unwrap()
+                .join("wsl-skill");
+            fs::create_dir_all(&ssot).unwrap();
+            fs::write(ssot.join("SKILL.md"), "name: wsl-skill\n").unwrap();
+            crate::services::skill::SkillService::sync_to_app_dir(
+                "wsl-skill",
+                &crate::app_config::AppType::Agy,
+            )
+            .unwrap();
+            let installed = root
+                .join("config")
+                .join("skills")
+                .join("wsl-skill")
+                .join("SKILL.md");
+            let body = fs::read_to_string(&installed).unwrap();
+            assert!(body.contains("wsl-skill"), "{body}");
+        };
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run));
+        restore();
+        if let Err(panic) = result {
+            std::panic::resume_unwind(panic);
+        }
     }
 
     #[test]
@@ -1029,5 +1227,58 @@ mod integration_tests {
         let real = fake_agy(&real_dir);
         let path = std::env::join_paths([&wrapper_dir, &plain, &real_dir]).unwrap();
         assert_eq!(resolve_real_agy(&path, &home, &[], false), Some(real));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn official_prepare_launch_only_passes_gemini_dir_for_non_default_root() {
+        struct ResetHome(Option<std::ffi::OsString>);
+        impl Drop for ResetHome {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                    None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+                }
+                let _ = crate::settings::reload_settings();
+            }
+        }
+
+        let home = tempfile::tempdir().unwrap();
+        let _reset = ResetHome(std::env::var_os("CC_SWITCH_TEST_HOME"));
+        std::env::set_var("CC_SWITCH_TEST_HOME", home.path());
+        crate::settings::reload_settings().unwrap();
+
+        let official_settings = json!({"config": {"model": {"name": "Gemini 3.8 Flash (High)"}}});
+
+        // 未覆盖（默认 ~/.gemini）
+        let default_launch = prepare_launch("official", &official_settings).unwrap();
+        assert!(!default_launch.key_mode);
+        assert_eq!(default_launch.gemini_dir, None);
+        assert_eq!(
+            default_launch.model.as_deref(),
+            Some("Gemini 3.8 Flash (High)")
+        );
+
+        // 显式指向默认 ~/.gemini（词法相等）同样不额外传 --gemini_dir
+        let mut settings = crate::settings::get_settings();
+        settings.agy_config_dir = Some(home.path().join(".gemini").to_string_lossy().into_owned());
+        crate::settings::update_settings(settings).unwrap();
+        let explicit_default = prepare_launch("official", &official_settings).unwrap();
+        assert!(!explicit_default.key_mode);
+        assert_eq!(explicit_default.gemini_dir, None);
+
+        // 指向自定义本地目录：走官方登录、带 --gemini_dir 与 --model、不建私有 Key 目录
+        let custom_root = home.path().join("custom-gemini");
+        let mut settings = crate::settings::get_settings();
+        settings.agy_config_dir = Some(custom_root.to_string_lossy().into_owned());
+        crate::settings::update_settings(settings).unwrap();
+        let custom_launch = prepare_launch("official", &official_settings).unwrap();
+        assert!(!custom_launch.key_mode);
+        assert_eq!(custom_launch.gemini_dir.as_ref(), Some(&custom_root));
+        assert_eq!(
+            custom_launch.model.as_deref(),
+            Some("Gemini 3.8 Flash (High)")
+        );
+        assert!(!key_profiles_root().exists());
     }
 }

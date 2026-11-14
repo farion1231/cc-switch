@@ -24,11 +24,31 @@ pub fn session_roots() -> Vec<PathBuf> {
         .collect()
 }
 
+/// Sessions under one `.gemini` root (the CLI brain and the IDE brain).
+#[cfg(test)]
+pub(crate) fn scan_gemini_root(root: &Path) -> Vec<SessionMeta> {
+    scan_roots(&gemini_root_sources(root))
+}
+
+fn gemini_root_resume_dir(root: &Path, home: &Path) -> Option<PathBuf> {
+    if let Some((_, linux)) = crate::config::wsl_unc_to_linux(&root.to_string_lossy()) {
+        return Some(PathBuf::from(linux));
+    }
+    crate::agy_config::non_default_gemini_root(root, home)
+}
+
+fn gemini_root_sources(root: &Path) -> Vec<(PathBuf, Option<PathBuf>)> {
+    let paths = crate::agy_config::agy_paths(root);
+    let resume_dir = gemini_root_resume_dir(root, &crate::config::get_home_dir());
+    vec![
+        (paths.sessions, resume_dir.clone()),
+        (paths.ide_sessions, resume_dir),
+    ]
+}
+
 /// Each root, with the private `--gemini_dir` its sessions must be resumed with.
 fn session_sources() -> Vec<(PathBuf, Option<PathBuf>)> {
-    let cli = crate::agy_config::agy_dir();
-    let ide = cli.with_file_name("antigravity");
-    let mut sources = vec![(cli.join("brain"), None), (ide.join("brain"), None)];
+    let mut sources = gemini_root_sources(&crate::agy_config::agy_gemini_root());
     let mut profiles: Vec<PathBuf> = fs::read_dir(crate::agy_config::key_profiles_root())
         .into_iter()
         .flatten()
@@ -190,12 +210,20 @@ fn scan_root(root: &Path, gemini_dir: Option<&Path>) -> Vec<SessionMeta> {
 
 fn read_summaries(path: &Path, gemini_dir: Option<&Path>) -> BTreeMap<String, SessionMeta> {
     let mut result = BTreeMap::new();
-    let Ok(conn) =
-        rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-    else {
+    if !path.is_file() {
         return result;
+    }
+    let db = match crate::agy_sqlite::open_read_only(path) {
+        Ok(db) => db,
+        Err(err) => {
+            log::warn!(
+                "Cannot read Antigravity conversation summaries {}: {err}",
+                path.display()
+            );
+            return result;
+        }
     };
-    let Ok(mut query) = conn.prepare("SELECT conversation_id, title, workspace_uris, preview, last_modified_time FROM conversation_summaries") else { return result };
+    let Ok(mut query) = db.conn().prepare("SELECT conversation_id, title, workspace_uris, preview, last_modified_time FROM conversation_summaries") else { return result };
     let Ok(rows) = query.query_map([], |r| {
         Ok((
             r.get::<_, String>(0)?,
@@ -249,6 +277,141 @@ fn user_request(content: &str) -> &str {
         .map(|(inner, _)| inner.trim())
         .filter(|inner| !inner.is_empty())
         .unwrap_or(content)
+}
+
+/// Parent conversation of this transcript.
+///
+/// `conversation_summaries.parent_conversation_id` wins. When that column is empty
+/// or missing, the parent is the sibling transcript whose `INVOKE_SUBAGENT` result
+/// names this conversation. The chosen parent is the one whose spawn time is the
+/// latest at or before `child_start` (or the latest spawn, when the child has no time).
+pub(crate) fn parent_session_id(transcript: &Path, child_start: Option<i64>) -> Option<String> {
+    let (root, id) = transcript_home(transcript)?;
+    if let Some(parent) = summary_parent(&root.join("conversation_summaries.db"), &id) {
+        return Some(parent);
+    }
+    parent_from_invoke(&root.join("brain"), &id, child_start)
+}
+
+pub(crate) fn transcript_home(transcript: &Path) -> Option<(PathBuf, String)> {
+    let session = transcript.parent()?.parent()?.parent()?;
+    let brain = session.parent()?;
+    if brain.file_name()? != "brain" {
+        return None;
+    }
+    let id = session.file_name()?.to_str()?.to_string();
+    let root = brain.parent()?;
+    valid_session_id(&id).then(|| (root.to_path_buf(), id))
+}
+
+fn summary_parent(summaries: &Path, id: &str) -> Option<String> {
+    if !summaries.is_file() {
+        return None;
+    }
+    let db = match crate::agy_sqlite::open_read_only(summaries) {
+        Ok(db) => db,
+        Err(err) => {
+            log::warn!(
+                "Cannot read Antigravity conversation summaries {}: {err}",
+                summaries.display()
+            );
+            return None;
+        }
+    };
+    let mut query = match db.conn().prepare(
+        "SELECT parent_conversation_id FROM conversation_summaries WHERE conversation_id=?1",
+    ) {
+        Ok(query) => query,
+        Err(err) => {
+            // Older agy builds have no parent column. That is not a read failure.
+            if !err.to_string().contains("no such column") {
+                log::warn!(
+                    "Cannot read Antigravity parent conversation from {}: {err}",
+                    summaries.display()
+                );
+            }
+            return None;
+        }
+    };
+    let parent: Option<String> = match query.query_row([id], |row| row.get(0)) {
+        Ok(parent) => parent,
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(err) => {
+            log::warn!(
+                "Cannot read Antigravity parent conversation from {}: {err}",
+                summaries.display()
+            );
+            return None;
+        }
+    };
+    parent.filter(|parent| valid_session_id(parent) && parent != id)
+}
+
+fn parent_from_invoke(brain: &Path, child: &str, child_start: Option<i64>) -> Option<String> {
+    let mut best: Option<(i64, String)> = None;
+    for entry in fs::read_dir(brain).ok()?.flatten() {
+        let Some(id) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        if id == child || !valid_session_id(&id) {
+            continue;
+        }
+        let transcript = entry
+            .path()
+            .join(".system_generated/logs/transcript_full.jsonl");
+        if !transcript.is_file() {
+            continue;
+        }
+        let Ok(rows) = records(&transcript) else {
+            continue;
+        };
+        for row in &rows {
+            if !invoke_names_child(row, child) {
+                continue;
+            }
+            let at = timestamp(row).unwrap_or(i64::MIN);
+            if child_start.is_some_and(|start| at > start) {
+                continue;
+            }
+            if best.as_ref().is_none_or(|(best_at, _)| at >= *best_at) {
+                best = Some((at, id.clone()));
+            }
+        }
+    }
+    best.map(|(_, id)| id)
+}
+
+fn invoke_names_child(row: &Value, child: &str) -> bool {
+    let kind = row["type"].as_str().unwrap_or("");
+    let Some(content) = row["content"].as_str() else {
+        return false;
+    };
+    if kind != "INVOKE_SUBAGENT" && !content.contains("logAbsoluteUri") {
+        return false;
+    }
+    conversation_ids(content).iter().any(|id| id == child)
+}
+
+fn conversation_ids(content: &str) -> Vec<String> {
+    let mut ids = Vec::new();
+    let mut rest = content;
+    let key = "\"conversationId\"";
+    while let Some(start) = rest.find(key) {
+        rest = &rest[start + key.len()..];
+        let Some(opened) = rest.find('"') else {
+            break;
+        };
+        let value = &rest[opened + 1..];
+        let Some(end) = value.find('"') else {
+            break;
+        };
+        let id = &value[..end];
+        if valid_session_id(id) {
+            ids.push(id.to_string());
+        }
+        rest = &value[end + 1..];
+    }
+    ids
 }
 
 pub(crate) fn timestamp(value: &Value) -> Option<i64> {
@@ -477,6 +640,89 @@ mod tests {
         assert_eq!(
             messages[1].meta.as_ref().unwrap().cache_read_tokens,
             Some(20)
+        );
+    }
+
+    #[test]
+    fn gemini_root_sources_pass_gemini_dir_only_when_non_default_or_wsl_unc() {
+        let home = PathBuf::from("/home/alice");
+        assert_eq!(gemini_root_resume_dir(&home.join(".gemini"), &home), None);
+        let local_custom = PathBuf::from("/home/alice/custom-gemini");
+        assert_eq!(
+            gemini_root_resume_dir(&local_custom, &home),
+            Some(local_custom)
+        );
+
+        let custom_home = tempfile::tempdir().unwrap();
+        let custom = custom_home.path().join("custom-gemini");
+        let expected_dir =
+            if let Some((_, linux)) = crate::config::wsl_unc_to_linux(&custom.to_string_lossy()) {
+                PathBuf::from(linux)
+            } else {
+                assert_eq!(gemini_root_resume_dir(&custom, &home), Some(custom.clone()));
+                custom.clone()
+            };
+
+        let logs = custom.join("antigravity-cli/brain/abc-123/.system_generated/logs");
+        fs::create_dir_all(&logs).unwrap();
+        fs::write(
+            logs.join("transcript_full.jsonl"),
+            "{\"step_index\":0,\"type\":\"USER_INPUT\",\"content\":\"hi\"}\n",
+        )
+        .unwrap();
+        let sessions = scan_gemini_root(&custom);
+        assert_eq!(sessions.len(), 1);
+        let resume = sessions[0].resume_command.as_deref().unwrap();
+        let expected = crate::agy_config::resume_command(Some(&expected_dir), "abc-123");
+        assert_eq!(resume, expected);
+        assert_eq!(
+            crate::agy_config::resume_command(
+                Some(Path::new(r"D:\Users\alice\custom-gemini")),
+                "abc-123"
+            ),
+            r"agy '--gemini_dir=D:\Users\alice\custom-gemini' --conversation=abc-123"
+        );
+
+        let db = crate::database::Database::memory().unwrap();
+        let key_provider = crate::provider::Provider::with_id(
+            "key-card".into(),
+            "Key".into(),
+            serde_json::json!({"env": {"GEMINI_API_KEY": "k"}}),
+            None,
+        );
+        db.save_provider("agy", &key_provider).unwrap();
+        assert!(
+            crate::services::provider::agy_direct::key_resume_target(&db, resume)
+                .unwrap()
+                .is_none()
+        );
+
+        let unc_ascii = Path::new(r"\\wsl.localhost\Ubuntu-26.04\home\alice\.gemini");
+        assert_eq!(
+            gemini_root_resume_dir(unc_ascii, &home),
+            Some(PathBuf::from("/home/alice/.gemini"))
+        );
+        let ascii_sources = gemini_root_sources(unc_ascii);
+        assert_eq!(
+            ascii_sources[0].1.as_deref(),
+            Some(Path::new("/home/alice/.gemini"))
+        );
+        assert_eq!(
+            ascii_sources[1].1.as_deref(),
+            Some(Path::new("/home/alice/.gemini"))
+        );
+
+        let unc_cjk = Path::new(r"\\wsl.localhost\Ubuntu-26.04\home\张三\.gemini");
+        assert_eq!(
+            gemini_root_resume_dir(unc_cjk, &home),
+            Some(PathBuf::from("/home/张三/.gemini"))
+        );
+        assert_eq!(
+            crate::agy_config::resume_command(
+                gemini_root_resume_dir(unc_cjk, &home).as_deref(),
+                "abc-123"
+            ),
+            "agy '--gemini_dir=/home/张三/.gemini' --conversation=abc-123"
         );
     }
 }
