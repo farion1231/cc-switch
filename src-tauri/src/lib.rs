@@ -43,6 +43,7 @@ mod pi_config;
 mod prompt;
 mod prompt_files;
 mod provider;
+mod provider_kind;
 mod proxy;
 mod services;
 mod session_manager;
