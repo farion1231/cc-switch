@@ -421,6 +421,9 @@ impl McpService {
             AppType::Agy => mcp::agy::sync(&server.id, Some(&server.server))?,
             AppType::Omp => mcp::sync_single_server_to_omp(&server.id, &server.server)?,
             AppType::WorkBuddy => mcp::workbuddy::sync(&server.id, Some(&server.server))?,
+            AppType::LaBunbun => {
+                log::debug!("LaBunbun Code MCP support is not implemented yet, skipping sync");
+            }
         }
         Ok(())
     }
@@ -483,6 +486,9 @@ impl McpService {
             AppType::Agy => mcp::agy::sync(id, None)?,
             AppType::Omp => mcp::remove_server_from_omp(id)?,
             AppType::WorkBuddy => mcp::workbuddy::sync(id, None)?,
+            AppType::LaBunbun => {
+                log::debug!("LaBunbun Code MCP support is not implemented yet, skipping remove");
+            }
         }
         Ok(())
     }
@@ -525,7 +531,12 @@ impl McpService {
     /// 由 CC Switch 管理 MCP 的应用（Claude Desktop、OpenClaw 不支持）
     pub fn live_sync_apps() -> Vec<AppType> {
         AppType::all()
-            .filter(|app| !matches!(app, AppType::OpenClaw | AppType::ClaudeDesktop))
+            .filter(|app| {
+                !matches!(
+                    app,
+                    AppType::OpenClaw | AppType::ClaudeDesktop | AppType::LaBunbun
+                )
+            })
             .collect()
     }
 

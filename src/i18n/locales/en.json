@@ -400,7 +400,8 @@
       "thirdPartyBucket": "third-party providers",
       "migrationFinished": "Migrated {{count}} old sessions. Restart Codex to continue them.",
       "migrationFailed": "Failed to migrate old sessions: {{error}}. CC Switch will retry on next launch."
-    }
+    },
+    "labunbunRestartRequired": "Switched successfully. Restart LaBunbun Code to apply changes."
   },
   "confirm": {
     "deleteProvider": "Delete Provider",
@@ -1189,7 +1190,8 @@
     "workbuddy": "WorkBuddy",
     "agy": "Antigravity",
     "copilot": "Copilot CLI",
-    "omp": "Oh My Pi"
+    "omp": "Oh My Pi",
+    "labunbun": "LaBunbun"
   },
   "mcode": {
     "empty": {
@@ -4464,7 +4466,8 @@
       "agy": "Installs with the official script",
       "copilot": "Installs with npm",
       "omp": "Installs with the official script"
-    }
+    },
+    "labunbunHelp": "LaBunbun Code is installed separately and can't be installed or upgraded here. CC Switch writes its config file (~/.labunbun/settings.json)."
   },
   "appPage": {
     "moreActions": "More actions for {{name}}",
@@ -5382,5 +5385,28 @@
       "managedHint": "This account is managed in the Auth Center; the card disappears after you sign out."
     },
     "deleteSessionHint": "Delete this session in DeepSeek Harness to keep its history consistent."
+  },
+  "labunbun": {
+    "providerKey": "Provider key",
+    "providerKeyPlaceholder": "e.g. openrouter",
+    "providerKeyHint": "Used as the provider id in ~/.labunbun/settings.json. Lowercase letters, digits and dashes only.",
+    "providerKeyLockedHint": "The provider key cannot change after the card is created.",
+    "providerKeyInvalid": "Use lowercase letters, digits and dashes only.",
+    "providerKeyDuplicate": "This provider key is already in use.",
+    "baseUrl": "Base URL",
+    "baseUrlPlaceholder": "https://api.example.com/v1",
+    "apiFormat": "API format",
+    "apiAuto": "Auto (inferred from the model)",
+    "apiHint": "Written as api in settings.json. Auto leaves the field unset.",
+    "apiKeyEnv": "API key variable",
+    "apiKeyEnvHint": "settings.json stores the key in env.<name>. A shell variable with the same name takes priority.",
+    "models": "Models",
+    "modelId": "Model ID",
+    "modelIdPlaceholder": "Model ID",
+    "contextWindow": "Context window",
+    "maxOutputTokens": "Max output tokens",
+    "addModel": "Add model",
+    "removeModel": "Remove model",
+    "modelsHint": "Each model needs an id, a context window and a max output token count. The first model becomes the current model."
   }
 }

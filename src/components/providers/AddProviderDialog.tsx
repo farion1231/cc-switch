@@ -76,6 +76,7 @@ export function AddProviderDialog({
     appId !== "copilot" &&
     appId !== "workbuddy" &&
     appId !== "grokbuild" &&
+    appId !== "labunbun" &&
     appId !== "claude-desktop";
   // 两步：先选预设，再填写（每次打开都从第 1 步开始）
   const [step, setStep] = useState<"pick" | "form">("pick");
@@ -301,7 +302,8 @@ export function AddProviderDialog({
           appId === "dsh" ||
           appId === "omp" ||
           appId === "copilot" ||
-          appId === "workbuddy") &&
+          appId === "workbuddy" ||
+          appId === "labunbun") &&
         values.providerKey
       ) {
         providerData.providerKey = values.providerKey;
@@ -426,6 +428,10 @@ export function AddProviderDialog({
         } else if (appId === "hermes") {
           if (parsedConfig.base_url) {
             addUrl(parsedConfig.base_url as string);
+          }
+        } else if (appId === "labunbun") {
+          if (parsedConfig.baseUrl) {
+            addUrl(parsedConfig.baseUrl as string);
           }
         }
 

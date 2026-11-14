@@ -885,7 +885,8 @@ function App() {
           activeApp === "kimi" ||
           activeApp === "agy" ||
           activeApp === "copilot" ||
-          activeApp === "workbuddy"
+          activeApp === "workbuddy" ||
+          activeApp === "labunbun"
         )
           return;
         const conflicts = await checkEnvConflicts(activeApp);

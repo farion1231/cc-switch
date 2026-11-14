@@ -37,6 +37,7 @@ export interface SkillApps {
   omp?: boolean;
   copilot?: boolean;
   workbuddy?: boolean;
+  labunbun?: boolean;
 }
 
 /** 已安装的 Skill（v3.10.0+ 统一结构） */

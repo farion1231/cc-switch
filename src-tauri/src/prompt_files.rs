@@ -50,6 +50,8 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         // 用户级说明是当前账号目录下的 MEMORY.md（MemoryCollector 以 <user_instructions> 注入，
         // 每次最多 4000 字）。目录随登录的账号变，没登录时是数据目录本身。
         AppType::WorkBuddy => crate::services::workbuddy_account::user_data_dir(),
+        // LaBunbun Code 的全局提示词是 `~/.labunbun/MEMORY.md`。
+        AppType::LaBunbun => crate::labunbun_config::get_labunbun_dir(),
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
@@ -66,7 +68,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         | AppType::Dsh
         | AppType::Omp => "AGENTS.md",
         AppType::Copilot => "copilot-instructions.md",
-        AppType::WorkBuddy => "MEMORY.md",
+        AppType::WorkBuddy | AppType::LaBunbun => "MEMORY.md",
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
@@ -142,6 +144,22 @@ mod tests {
         assert_eq!(
             path.file_name().and_then(|name| name.to_str()),
             Some("SOUL.md")
+        );
+    }
+
+    #[test]
+    fn labunbun_prompt_file_uses_memory_md_in_its_own_dir() {
+        let path = prompt_file_path(&AppType::LaBunbun).expect("LaBunbun prompt path");
+
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("MEMORY.md")
+        );
+        assert_eq!(
+            path.parent()
+                .and_then(|dir| dir.file_name())
+                .and_then(|name| name.to_str()),
+            Some(".labunbun")
         );
     }
 

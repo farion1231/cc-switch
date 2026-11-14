@@ -267,6 +267,9 @@ export function useProviderActions(
           } else if (activeApp === "grokbuild") {
             messageKey = "notifications.grokBuildRestartRequired";
             defaultMessage = "切换成功，请重启 Grok Build 以生效";
+          } else if (activeApp === "labunbun") {
+            messageKey = "notifications.labunbunRestartRequired";
+            defaultMessage = "切换成功，请重启 LaBunbun Code 以生效";
           } else if (activeApp === "claude-desktop") {
             // 直连、路由换一家都改了 Desktop 的配置文件，它只在启动时读
             messageKey = "notifications.claudeDesktopRestartRequired";

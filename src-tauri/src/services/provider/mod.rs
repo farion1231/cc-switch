@@ -5409,6 +5409,66 @@ wire_api = "responses"
             );
         });
     }
+
+    fn labunbun_provider(id: &str, base_url: &str, model: &str) -> Provider {
+        Provider::with_id(
+            id.into(),
+            id.into(),
+            json!({
+                "baseUrl": base_url,
+                "apiKey": "sk-test",
+                "api": "openai-completions",
+                "models": [{ "id": model, "contextWindow": 128000, "maxOutputTokens": 8192 }]
+            }),
+            None,
+        )
+    }
+
+    #[test]
+    #[serial]
+    fn labunbun_switch_keeps_one_native_entry_and_delete_removes_it() {
+        with_test_home(|state, _home| {
+            crate::settings::reload_settings().expect("reload settings");
+            let a = labunbun_provider("a", "https://a.example/v1", "model-a");
+            let b = labunbun_provider("b", "https://b.example/v1", "model-b");
+            ProviderService::add(state, AppType::LaBunbun, a, true).expect("add a");
+            ProviderService::add(state, AppType::LaBunbun, b, true).expect("add b");
+            ProviderService::switch(state, AppType::LaBunbun, "b").expect("switch to b");
+
+            let document = crate::labunbun_config::read_settings().expect("read live");
+            assert_eq!(
+                document.get("model").and_then(Value::as_str),
+                Some("b/model-b")
+            );
+            let entries = document
+                .pointer("/providers/openaiCompatible")
+                .and_then(Value::as_array)
+                .expect("native entries");
+            assert_eq!(entries.len(), 1, "only the current provider stays live");
+            assert_eq!(entries[0]["id"], "b");
+            assert_eq!(
+                document
+                    .pointer("/env/LABUNBUN_API_KEY")
+                    .and_then(Value::as_str),
+                Some("sk-test")
+            );
+
+            // 删掉非当前的卡片：库里那一行去掉，另一家的条目和 `model` 不动。
+            ProviderService::delete(state, AppType::LaBunbun, "a").expect("delete a");
+            assert!(state
+                .db
+                .get_provider_by_id("a", AppType::LaBunbun.as_str())
+                .unwrap()
+                .is_none());
+            assert_eq!(
+                crate::labunbun_config::read_settings()
+                    .unwrap()
+                    .get("model")
+                    .and_then(Value::as_str),
+                Some("b/model-b")
+            );
+        });
+    }
 }
 
 impl ProviderService {
@@ -5817,6 +5877,22 @@ impl ProviderService {
             Self::set_provider_live_config_managed(&mut provider, add_to_live);
         }
 
+        if app_type == AppType::LaBunbun {
+            // 原生条目标识就是行 id：已有的行或原生条目都不能被一张新卡覆盖。
+            if state
+                .db
+                .get_provider_by_id(&provider.id, app_type.as_str())?
+                .is_some()
+                || crate::labunbun_config::provider_key_exists(&provider.id)?
+            {
+                return Err(AppError::InvalidInput(format!(
+                    "{} provider key '{}' already exists",
+                    app_type.as_str(),
+                    provider.id
+                )));
+            }
+        }
+
         if matches!(app_type, AppType::Codex) {
             return Self::add_codex(state, provider);
         }
@@ -5929,6 +6005,20 @@ impl ProviderService {
                 }
                 // Antigravity 的卡只用来打开终端，添加不写任何文件。
                 AppType::Agy => return Ok(true),
+                AppType::LaBunbun => {
+                    // 第一个供应商：库里已有的其它卡片一并从原生设置里清掉，只留这一家。
+                    let managed_ids = state
+                        .db
+                        .get_all_providers(app_type.as_str())?
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    crate::labunbun_config::switch_to(&provider, &managed_ids)?;
+                    state
+                        .db
+                        .set_current_provider(app_type.as_str(), &provider.id)?;
+                    return Ok(true);
+                }
                 AppType::GrokBuild => {
                     grok_direct::switch_to(state.db.as_ref(), None, &provider)?;
                     return Ok(true);
@@ -6866,6 +6956,11 @@ impl ProviderService {
             .map_err(|error| AppError::Message(error.message))?;
         }
 
+        // LaBunbun 的条目直接写在原生设置里：删卡片时把那一项和它的 Key 一起清掉。
+        if app_type == AppType::LaBunbun {
+            crate::labunbun_config::remove_provider(id)?;
+        }
+
         state.db.delete_provider(app_type.as_str(), id)?;
         Ok(())
     }
@@ -7267,6 +7362,9 @@ impl ProviderService {
         if matches!(app_type, AppType::ClaudeDesktop) {
             return Self::switch_desktop_direct(state, provider);
         }
+        if matches!(app_type, AppType::LaBunbun) {
+            return Self::switch_labunbun_direct(state, provider, providers);
+        }
 
         // OMO ↔ OMO Slim are mutually exclusive; activating one removes the other's config file.
         if matches!(app_type, AppType::OpenCode) {
@@ -7478,6 +7576,23 @@ impl ProviderService {
         Ok(SwitchResult::default())
     }
 
+    /// LaBunbun Code 直连切换：原生设置里只留当前这一家的条目、Key 和 `model` 指针，
+    /// 库里其它卡片写过的条目一并清掉（不是卡片的原生条目原样保留）。文件和指针一起提交：
+    /// 写文件失败时指针不动。
+    fn switch_labunbun_direct(
+        state: &AppState,
+        provider: &Provider,
+        providers: &IndexMap<String, Provider>,
+    ) -> Result<SwitchResult, AppError> {
+        let managed_ids: Vec<String> = providers.keys().cloned().collect();
+        crate::labunbun_config::switch_to(provider, &managed_ids)?;
+        crate::settings::set_current_provider(&AppType::LaBunbun, Some(&provider.id))?;
+        state
+            .db
+            .set_current_provider(AppType::LaBunbun.as_str(), &provider.id)?;
+        Ok(SwitchResult::default())
+    }
+
     /// Sync current provider to live configuration (re-export)
     pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
         sync_current_to_live(state)
@@ -7606,7 +7721,8 @@ impl ProviderService {
             | AppType::Agy
             | AppType::Omp
             | AppType::Copilot
-            | AppType::WorkBuddy => Ok(String::new()),
+            | AppType::WorkBuddy
+            | AppType::LaBunbun => Ok(String::new()),
         }
     }
 
@@ -7631,7 +7747,8 @@ impl ProviderService {
             | AppType::Agy
             | AppType::Omp
             | AppType::Copilot
-            | AppType::WorkBuddy => Ok(String::new()),
+            | AppType::WorkBuddy
+            | AppType::LaBunbun => Ok(String::new()),
         }
     }
 
@@ -8424,6 +8541,12 @@ impl ProviderService {
             AppType::Omp => {
                 crate::omp_config::validate_provider(&provider.id, &provider.settings_config)?;
             }
+            AppType::LaBunbun => {
+                crate::labunbun_config::validate_provider_config(
+                    &provider.id,
+                    &provider.settings_config,
+                )?;
+            }
         }
 
         // Validate and clean UsageScript configuration (common for all app types)
@@ -8687,6 +8810,20 @@ impl ProviderService {
                 }
                 Ok((api_key, base_url))
             }
+            AppType::LaBunbun => Ok((
+                provider
+                    .settings_config
+                    .get("apiKey")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .into(),
+                provider
+                    .settings_config
+                    .get("baseUrl")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .into(),
+            )),
             AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::Mcode | AppType::Omp => {
                 // These native formats use apiKey and baseUrl directly on the object.
                 let api_key = provider

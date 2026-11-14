@@ -107,6 +107,7 @@ import { setClaudeOneMMarker } from "./hooks/useModelState";
 import { useAppMode } from "@/lib/query/proxy";
 import { ClaudeDesktopProviderForm } from "./ClaudeDesktopProviderForm";
 import { GrokBuildProviderForm } from "./GrokBuildProviderForm";
+import { LaBunbunProviderForm } from "./LaBunbunProviderForm";
 import { CodexFormFields } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
 import { KimiProviderForm } from "./KimiProviderForm";
@@ -371,6 +372,9 @@ export function ProviderForm(props: ProviderFormProps) {
   }
   if (props.appId === "grokbuild") {
     return <GrokBuildProviderForm {...props} />;
+  }
+  if (props.appId === "labunbun") {
+    return <LaBunbunProviderForm {...props} />;
   }
 
   return <ProviderFormFull {...props} />;

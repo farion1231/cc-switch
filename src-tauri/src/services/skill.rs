@@ -696,7 +696,8 @@ impl SkillService {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Copilot
-            | AppType::WorkBuddy => {}
+            | AppType::WorkBuddy
+            | AppType::LaBunbun => {}
             AppType::Codex => {
                 if let Some(custom) = crate::settings::get_codex_override_dir() {
                     return Ok(custom.join("skills"));
@@ -763,6 +764,7 @@ impl SkillService {
             AppType::Pi => crate::pi_config::get_pi_agent_dir()?.join("skills"),
             AppType::Omp => crate::omp_config::get_omp_agent_dir()?.join("skills"),
             AppType::Agy => home.join(".gemini").join("config").join("skills"),
+            AppType::LaBunbun => crate::labunbun_config::get_labunbun_dir().join("skills"),
         })
     }
 

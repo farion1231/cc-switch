@@ -57,6 +57,7 @@ const SWITCH_APPS: AppId[] = [
   "gemini",
   "grokbuild",
   "claude-desktop",
+  "labunbun",
 ];
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>

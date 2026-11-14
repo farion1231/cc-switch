@@ -400,7 +400,8 @@
       "thirdPartyBucket": "サードパーティプロバイダー",
       "migrationFinished": "古いセッションを {{count}} 件移行しました。Codex を再起動すると続けられます。",
       "migrationFailed": "古いセッションの移行に失敗しました：{{error}}。次回 CC Switch の起動時に自動で再試行します。"
-    }
+    },
+    "labunbunRestartRequired": "切り替えました。LaBunbun Code を再起動すると反映されます。"
   },
   "confirm": {
     "deleteProvider": "プロバイダーを削除",
@@ -1189,7 +1190,8 @@
     "workbuddy": "WorkBuddy",
     "agy": "Antigravity",
     "copilot": "Copilot CLI",
-    "omp": "Oh My Pi"
+    "omp": "Oh My Pi",
+    "labunbun": "LaBunbun"
   },
   "mcode": {
     "empty": {
@@ -4464,7 +4466,8 @@
       "agy": "公式インストールスクリプトでインストール",
       "copilot": "npm でインストール",
       "omp": "公式インストールスクリプトでインストール"
-    }
+    },
+    "labunbunHelp": "LaBunbun Code は別途インストールしてください。ここではインストールやアップグレードはできません。CC Switch は設定ファイル（~/.labunbun/settings.json）を介して接続します。"
   },
   "appPage": {
     "moreActions": "{{name}} のその他の操作",
@@ -5382,5 +5385,28 @@
       "managedHint": "アカウントは認証センターで管理します。ログアウトするとこのカードは自動で消えます。"
     },
     "deleteSessionHint": "履歴の整合性を保つため、DeepSeek Harness でこのセッションを削除してください。"
+  },
+  "labunbun": {
+    "providerKey": "プロバイダーキー",
+    "providerKeyPlaceholder": "例: openrouter",
+    "providerKeyHint": "~/.labunbun/settings.json のプロバイダー id として使います。小文字、数字、ハイフンのみ。",
+    "providerKeyLockedHint": "カード作成後はプロバイダーキーを変更できません。",
+    "providerKeyInvalid": "小文字、数字、ハイフンのみ使用できます。",
+    "providerKeyDuplicate": "このプロバイダーキーは既に使われています。",
+    "baseUrl": "ベース URL",
+    "baseUrlPlaceholder": "https://api.example.com/v1",
+    "apiFormat": "API 形式",
+    "apiAuto": "自動（モデルから推定）",
+    "apiHint": "settings.json の api として書き込みます。「自動」ではこの項目を書きません。",
+    "apiKeyEnv": "API キー変数",
+    "apiKeyEnvHint": "settings.json はキーを env.<名前> に保存します。同名のシェル変数が優先されます。",
+    "models": "モデル",
+    "modelId": "モデル ID",
+    "modelIdPlaceholder": "モデル ID",
+    "contextWindow": "コンテキストウィンドウ",
+    "maxOutputTokens": "最大出力トークン",
+    "addModel": "モデルを追加",
+    "removeModel": "モデルを削除",
+    "modelsHint": "各モデルに id、コンテキストウィンドウ、最大出力トークンが必要です。先頭のモデルが現在のモデルになります。"
   }
 }
