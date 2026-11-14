@@ -2,7 +2,6 @@
 //!
 //! Detects whether a Gemini provider uses PackyCode API Key, Google OAuth, or generic API Key.
 
-use crate::error::AppError;
 use crate::provider::Provider;
 
 /// Gemini authentication type enumeration
@@ -96,47 +95,4 @@ fn contains_packycode_keyword(value: &str) -> bool {
 /// This is a convenience wrapper around `detect_gemini_auth_type`.
 pub(crate) fn is_google_official_gemini(provider: &Provider) -> bool {
     detect_gemini_auth_type(provider) == GeminiAuthType::GoogleOfficial
-}
-
-/// Ensure Google Official Gemini provider security flag is correctly set (OAuth mode)
-///
-/// Google Official Gemini uses OAuth personal authentication, no API Key needed.
-///
-/// # What it does
-///
-/// Writes to **`~/.gemini/settings.json`** (Gemini client config).
-///
-/// # Value set
-///
-/// ```json
-/// {
-///   "security": {
-///     "auth": {
-///       "selectedType": "oauth-personal"
-///     }
-///   }
-/// }
-/// ```
-///
-/// # OAuth authentication flow
-///
-/// 1. User switches to Google Official provider
-/// 2. CC-Switch sets `selectedType = "oauth-personal"`
-/// 3. User's first use of Gemini CLI will auto-open browser for OAuth login
-/// 4. After successful login, credentials saved in Gemini credential store
-/// 5. Subsequent requests auto-use saved credentials
-///
-/// # Error handling
-///
-/// If provider is not Google Official, function returns `Ok(())` immediately without any operation.
-pub(crate) fn ensure_google_oauth_security_flag(provider: &Provider) -> Result<(), AppError> {
-    if !is_google_official_gemini(provider) {
-        return Ok(());
-    }
-
-    // Write to Gemini directory settings.json (~/.gemini/settings.json)
-    use crate::gemini_config::write_google_oauth_settings;
-    write_google_oauth_settings()?;
-
-    Ok(())
 }

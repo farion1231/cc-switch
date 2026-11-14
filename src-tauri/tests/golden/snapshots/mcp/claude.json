@@ -1,0 +1,37 @@
+{
+  "numStartups": 12,
+  "projects": {
+    "/Users/me/repo": {
+      "allowedTools": [],
+      "hasTrustDialogAccepted": true
+    }
+  },
+  "mcpServers": {
+    "external-only": {
+      "type": "stdio",
+      "command": "external"
+    },
+    "http-server": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer mcp-header"
+      }
+    },
+    "sse-server": {
+      "type": "sse",
+      "url": "https://mcp.example.com/sse"
+    },
+    "stdio-server": {
+      "type": "stdio",
+      "command": "example-mcp-server",
+      "args": [
+        "--stdio"
+      ],
+      "env": {
+        "EXAMPLE_TOKEN": "mcp-token"
+      }
+    }
+  },
+  "userID": "user-1"
+}

@@ -832,6 +832,46 @@ fn schema_model_pricing_is_seeded_on_init() {
 }
 
 #[test]
+fn model_pricing_repair_restores_deepseek_v4_pro_after_retracted_cutover() {
+    let db = Database::memory().expect("create memory db");
+
+    {
+        let conn = db.conn.lock().expect("lock conn");
+        // v3.20.3 已发货形态：09-11 条目提前把 V4 Pro 推到了 V4.1 Flash 高峰档
+        conn.execute(
+            "UPDATE model_pricing
+             SET input_cost_per_million = '0.3',
+                 output_cost_per_million = '1.2',
+                 cache_read_cost_per_million = '0.006',
+                 cache_creation_cost_per_million = '0'
+             WHERE model_id = 'deepseek-v4-pro'",
+            [],
+        )
+        .expect("restore v3.20.3 DeepSeek V4 Pro price");
+    }
+
+    // 连跑两次：锁住修回后价格稳定，不会在两档之间来回改写
+    for _ in 0..2 {
+        db.ensure_model_pricing_seeded()
+            .expect("ensure pricing seeded");
+    }
+
+    let conn = db.conn.lock().expect("lock conn");
+    let price: (String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million, cache_read_cost_per_million
+             FROM model_pricing WHERE model_id = 'deepseek-v4-pro'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("query DeepSeek V4 Pro price");
+    assert_eq!(
+        price,
+        ("1.32".to_string(), "3.96".to_string(), "0.044".to_string())
+    );
+}
+
+#[test]
 fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
     let db = Database::memory().expect("create memory db");
 
@@ -857,6 +897,39 @@ fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
             [],
         )
         .expect("set custom GLM price");
+        // <v3.19 老库形态：cache_write 仍是最初 seed 的 0（07-12 条目才补成 6.25）
+        conn.execute(
+            "UPDATE model_pricing
+             SET input_cost_per_million = '5',
+                 output_cost_per_million = '30',
+                 cache_read_cost_per_million = '0.50',
+                 cache_creation_cost_per_million = '0'
+             WHERE model_id = 'gpt-5.6-sol'",
+            [],
+        )
+        .expect("restore pre-v3.19 GPT-5.6 Sol price");
+        // 最早 seed 的 M2.5 价（bb7c83c2 时代）
+        conn.execute(
+            "UPDATE model_pricing
+             SET input_cost_per_million = '0.12',
+                 output_cost_per_million = '0.95',
+                 cache_read_cost_per_million = '0.03',
+                 cache_creation_cost_per_million = '0'
+             WHERE model_id = 'minimax-m2.5'",
+            [],
+        )
+        .expect("restore oldest MiniMax M2.5 price");
+        // 2026-07-31 之前的 V4 Flash 形态（cache_read 尚未修正为 0.0028）
+        conn.execute(
+            "UPDATE model_pricing
+             SET input_cost_per_million = '0.14',
+                 output_cost_per_million = '0.28',
+                 cache_read_cost_per_million = '0.028',
+                 cache_creation_cost_per_million = '0'
+             WHERE model_id = 'deepseek-v4-flash'",
+            [],
+        )
+        .expect("restore oldest DeepSeek V4 Flash price");
     }
 
     db.ensure_model_pricing_seeded()
@@ -871,13 +944,15 @@ fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .expect("query DeepSeek price");
+    // 从远古价 1.68/3.36/0.14 出发要连跳两级才能到位：
+    //   1.68/3.36/0.14 →(2026-07 条目)→ 0.435/0.87/0.003625
+    //                  →(2026-08-16 峰谷调价条目)→ 1.32/3.96/0.044
+    // 这同时锁住了 repair 条目的顺序：新条目必须排在旧条目之后，
+    // 否则老库会停在中间价位，本断言即会失败。v3.20.3 错价的修回另见
+    // model_pricing_repair_restores_deepseek_v4_pro_after_retracted_cutover。
     assert_eq!(
         deepseek,
-        (
-            "0.435".to_string(),
-            "0.87".to_string(),
-            "0.003625".to_string()
-        )
+        ("1.32".to_string(), "3.96".to_string(), "0.044".to_string())
     );
 
     let glm: (String, String, String) = conn
@@ -889,6 +964,495 @@ fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
         )
         .expect("query GLM price");
     assert_eq!(glm, ("9".to_string(), "9".to_string(), "9".to_string()));
+
+    // 2026-09-06 条目同样依赖顺序：
+    //   gpt-5.6-sol  5/30/0.50/0 →(07-12 补 cache_write)→ 5/30/0.50/6.25 →(09-06 促销)→ 4/20/0.40/5
+    //   minimax-m2.5 0.12/0.95/0.03/0 →(0.12→0.15 条目)→ 0.15/… →(09-06 官方价)→ 0.30/1.20/0.03/0.375
+    let sol: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'gpt-5.6-sol'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query GPT-5.6 Sol price");
+    assert_eq!(
+        sol,
+        (
+            "4".to_string(),
+            "20".to_string(),
+            "0.40".to_string(),
+            "5".to_string()
+        )
+    );
+    let m25: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'minimax-m2.5'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query MiniMax M2.5 price");
+    assert_eq!(
+        m25,
+        (
+            "0.30".to_string(),
+            "1.20".to_string(),
+            "0.03".to_string(),
+            "0.375".to_string()
+        )
+    );
+
+    // 2026-09-11 条目是 DeepSeek V4 Flash 链条的第三级，从最老形态出发要连跳三级：
+    //   0.14/0.28/0.028 →(2026-07 修 cache_read)→ 0.14/0.28/0.0028
+    //                   →(2026-08-16 峰谷调价)→ 0.44/1.32/0.014
+    //                   →(2026-09-11 V4.1 Flash 承接)→ 0.3/1.2/0.006
+    // 任一条目被挪到前面，老库都会停在中间价位，本断言即失败。
+    let flash: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'deepseek-v4-flash'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query DeepSeek V4 Flash price");
+    assert_eq!(
+        flash,
+        (
+            "0.3".to_string(),
+            "1.2".to_string(),
+            "0.006".to_string(),
+            "0".to_string()
+        )
+    );
+}
+
+#[test]
+fn model_pricing_seed_covers_deepseek_v41_flash_aliases() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    // 官方定价页（2026-09-11）：deepseek-flash 是唯一推荐名，两个 legacy 名仍被接受
+    // 但均由 V4.1-Flash 承接并按 Flash 价计费 → 四行同价（本表统一录高峰档）。
+    // 查价前缀兜底是 LIKE '{id}-%'，只命中更长的行，任一行缺失都会静默按 0 计费。
+    for model_id in [
+        "deepseek-flash",
+        "deepseek-v4.1-flash",
+        "deepseek-v4-flash",
+        "deepseek-v4-flash-0731",
+        "deepseek-v4-flash-vision-exp",
+    ] {
+        let price: (String, String, String, String) = conn
+            .query_row(
+                "SELECT input_cost_per_million, output_cost_per_million,
+                        cache_read_cost_per_million, cache_creation_cost_per_million
+                 FROM model_pricing WHERE model_id = ?1",
+                [model_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("query DeepSeek V4.1 Flash family price");
+        assert_eq!(
+            price,
+            (
+                "0.3".to_string(),
+                "1.2".to_string(),
+                "0.006".to_string(),
+                "0".to_string()
+            ),
+            "{model_id}"
+        );
+    }
+}
+
+#[test]
+fn model_pricing_seed_includes_claude_fable_5_2() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'claude-fable-5-2'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query Fable 5.2 price");
+
+    assert_eq!(
+        price,
+        (
+            "8".to_string(),
+            "40".to_string(),
+            "0.20".to_string(),
+            "10".to_string(),
+        )
+    );
+}
+
+#[test]
+fn model_pricing_seed_includes_claude_5_1_and_standard_sonnet_5_prices() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    for model_id in ["claude-fable-5-1", "claude-mythos-5-1"] {
+        let price: (String, String, String, String) = conn
+            .query_row(
+                "SELECT input_cost_per_million, output_cost_per_million,
+                        cache_read_cost_per_million, cache_creation_cost_per_million
+                 FROM model_pricing WHERE model_id = ?1",
+                [model_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("query Fable 5.1 family price");
+        // 缓存读 0.025x = $0.25，不是 Fable 5 的 $1
+        assert_eq!(
+            price,
+            (
+                "10".to_string(),
+                "50".to_string(),
+                "0.25".to_string(),
+                "12.50".to_string(),
+            ),
+            "{model_id}"
+        );
+    }
+
+    let sonnet: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'claude-sonnet-5'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query Sonnet 5 price");
+    // $2/$10 介绍价已转为正式价（原定 2026-09-01 涨至 $3/$15 取消）
+    assert_eq!(
+        sonnet,
+        (
+            "2".to_string(),
+            "10".to_string(),
+            "0.20".to_string(),
+            "2.50".to_string(),
+        )
+    );
+}
+
+#[test]
+fn model_pricing_seed_includes_claude_opus_5_5() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'claude-opus-5-5'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query Opus 5.5 price");
+
+    // 缓存读 0.05x = $0.20：不是常规 0.1x 的 $0.40，也不是 Opus 5 的 $0.50
+    assert_eq!(
+        price,
+        (
+            "4".to_string(),
+            "20".to_string(),
+            "0.20".to_string(),
+            "5".to_string(),
+        )
+    );
+}
+
+#[test]
+fn model_pricing_seed_includes_claude_sonnet_5_5_and_haiku_5_5() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price_of = |model_id: &str| -> (String, String, String, String) {
+        conn.query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = ?1",
+            [model_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap_or_else(|e| panic!("query {model_id} price: {e}"))
+    };
+
+    // 缓存读 0.05x = $0.10：不是 Sonnet 5 的 $0.20
+    assert_eq!(
+        price_of("claude-sonnet-5-5"),
+        (
+            "2".to_string(),
+            "10".to_string(),
+            "0.10".to_string(),
+            "2.50".to_string(),
+        )
+    );
+    // 10 万 token 以内的标准档
+    assert_eq!(
+        price_of("claude-haiku-5-5"),
+        (
+            "0.10".to_string(),
+            "0.50".to_string(),
+            "0.01".to_string(),
+            "0.125".to_string(),
+        )
+    );
+}
+
+#[test]
+fn model_pricing_refresh_finishes_old_repair_chains_and_preserves_custom_prices() {
+    let db = Database::memory().expect("create memory db");
+    {
+        let conn = db.conn.lock().unwrap();
+        conn.execute_batch(
+            "UPDATE model_pricing SET input_cost_per_million = '0.09',
+                output_cost_per_million = '0.29', cache_read_cost_per_million = '0.009',
+                cache_creation_cost_per_million = '0' WHERE model_id = 'mimo-v2.5';
+             UPDATE model_pricing SET input_cost_per_million = '9.99' WHERE model_id = 'o3-mini';",
+        )
+        .unwrap();
+    }
+    db.ensure_model_pricing_seeded().unwrap();
+    for _ in 0..2 {
+        {
+            let conn = db.conn.lock().unwrap();
+            let output: String = conn
+                .query_row(
+                    "SELECT output_cost_per_million FROM model_pricing WHERE model_id = 'mimo-v2.5'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(output, "0.28");
+            let custom: String = conn
+                .query_row(
+                    "SELECT input_cost_per_million FROM model_pricing WHERE model_id = 'o3-mini'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(custom, "9.99");
+        }
+        db.ensure_model_pricing_seeded().unwrap();
+    }
+}
+
+#[test]
+fn model_pricing_seed_includes_gpt_6_astra() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'gpt-6-astra'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query GPT-6 Astra price");
+
+    assert_eq!(
+        price,
+        (
+            "10".to_string(),
+            "50".to_string(),
+            "1".to_string(),
+            "12.5".to_string(),
+        )
+    );
+}
+
+#[test]
+fn model_pricing_seed_includes_glm_5_3_flash() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'glm-5.3-flash'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query GLM-5.3-Flash price");
+
+    assert_eq!(
+        price,
+        (
+            "0.15".to_string(),
+            "0.50".to_string(),
+            "0.03".to_string(),
+            "0".to_string(),
+        )
+    );
+}
+
+#[test]
+fn model_pricing_seed_includes_gemini_4_argon() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'gemini-4-argon'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query Gemini 4 Argon price");
+
+    assert_eq!(
+        price,
+        (
+            "2.00".to_string(),
+            "10.00".to_string(),
+            "0.10".to_string(),
+            "0".to_string(),
+        )
+    );
+}
+
+#[test]
+fn model_pricing_seed_includes_gemini_4_carbon() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'gemini-4-carbon'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query Gemini 4 Carbon price");
+
+    assert_eq!(
+        price,
+        (
+            "2.00".to_string(),
+            "10.00".to_string(),
+            "0.10".to_string(),
+            "0".to_string(),
+        )
+    );
+}
+
+#[test]
+fn model_pricing_seed_includes_gemini_3_8_flash() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'gemini-3.8-flash'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query Gemini 3.8 Flash price");
+
+    assert_eq!(
+        price,
+        (
+            "0.75".to_string(),
+            "3.75".to_string(),
+            "0.075".to_string(),
+            "0".to_string(),
+        )
+    );
+}
+
+#[test]
+fn model_pricing_seed_repairs_sonnet_5_list_price_but_keeps_custom_price() {
+    let db = Database::memory().expect("create memory db");
+
+    {
+        let conn = db.conn.lock().expect("lock conn");
+        // 旧 seed 按 list 价录入的行 → 应被修正
+        conn.execute(
+            "UPDATE model_pricing
+             SET input_cost_per_million = '3',
+                 output_cost_per_million = '15',
+                 cache_read_cost_per_million = '0.30',
+                 cache_creation_cost_per_million = '3.75'
+             WHERE model_id = 'claude-sonnet-5'",
+            [],
+        )
+        .expect("restore old Sonnet 5 list price");
+    }
+
+    db.ensure_model_pricing_seeded()
+        .expect("ensure pricing seeded");
+
+    {
+        let conn = db.conn.lock().expect("lock conn");
+        let sonnet: (String, String, String, String) = conn
+            .query_row(
+                "SELECT input_cost_per_million, output_cost_per_million,
+                        cache_read_cost_per_million, cache_creation_cost_per_million
+                 FROM model_pricing WHERE model_id = 'claude-sonnet-5'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("query repaired Sonnet 5 price");
+        assert_eq!(
+            sonnet,
+            (
+                "2".to_string(),
+                "10".to_string(),
+                "0.20".to_string(),
+                "2.50".to_string(),
+            )
+        );
+
+        // 用户手改过的价（不匹配旧 seed 值）不动
+        conn.execute(
+            "UPDATE model_pricing
+             SET input_cost_per_million = '9',
+                 output_cost_per_million = '9',
+                 cache_read_cost_per_million = '9',
+                 cache_creation_cost_per_million = '9'
+             WHERE model_id = 'claude-sonnet-5'",
+            [],
+        )
+        .expect("set custom Sonnet 5 price");
+    }
+
+    db.ensure_model_pricing_seeded()
+        .expect("ensure pricing seeded again");
+
+    let conn = db.conn.lock().expect("lock conn");
+    let custom: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'claude-sonnet-5'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query custom Sonnet 5 price");
+    assert_eq!(
+        custom,
+        (
+            "9".to_string(),
+            "9".to_string(),
+            "9".to_string(),
+            "9".to_string(),
+        )
+    );
 }
 
 #[test]
@@ -917,5 +1481,273 @@ fn ensure_incremental_auto_vacuum_rebuilds_existing_file_db() {
         Database::get_auto_vacuum_mode(&reopened).expect("auto_vacuum after rebuild"),
         2,
         "file db should persist INCREMENTAL auto_vacuum after VACUUM rebuild"
+    );
+}
+
+#[test]
+fn incremental_vacuum_reclaims_entire_freelist() {
+    let temp = NamedTempFile::new().expect("create temp db file");
+    let conn = Connection::open(temp.path()).expect("open temp db");
+    conn.execute("PRAGMA auto_vacuum = INCREMENTAL;", [])
+        .expect("set incremental auto_vacuum");
+    conn.execute_batch(
+        "CREATE TABLE bulk (payload BLOB);
+         WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 200)
+         INSERT INTO bulk SELECT zeroblob(4096) FROM n;
+         DELETE FROM bulk;",
+    )
+    .expect("fill and clear table");
+
+    let freelist = |conn: &Connection| -> i64 {
+        conn.query_row("PRAGMA freelist_count;", [], |row| row.get(0))
+            .expect("read freelist_count")
+    };
+    assert!(
+        freelist(&conn) > 100,
+        "deleting rows should leave free pages"
+    );
+
+    Database::incremental_vacuum_on_conn(&conn).expect("incremental vacuum");
+    assert_eq!(freelist(&conn), 0, "all free pages should be reclaimed");
+}
+
+/// v22 已随 v4.0.19 发布：从它升级必须补上 `mcp_servers.enabled_omp`，否则读 MCP 列表报
+/// `no such column`。Skills 没有 omp 列（启用状态按原生目录现算）。
+#[test]
+fn migration_v22_to_v23_adds_enabled_omp_to_mcp_servers_only() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    conn.execute_batch("ALTER TABLE mcp_servers DROP COLUMN enabled_omp;")
+        .expect("rewind mcp_servers to v22 shape");
+    conn.execute(
+        "INSERT INTO mcp_servers (id, name, server_config, enabled_pi) VALUES ('mcp-1', 'm', '{}', 1)",
+        [],
+    )
+    .expect("seed mcp row");
+    Database::set_user_version(&conn, 22).expect("set user_version=22");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
+    assert!(Database::has_column(&conn, "mcp_servers", "enabled_omp").unwrap());
+    assert!(!Database::has_column(&conn, "skills", "enabled_omp").unwrap());
+    let (pi, omp): (i64, i64) = conn
+        .query_row(
+            "SELECT enabled_pi, enabled_omp FROM mcp_servers WHERE id = 'mcp-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("read mcp row");
+    assert_eq!((pi, omp), (1, 0));
+}
+
+#[test]
+fn migration_v23_to_v24_adds_dsh_flags_without_changing_omp_or_skill_state() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    conn.execute_batch(
+        "ALTER TABLE mcp_servers DROP COLUMN enabled_dsh;
+         ALTER TABLE skills DROP COLUMN enabled_dsh;
+         ALTER TABLE mcp_servers DROP COLUMN enabled_copilot;
+         ALTER TABLE skills DROP COLUMN enabled_copilot;
+         INSERT INTO mcp_servers (id, name, server_config, enabled_omp)
+         VALUES ('shared', 'Shared MCP', '{}', 1);
+         INSERT INTO skills (id, name, directory, enabled_kimi)
+         VALUES ('skill', 'Skill', 'skill', 1);",
+    )
+    .expect("seed v23 database");
+    Database::set_user_version(&conn, 23).expect("set user_version=23");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("upgrade v23 database");
+    assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
+    let mcp_flags: (bool, bool) = conn
+        .query_row(
+            "SELECT enabled_omp, enabled_dsh FROM mcp_servers WHERE id = 'shared'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("read migrated MCP flags");
+    let skill_flags: (bool, bool) = conn
+        .query_row(
+            "SELECT enabled_kimi, enabled_dsh FROM skills WHERE id = 'skill'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("read migrated skill flags");
+    assert_eq!(mcp_flags, (true, false));
+    assert_eq!(skill_flags, (true, false));
+
+    conn.execute("UPDATE mcp_servers SET enabled_dsh = 1", [])
+        .unwrap();
+    Database::apply_schema_migrations_on_conn(&conn).expect("reopen migrated database");
+    assert!(conn
+        .query_row("SELECT enabled_dsh FROM mcp_servers", [], |row| row
+            .get::<_, bool>(0))
+        .unwrap());
+}
+
+#[test]
+fn migration_from_v24_adds_copilot_and_workbuddy_flags_without_changing_dsh_state() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    conn.execute_batch(
+        "ALTER TABLE mcp_servers DROP COLUMN enabled_copilot;
+         ALTER TABLE skills DROP COLUMN enabled_copilot;
+         ALTER TABLE mcp_servers DROP COLUMN enabled_workbuddy;
+         ALTER TABLE skills DROP COLUMN enabled_workbuddy;
+         INSERT INTO mcp_servers (id, name, server_config, enabled_dsh)
+         VALUES ('shared', 'Shared MCP', '{}', 1);
+         INSERT INTO skills (id, name, directory, enabled_dsh)
+         VALUES ('skill', 'Skill', 'skill', 1);",
+    )
+    .expect("seed v24 database");
+    Database::set_user_version(&conn, 24).expect("set user_version=24");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("upgrade v24 database");
+    // v24 → v25（Copilot）→ v26（WorkBuddy）
+    assert_eq!(Database::get_user_version(&conn).unwrap(), 26);
+    assert_eq!(SCHEMA_VERSION, 26);
+    for table in ["mcp_servers", "skills"] {
+        let flags: (bool, bool, bool) = conn
+            .query_row(
+                &format!("SELECT enabled_dsh, enabled_copilot, enabled_workbuddy FROM {table}"),
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("read migrated flags");
+        assert_eq!(flags, (true, false, false), "{table}");
+    }
+
+    conn.execute("UPDATE skills SET enabled_copilot = 1", [])
+        .unwrap();
+    Database::apply_schema_migrations_on_conn(&conn).expect("reopen migrated database");
+    assert!(conn
+        .query_row("SELECT enabled_copilot FROM skills", [], |row| row
+            .get::<_, bool>(0))
+        .unwrap());
+}
+
+#[test]
+fn fresh_install_has_dsh_copilot_and_workbuddy_flags_at_current_version() {
+    // 与 Database::init 的全新安装路径一致：先建表，再从 user_version=0 跑迁移。
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+    assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
+    for table in ["mcp_servers", "skills"] {
+        for column in ["enabled_dsh", "enabled_copilot", "enabled_workbuddy"] {
+            assert!(
+                Database::has_column(&conn, table, column).expect("inspect column"),
+                "{table}.{column} missing on fresh install"
+            );
+        }
+    }
+}
+
+#[test]
+fn recovers_after_a_panic_poisons_the_connection_lock() {
+    let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+    db.set_setting("kept", "1").expect("seed");
+
+    let poisoner = std::sync::Arc::clone(&db);
+    let joined = std::thread::spawn(move || {
+        let conn = poisoner.conn.lock().expect("lock conn");
+        conn.execute_batch("BEGIN; INSERT INTO settings (key, value) VALUES ('lost', '1');")
+            .expect("open transaction");
+        panic!("task panics while holding the lock");
+    })
+    .join();
+    assert!(joined.is_err());
+    assert!(db.conn.is_poisoned());
+
+    // 中毒后仍能读写，半截事务被回滚
+    assert_eq!(
+        db.get_setting("kept")
+            .expect("read after poison")
+            .as_deref(),
+        Some("1")
+    );
+    assert_eq!(db.get_setting("lost").expect("read after poison"), None);
+    db.set_setting("after", "1").expect("write after poison");
+    assert!(!db.conn.is_poisoned());
+}
+
+#[test]
+fn keeps_the_lock_poisoned_when_rollback_fails() {
+    use rusqlite::hooks::{AuthAction, AuthContext, Authorization, TransactionOperation};
+    let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+
+    let poisoner = std::sync::Arc::clone(&db);
+    let joined = std::thread::spawn(move || {
+        let conn = poisoner.conn.lock().expect("lock conn");
+        conn.execute_batch("BEGIN").expect("open transaction");
+        conn.authorizer(Some(|ctx: AuthContext<'_>| match ctx.action {
+            AuthAction::Transaction {
+                operation: TransactionOperation::Rollback,
+            } => Authorization::Deny,
+            _ => Authorization::Allow,
+        }));
+        panic!("task panics while holding the lock");
+    })
+    .join();
+    assert!(joined.is_err());
+
+    assert!(db.get_setting("kept").is_err());
+    assert!(db.conn.is_poisoned());
+}
+
+#[tokio::test]
+async fn proxy_dao_calls_survive_a_poisoned_lock() {
+    let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+    db.set_proxy_flags_sync("claude", true, true)
+        .expect("set flags");
+    db.update_proxy_config(crate::proxy::types::ProxyConfig {
+        listen_port: 25721,
+        ..Default::default()
+    })
+    .await
+    .expect("set port");
+
+    // 每次调用前都重新毒化，确保每个调用点自己完成恢复
+    let poison = || {
+        let poisoner = std::sync::Arc::clone(&db);
+        let joined = std::thread::spawn(move || {
+            let _conn = poisoner.conn.lock().expect("lock conn");
+            panic!("task panics while holding the lock");
+        })
+        .join();
+        assert!(joined.is_err());
+        assert!(db.conn.is_poisoned());
+    };
+
+    poison();
+    db.set_proxy_flags_sync("claude", true, false)
+        .expect("set flags after poison");
+    poison();
+    assert_eq!(
+        db.get_proxy_flags_sync("claude"),
+        (true, false),
+        "get_proxy_flags_sync after poison"
+    );
+    poison();
+    assert!(
+        db.is_live_takeover_active_sync(),
+        "is_live_takeover_active_sync after poison"
+    );
+    poison();
+    assert_eq!(
+        db.get_proxy_client_endpoint_sync().1,
+        25721,
+        "get_proxy_client_endpoint_sync after poison"
+    );
+    poison();
+    db.set_pricing_model_source("claude", "request")
+        .await
+        .expect("set pricing source after poison");
+    assert_eq!(
+        db.get_pricing_model_source("claude")
+            .await
+            .expect("read pricing source"),
+        "request"
     );
 }

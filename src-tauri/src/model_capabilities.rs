@@ -45,6 +45,18 @@ pub(crate) fn image_input_capability_from_settings(
     )
 }
 
+/// Whether provider settings prove that a model accepts text input only.
+/// A negative image flag alone is not enough because the model may still
+/// accept audio or files.
+pub(crate) fn is_text_only_model_from_settings(
+    settings: &Value,
+    model: &str,
+    use_confirmed_registry: bool,
+) -> bool {
+    declared_model_text_only(settings, model)
+        .unwrap_or_else(|| use_confirmed_registry && is_confirmed_text_only_model(model))
+}
+
 /// Convert a catalog row's explicit modality list into the shared capability
 /// representation, falling back to the text-only registry when omitted.
 pub(crate) fn image_input_capability_from_modalities(
@@ -73,12 +85,23 @@ pub(crate) fn is_confirmed_text_only_model(model: &str) -> bool {
         "ark-code-latest",
         "deepseek-chat",
         "deepseek-reasoner",
-        "deepseek-v4-flash",
-        "deepseek-v4-pro",
+        // `deepseek-v4-flash` is intentionally absent: it is a legacy alias the
+        // vendor still accepts and routes to the vision-capable `deepseek-flash`
+        // (api-docs.deepseek.com/guides/vision), so it must fail open.
+        // `deepseek-v4-pro` likewise stays out of this global registry: the
+        // official API continues serving V4 Pro after September 14, 2026
+        // (api-docs.deepseek.com), but hosted aliases can differ. First-party
+        // presets declare text-only explicitly; unknown gateways fail open.
+        // `deepseek-v4-flash-0731` is OpenRouter's dated alias for the
+        // 2026-07-31 Flash release, still listed there as text-only; it is not
+        // one of the legacy names the official API accepts. Keep this exact: a
+        // future `-vision` / `-vl` sibling must fail open.
+        "deepseek-v4-flash-0731",
         "glm-5.1",
         // Exact rather than prefix matching: GLM visual models use a `v`
         // suffix (for example glm-5.2v), which must remain image-capable.
         "glm-5.2",
+        "glm-5.3",
         "kat-coder",
         "kat-coder-pro",
         "kat-coder-pro v1",
@@ -86,6 +109,9 @@ pub(crate) fn is_confirmed_text_only_model(model: &str) -> bool {
         "kat-coder-pro-v1",
         "kat-coder-pro-v2",
         "ling-2.5-1t",
+        // Ant Ling ships vision as separate `-VL` models (Ling-3.0-flash-VL);
+        // Ling-2.6-1T is text-only (developer.ant-ling.com model docs).
+        "ling-2.6-1t",
         "longcat-2.0",
         "longcat-flash-chat",
         "minimax-m2.7",
@@ -115,6 +141,32 @@ fn declared_model_image_support(settings: &Value, model: &str) -> Option<bool> {
     .into_iter()
     .flatten()
     .find_map(|value| declared_model_image_support_in_value(value, model))
+}
+
+fn declared_model_text_only(settings: &Value, model: &str) -> Option<bool> {
+    [
+        settings
+            .get("modelCatalog")
+            .and_then(|catalog| catalog.get("models")),
+        settings.get("modelCatalog"),
+        settings.get("models"),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(|value| declared_model_text_only_in_value(value, model))
+}
+
+fn declared_model_text_only_in_value(value: &Value, model: &str) -> Option<bool> {
+    if let Some(models) = value.as_array() {
+        return models.iter().find_map(|entry| {
+            model_entry_matches(entry, None, model).then(|| explicit_text_only(entry))?
+        });
+    }
+
+    let object = value.as_object()?;
+    object.iter().find_map(|(key, entry)| {
+        model_entry_matches(entry, Some(key), model).then(|| explicit_text_only(entry))?
+    })
 }
 
 fn declared_model_image_support_in_value(value: &Value, model: &str) -> Option<bool> {
@@ -149,6 +201,36 @@ fn explicit_image_support(entry: &Value) -> Option<bool> {
     .into_iter()
     .flatten()
     .find_map(input_modalities_support_image)
+}
+
+fn explicit_text_only(entry: &Value) -> Option<bool> {
+    [
+        entry.get("input"),
+        entry.pointer("/modalities/input"),
+        entry.get("input_modalities"),
+        entry.get("inputModalities"),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(|value| {
+        let modalities = value.as_array()?;
+        Some(
+            !modalities.is_empty()
+                && modalities.iter().all(|item| {
+                    item.as_str()
+                        .map(str::trim)
+                        .is_some_and(|item| item.eq_ignore_ascii_case("text"))
+                }),
+        )
+    })
+    .or_else(|| {
+        entry
+            .get("supportsImage")
+            .or_else(|| entry.get("supports_image"))
+            .or_else(|| entry.get("vision"))
+            .and_then(Value::as_bool)
+            .map(|_| false)
+    })
 }
 
 fn input_modalities_support_image(value: &Value) -> Option<bool> {
@@ -215,8 +297,16 @@ mod tests {
 
     #[test]
     fn confirmed_text_only_registry_normalizes_namespaces_and_context_markers() {
-        assert!(is_confirmed_text_only_model("deepseek/deepseek-v4-pro"));
+        assert!(is_confirmed_text_only_model("deepseek/deepseek-chat"));
+        // v4-flash 是旧别名，路由到识图的 deepseek-flash；2026-09-14 起 v4-pro 也路由到
+        // 识图的 V4.1 Flash。两者均已移出名单，必须 fail-open。
+        assert!(!is_confirmed_text_only_model("deepseek/deepseek-v4-flash"));
+        assert!(!is_confirmed_text_only_model("deepseek/deepseek-v4-pro"));
+        assert!(is_confirmed_text_only_model(
+            "deepseek/deepseek-v4-flash-0731"
+        ));
         assert!(is_confirmed_text_only_model("GLM-5.2[1M]"));
+        assert!(is_confirmed_text_only_model("GLM-5.3[1M]"));
         assert!(is_confirmed_text_only_model("qwen/qwen3-coder-plus"));
         assert!(is_confirmed_text_only_model(
             "Qwen/Qwen3-Coder-480B-A35B-Instruct"
@@ -224,11 +314,13 @@ mod tests {
         assert!(is_confirmed_text_only_model("MiniMax-M2.7-Highspeed"));
         assert!(is_confirmed_text_only_model("step-3.5-flash-2603"));
         assert!(!is_confirmed_text_only_model("glm-5.2v"));
+        assert!(!is_confirmed_text_only_model("glm-5.3v"));
     }
 
     #[test]
     fn unconfirmed_family_suffixes_fail_open() {
         for model in [
+            "deepseek-v4-flash-vision",
             "minimax-m2.7-vision",
             "qwen3-coder-ultra",
             "qwen3-coder-vl",
@@ -244,7 +336,7 @@ mod tests {
     #[test]
     fn explicit_capability_overrides_the_registry() {
         assert_eq!(
-            resolve_image_input_capability("deepseek-v4-pro", Some(true), true),
+            resolve_image_input_capability("qwen3-coder-plus", Some(true), true),
             ImageInputCapability::Supported
         );
         assert_eq!(

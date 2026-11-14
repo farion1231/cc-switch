@@ -64,7 +64,7 @@ const OpenClawHealthBanner: React.FC<OpenClawHealthBannerProps> = ({
 
   return (
     <div className="px-6 pt-4">
-      <Alert className="border-amber-500/30 bg-amber-500/5">
+      <Alert className="border-transparent bg-warning-soft">
         <TriangleAlert className="h-4 w-4" />
         <AlertTitle>
           {t("openclaw.health.title", {

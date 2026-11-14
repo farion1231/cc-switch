@@ -6,11 +6,26 @@ use crate::app_config::AppType;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
-use crate::proxy::circuit_breaker::{AllowResult, CircuitBreaker, CircuitBreakerConfig};
+use crate::proxy::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, HalfOpenPermitGuard};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+/// 熔断器放行结果。占用了 HalfOpen 探测名额时带着 guard，drop 即归还名额。
+pub struct ProviderPermit {
+    pub allowed: bool,
+    pub used_half_open_permit: bool,
+    _guard: Option<HalfOpenPermitGuard>,
+}
+
+/// Codex Official requests carry the selected account's native Authorization
+/// header. Reusing that request against another account card would cross the
+/// account boundary, so these cards must never participate in provider retry.
+pub(crate) fn provider_supports_failover(app_type: &str, provider: &Provider) -> bool {
+    app_type != AppType::Codex.as_str()
+        || !crate::proxy::providers::is_codex_official_provider(provider)
+}
 
 /// 供应商路由器
 pub struct ProviderRouter {
@@ -35,11 +50,12 @@ impl ProviderRouter {
     /// - 故障转移关闭时：仅返回当前供应商
     /// - 故障转移开启时：仅使用故障转移队列，按队列顺序依次尝试（P1 → P2 → ...）
     pub async fn select_providers(&self, app_type: &str) -> Result<Vec<Provider>, AppError> {
-        let mut result = Vec::new();
-        let mut total_providers = 0usize;
-        let mut circuit_open_count = 0usize;
-
-        // 检查该应用的自动故障转移开关是否开启（从 proxy_config 表读取）
+        // 代理模式下路由到代理路由那家，和直连指针无关。
+        let current_provider = AppType::from_str(app_type).ok().and_then(|app_enum| {
+            crate::mode::current::provider_in_use(&self.db, &app_enum)
+                .ok()
+                .flatten()
+        });
         let auto_failover_enabled = match self.db.get_proxy_config_for_app(app_type).await {
             Ok(config) => config.auto_failover_enabled,
             Err(e) => {
@@ -47,25 +63,41 @@ impl ProviderRouter {
                 false
             }
         };
+        self.select_providers_with_current(app_type, current_provider, auto_failover_enabled)
+            .await
+    }
 
-        if auto_failover_enabled {
+    /// 同 [`Self::select_providers`]，正在用的那家由调用方给出：处理请求时上下文已经读过
+    /// 一次（要读 `live-state.json` 和这一行），不用每个请求再读一遍，两处用的也一定是
+    /// 同一家。故障转移开关也沿用本次请求已读取的配置。
+    pub async fn select_providers_with_current(
+        &self,
+        app_type: &str,
+        current_provider: Option<Provider>,
+        auto_failover_enabled: bool,
+    ) -> Result<Vec<Provider>, AppError> {
+        let mut result = Vec::new();
+        let mut total_providers = 0usize;
+        let mut circuit_open_count = 0usize;
+
+        if auto_failover_enabled
+            && current_provider
+                .as_ref()
+                .is_some_and(|provider| !provider_supports_failover(app_type, provider))
+        {
+            // A selected Codex Official account is an explicit account choice.
+            // Keep it as a single route even if an old failover setting remains
+            // enabled; retrying would reuse its inbound token for another card.
+            total_providers = 1;
+            result.push(current_provider.expect("checked above"));
+        } else if auto_failover_enabled {
             // 故障转移开启：仅按队列顺序依次尝试（P1 → P2 → ...）
-            let all_providers = self.db.get_all_providers(app_type)?;
-
             // 使用 DAO 返回的排序结果，确保和前端展示一致
-            let ordered_ids: Vec<String> = self
-                .db
-                .get_failover_queue(app_type)?
-                .into_iter()
-                .map(|item| item.provider_id)
-                .collect();
-
-            total_providers = ordered_ids.len();
-
-            for provider_id in ordered_ids {
-                let Some(provider) = all_providers.get(&provider_id).cloned() else {
+            for provider in self.db.get_failover_providers(app_type)? {
+                if !provider_supports_failover(app_type, &provider) {
                     continue;
-                };
+                }
+                total_providers += 1;
 
                 let circuit_key = format!("{app_type}:{}", provider.id);
                 let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
@@ -78,20 +110,9 @@ impl ProviderRouter {
             }
         } else {
             // 故障转移关闭：仅使用当前供应商，跳过熔断器检查
-            let current_id = AppType::from_str(app_type)
-                .ok()
-                .and_then(|app_enum| {
-                    crate::settings::get_effective_current_provider(&self.db, &app_enum)
-                        .ok()
-                        .flatten()
-                })
-                .or_else(|| self.db.get_current_provider(app_type).ok().flatten());
-
-            if let Some(current_id) = current_id {
-                if let Some(current) = self.db.get_provider_by_id(&current_id, app_type)? {
-                    total_providers = 1;
-                    result.push(current);
-                }
+            if let Some(current) = current_provider {
+                total_providers = 1;
+                result.push(current);
             }
         }
 
@@ -114,12 +135,25 @@ impl ProviderRouter {
     /// - Open：超时到达后切到 HalfOpen 并放行一次探测
     /// - HalfOpen：按限流规则放行探测
     ///
-    /// 注意：调用方必须在请求结束后通过 `record_result()` 释放 HalfOpen 名额，
-    /// 否则会导致该 Provider 长时间无法进入探测状态。
-    pub async fn allow_provider_request(&self, provider_id: &str, app_type: &str) -> AllowResult {
+    /// 占用了 HalfOpen 探测名额时，名额由返回值里的 guard 持有：这次尝试结束（或请求
+    /// 中途被丢弃）guard 一 drop 就归还，调用方要让它活到尝试结束。
+    pub async fn allow_provider_request(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+    ) -> ProviderPermit {
         let circuit_key = format!("{app_type}:{provider_id}");
         let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
-        breaker.allow_request().await
+        let result = breaker.allow_request().await;
+        // 拿到名额和交给 guard 之间不能有 await，否则在这里被取消同样会漏还。
+        let guard = result
+            .used_half_open_permit
+            .then(|| HalfOpenPermitGuard::new(breaker, result.half_open_round));
+        ProviderPermit {
+            allowed: result.allowed,
+            used_half_open_permit: result.used_half_open_permit,
+            _guard: guard,
+        }
     }
 
     /// 记录供应商请求结果
@@ -173,24 +207,6 @@ impl ProviderRouter {
     pub async fn reset_provider_breaker(&self, provider_id: &str, app_type: &str) {
         let circuit_key = format!("{app_type}:{provider_id}");
         self.reset_circuit_breaker(&circuit_key).await;
-    }
-
-    /// 仅释放 HalfOpen permit，不影响健康统计（neutral 接口）
-    ///
-    /// 用于整流器等场景：请求结果不应计入 Provider 健康度，
-    /// 但仍需释放占用的探测名额，避免 HalfOpen 状态卡死
-    pub async fn release_permit_neutral(
-        &self,
-        provider_id: &str,
-        app_type: &str,
-        used_half_open_permit: bool,
-    ) {
-        if !used_half_open_permit {
-            return;
-        }
-        let circuit_key = format!("{app_type}:{provider_id}");
-        let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
-        breaker.release_half_open_permit();
     }
 
     /// 更新所有熔断器的配置（热更新）
@@ -262,7 +278,7 @@ impl ProviderRouter {
             Err(_) => crate::proxy::circuit_breaker::CircuitBreakerConfig::default(),
         };
 
-        let breaker = Arc::new(CircuitBreaker::new(config));
+        let breaker = Arc::new(CircuitBreaker::new(config).with_label(key));
         breakers.insert(key.to_string(), breaker.clone());
 
         breaker
@@ -273,10 +289,31 @@ impl ProviderRouter {
 mod tests {
     use super::*;
     use crate::database::Database;
+    use crate::provider::{AuthBinding, AuthBindingSource, ProviderMeta};
     use serde_json::json;
     use serial_test::serial;
     use std::env;
     use tempfile::TempDir;
+
+    fn managed_codex_official(id: &str, account_id: &str) -> Provider {
+        let mut provider = Provider::with_id(
+            id.to_string(),
+            "OpenAI Official".to_string(),
+            json!({ "auth": {}, "config": "" }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            auth_binding: Some(AuthBinding {
+                source: AuthBindingSource::ManagedAccount,
+                auth_provider: Some("codex_oauth".to_string()),
+                account_id: Some(account_id.to_string()),
+            }),
+            ..Default::default()
+        });
+        provider
+    }
 
     struct TempHome {
         #[allow(dead_code)]
@@ -427,6 +464,77 @@ mod tests {
 
     #[tokio::test]
     #[serial]
+    async fn codex_official_current_stays_single_route_when_failover_is_stale() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let official = managed_codex_official("official-a", "account-a");
+        let fallback = Provider::with_id(
+            "fallback".to_string(),
+            "Fallback".to_string(),
+            json!({}),
+            None,
+        );
+        db.save_provider("codex", &official).unwrap();
+        db.save_provider("codex", &fallback).unwrap();
+        db.set_current_provider("codex", &official.id).unwrap();
+        db.add_to_failover_queue("codex", &fallback.id).unwrap();
+
+        let mut config = db.get_proxy_config_for_app("codex").await.unwrap();
+        config.auto_failover_enabled = true;
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let providers = ProviderRouter::new(db)
+            .select_providers("codex")
+            .await
+            .unwrap();
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, official.id);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn stale_codex_official_queue_entries_are_not_retry_targets() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let current = Provider::with_id(
+            "third-party".to_string(),
+            "Third Party".to_string(),
+            json!({}),
+            None,
+        );
+        let official = managed_codex_official("official-a", "account-a");
+        let fallback = Provider::with_id(
+            "fallback".to_string(),
+            "Fallback".to_string(),
+            json!({}),
+            None,
+        );
+        db.save_provider("codex", &current).unwrap();
+        db.save_provider("codex", &official).unwrap();
+        db.save_provider("codex", &fallback).unwrap();
+        db.set_current_provider("codex", &current.id).unwrap();
+        db.add_to_failover_queue("codex", &official.id).unwrap();
+        db.add_to_failover_queue("codex", &fallback.id).unwrap();
+
+        let mut config = db.get_proxy_config_for_app("codex").await.unwrap();
+        config.auto_failover_enabled = true;
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let providers = ProviderRouter::new(db)
+            .select_providers("codex")
+            .await
+            .unwrap();
+        assert_eq!(
+            providers
+                .iter()
+                .map(|provider| provider.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["fallback"]
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn test_select_providers_does_not_consume_half_open_permit() {
         let _home = TempHome::new();
         let db = Arc::new(Database::memory().unwrap());
@@ -470,7 +578,7 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn test_release_permit_neutral_frees_half_open_slot() {
+    async fn test_dropping_permit_frees_half_open_slot() {
         let _home = TempHome::new();
         let db = Arc::new(Database::memory().unwrap());
 
@@ -510,14 +618,109 @@ mod tests {
         let second = router.allow_provider_request("a", "claude").await;
         assert!(!second.allowed);
 
-        // 使用 release_permit_neutral 释放名额（不影响健康统计）
-        router
-            .release_permit_neutral("a", "claude", first.used_half_open_permit)
-            .await;
+        // 第一次请求结束（或被中途丢弃）：放行结果一 drop 就归还名额
+        drop(first);
 
         // 第三次请求应被允许（名额已释放）
         let third = router.allow_provider_request("a", "claude").await;
         assert!(third.allowed);
         assert!(third.used_half_open_permit);
+    }
+
+    /// 拿着探测名额的请求被中途丢弃（客户端断开取消了 future）也要归还名额，
+    /// 否则这家一直停在 HalfOpen、所有请求都被拒绝，直到重启（#7206 / #9292）。
+    #[tokio::test]
+    #[serial]
+    async fn test_cancelled_probe_returns_half_open_slot() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        db.update_circuit_breaker_config(&CircuitBreakerConfig {
+            failure_threshold: 1,
+            timeout_seconds: 0,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let provider_a =
+            Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
+        db.save_provider("claude", &provider_a).unwrap();
+        db.add_to_failover_queue("claude", "a").unwrap();
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.auto_failover_enabled = true;
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let router = Arc::new(ProviderRouter::new(db.clone()));
+        router
+            .record_result("a", "claude", false, false, Some("fail".to_string()))
+            .await
+            .unwrap();
+
+        // 探测请求拿到名额后卡在上游，然后整个任务被取消，结果一直没记。
+        let (acquired_tx, acquired_rx) = tokio::sync::oneshot::channel();
+        let probe_router = router.clone();
+        let probe = tokio::spawn(async move {
+            let permit = probe_router.allow_provider_request("a", "claude").await;
+            let _ = acquired_tx.send((permit.allowed, permit.used_half_open_permit));
+            std::future::pending::<()>().await;
+            drop(permit);
+        });
+        assert_eq!(acquired_rx.await.unwrap(), (true, true));
+        assert!(!router.allow_provider_request("a", "claude").await.allowed);
+
+        probe.abort();
+        let _ = probe.await;
+
+        let next = router.allow_provider_request("a", "claude").await;
+        assert!(next.allowed);
+        assert!(next.used_half_open_permit);
+    }
+
+    /// 上一轮探测的放行结果晚到 drop，不能把新一轮正在进行的探测名额还掉，
+    /// 否则同一轮会同时放出两个探测请求。
+    #[tokio::test]
+    #[serial]
+    async fn test_stale_probe_permit_does_not_free_next_round_slot() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        db.update_circuit_breaker_config(&CircuitBreakerConfig {
+            failure_threshold: 1,
+            timeout_seconds: 0,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let provider_a =
+            Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
+        db.save_provider("claude", &provider_a).unwrap();
+        db.add_to_failover_queue("claude", "a").unwrap();
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.auto_failover_enabled = true;
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+        router
+            .record_result("a", "claude", false, false, Some("fail".to_string()))
+            .await
+            .unwrap();
+
+        // A 拿到第一轮的名额，探测失败 → Open（A 的放行结果还没 drop）
+        let a = router.allow_provider_request("a", "claude").await;
+        assert!(a.used_half_open_permit);
+        router
+            .record_result("a", "claude", false, false, Some("fail".to_string()))
+            .await
+            .unwrap();
+
+        // 超时为 0：B 立刻进入第二轮并拿到名额
+        let b = router.allow_provider_request("a", "claude").await;
+        assert!(b.allowed);
+        assert!(b.used_half_open_permit);
+
+        // A 这时才 drop：只能作废自己那一轮的名额，B 的还占着
+        drop(a);
+        assert!(!router.allow_provider_request("a", "claude").await.allowed);
+
+        drop(b);
+        assert!(router.allow_provider_request("a", "claude").await.allowed);
     }
 }

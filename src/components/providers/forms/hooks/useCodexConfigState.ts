@@ -1,9 +1,14 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import {
+  extractCodexAgentsMaxThreads,
+  extractCodexAgentsString,
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
   extractCodexModelName,
+  extractCodexMultiAgentV2Total,
+  setCodexAgentsMaxThreads,
   setCodexBaseUrl as setCodexBaseUrlInConfig,
+  setCodexAgentsString,
   setCodexModelName as setCodexModelNameInConfig,
   updateCodexExperimentalBearerToken,
 } from "@/utils/providerConfigUtils";
@@ -29,103 +34,149 @@ function pickCodexApiKey(
   return extractCodexExperimentalBearerToken(configText) || "";
 }
 
+// 目录行 load 映射（隐藏字段白名单重建）。抽成可导出的纯函数，与
+// normalizeCodexCatalogModelsForSave 成对做 load→save 回环测试——
+// 任一侧丢字段都会静默清空供应商的逐模型声明（reasoningLevels、
+// baseInstructions 等），且 UI 无可察觉。
+export const mapCodexCatalogModelForForm = (item: any): CodexCatalogModel => {
+  // 隐藏字段（原生 Responses profile 用）不在行 UI 暴露，但必须 load→save
+  // 原样保留，否则编辑保存 MiMo/MiniMax 等会丢官方 base_instructions、
+  // 并行工具、图像模态。DB SSOT 为 camelCase、live 反解兜底可能为 snake_case，
+  // 双格式兼容（与 displayName/contextWindow 一致）。
+  const supportsParallelToolCalls =
+    typeof item?.supportsParallelToolCalls === "boolean"
+      ? item.supportsParallelToolCalls
+      : typeof item?.supports_parallel_tool_calls === "boolean"
+        ? item.supports_parallel_tool_calls
+        : undefined;
+  const inputModalities = Array.isArray(item?.inputModalities)
+    ? item.inputModalities
+    : Array.isArray(item?.input_modalities)
+      ? item.input_modalities
+      : undefined;
+  const baseInstructions =
+    typeof item?.baseInstructions === "string"
+      ? item.baseInstructions
+      : typeof item?.base_instructions === "string"
+        ? item.base_instructions
+        : undefined;
+  const reasoningLevels = Array.isArray(item?.reasoningLevels)
+    ? item.reasoningLevels
+    : Array.isArray(item?.reasoning_levels)
+      ? item.reasoning_levels
+      : undefined;
+  const defaultReasoningLevel =
+    typeof item?.defaultReasoningLevel === "string"
+      ? item.defaultReasoningLevel
+      : typeof item?.default_reasoning_level === "string"
+        ? item.default_reasoning_level
+        : undefined;
+  return {
+    model: typeof item?.model === "string" ? item.model : "",
+    displayName:
+      typeof item?.displayName === "string"
+        ? item.displayName
+        : typeof item?.display_name === "string"
+          ? item.display_name
+          : "",
+    contextWindow:
+      typeof item?.contextWindow === "string" ||
+      typeof item?.contextWindow === "number"
+        ? item.contextWindow
+        : typeof item?.context_window === "string" ||
+            typeof item?.context_window === "number"
+          ? item.context_window
+          : "",
+    ...(supportsParallelToolCalls !== undefined
+      ? { supportsParallelToolCalls }
+      : {}),
+    ...(inputModalities ? { inputModalities } : {}),
+    ...(baseInstructions ? { baseInstructions } : {}),
+    ...(reasoningLevels && reasoningLevels.length > 0
+      ? { reasoningLevels }
+      : {}),
+    ...(defaultReasoningLevel ? { defaultReasoningLevel } : {}),
+  };
+};
+
+/** 编辑已有供应商时，从它的 settingsConfig 读出表单的初始值；没有可用的配置时为 null */
+function readCodexInitialState(
+  initialData: UseCodexConfigStateProps["initialData"],
+) {
+  const config = initialData?.settingsConfig;
+  if (typeof config !== "object" || config === null) return null;
+  const configStr =
+    typeof (config as any).config === "string" ? (config as any).config : "";
+  const auth = (config as any).auth || {};
+  const modelCatalog = (config as any).modelCatalog;
+  const rawCatalogModels = Array.isArray(modelCatalog?.models)
+    ? modelCatalog.models
+    : [];
+  return {
+    config: configStr as string,
+    auth: JSON.stringify(auth, null, 2),
+    catalogModels: rawCatalogModels
+      .map(mapCodexCatalogModelForForm)
+      .filter((item: CodexCatalogModel) =>
+        item.model.trim(),
+      ) as CodexCatalogModel[],
+    autoReviewModel:
+      typeof modelCatalog?.autoReviewModel === "string"
+        ? (modelCatalog.autoReviewModel.trim() as string)
+        : "",
+    officialSpeedTiers: modelCatalog?.officialSpeedTiers === true,
+    baseUrl: extractCodexBaseUrl(configStr) || "",
+    apiKey: pickCodexApiKey(auth, configStr),
+  };
+}
+
 /**
  * 管理 Codex 配置状态
  * Codex 配置包含两部分：auth.json (JSON) 和 config.toml (TOML 字符串)
  */
 export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
-  const [codexAuth, setCodexAuthState] = useState("");
-  const [codexConfig, setCodexConfigState] = useState("");
-  const [codexApiKey, setCodexApiKey] = useState("");
-  const [codexBaseUrl, setCodexBaseUrl] = useState("");
-  const [codexModel, setCodexModel] = useState("");
+  // 初始值直接按 initialData 算好，不在挂载后的 effect 里再设一遍：那样每次打开编辑页
+  // 整张表单都要多渲染几轮。
+  const [initial] = useState(() => readCodexInitialState(initialData));
+  const [codexAuth, setCodexAuthState] = useState(initial?.auth ?? "");
+  const [codexConfig, setCodexConfigState] = useState(initial?.config ?? "");
+  const [codexApiKey, setCodexApiKey] = useState(initial?.apiKey ?? "");
+  const [codexBaseUrl, setCodexBaseUrl] = useState(initial?.baseUrl ?? "");
+  const [codexModel, setCodexModel] = useState(
+    () => extractCodexModelName(initial?.config ?? "") || "",
+  );
   const [codexCatalogModels, setCodexCatalogModels] = useState<
     CodexCatalogModel[]
-  >([]);
+  >(initial?.catalogModels ?? []);
+  // 自动审批（Auto Review）用的模型：`modelCatalog.autoReviewModel`，空串 = 用 Codex 的默认
+  const [codexAutoReviewModel, setCodexAutoReviewModel] = useState(
+    initial?.autoReviewModel ?? "",
+  );
+  // 保留官方 Fast 档：`modelCatalog.officialSpeedTiers`，默认关
+  const [codexOfficialSpeedTiers, setCodexOfficialSpeedTiers] = useState(
+    initial?.officialSpeedTiers ?? false,
+  );
   const [codexAuthError, setCodexAuthError] = useState("");
 
   const isUpdatingCodexBaseUrlRef = useRef(false);
   const isUpdatingCodexModelRef = useRef(false);
 
-  // 初始化 Codex 配置（编辑模式）
+  // initialData 之后换了（编辑模式）：重新读一遍。挂载时的那份已经用作初始值。
+  const initializedFor = useRef(initialData);
   useEffect(() => {
-    if (!initialData) return;
-
-    const config = initialData.settingsConfig;
-    if (typeof config === "object" && config !== null) {
-      // 设置 auth.json
-      const auth = (config as any).auth || {};
-      setCodexAuthState(JSON.stringify(auth, null, 2));
-
-      // 设置 config.toml
-      const configStr =
-        typeof (config as any).config === "string"
-          ? (config as any).config
-          : "";
-      setCodexConfigState(configStr);
-
-      const modelCatalog = (config as any).modelCatalog;
-      const rawCatalogModels = Array.isArray(modelCatalog?.models)
-        ? modelCatalog.models
-        : [];
-      setCodexCatalogModels(
-        rawCatalogModels
-          .map((item: any) => {
-            // 隐藏字段（原生 Responses profile 用）不在行 UI 暴露，但必须 load→save
-            // 原样保留，否则编辑保存 MiMo/MiniMax 等会丢官方 base_instructions、
-            // 并行工具、图像模态。DB SSOT 为 camelCase、live 反解兜底可能为 snake_case，
-            // 双格式兼容（与 displayName/contextWindow 一致）。
-            const supportsParallelToolCalls =
-              typeof item?.supportsParallelToolCalls === "boolean"
-                ? item.supportsParallelToolCalls
-                : typeof item?.supports_parallel_tool_calls === "boolean"
-                  ? item.supports_parallel_tool_calls
-                  : undefined;
-            const inputModalities = Array.isArray(item?.inputModalities)
-              ? item.inputModalities
-              : Array.isArray(item?.input_modalities)
-                ? item.input_modalities
-                : undefined;
-            const baseInstructions =
-              typeof item?.baseInstructions === "string"
-                ? item.baseInstructions
-                : typeof item?.base_instructions === "string"
-                  ? item.base_instructions
-                  : undefined;
-            return {
-              model: typeof item?.model === "string" ? item.model : "",
-              displayName:
-                typeof item?.displayName === "string"
-                  ? item.displayName
-                  : typeof item?.display_name === "string"
-                    ? item.display_name
-                    : "",
-              contextWindow:
-                typeof item?.contextWindow === "string" ||
-                typeof item?.contextWindow === "number"
-                  ? item.contextWindow
-                  : typeof item?.context_window === "string" ||
-                      typeof item?.context_window === "number"
-                    ? item.context_window
-                    : "",
-              ...(supportsParallelToolCalls !== undefined
-                ? { supportsParallelToolCalls }
-                : {}),
-              ...(inputModalities ? { inputModalities } : {}),
-              ...(baseInstructions ? { baseInstructions } : {}),
-            };
-          })
-          .filter((item: CodexCatalogModel) => item.model.trim()),
-      );
-
-      // 提取 Base URL
-      const initialBaseUrl = extractCodexBaseUrl(configStr);
-      if (initialBaseUrl) {
-        setCodexBaseUrl(initialBaseUrl);
-      }
-
-      setCodexApiKey(pickCodexApiKey(auth, configStr));
+    if (initializedFor.current === initialData) return;
+    initializedFor.current = initialData;
+    const next = readCodexInitialState(initialData);
+    if (!next) return;
+    setCodexConfigState(next.config);
+    setCodexAuthState(next.auth);
+    setCodexCatalogModels(next.catalogModels);
+    setCodexAutoReviewModel(next.autoReviewModel);
+    setCodexOfficialSpeedTiers(next.officialSpeedTiers);
+    if (next.baseUrl) {
+      setCodexBaseUrl(next.baseUrl);
     }
+    setCodexApiKey(next.apiKey);
   }, [initialData]);
 
   // 与 TOML 配置保持基础 URL 同步
@@ -255,6 +306,60 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     [setCodexConfig],
   );
 
+  // 子代理的默认模型和推理强度（`[agents]` 表）：直接从 TOML 读，改动实时写回，清空则删键
+  const codexSubagentModel = useMemo(
+    () => extractCodexAgentsString(codexConfig, "default_subagent_model") || "",
+    [codexConfig],
+  );
+  const codexSubagentReasoningEffort = useMemo(
+    () =>
+      extractCodexAgentsString(
+        codexConfig,
+        "default_subagent_reasoning_effort",
+      ) || "",
+    [codexConfig],
+  );
+
+  const handleCodexSubagentModelChange = useCallback(
+    (model: string) => {
+      const sanitized = model.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+      setCodexConfig((prev) =>
+        setCodexAgentsString(prev, "default_subagent_model", sanitized),
+      );
+    },
+    [setCodexConfig],
+  );
+
+  const handleCodexSubagentReasoningEffortChange = useCallback(
+    (effort: string) => {
+      setCodexConfig((prev) =>
+        setCodexAgentsString(prev, "default_subagent_reasoning_effort", effort),
+      );
+    },
+    [setCodexConfig],
+  );
+
+  // 子代理并发上限（`[agents] max_threads`）：Codex 的全局设置，保存时写进 live，不随供应商切换。
+  // 只收数字，清空或 0 删键，回到 Codex 默认值
+  const codexAgentMaxThreads = useMemo(
+    () => extractCodexAgentsMaxThreads(codexConfig)?.toString() ?? "",
+    [codexConfig],
+  );
+  const codexMultiAgentV2Total = useMemo(
+    () => extractCodexMultiAgentV2Total(codexConfig),
+    [codexConfig],
+  );
+
+  const handleCodexAgentMaxThreadsChange = useCallback(
+    (value: string) => {
+      const digits = value.replace(/\D/g, "").slice(0, 4);
+      setCodexConfig((prev) =>
+        setCodexAgentsMaxThreads(prev, digits ? Number(digits) : undefined),
+      );
+    },
+    [setCodexConfig],
+  );
+
   // 处理 config 变化（同步 Base URL）
   const handleCodexConfigChange = useCallback(
     (value: string) => {
@@ -283,6 +388,8 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
       setCodexAuth(authString);
       setCodexConfig(config);
       setCodexCatalogModels(modelCatalogModels);
+      setCodexAutoReviewModel("");
+      setCodexOfficialSpeedTiers(false);
 
       const baseUrl = extractCodexBaseUrl(config);
       setCodexBaseUrl(baseUrl || "");
@@ -298,14 +405,25 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     codexApiKey,
     codexBaseUrl,
     codexModel,
+    codexSubagentModel,
+    codexSubagentReasoningEffort,
+    codexAgentMaxThreads,
+    codexMultiAgentV2Total,
     codexCatalogModels,
+    codexAutoReviewModel,
+    codexOfficialSpeedTiers,
     codexAuthError,
     setCodexAuth,
     setCodexConfig,
     setCodexCatalogModels,
+    setCodexAutoReviewModel,
+    setCodexOfficialSpeedTiers,
     handleCodexApiKeyChange,
     handleCodexBaseUrlChange,
     handleCodexModelChange,
+    handleCodexSubagentModelChange,
+    handleCodexSubagentReasoningEffortChange,
+    handleCodexAgentMaxThreadsChange,
     handleCodexConfigChange,
     resetCodexConfig,
     getCodexAuthApiKey,

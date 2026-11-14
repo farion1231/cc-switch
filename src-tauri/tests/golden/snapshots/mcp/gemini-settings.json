@@ -1,0 +1,41 @@
+{
+  "security": {
+    "auth": {
+      "selectedType": "gemini-api-key"
+    }
+  },
+  "model": {
+    "name": "gemini-2.5-pro",
+    "compressionThreshold": 0.5
+  },
+  "ui": {
+    "theme": "GitHub"
+  },
+  "mcpServers": {
+    "external-only": {
+      "command": "external",
+      "timeout": 60000
+    },
+    "http-server": {
+      "timeout": 60000,
+      "headers": {
+        "Authorization": "Bearer mcp-header"
+      },
+      "httpUrl": "https://mcp.example.com/mcp"
+    },
+    "sse-server": {
+      "url": "https://mcp.example.com/sse",
+      "timeout": 60000
+    },
+    "stdio-server": {
+      "env": {
+        "EXAMPLE_TOKEN": "mcp-token"
+      },
+      "command": "example-mcp-server",
+      "args": [
+        "--stdio"
+      ],
+      "timeout": 60000
+    }
+  }
+}

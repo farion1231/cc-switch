@@ -1,0 +1,33 @@
+{
+  "version": "4.0.0",
+  "items": [
+    {
+      "type": "improve",
+      "zh": "全新界面：侧边栏布局，模式移到了每个应用页的顶部",
+      "zh-TW": "全新介面：側邊欄佈局，模式移到了每個應用頁的頂部",
+      "en": "Redesigned interface with a sidebar; modes now sit at the top of each app page",
+      "ja": "画面を一新：サイドバー構成になり、モードは各アプリのページ上部へ"
+    },
+    {
+      "type": "new",
+      "zh": "聚合模式：多家供应商的模型放进同一个模型列表，在客户端里随手切换",
+      "zh-TW": "聚合模式：多家供應商的模型放進同一個模型清單，在用戶端裡隨手切換",
+      "en": "Aggregation: models from several providers in one picker, switchable inside your client",
+      "ja": "集約モード：複数プロバイダーのモデルを 1 つの一覧にまとめ、クライアント内で切り替え"
+    },
+    {
+      "type": "improve",
+      "zh": "会话管理重写：每一轮做了什么、改了什么、哪步失败，一目了然",
+      "zh-TW": "工作階段管理重寫：每一輪做了什麼、改了什麼、哪步失敗，一目了然",
+      "en": "Rewritten sessions: see what each turn did, what it changed and where it failed",
+      "ja": "セッション管理を刷新：各ターンで何をし、何を変え、どこで失敗したかが一目で"
+    },
+    {
+      "type": "improve",
+      "zh": "切换供应商只替换地址、凭据、模型等关键字段，自定义配置不再丢失",
+      "zh-TW": "切換供應商只替換位址、憑證、模型等關鍵欄位，自訂設定不再遺失",
+      "en": "Switching providers only replaces the URL, credentials and model; custom settings are no longer lost",
+      "ja": "切り替え時はアドレス・認証情報・モデルなどだけを置き換え、カスタム設定が失われなくなりました"
+    }
+  ]
+}

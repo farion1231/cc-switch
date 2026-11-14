@@ -1,0 +1,56 @@
+id: claude-official
+name: Claude Official
+settings_config: {"env":{}}
+website_url: https://www.anthropic.com/claude-code
+category: official
+sort_index: 0
+notes: NULL
+icon: anthropic
+icon_color: #D4915D
+meta: {}
+is_current: false
+in_failover_queue: false
+
+id: default
+name: default
+settings_config: {"env":{"ANTHROPIC_AUTH_TOKEN":"sk-live","ANTHROPIC_BASE_URL":"https://relay.example","ANTHROPIC_MODEL":"claude-sonnet-4-5","ANTHROPIC_DEFAULT_OPUS_MODEL":"claude-sonnet-4-5","ANTHROPIC_DEFAULT_HAIKU_MODEL":"claude-sonnet-4-5","ANTHROPIC_DEFAULT_SONNET_MODEL":"claude-sonnet-4-5"},"model":"opus"}
+website_url: NULL
+category: custom
+sort_index: NULL
+notes: NULL
+icon: NULL
+icon_color: NULL
+meta: {"commonConfigEnabled":true}
+is_current: true
+in_failover_queue: false
+
+
+common config snippet: {
+  "env": {
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git status)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "say done"
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "example@marketplace": true
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/statusline.sh"
+  }
+}

@@ -24,17 +24,17 @@ The command-line `codex` `/model` menu and request routing both recognize the cu
 The workaround is to **keep the official login state** so the desktop app's gating allows your custom models through. The key points are below (the full step-by-step setup with screenshots is in the linked guide):
 
 1. Log in once with an official ChatGPT / Codex account in Codex (a Free subscription is enough) to keep the official login state.
-2. In CC Switch, enable `Settings -> General -> Codex App Enhancements -> Keep official login when switching third-party providers` (**off by default**).
-3. Enable local routing and route Codex through it for this third-party provider (required for Chat Completions providers such as DeepSeek / Kimi / MiniMax).
+2. In CC Switch, enable `Settings -> General -> Codex App Enhancements -> Keep official login for direct switches` (**off by default**). While routing takeover is enabled, the official login is always preserved, regardless of this toggle.
+3. If this third-party provider shows the `Needs Routing` badge (Chat Completions protocol, such as SiliconFlow or ModelScope), enable local routing and route Codex through it; presets that connect directly, such as DeepSeek, Kimi, and MiniMax, do not need this step.
 4. Fully quit and restart Codex.
 
-Once enabled, CC Switch preserves the official login state in `~/.codex/auth.json` when switching to a third-party provider and writes the third-party key into `config.toml`, so the desktop app still recognizes the official login identity, the gating lets your models through, and the custom models you configured reappear in the picker. **The preserved official token is never sent to the third party** — third-party model requests still use the key you configured, forwarded through the local route.
+Once enabled, CC Switch preserves the official login state in `~/.codex/auth.json` when switching to a third-party provider and writes the third-party key into `config.toml`, so the desktop app still recognizes the official login identity, the gating lets your models through, and the custom models you configured reappear in the picker. **The preserved official token is never sent to the third party** — third-party model requests are still sent with the key you configured (forwarded through the local route when routing takeover is enabled).
 
-> 📖 Detailed step-by-step setup: [Keep Codex Remote Control and Official Plugins While Using Third-Party APIs](./codex-official-auth-preservation-guide-en.md)
+> Detailed step-by-step setup: [Keep Codex Remote Control and Official Plugins While Using Third-Party APIs](./codex-official-auth-preservation-guide-en.md)
 
 ## Still can't see them?
 
-- **Confirm the toggle is on**: this toggle is off by default, and many people overwrite the official login state the first time they switch to a third-party provider, which is exactly why the models disappear — enable it as above.
+- **Confirm the toggle is on**: this toggle is off by default, and while it is off, a direct switch to a third-party provider deletes `auth.json`. That is how many people lose the official login state the first time they switch to a third-party provider, which is exactly why the models disappear — follow steps 1 and 2 above.
 - **The official login state expires**: if you haven't used the official login for several days, the picker may go empty again once the token expires — log in to the official account once more to restore it.
 - **Command-line fallback diagnosis**: run `codex debug models` to list the models actually available on the CLI side and confirm the model itself is configured correctly (the CLI is unaffected by this gating).
 - Individual Codex desktop versions may behave slightly differently; this is in the upstream client's domain, and no CC Switch version can fully fix it at the desktop-GUI level.
@@ -42,5 +42,5 @@ Once enabled, CC Switch preserves the official login state in `~/.codex/auth.jso
 ## References
 
 - [Keep Codex Remote Control and Official Plugins While Using Third-Party APIs](./codex-official-auth-preservation-guide-en.md)
-- [Codex DeepSeek local routing hands-on guide](./codex-deepseek-routing-guide-en.md)
+- [Using Chat-Format APIs in Codex: Local Routing Guide](./codex-deepseek-routing-guide-en.md)
 - [Local Routing](../user-manual/en/4-proxy/4.2-routing.md)

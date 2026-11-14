@@ -1,10 +1,14 @@
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { providersApi, settingsApi } from "@/lib/api";
 import { syncCurrentProvidersLiveSafe } from "@/utils/postChangeSync";
-import { useSettingsQuery, useSaveSettingsMutation } from "@/lib/query";
+import {
+  invalidatePiDirectoryCaches,
+  useSettingsQuery,
+  useSaveSettingsMutation,
+} from "@/lib/query";
 import type { Settings } from "@/types";
 import { useSettingsForm, type SettingsFormState } from "./useSettingsForm";
 import {
@@ -24,6 +28,8 @@ export interface UseSettingsResult {
   isSaving: boolean;
   isPortable: boolean;
   appConfigDir?: string;
+  /** 已保存的 CC Switch 数据目录（没覆盖时为空），用来判断有没有改动没保存 */
+  initialAppConfigDir?: string;
   resolvedDirs: ResolvedDirectories;
   requiresRestart: boolean;
   updateSettings: (updates: Partial<SettingsFormState>) => void;
@@ -45,6 +51,19 @@ export interface UseSettingsResult {
 }
 
 export type { SettingsFormState, ResolvedDirectories };
+
+const DIRECTORY_KEYS = [
+  "claudeConfigDir",
+  "codexConfigDir",
+  "geminiConfigDir",
+  "grokConfigDir",
+  "opencodeConfigDir",
+  "openclawConfigDir",
+  "hermesConfigDir",
+  "piConfigDir",
+  "ompConfigDir",
+  "dshConfigDir",
+] as const;
 
 const sanitizeDir = (value?: string | null): string | undefined => {
   if (!value) return undefined;
@@ -81,6 +100,7 @@ export function useSettings(): UseSettingsResult {
     resolvedDirs,
     isLoading: isDirectoryLoading,
     initialAppConfigDir,
+    commitAppConfigDir,
     updateDirectory,
     updateAppConfigDir,
     browseDirectory,
@@ -114,6 +134,9 @@ export function useSettings(): UseSettingsResult {
       opencode: sanitizeDir(data?.opencodeConfigDir),
       openclaw: sanitizeDir(data?.openclawConfigDir),
       hermes: sanitizeDir(data?.hermesConfigDir),
+      pi: sanitizeDir(data?.piConfigDir),
+      omp: sanitizeDir(data?.ompConfigDir),
+      dsh: sanitizeDir(data?.dshConfigDir),
     });
     setRequiresRestart(false);
   }, [
@@ -184,6 +207,11 @@ export function useSettings(): UseSettingsResult {
       const mergedSettings = settings ? { ...settings, ...updates } : null;
       if (!mergedSettings) return null;
 
+      // 目录草稿只由显式「保存」写入，自动保存沿用已确认的值
+      for (const key of DIRECTORY_KEYS) {
+        if (!(key in updates)) mergedSettings[key] = data?.[key];
+      }
+
       try {
         const sanitizedClaudeDir = sanitizeDir(mergedSettings.claudeConfigDir);
         const sanitizedCodexDir = sanitizeDir(mergedSettings.codexConfigDir);
@@ -195,6 +223,9 @@ export function useSettings(): UseSettingsResult {
         const sanitizedOpenclawDir = sanitizeDir(
           mergedSettings.openclawConfigDir,
         );
+        const sanitizedPiDir = sanitizeDir(mergedSettings.piConfigDir);
+        const sanitizedOmpDir = sanitizeDir(mergedSettings.ompConfigDir);
+        const sanitizedDshDir = sanitizeDir(mergedSettings.dshConfigDir);
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
@@ -209,6 +240,9 @@ export function useSettings(): UseSettingsResult {
           grokConfigDir: sanitizedGrokDir,
           opencodeConfigDir: sanitizedOpencodeDir,
           openclawConfigDir: sanitizedOpenclawDir,
+          piConfigDir: sanitizedPiDir,
+          ompConfigDir: sanitizedOmpDir,
+          dshConfigDir: sanitizedDshDir,
           language: mergedSettings.language,
         };
 
@@ -328,6 +362,9 @@ export function useSettings(): UseSettingsResult {
         const sanitizedOpenclawDir = sanitizeDir(
           mergedSettings.openclawConfigDir,
         );
+        const sanitizedPiDir = sanitizeDir(mergedSettings.piConfigDir);
+        const sanitizedOmpDir = sanitizeDir(mergedSettings.ompConfigDir);
+        const sanitizedDshDir = sanitizeDir(mergedSettings.dshConfigDir);
         const previousAppDir = initialAppConfigDir;
         const previousClaudeDir = sanitizeDir(data?.claudeConfigDir);
         const previousCodexDir = sanitizeDir(data?.codexConfigDir);
@@ -335,6 +372,9 @@ export function useSettings(): UseSettingsResult {
         const previousGrokDir = sanitizeDir(data?.grokConfigDir);
         const previousOpencodeDir = sanitizeDir(data?.opencodeConfigDir);
         const previousOpenclawDir = sanitizeDir(data?.openclawConfigDir);
+        const previousPiDir = sanitizeDir(data?.piConfigDir);
+        const previousOmpDir = sanitizeDir(data?.ompConfigDir);
+        const previousDshDir = sanitizeDir(data?.dshConfigDir);
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
@@ -349,6 +389,9 @@ export function useSettings(): UseSettingsResult {
           grokConfigDir: sanitizedGrokDir,
           opencodeConfigDir: sanitizedOpencodeDir,
           openclawConfigDir: sanitizedOpenclawDir,
+          piConfigDir: sanitizedPiDir,
+          ompConfigDir: sanitizedOmpDir,
+          dshConfigDir: sanitizedDshDir,
           language: mergedSettings.language,
         };
 
@@ -361,6 +404,8 @@ export function useSettings(): UseSettingsResult {
         await saveMutation.mutateAsync(payload);
 
         await settingsApi.setAppConfigDirOverride(sanitizedAppDir ?? null);
+        // 基准值换成刚存的：设置页不卸载，下次比较和「需要重启」都只跟真正没保存的改动走
+        commitAppConfigDir(sanitizedAppDir);
 
         // 只在开机自启状态真正改变时调用系统 API
         if (
@@ -428,7 +473,7 @@ export function useSettings(): UseSettingsResult {
           console.warn("[useSettings] Failed to refresh tray menu", error);
         }
 
-        // 如果 Claude/Codex/Gemini/OpenCode/OpenClaw 的目录覆盖发生变化，则立即将"当前使用的供应商"写回对应应用的 live 配置
+        // 任一 app 的目录覆盖发生变化后，立即把当前状态投影到新的 live 目录。
         // 如果插件同步已经执行过 syncCurrentProvidersLiveSafe，则跳过避免重复
         const claudeDirChanged = sanitizedClaudeDir !== previousClaudeDir;
         const codexDirChanged = sanitizedCodexDir !== previousCodexDir;
@@ -436,6 +481,9 @@ export function useSettings(): UseSettingsResult {
         const grokDirChanged = sanitizedGrokDir !== previousGrokDir;
         const opencodeDirChanged = sanitizedOpencodeDir !== previousOpencodeDir;
         const openclawDirChanged = sanitizedOpenclawDir !== previousOpenclawDir;
+        const piDirChanged = sanitizedPiDir !== previousPiDir;
+        const ompDirChanged = sanitizedOmpDir !== previousOmpDir;
+        const dshDirChanged = sanitizedDshDir !== previousDshDir;
         if (
           !pluginSynced &&
           (claudeDirChanged ||
@@ -452,6 +500,25 @@ export function useSettings(): UseSettingsResult {
               syncResult.error,
             );
           }
+        }
+        if (piDirChanged) {
+          await invalidatePiDirectoryCaches(queryClient);
+        }
+        if (ompDirChanged) {
+          await invalidatePiDirectoryCaches(queryClient, "omp");
+        }
+        if (dshDirChanged) {
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: ["providers", "dsh"] }),
+            queryClient.invalidateQueries({
+              queryKey: ["skills", "installed"],
+            }),
+            queryClient.invalidateQueries({ queryKey: ["sessions"] }),
+            // DSH_ACCOUNT_STATUS_KEY：登录凭据也在 DSH 主目录里，不刷新会显示旧目录的账号
+            queryClient.invalidateQueries({
+              queryKey: ["dsh-account-status"],
+            }),
+          ]);
         }
 
         const appDirChanged = sanitizedAppDir !== (previousAppDir ?? undefined);
@@ -480,6 +547,7 @@ export function useSettings(): UseSettingsResult {
     },
     [
       appConfigDir,
+      commitAppConfigDir,
       data,
       initialAppConfigDir,
       queryClient,
@@ -502,6 +570,7 @@ export function useSettings(): UseSettingsResult {
     isSaving: saveMutation.isPending,
     isPortable,
     appConfigDir,
+    initialAppConfigDir,
     resolvedDirs,
     requiresRestart,
     updateSettings,

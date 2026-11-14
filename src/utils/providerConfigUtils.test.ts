@@ -1,13 +1,14 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   codexApiFormatFromWireApi,
   isCodexAnthropicWireApi,
+  extractCodexBaseUrl,
+  extractCodexExperimentalBearerToken,
   extractCodexModelName,
-  hasCommonConfigSnippet,
   isCodexRemoteCompactionEnabled,
+  setCodexBaseUrl,
   setCodexModelName,
   setCodexRemoteCompaction,
-  updateCommonConfigSnippet,
 } from "./providerConfigUtils";
 
 describe("Codex wire API helpers", () => {
@@ -78,6 +79,19 @@ model = "gpt-5"
 
     expect(setCodexRemoteCompaction(input, true, "OpenAI")).toBe(input);
     expect(isCodexRemoteCompactionEnabled(input)).toBe(false);
+  });
+
+  it("treats amazon-bedrock-runtime as reserved, matching the backend list", () => {
+    // Codex 0.149 reserves this id; the backend never writes a bearer token
+    // into its table, so the frontend must not read one out of it either.
+    const input = `model_provider = "amazon-bedrock-runtime"
+experimental_bearer_token = "top-level-key"
+
+[model_providers.amazon-bedrock-runtime]
+experimental_bearer_token = "stale-table-key"
+`;
+
+    expect(extractCodexExperimentalBearerToken(input)).toBe("top-level-key");
   });
 });
 
@@ -176,76 +190,105 @@ name = "Example"
   });
 });
 
-describe("common config snippet prototype-pollution guards", () => {
-  // 污染是全局的：一旦漏进 Object.prototype，同文件后续用例会读到幽灵属性，
-  // 失败点会飘到无关的断言上。每条用例后强制清干净。
-  afterEach(() => {
-    delete (Object.prototype as Record<string, unknown>).polluted;
+describe("setCodexBaseUrl", () => {
+  it("writes base_url inside [model_providers.custom] when [[skills.config]] follows", () => {
+    // Regression: [[skills.config]] is an array-of-tables header ([[...]])
+    // that the section regex did not recognize, so the section range extended
+    // past it and base_url was appended after the skills content — landing
+    // inside skills.config[0] instead of model_providers.custom.
+    const input = `model_provider = "custom"
+model = "gpt-5.5"
+
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true
+
+[[skills.config]]
+path = "/path/to/some-skill/SKILL.md"
+enabled = false
+`;
+
+    const result = setCodexBaseUrl(input, "https://relay.example.com/v1");
+
+    // base_url must be inside [model_providers.custom], i.e. before the
+    // [[skills.config]] header.
+    const baseUrlLine = 'base_url = "https://relay.example.com/v1"';
+    const baseUrlIndex = result.indexOf(baseUrlLine);
+    const skillsHeaderIndex = result.indexOf("[[skills.config]]");
+    expect(baseUrlIndex).toBeGreaterThan(-1);
+    expect(skillsHeaderIndex).toBeGreaterThan(-1);
+    expect(baseUrlIndex).toBeLessThan(skillsHeaderIndex);
+
+    // Round-trip: extractCodexBaseUrl must find it in the custom table.
+    expect(extractCodexBaseUrl(result)).toBe("https://relay.example.com/v1");
   });
 
-  it("does not let a merged snippet reach Object.prototype", () => {
-    // `JSON.parse` 会把 `__proto__` 造成**自有可枚举属性**，所以它进得了
-    // `Object.entries`；而 `isPlainObject(Object.prototype)` 为 true，旧代码
-    // 因此不走"替换成空对象"的分支，直接把 value 合并进了全局原型。
-    const snippet = JSON.stringify({
-      env: { SHARED_TIMEOUT_MS: "1000" },
-      ["__proto__"]: { polluted: "YES" },
-    });
+  it("writes base_url inside [model_providers.custom] when [[skills.config]] precedes it", () => {
+    const input = `model_provider = "custom"
+model = "gpt-5.5"
 
-    const result = updateCommonConfigSnippet("{}", snippet, true);
+[[skills.config]]
+path = "/path/to/some-skill/SKILL.md"
+enabled = false
 
-    expect(result.error).toBeUndefined();
-    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
-    // 正常键必须照旧合并进去——守卫不能顺手把可共享配置也吃掉。
-    expect(JSON.parse(result.updatedConfig).env.SHARED_TIMEOUT_MS).toBe("1000");
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true
+`;
+
+    const result = setCodexBaseUrl(input, "https://relay.example.com/v1");
+
+    // base_url must be after [model_providers.custom] and NOT inside the
+    // skills.config array that precedes it.
+    const baseUrlLine = 'base_url = "https://relay.example.com/v1"';
+    const baseUrlIndex = result.indexOf(baseUrlLine);
+    const customHeaderIndex = result.indexOf("[model_providers.custom]");
+    expect(baseUrlIndex).toBeGreaterThan(customHeaderIndex);
+
+    // The skills.config block must not contain base_url.
+    const skillsBlock = result.slice(
+      result.indexOf("[[skills.config]]"),
+      result.indexOf("[model_providers.custom]"),
+    );
+    expect(skillsBlock).not.toContain("base_url");
+
+    expect(extractCodexBaseUrl(result)).toBe("https://relay.example.com/v1");
   });
 
-  it("does not report a __proto__-only snippet as already applied", () => {
-    // isSubset 是这组遍历里的第三个函数，只读不写，所以不会污染原型——但不跳过
-    // 就会拿 `Object.prototype` 去比对：`{"__proto__":{}}` 的每个键在任何对象上
-    // 都"存在"，于是被判成**任何**配置的子集，「通用配置已启用」开关随之读错。
-    expect(hasCommonConfigSnippet("{}", '{"__proto__":{}}')).toBe(false);
-    expect(
-      hasCommonConfigSnippet('{"env":{"A":"1"}}', '{"__proto__":{"x":1}}'),
-    ).toBe(false);
-  });
+  it("recovers base_url from a corrupted [[skills.config]] entry", () => {
+    // v4.0.21 wrote base_url inside [[skills.config]] instead of
+    // [model_providers.custom]. When the user edits the URL again,
+    // the fix must move it to the custom table and remove the stale
+    // entry from skills.config[0].
+    const input = `model_provider = "custom"
 
-  it("keeps merge and applied-state consistent for a mixed snippet", () => {
-    // 混合片段是三个遍历函数语义分歧的照妖镜：deepMerge 跳过禁键继续写 env.A，
-    // 而 isSubset 一旦见到禁键就整体否决 —— 结果是片段真的生效了，开关却永远
-    // 显示"未启用"。净化统一在入口做之后，这个偏差在结构上不再可能。
-    const snippet = JSON.stringify({
-      env: { A: "1" },
-      ["__proto__"]: { polluted: "YES" },
-    });
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true
 
-    const merged = updateCommonConfigSnippet("{}", snippet, true).updatedConfig;
-    expect(JSON.parse(merged).env.A).toBe("1");
-    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+[[skills.config]]
+path = "/synthetic/example/SKILL.md"
+enabled = false
+base_url = "https://old.example/v1"
+`;
 
-    // 写进去了，就必须报"已启用"
-    expect(hasCommonConfigSnippet(merged, snippet)).toBe(true);
-  });
+    const result = setCodexBaseUrl(input, "https://new.example/v1");
 
-  it("still reports a genuinely applied snippet as applied", () => {
-    // 守卫不能把正常判定也一起改坏
-    expect(
-      hasCommonConfigSnippet('{"env":{"A":"1","B":"2"}}', '{"env":{"A":"1"}}'),
-    ).toBe(true);
-    expect(
-      hasCommonConfigSnippet('{"env":{"A":"1"}}', '{"env":{"A":"9"}}'),
-    ).toBe(false);
-  });
+    // The new base_url must be in [model_providers.custom].
+    expect(extractCodexBaseUrl(result)).toBe("https://new.example/v1");
 
-  it("does not let an un-merged snippet delete from Object.prototype", () => {
-    // deepRemove 这侧更隐蔽：`"__proto__" in target` 恒为 true（`in` 查原型链），
-    // 旧代码会递归进 Object.prototype 并 `delete` 掉命中的键。
-    (Object.prototype as Record<string, unknown>).polluted = "YES";
+    // The old URL must be gone entirely.
+    expect(result).not.toContain("https://old.example/v1");
 
-    const snippet = JSON.stringify({ ["__proto__"]: { polluted: "YES" } });
-    const result = updateCommonConfigSnippet("{}", snippet, false);
+    // The skills.config block must not contain base_url.
+    const skillsBlock = result.slice(result.indexOf("[[skills.config]]"));
+    expect(skillsBlock).not.toContain("base_url");
 
-    expect(result.error).toBeUndefined();
-    expect(({} as Record<string, unknown>).polluted).toBe("YES");
+    // Skill path and enabled flag must be preserved.
+    expect(skillsBlock).toContain('path = "/synthetic/example/SKILL.md"');
+    expect(skillsBlock).toContain("enabled = false");
   });
 });

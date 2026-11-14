@@ -21,7 +21,13 @@ flatpak install -y --user flathub org.gnome.Platform//46 org.gnome.Sdk//46
 1) Build the deb on Linux first:
 
 ```bash
-pnpm tauri build -- --bundles deb
+pnpm tauri build --bundles deb
+```
+
+The last step of this build signs the auto-update bundles, which requires the release private key `TAURI_SIGNING_PRIVATE_KEY`. Without the key, the `.deb` is still produced but the command exits with an error. To skip updater bundle generation instead:
+
+```bash
+pnpm tauri build --bundles deb -c '{"bundle":{"createUpdaterArtifacts":false}}'
 ```
 
 2) Copy the generated deb to this directory:

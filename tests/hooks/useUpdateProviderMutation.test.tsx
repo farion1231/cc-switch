@@ -83,7 +83,12 @@ describe("useUpdateProviderMutation", () => {
       await result.current.mutateAsync({ provider });
     });
 
-    expect(apiMocks.update).toHaveBeenCalledWith(provider, "codex", undefined);
+    expect(apiMocks.update).toHaveBeenCalledWith(
+      provider,
+      "codex",
+      undefined,
+      undefined,
+    );
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ["providers", "codex"],
     });
@@ -113,6 +118,7 @@ describe("useUpdateProviderMutation", () => {
       provider,
       "openclaw",
       "provider-old",
+      undefined,
     );
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: usageKeys.script("provider-new", "openclaw"),
@@ -122,6 +128,28 @@ describe("useUpdateProviderMutation", () => {
     });
     expect(invalidateSpy).not.toHaveBeenCalledWith({
       queryKey: usageKeys.all,
+    });
+  });
+
+  it("refreshes Pi provider caches even when an update fails", async () => {
+    apiMocks.update.mockRejectedValueOnce(new Error("conflict"));
+    const { wrapper, invalidateSpy } = createWrapper();
+    const provider = createProvider({ id: "pi-provider" });
+    const { result } = renderHook(() => useUpdateProviderMutation("pi"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await expect(result.current.mutateAsync({ provider })).rejects.toThrow(
+        "conflict",
+      );
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["pi", "currentState"],
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["providers", "pi"],
     });
   });
 });

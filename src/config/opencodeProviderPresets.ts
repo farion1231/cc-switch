@@ -1,7 +1,8 @@
 import type { ProviderCategory, OpenCodeProviderConfig } from "../types";
 import type { PresetTheme, TemplateValueConfig } from "./claudeProviderPresets";
+import type { PresetFamilyFields } from "./presetFamilies";
 
-export interface OpenCodeProviderPreset {
+export interface OpenCodeProviderPreset extends PresetFamilyFields {
   name: string;
   nameKey?: string; // i18n key for localized display name
   websiteUrl: string;
@@ -9,7 +10,7 @@ export interface OpenCodeProviderPreset {
   settingsConfig: OpenCodeProviderConfig;
   isOfficial?: boolean;
   isPartner?: boolean;
-  primePartner?: boolean; // 置顶合作伙伴（顶级）：徽章显示为心形
+  primePartner?: boolean; // 旧版的置顶合作伙伴标记；v7 起界面不再读取，新预设不写
   partnerPromotionKey?: string;
   category?: ProviderCategory;
   templateValues?: Record<string, TemplateValueConfig>;
@@ -37,17 +38,36 @@ export interface PresetModelVariant {
   variants?: Record<string, Record<string, unknown>>;
 }
 
+// MiniMax-M3.1-Flash 的思考不可关：禁用 OpenCode 自带的 none 档，
+// 并把 effort 档位（low…max）直接传给接口。
+const MINIMAX_M31_VARIANTS = {
+  none: { disabled: true },
+  low: { reasoningEffort: "low" },
+  medium: { reasoningEffort: "medium" },
+  high: { reasoningEffort: "high" },
+  xhigh: { reasoningEffort: "xhigh" },
+  max: { reasoningEffort: "max" },
+};
+
 export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
   string,
   PresetModelVariant[]
 > = {
   "@ai-sdk/openai-compatible": [
     {
-      id: "MiniMax-M2.7",
-      name: "MiniMax M2.7",
-      contextLimit: 204800,
+      id: "MiniMax-M3.1-Flash",
+      name: "MiniMax M3.1 Flash",
+      contextLimit: 1000000,
       outputLimit: 131072,
-      modalities: { input: ["text"], output: ["text"] },
+      modalities: { input: ["text", "image"], output: ["text"] },
+      variants: MINIMAX_M31_VARIANTS,
+    },
+    {
+      id: "MiniMax-M3",
+      name: "MiniMax M3",
+      contextLimit: 1000000,
+      outputLimit: 131072,
+      modalities: { input: ["text", "image"], output: ["text"] },
     },
     {
       id: "glm-5.1",
@@ -99,6 +119,24 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
       },
     },
     {
+      id: "gemini-3.8-flash",
+      name: "Gemini 3.8 Flash",
+      contextLimit: 1048576,
+      outputLimit: 65536,
+      modalities: { input: ["text", "image"], output: ["text"] },
+      variants: {
+        low: {
+          thinkingConfig: { includeThoughts: true, thinkingLevel: "low" },
+        },
+        medium: {
+          thinkingConfig: { includeThoughts: true, thinkingLevel: "medium" },
+        },
+        high: {
+          thinkingConfig: { includeThoughts: true, thinkingLevel: "high" },
+        },
+      },
+    },
+    {
       id: "gemini-3.6-flash",
       name: "Gemini 3.6 Flash",
       contextLimit: 1048576,
@@ -127,7 +165,7 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
     {
       id: "gpt-5.6-sol",
       name: "GPT-5.6 Sol",
-      contextLimit: 400000,
+      contextLimit: 272000,
       outputLimit: 128000,
       modalities: { input: ["text", "image"], output: ["text"] },
       variants: {
@@ -200,16 +238,36 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
   ],
   "@ai-sdk/anthropic": [
     {
-      id: "claude-sonnet-4-5-20250929",
-      name: "Claude Sonnet 4.5",
-      contextLimit: 200000,
-      outputLimit: 64000,
+      id: "claude-sonnet-5-5",
+      name: "Claude Sonnet 5.5",
+      contextLimit: 1000000,
+      outputLimit: 128000,
       modalities: { input: ["text", "image", "pdf"], output: ["text"] },
       variants: {
         low: { effort: "low" },
         medium: { effort: "medium" },
         high: { effort: "high" },
       },
+    },
+    {
+      id: "claude-opus-5-5",
+      name: "Claude Opus 5.5",
+      contextLimit: 1000000,
+      outputLimit: 128000,
+      modalities: { input: ["text", "image", "pdf"], output: ["text"] },
+      variants: {
+        low: { effort: "low" },
+        medium: { effort: "medium" },
+        high: { effort: "high" },
+        max: { effort: "max" },
+      },
+    },
+    {
+      id: "claude-haiku-5-5",
+      name: "Claude Haiku 5.5",
+      contextLimit: 1000000,
+      outputLimit: 128000,
+      modalities: { input: ["text", "image", "pdf"], output: ["text"] },
     },
     {
       id: "claude-opus-4-5-20251101",
@@ -270,27 +328,38 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
   ],
 };
 
-/**
- * Look up preset metadata for a model by npm package and model ID.
- * Returns enrichment fields (options, limit, modalities) that can be
- * merged into a model definition when the user's config doesn't already
- * provide them.
- */
-export function getPresetModelDefaults(
-  npm: string,
-  modelId: string,
-): PresetModelVariant | undefined {
-  const models = OPENCODE_PRESET_MODEL_VARIANTS[npm];
-  if (!models) return undefined;
-  return models.find((m) => m.id === modelId);
-}
-
 export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
-  // ===== 赞助商预设：文件顺序 = 应用内展示顺序，与 README 赞助商表对齐 =====
+  {
+    name: "TokenPlus",
+    websiteUrl: "https://www.tokenplus.cn/",
+    apiKeyUrl: "https://www.tokenplus.cn/workspace",
+    category: "aggregator",
+    partnerPromotionKey: "tokenplus",
+    icon: "tokenplus",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "TokenPlus",
+      options: { baseURL: "https://api.tokenplus.cn/v1", apiKey: "" },
+      models: {
+        "deepseek/deepseek-v4.1-flash-1017": {
+          name: "DeepSeek V4.1 Flash 1017",
+          reasoning: true,
+        },
+        "z-ai/glm-5.3-flash": { name: "GLM 5.3 Flash", reasoning: true },
+        "moonshot-ai/kimi-k3.1-pro": { name: "Kimi K3.1 Pro", reasoning: true },
+        "minimax/m3.1-flash": { name: "MiniMax M3.1 Flash", reasoning: true },
+      },
+    },
+  },
+  // ===== 赞助商预设：文件顺序与 README 赞助商表对齐（仅维护约定；应用内一律按显示名排序，不置顶）=====
   {
     name: "Kimi",
+    family: "kimi",
+    planKey: "payg",
+    regionKey: "cn",
     primePartner: true,
-    websiteUrl: "https://platform.kimi.com?aff=cc-switch",
+    websiteUrl:
+      "https://platform.kimi.com?track_id=track-7cf2b91dcde043eda6ef9a95951a042c&aff=cc-switch",
     apiKeyUrl: "https://platform.kimi.com/console/api-keys?aff=cc-switch",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
@@ -301,8 +370,23 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "kimi-k2.7-code": { name: "Kimi K2.7 Code" },
-        "kimi-k3": { name: "Kimi K3" },
+        // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+        // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文）
+        "kimi-k3.1-pro": { name: "Kimi K3.1 Pro", reasoning: true },
+        "kimi-k2.7-code": { name: "Kimi K2.7 Code", reasoning: true },
+        "kimi-k3": { name: "Kimi K3", reasoning: true },
+        "kimi-k2.7-code-highspeed": {
+          name: "Kimi K2.7 Code HighSpeed",
+          reasoning: true,
+          limit: { context: 262144, output: 262144 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "kimi-k2.6": {
+          name: "Kimi K2.6",
+          reasoning: true,
+          limit: { context: 262144, output: 262144 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "cn_official",
@@ -323,8 +407,66 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
   },
+  // API 开放平台海外/Global 变体：platform.kimi.ai + api.moonshot.ai 端点
+  {
+    name: "Kimi Global",
+    family: "kimi",
+    planKey: "payg",
+    regionKey: "intl",
+    websiteUrl:
+      "https://platform.kimi.ai?track_id=track-674ed6e2af924a5682a87421f7cf753a&aff=cc-switch",
+    apiKeyUrl: "https://platform.kimi.ai/console/api-keys?aff=cc-switch",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Kimi",
+      options: {
+        baseURL: "https://api.moonshot.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+        // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文）
+        "kimi-k3.1-pro": { name: "Kimi K3.1 Pro", reasoning: true },
+        "kimi-k2.7-code": { name: "Kimi K2.7 Code", reasoning: true },
+        "kimi-k3": { name: "Kimi K3", reasoning: true },
+        "kimi-k2.7-code-highspeed": {
+          name: "Kimi K2.7 Code HighSpeed",
+          reasoning: true,
+          limit: { context: 262144, output: 262144 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "kimi-k2.6": {
+          name: "Kimi K2.6",
+          reasoning: true,
+          limit: { context: 262144, output: 262144 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "cn_official",
+    partnerPromotionKey: "kimi",
+    icon: "kimi",
+    iconColor: "#6366F1",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://api.moonshot.ai/v1",
+        defaultValue: "https://api.moonshot.ai/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
   {
     name: "Kimi For Coding",
+    family: "kimi",
+    planKey: "coding",
+    regionKey: "cn",
     primePartner: true,
     websiteUrl: "https://www.kimi.com/code/?aff=cc-switch",
     apiKeyUrl: "https://platform.kimi.com/console/api-keys?aff=cc-switch",
@@ -337,7 +479,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "kimi-for-coding": { name: "Kimi For Coding" },
+        "kimi-for-coding": { name: "Kimi For Coding", reasoning: true },
       },
     },
     category: "cn_official",
@@ -348,6 +490,43 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         label: "Base URL",
         placeholder: "https://api.kimi.com/coding/v1",
         defaultValue: "https://api.kimi.com/coding/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
+  // 海外/Global 变体：kimi.ai/code + api.kimi.ai 端点，其余与国内版一致
+  {
+    name: "Kimi For Coding Global",
+    family: "kimi",
+    planKey: "coding",
+    regionKey: "intl",
+    websiteUrl: "https://www.kimi.ai/code?aff=cc-switch",
+    apiKeyUrl: "https://www.kimi.ai/code?aff=cc-switch",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "Kimi For Coding",
+      options: {
+        baseURL: "https://api.kimi.ai/coding/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "kimi-for-coding": { name: "Kimi For Coding", reasoning: true },
+      },
+    },
+    category: "cn_official",
+    icon: "kimi",
+    iconColor: "#6366F1",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://api.kimi.ai/coding/v1",
+        defaultValue: "https://api.kimi.ai/coding/v1",
         editorValue: "",
       },
       apiKey: {
@@ -371,42 +550,30 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "claude-sonnet-5": { name: "Claude Sonnet 5" },
-        "claude-opus-5": { name: "Claude Opus 5" },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "third_party",
     isPartner: true,
     partnerPromotionKey: "packycode",
     icon: "packycode",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-  },
-  {
-    name: "ZetaAPI",
-    websiteUrl: "https://zetaapi.ai",
-    apiKeyUrl: "https://zetaapi.ai/go/u117",
-    settingsConfig: {
-      npm: "@ai-sdk/openai-compatible",
-      name: "ZetaAPI",
-      options: {
-        baseURL: "https://api.zetaapi.ai/v1",
-        apiKey: "",
-        setCacheKey: true,
-      },
-      models: {
-        "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
-      },
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "zetaapi",
-    icon: "zetaapi",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -428,7 +595,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
+        "gpt-6.1-sol": { name: "GPT-6.1 Sol", reasoning: true },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "third_party",
@@ -456,8 +629,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "claude-sonnet-5": { name: "Claude Sonnet 5" },
-        "claude-opus-5": { name: "Claude Opus 5" },
+        "claude-sonnet-5-5": { name: "Claude Sonnet 5.5", reasoning: true },
+        "claude-opus-5-5": { name: "Claude Opus 5.5", reasoning: true },
       },
     },
     category: "third_party",
@@ -474,6 +647,45 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "hao.ai",
+    websiteUrl: "https://hao.ai",
+    apiKeyUrl: "https://hao.ai/invite/DTBZS3OR",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "hao.ai",
+      options: {
+        baseURL: "https://api.hao.ai/anthropic/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "anthropic/claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "anthropic/claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "haoai",
+    icon: "haoai",
+  },
+  {
     name: "FennoAI",
     websiteUrl: "https://api.fenno.ai",
     apiKeyUrl:
@@ -487,7 +699,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
+        "gpt-6.1-sol": { name: "GPT-6.1 Sol", reasoning: true },
       },
     },
     category: "aggregator",
@@ -504,20 +716,41 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "RunAPI",
-    websiteUrl: "https://runapi.co",
-    apiKeyUrl: "https://runapi.co/register?aff=iOKB",
+    websiteUrl: "https://runapi.host",
+    apiKeyUrl: "https://runapi.host/register?aff=iOKB",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "RunAPI",
       options: {
-        baseURL: "https://runapi.co",
+        baseURL: "https://runapi.host",
         apiKey: "",
         setCacheKey: true,
       },
       models: {
-        "claude-sonnet-5": { name: "Claude Sonnet 5" },
-        "claude-opus-5": { name: "Claude Opus 5" },
-        "claude-haiku-4-5": { name: "Claude Haiku 4.5" },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-haiku-5-5": {
+          name: "Claude Haiku 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",
@@ -533,27 +766,282 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "Shengsuanyun",
-    nameKey: "providerForm.presets.shengsuanyun",
-    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
-    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    name: "OpenModel",
+    websiteUrl: "https://www.openmodel.ai",
+    apiKeyUrl: "https://www.openmodel.ai?ref=cc-switch",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
-      name: "Shengsuanyun",
+      name: "OpenModel",
       options: {
-        baseURL: "https://router.shengsuanyun.com/api/v1",
+        baseURL: "https://api.openmodel.ai/v1",
         apiKey: "",
         setCacheKey: true,
       },
       models: {
-        "anthropic/claude-opus-5": { name: "Claude Opus 5" },
-        "anthropic/claude-sonnet-5": { name: "Claude Sonnet 5" },
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-haiku-5-5": {
+          name: "Claude Haiku 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "openmodel",
+    icon: "openmodel",
+  },
+  {
+    name: "GrooRoute Pro",
+    websiteUrl: "https://grooroute.pro",
+    apiKeyUrl: "https://grooroute.pro/sign-up?aff=qqm9",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "GrooRoute Pro",
+      options: {
+        baseURL: "https://grooroute.pro/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "grooroute",
+    icon: "grooroute",
+  },
+  {
+    name: "BuyToken",
+    websiteUrl: "https://buytoken.work",
+    apiKeyUrl: "https://buytoken.work/sign-up?aff=cc-switch",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "BuyToken",
+      options: {
+        baseURL: "https://api.buytoken.work/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "buytoken",
+    icon: "buytoken",
+  },
+  {
+    name: "V-API",
+    websiteUrl: "https://gpt.ge",
+    apiKeyUrl: "https://gpt.ge/signup?aff=URNP",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "V-API",
+      options: {
+        baseURL: "https://api.gpt.ge/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "vapi",
+    icon: "vapi",
+  },
+  {
+    name: "TokenFactory",
+    nameKey: "providerForm.presets.tokenfactory",
+    websiteUrl: "https://tokenfactory.cn",
+    apiKeyUrl: "https://console.tokenfactory.cn/login",
+    // 官方 OpenCode 文档（docs.tokenfactory.cn/tools/opencode，2026-10-15
+    // 核对）：openai-compatible + /v1
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "TokenFactory",
+      options: {
+        baseURL: "https://api.tokenfactory.cn/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "glm-5.3": {
+          name: "GLM-5.3",
+          reasoning: true,
+          limit: { context: 1048576, output: 128000 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "kimi-k3": {
+          name: "Kimi K3",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "deepseek-v4.1-flash-1017": {
+          name: "DeepSeek V4.1 Flash 1017",
+          reasoning: true,
+          limit: { context: 1000000, output: 384000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "deepseek-v4.1-flash": {
+          name: "DeepSeek V4.1 Flash",
+          reasoning: true,
+          limit: { context: 1048576, output: 384000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "glm-5.3-flash": {
+          name: "GLM-5.3-Flash",
+          reasoning: true,
+          limit: { context: 1048576, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "qwen3.8-flash": {
+          name: "Qwen3.8 Flash",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    icon: "tokenfactory",
+  },
+  {
+    // FluxA AgentMarket 以合作价转售的百度智能云 TokenPlan：产品页写明
+    // "purchase it through AgentMarket, then use Baidu AI Cloud's endpoint and
+    // API key directly"，端点取其所链的百度国际站 Token Plan Enterprise 文档
+    // （2026-09-16 版）team 专属基址 —— 与国内个人版 qianfan.baidubce.com/
+    // .../personal 是两套部署，勿合并。阵容与窗口按 FluxA 产品页模型表
+    // （glm-5.2 500k ≠ 国内版千帆平台 1M，国际 team 部署口径，勿按国内预设
+    // "修正"）；标注 Coming soon 的 deepseek-v4-pro-0813 / glm-5.3 不收。
+    // Kimi K2.6 是定稿赞助文案点名的模型，FluxA 产品页模型表与百度国际站
+    // team 文档都没列它：id / 窗口取 FluxA baidu-ai-cloud 模型目录（categories
+    // 只有 text）与国内 Token Plan 预设（262144）双重印证，非臆造。
+    // 不开 setCacheKey：与仓库内其余 Token Plan 预设（腾讯/百度）保持一致
+    name: "FluxA Token Plan",
+    websiteUrl: "https://agentmarket.fluxapay.xyz/",
+    apiKeyUrl: "https://agentmarket.fluxapay.xyz/marketplace/tokenplans",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "FluxA Token Plan",
+      options: {
+        baseURL: "https://api.baiduqianfan.ai/v2/tokenplan/team",
+        apiKey: "",
+      },
+      models: {
+        "deepseek-v4-flash-0731": {
+          name: "DeepSeek V4 Flash 0731",
+          reasoning: true,
+        },
+        "deepseek-v4-flash": { name: "DeepSeek V4 Flash", reasoning: true },
+        "deepseek-v3.2": { name: "DeepSeek V3.2" },
+        "glm-5.2": { name: "GLM-5.2", reasoning: true },
+        "glm-5.1": { name: "GLM-5.1", reasoning: true },
+        "glm-5": { name: "GLM-5", reasoning: true },
+        "kimi-k2.6": { name: "Kimi K2.6", reasoning: true },
       },
     },
     category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "shengsuanyun",
-    icon: "shengsuanyun",
+    partnerPromotionKey: "fluxa",
+    icon: "fluxa",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -564,19 +1052,25 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "AIGoCode",
-    websiteUrl: "https://aigocode.app",
-    apiKeyUrl: "https://aigocode.app/invite/CC-SWITCH",
+    websiteUrl: "https://aigocode.net",
+    apiKeyUrl: "https://aigocode.net/invite/CC-SWITCH",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "AIGoCode",
       options: {
-        baseURL: "https://api.aigocode.app",
+        baseURL: "https://api.aigocode.dev",
         apiKey: "",
         setCacheKey: true,
       },
       models: {
-        "claude-sonnet-5": { name: "Claude Sonnet 5" },
-        "claude-opus-5": { name: "Claude Opus 5" },
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": { name: "Claude Sonnet 5.5", reasoning: true },
+        "claude-opus-5-5": { name: "Claude Opus 5.5", reasoning: true },
       },
     },
     category: "third_party",
@@ -606,7 +1100,30 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "moonshotai/kimi-k3": {
+          name: "Kimi K3",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "z-ai/glm-5.3": {
+          name: "GLM-5.3",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "z-ai/glm-5.3-flash": {
+          name: "GLM-5.3-Flash",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",
@@ -634,8 +1151,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "claude-sonnet-5": { name: "Claude Sonnet 5" },
-        "claude-opus-5": { name: "Claude Opus 5" },
+        "claude-sonnet-5-5": { name: "Claude Sonnet 5.5", reasoning: true },
+        "claude-opus-5-5": { name: "Claude Opus 5.5", reasoning: true },
       },
     },
     category: "third_party",
@@ -664,7 +1181,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
+        "gpt-6.1-sol": { name: "GPT-6.1 Sol", reasoning: true },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",
@@ -680,27 +1203,226 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "APIKEY.FUN",
-    websiteUrl: "https://apikey.fun",
-    apiKeyUrl: "https://apikey.fun/register?aff=CCSwitch",
+    name: "OspreyAI",
+    websiteUrl: "https://open.ospreyai.cn",
+    apiKeyUrl: "https://open.ospreyai.cn",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
-      name: "APIKEY.FUN",
+      name: "OspreyAI",
       options: {
-        baseURL: "https://api.apikey.fun/v1",
+        baseURL: "https://open.ospreyai.cn/v1",
         apiKey: "",
         setCacheKey: true,
       },
       models: {
-        "claude-opus-5": { name: "Claude Opus 5" },
-        "claude-sonnet-5": { name: "Claude Sonnet 5" },
-        "claude-haiku-4-5": { name: "Claude Haiku 4.5" },
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "ospreyai",
+    icon: "ospreyai",
+  },
+  {
+    name: "Shengsuanyun",
+    nameKey: "providerForm.presets.shengsuanyun",
+    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "Shengsuanyun",
+      options: {
+        baseURL: "https://router.shengsuanyun.com/api/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "anthropic/claude-sonnet-5.5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "anthropic/claude-opus-5.5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "anthropic/claude-fable-5.1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "shengsuanyun",
+    icon: "shengsuanyun",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "88API",
+    websiteUrl: "https://88api.ai",
+    apiKeyUrl: "https://88api.ai/sign-up?aff=HSGY",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "88API",
+      options: {
+        baseURL: "https://api.88api.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-haiku-5-5": {
+          name: "Claude Haiku 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "88api",
+    icon: "88api",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "APIKEY.FUN",
+    websiteUrl: "https://apikey.fan",
+    apiKeyUrl: "https://apikey.fan/register?aff=CCSwitch",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "APIKEY.FUN",
+      options: {
+        baseURL: "https://api.apikey.fan/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-opus-5-5": { name: "Claude Opus 5.5", reasoning: true },
+        "claude-sonnet-5-5": { name: "Claude Sonnet 5.5", reasoning: true },
+        "claude-haiku-5-5": { name: "Claude Haiku 5.5", reasoning: true },
       },
     },
     category: "third_party",
     isPartner: true,
     partnerPromotionKey: "apikeyfun",
     icon: "apikeyfun",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "9527CODE",
+    websiteUrl: "https://9527.codes/register?channel=ccs",
+    apiKeyUrl: "https://9527.codes/register?channel=ccs",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "9527CODE",
+      options: {
+        baseURL: "https://9527.codes/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-haiku-5-5": {
+          name: "Claude Haiku 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "9527code",
+    icon: "9527code",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -722,12 +1444,16 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
+        "gpt-6.1-sol": { name: "GPT-6.1 Sol", reasoning: true },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "code0",
     icon: "code0",
     templateValues: {
       apiKey: {
@@ -751,13 +1477,110 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
+        "gpt-6.1-sol": { name: "GPT-6.1 Sol", reasoning: true },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-5.6-sol": { name: "GPT-5.6 Sol", reasoning: true },
       },
     },
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "teamorouter",
     icon: "teamorouter",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "TeamoRouter Claude",
+    websiteUrl: "https://teamorouter.com",
+    apiKeyUrl:
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "TeamoRouter Claude",
+      options: {
+        baseURL: "https://api.teamorouter.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "teamorouter",
+    icon: "teamorouter",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "PPIO",
+    websiteUrl: "https://ppio.com",
+    apiKeyUrl: "https://ppio.com/activity/ccswitch",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "PPIO",
+      options: {
+        baseURL: "https://api.ppio.com/openai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "deepseek/deepseek-v4.1-flash": {
+          name: "DeepSeek V4.1 Flash",
+          reasoning: true,
+        },
+        "moonshotai/kimi-k3.1-pro": {
+          name: "Kimi K3.1 Pro",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "zai-org/glm-5.3": {
+          name: "GLM-5.3",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "ppio",
+    icon: "ppio",
+    iconColor: "#2874FF",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -779,9 +1602,30 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "claude-sonnet-5": { name: "Claude Sonnet 5" },
-        "claude-opus-5": { name: "Claude Opus 5" },
-        "claude-haiku-4-5": { name: "Claude Haiku 4.5" },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-haiku-5-5": {
+          name: "Claude Haiku 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "third_party",
@@ -797,14 +1641,51 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "火山Agentplan",
+    name: "火山 Agent Plan",
+    family: "volcengine",
+    planKey: "agentPlan",
+    websiteUrl:
+      "https://www.volcengine.com/activity/agentplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_source=OWO&utm_medium=devrel-1&utm_campaign=hw&utm_term=ccswitch&utm_content=hw",
+    apiKeyUrl:
+      "https://www.volcengine.com/activity/agentplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_source=OWO&utm_medium=devrel-1&utm_campaign=hw&utm_term=ccswitch&utm_content=hw",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "火山 Agent Plan",
+      options: {
+        baseURL: "https://ark.cn-beijing.volces.com/api/plan/v3",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "ark-code-latest": {
+          name: "Ark Code Latest",
+        },
+      },
+    },
+    category: "cn_official",
+    isPartner: true,
+    partnerPromotionKey: "volcengine_agentplan",
+    icon: "huoshan",
+    iconColor: "#3370FF",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "火山 Coding Plan",
+    family: "volcengine",
+    planKey: "codingPlan",
     websiteUrl:
       "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
       "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
-      name: "火山Agentplan",
+      name: "火山 Coding Plan",
       options: {
         baseURL: "https://ark.cn-beijing.volces.com/api/coding/v3",
         apiKey: "",
@@ -818,7 +1699,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
     category: "cn_official",
     isPartner: true,
-    partnerPromotionKey: "volcengine_agentplan",
+    partnerPromotionKey: "volcengine_codingplan",
     icon: "huoshan",
     iconColor: "#3370FF",
     templateValues: {
@@ -863,22 +1744,26 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "DouBaoSeed",
+    name: "Volcengine Doubao",
+    family: "volcengine",
+    planKey: "payg",
+    nameKey: "providerForm.presets.doubaoseed",
     websiteUrl:
       "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
       "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
-      name: "DouBaoSeed",
+      name: "Volcengine Doubao",
       options: {
         baseURL: "https://ark.cn-beijing.volces.com/api/v3",
         apiKey: "",
         setCacheKey: true,
       },
       models: {
-        "doubao-seed-2-1-pro-260628": {
+        "doubao-seed-2-1-pro-260915": {
           name: "Doubao Seed 2.1 Pro",
+          reasoning: true,
         },
       },
     },
@@ -897,52 +1782,30 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "A6API",
-    websiteUrl: "https://www.a6api.com",
-    apiKeyUrl: "https://a6api.com/register?aff=AqNr",
+    websiteUrl: "https://www.a6api.vip",
+    apiKeyUrl: "https://a6api.vip/register?aff=AqNr",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "A6API",
       options: {
-        baseURL: "https://api.a6api.com/v1",
+        baseURL: "https://api.a6api.vip/v1",
         apiKey: "",
         setCacheKey: true,
       },
       models: {
-        "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
+        "gpt-6.1-sol": { name: "GPT-6.1 Sol", reasoning: true },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "a6api",
     icon: "a6api",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-  },
-  {
-    name: "AtlasCloud",
-    websiteUrl: "https://www.atlascloud.ai/console/coding-plan",
-    apiKeyUrl: "https://www.atlascloud.ai/console/coding-plan",
-    settingsConfig: {
-      npm: "@ai-sdk/openai-compatible",
-      name: "AtlasCloud",
-      options: {
-        baseURL: "https://api.atlascloud.ai/v1",
-        apiKey: "",
-        setCacheKey: true,
-      },
-      models: {
-        "zai-org/glm-5.1": { name: "GLM 5.1" },
-      },
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "atlascloud",
-    icon: "atlascloud",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -964,12 +1827,20 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
+        "gpt-6.1-sol": {
+          name: "GPT-6.1 Sol",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+        },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+        },
       },
     },
     category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "ccsub",
     icon: "ccsub",
     templateValues: {
       apiKey: {
@@ -992,8 +1863,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "claude-sonnet-5": { name: "Claude Sonnet 5" },
-        "claude-opus-5": { name: "Claude Opus 5" },
+        "claude-sonnet-5-5": { name: "Claude Sonnet 5.5", reasoning: true },
+        "claude-opus-5-5": { name: "Claude Opus 5.5", reasoning: true },
       },
     },
     category: "third_party",
@@ -1001,6 +1872,36 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     partnerPromotionKey: "sssaicode",
     icon: "sssaicode",
     iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "SoleAPI",
+    websiteUrl: "https://soleapi.com",
+    apiKeyUrl: "https://soleapi.com/r/ccswitch",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "SoleAPI",
+      options: {
+        baseURL: "https://soleapi.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-5-5": { name: "Claude Opus 5.5", reasoning: true },
+        "claude-sonnet-5-5": { name: "Claude Sonnet 5.5", reasoning: true },
+        "claude-haiku-5-5": { name: "Claude Haiku 5.5", reasoning: true },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "soleapi",
+    icon: "soleapi",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -1022,8 +1923,14 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "claude-opus-5": { name: "Claude Opus 5" },
-        "claude-sonnet-5": { name: "Claude Sonnet 5" },
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-opus-5-5": { name: "Claude Opus 5.5", reasoning: true },
+        "claude-sonnet-5-5": { name: "Claude Sonnet 5.5", reasoning: true },
       },
     },
     category: "third_party",
@@ -1035,6 +1942,35 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       apiKey: {
         label: "API Key",
         placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    // OpenAI 平台 API Key 直连 Responses（按量计费）
+    name: "OpenAI API",
+    websiteUrl: "https://platform.openai.com",
+    apiKeyUrl: "https://platform.openai.com/api-keys",
+    settingsConfig: {
+      npm: "@ai-sdk/openai",
+      name: "OpenAI API",
+      options: {
+        baseURL: "https://api.openai.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "gpt-6.1-sol": { name: "GPT-6.1 Sol", reasoning: true },
+        "gpt-6-luna": { name: "GPT-6 Luna", reasoning: true },
+      },
+    },
+    category: "cn_official",
+    icon: "openai",
+    iconColor: "#00A67E",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
         editorValue: "",
       },
     },
@@ -1052,7 +1988,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
+        "gpt-6.1-sol": { name: "GPT-6.1 Sol", reasoning: true },
       },
     },
     category: "third_party",
@@ -1060,36 +1996,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     partnerPromotionKey: "rightcode",
     icon: "rc",
     iconColor: "#E96B2C",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-  },
-  {
-    name: "ETok.ai",
-    websiteUrl: "https://etok.ai",
-    apiKeyUrl: "https://etok.ai",
-    settingsConfig: {
-      npm: "@ai-sdk/anthropic",
-      name: "ETok",
-      options: {
-        baseURL: "https://api.etok.ai/v1",
-        apiKey: "",
-        setCacheKey: true,
-      },
-      models: {
-        "claude-opus-5": { name: "Claude Opus 5" },
-        "claude-sonnet-5": { name: "Claude Sonnet 5" },
-      },
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "etok",
-    icon: "etok",
-    iconColor: "#000000",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -1111,8 +2017,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "claude-sonnet-5": { name: "Claude Sonnet 5" },
-        "claude-opus-5": { name: "Claude Opus 5" },
+        "claude-sonnet-5-5": { name: "Claude Sonnet 5.5", reasoning: true },
+        "claude-opus-5-5": { name: "Claude Opus 5.5", reasoning: true },
       },
     },
     category: "third_party",
@@ -1141,8 +2047,14 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "claude-sonnet-5": { name: "Claude Sonnet 5" },
-        "claude-opus-5": { name: "Claude Opus 5" },
+        "claude-sonnet-5-5": { name: "Claude Sonnet 5.5", reasoning: true },
+        "claude-opus-5-5": { name: "Claude Opus 5.5", reasoning: true },
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "third_party",
@@ -1171,8 +2083,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "claude-sonnet-5": { name: "Claude Sonnet 5" },
-        "claude-opus-5": { name: "Claude Opus 5" },
+        "claude-sonnet-5-5": { name: "Claude Sonnet 5.5", reasoning: true },
+        "claude-opus-5-5": { name: "Claude Opus 5.5", reasoning: true },
       },
     },
     category: "aggregator",
@@ -1185,9 +2097,11 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         editorValue: "",
       },
     },
+    icon: "dmxapi",
   },
   {
     name: "SudoCode.chat",
+    family: "sudocode",
     websiteUrl: "https://sudocode.chat",
     apiKeyUrl:
       "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
@@ -1200,7 +2114,30 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
+        "gpt-6.1-sol": {
+          name: "GPT-6.1 Sol",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-6-sol": {
+          name: "GPT-6 Sol",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-6-luna": {
+          name: "GPT-6 Luna",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "third_party",
@@ -1217,6 +2154,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "SudoCode.us",
+    family: "sudocode",
     websiteUrl: "https://sudocode.us",
     apiKeyUrl: "https://sudocode.us",
     settingsConfig: {
@@ -1228,7 +2166,24 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
+        "gpt-6.1-sol": {
+          name: "GPT-6.1 Sol",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-6-sol": {
+          name: "GPT-6 Sol",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "third_party",
@@ -1242,7 +2197,207 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
   },
+  {
+    name: "XycAi",
+    websiteUrl: "https://xycai.us",
+    apiKeyUrl: "https://xycai.us/register?aff=Uhu9",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "XycAi",
+      options: {
+        baseURL: "https://apicdn.xycai.us/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "gpt-6.1-sol": { name: "GPT-6.1 Sol", reasoning: true },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "xycai",
+    icon: "xycai",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "Modelflare",
+    websiteUrl: "https://modelflare.dev",
+    apiKeyUrl:
+      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
+    // 官方 OpenCode 文档（docs.modelflare.dev/guides/clients/opencode，
+    // 2026-10-15 核对）：openai-compatible + /v1、默认 gpt-5.6-sol
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Modelflare",
+      options: {
+        baseURL: "https://modelflare.dev/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "gpt-6.1-sol": {
+          name: "GPT-6.1 Sol",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "modelflare",
+    icon: "modelflare",
+  },
+  {
+    name: "AllTokens",
+    websiteUrl: "https://alltokens.cc",
+    apiKeyUrl: "https://alltokens.cc/register",
+    // Sub2API 网关：Key 绑定单个分组，须用 GPT 分组的 Key；GPT 账号池原生走
+    // Responses（分组与模型见 alltokens.cc/api/v1/model-plaza，2026-10-17 核对）
+    settingsConfig: {
+      npm: "@ai-sdk/openai",
+      name: "AllTokens",
+      options: {
+        baseURL: "https://alltokens.cc/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "gpt-6.1-sol": {
+          name: "GPT-6.1 Sol",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-6-luna": {
+          name: "GPT-6 Luna",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "alltokens",
+    icon: "alltokens",
+  },
+  {
+    name: "AllTokens SI",
+    websiteUrl: "https://alltokens.si",
+    // 站点关闭了个人注册（/api/status 的 register_enabled=false），只能企业注册
+    apiKeyUrl: "https://alltokens.si/enterprise-register",
+    // new-api 网关，目录见 alltokens.si/api/pricing（2026-10-19 核对）：GPT 分组
+    // 只声明 Chat Completions，窗口按中转口径封顶 272K
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "AllTokens SI",
+      options: {
+        baseURL: "https://alltokens.si/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "gpt-6.1-sol": {
+          name: "GPT-6.1 Sol",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "alltokens_si",
+    icon: "alltokens-si",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
+  {
+    name: "Tu-zi",
+    nameKey: "providerForm.presets.tuzi",
+    websiteUrl: "https://api.tu-zi.com",
+    apiKeyUrl: "https://api.tu-zi.com/token",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "Tu-zi",
+      options: {
+        baseURL: "https://api.tu-zi.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-opus-5-5": { name: "Claude Opus 5.5", reasoning: true },
+        "claude-sonnet-5-5": { name: "Claude Sonnet 5.5", reasoning: true },
+        "claude-haiku-5-5": { name: "Claude Haiku 5.5", reasoning: true },
+      },
+    },
+    category: "aggregator",
+    icon: "tuzi",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
   {
     name: "Amux",
     websiteUrl: "https://amux.ai",
@@ -1256,11 +2411,72 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
+        "gpt-6.1-sol": { name: "GPT-6.1 Sol", reasoning: true },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",
     icon: "amux",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "AtlasCloud",
+    websiteUrl: "https://www.atlascloud.ai/console/coding-plan",
+    apiKeyUrl: "https://www.atlascloud.ai/console/coding-plan",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "AtlasCloud",
+      options: {
+        baseURL: "https://api.atlascloud.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "zai-org/glm-5.3": { name: "GLM 5.3", reasoning: true },
+        "zai-org/glm-5.3-flash": { name: "GLM 5.3 Flash", reasoning: true },
+        "moonshotai/kimi-k3": { name: "Kimi K3", reasoning: true },
+      },
+    },
+    category: "aggregator",
+    icon: "atlascloud",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "Soshow",
+    websiteUrl: "https://aimarket.so-show.com",
+    apiKeyUrl: "https://aimarket.so-show.com/workbench/access-key",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "Soshow",
+      options: {
+        baseURL: "https://maas.so-show.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-sonnet-5": { name: "Claude Sonnet 5", reasoning: true },
+        "claude-opus-5": { name: "Claude Opus 5", reasoning: true },
+      },
+    },
+    category: "aggregator",
+    icon: "soshow",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -1281,8 +2497,12 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "deepseek-v4-pro": { name: "DeepSeek V4 Pro" },
-        "deepseek-v4-flash": { name: "DeepSeek V4 Flash" },
+        "deepseek-flash": {
+          name: "DeepSeek V4.1 Flash",
+          reasoning: true,
+          limit: { context: 1000000, output: 384000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "cn_official",
@@ -1298,8 +2518,10 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "Zhipu GLM",
+    family: "zhipu",
+    regionKey: "cn",
     websiteUrl: "https://open.bigmodel.cn",
-    apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
+    apiKeyUrl: "https://www.bigmodel.cn/claude-code",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "Zhipu GLM",
@@ -1309,7 +2531,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "glm-5.1": { name: "GLM-5.1" },
+        "glm-5.3": { name: "GLM-5.3", reasoning: true },
+        "glm-5.3-flash": {
+          name: "GLM-5.3-Flash",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "cn_official",
@@ -1331,8 +2559,10 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "Zhipu GLM en",
+    family: "zhipu",
+    regionKey: "intl",
     websiteUrl: "https://z.ai",
-    apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
+    apiKeyUrl: "https://z.ai/subscribe",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "Zhipu GLM en",
@@ -1342,7 +2572,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "glm-5.1": { name: "GLM-5.1" },
+        "glm-5.3": { name: "GLM-5.3", reasoning: true },
+        "glm-5.3-flash": {
+          name: "GLM-5.3-Flash",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "cn_official",
@@ -1363,27 +2599,561 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "Bailian",
-    websiteUrl: "https://bailian.console.aliyun.com",
-    apiKeyUrl: "https://bailian.console.aliyun.com/#/api-key",
+    // 腾讯云 Token Plan 个人版（1823/130060，2026-08-21 版）：通用 + Hy 两
+    // 系列共用同一端点与 API Key，模型合并两系列；Auto 智能路由的调用 ID
+    // 是 tc-code-latest。端点 OpenAI 兼容（官方快速入门 1823/130119 未发
+    // OpenCode 专属接入页，按工具无关的 /plan/v3 + 阵容照文档收录）。
+    // kimi-k2.5 官方标注 2026-08-31 下线不收；minimax-m2.5 不在套餐文档
+    // 表内、但 /plan/v3/models 收录且真 Key 实测可用（2026-08-31），照实收
+    name: "Tencent Token Plan",
+    family: "tencent",
+    planKey: "tokenPlan",
+    regionKey: "cn",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
-      name: "Bailian",
+      name: "Tencent Token Plan",
       options: {
-        baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        baseURL: "https://api.lkeap.cloud.tencent.com/plan/v3",
+        apiKey: "",
+      },
+      models: {
+        "tc-code-latest": { name: "Auto" },
+        "deepseek-v4-flash-202605": {
+          name: "DeepSeek V4 Flash",
+          reasoning: true,
+        },
+        "minimax-m2.7": { name: "MiniMax M2.7", reasoning: true },
+        "glm-5": { name: "GLM-5", reasoning: true },
+        "glm-5.1": { name: "GLM-5.1", reasoning: true },
+        "glm-5.2": { name: "GLM-5.2", reasoning: true },
+        hy3: { name: "Hy3", reasoning: true },
+        "hy3-preview": { name: "Hy3 Preview", reasoning: true },
+      },
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://api.lkeap.cloud.tencent.com/plan/v3",
+        defaultValue: "https://api.lkeap.cloud.tencent.com/plan/v3",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    // 国际站（新加坡地域）个人版（intl 1300/81315，2026-08-20 版）：Auto
+    // 调用 ID 是 auto（≠国内个人版 tc-code-latest），阵容与国内不同（无
+    // GLM-5/5.1/Hy3，多 GLM-5.2/MiniMax-M3）。端点用国际站文档钦定的
+    // tencentcloudmaas.com 域；Key 按站独立不跨站通用
+    name: "Tencent Token Plan (Intl)",
+    family: "tencent",
+    planKey: "tokenPlan",
+    regionKey: "intl",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Tencent Token Plan (Intl)",
+      options: {
+        baseURL: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        apiKey: "",
+      },
+      models: {
+        auto: { name: "Auto" },
+        "glm-5.2": { name: "GLM-5.2", reasoning: true },
+        "kimi-k2.6": { name: "Kimi K2.6", reasoning: true },
+        "deepseek-v4-flash-202605": {
+          name: "DeepSeek V4 Flash",
+          reasoning: true,
+        },
+        "minimax-m3": { name: "MiniMax M3", reasoning: true },
+      },
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        defaultValue: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    // Token Plan 企业版专业套餐（1823/130659，2026-08-25 版，广州地域）：
+    // kimi-k2.5 官方标注 2026-08-31 下线不收；minimax-m2.5 型号列表已除名
+    // 但真 Key 实测仍可用（2026-08-31），照实收录
+    name: "Tencent Token Plan Enterprise Pro",
+    family: "tencent",
+    planKey: "enterprisePro",
+    regionKey: "cn",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Tencent Token Plan Enterprise Pro",
+      options: {
+        baseURL: "https://tokenhub.tencentmaas.com/plan/v3",
+        apiKey: "",
+      },
+      models: {
+        auto: { name: "Auto" },
+        "glm-5.3": { name: "GLM-5.3", reasoning: true },
+        "glm-5.2": { name: "GLM-5.2", reasoning: true },
+        "glm-5": { name: "GLM-5", reasoning: true },
+        "glm-5.1": { name: "GLM-5.1", reasoning: true },
+        "glm-5-turbo": { name: "GLM-5 Turbo", reasoning: true },
+        "kimi-k2.7-code": { name: "Kimi K2.7 Code", reasoning: true },
+        "kimi-k2.7-code-highspeed": {
+          name: "Kimi K2.7 Code HighSpeed",
+          reasoning: true,
+        },
+        "kimi-k2.6": { name: "Kimi K2.6", reasoning: true },
+        "minimax-m3": { name: "MiniMax M3", reasoning: true },
+        "deepseek-v4-flash": { name: "DeepSeek V4 Flash", reasoning: true },
+        "deepseek-v4-flash-0731": {
+          name: "DeepSeek V4 Flash 0731 GA",
+          reasoning: true,
+        },
+        "deepseek-v4-flash-202605": {
+          name: "DeepSeek V4 Flash Official",
+          reasoning: true,
+        },
+      },
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://tokenhub.tencentmaas.com/plan/v3",
+        defaultValue: "https://tokenhub.tencentmaas.com/plan/v3",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    // 国际站企业版专业套餐（intl 1300/81489，2026-08-26 版，新加坡地域）：
+    // 阵容为广州地域子集（无 GLM-5/5.1/5-Turbo、Kimi-K2.6、MiniMax-M2.7）
+    name: "Tencent Token Plan Enterprise Pro (Intl)",
+    family: "tencent",
+    planKey: "enterprisePro",
+    regionKey: "intl",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Tencent Token Plan Enterprise Pro (Intl)",
+      options: {
+        baseURL: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        apiKey: "",
+      },
+      models: {
+        auto: { name: "Auto" },
+        "glm-5.3": { name: "GLM-5.3", reasoning: true },
+        "glm-5.2": { name: "GLM-5.2", reasoning: true },
+        "minimax-m3": { name: "MiniMax M3", reasoning: true },
+        "kimi-k2.7-code": { name: "Kimi K2.7 Code", reasoning: true },
+        "kimi-k2.7-code-highspeed": {
+          name: "Kimi K2.7 Code HighSpeed",
+          reasoning: true,
+        },
+        "deepseek-v4-flash": { name: "DeepSeek V4 Flash", reasoning: true },
+        "deepseek-v4-flash-0731": {
+          name: "DeepSeek V4 Flash 0731 GA",
+          reasoning: true,
+        },
+        "deepseek-v4-flash-202605": {
+          name: "DeepSeek V4 Flash Official",
+          reasoning: true,
+        },
+      },
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        defaultValue: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    // Token Plan 企业版轻享套餐（1823/131173，2026-08-28 版）：仅 Auto 模型
+    name: "Tencent Token Plan Enterprise Lite",
+    family: "tencent",
+    planKey: "enterpriseLite",
+    regionKey: "cn",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Tencent Token Plan Enterprise Lite",
+      options: {
+        baseURL: "https://tokenhub.tencentmaas.com/plan/v3",
+        apiKey: "",
+      },
+      models: {
+        auto: { name: "Auto" },
+      },
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://tokenhub.tencentmaas.com/plan/v3",
+        defaultValue: "https://tokenhub.tencentmaas.com/plan/v3",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    // 国际站企业版轻享套餐（intl 1300/81490）：新加坡地域（资源调度范围
+    // Global），仅 Auto 模型
+    name: "Tencent Token Plan Enterprise Lite (Intl)",
+    family: "tencent",
+    planKey: "enterpriseLite",
+    regionKey: "intl",
+    websiteUrl: "https://www.tencentcloud.com/products/tokenhub",
+    apiKeyUrl: "https://console.tencentcloud.com/tokenhub/tokenplan-e",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Tencent Token Plan Enterprise Lite (Intl)",
+      options: {
+        baseURL: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        apiKey: "",
+      },
+      models: {
+        auto: { name: "Auto" },
+      },
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#0052D9",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        defaultValue: "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    // 千帆 Token Plan 个人版（2026-07-13 起替代 Coding Plan 发售）：官方
+    // OpenCode 接入页确认 /v2/tokenplan/personal + @ai-sdk/openai-compatible；
+    // 阵容=Token Plan 主文档 2026-08-14 版六模型（ernie-5.1 8/20 下线不收）
+    name: "Baidu Qianfan Token Plan",
+    websiteUrl: "https://cloud.baidu.com/product/codingplan.html",
+    apiKeyUrl: "https://console.bce.baidu.com/qianfan/resource/token-plan",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Baidu Qianfan Token Plan",
+      options: {
+        baseURL: "https://qianfan.baidubce.com/v2/tokenplan/personal",
+        apiKey: "",
+      },
+      models: {
+        "deepseek-v4-flash": { name: "DeepSeek V4 Flash", reasoning: true },
+        "deepseek-v4-flash-0731": {
+          name: "DeepSeek V4 Flash 0731",
+          reasoning: true,
+        },
+        "glm-5.2": { name: "GLM-5.2", reasoning: true },
+        "glm-5.1": { name: "GLM-5.1", reasoning: true },
+        "kimi-k2.6": { name: "Kimi K2.6", reasoning: true },
+      },
+    },
+    category: "cn_official",
+    icon: "baidu",
+    iconColor: "#2932E1",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://qianfan.baidubce.com/v2/tokenplan/personal",
+        defaultValue: "https://qianfan.baidubce.com/v2/tokenplan/personal",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "千问AI平台",
+    family: "qianwen",
+    planKey: "payg",
+    websiteUrl: "https://platform.qianwenai.com/?utm_content=g_20000002971",
+    apiKeyUrl:
+      "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002972",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "千问AI平台",
+      options: {
+        baseURL: "https://maas.qianwenaiapi.com/compatible-mode/v1",
         apiKey: "",
         setCacheKey: true,
       },
-      models: {},
+      models: {
+        "qwen3.8-max": {
+          name: "Qwen3.8 Max",
+          reasoning: true,
+          limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
+        },
+        "qwen3.8-flash": {
+          name: "Qwen3.8 Flash",
+          reasoning: true,
+          limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
+        },
+      },
     },
     category: "cn_official",
-    icon: "bailian",
+    icon: "qianwenai",
     iconColor: "#624AFF",
     templateValues: {
       baseURL: {
         label: "Base URL",
-        placeholder: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        defaultValue: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        placeholder: "https://maas.qianwenaiapi.com/compatible-mode/v1",
+        defaultValue: "https://maas.qianwenaiapi.com/compatible-mode/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "千问AI平台 Token Plan",
+    family: "qianwen",
+    planKey: "tokenPlan",
+    websiteUrl:
+      "https://platform.qianwenai.com/pricing/token-plan?utm_content=g_20000002977",
+    apiKeyUrl:
+      "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002978",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "千问AI平台 Token Plan",
+      options: {
+        baseURL: "https://token-plan.maas.qianwenaiapi.com/apps/anthropic/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "qwen3.8-max": {
+          name: "Qwen3.8 Max",
+          reasoning: true,
+          limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
+        },
+        "qwen3.8-flash": {
+          name: "Qwen3.8 Flash",
+          reasoning: true,
+          limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
+        },
+      },
+    },
+    category: "cn_official",
+    icon: "qianwenai",
+    iconColor: "#624AFF",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder:
+          "https://token-plan.maas.qianwenaiapi.com/apps/anthropic/v1",
+        defaultValue:
+          "https://token-plan.maas.qianwenaiapi.com/apps/anthropic/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
+  // ===== QwenCloud（DashScope 国际站）=====
+  // 与上面国内条目是两套独立站点：域名、控制台、密钥互不通用。
+  // 按量付费走 OpenAI 兼容层（/compatible-mode/v1）；Token Plan 官方给的是
+  // Anthropic 协议地址，且比 Claude Code 的多一段 /v1（AI SDK anthropic 惯例）。
+  {
+    name: "QwenCloud",
+    family: "qwencloud",
+    planKey: "payg",
+    websiteUrl: "https://home.qwencloud.com/?utm_content=g_20000002974",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002975",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "QwenCloud",
+      options: {
+        baseURL:
+          "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "qwen3.8-max": {
+          name: "Qwen3.8 Max",
+          reasoning: true,
+          limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
+        },
+        "qwen3.8-flash": {
+          name: "Qwen3.8 Flash",
+          reasoning: true,
+          limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
+        },
+        "qwen3.7-max": { name: "Qwen3.7 Max", reasoning: true },
+      },
+    },
+    category: "cn_official",
+    icon: "qwencloud",
+    iconColor: "#6336E7",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder:
+          "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1",
+        defaultValue:
+          "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "QwenCloud For Coding",
+    family: "qwencloud",
+    planKey: "coding",
+    websiteUrl: "https://www.qwencloud.com",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "QwenCloud For Coding",
+      options: {
+        baseURL: "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "qwen3.7-plus": { name: "Qwen3.7 Plus", reasoning: true },
+        "qwen3.6-plus": { name: "Qwen3.6 Plus", reasoning: true },
+        "qwen3-coder-plus": { name: "Qwen3 Coder Plus" },
+      },
+    },
+    category: "cn_official",
+    icon: "qwencloud",
+    iconColor: "#6336E7",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder:
+          "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1",
+        defaultValue:
+          "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "QwenCloud Token Plan",
+    family: "qwencloud",
+    planKey: "tokenPlan",
+    websiteUrl:
+      "https://www.qwencloud.com/pricing/token-plan?utm_content=g_20000002980",
+    apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002981",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "QwenCloud Token Plan",
+      options: {
+        baseURL: "https://token-plan.maas.qwencloudapi.com/apps/anthropic/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "qwen3.8-max": {
+          name: "Qwen3.8 Max",
+          reasoning: true,
+          limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
+        },
+        "qwen3.8-flash": {
+          name: "Qwen3.8 Flash",
+          reasoning: true,
+          limit: { context: 983616, output: 131072 },
+          modalities: { input: ["text", "image", "video"], output: ["text"] },
+        },
+        "qwen3.7-max": { name: "Qwen3.7 Max", reasoning: true },
+      },
+    },
+    category: "cn_official",
+    icon: "qwencloud",
+    iconColor: "#6336E7",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder:
+          "https://token-plan.maas.qwencloudapi.com/apps/anthropic/v1",
+        defaultValue:
+          "https://token-plan.maas.qwencloudapi.com/apps/anthropic/v1",
         editorValue: "",
       },
       apiKey: {
@@ -1395,6 +3165,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "StepFun",
+    family: "stepfun",
+    regionKey: "cn",
     websiteUrl: "https://platform.stepfun.com/step-plan",
     apiKeyUrl: "https://platform.stepfun.com/interface-key",
     settingsConfig: {
@@ -1406,8 +3178,20 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "step-3.5-flash-2603": { name: "Step 3.5 Flash 2603" },
-        "step-3.5-flash": { name: "Step 3.5 Flash" },
+        "step-3.5-flash-2603": { name: "Step 3.5 Flash 2603", reasoning: true },
+        "step-3.5-flash": { name: "Step 3.5 Flash", reasoning: true },
+        "step-3.7-flash": {
+          name: "Step 3.7 Flash",
+          reasoning: true,
+          limit: { context: 256000, output: 256000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "step-5-preview": {
+          name: "Step 5 Preview",
+          reasoning: true,
+          limit: { context: 1000000, output: 64000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "cn_official",
@@ -1429,6 +3213,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "StepFun en",
+    family: "stepfun",
+    regionKey: "intl",
     websiteUrl: "https://platform.stepfun.ai/step-plan",
     apiKeyUrl: "https://platform.stepfun.ai/interface-key",
     settingsConfig: {
@@ -1439,8 +3225,20 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "step-3.5-flash-2603": { name: "Step 3.5 Flash 2603" },
-        "step-3.5-flash": { name: "Step 3.5 Flash" },
+        "step-3.5-flash-2603": { name: "Step 3.5 Flash 2603", reasoning: true },
+        "step-3.5-flash": { name: "Step 3.5 Flash", reasoning: true },
+        "step-3.7-flash": {
+          name: "Step 3.7 Flash",
+          reasoning: true,
+          limit: { context: 256000, output: 256000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "step-5-preview": {
+          name: "Step 5 Preview",
+          reasoning: true,
+          limit: { context: 1000000, output: 64000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "cn_official",
@@ -1473,7 +3271,19 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "step-3.5-flash": { name: "Step 3.5 Flash" },
+        "step-3.5-flash": { name: "Step 3.5 Flash", reasoning: true },
+        "step-3.7-flash": {
+          name: "Step 3.7 Flash",
+          reasoning: true,
+          limit: { context: 256000, output: 256000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "step-5-preview": {
+          name: "Step 5 Preview",
+          reasoning: true,
+          limit: { context: 1000000, output: 64000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "cn_official",
@@ -1500,7 +3310,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "ZhipuAI/GLM-5.1": { name: "GLM-5.1" },
+        "ZhipuAI/GLM-5.2": { name: "GLM-5.2", reasoning: true },
       },
     },
     category: "aggregator",
@@ -1521,45 +3331,67 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "KAT-Coder",
-    websiteUrl: "https://console.streamlake.ai",
-    apiKeyUrl: "https://console.streamlake.ai/console/api-key",
+    name: "StreamLake",
+    family: "streamlake",
+    regionKey: "cn",
+    websiteUrl: "https://www.streamlake.com",
+    apiKeyUrl:
+      "https://console.streamlake.com/console/wanqing/api-key?channel=ccswitch",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
-      name: "KAT-Coder",
+      name: "StreamLake",
       options: {
-        baseURL:
-          "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/${ENDPOINT_ID}/openai",
+        baseURL: "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints",
         apiKey: "",
         setCacheKey: true,
       },
       models: {
-        "KAT-Coder-Pro": { name: "KAT-Coder Pro" },
+        "kat-coder-pro-v2.5": {
+          name: "KAT-Coder Pro V2.5",
+          limit: { context: 256000, output: 80000 },
+        },
       },
     },
     category: "cn_official",
     templateValues: {
-      baseURL: {
-        label: "Base URL",
-        placeholder:
-          "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/${ENDPOINT_ID}/openai",
-        defaultValue:
-          "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/${ENDPOINT_ID}/openai",
-        editorValue: "",
-      },
-      ENDPOINT_ID: {
-        label: "Vanchin Endpoint ID",
-        placeholder: "ep-xxx-xxx",
-        defaultValue: "",
-        editorValue: "",
-      },
       apiKey: {
         label: "API Key",
         placeholder: "",
         editorValue: "",
       },
     },
-    icon: "catcoder",
+    icon: "streamlake",
+  },
+  {
+    name: "StreamLake en",
+    family: "streamlake",
+    regionKey: "intl",
+    websiteUrl: "https://console.streamlake.ai",
+    apiKeyUrl: "https://console.streamlake.ai/console/api-key?channel=ccswitch",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "StreamLake en",
+      options: {
+        baseURL: "https://vanchin.streamlake.ai/api/gateway/v1/endpoints",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "kat-coder-pro-v2.5": {
+          name: "KAT-Coder Pro V2.5",
+          limit: { context: 256000, output: 80000 },
+        },
+      },
+    },
+    category: "cn_official",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    icon: "streamlake",
   },
   {
     name: "Longcat",
@@ -1599,22 +3431,35 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "MiniMax",
-    websiteUrl: "https://platform.minimaxi.com",
-    apiKeyUrl: "https://platform.minimaxi.com/subscribe/coding-plan",
+    family: "minimax",
+    regionKey: "cn",
+    websiteUrl: "https://platform.minimax.cn",
+    apiKeyUrl: "https://platform.minimax.cn/subscribe/token-plan",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "MiniMax",
       options: {
-        baseURL: "https://api.minimaxi.com/v1",
+        baseURL: "https://api.minimax.cn/v1",
         apiKey: "",
         setCacheKey: true,
       },
       models: {
-        "MiniMax-M2.7": { name: "MiniMax M2.7" },
+        "MiniMax-M3.1-Flash": {
+          name: "MiniMax M3.1 Flash",
+          reasoning: true,
+          limit: { context: 1000000, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+          variants: MINIMAX_M31_VARIANTS,
+        },
+        "MiniMax-M3": {
+          name: "MiniMax M3",
+          reasoning: true,
+          limit: { context: 1000000, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "cn_official",
-    partnerPromotionKey: "minimax_cn",
     theme: {
       backgroundColor: "#f64551",
       textColor: "#FFFFFF",
@@ -1631,6 +3476,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "MiniMax en",
+    family: "minimax",
+    regionKey: "intl",
     websiteUrl: "https://platform.minimax.io",
     apiKeyUrl: "https://platform.minimax.io/subscribe/coding-plan",
     settingsConfig: {
@@ -1642,11 +3489,22 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "MiniMax-M2.7": { name: "MiniMax M2.7" },
+        "MiniMax-M3.1-Flash": {
+          name: "MiniMax M3.1 Flash",
+          reasoning: true,
+          limit: { context: 1000000, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+          variants: MINIMAX_M31_VARIANTS,
+        },
+        "MiniMax-M3": {
+          name: "MiniMax M3",
+          reasoning: true,
+          limit: { context: 1000000, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "cn_official",
-    partnerPromotionKey: "minimax_en",
     theme: {
       backgroundColor: "#f64551",
       textColor: "#FFFFFF",
@@ -1663,17 +3521,18 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "BaiLing",
-    websiteUrl: "https://alipaytbox.yuque.com/sxs0ba/ling/get_started",
+    websiteUrl: "https://developer.ant-ling.com/zh-CN/docs/",
+    apiKeyUrl: "https://chat.ant-ling.com/open",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "BaiLing",
       options: {
-        baseURL: "https://api.tbox.cn/v1",
+        baseURL: "https://api.ant-ling.com/v1",
         apiKey: "",
         setCacheKey: true,
       },
       models: {
-        "Ling-2.5-1T": { name: "Ling 2.5-1T" },
+        "Ling-2.6-1T": { name: "Ling 2.6-1T" },
       },
     },
     category: "cn_official",
@@ -1684,9 +3543,12 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         editorValue: "",
       },
     },
+    icon: "bailing",
   },
   {
     name: "Xiaomi MiMo",
+    family: "xiaomi-mimo",
+    planKey: "payg",
     websiteUrl: "https://platform.xiaomimimo.com",
     apiKeyUrl: "https://platform.xiaomimimo.com/#/console/api-keys",
     settingsConfig: {
@@ -1698,13 +3560,21 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "mimo-v2.5-pro": {
-          name: "MiMo V2.5 Pro",
+        "mimo-v2.6-pro": {
+          name: "MiMo V2.6 Pro",
+          reasoning: true,
           limit: { context: 1048576, output: 131072 },
-          modalities: { input: ["text"], output: ["text"] },
+          modalities: { input: ["text", "image"], output: ["text"] },
         },
-        "mimo-v2.5": {
-          name: "MiMo V2.5",
+        "mimo-v2.6-flash": {
+          name: "MiMo V2.6 Flash",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "mimo-v2.6-pro-ultraspeed": {
+          name: "MiMo V2.6 Pro UltraSpeed",
+          reasoning: true,
           limit: { context: 1048576, output: 131072 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
@@ -1723,6 +3593,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "Xiaomi MiMo Token Plan (China)",
+    family: "xiaomi-mimo",
+    planKey: "tokenPlan",
     websiteUrl: "https://platform.xiaomimimo.com/#/token-plan",
     apiKeyUrl: "https://platform.xiaomimimo.com/#/console/plan-manage",
     settingsConfig: {
@@ -1734,13 +3606,15 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "mimo-v2.5-pro": {
-          name: "MiMo V2.5 Pro",
+        "mimo-v2.6-pro": {
+          name: "MiMo V2.6 Pro",
+          reasoning: true,
           limit: { context: 1048576, output: 131072 },
-          modalities: { input: ["text"], output: ["text"] },
+          modalities: { input: ["text", "image"], output: ["text"] },
         },
-        "mimo-v2.5": {
-          name: "MiMo V2.5",
+        "mimo-v2.6-flash": {
+          name: "MiMo V2.6 Flash",
+          reasoning: true,
           limit: { context: 1048576, output: 131072 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
@@ -1761,7 +3635,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "OpenCode Go",
     websiteUrl: "https://opencode.ai/go",
-    apiKeyUrl: "https://opencode.ai/go?ref=2YTRG2NGTX",
+    apiKeyUrl: "https://opencode.ai/go",
     partnerPromotionKey: "opencode_go",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
@@ -1772,11 +3646,11 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "glm-5.2": { name: "GLM 5.2" },
-        "kimi-k2.7-code": { name: "Kimi K2.7 Code" },
-        "deepseek-v4-pro": { name: "DeepSeek V4 Pro" },
-        "deepseek-v4-flash": { name: "DeepSeek V4 Flash" },
-        "mimo-v2.5-pro": { name: "MiMo V2.5 Pro" },
+        "glm-5.3": { name: "GLM 5.3", reasoning: true },
+        "glm-5.3-flash": { name: "GLM 5.3 Flash", reasoning: true },
+        "kimi-k3.1-pro": { name: "Kimi K3.1 Pro", reasoning: true },
+        "deepseek-v4.1-flash": { name: "DeepSeek V4.1 Flash", reasoning: true },
+        "mimo-v2.6-pro": { name: "MiMo V2.6 Pro", reasoning: true },
       },
     },
     category: "third_party",
@@ -1786,6 +3660,101 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       apiKey: {
         label: "API Key",
         placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "SiliconFlow",
+    family: "siliconflow",
+    regionKey: "cn",
+    websiteUrl: "https://siliconflow.cn",
+    apiKeyUrl: "https://cloud.siliconflow.cn/i/YflgU2Ve",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "SiliconFlow",
+      options: {
+        baseURL: "https://api.siliconflow.cn/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "deepseek-ai/DeepSeek-V4-Flash": {
+          name: "DeepSeek V4 Flash",
+          reasoning: true,
+          limit: { context: 1048576, output: 384000 },
+        },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "siliconflow",
+    icon: "siliconflow",
+    iconColor: "#6E29F6",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "SiliconFlow en",
+    family: "siliconflow",
+    regionKey: "intl",
+    websiteUrl: "https://siliconflow.com",
+    apiKeyUrl: "https://cloud.siliconflow.cn/i/YflgU2Ve",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "SiliconFlow en",
+      options: {
+        baseURL: "https://api.siliconflow.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "moonshotai/Kimi-K3": {
+          name: "Kimi K3",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "zai-org/GLM-5.3": {
+          name: "GLM-5.3",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "zai-org/GLM-5.3-Flash": {
+          name: "GLM-5.3 Flash",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "MiniMaxAI/MiniMax-M3": {
+          name: "MiniMax M3",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "deepseek-ai/DeepSeek-V4.1-Flash": {
+          name: "DeepSeek V4.1 Flash",
+          reasoning: true,
+          limit: { context: 1048576, output: 384000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "siliconflow",
+    icon: "siliconflow",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
         editorValue: "",
       },
     },
@@ -1803,8 +3772,30 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "claude-sonnet-5": { name: "Claude Sonnet 5" },
-        "claude-opus-5": { name: "Claude Opus 5" },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-haiku-5-5": {
+          name: "Claude Haiku 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",
@@ -1831,8 +3822,20 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "anthropic/claude-sonnet-5": { name: "Claude Sonnet 5" },
-        "anthropic/claude-opus-5": { name: "Claude Opus 5" },
+        "anthropic/claude-sonnet-5.5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+        },
+        "anthropic/claude-opus-5.5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+        },
+        "anthropic/claude-fable-5.1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",
@@ -1858,8 +3861,30 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "anthropic/claude-sonnet-5": { name: "Claude Sonnet 5" },
-        "anthropic/claude-opus-5": { name: "Claude Opus 5" },
+        "anthropic/claude-sonnet-5.5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "anthropic/claude-haiku-5.5": {
+          name: "Claude Haiku 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "anthropic/claude-opus-5.5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "anthropic/claude-fable-5.1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",
@@ -1886,13 +3911,22 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "anthropic/claude-sonnet-5": { name: "Claude Sonnet 5" },
-        "openai/gpt-5.3-codex": { name: "GPT-5.3 Codex" },
-        "openai/gpt-5.2": { name: "GPT-5.2" },
-        "google/gemini-3.6-flash": {
-          name: "Gemini 3.6 Flash",
+        "anthropic/claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
         },
-        "qwen/qwen3-coder-480b": { name: "Qwen3 Coder 480B" },
+        "anthropic/claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+        },
+        "openai/gpt-6.1-sol": { name: "GPT-6.1 Sol", reasoning: true },
+        "openai/gpt-6-astra": { name: "GPT-6 Astra", reasoning: true },
+        "google/gemini-4-argon": { name: "Gemini 4 Argon", reasoning: true },
+        "google/gemini-3.8-flash": {
+          name: "Gemini 3.8 Flash",
+          reasoning: true,
+        },
+        "qwen/qwen3.8-max": { name: "Qwen3.8 Max", reasoning: true },
       },
     },
     category: "aggregator",
@@ -1903,6 +3937,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         editorValue: "",
       },
     },
+    icon: "therouter",
   },
   {
     name: "Novita AI",
@@ -1917,12 +3952,129 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "zai-org/glm-5.1": { name: "GLM-5.1" },
+        "zai-org/glm-5.3": {
+          name: "GLM-5.3",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "zai-org/glm-5.3-flash": {
+          name: "GLM-5.3-Flash",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "moonshotai/kimi-k3.1-pro": {
+          name: "Kimi K3.1 Pro",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",
     icon: "novita",
     iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "ClinePass",
+    websiteUrl: "https://docs.cline.bot/getting-started/clinepass",
+    apiKeyUrl: "https://app.cline.bot",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "ClinePass",
+      // 官方只有 OpenAI Chat 端点（docs.cline.bot/getting-started/clinepass）。
+      // 阵容取 2026-10-26 官方公开列表 api.cline.bot/api/v1/ai/cline/
+      // recommended-models 的 clinePass 段，窗口与最大输出按 models.dev
+      options: {
+        baseURL: "https://api.cline.bot/api/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "cline-pass/kimi-k3.1-pro": {
+          name: "Kimi K3.1 Pro",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "cline-pass/glm-5.3": {
+          name: "GLM-5.3",
+          reasoning: true,
+          limit: { context: 1000000, output: 131072 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "cline-pass/glm-5.3-flash": {
+          name: "GLM-5.3 Flash",
+          reasoning: true,
+          limit: { context: 1000000, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "cline-pass/kimi-k3": {
+          name: "Kimi K3",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "cline-pass/deepseek-v4-pro": {
+          name: "DeepSeek V4 Pro",
+          reasoning: true,
+          limit: { context: 1000000, output: 384000 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "cline-pass/deepseek-v4.1-flash": {
+          name: "DeepSeek V4.1 Flash",
+          reasoning: true,
+          limit: { context: 1000000, output: 384000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "cline-pass/qwen3.8-max": {
+          name: "Qwen3.8 Max",
+          reasoning: true,
+          limit: { context: 1000000, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "cline-pass/qwen3.7-plus": {
+          name: "Qwen3.7 Plus",
+          reasoning: true,
+          limit: { context: 1000000, output: 64000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "cline-pass/minimax-m3": {
+          name: "MiniMax M3",
+          reasoning: true,
+          limit: { context: 1048576, output: 512000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "cline-pass/minimax-m3.1-flash": {
+          name: "MiniMax M3.1 Flash",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "cline-pass/mimo-v2.6-pro": {
+          name: "MiMo V2.6 Pro",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "cline-pass/mimo-v2.6-flash": {
+          name: "MiMo V2.6 Flash",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "third_party",
+    icon: "cline",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -1944,7 +4096,24 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "moonshotai/kimi-k2.5": { name: "Kimi K2.5" },
+        "moonshotai/kimi-k2.6": {
+          name: "Kimi K2.6",
+          reasoning: true,
+          limit: { context: 262144, output: 262144 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "z-ai/glm-5.3": {
+          name: "GLM-5.3",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "z-ai/glm-5.3-flash": {
+          name: "GLM-5.3-Flash",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "aggregator",
@@ -1971,9 +4140,9 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "claude-opus-5": { name: "claude-opus-5" },
-        "claude-sonnet-5": { name: "claude-sonnet-5" },
-        "claude-haiku-4-5-20251001": { name: "claude-haiku-4-5-20251001" },
+        "claude-opus-5-5": { name: "claude-opus-5-5", reasoning: true },
+        "claude-sonnet-5-5": { name: "claude-sonnet-5-5", reasoning: true },
+        "claude-haiku-5-5": { name: "claude-haiku-5-5", reasoning: true },
       },
     },
     category: "aggregator",
@@ -1997,11 +4166,23 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         baseURL: "https://e-flowcode.cc/v1",
       },
       models: {
-        "gpt-5.2-codex": {
-          name: "gpt-5.2-codex",
+        "gpt-6.1-sol": {
+          name: "GPT-6.1 Sol",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
         },
-        "gpt-5.3-codex": {
-          name: "gpt-5.3-codex",
+        "gpt-6-sol": {
+          name: "GPT-6 Sol",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
         },
       },
     },
@@ -2029,18 +4210,23 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "global.anthropic.claude-opus-5": { name: "Claude Opus 5" },
+        "global.anthropic.claude-opus-5": {
+          name: "Claude Opus 5",
+          reasoning: true,
+        },
         "global.anthropic.claude-sonnet-5": {
           name: "Claude Sonnet 5",
+          reasoning: true,
         },
         "global.anthropic.claude-haiku-4-5-20251001-v1:0": {
           name: "Claude Haiku 4.5",
+          reasoning: true,
         },
         "us.amazon.nova-pro-v1:0": { name: "Amazon Nova Pro" },
         "us.meta.llama4-maverick-17b-instruct-v1:0": {
           name: "Meta Llama 4 Maverick",
         },
-        "us.deepseek.r1-v1:0": { name: "DeepSeek R1" },
+        "us.deepseek.r1-v1:0": { name: "DeepSeek R1", reasoning: true },
       },
     },
     category: "cloud_provider",
@@ -2062,6 +4248,125 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         label: "Secret Access Key",
         placeholder: "your-secret-key",
         editorValue: "",
+      },
+    },
+  },
+  {
+    name: "Ollama",
+    websiteUrl: "https://ollama.com",
+    // 本机 OpenAI 兼容端点（docs.ollama.com/integrations/opencode、
+    // opencode.ai/docs/providers，2026-10-14 核对）；models.dev 只有
+    // ollama-cloud 没有本机 ollama，OpenCode 文档也要求手动配置，不算内置。
+    // 服务端不校验 Key，填占位值 ollama。OpenCode 要求窗口至少 64k，工具调用
+    // 不灵时先调大服务端窗口（OLLAMA_CONTEXT_LENGTH）。模型换成自己已下载的；
+    // qwen3.5 的 output 取 Qwen 官方建议值，gpt-oss 沿用 Pi 目录口径
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Ollama",
+      options: {
+        baseURL: "http://localhost:11434/v1",
+        apiKey: "ollama",
+        setCacheKey: true,
+      },
+      models: {
+        "qwen3.5": {
+          name: "Qwen3.5",
+          reasoning: true,
+          limit: { context: 262144, output: 32768 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-oss:20b": {
+          name: "GPT-OSS 20B",
+          reasoning: true,
+          limit: { context: 131072, output: 65536 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+      },
+    },
+    category: "local",
+    icon: "ollama",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "ollama",
+        editorValue: "ollama",
+      },
+    },
+  },
+  {
+    name: "llama.cpp",
+    websiteUrl: "https://github.com/ggml-org/llama.cpp",
+    // 本机 llama-server 的 OpenAI Chat 端点（github.com/ggml-org/llama.cpp/blob/
+    // master/tools/server/README.md、opencode.ai/docs/providers，2026-10-14
+    // 核对）；models.dev 没有 llama.cpp，OpenCode 文档也要求手动配置，不算内置。
+    // 默认端口 b11521（PR #30159）起为 9931，v0.6.0 及更早、Homebrew 与 Docker
+    // 仍是 8080；只监听 IPv4 的 127.0.0.1。不带 --api-key 时不校验，填占位值
+    // no-key（同 README 示例）。默认模型取 ggml-org 官方 GGUF 的 Qwen3-Coder
+    // 30B A3B（原生窗口 262144、建议输出 65536，取 Qwen 模型卡），换成自己已
+    // 下载的；本地实际窗口受 -c / --fit / -np 限制，更小时把 context 一起调小
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "llama.cpp",
+      options: {
+        baseURL: "http://127.0.0.1:9931/v1",
+        apiKey: "no-key",
+        setCacheKey: true,
+      },
+      models: {
+        "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF": {
+          name: "Qwen3-Coder 30B A3B",
+          limit: { context: 262144, output: 65536 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+      },
+    },
+    category: "local",
+    icon: "llamacpp",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "no-key",
+        editorValue: "no-key",
+      },
+    },
+  },
+  {
+    name: "vLLM",
+    websiteUrl: "https://vllm.ai",
+    // 本机 vllm serve 的 OpenAI Chat 端点（docs.vllm.ai/en/latest/serving/
+    // online_serving/openai_compatible_server、opencode.ai/docs/providers，
+    // 2026-10-14 核对）；models.dev 没有 vllm，OpenCode 文档也没有 vLLM 段落，
+    // 不算内置。默认端口 8000，不带 --host 时监听全部 IPv4 网卡，建议加
+    // --host 127.0.0.1；工具调用要启动时加 --enable-auto-tool-choice
+    // --tool-call-parser qwen3_coder，思考另加 --reasoning-parser qwen3。不带
+    // --api-key 时不校验，填官方占位值 dummy（带了就填那个值，只认 Bearer）。
+    // 默认模型取 vLLM Codex 接入页的示例 Qwen/Qwen3.6-27B（原生窗口 262144、
+    // 建议输出 32768，取 Qwen 模型卡），须与 /v1/models 的 id 一致，换成自己
+    // 已下载的；本地实际窗口受 --max-model-len 限制，更小时把 context 一起调小
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "vLLM",
+      options: {
+        baseURL: "http://localhost:8000/v1",
+        apiKey: "dummy",
+        setCacheKey: true,
+      },
+      models: {
+        "Qwen/Qwen3.6-27B": {
+          name: "Qwen3.6 27B",
+          reasoning: true,
+          limit: { context: 262144, output: 32768 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "local",
+    icon: "vllm",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "dummy",
+        editorValue: "dummy",
       },
     },
   },
@@ -2090,5 +4395,536 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     icon: "opencode",
     iconColor: "#6366F1",
     isCustomTemplate: true,
+  },
+  {
+    name: "JieKou AI",
+    websiteUrl: "https://jiekou.ai/#model-library",
+    apiKeyUrl: "https://jiekou.ai/settings/key-management",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "JieKou AI",
+      options: {
+        baseURL: "https://api.jiekou.ai/openai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-haiku-5-5": {
+          name: "Claude Haiku 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    icon: "jiekou",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "AICodeWith",
+    websiteUrl: "https://aicodewith.ai",
+    apiKeyUrl: "https://aicodewith.ai/login?tab=register",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "AICodeWith",
+      options: {
+        baseURL: "https://api.aicodewith.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-sonnet-5-5": { name: "Claude Sonnet 5.5", reasoning: true },
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    icon: "aicodewith",
+    iconColor: "#3A3B40",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "模力方舟",
+    websiteUrl: "https://moark.com",
+    apiKeyUrl: "https://moark.com/dashboard/tokens",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "模力方舟",
+      options: {
+        baseURL: "https://api.moark.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        // OpenCode 以 limit.context 判断自动压缩；缺失会被当成 0 而跳过压缩，
+        // 故显式声明容量，取值与本 PR 的 Pi / OpenClaw 预设一致
+        "deepseek-v4.1-flash": {
+          name: "DeepSeek V4.1 Flash",
+          reasoning: true,
+          limit: { context: 1000000, output: 384000 },
+        },
+        "GLM-5.3": {
+          name: "GLM-5.3",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+        },
+        "GLM-5.3-Flash": {
+          name: "GLM-5.3-Flash",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+        },
+        "kimi-k3.1-pro": {
+          name: "Kimi K3.1 Pro",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+        },
+        "qwen3.8-max": {
+          name: "Qwen3.8 Max",
+          reasoning: true,
+          limit: { context: 1000000, output: 65536 },
+        },
+      },
+    },
+    category: "aggregator",
+    icon: "moark",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "SoruxGPT",
+    websiteUrl: "https://ai.soruxgpt.com",
+    apiKeyUrl: "https://ai.soruxgpt.com/console/token",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "SoruxGPT",
+      options: {
+        baseURL: "https://ai.soruxgpt.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-haiku-5-5": {
+          name: "Claude Haiku 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    icon: "soruxgpt",
+  },
+  {
+    name: "IKunCode",
+    websiteUrl: "https://api.ikuncode.ai",
+    apiKeyUrl: "https://api.ikuncode.ai/console/token",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "IKunCode",
+      options: {
+        baseURL: "https://api.ikuncode.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-haiku-5-5": {
+          name: "Claude Haiku 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    icon: "ikuncode",
+  },
+  {
+    name: "RunToken",
+    websiteUrl: "https://www.runtoken.ai",
+    apiKeyUrl: "https://www.runtoken.ai/console/token",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "RunToken",
+      options: {
+        baseURL: "https://www.runtoken.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-haiku-5-5": {
+          name: "Claude Haiku 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    icon: "runtoken",
+  },
+  {
+    name: "BotCF",
+    websiteUrl: "https://botcf.com",
+    apiKeyUrl: "https://botcf.com/console/token",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "BotCF",
+      options: {
+        baseURL: "https://botcf.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-haiku-5-5": {
+          name: "Claude Haiku 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    icon: "botcf",
+  },
+  {
+    name: "YYLX",
+    nameKey: "providerForm.presets.yylx",
+    websiteUrl: "https://yylx.io",
+    apiKeyUrl: "https://app.yylx.io/keys",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "YYLX",
+      options: {
+        baseURL: "https://app.yylx.io/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-haiku-5-5": {
+          name: "Claude Haiku 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    icon: "yylx",
+  },
+  {
+    name: "TokenFlux",
+    websiteUrl: "https://tokenflux.com",
+    apiKeyUrl: "https://tokenflux.com/keys",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "TokenFlux",
+      options: {
+        baseURL: "https://tokenflux.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-haiku-5-5": {
+          name: "Claude Haiku 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    icon: "tokenflux",
+  },
+  {
+    name: "NekoCode",
+    websiteUrl: "https://nekoapi.ai",
+    apiKeyUrl: "https://nekoapi.ai/token",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "NekoCode",
+      options: {
+        baseURL: "https://nekoapi.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+        headers: {
+          "User-Agent": "claude-cli/2.1.161 (external, cli)",
+        },
+      },
+      models: {
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-haiku-5-5": {
+          name: "Claude Haiku 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    icon: "nekocode",
+  },
+  {
+    name: "AIComing",
+    websiteUrl: "https://aicoming.top",
+    apiKeyUrl: "https://aicoming.top/console#keys",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "AIComing",
+      options: {
+        baseURL: "https://api.aicoming.top/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-fable-5-1": {
+          name: "Claude Fable 5.1",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-haiku-5-5": {
+          name: "Claude Haiku 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    icon: "aicoming",
   },
 ];

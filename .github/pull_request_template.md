@@ -1,3 +1,8 @@
+## Human Note / 本人说明
+
+<!-- Required. In your own words, say what you want to do. No AI-generated text. -->
+<!-- 必填。用你自己的话说清楚你想要做什么，不允许 AI 生成。 -->
+
 ## Summary / 概述
 
 <!-- Briefly describe what this PR does and why. / 简要描述这个 PR 做了什么以及为什么。 -->

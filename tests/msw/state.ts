@@ -2,11 +2,16 @@ import type { AppId } from "@/lib/api/types";
 import type {
   McpServer,
   Provider,
+  SessionContentHit,
   SessionMessage,
   SessionMeta,
   Settings,
 } from "@/types";
 import { deepClone } from "@/utils/deepClone";
+import {
+  createHighlightedSnippet,
+  findTextMatches,
+} from "@/components/sessions/utils";
 
 type ProvidersByApp = Record<AppId, Record<string, Provider>>;
 type CurrentProviderState = Record<AppId, string>;
@@ -73,6 +78,14 @@ const createDefaultProviders = (): ProvidersByApp => ({
   opencode: {},
   openclaw: {},
   hermes: {},
+  pi: {},
+  mcode: {},
+  kimi: {},
+  dsh: {},
+  agy: {},
+  omp: {},
+  copilot: {},
+  workbuddy: {},
 });
 
 const createDefaultCurrent = (): CurrentProviderState => ({
@@ -84,6 +97,14 @@ const createDefaultCurrent = (): CurrentProviderState => ({
   opencode: "",
   openclaw: "",
   hermes: "",
+  pi: "",
+  mcode: "",
+  kimi: "",
+  dsh: "",
+  agy: "",
+  omp: "",
+  copilot: "",
+  workbuddy: "",
 });
 
 let providers = createDefaultProviders();
@@ -197,12 +218,92 @@ let mcpConfigs: McpConfigState = {
   opencode: {},
   openclaw: {},
   hermes: {},
+  pi: {},
+  mcode: {},
+  kimi: {},
+  dsh: {},
+  agy: {},
+  omp: {},
+  copilot: {},
+  workbuddy: {},
 };
 
 const cloneProviders = (value: ProvidersByApp) =>
   deepClone(value) as ProvidersByApp;
 
+// 后端暂存、等前端处理的深链接：peek 不清除，ack 按编号清除
+let pendingDeepLink: { id: number; link: unknown } | null = null;
+let nextPendingDeepLinkId = 1;
+
+export const setPendingDeepLink = (link: unknown) => {
+  pendingDeepLink = { id: nextPendingDeepLinkId++, link };
+};
+
+export const peekPendingDeepLink = () => pendingDeepLink;
+
+export const ackPendingDeepLink = (id: number) => {
+  if (pendingDeepLink?.id === id) pendingDeepLink = null;
+};
+
+export interface CustomIconFixture {
+  id: string;
+  name: string;
+  data: string;
+  createdAt: number;
+}
+
+let customIconsState: CustomIconFixture[] = [];
+
+export interface WorkBuddyModelOwnerFixture {
+  id: string;
+  owner: string | null;
+}
+let workbuddyModelOwnersState: WorkBuddyModelOwnerFixture[] = [];
+
+export const getWorkBuddyModelOwners = () =>
+  deepClone(workbuddyModelOwnersState);
+
+export const setWorkBuddyModelOwners = (
+  owners: WorkBuddyModelOwnerFixture[],
+) => {
+  workbuddyModelOwnersState = deepClone(owners);
+};
+
+export const listCustomIcons = () => deepClone(customIconsState);
+
+export const setCustomIcons = (icons: CustomIconFixture[]) => {
+  customIconsState = deepClone(icons);
+};
+
+/** 和后端一样：同一张图不重复存，新的排最前面 */
+export const addCustomIcon = (name: string, data: string) => {
+  const existing = customIconsState.find((icon) => icon.data === data);
+  if (existing) return { icon: deepClone(existing), existed: true };
+  const icon = {
+    id: `icon-${customIconsState.length + 1}`,
+    name: name.trim(),
+    data,
+    createdAt: Date.now(),
+  };
+  customIconsState = [icon, ...customIconsState];
+  return { icon: deepClone(icon), existed: false };
+};
+
+export const renameCustomIcon = (id: string, name: string) => {
+  const icon = customIconsState.find((item) => item.id === id);
+  if (!icon) throw new Error("not found");
+  icon.name = name.trim();
+  return deepClone(icon);
+};
+
+export const deleteCustomIcon = (id: string) => {
+  customIconsState = customIconsState.filter((icon) => icon.id !== id);
+};
+
 export const resetProviderState = () => {
+  pendingDeepLink = null;
+  customIconsState = [];
+  workbuddyModelOwnersState = [];
   providers = createDefaultProviders();
   current = createDefaultCurrent();
   liveProviderIds = {
@@ -266,6 +367,14 @@ export const resetProviderState = () => {
     opencode: {},
     openclaw: {},
     hermes: {},
+    pi: {},
+    mcode: {},
+    kimi: {},
+    dsh: {},
+    agy: {},
+    omp: {},
+    copilot: {},
+    workbuddy: {},
   };
 };
 
@@ -407,6 +516,53 @@ export const getSessionMessages = (providerId: string, sourcePath: string) =>
   deepClone(
     sessionMessagesState[sessionMessageKey(providerId, sourcePath)] ?? [],
   ) as SessionMessage[];
+
+/** 模拟后端正文搜索：用户 / Agent 的 Text 块按子串（不区分大小写）匹配 */
+export const searchSessionContent = (
+  query: string,
+  providerIds?: string[],
+): SessionContentHit[] => {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [];
+  return sessionsState.flatMap((session) => {
+    if (providerIds && !providerIds.includes(session.providerId)) return [];
+    const messages =
+      sessionMessagesState[
+        sessionMessageKey(session.providerId, session.sourcePath ?? "")
+      ] ?? [];
+    const matched = messages
+      .map((message, index) => ({
+        index,
+        text:
+          message.injected ||
+          (message.role !== "user" && message.role !== "assistant")
+            ? ""
+            : message.blocks?.length
+              ? message.blocks
+                  .map((block) => (block.type === "text" ? block.text : ""))
+                  .join("\n")
+              : (message.content ?? ""),
+      }))
+      .filter(({ text }) => text.toLowerCase().includes(needle));
+    if (matched.length === 0) return [];
+    return [
+      {
+        providerId: session.providerId,
+        sourcePath: session.sourcePath ?? "",
+        snippets: matched.slice(0, 3).map(({ index, text }) => {
+          const source = text.trim();
+          return {
+            messageIndex: index,
+            ...createHighlightedSnippet(source, [
+              ...findTextMatches(source, query),
+            ]),
+          };
+        }),
+        matchCount: matched.length,
+      },
+    ];
+  });
+};
 
 export const deleteSession = (
   providerId: string,

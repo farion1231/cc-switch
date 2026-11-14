@@ -1,12 +1,22 @@
-# 在 Codex 中用 Kimi：CC Switch 本地路由攻略
+# 在 Codex 中使用 Kimi：新版直连与旧版路由
+
+## v3.20.3 起：优先使用原生 Responses 直连
+
+Kimi 开放平台和 Kimi For Coding 的官方 Codex 预设已切换为 **Responses**，无需为了协议转换开启本地路由。旧卡片保存的是创建时的快照，不会自动更新。
+
+1. 升级到 CC Switch v3.20.3 或更新版本，在 Codex 标签下按 API Key 来源选择最新的 **Kimi** 或 **Kimi For Coding** 预设。国际站（kimi.ai）的 Key 选 **Kimi Global** 或 **Kimi For Coding Global**（v3.20.4 起提供）。
+2. 填入对应 API Key，保存并启用。旧卡片建议重新添加预设；若手动迁移，确认端点正确后将「上游格式」改为 **Responses**。
+3. 重启 Codex，使配置和模型目录生效。原生 Responses 也可经标准代理转发，但不再需要 Responses→Chat 转换。
+
+详见 [v3.20.3 更新说明](../release-notes/v3.20.3-zh.md)与[添加供应商](../user-manual/zh/2-providers/2.1-add.md)。**下文保留的是旧版 Chat 格式教程与截图，仅供已有 Chat 卡片排障参考，不代表新版预设的配置。**
 
 > 适用版本：CC Switch 3.16.5 及附近版本。本文根据仓库内文档与代码整理，并用 Kimi 作为 OpenAI Chat Completions 兼容接口的示例。截图来自当前前端界面，使用去敏示例数据生成，避免泄露真实 API Key 或账户余额。
 
-## 为什么需要本地路由
+## 旧版 Chat 配置为什么需要本地路由
 
 新版 Codex CLI 面向的是 OpenAI Responses API，而 Kimi 开放平台和 Kimi For Coding 实际暴露的都是 OpenAI Chat Completions 形态，也就是 `/chat/completions`。这两种协议的请求体、流式事件和返回结构不同，直接把 Kimi 的接口地址填进 Codex 配置里，常见结果就是请求 `/responses` 返回 404，或者流式响应无法被 Codex 正确解析。
 
-Kimi For Coding 官方目前支持的第三方工具是 Claude Code、Roo Code 这类兼容 Anthropic 协议的编程 Agent，并没有覆盖 Codex。所以想在 Codex 里用 Kimi，需要一层协议转换——这正是 CC Switch 本地路由做的事。
+本文最初编写时，Kimi For Coding 官方支持的第三方工具尚未覆盖 Codex，旧版 Chat 配置需要一层协议转换——这正是 CC Switch 本地路由做的事。新版 Responses 预设不再受此限制。
 
 CC Switch 的做法是让 Codex 始终连本机路由，仍以 Responses API 发送请求；路由在内部识别当前供应商是否是 Chat 格式，再把请求改写成 Chat Completions 发给上游，最后把 Chat 响应转换回 Responses 形态返回给 Codex。
 
@@ -71,7 +81,7 @@ Kimi 的 API Key 有两个来源，对应 CC Switch 里两个不同的内置预�
 
 ## 其它 Chat 供应商怎么处理
 
-Kimi、DeepSeek、MiniMax、SiliconFlow 等常见 Chat 格式供应商在 CC Switch 里已有预设，优先用预设即可。只有预设里没有的供应商，才需要选择自定义配置；这时按对方文档填 API Key、base URL 和模型，并把 `高级选项` 里的 `上游格式` 选为 `Chat Completions（需开启路由）`。
+SiliconFlow、ModelScope 等常见 Chat 格式供应商在 CC Switch 里已有预设，优先用预设即可。只有预设里没有的供应商，才需要选择自定义配置；这时按对方文档填 API Key、base URL 和模型，并把 `高级选项` 里的 `上游格式` 选为 `Chat Completions（需开启路由）`。
 
 如果上游直接支持 OpenAI Responses API，把 `上游格式` 选为 `Responses` 即可；这时 CC Switch 按 Responses 直连，不做 Chat 转换。
 
@@ -93,6 +103,7 @@ Kimi、DeepSeek、MiniMax、SiliconFlow 等常见 Chat 格式供应商在 CC Swi
 
 保存供应商后重启 Codex。CC Switch 会生成 `cc-switch-model-catalog.json` 并把路径写入 `model_catalog_json`，但正在运行的 Codex 进程不一定会热加载模型目录。
 目前 Codex app 不支持多模型选择，默认使用配置的第一个模型。
+如果命令行 `/model` 正常，但 Codex 桌面应用的模型选择器仍看不到自定义模型，这是 Codex 桌面应用上游自身的模型门控行为，详见 [Codex 桌面应用里看不到自定义模型？（常见问题）](./codex-desktop-custom-model-visibility-zh.md)。
 
 **开了路由但请求仍走错供应商**
 

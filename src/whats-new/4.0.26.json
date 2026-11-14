@@ -1,0 +1,33 @@
+{
+  "version": "4.0.26",
+  "items": [
+    {
+      "type": "new",
+      "zh": "授权中心和官方卡片显示账号的订阅计划",
+      "zh-TW": "授權中心和官方卡片顯示帳號的訂閱方案",
+      "en": "The Auth Center and official cards now show each account's plan",
+      "ja": "アカウントと公式カードにサブスクリプションプランを表示"
+    },
+    {
+      "type": "new",
+      "zh": "一键导入链接支持 Claude Desktop、Kimi Code 等更多应用",
+      "zh-TW": "一鍵匯入連結支援 Claude Desktop、Kimi Code 等更多應用",
+      "en": "Deep links can now import providers for Claude Desktop, Kimi Code and more",
+      "ja": "ディープリンクで Claude Desktop・Kimi Code などもインポート可能に"
+    },
+    {
+      "type": "new",
+      "zh": "系统代理接走本地路由的请求时会提醒你",
+      "zh-TW": "系統代理接走本地路由的請求時會提醒你",
+      "en": "CC Switch warns you when the system proxy captures local route requests",
+      "ja": "システムプロキシがローカルルーティングの通信を横取りすると警告"
+    },
+    {
+      "type": "fix",
+      "zh": "多项性能优化，会话同步时界面不再卡住",
+      "zh-TW": "多項效能最佳化，工作階段同步時介面不再卡住",
+      "en": "Performance improvements; the window no longer freezes during session sync",
+      "ja": "パフォーマンスを改善し、セッション同期中に画面が固まらないように"
+    }
+  ]
+}

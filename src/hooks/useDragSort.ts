@@ -8,22 +8,34 @@ import {
 } from "@dnd-kit/core";
 import { arrayMove, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useTranslation } from "react-i18next";
 import type { Provider } from "@/types";
 import { providersApi, type AppId } from "@/lib/api";
+import { appHas } from "@/config/appSpecs";
 
 export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
   const queryClient = useQueryClient();
   const { t, i18n } = useTranslation();
 
   const sortedProviders = useMemo(() => {
+    const language = i18n.language?.toLowerCase();
     const locale =
       i18n.language === "zh"
         ? "zh-CN"
         : i18n.language === "zh-TW"
           ? "zh-TW"
-          : "en-US";
+          : language === "ja" || language?.startsWith("ja-")
+            ? "ja-JP"
+            : language === "ko" || language?.startsWith("ko-")
+              ? "ko-KR"
+              : language === "ru" || language?.startsWith("ru-")
+                ? "ru-RU"
+                : language === "tr" || language?.startsWith("tr-")
+                  ? "tr-TR"
+                  : language === "de" || language?.startsWith("de-")
+                    ? "de-DE"
+                    : "en-US";
     return Object.values(providers).sort((a, b) => {
       if (a.sortIndex !== undefined && b.sortIndex !== undefined) {
         return a.sortIndex - b.sortIndex;
@@ -80,10 +92,12 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
           queryKey: ["providers", appId],
         });
 
-        // 刷新故障转移队列（因为队列顺序依赖 sort_index）
-        await queryClient.invalidateQueries({
-          queryKey: ["failoverQueue", appId],
-        });
+        // Routing apps derive failover order from sort_index.
+        if (appHas(appId, "localProxy")) {
+          await queryClient.invalidateQueries({
+            queryKey: ["failoverQueue", appId],
+          });
+        }
 
         // 更新托盘菜单以反映新的排序（失败不影响主操作）
         try {
@@ -101,6 +115,8 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
         );
       } catch (error) {
         console.error("Failed to update provider sort order", error);
+        // 排序可能已经存下、只是聚合名单没发布成：按库里的顺序重画，再拖一次会重试发布。
+        void queryClient.invalidateQueries({ queryKey: ["providers", appId] });
         toast.error(
           t("provider.sortUpdateFailed", {
             defaultValue: "排序更新失败",

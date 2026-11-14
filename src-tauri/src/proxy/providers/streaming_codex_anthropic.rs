@@ -6,6 +6,7 @@
 //! those in `streaming_codex_chat.rs` (Chat → Responses); the Codex client only recognizes
 //! this set of events.
 
+use super::codex_compaction;
 use super::codex_responses_sse as sse;
 use super::transform_codex_anthropic::{
     build_responses_usage_from_anthropic, map_anthropic_stop_reason_to_status,
@@ -21,7 +22,7 @@ use super::transform_codex_chat::{
 };
 use super::transform_responses::sanitize_anthropic_tool_use_input_json;
 use crate::proxy::json_canonical::canonicalize_tool_arguments_str;
-use crate::proxy::sse::{strip_sse_field, take_sse_block};
+use crate::proxy::sse::{strip_sse_field, SseBuffer};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Map, Value};
@@ -470,6 +471,10 @@ impl AnthropicToResponsesState {
             events.extend(self.close_block(index));
         }
 
+        if self.tool_context.is_compaction_request() {
+            return self.finish_compaction(events);
+        }
+
         let (status, incomplete_reason) =
             map_anthropic_stop_reason_to_status(self.stop_reason.as_deref());
 
@@ -482,6 +487,43 @@ impl AnthropicToResponsesState {
             response["incomplete_details"] = json!({ "reason": reason });
         }
 
+        events.push(sse::response_completed(&response));
+        self.completed = true;
+        events
+    }
+
+    fn sorted_output_items(&self) -> Vec<Value> {
+        let mut output = self.output_items.clone();
+        output.sort_by_key(|(output_index, _)| *output_index);
+        output.into_iter().map(|(_, item)| item).collect()
+    }
+
+    /// Codex 远程压缩回合：在 completed 之前交回唯一一个 compaction 条目（见
+    /// `codex_compaction`）。截断、拒答等非正常结束或没有摘要正文时报可重试的错误，
+    /// 不能让 Codex 装上半截或空的摘要。
+    fn finish_compaction(&mut self, mut events: Vec<Bytes>) -> Vec<Bytes> {
+        if let Some(reason) =
+            codex_compaction::compaction_incomplete_reason(self.stop_reason.as_deref())
+        {
+            let mut response = self.base_response("incomplete", self.sorted_output_items());
+            response["incomplete_details"] = json!({ "reason": reason });
+            events.push(sse::response_incomplete(&response));
+            self.completed = true;
+            return events;
+        }
+        let summary = codex_compaction::summary_from_output_items(&self.sorted_output_items());
+        if summary.is_empty() {
+            events.extend(self.failed_event(
+                "Upstream returned no summary text for the compaction turn".to_string(),
+                Some("compaction_summary_empty".to_string()),
+            ));
+            return events;
+        }
+        let item = codex_compaction::compaction_output_item(&summary);
+        let output_index = self.next_output_index();
+        events.push(sse::output_item_done(output_index, &item));
+        self.output_items.push((output_index, item));
+        let response = self.base_response("completed", self.sorted_output_items());
         events.push(sse::response_completed(&response));
         self.completed = true;
         events
@@ -686,8 +728,7 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
     tool_context: CodexToolContext,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
-        let mut buffer = String::new();
-        let mut utf8_remainder: Vec<u8> = Vec::new();
+        let mut sse = SseBuffer::new();
         let mut state = AnthropicToResponsesState::with_tool_context(tool_context);
         let mut stream_failed = false;
 
@@ -696,14 +737,14 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
+                    sse.push_bytes(&bytes);
 
                     // A few compatible gateways ignore stream:true and return one
                     // JSON document. Hold that body intact (including pretty-printed
                     // blank lines) until EOF instead of discarding it as SSE blocks.
-                    if json_document_candidate(&buffer).is_none() {
-                        while let Some(block) = take_sse_block(&mut buffer) {
-                            let (events, failed) = process_anthropic_sse_block(&mut state, &block);
+                    if json_document_candidate(sse.pending()).is_none() {
+                        while let Some(block) = sse.next_block() {
+                            let (events, failed) = process_anthropic_sse_block(&mut state, block);
                             for event in events {
                                 yield Ok(event);
                             }
@@ -734,9 +775,9 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
         // Process a final event even when the upstream omitted the trailing blank
         // line. This is common with buffering reverse proxies and must not discard
         // the last delta or terminal message_stop.
-        if !stream_failed && !buffer.trim().is_empty() {
+        if !stream_failed && !sse.pending().trim().is_empty() {
             if !state.response_started {
-                if let Some(candidate) = json_document_candidate(&buffer) {
+                if let Some(candidate) = json_document_candidate(sse.pending()) {
                     if let Ok(body) = serde_json::from_str::<Value>(candidate) {
                         for event in responses_sse_events_from_anthropic_message(
                             &body,
@@ -749,7 +790,7 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
                 }
             }
             if !state.completed {
-                let (events, failed) = process_anthropic_sse_block(&mut state, &buffer);
+                let (events, failed) = process_anthropic_sse_block(&mut state, sse.pending());
                 for event in events {
                     yield Ok(event);
                 }
@@ -1214,5 +1255,74 @@ mod tests {
         let merged = run(input).await;
         assert!(merged.contains("event: response.failed"));
         assert!(merged.contains("boom"));
+    }
+
+    fn compaction_context() -> CodexToolContext {
+        super::super::transform_codex_chat::build_codex_tool_context_from_request(&json!({
+            "input": [{ "type": "compaction_trigger" }]
+        }))
+    }
+
+    #[tokio::test]
+    async fn test_compaction_turn_emits_single_compaction_item() {
+        let input = concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_c\",\"model\":\"claude\",\"usage\":{\"input_tokens\":9}}}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Summary body\"}}\n\n",
+            "event: content_block_stop\n",
+            "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+            "event: message_delta\n",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":3}}\n\n",
+            "event: message_stop\n",
+            "data: {\"type\":\"message_stop\"}\n\n"
+        );
+        let merged = run_with_context(input, compaction_context()).await;
+        assert_eq!(merged.matches("\"type\":\"compaction\"").count(), 2);
+        let item_pos = merged.find("\"type\":\"compaction\"").unwrap();
+        let completed_pos = merged.find("event: response.completed").unwrap();
+        assert!(item_pos < completed_pos);
+        let encoded = super::super::codex_compaction::encode_compaction_summary("Summary body");
+        assert!(merged.contains(&encoded[..encoded.len().min(40)]));
+    }
+
+    #[tokio::test]
+    async fn test_truncated_compaction_turn_reports_incomplete() {
+        // 截断、拒答、半路要调工具：都不是写完的摘要，不能交回压缩条目。
+        for (stop_reason, expected) in [
+            ("max_tokens", "max_output_tokens"),
+            ("refusal", "content_filter"),
+            ("tool_use", "tool_use"),
+        ] {
+            let input = format!(
+                concat!(
+                    "event: message_start\n",
+                    "data: {{\"type\":\"message_start\",\"message\":{{\"id\":\"msg_c\",\"model\":\"claude\"}}}}\n\n",
+                    "event: content_block_start\n",
+                    "data: {{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{{\"type\":\"text\",\"text\":\"\"}}}}\n\n",
+                    "event: content_block_delta\n",
+                    "data: {{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{{\"type\":\"text_delta\",\"text\":\"half\"}}}}\n\n",
+                    "event: message_delta\n",
+                    "data: {{\"type\":\"message_delta\",\"delta\":{{\"stop_reason\":\"{}\"}}}}\n\n"
+                ),
+                stop_reason
+            );
+            let merged = run_with_context(&input, compaction_context()).await;
+            assert!(
+                merged.contains("event: response.incomplete"),
+                "{stop_reason}"
+            );
+            assert!(
+                merged.contains(&format!("\"reason\":\"{expected}\"")),
+                "{stop_reason}"
+            );
+            assert!(
+                !merged.contains("event: response.completed"),
+                "{stop_reason}"
+            );
+            assert!(!merged.contains("\"type\":\"compaction\""), "{stop_reason}");
+        }
     }
 }

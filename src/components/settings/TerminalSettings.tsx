@@ -15,6 +15,7 @@ const MACOS_TERMINALS = [
   { value: "alacritty", labelKey: "settings.terminal.options.macos.alacritty" },
   { value: "kitty", labelKey: "settings.terminal.options.macos.kitty" },
   { value: "ghostty", labelKey: "settings.terminal.options.macos.ghostty" },
+  { value: "otty", labelKey: "settings.terminal.options.macos.otty" },
   { value: "wezterm", labelKey: "settings.terminal.options.macos.wezterm" },
   { value: "kaku", labelKey: "settings.terminal.options.macos.kaku" },
   { value: "warp", labelKey: "settings.terminal.options.macos.warp" },
@@ -78,37 +79,31 @@ export interface TerminalSettingsProps {
   onChange: (value: string) => void;
 }
 
-export function TerminalSettings({ value, onChange }: TerminalSettingsProps) {
+/** 首选终端的下拉框（设置 → 通用 → 窗口与终端那一行的控件）。 */
+export function TerminalSelect({
+  value,
+  onChange,
+  className,
+}: TerminalSettingsProps & { className?: string }) {
   const { t } = useTranslation();
   const terminals = getTerminalOptions();
-  const defaultTerminal = getDefaultTerminal();
-
-  // Use value or default
-  const currentValue = value || defaultTerminal;
+  const currentValue = value || getDefaultTerminal();
 
   return (
-    <section className="space-y-2">
-      <header className="space-y-1">
-        <h3 className="text-sm font-medium">{t("settings.terminal.title")}</h3>
-        <p className="text-xs text-muted-foreground">
-          {t("settings.terminal.description")}
-        </p>
-      </header>
-      <Select value={currentValue} onValueChange={onChange}>
-        <SelectTrigger className="w-[200px]">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {terminals.map((terminal) => (
-            <SelectItem key={terminal.value} value={terminal.value}>
-              {t(terminal.labelKey)}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <p className="text-xs text-muted-foreground">
-        {t("settings.terminal.fallbackHint")}
-      </p>
-    </section>
+    <Select value={currentValue} onValueChange={onChange}>
+      <SelectTrigger
+        className={className ?? "w-[200px]"}
+        aria-label={t("settings.terminal.title")}
+      >
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {terminals.map((terminal) => (
+          <SelectItem key={terminal.value} value={terminal.value}>
+            {t(terminal.labelKey)}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }

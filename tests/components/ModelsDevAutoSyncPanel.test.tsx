@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
@@ -18,8 +19,12 @@ const {
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string, options?: { count?: number }) =>
-      options?.count == null ? key : `${key}:${options.count}`,
+    t: (key: string, options?: { count?: number; status?: string }) =>
+      options?.count != null
+        ? `${key}:${options.count}`
+        : options?.status != null
+          ? `${key}:${options.status}`
+          : key,
     i18n: { resolvedLanguage: "en" },
   }),
 }));
@@ -43,6 +48,12 @@ vi.mock("@/lib/api/settings", () => ({
 vi.mock("@/lib/modelsDevAutoSync", () => ({
   MODELS_DEV_SYNC_CONFIG_QUERY_KEY: ["models-dev-sync-config"],
   syncModelsDevPricing,
+}));
+
+const invokeMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: invokeMock,
 }));
 
 import { ModelsDevAutoSyncPanel } from "@/components/usage/ModelsDevAutoSyncPanel";
@@ -84,44 +95,50 @@ describe("ModelsDevAutoSyncPanel", () => {
       changed: 1,
       syncedAt: Date.now(),
     });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          openai: {
-            name: "OpenAI",
-            models: {
-              "gpt-5": {
-                name: "GPT-5",
-                release_date: "2025-08-01",
-                cost: { input: 1, output: 2 },
-              },
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command !== "fetch_models_dev") {
+        throw new Error(`Unexpected command: ${command}`);
+      }
+      return JSON.stringify({
+        openai: {
+          name: "OpenAI",
+          models: {
+            "gpt-5": {
+              name: "GPT-5",
+              release_date: "2025-08-01",
+              cost: { input: 1, output: 2 },
             },
           },
-          deepseek: {
-            name: "DeepSeek",
-            models: {
-              "deepseek-chat": {
-                name: "DeepSeek Chat",
-                release_date: "2025-12-01",
-                cost: { input: 0.3, output: 1.2 },
-              },
+        },
+        deepseek: {
+          name: "DeepSeek",
+          models: {
+            "deepseek-chat": {
+              name: "DeepSeek Chat",
+              release_date: "2025-12-01",
+              cost: { input: 0.3, output: 1.2 },
             },
           },
-        }),
-      }),
-    );
+        },
+      });
+    });
   });
 
   it("loads automatic sync as disabled by default", async () => {
+    const user = userEvent.setup();
     renderPanel();
 
     expect(
-      await screen.findByText("usage.modelsDevAutoSync.title"),
+      await screen.findByText(
+        "usage.pricing.modelsDevTitle:usage.modelsDevAutoSync.disabled",
+      ),
     ).toBeInTheDocument();
-    expect(screen.getByText(state.configPath)).toBeInTheDocument();
     expect(screen.getByRole("switch")).not.toBeChecked();
+    // 本地定价文件路径在 ⋯ 菜单里
+    await user.click(
+      screen.getByRole("button", { name: "usage.pricing.moreActions" }),
+    );
+    expect(await screen.findByText(state.configPath)).toBeInTheDocument();
     expect(saveModelsDevSyncConfig).not.toHaveBeenCalled();
   });
 
@@ -188,10 +205,14 @@ describe("ModelsDevAutoSyncPanel", () => {
     getModelsDevSyncConfig
       .mockResolvedValueOnce(initialState)
       .mockResolvedValue(state);
+    const user = userEvent.setup();
     renderPanel();
 
-    fireEvent.click(
-      await screen.findByRole("button", {
+    await user.click(
+      await screen.findByRole("button", { name: "usage.pricing.moreActions" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", {
         name: "usage.modelsDevAutoSync.reloadLocalFile",
       }),
     );

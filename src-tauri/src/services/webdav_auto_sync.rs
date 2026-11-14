@@ -9,6 +9,7 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use crate::error::AppError;
+use crate::services::sync_protocol::should_trigger_auto_sync_for_table;
 use crate::services::webdav_sync as webdav_sync_service;
 use crate::settings::{self, WebDavSyncSettings};
 
@@ -41,18 +42,7 @@ pub(crate) fn is_auto_sync_suppressed() -> bool {
 }
 
 pub fn should_trigger_for_table(table: &str) -> bool {
-    let normalized = table.trim().to_ascii_lowercase();
-    matches!(
-        normalized.as_str(),
-        "providers"
-            | "provider_endpoints"
-            | "mcp_servers"
-            | "prompts"
-            | "skills"
-            | "skill_repos"
-            | "settings"
-            | "proxy_config"
-    )
+    should_trigger_auto_sync_for_table(table)
 }
 
 pub(crate) fn enqueue_change_signal(tx: &Sender<String>, table: &str) -> bool {
@@ -107,21 +97,26 @@ async fn run_auto_sync_upload(
     db: &crate::database::Database,
     app: &AppHandle,
 ) -> Result<(), AppError> {
-    let mut settings = settings::get_webdav_sync_settings();
-    if !should_run_auto_sync(settings.as_ref()) {
+    if !should_run_auto_sync(settings::get_webdav_sync_settings().as_ref()) {
         return Ok(());
     }
-
-    let mut sync_settings = match settings.take() {
-        Some(value) => value,
-        None => return Ok(()),
+    // Re-read the settings under the sync lock so a "clear config" or "turn
+    // off auto sync" that got the lock first is honoured instead of uploading
+    // with the stale credentials captured before waiting.
+    let outcome = webdav_sync_service::run_with_sync_lock(async {
+        let Some(mut sync_settings) = settings::get_webdav_sync_settings() else {
+            return Ok(None);
+        };
+        if !should_run_auto_sync(Some(&sync_settings)) {
+            return Ok(None);
+        }
+        let result = webdav_sync_service::upload(db, &mut sync_settings).await;
+        Ok(Some((sync_settings, result)))
+    })
+    .await?;
+    let Some((mut sync_settings, result)) = outcome else {
+        return Ok(());
     };
-
-    let result = webdav_sync_service::run_with_sync_lock(webdav_sync_service::upload(
-        db,
-        &mut sync_settings,
-    ))
-    .await;
     match result {
         Ok(_) => {
             emit_auto_sync_status_updated(app, "success", None);
@@ -201,18 +196,21 @@ mod tests {
         MAX_AUTO_SYNC_WAIT_MS,
     };
     use crate::settings::WebDavSyncSettings;
+    use serial_test::serial;
     use std::time::{Duration, Instant};
     use tokio::sync::mpsc::channel;
 
     #[test]
     fn should_trigger_sync_for_config_tables_only() {
         assert!(should_trigger_for_table("providers"));
+        assert!(should_trigger_for_table("profiles"));
         assert!(should_trigger_for_table("settings"));
         assert!(!should_trigger_for_table("proxy_request_logs"));
         assert!(!should_trigger_for_table("provider_health"));
     }
 
     #[test]
+    #[serial]
     fn suppression_guard_enables_and_restores_state() {
         assert!(!is_auto_sync_suppressed());
         {

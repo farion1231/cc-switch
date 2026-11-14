@@ -1,5 +1,7 @@
 import React from "react";
 import type { AppId } from "@/lib/api/types";
+import type { VisibleApps } from "@/types";
+import { APP_IDS } from "./appSpecs";
 import {
   ClaudeIcon,
   CodexIcon,
@@ -15,29 +17,36 @@ export interface AppConfig {
   badgeClass: string;
 }
 
-export const APP_IDS: AppId[] = [
-  "claude",
-  "claude-desktop",
-  "codex",
-  "gemini",
-  "grokbuild",
-  "opencode",
-  "openclaw",
-  "hermes",
-];
+export const DEFAULT_VISIBLE_APPS = Object.fromEntries(
+  APP_IDS.map((app) => [app, true]),
+) as VisibleApps;
 
-/** App IDs shown in Skills panels (excludes OpenClaw — it doesn't support Skills) */
-export const SKILLS_APP_IDS: AppId[] = [
-  "claude",
-  "codex",
-  "gemini",
-  "grokbuild",
-  "opencode",
-  "hermes",
-];
+/**
+ * 应用页和侧栏的应用顺序：先按用户拖出来的顺序（`settings.appOrder`，不认识的 ID 忽略），
+ * 没在里面的应用（比如新版本加的）插回默认顺序里它前一个应用的后面。
+ */
+export function orderAppIds(saved: readonly string[] | undefined): AppId[] {
+  if (!saved?.length) return [...APP_IDS];
+  const known = new Set<string>(APP_IDS);
+  const ordered: AppId[] = [];
+  for (const id of saved) {
+    if (known.has(id) && !ordered.includes(id as AppId)) {
+      ordered.push(id as AppId);
+    }
+  }
+  APP_IDS.forEach((app, index) => {
+    if (ordered.includes(app)) return;
+    const previous = APP_IDS.slice(0, index)
+      .reverse()
+      .find((id) => ordered.includes(id));
+    ordered.splice(previous ? ordered.indexOf(previous) + 1 : 0, 0, app);
+  });
+  return ordered;
+}
 
-/** App IDs shown in MCP panels (excludes OpenClaw) */
-export const MCP_APP_IDS: AppId[] = [...SKILLS_APP_IDS];
+export function usesGeminiStyleForm(appId: string): boolean {
+  return appId === "gemini" || appId === "agy";
+}
 
 export const APP_ICON_MAP: Record<AppId, AppConfig> = {
   claude: {
@@ -125,4 +134,85 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
     badgeClass:
       "bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 border-0 gap-1.5",
   },
+  dsh: {
+    label: "DeepSeek Harness",
+    icon: <ProviderIcon icon="deepseek" name="DeepSeek Harness" size={14} />,
+    activeClass: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+    badgeClass:
+      "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-0 gap-1.5",
+  },
+  kimi: {
+    label: "Kimi Code",
+    icon: <ProviderIcon icon="kimi" name="Kimi Code" size={14} />,
+    activeClass: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+    badgeClass:
+      "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-0 gap-1.5",
+  },
+  mcode: {
+    label: "MiniMax Code",
+    icon: <ProviderIcon icon="minimax" name="MiniMax Code" size={14} />,
+    activeClass: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
+    badgeClass:
+      "bg-orange-500/10 text-orange-700 dark:text-orange-300 border-0 gap-1.5",
+  },
+  pi: {
+    label: "Pi",
+    icon: <ProviderIcon icon="pi" name="Pi" size={14} showFallback={false} />,
+    activeClass:
+      "bg-fuchsia-500/10 ring-1 ring-fuchsia-500/20 hover:bg-fuchsia-500/20 text-fuchsia-600 dark:text-fuchsia-400",
+    badgeClass:
+      "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300 hover:bg-fuchsia-500/20 border-0 gap-1.5",
+  },
+  workbuddy: {
+    label: "WorkBuddy",
+    icon: <ProviderIcon icon="workbuddy" name="WorkBuddy" size={14} />,
+    activeClass:
+      "bg-teal-500/10 ring-1 ring-teal-500/20 hover:bg-teal-500/20 text-teal-600 dark:text-teal-400",
+    badgeClass:
+      "bg-teal-500/10 text-teal-700 dark:text-teal-300 hover:bg-teal-500/20 border-0 gap-1.5",
+  },
+  agy: {
+    label: "Antigravity",
+    icon: (
+      <ProviderIcon
+        icon="antigravity"
+        name="Antigravity"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-sky-500/10 ring-1 ring-sky-500/20 hover:bg-sky-500/20 text-sky-700 dark:text-sky-300",
+    badgeClass:
+      "bg-sky-500/10 text-sky-700 dark:text-sky-300 hover:bg-sky-500/20 border-0 gap-1.5",
+  },
+  omp: {
+    label: "Oh My Pi",
+    icon: (
+      <ProviderIcon icon="omp" name="Oh My Pi" size={14} showFallback={false} />
+    ),
+    activeClass:
+      "bg-cyan-500/10 ring-1 ring-cyan-500/20 hover:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400",
+    badgeClass:
+      "bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 hover:bg-cyan-500/20 border-0 gap-1.5",
+  },
+  copilot: {
+    label: "Copilot CLI",
+    icon: (
+      <ProviderIcon
+        icon="githubcopilot"
+        name="GitHub Copilot CLI"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-slate-500/10 ring-1 ring-slate-500/20 hover:bg-slate-500/20 text-slate-700 dark:text-slate-300",
+    badgeClass:
+      "bg-slate-500/10 text-slate-700 dark:text-slate-300 hover:bg-slate-500/20 border-0 gap-1.5",
+  },
 };
+
+export function getAppLabel(appId: string): string {
+  return APP_ICON_MAP[appId as AppId]?.label ?? appId;
+}

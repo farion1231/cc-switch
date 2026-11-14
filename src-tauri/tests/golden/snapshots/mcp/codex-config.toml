@@ -1,0 +1,28 @@
+# personal settings
+model_provider = "custom"
+model = "gpt-5"
+approval_policy = "on-request"
+
+[model_providers.custom]
+name = "custom"
+base_url = "https://api.example.com/v1"
+wire_api = "responses"
+
+[projects."/Users/me/repo"]
+trust_level = "trusted"
+
+[mcp_servers.external-only]
+command = "external"
+
+[mcp_servers.http-server]
+url = "https://mcp.example.com/mcp"
+
+[mcp_servers.http-server.http_headers]
+Authorization = "Bearer mcp-header"
+
+[mcp_servers.stdio-server]
+command = "example-mcp-server"
+args = ["--stdio"]
+
+[mcp_servers.stdio-server.env]
+EXAMPLE_TOKEN = "mcp-token"

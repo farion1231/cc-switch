@@ -4,6 +4,8 @@ module.exports = {
   darkMode: ["selector", ".dark"],
   theme: {
     extend: {
+      // v7 禁用态统一 0.45（tokens.css 的 [aria-disabled] 规则）
+      opacity: { 45: "0.45" },
       colors: {
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
@@ -38,6 +40,90 @@ module.exports = {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
+        // v7 设计 token（见 src/index.css）。纯 var() 颜色不支持 /50 这类透明度修饰。
+        app: "var(--bg-app)",
+        sidebar: "var(--bg-sidebar)",
+        subtle: "var(--bg-subtle)",
+        selected: "var(--bg-selected)",
+        surface: "var(--bg-card)",
+        "border-strong": "var(--border-strong)",
+        fg: {
+          1: "var(--text-1)",
+          2: "var(--text-2)",
+          3: "var(--text-3)",
+        },
+        action: {
+          DEFAULT: "var(--action-bg)",
+          fg: "var(--action-fg)",
+          hover: "var(--action-hover)",
+          text: "var(--action-text)",
+          soft: "var(--action-soft)",
+        },
+        inverse: {
+          DEFAULT: "var(--inverse-bg)",
+          fg: "var(--inverse-fg)",
+          hover: "var(--inverse-hover)",
+        },
+        overlay: "var(--overlay)",
+        "control-off": "var(--control-off)",
+        direct: {
+          DEFAULT: "var(--direct-fill)",
+          text: "var(--direct-text)",
+          soft: "var(--direct-soft)",
+          solid: "var(--direct-solid)",
+          on: "var(--direct-on)",
+          border: "var(--direct-border)",
+        },
+        route: {
+          DEFAULT: "var(--route-fill)",
+          text: "var(--route-text)",
+          soft: "var(--route-soft)",
+          solid: "var(--route-solid)",
+          on: "var(--route-on)",
+          border: "var(--route-border)",
+        },
+        stack: {
+          DEFAULT: "var(--stack-fill)",
+          text: "var(--stack-text)",
+          soft: "var(--stack-soft)",
+          solid: "var(--stack-solid)",
+          on: "var(--stack-on)",
+          border: "var(--stack-border)",
+        },
+        success: {
+          DEFAULT: "var(--success)",
+          text: "var(--success-text)",
+          soft: "var(--success-soft)",
+        },
+        warning: {
+          DEFAULT: "var(--warning)",
+          text: "var(--warning-text)",
+          soft: "var(--warning-soft)",
+        },
+        danger: {
+          DEFAULT: "var(--danger)",
+          text: "var(--danger-text)",
+          soft: "var(--danger-soft)",
+        },
+        // 会话阅读页 Agent 主题色：text-agent-claude / bg-agent-codex / border-agent-gemini …
+        agent: {
+          claude: "var(--agent-claude)",
+          codex: "var(--agent-codex)",
+          gemini: "var(--agent-gemini)",
+          opencode: "var(--agent-opencode)",
+          pi: "var(--agent-pi)",
+          generic: "var(--agent-generic)",
+        },
+        diff: {
+          add: "var(--diff-add-bg)",
+          del: "var(--diff-del-bg)",
+        },
+        chart: {
+          1: "var(--chart-1)",
+          2: "var(--chart-2)",
+          usage: "var(--chart-usage)",
+          grid: "var(--chart-grid)",
+        },
         blue: {
           400: "#409CFF",
           500: "#0A84FF",
@@ -73,22 +159,80 @@ module.exports = {
         sm: "0 1px 2px 0 rgb(0 0 0 / 0.05)",
         md: "0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)",
         lg: "0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)",
+        // v7：分段控件凸起、卡片悬停 / 菜单、弹层 / 对话框、抽屉
+        "v7-sm": "var(--shadow-sm)",
+        "v7-md": "var(--shadow-md)",
+        "v7-lg": "var(--shadow-lg)",
+      },
+      // 只写 border / divide 不带颜色时用主题边框色；不设的话 Tailwind 默认是浅灰 #e4e4e7，深色下成了白线
+      borderColor: {
+        DEFAULT: "hsl(var(--border))",
       },
       borderRadius: {
         sm: "0.375rem",
         md: "0.5rem",
         lg: "0.75rem",
         xl: "0.875rem",
+        // v7：按钮、小控件、侧栏行 / 卡片、分段控件、输入框、弹层、通知条 / 对话框、抽屉
+        control: "6px",
+        panel: "10px",
+        dialog: "14px",
+      },
+      // 字号、控件高度随界面密度变（src/index.css 的 --fs-* / --h-*，<html data-density>）
+      fontSize: {
+        // v7 字体角色（AUTHORING.md「颜色与字体」）
+        badge: [
+          "var(--fs-badge)",
+          { lineHeight: "var(--lh-badge)", fontWeight: "500" },
+        ],
+        caption: ["var(--fs-caption)", { lineHeight: "var(--lh-caption)" }],
+        body: ["var(--fs-body)", { lineHeight: "var(--lh-body)" }],
+        strong: [
+          "var(--fs-strong)",
+          { lineHeight: "var(--lh-strong)", fontWeight: "500" },
+        ],
+        section: [
+          "var(--fs-section)",
+          { lineHeight: "var(--lh-section)", fontWeight: "600" },
+        ],
+        title: [
+          "var(--fs-title)",
+          { lineHeight: "var(--lh-title)", fontWeight: "600" },
+        ],
+        page: [
+          "var(--fs-page)",
+          { lineHeight: "var(--lh-page)", fontWeight: "600" },
+        ],
+        metric: ["24px", { lineHeight: "32px", fontWeight: "600" }],
+        // 还没迁到字体角色的 text-xs 跟着辅助字放大，免得舒适密度下它比正文小两档
+        xs: ["var(--fs-xs)", { lineHeight: "var(--lh-xs)" }],
+      },
+      spacing: {
+        // 按钮：control = regular，control-sm = compact
+        control: "var(--h-control)",
+        "control-sm": "var(--h-control-sm)",
+        "nav-row": "var(--h-nav-row)",
+        "card-y": "var(--card-py)",
+      },
+      minHeight: {
+        card: "var(--h-card)",
       },
       fontFamily: {
         // 使用与之前版本保持一致的系统字体栈
         sans: [
           "-apple-system",
           "BlinkMacSystemFont",
+          '"SF Pro Text"',
+          '"PingFang SC"',
+          '"Hiragino Sans GB"',
+          '"Segoe UI Variable Text"',
           '"Segoe UI"',
+          '"Microsoft YaHei UI"',
+          '"Microsoft YaHei"',
           "Roboto",
           '"Helvetica Neue"',
           "Arial",
+          "system-ui",
           "sans-serif",
         ],
         mono: [
@@ -109,8 +253,22 @@ module.exports = {
         "pulse-slow": "pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite",
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
+        "row-flash": "rowFlash 4s ease-in-out forwards",
+        "row-fade": "rowFade 3s ease-out forwards",
       },
       keyframes: {
+        // 从「发现」跳到「已安装」后标出那一行：黄底闪两下，停一会再淡出
+        // 动 opacity 而不是 background-color：WebKit 里 keyframes 带 var() 的颜色会跳变成快闪
+        rowFlash: {
+          "0%": { opacity: "0" },
+          "15%, 50%, 75%": { opacity: "1" },
+          "32%": { opacity: "0.15" },
+          "100%": { opacity: "0" },
+        },
+        rowFade: {
+          "0%, 60%": { opacity: "1" },
+          "100%": { opacity: "0" },
+        },
         fadeIn: {
           "0%": {
             opacity: "0",
@@ -168,6 +326,6 @@ module.exports = {
       },
     },
   },
-  plugins: [],
+  // animate-in / fade-in-0 / zoom-in-95 …：Radix 浮层（菜单、弹层、对话框、提示）的进出场动画
+  plugins: [require("tailwindcss-animate")],
 };
-

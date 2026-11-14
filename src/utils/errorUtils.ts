@@ -37,6 +37,49 @@ export const extractErrorMessage = (error: unknown): string => {
   return "";
 };
 
+export const translatePiProviderMutationError = (
+  message: string,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string => {
+  if (!message) return "";
+  // Oh My Pi 的后端错误本身就是 i18n key（`omp.errors.*`）。
+  const ompKey = message.match(/omp\.errors\.[A-Za-z]+/)?.[0];
+  if (ompKey) return t(ompKey);
+
+  if (
+    message.includes("models.json changed") ||
+    message.includes("changed outside CC Switch") ||
+    message.includes("no longer present in models.json") ||
+    message.includes("another value now owns the key")
+  ) {
+    return t("pi.provider.writeConflict");
+  }
+
+  if (message.includes("Pi provider") && message.includes("already exists")) {
+    return t("pi.form.providerKeyDuplicate");
+  }
+
+  return "";
+};
+
+/**
+ * Kimi 的默认模型可能在 Kimi Code 里被改过、页面上还是旧的，
+ * 后端按 config.toml 现读拒绝后，把这两条英文原因换成说明。
+ */
+export const translateKimiProviderMutationError = (
+  message: string,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string => {
+  if (!message) return "";
+  if (message.includes("Select another default model in Kimi Code")) {
+    return t("kimi.error.defaultModelInUse");
+  }
+  if (message.includes("Update the secondary model selection in Kimi Code")) {
+    return t("kimi.error.secondaryModelInUse");
+  }
+  return "";
+};
+
 /**
  * 将已知的 MCP 相关后端错误（通常为中文硬编码）映射为 i18n 文案
  * 采用包含式匹配，尽量稳健地覆盖不同上下文的相似消息。
@@ -47,7 +90,30 @@ export const translateMcpBackendError = (
   t: (key: string, opts?: any) => string,
 ): string => {
   if (!message) return "";
+  // Oh My Pi 的后端错误本身就是 i18n key（`omp.errors.*`）。
+  const ompKey = message.match(/omp\.errors\.[A-Za-z]+/)?.[0];
+  if (ompKey) return t(ompKey);
   const msg = String(message).trim();
+
+  // Pi 的 MCP 规则（src-tauri/src/mcp/pi.rs）
+  if (msg.includes("Pi 不支持 SSE")) {
+    return t("mcp.error.piSseUnsupported");
+  }
+  const piName = msg.match(
+    /Pi 的 MCP 服务器名只能包含字母、数字、_ 和 -：(.*)$/,
+  );
+  if (piName) {
+    return t("mcp.error.piInvalidName", { id: piName[1] });
+  }
+  const piConflict = msg.match(
+    /Pi 把只差 - 和 _ 的服务器名视为同一个：(.+) 与已有的 (.+) 冲突/,
+  );
+  if (piConflict) {
+    return t("mcp.error.piNameConflict", {
+      id: piConflict[1],
+      other: piConflict[2],
+    });
+  }
 
   // 基础字段与结构校验相关
   if (msg.includes("MCP 服务器 ID 不能为空")) {

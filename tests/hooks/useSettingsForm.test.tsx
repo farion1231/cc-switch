@@ -28,6 +28,26 @@ afterEach(() => {
 });
 
 describe("useSettingsForm Hook", () => {
+  it("ignores an unsupported cached language sharing the Chinese prefix", () => {
+    useSettingsQueryMock.mockReturnValue({ data: null, isLoading: false });
+    window.localStorage.setItem("language", "zha");
+    (i18n as any).language = "en";
+    const { result } = renderHook(() => useSettingsForm());
+    expect(result.current.readPersistedLanguage()).toBe("en");
+  });
+
+  it.each([
+    ["zh-TW-u-nu-hanidec", "zh-TW"],
+    ["zh-Hant-TW", "zh-TW"],
+    ["zh-hantx", "zh"],
+    ["zh-hkx", "zh"],
+  ])("normalizes the Chinese tag %s to %s", (language, expected) => {
+    useSettingsQueryMock.mockReturnValue({ data: null, isLoading: false });
+    window.localStorage.setItem("language", language);
+    const { result } = renderHook(() => useSettingsForm());
+    expect(result.current.readPersistedLanguage()).toBe(expected);
+  });
+
   it("should normalize settings and sync language on initialization", async () => {
     useSettingsQueryMock.mockReturnValue({
       data: {
@@ -57,6 +77,22 @@ describe("useSettingsForm Hook", () => {
     expect(result.current.initialLanguage).toBe("en");
     expect(changeLanguageSpy).toHaveBeenCalledWith("en");
   });
+
+  it.each(["tr", "ko", "ru", "de"])(
+    "preserves %s from server settings",
+    async (language) => {
+      useSettingsQueryMock.mockReturnValue({
+        data: { language },
+        isLoading: false,
+      });
+      const { result } = renderHook(() => useSettingsForm());
+      await waitFor(() =>
+        expect(result.current.settings?.language).toBe(language),
+      );
+      expect(result.current.initialLanguage).toBe(language);
+      expect(changeLanguageSpy).toHaveBeenCalledWith(language);
+    },
+  );
 
   it("should support japanese language preference from server data", async () => {
     useSettingsQueryMock.mockReturnValue({
@@ -170,6 +206,7 @@ describe("useSettingsForm Hook", () => {
         enableClaudePluginIntegration: true,
         claudeConfigDir: "  /reset  ",
         codexConfigDir: "   ",
+        piConfigDir: "  /pi-reset  ",
         language: "zh",
       });
     });
@@ -180,6 +217,7 @@ describe("useSettingsForm Hook", () => {
     expect(settings.enableClaudePluginIntegration).toBe(true);
     expect(settings.claudeConfigDir).toBe("/reset");
     expect(settings.codexConfigDir).toBeUndefined();
+    expect(settings.piConfigDir).toBe("/pi-reset");
     expect(settings.language).toBe("zh");
     expect(result.current.initialLanguage).toBe("en");
     expect(changeLanguageSpy).toHaveBeenCalledWith("en");

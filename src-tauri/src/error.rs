@@ -9,6 +9,9 @@ pub enum AppError {
     Config(String),
     #[error("无效输入: {0}")]
     InvalidInput(String),
+    /// Native files changed after CC Switch last read them.
+    #[error("并发冲突: {0}")]
+    Conflict(String),
     #[error("IO 错误: {path}: {source}")]
     Io {
         path: String,
