@@ -2174,13 +2174,23 @@ impl RequestForwarder {
                         provider.id
                     );
                 }
-            } else if super::providers::codex_compaction::prepare_native_third_party_request(
-                &mut request_body,
-            ) {
-                log::debug!(
-                    "[Codex] Rewrote compaction items for a native Responses upstream (provider={})",
-                    provider.id
-                );
+            } else {
+                if super::providers::codex_compaction::prepare_native_third_party_request(
+                    &mut request_body,
+                ) {
+                    log::debug!(
+                        "[Codex] Rewrote compaction items for a native Responses upstream (provider={})",
+                        provider.id
+                    );
+                }
+                if super::providers::transform_codex_responses_reorder::normalize_tool_output_grouping(
+                    &mut request_body,
+                ) {
+                    log::debug!(
+                        "[Codex] Regrouped tool outputs with their call batch for a native Responses upstream (provider={})",
+                        provider.id
+                    );
+                }
             }
 
             // Kimi 会在工具调用后再吐一条空助手消息，下一轮又拒收这段历史；DeepSeek 同样
