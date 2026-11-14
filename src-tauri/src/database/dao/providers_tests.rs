@@ -250,3 +250,56 @@ fn benchmark_provider_list() {
         );
     }
 }
+
+#[test]
+fn endpoint_last_used_survives_a_provider_save() {
+    let db = Database::memory().unwrap();
+    let mut subject = provider("p");
+    let mut meta = ProviderMeta::default();
+    meta.custom_endpoints.insert(
+        "https://a".to_string(),
+        crate::settings::CustomEndpoint {
+            url: "https://a".to_string(),
+            added_at: 10,
+            last_used: None,
+        },
+    );
+    subject.meta = Some(meta);
+    db.save_provider("claude", &subject).unwrap();
+
+    let loaded = db.get_all_providers("claude").unwrap();
+    assert_eq!(
+        loaded["p"].meta.as_ref().unwrap().custom_endpoints["https://a"].last_used,
+        None
+    );
+
+    db.set_endpoint_last_used("claude", "p", "https://a", 1_700_000_000_000)
+        .unwrap();
+    let loaded = db.get_all_providers("claude").unwrap();
+    assert_eq!(
+        loaded["p"].meta.as_ref().unwrap().custom_endpoints["https://a"].last_used,
+        Some(1_700_000_000_000)
+    );
+
+    // 旧实现是「改内存里的 meta 再 save_provider」，而 save_provider 写库前会把
+    // custom_endpoints 从 meta 摘掉；保存一次 provider 之后值必须还在。
+    db.save_provider("claude", &loaded["p"]).unwrap();
+    let reloaded = db.get_all_providers("claude").unwrap();
+    assert_eq!(
+        reloaded["p"].meta.as_ref().unwrap().custom_endpoints["https://a"].last_used,
+        Some(1_700_000_000_000)
+    );
+
+    // 端点不存在时是无操作：不报错，也不凭空建行
+    db.set_endpoint_last_used("claude", "p", "https://missing", 1)
+        .unwrap();
+    assert_eq!(
+        db.get_all_providers("claude").unwrap()["p"]
+            .meta
+            .as_ref()
+            .unwrap()
+            .custom_endpoints
+            .len(),
+        1
+    );
+}

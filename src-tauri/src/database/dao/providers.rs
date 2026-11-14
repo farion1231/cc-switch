@@ -190,7 +190,7 @@ impl Database {
 
         let mut stmt_endpoints = conn
             .prepare_cached(
-                "SELECT e.provider_id, e.url, e.added_at
+                "SELECT e.provider_id, e.url, e.added_at, e.last_used
              FROM provider_endpoints e
              INNER JOIN providers p ON p.id = e.provider_id AND p.app_type = e.app_type
              WHERE e.app_type = ?1 AND (?2 = 0 OR p.in_failover_queue = 1)
@@ -203,12 +203,13 @@ impl Database {
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
                 ))
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         for endpoint in endpoints {
-            let (provider_id, url, added_at) =
+            let (provider_id, url, added_at, last_used) =
                 endpoint.map_err(|e| AppError::Database(e.to_string()))?;
             if let Some(meta) = providers
                 .get_mut(&provider_id)
@@ -219,7 +220,7 @@ impl Database {
                     crate::settings::CustomEndpoint {
                         url,
                         added_at: added_at.unwrap_or(0),
-                        last_used: None,
+                        last_used,
                     },
                 );
             }
@@ -432,9 +433,15 @@ impl Database {
 
             for (url, endpoint) in endpoints {
                 tx.execute(
-                    "INSERT INTO provider_endpoints (provider_id, app_type, url, added_at)
-                     VALUES (?1, ?2, ?3, ?4)",
-                    params![provider.id, app_type, url, endpoint.added_at],
+                    "INSERT INTO provider_endpoints (provider_id, app_type, url, added_at, last_used)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![
+                        provider.id,
+                        app_type,
+                        url,
+                        endpoint.added_at,
+                        endpoint.last_used
+                    ],
                 )
                 .map_err(|e| AppError::Database(e.to_string()))?;
             }
@@ -621,6 +628,27 @@ impl Database {
         conn.execute(
             "DELETE FROM provider_endpoints WHERE provider_id = ?1 AND app_type = ?2 AND url = ?3",
             params![provider_id, app_type, url],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// 记录自定义端点的「最近使用」时间（毫秒）。
+    ///
+    /// 端点存在独立表里，因此这里直接写列；不要绕 `save_provider`——它写库前会把
+    /// `meta.custom_endpoints` 摘掉，改动会被静默丢弃。端点不存在时是无操作。
+    pub fn set_endpoint_last_used(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+        url: &str,
+        last_used: i64,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "UPDATE provider_endpoints SET last_used = ?1
+             WHERE provider_id = ?2 AND app_type = ?3 AND url = ?4",
+            params![last_used, provider_id, app_type, url],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())

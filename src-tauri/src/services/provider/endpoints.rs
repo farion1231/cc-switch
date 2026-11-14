@@ -76,17 +76,13 @@ pub fn update_endpoint_last_used(
 ) -> Result<(), AppError> {
     let normalized = url.trim().trim_end_matches('/').to_string();
 
-    // Get provider, update last_used, save back
-    let mut providers = state.db.get_all_providers(app_type.as_str())?;
-    if let Some(provider) = providers.get_mut(provider_id) {
-        if let Some(meta) = provider.meta.as_mut() {
-            if let Some(endpoint) = meta.custom_endpoints.get_mut(&normalized) {
-                endpoint.last_used = Some(now_millis());
-                state.db.save_provider(app_type.as_str(), provider)?;
-            }
-        }
-    }
-    Ok(())
+    // 端点表是这份数据的权威来源，直接写 `last_used` 列。以前是先把值塞进
+    // ProviderMeta.custom_endpoints 再 save_provider，可 save_provider 写库前会把
+    // custom_endpoints 从 meta 里摘掉（端点走独立表），于是这个时间戳从来没落过盘，
+    // 读完永远是 None。
+    state
+        .db
+        .set_endpoint_last_used(app_type.as_str(), provider_id, &normalized, now_millis())
 }
 
 /// Get current timestamp in milliseconds

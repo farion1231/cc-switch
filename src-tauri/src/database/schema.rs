@@ -84,6 +84,7 @@ impl Database {
                 app_type TEXT NOT NULL,
                 url TEXT NOT NULL,
                 added_at INTEGER,
+                last_used INTEGER,
                 FOREIGN KEY (provider_id, app_type) REFERENCES providers(id, app_type) ON DELETE CASCADE
             )",
             [],
@@ -726,6 +727,20 @@ impl Database {
                         }
                         Self::set_user_version(conn, 26)?;
                     }
+                    26 => {
+                        // 自定义端点的「最近使用」时间戳。以前只写在内存里的
+                        // ProviderMeta.custom_endpoints 上，而 save_provider 写库前会把
+                        // 它从 meta 摘掉，所以这个值从来没持久化过。
+                        if Self::table_exists(conn, "provider_endpoints")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "provider_endpoints",
+                                "last_used",
+                                "INTEGER",
+                            )?;
+                        }
+                        Self::set_user_version(conn, 27)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -770,6 +785,9 @@ impl Database {
 
         // provider_endpoints 表
         Self::add_column_if_missing(conn, "provider_endpoints", "added_at", "INTEGER")?;
+        // 「最近使用」时间戳。以前只存在内存里的 ProviderMeta 上，save_provider
+        // 会把 custom_endpoints 从 meta 摘掉写库，所以从来没落过盘。
+        Self::add_column_if_missing(conn, "provider_endpoints", "last_used", "INTEGER")?;
 
         // mcp_servers 表
         Self::add_column_if_missing(conn, "mcp_servers", "description", "TEXT")?;
