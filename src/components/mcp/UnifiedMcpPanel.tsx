@@ -106,6 +106,7 @@ const IMPORT_SOURCE_FILES: Record<
   },
   kimi: { file: "~/.kimi-code/mcp.json" },
   copilot: { file: "~/.copilot/mcp-config.json" },
+  liveagent: { file: "~/.liveagent/config.json" },
   workbuddy: { file: "~/.workbuddy/mcp.json" },
   mcode: { file: "~/.minimax/mcp.json" },
   omp: { file: "~/.omp/agent/mcp.json" },
@@ -121,6 +122,7 @@ const WRITE_THEN_SAVE_APPS: ReadonlySet<AppIdWith<"mcp">> = new Set([
   "agy",
   "omp",
   "copilot",
+  "liveagent",
 ]);
 
 /** 写入失败：记下想要的状态，「重试」按这个值再写一次 */

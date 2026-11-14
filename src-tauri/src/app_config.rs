@@ -20,6 +20,8 @@ pub struct McpApps {
     #[serde(default)]
     pub copilot: bool,
     #[serde(default)]
+    pub liveagent: bool,
+    #[serde(default)]
     pub claude: bool,
     #[serde(default)]
     pub codex: bool,
@@ -51,6 +53,7 @@ impl McpApps {
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
             AppType::Dsh => self.dsh,
+            AppType::LiveAgent => self.liveagent,
             AppType::Pi => self.pi,
             AppType::Omp => self.omp,
             AppType::ClaudeDesktop => false,
@@ -73,6 +76,7 @@ impl McpApps {
             AppType::Mcode => self.mcode = enabled,
             AppType::Kimi => self.kimi = enabled,
             AppType::Dsh => self.dsh = enabled,
+            AppType::LiveAgent => self.liveagent = enabled,
             AppType::Pi => self.pi = enabled,
             AppType::ClaudeDesktop => {}
             AppType::Agy => self.agy = enabled,
@@ -112,6 +116,9 @@ impl McpApps {
         if self.kimi {
             apps.push(AppType::Kimi);
         }
+        if self.liveagent {
+            apps.push(AppType::LiveAgent);
+        }
         if self.workbuddy {
             apps.push(AppType::WorkBuddy);
         }
@@ -142,6 +149,7 @@ impl McpApps {
             && !self.copilot
             && !self.kimi
             && !self.dsh
+            && !self.liveagent
             && !self.workbuddy
             && !self.mcode
             && !self.pi
@@ -164,6 +172,8 @@ pub struct SkillApps {
     pub agy: bool,
     #[serde(default)]
     pub copilot: bool,
+    #[serde(default)]
+    pub liveagent: bool,
     #[serde(default)]
     pub claude: bool,
     #[serde(default)]
@@ -194,6 +204,7 @@ impl SkillApps {
             AppType::Hermes => self.hermes,
             AppType::Pi => self.pi,
             AppType::Mcode => self.mcode,
+            AppType::LiveAgent => self.liveagent,
             AppType::Kimi => self.kimi,
             AppType::Dsh => self.dsh,
             AppType::OpenClaw => false,
@@ -216,6 +227,7 @@ impl SkillApps {
             AppType::Hermes => self.hermes = enabled,
             AppType::Pi => self.pi = enabled,
             AppType::Mcode => self.mcode = enabled,
+            AppType::LiveAgent => self.liveagent = enabled,
             AppType::Kimi => self.kimi = enabled,
             AppType::Dsh => self.dsh = enabled,
             AppType::OpenClaw => {}
@@ -257,6 +269,9 @@ impl SkillApps {
         if self.kimi {
             apps.push(AppType::Kimi);
         }
+        if self.liveagent {
+            apps.push(AppType::LiveAgent);
+        }
         if self.workbuddy {
             apps.push(AppType::WorkBuddy);
         }
@@ -287,6 +302,7 @@ impl SkillApps {
             && !self.copilot
             && !self.kimi
             && !self.dsh
+            && !self.liveagent
             && !self.workbuddy
             && !self.mcode
             && !self.pi
@@ -516,6 +532,8 @@ pub enum AppType {
     Agy,
     Omp,
     Copilot,
+    #[serde(rename = "liveagent")]
+    LiveAgent,
     #[serde(rename = "workbuddy", alias = "work-buddy")]
     WorkBuddy,
 }
@@ -651,6 +669,13 @@ impl AppType {
                 route_mode: false,
                 stack: false,
             },
+            AppType::LiveAgent => AppSpec {
+                id: "liveagent",
+                additive: true,
+                local_proxy: false,
+                route_mode: false,
+                stack: false,
+            },
             AppType::WorkBuddy => AppSpec {
                 id: "workbuddy",
                 additive: true,
@@ -666,7 +691,7 @@ impl AppType {
     }
 
     /// 所有应用，按默认顺序
-    pub const ALL: [AppType; 16] = [
+    pub const ALL: [AppType; 17] = [
         AppType::Claude,
         AppType::ClaudeDesktop,
         AppType::Codex,
@@ -682,6 +707,7 @@ impl AppType {
         AppType::Agy,
         AppType::Omp,
         AppType::Copilot,
+        AppType::LiveAgent,
         AppType::WorkBuddy,
     ];
 
@@ -714,10 +740,11 @@ impl FromStr for AppType {
                 Ok(AppType::Copilot)
             }
             "workbuddy" | "work-buddy" | "work_buddy" => Ok(AppType::WorkBuddy),
+            "liveagent" => Ok(AppType::LiveAgent),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy, liveagent。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy, liveagent."),
             )),
         }
     }
@@ -764,6 +791,7 @@ impl CommonConfigSnippets {
             | AppType::Agy
             | AppType::Omp
             | AppType::Copilot
+            | AppType::LiveAgent
             | AppType::WorkBuddy => None,
         }
     }
@@ -786,6 +814,7 @@ impl CommonConfigSnippets {
             | AppType::Agy
             | AppType::Omp
             | AppType::Copilot
+            | AppType::LiveAgent
             | AppType::WorkBuddy => {}
         }
     }
@@ -1121,6 +1150,7 @@ impl MultiAppConfig {
             | AppType::Agy
             | AppType::Omp
             | AppType::Copilot
+            | AppType::LiveAgent
             | AppType::WorkBuddy => return Ok(false),
         };
 
@@ -1172,6 +1202,7 @@ impl MultiAppConfig {
                 | AppType::Agy
                 | AppType::Omp
                 | AppType::Copilot
+                | AppType::LiveAgent
                 | AppType::WorkBuddy => continue, // Pi didn't exist in v3.6.x, skip
             };
 

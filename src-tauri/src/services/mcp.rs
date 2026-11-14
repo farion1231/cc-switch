@@ -34,6 +34,19 @@ impl McpService {
             .map(|s| s.apps.clone())
             .unwrap_or_default();
 
+        let save_with_liveagent = || {
+            if server.apps.liveagent || prev_apps.liveagent {
+                mcp::liveagent::sync_and_commit(
+                    &server.id,
+                    mcp::liveagent::Change::from_enabled(
+                        server.apps.liveagent.then_some(&server.server),
+                    ),
+                    || state.db.save_mcp_server(&server),
+                )
+            } else {
+                state.db.save_mcp_server(&server)
+            }
+        };
         // Keep our disabled OMP tombstone in step with edits while the checkbox is off.
         let managed_omp = server.apps.omp
             || prev_apps.omp
@@ -46,10 +59,10 @@ impl McpService {
                 mcp::copilot::sync_and_commit(
                     &server.id,
                     server.apps.copilot.then_some(&server.server),
-                    || state.db.save_mcp_server(&server),
+                    save_with_liveagent,
                 )
             } else {
-                state.db.save_mcp_server(&server)
+                save_with_liveagent()
             }
         };
         let save_with_omp = || {
@@ -168,11 +181,20 @@ impl McpService {
         let server = state.db.get_all_mcp_servers()?.shift_remove(id);
 
         if let Some(server) = server {
+            let delete_with_liveagent = || {
+                if server.apps.liveagent {
+                    mcp::liveagent::sync_and_commit(id, mcp::liveagent::Change::Remove, || {
+                        state.db.delete_mcp_server(id)
+                    })
+                } else {
+                    state.db.delete_mcp_server(id)
+                }
+            };
             let delete_with_copilot = || {
                 if server.apps.copilot {
-                    mcp::copilot::delete_and_commit(id, || state.db.delete_mcp_server(id))
+                    mcp::copilot::delete_and_commit(id, delete_with_liveagent)
                 } else {
-                    mcp::copilot::forget_options_and_commit(id, || state.db.delete_mcp_server(id))
+                    mcp::copilot::forget_options_and_commit(id, delete_with_liveagent)
                 }
             };
             let delete_with_workbuddy = || {
@@ -233,6 +255,13 @@ impl McpService {
             }
             // A false agy flag carries no ownership history. Even an identical disabled
             // native entry may belong to the user; leave it intact without proof of ownership.
+            if !server.apps.liveagent {
+                if let Err(err) =
+                    mcp::liveagent::remove_if_managed_and_commit(id, &server.server, || Ok(()))
+                {
+                    log::warn!("Could not clean disabled LiveAgent MCP entry: {err}");
+                }
+            }
             if !server.apps.pi {
                 // 取消勾选只在 Pi 里禁用、条目还留着：服务器删了就一并清掉（尽力而为）
                 if let Err(err) = mcp::pi::remove_disabled_if_managed(id, &server.server) {
@@ -284,6 +313,7 @@ impl McpService {
                 | AppType::Dsh
                 | AppType::Omp
                 | AppType::Copilot
+                | AppType::LiveAgent
                 | AppType::WorkBuddy
         ) {
             if let Some(server) = state.db.get_all_mcp_servers()?.get(server_id) {
@@ -293,7 +323,13 @@ impl McpService {
                         .db
                         .update_mcp_server_app_enabled(server_id, &app, enabled)
                 };
-                if app == AppType::Agy {
+                if app == AppType::LiveAgent {
+                    mcp::liveagent::sync_and_commit(
+                        server_id,
+                        mcp::liveagent::Change::from_enabled(spec),
+                        commit,
+                    )?;
+                } else if app == AppType::Agy {
                     mcp::agy::sync_and_commit(
                         server_id,
                         mcp::agy::AgyChange::from_enabled(spec),
@@ -353,6 +389,7 @@ impl McpService {
                     | AppType::Dsh
                     | AppType::Omp
                     | AppType::Copilot
+                    | AppType::LiveAgent
                     | AppType::WorkBuddy
             ) {
                 continue; // Already written before saving the managed state.
@@ -413,6 +450,9 @@ impl McpService {
             AppType::Hermes => {
                 mcp::sync_single_server_to_hermes(&Default::default(), &server.id, &server.server)?;
             }
+            AppType::LiveAgent => {
+                mcp::liveagent::sync(&server.id, mcp::liveagent::Change::Enable(&server.server))?
+            }
             AppType::Mcode => mcp::mcode::sync(&server.id, Some(&server.server))?,
             AppType::Kimi => mcp::kimi::sync(&server.id, Some(&server.server))?,
             AppType::Dsh => mcp::dsh::sync(&server.id, Some(&server.server))?,
@@ -442,6 +482,7 @@ impl McpService {
                     | AppType::Dsh
                     | AppType::Omp
                     | AppType::Copilot
+                    | AppType::LiveAgent
                     | AppType::WorkBuddy
             ) {
                 continue; // Already removed before deleting the managed record.
@@ -475,6 +516,7 @@ impl McpService {
             AppType::Hermes => {
                 mcp::remove_server_from_hermes(id)?;
             }
+            AppType::LiveAgent => mcp::liveagent::sync(id, mcp::liveagent::Change::Disable)?,
             AppType::Mcode => mcp::mcode::sync(id, None)?,
             AppType::Kimi => mcp::kimi::sync(id, None)?,
             AppType::Dsh => mcp::dsh::sync(id, None)?,
@@ -597,6 +639,7 @@ impl McpService {
                     | AppType::Dsh
                     | AppType::Omp
                     | AppType::Copilot
+                    | AppType::LiveAgent
                     | AppType::WorkBuddy
             ) {
                 Self::remove_server_from_app(state, &server.id, app)
@@ -907,7 +950,7 @@ impl McpService {
         let mut total = 0;
         let mut failures: Vec<String> = Vec::new();
 
-        let results: [(&str, Result<usize, AppError>); 14] = [
+        let results: [(&str, Result<usize, AppError>); 15] = [
             ("claude", Self::import_from_claude(state)),
             ("codex", Self::import_from_codex(state)),
             ("gemini", Self::import_from_gemini(state)),
@@ -919,6 +962,7 @@ impl McpService {
             ("dsh", mcp::dsh::import(state)),
             ("workbuddy", mcp::workbuddy::import(state)),
             ("agy", mcp::agy::import(state)),
+            ("liveagent", mcp::liveagent::import(state)),
             ("pi", mcp::pi::import(state)),
             ("omp", Self::import_from_omp(state)),
             ("copilot", mcp::copilot::import(state)),

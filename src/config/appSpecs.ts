@@ -224,6 +224,18 @@ export const APP_SPECS = {
     piFamily: false,
     editorView: false,
   },
+  liveagent: {
+    localProxy: false,
+    routeMode: false,
+    stack: false,
+    additive: true,
+    skills: true,
+    mcp: true,
+    prompts: false,
+    managedAccount: false,
+    piFamily: false,
+    editorView: false,
+  },
   workbuddy: {
     localProxy: false,
     routeMode: false,

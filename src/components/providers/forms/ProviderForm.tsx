@@ -115,6 +115,7 @@ import { CopilotProviderForm } from "./CopilotProviderForm";
 import { AgyAccountSelect } from "./AgyOAuthSection";
 import { ClaudeAccountSelect } from "./ClaudeOfficialSection";
 import { isMac } from "@/lib/platform";
+import { LiveAgentProviderForm } from "./LiveAgentProviderForm";
 import { McodeProviderForm } from "./McodeProviderForm";
 import { WorkBuddyProviderForm } from "./WorkBuddyProviderForm";
 import { PiProviderForm } from "./PiProviderForm";
@@ -360,6 +361,7 @@ function CodexConfigEditorWithName({
 }
 
 export function ProviderForm(props: ProviderFormProps) {
+  if (props.appId === "liveagent") return <LiveAgentProviderForm {...props} />;
   if (props.appId === "kimi") return <KimiProviderForm {...props} />;
   if (props.appId === "copilot") return <CopilotProviderForm {...props} />;
   if (props.appId === "mcode" || props.appId === "dsh")

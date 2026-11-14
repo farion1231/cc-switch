@@ -63,6 +63,7 @@ fn app_display_name(app: &AppType) -> &'static str {
         AppType::Agy => "Antigravity",
         AppType::Omp => "Oh My Pi",
         AppType::Copilot => "Copilot CLI",
+        AppType::LiveAgent => "LiveAgent",
     }
 }
 

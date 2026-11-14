@@ -1,3 +1,5 @@
+import { liveagentApi } from "@/lib/api/liveagent";
+import { enabledLiveAgentModels } from "@/lib/liveagentProvider";
 import { CSS } from "@dnd-kit/utilities";
 import { DndContext, closestCenter, type Modifier } from "@dnd-kit/core";
 import {
@@ -162,6 +164,11 @@ export function ProviderList({
     error: hermesLiveIdsError,
   } = useHermesLiveProviderIds(appId === "hermes");
   const { data: hermesModelConfig } = useHermesModelConfig(appId === "hermes");
+  const { data: liveagentSettings } = useQuery({
+    queryKey: ["liveagentSettings"],
+    queryFn: liveagentApi.getSettings,
+    enabled: appId === "liveagent",
+  });
   const { data: openclawDefaultModel } = useOpenClawDefaultModel(
     appId === "openclaw",
   );
@@ -199,6 +206,7 @@ export function ProviderList({
       switch (appId) {
         case "kimi":
         case "dsh":
+        case "liveagent":
         case "mcode":
         case "copilot":
         case "workbuddy":
@@ -392,6 +400,16 @@ export function ProviderList({
           ? opencodeDefaultModel
           : null) ?? "";
     const slash = defaultPrimary.indexOf("/");
+    // LiveAgent stores provider and model separately; model ids may contain "/".
+    const liveagentDefault =
+      appId === "liveagent" &&
+      liveagentSettings?.defaultProvider &&
+      liveagentSettings.defaultModel
+        ? {
+            providerId: liveagentSettings.defaultProvider,
+            model: liveagentSettings.defaultModel,
+          }
+        : null;
     return buildAdditiveSections({
       app: appId,
       t,
@@ -400,13 +418,18 @@ export function ProviderList({
       currentOmoId,
       currentOmoSlimId,
       defaultModel:
-        slash > 0
-          ? {
-              providerId: defaultPrimary.slice(0, slash),
-              model: defaultPrimary.slice(slash + 1),
-            }
-          : null,
+        appId === "liveagent"
+          ? liveagentDefault
+          : slash > 0
+            ? {
+                providerId: defaultPrimary.slice(0, slash),
+                model: defaultPrimary.slice(slash + 1),
+              }
+            : null,
       defaultModelOptions: (provider) => {
+        if (appId === "liveagent") {
+          return enabledLiveAgentModels(provider.settingsConfig);
+        }
         if (appId === "opencode") {
           return getOpencodeDeclaredModels(
             provider.id,
@@ -452,6 +475,8 @@ export function ProviderList({
     onOpenTerminal,
     openclawDefaultModel?.primary,
     opencodeDefaultModel,
+    liveagentSettings?.defaultProvider,
+    liveagentSettings?.defaultModel,
     isInConfig,
     currentOmoId,
     currentOmoSlimId,
@@ -541,6 +566,7 @@ export function ProviderList({
             appId === "mcode" ||
             appId === "kimi" ||
             appId === "dsh" ||
+            appId === "liveagent" ||
             appId === "workbuddy"
               ? undefined
               : () => importMutation.mutate()

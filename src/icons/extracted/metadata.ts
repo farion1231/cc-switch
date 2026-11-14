@@ -726,6 +726,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["hunyuan"],
     defaultColor: "#00A4FF",
   },
+  liveagent: {
+    name: "liveagent",
+    displayName: "LiveAgent",
+    category: "tool",
+    // Transparent mark cut from the app icon: no white tile in dark mode.
+    keywords: ["liveagent", "live agent", "k-brain", "kbrain"],
+  },
   tuzi: {
     name: "tuzi",
     displayName: "Tu-zi",
