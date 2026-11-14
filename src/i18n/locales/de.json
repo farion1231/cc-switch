@@ -3539,6 +3539,20 @@
     }
   },
   "skills": {
+    "github": {
+      "title": "Von GitHub abrufen",
+      "lead": "Rufen Sie ein öffentliches GitHub-Repository ab und wählen Sie die zu installierenden Skills aus.",
+      "fetch": "Skills abrufen",
+      "search": "Skills suchen…",
+      "count": "{{selected}} / {{total}} Skills ausgewählt",
+      "occupied": "Das Verzeichnis wird von einem anderen Skill verwendet. Verwalten Sie ihn unter „Installiert“.",
+      "open": "{{name}} auf GitHub öffnen",
+      "empty": "Keine passenden Skills",
+      "install": "Ausgewählte installieren",
+      "found": "{{count}} Skills in diesem Repository gefunden",
+      "selectAll": "Alle auswählen",
+      "selectNone": "Auswahl aufheben"
+    },
     "manage": "Skills",
     "title": "Skills-Verwaltung",
     "description": "Skills aus beliebten Repositories entdecken und installieren, um die Fähigkeiten von Claude Code/Codex/Gemini zu erweitern",

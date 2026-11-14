@@ -3539,6 +3539,20 @@
     }
   },
   "skills": {
+    "github": {
+      "title": "GitHub에서 가져오기",
+      "lead": "공개 GitHub 저장소를 가져와 설치할 스킬을 선택합니다.",
+      "fetch": "스킬 가져오기",
+      "search": "스킬 검색…",
+      "count": "선택한 스킬 {{selected}} / {{total}}개",
+      "occupied": "다른 스킬이 이 디렉터리를 사용하고 있습니다. “설치됨”에서 관리하세요.",
+      "open": "GitHub에서 {{name}} 열기",
+      "empty": "일치하는 스킬이 없습니다",
+      "install": "선택 항목 설치",
+      "found": "이 저장소에서 스킬 {{count}}개를 찾았습니다",
+      "selectAll": "모두 선택",
+      "selectNone": "모두 선택 해제"
+    },
     "manage": "스킬",
     "title": "스킬 관리",
     "description": "인기 저장소에서 스킬을 찾아 설치하여 Claude Code/Codex/Gemini의 기능을 확장합니다",
