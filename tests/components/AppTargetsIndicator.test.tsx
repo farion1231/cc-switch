@@ -82,6 +82,7 @@ vi.mock("@/lib/toast", () => ({ toast: toastMock }));
 
 describe("AppTargetsIndicator routing toggle", () => {
   beforeEach(() => {
+    view.app = "claude";
     wslRunning = true;
     setRouteMock.mockReset();
     syncMock.mockReset();
@@ -116,6 +117,7 @@ describe("AppTargetsIndicator routing toggle", () => {
   });
 
   it("has no routing toggle for OpenCode", async () => {
+    view.app = "opencode";
     render(<AppTargetsIndicator app="opencode" />);
     fireEvent.click(
       screen.getByRole("button", { name: "appTargets.indicator.title" }),
