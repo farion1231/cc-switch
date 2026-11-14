@@ -168,6 +168,7 @@ describe("formatUsageTrendTokenTickLabel", () => {
       expect(formatUsageTrendTokenTickLabel(50_000_000, formatter)).not.toMatch(
         /[千亿億万萬]/,
       );
+      expect(formatUsageTrendTokenTickLabel(50_000_000, formatter)).toBe("50M");
     },
   );
 
