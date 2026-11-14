@@ -564,8 +564,8 @@ pub fn validate(config: &AppTargetsConfig, resolved: &BTreeMap<String, String>) 
             }
             TargetId::Wsl(distro) => match parse_wsl_unc(dir) {
                 Some((dir_distro, _)) if dir_distro.eq_ignore_ascii_case(distro) => {}
-                // 单测在非 Windows 宿主上用临时目录模拟 WSL 目标。
-                None if cfg!(test) && dir.starts_with('/') => {}
+                // 单测使用宿主临时目录模拟 WSL 目标，兼容 Windows 本机路径。
+                None if cfg!(test) && std::path::Path::new(dir).is_absolute() => {}
                 _ => errors.push(FieldError::at(&target.id, "wslDistroMismatch")),
             },
         }
