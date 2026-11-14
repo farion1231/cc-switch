@@ -11,15 +11,20 @@ use support::{create_test_state, reset_test_fs, test_mutex};
 struct CopilotHome {
     directory: tempfile::TempDir,
     previous: Option<OsString>,
+    previous_providers: Option<OsString>,
 }
 impl CopilotHome {
     fn new() -> Self {
         let directory = tempfile::tempdir().unwrap();
         let previous = std::env::var_os("COPILOT_HOME");
+        let previous_providers = std::env::var_os("COPILOT_PROVIDERS_CONFIG");
         std::env::set_var("COPILOT_HOME", directory.path());
+        // providers.json follows COPILOT_HOME only while this override is unset.
+        std::env::remove_var("COPILOT_PROVIDERS_CONFIG");
         Self {
             directory,
             previous,
+            previous_providers,
         }
     }
     fn path(&self, name: &str) -> std::path::PathBuf {
@@ -33,6 +38,9 @@ impl Drop for CopilotHome {
         } else {
             std::env::remove_var("COPILOT_HOME");
         }
+        if let Some(value) = &self.previous_providers {
+            std::env::set_var("COPILOT_PROVIDERS_CONFIG", value);
+        }
     }
 }
 
@@ -40,38 +48,66 @@ fn byok(id: &str) -> Provider {
     Provider::with_id(
         id.into(),
         id.into(),
-        json!({"env":{
-            "COPILOT_PROVIDER_BASE_URL":"https://example.com/v1",
-            "COPILOT_PROVIDER_API_KEY":"fixture-key",
-            "COPILOT_PROVIDER_TYPE":"openai",
-            "COPILOT_MODEL":"gpt-5.4"
-        }}),
+        json!({
+            "provider": {"type":"openai","baseUrl":"https://example.com/v1","apiKey":"fixture-key"},
+            "models": [{"id":"gpt-5.4"}],
+            "reasoningEffort": "high"
+        }),
         None,
     )
 }
 
 #[test]
-fn copilot_cards_launch_terminals_and_never_write_native_settings() {
-    let _guard = test_mutex().lock().unwrap();
+fn copilot_byok_cards_live_in_providers_json_and_official_cards_never_write() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = CopilotHome::new();
     let state = create_test_state().unwrap();
     let original = "{\n  \"model\": \"claude-sonnet-4.6\",\n  \"theme\": \"dark\"\n}";
     fs::write(home.path("settings.json"), original).unwrap();
+    // Copilot's own entries (e.g. Foundry Local) must survive CC Switch writes.
+    let foreign = json!({
+        "providers": [{"name":"foundry","baseUrl":"http://localhost:5272/v1"}],
+        "models": [{"id":"phi","provider":"foundry"}]
+    });
+    fs::write(home.path("providers.json"), foreign.to_string()).unwrap();
 
     assert!(ProviderService::add(&state, AppType::Copilot, byok("relay"), true).unwrap());
-    let error = ProviderService::switch(&state, AppType::Copilot, "relay").unwrap_err();
+    let written: serde_json::Value =
+        serde_json::from_slice(&fs::read(home.path("providers.json")).unwrap()).unwrap();
+    assert_eq!(written["providers"][0], foreign["providers"][0]);
+    assert_eq!(written["providers"][1]["name"], "relay");
+    assert_eq!(
+        written["models"][1],
+        json!({"id":"gpt-5.4","provider":"relay"})
+    );
+    assert!(!written.to_string().contains("reasoningEffort"));
+
+    // Saving validates the card before touching the database or the file.
+    let mut missing_model = byok("broken");
+    missing_model.settings_config["models"] = json!([]);
+    assert!(ProviderService::add(&state, AppType::Copilot, missing_model, true).is_err());
+    assert!(ProviderService::list(&state, AppType::Copilot)
+        .unwrap()
+        .get("broken")
+        .is_none());
+
+    // Official cards only open terminals: saved, never written, cannot be added.
+    let mut official = Provider::with_id(
+        "login".into(),
+        "GitHub Copilot".into(),
+        json!({"env":{"COPILOT_MODEL":"gpt-5-mini"}}),
+        None,
+    );
+    official.category = Some("official".into());
+    assert!(ProviderService::add(&state, AppType::Copilot, official, true).unwrap());
+    let error = ProviderService::switch(&state, AppType::Copilot, "login").unwrap_err();
     assert!(error.to_string().contains("Open terminal"), "{error}");
 
-    // Saving validates the native environment contract before touching the database.
-    let mut missing_model = byok("broken");
-    missing_model.settings_config["env"]
-        .as_object_mut()
-        .unwrap()
-        .remove("COPILOT_MODEL");
-    assert!(ProviderService::add(&state, AppType::Copilot, missing_model, true).is_err());
-
     ProviderService::delete(&state, AppType::Copilot, "relay").unwrap();
+    let after: serde_json::Value =
+        serde_json::from_slice(&fs::read(home.path("providers.json")).unwrap()).unwrap();
+    assert_eq!(after, foreign);
     assert_eq!(
         fs::read_to_string(home.path("settings.json")).unwrap(),
         original

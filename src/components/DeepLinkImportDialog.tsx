@@ -72,11 +72,7 @@ async function loadLinkIcon(url: string): Promise<string | undefined> {
  */
 function initialActivation(request: DeepLinkImportRequest): boolean {
   // Antigravity 的卡没有「启用」，只导入（后端同样忽略 enabled）
-  if (
-    request.resource === "provider" &&
-    (request.app === "agy" || request.app === "copilot")
-  )
-    return false;
+  if (request.resource === "provider" && request.app === "agy") return false;
   if (
     request.resource === "provider" &&
     request.app &&
@@ -980,7 +976,7 @@ export function DeepLinkImportDialog() {
                   )}
 
                   {/* Antigravity 的卡没有「启用」，只导入，不给这个开关 */}
-                  {request.app !== "agy" && request.app !== "copilot" && (
+                  {request.app !== "agy" && (
                     <>
                       {/*
                         导入后是否立即生效由用户决定，链接里的 enabled 只是初始值。切换式应用打开后

@@ -69,7 +69,6 @@ mod tests {
     }
 }
 
-/// 获取故障转移队列
 #[tauri::command]
 pub async fn get_failover_queue(
     state: tauri::State<'_, AppState>,

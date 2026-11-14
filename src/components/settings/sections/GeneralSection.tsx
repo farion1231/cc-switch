@@ -34,6 +34,7 @@ const LANGUAGES: { value: Language; labelKey: string }[] = [
   { value: "zh", labelKey: "settings.languageOptionChinese" },
   { value: "zh-TW", labelKey: "settings.languageOptionTraditionalChinese" },
   { value: "en", labelKey: "settings.languageOptionEnglish" },
+  { value: "de", labelKey: "settings.languageOptionGerman" },
   { value: "ja", labelKey: "settings.languageOptionJapanese" },
   { value: "ko", labelKey: "settings.languageOptionKorean" },
   { value: "ru", labelKey: "settings.languageOptionRussian" },

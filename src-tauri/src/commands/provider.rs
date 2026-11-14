@@ -21,7 +21,6 @@ const TEMPLATE_TYPE_BALANCE: &str = "balance";
 const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str = "official_subscription";
 const COPILOT_UNIT_PREMIUM: &str = "requests";
 
-/// 获取所有供应商
 #[tauri::command]
 pub async fn get_providers(
     state: State<'_, AppState>,

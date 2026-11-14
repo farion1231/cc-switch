@@ -318,7 +318,7 @@ context_window = 500000
     );
 
     // 说明在「?」里（读屏副本一直在页面上），页面上只留超限会 400 的提醒。
-    expect(screen.getByText(/^默认上限 8192，长回答/)).toBeInTheDocument();
+    expect(screen.getByText(/^默认上限 32000，思考也算在内/)).toBeInTheDocument();
     expect(screen.queryByText(/^Codex 不带输出上限/)).toBeNull();
     expect(
       screen.getByText("不要超过模型或网关的真实输出上限，否则会返回 400。"),

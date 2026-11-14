@@ -171,3 +171,72 @@ it("previews agy wrapped and flat configs without unrelated native options", () 
     expect(JSON.stringify(preview)).not.toContain("ignored");
   }
 });
+
+it("previews Copilot providers.json entries and legacy env configs", () => {
+  const preview = parseDeepLinkConfigPreview({
+    app: "copilot",
+    config: encodeBase64(
+      JSON.stringify({
+        provider: {
+          type: "openai",
+          baseUrl: "https://relay.example/v1",
+          apiKey: "fixture",
+          headers: { "X-Ignored": "ignored" },
+        },
+        models: [{ id: "m1" }, { id: "m2" }],
+      }),
+    ),
+  });
+  expect(preview).toEqual({
+    type: "copilot",
+    env: { baseUrl: "https://relay.example/v1", apiKey: "fixture" },
+    model: "m1, m2",
+  });
+
+  const legacy = parseDeepLinkConfigPreview({
+    app: "copilot",
+    config: encodeBase64(
+      JSON.stringify({
+        env: {
+          COPILOT_PROVIDER_BASE_URL: "https://relay.example/v1",
+          COPILOT_PROVIDER_API_KEY: "fixture",
+          COPILOT_MODEL: "m1",
+        },
+      }),
+    ),
+  });
+  expect(legacy?.model).toBe("m1");
+  expect(legacy?.env).toEqual({
+    COPILOT_PROVIDER_API_KEY: "fixture",
+    COPILOT_PROVIDER_BASE_URL: "https://relay.example/v1",
+  });
+});
+
+it("shows the effective Copilot credential and ordered model IDs after overrides", () => {
+  const config = encodeBase64(
+    JSON.stringify({
+      provider: {
+        baseUrl: "https://example.org",
+        bearerToken: "token",
+        apiKey: "shadowed",
+      },
+      models: [{ id: "one" }, { id: "two" }],
+    }),
+  );
+  expect(parseDeepLinkConfigPreview({ app: "copilot", config })?.env).toEqual({
+    baseUrl: "https://example.org",
+    bearerToken: "token",
+  });
+  expect(
+    parseDeepLinkConfigPreview({
+      app: "copilot",
+      config,
+      apiKey: "url-key",
+      model: "two",
+    }),
+  ).toEqual({
+    type: "copilot",
+    env: { baseUrl: "https://example.org", apiKey: "url-key" },
+    model: "two, one",
+  });
+});

@@ -2594,3 +2594,78 @@ fn test_pi_family_inline_config_fills_each_apps_native_connection_fields() {
         );
     }
 }
+
+#[test]
+#[serial_test::serial]
+fn test_copilot_link_writes_a_readable_card_into_providers_json() {
+    use serde_json::json;
+
+    let home = TestHomeGuard::new();
+    let copilot_home = home._dir.path().join(".copilot");
+    let _copilot = crate::copilot_config::test_support::CopilotHomeGuard::new(&copilot_home);
+
+    assert_eq!(
+        build_from_link("copilot", Some("openai_responses")).settings_config,
+        json!({
+            "provider": {"type":"openai","wireApi":"responses","baseUrl":"https://api.example.com/v1","apiKey":"sk-test"},
+            "models": [{"id":"example-model"}],
+        })
+    );
+    assert_eq!(
+        build_from_link("copilot", Some("anthropic")).settings_config["provider"]["type"],
+        "anthropic"
+    );
+
+    // 卡片 id 是 `/model` 里看得见的前缀：用名字的 slug，撞了加后缀；累加式默认直接写进文件。
+    let request = parse_deeplink_url(&provider_link("copilot", None)).expect("parse link");
+    let db = Arc::new(Database::memory().expect("create memory db"));
+    let state = AppState::new(db);
+    let first = super::import_provider_from_deeplink(&state, request.clone()).unwrap();
+    let second = super::import_provider_from_deeplink(&state, request).unwrap();
+    assert_eq!((first.as_str(), second.as_str()), ("example", "example-2"));
+    let native = crate::copilot_config::get_providers().unwrap();
+    assert_eq!(native.keys().collect::<Vec<_>>(), ["example", "example-2"]);
+    assert_eq!(native["example"]["models"], json!([{"id":"example-model"}]));
+    assert_eq!(native["example"]["provider"]["wireApi"], "completions");
+}
+
+#[test]
+#[serial_test::serial]
+fn copilot_inline_links_keep_credentials_and_all_model_ids_after_preview() {
+    use serde_json::json;
+    let home = TestHomeGuard::new();
+    let _copilot = crate::copilot_config::test_support::CopilotHomeGuard::new(
+        &home._dir.path().join(".copilot"),
+    );
+    let state = AppState::new(Arc::new(Database::memory().unwrap()));
+    let config = BASE64_STANDARD.encode(json!({
+        "provider":{"baseUrl":"https://relay.example/v1","bearerToken":"bearer-fixture","headers":{"ignored":"header"}},
+        "models":[{"id":"first","systemMessage":{"mode":"replace","content":"ignored"}},{"id":"second"}]
+    }).to_string());
+    for (suffix, key, value, models) in [
+        (
+            "",
+            "bearerToken",
+            "bearer-fixture",
+            json!([{"id":"first"},{"id":"second"}]),
+        ),
+        (
+            "&apiKey=url-key&model=second",
+            "apiKey",
+            "url-key",
+            json!([{"id":"second"},{"id":"first"}]),
+        ),
+    ] {
+        let url = format!(
+            "ccswitch://v1/import?resource=provider&app=copilot&name=Multi&config={config}{suffix}"
+        );
+        let preview = parse_and_merge_config(&parse_deeplink_url(&url).unwrap()).unwrap();
+        let id = super::import_provider_from_deeplink(&state, preview).unwrap();
+        let card = &crate::copilot_config::get_providers().unwrap()[&id];
+        assert_eq!(card["models"], models);
+        assert_eq!(
+            card["provider"],
+            json!({"type":"openai","wireApi":"completions","baseUrl":"https://relay.example/v1", (key):value})
+        );
+    }
+}
