@@ -47,7 +47,7 @@ pub async fn search_session_content(
         )
     })
     .await
-    .map_err(|e| format!("Failed to search session content: {e}"))
+    .map_err(|e| format!("Failed to search session content: {e}"))?
 }
 
 /// 删除会话正文索引文件（关闭「搜索消息正文」时调用）

@@ -1371,6 +1371,7 @@
     "contentSearchToggle": "Mesaj metninde ara",
     "contentSearchToggleFailed": "Mesaj metni arama ayarı değiştirilemedi: {{error}}",
     "contentIndexing": "Mesaj metni dizinleniyor ({{processed}}/{{total}}). Metin eşleşmeleri eksik olabilir",
+    "contentSearchFailed": "Metin araması başarısız oldu; şu anda yalnızca başlık, klasör ve ilk/son mesajlarda arama yapılabiliyor",
     "contentHitPrefix": "Metin: ",
     "contentHitMore": " ({{count}} mesaj eşleşiyor)",
     "moreContentHits": "Daha fazla metin eşleşmesi",

@@ -1437,6 +1437,7 @@
     "contentSearchToggle": "Search message text",
     "contentSearchToggleFailed": "Couldn’t change the message text search setting: {{error}}",
     "contentIndexing": "Indexing message text ({{processed}}/{{total}}). Text matches may be incomplete",
+    "contentSearchFailed": "Text search failed, so only titles, folders and first/last messages can be searched right now",
     "contentHitPrefix": "Text: ",
     "contentHitMore": " ({{count}} messages match)",
     "moreContentHits": "More text matches",

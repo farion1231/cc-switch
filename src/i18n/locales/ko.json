@@ -1437,6 +1437,7 @@
     "contentSearchToggle": "메시지 본문 검색",
     "contentSearchToggleFailed": "메시지 본문 검색 설정을 변경하지 못했습니다: {{error}}",
     "contentIndexing": "메시지 본문 색인을 생성하는 중입니다({{processed}}/{{total}}). 본문 검색 결과가 아직 완전하지 않을 수 있습니다",
+    "contentSearchFailed": "본문 검색에 실패했습니다. 지금은 제목, 디렉터리, 처음과 마지막 메시지로만 검색합니다",
     "contentHitPrefix": "본문: ",
     "contentHitMore": " (메시지 {{count}}개 일치)",
     "moreContentHits": "본문 검색 결과 더 보기",

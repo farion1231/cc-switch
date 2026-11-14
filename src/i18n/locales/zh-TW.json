@@ -1437,6 +1437,7 @@
     "contentSearchToggle": "搜尋訊息內文",
     "contentSearchToggleFailed": "無法變更內文搜尋設定：{{error}}",
     "contentIndexing": "正在建立內文索引（{{processed}}/{{total}}），內文結果可能尚不完整",
+    "contentSearchFailed": "內文搜尋失敗，目前只能依標題、目錄與首末訊息搜尋",
     "contentHitPrefix": "內文：",
     "contentHitMore": "（{{count}} 則訊息符合）",
     "moreContentHits": "更多內文命中",

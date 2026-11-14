@@ -544,6 +544,9 @@ static STATUS: LazyLock<Mutex<IndexStatus>> = LazyLock::new(|| Mutex::new(IndexS
 static RUNNING: AtomicBool = AtomicBool::new(false);
 static RERUN: AtomicBool = AtomicBool::new(false);
 
+/// [`with_index_in`] 在持锁后再次检查开关时返回的哨兵：功能被关掉不是失败。
+const DISABLED: &str = "Session content search is disabled";
+
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -577,7 +580,7 @@ fn with_index_in<T>(
 ) -> Result<T, String> {
     let mut guard = lock(slot);
     if !is_enabled() {
-        return Err("Session content search is disabled".to_string());
+        return Err(DISABLED.to_string());
     }
     if guard.is_none() {
         if let Some(dir) = path.parent() {
@@ -649,21 +652,47 @@ pub fn forget_source(provider_id: &str, source_path: &str) {
     }
 }
 
-pub fn search(query: &str, providers: Option<Vec<String>>, limit: usize) -> ContentSearchResult {
+/// 在消息正文里搜索。索引打不开或查询失败时上报错误，不返回空结果：
+/// 空结果会被界面当成「正文里没有这个词」，而索引只是缓存，坏了是可以修的。
+pub fn search(
+    query: &str,
+    providers: Option<Vec<String>>,
+    limit: usize,
+) -> Result<ContentSearchResult, String> {
+    search_in(&INDEX, &index_path(), enabled, query, providers, limit)
+}
+
+/// [`search`] 的实现，索引槽、路径、开关可替换（测试用）。
+fn search_in(
+    slot: &Mutex<Option<SessionIndex>>,
+    path: &Path,
+    is_enabled: impl Fn() -> bool,
+    query: &str,
+    providers: Option<Vec<String>>,
+    limit: usize,
+) -> Result<ContentSearchResult, String> {
     let status = status();
-    if !enabled() || query.trim().is_empty() {
-        return ContentSearchResult {
+    if !is_enabled() || query.trim().is_empty() {
+        return Ok(ContentSearchResult {
             hits: Vec::new(),
             status,
-        };
+        });
     }
     let providers: Option<HashSet<String>> = providers.map(|list| list.into_iter().collect());
-    let hits =
-        with_index(|index| index.search(query, providers.as_ref(), limit)).unwrap_or_else(|e| {
-            log::warn!("会话正文搜索失败: {e}");
-            Vec::new()
-        });
-    ContentSearchResult { hits, status }
+    let hits = with_index_in(slot, path, is_enabled, |index| {
+        index.search(query, providers.as_ref(), limit)
+    })
+    .or_else(|error| {
+        // 等待期间被关掉：这不是失败，界面不该弹错误（开关本身已经说明了状态）
+        if error == DISABLED {
+            return Ok(Vec::new());
+        }
+        // 索引槽里已经打开的句柄再次查询失败（FTS 段损坏等）时，[`with_index_in`]
+        // 的重建逻辑不会触发。索引只是缓存，丢掉它让下一次重试重新打开并自愈。
+        *lock(slot) = None;
+        Err(error)
+    })?;
+    Ok(ContentSearchResult { hits, status })
 }
 
 /// 在后台线程里把索引同步到当前的会话列表；已经在跑时只记一次「跑完再来一遍」。
@@ -1553,6 +1582,54 @@ mod tests {
         );
         assert!(!enabled.load(Ordering::SeqCst));
         assert!(path.is_dir());
+    }
+
+    #[test]
+    fn search_reports_index_failures_instead_of_empty_hits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(INDEX_FILE);
+        // 索引文件位置被一个目录占着：打不开，也删不掉
+        fs::create_dir(&path).unwrap();
+        let slot = Mutex::new(None);
+        let enabled = AtomicBool::new(true);
+
+        let result = search_in(
+            &slot,
+            &path,
+            || enabled.load(Ordering::SeqCst),
+            "needle",
+            None,
+            10,
+        );
+        // 空命中会被界面当成「正文里没有这个词」，这里必须报错
+        let error = result.expect_err("an unreadable index must not look empty");
+        assert!(!error.trim().is_empty(), "the failure needs a reason");
+
+        // 索引只是缓存：挡路的目录挪开后，界面上的「重试」要能自愈
+        fs::remove_dir(&path).unwrap();
+        let recovered = search_in(
+            &slot,
+            &path,
+            || enabled.load(Ordering::SeqCst),
+            "needle",
+            None,
+            10,
+        )
+        .expect("the retry must rebuild the index");
+        assert!(recovered.hits.is_empty());
+
+        // 功能关着时不算失败：没有索引是正常状态
+        enabled.store(false, Ordering::SeqCst);
+        let empty = search_in(
+            &slot,
+            &path,
+            || enabled.load(Ordering::SeqCst),
+            "needle",
+            None,
+            10,
+        )
+        .expect("a disabled search is not a failure");
+        assert!(empty.hits.is_empty());
     }
 
     #[test]

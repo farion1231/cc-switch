@@ -1437,6 +1437,7 @@
     "contentSearchToggle": "メッセージ本文を検索",
     "contentSearchToggleFailed": "本文検索の設定を変更できません：{{error}}",
     "contentIndexing": "本文のインデックスを作成中（{{processed}}/{{total}}）。本文の結果はまだ不完全な場合があります",
+    "contentSearchFailed": "本文検索に失敗しました。今はタイトル・ディレクトリ・最初と最後のメッセージだけで検索しています",
     "contentHitPrefix": "本文：",
     "contentHitMore": "（{{count}} 件のメッセージが一致）",
     "moreContentHits": "その他の本文一致",
