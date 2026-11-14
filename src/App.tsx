@@ -884,6 +884,7 @@ function App() {
           activeApp === "kimi" ||
           activeApp === "agy" ||
           activeApp === "copilot" ||
+          activeApp === "liveagent" ||
           activeApp === "workbuddy"
         )
           return;
@@ -1136,9 +1137,15 @@ function App() {
       app === "dsh" ||
       app === "kimi" ||
       app === "copilot" ||
+      app === "liveagent" ||
       app === "workbuddy"
     ) {
       await queryClient.invalidateQueries({ queryKey: ["providers", app] });
+      if (app === "liveagent") {
+        await queryClient.invalidateQueries({
+          queryKey: ["liveagentSettings"],
+        });
+      }
     }
   };
 
@@ -1309,7 +1316,8 @@ function App() {
     } else if (
       activeApp === "mcode" ||
       activeApp === "dsh" ||
-      activeApp === "kimi"
+      activeApp === "kimi" ||
+      activeApp === "liveagent"
     ) {
       // The MCode list already includes its live custom nodes; the backend
       // rejects a key that MCode itself owns.
@@ -1540,6 +1548,7 @@ function App() {
             activeApp !== "mcode" &&
             activeApp !== "dsh" &&
             activeApp !== "kimi" &&
+            activeApp !== "liveagent" &&
             activeApp !== "workbuddy" &&
             (settingsData?.showProfileSwitcher ?? false) && (
               <ProfileSwitcher activeApp={activeApp} />
@@ -1718,7 +1727,9 @@ function App() {
               activeApp === "opencode" ? handleDisableOmoSlim : undefined
             }
             onSetAsDefault={
-              activeApp === "openclaw" || activeApp === "opencode"
+              activeApp === "openclaw" ||
+              activeApp === "opencode" ||
+              activeApp === "liveagent"
                 ? (provider, modelId) =>
                     void setAsDefaultModel(provider, modelId)
                 : activeApp === "hermes" || activeApp === "kimi"

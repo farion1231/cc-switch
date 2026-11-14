@@ -22,6 +22,7 @@ pub(crate) mod grok_direct;
 mod grok_editor;
 pub(crate) mod icon;
 mod live;
+mod liveagent;
 mod omp;
 #[cfg(test)]
 mod opencode_tests;
@@ -5540,6 +5541,9 @@ impl ProviderService {
         if app_type == AppType::Pi {
             return pi::list(state);
         }
+        if app_type == AppType::LiveAgent {
+            return liveagent::list(state);
+        }
         if app_type == AppType::Omp {
             return omp::list(state);
         }
@@ -5802,6 +5806,9 @@ impl ProviderService {
         }
         if app_type == AppType::Pi {
             return pi::add(state, provider, add_to_live);
+        }
+        if app_type == AppType::LiveAgent {
+            return liveagent::add(state, provider, add_to_live);
         }
 
         if app_type == AppType::Omp {
@@ -6438,6 +6445,9 @@ impl ProviderService {
         if app_type == AppType::Pi {
             return pi::update(state, original_id, provider);
         }
+        if app_type == AppType::LiveAgent {
+            return liveagent::update(state, original_id, provider);
+        }
 
         if app_type == AppType::Omp {
             return omp::update(state, original_id, provider);
@@ -6790,6 +6800,9 @@ impl ProviderService {
         if app_type == AppType::Omp {
             return omp::delete(state, id);
         }
+        if app_type == AppType::LiveAgent {
+            return liveagent::remove(state, id, true);
+        }
 
         // Additive mode apps - no current provider concept
         if app_type.spec().additive {
@@ -6970,6 +6983,9 @@ impl ProviderService {
         if app_type == AppType::Omp {
             return omp::remove(state, id);
         }
+        if app_type == AppType::LiveAgent {
+            return liveagent::remove(state, id, false);
+        }
 
         if app_type == AppType::WorkBuddy {
             if let Some(mut provider) = state.db.get_provider_by_id(id, app_type.as_str())? {
@@ -7126,6 +7142,9 @@ impl ProviderService {
 
         if app_type == AppType::Omp {
             return omp::enable(state, id);
+        }
+        if app_type == AppType::LiveAgent {
+            return liveagent::enable(state, id);
         }
 
         // Check if provider exists
@@ -7605,6 +7624,7 @@ impl ProviderService {
             | AppType::Agy
             | AppType::Omp
             | AppType::Copilot
+            | AppType::LiveAgent
             | AppType::WorkBuddy => Ok(String::new()),
         }
     }
@@ -7630,6 +7650,7 @@ impl ProviderService {
             | AppType::Agy
             | AppType::Omp
             | AppType::Copilot
+            | AppType::LiveAgent
             | AppType::WorkBuddy => Ok(String::new()),
         }
     }
@@ -8403,6 +8424,12 @@ impl ProviderService {
             AppType::Kimi => {
                 crate::kimi_config::validate_provider(&provider.id, &provider.settings_config)?
             }
+            AppType::LiveAgent => {
+                crate::liveagent_config::validate_provider(
+                    &provider.id,
+                    &provider.settings_config,
+                )?;
+            }
             AppType::Mcode => {
                 crate::mcode_config::validate_provider(&provider.id, &provider.settings_config)?
             }
@@ -8686,7 +8713,12 @@ impl ProviderService {
                 }
                 Ok((api_key, base_url))
             }
-            AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::Mcode | AppType::Omp => {
+            AppType::OpenClaw
+            | AppType::Hermes
+            | AppType::Pi
+            | AppType::Mcode
+            | AppType::Omp
+            | AppType::LiveAgent => {
                 // These native formats use apiKey and baseUrl directly on the object.
                 let api_key = provider
                     .settings_config

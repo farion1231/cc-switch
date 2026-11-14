@@ -259,6 +259,7 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                             kimi: false,
                             copilot: false,
                             dsh: false,
+                            liveagent: false,
                             workbuddy: false,
                             pi: false,
                             omp: false,

@@ -1506,6 +1506,7 @@
     "selectSessionLabel": "{{title}} auswählen",
     "agyDeleteHint": "Löschen Sie diese Sitzung in Antigravity, um auch ihren Laufzeitstatus zu entfernen",
     "mcodeDeleteHint": "In MiniMax Code löschen",
+    "liveagentDeleteHint": "Löschen Sie diese Sitzung in LiveAgent, damit auch dessen Laufzeitzustand entfernt wird",
     "groupMeta": "{{count}} Sitzungen · {{time}}",
     "bucketToday": "Heute",
     "bucketYesterday": "Gestern",
@@ -4439,6 +4440,7 @@
     "columnVisible": "Anzeigen",
     "visibleHelp": "Wenn ausgeschaltet, erscheint die App nicht mehr in der Seitenleiste, im Tray-Menü, in den App-Spalten von MCP / Skills oder in den App-Auswahlen bei Prompts und Sitzungen. Sie wird nur ausgeblendet: Ihre Anbieter, MCP-Server und anderen Einstellungen bleiben erhalten, und ihre eigenen Konfigurationsdateien bleiben unberührt.",
     "desktopHelp": "Claude Desktop ist eine Desktop-App und kann hier weder installiert noch aktualisiert werden; CC Switch verbindet sich über deren Konfigurationsdatei damit.",
+    "liveagentHelp": "LiveAgent ist eine Desktop-App und kann hier weder installiert noch aktualisiert werden. CC Switch verwaltet Anbieter, MCP-Server und Skills über deren config.json.",
     "workbuddyHelp": "WorkBuddy ist eine Desktop-App und kann hier weder installiert noch aktualisiert werden; sie aktualisiert sich selbst. CC Switch verbindet sich über deren Konfigurationsdatei (~/.workbuddy/models.json) damit.",
     "desktopUnsupported": "Auf diesem System nicht unterstützt",
     "desktopConnected": "Verbunden",
@@ -5393,5 +5395,44 @@
     "later": "Später",
     "installNow": "Installieren und neu starten",
     "installFailed": "Update-Installation fehlgeschlagen"
+  },
+  "liveagent": {
+    "modelApi": "API-Protokoll (überschreiben)",
+    "modelApiInherit": "Wie beim Anbieter",
+    "noModelsTyped": "LiveAgent lädt die Modelle für den integrierten Typ {{type}} zur Laufzeit. Rufen Sie die Liste über /v1/models ab und fügen Sie hier Modelle hinzu, um eines als Standard festzulegen.",
+    "sampling": {
+      "temperature": "Temperatur",
+      "top_p": "Top P",
+      "unset": "Nicht festgelegt (Modellstandard)"
+    },
+    "apiHint": {
+      "completions": "Am gebräuchlichsten: die OpenAI-kompatible API (/v1/chat/completions). Wählen Sie diese für die meisten Relay-Dienste und Drittanbietermodelle.",
+      "responses": "Die neuere Responses-API von OpenAI (/v1/responses), für OpenAI selbst oder Dienste, die sie ausdrücklich unterstützen.",
+      "anthropic": "Die native API von Claude (/v1/messages), für Anthropic oder Claude-kompatible Relay-Dienste.",
+      "google": "Die native API von Gemini, für API-Schlüssel aus Google AI Studio.",
+      "fromType": "LiveAgent wählt die API anhand des Anbietertyps."
+    },
+    "noModels": "Noch keine Modelle. Rufen Sie die Liste über /v1/models ab oder fügen Sie eines manuell hinzu.",
+    "toggleModelDetails": "Details für {{model}} ein- oder ausblenden",
+    "enableModel": "Modell {{model}} aktivieren",
+    "reasoning": "Unterstützt erweitertes Denken",
+    "imageInput": "Unterstützt Bildeingabe",
+    "restartRequired": "Beenden Sie LiveAgent, bevor Sie Modelle oder MCP-Server ändern (ein laufendes LiveAgent überschreibt diese Änderungen), und starten Sie es danach neu, damit sie wirksam werden. Projektspezifische Skill-Einstellungen verwaltet weiterhin LiveAgent.",
+    "apiFromType": "Automatisch nach Typ ({{type}})",
+    "providerKey": "Anbieterschlüssel",
+    "duplicateKey": "Dieser Anbieterschlüssel existiert bereits",
+    "api": "API-Protokoll",
+    "baseUrl": "API-Basis-URL",
+    "apiKey": "API-Schlüssel oder Verweis auf ein Geheimnis",
+    "models": "Modelle",
+    "addModel": "Modell hinzufügen",
+    "modelId": "Modell-ID",
+    "modelName": "Anzeigename",
+    "removeModel": "Modell {{model}} entfernen",
+    "contextWindow": "Kontextfenster",
+    "maxTokens": "Max. Ausgabe-Token",
+    "enabled": "Modell aktivieren",
+    "advanced": "Erweiterte JSON-Konfiguration",
+    "validationHint": "Geben Sie einen Namen, einen eindeutigen Schlüssel, eine API-URL, Zugangsdaten und gültige Modelle ein. Modell-IDs müssen eindeutig sein."
   }
 }

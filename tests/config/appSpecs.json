@@ -105,6 +105,13 @@
     "stack": false
   },
   {
+    "id": "liveagent",
+    "additive": true,
+    "localProxy": false,
+    "routeMode": false,
+    "stack": false
+  },
+  {
     "id": "workbuddy",
     "additive": true,
     "localProxy": false,

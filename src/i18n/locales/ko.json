@@ -1505,6 +1505,7 @@
     "selectSessionLabel": "{{title}} 선택",
     "agyDeleteHint": "런타임 상태도 제거하려면 Antigravity에서 이 세션을 삭제하세요.",
     "mcodeDeleteHint": "MiniMax Code에서 삭제하세요.",
+    "liveagentDeleteHint": "실행 상태도 함께 정리되도록 LiveAgent에서 이 세션을 삭제하세요",
     "groupMeta": "세션 {{count}}개 · {{time}}",
     "bucketToday": "오늘",
     "bucketYesterday": "어제",
@@ -4439,6 +4440,7 @@
     "columnVisible": "표시",
     "visibleHelp": "끄면 앱이 사이드바, 트레이 메뉴, MCP / 스킬의 앱 열, 프롬프트 및 세션의 앱 선택기에 표시되지 않습니다. 화면에서만 숨겨지며, 공급자와 MCP 서버 등의 설정 및 앱 자체 설정 파일은 변경되지 않습니다.",
     "desktopHelp": "Claude Desktop은 데스크톱 앱이므로 여기에서 설치하거나 업그레이드할 수 없습니다. CC Switch는 설정 파일을 통해 연결됩니다.",
+    "liveagentHelp": "LiveAgent는 데스크톱 앱이라 여기에서 설치하거나 업그레이드할 수 없습니다. CC Switch는 config.json을 통해 공급자, MCP 서버, Skill을 관리합니다.",
     "workbuddyHelp": "WorkBuddy는 데스크톱 앱이므로 여기서 설치하거나 업그레이드할 수 없으며 스스로 업데이트됩니다. CC Switch는 구성 파일(~/.workbuddy/models.json)을 통해 연결합니다.",
     "desktopUnsupported": "이 시스템에서는 지원되지 않습니다",
     "desktopConnected": "연결됨",
@@ -5393,5 +5395,44 @@
     "later": "나중에",
     "installNow": "설치 후 다시 시작",
     "installFailed": "업데이트 설치에 실패했습니다"
+  },
+  "liveagent": {
+    "modelApi": "API 프로토콜(재정의)",
+    "modelApiInherit": "공급자와 동일",
+    "noModelsTyped": "내장 {{type}} 유형의 모델은 LiveAgent가 실행 중에 불러옵니다. 기본 모델로 지정하려면 /v1/models에서 목록을 가져와 여기에 추가하세요.",
+    "sampling": {
+      "temperature": "Temperature(온도)",
+      "top_p": "Top P",
+      "unset": "설정 안 함(모델 기본값)"
+    },
+    "apiHint": {
+      "completions": "가장 일반적인 OpenAI 호환 API(/v1/chat/completions)입니다. 대부분의 중계 서비스와 서드파티 모델은 이것을 선택하세요.",
+      "responses": "OpenAI의 새 Responses API(/v1/responses)입니다. OpenAI 또는 이를 명시적으로 지원하는 서비스에 사용하세요.",
+      "anthropic": "Claude 네이티브 API(/v1/messages)입니다. Anthropic 또는 Claude 호환 중계 서비스에 사용하세요.",
+      "google": "Gemini 네이티브 API입니다. Google AI Studio API 키에 사용하세요.",
+      "fromType": "LiveAgent가 공급자 유형에 따라 API를 선택합니다."
+    },
+    "noModels": "아직 모델이 없습니다. /v1/models에서 목록을 가져오거나 직접 추가하세요.",
+    "toggleModelDetails": "{{model}} 세부 정보 표시/숨기기",
+    "enableModel": "{{model}} 모델 사용",
+    "reasoning": "확장 사고 지원",
+    "imageInput": "이미지 입력 지원",
+    "restartRequired": "모델이나 MCP 서버를 변경하기 전에 LiveAgent를 종료하세요(실행 중인 LiveAgent가 변경 내용을 덮어씁니다). 변경 후 다시 실행하면 적용됩니다. 프로젝트별 Skill 설정은 계속 LiveAgent에서 관리합니다.",
+    "apiFromType": "유형에서 자동 결정 ({{type}})",
+    "providerKey": "공급자 키",
+    "duplicateKey": "이미 존재하는 공급자 키입니다",
+    "api": "API 프로토콜",
+    "baseUrl": "API 기본 URL",
+    "apiKey": "API 키 또는 시크릿 참조",
+    "models": "모델",
+    "addModel": "모델 추가",
+    "modelId": "모델 ID",
+    "modelName": "표시 이름",
+    "removeModel": "{{model}} 모델 제거",
+    "contextWindow": "컨텍스트 창",
+    "maxTokens": "최대 출력 토큰",
+    "enabled": "모델 사용",
+    "advanced": "고급 JSON 설정",
+    "validationHint": "이름, 고유 키, API URL, 자격 증명과 올바른 모델을 입력하세요. 모델 ID는 중복될 수 없습니다."
   }
 }

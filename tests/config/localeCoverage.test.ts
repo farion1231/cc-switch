@@ -272,9 +272,9 @@ describe("Russian locale", () => {
   const translations = flattenStrings(ru);
 
   it("only keeps keys that still exist in English", () => {
-    expect([...translations.keys()].filter((key) => !reference.has(key))).toEqual(
-      [],
-    );
+    expect(
+      [...translations.keys()].filter((key) => !reference.has(key)),
+    ).toEqual([]);
   });
 
   it("keeps every existing translation non-empty", () => {
