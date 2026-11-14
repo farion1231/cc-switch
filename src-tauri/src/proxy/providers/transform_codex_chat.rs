@@ -3813,7 +3813,10 @@ mod tests {
         let stripped_has_tool_calls = result_messages(&stripped)
             .iter()
             .any(|message| message.get("tool_calls").is_some());
-        assert!(stripped_has_tool_calls, "工具调用本身不能被剥离: {stripped}");
+        assert!(
+            stripped_has_tool_calls,
+            "工具调用本身不能被剥离: {stripped}"
+        );
         // 非 assistant 消息不受影响。
         assert_eq!(result_messages(&stripped)[0]["role"], "user");
     }
