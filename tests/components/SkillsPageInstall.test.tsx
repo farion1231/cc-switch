@@ -12,6 +12,7 @@ import type {
   SkillsShSearchResult,
 } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
+import { settingsApi } from "@/lib/api";
 
 const m = vi.hoisted(() => ({
   install: vi.fn(),
@@ -78,8 +79,8 @@ vi.mock("@/hooks/useSkills", () => ({
     isLoading: false,
     isFetching: false,
     isError: false,
-    refetch: m.refetchDiscoverable,
   }),
+  useRefreshDiscoverableSkills: () => m.refetchDiscoverable,
   useDiscoverableSkillsFailures: () => ({ data: m.failures }),
   useInstalledSkills: () => ({ data: m.installed, isLoading: false }),
   useInstallSkill: () => ({ mutateAsync: m.install }),
@@ -375,6 +376,26 @@ describe("SkillsPage (Discover)", () => {
     expect(
       screen.getByRole("button", { name: "skillsPage.discover.retryAria" }),
     ).toBeInTheDocument();
+  });
+
+  it("opens a discovered skill's docs in the browser", async () => {
+    const open = vi
+      .spyOn(settingsApi, "openExternal")
+      .mockResolvedValue(undefined as never);
+    m.repos = [makeRepo()];
+    m.discoverable = [
+      makeDiscoverable({
+        readmeUrl: "https://github.com/owner-a/repo-a/tree/main/repo-skill",
+      }),
+    ];
+    renderPage();
+    await userEvent.click(
+      screen.getByRole("button", { name: "mcpPage.openDocs" }),
+    );
+    expect(open).toHaveBeenLastCalledWith(
+      "https://github.com/owner-a/repo-a/tree/main/repo-skill",
+    );
+    open.mockRestore();
   });
 
   it("turns a repository off through add_skill_repo with enabled=false", async () => {

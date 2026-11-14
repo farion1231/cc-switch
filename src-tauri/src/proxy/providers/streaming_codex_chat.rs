@@ -6,14 +6,14 @@ use super::{
     codex_compaction,
     inline_think::InlineThinkSplitter,
     transform_codex_chat::{
-        chat_usage_to_responses_usage, custom_tool_input_from_chat_arguments,
-        response_id_from_chat_id, response_status_from_finish_reason,
-        response_tool_call_item_from_chat_name, response_tool_call_item_id_from_chat_name,
-        CodexToolContext,
+        chat_error_to_response_error, chat_usage_to_responses_usage,
+        custom_tool_input_from_chat_arguments, response_id_from_chat_id,
+        response_status_from_finish_reason, response_tool_call_item_from_chat_name,
+        response_tool_call_item_id_from_chat_name, CodexToolContext,
     },
 };
 use crate::proxy::json_canonical::canonicalize_tool_arguments_str;
-use crate::proxy::sse::{strip_sse_field, take_sse_block};
+use crate::proxy::sse::{strip_sse_field, SseBuffer};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Value};
@@ -722,11 +722,23 @@ impl ChatToResponsesState {
     }
 
     fn failed_event(&mut self, message: String, error_type: Option<String>) -> Bytes {
-        self.completed = true;
         let mut error = json!({ "message": message });
         if let Some(error_type) = error_type.filter(|value| !value.is_empty()) {
             error["type"] = json!(error_type);
         }
+        self.failed_event_with_error(error)
+    }
+
+    fn failed_event_with_error(&mut self, mut error: Value) -> Bytes {
+        // Codex expects Option<String>; other JSON types would hide the upstream message.
+        if let Some(code) = error
+            .get_mut("code")
+            .filter(|code| !code.is_string() && !code.is_null())
+        {
+            *code = json!(code.to_string());
+        }
+
+        self.completed = true;
 
         let mut response = self.base_response("failed", self.completed_output_items());
         response["error"] = error;
@@ -754,8 +766,7 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
     tool_context: CodexToolContext,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
-        let mut buffer = String::new();
-        let mut utf8_remainder: Vec<u8> = Vec::new();
+        let mut sse = SseBuffer::new();
         let mut state = ChatToResponsesState::with_tool_context(tool_context);
         let mut stream_failed = false;
 
@@ -764,9 +775,9 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
+                    sse.push_bytes(&bytes);
 
-                    while let Some(block) = take_sse_block(&mut buffer) {
+                    while let Some(block) = sse.next_block() {
                         if block.trim().is_empty() {
                             continue;
                         }
@@ -801,8 +812,8 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
                         };
 
                         if event_name.as_deref() == Some("error") || chunk.get("error").is_some() {
-                            let (message, error_type) = extract_chat_sse_error(&chunk);
-                            yield Ok(state.failed_event(message, error_type));
+                            let normalized = chat_error_to_response_error(Some(&chunk));
+                            yield Ok(state.failed_event_with_error(normalized["error"].clone()));
                             stream_failed = true;
                             break;
                         }
@@ -845,28 +856,6 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
             }
         }
     }
-}
-
-fn extract_chat_sse_error(value: &Value) -> (String, Option<String>) {
-    let error = value.get("error").unwrap_or(value);
-    let message = error
-        .as_str()
-        .map(ToString::to_string)
-        .or_else(|| {
-            error
-                .get("message")
-                .or_else(|| error.get("detail"))
-                .and_then(|v| v.as_str())
-                .map(ToString::to_string)
-        })
-        .unwrap_or_else(|| error.to_string());
-    let error_type = error
-        .get("type")
-        .or_else(|| error.get("code"))
-        .and_then(|v| v.as_str())
-        .map(ToString::to_string);
-
-    (message, error_type)
 }
 
 #[cfg(test)]
@@ -1527,6 +1516,46 @@ mod tests {
         assert!(output.contains("event: response.failed"));
         assert!(output.contains("quota exceeded"));
         assert!(output.contains("rate_limit_exceeded"));
+        assert!(!output.contains("event: response.completed"));
+    }
+
+    #[tokio::test]
+    async fn gemini_sse_numeric_error_code_preserves_message() {
+        for prefix in ["", "event: error\n"] {
+            let chunk = format!(
+                "{prefix}data: {{\"error\":{{\"code\":429,\"status\":\"RESOURCE_EXHAUSTED\",\"message\":\"Quota exceeded for metric\"}}}}\n\n"
+            );
+            let output = collect(vec![&chunk, "data: [DONE]\n\n"]).await;
+            let events = parse_sse_events(&output);
+            let failed = events
+                .iter()
+                .find(|event| event["type"] == "response.failed")
+                .unwrap();
+
+            assert_eq!(failed["response"]["error"]["code"], "429");
+            assert_eq!(
+                failed["response"]["error"]["message"],
+                "Quota exceeded for metric"
+            );
+            assert!(!output.contains("event: response.completed"));
+        }
+    }
+
+    #[tokio::test]
+    async fn gemini_sse_overflow_preserves_the_code_codex_uses_for_compaction() {
+        let output = collect(vec![
+            "data: {\"error\":{\"code\":400,\"status\":\"INVALID_ARGUMENT\",\"message\":\"The input token count exceeds the maximum number of tokens allowed 1048576.\"}}\n\n",
+            "data: [DONE]\n\n",
+        ]).await;
+        let events = parse_sse_events(&output);
+        let failed = events
+            .iter()
+            .find(|event| event["type"] == "response.failed")
+            .unwrap();
+        assert_eq!(
+            failed["response"]["error"]["code"],
+            "context_length_exceeded"
+        );
         assert!(!output.contains("event: response.completed"));
     }
 

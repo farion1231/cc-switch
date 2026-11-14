@@ -2,7 +2,6 @@ import { Fragment, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { SegmentedControl } from "@/components/ui/segmented-control";
 import { useUsageFirstDate, useUsageTrends } from "@/lib/query/usage";
 import { cn } from "@/lib/utils";
 import type { UsageRangeSelection } from "@/types/usage";
@@ -11,20 +10,19 @@ import {
   getLocaleFromLanguage,
   parseFiniteNumber,
 } from "./format";
-import type { UsageTrendStatLike } from "./UsageTrendChart";
+import { hitRateOf, type UsageTrendStatLike } from "./UsageTrendChart";
 import { UsageTooltipCard } from "./UsageTooltipCard";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
-import { USAGE_CHOICE_KEYS, useRememberedChoice } from "./rememberedChoice";
+import type { UsageMetric } from "./rememberedChoice";
 
 const WEEKS = 53;
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** 0 档用底色，1–4 档是 --heat-1…4（与趋势图同一色相，色阶在 index.css 按深浅色分别定） */
 const LEVELS = [0, 1, 2, 3, 4];
 
-const HEAT_METRICS = ["tokens", "requests", "cost"] as const;
-type HeatMetric = (typeof HEAT_METRICS)[number];
-
 interface UsageHeatmapProps {
+  /** 格子深浅按哪个指标分档：由上方指标条选 */
+  metric: UsageMetric;
   appType?: string;
   providerName?: string;
   model?: string;
@@ -34,7 +32,10 @@ interface UsageHeatmapProps {
 interface DayCell {
   key: string;
   date: Date;
-  value: number;
+  /** 按当前指标分档的值；null = 这天没有可画的数据（画成底色） */
+  value: number | null;
+  /** 命中率指标时悬停卡片里显示 */
+  hitRate: number | null;
   tokens: number;
   requests: number;
   cost: number;
@@ -109,7 +110,10 @@ function spanCountFor(
   return before > 0 ? 1 + Math.ceil(before / (WEEKS * 7)) : 1;
 }
 
-function metricValue(stat: UsageTrendStatLike, metric: HeatMetric): number {
+function metricValue(
+  stat: UsageTrendStatLike,
+  metric: Exclude<UsageMetric, "hitRate">,
+): number {
   if (metric === "requests") return stat.requestCount ?? 0;
   if (metric === "cost") return parseFiniteNumber(stat.totalCost) ?? 0;
   return (
@@ -120,17 +124,30 @@ function metricValue(stat: UsageTrendStatLike, metric: HeatMetric): number {
   );
 }
 
-/** 按非零天的四分位分档，避免个别高峰日把其余格子都压成最浅 */
-function buildThresholds(values: number[]): number[] {
-  const sorted = values.filter((v) => v > 0).sort((a, b) => a - b);
+/** 格子分档用的值：用量类指标 0 就是没用；命中率 0% 是真实数据，只有没有输入时才是空 */
+function heatValue(
+  stat: UsageTrendStatLike | undefined,
+  metric: UsageMetric,
+): number | null {
+  if (!stat) return null;
+  if (metric === "hitRate") return hitRateOf(stat);
+  const value = metricValue(stat, metric);
+  return value > 0 ? value : null;
+}
+
+/** 按有数据的天的四分位分档，避免个别高峰日把其余格子都压成最浅 */
+function buildThresholds(values: (number | null)[]): number[] {
+  const sorted = values
+    .filter((v): v is number => v != null)
+    .sort((a, b) => a - b);
   if (sorted.length === 0) return [Infinity, Infinity, Infinity];
   const at = (q: number) =>
     sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))];
   return [at(0.25), at(0.5), at(0.75)];
 }
 
-function levelOf(value: number, thresholds: number[]): number {
-  if (value <= 0) return 0;
+function levelOf(value: number | null, thresholds: number[]): number {
+  if (value == null) return 0;
   if (value <= thresholds[0]) return 1;
   if (value <= thresholds[1]) return 2;
   if (value <= thresholds[2]) return 3;
@@ -187,7 +204,7 @@ function useAllSpansDailyTrends(
 function buildSpan(
   index: number,
   byDay: Map<string, UsageTrendStatLike>,
-  metric: HeatMetric,
+  metric: UsageMetric,
   today: Date,
 ): SpanGrid {
   const start = spanStart(today, index);
@@ -202,7 +219,8 @@ function buildSpan(
       const cell: DayCell = {
         key: dayKey(date),
         date,
-        value: stat ? metricValue(stat, metric) : 0,
+        value: heatValue(stat, metric),
+        hitRate: stat ? hitRateOf(stat) : null,
         tokens: stat ? metricValue(stat, "tokens") : 0,
         requests: stat?.requestCount ?? 0,
         cost: stat ? metricValue(stat, "cost") : 0,
@@ -227,6 +245,7 @@ function buildSpan(
 }
 
 export function UsageHeatmap({
+  metric,
   appType,
   providerName,
   model,
@@ -234,11 +253,6 @@ export function UsageHeatmap({
 }: UsageHeatmapProps) {
   const { t, i18n } = useTranslation();
   const { money } = useMoneyFormat();
-  const [metric, setMetric] = useRememberedChoice<HeatMetric>(
-    USAGE_CHOICE_KEYS.heatmapMetric,
-    HEAT_METRICS,
-    "tokens",
-  );
   const sectionRef = useRef<HTMLElement>(null);
   const [hover, setHover] = useState<HoverState | null>(null);
   // 默认只画最近 53 周，点「显示更多」才把更早的段全部展开；不记住，每次进来都是收起
@@ -304,32 +318,18 @@ export function UsageHeatmap({
     <section
       ref={sectionRef}
       aria-labelledby="usage-heatmap-title"
-      className="relative shrink-0 rounded-panel border border-border bg-surface px-4 py-3"
+      className="relative px-4 pb-3 pt-5"
     >
-      <div className="flex flex-wrap items-start gap-x-3.5 gap-y-1">
-        <div>
-          <h2
-            id="usage-heatmap-title"
-            className="m-0 text-body font-semibold text-fg-1"
-          >
-            {t("usage.heatmap.title")}
-          </h2>
-          <p className="m-0 text-caption text-fg-3">
-            {t("usage.heatmap.subtitle")}
-          </p>
-        </div>
-        <div className="flex-1" />
-        <SegmentedControl<HeatMetric>
-          size="sm"
-          aria-label={t("usage.trend.metricLabel")}
-          value={metric}
-          onValueChange={setMetric}
-          items={[
-            { value: "tokens", label: t("usage.trend.tokens") },
-            { value: "requests", label: t("usage.trend.requests") },
-            { value: "cost", label: t("usage.trend.cost") },
-          ]}
-        />
+      <div>
+        <h2
+          id="usage-heatmap-title"
+          className="m-0 text-body font-semibold text-fg-1"
+        >
+          {t("usage.heatmap.title")}
+        </h2>
+        <p className="m-0 text-caption text-fg-3">
+          {t("usage.heatmap.subtitle")}
+        </p>
       </div>
 
       {isLoading ? (
@@ -434,6 +434,7 @@ export function UsageHeatmap({
             tokens={hover.cell.tokens}
             requests={hover.cell.requests}
             cost={hover.cell.cost}
+            hitRate={metric === "hitRate" ? hover.cell.hitRate : undefined}
           />
         </div>
       )}

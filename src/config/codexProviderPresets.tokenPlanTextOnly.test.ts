@@ -27,16 +27,16 @@ describe("third-party Token Plan DeepSeek V4 rows stay text-only", () => {
     }
   });
 
-  it("distinguishes official V4.1 Flash vision from text-only V4 Pro", () => {
+  // 2026-10-25 起官方预设只留 Flash（Pro 贵且效果不如 Flash）
+  it("declares image input for the official V4.1 Flash row", () => {
     const preset = codexProviderPresets.find((p) => p.name === "DeepSeek");
     expect(preset).toBeDefined();
+    expect(preset!.modelCatalog?.map((row) => row.model)).toEqual([
+      "deepseek-flash",
+    ]);
     expect(
       preset!.modelCatalog?.find((row) => row.model === "deepseek-flash")
         ?.inputModalities,
     ).toEqual(["text", "image"]);
-    expect(
-      preset!.modelCatalog?.find((row) => row.model === "deepseek-v4-pro")
-        ?.inputModalities,
-    ).toEqual(["text"]);
   });
 });

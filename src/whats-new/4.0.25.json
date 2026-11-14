@@ -1,0 +1,33 @@
+{
+  "version": "4.0.25",
+  "items": [
+    {
+      "type": "new",
+      "zh": "MCP 页面可以一键检查服务器能否连上",
+      "zh-TW": "MCP 頁面可以一鍵檢查伺服器能否連上",
+      "en": "Check whether your MCP servers connect from the MCP page",
+      "ja": "MCP ページでサーバーに接続できるか一括確認可能に"
+    },
+    {
+      "type": "new",
+      "zh": "Codex 官方额度快用完时可自动暂停官方请求",
+      "zh-TW": "Codex 官方額度快用完時可自動暫停官方請求",
+      "en": "Codex can pause official requests before the quota runs out",
+      "ja": "Codex 公式クォータが尽きる前に公式リクエストを一時停止可能に"
+    },
+    {
+      "type": "new",
+      "zh": "路由和聚合模式下，模型菜单写明供应商和实际模型",
+      "zh-TW": "路由和聚合模式下，模型選單寫明供應商和實際模型",
+      "en": "Model pickers now show the provider and upstream model in routing and stack modes",
+      "ja": "ルーティング・集約モードでモデル一覧にプロバイダーと実モデルを表示"
+    },
+    {
+      "type": "fix",
+      "zh": "修复「打开终端」混入路由和聚合的设置",
+      "zh-TW": "修正「開啟終端機」混入路由和聚合的設定",
+      "en": "Fixed \"Open terminal\" picking up routing and stack settings",
+      "ja": "「ターミナルを開く」にルーティング・集約の設定が混ざる問題を修正"
+    }
+  ]
+}

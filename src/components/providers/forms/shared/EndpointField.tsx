@@ -12,6 +12,7 @@ interface EndpointFieldProps {
   onChange: (value: string) => void;
   placeholder: string;
   hint?: string;
+  required?: boolean;
   /** 填写说明放进字段名后的「?」，不占页面；和 `hint` 二选一。 */
   help?: string;
   showManageButton?: boolean;
@@ -26,6 +27,7 @@ export function EndpointField({
   onChange,
   placeholder,
   hint,
+  required = true,
   help,
   showManageButton = true,
   onManageClick,
@@ -41,7 +43,10 @@ export function EndpointField({
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-0.5">
-          <FormLabel htmlFor={id} className={REQUIRED_LABEL}>
+          <FormLabel
+            htmlFor={id}
+            className={required ? REQUIRED_LABEL : undefined}
+          >
             {label}
           </FormLabel>
           {help ? (
@@ -66,7 +71,7 @@ export function EndpointField({
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         autoComplete="off"
-        aria-required="true"
+        aria-required={required}
       />
       {hint ? (
         <p className="text-caption text-fg-2">{hint.replace(/^💡\s*/u, "")}</p>

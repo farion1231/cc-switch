@@ -18,6 +18,15 @@ export interface PiModelCatalogEntry {
  * Reviewed model values used only to build Pi provider presets.
  */
 export const piModelCatalog = {
+  "deepseek/deepseek-v4.1-flash-1017": {
+    capabilities: {
+      name: "DeepSeek V4.1 Flash 1017",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1048576,
+      maxTokens: 131072,
+    },
+  },
   "amazon/nova-pro": {
     capabilities: {
       name: "Amazon Nova Pro",
@@ -264,6 +273,15 @@ export const piModelCatalog = {
       maxTokens: 128_000,
     },
   },
+  "minimax/minimax-m3.1-flash": {
+    capabilities: {
+      name: "MiniMax-M3.1-Flash",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+    },
+  },
   "moonshotai/kimi-k2.5": {
     capabilities: {
       name: "Kimi K2.5",
@@ -303,6 +321,24 @@ export const piModelCatalog = {
   "moonshotai/kimi-k3": {
     capabilities: {
       name: "Kimi K3",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1_048_576,
+      maxTokens: 131_072,
+    },
+  },
+  "moonshotai/kimi-k3.1-pro": {
+    capabilities: {
+      name: "Kimi K3.1 Pro",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1_048_576,
+      maxTokens: 131_072,
+    },
+  },
+  "moonshotai/kimi-k3.1-pro-highspeed": {
+    capabilities: {
+      name: "Kimi K3.1 Pro HighSpeed",
       reasoning: true,
       input: ["text", "image"],
       contextWindow: 1_048_576,
@@ -788,6 +824,15 @@ export const piModelCatalog = {
       reasoning: true,
       input: ["text", "image"],
       contextWindow: 1000000,
+      maxTokens: 128000,
+    },
+  },
+  "openai/gpt-6.1-sol": {
+    capabilities: {
+      name: "GPT-6.1 Sol",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 272000,
       maxTokens: 128000,
     },
   },

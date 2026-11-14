@@ -8,7 +8,8 @@ use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::blocks::{assign_turn_ids, openai_tool_calls, tool_result_block};
 use super::utils::{
-    extract_text, for_each_jsonl_value, parse_timestamp_to_ms, truncate_summary, TITLE_MAX_CHARS,
+    extract_text, for_each_jsonl_value, parse_timestamp_to_ms, truncate_summary, ScanStatus,
+    TITLE_MAX_CHARS,
 };
 
 #[derive(Debug, Deserialize)]
@@ -42,13 +43,17 @@ pub fn session_roots() -> Vec<PathBuf> {
 }
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
+    scan_sessions_with_status(&mut ScanStatus::default())
+}
+
+pub(crate) fn scan_sessions_with_status(status: &mut ScanStatus) -> Vec<SessionMeta> {
     let mut summaries = Vec::new();
     for root in session_roots() {
-        collect_summary_files(&root, &mut summaries);
+        collect_summary_files_with_status(&root, &mut summaries, status);
     }
     summaries
         .into_iter()
-        .filter_map(|path| parse_summary(&path))
+        .filter_map(|path| parse_summary_with_status(&path, status))
         .collect()
 }
 
@@ -165,14 +170,20 @@ pub fn delete_session(root: &Path, path: &Path, session_id: &str) -> Result<bool
     Ok(true)
 }
 
+#[cfg(test)]
 fn collect_summary_files(root: &Path, files: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(root) else {
-        return;
-    };
-    for entry in entries.flatten() {
+    collect_summary_files_with_status(root, files, &mut ScanStatus::default());
+}
+
+fn collect_summary_files_with_status(
+    root: &Path,
+    files: &mut Vec<PathBuf>,
+    status: &mut ScanStatus,
+) {
+    for entry in status.entries(root) {
         let path = entry.path();
-        if path.is_dir() {
-            collect_summary_files(&path, files);
+        if status.is_dir(&path) {
+            collect_summary_files_with_status(&path, files, status);
         } else if path.file_name().and_then(|name| name.to_str()) == Some("summary.json") {
             files.push(path);
         }
@@ -186,8 +197,14 @@ fn read_summary(path: &Path) -> Result<GrokSessionSummary, String> {
         .map_err(|e| format!("Failed to parse Grok Build session summary: {e}"))
 }
 
+#[cfg(test)]
 fn parse_summary(path: &Path) -> Option<SessionMeta> {
-    let summary = read_summary(path).ok()?;
+    parse_summary_with_status(path, &mut ScanStatus::default())
+}
+
+fn parse_summary_with_status(path: &Path, status: &mut ScanStatus) -> Option<SessionMeta> {
+    let text = status.record(std::fs::read_to_string(path))?;
+    let summary: GrokSessionSummary = serde_json::from_str(&text).ok()?;
     let session_id = summary.info.id;
     let title = summary
         .generated_title

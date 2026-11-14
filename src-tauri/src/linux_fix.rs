@@ -37,6 +37,28 @@ use std::time::Duration;
 
 use tauri::{LogicalSize, PhysicalSize, WebviewWindow};
 
+/// Apply the existing Linux software-rendering workaround to every newly created
+/// WebView, including the tray panel and the main window recreated after lightweight
+/// mode. WebKit settings belong to a WebView, not to the application (#9216).
+pub(crate) fn configure_webview(view: &tauri::Webview) {
+    let label = view.label().to_owned();
+    if let Err(error) = view.with_webview(move |webview| {
+        use webkit2gtk::{HardwareAccelerationPolicy, SettingsExt, WebViewExt};
+
+        if let Some(settings) = WebViewExt::settings(&webview.inner()) {
+            settings.set_hardware_acceleration_policy(HardwareAccelerationPolicy::Never);
+            log::info!("Linux: disabled WebKitGTK hardware acceleration for {label}");
+        } else {
+            log::warn!("Linux: WebKitGTK settings unavailable for {label}");
+        }
+    }) {
+        log::warn!(
+            "Linux: failed to configure WebView {}: {error}",
+            view.label()
+        );
+    }
+}
+
 static IS_NUDGING: AtomicBool = AtomicBool::new(false);
 
 /// 只保留最新一次 nudge 请求。轻量模式销毁重建窗口时，旧任务仍在跑，

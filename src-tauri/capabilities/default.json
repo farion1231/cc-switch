@@ -15,6 +15,7 @@
     "core:window:allow-is-maximized",
     "core:window:allow-close",
     "core:window:allow-set-decorations",
+    "core:webview:allow-set-webview-zoom",
     "process:allow-exit",
     "process:allow-restart",
     "dialog:default"
