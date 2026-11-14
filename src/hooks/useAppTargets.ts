@@ -20,9 +20,9 @@ export function useAppTargetsOverview(enabled = true) {
     queryFn: () => appTargetsApi.overview(false),
     enabled,
     // 发行版空闲一会儿会自动停下：运行状态要跟着刷新（枚举本身不启动发行版）
-    staleTime: 15_000,
-    refetchInterval: enabled ? 30_000 : false,
-    refetchOnWindowFocus: true,
+    staleTime: 5_000,
+    refetchInterval: enabled ? 5_000 : false,
+    refetchOnWindowFocus: "always",
   });
 }
 

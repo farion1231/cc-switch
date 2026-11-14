@@ -45,12 +45,29 @@ const view: AppTargetsView = {
     },
   },
 };
+let wslRunning = true;
 
 vi.mock("@/hooks/useAppTargets", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/hooks/useAppTargets")>();
   return {
     ...actual,
-    useAppTargetView: () => view,
+    useAppTargetsOverview: () => ({
+      data: {
+        apps: [view],
+        inventory: {
+          hostWindows: true,
+          wslAvailable: true,
+          distros: [
+            {
+              distro: "Alpine",
+              available: true,
+              running: wslRunning,
+              cached: !wslRunning,
+            },
+          ],
+        },
+      },
+    }),
     useInvalidateAppTargets: () => () => Promise.resolve(),
   };
 });
@@ -65,6 +82,7 @@ vi.mock("@/lib/toast", () => ({ toast: toastMock }));
 
 describe("AppTargetsIndicator routing toggle", () => {
   beforeEach(() => {
+    wslRunning = true;
     setRouteMock.mockReset();
     syncMock.mockReset();
     view.records = {
@@ -103,6 +121,24 @@ describe("AppTargetsIndicator routing toggle", () => {
       screen.getByRole("button", { name: "appTargets.indicator.title" }),
     );
     expect(screen.queryAllByRole("switch")).toHaveLength(0);
+  });
+
+  it("hides saved WSL targets after shutdown and shows them again after startup", () => {
+    const { rerender } = render(<AppTargetsIndicator app="claude" />);
+    expect(
+      screen.getByRole("button", { name: "appTargets.indicator.title" }),
+    ).toBeInTheDocument();
+    wslRunning = false;
+    rerender(<AppTargetsIndicator app="claude" />);
+    expect(
+      screen.queryByRole("button", { name: "appTargets.indicator.title" }),
+    ).toBeNull();
+    expect(view.config.wsl[0].enabled).toBe(true);
+    wslRunning = true;
+    rerender(<AppTargetsIndicator app="claude" />);
+    expect(
+      screen.getByRole("button", { name: "appTargets.indicator.title" }),
+    ).toBeInTheDocument();
   });
 
   it.each(["partial", "ok"] as const)(

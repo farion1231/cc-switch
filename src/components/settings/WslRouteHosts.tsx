@@ -11,7 +11,11 @@ import {
   SettingsRow,
 } from "@/components/settings/SettingsLayout";
 import { toast } from "@/lib/toast";
-import { appTargetsApi, type WslRouteInfo } from "@/lib/api/appTargets";
+import {
+  appTargetsApi,
+  runningWslDistros,
+  type WslRouteInfo,
+} from "@/lib/api/appTargets";
 import { useAppTargetsOverview } from "@/hooks/useAppTargets";
 
 const QUERY_KEY = ["appTargets", "wslRouteInfo"] as const;
@@ -24,10 +28,14 @@ const QUERY_KEY = ["appTargets", "wslRouteInfo"] as const;
 export function WslRouteHosts() {
   const { t } = useTranslation();
   const overview = useAppTargetsOverview();
-  const enabled = Boolean(overview.data?.multiEnv);
+  const distros = runningWslDistros(overview.data?.inventory)
+    .map((env) => env.distro.toLowerCase())
+    .sort();
+  const enabled = Boolean(overview.data?.multiEnv) && distros.length > 0;
+  const infoKey = [...QUERY_KEY, distros] as const;
   const queryClient = useQueryClient();
   const info = useQuery({
-    queryKey: QUERY_KEY,
+    queryKey: infoKey,
     queryFn: () => appTargetsApi.wslRouteInfo(false),
     enabled,
     staleTime: 60_000,
@@ -39,15 +47,15 @@ export function WslRouteHosts() {
     Record<string, { ok: boolean; text: string }>
   >({});
 
-  if (!enabled || !info.data?.length) return null;
+  const rows =
+    info.data?.filter((row) => distros.includes(row.distro.toLowerCase())) ??
+    [];
+  if (!enabled || !rows.length) return null;
 
   const detect = async () => {
     setDetecting(true);
     try {
-      queryClient.setQueryData(
-        QUERY_KEY,
-        await appTargetsApi.wslRouteInfo(true),
-      );
+      queryClient.setQueryData(infoKey, await appTargetsApi.wslRouteInfo(true));
     } catch (error) {
       toast.error(String(error));
     } finally {
@@ -124,7 +132,7 @@ export function WslRouteHosts() {
       }
     >
       <SettingsCard>
-        {info.data.map((row) => {
+        {rows.map((row) => {
           const value = drafts[row.distro] ?? row.savedHost ?? "";
           const dirty = value.trim() !== (row.savedHost ?? "");
           const result = results[row.distro];

@@ -346,4 +346,50 @@ describe("AppTargetsEditor", () => {
     expect(screen.getByText("common.save").closest("button")).toBeEnabled();
     expect(screen.getByText("appTargets.unsaved")).toBeInTheDocument();
   });
+
+  it("hides stopped targets while preserving their saved settings when another target is edited", async () => {
+    inspectMock.mockResolvedValue({
+      errors: [],
+      resolvedDirs: {},
+      conflicts: [],
+      primaryTarget: "windows",
+    });
+    saveMock.mockResolvedValue({
+      saved: true,
+      needsResolution: false,
+      errors: [],
+      resolvedDirs: {},
+      conflicts: [],
+      imported: [],
+      targets: [],
+    });
+    renderEditor({
+      ...legacyView,
+      source: "saved",
+      config: {
+        primary: "windows",
+        windows: { enabled: true },
+        wsl: [
+          { distro: "Ubuntu", enabled: true },
+          {
+            distro: "Debian",
+            enabled: true,
+            route: true,
+            dir: "\\\\wsl.localhost\\Debian\\home\\me\\.claude",
+          },
+        ],
+      },
+    });
+    expect(screen.queryByText(/Debian/)).toBeNull();
+    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    await act(async () => {
+      fireEvent.click(screen.getByText("common.save"));
+    });
+    expect(saveMock.mock.calls[0][1].wsl).toContainEqual({
+      distro: "Debian",
+      enabled: true,
+      route: true,
+      dir: "\\\\wsl.localhost\\Debian\\home\\me\\.claude",
+    });
+  });
 });

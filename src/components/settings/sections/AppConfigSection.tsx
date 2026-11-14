@@ -10,6 +10,7 @@ import {
 import {
   appTargetsApi,
   isAppTargetApp,
+  isTargetRunning,
   wslCandidates,
 } from "@/lib/api/appTargets";
 import type {
@@ -104,13 +105,13 @@ export function AppConfigSection({
   const queryClient = useQueryClient();
   const targets = useAppTargetsOverview();
   const [detecting, setDetecting] = useState(false);
-  // 多环境界面只在 Windows 上、检测到发行版或已有 WSL 目标时出现；其余情况保留单目录。
+  // 多环境界面只展示运行中的 WSL；缓存和保存的目标不会使停止的环境继续显示。
   const multiEnv = targets.data?.multiEnv ?? false;
 
   const detect = async () => {
     setDetecting(true);
     try {
-      const overview = await appTargetsApi.overview(true);
+      const overview = await appTargetsApi.overview(false, true);
       queryClient.setQueryData(APP_TARGETS_QUERY_KEY, overview);
     } finally {
       setDetecting(false);
@@ -210,6 +211,10 @@ export function AppConfigSection({
   return (
     <>
       {DIRECTORY_APPS.map((app) => {
+        const configured = targets.data?.apps.find((item) => item.app === app);
+        const primaryRunning =
+          !configured ||
+          isTargetRunning(configured.config.primary, targets.data?.inventory);
         // 某个 WSL 里装了这个客户端（或已经保存过 WSL 目标）才显示多环境表单，否则单目录。
         const found =
           multiEnv && isAppTargetApp(app)
@@ -252,11 +257,11 @@ export function AppConfigSection({
             id={`app-config-${app}`}
             className="rounded-panel"
             title={blockTitle(app)}
-            actions={saveButton(app)}
+            actions={primaryRunning ? saveButton(app) : undefined}
           >
             <SettingsCard>
               {appRows(app)}
-              {directoryRow(app)}
+              {primaryRunning && directoryRow(app)}
             </SettingsCard>
           </SettingsBlock>
         );

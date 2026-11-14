@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, Loader2 } from "lucide-react";
 import { HoverTip } from "@/components/ui/hover-tip";
@@ -9,12 +9,14 @@ import { cn } from "@/lib/utils";
 import {
   appTargetsApi,
   distroOf,
-  enabledTargetKeys,
+  visibleTargetKeys,
+  isTargetRunning,
   sameTarget,
   wslTargetKey,
   type AppTargetAppId,
   type AppTargetsView,
   type TargetKey,
+  type WslInventory,
 } from "@/lib/api/appTargets";
 import {
   reasonLabel,
@@ -30,6 +32,7 @@ interface ProviderEnvSwitchesProps {
   app: AppTargetAppId;
   provider: Provider;
   view: AppTargetsView;
+  inventory: WslInventory | undefined;
   /** 主环境（Windows）现在用的就是这张卡 */
   mainActive: boolean;
   /** 主环境原来的主操作（切换 / 回到直连并使用），没有时表示已在用或不可用 */
@@ -62,6 +65,7 @@ export function ProviderEnvSwitches({
   app,
   provider,
   view,
+  inventory,
   mainActive,
   mainAction,
   candidates = [],
@@ -71,6 +75,12 @@ export function ProviderEnvSwitches({
   const [busy, setBusy] = useState<TargetKey | null>(null);
   const [confirming, setConfirming] = useState<TargetKey | null>(null);
   const [releasing, setReleasing] = useState<TargetKey | null>(null);
+
+  useEffect(() => {
+    if (confirming && !isTargetRunning(confirming, inventory))
+      setConfirming(null);
+    if (releasing && !isTargetRunning(releasing, inventory)) setReleasing(null);
+  }, [inventory, confirming, releasing]);
 
   // 取消一个 WSL 环境正在用的这家：清掉 CC Switch 写进去的地址和 Key，回到它自己的配置。
   const release = async (key: TargetKey) => {
@@ -106,7 +116,13 @@ export function ProviderEnvSwitches({
     }
   };
   const managed = isManagedLogin(app, provider);
-  const candidateKeys = candidates.map(wslTargetKey);
+  const candidateKeys = candidates
+    .map(wslTargetKey)
+    .filter((key) => isTargetRunning(key, inventory));
+  const targetKeys = [
+    ...visibleTargetKeys(view.config, inventory),
+    ...candidateKeys,
+  ];
 
   const activate = async (key: TargetKey) => {
     setBusy(key);
@@ -163,7 +179,7 @@ export function ProviderEnvSwitches({
       role="group"
       aria-label={t("appTargets.switch.group")}
     >
-      {[...enabledTargetKeys(view.config), ...candidateKeys].map((key) => {
+      {targetKeys.map((key) => {
         const isMain = sameTarget(key, view.config.primary);
         const isCandidate = candidateKeys.some((c) => sameTarget(c, key));
         const active = isMain
@@ -178,7 +194,9 @@ export function ProviderEnvSwitches({
         const tip = active
           ? isMain
             ? t("appTargets.switch.inUseMain", { target: targetLabel(key) })
-            : t("appTargets.switch.inUseRelease", { target: targetLabel(key) })
+            : t("appTargets.switch.inUseRelease", {
+                target: targetLabel(key),
+              })
           : disabledReason ||
             (isCandidate
               ? t("appTargets.switch.addAndEnable", {

@@ -56,6 +56,7 @@ import {
   installedIn,
   installOf,
   isAppTargetApp,
+  runningWslDistros,
 } from "@/lib/api/appTargets";
 import {
   APP_TARGETS_QUERY_KEY,
@@ -251,7 +252,7 @@ export function AppsPage() {
     if (targetsOverview.isPending) return null;
     const overview = targetsOverview.data;
     if (!overview?.inventory.hostWindows) return false;
-    const wsl = overview.inventory.distros.map((env) =>
+    const wsl = runningWslDistros(overview.inventory).map((env) =>
       installedIn(overview.installs, env.distro, row.tool),
     );
     if (wsl.some((installed) => installed === true)) return true;
@@ -858,12 +859,12 @@ function ToolRow({
   const hasWsl =
     isAppTargetApp(tool) &&
     Boolean(wslOverview.data?.inventory.hostWindows) &&
-    (wslOverview.data?.inventory.distros.length ?? 0) > 0;
+    runningWslDistros(wslOverview.data?.inventory).length > 0;
   const [installTargetsOpen, setInstallTargetsOpen] = useState(false);
   const windowsBadge =
     isAppTargetApp(tool) &&
     info?.env_type === "windows" &&
-    (wslOverview.data?.inventory.distros ?? []).some((env) => {
+    runningWslDistros(wslOverview.data?.inventory).some((env) => {
       const status = installOf(
         wslOverview.data?.installs,
         env.distro,
@@ -874,7 +875,13 @@ function ToolRow({
       ? "Windows"
       : null;
   const envBadge =
-    info?.env_type === "wsl" && ENV_BADGE_CONFIG.wsl
+    info?.env_type === "wsl" &&
+    ENV_BADGE_CONFIG.wsl &&
+    runningWslDistros(wslOverview.data?.inventory).some(
+      (env) =>
+        !info.wsl_distro ||
+        env.distro.toLowerCase() === info.wsl_distro.toLowerCase(),
+    )
       ? `${t(ENV_BADGE_CONFIG.wsl.labelKey)}${info.wsl_distro ? ` · ${info.wsl_distro}` : ""}`
       : null;
 
@@ -978,7 +985,7 @@ function ToolRow({
   ) : null;
 
   const wslControls =
-    info?.env_type === "wsl" ? (
+    info?.env_type === "wsl" && envBadge ? (
       <div className="flex items-center gap-2 text-caption text-fg-2">
         <span>Shell</span>
         <Select

@@ -705,6 +705,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     missing.add("gemini");
     missing.add("opencode");
     const refreshCalls: unknown[] = [];
+    let wslRunning = true;
     server.use(
       http.post(
         "http://tauri.local/get_app_targets_overview",
@@ -719,7 +720,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
                 {
                   distro: "Alpine",
                   available: true,
-                  running: true,
+                  running: wslRunning,
                   cached: false,
                 },
               ],
@@ -771,6 +772,31 @@ describe("AppsPage concurrent CLI upgrades", () => {
     // 「检查更新」顺带重新检测运行中的 WSL，不另设按钮
     fireEvent.click(screen.getByText("appsPage.checkUpdates"));
     await waitFor(() => expect(refreshCalls).toContainEqual(true));
+
+    wslRunning = false;
+    await waitFor(() =>
+      expect(
+        screen.getByText("appsPage.checkUpdates").closest("button"),
+      ).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByText("appsPage.checkUpdates"));
+    await waitFor(() =>
+      expect(card("Codex").queryByText("WSL · Alpine")).toBeNull(),
+    );
+    expect(rowApps("appsPage.sectionNotInstalled")).toContain("codex");
+    expect(card("Codex").queryByText("Windows")).toBeNull();
+
+    wslRunning = true;
+    await waitFor(() =>
+      expect(
+        screen.getByText("appsPage.checkUpdates").closest("button"),
+      ).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByText("appsPage.checkUpdates"));
+    await waitFor(() =>
+      expect(card("Codex").getByText("WSL · Alpine")).toBeInTheDocument(),
+    );
+    expect(rowApps("appsPage.sectionInstalled")).toContain("codex");
   });
 
   it("asks which environments to install into when WSL distros exist", async () => {
@@ -830,10 +856,8 @@ describe("AppsPage concurrent CLI upgrades", () => {
       await dialog.findByRole("checkbox", { name: "WSL · Alpine" }),
     ).not.toBeChecked();
     expect(dialog.getByRole("checkbox", { name: "Windows" })).toBeChecked();
-    // 未运行的发行版不能勾
-    expect(
-      dialog.getByRole("checkbox", { name: "WSL · Debian" }),
-    ).toBeDisabled();
+    // 未运行的发行版不再显示，即使有缓存也不能作为安装目标。
+    expect(dialog.queryByRole("checkbox", { name: "WSL · Debian" })).toBeNull();
     expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
 
     fireEvent.click(dialog.getByRole("checkbox", { name: "Windows" }));
@@ -1633,6 +1657,27 @@ describe("AppsPage concurrent CLI upgrades", () => {
   });
 
   it("preserves WSL execution and refresh parameters when confirming a mixed batch after remount", async () => {
+    server.use(
+      http.post("http://tauri.local/get_app_targets_overview", () =>
+        HttpResponse.json({
+          inventory: {
+            hostWindows: true,
+            wslAvailable: true,
+            distros: [
+              {
+                distro: "Ubuntu",
+                available: true,
+                running: true,
+                cached: false,
+              },
+            ],
+          },
+          installs: {},
+          multiEnv: false,
+          apps: [],
+        }),
+      ),
+    );
     const preflight = deferred<ToolInstallationReport[]>();
     const getVersions = mocks.getToolVersions.getMockImplementation()!;
     mocks.getToolVersions.mockImplementation(async (tools: string[]) =>

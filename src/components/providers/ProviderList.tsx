@@ -60,8 +60,8 @@ import { ProviderEnvSwitches } from "@/components/providers/ProviderEnvSwitches"
 import { useAppTargetsOverview } from "@/hooks/useAppTargets";
 import {
   isAppTargetApp,
-  isWindowsOnly,
   wslCandidates,
+  visibleTargetKeys,
 } from "@/lib/api/appTargets";
 import {
   DshAccountCard,
@@ -160,7 +160,12 @@ export function ProviderList({
     appId !== "opencode" &&
     switchMode?.view === "direct" &&
     targetView &&
-    ((targetView.source === "saved" && !isWindowsOnly(targetView.config)) ||
+    ((targetView.source === "saved" &&
+      (!targetView.config.windows.enabled ||
+        visibleTargetKeys(
+          targetView.config,
+          targetsOverview.data?.inventory,
+        ).some((key) => key !== "windows"))) ||
       envCandidates.length > 0)
       ? targetView
       : undefined;
@@ -618,6 +623,7 @@ export function ProviderList({
             app={appId}
             provider={provider}
             view={envSwitchView}
+            inventory={targetsOverview.data?.inventory}
             mainActive={provider.id === switchMode?.directId}
             mainAction={presentation.buttons[0]}
             candidates={envCandidates}

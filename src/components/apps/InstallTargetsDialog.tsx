@@ -16,10 +16,13 @@ import { toast } from "@/lib/toast";
 import {
   appTargetsApi,
   installOf,
+  runningWslDistros,
   type AppTargetAppId,
-  type AppTargetsOverview,
 } from "@/lib/api/appTargets";
-import { APP_TARGETS_QUERY_KEY } from "@/hooks/useAppTargets";
+import {
+  APP_TARGETS_QUERY_KEY,
+  useAppTargetsOverview,
+} from "@/hooks/useAppTargets";
 
 const WINDOWS = "windows";
 
@@ -50,7 +53,8 @@ export function InstallTargetsDialog({
 }: InstallTargetsDialogProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const [overview, setOverview] = useState<AppTargetsOverview | null>(null);
+  const liveOverview = useAppTargetsOverview(open);
+  const overview = liveOverview.data;
   const [detecting, setDetecting] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [running, setRunning] = useState(false);
@@ -58,14 +62,12 @@ export function InstallTargetsDialog({
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    setOverview(null);
     setSelected(windowsInstalled ? [] : [WINDOWS]);
     setDetecting(true);
     appTargetsApi
       .overview(false, true)
       .then((data) => {
         if (cancelled) return;
-        setOverview(data);
         queryClient.setQueryData(APP_TARGETS_QUERY_KEY, data);
       })
       .catch((error) => {
@@ -79,9 +81,10 @@ export function InstallTargetsDialog({
     };
   }, [open, windowsInstalled, queryClient]);
 
-  const distros = overview?.inventory.hostWindows
-    ? overview.inventory.distros
-    : [];
+  const distros = runningWslDistros(overview?.inventory);
+  const availableSelected = selected.filter(
+    (key) => key === WINDOWS || distros.some((env) => env.distro === key),
+  );
 
   const toggle = (key: string, checked: boolean) =>
     setSelected((current) =>
@@ -90,9 +93,9 @@ export function InstallTargetsDialog({
 
   const confirm = async () => {
     setRunning(true);
-    const wsl = selected.filter((key) => key !== WINDOWS);
+    const wsl = availableSelected.filter((key) => key !== WINDOWS);
     try {
-      if (selected.includes(WINDOWS)) {
+      if (availableSelected.includes(WINDOWS)) {
         await onInstallWindows();
       }
       for (const distro of wsl) {
@@ -248,11 +251,13 @@ export function InstallTargetsDialog({
           </Button>
           <Button
             variant="solid"
-            disabled={running || detecting || selected.length === 0}
+            disabled={running || detecting || availableSelected.length === 0}
             onClick={() => void confirm()}
           >
             {running && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            {t("appTargets.installTargets.confirm", { count: selected.length })}
+            {t("appTargets.installTargets.confirm", {
+              count: availableSelected.length,
+            })}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -7,7 +7,12 @@ import { HoverTip } from "@/components/ui/hover-tip";
 import { toast } from "@/lib/toast";
 import { isUpdateAvailable } from "@/lib/version";
 import { cn } from "@/lib/utils";
-import { appTargetsApi, installOf, isAppTargetApp } from "@/lib/api/appTargets";
+import {
+  appTargetsApi,
+  installOf,
+  isAppTargetApp,
+  runningWslDistros,
+} from "@/lib/api/appTargets";
 import {
   APP_TARGETS_QUERY_KEY,
   useAppTargetsOverview,
@@ -16,7 +21,7 @@ import {
 /**
  * 应用页：Claude Code、Codex、Gemini CLI、OpenCode 在各个 WSL 发行版里的安装，作为应用行
  * 下面的子行，和 Windows 那一处同一套列：名称列是环境标签 + 可执行文件路径，版本列是版本，
- * 操作列是安装 / 更新。停止的发行版不为此启动，用上次结果。
+ * 操作列是安装 / 更新。停止的发行版不显示，也不为刷新启动。
  */
 export function WslInstallRows({
   tool,
@@ -35,17 +40,15 @@ export function WslInstallRows({
   const supported = isAppTargetApp(tool);
   const overview = useAppTargetsOverview(supported);
   const [busy, setBusy] = useState<string | null>(null);
-  // 只列出装在 WSL 里的（含装了跑不起来的）；没装的不占行，安装时在确认框里选环境。
-  const distros = overview.data?.inventory.hostWindows
-    ? overview.data.inventory.distros.filter((env) => {
-        const install = installOf(overview.data?.installs, env.distro, tool);
-        return (
-          install?.status === "installed" ||
-          install?.status === "broken" ||
-          Boolean(install?.error || install?.probeError)
-        );
-      })
-    : [];
+  // 只列运行中的发行版；停止后的安装缓存不再占行。
+  const distros = runningWslDistros(overview.data?.inventory).filter((env) => {
+    const install = installOf(overview.data?.installs, env.distro, tool);
+    return (
+      install?.status === "installed" ||
+      install?.status === "broken" ||
+      Boolean(install?.error || install?.probeError)
+    );
+  });
   if (!supported || distros.length === 0) return null;
 
   const run = async (

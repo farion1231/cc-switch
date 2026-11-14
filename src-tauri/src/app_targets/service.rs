@@ -104,14 +104,21 @@ fn view(app: &AppType, inventory: &WslInventory) -> AppTargetsView {
 
 /// 设置页概览。`probe_stopped` 为真时（用户点「重新检测」）连停止的发行版也启动探测。
 pub fn overview(probe_stopped: bool, refresh_installs: bool) -> AppTargetsOverview {
-    let inventory = wsl::inventory(probe_stopped);
+    let mut inventory = wsl::inventory(probe_stopped);
+    // 缓存只供恢复配置使用；概览不能把已经关闭的发行版当成当前环境。
+    inventory.distros.retain(|env| env.available && env.running);
     let installs =
         super::installs::detect(&inventory, refresh_installs || probe_stopped, probe_stopped);
     let apps: Vec<AppTargetsView> = model::supported_apps()
         .iter()
         .map(|app| view(app, &inventory))
         .collect();
-    let has_wsl_targets = apps.iter().any(|v| !v.config.wsl.is_empty());
+    let has_wsl_targets = apps.iter().any(|v| {
+        v.config
+            .wsl
+            .iter()
+            .any(|target| is_running(&inventory, &target.distro))
+    });
     let any_installed = installs
         .values()
         .any(|tools| tools.values().any(|t| t.present()));
@@ -933,6 +940,7 @@ pub fn wsl_route_info(state: &AppState, probe: bool) -> Vec<WslRouteInfo> {
     inventory
         .distros
         .iter()
+        .filter(|env| env.available && env.running)
         .map(|env| {
             let linux = if probe {
                 wsl::probe(&env.distro).unwrap_or_else(|_| env.env.clone())

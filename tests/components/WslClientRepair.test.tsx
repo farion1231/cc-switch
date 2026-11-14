@@ -7,7 +7,7 @@ import {
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type { AppTargetsOverview } from "@/lib/api/appTargets";
 import { WslInstallRows } from "@/components/apps/WslInstallRows";
 import { InstallTargetsDialog } from "@/components/apps/InstallTargetsDialog";
@@ -38,11 +38,8 @@ vi.mock("@/hooks/useAppTargets", async (importOriginal) => ({
 }));
 
 function wrapper({ children }: { children: ReactNode }) {
-  return (
-    <QueryClientProvider client={new QueryClient()}>
-      {children}
-    </QueryClientProvider>
-  );
+  const [client] = useState(() => new QueryClient());
+  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 }
 
 describe("WSL client repair", () => {
@@ -183,5 +180,62 @@ describe("WSL client repair", () => {
       screen.getByText("appTargets.installs.probeFailedCached"),
     ).toBeInTheDocument();
     expect(screen.getByText("Command timed out after 10s")).toBeInTheDocument();
+  });
+
+  it("hides cached WSL installation rows on shutdown and restores them on startup", () => {
+    const row = (
+      <WslInstallRows
+        tool="claude"
+        appName="Claude Code"
+        gridClassName="grid"
+      />
+    );
+    const { rerender } = render(row, { wrapper });
+    expect(screen.getByText("WSL · Ubuntu")).toBeInTheDocument();
+    overview.inventory.distros[0].running = false;
+    rerender(
+      <WslInstallRows
+        tool="claude"
+        appName="Claude Code"
+        gridClassName="grid"
+      />,
+    );
+    expect(screen.queryByText("WSL · Ubuntu")).toBeNull();
+    overview.inventory.distros[0].running = true;
+    rerender(
+      <WslInstallRows
+        tool="claude"
+        appName="Claude Code"
+        gridClassName="grid"
+      />,
+    );
+    expect(screen.getByText("WSL · Ubuntu")).toBeInTheDocument();
+  });
+
+  it("removes stopped targets from an open install dialog", async () => {
+    const onClose = vi.fn();
+    const onInstallWindows = vi.fn();
+    const dialog = () => (
+      <InstallTargetsDialog
+        open
+        tool="claude"
+        appName="Claude Code"
+        windowsInstalled
+        onClose={onClose}
+        onInstallWindows={onInstallWindows}
+      />
+    );
+    const { rerender } = render(dialog(), { wrapper });
+    const target = await screen.findByRole("checkbox", {
+      name: "WSL · Ubuntu",
+    });
+    fireEvent.click(target);
+    overview.inventory.distros[0].running = false;
+    rerender(dialog());
+    expect(screen.queryByRole("checkbox", { name: "WSL · Ubuntu" })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "appTargets.installTargets.confirm" }),
+    ).toBeDisabled();
+    expect(actionMock).not.toHaveBeenCalled();
   });
 });

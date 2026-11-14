@@ -12,7 +12,7 @@ import {
 import { Dot, toneOf } from "@/components/settings/AppTargetsEditor";
 import {
   appTargetsApi,
-  enabledTargetKeys,
+  visibleTargetKeys,
   isAppTargetApp,
   isWindowsOnly,
   routeFlag,
@@ -25,7 +25,7 @@ import {
   syncFailureWarnings,
   syncWarningLabel,
   targetLabel,
-  useAppTargetView,
+  useAppTargetsOverview,
   useInvalidateAppTargets,
 } from "@/hooks/useAppTargets";
 import type { Provider } from "@/types";
@@ -47,14 +47,16 @@ export function AppTargetsIndicator({
   currentProviderId?: string;
 }) {
   const { t } = useTranslation();
-  const view = useAppTargetView(app);
+  const overview = useAppTargetsOverview(isAppTargetApp(app));
+  const view = overview.data?.apps.find((item) => item.app === app);
   const invalidate = useInvalidateAppTargets();
   const [busy, setBusy] = useState(false);
 
   if (!isAppTargetApp(app) || !view || view.source !== "saved") return null;
   if (isWindowsOnly(view.config)) return null;
 
-  const enabled = enabledTargetKeys(view.config);
+  const enabled = visibleTargetKeys(view.config, overview.data?.inventory);
+  if (!enabled.some((key) => key !== "windows")) return null;
   const followers = enabled.filter(
     (key) => !sameTarget(key, view.config.primary),
   );
@@ -69,7 +71,7 @@ export function AppTargetsIndicator({
       ? "warn"
       : "ok";
 
-  const retry = async (keys?: TargetKey[]) => {
+  const retry = async (keys: TargetKey[] = followers) => {
     setBusy(true);
     try {
       const result = await appTargetsApi.sync(app, keys);

@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import { ProviderEnvSwitches } from "@/components/providers/ProviderEnvSwitches";
-import type { AppTargetsView } from "@/lib/api/appTargets";
+import type { AppTargetsView, WslInventory } from "@/lib/api/appTargets";
 import type { Provider } from "@/types";
 
 vi.mock("react-i18next", () => ({
@@ -50,6 +50,16 @@ const view: AppTargetsView = {
 };
 
 const provider = (id: string) => ({ id, name: id.toUpperCase() }) as Provider;
+const inventory: WslInventory = {
+  hostWindows: true,
+  wslAvailable: true,
+  distros: ["Alpine", "Debian", "Ubuntu"].map((distro) => ({
+    distro,
+    available: true,
+    running: true,
+    cached: false,
+  })),
+};
 
 function renderSwitches(id: string, mainActive: boolean, onMain = vi.fn()) {
   const client = new QueryClient();
@@ -61,6 +71,7 @@ function renderSwitches(id: string, mainActive: boolean, onMain = vi.fn()) {
       app="claude"
       provider={provider(id)}
       view={view}
+      inventory={inventory}
       mainActive={mainActive}
       mainAction={{ key: "switch", label: "switch", onClick: onMain }}
     />,
@@ -131,6 +142,7 @@ describe("ProviderEnvSwitches", () => {
           app="claude"
           provider={provider("a")}
           view={view}
+          inventory={inventory}
           mainActive={false}
           mainAction={{ key: "switch", label: "switch", onClick: vi.fn() }}
           candidates={["Ubuntu"]}
@@ -166,6 +178,7 @@ describe("ProviderEnvSwitches", () => {
           app="claude"
           provider={bound}
           view={view}
+          inventory={inventory}
           mainActive={false}
           mainAction={{ key: "switch", label: "switch", onClick: vi.fn() }}
         />

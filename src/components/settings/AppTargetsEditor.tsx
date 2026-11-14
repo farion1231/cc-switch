@@ -19,6 +19,8 @@ import { settingsApi } from "@/lib/api/settings";
 import {
   appTargetsApi,
   enabledTargetKeys,
+  isTargetRunning,
+  visibleTargetKeys,
   sameTarget,
   wslCandidates,
   WINDOWS_TARGET,
@@ -183,6 +185,7 @@ export function AppTargetsEditor({
 
   const dirty = comparable(draft) !== baseKey;
   const enabled = enabledTargetKeys(draft);
+  const visibleEnabled = visibleTargetKeys(draft, inventory);
 
   const rows: { key: TargetKey; enabled: boolean; dir: string | null }[] = [
     {
@@ -190,11 +193,15 @@ export function AppTargetsEditor({
       enabled: draft.windows.enabled,
       dir: draft.windows.dir ?? null,
     },
-    ...draft.wsl.map((target) => ({
-      key: wslTargetKey(target.distro),
-      enabled: target.enabled,
-      dir: target.dir ?? null,
-    })),
+    ...draft.wsl
+      .filter((target) =>
+        isTargetRunning(wslTargetKey(target.distro), inventory),
+      )
+      .map((target) => ({
+        key: wslTargetKey(target.distro),
+        enabled: target.enabled,
+        dir: target.dir ?? null,
+      })),
   ];
 
   const update = (
@@ -422,11 +429,13 @@ export function AppTargetsEditor({
   };
 
   const summary =
-    enabled.length === 1
-      ? t("appTargets.summaryOne", { target: targetLabel(enabled[0]) })
-      : t("appTargets.summaryMany", {
-          targets: enabled.map(targetLabel).join("、"),
-        });
+    visibleEnabled.length === 0
+      ? null
+      : visibleEnabled.length === 1
+        ? t("appTargets.summaryOne", { target: targetLabel(visibleEnabled[0]) })
+        : t("appTargets.summaryMany", {
+            targets: visibleEnabled.map(targetLabel).join("、"),
+          });
 
   const actions = (
     <>

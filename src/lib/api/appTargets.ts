@@ -266,6 +266,29 @@ export const enabledTargetKeys = (config: AppTargetsConfig): TargetKey[] => [
   ...config.wsl.filter((t) => t.enabled).map((t) => wslTargetKey(t.distro)),
 ];
 
+/** 页面只展示当前运行中的 WSL；保存的目标配置保持完整。 */
+export const runningWslDistros = (
+  inventory?: WslInventory,
+): WslEnvironment[] =>
+  inventory?.hostWindows && inventory.wslAvailable
+    ? inventory.distros.filter((env) => env.available && env.running)
+    : [];
+
+export const isTargetRunning = (key: TargetKey, inventory?: WslInventory) => {
+  const distro = distroOf(key);
+  return (
+    !distro ||
+    runningWslDistros(inventory).some(
+      (env) => env.distro.toLowerCase() === distro.toLowerCase(),
+    )
+  );
+};
+
+export const visibleTargetKeys = (
+  config: AppTargetsConfig,
+  inventory?: WslInventory,
+) => enabledTargetKeys(config).filter((key) => isTargetRunning(key, inventory));
+
 /** 跟随环境的「接入路由」偏好 */
 export const routeFlag = (config: AppTargetsConfig, key: TargetKey) => {
   const distro = distroOf(key);
@@ -300,15 +323,19 @@ export function installOf(
 }
 
 /**
- * 应用的 WSL 配置入口里列哪些发行版：已经保存在目标配置里的，加上检测到装了这个客户端的。
+ * 只列运行中的发行版：已保存的目标，加上检测到装了这个客户端的。
  */
 export function wslCandidates(
   config: AppTargetsConfig,
   overview: Pick<AppTargetsOverview, "installs" | "inventory"> | undefined,
   app: string,
 ): string[] {
-  const saved = config.wsl.map((t) => t.distro);
-  const detected = (overview?.inventory.distros ?? [])
+  const saved = config.wsl
+    .filter((target) =>
+      isTargetRunning(wslTargetKey(target.distro), overview?.inventory),
+    )
+    .map((target) => target.distro);
+  const detected = runningWslDistros(overview?.inventory)
     .map((env) => env.distro)
     .filter(
       (distro) =>
