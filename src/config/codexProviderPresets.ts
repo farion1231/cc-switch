@@ -131,6 +131,81 @@ function modelCatalog(
   );
 }
 
+// Model lists that several presets share, each named after the first preset
+// that uses it. Every call builds fresh objects, so presets never share state.
+const stepFunApiModels = (): CodexCatalogModel[] =>
+  modelCatalog([
+    {
+      model: "step-3.7-flash",
+      displayName: "Step 3.7 Flash",
+      contextWindow: 262144,
+      inputModalities: ["text", "image"],
+      reasoningLevels: ["low", "medium", "high"],
+      defaultReasoningLevel: "high",
+    },
+  ]);
+
+const stepFunModels = (): CodexCatalogModel[] =>
+  modelCatalog([
+    // 档位照抄官方两站模型页与 reasoning 指南（2026-08-15 盘点）：
+    // 3.7-flash 三档默认 medium、2603 两档；无后缀 3.5-flash 官方未暴露
+    // effort，不填。全系无关思考形态，none 一律不列。effort 下发由后端
+    // 按模型推断（2603=low_high 收敛、3.7=passthrough），预设不加
+    // codexChatReasoning——显式声明是 provider 级会丢 per-model 门控
+    {
+      model: "step-3.7-flash",
+      displayName: "Step 3.7 Flash",
+      contextWindow: 262144,
+      reasoningLevels: ["low", "medium", "high"],
+    },
+    {
+      model: "step-3.5-flash-2603",
+      displayName: "Step 3.5 Flash 2603",
+      contextWindow: 262144,
+      reasoningLevels: ["low", "high"],
+    },
+    {
+      model: "step-3.5-flash",
+      displayName: "Step 3.5 Flash",
+      contextWindow: 262144,
+    },
+  ]);
+
+const streamLakeModels = (): CodexCatalogModel[] =>
+  modelCatalog([
+    {
+      model: "kat-coder-pro-v2.5",
+      displayName: "KAT-Coder Pro V2.5",
+      contextWindow: 262144,
+      inputModalities: ["text"],
+      reasoningLevels: ["high"],
+    },
+  ]);
+
+const miniMaxModels = (): CodexCatalogModel[] =>
+  modelCatalog([
+    {
+      model: "MiniMax-M3.1-Flash",
+      displayName: "MiniMax-M3.1-Flash",
+      contextWindow: 1000000,
+      reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
+      supportsParallelToolCalls: true,
+      inputModalities: ["text", "image"],
+      baseInstructions:
+        "You are Codex, a coding agent based on MiniMax-M3.1-Flash. You and the user share the same workspace and collaborate to achieve the user's goals.",
+    },
+    {
+      model: "MiniMax-M3",
+      displayName: "MiniMax-M3",
+      contextWindow: 1000000,
+      reasoningLevels: ["none", "high"],
+      supportsParallelToolCalls: true,
+      inputModalities: ["text", "image"],
+      baseInstructions:
+        "You are Codex, a coding agent based on MiniMax-M3. You and the user share the same workspace and collaborate to achieve the user's goals.",
+    },
+  ]);
+
 export const codexProviderPresets: CodexProviderPreset[] = [
   {
     name: "OpenAI Official",
@@ -2860,16 +2935,7 @@ requires_openai_auth = true`,
     // Step Plan 的 /step_plan/v1 仍单列 Chat，不与按量接口混用。
     endpointCandidates: ["https://api.stepfun.com/v1"],
     apiFormat: "openai_responses",
-    modelCatalog: modelCatalog([
-      {
-        model: "step-3.7-flash",
-        displayName: "Step 3.7 Flash",
-        contextWindow: 262144,
-        inputModalities: ["text", "image"],
-        reasoningLevels: ["low", "medium", "high"],
-        defaultReasoningLevel: "high",
-      },
-    ]),
+    modelCatalog: stepFunApiModels(),
     category: "cn_official",
     icon: "stepfun",
     iconColor: "#16D6D2",
@@ -2890,16 +2956,7 @@ requires_openai_auth = true`,
     // 国际站使用独立域名/Key；与 Step Plan 国际预设分别计费。
     endpointCandidates: ["https://api.stepfun.ai/v1"],
     apiFormat: "openai_responses",
-    modelCatalog: modelCatalog([
-      {
-        model: "step-3.7-flash",
-        displayName: "Step 3.7 Flash",
-        contextWindow: 262144,
-        inputModalities: ["text", "image"],
-        reasoningLevels: ["low", "medium", "high"],
-        defaultReasoningLevel: "high",
-      },
-    ]),
+    modelCatalog: stepFunApiModels(),
     category: "cn_official",
     icon: "stepfun",
     iconColor: "#16D6D2",
@@ -2919,30 +2976,7 @@ requires_openai_auth = true`,
     ),
     endpointCandidates: ["https://api.stepfun.com/step_plan/v1"],
     apiFormat: "openai_chat",
-    modelCatalog: modelCatalog([
-      // 档位照抄官方两站模型页与 reasoning 指南（2026-08-15 盘点）：
-      // 3.7-flash 三档默认 medium、2603 两档；无后缀 3.5-flash 官方未暴露
-      // effort，不填。全系无关思考形态，none 一律不列。effort 下发由后端
-      // 按模型推断（2603=low_high 收敛、3.7=passthrough），预设不加
-      // codexChatReasoning——显式声明是 provider 级会丢 per-model 门控
-      {
-        model: "step-3.7-flash",
-        displayName: "Step 3.7 Flash",
-        contextWindow: 262144,
-        reasoningLevels: ["low", "medium", "high"],
-      },
-      {
-        model: "step-3.5-flash-2603",
-        displayName: "Step 3.5 Flash 2603",
-        contextWindow: 262144,
-        reasoningLevels: ["low", "high"],
-      },
-      {
-        model: "step-3.5-flash",
-        displayName: "Step 3.5 Flash",
-        contextWindow: 262144,
-      },
-    ]),
+    modelCatalog: stepFunModels(),
     category: "cn_official",
     icon: "stepfun",
     iconColor: "#16D6D2",
@@ -2962,30 +2996,7 @@ requires_openai_auth = true`,
     ),
     endpointCandidates: ["https://api.stepfun.ai/step_plan/v1"],
     apiFormat: "openai_chat",
-    modelCatalog: modelCatalog([
-      // 档位照抄官方两站模型页与 reasoning 指南（2026-08-15 盘点）：
-      // 3.7-flash 三档默认 medium、2603 两档；无后缀 3.5-flash 官方未暴露
-      // effort，不填。全系无关思考形态，none 一律不列。effort 下发由后端
-      // 按模型推断（2603=low_high 收敛、3.7=passthrough），预设不加
-      // codexChatReasoning——显式声明是 provider 级会丢 per-model 门控
-      {
-        model: "step-3.7-flash",
-        displayName: "Step 3.7 Flash",
-        contextWindow: 262144,
-        reasoningLevels: ["low", "medium", "high"],
-      },
-      {
-        model: "step-3.5-flash-2603",
-        displayName: "Step 3.5 Flash 2603",
-        contextWindow: 262144,
-        reasoningLevels: ["low", "high"],
-      },
-      {
-        model: "step-3.5-flash",
-        displayName: "Step 3.5 Flash",
-        contextWindow: 262144,
-      },
-    ]),
+    modelCatalog: stepFunModels(),
     category: "cn_official",
     icon: "stepfun",
     iconColor: "#16D6D2",
@@ -3049,15 +3060,7 @@ requires_openai_auth = true`,
     // kat-coder-pro-v2.5（公共推理点，免建 ep-）；订阅 Coding Plan 改用 /api/gateway/coding/v1
     apiFormat: "openai_responses",
     // 官方只写支持 reasoning.effort、未列档位：同 LongCat 只给 high，不提供 none 假开关
-    modelCatalog: modelCatalog([
-      {
-        model: "kat-coder-pro-v2.5",
-        displayName: "KAT-Coder Pro V2.5",
-        contextWindow: 262144,
-        inputModalities: ["text"],
-        reasoningLevels: ["high"],
-      },
-    ]),
+    modelCatalog: streamLakeModels(),
     category: "cn_official",
     icon: "streamlake",
   },
@@ -3078,15 +3081,7 @@ requires_openai_auth = true`,
     ],
     // 国际站接入形态同国内版
     apiFormat: "openai_responses",
-    modelCatalog: modelCatalog([
-      {
-        model: "kat-coder-pro-v2.5",
-        displayName: "KAT-Coder Pro V2.5",
-        contextWindow: 262144,
-        inputModalities: ["text"],
-        reasoningLevels: ["high"],
-      },
-    ]),
+    modelCatalog: streamLakeModels(),
     category: "cn_official",
     icon: "streamlake",
   },
@@ -3140,28 +3135,7 @@ requires_openai_auth = true`,
     // 档位照抄官方 catalog：none/high（M3 的 effort 是思考开关，minimal/low/medium
     // 端点接受但与 high 行为完全等价，不给假差异档）。与模板默认一致故 Codex 侧
     // 零行为变化，显式声明只为表单可见（"未设置"误导性更大，Jason 2026-08-15 拍板）
-    modelCatalog: modelCatalog([
-      {
-        model: "MiniMax-M3.1-Flash",
-        displayName: "MiniMax-M3.1-Flash",
-        contextWindow: 1000000,
-        reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
-        supportsParallelToolCalls: true,
-        inputModalities: ["text", "image"],
-        baseInstructions:
-          "You are Codex, a coding agent based on MiniMax-M3.1-Flash. You and the user share the same workspace and collaborate to achieve the user's goals.",
-      },
-      {
-        model: "MiniMax-M3",
-        displayName: "MiniMax-M3",
-        contextWindow: 1000000,
-        reasoningLevels: ["none", "high"],
-        supportsParallelToolCalls: true,
-        inputModalities: ["text", "image"],
-        baseInstructions:
-          "You are Codex, a coding agent based on MiniMax-M3. You and the user share the same workspace and collaborate to achieve the user's goals.",
-      },
-    ]),
+    modelCatalog: miniMaxModels(),
     category: "cn_official",
     theme: {
       backgroundColor: "#f64551",
@@ -3190,28 +3164,7 @@ requires_openai_auth = true`,
     // 档位照抄官方 catalog：none/high（M3 的 effort 是思考开关，minimal/low/medium
     // 端点接受但与 high 行为完全等价，不给假差异档）。与模板默认一致故 Codex 侧
     // 零行为变化，显式声明只为表单可见（"未设置"误导性更大，Jason 2026-08-15 拍板）
-    modelCatalog: modelCatalog([
-      {
-        model: "MiniMax-M3.1-Flash",
-        displayName: "MiniMax-M3.1-Flash",
-        contextWindow: 1000000,
-        reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
-        supportsParallelToolCalls: true,
-        inputModalities: ["text", "image"],
-        baseInstructions:
-          "You are Codex, a coding agent based on MiniMax-M3.1-Flash. You and the user share the same workspace and collaborate to achieve the user's goals.",
-      },
-      {
-        model: "MiniMax-M3",
-        displayName: "MiniMax-M3",
-        contextWindow: 1000000,
-        reasoningLevels: ["none", "high"],
-        supportsParallelToolCalls: true,
-        inputModalities: ["text", "image"],
-        baseInstructions:
-          "You are Codex, a coding agent based on MiniMax-M3. You and the user share the same workspace and collaborate to achieve the user's goals.",
-      },
-    ]),
+    modelCatalog: miniMaxModels(),
     category: "cn_official",
     theme: {
       backgroundColor: "#f64551",
