@@ -2049,9 +2049,14 @@ impl RequestForwarder {
             }
             let reasoning_config =
                 super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
+            // 严格校验的上游（Mistral）拒收 assistant 历史里的 reasoning_content，
+            // 与 Claude → Chat 路径的 should_preserve_reasoning_content_for_openai_chat 同口径。
+            let preserve_reasoning_content =
+                !super::providers::codex_chat_upstream_rejects_reasoning_content(&base_url);
             let mut chat_body = super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
                 mapped_body,
                 reasoning_config.as_ref(),
+                preserve_reasoning_content,
             )?;
             let signature_fallbacks =
                 super::providers::codex_chat_common::fill_gemini_thought_signature_fallback(
