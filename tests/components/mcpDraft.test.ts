@@ -182,21 +182,21 @@ describe("mcpDraft form ⇄ JSON", () => {
 });
 
 describe("mcpDraft validation", () => {
-  it("checks the name, command and URL", () => {
+  it("checks the id, command and URL", () => {
     const stdio = connectionOf({ type: "stdio", command: "" });
     expect(
-      validateDraft("", stdio, { checkName: true, existingIds: [] }),
-    ).toEqual({ name: "nameRequired", command: "commandRequired" });
+      validateDraft("", stdio, { checkId: true, existingIds: [] }),
+    ).toEqual({ id: "idRequired", command: "commandRequired" });
     expect(
-      validateDraft("a b", stdio, { checkName: true, existingIds: [] }).name,
-    ).toBe("nameSpaces");
+      validateDraft("a b", stdio, { checkId: true, existingIds: [] }).id,
+    ).toBe("idSpaces");
     expect(
-      validateDraft("fetch", stdio, { checkName: true, existingIds: ["fetch"] })
-        .name,
-    ).toBe("nameExists");
+      validateDraft("fetch", stdio, { checkId: true, existingIds: ["fetch"] })
+        .id,
+    ).toBe("idExists");
     const http = connectionOf({ type: "http", url: "mcp.example.com" });
     expect(
-      validateDraft("x", http, { checkName: false, existingIds: [] }),
+      validateDraft("x", http, { checkId: false, existingIds: [] }),
     ).toEqual({ url: "urlScheme" });
   });
 

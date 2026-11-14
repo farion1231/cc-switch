@@ -355,30 +355,30 @@ export function parseJsonText(
 
 // ─── 校验 ──────────────────────────────────────────────────────────────
 export type McpFieldError =
-  | "nameRequired"
-  | "nameSpaces"
-  | "nameExists"
+  | "idRequired"
+  | "idSpaces"
+  | "idExists"
   | "commandRequired"
   | "urlRequired"
   | "urlScheme";
 
 export interface McpDraftErrors {
-  name?: McpFieldError;
+  id?: McpFieldError;
   command?: McpFieldError;
   url?: McpFieldError;
 }
 
 export function validateDraft(
-  name: string,
+  id: string,
   conn: McpDraftConnection,
-  options: { checkName: boolean; existingIds: readonly string[] },
+  options: { checkId: boolean; existingIds: readonly string[] },
 ): McpDraftErrors {
   const errors: McpDraftErrors = {};
-  if (options.checkName) {
-    const trimmed = name.trim();
-    if (!trimmed) errors.name = "nameRequired";
-    else if (/\s/.test(trimmed)) errors.name = "nameSpaces";
-    else if (options.existingIds.includes(trimmed)) errors.name = "nameExists";
+  if (options.checkId) {
+    const trimmed = id.trim();
+    if (!trimmed) errors.id = "idRequired";
+    else if (/\s/.test(trimmed)) errors.id = "idSpaces";
+    else if (options.existingIds.includes(trimmed)) errors.id = "idExists";
   }
   if (conn.transport === "stdio") {
     if (!conn.command.trim()) errors.command = "commandRequired";
