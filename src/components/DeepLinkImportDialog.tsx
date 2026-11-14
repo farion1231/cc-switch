@@ -766,7 +766,8 @@ export function DeepLinkImportDialog() {
 
                           {/* Gemini config */}
                           {(parsedConfig.type === "gemini" ||
-                            parsedConfig.type === "agy") &&
+                            parsedConfig.type === "agy" ||
+                            parsedConfig.type === "copilot") &&
                             parsedConfig.env && (
                               <div className="space-y-1.5">
                                 {parsedConfig.model && (

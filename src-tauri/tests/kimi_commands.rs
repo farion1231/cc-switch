@@ -4,7 +4,7 @@ use cc_switch_lib::{
 use serde_json::json;
 use std::{ffi::OsString, fs};
 
-#[path = "support.rs"]
+#[path = "support/mod.rs"]
 mod support;
 use support::{create_test_state, reset_test_fs, test_mutex};
 
@@ -496,6 +496,7 @@ fn kimi_mcp_and_global_prompts_follow_the_native_home() {
         server: json!({"type":"sse","url":"https://example.com/sse"}),
         apps: McpApps {
             kimi: true,
+            copilot: false,
             ..Default::default()
         },
         description: None,

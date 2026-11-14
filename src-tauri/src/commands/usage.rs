@@ -19,7 +19,6 @@ where
         .map_err(|error| AppError::Message(format!("用量查询任务失败: {error}")))?
 }
 
-/// 获取使用量汇总
 #[tauri::command]
 pub async fn get_usage_summary(
     state: State<'_, AppState>,
@@ -74,7 +73,6 @@ pub async fn get_usage_summary_by_app(
     .await
 }
 
-/// 获取每日趋势
 #[tauri::command]
 pub async fn get_usage_trends(
     state: State<'_, AppState>,
@@ -114,7 +112,6 @@ pub async fn get_usage_first_date(
     .await
 }
 
-/// 获取 Provider 统计
 #[tauri::command]
 pub async fn get_provider_stats(
     state: State<'_, AppState>,
@@ -136,7 +133,6 @@ pub async fn get_provider_stats(
     .await
 }
 
-/// 获取模型统计
 #[tauri::command]
 pub async fn get_model_stats(
     state: State<'_, AppState>,
@@ -158,7 +154,6 @@ pub async fn get_model_stats(
     .await
 }
 
-/// 获取请求日志列表
 #[tauri::command]
 pub async fn get_request_logs(
     state: State<'_, AppState>,
@@ -172,7 +167,6 @@ pub async fn get_request_logs(
     .await
 }
 
-/// 获取单个请求详情
 #[tauri::command]
 pub async fn get_request_detail(
     state: State<'_, AppState>,
@@ -181,7 +175,6 @@ pub async fn get_request_detail(
     run_db_query(&state, move |db| db.get_request_detail(&request_id)).await
 }
 
-/// 获取模型定价列表
 #[tauri::command]
 pub async fn get_model_pricing(
     state: State<'_, AppState>,
@@ -239,7 +232,6 @@ fn get_model_pricing_blocking(
     Ok(pricing)
 }
 
-/// 更新模型定价
 #[tauri::command]
 pub async fn update_model_pricing(
     state: State<'_, AppState>,
@@ -319,7 +311,6 @@ pub async fn fetch_models_dev() -> Result<String, String> {
     crate::services::model_pricing::fetch_models_dev().await
 }
 
-/// 检查 Provider 使用限额
 #[tauri::command]
 pub async fn check_provider_limits(
     state: State<'_, AppState>,
@@ -332,7 +323,6 @@ pub async fn check_provider_limits(
     .await
 }
 
-/// 删除模型定价
 #[tauri::command]
 pub async fn delete_model_pricing(
     state: State<'_, AppState>,
@@ -398,7 +388,6 @@ pub async fn rebuild_codex_usage(
     .map_err(|error| AppError::Message(format!("Codex 用量重建任务失败: {error}")))?
 }
 
-/// 获取数据来源分布
 #[tauri::command]
 pub async fn get_usage_data_sources(
     state: State<'_, AppState>,

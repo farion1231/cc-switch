@@ -8,16 +8,9 @@
 use super::{AuthInfo, AuthStrategy, ProviderAdapter};
 use crate::provider::{CodexChatReasoningConfig, Provider};
 use crate::proxy::error::ProxyError;
-use regex::Regex;
 use serde_json::Value as JsonValue;
 use std::collections::HashSet;
-use std::sync::LazyLock;
 use toml::Value as TomlValue;
-
-/// 官方 Codex 客户端 User-Agent 正则
-#[allow(dead_code)]
-static CODEX_CLIENT_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(codex_vscode|codex_cli_rs)/[\d.]+").unwrap());
 
 /// Codex 适配器
 pub struct CodexAdapter;
@@ -602,6 +595,124 @@ pub fn strip_codex_hosted_web_search(body: &mut JsonValue) -> bool {
         obj.remove("tool_choice");
         changed = true;
     }
+    changed
+}
+
+/// Codex 客户端私有、第三方原生 Responses 网关普遍不认识的 `include` 标记。Codex 0.163+
+/// 起随请求下发（#8996 / #9042），ChatGPT 后端之外的网关会拿它整条 400。只删这一项，
+/// 其余标记原样保留。
+const CODEX_PRIVATE_INCLUDE_MARKERS: &[&str] = &["output.encrypted_content"];
+
+/// 去掉 `include` 里的 Codex 私有标记：去完为空时整个键删掉；缺键、非数组、非对象
+/// 请求一律不动；数组里的非字符串项原样留着。返回是否改了请求。和 xAI 侧的白名单各管
+/// 一段，重复删无副作用。
+pub fn strip_codex_private_include_markers(body: &mut JsonValue) -> bool {
+    let Some(obj) = body.as_object_mut() else {
+        return false;
+    };
+    let mut include_gone = false;
+    let changed = match obj.get_mut("include").and_then(JsonValue::as_array_mut) {
+        Some(include) => {
+            let before = include.len();
+            include.retain(|marker| {
+                !marker
+                    .as_str()
+                    .is_some_and(|marker| CODEX_PRIVATE_INCLUDE_MARKERS.contains(&marker))
+            });
+            let changed = include.len() != before;
+            include_gone = changed && include.is_empty();
+            changed
+        }
+        None => false,
+    };
+    if include_gone {
+        obj.remove("include");
+    }
+    changed
+}
+
+/// Codex 对非 OpenAI provider 会清掉 `encrypted_content` 的条目类型：codex-rs
+/// `ResponseItem::clear_encrypted_content` 覆盖的类型，去掉它另外放行的推理与压缩条目。
+/// 按正向名单照抄，Codex 以后新加的条目类型不会被误删。
+const CODEX_OPENAI_ONLY_ENCRYPTED_CONTENT_ITEM_TYPES: &[&str] = &[
+    "message",
+    "local_shell_call",
+    "function_call",
+    "tool_search_call",
+    "custom_tool_call",
+    "web_search_call",
+    "image_generation_call",
+];
+
+/// 去掉 Codex 只在 provider 是内置 openai 时才发的请求内容，让第三方上游收到的请求和
+/// Codex 自己对非 OpenAI provider 发的一样。照 codex-rs `core/src/client.rs`
+/// `build_responses_request` 里 `is_openai()`（`name == "OpenAI"`）的分支：
+///
+/// - `include` 里的 `output.encrypted_content`（`output_token_replay` 只对 OpenAI 开）；
+/// - `stream_options.reasoning_summary_delivery`（同上，`stream_options` 只有这一个字段）；
+/// - `input` 里的 `configuration_update` 条目（推理档位更新只对 OpenAI 开，否则整条滤掉）；
+/// - 每个条目的 `internal_chat_message_metadata_passthrough`；
+/// - 推理、压缩以外条目的 `encrypted_content`，以及 `function_call` 的 `encrypted_function_args`。
+///
+/// 另加顶层 `access_programs`：Codex 按登录方式而非 provider 决定发不发，但只有带着
+/// ChatGPT 登录才会出现，自定义表（第三方 Key）永远不发。
+///
+/// 第三方路由写成内置 openai（有 ChatGPT 登录时）、聚合模式经内置 openai 走第三方成员，
+/// Codex 都以为自己在跟 OpenAI 说话，这些字段就会到达第三方，严格网关会整条 400
+/// （#9042）。每次删得一样，不影响缓存前缀；请求里没有这些字段时逐字节不变。返回是否
+/// 改了请求。
+pub fn strip_codex_openai_only_request_fields(body: &mut JsonValue) -> bool {
+    let mut changed = strip_codex_private_include_markers(body);
+    let Some(obj) = body.as_object_mut() else {
+        return changed;
+    };
+
+    let mut stream_options_gone = false;
+    if let Some(stream_options) = obj
+        .get_mut("stream_options")
+        .and_then(JsonValue::as_object_mut)
+    {
+        if stream_options
+            .remove("reasoning_summary_delivery")
+            .is_some()
+        {
+            changed = true;
+            stream_options_gone = stream_options.is_empty();
+        }
+    }
+    if stream_options_gone {
+        obj.remove("stream_options");
+    }
+
+    changed |= obj.remove("access_programs").is_some();
+
+    if let Some(input) = obj.get_mut("input").and_then(JsonValue::as_array_mut) {
+        let before = input.len();
+        input.retain(|item| {
+            item.get("type").and_then(JsonValue::as_str) != Some("configuration_update")
+        });
+        changed |= input.len() != before;
+
+        for item in input.iter_mut() {
+            let Some(item) = item.as_object_mut() else {
+                continue;
+            };
+            changed |= item
+                .remove("internal_chat_message_metadata_passthrough")
+                .is_some();
+            let item_type = item.get("type").and_then(JsonValue::as_str);
+            let drops_encrypted_content = item_type
+                .is_some_and(|t| CODEX_OPENAI_ONLY_ENCRYPTED_CONTENT_ITEM_TYPES.contains(&t));
+            let is_function_call = item_type == Some("function_call");
+            if drops_encrypted_content {
+                changed |= item.remove("encrypted_content").is_some();
+            }
+            if is_function_call {
+                changed |= item.remove("encrypted_function_args").is_some();
+            }
+        }
+    }
+
     changed
 }
 
@@ -2651,5 +2762,147 @@ wire_api = "responses"
             &copilot,
             Some("grok-4.7")
         ));
+    }
+
+    #[test]
+    fn strip_private_include_markers_keeps_other_markers() {
+        let mut body = json!({
+            "include": ["reasoning.encrypted_content", "output.encrypted_content"]
+        });
+
+        assert!(strip_codex_private_include_markers(&mut body));
+        assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
+    }
+
+    #[test]
+    fn strip_private_include_markers_removes_empty_include() {
+        let mut body = json!({ "include": ["output.encrypted_content"] });
+
+        assert!(strip_codex_private_include_markers(&mut body));
+        assert!(body.get("include").is_none());
+    }
+
+    #[test]
+    fn strip_private_include_markers_leaves_unrelated_markers_alone() {
+        let mut body = json!({ "include": ["web_search_call.action.sources"] });
+
+        assert!(!strip_codex_private_include_markers(&mut body));
+        assert_eq!(body["include"], json!(["web_search_call.action.sources"]));
+    }
+
+    #[test]
+    fn strip_private_include_markers_ignores_shapes_it_does_not_own() {
+        // Missing key.
+        let mut body = json!({ "model": "m" });
+        assert!(!strip_codex_private_include_markers(&mut body));
+
+        // Not an array.
+        let mut body = json!({ "include": "output.encrypted_content" });
+        assert!(!strip_codex_private_include_markers(&mut body));
+        assert_eq!(body["include"], json!("output.encrypted_content"));
+
+        // Non-object body.
+        let mut body = json!(["output.encrypted_content"]);
+        assert!(!strip_codex_private_include_markers(&mut body));
+    }
+
+    #[test]
+    fn strip_private_include_markers_keeps_non_string_entries() {
+        // `include` should only ever hold strings; if something else shows up, the
+        // private marker still goes but the unknown entry is left where it was.
+        let mut body = json!({ "include": ["output.encrypted_content", 42] });
+
+        assert!(strip_codex_private_include_markers(&mut body));
+        assert_eq!(body["include"], json!([42]));
+    }
+
+    #[test]
+    fn strip_private_include_markers_is_idempotent() {
+        let mut body = json!({ "include": ["reasoning.encrypted_content"] });
+
+        assert!(!strip_codex_private_include_markers(&mut body));
+        assert!(!strip_codex_private_include_markers(&mut body));
+        assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
+    }
+
+    #[test]
+    fn strip_openai_only_fields_leaves_custom_table_requests_byte_identical() {
+        // 和 Codex 对自定义表发的请求一样：没有任何只发给 OpenAI 的字段，什么都不动。
+        let mut body = json!({
+            "model": "m",
+            "include": ["reasoning.encrypted_content"],
+            "input": [
+                { "type": "message", "role": "user", "content": [] },
+                { "type": "reasoning", "summary": [], "encrypted_content": "r" },
+                { "type": "compaction", "encrypted_content": "c" },
+                { "type": "context_compaction", "encrypted_content": "cc" }
+            ]
+        });
+        let before = body.clone();
+
+        assert!(!strip_codex_openai_only_request_fields(&mut body));
+        assert_eq!(body, before);
+    }
+
+    #[test]
+    fn strip_openai_only_fields_keeps_other_stream_options() {
+        let mut body = json!({
+            "stream_options": { "reasoning_summary_delivery": "sequential_cutoff", "include_usage": true }
+        });
+
+        assert!(strip_codex_openai_only_request_fields(&mut body));
+        assert_eq!(body["stream_options"], json!({ "include_usage": true }));
+    }
+
+    #[test]
+    fn strip_openai_only_fields_keeps_compaction_ciphertext() {
+        // 压缩条目的密文 Codex 对非 OpenAI 也照发，第三方压缩靠 `codex_compaction` 处理。
+        let mut body = json!({
+            "input": [
+                {
+                    "type": "compaction_summary",
+                    "encrypted_content": "c",
+                    "internal_chat_message_metadata_passthrough": { "turn_id": "t" }
+                },
+                { "type": "web_search_call", "status": "completed", "encrypted_content": "w" }
+            ]
+        });
+
+        assert!(strip_codex_openai_only_request_fields(&mut body));
+        assert_eq!(
+            body["input"],
+            json!([
+                { "type": "compaction_summary", "encrypted_content": "c" },
+                { "type": "web_search_call", "status": "completed" }
+            ])
+        );
+    }
+
+    #[test]
+    fn strip_openai_only_fields_ignores_shapes_it_does_not_own() {
+        let mut body = json!(["output.encrypted_content"]);
+        assert!(!strip_codex_openai_only_request_fields(&mut body));
+
+        // input 不是数组、条目不是对象：不动。
+        let mut body = json!({ "input": "hi", "stream_options": "x" });
+        assert!(!strip_codex_openai_only_request_fields(&mut body));
+        let mut body = json!({ "input": ["hi", 1] });
+        assert!(!strip_codex_openai_only_request_fields(&mut body));
+        assert_eq!(body["input"], json!(["hi", 1]));
+    }
+
+    #[test]
+    fn strip_openai_only_fields_is_idempotent() {
+        let mut body = json!({
+            "include": ["output.encrypted_content"],
+            "access_programs": { "cyber": "standard" },
+            "input": [{ "type": "configuration_update", "reasoning": { "effort": "high" } }]
+        });
+
+        assert!(strip_codex_openai_only_request_fields(&mut body));
+        let once = body.clone();
+        assert!(!strip_codex_openai_only_request_fields(&mut body));
+        assert_eq!(body, once);
+        assert_eq!(body, json!({ "input": [] }));
     }
 }

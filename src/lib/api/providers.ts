@@ -19,9 +19,22 @@ export interface ProviderSwitchEvent {
   providerId: string;
 }
 
+/**
+ * Codex 切换让新会话换了组（openai ↔ custom），统一会话历史又关着：
+ * 新版 Codex 只能继续当前组的会话，切换前那组从此只读。
+ */
+export interface CodexHistorySplitHint {
+  /** 切换前新会话记的 provider id（"openai" 或 "custom"） */
+  previousBucket: string;
+  currentBucket: string;
+  /** 记在切换前那组、现在只能查看的会话数 */
+  lockedThreads: number;
+}
+
 export interface SwitchResult {
   warnings: string[];
   route?: RouteSwitchResult;
+  codexHistorySplit?: CodexHistorySplitHint;
 }
 
 export interface OpenTerminalOptions {
@@ -76,6 +89,12 @@ export interface ClaudeDesktopDefaultRoute {
   routeId: string;
   envKey: string;
   supports1m: boolean;
+}
+
+/** WorkBuddy models.json 里的一个模型 id 及归属（CC Switch 供应商 id；null 是用户自己加的）。 */
+export interface WorkBuddyModelOwner {
+  id: string;
+  owner: string | null;
 }
 
 export const providersApi = {
@@ -279,6 +298,14 @@ export const providersApi = {
    */
   async importHermesFromLive(): Promise<number> {
     return await invoke("import_hermes_providers_from_live");
+  },
+
+  /**
+   * WorkBuddy models.json 里已有的模型 id 及归属。WorkBuddy 里一个模型 id 只能属于一张卡
+   * （id 既是唯一键又是发给上游的模型名），表单据此跳过或标出被占用的 id。
+   */
+  async getWorkBuddyModelOwners(): Promise<WorkBuddyModelOwner[]> {
+    return await invoke("workbuddy_model_owners");
   },
 };
 

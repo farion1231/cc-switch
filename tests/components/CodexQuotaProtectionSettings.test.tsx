@@ -120,10 +120,19 @@ describe("Codex official quota protection settings", () => {
     expect(toastError).toHaveBeenCalledWith("notifications.saveFailedGeneric");
     expect(screen.getByRole("button", { name: key("save") })).toBeEnabled();
   });
-  it("is off by default and enabling keeps the 95% / 98% defaults", async () => {
+  it("is on by default with the 95% / 98% defaults and can be turned off", async () => {
     const save = setup({});
     const toggle = screen.getByRole("switch", { name: key("title") });
-    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(
+      screen.getByRole("spinbutton", { name: key("fiveHour") }),
+    ).toHaveValue(95);
+    await act(async () => {
+      fireEvent.click(toggle);
+    });
+    expect(save).toHaveBeenLastCalledWith({
+      codexQuotaProtection: { ...ENABLED, enabled: false },
+    });
     expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
     await act(async () => {
       fireEvent.click(toggle);

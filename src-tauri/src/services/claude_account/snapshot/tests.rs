@@ -999,3 +999,56 @@ fn reads_the_plan_claude_code_keeps_with_the_login() {
     bare.0["claudeAiOauth"]["subscriptionType"] = json!("");
     assert_eq!(credential_plan(&bare).subscription_type, None);
 }
+
+#[test]
+fn quota_slot_is_the_default_slot_when_its_credential_is_that_account() {
+    let fx = Fixture::new();
+    fx.sign_in_default("me", "org-me", "rt-me");
+    let (me, me_dir) = fx.account("me", "org-me", "rt-parked");
+
+    assert_eq!(
+        resolve_slot(&me, &fx.default(), &fx.store, || Some(me_dir.clone())),
+        Some(fx.default())
+    );
+}
+
+#[test]
+fn quota_slot_skips_a_default_credential_that_belongs_to_someone_else() {
+    let fx = Fixture::new();
+    // 默认资料写着 me，默认凭据却是另一个组织（另一个号）的：读默认槽位会把别人的额度当成 me 的
+    fx.sign_in_default("me", "org-me", "rt-me");
+    fx.store.put(&fx.default(), secret("org-other", "rt-other"));
+    let (me, me_dir) = fx.account("me", "org-me", "rt-parked");
+
+    assert_eq!(
+        resolve_slot(&me, &fx.default(), &fx.store, || Some(me_dir.clone())),
+        Some(Slot::Account(me_dir.clone()))
+    );
+}
+
+#[test]
+fn quota_slot_skips_the_default_slot_when_its_profile_is_another_account() {
+    let fx = Fixture::new();
+    fx.sign_in_default("other", "org-other", "rt-other");
+    let (me, me_dir) = fx.account("me", "org-me", "rt-me");
+
+    assert_eq!(
+        resolve_slot(&me, &fx.default(), &fx.store, || Some(me_dir.clone())),
+        Some(Slot::Account(me_dir.clone()))
+    );
+}
+
+#[test]
+fn quota_slot_skips_the_default_slot_without_a_credential() {
+    let fx = Fixture::new();
+    fx.sign_in_default("me", "org-me", "rt-me");
+    fx.store.delete(&fx.default()).unwrap();
+    let (me, me_dir) = fx.account("me", "org-me", "rt-parked");
+
+    assert_eq!(
+        resolve_slot(&me, &fx.default(), &fx.store, || Some(me_dir.clone())),
+        Some(Slot::Account(me_dir.clone()))
+    );
+    // 本机没有这个账号目录时没有槽位可读
+    assert_eq!(resolve_slot(&me, &fx.default(), &fx.store, || None), None);
+}

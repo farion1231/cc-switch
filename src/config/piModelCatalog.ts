@@ -18,6 +18,15 @@ export interface PiModelCatalogEntry {
  * Reviewed model values used only to build Pi provider presets.
  */
 export const piModelCatalog = {
+  "deepseek/deepseek-v4.1-flash-1017": {
+    capabilities: {
+      name: "DeepSeek V4.1 Flash 1017",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1048576,
+      maxTokens: 131072,
+    },
+  },
   "amazon/nova-pro": {
     capabilities: {
       name: "Amazon Nova Pro",

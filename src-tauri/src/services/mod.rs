@@ -62,8 +62,11 @@ pub use usage_stats::{
     RequestLogDetail, UsageSummary, UsageSummaryByApp,
 };
 
+pub mod session_usage_copilot;
 pub mod session_usage_kimi;
 pub mod session_usage_mcode;
 
 pub mod session_usage_agy;
 pub mod session_usage_dsh;
+pub mod session_usage_workbuddy;
+pub mod workbuddy_account;

@@ -54,6 +54,7 @@ import {
 } from "./StackSubagentFields";
 import { RouteSettingsSheet } from "./RouteSettingsSheet";
 import { StackSettingsSheet } from "./StackSettingsSheet";
+import { useCodexPauseOfficialLogin } from "./CodexPauseOfficialLogin";
 import { useDesktopConfigMessages } from "./useDesktopConfigMessages";
 
 type ListCallbacks = Pick<
@@ -138,6 +139,7 @@ export function SwitchModePanel({
   const { data: proxyStatus } = useProxyStatusQuery();
   const serviceRunning = proxyStatus?.running ?? false;
   const { data: settings } = useSettingsQuery();
+  const pauseOfficialLogin = useCodexPauseOfficialLogin();
   // Claude Desktop 没有故障转移和路由设置（没有 proxy_config 行）
   const hasFailover = isProxyAppId(app);
   const { data: failoverOn = false } = useAutoFailoverEnabled(app, hasFailover);
@@ -500,6 +502,28 @@ export function SwitchModePanel({
         staleClients={stack.staleClients}
         onDismiss={() => setStaleDismissed(staleRevision)}
       />,
+    );
+  }
+  // 暂停使用官方登录只在路由 / 聚合下生效；开着就一直提示，免得额度恢复后忘了关
+  if (app === "codex" && active !== "direct" && pauseOfficialLogin.paused) {
+    notices.push(
+      <Notice
+        key="officialLoginPaused"
+        tone="warning"
+        title={t("mode.notice.officialLoginPaused")}
+        actions={
+          <Button
+            variant="neutral"
+            size="compact"
+            disabled={pauseOfficialLogin.saving}
+            onClick={() => void pauseOfficialLogin.setPaused(false)}
+          >
+            {t("mode.notice.resumeOfficialLogin")}
+          </Button>
+        }
+      >
+        {t("mode.notice.officialLoginPausedBody")}
+      </Notice>,
     );
   }
   if (view !== active) {
