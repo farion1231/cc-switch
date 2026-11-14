@@ -148,6 +148,7 @@ mod tests {
             enabled: true,
             request_thinking_signature: true,
             request_thinking_budget: true,
+            request_adaptive_thinking: true,
             request_media_fallback: true,
             request_media_heuristic: true,
         }
@@ -158,6 +159,7 @@ mod tests {
             enabled: true,
             request_thinking_signature: true,
             request_thinking_budget: false,
+            request_adaptive_thinking: true,
             request_media_fallback: true,
             request_media_heuristic: true,
         }
@@ -168,6 +170,7 @@ mod tests {
             enabled: false,
             request_thinking_signature: true,
             request_thinking_budget: true,
+            request_adaptive_thinking: true,
             request_media_fallback: true,
             request_media_heuristic: true,
         }
