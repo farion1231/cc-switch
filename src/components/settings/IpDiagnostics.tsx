@@ -177,6 +177,7 @@ function DiagnosticRun({ url, disabled }: { url: string; disabled: boolean }) {
                   : "different",
             )}
           </p>
+          <p className="text-sm text-fg-2">{label("exitScope")}</p>
           {result.report.locationError && (
             <p role="status" className="text-sm">
               {label("locationError")}:{" "}

@@ -1175,6 +1175,7 @@
     "ipDiagnostics": {
       "title": "IP diagnostics",
       "scope": "Inspect the selected outbound route. These samples do not verify DNS or browser isolation and do not predict account restrictions.",
+      "exitScope": "This shows the exit CC Switch uses to reach the check services over the selected route, which may differ from other apps: in Direct mode, clients such as Claude Code and Codex use their own proxy settings, and a proxy tool with domain-based rules may send AI services and these check services through different nodes.",
       "route": "Network route",
       "saved": "Saved global proxy",
       "custom": "Temporary proxy",

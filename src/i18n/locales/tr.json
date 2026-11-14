@@ -1175,6 +1175,7 @@
     "ipDiagnostics": {
       "title": "IP tanılama",
       "scope": "Seçilen ağ yolunun çıkış bilgilerini inceleyin. Bu örnekler DNS veya tarayıcı yalıtımını doğrulamaz ve hesap kısıtlamalarını öngörmez.",
+      "exitScope": "Burada gösterilen, CC Switch'in seçilen rota üzerinden kontrol hizmetlerine bağlanırken kullandığı çıkıştır ve diğer uygulamalarınkinden farklı olabilir: Doğrudan modda Claude Code ve Codex gibi istemciler kendi proxy ayarlarını kullanır; alan adına göre kural uygulayan bir proxy aracı da yapay zekâ hizmetlerini ve bu kontrol hizmetlerini farklı düğümlerden geçirebilir.",
       "route": "Ağ yolu",
       "saved": "Kayıtlı genel proxy",
       "custom": "Geçici proxy",

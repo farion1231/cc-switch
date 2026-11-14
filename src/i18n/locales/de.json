@@ -1175,6 +1175,7 @@
     "ipDiagnostics": {
       "title": "IP-Diagnose",
       "scope": "Prüft die Ausgangsinformationen der gewählten Netzwerkroute. Diese Stichproben bestätigen keine DNS- oder Browser-Isolation und sagen keine Kontosperren voraus.",
+      "exitScope": "Angezeigt wird der Ausgang, den CC Switch über die gewählte Route zu den Prüfdiensten nutzt; bei anderen Apps kann er abweichen: Im Direktmodus verwenden Clients wie Claude Code und Codex ihre eigenen Proxy-Einstellungen, und ein Proxy-Tool mit domainbasierten Regeln kann KI-Dienste und diese Prüfdienste über unterschiedliche Knoten leiten.",
       "route": "Netzwerkroute",
       "saved": "Gespeicherter globaler Proxy",
       "custom": "Temporärer Proxy",

@@ -78,6 +78,7 @@ describe("IP diagnostics", () => {
     const { container } = render(<IpDiagnostics />);
     expect(mocks.invoke).not.toHaveBeenCalled();
     expect(container.textContent).not.toContain("secret");
+    expect(screen.queryByText(text("exitScope"))).not.toBeInTheDocument();
     check();
     expect(await screen.findByText("AS64500")).toBeInTheDocument();
     expect(mocks.invoke).toHaveBeenCalledTimes(1);
@@ -95,6 +96,7 @@ describe("IP diagnostics", () => {
       expect(screen.getByText(value)).toBeInTheDocument();
     }
     expect(screen.getByText(text("consistent"))).toBeInTheDocument();
+    expect(screen.getByText(text("exitScope"))).toBeInTheDocument();
     expect(container.textContent).not.toContain("secret");
   });
 
