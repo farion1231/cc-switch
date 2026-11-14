@@ -22,12 +22,15 @@ use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
     metadata_modified_nanos, update_sync_state, SessionSyncResult,
 };
-use crate::services::usage_stats::{find_model_pricing, should_skip_session_insert, DedupKey};
+use crate::services::usage_stats::{find_model_pricing, has_matching_proxy_usage_log, DedupKey};
 use crate::session_manager::providers::gemini::{is_session_file, parse_session_document};
+use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+
+const GEMINI_DATA_SOURCE: &str = "gemini_session";
 
 /// 从 Gemini message 中提取的 token 数据
 #[derive(Debug)]
@@ -245,7 +248,10 @@ fn insert_gemini_session_entry(
     session_id: Option<&str>,
     timestamp: Option<&str>,
 ) -> Result<bool, AppError> {
-    let conn = lock_conn!(db.conn);
+    let mut conn = lock_conn!(db.conn);
+    let tx = conn
+        .transaction()
+        .map_err(|e| AppError::Database(format!("开启 Gemini 会话日志事务失败: {e}")))?;
 
     let created_at = timestamp
         .and_then(|ts| {
@@ -263,9 +269,105 @@ fn insert_gemini_session_entry(
     // 合并 thoughts 到 output（思考 token 按输出计费）
     let output_tokens = tokens.output + tokens.thoughts;
 
+    let existing_row: Option<(String, String, i64, i64, i64)> = tx
+        .prepare_cached(
+            "SELECT COALESCE(data_source, 'proxy'), model, input_tokens, output_tokens, cache_read_tokens
+             FROM proxy_request_logs
+             WHERE request_id = ?1",
+        )
+        .and_then(|mut stmt| {
+            stmt.query_row(rusqlite::params![request_id], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            })
+        })
+        .optional()
+        .map_err(|e| AppError::Database(format!("查询 Gemini 会话日志失败: {e}")))?;
+
+    if let Some((existing_source, old_model, old_input, old_output, old_cached)) = existing_row {
+        if existing_source != GEMINI_DATA_SOURCE {
+            return Ok(false);
+        }
+
+        // 确保未剪枝的存量明细也拥有长期去重收据，后续归档删除明细后不会重导
+        record_gemini_dedup_tombstone(&tx, request_id)?;
+
+        if old_model == model
+            && old_input == i64::from(tokens.input)
+            && old_output == i64::from(output_tokens)
+            && old_cached == i64::from(tokens.cached)
+        {
+            tx.commit()
+                .map_err(|e| AppError::Database(format!("提交 Gemini 会话日志事务失败: {e}")))?;
+            return Ok(false);
+        }
+
+        let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) =
+            compute_gemini_entry_costs(&tx, model, tokens.input, output_tokens, tokens.cached);
+
+        let updated = tx
+            .prepare_cached(
+                "UPDATE proxy_request_logs SET
+                    model = ?2,
+                    request_model = ?2,
+                    input_tokens = ?3,
+                    output_tokens = ?4,
+                    cache_read_tokens = ?5,
+                    input_cost_usd = ?6,
+                    output_cost_usd = ?7,
+                    cache_read_cost_usd = ?8,
+                    cache_creation_cost_usd = ?9,
+                    total_cost_usd = ?10
+                WHERE request_id = ?1 AND data_source = ?11",
+            )
+            .and_then(|mut stmt| {
+                stmt.execute(rusqlite::params![
+                    request_id,
+                    model,
+                    tokens.input,
+                    output_tokens,
+                    tokens.cached,
+                    input_cost,
+                    output_cost,
+                    cache_read_cost,
+                    cache_creation_cost,
+                    total_cost,
+                    GEMINI_DATA_SOURCE,
+                ])
+            })
+            .map_err(|e| AppError::Database(format!("更新 Gemini 会话日志失败: {e}")))?;
+
+        tx.commit()
+            .map_err(|e| AppError::Database(format!("提交 Gemini 会话日志事务失败: {e}")))?;
+        return Ok(updated > 0);
+    }
+
+    // 明细不存在时检查长期去重收据：已被 rollup_and_prune 归档删除的历史消息不得重复导入
+    let already_recorded: bool = tx
+        .prepare_cached(
+            "SELECT EXISTS(
+                SELECT 1 FROM session_usage_dedup
+                WHERE data_source = ?1 AND request_id = ?2
+            )",
+        )
+        .and_then(|mut stmt| {
+            stmt.query_row(rusqlite::params![GEMINI_DATA_SOURCE, request_id], |row| {
+                row.get(0)
+            })
+        })
+        .map_err(|e| AppError::Database(format!("查询 Gemini 会话去重收据失败: {e}")))?;
+    if already_recorded {
+        return Ok(false);
+    }
+
     let dedup_key = DedupKey {
         app_type: "gemini",
-        data_source: "gemini_session",
+        data_source: GEMINI_DATA_SOURCE,
         model,
         input_tokens: tokens.input,
         output_tokens,
@@ -273,67 +375,26 @@ fn insert_gemini_session_entry(
         cache_creation_tokens: 0,
         created_at,
     };
-    if should_skip_session_insert(&conn, request_id, &dedup_key)? {
+    if has_matching_proxy_usage_log(&tx, &dedup_key)? {
+        record_gemini_dedup_tombstone(&tx, request_id)?;
+        tx.commit()
+            .map_err(|e| AppError::Database(format!("提交 Gemini 会话日志事务失败: {e}")))?;
         return Ok(false);
     }
 
-    // 计算费用
-    let usage = TokenUsage {
-        input_tokens: tokens.input,
-        output_tokens,
-        cache_read_tokens: tokens.cached,
-        cache_creation_tokens: 0,
-        cache_creation_1h_tokens: 0,
-        model: Some(model.to_string()),
-        message_id: None,
-    };
+    let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) =
+        compute_gemini_entry_costs(&tx, model, tokens.input, output_tokens, tokens.cached);
 
-    let pricing = find_gemini_pricing(&conn, model);
-    let multiplier = Decimal::from(1);
-    let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) = match pricing
-    {
-        Some(p) => {
-            let cost = CostCalculator::calculate_for_app("gemini", &usage, &p, multiplier);
-            (
-                cost.input_cost.to_string(),
-                cost.output_cost.to_string(),
-                cost.cache_read_cost.to_string(),
-                cost.cache_creation_cost.to_string(),
-                cost.total_cost.to_string(),
-            )
-        }
-        None => (
-            "0".to_string(),
-            "0".to_string(),
-            "0".to_string(),
-            "0".to_string(),
-            "0".to_string(),
-        ),
-    };
+    record_gemini_dedup_tombstone(&tx, request_id)?;
 
-    // 使用 UPSERT：新记录插入，已存在记录更新 token 和费用（Gemini 全量重读可能携带更新值）
-    conn.execute(
+    tx.execute(
         "INSERT INTO proxy_request_logs (
             request_id, provider_id, app_type, model, request_model,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
             provider_type, is_streaming, cost_multiplier, created_at, data_source
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)
-        ON CONFLICT(request_id) DO UPDATE SET
-            model = excluded.model,
-            input_tokens = excluded.input_tokens,
-            output_tokens = excluded.output_tokens,
-            cache_read_tokens = excluded.cache_read_tokens,
-            input_cost_usd = excluded.input_cost_usd,
-            output_cost_usd = excluded.output_cost_usd,
-            cache_read_cost_usd = excluded.cache_read_cost_usd,
-            cache_creation_cost_usd = excluded.cache_creation_cost_usd,
-            total_cost_usd = excluded.total_cost_usd
-        WHERE input_tokens != excluded.input_tokens
-           OR output_tokens != excluded.output_tokens
-           OR cache_read_tokens != excluded.cache_read_tokens
-           OR model != excluded.model",
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
         rusqlite::params![
             request_id,
             "_gemini_session",   // provider_id
@@ -354,18 +415,70 @@ fn insert_gemini_session_entry(
             200i64,              // status_code
             Option::<String>::None, // error_message
             session_id.map(|s| s.to_string()),
-            Some("gemini_session"), // provider_type
+            Some(GEMINI_DATA_SOURCE), // provider_type
             1i64,                // is_streaming
             "1.0",               // cost_multiplier
             created_at,
-            "gemini_session",    // data_source
+            GEMINI_DATA_SOURCE,  // data_source
         ],
     )
     .map_err(|e| AppError::Database(format!("插入 Gemini 会话日志失败: {e}")))?;
 
-    // changes() > 0 表示新插入或已更新，== 0 表示值完全相同（无实际变更）
-    let changed = conn.changes() > 0;
-    Ok(changed)
+    tx.commit()
+        .map_err(|e| AppError::Database(format!("提交 Gemini 会话日志事务失败: {e}")))?;
+    Ok(true)
+}
+
+fn record_gemini_dedup_tombstone(
+    conn: &rusqlite::Connection,
+    request_id: &str,
+) -> Result<(), AppError> {
+    conn.prepare_cached(
+        "INSERT OR IGNORE INTO session_usage_dedup (data_source, request_id, semantic_id, has_entry_id)
+         VALUES (?1, ?2, ?2, 1)",
+    )
+    .and_then(|mut stmt| stmt.execute(rusqlite::params![GEMINI_DATA_SOURCE, request_id]))
+    .map_err(|e| AppError::Database(format!("记录 Gemini 会话去重收据失败: {e}")))?;
+    Ok(())
+}
+
+fn compute_gemini_entry_costs(
+    conn: &rusqlite::Connection,
+    model: &str,
+    input_tokens: u32,
+    output_tokens: u32,
+    cache_read_tokens: u32,
+) -> (String, String, String, String, String) {
+    let usage = TokenUsage {
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_creation_tokens: 0,
+        cache_creation_1h_tokens: 0,
+        model: Some(model.to_string()),
+        message_id: None,
+    };
+
+    match find_gemini_pricing(conn, model) {
+        Some(pricing) => {
+            let cost =
+                CostCalculator::calculate_for_app("gemini", &usage, &pricing, Decimal::from(1));
+            (
+                cost.input_cost.to_string(),
+                cost.output_cost.to_string(),
+                cost.cache_read_cost.to_string(),
+                cost.cache_creation_cost.to_string(),
+                cost.total_cost.to_string(),
+            )
+        }
+        None => (
+            "0".to_string(),
+            "0".to_string(),
+            "0".to_string(),
+            "0".to_string(),
+            "0".to_string(),
+        ),
+    }
 }
 
 /// 查找 Gemini 模型定价
@@ -505,5 +618,261 @@ mod tests {
         let should_skip =
             tokens.input == 0 && tokens.output == 0 && tokens.thoughts == 0 && tokens.cached == 0;
         assert!(!should_skip, "纯缓存命中记录不应被跳过");
+    }
+
+    #[test]
+    fn test_sync_single_gemini_file_does_not_double_count_after_rollup_and_prune(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let session_path = temp.path().join("session-archived.json");
+
+        fs::write(
+            &session_path,
+            serde_json::json!({
+                "sessionId": "sess-1",
+                "messages": [
+                    {
+                        "id": "msg-old",
+                        "type": "gemini",
+                        "model": "gemini-2.5-pro",
+                        "timestamp": "2020-01-15T10:00:00Z",
+                        "tokens": { "input": 100, "output": 25, "cached": 10, "thoughts": 5 }
+                    }
+                ]
+            })
+            .to_string(),
+        )
+        .expect("write initial session");
+
+        let (imported, skipped) = sync_single_gemini_file(&db, &session_path, 0)?;
+        assert_eq!((imported, skipped), (1, 0));
+
+        let pruned = db.rollup_and_prune(30)?;
+        assert_eq!(pruned, 1);
+
+        {
+            let conn = lock_conn!(db.conn);
+            let live_count: i64 =
+                conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |r| r.get(0))?;
+            let (rollup_reqs, rollup_out): (i64, i64) = conn.query_row(
+                "SELECT COALESCE(SUM(request_count), 0), COALESCE(SUM(output_tokens), 0)
+                 FROM usage_daily_rollups WHERE app_type = 'gemini'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            assert_eq!(live_count, 0);
+            assert_eq!(rollup_reqs, 1);
+            assert_eq!(rollup_out, 30);
+        }
+
+        // User resumes the old session: mtime advances (pass last_modified = 0 to force re-scan)
+        // and a second old-timestamp message is appended alongside msg-old.
+        fs::write(
+            &session_path,
+            serde_json::json!({
+                "sessionId": "sess-1",
+                "messages": [
+                    {
+                        "id": "msg-old",
+                        "type": "gemini",
+                        "model": "gemini-2.5-pro",
+                        "timestamp": "2020-01-15T10:00:00Z",
+                        "tokens": { "input": 100, "output": 25, "cached": 10, "thoughts": 5 }
+                    },
+                    {
+                        "id": "msg-new",
+                        "type": "gemini",
+                        "model": "gemini-2.5-pro",
+                        "timestamp": "2020-01-15T10:05:00Z",
+                        "tokens": { "input": 40, "output": 12, "cached": 0, "thoughts": 3 }
+                    }
+                ]
+            })
+            .to_string(),
+        )
+        .expect("write resumed session");
+
+        let (imported_after, skipped_after) = sync_single_gemini_file(&db, &session_path, 0)?;
+        assert_eq!(
+            (imported_after, skipped_after),
+            (1, 1),
+            "pruned msg-old must be skipped while msg-new is imported"
+        );
+
+        let pruned_second = db.rollup_and_prune(30)?;
+        assert_eq!(pruned_second, 1);
+
+        let conn = lock_conn!(db.conn);
+        let (rollup_reqs, rollup_out): (i64, i64) = conn.query_row(
+            "SELECT COALESCE(SUM(request_count), 0), COALESCE(SUM(output_tokens), 0)
+             FROM usage_daily_rollups WHERE app_type = 'gemini'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        assert_eq!(
+            rollup_reqs, 2,
+            "archived msg-old must not be double-counted"
+        );
+        assert_eq!(rollup_out, 45);
+        Ok(())
+    }
+
+    #[test]
+    fn test_insert_gemini_session_updates_retained_entry_in_place() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let request_id = "gemini_session:sess-live:msg-1";
+
+        let initial = GeminiTokens {
+            input: 100,
+            output: 20,
+            cached: 10,
+            thoughts: 5,
+        };
+        assert!(insert_gemini_session_entry(
+            &db,
+            request_id,
+            &initial,
+            "unknown",
+            Some("sess-live"),
+            Some("2026-04-10T12:00:00Z"),
+        )?);
+
+        // Identical re-read is a no-op skip
+        assert!(!insert_gemini_session_entry(
+            &db,
+            request_id,
+            &initial,
+            "unknown",
+            Some("sess-live"),
+            Some("2026-04-10T12:00:00Z"),
+        )?);
+
+        // Updated token counters and resolved model update the retained row in place
+        let updated = GeminiTokens {
+            input: 160,
+            output: 50,
+            cached: 30,
+            thoughts: 10,
+        };
+        assert!(insert_gemini_session_entry(
+            &db,
+            request_id,
+            &updated,
+            "gemini-2.5-pro",
+            Some("sess-live"),
+            Some("2026-04-10T12:00:00Z"),
+        )?);
+
+        let conn = lock_conn!(db.conn);
+        let (count, model, req_model, inp, out, cached, total_cost): (
+            i64,
+            String,
+            String,
+            i64,
+            i64,
+            i64,
+            String,
+        ) = conn.query_row(
+            "SELECT COUNT(*), model, COALESCE(request_model, ''), input_tokens, output_tokens, cache_read_tokens, total_cost_usd
+             FROM proxy_request_logs WHERE request_id = ?1",
+            [request_id],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                ))
+            },
+        )?;
+        assert_eq!(count, 1);
+        assert_eq!(model, "gemini-2.5-pro");
+        assert_eq!(req_model, "gemini-2.5-pro");
+        assert_eq!(inp, 160);
+        assert_eq!(out, 60);
+        assert_eq!(cached, 30);
+        assert_ne!(total_cost, "0");
+        Ok(())
+    }
+
+    #[test]
+    fn test_legacy_gemini_row_without_dedup_tombstone_is_protected_on_prune_and_never_overwrites_proxy(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let legacy_id = "gemini_session:legacy-sess:msg-legacy";
+        let proxy_id = "gemini_session:collision:msg-proxy";
+
+        {
+            let conn = lock_conn!(db.conn);
+            // Simulate a <= 4.0.31 database row created before session_usage_dedup tombstones
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    total_cost_usd, latency_ms, status_code, created_at, data_source
+                ) VALUES (?1, '_gemini_session', 'gemini', 'gemini-2.5-pro', 'gemini-2.5-pro',
+                          80, 20, 0, 0, '0.01', 0, 200, 946684800, 'gemini_session')",
+                [legacy_id],
+            )?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    total_cost_usd, latency_ms, status_code, created_at, data_source
+                ) VALUES (?1, 'google', 'gemini', 'gemini-2.5-pro', 'gemini-2.5-pro',
+                          50, 10, 0, 0, '0.02', 50, 200, 1893456000, 'proxy')",
+                [proxy_id],
+            )?;
+        }
+
+        // Pruning old legacy row records its tombstone before deleting detail
+        assert_eq!(db.rollup_and_prune(30)?, 1);
+
+        let tokens = GeminiTokens {
+            input: 80,
+            output: 20,
+            cached: 0,
+            thoughts: 0,
+        };
+        assert!(
+            !insert_gemini_session_entry(
+                &db,
+                legacy_id,
+                &tokens,
+                "gemini-2.5-pro",
+                Some("legacy-sess"),
+                Some("2000-01-01T00:00:00Z"),
+            )?,
+            "pruned legacy gemini_session row must not be re-imported"
+        );
+
+        // Non-gemini_session row with same request_id is never overwritten
+        let changed_tokens = GeminiTokens {
+            input: 999,
+            output: 999,
+            cached: 0,
+            thoughts: 0,
+        };
+        assert!(!insert_gemini_session_entry(
+            &db,
+            proxy_id,
+            &changed_tokens,
+            "gemini-2.5-pro",
+            Some("collision"),
+            Some("2030-01-01T00:00:00Z"),
+        )?);
+
+        let conn = lock_conn!(db.conn);
+        let proxy_inp: i64 = conn.query_row(
+            "SELECT input_tokens FROM proxy_request_logs WHERE request_id = ?1",
+            [proxy_id],
+            |r| r.get(0),
+        )?;
+        assert_eq!(proxy_inp, 50);
+        Ok(())
     }
 }
