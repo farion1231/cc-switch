@@ -13,7 +13,7 @@ in_failover_queue: false
 
 id: default
 name: default
-settings_config: {"env":{"ANTHROPIC_AUTH_TOKEN":"sk-live","ANTHROPIC_BASE_URL":"https://relay.example","ANTHROPIC_MODEL":"claude-sonnet-4-5","ANTHROPIC_DEFAULT_OPUS_MODEL":"claude-sonnet-4-5","ANTHROPIC_DEFAULT_HAIKU_MODEL":"claude-sonnet-4-5","ANTHROPIC_DEFAULT_SONNET_MODEL":"claude-sonnet-4-5"},"model":"opus"}
+settings_config: {"env":{"ANTHROPIC_AUTH_TOKEN":"sk-live","ANTHROPIC_BASE_URL":"https://relay.example","ANTHROPIC_MODEL":"claude-sonnet-4-5"},"model":"opus"}
 website_url: NULL
 category: custom
 sort_index: NULL

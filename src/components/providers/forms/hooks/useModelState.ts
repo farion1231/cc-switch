@@ -43,81 +43,45 @@ export function setClaudeOneMMarker(model: string, enabled: boolean): string {
 
 /**
  * Parse model values from settings config JSON
+ *
+ * 各档只读取 env 里真实存在的键：键缺失时返回空串，由输入框 placeholder 提示
+ * 运行时回落目标（fable → opus，其余档 → 默认兜底模型，见 proxy/model_mapper）。
+ * 不再把回落值填进受控 input——那会造成「已保存」的假象（settings_config 里
+ * 并没有该键），保存后看起来又像被改写（issue #7456）。
  */
 function parseModelsFromConfig(settingsConfig: string) {
+  const empty = {
+    model: "",
+    haiku: "",
+    haikuName: "",
+    sonnet: "",
+    sonnetName: "",
+    opus: "",
+    opusName: "",
+    fable: "",
+    fableName: "",
+    subagent: "",
+  };
   try {
     const cfg = settingsConfig ? JSON.parse(settingsConfig) : {};
     const env = cfg?.env || {};
-    const model =
-      typeof env.ANTHROPIC_MODEL === "string" ? env.ANTHROPIC_MODEL : "";
-    const small =
-      typeof env.ANTHROPIC_SMALL_FAST_MODEL === "string"
-        ? env.ANTHROPIC_SMALL_FAST_MODEL
-        : "";
-    const haiku =
-      typeof env.ANTHROPIC_DEFAULT_HAIKU_MODEL === "string"
-        ? env.ANTHROPIC_DEFAULT_HAIKU_MODEL
-        : small || model;
-    const haikuName =
-      typeof env.ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME === "string"
-        ? env.ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME
-        : stripClaudeOneMMarker(haiku);
-    const sonnet =
-      typeof env.ANTHROPIC_DEFAULT_SONNET_MODEL === "string"
-        ? env.ANTHROPIC_DEFAULT_SONNET_MODEL
-        : model || small;
-    const sonnetName =
-      typeof env.ANTHROPIC_DEFAULT_SONNET_MODEL_NAME === "string"
-        ? env.ANTHROPIC_DEFAULT_SONNET_MODEL_NAME
-        : stripClaudeOneMMarker(sonnet);
-    const opus =
-      typeof env.ANTHROPIC_DEFAULT_OPUS_MODEL === "string"
-        ? env.ANTHROPIC_DEFAULT_OPUS_MODEL
-        : model || small;
-    const opusName =
-      typeof env.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME === "string"
-        ? env.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME
-        : stripClaudeOneMMarker(opus);
-    // 回填链镜像运行时映射链（fable → opus → default），保证 UI 展示
-    // 与代理实际转发的模型一致。
-    const fable =
-      typeof env.ANTHROPIC_DEFAULT_FABLE_MODEL === "string"
-        ? env.ANTHROPIC_DEFAULT_FABLE_MODEL
-        : opus;
-    const fableName =
-      typeof env.ANTHROPIC_DEFAULT_FABLE_MODEL_NAME === "string"
-        ? env.ANTHROPIC_DEFAULT_FABLE_MODEL_NAME
-        : stripClaudeOneMMarker(fable);
-    const subagent =
-      typeof env.CLAUDE_CODE_SUBAGENT_MODEL === "string"
-        ? env.CLAUDE_CODE_SUBAGENT_MODEL
-        : "";
+    const read = (key: string) =>
+      typeof env[key] === "string" ? (env[key] as string) : "";
 
     return {
-      model,
-      haiku,
-      haikuName,
-      sonnet,
-      sonnetName,
-      opus,
-      opusName,
-      fable,
-      fableName,
-      subagent,
+      model: read("ANTHROPIC_MODEL"),
+      haiku: read("ANTHROPIC_DEFAULT_HAIKU_MODEL"),
+      haikuName: read("ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"),
+      sonnet: read("ANTHROPIC_DEFAULT_SONNET_MODEL"),
+      sonnetName: read("ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"),
+      opus: read("ANTHROPIC_DEFAULT_OPUS_MODEL"),
+      opusName: read("ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"),
+      fable: read("ANTHROPIC_DEFAULT_FABLE_MODEL"),
+      fableName: read("ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"),
+      subagent: read("CLAUDE_CODE_SUBAGENT_MODEL"),
     };
   } catch {
-    return {
-      model: "",
-      haiku: "",
-      haikuName: "",
-      sonnet: "",
-      sonnetName: "",
-      opus: "",
-      opusName: "",
-      fable: "",
-      fableName: "",
-      subagent: "",
-    };
+    return empty;
   }
 }
 
