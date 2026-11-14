@@ -139,6 +139,12 @@ describe("SwitchModePanel — Stack mode", () => {
           ],
           subagentModels: [
             {
+              id: "gpt-official",
+              providerId: "route",
+              displayName: "GPT Official",
+              efforts: ["high"],
+            },
+            {
               id: "ccs-deepseek/deepseek-v4-flash",
               providerId: "deepseek",
               displayName: "DeepSeek V4 Flash（deepseek）",
@@ -149,7 +155,7 @@ describe("SwitchModePanel — Stack mode", () => {
       ),
     );
     renderPanel("codex", {
-      route: provider("route"),
+      route: { ...provider("route"), category: "official" },
       deepseek: provider("deepseek"),
     });
 
@@ -161,6 +167,21 @@ describe("SwitchModePanel — Stack mode", () => {
         name: "mode.stackSettings.subagentModel",
       }),
     ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("combobox", {
+        name: "mode.stackSettings.subagentModel",
+      }),
+    );
+    await user.click(
+      await screen.findByRole("option", { name: "GPT Official" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("combobox", {
+          name: "mode.stackSettings.subagentModel",
+        }),
+      ).toHaveTextContent("GPT Official"),
+    );
   });
 
   it("has no aggregation settings for Claude Code", async () => {

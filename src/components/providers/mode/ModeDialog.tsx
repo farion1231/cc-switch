@@ -168,9 +168,11 @@ function EnterBody({
   const [subagent, setSubagent] = useState<StackSubagentValue | undefined>(
     stackSubagent?.value,
   );
-  // 默认那家不发布 `ccs-*` 模型：它自己的模型不能当子代理
-  const subagentModels = (stackSubagent?.models ?? []).filter(
-    (model) => model.providerId !== pick,
+  // 官方原生模型只适用于它仍是默认供应商的情况。
+  const subagentModels = (stackSubagent?.models ?? []).filter((model) =>
+    model.id.startsWith("ccs-")
+      ? model.providerId !== pick
+      : model.providerId === pick,
   );
 
   useEffect(() => {
