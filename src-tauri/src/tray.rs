@@ -3675,6 +3675,75 @@ mod tests {
         }
     }
 
+    /// 前端 `src/i18n/languages.ts` 的语言表和系统区域识别对照
+    /// `tests/config/languages.json`，这份文件由这里生成。改了 `settings::LANGUAGES`
+    /// 或 [`map_locale_to_tray_language`] 后用
+    /// `CC_SWITCH_UPDATE_GOLDEN=1 cargo test languages_match_shared_fixture` 重新生成。
+    #[test]
+    fn languages_match_shared_fixture() {
+        const LOCALES: &[&str] = &[
+            "",
+            "zh",
+            "zh-CN",
+            "zh-SG",
+            "zh-Hans",
+            "zh-Hans-CN",
+            "zh_CN",
+            "zh-TW",
+            "zh-HK",
+            "zh-MO",
+            "zh-Hant",
+            "zh-Hant-TW",
+            "zh-hant-hk",
+            "zh-tw-x",
+            "ja",
+            "ja-JP",
+            "ja_JP",
+            "ko",
+            "ko-KR",
+            "kok",
+            "tr",
+            "tr-TR",
+            "ru",
+            "ru-RU",
+            "de",
+            "de-AT",
+            "en",
+            "en-US",
+            "fr-FR",
+            "es",
+            "pt-BR",
+        ];
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/config/languages.json");
+        let locale_to_language: serde_json::Map<String, serde_json::Value> = LOCALES
+            .iter()
+            .map(|locale| {
+                (
+                    locale.to_string(),
+                    map_locale_to_tray_language(locale).into(),
+                )
+            })
+            .collect();
+        let expected = serde_json::to_string_pretty(&serde_json::json!({
+            "languages": crate::settings::LANGUAGES,
+            "localeToLanguage": locale_to_language,
+        }))
+        .unwrap()
+            + "\n";
+        if std::env::var_os("CC_SWITCH_UPDATE_GOLDEN").is_some() {
+            std::fs::write(&path, &expected).unwrap();
+        }
+        let actual = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            actual, expected,
+            "tests/config/languages.json 和后端语言表不一致；确认改动后用 CC_SWITCH_UPDATE_GOLDEN=1 重新生成，再同步 src/i18n/languages.ts"
+        );
+        for &language in crate::settings::LANGUAGES {
+            assert_eq!(map_locale_to_tray_language(language), language);
+        }
+    }
+
     #[test]
     fn locale_maps_traditional_chinese_variants_to_zh_tw() {
         for locale in [
@@ -5045,7 +5114,7 @@ mod tests {
             quit_text(&en(), true),
             "Quit CC Switch (stops the routing service)"
         );
-        for language in ["zh", "zh-TW", "en", "de", "ja", "tr", "ko", "ru"] {
+        for &language in crate::settings::LANGUAGES {
             let texts = TrayTexts::from_language(language);
             assert_ne!(texts.quit, texts.quit_stops_routing, "{language}");
             assert!(

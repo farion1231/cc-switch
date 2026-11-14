@@ -52,6 +52,7 @@ export interface EndpointCandidate {
 
 import type { AppId } from "./lib/api/types";
 import type { TemplateType } from "./config/constants";
+import type { Language } from "./i18n/languages";
 
 // 用量查询脚本配置
 export interface UsageScript {
@@ -476,7 +477,7 @@ export interface Settings {
   // User has confirmed the common config first-run notice
   commonConfigConfirmed?: boolean;
   // 首选语言（可选，默认中文）
-  language?: "en" | "zh" | "zh-TW" | "de" | "ja" | "tr" | "ko" | "ru";
+  language?: Language;
   // 按档的额度百分比写剩余还是已用（默认剩余；余额、Credits 不受影响）
   quotaDisplay?: "left" | "used";
 
