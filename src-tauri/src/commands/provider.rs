@@ -1,4 +1,6 @@
 use indexmap::IndexMap;
+use once_cell::sync::Lazy;
+use regex::Regex;
 use tauri::{Emitter, Manager, State};
 
 use super::run_db_task;
@@ -575,6 +577,39 @@ pub(crate) fn suggested_claude_desktop_routes(
     (!routes.is_empty()).then_some(routes)
 }
 
+fn redact_urls_in_text_for_log(text: &str) -> String {
+    static URL_PATTERN: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r#"https?://[^\s<>()"'\[\]{},;]+"#).expect("valid URL pattern"));
+    URL_PATTERN
+        .replace_all(text, |captures: &regex::Captures<'_>| {
+            crate::redact_url_for_log(&captures[0])
+        })
+        .into_owned()
+}
+
+fn usage_query_failure_message(
+    app_type: &AppType,
+    provider_id: &str,
+    result: &Result<crate::provider::UsageResult, String>,
+) -> Option<String> {
+    let detail = match result {
+        Ok(snapshot) if snapshot.success => return None,
+        Ok(snapshot) => snapshot
+            .error
+            .as_deref()
+            .map(str::trim)
+            .filter(|detail| !detail.is_empty())
+            .unwrap_or("no error detail"),
+        Err(error) => error.trim(),
+    };
+    Some(format!(
+        "usage query failed for {}:{}: {}",
+        app_type.as_str(),
+        provider_id,
+        redact_urls_in_text_for_log(detail)
+    ))
+}
+
 #[allow(non_snake_case)]
 #[tauri::command]
 pub async fn queryProviderUsage(
@@ -602,6 +637,9 @@ pub async fn queryProviderUsage(
         &providerId,
     )
     .await;
+    if let Some(message) = usage_query_failure_message(&app_type, &providerId, &inner) {
+        log::warn!("{message}");
+    }
     if let Ok(snapshot) = &inner {
         let payload = serde_json::json!({
             "kind": "script",
@@ -1471,5 +1509,88 @@ mod native_query_credentials_tests {
 
         assert_eq!(base_url, "https://provider.zenmux.example/v1");
         assert_eq!(api_key, "sk-provider");
+    }
+}
+
+#[cfg(test)]
+mod usage_query_log_tests {
+    use super::{redact_urls_in_text_for_log, usage_query_failure_message};
+    use crate::app_config::AppType;
+    use crate::provider::UsageResult;
+
+    fn failure(error: Option<&str>) -> UsageResult {
+        UsageResult {
+            success: false,
+            data: None,
+            error: error.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn successful_query_logs_nothing() {
+        let result = Ok::<UsageResult, String>(UsageResult {
+            success: true,
+            data: None,
+            error: None,
+        });
+        assert!(usage_query_failure_message(&AppType::Claude, "relay-1", &result).is_none());
+    }
+
+    #[test]
+    fn script_failure_names_provider_and_redacts_request_url() {
+        let result = Ok::<UsageResult, String>(failure(Some(
+            "HTTP 401 : bad key from https://gw.example.com/v1?api_key=sk-secret",
+        )));
+
+        let message = usage_query_failure_message(&AppType::Claude, "relay-1", &result)
+            .expect("failed query must be logged");
+
+        assert!(message.contains("claude:relay-1"), "{message}");
+        assert!(message.contains("HTTP 401"), "{message}");
+        assert!(message.contains("https://gw.example.com/v1"), "{message}");
+        assert!(!message.contains("api_key"), "{message}");
+        assert!(!message.contains("sk-secret"), "{message}");
+    }
+
+    #[test]
+    fn transport_failure_is_logged_without_credentials() {
+        let result: Result<UsageResult, String> = Err(
+            "Request failed: error sending request for url (https://user:sk-secret@gw.example.com/v1/usage?token=abc)"
+                .to_string(),
+        );
+
+        let message = usage_query_failure_message(&AppType::Codex, "relay-2", &result)
+            .expect("transport failure must be logged");
+
+        assert!(message.contains("codex:relay-2"), "{message}");
+        assert!(message.contains("Request failed"), "{message}");
+        assert!(
+            message.contains("https://gw.example.com/v1/usage"),
+            "{message}"
+        );
+        assert!(!message.contains("user"), "{message}");
+        assert!(!message.contains("token=abc"), "{message}");
+        assert!(!message.contains("sk-secret"), "{message}");
+    }
+
+    #[test]
+    fn failure_without_detail_still_logs_the_outcome() {
+        let result = Ok::<UsageResult, String>(failure(None));
+
+        let message = usage_query_failure_message(&AppType::Gemini, "relay-3", &result)
+            .expect("missing detail must not drop the log line");
+
+        assert_eq!(
+            message,
+            "usage query failed for gemini:relay-3: no error detail"
+        );
+    }
+
+    #[test]
+    fn redaction_leaves_plain_errors_untouched() {
+        assert_eq!(
+            redact_urls_in_text_for_log("usage script returned an empty array"),
+            "usage script returned an empty array"
+        );
     }
 }
