@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { ChevronRight, Monitor, Moon, Sun } from "lucide-react";
 import type { SettingsFormState } from "@/hooks/useSettings";
+import { LANGUAGES, type Language } from "@/i18n/languages";
 import { useTheme } from "@/components/theme-provider";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
@@ -27,19 +28,6 @@ import {
   SettingsRow,
   SettingsSwitchRow,
 } from "@/components/settings/SettingsLayout";
-
-type Language = SettingsFormState["language"];
-
-const LANGUAGES: { value: Language; labelKey: string }[] = [
-  { value: "zh", labelKey: "settings.languageOptionChinese" },
-  { value: "zh-TW", labelKey: "settings.languageOptionTraditionalChinese" },
-  { value: "en", labelKey: "settings.languageOptionEnglish" },
-  { value: "de", labelKey: "settings.languageOptionGerman" },
-  { value: "ja", labelKey: "settings.languageOptionJapanese" },
-  { value: "ko", labelKey: "settings.languageOptionKorean" },
-  { value: "ru", labelKey: "settings.languageOptionRussian" },
-  { value: "tr", labelKey: "settings.languageOptionTurkish" },
-];
 
 interface GeneralSectionProps {
   settings: SettingsFormState;
@@ -77,7 +65,7 @@ export function GeneralSection({
                 </SelectTrigger>
                 <SelectContent>
                   {LANGUAGES.map((language) => (
-                    <SelectItem key={language.value} value={language.value}>
+                    <SelectItem key={language.id} value={language.id}>
                       {t(language.labelKey)}
                     </SelectItem>
                   ))}
