@@ -162,6 +162,17 @@ export function useSessionContentSearch({
     status: enabled ? (status ?? search.data?.status ?? null) : null,
     isSearching: enabled && query.trim() !== "" && search.isFetching,
     error,
-    retry: () => void search.refetch(),
+    // 索引读不出来时重试只重新查询是不够的：后端会删掉坏索引重建出一个**空**索引，
+    // 查询随之成功返回零命中，界面又变回「没有会话包含该词」。重新收录挂在这里是
+    // 列表刷新后的同步，而列表有 staleTime，停在页面上点重试不会触发它。
+    // 顺手再同步一次：后端按变化处理，已经在跑时只排一次重跑，重复调用无害；
+    // 进度事件会让查询重新执行。
+    retry: () => {
+      void search.refetch();
+      sessionsApi
+        .syncContentIndex()
+        .then(setStatus)
+        .catch((error) => console.warn("同步会话正文索引失败", error));
+    },
   };
 }

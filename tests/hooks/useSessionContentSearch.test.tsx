@@ -222,6 +222,29 @@ describe("useSessionContentSearch failure reporting", () => {
     expect(sessionsApi.searchContent).toHaveBeenCalledTimes(2);
   });
 
+  it("re-syncs the index on retry so a rebuilt-but-empty index gets refilled", async () => {
+    // 重试时后端会删掉坏索引重建：建出来是空的，只重新查询会「成功返回零命中」，
+    // 界面又回到「没有会话包含该词」。所以重试必须同时触发一次重新收录。
+    vi.mocked(sessionsApi.searchContent).mockRejectedValueOnce(
+      "Session index error: database disk image is malformed",
+    );
+    const { result } = renderSearch(true, { query: "needle" });
+    await waitFor(() =>
+      expect(result.current.content.error).toContain("malformed"),
+    );
+    const syncBefore = vi.mocked(sessionsApi.syncContentIndex).mock.calls
+      .length;
+
+    await act(async () => {
+      result.current.content.retry();
+    });
+    await waitFor(() =>
+      expect(sessionsApi.syncContentIndex).toHaveBeenCalledTimes(
+        syncBefore + 1,
+      ),
+    );
+  });
+
   it("keeps a non-empty reason even when the command rejects with an empty message", async () => {
     vi.mocked(sessionsApi.searchContent).mockRejectedValue("");
     const { result } = renderSearch(true, { query: "needle" });
