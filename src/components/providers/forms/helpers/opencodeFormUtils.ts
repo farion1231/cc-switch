@@ -243,8 +243,9 @@ export function isKnownModelKey(key: string): boolean {
 /**
  * 模型字段的方言：OpenCode 和 MiniMax Code 用 OpenCode 的模型结构；DeepSeek Harness
  * 走 pi-ai 适配器，多认 `reasoningEfforts`（档位 → 上游值）和 `compat`。
+ * MiniMax Code 不读 `variants`，思考档位写在 `thinking.effortOptions`。
  */
-export type OpenCodeModelDialect = "opencode" | "dsh";
+export type OpenCodeModelDialect = "opencode" | "dsh" | "mcode";
 
 type Modalities = { input: string[]; output?: string[] };
 

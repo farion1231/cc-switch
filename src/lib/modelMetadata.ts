@@ -1,5 +1,6 @@
 import {
   normalizeModelsDevModelId,
+  type ModelsDevCost,
   type ModelsDevModel,
   type ModelsDevResponse,
 } from "./modelsDev";
@@ -10,8 +11,19 @@ import {
  * OpenCode `limit.context`……）。
  */
 export interface KnownModelMetadata {
+  /** 显示名称（models.dev `name`）；只用来补表单里还没写名字的行。 */
+  displayName?: string;
   contextWindow?: number;
+  maxInputTokens?: number;
   maxOutputTokens?: number;
+  family?: string;
+  releaseDate?: string;
+  attachment?: boolean;
+  temperature?: boolean;
+  toolCall?: boolean;
+  /** models.dev `interleaved`：思考内容与正文的交错字段。 */
+  interleaved?: unknown;
+  status?: "alpha" | "beta" | "deprecated" | "active";
   reasoning?: boolean;
   /** 模型接受的思考档位（models.dev `reasoning_options` 里 effort 类的取值）。 */
   reasoningEfforts?: string[];
@@ -27,8 +39,15 @@ export interface KnownModelMetadata {
   };
   inputModalities?: string[];
   outputModalities?: string[];
-  /** 美元 / 百万 token。只取自同一家供应商，原厂兜底不带价格。 */
+  /** 美元 / 百万 token。来自网关、同地址预设或同一家供应商；原厂兜底不带价格。 */
   cost?: {
+    input: number;
+    output: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+  };
+  /** models.dev `cost.context_over_200k`：超过 200K 上下文后的价格。 */
+  costOver200k?: {
     input: number;
     output: number;
     cacheRead?: number;
@@ -36,8 +55,8 @@ export interface KnownModelMetadata {
   };
 }
 
-/** 参数来自哪里：同地址预设，还是 models.dev。补全提示里告诉用户。 */
-export type ModelMetadataSource = "preset" | "models-dev";
+/** 参数来自哪里：同地址预设，还是 models.dev，还是网关随列表返回的元数据。 */
+export type ModelMetadataSource = "preset" | "models-dev" | "gateway";
 
 export interface ResolvedModelMetadata extends KnownModelMetadata {
   /** 实际贡献了字段的来源，按优先级排序。 */
@@ -121,6 +140,12 @@ function endpointKey(url: string): string | null {
   }
   const key = [parsed.hostname.toLowerCase(), ...segments].join("/");
   return ENDPOINT_ALIASES[key] ?? key;
+}
+
+/** 两个地址是否指向同一个接口（忽略版本段和请求路径）。 */
+export function endpointsMatch(left: string, right: string): boolean {
+  const leftKey = endpointKey(left);
+  return leftKey !== null && leftKey === endpointKey(right);
 }
 
 /** 挑出与地址是同一个接口的候选，保持原有顺序。 */
@@ -233,6 +258,150 @@ export function stringList(value: unknown): string[] | undefined {
   return list.length > 0 ? [...new Set(list)] : undefined;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function booleanValue(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+const MODEL_STATUSES = new Set<NonNullable<KnownModelMetadata["status"]>>([
+  "alpha",
+  "beta",
+  "deprecated",
+  "active",
+]);
+
+function statusValue(value: unknown): KnownModelMetadata["status"] | undefined {
+  return typeof value === "string" &&
+    MODEL_STATUSES.has(value as NonNullable<KnownModelMetadata["status"]>)
+    ? (value as NonNullable<KnownModelMetadata["status"]>)
+    : undefined;
+}
+
+function costFromRecord(
+  record: Record<string, unknown> | ModelsDevCost | undefined,
+): KnownModelMetadata["cost"] | undefined {
+  const input = numberValue(record?.input);
+  const output = numberValue(record?.output);
+  if (input === undefined || output === undefined) return undefined;
+  const cacheRead = numberValue(record?.cache_read);
+  const cacheWrite = numberValue(record?.cache_write);
+  return {
+    input,
+    output,
+    ...(cacheRead !== undefined ? { cacheRead } : {}),
+    ...(cacheWrite !== undefined ? { cacheWrite } : {}),
+  };
+}
+
+/** 只保留 OpenCode / models.dev 认识的交错字段形状。 */
+function interleavedValue(value: unknown): unknown {
+  return typeof value === "string" ||
+    typeof value === "boolean" ||
+    asRecord(value) !== undefined
+    ? value
+    : undefined;
+}
+
+/** models.dev `reasoning_options` 里 effort 类的取值；其他类型忽略。 */
+function effortValues(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return stringList(
+    value.flatMap((option) => {
+      const record = asRecord(option);
+      return record?.type === "effort" && Array.isArray(record.values)
+        ? record.values
+        : [];
+    }),
+  );
+}
+
+/**
+ * 解析网关在 /v1/models 条目里附带的参数。认 `info.meta` 信封：
+ * `capabilities.vision` 加上 `models_dev.*`（limit、cost、modalities、
+ * reasoning 等）；也接受把 `meta` 直接放在条目上的实现。
+ *
+ * 这些值是网关按自己的配置算好的，比 cc-switch 按地址猜 models.dev 更准，
+ * 所以补全时优先级最高。
+ */
+export function metadataFromGateway(
+  raw: unknown,
+): KnownModelMetadata | undefined {
+  const envelope = asRecord(raw);
+  if (!envelope) return undefined;
+  const meta = asRecord(envelope.meta) ?? envelope;
+  const dev = asRecord(meta.models_dev) ?? asRecord(meta.modelsDev);
+  const capabilities = asRecord(meta.capabilities);
+  const limit = asRecord(dev?.limit);
+  const modalities = asRecord(dev?.modalities);
+  const cost = asRecord(dev?.cost);
+
+  const vision = booleanValue(capabilities?.vision);
+  // `vision_source: "default"`（或没写来源）只是网关的保守默认值，不能据此
+  // 断言模型只收文字，否则会把图片入口关掉。
+  const visionKnown =
+    typeof capabilities?.vision_source === "string" &&
+    capabilities.vision_source !== "default";
+  const metadata: KnownModelMetadata = {
+    displayName:
+      stringValue(dev?.name) ??
+      stringValue(meta.name) ??
+      stringValue(meta.display_name),
+    contextWindow:
+      positiveInteger(limit?.context) ??
+      positiveInteger(meta.context_window) ??
+      positiveInteger(meta.context_length) ??
+      positiveInteger(meta.n_ctx),
+    maxInputTokens: positiveInteger(limit?.input),
+    maxOutputTokens:
+      positiveInteger(limit?.output) ??
+      positiveInteger(meta.max_output_tokens) ??
+      positiveInteger(meta.max_tokens),
+    family: stringValue(dev?.family) ?? stringValue(meta.family),
+    releaseDate:
+      stringValue(dev?.release_date) ?? stringValue(meta.release_date),
+    attachment: booleanValue(dev?.attachment) ?? booleanValue(meta.attachment),
+    temperature:
+      booleanValue(dev?.temperature) ?? booleanValue(meta.temperature),
+    toolCall: booleanValue(dev?.tool_call) ?? booleanValue(meta.tool_call),
+    interleaved: interleavedValue(dev?.interleaved ?? meta.interleaved),
+    status: statusValue(dev?.status) ?? statusValue(meta.status),
+    reasoning: booleanValue(dev?.reasoning) ?? booleanValue(meta.reasoning),
+    reasoningEfforts:
+      effortValues(dev?.reasoning_options) ??
+      effortValues(meta.reasoning_options),
+    inputModalities:
+      stringList(modalities?.input) ??
+      stringList(meta.input_modalities) ??
+      (vision === true
+        ? ["text", "image"]
+        : vision === false && visionKnown
+          ? ["text"]
+          : undefined),
+    outputModalities:
+      stringList(modalities?.output) ?? stringList(meta.output_modalities),
+    cost: costFromRecord(cost),
+    costOver200k: costFromRecord(asRecord(cost?.context_over_200k)),
+  };
+  return Object.values(metadata).some((value) => value !== undefined)
+    ? metadata
+    : undefined;
+}
+
 function metadataFromModelsDev(
   model: ModelsDevModel,
   withCost: boolean,
@@ -243,29 +412,25 @@ function metadataFromModelsDev(
       .flatMap((option) => option.values ?? []),
   );
   const cost = model.cost;
-  const hasCost =
-    withCost &&
-    typeof cost?.input === "number" &&
-    typeof cost?.output === "number";
   return {
+    displayName: stringValue(model.name),
     contextWindow: positiveInteger(model.limit?.context),
+    maxInputTokens: positiveInteger(model.limit?.input),
     maxOutputTokens: positiveInteger(model.limit?.output),
-    reasoning:
-      typeof model.reasoning === "boolean" ? model.reasoning : undefined,
+    family: stringValue(model.family),
+    releaseDate: stringValue(model.release_date),
+    attachment: model.attachment,
+    temperature: model.temperature,
+    toolCall: model.tool_call,
+    interleaved: interleavedValue(model.interleaved),
+    status: statusValue(model.status),
+    reasoning: booleanValue(model.reasoning),
     reasoningEfforts: efforts,
     inputModalities: stringList(model.modalities?.input),
     outputModalities: stringList(model.modalities?.output),
-    cost: hasCost
-      ? {
-          input: cost.input as number,
-          output: cost.output as number,
-          ...(typeof cost.cache_read === "number"
-            ? { cacheRead: cost.cache_read }
-            : {}),
-          ...(typeof cost.cache_write === "number"
-            ? { cacheWrite: cost.cache_write }
-            : {}),
-        }
+    cost: withCost ? costFromRecord(cost) : undefined,
+    costOver200k: withCost
+      ? costFromRecord(cost?.context_over_200k)
       : undefined,
   };
 }
@@ -348,10 +513,12 @@ function fieldCount(metadata: KnownModelMetadata): number {
 
 /**
  * 查一个模型的已知参数。逐字段按优先级取值：
- * 1. 同地址预设里手工核实过的那一行（同一个模型各家部署的窗口差很多，
+ * 1. 网关随 `/v1/models` 返回的参数（`info.meta`；网关已按自己的配置和
+ *    models.dev 算好，最贴近这一家路由的真实值）；
+ * 2. 同地址预设里手工核实过的那一行（同一个模型各家部署的窗口差很多，
  *    比如 glm-5.2 从 200K 到 1M 都有，预设写的就是这一家的真实值）；
- * 2. models.dev 里按地址认出的同一家供应商；
- * 3. models.dev 里的原厂条目（不带价格：转售价不等于原厂价；思考档位照用，
+ * 3. models.dev 里按地址认出的同一家供应商；
+ * 4. models.dev 里的原厂条目（不带价格：转售价不等于原厂价；思考档位照用，
  *    中转站绝大多数与原厂一致），
  *    认出了供应商也照样用它补供应商条目里没写的字段。
  * GPT 模型的窗口只在取自原厂条目时按 {@link GPT_CONTEXT_WINDOW_CAP} 封顶。
@@ -363,6 +530,8 @@ export function resolveModelMetadata(
     baseUrl: string;
     presets?: readonly PresetModelSource[];
     modelsDev?: ModelsDevResponse;
+    /** 网关随模型列表返回的参数（见 {@link metadataFromGateway}）。 */
+    gatewayMetadata?: KnownModelMetadata;
   },
 ): ResolvedModelMetadata | null {
   const id = modelId.trim();
@@ -377,6 +546,10 @@ export function resolveModelMetadata(
       sources.push(source);
     }
   };
+
+  if (options.gatewayMetadata) {
+    add("gateway", options.gatewayMetadata);
+  }
 
   for (const preset of matchEndpoint(
     options.baseUrl,

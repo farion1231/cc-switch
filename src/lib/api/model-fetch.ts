@@ -11,6 +11,11 @@ const GENESIS_CHAT_MODELS_URL = `${GENESIS_ORIGIN}/v1/models?type=chat`;
 export interface FetchedModel {
   id: string;
   ownedBy: string | null;
+  /**
+   * 供应商在列表条目里附带的参数，原样保留（常见形态是 `info.meta`，
+   * 含 models.dev 的窗口、价格、模态等）。用 `metadataFromGateway` 解析。
+   */
+  metadata?: unknown;
 }
 
 export interface ModelFetchOptions {

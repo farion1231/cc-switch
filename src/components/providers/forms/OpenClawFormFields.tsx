@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { ImeSafeInput } from "@/components/ui/ime-safe-input";
@@ -76,7 +76,19 @@ export function OpenClawFormFields({
   const { t } = useTranslation();
   const [expandedModels, setExpandedModels] = useState<Set<string>>(new Set());
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
+  const [fetchedModelsFrom, setFetchedModelsFrom] = useState("");
   const [isFetchingModels, setIsFetchingModels] = useState(false);
+  const modelFetchGeneration = useRef(0);
+
+  useEffect(() => {
+    modelFetchGeneration.current += 1;
+    setFetchedModels((prev) => (prev.length === 0 ? prev : []));
+    setFetchedModelsFrom((prev) => (prev === "" ? prev : ""));
+    setIsFetchingModels(false);
+    return () => {
+      modelFetchGeneration.current += 1;
+    };
+  }, [baseUrl, apiKey]);
 
   // Stable key tracking for models list
   const modelKeysRef = useRef<string[]>([]);
@@ -131,10 +143,16 @@ export function OpenClawFormFields({
       });
       return;
     }
+    const endpoint = baseUrl.trim();
+    const generation = ++modelFetchGeneration.current;
+    setFetchedModels([]);
+    setFetchedModelsFrom("");
     setIsFetchingModels(true);
     fetchModelsForConfig(baseUrl, apiKey)
       .then((models) => {
+        if (generation !== modelFetchGeneration.current) return;
         setFetchedModels(models);
+        setFetchedModelsFrom(endpoint);
         if (models.length === 0) {
           toast.info(t("providerForm.fetchModelsEmpty"));
         } else {
@@ -144,10 +162,15 @@ export function OpenClawFormFields({
         }
       })
       .catch((err) => {
+        if (generation !== modelFetchGeneration.current) return;
         console.warn("[ModelFetch] Failed:", err);
         showFetchModelsError(err, t);
       })
-      .finally(() => setIsFetchingModels(false));
+      .finally(() => {
+        if (generation === modelFetchGeneration.current) {
+          setIsFetchingModels(false);
+        }
+      });
   }, [baseUrl, apiKey, t]);
 
   // Remove a model entry
@@ -184,6 +207,8 @@ export function OpenClawFormFields({
     baseUrl,
     presets: openclawPresetModelSources,
     prefetch: fetchedModels.length > 0,
+    fetchedModels,
+    fetchedFrom: fetchedModelsFrom,
   });
   const handleSelectFetchedModel = (index: number, id: string) => {
     commitModels(

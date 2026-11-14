@@ -11,6 +11,12 @@ export interface ModelsDevCost {
   output?: number;
   cache_read?: number;
   cache_write?: number;
+  context_over_200k?: {
+    input?: number;
+    output?: number;
+    cache_read?: number;
+    cache_write?: number;
+  };
 }
 
 export interface ModelsDevModalities {
@@ -32,11 +38,16 @@ export interface ModelsDevReasoningOption {
 export interface ModelsDevModel {
   id?: string;
   name?: string;
+  family?: string;
   release_date?: string;
   cost?: ModelsDevCost;
   modalities?: ModelsDevModalities;
   limit?: ModelsDevLimit;
+  attachment?: boolean;
   reasoning?: boolean;
+  temperature?: boolean;
+  tool_call?: boolean;
+  interleaved?: unknown;
   reasoning_options?: ModelsDevReasoningOption[];
   // 转售 / 聚合商的条目指回原厂条目，形如 "zhipuai/glm-5"。
   canonical_model_id?: string;

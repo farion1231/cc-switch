@@ -2,8 +2,11 @@ import { useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
+import type { FetchedModel } from "@/lib/api/model-fetch";
 import { modelsDevQueryOptions, type ModelsDevResponse } from "@/lib/modelsDev";
 import {
+  endpointsMatch,
+  metadataFromGateway,
   resolveModelMetadata,
   type ModelMetadataSource,
   type PresetModelSource,
@@ -25,15 +28,25 @@ const FILLED_TOAST_ID = "model-metadata-filled";
  *
  * `prefetch` 为真（已经拉过模型列表）时提前下载 models.dev，和价格导入共用同
  * 一份查询缓存；离线或下载失败时只用预设里的值，不打扰用户。
+ *
+ * `fetchedModels` 是这次从供应商拿到的列表；条目里带的 `info.meta` 等参数会作为
+ * 最高优先级来源，先于预设和 models.dev。`fetchedFrom` 是这份列表请求的地址：
+ * 行实际请求的地址与它不一致时（模型级 `baseUrl` 覆盖、换地址后残留的列表），
+ * 不使用列表里的参数。
  */
 export function useModelMetadataFill({
   baseUrl,
   presets,
   prefetch,
+  fetchedModels,
+  fetchedFrom,
 }: {
   baseUrl: string;
   presets: () => readonly PresetModelSource[];
   prefetch: boolean;
+  fetchedModels?: readonly FetchedModel[];
+  /** 拉取 `fetchedModels` 时使用的地址。 */
+  fetchedFrom?: string;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -44,6 +57,8 @@ export function useModelMetadataFill({
 
   const baseUrlRef = useLatestRef(baseUrl);
   const presetsRef = useLatestRef(presets);
+  const fetchedModelsRef = useLatestRef(fetchedModels ?? []);
+  const fetchedFromRef = useLatestRef(fetchedFrom ?? "");
 
   const pending = useRef<{
     models: Set<string>;
@@ -60,20 +75,27 @@ export function useModelMetadataFill({
       clearTimeout(batch.timer);
       batch.timer = setTimeout(() => {
         const models = [...batch.models];
-        const fromPreset = batch.sources.has("preset");
-        const fromModelsDev = batch.sources.has("models-dev");
+        const source = [
+          batch.sources.has("gateway")
+            ? t("providerForm.modelMetadataSourceGateway", {
+                defaultValue: "网关",
+              })
+            : undefined,
+          batch.sources.has("preset")
+            ? t("providerForm.modelMetadataSourcePreset", {
+                defaultValue: "预设",
+              })
+            : undefined,
+          batch.sources.has("models-dev")
+            ? t("providerForm.modelMetadataSourceModelsDev", {
+                defaultValue: "models.dev",
+              })
+            : undefined,
+        ]
+          .filter(Boolean)
+          .join(" + ");
         batch.models.clear();
         batch.sources.clear();
-        const source =
-          fromPreset && fromModelsDev
-            ? t("providerForm.modelMetadataSourceBoth", {
-                defaultValue: "预设和 models.dev",
-              })
-            : fromPreset
-              ? t("providerForm.modelMetadataSourcePreset", {
-                  defaultValue: "预设",
-                })
-              : "models.dev";
         toast.info(
           models.length === 1
             ? t("providerForm.modelMetadataFilled", {
@@ -105,11 +127,21 @@ export function useModelMetadataFill({
         silent?: boolean;
       },
     ): void => {
+      const requestBaseUrl = options?.baseUrl || baseUrlRef.current;
+      const listBaseUrl = fetchedFromRef.current;
+      const gatewayMetadata =
+        listBaseUrl && endpointsMatch(requestBaseUrl, listBaseUrl)
+          ? metadataFromGateway(
+              fetchedModelsRef.current.find((model) => model.id === modelId)
+                ?.metadata,
+            )
+          : undefined;
       const resolve = (modelsDev?: ModelsDevResponse) =>
         resolveModelMetadata(modelId, {
-          baseUrl: options?.baseUrl || baseUrlRef.current,
+          baseUrl: requestBaseUrl,
           presets: presetsRef.current(),
           modelsDev,
+          gatewayMetadata,
         });
       const run = (metadata: ResolvedModelMetadata | null) => {
         if (metadata && apply(metadata) && !options?.silent) {
@@ -127,6 +159,13 @@ export function useModelMetadataFill({
           // 离线或 models.dev 不可用：保持预设值补过的样子。
         });
     },
-    [baseUrlRef, notify, presetsRef, queryClient],
+    [
+      baseUrlRef,
+      fetchedFromRef,
+      fetchedModelsRef,
+      notify,
+      presetsRef,
+      queryClient,
+    ],
   );
 }

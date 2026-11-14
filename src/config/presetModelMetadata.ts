@@ -100,6 +100,10 @@ function openCodeModelMetadata(model: OpenCodeModel): KnownModelMetadata {
       ? (model.modalities as { input?: unknown; output?: unknown })
       : undefined;
   return {
+    displayName:
+      typeof model.name === "string" && model.name.trim()
+        ? model.name.trim()
+        : undefined,
     contextWindow: positiveInteger(model.limit?.context),
     maxOutputTokens: positiveInteger(model.limit?.output),
     reasoning:
