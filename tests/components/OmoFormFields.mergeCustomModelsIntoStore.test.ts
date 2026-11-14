@@ -66,6 +66,49 @@ describe("mergeCustomModelsIntoStore", () => {
     });
   });
 
+  it.each(["rename another", "delete another", "rename current"])(
+    "preserves an unavailable saved variant when %s custom entry",
+    (operation) => {
+      const saved = {
+        model: "provider/model",
+        variant: "medium",
+        temperature: 0.2,
+      };
+      const store = {
+        first: saved,
+        second: { model: "provider/model" },
+      };
+      const targetKey = operation === "rename current" ? "renamed" : "first";
+      const customs = [
+        { key: targetKey, sourceKey: "first", model: "provider/model" },
+        ...(operation === "delete another"
+          ? []
+          : [{ key: "other", sourceKey: "second", model: "provider/model" }]),
+      ];
+
+      const merged = mergeCustomModelsIntoStore(store, new Set(), customs, {
+        "provider/model": ["low", "high"],
+      });
+
+      expect(merged[targetKey]).toEqual(saved);
+      expect(store.first).toEqual(saved);
+    },
+  );
+
+  it("keeps a saved variant supported by an explicitly selected new model", () => {
+    const merged = mergeCustomModelsIntoStore(
+      { first: { model: "model-a", variant: "medium", temperature: 0.2 } },
+      new Set(),
+      [{ key: "first", sourceKey: "first", model: "model-b" }],
+      { "model-b": ["medium"] },
+    );
+    expect(merged.first).toEqual({
+      model: "model-b",
+      variant: "medium",
+      temperature: 0.2,
+    });
+  });
+
   it("custom 列表为空时移除旧自定义项但保留内置项", () => {
     const store = {
       sisyphus: { model: "builtin-model" },
