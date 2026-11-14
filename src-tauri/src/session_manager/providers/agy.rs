@@ -647,10 +647,21 @@ mod tests {
     fn gemini_root_sources_pass_gemini_dir_only_when_non_default_or_wsl_unc() {
         let home = PathBuf::from("/home/alice");
         assert_eq!(gemini_root_resume_dir(&home.join(".gemini"), &home), None);
+        let local_custom = PathBuf::from("/home/alice/custom-gemini");
+        assert_eq!(
+            gemini_root_resume_dir(&local_custom, &home),
+            Some(local_custom)
+        );
 
         let custom_home = tempfile::tempdir().unwrap();
         let custom = custom_home.path().join("custom-gemini");
-        assert_eq!(gemini_root_resume_dir(&custom, &home), Some(custom.clone()));
+        let expected_dir =
+            if let Some((_, linux)) = crate::config::wsl_unc_to_linux(&custom.to_string_lossy()) {
+                PathBuf::from(linux)
+            } else {
+                assert_eq!(gemini_root_resume_dir(&custom, &home), Some(custom.clone()));
+                custom.clone()
+            };
 
         let logs = custom.join("antigravity-cli/brain/abc-123/.system_generated/logs");
         fs::create_dir_all(&logs).unwrap();
@@ -662,11 +673,15 @@ mod tests {
         let sessions = scan_gemini_root(&custom);
         assert_eq!(sessions.len(), 1);
         let resume = sessions[0].resume_command.as_deref().unwrap();
-        let expected = format!(
-            "agy --gemini_dir={} --conversation=abc-123",
-            custom.display()
-        );
+        let expected = crate::agy_config::resume_command(Some(&expected_dir), "abc-123");
         assert_eq!(resume, expected);
+        assert_eq!(
+            crate::agy_config::resume_command(
+                Some(Path::new(r"D:\Users\alice\custom-gemini")),
+                "abc-123"
+            ),
+            r"agy '--gemini_dir=D:\Users\alice\custom-gemini' --conversation=abc-123"
+        );
 
         let db = crate::database::Database::memory().unwrap();
         let key_provider = crate::provider::Provider::with_id(
