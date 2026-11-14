@@ -2403,6 +2403,7 @@ wire_api = "chat"
         let transformed = crate::proxy::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
             request,
             Some(&config),
+            true,
         )
         .unwrap();
         assert_eq!(transformed["reasoning_effort"], "max");
