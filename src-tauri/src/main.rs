@@ -29,6 +29,22 @@ fn main() {
                 std::env::set_var("GDK_BACKEND", backend);
             }
         }
+
+        // AppImage 的 GTK 启动钩子 (linuxdeploy-plugin-gtk.sh) 还会无条件
+        // 导出 GTK_IM_MODULE_FILE（指向 bundle 的 immodules.cache）和
+        // GTK_EXE_PREFIX（指向 AppDir），而该 bundle 缓存只含 GTK 自带输入法
+        // 模块、没有任何 fcitx/ibus 条目。用户配了 GTK_IM_MODULE=fcitx 时
+        // GTK 查无此模块会回退 XIM，WebKitGTK 文本框一获得焦点就卡死整个
+        // 应用（见 issue #7746）。注意：钩子是同一套 export，所以只摘掉
+        // GTK_IM_MODULE_FILE 没用——GTK 会顺着 GTK_EXE_PREFIX 回到同一份
+        // bundle 缓存（或被引到一个不存在的 multiarch 路径）。这里在 GTK
+        // 初始化前判定：仅当变量确实指向 AppDir 内的 bundle 缓存、且该缓存
+        // 服务不了用户配置的输入法模块时，才把变量改指向主机上真正列出该
+        // 模块的缓存；一台都找不到则保持原状（其余情况一律不动，零回归）。
+        // 逃生开关与上面 CC_SWITCH_GDK_BACKEND 同风格，钩子不会触碰它：
+        //   CC_SWITCH_GTK_IM_MODULE_FILE=keep     强制保持钩子写入的路径
+        //   CC_SWITCH_GTK_IM_MODULE_FILE=<path>   强制改写为指定缓存路径
+        cc_switch_lib::apply_gtk_im_module_file_fix();
     }
 
     cc_switch_lib::run();
