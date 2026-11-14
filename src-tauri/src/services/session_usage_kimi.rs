@@ -21,7 +21,7 @@ use std::{
     path::Path,
 };
 
-const KIMI_USAGE_PARSER_STATE: &str = "step-usage-v1";
+const KIMI_USAGE_PARSER_STATE: &str = "step-usage-v2";
 type UsageKey = (u64, u64, u64, u64);
 
 fn usage_key(usage: &Value) -> UsageKey {
@@ -131,20 +131,29 @@ fn sync_file(
         let Ok(record) = serde_json::from_slice::<Value>(&buffer) else {
             continue;
         };
-        if record["type"].as_str() == Some("usage.record") {
-            let own = record["agentId"].as_str().is_none_or(|id| id == agent);
-            if own {
-                let model = record["model"]
-                    .as_str()
-                    .filter(|model| {
-                        !model.trim().is_empty() && !matches!(*model, "agent-loop" | "unknown")
-                    })
-                    .map(str::to_owned);
-                usage_models
-                    .entry(usage_key(&record["usage"]))
-                    .or_default()
-                    .push_back(model);
+        if record["agentId"].as_str().is_some_and(|id| id != agent) {
+            continue;
+        }
+        // Interrupted steps may never emit step.end. Their usage must not supply
+        // a model to a resumed step with identical token counts.
+        match record["type"].as_str() {
+            Some("agent.switched" | "agent.turn.started") => usage_models.clear(),
+            Some("context.append_loop_event") if record["event"]["type"] == "step.begin" => {
+                usage_models.clear();
             }
+            _ => {}
+        }
+        if record["type"].as_str() == Some("usage.record") {
+            let model = record["model"]
+                .as_str()
+                .filter(|model| {
+                    !model.trim().is_empty() && !matches!(*model, "agent-loop" | "unknown")
+                })
+                .map(str::to_owned);
+            usage_models
+                .entry(usage_key(&record["usage"]))
+                .or_default()
+                .push_back(model);
             continue;
         }
         requests.observe(&record);
@@ -176,10 +185,12 @@ fn sync_file(
             {
                 continue;
             }
+            // Discard every unmatched record even when the step has no usage.
+            let mut step_models = std::mem::take(&mut usage_models);
             let Some(usage) = event.get("usage").cloned() else {
                 continue;
             };
-            let model = usage_models
+            let model = step_models
                 .get_mut(&usage_key(&usage))
                 .and_then(VecDeque::pop_front)
                 .flatten();
@@ -736,6 +747,85 @@ mod tests {
     }
 
     #[test]
+    fn kimi_usage_discards_abandoned_models_at_step_and_turn_boundaries() {
+        for agent in ["main", "agent-0"] {
+            for boundary in [
+                json!({"type":"context.append_loop_event","agentId":agent,"event":{"type":"step.begin","uuid":"resumed","turnId":"1","step":1}}),
+                json!({"type":"agent.turn.started","agentId":agent}),
+                json!({"type":"agent.switched","agentId":agent}),
+                json!({"type":"context.append_loop_event","agentId":agent,"event":{"type":"step.end","uuid":"abandoned"}}),
+            ] {
+                let db = Database::memory().unwrap();
+                let dir = tempfile::tempdir().unwrap();
+                let path = dir.path().join("wire.jsonl");
+                let mut records =
+                    protocol_step(agent, "abandoned", "old-model", 1_700_000_000_000, 50);
+                records.pop();
+                records.push(boundary);
+                // Omit step.begin to exercise each boundary independently.
+                records.extend(
+                    protocol_step(agent, "resumed", "new-model", 1_700_000_002_000, 50)
+                        .into_iter()
+                        .skip(1),
+                );
+                write_records(&path, &records);
+                assert_eq!(
+                    sync_file(&db, &path, agent, "session", "file", 1)
+                        .unwrap()
+                        .imported,
+                    1
+                );
+                let model: String = db
+                    .conn
+                    .lock()
+                    .unwrap()
+                    .query_row("SELECT model FROM proxy_request_logs", [], |row| row.get(0))
+                    .unwrap();
+                assert_eq!(model, "new-model");
+                assert_eq!(
+                    sync_file(&db, &path, agent, "session", "rescan", 2)
+                        .unwrap()
+                        .imported,
+                    0
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn kimi_usage_ignores_other_agents_usage_and_boundaries() {
+        let db = Database::memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wire.jsonl");
+        let mut records = protocol_step("main", "own", "own-model", 1_700_000_000_000, 50);
+        let end = records.pop().unwrap();
+        records.push(json!({"type":"agent.turn.started","agentId":"agent-0"}));
+        records.push(json!({"type":"agent.switched","agentId":"agent-0"}));
+        records.extend(protocol_step(
+            "agent-0",
+            "other",
+            "other-model",
+            1_700_000_000_000,
+            50,
+        ));
+        records.push(end);
+        write_records(&path, &records);
+        assert_eq!(
+            sync_file(&db, &path, "main", "session", "file", 1)
+                .unwrap()
+                .imported,
+            1
+        );
+        let model: String = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT model FROM proxy_request_logs", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(model, "own-model");
+    }
+
+    #[test]
     fn kimi_usage_enriches_protocol_1_5_subagent_models_without_recounting() {
         let db = Database::memory().unwrap();
         let dir = tempfile::tempdir().unwrap();
@@ -811,7 +901,11 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let path = root
             .path()
-            .join("wd_project/session_one/agents/main/wire.jsonl");
+            .join("wd_project")
+            .join("session_one")
+            .join("agents")
+            .join("main")
+            .join("wire.jsonl");
         write_records(
             &path,
             &protocol_step("main", "new-main", "new-model", 1_700_000_000_000, 50),
@@ -835,6 +929,33 @@ mod tests {
             )
             .unwrap();
         assert_eq!(state, KIMI_USAGE_PARSER_STATE);
+        // A previous parser generation may have persisted a model from an
+        // abandoned step. Rescan unchanged files and refresh the existing row.
+        conn.execute(
+            "UPDATE session_log_sync SET parser_state='step-usage-v1' WHERE file_path=?1",
+            [&key],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE proxy_request_logs SET model='old-model',request_model='old-model'",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+        let result = sync_sessions(&db, root.path()).unwrap();
+        assert_eq!((result.files_scanned, result.imported), (1, 1));
+        assert_eq!(sync_sessions(&db, root.path()).unwrap().files_scanned, 0);
+        let row: (i64, String) = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*),MIN(model) FROM proxy_request_logs",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(row, (1, "new-model".into()));
     }
 
     fn subagent_step(agent: &str, id: &str, model: &str, start: i64, output: u64) -> Vec<Value> {
