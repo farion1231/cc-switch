@@ -4447,6 +4447,7 @@
     "usage": "用量统计",
     "auth": "授权中心",
     "authNeedsReauth": "有账号需要重新登录",
+    "skills": "Skills",
     "prompts": "提示词",
     "sessions": "会话",
     "apps": "应用",

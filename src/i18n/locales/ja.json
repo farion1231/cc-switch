@@ -4447,6 +4447,7 @@
     "usage": "使用量",
     "auth": "アカウント",
     "authNeedsReauth": "再ログインが必要なアカウントがあります",
+    "skills": "Skills",
     "prompts": "プロンプト",
     "sessions": "セッション",
     "apps": "アプリ",

@@ -929,7 +929,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const header = (
     <AppPageHeader
       icon={<SkillsIcon size={20} />}
-      title="Skills"
+      title={t("nav.skills")}
       titleExtra={
         <HelpTip title={t("skillsPage.helpTitle")}>
           {t("skillsPage.help")}

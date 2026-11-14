@@ -4381,6 +4381,7 @@
     "usage": "Kullanım",
     "auth": "Hesaplar",
     "authNeedsReauth": "Bir hesapta tekrar oturum açılması gerekiyor",
+    "skills": "Beceriler",
     "prompts": "İstemler",
     "sessions": "Oturumlar",
     "apps": "Uygulamalar",
