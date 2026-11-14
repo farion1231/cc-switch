@@ -405,10 +405,10 @@ async fn handle_count_tokens_for_app(
             &app_type,
             method,
             endpoint,
-            body,
+            &body,
             headers,
             extensions,
-            ctx.get_providers(),
+            &ctx.get_providers(),
         )
         .await
     {
