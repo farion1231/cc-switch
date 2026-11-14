@@ -28,6 +28,7 @@ import {
   stackSubagentSettings,
   stackSubagentValue,
 } from "./StackSubagentFields";
+import { CodexPauseOfficialLoginSection } from "./CodexPauseOfficialLogin";
 
 // Radix Select 不收空值：代表「不写覆盖、用 Codex 的默认审批模型」。
 const CODEX_DEFAULT_REVIEWER = "__codex_default__";
@@ -45,8 +46,8 @@ interface StackSettingsSheetProps {
 }
 
 /**
- * Codex 聚合页签上的「聚合设置 ›」：子代理默认用的模型和推理强度、经典子代理开关，以及
- * 自动审批（Auto Review）用的模型。都是设备级设置，改了就保存；后端按合并目录校验再写进
+ * Codex 聚合页签上的「聚合设置 ›」：最上面是「暂停使用官方登录」，下面是子代理默认用的模型
+ * 和推理强度、经典子代理开关、自动审批（Auto Review）用的模型。都是设备级设置，改了就保存；后端按合并目录校验再写进
  * 客户端（不在目录里就用默认：子代理跟随主模型，审批用 Codex 的默认）。
  */
 export function StackSettingsSheet({
@@ -99,6 +100,7 @@ export function StackSettingsSheet({
           <SheetDescription>{APP_DISPLAY_NAME.codex}</SheetDescription>
         </SheetHeader>
         <SheetBody className="space-y-3">
+          <CodexPauseOfficialLoginSection />
           <p className="text-caption text-fg-2">
             {t("mode.stackSettings.subagentDescription")}
           </p>

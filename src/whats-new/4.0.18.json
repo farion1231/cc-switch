@@ -1,0 +1,33 @@
+{
+  "version": "4.0.18",
+  "items": [
+    {
+      "type": "new",
+      "zh": "支持 Antigravity CLI，供应商须从卡片打开终端才生效",
+      "zh-TW": "支援 Antigravity CLI，供應商須從卡片開啟終端機才生效",
+      "en": "Antigravity CLI support: a provider applies only when agy is started from its card's terminal",
+      "ja": "Antigravity CLI に対応。プロバイダーはカードからターミナルを開いたときだけ有効"
+    },
+    {
+      "type": "new",
+      "zh": "macOS 授权中心可管理多个 Antigravity 账号并切换",
+      "zh-TW": "macOS 授權中心可管理多個 Antigravity 帳號並切換",
+      "en": "On macOS, add and switch several Antigravity accounts in Accounts",
+      "ja": "macOS の「アカウント」で複数の Antigravity アカウントを管理・切り替え"
+    },
+    {
+      "type": "fix",
+      "zh": "Windows 应用内更新不再重启电脑，桌面快捷方式可选",
+      "zh-TW": "Windows 應用內更新不再重新啟動電腦，桌面捷徑可選",
+      "en": "Windows in-app updates no longer reboot the PC, and the desktop shortcut is optional",
+      "ja": "Windows のアプリ内更新で PC が再起動しなくなり、デスクトップのショートカットを選択可能に"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 macOS 并发请求多时路由因文件句柄耗尽而失败",
+      "zh-TW": "修正 macOS 並發請求多時路由因檔案控制代碼耗盡而失敗",
+      "en": "Fixed routing failing on macOS when many parallel requests ran out of file handles",
+      "ja": "macOS で並行リクエストが多いとファイルハンドルが尽きてルーティングが失敗する問題を修正"
+    }
+  ]
+}

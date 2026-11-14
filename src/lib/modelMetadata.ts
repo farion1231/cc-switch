@@ -52,9 +52,10 @@ export interface PresetModelSource {
 
 /**
  * GPT 模型的窗口上限：Codex 官方目录给 GPT-5.5 以后各款的默认窗口。OpenAI API
- * 写的是 1.05M，但很多中转站的 GPT 是从 ChatGPT 订阅分发的，按订阅的窗口卡；
- * 只看地址分不出是哪种。窗口写大了客户端不压缩，直到上游拒收、这一轮失败；
- * 写小只是提前压缩，所以一律按订阅的窗口封顶。预设里的 GPT 窗口同样遵守。
+ * 写的是 1.05M，但很多中转站的 GPT 是从 ChatGPT 订阅分发的，按订阅的窗口卡。
+ * 窗口写大了客户端不压缩，直到上游拒收、这一轮失败；写小只是提前压缩。所以
+ * 认不出地址、只能借原厂条目的窗口时按订阅的窗口封顶；同地址预设和 models.dev
+ * 按地址认出的那家照用它们自己的值，用户手填的不经过这里。
  */
 export const GPT_CONTEXT_WINDOW_CAP = 272_000;
 
@@ -75,6 +76,16 @@ export function capGptContextWindow(
 
 const VERSION_SEGMENT = /^v\d+(?:(?:alpha|beta)\d*)?$/;
 const REQUEST_SEGMENTS = new Set(["responses", "messages"]);
+
+/**
+ * 同一个接口的新旧地址（归一后的写法）。OpenCode 的 Zen / Go 在 models.dev
+ * 里改成了 `/inference/...`（2026-10），预设和用户手里的仍是 `/zen/...`，两者
+ * 都能用、计费相同。
+ */
+const ENDPOINT_ALIASES: Record<string, string> = {
+  "opencode.ai/zen": "opencode.ai/inference/openai",
+  "opencode.ai/zen/go": "opencode.ai/inference/go/openai",
+};
 
 /**
  * 把地址归一成「域名 + 路径」，去掉末尾的版本号（`v1`、`v4`、`v1beta`）和请求
@@ -108,7 +119,8 @@ function endpointKey(url: string): string | null {
       break;
     }
   }
-  return [parsed.hostname.toLowerCase(), ...segments].join("/");
+  const key = [parsed.hostname.toLowerCase(), ...segments].join("/");
+  return ENDPOINT_ALIASES[key] ?? key;
 }
 
 /** 挑出与地址是同一个接口的候选，保持原有顺序。 */
@@ -276,11 +288,14 @@ function findByProvider(
 }
 
 /**
- * 原厂兜底：同名条目指向的原厂条目；没有条目指向时，才用原厂自己名下的同名
- * 条目。指向不止一家原厂时说不清是哪个模型，放弃。
+ * 原厂兜底：同名条目指向的原厂条目；指向都落空（没写，或原厂名下没有这一条）
+ * 时，才用原厂自己名下的同名条目。指向不止一家原厂时说不清是哪个模型，放弃。
  *
  * 「原厂名下」只是退路：原厂也会托管别家的模型（NVIDIA 名下有
  * `minimaxai/minimax-m2.7`），和指向结果并列就会被当成第二家原厂。
+ * 自己指向别家的条目也不算自有：指向的条目缺失时（models.dev 的 deepseek 名下
+ * 没有 `deepseek-v4.1-flash-1017`），thinkingmachines 名下指回 deepseek 的 LoRA
+ * 微调条目只收文字、窗口 262144，不能冒充原厂资料（#8765）。
  */
 function findByVendor(
   index: ModelsDevIndex,
@@ -301,6 +316,7 @@ function findByVendor(
         pointed.set(canonical, vendorModel);
         continue;
       }
+      if (vendorId !== providerId) continue;
     }
     if (index.vendors.has(providerId)) {
       owned.set(`${providerId}/${model.id ?? normalized}`, model);
@@ -338,7 +354,7 @@ function fieldCount(metadata: KnownModelMetadata): number {
  * 3. models.dev 里的原厂条目（不带价格：转售价不等于原厂价；思考档位照用，
  *    中转站绝大多数与原厂一致），
  *    认出了供应商也照样用它补供应商条目里没写的字段。
- * GPT 模型的窗口不论来源都按 {@link GPT_CONTEXT_WINDOW_CAP} 封顶。
+ * GPT 模型的窗口只在取自原厂条目时按 {@link GPT_CONTEXT_WINDOW_CAP} 封顶。
  * 都查不到返回 null。
  */
 export function resolveModelMetadata(
@@ -382,13 +398,14 @@ export function resolveModelMetadata(
     }
     const vendorModel = findByVendor(index, id);
     if (vendorModel) {
-      add("models-dev", metadataFromModelsDev(vendorModel, false));
+      const vendor = metadataFromModelsDev(vendorModel, false);
+      if (vendor.contextWindow !== undefined) {
+        vendor.contextWindow = capGptContextWindow(id, vendor.contextWindow);
+      }
+      add("models-dev", vendor);
     }
   }
 
   if (sources.length === 0) return null;
-  if (metadata.contextWindow !== undefined) {
-    metadata.contextWindow = capGptContextWindow(id, metadata.contextWindow);
-  }
   return { ...metadata, sources };
 }

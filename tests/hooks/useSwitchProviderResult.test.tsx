@@ -37,4 +37,33 @@ describe("provider switch result transport", () => {
       client.clear();
     },
   );
+
+  // 切到绑号的官方卡时后端可能把默认登录收成新账号，授权中心的 Claude 列表要重读
+  it.each([
+    ["claude", true],
+    ["codex", false],
+  ] as const)(
+    "invalidates the Claude account list after a %s switch: %s",
+    async (appId, invalidated) => {
+      server.use(
+        http.post("http://tauri.local/switch_provider", () =>
+          HttpResponse.json({ warnings: [] }),
+        ),
+      );
+      const client = createTestQueryClient();
+      const statusKey = ["managed-auth-status", "claude_official"];
+      client.setQueryData(statusKey, { accounts: [] });
+      const wrapper = ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      );
+      const { result } = renderHook(() => useSwitchProviderMutation(appId), {
+        wrapper,
+      });
+      await act(async () => {
+        await result.current.mutateAsync("provider-b");
+      });
+      expect(client.getQueryState(statusKey)?.isInvalidated).toBe(invalidated);
+      client.clear();
+    },
+  );
 });

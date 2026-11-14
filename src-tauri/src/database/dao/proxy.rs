@@ -5,7 +5,7 @@
 use crate::error::AppError;
 use crate::proxy::types::*;
 
-use super::super::{lock_conn, Database};
+use super::super::{lock_conn, lock_recovering, Database};
 
 pub(crate) const PRICING_SOURCE_RESPONSE: &str = "response";
 pub(crate) const PRICING_SOURCE_REQUEST: &str = "request";
@@ -142,33 +142,31 @@ impl Database {
         app_type: &str,
     ) -> Result<AppProxyConfig, AppError> {
         // 使用 block 限制 conn 的作用域，避免跨 await 持有锁
-        let app_type_owned = app_type.to_string();
         let result = {
             let conn = lock_conn!(self.conn);
-            conn.query_row(
+            let mut stmt = conn.prepare_cached(
                 "SELECT app_type, enabled, auto_failover_enabled,
                         max_retries, streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
                         circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
                         circuit_error_rate_threshold, circuit_min_requests
-                 FROM proxy_config WHERE app_type = ?1",
-                [app_type],
-                |row| {
-                    Ok(AppProxyConfig {
-                        app_type: row.get(0)?,
-                        enabled: row.get::<_, i32>(1)? != 0,
-                        auto_failover_enabled: row.get::<_, i32>(2)? != 0,
-                        max_retries: row.get::<_, i32>(3)? as u32,
-                        streaming_first_byte_timeout: row.get::<_, i32>(4)? as u32,
-                        streaming_idle_timeout: row.get::<_, i32>(5)? as u32,
-                        non_streaming_timeout: row.get::<_, i32>(6)? as u32,
-                        circuit_failure_threshold: row.get::<_, i32>(7)? as u32,
-                        circuit_success_threshold: row.get::<_, i32>(8)? as u32,
-                        circuit_timeout_seconds: row.get::<_, i32>(9)? as u32,
-                        circuit_error_rate_threshold: row.get(10)?,
-                        circuit_min_requests: row.get::<_, i32>(11)? as u32,
-                    })
-                },
-            )
+                 FROM proxy_config WHERE app_type = ?1"
+            ).map_err(|e| AppError::Database(e.to_string()))?;
+            stmt.query_row([app_type], |row| {
+                Ok(AppProxyConfig {
+                    app_type: row.get(0)?,
+                    enabled: row.get::<_, i32>(1)? != 0,
+                    auto_failover_enabled: row.get::<_, i32>(2)? != 0,
+                    max_retries: row.get::<_, i32>(3)? as u32,
+                    streaming_first_byte_timeout: row.get::<_, i32>(4)? as u32,
+                    streaming_idle_timeout: row.get::<_, i32>(5)? as u32,
+                    non_streaming_timeout: row.get::<_, i32>(6)? as u32,
+                    circuit_failure_threshold: row.get::<_, i32>(7)? as u32,
+                    circuit_success_threshold: row.get::<_, i32>(8)? as u32,
+                    circuit_timeout_seconds: row.get::<_, i32>(9)? as u32,
+                    circuit_error_rate_threshold: row.get(10)?,
+                    circuit_min_requests: row.get::<_, i32>(11)? as u32,
+                })
+            })
         };
         // conn 已在 block 结束时释放
 
@@ -178,7 +176,7 @@ impl Database {
                 // 如果不存在，创建默认配置
                 self.init_proxy_config_rows().await?;
                 Ok(AppProxyConfig {
-                    app_type: app_type_owned,
+                    app_type: app_type.to_string(),
                     enabled: false,
                     auto_failover_enabled: false,
                     max_retries: 3,
@@ -242,10 +240,7 @@ impl Database {
     ///
     /// 使用与 schema.rs seed 相同的 per-app 默认值
     fn ensure_proxy_config_row_exists(&self, app_type: &str) -> Result<(), AppError> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| AppError::Lock(e.to_string()))?;
+        let conn = lock_conn!(self.conn);
 
         // 根据 app_type 使用不同的默认值（与 schema.rs seed 保持一致）
         let (retries, fb_timeout, idle_timeout, cb_fail, cb_succ, cb_timeout, cb_rate, cb_min) =
@@ -436,7 +431,7 @@ impl Database {
     ///
     /// 用于 `ProfileService::apply` 等 sync 路径判断是否需要停止代理服务。
     pub fn is_live_takeover_active_sync(&self) -> bool {
-        let conn = match self.conn.lock() {
+        let conn = match lock_recovering(&self.conn) {
             Ok(c) => c,
             Err(_) => return false,
         };
@@ -793,7 +788,7 @@ impl Database {
             let defaults = crate::proxy::types::ProxyConfig::default();
             (defaults.listen_address, defaults.listen_port)
         };
-        let (listen_address, port) = match self.conn.lock() {
+        let (listen_address, port) = match lock_recovering(&self.conn) {
             Ok(conn) => conn
                 .query_row(
                     "SELECT listen_address, listen_port FROM proxy_config WHERE app_type = 'claude'",
@@ -808,7 +803,7 @@ impl Database {
     }
 
     pub fn get_proxy_flags_sync(&self, app_type: &str) -> (bool, bool) {
-        let conn = match self.conn.lock() {
+        let conn = match lock_recovering(&self.conn) {
             Ok(c) => c,
             Err(_) => return (false, false),
         };
@@ -830,10 +825,7 @@ impl Database {
         enabled: bool,
         auto_failover_enabled: bool,
     ) -> Result<(), AppError> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| AppError::Database(format!("Mutex lock failed: {e}")))?;
+        let conn = lock_conn!(self.conn);
 
         conn.execute(
             "UPDATE proxy_config SET enabled = ?2, auto_failover_enabled = ?3, updated_at = datetime('now') WHERE app_type = ?1",

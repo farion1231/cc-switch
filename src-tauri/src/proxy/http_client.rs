@@ -141,50 +141,6 @@ pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-/// 更新代理配置（热更新）
-///
-/// 可在运行时调用以更改代理设置，无需重启应用。
-/// 注意：此函数同时验证和应用，如果需要先验证后持久化再应用，
-/// 请使用 validate_proxy + apply_proxy 组合。
-///
-/// # Arguments
-/// * `proxy_url` - 新的代理 URL，None 或空字符串表示直连
-#[allow(dead_code)]
-pub fn update_proxy(proxy_url: Option<&str>) -> Result<(), String> {
-    let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
-    let new_client = build_client(effective_url)?;
-
-    // 更新客户端
-    if let Some(lock) = GLOBAL_CLIENT.get() {
-        let mut client = lock.write().map_err(|e| {
-            log::error!("[GlobalProxy] [GP-001] Failed to acquire write lock: {e}");
-            "Failed to update proxy: lock poisoned".to_string()
-        })?;
-        *client = new_client;
-    } else {
-        // 如果还没初始化，则初始化
-        return init(proxy_url);
-    }
-
-    // 更新代理 URL 记录
-    if let Some(lock) = CURRENT_PROXY_URL.get() {
-        let mut url = lock.write().map_err(|e| {
-            log::error!("[GlobalProxy] [GP-002] Failed to acquire URL write lock: {e}");
-            "Failed to update proxy URL record: lock poisoned".to_string()
-        })?;
-        *url = effective_url.map(|s| s.to_string());
-    }
-
-    log::info!(
-        "[GlobalProxy] Updated: {}",
-        effective_url
-            .map(mask_url)
-            .unwrap_or_else(|| "direct connection".to_string())
-    );
-
-    Ok(())
-}
-
 /// 获取全局 HTTP 客户端
 ///
 /// 返回配置了代理的客户端（如果已配置代理），否则返回跟随系统代理的客户端。
@@ -273,12 +229,6 @@ pub fn get_current_proxy_url() -> Option<String> {
         .and_then(|url| url.clone())
 }
 
-/// 检查是否正在使用代理
-#[allow(dead_code)]
-pub fn is_proxy_enabled() -> bool {
-    get_current_proxy_url().is_some()
-}
-
 /// 两种客户端共用的参数
 fn base_builder() -> reqwest::ClientBuilder {
     Client::builder()
@@ -294,10 +244,37 @@ fn base_builder() -> reqwest::ClientBuilder {
         .no_zstd()
 }
 
+/// 不跟随重定向的客户端，代理设置与全局客户端一致。带自定义凭据请求头（如 `x-dsh-auth-token`）
+/// 的请求用它：reqwest 跨主机重定向时只剥掉标准认证头，自定义头会被带到新主机。
+pub fn no_redirect() -> Result<Client, String> {
+    build_client_from(
+        base_builder().redirect(reqwest::redirect::Policy::none()),
+        get_current_proxy_url().as_deref(),
+    )
+}
+
+/// 不跟随重定向、按目标地址选代理的客户端：本机地址直连，其余同 [`no_redirect`]。
+pub fn no_redirect_for_url(url: &str) -> Result<Client, String> {
+    if is_loopback_url(url) {
+        base_builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| format!("Failed to build HTTP client: {e}"))
+    } else {
+        no_redirect()
+    }
+}
+
 /// 构建 HTTP 客户端
 fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
-    let mut builder = base_builder();
+    build_client_from(base_builder(), proxy_url)
+}
 
+fn build_client_from(
+    mut builder: reqwest::ClientBuilder,
+    proxy_url: Option<&str>,
+) -> Result<Client, String> {
     // 有代理地址则使用代理，否则跟随系统代理
     if let Some(url) = proxy_url {
         // 先验证 URL 格式和 scheme

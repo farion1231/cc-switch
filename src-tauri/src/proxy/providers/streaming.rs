@@ -3,7 +3,7 @@
 //! 实现 OpenAI SSE → Anthropic SSE 格式转换
 
 use super::inline_think::InlineThinkSplitter;
-use crate::proxy::sse::{strip_sse_field, take_sse_block};
+use crate::proxy::sse::{strip_sse_field, SseBuffer};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -243,8 +243,7 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
-        let mut buffer = String::new();
-        let mut utf8_remainder: Vec<u8> = Vec::new();
+        let mut sse = SseBuffer::new();
         let mut message_id = None;
         let mut current_model = None;
         let mut next_content_index: u32 = 0;
@@ -269,9 +268,9 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
+                    sse.push_bytes(&bytes);
 
-                    while let Some(line) = take_sse_block(&mut buffer) {
+                    while let Some(line) = sse.next_block() {
                         if line.trim().is_empty() {
                             continue;
                         }

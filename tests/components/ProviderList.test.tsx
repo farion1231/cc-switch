@@ -24,12 +24,25 @@ const TAURI_ENDPOINT = "http://tauri.local";
 const useDragSortMock = vi.fn();
 const useSortableMock = vi.fn();
 const providerCardRenderSpy = vi.fn();
+
 /** 某张卡片最近一次渲染拿到的 props。 */
 const lastProps = (id: string) =>
   providerCardRenderSpy.mock.calls
     .map((call) => call[0])
     .filter((props) => props.provider.id === id)
     .at(-1);
+
+const dshAccountStatusMock = vi.fn();
+
+vi.mock("@/components/providers/DshAccount", () => ({
+  useDshAccountStatus: (enabled: boolean) =>
+    enabled ? dshAccountStatusMock() : { data: undefined },
+  accountName: (status: any, fallback: string) =>
+    status.profile?.name ?? fallback,
+  DshAccountCard: ({ status }: any) => (
+    <div data-testid="dsh-account-card">{status.profile?.name}</div>
+  ),
+}));
 
 vi.mock("@/hooks/useDragSort", () => ({
   useDragSort: (...args: unknown[]) => useDragSortMock(...args),
@@ -157,6 +170,26 @@ describe("ProviderList Component", () => {
     onDuplicate: vi.fn(),
     onOpenWebsite: vi.fn(),
   };
+
+  it.each([false, true])(
+    "keeps account login inside the add-provider flow with existing providers: %s",
+    (hasProvider) => {
+      const providers: Record<string, Provider> = hasProvider
+        ? {
+            custom: {
+              id: "custom",
+              name: "Custom",
+              settingsConfig: {},
+              meta: { liveConfigManaged: true },
+            },
+          }
+        : {};
+      renderWithQueryClient(
+        <ProviderList {...baseProps} appId="kimi" providers={providers} />,
+      );
+      expect(screen.queryByText("kimi.oauth.title")).not.toBeInTheDocument();
+    },
+  );
 
   function switchMode(
     overrides: Partial<SwitchModeProps> = {},
@@ -340,6 +373,298 @@ describe("ProviderList Component", () => {
     expect(onRemoveFromConfig).toHaveBeenCalledWith(live);
     fireEvent.click(screen.getByTestId("add-a"));
     expect(onSwitch).toHaveBeenCalledWith(providerA);
+  });
+
+  it.each(["mcode"] as const)(
+    "uses native membership to add and remove %s providers",
+    async (appId) => {
+      const saved = createProvider({
+        id: "saved",
+        name: "Saved",
+        meta: { liveConfigManaged: false },
+      });
+      const live = createProvider({
+        id: "live",
+        name: "Live",
+        meta: { liveConfigManaged: true },
+      });
+      const onSwitch = vi.fn();
+      const onRemoveFromConfig = vi.fn();
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [saved, live],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      renderWithQueryClient(
+        <ProviderList
+          {...baseProps}
+          providers={{ saved, live }}
+          appId={appId}
+          onSwitch={onSwitch}
+          onRemoveFromConfig={onRemoveFromConfig}
+        />,
+      );
+      fireEvent.click(await screen.findByTestId("remove-live"));
+      expect(onRemoveFromConfig).toHaveBeenCalledWith(live);
+      fireEvent.click(screen.getByTestId("add-saved"));
+      expect(onSwitch).toHaveBeenCalledWith(saved);
+    },
+  );
+
+  it("adds, switches and removes Kimi providers and marks only the native default-model owner as in use", () => {
+    const current = createProvider({
+      id: "current",
+      name: "Current",
+      meta: { liveConfigManaged: true },
+    });
+    const other = createProvider({
+      id: "other",
+      name: "Other",
+      meta: { liveConfigManaged: true },
+    });
+    const saved = createProvider({
+      id: "saved",
+      name: "Saved",
+      meta: { liveConfigManaged: false },
+    });
+    const onSwitch = vi.fn();
+    const onSetAsDefault = vi.fn();
+    const onRemoveFromConfig = vi.fn();
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [current, other, saved],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    const props = {
+      ...baseProps,
+      appId: "kimi" as const,
+      providers: { current, other, saved },
+      onSwitch,
+      onSetAsDefault,
+      onRemoveFromConfig,
+    };
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <ProviderList {...props} currentProviderId="current" />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByTestId("status-current")).toHaveTextContent(
+      "providerCard.status.default",
+    );
+    expect(lastProps("current")?.presentation.tone).toBe("direct");
+    expect(lastProps("current")?.isCurrent).toBe(true);
+    expect(screen.queryByTestId("switch-current")).not.toBeInTheDocument();
+    expect(
+      lastProps("current")?.presentation.deleteDisabledReason,
+    ).toBeTruthy();
+    expect(
+      lastProps("current")?.presentation.buttons.find(
+        (button: { key: string }) => button.key === "remove",
+      )?.disabledReason,
+    ).toBeTruthy();
+    // 已添加的卡在「更多」菜单里「设为默认」；未添加的卡「添加」只写进配置
+    expect(screen.queryByTestId("switch-other")).not.toBeInTheDocument();
+    lastProps("other")
+      ?.presentation.menuItems.find(
+        (action: { key: string }) => action.key === "setDefault",
+      )
+      .onSelect();
+    expect(onSetAsDefault).toHaveBeenLastCalledWith(other, undefined);
+    expect(screen.queryByTestId("switch-saved")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("add-saved"));
+    expect(onSwitch).toHaveBeenLastCalledWith(saved);
+    fireEvent.click(screen.getByTestId("remove-other"));
+    expect(onRemoveFromConfig).toHaveBeenCalledWith(other);
+    rerender(
+      <QueryClientProvider client={client}>
+        <ProviderList {...props} currentProviderId="other" />
+      </QueryClientProvider>,
+    );
+    expect(screen.queryByTestId("status-current")).not.toBeInTheDocument();
+    expect(screen.getByTestId("status-other")).toHaveTextContent(
+      "providerCard.status.default",
+    );
+    expect(
+      lastProps("current")?.presentation.menuItems.map(
+        (action: { key: string }) => action.key,
+      ),
+    ).toEqual(["setDefault"]);
+  });
+
+  describe("WorkBuddy official sign-in cards", () => {
+    const bound = (id: string, accountId: string) =>
+      createProvider({
+        id,
+        name: id,
+        category: "official",
+        meta: {
+          authBinding: {
+            source: "managed_account",
+            authProvider: "workbuddy_account",
+            accountId,
+          },
+        },
+      });
+    const wbAccount = (id: string) => ({
+      id,
+      provider: "workbuddy_account",
+      login: id,
+      avatar_url: null,
+      authenticated_at: 0,
+      is_default: id === "u-1",
+      github_domain: "workbuddy",
+      requires_reauth: false,
+    });
+
+    function setup(running: boolean) {
+      const switched: unknown[] = [];
+      server.use(
+        http.post(`${TAURI_ENDPOINT}/auth_get_status`, () =>
+          HttpResponse.json({
+            provider: "workbuddy_account",
+            authenticated: true,
+            default_account_id: "u-1",
+            accounts: [wbAccount("u-1"), wbAccount("u-2")],
+          }),
+        ),
+        http.post(`${TAURI_ENDPOINT}/workbuddy_account_live_state`, () =>
+          HttpResponse.json({
+            running,
+            signedIn: true,
+            recognized: true,
+            imported: true,
+          }),
+        ),
+        http.post(
+          `${TAURI_ENDPOINT}/auth_set_default_account`,
+          async ({ request }) => {
+            switched.push(await request.json());
+            return HttpResponse.json(null);
+          },
+        ),
+      );
+      const a = bound("card-a", "u-1");
+      const b = bound("card-b", "u-2");
+      const custom = createProvider({
+        id: "custom",
+        meta: { liveConfigManaged: true },
+      });
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [a, b, custom],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      const onSwitch = vi.fn();
+      renderWithQueryClient(
+        <ProviderList
+          {...baseProps}
+          appId="workbuddy"
+          providers={{ "card-a": a, "card-b": b, custom }}
+          onSwitch={onSwitch}
+          onRemoveFromConfig={vi.fn()}
+        />,
+      );
+      return { switched, onSwitch };
+    }
+
+    it("adds another official card through the account switch, never through models.json", async () => {
+      const { switched, onSwitch } = setup(false);
+      const remove = await screen.findByTestId("remove-card-a");
+      await waitFor(() => expect(remove).toBeDisabled());
+      expect(lastProps("card-a")?.presentation.buttons[0].disabledReason).toBe(
+        "workbuddy.official.onlyOne",
+      );
+      const button = screen.getByTestId("add-card-b");
+      await waitFor(() => expect(button).toBeEnabled());
+      fireEvent.click(button);
+      await waitFor(() =>
+        expect(switched).toEqual([
+          { authProvider: "workbuddy_account", accountId: "u-2" },
+        ]),
+      );
+      // 官方卡不走「添加到配置」；自定义模型卡照旧可以移除
+      expect(onSwitch).not.toHaveBeenCalled();
+      expect(screen.getByTestId("remove-custom")).toBeEnabled();
+    });
+
+    it("disables adding while WorkBuddy is running", async () => {
+      const { switched } = setup(true);
+      const button = await screen.findByTestId("add-card-b");
+      await waitFor(() => expect(button).toBeDisabled());
+      expect(lastProps("card-b")?.presentation.buttons[0].disabledReason).toBe(
+        "workbuddy.official.quitFirst",
+      );
+      expect(switched).toEqual([]);
+    });
+  });
+
+  it("does not mark any Kimi provider as current when the native selection is missing", () => {
+    const provider = createProvider({
+      id: "live",
+      meta: { liveConfigManaged: true },
+    });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        appId="kimi"
+        providers={{ live: provider }}
+      />,
+    );
+    expect(screen.queryByTestId("status-live")).not.toBeInTheDocument();
+    expect(
+      lastProps("live")?.presentation.menuItems.map(
+        (action: { key: string }) => action.key,
+      ),
+    ).toEqual(["setDefault"]);
+  });
+
+  it("marks the native Kimi OAuth card as official without marking API-key presets", () => {
+    const official = createProvider({
+      id: "managed:kimi-code",
+      name: "Kimi Official",
+      icon: "kimi",
+      settingsConfig: {
+        provider: { type: "kimi", oauth: { key: "oauth/kimi-code" } },
+        models: {},
+      },
+      meta: { liveConfigManaged: true },
+    });
+    const apiKey = createProvider({
+      id: "kimi-coding",
+      name: "Kimi For Coding",
+      category: "cn_official",
+      meta: { liveConfigManaged: true },
+    });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [official, apiKey],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        appId="kimi"
+        currentProviderId={official.id}
+        providers={{ [official.id]: official, [apiKey.id]: apiKey }}
+      />,
+    );
+    expect(lastProps(official.id)?.presentation.chips).toContainEqual({
+      key: "official",
+      label: "providerCard.chip.official",
+      tone: "outline",
+    });
+    expect(lastProps(official.id)?.presentation.status.label).toBe(
+      "providerCard.status.default",
+    );
+    expect(lastProps(apiKey.id)?.presentation.chips).toEqual([]);
   });
 
   it.each([{ ctrlKey: true }, { metaKey: true }])(
@@ -831,7 +1156,6 @@ describe("ProviderList Component", () => {
       // Pi 只有启用 / 停用，没有路由、队列、健康状态
       for (const props of [currentCards.at(-1), inactiveCards.at(-1)]) {
         expect(props.isCurrent).toBe(false);
-        expect(props.isInConfig).toBe(true);
         expect(props.presentation.showHealth).toBeFalsy();
         expect(props.presentation.move).toBeUndefined();
         expect(
@@ -880,7 +1204,7 @@ describe("ProviderList Component", () => {
         .at(-1);
       expect(latestCardProps).toMatchObject({
         isCurrent: false,
-        isInConfig: true,
+        presentation: { buttons: [{ key: "remove" }] },
       });
       expect(latestCardProps.presentation.deleteDisabledReason).toBeUndefined();
     });
@@ -969,12 +1293,40 @@ describe("ProviderList Component", () => {
         .at(-1);
       expect(latestCardProps).toMatchObject({
         isCurrent: false,
-        isInConfig: false,
+        presentation: { buttons: [{ key: "add" }] },
       });
       expect(latestCardProps.presentation.deleteDisabledReason).toBe(
         "pi.current.stateUnavailableHint",
       );
     });
+  });
+
+  it("warns when an additive app's live config cannot be read", async () => {
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_hermes_live_provider_ids`, () =>
+        HttpResponse.json("Failed to parse Hermes config as YAML", {
+          status: 500,
+        }),
+      ),
+    );
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{}}
+        currentProviderId=""
+        appId="hermes"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    await screen.findByText("无法读取 apps.hermes 配置文件");
+    expect(
+      screen.getByText(/Failed to parse Hermes config as YAML/),
+    ).toBeInTheDocument();
   });
 
   it("keeps Pi provider creation on the page-level add action", async () => {
@@ -1035,5 +1387,59 @@ describe("ProviderList Component", () => {
     expect(
       screen.getByRole("button", { name: "provider.addProvider" }),
     ).toBeInTheDocument();
+  });
+
+  it("shows the signed-in DeepSeek account as an official card under Added", async () => {
+    dshAccountStatusMock.mockReturnValue({
+      data: { signedIn: true, expired: false, profile: { name: "Jason" } },
+    });
+    renderWithQueryClient(
+      <ProviderList
+        providers={{}}
+        currentProviderId=""
+        appId="dsh"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+        onCreate={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByTestId("dsh-account-card")).toHaveTextContent(
+      "Jason",
+    );
+    expect(screen.getByText("providerCard.section.added")).toBeInTheDocument();
+    expect(
+      screen.queryByText("providerCard.section.addedEmpty"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "provider.addProvider" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the empty state and no account card while signed out of DeepSeek", async () => {
+    dshAccountStatusMock.mockReturnValue({
+      data: { signedIn: false, expired: false, profile: null },
+    });
+    renderWithQueryClient(
+      <ProviderList
+        providers={{}}
+        currentProviderId=""
+        appId="dsh"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+        onCreate={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("button", { name: "provider.addProvider" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("dsh-account-card")).not.toBeInTheDocument();
   });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
 import { Globe, Info, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { HelpTip } from "@/components/ui/help-tip";
 import { Notice } from "@/components/ui/notice";
+import { SearchField } from "@/components/ui/search-field";
 import {
   Dialog,
   DialogContent,
@@ -67,6 +68,42 @@ export function formatUnitPrice(value: string): string {
   const fixed = num.toFixed(4).replace(/0+$/, "");
   const [whole, frac = ""] = fixed.split(".");
   return `$${whole}.${frac.padEnd(2, "0")}`;
+}
+
+const WORD_SEPARATOR = /[\s\-._/]/;
+
+/** text 在整串开头或任意一个词首（`-` `.` `_` `/` 空白之后）以 needle 开头。 */
+function startsAtWordBoundary(text: string, needle: string): boolean {
+  const value = text.toLowerCase();
+  for (let i = 0; i <= value.length - needle.length; i++) {
+    if (i > 0 && !WORD_SEPARATOR.test(value[i - 1])) continue;
+    if (value.startsWith(needle, i)) return true;
+  }
+  return false;
+}
+
+/**
+ * 定价表搜索：模型 ID 或显示名的整串开头或任意词首命中查询串（不区分大小写）。
+ * `sonnet` 能命中 `claude-sonnet-4-5`，`net` 不会；查询串里可以带分隔符，
+ * 如 `sonnet 4` 命中「Claude Sonnet 4.5」。
+ * 空查询原样返回；完全等于某个模型 ID 的那条排到最前，回车编辑的就是它。
+ */
+export function filterPricingByPrefix(
+  rows: readonly ModelPricing[],
+  query: string,
+): ModelPricing[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [...rows];
+  const matches = rows.filter(
+    (row) =>
+      startsAtWordBoundary(row.modelId, needle) ||
+      startsAtWordBoundary(row.displayName ?? "", needle),
+  );
+  const exact = matches.findIndex(
+    (row) => row.modelId.toLowerCase() === needle,
+  );
+  if (exact > 0) matches.unshift(...matches.splice(exact, 1));
+  return matches;
 }
 
 function useBillingSources() {
@@ -316,11 +353,12 @@ export function PricingConfigPanel() {
   const [isAddingNew, setIsAddingNew] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ModelPricing | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [query, setQuery] = useState("");
 
-  const handleAddNew = () => {
+  const handleAddNew = (modelId = "") => {
     setIsAddingNew(true);
     setEditingModel({
-      modelId: "",
+      modelId,
       displayName: "",
       inputCostPerMillion: "0",
       outputCostPerMillion: "0",
@@ -329,8 +367,18 @@ export function PricingConfigPanel() {
     });
   };
 
+  const handleEdit = (model: ModelPricing) => {
+    setIsAddingNew(false);
+    setEditingModel(model);
+  };
+
   const rows = pricing ?? [];
-  const pagination = useClientPagination(rows);
+  const trimmedQuery = query.trim();
+  const filteredRows = useMemo(
+    () => filterPricingByPrefix(pricing ?? [], query),
+    [pricing, query],
+  );
+  const pagination = useClientPagination(filteredRows, trimmedQuery);
 
   return (
     <div className="flex flex-col gap-3 pt-3">
@@ -350,6 +398,31 @@ export function PricingConfigPanel() {
           {t("usage.pricing.unit")}
         </span>
         <div className="flex-1" />
+        <SearchField
+          value={query}
+          onValueChange={setQuery}
+          clearLabel={t("common.clear")}
+          placeholder={t("usage.pricing.searchPlaceholder")}
+          aria-label={t("usage.pricing.searchPlaceholder")}
+          autoComplete="off"
+          containerClassName="w-56"
+          className="h-7"
+          onKeyDown={(event) => {
+            if (event.key !== "Enter") return;
+            // WebKit 输入法回车确认候选词时 isComposing 已是 false，只剩 keyCode 229 可辨认
+            if (
+              event.nativeEvent.isComposing ||
+              event.nativeEvent.keyCode === 229
+            )
+              return;
+            event.preventDefault();
+            if (!trimmedQuery) return;
+            // 编辑页不接管焦点：先让搜索框失焦，免得后续按键还落在被挡住的搜索框上
+            event.currentTarget.blur();
+            if (filteredRows.length > 0) handleEdit(filteredRows[0]);
+            else handleAddNew(trimmedQuery);
+          }}
+        />
         <Button
           type="button"
           variant="neutral"
@@ -363,7 +436,7 @@ export function PricingConfigPanel() {
           type="button"
           variant="neutral"
           size="compact"
-          onClick={handleAddNew}
+          onClick={() => handleAddNew()}
         >
           <Plus className="h-3.5 w-3.5" />
           {t("usage.addPricing")}
@@ -400,6 +473,29 @@ export function PricingConfigPanel() {
                 <tr>
                   <td colSpan={6} className={usageTable.empty}>
                     {t("usage.noPricingData")}
+                  </td>
+                </tr>
+              ) : filteredRows.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className={usageTable.empty}>
+                    <div className="flex flex-col items-center gap-2">
+                      <span>
+                        {t("usage.pricing.noSearchMatch", {
+                          query: trimmedQuery,
+                        })}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="neutral"
+                        size="compact"
+                        onClick={() => handleAddNew(trimmedQuery)}
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        {t("usage.pricing.addForQuery", {
+                          query: trimmedQuery,
+                        })}
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ) : (
@@ -444,10 +540,7 @@ export function PricingConfigPanel() {
                             variant="quiet"
                             size="icon-compact"
                             aria-label={t("usage.pricing.editAria", { name })}
-                            onClick={() => {
-                              setIsAddingNew(false);
-                              setEditingModel(model);
-                            }}
+                            onClick={() => handleEdit(model)}
                           >
                             <Pencil
                               className="h-3.5 w-3.5"

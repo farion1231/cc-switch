@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   fillCodexCatalogModel,
   fillHermesModel,
+  fillKimiModel,
   fillOpenClawModel,
   fillOpenCodeModel,
+  fillWorkBuddyModel,
   piPresetThinkingFor,
   piSendsReasoningEffort,
   piThinkingLevelMapFromEfforts,
@@ -47,6 +49,19 @@ describe("fillCodexCatalogModel", () => {
       inputModalities: ["text"],
     };
     expect(fillCodexCatalogModel(row, metadata, CODEX_LEVELS)).toEqual(row);
+  });
+
+  it("never turns image input off for a text-only lookup", () => {
+    expect(
+      fillCodexCatalogModel(
+        { model: "deepseek-v4.1-flash-1017", contextWindow: "" },
+        { contextWindow: 1_000_000, inputModalities: ["text"] },
+        CODEX_LEVELS,
+      ),
+    ).toEqual({
+      model: "deepseek-v4.1-flash-1017",
+      contextWindow: "1000000",
+    });
   });
 });
 
@@ -101,9 +116,9 @@ describe("fillHermesModel", () => {
   });
 
   it("only fills supports_vision towards true and keeps an explicit false", () => {
-    expect(
-      fillHermesModel({ id: "m" }, { inputModalities: ["text"] }),
-    ).toEqual({ id: "m" });
+    expect(fillHermesModel({ id: "m" }, { inputModalities: ["text"] })).toEqual(
+      { id: "m" },
+    );
     expect(
       fillHermesModel({ id: "m", supports_vision: false }, metadata),
     ).toEqual({ id: "m", context_length: 262144, supports_vision: false });
@@ -149,6 +164,37 @@ describe("fillOpenCodeModel", () => {
 
   it("leaves the model untouched when nothing is known", () => {
     expect(fillOpenCodeModel({ name: "m" }, {})).toEqual({ name: "m" });
+  });
+});
+
+describe("fillKimiModel", () => {
+  it("replaces a placeholder window and adds supported capabilities", () => {
+    expect(
+      fillKimiModel(
+        { model: "m", max_context_size: 1, capabilities: ["tool_use"] },
+        metadata,
+        { replaceContext: true },
+      ),
+    ).toEqual({
+      model: "m",
+      max_context_size: 262144,
+      capabilities: ["tool_use", "image_in", "thinking"],
+    });
+  });
+
+  it("keeps a window the user set and never removes capabilities", () => {
+    const model = {
+      model: "m",
+      max_context_size: 1000,
+      capabilities: ["thinking", "video_in"],
+    };
+    expect(
+      fillKimiModel(
+        model,
+        { contextWindow: 9, inputModalities: ["text"], reasoning: false },
+        { replaceContext: false },
+      ),
+    ).toEqual(model);
   });
 });
 
@@ -286,5 +332,29 @@ describe("piPresetThinkingFor", () => {
         compat: { supportsReasoningEffort: false },
       }),
     ).toBeNull();
+  });
+});
+
+describe("fillWorkBuddyModel", () => {
+  it("fills blank limits and only turns capabilities on", () => {
+    expect(
+      fillWorkBuddyModel(
+        { id: "m", supportsToolCall: true, supportsImages: false },
+        metadata,
+      ),
+    ).toEqual({
+      id: "m",
+      supportsToolCall: true,
+      supportsImages: true,
+      supportsReasoning: true,
+      maxInputTokens: 262144,
+      maxOutputTokens: 32768,
+    });
+    expect(
+      fillWorkBuddyModel(
+        { id: "m", maxInputTokens: 1000, supportsReasoning: true },
+        { reasoning: false, contextWindow: 2000 },
+      ),
+    ).toEqual({ id: "m", maxInputTokens: 1000, supportsReasoning: true });
   });
 });
