@@ -306,6 +306,16 @@ impl ProxyServer {
             // Claude API (支持带前缀和不带前缀两种格式)
             .route("/v1/messages", post(handlers::handle_messages))
             .route("/claude/v1/messages", post(handlers::handle_messages))
+            // 上下文计数：官方 API 免费提供。没有这条路由时客户端会退化成本地付费的
+            // max_tokens:1 请求，Claude Desktop 的后台计数会按默认供应商计费。
+            .route(
+                "/v1/messages/count_tokens",
+                post(handlers::handle_count_tokens),
+            )
+            .route(
+                "/claude/v1/messages/count_tokens",
+                post(handlers::handle_count_tokens),
+            )
             // Claude Desktop 3P 本地 gateway（独立 provider namespace）
             .route(
                 "/claude-desktop/v1/models",
@@ -314,6 +324,10 @@ impl ProxyServer {
             .route(
                 "/claude-desktop/v1/messages",
                 post(handlers::handle_claude_desktop_messages),
+            )
+            .route(
+                "/claude-desktop/v1/messages/count_tokens",
+                post(handlers::handle_claude_desktop_count_tokens),
             )
             // OpenAI Chat Completions API (Codex CLI，支持带前缀和不带前缀)
             .route("/chat/completions", post(handlers::handle_chat_completions))
