@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { Provider } from "@/types";
 
 /** 第一阶段支持多环境写入的应用；其他应用沿用单目录。 */
 export const APP_TARGET_APPS = [
@@ -290,6 +291,45 @@ export const visibleTargetKeys = (
   config: AppTargetsConfig,
   inventory?: WslInventory,
 ) => enabledTargetKeys(config).filter((key) => isTargetRunning(key, inventory));
+
+/** 隐藏已关闭 WSL 导入的卡片，保留本机及其他运行中环境仍使用的共享卡片。 */
+export function isTargetProviderVisible(
+  provider: Provider,
+  view: AppTargetsView | undefined,
+  inventory: WslInventory | undefined,
+  sharedProviderIds: ReadonlySet<string>,
+): boolean {
+  if (inventory?.hostWindows !== true || !view) return true;
+
+  let source = provider.meta?.importedFromTarget;
+  if (!source) {
+    // 兼容尚未记录导入来源的旧卡片：只识别已保存发行版的自动导入名称。
+    const distro = /^WSL · ([A-Za-z0-9_.-]{1,64})(?: · |$)/.exec(
+      provider.name,
+    )?.[1];
+    if (
+      !distro ||
+      !view.config.wsl.some(
+        (target) => target.distro.toLowerCase() === distro.toLowerCase(),
+      )
+    )
+      return true;
+    source = wslTargetKey(distro);
+  }
+  if (
+    !distroOf(source) ||
+    isTargetRunning(source, inventory) ||
+    sharedProviderIds.has(provider.id)
+  )
+    return true;
+
+  return visibleTargetKeys(view.config, inventory).some((key) =>
+    Object.entries(view.records).some(
+      ([recordKey, record]) =>
+        sameTarget(recordKey, key) && record.providerId === provider.id,
+    ),
+  );
+}
 
 /** 跟随环境的「接入路由」偏好 */
 export const routeFlag = (config: AppTargetsConfig, key: TargetKey) => {

@@ -508,6 +508,15 @@ fn conflicts_are_reported_and_import_deduplicates() {
             .unwrap()
             .expect("matched");
         assert_eq!(first, second, "import deduplicates");
+        let imported = state
+            .db
+            .get_provider_by_id(&first, "claude")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            imported.meta.unwrap().imported_from_target.as_deref(),
+            Some("wsl:Ubuntu")
+        );
         let conflict = sync::inspect_target(state, &AppType::Claude, &spec, Some(wsl_dir.clone()))
             .unwrap()
             .expect("still a conflict");
@@ -521,6 +530,18 @@ fn conflicts_are_reported_and_import_deduplicates() {
             &wsl_dir.join("settings.json"),
             r#"{ "env": { "ANTHROPIC_BASE_URL": "https://a.example/api", "ANTHROPIC_AUTH_TOKEN": "sk-a" } }"#,
         );
+        assert_eq!(
+            sync::import_target(state, &AppType::Claude, &spec, Some(wsl_dir.clone()))
+                .unwrap()
+                .as_deref(),
+            Some("a")
+        );
+        let shared = state.db.get_provider_by_id("a", "claude").unwrap().unwrap();
+        assert!(shared
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.imported_from_target.as_ref())
+            .is_none());
         assert!(
             sync::inspect_target(state, &AppType::Claude, &spec, Some(wsl_dir))
                 .unwrap()

@@ -60,6 +60,7 @@ import { ProviderEnvSwitches } from "@/components/providers/ProviderEnvSwitches"
 import { useAppTargetsOverview } from "@/hooks/useAppTargets";
 import {
   isAppTargetApp,
+  isTargetProviderVisible,
   isWindowsOnly,
   wslCandidates,
   visibleTargetKeys,
@@ -177,6 +178,32 @@ export function ProviderList({
     providers,
     appId,
   );
+  const visibleProviders = useMemo(() => {
+    const sharedIds = new Set(
+      [
+        ...(targetView?.config.windows.enabled
+          ? [currentProviderId, switchMode?.directId]
+          : []),
+        switchMode?.routeId,
+        ...(switchMode?.queue ?? []),
+        ...(switchMode?.stackMembers.keys() ?? []),
+      ].filter((id): id is string => Boolean(id)),
+    );
+    return sortedProviders.filter((provider) =>
+      isTargetProviderVisible(
+        provider,
+        targetView,
+        targetsOverview.data?.inventory,
+        sharedIds,
+      ),
+    );
+  }, [
+    sortedProviders,
+    targetView,
+    targetsOverview.data?.inventory,
+    currentProviderId,
+    switchMode,
+  ]);
 
   const {
     data: opencodeLiveIds,
@@ -366,7 +393,7 @@ export function ProviderList({
   // 每家可被搜到的文字：名称、备注、官网、请求地址（请求地址要解析配置，只随列表变化重算）
   const searchIndex = useMemo(
     () =>
-      sortedProviders.map((provider) => ({
+      visibleProviders.map((provider) => ({
         provider,
         text: [
           provider.name,
@@ -378,7 +405,7 @@ export function ProviderList({
           .join("\n")
           .toLowerCase(),
       })),
-    [sortedProviders],
+    [visibleProviders],
   );
 
   const searchKeyword = isSearchOpen ? searchTerm.trim().toLowerCase() : "";
@@ -399,11 +426,11 @@ export function ProviderList({
   // 关掉面板就不再过滤：搜索词留着，下次打开还在，但列表不会悄悄少几家
   const filteredProviders = useMemo(() => {
     const keyword = searchKeyword;
-    if (!keyword) return sortedProviders;
+    if (!keyword) return visibleProviders;
     return searchIndex
       .filter((entry) => entry.text.includes(keyword))
       .map((entry) => entry.provider);
-  }, [searchKeyword, searchIndex, sortedProviders]);
+  }, [searchKeyword, searchIndex, visibleProviders]);
 
   const sections = useMemo<ProviderSection[]>(() => {
     if (switchMode) {
@@ -576,7 +603,7 @@ export function ProviderList({
     );
   }
 
-  if (sortedProviders.length === 0 && !dshAccountCard) {
+  if (visibleProviders.length === 0 && !dshAccountCard) {
     return (
       <div className="space-y-4">
         {piStateErrorNotice}

@@ -503,7 +503,11 @@ pub fn import_target(
         None => env_label(&spec.id),
     };
     let id = uuid::Uuid::new_v4().to_string();
-    let provider = Provider::with_id(id.clone(), name, settings_config, None);
+    let mut provider = Provider::with_id(id.clone(), name, settings_config, None);
+    provider.meta = Some(crate::provider::ProviderMeta {
+        imported_from_target: Some(spec.id.key()),
+        ..Default::default()
+    });
     state.db.save_provider(app.as_str(), &provider)?;
     log::info!(
         "[app-targets] 从 {} 导入了 {} 供应商卡 {id}",

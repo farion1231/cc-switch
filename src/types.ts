@@ -175,6 +175,8 @@ export interface LocalProxyRequestOverrides {
 
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
+  // 导入来源配置目标（如 wsl:Ubuntu），用于按 WSL 运行状态显示卡片
+  importedFromTarget?: string;
   // 自定义端点：以 URL 为键，值为端点信息
   custom_endpoints?: Record<string, CustomEndpoint>;
   // 是否在切换/同步到 live 时应用通用配置片段
