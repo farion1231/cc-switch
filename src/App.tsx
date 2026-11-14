@@ -1578,6 +1578,7 @@ function App() {
             <Button
               variant="solid"
               size="regular"
+              data-tour="add-provider"
               onClick={() => openAddProvider(currentModeView)}
             >
               <Plus className="h-4 w-4" />
@@ -2071,7 +2072,13 @@ function App() {
       />
 
       <DeepLinkImportDialog />
-      <FirstRunNoticeDialog />
+      <FirstRunNoticeDialog
+        onBeforeOpen={() => {
+          // 教程要圈的元素都在供应商页上：从设置 → 关于重新打开时先回到这一页
+          closeProviderPanels();
+          setCurrentView("providers");
+        }}
+      />
       <NewLayoutDialog />
       <WhatsNewNotice />
     </WindowControlsContext.Provider>
