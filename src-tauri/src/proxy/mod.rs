@@ -31,6 +31,7 @@ pub mod privacy_filter;
 pub mod provider_router;
 pub mod providers;
 pub mod response_processor;
+pub(crate) mod responses_compat;
 pub(crate) mod server;
 pub mod session;
 pub(crate) mod sse;
