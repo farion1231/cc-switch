@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Save } from "lucide-react";
 import { toast } from "@/lib/toast";
@@ -14,8 +14,12 @@ const EnvPanel: React.FC = () => {
   const saveEnvMutation = useSaveOpenClawEnv();
   const [editorValue, setEditorValue] = useState("{}");
   const [isDarkMode, setIsDarkMode] = useState(false);
+  // 用户改过、还没保存时，任何一次 refetch（窗口重新聚焦、别的面板触发
+  // invalidateQueries）都不能用服务端旧值盖掉编辑器里的内容。
+  const dirtyRef = useRef(false);
 
   useEffect(() => {
+    if (dirtyRef.current) return;
     const nextValue =
       envData && Object.keys(envData).length > 0
         ? JSON.stringify(envData, null, 2)
@@ -38,10 +42,16 @@ const EnvPanel: React.FC = () => {
     return () => observer.disconnect();
   }, []);
 
+  const handleEditorChange = (value: string) => {
+    dirtyRef.current = true;
+    setEditorValue(value);
+  };
+
   const handleSave = async () => {
     try {
       const env = parseOpenClawEnvEditorValue(editorValue);
       await saveEnvMutation.mutateAsync(env);
+      dirtyRef.current = false;
       toast.success(t("openclaw.env.saveSuccess"));
     } catch (error) {
       const detail = extractErrorMessage(error);
@@ -85,7 +95,7 @@ const EnvPanel: React.FC = () => {
 
       <JsonEditor
         value={editorValue}
-        onChange={setEditorValue}
+        onChange={handleEditorChange}
         darkMode={isDarkMode}
         rows={18}
         showValidation={true}

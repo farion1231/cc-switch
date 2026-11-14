@@ -266,7 +266,20 @@ pub async fn handle_messages(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
-    handle_messages_for_app(state, request, AppType::Claude, "Claude", "claude", None).await
+    // `/claude/v1/messages` 是 `/v1/messages` 的别名（客户端可以把 base_url 配成
+    // `http://127.0.0.1:<port>/claude`）。前缀必须在进入转发前剥掉，否则原生
+    // Anthropic 透传（needs_transform == false）会把 `/claude/v1/messages` 直接拼到
+    // 上游 base_url 后面，得到 `.../claude/v1/messages` → 404。转换路径会自己归一化，
+    // 只有透传路径依赖这里。
+    handle_messages_for_app(
+        state,
+        request,
+        AppType::Claude,
+        "Claude",
+        "claude",
+        Some("/claude"),
+    )
+    .await
 }
 
 pub async fn handle_claude_desktop_messages(
@@ -2624,6 +2637,20 @@ fn compact_error_message(message: &str, max_chars: usize) -> String {
 // Gemini API 处理器
 // ============================================================================
 
+/// 路由别名前缀：`/gemini/v1beta/*`、`/gemini/v1/*` 指向 `handle_gemini`。
+pub(crate) const GEMINI_ROUTE_ALIAS: &str = "/gemini";
+
+/// 剥掉请求路径上的路由别名前缀（`/claude`、`/gemini` 这类前缀），让上游只收到原生路径。
+///
+/// 只在别名后紧跟 `/` 时才剥离，`/geminixyz` 这种同前缀的其它路径保持原样。
+/// 返回值借用原串，不额外分配。
+pub(crate) fn strip_route_alias<'a>(endpoint: &'a str, alias: &str) -> &'a str {
+    match endpoint.strip_prefix(alias) {
+        Some(rest) if rest.starts_with('/') => rest,
+        _ => endpoint,
+    }
+}
+
 /// 处理 Gemini API 请求（透传，包括查询参数）
 pub async fn handle_gemini(
     State(state): State<ProxyState>,
@@ -2668,6 +2695,10 @@ pub async fn handle_gemini(
         .path_and_query()
         .map(|pq| pq.as_str())
         .unwrap_or(uri.path());
+    // `/gemini/v1beta/*`、`/gemini/v1/*` 是原生路径的别名（客户端可以把 base_url
+    // 配成 `http://127.0.0.1:<port>/gemini`）。前缀不剥掉的话会被原样拼到上游
+    // base_url 后面，得到 `.../gemini/v1beta/models/...` → 404。
+    let endpoint = strip_route_alias(endpoint, GEMINI_ROUTE_ALIAS);
 
     let is_stream = body
         .get("stream")
@@ -5635,5 +5666,36 @@ mod stack_tests {
         .expect("models");
         let (_, body) = json_of(response).await;
         assert_eq!(body, json!({ "data": [], "has_more": false }));
+    }
+}
+
+#[cfg(test)]
+mod route_alias_tests {
+    use super::{strip_route_alias, GEMINI_ROUTE_ALIAS};
+
+    #[test]
+    fn strips_gemini_alias_but_keeps_query_and_native_path() {
+        assert_eq!(
+            strip_route_alias("/gemini/v1beta/models/x:generateContent?alt=sse", GEMINI_ROUTE_ALIAS),
+            "/v1beta/models/x:generateContent?alt=sse"
+        );
+        assert_eq!(
+            strip_route_alias("/gemini/v1/models", GEMINI_ROUTE_ALIAS),
+            "/v1/models"
+        );
+    }
+
+    #[test]
+    fn leaves_native_path_and_lookalike_untouched() {
+        assert_eq!(
+            strip_route_alias("/v1beta/models/x:generateContent", GEMINI_ROUTE_ALIAS),
+            "/v1beta/models/x:generateContent"
+        );
+        // 仅前缀相同、但不是别名路径的串不能被吃掉
+        assert_eq!(
+            strip_route_alias("/geminixyz/v1beta/models", GEMINI_ROUTE_ALIAS),
+            "/geminixyz/v1beta/models"
+        );
+        assert_eq!(strip_route_alias("/gemini", GEMINI_ROUTE_ALIAS), "/gemini");
     }
 }
