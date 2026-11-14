@@ -481,9 +481,14 @@ fn push_provider_model_filters(
     }
 }
 
+fn strip_model_prefix_sql(expr: &str) -> String {
+    format!("REPLACE(TRIM({expr}), RTRIM(TRIM({expr}), REPLACE(TRIM({expr}), '/', '')), '')")
+}
+
 /// 跨来源去重的模型匹配条件。
 ///
-/// 常规路径按上游回显模型匹配。仅 Codex 会话允许再匹配代理记录的请求模型：
+/// 常规路径按上游回显模型匹配（支持剥离 `provider/` 等命名空间前缀，如 `antigravity/`）。
+/// 仅 Codex 会话允许再匹配代理记录的请求模型：
 /// Codex rollout 保留客户端别名，而代理 `model` 可能已被映射为实际上游模型。
 /// 空白或 `unknown` 请求模型不能放宽匹配，避免无有效别名时扩大启发式去重范围。
 fn session_proxy_model_match_sql(
@@ -493,17 +498,26 @@ fn session_proxy_model_match_sql(
     session_app_type: &str,
     session_data_source: &str,
 ) -> String {
+    let p_model = strip_model_prefix_sql(proxy_model);
+    let s_model = strip_model_prefix_sql(session_model);
+    let p_req_model = strip_model_prefix_sql(proxy_request_model);
     format!(
         "(
-            LOWER({proxy_model}) = LOWER({session_model})
-            OR LOWER({proxy_model}) = 'unknown'
-            OR LOWER({session_model}) = 'unknown'
+            (
+                NULLIF({p_model}, '') IS NOT NULL
+                AND NULLIF({s_model}, '') IS NOT NULL
+                AND LOWER({p_model}) = LOWER({s_model})
+            )
+            OR LOWER(TRIM({proxy_model})) = 'unknown'
+            OR LOWER(TRIM({session_model})) = 'unknown'
             OR (
                 {session_app_type} = 'codex'
                 AND {session_data_source} = 'codex_session'
                 AND NULLIF(TRIM({proxy_request_model}), '') IS NOT NULL
                 AND LOWER(TRIM({proxy_request_model})) <> 'unknown'
-                AND LOWER(TRIM({proxy_request_model})) = LOWER(TRIM({session_model}))
+                AND NULLIF({p_req_model}, '') IS NOT NULL
+                AND NULLIF({s_model}, '') IS NOT NULL
+                AND LOWER({p_req_model}) = LOWER({s_model})
             )
         )"
     )
@@ -3465,6 +3479,174 @@ mod tests {
             params!["gpt-5.6-sol-joybuilder", "codex-proxy-alias"],
         )?;
         assert!(!has_matching_proxy_usage_log(&conn, &key)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_matching_proxy_log_matches_codex_prefix_model() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        insert_usage_log(
+            &conn,
+            "codex-proxy-prefix",
+            "codex",
+            "provider-cpa",
+            "antigravity/gemini-3.8-flash-high",
+            "proxy",
+            1_000,
+            2_341,
+            228,
+            116_000,
+            0,
+            200,
+            "0.08",
+        )?;
+        conn.execute(
+            "UPDATE proxy_request_logs SET request_model = ?1 WHERE request_id = ?2",
+            params!["antigravity/gemini-3.8-flash-high", "codex-proxy-prefix"],
+        )?;
+
+        // 会话日志经过 normalize_codex_model 剥离了前缀
+        let key = DedupKey {
+            app_type: "codex",
+            data_source: "codex_session",
+            model: "gemini-3.8-flash-high",
+            input_tokens: 2_341,
+            output_tokens: 228,
+            cache_read_tokens: 116_000,
+            cache_creation_tokens: 0,
+            created_at: 1_001,
+        };
+
+        assert!(has_matching_proxy_usage_log(&conn, &key)?);
+        assert!(should_skip_session_insert(
+            &conn,
+            "codex-session-prefix",
+            &key
+        )?);
+
+        // 如果代理的 request_model 带有前缀，而实际 model 被路由改写，也能识别
+        conn.execute(
+            "UPDATE proxy_request_logs SET model = ?1, request_model = ?2 WHERE request_id = ?3",
+            params![
+                "gemini-3.8-flash-high",
+                "antigravity/gemini-3.8-flash-high",
+                "codex-proxy-prefix"
+            ],
+        )?;
+        assert!(has_matching_proxy_usage_log(&conn, &key)?);
+
+        // 多级前缀（如 cpa/antigravity/gemini-3.8-flash-high）同样与最后一个 '/' 之后的模型对齐
+        conn.execute(
+            "UPDATE proxy_request_logs SET model = ?1, request_model = ?1 WHERE request_id = ?2",
+            params![
+                "cpa/antigravity/gemini-3.8-flash-high",
+                "codex-proxy-prefix"
+            ],
+        )?;
+        assert!(has_matching_proxy_usage_log(&conn, &key)?);
+        assert!(should_skip_session_insert(
+            &conn,
+            "codex-session-prefix",
+            &key
+        )?);
+
+        // 模型名不同则不误伤
+        let mut different_model = key;
+        different_model.model = "gemini-2.5-pro";
+        assert!(!has_matching_proxy_usage_log(&conn, &different_model)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_effective_filter_dedups_codex_prefix_model() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        insert_usage_log(
+            &conn,
+            "codex-proxy-prefix",
+            "codex",
+            "provider-cpa",
+            "antigravity/gemini-3.8-flash-high",
+            "proxy",
+            1_000,
+            2_341,
+            228,
+            116_000,
+            0,
+            200,
+            "0.08",
+        )?;
+        conn.execute(
+            "UPDATE proxy_request_logs SET request_model = ?1 WHERE request_id = ?2",
+            params!["antigravity/gemini-3.8-flash-high", "codex-proxy-prefix"],
+        )?;
+        insert_usage_log(
+            &conn,
+            "codex-session-prefix",
+            "codex",
+            "_codex_session",
+            "gemini-3.8-flash-high",
+            "codex_session",
+            1_001,
+            2_341,
+            228,
+            116_000,
+            0,
+            200,
+            "0.08",
+        )?;
+
+        let filter = effective_usage_log_filter("l");
+        let sql = format!(
+            "SELECT request_id FROM proxy_request_logs l WHERE {filter} ORDER BY request_id"
+        );
+        let request_ids = conn
+            .prepare(&sql)?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(request_ids, vec!["codex-proxy-prefix".to_string()]);
+
+        // range filter (JOIN 路径) 同样正确去重
+        let range_filter = effective_usage_log_filter_for_range(&conn, "l", None, None)?;
+        let range_sql = format!(
+            "SELECT request_id FROM proxy_request_logs l WHERE {range_filter} ORDER BY request_id"
+        );
+        let range_ids = conn
+            .prepare(&range_sql)?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(range_ids, vec!["codex-proxy-prefix".to_string()]);
+
+        // 多级前缀在单行过滤与 range JOIN 中也能正确去重
+        conn.execute(
+            "UPDATE proxy_request_logs SET model = ?1, request_model = ?1 WHERE request_id = ?2",
+            params![
+                "cpa/antigravity/gemini-3.8-flash-high",
+                "codex-proxy-prefix"
+            ],
+        )?;
+        let filter = effective_usage_log_filter("l");
+        let sql = format!(
+            "SELECT request_id FROM proxy_request_logs l WHERE {filter} ORDER BY request_id"
+        );
+        let request_ids = conn
+            .prepare(&sql)?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(request_ids, vec!["codex-proxy-prefix".to_string()]);
+
+        let range_filter = effective_usage_log_filter_for_range(&conn, "l", None, None)?;
+        let range_sql = format!(
+            "SELECT request_id FROM proxy_request_logs l WHERE {range_filter} ORDER BY request_id"
+        );
+        let range_ids = conn
+            .prepare(&range_sql)?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(range_ids, vec!["codex-proxy-prefix".to_string()]);
 
         Ok(())
     }
