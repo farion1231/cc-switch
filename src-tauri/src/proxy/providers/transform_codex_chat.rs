@@ -386,6 +386,23 @@ pub fn responses_to_chat_completions_with_reasoning(
             obj.remove("parallel_tool_calls");
         }
     }
+    // Codex 以为在跟内置 openai 说话时会下发 Responses 专有的
+    // `stream_options.reasoning_summary_delivery`；第三方 Chat 上游不认这个字段
+    // （Mistral 直接 `extra_forbidden` 422）。这里只保留 include_usage，删完为空
+    // 就整个键去掉，避免严格的校验器拒收空对象。
+    if let Some(obj) = result.as_object_mut() {
+        let now_empty = obj
+            .get_mut("stream_options")
+            .and_then(Value::as_object_mut)
+            .map(|options| {
+                options.remove("reasoning_summary_delivery");
+                options.is_empty()
+            })
+            .unwrap_or(false);
+        if now_empty {
+            obj.remove("stream_options");
+        }
+    }
     // OpenAI 兼容上游在流式下默认不在 SSE 里返回 usage，必须显式声明
     // include_usage 才会在末尾吐 usage chunk。Codex CLI 用 Responses 协议、
     // 自身不带 stream_options，缺这一注入会导致 kimi/MiniMax 等第三方流式请求的
