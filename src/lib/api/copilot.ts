@@ -152,6 +152,8 @@ export interface QuotaDetail {
   remaining: number;
   percent_remaining: number;
   unlimited: boolean;
+  /** 当前计划是否含这一项（Free 的 premium_interactions 是 false）；旧响应没有 */
+  has_quota?: boolean;
 }
 
 /**
@@ -168,6 +170,8 @@ export interface QuotaSnapshots {
  */
 export interface CopilotUsageResponse {
   copilot_plan: string;
+  /** 订阅 SKU（`free_limited_copilot` / `max_monthly_subscriber_quota` …），旧版后端没有 */
+  access_type_sku?: string;
   quota_reset_date: string;
   quota_snapshots: QuotaSnapshots;
 }
@@ -179,6 +183,23 @@ export interface CopilotUsageResponse {
  */
 export async function copilotGetUsage(): Promise<CopilotUsageResponse> {
   return invoke<CopilotUsageResponse>("copilot_get_usage");
+}
+
+/** Copilot CLI 当前登录的 GitHub 账号，以及授权中心里与它对应的账号。 */
+export interface CopilotCliSignedInAccount {
+  login: string;
+  githubDomain: string;
+  accountId: string | null;
+}
+
+/**
+ * 读 Copilot CLI 当前登录的账号（`~/.copilot/config.json`），并在授权中心里按用户名和
+ * 域名找对应账号。Copilot CLI 没登录时返回 `null`。
+ */
+export async function copilotCliSignedInAccount(): Promise<CopilotCliSignedInAccount | null> {
+  return invoke<CopilotCliSignedInAccount | null>(
+    "copilot_cli_signed_in_account",
+  );
 }
 
 // ==================== 多账号管理 API ====================

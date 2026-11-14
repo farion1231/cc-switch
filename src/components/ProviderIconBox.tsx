@@ -1,5 +1,5 @@
 import { ProviderIcon } from "@/components/ProviderIcon";
-import { isTileIcon } from "@/icons/extracted";
+import { isTileIcon, needsLightBacking } from "@/icons/extracted";
 import { cn } from "@/lib/utils";
 import { isCustomIcon } from "@/utils/customIcon";
 
@@ -31,6 +31,8 @@ export function ProviderIconBox({
 }: ProviderIconBoxProps) {
   // 用户上传的图标在编码时已经按 tile / 透明 logo 留好了白，统一铺满整框
   const tile = isCustomIcon(icon) || isTileIcon(icon);
+  // 透明底的位图 / 上传图标、适配后仍带近黑笔画的图标：深色下垫浅色衬底，否则看不见
+  const lightBacking = isCustomIcon(icon) || needsLightBacking(icon);
   return (
     <span
       aria-hidden="true"
@@ -41,6 +43,7 @@ export function ProviderIconBox({
             "after:pointer-events-none after:absolute after:inset-0 after:rounded-[inherit] after:ring-1 after:ring-inset after:ring-black/10 dark:after:ring-white/10"
           : "border border-border",
         className,
+        lightBacking && "dark:bg-white dark:text-neutral-900",
       )}
     >
       <ProviderIcon

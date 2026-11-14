@@ -26,9 +26,11 @@ pub struct XaiOAuthState(pub Arc<RwLock<XaiOAuthManager>>);
 /// - `account_id` 未指定时回退到 `XaiOAuthManager` 的默认账号
 /// - 没有任何账号时返回 `not_found`，前端 `SubscriptionQuotaView` 会静默不渲染
 /// - 瞬时传输失败以 `Err` 传播（前端 reject → retry + 保留上次成功值）
+/// - `with_plan`：顺带问套餐（多一个请求），只有前端要显示时才开，托盘轮询不问
 pub(crate) async fn query_xai_oauth_quota_for(
     state: &XaiOAuthState,
     account_id: Option<String>,
+    with_plan: bool,
 ) -> Result<SubscriptionQuota, String> {
     let manager = state.0.read().await;
 
@@ -57,12 +59,26 @@ pub(crate) async fn query_xai_oauth_quota_for(
         }
     };
 
-    crate::services::subscription_grok::query_grok_quota(
-        &token,
-        "xai_oauth",
-        "Please re-login via cc-switch.",
-    )
-    .await
+    // 套餐（SuperGrok / Heavy）另问 Grok CLI 的设置接口，和额度并行；问不到只是不显示
+    let (quota, plan) = tokio::join!(
+        crate::services::subscription_grok::query_grok_quota(
+            &token,
+            "xai_oauth",
+            "Please re-login via cc-switch.",
+        ),
+        async {
+            if with_plan {
+                crate::services::subscription_grok::query_grok_plan(&token).await
+            } else {
+                None
+            }
+        },
+    );
+    let mut quota = quota?;
+    if quota.success {
+        quota.plan_name = plan;
+    }
+    Ok(quota)
 }
 
 /// 查询 xAI OAuth (SuperGrok 反代) 订阅额度
@@ -71,7 +87,7 @@ pub async fn get_xai_oauth_quota(
     account_id: Option<String>,
     state: State<'_, XaiOAuthState>,
 ) -> Result<SubscriptionQuota, String> {
-    query_xai_oauth_quota_for(&state, account_id).await
+    query_xai_oauth_quota_for(&state, account_id, true).await
 }
 
 #[derive(Debug, Deserialize)]

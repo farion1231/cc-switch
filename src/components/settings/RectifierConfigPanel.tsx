@@ -68,9 +68,6 @@ export function RectifierConfigPanel() {
       <div className="flex items-center justify-between">
         <div className="space-y-0.5">
           <Label>{t("settings.advanced.rectifier.enabled")}</Label>
-          <p className="text-xs text-fg-2">
-            {t("settings.advanced.rectifier.enabledDescription")}
-          </p>
         </div>
         <Switch
           checked={config.enabled}

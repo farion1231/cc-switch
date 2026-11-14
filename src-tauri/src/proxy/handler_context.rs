@@ -9,7 +9,10 @@ use crate::proxy::{
     extract_session_id,
     forwarder::RequestForwarder,
     server::ProxyState,
-    types::{AppProxyConfig, CopilotOptimizerConfig, OptimizerConfig, RectifierConfig},
+    types::{
+        AppProxyConfig, CopilotOptimizerConfig, OptimizerConfig, PrivacyFilterConfig,
+        RectifierConfig,
+    },
     ProxyError,
 };
 use axum::http::HeaderMap;
@@ -71,6 +74,8 @@ pub struct RequestContext {
     pub optimizer_config: OptimizerConfig,
     /// Copilot 优化器配置
     pub copilot_optimizer_config: CopilotOptimizerConfig,
+    /// 隐私过滤器配置
+    pub privacy_filter_config: PrivacyFilterConfig,
     /// Stack 模型的请求（`mode::stack`）：直达 Stack 里的那一家，不读也不写任何路由状态。
     pub is_stack: bool,
 }
@@ -111,10 +116,11 @@ impl RequestContext {
         let rectifier_config = state.db.get_rectifier_config().unwrap_or_default();
         let optimizer_config = state.db.get_optimizer_config().unwrap_or_default();
         let copilot_optimizer_config = state.db.get_copilot_optimizer_config().unwrap_or_default();
+        let privacy_filter_config = state.db.get_privacy_filter_config().unwrap_or_default();
 
         // 提取 Session ID
         let session_result = extract_session_id(headers, body, app_type_str);
-        let session_id = session_result.session_id.clone();
+        let session_id = session_result.session_id;
 
         log::debug!(
             "[{}] Session ID: {} (from {:?}, client_provided: {})",
@@ -139,10 +145,11 @@ impl RequestContext {
                     target.upstream_model,
                     session_id
                 );
+                let current_provider_id = target.provider.id.clone();
                 (
                     target.provider.clone(),
-                    vec![target.provider.clone()],
-                    target.provider.id,
+                    vec![target.provider],
+                    current_provider_id,
                     target.original_model,
                 )
             }
@@ -174,7 +181,11 @@ impl RequestContext {
                     // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
                     state
                         .provider_router
-                        .select_providers_with_current(app_type_str, current_provider)
+                        .select_providers_with_current(
+                            app_type_str,
+                            current_provider,
+                            app_config.auto_failover_enabled,
+                        )
                         .await
                         .map_err(|e| match e {
                             crate::error::AppError::AllProvidersCircuitOpen => {
@@ -220,6 +231,7 @@ impl RequestContext {
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
+            privacy_filter_config,
             is_stack,
         })
     }
@@ -291,13 +303,15 @@ impl RequestContext {
             max_retries,
         )
         .stack_request(self.is_stack)
+        .failover_chain(self.app_config.auto_failover_enabled)
+        .privacy_filter(self.privacy_filter_config.clone())
     }
 
     /// 获取 Provider 列表（用于故障转移）
     ///
     /// 返回在创建上下文时已选择的 providers，避免重复调用 select_providers()
-    pub fn get_providers(&self) -> Vec<Provider> {
-        self.providers.clone()
+    pub fn get_providers(&self) -> &[Provider] {
+        &self.providers
     }
 
     /// 计算请求延迟（毫秒）

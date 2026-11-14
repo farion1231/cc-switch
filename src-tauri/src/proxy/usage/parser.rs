@@ -6,6 +6,7 @@
 //! - Codex API (非流式和流式)
 //! - Gemini API (非流式和流式)
 
+use crate::proxy::providers::transform::chat_completion_body;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -65,6 +66,18 @@ fn response_id(body: &Value, field: &str) -> Option<String> {
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
+}
+
+/// 读取 Gemini usageMetadata 的 token 计数字段。
+///
+/// Generative Language API 序列化为 JSON 数字，而 Vertex AI 遵循 protobuf 的
+/// int64→JSON string 映射返回字符串；两种形状都要认，否则 Vertex 形状的
+/// usage 会被整体丢弃。
+fn gemini_token_count(value: &Value) -> Option<u32> {
+    value
+        .as_u64()
+        .or_else(|| value.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+        .map(|n| n as u32)
 }
 
 /// Token 使用量统计
@@ -267,6 +280,36 @@ impl TokenUsage {
         }
     }
 
+    /// 从本地转换层（如 Gemini Native → Anthropic）生成的 Claude SSE 解析。
+    ///
+    /// 转换层的 `message_delta.usage` 是整次请求的最终快照（由上游最后一帧 usage 换算而来），
+    /// 比 `message_start` 里的首帧数字更权威：Gemini 的 promptTokenCount 会在末帧变大，
+    /// 缓存命中数也可能只在末帧出现。通用解析只接受更小的 delta input，会把偏小的首帧值留下，
+    /// 所以这里以最后一个带 input_tokens 的 message_delta 为准覆盖 input / cache_read / output。
+    pub fn from_converted_claude_stream_events(events: &[Value]) -> Option<Self> {
+        let mut usage = Self::from_claude_stream_events(events)?;
+        let final_usage = events.iter().rev().find_map(|event| {
+            (event.get("type").and_then(|v| v.as_str()) == Some("message_delta"))
+                .then(|| event.get("usage"))
+                .flatten()
+                .filter(|u| u.get("input_tokens").and_then(|v| v.as_u64()).is_some())
+        });
+        if let Some(final_usage) = final_usage {
+            let read = |key: &str| {
+                final_usage
+                    .get(key)
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32)
+            };
+            usage.input_tokens = read("input_tokens").unwrap_or(0);
+            usage.cache_read_tokens = read("cache_read_input_tokens").unwrap_or(0);
+            if let Some(output) = read("output_tokens") {
+                usage.output_tokens = output;
+            }
+        }
+        usage.has_billable_tokens().then_some(usage)
+    }
+
     /// 从 Codex API 非流式响应解析
     pub fn from_codex_response(body: &Value) -> Option<Self> {
         let usage = body.get("usage");
@@ -315,6 +358,8 @@ impl TokenUsage {
     ///
     /// 注意：记录原始 input_tokens，费用计算时再减去 cached_tokens
     pub fn from_codex_response_auto(body: &Value) -> Option<Self> {
+        let body = chat_completion_body(body);
+        let body = body.as_ref();
         let usage = body.get("usage")?;
 
         // 检测格式：OpenAI 使用 prompt_tokens，Codex 使用 input_tokens
@@ -368,6 +413,9 @@ impl TokenUsage {
 
     /// 从 OpenAI Chat Completions API 响应解析 (prompt_tokens, completion_tokens)
     pub fn from_openai_response(body: &Value) -> Option<Self> {
+        // 包在 `data` 里的 Chat 响应（#5658）按解包后的字段取 usage / model / id
+        let body = chat_completion_body(body);
+        let body = body.as_ref();
         let usage = body.get("usage")?;
 
         // OpenAI 使用 prompt_tokens 和 completion_tokens
@@ -425,8 +473,8 @@ impl TokenUsage {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let prompt_tokens = usage.get("promptTokenCount")?.as_u64()? as u32;
-        let total_tokens = usage.get("totalTokenCount")?.as_u64()? as u32;
+        let prompt_tokens = usage.get("promptTokenCount").and_then(gemini_token_count)?;
+        let total_tokens = usage.get("totalTokenCount").and_then(gemini_token_count)?;
 
         // 输出 tokens = 总 tokens - 输入 tokens
         // 这包含了 candidatesTokenCount + thoughtsTokenCount
@@ -437,8 +485,8 @@ impl TokenUsage {
             output_tokens,
             cache_read_tokens: usage
                 .get("cachedContentTokenCount")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32,
+                .and_then(gemini_token_count)
+                .unwrap_or(0),
             cache_creation_tokens: 0,
             cache_creation_1h_tokens: 0,
             model,
@@ -447,7 +495,6 @@ impl TokenUsage {
     }
 
     /// 从 Gemini API 流式响应解析
-    #[allow(dead_code)]
     pub fn from_gemini_stream_chunks(chunks: &[Value]) -> Option<Self> {
         let mut total_input = 0u32;
         let mut total_tokens = 0u32;
@@ -460,20 +507,20 @@ impl TokenUsage {
                 // 输入 tokens (通常在所有 chunk 中保持不变)
                 total_input = usage
                     .get("promptTokenCount")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0) as u32;
+                    .and_then(gemini_token_count)
+                    .unwrap_or(0);
 
                 // 总 tokens (包含输入 + 输出 + 思考)
                 total_tokens = usage
                     .get("totalTokenCount")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0) as u32;
+                    .and_then(gemini_token_count)
+                    .unwrap_or(0);
 
                 // 缓存读取 tokens
                 total_cache_read = usage
                     .get("cachedContentTokenCount")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0) as u32;
+                    .and_then(gemini_token_count)
+                    .unwrap_or(0);
             }
 
             // 提取实际使用的模型名称（modelVersion 字段）
@@ -791,6 +838,44 @@ mod tests {
     }
 
     #[test]
+    fn test_gemini_response_accepts_vertex_string_token_counts() {
+        // Vertex AI 遵循 protobuf int64→JSON string 映射返回 token 计数
+        let response = json!({
+            "modelVersion": "gemini-3.8-flash",
+            "usageMetadata": {
+                "promptTokenCount": "8383",
+                "totalTokenCount": "8547",
+                "cachedContentTokenCount": "20"
+            }
+        });
+
+        let usage = TokenUsage::from_gemini_response(&response).unwrap();
+        assert_eq!(usage.input_tokens, 8383);
+        // output_tokens = totalTokenCount - promptTokenCount = 8547 - 8383 = 164
+        assert_eq!(usage.output_tokens, 164);
+        assert_eq!(usage.cache_read_tokens, 20);
+        assert_eq!(usage.model.as_deref(), Some("gemini-3.8-flash"));
+    }
+
+    #[test]
+    fn test_gemini_stream_chunks_accept_vertex_string_token_counts() {
+        let chunks = vec![json!({
+            "responseId": "resp_vertex",
+            "usageMetadata": {
+                "promptTokenCount": "163766",
+                "totalTokenCount": "163908",
+                "cachedContentTokenCount": "160660"
+            }
+        })];
+
+        let usage = TokenUsage::from_gemini_stream_chunks(&chunks).unwrap();
+        assert_eq!(usage.input_tokens, 163766);
+        assert_eq!(usage.output_tokens, 142);
+        assert_eq!(usage.cache_read_tokens, 160660);
+        assert_eq!(usage.message_id.as_deref(), Some("resp_vertex"));
+    }
+
+    #[test]
     fn test_gemini_response_with_thoughts() {
         // 测试包含 thoughtsTokenCount 的实际响应
         // 这是用户报告的真实场景
@@ -980,6 +1065,49 @@ mod tests {
     }
 
     #[test]
+    fn test_converted_stream_takes_final_delta_input_even_when_larger() {
+        let events = vec![
+            json!({
+                "type": "message_start",
+                "message": {
+                    "id": "resp_g",
+                    "model": "gemini-pro",
+                    "usage": {"input_tokens": 10000, "output_tokens": 1}
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {"input_tokens": 12000, "output_tokens": 10}
+            }),
+        ];
+
+        let usage = TokenUsage::from_converted_claude_stream_events(&events).unwrap();
+        assert_eq!(usage.input_tokens, 12000);
+        assert_eq!(usage.output_tokens, 10);
+        assert_eq!(usage.cache_read_tokens, 0);
+        assert_eq!(usage.model.as_deref(), Some("gemini-pro"));
+    }
+
+    #[test]
+    fn test_converted_stream_final_delta_owns_cache_split() {
+        let events = vec![
+            json!({
+                "type": "message_start",
+                "message": {"usage": {"input_tokens": 10000, "output_tokens": 0}}
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {"input_tokens": 25000, "output_tokens": 10, "cache_read_input_tokens": 5000}
+            }),
+        ];
+
+        let usage = TokenUsage::from_converted_claude_stream_events(&events).unwrap();
+        assert_eq!(usage.input_tokens, 25000);
+        assert_eq!(usage.cache_read_tokens, 5000);
+        assert_eq!(usage.output_tokens, 10);
+    }
+
+    #[test]
     fn test_claude_stream_keeps_start_when_delta_input_is_larger() {
         // 正常 Anthropic 语义下，message_start 的 input_tokens 已经可信；
         // 如果 delta input 变大，不应覆盖 start input/cache。
@@ -1062,6 +1190,33 @@ mod tests {
         assert_eq!(usage.output_tokens, 500);
         assert_eq!(usage.cache_read_tokens, 200);
         assert_eq!(usage.model, Some("gpt-4o".to_string()));
+    }
+
+    #[test]
+    fn test_openai_response_reads_data_envelope() {
+        // #5658：包在 data 里的 Chat 响应也要记账
+        let body = json!({
+            "success": true,
+            "data": {
+                "id": "chatcmpl-wrapped",
+                "model": "cline-pass/deepseek-v4.1-flash",
+                "choices": [{"message": {"role": "assistant", "content": "OK"}}],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 1}
+            }
+        });
+
+        for usage in [
+            TokenUsage::from_openai_response(&body).unwrap(),
+            TokenUsage::from_codex_response_auto(&body).unwrap(),
+        ] {
+            assert_eq!(usage.input_tokens, 12);
+            assert_eq!(usage.output_tokens, 1);
+            assert_eq!(
+                usage.model.as_deref(),
+                Some("cline-pass/deepseek-v4.1-flash")
+            );
+            assert_eq!(usage.message_id.as_deref(), Some("chatcmpl-wrapped"));
+        }
     }
 
     #[test]

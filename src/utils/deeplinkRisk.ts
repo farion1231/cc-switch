@@ -109,29 +109,38 @@ function isInlineCommandFlag(arg: string): boolean {
  * "这个地址看着像内网，你确认吗"的提示，字面量匹配已经够用。
  */
 /**
- * 取出主机的 IPv4 四元组，兼容 IPv4-mapped IPv6。
+ * 取出主机的 IPv4 四元组，兼容 IPv4-mapped, IPv4-compatible, SIIT 与 NAT64 等 IPv6 嵌入形式。
  *
- * `new URL("http://[::ffff:127.0.0.1]/")` 会把主机**归一成十六进制**
- * `[::ffff:7f00:1]`，点分形式在这一步就消失了，只按 `\d+\.\d+\.\d+\.\d+`
- * 匹配会整类漏掉——`[::ffff:169.254.169.254]` 同理会绕过内网判定。
+ * `new URL()` 会把 `[::ffff:127.0.0.1]` 归一成 `[::ffff:7f00:1]`，
+ * 把 `[::127.0.0.1]` 归一成 `[::7f00:1]`，
+ * 把 `[64:ff9b::127.0.0.1]` 归一成 `[64:ff9b::7f00:1]`，
+ * 点分形式在这一步消失。若仅匹配标准点分与 `::ffff:`，
+ * `[::169.254.169.254]`、`[::ffff:0:169.254.169.254]` 与 NAT64 前缀均会绕过内网判定。
  */
 function extractIpv4Octets(bare: string): [number, number] | null {
   const dotted = bare.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (dotted) return [Number(dotted[1]), Number(dotted[2])];
 
-  // ::ffff:7f00:1 → 0x7f00 0x0001 → 127.0.0.1
-  const mapped = bare.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
-  if (mapped) {
-    const high = parseInt(mapped[1], 16);
+  // IPv6 嵌入 IPv4 形式（十六进制归一化）：
+  // - IPv4-mapped: ::ffff:7f00:1
+  // - SIIT IPv4-translated (RFC 6052 / RFC 7915): ::ffff:0:7f00:1
+  // - NAT64 well-known / local prefix (RFC 6052 / RFC 8215): 64:ff9b::7f00:1, 64:ff9b:1::7f00:1
+  // - IPv4-compatible (RFC 4291): ::7f00:1
+  const hexMapped = bare.match(
+    /^(?:(?:64:ff9b(?::1)?|)::|::ffff:(?:0:)?)([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i,
+  );
+  if (hexMapped) {
+    const high = parseInt(hexMapped[1], 16);
     return [(high >> 8) & 0xff, high & 0xff];
   }
 
-  // 少数实现保留点分尾巴：::ffff:127.0.0.1
-  const mappedDotted = bare.match(
-    /^::ffff:(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/,
+  // 少数实现或原始形式保留点分尾巴：
+  // ::ffff:127.0.0.1, ::ffff:0:127.0.0.1, 64:ff9b::127.0.0.1, ::127.0.0.1
+  const dottedMapped = bare.match(
+    /^(?:(?:64:ff9b(?::1)?|)::|::ffff:(?:0:)?)(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/i,
   );
-  if (mappedDotted) {
-    return [Number(mappedDotted[1]), Number(mappedDotted[2])];
+  if (dottedMapped) {
+    return [Number(dottedMapped[1]), Number(dottedMapped[2])];
   }
 
   return null;

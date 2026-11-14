@@ -7,18 +7,16 @@ use once_cell::sync::OnceCell;
 use reqwest::Client;
 use std::env;
 use std::net::IpAddr;
+#[cfg(test)]
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 /// 全局 HTTP 客户端实例
-static GLOBAL_CLIENT: OnceCell<RwLock<Client>> = OnceCell::new();
+static GLOBAL_CLIENT: OnceCell<RwLock<GlobalClient>> = OnceCell::new();
 
 /// 不走任何代理的客户端：上游是本机地址（Ollama、LM Studio 等）时使用
 static DIRECT_CLIENT: OnceCell<Client> = OnceCell::new();
-
-/// 当前代理 URL（用于日志和状态查询）
-static CURRENT_PROXY_URL: OnceCell<RwLock<Option<String>>> = OnceCell::new();
 
 /// CC Switch 代理服务器当前监听的端口
 static CC_SWITCH_PROXY_PORT: OnceCell<RwLock<u16>> = OnceCell::new();
@@ -28,31 +26,27 @@ static CC_SWITCH_PROXY_PORT: OnceCell<RwLock<u16>> = OnceCell::new();
 /// reqwest/hyper-util 内部按 http/https/all 三类代理外加 NO_PROXY 分别生效，
 /// 单个 `Option<String>` 无法表达这些语义：HTTPS 不变、仅 HTTP 变化，或仅
 /// NO_PROXY 变化时，单 URL 签名都看不见。快照按 hyper-util 的规则构造
-/// （环境变量优先，系统配置只填补仍为空的槽位：macOS 填 http/https，
-/// Windows 额外用 ProxyOverride 填 NO_PROXY），用作变化检测签名。
+/// （环境变量优先，macOS 系统配置只填补仍为空的协议槽），用作变化检测签名。
 ///
-/// macOS 上 reqwest 还把系统代理的 bypass 规则（ExceptionsList 与
-/// ExcludeSimpleHostnames）烘焙进客户端，因此快照以 `system_bypass` 记录
-/// 其规范化签名；仅改 bypass 列表时端点槽不变，没有这个字段就检测不到。
-/// 非 macOS 恒为 `None`。
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+/// hyper-util 0.1.20 在 macOS 上不读取系统绕过列表；NO_PROXY 仍来自环境变量。
+#[derive(Clone, PartialEq, Eq, Default)]
+#[cfg_attr(test, derive(Debug))]
 struct SystemProxySnapshot {
     http: Option<String>,
     https: Option<String>,
     all: Option<String>,
     no_proxy: Option<String>,
-    system_bypass: Option<String>,
 }
 
-/// 当前全局客户端烘焙时的系统代理快照；`None` 表示显式代理生效
-/// （刷新逻辑让位于用户设置）或尚未初始化。
-static BAKED_SYSTEM_SNAPSHOT: OnceCell<RwLock<Option<SystemProxySnapshot>>> = OnceCell::new();
+/// 将客户端、显式 URL 与构建前快照一次性发布，避免刷新读到部分更新。
+struct GlobalClient {
+    client: Client,
+    proxy_url: Option<String>,
+    snapshot: Option<SystemProxySnapshot>,
+    generation: u64,
+}
 
-/// 状态代数：每次 init/apply/update 显式修改全局客户端前递增。
-/// 自动刷新提交重建结果时会校验代数，避免覆盖并发发生的显式配置。
-static STATE_GENERATION: AtomicU64 = AtomicU64::new(0);
-
-/// 客户端因系统代理变化而重建的次数（诊断与回归测试用）
+#[cfg(test)]
 static SYSTEM_PROXY_REBUILD_COUNT: AtomicU64 = AtomicU64::new(0);
 
 /// 上次检查系统代理变化的时间（单调时钟，系统时间回拨不影响节流）
@@ -91,7 +85,7 @@ fn get_proxy_port() -> u16 {
 ///
 /// # Arguments
 /// * `proxy_url` - 代理 URL，如 `http://127.0.0.1:7890` 或 `socks5://127.0.0.1:1080`
-///   传入 None 或空字符串表示直连
+///   传入 None 或空字符串表示跟随系统代理
 pub fn init(proxy_url: Option<&str>) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
     // 与 apply_proxy 相同：先捕获快照再构建，构建期间的变化留待下一轮
@@ -103,28 +97,29 @@ pub fn init(proxy_url: Option<&str>) -> Result<(), String> {
     };
     let client = build_client(effective_url)?;
 
-    // 尝试初始化全局客户端，如果已存在则记录警告并使用 apply_proxy 更新
-    if GLOBAL_CLIENT.set(RwLock::new(client)).is_err() {
+    if GLOBAL_CLIENT
+        .set(RwLock::new(GlobalClient {
+            client,
+            proxy_url: effective_url.map(str::to_owned),
+            snapshot: baked,
+            generation: 0,
+        }))
+        .is_err()
+    {
         log::warn!(
             "[GlobalProxy] [GP-003] Already initialized, updating instead: {}",
             effective_url
                 .map(mask_url)
-                .unwrap_or_else(|| "direct connection".to_string())
+                .unwrap_or_else(|| "system proxy".to_string())
         );
-        // 已初始化，改用 apply_proxy 更新
         return apply_proxy(proxy_url);
     }
-
-    // 初始化代理 URL 记录（OnceCell 首次写入，无并发切换窗口）
-    let _ = CURRENT_PROXY_URL.set(RwLock::new(effective_url.map(|s| s.to_string())));
-    STATE_GENERATION.fetch_add(1, Ordering::AcqRel);
-    store_baked_system_snapshot(baked);
 
     log::info!(
         "[GlobalProxy] Initialized: {}",
         effective_url
             .map(mask_url)
-            .unwrap_or_else(|| "direct connection".to_string())
+            .unwrap_or_else(|| "system proxy".to_string())
     );
 
     Ok(())
@@ -136,7 +131,7 @@ pub fn init(proxy_url: Option<&str>) -> Result<(), String> {
 /// 用于在持久化之前验证配置的有效性。
 ///
 /// # Arguments
-/// * `proxy_url` - 代理 URL，None 或空字符串表示直连
+/// * `proxy_url` - 代理 URL，None 或空字符串表示跟随系统代理
 ///
 /// # Returns
 /// 验证成功返回 Ok(())，失败返回错误信息
@@ -153,7 +148,7 @@ pub fn validate_proxy(proxy_url: Option<&str>) -> Result<(), String> {
 /// 应在 validate_proxy 成功后调用。
 ///
 /// # Arguments
-/// * `proxy_url` - 代理 URL，None 或空字符串表示直连
+/// * `proxy_url` - 代理 URL，None 或空字符串表示跟随系统代理
 pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
     // 先捕获快照再构建：若构建期间系统代理恰好变化，最多造成一次可检测的
@@ -166,82 +161,27 @@ pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
     };
     let new_client = build_client(effective_url)?;
 
-    // Client、CURRENT_PROXY_URL、snapshot 三份状态在同一个 GLOBAL_CLIENT
-    // 写锁临界区内切换（锁序与 commit_system_refresh 一致：
-    // GLOBAL_CLIENT → CURRENT_PROXY_URL → snapshot）。自动刷新的提交同样
-    // 需要先取得该写锁，无法插入到切换中间造成"记录为显式、Client 却跟随
-    // 系统"的错位；代数递增也放在临界区内，供已过期的刷新提交复核。
-    if let Some(lock) = GLOBAL_CLIENT.get() {
-        let mut client = lock.write().map_err(|e| {
+    let Some(lock) = GLOBAL_CLIENT.get() else {
+        return init(proxy_url);
+    };
+    {
+        let mut state = lock.write().map_err(|e| {
             log::error!("[GlobalProxy] [GP-001] Failed to acquire write lock: {e}");
             "Failed to update proxy: lock poisoned".to_string()
         })?;
-        STATE_GENERATION.fetch_add(1, Ordering::AcqRel);
-        *client = new_client;
-        if let Some(url_lock) = CURRENT_PROXY_URL.get() {
-            if let Ok(mut url) = url_lock.write() {
-                *url = effective_url.map(|s| s.to_string());
-            }
-        }
-        store_baked_system_snapshot(baked);
-    } else {
-        // 如果还没初始化，则初始化
-        return init(proxy_url);
+        *state = GlobalClient {
+            client: new_client,
+            proxy_url: effective_url.map(str::to_owned),
+            snapshot: baked,
+            generation: state.generation.wrapping_add(1),
+        };
     }
 
     log::info!(
         "[GlobalProxy] Applied: {}",
         effective_url
             .map(mask_url)
-            .unwrap_or_else(|| "direct connection".to_string())
-    );
-
-    Ok(())
-}
-
-/// 更新代理配置（热更新）
-///
-/// 可在运行时调用以更改代理设置，无需重启应用。
-/// 注意：此函数同时验证和应用，如果需要先验证后持久化再应用，
-/// 请使用 validate_proxy + apply_proxy 组合。
-///
-/// # Arguments
-/// * `proxy_url` - 新的代理 URL，None 或空字符串表示直连
-#[allow(dead_code)]
-pub fn update_proxy(proxy_url: Option<&str>) -> Result<(), String> {
-    let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
-    let baked = if effective_url.is_some() {
-        None
-    } else {
-        Some(read_system_proxy_snapshot())
-    };
-    let new_client = build_client(effective_url)?;
-
-    // 与 apply_proxy 相同：三份状态在同一个 GLOBAL_CLIENT 写锁临界区内
-    // 切换，锁序与 commit_system_refresh 一致，刷新无法插入切换中间。
-    if let Some(lock) = GLOBAL_CLIENT.get() {
-        let mut client = lock.write().map_err(|e| {
-            log::error!("[GlobalProxy] [GP-001] Failed to acquire write lock: {e}");
-            "Failed to update proxy: lock poisoned".to_string()
-        })?;
-        STATE_GENERATION.fetch_add(1, Ordering::AcqRel);
-        *client = new_client;
-        if let Some(url_lock) = CURRENT_PROXY_URL.get() {
-            if let Ok(mut url) = url_lock.write() {
-                *url = effective_url.map(|s| s.to_string());
-            }
-        }
-        store_baked_system_snapshot(baked);
-    } else {
-        // 如果还没初始化，则初始化
-        return init(proxy_url);
-    }
-
-    log::info!(
-        "[GlobalProxy] Updated: {}",
-        effective_url
-            .map(mask_url)
-            .unwrap_or_else(|| "direct connection".to_string())
+            .unwrap_or_else(|| "system proxy".to_string())
     );
 
     Ok(())
@@ -250,9 +190,8 @@ pub fn update_proxy(proxy_url: Option<&str>) -> Result<(), String> {
 /// 获取全局 HTTP 客户端
 ///
 /// 返回配置了代理的客户端（如果已配置代理），否则返回跟随系统代理的客户端。
-/// 未配置显式代理时（macOS/Windows），会节流地检测系统代理配置变化并按需
-/// 重建客户端，避免应用启动后系统代理关闭/切换导致请求持续打到已移除的
-/// 代理上。
+/// 未配置显式代理时（macOS/Windows），会节流地检测系统代理配置变化并按需重建客户端，
+/// 避免应用启动后系统代理关闭/切换导致请求持续打到已移除的代理上。
 ///
 /// 注意：这里只跟随"配置"变化，不做代理性存活性探测——系统仍配置代理但
 /// 代理进程未监听时保持 fail-closed（请求按 reqwest 语义正常报错），不静默
@@ -265,50 +204,35 @@ pub fn get() -> Client {
     GLOBAL_CLIENT
         .get()
         .and_then(|lock| lock.read().ok())
-        .map(|c| c.clone())
+        .map(|state| state.client.clone())
         .unwrap_or_else(|| {
             log::warn!("[GlobalProxy] [GP-004] Client not initialized, using fallback");
             build_client(None).unwrap_or_default()
         })
 }
 
-/// 写入当前全局客户端烘焙时的系统代理快照（未初始化则初始化）
-fn store_baked_system_snapshot(baked: Option<SystemProxySnapshot>) {
-    match BAKED_SYSTEM_SNAPSHOT.get() {
-        Some(lock) => {
-            if let Ok(mut baked_lock) = lock.write() {
-                *baked_lock = baked;
-            }
-        }
-        None => {
-            let _ = BAKED_SYSTEM_SNAPSHOT.set(RwLock::new(baked));
-        }
-    }
-}
-
-/// 读取当前烘焙快照的克隆
-fn baked_system_snapshot() -> Option<SystemProxySnapshot> {
-    BAKED_SYSTEM_SNAPSHOT
-        .get()
-        .and_then(|lock| lock.read().ok())
-        .and_then(|snapshot| snapshot.clone())
-}
-
 /// 节流地检查"跟随系统代理"的配置是否变化，变化则重建全局客户端
 ///
 /// 仅在未配置显式代理时生效；显式代理由用户管理，不参与自动刷新。
 /// 平台边界：reqwest 只在构建时读取一次系统代理，长驻进程里配置关闭/
-/// 切换后旧客户端会一直指向失效目标，这个检测只服务该场景的 macOS 与
-/// Windows 桌面应用；其余平台维持原有行为，不做周期性解析。
+/// 切换后旧客户端会一直指向失效目标，仅在 macOS 和 Windows 桌面应用启用；
+/// 其余平台维持原有行为，不做周期性解析。
 fn refresh_system_proxy_if_changed() {
-    if !(cfg!(target_os = "macos") || cfg!(target_os = "windows")) {
+    if !cfg!(any(target_os = "macos", target_os = "windows")) {
         return;
     }
 
-    // 显式用户代理生效时，跳过自动刷新
-    if get_current_proxy_url().is_some() {
+    refresh_system_proxy();
+}
+
+fn refresh_system_proxy() {
+    let Some((seen_generation, previous)) = GLOBAL_CLIENT
+        .get()
+        .and_then(|lock| lock.read().ok())
+        .and_then(|state| Some((state.generation, state.snapshot.clone()?)))
+    else {
         return;
-    }
+    };
 
     // 单调时钟节流。try_lock 失败说明已有并发检测在进行，直接让位，
     // 避免多个线程同时通过间隔检查并各自重建一次。
@@ -320,13 +244,6 @@ fn refresh_system_proxy_if_changed() {
     }
     *last_check = Some(Instant::now());
     drop(last_check);
-
-    let seen_generation = STATE_GENERATION.load(Ordering::Acquire);
-    let baked = baked_system_snapshot();
-    // 快照为 None 说明显式代理刚被应用（或未初始化），让位
-    let Some(previous) = baked else {
-        return;
-    };
 
     let current = read_system_proxy_snapshot();
     if current == previous {
@@ -341,55 +258,29 @@ fn refresh_system_proxy_if_changed() {
             return;
         }
     };
-    log::info!(
-        "[GlobalProxy] System proxy configuration changed, rebuilt client (http={:?}, https={:?}, all={:?}, no_proxy={:?}, bypass={:?})",
-        current.http.as_deref().map(mask_url),
-        current.https.as_deref().map(mask_url),
-        current.all.as_deref().map(mask_url),
-        current.no_proxy.is_some(),
-        current.system_bypass
-    );
     if commit_system_refresh(new_client, seen_generation, previous, current) {
+        log::info!("[GlobalProxy] System proxy configuration changed, rebuilt client");
+        #[cfg(test)]
         SYSTEM_PROXY_REBUILD_COUNT.fetch_add(1, Ordering::Relaxed);
     }
 }
 
-/// 提交一次系统代理刷新的重建结果
-///
-/// 提交前在写锁内校验：显式代理仍为空、状态代数未变、烘焙快照仍是检测时
-/// 的那份。任一不满足即放弃（例如用户在检测期间应用了显式代理，或另一路
-/// 刷新已经提交过），防止自动刷新覆盖用户设置或造成新旧状态错位。
-///
-/// 锁序契约：所有同时触碰 GLOBAL_CLIENT 与其余状态的路径（本函数与
-/// init/apply_proxy/update_proxy）都必须按 GLOBAL_CLIENT → CURRENT_PROXY_URL
-/// → BAKED_SYSTEM_SNAPSHOT 的顺序嵌套加锁，保证三份状态在同一个
-/// GLOBAL_CLIENT 写锁临界区内切换，刷新无法观察到"半切换"状态。
+/// 丢弃基于旧配置构建的候选，避免覆盖用户显式设置或已提交的刷新。
 fn commit_system_refresh(
     candidate: Client,
     seen_generation: u64,
     previous: SystemProxySnapshot,
     updated: SystemProxySnapshot,
 ) -> bool {
-    let Some(client_lock) = GLOBAL_CLIENT.get() else {
+    let Some(mut state) = GLOBAL_CLIENT.get().and_then(|lock| lock.write().ok()) else {
         return false;
     };
-    let mut client = match client_lock.write() {
-        Ok(client) => client,
-        Err(_) => return false,
-    };
-
-    if STATE_GENERATION.load(Ordering::Acquire) != seen_generation {
+    if state.generation != seen_generation || state.snapshot.as_ref() != Some(&previous) {
         return false;
     }
-    if get_current_proxy_url().is_some() {
-        return false;
-    }
-    if baked_system_snapshot().as_ref() != Some(&previous) {
-        return false;
-    }
-
-    *client = candidate;
-    store_baked_system_snapshot(Some(updated));
+    state.client = candidate;
+    state.snapshot = Some(updated);
+    state.generation = state.generation.wrapping_add(1);
     true
 }
 
@@ -403,17 +294,13 @@ fn read_system_proxy_snapshot() -> SystemProxySnapshot {
     // "环境变量优先、系统配置补缺"顺序一致）
     #[cfg(target_os = "macos")]
     {
-        let (system_http, system_https, system_bypass) = macos_system_proxy_state();
+        let (system_http, system_https) = macos_system_proxy_state();
         if snapshot.https.is_none() {
             snapshot.https = system_https;
         }
         if snapshot.http.is_none() {
             snapshot.http = system_http;
         }
-        // bypass 规则恒记录：它与 NO_PROXY 环境变量在 reqwest 里是独立的
-        // 匹配层，没有"环境变量存在则系统 bypass 无效"的可靠结论。多记的
-        // 代价最多是一次幂等的重建，漏记的代价是旧 bypass 规则驻留。
-        snapshot.system_bypass = system_bypass;
     }
 
     // Windows 注册表同样只填补环境变量仍为空的槽位。与 macOS 的差异：
@@ -437,37 +324,31 @@ fn read_system_proxy_snapshot() -> SystemProxySnapshot {
     snapshot
 }
 
-/// 从环境变量解析分协议代理 URL（优先级：大写与小写同组同权，组间
-/// 按协议独立，不再折叠成单个 URL）
+/// 与 hyper-util 一致：各协议独立，先取第一个存在的变量，再判断是否为空。
 fn env_system_proxy_snapshot() -> SystemProxySnapshot {
     let env_group = |keys: &[&str]| {
-        keys.iter().find_map(|key| {
-            env::var(key)
-                .ok()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-        })
+        keys.iter()
+            .find_map(|key| env::var(key).ok())
+            .filter(|value| !value.is_empty())
     };
     SystemProxySnapshot {
         http: env_group(&["HTTP_PROXY", "http_proxy"]),
         https: env_group(&["HTTPS_PROXY", "https_proxy"]),
         all: env_group(&["ALL_PROXY", "all_proxy"]),
         no_proxy: env_group(&["NO_PROXY", "no_proxy"]),
-        system_bypass: None,
     }
 }
 
 /// macOS 系统代理的分协议条目（SCDynamicStore，与 reqwest/hyper-util 的
-/// 数据源一致），返回 (http, https, bypass 签名)
+/// 数据源一致），返回 (http, https)
 #[cfg(target_os = "macos")]
-fn macos_system_proxy_state() -> (Option<String>, Option<String>, Option<String>) {
+fn macos_system_proxy_state() -> (Option<String>, Option<String>) {
     use system_configuration::core_foundation::base::CFType;
     use system_configuration::core_foundation::dictionary::CFDictionary;
     use system_configuration::core_foundation::number::CFNumber;
     use system_configuration::core_foundation::string::{CFString, CFStringRef};
     use system_configuration::dynamic_store::SCDynamicStoreBuilder;
     use system_configuration::sys::schema_definitions::{
-        kSCPropNetProxiesExceptionsList, kSCPropNetProxiesExcludeSimpleHostnames,
         kSCPropNetProxiesHTTPEnable, kSCPropNetProxiesHTTPPort, kSCPropNetProxiesHTTPProxy,
         kSCPropNetProxiesHTTPSEnable, kSCPropNetProxiesHTTPSPort, kSCPropNetProxiesHTTPSProxy,
     };
@@ -494,38 +375,14 @@ fn macos_system_proxy_state() -> (Option<String>, Option<String>, Option<String>
         let port = proxies_map
             .find(port_key)
             .and_then(|v| v.downcast::<CFNumber>())
-            .and_then(|v| v.to_i32())?;
-        Some(format_proxy_entry(&host, port))
+            .and_then(|v| v.to_i32());
+        Some(match port {
+            Some(port) => format!("{host}:{port}"),
+            None => host,
+        })
     }
 
-    /// ExceptionsList（CFArray<CFString>）+ ExcludeSimpleHostnames 的规范化
-    /// 签名。crate 的 `CFType::downcast` 只支持 `CFArray<*const c_void>`，
-    /// 元素再按 CFStringRef 逐个还原。
-    fn read_bypass(proxies_map: &CFDictionary<CFString, CFType>) -> Option<String> {
-        use system_configuration::core_foundation::array::CFArray;
-        use system_configuration::core_foundation::base::TCFType;
-        let exceptions: Vec<String> = proxies_map
-            .find(unsafe { kSCPropNetProxiesExceptionsList })
-            .and_then(|value| value.downcast::<CFArray<*const std::ffi::c_void>>())
-            .map(|array| {
-                array
-                    .iter()
-                    .map(|entry| unsafe {
-                        CFString::wrap_under_get_rule(*entry as CFStringRef).to_string()
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let exclude_simple_hostnames = proxies_map
-            .find(unsafe { kSCPropNetProxiesExcludeSimpleHostnames })
-            .and_then(|flag| flag.downcast::<CFNumber>())
-            .and_then(|flag| flag.to_i32())
-            .unwrap_or(0)
-            == 1;
-        canonical_macos_bypass(exceptions, exclude_simple_hostnames)
-    }
-
-    fn read_entries() -> Option<(Option<String>, Option<String>, Option<String>)> {
+    fn read_entries() -> Option<(Option<String>, Option<String>)> {
         let store = SCDynamicStoreBuilder::new("cc-switch").build()?;
         let proxies_map = store.get_proxies()?;
         Some((
@@ -541,51 +398,11 @@ fn macos_system_proxy_state() -> (Option<String>, Option<String>, Option<String>
                 unsafe { kSCPropNetProxiesHTTPSProxy },
                 unsafe { kSCPropNetProxiesHTTPSPort },
             ),
-            read_bypass(&proxies_map),
         ))
     }
 
     // SCDynamicStore 读取失败时按"无系统代理"处理，交给环境变量与直连语义
-    read_entries().unwrap_or((None, None, None))
-}
-
-/// bypass 配置的规范化签名：主机名比较不区分大小写，列表顺序无语义，
-/// 统一小写 + 排序去重，避免无语义变化（大小写调整、条目重排）触发重建。
-/// 两者都为空时返回 `None`（与"没有 bypass 规则"同义）。
-#[cfg(target_os = "macos")]
-fn canonical_macos_bypass(
-    exceptions: Vec<String>,
-    exclude_simple_hostnames: bool,
-) -> Option<String> {
-    let mut entries: Vec<String> = exceptions
-        .into_iter()
-        .map(|entry| entry.trim().to_lowercase())
-        .filter(|entry| !entry.is_empty())
-        .collect();
-    entries.sort();
-    entries.dedup();
-    if entries.is_empty() && !exclude_simple_hostnames {
-        return None;
-    }
-    Some(format!(
-        "exclude_simple_hostnames={};list={}",
-        u8::from(exclude_simple_hostnames),
-        entries.join(",")
-    ))
-}
-
-/// 把系统代理条目的 host:port 组装成 URL（裸 IPv6 地址补方括号）
-#[cfg(target_os = "macos")]
-fn format_proxy_entry(host: &str, port: i32) -> String {
-    let is_bare_ipv6 = host
-        .parse::<IpAddr>()
-        .map(|address| address.is_ipv6())
-        .unwrap_or(false);
-    if is_bare_ipv6 {
-        format!("http://[{host}]:{port}")
-    } else {
-        format!("http://{host}:{port}")
-    }
+    read_entries().unwrap_or_default()
 }
 
 /// 按目标地址取客户端：本机地址直连，其余同 [`get`]
@@ -686,8 +503,8 @@ fn windows_system_proxy_state() -> (Option<String>, Option<String>, Option<Strin
 }
 
 /// `ProxyOverride` → NO_PROXY 风格的规范化签名。先对齐 hyper-util v0.1.20
-/// 的 normalize（分号分隔 → 逗号连接、移除所有 `*.`），再叠加与 macOS
-/// bypass 相同的规范化（小写 + 排序去重）：NoProxy 的域名匹配不区分大小写、
+/// 的 normalize（分号分隔 → 逗号连接、移除所有 `*.`），再按 ASCII 小写、
+/// 排序去重：NoProxy 的域名匹配以 ASCII 大小写不敏感方式比较，
 /// 条目顺序无语义，这些差异不构成客户端行为变化，不该触发重建。
 /// `127.*` 这类通配符条目在 0.1.20 里原样保留（匹配不到任何主机），签名
 /// 同样原样记录。
@@ -695,7 +512,7 @@ fn windows_system_proxy_state() -> (Option<String>, Option<String>, Option<Strin
 fn canonical_windows_bypass(value: &str) -> Option<String> {
     let mut entries: Vec<String> = value
         .split(';')
-        .map(|entry| entry.trim().replace("*.", "").to_lowercase())
+        .map(|entry| entry.trim().replace("*.", "").to_ascii_lowercase())
         .filter(|entry| !entry.is_empty())
         .collect();
     entries.sort();
@@ -708,18 +525,12 @@ fn canonical_windows_bypass(value: &str) -> Option<String> {
 
 /// 获取当前代理 URL
 ///
-/// 返回当前配置的代理 URL，None 表示直连。
+/// 返回当前配置的代理 URL，None 表示跟随系统代理。
 pub fn get_current_proxy_url() -> Option<String> {
-    CURRENT_PROXY_URL
+    GLOBAL_CLIENT
         .get()
         .and_then(|lock| lock.read().ok())
-        .and_then(|url| url.clone())
-}
-
-/// 检查是否正在使用代理
-#[allow(dead_code)]
-pub fn is_proxy_enabled() -> bool {
-    get_current_proxy_url().is_some()
+        .and_then(|state| state.proxy_url.clone())
 }
 
 /// 两种客户端共用的参数
@@ -737,10 +548,37 @@ fn base_builder() -> reqwest::ClientBuilder {
         .no_zstd()
 }
 
+/// 不跟随重定向的客户端，代理设置与全局客户端一致。带自定义凭据请求头（如 `x-dsh-auth-token`）
+/// 的请求用它：reqwest 跨主机重定向时只剥掉标准认证头，自定义头会被带到新主机。
+pub fn no_redirect() -> Result<Client, String> {
+    build_client_from(
+        base_builder().redirect(reqwest::redirect::Policy::none()),
+        get_current_proxy_url().as_deref(),
+    )
+}
+
+/// 不跟随重定向、按目标地址选代理的客户端：本机地址直连，其余同 [`no_redirect`]。
+pub fn no_redirect_for_url(url: &str) -> Result<Client, String> {
+    if is_loopback_url(url) {
+        base_builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| format!("Failed to build HTTP client: {e}"))
+    } else {
+        no_redirect()
+    }
+}
+
 /// 构建 HTTP 客户端
 fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
-    let mut builder = base_builder();
+    build_client_from(base_builder(), proxy_url)
+}
 
+fn build_client_from(
+    mut builder: reqwest::ClientBuilder,
+    proxy_url: Option<&str>,
+) -> Result<Client, String> {
     // 有代理地址则使用代理，否则跟随系统代理
     if let Some(url) = proxy_url {
         // 先验证 URL 格式和 scheme
@@ -766,10 +604,10 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
     } else {
         // 跟随系统代理。reqwest 内建的自动跟随只在客户端构建时读取一次系统
         // 状态：长驻进程里系统代理配置关闭/切换（代理工具退出、转为 TUN
-        // 模式）会让客户端继续使用已移除的代理。macOS/Windows 上由 get()
-        // 节流检测配置变化并重建（见 refresh_system_proxy_if_changed）；
-        // 代理语义（分协议、NO_PROXY）完全交由 reqwest 处理，不做存活探测，
-        // 也不在配置仍指向代理时静默直连。
+        // 模式）会让客户端继续使用已移除的代理。macOS/Windows 上由 get() 节流检测
+        // 配置变化并重建（见 refresh_system_proxy_if_changed）；代理语义
+        // （分协议、NO_PROXY）完全交由 reqwest 处理，不做存活探测，也不在
+        // 配置仍指向代理时静默直连。
         log::debug!("[GlobalProxy] Following system proxy (no explicit proxy configured)");
     }
 
@@ -964,8 +802,11 @@ mod tests {
                 let Ok(mut stream) = stream else { continue };
                 let mut buf = [0u8; 1024];
                 let _ = stream.read(&mut buf);
-                let _ = stream.write_all(
-                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+                let body = format!("http://{addr}/v1/models");
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
                 );
             }
         });
@@ -1088,7 +929,6 @@ mod tests {
                 https: Some("http://127.0.0.1:8899".to_string()),
                 all: Some("socks5://127.0.0.1:7801".to_string()),
                 no_proxy: Some("localhost,127.0.0.1".to_string()),
-                system_bypass: None,
             }
         );
 
@@ -1107,17 +947,15 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "macos")]
-    fn test_format_proxy_entry_brackets_bare_ipv6() {
-        assert_eq!(
-            format_proxy_entry("127.0.0.1", 7890),
-            "http://127.0.0.1:7890"
-        );
-        assert_eq!(format_proxy_entry("::1", 7890), "http://[::1]:7890");
-        assert_eq!(
-            format_proxy_entry("proxy.example.com", 8080),
-            "http://proxy.example.com:8080"
-        );
+    #[cfg(unix)]
+    fn test_empty_uppercase_proxy_does_not_fall_back_to_lowercase() {
+        let _guard = env_lock().lock().unwrap();
+        clear_proxy_env();
+        std::env::set_var("HTTPS_PROXY", "");
+        std::env::set_var("https_proxy", "http://127.0.0.1:8899");
+        let https = env_system_proxy_snapshot().https;
+        clear_proxy_env();
+        assert_eq!(https, None);
     }
 
     #[test]
@@ -1140,81 +978,10 @@ mod tests {
         clear_proxy_env();
     }
 
-    #[test]
-    fn test_snapshot_detects_system_bypass_only_change() {
-        // macOS 用户只改 bypass/exception 列表、HTTP/HTTPS 端点不变时，
-        // reqwest 烘焙进客户端的匹配器已变；快照必须能看见（这是
-        // refresh_system_proxy_if_changed 里 `current == previous` 的判定
-        // 输入），否则客户端会一直沿用旧的 bypass 规则。
-        let endpoints = SystemProxySnapshot {
-            http: Some("http://127.0.0.1:7890".to_string()),
-            https: Some("http://127.0.0.1:7890".to_string()),
-            ..Default::default()
-        };
-        let with_exceptions = SystemProxySnapshot {
-            system_bypass: Some(
-                "exclude_simple_hostnames=0;list=*.internal,10.0.0.0/8".to_string(),
-            ),
-            ..endpoints.clone()
-        };
-        assert_ne!(endpoints, with_exceptions);
-
-        let changed_exceptions = SystemProxySnapshot {
-            system_bypass: Some("exclude_simple_hostnames=0;list=*.internal".to_string()),
-            ..endpoints.clone()
-        };
-        assert_ne!(with_exceptions, changed_exceptions);
-
-        // ExcludeSimpleHostnames 翻转同样是有效变化，即使列表为空。
-        let exclude_only = SystemProxySnapshot {
-            system_bypass: Some("exclude_simple_hostnames=1;list=".to_string()),
-            ..endpoints
-        };
-        assert_ne!(exclude_only, SystemProxySnapshot::default());
-    }
-
-    #[test]
-    #[cfg(target_os = "macos")]
-    fn test_canonical_macos_bypass_normalizes_semantically_equal_lists() {
-        // 大小写、空白、顺序、重复项都不构成语义变化。
-        let normalized = canonical_macos_bypass(
-            vec![
-                "  *.Internal ".to_string(),
-                "10.0.0.0/8".to_string(),
-                "*.internal".to_string(),
-            ],
-            false,
-        );
-        assert_eq!(
-            normalized,
-            Some("exclude_simple_hostnames=0;list=*.internal,10.0.0.0/8".to_string())
-        );
-
-        // 无任何规则时为 None（与"没有 bypass"同义）。
-        assert_eq!(canonical_macos_bypass(vec![], false), None);
-        assert_eq!(
-            canonical_macos_bypass(vec!["  ".to_string()], false),
-            None,
-            "空白条目不构成规则"
-        );
-
-        // ExcludeSimpleHostnames 单独开启也是有效签名。
-        assert_eq!(
-            canonical_macos_bypass(vec![], true),
-            Some("exclude_simple_hostnames=1;list=".to_string())
-        );
-    }
-
-    /// 初始化全局客户端并烘焙当前快照（消除 init 路径差异）
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
     fn setup_global_client_with_current_snapshot() {
-        if GLOBAL_CLIENT.get().is_none() {
-            let _ = init(None);
-        }
-        store_baked_system_snapshot(Some(read_system_proxy_snapshot()));
+        apply_proxy(None).expect("install client and capture its snapshot");
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
     fn reset_system_proxy_check_throttle() {
         if let Ok(mut last_check) = LAST_SYSTEM_PROXY_CHECK.try_lock() {
             *last_check = None;
@@ -1223,7 +990,6 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
     fn test_no_rebuild_when_system_proxy_unchanged() {
         let _guard = env_lock().lock().unwrap();
         clear_proxy_env();
@@ -1237,7 +1003,7 @@ mod tests {
         // （回归防护：若快照未正确写入/读取，这里每次都会误判为变化）
         for _ in 0..3 {
             reset_system_proxy_check_throttle();
-            refresh_system_proxy_if_changed();
+            refresh_system_proxy();
             assert_eq!(
                 system_proxy_rebuild_count(),
                 before,
@@ -1250,7 +1016,6 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
     fn test_rebuild_once_when_system_proxy_config_removed() {
         let _guard = env_lock().lock().unwrap();
         clear_proxy_env();
@@ -1263,7 +1028,7 @@ mod tests {
 
         std::env::remove_var("HTTPS_PROXY");
         reset_system_proxy_check_throttle();
-        refresh_system_proxy_if_changed();
+        refresh_system_proxy();
         let after_change = system_proxy_rebuild_count();
         assert_eq!(
             after_change,
@@ -1273,7 +1038,7 @@ mod tests {
 
         // 配置保持移除：后续检测不应再次重建
         reset_system_proxy_check_throttle();
-        refresh_system_proxy_if_changed();
+        refresh_system_proxy();
         assert_eq!(
             system_proxy_rebuild_count(),
             after_change,
@@ -1285,7 +1050,6 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
     fn test_refresh_yields_to_explicit_proxy() {
         let _guard = env_lock().lock().unwrap();
         clear_proxy_env();
@@ -1298,7 +1062,7 @@ mod tests {
         let before = system_proxy_rebuild_count();
 
         reset_system_proxy_check_throttle();
-        refresh_system_proxy_if_changed();
+        refresh_system_proxy();
         assert_eq!(
             system_proxy_rebuild_count(),
             before,
@@ -1310,7 +1074,7 @@ mod tests {
             "explicit proxy must stay recorded"
         );
         assert_eq!(
-            baked_system_snapshot(),
+            GLOBAL_CLIENT.get().unwrap().read().unwrap().snapshot,
             None,
             "snapshot must be cleared while explicit proxy is active"
         );
@@ -1322,16 +1086,20 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
     fn test_stale_refresh_cannot_overwrite_explicit_proxy() {
         let _guard = env_lock().lock().unwrap();
         clear_proxy_env();
 
         setup_global_client_with_current_snapshot();
-        let previous = baked_system_snapshot().expect("snapshot after setup");
+        let (stale_generation, previous) = {
+            let state = GLOBAL_CLIENT.get().unwrap().read().unwrap();
+            (
+                state.generation,
+                state.snapshot.clone().expect("snapshot after setup"),
+            )
+        };
 
         // 模拟竞态：刷新流程读到旧代数后，用户应用了显式代理
-        let stale_generation = STATE_GENERATION.load(Ordering::Acquire);
         std::env::set_var("HTTPS_PROXY", "http://127.0.0.1:8899");
         apply_proxy(Some("http://127.0.0.1:7890")).expect("apply explicit proxy");
         let updated = read_system_proxy_snapshot();
@@ -1354,7 +1122,49 @@ mod tests {
         clear_proxy_env();
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[test]
+    #[serial_test::serial]
+    fn test_system_refresh_routes_next_request_to_new_proxy() {
+        let _guard = env_lock().lock().unwrap();
+        clear_proxy_env();
+
+        let first = spawn_ok_server();
+        let second = spawn_ok_server();
+
+        // Point at a synthetic destination. A request can complete only via
+        // the local proxy; the server returns its own address as the marker.
+        std::env::set_var("HTTP_PROXY", &first);
+        setup_global_client_with_current_snapshot();
+        let initial = get();
+        std::env::set_var("HTTP_PROXY", &second);
+        reset_system_proxy_check_throttle();
+        refresh_system_proxy();
+        let refreshed = get();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let responses = runtime.block_on(async {
+            let mut responses = Vec::new();
+            for client in [initial, refreshed] {
+                responses.push(
+                    client
+                        .get("http://cc-switch-proxy-test.invalid/health")
+                        .timeout(Duration::from_secs(5))
+                        .send()
+                        .await
+                        .expect("request should use the configured local proxy")
+                        .text()
+                        .await
+                        .expect("proxy response should include its marker"),
+                );
+            }
+            responses
+        });
+        clear_proxy_env();
+        assert_eq!(responses, [first, second]);
+    }
+
     fn system_proxy_rebuild_count() -> u64 {
         SYSTEM_PROXY_REBUILD_COUNT.load(Ordering::Relaxed)
     }

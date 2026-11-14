@@ -117,6 +117,55 @@ const modelsDev: ModelsDevResponse = {
     id: "elsewhere",
     models: { "kimi-k9": { id: "kimi-k9", limit: { context: 50000 } } },
   },
+  // 原厂名下没有 deepseek-v9-flash-1017，各家条目都指向它却落空。
+  deepseek: {
+    id: "deepseek",
+    models: { "deepseek-flash": { id: "deepseek-flash" } },
+  },
+  "ds-relay": {
+    id: "ds-relay",
+    models: {
+      "deepseek-v9-flash-1017": {
+        id: "deepseek-v9-flash-1017",
+        limit: { context: 1000000 },
+        modalities: { input: ["text", "image"], output: ["text"] },
+        canonical_model_id: "deepseek/deepseek-v9-flash-1017",
+      },
+      "tinker/inkling-9": {
+        id: "tinker/inkling-9",
+        canonical_model_id: "tinker/inkling-9",
+      },
+    },
+  },
+  // 原厂（有条目指向它），也托管别家的微调条目，这些条目指回别家原厂。
+  tinker: {
+    id: "tinker",
+    models: {
+      "inkling-9": { id: "inkling-9" },
+      "deepseek-ai/DeepSeek-V9-Flash-1017:peft:262144": {
+        id: "deepseek-ai/DeepSeek-V9-Flash-1017:peft:262144",
+        limit: { context: 262144 },
+        modalities: { input: ["text"], output: ["text"] },
+        canonical_model_id: "deepseek/deepseek-v9-flash-1017",
+      },
+      "poolside/Laguna-9": {
+        id: "poolside/Laguna-9",
+        limit: { context: 65536 },
+        canonical_model_id: "poolside/laguna-9",
+      },
+    },
+  },
+  // 原厂自己的条目指向自己，但 ID 写法和指向的不一致，指向也落空。
+  poolside: {
+    id: "poolside",
+    models: {
+      "poolside/laguna-9": {
+        id: "poolside/laguna-9",
+        limit: { context: 262144 },
+        canonical_model_id: "poolside/laguna-9",
+      },
+    },
+  },
 };
 
 const preset = (
@@ -204,6 +253,24 @@ describe("resolveModelMetadata", () => {
     ).toBe(204800);
   });
 
+  it("does not borrow an entry that points at another vendor", () => {
+    expect(
+      resolveModelMetadata("DeepSeek-v9-flash-1017", {
+        baseUrl: "https://relay.example.com/v1",
+        modelsDev,
+      }),
+    ).toBeNull();
+  });
+
+  it("still uses the vendor's own entry when its pointer is dangling", () => {
+    expect(
+      resolveModelMetadata("laguna-9", {
+        baseUrl: "https://relay.example.com/v1",
+        modelsDev,
+      })?.contextWindow,
+    ).toBe(262144);
+  });
+
   it("gives up when the same name points at different vendors", () => {
     expect(
       resolveModelMetadata("kimi-k9", {
@@ -256,6 +323,49 @@ describe("resolveModelMetadata", () => {
         modelsDev,
       })?.contextWindow,
     ).toBe(1000000);
+  });
+
+  it("matches the old OpenCode address to the entry models.dev moved to /inference", () => {
+    const moved: ModelsDevResponse = {
+      "opencode-go": {
+        id: "opencode-go",
+        api: "https://opencode.ai/inference/go/openai/v1",
+        models: {
+          "deepseek-v4.1-flash": {
+            id: "deepseek-v4.1-flash",
+            limit: { context: 1000000 },
+            reasoning: true,
+            modalities: { input: ["text", "image"], output: ["text"] },
+          },
+        },
+      },
+      opencode: {
+        id: "opencode",
+        api: "https://opencode.ai/inference/openai/v1",
+        models: {
+          "deepseek-v4.1-flash": {
+            id: "deepseek-v4.1-flash",
+            limit: { context: 200000 },
+          },
+        },
+      },
+    };
+    expect(
+      resolveModelMetadata("deepseek-v4.1-flash", {
+        baseUrl: "https://opencode.ai/zen/go/v1",
+        modelsDev: moved,
+      }),
+    ).toMatchObject({
+      contextWindow: 1000000,
+      reasoning: true,
+      inputModalities: ["text", "image"],
+    });
+    expect(
+      resolveModelMetadata("deepseek-v4.1-flash", {
+        baseUrl: "https://opencode.ai/zen/v1",
+        modelsDev: moved,
+      })?.contextWindow,
+    ).toBe(200000);
   });
 
   it("does not treat a parent path as the plans nested under it", () => {
@@ -311,7 +421,7 @@ describe("resolveModelMetadata", () => {
     ).toBeNull();
   });
 
-  it("caps GPT windows at the subscription window whatever the source", () => {
+  it("caps GPT windows only when they are borrowed from the vendor entry", () => {
     const openai: ModelsDevResponse = {
       openai: {
         id: "openai",
@@ -334,20 +444,33 @@ describe("resolveModelMetadata", () => {
           },
         },
       },
+      gateway: {
+        id: "gateway",
+        api: "https://gateway.example.com/v1",
+        models: {
+          "gpt-6-astra": {
+            id: "gpt-6-astra",
+            canonical_model_id: "openai/gpt-6-astra",
+          },
+        },
+      },
     };
     const resolve = (id: string, baseUrl: string) =>
       resolveModelMetadata(id, { baseUrl, modelsDev: openai })?.contextWindow;
 
-    // 认出了 OpenAI 自己、走原厂兜底的中转、带命名空间或平台前缀的写法都封顶。
-    expect(resolve("gpt-6-astra", "https://api.openai.com/v1")).toBe(
-      GPT_CONTEXT_WINDOW_CAP,
-    );
+    // 认不出地址、借原厂条目的中转封顶，带命名空间的写法也一样。
     expect(resolve("gpt-6-astra", "https://relay.example.com/v1")).toBe(
       GPT_CONTEXT_WINDOW_CAP,
     );
     expect(resolve("openai/GPT-6-Astra", "https://relay.example.com/v1")).toBe(
       GPT_CONTEXT_WINDOW_CAP,
     );
+    // 认出了地址但那家没写窗口，借来的原厂窗口同样封顶。
+    expect(resolve("gpt-6-astra", "https://gateway.example.com/v1")).toBe(
+      GPT_CONTEXT_WINDOW_CAP,
+    );
+    // 按地址认出的那家、同地址预设照用自己的值。
+    expect(resolve("gpt-6-astra", "https://api.openai.com/v1")).toBe(1050000);
     expect(
       resolveModelMetadata("openai-gpt-6-astra", {
         baseUrl: "https://relay.example.com/v1",
@@ -356,8 +479,9 @@ describe("resolveModelMetadata", () => {
             "openai-gpt-6-astra": { contextWindow: 1050000 },
           }),
         ],
+        modelsDev: openai,
       })?.contextWindow,
-    ).toBe(GPT_CONTEXT_WINDOW_CAP);
+    ).toBe(1050000);
     // 本来就小的 GPT 不往上抬，其他模型不受影响。
     expect(resolve("gpt-4o", "https://api.openai.com/v1")).toBe(128000);
     expect(resolve("o9-big", "https://api.openai.com/v1")).toBe(1050000);

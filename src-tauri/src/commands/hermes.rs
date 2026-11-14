@@ -2,6 +2,7 @@ use std::time::Duration;
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
+use super::run_db_task;
 use crate::hermes_config;
 use crate::store::AppState;
 
@@ -19,9 +20,14 @@ const HERMES_WEB_OFFLINE_ERROR: &str = "hermes_web_offline";
 /// Hermes uses additive mode — users may already have providers
 /// configured in config.yaml.
 #[tauri::command]
-pub fn import_hermes_providers_from_live(state: State<'_, AppState>) -> Result<usize, String> {
-    crate::services::provider::import_hermes_providers_from_live(state.inner())
-        .map_err(|e| e.to_string())
+pub async fn import_hermes_providers_from_live(
+    state: State<'_, AppState>,
+) -> Result<usize, String> {
+    run_db_task(&state, |state| {
+        crate::services::provider::import_hermes_providers_from_live(state)
+            .map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// Get provider names in the Hermes live config.
@@ -136,7 +142,8 @@ pub async fn open_hermes_web_ui(app: AppHandle, path: Option<String>) -> Result<
 #[tauri::command]
 pub async fn launch_hermes_dashboard() -> Result<(), String> {
     tokio::task::spawn_blocking(|| {
-        crate::commands::misc::launch_terminal_running("hermes dashboard", "hermes_dashboard")
+        let command_line = crate::commands::misc::hermes_dashboard_command_line()?;
+        crate::commands::misc::launch_terminal_running(&command_line, "hermes_dashboard")
     })
     .await
     .map_err(|e| format!("launch task join error: {e}"))?

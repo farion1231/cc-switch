@@ -372,19 +372,20 @@ fn zip_dir_recursive(
             Err(_) => path.clone(),
         };
 
-        let rel = real_path
-            .strip_prefix(root)
-            .or_else(|_| path.strip_prefix(root))
-            .map_err(|e| {
-                localized(
-                    "webdav.sync.zip_relative_path_failed",
-                    format!("生成 ZIP 相对路径失败: {e}"),
-                    format!("Failed to build relative ZIP path: {e}"),
-                )
-            })?;
+        let is_dir = real_path.is_dir();
+        // File aliases keep their own names while their contents come from real_path.
+        // Directories keep canonical names to match traversal and deduplication.
+        let archive_path = if is_dir { &real_path } else { &path };
+        let rel = archive_path.strip_prefix(root).map_err(|e| {
+            localized(
+                "webdav.sync.zip_relative_path_failed",
+                format!("生成 ZIP 相对路径失败: {e}"),
+                format!("Failed to build relative ZIP path: {e}"),
+            )
+        })?;
         let rel_str = rel.to_string_lossy().replace('\\', "/");
 
-        if real_path.is_dir() {
+        if is_dir {
             if !mark_visited_dir(&real_path, visited)? {
                 log::warn!(
                     "[WebDAV] Skipping already visited directory: {}",
@@ -507,6 +508,88 @@ mod tests {
     use std::io::Cursor;
     use std::path::Path;
     use tempfile::tempdir;
+
+    #[cfg(unix)]
+    mod zip_symlinks {
+        use super::super::zip_dir_recursive;
+        use super::*;
+        use std::fs;
+        use std::io::Read;
+        use std::os::unix::fs::symlink;
+        use zip::write::SimpleFileOptions;
+
+        fn archive_dir(source: &Path, destination: &Path) -> zip::ZipArchive<fs::File> {
+            let root = fs::canonicalize(source).unwrap();
+            let mut writer = zip::ZipWriter::new(fs::File::create(destination).unwrap());
+            let options = SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated)
+                .last_modified_time(zip::DateTime::default());
+            let mut visited = HashSet::new();
+            mark_visited_dir(&root, &mut visited).unwrap();
+            zip_dir_recursive(&root, &root, &mut writer, options, &mut visited).unwrap();
+            writer.finish().unwrap();
+            zip::ZipArchive::new(fs::File::open(destination).unwrap()).unwrap()
+        }
+
+        #[test]
+        fn zip_preserves_file_symlink_names_and_contents() {
+            let temp = tempdir().unwrap();
+            let source = temp.path().join("skills");
+            let skill = source.join("example");
+            fs::create_dir_all(&skill).unwrap();
+            fs::write(skill.join("AGENTS.md"), "shared instructions").unwrap();
+            // Cover aliases sorted both before and after the target file.
+            for name in ["00-alias.md", "CLAUDE.md", "GEMINI.md"] {
+                symlink("AGENTS.md", skill.join(name)).unwrap();
+            }
+
+            let mut archive = archive_dir(&source, &temp.path().join("skills.zip"));
+            assert_eq!(archive.len(), 5);
+            for name in ["00-alias.md", "AGENTS.md", "CLAUDE.md", "GEMINI.md"] {
+                let mut entry = archive.by_name(&format!("example/{name}")).unwrap();
+                let mut content = String::new();
+                entry.read_to_string(&mut content).unwrap();
+                assert_eq!(content, "shared instructions");
+                assert!(!entry.is_symlink());
+            }
+        }
+
+        #[test]
+        fn zip_skips_file_symlinks_outside_root() {
+            let temp = tempdir().unwrap();
+            let source = temp.path().join("skills");
+            fs::create_dir(&source).unwrap();
+            fs::write(source.join("inside.md"), "included").unwrap();
+            fs::write(temp.path().join("outside.md"), "excluded").unwrap();
+            symlink("../outside.md", source.join("outside.md")).unwrap();
+
+            let mut archive = archive_dir(&source, &temp.path().join("skills.zip"));
+            assert_eq!(archive.len(), 1);
+            assert_eq!(archive.by_index(0).unwrap().name(), "inside.md");
+        }
+
+        #[test]
+        fn zip_keeps_canonical_directory_names_and_skips_cycles() {
+            let temp = tempdir().unwrap();
+            let source = temp.path().join("skills");
+            let target = source.join("target");
+            fs::create_dir_all(&target).unwrap();
+            fs::write(target.join("AGENTS.md"), "instructions").unwrap();
+            symlink("target", source.join("alias")).unwrap();
+            symlink("..", target.join("loop")).unwrap();
+
+            let mut archive = archive_dir(&source, &temp.path().join("skills.zip"));
+            assert_eq!(archive.len(), 2);
+            assert!(archive.by_name("target/").unwrap().is_dir());
+            let mut content = String::new();
+            archive
+                .by_name("target/AGENTS.md")
+                .unwrap()
+                .read_to_string(&mut content)
+                .unwrap();
+            assert_eq!(content, "instructions");
+        }
+    }
 
     #[test]
     fn mark_visited_dir_tracks_canonical_duplicates() {

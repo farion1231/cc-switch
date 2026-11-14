@@ -221,6 +221,7 @@ export const IconPicker: React.FC<IconPickerProps> = ({
           <Input
             id="icon-search"
             type="text"
+            data-unsaved-ignore
             placeholder={t("iconPicker.searchPlaceholder", {
               defaultValue: "输入图标名称...",
             })}
@@ -228,7 +229,12 @@ export const IconPicker: React.FC<IconPickerProps> = ({
             onChange={(e) => setSearchQuery(e.target.value)}
           />
           {value && (
-            <Button type="button" variant="ghost" onClick={() => select("")}>
+            <Button
+              type="button"
+              variant="ghost"
+              data-unsaved-edit
+              onClick={() => select("")}
+            >
               <X className="h-4 w-4" />
               {t("iconPicker.clear")}
             </Button>
@@ -271,6 +277,7 @@ export const IconPicker: React.FC<IconPickerProps> = ({
             accept={CUSTOM_ICON_ACCEPT}
             className="hidden"
             data-testid="icon-upload-input"
+            data-unsaved-ignore
             onChange={handleFileChange}
           />
 
@@ -305,6 +312,7 @@ export const IconPicker: React.FC<IconPickerProps> = ({
             <div key={icon.id} className="group relative">
               <button
                 type="button"
+                aria-pressed={value === icon.data}
                 onClick={() => select(icon.data)}
                 className={tileClass(value === icon.data)}
                 title={icon.name}
@@ -355,6 +363,7 @@ export const IconPicker: React.FC<IconPickerProps> = ({
               <button
                 key={iconName}
                 type="button"
+                aria-pressed={isSelected}
                 onClick={() => select(iconName)}
                 className={tileClass(isSelected)}
                 title={meta?.displayName || iconName}

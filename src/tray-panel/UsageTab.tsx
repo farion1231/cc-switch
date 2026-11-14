@@ -2,6 +2,8 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import {
+  Area,
+  AreaChart,
   Bar,
   BarChart,
   ResponsiveContainer,
@@ -12,12 +14,14 @@ import {
 import { Loader2 } from "lucide-react";
 import { usageApi } from "@/lib/api";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
+import { useSettingsQuery } from "@/lib/query";
 import { resolveUsageRange, getUsageRangePresetLabel } from "@/lib/usageRange";
 import {
   fmtInt,
   formatHitRatePercent,
   formatTokensCompact,
   getLocaleFromLanguage,
+  resolveTrendChartType,
 } from "@/components/usage/format";
 import {
   buildUsageTrendChartData,
@@ -198,6 +202,10 @@ export function UsageTab({
 }) {
   const { t, i18n } = useTranslation();
   const { money, moneyTick, rate } = useMoneyFormat();
+  // 柱形图 / 曲线面积图跟主窗口用量「设置」里选的一样
+  const { data: settings } = useSettingsQuery();
+  const chartType = resolveTrendChartType(settings?.usageDisplay);
+  const Chart = chartType === "bar" ? BarChart : AreaChart;
   const [range, setRange] = useState<Range>(() =>
     remembered(RANGE_KEY, RANGES, "today"),
   );
@@ -323,7 +331,7 @@ export function UsageTab({
             </div>
             <div className="h-[128px]">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart
+                <Chart
                   data={chartData}
                   margin={{ top: 4, right: 4, bottom: 0, left: 0 }}
                 >
@@ -339,7 +347,7 @@ export function UsageTab({
                     minTickGap={24}
                   />
                   <YAxis
-                    width={44}
+                    width="auto"
                     tick={{ fill: "currentColor", fontSize: 10, opacity: 0.55 }}
                     tickLine={false}
                     axisLine={false}
@@ -352,7 +360,14 @@ export function UsageTab({
                     }
                   />
                   <Tooltip
-                    cursor={{ fill: "rgba(127,127,127,0.12)" }}
+                    cursor={
+                      chartType === "bar"
+                        ? { fill: "rgba(127,127,127,0.12)" }
+                        : {
+                            stroke: "rgba(127,127,127,0.5)",
+                            strokeDasharray: "3 3",
+                          }
+                    }
                     content={({ active, payload }) => {
                       const point = payload?.[0]?.payload as
                         | UsageTrendChartPoint
@@ -370,14 +385,28 @@ export function UsageTab({
                       );
                     }}
                   />
-                  <Bar
-                    dataKey={dataKey}
-                    fill="#38bdf8"
-                    radius={[3, 3, 0, 0]}
-                    maxBarSize={18}
-                    isAnimationActive={false}
-                  />
-                </BarChart>
+                  {chartType === "bar" ? (
+                    <Bar
+                      dataKey={dataKey}
+                      fill="#38bdf8"
+                      radius={[3, 3, 0, 0]}
+                      maxBarSize={18}
+                      isAnimationActive={false}
+                    />
+                  ) : (
+                    <Area
+                      type="monotone"
+                      dataKey={dataKey}
+                      stroke="#38bdf8"
+                      strokeWidth={2}
+                      fill="#38bdf8"
+                      fillOpacity={0.16}
+                      dot={chartData.length === 1 ? { r: 3 } : false}
+                      activeDot={{ r: 3 }}
+                      isAnimationActive={false}
+                    />
+                  )}
+                </Chart>
               </ResponsiveContainer>
             </div>
           </div>

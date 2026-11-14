@@ -111,6 +111,15 @@ pub struct EditorSave {
 
 /// 编辑器显示的内容。`settings_config` 是这个供应商的行（新增时是空对象）。
 pub fn view(state: &AppState, settings_config: &Value) -> Result<EditorView, AppError> {
+    let (_, settings) = switched(state, settings_config)?;
+    Ok(EditorView {
+        inactive: inactive_fields(settings_config, &settings),
+        settings,
+    })
+}
+
+/// 当前 live，和在内存里切到这个供应商之后的样子。
+fn switched(state: &AppState, settings_config: &Value) -> Result<(Value, Value), AppError> {
     let file = claude_direct::settings_file();
     let pre = read_current(&file.path)?;
     let (live, _) = patch_json::parse(&file.path, pre.as_deref())?;
@@ -121,10 +130,40 @@ pub fn view(state: &AppState, settings_config: &Value) -> Result<EditorView, App
         prev.as_ref(),
         &ClaudeProjection::of(settings_config),
     )?;
-    Ok(EditorView {
-        inactive: inactive_fields(settings_config, &settings),
-        settings,
-    })
+    Ok((live, settings))
+}
+
+/// live 里有、切到这个供应商之后就没有的键（值是 live 里的）。
+#[derive(Debug, Default, PartialEq)]
+pub struct SwitchDrops {
+    pub env: Map<String, Value>,
+    pub top: Map<String, Value>,
+}
+
+/// 「打开终端」用：临时 `--settings` 叠在用户级 settings.json 上，`env` 按键合并、顶层按键
+/// 覆盖，切换会清掉的键不挡住就会带进这个只连一家的终端（代理的占位凭据、别家的模型名、
+/// 聚合模式的窗口上限……）。按切换的规则算，用户自己设的全局独有字段照常留着。
+pub fn switch_drops(state: &AppState, settings_config: &Value) -> Result<SwitchDrops, AppError> {
+    let (live, settings) = switched(state, settings_config)?;
+    Ok(drops_between(&live, &settings))
+}
+
+fn drops_between(live: &Value, settings: &Value) -> SwitchDrops {
+    let missing = |from: Option<&Value>, into: Option<&Value>| -> Map<String, Value> {
+        let into = into.and_then(Value::as_object);
+        from.and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+            .filter(|(key, _)| !into.is_some_and(|into| into.contains_key(*key)))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect()
+    };
+    let mut top = missing(Some(live), Some(settings));
+    top.shift_remove("env");
+    SwitchDrops {
+        env: missing(live.get("env"), settings.get("env")),
+        top,
+    }
 }
 
 /// live 里的独有字段是谁带进来的：接上代理时是代理契约，否则是直连指针指向的供应商。
@@ -361,14 +400,19 @@ pub(crate) fn write_live(
         .as_ref()
         .filter(|write| write.set_pointer)
         .map(|write| write.target.id.clone());
+    // 改了当前卡绑的账号（或新增的第一张就是绑号卡）：和切换一样先换登录，写失败时换回去
+    let login_target = key_fields.as_ref().map(|write| write.target);
     let key_patch = key_fields.map(|write| {
         let prev = write
             .prev
             .map(|provider| ClaudeProjection::of(&provider.settings_config));
-        direct_patch(
+        let mut patch = direct_patch(
             prev.as_ref(),
             &ClaudeProjection::of(&write.target.settings_config),
-        )
+        );
+        // 和切换一样：删掉以前开发版写进去的账号目录
+        super::claude_official::strip_from_patch(&mut patch);
+        patch
     });
     let patch = EditorPatch {
         changes: &plan.changes,
@@ -377,18 +421,25 @@ pub(crate) fn write_live(
     };
 
     // 关键字段的补丁是按调用方读到的行算的：先补完上一次的操作。
-    AppWrite::begin(db, AppType::Claude.as_str())?.run(
-        if pointer.is_some() {
-            op::SWITCH
-        } else {
-            op::APPLY
-        },
-        &[FileChange {
-            file: claude_direct::settings_file(),
-            patch: &patch,
-        }],
-        PendingTarget::pointer(pointer),
-    )?;
+    super::claude_official::with_login_switch(login_target, || {
+        AppWrite::begin(db, AppType::Claude.as_str()).and_then(|write| {
+            write.run(
+                if pointer.is_some() {
+                    op::SWITCH
+                } else {
+                    op::APPLY
+                },
+                &[FileChange {
+                    file: claude_direct::settings_file(),
+                    patch: &patch,
+                }],
+                PendingTarget::pointer(pointer),
+            )
+        })
+    })?;
+    // 账号目录里的设置是默认 settings.json 的镜像：写完再同步，编辑器里改的 hooks、
+    // permissions 才到得了正在用的账号（切换路径上的同步在写入之前，读到的是旧内容）
+    crate::services::claude_account::sync_all_shared(&crate::config::get_app_config_dir());
     Ok(())
 }
 
@@ -412,6 +463,60 @@ mod tests {
             Some(live.to_string().as_bytes()),
         )?;
         Ok(serde_json::from_slice(&out).expect("json"))
+    }
+
+    #[test]
+    fn switch_drops_are_what_the_switch_clears() {
+        // 聚合模式下的 live：代理地址和占位凭据、四档 Stack id、菜单、`/model` 的选择、契约带的
+        // 窗口上限；另有用户自己的全局设置。
+        let live = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
+                "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "ccs-claude-kimi--k3[1M]",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "ccs-claude-kimi--k3[1M]",
+                "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "128000",
+                "CLAUDE_CODE_DISABLE_ARTIFACT": "1",
+                "API_TIMEOUT_MS": "600000"
+            },
+            "model": "ccs-claude-kimi--k3[1M]",
+            "modelPicker": { "replaceBuiltInOptions": true, "options": [] },
+            "hooks": {}
+        });
+        let contract = ClaudeProjection {
+            exclusive: [(
+                "CLAUDE_CODE_MAX_CONTEXT_TOKENS".to_string(),
+                json!("128000"),
+            )]
+            .into_iter()
+            .collect(),
+            ..ClaudeProjection::default()
+        };
+        let card = json!({ "env": {
+            "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+            "ANTHROPIC_API_KEY": "sk",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro"
+        }});
+        let settings = project_onto(
+            Path::new("settings.json"),
+            &live,
+            Some(&contract),
+            &ClaudeProjection::of(&card),
+        )
+        .unwrap();
+        let drops = drops_between(&live, &settings);
+        let keys = |map: &Map<String, Value>| map.keys().cloned().collect::<Vec<_>>();
+        // 卡上有的（地址、sonnet）不算；用户自己的全局独有字段和其余设置不算。
+        assert_eq!(
+            keys(&drops.env),
+            [
+                "ANTHROPIC_AUTH_TOKEN",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                "CLAUDE_CODE_MAX_CONTEXT_TOKENS"
+            ]
+        );
+        assert_eq!(keys(&drops.top), ["model", "modelPicker"]);
+        assert_eq!(drops.top["model"], "ccs-claude-kimi--k3[1M]");
     }
 
     #[test]

@@ -1,0 +1,122 @@
+[
+  {
+    "id": 1,
+    "desc": "Unix 绝对路径（含中文目录）",
+    "input": "/Users/alice/Documents/notes/My Vault/00.索引/技术指南/密钥速查.md",
+    "expect_hit": false
+  },
+  {
+    "id": 2,
+    "desc": "工程路径含引号尾巴",
+    "input": "/data/simulations/wind/20260528_sim_run/forward_run_2\"",
+    "expect_hit": false
+  },
+  {
+    "id": 3,
+    "desc": "路径里高熵段（/tmp/xxxx.log）",
+    "input": "/tmp/AbCdEfGh1234567890XyZQwErTyUiOp.log",
+    "expect_hit": false
+  },
+  {
+    "id": 4,
+    "desc": "URL path 不脱",
+    "input": "https://example.com/files/AbCdEfGh1234567890XyZQwErTyUiOp",
+    "expect_hit": false
+  },
+  {
+    "id": 5,
+    "desc": "S3 路径不脱",
+    "input": "s3://bucket/aB3xK9pLmN2qR7sT5vW1zY/file.txt",
+    "expect_hit": false
+  },
+  {
+    "id": 6,
+    "desc": "Docker sha256 摘要不脱",
+    "input": "registry.io/img@sha256:9f86d081884c7d659a2feaa0c55ad015b1b8a3e6b1d2c4a5e9f8b7d6c5a4b3210",
+    "expect_hit": false
+  },
+  {
+    "id": 7,
+    "desc": "token=value 真密钥",
+    "input": "token=aB3xK9pLmN2qR7sT5vW1zYQwErTyUiOp",
+    "expect_hit": true
+  },
+  {
+    "id": 8,
+    "desc": "api_key 赋值",
+    "input": "api_key = aB3xK9pLmN2qR7sT5vW1zYQwErTyUiOp",
+    "expect_hit": true
+  },
+  {
+    "id": 9,
+    "desc": "Bearer 含 base64 padding 的 /（修复项）",
+    "input": "Authorization: Bearer abcDEF1234567890/xyzABC4567890==",
+    "expect_hit": true
+  },
+  {
+    "id": 10,
+    "desc": "URL query 的 token 必须脱",
+    "input": "https://x.com/cb?token=aB3xK9pLmN2qR7sT5vW1zYQwErTyUiOp",
+    "expect_hit": true
+  },
+  {
+    "id": 11,
+    "desc": "URL query 含路径不脱",
+    "input": "https://x.com/open?file=/Users/alice/Documents/a.txt",
+    "expect_hit": false
+  },
+  {
+    "id": 12,
+    "desc": "业务 ID 不脱（修复项 order_id）",
+    "input": "order_id=aB3xK9pLmN2qR7sT5vW1zY",
+    "expect_hit": false
+  },
+  {
+    "id": 13,
+    "desc": "UUID 不脱",
+    "input": "trace_id=550e8400-e29b-41d4-a716-446655440000",
+    "expect_hit": false
+  },
+  {
+    "id": 14,
+    "desc": "git SHA 不脱",
+    "input": "commit=9f86d081884c7d659a2feaa0c55ad015",
+    "expect_hit": false
+  },
+  {
+    "id": 15,
+    "desc": "模板变量不脱（修复项 ${TOKEN}）",
+    "input": "secret={{ API_KEY }} 或 token=${TOKEN}",
+    "expect_hit": false
+  },
+  {
+    "id": 16,
+    "desc": "上下文短密码必须脱",
+    "input": "我的密码是 Hunter2xyz",
+    "expect_hit": true
+  },
+  {
+    "id": 17,
+    "desc": "文档标题/字段名不脱",
+    "input": "\"密钥速查\"、config[\"api_key\"]",
+    "expect_hit": false
+  },
+  {
+    "id": 18,
+    "desc": "回归 case：长路径含空格 + 中文目录的 .md 文件",
+    "input": "/Users/alice/Documents/notes/My Vault/00.索引/技术指南/密钥速查.md",
+    "expect_hit": false
+  },
+  {
+    "id": 19,
+    "desc": "回归 case：60+ 字符的 ASCII 路径含引号尾巴",
+    "input": "/data/simulations/wind/20260528_sim_run/forward_run_2\"",
+    "expect_hit": false
+  },
+  {
+    "id": 20,
+    "desc": "api_key 出现在域名里（不是赋值）",
+    "input": "api_key.example.com/AbCdEfGh1234567890XyZ",
+    "expect_hit": false
+  }
+]

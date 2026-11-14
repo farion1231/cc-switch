@@ -9,6 +9,7 @@
 //! a direct (non-proxied) CLI request.
 
 use super::{
+    browser_guard,
     failover_switch::FailoverSwitchManager,
     handlers,
     log_codes::srv as log_srv,
@@ -20,6 +21,7 @@ use super::{
 use crate::database::Database;
 use axum::{
     extract::DefaultBodyLimit,
+    middleware,
     routing::{any, get, post},
     Router,
 };
@@ -421,6 +423,11 @@ impl ProxyServer {
             .route("/gemini/v1/*path", any(handlers::handle_gemini))
             // 提高默认请求体大小限制（避免 413 Payload Too Large）
             .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
+            // 拒绝网页发来的请求（最外层，读请求体之前）：见 browser_guard
+            .layer(middleware::from_fn_with_state(
+                self.state.clone(),
+                browser_guard::reject_browser_requests,
+            ))
             .with_state(self.state.clone())
     }
 
@@ -475,6 +482,28 @@ mod tests {
         body: Value,
     }
 
+    /// Windows 上监听 socket 不能被子进程继承：从 CC Switch 拉起的终端、CLI 一旦继承它，
+    /// 退出后端口仍被占着，下次启动报 os error 10048（#8552）。mio 1.2.1 起才带
+    /// WSA_FLAG_NO_HANDLE_INHERIT，这里防止 Cargo.lock 退回旧版本。
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn listener_socket_is_not_inheritable_on_windows() {
+        use std::os::windows::io::AsRawSocket;
+        use windows_sys::Win32::Foundation::{GetHandleInformation, HANDLE, HANDLE_FLAG_INHERIT};
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind listener");
+        let mut flags = 0u32;
+        let ok = unsafe { GetHandleInformation(listener.as_raw_socket() as HANDLE, &mut flags) };
+        assert_ne!(ok, 0, "GetHandleInformation failed");
+        assert_eq!(
+            flags & HANDLE_FLAG_INHERIT,
+            0,
+            "listener socket is inheritable"
+        );
+    }
+
     /// Codex 内置的 openai 先用 WebSocket 连 Responses：握手回 426 它才立刻改走 HTTP。
     #[tokio::test]
     async fn responses_websocket_handshake_is_answered_with_upgrade_required() {
@@ -507,6 +536,144 @@ mod tests {
             assert_eq!(response.status(), StatusCode::UPGRADE_REQUIRED, "{path}");
         }
         proxy.stop().await.expect("stop test proxy");
+    }
+
+    /// 网页发来的请求（no-cors POST、WebSocket、DNS rebinding）在读请求体之前就被拒绝。
+    #[tokio::test]
+    async fn browser_originated_requests_are_rejected() {
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                ..ProxyConfig::default()
+            },
+            db,
+            None,
+        );
+        let info = proxy.start().await.expect("start test proxy");
+        let base = format!("http://127.0.0.1:{}", info.port);
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+
+        let no_cors_post = client
+            .post(format!("{base}/v1/messages"))
+            .header(header::ORIGIN, "https://evil.example")
+            .header(header::CONTENT_TYPE, "text/plain")
+            .body(r#"{"model":"x","max_tokens":1,"messages":[]}"#)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(no_cors_post.status(), StatusCode::FORBIDDEN);
+
+        let websocket = client
+            .get(format!("{base}/v1/responses"))
+            .header(header::ORIGIN, "https://evil.example")
+            .header(header::CONNECTION, "Upgrade")
+            .header(header::UPGRADE, "websocket")
+            .header("sec-websocket-version", "13")
+            .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(websocket.status(), StatusCode::FORBIDDEN);
+
+        let rebinding = client
+            .get(format!("{base}/status"))
+            .header(header::HOST, format!("rebind.evil.example:{}", info.port))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(rebinding.status(), StatusCode::FORBIDDEN);
+
+        let cli = client.get(format!("{base}/health")).send().await.unwrap();
+        assert_eq!(cli.status(), StatusCode::OK);
+
+        // Claude Desktop 由网关 token 把关，带 Origin 也交给它自己的鉴权（401 而非 403）
+        let desktop = client
+            .get(format!("{base}/claude-desktop/v1/models"))
+            .header(header::ORIGIN, "app://claude")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(desktop.status(), StatusCode::UNAUTHORIZED);
+
+        proxy.stop().await.expect("stop test proxy");
+    }
+
+    /// Regression for #3787: a provider accidentally pointing at the proxy must
+    /// fail before it creates another request, even with a dynamically bound port.
+    #[tokio::test]
+    async fn codex_upstream_self_forwarding_is_rejected() {
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                ..ProxyConfig::default()
+            },
+            db.clone(),
+            None,
+        );
+        let info = proxy.start().await.expect("start proxy");
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let loopback = std::net::Ipv4Addr::LOCALHOST.to_string();
+        for (host, full_url, stream) in
+            [(loopback.as_str(), false, true), ("localhost", true, false)]
+        {
+            let mut provider = Provider::with_id(
+                "self-forwarding".to_string(),
+                "Self forwarding".to_string(),
+                json!({
+                    "base_url": format!("http://{host}:{}/v1{}", info.port, if full_url { "/responses" } else { "" }),
+                    "auth": {"OPENAI_API_KEY": "upstream-secret"},
+                }),
+                None,
+            );
+            provider.meta = Some(ProviderMeta {
+                is_full_url: Some(full_url),
+                ..ProviderMeta::default()
+            });
+            db.save_provider("codex", &provider).unwrap();
+            db.set_current_provider("codex", &provider.id).unwrap();
+            let before = proxy.get_status().await.total_requests;
+            let request = client
+                .post(format!(
+                    "http://{}:{}/v1/responses",
+                    info.address, info.port
+                ))
+                .json(&json!({
+                    "model": "gpt-5",
+                    "stream": stream,
+                    "input": [{"role": "user", "content": "x".repeat(256 * 1024)}],
+                }));
+            // Bound the regression itself if the guard is ever removed: stop
+            // after eight internal requests instead of letting the loop grow.
+            let response = tokio::select! {
+                response = request.send() => response.expect("send request"),
+                _ = async {
+                    while proxy.get_status().await.total_requests < before + 8 {
+                        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                    }
+                } => {
+                    proxy.stop().await.unwrap();
+                    panic!("provider request looped back into the proxy");
+                }
+            };
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let error: Value = response.json().await.unwrap();
+            assert!(error.to_string().contains("own proxy listener"), "{error}");
+            assert_eq!(proxy.get_status().await.total_requests, before + 1);
+            tokio::time::timeout(std::time::Duration::from_secs(1), async {
+                while proxy.get_status().await.active_connections != 0 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("rejected request releases its connection");
+        }
+        proxy.stop().await.unwrap();
     }
 
     /// A base URL pasted as a complete endpoint with the full-URL switch left off

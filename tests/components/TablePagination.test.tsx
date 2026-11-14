@@ -74,6 +74,42 @@ describe("useClientPagination + TablePagination", () => {
     expect(screen.getByText("row-1")).toBeInTheDocument();
   });
 
+  it("draws no pagination bar when everything fits on one page", () => {
+    render(<Harness count={3} />);
+    expect(screen.getAllByRole("listitem")).toHaveLength(3);
+    expect(
+      screen.queryByRole("button", { name: "usage.nextPage" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("usage.totalRecords:3")).not.toBeInTheDocument();
+  });
+
+  it("offers rows per page, even on a single page, once there are more rows than the smallest size", async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    const user = userEvent.setup();
+    const onPageSizeChange = vi.fn();
+    const props = {
+      page: 0,
+      onPageChange: vi.fn(),
+      pageSize: 50,
+      pageSizeOptions: [10, 20, 50],
+      onPageSizeChange,
+    };
+    const { rerender, container } = render(
+      <TablePagination {...props} totalPages={1} total={8} />,
+    );
+    // 比最小一档还少：没什么可调的
+    expect(container).toBeEmptyDOMElement();
+
+    // 只有一页，但调小以后会分页：要能找回这个下拉
+    rerender(<TablePagination {...props} totalPages={1} total={30} />);
+    await user.click(
+      screen.getByRole("combobox", { name: "usage.pageSizeLabel" }),
+    );
+    // 选项依次是 10 / 20 / 50（测试里的 t 只返回键名）
+    await user.click((await screen.findAllByRole("option"))[0]);
+    expect(onPageSizeChange).toHaveBeenCalledWith(10);
+  });
+
   it("clamps to the last page when rows shrink", async () => {
     const user = userEvent.setup();
     const { rerender } = render(<Harness count={45} />);
