@@ -374,7 +374,8 @@ mod tests {
         let task = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut request = [0; 4096];
-            socket.read(&mut request).await.unwrap();
+            let read = socket.read(&mut request).await.unwrap();
+            assert!(read > 0, "client sent no request");
             socket
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\nx")
                 .await
