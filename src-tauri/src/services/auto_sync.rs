@@ -229,10 +229,11 @@ async fn run_worker_loop<B: AutoSyncBackend, R: Runtime>(
 #[cfg(test)]
 mod tests {
     use super::{
-        auto_sync_wait_duration, enqueue_change_signal, is_suppressed, run_worker_loop,
-        AutoSyncBackend, SuppressionGuard, AUTO_SYNC_DEBOUNCE_MS, MAX_AUTO_SYNC_WAIT_MS,
+        auto_sync_wait_duration, run_worker_loop, AutoSyncBackend, AUTO_SYNC_DEBOUNCE_MS,
+        MAX_AUTO_SYNC_WAIT_MS,
     };
     use crate::database::Database;
+    use crate::error::AppError;
     use crate::services::s3_auto_sync::S3AutoSync;
     use crate::services::sync_protocol::sync_mutex;
     use crate::services::webdav_auto_sync::WebDavAutoSync;
@@ -245,28 +246,10 @@ mod tests {
     use tokio::sync::mpsc::channel;
 
     #[test]
-    #[serial]
-    fn suppression_guard_enables_and_restores_state() {
-        assert!(!is_suppressed::<WebDavAutoSync>());
-        {
-            let _guard = SuppressionGuard::<WebDavAutoSync>::new();
-            assert!(is_suppressed::<WebDavAutoSync>());
-        }
-        assert!(!is_suppressed::<WebDavAutoSync>());
-    }
-
-    #[test]
     fn max_wait_caps_flush_latency_for_continuous_events() {
         let started = Instant::now();
         let later = started + Duration::from_millis(MAX_AUTO_SYNC_WAIT_MS + 1);
         assert!(auto_sync_wait_duration(started, later).is_none());
-    }
-
-    #[tokio::test]
-    async fn enqueue_change_signal_drops_when_channel_is_full() {
-        let (tx, _rx) = channel::<String>(1);
-        assert!(enqueue_change_signal(&tx, "providers"));
-        assert!(!enqueue_change_signal(&tx, "providers"));
     }
 
     #[test]
@@ -338,24 +321,53 @@ mod tests {
         }
     }
 
-    /// A DB change queues an auto upload while another sync operation holds
-    /// the lock. While it waits, the user saves `changed` settings
-    /// (`(enabled, auto_sync)`), or nothing. Returns how many requests reached
-    /// the remote.
-    async fn requests_after_queued_upload<B: AutoSyncBackend>(
-        store: fn(Option<B::Settings>) -> Result<(), crate::error::AppError>,
-        settings_for: fn(&str, bool, bool) -> B::Settings,
-        changed: Option<(bool, bool)>,
-    ) -> usize {
-        let test_home = std::env::temp_dir().join(format!(
-            "cc-switch-{}-auto-sync-queue-test",
-            B::NAME.to_lowercase()
-        ));
-        let _ = std::fs::remove_dir_all(&test_home);
-        std::fs::create_dir_all(&test_home).expect("create test home");
-        std::env::set_var("CC_SWITCH_TEST_HOME", &test_home);
-        settings::update_settings(AppSettings::default()).expect("reset settings");
+    /// What the user does while the auto upload waits for the sync lock.
+    enum UserChange {
+        Nothing,
+        /// Saves the same config with these `(enabled, auto_sync)` flags.
+        Save(bool, bool),
+        /// Clears the saved config.
+        Clear,
+    }
 
+    /// Points settings at a fresh home for one test and puts the old one back.
+    struct IsolatedHome {
+        _dir: tempfile::TempDir,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl IsolatedHome {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().expect("create test home");
+            let previous = std::env::var_os("CC_SWITCH_TEST_HOME");
+            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            settings::update_settings(AppSettings::default()).expect("reset settings");
+            Self {
+                _dir: dir,
+                previous,
+            }
+        }
+    }
+
+    impl Drop for IsolatedHome {
+        fn drop(&mut self) {
+            let _ = settings::update_settings(AppSettings::default());
+            match self.previous.take() {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
+
+    /// A DB change queues an auto upload while another sync operation holds
+    /// the lock. While it waits, the user makes `change`. Returns how many
+    /// requests reached the remote.
+    async fn requests_after_queued_upload<B: AutoSyncBackend>(
+        store: fn(Option<B::Settings>) -> Result<(), AppError>,
+        settings_for: fn(&str, bool, bool) -> B::Settings,
+        change: UserChange,
+    ) -> usize {
+        let _home = IsolatedHome::new();
         let (remote, hits) = counting_remote();
         store(Some(settings_for(&remote, true, true))).expect("seed settings");
 
@@ -371,8 +383,12 @@ mod tests {
         // Past the debounce, so the upload is queued on the sync lock.
         tokio::time::sleep(Duration::from_millis(AUTO_SYNC_DEBOUNCE_MS + 300)).await;
 
-        if let Some((enabled, auto_sync)) = changed {
-            store(Some(settings_for(&remote, enabled, auto_sync))).expect("save settings");
+        match change {
+            UserChange::Nothing => {}
+            UserChange::Save(enabled, auto_sync) => {
+                store(Some(settings_for(&remote, enabled, auto_sync))).expect("save settings")
+            }
+            UserChange::Clear => store(None).expect("clear settings"),
         }
         drop(other_sync);
         drop(tx);
@@ -388,23 +404,21 @@ mod tests {
             mod $name {
                 use super::*;
 
+                async fn requests(change: UserChange) -> usize {
+                    requests_after_queued_upload::<$backend>($store, $settings, change).await
+                }
+
                 #[tokio::test]
                 #[serial]
                 async fn queued_upload_runs_when_settings_are_unchanged() {
-                    let requests =
-                        requests_after_queued_upload::<$backend>($store, $settings, None).await;
+                    let requests = requests(UserChange::Nothing).await;
                     assert!(requests > 0, "the queued upload should reach the remote");
                 }
 
                 #[tokio::test]
                 #[serial]
                 async fn queued_upload_is_dropped_after_auto_sync_is_turned_off() {
-                    let requests = requests_after_queued_upload::<$backend>(
-                        $store,
-                        $settings,
-                        Some((true, false)),
-                    )
-                    .await;
+                    let requests = requests(UserChange::Save(true, false)).await;
                     assert_eq!(
                         requests, 0,
                         "nothing may be uploaded after auto sync is off"
@@ -414,12 +428,7 @@ mod tests {
                 #[tokio::test]
                 #[serial]
                 async fn queued_upload_is_dropped_after_sync_is_disabled() {
-                    let requests = requests_after_queued_upload::<$backend>(
-                        $store,
-                        $settings,
-                        Some((false, true)),
-                    )
-                    .await;
+                    let requests = requests(UserChange::Save(false, true)).await;
                     assert_eq!(
                         requests, 0,
                         "nothing may be uploaded after sync is disabled"
@@ -436,4 +445,20 @@ mod tests {
         webdav_settings
     );
     queued_upload_tests!(s3, S3AutoSync, settings::set_s3_sync_settings, s3_settings);
+
+    /// "Clear config" exists only for WebDAV (`webdav_sync_clear_settings`).
+    #[tokio::test]
+    #[serial]
+    async fn webdav_queued_upload_is_dropped_after_config_is_cleared() {
+        let requests = requests_after_queued_upload::<WebDavAutoSync>(
+            settings::set_webdav_sync_settings,
+            webdav_settings,
+            UserChange::Clear,
+        )
+        .await;
+        assert_eq!(
+            requests, 0,
+            "nothing may be uploaded after the config is cleared"
+        );
+    }
 }
