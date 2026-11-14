@@ -2761,18 +2761,9 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        piModel("anthropic/claude-opus-5.5", {
-          id: "claude-opus-5-5",
-          name: "claude-opus-5",
-        }),
-        piModel("anthropic/claude-sonnet-5.5", {
-          id: "claude-sonnet-5-5",
-          name: "claude-sonnet-5",
-        }),
-        piModel("anthropic/claude-haiku-5.5", {
-          id: "claude-haiku-5-5",
-          name: "claude-haiku-4-5-20251001",
-        }),
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+        piModel("anthropic/claude-haiku-5.5", { id: "claude-haiku-5-5" }),
       ],
     },
     category: "aggregator",
@@ -2789,10 +2780,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-responses",
       apiKey: "",
       models: [
-        piModel("openai/gpt-6.1-sol", {
-          id: "gpt-6.1-sol",
-          name: "gpt-5.6-sol",
-        }),
+        piModel("openai/gpt-6.1-sol", { id: "gpt-6.1-sol" }),
         piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
         piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
       ],
@@ -2812,15 +2800,9 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-responses",
       apiKey: "",
       models: [
-        piModel("openai/gpt-6.1-sol", {
-          id: "gpt-6.1-sol",
-          name: "gpt-5.2-codex",
-        }),
+        piModel("openai/gpt-6.1-sol", { id: "gpt-6.1-sol" }),
         piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
-        piModel("openai/gpt-6-astra", {
-          id: "gpt-6-astra",
-          name: "gpt-5.3-codex",
-        }),
+        piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
       ],
     },
     category: "third_party",
