@@ -6,7 +6,6 @@ import {
   type AgentReaderStyle,
 } from "@/components/sessions/reader/agentStyles";
 import {
-  formatCost,
   formatDuration,
   formatMergedTitle,
   formatStepMeta,
@@ -192,17 +191,12 @@ describe("格式化小工具", () => {
     ]);
   });
 
-  it("formatTokens / formatCost", () => {
+  it("formatTokens", () => {
     expect([980, 1000, 28500, 1_200_000].map(formatTokens)).toEqual([
       "980",
       "1k",
       "28.5k",
       "1.2M",
-    ]);
-    expect([0.0081, 0.0123, 1.25].map(formatCost)).toEqual([
-      "$0.0081",
-      "$0.012",
-      "$1.25",
     ]);
   });
 

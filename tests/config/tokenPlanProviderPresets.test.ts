@@ -67,7 +67,6 @@ const products = [
     catalogModels: [
       "tc-code-latest",
       "deepseek-v4-flash-202605",
-      "deepseek-v4-pro-202606",
       "minimax-m2.7",
       "glm-5",
       "glm-5.1",
@@ -91,7 +90,6 @@ const products = [
       "auto",
       "glm-5.2",
       "kimi-k2.6",
-      "deepseek-v4-pro-202606",
       "deepseek-v4-flash-202605",
       "minimax-m3",
     ],
@@ -123,14 +121,10 @@ const products = [
       "kimi-k2.7-code",
       "kimi-k2.7-code-highspeed",
       "kimi-k2.6",
-      "minimax-m2.7",
       "minimax-m3",
       "deepseek-v4-flash",
-      "deepseek-v4-pro",
       "deepseek-v4-flash-0731",
-      "deepseek-v4-pro-0813",
       "deepseek-v4-flash-202605",
-      "deepseek-v4-pro-202606",
     ],
   },
   {
@@ -153,11 +147,8 @@ const products = [
       "kimi-k2.7-code",
       "kimi-k2.7-code-highspeed",
       "deepseek-v4-flash",
-      "deepseek-v4-pro",
       "deepseek-v4-flash-0731",
-      "deepseek-v4-pro-0813",
       "deepseek-v4-flash-202605",
-      "deepseek-v4-pro-202606",
     ],
   },
   {
@@ -470,9 +461,10 @@ describe("Tencent Token Plan provider presets", () => {
     // 全部真 Key 实测（2026-08-31）：
     // - glm-5.3 始终思考且档位严格枚举 low/high/max（medium/xhigh 会 400）
     // - kimi-k2.7-code(-highspeed) 仅接受 thinking:enabled
-    // - minimax-m2.7 与国内 auto 关思考被静默忽略 → 不列 none
+    // - 国内 auto 关思考被静默忽略 → 不列 none
     // - 其余模型 thinking 开关真实生效 → 两态 none/high
     // - minimax-m2.5 官方已除名且平台计划下线（2026-09-07 从全部 app 移除），不再断言
+    // - minimax-m2.7 平台标注 2026-11-17 下线，2026-10-24 从企业版移除
     const epro = codexProviderPresets.find(
       (item) => item.name === "Tencent Token Plan Enterprise Pro",
     );
@@ -482,12 +474,10 @@ describe("Tencent Token Plan provider presets", () => {
     expect(levels("glm-5.3")).toEqual(["low", "high", "max"]);
     expect(levels("kimi-k2.7-code")).toEqual(["high"]);
     expect(levels("kimi-k2.7-code-highspeed")).toEqual(["high"]);
-    expect(levels("minimax-m2.7")).toEqual(["high"]);
     expect(levels("auto")).toEqual(["high"]); // 国内 auto 忽略关思考
     expect(levels("glm-5.2")).toEqual(["none", "high"]);
     expect(levels("kimi-k2.6")).toEqual(["none", "high"]);
     expect(levels("minimax-m3")).toEqual(["none", "high"]);
-    expect(levels("deepseek-v4-pro-202606")).toEqual(["none", "high"]);
 
     // 国际站 auto 尊重关思考（与国内 auto 行为不同）
     const intlEpro = codexProviderPresets.find(
@@ -623,12 +613,9 @@ describe("Tencent TokenHub (pay-as-you-go) Pi presets", () => {
         "hy4-preview",
         "hy3",
         "deepseek-v4-flash-202605",
-        "deepseek-v4-pro-202606",
         "deepseek/deepseek-v4-flash-vision-exp",
         "deepseek-v4-flash-0731",
-        "deepseek-v4-pro-0813",
         "deepseek-v4-flash",
-        "deepseek-v4-pro",
         "glm-5.3-flash",
         "glm-5.3",
         "glm-5.2",
@@ -658,12 +645,9 @@ describe("Tencent TokenHub (pay-as-you-go) Pi presets", () => {
         "hy4-preview",
         "hy3",
         "deepseek-v4-flash-202605",
-        "deepseek-v4-pro-202606",
         "deepseek/deepseek-v4-flash-vision-exp",
         "deepseek-v4-flash-0731",
-        "deepseek-v4-pro-0813",
         "deepseek-v4-flash",
-        "deepseek-v4-pro",
         "deepseek-v3.2",
         "glm-5.3",
         "glm-5.3-flash",

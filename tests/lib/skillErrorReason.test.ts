@@ -28,6 +28,17 @@ describe("skillErrorReason", () => {
     );
   });
 
+  it("tells an oversized download apart from the extraction limit", () => {
+    // #8421：下载体超限曾复用 ARCHIVE_TOO_LARGE，被说成「解压后超过上限」
+    const error = JSON.stringify({
+      code: "ARCHIVE_DOWNLOAD_TOO_LARGE",
+      context: { limit_mb: "512" },
+    });
+    expect(skillErrorReason(error, t)).toBe(
+      'skills.error.archiveDownloadTooLarge:{"limit_mb":"512"}',
+    );
+  });
+
   it("keeps the first line of an unstructured error", () => {
     expect(skillErrorReason("connection reset\nstack…", t)).toBe(
       "connection reset",

@@ -78,12 +78,12 @@ describe("Pi thinking profiles", () => {
         }),
         expect.objectContaining({
           preset: "DeepSeek",
-          modelId: "deepseek-v4-pro",
+          modelId: "deepseek-flash",
           profileId: "deepseekV4",
         }),
         expect.objectContaining({
           preset: "OpenCode Go",
-          modelId: "glm-5.2",
+          modelId: "glm-5.3",
           profileId: "openCodeGoGlm52",
         }),
         expect.objectContaining({

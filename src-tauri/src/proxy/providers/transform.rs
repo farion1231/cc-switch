@@ -13,6 +13,7 @@ use crate::proxy::{
     },
 };
 use serde_json::{json, Value};
+use std::borrow::Cow;
 
 const ANTHROPIC_BILLING_HEADER_PREFIX: &str = "x-anthropic-billing-header:";
 
@@ -86,15 +87,26 @@ pub fn supports_reasoning_effort(model: &str) -> bool {
 }
 
 /// Detect models whose OpenAI reasoning effort supports a distinct `max` tier.
+///
+/// Matched by family instead of by name, so new releases need no list update:
+/// GPT 5.6 and later, bare or as a Sol / Terra / Luna / Astra variant (every such
+/// model on the OpenAI model pages and in the Codex catalog accepts `max`, e.g.
+/// gpt-5.6-sol, gpt-6-astra, gpt-6.1-sol, gpt-6.1-terra). Other variants
+/// (`-pro`, `-codex`, `-mini`, dated snapshots, …) keep falling back to `xhigh`.
 fn supports_max_reasoning_effort(model: &str) -> bool {
     let normalized = model.to_ascii_lowercase();
-    matches!(
-        normalized.as_str(),
-        "gpt-5.6" | "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna"
-    ) || matches!(
-        normalized.as_str(),
-        "gpt-6-astra" | "gpt-6-sol" | "gpt-6-luna"
-    )
+    let Some(rest) = normalized.strip_prefix("gpt-") else {
+        return false;
+    };
+    let (version, variant) = rest.split_once('-').unwrap_or((rest, ""));
+    if !matches!(variant, "" | "sol" | "terra" | "luna" | "astra") {
+        return false;
+    }
+    let (major, minor) = version.split_once('.').unwrap_or((version, "0"));
+    match (major.parse::<u32>(), minor.parse::<u32>()) {
+        (Ok(major), Ok(minor)) => major > 5 || (major == 5 && minor >= 6),
+        _ => false,
+    }
 }
 
 /// Resolve the appropriate OpenAI `reasoning_effort` from an Anthropic request body.
@@ -157,6 +169,12 @@ fn resolve_requested_reasoning_effort(body: &Value, model: &str) -> Option<&'sta
     }
 
     // --- Priority 2: thinking.type + budget_tokens fallback ---
+    effort_from_thinking(body)
+}
+
+/// Effort implied by `thinking` alone (no `output_config.effort`): `adaptive` →
+/// `xhigh`, `enabled` → bucketed by `budget_tokens`, `disabled` / absent → `None`.
+pub(crate) fn effort_from_thinking(body: &Value) -> Option<&'static str> {
     let thinking = body.get("thinking")?;
     match thinking.get("type").and_then(|t| t.as_str()) {
         Some("adaptive") => Some("xhigh"),
@@ -593,8 +611,50 @@ fn clean_schema_inner(mut schema: Value, is_root: bool) -> Value {
     schema
 }
 
+/// 部分 OpenAI 兼容网关（ClinePass，#5658）把非流式 Chat Completions 响应包成
+/// `{"data": {...}, "success": true}`。只认顶层没有 `choices` 数组、`data` 里有的形状，
+/// 标准响应不受影响。
+fn is_chat_completion_envelope(body: &Value) -> bool {
+    !body.get("choices").is_some_and(Value::is_array)
+        && body
+            .get("data")
+            .and_then(|data| data.get("choices"))
+            .is_some_and(Value::is_array)
+}
+
+/// 把包在 `data` 里的 Chat Completions 响应解开；顶层的非 null 字段优先于 `data`
+/// 里的同名字段。不是这种形状时原样返回。
+pub(crate) fn unwrap_chat_completion_envelope(body: Value) -> Value {
+    if !is_chat_completion_envelope(&body) {
+        return body;
+    }
+    let Value::Object(mut outer) = body else {
+        unreachable!("envelope check requires an object");
+    };
+    let Some(Value::Object(mut completion)) = outer.remove("data") else {
+        unreachable!("envelope check requires an object `data`");
+    };
+    for (key, value) in outer {
+        // 顶层 `choices` 此时只可能是非数组的占位值，不能盖掉 `data` 里的真值
+        if key != "choices" && !value.is_null() {
+            completion.insert(key, value);
+        }
+    }
+    Value::Object(completion)
+}
+
+/// 只读场景（用量解析）用的同款解包：仅包层响应才复制一份。
+pub(crate) fn chat_completion_body(body: &Value) -> Cow<'_, Value> {
+    if is_chat_completion_envelope(body) {
+        Cow::Owned(unwrap_chat_completion_envelope(body.clone()))
+    } else {
+        Cow::Borrowed(body)
+    }
+}
+
 /// OpenAI 响应 → Anthropic 响应
 pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
+    let body = unwrap_chat_completion_envelope(body);
     let choices = body
         .get("choices")
         .and_then(|c| c.as_array())
@@ -1463,6 +1523,72 @@ mod tests {
         assert_eq!(result["usage"]["output_tokens"], 5);
     }
 
+    #[test]
+    fn test_openai_to_anthropic_unwraps_data_envelope() {
+        // #5658：ClinePass 把非流式 Chat 响应包在 data 里
+        let input = json!({
+            "success": true,
+            "data": {
+                "id": "chatcmpl-wrapped",
+                "object": "chat.completion",
+                "model": "cline-pass/deepseek-v4.1-flash",
+                "choices": [{
+                    "message": {"role": "assistant", "content": "OK"},
+                    "finish_reason": "stop"
+                }],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 1, "total_tokens": 13}
+            }
+        });
+
+        let result = openai_to_anthropic(input).unwrap();
+        assert_eq!(result["id"], "chatcmpl-wrapped");
+        assert_eq!(result["model"], "cline-pass/deepseek-v4.1-flash");
+        assert_eq!(result["content"][0]["text"], "OK");
+        assert_eq!(result["stop_reason"], "end_turn");
+        assert_eq!(result["usage"]["input_tokens"], 12);
+        assert_eq!(result["usage"]["output_tokens"], 1);
+    }
+
+    #[test]
+    fn test_unwrap_chat_completion_envelope_prefers_top_level_fields() {
+        let input = json!({
+            "id": "top-id",
+            "usage": null,
+            "choices": null,
+            "data": {
+                "id": "inner-id",
+                "model": "inner-model",
+                "choices": [{"message": {"role": "assistant", "content": "x"}}],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 2}
+            }
+        });
+
+        let result = unwrap_chat_completion_envelope(input);
+        assert_eq!(result["id"], "top-id");
+        assert_eq!(result["model"], "inner-model");
+        assert_eq!(result["usage"]["prompt_tokens"], 3);
+        assert!(result["choices"].is_array());
+        assert!(result.get("data").is_none());
+    }
+
+    #[test]
+    fn test_unwrap_chat_completion_envelope_leaves_other_shapes_alone() {
+        // 顶层已有 choices 的标准响应、data 里没有 choices 的响应都原样返回
+        let standard = json!({
+            "id": "chatcmpl-1",
+            "choices": [{"message": {"role": "assistant", "content": "hi"}}],
+            "data": {"choices": [{"message": {"role": "assistant", "content": "other"}}]}
+        });
+        assert_eq!(unwrap_chat_completion_envelope(standard.clone()), standard);
+
+        let unrelated = json!({"data": {"text": "no choices"}});
+        assert_eq!(
+            unwrap_chat_completion_envelope(unrelated.clone()),
+            unrelated
+        );
+        assert!(openai_to_anthropic(unrelated).is_err());
+    }
+
     fn chat_response_with_content(content: Value) -> Value {
         json!({
             "id": "chatcmpl-think",
@@ -2014,6 +2140,9 @@ mod tests {
             "gpt-6-astra",
             "gpt-6-sol",
             "gpt-6-luna",
+            // #9122: GPT-6.1 Sol / Terra accept max (OpenAI model pages, Codex catalog).
+            "gpt-6.1-sol",
+            "GPT-6.1-Terra",
         ] {
             let body = json!({
                 "model": model,
@@ -2023,6 +2152,30 @@ mod tests {
             assert_eq!(
                 resolve_reasoning_effort(&body),
                 Some("max"),
+                "model {model}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_output_config_max_falls_back_to_xhigh_outside_max_families() {
+        for model in [
+            "gpt-5.5",
+            "gpt-5.6-cyber",
+            "gpt-6.1-codex",
+            "gpt-6-pro",
+            "gpt-6.1-sol-2026-10-01",
+            "gpt-5.10-sol-x",
+            "o3",
+        ] {
+            let body = json!({
+                "model": model,
+                "thinking": {"type": "adaptive"},
+                "output_config": {"effort": "max"}
+            });
+            assert_eq!(
+                resolve_reasoning_effort(&body),
+                Some("xhigh"),
                 "model {model}"
             );
         }

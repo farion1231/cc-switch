@@ -24,6 +24,8 @@ interface ManagedAccountRemoveDialogProps {
   users: ManagedAccountUser[];
   /** 删掉这一个之后还剩别的账号：跟着默认账号的供应商会改用新的默认账号 */
   othersRemain: boolean;
+  /** 跟在说明后面的一句补充（Antigravity：只删副本、不让 agy 登出） */
+  note?: string;
   pending?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
@@ -38,6 +40,7 @@ export function ManagedAccountRemoveDialog({
   serviceName,
   users,
   othersRemain,
+  note,
   pending = false,
   onConfirm,
   onCancel,
@@ -125,6 +128,7 @@ export function ManagedAccountRemoveDialog({
                       "会删除这 {{count}} 个账号保存在 CC Switch 里的登录凭据，无法撤销。",
                     count,
                   })}
+              {note && <> {note}</>}
             </DialogDescription>
           </div>
 

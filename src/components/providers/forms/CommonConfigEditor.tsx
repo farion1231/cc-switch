@@ -249,9 +249,8 @@ export function CommonConfigEditor({
       <InactiveFieldsPanel
         fields={pendingInactiveFields}
         hint={t("claudeConfig.inactiveFieldsHint", {
-          count: pendingInactiveFields.length,
           defaultValue:
-            "这个供应商还保存着 {{count}} 个不随切换生效的字段。点击可加入上方的全局设置，保存后写入配置文件；供应商里保存的原值不会删除。",
+            "这些是旧版存进卡里的设置，现在切换不会写出去。点一下加入上方，保存后对所有供应商生效。",
         })}
         action={{
           kind: "add",

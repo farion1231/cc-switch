@@ -150,9 +150,10 @@ const API_KEY_INPUT_ID: Record<GoldenAppId, string> = {
 };
 
 function presetNameAt(appId: GoldenAppId, index: number): string | undefined {
-  // 与 ProviderForm 的 presetEntries 生成方式一致：Claude 先滤掉 hidden 再编号
+  // 与 ProviderForm 的 presetEntries 生成方式一致：先按原数组下标编号再滤掉
+  // hidden，所以序号直接回查原数组（AddProviderDialog 也这样回查）
   return appId === "claude"
-    ? providerPresets.filter((preset) => !preset.hidden)[index]?.name
+    ? providerPresets[index]?.name
     : codexProviderPresets[index]?.name;
 }
 

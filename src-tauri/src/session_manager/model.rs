@@ -384,23 +384,23 @@ pub enum ImageSource {
     rename_all = "snake_case",
     rename_all_fields = "camelCase"
 )]
-pub enum TranscriptChunk {
+pub enum TranscriptChunk<'a> {
     /// 第一包：总数与轮次索引，让前端先画骨架
     Header {
         total: usize,
-        turns: Vec<TurnIndex>,
+        turns: &'a [TurnIndex],
         cached: bool,
         parse_ms: u64,
     },
     Messages {
         start: usize,
-        messages: Vec<SessionMessage>,
+        messages: &'a [SessionMessage],
     },
     Done {
         payload_bytes: u64,
     },
     Error {
-        message: String,
+        message: &'a str,
     },
 }
 
@@ -576,7 +576,7 @@ mod tests {
 
         let chunk = TranscriptChunk::Header {
             total: 0,
-            turns: vec![],
+            turns: &[],
             cached: true,
             parse_ms: 3,
         };

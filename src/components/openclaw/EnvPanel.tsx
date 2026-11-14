@@ -76,7 +76,6 @@ const EnvPanel: React.FC = () => {
 
   return (
     <div className="px-6 pt-4 pb-8">
-      <p className="text-sm text-fg-2 mb-4">{t("openclaw.env.description")}</p>
       <p className="text-xs text-fg-2 mb-4">
         {t("openclaw.env.editorHint", {
           defaultValue:

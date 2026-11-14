@@ -1,4 +1,5 @@
 import { useSettings } from "@/hooks/useSettings";
+import { useAutoExchangeRates } from "@/hooks/useAutoExchangeRates";
 import type { SettingsFormState } from "@/hooks/useSettings";
 import type { AppTypeFilter } from "@/types/usage";
 import { UsageDashboard } from "./UsageDashboard";
@@ -15,12 +16,23 @@ export function UsagePage({
   initialAppType,
   onOpenRoutingSettings,
 }: UsagePageProps = {}) {
-  const { settings, updateSettings, autoSaveSettings } = useSettings();
+  const { settings, autoSaveSettings } = useSettings();
 
-  const save = (updates: Partial<SettingsFormState>) => {
-    updateSettings(updates);
-    void autoSaveSettings(updates).catch(() => undefined);
+  const save = async (updates: Partial<SettingsFormState>) => {
+    try {
+      return (await autoSaveSettings(updates)) != null;
+    } catch {
+      // useSettings 已提示保存失败；将结果传回面板，回滚乐观更新的刷新间隔。
+      return false;
+    }
   };
+
+  // 自动模式的汇率：进用量页时过期就取一次，取到后写回设置
+  useAutoExchangeRates(
+    settings?.usageDisplay,
+    (usageDisplay) => save({ usageDisplay }),
+    settings != null,
+  );
 
   return (
     <UsageDashboard
@@ -29,11 +41,14 @@ export function UsagePage({
         save({ usageDashboardRefreshIntervalMs })
       }
       sessionAutoSyncEnabled={settings?.sessionAutoSyncEnabled ?? true}
+      settingsReady={settings != null}
       onSessionAutoSyncEnabledChange={(sessionAutoSyncEnabled) =>
         save({ sessionAutoSyncEnabled })
       }
       initialAppType={initialAppType}
       onOpenRoutingSettings={onOpenRoutingSettings}
+      usageDisplay={settings?.usageDisplay}
+      onUsageDisplayChange={(usageDisplay) => save({ usageDisplay })}
     />
   );
 }
