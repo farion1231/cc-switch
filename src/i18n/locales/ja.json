@@ -241,17 +241,19 @@
         "oauthHint": "Google 公式は OAuth 個人認証を使用するため API Key は不要です。初回利用時にブラウザが開きます。",
         "apiKeyPlaceholder": "Gemini API Key を入力"
       },
-      "claudeAccount": {
+      "managedAccount": {
         "label": "ログイン方法",
+        "missing": "このコンピューターにないアカウント",
+        "reauthBadge": "再ログインが必要"
+      },
+      "claudeAccount": {
         "default": "Claude Code のログインに追従",
         "defaultDescription": "Claude Code で現在ログイン中のアカウントに追従します",
-        "missing": "このコンピューターにないアカウント",
         "manage": "Claude アカウントを追加または管理",
         "helpTerminal": "設定で Claude の設定フォルダーが上書きされているため、このカードに切り替えても Claude Code のログインは変わりません。選んだアカウントはカードの「ターミナルを開く」から使ってください。",
         "helpWsl": "Claude の設定フォルダーが WSL にあるため、Claude アカウントにはまだ対応していません。このカードに切り替えても Claude Code のログインは変わりません。",
         "help": "このカードに切り替えると、実行中のセッションも含めて Claude Code のログインがすぐに選んだアカウントに変わります。複数のアカウントを同時に使うには、カードの「ターミナルを開く」を使ってください。",
         "claudeAccount": "Claude アカウント",
-        "reauthBadge": "再ログインが必要",
         "terminalHint": "ターミナルを開いて使用",
         "wslHint": "WSL は未対応",
         "plan": {
@@ -263,6 +265,13 @@
           "teamPremium": "Team プレミアム",
           "enterprise": "Enterprise"
         }
+      },
+      "grokAccount": {
+        "default": "Grok CLI のログインに従う",
+        "defaultDescription": "Grok CLI で現在ログインしているアカウントを使います",
+        "manage": "xAI アカウントを追加・管理",
+        "help": "このカードに切り替えると、Grok CLI のログイン（~/.grok/auth.json）が選択したアカウントに替わります。それまでのアカウントは先に認証センターへ保存され、「Grok CLI のログインに従う」カードに戻すと元に戻ります。",
+        "xaiAccount": "xAI アカウント"
       }
     },
     "duplicateLiveIdsLoadFailed": "設定内のプロバイダー識別子を読み込めませんでした。設定を修正してから再度お試しください",

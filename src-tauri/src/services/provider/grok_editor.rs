@@ -199,18 +199,23 @@ fn store_into_row(
     Ok(row)
 }
 
-/// 把编辑器保存的改动写进 live。`key_fields` 有值时（直连模式下编辑当前供应商）模型表在
-/// 同一次写入里换成它的；`prev` 是编辑前的行，没有写入记录时用来推断旧表。`set_pointer`
-/// 为新增第一个供应商，指针随操作落定。
+/// 把编辑器保存的改动写进 live。`key_fields` 有值时（直连模式下编辑当前供应商）模型表和
+/// Grok CLI 的登录（官方卡改绑、解绑账号）在同一次写入里换成它的；`prev` 是编辑前的行，没有
+/// 写入记录时用来推断旧表。`set_pointer` 为新增第一个供应商，指针随操作落定。
 pub(crate) fn write_live(
     db: &Database,
+    manager: &grok_direct::XaiManager,
     edits: &TomlEdits,
     key_fields: Option<(Option<&Provider>, &Provider)>,
     set_pointer: bool,
 ) -> Result<(), AppError> {
-    let (prev, projection) = match key_fields {
-        Some((prev, target)) => (prev, Some(grok_direct::projection(target)?)),
-        None => (None, None),
+    let (prev, projection, login) = match key_fields {
+        Some((prev, target)) => (
+            prev,
+            Some(grok_direct::projection(target)?),
+            grok_direct::prepare_login(manager, target)?,
+        ),
+        None => (None, None, None),
     };
     if projection.is_none() && edits.is_empty() {
         return Ok(());
@@ -218,7 +223,7 @@ pub(crate) fn write_live(
     let pointer = key_fields
         .filter(|_| set_pointer)
         .map(|(_, target)| target.id.clone());
-    grok_direct::run_with_edits(
+    grok_direct::run(
         db,
         if pointer.is_some() {
             op::SWITCH
@@ -229,6 +234,7 @@ pub(crate) fn write_live(
         projection.as_ref(),
         PendingTarget::pointer(pointer),
         Some(edits),
+        login.as_ref(),
     )?;
     Ok(())
 }

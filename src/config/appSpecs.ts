@@ -29,8 +29,8 @@ export interface AppCaps {
   /** 支持提示词。Claude Desktop 用 Claude Code 的；OpenClaw 在自己的「工作区」里管理 */
   prompts: boolean;
   /**
-   * 能用授权中心里的托管账号。Antigravity 官方卡只算明确绑了号的（没绑的跟着 agy 自己的
-   * 登录）；WorkBuddy 官方登录卡一定绑了号。
+   * 能用授权中心里的托管账号。Antigravity、Grok 官方卡只算明确绑了号的（没绑的跟着
+   * 客户端自己的登录）；WorkBuddy 官方登录卡一定绑了号。
    */
   managedAccount: boolean;
   /** Pi 一族：Oh My Pi 是 Pi 的分支，供应商表单、启用状态和用量脚本命令与 Pi 共用 */
@@ -100,7 +100,7 @@ export const APP_SPECS = {
     skills: true,
     mcp: true,
     prompts: true,
-    managedAccount: false,
+    managedAccount: true,
     piFamily: false,
     editorView: true,
   },

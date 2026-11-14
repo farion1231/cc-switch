@@ -435,7 +435,7 @@ pub(crate) fn write_live_for_state(
         return Ok(());
     }
     if matches!(app_type, AppType::GrokBuild) {
-        super::grok_direct::reapply(db, Some(provider), provider)?;
+        super::grok_direct::reapply(state, Some(provider), provider)?;
         return Ok(());
     }
     if matches!(app_type, AppType::Agy | AppType::Copilot) {
@@ -840,7 +840,7 @@ pub(crate) fn sync_live_for_provider_respecting_mode(
         super::claude_direct::reapply(state.db.as_ref(), prev.or(Some(provider)), provider)?;
     } else if matches!(app_type, AppType::GrokBuild) {
         // 编辑前的行用来推断旧版写的表（还没有写入记录时），改了表名也能删掉旧表。
-        super::grok_direct::reapply(state.db.as_ref(), prev.or(Some(provider)), provider)?;
+        super::grok_direct::reapply(state, prev.or(Some(provider)), provider)?;
     } else {
         write_live_for_state(state, app_type, provider)?;
     }
