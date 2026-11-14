@@ -280,6 +280,11 @@ export function SkillsPage({
       ? `${skill.repoOwner}/${skill.repoName}`
       : t("skillsPage.source.local");
 
+  // 占用目录的是 zip 本地安装（没有仓库信息）：可以走「从仓库接管」安装（#7624）。
+  // 后端会再校验 SKILL.md 元数据，不一致时仍按目录冲突拒绝。
+  const isLocalSkill = (skill: InstalledSkill) =>
+    !skill.repoOwner && !skill.repoName;
+
   // ─── 行数据 ─────────────────────────────────────────────────────────
   const repoRows: DiscoverRow[] = useMemo(
     () =>
@@ -758,23 +763,6 @@ export function SkillsPage({
                               strokeWidth={2}
                             />
                           </button>
-                        ) : status.kind === "conflict" ? (
-                          <button
-                            type="button"
-                            onClick={() => onShowInstalled(status.skill.id)}
-                            className="inline-flex min-w-0 items-center gap-0.5 rounded-control px-1 text-right text-caption text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1"
-                          >
-                            <span className="min-w-0 truncate">
-                              {t("skillsPage.discover.dirTaken", {
-                                name: status.skill.name,
-                                source: sourceLabel(status.skill),
-                              })}
-                            </span>
-                            <ChevronRight
-                              className="h-3.5 w-3.5 shrink-0"
-                              strokeWidth={2}
-                            />
-                          </button>
                         ) : isInstalling ? (
                           <Button
                             type="button"
@@ -792,6 +780,40 @@ export function SkillsPage({
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
                             {t("skillsPage.discover.installing")}
                           </Button>
+                        ) : status.kind === "conflict" &&
+                          isLocalSkill(status.skill) ? (
+                          <Button
+                            type="button"
+                            variant="neutral"
+                            size="compact"
+                            aria-label={t("skillsPage.discover.adoptAria", {
+                              name: row.name,
+                            })}
+                            title={t("skillsPage.discover.dirTaken", {
+                              name: status.skill.name,
+                              source: sourceLabel(status.skill),
+                            })}
+                            onClick={() => void handleInstall(row)}
+                          >
+                            {t("skillsPage.discover.adopt")}
+                          </Button>
+                        ) : status.kind === "conflict" ? (
+                          <button
+                            type="button"
+                            onClick={() => onShowInstalled(status.skill.id)}
+                            className="inline-flex min-w-0 items-center gap-0.5 rounded-control px-1 text-right text-caption text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1"
+                          >
+                            <span className="min-w-0 truncate">
+                              {t("skillsPage.discover.dirTaken", {
+                                name: status.skill.name,
+                                source: sourceLabel(status.skill),
+                              })}
+                            </span>
+                            <ChevronRight
+                              className="h-3.5 w-3.5 shrink-0"
+                              strokeWidth={2}
+                            />
+                          </button>
                         ) : (
                           <Button
                             type="button"
