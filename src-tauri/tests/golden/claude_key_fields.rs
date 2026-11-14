@@ -1,8 +1,10 @@
 //! ② Claude Code 关键字段的切换结果。
 //!
 //! 关键字段回答「请求发到哪、凭什么鉴权、哪个模型名、哪种协议」，由供应商完全拥有：
-//! 切换后 live 里的关键字段必须恰好等于目标供应商行里的，上一家的一个都不能留。
-//! 旧代码靠整份覆盖做到这一点，重构版改成「清空关键字段再写入」，结果必须一样。
+//! 切换后 live 里生效的关键字段必须恰好等于目标供应商行里的。上一家带进、目标行里
+//! 没有的键写成空串而不是删除（#7808）：Claude Code 热加载 env 相当于
+//! `Object.assign`，删掉的键留在进程里，空串等于没设，开着的会话立即生效。
+//! 旧代码靠整份覆盖做到前一半，重构版改成「清空关键字段再写入」，结果必须一样。
 //!
 //! 关键字段的定义直接引用 `live::floor`，和切换用的是同一份。
 
@@ -16,12 +18,13 @@ use cc_switch_lib::{AppState, AppType, Provider, ProviderService};
 use crate::support::{create_test_state, reset_test_fs, test_mutex};
 use crate::util::{official, provider, read_home_json, seed_providers, write_home_file};
 
-/// 取出关键字段：`env.<KEY>` 与顶层键，按名字排序。
+/// 取出关键字段：`env.<KEY>` 与顶层键，按名字排序。值为空串的中和键不参与比较：
+/// 它对 Claude Code 等价于没设（#7808）。
 fn floor_view(settings: &Value) -> BTreeMap<String, Value> {
     let mut view = BTreeMap::new();
     if let Some(env) = settings.get("env").and_then(Value::as_object) {
         for (key, value) in env {
-            if claude_floor_env(key) {
+            if claude_floor_env(key) && value != &Value::String(String::new()) {
                 view.insert(format!("env.{key}"), value.clone());
             }
         }
@@ -225,6 +228,34 @@ fn api_key_helper_does_not_outlive_its_provider() {
 
     switch_and_check(&state, "b");
     switch_and_check(&state, "helper");
+}
+
+/// #7808：切回官方后，上一家带进、官方行里没有的关键字段写成空串而不是删除。
+/// Claude Code 热加载 env 相当于 `Object.assign`，删掉的键留在进程里；空串等于没设，
+/// 开着的会话立即回到官方。
+#[test]
+fn switching_back_to_official_blanks_prev_key_fields_for_running_sessions() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let state = setup(
+        &[
+            relay("a", None),
+            official("claude-official", json!({ "env": {} })),
+        ],
+        "a",
+    );
+
+    switch_and_check(&state, "claude-official");
+    let live = read_home_json(LIVE);
+    for key in [
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_MODEL",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        "CLAUDE_CODE_SUBAGENT_MODEL",
+    ] {
+        assert_eq!(live["env"][key], json!(""), "{key}");
+    }
 }
 
 #[test]
