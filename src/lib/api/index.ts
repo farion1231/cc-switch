@@ -5,7 +5,12 @@ export { settingsApi } from "./settings";
 export { backupsApi } from "./settings";
 export { mcpApi } from "./mcp";
 export { profilesApi } from "./profiles";
-export { promptsApi } from "./prompts";
+export {
+  promptsApi,
+  linkedPromptId,
+  globalIdOfLinked,
+  GLOBAL_PROMPT_LINK_PREFIX,
+} from "./prompts";
 export { skillsApi } from "./skills";
 export { usageApi } from "./usage";
 export { subscriptionApi } from "./subscription";
@@ -17,7 +22,12 @@ export { workspaceApi } from "./workspace";
 export * as authApi from "./auth";
 export * as copilotApi from "./copilot";
 export type { ProviderSwitchEvent } from "./providers";
-export type { Prompt } from "./prompts";
+export type {
+  Prompt,
+  GlobalPrompt,
+  GlobalPromptEntry,
+  GlobalPromptSaveResult,
+} from "./prompts";
 export type { Profile, ProfilePayload, ProfilesResponse } from "./profiles";
 export type {
   CopilotDeviceCodeResponse,

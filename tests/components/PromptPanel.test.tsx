@@ -839,4 +839,93 @@ describe("PromptPanel", () => {
 
     expect(onAppChange).toHaveBeenCalledWith("hermes");
   });
+
+  it("switches to global prompts from the picker", async () => {
+    const onAppChange = vi.fn();
+    renderPanel({ onAppChange });
+    await waitForPanelReady();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: /Claude Code/ }));
+    await user.click(
+      await screen.findByRole("button", { name: /prompts\.global\.scopeName/ }),
+    );
+
+    expect(onAppChange).toHaveBeenCalledWith("global");
+  });
+
+  it("marks linked global prompts and saves their edits to the global copy", async () => {
+    mocks.state.prompts = {
+      ...createPrompts(),
+      "global-g1": {
+        id: "global-g1",
+        name: "Shared Rules",
+        content: "shared body",
+        enabled: false,
+      },
+    };
+    vi.spyOn(promptsApi, "getGlobalPrompts").mockResolvedValue([
+      {
+        id: "g1",
+        name: "Shared Rules",
+        content: "shared body",
+        createdAt: 7,
+        apps: { codex: true },
+        modifiedApps: [],
+      },
+    ]);
+    const upsertGlobal = vi
+      .spyOn(promptsApi, "upsertGlobalPrompt")
+      .mockResolvedValue({ id: "g1", failures: [] });
+    renderPanel();
+    await waitForPanelReady();
+
+    const row = screen.getByTestId("prompt-row-global-g1");
+    expect(
+      await within(row).findByText("prompts.global.badge"),
+    ).toBeInTheDocument();
+    // 普通条目没有徽标
+    expect(
+      within(screen.getByTestId("prompt-row-second-record")).queryByText(
+        "prompts.global.badge",
+      ),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(editButton("Shared Rules"));
+    fireEvent.click(await screen.findByRole("button", { name: "form-save" }));
+
+    await waitFor(() =>
+      expect(upsertGlobal).toHaveBeenCalledWith({
+        id: "g1",
+        name: "Shared Rules",
+        content: "shared body",
+        description: undefined,
+        createdAt: 7,
+      }),
+    );
+    expect(mocks.savePrompt).not.toHaveBeenCalled();
+  });
+
+  it("promotes an app prompt to a global prompt", async () => {
+    const promote = vi
+      .spyOn(promptsApi, "promoteToGlobal")
+      .mockResolvedValue("g-new");
+    renderPanel();
+    await waitForPanelReady();
+
+    const { user, menu } = await openRowMenu("Harbor Prompt");
+    await user.click(
+      within(menu).getByRole("menuitem", { name: "prompts.global.promote" }),
+    );
+
+    await waitFor(() =>
+      expect(promote).toHaveBeenCalledWith("claude", "second-record"),
+    );
+    expect(mocks.toastSuccess).toHaveBeenCalledWith(
+      "prompts.global.toast.promoted:Harbor Prompt",
+      expect.objectContaining({
+        action: expect.objectContaining({ label: "prompts.global.open" }),
+      }),
+    );
+  });
 });

@@ -28,6 +28,10 @@ interface PromptListItemProps {
   onDelete: (id: string) => void;
   onCopyToApps?: (id: string) => void;
   onCopyContent?: (id: string) => void;
+  /** 这条是全局提示词在本应用里的关联记录：显示「全局」徽标，编辑改的是全局那份 */
+  isGlobal?: boolean;
+  /** 设为全局提示词（只对非全局的条目显示） */
+  onPromote?: (id: string) => void;
   /** 删除不能用时的原因（启用中的不能删） */
   deleteBlockedReason?: string;
 }
@@ -45,6 +49,8 @@ const PromptListItem: React.FC<PromptListItemProps> = ({
   onDelete,
   onCopyToApps,
   onCopyContent,
+  isGlobal = false,
+  onPromote,
   deleteBlockedReason,
 }) => {
   const { t } = useTranslation();
@@ -76,6 +82,13 @@ const PromptListItem: React.FC<PromptListItemProps> = ({
             <span className="inline-flex h-[18px] shrink-0 items-center whitespace-nowrap rounded-full bg-success-soft px-[7px] text-badge text-success-text">
               {t("prompts.enabled")}
             </span>
+          ) : null}
+          {isGlobal ? (
+            <HoverTip content={t("prompts.global.badgeHint")}>
+              <span className="inline-flex h-[18px] shrink-0 items-center whitespace-nowrap rounded-full border border-border-strong px-1.5 text-badge font-medium text-fg-2">
+                {t("prompts.global.badge")}
+              </span>
+            </HoverTip>
           ) : null}
         </div>
         <span
@@ -134,6 +147,14 @@ const PromptListItem: React.FC<PromptListItemProps> = ({
             align="end"
             className={cn(promptMenuContentClass, "w-[240px]")}
           >
+            {onPromote && !isGlobal ? (
+              <DropdownMenuItem
+                className={promptMenuItemClass}
+                onSelect={() => onPromote(id)}
+              >
+                {t("prompts.global.promote")}
+              </DropdownMenuItem>
+            ) : null}
             {onCopyToApps ? (
               <DropdownMenuItem
                 className={promptMenuItemClass}
@@ -150,7 +171,7 @@ const PromptListItem: React.FC<PromptListItemProps> = ({
                 {t("prompts.copyContent")}
               </DropdownMenuItem>
             ) : null}
-            {onCopyToApps || onCopyContent ? (
+            {onCopyToApps || onCopyContent || (onPromote && !isGlobal) ? (
               <DropdownMenuSeparator className="mx-1.5 my-1 bg-border" />
             ) : null}
             <DropdownMenuItem

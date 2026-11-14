@@ -10,6 +10,7 @@ pub mod dsh_account;
 pub mod env_checker;
 pub mod env_manager;
 pub mod exchange_rates;
+pub mod global_prompt;
 pub mod kimi_oauth;
 pub mod mcp;
 pub mod mcp_connectivity;
