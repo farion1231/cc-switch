@@ -5,7 +5,8 @@ use crate::kimi_session::{timestamp_ms, RequestIndex, RequestInfo};
 use crate::proxy::usage::{calculator::CostCalculator, parser::TokenUsage};
 use crate::services::{
     session_usage::{
-        load_sync_cursors, metadata_modified_nanos, update_sync_state_on_conn, SessionSyncResult,
+        backfill_reasoning_effort_on_conn, load_sync_cursors, mark_reasoning_effort_synced,
+        metadata_modified_nanos, update_sync_state_on_conn, SessionSyncResult,
     },
     sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH,
     usage_stats::find_model_pricing,
@@ -48,8 +49,10 @@ fn sync_sessions(db: &Database, root: &Path) -> Result<SessionSyncResult, AppErr
                     .map(|meta| metadata_modified_nanos(&meta))
                     .unwrap_or(0);
                 let key = format!("kimi:{}", path.to_string_lossy());
+                // Wires imported before thinking levels were recorded get one more read.
                 if cursors.get(&key).is_some_and(|cursor| {
-                    cursor.last_modified == modified
+                    cursor.reasoning_effort_synced
+                        && cursor.last_modified == modified
                         && cursor.last_line_offset
                             == fs::metadata(&path)
                                 .map(|meta| meta.len() as i64)
@@ -195,11 +198,15 @@ fn sync_file(
         let latency = info.map_or(0, |info| info.latency_ms);
         let first_token = info.and_then(|info| info.first_token_ms);
         let started = info.and_then(|info| info.request_ms);
+        let effort = info.and_then(|info| info.reasoning_effort.as_deref());
         // Permanent receipts prevent re-import after wire rewrites, forks, or log pruning.
         if tx.execute("INSERT OR IGNORE INTO session_usage_dedup (data_source, request_id, semantic_id, has_entry_id) VALUES ('kimi_session', ?1, ?1, 1)", [&request])? == 0 {
             // As with Claude imports, enrichment counts as changed data so the normal
             // usage-log-recorded notification refreshes open tables and detail panels.
-            if refresh_existing(&tx, &request, model, &usage, info, created)? {
+            let refreshed = refresh_existing(&tx, &request, model, &usage, info, created)?;
+            let backfilled =
+                backfill_reasoning_effort_on_conn(&tx, &request, "kimi_session", effort)? > 0;
+            if refreshed || backfilled {
                 result.imported += 1;
             } else {
                 result.skipped += 1;
@@ -210,13 +217,14 @@ fn sync_file(
         tx.execute("INSERT OR IGNORE INTO proxy_request_logs (
             request_id, provider_id, app_type, model, request_model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
-            latency_ms, first_token_ms, status_code, session_id, provider_type, is_streaming, cost_multiplier, created_at, data_source, input_token_semantics
-        ) VALUES (?1, '_kimi_session', 'kimi', ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?15, ?16, 200, ?12, 'kimi_session', 1, '1', ?13, 'kimi_session', ?14)",
+            latency_ms, first_token_ms, status_code, session_id, provider_type, is_streaming, cost_multiplier, created_at, data_source, input_token_semantics, reasoning_effort
+        ) VALUES (?1, '_kimi_session', 'kimi', ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?15, ?16, 200, ?12, 'kimi_session', 1, '1', ?13, 'kimi_session', ?14, ?17)",
             rusqlite::params![request, model, usage.input_tokens, usage.output_tokens, usage.cache_read_tokens, usage.cache_creation_tokens,
-                amounts[0], amounts[1], amounts[2], amounts[3], amounts[4], session, started.map_or(created, |start| completed_ms(start, latency, created))/1000, INPUT_TOKEN_SEMANTICS_FRESH, latency, first_token])?;
+                amounts[0], amounts[1], amounts[2], amounts[3], amounts[4], session, started.map_or(created, |start| completed_ms(start, latency, created))/1000, INPUT_TOKEN_SEMANTICS_FRESH, latency, first_token, effort])?;
         result.imported += 1;
     }
     update_sync_state_on_conn(&tx, key, modified, bytes)?;
+    mark_reasoning_effort_synced(&tx, key)?;
     tx.commit()?;
     Ok(result)
 }
@@ -601,6 +609,47 @@ mod tests {
             json!({"type":"usage.record","time":start+900,"agentId":agent,"model":format!("kimi-code/{model}"),"usage":usage,"usageScope":"turn"}),
             json!({"type":"context.append_loop_event","time":start+1_000,"event":{"type":"step.end","uuid":id,"turnId":"0","step":1,"usage":usage,"messageId":id,"llmFirstTokenLatencyMs":200,"llmStreamDurationMs":800}}),
         ]
+    }
+
+    #[test]
+    fn kimi_usage_records_reasoning_effort_and_backfills_unchanged_wires_once() {
+        let db = Database::memory().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let mut records = request("step", "model", 1_700_000_000_000, 1_000, 1_000, 50);
+        records[1]["thinkingEffort"] = json!("max");
+        write_records(
+            &root
+                .path()
+                .join("wd_project/session_one/agents/main/wire.jsonl"),
+            &records,
+        );
+        assert_eq!(sync_sessions(&db, root.path()).unwrap().imported, 1);
+        let effort = |db: &Database| -> Option<String> {
+            db.conn
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT reasoning_effort FROM proxy_request_logs",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(effort(&db).as_deref(), Some("max"));
+
+        // Rows imported before the column existed: the unchanged wire is read once more.
+        db.conn
+            .lock()
+            .unwrap()
+            .execute_batch(
+                "UPDATE proxy_request_logs SET reasoning_effort = NULL;
+                 UPDATE session_log_sync SET reasoning_effort_synced = 0;",
+            )
+            .unwrap();
+        let result = sync_sessions(&db, root.path()).unwrap();
+        assert_eq!((result.imported, result.skipped), (1, 0));
+        assert_eq!(effort(&db).as_deref(), Some("max"));
+        assert_eq!(sync_sessions(&db, root.path()).unwrap().files_scanned, 0);
     }
 
     #[test]

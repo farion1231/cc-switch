@@ -6,6 +6,8 @@ use std::collections::HashMap;
 #[derive(Debug, Default)]
 pub(crate) struct RequestInfo {
     pub model: Option<String>,
+    /// `thinkingEffort` of the final `llm.request` attempt for this step.
+    pub reasoning_effort: Option<String>,
     pub latency_ms: i64,
     pub first_token_ms: Option<i64>,
     /// When the final `llm.request` attempt for this step started. Committed messages carry
@@ -18,6 +20,7 @@ struct Step {
     uuid: String,
     turn_step: Option<String>,
     model: Option<String>,
+    reasoning_effort: Option<String>,
     request_ms: Option<i64>,
     response_ms: Option<i64>,
     has_tools: bool,
@@ -46,6 +49,16 @@ fn model_name(value: &Value) -> Option<&str> {
     value
         .as_str()
         .filter(|name| !name.trim().is_empty() && !matches!(*name, "agent-loop" | "unknown"))
+}
+
+/// Kimi writes `off` when thinking is disabled; other apps record that as `none`.
+fn thinking_effort(value: &Value) -> Option<String> {
+    let effort = value.as_str()?.trim().to_ascii_lowercase();
+    match effort.as_str() {
+        "" => None,
+        "off" => Some("none".into()),
+        _ => Some(effort),
+    }
 }
 
 fn duration_ms(value: &Value) -> Option<i64> {
@@ -84,6 +97,7 @@ impl RequestIndex {
                     }
                     // Retries replace the failed attempt; native timing belongs to the final one.
                     step.model = model_name(&record["model"]).map(str::to_owned);
+                    step.reasoning_effort = thinking_effort(&record["thinkingEffort"]);
                     step.request_ms = timestamp_ms(&record["time"]);
                     step.response_ms = None;
                     step.has_tools = false;
@@ -146,6 +160,9 @@ impl RequestIndex {
                         // A fork can repeat a step without the original request events.
                         let info = self.messages.entry(id.into()).or_default();
                         info.model = step.model.or_else(|| info.model.take());
+                        info.reasoning_effort = step
+                            .reasoning_effort
+                            .or_else(|| info.reasoning_effort.take());
                         info.request_ms = step.request_ms.or(info.request_ms);
                         if latency_ms > 0 {
                             info.latency_ms = latency_ms;
@@ -214,6 +231,30 @@ mod tests {
             index.model(&json!({"model":{"model":"legacy-real-model"}})),
             Some("legacy-real-model")
         );
+    }
+
+    #[test]
+    fn kimi_reasoning_effort_follows_final_attempt() {
+        for (retry, expected) in [
+            (json!("MAX"), Some("max")),
+            (json!("off"), Some("none")),
+            (json!(" "), None),
+            (Value::Null, None),
+        ] {
+            let mut index = RequestIndex::default();
+            index.observe(&loop_event(
+                1_700_000_000_000,
+                json!({"type":"step.begin","uuid":"step","turnId":"1","step":2}),
+            ));
+            index.observe(&json!({"type":"llm.request","time":1_700_000_000_010i64,"kind":"loop","turnStep":"1.2","model":"m","thinkingEffort":"on"}));
+            index.observe(&json!({"type":"llm.request","time":1_700_000_001_000i64,"kind":"loop","turnStep":"1.2","model":"m","thinkingEffort":retry}));
+            index.observe(&loop_event(
+                1_700_000_002_000,
+                json!({"type":"step.end","uuid":"step","messageId":"message"}),
+            ));
+            let info = index.get(&json!({"messageId":"message"})).unwrap();
+            assert_eq!(info.reasoning_effort.as_deref(), expected, "{retry}");
+        }
     }
 
     #[test]
