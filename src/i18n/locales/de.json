@@ -1437,6 +1437,7 @@
     "contentSearchToggle": "Nachrichtentext durchsuchen",
     "contentSearchToggleFailed": "Die Einstellung für die Nachrichtentextsuche konnte nicht geändert werden: {{error}}",
     "contentIndexing": "Nachrichtentext wird indiziert ({{processed}}/{{total}}). Texttreffer sind möglicherweise unvollständig",
+    "contentSearchFailed": "Textsuche fehlgeschlagen; derzeit kann nur in Titeln, Ordnern und der ersten/letzten Nachricht gesucht werden",
     "contentHitPrefix": "Text: ",
     "contentHitMore": " ({{count}} Nachrichten passen)",
     "moreContentHits": "Weitere Texttreffer",

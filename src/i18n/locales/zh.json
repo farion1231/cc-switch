@@ -1437,6 +1437,7 @@
     "contentSearchToggle": "搜索消息正文",
     "contentSearchToggleFailed": "无法更改正文搜索设置：{{error}}",
     "contentIndexing": "正在建立正文索引（{{processed}}/{{total}}），正文结果可能还不全",
+    "contentSearchFailed": "正文搜索失败，暂时只能按标题、目录和首末消息查找",
     "contentHitPrefix": "正文：",
     "contentHitMore": "（{{count}} 条消息命中）",
     "moreContentHits": "更多正文命中",
