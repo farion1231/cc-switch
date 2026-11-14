@@ -30,6 +30,7 @@ pub mod opaque_state_rectifier;
 pub mod privacy_filter;
 pub mod provider_router;
 pub mod providers;
+pub(crate) mod rate_limiter;
 pub mod response_processor;
 pub(crate) mod server;
 pub mod session;
