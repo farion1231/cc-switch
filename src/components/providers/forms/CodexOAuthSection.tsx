@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/select";
 import { Loader2, Plus, AlertTriangle, RefreshCw } from "lucide-react";
 import { useCodexOauth } from "./hooks/useCodexOauth";
+import { CodexAuthImport } from "./CodexAuthImport";
 import type { CodexLoginMethod } from "@/lib/api/auth";
 import {
   ManagedAccountRemoveDialog,
@@ -477,26 +478,37 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
       })}
       onAdd={addAccount}
       loginControl={
-        <Select
-          value={loginMethod}
-          onValueChange={(value) => setLoginMethod(value as CodexLoginMethod)}
-          disabled={isAddingAccount}
-        >
-          <SelectTrigger
-            aria-label={t("codexOauth.loginMethod")}
-            className="h-7 w-[136px]"
+        <>
+          <CodexAuthImport
+            disabled={
+              isAddingAccount ||
+              isPolling ||
+              isRemovingAccount ||
+              !isStatusSuccess
+            }
+            onImported={refetchStatus}
+          />
+          <Select
+            value={loginMethod}
+            onValueChange={(value) => setLoginMethod(value as CodexLoginMethod)}
+            disabled={isAddingAccount}
           >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent align="end">
-            <SelectItem value="browser">
-              {t("codexOauth.browserLogin")}
-            </SelectItem>
-            <SelectItem value="device_code">
-              {t("codexOauth.deviceCodeLogin")}
-            </SelectItem>
-          </SelectContent>
-        </Select>
+            <SelectTrigger
+              aria-label={t("codexOauth.loginMethod")}
+              className="h-7 w-[136px]"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="end">
+              <SelectItem value="browser">
+                {t("codexOauth.browserLogin")}
+              </SelectItem>
+              <SelectItem value="device_code">
+                {t("codexOauth.deviceCodeLogin")}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </>
       }
       canReauth
       onReauth={reauthAccount}
