@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use tauri::State;
 
+use super::run_db_task;
 use crate::openclaw_config;
 use crate::store::AppState;
 
@@ -13,9 +14,14 @@ use crate::store::AppState;
 /// OpenClaw uses additive mode — users may already have providers
 /// configured in openclaw.json.
 #[tauri::command]
-pub fn import_openclaw_providers_from_live(state: State<'_, AppState>) -> Result<usize, String> {
-    crate::services::provider::import_openclaw_providers_from_live(state.inner())
-        .map_err(|e| e.to_string())
+pub async fn import_openclaw_providers_from_live(
+    state: State<'_, AppState>,
+) -> Result<usize, String> {
+    run_db_task(&state, |state| {
+        crate::services::provider::import_openclaw_providers_from_live(state)
+            .map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// Get provider IDs in the OpenClaw live config.

@@ -1,0 +1,33 @@
+{
+  "version": "4.0.12",
+  "items": [
+    {
+      "type": "new",
+      "zh": "「应用」页可完整安装、升级、卸载，装了多处时可选卸载哪一处",
+      "zh-TW": "「應用」頁可完整安裝、升級、解除安裝，裝了多處時可選解除安裝哪一處",
+      "en": "The Apps page now covers install, update and uninstall, and lets you pick which duplicate to remove",
+      "ja": "「アプリ」ページでインストール・更新・アンインストールが完結、重複インストールは削除先を選択可能に"
+    },
+    {
+      "type": "new",
+      "zh": "新增「本地」分组：Ollama、LM Studio、llama.cpp、vLLM",
+      "zh-TW": "新增「本機」分組：Ollama、LM Studio、llama.cpp、vLLM",
+      "en": "New Local group for Ollama, LM Studio, llama.cpp and vLLM running on your computer",
+      "ja": "新しい「ローカル」グループ：Ollama、LM Studio、llama.cpp、vLLM"
+    },
+    {
+      "type": "improve",
+      "zh": "升级前检查 Node 版本，不再给出注定失败的升级",
+      "zh-TW": "升級前檢查 Node 版本，不再提供注定失敗的升級",
+      "en": "Updates check the required Node version first, so ones that cannot succeed are no longer offered",
+      "ja": "更新前に Node のバージョンを確認し、失敗する更新を表示しないように"
+    },
+    {
+      "type": "improve",
+      "zh": "后台扫描会话日志改为 10 分钟一次，更省资源；用量页按所选间隔扫描",
+      "zh-TW": "背景掃描工作階段日誌改為 10 分鐘一次，更省資源；用量頁按所選間隔掃描",
+      "en": "Less background load: logs are scanned every 10 minutes, or at your set interval on the usage page",
+      "ja": "バックグラウンドのセッションログ読み込みを10分ごとにして負荷を軽減、使用量ページでは選んだ間隔で"
+    }
+  ]
+}

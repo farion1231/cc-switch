@@ -1,0 +1,33 @@
+{
+  "version": "4.0.10",
+  "items": [
+    {
+      "type": "new",
+      "zh": "供应商图标可以上传本地图片，存进「我的图标」反复使用",
+      "zh-TW": "供應商圖示可以上傳本機圖片，存進「我的圖示」重複使用",
+      "en": "Upload your own provider icons and reuse them from My Icons",
+      "ja": "プロバイダーのアイコンに画像をアップロードし、「マイアイコン」から使い回せるように"
+    },
+    {
+      "type": "improve",
+      "zh": "一键导入链接不再丢失，导入时可选是否立即切换",
+      "zh-TW": "一鍵匯入連結不再遺失，匯入時可選擇是否立即切換",
+      "en": "Import links are no longer lost, and you choose whether to switch right after importing",
+      "ja": "インポートリンクが失われなくなり、インポート後すぐに切り替えるかを選べるように"
+    },
+    {
+      "type": "new",
+      "zh": "用量页显示首字时间，没开路由也能估算",
+      "zh-TW": "用量頁顯示首字時間，沒開路由也能估算",
+      "en": "The usage page shows first-token time, estimated even without routing",
+      "ja": "使用量ページに最初のトークンまでの時間を表示（ルーティングなしでも推定）"
+    },
+    {
+      "type": "fix",
+      "zh": "路由模式下 Claude Code 的 haiku 档请求不再被上游拒绝",
+      "zh-TW": "路由模式下 Claude Code 的 haiku 檔請求不再被上游拒絕",
+      "en": "Routed Claude Code haiku-tier requests are no longer rejected by upstreams",
+      "ja": "ルーティング時に Claude Code の haiku 枠のリクエストが上流で拒否されないように"
+    }
+  ]
+}

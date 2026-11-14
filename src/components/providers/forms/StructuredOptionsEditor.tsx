@@ -1,3 +1,4 @@
+import { HelpTip } from "@/components/ui/help-tip";
 import { useEffect, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -170,9 +171,9 @@ export function StructuredOptionsEditor({
       className={cn("space-y-2 border-l border-border pl-3", className)}
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1 space-y-1">
+        <div className="flex min-w-0 flex-1 items-center gap-1">
           <span className="block text-sm font-medium text-fg-1">{title}</span>
-          <p className="text-xs text-fg-2">{hint}</p>
+          <HelpTip title={title}>{hint}</HelpTip>
         </div>
         <Button
           type="button"

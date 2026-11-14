@@ -251,6 +251,8 @@ impl GrokConfigPatch {
             }
         }
 
+        // 这次删掉的表（写入记录里的，加上代理契约留下的）
+        let mut retired_here: Vec<String> = Vec::new();
         if let Some(tables) = table_mut(path, root, "model", false)? {
             let placeholder = self.placeholder.as_deref();
             let doomed: Vec<String> = tables
@@ -267,10 +269,12 @@ impl GrokConfigPatch {
                 })
                 .map(|(name, _)| name.to_string())
                 .collect();
-            for name in doomed {
-                tables.remove(&name);
+            for name in &doomed {
+                tables.remove(name);
             }
+            retired_here = doomed;
         }
+        self.follow_session_summary(path, root, target_name, &retired_here)?;
 
         if let Some((name, table)) = &self.target {
             let tables = table_mut(path, root, "model", true)?.expect("created");
@@ -299,6 +303,62 @@ impl GrokConfigPatch {
                 .is_some_and(|table| table.is_empty())
             {
                 root.remove(key);
+            }
+        }
+        Ok(())
+    }
+}
+
+impl GrokConfigPatch {
+    /// `models.session_summary`：Grok 生成会话标题和摘要用的模型。没设时 Grok（1.0.50 实测）
+    /// 用内置的 `grok-4.6`，请求却发到默认模型表的地址，第三方上游不认这个模型名，标题生成
+    /// 就失败（#7003）。
+    ///
+    /// 没设、或者指向 CC Switch 写的表（目标表、写入记录里的、这次删掉的）时跟着目标走：有
+    /// 目标就指向它，切到官方就删掉。指向用户自己的表或内置模型时不动。
+    fn follow_session_summary(
+        &self,
+        path: &Path,
+        root: &mut Table,
+        target_name: Option<&str>,
+        retired_here: &[String],
+    ) -> Result<(), LiveWriteError> {
+        let current = root
+            .get("models")
+            .and_then(|models| models.get("session_summary"))
+            .and_then(Item::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string);
+        let follows = match current.as_deref() {
+            None => true,
+            Some(name) => {
+                Some(name) == target_name
+                    || self.retired.iter().any(|retired| retired == name)
+                    || retired_here.iter().any(|retired| retired == name)
+            }
+        };
+        if !follows {
+            return Ok(());
+        }
+        match target_name {
+            Some(name) => {
+                let models = table_mut(path, root, "models", true)?.expect("created");
+                match models.get_mut("session_summary") {
+                    Some(Item::Value(slot)) => {
+                        let decor = slot.decor().clone();
+                        *slot = name.into();
+                        *slot.decor_mut() = decor;
+                    }
+                    _ => {
+                        models.insert("session_summary", toml_edit::value(name));
+                    }
+                }
+            }
+            None => {
+                if let Some(models) = table_mut(path, root, "models", false)? {
+                    models.remove("session_summary");
+                }
             }
         }
         Ok(())
@@ -380,6 +440,61 @@ env_key = "B_KEY"
 api_backend = "chat_completions"
 context_window = 200000
 "#;
+
+    /// #7003：没设 session_summary 时 Grok 用内置模型生成标题，第三方上游不认。
+    #[test]
+    fn session_summary_follows_the_written_table() {
+        let b = GrokProjection::of(&row(ROW_B), false).unwrap();
+        let summary = |out: &str| {
+            let doc: DocumentMut = out.parse().unwrap();
+            doc.get("models")
+                .and_then(|models| models.get("session_summary"))
+                .and_then(Item::as_str)
+                .map(str::to_string)
+        };
+
+        // 没设：指向目标表
+        let out = apply(&GrokConfigPatch::direct(&b, vec![], PLACEHOLDER), "");
+        assert_eq!(summary(&out).as_deref(), Some("b"), "{out}");
+
+        // 指向上一家写的表：跟着换
+        let live = ROW_A.replace(
+            "default = \"grok-4.5\"\n",
+            "default = \"grok-4.5\"\nsession_summary = \"grok-4.5\" # titles\n",
+        );
+        let out = apply(
+            &GrokConfigPatch::direct(&b, vec!["grok-4.5".into()], PLACEHOLDER),
+            &live,
+        );
+        assert_eq!(summary(&out).as_deref(), Some("b"), "{out}");
+        assert!(
+            out.contains("session_summary = \"b\" # titles"),
+            "keeps the comment: {out}"
+        );
+
+        // 指向用户自己选的模型：不动
+        let live = ROW_A.replace(
+            "default = \"grok-4.5\"\n",
+            "default = \"grok-4.5\"\nsession_summary = \"grok-4.6\"\n",
+        );
+        let out = apply(
+            &GrokConfigPatch::direct(&b, vec!["grok-4.5".into()], PLACEHOLDER),
+            &live,
+        );
+        assert_eq!(summary(&out).as_deref(), Some("grok-4.6"), "{out}");
+
+        // 切到官方：指向上一家的删掉，不留一个指不到表的名字
+        let official = GrokProjection::of(&row(""), true).unwrap();
+        let live = ROW_A.replace(
+            "default = \"grok-4.5\"\n",
+            "default = \"grok-4.5\"\nsession_summary = \"grok-4.5\"\n",
+        );
+        let out = apply(
+            &GrokConfigPatch::direct(&official, vec!["grok-4.5".into()], PLACEHOLDER),
+            &live,
+        );
+        assert_eq!(out, "");
+    }
 
     #[test]
     fn a_default_that_points_nowhere_falls_back_to_the_only_table() {

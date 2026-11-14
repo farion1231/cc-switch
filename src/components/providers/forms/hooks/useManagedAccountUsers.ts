@@ -16,6 +16,9 @@ export function useManagedAccountUsers(
   const { data: claude } = useProvidersQuery("claude");
   const { data: desktop } = useProvidersQuery("claude-desktop");
   const { data: codex } = useProvidersQuery("codex");
+  const { data: agy } = useProvidersQuery("agy");
+  const { data: copilot } = useProvidersQuery("copilot");
+  const { data: workbuddy } = useProvidersQuery("workbuddy");
 
   return useCallback(
     (accountIds: readonly string[]): ManagedAccountUser[] =>
@@ -23,7 +26,19 @@ export function useManagedAccountUsers(
         claude: claude?.providers,
         "claude-desktop": desktop?.providers,
         codex: codex?.providers,
+        agy: agy?.providers,
+        copilot: copilot?.providers,
+        workbuddy: workbuddy?.providers,
       }),
-    [authProvider, defaultAccountId, claude, desktop, codex],
+    [
+      authProvider,
+      defaultAccountId,
+      claude,
+      desktop,
+      codex,
+      agy,
+      copilot,
+      workbuddy,
+    ],
   );
 }

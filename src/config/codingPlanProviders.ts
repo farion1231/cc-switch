@@ -10,6 +10,7 @@
 import { createUsageScript } from "@/types";
 import { TEMPLATE_TYPES } from "@/config/constants";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
+import { extractGrokBuildBaseUrl } from "@/utils/grokBuildConfig";
 
 export interface CodingPlanProviderEntry {
   /** 与后端 QuotaTier 的 `codingPlanProvider` 取值对齐 */
@@ -70,13 +71,14 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
   {
     // OpenCode Go（$10/月订阅，三时间窗口美元额度）。用量端点
     // GET /zen/go/v1/usage 是官方第一方但未文档化的路由，只认
-    // Authorization: Bearer（与推理侧 /messages 只认 x-api-key 相反）。
-    // base 分两档：/zen/go（claude/claude-desktop 直连 /messages）与
-    // /zen/go/v1（codex/opencode/pi 走 Chat），子串同时覆盖；
+    // Authorization: Bearer（与推理侧 /messages 只认 x-api-key 相反）；
+    // /inference/go/v1/usage 返回同一份数据，两个入口共用该端点。
+    // base 分两档：Anthropic 端 /inference/go/anthropic 与旧入口 /zen/go，
+    // OpenAI Chat 端分别是 /inference/go/v1 与 /zen/go/v1；
     // Zen 按量版（/zen/v1）没有用量 API，刻意不命中。
     id: "opencode_go",
     label: "OpenCode Go",
-    pattern: /opencode\.ai\/zen\/go/i,
+    pattern: /opencode\.ai\/(?:zen|inference)\/go/i,
   },
   {
     // Command Code 的余额与窗口接口由官方 CLI 使用，当前未公开文档化。
@@ -96,6 +98,18 @@ export function detectCodingPlanProvider(
     if (cp.pattern.test(baseUrl)) return cp.id;
   }
   return null;
+}
+
+/**
+ * 认出套餐地址后，额度查询是否默认启用。火山查额度要账号级 AccessKey ID +
+ * Secret（不是推理 Key），新建或导入时还没有这两项，启用了只会在卡片上显示
+ * 「额度查询失败」，被误读成供应商没生效（#8494）。所以火山只预选套餐、不启用，
+ * 等用户在额度设置里填好凭据再打开。与后端深链接导入的默认值一致。
+ */
+export function codingPlanEnabledByDefault(
+  id: CodingPlanProviderEntry["id"],
+): boolean {
+  return id !== "volcengine";
 }
 
 /**
@@ -121,11 +135,29 @@ export function extractBaseUrlForUsageDetection(
           : null,
       );
       break;
+    case "gemini":
+      raw = settingsConfig.env?.GOOGLE_GEMINI_BASE_URL;
+      break;
+    case "grokbuild":
+      raw =
+        typeof settingsConfig.config === "string"
+          ? extractGrokBuildBaseUrl(settingsConfig.config)
+          : null;
+      break;
     case "opencode":
+    case "mcode":
       raw = settingsConfig.options?.baseURL;
       break;
     case "pi":
+    case "omp":
+    case "openclaw":
       raw = settingsConfig.baseUrl;
+      break;
+    case "kimi":
+      raw = settingsConfig.provider?.base_url;
+      break;
+    case "hermes":
+      raw = settingsConfig.base_url;
       break;
     default:
       return null;
@@ -138,11 +170,10 @@ export function extractBaseUrlForUsageDetection(
  * `meta.usage_script` 标记为 token_plan 并启用。
  *
  * - 仅在 `meta.usage_script` 完全缺失时注入，不覆盖用户/UsageScriptModal 已有配置
- * - Claude app 保持既有行为：命中任意 Coding Plan 供应商都注入；
- *   其余 app 仅对已验证预设注入：Codex 支持 Command Code，其他非 Claude
- *   Coding Plan 保持既有行为——
- *   五个 app 各有一份 OpenCode Go 预设、凭据形态后端全部支持，而智谱/Kimi
- *   等在其他 app 的自动注入未逐一验证过，不随手扩大
+ * - 所有 app 一视同仁：套餐额度只按 Key（智谱另看 host）查固定端点，与
+ *   客户端协议、base_url 路径无关；凭据提取与后端 `resolve_usage_credentials` 对齐
+ * - ZenMux 例外，仍只在 Claude 注入：它的查询直接 GET 用户填的 base_url，
+ *   其他 app 的推理地址未验证能返回额度
  * - code 置空：Rust 端走专用 `coding_plan::get_coding_plan_quota`，不执行 JS 脚本
  */
 export function injectCodingPlanUsageScript<
@@ -159,22 +190,14 @@ export function injectCodingPlanUsageScript<
   );
   const codingPlanProvider = detectCodingPlanProvider(baseUrl);
   if (!codingPlanProvider) return provider;
-  const isCommandCodeForCodex =
-    appId === "codex" && codingPlanProvider === "command_code";
-  if (
-    appId !== "claude" &&
-    codingPlanProvider !== "opencode_go" &&
-    !isCommandCodeForCodex
-  ) {
-    return provider;
-  }
+  if (codingPlanProvider === "zenmux" && appId !== "claude") return provider;
 
   return {
     ...provider,
     meta: {
       ...(provider.meta ?? {}),
       usage_script: createUsageScript({
-        enabled: true,
+        enabled: codingPlanEnabledByDefault(codingPlanProvider),
         templateType: TEMPLATE_TYPES.TOKEN_PLAN,
         codingPlanProvider,
       }),
