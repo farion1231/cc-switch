@@ -14,6 +14,12 @@ describe("Command Code usage detection", () => {
     expect(
       detectCodingPlanProvider("https://commandcode.ai/provider"),
     ).toBeNull();
+    expect(
+      detectCodingPlanProvider("https://api.commandcode.ai/providers"),
+    ).toBeNull();
+    expect(
+      detectCodingPlanProvider("https://api.commandcode.ai/provider-v2"),
+    ).toBeNull();
   });
 
   it("injects the quota script for Claude Code and Codex", () => {
