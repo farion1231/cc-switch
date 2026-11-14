@@ -1014,6 +1014,24 @@ fn infer_aggregator_platform_config(
         });
     }
 
+    // Mistral 官方 API（#9507）：Chat 请求体不收额外字段，它托管的 deepseek / glm 名模型
+    // 会被下方模型规则注入 `thinking:{type}`，整条 422。与 Codex 的 Mistral 预设、Claude
+    // 侧（`claude_reasoning::is_mistral`）同口径，不下发推理参数；精确 host 与 #9388 一致。
+    // 要发档位的用户在卡上显式配置 codexChatReasoning。
+    let is_mistral_api =
+        url::Url::parse(base_url.trim()).is_ok_and(|url| url.host_str() == Some("api.mistral.ai"));
+    if is_mistral_api {
+        return Some(CodexChatReasoningConfig {
+            supports_thinking: Some(false),
+            supports_effort: Some(false),
+            thinking_param: Some("none".to_string()),
+            effort_param: Some("none".to_string()),
+            effort_value_mode: None,
+            output_format: Some("auto".to_string()),
+            effort_levels: None,
+        });
+    }
+
     None
 }
 
@@ -2498,6 +2516,69 @@ wire_api = "chat"
         assert_eq!(config.effort_param.as_deref(), Some("reasoning_effort"));
         assert_eq!(config.effort_value_mode.as_deref(), Some("zen"));
         assert_eq!(config.output_format.as_deref(), Some("reasoning_content"));
+    }
+
+    #[test]
+    fn test_resolve_codex_chat_reasoning_mistral_api_sends_no_reasoning_fields() {
+        let provider = create_provider(json!({
+            "config": r#"
+model_provider = "mistral"
+model = "deepseek-v4-1-flash-1017"
+
+[model_providers.mistral]
+name = "Mistral AI"
+base_url = "https://api.mistral.ai/v1"
+wire_api = "chat"
+"#
+        }));
+
+        // Mistral 托管的 deepseek 名模型不得套 DeepSeek 规则注入 thinking（#9507）。
+        let request = json!({
+            "model": "deepseek-v4-1-flash-1017",
+            "input": "hi",
+            "reasoning": {"effort": "high"}
+        });
+        let config = resolve_codex_chat_reasoning_config(&provider, &request).unwrap();
+        let chat = crate::proxy::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+            request,
+            Some(&config),
+        )
+        .unwrap();
+
+        assert!(chat.get("thinking").is_none());
+        assert!(chat.get("reasoning_effort").is_none());
+        assert!(chat.get("reasoning").is_none());
+    }
+
+    #[test]
+    fn test_resolve_codex_chat_reasoning_mistral_rule_needs_exact_host() {
+        for base_url in [
+            "https://api.mistral.ai.example/v1",
+            "https://relay.example/api.mistral.ai/v1",
+        ] {
+            let provider = create_provider(json!({
+                "config": format!(
+                    "model_provider = \"relay\"\nmodel = \"deepseek-v4-pro\"\n\n[model_providers.relay]\nname = \"Relay\"\nbase_url = \"{base_url}\"\nwire_api = \"chat\"\n"
+                )
+            }));
+
+            let config = resolve_codex_chat_reasoning_config(
+                &provider,
+                &json!({ "model": "deepseek-v4-pro" }),
+            )
+            .unwrap();
+
+            assert_eq!(
+                config.thinking_param.as_deref(),
+                Some("thinking"),
+                "{base_url}"
+            );
+            assert_eq!(
+                config.effort_value_mode.as_deref(),
+                Some("deepseek"),
+                "{base_url}"
+            );
+        }
     }
 
     #[test]

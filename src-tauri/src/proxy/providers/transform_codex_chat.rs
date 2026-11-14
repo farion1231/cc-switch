@@ -356,6 +356,7 @@ pub fn responses_to_chat_completions_with_reasoning(
             result[*key] = value.clone();
         }
     }
+    drop_responses_only_stream_options(&mut result);
 
     // Strict OpenAI-compatible upstreams (vLLM, enterprise gateways) reject
     // requests that carry tool_choice or parallel_tool_calls without a non-empty
@@ -378,6 +379,26 @@ pub fn responses_to_chat_completions_with_reasoning(
     super::transform::inject_openai_stream_include_usage(&mut result);
 
     Ok(result)
+}
+
+/// `stream_options.reasoning_summary_delivery` 是 Responses 协议的字段（Codex 以为在跟
+/// 内置 openai 说话时才发，聚合模式就是这样），Chat Completions 没有它；严格校验的
+/// 上游（Mistral）收到会整条 422（#9507）。只删这一项，删完为空时整个键删掉，流式时
+/// 下面照常补 `include_usage`。
+fn drop_responses_only_stream_options(result: &mut Value) {
+    let Some(obj) = result.as_object_mut() else {
+        return;
+    };
+    let Some(stream_options) = obj.get_mut("stream_options").and_then(Value::as_object_mut) else {
+        return;
+    };
+    if stream_options
+        .remove("reasoning_summary_delivery")
+        .is_some()
+        && stream_options.is_empty()
+    {
+        obj.remove("stream_options");
+    }
 }
 
 fn apply_reasoning_options(
@@ -3679,6 +3700,41 @@ mod tests {
         assert!(description.contains("\"type\":\"custom\""));
         assert!(description.contains("\"format\":"));
         assert!(description.contains("\"syntax\":\"lark\""));
+    }
+
+    #[test]
+    fn responses_request_to_chat_drops_responses_only_stream_options() {
+        // 聚合模式下 Codex 以为在跟内置 openai 说话，会带上 Responses 专有的
+        // reasoning_summary_delivery；Chat 没有这个字段，Mistral 会 422（#9507）。
+        let input = json!({
+            "model": "deepseek-v4-1-flash-1017",
+            "input": "hello",
+            "stream": true,
+            "stream_options": {"reasoning_summary_delivery": "sequential_cutoff"},
+            "tools": [{"type": "web_search"}]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert_eq!(result["stream_options"], json!({"include_usage": true}));
+        // 托管 web_search 在 Chat 路径上本来就丢掉。
+        assert!(result.get("tools").is_none());
+
+        let non_stream = responses_to_chat_completions(json!({
+            "model": "m",
+            "input": "hello",
+            "stream_options": {"reasoning_summary_delivery": "sequential_cutoff", "other": 1}
+        }))
+        .unwrap();
+        assert_eq!(non_stream["stream_options"], json!({"other": 1}));
+
+        let only_private = responses_to_chat_completions(json!({
+            "model": "m",
+            "input": "hello",
+            "stream_options": {"reasoning_summary_delivery": "sequential_cutoff"}
+        }))
+        .unwrap();
+        assert!(only_private.get("stream_options").is_none());
     }
 
     #[test]
