@@ -41,7 +41,6 @@ const APP_ICON_NAME: Record<AppId, string> = {
   omp: "omp",
   copilot: "githubcopilot",
   workbuddy: "workbuddy",
-  // 目前没有官方图标：留空名字，ProviderIcon 回退到首字母。
   labunbun: "labunbun",
 };
 
