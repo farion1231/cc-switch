@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
+use crate::provider_kind::ProviderKind;
+
 // SSOT 模式：不再写供应商副本文件
 
 /// 供应商结构体
@@ -68,16 +70,15 @@ impl Provider {
     }
 
     pub fn is_codex_oauth(&self) -> bool {
-        self.provider_type() == Some("codex_oauth")
+        ProviderKind::declared(self) == Some(ProviderKind::CodexOAuth)
     }
 
     pub fn is_xai_oauth(&self) -> bool {
-        self.provider_type() == Some("xai_oauth")
+        ProviderKind::declared(self) == Some(ProviderKind::XaiOAuth)
     }
 
     pub fn is_github_copilot(&self) -> bool {
-        self.provider_type() == Some("github_copilot")
-            || self.claude_base_url_contains("githubcopilot.com")
+        ProviderKind::of(self) == Some(ProviderKind::GitHubCopilot)
     }
 
     pub fn uses_managed_account_auth(&self) -> bool {
@@ -106,10 +107,6 @@ impl Provider {
             .and_then(|m| m.api_key_field.as_deref())
             .map(|field| field.eq_ignore_ascii_case("ANTHROPIC_API_KEY"))
             .unwrap_or(false)
-    }
-
-    fn provider_type(&self) -> Option<&str> {
-        self.meta.as_ref().and_then(|m| m.provider_type.as_deref())
     }
 
     /// The stored OpenCode source format; only native declarations record one.
@@ -245,6 +242,28 @@ impl Provider {
                 crate::pi_config::provider_base_url(settings).unwrap_or_default(),
                 crate::pi_config::resolve_usage_api_key(&str_at(settings.get("apiKey"))),
             ),
+            // WorkBuddy models.json: shared `url` / `apiKey`, or per-model overrides.
+            AppType::WorkBuddy => {
+                let first_model = settings
+                    .get("models")
+                    .and_then(Value::as_array)
+                    .and_then(|models| models.first());
+                let pick = |field: &str| {
+                    let shared = str_at(settings.get(field));
+                    if shared.is_empty() {
+                        str_at(first_model.and_then(|model| model.get(field)))
+                    } else {
+                        shared
+                    }
+                };
+                let url = pick("url");
+                let base_url = url
+                    .trim_end_matches('/')
+                    .strip_suffix("/chat/completions")
+                    .map(str::to_string)
+                    .unwrap_or(url);
+                (base_url, pick("apiKey"))
+            }
             // OpenCode (OMO) nests credentials under `options` (the SDK options object).
             AppType::OpenCode | AppType::Mcode => {
                 let options = settings.get("options");

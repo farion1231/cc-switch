@@ -46,6 +46,10 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Omp => crate::omp_config::get_omp_agent_dir()?,
         // Copilot CLI 的个人指令是 `~/.copilot/copilot-instructions.md`（`copilot instruction list`）。
         AppType::Copilot => crate::copilot_config::copilot_dir(),
+        // WorkBuddy 桌面端关掉了引擎的 CODEBUDDY.md 注入（CODEBUDDY_DISABLE_SYSTEM_REMINDER_MD=1），
+        // 用户级说明是当前账号目录下的 MEMORY.md（MemoryCollector 以 <user_instructions> 注入，
+        // 每次最多 4000 字）。目录随登录的账号变，没登录时是数据目录本身。
+        AppType::WorkBuddy => crate::services::workbuddy_account::user_data_dir(),
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
@@ -62,6 +66,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         | AppType::Dsh
         | AppType::Omp => "AGENTS.md",
         AppType::Copilot => "copilot-instructions.md",
+        AppType::WorkBuddy => "MEMORY.md",
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 

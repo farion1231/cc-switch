@@ -96,7 +96,6 @@ pub async fn copilot_list_accounts(
     Ok(auth_manager.list_accounts().await)
 }
 
-/// 移除指定账号
 #[tauri::command(rename_all = "camelCase")]
 pub async fn copilot_remove_account(
     account_id: String,
@@ -109,7 +108,6 @@ pub async fn copilot_remove_account(
         .map_err(|e| e.to_string())
 }
 
-/// 设置默认账号
 #[tauri::command(rename_all = "camelCase")]
 pub async fn copilot_set_default_account(
     account_id: String,

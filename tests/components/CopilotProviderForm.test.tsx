@@ -19,12 +19,17 @@ vi.mock("@/lib/api/model-fetch", async (importOriginal) => ({
 vi.mock("@/components/providers/forms/CopilotAuthSection", () => ({
   CopilotAuthSection: ({
     onAccountSelect,
+    noneOptionLabel,
   }: {
     onAccountSelect?: (id: string | null) => void;
+    noneOptionLabel?: string;
   }) => (
-    <button type="button" onClick={() => onAccountSelect?.("12345")}>
-      bind-account
-    </button>
+    <>
+      <span data-testid="copilot-none-option">{noneOptionLabel}</span>
+      <button type="button" onClick={() => onAccountSelect?.("12345")}>
+        bind-account
+      </button>
+    </>
   ),
 }));
 
@@ -314,6 +319,10 @@ describe("CopilotProviderForm", () => {
     );
     expect(screen.queryByLabelText(/copilot\.form\.baseUrl/)).toBeNull();
     expect(document.getElementById("copilot-provider-id")).toBeNull();
+    // 不绑账号时用的是 Copilot CLI 自己的登录，不是授权中心的默认账号
+    expect(screen.getByTestId("copilot-none-option")).toHaveTextContent(
+      "copilot.form.followCliLogin",
+    );
     fireEvent.click(screen.getByRole("button", { name: "bind-account" }));
     const values = await save(submit);
     expect(values.providerKey).toBeUndefined();

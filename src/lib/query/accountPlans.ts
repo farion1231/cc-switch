@@ -14,7 +14,7 @@ const defaultPick: PlanPicker = (data) => (data as PlanCarrier).planName;
  * 额度查询顺带带回的套餐：只读缓存、不发请求，额度查到才有。一次刷新失败时沿用上次
  * 查到的，免得额度还显示着上次的值、套餐却没了。`entries` 是「名字 → 查询键」。
  */
-function useQuotaPlansByKey(
+export function useQuotaPlansByKey(
   entries: [string, QueryKey][],
   pick: PlanPicker,
 ): Record<string, string> {

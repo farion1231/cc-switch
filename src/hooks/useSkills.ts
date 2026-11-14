@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import {
+  useIsMutating,
   useMutation,
   useQuery,
   useQueryClient,
@@ -579,16 +580,24 @@ export type {
   AppId,
 };
 
+const SKILLS_RESYNC_MUTATION_KEY = ["skills", "resyncToApps"] as const;
+
 /**
  * 立即重新同步：按开关和当前同步方式把 Skill 重新投影到各应用目录
  */
 export function useResyncSkillsToApps() {
   const queryClient = useQueryClient();
   return useMutation({
+    mutationKey: SKILLS_RESYNC_MUTATION_KEY,
     mutationFn: () => skillsApi.resyncToApps(),
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
   });
+}
+
+/** 任一入口（⋯ 菜单或「存储与同步」对话框）的重新同步是否在进行：两处共用，避免并发重建同一目录 */
+export function useIsResyncingSkills() {
+  return useIsMutating({ mutationKey: SKILLS_RESYNC_MUTATION_KEY }) > 0;
 }
 
 /**

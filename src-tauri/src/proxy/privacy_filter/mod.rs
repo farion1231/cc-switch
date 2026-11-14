@@ -10,8 +10,15 @@
 //!
 //! 各层产出 `(start, end, label)` 区间 → 合并去重叠 → 单遍重建文本。占位符不可逆。
 //!
-//! 代理侧只改写用户输入和系统提示的文本，不碰 thinking 块、签名、工具调用参数和图片等
-//! 二进制内容，避免破坏协议语义。
+//! 代理侧只改写用户输入、系统提示和搜索词，不碰 thinking 块、签名、工具定义、
+//! 工具调用参数和图片等二进制内容，避免破坏协议语义。工具定义的说明文字是客户端自带的
+//! 固定文字，里面的示例地址（如 `noreply@anthropic.com`）会被模型照抄，不能换成占位符。
+//!
+//! 转发器里每次尝试过滤多遍（见 `forwarder::RequestForwarder::apply_privacy_filter`）：
+//! 先在客户端格式的请求体上过滤，此时还分得清用户文本和工具结果；Copilot 清洗 / 合并工具结果后、
+//! 供应商的本地 body 覆写合并前各补一遍；最后在定稿的上游请求体上过滤，兜住代理自己补进去的内容。
+//! 替换结果与原文相同的命中（第一遍留下的同类占位符）不改写、不计数；原文里写着的占位符字样
+//! 不享受豁免，照常检测和替换。
 //!
 //! 模型回复和工具结果默认也不碰：模型只拿到占位符时，Edit / apply_patch 对不上原文，
 //! 整文件重写还会把占位符写回用户的真实文件。工具结果可由 `tool_results` 子开关单独打开。
@@ -125,7 +132,8 @@ impl Placeholders {
     }
 }
 
-/// 一次脱敏的结果
+/// 一次脱敏的结果（测试用；代理路径走 `redact_cow`，没有命中时不复制原文）
+#[cfg(test)]
 #[derive(Debug, Clone)]
 pub struct RedactResult {
     pub redacted: String,
@@ -145,31 +153,53 @@ impl Filter {
         }
     }
 
-    /// 检测并脱敏文本，命中处替换为 `placeholders` 里对应的占位符
-    pub fn redact(&self, text: &str, placeholders: &Placeholders) -> RedactResult {
+    /// 合并后的命中区间（按起点升序、互不重叠）
+    fn detect(&self, text: &str) -> Vec<Span> {
         let mut spans = pii::detect(text);
         spans.extend(self.secrets.detect(text));
+        merge_spans(spans)
+    }
 
-        let merged = merge_spans(spans);
-        if merged.is_empty() {
-            return RedactResult {
-                redacted: text.to_string(),
-                count: 0,
-            };
+    /// 检测并脱敏文本，命中处替换为 `placeholders` 里对应的占位符
+    #[cfg(test)]
+    pub fn redact(&self, text: &str, placeholders: &Placeholders) -> RedactResult {
+        let (redacted, count) = self.redact_cow(text, placeholders);
+        RedactResult {
+            redacted: redacted.into_owned(),
+            count,
         }
+    }
 
-        // merged 已按起点升序且互不重叠，单遍重建
-        let mut out = String::with_capacity(text.len());
+    /// 检测并脱敏文本，没有命中时不复制原文
+    fn redact_cow<'t>(
+        &self,
+        text: &'t str,
+        placeholders: &Placeholders,
+    ) -> (std::borrow::Cow<'t, str>, usize) {
+        let merged = self.detect(text);
+
+        // merged 已按起点升序且互不重叠，单遍重建。替换结果和原文一样的命中（例如第二遍过滤时
+        // 「密码是 [密钥]」里的 [密钥] 又被上下文规则按密钥命中）不改写、不计数。只比较这一处
+        // 替换结果，不按「像占位符」豁免：`password = [EMAIL]` 照样换成 [SECRET]。
+        let mut out: Option<String> = None;
         let mut prev = 0;
+        let mut count = 0;
         for s in &merged {
+            if placeholders.label(s.kind) == &text[s.start..s.end] {
+                continue;
+            }
+            let out = out.get_or_insert_with(|| String::with_capacity(text.len()));
             out.push_str(&text[prev..s.start]);
             out.push_str(placeholders.label(s.kind));
             prev = s.end;
+            count += 1;
         }
-        out.push_str(&text[prev..]);
-        RedactResult {
-            redacted: out,
-            count: merged.len(),
+        match out {
+            None => (std::borrow::Cow::Borrowed(text), 0),
+            Some(mut out) => {
+                out.push_str(&text[prev..]);
+                (std::borrow::Cow::Owned(out), count)
+            }
         }
     }
 }
@@ -222,7 +252,8 @@ struct Redactor<'a> {
 /// 脱敏请求体里的文本内容，返回命中数。
 ///
 /// 覆盖 Anthropic Messages / OpenAI Chat Completions / OpenAI Responses / Gemini
-/// 四种格式，以及图片生成的 `prompt`。只改写用户输入和系统提示的纯文本字段，
+/// （含 countTokens 的 `generateContentRequest` 包装）四种格式，图片生成的 `prompt`，
+/// 以及 Alpha Search 的搜索词。只改写用户输入和系统提示的纯文本字段，
 /// `tool_results` 为 true 时再加上工具结果。
 pub fn redact_request_body(
     body: &mut Value,
@@ -234,11 +265,21 @@ pub fn redact_request_body(
         placeholders,
         tool_results,
     };
-    let r = &r;
+    redact_body(&r, body)
+}
+
+fn redact_body(r: &Redactor, body: &mut Value) -> usize {
     let Some(obj) = body.as_object_mut() else {
         return 0;
     };
     let mut count = 0;
+
+    // Gemini countTokens：完整的 GenerateContentRequest 包在这个字段里
+    for key in ["generateContentRequest", "generate_content_request"] {
+        if let Some(inner) = obj.get_mut(key) {
+            count += redact_body(r, inner);
+        }
+    }
 
     // Anthropic: system（字符串或 text 块数组）
     if let Some(system) = obj.get_mut("system") {
@@ -272,6 +313,18 @@ pub fn redact_request_body(
     if let Some(prompt) = obj.get_mut("prompt") {
         count += redact_string(r, prompt);
     }
+    // Codex Alpha Search：`commands.<命令>[].q`
+    if let Some(Value::Object(commands)) = obj.get_mut("commands") {
+        for command in commands.values_mut() {
+            if let Value::Array(calls) = command {
+                for call in calls {
+                    if let Some(q) = call.get_mut("q") {
+                        count += redact_string(r, q);
+                    }
+                }
+            }
+        }
+    }
     count
 }
 
@@ -279,11 +332,11 @@ fn redact_string(r: &Redactor, v: &mut Value) -> usize {
     let Value::String(s) = v else {
         return 0;
     };
-    let res = r.filter.redact(s, r.placeholders);
-    if res.count > 0 {
-        *s = res.redacted;
+    let (redacted, count) = r.filter.redact_cow(s, r.placeholders);
+    if let std::borrow::Cow::Owned(redacted) = redacted {
+        *s = redacted;
     }
-    res.count
+    count
 }
 
 /// 消息是否出自模型（assistant / Gemini 的 model）。未知角色按用户文本处理，宁可多脱敏。
@@ -349,7 +402,16 @@ fn redact_responses_input(r: &Redactor, input: &mut Value) -> usize {
                     None | Some("message") => {
                         obj.get_mut("content").map_or(0, |c| redact_content(r, c))
                     }
+                    // CC Switch 自己包装的压缩摘要只是 base64，上游一解就是明文。
+                    // 转成 Chat / Anthropic 时它会作为用户文字回放，这里保持同样的处理。
+                    Some("compaction" | "compaction_summary" | "context_compaction") => {
+                        redact_own_compaction_summary(r, obj)
+                    }
                     Some("function_call_output" | "custom_tool_call_output") if r.tool_results => {
+                        obj.get_mut("output").map_or(0, |o| redact_content(r, o))
+                    }
+                    // 工具搜索结果：结果文本跟随子开关，带出来的工具定义不碰
+                    Some("tool_search_output") if r.tool_results => {
                         obj.get_mut("output").map_or(0, |o| redact_content(r, o))
                     }
                     _ => 0,
@@ -358,6 +420,24 @@ fn redact_responses_input(r: &Redactor, input: &mut Value) -> usize {
             .sum(),
         _ => 0,
     }
+}
+
+/// 解开 CC Switch 的压缩摘要包装，脱敏后重新包装。别家签发的真密文不碰。
+fn redact_own_compaction_summary(r: &Redactor, item: &mut serde_json::Map<String, Value>) -> usize {
+    use crate::proxy::providers::codex_compaction::{
+        decode_compaction_summary, encode_compaction_summary,
+    };
+    let Some(Value::String(encrypted)) = item.get_mut("encrypted_content") else {
+        return 0;
+    };
+    let Some(summary) = decode_compaction_summary(encrypted) else {
+        return 0;
+    };
+    let (redacted, count) = r.filter.redact_cow(&summary, r.placeholders);
+    if count > 0 {
+        *encrypted = encode_compaction_summary(&redacted);
+    }
+    count
 }
 
 /// Gemini Content：`{ parts: [{ text } | { functionResponse }] }`。
