@@ -1,10 +1,4 @@
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { IpDiagnostics } from "@/components/settings/IpDiagnostics";
@@ -12,7 +6,6 @@ import type { IpReport } from "@/lib/api/globalProxy";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
-  openExternal: vi.fn(),
   proxy: {
     data: "http://user:secret@proxy.example:8080" as string | null | undefined,
     isLoading: false,
@@ -23,9 +16,6 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@/hooks/useGlobalProxy", () => ({
   useGlobalProxyUrl: () => mocks.proxy,
-}));
-vi.mock("@/lib/api", () => ({
-  settingsApi: { openExternal: mocks.openExternal },
 }));
 
 function report(): IpReport {
@@ -68,7 +58,6 @@ describe("IP diagnostics", () => {
 
   beforeEach(() => {
     mocks.invoke.mockReset().mockResolvedValue(report());
-    mocks.openExternal.mockReset().mockResolvedValue(undefined);
     mocks.proxy.data = "http://user:secret@proxy.example:8080";
     mocks.proxy.isLoading = false;
     mocks.proxy.isError = false;
@@ -228,24 +217,6 @@ describe("IP diagnostics", () => {
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     },
   );
-
-  it("opens the community check only when clicked and reports browser errors", async () => {
-    render(<IpDiagnostics />);
-    expect(screen.getByText(text("browserRoute"))).toBeInTheDocument();
-    const link = screen.getByRole("button", { name: text("ipQuality") });
-    fireEvent.click(link);
-    await waitFor(() =>
-      expect(mocks.openExternal).toHaveBeenCalledWith(
-        "https://ip.net.coffee/claude/",
-      ),
-    );
-    mocks.openExternal.mockRejectedValueOnce(new Error("No browser"));
-    fireEvent.click(link);
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      text("openError"),
-    );
-    expect(mocks.invoke).not.toHaveBeenCalled();
-  });
 
   it("shows unknown when the runtime cannot report a local timezone", async () => {
     const options = new Intl.DateTimeFormat().resolvedOptions();

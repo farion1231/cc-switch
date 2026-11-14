@@ -1188,7 +1188,6 @@
       "running": "Wird geprüft…",
       "invalidProxy": "Ungültige Proxy-Adresse. Bitte HTTP, HTTPS, SOCKS5 oder SOCKS5H verwenden.",
       "failed": "Die Prüfung konnte nicht ausgeführt werden. Bitte erneut versuchen.",
-      "openError": "Der Browser konnte nicht geöffnet werden.",
       "unknown": "Unbekannt",
       "checkedAt": "Geprüft am",
       "incomplete": "Die Ausgangsstichproben sind unvollständig. Fehlgeschlagene Prüfungen belegen keine sichere Route.",
@@ -1206,9 +1205,6 @@
       "utcOffset": "UTC-Versatz",
       "localTimezone": "Lokale Zeitzone",
       "locationSource": "Standort- und Netzwerkdaten: ipwho.is. Datenbankschätzungen können ungenau sein.",
-      "community": "Community-Prüfung",
-      "browserRoute": "Der Link öffnet sich im Standardbrowser und nutzt dessen eigene Netzwerkroute, die von der obigen Route abweichen kann. Die Website erhält die Ausgangs-IP und Informationen des Browsers. Die Bewertungen sind nur Community-Referenzen.",
-      "ipQuality": "IP-Qualität, ASN und Reputation (ip.net.coffee)",
       "errors": {
         "network": "Verbindung fehlgeschlagen oder Zeitüberschreitung",
         "http": "Der Dienst hat einen HTTP-Fehler zurückgegeben",

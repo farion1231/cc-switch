@@ -1188,7 +1188,6 @@
       "running": "檢測中…",
       "invalidProxy": "代理位址無效，請使用 HTTP、HTTPS、SOCKS5 或 SOCKS5H。",
       "failed": "無法執行檢測，請重試。",
-      "openError": "無法開啟瀏覽器。",
       "unknown": "未知",
       "checkedAt": "檢測時間",
       "incomplete": "出口取樣不完整。檢測失敗無法證明網路路徑安全。",
@@ -1206,9 +1205,6 @@
       "utcOffset": "UTC 偏移",
       "localTimezone": "本機時區",
       "locationSource": "位置與網路資料來自 ipwho.is，資料庫估算可能存在誤差。",
-      "community": "社群檢測",
-      "browserRoute": "連結在預設瀏覽器中開啟，使用瀏覽器自身的網路路徑，可能與上方檢測路徑不同。第三方網站會收到瀏覽器出口 IP 和瀏覽器資訊，評分僅供參考。",
-      "ipQuality": "IP 品質、ASN 與信譽（ip.net.coffee）",
       "errors": {
         "network": "連線失敗或逾時",
         "http": "服務回傳 HTTP 錯誤",

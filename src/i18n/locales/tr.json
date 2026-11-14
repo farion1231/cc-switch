@@ -1188,7 +1188,6 @@
       "running": "Kontrol ediliyor…",
       "invalidProxy": "Geçersiz proxy URL’si. HTTP, HTTPS, SOCKS5 veya SOCKS5H kullanın.",
       "failed": "Kontrol çalıştırılamadı. Yeniden deneyin.",
-      "openError": "Tarayıcı açılamadı.",
       "unknown": "Bilinmiyor",
       "checkedAt": "Kontrol zamanı",
       "incomplete": "Çıkış örneklemesi eksik. Başarısız kontroller güvenli bir ağ yolunun kanıtı değildir.",
@@ -1206,9 +1205,6 @@
       "utcOffset": "UTC farkı",
       "localTimezone": "Yerel saat dilimi",
       "locationSource": "Konum ve ağ verileri: ipwho.is. Veritabanı tahminleri hatalı olabilir.",
-      "community": "Topluluk kontrolü",
-      "browserRoute": "Bağlantı varsayılan tarayıcınızda, yukarıdakinden farklı olabilecek kendi ağ yolu kullanılarak açılır. Site tarayıcının çıkış IP’sini ve tarayıcı bilgilerini alır. Puanlar yalnızca referans amaçlıdır.",
-      "ipQuality": "IP kalitesi, ASN ve itibar (ip.net.coffee)",
       "errors": {
         "network": "Bağlantı başarısız veya zaman aşımına uğradı",
         "http": "Hizmet bir HTTP hatası döndürdü",

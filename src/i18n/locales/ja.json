@@ -1188,7 +1188,6 @@
       "running": "検査中…",
       "invalidProxy": "無効なプロキシ URL です。HTTP、HTTPS、SOCKS5、SOCKS5H を使用してください。",
       "failed": "検査を実行できませんでした。再試行してください。",
-      "openError": "ブラウザーを開けませんでした。",
       "unknown": "不明",
       "checkedAt": "検査日時",
       "incomplete": "出口の観測が不完全です。検査の失敗は経路の安全性を証明しません。",
@@ -1206,9 +1205,6 @@
       "utcOffset": "UTC オフセット",
       "localTimezone": "ローカルタイムゾーン",
       "locationSource": "位置とネットワーク情報：ipwho.is。データベースの推定には誤差があります。",
-      "community": "コミュニティ検査",
-      "browserRoute": "既定のブラウザーで開きます。ブラウザー自身の通信経路は上記と異なる場合があります。サイトにはブラウザーの出口 IP とブラウザー情報が送信されます。スコアは参考情報です。",
-      "ipQuality": "IP 品質・ASN・評判（ip.net.coffee）",
       "errors": {
         "network": "接続失敗またはタイムアウト",
         "http": "サービスが HTTP エラーを返しました",

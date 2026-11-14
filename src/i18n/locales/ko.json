@@ -1188,7 +1188,6 @@
       "running": "검사 중…",
       "invalidProxy": "잘못된 프록시 URL입니다. HTTP, HTTPS, SOCKS5 또는 SOCKS5H를 사용하세요.",
       "failed": "검사를 실행하지 못했습니다. 다시 시도하세요.",
-      "openError": "브라우저를 열 수 없습니다.",
       "unknown": "알 수 없음",
       "checkedAt": "검사 시간",
       "incomplete": "출구 IP 관측이 불완전합니다. 검사 실패가 안전한 경로를 의미하지는 않습니다.",
@@ -1206,9 +1205,6 @@
       "utcOffset": "UTC 오프셋",
       "localTimezone": "로컬 시간대",
       "locationSource": "위치 및 네트워크 데이터: ipwho.is. 데이터베이스 추정에는 오차가 있을 수 있습니다.",
-      "community": "커뮤니티 검사",
-      "browserRoute": "기본 브라우저에서 열리며 브라우저 자체의 네트워크 경로를 사용합니다. 위 경로와 다를 수 있습니다. 사이트는 브라우저의 출구 IP와 브라우저 정보를 받습니다. 점수는 참고용입니다.",
-      "ipQuality": "IP 품질, ASN 및 평판 (ip.net.coffee)",
       "errors": {
         "network": "연결 실패 또는 시간 초과",
         "http": "서비스가 HTTP 오류를 반환했습니다",

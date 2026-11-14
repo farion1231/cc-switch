@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ExternalLink, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -12,10 +12,8 @@ import {
 } from "@/components/ui/select";
 import { useGlobalProxyUrl } from "@/hooks/useGlobalProxy";
 import { diagnoseIp, type IpReport } from "@/lib/api/globalProxy";
-import { settingsApi } from "@/lib/api";
 import { SettingsBlock, SettingsRow } from "./SettingsLayout";
 
-const IP_QUALITY_URL = "https://ip.net.coffee/claude/";
 const key = (name: string) => `settings.ipDiagnostics.${name}`;
 
 type Field = [name: string, value: string | null | undefined];
@@ -96,14 +94,6 @@ function DiagnosticRun({ url, disabled }: { url: string; disabled: boolean }) {
       setError(label(reason === "invalidProxy" ? "invalidProxy" : "failed"));
     } finally {
       setBusy(false);
-    }
-  };
-
-  const openIpQualityCheck = async () => {
-    try {
-      await settingsApi.openExternal(IP_QUALITY_URL);
-    } catch {
-      setError(label("openError"));
     }
   };
 
@@ -197,18 +187,6 @@ function DiagnosticRun({ url, disabled }: { url: string; disabled: boolean }) {
           )}
         </div>
       )}
-      <div className="space-y-2 border-t border-border pt-4">
-        <h3 className="text-sm font-medium">{label("community")}</h3>
-        <p className="text-sm text-fg-2">{label("browserRoute")}</p>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => void openIpQualityCheck()}
-        >
-          {label("ipQuality")}
-          <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-        </Button>
-      </div>
     </div>
   );
 }

@@ -1188,7 +1188,6 @@
       "running": "Checking…",
       "invalidProxy": "Invalid proxy URL. Use HTTP, HTTPS, SOCKS5 or SOCKS5H.",
       "failed": "Could not run the checks. Please retry.",
-      "openError": "Could not open the browser.",
       "unknown": "Unknown",
       "checkedAt": "Checked at",
       "incomplete": "Exit sampling is incomplete. Failed checks are not evidence of a safe route.",
@@ -1206,9 +1205,6 @@
       "utcOffset": "UTC offset",
       "localTimezone": "Local timezone",
       "locationSource": "Location and network data: ipwho.is. Database estimates can be inaccurate.",
-      "community": "Community check",
-      "browserRoute": "This link opens in your default browser, using its own network route, which can differ from the route above. The site receives the browser’s exit IP and browser information. Its scores are community references.",
-      "ipQuality": "IP quality, ASN and reputation (ip.net.coffee)",
       "errors": {
         "network": "Connection failed or timed out",
         "http": "Service returned an HTTP error",
