@@ -66,7 +66,10 @@
       "endpoints": [
         "https://dl.ccswitch.io/latest.json",
         "https://github.com/farion1231/cc-switch/releases/latest/download/latest.json"
-      ]
+      ],
+      "windows": {
+        "installMode": "quiet"
+      }
     }
   }
 }

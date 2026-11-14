@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import "@testing-library/jest-dom";
 import { GeneralSection } from "@/components/settings/sections/GeneralSection";
@@ -75,5 +75,27 @@ describe("GeneralSection tray style", () => {
     expect(
       screen.queryByRole("group", { name: "settings.general.trayStyle" }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("GeneralSection silent app update", () => {
+  it("defaults to on unless silentAppUpdate is explicitly false", () => {
+    const onAutoSave = renderSection();
+    const toggle = screen.getByRole("switch", {
+      name: "settings.general.silentAppUpdate",
+    });
+    expect(toggle).toBeChecked();
+    fireEvent.click(toggle);
+    expect(onAutoSave).toHaveBeenCalledWith({ silentAppUpdate: false });
+
+    cleanup();
+
+    const onAutoSaveOff = renderSection({ silentAppUpdate: false });
+    const offToggle = screen.getByRole("switch", {
+      name: "settings.general.silentAppUpdate",
+    });
+    expect(offToggle).not.toBeChecked();
+    fireEvent.click(offToggle);
+    expect(onAutoSaveOff).toHaveBeenCalledWith({ silentAppUpdate: true });
   });
 });
