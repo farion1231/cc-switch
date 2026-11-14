@@ -87,7 +87,8 @@ pub(crate) struct SyncCursor {
     /// 游标边界前尾部字节的指纹（仅 Claude 路径写入），用于识别文件被
     /// 外部重写；NULL 表示无指纹可校验。
     pub last_tail_fingerprint: Option<i64>,
-    /// Parser context at the byte offset (DSH's unfinished steps). Committed with the cursor.
+    /// Parser context or generation at the byte offset (DSH's unfinished steps, Kimi's
+    /// usage-parser generation). Committed with the cursor.
     pub parser_state: Option<String>,
     pub last_synced_at: i64,
 }
