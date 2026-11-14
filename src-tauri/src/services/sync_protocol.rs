@@ -1,6 +1,7 @@
 //! Transport-agnostic sync protocol layer.
 //!
-//! Shared by WebDAV, S3, and future transports. Artifact set: `db.sql` + `skills.zip`.
+//! Shared by WebDAV, S3, and future transports.
+//! Artifact set: `db.sql` + `skills.zip` + optional `extra.zip` (#7835).
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -21,6 +22,7 @@ use crate::services::skill::{skill_state_read_guard, skill_state_write_guard};
 pub(crate) use super::webdav_sync::archive::{
     backup_current_skills, restore_skills_zip, zip_skills_ssot,
 };
+use super::webdav_sync::archive::{restore_extra_zip, zip_extra_paths, ExtraRestore};
 
 // ─── Protocol constants ──────────────────────────────────────
 
@@ -32,6 +34,10 @@ pub(crate) const DB_COMPAT_VERSION: u32 = 6;
 pub(crate) const LEGACY_DB_COMPAT_VERSION: u32 = 5;
 pub(crate) const REMOTE_DB_SQL: &str = "db.sql";
 pub(crate) const REMOTE_SKILLS_ZIP: &str = "skills.zip";
+/// Optional artifact holding the user-configured extra sync paths (#7835).
+/// Only present when the uploader had enabled paths with content; older
+/// clients ignore unknown artifacts, so no protocol version bump is needed.
+pub(crate) const REMOTE_EXTRA_ZIP: &str = "extra.zip";
 pub(crate) const REMOTE_MANIFEST: &str = "manifest.json";
 pub(crate) const MAX_DEVICE_NAME_LEN: usize = 64;
 pub(crate) const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
@@ -146,6 +152,10 @@ pub(crate) struct ArtifactMeta {
 pub(crate) struct LocalSnapshot {
     pub db_sql: Vec<u8>,
     pub skills_zip: Vec<u8>,
+    /// Optional `extra.zip` with the user-configured extra sync paths (#7835).
+    /// `None` when no enabled path had content, keeping the artifact set —
+    /// and therefore the remote layout — identical to the previous format.
+    pub extra_zip: Option<Vec<u8>>,
     pub manifest_bytes: Vec<u8>,
     pub manifest_hash: String,
 }
@@ -191,6 +201,16 @@ pub(crate) fn build_local_snapshot(
     zip_skills_ssot(&skills_zip_path)?;
     let skills_zip = fs::read(&skills_zip_path).map_err(|e| AppError::io(&skills_zip_path, e))?;
 
+    // Pack the enabled extra sync paths (~/.claude custom dirs/files) into a
+    // single extra.zip. An empty or all-empty list produces no artifact at all
+    // (#7835), keeping the snapshot layout stable for existing consumers.
+    let extra_zip_path = tmp.path().join(REMOTE_EXTRA_ZIP);
+    let extra_zip = if zip_extra_paths(&extra_zip_path, &extra_sync_paths())? {
+        Some(fs::read(&extra_zip_path).map_err(|e| AppError::io(&extra_zip_path, e))?)
+    } else {
+        None
+    };
+
     // Build artifact map and compute hashes
     let mut artifacts = BTreeMap::new();
     artifacts.insert(
@@ -207,6 +227,15 @@ pub(crate) fn build_local_snapshot(
             size: skills_zip.len() as u64,
         },
     );
+    if let Some(extra_zip) = &extra_zip {
+        artifacts.insert(
+            REMOTE_EXTRA_ZIP.to_string(),
+            ArtifactMeta {
+                sha256: sha256_hex(extra_zip),
+                size: extra_zip.len() as u64,
+            },
+        );
+    }
 
     let snapshot_id = compute_snapshot_id(&artifacts);
     let manifest = SyncManifest {
@@ -225,6 +254,7 @@ pub(crate) fn build_local_snapshot(
     Ok(LocalSnapshot {
         db_sql,
         skills_zip,
+        extra_zip,
         manifest_bytes,
         manifest_hash,
     })
@@ -375,10 +405,16 @@ pub(crate) fn verify_artifact(
 
 // ─── Snapshot application ────────────────────────────────────
 
+/// The extra sync paths configured on this device (possibly empty).
+fn extra_sync_paths() -> Vec<crate::settings::SyncExtraPath> {
+    crate::settings::enabled_sync_extra_paths()
+}
+
 pub(crate) fn apply_snapshot(
     db: &crate::database::Database,
     db_sql: &[u8],
     skills_zip: &[u8],
+    extra_zip: Option<&[u8]>,
 ) -> Result<(), AppError> {
     let sql_str = std::str::from_utf8(db_sql).map_err(|e| {
         localized(
@@ -392,10 +428,25 @@ pub(crate) fn apply_snapshot(
     let _skill_state_guard = skill_state_write_guard();
     let skills_backup = backup_current_skills()?;
 
-    // Replace skills first, then import database; roll back skills on DB failure.
+    // Replace skills first, then extra paths, then import database; roll back
+    // the earlier steps when a later one fails.
     restore_skills_zip(skills_zip)?;
 
+    let extra_restore: Option<ExtraRestore> = match extra_zip {
+        Some(bytes) => match restore_extra_zip(bytes, &extra_sync_paths()) {
+            Ok(restore) => Some(restore),
+            Err(extra_err) => {
+                return Err(skills_backup.rollback_after_extra_restore_error(extra_err));
+            }
+        },
+        None => None,
+    };
+
     if let Err(db_err) = db.import_sql_string_for_sync(sql_str) {
+        let db_err = match extra_restore {
+            Some(restore) => restore.rollback_after_import_error(db_err),
+            None => db_err,
+        };
         return Err(skills_backup.rollback_after_import_error(db_err));
     }
 
