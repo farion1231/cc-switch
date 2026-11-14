@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MCP_APP_IDS } from "@/config/appConfig";
-import { mcpApi } from "@/lib/api/mcp";
+import { mcpApi, type McpToolsCheck } from "@/lib/api/mcp";
 import type { McpServer, McpServersMap } from "@/types";
 
 export type McpConnectionState =
@@ -14,6 +14,7 @@ type CheckResult = {
   /** The connection config the result was produced for. */
   config: string;
   state: McpConnectionState;
+  tools?: McpToolsCheck;
 };
 
 const isEnabled = (server: McpServer) =>
@@ -60,12 +61,16 @@ export function useMcpConnectivity(servers: McpServersMap | undefined) {
         runningRef.current.set(id, configs[id]);
       }
       const pending = new Set(targets);
-      const settle = (id: string, state: McpConnectionState) => {
+      const settle = (
+        id: string,
+        state: McpConnectionState,
+        tools?: McpToolsCheck,
+      ) => {
         if (latestRef.current[id] !== generation) return;
         if (state !== "checking") runningRef.current.delete(id);
         setResults((previous) => ({
           ...previous,
-          [id]: { config: configs[id], state },
+          [id]: { config: configs[id], state, tools },
         }));
       };
       targets.forEach((id) => settle(id, "checking"));
@@ -75,9 +80,13 @@ export function useMcpConnectivity(servers: McpServersMap | undefined) {
       const finish = () => cancelsRef.current.delete(cancel);
       const batch = mcpApi.startConnectivityChecks(
         targets,
-        ({ serverId, status }) => {
+        ({ serverId, status, tools }) => {
           if (disposed || !pending.delete(serverId)) return;
-          settle(serverId, status === "failed" ? "disconnected" : status);
+          settle(
+            serverId,
+            status === "failed" ? "disconnected" : status,
+            tools,
+          );
           if (pending.size === 0) finish();
         },
       );
@@ -108,23 +117,57 @@ export function useMcpConnectivity(servers: McpServersMap | undefined) {
 
   const checkServer = useCallback((id: string) => check([id]), [check]);
 
+  /**
+   * Accept a server's changed tools. Throws when the backend fails; resolves
+   * false when nothing was pending (e.g. another window already trusted them).
+   */
+  const trustTools = useCallback(async (id: string) => {
+    const trusted = await mcpApi.trustTools(id);
+    setResults((previous) => {
+      const result = previous[id];
+      if (!result?.tools || result.tools.status !== "changed") return previous;
+      return {
+        ...previous,
+        [id]: {
+          ...result,
+          tools: {
+            ...result.tools,
+            status: "unchanged",
+            added: [],
+            removed: [],
+            modified: [],
+          },
+        },
+      };
+    });
+    return trusted;
+  }, []);
+
   // Metadata, filtering and toggling another app keep a result; editing the
   // connection config makes it unchecked again. Disabled servers have no state.
-  const states = useMemo(() => {
-    const next: Record<string, McpConnectionState> = {};
+  const { states, tools } = useMemo(() => {
+    const states: Record<string, McpConnectionState> = {};
+    const tools: Record<string, McpToolsCheck> = {};
     for (const [id, server] of Object.entries(servers ?? {})) {
       if (!isEnabled(server)) continue;
       const result = results[id];
-      next[id] =
-        result && result.config === configOf(server)
-          ? result.state
-          : "unchecked";
+      const current = result && result.config === configOf(server);
+      states[id] = current ? result.state : "unchecked";
+      if (current && result.tools) tools[id] = result.tools;
     }
-    return next;
+    return { states, tools };
   }, [servers, results]);
 
   const checking = Object.values(states).includes("checking");
   const canCheck = Object.keys(states).length > 0;
 
-  return { states, checking, canCheck, checkAll, checkServer };
+  return {
+    states,
+    tools,
+    checking,
+    canCheck,
+    checkAll,
+    checkServer,
+    trustTools,
+  };
 }

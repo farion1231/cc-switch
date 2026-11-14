@@ -9,6 +9,7 @@ vi.mock("@/lib/api/mcp", () => ({
   mcpApi: {
     startConnectivityChecks: vi.fn(),
     cancelConnectivityChecks: vi.fn(),
+    trustTools: vi.fn(),
   },
 }));
 
@@ -74,6 +75,41 @@ describe("page-local MCP connectivity", () => {
     act(() => delivery()({ serverId: "example", status: "connected" }));
     expect(result.current.states.example).toBe("connected");
     expect(result.current.checking).toBe(false);
+  });
+
+  it("keeps tool pin results with the config they were checked for", async () => {
+    const { result, rerender } = renderHook(
+      ({ data }) => useMcpConnectivity(data),
+      { initialProps: { data: servers() } },
+    );
+    act(() => result.current.checkAll());
+    act(() =>
+      delivery()({
+        serverId: "example",
+        status: "connected",
+        tools: {
+          status: "changed",
+          toolCount: 1,
+          added: [],
+          removed: [],
+          modified: ["read"],
+        },
+      }),
+    );
+    expect(result.current.tools.example?.status).toBe("changed");
+
+    vi.mocked(mcpApi.trustTools).mockResolvedValue(true);
+    await act(async () => {
+      await expect(result.current.trustTools("example")).resolves.toBe(true);
+    });
+    expect(mcpApi.trustTools).toHaveBeenCalledWith("example");
+    expect(result.current.tools.example).toMatchObject({
+      status: "unchanged",
+      modified: [],
+    });
+
+    rerender({ data: servers(true, "edited") });
+    expect(result.current.tools).toEqual({});
   });
 
   it("checks a single server and ignores disabled ones", () => {

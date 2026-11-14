@@ -20,7 +20,12 @@ pub async fn start_mcp_connectivity_checks(
     on_result: tauri::ipc::Channel<crate::services::mcp_connectivity::ConnectivityResult>,
 ) -> Result<String, String> {
     let servers = run_db_task(&state, |state| {
-        McpService::get_all_servers(state).map_err(|e| e.to_string())
+        let servers = McpService::get_all_servers(state).map_err(|e| e.to_string())?;
+        let existing = servers.keys().cloned().collect();
+        if let Err(error) = crate::services::mcp_tool_pins::prune(&state.db, &existing) {
+            log::warn!("Failed to prune MCP tool pins: {error}");
+        }
+        Ok(servers)
     })
     .await?;
     Ok(crate::services::mcp_connectivity::start_checks(
@@ -31,8 +36,21 @@ pub async fn start_mcp_connectivity_checks(
             .filter(|(id, _)| server_ids.contains(id))
             .map(|(_, server)| server)
             .collect(),
+        Some(state.db.clone()),
         move |result| on_result.send(result).is_ok(),
     ))
+}
+
+/// Accept the tool definitions a server's latest check reported as changed.
+#[tauri::command]
+pub async fn trust_mcp_tools(
+    state: State<'_, AppState>,
+    server_id: String,
+) -> Result<bool, String> {
+    run_db_task(&state, move |state| {
+        crate::services::mcp_tool_pins::trust(&state.db, &server_id).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
