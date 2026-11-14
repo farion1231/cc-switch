@@ -1036,7 +1036,7 @@ pub fn all_supported() -> Vec<AppType> {
 
 /// 这个跟随环境的客户端文件现在是不是代理契约（以它自己的模式状态为准）。
 pub fn follower_routed(app: &AppType, id: &TargetId) -> bool {
-    app.has_route_mode()
+    app.spec().route_mode
         && crate::mode::state::mode_state(
             &crate::live::engine::DeviceStore::at(store_root(app, id)),
             app.as_str(),
@@ -1086,7 +1086,7 @@ pub fn sync_follower_routes_for(
     detach: bool,
     only: Option<&[TargetId]>,
 ) -> Vec<TargetReport> {
-    if !app.has_route_mode() || !model::supports(app) || scope::active() {
+    if !app.spec().route_mode || !model::supports(app) || scope::active() {
         return Vec::new();
     }
     let lock = route_sync_lock(app);
@@ -1110,7 +1110,7 @@ pub(super) fn sync_routes_locked(
     targets: Vec<TargetSpec>,
     detach: bool,
 ) -> Vec<TargetReport> {
-    if !app.has_route_mode() || !model::supports(app) || scope::active() {
+    if !app.spec().route_mode || !model::supports(app) || scope::active() {
         return Vec::new();
     }
     let main = crate::mode::current::mode_state(app);
@@ -1315,7 +1315,7 @@ fn listen_is_loopback(state: &AppState) -> bool {
 /// 应用的路由状态变了之后（进入 / 退出 / 换路由 / 聚合名单 / 启动接上），在后台同步跟随
 /// 环境，不让界面等 WSL。
 pub fn spawn_route_sync(state: &AppState, app: &AppType) {
-    if !has_followers(app) || !app.has_route_mode() || scope::active() {
+    if !has_followers(app) || !app.spec().route_mode || scope::active() {
         return;
     }
     let state = state.clone();

@@ -281,7 +281,7 @@ fn save_lock() -> &'static Mutex<()> {
 
 /// 主环境：沿用现有写入（尊重直连 / 代理模式，重投影 MCP），再补提示词和 Skills。
 fn write_primary(state: &AppState, app: &AppType, key: &str) -> TargetReport {
-    let proxy = app.has_route_mode() && crate::mode::current::mode_state(app).is_proxy();
+    let proxy = app.spec().route_mode && crate::mode::current::mode_state(app).is_proxy();
     let result = if proxy {
         tauri::async_runtime::block_on(crate::mode::controller::sync_primary_route(state, app))
             .map_err(AppError::Message)
@@ -380,7 +380,7 @@ pub fn save(
         })
         .collect();
     let mut detached = sync::sync_routes_locked(state, &app, replaced, true);
-    if app.has_route_mode()
+    if app.spec().route_mode
         && !detached
             .iter()
             .any(|r| r.record.status == TargetStatus::Error)
@@ -521,7 +521,7 @@ pub fn save(
         out.primary = Some(
             match crate::services::ProviderService::switch(state, app.clone(), imported_id) {
                 Ok(_) => {
-                    let mut report = if app.has_route_mode()
+                    let mut report = if app.spec().route_mode
                         && crate::mode::current::mode_state(&app).is_proxy()
                     {
                         write_primary(state, &app, &new_primary.key())
@@ -822,7 +822,7 @@ pub fn set_route(
     join: bool,
 ) -> Result<TargetReport, AppError> {
     let app = parse_app(app)?;
-    if !app.has_route_mode() {
+    if !app.spec().route_mode {
         return Err(AppError::localized(
             "app_targets.route_unsupported",
             format!("{} 不支持本地路由", app.as_str()),
