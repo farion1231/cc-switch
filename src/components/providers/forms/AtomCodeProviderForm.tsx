@@ -604,6 +604,7 @@ export function AtomCodeProviderForm({
                   setConfig(next as unknown as AtomCodeConfig);
                   syncRowIds((next as unknown as AtomCodeConfig).models ?? {});
                   setJsonValid(true);
+                  setKeyConflict(false); // JSON 路径解决冲突后同样要清掉提示
                 } catch {
                   setJsonValid(false);
                 }

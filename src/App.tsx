@@ -58,6 +58,7 @@ import {
 import { useLastValidValue } from "@/hooks/useLastValidValue";
 import {
   extractErrorMessage,
+  translateAtomcodeProviderMutationError,
   translateKimiProviderMutationError,
   translatePiProviderMutationError,
 } from "@/utils/errorUtils";
@@ -875,6 +876,7 @@ function App() {
           activeApp === "mcode" ||
           activeApp === "dsh" ||
           activeApp === "kimi" ||
+          activeApp === "atomcode" ||
           activeApp === "agy" ||
           activeApp === "copilot"
         )
@@ -1149,7 +1151,9 @@ function App() {
             ? translatePiProviderMutationError(detail, t)
             : activeApp === "kimi"
               ? translateKimiProviderMutationError(detail, t)
-              : "") || detail;
+              : activeApp === "atomcode"
+                ? translateAtomcodeProviderMutationError(detail, t)
+                : "") || detail;
         // 默认模型可能在客户端里改过、页面还是旧的：失败了也重读，让「默认」和移除按钮跟上
         void refreshAdditiveLiveState(activeApp).catch(() => undefined);
         toast.error(t("notifications.removeFromConfigFailed"), {

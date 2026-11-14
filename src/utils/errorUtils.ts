@@ -81,6 +81,24 @@ export const translateKimiProviderMutationError = (
 };
 
 /**
+ * AtomCode 的默认模型可能正在被使用（在 AtomCode 内选中），
+ * 后端按 config.toml 现读拒绝删除/改名，把这条英文原因换成说明。
+ */
+export const translateAtomcodeProviderMutationError = (
+  message: string,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string => {
+  if (!message) return "";
+  if (
+    message.includes("Cannot delete or rename the default model") &&
+    message.includes("while it is selected")
+  ) {
+    return t("atomcode.error.defaultModelInUse");
+  }
+  return "";
+};
+
+/**
  * 将已知的 MCP 相关后端错误（通常为中文硬编码）映射为 i18n 文案
  * 采用包含式匹配，尽量稳健地覆盖不同上下文的相似消息。
  * 若无法识别，返回空字符串以便调用方回退到原始 detail 或默认 i18n。

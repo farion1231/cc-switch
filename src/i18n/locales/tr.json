@@ -1147,6 +1147,8 @@
     "agy": "Antigravity",
     "omp": "Oh My Pi",
     "copilot": "Copilot CLI",
+    "kimi": "Kimi",
+    "dsh": "DeepSeek Harness",
     "atomcode": "AtomCode"
   },
   "mcode": {
@@ -5166,6 +5168,9 @@
       "contextWindow": "Bağlam penceresi",
       "contextWindowPlaceholder": "İsteğe bağlı",
       "removeModel": "Modeli kaldır"
+    },
+    "error": {
+      "defaultModelInUse": "AtomCode bu sağlayıcıdaki bir modeli kullanıyor. Önce AtomCode'da /model komutuyla başka bir modele geçin."
     }
   },
   "dsh": {

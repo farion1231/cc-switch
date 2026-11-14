@@ -1180,6 +1180,8 @@
     "agy": "Antigravity",
     "copilot": "Copilot CLI",
     "omp": "Oh My Pi",
+    "kimi": "Kimi",
+    "dsh": "DeepSeek Harness",
     "atomcode": "AtomCode"
   },
   "mcode": {
@@ -5256,6 +5258,9 @@
       "contextWindow": "上下文窗口",
       "contextWindowPlaceholder": "可选",
       "removeModel": "移除模型"
+    },
+    "error": {
+      "defaultModelInUse": "AtomCode 正在使用该供应商的模型，请先在 AtomCode 中用 /model 切换到其他模型"
     }
   },
   "dsh": {

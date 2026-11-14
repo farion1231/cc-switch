@@ -24,7 +24,13 @@ Fixes #
 
 ## Checklist / 检查清单
 
+<!-- 逐项真实勾选：做过才勾，不适用写 N/A 及理由。 -->
+<!-- Check each item only after actually running it; write N/A with a reason if not applicable. -->
+
 - [ ] `pnpm typecheck` passes / 通过 TypeScript 类型检查
 - [ ] `pnpm format:check` passes / 通过代码格式检查
-- [ ] `cargo clippy` passes (if Rust code changed) / 通过 Clippy 检查（如修改了 Rust 代码）
-- [ ] Updated i18n files if user-facing text changed / 如修改了用户可见文本，已更新国际化文件
+- [ ] `pnpm test:unit` passes（如修改了前端代码）/ 通过前端单元测试（如修改了前端代码）
+- [ ] `cargo fmt --check` passes（如修改了 Rust 代码）/ 通过格式检查（如修改了 Rust 代码）
+- [ ] `cargo clippy -- -D warnings` passes（如修改了 Rust 代码；口径为全 workspace，勿只跑 `--lib`）/ 通过 Clippy 检查（如修改了 Rust 代码）
+- [ ] `cargo test` passes（如修改了 Rust 代码）/ 通过 Rust 测试（如修改了 Rust 代码）
+- [ ] Updated i18n files if user-facing text changed (zh / zh-TW / en / ja / tr required; ko / ru may fall back to en) / 如修改了用户可见文本，已更新国际化文件（zh / zh-TW / en / ja / tr 必须同步；ko / ru 可回退英文）

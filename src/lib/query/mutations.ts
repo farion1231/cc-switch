@@ -8,6 +8,7 @@ import { parseLiveEditConflict } from "@/lib/errors/liveEditConflict";
 import type { Provider, SessionMeta, Settings } from "@/types";
 import {
   extractErrorMessage,
+  translateAtomcodeProviderMutationError,
   translateKimiProviderMutationError,
   translatePiProviderMutationError,
 } from "@/utils/errorUtils";
@@ -157,7 +158,9 @@ export const useAddProviderMutation = (appId: AppId) => {
           ? translatePiProviderMutationError(rawDetail, t)
           : appId === "kimi"
             ? translateKimiProviderMutationError(rawDetail, t)
-            : "") ||
+            : appId === "atomcode"
+              ? translateAtomcodeProviderMutationError(rawDetail, t)
+              : "") ||
         rawDetail ||
         t("common.unknown");
       toast.error(
@@ -227,7 +230,9 @@ export const useUpdateProviderMutation = (appId: AppId) => {
           ? translatePiProviderMutationError(rawDetail, t)
           : appId === "kimi"
             ? translateKimiProviderMutationError(rawDetail, t)
-            : "") ||
+            : appId === "atomcode"
+              ? translateAtomcodeProviderMutationError(rawDetail, t)
+              : "") ||
         rawDetail ||
         t("common.unknown");
       toast.error(
@@ -240,10 +245,10 @@ export const useUpdateProviderMutation = (appId: AppId) => {
     onSettled: async () => {
       if (isPiFamilyApp(appId)) {
         await invalidatePiProviderCaches(queryClient, appId);
-      } else if (appId === "kimi") {
-        // 默认模型可能在 Kimi Code 里改过：失败时也重读，页面上的「默认」才跟得上
+      } else if (appId === "kimi" || appId === "atomcode") {
+        // 默认模型可能在客户端里改过：失败时也重读，页面上的「默认」才跟得上
         await queryClient.invalidateQueries({
-          queryKey: ["providers", "kimi"],
+          queryKey: ["providers", appId],
         });
       }
     },
@@ -310,7 +315,9 @@ export const useDeleteProviderMutation = (appId: AppId) => {
           ? translatePiProviderMutationError(rawDetail, t)
           : appId === "kimi"
             ? translateKimiProviderMutationError(rawDetail, t)
-            : "") ||
+            : appId === "atomcode"
+              ? translateAtomcodeProviderMutationError(rawDetail, t)
+              : "") ||
         rawDetail ||
         t("common.unknown");
       toast.error(
@@ -323,10 +330,10 @@ export const useDeleteProviderMutation = (appId: AppId) => {
     onSettled: async () => {
       if (isPiFamilyApp(appId)) {
         await invalidatePiProviderCaches(queryClient, appId);
-      } else if (appId === "kimi") {
-        // 默认模型可能在 Kimi Code 里改过：失败时也重读，页面上的「默认」才跟得上
+      } else if (appId === "kimi" || appId === "atomcode") {
+        // 默认模型可能在客户端里改过：失败时也重读，页面上的「默认」才跟得上
         await queryClient.invalidateQueries({
-          queryKey: ["providers", "kimi"],
+          queryKey: ["providers", appId],
         });
       }
     },
