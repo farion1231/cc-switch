@@ -10097,6 +10097,8 @@ mod tests {
                         model: "kimi-k2".to_string(),
                         label_override: None,
                         supports_1m: None,
+                        max_effort: None,
+                        enabled: None,
                     },
                 )]
                 .into_iter()
