@@ -159,3 +159,40 @@ export const workbuddyOfficialPreset: WorkBuddyProviderPreset = {
   icon: "workbuddy",
   settingsConfig: WORKBUDDY_DEFAULT_CONFIG,
 };
+
+/** Account-backed Grok uses the local Responses bridge, never a copied OAuth token. */
+export const workbuddyGrokOAuthPreset: WorkBuddyProviderPreset = {
+  name: "xAI (Grok) OAuth",
+  providerKey: "grok-oauth",
+  websiteUrl: "https://grok.com",
+  category: "custom",
+  icon: "grok",
+  settingsConfig: {
+    vendor: "Grok OAuth",
+    url: "http://127.0.0.1",
+    apiKey: "",
+    models: [
+      {
+        id: "grok-4.7-build-fast",
+        maxInputTokens: 500000,
+        supportsToolCall: true,
+        supportsImages: true,
+        supportsReasoning: true,
+        reasoning: {
+          supportedEfforts: ["low", "medium", "high", "xhigh"],
+          defaultEffort: "xhigh",
+          canDisableThinking: false,
+        },
+        thinkingLevelMap: {
+          low: "low",
+          medium: "medium",
+          high: "high",
+          xhigh: "xhigh",
+          max: null,
+          off: null,
+          minimal: null,
+        },
+      },
+    ],
+  },
+};

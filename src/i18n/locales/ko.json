@@ -1204,6 +1204,7 @@
       "description": "CC Switch는 공급자를 ~/.workbuddy/models.json에 사용자 지정 모델로 기록하며, WorkBuddy에서 직접 추가한 모델은 건드리지 않으므로 가져올 항목이 없습니다. 오른쪽 위의 + 버튼으로 프리셋 또는 사용자 지정 공급자를 추가하세요."
     },
     "form": {
+      "grokOAuthHint": "CC Switch 로컬 라우팅으로 Grok 구독을 사용합니다. API 키가 필요하지 않습니다. 사용하는 동안 CC Switch를 실행해 두세요.",
       "providerKeyHint": "영문 소문자, 숫자, 하이픈만 사용할 수 있습니다. models.json의 어떤 항목이 이 공급자에 속하는지 표시합니다.",
       "providerKeyLockedHint": "이 키는 models.json에서 이 공급자의 항목을 표시하므로 생성 후에는 변경할 수 없습니다.",
       "url": "요청 URL",

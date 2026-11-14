@@ -5324,6 +5324,7 @@
       "description": "CC Switch sağlayıcılarını WorkBuddy'nin ~/.workbuddy/models.json dosyasına özel model olarak yazar ve WorkBuddy'de eklediğiniz modellere dokunmaz; bu yüzden içe aktarılacak bir şey yoktur. Ön ayar veya özel sağlayıcı eklemek için sağ üst köşedeki + düğmesini kullanın."
     },
     "form": {
+      "grokOAuthHint": "Grok aboneliğinizi CC Switch yerel yönlendirmesi üzerinden kullanın. API anahtarı gerekmez. Kullanırken CC Switch açık kalmalıdır.",
       "providerKeyHint": "Yalnızca küçük harf, rakam ve kısa çizgi. models.json içindeki hangi girdilerin bu sağlayıcıya ait olduğunu işaretler.",
       "providerKeyLockedHint": "Anahtar, bu sağlayıcının models.json içindeki girdilerini işaretler; bu yüzden oluşturulduktan sonra değiştirilemez.",
       "url": "İstek URL'si",

@@ -39,6 +39,35 @@ pub(crate) fn is_official_provider(provider: &crate::provider::Provider) -> bool
     provider.category.as_deref() == Some("official")
 }
 
+/// Materialize only a local gateway key. OAuth access/refresh tokens never leave the manager.
+pub(crate) fn oauth_live_config(
+    provider: &crate::provider::Provider,
+    origin: &str,
+) -> Result<Value, AppError> {
+    let mut config = provider.settings_config.clone();
+    let key = config
+        .get("apiKey")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    if key.len() < 32 {
+        return Err(AppError::InvalidInput(
+            "WorkBuddy OAuth requires a private gateway key".into(),
+        ));
+    }
+    let url = format!("{origin}/workbuddy/{}/v1/chat/completions", provider.id);
+    config["url"] = Value::String(url.clone());
+    if let Some(models) = config.get_mut("models").and_then(Value::as_array_mut) {
+        for model in models {
+            model["url"] = Value::String(url.clone());
+            model["apiKey"] = Value::String(key.clone());
+            model["api"] = Value::String("openai-completions".into());
+        }
+    }
+    validate_provider(&config)?;
+    Ok(config)
+}
+
 pub(crate) fn data_dir() -> PathBuf {
     explicit_data_dir(std::env::var("WORKBUDDY_CONFIG_DIR").ok().as_deref())
         .unwrap_or_else(|| get_home_dir().join(".workbuddy"))

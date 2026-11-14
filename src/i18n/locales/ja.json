@@ -1204,6 +1204,7 @@
       "description": "CC Switch はプロバイダーをカスタムモデルとして ~/.workbuddy/models.json に書き込み、WorkBuddy で追加したモデルは変更しないため、インポートは不要です。右上の + から、プリセットまたはカスタムプロバイダーを追加できます。"
     },
     "form": {
+      "grokOAuthHint": "CC Switch のローカルルーティングで Grok サブスクリプションを利用します。API キーは不要です。使用中は CC Switch を起動しておいてください。",
       "providerKeyHint": "小文字・数字・ハイフンのみ。models.json のどのエントリがこのプロバイダーのものかを示します。",
       "providerKeyLockedHint": "キーは models.json のエントリに記録されるため、作成後は変更できません。",
       "url": "リクエスト URL",

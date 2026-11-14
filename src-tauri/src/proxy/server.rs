@@ -302,6 +302,10 @@ impl ProxyServer {
         Router::new()
             // 健康检查
             .route("/health", get(handlers::health_check))
+            .route(
+                "/workbuddy/:provider_id/v1/chat/completions",
+                post(super::workbuddy::handle),
+            )
             .route("/status", get(handlers::get_status))
             // Claude API (支持带前缀和不带前缀两种格式)
             .route("/v1/messages", post(handlers::handle_messages))

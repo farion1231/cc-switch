@@ -1204,6 +1204,7 @@
       "description": "CC Switch 把供應商作為自訂模型寫進 ~/.workbuddy/models.json，不會改動你在 WorkBuddy 中新增的模型，因此無需匯入。點擊右上角的 +，從預設或自訂設定新增供應商。"
     },
     "form": {
+      "grokOAuthHint": "透過 CC Switch 本機路由使用 Grok 訂閱，無需 API Key。使用時請保持 CC Switch 執行。",
       "providerKeyHint": "只能使用小寫字母、數字和連字號，用來標記 models.json 裡哪些項目屬於這個供應商。",
       "providerKeyLockedHint": "識別碼寫在 models.json 的項目上，建立後不能再修改。",
       "url": "請求位址",

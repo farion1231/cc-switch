@@ -455,6 +455,23 @@ pub(crate) fn write_live_for_state(
         return Ok(());
     }
 
+    if matches!(app_type, AppType::WorkBuddy) && provider.is_xai_oauth() {
+        let config = tauri::async_runtime::block_on(async {
+            state
+                .proxy_service
+                .start()
+                .await
+                .map_err(AppError::Message)?;
+            let (origin, _) = state
+                .proxy_service
+                .build_proxy_urls()
+                .await
+                .map_err(AppError::Message)?;
+            crate::workbuddy_config::oauth_live_config(provider, &origin)
+        })?;
+        return crate::workbuddy_config::set_provider(&provider.id, &config);
+    }
+
     write_live_snapshot(app_type, provider)
 }
 
