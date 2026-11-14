@@ -1753,35 +1753,11 @@ impl SkillService {
         }
 
         // 备份旧文件
-        let _ = Self::create_uninstall_backup(&skill);
+        Self::create_uninstall_backup(&skill)?;
 
-        if !(skill.apps.mcode
-            || skill.apps.agy
-            || skill.apps.kimi
-            || skill.apps.dsh
-            || skill.apps.copilot
-            || skill.apps.workbuddy)
-        {
-            if dest.exists() {
-                fs::remove_dir_all(&dest)?;
-            }
-            Self::copy_dir_recursive(&source, &dest)?;
-        }
-
-        // 计算新哈希 + 解析新元数据
-        let metadata_source = if skill.apps.mcode
-            || skill.apps.agy
-            || skill.apps.kimi
-            || skill.apps.dsh
-            || skill.apps.copilot
-            || skill.apps.workbuddy
-        {
-            &source
-        } else {
-            &dest
-        };
-        let new_hash = Self::compute_dir_hash(metadata_source).ok();
-        let skill_md = metadata_source.join("SKILL.md");
+        // 计算新哈希 + 解析新元数据（先从源目录读取，暂存替换成功后再提交）
+        let new_hash = Self::compute_dir_hash(&source).ok();
+        let skill_md = source.join("SKILL.md");
         let (new_name, new_description) = Self::read_skill_name_desc(&skill_md, &skill.directory);
 
         // 更新 readme_url
@@ -1807,48 +1783,27 @@ impl SkillService {
             updated_at: chrono::Utc::now().timestamp(),
         };
 
-        let mut updated_skill = if skill.apps.mcode
-            || skill.apps.agy
-            || skill.apps.kimi
-            || skill.apps.dsh
-            || skill.apps.copilot
-            || skill.apps.workbuddy
-        {
-            Self::update_managed_skill_files(
-                &source,
-                &dest,
-                &skill.directory,
-                &deployments,
-                &[
-                    AppType::Mcode,
-                    AppType::Agy,
-                    AppType::Kimi,
-                    AppType::Dsh,
-                    AppType::Copilot,
-                    AppType::WorkBuddy,
-                ]
-                .iter()
-                .filter(|app| skill.apps.is_enabled_for(app))
-                .map(|app| Self::get_app_skills_dir(app).map(|dir| dir.join(&skill.directory)))
-                .collect::<Result<Vec<_>>>()?,
-                || {
-                    if !db.update_skill_metadata(&updated_metadata)? {
-                        return Err(anyhow!("Skill no longer installed: {}", skill.id));
-                    }
-                    Ok(updated_metadata)
-                },
-            )?
-        } else {
-            for (destination, deployment) in deployments {
-                Self::refresh_pi_skill_destination(
-                    &dest,
-                    &destination,
-                    &updated_metadata.directory,
-                    &deployment,
-                )?;
-            }
-            Self::persist_updated_skill_metadata(db, &updated_metadata)?
-        };
+        let native_targets = [
+            AppType::Mcode,
+            AppType::Agy,
+            AppType::Kimi,
+            AppType::Dsh,
+            AppType::Copilot,
+            AppType::WorkBuddy,
+        ]
+        .iter()
+        .filter(|app| skill.apps.is_enabled_for(app))
+        .map(|app| Self::get_app_skills_dir(app).map(|dir| dir.join(&skill.directory)))
+        .collect::<Result<Vec<_>>>()?;
+
+        let mut updated_skill = Self::update_managed_skill_files(
+            &source,
+            &dest,
+            &skill.directory,
+            &deployments,
+            &native_targets,
+            || Self::persist_updated_skill_metadata(db, &updated_metadata),
+        )?;
         updated_skill.apps.pi = Self::skill_exists_in_app(&updated_skill.directory, &AppType::Pi);
         updated_skill.apps.omp = Self::skill_exists_in_app(&updated_skill.directory, &AppType::Omp);
 
@@ -1973,7 +1928,7 @@ impl SkillService {
             if !rollback_errors.is_empty() {
                 let backups: Vec<_> = staged.into_iter().map(|(_, stage)| stage.keep()).collect();
                 return Err(anyhow!(
-                    "{error}; MiniMax Code Skill rollback failed: {}; backups: {backups:?}",
+                    "{error}; Skill update rollback failed: {}; backups: {backups:?}",
                     rollback_errors.join("; ")
                 ));
             }
@@ -8783,5 +8738,173 @@ mod tests {
         // 切换供应商走的同一条同步也不能碰它
         SkillService::sync_to_app(&db, &AppType::OpenClaw).expect("no-op sync");
         assert!(own_skill.exists());
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn update_skill_aborts_and_preserves_ssot_when_backup_fails() {
+        let home = tempdir().expect("home");
+        let config_dir = home.path().join(".cc-switch");
+        fs::create_dir_all(&config_dir).expect("isolated config directory");
+        fs::File::create(config_dir.join("cc-switch.db")).expect("isolated database sentinel");
+        let _home = TestHomeGuard::set(home.path());
+        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+
+        let remote = tempdir().expect("remote repo");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let service = SkillService {
+            repo_fixture: Some(remote.path().to_path_buf()),
+            ..SkillService::new()
+        };
+
+        let directory = "guarded-skill";
+        let local = SkillService::get_ssot_dir().unwrap().join(directory);
+        write_skill(&local, "old-skill");
+        fs::write(local.join("extra.txt"), "keep-me").expect("seed extra file");
+        let original_hash = SkillService::compute_dir_hash(&local).expect("hash local");
+
+        let mut installed = poisoned_skill("owner/repo:guarded-skill", directory);
+        installed.name = "old-skill".to_string();
+        installed.repo_owner = Some("owner".to_string());
+        installed.repo_name = Some("repo".to_string());
+        installed.repo_branch = Some("main".to_string());
+        installed.apps = SkillApps::only(&AppType::Claude);
+        installed.content_hash = Some(original_hash.clone());
+        db.save_skill(&installed).expect("seed installed skill");
+
+        write_skill(&remote.path().join(directory), "new-skill");
+
+        // Block skill-backups directory creation with a regular file.
+        fs::write(config_dir.join("skill-backups"), "not-a-directory")
+            .expect("block skill-backups dir");
+
+        let err = service
+            .update_skill(&db, &installed.id)
+            .await
+            .expect_err("backup failure must abort update before mutating SSOT");
+        assert!(!err.to_string().is_empty());
+        assert_eq!(
+            SkillService::read_skill_name_desc(&local.join("SKILL.md"), directory).0,
+            "old-skill"
+        );
+        assert_eq!(
+            fs::read_to_string(local.join("extra.txt")).expect("extra file preserved"),
+            "keep-me"
+        );
+        let saved = db.get_installed_skill(&installed.id).unwrap().unwrap();
+        assert_eq!(saved.name, "old-skill");
+        assert_eq!(saved.content_hash, Some(original_hash));
+    }
+
+    #[test]
+    fn update_managed_skill_files_rolls_back_standard_ssot_on_commit_failure() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("remote").join("demo-skill");
+        let ssot = temp.path().join("ssot").join("demo-skill");
+        let pi_dest = temp.path().join("pi").join("demo-skill");
+
+        write_skill(&ssot, "old-skill");
+        fs::write(ssot.join("preserved.txt"), "original").expect("seed preserved file");
+        SkillService::copy_dir_recursive(&ssot, &pi_dest).expect("seed pi copy");
+        let deployment = SkillService::inspect_pi_skill_destination(&ssot, &pi_dest, "demo-skill")
+            .expect("inspect pi copy")
+            .expect("managed deployment");
+
+        write_skill(&source, "new-skill");
+
+        let err = SkillService::update_managed_skill_files::<()>(
+            &source,
+            &ssot,
+            "demo-skill",
+            &[(pi_dest.clone(), deployment)],
+            &[],
+            || Err(anyhow!("simulated metadata commit failure")),
+        )
+        .expect_err("commit failure must propagate");
+        assert!(err
+            .to_string()
+            .contains("simulated metadata commit failure"));
+        assert_eq!(
+            SkillService::read_skill_name_desc(&ssot.join("SKILL.md"), "demo-skill").0,
+            "old-skill"
+        );
+        assert_eq!(
+            fs::read_to_string(ssot.join("preserved.txt")).expect("preserved file restored"),
+            "original"
+        );
+        assert_eq!(
+            SkillService::read_skill_name_desc(&pi_dest.join("SKILL.md"), "demo-skill").0,
+            "old-skill"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn update_skill_preserves_existing_ssot_when_staging_copy_fails() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = tempdir().expect("home");
+        let config_dir = home.path().join(".cc-switch");
+        fs::create_dir_all(&config_dir).expect("isolated config directory");
+        fs::File::create(config_dir.join("cc-switch.db")).expect("isolated database sentinel");
+        let _home = TestHomeGuard::set(home.path());
+        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+
+        let remote = tempdir().expect("remote repo");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let service = SkillService {
+            repo_fixture: Some(remote.path().to_path_buf()),
+            ..SkillService::new()
+        };
+
+        let directory = "atomic-skill";
+        let local = SkillService::get_ssot_dir().unwrap().join(directory);
+        write_skill(&local, "old-skill");
+        fs::write(local.join("extra.txt"), "keep-me").expect("seed extra file");
+        let original_hash = SkillService::compute_dir_hash(&local).expect("hash local");
+
+        let mut installed = poisoned_skill("owner/repo:atomic-skill", directory);
+        installed.name = "old-skill".to_string();
+        installed.repo_owner = Some("owner".to_string());
+        installed.repo_name = Some("repo".to_string());
+        installed.repo_branch = Some("main".to_string());
+        installed.apps = SkillApps::only(&AppType::Claude);
+        installed.content_hash = Some(original_hash.clone());
+        db.save_skill(&installed).expect("seed installed skill");
+
+        let remote_skill = remote.path().join(directory);
+        write_skill(&remote_skill, "new-skill");
+        let unreadable = remote_skill.join("nested").join("unreadable.txt");
+        fs::create_dir_all(unreadable.parent().unwrap()).expect("create nested dir");
+        fs::write(&unreadable, "broken").expect("write nested file");
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000))
+            .expect("make file unreadable");
+
+        // Running as root in a container ignores mode 0000; skip assertion only in that case.
+        if fs::File::open(&unreadable).is_ok() {
+            let _ = fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o644));
+            return;
+        }
+
+        let result = service.update_skill(&db, &installed.id).await;
+        let _ = fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o644));
+
+        assert!(
+            result.is_err(),
+            "mid-copy read failure must abort update_skill"
+        );
+        assert_eq!(
+            SkillService::read_skill_name_desc(&local.join("SKILL.md"), directory).0,
+            "old-skill"
+        );
+        assert_eq!(
+            fs::read_to_string(local.join("extra.txt")).expect("extra file preserved"),
+            "keep-me"
+        );
+        assert!(!local.join("nested").exists());
+        let saved = db.get_installed_skill(&installed.id).unwrap().unwrap();
+        assert_eq!(saved.name, "old-skill");
+        assert_eq!(saved.content_hash, Some(original_hash));
     }
 }
