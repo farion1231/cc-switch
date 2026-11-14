@@ -39,6 +39,7 @@ pub fn exit_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
 
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
+        crate::window_fit::fit_to_work_area(&window);
         let _ = window.show();
         let _ = window.set_focus();
         #[cfg(target_os = "linux")]
