@@ -12,7 +12,7 @@ use std::str::FromStr;
 fn require_proxy_app(app_type: &str) -> Result<crate::app_config::AppType, String> {
     let app = crate::app_config::AppType::from_str(app_type)
         .map_err(|error| format!("无效的应用类型: {error}"))?;
-    if !app.supports_local_proxy() {
+    if !app.spec().local_proxy {
         return Err(format!("{} 不支持本地路由", app.as_str()));
     }
     Ok(app)
@@ -22,7 +22,7 @@ fn require_proxy_app(app_type: &str) -> Result<crate::app_config::AppType, Strin
 fn require_mode_app(app_type: &str) -> Result<crate::app_config::AppType, String> {
     let app = crate::app_config::AppType::from_str(app_type)
         .map_err(|error| format!("无效的应用类型: {error}"))?;
-    if !app.has_route_mode() {
+    if !app.spec().route_mode {
         return Err(format!("{} 不支持本地路由", app.as_str()));
     }
     Ok(app)

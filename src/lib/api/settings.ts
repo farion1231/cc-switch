@@ -6,6 +6,7 @@ import type {
   RemoteSnapshotInfo,
 } from "@/types";
 import type { AppId } from "./types";
+import type { AutoUpdateStatus, ReadyUpdate } from "@/lib/updater";
 
 export interface ConfigTransferResult {
   success: boolean;
@@ -75,6 +76,15 @@ export const settingsApi = {
 
   async installUpdateAndRestart(): Promise<boolean> {
     return await invoke("install_update_and_restart");
+  },
+
+  async getAutoUpdateStatus(): Promise<AutoUpdateStatus> {
+    return await invoke("get_auto_update_status");
+  },
+
+  /** 立刻在后台检查并下载最新版本（打开自动更新开关时调用） */
+  async downloadAppUpdate(): Promise<ReadyUpdate | null> {
+    return await invoke("download_app_update");
   },
 
   async checkUpdates(): Promise<void> {

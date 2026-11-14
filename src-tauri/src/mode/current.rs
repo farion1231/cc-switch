@@ -23,7 +23,7 @@ pub enum Purpose {
 
 /// 这个应用的模式状态；没有路由模式的应用恒为直连。
 pub fn mode_state(app: &AppType) -> ModeState {
-    if !app.has_route_mode() {
+    if !app.spec().route_mode {
         return ModeState::default();
     }
     state::mode_state(&DeviceStore::for_device(), app.as_str()).unwrap_or_else(|err| {
@@ -37,10 +37,15 @@ pub fn is_proxy(app: &AppType) -> bool {
 }
 
 /// 同 [`is_proxy`]，一次看几个应用，状态文件只读一次（状态面板每 2 秒轮询一次）。
+/// 有没有应用在路由模式（含 Claude Desktop），状态文件只读一次。
+pub fn any_proxy() -> bool {
+    proxy_flags(AppType::ALL).contains(&true)
+}
+
 pub fn proxy_flags<const N: usize>(apps: [AppType; N]) -> [bool; N] {
     let names = apps.each_ref().map(AppType::as_str);
     match state::mode_states(&DeviceStore::for_device(), names) {
-        Ok(states) => std::array::from_fn(|i| apps[i].has_route_mode() && states[i].is_proxy()),
+        Ok(states) => std::array::from_fn(|i| apps[i].spec().route_mode && states[i].is_proxy()),
         Err(err) => {
             log::warn!("读取模式状态失败，按直连处理: {err}");
             [false; N]

@@ -232,6 +232,25 @@ describe("OpenTerminalDialog", () => {
     ).toBeNull();
   });
 
+  // 回车直接打开：确认按钮被挤到下面时也能用键盘确认（#9478）；输入法选词的回车不算
+  it("opens on Enter in the extra-arguments field, but not while composing", async () => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(["/work/alpha"]));
+    const onClose = renderDialog();
+    const input = screen.getByLabelText(
+      "provider.openTerminalDialog.extraArgs",
+    );
+
+    fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
+    expect(openTerminalMock).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(openTerminalMock).toHaveBeenCalledWith("p1", "claude", {
+      cwd: "/work/alpha",
+      skipPermissions: false,
+    });
+  });
+
   it("prefills the remembered extra arguments", () => {
     window.localStorage.setItem(
       "cc-switch:terminal:extra-args:claude",

@@ -1171,6 +1171,46 @@
     },
     "data": {
       "location": "保存場所"
+    },
+    "ipDiagnostics": {
+      "title": "IP 診断",
+      "scope": "選択した通信経路の出口情報を確認します。DNS やブラウザーの隔離を検証したり、アカウント制限を予測したりするものではありません。",
+      "exitScope": "表示されるのは、CC Switch が選択した経路で検査サービスに接続したときの出口で、他のアプリの出口と同じとは限りません。直接接続モードでは、Claude Code や Codex などのクライアントは各自のプロキシ設定を使います。また、プロキシツールがドメインごとに振り分けている場合、AI サービスと検査サービスで異なるノードを通ることがあります。",
+      "route": "通信経路",
+      "saved": "保存済みのグローバルプロキシ",
+      "custom": "一時プロキシ",
+      "proxyUrl": "一時プロキシの URL",
+      "explicitRoute": "保存済みの設定を変更せず、このプロキシで検査します。プロキシが失敗しても直接接続には切り替えません。",
+      "systemRoute": "プロキシ未指定：CC Switch のシステムプロキシ動作に従います。システムプロキシまたは直接接続を使用します。",
+      "settingsError": "保存済みのプロキシを読み込めません。再試行するか、一時プロキシを選択してください。",
+      "privacy": "検査ボタンを押したときだけ実行します。icanhazip.com と ipify.org に接続し、観測した IP を ipwho.is に送信して位置とネットワーク情報を取得します。",
+      "run": "IP を検査",
+      "running": "検査中…",
+      "invalidProxy": "無効なプロキシ URL です。HTTP、HTTPS、SOCKS5、SOCKS5H を使用してください。",
+      "failed": "検査を実行できませんでした。再試行してください。",
+      "unknown": "不明",
+      "checkedAt": "検査日時",
+      "incomplete": "出口の観測が不完全です。検査の失敗は経路の安全性を証明しません。",
+      "consistent": "両サービスで同じ出口 IP を観測しました。今回のリクエストのみの結果です。",
+      "different": "異なる IP を観測しました。経路ルールや動的プロキシが原因の可能性があります。プロキシ設定を確認してください。",
+      "locationError": "位置の照会に失敗",
+      "locationIp": "照会対象 IP",
+      "country": "国・地域",
+      "region": "州・省",
+      "city": "都市",
+      "asn": "ASN",
+      "isp": "ISP",
+      "organization": "組織",
+      "exitTimezone": "IP のタイムゾーン",
+      "utcOffset": "UTC オフセット",
+      "localTimezone": "ローカルタイムゾーン",
+      "locationSource": "位置とネットワーク情報：ipwho.is。データベースの推定には誤差があります。",
+      "errors": {
+        "network": "接続失敗またはタイムアウト",
+        "http": "サービスが HTTP エラーを返しました",
+        "invalidResponse": "サービスが無効なデータを返しました",
+        "unavailable": "サービスからデータを取得できません"
+      }
     }
   },
   "apps": {
@@ -2636,9 +2676,9 @@
         "manual": "手動入力"
       },
       "rateAutoHint": "1 日 1 回自動で取得し、表示の換算にのみ使います。費用は引き続き米ドルで記録されます。",
-      "rateAutoUpdated": "最終更新：{{time}}",
-      "rateAutoNever": "レートをまだ取得していません",
-      "rateAutoFailed": "自動取得に失敗しました。前回のレートを使用します",
+      "rateAutoUpdated": "最終更新：{{time}}。",
+      "rateAutoNever": "レートをまだ取得していません。",
+      "rateAutoFailed": "自動取得に失敗しました。前回のレートを使用します。",
       "rateAttribution": "為替レートの提供：{{provider}}。",
       "rateRefresh": "今すぐ更新",
       "rateHint": "手動で入力し、表示の換算にのみ使います。費用は引き続き米ドルで記録されます。",
@@ -5382,6 +5422,17 @@
       "managedHint": "アカウントは認証センターで管理します。ログアウトするとこのカードは自動で消えます。"
     },
     "deleteSessionHint": "履歴の整合性を保つため、DeepSeek Harness でこのセッションを削除してください。"
+  },
+  "autoUpdate": {
+    "toggle": "アップデートを自動でダウンロード",
+    "toggleHelp": "新しいバージョンをバックグラウンドでダウンロードし、インストール前に確認します。確認なしにインストールすることはありません。",
+    "unsupported": "ポータブル版と Linux の deb / rpm パッケージでは利用できません",
+    "readyTitle": "新しいバージョン v{{version}} のダウンロードが完了しました",
+    "readyBody": "今すぐインストールしますか？CC Switch が再起動します。",
+    "readyBodyRouting": "今すぐインストールしますか？CC Switch が再起動し、ローカルルーティングを経由中のリクエストは中断されます。",
+    "later": "後で",
+    "installNow": "インストールして再起動",
+    "installFailed": "アップデートのインストールに失敗しました"
   },
   "customApps": {
     "title": "カスタムアプリ",

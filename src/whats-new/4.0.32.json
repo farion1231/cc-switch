@@ -1,0 +1,33 @@
+{
+  "version": "4.0.32",
+  "items": [
+    {
+      "type": "new",
+      "zh": "可在后台自动下载更新，下载好后询问再安装",
+      "zh-TW": "可在背景自動下載更新，下載完成後詢問再安裝",
+      "en": "Updates can download in the background and wait for your OK to install",
+      "ja": "更新をバックグラウンドで自動ダウンロードし、確認後にインストール"
+    },
+    {
+      "type": "new",
+      "zh": "设置 → 网络新增 IP 检测，查看代理出口",
+      "zh-TW": "設定 → 網路新增 IP 檢測，查看代理出口",
+      "en": "IP diagnostics in Settings → Network show your proxy's exit IP",
+      "ja": "設定 → ネットワークに IP 診断を追加。プロキシの出口を確認"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 Codex 换供应商续接旧会话报「无法解密」",
+      "zh-TW": "修正 Codex 換供應商續接舊對話報「無法解密」",
+      "en": "Codex threads resumed on another provider no longer fail to decrypt",
+      "ja": "Codex で別のプロバイダーに切り替えて再開すると復号に失敗する問題を修正"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 Codex 接 Mistral AI 报 422",
+      "zh-TW": "修正 Codex 接 Mistral AI 報 422",
+      "en": "Codex requests to Mistral AI no longer fail with 422",
+      "ja": "Codex から Mistral AI への 422 エラーを修正"
+    }
+  ]
+}
