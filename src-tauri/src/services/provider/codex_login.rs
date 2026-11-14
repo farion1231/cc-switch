@@ -171,16 +171,19 @@ pub(crate) fn official_login_requirement(row_auth: &Value) -> Option<String> {
 }
 
 /// 官方卡的行里存的是 API Key（直连 OpenAI API）：静态凭据，不会过期，照写。
-fn is_api_key_credential(auth: &Value) -> bool {
+pub(crate) fn is_api_key_credential(auth: &Value) -> bool {
     extract_codex_auth_api_key(auth).is_some() && !codex_auth_has_credential_login_material(auth)
 }
 
-/// 旧版切到第三方时写进 `auth.json` 的 Key（只有 `OPENAI_API_KEY`，而且就是某个第三方
-/// 供应商的 Key）。能证明是 CC Switch 写的才算残留；用户自己 `codex login --api-key`
-/// 登录的 Key 不算。
-fn is_residue(auth: &Value, third_party_keys: &[String]) -> bool {
+/// CC Switch 自己写进 `auth.json` 的纯 Key 占位：只有 `OPENAI_API_KEY`、没有任何 OAuth
+/// 材料，而且 key 能对上某张卡行里存着的 key——第三方行的 key 是旧版切第三方时整份写进
+/// 去的，官方行的 key 是官方卡 API key 投影（[`official`] 的 API key 分支）写进去的。
+/// 接管期它把原生登录换下去，退出时不能算原生登录挡住暂存还原（#8390）。用户自己
+/// `codex login --api-key` 登录的 key 对不上任何行，不算——宁可保守。
+fn is_taken_over_key(auth: &Value, third_party_keys: &[String], official_keys: &[String]) -> bool {
     codex_live_auth_is_stale_third_party_residue(auth)
-        && extract_codex_auth_api_key(auth).is_some_and(|key| third_party_keys.contains(&key))
+        && extract_codex_auth_api_key(auth)
+            .is_some_and(|key| third_party_keys.contains(&key) || official_keys.contains(&key))
 }
 
 /// 登录的 access_token 已经过期：按 JWT 里的 `exp` 算，解不出的当没过期。Codex 在用的
@@ -219,6 +222,9 @@ pub(crate) struct AuthInput<'a> {
     pub live_is_managed: bool,
     /// 第三方供应商行里的 Key，用来认出旧版留下的残留。
     pub third_party_keys: &'a [String],
+    /// 官方卡行里存着的 API Key（[`official`] 的 API key 分支整份写进 `auth.json` 的就是
+    /// 它）：live 里的纯 key 占位对上它，就能证明是 CC Switch 写的（#8390）。
+    pub official_keys: &'a [String],
     /// 切走的是没绑托管账号的官方卡（它的行 `auth`）：live 里没有登录，说明用户在
     /// Codex 里登出了，暂存里对应的登录也作废，免得切回来又登上。
     pub leaving_official: Option<&'a Value>,
@@ -243,15 +249,17 @@ pub(crate) fn plan(input: AuthInput<'_>) -> AuthPlan {
     let original = input.stash.clone();
     let mut stash = input.stash;
     let managed = input.live_is_managed;
-    let residue = input
-        .live
-        .is_some_and(|auth| !managed && is_residue(auth, input.third_party_keys));
+    // CC Switch 写的纯 key 占位（key 对得上某张卡的行）：不是用户的登录。
+    let taken_over = input.live.is_some_and(|auth| {
+        !managed && is_taken_over_key(auth, input.third_party_keys, input.official_keys)
+    });
     let native = input
         .live
-        .filter(|auth| !managed && !residue && codex_auth_has_login_material(auth));
+        .filter(|auth| !managed && !taken_over && codex_auth_has_login_material(auth));
 
     if let Some(row_auth) = input.leaving_official {
-        if native.is_none() && !managed {
+        // live 里是 CC Switch 写的 key 占位不是登出：接管期换下去的登录在暂存里还算数。
+        if native.is_none() && !managed && !taken_over {
             match oauth_identity(row_auth) {
                 Some(id) => {
                     stash.take(&id);
@@ -272,7 +280,7 @@ pub(crate) fn plan(input: AuthInput<'_>) -> AuthPlan {
                 stash.put(live);
             }
             // 保留登录关闭时第三方路由旁边不留任何 auth.json（写 `{}` 不等于登出）。
-            (managed || residue || (!preserve && input.live.is_some())).then_some(None)
+            (managed || taken_over || (!preserve && input.live.is_some())).then_some(None)
         }
         AuthTarget::ProxyThirdParty { restore_last } => {
             let restored = (restore_last && !managed && native.is_none())
@@ -297,7 +305,7 @@ pub(crate) fn plan(input: AuthInput<'_>) -> AuthPlan {
             Some(Some(auth.clone()))
         }
         AuthTarget::Official { row_auth } => {
-            official(row_auth, native, managed || residue, &mut stash)
+            official(row_auth, native, managed || taken_over, &mut stash)
         }
     };
 
@@ -319,7 +327,9 @@ pub(crate) fn plan(input: AuthInput<'_>) -> AuthPlan {
 }
 
 /// 切到没绑托管账号的官方卡。`clearable` 表示 live 里是要清掉的东西（托管账号的登录、
-/// 旧版的第三方 Key 残留）。
+/// CC Switch 写进来的纯 key 占位）。行里存 API key 的官方卡照写行 key：那是这张卡自己
+/// 声明的凭据，「行 key 对得上 live」证明不了 live 是接管占位还是用户真心配置的 key，
+/// 不能拿暂存登录把它顶掉（farion1231 review #8929）。
 fn official(
     row_auth: &Value,
     native: Option<&Value>,
@@ -390,6 +400,7 @@ mod tests {
             live,
             live_is_managed: false,
             third_party_keys: &[],
+            official_keys: &[],
             leaving_official: None,
             target,
             stash,
@@ -690,6 +701,123 @@ mod tests {
             )
         });
         assert_eq!(kept.auth, None, "the user's own API key login stays");
+    }
+
+    /// #8929 review：行里存 API key 的官方卡（用户真配置的直连 key）分离时照写行 key。
+    /// 「live 的 key 对得上官方行」区分不了接管占位和用户配置的 key，不能用暂存登录
+    /// 把卡上声明的 key 顶掉；被接管换下去的登录留在暂存里。
+    #[test]
+    fn detaching_from_an_api_key_official_card_keeps_its_row_key() {
+        let alice = login("alice");
+        let row = json!({ "OPENAI_API_KEY": "wbk-seeded" });
+        // 旧版整份写入的占位带空的 tokens 和 null 的 auth_mode，行 key 对得上官方行。
+        let placeholder = json!({
+            "OPENAI_API_KEY": "wbk-seeded",
+            "tokens": {},
+            "auth_mode": null,
+            "last_refresh": null,
+        });
+        let keys = vec!["wbk-seeded".to_string()];
+        let mut stash = ready();
+        stash.put(&alice);
+
+        let detach = plan(AuthInput {
+            leaving_official: Some(&row),
+            official_keys: &keys,
+            ..input(
+                Some(&placeholder),
+                AuthTarget::Official { row_auth: &row },
+                stash,
+            )
+        });
+        assert_eq!(
+            detach.auth,
+            Some(Some(row.clone())),
+            "the card's own key is what detach restores"
+        );
+        assert_eq!(detach.stash, None, "the stashed login stays stashed");
+    }
+
+    /// 暂存里没有可还原的登录：把行 key 写回去。不清空——行 key 是这张卡声明的凭据。
+    #[test]
+    fn detaching_without_a_stashed_login_keeps_the_row_key() {
+        let row = json!({ "OPENAI_API_KEY": "wbk-seeded" });
+        let placeholder = json!({ "OPENAI_API_KEY": "wbk-seeded" });
+        let keys = vec!["wbk-seeded".to_string()];
+
+        let detach = plan(AuthInput {
+            official_keys: &keys,
+            ..input(
+                Some(&placeholder),
+                AuthTarget::Official { row_auth: &row },
+                ready(),
+            )
+        });
+        assert_eq!(detach.auth, Some(Some(row)));
+        assert_eq!(detach.stash, None);
+    }
+
+    /// 行里没存登录的官方卡：key 占位同样不算原生登录，暂存还原照常走。
+    #[test]
+    fn a_taken_over_placeholder_does_not_block_the_restore_on_a_clean_official_card() {
+        let alice = login("alice");
+        let empty = json!({});
+        let placeholder = json!({ "OPENAI_API_KEY": "wbk-seeded" });
+        let keys = vec!["wbk-seeded".to_string()];
+        let mut stash = ready();
+        stash.put(&alice);
+
+        let detach = plan(AuthInput {
+            official_keys: &keys,
+            ..input(
+                Some(&placeholder),
+                AuthTarget::Official { row_auth: &empty },
+                stash,
+            )
+        });
+        assert_eq!(detach.auth, Some(Some(alice)));
+    }
+
+    /// 用户自己的 API key 登录（对不上任何行 key）不算占位：照旧按原生登录处理。
+    #[test]
+    fn the_users_own_api_key_login_is_not_taken_over_placeholder() {
+        let own = json!({ "OPENAI_API_KEY": "sk-my-own" });
+        let row = json!({ "OPENAI_API_KEY": "wbk-seeded" });
+        let keys = vec!["wbk-seeded".to_string()];
+
+        let detach = plan(AuthInput {
+            official_keys: &keys,
+            ..input(Some(&own), AuthTarget::Official { row_auth: &row }, ready())
+        });
+        assert_eq!(
+            detach.auth,
+            Some(Some(row)),
+            "the card's key is what direct uses"
+        );
+        let stash = detach.stash.expect("the user's own login is stashed");
+        assert!(stash.logins.contains_key("api-key"), "stashed, not deleted");
+    }
+
+    /// 普通切换（非分离）照旧写行 key，暂存里的登录留着，分离时再还。
+    #[test]
+    fn a_switch_to_an_api_key_official_card_still_writes_its_key() {
+        let alice = login("alice");
+        let row = json!({ "OPENAI_API_KEY": "wbk-seeded" });
+        let placeholder = json!({ "OPENAI_API_KEY": "wbk-seeded" });
+        let keys = vec!["wbk-seeded".to_string()];
+        let mut stash = ready();
+        stash.put(&alice);
+
+        let switch = plan(AuthInput {
+            official_keys: &keys,
+            ..input(
+                Some(&placeholder),
+                AuthTarget::Official { row_auth: &row },
+                stash,
+            )
+        });
+        assert_eq!(switch.auth, Some(Some(row)));
+        assert_eq!(switch.stash, None, "the stashed login is untouched");
     }
 
     #[test]
