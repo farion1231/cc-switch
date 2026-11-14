@@ -88,29 +88,98 @@ describe("useImportExport Hook", () => {
     expect(result.current.status).toBe("idle");
   });
 
-  it("should set success status, record backup ID, and call callback on successful import", async () => {
-    openFileDialogMock.mockResolvedValue("/config.json");
-    importConfigMock.mockResolvedValue({
-      success: true,
-      backupId: "backup-123",
-    });
-    const onImportSuccess = vi.fn();
+  it.each([undefined, "  \n  "])(
+    "should set success status, record backup ID, and call callback when warning is %s",
+    async (warning) => {
+      openFileDialogMock.mockResolvedValue("/config.json");
+      importConfigMock.mockResolvedValue({
+        success: true,
+        backupId: "backup-123",
+        warning,
+      });
+      const onImportSuccess = vi.fn();
 
-    const { result } = renderHook(() => useImportExport({ onImportSuccess }));
+      const { result } = renderHook(() => useImportExport({ onImportSuccess }));
+
+      await act(async () => {
+        await result.current.selectImportFile();
+      });
+
+      await act(async () => {
+        await result.current.importConfig();
+      });
+
+      expect(importConfigMock).toHaveBeenCalledWith("/config.json");
+      expect(result.current.status).toBe("success");
+      expect(result.current.backupId).toBe("backup-123");
+      expect(toastSuccessMock).toHaveBeenCalledTimes(1);
+      expect(onImportSuccess).toHaveBeenCalledTimes(1);
+      expect(result.current.errorMessage).toBeNull();
+      expect(toastWarningMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([false, true])(
+    "preserves backend import warnings when provider synchronization fails: %s",
+    async (syncFails) => {
+      const warning =
+        "Post-operation synchronization failed: prompts: permission denied";
+      openFileDialogMock.mockResolvedValue("/config.sql");
+      importConfigMock.mockResolvedValue({
+        success: true,
+        backupId: "backup-with-warning",
+        warning,
+      });
+      if (syncFails) {
+        syncCurrentProvidersLiveMock.mockRejectedValue(
+          new Error("provider sync failed"),
+        );
+      } else {
+        syncCurrentProvidersLiveMock.mockResolvedValue(undefined);
+      }
+      const onImportSuccess = vi.fn();
+      const { result } = renderHook(() => useImportExport({ onImportSuccess }));
+
+      await act(async () => {
+        await result.current.selectImportFile();
+      });
+      await act(async () => {
+        await result.current.importConfig();
+      });
+
+      const expectedWarning = syncFails
+        ? `${warning}\n配置已导入，但同步到当前供应商失败。请手动重新选择一次供应商。`
+        : warning;
+      expect(result.current.status).toBe("partial-success");
+      expect(result.current.errorMessage).toBe(expectedWarning);
+      expect(result.current.backupId).toBe("backup-with-warning");
+      expect(result.current.isImporting).toBe(false);
+      expect(onImportSuccess).toHaveBeenCalledTimes(1);
+      expect(toastWarningMock).toHaveBeenCalledWith(expectedWarning);
+      expect(toastSuccessMock).not.toHaveBeenCalled();
+      expect(toastErrorMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps the generic provider warning when only the follow-up sync fails", async () => {
+    openFileDialogMock.mockResolvedValue("/config.sql");
+    importConfigMock.mockResolvedValue({ success: true });
+    syncCurrentProvidersLiveMock.mockRejectedValue(new Error("sync failed"));
+    const { result } = renderHook(() => useImportExport());
 
     await act(async () => {
       await result.current.selectImportFile();
     });
-
     await act(async () => {
       await result.current.importConfig();
     });
 
-    expect(importConfigMock).toHaveBeenCalledWith("/config.json");
-    expect(result.current.status).toBe("success");
-    expect(result.current.backupId).toBe("backup-123");
-    expect(toastSuccessMock).toHaveBeenCalledTimes(1);
-    expect(onImportSuccess).toHaveBeenCalledTimes(1);
+    expect(result.current.status).toBe("partial-success");
+    expect(result.current.errorMessage).toBeNull();
+    expect(toastWarningMock).toHaveBeenCalledWith(
+      "配置已导入，但同步到当前供应商失败。请手动重新选择一次供应商。",
+    );
+    expect(toastSuccessMock).not.toHaveBeenCalled();
   });
 
   it("should show error message and keep selected file when import result fails", async () => {
