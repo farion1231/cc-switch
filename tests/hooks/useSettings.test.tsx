@@ -2,6 +2,8 @@ import { renderHook, act } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useSettings } from "@/hooks/useSettings";
 import type { Settings } from "@/types";
+import i18n from "@/i18n";
+import en from "@/i18n/locales/en.json";
 
 const mutateAsyncMock = vi.fn();
 const useSettingsQueryMock = vi.fn();
@@ -199,6 +201,30 @@ describe("useSettings hook", () => {
     getAllMock.mockResolvedValue({});
     // 默认将 queryClient 缓存对齐到 serverSettings，既有断言的 "prev === data" 语义保持不变
     getQueryDataMock.mockImplementation(() => serverSettings);
+  });
+
+  it("localizes catalog failures when settings cannot be saved", async () => {
+    i18n.addResourceBundle("en", "translation", en, true, true);
+    await i18n.changeLanguage("en");
+    const error =
+      'Aggregation rewrite failed: CC_SWITCH_CODEX_CATALOG_ERROR:{"code":"invalidModels","context":{"path":"/tmp/models.json"}}';
+    mutateAsyncMock.mockRejectedValueOnce(error);
+    const { result } = renderHook(() => useSettings());
+    try {
+      await act(async () => {
+        await expect(
+          result.current.autoSaveSettings({ codexStackClassicTools: true }),
+        ).rejects.toBe(error);
+      });
+      expect(toastErrorMock).toHaveBeenCalledWith(
+        expect.stringContaining("must contain a models array"),
+      );
+      expect(toastErrorMock).not.toHaveBeenCalledWith(
+        expect.stringContaining("CC_SWITCH_CODEX_CATALOG_ERROR"),
+      );
+    } finally {
+      await i18n.changeLanguage("zh");
+    }
   });
 
   it("auto-saves and applies Claude onboarding skip when toggled on", async () => {

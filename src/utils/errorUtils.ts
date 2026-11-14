@@ -1,9 +1,46 @@
+// 使用 i18next 单例，避免工具模块被测试或非 UI 代码导入时触发完整 i18n 资源初始化。
+import i18n from "i18next";
+
+const CODEX_CATALOG_ERROR_PREFIX = "CC_SWITCH_CODEX_CATALOG_ERROR:";
+const CODEX_CATALOG_ERROR_CODES = new Set([
+  "invalidConfig",
+  "readFailed",
+  "invalidJson",
+  "invalidModels",
+  "invalidSlug",
+]);
+
+const translateCodexCatalogError = (message: string): string => {
+  const start = message.indexOf(CODEX_CATALOG_ERROR_PREFIX);
+  if (start < 0) return message;
+  try {
+    const { code, context }: { code: unknown; context: unknown } = JSON.parse(
+      message.slice(start + CODEX_CATALOG_ERROR_PREFIX.length),
+    );
+    if (
+      typeof code !== "string" ||
+      !CODEX_CATALOG_ERROR_CODES.has(code) ||
+      !context ||
+      typeof context !== "object" ||
+      Array.isArray(context)
+    ) {
+      return message;
+    }
+    return i18n.t(`provider.customCatalogError.${code}`, {
+      ...context,
+      interpolation: { escapeValue: false },
+    });
+  } catch {
+    return message;
+  }
+};
+
 /**
  * 从各种错误对象中提取错误信息
  * @param error 错误对象
  * @returns 提取的错误信息字符串
  */
-export const extractErrorMessage = (error: unknown): string => {
+const rawErrorMessage = (error: unknown): string => {
   if (!error) return "";
   if (typeof error === "string") {
     return error;
@@ -36,6 +73,9 @@ export const extractErrorMessage = (error: unknown): string => {
 
   return "";
 };
+
+export const extractErrorMessage = (error: unknown): string =>
+  translateCodexCatalogError(rawErrorMessage(error));
 
 export const translatePiProviderMutationError = (
   message: string,

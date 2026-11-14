@@ -122,6 +122,13 @@
     "stackReselectHint": "CC Switch istemci yapılandırmasını yeniden yazdığında, model seçicide toplanan modeli tekrar seçin",
     "stackPartial": "Kısmen yazılı; bir sonraki değişiklikte veya CC Switch yeniden başlatıldığında tamamlanacak",
     "stackFailed": "Birleştirilmiş modeller kaydedilemedi: {{error}}",
+    "customCatalogError": {
+      "invalidConfig": "Özel model kataloğu ayarı okunamadı: Codex config.toml biçimi geçersiz. {{detail}}",
+      "readFailed": "Özel Codex model kataloğu okunamadı: {{path}}. {{detail}}",
+      "invalidJson": "Özel Codex model kataloğu geçersiz JSON içeriyor: {{path}}. {{detail}}",
+      "invalidModels": "Özel Codex model kataloğu bir models dizisi içermelidir: {{path}}",
+      "invalidSlug": "models[{{index}}], boş olmayan bir slug dizesi içeren bir nesne olmalıdır: {{path}}"
+    },
     "stackDefaultCannotRemove": "Varsayılan sağlayıcı kaldırılamaz; önce başka bir sağlayıcıyı varsayılan olarak ayarlayın",
     "stackDefaultHint": "Bu varsayılan sağlayıcıdır: listesindeki ilk model Claude Code'nin başlangıç ​​ve arka plan görevlerini yönetir",
     "officialModelsBundled": "Resmi model listesi henüz mevcut olmadığından şimdilik Codex'nin yerleşik listesi kullanılıyor ve hesaba özel modeller eksik olabilir",
