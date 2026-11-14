@@ -691,6 +691,17 @@ pub(crate) fn plan(
                     openai_route = Some(base_url.to_string());
                 }
                 if let Route::Custom { table, .. } = &projection.route {
+                    // Codex checks this header locally before registering its image
+                    // tool. Other upstream headers stay on the forwarding boundary.
+                    if let Some(actor) = table
+                        .get("http_headers")
+                        .and_then(|headers| headers.get("x-openai-actor-authorization"))
+                        .and_then(Item::as_str)
+                    {
+                        let mut headers = Table::new();
+                        headers.insert("x-openai-actor-authorization", toml_edit::value(actor));
+                        proxy_table.insert("http_headers", Item::Table(headers));
+                    }
                     if table.get("name").and_then(Item::as_str) == Some("OpenAI") {
                         proxy_table.insert("name", toml_edit::value("OpenAI"));
                     }
