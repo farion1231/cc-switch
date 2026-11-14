@@ -7,6 +7,7 @@
 use super::codex_chat_common::{requires_gemini_thought_signature, GEMINI_SKIP_THOUGHT_SIGNATURE};
 use super::gemini_schema::build_gemini_function_declaration;
 use super::gemini_shadow::{GeminiAssistantTurn, GeminiShadowStore, GeminiToolCallMeta};
+use super::transform_responses::is_anthropic_web_search_tool;
 use crate::proxy::error::ProxyError;
 use crate::proxy::tool_media::{
     strip_and_clamp_media_from_tool_value, ToolMediaScope, TOOL_RESULT_MEDIA_ATTACHED_MARKER,
@@ -105,12 +106,24 @@ pub fn anthropic_to_gemini_with_shadow(
         result["generationConfig"] = generation_config;
     }
 
+    let mut hosted_web_search_names = HashSet::new();
+    let mut has_hosted_web_search_tools = false;
+    let mut has_function_declarations = false;
     if let Some(tools) = body.get("tools").and_then(|value| value.as_array()) {
         let function_declarations: Vec<Value> = tools
             .iter()
-            .filter(|tool| tool.get("type").and_then(|value| value.as_str()) != Some("BatchTool"))
-            .map(|tool| {
-                build_gemini_function_declaration(
+            .filter_map(|tool| {
+                if is_anthropic_web_search_tool(tool) {
+                    has_hosted_web_search_tools = true;
+                    if let Some(name) = tool.get("name").and_then(Value::as_str) {
+                        hosted_web_search_names.insert(name.to_string());
+                    }
+                    return None;
+                }
+                if tool.get("type").and_then(Value::as_str) == Some("BatchTool") {
+                    return None;
+                }
+                Some(build_gemini_function_declaration(
                     tool.get("name")
                         .and_then(|value| value.as_str())
                         .unwrap_or(""),
@@ -118,16 +131,22 @@ pub fn anthropic_to_gemini_with_shadow(
                     tool.get("input_schema")
                         .cloned()
                         .unwrap_or_else(|| json!({})),
-                )
+                ))
             })
             .collect();
 
         if !function_declarations.is_empty() {
+            has_function_declarations = true;
             result["tools"] = json!([{ "functionDeclarations": function_declarations }]);
         }
     }
 
-    if let Some(tool_config) = map_tool_choice(body.get("tool_choice"))? {
+    if let Some(tool_config) = map_tool_choice(
+        body.get("tool_choice"),
+        &hosted_web_search_names,
+        has_hosted_web_search_tools,
+        has_function_declarations,
+    )? {
         result["toolConfig"] = tool_config;
     }
 
@@ -1542,10 +1561,30 @@ fn extract_tool_call_meta(parts: &[Value]) -> Vec<GeminiToolCallMeta> {
         .collect()
 }
 
-fn map_tool_choice(tool_choice: Option<&Value>) -> Result<Option<Value>, ProxyError> {
+fn map_tool_choice(
+    tool_choice: Option<&Value>,
+    hosted_web_search_names: &HashSet<String>,
+    has_hosted_web_search_tools: bool,
+    has_function_declarations: bool,
+) -> Result<Option<Value>, ProxyError> {
     let Some(tool_choice) = tool_choice else {
         return Ok(None);
     };
+
+    if has_hosted_web_search_tools && !has_function_declarations {
+        let forced_hosted_search = tool_choice
+            .as_object()
+            .filter(|choice| choice.get("type").and_then(Value::as_str) == Some("tool"))
+            .and_then(|choice| choice.get("name"))
+            .and_then(Value::as_str)
+            .filter(|name| hosted_web_search_names.contains(*name));
+        if let Some(name) = forced_hosted_search {
+            return Err(ProxyError::InvalidRequest(format!(
+                "Anthropic hosted WebSearch tool '{name}' is not supported by the Gemini Native bridge"
+            )));
+        }
+        return Ok(None);
+    }
 
     match tool_choice {
         Value::String(choice) => Ok(match choice.as_str() {
@@ -1575,6 +1614,11 @@ fn map_tool_choice(tool_choice: Option<&Value>) -> Result<Option<Value>, ProxyEr
                         .get("name")
                         .and_then(|value| value.as_str())
                         .unwrap_or("");
+                    if hosted_web_search_names.contains(name) {
+                        return Err(ProxyError::InvalidRequest(format!(
+                            "Anthropic hosted WebSearch tool '{name}' is not supported by the Gemini Native bridge"
+                        )));
+                    }
                     json!({
                         "mode": "ANY",
                         "allowedFunctionNames": [name]
@@ -2140,6 +2184,99 @@ mod tests {
         assert_eq!(
             result["toolConfig"]["functionCallingConfig"]["allowedFunctionNames"][0],
             "get_weather"
+        );
+    }
+
+    #[test]
+    fn anthropic_to_gemini_strips_hosted_web_search_from_function_declarations() {
+        let input = json!({
+            "messages": [{ "role": "user", "content": "Find the weather" }],
+            "tools": [
+                {
+                    "type": "web_search_20260318",
+                    "name": "web_search",
+                    "allowed_callers": ["direct"]
+                },
+                {
+                    "name": "get_weather",
+                    "description": "Weather lookup",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": { "city": { "type": "string" } }
+                    }
+                }
+            ],
+            "tool_choice": { "type": "auto" }
+        });
+
+        let result = anthropic_to_gemini(input).unwrap();
+        let declarations = result["tools"][0]["functionDeclarations"]
+            .as_array()
+            .unwrap();
+        assert_eq!(declarations.len(), 1);
+        assert_eq!(declarations[0]["name"], "get_weather");
+        assert_eq!(
+            result["toolConfig"]["functionCallingConfig"]["mode"],
+            "AUTO"
+        );
+    }
+
+    #[test]
+    fn anthropic_to_gemini_drops_tool_config_when_only_hosted_web_search_remains() {
+        let input = json!({
+            "messages": [{ "role": "user", "content": "Search the web" }],
+            "tools": [{
+                "type": "web_search_20250305",
+                "name": "web_search"
+            }],
+            "tool_choice": { "type": "auto" }
+        });
+
+        let result = anthropic_to_gemini(input).unwrap();
+        assert!(result.get("tools").is_none());
+        assert!(result.get("toolConfig").is_none());
+    }
+
+    #[test]
+    fn anthropic_to_gemini_rejects_forced_hosted_web_search() {
+        let input = json!({
+            "messages": [{ "role": "user", "content": "Search the web" }],
+            "tools": [{
+                "type": "web_search_20250305",
+                "name": "web_search"
+            }],
+            "tool_choice": { "type": "tool", "name": "web_search" }
+        });
+
+        let error = anthropic_to_gemini(input).unwrap_err();
+        match error {
+            ProxyError::InvalidRequest(message) => {
+                assert!(message.contains("hosted WebSearch tool 'web_search'"));
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[test]
+    fn anthropic_to_gemini_keeps_custom_function_named_web_search() {
+        let input = json!({
+            "messages": [{ "role": "user", "content": "Search the web" }],
+            "tools": [{
+                "name": "web_search",
+                "description": "Custom client-side search",
+                "input_schema": { "type": "object" }
+            }],
+            "tool_choice": { "type": "tool", "name": "web_search" }
+        });
+
+        let result = anthropic_to_gemini(input).unwrap();
+        assert_eq!(
+            result["tools"][0]["functionDeclarations"][0]["name"],
+            "web_search"
+        );
+        assert_eq!(
+            result["toolConfig"]["functionCallingConfig"]["allowedFunctionNames"][0],
+            "web_search"
         );
     }
 
