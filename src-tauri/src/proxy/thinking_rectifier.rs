@@ -251,6 +251,7 @@ mod tests {
             enabled: true,
             request_thinking_signature: true,
             request_thinking_budget: true,
+            normalize_system_messages: true,
             request_media_fallback: true,
             request_media_heuristic: true,
         }
@@ -261,6 +262,7 @@ mod tests {
             enabled: true,
             request_thinking_signature: false,
             request_thinking_budget: false,
+            normalize_system_messages: true,
             request_media_fallback: true,
             request_media_heuristic: true,
         }
@@ -271,6 +273,7 @@ mod tests {
             enabled: false,
             request_thinking_signature: true,
             request_thinking_budget: true,
+            normalize_system_messages: true,
             request_media_fallback: true,
             request_media_heuristic: true,
         }
