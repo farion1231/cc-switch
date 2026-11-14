@@ -14,7 +14,7 @@ vi.mock("@/components/providers/ProviderActions", () => ({
 vi.mock("@/components/ProviderIcon", () => ({ ProviderIcon: () => null }));
 vi.mock("@/components/UsageFooter", () => ({
   default: ({ inline }: { inline: boolean }) =>
-    inline ? null : <div>expanded-plan-details</div>,
+    inline ? <div>inline-plan-details</div> : <div>expanded-plan-details</div>,
 }));
 vi.mock("@/components/SubscriptionQuotaFooter", () => ({
   default: () => <div>official-subscription-quota</div>,
@@ -109,5 +109,17 @@ describe("ProviderCard cached usage expansion", () => {
     await user.click(screen.getByRole("button", { name: "收起" }));
     expect(screen.queryByText("expanded-plan-details")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "展开" })).toBeInTheDocument();
+  });
+
+  it("keeps custom Token Plan windows inline", () => {
+    renderCard({ templateType: "custom_token_plan" });
+
+    expect(screen.getByText("inline-plan-details")).toBeInTheDocument();
+    expect(
+      screen.queryByText("expanded-plan-details"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "展开" }),
+    ).not.toBeInTheDocument();
   });
 });

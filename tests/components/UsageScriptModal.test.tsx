@@ -116,6 +116,37 @@ describe("UsageScriptModal Sub2API template", () => {
   });
 });
 
+describe("UsageScriptModal Custom Token Plan template", () => {
+  it("shows the script credentials and saves the explicit template type", async () => {
+    const onSave = vi.fn();
+    renderModal(onSave);
+
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "usageScript.templateCustomTokenPlan",
+      }),
+    );
+
+    const code = (
+      screen.getByTestId("usage-script-code") as HTMLTextAreaElement
+    ).value;
+    expect(code).toContain("{{baseUrl}}/v1/usage");
+    expect(code).toContain('unit: "%"');
+    expect(screen.getByLabelText(/API Key/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/usageScript\.baseUrl/)).toBeInTheDocument();
+    expect(
+      screen.getByText("usageScript.customTokenPlanHint"),
+    ).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "usageScript.saveConfig" }),
+    );
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ templateType: "custom_token_plan", code }),
+    );
+  });
+});
+
 describe("UsageScriptModal official subscription hint", () => {
   // agy 的额度靠它自己的 /usage 命令查，不读登录凭据
   it("explains Antigravity's quota check instead of reading OAuth credentials", () => {
