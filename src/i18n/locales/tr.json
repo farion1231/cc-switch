@@ -400,7 +400,8 @@
       "thirdPartyBucket": "üçüncü taraf sağlayıcılar",
       "migrationFinished": "{{count}} eski oturum taşındı. Devam etmek için Codex'i yeniden başlatın.",
       "migrationFailed": "Eski oturumlar taşınamadı: {{error}}. CC Switch bir sonraki açılışta yeniden deneyecek."
-    }
+    },
+    "labunbunRestartRequired": "Geçiş yapıldı. Uygulamak için LaBunbun Code'u yeniden başlatın."
   },
   "confirm": {
     "deleteProvider": "Sağlayıcıyı Sil",
@@ -1189,7 +1190,8 @@
     "agy": "Antigravity",
     "omp": "Oh My Pi",
     "copilot": "Copilot CLI",
-    "workbuddy": "WorkBuddy"
+    "workbuddy": "WorkBuddy",
+    "labunbun": "LaBunbun"
   },
   "mcode": {
     "empty": {
@@ -4398,7 +4400,8 @@
       "omp": "Resmi komut dosyasıyla yüklenir",
       "copilot": "npm ile kurulur"
     },
-    "workbuddyHelp": "WorkBuddy bir masaüstü uygulamasıdır; buradan kurulamaz veya yükseltilemez, kendini günceller. CC Switch ona yapılandırma dosyası (~/.workbuddy/models.json) üzerinden bağlanır."
+    "workbuddyHelp": "WorkBuddy bir masaüstü uygulamasıdır; buradan kurulamaz veya yükseltilemez, kendini günceller. CC Switch ona yapılandırma dosyası (~/.workbuddy/models.json) üzerinden bağlanır.",
+    "labunbunHelp": "LaBunbun Code ayrı olarak kurulur; burada kurulamaz veya güncellenemez. CC Switch, yapılandırma dosyası (~/.labunbun/settings.json) üzerinden bağlanır."
   },
   "appPage": {
     "moreActions": "{{name}} için diğer işlemler",
@@ -5382,5 +5385,28 @@
       "expiryShowAll": "Her kredi grubunun son kullanma tarihini göster",
       "inTime": "{{time}}'de"
     }
+  },
+  "labunbun": {
+    "providerKey": "Sağlayıcı anahtarı",
+    "providerKeyPlaceholder": "ör. openrouter",
+    "providerKeyHint": "~/.labunbun/settings.json içinde sağlayıcı id'si olarak kullanılır. Yalnızca küçük harf, rakam ve tire.",
+    "providerKeyLockedHint": "Kart oluşturulduktan sonra sağlayıcı anahtarı değiştirilemez.",
+    "providerKeyInvalid": "Yalnızca küçük harf, rakam ve tire kullanın.",
+    "providerKeyDuplicate": "Bu sağlayıcı anahtarı zaten kullanılıyor.",
+    "baseUrl": "Temel URL",
+    "baseUrlPlaceholder": "https://api.example.com/v1",
+    "apiFormat": "API biçimi",
+    "apiAuto": "Otomatik (modelden çıkarılır)",
+    "apiHint": "settings.json içine api olarak yazılır. Otomatik seçilirse bu alan yazılmaz.",
+    "apiKeyEnv": "API anahtarı değişkeni",
+    "apiKeyEnvHint": "settings.json anahtarı env.<ad> içinde saklar. Aynı adlı kabuk değişkeni önceliklidir.",
+    "models": "Modeller",
+    "modelId": "Model kimliği",
+    "modelIdPlaceholder": "Model kimliği",
+    "contextWindow": "Bağlam penceresi",
+    "maxOutputTokens": "Maks. çıktı belirteci",
+    "addModel": "Model ekle",
+    "removeModel": "Modeli sil",
+    "modelsHint": "Her model için id, bağlam penceresi ve maks. çıktı belirteci gerekir. İlk model geçerli model olur."
   }
 }

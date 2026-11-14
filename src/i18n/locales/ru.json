@@ -400,7 +400,8 @@
       "thirdPartyBucket": "сторонние провайдеры",
       "migrationFinished": "Перенесено старых сессий: {{count}}. Перезапустите Codex, чтобы продолжить их.",
       "migrationFailed": "Не удалось перенести старые сессии: {{error}}. CC Switch повторит попытку при следующем запуске."
-    }
+    },
+    "labunbunRestartRequired": "Переключено. Перезапустите LaBunbun Code, чтобы применить изменения."
   },
   "confirm": {
     "deleteProvider": "Удалить провайдера",
@@ -1189,7 +1190,8 @@
     "workbuddy": "WorkBuddy",
     "copilot": "Copilot CLI",
     "agy": "Antigravity",
-    "omp": "Oh My Pi"
+    "omp": "Oh My Pi",
+    "labunbun": "LaBunbun"
   },
   "mcode": {
     "empty": {
@@ -4462,7 +4464,8 @@
       "agy": "Устанавливается официальным скриптом",
       "omp": "Устанавливается официальным скриптом",
       "copilot": "Устанавливается через npm"
-    }
+    },
+    "labunbunHelp": "LaBunbun Code устанавливается отдельно; установить или обновить его здесь нельзя. CC Switch подключается через его файл конфигурации (~/.labunbun/settings.json)."
   },
   "appPage": {
     "moreActions": "Другие действия для {{name}}",
@@ -5380,5 +5383,28 @@
       "managedHint": "Этот аккаунт управляется в разделе «Аккаунты»; карточка исчезнет после выхода."
     },
     "deleteSessionHint": "Удалите эту сессию в DeepSeek Harness, чтобы её история оставалась согласованной."
+  },
+  "labunbun": {
+    "providerKey": "Ключ провайдера",
+    "providerKeyPlaceholder": "например, openrouter",
+    "providerKeyHint": "Используется как id провайдера в ~/.labunbun/settings.json. Только строчные буквы, цифры и дефисы.",
+    "providerKeyLockedHint": "Ключ провайдера нельзя изменить после создания карточки.",
+    "providerKeyInvalid": "Допустимы только строчные буквы, цифры и дефисы.",
+    "providerKeyDuplicate": "Этот ключ провайдера уже используется.",
+    "baseUrl": "Базовый URL",
+    "baseUrlPlaceholder": "https://api.example.com/v1",
+    "apiFormat": "Формат API",
+    "apiAuto": "Авто (по модели)",
+    "apiHint": "Записывается как api в settings.json. При «Авто» поле не записывается.",
+    "apiKeyEnv": "Переменная API-ключа",
+    "apiKeyEnvHint": "settings.json хранит ключ в env.<имя>. Переменная оболочки с тем же именем имеет приоритет.",
+    "models": "Модели",
+    "modelId": "ID модели",
+    "modelIdPlaceholder": "ID модели",
+    "contextWindow": "Контекстное окно",
+    "maxOutputTokens": "Макс. выходных токенов",
+    "addModel": "Добавить модель",
+    "removeModel": "Удалить модель",
+    "modelsHint": "Для каждой модели нужны id, контекстное окно и лимит выходных токенов. Первая модель становится текущей."
   }
 }

@@ -400,7 +400,8 @@
       "thirdPartyBucket": "Drittanbietern",
       "migrationFinished": "{{count}} alte Sitzungen migriert. Starten Sie Codex neu, um sie fortzusetzen.",
       "migrationFailed": "Alte Sitzungen konnten nicht migriert werden: {{error}}. CC Switch versucht es beim nächsten Start erneut."
-    }
+    },
+    "labunbunRestartRequired": "Erfolgreich umgeschaltet. Starten Sie LaBunbun Code neu, um die Änderungen anzuwenden."
   },
   "confirm": {
     "deleteProvider": "Anbieter löschen",
@@ -1189,7 +1190,8 @@
     "workbuddy": "WorkBuddy",
     "agy": "Antigravity",
     "copilot": "Copilot CLI",
-    "omp": "Oh My Pi"
+    "omp": "Oh My Pi",
+    "labunbun": "LaBunbun"
   },
   "mcode": {
     "empty": {
@@ -4464,7 +4466,8 @@
       "agy": "Installiert mit dem offiziellen Skript",
       "copilot": "Installiert mit npm",
       "omp": "Installiert mit dem offiziellen Skript"
-    }
+    },
+    "labunbunHelp": "LaBunbun Code wird separat installiert und kann hier nicht installiert oder aktualisiert werden. CC Switch verbindet sich über seine Konfigurationsdatei (~/.labunbun/settings.json)."
   },
   "appPage": {
     "moreActions": "Weitere Aktionen für {{name}}",
@@ -5382,5 +5385,28 @@
       "managedHint": "Dieses Konto wird in der Kontoverwaltung verwaltet; die Karte verschwindet nach der Abmeldung."
     },
     "deleteSessionHint": "Löschen Sie diese Sitzung in DeepSeek Harness, damit der Verlauf konsistent bleibt."
+  },
+  "labunbun": {
+    "providerKey": "Provider-Schlüssel",
+    "providerKeyPlaceholder": "z. B. openrouter",
+    "providerKeyHint": "Wird als Provider-id in ~/.labunbun/settings.json verwendet. Nur Kleinbuchstaben, Ziffern und Bindestriche.",
+    "providerKeyLockedHint": "Der Provider-Schlüssel kann nach dem Erstellen der Karte nicht geändert werden.",
+    "providerKeyInvalid": "Nur Kleinbuchstaben, Ziffern und Bindestriche erlaubt.",
+    "providerKeyDuplicate": "Dieser Provider-Schlüssel wird bereits verwendet.",
+    "baseUrl": "Basis-URL",
+    "baseUrlPlaceholder": "https://api.example.com/v1",
+    "apiFormat": "API-Format",
+    "apiAuto": "Automatisch (aus dem Modell abgeleitet)",
+    "apiHint": "Wird als api in settings.json geschrieben. Bei Automatisch bleibt das Feld leer.",
+    "apiKeyEnv": "API-Key-Variable",
+    "apiKeyEnvHint": "settings.json speichert den Key in env.<Name>. Eine Shell-Variable mit gleichem Namen hat Vorrang.",
+    "models": "Modelle",
+    "modelId": "Modell-ID",
+    "modelIdPlaceholder": "Modell-ID",
+    "contextWindow": "Kontextfenster",
+    "maxOutputTokens": "Max. Ausgabe-Token",
+    "addModel": "Modell hinzufügen",
+    "removeModel": "Modell entfernen",
+    "modelsHint": "Jedes Modell braucht eine id, ein Kontextfenster und eine maximale Ausgabe-Token-Zahl. Das erste Modell wird das aktuelle."
   }
 }

@@ -400,7 +400,8 @@
       "thirdPartyBucket": "타사 공급자",
       "migrationFinished": "이전 세션 {{count}}개를 옮겼습니다. Codex를 다시 시작하면 이어갈 수 있습니다.",
       "migrationFailed": "이전 세션을 옮기지 못했습니다: {{error}}. 다음에 CC Switch를 실행하면 자동으로 다시 시도합니다."
-    }
+    },
+    "labunbunRestartRequired": "전환했습니다. LaBunbun Code를 다시 시작하면 적용됩니다."
   },
   "confirm": {
     "deleteProvider": "공급자 삭제",
@@ -1189,7 +1190,8 @@
     "workbuddy": "WorkBuddy",
     "agy": "Antigravity",
     "copilot": "Copilot CLI",
-    "omp": "Oh My Pi"
+    "omp": "Oh My Pi",
+    "labunbun": "LaBunbun"
   },
   "mcode": {
     "empty": {
@@ -4464,7 +4466,8 @@
       "agy": "공식 스크립트로 설치",
       "copilot": "npm으로 설치",
       "omp": "공식 스크립트로 설치"
-    }
+    },
+    "labunbunHelp": "LaBunbun Code는 별도로 설치해야 하며 여기서 설치하거나 업그레이드할 수 없습니다. CC Switch는 설정 파일(~/.labunbun/settings.json)을 통해 연결합니다."
   },
   "appPage": {
     "moreActions": "{{name}}에 대한 추가 작업",
@@ -5382,5 +5385,28 @@
       "editDisabled": "DeepSeek Harness가 이 계정으로 사용할 수 있는 모델을 자동으로 제공하므로 편집할 필요가 없습니다.",
       "managedHint": "이 계정은 인증 센터에서 관리합니다. 로그아웃하면 이 카드가 사라집니다."
     }
+  },
+  "labunbun": {
+    "providerKey": "공급자 키",
+    "providerKeyPlaceholder": "예: openrouter",
+    "providerKeyHint": "~/.labunbun/settings.json의 공급자 id로 사용됩니다. 소문자, 숫자, 하이픈만 가능합니다.",
+    "providerKeyLockedHint": "카드를 만든 뒤에는 공급자 키를 바꿀 수 없습니다.",
+    "providerKeyInvalid": "소문자, 숫자, 하이픈만 사용할 수 있습니다.",
+    "providerKeyDuplicate": "이미 사용 중인 공급자 키입니다.",
+    "baseUrl": "기본 URL",
+    "baseUrlPlaceholder": "https://api.example.com/v1",
+    "apiFormat": "API 형식",
+    "apiAuto": "자동(모델에서 추론)",
+    "apiHint": "settings.json의 api로 기록됩니다. 자동을 고르면 이 필드를 쓰지 않습니다.",
+    "apiKeyEnv": "API 키 변수",
+    "apiKeyEnvHint": "settings.json은 키를 env.<이름>에 저장합니다. 같은 이름의 셸 변수가 우선합니다.",
+    "models": "모델",
+    "modelId": "모델 ID",
+    "modelIdPlaceholder": "모델 ID",
+    "contextWindow": "컨텍스트 창",
+    "maxOutputTokens": "최대 출력 토큰",
+    "addModel": "모델 추가",
+    "removeModel": "모델 삭제",
+    "modelsHint": "각 모델에 id, 컨텍스트 창, 최대 출력 토큰이 필요합니다. 첫 모델이 현재 모델이 됩니다."
   }
 }

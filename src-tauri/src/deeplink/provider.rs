@@ -439,6 +439,12 @@ pub(crate) fn build_provider_from_request(
                 "Add WorkBuddy providers from the WorkBuddy page".into(),
             ))
         }
+        // A LaBunbun provider needs a model list, which a deep link cannot carry.
+        AppType::LaBunbun => {
+            return Err(AppError::InvalidInput(
+                "Add LaBunbun Code providers from the LaBunbun Code page".into(),
+            ))
+        }
         AppType::Agy => {
             let mut settings = build_gemini_settings(request);
             settings["env"]

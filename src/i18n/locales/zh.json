@@ -400,7 +400,8 @@
       "thirdPartyBucket": "第三方供应商",
       "migrationFinished": "已迁入 {{count}} 个旧会话，重启 Codex 后即可继续",
       "migrationFailed": "迁入旧会话失败：{{error}}。下次启动 CC Switch 会自动重试"
-    }
+    },
+    "labunbunRestartRequired": "切换成功，请重启 LaBunbun Code 以生效"
   },
   "confirm": {
     "deleteProvider": "删除供应商",
@@ -1189,7 +1190,8 @@
     "workbuddy": "WorkBuddy",
     "agy": "Antigravity",
     "copilot": "Copilot CLI",
-    "omp": "Oh My Pi"
+    "omp": "Oh My Pi",
+    "labunbun": "LaBunbun"
   },
   "mcode": {
     "empty": {
@@ -4464,7 +4466,8 @@
       "agy": "安装时运行官方安装脚本",
       "copilot": "通过 npm 安装",
       "omp": "安装时运行官方安装脚本"
-    }
+    },
+    "labunbunHelp": "LaBunbun Code 请单独安装，这里不能安装或升级。CC Switch 通过它的配置文件（~/.labunbun/settings.json）接入。"
   },
   "appPage": {
     "moreActions": "{{name}} 的更多操作",
@@ -5382,5 +5385,28 @@
       "managedHint": "账号在授权中心管理：退出登录后这张卡会自动消失。"
     },
     "deleteSessionHint": "请在 DeepSeek Harness 中删除此会话，以保持原生历史记录一致。"
+  },
+  "labunbun": {
+    "providerKey": "供应商标识",
+    "providerKeyPlaceholder": "例如 openrouter",
+    "providerKeyHint": "写入 ~/.labunbun/settings.json 的供应商 id，只能用小写字母、数字和连字符。",
+    "providerKeyLockedHint": "卡片创建后不能修改供应商标识。",
+    "providerKeyInvalid": "只能使用小写字母、数字和连字符。",
+    "providerKeyDuplicate": "这个供应商标识已被使用。",
+    "baseUrl": "接口地址",
+    "baseUrlPlaceholder": "https://api.example.com/v1",
+    "apiFormat": "接口格式",
+    "apiAuto": "自动（按模型推断）",
+    "apiHint": "作为 api 写入 settings.json；选「自动」时不写这个字段。",
+    "apiKeyEnv": "Key 变量名",
+    "apiKeyEnvHint": "settings.json 把 Key 存在 env.<变量名>；shell 里的同名变量优先。",
+    "models": "模型",
+    "modelId": "模型 ID",
+    "modelIdPlaceholder": "模型 ID",
+    "contextWindow": "上下文窗口",
+    "maxOutputTokens": "最大输出 Token",
+    "addModel": "添加模型",
+    "removeModel": "删除模型",
+    "modelsHint": "每个模型都需要 id、上下文窗口和最大输出 Token；第一个模型作为当前模型。"
   }
 }

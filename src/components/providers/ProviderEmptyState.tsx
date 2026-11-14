@@ -38,7 +38,8 @@ export function ProviderEmptyState({
     appId === "claude" ||
     appId === "codex" ||
     appId === "gemini" ||
-    appId === "grokbuild";
+    appId === "grokbuild" ||
+    appId === "labunbun";
 
   return (
     <div className="flex flex-col items-center justify-center px-6 py-16 text-center">

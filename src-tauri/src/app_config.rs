@@ -57,6 +57,7 @@ impl McpApps {
             AppType::Agy => self.agy,
             AppType::Copilot => self.copilot,
             AppType::WorkBuddy => self.workbuddy,
+            AppType::LaBunbun => false,
         }
     }
 
@@ -79,6 +80,8 @@ impl McpApps {
             AppType::Omp => self.omp = enabled,
             AppType::Copilot => self.copilot = enabled,
             AppType::WorkBuddy => self.workbuddy = enabled,
+            // LaBunbun Code 的 MCP 支持在后续 PR 里加；这里先不接受。
+            AppType::LaBunbun => {}
         }
     }
 
@@ -202,6 +205,7 @@ impl SkillApps {
             AppType::Copilot => self.copilot,
             AppType::ClaudeDesktop => false,
             AppType::WorkBuddy => self.workbuddy,
+            AppType::LaBunbun => false,
         }
     }
 
@@ -224,6 +228,8 @@ impl SkillApps {
             AppType::Copilot => self.copilot = enabled,
             AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
             AppType::WorkBuddy => self.workbuddy = enabled,
+            // LaBunbun Code 的 Skill 支持在后续 PR 里加；这里先不接受。
+            AppType::LaBunbun => {}
         }
     }
 
@@ -518,6 +524,8 @@ pub enum AppType {
     Copilot,
     #[serde(rename = "workbuddy", alias = "work-buddy")]
     WorkBuddy,
+    #[serde(rename = "labunbun", alias = "la-bunbun", alias = "labunbun-code")]
+    LaBunbun,
 }
 
 impl AppType {
@@ -539,6 +547,7 @@ impl AppType {
             AppType::Omp => "omp",
             AppType::Copilot => "copilot",
             AppType::WorkBuddy => "workbuddy",
+            AppType::LaBunbun => "labunbun",
         }
     }
 
@@ -600,6 +609,7 @@ impl AppType {
             AppType::Omp,
             AppType::Copilot,
             AppType::WorkBuddy,
+            AppType::LaBunbun,
         ]
         .into_iter()
     }
@@ -629,10 +639,11 @@ impl FromStr for AppType {
                 Ok(AppType::Copilot)
             }
             "workbuddy" | "work-buddy" | "work_buddy" => Ok(AppType::WorkBuddy),
+            "labunbun" | "la-bunbun" | "la_bunbun" | "labunbun-code" => Ok(AppType::LaBunbun),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy, labunbun。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy, labunbun."),
             )),
         }
     }
@@ -679,7 +690,8 @@ impl CommonConfigSnippets {
             | AppType::Agy
             | AppType::Omp
             | AppType::Copilot
-            | AppType::WorkBuddy => None,
+            | AppType::WorkBuddy
+            | AppType::LaBunbun => None,
         }
     }
 
@@ -701,7 +713,8 @@ impl CommonConfigSnippets {
             | AppType::Agy
             | AppType::Omp
             | AppType::Copilot
-            | AppType::WorkBuddy => {}
+            | AppType::WorkBuddy
+            | AppType::LaBunbun => {}
         }
     }
 }
@@ -1036,7 +1049,8 @@ impl MultiAppConfig {
             | AppType::Agy
             | AppType::Omp
             | AppType::Copilot
-            | AppType::WorkBuddy => return Ok(false),
+            | AppType::WorkBuddy
+            | AppType::LaBunbun => return Ok(false),
         };
 
         prompts.insert(id, prompt);
@@ -1087,7 +1101,8 @@ impl MultiAppConfig {
                 | AppType::Agy
                 | AppType::Omp
                 | AppType::Copilot
-                | AppType::WorkBuddy => continue, // Pi didn't exist in v3.6.x, skip
+                | AppType::WorkBuddy
+                | AppType::LaBunbun => continue, // Pi didn't exist in v3.6.x, skip
             };
 
             for (id, entry) in old_servers {

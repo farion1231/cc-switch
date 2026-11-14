@@ -563,6 +563,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["moonshot"],
     defaultColor: "#1783FF",
   },
+  labunbun: {
+    name: "labunbun",
+    displayName: "LaBunbun Code",
+    category: "ai-provider",
+    keywords: ["labunbun", "la bunbun", "bunbun", "code", "agent"],
+    defaultColor: "#F2A33C",
+  },
   meta: {
     name: "meta",
     displayName: "Meta",

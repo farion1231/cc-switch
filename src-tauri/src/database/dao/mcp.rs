@@ -106,7 +106,7 @@ impl Database {
             AppType::WorkBuddy => Some("enabled_workbuddy"),
             AppType::Pi => Some("enabled_pi"),
             AppType::Omp => Some("enabled_omp"),
-            AppType::ClaudeDesktop | AppType::OpenClaw => None,
+            AppType::ClaudeDesktop | AppType::OpenClaw | AppType::LaBunbun => None,
             AppType::Agy => Some("enabled_agy"),
         };
 

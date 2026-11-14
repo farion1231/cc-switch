@@ -298,6 +298,11 @@ impl Provider {
                 crate::omp_config::provider_base_url(settings).unwrap_or_default(),
                 crate::omp_config::resolve_usage_api_key(&str_at(settings.get("apiKey"))),
             ),
+            // LaBunbun stores the card fields at the top level of settings_config.
+            AppType::LaBunbun => (
+                str_at(settings.get("baseUrl")),
+                str_at(settings.get("apiKey")),
+            ),
         };
 
         // Normalize like the JS-script path (extract_base_url_from_provider) so a

@@ -42,6 +42,7 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Copilot => crate::copilot_config::provider_key_exists(provider_id),
         AppType::WorkBuddy => crate::workbuddy_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
+        AppType::LaBunbun => crate::labunbun_config::provider_key_exists(provider_id),
         _ => Ok(false),
     }
 }
@@ -317,6 +318,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Omp
         | AppType::Copilot
         | AppType::WorkBuddy
+        | AppType::LaBunbun
         | AppType::ClaudeDesktop => false,
     }
 }
@@ -399,7 +401,8 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Agy
         | AppType::Omp
         | AppType::Copilot
-        | AppType::WorkBuddy => Ok(settings.clone()),
+        | AppType::WorkBuddy
+        | AppType::LaBunbun => Ok(settings.clone()),
     }
 }
 
@@ -438,6 +441,12 @@ pub(crate) fn write_live_for_state(
         super::grok_direct::reapply(db, Some(provider), provider)?;
         return Ok(());
     }
+    if matches!(app_type, AppType::LaBunbun) {
+        // 切换式应用：只把当前这一家的条目、Key 和 `model` 写回原生设置文件。
+        crate::labunbun_config::reapply(provider)?;
+        return Ok(());
+    }
+
     if matches!(app_type, AppType::Agy | AppType::Copilot) {
         // Antigravity 的卡只作用于它打开的终端，全量同步不写真实 settings.json。Copilot 自带
         // 模型卡只经「添加 / 编辑」写进 providers.json（文件里的条目归 Copilot，列表从文件读回），
@@ -585,6 +594,13 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 "grokbuild.live.requires_engine",
                 "Grok Build 配置只能经关键字段写入流程写入",
                 "Grok Build configuration must be written through the key-field write flow",
+            ));
+        }
+        AppType::LaBunbun => {
+            return Err(AppError::localized(
+                "labunbun.live.requires_engine",
+                "LaBunbun Code 配置只能经关键字段写入流程写入",
+                "LaBunbun Code configuration must be written through the key-field write flow",
             ));
         }
         AppType::OpenCode => {
@@ -1087,6 +1103,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             "Oh My Pi providers are read from Oh My Pi's native models file".to_string(),
         )),
         AppType::Copilot => crate::copilot_config::read_live_settings(),
+        AppType::LaBunbun => crate::labunbun_config::read_settings(),
     }
 }
 
@@ -1122,6 +1139,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         ));
     }
 
+    let mut imported_id: Option<String> = None;
     let settings_config = match app_type {
         AppType::Codex => crate::codex_config::read_codex_live_settings()?,
         AppType::GrokBuild => {
@@ -1201,6 +1219,17 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             }
             live
         }
+        AppType::LaBunbun => {
+            // 原生 id 就是供应商标识：导入时用它建卡片，之后写回不会多出一条。
+            let document = crate::labunbun_config::read_settings()?;
+            match crate::labunbun_config::import_candidate(&document) {
+                Some((id, config)) => {
+                    imported_id = Some(id);
+                    config
+                }
+                None => return Ok(false),
+            }
+        }
         AppType::Copilot => {
             // 刚装好、还没在 Copilot 里选过模型时没有 settings.json：同样没什么可导入，不报错。
             if !crate::copilot_config::settings_path().exists() {
@@ -1228,12 +1257,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         }
     };
 
-    let mut provider = Provider::with_id(
-        "default".to_string(),
-        "default".to_string(),
-        settings_config,
-        None,
-    );
+    let provider_id = imported_id.unwrap_or_else(|| "default".to_string());
+    let mut provider = Provider::with_id(provider_id.clone(), provider_id, settings_config, None);
     provider.category = Some(
         if matches!(app_type, AppType::Codex) {
             let config_text = provider

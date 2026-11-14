@@ -226,7 +226,8 @@ impl ProviderType {
             | AppType::Agy
             | AppType::Omp
             | AppType::Copilot
-            | AppType::WorkBuddy => return None,
+            | AppType::WorkBuddy
+            | AppType::LaBunbun => return None,
         };
         Some(provider_type)
     }
@@ -289,7 +290,8 @@ pub fn get_adapter(app_type: &AppType) -> Option<Box<dyn ProviderAdapter>> {
         | AppType::Agy
         | AppType::Omp
         | AppType::Copilot
-        | AppType::WorkBuddy => return None,
+        | AppType::WorkBuddy
+        | AppType::LaBunbun => return None,
     })
 }
 
