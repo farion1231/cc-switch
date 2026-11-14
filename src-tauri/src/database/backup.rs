@@ -26,10 +26,8 @@ const INSERT_BATCH_MAX_BYTES: usize = 1024 * 1024;
 static BACKUP_FILE_OPERATION_LOCK: Mutex<()> = Mutex::new(());
 type BackupFileOperationGuard = MutexGuard<'static, ()>;
 
-fn lock_backup_file_operations() -> Result<BackupFileOperationGuard, AppError> {
-    BACKUP_FILE_OPERATION_LOCK
-        .lock()
-        .map_err(|e| AppError::Database(format!("Backup file operation lock failed: {e}")))
+fn lock_backup_file_operations() -> BackupFileOperationGuard {
+    crate::sync_utils::lock_file_operation(&BACKUP_FILE_OPERATION_LOCK)
 }
 
 /// `dump_sql` 会写出的 PRAGMA。其余 PRAGMA 一律拒绝——`temp_store_directory`
@@ -226,7 +224,7 @@ impl Database {
         crate::services::provider::icon::strip_invalid_custom_icons(&temp_conn)?;
         on_staging_ready()?;
 
-        let backup_file_guard = lock_backup_file_operations()?;
+        let backup_file_guard = lock_backup_file_operations();
         // Keep one main-DB guard across the safety snapshot, local-table read,
         // and final replacement so neither the rollback point nor preserved
         // device-local rows can miss writes that arrived during staging.
@@ -415,7 +413,7 @@ impl Database {
     fn backup_if_needed(&self) -> Result<(), AppError> {
         let interval_hours = crate::settings::effective_backup_interval_hours();
         if interval_hours > 0 {
-            let backup_file_guard = lock_backup_file_operations()?;
+            let backup_file_guard = lock_backup_file_operations();
             let backup_dir = get_app_config_dir().join("backups");
             if !backup_dir.exists() {
                 self.backup_database_file_locked(&backup_file_guard)?;
@@ -472,7 +470,7 @@ impl Database {
 
     /// 生成一致性快照备份，返回备份文件路径（不存在主库时返回 None）
     pub(crate) fn backup_database_file(&self) -> Result<Option<PathBuf>, AppError> {
-        let backup_file_guard = lock_backup_file_operations()?;
+        let backup_file_guard = lock_backup_file_operations();
         self.backup_database_file_locked(&backup_file_guard)
     }
 
@@ -961,7 +959,7 @@ impl Database {
 
     /// List all database backup files, sorted by creation time (newest first)
     pub fn list_backups() -> Result<Vec<BackupEntry>, AppError> {
-        let _backup_file_guard = lock_backup_file_operations()?;
+        let _backup_file_guard = lock_backup_file_operations();
         let backup_dir = get_app_config_dir().join("backups");
         if !backup_dir.exists() {
             return Ok(vec![]);
@@ -1020,7 +1018,7 @@ impl Database {
             ));
         }
 
-        let backup_file_guard = lock_backup_file_operations()?;
+        let backup_file_guard = lock_backup_file_operations();
         let backup_dir = get_app_config_dir().join("backups");
         let backup_path = backup_dir.join(filename);
 
@@ -1127,7 +1125,7 @@ impl Database {
 
         let new_filename = format!("{name_part}.db");
 
-        let _backup_file_guard = lock_backup_file_operations()?;
+        let _backup_file_guard = lock_backup_file_operations();
         let backup_dir = get_app_config_dir().join("backups");
         let old_path = backup_dir.join(old_filename);
         let new_path = backup_dir.join(&new_filename);
@@ -1162,7 +1160,7 @@ impl Database {
             ));
         }
 
-        let _backup_file_guard = lock_backup_file_operations()?;
+        let _backup_file_guard = lock_backup_file_operations();
         let backup_path = get_app_config_dir().join("backups").join(filename);
         if !backup_path.exists() {
             return Err(AppError::InvalidInput(format!(
@@ -1183,6 +1181,36 @@ mod tests {
     use crate::settings::{get_settings, update_settings, AppSettings};
     use rusqlite::Connection;
     use serial_test::serial;
+
+    #[test]
+    #[serial]
+    fn backups_recover_after_poisoned_file_operation() {
+        if !crate::sync_utils::in_isolated_process(
+            "database::backup::tests::backups_recover_after_poisoned_file_operation",
+        ) {
+            return;
+        }
+        let _home = TestHomeGuard::new();
+        let db = Database::memory().unwrap();
+        db.set_setting("kept", "yes").unwrap();
+        assert!(std::panic::catch_unwind(|| {
+            let _guard = lock_backup_file_operations();
+            panic!("backup operation interrupted");
+        })
+        .is_err());
+        let path = db
+            .backup_database_file()
+            .expect("backup after panic")
+            .expect("snapshot file");
+        let saved = Connection::open(path).unwrap();
+        let value: String = saved
+            .query_row("SELECT value FROM settings WHERE key = 'kept'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(value, "yes");
+        assert!(!super::BACKUP_FILE_OPERATION_LOCK.is_poisoned());
+    }
 
     struct TestHomeGuard {
         previous_test_home: Option<std::ffi::OsString>,
@@ -2423,7 +2451,7 @@ mod tests {
         visible_before.sort();
 
         let error = {
-            let backup_file_guard = lock_backup_file_operations()?;
+            let backup_file_guard = lock_backup_file_operations();
             let conn = crate::database::lock_conn!(db.conn);
             Database::backup_database_file_from_conn_with_hook(
                 &backup_file_guard,
@@ -2474,7 +2502,7 @@ mod tests {
         let mut claimed_path = None;
 
         let published_path = {
-            let backup_file_guard = lock_backup_file_operations()?;
+            let backup_file_guard = lock_backup_file_operations();
             let conn = crate::database::lock_conn!(db.conn);
             Database::backup_database_file_from_conn_with_hook(
                 &backup_file_guard,

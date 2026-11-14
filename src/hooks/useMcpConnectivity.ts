@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { MCP_APP_IDS } from "@/config/appConfig";
 import { mcpApi } from "@/lib/api/mcp";
 import type { McpServer, McpServersMap } from "@/types";
+import { APP_IDS_WITH } from "@/config/appSpecs";
 
 export type McpConnectionState =
   | "unchecked"
@@ -17,7 +17,7 @@ type CheckResult = {
 };
 
 const isEnabled = (server: McpServer) =>
-  MCP_APP_IDS.some((app) => server.apps[app]);
+  APP_IDS_WITH.mcp.some((app) => server.apps[app]);
 const configOf = (server: McpServer) => JSON.stringify(server.server);
 
 /**

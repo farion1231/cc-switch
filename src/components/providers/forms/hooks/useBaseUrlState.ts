@@ -21,6 +21,16 @@ interface UseBaseUrlStateProps {
   getSettingsConfig?: () => string;
 }
 
+/** 读 settingsConfig 里 env 下的地址；解析不了时为空 */
+function readEnvUrl(settingsConfig: string, key: string): string {
+  try {
+    const envUrl: unknown = JSON.parse(settingsConfig || "{}")?.env?.[key];
+    return typeof envUrl === "string" ? envUrl.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
 /**
  * 管理 Base URL 状态
  * 支持 Claude (JSON) 和 Codex (TOML) 两种格式
@@ -34,9 +44,19 @@ export function useBaseUrlState({
   onCodexConfigChange,
   getSettingsConfig,
 }: UseBaseUrlStateProps) {
-  const [baseUrl, setBaseUrl] = useState("");
+  // 初始值和下面的同步 effect 读法一致，打开编辑页时不用等 effect 回填、多渲染一轮
+  const [geminiBaseUrl, setGeminiBaseUrl] = useState(() =>
+    appType === "gemini" && category !== "official"
+      ? readEnvUrl(settingsConfig, "GOOGLE_GEMINI_BASE_URL")
+      : "",
+  );
+  const [baseUrl, setBaseUrl] = useState(() =>
+    (appType === "claude" || appType === "claude-desktop") &&
+    category !== "official"
+      ? readEnvUrl(settingsConfig, "ANTHROPIC_BASE_URL")
+      : geminiBaseUrl,
+  );
   const [codexBaseUrl, setCodexBaseUrl] = useState("");
-  const [geminiBaseUrl, setGeminiBaseUrl] = useState("");
   const isUpdatingRef = useRef(false);
 
   // 事件处理里一律走这里取配置：有 getter 用 getter（当前值），否则退回快照。

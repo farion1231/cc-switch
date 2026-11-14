@@ -75,6 +75,8 @@ pub fn exit_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| format!("创建主窗口失败: {e}"))?;
 
     if let Some(window) = app.get_webview_window("main") {
+        // 重建时 window-state 插件同样会恢复旧位置
+        crate::window_fit::fit_to_work_area(&window);
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();

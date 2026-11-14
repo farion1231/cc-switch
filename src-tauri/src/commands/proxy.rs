@@ -12,7 +12,7 @@ use std::str::FromStr;
 fn require_proxy_app(app_type: &str) -> Result<crate::app_config::AppType, String> {
     let app = crate::app_config::AppType::from_str(app_type)
         .map_err(|error| format!("无效的应用类型: {error}"))?;
-    if !app.supports_local_proxy() {
+    if !app.spec().local_proxy {
         return Err(format!("{} 不支持本地路由", app.as_str()));
     }
     Ok(app)
@@ -22,7 +22,7 @@ fn require_proxy_app(app_type: &str) -> Result<crate::app_config::AppType, Strin
 fn require_mode_app(app_type: &str) -> Result<crate::app_config::AppType, String> {
     let app = crate::app_config::AppType::from_str(app_type)
         .map_err(|error| format!("无效的应用类型: {error}"))?;
-    if !app.has_route_mode() {
+    if !app.spec().route_mode {
         return Err(format!("{} 不支持本地路由", app.as_str()));
     }
     Ok(app)
@@ -62,7 +62,6 @@ pub async fn stop_proxy_with_restore(state: tauri::State<'_, AppState>) -> Resul
     crate::mode::controller::exit_all(state.inner()).await
 }
 
-/// 获取各应用接管状态
 #[tauri::command]
 pub async fn get_proxy_takeover_status(
     state: tauri::State<'_, AppState>,
@@ -221,19 +220,16 @@ pub async fn adopt_codex_stack_catalog(
     crate::mode::controller::adopt_codex_stack_catalog(state.inner()).await
 }
 
-/// 获取代理服务器状态
 #[tauri::command]
 pub async fn get_proxy_status(state: tauri::State<'_, AppState>) -> Result<ProxyStatus, String> {
     state.proxy_service.get_status().await
 }
 
-/// 获取代理配置
 #[tauri::command]
 pub async fn get_proxy_config(state: tauri::State<'_, AppState>) -> Result<ProxyConfig, String> {
     state.proxy_service.get_config().await
 }
 
-/// 更新代理配置
 #[tauri::command]
 pub async fn update_proxy_config(
     state: tauri::State<'_, AppState>,
@@ -364,7 +360,6 @@ pub async fn get_pricing_model_source_test_hook(
     get_pricing_model_source_internal(state, app_type).await
 }
 
-/// 获取计费模式来源
 #[tauri::command]
 pub async fn get_pricing_model_source(
     state: tauri::State<'_, AppState>,
@@ -393,7 +388,6 @@ pub async fn set_pricing_model_source_test_hook(
     set_pricing_model_source_internal(state, app_type, value).await
 }
 
-/// 设置计费模式来源
 #[tauri::command]
 pub async fn set_pricing_model_source(
     state: tauri::State<'_, AppState>,
@@ -405,13 +399,11 @@ pub async fn set_pricing_model_source(
         .map_err(|e| e.to_string())
 }
 
-/// 检查代理服务器是否正在运行
 #[tauri::command]
 pub async fn is_proxy_running(state: tauri::State<'_, AppState>) -> Result<bool, String> {
     Ok(state.proxy_service.is_running().await)
 }
 
-/// 检查是否处于 Live 接管模式
 #[tauri::command]
 pub async fn is_live_takeover_active(state: tauri::State<'_, AppState>) -> Result<bool, String> {
     state.proxy_service.is_takeover_active().await
@@ -430,7 +422,6 @@ pub async fn switch_proxy_provider(
 
 // ==================== 故障转移相关命令 ====================
 
-/// 获取供应商健康状态
 #[tauri::command]
 pub async fn get_provider_health(
     state: tauri::State<'_, AppState>,
@@ -534,7 +525,6 @@ pub async fn reset_circuit_breaker(
     Ok(())
 }
 
-/// 获取熔断器配置
 #[tauri::command]
 pub async fn get_circuit_breaker_config(
     state: tauri::State<'_, AppState>,
@@ -545,7 +535,6 @@ pub async fn get_circuit_breaker_config(
         .map_err(|e| e.to_string())
 }
 
-/// 更新熔断器配置
 #[tauri::command]
 pub async fn update_circuit_breaker_config(
     state: tauri::State<'_, AppState>,
