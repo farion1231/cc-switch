@@ -173,9 +173,9 @@ pub struct ToolVersion {
     update_blocked_by_node: Option<tool_node_requirement::NodeRequirementGap>,
 }
 
-const VALID_TOOLS: [&str; 14] = [
+const VALID_TOOLS: [&str; 15] = [
     "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "kimi",
-    "dsh", "agy", "omp", "copilot",
+    "dsh", "agy", "omp", "copilot", "atomcode",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -725,6 +725,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "dsh" => "DeepSeek Harness",
         "agy" => "Antigravity CLI",
         "copilot" => "GitHub Copilot CLI",
+        "atomcode" => "AtomCode CLI",
         _ => "Unknown",
     }
 }
@@ -767,6 +768,14 @@ const KIMI_INSTALL_UNIX: &str =
     "bash -c 'tmp=$(mktemp) && curl -fsSL https://code.kimi.com/kimi-code/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
 #[cfg(target_os = "windows")]
 const KIMI_INSTALL_WINDOWS_SCRIPT: &str = "irm https://code.kimi.com/kimi-code/install.ps1 | iex";
+
+// AtomCode 官方 installer 从 AtomGit release 拉预编译二进制放进 `~/.local/bin`（FAQ 亦提到
+// `~/.atomcode/bin`），npm 包 `@atomgit.com/atomcode` 经 optionalDependencies 解析平台二进制。
+const ATOMCODE_INSTALL_UNIX: &str =
+    "bash -c 'tmp=$(mktemp) && curl -fsSL https://raw.atomgit.com/atomgit_atomcode/atomcode/raw/main/scripts/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
+#[cfg(target_os = "windows")]
+const ATOMCODE_INSTALL_WINDOWS_SCRIPT: &str =
+    "irm https://raw.atomgit.com/atomgit_atomcode/atomcode/raw/main/scripts/install.ps1 | iex";
 
 // Oh My Pi 的 npm 包只能由 bun 运行（入口是 `#!/usr/bin/env bun` 的 TypeScript）。官方
 // installer 有匹配架构的 bun 时走 bun，否则下载并校验预编译二进制到 `~/.local/bin`，
@@ -851,6 +860,14 @@ fn omp_install_windows_command() -> String {
     format!(
         "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {}",
         powershell_encoded_command(OMP_INSTALL_WINDOWS_SCRIPT)
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn atomcode_install_windows_command() -> String {
+    format!(
+        "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {}",
+        powershell_encoded_command(ATOMCODE_INSTALL_WINDOWS_SCRIPT)
     )
 }
 
@@ -1018,6 +1035,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "mcode" => Some(
             "npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
         ),
+        "atomcode" => Some("npm i -g @atomgit.com/atomcode@latest"),
         _ => None,
     }
 }
@@ -1119,6 +1137,7 @@ fn tool_action_shell_command_for_shell(
         let installer = match tool {
             "grok" => Some(grok_install_windows_command()),
             "mcode" => Some(mcode_install_windows_command()),
+            "atomcode" => Some(atomcode_install_windows_command()),
             _ => None,
         };
         if let Some(installer) = installer {
@@ -1440,6 +1459,9 @@ async fn get_single_tool_version_impl(
         "agy" => fetch_agy_latest_version(&client).await,
         "omp" => fetch_npm_latest_for_tool(&client, "@oh-my-pi/pi-coding-agent", tool, local).await,
         "copilot" => fetch_npm_latest_for_tool(&client, "@github/copilot", tool, local).await,
+        "atomcode" => {
+            fetch_npm_latest_for_tool(&client, "@atomgit.com/atomcode", tool, local).await
+        }
         _ => None,
     };
 
@@ -2728,6 +2750,13 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
             push_unique_path(&mut search_paths, home.join(".bun").join("bin"));
         }
     }
+    if tool == "atomcode" {
+        // 官方 FAQ 提到的默认安装目录（`~/.atomcode/bin`）；`~/.local/bin` 与 npm 全局
+        // 已在下方通用路径覆盖。
+        if !home.as_os_str().is_empty() {
+            push_unique_path(&mut search_paths, home.join(".atomcode").join("bin"));
+        }
+    }
     if !home.as_os_str().is_empty() {
         push_unique_path(&mut search_paths, home.join(".local/bin"));
         push_unique_path(&mut search_paths, home.join(".npm-global/bin"));
@@ -3607,6 +3636,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "omp" => Some("@oh-my-pi/pi-coding-agent"),
         "copilot" => Some("@github/copilot"),
         "dsh" => Some("@deepseek-ai/dsh"),
+        "atomcode" => Some("@atomgit.com/atomcode"),
         _ => None,
     }
 }
@@ -5112,6 +5142,7 @@ fn posix_install_command_for(tool: &str) -> String {
         "kimi" => KIMI_INSTALL_UNIX.to_string(),
         "omp" => OMP_INSTALL_UNIX.to_string(),
         "agy" => AGY_INSTALL_UNIX.to_string(),
+        "atomcode" => installer_with_npm_fallback(ATOMCODE_INSTALL_UNIX, tool),
         _ => static_fallback_command_for(tool, ToolLifecycleAction::Install),
     }
 }
@@ -5256,6 +5287,7 @@ fn wsl_distro_for_tool(tool: &str) -> Option<String> {
         "pi" => crate::settings::get_pi_override_dir(),
         "omp" => crate::settings::get_omp_override_dir(),
         "dsh" => crate::settings::get_dsh_override_dir(),
+        "atomcode" => crate::settings::get_atomcode_override_dir(),
         _ => None,
     }?;
 
@@ -8852,6 +8884,31 @@ mod tests {
                 )
                 .as_deref(),
                 Some(format!("omp update || {OMP_INSTALL_UNIX}").as_str())
+            );
+        }
+    }
+
+    #[test]
+    fn atomcode_lifecycle_metadata_names_the_tool_and_keeps_one_package() {
+        let requested = vec!["unsupported".to_string(), "atomcode".to_string()];
+        assert_eq!(normalize_requested_tools(&requested), vec!["atomcode"]);
+        assert_eq!(tool_display_name("atomcode"), "AtomCode CLI");
+        assert_eq!(npm_package_for("atomcode"), Some("@atomgit.com/atomcode"));
+        assert_eq!(
+            npm_install_command_for("atomcode"),
+            Some("npm i -g @atomgit.com/atomcode@latest")
+        );
+        // No verified self-update contract in the official docs; upgrades stay on
+        // the installer/npm path instead of `atomcode update`.
+        assert_eq!(official_update_args("atomcode"), None);
+        #[cfg(not(target_os = "windows"))]
+        {
+            // POSIX install prefers the official script with the npm package as fallback.
+            let install = install_command_for("atomcode");
+            assert!(
+                install.starts_with(ATOMCODE_INSTALL_UNIX)
+                    && install.ends_with(" || npm i -g @atomgit.com/atomcode@latest"),
+                "atomcode install should chain official installer with npm fallback: {install}"
             );
         }
     }

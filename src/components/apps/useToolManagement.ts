@@ -54,6 +54,7 @@ export const TOOL_NAMES = [
   "agy",
   "omp",
   "copilot",
+  "atomcode",
 ] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
 export type ToolLifecycleAction = "install" | "update" | "uninstall";
@@ -146,6 +147,10 @@ const AGY_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -ExecutionPolicy Bypa
   "irm https://antigravity.google/cli/install.ps1 | iex",
 )}`;
 
+const ATOMCODE_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${powershellEncodedCommand(
+  "irm https://raw.atomgit.com/atomgit_atomcode/atomcode/raw/main/scripts/install.ps1 | iex",
+)}`;
+
 // 与后端 npm_install_command_for("claude") 保持一致：原生依赖和 postinstall 缺一不可，
 // 否则 bin/claude.exe 会保留文本占位文件，在 Windows 上报兼容性错误。
 const CLAUDE_NPM_INSTALL_COMMAND =
@@ -193,7 +198,9 @@ ${posixScriptInstallCommand("https://antigravity.google/cli/install.sh")}
 # Oh My Pi
 bun install -g @oh-my-pi/pi-coding-agent@latest
 # GitHub Copilot CLI
-npm i -g @github/copilot@latest`;
+npm i -g @github/copilot@latest
+# AtomCode CLI
+${posixScriptInstallCommand("https://raw.atomgit.com/atomgit_atomcode/atomcode/raw/main/scripts/install.sh")} || npm i -g @atomgit.com/atomcode@latest`;
 
 const WINDOWS_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 ${CLAUDE_NPM_INSTALL_COMMAND}
@@ -222,7 +229,9 @@ ${AGY_WINDOWS_INSTALL_COMMAND}
 # Oh My Pi
 bun install -g @oh-my-pi/pi-coding-agent@latest
 # GitHub Copilot CLI
-npm i -g @github/copilot@latest`;
+npm i -g @github/copilot@latest
+# AtomCode CLI
+${ATOMCODE_WINDOWS_INSTALL_COMMAND}`;
 
 export const ONE_CLICK_INSTALL_COMMANDS = isWindows()
   ? WINDOWS_ONE_CLICK_INSTALL_COMMANDS
@@ -243,6 +252,7 @@ export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   agy: "Antigravity CLI",
   omp: "Oh My Pi",
   copilot: "GitHub Copilot CLI",
+  atomcode: "AtomCode CLI",
 };
 
 // 后端返回的 tool 是 string；这里收敛唯一的 ToolName 断言与兜底，供升级确认
@@ -266,6 +276,7 @@ export const TOOL_APP_IDS: Record<ToolName, AppId> = {
   agy: "agy",
   omp: "omp",
   copilot: "copilot",
+  atomcode: "atomcode",
 };
 
 // 工具版本探测代价高：每个工具一次 `--version` 子进程 + 一次 npm/github/pypi 网络请求。

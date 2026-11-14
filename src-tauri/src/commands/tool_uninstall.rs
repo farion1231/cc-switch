@@ -424,6 +424,13 @@ fn known_native_install(tool: &str, inst: &ToolInstallation) -> bool {
         }
         // Official install.sh (`~/.local/bin`) / install.ps1 (`%LOCALAPPDATA%\omp`) targets.
         "omp" => normalized.ends_with("/.local/bin/omp") || normalized.ends_with("/omp/omp.exe"),
+        // Official install.sh / install.ps1 targets (`~/.local/bin`, FAQ 亦提到 `~/.atomcode/bin`).
+        "atomcode" => {
+            normalized.ends_with("/.local/bin/atomcode")
+                || normalized.ends_with("/.local/bin/atomcode.exe")
+                || normalized.ends_with("/.atomcode/bin/atomcode")
+                || normalized.ends_with("/.atomcode/bin/atomcode.exe")
+        }
         _ => false,
     }
 }

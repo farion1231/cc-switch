@@ -63,6 +63,7 @@ const DIRECTORY_KEYS = [
   "piConfigDir",
   "ompConfigDir",
   "dshConfigDir",
+  "atomcodeConfigDir",
 ] as const;
 
 const sanitizeDir = (value?: string | null): string | undefined => {
@@ -137,6 +138,7 @@ export function useSettings(): UseSettingsResult {
       pi: sanitizeDir(data?.piConfigDir),
       omp: sanitizeDir(data?.ompConfigDir),
       dsh: sanitizeDir(data?.dshConfigDir),
+      atomcode: sanitizeDir(data?.atomcodeConfigDir),
     });
     setRequiresRestart(false);
   }, [
@@ -226,6 +228,9 @@ export function useSettings(): UseSettingsResult {
         const sanitizedPiDir = sanitizeDir(mergedSettings.piConfigDir);
         const sanitizedOmpDir = sanitizeDir(mergedSettings.ompConfigDir);
         const sanitizedDshDir = sanitizeDir(mergedSettings.dshConfigDir);
+        const sanitizedAtomcodeDir = sanitizeDir(
+          mergedSettings.atomcodeConfigDir,
+        );
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
@@ -243,6 +248,7 @@ export function useSettings(): UseSettingsResult {
           piConfigDir: sanitizedPiDir,
           ompConfigDir: sanitizedOmpDir,
           dshConfigDir: sanitizedDshDir,
+          atomcodeConfigDir: sanitizedAtomcodeDir,
           language: mergedSettings.language,
         };
 
@@ -365,6 +371,9 @@ export function useSettings(): UseSettingsResult {
         const sanitizedPiDir = sanitizeDir(mergedSettings.piConfigDir);
         const sanitizedOmpDir = sanitizeDir(mergedSettings.ompConfigDir);
         const sanitizedDshDir = sanitizeDir(mergedSettings.dshConfigDir);
+        const sanitizedAtomcodeDir = sanitizeDir(
+          mergedSettings.atomcodeConfigDir,
+        );
         const previousAppDir = initialAppConfigDir;
         const previousClaudeDir = sanitizeDir(data?.claudeConfigDir);
         const previousCodexDir = sanitizeDir(data?.codexConfigDir);
@@ -375,6 +384,7 @@ export function useSettings(): UseSettingsResult {
         const previousPiDir = sanitizeDir(data?.piConfigDir);
         const previousOmpDir = sanitizeDir(data?.ompConfigDir);
         const previousDshDir = sanitizeDir(data?.dshConfigDir);
+        const previousAtomcodeDir = sanitizeDir(data?.atomcodeConfigDir);
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
@@ -392,6 +402,7 @@ export function useSettings(): UseSettingsResult {
           piConfigDir: sanitizedPiDir,
           ompConfigDir: sanitizedOmpDir,
           dshConfigDir: sanitizedDshDir,
+          atomcodeConfigDir: sanitizedAtomcodeDir,
           language: mergedSettings.language,
         };
 
@@ -484,6 +495,7 @@ export function useSettings(): UseSettingsResult {
         const piDirChanged = sanitizedPiDir !== previousPiDir;
         const ompDirChanged = sanitizedOmpDir !== previousOmpDir;
         const dshDirChanged = sanitizedDshDir !== previousDshDir;
+        const atomcodeDirChanged = sanitizedAtomcodeDir !== previousAtomcodeDir;
         if (
           !pluginSynced &&
           (claudeDirChanged ||
@@ -519,6 +531,11 @@ export function useSettings(): UseSettingsResult {
               queryKey: ["dsh-account-status"],
             }),
           ]);
+        }
+        if (atomcodeDirChanged) {
+          await queryClient.invalidateQueries({
+            queryKey: ["providers", "atomcode"],
+          });
         }
 
         const appDirChanged = sanitizedAppDir !== (previousAppDir ?? undefined);

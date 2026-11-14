@@ -17,6 +17,10 @@ use std::{
 static WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 pub(crate) fn data_dir() -> PathBuf {
+    // 设置里的目录覆盖（与其他应用的 override-dir 体系一致）优先于 ATOMCODE_HOME。
+    if let Some(dir) = crate::settings::get_atomcode_override_dir() {
+        return dir;
+    }
     std::env::var_os("ATOMCODE_HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
@@ -72,16 +76,32 @@ pub(crate) fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
         .collect())
 }
 
-/// 获取 AtomCode 当前的 default_provider（如果有的话）。
-/// 返回空字符串表示未设置或配置文件不存在。
+/// 获取 AtomCode 当前选中的账号 ID（如果有的话）。
+/// 返回空字符串表示未设置、配置文件不存在或模型键解析不到账号。
 ///
-/// 注意：config.toml 中的 default_provider 是模型键，需要通过
-/// models[模型键].account 找到对应的账号 ID。
+/// 解析顺序与 AtomCode 自身一致（`effective_model_selection()`，
+/// `crates/atomcode-config/src/config/mod.rs:1448-1457`）：`default_model`
+/// （canonical，`mod.rs:661-665`）优先，回退 legacy 的 `default_provider`
+/// （`mod.rs:633-637`）。两者在 AtomCode CLI 程序化切换时写成同一个
+/// selection id（`crates/atomcode-cli/src/main.rs:3215-3219`），本分支的
+/// select_provider_model 双写行为与之对齐。
+///
+/// 模型键（selection id）需通过 models[模型键].account 反查账号 ID；与
+/// AtomCode 推荐的 selection id 格式 `<account>/<model>`（`mod.rs:657-660`）
+/// 相容，legacy `[providers.*]` 投影出来的配置同样能解析。
 pub(crate) fn current_provider() -> Result<String, AppError> {
     let document = read(&config_path())?;
-    let default_model_key = match document.get("default_provider").and_then(Value::as_str) {
-        Some(key) if !key.is_empty() => key,
-        _ => return Ok(String::new()),
+    let default_model_key = ["default_model", "default_provider"]
+        .iter()
+        .find_map(|field| {
+            document
+                .get(*field)
+                .and_then(Value::as_str)
+                .and_then(|key| if key.is_empty() { None } else { Some(key) })
+        });
+    let default_model_key = match default_model_key {
+        Some(key) => key,
+        None => return Ok(String::new()),
     };
 
     // 通过模型键找到对应的账号 ID
@@ -653,6 +673,71 @@ context_window = 262144
         assert_eq!(current, "acct", "Should return account ID, not model key");
 
         // Clean up
+        std::env::remove_var("ATOMCODE_HOME");
+    }
+
+    #[test]
+    fn current_provider_prefers_default_model_and_degrades_to_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::env::set_var("ATOMCODE_HOME", dir.path());
+
+        // `default_model` 是 canonical 选择：同时存在时优先于 legacy 的 `default_provider`
+        //（与 AtomCode `effective_model_selection()` 的解析顺序一致）。
+        fs::write(
+            &path,
+            r#"
+default_model = "acct-b/m2"
+default_provider = "acct-a/m1"
+
+[provider_accounts.acct-a]
+provider = "anthropic"
+[provider_accounts.acct-b]
+provider = "openai"
+
+[models."acct-a/m1"]
+account = "acct-a"
+model = "m1"
+[models."acct-b/m2"]
+account = "acct-b"
+model = "m2"
+"#,
+        )
+        .unwrap();
+        assert_eq!(current_provider().unwrap(), "acct-b");
+
+        // 只写了 legacy `default_provider` 时回退解析。
+        fs::write(
+            &path,
+            r#"
+default_provider = "acct-a/m1"
+
+[provider_accounts.acct-a]
+provider = "anthropic"
+[models."acct-a/m1"]
+account = "acct-a"
+model = "m1"
+"#,
+        )
+        .unwrap();
+        assert_eq!(current_provider().unwrap(), "acct-a");
+
+        // 两个选择字段都缺失 → 空串。
+        fs::write(
+            &path,
+            "[provider_accounts.acct-a]\nprovider = \"anthropic\"\n",
+        )
+        .unwrap();
+        assert_eq!(current_provider().unwrap(), "");
+
+        // 模型键解析不到 `account` → 空串（不 panic）。
+        fs::write(
+            &path,
+            "default_model = \"gone\"\n[models.gone]\nmodel = \"m\"\n",
+        )
+        .unwrap();
+        assert_eq!(current_provider().unwrap(), "");
+
         std::env::remove_var("ATOMCODE_HOME");
     }
 

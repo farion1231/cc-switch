@@ -112,7 +112,7 @@ type Row = { kind: "tool"; tool: ToolName } | { kind: "desktop" };
 const ROW_BY_APP = Object.fromEntries([
   ["claude-desktop", { kind: "desktop" }],
   ...TOOL_NAMES.map((tool) => [TOOL_APP_IDS[tool], { kind: "tool", tool }]),
-]) as Partial<Record<AppId, Row>>;
+]) as Record<AppId, Row>;
 
 type RowSection = { key: string; title: string; rows: Row[] };
 
