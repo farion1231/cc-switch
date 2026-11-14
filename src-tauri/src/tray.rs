@@ -89,6 +89,7 @@ static TRAY_SECTION_SUBMENUS: Lazy<Mutex<HashMap<AppType, Submenu<tauri::Wry>>>>
 #[derive(Clone, Copy)]
 pub struct TrayTexts {
     pub show_main: &'static str,
+    pub reload_ui: &'static str,
     pub open_website: &'static str,
     pub lightweight_mode: &'static str,
     pub quit: &'static str,
@@ -205,6 +206,7 @@ impl TrayTexts {
         match language {
             "en" => Self {
                 show_main: "Open CC Switch",
+                reload_ui: "Reload UI",
                 open_website: "Open official website",
                 lightweight_mode: "Lightweight mode",
                 quit: "Quit CC Switch",
@@ -260,8 +262,10 @@ impl TrayTexts {
                 date_format: "%b %-d",
                 quota_used: false,
             },
+
             "ko" => Self {
                 show_main: "CC Switch 열기",
+                reload_ui: "인터페이스 새로고침",
                 open_website: "공식 웹사이트 열기",
                 lightweight_mode: "경량 모드",
                 quit: "CC Switch 종료",
@@ -317,6 +321,7 @@ impl TrayTexts {
             },
             "de" => Self {
                 show_main: "CC Switch öffnen",
+                reload_ui: "Oberfläche neu laden",
                 open_website: "Offizielle Website öffnen",
                 lightweight_mode: "Lightweight-Modus",
                 quit: "CC Switch beenden",
@@ -374,6 +379,7 @@ impl TrayTexts {
             },
             "ru" => Self {
                 show_main: "Открыть CC Switch",
+                reload_ui: "Обновить интерфейс",
                 open_website: "Открыть официальный сайт",
                 lightweight_mode: "Облегчённый режим",
                 quit: "Выйти из CC Switch",
@@ -427,63 +433,69 @@ impl TrayTexts {
                 date_format: "%d.%m",
                 quota_used: false,
             },
-            "tr" => Self {
-                show_main: "CC Switch'i aç",
-                open_website: "Resmî web sitesini aç",
-                lightweight_mode: "Hafif mod",
-                quit: "CC Switch'ten çık",
-                quit_stops_routing: "CC Switch'ten çık (yönlendirme hizmeti durur)",
-                install_update: "Yeniden başlat ve v{version} sürümüne güncelle",
-                projects_label: "Projeler",
-                no_project_label: "Proje yok",
-                header_direct: "Doğrudan",
-                header_route: "Yönlendirme",
-                header_failover: "Yönlendirme · Yedek sağlayıcıya geçiş açık",
-                header_stack: "Birleştirme · Varsayılan sağlayıcı",
-                header_stack_default: "Birleştirme · Varsayılan: {name}",
-                failover_note: "Kuyruktan otomatik seçilir; uygulama sayfasından değiştirebilirsiniz",
-                mode_route: "Yönlendirme",
-                mode_stack: "Birleştirme",
-                needs_routing_suffix: " (yönlendirme gerekir)…",
-                official_blocked_suffix: " (resmî abonelikler yönlendirmeyi kullanmaz)",
-                open_app_page: "{app} sayfasını aç",
-                add_provider: "Sağlayıcı ekle…",
-                almost_out: "bitmek üzere",
-                needs_attention: "ilgilenilmesi gerekiyor",
-                problem_service_down: "Yönlendirme hizmeti çalışmıyor (port {port})",
-                problem_attach_failed: "{app}: {mode} başlangıçta yeniden bağlanamadı; doğrudan bağlantıya dönüldü",
-                problem_switch_failed: "{app} geçiş yapamadı: {reason}",
-                problem_more: "{count} sorun daha var — görmek için CC Switch'i açın",
-                tooltip_problem: "CC Switch · İlgilenilmesi gerekiyor: {problem}",
-                feedback_switched: "{app}, {name} sağlayıcısına geçti. Uygulamak için {app} uygulamasını yeniden başlatın",
-                feedback_stack_default: "{app} için varsayılan sağlayıcı artık {name}. Uygulamak için {app} uygulamasını yeniden başlatın",
-                feedback_profile: "{name} projesi {app} uygulamasına uygulandı",
-                tier_five_hour: "5 saatlik",
-                tier_weekly: "Haftalık",
-                tier_fable: "Fable",
-                tier_monthly: "Aylık",
-                tier_thirty_day: "30 günlük",
-                tier_credits: "Krediler",
-                tier_gemini_pro: "Pro",
-                tier_gemini_flash: "Flash",
-                tier_gemini_flash_lite: "Flash Lite",
-                tier_premium: "Credits",
-                tier_left: "{label} %{value} kaldı",
-                tier_used: "{label} %{value} kullanıldı",
-                tier_used_up: "{label} tükendi",
-                balance: "Bakiye {value}",
-                plan_expired: "Planın süresi doldu",
-                used_amount: "Kullanılan: {value}",
-                quota_failed: "Kota bilgisi alınamıyor",
-                quota_failed_login_expired: "Kota bilgisi alınamıyor: oturumun süresi doldu",
-                quota_failed_token_refresh_pending: "Kota bilgisi alınamıyor: token yenilenmesi bekleniyor",
-                reset_on_date: "{label} kotası {when} tarihinde sıfırlanır",
-                reset_at_time: "{label} kotası {when} saatinde sıfırlanır",
-                date_format: "%d.%m",
-                quota_used: false,
-            },
+
+
+            // 土耳其语是社区翻译：从英文起步再覆盖已翻译的项，之后新增的托盘项
+            // 在有人翻译前显示英文，而不是让所有改托盘的提交都必须补土耳其语。
+            "tr" => {
+                let mut texts = Self::from_language("en");
+                texts.show_main = "CC Switch'i aç";
+                texts.reload_ui = "Arayüzü yenile";
+                texts.install_update = "Yeniden başlat ve v{version} sürümüne güncelle";
+                texts.open_website = "Resmî web sitesini aç";
+                texts.lightweight_mode = "Hafif mod";
+                texts.quit = "CC Switch'ten çık";
+                texts.quit_stops_routing = "CC Switch'ten çık (yönlendirme hizmeti durur)";
+                texts.projects_label = "Projeler";
+                texts.no_project_label = "Proje yok";
+                texts.header_direct = "Doğrudan";
+                texts.header_route = "Yönlendirme";
+                texts.header_failover = "Yönlendirme · Yedek sağlayıcıya geçiş açık";
+                texts.header_stack = "Birleştirme · Varsayılan sağlayıcı";
+                texts.header_stack_default = "Birleştirme · Varsayılan: {name}";
+                texts.failover_note = "Kuyruktan otomatik seçilir; uygulama sayfasından değiştirebilirsiniz";
+                texts.mode_route = "Yönlendirme";
+                texts.mode_stack = "Birleştirme";
+                texts.needs_routing_suffix = " (yönlendirme gerekir)…";
+                texts.official_blocked_suffix = " (resmî abonelikler yönlendirmeyi kullanmaz)";
+                texts.open_app_page = "{app} sayfasını aç";
+                texts.add_provider = "Sağlayıcı ekle…";
+                texts.almost_out = "bitmek üzere";
+                texts.needs_attention = "ilgilenilmesi gerekiyor";
+                texts.problem_service_down = "Yönlendirme hizmeti çalışmıyor (port {port})";
+                texts.problem_attach_failed = "{app}: {mode} başlangıçta yeniden bağlanamadı; doğrudan bağlantıya dönüldü";
+                texts.problem_switch_failed = "{app} geçiş yapamadı: {reason}";
+                texts.problem_more = "{count} sorun daha var — görmek için CC Switch'i açın";
+                texts.tooltip_problem = "CC Switch · İlgilenilmesi gerekiyor: {problem}";
+                texts.feedback_switched = "{app}, {name} sağlayıcısına geçti. Uygulamak için {app} uygulamasını yeniden başlatın";
+                texts.feedback_stack_default = "{app} için varsayılan sağlayıcı artık {name}. Uygulamak için {app} uygulamasını yeniden başlatın";
+                texts.feedback_profile = "{name} projesi {app} uygulamasına uygulandı";
+                texts.tier_five_hour = "5 saatlik";
+                texts.tier_weekly = "Haftalık";
+                texts.tier_fable = "Fable";
+                texts.tier_monthly = "Aylık";
+                texts.tier_thirty_day = "30 günlük";
+                texts.tier_credits = "Krediler";
+                texts.tier_gemini_pro = "Pro";
+                texts.tier_gemini_flash = "Flash";
+                texts.tier_gemini_flash_lite = "Flash Lite";
+                texts.tier_left = "{label} %{value} kaldı";
+                texts.tier_used = "{label} %{value} kullanıldı";
+                texts.tier_used_up = "{label} tükendi";
+                texts.balance = "Bakiye {value}";
+                texts.plan_expired = "Planın süresi doldu";
+                texts.used_amount = "Kullanılan: {value}";
+                texts.quota_failed = "Kota bilgisi alınamıyor";
+                texts.quota_failed_login_expired = "Kota bilgisi alınamıyor: oturumun süresi doldu";
+                texts.quota_failed_token_refresh_pending = "Kota bilgisi alınamıyor: token yenilenmesi bekleniyor";
+                texts.reset_on_date = "{label} kotası {when} tarihinde sıfırlanır";
+                texts.reset_at_time = "{label} kotası {when} saatinde sıfırlanır";
+                texts.date_format = "%d.%m";
+                texts
+            }
             "ja" => Self {
                 show_main: "CC Switch を開く",
+                reload_ui: "UIを再読み込み",
                 open_website: "公式サイトを開く",
                 lightweight_mode: "軽量モード",
                 quit: "CC Switch を終了",
@@ -541,6 +553,7 @@ impl TrayTexts {
             },
             "zh-TW" => Self {
                 show_main: "開啟 CC Switch",
+                reload_ui: "重新載入介面",
                 open_website: "開啟官方網站",
                 lightweight_mode: "輕量模式",
                 quit: "退出 CC Switch",
@@ -596,6 +609,7 @@ impl TrayTexts {
             },
             _ => Self {
                 show_main: "打开 CC Switch",
+                reload_ui: "刷新界面",
                 open_website: "打开官方网站",
                 lightweight_mode: "轻量模式",
                 quit: "退出 CC Switch",
@@ -2169,12 +2183,16 @@ fn build_menu_model(
 
     // 窗口找不回来时托盘是唯一入口，「打开 CC Switch」一直放在最上面。
     menu.push(TrayEntry::item("show_main", texts.show_main));
+
     if let Some(version) = &status.update_ready {
         menu.push(TrayEntry::item(
             INSTALL_UPDATE_ID,
             fill(texts.install_update, &[("version", version)]),
         ));
     }
+
+    // 界面卡死/白屏时的显式恢复入口：重载 WebView（Rust 侧调用，不依赖存活的 JS）
+    menu.push(TrayEntry::item("reload_ui", texts.reload_ui));
     menu.push(TrayEntry::Separator);
 
     if !apps.is_empty() {
@@ -3088,6 +3106,10 @@ pub fn show_main_window(app: &tauri::AppHandle) {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
+        // 渲染进程死亡后自动恢复没能完成时，这里补一次重载：左键托盘、快捷面板
+        // 的「打开主窗口」、托盘导航入口都走这个函数，只 show 白屏窗口救不回来
+        #[cfg(target_os = "windows")]
+        crate::webview_recovery::reload_if_renderer_failure_pending(&window);
         #[cfg(target_os = "linux")]
         {
             crate::linux_fix::nudge_main_window(window.clone(), "tray-show-main");
@@ -3345,6 +3367,7 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
 
     match event_id {
         "show_main" => show_main_window(app),
+
         INSTALL_UPDATE_ID => {
             // 弹窗或关于页已经在装了：这次点击什么都不做
             if crate::app_update::is_installing() {
@@ -3364,6 +3387,21 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
                     );
                 }
             });
+        }
+
+        "reload_ui" => {
+            // Windows 下的重载走恢复模块（带日志）；其他平台直接重载
+            #[cfg(target_os = "windows")]
+            if let Err(e) = crate::webview_recovery::reload_main_window(app) {
+                // 重载失败时保留故障标志：手动路径还能再试
+                log::error!("托盘重载主界面失败: {e}");
+            }
+            #[cfg(not(target_os = "windows"))]
+            if let Some(window) = app.get_webview_window("main") {
+                if let Err(e) = window.reload() {
+                    log::error!("托盘重载主界面失败: {e}");
+                }
+            }
         }
         "open_website" => {
             if let Err(e) = app.opener().open_url("https://ccswitch.io", None::<String>) {
@@ -4673,6 +4711,7 @@ mod tests {
             texts_of(&menu),
             [
                 "打开 CC Switch",
+                "刷新界面",
                 "---",
                 "Claude Code · Kimi For Coding",
                 "Grok Build · 添加供应商…",
@@ -4683,8 +4722,8 @@ mod tests {
                 "退出 CC Switch",
             ]
         );
-        assert!(matches!(&menu[3], TrayEntry::Item { id, .. } if id == "nav:add:grokbuild"));
-        assert!(matches!(&menu[8], TrayEntry::Item { id, .. } if id == "quit"));
+        assert!(matches!(&menu[4], TrayEntry::Item { id, .. } if id == "nav:add:grokbuild"));
+        assert!(matches!(&menu[9], TrayEntry::Item { id, .. } if id == "quit"));
     }
 
     #[test]
@@ -4733,7 +4772,7 @@ mod tests {
             vec![entry("or", "OpenRouter"), official],
         );
         let menu = model(&[], &[app]);
-        assert_eq!(text_of(&menu[2]), "Grok Build · 路由 · OpenRouter");
+        assert_eq!(text_of(&menu[3]), "Grok Build · 路由 · OpenRouter");
         let children = children_of(&menu, &AppType::GrokBuild);
         assert_eq!(text_of(&children[0]), "路由");
         assert!(
@@ -4798,7 +4837,7 @@ mod tests {
         );
         app.stack_members = vec!["deepseek".to_string(), "kimi".to_string()];
         let menu = model(&[], &[app]);
-        assert_eq!(text_of(&menu[2]), "Codex · 聚合 · DeepSeek");
+        assert_eq!(text_of(&menu[3]), "Codex · 聚合 · DeepSeek");
         let children = children_of(&menu, &AppType::Codex);
         assert_eq!(
             texts_of(&children),
@@ -4838,7 +4877,7 @@ mod tests {
         );
         routed.current_id = Some("kimi".to_string());
         let menu = model(&[], &[routed]);
-        assert_eq!(text_of(&menu[2]), "Claude Desktop · 路由 · Kimi For Coding");
+        assert_eq!(text_of(&menu[3]), "Claude Desktop · 路由 · Kimi For Coding");
         let children = children_of(&menu, &AppType::ClaudeDesktop);
         assert!(
             matches!(&children[1], TrayEntry::Check { id, checked: true, .. } if id == "prov:claude-desktop:kimi")
@@ -4867,8 +4906,9 @@ mod tests {
         );
         assert_eq!(text_of(&menu[1]), "---");
         assert_eq!(text_of(&menu[2]), "打开 CC Switch");
+        assert_eq!(text_of(&menu[3]), "刷新界面");
         assert_eq!(
-            text_of(&menu[4]),
+            text_of(&menu[5]),
             "Claude Desktop · 路由 · Kimi For Coding · 需要处理"
         );
         // 子菜单和其他路由应用一样以模式标题开头，服务没在跑由顶部问题区说。
