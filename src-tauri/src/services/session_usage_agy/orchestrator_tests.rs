@@ -221,7 +221,14 @@ fn orchestrator_backfills_timed_history_after_parser_upgrade_once() {
         .unwrap()
         .execute_batch("DELETE FROM proxy_request_logs; DELETE FROM session_log_sync;")
         .unwrap();
-    sync_agy_usage_from_files(&db, files()).unwrap();
     let result = sync_agy_usage_from_files(&db, files()).unwrap();
-    assert_eq!((result.imported, result.skipped), (0, 0));
+    assert_eq!(
+        (result.imported, result.skipped, result.errors.len()),
+        (0, 2, 0)
+    );
+    let result = sync_agy_usage_from_files(&db, files()).unwrap();
+    assert_eq!(
+        (result.imported, result.skipped, result.errors.len()),
+        (0, 0, 0)
+    );
 }
