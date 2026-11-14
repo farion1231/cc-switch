@@ -148,7 +148,7 @@ impl Database {
                 "SELECT app_type, enabled, auto_failover_enabled,
                         max_retries, streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
                         circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
-                        circuit_error_rate_threshold, circuit_min_requests
+                        circuit_error_rate_threshold, circuit_min_requests, model_mismatch_breaker
                  FROM proxy_config WHERE app_type = ?1"
             ).map_err(|e| AppError::Database(e.to_string()))?;
             stmt.query_row([app_type], |row| {
@@ -165,6 +165,7 @@ impl Database {
                     circuit_timeout_seconds: row.get::<_, i32>(9)? as u32,
                     circuit_error_rate_threshold: row.get(10)?,
                     circuit_min_requests: row.get::<_, i32>(11)? as u32,
+                    model_mismatch_breaker: row.get::<_, i32>(12)? != 0,
                 })
             })
         };
@@ -188,6 +189,7 @@ impl Database {
                     circuit_timeout_seconds: 60,
                     circuit_error_rate_threshold: 0.6,
                     circuit_min_requests: 10,
+                    model_mismatch_breaker: false,
                 })
             }
             Err(e) => Err(AppError::Database(e.to_string())),
@@ -214,6 +216,7 @@ impl Database {
                 circuit_timeout_seconds = ?10,
                 circuit_error_rate_threshold = ?11,
                 circuit_min_requests = ?12,
+                model_mismatch_breaker = ?13,
                 updated_at = datetime('now')
              WHERE app_type = ?1",
             rusqlite::params![
@@ -229,6 +232,7 @@ impl Database {
                 config.circuit_timeout_seconds as i32,
                 config.circuit_error_rate_threshold,
                 config.circuit_min_requests as i32,
+                if config.model_mismatch_breaker { 1 } else { 0 },
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;

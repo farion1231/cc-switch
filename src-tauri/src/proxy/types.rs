@@ -186,6 +186,9 @@ pub struct AppProxyConfig {
     pub circuit_error_rate_threshold: f64,
     /// 计算错误率的最小请求数
     pub circuit_min_requests: u32,
+    /// 响应模型与请求模型不一致时计入熔断器失败（#7589，默认关闭：只告警不熔断）
+    #[serde(default)]
+    pub model_mismatch_breaker: bool,
 }
 
 /// 整流器配置
