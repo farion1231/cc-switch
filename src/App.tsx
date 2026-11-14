@@ -1805,6 +1805,7 @@ function App() {
           <UsagePage
             initialAppType={usageAppFilter}
             onOpenRoutingSettings={() => openSettings("routing")}
+            onOpenSyncSettings={() => openSettings("data")}
           />
         );
       case "auth":

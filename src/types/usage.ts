@@ -35,6 +35,8 @@ export interface RequestLog {
   errorMessage?: string;
   createdAt: number;
   dataSource?: string;
+  /** Remote device that recorded this request; absent for this device */
+  deviceId?: string;
 }
 
 export interface SessionSyncResult {
@@ -161,6 +163,8 @@ export interface LogFilters {
   statusCode?: number;
   startDate?: number;
   endDate?: number;
+  /** Device scope: undefined = this device, "all", or a remote device id */
+  device?: string;
 }
 
 /**
@@ -175,7 +179,15 @@ export interface UsageScopeFilters {
   appType?: string;
   providerName?: string;
   model?: string;
+  /**
+   * 设备范围（跨设备用量同步）：缺省 = 本机（原有行为），"all" = 全部设备，
+   * 其它值 = 某台远端设备的 ID。
+   */
+  device?: string;
 }
+
+/** Device filter value used by the dashboard ("local" maps to undefined). */
+export type UsageDeviceFilter = "local" | "all" | (string & {});
 
 export interface ProviderLimitStatus {
   providerId: string;

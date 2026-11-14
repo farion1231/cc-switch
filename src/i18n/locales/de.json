@@ -5309,6 +5309,119 @@
       "secondaryModelInUse": "Das Subagent-Modell von Kimi Code verwendet ein Modell dieses Anbieters. Ändern Sie es zuerst in Kimi Code mit /secondary-model."
     }
   },
+  "usageSync": {
+    "thisDevice": "Dieses Gerät",
+    "allDevices": "Alle Geräte",
+    "device": "Gerät",
+    "never": "nie",
+    "syncNow": "Nutzung jetzt synchronisieren",
+    "openSettings": "Einstellungen öffnen",
+    "syncCompleted": "Nutzung synchronisiert · weitere Geräte: {{devices}}",
+    "syncPartial": "Nutzungssynchronisierung mit Problemen abgeschlossen: {{error}}",
+    "syncFailed": "Nutzungssynchronisierung fehlgeschlagen: {{error}}",
+    "deviceFilter": {
+      "title": "Gerät"
+    },
+    "status": {
+      "ok": "Aktuell",
+      "stale": "Veraltet",
+      "error": "Fehler",
+      "incompatible": "Neuere Version",
+      "missing": "Nicht gefunden",
+      "hidden": "Ausgeblendet"
+    },
+    "devices": {
+      "button": "Geräte",
+      "title": "Geräte",
+      "description": "Per geräteübergreifender Nutzungssynchronisierung geteilte Nutzungsdaten",
+      "disabledTitle": "Nutzungssynchronisierung ist aus",
+      "disabledBody": "Aktivieren Sie die Nutzungssynchronisierung unter Einstellungen → Daten, um die Nutzung dieses Geräts zu teilen und Ihre anderen Geräte zu sehen.",
+      "lastUpload": "Letzter Upload {{time}}",
+      "notSharing": "Teilt keine Nutzungsdaten",
+      "empty": "Noch keine anderen Geräte haben Nutzung geteilt.",
+      "listLabel": "Synchronisierte Geräte",
+      "coverage": "Verlauf {{from}} → {{to}}",
+      "dailyOnly": "nur Tagessummen",
+      "detailFrom": "Anfragedetails seit {{date}}",
+      "show": "In der Statistik anzeigen",
+      "hide": "In der Statistik ausblenden",
+      "costNote": "Kosten sind Schätzungen, die jedes Gerät anhand seiner eigenen Modellpreise berechnet; sie entsprechen nicht dem tatsächlich über ein Abonnement abgerechneten Betrag.",
+      "unverified": "Tagesverlauf ohne Anfrage-IDs: {{count}} Anfragen",
+      "unverifiedRange": "Tagesverlauf ohne Anfrage-IDs: {{count}} Anfragen ({{from}} → {{to}})",
+      "calendar": "Tagessummen verwenden den Kalender dieses Geräts ({{offset}})",
+      "splitFrom": "Abgespalten von {{device}} (kopierte Installation)"
+    },
+    "conflict": {
+      "title": "Konflikt der Geräteidentität",
+      "body": "Eine andere CC Switch-Installation lädt mit der Identität dieses Geräts hoch (vermutlich wurde der CC Switch-Datenordner kopiert oder dieser Computer aus einer Sicherung wiederhergestellt). Das Hochladen ist pausiert; die Nutzung anderer Geräte wird weiterhin heruntergeladen.",
+      "newIdentity": "Neue Identität verwenden",
+      "takeOver": "Übernehmen",
+      "takeOverTitle": "Diese Identität übernehmen?",
+      "takeOverMessage": "Tun Sie dies nur, wenn die andere Installation nicht mehr läuft (zum Beispiel nach dem Wiederherstellen dieses Computers aus einer Sicherung). Wenn beide weiterlaufen, überschreiben sie gegenseitig ihre Nutzung.",
+      "resolved": "Geräteidentität aktualisiert",
+      "newIdentityEffect": "Neue Identität verwenden – für einen zweiten Computer, der weiterläuft: Diese Installation läuft unter einer neuen ID weiter. Von der anderen Installation kopierter Verlauf wird einmal gezählt (Anfragen mit IDs werden abgeglichen; ältere Tagessummen bleiben bei der anderen Installation, solange sie vorhanden ist, und gehen auf diese über, wenn Sie sie ausblenden). Ab jetzt gestellte Anfragen zählen für diese Installation.",
+      "takeOverEffect": "Übernehmen – nur wenn die andere Installation nicht mehr läuft (zum Beispiel wurde dieser Computer aus einer Sicherung wiederhergestellt): Diese Installation führt die bestehende Identität fort und veröffentlicht ihre Daten erneut. Wenn beide weiterlaufen, überschreiben sie sich gegenseitig.",
+      "resolveInSettings": "Wählen Sie unter Einstellungen → Daten → Geräteübergreifende Nutzungssynchronisierung, wie der Konflikt gelöst wird."
+    },
+    "insecure": {
+      "title": "Unverschlüsselte Verbindung",
+      "body": "Die Speicheradresse verwendet einfaches HTTP. Zugangsdaten und Nutzungsdaten werden unverschlüsselt übertragen; verwenden Sie HTTPS, sofern es sich nicht um ein vertrauenswürdiges lokales Netzwerk handelt."
+    },
+    "notice": {
+      "dailyOnly": "{{devices}} teilen nur Tagessummen: Angebrochene Tage werden nicht gezählt und ihre Anfragen nicht aufgelistet.",
+      "outdated": "Daten von {{devices}} sind möglicherweise veraltet oder unvollständig."
+    },
+    "detail": {
+      "remoteTitle": "Auf einem anderen Gerät erfasst",
+      "remoteBody": "Diese Anfrage wurde auf {{device}} erfasst. Fehlermeldungen und Sitzungsdetails werden nicht zwischen Geräten geteilt."
+    },
+    "settings": {
+      "title": "Geräteübergreifende Nutzungssynchronisierung",
+      "help": "Teilen Sie Nutzungsstatistiken zwischen Ihren Geräten über den oben konfigurierten WebDAV- oder S3-Speicher. Die Nutzung wird getrennt vom Konfigurations-Snapshot gespeichert und überschreibt ihn nie.",
+      "intro": "Jedes Gerät lädt seine eigene Nutzung in den obigen Cloud-Speicher hoch und lädt die Nutzung Ihrer anderen Geräte herunter, sodass die Nutzungsseite alle Geräte oder ein einzelnes anzeigen kann.",
+      "privacyShared": "Geteilt: Zeit, App, Anbietername, Modell, Token-Anzahlen, geschätzte Kosten, Statuscode und im Modus pro Anfrage Zeitangaben und Anfrage-IDs – einschließlich der IDs des zusammengefassten Verlaufs für bis zu ein Jahr, damit Kopien auf mehreren Geräten nur einmal gezählt werden.",
+      "privacyNotShared": "Nie geteilt: API-Schlüssel, Tokens, Prompts und Antworten, Sitzungsdateien, Fehlermeldungen, Dateipfade sowie die CC Switch-Datenbank.",
+      "privacyCost": "Kosten sind Schätzungen auf Basis der Modellpreise des jeweiligen Geräts.",
+      "noBackendTitle": "Kein Cloud-Speicher konfiguriert",
+      "noBackendBody": "Konfigurieren Sie zuerst WebDAV oder S3 oben unter Cloud-Synchronisierung; die Nutzungssynchronisierung verwendet diese Verbindung.",
+      "enable": "Nutzung geräteübergreifend synchronisieren",
+      "enableHint": "Standardmäßig aus",
+      "chooseBackendFirst": "Wählen Sie zuerst, welcher Speicher die Nutzungsdaten aufnimmt.",
+      "backend": "Speicher für die Nutzung",
+      "backendHint": "Wählen Sie genau einen Speicher, damit alle Geräte denselben Ort verwenden",
+      "chooseBackend": "Speicher wählen",
+      "notConfigured": "nicht konfiguriert",
+      "detailLevel": "Geteilte Detailstufe",
+      "detailLevelHint": "Tagessummen teilen weniger, können Duplikate zwischen Geräten aber nicht entfernen",
+      "detailRecords": "Pro Anfrage (empfohlen)",
+      "detailDaily": "Nur Tagessummen",
+      "autoSync": "Automatisch synchronisieren",
+      "autoSyncHint": "Im Hintergrund hoch- und herunterladen",
+      "interval": "Synchronisierungsintervall",
+      "everyMinutes": "Alle {{count}} Min.",
+      "deviceName": "Gerätename",
+      "deviceNameHint": "Wird auf Ihren anderen Geräten angezeigt",
+      "location": "Entfernter Speicherort: {{location}}",
+      "lastSync": "Letzte Synchronisierung {{time}}",
+      "neverSynced": "Noch nicht synchronisiert",
+      "saveFailed": "Einstellungen der Nutzungssynchronisierung konnten nicht gespeichert werden: {{error}}",
+      "saveName": "Namen speichern"
+    },
+    "accuracy": {
+      "summary": "Wie diese Summen zusammengeführt werden",
+      "summaryWithIssues": "Wie diese Summen zusammengeführt werden · Einschränkungen: {{count}}",
+      "exact": "Exakt: Anfrageeinträge und Verlauf mit Anfrage-IDs werden geräteübergreifend dedupliziert – eine auf mehrere Geräte kopierte Anfrage wird einmal gezählt.",
+      "unverified": "Nicht deduplizierbar: {{count}} Anfragen im Tagesverlauf haben keine Anfrage-ID ({{devices}}). Wenn ein anderes Gerät dieselben Anfragen enthält, werden sie einmal pro Gerät gezählt.",
+      "unknownOverlap": "Nicht erkennbar: Ein Proxy-Eintrag auf einem Gerät und der Sitzungsprotokoll-Eintrag desselben Aufrufs auf einem anderen Gerät haben unterschiedliche IDs und werden beide gezählt.",
+      "calendar": "Der Tagesverlauf von {{devices}} ist mit dem Kalenderdatum des jeweiligen Geräts beschriftet, das um Mitternacht von Ihrem abweichen kann.",
+      "neverSynced": "Noch keine Daten von {{devices}} empfangen.",
+      "syncError": "Letzte Nutzungssynchronisierung fehlgeschlagen: {{error}}",
+      "estimate": "Kosten sind Schätzungen auf Basis der Modellpreise des jeweiligen Geräts, nicht der über ein Abonnement abgerechnete Betrag.",
+      "howTitle": "Wie die Summen für Alle Geräte zusammengeführt werden",
+      "howUnverified": "Tagesverlauf ohne Anfrage-IDs (von älteren Versionen zusammengefasst, älter als ein Jahr oder nur als Tagessummen geteilt) kann nicht dedupliziert werden und wird einmal pro Gerät gezählt, das ihn enthält.",
+      "howCalendar": "Der Tagesverlauf verwendet den Kalender des Geräts, das ihn erfasst hat; Anfrageeinträge verwenden Ihren eigenen Kalender."
+    }
+  },
   "omp": {
     "empty": {
       "title": "Noch keine Anbieter mit API-Schlüssel",

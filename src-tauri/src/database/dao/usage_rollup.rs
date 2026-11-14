@@ -8,6 +8,10 @@ use crate::services::sql_helpers::{fresh_input_sql, INPUT_TOKEN_SEMANTICS_FRESH}
 use crate::services::usage_stats::effective_usage_log_filter;
 use chrono::{Duration, Local, TimeZone};
 
+/// Rolled-up request identities are kept this long (see `usage_rollup_ledger`).
+/// Older rollup totals stay, but can no longer be de-duplicated across devices.
+pub(crate) const ROLLUP_LEDGER_RETENTION_DAYS: i64 = 365;
+
 /// Compute the rollup/prune cutoff aligned to a local-day boundary.
 ///
 /// Anything strictly older than the returned timestamp will be aggregated into
@@ -55,13 +59,74 @@ fn compute_local_midnight_cutoff(
     Ok(local_dt.timestamp())
 }
 
+/// Whether this database holds any cross-device usage state (a remote cache,
+/// inherited history or identity ledger), i.e. whether the materialized
+/// cross-device subtraction depends on local rollups at all.
+fn has_usage_sync_state(conn: &rusqlite::Connection) -> Result<bool, AppError> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM usage_rollup_ledger)
+             OR EXISTS(SELECT 1 FROM usage_sync_remote_partitions)
+             OR EXISTS(SELECT 1 FROM usage_sync_inherited)",
+        [],
+        |row| row.get(0),
+    )
+    .map_err(|e| AppError::Database(format!("Reading usage sync state failed: {e}")))
+}
+
 impl Database {
+    /// Whether rollups record per-request identities (the ledger used by
+    /// cross-device usage sync): only after usage sync was enabled on this
+    /// device, in automatic or manual mode.
+    pub(crate) fn usage_identity_ledger_enabled(&self) -> bool {
+        #[cfg(test)]
+        if let Some(enabled) = *self
+            .usage_sync_enabled_override
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+        {
+            return enabled;
+        }
+        crate::settings::get_usage_sync_settings().enabled
+    }
+
+    /// Test stand-in for enabling / disabling usage sync on this device.
+    #[cfg(test)]
+    pub(crate) fn set_usage_sync_enabled_for_test(&self, enabled: bool) {
+        *self
+            .usage_sync_enabled_override
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(enabled);
+    }
+
     /// Aggregate proxy_request_logs older than `retain_days` into usage_daily_rollups,
     /// then delete the aggregated detail rows.
     /// Returns the number of deleted detail rows.
     pub fn rollup_and_prune(&self, retain_days: i64) -> Result<u64, AppError> {
         let cutoff = compute_local_midnight_cutoff(Local::now(), retain_days)?;
+        // Read before taking the connection lock (settings have their own lock).
+        let sync_enabled = self.usage_identity_ledger_enabled();
         let conn = lock_conn!(self.conn);
+        // Identities are recorded once usage sync is enabled, and also while
+        // it is off on a database whose identity already published (see
+        // `identity_takes_part_in_sync`). Installations that never published
+        // record nothing. On a read error, record (the safe side).
+        let record_identities = sync_enabled
+            || crate::services::usage_sync::store::identity_takes_part_in_sync(&conn)
+                .unwrap_or(true);
+
+        // Identity-ledger retention runs on every call, also on an idle device
+        // with nothing to roll up, so the 365-day bound holds everywhere.
+        let expired = conn
+            .execute(
+                "DELETE FROM usage_rollup_ledger WHERE date < date('now', 'localtime', ?1)",
+                [format!("-{ROLLUP_LEDGER_RETENTION_DAYS} days")],
+            )
+            .map_err(|e| AppError::Database(format!("Rollup ledger retention failed: {e}")))?;
+        if expired > 0 {
+            if let Err(e) = crate::services::usage_sync::store::refresh_ledger_suppression(&conn) {
+                log::warn!("Refreshing cross-device ledger suppression failed: {e}");
+            }
+        }
 
         // Check if there are any rows to process
         let count: i64 = conn
@@ -89,7 +154,7 @@ impl Database {
         conn.execute("SAVEPOINT rollup_prune;", [])
             .map_err(|e| AppError::Database(e.to_string()))?;
 
-        let result = Self::do_rollup_and_prune(&conn, cutoff);
+        let result = Self::do_rollup_and_prune(&conn, cutoff, record_identities);
 
         match result {
             Ok(deleted) => {
@@ -99,6 +164,17 @@ impl Database {
                     log::info!(
                         "Rolled up and pruned {deleted} proxy_request_logs (retain={retain_days}d)"
                     );
+                    // Only databases that take part in usage sync need the
+                    // cross-device state re-derived; for everyone else it is empty.
+                    // The rollup is already committed here: on a read error, refresh.
+                    let refresh = record_identities || has_usage_sync_state(&conn).unwrap_or(true);
+                    if refresh {
+                        if let Err(e) =
+                            crate::services::usage_sync::store::refresh_ledger_suppression(&conn)
+                        {
+                            log::warn!("Refreshing cross-device ledger suppression failed: {e}");
+                        }
+                    }
                     // 归档触发了表结构变化，前端 30 天前的统计可能跟着变，
                     // 通知一次让 UsageDashboard 重拉数据
                     crate::usage_events::notify_log_recorded();
@@ -113,7 +189,11 @@ impl Database {
         }
     }
 
-    fn do_rollup_and_prune(conn: &rusqlite::Connection, cutoff: i64) -> Result<u64, AppError> {
+    fn do_rollup_and_prune(
+        conn: &rusqlite::Connection,
+        cutoff: i64,
+        record_identities: bool,
+    ) -> Result<u64, AppError> {
         // Aggregate old logs, merging with any pre-existing rollup rows via LEFT JOIN.
         let effective_filter = effective_usage_log_filter("l");
         let fresh_detail_input = fresh_input_sql("l");
@@ -170,6 +250,12 @@ impl Database {
         conn.execute(&aggregation_sql, [cutoff])
             .map_err(|e| AppError::Database(format!("Rollup aggregation failed: {e}")))?;
 
+        // Usage sync only: record identities before the detail rows go, in the
+        // same savepoint, so a failure here keeps the detail rows.
+        if record_identities {
+            Self::record_rollup_identities(conn, cutoff)?;
+        }
+
         // INSERT uses the effective-log filter to exclude duplicate session rows.
         // DELETE intentionally prunes all old details so those duplicates are discarded.
         let deleted = conn
@@ -180,6 +266,62 @@ impl Database {
             .map_err(|e| AppError::Database(format!("Pruning old logs failed: {e}")))?;
 
         Ok(deleted as u64)
+    }
+
+    /// Write the identity ledger for the rows about to be pruned (cross-device
+    /// usage sync). Runs inside the rollup savepoint, before the DELETE.
+    fn record_rollup_identities(conn: &rusqlite::Connection, cutoff: i64) -> Result<(), AppError> {
+        let effective_filter = effective_usage_log_filter("l");
+
+        // Keep the identity of every rolled-up row (what it added to which rollup
+        // group), so cross-device statistics can still de-duplicate it after its
+        // detail row is gone. Rows the effective filter drops are recorded as
+        // aliases: they are counted through another row of this device.
+        let fresh_ledger_input = fresh_input_sql("l");
+        // kind 1 (published alias) only for unambiguous 1:1 pairings; other
+        // heuristic duplicates are kind 2 (dropped here, never published).
+        let unambiguous = crate::services::usage_stats::unambiguous_alias_sql("l");
+        let ledger_sql = format!(
+            "INSERT OR IGNORE INTO usage_rollup_ledger (
+                request_id, data_source, kind, date, app_type, provider_id, model,
+                request_model, pricing_model, success, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens, total_cost_usd, rolled_up_at
+             )
+             SELECT request_id, data_source,
+                    CASE WHEN eff THEN 0 WHEN unambiguous THEN 1 ELSE 2 END,
+                    d, app_type, provider_id, model, rm, pm,
+                    CASE WHEN eff AND status_code >= 200 AND status_code < 300 THEN 1 ELSE 0 END,
+                    CASE WHEN eff THEN fresh_in ELSE 0 END,
+                    CASE WHEN eff THEN output_tokens ELSE 0 END,
+                    CASE WHEN eff THEN cache_read_tokens ELSE 0 END,
+                    CASE WHEN eff THEN cache_creation_tokens ELSE 0 END,
+                    CASE WHEN eff THEN cost ELSE '0' END,
+                    ?2
+             FROM (
+                SELECT l.request_id, COALESCE(l.data_source, 'proxy') AS data_source,
+                       ({effective_filter}) AS eff,
+                       ({unambiguous}) AS unambiguous,
+                       date(l.created_at, 'unixepoch', 'localtime') AS d,
+                       l.app_type, l.provider_id, l.model,
+                       COALESCE(l.request_model, '') AS rm, COALESCE(l.pricing_model, '') AS pm,
+                       l.status_code, {fresh_ledger_input} AS fresh_in, l.output_tokens,
+                       l.cache_read_tokens, l.cache_creation_tokens,
+                       CAST(COALESCE(CAST(l.total_cost_usd AS REAL), 0) AS TEXT) AS cost
+                FROM proxy_request_logs l
+                WHERE l.created_at < ?1
+             )"
+        );
+        conn.execute(
+            &ledger_sql,
+            rusqlite::params![cutoff, Local::now().timestamp()],
+        )
+        .map_err(|e| AppError::Database(format!("Rollup ledger failed: {e}")))?;
+        conn.execute(
+            "DELETE FROM usage_rollup_ledger WHERE date < date('now', 'localtime', ?1)",
+            [format!("-{ROLLUP_LEDGER_RETENTION_DAYS} days")],
+        )
+        .map_err(|e| AppError::Database(format!("Rollup ledger retention failed: {e}")))?;
+        Ok(())
     }
 }
 

@@ -5243,6 +5243,119 @@
       "secondaryModelInUse": "Kimi Code'un alt ajan modeli bu sağlayıcıdaki bir modeli kullanıyor. Önce Kimi Code'da /secondary-model komutuyla değiştirin."
     }
   },
+  "usageSync": {
+    "thisDevice": "Bu cihaz",
+    "allDevices": "Tüm cihazlar",
+    "device": "Cihaz",
+    "never": "hiç",
+    "syncNow": "Kullanımı şimdi eşitle",
+    "openSettings": "Ayarları aç",
+    "syncCompleted": "Kullanım eşitlendi · {{devices}} diğer cihaz",
+    "syncPartial": "Kullanım eşitleme sorunlarla tamamlandı: {{error}}",
+    "syncFailed": "Kullanım eşitleme başarısız: {{error}}",
+    "deviceFilter": {
+      "title": "Cihaz"
+    },
+    "status": {
+      "ok": "Güncel",
+      "stale": "Eski",
+      "error": "Hata",
+      "incompatible": "Daha yeni sürüm",
+      "missing": "Bulunamadı",
+      "hidden": "Gizli"
+    },
+    "devices": {
+      "button": "Cihazlar",
+      "title": "Cihazlar",
+      "description": "Cihazlar arası kullanım eşitlemesiyle paylaşılan kullanım",
+      "disabledTitle": "Kullanım eşitleme kapalı",
+      "disabledBody": "Bu cihazın kullanımını paylaşmak ve diğer cihazlarınızı görmek için Ayarlar → Veri bölümünden kullanım eşitlemeyi açın.",
+      "lastUpload": "Son yükleme {{time}}",
+      "notSharing": "Kullanım paylaşılmıyor",
+      "empty": "Henüz kullanım paylaşan başka cihaz yok.",
+      "listLabel": "Eşitlenen cihazlar",
+      "coverage": "Geçmiş {{from}} → {{to}}",
+      "dailyOnly": "yalnızca günlük toplamlar",
+      "detailFrom": "{{date}} tarihinden beri istek ayrıntıları",
+      "show": "İstatistiklerde göster",
+      "hide": "İstatistiklerden gizle",
+      "costNote": "Maliyetler, her cihazın kendi model fiyatlarıyla hesapladığı tahminlerdir; bir abonelikle gerçekte faturalanan tutar değildir.",
+      "unverified": "İstek kimliği olmayan günlük geçmiş: {{count}} istek",
+      "unverifiedRange": "İstek kimliği olmayan günlük geçmiş: {{count}} istek ({{from}} → {{to}})",
+      "calendar": "Günlük toplamlar bu cihazın takvimini kullanır ({{offset}})",
+      "splitFrom": "{{device}} cihazından ayrıldı (kopyalanmış kurulum)"
+    },
+    "conflict": {
+      "title": "Cihaz kimliği çakışması",
+      "body": "Başka bir CC Switch kurulumu bu cihazın kimliğiyle yükleme yapıyor (CC Switch veri klasörü muhtemelen kopyalandı veya bu bilgisayar bir yedekten geri yüklendi). Yükleme duraklatıldı; diğer cihazların kullanımı indirilmeye devam ediyor.",
+      "newIdentity": "Yeni kimlik kullan",
+      "takeOver": "Devral",
+      "takeOverTitle": "Bu kimlik devralınsın mı?",
+      "takeOverMessage": "Bunu yalnızca diğer kurulum artık çalışmıyorsa yapın (örneğin bu bilgisayarı bir yedekten geri yükledikten sonra). İkisi de çalışmaya devam ederse birbirlerinin kullanımının üzerine yazarlar.",
+      "resolved": "Cihaz kimliği güncellendi",
+      "newIdentityEffect": "Yeni kimlik kullan — çalışmaya devam eden ikinci bir bilgisayar için: bu kurulum yeni bir kimlikle devam eder. Diğer kurulumdan kopyalanan geçmiş bir kez sayılır (kimliği olan istekler eşleştirilir; eski günlük toplamlar diğer kurulum var olduğu sürece onda kalır ve onu gizlerseniz buna geçer). Bundan sonraki istekler bu kurulum için sayılır.",
+      "takeOverEffect": "Devral — yalnızca diğer kurulum artık çalışmıyorsa (örneğin bu bilgisayar bir yedekten geri yüklendiyse): bu kurulum mevcut kimliği sürdürür ve verilerini yeniden yayımlar. İkisi de çalışmaya devam ederse birbirlerinin üzerine yazarlar.",
+      "resolveInSettings": "Nasıl çözüleceğini Ayarlar → Veri → Cihazlar arası kullanım eşitleme bölümünden seçin."
+    },
+    "insecure": {
+      "title": "Şifrelenmemiş bağlantı",
+      "body": "Depolama adresi düz HTTP kullanıyor. Kimlik bilgileri ve kullanım verileri şifrelenmeden gönderilir; güvenilir bir yerel ağ değilse HTTPS kullanın."
+    },
+    "notice": {
+      "dailyOnly": "{{devices}} yalnızca günlük toplamları paylaşıyor: tamamlanmamış günler sayılmaz ve istekleri listelenmez.",
+      "outdated": "{{devices}} verileri eski veya eksik olabilir."
+    },
+    "detail": {
+      "remoteTitle": "Başka bir cihazda kaydedildi",
+      "remoteBody": "Bu istek {{device}} cihazında kaydedildi. Hata mesajları ve oturum ayrıntıları cihazlar arasında paylaşılmaz."
+    },
+    "settings": {
+      "title": "Cihazlar arası kullanım eşitleme",
+      "help": "Kullanım istatistiklerini yukarıda yapılandırılan WebDAV veya S3 depolaması üzerinden cihazlarınız arasında paylaşın. Kullanım, yapılandırma anlık görüntüsünden ayrı saklanır ve onun üzerine asla yazmaz.",
+      "intro": "Her cihaz kendi kullanımını yukarıdaki bulut depolamaya yükler ve diğer cihazlarınızın kullanımını indirir; böylece Kullanım sayfası tüm cihazları veya tek bir cihazı gösterebilir.",
+      "privacyShared": "Paylaşılanlar: zaman, uygulama, sağlayıcı adı, model, token sayıları, tahmini maliyet, durum kodu ve istek başına modunda süreler ile istek kimlikleri — birden çok cihazdaki kopyalar bir kez sayılsın diye bir yıla kadar toplanmış geçmişin kimlikleri dahil.",
+      "privacyNotShared": "Asla paylaşılmayanlar: API anahtarları, tokenlar, istemler ve yanıtlar, oturum dosyaları, hata mesajları, dosya yolları veya CC Switch veritabanı.",
+      "privacyCost": "Maliyetler, her cihazın model fiyatlarına dayalı tahminlerdir.",
+      "noBackendTitle": "Bulut depolama yapılandırılmadı",
+      "noBackendBody": "Önce yukarıdaki Bulut eşitleme bölümünde WebDAV veya S3'ü yapılandırın; kullanım eşitleme bu bağlantıyı yeniden kullanır.",
+      "enable": "Kullanımı cihazlar arasında eşitle",
+      "enableHint": "Varsayılan olarak kapalı",
+      "chooseBackendFirst": "Önce kullanım verilerini hangi depolamanın taşıyacağını seçin.",
+      "backend": "Kullanım için depolama",
+      "backendHint": "Cihazlar farklı yerlere yazmasın diye birini seçin",
+      "chooseBackend": "Depolama seç",
+      "notConfigured": "yapılandırılmadı",
+      "detailLevel": "Paylaşılan ayrıntı",
+      "detailLevelHint": "Günlük toplamlar daha az paylaşır ancak cihazlar arasındaki yinelenenleri kaldıramaz",
+      "detailRecords": "İstek başına (önerilen)",
+      "detailDaily": "Yalnızca günlük toplamlar",
+      "autoSync": "Otomatik eşitle",
+      "autoSyncHint": "Arka planda yükle ve indir",
+      "interval": "Eşitleme aralığı",
+      "everyMinutes": "Her {{count}} dk",
+      "deviceName": "Cihaz adı",
+      "deviceNameHint": "Diğer cihazlarınızda gösterilir",
+      "location": "Uzak konum: {{location}}",
+      "lastSync": "Son eşitleme {{time}}",
+      "neverSynced": "Henüz eşitlenmedi",
+      "saveFailed": "Kullanım eşitleme ayarları kaydedilemedi: {{error}}",
+      "saveName": "Adı kaydet"
+    },
+    "accuracy": {
+      "summary": "Bu toplamlar nasıl birleştirilir",
+      "summaryWithIssues": "Bu toplamlar nasıl birleştirilir · {{count}} sınırlama",
+      "exact": "Kesin: istek kayıtları ve istek kimliklerini koruyan geçmiş cihazlar arasında tekilleştirilir — birden çok cihaza kopyalanan bir istek bir kez sayılır.",
+      "unverified": "Tekilleştirilemez: günlük geçmişteki {{count}} isteğin istek kimliği yok ({{devices}}). Başka bir cihazda aynı istekler varsa her cihaz için bir kez sayılırlar.",
+      "unknownOverlap": "Tespit edilemez: bir cihazdaki proxy kaydı ile başka bir cihazdaki aynı çağrının oturum günlüğü kaydı farklı kimliklere sahiptir ve ikisi de sayılır.",
+      "calendar": "{{devices}} günlük geçmişi, o cihazın kendi takvim tarihiyle etiketlenir; bu tarih gece yarısına yakın sizinkinden farklı olabilir.",
+      "neverSynced": "{{devices}} cihazından henüz veri alınmadı.",
+      "syncError": "Son kullanım eşitleme başarısız: {{error}}",
+      "estimate": "Maliyetler her cihazın model fiyatlarından yapılan tahminlerdir, bir abonelikle faturalanan tutar değildir.",
+      "howTitle": "Tüm cihazlar toplamları nasıl birleştirilir",
+      "howUnverified": "İstek kimliği olmayan günlük geçmiş (eski sürümlerce toplanmış, bir yıldan eski veya yalnızca günlük toplam olarak paylaşılmış) tekilleştirilemez ve onu barındıran her cihaz için bir kez sayılır.",
+      "howCalendar": "Günlük geçmiş onu kaydeden cihazın takvimini kullanır; istek kayıtları sizin takviminizi kullanır."
+    }
+  },
   "omp": {
     "empty": {
       "title": "Henüz API anahtarı sağlayıcısı yok",

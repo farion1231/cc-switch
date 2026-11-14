@@ -5309,6 +5309,119 @@
       "secondaryModelInUse": "Kimi Code의 서브에이전트가 이 공급자의 모델을 사용 중입니다. 먼저 Kimi Code에서 /secondary-model로 변경하세요."
     }
   },
+  "usageSync": {
+    "thisDevice": "이 기기",
+    "allDevices": "모든 기기",
+    "device": "기기",
+    "never": "없음",
+    "syncNow": "지금 사용량 동기화",
+    "openSettings": "설정 열기",
+    "syncCompleted": "사용량 동기화됨 · 다른 기기 {{devices}}대",
+    "syncPartial": "사용량 동기화가 문제와 함께 완료됨: {{error}}",
+    "syncFailed": "사용량 동기화 실패: {{error}}",
+    "deviceFilter": {
+      "title": "기기"
+    },
+    "status": {
+      "ok": "최신",
+      "stale": "오래됨",
+      "error": "오류",
+      "incompatible": "더 새 버전",
+      "missing": "찾을 수 없음",
+      "hidden": "숨김"
+    },
+    "devices": {
+      "button": "기기",
+      "title": "기기",
+      "description": "기기 간 사용량 동기화로 공유된 사용량",
+      "disabledTitle": "사용량 동기화가 꺼져 있음",
+      "disabledBody": "설정 → 데이터에서 사용량 동기화를 켜면 이 기기의 사용량을 공유하고 다른 기기를 볼 수 있습니다.",
+      "lastUpload": "마지막 업로드 {{time}}",
+      "notSharing": "사용량을 공유하지 않음",
+      "empty": "아직 사용량을 공유한 다른 기기가 없습니다.",
+      "listLabel": "동기화된 기기",
+      "coverage": "기록 {{from}} → {{to}}",
+      "dailyOnly": "일별 합계만",
+      "detailFrom": "{{date}}부터 요청 상세",
+      "show": "통계에 표시",
+      "hide": "통계에서 숨기기",
+      "costNote": "비용은 각 기기가 자체 모델 가격으로 계산한 추정치이며, 구독으로 실제 청구된 금액이 아닙니다.",
+      "unverified": "요청 ID가 없는 일별 기록: 요청 {{count}}건",
+      "unverifiedRange": "요청 ID가 없는 일별 기록: 요청 {{count}}건 ({{from}} → {{to}})",
+      "calendar": "일별 합계는 이 기기의 달력을 사용합니다 ({{offset}})",
+      "splitFrom": "{{device}}에서 분리됨 (복사된 설치)"
+    },
+    "conflict": {
+      "title": "기기 ID 충돌",
+      "body": "다른 CC Switch 설치가 이 기기의 ID로 업로드하고 있습니다 (CC Switch 데이터 폴더가 복사되었거나 이 컴퓨터가 백업에서 복원되었을 수 있습니다). 업로드는 일시 중지되었으며, 다른 기기의 사용량은 계속 다운로드됩니다.",
+      "newIdentity": "새 ID 사용",
+      "takeOver": "인계",
+      "takeOverTitle": "이 ID를 인계할까요?",
+      "takeOverMessage": "다른 설치가 더 이상 실행되지 않을 때만 수행하세요 (예: 이 컴퓨터를 백업에서 복원한 후). 둘 다 계속 실행되면 서로의 사용량을 덮어씁니다.",
+      "resolved": "기기 ID가 업데이트됨",
+      "newIdentityEffect": "새 ID 사용 — 계속 실행되는 두 번째 컴퓨터용: 이 설치는 새 ID로 계속됩니다. 다른 설치에서 복사된 기록은 한 번만 집계됩니다 (ID가 있는 요청은 대조되며, 이전 일별 합계는 다른 설치가 있는 동안 그쪽에 남고 그 설치를 숨기면 이쪽으로 옮겨집니다). 지금부터의 요청은 이 설치에 집계됩니다.",
+      "takeOverEffect": "인계 — 다른 설치가 더 이상 실행되지 않을 때만 (예: 이 컴퓨터를 백업에서 복원한 경우): 이 설치가 기존 ID를 이어받아 데이터를 다시 게시합니다. 둘 다 계속 실행되면 서로 덮어씁니다.",
+      "resolveInSettings": "설정 → 데이터 → 기기 간 사용량 동기화에서 해결 방법을 선택하세요."
+    },
+    "insecure": {
+      "title": "암호화되지 않은 연결",
+      "body": "스토리지 주소가 일반 HTTP를 사용합니다. 자격 증명과 사용량 데이터가 암호화되지 않고 전송됩니다. 신뢰할 수 있는 로컬 네트워크가 아니라면 HTTPS를 사용하세요."
+    },
+    "notice": {
+      "dailyOnly": "{{devices}}은(는) 일별 합계만 공유합니다: 진행 중인 날은 집계되지 않으며 요청도 나열되지 않습니다.",
+      "outdated": "{{devices}}의 데이터가 오래되었거나 불완전할 수 있습니다."
+    },
+    "detail": {
+      "remoteTitle": "다른 기기에서 기록됨",
+      "remoteBody": "이 요청은 {{device}}에서 기록되었습니다. 오류 메시지와 세션 상세는 기기 간에 공유되지 않습니다."
+    },
+    "settings": {
+      "title": "기기 간 사용량 동기화",
+      "help": "위에서 구성한 WebDAV 또는 S3 스토리지를 통해 기기 간에 사용량 통계를 공유합니다. 사용량은 구성 스냅샷과 별도로 저장되며 이를 덮어쓰지 않습니다.",
+      "intro": "각 기기는 자신의 사용량을 위 클라우드 스토리지에 업로드하고 다른 기기의 사용량을 다운로드하므로, 사용량 페이지에서 모든 기기 또는 한 기기를 볼 수 있습니다.",
+      "privacyShared": "공유됨: 시간, 앱, 공급자 이름, 모델, 토큰 수, 예상 비용, 상태 코드, 그리고 요청별 모드에서는 소요 시간과 요청 ID — 여러 기기에 있는 사본을 한 번만 집계하도록 최대 1년간 롤업된 기록의 ID도 포함됩니다.",
+      "privacyNotShared": "공유되지 않음: API 키, 토큰, 프롬프트와 응답, 세션 파일, 오류 메시지, 파일 경로, CC Switch 데이터베이스.",
+      "privacyCost": "비용은 각 기기의 모델 가격에 기반한 추정치입니다.",
+      "noBackendTitle": "구성된 클라우드 스토리지가 없음",
+      "noBackendBody": "먼저 위의 클라우드 동기화에서 WebDAV 또는 S3를 구성하세요. 사용량 동기화는 그 연결을 재사용합니다.",
+      "enable": "기기 간 사용량 동기화",
+      "enableHint": "기본값은 꺼짐",
+      "chooseBackendFirst": "먼저 사용량 데이터를 저장할 스토리지를 선택하세요.",
+      "backend": "사용량 저장소",
+      "backendHint": "기기들이 서로 다른 위치에 저장하지 않도록 하나를 선택하세요",
+      "chooseBackend": "스토리지 선택",
+      "notConfigured": "구성되지 않음",
+      "detailLevel": "공유 상세 수준",
+      "detailLevelHint": "일별 합계는 공유하는 정보가 적지만 기기 간 중복을 제거할 수 없습니다",
+      "detailRecords": "요청별 (권장)",
+      "detailDaily": "일별 합계만",
+      "autoSync": "자동 동기화",
+      "autoSyncHint": "백그라운드에서 업로드 및 다운로드",
+      "interval": "동기화 간격",
+      "everyMinutes": "{{count}}분마다",
+      "deviceName": "기기 이름",
+      "deviceNameHint": "다른 기기에 표시됩니다",
+      "location": "원격 위치: {{location}}",
+      "lastSync": "마지막 동기화 {{time}}",
+      "neverSynced": "아직 동기화되지 않음",
+      "saveFailed": "사용량 동기화 설정을 저장하지 못했습니다: {{error}}",
+      "saveName": "이름 저장"
+    },
+    "accuracy": {
+      "summary": "이 합계가 합쳐지는 방식",
+      "summaryWithIssues": "이 합계가 합쳐지는 방식 · 제한 사항 {{count}}개",
+      "exact": "정확: 요청 기록과 요청 ID가 남아 있는 기록은 기기 간에 중복 제거됩니다 — 여러 기기에 복사된 요청은 한 번만 집계됩니다.",
+      "unverified": "중복 제거 불가: 일별 기록 중 요청 {{count}}건에 요청 ID가 없습니다 ({{devices}}). 다른 기기에 같은 요청이 있으면 기기마다 한 번씩 집계됩니다.",
+      "unknownOverlap": "감지 불가: 한 기기의 프록시 기록과 다른 기기에 있는 같은 호출의 세션 로그 기록은 ID가 달라 둘 다 집계됩니다.",
+      "calendar": "{{devices}}의 일별 기록은 해당 기기 자체 달력 날짜로 표시되며, 자정 무렵에는 사용자의 날짜와 다를 수 있습니다.",
+      "neverSynced": "{{devices}}에서 아직 받은 데이터가 없습니다.",
+      "syncError": "마지막 사용량 동기화 실패: {{error}}",
+      "estimate": "비용은 각 기기의 모델 가격에 따른 추정치이며, 구독으로 청구된 금액이 아닙니다.",
+      "howTitle": "모든 기기 합계가 합쳐지는 방식",
+      "howUnverified": "요청 ID가 없는 일별 기록 (이전 버전에서 롤업되었거나, 1년보다 오래되었거나, 일별 합계로만 공유된 경우)은 중복 제거할 수 없으며 이를 보유한 기기마다 한 번씩 집계됩니다.",
+      "howCalendar": "일별 기록은 기록한 기기의 달력을 사용하고, 요청 기록은 사용자의 달력을 사용합니다."
+    }
+  },
   "omp": {
     "empty": {
       "title": "아직 API 키 공급자가 없습니다.",
