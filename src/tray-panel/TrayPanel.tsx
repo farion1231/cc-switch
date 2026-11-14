@@ -303,7 +303,7 @@ function AppRow({
           )}
         </span>
         <span className="block truncate text-xs text-muted-foreground">
-          {app.addId ? (
+          {app.addId || app.openId ? (
             app.addText
           ) : (
             <>
@@ -676,7 +676,7 @@ export function TrayPanel() {
   const apps = state?.apps ?? [];
   const openEntry =
     tab === "config"
-      ? apps.find((app) => app.app === openApp && !app.addId)
+      ? apps.find((app) => app.app === openApp && !app.addId && !app.openId)
       : undefined;
 
   /**
@@ -817,7 +817,7 @@ export function TrayPanel() {
 
   const openSub = useCallback((app: PanelApp | null) => {
     window.clearTimeout(hoverTimer.current);
-    const next = app && !app.addId ? app.app : null;
+    const next = app && !app.addId && !app.openId ? app.app : null;
     const previous = openAppRef.current;
     setSwapped(previous !== null && next !== null && previous !== next);
     setOpenApp(next);
@@ -942,7 +942,7 @@ export function TrayPanel() {
       const back = forward === "ArrowLeft" ? "ArrowRight" : "ArrowLeft";
       if (event.key === forward && target?.dataset.appRow) {
         const app = apps.find((entry) => entry.app === target.dataset.appRow);
-        if (app && !app.addId) {
+        if (app && !app.addId && !app.openId) {
           event.preventDefault();
           openSub(app);
           window.setTimeout(() => {
@@ -1109,8 +1109,8 @@ export function TrayPanel() {
                   onHover={() => hoverApp(app)}
                   onLeave={leaveApp}
                   onOpen={() =>
-                    app.addId
-                      ? action(app.addId)
+                    app.openId || app.addId
+                      ? action((app.openId || app.addId)!)
                       : openSub(openApp === app.app ? null : app)
                   }
                 />
