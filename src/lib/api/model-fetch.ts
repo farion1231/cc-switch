@@ -11,6 +11,14 @@ const GENESIS_CHAT_MODELS_URL = `${GENESIS_ORIGIN}/v1/models?type=chat`;
 export interface FetchedModel {
   id: string;
   ownedBy: string | null;
+  maxInputTokens?: number | null;
+  maxOutputTokens?: number | null;
+  pricing?: {
+    prompt?: string | null;
+    completion?: string | null;
+    inputCacheRead?: string | null;
+    inputCacheWrite?: string | null;
+  } | null;
 }
 
 export interface ModelFetchOptions {
