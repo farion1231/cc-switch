@@ -5086,6 +5086,13 @@
       "removeAria": "Repository {{repo}} entfernen",
       "readFailed": "Lesen fehlgeschlagen"
     },
+    "pluginSkills": {
+      "title": "Von Claude-Code-Plugins bereitgestellt",
+      "lead": "Diese Skills werden über das Plugin-System von Claude Code installiert und von Claude Code verwaltet. CC Switch listet sie nur auf.",
+      "helpTitle": "Warum sich diese nicht importieren lassen",
+      "help": "Eine Kopie hier würde in Claude Code doppelt geladen. Verwenden Sie /plugin in Claude Code, um sie zu aktivieren oder zu entfernen.",
+      "noImportable": "Keine importierbaren Skills gefunden. Skills aus Claude-Code-Plugins ({{count}}) werden von Claude Code verwaltet."
+    },
     "import": {
       "title": "Skills von diesem Computer importieren",
       "helpTitle": "Was als bereits auf diesem Computer vorhanden gilt",

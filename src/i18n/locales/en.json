@@ -5086,6 +5086,13 @@
       "removeAria": "Remove repository {{repo}}",
       "readFailed": "Read failed"
     },
+    "pluginSkills": {
+      "title": "Provided by Claude Code plugins",
+      "lead": "These skills are installed through Claude Code's plugin system and managed by Claude Code. CC Switch only lists them.",
+      "helpTitle": "Why these can't be imported",
+      "help": "A copy here would load twice in Claude Code. Use /plugin in Claude Code to enable or remove them.",
+      "noImportable": "No skills to import found. Skills from Claude Code plugins ({{count}}) are managed by Claude Code."
+    },
     "import": {
       "title": "Import Skills from this computer",
       "helpTitle": "What counts as already on this computer",
