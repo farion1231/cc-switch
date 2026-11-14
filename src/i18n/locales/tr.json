@@ -1161,8 +1161,7 @@
       "routing": "Yerel yönlendirme",
       "network": "Ağ",
       "data": "Veri",
-      "about": "Hakkında",
-      "tools": "Araçlar"
+      "about": "Hakkında"
     },
     "appConfig": {
       "configDir": "Yapılandırma dizini"

@@ -1161,8 +1161,7 @@
       "routing": "ローカルルーティング",
       "network": "ネットワーク",
       "data": "データ",
-      "about": "情報",
-      "tools": "ツール"
+      "about": "情報"
     },
     "appConfig": {
       "configDir": "設定ディレクトリ"

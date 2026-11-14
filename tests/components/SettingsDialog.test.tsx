@@ -220,18 +220,16 @@ describe("SettingsPage", () => {
     expect(screen.getByText("global-proxy-settings")).toBeInTheDocument();
   });
 
-  it("places IP diagnostics under Tools", () => {
-    renderSettingsPage({ section: "tools" });
+  it("places IP diagnostics under Network, after the global proxy", () => {
+    renderSettingsPage({ section: "network" });
+    const proxy = screen.getByText("global-proxy-settings");
+    const diagnostics = screen.getByRole("heading", {
+      name: "settings.ipDiagnostics.title",
+    });
     expect(
-      screen.getByRole("heading", {
-        level: 1,
-        name: "settings.sections.tools",
-      }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "settings.ipDiagnostics.title" }),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("global-proxy-settings")).not.toBeInTheDocument();
+      proxy.compareDocumentPosition(diagnostics) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("saves general switches immediately and links to the Apps page", async () => {

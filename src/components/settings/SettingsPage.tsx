@@ -16,7 +16,6 @@ import {
   Loader2,
   Route,
   SlidersHorizontal,
-  Wrench,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { useTranslation } from "react-i18next";
@@ -63,7 +62,6 @@ const SECTION_ICON: Record<
   appConfig: Folder,
   routing: Route,
   network: Globe,
-  tools: Wrench,
   data: Database,
   about: Info,
 };
@@ -80,7 +78,7 @@ interface SettingsPageProps {
 }
 
 /**
- * Settings (v7): render the selected preferences or utility group.
+ * 设置（v7）：侧栏换成设置目录，这里只渲染当前分组。设置里只放偏好，功能页都在侧栏。
  * 开关类即时保存；路径类改完点本节的「保存」。
  */
 export function SettingsPage({
@@ -397,20 +395,21 @@ export function SettingsPage({
         return <RoutingSection onOpenApp={onOpenApp} />;
       case "network":
         return (
-          <SettingsBlock
-            title={t("settings.advanced.globalProxy.title")}
-            help={{
-              title: t("settings.advanced.globalProxy.title"),
-              body: t("settings.advanced.globalProxy.description"),
-            }}
-          >
-            <div className="rounded-panel border border-border bg-surface p-5">
-              <GlobalProxySettings />
-            </div>
-          </SettingsBlock>
+          <>
+            <SettingsBlock
+              title={t("settings.advanced.globalProxy.title")}
+              help={{
+                title: t("settings.advanced.globalProxy.title"),
+                body: t("settings.advanced.globalProxy.description"),
+              }}
+            >
+              <div className="rounded-panel border border-border bg-surface p-5">
+                <GlobalProxySettings />
+              </div>
+            </SettingsBlock>
+            <IpDiagnostics />
+          </>
         );
-      case "tools":
-        return <IpDiagnostics />;
       case "data":
         return (
           <>

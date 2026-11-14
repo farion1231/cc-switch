@@ -1161,8 +1161,7 @@
       "routing": "本地路由",
       "network": "网络",
       "data": "数据",
-      "about": "关于",
-      "tools": "小工具"
+      "about": "关于"
     },
     "appConfig": {
       "configDir": "配置目录"

@@ -9,7 +9,6 @@ import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { IpDiagnostics } from "@/components/settings/IpDiagnostics";
 import type { IpReport } from "@/lib/api/globalProxy";
-import { SETTINGS_SECTIONS, normalizeSettingsSection } from "@/lib/navigation";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -73,11 +72,6 @@ describe("IP diagnostics", () => {
     mocks.proxy.data = "http://user:secret@proxy.example:8080";
     mocks.proxy.isLoading = false;
     mocks.proxy.isError = false;
-  });
-
-  it("supports the tools settings route", () => {
-    expect(SETTINGS_SECTIONS).toContain("tools");
-    expect(normalizeSettingsSection("tools")).toBe("tools");
   });
 
   it("runs only on demand and displays observations without proxy credentials", async () => {

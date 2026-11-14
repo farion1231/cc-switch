@@ -1161,8 +1161,7 @@
       "routing": "로컬 라우팅",
       "network": "네트워크",
       "data": "데이터",
-      "about": "정보",
-      "tools": "도구"
+      "about": "정보"
     },
     "appConfig": {
       "configDir": "설정 디렉터리"

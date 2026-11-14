@@ -1161,8 +1161,7 @@
       "routing": "Local routing",
       "network": "Network",
       "data": "Data",
-      "about": "About",
-      "tools": "Tools"
+      "about": "About"
     },
     "appConfig": {
       "configDir": "Config directory"
