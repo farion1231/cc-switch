@@ -10,6 +10,16 @@ import {
 } from "@/lib/query/proxy";
 import type { CodexStaleClients } from "@/types/proxy";
 
+const DISMISSED_STORAGE_KEY = "cc-switch:codex-stale-clients-notice-dismissed";
+
+function readDismissedPreference() {
+  try {
+    return window.localStorage.getItem(DISMISSED_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
 interface CodexStaleClientsNoticeProps {
   staleClients: CodexStaleClients;
   onDismiss?: () => void;
@@ -27,12 +37,24 @@ export function CodexStaleClientsNotice({
 }: CodexStaleClientsNoticeProps) {
   const { t } = useTranslation();
   const [confirming, setConfirming] = useState(false);
+  const [dismissed, setDismissed] = useState(readDismissedPreference);
+  const [dontShowAgain, setDontShowAgain] = useState(false);
   const restart = useRestartCodexAppServerDaemon();
   const acknowledge = useAcknowledgeCodexStaleClients();
   const dismiss = () => {
+    if (dontShowAgain) {
+      try {
+        window.localStorage.setItem(DISMISSED_STORAGE_KEY, "true");
+      } catch {
+        // 存储不可用时仍关闭本次提醒，不影响账号或模型切换。
+      }
+      setDismissed(true);
+    }
     if (staleClients.unverified) acknowledge.mutate();
     onDismiss?.();
   };
+
+  if (dismissed) return null;
 
   return (
     <>
@@ -45,7 +67,7 @@ export function CodexStaleClientsNotice({
               ? "proxy.stackMode.codexStale.authTitle"
               : "proxy.stackMode.codexStale.title",
         )}
-        onDismiss={onDismiss || staleClients.unverified ? dismiss : undefined}
+        onDismiss={dismiss}
         dismissLabel={t("common.close")}
         actions={
           staleClients.daemon ? (
@@ -78,6 +100,14 @@ export function CodexStaleClientsNotice({
             {t("proxy.stackMode.codexStale.unverifiedHint")}
           </span>
         )}
+        <label className="mt-2 flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={dontShowAgain}
+            onChange={(event) => setDontShowAgain(event.target.checked)}
+          />
+          {t("proxy.stackMode.codexStale.dontShowAgain")}
+        </label>
       </Notice>
       <ConfirmDialog
         isOpen={confirming}
