@@ -13,7 +13,7 @@ use crate::{
 };
 use rusqlite::{params, OptionalExtension};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 mod native_models;
@@ -129,15 +129,18 @@ fn model_id_of(display: &str) -> String {
         .join("-")
 }
 
-/// These are multi-model modes, not evidence of the model used for an individual response.
+/// Multi-model modes, not evidence of the model used for an individual response.
+/// Display name and native alias of the same mode map to the same planner.
+fn orchestrator_mode(model: &str) -> Option<&'static str> {
+    match model_id_of(model).as_str() {
+        "orchestrator-carbon" | "gemini-pro-orchestrator" => Some("carbon"),
+        "orchestrator-argon" | "gemini-pro-orchestrator-argon" => Some("argon"),
+        _ => None,
+    }
+}
+
 fn is_orchestrator(model: &str) -> bool {
-    matches!(
-        model_id_of(model).as_str(),
-        "orchestrator-carbon"
-            | "orchestrator-argon"
-            | "gemini-pro-orchestrator"
-            | "gemini-pro-orchestrator-argon"
-    )
+    orchestrator_mode(model).is_some()
 }
 
 /// 五个金额（输入、输出、缓存读、缓存写、合计）；查不到价格的记 0。
@@ -224,7 +227,7 @@ fn import_records_with_cursor(
     let mut native_model_by_step = HashMap::new();
     let mut native_ok = true;
     if let Some(transcript) = transcript {
-        let settled = steps_with_timing(db, session, &ordered)?;
+        let (settled, pruned) = steps_with_timing(db, session, &ordered)?;
         let wanted: Vec<u64> = ordered
             .iter()
             .filter(|row| row["type"] == "PLANNER_RESPONSE" && row["status"] == "DONE")
@@ -232,7 +235,8 @@ fn import_records_with_cursor(
                 let step = row["step_index"].as_u64()?;
                 let selected =
                     known_model(row).or_else(|| model_by_step.get(&step).map(String::as_str));
-                let needs_model = selected.is_none_or(is_orchestrator);
+                // Pruned steps can never be updated again, so their model is moot.
+                let needs_model = selected.is_none_or(is_orchestrator) && !pruned.contains(&step);
                 (needs_model || !settled.contains(&step)).then_some(step)
             })
             .collect();
@@ -312,7 +316,7 @@ fn import_records_with_cursor(
                 .filter(|(old_model, old_display)| {
                     model == "unknown"
                         || (!is_orchestrator(old_model)
-                            && model_id_of(old_display) == model_id_of(&display))
+                            && orchestrator_mode(old_display) == orchestrator_mode(&display))
                 })
                 .unwrap_or((model, display))
         } else {
@@ -371,30 +375,43 @@ fn import_records_with_cursor(
 
 /// Steps that need nothing more from the native database for timing: imported with a
 /// timing already, or imported and since pruned (the tombstone forbids re-importing them).
-/// Keeps steady-state syncs from reopening every conversation database.
+/// Also returns the pruned subset on its own. Keeps steady-state syncs from reopening
+/// every conversation database.
 fn steps_with_timing(
     db: &Database,
     session: &str,
     rows: &[&Value],
-) -> Result<std::collections::HashSet<u64>, AppError> {
+) -> Result<(HashSet<u64>, HashSet<u64>), AppError> {
     let conn = lock_conn!(db.conn);
     let mut query = conn.prepare(
         "SELECT EXISTS(SELECT 1 FROM session_usage_dedup
-                       WHERE data_source='agy_session' AND request_id=?1)
-            AND NOT EXISTS(SELECT 1 FROM proxy_request_logs
-                           WHERE request_id=?1 AND latency_ms<=0)",
+                       WHERE data_source='agy_session' AND request_id=?1),
+                EXISTS(SELECT 1 FROM proxy_request_logs WHERE request_id=?1),
+                EXISTS(SELECT 1 FROM proxy_request_logs
+                       WHERE request_id=?1 AND latency_ms<=0)",
     )?;
-    let mut settled = std::collections::HashSet::new();
+    let (mut settled, mut pruned) = (HashSet::new(), HashSet::new());
     for step in rows
         .iter()
         .filter(|row| row["type"] == "PLANNER_RESPONSE" && row["status"] == "DONE")
         .filter_map(|row| row["step_index"].as_u64())
     {
-        if query.query_row([format!("agy:{session}:{step}")], |r| r.get::<_, bool>(0))? {
+        let (imported, detail, untimed) =
+            query.query_row([format!("agy:{session}:{step}")], |r| {
+                Ok((
+                    r.get::<_, bool>(0)?,
+                    r.get::<_, bool>(1)?,
+                    r.get::<_, bool>(2)?,
+                ))
+            })?;
+        if imported && !untimed {
             settled.insert(step);
         }
+        if imported && !detail {
+            pruned.insert(step);
+        }
     }
-    Ok(settled)
+    Ok((settled, pruned))
 }
 
 fn known_model(row: &Value) -> Option<&str> {

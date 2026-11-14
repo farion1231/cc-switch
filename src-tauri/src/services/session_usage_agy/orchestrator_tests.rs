@@ -52,6 +52,9 @@ fn assert_price(db: &Database, step: u64, model: &str, request: &str, cost: &str
 
 #[test]
 fn orchestrator_splits_native_generations_and_preserves_request_mode() {
+    if crate::config::sqlite_unsupported_in_temp_dir() {
+        return;
+    }
     for (mode, planner, expected) in [
         (
             "Orchestrator (Carbon)",
@@ -109,6 +112,9 @@ fn orchestrator_splits_native_generations_and_preserves_request_mode() {
 
 #[test]
 fn orchestrator_requires_native_evidence_and_keeps_recovered_models_on_read_failure() {
+    if crate::config::sqlite_unsupported_in_temp_dir() {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("conversations")).unwrap();
     let source = dir
@@ -134,6 +140,8 @@ fn orchestrator_requires_native_evidence_and_keeps_recovered_models_on_read_fail
 
     native.execute_batch("DROP TABLE gen_metadata").unwrap();
     rows[1]["input_tokens"] = json!(2_000_000);
+    // Same Carbon mode, now spelled as the native alias: the recovered model must survive.
+    rows[2]["model"] = json!("gemini-pro-orchestrator");
     assert_eq!(
         import_records(&db, "session", &rows, Some(&source)).unwrap(),
         (1, 1)
@@ -160,6 +168,9 @@ fn orchestrator_requires_native_evidence_and_keeps_recovered_models_on_read_fail
 
 #[test]
 fn orchestrator_backfills_timed_history_after_parser_upgrade_once() {
+    if crate::config::sqlite_unsupported_in_temp_dir() {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("conversations")).unwrap();
     let source = dir
@@ -197,6 +208,20 @@ fn orchestrator_backfills_timed_history_after_parser_upgrade_once() {
     assert_eq!((result.imported, result.skipped), (2, 0));
     assert_price(&db, 1, "gemini-4-carbon", mode, "3.1");
     assert_price(&db, 3, "gemini-4-hydrogen", mode, "2.325");
+    let result = sync_agy_usage_from_files(&db, files()).unwrap();
+    assert_eq!((result.imported, result.skipped), (0, 0));
+
+    // Fully pruned history with a broken native db must not keep the cursor unsettled.
+    rusqlite::Connection::open(dir.path().join("conversations/session.db"))
+        .unwrap()
+        .execute_batch("DROP TABLE gen_metadata")
+        .unwrap();
+    db.conn
+        .lock()
+        .unwrap()
+        .execute_batch("DELETE FROM proxy_request_logs; DELETE FROM session_log_sync;")
+        .unwrap();
+    sync_agy_usage_from_files(&db, files()).unwrap();
     let result = sync_agy_usage_from_files(&db, files()).unwrap();
     assert_eq!((result.imported, result.skipped), (0, 0));
 }

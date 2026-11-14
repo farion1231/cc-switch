@@ -316,6 +316,9 @@ mod tests {
 
     #[test]
     fn orchestrator_native_aliases_use_generation_role_instead_of_generic_display() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("session.db");
         let conn = write_test_database(
