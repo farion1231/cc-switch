@@ -226,26 +226,6 @@ pub fn describe_reqwest_error(error: reqwest::Error) -> String {
     describe_error_chain(&error.without_url())
 }
 
-/// 判断错误是否可重试
-#[allow(dead_code)]
-pub fn categorize_error(error: &reqwest::Error) -> ErrorCategory {
-    if error.is_timeout() || error.is_connect() {
-        return ErrorCategory::Retryable;
-    }
-
-    if let Some(status) = error.status() {
-        if status.is_server_error() {
-            ErrorCategory::Retryable
-        } else if status.is_client_error() {
-            ErrorCategory::NonRetryable
-        } else {
-            ErrorCategory::Retryable
-        }
-    } else {
-        ErrorCategory::Retryable
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

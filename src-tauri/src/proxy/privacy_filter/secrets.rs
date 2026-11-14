@@ -1,6 +1,7 @@
 //! 密钥 / 凭证检测：gitleaks 规则（关键词预筛）+ 上下文口令 + 高熵兜底
 
 use super::{Kind, Span};
+use aho_corasick::{AhoCorasick, MatchKind};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Deserialize;
@@ -250,8 +251,118 @@ impl RuleAllowlist {
 
 pub(super) struct SecretDetector {
     rules: Vec<SecretRule>,
-    /// 因正则语法不兼容被跳过的规则数
+    /// 正则编译失败被跳过的规则数（语法不兼容，或编译后超出 regex 默认的 10 MB 上限：
+    /// generic-api-key、pypi-upload-token、vault-batch-token 属于后者）
     skipped: usize,
+    /// 关键词预筛：所有规则的关键词共用一个自动机，一遍扫描得出哪些规则需要跑正则
+    gate: KeywordGate,
+}
+
+/// 关键词预筛，语义与「`text.to_lowercase()` 后逐条 `contains(keyword)`」完全一致。
+///
+/// aho-corasick 的 `ascii_case_insensitive` 只忽略 ASCII 大小写，而 `to_lowercase` 还会把
+/// 开尔文符号 `K`（U+212A）变成 `k`、把 `İ` 变成 `i̇` 等。所以纯 ASCII 文本直接在原文上扫，
+/// 含非 ASCII 的文本仍先整体 `to_lowercase()` 再扫，两条路径都与旧实现等价。
+struct KeywordGate {
+    /// 由全部规则的关键词（小写、去重）构建的自动机；构建失败时为 None，退回逐条 contains
+    automaton: Option<AhoCorasick>,
+    /// 自动机里第 i 个关键词 → 带这个关键词的规则下标
+    keyword_rules: Vec<Vec<usize>>,
+    /// 没有关键词（或含空关键词）的规则，始终参与
+    always_active: Vec<usize>,
+}
+
+impl KeywordGate {
+    fn build(rules: &[SecretRule]) -> Self {
+        let mut keywords: Vec<String> = Vec::new();
+        let mut keyword_rules: Vec<Vec<usize>> = Vec::new();
+        let mut index: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        let mut always_active = Vec::new();
+        for (rule_idx, rule) in rules.iter().enumerate() {
+            // 旧实现：keywords 为空 → 总是参与；`low.contains("")` 恒为真 → 同样总是参与
+            if rule.keywords.is_empty() || rule.keywords.iter().any(String::is_empty) {
+                always_active.push(rule_idx);
+                continue;
+            }
+            for keyword in &rule.keywords {
+                let id = *index.entry(keyword.as_str()).or_insert_with(|| {
+                    keywords.push(keyword.clone());
+                    keyword_rules.push(Vec::new());
+                    keywords.len() - 1
+                });
+                if keyword_rules[id].last() != Some(&rule_idx) {
+                    keyword_rules[id].push(rule_idx);
+                }
+            }
+        }
+        let automaton = if keywords.is_empty() {
+            None
+        } else {
+            match AhoCorasick::builder()
+                .match_kind(MatchKind::Standard)
+                .ascii_case_insensitive(true)
+                .build(&keywords)
+            {
+                Ok(ac) => Some(ac),
+                Err(e) => {
+                    log::warn!("[PrivacyFilter] Keyword automaton build failed, falling back: {e}");
+                    None
+                }
+            }
+        };
+        Self {
+            automaton,
+            keyword_rules,
+            always_active,
+        }
+    }
+
+    /// 返回每条规则是否需要跑正则
+    fn active_rules(&self, rules: &[SecretRule], text: &str) -> Vec<bool> {
+        /// 标记规则为活跃，返回是否所有规则都已活跃
+        fn mark(active: &mut [bool], remaining: &mut usize, i: usize) -> bool {
+            if !active[i] {
+                active[i] = true;
+                *remaining -= 1;
+            }
+            *remaining == 0
+        }
+
+        let mut active = vec![false; rules.len()];
+        let mut remaining = rules.len();
+        for &i in &self.always_active {
+            mark(&mut active, &mut remaining, i);
+        }
+        if remaining == 0 {
+            return active;
+        }
+        let Some(ac) = &self.automaton else {
+            // 自动机不可用：原样执行旧逻辑
+            let low = text.to_lowercase();
+            for (i, rule) in rules.iter().enumerate() {
+                if rule.keywords.iter().any(|k| low.contains(k.as_str())) {
+                    mark(&mut active, &mut remaining, i);
+                }
+            }
+            return active;
+        };
+        let lowered;
+        let haystack = if text.is_ascii() {
+            text
+        } else {
+            lowered = text.to_lowercase();
+            lowered.as_str()
+        };
+        // Standard 语义下 overlapping 迭代报告每一处出现，互相包含的关键词也不会漏
+        'scan: for m in ac.find_overlapping_iter(haystack) {
+            for &i in &self.keyword_rules[m.pattern().as_usize()] {
+                if mark(&mut active, &mut remaining, i) {
+                    break 'scan;
+                }
+            }
+        }
+        active
+    }
 }
 
 /// gitleaks.toml 的文本检测配置；不使用文件路径等扫描器专用字段。
@@ -293,6 +404,7 @@ impl SecretDetector {
         let mut sd = Self {
             rules: Vec::new(),
             skipped: 0,
+            gate: KeywordGate::build(&[]),
         };
         match toml::from_str::<TomlConfig>(toml_text) {
             Ok(cfg) => {
@@ -328,6 +440,7 @@ impl SecretDetector {
         if sd.rules.is_empty() {
             sd.load_builtin();
         }
+        sd.gate = KeywordGate::build(&sd.rules);
         sd
     }
 
@@ -366,8 +479,48 @@ impl SecretDetector {
     }
 
     pub(super) fn detect(&self, text: &str) -> Vec<Span> {
-        let mut spans = Vec::new();
+        self.detect_with_active(text, &self.gate.active_rules(&self.rules, text))
+    }
+
+    /// 旧版预筛：整体小写后逐条 contains。只用于对拍测试，证明自动机预筛与它等价。
+    #[cfg(test)]
+    pub(super) fn active_rules_naive(&self, text: &str) -> Vec<bool> {
         let low = text.to_lowercase();
+        self.rules
+            .iter()
+            .map(|r| r.keywords.is_empty() || r.keywords.iter().any(|k| low.contains(k.as_str())))
+            .collect()
+    }
+
+    /// 旧版预筛下的 Route 1–3 原始命中（测试用：和 [`Self::detect`] 逐个区间对拍）
+    #[cfg(test)]
+    pub(super) fn detect_naive(&self, text: &str) -> Vec<Span> {
+        self.detect_with_active(text, &self.active_rules_naive(text))
+    }
+
+    /// 去掉自动机，强制走构建失败时的回退路径（测试用）
+    #[cfg(test)]
+    pub(super) fn without_automaton(mut self) -> Self {
+        self.gate.automaton = None;
+        self
+    }
+
+    #[cfg(test)]
+    pub(super) fn active_rules(&self, text: &str) -> Vec<bool> {
+        self.gate.active_rules(&self.rules, text)
+    }
+
+    /// 全部规则的小写关键词（测试用：拿来构造对拍语料）
+    #[cfg(test)]
+    pub(super) fn all_keywords(&self) -> Vec<String> {
+        let mut all: Vec<String> = self.rules.iter().flat_map(|r| r.keywords.clone()).collect();
+        all.sort();
+        all.dedup();
+        all
+    }
+
+    fn detect_with_active(&self, text: &str, active: &[bool]) -> Vec<Span> {
+        let mut spans = Vec::new();
         let push = |spans: &mut Vec<Span>, start, end| {
             spans.push(Span {
                 start,
@@ -377,10 +530,7 @@ impl SecretDetector {
         };
 
         // Route 1: gitleaks 规则，关键词预筛 —— 只对命中关键词的规则跑正则
-        for r in &self.rules {
-            if !r.keywords.is_empty() && !r.keywords.iter().any(|k| low.contains(k.as_str())) {
-                continue;
-            }
+        for (r, _) in self.rules.iter().zip(active).filter(|(_, &on)| on) {
             for caps in r.re.captures_iter(text) {
                 let whole = caps.get(0).unwrap();
                 let m = if r.whole_secret {

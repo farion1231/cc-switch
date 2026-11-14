@@ -450,9 +450,7 @@ pub(crate) fn save_and_commit<T>(
     create: bool,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let path = config_path();
     crate::mcode_config::write_and_commit(&path, || update(&path, id, config, create), commit)
 }
@@ -516,9 +514,7 @@ pub(crate) fn switch_and_commit<T>(
     archived_config: Value,
     commit: impl FnOnce(Value) -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let path = config_path();
     switch_at(&path, id, archived_config, commit)
 }
@@ -561,9 +557,7 @@ pub(crate) fn add_and_commit<T>(
     archived_config: Value,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let path = config_path();
     add_at(&path, id, archived_config, commit)
 }
@@ -600,9 +594,7 @@ fn add_at<T>(
 /// Selecting the account is explicit: signing in alone preserves the current
 /// model, while "Use this account" selects one of its official model aliases.
 pub(crate) fn use_oauth_account(home: &Path, id: &str) -> Result<(), AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let path = home.join("config.toml");
     let before = read(&path)?;
     if before["providers"][id]
@@ -628,9 +620,7 @@ pub(crate) fn remove_oauth_account<T>(
     id: &str,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let path = home.join("config.toml");
     let before = read(&path)?;
     if current_provider_in(&before) == Some(id) {
@@ -679,9 +669,7 @@ pub(crate) fn save_oauth_login(
     oauth: Value,
     models: serde_json::Map<String, Value>,
 ) -> Result<(), AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let path = home.join("config.toml");
     let before = read(&path)?;
     let mut after = before.clone();

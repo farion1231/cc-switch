@@ -234,7 +234,8 @@ export type AppType =
   | "kimi"
   | "dsh"
   | "agy"
-  | "copilot";
+  | "copilot"
+  | "workbuddy";
 
 export type AppTypeFilter = "all" | AppType;
 
@@ -252,6 +253,7 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "dsh",
   "agy",
   "copilot",
+  "workbuddy",
 ];
 
 /**
@@ -281,6 +283,7 @@ const PARTIAL_CACHE_WRITE_APP_TYPES: ReadonlySet<string> = new Set([
   "mcode",
   "kimi",
   // DevEco reports cache writes natively, so it is not partial.
+  "workbuddy",
 ]);
 
 export type CacheWriteAvailability = "ok" | "partial" | "na";

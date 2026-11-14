@@ -15,6 +15,7 @@ const SESSION_PROVIDER_APPS: Record<string, AppId> = {
   "Grok Build (Session)": "grokbuild",
   "MiniMax Code (Session)": "mcode",
   "Kimi Code (Session)": "kimi",
+  "WorkBuddy (Session)": "workbuddy",
   "Pi (Session)": "pi",
   "DevEco Code (Session)": "deveco",
   "Oh My Pi (Session)": "omp",

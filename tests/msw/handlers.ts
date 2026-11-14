@@ -9,6 +9,7 @@ import {
   getLiveProviderIds,
   getSessionMessages,
   getProviders,
+  getWorkBuddyModelOwners,
   listProviders,
   listSessions,
   searchSessionContent,
@@ -59,6 +60,10 @@ export const handlers = [
     const { app } = await withJson<{ app: AppId }>(request);
     return success(getProviders(app));
   }),
+
+  http.post(`${TAURI_ENDPOINT}/workbuddy_model_owners`, () =>
+    success(getWorkBuddyModelOwners()),
+  ),
 
   http.post(`${TAURI_ENDPOINT}/get_current_provider`, async ({ request }) => {
     const { app } = await withJson<{ app: AppId }>(request);

@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import type { SessionContentHit, SessionMeta } from "@/types";
 import {
   canDeleteSession,
+  nativeDeleteHintKey,
   formatRelativeTime,
   formatSessionTitle,
   formatShortDateTime,
@@ -140,13 +141,8 @@ export function SessionItem({
 
   const deleteReason = !deletable
     ? t(
-        session.providerId === "dsh"
-          ? "dsh.deleteSessionHint"
-          : session.providerId === "agy"
-            ? "sessionManager.agyDeleteHint"
-            : session.providerId === "copilot"
-              ? "sessionManager.copilotDeleteHint"
-              : "sessionManager.mcodeDeleteHint",
+        nativeDeleteHintKey(session.providerId) ??
+          "sessionManager.mcodeDeleteHint",
         {
           defaultValue: "请在 MiniMax Code 中删除",
         },

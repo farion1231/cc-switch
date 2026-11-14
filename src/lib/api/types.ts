@@ -15,4 +15,5 @@ export type AppId =
   | "deveco"
   | "agy"
   | "omp"
-  | "copilot";
+  | "copilot"
+  | "workbuddy";

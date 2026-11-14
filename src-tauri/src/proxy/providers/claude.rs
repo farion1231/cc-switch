@@ -578,14 +578,13 @@ impl ClaudeAdapter {
 
     /// 检测是否为 GitHub Copilot 供应商
     fn is_github_copilot(&self, provider: &Provider) -> bool {
-        // 方式1: 检查 meta.provider_type
         if let Some(meta) = provider.meta.as_ref() {
             if meta.provider_type.as_deref() == Some("github_copilot") {
                 return true;
             }
         }
 
-        // 方式2: 检查 base_url（兼容旧数据的 fallback，后续应优先依赖 providerType）
+        // 兼容旧数据的 fallback，后续应优先依赖 providerType
         if let Ok(base_url) = self.extract_base_url(provider) {
             if base_url.contains("githubcopilot.com") {
                 return true;

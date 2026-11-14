@@ -44,6 +44,8 @@ interface CopilotAuthSectionProps {
   selectedAccountId?: string | null;
   /** 账号选择回调 */
   onAccountSelect?: (accountId: string | null) => void;
+  /** 不绑账号那一项的文案；默认表示用授权中心的默认账号 */
+  noneOptionLabel?: string;
   /** 打开账号管理入口 */
   onManageAccounts?: () => void;
   /** 授权中心里最后一组的「?」向上弹 */
@@ -69,6 +71,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
   mode = "manage",
   selectedAccountId,
   onAccountSelect,
+  noneOptionLabel,
   onManageAccounts,
   helpSide,
 }) => {
@@ -201,7 +204,8 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
           <SelectContent>
             <SelectItem value="none">
               <span className="text-fg-2">
-                {t("copilot.useDefaultAccount", "使用默认账号")}
+                {noneOptionLabel ??
+                  t("copilot.useDefaultAccount", "使用默认账号")}
               </span>
             </SelectItem>
             {accounts.map((account) => (

@@ -478,6 +478,8 @@ export function loginAccountKey(
       return "github";
     case "dsh":
       return "deepseek";
+    case "workbuddy":
+      return "workbuddy";
     default:
       return "claude";
   }

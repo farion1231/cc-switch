@@ -50,3 +50,4 @@ pub(crate) mod deveco;
 pub(crate) mod kimi;
 pub(crate) mod mcode;
 pub(crate) mod pi;
+pub(crate) mod workbuddy;

@@ -275,7 +275,8 @@ export function useProviderActions(
             activeApp === "opencode" ||
             activeApp === "openclaw" ||
             activeApp === "mcode" ||
-            activeApp === "deveco"
+            activeApp === "deveco" ||
+            activeApp === "workbuddy"
           ) {
             messageKey = "notifications.addToConfigSuccess";
             defaultMessage = "已添加到配置";

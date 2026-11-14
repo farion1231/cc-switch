@@ -462,6 +462,7 @@ export function getLocaleFromLanguage(language: string): string {
     return "zh-TW";
   }
   if (normalized === "zh" || normalized.startsWith("zh-")) return "zh-CN";
+  if (normalized === "de" || normalized.startsWith("de-")) return "de-DE";
   if (normalized === "ja" || normalized.startsWith("ja-")) return "ja-JP";
   if (normalized === "ko" || normalized.startsWith("ko-")) return "ko-KR";
   if (normalized === "tr" || normalized.startsWith("tr-")) return "tr-TR";

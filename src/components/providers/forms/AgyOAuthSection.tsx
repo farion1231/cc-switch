@@ -122,11 +122,13 @@ export const AgyOAuthSection: React.FC<AgyOAuthSectionProps> = ({
           "还没有 Antigravity 账号。agy 里已登录的号会自动出现在这里。",
       })}
       onAdd={addAccount}
-      defaultLabel={t("authCenter.agy.current", {
-        defaultValue: "agy 在用",
+      defaultLabel={t("authCenter.inUseBy", {
+        defaultValue: "{{app}} 在用",
+        app: "agy",
       })}
-      setDefaultLabel={t("authCenter.agy.switchTo", {
-        defaultValue: "切换 agy 到这个账号",
+      setDefaultLabel={t("authCenter.switchAppTo", {
+        defaultValue: "切换 {{app}} 到这个账号",
+        app: "agy",
       })}
       canReauth
       // 用同一个 Google 账号再登录一次就会替换掉旧凭据
