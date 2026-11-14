@@ -1,4 +1,5 @@
 pub mod agy_account;
+pub mod auto_sync;
 pub mod backup_storage;
 pub mod balance;
 pub mod claude_account;
