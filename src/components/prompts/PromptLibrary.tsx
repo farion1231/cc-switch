@@ -18,6 +18,7 @@ interface PromptLibraryProps {
   searchQuery: string;
   listLabel: string;
   disabled?: boolean;
+  readOnly?: boolean;
   onClearSearch: () => void;
   onToggle: (id: string, enabled: boolean) => void;
   onEdit: (id: string) => void;
@@ -47,6 +48,7 @@ export function PromptLibrary({
   searchQuery,
   listLabel,
   disabled = false,
+  readOnly = false,
   onClearSearch,
   onToggle,
   onEdit,
@@ -89,20 +91,23 @@ export function PromptLibrary({
         const detail = [summary, formatSize(utf8Bytes(prompt.content)), updated]
           .filter(Boolean)
           .join(" · ");
-        const blocked = getDeleteBlockedReason
-          ? getDeleteBlockedReason(id, prompt)
-          : prompt.enabled
-            ? t("prompts.deleteBlocked")
-            : undefined;
+        const blocked = readOnly
+          ? t("prompts.fileProtection.readOnly")
+          : getDeleteBlockedReason
+            ? getDeleteBlockedReason(id, prompt)
+            : prompt.enabled
+              ? t("prompts.deleteBlocked")
+              : undefined;
         return (
           <PromptListItem
             key={id}
             id={id}
             prompt={prompt}
-            active={prompt.enabled}
+            active={prompt.enabled && !readOnly}
             detail={detail}
             first={index === 0}
             disabled={disabled}
+            readOnly={readOnly}
             onToggle={onToggle}
             onEdit={onEdit}
             onDelete={onDelete}

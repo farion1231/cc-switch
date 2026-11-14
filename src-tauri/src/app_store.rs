@@ -21,6 +21,24 @@ fn update_cached_override(value: Option<PathBuf>) {
     }
 }
 
+/// Exercise a data-directory change without a native window or persisted Store.
+/// Callers must serialize tests that use the process-global path cache.
+#[cfg(feature = "test-hooks")]
+pub fn with_app_config_dir_override_for_test<T>(
+    value: Option<PathBuf>,
+    run: impl FnOnce() -> T,
+) -> T {
+    struct Restore(Option<PathBuf>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            update_cached_override(self.0.clone());
+        }
+    }
+    let _restore = Restore(get_app_config_dir_override());
+    update_cached_override(value);
+    run()
+}
+
 /// 获取缓存中的 app_config_dir 覆盖路径
 pub fn get_app_config_dir_override() -> Option<PathBuf> {
     override_cache().read().ok()?.clone()

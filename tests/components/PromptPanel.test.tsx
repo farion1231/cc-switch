@@ -219,9 +219,114 @@ describe("PromptPanel", () => {
       displayPath: `~/.${app}/CLAUDE.md`,
     }));
     vi.spyOn(promptsApi, "getPrompts").mockResolvedValue({});
+    vi.spyOn(promptsApi, "getFileProtection").mockResolvedValue(false);
+    vi.spyOn(promptsApi, "setFileProtection").mockResolvedValue(undefined);
     vi.spyOn(promptsApi, "upsertPrompt").mockResolvedValue(undefined);
     vi.spyOn(promptsApi, "enablePrompt").mockResolvedValue(undefined);
     vi.spyOn(promptsApi, "deletePrompt").mockResolvedValue(undefined);
+  });
+
+  it("keeps protected prompt actions read-only while allowing content copying", async () => {
+    vi.mocked(promptsApi.getFileProtection).mockResolvedValue(true);
+    renderPanel();
+    const toggle = await screen.findByRole("switch", {
+      name: "prompts.fileProtection.label",
+    });
+    await waitFor(() => expect(toggle).toBeChecked());
+    expect(editButton("Harbor Prompt")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "prompts.add" })).toBeDisabled();
+    const { menu } = await openRowMenu("Harbor Prompt");
+    expect(
+      within(menu).getByRole("menuitem", { name: "prompts.copyContent" }),
+    ).not.toHaveAttribute("data-disabled");
+    expect(
+      within(menu).getByRole("menuitem", { name: /common.delete/ }),
+    ).toHaveAttribute("data-disabled");
+    expect(mocks.savePrompt).not.toHaveBeenCalled();
+    expect(mocks.toggleEnabled).not.toHaveBeenCalled();
+  });
+
+  it("persists protection before changing the UI and reloads the prompt library", async () => {
+    let finish!: () => void;
+    vi.mocked(promptsApi.setFileProtection).mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    renderPanel();
+    const toggle = await screen.findByRole("switch", {
+      name: "prompts.fileProtection.label",
+    });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    await userEvent.click(toggle);
+    expect(promptsApi.setFileProtection).toHaveBeenCalledWith("claude", true);
+    expect(toggle).toBeDisabled();
+    expect(toggle).not.toBeChecked();
+    await act(async () => finish());
+    await waitFor(() => expect(toggle).toBeChecked());
+    expect(mocks.reload).toHaveBeenCalled();
+    expect(editButton("Harbor Prompt")).toBeDisabled();
+  });
+
+  it("keeps the saved protection state after a failed toggle and fails closed on read errors", async () => {
+    vi.mocked(promptsApi.getFileProtection).mockResolvedValue(true);
+    vi.mocked(promptsApi.setFileProtection).mockRejectedValue(
+      new Error("policy write failed"),
+    );
+    const view = renderPanel();
+    const toggle = await screen.findByRole("switch", {
+      name: "prompts.fileProtection.label",
+    });
+    await waitFor(() => expect(toggle).toBeChecked());
+    await userEvent.click(toggle);
+    await waitFor(() => expect(mocks.toastError).toHaveBeenCalled());
+    expect(toggle).toBeChecked();
+    expect(editButton("Harbor Prompt")).toBeDisabled();
+    view.unmount();
+    vi.mocked(promptsApi.getFileProtection).mockRejectedValue(
+      new Error("invalid policy"),
+    );
+    renderPanel();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "prompts.fileProtection.loadFailed",
+    );
+    expect(editButton("Harbor Prompt")).toBeDisabled();
+  });
+
+  it("does not expose this protection for unrelated apps", async () => {
+    renderPanel({ appId: "gemini" });
+    await waitForPanelReady();
+    expect(
+      screen.queryByRole("switch", { name: "prompts.fileProtection.label" }),
+    ).not.toBeInTheDocument();
+    expect(promptsApi.getFileProtection).not.toHaveBeenCalled();
+  });
+
+  it("keeps a pending policy change bound to its original app", async () => {
+    let finish!: () => void;
+    vi.mocked(promptsApi.setFileProtection).mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const view = renderPanel();
+    const toggle = await screen.findByRole("switch", {
+      name: "prompts.fileProtection.label",
+    });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    await userEvent.click(toggle);
+    view.rerenderWith({ appId: "codex" });
+    await waitFor(() =>
+      expect(promptsApi.getFileProtection).toHaveBeenCalledWith("codex"),
+    );
+    await act(async () => finish());
+    await waitFor(() => expect(toggle).toBeEnabled());
+    expect(toggle).not.toBeChecked();
+    expect(promptsApi.setFileProtection).toHaveBeenCalledWith("claude", true);
+    view.rerenderWith({ appId: "claude" });
+    await waitFor(() => expect(toggle).toBeChecked());
   });
 
   it.each([
@@ -544,6 +649,146 @@ describe("PromptPanel", () => {
       ),
     );
     expect(promptsApi.upsertPrompt).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["claude", "codex"],
+    ["codex", "claude"],
+  ] as const)(
+    "copies from protected %s to %s while serializing writes and queued reloads",
+    async (sourceApp, targetApp) => {
+      vi.mocked(promptsApi.getFileProtection).mockImplementation(
+        async (app) => app === sourceApp,
+      );
+      let finishCopy!: () => void;
+      vi.mocked(promptsApi.upsertPrompt).mockImplementation(
+        () => new Promise<void>((resolve) => (finishCopy = resolve)),
+      );
+      const onInteractionBlockedChange = vi.fn();
+      const onNavigationBlockedChange = vi.fn();
+      renderPanel({
+        appId: sourceApp,
+        apps: [sourceApp, targetApp],
+        onInteractionBlockedChange,
+        onNavigationBlockedChange,
+      });
+      const protection = await screen.findByRole("switch", {
+        name: "prompts.fileProtection.label",
+      });
+      await waitFor(() => expect(protection).toBeChecked());
+      mocks.reload.mockClear();
+
+      const { user, menu } = await openRowMenu("Harbor Prompt");
+      await user.click(
+        within(menu).getByRole("menuitem", { name: "prompts.copyToApps" }),
+      );
+      const dialog = await screen.findByRole("dialog");
+      await waitFor(() =>
+        expect(within(dialog).getByRole("checkbox")).toBeChecked(),
+      );
+      const confirm = within(dialog).getByRole("button", {
+        name: "prompts.copyDialog.go",
+      });
+      act(() => {
+        fireEvent.click(confirm);
+        fireEvent.click(confirm);
+      });
+
+      expect(promptsApi.upsertPrompt).toHaveBeenCalledTimes(1);
+      expect(promptsApi.upsertPrompt).toHaveBeenCalledWith(
+        targetApp,
+        expect.any(String),
+        expect.objectContaining({
+          name: "Harbor Prompt",
+          description: "Deployment checklist",
+          content: "Prepare the release notes.",
+          enabled: false,
+        }),
+      );
+      expect(confirm).toBeDisabled();
+      expect(
+        within(dialog).getByRole("button", { name: "common.cancel" }),
+      ).toBeDisabled();
+      expect(onInteractionBlockedChange).toHaveBeenLastCalledWith(true);
+      expect(onNavigationBlockedChange).toHaveBeenLastCalledWith(true);
+      act(() => window.dispatchEvent(new Event("focus")));
+      expect(mocks.reload).not.toHaveBeenCalled();
+
+      await act(async () => finishCopy());
+
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+      );
+      await waitFor(() =>
+        expect(onInteractionBlockedChange).toHaveBeenLastCalledWith(false),
+      );
+      expect(onNavigationBlockedChange).toHaveBeenLastCalledWith(false);
+      expect(mocks.reload).toHaveBeenCalledTimes(1);
+      expect(mocks.toastSuccess).toHaveBeenCalledWith(
+        "prompts.toast.copied:Harbor Prompt",
+        expect.anything(),
+      );
+      expect(mocks.toastError).not.toHaveBeenCalled();
+      expect(protection).toBeChecked();
+      expect(editButton("Harbor Prompt")).toBeDisabled();
+      expect(mocks.savePrompt).not.toHaveBeenCalled();
+      expect(mocks.toggleEnabled).not.toHaveBeenCalled();
+      expect(mocks.deletePrompt).not.toHaveBeenCalled();
+      expect(mocks.importFromFile).not.toHaveBeenCalled();
+      expect(promptsApi.enablePrompt).not.toHaveBeenCalled();
+    },
+  );
+
+  it("reports a protected copy target while still copying to an unprotected target", async () => {
+    vi.mocked(promptsApi.getFileProtection).mockResolvedValue(true);
+    vi.mocked(promptsApi.upsertPrompt).mockImplementation(async (app) => {
+      if (app === "codex") throw new Error("target prompt file is protected");
+    });
+    renderPanel({ apps: ["claude", "codex", "gemini"] });
+    const protection = await screen.findByRole("switch", {
+      name: "prompts.fileProtection.label",
+    });
+    await waitFor(() => expect(protection).toBeChecked());
+    const { user, menu } = await openRowMenu("Harbor Prompt");
+    await user.click(
+      within(menu).getByRole("menuitem", { name: "prompts.copyToApps" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await waitFor(() => {
+      expect(within(dialog).getByLabelText(/Codex/)).toBeChecked();
+      expect(within(dialog).getByLabelText(/Gemini CLI/)).toBeChecked();
+    });
+    await user.click(
+      within(dialog).getByRole("button", { name: "prompts.copyDialog.go" }),
+    );
+
+    await waitFor(() =>
+      expect(mocks.toastError).toHaveBeenCalledWith(
+        "prompts.copyDialog.failed",
+      ),
+    );
+    expect(promptsApi.upsertPrompt).toHaveBeenCalledTimes(2);
+    expect(promptsApi.upsertPrompt).toHaveBeenCalledWith(
+      "gemini",
+      expect.any(String),
+      expect.objectContaining({ name: "Harbor Prompt", enabled: false }),
+    );
+    expect(mocks.toastSuccess).toHaveBeenCalledWith(
+      "prompts.toast.copied:Harbor Prompt",
+      expect.anything(),
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(editButton("Harbor Prompt")).toBeDisabled();
+    act(() => lastUndo()?.());
+    await waitFor(() =>
+      expect(promptsApi.deletePrompt).toHaveBeenCalledWith(
+        "gemini",
+        expect.any(String),
+      ),
+    );
+    expect(promptsApi.deletePrompt).toHaveBeenCalledTimes(1);
+    expect(mocks.savePrompt).not.toHaveBeenCalled();
+    expect(mocks.toggleEnabled).not.toHaveBeenCalled();
   });
 
   it("serializes toggle writes and reports the interaction as blocked", async () => {

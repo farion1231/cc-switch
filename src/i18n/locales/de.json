@@ -3208,6 +3208,14 @@
       "imported": "Inhalt von {{path}} importiert; die Datei bleibt unverändert",
       "importedPi": "AGENTS.md in der Bibliothek gespeichert; die Datei bleibt unverändert",
       "copied": "„{{name}}“ nach {{apps}} kopiert"
+    },
+    "fileProtection": {
+      "label": "{{file}} auf diesem Gerät schützen",
+      "help": "Aktivieren Sie diese Option, wenn Sie diese Datei selbst pflegen. Verhindert, dass Prompt-Aktionen dieser App, Cloud-Synchronisierung und Wiederherstellungen die Datei überschreiben. Aktivieren Sie nach dem Aufheben des Schutzes eine Vorlage oder führen Sie eine Wiederherstellung aus, um die Verwaltung fortzusetzen.",
+      "protected": "Der Schutz ist aktiv: Die Prompt-Bibliothek ist schreibgeschützt, und Vorlagen werden nicht auf diese Datei angewendet. Das Deaktivieren schreibt die Datei nicht sofort und übernimmt lokalen Text nicht in Vorlagen.",
+      "readOnly": "Die Prompt-Verwaltung für diese App ist derzeit schreibgeschützt.",
+      "loadFailed": "Der Schutzstatus konnte nicht gelesen werden. Prompt-Änderungen sind vorübergehend deaktiviert.",
+      "saveFailed": "Der Schutz der Regeldatei konnte nicht gespeichert werden: {{error}}"
     }
   },
   "profiles": {

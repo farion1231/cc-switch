@@ -32,6 +32,17 @@ export interface PiPromptTemplate {
 }
 
 export const promptsApi = {
+  async getFileProtection(app: AppId): Promise<boolean> {
+    return invoke("get_prompt_file_protection", { app });
+  },
+
+  async setFileProtection(app: AppId, protectedFile: boolean): Promise<void> {
+    return invoke("set_prompt_file_protection", {
+      app,
+      protected: protectedFile,
+    });
+  },
+
   async getPrompts(app: AppId): Promise<Record<string, Prompt>> {
     return await invoke("get_prompts", { app });
   },
