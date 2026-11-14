@@ -61,7 +61,9 @@
   "apiKeyInput": {
     "placeholder": "Enter API Key",
     "show": "Show API Key",
-    "hide": "Hide API Key"
+    "hide": "Hide API Key",
+    "copied": "API Key copied",
+    "copyFailed": "Failed to copy API Key"
   },
   "jsonEditor": {
     "mustBeObject": "Configuration must be a JSON object, not an array or other type",

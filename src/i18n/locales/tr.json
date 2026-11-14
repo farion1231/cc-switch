@@ -61,7 +61,9 @@
   "apiKeyInput": {
     "placeholder": "API Anahtarını Girin",
     "show": "API Anahtarını Göster",
-    "hide": "API Anahtarını Gizle"
+    "hide": "API Anahtarını Gizle",
+    "copied": "API anahtarı kopyalandı",
+    "copyFailed": "API anahtarı kopyalanamadı"
   },
   "jsonEditor": {
     "mustBeObject": "Yapılandırma bir dizi veya başka türde değil, JSON nesnesi olmalıdır",
