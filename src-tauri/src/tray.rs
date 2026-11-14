@@ -321,6 +321,7 @@ impl TrayTexts {
             },
             "de" => Self {
                 show_main: "CC Switch öffnen",
+                reload_ui: "Oberfläche neu laden",
                 open_website: "Offizielle Website öffnen",
                 lightweight_mode: "Lightweight-Modus",
                 quit: "CC Switch beenden",
@@ -3386,6 +3387,7 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
                     );
                 }
             });
+        }
 
         "reload_ui" => {
             // Windows 下的重载走恢复模块（带日志）；其他平台直接重载

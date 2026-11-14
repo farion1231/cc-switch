@@ -153,6 +153,7 @@ impl PanelTexts {
                 in_use: "Aktiv",
                 no_match: "Keine passenden Anbieter",
                 open_main: "Hauptfenster öffnen",
+                reload_ui: "Oberfläche neu laden",
                 quit: "Beenden",
                 settings: "Optionen",
                 lightweight_mode: "Lightweight-Modus",
