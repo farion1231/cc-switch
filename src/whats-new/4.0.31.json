@@ -1,0 +1,33 @@
+{
+  "version": "4.0.31",
+  "items": [
+    {
+      "type": "new",
+      "zh": "新增 WorkBuddy：自定义模型、多账号切换与积分查看",
+      "zh-TW": "新增 WorkBuddy：自訂模型、多帳號切換與積分查看",
+      "en": "WorkBuddy support: custom models, account switching and credits at a glance",
+      "ja": "WorkBuddy に対応。カスタムモデル、アカウント切り替え、クレジット表示"
+    },
+    {
+      "type": "new",
+      "zh": "界面新增德语，README 提供全部八种语言",
+      "zh-TW": "介面新增德語，README 提供全部八種語言",
+      "en": "German UI, and the README in all eight languages",
+      "ja": "ドイツ語 UI を追加。README も 8 言語すべてに対応"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 Claude Code 经 Responses 中转时会话卡在 400",
+      "zh-TW": "修正 Claude Code 經 Responses 中轉時對話卡在 400",
+      "en": "Routed Claude Code no longer gets stuck on 400 with Responses relays",
+      "ja": "Responses 中継経由の Claude Code が 400 で止まる問題を修正"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 Gemini Native 并行工具报 400、缓存命中率低",
+      "zh-TW": "修正 Gemini Native 平行工具報 400、快取命中率低",
+      "en": "Gemini Native: parallel tool calls no longer fail, and prompt caching works again",
+      "ja": "Gemini Native の並列ツール呼び出しの 400 とキャッシュ低下を修正"
+    }
+  ]
+}

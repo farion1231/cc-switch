@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import type { AppId } from "@/lib/api/types";
-import { SKILLS_APP_IDS } from "@/config/appConfig";
 import { useToggleSkillApp } from "@/hooks/useSkills";
+import { APP_IDS_WITH, appHas } from "@/config/appSpecs";
 
 const STORAGE_KEY = "cc-switch:skills:install-to";
 const DEFAULT_TARGETS: AppId[] = ["claude", "codex"];
@@ -12,9 +12,7 @@ function readStored(): AppId[] | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return null;
-    const apps = parsed.filter((app): app is AppId =>
-      SKILLS_APP_IDS.includes(app as AppId),
-    );
+    const apps = parsed.filter((app): app is AppId => appHas(app, "skills"));
     return apps.length ? apps : null;
   } catch {
     return null;
@@ -40,7 +38,7 @@ export function useSkillInstallTargets(visibleAppIds: readonly AppId[]) {
   const toggleMutation = useToggleSkillApp();
 
   // 只算看得见的应用；一个都不剩时退回第一个可见应用
-  const targets = SKILLS_APP_IDS.filter(
+  const targets = APP_IDS_WITH.skills.filter(
     (app) => stored.includes(app) && visibleAppIds.includes(app),
   );
   const effective =

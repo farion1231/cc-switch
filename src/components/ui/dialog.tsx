@@ -61,6 +61,8 @@ const DialogContent = React.forwardRef<
         className={cn(
           // 用 inset-0 + m-auto 居中，不用 translate(-50%)：内容高度为奇数时 translate 会落在半像素上，
           // 1x 屏（非 Retina 外接显示器）上 WebKit 按半像素重采样，整个弹窗的文字和描边都发虚（#9238）
+          // h-fit 下可滚动的正文要用 flex-auto + min-h-0，别用 flex-1：WebKit 会把 flex-basis: 0% 的正文按 0 高计入，
+          // 弹窗被压扁（Chromium 内核的 WebView2 不会，所以只有 Windows 看着正常）
           "fixed inset-0 m-auto flex h-fit flex-col w-full max-w-lg max-h-[90vh] border border-border bg-surface text-fg-1 shadow-v7-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 rounded-dialog",
           zIndexMap[zIndex],
           className,

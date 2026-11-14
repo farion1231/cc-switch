@@ -342,7 +342,8 @@ export function OpenTerminalDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 px-6 py-3">
+        {/* 正文单独滚动，确认按钮固定在底部：窗口矮、提示多、最近目录多时也点得到（#9478） */}
+        <div className="min-h-0 flex-auto space-y-4 overflow-y-auto px-6 py-3">
           {provider && terminalIsIsolated(provider, appId) && (
             <Notice title={t("provider.openTerminalDialog.isolationTitle")}>
               {/* Antigravity 没有「切换」，Claude Code 那句「之后切换不会影响它」对它不成立 */}
@@ -473,6 +474,17 @@ export function OpenTerminalDialog({
               value={extraArgs}
               disabled={opening}
               onChange={(event) => setExtraArgs(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") return;
+                // WebKit 输入法回车确认候选词时 isComposing 已是 false，只剩 keyCode 229 可辨认
+                if (
+                  event.nativeEvent.isComposing ||
+                  event.nativeEvent.keyCode === 229
+                )
+                  return;
+                event.preventDefault();
+                void handleOpen();
+              }}
               placeholder={t(
                 "provider.openTerminalDialog.extraArgsPlaceholder",
               )}

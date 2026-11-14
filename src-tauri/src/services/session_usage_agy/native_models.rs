@@ -103,10 +103,7 @@ fn timing_of(bytes: &[u8]) -> Option<Timing> {
     })
 }
 
-pub(super) fn generations_for_transcript(
-    transcript: &Path,
-    steps: &[u64],
-) -> Result<HashMap<u64, Generation>, String> {
+fn native_database_path(transcript: &Path) -> Result<Option<std::path::PathBuf>, String> {
     // brain/<id>/.system_generated/logs/transcript_full.jsonl and conversations/<id>.db
     // share the same CLI/IDE/private-profile root.
     let session = transcript
@@ -122,13 +119,47 @@ pub(super) fn generations_for_transcript(
     let id = session.file_name().ok_or("Missing session id")?;
     let path = root.join("conversations").join(id).with_extension("db");
     if !path.is_file() {
-        return Ok(HashMap::new());
+        return Ok(None);
     }
     let root = root.canonicalize().map_err(|error| error.to_string())?;
     let path = path.canonicalize().map_err(|error| error.to_string())?;
     if !path.starts_with(root) {
         return Err("Conversation database is outside the Antigravity root".into());
     }
+    Ok(Some(path))
+}
+
+/// Fingerprint of the companion `conversations/<id>.db` (and its WAL file when present) so
+/// `session_log_sync` cursors stay valid across steady-state syncs while still re-importing
+/// when the native database is created or updated after the transcript.
+pub(super) fn native_state_fingerprint(transcript: &Path) -> String {
+    let Ok(Some(path)) = native_database_path(transcript) else {
+        return "none".to_string();
+    };
+    let file_sig = |target: &Path| -> (i64, u64) {
+        std::fs::metadata(target)
+            .map(|meta| {
+                (
+                    crate::services::session_usage::metadata_modified_nanos(&meta),
+                    meta.len(),
+                )
+            })
+            .unwrap_or((0, 0))
+    };
+    let (db_mtime, db_len) = file_sig(&path);
+    let mut wal_os = path.as_os_str().to_os_string();
+    wal_os.push("-wal");
+    let (wal_mtime, wal_len) = file_sig(Path::new(&wal_os));
+    format!("{db_mtime}:{db_len}:{wal_mtime}:{wal_len}")
+}
+
+pub(super) fn generations_for_transcript(
+    transcript: &Path,
+    steps: &[u64],
+) -> Result<HashMap<u64, Generation>, String> {
+    let Some(path) = native_database_path(transcript)? else {
+        return Ok(HashMap::new());
+    };
     read_generations(&path, steps).map_err(|error| error.to_string())
 }
 
@@ -175,7 +206,24 @@ fn read_generations(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64,
             .ok()
             .and_then(|metadata| metadata.response)
             .map(|response| response.model);
-        let model = [tiered, base]
+        // Orchestrator's display field names the mode (or just "Gemini Flash"),
+        // while field 19 identifies the planner/worker that produced this step.
+        // Only these exact AGY aliases are mapped; unknown IDs keep their configured pricing.
+        // https://antigravity.google/docs/models#orchestrator
+        let orchestrator_model = match base.as_deref() {
+            Some("gemini-pro-orchestrator") => Some("gemini-4-carbon"),
+            Some("gemini-pro-orchestrator-argon") => Some("gemini-4-argon"),
+            Some("gemini-flash-worker-agy") => Some("gemini-4-hydrogen"),
+            _ => None,
+        };
+        let tiered = tiered.filter(|model| {
+            let id = super::model_id_of(model);
+            // Keep a concrete field-21 model/tier if a newer AGY build supplies one.
+            !(orchestrator_model.is_some()
+                && (super::is_orchestrator(&id)
+                    || matches!(id.as_str(), "gemini-flash" | "gemini-flash-worker-agy")))
+        });
+        let model = [tiered, orchestrator_model.map(str::to_string), base]
             .into_iter()
             .flatten()
             .map(|model| model.trim().to_string())
@@ -265,6 +313,55 @@ pub(super) fn test_timing(first_token_ms: i64, streaming_ms: i64) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn orchestrator_native_aliases_use_generation_role_instead_of_generic_display() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.db");
+        let conn = write_test_database(
+            &path,
+            &[
+                (1, 0, "gemini-pro-orchestrator"),
+                (3, 7, "gemini-flash-worker-agy"),
+                (5, 2, "gemini-pro-orchestrator-argon"),
+                (7, 3, "future-worker"),
+                (9, 4, "gemini-flash-worker-agy"),
+            ],
+        );
+        set_test_generation(
+            &conn,
+            0,
+            "gemini-pro-orchestrator",
+            &test_model_id("Orchestrator (Carbon)"),
+        );
+        set_test_generation(
+            &conn,
+            7,
+            "gemini-flash-worker-agy",
+            &test_model_id("Gemini Flash"),
+        );
+        set_test_generation(
+            &conn,
+            2,
+            "gemini-pro-orchestrator-argon",
+            &test_model_id("Orchestrator (Argon)"),
+        );
+        set_test_generation(
+            &conn,
+            4,
+            "gemini-flash-worker-agy",
+            &test_model_id("gemini-4-hydrogen-high"),
+        );
+        let models = read_models(&path, &[1, 3, 5, 7, 9]).unwrap();
+        assert_eq!(models[&1], "gemini-4-carbon");
+        assert_eq!(models[&3], "gemini-4-hydrogen");
+        assert_eq!(models[&5], "gemini-4-argon");
+        assert_eq!(models[&7], "future-worker");
+        assert_eq!(models[&9], "gemini-4-hydrogen-high");
+    }
 
     #[test]
     fn uses_step_references_including_zero_instead_of_generation_order() {

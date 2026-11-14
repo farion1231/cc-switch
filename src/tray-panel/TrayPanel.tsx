@@ -15,6 +15,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Download,
   ExternalLink,
   Feather,
   Loader2,
@@ -1077,6 +1078,22 @@ export function TrayPanel() {
                 <div className="flex justify-center py-6">
                   <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                 </div>
+              )}
+              {state?.update && (
+                <button
+                  key={state.update.id}
+                  type="button"
+                  data-other-item
+                  onClick={() => action(state.update!.id)}
+                  className={cn(
+                    "flex items-start gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-blue-500",
+                    FOCUS_RING,
+                    ROW_HOVER,
+                  )}
+                >
+                  <Download className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>{state.update.text}</span>
+                </button>
               )}
               {state?.problems.map((problem) => (
                 <button

@@ -40,6 +40,8 @@ pub(crate) fn provider_exists_in_live_config(
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Omp => Ok(crate::omp_config::get_providers()?.contains_key(provider_id)),
         AppType::Copilot => crate::copilot_config::provider_key_exists(provider_id),
+        AppType::WorkBuddy => crate::workbuddy_config::get_providers()
+            .map(|providers| providers.contains_key(provider_id)),
         _ => Ok(false),
     }
 }
@@ -314,6 +316,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Agy
         | AppType::Omp
         | AppType::Copilot
+        | AppType::WorkBuddy
         | AppType::ClaudeDesktop => false,
     }
 }
@@ -395,7 +398,8 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::ClaudeDesktop
         | AppType::Agy
         | AppType::Omp
-        | AppType::Copilot => Ok(settings.clone()),
+        | AppType::Copilot
+        | AppType::WorkBuddy => Ok(settings.clone()),
     }
 }
 
@@ -721,6 +725,13 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         AppType::Mcode => {
             crate::mcode_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
+        AppType::WorkBuddy => {
+            // 官方登录卡只绑定账号，没有模型条目：任何写 live 的路径（全量同步等）都跳过它
+            if crate::workbuddy_config::is_official_provider(provider) {
+                return Ok(());
+            }
+            crate::workbuddy_config::set_provider(&provider.id, &provider.settings_config)?
+        }
         AppType::Pi => {
             return Err(AppError::InvalidInput(
                 "Pi providers use the Pi provider service".to_string(),
@@ -912,7 +923,7 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
         ) {
             continue;
         }
-        let result = if app_type.is_additive_mode() {
+        let result = if app_type.spec().additive {
             // Additive mode: sync ALL providers
             sync_all_providers_to_live(state, &app_type)
         } else {
@@ -1066,9 +1077,8 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         }
         AppType::Mcode => Ok(json!(crate::mcode_config::get_providers()?)),
         AppType::Kimi => Ok(json!(crate::kimi_config::get_providers()?)),
-        AppType::Dsh => {
-            Ok(json!(crate::dsh_config::get_providers()?))
-        }
+        AppType::Dsh => Ok(json!(crate::dsh_config::get_providers()?)),
+        AppType::WorkBuddy => Ok(json!(crate::workbuddy_config::get_providers()?)),
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
         )),
@@ -1212,7 +1222,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         | AppType::Mcode
         | AppType::Kimi
         | AppType::Dsh
-        | AppType::Omp => {
+        | AppType::Omp
+        | AppType::WorkBuddy => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
@@ -1262,7 +1273,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
 
     state.db.save_provider(app_type.as_str(), &provider)?;
     // Copilot 是累加式，没有直连指针：「默认」看 Copilot 自己的 settings.json。
-    if !app_type.is_additive_mode() {
+    if !app_type.spec().additive {
         state
             .db
             .set_current_provider(app_type.as_str(), &provider.id)?;
@@ -1289,7 +1300,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
 /// 这个应用是否从 live 导入 `default` 供应商：切换式应用都导入；累加式应用里只有 Copilot
 /// （它的官方登录卡是启动式，从 settings.json 的模型导入，自带模型卡才是累加式）。
 pub(crate) fn imports_default_config(app_type: &AppType) -> bool {
-    !app_type.is_additive_mode() || matches!(app_type, AppType::Copilot)
+    !app_type.spec().additive || matches!(app_type, AppType::Copilot)
 }
 
 /// Decide whether startup should auto-import the current live config as `default`.

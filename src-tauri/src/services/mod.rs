@@ -10,6 +10,7 @@ pub mod dsh_account;
 pub mod env_checker;
 pub mod env_manager;
 pub mod exchange_rates;
+pub mod ip_diagnostics;
 pub mod kimi_oauth;
 pub mod mcp;
 pub mod mcp_connectivity;
@@ -68,3 +69,5 @@ pub mod session_usage_mcode;
 
 pub mod session_usage_agy;
 pub mod session_usage_dsh;
+pub mod session_usage_workbuddy;
+pub mod workbuddy_account;

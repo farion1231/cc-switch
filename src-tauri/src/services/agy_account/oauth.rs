@@ -301,6 +301,31 @@ pub fn identity(id_token: &str) -> Option<IdentityClaims> {
     Some(claims)
 }
 
+const USERINFO_ENDPOINT: &str = "https://openidconnect.googleapis.com/v1/userinfo";
+const USERINFO_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// 用 access token 问 Google 这是谁（OIDC userinfo，返回字段和 id_token 里的一样）。
+/// agy 1.5 起钥匙串里不再存 id_token，CC Switch 还没收录的号只能这样认；问不到返回 `None`。
+pub async fn fetch_identity(access_token: &str) -> Option<IdentityClaims> {
+    let response = crate::proxy::http_client::get()
+        .get(USERINFO_ENDPOINT)
+        .timeout(USERINFO_TIMEOUT)
+        .bearer_auth(access_token)
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let bytes = response.bytes().await.ok()?;
+    if bytes.len() > MAX_RESPONSE_BYTES {
+        return None;
+    }
+    let claims: IdentityClaims = serde_json::from_slice(&bytes).ok()?;
+    claims.sub.as_ref().filter(|sub| !sub.is_empty())?;
+    Some(claims)
+}
+
 /// agy 钥匙串里那份 JSON 的过期时间：本地时区的 RFC 3339，带微秒（和 Go 的 time.Time 一致）。
 pub fn expiry_from_now(expires_in: i64) -> String {
     (chrono::Local::now() + chrono::Duration::seconds(expires_in.max(0)))

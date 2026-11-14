@@ -188,6 +188,11 @@ interface ClaudeFormFieldsProps {
   onStackModelRowsChange?: (rows: ClaudeStackModelRow[]) => void;
 }
 
+/** 清空列表的 state 更新：已经是空的就原样返回，React 不会因此重渲染 */
+function keepEmpty<T>(prev: T[]): T[] {
+  return prev.length === 0 ? prev : [];
+}
+
 export function ClaudeFormFields({
   providerId,
   shouldShowApiKey,
@@ -489,21 +494,22 @@ export function ClaudeFormFields({
       });
   }, [isXaiOauthAuthenticated, selectedXaiAccountId, showModelFetchResult, t]);
 
+  // 已经是空列表时保留原数组：挂载时新建的 [] 会让表单白白多渲染一轮
   useEffect(() => {
     copilotModelsRequestRef.current += 1;
-    setCopilotModels([]);
+    setCopilotModels(keepEmpty);
     setModelsLoading(false);
   }, [isCopilotPreset, isCopilotAuthenticated, selectedGitHubAccountId]);
 
   useEffect(() => {
     codexOauthModelsRequestRef.current += 1;
-    setCodexOauthModels([]);
+    setCodexOauthModels(keepEmpty);
     setCodexOauthModelsLoading(false);
   }, [isCodexOauthPreset, isCodexOauthAuthenticated, selectedCodexAccountId]);
 
   useEffect(() => {
     xaiOauthModelsRequestRef.current += 1;
-    setXaiOauthModels([]);
+    setXaiOauthModels(keepEmpty);
     setXaiOauthModelsLoading(false);
   }, [isXaiOauthPreset, isXaiOauthAuthenticated, selectedXaiAccountId]);
 
