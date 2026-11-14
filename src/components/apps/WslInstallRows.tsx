@@ -38,26 +38,45 @@ export function WslInstallRows({
   // 只列出装在 WSL 里的（含装了跑不起来的）；没装的不占行，安装时在确认框里选环境。
   const distros = overview.data?.inventory.hostWindows
     ? overview.data.inventory.distros.filter((env) => {
-        const status = installOf(
-          overview.data?.installs,
-          env.distro,
-          tool,
-        )?.status;
-        return status === "installed" || status === "broken";
+        const install = installOf(overview.data?.installs, env.distro, tool);
+        return (
+          install?.status === "installed" ||
+          install?.status === "broken" ||
+          Boolean(install?.error || install?.probeError)
+        );
       })
     : [];
   if (!supported || distros.length === 0) return null;
 
-  const run = async (distro: string, action: "install" | "update") => {
+  const run = async (
+    distro: string,
+    action: "install" | "update",
+    repair = false,
+  ) => {
     if (!isAppTargetApp(tool)) return;
     setBusy(distro);
     try {
       await appTargetsApi.wslToolAction(tool, distro, action);
+      const refreshed = await appTargetsApi.overview(false, true);
+      queryClient.setQueryData(APP_TARGETS_QUERY_KEY, refreshed);
+      const result = installOf(refreshed.installs, distro, tool);
+      if (result?.status !== "installed" || result.cached) {
+        toast.warning(
+          t("appTargets.installs.notReady", { app: appName, distro }),
+          {
+            description: result?.probeError || result?.error,
+            duration: 8000,
+          },
+        );
+        return;
+      }
       toast.success(
         t(
-          action === "install"
-            ? "appTargets.installs.installed"
-            : "appTargets.installs.updated",
+          repair
+            ? "appTargets.installs.reinstalled"
+            : action === "install"
+              ? "appTargets.installs.installed"
+              : "appTargets.installs.updated",
           { app: appName, distro },
         ),
       );
@@ -77,13 +96,14 @@ export function WslInstallRows({
       {distros.map((env) => {
         const install = installOf(overview.data?.installs, env.distro, tool);
         const installed = install?.status === "installed";
+        const broken = install?.status === "broken";
         const outdated =
           installed &&
           isUpdateAvailable(install.version, latestVersion ?? undefined);
         // 没在运行的发行版里执行安装 / 升级会卡在启动上：不给按钮，先在终端里启动它。
         const action = !env.running
           ? null
-          : install?.status === "notInstalled"
+          : broken || install?.status === "notInstalled"
             ? "install"
             : outdated
               ? "update"
@@ -106,7 +126,7 @@ export function WslInstallRows({
               </div>
             )}
           </div>
-        ) : install?.status === "broken" ? (
+        ) : broken ? (
           <span className="inline-flex items-center gap-1 text-caption font-medium text-warning-text">
             <AlertTriangle className="h-3.5 w-3.5" />
             {t("appsPage.notRunnable")}
@@ -148,6 +168,26 @@ export function WslInstallRows({
                     {staleNote && <span className="shrink-0">{staleNote}</span>}
                   </div>
                 )}
+                {install?.probeError && (
+                  <div className="mt-1 break-words text-caption text-warning-text">
+                    {install.cached
+                      ? t("appTargets.installs.probeFailedCached")
+                      : t("appTargets.installs.probeFailed")}
+                    <div className="whitespace-pre-wrap">
+                      {install.probeError}
+                    </div>
+                  </div>
+                )}
+                {install?.error && install.error !== install.probeError && (
+                  <div className="mt-1 whitespace-pre-wrap break-words text-caption text-warning-text">
+                    {install.error}
+                  </div>
+                )}
+                {broken && (
+                  <div className="mt-1 text-caption text-fg-2">
+                    {t("appTargets.installs.repairHint")}
+                  </div>
+                )}
               </div>
             </div>
             <div className="text-end">{version}</div>
@@ -162,11 +202,13 @@ export function WslInstallRows({
                   disabled={busy !== null}
                   aria-busy={loading}
                   aria-label={`${
-                    action === "install"
-                      ? t("settings.toolInstall")
-                      : t("settings.toolUpdate")
+                    broken
+                      ? t("appTargets.installs.reinstall")
+                      : action === "install"
+                        ? t("settings.toolInstall")
+                        : t("settings.toolUpdate")
                   } · ${label}`}
-                  onClick={() => void run(env.distro, action)}
+                  onClick={() => void run(env.distro, action, broken)}
                 >
                   {loading ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -175,9 +217,11 @@ export function WslInstallRows({
                   ) : (
                     <ArrowUpCircle className="h-3.5 w-3.5" />
                   )}
-                  {action === "install"
-                    ? t("settings.toolInstall")
-                    : t("settings.toolUpdate")}
+                  {broken
+                    ? t("appTargets.installs.reinstall")
+                    : action === "install"
+                      ? t("settings.toolInstall")
+                      : t("settings.toolUpdate")}
                 </Button>
               )}
             </div>

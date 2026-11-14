@@ -5498,14 +5498,16 @@
       "conflictChanged": "Hedef yapılandırma az önce değişti; yeniden kaydedin.",
       "saveFailed": "Yazma hedefleri kaydedilemedi",
       "synced": "Eşitlendi.",
-      "syncFailed": "Eşitleme başarısız"
+      "syncFailed": "Eşitleme başarısız",
+      "detachFailed": "{{targets}} için doğrudan bağlantı geri yüklenemedi. Ortam değişiklikleri kaydedilmedi. Dizin erişimini kontrol edip yeniden kaydedin."
     },
     "status": {
       "ok": "Eşitlendi",
       "error": "Eşitlenmedi",
       "deferred": "Beklemede",
       "skipped": "Olduğu gibi",
-      "external": "Dışarıda değişti"
+      "external": "Dışarıda değişti",
+      "partial": "Kısmen eşitlendi"
     },
     "reason": {
       "user_deferred": "Kendi yapılandırması korundu; henüz sağlayıcı seçilmedi",
@@ -5522,7 +5524,9 @@
       "direct": "Doğrudan",
       "route_failed": "Yönlendirme yapılandırması yazılamadı; özgün yapılandırma değişmedi",
       "client_host_unresolved": "Windows'a ulaşacak adres yok",
-      "route_when_proxy": "Uygulama yönlendirmeye / birleştirmeye girince katılır"
+      "route_when_proxy": "Uygulama yönlendirmeye / birleştirmeye girince katılır",
+      "partial_sync": "Bazı ortak içerikler henüz eşitlenmedi",
+      "route_detach_failed": "Doğrudan bağlantı geri yüklenemedi; ortam korundu"
     },
     "indicator": {
       "title": "Yazma hedefleri",
@@ -5581,16 +5585,28 @@
       "versionUnknown": "Kurulu · sürüm bilinmiyor",
       "notChecked": "Kontrol edilmedi",
       "cached": "son kontrol",
-      "stoppedCached": "durdu · son kontrol"
+      "stoppedCached": "durdu · son kontrol",
+      "reinstall": "Yeniden yükle",
+      "reinstalled": "{{app}}, WSL · {{distro}} içine yeniden yüklendi",
+      "repairHint": "Yeniden yükleme yardımcı olmazsa bu dağıtımda bir terminal açıp hata ayrıntılarına göre çalışma zamanı bağımlılıklarını ve kurulumu kontrol edin.",
+      "notReady": "İşlem tamamlandı, ancak WSL · {{distro}} içindeki {{app}} hâlâ algılama denetiminden geçemedi.",
+      "probeFailed": "Bu algılama başarısız oldu",
+      "probeFailedCached": "Bu algılama başarısız oldu; önceki sonuç gösteriliyor"
     },
     "installTargets": {
       "title": "{{app}} kur",
-      "description": "WSL dağıtımları kontrol edildi. Nereye kurulacağını seçin; kurulu ortamlar seçilemez, durmuş dağıtımları önce bir terminalde başlatın.",
+      "description": "WSL dağıtımları kontrol edildi. Kurulum hedeflerini seçin. Çalışan kurulumlar tekrar seçilemez, bozuk istemciler yeniden yüklenebilir. Durdurulmuş dağıtımlar önce terminalde başlatılmalıdır.",
       "detecting": "WSL kontrol ediliyor…",
       "installed": "Kurulu {{version}}",
       "stopped": "Çalışmıyor; önce başlatın",
       "confirm": "Kur ({{count}})",
-      "menu": "Diğer ortamlara kur…"
+      "menu": "Diğer ortamlara kur…",
+      "broken": "Çalıştırılamıyor; yeniden yüklenebilir"
+    },
+    "syncFailure": {
+      "mcp_failed": "MCP eşitlemesi başarısız: {{detail}}",
+      "prompt_failed": "İstem eşitlemesi başarısız: {{detail}}",
+      "skills_failed": "Skills eşitlemesi başarısız: {{detail}}"
     }
   },
   "autoUpdate": {

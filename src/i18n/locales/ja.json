@@ -5498,14 +5498,16 @@
       "conflictChanged": "書き込み先の設定が変更されました。もう一度保存してください。",
       "saveFailed": "書き込み先の保存に失敗しました",
       "synced": "同期しました。",
-      "syncFailed": "同期に失敗しました"
+      "syncFailed": "同期に失敗しました",
+      "detachFailed": "{{targets}} を直接接続に戻せませんでした。環境の変更は保存されていません。ディレクトリへのアクセスを確認して再度保存してください。"
     },
     "status": {
       "ok": "同期済み",
       "error": "未同期",
       "deferred": "同期待ち",
       "skipped": "元の設定を保持",
-      "external": "外部で変更"
+      "external": "外部で変更",
+      "partial": "一部の同期に失敗"
     },
     "reason": {
       "user_deferred": "元の設定を保持。プロバイダーは未選択",
@@ -5522,7 +5524,9 @@
       "direct": "直結",
       "route_failed": "ルーティング設定の書き込みに失敗しました。元の設定は変更されていません",
       "client_host_unresolved": "Windows に接続するアドレスがありません",
-      "route_when_proxy": "アプリがルーティング / 集約に入ると参加します"
+      "route_when_proxy": "アプリがルーティング / 集約に入ると参加します",
+      "partial_sync": "一部の共有コンテンツが未同期です",
+      "route_detach_failed": "直接接続に戻せなかったため環境を保持しました"
     },
     "indicator": {
       "title": "書き込み先",
@@ -5581,16 +5585,28 @@
       "versionUnknown": "インストール済み · バージョン不明",
       "notChecked": "未確認",
       "cached": "前回の検出",
-      "stoppedCached": "停止中 · 前回の検出"
+      "stoppedCached": "停止中 · 前回の検出",
+      "reinstall": "再インストール",
+      "reinstalled": "WSL · {{distro}} に {{app}} を再インストールしました",
+      "repairHint": "再インストールしても実行できない場合は、このディストリビューションのターミナルでエラーの詳細を確認し、実行時の依存関係とインストール環境を確認してください。",
+      "notReady": "操作は完了しましたが、WSL · {{distro}} の {{app}} はまだ正常に検出できません。",
+      "probeFailed": "今回の検出に失敗",
+      "probeFailedCached": "今回の検出に失敗したため前回の結果を表示しています"
     },
     "installTargets": {
       "title": "{{app}} をインストール",
-      "description": "各 WSL ディストリビューションのインストール状況を確認しました。インストール先を選んでください。インストール済みの環境は選べず、停止中のディストリビューションは先にターミナルで起動してください。",
+      "description": "WSL ディストリビューションを確認しました。インストール先を選択してください。正常なインストールは再選択できません。実行できないクライアントは再インストールできます。停止中のディストリビューションは先にターミナルで起動してください。",
       "detecting": "WSL を確認中…",
       "installed": "インストール済み {{version}}",
       "stopped": "停止中。先に起動してください",
       "confirm": "インストール（{{count}}）",
-      "menu": "他の環境にインストール…"
+      "menu": "他の環境にインストール…",
+      "broken": "実行できません・再インストール可能"
+    },
+    "syncFailure": {
+      "mcp_failed": "MCP の同期に失敗：{{detail}}",
+      "prompt_failed": "プロンプトの同期に失敗：{{detail}}",
+      "skills_failed": "Skills の同期に失敗：{{detail}}"
     }
   },
   "autoUpdate": {

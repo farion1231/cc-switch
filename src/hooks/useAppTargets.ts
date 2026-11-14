@@ -59,6 +59,22 @@ export const reasonLabel = (t: TFunction, reason?: string) =>
   reason ? t(`appTargets.reason.${reason}`, { defaultValue: reason }) : "";
 
 export const failedTargets = (reports: TargetReport[]) =>
-  reports.filter((report) => report.status === "error");
+  reports.filter(
+    (report) => report.status === "error" || report.status === "partial",
+  );
+
+export const syncFailureWarnings = (warnings: string[] = []) =>
+  warnings.filter((warning) =>
+    ["mcp_failed:", "prompt_failed:", "skills_failed:"].some((prefix) =>
+      warning.startsWith(prefix),
+    ),
+  );
+
+export function syncWarningLabel(t: TFunction, warning: string): string {
+  const separator = warning.indexOf(":");
+  return t(`appTargets.syncFailure.${warning.slice(0, separator)}`, {
+    detail: warning.slice(separator + 1),
+  });
+}
 
 export type { AppTargetAppId };

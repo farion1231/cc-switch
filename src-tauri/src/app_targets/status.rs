@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 pub enum TargetStatus {
     /// 已同步。
     Ok,
+    /// 供应商保持可用，但 MCP / 提示词 / Skills 有未完成的同步。
+    Partial,
     /// 未同步（写入失败、超时）。
     Error,
     /// 待同步（用户暂缓、主环境失败本次未开始、路由模式下暂不写）。
@@ -78,6 +80,32 @@ impl TargetRecord {
         self.detail = Some(detail.into());
         self
     }
+
+    /// 保留供应商 / 路由错误；共享内容的失败独立可见，不能被下一次局部同步隐藏。
+    pub fn with_sync_warnings(mut self, warnings: Vec<String>) -> Self {
+        let failed = warnings.iter().any(|w| is_sync_failure(w));
+        self.warnings = warnings;
+        if failed && self.status != TargetStatus::Error {
+            self.status = TargetStatus::Partial;
+            self.reason = Some("partial_sync".to_string());
+        } else if !failed && self.status == TargetStatus::Partial {
+            if self.provider_id.is_some() || self.routed {
+                self.status = TargetStatus::Ok;
+                self.reason = self.routed.then(|| "routed".to_string());
+            } else {
+                self.status = TargetStatus::Skipped;
+                self.reason = Some("no_provider".to_string());
+            }
+            self.detail = None;
+        }
+        self
+    }
+}
+
+pub fn is_sync_failure(warning: &str) -> bool {
+    ["mcp_failed:", "prompt_failed:", "skills_failed:"]
+        .iter()
+        .any(|prefix| warning.starts_with(prefix))
 }
 
 type AppRecords = BTreeMap<String, TargetRecord>;

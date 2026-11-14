@@ -5498,14 +5498,16 @@
       "conflictChanged": "目標中的設定剛剛變了，請再儲存一次。",
       "saveFailed": "儲存寫入目標失敗",
       "synced": "已同步。",
-      "syncFailed": "同步失敗"
+      "syncFailed": "同步失敗",
+      "detachFailed": "無法還原 {{targets}} 的直連設定，環境變更未儲存。請檢查目錄存取後重新儲存。"
     },
     "status": {
       "ok": "已同步",
       "error": "未同步",
       "deferred": "待同步",
       "skipped": "保持原設定",
-      "external": "外部已修改"
+      "external": "外部已修改",
+      "partial": "部分同步失敗"
     },
     "reason": {
       "user_deferred": "保留原設定，尚未選擇供應商",
@@ -5522,7 +5524,9 @@
       "direct": "直連",
       "route_failed": "寫入路由設定失敗，原設定未變更",
       "client_host_unresolved": "未取得連到 Windows 的位址",
-      "route_when_proxy": "應用進入路由 / 聚合時接入"
+      "route_when_proxy": "應用進入路由 / 聚合時接入",
+      "partial_sync": "部分共用內容尚未同步",
+      "route_detach_failed": "還原直連失敗，仍保留該環境"
     },
     "indicator": {
       "title": "寫入目標",
@@ -5581,16 +5585,28 @@
       "versionUnknown": "已安裝 · 版本未知",
       "notChecked": "未偵測",
       "cached": "上次偵測",
-      "stoppedCached": "未執行 · 上次偵測"
+      "stoppedCached": "未執行 · 上次偵測",
+      "reinstall": "重新安裝",
+      "reinstalled": "已在 WSL · {{distro}} 重新安裝 {{app}}",
+      "repairHint": "重新安裝後若仍無法執行，請在該發行版終端依錯誤提示檢查執行相依套件和安裝環境。",
+      "notReady": "操作已完成，但 {{app}} 在 WSL · {{distro}} 仍未通過偵測。",
+      "probeFailed": "本次偵測失敗",
+      "probeFailedCached": "本次偵測失敗，顯示上次結果"
     },
     "installTargets": {
       "title": "安裝 {{app}}",
-      "description": "已偵測各 WSL 發行版的安裝情況。勾選要安裝到的環境；已安裝的不能勾，未執行的發行版請先在終端裡啟動。",
+      "description": "已檢查 WSL 發行版。選擇安裝位置；正常安裝的環境無法重複選取，無法執行的用戶端可以重新安裝，停止的發行版需要先在終端啟動。",
       "detecting": "正在偵測 WSL…",
       "installed": "已安裝 {{version}}",
       "stopped": "未執行，請先啟動",
       "confirm": "安裝（{{count}}）",
-      "menu": "安裝到其他環境…"
+      "menu": "安裝到其他環境…",
+      "broken": "無法執行，可重新安裝"
+    },
+    "syncFailure": {
+      "mcp_failed": "MCP 同步失敗：{{detail}}",
+      "prompt_failed": "提示詞同步失敗：{{detail}}",
+      "skills_failed": "Skills 同步失敗：{{detail}}"
     }
   },
   "autoUpdate": {

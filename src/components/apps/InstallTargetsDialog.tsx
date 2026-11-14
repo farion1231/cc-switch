@@ -37,7 +37,7 @@ interface InstallTargetsDialogProps {
 
 /**
  * 安装前确认目标环境：先重新检测运行中的 WSL 发行版装没装，再让用户勾选装到 Windows 还是
- * 哪些 WSL。已装的不能勾；没检测出来的可以勾（装的时候会启动停止的发行版）。
+ * 哪些 WSL。正常安装的不能勾；损坏的可重新安装；停止的发行版需先由用户启动。
  */
 export function InstallTargetsDialog({
   open,
@@ -98,8 +98,26 @@ export function InstallTargetsDialog({
       for (const distro of wsl) {
         try {
           await appTargetsApi.wslToolAction(tool, distro, "install");
+          const refreshed = await appTargetsApi.overview(false, true);
+          queryClient.setQueryData(APP_TARGETS_QUERY_KEY, refreshed);
+          const result = installOf(refreshed.installs, distro, tool);
+          if (result?.status !== "installed" || result.cached) {
+            toast.warning(
+              t("appTargets.installs.notReady", { app: appName, distro }),
+              {
+                description: result?.probeError || result?.error,
+                duration: 8000,
+              },
+            );
+            continue;
+          }
           toast.success(
-            t("appTargets.installs.installed", { app: appName, distro }),
+            t(
+              installOf(overview?.installs, distro, tool)?.status === "broken"
+                ? "appTargets.installs.reinstalled"
+                : "appTargets.installs.installed",
+              { app: appName, distro },
+            ),
           );
         } catch (error) {
           toast.error(
@@ -129,7 +147,8 @@ export function InstallTargetsDialog({
         version: install.version ?? "",
       })}${stale}`;
     }
-    if (install?.status === "broken") return t("appsPage.notRunnable");
+    if (install?.status === "broken")
+      return `${t("appTargets.installTargets.broken")}${stale}`;
     if (!isRunning) return t("appTargets.installTargets.stopped");
     if (install?.status === "notInstalled") {
       return `${t("common.notInstalled")}${stale}`;
@@ -178,8 +197,7 @@ export function InstallTargetsDialog({
           ) : (
             distros.map((env) => {
               const install = installOf(overview?.installs, env.distro, tool);
-              const present =
-                install?.status === "installed" || install?.status === "broken";
+              const present = install?.status === "installed";
               // 没在运行的发行版里安装会卡在启动上：不让勾，提示先启动它。
               const blocked = !present && !env.running;
               const label = `WSL · ${env.distro}`;
@@ -194,9 +212,28 @@ export function InstallTargetsDialog({
                     aria-label={label}
                     onCheckedChange={(checked) => toggle(env.distro, checked)}
                   />
-                  <span className="min-w-0 flex-1 truncate text-body text-fg-1">
-                    {label}
-                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-body text-fg-1">{label}</div>
+                    {(install?.probeError || install?.error) && (
+                      <div className="mt-1 break-words text-caption text-warning-text">
+                        {install?.probeError && (
+                          <div>
+                            {t(
+                              install.cached
+                                ? "appTargets.installs.probeFailedCached"
+                                : "appTargets.installs.probeFailed",
+                            )}
+                          </div>
+                        )}
+                        {install?.probeError || install?.error}
+                      </div>
+                    )}
+                    {install?.status === "broken" && (
+                      <div className="mt-1 text-caption text-fg-2">
+                        {t("appTargets.installs.repairHint")}
+                      </div>
+                    )}
+                  </div>
                   <span className="shrink-0 text-caption text-fg-2">
                     {statusText(env.distro, env.running)}
                   </span>

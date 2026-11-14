@@ -5498,14 +5498,16 @@
       "conflictChanged": "The target config just changed; save again.",
       "saveFailed": "Failed to save write targets",
       "synced": "Synced.",
-      "syncFailed": "Sync failed"
+      "syncFailed": "Sync failed",
+      "detachFailed": "Could not restore direct access for {{targets}}. Environment changes were not saved. Check directory access and save again."
     },
     "status": {
       "ok": "Synced",
       "error": "Not synced",
       "deferred": "Pending",
       "skipped": "Kept as is",
-      "external": "Changed externally"
+      "external": "Changed externally",
+      "partial": "Partially synced"
     },
     "reason": {
       "user_deferred": "Own config kept; no provider picked yet",
@@ -5522,7 +5524,9 @@
       "direct": "Direct",
       "route_failed": "Writing the routing config failed; original config untouched",
       "client_host_unresolved": "No address to reach Windows",
-      "route_when_proxy": "Joins when the app enters routing / aggregation"
+      "route_when_proxy": "Joins when the app enters routing / aggregation",
+      "partial_sync": "Some shared content has not synced",
+      "route_detach_failed": "Could not restore direct access; environment kept"
     },
     "indicator": {
       "title": "Write targets",
@@ -5581,16 +5585,28 @@
       "versionUnknown": "Installed · version unknown",
       "notChecked": "Not checked",
       "cached": "last check",
-      "stoppedCached": "stopped · last check"
+      "stoppedCached": "stopped · last check",
+      "reinstall": "Reinstall",
+      "reinstalled": "Reinstalled {{app}} in WSL · {{distro}}",
+      "repairHint": "If reinstalling does not help, open a terminal in this distro and use the error details to check runtime dependencies and the installation.",
+      "notReady": "The operation finished, but {{app}} in WSL · {{distro}} still did not pass detection.",
+      "probeFailed": "Detection failed this time",
+      "probeFailedCached": "Detection failed this time; showing the previous result"
     },
     "installTargets": {
       "title": "Install {{app}}",
-      "description": "WSL distros were checked. Choose where to install; installed environments can't be selected, and stopped distros must be started in a terminal first.",
+      "description": "WSL distros were checked. Choose where to install; working installations cannot be selected again, broken clients can be reinstalled, and stopped distros must be started in a terminal first.",
       "detecting": "Checking WSL…",
       "installed": "Installed {{version}}",
       "stopped": "Not running; start it first",
       "confirm": "Install ({{count}})",
-      "menu": "Install to other environments…"
+      "menu": "Install to other environments…",
+      "broken": "Not runnable; can reinstall"
+    },
+    "syncFailure": {
+      "mcp_failed": "MCP sync failed: {{detail}}",
+      "prompt_failed": "Prompt sync failed: {{detail}}",
+      "skills_failed": "Skills sync failed: {{detail}}"
     }
   },
   "autoUpdate": {

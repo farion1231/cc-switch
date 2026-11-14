@@ -84,6 +84,9 @@ fn view(app: &AppType, inventory: &WslInventory) -> AppTargetsView {
         }
     }
     let mut records = status::records(app.as_str());
+    for record in records.values_mut() {
+        *record = record.clone().with_sync_warnings(record.warnings.clone());
+    }
     for spec in config.followers() {
         let routed = sync::follower_routed(app, &spec.id);
         if let Some(record) = records.get_mut(&spec.id.key()) {
@@ -278,11 +281,21 @@ fn save_lock() -> &'static Mutex<()> {
 
 /// 主环境：沿用现有写入（尊重直连 / 代理模式，重投影 MCP），再补提示词和 Skills。
 fn write_primary(state: &AppState, app: &AppType, key: &str) -> TargetReport {
-    let result =
-        crate::services::ProviderService::sync_current_provider_for_app(state, app.clone());
+    let proxy = app.has_route_mode() && crate::mode::current::mode_state(app).is_proxy();
+    let result = if proxy {
+        tauri::async_runtime::block_on(crate::mode::controller::sync_primary_route(state, app))
+            .map_err(AppError::Message)
+    } else {
+        crate::services::ProviderService::sync_current_provider_for_app(state, app.clone())
+    };
     match result {
         Ok(()) => {
             let mut warnings = Vec::new();
+            if proxy {
+                if let Err(err) = crate::services::McpService::sync_enabled_for_app(state, app) {
+                    warnings.push(format!("mcp_failed:{err}"));
+                }
+            }
             if let Err(err) = crate::services::PromptService::sync_to_live(state, app.clone()) {
                 warnings.push(format!("prompt_failed:{err}"));
             }
@@ -291,10 +304,7 @@ fn write_primary(state: &AppState, app: &AppType, key: &str) -> TargetReport {
             }
             TargetReport {
                 target: key.to_string(),
-                record: TargetRecord {
-                    warnings,
-                    ..TargetRecord::new(TargetStatus::Ok)
-                },
+                record: TargetRecord::new(TargetStatus::Ok).with_sync_warnings(warnings),
             }
         }
         Err(err) => TargetReport {
@@ -356,7 +366,53 @@ pub fn save(
         });
     }
 
-    // 导入、备份都在保存之前：失败时什么都不保存，目标原配置不动。
+    // 和后台路由同步共用锁：恢复旧目录后、保存新设置前，不能被旧目标列表重新接上路由。
+    let route_lock = sync::route_sync_lock(&app);
+    let route_guard = route_lock.lock().unwrap_or_else(|e| e.into_inner());
+    let next_followers = config.followers();
+    let replaced = previous
+        .followers()
+        .into_iter()
+        .filter(|old| {
+            !next_followers
+                .iter()
+                .any(|next| next.id.same(&old.id) && next.dir == old.dir)
+        })
+        .collect();
+    let mut detached = sync::sync_routes_locked(state, &app, replaced, true);
+    if app.has_route_mode()
+        && !detached
+            .iter()
+            .any(|r| r.record.status == TargetStatus::Error)
+        && (primary_changed(&previous, &config)
+            || changed
+                .iter()
+                .any(|t| previous.primary_id().is_some_and(|id| id.same(&t.id))))
+    {
+        if let Err(error) = tauri::async_runtime::block_on(
+            crate::mode::controller::detach_for_target_change(state, &app),
+        ) {
+            detached.push(sync::record(
+                &app,
+                &previous.primary,
+                TargetRecord::new(TargetStatus::Error)
+                    .reason("route_detach_failed")
+                    .detail(error.lines().next().unwrap_or_default().to_string()),
+            ));
+        }
+    }
+    if detached
+        .iter()
+        .any(|r| r.record.status == TargetStatus::Error)
+    {
+        return Ok(SaveResult {
+            inspect,
+            targets: detached,
+            ..Default::default()
+        });
+    }
+
+    // 导入、备份都在保存之前：失败时目标设置不保存。
     let mut imported = Vec::new();
     let mut imported_for: BTreeMap<String, String> = BTreeMap::new();
     let mut deferred: Vec<TargetId> = Vec::new();
@@ -393,6 +449,7 @@ pub fn save(
     let new_primary = config.primary_id().expect("validated primary");
     let old_primary = previous.primary_id();
     crate::settings::set_app_targets(&app, config.clone(), legacy)?;
+    drop(route_guard);
     log::info!(
         "[app-targets] 保存 {} 写入目标：主环境 {}，启用 {}",
         app.as_str(),
@@ -463,13 +520,22 @@ pub fn save(
     } else if let Some(imported_id) = imported_for.get(&new_primary.key()) {
         out.primary = Some(
             match crate::services::ProviderService::switch(state, app.clone(), imported_id) {
-                Ok(_) => TargetReport {
-                    target: new_primary.key(),
-                    record: TargetRecord {
-                        provider_id: Some(imported_id.clone()),
-                        ..TargetRecord::new(TargetStatus::Ok)
-                    },
-                },
+                Ok(_) => {
+                    let mut report = if app.has_route_mode()
+                        && crate::mode::current::mode_state(&app).is_proxy()
+                    {
+                        write_primary(state, &app, &new_primary.key())
+                    } else {
+                        TargetReport {
+                            target: new_primary.key(),
+                            record: TargetRecord::new(TargetStatus::Ok),
+                        }
+                    };
+                    if report.record.status != TargetStatus::Error {
+                        report.record.provider_id = Some(imported_id.clone());
+                    }
+                    report
+                }
                 Err(err) => TargetReport {
                     target: new_primary.key(),
                     record: TargetRecord::new(TargetStatus::Error)
@@ -716,7 +782,34 @@ pub fn sync_now(
     if followers.as_ref().is_some_and(|ids| ids.is_empty()) {
         return Ok(out);
     }
-    out.targets = sync::sync_followers(state, &app, followers.as_deref(), SyncKind::Full);
+    let routes = sync::sync_follower_routes_for(state, &app, false, followers.as_deref());
+    let failed: Vec<TargetId> = routes
+        .iter()
+        .filter(|r| r.record.status == TargetStatus::Error)
+        .filter_map(|r| TargetId::parse(&r.target))
+        .collect();
+    let ready: Vec<TargetId> = config
+        .followers()
+        .into_iter()
+        .map(|spec| spec.id)
+        .filter(|id| {
+            followers
+                .as_ref()
+                .is_none_or(|ids| ids.iter().any(|t| t.same(id)))
+        })
+        .filter(|id| !failed.iter().any(|failed| failed.same(id)))
+        .collect();
+    out.targets = routes
+        .into_iter()
+        .filter(|r| r.record.status == TargetStatus::Error)
+        .collect();
+    // 路由失败的目标保留原错误，不能再写直连并把状态覆盖成「已同步」。
+    out.targets.extend(sync::sync_followers(
+        state,
+        &app,
+        Some(&ready),
+        SyncKind::Full,
+    ));
     Ok(out)
 }
 

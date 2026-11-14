@@ -5498,14 +5498,16 @@
       "conflictChanged": "Die Zielkonfiguration hat sich gerade geändert; bitte erneut speichern.",
       "saveFailed": "Schreibziele konnten nicht gespeichert werden",
       "synced": "Synchronisiert.",
-      "syncFailed": "Synchronisierung fehlgeschlagen"
+      "syncFailed": "Synchronisierung fehlgeschlagen",
+      "detachFailed": "Die Direktverbindung für {{targets}} konnte nicht wiederhergestellt werden. Die Umgebungsänderungen wurden nicht gespeichert. Prüfe den Verzeichniszugriff und speichere erneut."
     },
     "status": {
       "ok": "Synchronisiert",
       "error": "Nicht synchronisiert",
       "deferred": "Ausstehend",
       "skipped": "Unverändert",
-      "external": "Extern geändert"
+      "external": "Extern geändert",
+      "partial": "Teilweise synchronisiert"
     },
     "reason": {
       "user_deferred": "Eigene Konfiguration behalten; noch kein Anbieter gewählt",
@@ -5522,7 +5524,9 @@
       "direct": "Direkt",
       "route_failed": "Routing-Konfiguration konnte nicht geschrieben werden; Original unverändert",
       "client_host_unresolved": "Keine Adresse, um Windows zu erreichen",
-      "route_when_proxy": "Tritt bei, sobald die App Routing / Aggregation nutzt"
+      "route_when_proxy": "Tritt bei, sobald die App Routing / Aggregation nutzt",
+      "partial_sync": "Einige gemeinsame Inhalte wurden nicht synchronisiert",
+      "route_detach_failed": "Direktverbindung nicht wiederhergestellt; Umgebung beibehalten"
     },
     "indicator": {
       "title": "Schreibziele",
@@ -5581,16 +5585,28 @@
       "versionUnknown": "Installiert · Version unbekannt",
       "notChecked": "Nicht geprüft",
       "cached": "letzte Prüfung",
-      "stoppedCached": "gestoppt · letzte Prüfung"
+      "stoppedCached": "gestoppt · letzte Prüfung",
+      "reinstall": "Neu installieren",
+      "reinstalled": "{{app}} in WSL · {{distro}} neu installiert",
+      "repairHint": "Falls die Neuinstallation nicht hilft, öffne ein Terminal in dieser Distribution und prüfe anhand der Fehlerdetails die Laufzeitabhängigkeiten und die Installation.",
+      "notReady": "Der Vorgang ist abgeschlossen, aber {{app}} in WSL · {{distro}} hat die Erkennung weiterhin nicht bestanden.",
+      "probeFailed": "Erkennung diesmal fehlgeschlagen",
+      "probeFailedCached": "Erkennung diesmal fehlgeschlagen; vorheriges Ergebnis wird angezeigt"
     },
     "installTargets": {
       "title": "{{app}} installieren",
-      "description": "Die WSL-Distributionen wurden geprüft. Wählen Sie die Ziele; bereits installierte Umgebungen sind nicht wählbar, gestoppte Distributionen zuerst in einem Terminal starten.",
+      "description": "Die WSL-Distributionen wurden geprüft. Wähle die Installationsziele. Funktionierende Installationen sind nicht erneut auswählbar, defekte Clients können neu installiert werden. Gestoppte Distributionen müssen zuerst im Terminal gestartet werden.",
       "detecting": "WSL wird geprüft…",
       "installed": "Installiert {{version}}",
       "stopped": "Läuft nicht; zuerst starten",
       "confirm": "Installieren ({{count}})",
-      "menu": "In weitere Umgebungen installieren…"
+      "menu": "In weitere Umgebungen installieren…",
+      "broken": "Nicht ausführbar; Neuinstallation möglich"
+    },
+    "syncFailure": {
+      "mcp_failed": "MCP-Synchronisierung fehlgeschlagen: {{detail}}",
+      "prompt_failed": "Prompt-Synchronisierung fehlgeschlagen: {{detail}}",
+      "skills_failed": "Skills-Synchronisierung fehlgeschlagen: {{detail}}"
     }
   },
   "autoUpdate": {

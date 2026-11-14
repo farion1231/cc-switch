@@ -18,6 +18,8 @@ import {
 } from "@/lib/api/appTargets";
 import {
   reasonLabel,
+  syncFailureWarnings,
+  syncWarningLabel,
   targetLabel,
   useInvalidateAppTargets,
 } from "@/hooks/useAppTargets";
@@ -110,7 +112,17 @@ export function ProviderEnvSwitches({
     setBusy(key);
     try {
       const report = await appTargetsApi.activate(app, key, provider.id);
-      if (report.status === "ok") {
+      if (report.status === "partial") {
+        toast.warning(
+          t("appTargets.toast.partial", { targets: targetLabel(key) }),
+          {
+            description: syncFailureWarnings(report.warnings)
+              .map((w) => syncWarningLabel(t, w))
+              .join(" · "),
+            duration: 8000,
+          },
+        );
+      } else if (report.status === "ok") {
         toast.success(
           t("appTargets.switch.done", {
             provider: provider.name,

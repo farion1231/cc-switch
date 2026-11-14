@@ -39,8 +39,11 @@ pub struct ToolInstall {
     pub path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// 本次探测失败的原因；使用上次安装结果时与原来的客户端错误分开显示。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe_error: Option<String>,
     pub detected_at: i64,
-    /// 这次没有重新探测，用的是上次结果（发行版没在运行）。
+    /// 使用上次结果（发行版停止、缓存过期或本次探测失败）。
     #[serde(default)]
     pub cached: bool,
 }
@@ -117,6 +120,9 @@ fn probe_distro(distro: &str) -> BTreeMap<String, ToolInstall> {
                 WslToolState::NotInstalled => (InstallStatus::NotInstalled, None, None, None),
                 WslToolState::Unknown(error) => (InstallStatus::Unknown, None, None, Some(error)),
             };
+            let probe_error = (status == InstallStatus::Unknown)
+                .then(|| error.clone())
+                .flatten();
             (
                 tool,
                 ToolInstall {
@@ -124,12 +130,27 @@ fn probe_distro(distro: &str) -> BTreeMap<String, ToolInstall> {
                     version,
                     path,
                     error: error.map(|e| e.chars().take(300).collect()),
+                    probe_error: probe_error.map(|e| e.chars().take(300).collect()),
                     detected_at: now,
                     cached: false,
                 },
             )
         })
         .collect()
+}
+
+fn retain_last_install(result: &mut ToolInstall, previous: Option<&ToolInstall>) {
+    if result.status != InstallStatus::Unknown {
+        return;
+    }
+    if let Some(last) = previous.filter(|last| last.present()) {
+        *result = ToolInstall {
+            probe_error: result.probe_error.clone(),
+            detected_at: result.detected_at,
+            cached: true,
+            ..last.clone()
+        };
+    }
 }
 
 /// 当前的安装情况。运行中的发行版在缓存过期或 `refresh` 时重新探测（应用页「检查更新」）；
@@ -162,7 +183,16 @@ pub fn detect(inventory: &WslInventory, refresh: bool, start_stopped: bool) -> I
         })
         .collect();
     for job in jobs {
-        if let Ok((distro, tools)) = job.join() {
+        if let Ok((distro, mut tools)) = job.join() {
+            // 本次探测失败时保留上次已安装的结果，同时显示新的错误；不能把超时当成卸载。
+            if let Some((_, previous)) = cache
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case(&distro))
+            {
+                for (tool, result) in &mut tools {
+                    retain_last_install(result, previous.get(tool));
+                }
+            }
             cache.retain(|name, _| !name.eq_ignore_ascii_case(&distro));
             cache.insert(distro, tools);
             changed = true;
@@ -180,7 +210,7 @@ pub fn detect(inventory: &WslInventory, refresh: bool, start_stopped: bool) -> I
         };
         let mut tools = tools.clone();
         for tool in tools.values_mut() {
-            tool.cached = !env.running || now - tool.detected_at >= MAX_AGE_SECS;
+            tool.cached = tool.cached || !env.running || now - tool.detected_at >= MAX_AGE_SECS;
         }
         out.insert(env.distro.clone(), tools);
     }
@@ -221,6 +251,7 @@ mod tests {
             version: None,
             path: None,
             error: None,
+            probe_error: None,
             detected_at: 0,
             cached: false,
         }
@@ -243,6 +274,43 @@ mod tests {
         assert_eq!(installed(&installs, "Alpine", "gemini"), None);
         assert_eq!(installed(&installs, "Alpine", "opencode"), Some(true));
         assert_eq!(installed(&installs, "Debian", "codex"), None);
+    }
+
+    #[test]
+    fn failed_probes_keep_last_install_and_report_the_new_error() {
+        for status in [InstallStatus::Installed, InstallStatus::Broken] {
+            let previous = ToolInstall {
+                version: Some("1.2.3".into()),
+                path: Some("/usr/bin/codex".into()),
+                error: (status == InstallStatus::Broken).then(|| "Node version unsupported".into()),
+                ..tool(status)
+            };
+            let mut current = ToolInstall {
+                error: Some("Command timed out after 10s".into()),
+                probe_error: Some("Command timed out after 10s".into()),
+                detected_at: 42,
+                ..tool(InstallStatus::Unknown)
+            };
+            retain_last_install(&mut current, Some(&previous));
+            assert_eq!(current.status, status);
+            assert_eq!(current.version, previous.version);
+            assert_eq!(current.path, previous.path);
+            assert_eq!(current.error, previous.error);
+            assert_eq!(
+                current.probe_error.as_deref(),
+                Some("Command timed out after 10s")
+            );
+            assert_eq!(current.detected_at, 42);
+            assert!(current.cached);
+        }
+    }
+
+    #[test]
+    fn confirmed_uninstall_replaces_last_install() {
+        let mut current = tool(InstallStatus::NotInstalled);
+        retain_last_install(&mut current, Some(&tool(InstallStatus::Installed)));
+        assert_eq!(current.status, InstallStatus::NotInstalled);
+        assert!(!current.cached);
     }
 
     #[test]

@@ -37,6 +37,8 @@ import {
 import {
   reasonLabel,
   statusLabel,
+  syncFailureWarnings,
+  syncWarningLabel,
   targetLabel,
   useInvalidateAppTargets,
 } from "@/hooks/useAppTargets";
@@ -264,7 +266,10 @@ export function AppTargetsEditor({
     });
 
   const report = (result: SaveResult) => {
-    const failed = result.targets.filter((r) => r.status === "error");
+    const failed = [
+      ...result.targets,
+      ...(result.primary?.status === "partial" ? [result.primary] : []),
+    ].filter((r) => r.status === "error" || r.status === "partial");
     const deferred = result.targets.filter((r) => r.status === "deferred");
     const written = result.targets.filter((r) => r.status === "ok");
     if (result.primary?.status === "error") {
@@ -277,7 +282,14 @@ export function AppTargetsEditor({
         t("appTargets.toast.partial", {
           targets: failed.map((r) => targetLabel(r.target)).join("、"),
         }),
-        { description: failed[0].detail, duration: 8000 },
+        {
+          description:
+            failed[0].detail ||
+            syncFailureWarnings(failed[0].warnings)
+              .map((w) => syncWarningLabel(t, w))
+              .join(" · "),
+          duration: 8000,
+        },
       );
     } else if (deferred.length) {
       toast.warning(t("appTargets.toast.deferred"), { duration: 6000 });
@@ -342,6 +354,17 @@ export function AppTargetsEditor({
       }
       const result = await appTargetsApi.save(app, payload, resolutions);
       if (!result.saved) {
+        const failed = result.targets.filter((r) => r.status === "error");
+        if (failed.length) {
+          toast.error(
+            t("appTargets.toast.detachFailed", {
+              targets: failed.map((r) => targetLabel(r.target)).join("、"),
+            }),
+            { description: failed[0].detail, duration: 8000 },
+          );
+          await invalidate();
+          return;
+        }
         if (result.errors.length) setErrors(result.errors);
         if (result.blocked) {
           toast.warning(t(`appTargets.blocked.${result.blocked}`));
@@ -569,6 +592,16 @@ export function AppTargetsEditor({
                   })}
                 </div>
               )}
+              {!isPrimary &&
+                row.enabled &&
+                syncFailureWarnings(record?.warnings).map((warning) => (
+                  <div
+                    key={warning}
+                    className="mt-1 break-all ps-7 text-caption text-warning-text"
+                  >
+                    {syncWarningLabel(t, warning)}
+                  </div>
+                ))}
             </div>
           );
         })}

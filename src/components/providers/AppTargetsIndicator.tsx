@@ -22,13 +22,15 @@ import {
 import {
   reasonLabel,
   statusLabel,
+  syncFailureWarnings,
+  syncWarningLabel,
   targetLabel,
   useAppTargetView,
   useInvalidateAppTargets,
 } from "@/hooks/useAppTargets";
 import type { Provider } from "@/types";
 
-const NEEDS_SYNC = ["error", "deferred", "external"];
+const NEEDS_SYNC = ["error", "partial", "deferred", "external"];
 
 /**
  * 供应商页头的「写入目标」：目标不是默认「仅 Windows」时出现。点开看每个环境的目录、
@@ -56,8 +58,10 @@ export function AppTargetsIndicator({
   const followers = enabled.filter(
     (key) => !sameTarget(key, view.config.primary),
   );
-  const pending = followers.filter((key) =>
-    NEEDS_SYNC.includes(view.records[key]?.status ?? "deferred"),
+  const pending = followers.filter(
+    (key) =>
+      NEEDS_SYNC.includes(view.records[key]?.status ?? "deferred") ||
+      syncFailureWarnings(view.records[key]?.warnings).length > 0,
   );
   const worst = followers.some((k) => view.records[k]?.status === "error")
     ? "bad"
@@ -69,13 +73,21 @@ export function AppTargetsIndicator({
     setBusy(true);
     try {
       const result = await appTargetsApi.sync(app, keys);
-      const failed = result.targets.filter((r) => r.status === "error");
+      const failed = result.targets.filter(
+        (r) => r.status === "error" || r.status === "partial",
+      );
       if (failed.length) {
         toast.warning(
           t("appTargets.toast.partial", {
             targets: failed.map((r) => targetLabel(r.target)).join("、"),
           }),
-          { description: failed[0].detail },
+          {
+            description:
+              failed[0].detail ||
+              syncFailureWarnings(failed[0].warnings)
+                .map((w) => syncWarningLabel(t, w))
+                .join(" · "),
+          },
         );
       } else {
         toast.success(t("appTargets.toast.synced"));
@@ -105,6 +117,15 @@ export function AppTargetsIndicator({
               .filter(Boolean)
               .join(" · "),
             duration: 8000,
+          },
+        );
+      } else if (report.status === "partial") {
+        toast.warning(
+          t("appTargets.toast.partial", { targets: targetLabel(key) }),
+          {
+            description: syncFailureWarnings(report.warnings)
+              .map((w) => syncWarningLabel(t, w))
+              .join(" · "),
           },
         );
       } else {
@@ -162,7 +183,7 @@ export function AppTargetsIndicator({
                   </span>
                   <span className="ms-auto inline-flex items-center gap-1.5 text-caption text-fg-1">
                     <Dot tone={toneOf(status)} />
-                    {!primary && record?.routed
+                    {!primary && record?.routed && status === "ok"
                       ? t("appTargets.route.routed")
                       : statusLabel(t, status)}
                   </span>
@@ -196,6 +217,15 @@ export function AppTargetsIndicator({
                     {record.detail}
                   </div>
                 )}
+                {!primary &&
+                  syncFailureWarnings(record?.warnings).map((warning) => (
+                    <div
+                      key={warning}
+                      className="break-all text-caption text-warning-text"
+                    >
+                      {syncWarningLabel(t, warning)}
+                    </div>
+                  ))}
                 {!primary && record?.warnings?.includes("listen_loopback") && (
                   <div className="text-caption text-warning-text">
                     {t("appTargets.route.listenLoopback")}

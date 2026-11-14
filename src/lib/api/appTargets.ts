@@ -38,7 +38,13 @@ export interface AppTargetsConfig {
 
 export type ConfigSource = "saved" | "legacy" | "legacyUnresolved";
 
-export type TargetStatus = "ok" | "error" | "deferred" | "skipped" | "external";
+export type TargetStatus =
+  | "ok"
+  | "partial"
+  | "error"
+  | "deferred"
+  | "skipped"
+  | "external";
 
 export interface TargetRecord {
   status: TargetStatus;
@@ -93,8 +99,9 @@ export interface ToolInstall {
   /** 发行版里的可执行文件路径 */
   path?: string;
   error?: string;
+  probeError?: string;
   detectedAt: number;
-  /** 发行版没在运行，用的是上次检测结果 */
+  /** 使用上次结果（发行版停止、缓存过期或本次探测失败） */
   cached: boolean;
 }
 

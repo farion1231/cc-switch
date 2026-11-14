@@ -5498,14 +5498,16 @@
       "conflictChanged": "대상 설정이 방금 변경되었습니다. 다시 저장하세요.",
       "saveFailed": "기록 대상 저장 실패",
       "synced": "동기화했습니다.",
-      "syncFailed": "동기화 실패"
+      "syncFailed": "동기화 실패",
+      "detachFailed": "{{targets}}의 직접 연결을 복원하지 못했습니다. 환경 변경 사항은 저장되지 않았습니다. 디렉터리 접근 권한을 확인하고 다시 저장하세요."
     },
     "status": {
       "ok": "동기화됨",
       "error": "동기화 안 됨",
       "deferred": "대기 중",
       "skipped": "원래 설정 유지",
-      "external": "외부에서 변경됨"
+      "external": "외부에서 변경됨",
+      "partial": "일부 동기화 실패"
     },
     "reason": {
       "user_deferred": "기존 설정 유지, 공급자 미선택",
@@ -5522,7 +5524,9 @@
       "direct": "직접 연결",
       "route_failed": "라우팅 설정 기록 실패, 원래 설정은 변경되지 않음",
       "client_host_unresolved": "Windows에 연결할 주소가 없음",
-      "route_when_proxy": "앱이 라우팅 / 집계에 들어가면 참여"
+      "route_when_proxy": "앱이 라우팅 / 집계에 들어가면 참여",
+      "partial_sync": "일부 공유 콘텐츠가 아직 동기화되지 않았습니다",
+      "route_detach_failed": "직접 연결을 복원하지 못해 환경을 유지했습니다"
     },
     "indicator": {
       "title": "기록 대상",
@@ -5581,16 +5585,28 @@
       "versionUnknown": "설치됨 · 버전 알 수 없음",
       "notChecked": "확인 안 됨",
       "cached": "마지막 확인",
-      "stoppedCached": "중지됨 · 마지막 확인"
+      "stoppedCached": "중지됨 · 마지막 확인",
+      "reinstall": "다시 설치",
+      "reinstalled": "WSL · {{distro}}에 {{app}} 다시 설치 완료",
+      "repairHint": "다시 설치해도 실행되지 않으면 이 배포판의 터미널에서 오류 내용을 바탕으로 실행 종속성과 설치 환경을 확인하세요.",
+      "notReady": "작업이 완료되었지만 WSL · {{distro}}의 {{app}}이 아직 정상적으로 감지되지 않습니다.",
+      "probeFailed": "이번 감지 실패",
+      "probeFailedCached": "이번 감지에 실패하여 이전 결과를 표시합니다"
     },
     "installTargets": {
       "title": "{{app}} 설치",
-      "description": "각 WSL 배포판의 설치 여부를 확인했습니다. 설치할 환경을 선택하세요. 이미 설치된 환경은 선택할 수 없고, 중지된 배포판은 먼저 터미널에서 시작하세요.",
+      "description": "WSL 배포판을 확인했습니다. 설치할 환경을 선택하세요. 정상 설치된 환경은 다시 선택할 수 없고, 실행되지 않는 클라이언트는 다시 설치할 수 있습니다. 중지된 배포판은 먼저 터미널에서 시작해야 합니다.",
       "detecting": "WSL 확인 중…",
       "installed": "설치됨 {{version}}",
       "stopped": "실행 중 아님, 먼저 시작하세요",
       "confirm": "설치 ({{count}})",
-      "menu": "다른 환경에 설치…"
+      "menu": "다른 환경에 설치…",
+      "broken": "실행 불가 · 다시 설치 가능"
+    },
+    "syncFailure": {
+      "mcp_failed": "MCP 동기화 실패: {{detail}}",
+      "prompt_failed": "프롬프트 동기화 실패: {{detail}}",
+      "skills_failed": "Skills 동기화 실패: {{detail}}"
     }
   },
   "autoUpdate": {

@@ -6,18 +6,23 @@ import type { AppTargetsView } from "@/lib/api/appTargets";
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: (key: string, options?: Record<string, unknown>) =>
-      options?.target ? `${key}:${options.target}` : key,
+      options?.target
+        ? `${key}:${options.target}`
+        : options?.detail
+          ? `${key}:${options.detail}`
+          : key,
   }),
 }));
 
 const setRouteMock = vi.fn();
+const syncMock = vi.fn();
 vi.mock("@/lib/api/appTargets", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api/appTargets")>();
   return {
     ...actual,
     appTargetsApi: {
       setRoute: (...args: unknown[]) => setRouteMock(...args),
-      sync: vi.fn(),
+      sync: (...args: unknown[]) => syncMock(...args),
     },
   };
 });
@@ -61,6 +66,10 @@ vi.mock("@/lib/toast", () => ({ toast: toastMock }));
 describe("AppTargetsIndicator routing toggle", () => {
   beforeEach(() => {
     setRouteMock.mockReset();
+    syncMock.mockReset();
+    view.records = {
+      "wsl:Alpine": { status: "ok", providerId: "b", at: 1, routed: false },
+    };
     Object.values(toastMock).forEach((fn) => fn.mockReset());
   });
 
@@ -95,4 +104,50 @@ describe("AppTargetsIndicator routing toggle", () => {
     );
     expect(screen.queryAllByRole("switch")).toHaveLength(0);
   });
+
+  it.each(["partial", "ok"] as const)(
+    "retries shared-content failures even with a %s record",
+    async (status) => {
+      view.records["wsl:Alpine"] = {
+        status,
+        providerId: "b",
+        at: 1,
+        routed: true,
+        warnings: ["mcp_failed:permission denied"],
+      };
+      syncMock.mockResolvedValue({
+        targets: [
+          {
+            target: "wsl:Alpine",
+            ...view.records["wsl:Alpine"],
+            status: "partial",
+          },
+        ],
+      });
+      render(<AppTargetsIndicator app="claude" />);
+      fireEvent.click(
+        screen.getByRole("button", { name: "appTargets.indicator.title" }),
+      );
+      expect(
+        await screen.findByText(
+          "appTargets.syncFailure.mcp_failed:permission denied",
+        ),
+      ).toBeInTheDocument();
+      const retry = screen.getByRole("button", {
+        name: "appTargets.indicator.retry",
+      });
+      expect(retry).toBeEnabled();
+      await act(async () => {
+        fireEvent.click(retry);
+      });
+      expect(syncMock).toHaveBeenCalledWith("claude", ["wsl:Alpine"]);
+      expect(toastMock.warning).toHaveBeenCalledWith(
+        "appTargets.toast.partial",
+        {
+          description: "appTargets.syncFailure.mcp_failed:permission denied",
+        },
+      );
+      expect(toastMock.success).not.toHaveBeenCalled();
+    },
+  );
 });

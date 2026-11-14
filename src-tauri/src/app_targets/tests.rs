@@ -250,6 +250,65 @@ fn managed_login_cards_cannot_be_enabled_in_wsl() {
 
 #[test]
 #[serial]
+fn shared_sync_failures_stay_visible_until_the_failed_content_is_retried() {
+    with_home(|state, home| {
+        seed_claude(state);
+        state
+            .db
+            .save_mcp_server(&McpServer {
+                id: "portable".into(),
+                name: "portable".into(),
+                server: json!({ "command": "npx", "args": ["-y", "portable-mcp"] }),
+                apps: McpApps {
+                    claude: true,
+                    ..Default::default()
+                },
+                description: None,
+                homepage: None,
+                docs: None,
+                tags: Vec::new(),
+            })
+            .unwrap();
+        let wsl_dir = home.join("wsl").join(".claude");
+        set_targets(&AppType::Claude, windows_plus_wsl("Ubuntu", &wsl_dir));
+        activate(state, "claude", "wsl:Ubuntu", "a");
+        let mcp_path = wsl_dir.join(".claude.json");
+        if mcp_path.exists() {
+            fs::remove_file(&mcp_path).unwrap();
+        }
+        fs::create_dir_all(&mcp_path).unwrap();
+
+        let reports = sync::after_change(state, &AppType::Claude, SyncKind::Mcp);
+        assert_eq!(reports[0].record.status, TargetStatus::Partial);
+        assert_eq!(reports[0].record.provider_id.as_deref(), Some("a"));
+        assert!(reports[0]
+            .record
+            .warnings
+            .iter()
+            .any(|w| w.starts_with("mcp_failed:")));
+
+        // 成功同步提示词不能清除尚未补写的 MCP 错误。
+        let reports = sync::after_change(state, &AppType::Claude, SyncKind::Prompt);
+        assert_eq!(reports[0].record.status, TargetStatus::Partial);
+        assert!(reports[0]
+            .record
+            .warnings
+            .iter()
+            .any(|w| w.starts_with("mcp_failed:")));
+
+        fs::remove_dir(&mcp_path).unwrap();
+        let retried = service::sync_now(state, "claude", Some(vec!["wsl:Ubuntu".into()])).unwrap();
+        assert_eq!(retried.targets[0].record.status, TargetStatus::Ok);
+        assert!(!retried.targets[0]
+            .record
+            .warnings
+            .iter()
+            .any(|w| super::status::is_sync_failure(w)));
+    });
+}
+
+#[test]
+#[serial]
 fn codex_follower_keeps_its_own_login_when_switching_to_a_key() {
     with_home(|state, home| {
         let codex = |id: &str, base: &str, key: &str| {
@@ -782,10 +841,101 @@ fn wsl_targets_join_the_shared_route_and_fall_back_to_their_own_direct_provider(
         let follower = read_json(&wsl_dir.join("settings.json"));
         assert_eq!(follower["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-a");
 
+        // 路由接入失败后重试，必须真正接上代理；失败时不能改成直连并报告成功。
+        write(&wsl_dir.join("settings.json"), "{ broken");
+        let retried = service::sync_now(state, "claude", Some(vec!["wsl:Ubuntu".into()])).unwrap();
+        assert_eq!(retried.targets[0].record.status, TargetStatus::Error);
+        assert_eq!(
+            retried.targets[0].record.reason.as_deref(),
+            Some("route_failed")
+        );
+        write(&wsl_dir.join("settings.json"), "{}");
+        let retried = service::sync_now(state, "claude", Some(vec!["wsl:Ubuntu".into()])).unwrap();
+        assert_eq!(retried.targets[0].record.status, TargetStatus::Ok);
+        assert!(retried.targets[0].record.routed);
+        let routed = fs::read_to_string(wsl_dir.join("settings.json")).unwrap();
+
+        // 无法恢复直连时保留启用设置；修复后再次保存才允许取消管理。
+        let (mut disabled, _) = sync::app_config(&AppType::Claude);
+        disabled.wsl[0].enabled = false;
+        write(&wsl_dir.join("settings.json"), "{ broken");
+        let rejected = service::save(state, "claude", disabled.clone(), BTreeMap::new()).unwrap();
+        assert!(!rejected.saved);
+        assert!(rejected
+            .targets
+            .iter()
+            .any(|r| r.record.status == TargetStatus::Error));
+        assert!(sync::app_config(&AppType::Claude).0.wsl[0].enabled);
+        write(&wsl_dir.join("settings.json"), &routed);
+        let saved = service::save(state, "claude", disabled, BTreeMap::new()).unwrap();
+        assert!(saved.saved, "{saved:?}");
+        assert!(!sync::app_config(&AppType::Claude).0.wsl[0].enabled);
+        assert!(!sync::follower_routed(
+            &AppType::Claude,
+            &TargetId::Wsl("Ubuntu".into())
+        ));
+        let follower = read_json(&wsl_dir.join("settings.json"));
+        assert_eq!(
+            follower["env"]["ANTHROPIC_BASE_URL"],
+            "https://a.example/api"
+        );
+        assert_eq!(follower["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-a");
+
         rt.block_on(crate::mode::controller::exit(state, &AppType::Claude))
             .expect("exit");
         // 后台跟随同步线程可能还在跑：等它们落定再结束（临时目录随后删除）。
         std::thread::sleep(std::time::Duration::from_millis(300));
+    });
+}
+
+#[test]
+#[serial]
+fn moving_the_primary_directory_restores_the_old_directory_and_reattaches_the_new_one() {
+    with_home(|state, home| {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(
+            state
+                .db
+                .update_proxy_config(crate::proxy::types::ProxyConfig {
+                    listen_port: 0,
+                    ..Default::default()
+                }),
+        )
+        .unwrap();
+        seed_claude(state);
+        let mut config = windows_plus_wsl("Ubuntu", &home.join("wsl").join(".claude"));
+        config.wsl[0].enabled = false;
+        set_targets(&AppType::Claude, config.clone());
+        rt.block_on(crate::mode::controller::enter(
+            state,
+            &AppType::Claude,
+            false,
+        ))
+        .unwrap();
+        let old_dir = home.join(".claude");
+        let new_dir = home.join("moved").join(".claude");
+        config.windows.dir = Some(path_of(&new_dir));
+        let saved = service::save(state, "claude", config, BTreeMap::new()).unwrap();
+        assert!(saved.saved, "{saved:?}");
+        assert_eq!(saved.primary.unwrap().record.status, TargetStatus::Ok);
+        assert_eq!(
+            read_json(&old_dir.join("settings.json"))["env"]["ANTHROPIC_AUTH_TOKEN"],
+            "sk-a"
+        );
+        assert_eq!(
+            read_json(&new_dir.join("settings.json"))["env"]["ANTHROPIC_AUTH_TOKEN"],
+            crate::live::project::claude::PROXY_TOKEN_PLACEHOLDER
+        );
+        assert!(crate::mode::current::mode_state(&AppType::Claude).attached);
+        rt.block_on(crate::mode::controller::exit(state, &AppType::Claude))
+            .unwrap();
+        assert_eq!(
+            read_json(&new_dir.join("settings.json"))["env"]["ANTHROPIC_AUTH_TOKEN"],
+            "sk-a"
+        );
     });
 }
 

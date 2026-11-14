@@ -51,6 +51,12 @@ impl SyncKind {
     fn writes_skills(self) -> bool {
         matches!(self, Self::Full | Self::Skills)
     }
+
+    fn covers_warning(self, warning: &str) -> bool {
+        (self.writes_mcp() && warning.starts_with("mcp_"))
+            || (self.writes_prompt() && warning.starts_with("prompt_"))
+            || (self.writes_skills() && warning.starts_with("skills_"))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -760,7 +766,17 @@ pub fn sync_followers_with(
                 )
             });
             let previous = status::get(worker_app.as_str(), &worker_key);
-            let record = match result {
+            let retained_warnings: Vec<String> = previous
+                .as_ref()
+                .map(|r| {
+                    r.warnings
+                        .iter()
+                        .filter(|w| !kind.covers_warning(w))
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default();
+            let mut record = match result {
                 Ok((fingerprint, mut warnings)) => {
                     warnings.extend(notes);
                     if kind.writes_provider() && routed {
@@ -789,7 +805,7 @@ pub fn sync_followers_with(
                             ..TargetRecord::new(TargetStatus::Ok)
                         }
                     } else {
-                        // 只写 MCP / 提示词 / Skills：供应商状态不变，只更新提示。
+                        // 只写共享内容：保留供应商状态，以及本次没有重试的其他失败项。
                         let mut record = previous.unwrap_or_else(|| {
                             TargetRecord::new(TargetStatus::Deferred).reason("not_synced")
                         });
@@ -824,10 +840,14 @@ pub fn sync_followers_with(
                             },
                             error_detail(&err)
                         )];
+                        record.at = chrono::Utc::now().timestamp();
                         record
                     }
                 }
             };
+            let mut warnings = retained_warnings;
+            warnings.append(&mut record.warnings);
+            record = record.with_sync_warnings(warnings);
             let mut finished = worker_done.lock().unwrap_or_else(|e| e.into_inner());
             let report = if is_latest(&worker_app, &worker_key, generation) {
                 record_report(&worker_app, &worker_key, record)
@@ -902,7 +922,7 @@ pub fn after_change(state: &AppState, app: &AppType, kind: SyncKind) -> Vec<Targ
     let reports = sync_followers(state, app, None, kind);
     let failed: Vec<&str> = reports
         .iter()
-        .filter(|r| r.record.status == TargetStatus::Error)
+        .filter(|r| matches!(r.record.status, TargetStatus::Error | TargetStatus::Partial))
         .map(|r| r.target.as_str())
         .collect();
     if !failed.is_empty() {
@@ -1056,16 +1076,43 @@ pub fn detected_client_host(env: &model::LinuxEnv) -> Option<String> {
 /// 「接入路由」时写共用的代理契约（地址用这个环境的客户端主机）；否则把接着路由的环境
 /// 写回它自己的直连供应商。`detach` 为真时（退出 CC Switch）一律写回直连，模式偏好不变。
 pub fn sync_follower_routes(state: &AppState, app: &AppType, detach: bool) -> Vec<TargetReport> {
+    sync_follower_routes_for(state, app, detach, None)
+}
+
+/// 只重做指定环境的路由接入 / 退出；重试不能跳过之前失败的代理契约写入。
+pub fn sync_follower_routes_for(
+    state: &AppState,
+    app: &AppType,
+    detach: bool,
+    only: Option<&[TargetId]>,
+) -> Vec<TargetReport> {
     if !app.has_route_mode() || !model::supports(app) || scope::active() {
         return Vec::new();
     }
+    let lock = route_sync_lock(app);
+    let _serial = lock.lock().unwrap_or_else(|e| e.into_inner());
     let (config, source) = app_config(app);
     if source != ConfigSource::Saved {
         return Vec::new();
     }
-    // 同一个应用的路由同步串行：后台触发的和用户点的不互相顶掉，后来的读到的是落定后的状态。
-    let lock = route_sync_lock(app);
-    let _serial = lock.lock().unwrap_or_else(|e| e.into_inner());
+    let targets = config
+        .followers()
+        .into_iter()
+        .filter(|spec| only.is_none_or(|ids| ids.iter().any(|id| id.same(&spec.id))))
+        .collect();
+    sync_routes_locked(state, app, targets, detach)
+}
+
+/// 调用方持有 route_sync_lock。保存目标时传入旧目录，恢复成功后才可保存新设置。
+pub(super) fn sync_routes_locked(
+    state: &AppState,
+    app: &AppType,
+    targets: Vec<TargetSpec>,
+    detach: bool,
+) -> Vec<TargetReport> {
+    if !app.has_route_mode() || !model::supports(app) || scope::active() {
+        return Vec::new();
+    }
     let main = crate::mode::current::mode_state(app);
     let main_stack = crate::mode::state::stack(
         &crate::live::engine::DeviceStore::for_device(),
@@ -1075,7 +1122,7 @@ pub fn sync_follower_routes(state: &AppState, app: &AppType, detach: bool) -> Ve
     let attach = !detach && main.is_proxy() && main.attached;
     let mut reports = Vec::new();
     let mut jobs = Vec::new();
-    for spec in config.followers() {
+    for spec in targets {
         let key = spec.id.key();
         let join = attach && spec.route;
         let routed = follower_routed(app, &spec.id);
@@ -1179,6 +1226,17 @@ pub fn sync_follower_routes(state: &AppState, app: &AppType, detach: bool) -> Ve
                         )
                 }
             };
+            // 路由接入成功不代表此前失败的 MCP / 提示词 / Skills 也已补写。
+            let mut warnings: Vec<String> = status::get(worker_app.as_str(), &worker_key)
+                .map(|r| {
+                    r.warnings
+                        .into_iter()
+                        .filter(|w| status::is_sync_failure(w))
+                        .collect()
+                })
+                .unwrap_or_default();
+            warnings.extend(record.warnings.iter().cloned());
+            let record = record.with_sync_warnings(warnings);
             let mut finished = worker_done.lock().unwrap_or_else(|e| e.into_inner());
             let report = if is_latest(&worker_app, &worker_key, generation) {
                 record_report(&worker_app, &worker_key, record)
@@ -1267,7 +1325,7 @@ pub fn spawn_route_sync(state: &AppState, app: &AppType) {
     });
 }
 
-fn route_sync_lock(app: &AppType) -> Arc<Mutex<()>> {
+pub(super) fn route_sync_lock(app: &AppType) -> Arc<Mutex<()>> {
     static LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
     LOCKS
         .get_or_init(|| Mutex::new(HashMap::new()))

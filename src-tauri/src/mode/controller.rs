@@ -975,6 +975,26 @@ pub async fn exit(state: &AppState, app: &AppType) -> Result<(), String> {
     Ok(())
 }
 
+/// 主环境被移除或换目录前，先恢复旧目录的直连配置，保留应用的路由偏好。
+pub(crate) async fn detach_for_target_change(
+    state: &AppState,
+    app: &AppType,
+) -> Result<(), String> {
+    require_proxy_app(app)?;
+    let _guard = lock_settled(state, app).await.map_err(|e| e.to_string())?;
+    exit_locked(state, app, true)
+}
+
+/// 更换主环境或手动重试时，按保留的模式重新接上当前目录；已分离时也必须写入。
+pub(crate) async fn sync_primary_route(state: &AppState, app: &AppType) -> Result<(), String> {
+    require_proxy_app(app)?;
+    let _guard = lock_settled(state, app).await.map_err(|e| e.to_string())?;
+    if !current::mode_state(app).is_proxy() {
+        return Ok(());
+    }
+    enter_locked(state, app, op::ATTACH, None, None).await
+}
+
 /// 设置里在路由和 Stack 之间换：处于另一种模式（`stack` 为真是 Stack 模式）的 Claude Code、
 /// Codex 退回直连，名单留着。返回退回直连的应用。
 pub async fn exit_apps_in_mode(state: &AppState, stack: bool) -> Result<Vec<String>, String> {

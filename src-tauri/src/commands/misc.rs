@@ -1418,7 +1418,7 @@ fn split_probe_path(output: &str) -> (Option<String>, String) {
 
 #[cfg(target_os = "windows")]
 pub(crate) fn wsl_tool_state(tool: &str, distro: &str) -> WslToolState {
-    use std::process::Command;
+    use std::process::{Command, Stdio};
     if !VALID_TOOLS.contains(&tool) {
         return WslToolState::Unknown(format!("unsupported tool {tool}"));
     }
@@ -1431,10 +1431,20 @@ pub(crate) fn wsl_tool_state(tool: &str, distro: &str) -> WslToolState {
     let output = Command::new("wsl.exe")
         .args(["-d", distro, "--", "sh", "-c", &cmd])
         .creation_flags(CREATE_NO_WINDOW)
-        .output();
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("exec failed: {error}"))
+        .and_then(|child| {
+            wait_child_output(
+                child,
+                CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
+            )
+        });
     let out = match output {
         Ok(out) => out,
-        Err(error) => return WslToolState::Unknown(format!("exec failed: {error}")),
+        Err(error) => return WslToolState::Unknown(error),
     };
     let stdout = decode_command_output(&out.stdout).trim().to_string();
     let stderr = decode_command_output(&out.stderr).trim().to_string();

@@ -297,4 +297,53 @@ describe("AppTargetsEditor", () => {
     ).toBeInTheDocument();
     expect(saveMock).not.toHaveBeenCalled();
   });
+
+  it("keeps the removal draft available when restoring the old route fails", async () => {
+    inspectMock.mockResolvedValue({
+      errors: [],
+      resolvedDirs: {},
+      conflicts: [],
+      primaryTarget: "windows",
+    });
+    saveMock.mockResolvedValue({
+      saved: false,
+      needsResolution: false,
+      errors: [],
+      resolvedDirs: {},
+      conflicts: [],
+      imported: [],
+      targets: [
+        {
+          target: "wsl:Ubuntu",
+          status: "error",
+          reason: "route_failed",
+          detail: "permission denied",
+          at: 1,
+        },
+      ],
+    });
+    renderEditor({
+      ...legacyView,
+      source: "saved",
+      config: {
+        primary: "windows",
+        windows: { enabled: true },
+        wsl: [{ distro: "Ubuntu", enabled: true, route: true }],
+      },
+    });
+    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    await act(async () => {
+      fireEvent.click(screen.getByText("common.save"));
+    });
+    expect(toastMock.error).toHaveBeenCalledWith(
+      "appTargets.toast.detachFailed",
+      {
+        description: "permission denied",
+        duration: 8000,
+      },
+    );
+    expect(screen.getAllByRole("checkbox")[1]).not.toBeChecked();
+    expect(screen.getByText("common.save").closest("button")).toBeEnabled();
+    expect(screen.getByText("appTargets.unsaved")).toBeInTheDocument();
+  });
 });
