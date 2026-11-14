@@ -19,6 +19,8 @@ mod database;
 mod deeplink;
 mod dsh_config;
 mod error;
+#[cfg(test)]
+mod frontend_parity_tests;
 mod gemini_config;
 mod gemini_mcp;
 mod grok_config;
