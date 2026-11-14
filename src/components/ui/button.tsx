@@ -41,18 +41,19 @@ const buttonVariants = cva(
         // 旧尺寸都映射到 v7 的三档（docs/design-system.html「按钮」）：
         // default = regular（32）、sm = compact（28）、icon = 32 见方，lg 只给少数大按钮（36）
         default:
-          "h-8 px-3.5 transition-[background-color,filter,scale] active:scale-[0.96] [&[aria-haspopup]]:active:scale-100",
-        sm: "h-7 px-3 transition-[background-color,filter,scale] active:scale-[0.96] [&[aria-haspopup]]:active:scale-100",
+          "h-control px-3.5 transition-[background-color,filter,scale] active:scale-[0.96] [&[aria-haspopup]]:active:scale-100",
+        sm: "h-control-sm px-3 transition-[background-color,filter,scale] active:scale-[0.96] [&[aria-haspopup]]:active:scale-100",
         lg: "h-9 px-4 transition-[background-color,filter,scale] active:scale-[0.96] [&[aria-haspopup]]:active:scale-100",
-        icon: "h-8 w-8 p-0 transition-[background-color,color,scale] active:scale-[0.96] [&[aria-haspopup]]:active:scale-100",
-        // v7：高 28（卡片、对话框里）/ 高 32（页头、模式切换）/ 28 见方的图标按钮
+        icon: "h-control w-control p-0 transition-[background-color,color,scale] active:scale-[0.96] [&[aria-haspopup]]:active:scale-100",
+        // v7：compact（卡片、对话框里）/ regular（页头、模式切换）/ 与 compact 同高的图标按钮。
+        // 紧凑密度下是 28 / 32，舒适密度下是 32 / 36（--h-control-sm / --h-control）
         // 按下缩一下只给「执行动作」的按钮；打开菜单 / 弹层的触发器（aria-haspopup）不缩，弹层自己有进场动画
         compact:
-          "h-7 rounded-control px-3 text-body font-medium transition-[background-color,filter,scale] active:scale-[0.96] [&[aria-haspopup]]:active:scale-100",
+          "h-control-sm rounded-control px-3 text-body font-medium transition-[background-color,filter,scale] active:scale-[0.96] [&[aria-haspopup]]:active:scale-100",
         regular:
-          "h-8 rounded-control px-3.5 text-body font-medium transition-[background-color,filter,scale] active:scale-[0.96] [&[aria-haspopup]]:active:scale-100",
+          "h-control rounded-control px-3.5 text-body font-medium transition-[background-color,filter,scale] active:scale-[0.96] [&[aria-haspopup]]:active:scale-100",
         "icon-compact":
-          "h-7 w-7 rounded-control p-0 text-fg-2 hover:text-fg-1 transition-[background-color,color,scale] active:scale-[0.96] [&[aria-haspopup]]:active:scale-100",
+          "h-control-sm w-control-sm rounded-control p-0 text-fg-2 hover:text-fg-1 transition-[background-color,color,scale] active:scale-[0.96] [&[aria-haspopup]]:active:scale-100",
       },
     },
     defaultVariants: {

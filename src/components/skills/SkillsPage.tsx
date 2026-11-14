@@ -37,7 +37,6 @@ import type {
   SkillRepoFailure,
   SkillsShDiscoverableSkill,
 } from "@/lib/api/skills";
-import { SKILLS_APP_IDS } from "@/config/appConfig";
 import {
   formatSkillError,
   skillErrorReason,
@@ -47,6 +46,7 @@ import { MatrixSearch } from "@/components/mcp/AppMatrix";
 import { CHECKBOX_CLASS } from "@/components/mcp/formBits";
 import { countRepoSkills } from "./RepoManagerPanel";
 import { describeRepoFailures, repoFailureKey } from "./repoFailures";
+import { APP_IDS_WITH } from "@/config/appSpecs";
 
 /** 发现列表每行高度（h-14），虚拟化按这个算 */
 const ROW_HEIGHT = 56;
@@ -273,7 +273,7 @@ export function SkillsPage({
   }, [installedSkills]);
 
   const enabledAppCount = (skill: InstalledSkill) =>
-    SKILLS_APP_IDS.filter((app) => skill.apps[app]).length;
+    APP_IDS_WITH.skills.filter((app) => skill.apps[app]).length;
 
   const sourceLabel = (skill: InstalledSkill) =>
     skill.repoOwner && skill.repoName
@@ -887,7 +887,7 @@ function InstallToPopover({
   onChange: (apps: AppId[]) => void;
 }) {
   const { t } = useTranslation();
-  const apps = SKILLS_APP_IDS.filter((app) => visibleAppIds.includes(app));
+  const apps = APP_IDS_WITH.skills.filter((app) => visibleAppIds.includes(app));
   return (
     <PopoverPrimitive.Root>
       <PopoverPrimitive.Trigger asChild>

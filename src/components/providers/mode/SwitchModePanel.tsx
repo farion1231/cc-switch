@@ -8,8 +8,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 import type { Provider } from "@/types";
 import type { AppMode, StartupAttachFailure } from "@/types/proxy";
-import type { ModeAppId } from "@/config/appConfig";
-import { isProxyAppId, isStackAppId } from "@/config/appConfig";
 import { settingsApi } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
 import { proxyApi } from "@/lib/api/proxy";
@@ -54,7 +52,9 @@ import {
 } from "./StackSubagentFields";
 import { RouteSettingsSheet } from "./RouteSettingsSheet";
 import { StackSettingsSheet } from "./StackSettingsSheet";
+import { useCodexPauseOfficialLogin } from "./CodexPauseOfficialLogin";
 import { useDesktopConfigMessages } from "./useDesktopConfigMessages";
+import { type AppIdWith, appHas } from "@/config/appSpecs";
 
 type ListCallbacks = Pick<
   React.ComponentProps<typeof ProviderList>,
@@ -70,7 +70,7 @@ type ListCallbacks = Pick<
 >;
 
 interface SwitchModePanelProps extends ListCallbacks {
-  app: ModeAppId;
+  app: AppIdWith<"routeMode">;
   statusSlot?: HTMLDivElement | null;
   providers: Record<string, Provider>;
   currentProviderId: string;
@@ -87,12 +87,12 @@ interface SwitchModePanelProps extends ListCallbacks {
   needsRouteRequest?: { providerId: string; nonce: number };
   onNeedsRouteHandled?: () => void;
   /** 正在看的那格变了：新增 / 编辑供应商按它选表单布局。需要是稳定的回调 */
-  onViewChange?: (app: ModeAppId, view: AppMode) => void;
+  onViewChange?: (app: AppIdWith<"routeMode">, view: AppMode) => void;
 }
 
 /** Gemini CLI、Grok Build、Claude Desktop 没有聚合模式（Q6）：那一格隐藏，前两格位置不变。 */
-const modesFor = (app: ModeAppId): AppMode[] =>
-  isStackAppId(app) ? ["direct", "route", "stack"] : ["direct", "route"];
+const modesFor = (app: AppIdWith<"routeMode">): AppMode[] =>
+  appHas(app, "stack") ? ["direct", "route", "stack"] : ["direct", "route"];
 
 /**
  * 切换式应用的供应商页（v7 S1–S3）：模式行 → 通知槽 → 按查看的模式分区的列表。
@@ -138,14 +138,15 @@ export function SwitchModePanel({
   const { data: proxyStatus } = useProxyStatusQuery();
   const serviceRunning = proxyStatus?.running ?? false;
   const { data: settings } = useSettingsQuery();
+  const pauseOfficialLogin = useCodexPauseOfficialLogin();
   // Claude Desktop 没有故障转移和路由设置（没有 proxy_config 行）
-  const hasFailover = isProxyAppId(app);
+  const hasFailover = appHas(app, "localProxy");
   const { data: failoverOn = false } = useAutoFailoverEnabled(app, hasFailover);
   const { data: queue } = useFailoverQueue(app, hasFailover);
   const setFailover = useSetAutoFailoverEnabled();
   const addToQueue = useAddToFailoverQueue();
   const removeFromQueue = useRemoveFromFailoverQueue();
-  const { data: stack } = useProxyStack(app, isStackAppId(app));
+  const { data: stack } = useProxyStack(app, appHas(app, "stack"));
   const setStackMember = useSetProxyStackMember();
   const adoptCatalog = useAdoptCodexStackCatalog();
   const modeActions = useModeActions(app);
@@ -502,6 +503,28 @@ export function SwitchModePanel({
       />,
     );
   }
+  // 暂停使用官方登录只在路由 / 聚合下生效；开着就一直提示，免得额度恢复后忘了关
+  if (app === "codex" && active !== "direct" && pauseOfficialLogin.paused) {
+    notices.push(
+      <Notice
+        key="officialLoginPaused"
+        tone="warning"
+        title={t("mode.notice.officialLoginPaused")}
+        actions={
+          <Button
+            variant="neutral"
+            size="compact"
+            disabled={pauseOfficialLogin.saving}
+            onClick={() => void pauseOfficialLogin.setPaused(false)}
+          >
+            {t("mode.notice.resumeOfficialLogin")}
+          </Button>
+        }
+      >
+        {t("mode.notice.officialLoginPausedBody")}
+      </Notice>,
+    );
+  }
   if (view !== active) {
     const cta =
       view === "route"
@@ -663,7 +686,7 @@ export function SwitchModePanel({
         }}
       />
 
-      {isProxyAppId(app) && (
+      {appHas(app, "localProxy") && (
         <RouteSettingsSheet
           app={app}
           open={routeSettingsOpen}

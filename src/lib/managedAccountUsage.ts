@@ -3,27 +3,15 @@ import type { ManagedAuthProvider } from "@/lib/api/auth";
 import type { Provider } from "@/types";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
-
-/**
- * 能用托管账号（授权中心里的账号）的应用；其他应用的供应商不走代理注入的托管凭据。
- * Antigravity 官方卡只算明确绑了号的（没绑的跟着 agy 自己的登录，不用授权中心的账号）。
- */
-export const MANAGED_ACCOUNT_APPS = [
-  "claude",
-  "claude-desktop",
-  "codex",
-  "agy",
-] as const;
-
-export type ManagedAccountApp = (typeof MANAGED_ACCOUNT_APPS)[number];
+import { APP_IDS_WITH, type AppIdWith } from "@/config/appSpecs";
 
 export type ProvidersByApp = Partial<
-  Record<ManagedAccountApp, Record<string, Provider> | undefined>
+  Record<AppIdWith<"managedAccount">, Record<string, Provider> | undefined>
 >;
 
 /** 在用某个托管账号的一个供应商 */
 export interface ManagedAccountUser {
-  appId: ManagedAccountApp;
+  appId: AppIdWith<"managedAccount">;
   providerId: string;
   name: string;
   /** 没指定账号、跟着「默认」账号走的供应商（删掉这个账号后会改用新的默认账号） */
@@ -48,10 +36,12 @@ function claudeBaseUrl(provider: Provider): string {
  * `managed_account_id_for(...)` 为空时取默认账号的那几条路径）。
  */
 function followsDefaultAccount(
-  appId: ManagedAccountApp,
+  appId: AppIdWith<"managedAccount">,
   provider: Provider,
   authProvider: ManagedAuthProvider,
 ): boolean {
+  // Copilot CLI 官方卡没绑账号时用的是 Copilot CLI 自己的登录
+  if (appId === "copilot") return false;
   // Codex 官方卡没绑托管账号时用的是 Codex 自己的登录，不碰授权中心的默认账号
   if (
     appId === "codex" &&
@@ -78,7 +68,7 @@ export function findManagedAccountUsers(
 ): ManagedAccountUser[] {
   const ids = new Set(accountIds);
   const users: ManagedAccountUser[] = [];
-  for (const appId of MANAGED_ACCOUNT_APPS) {
+  for (const appId of APP_IDS_WITH.managedAccount) {
     const providers = providersByApp[appId];
     if (!providers) continue;
     for (const provider of Object.values(providers)) {
@@ -114,12 +104,14 @@ export function findManagedAccountUsers(
   return users;
 }
 
-/** 按应用分组（保持 MANAGED_ACCOUNT_APPS 的顺序），确认框里一行一个应用 */
+/** 按应用分组（保持 APP_IDS_WITH.managedAccount 的顺序），确认框里一行一个应用 */
 export function groupUsersByApp(
   users: readonly ManagedAccountUser[],
 ): { appId: AppId; names: string[] }[] {
-  return MANAGED_ACCOUNT_APPS.map((appId) => ({
-    appId,
-    names: users.filter((user) => user.appId === appId).map((u) => u.name),
-  })).filter((group) => group.names.length > 0);
+  return APP_IDS_WITH.managedAccount
+    .map((appId) => ({
+      appId,
+      names: users.filter((user) => user.appId === appId).map((u) => u.name),
+    }))
+    .filter((group) => group.names.length > 0);
 }

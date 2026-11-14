@@ -26,7 +26,7 @@ import type {
 } from "@/lib/api/providers";
 import { useLiveEditConflict } from "@/components/providers/LiveEditConflictDialog";
 import { toastEditorViewFailed } from "@/components/providers/forms/hooks/useDraftEditorProjection";
-import { isPiFamilyApp, usesEditorView } from "@/config/appConfig";
+import { appHas } from "@/config/appSpecs";
 
 interface EditProviderDialogProps {
   open: boolean;
@@ -93,12 +93,12 @@ export function EditProviderDialog({
   currentFormReadyToken.current = formReadyToken;
   const [formReadyState, setFormReadyState] = useState({
     token: formReadyToken,
-    ready: !isPiFamilyApp(appId),
+    ready: !appHas(appId, "piFamily"),
   });
   const isFormReady =
     formReadyState.token === formReadyToken
       ? formReadyState.ready
-      : !isPiFamilyApp(appId);
+      : !appHas(appId, "piFamily");
   const handleSubmitReadyChange = useCallback(
     (ready: boolean) => {
       if (currentFormReadyToken.current === formReadyToken) {
@@ -151,7 +151,7 @@ export function EditProviderDialog({
 
       // 切换式应用：编辑任何供应商都显示切换投影（关键字段、独有字段来自这一行，其余
       // 来自 live），代理模式下也一样，关键字段显示的是这个供应商自己的值。
-      if (usesEditorView(appId)) {
+      if (appHas(appId, "editorView")) {
         try {
           const view = await providersApi.getEditorView(
             appId,
@@ -198,7 +198,9 @@ export function EditProviderDialog({
         appId === "mcode" ||
         appId === "kimi" ||
         appId === "dsh" ||
-        appId === "omp"
+        appId === "omp" ||
+        appId === "copilot" ||
+        appId === "workbuddy"
       ) {
         if (!cancelled) {
           setLiveSettings(null);
@@ -342,7 +344,7 @@ export function EditProviderDialog({
     return null;
   }
 
-  const waitingForEditorView = usesEditorView(appId) && !hasLoadedLive;
+  const waitingForEditorView = appHas(appId, "editorView") && !hasLoadedLive;
 
   const liveFile = !isProxyTakeover ? LIVE_FILE[appId] : undefined;
   const currentNotice =

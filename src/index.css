@@ -377,6 +377,59 @@
   -webkit-app-region: no-drag;
 }
 
+/* 界面密度（设置 › 通用 › 界面密度，src/lib/interfacePrefs.ts）。
+   不带 data-density 或为 compact 时是紧凑，即原来的尺寸（默认；托盘面板等小窗口始终如此）；
+   选了舒适时主窗口 <html> 上是 data-density="comfortable"，字号整体大一档、控件高 4px。 */
+:root {
+  --fs-badge: 11px;
+  --lh-badge: 16px;
+  --fs-caption: 12px;
+  --lh-caption: 18px;
+  --fs-body: 13px;
+  --lh-body: 20px;
+  --fs-strong: 14px;
+  --lh-strong: 20px;
+  --fs-section: 15px;
+  --lh-section: 22px;
+  --fs-title: 16px;
+  --lh-title: 24px;
+  --fs-page: 18px;
+  --lh-page: 26px;
+  --fs-xs: 12px;
+  --lh-xs: 16px;
+
+  --h-control: 32px;
+  --h-control-sm: 28px;
+  --h-nav-row: 28px;
+  --h-card: 58px;
+  --card-py: 10px;
+}
+
+html[data-density="comfortable"] {
+  --fs-badge: 12px;
+  --lh-badge: 16px;
+  --fs-caption: 13px;
+  --lh-caption: 18px;
+  --fs-body: 14px;
+  --lh-body: 22px;
+  --fs-strong: 15px;
+  --lh-strong: 22px;
+  --fs-section: 16px;
+  --lh-section: 24px;
+  --fs-title: 18px;
+  --lh-title: 26px;
+  --fs-page: 20px;
+  --lh-page: 28px;
+  --fs-xs: 13px;
+  --lh-xs: 18px;
+
+  --h-control: 36px;
+  --h-control-sm: 32px;
+  --h-nav-row: 34px;
+  --h-card: 68px;
+  --card-py: 14px;
+}
+
 * {
   box-sizing: border-box;
 }

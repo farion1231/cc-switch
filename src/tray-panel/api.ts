@@ -82,6 +82,8 @@ export interface PanelApp {
 
 /** 托盘面板的数据（后端 `tray::PanelModel`）。 */
 export interface TrayPanelState {
+  /** 自动更新已下好新版本：点了重启安装 */
+  update?: PanelLink | null;
   problems: PanelLink[];
   feedback: string | null;
   apps: PanelApp[];

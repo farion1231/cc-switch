@@ -780,6 +780,81 @@ describe("buildAdditiveSections", () => {
     expect(item(sections, "current").menuItems).toBeUndefined();
   });
 
+  it("keeps Copilot official cards as launchers and makes BYOK cards additive", () => {
+    const byokConfig = {
+      provider: { type: "openai", baseUrl: "https://api.example.com/v1" },
+      models: [{ id: "m" }],
+    };
+    const login = provider("login", {
+      settingsConfig: { env: { COPILOT_MODEL: "gpt-5.4" } },
+    });
+    const current = provider("current", { settingsConfig: byokConfig });
+    const other = provider("other", { settingsConfig: byokConfig });
+    const saved = provider("saved", { settingsConfig: byokConfig });
+    const actions = { ...additiveActions(), openTerminal: vi.fn() };
+    const sections = buildAdditiveSections({
+      app: "copilot",
+      t,
+      providers: [login, current, other, saved],
+      isInConfig: (p) => p.id === "current" || p.id === "other",
+      copilotDefaultId: "current",
+      actions,
+    });
+
+    // 官方卡并进「已添加」排在最前，仍只有「打开终端」
+    expect(sections.map((section) => section.key)).toEqual([
+      "added",
+      "available",
+    ]);
+    expect(sections[0].items.map((entry) => entry.provider.id)).toEqual([
+      "login",
+      "current",
+      "other",
+    ]);
+    expect(item(sections, "login").buttons.map((b) => b.key)).toEqual([
+      "openTerminal",
+    ]);
+    button(sections, "login", "openTerminal").onClick();
+    expect(actions.openTerminal).toHaveBeenCalledWith(login);
+    expect(actions.add).not.toHaveBeenCalled();
+
+    button(sections, "saved", "add").onClick();
+    expect(actions.add).toHaveBeenCalledWith(saved);
+    button(sections, "other", "remove").onClick();
+    expect(actions.remove).toHaveBeenCalledWith(other);
+    // Copilot 里没有「设为默认」：换默认模型在 copilot 的 /model 里
+    expect(item(sections, "other").menuItems).toBeUndefined();
+
+    // 默认那家：标「默认」，不能移除也不能删
+    expect(item(sections, "current").status?.label).toBe(
+      "providerCard.status.default",
+    );
+    expect(button(sections, "current", "remove").disabledReason).toBe(
+      "copilot.defaultCannotRemove",
+    );
+    expect(item(sections, "current").deleteDisabledReason).toBe(
+      "copilot.defaultCannotRemove",
+    );
+  });
+
+  it("keeps only the added and available groups when there is no Copilot official card", () => {
+    const sections = buildAdditiveSections({
+      app: "copilot",
+      t,
+      providers: [
+        provider("relay", {
+          settingsConfig: { provider: { baseUrl: "http://x/v1" }, models: [] },
+        }),
+      ],
+      isInConfig: () => false,
+      actions: additiveActions(),
+    });
+    expect(sections.map((section) => section.key)).toEqual([
+      "added",
+      "available",
+    ]);
+  });
+
   it("blocks every Pi change while Pi's current state is unavailable", () => {
     const sections = buildAdditiveSections({
       app: "pi",
@@ -815,6 +890,116 @@ describe("buildAdditiveSections", () => {
     });
     expect(item(sections, "relay").deleteDisabledReason).toBe(
       "omp.current.stateUnavailableHint",
+    );
+  });
+});
+
+describe("buildAdditiveSections — WorkBuddy official sign-in", () => {
+  const wbCard = (id: string, accountId?: string) =>
+    provider(id, {
+      category: "official",
+      meta: accountId
+        ? {
+            authBinding: {
+              source: "managed_account",
+              authProvider: "workbuddy_account",
+              accountId,
+            },
+          }
+        : undefined,
+    });
+  const custom = provider("custom", { meta: { liveConfigManaged: true } });
+  const base = (overrides: Record<string, unknown> = {}) => ({
+    accountIds: new Set(["u-1", "u-2"]) as ReadonlySet<string>,
+    currentAccountId: "u-1",
+    running: false,
+    switching: false,
+    ...overrides,
+  });
+  const build = (state = base(), providers = [wbCard("a", "u-1")]) => {
+    const actions = {
+      add: vi.fn(),
+      remove: vi.fn(),
+      disableOmo: vi.fn(),
+      setDefault: vi.fn(),
+      switchAccount: vi.fn(),
+    };
+    const sections = buildAdditiveSections({
+      app: "workbuddy",
+      t,
+      providers: [custom, ...providers],
+      isInConfig: (p) => p.meta?.liveConfigManaged === true,
+      workbuddyOfficial: state,
+      actions,
+    });
+    return { sections, actions };
+  };
+
+  it("puts the signed-in official card in Added and the others in Available, with custom models", () => {
+    const { sections } = build(base(), [
+      wbCard("a", "u-1"),
+      wbCard("b", "u-2"),
+    ]);
+    expect(
+      sections.map((s) => [s.key, s.items.map((i) => i.provider.id)]),
+    ).toEqual([
+      ["added", ["custom", "a"]],
+      ["available", ["b"]],
+    ]);
+    // 自定义模型卡的「移除」不变
+    expect(button(sections, "custom", "remove").disabledReason).toBeUndefined();
+  });
+
+  it("keeps at most one official card in Added", () => {
+    const { sections } = build(base({ currentAccountId: "u-2" }), [
+      wbCard("a", "u-1"),
+      wbCard("b", "u-2"),
+      wbCard("c", "u-1"),
+    ]);
+    const added = sections.find((s) => s.key === "added")!;
+    expect(added.items.map((i) => i.provider.id)).toEqual(["custom", "b"]);
+  });
+
+  it("does not let the in-use official card be removed on its own", () => {
+    const { sections, actions } = build(base(), [wbCard("a", "u-1")]);
+    const remove = button(sections, "a", "remove");
+    expect(remove.disabledReason).toBe("workbuddy.official.onlyOne");
+    expect(item(sections, "a").status).toBeUndefined();
+    remove.onClick();
+    expect(actions.remove).not.toHaveBeenCalled();
+    expect(actions.switchAccount).not.toHaveBeenCalled();
+  });
+
+  it("switches to the bound account when another official card is added", () => {
+    const card = wbCard("b", "u-2");
+    const { sections, actions } = build(base(), [card]);
+    const add = button(sections, "b", "add");
+    expect(add.label).toBe("providerCard.action.add");
+    expect(add.disabledReason).toBeUndefined();
+    add.onClick();
+    expect(actions.switchAccount).toHaveBeenCalledWith(card);
+    expect(actions.add).not.toHaveBeenCalled();
+  });
+
+  it("asks to quit WorkBuddy before adding while it is running", () => {
+    const { sections } = build(base({ running: true }), [wbCard("b", "u-2")]);
+    expect(button(sections, "b", "add").disabledReason).toBe(
+      "workbuddy.official.quitFirst",
+    );
+  });
+
+  it("cannot add a card whose account was deleted", () => {
+    const { sections } = build(base(), [wbCard("gone", "u-9")]);
+    expect(button(sections, "gone", "add").disabledReason).toBe(
+      "workbuddy.official.accountDeleted",
+    );
+    expect(item(sections, "gone").chips.map((c) => c.key)).toContain(
+      "accountMissing",
+    );
+    // 账号删了，即便 id 恰好对得上当前登录也不进「已添加」
+    const unset = build(base(), [wbCard("none")]).sections;
+    expect(button(unset, "none", "add").disabledReason).toBe(
+      "workbuddy.official.accountUnset",
     );
   });
 });

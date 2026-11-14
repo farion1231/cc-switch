@@ -168,6 +168,42 @@ pub fn strip_one_m_suffix_for_upstream(model: &str) -> &str {
     model
 }
 
+/// Codex 故障转移换家时的模型名。
+///
+/// Codex 的客户端配置写的是路由那家的真实模型名（没有 Claude 那样的档位别名），故障转移
+/// 换到别家时原样发过去，别家多半不认（MiniMax 回 400 unknown model，队列就此停下）。
+/// 这家发布的模型（目录里的，或行里的 `model`）里没有请求的模型名时，换成这家行里的
+/// `model`；认得的照发。只在故障转移开着时调用：关着时只有一家，用户选的模型原样发。
+/// 转移成功后路由会记到新的那家，客户端却还发原来的名字，所以按「这家认不认」判断，
+/// 不按「是不是路由那家」判断。
+pub fn map_codex_failover_model(mut body: Value, provider: &Provider) -> Value {
+    let Some(requested) = body.get("model").and_then(Value::as_str) else {
+        return body;
+    };
+    let config = provider
+        .settings_config
+        .get("config")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let Some(own) = crate::codex_config::codex_top_level_model(config) else {
+        // 行里没有模型（官方卡等）：不知道该换成什么，原样发。
+        return body;
+    };
+    if requested == own
+        || crate::codex_config::codex_published_models(&provider.settings_config, config)
+            .iter()
+            .any(|model| model == requested)
+    {
+        return body;
+    }
+    log::info!(
+        "[ModelMapper] Codex 故障转移到 {}：这家没有模型 {requested}，改用 {own}",
+        provider.name
+    );
+    body["model"] = serde_json::json!(own);
+    body
+}
+
 pub fn strip_one_m_suffix_for_upstream_from_body(mut body: Value) -> Value {
     let Some(model) = body.get("model").and_then(Value::as_str) else {
         return body;
@@ -417,6 +453,48 @@ mod tests {
         let body = json!({"model": "claude-opus-5"});
         let (result, _, _) = apply_model_mapping(body, &provider);
         assert_eq!(result["model"], "glm-5");
+    }
+
+    fn codex_provider(name: &str, settings_config: Value) -> Provider {
+        Provider {
+            name: name.to_string(),
+            settings_config,
+            ..create_provider_without_mapping()
+        }
+    }
+
+    #[test]
+    fn codex_failover_swaps_in_the_targets_own_model_when_it_does_not_serve_the_request() {
+        let minimax = codex_provider(
+            "MiniMax",
+            json!({"config": "model = \"MiniMax-M3\"\nmodel_provider = \"custom\"\n"}),
+        );
+        let body = json!({"model": "kimi-k3", "input": []});
+        let result = map_codex_failover_model(body, &minimax);
+        assert_eq!(result["model"], "MiniMax-M3");
+        assert_eq!(result["input"], json!([]));
+    }
+
+    #[test]
+    fn codex_failover_keeps_a_model_the_target_publishes() {
+        let kimi = codex_provider(
+            "Kimi",
+            json!({
+                "config": "model = \"k3\"\n",
+                "modelCatalog": {"models": [{"model": "k3"}, {"model": "k3.1-pro"}]}
+            }),
+        );
+        for model in ["k3", "k3.1-pro"] {
+            let result = map_codex_failover_model(json!({ "model": model }), &kimi);
+            assert_eq!(result["model"], model);
+        }
+    }
+
+    #[test]
+    fn codex_failover_leaves_rows_without_a_model_alone() {
+        let official = codex_provider("OpenAI Official", json!({"config": ""}));
+        let result = map_codex_failover_model(json!({"model": "gpt-6-astra"}), &official);
+        assert_eq!(result["model"], "gpt-6-astra");
     }
 
     #[test]

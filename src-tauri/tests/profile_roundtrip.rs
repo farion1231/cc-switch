@@ -1,6 +1,6 @@
 //! 项目 Profile 快照/应用的端到端集成测试
 //!
-//! 全链路 apply 会写 live 配置文件——support.rs 已把 HOME 指向临时目录，安全。
+//! 全链路 apply 会写 live 配置文件——support 模块已把 HOME 指向临时目录，安全。
 
 use std::fs;
 
@@ -11,7 +11,7 @@ use cc_switch_lib::{
     Prompt, PromptService, Provider, ProviderService, SkillApps, SkillService, NO_ACTIVE_PROMPT,
 };
 
-#[path = "support.rs"]
+#[path = "support/mod.rs"]
 mod support;
 use support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
 

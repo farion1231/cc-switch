@@ -24,12 +24,17 @@ import type {
   ToolUninstallPlan,
 } from "@/lib/api/settings";
 import type { DndContextProps, DragEndEvent } from "@dnd-kit/core";
-import { APP_IDS } from "@/config/appConfig";
+import { emitTauriEvent } from "../msw/tauriMocks";
+import { APP_IDS } from "@/config/appSpecs";
 
 type ToolVersions = Awaited<ReturnType<typeof settingsApi.getToolVersions>>;
 
 const mocks = vi.hoisted(() => ({
   getToolVersions: vi.fn(),
+  getConfigStatus: vi.fn(async () => ({
+    exists: true,
+    path: "/home/me/.workbuddy",
+  })),
   probeToolInstallations: vi.fn(),
   listToolInstallations: vi.fn(),
   runToolLifecycleAction: vi.fn(),
@@ -1900,6 +1905,48 @@ describe("AppsPage concurrent CLI upgrades", () => {
     await act(async () => claudeRun.resolve());
   });
 
+  it("shows the queue, elapsed time and latest output on the running rows", async () => {
+    const claudeRun = deferred<void>();
+    const codexRun = deferred<void>();
+    mocks.runToolLifecycleAction.mockImplementation(
+      async ([tool]: string[]) => {
+        await (tool === "claude" ? claudeRun : codexRun).promise;
+        upgraded.add(tool);
+      },
+    );
+    await renderApps();
+    fireEvent.click(updateButton("Claude Code"));
+    fireEvent.click(updateButton("Codex"));
+    await waitFor(() =>
+      expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(2),
+    );
+
+    const progress = (tool: string, stage: string, line?: string) =>
+      emitTauriEvent("tool-lifecycle-progress", { tools: [tool], stage, line });
+    act(() => {
+      progress("claude", "running");
+      progress("claude", "output", "==> [4/5] Installing");
+      progress("codex", "queued");
+      // 没在执行的工具收到迟到的事件，不显示进度
+      progress("gemini", "output", "stray line");
+    });
+    expect(card("Claude Code").getByText("appsPage.toolElapsed")).toBeVisible();
+    expect(card("Claude Code").getByText("==> [4/5] Installing")).toBeVisible();
+    expect(card("Codex").getByText("appsPage.toolQueued")).toBeVisible();
+    expect(card("Gemini CLI").queryByText("stray line")).toBeNull();
+
+    await act(async () => claudeRun.resolve());
+    await waitFor(() => expect(isReady("Claude Code")).toBe(true));
+    expect(card("Claude Code").queryByText("==> [4/5] Installing")).toBeNull();
+    expect(card("Codex").getByText("appsPage.toolQueued")).toBeVisible();
+
+    act(() => progress("codex", "running"));
+    expect(card("Codex").queryByText("appsPage.toolQueued")).toBeNull();
+    expect(card("Codex").getByText("appsPage.toolElapsed")).toBeVisible();
+    await act(async () => codexRun.resolve());
+    await waitFor(() => expect(isReady("Codex")).toBe(true));
+  });
+
   it("keeps a tool locked through version refresh and remount with an expired cache", async () => {
     const refreshed =
       deferred<Awaited<ReturnType<typeof mocks.getToolVersions>>>();
@@ -2107,5 +2154,29 @@ describe("AppsPage visibility column", () => {
       expect(element).toHaveAttribute("data-size", "sm");
       expect(element).not.toHaveAttribute("data-tone");
     }
+  });
+
+  it("gives WorkBuddy only the sidebar switch, like Claude Desktop", async () => {
+    vi.resetModules();
+    await renderApps();
+    const row = screen
+      .getByText("WorkBuddy", { selector: "span" })
+      .closest("[data-tool-row]") as HTMLElement;
+    expect(row).not.toBeNull();
+    expect(within(row).getByRole("switch")).toBeInTheDocument();
+    // 和 Claude Desktop 一样：接入状态 + 说明，没有操作按钮
+    expect(
+      await within(row).findByText("appsPage.desktopConnected"),
+    ).toBeInTheDocument();
+    expect(mocks.getConfigStatus).toHaveBeenCalledWith("workbuddy");
+    // 除了「已安装」组的拖动把手，唯一的按钮是说明的问号
+    expect(
+      within(row)
+        .getAllByRole("button")
+        .filter(
+          (button) =>
+            button.getAttribute("aria-label") !== "appsPage.dragHandle",
+        ),
+    ).toEqual([within(row).getByRole("button", { name: "WorkBuddy" })]);
   });
 });

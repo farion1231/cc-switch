@@ -25,6 +25,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::provider::Provider;
+use crate::provider_kind::ProviderKind;
 use crate::services::usage_cache::UsageCache;
 use crate::store::AppState;
 
@@ -58,8 +59,10 @@ fn app_display_name(app: &AppType) -> &'static str {
         AppType::Mcode => "MiniMax Code",
         AppType::Kimi => "Kimi Code",
         AppType::Dsh => "DeepSeek Harness",
+        AppType::WorkBuddy => "WorkBuddy",
         AppType::Agy => "Antigravity",
         AppType::Omp => "Oh My Pi",
+        AppType::Copilot => "Copilot CLI",
     }
 }
 
@@ -91,6 +94,8 @@ pub struct TrayTexts {
     pub quit: &'static str,
     /// 有应用在用路由服务时的「退出」：写明后果（客户端指回直连、路由服务停止，下次打开自动接回）。
     pub quit_stops_routing: &'static str,
+    /// 自动更新已下好新版本时的菜单项：`{version}`
+    pub install_update: &'static str,
     pub projects_label: &'static str,
     pub no_project_label: &'static str,
     pub header_direct: &'static str,
@@ -152,24 +157,34 @@ pub struct TrayTexts {
 /// 镜像前端 `i18n/getInitialLanguage` 的判定顺序，确保首次安装
 /// （`settings.language` 尚未写入）时托盘语言与界面语言一致：
 /// 繁中系统（zh-TW/HK/MO/Hant）→ `zh-TW`，其余 zh → `zh`，
-/// 日文 → `ja`，土耳其文 → `tr`，英文 → `en`，其他语言回退到 `en`，
+/// 日文 → `ja`，韩文 → `ko`，土耳其文 → `tr`，俄文 → `ru`，德文 → `de`，英文 → `en`，其他语言回退到 `en`，
 /// 区域为空时回退到 `zh`（与前端默认一致）。
 fn map_locale_to_tray_language(locale: &str) -> &'static str {
     let locale = locale.to_lowercase();
     if locale == "zh" {
         "zh"
-    } else if locale.starts_with("zh-tw")
-        || locale.starts_with("zh-hk")
-        || locale.starts_with("zh-mo")
-        || locale.starts_with("zh-hant")
+    } else if locale == "zh-tw"
+        || locale.starts_with("zh-tw-")
+        || locale == "zh-hk"
+        || locale.starts_with("zh-hk-")
+        || locale == "zh-mo"
+        || locale.starts_with("zh-mo-")
+        || locale == "zh-hant"
+        || locale.starts_with("zh-hant-")
     {
         "zh-TW"
-    } else if locale.starts_with("zh") {
+    } else if locale == "zh" || locale.starts_with("zh-") {
         "zh"
-    } else if locale.starts_with("ja") {
+    } else if locale == "ja" || locale.starts_with("ja-") {
         "ja"
-    } else if locale.starts_with("tr") {
+    } else if locale == "ko" || locale.starts_with("ko-") {
+        "ko"
+    } else if locale == "tr" || locale.starts_with("tr-") {
         "tr"
+    } else if locale == "ru" || locale.starts_with("ru-") {
+        "ru"
+    } else if locale == "de" || locale.starts_with("de-") {
+        "de"
     } else if locale.is_empty() {
         "zh"
     } else {
@@ -194,6 +209,7 @@ impl TrayTexts {
                 lightweight_mode: "Lightweight mode",
                 quit: "Quit CC Switch",
                 quit_stops_routing: "Quit CC Switch (stops the routing service)",
+                install_update: "Restart to update to v{version}",
                 projects_label: "Projects",
                 no_project_label: "No project",
                 header_direct: "Direct",
@@ -244,68 +260,235 @@ impl TrayTexts {
                 date_format: "%b %-d",
                 quota_used: false,
             },
-            // 土耳其语是社区翻译：从英文起步再覆盖已翻译的项，之后新增的托盘项
-            // 在有人翻译前显示英文，而不是让所有改托盘的提交都必须补土耳其语。
-            "tr" => {
-                let mut texts = Self::from_language("en");
-                texts.show_main = "CC Switch'i aç";
-                texts.open_website = "Resmî web sitesini aç";
-                texts.lightweight_mode = "Hafif mod";
-                texts.quit = "CC Switch'ten çık";
-                texts.quit_stops_routing = "CC Switch'ten çık (yönlendirme hizmeti durur)";
-                texts.projects_label = "Projeler";
-                texts.no_project_label = "Proje yok";
-                texts.header_direct = "Doğrudan";
-                texts.header_route = "Yönlendirme";
-                texts.header_failover = "Yönlendirme · Yedek sağlayıcıya geçiş açık";
-                texts.header_stack = "Birleştirme · Varsayılan sağlayıcı";
-                texts.header_stack_default = "Birleştirme · Varsayılan: {name}";
-                texts.failover_note = "Kuyruktan otomatik seçilir; uygulama sayfasından değiştirebilirsiniz";
-                texts.mode_route = "Yönlendirme";
-                texts.mode_stack = "Birleştirme";
-                texts.needs_routing_suffix = " (yönlendirme gerekir)…";
-                texts.official_blocked_suffix = " (resmî abonelikler yönlendirmeyi kullanmaz)";
-                texts.open_app_page = "{app} sayfasını aç";
-                texts.add_provider = "Sağlayıcı ekle…";
-                texts.almost_out = "bitmek üzere";
-                texts.needs_attention = "ilgilenilmesi gerekiyor";
-                texts.problem_service_down = "Yönlendirme hizmeti çalışmıyor (port {port})";
-                texts.problem_attach_failed = "{app}: {mode} başlangıçta yeniden bağlanamadı; doğrudan bağlantıya dönüldü";
-                texts.problem_switch_failed = "{app} geçiş yapamadı: {reason}";
-                texts.problem_more = "{count} sorun daha var — görmek için CC Switch'i açın";
-                texts.tooltip_problem = "CC Switch · İlgilenilmesi gerekiyor: {problem}";
-                texts.feedback_switched = "{app}, {name} sağlayıcısına geçti. Uygulamak için {app} uygulamasını yeniden başlatın";
-                texts.feedback_stack_default = "{app} için varsayılan sağlayıcı artık {name}. Uygulamak için {app} uygulamasını yeniden başlatın";
-                texts.feedback_profile = "{name} projesi {app} uygulamasına uygulandı";
-                texts.tier_five_hour = "5 saatlik";
-                texts.tier_weekly = "Haftalık";
-                texts.tier_fable = "Fable";
-                texts.tier_monthly = "Aylık";
-                texts.tier_thirty_day = "30 günlük";
-                texts.tier_credits = "Krediler";
-                texts.tier_gemini_pro = "Pro";
-                texts.tier_gemini_flash = "Flash";
-                texts.tier_gemini_flash_lite = "Flash Lite";
-                texts.tier_left = "{label} %{value} kaldı";
-                texts.tier_used = "{label} %{value} kullanıldı";
-                texts.tier_used_up = "{label} tükendi";
-                texts.balance = "Bakiye {value}";
-                texts.plan_expired = "Planın süresi doldu";
-                texts.used_amount = "Kullanılan: {value}";
-                texts.quota_failed = "Kota bilgisi alınamıyor";
-                texts.quota_failed_login_expired = "Kota bilgisi alınamıyor: oturumun süresi doldu";
-                texts.quota_failed_token_refresh_pending = "Kota bilgisi alınamıyor: token yenilenmesi bekleniyor";
-                texts.reset_on_date = "{label} kotası {when} tarihinde sıfırlanır";
-                texts.reset_at_time = "{label} kotası {when} saatinde sıfırlanır";
-                texts.date_format = "%d.%m";
-                texts
-            }
+            "ko" => Self {
+                show_main: "CC Switch 열기",
+                open_website: "공식 웹사이트 열기",
+                lightweight_mode: "경량 모드",
+                quit: "CC Switch 종료",
+                quit_stops_routing: "CC Switch 종료 (라우팅 서비스 중지)",
+                install_update: "재시작하여 v{version}(으)로 업데이트",
+                projects_label: "프로젝트",
+                no_project_label: "프로젝트 없음",
+                header_direct: "직접 연결",
+                header_route: "라우팅",
+                header_failover: "라우팅 · 장애 조치 켜짐",
+                header_stack: "통합 · 기본 공급자",
+                header_stack_default: "통합 · 기본값: {name}",
+                failover_note: "대기열에서 자동으로 선택됩니다. 앱 페이지에서 변경하세요",
+                mode_route: "라우팅",
+                mode_stack: "통합",
+                needs_routing_suffix: " (라우팅 필요)…",
+                official_blocked_suffix: " (공식 요금제는 라우팅을 사용하지 않음)",
+                open_app_page: "{app} 페이지 열기",
+                add_provider: "공급자 추가…",
+                almost_out: "거의 소진됨",
+                needs_attention: "확인 필요",
+                problem_service_down: "라우팅 서비스가 실행 중이 아닙니다 (포트 {port})",
+                problem_attach_failed: "{app}: 이전 {mode} 연결에 실패하여 직접 연결로 돌아갔습니다",
+                problem_switch_failed: "{app} 전환 실패: {reason}",
+                problem_more: "문제 {count}개 더 있음 — CC Switch에서 확인하세요",
+                tooltip_problem: "CC Switch · 확인 필요: {problem}",
+                feedback_switched: "{app}의 공급자가 {name}(으)로 전환되었습니다. 적용하려면 {app}을(를) 다시 시작하세요",
+                feedback_stack_default: "{app}의 기본 공급자가 {name}(으)로 변경되었습니다. 적용하려면 {app}을(를) 다시 시작하세요",
+                feedback_profile: "{app}에 {name} 프로젝트를 적용했습니다",
+                tier_five_hour: "5시간",
+                tier_weekly: "주간",
+                tier_fable: "Fable",
+                tier_monthly: "월간",
+                tier_thirty_day: "30일",
+                tier_credits: "크레딧",
+                tier_gemini_pro: "Pro",
+                tier_gemini_flash: "Flash",
+                tier_gemini_flash_lite: "Flash Lite",
+                tier_premium: "프리미엄 요청",
+                tier_left: "{label} {value}% 남음",
+                tier_used: "{label} {value}% 사용",
+                tier_used_up: "{label} 소진됨",
+                balance: "잔액 {value}",
+                plan_expired: "요금제 만료됨",
+                used_amount: "{value} 사용",
+                quota_failed: "할당량 조회 실패",
+                quota_failed_login_expired: "할당량 조회 실패: 로그인 만료",
+                quota_failed_token_refresh_pending: "할당량 조회 실패: 토큰 갱신 대기 중",
+                reset_on_date: "{when}에 {label} 할당량 초기화",
+                reset_at_time: "{when}에 {label} 할당량 초기화",
+                date_format: "%-m월 %-d일",
+                quota_used: false,
+            },
+            "de" => Self {
+                show_main: "CC Switch öffnen",
+                open_website: "Offizielle Website öffnen",
+                lightweight_mode: "Lightweight-Modus",
+                quit: "CC Switch beenden",
+                quit_stops_routing: "CC Switch beenden (Routing-Dienst wird gestoppt)",
+                install_update: "Neu starten und auf v{version} aktualisieren",
+                projects_label: "Projekte",
+                no_project_label: "Kein Projekt",
+                header_direct: "Direkt",
+                header_route: "Routing",
+                header_failover: "Routing · Failover aktiv",
+                header_stack: "Aggregation · Standardanbieter",
+                header_stack_default: "Aggregation · Standard: {name}",
+                failover_note: "Wird automatisch aus der Warteschlange gewählt; änderbar auf der App-Seite",
+                mode_route: "Routing",
+                mode_stack: "Aggregation",
+                needs_routing_suffix: " (benötigt Routing)…",
+                official_blocked_suffix: " (offizielle Tarife laufen nicht über Routing)",
+                open_app_page: "Seite von {app} öffnen",
+                add_provider: "Anbieter hinzufügen…",
+                almost_out: "fast aufgebraucht",
+                needs_attention: "erfordert Aufmerksamkeit",
+                problem_service_down: "Der Routing-Dienst läuft nicht (Port {port})",
+                problem_attach_failed:
+                    "{app}: {mode} konnte beim Start nicht wieder verbunden werden; zurück auf Direkt",
+                problem_switch_failed: "{app} wurde nicht umgeschaltet: {reason}",
+                problem_more: "{count} weitere Probleme – zum Ansehen CC Switch öffnen",
+                tooltip_problem: "CC Switch · Erfordert Aufmerksamkeit: {problem}",
+                feedback_switched: "{app} auf {name} umgeschaltet. {app} neu starten, um es zu übernehmen",
+                feedback_stack_default:
+                    "Standardanbieter von {app} ist jetzt {name}. {app} neu starten, um es zu übernehmen",
+                feedback_profile: "Projekt \u{201e}{name}\u{201c} auf {app} angewendet",
+                tier_five_hour: "5 Stunden",
+                tier_weekly: "Woche",
+                tier_fable: "Fable",
+                tier_monthly: "Monat",
+                tier_thirty_day: "30 Tage",
+                tier_credits: "Credits",
+                tier_gemini_pro: "Pro",
+                tier_gemini_flash: "Flash",
+                tier_gemini_flash_lite: "Flash Lite",
+                tier_premium: "Credits",
+                tier_left: "{label}: {value} % übrig",
+                tier_used: "{label}: {value} % verbraucht",
+                tier_used_up: "{label}: aufgebraucht",
+                balance: "Guthaben {value}",
+                plan_expired: "Tarif abgelaufen",
+                used_amount: "{value} verbraucht",
+                quota_failed: "Kontingent unbekannt",
+                quota_failed_login_expired: "Kontingent unbekannt: Anmeldung abgelaufen",
+                quota_failed_token_refresh_pending: "Kontingent unbekannt: Token-Aktualisierung ausstehend",
+                reset_on_date: "Kontingent {label} wird am {when} zurückgesetzt",
+                reset_at_time: "Kontingent {label} wird um {when} zurückgesetzt",
+                date_format: "%-d.%-m.",
+                quota_used: false,
+            },
+            "ru" => Self {
+                show_main: "Открыть CC Switch",
+                open_website: "Открыть официальный сайт",
+                lightweight_mode: "Облегчённый режим",
+                quit: "Выйти из CC Switch",
+                quit_stops_routing: "Выйти из CC Switch (служба маршрутизации остановится)",
+                install_update: "Перезапустить и обновить до v{version}",
+                projects_label: "Проекты",
+                no_project_label: "Без проекта",
+                header_direct: "Напрямую",
+                header_route: "Маршрутизация",
+                header_failover: "Маршрутизация · резервное переключение включено",
+                header_stack: "Агрегация · провайдер по умолчанию",
+                header_stack_default: "Агрегация · по умолчанию: {name}",
+                failover_note: "Выбирается из очереди автоматически; изменить можно на странице приложения",
+                mode_route: "Маршрутизация",
+                mode_stack: "Агрегация",
+                needs_routing_suffix: " (нужна маршрутизация)…",
+                official_blocked_suffix: " (официальные планы не идут через маршрутизацию)",
+                open_app_page: "Открыть страницу {app}",
+                add_provider: "Добавить провайдера…",
+                almost_out: "почти исчерпано",
+                needs_attention: "требует внимания",
+                problem_service_down: "Служба маршрутизации не запущена (порт {port})",
+                problem_attach_failed: "{app}: не удалось переподключить {mode} при запуске; включено прямое подключение",
+                problem_switch_failed: "{app} не переключился: {reason}",
+                problem_more: "Ещё проблем: {count} — откройте CC Switch, чтобы посмотреть",
+                tooltip_problem: "CC Switch · Требует внимания: {problem}",
+                feedback_switched: "{app} переключён на {name}. Перезапустите {app}, чтобы применить",
+                feedback_stack_default: "Провайдер по умолчанию для {app} теперь {name}. Перезапустите {app}, чтобы применить",
+                feedback_profile: "Проект \u{00ab}{name}\u{00bb} применён к {app}",
+                tier_five_hour: "5 часов",
+                tier_weekly: "Неделя",
+                tier_fable: "Fable",
+                tier_monthly: "Месяц",
+                tier_thirty_day: "30 дней",
+                tier_credits: "Кредиты",
+                tier_gemini_pro: "Pro",
+                tier_gemini_flash: "Flash",
+                tier_gemini_flash_lite: "Flash Lite",
+                tier_premium: "Credits",
+                tier_left: "{label}: осталось {value}%",
+                tier_used: "{label}: использовано {value}%",
+                tier_used_up: "{label}: исчерпано",
+                balance: "Баланс {value}",
+                plan_expired: "Срок плана истёк",
+                used_amount: "Использовано {value}",
+                quota_failed: "Квота недоступна",
+                quota_failed_login_expired: "Квота недоступна: срок входа истёк",
+                quota_failed_token_refresh_pending: "Квота недоступна: ожидается обновление токена",
+                reset_on_date: "Квота {label} сбросится {when}",
+                reset_at_time: "Квота {label} сбросится в {when}",
+                date_format: "%d.%m",
+                quota_used: false,
+            },
+            "tr" => Self {
+                show_main: "CC Switch'i aç",
+                open_website: "Resmî web sitesini aç",
+                lightweight_mode: "Hafif mod",
+                quit: "CC Switch'ten çık",
+                quit_stops_routing: "CC Switch'ten çık (yönlendirme hizmeti durur)",
+                install_update: "Yeniden başlat ve v{version} sürümüne güncelle",
+                projects_label: "Projeler",
+                no_project_label: "Proje yok",
+                header_direct: "Doğrudan",
+                header_route: "Yönlendirme",
+                header_failover: "Yönlendirme · Yedek sağlayıcıya geçiş açık",
+                header_stack: "Birleştirme · Varsayılan sağlayıcı",
+                header_stack_default: "Birleştirme · Varsayılan: {name}",
+                failover_note: "Kuyruktan otomatik seçilir; uygulama sayfasından değiştirebilirsiniz",
+                mode_route: "Yönlendirme",
+                mode_stack: "Birleştirme",
+                needs_routing_suffix: " (yönlendirme gerekir)…",
+                official_blocked_suffix: " (resmî abonelikler yönlendirmeyi kullanmaz)",
+                open_app_page: "{app} sayfasını aç",
+                add_provider: "Sağlayıcı ekle…",
+                almost_out: "bitmek üzere",
+                needs_attention: "ilgilenilmesi gerekiyor",
+                problem_service_down: "Yönlendirme hizmeti çalışmıyor (port {port})",
+                problem_attach_failed: "{app}: {mode} başlangıçta yeniden bağlanamadı; doğrudan bağlantıya dönüldü",
+                problem_switch_failed: "{app} geçiş yapamadı: {reason}",
+                problem_more: "{count} sorun daha var — görmek için CC Switch'i açın",
+                tooltip_problem: "CC Switch · İlgilenilmesi gerekiyor: {problem}",
+                feedback_switched: "{app}, {name} sağlayıcısına geçti. Uygulamak için {app} uygulamasını yeniden başlatın",
+                feedback_stack_default: "{app} için varsayılan sağlayıcı artık {name}. Uygulamak için {app} uygulamasını yeniden başlatın",
+                feedback_profile: "{name} projesi {app} uygulamasına uygulandı",
+                tier_five_hour: "5 saatlik",
+                tier_weekly: "Haftalık",
+                tier_fable: "Fable",
+                tier_monthly: "Aylık",
+                tier_thirty_day: "30 günlük",
+                tier_credits: "Krediler",
+                tier_gemini_pro: "Pro",
+                tier_gemini_flash: "Flash",
+                tier_gemini_flash_lite: "Flash Lite",
+                tier_premium: "Credits",
+                tier_left: "{label} %{value} kaldı",
+                tier_used: "{label} %{value} kullanıldı",
+                tier_used_up: "{label} tükendi",
+                balance: "Bakiye {value}",
+                plan_expired: "Planın süresi doldu",
+                used_amount: "Kullanılan: {value}",
+                quota_failed: "Kota bilgisi alınamıyor",
+                quota_failed_login_expired: "Kota bilgisi alınamıyor: oturumun süresi doldu",
+                quota_failed_token_refresh_pending: "Kota bilgisi alınamıyor: token yenilenmesi bekleniyor",
+                reset_on_date: "{label} kotası {when} tarihinde sıfırlanır",
+                reset_at_time: "{label} kotası {when} saatinde sıfırlanır",
+                date_format: "%d.%m",
+                quota_used: false,
+            },
             "ja" => Self {
                 show_main: "CC Switch を開く",
                 open_website: "公式サイトを開く",
                 lightweight_mode: "軽量モード",
                 quit: "CC Switch を終了",
                 quit_stops_routing: "CC Switch を終了（ルーティングサービスが停止します）",
+                install_update: "再起動して v{version} に更新",
                 projects_label: "プロジェクト",
                 no_project_label: "プロジェクトを使用しない",
                 header_direct: "直接接続",
@@ -362,6 +545,7 @@ impl TrayTexts {
                 lightweight_mode: "輕量模式",
                 quit: "退出 CC Switch",
                 quit_stops_routing: "退出 CC Switch（路由服務會停止）",
+                install_update: "重新啟動並更新到 v{version}",
                 projects_label: "專案",
                 no_project_label: "不使用專案",
                 header_direct: "直連",
@@ -416,6 +600,7 @@ impl TrayTexts {
                 lightweight_mode: "轻量模式",
                 quit: "退出 CC Switch",
                 quit_stops_routing: "退出 CC Switch（路由服务会停止）",
+                install_update: "重启并更新到 v{version}",
                 projects_label: "项目",
                 no_project_label: "不使用项目",
                 header_direct: "直连",
@@ -1023,8 +1208,6 @@ fn cached_usage_view(
 
 // ─── 「需要路由」判定（镜像前端 `providerNeedsRouting`）──────────────────────────────
 
-const MANAGED_OAUTH_PROVIDER_TYPES: &[&str] = &["github_copilot", "codex_oauth", "xai_oauth"];
-
 /// 官方账号卡（同前端 `isOfficialAccount`）：Codex 早期绑定托管账号的官方卡没有 category，按身份认。
 fn is_official_account(app: &AppType, provider: &Provider) -> bool {
     provider.category.as_deref() == Some("official")
@@ -1092,9 +1275,7 @@ pub(crate) fn provider_needs_routing(app: &AppType, provider: &Provider) -> bool
         return false;
     }
     let meta = provider.meta.as_ref();
-    let managed_oauth = meta
-        .and_then(|meta| meta.provider_type.as_deref())
-        .is_some_and(|kind| MANAGED_OAUTH_PROVIDER_TYPES.contains(&kind));
+    let managed_oauth = ProviderKind::declared(provider).is_some();
     let full_url = meta.and_then(|meta| meta.is_full_url) == Some(true);
     let api_format = meta
         .and_then(|meta| meta.api_format.as_deref())
@@ -1610,6 +1791,8 @@ struct MenuStatus {
     problems: Vec<TrayProblem>,
     feedback: Option<TrayFeedback>,
     routing_in_use: bool,
+    /// 自动更新已下好、待安装的版本。
+    update_ready: Option<String>,
 }
 
 // ─── 菜单模型（纯数据）────────────────────────────────────────────────────────
@@ -1696,6 +1879,9 @@ fn problem_text(texts: &TrayTexts, problem: &TrayProblem) -> String {
         ),
     }
 }
+
+/// 托盘 / 面板里「重启并更新」的事件 id。
+const INSTALL_UPDATE_ID: &str = "app_update:install";
 
 fn problem_id(problem: &TrayProblem) -> String {
     match problem {
@@ -1983,6 +2169,12 @@ fn build_menu_model(
 
     // 窗口找不回来时托盘是唯一入口，「打开 CC Switch」一直放在最上面。
     menu.push(TrayEntry::item("show_main", texts.show_main));
+    if let Some(version) = &status.update_ready {
+        menu.push(TrayEntry::item(
+            INSTALL_UPDATE_ID,
+            fill(texts.install_update, &[("version", version)]),
+        ));
+    }
     menu.push(TrayEntry::Separator);
 
     if !apps.is_empty() {
@@ -2061,6 +2253,7 @@ fn collect_status(
         problems,
         feedback: current_feedback(),
         routing_in_use: routing_in_use(app_state),
+        update_ready: crate::app_update::ready().map(|ready| ready.version),
     };
     Ok((snapshots, status))
 }
@@ -2079,9 +2272,8 @@ fn collect_model(app_state: &AppState, texts: &TrayTexts) -> Result<TrayModel, A
 
 /// 退出会让它们断开的情况：路由服务在跑，且有应用在路由 / 聚合模式（含 Claude Desktop；和
 /// `controller::stop_server_if_unused` 的「在用」同一口径，隐藏的应用也算）。
-fn routing_in_use(app_state: &AppState) -> bool {
-    app_state.proxy_service.running_now() == Some(true)
-        && crate::mode::current::proxy_flags(crate::mode::controller::PROXY_APPS).contains(&true)
+pub(crate) fn routing_in_use(app_state: &AppState) -> bool {
+    app_state.proxy_service.running_now() == Some(true) && crate::mode::current::any_proxy()
 }
 
 // ─── 模型 → 托盘面板 ───────────────────────────────────────────────────────────
@@ -2091,6 +2283,8 @@ fn routing_in_use(app_state: &AppState) -> bool {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PanelModel {
+    /// 自动更新已下好新版本：点了重启安装。
+    pub update: Option<PanelLink>,
     pub problems: Vec<PanelLink>,
     pub feedback: Option<String>,
     pub apps: Vec<PanelApp>,
@@ -2366,6 +2560,10 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
     }
 
     Ok(PanelModel {
+        update: status.update_ready.as_ref().map(|version| PanelLink {
+            id: INSTALL_UPDATE_ID.to_string(),
+            text: fill(texts.install_update, &[("version", version)]),
+        }),
         problems: status
             .problems
             .iter()
@@ -2559,6 +2757,10 @@ fn icon_with_problem_dot(icon: &Image<'_>, template: bool) -> Image<'static> {
     Image::new_owned(rgba, width, height)
 }
 
+/// 托盘图标要不要设悬停提示。macOS 不设：提示框有时会卡在屏幕上，鼠标移开也不收起，之后还会
+/// 出现在鼠标停留的别处，只有退出应用才消失。macOS 上出问题时照样有图标圆点，点开面板能看到问题区。
+pub const TRAY_TOOLTIP_ENABLED: bool = cfg!(not(target_os = "macos"));
+
 /// 悬停提示：平时 `CC Switch`，出问题时 `CC Switch · 需要处理：<问题区第一条>`。额度不算问题。
 fn tray_tooltip(texts: &TrayTexts, problems: &[TrayProblem]) -> String {
     match problems.first() {
@@ -2576,15 +2778,20 @@ fn tray_tooltip(texts: &TrayTexts, problems: &[TrayProblem]) -> String {
 /// 现在托盘上的（有没有圆点，悬停提示）；`None` = 托盘图标还没建好，还是建图标时的样子。
 static APPLIED_INDICATOR: Lazy<Mutex<Option<(bool, String)>>> = Lazy::new(|| Mutex::new(None));
 
-/// 问题区有内容时托盘图标加圆点、悬停提示写第一条问题；问题都消失后换回原图标和提示。只在
-/// 变了时才动（Linux 每次换图标都要写临时文件）。
+/// 问题区有内容时托盘图标加圆点、悬停提示写第一条问题（macOS 不设提示，见
+/// `TRAY_TOOLTIP_ENABLED`）；问题都消失后换回原图标和提示。只在变了时才动（Linux 每次换图标
+/// 都要写临时文件）。
 fn update_problem_indicator(app: &tauri::AppHandle, texts: &TrayTexts, problems: &[TrayProblem]) {
     // 启动时第一次建菜单那会儿托盘图标还没建，等下一次重建。
     let Some(tray) = app.tray_by_id(TRAY_ID) else {
         return;
     };
     let has_dot = !problems.is_empty();
-    let tooltip = tray_tooltip(texts, problems);
+    let tooltip = if TRAY_TOOLTIP_ENABLED {
+        tray_tooltip(texts, problems)
+    } else {
+        String::new()
+    };
     // 只在锁里比对和记账：换图标要回主线程执行，不能拿着锁等。
     let icon_changed = {
         let mut applied = lock(&APPLIED_INDICATOR);
@@ -2614,8 +2821,10 @@ fn update_problem_indicator(app: &tauri::AppHandle, texts: &TrayTexts, problems:
         }
     }
     // Linux（AppIndicator）不显示悬停提示，设了也无害。
-    if let Err(e) = tray.set_tooltip(Some(&tooltip)) {
-        log::warn!("[Tray] 更新托盘悬停提示失败: {e}");
+    if TRAY_TOOLTIP_ENABLED {
+        if let Err(e) = tray.set_tooltip(Some(&tooltip)) {
+            log::warn!("[Tray] 更新托盘悬停提示失败: {e}");
+        }
     }
 }
 
@@ -3136,6 +3345,26 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
 
     match event_id {
         "show_main" => show_main_window(app),
+        INSTALL_UPDATE_ID => {
+            // 弹窗或关于页已经在装了：这次点击什么都不做
+            if crate::app_update::is_installing() {
+                return;
+            }
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = crate::commands::install_update_and_restart(app.clone()).await {
+                    log::error!("托盘安装更新失败: {e}");
+                    // 失败原因只有主界面能说清：打开关于页，用户在那里重试会看到报错
+                    navigate(
+                        &app,
+                        TrayNavigation {
+                            section: Some("about".to_string()),
+                            ..Default::default()
+                        },
+                    );
+                }
+            });
+        }
         "open_website" => {
             if let Err(e) = app.opener().open_url("https://ccswitch.io", None::<String>) {
                 log::error!("打开官方网站失败: {e}");
@@ -3442,7 +3671,7 @@ mod tests {
             ]
         );
         for app in TRAY_APPS {
-            assert!(!app.is_additive_mode(), "{app:?} 是累加式应用，不进托盘");
+            assert!(!app.spec().additive, "{app:?} 是累加式应用，不进托盘");
         }
     }
 
@@ -3476,7 +3705,54 @@ mod tests {
     }
 
     #[test]
+    fn locale_matches_language_and_chinese_region_boundaries() {
+        for locale in ["zha", "zhb-CN", "jam", "trv-TW"] {
+            assert_eq!(map_locale_to_tray_language(locale), "en", "{locale}");
+        }
+        for locale in ["zh-TW-u-nu-hanidec", "zh-Hant-TW", "zh-HK"] {
+            assert_eq!(map_locale_to_tray_language(locale), "zh-TW", "{locale}");
+        }
+        for locale in ["zh-hantx", "zh-hkx"] {
+            assert_eq!(map_locale_to_tray_language(locale), "zh", "{locale}");
+        }
+    }
+
+    #[test]
+    fn locale_maps_korean_without_matching_other_language_subtags() {
+        for locale in ["ko", "ko-KR", "ko-KP", "KO-kr"] {
+            assert_eq!(map_locale_to_tray_language(locale), "ko");
+        }
+        for locale in ["kok", "kok-IN", "kos"] {
+            assert_eq!(map_locale_to_tray_language(locale), "en");
+        }
+    }
+
+    #[test]
+    fn locale_maps_russian_without_matching_other_language_subtags() {
+        for locale in ["ru", "ru-RU", "ru-UA", "RU-ru"] {
+            assert_eq!(map_locale_to_tray_language(locale), "ru");
+        }
+        // 卢森尼亚语 rue、Rupuni 等以 ru 开头但不是俄语，按不支持的语言回落英文
+        for locale in ["rue", "rue-UA", "rup"] {
+            assert_eq!(map_locale_to_tray_language(locale), "en");
+        }
+    }
+
+    #[test]
+    fn locale_maps_german_without_matching_other_language_subtags() {
+        for locale in ["de", "de-DE", "de-AT", "de-CH", "DE-de"] {
+            assert_eq!(map_locale_to_tray_language(locale), "de");
+        }
+        // 下索布语 dsb、Delaware 语 del 等不是德语，按不支持的语言回落英文
+        for locale in ["dsb", "del", "den-CA"] {
+            assert_eq!(map_locale_to_tray_language(locale), "en");
+        }
+    }
+
+    #[test]
     fn locale_maps_japanese_and_english() {
+        assert_eq!(map_locale_to_tray_language("ko-KR"), "ko");
+        assert_eq!(map_locale_to_tray_language("ko"), "ko");
         assert_eq!(map_locale_to_tray_language("tr-TR"), "tr");
         assert_eq!(map_locale_to_tray_language("tr"), "tr");
         assert_eq!(map_locale_to_tray_language("ja-JP"), "ja");
@@ -3488,7 +3764,7 @@ mod tests {
     #[test]
     fn locale_unknown_falls_back_to_en() {
         // 与前端 getInitialLanguage 保持一致：认不出的语言用英文，区域为空才用默认的 zh。
-        for locale in ["de-DE", "fr", "ko-KR"] {
+        for locale in ["it-IT", "fr", "es-ES"] {
             assert_eq!(
                 map_locale_to_tray_language(locale),
                 "en",
@@ -4348,6 +4624,27 @@ mod tests {
         entries.iter().map(text_of).collect()
     }
 
+    #[test]
+    fn downloaded_update_adds_install_item_right_below_open_main() {
+        let status = MenuStatus {
+            update_ready: Some("4.1.0".to_string()),
+            ..Default::default()
+        };
+        let entries = build_menu_model(&zh(), &status, &[], false, now());
+        let texts = texts_of(&entries);
+        assert_eq!(texts[0], "打开 CC Switch");
+        assert_eq!(texts[1], "重启并更新到 v4.1.0");
+        assert!(matches!(
+            &entries[1],
+            TrayEntry::Item { id, .. } if id == INSTALL_UPDATE_ID
+        ));
+
+        let without = build_menu_model(&zh(), &MenuStatus::default(), &[], false, now());
+        assert!(!without
+            .iter()
+            .any(|entry| matches!(entry, TrayEntry::Item { id, .. } if id == INSTALL_UPDATE_ID)));
+    }
+
     fn children_of(menu: &[TrayEntry], app: &AppType) -> Vec<TrayEntry> {
         menu.iter()
             .find_map(|entry| match entry {
@@ -4748,7 +5045,7 @@ mod tests {
             quit_text(&en(), true),
             "Quit CC Switch (stops the routing service)"
         );
-        for language in ["zh", "zh-TW", "en", "ja", "tr"] {
+        for language in ["zh", "zh-TW", "en", "de", "ja", "tr", "ko", "ru"] {
             let texts = TrayTexts::from_language(language);
             assert_ne!(texts.quit, texts.quit_stops_routing, "{language}");
             assert!(
@@ -4865,6 +5162,7 @@ mod tests {
                 name: "DeepSeek".to_string(),
             }),
             routing_in_use: false,
+            update_ready: None,
         };
         let menu = build_menu_model(&zh(), &status, &[], false, now());
         assert_eq!(

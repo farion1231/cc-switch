@@ -219,6 +219,148 @@ mod switching {
         assert_eq!(*login.writes.lock().unwrap(), 0);
     }
 
+    /// agy 1.5 自己写回钥匙串的格式：没有 id_token，只有 id_token_email 和 writer_id。
+    fn agy15_credential(sub: &str, access: &str) -> Value {
+        let mut credential = credential(sub, access);
+        let object = credential.as_object_mut().unwrap();
+        object.remove("id_token");
+        object.insert("id_token_email".into(), json!(format!("{sub}@example.com")));
+        object.insert("writer_id".into(), json!("w1"));
+        credential
+    }
+
+    #[tokio::test]
+    async fn agy15_login_is_recognized_by_its_refresh_token() {
+        let (_dir, login, manager) = manager();
+        add(&manager, "alice").await;
+        add(&manager, "bob").await;
+        let mut live = agy15_credential("alice", "renewed-by-agy15");
+        live["token"]["expiry"] = json!(in_an_hour());
+        set_live(&login, &live);
+
+        let status = manager.status().await.unwrap();
+        assert_eq!(status.current_account_id.as_deref(), Some("alice"));
+        assert_eq!(status.accounts.len(), 2, "不会多出一个认不出的号");
+        // agy 续过的令牌照样收回来，查额度直接用
+        assert_eq!(
+            manager.access_token("alice").await.unwrap(),
+            "renewed-by-agy15"
+        );
+        assert_eq!(*login.writes.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn agy15_login_falls_back_to_the_email() {
+        let (_dir, login, manager) = manager();
+        add(&manager, "alice").await;
+        // 在 agy 里重新登录过：refresh token 换了，邮箱没变（大小写不同也认）
+        let mut live = agy15_credential("alice", "a2");
+        live["token"]["refresh_token"] = json!("another-refresh");
+        live["id_token_email"] = json!("Alice@Example.com");
+        set_live(&login, &live);
+        assert_eq!(manager.live_account_id().await.as_deref(), Some("alice"));
+        let store = manager.store.lock().await;
+        assert_eq!(
+            store.accounts["alice"].credential["token"]["refresh_token"],
+            "another-refresh"
+        );
+    }
+
+    #[tokio::test]
+    async fn switching_away_from_an_agy15_login_does_not_stash_it() {
+        let (dir, login, manager) = manager();
+        add(&manager, "alice").await;
+        add(&manager, "bob").await;
+        set_live(&login, &agy15_credential("alice", "a2"));
+        manager.switch_to("bob").await.unwrap();
+        assert_eq!(live_sub(&login).as_deref(), Some("bob"));
+        assert!(!dir.path().join(STASH_FILENAME).exists());
+        // 切回 alice 时写的是 agy 写回的那份（新格式），核对照样通过
+        manager.switch_to("alice").await.unwrap();
+        let raw = login.value.lock().unwrap().clone().unwrap();
+        assert_eq!(
+            keychain::decode(&raw).unwrap()["id_token_email"],
+            "alice@example.com"
+        );
+    }
+
+    #[tokio::test]
+    async fn removing_an_agy15_live_account_keeps_it_out_and_recovers_it_on_switch() {
+        let (dir, login, manager) = manager();
+        add(&manager, "alice").await;
+        add(&manager, "bob").await;
+        set_live(&login, &agy15_credential("alice", "a2"));
+
+        manager.remove("alice").await.unwrap();
+        assert_eq!(*login.writes.lock().unwrap(), 0, "删账号不动钥匙串");
+        // agy 1.5 的钥匙串条目没有 id_token，删掉后依然靠 dismissed_emails 本地识别，
+        // 不会发网请求，也不会重新塞回列表
+        let status = manager.status().await.unwrap();
+        assert_eq!(status.current_account_id, None);
+        assert_eq!(status.accounts.len(), 1);
+        assert_eq!(manager.live_account_id().await, None);
+
+        // 切走时照样收录回 accounts，不会当成不认识的登录存进 stash
+        manager.switch_to("bob").await.unwrap();
+        assert!(!dir.path().join(STASH_FILENAME).exists());
+        assert_eq!(manager.list().await.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn legacy_dismissed_account_backfills_dismissed_email_once_recognized() {
+        let (_dir, login, manager) = manager();
+        // 模拟旧版删过的账号：只有 dismissed 里的 sub，没有 dismissed_emails
+        {
+            let mut store = manager.store.lock().await;
+            store.dismissed.push("alice".into());
+            manager.persist(&store).unwrap();
+        }
+        // 第一次经带 id_token 的旧格式或 userinfo 认出是谁时，顺手把邮箱补进 dismissed_emails
+        set_live(&login, &credential("alice", "a1"));
+        let status = manager.status().await.unwrap();
+        assert_eq!(status.current_account_id, None);
+        assert!(status.accounts.is_empty());
+        {
+            let store = manager.store.lock().await;
+            assert_eq!(
+                store.dismissed_emails.get("alice").map(String::as_str),
+                Some("alice@example.com")
+            );
+        }
+        // 之后 agy 1.5 改写成不带 id_token 的新格式，直接靠补齐的 dismissed_emails 本地识别
+        set_live(&login, &agy15_credential("alice", "a2"));
+        let status = manager.status().await.unwrap();
+        assert_eq!(status.current_account_id, None);
+        assert!(status.accounts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stored_refreshed_token_is_not_overwritten_by_stale_keychain_login() {
+        let (_dir, login, manager) = manager();
+        add(&manager, "alice").await;
+        // 钥匙串里还是过期的旧令牌，CC Switch 查额度时已经续期并存在自己的副本里
+        set_live(&login, &agy15_credential("alice", "expired-in-keychain"));
+        {
+            let mut store = manager.store.lock().await;
+            let cred = &mut store.accounts.get_mut("alice").unwrap().credential;
+            cred["token"]["access_token"] = json!("refreshed-by-cc-switch");
+            cred["token"]["expiry"] = json!(in_an_hour());
+        }
+        assert_eq!(
+            manager
+                .status()
+                .await
+                .unwrap()
+                .current_account_id
+                .as_deref(),
+            Some("alice")
+        );
+        assert_eq!(
+            manager.access_token("alice").await.unwrap(),
+            "refreshed-by-cc-switch"
+        );
+    }
+
     /// 真机钥匙串冒烟：读写一条测试专用的条目（不是 agy 那条），确认 `security -i` 写入、
     /// 原地更新、读回都正常。默认不跑：`cargo test agy_account -- --ignored`。
     #[test]

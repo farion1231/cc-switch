@@ -137,9 +137,11 @@ fn read_text(path: &Path) -> Result<String, AppError> {
     }
 }
 
+const INVALID_PROFILE_YAML: &str = "Invalid DeepSeek Harness profile YAML";
+
 pub(crate) fn entries(text: &str) -> Result<Vec<Yaml>, AppError> {
     let value: Yaml = serde_yaml::from_str(text)
-        .map_err(|_| AppError::Config("Invalid DeepSeek Harness profile YAML".into()))?;
+        .map_err(|error| AppError::Config(format!("{INVALID_PROFILE_YAML}: {error}")))?;
     match value {
         Yaml::Null => Ok(vec![]),
         Yaml::Sequence(entries) => Ok(entries),
@@ -401,7 +403,7 @@ fn edit_files_and_commit<T>(
         });
         current.push(read_text(path)?);
     }
-    let next = plan(&current)?;
+    let next = plan(&current).map_err(|error| name_invalid_profile(paths, &current, error))?;
     // plan 少给或多给一个文件都意味着某一处改动会被静默丢掉：宁可整体失败。
     if next.len() != paths.len() {
         return Err(AppError::Message(format!(
@@ -411,39 +413,84 @@ fn edit_files_and_commit<T>(
         )));
     }
     let mut written = vec![];
-    let result = paths
-        .iter()
-        .zip(&current)
-        .zip(&next)
-        .enumerate()
-        .filter(|(_, ((_, current), next))| current != next)
-        .try_for_each(|(index, ((path, _), next))| {
-            atomic_write_private(path, next.as_bytes())?;
-            written.push(index);
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        paths
+            .iter()
+            .zip(&current)
+            .zip(&next)
+            .enumerate()
+            .filter(|(_, ((_, current), next))| current != next)
+            .try_for_each(|(index, ((path, _), next))| {
+                atomic_write_private(path, next.as_bytes())?;
+                written.push(index);
+                Ok(())
+            })
+            .and_then(|()| commit())
+    }));
+    let mut rollback = || {
+        let failures: Vec<_> = written
+            .iter()
+            .rev()
+            .filter_map(|&index| {
+                restore(&paths[index], previous[index].take())
+                    .err()
+                    .map(|rollback| rollback.to_string())
+            })
+            .collect();
+        if failures.is_empty() {
             Ok(())
-        })
-        .and_then(|()| commit());
+        } else {
+            Err(AppError::Message(format!(
+                "restoring DeepSeek Harness configuration failed: {}",
+                failures.join("; ")
+            )))
+        }
+    };
+    let result = crate::sync_utils::resume_after_rollback(outcome, &mut rollback);
     match result {
         Ok(result) => Ok(result),
         Err(error) => {
-            let failures: Vec<_> = written
-                .into_iter()
-                .rev()
-                .filter_map(|index| {
-                    restore(&paths[index], previous[index].take())
-                        .err()
-                        .map(|rollback| rollback.to_string())
-                })
-                .collect();
-            if failures.is_empty() {
-                Err(error)
+            if let Err(rollback_error) = rollback() {
+                Err(AppError::Message(format!("{error}; {rollback_error}")))
             } else {
-                Err(AppError::Message(format!(
-                    "{error}; restoring DeepSeek Harness configuration failed: {}",
-                    failures.join("; ")
-                )))
+                Err(error)
             }
         }
+    }
+}
+
+/// A profile that no longer parses fails the whole write, but the plan only reports the YAML
+/// error. Name the file so the user can find which profile to repair (#9297).
+fn name_invalid_profile(paths: &[PathBuf], texts: &[String], error: AppError) -> AppError {
+    if !is_invalid_profile_yaml(&error) {
+        return error;
+    }
+    paths
+        .iter()
+        .zip(texts)
+        .filter(|(path, _)| {
+            path.file_name()
+                .is_some_and(|name| name == "cordis.patch.yml")
+        })
+        .find_map(|(path, text)| {
+            entries(text)
+                .err()
+                .filter(is_invalid_profile_yaml)
+                .map(|parse_error| with_profile_path(path, parse_error))
+        })
+        .unwrap_or(error)
+}
+
+fn is_invalid_profile_yaml(error: &AppError) -> bool {
+    matches!(error, AppError::Config(message) if message.starts_with(INVALID_PROFILE_YAML))
+}
+
+fn with_profile_path(path: &Path, error: AppError) -> AppError {
+    match error {
+        AppError::Config(message) if message.starts_with(INVALID_PROFILE_YAML) => {
+            AppError::Config(format!("{message} ({})", path.display()))
+        }
+        error => error,
     }
 }
 
@@ -618,7 +665,7 @@ pub(crate) fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
                 );
                 continue;
             }
-            Err(error) => return Err(error),
+            Err(error) => return Err(with_profile_path(&path, error)),
         };
         for (id, provider) in providers {
             merged.entry(id).or_insert(provider);
@@ -634,7 +681,8 @@ fn ensure_providers_not_shadowed(home: &Path) -> Result<(), AppError> {
     if text.trim().is_empty() {
         return Ok(());
     }
-    let shadowed = entries(&text)?
+    let shadowed = entries(&text)
+        .map_err(|error| with_profile_path(home, error))?
         .iter()
         .any(|entry| entry["id"].as_str() == Some("llm-pi-ai") && !entry["config"].is_null());
     if shadowed {
@@ -1304,7 +1352,8 @@ pub(crate) fn remove_provider(id: &str) -> Result<(), AppError> {
 /// A key is taken when any target profile already has it (CC Switch never overwrites a node).
 pub(crate) fn provider_key_exists(id: &str) -> Result<bool, AppError> {
     for path in target_paths() {
-        let entry = provider_entry(&read_text(&path)?)?;
+        let entry =
+            provider_entry(&read_text(&path)?).map_err(|error| with_profile_path(&path, error))?;
         if entry["config"]["providers"]
             .as_mapping()
             .is_some_and(|providers| providers.contains_key(Yaml::from(id)))
@@ -1333,7 +1382,7 @@ pub(crate) fn mcp_entries() -> Result<Vec<Yaml>, AppError> {
                 );
                 continue;
             }
-            Err(error) => return Err(error),
+            Err(error) => return Err(with_profile_path(&path, error)),
         };
         for entry in entries {
             let name = entry["config"]["serverName"]
@@ -1628,6 +1677,35 @@ mod tests {
         assert_eq!(entries(&text).unwrap().len(), 1);
         assert_eq!(get_providers_from(&path, &credentials).unwrap().len(), 1);
         assert!(!text.lines().any(|line| line.trim() == "[]"));
+    }
+
+    #[test]
+    fn provider_write_names_the_profile_that_does_not_parse() {
+        let temp = tempfile::tempdir().unwrap();
+        let web = temp.path().join("web").join("cordis.patch.yml");
+        let desktop = temp.path().join("desktop").join("cordis.patch.yml");
+        let credentials = temp.path().join(".credentials.yaml");
+        fs::create_dir_all(web.parent().unwrap()).unwrap();
+        fs::create_dir_all(desktop.parent().unwrap()).unwrap();
+        // A tool appended block entries after the factory `[]` instead of replacing it (#9297).
+        let broken = format!("{FACTORY_PROFILE}\n- id: system-prompt\n  config: {{}}\n");
+        fs::write(&web, &broken).unwrap();
+        fs::write(&desktop, FACTORY_PROFILE).unwrap();
+        let error = save_paths_and_commit(
+            &[web.clone(), desktop.clone()],
+            &credentials,
+            "gateway",
+            Some(editor_config()),
+            true,
+            || Ok(()),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains(INVALID_PROFILE_YAML), "{error}");
+        assert!(error.contains(&web.display().to_string()), "{error}");
+        assert_eq!(read_text(&web).unwrap(), broken);
+        assert_eq!(read_text(&desktop).unwrap(), FACTORY_PROFILE);
+        assert!(!credentials.exists());
     }
 
     #[test]
@@ -2018,6 +2096,31 @@ mod tests {
         assert!(!path.with_extension("yml.lock").exists());
     }
 
+    #[test]
+    fn panicking_commit_restores_all_profiles_before_releasing_native_locks() {
+        let temp = tempfile::tempdir().unwrap();
+        let existing = temp.path().join("existing.yml");
+        let fresh = temp.path().join("new.yml");
+        fs::write(&existing, "# original\n[]\n").unwrap();
+        assert!(std::panic::catch_unwind(|| {
+            let _: Result<(), AppError> = edit_files_and_commit(
+                &[existing.clone(), fresh.clone()],
+                |_| Ok(vec!["- id: changed\n".into(), "- id: new\n".into()]),
+                || {
+                    assert!(existing.with_extension("yml.lock").exists());
+                    assert!(fresh.with_extension("yml.lock").exists());
+                    panic!("commit interrupted");
+                },
+            );
+        })
+        .is_err());
+        assert_eq!(fs::read_to_string(&existing).unwrap(), "# original\n[]\n");
+        assert!(!fresh.exists());
+        assert!(!existing.with_extension("yml.lock").exists());
+        assert!(!fresh.with_extension("yml.lock").exists());
+        edit_path_and_commit(&existing, |_| Ok("[]\n".into()), || Ok(())).unwrap();
+    }
+
     /// Points `DSH_HOME` at a temporary directory for one test and restores it afterwards.
     struct DshHome {
         dir: tempfile::TempDir,
@@ -2204,7 +2307,7 @@ mod tests {
         let web = profile_path("web");
         // Existing users only had Web when these rows were written.
         save_paths_and_commit(
-            &[web.clone()],
+            std::slice::from_ref(&web),
             &credentials_path(),
             "gateway",
             Some(editor_config()),

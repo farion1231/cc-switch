@@ -11,7 +11,8 @@ use crate::session_manager::{SessionMessage, SessionMeta};
 use super::pi_blocks::PiTranscript;
 use super::utils::for_each_jsonl_value;
 use super::utils::{
-    extract_text, parse_timestamp_to_ms, path_basename, truncate_summary, TITLE_MAX_CHARS,
+    extract_text, parse_timestamp_to_ms, path_basename, truncate_summary, ScanStatus,
+    TITLE_MAX_CHARS,
 };
 use crate::session_manager::terminal::shell_escape;
 
@@ -251,17 +252,29 @@ fn resolve_global_session_dir(value: &str, home: &Path) -> Option<PathBuf> {
 }
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    scan_sessions_for(&PI)
+    scan_sessions_with_status(&mut ScanStatus::default())
+}
+
+pub(crate) fn scan_sessions_with_status(status: &mut ScanStatus) -> Vec<SessionMeta> {
+    scan_sessions_for_with_status(&PI, status)
 }
 
 pub(crate) fn scan_sessions_for(d: &Dialect) -> Vec<SessionMeta> {
+    scan_sessions_for_with_status(d, &mut ScanStatus::default())
+}
+
+pub(crate) fn scan_sessions_for_with_status(
+    d: &Dialect,
+    status: &mut ScanStatus,
+) -> Vec<SessionMeta> {
     match (d.resolve_root)() {
         SessionRootResolution::Available { root, layout, .. } => {
-            scan_sessions_in_root(d, &root, layout)
+            scan_sessions_in_root_with_status(d, &root, layout, status)
         }
         SessionRootResolution::RequiresProjectContext {
             configured_path, ..
         } => {
+            status.incomplete = true;
             log::warn!(
                 "{} session directory '{configured_path}' requires a project cwd and cannot be globally enumerated",
                 d.label
@@ -269,18 +282,29 @@ pub(crate) fn scan_sessions_for(d: &Dialect) -> Vec<SessionMeta> {
             Vec::new()
         }
         SessionRootResolution::Unavailable { reason } => {
+            status.incomplete = true;
             log::warn!("{} session discovery unavailable: {reason}", d.label);
             Vec::new()
         }
     }
 }
 
+#[cfg(test)]
 fn scan_sessions_in_root(d: &Dialect, root: &Path, layout: SessionLayout) -> Vec<SessionMeta> {
+    scan_sessions_in_root_with_status(d, root, layout, &mut ScanStatus::default())
+}
+
+fn scan_sessions_in_root_with_status(
+    d: &Dialect,
+    root: &Path,
+    layout: SessionLayout,
+    status: &mut ScanStatus,
+) -> Vec<SessionMeta> {
     let mut files = Vec::new();
-    collect_jsonl_files(root, layout, &mut files, true);
+    collect_jsonl_files_with_status(root, layout, &mut files, true, status);
     files
         .into_iter()
-        .filter_map(|path| match parse_session(d, &path) {
+        .filter_map(|path| match parse_session_with_status(d, &path, status) {
             Ok(session) => Some(session),
             Err(error) => {
                 log::debug!(
@@ -384,21 +408,33 @@ fn layout_for_current_root(d: &Dialect, root: &Path) -> Result<SessionLayout, St
     Ok(layout)
 }
 
+#[cfg(test)]
 fn parse_session(d: &Dialect, path: &Path) -> Result<SessionMeta, String> {
-    let source = path.canonicalize().map_err(|error| {
-        format!(
-            "Failed to resolve {} session {}: {error}",
-            d.label,
-            path.display()
-        )
-    })?;
+    parse_session_with_status(d, path, &mut ScanStatus::default())
+}
+
+fn parse_session_with_status(
+    d: &Dialect,
+    path: &Path,
+    status: &mut ScanStatus,
+) -> Result<SessionMeta, String> {
+    let source = path
+        .canonicalize()
+        .inspect_err(|_| status.incomplete = true)
+        .map_err(|error| {
+            format!(
+                "Failed to resolve {} session {}: {error}",
+                d.label,
+                path.display()
+            )
+        })?;
     let source_path = source
         .to_str()
         .ok_or_else(|| format!("{} session path is not valid UTF-8", d.label))?
         .to_string();
     let SessionTree {
         header, summary, ..
-    } = read_tree(d, &source)?;
+    } = read_tree_with_status(d, &source, status)?;
     let title = summary.explicit_name.flatten().or_else(|| {
         summary
             .first_user_message
@@ -426,10 +462,20 @@ fn parse_session(d: &Dialect, path: &Path) -> Result<SessionMeta, String> {
 }
 
 fn read_tree(d: &Dialect, path: &Path) -> Result<SessionTree, String> {
+    read_tree_with_status(d, path, &mut ScanStatus::default())
+}
+
+fn read_tree_with_status(
+    d: &Dialect,
+    path: &Path,
+    status: &mut ScanStatus,
+) -> Result<SessionTree, String> {
     let label = d.label;
-    validate_file_size(d, path)?;
+    validate_file_size_with_status(d, path, status)?;
     let reader = BufReader::new(
-        File::open(path).map_err(|error| format!("Failed to open {label} session: {error}"))?,
+        File::open(path)
+            .inspect_err(|_| status.incomplete = true)
+            .map_err(|error| format!("Failed to open {label} session: {error}"))?,
     );
     let mut header = None;
     let mut parents = HashMap::<String, (Option<String>, usize)>::new();
@@ -438,7 +484,9 @@ fn read_tree(d: &Dialect, path: &Path) -> Result<SessionTree, String> {
     let mut entry_index = 0usize;
     let mut summary = SessionSummary::default();
     for line in reader.lines() {
-        let line = line.map_err(|error| format!("Failed to read {label} session: {error}"))?;
+        let line = line
+            .inspect_err(|_| status.incomplete = true)
+            .map_err(|error| format!("Failed to read {label} session: {error}"))?;
         if line.trim().is_empty() {
             continue;
         }
@@ -768,8 +816,17 @@ fn matches_session_layout(root: &Path, source: &Path, layout: SessionLayout) -> 
 }
 
 fn validate_file_size(d: &Dialect, path: &Path) -> Result<(), String> {
+    validate_file_size_with_status(d, path, &mut ScanStatus::default())
+}
+
+fn validate_file_size_with_status(
+    d: &Dialect,
+    path: &Path,
+    status: &mut ScanStatus,
+) -> Result<(), String> {
     let label = d.label;
     let metadata = fs::metadata(path)
+        .inspect_err(|_| status.incomplete = true)
         .map_err(|error| format!("Failed to inspect {label} session: {error}"))?;
     if metadata.len() > MAX_SESSION_BYTES {
         Err(format!(
@@ -797,27 +854,37 @@ fn collect_jsonl_files(
     output: &mut Vec<PathBuf>,
     enforce_size_limit: bool,
 ) {
-    let Ok(entries) = fs::read_dir(root) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let Ok(file_type) = entry.file_type() else {
+    collect_jsonl_files_with_status(
+        root,
+        layout,
+        output,
+        enforce_size_limit,
+        &mut ScanStatus::default(),
+    );
+}
+
+fn collect_jsonl_files_with_status(
+    root: &Path,
+    layout: SessionLayout,
+    output: &mut Vec<PathBuf>,
+    enforce_size_limit: bool,
+    status: &mut ScanStatus,
+) {
+    for entry in status.entries(root) {
+        let Some(file_type) = status.record(entry.file_type()) else {
             continue;
         };
         match layout {
             SessionLayout::Flat if file_type.is_file() => {
-                push_jsonl_file(&entry, output, enforce_size_limit);
+                push_jsonl_file(&entry, output, enforce_size_limit, status);
             }
             SessionLayout::ProjectDirectories if file_type.is_dir() => {
-                let Ok(project_entries) = fs::read_dir(entry.path()) else {
-                    continue;
-                };
-                for project_entry in project_entries.flatten() {
-                    if project_entry
-                        .file_type()
-                        .is_ok_and(|file_type| file_type.is_file())
+                for project_entry in status.entries(&entry.path()) {
+                    if status
+                        .record(project_entry.file_type())
+                        .is_some_and(|file_type| file_type.is_file())
                     {
-                        push_jsonl_file(&project_entry, output, enforce_size_limit);
+                        push_jsonl_file(&project_entry, output, enforce_size_limit, status);
                     }
                 }
             }
@@ -826,13 +893,18 @@ fn collect_jsonl_files(
     }
 }
 
-fn push_jsonl_file(entry: &fs::DirEntry, output: &mut Vec<PathBuf>, enforce_size_limit: bool) {
+fn push_jsonl_file(
+    entry: &fs::DirEntry,
+    output: &mut Vec<PathBuf>,
+    enforce_size_limit: bool,
+    status: &mut ScanStatus,
+) {
     let path = entry.path();
     if path.extension().and_then(|value| value.to_str()) == Some("jsonl")
         && (!enforce_size_limit
-            || entry
-                .metadata()
-                .is_ok_and(|metadata| metadata.len() <= MAX_SESSION_BYTES))
+            || status
+                .record(entry.metadata())
+                .is_some_and(|metadata| metadata.len() <= MAX_SESSION_BYTES))
     {
         output.push(path);
     }
@@ -856,7 +928,8 @@ fn collect_child_session_files(dir: &Path, output: &mut Vec<PathBuf>) {
                 collect_child_session_files(&entry.path(), output);
             }
         } else if file_type.is_file() {
-            push_jsonl_file(&entry, output, false);
+            // 不限大小时 push_jsonl_file 不读元数据，扫描状态用不上
+            push_jsonl_file(&entry, output, false, &mut ScanStatus::default());
         }
     }
 }

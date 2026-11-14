@@ -14,7 +14,11 @@ pub struct McpApps {
     #[serde(default)]
     pub dsh: bool,
     #[serde(default)]
+    pub workbuddy: bool,
+    #[serde(default)]
     pub agy: bool,
+    #[serde(default)]
+    pub copilot: bool,
     #[serde(default)]
     pub claude: bool,
     #[serde(default)]
@@ -51,6 +55,8 @@ impl McpApps {
             AppType::Omp => self.omp,
             AppType::ClaudeDesktop => false,
             AppType::Agy => self.agy,
+            AppType::Copilot => self.copilot,
+            AppType::WorkBuddy => self.workbuddy,
         }
     }
 
@@ -71,6 +77,8 @@ impl McpApps {
             AppType::ClaudeDesktop => {}
             AppType::Agy => self.agy = enabled,
             AppType::Omp => self.omp = enabled,
+            AppType::Copilot => self.copilot = enabled,
+            AppType::WorkBuddy => self.workbuddy = enabled,
         }
     }
 
@@ -95,11 +103,17 @@ impl McpApps {
         if self.agy {
             apps.push(AppType::Agy);
         }
+        if self.copilot {
+            apps.push(AppType::Copilot);
+        }
         if self.dsh {
             apps.push(AppType::Dsh);
         }
         if self.kimi {
             apps.push(AppType::Kimi);
+        }
+        if self.workbuddy {
+            apps.push(AppType::WorkBuddy);
         }
         if self.mcode {
             apps.push(AppType::Mcode);
@@ -125,8 +139,10 @@ impl McpApps {
             && !self.opencode
             && !self.hermes
             && !self.agy
+            && !self.copilot
             && !self.kimi
             && !self.dsh
+            && !self.workbuddy
             && !self.mcode
             && !self.pi
             && !self.omp
@@ -143,7 +159,11 @@ pub struct SkillApps {
     #[serde(default)]
     pub dsh: bool,
     #[serde(default)]
+    pub workbuddy: bool,
+    #[serde(default)]
     pub agy: bool,
+    #[serde(default)]
+    pub copilot: bool,
     #[serde(default)]
     pub claude: bool,
     #[serde(default)]
@@ -179,7 +199,9 @@ impl SkillApps {
             AppType::OpenClaw => false,
             AppType::Agy => self.agy,
             AppType::Omp => self.omp,
+            AppType::Copilot => self.copilot,
             AppType::ClaudeDesktop => false,
+            AppType::WorkBuddy => self.workbuddy,
         }
     }
 
@@ -199,7 +221,9 @@ impl SkillApps {
             AppType::OpenClaw => {}
             AppType::Agy => self.agy = enabled,
             AppType::Omp => self.omp = enabled,
+            AppType::Copilot => self.copilot = enabled,
             AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
+            AppType::WorkBuddy => self.workbuddy = enabled,
         }
     }
 
@@ -224,11 +248,17 @@ impl SkillApps {
         if self.agy {
             apps.push(AppType::Agy);
         }
+        if self.copilot {
+            apps.push(AppType::Copilot);
+        }
         if self.dsh {
             apps.push(AppType::Dsh);
         }
         if self.kimi {
             apps.push(AppType::Kimi);
+        }
+        if self.workbuddy {
+            apps.push(AppType::WorkBuddy);
         }
         if self.mcode {
             apps.push(AppType::Mcode);
@@ -254,8 +284,10 @@ impl SkillApps {
             && !self.opencode
             && !self.hermes
             && !self.agy
+            && !self.copilot
             && !self.kimi
             && !self.dsh
+            && !self.workbuddy
             && !self.mcode
             && !self.pi
             && !self.omp
@@ -483,80 +515,178 @@ pub enum AppType {
     Dsh,
     Agy,
     Omp,
+    Copilot,
+    #[serde(rename = "workbuddy", alias = "work-buddy")]
+    WorkBuddy,
+}
+
+/// 一个应用支持哪些功能。每个应用都在 [`AppType::spec`] 里写全每一项，新增应用时漏写
+/// 就编译不过。前端 `src/config/appSpecs.ts` 的 `APP_SPECS` 有同样的几项，
+/// `tests/config/appSpecs.json` 由这里的测试生成，前端测试拿它比对两边。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppSpec {
+    /// 序列化、命令参数和前端用的应用 ID
+    pub id: &'static str,
+    /// 累加式：供应商并存在一个 live 文件里，可以各自启用。
+    ///
+    /// GitHub Copilot CLI 是混合的：自带模型卡累加式写进 `providers.json`，官方登录卡仍是
+    /// 启动式（只打开终端、不写文件，启动时照旧从 settings.json 导入）。
+    pub additive: bool,
+    /// 有完整的本地路由和故障转移（`proxy_config` 行）
+    pub local_proxy: bool,
+    /// 有设备级的直连 / 路由模式（`live-state.json`，`mode::controller`）。Claude Desktop 经
+    /// 同一个路由服务转发，但没有 `proxy_config` 行、不做故障转移，所以只有这一项。
+    pub route_mode: bool,
+    /// 支持 Stack 模式（`mode::stack`）
+    pub stack: bool,
 }
 
 impl AppType {
-    pub fn as_str(&self) -> &str {
+    /// 这个应用的功能表。不要加 `_ =>` 分支：新增应用必须在这里写全每一项。
+    pub const fn spec(&self) -> AppSpec {
         match self {
-            AppType::Claude => "claude",
-            AppType::ClaudeDesktop => "claude-desktop",
-            AppType::Codex => "codex",
-            AppType::Gemini => "gemini",
-            AppType::GrokBuild => "grokbuild",
-            AppType::OpenCode => "opencode",
-            AppType::OpenClaw => "openclaw",
-            AppType::Hermes => "hermes",
-            AppType::Pi => "pi",
-            AppType::Mcode => "mcode",
-            AppType::Kimi => "kimi",
-            AppType::Dsh => "dsh",
-            AppType::Agy => "agy",
-            AppType::Omp => "omp",
+            AppType::Claude => AppSpec {
+                id: "claude",
+                additive: false,
+                local_proxy: true,
+                route_mode: true,
+                stack: true,
+            },
+            AppType::ClaudeDesktop => AppSpec {
+                id: "claude-desktop",
+                additive: false,
+                local_proxy: false,
+                route_mode: true,
+                stack: true,
+            },
+            AppType::Codex => AppSpec {
+                id: "codex",
+                additive: false,
+                local_proxy: true,
+                route_mode: true,
+                stack: true,
+            },
+            AppType::Gemini => AppSpec {
+                id: "gemini",
+                additive: false,
+                local_proxy: true,
+                route_mode: true,
+                stack: false,
+            },
+            AppType::GrokBuild => AppSpec {
+                id: "grokbuild",
+                additive: false,
+                local_proxy: true,
+                route_mode: true,
+                stack: false,
+            },
+            AppType::OpenCode => AppSpec {
+                id: "opencode",
+                additive: true,
+                local_proxy: false,
+                route_mode: false,
+                stack: false,
+            },
+            AppType::OpenClaw => AppSpec {
+                id: "openclaw",
+                additive: true,
+                local_proxy: false,
+                route_mode: false,
+                stack: false,
+            },
+            AppType::Hermes => AppSpec {
+                id: "hermes",
+                additive: true,
+                local_proxy: false,
+                route_mode: false,
+                stack: false,
+            },
+            AppType::Pi => AppSpec {
+                id: "pi",
+                additive: true,
+                local_proxy: false,
+                route_mode: false,
+                stack: false,
+            },
+            AppType::Mcode => AppSpec {
+                id: "mcode",
+                additive: true,
+                local_proxy: false,
+                route_mode: false,
+                stack: false,
+            },
+            AppType::Kimi => AppSpec {
+                id: "kimi",
+                additive: true,
+                local_proxy: false,
+                route_mode: false,
+                stack: false,
+            },
+            AppType::Dsh => AppSpec {
+                id: "dsh",
+                additive: true,
+                local_proxy: false,
+                route_mode: false,
+                stack: false,
+            },
+            AppType::Agy => AppSpec {
+                id: "agy",
+                additive: false,
+                local_proxy: false,
+                route_mode: false,
+                stack: false,
+            },
+            AppType::Omp => AppSpec {
+                id: "omp",
+                additive: true,
+                local_proxy: false,
+                route_mode: false,
+                stack: false,
+            },
+            AppType::Copilot => AppSpec {
+                id: "copilot",
+                additive: true,
+                local_proxy: false,
+                route_mode: false,
+                stack: false,
+            },
+            AppType::WorkBuddy => AppSpec {
+                id: "workbuddy",
+                additive: true,
+                local_proxy: false,
+                route_mode: false,
+                stack: false,
+            },
         }
     }
 
-    /// Check if this app uses additive mode
-    ///
-    /// - Switch mode (false): Only the current provider is written to live config (Claude, Codex, Gemini)
-    /// - Additive mode (true): Providers coexist in native config and can be enabled independently
-    ///   (OpenCode, OpenClaw, Hermes, Pi)
-    pub fn is_additive_mode(&self) -> bool {
-        matches!(
-            self,
-            AppType::OpenCode
-                | AppType::OpenClaw
-                | AppType::Hermes
-                | AppType::Pi
-                | AppType::Mcode
-                | AppType::Kimi
-                | AppType::Dsh
-                | AppType::Omp
-        )
+    pub fn as_str(&self) -> &str {
+        self.spec().id
     }
 
-    pub fn supports_local_proxy(&self) -> bool {
-        matches!(
-            self,
-            AppType::Claude | AppType::Codex | AppType::Gemini | AppType::GrokBuild
-        )
-    }
+    /// 所有应用，按默认顺序
+    pub const ALL: [AppType; 16] = [
+        AppType::Claude,
+        AppType::ClaudeDesktop,
+        AppType::Codex,
+        AppType::Gemini,
+        AppType::GrokBuild,
+        AppType::OpenCode,
+        AppType::OpenClaw,
+        AppType::Hermes,
+        AppType::Pi,
+        AppType::Mcode,
+        AppType::Kimi,
+        AppType::Dsh,
+        AppType::Agy,
+        AppType::Omp,
+        AppType::Copilot,
+        AppType::WorkBuddy,
+    ];
 
-    /// 有设备级的直连 / 路由模式（`live-state.json`，`mode::controller`）：本地路由的四个应用，
-    /// 加上 Claude Desktop。Desktop 经同一个路由服务转发，但没有 `proxy_config` 行、不做故障
-    /// 转移，所以不算 [`Self::supports_local_proxy`]。
-    pub fn has_route_mode(&self) -> bool {
-        self.supports_local_proxy() || matches!(self, AppType::ClaudeDesktop)
-    }
-
-    /// Return an iterator over all app types
     pub fn all() -> impl Iterator<Item = AppType> {
-        [
-            AppType::Claude,
-            AppType::ClaudeDesktop,
-            AppType::Codex,
-            AppType::Gemini,
-            AppType::GrokBuild,
-            AppType::OpenCode,
-            AppType::OpenClaw,
-            AppType::Hermes,
-            AppType::Pi,
-            AppType::Mcode,
-            AppType::Kimi,
-            AppType::Dsh,
-            AppType::Agy,
-            AppType::Omp,
-        ]
-        .into_iter()
+        Self::ALL.into_iter()
     }
 }
 
@@ -580,10 +710,14 @@ impl FromStr for AppType {
             "dsh" | "deepseek-harness" => Ok(AppType::Dsh),
             "agy" | "antigravity" | "antigravity-cli" => Ok(AppType::Agy),
             "omp" | "oh-my-pi" | "oh_my_pi" | "ohmypi" => Ok(AppType::Omp),
+            "copilot" | "copilot-cli" | "github-copilot" | "github-copilot-cli" => {
+                Ok(AppType::Copilot)
+            }
+            "workbuddy" | "work-buddy" | "work_buddy" => Ok(AppType::WorkBuddy),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy."),
             )),
         }
     }
@@ -627,8 +761,10 @@ impl CommonConfigSnippets {
             | AppType::Mcode
             | AppType::Kimi
             | AppType::Dsh
+            | AppType::Agy
             | AppType::Omp
-            | AppType::Agy => None,
+            | AppType::Copilot
+            | AppType::WorkBuddy => None,
         }
     }
 
@@ -647,8 +783,10 @@ impl CommonConfigSnippets {
             | AppType::Mcode
             | AppType::Kimi
             | AppType::Dsh
+            | AppType::Agy
             | AppType::Omp
-            | AppType::Agy => {}
+            | AppType::Copilot
+            | AppType::WorkBuddy => {}
         }
     }
 }
@@ -694,6 +832,7 @@ impl Default for MultiAppConfig {
         apps.insert("openclaw".to_string(), ProviderManager::default());
         apps.insert("hermes".to_string(), ProviderManager::default());
         apps.insert("agy".to_string(), ProviderManager::default());
+        apps.insert("copilot".to_string(), ProviderManager::default());
 
         Self {
             version: 2,
@@ -979,8 +1118,10 @@ impl MultiAppConfig {
             | AppType::Mcode
             | AppType::Kimi
             | AppType::Dsh
+            | AppType::Agy
             | AppType::Omp
-            | AppType::Agy => return Ok(false),
+            | AppType::Copilot
+            | AppType::WorkBuddy => return Ok(false),
         };
 
         prompts.insert(id, prompt);
@@ -1028,8 +1169,10 @@ impl MultiAppConfig {
                 | AppType::Mcode
                 | AppType::Kimi
                 | AppType::Dsh
+                | AppType::Agy
                 | AppType::Omp
-                | AppType::Agy => continue, // Pi didn't exist in v3.6.x, skip
+                | AppType::Copilot
+                | AppType::WorkBuddy => continue, // Pi didn't exist in v3.6.x, skip
             };
 
             for (id, entry) in old_servers {
@@ -1160,6 +1303,28 @@ mod tests {
             AppType::ClaudeDesktop
         );
         assert_eq!(AppType::ClaudeDesktop.as_str(), "claude-desktop");
+    }
+
+    /// 前后端共用的应用功能表：`tests/config/appSpecs.json` 从这里生成，前端
+    /// `tests/config/appSpecs.test.ts` 拿它比对 `APP_SPECS`。改了 [`AppType::spec`] 后用
+    /// `CC_SWITCH_UPDATE_GOLDEN=1 cargo test app_specs_match_shared_fixture` 重新生成。
+    #[test]
+    fn app_specs_match_shared_fixture() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/config/appSpecs.json");
+        let specs: Vec<AppSpec> = AppType::all().map(|app| app.spec()).collect();
+        let expected = serde_json::to_string_pretty(&specs).unwrap() + "\n";
+        if std::env::var_os("CC_SWITCH_UPDATE_GOLDEN").is_some() {
+            std::fs::write(&path, &expected).unwrap();
+        }
+        let actual = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            actual, expected,
+            "tests/config/appSpecs.json 和 AppType::spec 不一致；确认改动后用 CC_SWITCH_UPDATE_GOLDEN=1 重新生成，再同步前端 APP_SPECS"
+        );
+        for app in AppType::all() {
+            assert_eq!(app.as_str().parse::<AppType>().unwrap(), app);
+        }
     }
 
     #[test]

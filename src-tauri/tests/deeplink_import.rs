@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use cc_switch_lib::{import_provider_from_deeplink, parse_deeplink_url, AppState, Database};
 
-#[path = "support.rs"]
+#[path = "support/mod.rs"]
 mod support;
 use support::{ensure_test_home, reset_test_fs, test_mutex};
 

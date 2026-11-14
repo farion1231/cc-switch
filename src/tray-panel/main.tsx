@@ -6,9 +6,11 @@ import "./tray-panel.css";
 import "../i18n";
 import { FrontendErrorBoundary } from "@/components/FrontendErrorBoundary";
 import { installGlobalErrorHandlers } from "@/lib/frontendLogger";
+import { disableContextMenu } from "@/lib/disableContextMenu";
 import { TrayPanel } from "./TrayPanel";
 
 installGlobalErrorHandlers();
+disableContextMenu();
 
 const queryClient = new QueryClient({
   defaultOptions: {

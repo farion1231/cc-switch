@@ -87,24 +87,31 @@ pub fn read_to_string(path: &Path) -> io::Result<String> {
 
 /// 原子写回；压缩路径先编码成 zstd，保持文件原有形态。
 ///
-/// 压缩形态还保留原 mtime：会话列表不解压结尾，压缩会话的最后活跃时间就是 mtime
-/// （Codex 压缩时也保留了它），改写元数据不该让老会话显示成刚刚活跃。
+/// 两种形态都保留原 mtime：`codex resume` 按 mtime 排序，会话列表里压缩会话的最后活跃
+/// 时间也取 mtime（Codex 压缩时也保留了它），改写元数据不该让老会话显示成刚刚活跃。
 pub fn write_rollout(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
-    if !is_compressed(path) {
-        return atomic_write(path, bytes);
-    }
     let modified = std::fs::metadata(path)
         .and_then(|meta| meta.modified())
         .ok();
-    let encoded =
-        zstd::stream::encode_all(bytes, WRITE_LEVEL).map_err(|error| AppError::io(path, error))?;
-    atomic_write(path, &encoded)?;
-    if let Some(modified) = modified {
-        File::options()
-            .write(true)
-            .open(path)
-            .and_then(|file| file.set_times(std::fs::FileTimes::new().set_modified(modified)))
+    if is_compressed(path) {
+        let encoded = zstd::stream::encode_all(bytes, WRITE_LEVEL)
             .map_err(|error| AppError::io(path, error))?;
+        atomic_write(path, &encoded)?;
+    } else {
+        atomic_write(path, bytes)?;
+    }
+    if let Some(modified) = modified {
+        // Unix 设时间只看属主，只读打开就够（文件本身可能只读）；Windows 要可写句柄。
+        // 内容已经写好，时间戳只影响排序：恢复失败不该让整次迁移中断
+        let file = if cfg!(windows) {
+            File::options().write(true).open(path)
+        } else {
+            File::open(path)
+        };
+        let times = std::fs::FileTimes::new().set_modified(modified);
+        if let Err(error) = file.and_then(|file| file.set_times(times)) {
+            log::warn!("Failed to restore mtime of {}: {error}", path.display());
+        }
     }
     Ok(())
 }
@@ -192,26 +199,60 @@ mod tests {
     }
 
     #[test]
-    fn rewriting_compressed_rollout_keeps_mtime() {
+    fn rewriting_rollout_keeps_mtime() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let zst = temp.path().join("rollout-a.jsonl.zst");
-        write_rollout(&zst, b"{\"a\":1}\n").expect("write");
-        let old = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
-        File::options()
-            .write(true)
-            .open(&zst)
-            .expect("open")
-            .set_times(std::fs::FileTimes::new().set_modified(old))
-            .expect("set mtime");
+        for name in ["rollout-a.jsonl.zst", "rollout-b.jsonl"] {
+            let path = temp.path().join(name);
+            write_rollout(&path, b"{\"a\":1}\n").expect("write");
+            let old = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+            File::options()
+                .write(true)
+                .open(&path)
+                .expect("open")
+                .set_times(std::fs::FileTimes::new().set_modified(old))
+                .expect("set mtime");
 
-        write_rollout(&zst, b"{\"a\":2}\n").expect("rewrite");
+            write_rollout(&path, b"{\"a\":2}\n").expect("rewrite");
 
-        let modified = std::fs::metadata(&zst)
-            .expect("meta")
-            .modified()
-            .expect("mtime");
-        assert_eq!(modified, old);
-        assert_eq!(read_to_string(&zst).expect("read"), "{\"a\":2}\n");
+            let modified = std::fs::metadata(&path)
+                .expect("meta")
+                .modified()
+                .expect("mtime");
+            assert_eq!(modified, old, "{name}");
+            assert_eq!(read_to_string(&path).expect("read"), "{\"a\":2}\n");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rewriting_read_only_rollout_keeps_mtime() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().expect("tempdir");
+        for name in ["rollout-c.jsonl", "rollout-d.jsonl.zst"] {
+            let path = temp.path().join(name);
+            write_rollout(&path, b"{\"a\":1}\n").expect("write");
+            let old = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+            File::options()
+                .write(true)
+                .open(&path)
+                .expect("open")
+                .set_times(std::fs::FileTimes::new().set_modified(old))
+                .expect("set mtime");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444)).expect("chmod");
+
+            write_rollout(&path, b"{\"a\":2}\n").expect("rewrite");
+
+            let modified = std::fs::metadata(&path)
+                .expect("meta")
+                .modified()
+                .expect("mtime");
+            assert_eq!(
+                read_to_string(&path).expect("read"),
+                "{\"a\":2}\n",
+                "{name}"
+            );
+            assert_eq!(modified, old, "{name}");
+        }
     }
 
     #[test]
