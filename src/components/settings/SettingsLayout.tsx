@@ -61,6 +61,7 @@ export function SettingsCard({
 
 export function SettingsRow({
   label,
+  summary,
   help,
   description,
   control,
@@ -69,6 +70,8 @@ export function SettingsRow({
   className,
 }: {
   label: ReactNode;
+  /** 名称下面常驻的一句话：开 / 关之后会怎样这类后果，不能藏进「?」 */
+  summary?: ReactNode;
   help?: { title: string; body: ReactNode };
   /** 只有真正的数据（路径、地址）才写在名称下面；说明进「?」 */
   description?: ReactNode;
@@ -92,6 +95,9 @@ export function SettingsRow({
             </Label>
             {help && <HelpTip title={help.title}>{help.body}</HelpTip>}
           </div>
+          {summary && (
+            <div className="mt-0.5 text-caption text-fg-2">{summary}</div>
+          )}
           {description && (
             <div className="mt-0.5 break-all text-caption text-fg-2">
               {description}
@@ -109,6 +115,7 @@ export function SettingsRow({
 
 export function SettingsSwitchRow({
   label,
+  summary,
   help,
   description,
   checked,
@@ -116,6 +123,7 @@ export function SettingsSwitchRow({
   disabled,
 }: {
   label: string;
+  summary?: ReactNode;
   help?: { title: string; body: ReactNode };
   description?: ReactNode;
   checked: boolean;
@@ -125,6 +133,7 @@ export function SettingsSwitchRow({
   return (
     <SettingsRow
       label={label}
+      summary={summary}
       help={help}
       description={description}
       control={

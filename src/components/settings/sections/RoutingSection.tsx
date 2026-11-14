@@ -375,10 +375,7 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
           />
           <SettingsSwitchRow
             label={t("routingSettings.logging")}
-            help={{
-              title: t("routingSettings.logging"),
-              body: t("routingSettings.loggingHelp"),
-            }}
+            summary={t("routingSettings.loggingHelp")}
             checked={config?.enableLogging ?? false}
             disabled={!config}
             onCheckedChange={(value) => void toggleLogging(value)}
