@@ -19,6 +19,8 @@ mod database;
 mod deeplink;
 mod dsh_config;
 mod error;
+#[cfg(test)]
+mod frontend_parity_tests;
 mod gemini_config;
 mod gemini_mcp;
 mod grok_config;
@@ -1326,11 +1328,10 @@ pub fn run() {
             let _tray = tray_builder.build(app)?;
             #[cfg(target_os = "windows")]
             tray_compat::install(app.handle());
-            crate::services::webdav_auto_sync::start_worker(
-                app_state.db.clone(),
-                app.handle().clone(),
-            );
-            crate::services::s3_auto_sync::start_worker(
+            crate::services::auto_sync::start_worker::<
+                crate::services::webdav_auto_sync::WebDavAutoSync,
+            >(app_state.db.clone(), app.handle().clone());
+            crate::services::auto_sync::start_worker::<crate::services::s3_auto_sync::S3AutoSync>(
                 app_state.db.clone(),
                 app.handle().clone(),
             );
