@@ -424,10 +424,15 @@ fn known_native_install(tool: &str, inst: &ToolInstallation) -> bool {
         }
         // Official install.sh (`~/.local/bin`) / install.ps1 (`%LOCALAPPDATA%\omp`) targets.
         "omp" => normalized.ends_with("/.local/bin/omp") || normalized.ends_with("/omp/omp.exe"),
-        // Official install.sh / install.ps1 targets (`~/.local/bin`, FAQ 亦提到 `~/.atomcode/bin`).
+        // Official installer targets, per the scripts themselves:
+        // install.sh → `~/.local/bin` (non-root) or `/usr/local/bin` (root),
+        // install.ps1 → `%LOCALAPPDATA%\AtomCode`; FAQ also mentions `~/.atomcode/bin`.
         "atomcode" => {
             normalized.ends_with("/.local/bin/atomcode")
                 || normalized.ends_with("/.local/bin/atomcode.exe")
+                || normalized.ends_with("/usr/local/bin/atomcode")
+                || normalized.ends_with("/usr/local/bin/atomcode.exe")
+                || normalized.ends_with("/atomcode/atomcode.exe")
                 || normalized.ends_with("/.atomcode/bin/atomcode")
                 || normalized.ends_with("/.atomcode/bin/atomcode.exe")
         }
@@ -1048,6 +1053,38 @@ mod tests {
         let other = temp.path().join("omp");
         std::fs::write(&other, "#!/usr/bin/env bun\n").unwrap();
         assert!(!known_native_install("omp", &installation(&other)));
+    }
+
+    #[test]
+    fn atomcode_official_installer_targets_are_known_native_installs() {
+        // Real paths the official scripts write (see §13.3 of the verification
+        // report): install.sh → `~/.local/bin` or `/usr/local/bin` (root),
+        // install.ps1 → `%LOCALAPPDATA%\AtomCode`, FAQ → `~/.atomcode/bin`.
+        // Each layout is built under a temp root so `inst.real` both exists
+        // (is_native_executable reads the file header) and ends with the
+        // normalized suffix the matcher requires.
+        for (layout, binary_name) in [
+            (".local/bin", "atomcode"),
+            ("usr/local/bin", "atomcode"),
+            // install.ps1 target: `%LOCALAPPDATA%\AtomCode\atomcode.exe`.
+            ("AtomCode", "atomcode.exe"),
+            (".atomcode/bin", "atomcode"),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let binary = temp.path().join(layout).join(binary_name);
+            std::fs::create_dir_all(binary.parent().unwrap()).unwrap();
+            std::fs::write(&binary, [0x4d, 0x5a, 0x00, 0x00]).unwrap();
+            assert!(
+                known_native_install("atomcode", &installation(&binary)),
+                "official installer target should be recognized: {}",
+                binary.display()
+            );
+        }
+        // A same-named script elsewhere is never claimed.
+        let temp = tempfile::tempdir().unwrap();
+        let other = temp.path().join("atomcode");
+        std::fs::write(&other, "#!/bin/sh\necho atomcode\n").unwrap();
+        assert!(!known_native_install("atomcode", &installation(&other)));
     }
 
     #[test]

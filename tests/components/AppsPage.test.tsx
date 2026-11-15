@@ -2153,3 +2153,21 @@ describe("AppsPage visibility column", () => {
     }
   });
 });
+
+describe("AppsPage tool mapping completeness", () => {
+  it("maps every app id to a tool row except claude-desktop", async () => {
+    const { TOOL_APP_IDS } = await import(
+      "@/components/apps/useToolManagement"
+    );
+    const mapped = new Set([
+      "claude-desktop",
+      ...TOOL_NAMES.map((tool) => TOOL_APP_IDS[tool]),
+    ]);
+    // ROW_BY_APP is `as Record<AppId, Row>`; this guards the cast from rotting
+    // when a new app id is added without a tool entry (the §13.5 check).
+    for (const app of APP_IDS) {
+      expect(mapped).toContain(app);
+    }
+    expect(mapped.size).toBe(APP_IDS.length);
+  });
+});

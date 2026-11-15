@@ -655,6 +655,21 @@ context_window = 262144
         assert!(document["provider_accounts"].get("x").is_none());
     }
 
+    /// 测试用的 `ATOMCODE_HOME` 守卫：构造时设值，Drop 时清除（断言 panic 也会清理），
+    /// 避免污染同 crate 的后续测试（与 §9 P2#11 的 crash_at 缺少 guard 同类问题）。
+    struct AtomcodeHomeGuard(std::path::PathBuf);
+    impl AtomcodeHomeGuard {
+        fn set(dir: &std::path::Path) -> Self {
+            std::env::set_var("ATOMCODE_HOME", dir);
+            Self(dir.to_path_buf())
+        }
+    }
+    impl Drop for AtomcodeHomeGuard {
+        fn drop(&mut self) {
+            std::env::remove_var("ATOMCODE_HOME");
+        }
+    }
+
     #[test]
     fn current_provider_returns_account_id_from_default_provider() {
         let dir = tempfile::tempdir().unwrap();
@@ -662,7 +677,7 @@ context_window = 262144
         fs::write(&path, toml_text()).unwrap();
 
         // Mock the config path to use our test directory
-        std::env::set_var("ATOMCODE_HOME", dir.path());
+        let _home = AtomcodeHomeGuard::set(dir.path());
 
         // toml_text() has:
         // default_provider = "acct-key-a"
@@ -671,16 +686,13 @@ context_window = 262144
         // So current_provider() should return "acct", not "acct-key-a"
         let current = current_provider().unwrap();
         assert_eq!(current, "acct", "Should return account ID, not model key");
-
-        // Clean up
-        std::env::remove_var("ATOMCODE_HOME");
     }
 
     #[test]
     fn current_provider_prefers_default_model_and_degrades_to_empty() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        std::env::set_var("ATOMCODE_HOME", dir.path());
+        let _home = AtomcodeHomeGuard::set(dir.path());
 
         // `default_model` 是 canonical 选择：同时存在时优先于 legacy 的 `default_provider`
         //（与 AtomCode `effective_model_selection()` 的解析顺序一致）。
@@ -737,8 +749,6 @@ model = "m1"
         )
         .unwrap();
         assert_eq!(current_provider().unwrap(), "");
-
-        std::env::remove_var("ATOMCODE_HOME");
     }
 
     #[test]

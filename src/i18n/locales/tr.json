@@ -987,6 +987,7 @@
     "browsePlaceholderHermes": "ör. /home/<your-username>/.hermes",
     "browsePlaceholderPi": "ör. /home/<your-username>/.pi/agent",
     "browsePlaceholderOmp": "ör. /home/<your-username>/.omp/agent",
+    "browsePlaceholderDsh": "ör. /home/<your-username>/.dsh",
     "browsePlaceholderAtomcode": "ör. /home/<your-username>/.atomcode",
     "browseDirectory": "Dizine Göz Atın",
     "resetDefault": "Varsayılan dizine sıfırla (kaydettikten sonra etkili olur)",

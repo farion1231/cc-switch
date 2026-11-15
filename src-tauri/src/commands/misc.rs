@@ -2756,6 +2756,11 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
         if !home.as_os_str().is_empty() {
             push_unique_path(&mut search_paths, home.join(".atomcode").join("bin"));
         }
+        // 官方 install.ps1 的目标目录（`%LOCALAPPDATA%\AtomCode`），ps1 只写用户 PATH，
+        // GUI 进程不重启时探测不到。
+        if let Some(local_data) = dirs::data_local_dir() {
+            push_unique_path(&mut search_paths, local_data.join("AtomCode"));
+        }
     }
     if !home.as_os_str().is_empty() {
         push_unique_path(&mut search_paths, home.join(".local/bin"));
