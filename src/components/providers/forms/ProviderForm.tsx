@@ -58,6 +58,7 @@ import {
 import {
   openclawProviderPresets,
   rebaseOpenClawSuggestedDefaults,
+  savedOpenClawModelIds,
   type OpenClawProviderPreset,
   type OpenClawSuggestedDefaults,
 } from "@/config/openclawProviderPresets";
@@ -159,6 +160,7 @@ import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
 import { useHermesLiveProviderIds } from "@/hooks/useHermes";
 import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
 import { normalizeEnabledCodexChatEffortParam } from "./helpers/codexChatReasoning";
+import { appHas } from "@/config/appSpecs";
 
 type PresetEntry = {
   id: string;
@@ -365,7 +367,7 @@ export function ProviderForm(props: ProviderFormProps) {
     return <McodeProviderForm {...props} />;
   if (props.appId === "workbuddy") return <WorkBuddyProviderForm {...props} />;
   if (props.appId === "codebuddy") return <CodebuddyProviderForm {...props} />;
-  if (props.appId === "pi" || props.appId === "omp") {
+  if (appHas(props.appId, "piFamily")) {
     return <PiProviderForm {...props} />;
   }
   if (props.appId === "claude-desktop") {
@@ -1943,6 +1945,7 @@ function ProviderFormFull({
             ? rebaseOpenClawSuggestedDefaults(
                 activePreset.suggestedDefaults,
                 payload.providerKey,
+                savedOpenClawModelIds(payload.settingsConfig),
               )
             : activePreset.suggestedDefaults;
       }

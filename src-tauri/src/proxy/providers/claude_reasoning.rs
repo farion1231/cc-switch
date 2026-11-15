@@ -15,6 +15,7 @@
 //! Codex / xAI OAuth）的模型和参数由平台限定，自动模式下保持转换层的结果。
 
 use crate::provider::Provider;
+use crate::provider_kind::{is_copilot_url, ProviderKind};
 use serde_json::{json, Value};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,10 +137,7 @@ fn override_mode(provider: &Provider) -> Option<&str> {
 }
 
 fn is_managed_account(provider: &Provider, base_url: &str) -> bool {
-    provider.is_github_copilot()
-        || provider.is_codex_oauth()
-        || provider.is_xai_oauth()
-        || base_url.contains("githubcopilot.com")
+    ProviderKind::of(provider).is_some() || is_copilot_url(base_url)
 }
 
 /// 客户端要的档位，不按目标模型折算。关思考时为 `None`。
@@ -234,6 +232,29 @@ mod tests {
             icon_color: None,
             in_failover_queue: false,
         }
+    }
+
+    #[test]
+    fn managed_account_covers_declared_kinds_legacy_url_and_request_url() {
+        for kind in ["github_copilot", "codex_oauth", "xai_oauth"] {
+            let meta = Some(ProviderMeta {
+                provider_type: Some(kind.to_string()),
+                ..Default::default()
+            });
+            assert!(is_managed_account(
+                &provider("p", meta),
+                "https://relay.example.com"
+            ));
+        }
+
+        let mut legacy = provider("p", None);
+        legacy.settings_config =
+            json!({ "env": { "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com" } });
+        assert!(is_managed_account(&legacy, "https://relay.example.com"));
+
+        let plain = provider("p", None);
+        assert!(is_managed_account(&plain, "https://api.githubcopilot.com"));
+        assert!(!is_managed_account(&plain, "https://relay.example.com"));
     }
 
     fn with_override(mode: &str) -> Option<ProviderMeta> {

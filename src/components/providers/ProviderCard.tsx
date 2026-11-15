@@ -56,7 +56,6 @@ import {
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 import { resolveProviderIcon } from "@/utils/providerIcon";
-import { isProxyAppId } from "@/config/appConfig";
 import { isWorkBuddyOfficial } from "@/components/providers/workbuddyOfficial";
 import { WorkBuddyOfficialAccountLine } from "@/components/providers/WorkBuddyOfficialAccountLine";
 import { WorkBuddyQuotaFooter } from "@/components/providers/WorkBuddyQuotaFooter";
@@ -67,6 +66,7 @@ import {
   terminalNeedsRoute,
 } from "./OpenTerminalDialog";
 import type { CardChip, CardPresentation, CardTone } from "./presentation";
+import { appHas } from "@/config/appSpecs";
 
 const copilotPlan = (data: unknown) => (data as CopilotQuota).plan;
 
@@ -298,7 +298,7 @@ export function ProviderCard({
   const { data: health } = useProviderHealth(
     provider.id,
     appId,
-    Boolean(presentation.showHealth) && isProxyAppId(appId),
+    Boolean(presentation.showHealth) && appHas(appId, "localProxy"),
   );
 
   const fallbackUrlText = t("provider.notConfigured", {
