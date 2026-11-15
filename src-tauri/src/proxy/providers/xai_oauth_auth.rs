@@ -636,7 +636,11 @@ impl XaiOAuthManager {
                 }
             });
         if refresh_token_changed {
-            let default_account_id = self.default_account_id.read().await.clone();
+            let stored_default = self.default_account_id.read().await.clone();
+            let default_account_id = match stored_default {
+                Some(id) if Self::is_usable_account(&accounts, &id) => Some(id),
+                _ => Self::fallback_default_account_id(&accounts),
+            };
             self.persist_and_commit(accounts, default_account_id)
                 .await?;
         }
@@ -659,7 +663,11 @@ impl XaiOAuthManager {
             .get_mut(account_id)
             .ok_or_else(|| XaiOAuthError::AccountNotFound(account_id.to_string()))?;
         account.requires_reauth = true;
-        let default_account_id = Self::fallback_default_account_id(&accounts);
+        let stored_default = self.default_account_id.read().await.clone();
+        let default_account_id = match stored_default {
+            Some(id) if id != account_id && Self::is_usable_account(&accounts, &id) => Some(id),
+            _ => Self::fallback_default_account_id(&accounts),
+        };
         self.persist_and_commit(accounts, default_account_id)
             .await?;
         self.access_tokens.write().await.remove(account_id);
@@ -1351,5 +1359,136 @@ mod tests {
         assert!(manager.list_accounts().await.is_empty());
         assert!(manager.access_tokens.read().await.is_empty());
         assert!(!data_dir.path().join("xai_oauth_auth.json").exists());
+    }
+
+    fn test_account(
+        id: &str,
+        login: &str,
+        authenticated_at: i64,
+        requires_reauth: bool,
+    ) -> XaiAccountData {
+        XaiAccountData {
+            account_id: id.to_string(),
+            login: Some(login.to_string()),
+            refresh_token: format!("refresh-{id}"),
+            authenticated_at,
+            requires_reauth,
+        }
+    }
+
+    #[tokio::test]
+    async fn mark_reauth_required_preserves_valid_default_when_non_default_invalidated() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let manager = XaiOAuthManager::new(data_dir.path().to_path_buf());
+        let mut accounts = HashMap::new();
+        accounts.insert(
+            "account-a".to_string(),
+            test_account("account-a", "a@example.com", 100, false),
+        );
+        accounts.insert(
+            "account-b".to_string(),
+            test_account("account-b", "b@example.com", 200, false),
+        );
+        accounts.insert(
+            "account-c".to_string(),
+            test_account("account-c", "c@example.com", 300, false),
+        );
+        manager
+            .persist_and_commit(accounts, Some("account-a".to_string()))
+            .await
+            .unwrap();
+        manager.access_tokens.write().await.insert(
+            "account-b".to_string(),
+            CachedAccessToken {
+                token: "cached-b".to_string(),
+                expires_at_ms: chrono::Utc::now().timestamp_millis() + 3_600_000,
+            },
+        );
+
+        manager.mark_reauth_required("account-b").await.unwrap();
+
+        let status = manager.get_status().await;
+        assert_eq!(status.default_account_id.as_deref(), Some("account-a"));
+        assert_eq!(status.username.as_deref(), Some("a@example.com"));
+        assert!(!manager.access_tokens.read().await.contains_key("account-b"));
+
+        let reloaded = XaiOAuthManager::new(data_dir.path().to_path_buf());
+        let reloaded_status = reloaded.get_status().await;
+        assert_eq!(
+            reloaded_status.default_account_id.as_deref(),
+            Some("account-a")
+        );
+        assert!(reloaded_status
+            .accounts
+            .iter()
+            .find(|account| account.id == "account-b")
+            .is_some_and(|account| account.requires_reauth));
+    }
+
+    #[tokio::test]
+    async fn mark_reauth_required_falls_back_to_newest_usable_when_default_invalidated() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let manager = XaiOAuthManager::new(data_dir.path().to_path_buf());
+        let mut accounts = HashMap::new();
+        accounts.insert(
+            "account-a".to_string(),
+            test_account("account-a", "a@example.com", 100, false),
+        );
+        accounts.insert(
+            "account-b".to_string(),
+            test_account("account-b", "b@example.com", 200, false),
+        );
+        accounts.insert(
+            "account-c".to_string(),
+            test_account("account-c", "c@example.com", 300, false),
+        );
+        manager
+            .persist_and_commit(accounts, Some("account-a".to_string()))
+            .await
+            .unwrap();
+
+        manager.mark_reauth_required("account-a").await.unwrap();
+
+        let status = manager.get_status().await;
+        assert_eq!(status.default_account_id.as_deref(), Some("account-c"));
+
+        let reloaded = XaiOAuthManager::new(data_dir.path().to_path_buf());
+        assert_eq!(
+            reloaded.get_status().await.default_account_id.as_deref(),
+            Some("account-c")
+        );
+    }
+
+    #[tokio::test]
+    async fn mark_reauth_required_selects_usable_when_no_default_and_clears_when_last_invalidated()
+    {
+        let data_dir = tempfile::tempdir().unwrap();
+        let manager = XaiOAuthManager::new(data_dir.path().to_path_buf());
+        let mut accounts = HashMap::new();
+        accounts.insert(
+            "account-a".to_string(),
+            test_account("account-a", "a@example.com", 100, false),
+        );
+        accounts.insert(
+            "account-b".to_string(),
+            test_account("account-b", "b@example.com", 200, false),
+        );
+        manager.persist_and_commit(accounts, None).await.unwrap();
+
+        manager.mark_reauth_required("account-a").await.unwrap();
+        assert_eq!(
+            manager.get_status().await.default_account_id.as_deref(),
+            Some("account-b")
+        );
+
+        manager.mark_reauth_required("account-b").await.unwrap();
+        let final_status = manager.get_status().await;
+        assert!(!final_status.authenticated);
+        assert!(final_status.default_account_id.is_none());
+
+        let reloaded = XaiOAuthManager::new(data_dir.path().to_path_buf());
+        let reloaded_status = reloaded.get_status().await;
+        assert!(!reloaded_status.authenticated);
+        assert!(reloaded_status.default_account_id.is_none());
     }
 }
