@@ -109,6 +109,22 @@ struct Strings {
                 previousPage: "Предыдущая страница", nextPage: "Следующая страница"
             )
         }
+        if lang.hasPrefix("de") {
+            return Strings(
+                quotaTitle: "Kontingent", quotaGallery: "Aktiver Anbieter und Kontingent jeder App, seitenweise.",
+                accountsTitle: "Konten", accountsGallery: "Kontingent aller Konten; fast aufgebrauchte und abgemeldete zuerst, seitenweise.",
+                usageTitle: "Nutzung", usageGallery: "Kosten, Token und Anfragen. Den Zeitraum wechseln Sie mit den Tasten im Widget, den Diagrammstil unter „Widget bearbeiten“.",
+                off: "Aktivieren Sie „Desktop-Widget“ in den CC Switch-Einstellungen", outdated: "Aktualisieren Sie CC Switch",
+                noQuota: "Keine Kontingentdaten", noAccounts: "Noch keine Konten",
+                inUse: "In Verwendung", reauth: "Erneut anmelden",
+                today: "Heute", last7Days: "Letzte 7 Tage", last30Days: "Letzte 30 Tage",
+                tokens: "Token", requests: "Anfragen", cacheHit: "Cache-Treffer",
+                accountCount: "Konten: %d", more: "%d weitere", needAction: "Handlungsbedarf: %d",
+                stale: "Daten veraltet", cost: "Kosten", noUsage: "Keine Nutzung in diesem Zeitraum", moreTiers: "%d weitere",
+                loadingAccounts: "Konten werden geladen…",
+                previousPage: "Vorherige Seite", nextPage: "Nächste Seite"
+            )
+        }
         if lang.hasPrefix("tr") {
             return Strings(
                 quotaTitle: "Kota", quotaGallery: "Her uygulamanın etkin sağlayıcısı ve kotası; sayfalar arasında geçiş yapın.",
