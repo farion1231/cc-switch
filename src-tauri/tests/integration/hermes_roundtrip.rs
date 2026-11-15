@@ -1,5 +1,4 @@
-mod support;
-
+use crate::support;
 use cc_switch_lib::{hermes_config, update_settings, AppSettings};
 
 /// 读取并回写 Hermes provider 时，Hermes v12+ 新增或未来才会出现的字段

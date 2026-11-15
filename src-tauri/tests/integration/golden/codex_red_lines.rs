@@ -54,8 +54,8 @@ use cc_switch_lib::{
     AppType, Provider, ProviderMeta, ProviderService,
 };
 
+use crate::golden::util::{official, provider, seed_providers, write_home_file};
 use crate::support::{create_test_state, reset_test_fs, test_mutex};
-use crate::util::{official, provider, seed_providers, write_home_file};
 
 const RESERVED_IDS: &[&str] = &["openai", "ollama", "lmstudio"];
 const BEDROCK_IDS: &[&str] = &["amazon-bedrock", "amazon-bedrock-runtime"];

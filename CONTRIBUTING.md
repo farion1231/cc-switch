@@ -83,7 +83,7 @@ For a debug build, append `--debug` to the command above. This single-quote form
 
 **Frontend**: vitest runs `*.test.ts(x)` under `tests/` and `src/`; Tauri calls are mocked with MSW (see `tests/msw/`); component tests use @testing-library/react.
 
-**Backend**: unit tests live next to the source (`#[cfg(test)]`), and integration tests live in `src-tauri/tests/`. CI runs `cargo test` on Linux, macOS, and Windows.
+**Backend**: unit tests live next to the source (`#[cfg(test)]`), and integration tests are modules of the single test binary in `src-tauri/tests/integration/` (register new ones in its `main.rs`; every top-level file under `tests/` would link the whole app again). CI runs `cargo test` on Linux, macOS, and Windows.
 
 > **Isolate your real config**: some backend tests read and write directories such as `~/.cc-switch` and `~/.codex`. When running them locally, point `CC_SWITCH_TEST_HOME` at a temporary directory:
 >
@@ -339,7 +339,7 @@ pnpm tauri build -c '{"bundle":{"createUpdaterArtifacts":false}}'
 
 **前端**：使用 vitest 运行 `tests/` 和 `src/` 下的 `*.test.ts(x)`；Tauri 调用由 MSW 模拟（见 `tests/msw/`）；组件测试使用 @testing-library/react。
 
-**后端**：单元测试写在源码旁边（`#[cfg(test)]`），集成测试放在 `src-tauri/tests/`。CI 会在 Linux、macOS 和 Windows 上运行 `cargo test`。
+**后端**：单元测试写在源码旁边（`#[cfg(test)]`），集成测试是 `src-tauri/tests/integration/` 这一个测试二进制里的模块（新文件在它的 `main.rs` 里登记；`tests/` 顶层每多一个文件就要把整个应用再链接一遍）。CI 会在 Linux、macOS 和 Windows 上运行 `cargo test`。
 
 > **隔离真实配置**：部分后端测试会读写 `~/.cc-switch`、`~/.codex` 等目录。本地运行时，建议把 `CC_SWITCH_TEST_HOME` 指向一个临时目录：
 >
