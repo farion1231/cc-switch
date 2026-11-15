@@ -1262,18 +1262,21 @@ fn refresh_session_log_entry_on_conn(
 
     let [input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost] =
         session_costs(conn, msg, pricing_cache);
+    let cache_creation_1h_tokens = msg.cache_creation_1h_tokens.min(msg.cache_creation_tokens);
     conn.execute(
         "UPDATE proxy_request_logs SET
             input_tokens = ?1, output_tokens = ?2, cache_read_tokens = ?3,
-            cache_creation_tokens = ?4, input_cost_usd = ?5, output_cost_usd = ?6,
-            cache_read_cost_usd = ?7, cache_creation_cost_usd = ?8, total_cost_usd = ?9,
-            latency_ms = ?10, first_token_ms = ?11
-         WHERE request_id = ?12",
+            cache_creation_tokens = ?4, cache_creation_1h_tokens = ?5,
+            input_cost_usd = ?6, output_cost_usd = ?7,
+            cache_read_cost_usd = ?8, cache_creation_cost_usd = ?9, total_cost_usd = ?10,
+            latency_ms = ?11, first_token_ms = ?12
+         WHERE request_id = ?13",
         rusqlite::params![
             msg.input_tokens,
             msg.output_tokens,
             msg.cache_read_tokens,
             msg.cache_creation_tokens,
+            cache_creation_1h_tokens,
             input_cost,
             output_cost,
             cache_read_cost,
@@ -1342,16 +1345,18 @@ fn upsert_session_log_entry_on_conn(
 
     let [input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost] =
         session_costs(conn, msg, pricing_cache);
+    let cache_creation_1h_tokens = msg.cache_creation_1h_tokens.min(msg.cache_creation_tokens);
 
     let inserted_rows = conn
         .execute(
             "INSERT OR IGNORE INTO proxy_request_logs (
             request_id, provider_id, app_type, model, request_model,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+            cache_creation_1h_tokens,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
             provider_type, is_streaming, cost_multiplier, created_at, data_source
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
             rusqlite::params![
                 request_id,
                 "_session",         // provider_id: 标记为会话来源
@@ -1362,6 +1367,7 @@ fn upsert_session_log_entry_on_conn(
                 msg.output_tokens,
                 msg.cache_read_tokens,
                 msg.cache_creation_tokens,
+                cache_creation_1h_tokens,
                 input_cost,
                 output_cost,
                 cache_read_cost,

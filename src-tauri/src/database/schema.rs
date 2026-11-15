@@ -245,6 +245,7 @@ impl Database {
             pricing_model TEXT,
             input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
             cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_creation_1h_tokens INTEGER NOT NULL DEFAULT 0,
             input_token_semantics INTEGER NOT NULL DEFAULT 0,
             input_cost_usd TEXT NOT NULL DEFAULT '0', output_cost_usd TEXT NOT NULL DEFAULT '0',
             cache_read_cost_usd TEXT NOT NULL DEFAULT '0', cache_creation_cost_usd TEXT NOT NULL DEFAULT '0',
@@ -254,6 +255,14 @@ impl Database {
             cost_multiplier TEXT NOT NULL DEFAULT '1.0', created_at INTEGER NOT NULL,
             data_source TEXT NOT NULL DEFAULT 'proxy'
         )", []).map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 幂等补齐 1 小时缓存创建 token 列（不修改 SCHEMA_VERSION，兼容已存在的 v26 库与 SQL 备份导入）
+        Self::add_column_if_missing(
+            conn,
+            "proxy_request_logs",
+            "cache_creation_1h_tokens",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON proxy_request_logs(provider_id, app_type)", [])
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -734,6 +743,14 @@ impl Database {
                 }
                 version = Self::get_user_version(conn)?;
             }
+            if Self::table_exists(conn, "proxy_request_logs")? {
+                Self::add_column_if_missing(
+                    conn,
+                    "proxy_request_logs",
+                    "cache_creation_1h_tokens",
+                    "INTEGER NOT NULL DEFAULT 0",
+                )?;
+            }
             Ok(())
         })();
 
@@ -898,6 +915,7 @@ impl Database {
             request_model TEXT,
             input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
             cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_creation_1h_tokens INTEGER NOT NULL DEFAULT 0,
             input_token_semantics INTEGER NOT NULL DEFAULT 0,
             input_cost_usd TEXT NOT NULL DEFAULT '0', output_cost_usd TEXT NOT NULL DEFAULT '0',
             cache_read_cost_usd TEXT NOT NULL DEFAULT '0', cache_creation_cost_usd TEXT NOT NULL DEFAULT '0',
@@ -908,6 +926,12 @@ impl Database {
         )", [])?;
 
         // 为已存在的表添加新字段
+        Self::add_column_if_missing(
+            conn,
+            "proxy_request_logs",
+            "cache_creation_1h_tokens",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
         Self::add_column_if_missing(conn, "proxy_request_logs", "provider_type", "TEXT")?;
         Self::add_column_if_missing(
             conn,
@@ -4806,6 +4830,44 @@ mod tests {
         )?;
         assert_eq!(byte_offset, None, "存量行的字节游标必须为 NULL");
         assert_eq!(fingerprint, None, "存量行的尾部指纹必须为 NULL");
+        Ok(())
+    }
+
+    #[test]
+    fn existing_v26_database_gains_cache_creation_1h_tokens_idempotently() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE proxy_request_logs (
+                request_id TEXT PRIMARY KEY,
+                provider_id TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                model TEXT NOT NULL,
+                cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                latency_ms INTEGER NOT NULL DEFAULT 0,
+                status_code INTEGER NOT NULL DEFAULT 200,
+                created_at INTEGER NOT NULL DEFAULT 0
+             );
+             INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, cache_creation_tokens
+             ) VALUES ('legacy-v26-row', 'p1', 'claude', 'claude-sonnet-4-6', 800);",
+        )?;
+        Database::set_user_version(&conn, SCHEMA_VERSION)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::has_column(
+            &conn,
+            "proxy_request_logs",
+            "cache_creation_1h_tokens"
+        )?);
+        let default_1h: i64 = conn.query_row(
+            "SELECT cache_creation_1h_tokens FROM proxy_request_logs WHERE request_id = 'legacy-v26-row'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(default_1h, 0);
         Ok(())
     }
 }
