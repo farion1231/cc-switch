@@ -17,7 +17,8 @@ export type AppType =
   | "dsh"
   | "agy"
   | "omp"
-  | "copilot";
+  | "copilot"
+  | "workbuddy";
 
 /** Skill 应用启用状态 */
 export interface SkillApps {
@@ -136,6 +137,12 @@ export interface SkillUpdateCheckResult {
   updates: SkillUpdateInfo[];
   failures: SkillRepoFailure[];
 }
+
+/** 单个 Skill 更新结果：顶层平铺 InstalledSkill 字段，并附带客户端副本同步失败详情 */
+export type SkillUpdateOutcome = InstalledSkill & {
+  failedApps?: AppId[];
+  syncWarnings?: string[];
+};
 
 /** ZIP 里因目录名已被占用而跳过的 Skill（#3749） */
 export interface ZipSkippedSkill {
@@ -284,7 +291,7 @@ export const skillsApi = {
   },
 
   /** 更新单个 Skill */
-  async updateSkill(id: string): Promise<InstalledSkill> {
+  async updateSkill(id: string): Promise<SkillUpdateOutcome> {
     return await invoke("update_skill", { id });
   },
 

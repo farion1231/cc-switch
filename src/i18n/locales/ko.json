@@ -5077,7 +5077,9 @@
       "noUpdatesInSelection": "선택한 스킬에 업데이트가 없습니다",
       "selectionAlreadyOn": "선택한 스킬 {{count}}개가 이미 {{app}}에서 활성화되어 있습니다",
       "selectionAlreadyOff": "선택한 스킬 {{count}}개 중 {{app}}에서 활성화된 항목이 없습니다",
-      "disabledSelection": "{{app}}에서 {{noun}} {{count}}개를 비활성화했습니다."
+      "disabledSelection": "{{app}}에서 {{noun}} {{count}}개를 비활성화했습니다.",
+      "updateSyncPartial": "{{name}} 원본은 업데이트했지만 {{apps}} 동기화에 실패했습니다. 폴더 권한을 확인한 뒤 다시 시도하거나 다시 동기화하세요",
+      "updateAllSyncPartial": "스킬 {{updatedCount}}개 원본을 업데이트했지만 {{failedCount}}개의 {{apps}} 동기화에 실패했습니다. 폴더 권한을 확인한 뒤 다시 시도하거나 다시 동기화하세요"
     },
     "installTo": {
       "prefix": "설치 대상: ",

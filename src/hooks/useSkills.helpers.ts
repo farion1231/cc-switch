@@ -1,4 +1,17 @@
-import type { InstalledSkill, SkillDiscoveryResult } from "@/lib/api/skills";
+import type {
+  InstalledSkill,
+  SkillDiscoveryResult,
+  SkillUpdateOutcome,
+} from "@/lib/api/skills";
+
+export function hasSkillUpdateSyncFailures(
+  outcome: Pick<SkillUpdateOutcome, "failedApps" | "syncWarnings">,
+): boolean {
+  return (
+    (outcome.failedApps?.length ?? 0) > 0 ||
+    (outcome.syncWarnings?.length ?? 0) > 0
+  );
+}
 
 /**
  * 合并本次导入结果到已安装缓存，按 id 去重。

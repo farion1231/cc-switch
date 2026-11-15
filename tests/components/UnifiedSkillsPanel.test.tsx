@@ -1050,4 +1050,52 @@ describe("UnifiedSkillsPanel", () => {
     expect(m.toastError).not.toHaveBeenCalled();
     consoleErrorSpy.mockRestore();
   });
+
+  it("warns and marks failed app cells when skill update partially fails to sync, then clears fail markers after resync", async () => {
+    const skill = makeSkill({
+      id: "owner/repo:alpha-skill",
+      name: "Alpha Skill",
+      apps: { claude: true, codex: true },
+    });
+    m.installed = [skill];
+    m.updates = [{ id: skill.id, name: skill.name, remoteHash: "hash-v2" }];
+    m.updateSkill.mockResolvedValueOnce({
+      ...skill,
+      failedApps: ["codex"],
+      syncWarnings: ["codex: Permission denied (~/.codex/skills)"],
+    });
+
+    renderPanel();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.rowUpdateAria" }),
+    );
+
+    await waitFor(() =>
+      expect(m.toastWarning).toHaveBeenCalledWith(
+        "skillsPage.toast.updateSyncPartial",
+        expect.objectContaining({
+          description: "codex: Permission denied (~/.codex/skills)",
+          closeButton: true,
+        }),
+      ),
+    );
+    expect(m.toastSuccess).not.toHaveBeenCalled();
+    expect(
+      screen.getAllByRole("button", { name: "appMatrix.cell.fail" }),
+    ).toHaveLength(1);
+
+    // Resync succeeds -> clears the failed Codex cell marker
+    m.resync.mockResolvedValueOnce([
+      { app: "claude", ok: true, failedSkills: [] },
+      { app: "codex", ok: true, failedSkills: [] },
+    ]);
+    await openMenu("skills.moreActions", "skills.storageSheet.resync");
+    await waitFor(() => expect(m.resync).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(
+        screen.queryAllByRole("button", { name: "appMatrix.cell.fail" }),
+      ).toHaveLength(0),
+    );
+  });
 });

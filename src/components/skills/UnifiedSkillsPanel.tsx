@@ -76,6 +76,7 @@ import { useSkillsResync } from "./useSkillsResync";
 import { useSkillInstallTargets } from "./useSkillInstallTargets";
 import { describeRepoFailures } from "./repoFailures";
 import type { ZipSkippedSkill } from "@/lib/api/skills";
+import { hasSkillUpdateSyncFailures } from "@/hooks/useSkills.helpers";
 import { APP_IDS_WITH } from "@/config/appSpecs";
 
 const BACKUP_DIR = "~/.cc-switch/skill-backups";
@@ -602,11 +603,42 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     setIsUpdatingMany(ids.length > 1);
     setUpdateProgress({ done: 0, total: ids.length });
     const updated: string[] = [];
+    const partialUpdated: Array<{
+      name: string;
+      failedApps: AppId[];
+      syncWarnings: string[];
+    }> = [];
     try {
       for (const [index, id] of ids.entries()) {
         try {
           const result = await updateSkillMutation.mutateAsync(id);
-          updated.push(result.name);
+          const failedApps = result.failedApps ?? [];
+          const syncWarnings = result.syncWarnings ?? [];
+          const failedSet = new Set<AppId>(failedApps);
+          for (const app of APP_IDS_WITH.skills) {
+            if (result.apps[app] && !failedSet.has(app)) {
+              recordResult(result.id, app, true);
+            }
+          }
+          if (hasSkillUpdateSyncFailures(result)) {
+            for (const app of failedApps) {
+              const prefix = `${app}:`;
+              const matched = syncWarnings.find((warning) =>
+                warning.startsWith(prefix),
+              );
+              const reason = matched
+                ? matched.slice(prefix.length).trim()
+                : (syncWarnings[0] ?? t("skills.updateFailed"));
+              recordResult(result.id, app, true, reason);
+            }
+            partialUpdated.push({
+              name: result.name,
+              failedApps,
+              syncWarnings,
+            });
+          } else {
+            updated.push(result.name);
+          }
         } catch (error) {
           const name = installedSkills.find((skill) => skill.id === id)?.name;
           toast.error(t("skills.updateFailed"), {
@@ -619,6 +651,45 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       setIsUpdatingMany(false);
       setUpdateProgress(null);
       endWrite();
+    }
+    if (partialUpdated.length > 0) {
+      const separator = t("mcpPage.listSeparator", { defaultValue: "、" });
+      const uniqueFailedApps = Array.from(
+        new Set(partialUpdated.flatMap((item) => item.failedApps)),
+      );
+      const appsLabel =
+        uniqueFailedApps.length > 0
+          ? uniqueFailedApps
+              .map((app) => APP_DISPLAY_NAME[app] ?? app)
+              .join(separator)
+          : partialUpdated
+              .flatMap((item) => item.syncWarnings)
+              .map((warning) => warning.split(":")[0]?.trim())
+              .filter(Boolean)
+              .join(separator);
+      const warningDetails = partialUpdated
+        .flatMap((item) =>
+          partialUpdated.length > 1
+            ? item.syncWarnings.map((warning) => `${item.name}: ${warning}`)
+            : item.syncWarnings,
+        )
+        .join("\n");
+      const message =
+        partialUpdated.length === 1 && updated.length === 0
+          ? t("skillsPage.toast.updateSyncPartial", {
+              name: partialUpdated[0].name,
+              apps: appsLabel,
+            })
+          : t("skillsPage.toast.updateAllSyncPartial", {
+              updatedCount: updated.length + partialUpdated.length,
+              failedCount: partialUpdated.length,
+              apps: appsLabel,
+            });
+      toast.warning(message, {
+        ...(warningDetails ? { description: warningDetails } : {}),
+        closeButton: true,
+      });
+      return;
     }
     if (updated.length === 1) {
       toast.success(t("skills.updateSuccess", { name: updated[0] }), {
@@ -671,7 +742,26 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const handleResyncToApps = async () => {
     if (resyncPending || !beginWrite()) return;
     try {
-      await resyncToApps();
+      const outcomes = await resyncToApps();
+      if (outcomes) {
+        const okApps = new Set<string>(
+          outcomes
+            .filter((outcome) => outcome.ok)
+            .map((outcome) => outcome.app),
+        );
+        if (okApps.size > 0) {
+          setFails((prev) => {
+            const next = { ...prev };
+            for (const key of Object.keys(next)) {
+              const app = key.split("\u0000")[1];
+              if (app && okApps.has(app)) {
+                delete next[key];
+              }
+            }
+            return next;
+          });
+        }
+      }
     } finally {
       endWrite();
     }

@@ -5011,7 +5011,9 @@
       "noUpdatesInSelection": "Seçilen Becerilerin hiçbirinde güncelleme yok",
       "selectionAlreadyOn": "{{count}}'nin seçilen Becerileri zaten {{app}}'de etkindir",
       "selectionAlreadyOff": "Seçilen {{count}} Becerilerinden hiçbiri {{app}}'de etkin değil",
-      "disabledSelection": "{{app}}'de {{count}} {{noun}} kapatıldı"
+      "disabledSelection": "{{app}}'de {{count}} {{noun}} kapatıldı",
+      "updateSyncPartial": "{{name}} ana kopyası güncellendi ancak {{apps}} ile eşitleme başarısız oldu; klasör izinlerini kontrol edip yeniden deneyin veya yeniden eşitleyin",
+      "updateAllSyncPartial": "{{updatedCount}} Beceri güncellendi ancak {{failedCount}} tanesinin {{apps}} ile eşitlemesi başarısız oldu; klasör izinlerini kontrol edip yeniden deneyin veya yeniden eşitleyin"
     },
     "installTo": {
       "prefix": "Şuraya yükleyin:",
