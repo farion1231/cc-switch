@@ -4,6 +4,9 @@
 //! 条目的访问控制里信任的也是这个程序，所以这里同样经它读写，不会弹授权框（10-21 真机实测）。
 //! 值是 `go-keyring-base64:` 加 base64 的 JSON：
 //! `{token{access_token,token_type,refresh_token,expiry,expires_in},auth_method,id_token}`。
+//! agy 1.5 起自己写入时不再带 `id_token`，改成 `id_token_email`（可能带 `writer_id`，1.5.2 有、1.5.3 已去掉），
+//! 认账号的办法见 `AgyAccountManager::read_live`。旧格式 agy 1.5 照样能读（切过去的号 agy
+//! 续期后会改写成新格式），这里不转换，原样读写。
 //!
 //! 只做切换要用的两件事：读出整条、整条写入。不删除条目，也不碰 `~/.gemini` 下的文件
 //! （`oauth_creds.json` 那些是 Gemini CLI 的登录，agy 1.4.3 切号只看钥匙串）。

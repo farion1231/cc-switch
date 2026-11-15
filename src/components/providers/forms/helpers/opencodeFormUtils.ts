@@ -240,12 +240,129 @@ export function isKnownModelKey(key: string): boolean {
   );
 }
 
+/**
+ * 模型字段的方言：OpenCode 和 MiniMax Code 用 OpenCode 的模型结构；DeepSeek Harness
+ * 走 pi-ai 适配器，多认 `reasoningEfforts`（档位 → 上游值）和 `compat`。
+ */
+export type OpenCodeModelDialect = "opencode" | "dsh";
+
+type Modalities = { input: string[]; output?: string[] };
+
+function isStringList(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) && value.every((item) => typeof item === "string")
+  );
+}
+
+function isModalities(value: unknown): value is Modalities {
+  return (
+    isPlainObject(value) &&
+    isStringList(value.input) &&
+    (value.output === undefined || isStringList(value.output))
+  );
+}
+
+export function isReasoningEffortMap(
+  value: unknown,
+): value is Record<string, string | null> {
+  return (
+    isPlainObject(value) &&
+    Object.values(value).every(
+      (item) => item === null || typeof item === "string",
+    )
+  );
+}
+
+/** 展开区有专门控件的字段不在「模型属性」里重复；形状认不出的照旧留在那里，免得藏起来改不了。 */
+function hasDedicatedControl(
+  key: string,
+  value: unknown,
+  dialect: OpenCodeModelDialect,
+): boolean {
+  switch (key) {
+    case "reasoning":
+      return typeof value === "boolean";
+    case "modalities":
+      return isModalities(value);
+    case "reasoningEfforts":
+      return (
+        dialect === "dsh" && (value === false || isReasoningEffortMap(value))
+      );
+    case "compat":
+      return dialect === "dsh" && isPlainObject(value);
+    default:
+      return false;
+  }
+}
+
+export function modelSupportsReasoning(
+  model: OpenCodeModel,
+  dialect: OpenCodeModelDialect,
+): boolean {
+  if (typeof model.reasoning === "boolean") return model.reasoning;
+  return dialect === "dsh" && isReasoningEffortMap(model.reasoningEfforts);
+}
+
+// 与后端给「开了思考、没写档位」的模型补的默认档位一致（dsh_config.rs）
+const DSH_DEFAULT_REASONING_EFFORTS = {
+  off: null,
+  low: "low",
+  medium: "medium",
+  high: "high",
+};
+
+export function withModelReasoning(
+  model: OpenCodeModel,
+  enabled: boolean,
+  dialect: OpenCodeModelDialect,
+): OpenCodeModel {
+  const next = { ...model };
+  if (dialect === "dsh") {
+    // DSH 只看 reasoningEfforts：false 表示不思考，对象是提供的档位
+    next.reasoning = enabled;
+    next.reasoningEfforts = enabled
+      ? isReasoningEffortMap(model.reasoningEfforts)
+        ? model.reasoningEfforts
+        : { ...DSH_DEFAULT_REASONING_EFFORTS }
+      : false;
+  } else if (enabled) {
+    next.reasoning = true;
+  } else {
+    // 不写 false：OpenCode 里 false 会盖住 models.dev 同名条目
+    delete next.reasoning;
+  }
+  return next;
+}
+
+export function modelSupportsImageInput(model: OpenCodeModel): boolean {
+  return (
+    isModalities(model.modalities) && model.modalities.input.includes("image")
+  );
+}
+
+export function withModelImageInput(
+  model: OpenCodeModel,
+  enabled: boolean,
+): OpenCodeModel {
+  const current = isModalities(model.modalities) ? model.modalities : null;
+  const input = (current?.input ?? ["text"]).filter((item) => item !== "image");
+  return {
+    ...model,
+    modalities: {
+      ...current,
+      input: enabled ? [...input, "image"] : input,
+      output: current?.output ?? ["text"],
+    },
+  };
+}
+
 export function getModelExtraFields(
   model: OpenCodeModel,
+  dialect: OpenCodeModelDialect = "opencode",
 ): Record<string, string> {
   const extra: Record<string, string> = {};
   for (const [k, v] of Object.entries(model)) {
-    if (!isKnownModelKey(k)) {
+    if (!isKnownModelKey(k) && !hasDedicatedControl(k, v, dialect)) {
       extra[k] = typeof v === "string" ? v : JSON.stringify(v);
     }
   }

@@ -19,6 +19,7 @@ const copilotApiMock = vi.hoisted(() => ({
 const modelFetchApiMock = vi.hoisted(() => ({
   fetchCodexOauthModels: vi.fn(),
   fetchModelsForConfig: vi.fn(),
+  modelFetchRequestHeaders: vi.fn(),
   showFetchModelsError: vi.fn(),
 }));
 
@@ -30,6 +31,7 @@ vi.mock("@/lib/api/copilot", () => ({
 vi.mock("@/lib/api/model-fetch", () => ({
   fetchCodexOauthModels: modelFetchApiMock.fetchCodexOauthModels,
   fetchModelsForConfig: modelFetchApiMock.fetchModelsForConfig,
+  modelFetchRequestHeaders: modelFetchApiMock.modelFetchRequestHeaders,
   showFetchModelsError: modelFetchApiMock.showFetchModelsError,
 }));
 
@@ -96,6 +98,8 @@ const renderCopilotForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) => {
     speedTestEndpoints: [],
     apiFormat: "anthropic",
     onApiFormatChange: vi.fn(),
+    reasoningEffort: "auto",
+    onReasoningEffortChange: vi.fn(),
     apiKeyField: "ANTHROPIC_AUTH_TOKEN",
     onApiKeyFieldChange: vi.fn(),
     isFullUrl: false,
@@ -153,6 +157,33 @@ describe("ClaudeFormFields", () => {
     },
   );
 
+  it.each(["classic", "stack"] as const)(
+    "%s 布局只在转成 OpenAI 格式时显示思考档位",
+    (variant) => {
+      const { unmount } = renderCopilotForm({
+        variant,
+        isCopilotPreset: false,
+        apiFormat: "openai_chat",
+      });
+      expect(
+        screen.getByRole("combobox", { name: "思考档位" }),
+      ).toBeVisible();
+      unmount();
+
+      renderCopilotForm({
+        variant,
+        isCopilotPreset: false,
+        apiFormat: "anthropic",
+      });
+      expect(screen.queryByRole("combobox", { name: "思考档位" })).toBeNull();
+    },
+  );
+
+  it("Copilot 卡不显示思考档位", () => {
+    renderCopilotForm({ apiFormat: "openai_chat" });
+    expect(screen.queryByRole("combobox", { name: "思考档位" })).toBeNull();
+  });
+
   it("点击获取模型列表后才请求当前 Copilot 账号的模型", async () => {
     renderCopilotForm();
 
@@ -190,6 +221,53 @@ describe("ClaudeFormFields", () => {
         "chatgpt-1",
       );
     });
+  });
+
+  it("Genesis 使用当前 Key 拉取可用对话模型", async () => {
+    Element.prototype.scrollIntoView ??= vi.fn();
+    const onModelChange = vi.fn();
+    modelFetchApiMock.fetchModelsForConfig.mockResolvedValueOnce([
+      { id: "chat-model-a" },
+      { id: "chat-model-b" },
+    ]);
+    renderCopilotForm({
+      isCopilotPreset: false,
+      usesOAuth: false,
+      category: "aggregator",
+      shouldShowApiKey: true,
+      apiKey: "test-key",
+      baseUrl: "https://token.moi.matrixorigin.cn",
+      defaultSonnetModel: "",
+      defaultSonnetModelName: "",
+      onModelChange,
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "providerForm.advancedOptionsToggle",
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "providerForm.fetchModels" }),
+    );
+
+    await waitFor(() => {
+      expect(modelFetchApiMock.fetchModelsForConfig).toHaveBeenCalledWith(
+        "https://token.moi.matrixorigin.cn",
+        "test-key",
+        false,
+        "https://token.moi.matrixorigin.cn/v1/models?type=chat",
+        "",
+        { requestHeaders: undefined },
+      );
+    });
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Select model" })[0]);
+    fireEvent.click(screen.getByText("chat-model-b"));
+    expect(onModelChange).toHaveBeenCalledWith(
+      "ANTHROPIC_DEFAULT_SONNET_MODEL",
+      "chat-model-b",
+    );
   });
 
   it("一键设置会同时写入 Subagent 模型", () => {

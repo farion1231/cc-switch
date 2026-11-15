@@ -41,6 +41,17 @@ impl McpService {
                 mcp::omp::is_disabled_managed(&saved.id, &saved.server).unwrap_or(false)
             });
         // Native MCP writes and managed state commit together.
+        let save_with_copilot = || {
+            if server.apps.copilot || prev_apps.copilot {
+                mcp::copilot::sync_and_commit(
+                    &server.id,
+                    server.apps.copilot.then_some(&server.server),
+                    || state.db.save_mcp_server(&server),
+                )
+            } else {
+                state.db.save_mcp_server(&server)
+            }
+        };
         let save_with_omp = || {
             if managed_omp {
                 mcp::omp::sync_and_commit(
@@ -53,22 +64,44 @@ impl McpService {
                             .unwrap_or(&server.server),
                         server.apps.omp,
                     ),
-                    || state.db.save_mcp_server(&server),
+                    save_with_copilot,
                 )
             } else {
-                state.db.save_mcp_server(&server)
+                save_with_copilot()
             }
         };
         // MCode / Pi 的文件和数据库一起提交：任一步失败都恢复原样
+        let save_with_workbuddy = || {
+            if server.apps.workbuddy || prev_apps.workbuddy {
+                mcp::workbuddy::sync_and_commit(
+                    &server.id,
+                    server.apps.workbuddy.then_some(&server.server),
+                    save_with_omp,
+                )
+            } else {
+                save_with_omp()
+            }
+        };
+        let save_with_dsh = || {
+            if server.apps.dsh || prev_apps.dsh {
+                mcp::dsh::sync_and_commit(
+                    &server.id,
+                    server.apps.dsh.then_some(&server.server),
+                    save_with_workbuddy,
+                )
+            } else {
+                save_with_workbuddy()
+            }
+        };
         let save_with_kimi = || {
             if server.apps.kimi || prev_apps.kimi {
                 mcp::kimi::sync_and_commit(
                     &server.id,
                     server.apps.kimi.then_some(&server.server),
-                    save_with_omp,
+                    save_with_dsh,
                 )
             } else {
-                save_with_omp()
+                save_with_dsh()
             }
         };
         let save_with_agy = || {
@@ -85,6 +118,7 @@ impl McpService {
         let save_with_pi = || {
             if server.apps.pi || prev_apps.pi {
                 mcp::pi::sync_and_commit(
+                    &state.db,
                     &server.id,
                     mcp::pi::PiChange::from_enabled(server.apps.pi.then_some(&server.server)),
                     save_with_agy,
@@ -134,11 +168,32 @@ impl McpService {
         let server = state.db.get_all_mcp_servers()?.shift_remove(id);
 
         if let Some(server) = server {
+            let delete_with_copilot = || {
+                if server.apps.copilot {
+                    mcp::copilot::delete_and_commit(id, || state.db.delete_mcp_server(id))
+                } else {
+                    mcp::copilot::forget_options_and_commit(id, || state.db.delete_mcp_server(id))
+                }
+            };
+            let delete_with_workbuddy = || {
+                if server.apps.workbuddy {
+                    mcp::workbuddy::sync_and_commit(id, None, delete_with_copilot)
+                } else {
+                    delete_with_copilot()
+                }
+            };
+            let delete_with_dsh = || {
+                if server.apps.dsh {
+                    mcp::dsh::sync_and_commit(id, None, delete_with_workbuddy)
+                } else {
+                    delete_with_workbuddy()
+                }
+            };
             let delete_with_kimi = || {
                 if server.apps.kimi {
-                    mcp::kimi::sync_and_commit(id, None, || state.db.delete_mcp_server(id))
+                    mcp::kimi::sync_and_commit(id, None, delete_with_dsh)
                 } else {
-                    state.db.delete_mcp_server(id)
+                    delete_with_dsh()
                 }
             };
             let delete_with_omp = || {
@@ -161,7 +216,12 @@ impl McpService {
             };
             let delete_with_pi = || {
                 if server.apps.pi {
-                    mcp::pi::sync_and_commit(id, mcp::pi::PiChange::Remove, delete_with_agy)
+                    mcp::pi::sync_and_commit(
+                        &state.db,
+                        id,
+                        mcp::pi::PiChange::Remove,
+                        delete_with_agy,
+                    )
                 } else {
                     delete_with_agy()
                 }
@@ -217,7 +277,14 @@ impl McpService {
     ) -> Result<(), AppError> {
         if matches!(
             app,
-            AppType::Mcode | AppType::Kimi | AppType::Pi | AppType::Agy | AppType::Omp
+            AppType::Mcode
+                | AppType::Kimi
+                | AppType::Pi
+                | AppType::Agy
+                | AppType::Dsh
+                | AppType::Omp
+                | AppType::Copilot
+                | AppType::WorkBuddy
         ) {
             if let Some(server) = state.db.get_all_mcp_servers()?.get(server_id) {
                 let spec = enabled.then_some(&server.server);
@@ -232,8 +299,14 @@ impl McpService {
                         mcp::agy::AgyChange::from_enabled(spec),
                         commit,
                     )?;
+                } else if app == AppType::Dsh {
+                    mcp::dsh::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::Kimi {
                     mcp::kimi::sync_and_commit(server_id, spec, commit)?;
+                } else if app == AppType::Copilot {
+                    mcp::copilot::sync_and_commit(server_id, spec, commit)?;
+                } else if app == AppType::WorkBuddy {
+                    mcp::workbuddy::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::Mcode {
                     mcp::mcode::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::Omp {
@@ -244,6 +317,7 @@ impl McpService {
                     )?;
                 } else {
                     mcp::pi::sync_and_commit(
+                        &state.db,
                         server_id,
                         mcp::pi::PiChange::from_enabled(spec),
                         commit,
@@ -272,7 +346,14 @@ impl McpService {
         for app in server.apps.enabled_apps() {
             if matches!(
                 app,
-                AppType::Mcode | AppType::Kimi | AppType::Pi | AppType::Agy | AppType::Omp
+                AppType::Mcode
+                    | AppType::Kimi
+                    | AppType::Pi
+                    | AppType::Agy
+                    | AppType::Dsh
+                    | AppType::Omp
+                    | AppType::Copilot
+                    | AppType::WorkBuddy
             ) {
                 continue; // Already written before saving the managed state.
             }
@@ -295,6 +376,10 @@ impl McpService {
         match app {
             AppType::Claude => {
                 mcp::sync_single_server_to_claude(&Default::default(), &server.id, &server.server)?;
+                // 各官方账号目录镜像默认 .claude.json 的 mcpServers
+                crate::services::claude_account::sync_all_shared(
+                    &crate::config::get_app_config_dir(),
+                );
             }
             AppType::ClaudeDesktop => {
                 log::debug!("Claude Desktop 3P profiles do not use CC Switch MCP sync, skipping");
@@ -330,9 +415,12 @@ impl McpService {
             }
             AppType::Mcode => mcp::mcode::sync(&server.id, Some(&server.server))?,
             AppType::Kimi => mcp::kimi::sync(&server.id, Some(&server.server))?,
+            AppType::Dsh => mcp::dsh::sync(&server.id, Some(&server.server))?,
+            AppType::Copilot => mcp::copilot::sync(&server.id, Some(&server.server))?,
             AppType::Pi => mcp::pi::sync(&server.id, Some(&server.server))?,
             AppType::Agy => mcp::agy::sync(&server.id, Some(&server.server))?,
             AppType::Omp => mcp::sync_single_server_to_omp(&server.id, &server.server)?,
+            AppType::WorkBuddy => mcp::workbuddy::sync(&server.id, Some(&server.server))?,
         }
         Ok(())
     }
@@ -347,7 +435,14 @@ impl McpService {
         for app in server.apps.enabled_apps() {
             if matches!(
                 app,
-                AppType::Mcode | AppType::Kimi | AppType::Pi | AppType::Agy | AppType::Omp
+                AppType::Mcode
+                    | AppType::Kimi
+                    | AppType::Pi
+                    | AppType::Agy
+                    | AppType::Dsh
+                    | AppType::Omp
+                    | AppType::Copilot
+                    | AppType::WorkBuddy
             ) {
                 continue; // Already removed before deleting the managed record.
             }
@@ -358,7 +453,12 @@ impl McpService {
 
     fn remove_server_from_app(_state: &AppState, id: &str, app: &AppType) -> Result<(), AppError> {
         match app {
-            AppType::Claude => mcp::remove_server_from_claude(id)?,
+            AppType::Claude => {
+                mcp::remove_server_from_claude(id)?;
+                crate::services::claude_account::sync_all_shared(
+                    &crate::config::get_app_config_dir(),
+                );
+            }
             AppType::ClaudeDesktop => {
                 log::debug!("Claude Desktop 3P profiles do not use CC Switch MCP sync, skipping");
             }
@@ -377,9 +477,12 @@ impl McpService {
             }
             AppType::Mcode => mcp::mcode::sync(id, None)?,
             AppType::Kimi => mcp::kimi::sync(id, None)?,
+            AppType::Dsh => mcp::dsh::sync(id, None)?,
+            AppType::Copilot => mcp::copilot::sync(id, None)?,
             AppType::Pi => mcp::pi::sync(id, None)?,
             AppType::Agy => mcp::agy::sync(id, None)?,
             AppType::Omp => mcp::remove_server_from_omp(id)?,
+            AppType::WorkBuddy => mcp::workbuddy::sync(id, None)?,
         }
         Ok(())
     }
@@ -487,7 +590,14 @@ impl McpService {
                 Self::sync_server_to_app(state, server, app)
             } else if !matches!(
                 app,
-                AppType::Mcode | AppType::Kimi | AppType::Pi | AppType::Agy | AppType::Omp
+                AppType::Mcode
+                    | AppType::Kimi
+                    | AppType::Pi
+                    | AppType::Agy
+                    | AppType::Dsh
+                    | AppType::Omp
+                    | AppType::Copilot
+                    | AppType::WorkBuddy
             ) {
                 Self::remove_server_from_app(state, &server.id, app)
             } else {
@@ -797,7 +907,7 @@ impl McpService {
         let mut total = 0;
         let mut failures: Vec<String> = Vec::new();
 
-        let results: [(&str, Result<usize, AppError>); 11] = [
+        let results: [(&str, Result<usize, AppError>); 14] = [
             ("claude", Self::import_from_claude(state)),
             ("codex", Self::import_from_codex(state)),
             ("gemini", Self::import_from_gemini(state)),
@@ -806,9 +916,12 @@ impl McpService {
             ("hermes", Self::import_from_hermes(state)),
             ("mcode", mcp::mcode::import(state)),
             ("kimi", mcp::kimi::import(state)),
+            ("dsh", mcp::dsh::import(state)),
+            ("workbuddy", mcp::workbuddy::import(state)),
             ("agy", mcp::agy::import(state)),
             ("pi", mcp::pi::import(state)),
             ("omp", Self::import_from_omp(state)),
+            ("copilot", mcp::copilot::import(state)),
         ];
         for (app, result) in results {
             match result {

@@ -97,21 +97,26 @@ async fn run_auto_sync_upload(
     db: &crate::database::Database,
     app: &AppHandle,
 ) -> Result<(), AppError> {
-    let mut settings = settings::get_webdav_sync_settings();
-    if !should_run_auto_sync(settings.as_ref()) {
+    if !should_run_auto_sync(settings::get_webdav_sync_settings().as_ref()) {
         return Ok(());
     }
-
-    let mut sync_settings = match settings.take() {
-        Some(value) => value,
-        None => return Ok(()),
+    // Re-read the settings under the sync lock so a "clear config" or "turn
+    // off auto sync" that got the lock first is honoured instead of uploading
+    // with the stale credentials captured before waiting.
+    let outcome = webdav_sync_service::run_with_sync_lock(async {
+        let Some(mut sync_settings) = settings::get_webdav_sync_settings() else {
+            return Ok(None);
+        };
+        if !should_run_auto_sync(Some(&sync_settings)) {
+            return Ok(None);
+        }
+        let result = webdav_sync_service::upload(db, &mut sync_settings).await;
+        Ok(Some((sync_settings, result)))
+    })
+    .await?;
+    let Some((mut sync_settings, result)) = outcome else {
+        return Ok(());
     };
-
-    let result = webdav_sync_service::run_with_sync_lock(webdav_sync_service::upload(
-        db,
-        &mut sync_settings,
-    ))
-    .await;
     match result {
         Ok(_) => {
             emit_auto_sync_status_updated(app, "success", None);

@@ -11,6 +11,7 @@ use super::codex_chat_common::{
 };
 use super::codex_compaction;
 use super::inline_think::split_leading_think_block;
+use super::transform::unwrap_chat_completion_envelope;
 use crate::provider::CodexChatReasoningConfig;
 use crate::proxy::{
     error::ProxyError,
@@ -267,14 +268,22 @@ pub(crate) fn build_codex_tool_context_from_request(body: &Value) -> CodexToolCo
 /// Convert an OpenAI Responses request into an OpenAI Chat Completions request.
 #[allow(dead_code)]
 pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
-    responses_to_chat_completions_with_reasoning(body, None)
+    responses_to_chat_completions_with_reasoning(body, None, true)
 }
 
 /// Convert an OpenAI Responses request into an OpenAI Chat Completions request,
 /// using provider-declared Codex Chat reasoning capabilities when available.
+///
+/// `preserve_reasoning_content` mirrors the Claude → Chat path
+/// (`should_preserve_reasoning_content_for_openai_chat`): `reasoning_content`
+/// is a DeepSeek / Kimi compatibility field that third-party gateways expect on
+/// assistant history, and strict OpenAI-compatible upstreams such as Mistral
+/// reject it with HTTP 422 (`extra_forbidden`). Callers pass `false` for those
+/// upstreams so the field never reaches them.
 pub fn responses_to_chat_completions_with_reasoning(
     body: Value,
     reasoning_config: Option<&CodexChatReasoningConfig>,
+    preserve_reasoning_content: bool,
 ) -> Result<Value, ProxyError> {
     let mut result = json!({});
     let tool_context = build_codex_tool_context_from_request(&body);
@@ -311,6 +320,14 @@ pub fn responses_to_chat_completions_with_reasoning(
         coalesce_replayed_tool_turn_messages(&mut messages);
     }
     backfill_tool_call_reasoning_placeholders(&mut messages);
+    if !preserve_reasoning_content {
+        let stripped = strip_assistant_reasoning_content(&mut messages);
+        if stripped > 0 {
+            log::debug!(
+                "[Codex Chat] Dropped reasoning_content from {stripped} assistant message(s)"
+            );
+        }
+    }
     let messages = collapse_system_messages_to_head(messages);
     result["messages"] = json!(messages);
 
@@ -355,6 +372,7 @@ pub fn responses_to_chat_completions_with_reasoning(
             result[*key] = value.clone();
         }
     }
+    drop_responses_only_stream_options(&mut result);
 
     // Strict OpenAI-compatible upstreams (vLLM, enterprise gateways) reject
     // requests that carry tool_choice or parallel_tool_calls without a non-empty
@@ -377,6 +395,26 @@ pub fn responses_to_chat_completions_with_reasoning(
     super::transform::inject_openai_stream_include_usage(&mut result);
 
     Ok(result)
+}
+
+/// `stream_options.reasoning_summary_delivery` 是 Responses 协议的字段（Codex 以为在跟
+/// 内置 openai 说话时才发，聚合模式就是这样），Chat Completions 没有它；严格校验的
+/// 上游（Mistral）收到会整条 422（#9507）。只删这一项，删完为空时整个键删掉，流式时
+/// 下面照常补 `include_usage`。
+fn drop_responses_only_stream_options(result: &mut Value) {
+    let Some(obj) = result.as_object_mut() else {
+        return;
+    };
+    let Some(stream_options) = obj.get_mut("stream_options").and_then(Value::as_object_mut) else {
+        return;
+    };
+    if stream_options
+        .remove("reasoning_summary_delivery")
+        .is_some()
+        && stream_options.is_empty()
+    {
+        obj.remove("stream_options");
+    }
 }
 
 fn apply_reasoning_options(
@@ -488,7 +526,7 @@ fn reasoning_requested(body: &Value) -> Option<bool> {
     body.get("reasoning").map(|value| !value.is_null())
 }
 
-fn map_reasoning_effort<'a>(
+pub(crate) fn map_reasoning_effort<'a>(
     effort: &str,
     mode: Option<&str>,
     effort_levels: Option<&'a [String]>,
@@ -503,8 +541,11 @@ fn map_reasoning_effort<'a>(
     // passthrough 面向枚举未知的通用上游，档位由用户/预设的 reasoningLevels 声明
     // 背书，与 max/xhigh 一样原值透传。
     match mode.unwrap_or("passthrough") {
+        // DeepSeek 官方档位 low / high / max，其余档位照官方服务端的换算折
+        // （api-docs.deepseek.com/guides/thinking_mode：minimal→low、medium/xhigh→high、ultra→max）。
         "deepseek" => match effort.as_str() {
-            "max" | "xhigh" | "ultra" => Some("max"),
+            "minimal" | "low" => Some("low"),
+            "max" | "ultra" => Some("max"),
             _ => Some("high"),
         },
         "low_high" => match effort.as_str() {
@@ -578,22 +619,44 @@ fn zen_effort_rank(effort: &str) -> Option<u8> {
 
 /// MiniMax 严格要求 messages 中只能首条出现 `role=system`，
 /// 否则返回 `invalid params, chat content has invalid message role: system (2013)`。
-/// 把所有 system 消息合并到首位，避免中间 system（如 Codex 的 `developer` 指令）触发该约束；
-/// 该重排对 OpenAI / DeepSeek 等宽松兼容层也是无损的。
+/// 所以 messages 里最多只留首条 system：
+/// - 开头连续的 system（instructions 与首批 developer 指令）合并成首条。
+/// - 会话中途、后面（只隔 system）紧接 user 的 system——Codex 在新回合开头插的
+///   developer 指令（权限、协作模式、模型切换等）——原位改成 user 消息。拼进首条会
+///   改动已经发过的前缀，上游前缀缓存从第一条消息断开，整段对话重算。
+/// - 其余中途 system（夹在工具调用循环里，如图片缩放提示）仍拼进首条：原位插 user
+///   会把一次工具循环拆成两个回合，影响 DeepSeek / Kimi 等的推理连续性。
 fn collapse_system_messages_to_head(messages: Vec<Value>) -> Vec<Value> {
+    // 每条消息之后第一条非 system 消息是否为 user。
+    let mut followed_by_user = vec![false; messages.len()];
+    let mut next_is_user = false;
+    for (idx, msg) in messages.iter().enumerate().rev() {
+        followed_by_user[idx] = next_is_user;
+        if !is_hoistable_system_message(msg) {
+            next_is_user = msg.get("role").and_then(Value::as_str) == Some("user");
+        }
+    }
+
     let mut system_chunks: Vec<String> = Vec::new();
     let mut rest: Vec<Value> = Vec::with_capacity(messages.len());
+    let mut seen_non_system = false;
 
-    for msg in messages {
-        if msg.get("role").and_then(|v| v.as_str()) == Some("system") {
-            if let Some(text) = msg.get("content").and_then(|v| v.as_str()) {
-                let trimmed = text.trim();
-                if !trimmed.is_empty() {
+    for (msg, followed_by_user) in messages.into_iter().zip(followed_by_user) {
+        if is_hoistable_system_message(&msg) {
+            let text = msg
+                .get("content")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if !text.trim().is_empty() {
+                if seen_non_system && followed_by_user {
+                    rest.push(json!({"role": "user", "content": text}));
+                } else {
                     system_chunks.push(text.to_string());
                 }
-                continue;
             }
+            continue;
         }
+        seen_non_system = true;
         rest.push(msg);
     }
 
@@ -1536,6 +1599,29 @@ fn ensure_tool_call_reasoning_content(message: &mut Value) {
     }
 }
 
+/// 移除 assistant 历史里的 `reasoning_content`，返回被移除的消息条数。
+///
+/// 该字段是 DeepSeek / Kimi 经第三方网关时的兼容约定，严格校验的
+/// OpenAI 兼容上游（Mistral）会以 `extra_forbidden` 整条 422 拒收。所有注入点
+/// （真实思考回填、`"tool call"` 占位）都在本模块内，出口统一剥离比逐个给注入点
+/// 加门控更不容易漏。与 `claude.rs` 的
+/// `should_preserve_reasoning_content_for_openai_chat` 同口径。
+fn strip_assistant_reasoning_content(messages: &mut [Value]) -> usize {
+    let mut stripped = 0;
+    for message in messages.iter_mut() {
+        let is_assistant = message.get("role").and_then(Value::as_str) == Some("assistant");
+        if !is_assistant {
+            continue;
+        }
+        if let Some(obj) = message.as_object_mut() {
+            if obj.remove("reasoning_content").is_some() {
+                stripped += 1;
+            }
+        }
+    }
+    stripped
+}
+
 /// 将仍未消费的 pending reasoning 回溯附挂到上一条 assistant 消息。
 ///
 /// 只允许两种「真正的尾部」场景调用：
@@ -1929,6 +2015,7 @@ pub(crate) fn chat_completion_to_response_with_context(
     body: Value,
     tool_context: &CodexToolContext,
 ) -> Result<Value, ProxyError> {
+    let body = unwrap_chat_completion_envelope(body);
     let choices = body
         .get("choices")
         .and_then(|v| v.as_array())
@@ -3113,6 +3200,26 @@ mod tests {
     }
 
     #[test]
+    fn map_reasoning_effort_deepseek_keeps_official_tiers() {
+        // DeepSeek 官方档位 low / high / max，其余照官方服务端的换算折。
+        for (requested, expected) in [
+            ("minimal", "low"),
+            ("low", "low"),
+            ("medium", "high"),
+            ("high", "high"),
+            ("xhigh", "high"),
+            ("max", "max"),
+            ("ultra", "max"),
+        ] {
+            assert_eq!(
+                map_reasoning_effort(requested, Some("deepseek"), None),
+                Some(expected),
+                "{requested}"
+            );
+        }
+    }
+
+    #[test]
     fn map_reasoning_effort_handles_ultra_per_mode() {
         // passthrough 面向枚举未知的通用上游：ultra 与 max/xhigh 一样原值透传，
         // 让声明了该档位的上游能收到用户选择。
@@ -3635,6 +3742,41 @@ mod tests {
     }
 
     #[test]
+    fn responses_request_to_chat_drops_responses_only_stream_options() {
+        // 聚合模式下 Codex 以为在跟内置 openai 说话，会带上 Responses 专有的
+        // reasoning_summary_delivery；Chat 没有这个字段，Mistral 会 422（#9507）。
+        let input = json!({
+            "model": "deepseek-v4-1-flash-1017",
+            "input": "hello",
+            "stream": true,
+            "stream_options": {"reasoning_summary_delivery": "sequential_cutoff"},
+            "tools": [{"type": "web_search"}]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert_eq!(result["stream_options"], json!({"include_usage": true}));
+        // 托管 web_search 在 Chat 路径上本来就丢掉。
+        assert!(result.get("tools").is_none());
+
+        let non_stream = responses_to_chat_completions(json!({
+            "model": "m",
+            "input": "hello",
+            "stream_options": {"reasoning_summary_delivery": "sequential_cutoff", "other": 1}
+        }))
+        .unwrap();
+        assert_eq!(non_stream["stream_options"], json!({"other": 1}));
+
+        let only_private = responses_to_chat_completions(json!({
+            "model": "m",
+            "input": "hello",
+            "stream_options": {"reasoning_summary_delivery": "sequential_cutoff"}
+        }))
+        .unwrap();
+        assert!(only_private.get("stream_options").is_none());
+    }
+
+    #[test]
     fn responses_request_to_chat_uses_provider_reasoning_effort_for_deepseek_model() {
         let input = json!({
             "model": "deepseek-v4-pro",
@@ -3651,10 +3793,100 @@ mod tests {
             effort_levels: None,
         };
 
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
 
         assert_eq!(result["thinking"]["type"], "enabled");
-        assert_eq!(result["reasoning_effort"], "max");
+        // DeepSeek 官方服务端把 xhigh 当 high。
+        assert_eq!(result["reasoning_effort"], "high");
+    }
+
+    /// 严格上游（Mistral）拒收 assistant 历史里的 `reasoning_content`：转换出口按
+    /// `preserve_reasoning_content` 剥离，真实思考回填与 `"tool call"` 占位两种来源
+    /// 都要覆盖。回归锁：issue #9507。
+    #[test]
+    fn responses_request_to_chat_drops_reasoning_content_for_strict_upstream() {
+        let input = json!({
+            "model": "deepseek-v4-1-flash-1017",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "list files"}]
+                },
+                {
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "need ls"}]
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "c1",
+                    "name": "shell",
+                    "arguments": "{\"cmd\":\"ls\"}"
+                },
+                {"type": "function_call_output", "call_id": "c1", "output": "a.txt"},
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "thanks"}]
+                },
+                // 第二轮没有思考内容：只会拿到 "tool call" 占位。
+                {
+                    "type": "function_call",
+                    "call_id": "c2",
+                    "name": "shell",
+                    "arguments": "{\"cmd\":\"pwd\"}"
+                },
+                {"type": "function_call_output", "call_id": "c2", "output": "/tmp"}
+            ],
+            "reasoning": {"effort": "high"}
+        });
+        let config = CodexChatReasoningConfig {
+            supports_thinking: Some(false),
+            supports_effort: Some(true),
+            thinking_param: Some("none".to_string()),
+            effort_param: Some("reasoning_effort".to_string()),
+            effort_value_mode: Some("deepseek".to_string()),
+            output_format: Some("reasoning_content".to_string()),
+            effort_levels: None,
+        };
+
+        // 保持原行为：第三方网关仍要这个字段，两种来源都在。
+        let preserved =
+            responses_to_chat_completions_with_reasoning(input.clone(), Some(&config), true)
+                .unwrap();
+        let preserved_reasoning: Vec<&str> = result_messages(&preserved)
+            .iter()
+            .filter_map(|message| message.get("reasoning_content")?.as_str())
+            .collect();
+        assert!(
+            preserved_reasoning.contains(&"need ls"),
+            "preserve=true 时应保留真实思考: {preserved}"
+        );
+        assert!(
+            preserved_reasoning.contains(&"tool call"),
+            "preserve=true 时应保留占位: {preserved}"
+        );
+
+        // 严格上游：assistant 消息上不得残留该字段，其余内容不变。
+        let stripped =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), false).unwrap();
+        let stripped_has_reasoning = result_messages(&stripped)
+            .iter()
+            .any(|message| message.get("reasoning_content").is_some());
+        assert!(
+            !stripped_has_reasoning,
+            "preserve=false 时应剥离 reasoning_content: {stripped}"
+        );
+        let stripped_has_tool_calls = result_messages(&stripped)
+            .iter()
+            .any(|message| message.get("tool_calls").is_some());
+        assert!(
+            stripped_has_tool_calls,
+            "工具调用本身不能被剥离: {stripped}"
+        );
+        // 非 assistant 消息不受影响。
+        assert_eq!(result_messages(&stripped)[0]["role"], "user");
     }
 
     #[test]
@@ -3719,7 +3951,8 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "max"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
 
         assert_eq!(result["reasoning"]["effort"], "xhigh");
         assert!(result.get("reasoning_effort").is_none());
@@ -3734,7 +3967,7 @@ mod tests {
             "reasoning": {"effort": "high"}
         });
         let result_high =
-            responses_to_chat_completions_with_reasoning(input_high, Some(&config)).unwrap();
+            responses_to_chat_completions_with_reasoning(input_high, Some(&config), true).unwrap();
         assert_eq!(result_high["reasoning"]["effort"], "high");
         assert!(result_high.get("reasoning_effort").is_none());
     }
@@ -3759,7 +3992,8 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "none"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
 
         assert_eq!(result["reasoning"]["effort"], "none");
         // none 不是 OpenAI 顶层 reasoning_effort 的合法枚举，不写顶层别名；也不写 thinking。
@@ -3787,7 +4021,8 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "none"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
 
         // thinking 关闭信号照发；但不写 reasoning_effort，也不写原生 reasoning 对象。
         assert_eq!(result["thinking"]["type"], "disabled");
@@ -3826,7 +4061,7 @@ mod tests {
                 "reasoning": {"effort": input_effort}
             });
             let result =
-                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+                responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
             assert_eq!(
                 result["reasoning_effort"], expected,
                 "effort={input_effort}"
@@ -3868,7 +4103,7 @@ mod tests {
                 "reasoning": {"effort": input_effort}
             });
             let result =
-                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+                responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
             assert_eq!(
                 result["reasoning_effort"], expected,
                 "effort={input_effort}"
@@ -3897,7 +4132,7 @@ mod tests {
                 "reasoning": {"effort": input_effort}
             });
             let result =
-                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+                responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
             assert_eq!(result["reasoning_effort"], "max", "effort={input_effort}");
         }
     }
@@ -3921,7 +4156,8 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "medium"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
 
         assert!(result.get("reasoning_effort").is_none());
         assert!(result.get("thinking").is_none());
@@ -3944,7 +4180,8 @@ mod tests {
             effort_levels: None,
         };
 
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
 
         assert_eq!(result["thinking"]["type"], "enabled");
         assert!(result.get("reasoning_effort").is_none());
@@ -3967,7 +4204,8 @@ mod tests {
             effort_levels: None,
         };
 
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
 
         assert_eq!(result["enable_thinking"], true);
         assert!(result.get("reasoning_effort").is_none());
@@ -4000,6 +4238,33 @@ mod tests {
             "Need to inspect the code."
         );
         assert_eq!(result["output"][1]["content"][0]["text"], "Done");
+    }
+
+    #[test]
+    fn chat_completion_to_response_unwraps_data_envelope() {
+        // #5658：ClinePass 把非流式 Chat 响应包在 data 里
+        let input = json!({
+            "success": true,
+            "data": {
+                "id": "chatcmpl-wrapped",
+                "model": "cline-pass/deepseek-v4.1-flash",
+                "created": 1_700_000_000,
+                "choices": [{
+                    "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": "OK"}
+                }],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 1, "total_tokens": 13}
+            }
+        });
+
+        let result = chat_completion_to_response(input).unwrap();
+
+        assert_eq!(result["model"], "cline-pass/deepseek-v4.1-flash");
+        assert_eq!(result["created_at"], 1_700_000_000);
+        assert_eq!(result["status"], "completed");
+        assert_eq!(result["output"][0]["content"][0]["text"], "OK");
+        assert_eq!(result["usage"]["input_tokens"], 12);
+        assert_eq!(result["usage"]["output_tokens"], 1);
     }
 
     #[test]
@@ -4039,7 +4304,7 @@ mod tests {
     }
 
     #[test]
-    fn responses_request_to_chat_merges_mid_stream_system_into_head() {
+    fn responses_request_to_chat_keeps_only_head_system_for_minimax() {
         let input = json!({
             "model": "MiniMax-M2.7",
             "instructions": "You are Codex.",
@@ -4071,7 +4336,44 @@ mod tests {
         let head_content = messages[0]["content"].as_str().unwrap();
         assert!(head_content.contains("You are Codex."));
         assert!(head_content.contains("Permissions block"));
-        assert!(head_content.contains("Collaboration Mode: Default"));
+        // A developer message opening a later turn stays in place as user, so
+        // the head (and the prefix already sent) does not change.
+        assert!(!head_content.contains("Collaboration Mode: Default"));
+        assert_eq!(messages[3]["role"], "user");
+        assert_eq!(messages[3]["content"], "Collaboration Mode: Default");
+    }
+
+    #[test]
+    fn turn_start_developer_message_keeps_previous_request_as_prefix() {
+        let first_turn = vec![
+            json!({"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "Permissions: read-only"}]}),
+            json!({"type": "message", "role": "user", "content": [{"type": "input_text", "text": "list files"}]}),
+            json!({"type": "function_call", "call_id": "call_0", "name": "exec_command", "arguments": "{}"}),
+            json!({"type": "function_call_output", "call_id": "call_0", "output": "a.rs"}),
+            json!({"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Done."}]}),
+        ];
+        let mut second_turn = first_turn.clone();
+        second_turn.extend([
+            json!({"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "Permissions: workspace-write"}]}),
+            json!({"type": "message", "role": "user", "content": [{"type": "input_text", "text": "edit a.rs"}]}),
+        ]);
+
+        let convert = |input: Vec<Value>| {
+            let body = json!({"model": "k3", "instructions": "You are Codex.", "input": input});
+            responses_to_chat_completions(body).unwrap()["messages"]
+                .as_array()
+                .unwrap()
+                .clone()
+        };
+        let first = convert(first_turn);
+        let second = convert(second_turn);
+
+        assert_eq!(&second[..first.len()], &first[..]);
+        assert_eq!(second[first.len()]["role"], "user");
+        assert_eq!(
+            second[first.len()]["content"],
+            "Permissions: workspace-write"
+        );
     }
 
     #[test]
@@ -4206,12 +4508,30 @@ mod tests {
         ];
         let out = collapse_system_messages_to_head(input);
 
-        assert_eq!(out.len(), 4);
+        assert_eq!(out.len(), 5);
         assert_eq!(out[0]["role"], "system");
-        assert_eq!(out[0]["content"], "S1\n\nS2");
+        assert_eq!(out[0]["content"], "S1");
         assert_eq!(out[1]["content"], "U1");
         assert_eq!(out[2]["content"], "A1");
-        assert_eq!(out[3]["content"], "U2");
+        assert_eq!(out[3]["role"], "user");
+        assert_eq!(out[3]["content"], "S2");
+        assert_eq!(out[4]["content"], "U2");
+    }
+
+    #[test]
+    fn collapse_system_messages_hoists_mid_system_not_followed_by_user() {
+        let input = vec![
+            json!({"role": "system", "content": "S1"}),
+            json!({"role": "user", "content": "U1"}),
+            json!({"role": "assistant", "content": null, "tool_calls": [{"id": "c0", "type": "function", "function": {"name": "f", "arguments": "{}"}}]}),
+            json!({"role": "system", "content": "Notice"}),
+            json!({"role": "tool", "tool_call_id": "c0", "content": "ok"}),
+        ];
+        let out = collapse_system_messages_to_head(input);
+
+        let roles: Vec<&str> = out.iter().filter_map(|m| m["role"].as_str()).collect();
+        assert_eq!(roles, vec!["system", "user", "assistant", "tool"]);
+        assert_eq!(out[0]["content"], "S1\n\nNotice");
     }
 
     #[test]

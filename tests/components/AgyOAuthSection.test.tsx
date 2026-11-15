@@ -8,6 +8,10 @@ const mocks = vi.hoisted(() => ({
   openExternal: vi.fn(),
 }));
 
+vi.mock("@/lib/query/accountPlans", () => ({
+  useAccountQuotaPlans: () => ({}),
+}));
+
 vi.mock("@/components/providers/forms/hooks/useManagedAuth", () => ({
   useManagedAuth: mocks.useManagedAuth,
 }));

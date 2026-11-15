@@ -21,6 +21,7 @@ import {
 import { useManagedAccountUsers } from "./hooks/useManagedAccountUsers";
 import CodexOauthAccountQuota from "@/components/CodexOauthAccountQuota";
 import { cn } from "@/lib/utils";
+import { useAccountQuotaPlans } from "@/lib/query/accountPlans";
 import {
   ManagedAccountsGroup,
   type GroupAccountRow,
@@ -117,7 +118,6 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
     removeAccount,
     setDefaultAccount,
     cancelAuth,
-    logout,
     refetchStatus,
   } = useCodexOauth(loginMethod);
   const accountUsers = useManagedAccountUsers("codex_oauth", defaultAccountId);
@@ -163,11 +163,8 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
   const confirmRemove = () => {
     const target = removeTarget;
     setRemoveTarget(null);
-    if (!target) return;
-    if (target.kind === "all") {
-      logout();
-      return;
-    }
+    // 标题行没有「删除全部」，只会是单个账号
+    if (target?.kind !== "one") return;
     removeAccount(target.accountId);
     if (selectedAccountId === target.accountId) {
       onSelectionInvalidated?.();
@@ -351,6 +348,12 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
     </div>
   );
 
+  // 授权中心第二行的套餐（额度查到才有）
+  const plans = useAccountQuotaPlans(
+    "codex_oauth",
+    accounts.map((account) => account.id),
+  );
+
   if (mode === "select") {
     return (
       <div className={`space-y-4 ${className || ""}`}>
@@ -430,9 +433,15 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
               "id_token",
             ),
           ]
-        : date
-          ? [t("authCenter.signedInOn", { defaultValue: "{{date}}登录", date })]
-          : [],
+        : [
+            plans[account.id],
+            date
+              ? t("authCenter.signedInOn", {
+                  defaultValue: "{{date}}登录",
+                  date,
+                })
+              : null,
+          ].filter(Boolean),
       isDefault: defaultAccountId === account.id,
       needsReauth,
       users: accountUsers([account.id]),
@@ -466,31 +475,28 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
         defaultValue: "还没有登录 {{service}} 账号。",
         service: "ChatGPT",
       })}
-      loginLabel={t("codexOauth.loginWithChatGPT", "使用 ChatGPT 登录")}
       onAdd={addAccount}
-      loginOptions={
-        <div className="flex items-center gap-3 border-t border-border px-4 py-2">
-          <Label htmlFor="codex-login-method">
-            {t("codexOauth.loginMethod")}
-          </Label>
-          <Select
-            value={loginMethod}
-            onValueChange={(value) => setLoginMethod(value as CodexLoginMethod)}
-            disabled={isAddingAccount}
+      loginControl={
+        <Select
+          value={loginMethod}
+          onValueChange={(value) => setLoginMethod(value as CodexLoginMethod)}
+          disabled={isAddingAccount}
+        >
+          <SelectTrigger
+            aria-label={t("codexOauth.loginMethod")}
+            className="h-7 w-[136px]"
           >
-            <SelectTrigger id="codex-login-method" className="w-[200px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="browser">
-                {t("codexOauth.browserLogin")}
-              </SelectItem>
-              <SelectItem value="device_code">
-                {t("codexOauth.deviceCodeLogin")}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent align="end">
+            <SelectItem value="browser">
+              {t("codexOauth.browserLogin")}
+            </SelectItem>
+            <SelectItem value="device_code">
+              {t("codexOauth.deviceCodeLogin")}
+            </SelectItem>
+          </SelectContent>
+        </Select>
       }
       canReauth
       onReauth={reauthAccount}
@@ -498,12 +504,6 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
       settingDefault={isSettingDefaultAccount}
       onRemove={(accountId, login) =>
         setRemoveTarget({ kind: "one", accountId, login })
-      }
-      onRemoveAll={() =>
-        setRemoveTarget({
-          kind: "all",
-          accountIds: accounts.map((account) => account.id),
-        })
       }
       removing={isRemovingAccount}
       login={{

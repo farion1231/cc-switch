@@ -37,7 +37,7 @@ export function resolveBulkScope<T>(
   return { rows: visibleRows, kind: narrowedBy };
 }
 
-// ─── 列高亮（悬停 / 键盘焦点落在某一列时，列头跟着亮并显示应用名） ─────────────
+// ─── 列高亮（悬停 / 键盘焦点落在某一列时，列头跟着亮） ─────────────────────
 /**
  * 只有列头订阅当前列；单元格只拿稳定的 setter，悬停时整张表不会重渲染。
  */
@@ -228,6 +228,7 @@ export function MatrixColumnHeader({
 }: MatrixColumnHeaderProps) {
   const { t } = useTranslation();
   const [open, setOpen] = React.useState(false);
+  const [headerHovered, setHeaderHovered] = React.useState(false);
   const countId = React.useId();
   const name = APP_DISPLAY_NAME[app];
   const rest = scopeTotal - scopeEnabled;
@@ -236,9 +237,9 @@ export function MatrixColumnHeader({
 
   const tracking = useColumnTracking(app);
   const activeColumn = React.useContext(MatrixActiveColumnContext);
-  // 悬停 / 键盘聚焦在这一列（列头或任一单元格）时亮起；弹层开着时名字已在弹层标题里
+  // 悬停 / 键盘聚焦在这一列时亮起；应用名只跟随列头悬停，弹层开着时隐藏。
   const highlighted = activeColumn === app || open;
-  const showName = activeColumn === app && !open;
+  const showName = !open && headerHovered;
 
   const run = (action: () => void) => {
     setOpen(false);
@@ -257,6 +258,8 @@ export function MatrixColumnHeader({
             <button
               type="button"
               disabled={disabled}
+              onMouseEnter={() => setHeaderHovered(true)}
+              onMouseLeave={() => setHeaderHovered(false)}
               aria-label={t("appMatrix.columnAria", {
                 app: name,
                 on: enabledCount,

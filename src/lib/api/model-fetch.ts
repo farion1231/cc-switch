@@ -3,6 +3,11 @@ import type { TFunction } from "i18next";
 import { toast } from "@/lib/toast";
 import { parseHeaderOverrideJson } from "@/lib/requestOverrides";
 
+// 矩阵起源 Genesis 的 /v1/models 会混入 embedding / rerank 模型。除 Claude 外
+// 的表单不读预设的 modelsUrl，所以在这里按地址补上 ?type=chat。
+const GENESIS_ORIGIN = "https://token.moi.matrixorigin.cn";
+const GENESIS_CHAT_MODELS_URL = `${GENESIS_ORIGIN}/v1/models?type=chat`;
+
 export interface FetchedModel {
   id: string;
   ownedBy: string | null;
@@ -50,6 +55,21 @@ export async function fetchModelsForConfig(
   customUserAgent?: string,
   options?: ModelFetchOptions,
 ): Promise<FetchedModel[]> {
+  if (!modelsUrl) {
+    try {
+      const endpoint = new URL(baseUrl);
+      if (
+        endpoint.origin === GENESIS_ORIGIN &&
+        (endpoint.pathname === "/" ||
+          endpoint.pathname === "/v1" ||
+          endpoint.pathname === "/v1/")
+      ) {
+        modelsUrl = GENESIS_CHAT_MODELS_URL;
+      }
+    } catch {
+      // Keep the native fetcher's normal validation for malformed URLs.
+    }
+  }
   return invoke("fetch_models_for_config", {
     baseUrl,
     apiKey,

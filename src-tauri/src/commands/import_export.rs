@@ -96,7 +96,6 @@ pub async fn sync_current_providers_live(state: State<'_, AppState>) -> Result<V
 
 // ─── File dialogs ────────────────────────────────────────────
 
-/// 保存文件对话框
 #[tauri::command]
 pub async fn save_file_dialog<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -112,7 +111,6 @@ pub async fn save_file_dialog<R: tauri::Runtime>(
     Ok(result.map(|p| p.to_string()))
 }
 
-/// 打开文件对话框
 #[tauri::command]
 pub async fn open_file_dialog<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -126,7 +124,6 @@ pub async fn open_file_dialog<R: tauri::Runtime>(
     Ok(result.map(|p| p.to_string()))
 }
 
-/// 打开 ZIP 文件选择对话框
 #[tauri::command]
 pub async fn open_zip_file_dialog<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -162,8 +159,12 @@ pub async fn create_db_backup(state: State<'_, AppState>) -> Result<String, Stri
 
 /// List all database backup files
 #[tauri::command]
-pub fn list_db_backups() -> Result<Vec<BackupEntry>, String> {
-    Database::list_backups().map_err(|e| e.to_string())
+pub async fn list_db_backups() -> Result<Vec<BackupEntry>, String> {
+    // 备份文件锁的持有方（定时备份、恢复）会在锁内等数据库，不能在主线程上等它。
+    tauri::async_runtime::spawn_blocking(Database::list_backups)
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
 }
 
 /// Restore database from a backup file
@@ -197,17 +198,23 @@ pub async fn restore_db_backup(
 
 /// Rename a database backup file
 #[tauri::command]
-pub fn rename_db_backup(
+pub async fn rename_db_backup(
     #[allow(non_snake_case)] oldFilename: String,
     #[allow(non_snake_case)] newName: String,
 ) -> Result<String, String> {
-    Database::rename_backup(&oldFilename, &newName).map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || Database::rename_backup(&oldFilename, &newName))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
 }
 
 /// Delete a database backup file
 #[tauri::command]
-pub fn delete_db_backup(filename: String) -> Result<(), String> {
-    Database::delete_backup(&filename).map_err(|e| e.to_string())
+pub async fn delete_db_backup(filename: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || Database::delete_backup(&filename))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
 }
 
 // ─── Backup storage overview ─────────────────────────────────

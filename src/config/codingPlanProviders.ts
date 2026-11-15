@@ -71,13 +71,14 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
   {
     // OpenCode Go（$10/月订阅，三时间窗口美元额度）。用量端点
     // GET /zen/go/v1/usage 是官方第一方但未文档化的路由，只认
-    // Authorization: Bearer（与推理侧 /messages 只认 x-api-key 相反）。
-    // base 分两档：/zen/go（claude/claude-desktop 直连 /messages）与
-    // /zen/go/v1（codex/opencode/pi 走 Chat），子串同时覆盖；
+    // Authorization: Bearer（与推理侧 /messages 只认 x-api-key 相反）；
+    // /inference/go/v1/usage 返回同一份数据，两个入口共用该端点。
+    // base 分两档：Anthropic 端 /inference/go/anthropic 与旧入口 /zen/go，
+    // OpenAI Chat 端分别是 /inference/go/v1 与 /zen/go/v1；
     // Zen 按量版（/zen/v1）没有用量 API，刻意不命中。
     id: "opencode_go",
     label: "OpenCode Go",
-    pattern: /opencode\.ai\/zen\/go/i,
+    pattern: /opencode\.ai\/(?:zen|inference)\/go/i,
   },
   {
     // Command Code 的余额与窗口接口由官方 CLI 使用，当前未公开文档化。

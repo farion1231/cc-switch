@@ -100,16 +100,16 @@ describe("Pi provider presets", () => {
     expect(models.every((model) => model.contextWindow === 272_000)).toBe(true);
   });
 
-  // #7859: 官方 V4.1 Flash 识图，V4 Pro 仍是纯文本
-  it("declares image input for official DeepSeek V4.1 Flash only", () => {
+  // #7859: 官方 V4.1 Flash 识图；2026-10-25 起官方预设只留 Flash
+  it("declares image input for official DeepSeek V4.1 Flash", () => {
     const models =
       piProviderPresets.find((preset) => preset.name === "DeepSeek")
         ?.settingsConfig.models ?? [];
     const input = (id: string) =>
       models.find((model) => model.id === id)?.input;
 
+    expect(models.map((model) => model.id)).toEqual(["deepseek-flash"]);
     expect(input("deepseek-flash")).toEqual(["text", "image"]);
-    expect(input("deepseek-v4-pro")).toEqual(["text"]);
   });
 
   // #7956: 火山各套餐端点不同，Agent Plan 曾误用 Coding Plan 的端点
@@ -160,13 +160,11 @@ describe("Pi provider presets", () => {
     expect(model("OpenCode Go", "glm-5.3").compat).toEqual(openCodeBase);
     expect(model("OpenCode Go", "kimi-k3.1-pro").compat).toEqual(openCodeBase);
     expect(model("OpenCode Go", "mimo-v2.6-pro").compat).toEqual(openCodeBase);
-    for (const id of ["deepseek-v4-pro", "deepseek-v4.1-flash"]) {
-      expect(model("OpenCode Go", id).compat).toEqual({
-        ...openCodeBase,
-        requiresReasoningContentOnAssistantMessages: true,
-        thinkingFormat: "deepseek",
-      });
-    }
+    expect(model("OpenCode Go", "deepseek-v4.1-flash").compat).toEqual({
+      ...openCodeBase,
+      requiresReasoningContentOnAssistantMessages: true,
+      thinkingFormat: "deepseek",
+    });
 
     for (const id of ["mimo-v2.6-pro", "mimo-v2.6-flash"]) {
       expect(model("Xiaomi MiMo", id).compat).toEqual({

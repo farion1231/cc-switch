@@ -15,12 +15,13 @@
 pub mod agy;
 mod claude;
 mod codex;
+pub(crate) mod dsh;
 mod gemini;
 mod grokbuild;
 mod hermes;
 pub(crate) mod omp;
 mod opencode;
-mod validation;
+pub(crate) mod validation;
 
 // 重新导出公共 API
 pub use claude::{
@@ -43,6 +44,8 @@ pub use opencode::{
     import_from_opencode, remove_server_from_opencode, sync_single_server_to_opencode,
 };
 
+pub(crate) mod copilot;
 pub(crate) mod kimi;
 pub(crate) mod mcode;
 pub(crate) mod pi;
+pub(crate) mod workbuddy;

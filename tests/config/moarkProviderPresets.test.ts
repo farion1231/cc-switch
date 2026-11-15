@@ -59,7 +59,6 @@ describe("MoArk (模力方舟) provider presets", () => {
     // 缺 modelCatalog 时 Codex 退回通用元数据，/model 只会列出默认模型。
     expect(catalog.map((model) => model.model)).toEqual([
       DEFAULT_MODEL,
-      "DeepSeek-V4-Pro-0813",
       "GLM-5.3",
       "GLM-5.3-Flash",
       "Kimi-K2.7-Code",
@@ -79,7 +78,8 @@ describe("MoArk (模力方舟) provider presets", () => {
     }
     // Kimi K2.7 Code 支持图像输入。
     expect(
-      catalog.find((model) => model.model === "Kimi-K2.7-Code")?.inputModalities,
+      catalog.find((model) => model.model === "Kimi-K2.7-Code")
+        ?.inputModalities,
     ).toEqual(["text", "image"]);
   });
 
@@ -129,13 +129,6 @@ describe("MoArk (模力方舟) provider presets", () => {
 
     // 实测自 https://moark.com/v1/responses：非法 reasoning_effort 触发的 400
     // 里厂商给出的明文枚举。
-    expect(levels["DeepSeek-V4-Pro-0813"]).toEqual([
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max",
-    ]);
     expect(levels["GLM-5.3"]).toEqual([
       "none",
       "low",
@@ -162,9 +155,9 @@ describe("MoArk (模力方舟) provider presets", () => {
 
     // 只有单档时 Codex 直接应用、不显示选择界面；支持思考的模型必须保留多档
     // 且每档都含 high，后端才会保留模板默认 high，与 config 的
-    // model_reasoning_effort = "high" 一致。目录里五款模型都支持思考。
+    // model_reasoning_effort = "high" 一致。目录里四款模型都支持思考。
     const thinkingModels = preset?.modelCatalog ?? [];
-    expect(thinkingModels).toHaveLength(5);
+    expect(thinkingModels).toHaveLength(4);
     for (const model of thinkingModels) {
       expect(model.reasoningLevels, `${model.model} keeps high`).toContain(
         "high",
@@ -194,7 +187,6 @@ describe("MoArk (模力方舟) provider presets", () => {
     expect(modelIds).toEqual(
       expect.arrayContaining([
         DEFAULT_MODEL,
-        "DeepSeek-V4-Pro-0813",
         "GLM-5.3",
         "GLM-5.3-Flash",
         "kimi-k3.1-pro",
@@ -227,7 +219,6 @@ describe("MoArk (模力方舟) provider presets", () => {
     // Qwen3.8 Max, which thinks, so every listed model is flagged now.
     for (const id of [
       DEFAULT_MODEL,
-      "DeepSeek-V4-Pro-0813",
       "GLM-5.3",
       "GLM-5.3-Flash",
       "kimi-k3.1-pro",
@@ -253,12 +244,7 @@ describe("MoArk (模力方舟) provider presets", () => {
     expect(preset?.settingsConfig.baseUrl).toBe("https://api.moark.com/v1");
     expect(preset?.settingsConfig.api).toBe("openai-completions");
     expect(modelIds).toEqual(
-      expect.arrayContaining([
-        DEFAULT_MODEL,
-        "DeepSeek-V4-Pro-0813",
-        "GLM-5.3",
-        "kimi-k3.1-pro",
-      ]),
+      expect.arrayContaining([DEFAULT_MODEL, "GLM-5.3", "kimi-k3.1-pro"]),
     );
     expect(preset?.suggestedDefaults?.model).toEqual({
       primary: `moark/${DEFAULT_MODEL}`,
@@ -277,7 +263,7 @@ describe("MoArk (模力方舟) provider presets", () => {
     // OpenCode treats a missing limit as 0 and then skips auto-compaction
     // (`isOverflow` returns false when `limit.context === 0`), so every model
     // of a custom provider key must carry explicit capacity numbers.
-    expect(Object.keys(models)).toHaveLength(6);
+    expect(Object.keys(models)).toHaveLength(5);
     for (const [id, model] of Object.entries(models)) {
       expect(model.limit?.context, `${id} limit.context`).toBeGreaterThan(0);
       expect(model.limit?.output, `${id} limit.output`).toBeGreaterThan(0);
