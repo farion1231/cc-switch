@@ -28,6 +28,40 @@ pub struct CopilotClassification {
     pub is_subagent: bool,
 }
 
+/// Classify the latest user/tool input without applying Claude-specific heuristics.
+pub fn classify_responses_request(body: &Value) -> CopilotClassification {
+    let initiator_for_item = |item: &Value| {
+        let item_type = item.get("type").and_then(Value::as_str);
+        if item_type.is_some_and(super::providers::codex_chat_history::is_call_output_item_type) {
+            return Some("agent");
+        }
+        match item.get("role").and_then(Value::as_str) {
+            Some("user") => Some("user"),
+            Some("assistant" | "system" | "developer") => None,
+            _ => match item_type {
+                Some("reasoning" | "function_call" | "custom_tool_call" | "tool_search_call") => {
+                    None
+                }
+                _ => Some("user"),
+            },
+        }
+    };
+    // Full-history requests can contain old tool outputs before a new user turn.
+    let initiator = match body.get("input") {
+        Some(Value::Array(items)) => items.iter().rev().find_map(initiator_for_item),
+        Some(item @ Value::Object(_)) => initiator_for_item(item),
+        _ => None,
+    }
+    .unwrap_or("user");
+
+    CopilotClassification {
+        initiator,
+        is_warmup: false,
+        is_compact: false,
+        is_subagent: false,
+    }
+}
+
 /// 分类 Anthropic 格式的请求体，决定 Copilot 请求头。
 ///
 /// 分类算法（只检查最后一条消息，与参考实现 caozhiyuan/copilot-api 对齐）：
@@ -626,6 +660,70 @@ fn is_tool_result_only_message(msg: &Value) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn responses_classification_uses_the_latest_user_or_tool_input() {
+        let tool = json!({
+            "type": "function_call_output",
+            "call_id": "call-1",
+            "output": "done"
+        });
+        let user = json!({"role": "user", "content": "A new question"});
+        for (input, expected) in [
+            (json!([user.clone(), tool.clone()]), "agent"),
+            (json!([tool.clone(), user.clone()]), "user"),
+            (
+                json!([
+                    user.clone(),
+                    tool.clone(),
+                    {"type": "reasoning", "summary": []},
+                    {"role": "developer", "content": "Use the output"}
+                ]),
+                "agent",
+            ),
+            (
+                json!([
+                    tool.clone(),
+                    user,
+                    {"role": "system", "content": "Continue"}
+                ]),
+                "user",
+            ),
+            (tool.clone(), "agent"),
+            (json!("A new question"), "user"),
+            (json!([]), "user"),
+            (json!(null), "user"),
+            (json!([tool, {"type": "unknown"}]), "user"),
+        ] {
+            let body = json!({"input": input, "previous_response_id": "resp-previous"});
+            let result = classify_responses_request(&body);
+            assert_eq!(result.initiator, expected, "{body}");
+            assert!(!result.is_warmup);
+            assert!(!result.is_compact);
+            assert!(!result.is_subagent);
+        }
+    }
+
+    #[test]
+    fn responses_classification_does_not_use_claude_message_heuristics() {
+        for body in [
+            json!({}),
+            json!({
+                "input": "A new question",
+                "system": "You are a helpful AI assistant tasked with summarizing conversations",
+                "messages": [{"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "tool-1", "content": "done"},
+                    {"type": "text", "text": "__SUBAGENT_MARKER__"}
+                ]}]
+            }),
+        ] {
+            let result = classify_responses_request(&body);
+            assert_eq!(result.initiator, "user");
+            assert!(!result.is_warmup);
+            assert!(!result.is_compact);
+            assert!(!result.is_subagent);
+        }
+    }
 
     // === classify_request 测试 ===
 

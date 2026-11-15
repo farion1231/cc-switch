@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Layers } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { UniversalProviderCard } from "./UniversalProviderCard";
 import { UniversalProviderFormModal } from "./UniversalProviderFormModal";
@@ -225,13 +225,13 @@ export function UniversalProviderPanel() {
         <h2 className="text-lg font-semibold">
           {t("universalProvider.title", { defaultValue: "统一供应商" })}
         </h2>
-        <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+        <span className="rounded-full bg-subtle px-2 py-0.5 text-xs text-fg-2">
           {providerList.length}
         </span>
       </div>
 
       {/* 描述 */}
-      <p className="text-sm text-muted-foreground">
+      <p className="text-sm text-fg-2">
         {t("universalProvider.description", {
           defaultValue:
             "统一供应商可以同时管理 Claude、Codex 和 Gemini 的配置。修改后会自动同步到所有启用的应用。",
@@ -245,13 +245,13 @@ export function UniversalProviderPanel() {
         </div>
       ) : providerList.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed py-12 text-center">
-          <Layers className="mb-3 h-10 w-10 text-muted-foreground/50" />
-          <p className="text-sm text-muted-foreground">
+          <Layers className="mb-3 h-10 w-10 text-fg-3" />
+          <p className="text-sm text-fg-2">
             {t("universalProvider.empty", {
               defaultValue: "还没有统一供应商",
             })}
           </p>
-          <p className="mt-1 text-xs text-muted-foreground/70">
+          <p className="mt-1 text-xs text-fg-3">
             {t("universalProvider.emptyHint", {
               defaultValue: "点击下方「添加统一供应商」按钮创建一个",
             })}

@@ -1,0 +1,13 @@
+id: relaygrokconfig-<ts>
+name: Relay Grok Config
+settings_config: {"config":"[models]\ndefault = \"grok-4.6\"\n\n[model.\"grok-4.6\"]\nmodel = \"grok-4.6\"\nbase_url = \"https://api.relay.example/v1\"\nname = \"Grok 4.6 (Relay)\"\napi_key = \"xai-relay\"\napi_backend = \"chat_completions\"\ncontext_window = 256000\ndescription = \"Fast coding model\"\n"}
+website_url: https://relay.example
+category: NULL
+sort_index: NULL
+notes: NULL
+icon: NULL
+icon_color: NULL
+meta: {}
+is_current: false
+in_failover_queue: false
+

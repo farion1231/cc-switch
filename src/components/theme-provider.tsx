@@ -24,6 +24,30 @@ const ThemeProviderContext = createContext<ThemeContextValue | undefined>(
   undefined,
 );
 
+/**
+ * 切换 html 上的 light / dark。切换期间暂停所有过渡（`.theme-switching`），
+ * 否则各处的 transition-colors 会让颜色一块块慢慢变过去。
+ */
+function applyColorScheme(isDark: boolean) {
+  const root = window.document.documentElement;
+  if (
+    root.classList.contains("dark") === isDark &&
+    root.classList.contains("light") === !isDark
+  ) {
+    return;
+  }
+  root.classList.add("theme-switching");
+  root.classList.toggle("dark", isDark);
+  root.classList.toggle("light", !isDark);
+  // 强制重排一次，让不带过渡的新颜色先落定，再在第二帧恢复过渡。
+  void window.document.body?.offsetHeight;
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
+      root.classList.remove("theme-switching");
+    });
+  });
+}
+
 export function ThemeProvider({
   children,
   defaultTheme = "system",
@@ -57,18 +81,12 @@ export function ThemeProvider({
       return;
     }
 
-    const root = window.document.documentElement;
-    root.classList.remove("light", "dark");
-
-    if (theme === "system") {
-      const isDark =
-        window.matchMedia &&
-        window.matchMedia("(prefers-color-scheme: dark)").matches;
-      root.classList.add(isDark ? "dark" : "light");
-      return;
-    }
-
-    root.classList.add(theme);
+    const isDark =
+      theme === "system"
+        ? window.matchMedia &&
+          window.matchMedia("(prefers-color-scheme: dark)").matches
+        : theme === "dark";
+    applyColorScheme(isDark);
   }, [theme]);
 
   useEffect(() => {
@@ -82,9 +100,7 @@ export function ThemeProvider({
         return;
       }
 
-      const root = window.document.documentElement;
-      root.classList.toggle("dark", mediaQuery.matches);
-      root.classList.toggle("light", !mediaQuery.matches);
+      applyColorScheme(mediaQuery.matches);
     };
 
     if (theme === "system") {

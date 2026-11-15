@@ -1,0 +1,33 @@
+{
+  "version": "4.0.11",
+  "items": [
+    {
+      "type": "new",
+      "zh": "现在可以在「应用」页安装、更新、卸载编程应用",
+      "zh-TW": "現在可以在「應用」頁安裝、更新、解除安裝編程應用",
+      "en": "Install, update and uninstall coding apps right from the Apps page",
+      "ja": "「アプリ」ページでコーディングツールのインストール・更新・アンインストールが可能に"
+    },
+    {
+      "type": "improve",
+      "zh": "套餐类供应商在所有应用里默认开启额度查询",
+      "zh-TW": "方案類供應商在所有應用中預設開啟額度查詢",
+      "en": "Coding-plan providers show their quota by default in every app",
+      "ja": "コーディングプランのプロバイダーは全アプリで残量照会を既定で有効に"
+    },
+    {
+      "type": "fix",
+      "zh": "Codex 分叉会话不再每分钟重读，翻页后的子代理用量也能统计",
+      "zh-TW": "Codex 分叉工作階段不再每分鐘重讀，翻頁後的子代理用量也能統計",
+      "en": "Codex fork sessions are no longer reread every minute, and subagent usage after a page turn counts",
+      "ja": "Codex の分岐セッションを毎分読み直さず、ページ送り後のサブエージェント使用量も集計"
+    },
+    {
+      "type": "fix",
+      "zh": "Windows 自动更新重启后，安装和升级工具不再找不到 npm",
+      "zh-TW": "Windows 自動更新重新啟動後，安裝和升級工具不再找不到 npm",
+      "en": "On Windows, installing and updating tools finds npm again after an auto-update restart",
+      "ja": "Windows で自動更新の再起動後もツールのインストール・更新で npm が見つかるように"
+    }
+  ]
+}

@@ -5,10 +5,13 @@ import { DatabaseUpgrade } from "./components/DatabaseUpgrade";
 import { UpdateProvider } from "./contexts/UpdateContext";
 import "./index.css";
 // 导入国际化配置
-import i18n from "./i18n";
+import i18n, { syncLanguageFromSettings } from "./i18n";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "@/components/theme-provider";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { MotionConfig } from "framer-motion";
 import { queryClient } from "@/lib/query";
+import { settingsApi } from "@/lib/api";
 import { Toaster } from "@/components/ui/sonner";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
@@ -24,8 +27,12 @@ import {
   syncModelsDevPricingOnStartup,
 } from "./lib/modelsDevAutoSync";
 import { initializeWindowActivity } from "@/lib/windowActivity";
+import { initializeInputModality } from "@/lib/inputModality";
+import { initializeInterfacePrefs } from "@/lib/interfacePrefs";
+import { disableContextMenu } from "@/lib/disableContextMenu";
 
 installGlobalErrorHandlers();
+disableContextMenu();
 
 // 根据平台添加 body class，便于平台特定样式
 try {
@@ -86,6 +93,9 @@ try {
 }
 
 async function bootstrap() {
+  // 界面密度和缩放要在任何界面渲染之前用上（含下面的数据库升级界面），首屏不会先按紧凑尺寸画一遍
+  initializeInterfacePrefs();
+
   // 启动早期主动查询后端初始化错误，避免事件竞态
   try {
     const initError = (await invoke(
@@ -116,6 +126,14 @@ async function bootstrap() {
   }
 
   initializeWindowActivity();
+  initializeInputModality();
+
+  // 首屏语言来自 localStorage 缓存；拿到后端保存的语言后再校正一次。
+  // 与 useSettingsQuery 共用 ["settings"] 缓存，进设置页不会重复拉取。
+  void queryClient
+    .fetchQuery({ queryKey: ["settings"], queryFn: () => settingsApi.get() })
+    .then((settings) => syncLanguageFromSettings(settings.language))
+    .catch((error) => reportFrontendError("startup_language_sync", error));
 
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
@@ -123,7 +141,13 @@ async function bootstrap() {
         <QueryClientProvider client={queryClient}>
           <ThemeProvider defaultTheme="system" storageKey="cc-switch-theme">
             <UpdateProvider>
-              <App />
+              {/* 系统开了「减少动态效果」时，framer-motion 的位移动画一律跳过 */}
+              <MotionConfig reducedMotion="user">
+                {/* 全局悬停提示：移上去立即出现（HoverTip） */}
+                <TooltipProvider delayDuration={0} skipDelayDuration={0}>
+                  <App />
+                </TooltipProvider>
+              </MotionConfig>
               <Toaster />
             </UpdateProvider>
           </ThemeProvider>

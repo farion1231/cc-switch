@@ -1,0 +1,33 @@
+{
+  "version": "4.0.17",
+  "items": [
+    {
+      "type": "fix",
+      "zh": "修复轻量模式不释放托盘面板、Codex 进路由后卡在登录页",
+      "zh-TW": "修正輕量模式不釋放系統匣面板、Codex 進路由後卡在登入頁",
+      "en": "Fixed lightweight mode keeping the tray panel alive and Codex stuck on sign-in after routing",
+      "ja": "軽量モードでトレイパネルが解放されない問題と、ルーティング後の Codex ログイン停止を修正"
+    },
+    {
+      "type": "improve",
+      "zh": "托盘面板悬停不再跳动，额度显示距重置还有多久",
+      "zh-TW": "系統匣面板懸停不再跳動，額度顯示距重置還有多久",
+      "en": "The tray panel stays steady on hover and shows time until each quota resets",
+      "ja": "トレイパネルがホバーで揺れなくなり、クォータのリセットまでの時間を表示"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 Windows 退出后路由端口仍被占用",
+      "zh-TW": "修正 Windows 退出後路由連接埠仍被佔用",
+      "en": "Fixed the routing port staying taken after quitting on Windows",
+      "ja": "Windows で終了後もルーティングのポートが使用中のままになる問題を修正"
+    },
+    {
+      "type": "fix",
+      "zh": "修复同时勾选多个 MCP 服务器时有的丢失",
+      "zh-TW": "修正同時勾選多個 MCP 伺服器時有的遺失",
+      "en": "Fixed MCP servers lost when several are toggled at once",
+      "ja": "複数の MCP サーバーを同時に切り替えると一部が消える問題を修正"
+    }
+  ]
+}

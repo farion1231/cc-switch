@@ -17,6 +17,12 @@ const requiredPaths = [
   "prompts.searchPlaceholder",
   "prompts.searchAriaLabel",
   "prompts.noSearchResults",
+  // `translatePiProviderMutationError` returns this key for the duplicate-key error
+  // the Pi backend raises, and it existed in no locale -- so the toast showed the raw
+  // key. Its own test mocks `t` as identity, so it stayed green throughout.
+  "pi.form.providerKeyDuplicate",
+  // Rendered as the aria-label of the thinking-map toggle in PiProviderForm.
+  "common.collapse",
 ] as const;
 
 type Locale = Record<string, unknown>;

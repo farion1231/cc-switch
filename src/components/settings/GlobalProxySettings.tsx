@@ -8,6 +8,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { Loader2, TestTube2, Search, Eye, EyeOff, X } from "lucide-react";
 import {
   useGlobalProxyUrl,
@@ -142,7 +143,7 @@ export function GlobalProxySettings() {
   if (isLoading && savedUrl === undefined) {
     return (
       <div className="flex items-center justify-center p-4">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        <Loader2 className="h-5 w-5 animate-spin text-fg-2" />
       </div>
     );
   }
@@ -150,9 +151,7 @@ export function GlobalProxySettings() {
   return (
     <div className="space-y-3">
       {/* 描述 */}
-      <p className="text-sm text-muted-foreground">
-        {t("settings.globalProxy.hint")}
-      </p>
+      <p className="text-sm text-fg-2">{t("settings.globalProxy.hint")}</p>
 
       {/* 代理地址输入框和按钮 */}
       <div className="flex gap-2">
@@ -166,48 +165,54 @@ export function GlobalProxySettings() {
           onKeyDown={handleKeyDown}
           className="font-mono text-sm flex-1"
         />
-        <Button
-          variant="outline"
-          size="icon"
-          disabled={scanMutation.isPending}
-          onClick={handleScan}
-          title={t("settings.globalProxy.scan")}
-        >
-          {scanMutation.isPending ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Search className="h-4 w-4" />
-          )}
-        </Button>
-        <Button
-          variant="outline"
-          size="icon"
-          disabled={!fullUrl || testMutation.isPending}
-          onClick={handleTest}
-          title={t("settings.globalProxy.test")}
-        >
-          {testMutation.isPending ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <TestTube2 className="h-4 w-4" />
-          )}
-        </Button>
-        <Button
-          variant="outline"
-          size="icon"
-          disabled={!url && !username && !password}
-          onClick={handleClear}
-          title={t("settings.globalProxy.clear")}
-        >
-          <X className="h-4 w-4" />
-        </Button>
+        <HoverTip content={t("settings.globalProxy.scan")}>
+          <Button
+            variant="outline"
+            size="icon"
+            disabled={scanMutation.isPending}
+            onClick={handleScan}
+            aria-label={t("settings.globalProxy.scan")}
+          >
+            {scanMutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Search className="h-4 w-4" />
+            )}
+          </Button>
+        </HoverTip>
+        <HoverTip content={t("settings.globalProxy.test")}>
+          <Button
+            variant="outline"
+            size="icon"
+            disabled={!fullUrl || testMutation.isPending}
+            onClick={handleTest}
+            aria-label={t("settings.globalProxy.test")}
+          >
+            {testMutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <TestTube2 className="h-4 w-4" />
+            )}
+          </Button>
+        </HoverTip>
+        <HoverTip content={t("settings.globalProxy.clear")}>
+          <Button
+            variant="outline"
+            size="icon"
+            disabled={!url && !username && !password}
+            onClick={handleClear}
+            aria-label={t("settings.globalProxy.clear")}
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </HoverTip>
         <Button
           onClick={handleSave}
           disabled={!dirty || setMutation.isPending}
           size="sm"
         >
           {setMutation.isPending && (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            <Loader2 className="h-4 w-4 animate-spin" />
           )}
           {t("common.save")}
         </Button>
@@ -246,9 +251,9 @@ export function GlobalProxySettings() {
             tabIndex={-1}
           >
             {showPassword ? (
-              <EyeOff className="h-4 w-4 text-muted-foreground" />
+              <EyeOff className="h-4 w-4 text-fg-2" />
             ) : (
-              <Eye className="h-4 w-4 text-muted-foreground" />
+              <Eye className="h-4 w-4 text-fg-2" />
             )}
           </Button>
         </div>

@@ -2,44 +2,15 @@
 //!
 //! 处理代理配置、Provider健康状态和使用统计的数据库操作
 
-use std::str::FromStr;
-
 use crate::error::AppError;
 use crate::proxy::types::*;
-use rust_decimal::Decimal;
 
-use super::super::{lock_conn, Database};
+use super::super::{lock_conn, lock_recovering, Database};
 
 pub(crate) const PRICING_SOURCE_RESPONSE: &str = "response";
 pub(crate) const PRICING_SOURCE_REQUEST: &str = "request";
 
-pub(crate) fn validate_cost_multiplier(value: &str) -> Result<Decimal, AppError> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Err(AppError::localized(
-            "error.multiplierEmpty",
-            "倍率不能为空",
-            "Multiplier cannot be empty",
-        ));
-    }
-    let parsed = Decimal::from_str(trimmed).map_err(|e| {
-        AppError::localized(
-            "error.invalidMultiplier",
-            format!("无效倍率: {value} - {e}"),
-            format!("Invalid multiplier: {value} - {e}"),
-        )
-    })?;
-    if parsed < Decimal::ZERO {
-        return Err(AppError::localized(
-            "error.invalidMultiplier",
-            format!("无效倍率: {value} - 倍率不能为负数"),
-            format!("Invalid multiplier: {value} - multiplier cannot be negative"),
-        ));
-    }
-    Ok(parsed)
-}
-
-pub(crate) fn validate_pricing_source(value: &str) -> Result<&str, AppError> {
+fn validate_pricing_source(value: &str) -> Result<&str, AppError> {
     let trimmed = value.trim();
     if trimmed == PRICING_SOURCE_RESPONSE || trimmed == PRICING_SOURCE_REQUEST {
         Ok(trimmed)
@@ -120,52 +91,6 @@ impl Database {
         Ok(())
     }
 
-    /// 获取默认成本倍率
-    pub async fn get_default_cost_multiplier(&self, app_type: &str) -> Result<String, AppError> {
-        let result = {
-            let conn = lock_conn!(self.conn);
-            conn.query_row(
-                "SELECT default_cost_multiplier FROM proxy_config WHERE app_type = ?1",
-                [app_type],
-                |row| row.get(0),
-            )
-        };
-
-        match result {
-            Ok(value) => Ok(value),
-            Err(rusqlite::Error::QueryReturnedNoRows) => {
-                self.init_proxy_config_rows().await?;
-                Ok("1".to_string())
-            }
-            Err(e) => Err(AppError::Database(e.to_string())),
-        }
-    }
-
-    /// 设置默认成本倍率
-    pub async fn set_default_cost_multiplier(
-        &self,
-        app_type: &str,
-        value: &str,
-    ) -> Result<(), AppError> {
-        validate_cost_multiplier(value)?;
-        let trimmed = value.trim();
-
-        // 确保行存在
-        self.ensure_proxy_config_row_exists(app_type)?;
-
-        let conn = lock_conn!(self.conn);
-        conn.execute(
-            "UPDATE proxy_config SET
-                default_cost_multiplier = ?2,
-                updated_at = datetime('now')
-             WHERE app_type = ?1",
-            rusqlite::params![app_type, trimmed],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-
-        Ok(())
-    }
-
     /// 获取计费模式来源
     pub async fn get_pricing_model_source(&self, app_type: &str) -> Result<String, AppError> {
         let result = {
@@ -217,33 +142,31 @@ impl Database {
         app_type: &str,
     ) -> Result<AppProxyConfig, AppError> {
         // 使用 block 限制 conn 的作用域，避免跨 await 持有锁
-        let app_type_owned = app_type.to_string();
         let result = {
             let conn = lock_conn!(self.conn);
-            conn.query_row(
+            let mut stmt = conn.prepare_cached(
                 "SELECT app_type, enabled, auto_failover_enabled,
                         max_retries, streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
                         circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
                         circuit_error_rate_threshold, circuit_min_requests
-                 FROM proxy_config WHERE app_type = ?1",
-                [app_type],
-                |row| {
-                    Ok(AppProxyConfig {
-                        app_type: row.get(0)?,
-                        enabled: row.get::<_, i32>(1)? != 0,
-                        auto_failover_enabled: row.get::<_, i32>(2)? != 0,
-                        max_retries: row.get::<_, i32>(3)? as u32,
-                        streaming_first_byte_timeout: row.get::<_, i32>(4)? as u32,
-                        streaming_idle_timeout: row.get::<_, i32>(5)? as u32,
-                        non_streaming_timeout: row.get::<_, i32>(6)? as u32,
-                        circuit_failure_threshold: row.get::<_, i32>(7)? as u32,
-                        circuit_success_threshold: row.get::<_, i32>(8)? as u32,
-                        circuit_timeout_seconds: row.get::<_, i32>(9)? as u32,
-                        circuit_error_rate_threshold: row.get(10)?,
-                        circuit_min_requests: row.get::<_, i32>(11)? as u32,
-                    })
-                },
-            )
+                 FROM proxy_config WHERE app_type = ?1"
+            ).map_err(|e| AppError::Database(e.to_string()))?;
+            stmt.query_row([app_type], |row| {
+                Ok(AppProxyConfig {
+                    app_type: row.get(0)?,
+                    enabled: row.get::<_, i32>(1)? != 0,
+                    auto_failover_enabled: row.get::<_, i32>(2)? != 0,
+                    max_retries: row.get::<_, i32>(3)? as u32,
+                    streaming_first_byte_timeout: row.get::<_, i32>(4)? as u32,
+                    streaming_idle_timeout: row.get::<_, i32>(5)? as u32,
+                    non_streaming_timeout: row.get::<_, i32>(6)? as u32,
+                    circuit_failure_threshold: row.get::<_, i32>(7)? as u32,
+                    circuit_success_threshold: row.get::<_, i32>(8)? as u32,
+                    circuit_timeout_seconds: row.get::<_, i32>(9)? as u32,
+                    circuit_error_rate_threshold: row.get(10)?,
+                    circuit_min_requests: row.get::<_, i32>(11)? as u32,
+                })
+            })
         };
         // conn 已在 block 结束时释放
 
@@ -253,7 +176,7 @@ impl Database {
                 // 如果不存在，创建默认配置
                 self.init_proxy_config_rows().await?;
                 Ok(AppProxyConfig {
-                    app_type: app_type_owned,
+                    app_type: app_type.to_string(),
                     enabled: false,
                     auto_failover_enabled: false,
                     max_retries: 3,
@@ -317,10 +240,7 @@ impl Database {
     ///
     /// 使用与 schema.rs seed 相同的 per-app 默认值
     fn ensure_proxy_config_row_exists(&self, app_type: &str) -> Result<(), AppError> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| AppError::Lock(e.to_string()))?;
+        let conn = lock_conn!(self.conn);
 
         // 根据 app_type 使用不同的默认值（与 schema.rs seed 保持一致）
         let (retries, fb_timeout, idle_timeout, cb_fail, cb_succ, cb_timeout, cb_rate, cb_min) =
@@ -511,7 +431,7 @@ impl Database {
     ///
     /// 用于 `ProfileService::apply` 等 sync 路径判断是否需要停止代理服务。
     pub fn is_live_takeover_active_sync(&self) -> bool {
-        let conn = match self.conn.lock() {
+        let conn = match lock_recovering(&self.conn) {
             Ok(c) => c,
             Err(_) => return false,
         };
@@ -860,8 +780,30 @@ impl Database {
     ///
     /// 用于托盘菜单构建等同步场景
     /// 返回 (enabled, auto_failover_enabled)
+    /// 同步读客户端连代理用的主机和端口（读不到时用默认值）：本机设了客户端地址
+    /// （settings.json）就用它，否则是监听地址（交给 `proxy_origin` 处理 `0.0.0.0`）。
+    /// 写进客户端文件的代理地址都按这个生成，不需要代理在运行。
+    pub fn get_proxy_client_endpoint_sync(&self) -> (String, u16) {
+        let fallback = || {
+            let defaults = crate::proxy::types::ProxyConfig::default();
+            (defaults.listen_address, defaults.listen_port)
+        };
+        let (listen_address, port) = match lock_recovering(&self.conn) {
+            Ok(conn) => conn
+                .query_row(
+                    "SELECT listen_address, listen_port FROM proxy_config WHERE app_type = 'claude'",
+                    [],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)? as u16)),
+                )
+                .unwrap_or_else(|_| fallback()),
+            Err(_) => fallback(),
+        };
+        let host = crate::settings::get_proxy_client_host().unwrap_or(listen_address);
+        (host, port)
+    }
+
     pub fn get_proxy_flags_sync(&self, app_type: &str) -> (bool, bool) {
-        let conn = match self.conn.lock() {
+        let conn = match lock_recovering(&self.conn) {
             Ok(c) => c,
             Err(_) => return (false, false),
         };
@@ -883,10 +825,7 @@ impl Database {
         enabled: bool,
         auto_failover_enabled: bool,
     ) -> Result<(), AppError> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| AppError::Database(format!("Mutex lock failed: {e}")))?;
+        let conn = lock_conn!(self.conn);
 
         conn.execute(
             "UPDATE proxy_config SET enabled = ?2, auto_failover_enabled = ?3, updated_at = datetime('now') WHERE app_type = ?1",
@@ -908,40 +847,6 @@ mod tests {
     use crate::error::AppError;
 
     #[tokio::test]
-    async fn test_default_cost_multiplier_round_trip() -> Result<(), AppError> {
-        let db = Database::memory()?;
-
-        let default = db.get_default_cost_multiplier("claude").await?;
-        assert_eq!(default, "1");
-
-        db.set_default_cost_multiplier("claude", "1.5").await?;
-        let updated = db.get_default_cost_multiplier("claude").await?;
-        assert_eq!(updated, "1.5");
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_default_cost_multiplier_validation() -> Result<(), AppError> {
-        let db = Database::memory()?;
-
-        let err = db
-            .set_default_cost_multiplier("claude", "not-a-number")
-            .await
-            .unwrap_err();
-        // AppError::localized returns AppError::Localized variant
-        assert!(matches!(
-            err,
-            AppError::Localized {
-                key: "error.invalidMultiplier",
-                ..
-            }
-        ));
-
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn test_pricing_model_source_round_trip_and_validation() -> Result<(), AppError> {
         let db = Database::memory()?;
 
@@ -961,18 +866,6 @@ mod tests {
             err,
             AppError::Localized {
                 key: "error.invalidPricingMode",
-                ..
-            }
-        ));
-
-        let err = db
-            .set_default_cost_multiplier("claude", "-0.5")
-            .await
-            .unwrap_err();
-        assert!(matches!(
-            err,
-            AppError::Localized {
-                key: "error.invalidMultiplier",
                 ..
             }
         ));

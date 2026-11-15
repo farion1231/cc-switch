@@ -148,6 +148,30 @@ export const piThinkingProfiles = {
       max: "max",
     },
   },
+  openaiResponsesGpt6Astra: {
+    map: {
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "xhigh",
+      max: "max",
+    },
+  },
+  // MiniMax-M3.1-Flash always thinks (reasoning_effort "none" is rejected) and
+  // takes low/medium/high/xhigh/max.
+  minimaxM31: {
+    map: {
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "xhigh",
+      max: "max",
+    },
+  },
   geminiLowHigh: {
     map: {
       off: null,
@@ -177,6 +201,19 @@ export interface PiThinkingBinding {
  * transport semantics.
  */
 export const piThinkingBindings: readonly PiThinkingBinding[] = [
+  // 2026-09-23 按 Anthropic 模型概览和 effort 文档核对：常开自适应思考及对应档位。
+  {
+    catalogKey: "anthropic/claude-opus-5.5",
+    api: "anthropic-messages",
+    profileId: "offUnsupportedXhighAndMax",
+    modelCompat: { forceAdaptiveThinking: true },
+  },
+  {
+    catalogKey: "anthropic/claude-fable-5.1",
+    api: "anthropic-messages",
+    profileId: "offUnsupportedXhighAndMax",
+    modelCompat: { forceAdaptiveThinking: true },
+  },
   {
     catalogKey: "anthropic/claude-fable-5",
     api: "anthropic-messages",
@@ -285,6 +322,26 @@ export const piThinkingBindings: readonly PiThinkingBinding[] = [
   },
   {
     catalogKey: "openai/gpt-5.6-terra",
+    api: "openai-responses",
+    profileId: "openaiResponsesGpt56",
+  },
+  {
+    catalogKey: "openai/gpt-6-astra",
+    api: "openai-responses",
+    profileId: "openaiResponsesGpt6Astra",
+  },
+  {
+    catalogKey: "openai/gpt-6.1-sol",
+    api: "openai-responses",
+    profileId: "openaiResponsesGpt56",
+  },
+  {
+    catalogKey: "openai/gpt-6-sol",
+    api: "openai-responses",
+    profileId: "openaiResponsesGpt56",
+  },
+  {
+    catalogKey: "openai/gpt-6-luna",
     api: "openai-responses",
     profileId: "openaiResponsesGpt56",
   },

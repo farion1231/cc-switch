@@ -6,6 +6,7 @@ import type {
   RemoteSnapshotInfo,
 } from "@/types";
 import type { AppId } from "./types";
+import type { AutoUpdateStatus, ReadyUpdate } from "@/lib/updater";
 
 export interface ConfigTransferResult {
   success: boolean;
@@ -44,6 +45,26 @@ export const settingsApi = {
     return await invoke("has_codex_unify_history_backup");
   },
 
+  /** Codex 的 config.toml 是否用 [features] multi_agent_v2 强制了新版子 agent 工具 */
+  async codexForcesMultiAgentV2(): Promise<boolean> {
+    return await invoke("codex_forces_multi_agent_v2");
+  },
+
+  /** Codex 会话压缩开关（config.toml 的 [features] local_thread_store_compression） */
+  async getCodexSessionCompression(): Promise<boolean> {
+    return await invoke("get_codex_session_compression");
+  },
+
+  /** 开关 Codex 会话压缩，返回写入后的状态 */
+  async setCodexSessionCompression(enabled: boolean): Promise<boolean> {
+    return await invoke("set_codex_session_compression", { enabled });
+  },
+
+  /** Codex 会话目录当前占用的字节数 */
+  async getCodexSessionsDiskUsage(): Promise<number> {
+    return await invoke("get_codex_sessions_disk_usage");
+  },
+
   /** 按迁移备份账本把当时迁入共享桶的官方会话还原回 openai 桶（幂等） */
   async restoreCodexUnifiedHistory(): Promise<CodexUnifyHistoryRestoreResult> {
     return await invoke("restore_codex_unified_history");
@@ -57,8 +78,21 @@ export const settingsApi = {
     return await invoke("install_update_and_restart");
   },
 
+  async getAutoUpdateStatus(): Promise<AutoUpdateStatus> {
+    return await invoke("get_auto_update_status");
+  },
+
+  /** 立刻在后台检查并下载最新版本（打开自动更新开关时调用） */
+  async downloadAppUpdate(): Promise<ReadyUpdate | null> {
+    return await invoke("download_app_update");
+  },
+
   async checkUpdates(): Promise<void> {
     await invoke("check_for_updates");
+  },
+
+  async openPortableUpdateDownload(version: string): Promise<void> {
+    await invoke("open_portable_update_download", { version });
   },
 
   async isPortable(): Promise<boolean> {
@@ -67,6 +101,12 @@ export const settingsApi = {
 
   async getConfigDir(appId: AppId): Promise<string> {
     return await invoke("get_config_dir", { app: appId });
+  },
+
+  async getConfigStatus(
+    appId: AppId,
+  ): Promise<{ exists: boolean; path: string }> {
+    return await invoke("get_config_status", { app: appId });
   },
 
   async openConfigFolder(appId: AppId): Promise<void> {
@@ -91,6 +131,10 @@ export const settingsApi = {
 
   async openAppConfigFolder(): Promise<void> {
     await invoke("open_app_config_folder");
+  },
+
+  async revealAppLogFile(): Promise<void> {
+    await invoke("reveal_app_log_file");
   },
 
   async getAppConfigDirOverride(): Promise<string | null> {
@@ -160,6 +204,10 @@ export const settingsApi = {
       settings,
       passwordTouched,
     });
+  },
+
+  async webdavSyncClearSettings(): Promise<{ success: boolean }> {
+    return await invoke("webdav_sync_clear_settings");
   },
 
   async webdavSyncFetchRemoteInfo(): Promise<
@@ -248,6 +296,7 @@ export const settingsApi = {
       installed_but_broken: boolean;
       env_type: "windows" | "wsl" | "macos" | "linux" | "unknown";
       wsl_distro: string | null;
+      update_blocked_by_node: NodeRequirementGap | null;
     }>
   > {
     return await invoke("get_tool_versions", { tools, wslShellByTool });
@@ -255,17 +304,30 @@ export const settingsApi = {
 
   async runToolLifecycleAction(
     tools: string[],
-    action: "install" | "update",
+    action: "install" | "update" | "uninstall",
     wslShellByTool?: Record<
       string,
       { wslShell?: string | null; wslShellFlag?: string | null }
     >,
+    uninstallPlan?: ToolUninstallPlan,
   ): Promise<void> {
     await invoke("run_tool_lifecycle_action", {
       tools,
       action,
       wslShellByTool,
+      uninstallPlan,
     });
+  },
+
+  /** List every installation with its read-only uninstall preview; execution checks the chosen one is still current. */
+  async prepareToolUninstall(
+    tool: string,
+    wslShellByTool?: Record<
+      string,
+      { wslShell?: string | null; wslShellFlag?: string | null }
+    >,
+  ): Promise<ToolUninstallCandidate[]> {
+    return await invoke("prepare_tool_uninstall", { tool, wslShellByTool });
   },
 
   /** 探测各工具安装分布：枚举所有安装、标记冲突、生成锚定升级命令。
@@ -274,6 +336,13 @@ export const settingsApi = {
     tools: string[],
   ): Promise<ToolInstallationReport[]> {
     return await invoke("probe_tool_installations", { tools });
+  },
+
+  /** 「应用」页展示路径、来源和多处安装（和升级前的预检分开调用）。 */
+  async listToolInstallations(
+    tools: string[],
+  ): Promise<ToolInstallationReport[]> {
+    return await invoke("list_tool_installations", { tools });
   },
 
   async getRectifierConfig(): Promise<RectifierConfig> {
@@ -292,6 +361,14 @@ export const settingsApi = {
     return await invoke("set_optimizer_config", { config });
   },
 
+  async getPrivacyFilterConfig(): Promise<PrivacyFilterConfig> {
+    return await invoke("get_privacy_filter_config");
+  },
+
+  async setPrivacyFilterConfig(config: PrivacyFilterConfig): Promise<boolean> {
+    return await invoke("set_privacy_filter_config", { config });
+  },
+
   async getLogConfig(): Promise<LogConfig> {
     return await invoke("get_log_config");
   },
@@ -300,6 +377,15 @@ export const settingsApi = {
     return await invoke("set_log_config", { config });
   },
 };
+
+export interface ToolUninstallPlan {
+  tool: string;
+  path: string;
+  real_path: string;
+  command: string;
+  native: boolean;
+  wsl_distro: string | null;
+}
 
 /** 单处工具安装的诊断信息（多处安装冲突检测）。字段对应后端 ToolInstallation。 */
 export interface ToolInstallation {
@@ -311,6 +397,20 @@ export interface ToolInstallation {
   is_path_default: boolean;
 }
 
+/** 卸载对话框里的一处安装：能自动卸载就带 plan，否则给出原因。对应后端 ToolUninstallCandidate。 */
+/** 新版本要求的 Node（`engines.node` 原文）与这处安装用的 Node 版本。 */
+export interface NodeRequirementGap {
+  required: string;
+  current: string;
+}
+
+export interface ToolUninstallCandidate extends ToolInstallation {
+  plan: ToolUninstallPlan | null;
+  unavailable_reason: string | null;
+  /** 工具自己的更新程序会把这份装回来（Grok 的 npm 模式），单独删掉只是暂时的。 */
+  reinstalled_by_updater: boolean;
+}
+
 /** 一次"探测工具安装分布"的结果。字段对应后端 ToolInstallationReport。 */
 export interface ToolInstallationReport {
   tool: string;
@@ -319,6 +419,8 @@ export interface ToolInstallationReport {
   needs_confirmation: boolean;
   command: string;
   anchored: boolean;
+  /** 默认那处是认不出安装渠道的原生可执行文件：不执行升级，command 为空。 */
+  unmanaged: boolean;
 }
 
 export interface RectifierConfig {
@@ -335,6 +437,11 @@ export interface OptimizerConfig {
   cacheInjection: boolean;
 }
 
+export interface PrivacyFilterConfig {
+  enabled: boolean;
+  filterToolResults: boolean;
+}
+
 export interface LogConfig {
   enabled: boolean;
   level: "error" | "warn" | "info" | "debug" | "trace";
@@ -344,6 +451,15 @@ export interface BackupEntry {
   filename: string;
   sizeBytes: number;
   createdAt: string;
+}
+
+export interface BackupLocation {
+  id: string;
+  path: string;
+  sizeBytes: number;
+  itemCount: number;
+  lastModified?: string | null;
+  deletable: boolean;
 }
 
 export const backupsApi = {
@@ -365,5 +481,18 @@ export const backupsApi = {
 
   async deleteDbBackup(filename: string): Promise<void> {
     await invoke("delete_db_backup", { filename });
+  },
+
+  async listBackupLocations(): Promise<BackupLocation[]> {
+    return await invoke("list_backup_locations");
+  },
+
+  /** 删除一类备份，返回释放的字节数 */
+  async deleteBackupLocation(id: string): Promise<number> {
+    return await invoke("delete_backup_location", { id });
+  },
+
+  async revealBackupLocation(id: string): Promise<boolean> {
+    return await invoke("reveal_backup_location", { id });
   },
 };

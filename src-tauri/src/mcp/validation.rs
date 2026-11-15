@@ -50,6 +50,25 @@ pub fn validate_server_spec(spec: &Value) -> Result<(), AppError> {
     Ok(())
 }
 
+/// 写出侧的传输类型（各应用把统一规范投影成原生格式时共用）。
+///
+/// 规范里可能没有 `type`（面板 JSON 模式粘贴 `{"url": …}`、deeplink 都不补），
+/// 此时不能一律当 stdio：那样 url 型服务器会被投影成没有 `url` 的 stdio 条目
+/// （Codex 报 `url is not supported for stdio` 整份 config.toml 加载失败，
+/// Hermes 只剩 `enabled: true` 的空壳）。显式写了 stdio 却只有 `url` 的规范同理。
+pub(crate) fn spec_transport_type(spec: &Value) -> &str {
+    let has = |key: &str| {
+        spec.get(key)
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| !s.trim().is_empty())
+    };
+    let explicit = spec.get("type").and_then(|v| v.as_str());
+    if matches!(explicit, None | Some("stdio")) && !has("command") && has("url") {
+        return "http";
+    }
+    explicit.unwrap_or("stdio")
+}
+
 /// 从 MCP 条目中提取服务器规范
 pub fn extract_server_spec(entry: &Value) -> Result<Value, AppError> {
     let obj = entry

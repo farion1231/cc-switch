@@ -1,0 +1,10 @@
+# CI 用 cargo-nextest 跑后端测试：每个测试一个进程，单个测试卡住时按下面的超时终止，
+# 不会拖到整个 job 超时。本地照常用 `cargo test` 也行。
+
+[profile.default]
+# 每 60 秒报一次“慢”，第 3 个周期（180 秒）还没结束就终止这个测试
+slow-timeout = { period = "60s", terminate-after = 3 }
+
+[profile.ci]
+# 跑完全部测试再汇总失败
+fail-fast = false
