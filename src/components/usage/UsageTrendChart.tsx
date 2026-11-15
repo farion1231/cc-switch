@@ -221,6 +221,8 @@ function cjkThousandUnits(locale: string): Array<[number, string]> | null {
 export function createUsageTrendTokenTickFormatter(
   locale: string,
 ): UsageTrendTokenTickFormatter {
+  // 不支持的语言统一退回英文，避免 Intl 隐式使用系统语言（例如中文单位）。
+  locale = Intl.NumberFormat.supportedLocalesOf(locale)[0] ?? "en-US";
   const compact = new Intl.NumberFormat(locale, {
     notation: "compact",
     compactDisplay: "short",

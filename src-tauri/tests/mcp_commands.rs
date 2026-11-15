@@ -1913,9 +1913,9 @@ fn resync_targets_default_to_managed_apps_and_reject_unsupported() {
             "pi",
             "mcode",
             "kimi",
+            "cline",
             "dsh",
             "agy",
-            "cline",
             "omp",
             "copilot",
             "workbuddy"

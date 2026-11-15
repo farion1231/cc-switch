@@ -25,6 +25,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::provider::Provider;
+use crate::provider_kind::ProviderKind;
 use crate::services::usage_cache::UsageCache;
 use crate::store::AppState;
 
@@ -94,6 +95,8 @@ pub struct TrayTexts {
     pub quit: &'static str,
     /// 有应用在用路由服务时的「退出」：写明后果（客户端指回直连、路由服务停止，下次打开自动接回）。
     pub quit_stops_routing: &'static str,
+    /// 自动更新已下好新版本时的菜单项：`{version}`
+    pub install_update: &'static str,
     pub projects_label: &'static str,
     pub no_project_label: &'static str,
     pub header_direct: &'static str,
@@ -207,6 +210,7 @@ impl TrayTexts {
                 lightweight_mode: "Lightweight mode",
                 quit: "Quit CC Switch",
                 quit_stops_routing: "Quit CC Switch (stops the routing service)",
+                install_update: "Restart to update to v{version}",
                 projects_label: "Projects",
                 no_project_label: "No project",
                 header_direct: "Direct",
@@ -263,6 +267,7 @@ impl TrayTexts {
                 lightweight_mode: "경량 모드",
                 quit: "CC Switch 종료",
                 quit_stops_routing: "CC Switch 종료 (라우팅 서비스 중지)",
+                install_update: "재시작하여 v{version}(으)로 업데이트",
                 projects_label: "프로젝트",
                 no_project_label: "프로젝트 없음",
                 header_direct: "직접 연결",
@@ -317,6 +322,7 @@ impl TrayTexts {
                 lightweight_mode: "Lightweight-Modus",
                 quit: "CC Switch beenden",
                 quit_stops_routing: "CC Switch beenden (Routing-Dienst wird gestoppt)",
+                install_update: "Neu starten und auf v{version} aktualisieren",
                 projects_label: "Projekte",
                 no_project_label: "Kein Projekt",
                 header_direct: "Direkt",
@@ -373,6 +379,7 @@ impl TrayTexts {
                 lightweight_mode: "Облегчённый режим",
                 quit: "Выйти из CC Switch",
                 quit_stops_routing: "Выйти из CC Switch (служба маршрутизации остановится)",
+                install_update: "Перезапустить и обновить до v{version}",
                 projects_label: "Проекты",
                 no_project_label: "Без проекта",
                 header_direct: "Напрямую",
@@ -427,6 +434,7 @@ impl TrayTexts {
                 lightweight_mode: "Hafif mod",
                 quit: "CC Switch'ten çık",
                 quit_stops_routing: "CC Switch'ten çık (yönlendirme hizmeti durur)",
+                install_update: "Yeniden başlat ve v{version} sürümüne güncelle",
                 projects_label: "Projeler",
                 no_project_label: "Proje yok",
                 header_direct: "Doğrudan",
@@ -481,6 +489,7 @@ impl TrayTexts {
                 lightweight_mode: "軽量モード",
                 quit: "CC Switch を終了",
                 quit_stops_routing: "CC Switch を終了（ルーティングサービスが停止します）",
+                install_update: "再起動して v{version} に更新",
                 projects_label: "プロジェクト",
                 no_project_label: "プロジェクトを使用しない",
                 header_direct: "直接接続",
@@ -537,6 +546,7 @@ impl TrayTexts {
                 lightweight_mode: "輕量模式",
                 quit: "退出 CC Switch",
                 quit_stops_routing: "退出 CC Switch（路由服務會停止）",
+                install_update: "重新啟動並更新到 v{version}",
                 projects_label: "專案",
                 no_project_label: "不使用專案",
                 header_direct: "直連",
@@ -591,6 +601,7 @@ impl TrayTexts {
                 lightweight_mode: "轻量模式",
                 quit: "退出 CC Switch",
                 quit_stops_routing: "退出 CC Switch（路由服务会停止）",
+                install_update: "重启并更新到 v{version}",
                 projects_label: "项目",
                 no_project_label: "不使用项目",
                 header_direct: "直连",
@@ -1198,8 +1209,6 @@ fn cached_usage_view(
 
 // ─── 「需要路由」判定（镜像前端 `providerNeedsRouting`）──────────────────────────────
 
-const MANAGED_OAUTH_PROVIDER_TYPES: &[&str] = &["github_copilot", "codex_oauth", "xai_oauth"];
-
 /// 官方账号卡（同前端 `isOfficialAccount`）：Codex 早期绑定托管账号的官方卡没有 category，按身份认。
 fn is_official_account(app: &AppType, provider: &Provider) -> bool {
     provider.category.as_deref() == Some("official")
@@ -1267,9 +1276,7 @@ pub(crate) fn provider_needs_routing(app: &AppType, provider: &Provider) -> bool
         return false;
     }
     let meta = provider.meta.as_ref();
-    let managed_oauth = meta
-        .and_then(|meta| meta.provider_type.as_deref())
-        .is_some_and(|kind| MANAGED_OAUTH_PROVIDER_TYPES.contains(&kind));
+    let managed_oauth = ProviderKind::declared(provider).is_some();
     let full_url = meta.and_then(|meta| meta.is_full_url) == Some(true);
     let api_format = meta
         .and_then(|meta| meta.api_format.as_deref())
@@ -1785,6 +1792,8 @@ struct MenuStatus {
     problems: Vec<TrayProblem>,
     feedback: Option<TrayFeedback>,
     routing_in_use: bool,
+    /// 自动更新已下好、待安装的版本。
+    update_ready: Option<String>,
 }
 
 // ─── 菜单模型（纯数据）────────────────────────────────────────────────────────
@@ -1871,6 +1880,9 @@ fn problem_text(texts: &TrayTexts, problem: &TrayProblem) -> String {
         ),
     }
 }
+
+/// 托盘 / 面板里「重启并更新」的事件 id。
+const INSTALL_UPDATE_ID: &str = "app_update:install";
 
 fn problem_id(problem: &TrayProblem) -> String {
     match problem {
@@ -2158,6 +2170,12 @@ fn build_menu_model(
 
     // 窗口找不回来时托盘是唯一入口，「打开 CC Switch」一直放在最上面。
     menu.push(TrayEntry::item("show_main", texts.show_main));
+    if let Some(version) = &status.update_ready {
+        menu.push(TrayEntry::item(
+            INSTALL_UPDATE_ID,
+            fill(texts.install_update, &[("version", version)]),
+        ));
+    }
     menu.push(TrayEntry::Separator);
 
     if !apps.is_empty() {
@@ -2236,6 +2254,7 @@ fn collect_status(
         problems,
         feedback: current_feedback(),
         routing_in_use: routing_in_use(app_state),
+        update_ready: crate::app_update::ready().map(|ready| ready.version),
     };
     Ok((snapshots, status))
 }
@@ -2254,9 +2273,8 @@ fn collect_model(app_state: &AppState, texts: &TrayTexts) -> Result<TrayModel, A
 
 /// 退出会让它们断开的情况：路由服务在跑，且有应用在路由 / 聚合模式（含 Claude Desktop；和
 /// `controller::stop_server_if_unused` 的「在用」同一口径，隐藏的应用也算）。
-fn routing_in_use(app_state: &AppState) -> bool {
-    app_state.proxy_service.running_now() == Some(true)
-        && crate::mode::current::proxy_flags(crate::mode::controller::PROXY_APPS).contains(&true)
+pub(crate) fn routing_in_use(app_state: &AppState) -> bool {
+    app_state.proxy_service.running_now() == Some(true) && crate::mode::current::any_proxy()
 }
 
 // ─── 模型 → 托盘面板 ───────────────────────────────────────────────────────────
@@ -2266,6 +2284,8 @@ fn routing_in_use(app_state: &AppState) -> bool {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PanelModel {
+    /// 自动更新已下好新版本：点了重启安装。
+    pub update: Option<PanelLink>,
     pub problems: Vec<PanelLink>,
     pub feedback: Option<String>,
     pub apps: Vec<PanelApp>,
@@ -2541,6 +2561,10 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
     }
 
     Ok(PanelModel {
+        update: status.update_ready.as_ref().map(|version| PanelLink {
+            id: INSTALL_UPDATE_ID.to_string(),
+            text: fill(texts.install_update, &[("version", version)]),
+        }),
         problems: status
             .problems
             .iter()
@@ -3322,6 +3346,26 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
 
     match event_id {
         "show_main" => show_main_window(app),
+        INSTALL_UPDATE_ID => {
+            // 弹窗或关于页已经在装了：这次点击什么都不做
+            if crate::app_update::is_installing() {
+                return;
+            }
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = crate::commands::install_update_and_restart(app.clone()).await {
+                    log::error!("托盘安装更新失败: {e}");
+                    // 失败原因只有主界面能说清：打开关于页，用户在那里重试会看到报错
+                    navigate(
+                        &app,
+                        TrayNavigation {
+                            section: Some("about".to_string()),
+                            ..Default::default()
+                        },
+                    );
+                }
+            });
+        }
         "open_website" => {
             if let Err(e) = app.opener().open_url("https://ccswitch.io", None::<String>) {
                 log::error!("打开官方网站失败: {e}");
@@ -3628,7 +3672,7 @@ mod tests {
             ]
         );
         for app in TRAY_APPS {
-            assert!(!app.is_additive_mode(), "{app:?} 是累加式应用，不进托盘");
+            assert!(!app.spec().additive, "{app:?} 是累加式应用，不进托盘");
         }
     }
 
@@ -4581,6 +4625,27 @@ mod tests {
         entries.iter().map(text_of).collect()
     }
 
+    #[test]
+    fn downloaded_update_adds_install_item_right_below_open_main() {
+        let status = MenuStatus {
+            update_ready: Some("4.1.0".to_string()),
+            ..Default::default()
+        };
+        let entries = build_menu_model(&zh(), &status, &[], false, now());
+        let texts = texts_of(&entries);
+        assert_eq!(texts[0], "打开 CC Switch");
+        assert_eq!(texts[1], "重启并更新到 v4.1.0");
+        assert!(matches!(
+            &entries[1],
+            TrayEntry::Item { id, .. } if id == INSTALL_UPDATE_ID
+        ));
+
+        let without = build_menu_model(&zh(), &MenuStatus::default(), &[], false, now());
+        assert!(!without
+            .iter()
+            .any(|entry| matches!(entry, TrayEntry::Item { id, .. } if id == INSTALL_UPDATE_ID)));
+    }
+
     fn children_of(menu: &[TrayEntry], app: &AppType) -> Vec<TrayEntry> {
         menu.iter()
             .find_map(|entry| match entry {
@@ -5098,6 +5163,7 @@ mod tests {
                 name: "DeepSeek".to_string(),
             }),
             routing_in_use: false,
+            update_ready: None,
         };
         let menu = build_menu_model(&zh(), &status, &[], false, now());
         assert_eq!(

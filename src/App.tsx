@@ -83,6 +83,7 @@ import {
 } from "@/lib/navigation";
 import { Sidebar } from "@/components/shell/Sidebar";
 import { useUpdate } from "@/contexts/UpdateContext";
+import { AutoUpdatePrompt } from "@/components/AutoUpdatePrompt";
 import { NewLayoutDialog } from "@/components/shell/NewLayoutDialog";
 import {
   AppPageHeader,
@@ -113,7 +114,6 @@ import { EnvWarningBanner } from "@/components/env/EnvWarningBanner";
 import { SwitchModePanel } from "@/components/providers/mode/SwitchModePanel";
 import { proxyApi } from "@/lib/api/proxy";
 import type { AppMode, StartupAttachFailure } from "@/types/proxy";
-import { PROMPT_APP_IDS } from "@/lib/query/prompts";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
 import { WhatsNewNotice } from "@/components/WhatsNewDialog";
@@ -135,18 +135,17 @@ import {
 } from "@/lib/query/omo";
 import { invalidatePiProviderCaches, usePiCurrentState } from "@/lib/query/pi";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
-import {
-  APP_IDS,
-  DEFAULT_VISIBLE_APPS,
-  isModeAppId,
-  isPiFamilyApp,
-  orderAppIds,
-} from "@/config/appConfig";
-import type { PiFamilyAppId } from "@/lib/api/pi";
 import { isClineCustomConfig } from "@/config/clineProviderPresets";
+import { DEFAULT_VISIBLE_APPS, orderAppIds } from "@/config/appConfig";
 import { EditProviderHost } from "@/components/providers/EditProviderHost";
 import { preloadOnIdle } from "@/lib/preloadOnIdle";
 import { useCreateEditProviderStore } from "@/components/providers/editProviderStore";
+import {
+  APP_IDS,
+  APP_IDS_WITH,
+  type AppIdWith,
+  appHas,
+} from "@/config/appSpecs";
 
 // Keep the provider page and event listeners ready at startup. Editors, charts
 // and secondary pages are loaded when the user first opens them.
@@ -247,7 +246,7 @@ function App() {
   const [openclawConfigTab, setOpenclawConfigTab] =
     useState<OpenClawConfigTab>("env");
   const [promptsApp, setPromptsApp] = useState<AppId>(() =>
-    PROMPT_APP_IDS.includes(sharedFeatureApp) ? sharedFeatureApp : "claude",
+    appHas(sharedFeatureApp, "prompts") ? sharedFeatureApp : "claude",
   );
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [hasOpenedAdd, setHasOpenedAdd] = useState(false);
@@ -391,7 +390,7 @@ function App() {
   }, [activeApp, currentView]);
 
   const { isRunning: isProxyRunning, takeoverStatus } = useProxyStatus();
-  const modeAppId = isModeAppId(activeApp) ? activeApp : null;
+  const modeAppId = appHas(activeApp, "routeMode") ? activeApp : null;
   // 换了应用、新面板还没报上来时为 undefined：表单按应用实际生效的模式
   const currentModeView =
     providerModeView?.app === activeApp ? providerModeView.view : undefined;
@@ -426,7 +425,7 @@ function App() {
   );
   const handleEnablePiProvider = async (
     provider: Provider,
-    app: PiFamilyAppId,
+    app: AppIdWith<"piFamily">,
   ) => {
     try {
       await providersApi.switch(provider.id, app);
@@ -993,7 +992,7 @@ function App() {
     if (page === "prompts" && currentViewRef.current !== "prompts") {
       // 提示词页默认选中侧栏里最后选的那个应用
       setPromptsApp(
-        PROMPT_APP_IDS.includes(sharedFeatureApp) ? sharedFeatureApp : "claude",
+        appHas(sharedFeatureApp, "prompts") ? sharedFeatureApp : "claude",
       );
     }
     setCurrentView(page);
@@ -1117,7 +1116,7 @@ function App() {
 
   // 累加式应用的「已添加」和「默认」都现读客户端文件，移除前后重读一遍
   const refreshAdditiveLiveState = async (app: AppId) => {
-    if (isPiFamilyApp(app)) {
+    if (appHas(app, "piFamily")) {
       await invalidatePiProviderCaches(queryClient, app);
     } else if (app === "opencode") {
       await Promise.all([
@@ -1166,7 +1165,7 @@ function App() {
       } catch (error) {
         const detail = extractErrorMessage(error);
         const description =
-          (isPiFamilyApp(activeApp)
+          (appHas(activeApp, "piFamily")
             ? translatePiProviderMutationError(detail, t)
             : activeApp === "kimi"
               ? translateKimiProviderMutationError(detail, t)
@@ -1181,7 +1180,7 @@ function App() {
       }
       await refreshAdditiveLiveState(activeApp);
       toast.success(
-        isPiFamilyApp(activeApp)
+        appHas(activeApp, "piFamily")
           ? t(`${activeApp}.provider.removed`, {
               defaultValue: "已从 Pi 移除",
             })
@@ -1728,7 +1727,7 @@ function App() {
             appId={activeApp}
             isLoading={isLoading}
             onSwitch={(provider) =>
-              void (isPiFamilyApp(activeApp)
+              void (appHas(activeApp, "piFamily")
                 ? handleEnablePiProvider(provider, activeApp)
                 : activeApp === "kimi" ||
                     activeApp === "cline" ||
@@ -1737,17 +1736,7 @@ function App() {
                   : switchProvider(provider))
             }
             onRemoveFromConfig={
-              activeApp === "opencode" ||
-              activeApp === "openclaw" ||
-              activeApp === "hermes" ||
-              activeApp === "pi" ||
-              activeApp === "mcode" ||
-              activeApp === "kimi" ||
-              activeApp === "cline" ||
-              activeApp === "dsh" ||
-              activeApp === "omp" ||
-              activeApp === "copilot" ||
-              activeApp === "workbuddy"
+              appHas(activeApp, "additive")
                 ? (provider) => setConfirmAction({ provider, action: "remove" })
                 : undefined
             }
@@ -1901,7 +1890,7 @@ function App() {
           <div id="main-content" className="flex min-h-0 flex-1 flex-col">
             <PromptPanel
               appId={promptsApp}
-              apps={PROMPT_APP_IDS.filter(
+              apps={APP_IDS_WITH.prompts.filter(
                 (app) =>
                   visibleApps[app] ||
                   (app === "claude" && visibleApps["claude-desktop"]) ||
@@ -2006,6 +1995,7 @@ function App() {
           >
             <Suspense fallback={<PageLoading />}>{renderContent()}</Suspense>
           </div>
+          <AutoUpdatePrompt />
         </main>
       </div>
 
