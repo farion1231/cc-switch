@@ -62,7 +62,10 @@ pub fn write_home_file(rel: &str, content: &str) -> PathBuf {
     path
 }
 
+/// 读之前先删完切换给开着的 Claude Code 会话写的空值墓碑（它们几秒后才删），读到的是
+/// 落定的文件。
 pub fn read_home_file(rel: &str) -> String {
+    cc_switch_lib::settle_claude_tombstones().expect("settle claude tombstones");
     std::fs::read_to_string(home().join(rel)).unwrap_or_else(|e| panic!("read {rel}: {e}"))
 }
 
