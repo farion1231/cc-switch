@@ -64,7 +64,7 @@ fn models_of(document: &Value, account: &str) -> IndexMap<String, Value> {
 
 pub(crate) fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
     let document = read(&config_path())?;
-    Ok(document
+    let mut providers: IndexMap<String, Value> = document
         .get("provider_accounts")
         .and_then(Value::as_object)
         .into_iter()
@@ -73,7 +73,62 @@ pub(crate) fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
             let models = models_of(&document, id);
             (id.clone(), json!({"account": account, "models": models}))
         })
-        .collect())
+        .collect();
+    // 兼容读取：官方配置参考的 legacy `[providers.*]` 格式（AtomCode 启动时会在
+    // 原位迁移，但迁移前 CC Switch 导入会拿到 0 个账号）。只读投影，不写盘；
+    // 新 schema 里已存在的账号 id 优先，legacy 同名条目跳过（不改现有行为）。
+    if let Some(legacy) = document.get("providers").and_then(Value::as_object) {
+        for (name, entry) in legacy {
+            if providers.contains_key(name) {
+                continue;
+            }
+            if let Some(projected) = project_legacy_provider(name, entry) {
+                providers.insert(name.clone(), projected);
+            }
+        }
+    }
+    Ok(providers)
+}
+
+/// legacy `[providers.<name>]` → 新 schema 形状的只读投影。
+/// 官方文档：`type` 仅 openai / claude / ollama，`model` 必填；
+/// 模型键沿用 provider 名，使 legacy `default_provider` 能按同一规则反查。
+fn project_legacy_provider(name: &str, entry: &Value) -> Option<Value> {
+    let legacy_type = entry.get("type").and_then(Value::as_str)?;
+    let model = entry.get("model").and_then(Value::as_str)?;
+    if model.trim().is_empty() {
+        return None;
+    }
+    let provider = match legacy_type {
+        "claude" => "anthropic",
+        "ollama" => "ollama",
+        // 带 base_url 的 openai 协议走通用 chat 协议；不带则用 openai 厂商预设
+        "openai" => {
+            if entry
+                .get("base_url")
+                .and_then(Value::as_str)
+                .is_some_and(|url| !url.trim().is_empty())
+            {
+                "openai-compatible"
+            } else {
+                "openai"
+            }
+        }
+        _ => return None,
+    };
+    let mut account = json!({"provider": provider});
+    for field in ["base_url", "api_key"] {
+        if let Some(value) = entry.get(field).and_then(Value::as_str) {
+            if !value.trim().is_empty() {
+                account[field] = json!(value);
+            }
+        }
+    }
+    let mut model_entry = json!({"account": name, "model": model});
+    if let Some(size) = entry.get("context_window").and_then(Value::as_i64) {
+        model_entry["context_window"] = json!(size);
+    }
+    Some(json!({"account": account, "models": {name: model_entry}}))
 }
 
 /// 获取 AtomCode 当前选中的账号 ID（如果有的话）。
@@ -110,6 +165,15 @@ pub(crate) fn current_provider() -> Result<String, AppError> {
         .and_then(|models| models.get(default_model_key))
         .and_then(|model| model.get("account"))
         .and_then(Value::as_str)
+        // legacy `[providers.*]` 配置没有 models 表，`default_provider` 直接
+        // 命名 provider 名；与 get_providers 的投影 id（provider 名）一致。
+        .or_else(|| {
+            document
+                .get("providers")
+                .and_then(Value::as_object)
+                .filter(|providers| providers.contains_key(default_model_key))
+                .map(|_| default_model_key)
+        })
         .unwrap_or_default();
 
     Ok(account_id.to_string())
@@ -676,6 +740,100 @@ context_window = 262144
                 std::env::remove_var("ATOMCODE_HOME");
             }
         }
+    }
+
+    #[test]
+    #[serial]
+    fn legacy_providers_are_projected_readonly_and_new_schema_wins() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let _home = AtomcodeHomeGuard::set(dir.path());
+        // 官方配置参考的 legacy 格式：[providers.*] + default_provider
+        fs::write(
+            &path,
+            r#"
+default_provider = "deepseek"
+
+[providers.deepseek]
+type = "openai"
+api_key = "sk-xxx"
+model = "deepseek-chat"
+base_url = "https://api.deepseek.com/v1"
+context_window = 64000
+
+[providers.claude]
+type = "claude"
+api_key = "sk-ant-..."
+model = "claude-sonnet-4-6"
+
+[providers.local]
+type = "ollama"
+model = "llama3.2"
+base_url = "http://localhost:11434"
+context_window = 8000
+
+[providers.acct]
+type = "openai"
+model = "gpt-4o"
+
+[provider_accounts.acct]
+provider = "openai"
+api_key = "sk-new"
+
+[models."acct/new"]
+account = "acct"
+model = "gpt-5"
+"#,
+        )
+        .unwrap();
+        let providers = get_providers().unwrap();
+        // 三种协议都投影出来
+        let ds = &providers["deepseek"];
+        assert_eq!(ds["account"]["provider"], json!("openai-compatible"));
+        assert_eq!(ds["account"]["base_url"], json!("https://api.deepseek.com/v1"));
+        assert_eq!(ds["account"]["api_key"], json!("sk-xxx"));
+        assert_eq!(ds["models"]["deepseek"]["model"], json!("deepseek-chat"));
+        assert_eq!(ds["models"]["deepseek"]["account"], json!("deepseek"));
+        assert_eq!(ds["models"]["deepseek"]["context_window"], json!(64000));
+        assert_eq!(providers["claude"]["account"]["provider"], json!("anthropic"));
+        assert_eq!(providers["local"]["account"]["provider"], json!("ollama"));
+        // 无 base_url 的 openai 用 openai 厂商预设
+        assert_eq!(providers["claude"]["account"].get("base_url"), None);
+        // 新 schema 已存在的账号 id 优先，legacy 同名条目不投影、原账号不被覆盖
+        assert_eq!(providers["acct"]["account"]["api_key"], json!("sk-new"));
+        assert_eq!(providers["acct"]["models"]["acct/new"]["model"], json!("gpt-5"));
+        // legacy 选择也能解析到账号（投影 id = provider 名）
+        assert_eq!(current_provider().unwrap(), "deepseek");
+
+        // 新 schema 的选择仍优先：default_model 命中新账号
+        fs::write(
+            &path,
+            r#"
+default_model = "acct/new"
+default_provider = "deepseek"
+[providers.deepseek]
+type = "openai"
+model = "deepseek-chat"
+[provider_accounts.acct]
+provider = "openai"
+[models."acct/new"]
+account = "acct"
+model = "gpt-5"
+"#,
+        )
+        .unwrap();
+        assert_eq!(current_provider().unwrap(), "acct");
+        // 未投影的 legacy 条目不该出现在导入结果里（无法识别的 type）
+        fs::write(
+            &path,
+            r#"
+[providers.odd]
+type = "gemini"
+model = "m"
+"#,
+        )
+        .unwrap();
+        assert!(get_providers().unwrap().is_empty());
     }
 
     #[test]

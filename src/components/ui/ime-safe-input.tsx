@@ -6,6 +6,12 @@ export interface ImeSafeInputProps
   value: string;
   onValueChange: (value: string) => void;
   normalize?: (value: string) => string;
+  /**
+   * 默认 false：失焦把 draft 对齐回父级 value（父级可能把提交值规范化成
+   * 同一个 prop，如 JSON 重排）。为 true 时不回滚——用于父级会拒绝提交
+   * （如改键重名）且需要保留用户输入的场景。
+   */
+  keepDraftOnBlur?: boolean;
 }
 
 /**
@@ -18,6 +24,7 @@ const ImeSafeInput = React.forwardRef<HTMLInputElement, ImeSafeInputProps>(
       value,
       onValueChange,
       normalize,
+      keepDraftOnBlur = false,
       onBlur,
       onCompositionStart,
       onCompositionEnd,
@@ -77,7 +84,9 @@ const ImeSafeInput = React.forwardRef<HTMLInputElement, ImeSafeInputProps>(
             // observe a dependency change, so blur is the idle reconciliation
             // point for both the visible draft and duplicate-event baseline.
             externalValueRef.current = value;
-            setDraft(value);
+            if (!keepDraftOnBlur) {
+              setDraft(value);
+            }
           }
           onBlur?.(event);
         }}

@@ -73,6 +73,49 @@ describe("AtomCodeProviderForm", () => {
     expect(keyInput).toHaveValue("renamed");
   });
 
+  it("keeps the typed key in the input when renaming to a duplicate and flags the row", () => {
+    setProviders("atomcode", {});
+    render(
+      <AtomCodeProviderForm
+        appId="atomcode"
+        providerId="existing"
+        initialData={initialData}
+        submitLabel="Save"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    const keyInputs = screen.getAllByLabelText("atomcode.form.modelKey");
+    fireEvent.change(keyInputs[1], { target: { value: "m1" } });
+    expect(screen.getByText("atomcode.form.modelKeyDuplicate")).toBeTruthy();
+    // 失焦不静默回滚：用户输入保留在框里，红框标在冲突行
+    fireEvent.blur(keyInputs[1]);
+    expect(screen.getAllByLabelText("atomcode.form.modelKey")[1]).toHaveValue(
+      "m1",
+    );
+    expect(keyInputs[1].className).toContain("border-destructive");
+  });
+
+  it("normalizes invalid model key characters on input instead of on blur", () => {
+    setProviders("atomcode", {});
+    render(
+      <AtomCodeProviderForm
+        appId="atomcode"
+        providerId="existing"
+        initialData={initialData}
+        submitLabel="Save"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    const keyInput = screen.getAllByLabelText("atomcode.form.modelKey")[0];
+    fireEvent.change(keyInput, { target: { value: "m1 中文" } });
+    // normalize 在输入时生效，draft 与父级一致，失焦不再吞掉非法字符
+    expect(keyInput).toHaveValue("m1");
+    fireEvent.blur(keyInput);
+    expect(keyInput).toHaveValue("m1");
+  });
+
   it("rejects renaming a model key to an existing key without overwriting it", async () => {
     setProviders("atomcode", {});
     const submit = vi.fn();

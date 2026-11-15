@@ -114,6 +114,8 @@ export function AtomCodeProviderForm({
     ),
   );
   const [keyConflict, setKeyConflict] = useState(false);
+  // 冲突所在行（旧键）：把红框绑到具体输入框，输入不静默回滚
+  const [conflictKey, setConflictKey] = useState<string | undefined>(undefined);
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const syncRowIds = (models: AtomCodeConfig["models"]) =>
@@ -175,6 +177,7 @@ export function AtomCodeProviderForm({
     setJsonText(text ?? JSON.stringify(next, null, 2));
     setJsonValid(true);
     setKeyConflict(false); // Clear conflict warning when config changes
+    setConflictKey(undefined);
   };
   const updateAccount = (next: Partial<AtomCodeConfig["account"]>) =>
     update({
@@ -226,11 +229,13 @@ export function AtomCodeProviderForm({
       renamedKey !== undefined &&
       Object.prototype.hasOwnProperty.call(config.models, renamedKey)
     ) {
-      // 改键重名：提示且不覆盖既有键
+      // 改键重名：提示且不覆盖既有键；保留该行输入框的当前 draft，不静默回滚
       setKeyConflict(true);
+      setConflictKey(oldKey);
       return;
     }
     setKeyConflict(false);
+    setConflictKey(undefined);
     if (renamedKey !== undefined) {
       // 改键时行 id 跟着键走，行不重建
       setRowIds((prev) => {
@@ -554,11 +559,12 @@ export function AtomCodeProviderForm({
                     <ImeSafeInput
                       aria-label={t("atomcode.form.modelKey")}
                       value={key}
-                      onValueChange={(next) =>
-                        updateModel(key, { key: normalizeKey(next) })
-                      }
+                      onValueChange={(next) => updateModel(key, { key: next })}
+                      normalize={normalizeKey}
+                      keepDraftOnBlur
                       placeholder={t("atomcode.form.modelKeyPlaceholder")}
                       autoComplete="off"
+                      className={conflictKey === key ? "border-destructive" : ""}
                     />
                   </div>
                   <div className="w-36 shrink-0">
@@ -605,6 +611,7 @@ export function AtomCodeProviderForm({
                   syncRowIds((next as unknown as AtomCodeConfig).models ?? {});
                   setJsonValid(true);
                   setKeyConflict(false); // JSON 路径解决冲突后同样要清掉提示
+                  setConflictKey(undefined);
                 } catch {
                   setJsonValid(false);
                 }

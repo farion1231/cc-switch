@@ -122,13 +122,14 @@ CREATE TABLE providers (
 
 1. **Import from Legacy Config**: Users who configured AtomCode with only the
    legacy format (top-level `default_provider` naming a `[providers.*]` table,
-   as in the official configuration reference) will get zero imports — the
-   import path only reads the new schema (`[provider_accounts.*]` +
-   `[models.*]`). AtomCode itself migrates legacy entries to the new schema in
-   place (`crates/atomcode-config/src/config/mod.rs:1459`, design §5 rule 5/6);
-   until CC Switch reuses that projection, such users should first run
-   AtomCode's own `/provider` flow (or any AtomCode start) so the config is
-   migrated, then import.
+   as in the official configuration reference) now get a **read-only
+   projection** on import (`atomcode_config.rs::project_legacy_provider`):
+   each `[providers.<name>]` entry (`type` = openai / claude / ollama, `model`
+   required) is projected as an account + one model keyed by the provider
+   name, so legacy `default_provider` resolves through the same rule. New
+   schema entries win: ids already present in `[provider_accounts.*]` are
+   never overwritten, and nothing is written back to config.toml (AtomCode
+   itself migrates legacy entries in place, `config/mod.rs:1459`).
 
 2. **Version Compatibility**: Verified against AtomCode source at v5.2.7
    (`0c0512143`, 2026-11-13). Future versions may introduce breaking changes to
@@ -154,6 +155,9 @@ pnpm test:unit atomcode
 ## Future Improvements
 
 1. ~~Document the exact AtomCode version/commit this integration targets~~ — done: v5.2.7 (`0c0512143`), see *Supported AtomCode Version*.
-2. ~~Add support for official `[providers.*]` format import~~ — narrowed: legacy configs are migrated in place by AtomCode itself (`config/mod.rs:1459`); CC Switch import stays new-schema-only and points legacy users to AtomCode's own migration (see Known Limitations 1).
+2. ~~Add support for official `[providers.*]` format import~~ — done as a
+   read-only projection on import (see Known Limitations 1); writes stay
+   new-schema-only and AtomCode's own in-place migration remains the upgrade
+   path.
 3. Improve OAuth account detection and display
 4. Add config validation against AtomCode's schema
