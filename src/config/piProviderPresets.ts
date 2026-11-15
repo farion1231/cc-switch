@@ -279,6 +279,21 @@ const miniMaxModels = (): PiPresetModel[] => [
   }),
 ];
 
+// Named after the lineup, not a provider: presets that sell the same models
+// share the list. A provider that diverges gets its own list instead of
+// editing these.
+const claude55Models = (): PiPresetModel[] => [
+  piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+  piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+  piModel("anthropic/claude-haiku-5.5", { id: "claude-haiku-5-5" }),
+];
+
+const gpt6Models = (): PiPresetModel[] => [
+  piModel("openai/gpt-6.1-sol", { id: "gpt-6.1-sol" }),
+  piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
+  piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
+];
+
 /**
  * Pi-native provider catalog.
  *
@@ -2546,11 +2561,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       baseUrl: "https://YOUR_RESOURCE_NAME.services.ai.azure.com/anthropic",
       api: "anthropic-messages",
       apiKey: "",
-      models: [
-        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
-        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
-        piModel("anthropic/claude-haiku-5.5", { id: "claude-haiku-5-5" }),
-      ],
+      models: claude55Models(),
     },
     category: "cloud_provider",
     icon: "azure",
@@ -2566,11 +2577,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       baseUrl: "https://cc-api.pipellm.ai",
       api: "anthropic-messages",
       apiKey: "",
-      models: [
-        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
-        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
-        piModel("anthropic/claude-haiku-5.5", { id: "claude-haiku-5-5" }),
-      ],
+      models: claude55Models(),
     },
     category: "aggregator",
     icon: "pipellm",
@@ -2585,11 +2592,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       baseUrl: "https://api.aicodewith.ai/v1",
       api: "openai-responses",
       apiKey: "",
-      models: [
-        piModel("openai/gpt-6.1-sol", { id: "gpt-6.1-sol" }),
-        piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
-        piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
-      ],
+      models: gpt6Models(),
     },
     category: "aggregator",
     icon: "aicodewith",
@@ -2605,11 +2608,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       baseUrl: "https://e-flowcode.cc/v1",
       api: "openai-responses",
       apiKey: "",
-      models: [
-        piModel("openai/gpt-6.1-sol", { id: "gpt-6.1-sol" }),
-        piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
-        piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
-      ],
+      models: gpt6Models(),
     },
     category: "third_party",
     icon: "eflowcode",
