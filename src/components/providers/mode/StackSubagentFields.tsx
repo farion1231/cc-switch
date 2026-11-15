@@ -206,7 +206,8 @@ export function StackSubagentFields({
           body: t("settings.codexStackClassicSubagentsDescription"),
         }}
         description={
-          forcesMultiAgentV2 ? (
+          // 开关刚关掉的那一帧，effect 还没把检测结果清掉；按当前开关判断，不闪旧提示
+          classic && forcesMultiAgentV2 ? (
             <span className="text-warning-text">
               {t("settings.codexStackClassicSubagentsForcedV2")}
             </span>

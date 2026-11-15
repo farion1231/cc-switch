@@ -100,19 +100,19 @@ pub(crate) fn read_pi_native_defaults() -> Result<PiNativeDefaults, AppError> {
 }
 
 pub(crate) fn read_pi_native_providers() -> Result<IndexMap<String, Value>, AppError> {
-    let _guard = lock_models_file()?;
+    let _guard = lock_models_file();
     read_pi_native_providers_locked(&get_pi_models_path()?)
 }
 
 pub(crate) fn read_pi_native_provider(provider_key: &str) -> Result<Option<Value>, AppError> {
-    let _guard = lock_models_file()?;
+    let _guard = lock_models_file();
     let path = get_pi_models_path()?;
     let document = read_models_document(&path)?;
     Ok(providers(&document, &path)?.get(provider_key).cloned())
 }
 
 pub(crate) fn pi_provider_exists(provider_key: &str) -> Result<bool, AppError> {
-    let _guard = lock_models_file()?;
+    let _guard = lock_models_file();
     let path = get_pi_models_path()?;
     let document = read_models_document(&path)?;
     Ok(providers(&document, &path)?.contains_key(provider_key))
@@ -120,7 +120,7 @@ pub(crate) fn pi_provider_exists(provider_key: &str) -> Result<bool, AppError> {
 
 pub(crate) fn insert_pi_provider(provider_key: &str, config: &Value) -> Result<bool, AppError> {
     validate_provider_node(provider_key, config)?;
-    let _guard = lock_models_file()?;
+    let _guard = lock_models_file();
     let path = get_pi_models_path()?;
     let (mut document, expected_revision) = read_models_document_with_revision(&path)?;
     let providers = providers_mut(&mut document, &path)?;
@@ -146,7 +146,7 @@ pub(crate) fn replace_pi_provider(
     replacement: &Value,
 ) -> Result<(), AppError> {
     validate_provider_node(provider_key, replacement)?;
-    let _guard = lock_models_file()?;
+    let _guard = lock_models_file();
     let path = get_pi_models_path()?;
     let (mut document, expected_revision) = read_models_document_with_revision(&path)?;
     let providers = providers_mut(&mut document, &path)?;
@@ -172,7 +172,7 @@ pub(crate) fn replace_pi_provider_if_present(
     replacement: &Value,
 ) -> Result<Option<Value>, AppError> {
     validate_provider_node(provider_key, replacement)?;
-    let _guard = lock_models_file()?;
+    let _guard = lock_models_file();
     let path = get_pi_models_path()?;
     let (mut document, expected_revision) = read_models_document_with_revision(&path)?;
     let providers = providers_mut(&mut document, &path)?;
@@ -202,7 +202,7 @@ fn remove_pi_provider_inner(
     provider_key: &str,
     expected: Option<&Value>,
 ) -> Result<Option<Value>, AppError> {
-    let _guard = lock_models_file()?;
+    let _guard = lock_models_file();
     let path = get_pi_models_path()?;
     let (mut document, expected_revision) = read_models_document_with_revision(&path)?;
     let providers = providers_mut(&mut document, &path)?;
@@ -223,7 +223,7 @@ pub(crate) fn restore_pi_provider_if_missing(
     provider_key: &str,
     config: &Value,
 ) -> Result<(), AppError> {
-    let _guard = lock_models_file()?;
+    let _guard = lock_models_file();
     let path = get_pi_models_path()?;
     let (mut document, expected_revision) = read_models_document_with_revision(&path)?;
     let providers = providers_mut(&mut document, &path)?;
@@ -276,10 +276,75 @@ pub(crate) fn provider_base_url(config: &Value) -> Result<String, AppError> {
         .ok_or_else(|| AppError::InvalidInput("Pi provider has no request URL".to_string()))
 }
 
-fn lock_models_file() -> Result<MutexGuard<'static, ()>, AppError> {
-    MODELS_FILE_LOCK
-        .lock()
-        .map_err(|error| AppError::Config(format!("Pi models file lock is poisoned: {error}")))
+/// The key CC Switch's own usage queries should send for a Pi `apiKey` value.
+///
+/// Pi resolves `$NAME` / `${NAME}` from the environment (`$$` and `$!` are literal
+/// `$` and `!`) and runs values starting with `!` as shell commands. Usage queries
+/// follow the same environment rules so a reference is never sent as the key
+/// itself. Commands are not run here, and a referenced variable that is unset or
+/// empty makes the whole value unresolved, as in Pi; both give an empty key.
+pub(crate) fn resolve_usage_api_key(value: &str) -> String {
+    resolve_usage_api_key_with(value, |name| std::env::var(name).ok())
+}
+
+fn resolve_usage_api_key_with(value: &str, env: impl Fn(&str) -> Option<String>) -> String {
+    if value.starts_with('!') {
+        return String::new();
+    }
+    let is_name_start = |ch: char| ch == '_' || ch.is_ascii_alphabetic();
+    let is_name_char = |ch: char| ch == '_' || ch.is_ascii_alphanumeric();
+    let lookup = |name: &str| env(name).filter(|value| !value.is_empty());
+
+    let mut resolved = String::new();
+    let mut rest = value;
+    while let Some(dollar) = rest.find('$') {
+        resolved.push_str(&rest[..dollar]);
+        let after = &rest[dollar + 1..];
+        match after.chars().next() {
+            Some(ch @ ('$' | '!')) => {
+                resolved.push(ch);
+                rest = &after[1..];
+            }
+            Some('{') => match after.find('}') {
+                Some(end) => {
+                    let name = &after[1..end];
+                    let valid = name.starts_with(is_name_start) && name.chars().all(is_name_char);
+                    if valid {
+                        match lookup(name) {
+                            Some(found) => resolved.push_str(&found),
+                            None => return String::new(),
+                        }
+                    } else {
+                        resolved.push('$');
+                        resolved.push_str(&after[..=end]);
+                    }
+                    rest = &after[end + 1..];
+                }
+                None => {
+                    resolved.push('$');
+                    rest = after;
+                }
+            },
+            Some(ch) if is_name_start(ch) => {
+                let len = after.find(|ch| !is_name_char(ch)).unwrap_or(after.len());
+                match lookup(&after[..len]) {
+                    Some(found) => resolved.push_str(&found),
+                    None => return String::new(),
+                }
+                rest = &after[len..];
+            }
+            _ => {
+                resolved.push('$');
+                rest = after;
+            }
+        }
+    }
+    resolved.push_str(rest);
+    resolved
+}
+
+fn lock_models_file() -> MutexGuard<'static, ()> {
+    crate::sync_utils::lock_file_operation(&MODELS_FILE_LOCK)
 }
 
 fn read_pi_native_providers_locked(path: &Path) -> Result<IndexMap<String, Value>, AppError> {
@@ -526,6 +591,31 @@ mod tests {
             "apiKey": "secret",
             "models": [{"id": "example-model"}]
         })
+    }
+
+    #[test]
+    fn usage_api_key_resolves_pi_environment_references() {
+        let env = |name: &str| match name {
+            "KEY" => Some("sk-env".to_string()),
+            "PART" => Some("abc".to_string()),
+            "EMPTY" => Some(String::new()),
+            _ => None,
+        };
+        let resolve = |value: &str| resolve_usage_api_key_with(value, env);
+
+        assert_eq!(resolve("sk-literal"), "sk-literal");
+        assert_eq!(resolve("$KEY"), "sk-env");
+        assert_eq!(resolve("${KEY}"), "sk-env");
+        assert_eq!(resolve("pre-${PART}-$PART.x"), "pre-abc-abc.x");
+        assert_eq!(resolve("a$$b$!c"), "a$b!c");
+        assert_eq!(resolve("cost$5 ${1X} ${open"), "cost$5 ${1X} ${open");
+        // Unset or empty variables leave the value unresolved, as in Pi.
+        assert_eq!(resolve("$MISSING"), "");
+        assert_eq!(resolve("${EMPTY}"), "");
+        assert_eq!(resolve("$KEY-$MISSING"), "");
+        // Commands are Pi's to run, never sent as the key.
+        assert_eq!(resolve("!security find-generic-password -w"), "");
+        assert_eq!(resolve(""), "");
     }
 
     #[test]

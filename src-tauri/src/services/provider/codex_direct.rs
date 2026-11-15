@@ -406,7 +406,7 @@ fn auth_target<'a>(goal: &'a AuthGoal, op_name: &str) -> AuthTarget<'a> {
     }
 }
 
-fn project(provider: &Provider) -> Result<CodexProjection, AppError> {
+pub(super) fn project(provider: &Provider) -> Result<CodexProjection, AppError> {
     CodexProjection::of(&RowInput {
         settings: &provider.settings_config,
         official: is_official(provider),
@@ -415,7 +415,10 @@ fn project(provider: &Provider) -> Result<CodexProjection, AppError> {
 }
 
 /// 这个供应商的独有字段，含 `web_search`（需要时为 `"disabled"`）。
-fn exclusive_of(provider: &Provider, projection: &CodexProjection) -> Vec<(String, TomlValue)> {
+pub(super) fn exclusive_of(
+    provider: &Provider,
+    projection: &CodexProjection,
+) -> Vec<(String, TomlValue)> {
     let mut exclusive = projection.exclusive.clone();
     let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
     if codex_disables_web_search(
@@ -562,8 +565,16 @@ pub(crate) struct Planned {
     official_logins: Vec<Value>,
     /// 目录里的官方行取自哪个登录的官方列表：拿写锁后和实际的目标登录核对。
     native_identity: Option<String>,
+    /// 代理的第三方路由可以和官方路由一样写成内置 openai（不写选路，顶层 `openai_base_url`
+    /// 指向本地代理）时的代理地址。写入时盘上有登录才这样写，否则仍写 custom 表：内置 openai
+    /// 没有登录会卡在登录页。这样路由 / 聚合模式下换哪一家，新会话都记在 `openai` 组，
+    /// Codex 0.167 起不会因为 provider 不一致把另一组会话变成只读。代理负责把请求带着的
+    /// ChatGPT 身份剥掉、换上第三方的 Key。
+    openai_route: Option<String>,
     /// 代理契约（直连时也算，没有用处）。
     pub contract: Contract,
+    // A unified API route needs a proven surviving file login before promotion.
+    unify_history: bool,
 }
 
 impl Planned {
@@ -580,6 +591,25 @@ pub(crate) fn plan(
     target: &Target<'_>,
     prepared: &Prepared,
 ) -> Result<Planned, AppError> {
+    let settings = crate::settings::get_settings();
+    plan_with_history_flags(
+        db,
+        owner,
+        target,
+        prepared,
+        settings.unify_codex_session_history,
+        settings.codex_proxy_without_official_login,
+    )
+}
+
+fn plan_with_history_flags(
+    db: &Database,
+    owner: &Owner<'_>,
+    target: &Target<'_>,
+    prepared: &Prepared,
+    unify_history: bool,
+    pause_login: bool,
+) -> Result<Planned, AppError> {
     let facts = row_facts(db)?;
     let provider = target_provider(target);
     let projection = provider.map(project).transpose()?;
@@ -595,6 +625,9 @@ pub(crate) fn plan(
 
     let official = provider.is_some_and(is_official);
     let managed_login = prepared.target_login.as_ref().map(|(_, auth)| auth.clone());
+    let mut openai_route = None;
+    // 「暂停使用官方登录」只管代理契约：直连照常。
+    let without_login = matches!(target, Target::Proxy { .. }) && pause_login && !unify_history;
     let (route, stamp, auth) = match (target, &projection) {
         (Target::Direct(None), _) | (_, None) => (RouteWrite::Default, None, AuthGoal::KeepNative),
         (Target::Direct(Some(provider)), Some(projection)) => {
@@ -636,31 +669,42 @@ pub(crate) fn plan(
                     Some(login) => AuthGoal::Managed(login.clone()),
                     None => AuthGoal::Official(row_auth(route)),
                 };
-                (
+                // 暂停使用官方登录：官方路由也写成不要求登录的 custom 表（Codex 就不按登录
+                // 账号的额度锁发送键），登录照常留在 auth.json；代理在本地拒绝官方请求，
+                // 聚合里的第三方成员照常可用。
+                let route = if without_login {
+                    RouteWrite::Custom(proxy_route_table(ROUTE_ID, base_url, false))
+                } else {
                     RouteWrite::OfficialProxy {
                         base_url: base_url.to_string(),
                         unified: false,
-                    },
-                    None,
-                    auth,
-                )
-            } else if crate::settings::unify_codex_session_history() {
-                // Keep the native ChatGPT login and built-in provider identity.
-                // Only the loopback proxy receives that login; its upstream
-                // adapter replaces credentials for the selected API provider.
-                (
-                    RouteWrite::OfficialProxy {
-                        base_url: base_url.to_string(),
-                        unified: false,
-                    },
-                    None,
-                    AuthGoal::KeepNative,
-                )
+                    }
+                };
+                (route, None, auth)
             } else {
                 // The proxy owns its URL/auth, but the route still owns the remote
                 // compaction preference. Preserve the existing UI's OpenAI-name
                 // toggle and Codex's explicit override (including "unsupported").
                 let mut proxy_table = proxy_route_table(ROUTE_ID, base_url, false);
+                // 写完后盘上有登录时，改成和官方路由一样的写法（见 `Planned::openai_route`）。
+                // 行里写了内置 openai 表达不了的客户端设置时仍写 custom 表，统一会话历史开着时
+                // 本来就全在 custom 组。
+                let client_owned = match &projection.route {
+                    Route::Custom { table, .. } => {
+                        PROXY_KEPT_CLIENT_KEYS
+                            .iter()
+                            .any(|key| table.contains_key(key))
+                            || table
+                                .get("capabilities")
+                                .and_then(|capabilities| capabilities.get("remote_compaction"))
+                                .is_some()
+                            || table.get("name").and_then(Item::as_str) == Some("OpenAI")
+                    }
+                    _ => false,
+                };
+                if !client_owned && !without_login {
+                    openai_route = Some(base_url.to_string());
+                }
                 if let Route::Custom { table, .. } = &projection.route {
                     if table.get("name").and_then(Item::as_str) == Some("OpenAI") {
                         proxy_table.insert("name", toml_edit::value("OpenAI"));
@@ -683,7 +727,8 @@ pub(crate) fn plan(
                 }
                 (
                     RouteWrite::Custom(proxy_table),
-                    Some(RouteAuth::Bearer),
+                    // 暂停使用官方登录时不按盘上的登录补 `requires_openai_auth`，恒为 false。
+                    (!without_login).then_some(RouteAuth::Bearer),
                     AuthGoal::KeepNative,
                 )
             }
@@ -762,10 +807,15 @@ pub(crate) fn plan(
         catalog.as_deref(),
         prepared,
         official_login.as_deref(),
+        openai_route.is_some(),
+        without_login,
+        unify_history,
     );
     Ok(Planned {
+        unify_history,
         config,
         stamp,
+        openai_route,
         catalog,
         auth,
         leaving_official,
@@ -807,7 +857,7 @@ pub(crate) fn settings_without_row_catalog(route: &Provider) -> Option<Value> {
 }
 
 /// 代理契约的路由表从行的路由表照搬的客户端键：Codex 自己的重试和流空闲超时。
-const PROXY_KEPT_CLIENT_KEYS: &[&str] = &[
+pub(super) const PROXY_KEPT_CLIENT_KEYS: &[&str] = &[
     "request_max_retries",
     "stream_max_retries",
     "stream_idle_timeout_ms",
@@ -1006,12 +1056,16 @@ fn table_text(table: &Table) -> String {
 /// 代理契约：路由供应商在客户端那一侧的全部要求。摘要相同，换路由时客户端文件就不读
 /// 也不写。`requires_openai_auth` 跟着盘上的登录走，不算进契约；官方路由要的是谁的登录
 /// （托管账号，或 `official_login`：没绑托管账号的官方卡行里的账号）算进去。
+#[allow(clippy::too_many_arguments)]
 fn contract_of(
     target: &Target<'_>,
     config: &CodexConfigPatch,
     catalog: Option<&[u8]>,
     prepared: &Prepared,
     official_login: Option<&str>,
+    openai_route: bool,
+    without_login: bool,
+    unify_history: bool,
 ) -> Contract {
     let base_url = match target {
         Target::Proxy { base_url, .. } => *base_url,
@@ -1043,7 +1097,7 @@ fn contract_of(
         .iter()
         .map(|(path, value)| serde_json::json!([path.join("."), value_text(value)]))
         .collect();
-    let parts = serde_json::json!({
+    let mut parts = serde_json::json!({
         "app": "codex",
         "version": CONTRACT_VERSION,
         "url": base_url,
@@ -1056,6 +1110,17 @@ fn contract_of(
         "managed": prepared.target_login.as_ref().map(|(account, _)| account),
         "login": official_login,
     });
+    // 第三方路由按登录写成内置 openai：和以前只写 custom 表的契约区分开，升级后接上时重写一次。
+    if openai_route {
+        parts["openai_route"] = Value::Bool(true);
+    }
+    // 暂停使用官方登录改的是不进契约的 `requires_openai_auth`：单独记一笔，开关一动就重写。
+    if without_login {
+        parts["without_login"] = Value::Bool(true);
+    }
+    if unify_history {
+        parts["unified_history"] = Value::Bool(true);
+    }
     let key = digest(Some(
         &serde_json::to_vec(&parts).expect("contract parts serialize"),
     ))
@@ -1069,6 +1134,32 @@ fn contract_of(
             .map(|(key, value)| (key.clone(), Value::String(value_text(value))))
             .collect(),
     }
+}
+
+fn native_proxy_route_allowed(
+    unified: bool,
+    store: CodexAuthStoreMode,
+    file_login: bool,
+    config: &str,
+) -> bool {
+    (!unified || (matches!(store, CodexAuthStoreMode::File) && file_login))
+        && native_profile_compatible(config)
+}
+
+/// An explicit custom profile retains its table; never silently change its selector.
+fn native_profile_compatible(config: &str) -> bool {
+    let Ok(doc) = config.parse::<toml_edit::DocumentMut>() else {
+        return false;
+    };
+    let Some(name) = doc.get("profile").and_then(Item::as_str) else {
+        return true;
+    };
+    let Some(profile) = doc.get("profiles").and_then(|profiles| profiles.get(name)) else {
+        return false;
+    };
+    profile
+        .get("model_provider")
+        .is_none_or(|item| item.as_str() == Some("openai"))
 }
 
 /// 读到的登录暂存。
@@ -1226,6 +1317,21 @@ pub(crate) fn run_with_edits(
         }
     };
     let mut config = planned.config;
+    let native_route_allowed = native_proxy_route_allowed(
+        planned.unify_history,
+        codex_config_auth_store_mode(&config_text),
+        auth_plan.login_on_disk,
+        &config_text,
+    );
+    if let Some(base_url) = planned
+        .openai_route
+        .filter(|_| login && native_route_allowed)
+    {
+        config.route = RouteWrite::OfficialProxy {
+            base_url,
+            unified: false,
+        };
+    }
     if let (Some(kind), RouteWrite::Custom(table)) = (planned.stamp, &mut config.route) {
         if matches!(kind, RouteAuth::Bearer | RouteAuth::EnvKey) {
             table.insert(
@@ -1345,13 +1451,8 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    #[serial_test::serial]
-    fn oauth_unified_proxy_keeps_builtin_identity_and_provider_key_out_of_live_config() {
+    fn oauth_unified_proxy_plans_a_login_checked_native_identity_without_global_settings() {
         use super::*;
-        let previous = crate::settings::get_settings();
-        let mut settings = previous.clone();
-        settings.unify_codex_session_history = true;
-        crate::settings::update_settings(settings).unwrap();
         let db = Database::memory().unwrap();
         let provider = Provider::with_id(
             "api".to_string(),
@@ -1367,10 +1468,29 @@ mod tests {
             base_url: "http://127.0.0.1:15721/v1",
             stack: &[],
         };
-        let planned = plan(&db, &Owner::None, &target, &Prepared::default());
-        crate::settings::update_settings(previous).unwrap();
-        let planned = planned.unwrap();
+        let planned = plan_with_history_flags(
+            &db,
+            &Owner::None,
+            &target,
+            &Prepared::default(),
+            true,
+            false,
+        );
+        let mut planned = planned.unwrap();
         assert!(matches!(planned.auth, AuthGoal::KeepNative));
+        assert!(planned.unify_history);
+        let base_url = planned
+            .openai_route
+            .take()
+            .expect("provisional native route");
+        assert!(
+            matches!(planned.config.route, RouteWrite::Custom(_)),
+            "no native route before the auth plan"
+        );
+        planned.config.route = RouteWrite::OfficialProxy {
+            base_url,
+            unified: false,
+        };
         let mut doc = "model_provider = \"custom\"\n[model_providers.custom]\nexperimental_bearer_token = \"sk-old\"\n".parse::<toml_edit::DocumentMut>().unwrap();
         planned
             .config
@@ -1383,6 +1503,157 @@ mod tests {
         );
         assert!(!doc.to_string().contains("sk-provider-only"));
         assert!(!doc.to_string().contains("sk-old"));
+    }
+
+    #[test]
+    fn unified_native_proxy_requires_the_surviving_auth_plan_not_the_incoming_login() {
+        use super::*;
+        let login = json!({"auth_mode":"chatgpt", "tokens":{"id_token":"native-id", "access_token":"native-access", "refresh_token":"native-refresh", "account_id":"native-account"}});
+        for (live, managed, survives) in [
+            (None, false, false),
+            (Some(&login), true, false),
+            (Some(&login), false, true),
+        ] {
+            let auth = codex_login::plan(AuthInput {
+                live,
+                live_is_managed: managed,
+                third_party_keys: &[],
+                leaving_official: None,
+                target: codex_login::AuthTarget::ProxyThirdParty {
+                    restore_last: false,
+                },
+                stash: Default::default(),
+                now: 0,
+            });
+            assert_eq!(auth.login_on_disk, survives);
+            assert_eq!(
+                native_proxy_route_allowed(true, CodexAuthStoreMode::File, auth.login_on_disk, ""),
+                survives
+            );
+            if managed {
+                assert_eq!(auth.auth, Some(None));
+            }
+            for store in [
+                CodexAuthStoreMode::Keyring,
+                CodexAuthStoreMode::Auto,
+                CodexAuthStoreMode::Ephemeral,
+                CodexAuthStoreMode::Unknown,
+            ] {
+                assert!(!native_proxy_route_allowed(
+                    true,
+                    store,
+                    auth.login_on_disk,
+                    ""
+                ));
+            }
+        }
+        assert!(!native_profile_compatible(
+            "profile = \"work\"\n[profiles.work]\nmodel_provider = \"custom\"\n"
+        ));
+        assert!(native_profile_compatible(
+            "profile = \"work\"\n[profiles.work]\nmodel_provider = \"openai\"\n"
+        ));
+        assert!(!native_profile_compatible("profile = \"missing\"\n"));
+    }
+
+    #[test]
+    fn unified_proxy_keeps_every_client_owned_setting_and_legacy_compaction_opt_out() {
+        use super::*;
+        for unified in [false, true] {
+            for extra in [
+                "request_max_retries = 7",
+                "stream_max_retries = 8",
+                "stream_idle_timeout_ms = 900000",
+                "name = \"OpenAI\"",
+                "[model_providers.custom.capabilities]\nremote_compaction = \"unsupported\"",
+            ] {
+                let db = Database::memory().unwrap();
+                let name = if extra.starts_with("name") {
+                    ""
+                } else {
+                    "name = \"API\"\n"
+                };
+                let config = format!("model_provider = \"custom\"\nmodel = \"model\"\n[model_providers.custom]\n{name}base_url = \"https://api.example/v1\"\nwire_api = \"responses\"\n{extra}\n");
+                let provider = Provider::with_id(
+                    "api".into(),
+                    "API".into(),
+                    json!({"auth":{"OPENAI_API_KEY":"sk-api"}, "config":config}),
+                    None,
+                );
+                let target = Target::Proxy {
+                    route: &provider,
+                    base_url: "http://127.0.0.1:15721/v1",
+                    stack: &[],
+                };
+                let planned = plan_with_history_flags(
+                    &db,
+                    &Owner::None,
+                    &target,
+                    &Prepared::default(),
+                    unified,
+                    false,
+                )
+                .unwrap();
+                assert!(planned.openai_route.is_none(), "{extra}, unified={unified}");
+                let RouteWrite::Custom(table) = planned.config.route else {
+                    panic!("client settings must retain their table");
+                };
+                if extra.starts_with('[') {
+                    assert_eq!(
+                        table["capabilities"]["remote_compaction"].as_str(),
+                        Some("unsupported")
+                    );
+                } else {
+                    let key = extra.split_once(" = ").unwrap().0;
+                    let expected = config.parse::<toml_edit::DocumentMut>().unwrap();
+                    assert_eq!(
+                        table[key].to_string().trim(),
+                        expected["model_providers"]["custom"][key]
+                            .to_string()
+                            .trim()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_pause_conflict_prefers_unified_identity_without_shared_settings_writes() {
+        use super::*;
+        let db = Database::memory().unwrap();
+        let provider = Provider::with_id(
+            "api".into(),
+            "API".into(),
+            json!({"auth":{"OPENAI_API_KEY":"sk-api"}, "config":"model_provider = \"custom\"\n[model_providers.custom]\nname = \"API\"\nbase_url = \"https://api.example/v1\"\nwire_api = \"responses\"\n"}),
+            None,
+        );
+        let target = Target::Proxy {
+            route: &provider,
+            base_url: "http://127.0.0.1:15721/v1",
+            stack: &[],
+        };
+        let unified =
+            plan_with_history_flags(&db, &Owner::None, &target, &Prepared::default(), true, true)
+                .unwrap();
+        assert!(unified.openai_route.is_some());
+        let paused = plan_with_history_flags(
+            &db,
+            &Owner::None,
+            &target,
+            &Prepared::default(),
+            false,
+            true,
+        )
+        .unwrap();
+        assert!(paused.openai_route.is_none());
+        assert!(paused.stamp.is_none());
+        let RouteWrite::Custom(table) = paused.config.route else {
+            panic!("pause requires custom");
+        };
+        assert_ne!(
+            table.get("requires_openai_auth").and_then(Item::as_bool),
+            Some(true)
+        );
     }
 
     /// 子代理设置按合并目录校验：不在目录里、或者父 agent 用新版工具时会拒收的
