@@ -425,13 +425,15 @@ fn known_native_install(tool: &str, inst: &ToolInstallation) -> bool {
         // Official install.sh (`~/.local/bin`) / install.ps1 (`%LOCALAPPDATA%\omp`) targets.
         "omp" => normalized.ends_with("/.local/bin/omp") || normalized.ends_with("/omp/omp.exe"),
         // Official installer targets, per the scripts themselves:
-        // install.sh → `~/.local/bin` (non-root) or `/usr/local/bin` (root),
-        // install.ps1 → `%LOCALAPPDATA%\AtomCode`; FAQ also mentions `~/.atomcode/bin`.
-        // The POSIX suffixes carry no `.exe` — the scripts never write one on
-        // Linux/macOS — so each arm has a script-verified source and the
-        // matching surface stays as narrow as the installers make it.
+        // install.sh → `~/.local/bin` (non-root) or `/usr/local/bin` (root);
+        // on MSYS/MINGW/CYGWIN (a Unix shell running ON Windows) the same script
+        // sets ext=".exe" and forces PREFIX="$HOME/.local/bin", so
+        // `~/.local/bin/atomcode.exe` is also an official target;
+        // install.ps1 → `%LOCALAPPDATA%\AtomCode`; FAQ also mentions `~/.atomcode/bin`
+        // (a custom ATOMCODE_PREFIX there is outside auto-uninstall recognition).
         "atomcode" => {
             normalized.ends_with("/.local/bin/atomcode")
+                || normalized.ends_with("/.local/bin/atomcode.exe")
                 || normalized.ends_with("/usr/local/bin/atomcode")
                 || normalized.ends_with("/appdata/local/atomcode/atomcode.exe")
                 || normalized.ends_with("/.atomcode/bin/atomcode")
@@ -1065,6 +1067,8 @@ mod tests {
         // normalized suffix the matcher requires.
         for (layout, binary_name) in [
             (".local/bin", "atomcode"),
+            // install.sh's MSYS/MINGW/CYGWIN branch: ext=".exe", PREFIX="$HOME/.local/bin".
+            (".local/bin", "atomcode.exe"),
             ("usr/local/bin", "atomcode"),
             // install.ps1 target: `%LOCALAPPDATA%\AtomCode\atomcode.exe`.
             ("AppData/Local/AtomCode", "atomcode.exe"),
