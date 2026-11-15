@@ -50,6 +50,7 @@ pub fn reset_test_fs() {
         ".config",
         ".openclaw",
         ".pi",
+        ".workbuddy",
         "profiles",
     ] {
         let path = home.join(sub);

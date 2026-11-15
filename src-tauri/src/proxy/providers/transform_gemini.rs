@@ -315,11 +315,16 @@ fn build_system_instruction(
         collect_system_texts(system, &mut texts)?;
     }
 
+    // Only system messages that lead the conversation are hoisted. Ones that
+    // appear later (Claude Code's per-turn `<total_tokens>` budget, steer
+    // reminders) stay in place as contents: hoisting them would rewrite the
+    // instruction ahead of the whole history every turn and break the
+    // upstream prefix cache (same fix as #6941 for OpenAI Chat).
     if let Some(messages) = messages {
-        for message in messages {
-            if message.get("role").and_then(|value| value.as_str()) != Some("system") {
-                continue;
-            }
+        for message in messages
+            .iter()
+            .take_while(|message| is_system_message(message))
+        {
             if let Some(content) = message.get("content") {
                 collect_system_texts(content, &mut texts)?;
             }
@@ -333,6 +338,10 @@ fn build_system_instruction(
     Ok(Some(json!({
         "parts": [{ "text": texts.join("\n\n") }]
     })))
+}
+
+fn is_system_message(message: &Value) -> bool {
+    message.get("role").and_then(|value| value.as_str()) == Some("system")
 }
 
 fn collect_system_texts(value: &Value, texts: &mut Vec<String>) -> Result<(), ProxyError> {
@@ -554,6 +563,8 @@ fn convert_messages_to_contents(
     shadow_turns: &[GeminiAssistantTurn],
     supports_multimodal_function_response: bool,
 ) -> Result<Vec<Value>, ProxyError> {
+    let messages = coalesce_split_tool_result_messages(messages);
+    let messages = messages.as_ref();
     let mut contents = Vec::new();
     let mut used_shadow_indices = HashSet::new();
     let total_assistant_messages = messages
@@ -600,13 +611,41 @@ fn convert_messages_to_contents(
 
     let shadow_start_index = total_assistant_messages.saturating_sub(effective_shadow_turns.len());
     let mut assistant_seen_index = 0usize;
+    // Leading system messages were hoisted into `systemInstruction`.
+    let leading_system_count = messages
+        .iter()
+        .take_while(|message| is_system_message(message))
+        .count();
 
-    for message in messages {
+    let mut deferred_system: Vec<Value> = Vec::new();
+
+    for message in &messages[leading_system_count..] {
+        // A function call turn must be followed directly by its function
+        // response turn, so a system message wedged between them is held
+        // back until the response has been emitted.
+        if !contents.last().is_some_and(has_function_call) {
+            contents.append(&mut deferred_system);
+        }
+
         let role = message
             .get("role")
             .and_then(|value| value.as_str())
             .unwrap_or("user");
         if role == "system" {
+            // Gemini contents have no system role; keep a later system message
+            // at its position as a user turn so the converted history stays
+            // append-only across requests (see `build_system_instruction`).
+            let mut texts = Vec::new();
+            if let Some(content) = message.get("content") {
+                collect_system_texts(content, &mut texts)?;
+            }
+            if !texts.is_empty() {
+                let parts: Vec<Value> = texts
+                    .into_iter()
+                    .map(|text| json!({ "text": text }))
+                    .collect();
+                deferred_system.push(json!({ "role": "user", "parts": parts }));
+            }
             continue;
         }
 
@@ -681,8 +720,103 @@ fn convert_messages_to_contents(
             "parts": parts
         }));
     }
+    contents.append(&mut deferred_system);
 
     Ok(contents)
+}
+
+/// Merges a run of consecutive user messages into one when two or more of
+/// them carry `tool_result` blocks (#9453).
+///
+/// Anthropic treats consecutive same-role messages as a single turn, so the
+/// results of parallel tool calls may arrive spread over several user
+/// messages. Gemini instead checks that the content right after a
+/// functionCall turn holds as many functionResponse parts as there were
+/// calls, and rejects the split shape with "the number of function response
+/// parts is equal to the number of function call parts". Once merged, the
+/// existing split in `convert_messages_to_contents` emits every function
+/// response in one user content and the remaining parts in the next.
+///
+/// Runs with at most one tool-carrying message are left untouched, so the
+/// converted history of shapes that already worked stays byte-identical.
+fn coalesce_split_tool_result_messages(messages: &[Value]) -> std::borrow::Cow<'_, [Value]> {
+    let is_user = |message: &Value| {
+        matches!(
+            message.get("role").and_then(|value| value.as_str()),
+            None | Some("user")
+        )
+    };
+    let has_tool_result = |message: &Value| {
+        message
+            .get("content")
+            .and_then(|content| content.as_array())
+            .is_some_and(|blocks| {
+                blocks.iter().any(|block| {
+                    block.get("type").and_then(|value| value.as_str()) == Some("tool_result")
+                })
+            })
+    };
+    let mergeable_content = |message: &Value| match message.get("content") {
+        None => Some(Vec::new()),
+        Some(Value::String(text)) => Some(vec![json!({ "type": "text", "text": text })]),
+        Some(Value::Array(blocks)) => Some(blocks.clone()),
+        Some(_) => None,
+    };
+
+    let mut result: Option<Vec<Value>> = None;
+    let mut index = 0;
+    while index < messages.len() {
+        let mut end = index;
+        while end < messages.len() && is_user(&messages[end]) {
+            end += 1;
+        }
+        if end == index {
+            if let Some(result) = result.as_mut() {
+                result.push(messages[index].clone());
+            }
+            index += 1;
+            continue;
+        }
+
+        let run = &messages[index..end];
+        let merged = (run
+            .iter()
+            .filter(|message| has_tool_result(message))
+            .count()
+            > 1)
+        .then(|| {
+            run.iter()
+                .map(mergeable_content)
+                .collect::<Option<Vec<_>>>()
+                .map(|blocks| json!({ "role": "user", "content": blocks.concat() }))
+        })
+        .flatten();
+
+        match merged {
+            Some(merged) => {
+                let result = result.get_or_insert_with(|| messages[..index].to_vec());
+                result.push(merged);
+            }
+            None => {
+                if let Some(result) = result.as_mut() {
+                    result.extend_from_slice(run);
+                }
+            }
+        }
+        index = end;
+    }
+
+    match result {
+        Some(result) => std::borrow::Cow::Owned(result),
+        None => std::borrow::Cow::Borrowed(messages),
+    }
+}
+
+fn has_function_call(content: &Value) -> bool {
+    content
+        .get("parts")
+        .and_then(Value::as_array)
+        .is_some_and(|parts| parts.iter().any(|part| part.get("functionCall").is_some()))
 }
 
 fn find_matching_shadow_turn_for_assistant_message(
@@ -1877,6 +2011,90 @@ mod tests {
     }
 
     #[test]
+    fn anthropic_to_gemini_keeps_mid_conversation_system_messages_in_place() {
+        // Claude Code appends a `<total_tokens>` system message every turn;
+        // hoisting it would change the instruction ahead of the whole history
+        // and break the prefix cache, so it must stay where it appears.
+        let first = json!({
+            "model": "gemini-3-pro",
+            "system": "Stable instructions",
+            "messages": [
+                { "role": "user", "content": "Existing history" },
+                { "role": "system", "content": "<total_tokens>99900000 tokens left</total_tokens>\n\n" }
+            ]
+        });
+        let mut second = first.clone();
+        second["messages"].as_array_mut().unwrap().extend([
+            json!({ "role": "assistant", "content": "Acknowledged" }),
+            json!({ "role": "user", "content": "Continue" }),
+            json!({
+                "role": "system",
+                "content": [{ "type": "text", "text": "<total_tokens>99899000 tokens left</total_tokens>\n\n" }]
+            }),
+        ]);
+
+        let first = anthropic_to_gemini(first).unwrap();
+        let second = anthropic_to_gemini(second).unwrap();
+
+        assert_eq!(
+            first["systemInstruction"]["parts"][0]["text"],
+            "Stable instructions"
+        );
+        assert_eq!(first["systemInstruction"], second["systemInstruction"]);
+
+        let first_contents = first["contents"].as_array().unwrap();
+        let second_contents = second["contents"].as_array().unwrap();
+        assert_eq!(first_contents.len(), 2);
+        assert_eq!(second_contents.len(), 5);
+        assert_eq!(&second_contents[..2], first_contents.as_slice());
+        assert_eq!(
+            first_contents[1],
+            json!({
+                "role": "user",
+                "parts": [{ "text": "<total_tokens>99900000 tokens left</total_tokens>\n\n" }]
+            })
+        );
+        assert_eq!(second_contents[2]["role"], "model");
+        assert_eq!(
+            second_contents[4],
+            json!({
+                "role": "user",
+                "parts": [{ "text": "<total_tokens>99899000 tokens left</total_tokens>\n\n" }]
+            })
+        );
+    }
+
+    #[test]
+    fn anthropic_to_gemini_moves_system_message_after_function_response() {
+        let input = json!({
+            "model": "gemini-3-pro",
+            "messages": [
+                { "role": "user", "content": "Read the file" },
+                {
+                    "role": "assistant",
+                    "content": [{ "type": "tool_use", "id": "toolu_1", "name": "Read", "input": {} }]
+                },
+                { "role": "system", "content": "<total_tokens>1 tokens left</total_tokens>" },
+                {
+                    "role": "user",
+                    "content": [{ "type": "tool_result", "tool_use_id": "toolu_1", "content": "ok" }]
+                }
+            ]
+        });
+
+        let result = anthropic_to_gemini(input).unwrap();
+        let contents = result["contents"].as_array().unwrap();
+
+        assert_eq!(contents.len(), 4);
+        assert!(contents[1]["parts"][0].get("functionCall").is_some());
+        assert!(contents[2]["parts"][0].get("functionResponse").is_some());
+        assert_eq!(
+            contents[3]["parts"][0]["text"],
+            "<total_tokens>1 tokens left</total_tokens>"
+        );
+    }
+
+    #[test]
     fn anthropic_to_gemini_maps_tools_and_tool_results() {
         let input = json!({
             "messages": [
@@ -1968,6 +2186,98 @@ mod tests {
             contents[3]["parts"],
             json!([{ "text": "<system-reminder>keep going</system-reminder>" }])
         );
+    }
+
+    /// Regression for #9453: results of parallel tool calls spread over
+    /// consecutive user messages must land in one functionResponse turn,
+    /// otherwise Gemini rejects the call/response count mismatch.
+    #[test]
+    fn anthropic_to_gemini_merges_parallel_tool_results_split_across_user_messages() {
+        let input = json!({
+            "messages": [
+                { "role": "user", "content": "Check two cities" },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "call_1", "name": "get_weather", "input": { "city": "Tokyo" } },
+                        { "type": "tool_use", "id": "call_2", "name": "get_weather", "input": { "city": "Paris" } }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_1", "content": "Sunny" },
+                        { "type": "text", "text": "reminder 1" }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_2", "content": "Rain" },
+                        { "type": "text", "text": "reminder 2" }
+                    ]
+                },
+                { "role": "assistant", "content": "Tokyo is sunny, Paris is rainy." },
+                { "role": "user", "content": "Thanks" }
+            ]
+        });
+
+        let result = anthropic_to_gemini(input).unwrap();
+        let contents = result["contents"].as_array().unwrap();
+
+        assert_eq!(contents.len(), 6);
+        assert_eq!(contents[1]["role"], "model");
+        assert_eq!(contents[1]["parts"].as_array().unwrap().len(), 2);
+
+        let responses = contents[2]["parts"].as_array().unwrap();
+        assert_eq!(contents[2]["role"], "user");
+        assert_eq!(responses.len(), 2);
+        assert_eq!(responses[0]["functionResponse"]["id"], "call_1");
+        assert_eq!(responses[1]["functionResponse"]["id"], "call_2");
+
+        assert_eq!(
+            contents[3]["parts"],
+            json!([{ "text": "reminder 1" }, { "text": "reminder 2" }])
+        );
+        assert_eq!(contents[4]["role"], "model");
+        assert_eq!(contents[5]["parts"], json!([{ "text": "Thanks" }]));
+    }
+
+    /// Consecutive user messages with at most one tool_result carrier keep
+    /// their existing one-content-per-message conversion (prompt cache).
+    #[test]
+    fn anthropic_to_gemini_keeps_consecutive_user_messages_without_split_tool_results() {
+        let input = json!({
+            "messages": [
+                { "role": "user", "content": "first" },
+                { "role": "user", "content": [{ "type": "text", "text": "second" }] },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "call_1", "name": "get_weather", "input": { "city": "Tokyo" } }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [{ "type": "tool_result", "tool_use_id": "call_1", "content": "Sunny" }]
+                },
+                { "role": "user", "content": "follow-up" }
+            ]
+        });
+
+        let messages = input["messages"].as_array().unwrap();
+        assert!(matches!(
+            coalesce_split_tool_result_messages(messages),
+            std::borrow::Cow::Borrowed(_)
+        ));
+
+        let result = anthropic_to_gemini(input).unwrap();
+        let contents = result["contents"].as_array().unwrap();
+        assert_eq!(contents.len(), 5);
+        assert_eq!(contents[0]["parts"], json!([{ "text": "first" }]));
+        assert_eq!(contents[1]["parts"], json!([{ "text": "second" }]));
+        assert_eq!(contents[3]["parts"][0]["functionResponse"]["id"], "call_1");
+        assert_eq!(contents[4]["parts"], json!([{ "text": "follow-up" }]));
     }
 
     #[test]

@@ -5,7 +5,7 @@
 use crate::error::AppError;
 use crate::proxy::types::*;
 
-use super::super::{lock_conn, Database};
+use super::super::{lock_conn, lock_recovering, Database};
 
 pub(crate) const PRICING_SOURCE_RESPONSE: &str = "response";
 pub(crate) const PRICING_SOURCE_REQUEST: &str = "request";
@@ -240,10 +240,7 @@ impl Database {
     ///
     /// 使用与 schema.rs seed 相同的 per-app 默认值
     fn ensure_proxy_config_row_exists(&self, app_type: &str) -> Result<(), AppError> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| AppError::Lock(e.to_string()))?;
+        let conn = lock_conn!(self.conn);
 
         // 根据 app_type 使用不同的默认值（与 schema.rs seed 保持一致）
         let (retries, fb_timeout, idle_timeout, cb_fail, cb_succ, cb_timeout, cb_rate, cb_min) =
@@ -434,7 +431,7 @@ impl Database {
     ///
     /// 用于 `ProfileService::apply` 等 sync 路径判断是否需要停止代理服务。
     pub fn is_live_takeover_active_sync(&self) -> bool {
-        let conn = match self.conn.lock() {
+        let conn = match lock_recovering(&self.conn) {
             Ok(c) => c,
             Err(_) => return false,
         };
@@ -791,7 +788,7 @@ impl Database {
             let defaults = crate::proxy::types::ProxyConfig::default();
             (defaults.listen_address, defaults.listen_port)
         };
-        let (listen_address, port) = match self.conn.lock() {
+        let (listen_address, port) = match lock_recovering(&self.conn) {
             Ok(conn) => conn
                 .query_row(
                     "SELECT listen_address, listen_port FROM proxy_config WHERE app_type = 'claude'",
@@ -806,7 +803,7 @@ impl Database {
     }
 
     pub fn get_proxy_flags_sync(&self, app_type: &str) -> (bool, bool) {
-        let conn = match self.conn.lock() {
+        let conn = match lock_recovering(&self.conn) {
             Ok(c) => c,
             Err(_) => return (false, false),
         };
@@ -828,10 +825,7 @@ impl Database {
         enabled: bool,
         auto_failover_enabled: bool,
     ) -> Result<(), AppError> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| AppError::Database(format!("Mutex lock failed: {e}")))?;
+        let conn = lock_conn!(self.conn);
 
         conn.execute(
             "UPDATE proxy_config SET enabled = ?2, auto_failover_enabled = ?3, updated_at = datetime('now') WHERE app_type = ?1",

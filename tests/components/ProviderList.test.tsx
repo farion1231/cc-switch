@@ -8,6 +8,7 @@ import {
   ProviderList,
   type SwitchModeProps,
 } from "@/components/providers/ProviderList";
+import { hermesKeys } from "@/hooks/useHermes";
 import { server } from "../msw/server";
 
 vi.mock("sonner", () => ({
@@ -135,9 +136,12 @@ function renderWithQueryClient(ui: ReactElement) {
     defaultOptions: { queries: { retry: false } },
   });
 
-  return render(
-    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
-  );
+  return {
+    ...render(
+      <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
+    ),
+    queryClient,
+  };
 }
 
 beforeEach(() => {
@@ -492,6 +496,113 @@ describe("ProviderList Component", () => {
         (action: { key: string }) => action.key,
       ),
     ).toEqual(["setDefault"]);
+  });
+
+  describe("WorkBuddy official sign-in cards", () => {
+    const bound = (id: string, accountId: string) =>
+      createProvider({
+        id,
+        name: id,
+        category: "official",
+        meta: {
+          authBinding: {
+            source: "managed_account",
+            authProvider: "workbuddy_account",
+            accountId,
+          },
+        },
+      });
+    const wbAccount = (id: string) => ({
+      id,
+      provider: "workbuddy_account",
+      login: id,
+      avatar_url: null,
+      authenticated_at: 0,
+      is_default: id === "u-1",
+      github_domain: "workbuddy",
+      requires_reauth: false,
+    });
+
+    function setup(running: boolean) {
+      const switched: unknown[] = [];
+      server.use(
+        http.post(`${TAURI_ENDPOINT}/auth_get_status`, () =>
+          HttpResponse.json({
+            provider: "workbuddy_account",
+            authenticated: true,
+            default_account_id: "u-1",
+            accounts: [wbAccount("u-1"), wbAccount("u-2")],
+          }),
+        ),
+        http.post(`${TAURI_ENDPOINT}/workbuddy_account_live_state`, () =>
+          HttpResponse.json({
+            running,
+            signedIn: true,
+            recognized: true,
+            imported: true,
+          }),
+        ),
+        http.post(
+          `${TAURI_ENDPOINT}/auth_set_default_account`,
+          async ({ request }) => {
+            switched.push(await request.json());
+            return HttpResponse.json(null);
+          },
+        ),
+      );
+      const a = bound("card-a", "u-1");
+      const b = bound("card-b", "u-2");
+      const custom = createProvider({
+        id: "custom",
+        meta: { liveConfigManaged: true },
+      });
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [a, b, custom],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      const onSwitch = vi.fn();
+      renderWithQueryClient(
+        <ProviderList
+          {...baseProps}
+          appId="workbuddy"
+          providers={{ "card-a": a, "card-b": b, custom }}
+          onSwitch={onSwitch}
+          onRemoveFromConfig={vi.fn()}
+        />,
+      );
+      return { switched, onSwitch };
+    }
+
+    it("adds another official card through the account switch, never through models.json", async () => {
+      const { switched, onSwitch } = setup(false);
+      const remove = await screen.findByTestId("remove-card-a");
+      await waitFor(() => expect(remove).toBeDisabled());
+      expect(lastProps("card-a")?.presentation.buttons[0].disabledReason).toBe(
+        "workbuddy.official.onlyOne",
+      );
+      const button = screen.getByTestId("add-card-b");
+      await waitFor(() => expect(button).toBeEnabled());
+      fireEvent.click(button);
+      await waitFor(() =>
+        expect(switched).toEqual([
+          { authProvider: "workbuddy_account", accountId: "u-2" },
+        ]),
+      );
+      // 官方卡不走「添加到配置」；自定义模型卡照旧可以移除
+      expect(onSwitch).not.toHaveBeenCalled();
+      expect(screen.getByTestId("remove-custom")).toBeEnabled();
+    });
+
+    it("disables adding while WorkBuddy is running", async () => {
+      const { switched } = setup(true);
+      const button = await screen.findByTestId("add-card-b");
+      await waitFor(() => expect(button).toBeDisabled());
+      expect(lastProps("card-b")?.presentation.buttons[0].disabledReason).toBe(
+        "workbuddy.official.quitFirst",
+      );
+      expect(switched).toEqual([]);
+    });
   });
 
   it("does not mark any Kimi provider as current when the native selection is missing", () => {
@@ -1190,6 +1301,105 @@ describe("ProviderList Component", () => {
       });
       expect(latestCardProps.presentation.deleteDisabledReason).toBe(
         "pi.current.stateUnavailableHint",
+      );
+    });
+  });
+
+  describe("Hermes providers from the providers: dict", () => {
+    const dictProvider = createProvider({
+      id: "dict-provider",
+      name: "Dict Provider",
+      settingsConfig: { _cc_source: "providers_dict" },
+    });
+    const latestPresentation = () =>
+      providerCardRenderSpy.mock.calls
+        .map(([props]) => props)
+        .filter((props) => props.provider.id === dictProvider.id)
+        .at(-1)?.presentation;
+
+    function renderHermes(liveIds: () => Response) {
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [dictProvider],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      server.use(
+        http.post(`${TAURI_ENDPOINT}/get_hermes_live_provider_ids`, liveIds),
+      );
+      return renderWithQueryClient(
+        <ProviderList
+          providers={{ [dictProvider.id]: dictProvider }}
+          currentProviderId=""
+          appId="hermes"
+          onSwitch={vi.fn()}
+          onEdit={vi.fn()}
+          onDelete={vi.fn()}
+          onDuplicate={vi.fn()}
+          onOpenWebsite={vi.fn()}
+        />,
+      );
+    }
+
+    it("can be deleted once Hermes no longer defines them", async () => {
+      renderHermes(() => HttpResponse.json([]));
+
+      await waitFor(() =>
+        expect(latestPresentation()).toMatchObject({
+          editDisabledReason: undefined,
+          deleteDisabledReason: undefined,
+        }),
+      );
+    });
+
+    it("stay read-only while Hermes still defines them", async () => {
+      renderHermes(() => HttpResponse.json([dictProvider.id]));
+
+      await waitFor(() =>
+        expect(latestPresentation()?.deleteDisabledReason).toBe(
+          "provider.managedByHermesHint",
+        ),
+      );
+    });
+
+    it("stay read-only when the Hermes config cannot be read", async () => {
+      renderHermes(() =>
+        HttpResponse.json("Failed to parse Hermes config as YAML", {
+          status: 500,
+        }),
+      );
+
+      await screen.findByText("无法读取 apps.hermes 配置文件");
+      await waitFor(() =>
+        expect(latestPresentation()?.deleteDisabledReason).toBe(
+          "provider.managedByHermesHint",
+        ),
+      );
+    });
+
+    it("lock again when re-reading the Hermes config fails", async () => {
+      const { queryClient } = renderHermes(() => HttpResponse.json([]));
+      await waitFor(() =>
+        expect(latestPresentation()).toMatchObject({
+          deleteDisabledReason: undefined,
+        }),
+      );
+
+      // 刷新失败时 React Query 保留旧的 []，不能据此继续放开
+      server.use(
+        http.post(`${TAURI_ENDPOINT}/get_hermes_live_provider_ids`, () =>
+          HttpResponse.json("Failed to parse Hermes config as YAML", {
+            status: 500,
+          }),
+        ),
+      );
+      await queryClient.invalidateQueries({
+        queryKey: hermesKeys.liveProviderIds,
+      });
+
+      await waitFor(() =>
+        expect(latestPresentation()?.deleteDisabledReason).toBe(
+          "provider.managedByHermesHint",
+        ),
       );
     });
   });

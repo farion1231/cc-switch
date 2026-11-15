@@ -76,7 +76,6 @@ pub async fn copy_text_to_clipboard(text: String) -> Result<bool, String> {
     .map_err(|e| format!("剪贴板任务执行失败: {e}"))?
 }
 
-/// 检查更新
 #[tauri::command]
 pub async fn check_for_updates(handle: AppHandle) -> Result<bool, String> {
     handle
@@ -127,12 +126,7 @@ pub async fn open_portable_update_download(
 /// 判断是否为便携版（绿色版）运行
 #[tauri::command]
 pub async fn is_portable_mode() -> Result<bool, String> {
-    let exe_path = std::env::current_exe().map_err(|e| format!("获取可执行路径失败: {e}"))?;
-    if let Some(dir) = exe_path.parent() {
-        Ok(dir.join("portable.ini").is_file())
-    } else {
-        Ok(false)
-    }
+    Ok(crate::app_update::is_portable())
 }
 
 /// 获取应用启动阶段的初始化错误（若有）。
@@ -2939,6 +2933,20 @@ fn is_foreign_pip_launcher(tool: &str, path: &Path) -> bool {
             .ends_with(&format!("/scripts/{tool}.exe"))
 }
 
+/// VS Code's `bin\copilot-shim\copilot.exe` is a placeholder that only prints
+/// "GitHub Copilot CLI was not found" when the real CLI is missing. It sits on PATH under
+/// the tool's own name but is never the CLI, so probing it reports "installed but broken"
+/// instead of "not installed". Matched by its directory, which covers `.exe` and `.cmd`.
+#[cfg(any(target_os = "windows", test))]
+fn is_vscode_copilot_shim(tool: &str, path: &Path) -> bool {
+    tool == "copilot"
+        && path
+            .to_string_lossy()
+            .replace('\\', "/")
+            .to_ascii_lowercase()
+            .contains("/copilot-shim/")
+}
+
 /// OpenCode Desktop has shipped both root-level and Electron `resources/` CLI sidecars.
 /// Some Electron releases omitted the sidecar; `resources/app.asar` still identifies the
 /// Desktop bundle, so skip its GUI instead of probing `opencode.exe` with `--version`.
@@ -2946,7 +2954,7 @@ fn is_foreign_pip_launcher(tool: &str, path: &Path) -> bool {
 /// Also skips launchers that only share the tool's name (`is_foreign_pip_launcher`).
 #[cfg(target_os = "windows")]
 fn windows_preferred_tool_executable(tool: &str, path: &Path) -> Option<std::path::PathBuf> {
-    if is_foreign_pip_launcher(tool, path) {
+    if is_foreign_pip_launcher(tool, path) || is_vscode_copilot_shim(tool, path) {
         return None;
     }
     if tool == "opencode"
@@ -3506,7 +3514,7 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
     // 必须带超时：deadline 传 None 时 wait_child_output 无限等，登录 shell 一挂
     // 整个预检就永久卡死（且前端此阶段无任何反馈）。定位失败仅丢失 is_path_default
     // 标记，非致命。
-    let path_default = resolve_path_default(
+    let mut path_default = resolve_path_default(
         tool,
         CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
     )
@@ -3539,9 +3547,26 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
             // canonicalize 解析软链后去重：/opt/homebrew/bin/x → Cellar/...、nvm shim 等
             // 多个入口可能指向同一真实文件，只算一处安装。
             let real = std::fs::canonicalize(&tool_path).unwrap_or_else(|_| tool_path.clone());
+            let (tool_path, real) = resolve_mise_shim_install(
+                tool,
+                tool_path,
+                real,
+                &mut path_default,
+                CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
+            );
             if !seen.insert(real.clone()) {
                 continue;
             }
+
+            // mise shim 换成真身后，探测用真身所在的 bin 目录：`#!/usr/bin/env node` 入口若仍走
+            // shims 目录里的 node，会在 GUI 的工作目录下重新选版本，可能找不到或选错 Node。
+            #[cfg(not(target_os = "windows"))]
+            let new_path = match tool_path.parent() {
+                Some(parent) if parent != dir.as_path() => {
+                    prepend_search_dir_to_path(parent, &current_path)
+                }
+                _ => new_path.clone(),
+            };
 
             let output = run_probe_version_command(&tool_path, &new_path);
 
@@ -3567,7 +3592,6 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
                 Err(e) => (None, false, Some(e), false),
             };
 
-            let is_path_default = path_default.as_ref() == Some(&real);
             let path_str = tool_path.display().to_string();
             let source = infer_install_source_for_install(&tool_path, &real);
 
@@ -3578,7 +3602,8 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
                 error,
                 exited_with_error,
                 source: source.to_string(),
-                is_path_default,
+                // 循环结束后统一标：默认入口可能在后面才被 mise shim 换成真身。
+                is_path_default: false,
                 // 复用上面 line ~1357 已 canonicalize 的真身,避免下游
                 // installs_anchored_command 再 canonicalize 一遍同一文件。
                 real: real.clone(),
@@ -3586,9 +3611,45 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
         }
     }
 
+    for install in &mut installs {
+        install.is_path_default = path_default.as_ref() == Some(&install.real);
+    }
     // PATH 默认那处排最前，UI 一眼看到"命令行默认用的是哪处"。
     installs.sort_by_key(|i| std::cmp::Reverse(i.is_path_default));
     installs
+}
+
+/// mise 的 shim 是指向 mise 本体的软链，canonicalize 只能解析到 mise（Homebrew 装的 mise
+/// 还会落进 Cellar 被标成 homebrew），和它调度的 `installs/node/<版本>/bin/<tool>` 算成两处
+/// 安装（#9515）。换成 mise 自己说的真身（入口与真身一起换）再去重；shim 模式下登录 shell
+/// 的默认入口也是 mise 本体，一并换成真身。不是 mise shim 或解析不了时原样返回。
+#[cfg(not(target_os = "windows"))]
+fn resolve_mise_shim_install(
+    tool: &str,
+    tool_path: std::path::PathBuf,
+    real: std::path::PathBuf,
+    path_default: &mut Option<std::path::PathBuf>,
+    deadline: Option<CommandDeadline>,
+) -> (std::path::PathBuf, std::path::PathBuf) {
+    let Some(target) = mise_shim_target(tool, &tool_path, &real, deadline) else {
+        return (tool_path, real);
+    };
+    let target_real = std::fs::canonicalize(&target).unwrap_or_else(|_| target.clone());
+    if path_default.as_ref() == Some(&real) {
+        *path_default = Some(target_real.clone());
+    }
+    (target, target_real)
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_mise_shim_install(
+    _tool: &str,
+    tool_path: std::path::PathBuf,
+    real: std::path::PathBuf,
+    _path_default: &mut Option<std::path::PathBuf>,
+    _deadline: Option<CommandDeadline>,
+) -> (std::path::PathBuf, std::path::PathBuf) {
+    (tool_path, real)
 }
 
 /// 工具对应的 npm 包名（hermes 走自己的 CLI/installer，不在此表）。锚定升级据此拼 `npm i -g`。
@@ -12024,6 +12085,32 @@ mod tests {
         );
         // mise 说不出路径（工具没装在当前版本里）时不猜。
         assert_eq!(mise_shim_target("codex", &shim, &shim_real, None), None);
+
+        // 枚举安装时 shim 换成真身，和 installs 目录那处去重成同一处（#9515）；
+        // shim 模式下默认入口是 mise 本体，也换成真身。
+        let mut path_default = Some(shim_real.clone());
+        let (path, real) = resolve_mise_shim_install(
+            "claude",
+            shim.clone(),
+            shim_real.clone(),
+            &mut path_default,
+            None,
+        );
+        assert_eq!(path, target);
+        assert_eq!(real, target_real);
+        assert_eq!(path_default, Some(target_real.clone()));
+        // 解析不了的 shim 原样保留，默认入口不动。
+        let mut path_default = Some(shim_real.clone());
+        let (path, real) = resolve_mise_shim_install(
+            "codex",
+            shim.clone(),
+            shim_real.clone(),
+            &mut path_default,
+            None,
+        );
+        assert_eq!(path, shim);
+        assert_eq!(real, shim_real);
+        assert_eq!(path_default, Some(shim_real));
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -12255,6 +12342,28 @@ mod tests {
         assert!(!is_foreign_pip_launcher(
             "hermes",
             Path::new(r"D:\soft\Python\Python311\Scripts\hermes.exe")
+        ));
+    }
+
+    #[test]
+    fn vscode_copilot_shim_is_rejected_but_real_copilot_is_kept() {
+        assert!(is_vscode_copilot_shim(
+            "copilot",
+            Path::new(r"D:\Microsoft VS Code\bin\copilot-shim\copilot.exe")
+        ));
+        assert!(is_vscode_copilot_shim(
+            "copilot",
+            Path::new(r"C:\Program Files\Microsoft VS Code\bin\COPILOT-SHIM\copilot.cmd")
+        ));
+        // npm's global shim is the real CLI.
+        assert!(!is_vscode_copilot_shim(
+            "copilot",
+            Path::new(r"C:\Users\me\AppData\Roaming\npm\copilot.cmd")
+        ));
+        // Only the copilot tool is affected.
+        assert!(!is_vscode_copilot_shim(
+            "codex",
+            Path::new(r"D:\x\copilot-shim\codex.exe")
         ));
     }
 

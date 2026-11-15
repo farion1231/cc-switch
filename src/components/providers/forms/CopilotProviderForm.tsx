@@ -926,6 +926,7 @@ export function CopilotProviderForm({
                 mode="select"
                 selectedAccountId={accountId}
                 onAccountSelect={setAccountId}
+                noneOptionLabel={t("copilot.form.followCliLogin")}
                 onManageAccounts={
                   onManageAuthAccounts
                     ? () => onManageAuthAccounts("github_copilot")
