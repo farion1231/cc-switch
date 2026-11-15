@@ -19,8 +19,8 @@ import { proxyKeys } from "@/lib/query/proxy";
 import { usageKeys } from "@/lib/query/usage";
 import { sessionKeys } from "@/lib/query/sessions";
 import { invalidatePiProviderCaches } from "@/lib/query/pi";
-import { isPiFamilyApp } from "@/config/appConfig";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
+import { appHas } from "@/config/appSpecs";
 
 export const useAddProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
@@ -73,17 +73,7 @@ export const useAddProviderMutation = (appId: AppId) => {
         // 没有 provider 节点，用随机 id，也从不写进 providers.json
         id = providerInput.providerKey || generateUUID();
         if (!providerInput.providerKey) liveTarget = false;
-      } else if (
-        appId === "opencode" ||
-        appId === "openclaw" ||
-        appId === "hermes" ||
-        appId === "pi" ||
-        appId === "mcode" ||
-        appId === "kimi" ||
-        appId === "dsh" ||
-        appId === "omp" ||
-        appId === "workbuddy"
-      ) {
+      } else if (appHas(appId, "additive")) {
         if (
           providerInput.category === "omo" ||
           providerInput.category === "omo-slim"
@@ -164,7 +154,7 @@ export const useAddProviderMutation = (appId: AppId) => {
       if (parseLiveEditConflict(error)) return;
       const rawDetail = extractErrorMessage(error);
       const detail =
-        (isPiFamilyApp(appId)
+        (appHas(appId, "piFamily")
           ? translatePiProviderMutationError(rawDetail, t)
           : appId === "kimi"
             ? translateKimiProviderMutationError(rawDetail, t)
@@ -179,7 +169,7 @@ export const useAddProviderMutation = (appId: AppId) => {
       );
     },
     onSettled: async () => {
-      if (isPiFamilyApp(appId)) {
+      if (appHas(appId, "piFamily")) {
         await invalidatePiProviderCaches(queryClient, appId);
       }
     },
@@ -238,7 +228,7 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       if (parseLiveEditConflict(error)) return;
       const rawDetail = extractErrorMessage(error);
       const detail =
-        (isPiFamilyApp(appId)
+        (appHas(appId, "piFamily")
           ? translatePiProviderMutationError(rawDetail, t)
           : appId === "kimi"
             ? translateKimiProviderMutationError(rawDetail, t)
@@ -253,7 +243,7 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       );
     },
     onSettled: async () => {
-      if (isPiFamilyApp(appId)) {
+      if (appHas(appId, "piFamily")) {
         await invalidatePiProviderCaches(queryClient, appId);
       } else if (appId === "kimi") {
         // 默认模型可能在 Kimi Code 里改过：失败时也重读，页面上的「默认」才跟得上
@@ -325,7 +315,7 @@ export const useDeleteProviderMutation = (appId: AppId) => {
     onError: (error: Error) => {
       const rawDetail = extractErrorMessage(error);
       const detail =
-        (isPiFamilyApp(appId)
+        (appHas(appId, "piFamily")
           ? translatePiProviderMutationError(rawDetail, t)
           : appId === "kimi"
             ? translateKimiProviderMutationError(rawDetail, t)
@@ -340,7 +330,7 @@ export const useDeleteProviderMutation = (appId: AppId) => {
       );
     },
     onSettled: async () => {
-      if (isPiFamilyApp(appId)) {
+      if (appHas(appId, "piFamily")) {
         await invalidatePiProviderCaches(queryClient, appId);
       } else if (appId === "kimi") {
         // 默认模型可能在 Kimi Code 里改过：失败时也重读，页面上的「默认」才跟得上
@@ -437,7 +427,7 @@ export const useSwitchProviderMutation = (appId: AppId) => {
       );
     },
     onSettled: async () => {
-      if (isPiFamilyApp(appId)) {
+      if (appHas(appId, "piFamily")) {
         await invalidatePiProviderCaches(queryClient, appId);
       }
     },

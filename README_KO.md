@@ -150,8 +150,8 @@ TeamoRouter는 통합 청구, 팀 관리, BYOK, 스마트 라우팅, 사용량 �
 </tr>
 
 <tr>
-<td width="180"><a href="https://9527.codes/register?aff=e5zI"><img src="assets/partners/logos/9527-banner.png" alt="9527CODE" width="150"></a></td>
-<td>이 프로젝트를 후원해 주신 9527CODE에 감사드립니다! 9527 CODE는 안정성과 서비스 품질에 집중하는 엔터프라이즈급 풀 기능 AI 릴레이 플랫폼으로, Claude Code, Codex 등 주요 AI 모델에 빠르고 안정적이며 품질 높은 릴레이 서비스를 제공합니다. 장기적인 안정성, 경로 품질, 지속적인 가용성을 더욱 중시하며, 기업과 헤비 AI 사용자에게 안정적이고 효율적인 원스톱 모델 접속 솔루션을 제공합니다. 1년간의 무중단 운영, 99.9% 서비스 안정성, 연중무휴 7×24 전문 상담원 기술 지원을 갖추고 있습니다. 이 프로젝트의 <a href="https://9527.codes/register?aff=e5zI">전용 링크</a>로 가입하세요. 신규 사용자는 고객센터에 문의해 체험 크레딧을 받을 수 있으며, 추천 캐시백은 무제한입니다!</td>
+<td width="180"><a href="https://9527.codes/register?channel=ccs"><img src="assets/partners/logos/9527-banner.png" alt="9527CODE" width="150"></a></td>
+<td>이 프로젝트를 후원해 주신 9527CODE에 감사드립니다! 9527 CODE는 안정성과 서비스 품질에 집중하는 엔터프라이즈급 풀 기능 AI 릴레이 플랫폼으로, Claude Code, Codex 등 주요 AI 모델에 빠르고 안정적이며 품질 높은 릴레이 서비스를 제공합니다. 장기적인 안정성, 경로 품질, 지속적인 가용성을 더욱 중시하며, 기업과 헤비 AI 사용자에게 안정적이고 효율적인 원스톱 모델 접속 솔루션을 제공합니다. 1년간의 무중단 운영, 99.9% 서비스 안정성, 연중무휴 7×24 전문 상담원 기술 지원을 갖추고 있습니다. 이 프로젝트의 <a href="https://9527.codes/register?channel=ccs">전용 링크</a>로 가입하세요. 신규 사용자는 고객센터에 문의해 체험 크레딧을 받을 수 있으며, 추천 캐시백은 무제한입니다!</td>
 </tr>
 
 <tr>
