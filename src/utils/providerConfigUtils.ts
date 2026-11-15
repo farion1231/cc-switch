@@ -701,31 +701,37 @@ const unescapeTomlBasicString = (value: string): string =>
     },
   );
 
-const CODEX_CHAT_WIRE_API_VALUES = new Set([
+// 后端 codex_config::CHAT_WIRE_APIS / ANTHROPIC_WIRE_APIS 的前端副本，
+// tests/config/backendConstants.test.ts 核对两边一致。
+export const CODEX_CHAT_WIRE_API_VALUES: readonly string[] = [
   "chat",
   "chat_completions",
   "chat-completions",
   "openai_chat",
   "openai-chat",
   "openai_chat_completions",
-]);
+];
+
+export const CODEX_ANTHROPIC_WIRE_API_VALUES: readonly string[] = [
+  "anthropic",
+  "anthropic_messages",
+  "anthropic-messages",
+  "messages",
+  "claude",
+];
 
 // 判断给定的 wire_api 字符串是否表示 Codex 的 Chat Completions 协议
 export const isCodexChatWireApi = (
   wireApi: string | undefined | null,
 ): boolean =>
-  CODEX_CHAT_WIRE_API_VALUES.has((wireApi ?? "").trim().toLowerCase());
+  CODEX_CHAT_WIRE_API_VALUES.includes((wireApi ?? "").trim().toLowerCase());
 
 export const isCodexAnthropicWireApi = (
   wireApi: string | undefined | null,
 ): boolean =>
-  [
-    "anthropic",
-    "anthropic_messages",
-    "anthropic-messages",
-    "messages",
-    "claude",
-  ].includes((wireApi ?? "").trim().toLowerCase());
+  CODEX_ANTHROPIC_WIRE_API_VALUES.includes(
+    (wireApi ?? "").trim().toLowerCase(),
+  );
 
 export const codexApiFormatFromWireApi = (
   wireApi: string | undefined | null,
