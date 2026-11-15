@@ -1,6 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { TFunction } from "i18next";
 import { toast } from "@/lib/toast";
+import { parseHeaderOverrideJson } from "@/lib/requestOverrides";
+
+// 矩阵起源 Genesis 的 /v1/models 会混入 embedding / rerank 模型。除 Claude 外
+// 的表单不读预设的 modelsUrl，所以在这里按地址补上 ?type=chat。
+const GENESIS_ORIGIN = "https://token.moi.matrixorigin.cn";
+const GENESIS_CHAT_MODELS_URL = `${GENESIS_ORIGIN}/v1/models?type=chat`;
 
 export interface FetchedModel {
   id: string;
@@ -10,6 +16,35 @@ export interface FetchedModel {
 export interface ModelFetchOptions {
   apiFormat?: string;
   requestHeaders?: Record<string, string>;
+}
+
+/**
+ * Claude / Claude Desktop 卡片的 `meta.apiFormat` 换成取模型列表要用的格式名。
+ *
+ * 只有 Gemini Native 需要换：Google 原生接口只认 `x-goog-api-key` 头里的
+ * AI Studio Key，按默认的 `Authorization: Bearer` 发会被回 401。其余格式
+ * 沿用默认（Bearer + `/v1/models`），不改变既有行为。
+ */
+export function claudeModelFetchApiFormat(
+  apiFormat: string | undefined,
+): string | undefined {
+  return apiFormat === "gemini_native" ? "google-generative-ai" : undefined;
+}
+
+/**
+ * 把表单里的本地代理 Header 覆盖 JSON 解析成取模型列表时要携带的请求头。
+ *
+ * 与转发路径共用 parseHeaderOverrideJson 的校验规则；解析失败或覆盖为空时
+ * 静默返回 undefined（回退到不带覆盖头取模型），格式错误由表单字段本身提示。
+ */
+export function modelFetchRequestHeaders(
+  headersJson: string,
+): Record<string, string> | undefined {
+  const { headers, error } = parseHeaderOverrideJson(headersJson);
+  if (error || !headers || Object.keys(headers).length === 0) {
+    return undefined;
+  }
+  return headers;
 }
 
 /**
@@ -33,6 +68,21 @@ export async function fetchModelsForConfig(
   customUserAgent?: string,
   options?: ModelFetchOptions,
 ): Promise<FetchedModel[]> {
+  if (!modelsUrl) {
+    try {
+      const endpoint = new URL(baseUrl);
+      if (
+        endpoint.origin === GENESIS_ORIGIN &&
+        (endpoint.pathname === "/" ||
+          endpoint.pathname === "/v1" ||
+          endpoint.pathname === "/v1/")
+      ) {
+        modelsUrl = GENESIS_CHAT_MODELS_URL;
+      }
+    } catch {
+      // Keep the native fetcher's normal validation for malformed URLs.
+    }
+  }
   return invoke("fetch_models_for_config", {
     baseUrl,
     apiKey,
@@ -41,6 +91,20 @@ export async function fetchModelsForConfig(
     customUserAgent,
     apiFormat: options?.apiFormat,
     requestHeaders: options?.requestHeaders,
+  });
+}
+
+/**
+ * Models reported by the locally installed Antigravity runtime. With an API key it asks agy's
+ * API-key mode, which only accepts its built-in Gemini models (by display name).
+ */
+export async function getAgyModels(options?: {
+  apiKey?: string;
+  baseUrl?: string;
+}): Promise<FetchedModel[]> {
+  return invoke("get_agy_models", {
+    apiKey: options?.apiKey || null,
+    baseUrl: options?.baseUrl || null,
   });
 }
 
@@ -101,7 +165,12 @@ export function showFetchModelsError(
   // 解析后端错误字符串
   const msg = String(err);
 
-  if (msg.includes("HTTP 401") || msg.includes("HTTP 403")) {
+  // Google 对无效的 AI Studio Key 回 400 + reason API_KEY_INVALID，而不是 401
+  if (
+    msg.includes("HTTP 401") ||
+    msg.includes("HTTP 403") ||
+    msg.includes("API_KEY_INVALID")
+  ) {
     toast.error(t("providerForm.fetchModelsAuthFailed"));
     return;
   }

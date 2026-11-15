@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "tray-panel",
+  "description": "托盘面板：只读数据、发事件，用不到主窗口的其它权限",
+  "windows": ["tray-panel"],
+  "permissions": ["core:default"]
+}

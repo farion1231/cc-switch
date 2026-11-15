@@ -265,6 +265,7 @@ fn insert_gemini_session_entry(
 
     let dedup_key = DedupKey {
         app_type: "gemini",
+        data_source: "gemini_session",
         model,
         input_tokens: tokens.input,
         output_tokens,
@@ -282,6 +283,7 @@ fn insert_gemini_session_entry(
         output_tokens,
         cache_read_tokens: tokens.cached,
         cache_creation_tokens: 0,
+        cache_creation_1h_tokens: 0,
         model: Some(model.to_string()),
         message_id: None,
     };

@@ -154,6 +154,49 @@ describe("EditProviderDialog", () => {
     apiMocks.getOpenClawLiveProvider.mockReset();
   });
 
+  it("keeps the list visible until the initial editor projection is ready", async () => {
+    let resolveView!: (view: {
+      settings: Record<string, unknown>;
+      inactive: string[];
+    }) => void;
+    apiMocks.getEditorView.mockReturnValue(
+      new Promise((resolve) => {
+        resolveView = resolve;
+      }),
+    );
+    const provider: Provider = {
+      id: "delayed",
+      name: "Delayed",
+      settingsConfig: { auth: {}, config: "" },
+    };
+    const props = {
+      provider,
+      onOpenChange: vi.fn(),
+      onSubmit: vi.fn(),
+      appId: "codex" as const,
+    };
+    const { rerender } = render(<EditProviderDialog open {...props} />);
+    expect(screen.queryByText("common.loading")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "common.save" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("settings-config")).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveView({ settings: provider.settingsConfig, inactive: [] });
+    });
+    expect(screen.getByTestId("settings-config")).toBeInTheDocument();
+
+    rerender(<EditProviderDialog open={false} {...props} />);
+    rerender(<EditProviderDialog open {...props} />);
+    expect(screen.queryByTestId("settings-config")).not.toBeInTheDocument();
+    rerender(<EditProviderDialog open={false} {...props} />);
+    await act(async () => {
+      resolveView({ settings: provider.settingsConfig, inactive: [] });
+    });
+    expect(screen.queryByTestId("settings-config")).not.toBeInTheDocument();
+  });
+
   it("Codex 显示后端算出的切换投影，并把它作为保存时三方比较的基准", async () => {
     const modelCatalog = {
       models: [{ model: "deepseek-v4-flash", contextWindow: 1000000 }],
@@ -572,5 +615,34 @@ describe("EditProviderDialog", () => {
 
     act(() => staleCallback?.(true));
     expect(reopenedButton).toBeDisabled();
+  });
+
+  it("Oh My Pi 编辑表单报告未就绪时禁用保存按钮", async () => {
+    const provider: Provider = {
+      id: "omp-provider",
+      name: "Oh My Pi Provider",
+      settingsConfig: {
+        baseUrl: "https://api.example.com/v1",
+        api: "openai-completions",
+      },
+    };
+    mockFormReady = false;
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+        appId="omp"
+      />,
+    );
+
+    const saveButton = await screen.findByRole("button", {
+      name: "common.save",
+    });
+    await waitFor(() => expect(saveButton).toBeDisabled());
+
+    act(() => submitReadyCallbacks.at(-1)?.(true));
+    await waitFor(() => expect(saveButton).toBeEnabled());
   });
 });

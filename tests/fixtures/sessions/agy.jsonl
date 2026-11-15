@@ -1,0 +1,2 @@
+{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-10-13T19:52:43Z","content":"Say fixture reply only"}
+{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-10-13T19:52:43Z","input_tokens":80,"cache_read_tokens":20,"output_tokens":12,"content":"fixture reply"}

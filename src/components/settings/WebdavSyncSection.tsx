@@ -9,6 +9,7 @@ import {
   Check,
   Info,
   AlertTriangle,
+  Trash2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -179,7 +180,8 @@ type ActionState =
   | "saving"
   | "uploading"
   | "downloading"
-  | "fetching_remote";
+  | "fetching_remote"
+  | "clearing";
 
 type SyncType = "webdav" | "s3";
 
@@ -314,6 +316,10 @@ export function WebdavSyncSection({
   const [dialogType, setDialogType] = useState<DialogType>(null);
   const [remoteInfo, setRemoteInfo] = useState<RemoteSnapshotInfo | null>(null);
   const [showAutoSyncConfirm, setShowAutoSyncConfirm] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  // Set while a cleared config is still on its way down from the parent, so
+  // the sync effect below does not refill the form from the stale `config`.
+  const awaitingClearedConfigRef = useRef(false);
 
   const closeDialog = useCallback(() => {
     setDialogType(null);
@@ -336,7 +342,11 @@ export function WebdavSyncSection({
 
   // Sync form when config is loaded/updated from backend, but not while user is editing
   useEffect(() => {
-    if (!config || dirty) return;
+    if (!config) {
+      awaitingClearedConfigRef.current = false;
+      return;
+    }
+    if (dirty || awaitingClearedConfigRef.current) return;
     setForm(() => {
       const nextBaseUrl = config.baseUrl ?? "";
       const nextUsername = config.username ?? "";
@@ -497,6 +507,7 @@ export function WebdavSyncSection({
       return;
     }
     setActionState("saving");
+    awaitingClearedConfigRef.current = false;
     pendingPasswordPreservationRef.current = form.password
       ? {
           key: buildPasswordPreservationKey(settings),
@@ -541,6 +552,39 @@ export function WebdavSyncSection({
       setActionState("idle");
     }
   }, [buildSettings, form.password, passwordTouched, queryClient, t]);
+
+  /** Forget the saved WebDAV config on this device; remote data is kept. */
+  const handleClearConfirm = useCallback(async () => {
+    setShowClearConfirm(false);
+    setActionState("clearing");
+    try {
+      await settingsApi.webdavSyncClearSettings();
+      awaitingClearedConfigRef.current = true;
+      pendingPasswordPreservationRef.current = null;
+      setForm({
+        baseUrl: "",
+        username: "",
+        password: "",
+        remoteRoot: "cc-switch-sync",
+        profile: "default",
+        autoSync: false,
+      });
+      setPresetId(detectPreset(""));
+      setDirty(false);
+      setPasswordTouched(false);
+      setJustSaved(false);
+      await queryClient.invalidateQueries();
+      toast.success(t("settings.webdavSync.clearSuccess"));
+    } catch (error) {
+      toast.error(
+        t("settings.webdavSync.clearFailed", {
+          error: (error as Error)?.message ?? String(error),
+        }),
+      );
+    } finally {
+      setActionState("idle");
+    }
+  }, [queryClient, t]);
 
   /** Fetch remote info, then open upload confirmation dialog. */
   const handleUploadClick = useCallback(async () => {
@@ -964,9 +1008,6 @@ export function WebdavSyncSection({
         <h3 className="text-base font-semibold text-fg-1">
           {t("settings.webdavSync.title")}
         </h3>
-        <p className="text-sm text-fg-2">
-          {t("settings.webdavSync.description")}
-        </p>
       </header>
 
       {/* ─── Sync type selector ───────────────────────────── */}
@@ -1076,9 +1117,6 @@ export function WebdavSyncSection({
             <div className="flex items-center gap-4">
               <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
                 {t("settings.webdavSync.remoteRoot")}
-                <span className="block text-badge font-normal text-fg-2">
-                  {t("settings.webdavSync.remoteRootDefault")}
-                </span>
               </label>
               <Input
                 value={form.remoteRoot}
@@ -1093,9 +1131,6 @@ export function WebdavSyncSection({
             <div className="flex items-center gap-4">
               <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
                 {t("settings.webdavSync.profile")}
-                <span className="block text-badge font-normal text-fg-2">
-                  {t("settings.webdavSync.profileDefault")}
-                </span>
               </label>
               <Input
                 value={form.profile}
@@ -1166,6 +1201,19 @@ export function WebdavSyncSection({
               activeLabel={t("settings.webdavSync.saving")}
               idleLabel={t("settings.webdavSync.save")}
             />
+            {hasSavedConfig && (
+              <ActionButton
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setShowClearConfirm(true)}
+                actionState={actionState}
+                targetState="clearing"
+                icon={Trash2}
+                activeLabel={t("settings.webdavSync.clearing")}
+                idleLabel={t("settings.webdavSync.clear")}
+              />
+            )}
 
             {/* Save status indicator */}
             {dirty && (
@@ -1356,9 +1404,6 @@ export function WebdavSyncSection({
             <div className="flex items-center gap-4">
               <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
                 {t("settings.s3Sync.remoteRoot")}
-                <span className="block text-badge font-normal text-fg-2">
-                  {t("settings.s3Sync.remoteRootDefault")}
-                </span>
               </label>
               <Input
                 value={s3RemoteRoot}
@@ -1376,9 +1421,6 @@ export function WebdavSyncSection({
             <div className="flex items-center gap-4">
               <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
                 {t("settings.s3Sync.profile")}
-                <span className="block text-badge font-normal text-fg-2">
-                  {t("settings.s3Sync.profileDefault")}
-                </span>
               </label>
               <Input
                 value={s3Profile}
@@ -1858,6 +1900,17 @@ export function WebdavSyncSection({
         confirmText={t("confirm.autoSync.confirm")}
         onConfirm={() => void handleAutoSyncConfirm()}
         onCancel={() => setShowAutoSyncConfirm(false)}
+      />
+
+      {/* ─── Clear WebDAV config confirmation dialog ──────── */}
+      <ConfirmDialog
+        isOpen={showClearConfirm}
+        variant="destructive"
+        title={t("settings.webdavSync.clearConfirm.title")}
+        message={t("settings.webdavSync.clearConfirm.message")}
+        confirmText={t("settings.webdavSync.clearConfirm.confirm")}
+        onConfirm={() => void handleClearConfirm()}
+        onCancel={() => setShowClearConfirm(false)}
       />
     </section>
   );

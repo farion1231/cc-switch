@@ -21,7 +21,7 @@
       "description": "Extra high reasoning depth for complex problems"
     }
   ],
-  "shell_type": "shell_command",
+  "shell_type": "unified_exec",
   "visibility": "list",
   "supported_in_api": true,
   "priority": 0,
@@ -68,5 +68,7 @@
     "text",
     "image"
   ],
-  "supports_search_tool": true
+  "supports_search_tool": true,
+  "include_skills_usage_instructions": true,
+  "include_plugin_usage_instructions": true
 }

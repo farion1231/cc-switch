@@ -3,10 +3,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { http, HttpResponse } from "msw";
+import type { Settings } from "@/types";
 import { SettingsPage } from "@/components/settings/SettingsPage";
 import {
   resetProviderState,
   getSettings,
+  setSettings,
   getAppConfigDirOverride,
 } from "../msw/state";
 import { server } from "../msw/server";
@@ -204,6 +206,179 @@ describe("SettingsPage integration", () => {
     fireEvent.click(resetButtons[0]);
     await waitFor(() => expect(claudeInput.value).toBe("/home/mock/.claude"));
   });
+
+  it.each([undefined, "/saved/claude"])(
+    "discards directory drafts after unrelated autosave with saved directory %s",
+    async (savedDirectory) => {
+      setSettings({ claudeConfigDir: savedDirectory });
+      const resolvedDirectory = savedDirectory ?? "/home/mock/.claude";
+      const saves: Settings[] = [];
+      const syncLive = vi.fn();
+      server.use(
+        http.post("http://tauri.local/get_config_dir", async ({ request }) => {
+          const { app } = (await request.json()) as { app: string };
+          return HttpResponse.json(
+            app === "claude" ? resolvedDirectory : `/default/${app}`,
+          );
+        }),
+        http.post("http://tauri.local/save_settings", async ({ request }) => {
+          const { settings } = (await request.json()) as { settings: Settings };
+          saves.push(settings);
+          setSettings(settings);
+          return HttpResponse.json(true);
+        }),
+        http.post("http://tauri.local/sync_current_providers_live", () => {
+          syncLive();
+          return HttpResponse.json(true);
+        }),
+      );
+      renderDialog({ section: "appConfig" });
+
+      const directory = await screen.findByPlaceholderText(
+        "settings.browsePlaceholderClaude",
+      );
+      expect(directory).toHaveValue(resolvedDirectory);
+      fireEvent.change(directory, { target: { value: "/unsaved/claude" } });
+      expect(directory).toHaveValue("/unsaved/claude");
+      expect(screen.getByRole("button", { name: "common.save" })).toBeEnabled();
+      expect(saves).toHaveLength(0);
+
+      const toggle = screen.getByRole("switch", {
+        name: "settings.skipClaudeOnboarding",
+      });
+      fireEvent.click(toggle);
+      await waitFor(() =>
+        expect(getSettings().skipClaudeOnboarding).toBe(true),
+      );
+      expect(saves[0].claudeConfigDir).toBe(savedDirectory);
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("button", { name: "common.save" }),
+        ).toBeNull(),
+      );
+      await waitFor(() => expect(directory).toHaveValue(resolvedDirectory));
+
+      fireEvent.click(toggle);
+      await waitFor(() =>
+        expect(getSettings().skipClaudeOnboarding).toBe(false),
+      );
+      expect(saves).toHaveLength(2);
+      expect(saves[1].claudeConfigDir).toBe(savedDirectory);
+      expect(directory).toHaveValue(resolvedDirectory);
+      expect(syncLive).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([undefined, "/saved/claude"])(
+    "saves directory edits and resets after picker cancellation from %s",
+    async (savedDirectory) => {
+      setSettings({ claudeConfigDir: savedDirectory });
+      const selectDirectory = vi.fn();
+      server.use(
+        http.post("http://tauri.local/get_config_dir", async ({ request }) => {
+          const { app } = (await request.json()) as { app: string };
+          return HttpResponse.json(
+            app === "claude"
+              ? (getSettings().claudeConfigDir ?? "/home/mock/.claude")
+              : `/default/${app}`,
+          );
+        }),
+        http.post("http://tauri.local/save_settings", async ({ request }) => {
+          const { settings } = (await request.json()) as { settings: Settings };
+          // The backend replaces settings, so an omitted override is cleared.
+          setSettings({
+            ...settings,
+            claudeConfigDir: settings.claudeConfigDir,
+          });
+          return HttpResponse.json(true);
+        }),
+        http.post("http://tauri.local/pick_directory", () => {
+          selectDirectory();
+          return HttpResponse.json(null);
+        }),
+      );
+      renderDialog({ section: "appConfig" });
+      const directory = await screen.findByPlaceholderText(
+        "settings.browsePlaceholderClaude",
+      );
+      fireEvent.change(directory, { target: { value: "/edited/claude" } });
+      fireEvent.click(
+        screen.getAllByRole("button", { name: "settings.browseDirectory" })[0],
+      );
+      await waitFor(() => expect(selectDirectory).toHaveBeenCalledOnce());
+      expect(directory).toHaveValue("/edited/claude");
+      expect(getSettings().claudeConfigDir).toBe(savedDirectory);
+
+      fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+      await waitFor(() =>
+        expect(getSettings().claudeConfigDir).toBe("/edited/claude"),
+      );
+      await waitFor(() => expect(toastSuccessMock).toHaveBeenCalledOnce());
+      expect(directory).toHaveValue("/edited/claude");
+      expect(screen.queryByRole("button", { name: "common.save" })).toBeNull();
+
+      fireEvent.click(
+        screen.getAllByRole("button", { name: "settings.resetDefault" })[0],
+      );
+      expect(directory).toHaveValue("/home/mock/.claude");
+      expect(getSettings().claudeConfigDir).toBe("/edited/claude");
+      fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+      await waitFor(() =>
+        expect(getSettings().claudeConfigDir).toBeUndefined(),
+      );
+      await waitFor(() => expect(toastSuccessMock).toHaveBeenCalledTimes(2));
+      expect(directory).toHaveValue("/home/mock/.claude");
+      expect(screen.queryByRole("button", { name: "common.save" })).toBeNull();
+    },
+  );
+
+  it.each([
+    [
+      "hermes",
+      "hermesConfigDir",
+      "settings.browsePlaceholderHermes",
+      "/env/hermes-home",
+    ],
+    ["pi", "piConfigDir", "settings.browsePlaceholderPi", "/env/pi-agent"],
+  ] as const)(
+    "restores backend-resolved %s default after draft discard",
+    async (targetApp, field, placeholder, backendDefault) => {
+      setSettings({ [field]: undefined });
+      const saves: Settings[] = [];
+      server.use(
+        http.post("http://tauri.local/get_config_dir", async ({ request }) => {
+          const { app } = (await request.json()) as { app: string };
+          return HttpResponse.json(
+            app === targetApp ? backendDefault : `/default/${app}`,
+          );
+        }),
+        http.post("http://tauri.local/save_settings", async ({ request }) => {
+          const { settings } = (await request.json()) as { settings: Settings };
+          saves.push(settings);
+          setSettings({ ...settings, [field]: settings[field] });
+          return HttpResponse.json(true);
+        }),
+      );
+      renderDialog({ section: "appConfig" });
+      const directory = await screen.findByPlaceholderText(placeholder);
+      await waitFor(() => expect(directory).toHaveValue(backendDefault));
+      fireEvent.change(directory, { target: { value: `/draft/${targetApp}` } });
+      expect(directory).toHaveValue(`/draft/${targetApp}`);
+      fireEvent.click(
+        screen.getByRole("switch", { name: "settings.skipClaudeOnboarding" }),
+      );
+      await waitFor(() =>
+        expect(getSettings().skipClaudeOnboarding).toBe(true),
+      );
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("button", { name: "common.save" }),
+        ).toBeNull(),
+      );
+      expect(saves[0][field]).toBeUndefined();
+      await waitFor(() => expect(directory).toHaveValue(backendDefault));
+    },
+  );
 
   it("notifies when export fails", async () => {
     renderDialog();

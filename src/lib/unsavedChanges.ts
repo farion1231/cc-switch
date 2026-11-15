@@ -27,6 +27,7 @@ const EDIT_CONTROL_SELECTOR = [
   '[role="menuitemcheckbox"]',
   '[role="menuitemradio"]',
   "[aria-pressed]",
+  "[data-unsaved-edit]",
 ].join(",");
 
 /**
@@ -47,6 +48,16 @@ export function useUnsavedChangesTracker(enabled = true) {
     if (enabled) dirtyEditors.add(token);
   }, [enabled, token]);
 
+  const onInputOrChangeCapture = useCallback(
+    (event: SyntheticEvent) => {
+      const target = event.target as Element | null;
+      if (!target?.closest?.("[data-unsaved-ignore]")) {
+        markDirty();
+      }
+    },
+    [markDirty],
+  );
+
   const onClickCapture = useCallback(
     (event: SyntheticEvent) => {
       const target = event.target as Element | null;
@@ -61,8 +72,8 @@ export function useUnsavedChangesTracker(enabled = true) {
   );
 
   return {
-    onInputCapture: markDirty,
-    onChangeCapture: markDirty,
+    onInputCapture: onInputOrChangeCapture,
+    onChangeCapture: onInputOrChangeCapture,
     onClickCapture,
   };
 }

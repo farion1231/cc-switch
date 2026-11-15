@@ -6,7 +6,8 @@
 //! codex-rs 的 `collect_compaction_output` 要求返回里**恰好一个**
 //! `{"type":"compaction","encrypted_content":...}` 条目，否则直接 Fatal。
 //!
-//! 第三方模型产不出 OpenAI 的密文，所以这里把它当普通摘要模型用：去掉工具、在末尾追加
+//! 第三方模型产不出 OpenAI 的密文，所以这里把它当普通摘要模型用：禁止发起新的工具调用
+//! （工具定义保留，历史里的调用条目还引用着它们）、在末尾追加
 //! Codex 自己的压缩提示词，再把摘要正文包成 `ccswitch-compaction-v1:` + base64 放进
 //! `encrypted_content`。以后 Codex 在历史里回放这个条目时：
 //! - 发往 Chat / Anthropic 转换：解回摘要正文，作为用户消息；解不开的（别家的密文）
@@ -15,7 +16,7 @@
 //!   来源（可能正是这家自己签发的），原样发出，上游明确拒绝后再由 `opaque_state_rectifier`
 //!   换掉。
 
-use crate::proxy::sse::{append_utf8_safe, strip_sse_field, take_sse_block};
+use crate::proxy::sse::{strip_sse_field, SseBuffer};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
@@ -217,20 +218,42 @@ pub(crate) fn prepare_native_third_party_request(body: &mut Value) -> bool {
     body["input"] = Value::Array(rewritten);
 
     if compaction {
-        strip_tools_for_summary_turn(body);
+        shape_summary_turn_request(body);
     }
     true
 }
 
-/// 压缩回合只要一段摘要：去掉工具和结构化输出，和 Codex 本地压缩请求的形态一致
-/// （codex-rs `compact.rs` 的 Prompt 不带 tools）。
-fn strip_tools_for_summary_turn(body: &mut Value) {
+/// 压缩回合被原生 Responses 第三方拒绝（HTTP 400）后的重试请求体：改写同
+/// [`prepare_native_third_party_request`]，但不带 `tool_choice`。有的上游不收
+/// `tool_choice: "none"`，整个请求只回一句「Invalid request」（Kimi For Coding 实测，去掉或
+/// 改成 `auto` 都正常）。摘要只取输出里的文字消息，模型偶尔发起的工具调用不影响压缩结果。
+///
+/// 不是压缩请求、或这次改写本来就不会带 `tool_choice`（请求里没有工具）时为 `None`。
+/// 返回的请求体已经改写过，再经过 `prepare_native_third_party_request` 时一个字节都不变。
+pub(crate) fn compaction_retry_without_tool_choice(request: &Value) -> Option<Value> {
+    if !is_compaction_request(request) || request.get("tools").is_none() {
+        return None;
+    }
+    let mut body = request.clone();
+    prepare_native_third_party_request(&mut body);
+    body.as_object_mut()?.remove("tool_choice")?;
+    Some(body)
+}
+
+/// 压缩回合只要一段摘要：强制 `tool_choice: "none"` 不发起新的工具调用，并去掉结构化输出，
+/// 保持和 Codex 本地压缩请求一致的"只要文字"形态（codex-rs `compact.rs` 的 Prompt 不带 tools）。
+/// 工具定义保留：历史里回放的 `web_search_call`、`function_call` 等条目引用这些定义，
+/// 部分上游对"有调用历史、无工具定义"的请求直接拒绝（#7976）。
+fn shape_summary_turn_request(body: &mut Value) {
     let Some(obj) = body.as_object_mut() else {
         return;
     };
-    obj.remove("tools");
-    obj.remove("tool_choice");
-    obj.remove("parallel_tool_calls");
+    if obj.contains_key("tools") {
+        obj.insert("tool_choice".to_string(), json!("none"));
+    } else {
+        obj.remove("tool_choice");
+        obj.remove("parallel_tool_calls");
+    }
     let text_is_empty = obj
         .get_mut("text")
         .and_then(Value::as_object_mut)
@@ -332,8 +355,7 @@ where
     E: std::error::Error + Send + 'static,
 {
     async_stream::stream! {
-        let mut buffer = String::new();
-        let mut utf8_remainder: Vec<u8> = Vec::new();
+        let mut sse = SseBuffer::new();
         let mut state = NativeCompactionState::default();
 
         tokio::pin!(stream);
@@ -341,12 +363,12 @@ where
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
-                    while let Some(block) = take_sse_block(&mut buffer) {
+                    sse.push_bytes(&bytes);
+                    while let Some(block) = sse.next_block() {
                         if block.trim().is_empty() {
                             continue;
                         }
-                        for event in state.handle_block(&block) {
+                        for event in state.handle_block(block) {
                             yield Ok(event);
                         }
                     }
@@ -358,10 +380,7 @@ where
             }
         }
 
-        if !utf8_remainder.is_empty() {
-            buffer.push_str(&String::from_utf8_lossy(&utf8_remainder));
-        }
-        let tail = std::mem::take(&mut buffer);
+        let tail = sse.take_tail();
         if !tail.trim().is_empty() {
             for event in state.handle_block(&tail) {
                 yield Ok(event);
@@ -582,10 +601,58 @@ mod tests {
             format!("{SUMMARY_PREFIX}\nprior work")
         );
         assert_eq!(input[4]["content"][0]["text"], COMPACT_PROMPT);
+        assert_eq!(
+            body["tools"],
+            json!([{ "type": "function", "name": "shell" }])
+        );
+        assert_eq!(body["tool_choice"], "none");
+        assert_eq!(body["parallel_tool_calls"], true);
+        assert_eq!(body["text"], json!({ "verbosity": "low" }));
+    }
+
+    #[test]
+    fn compaction_summary_turn_keeps_tools_referenced_by_search_history() {
+        // #7976：历史里回放的 `web_search_call` 引用 `web_search` 工具定义，摘要回合删掉
+        // 定义会让部分上游直接拒绝整个压缩请求。定义保留，`tool_choice: "none"` 保证摘要
+        // 回合不发起新调用（原请求没有 `tool_choice` 时也要补上）。
+        let mut body = json!({
+            "model": "gpt-6.1-sol",
+            "stream": true,
+            "store": false,
+            "input": [
+                { "type": "message", "role": "user", "content": [
+                    { "type": "input_text", "text": "This is a transport diagnostic. Reply with exactly OK." }
+                ]},
+                { "type": "web_search_call", "id": "ws_diagnostic_1", "status": "completed",
+                  "action": { "type": "search", "query": "Codex documentation" } },
+                { "type": "compaction_trigger" }
+            ],
+            "tools": [{ "type": "web_search" }]
+        });
+        assert!(prepare_native_third_party_request(&mut body));
+        assert_eq!(body["tools"], json!([{ "type": "web_search" }]));
+        assert_eq!(body["tool_choice"], "none");
+        let input = body["input"].as_array().unwrap();
+        assert_eq!(input[1]["type"], "web_search_call");
+        assert_eq!(input[2]["content"][0]["text"], COMPACT_PROMPT);
+    }
+
+    #[test]
+    fn summary_turn_without_tools_drops_stale_tool_fields() {
+        // 没有 tools 的请求保持原行为：不引入 tool_choice，陈旧的调用相关字段清掉。
+        let mut body = json!({
+            "model": "kimi-k3",
+            "input": [
+                { "type": "message", "role": "user", "content": "hi" },
+                { "type": "compaction_trigger" }
+            ],
+            "tool_choice": "auto",
+            "parallel_tool_calls": true
+        });
+        assert!(prepare_native_third_party_request(&mut body));
         assert!(body.get("tools").is_none());
         assert!(body.get("tool_choice").is_none());
         assert!(body.get("parallel_tool_calls").is_none());
-        assert_eq!(body["text"], json!({ "verbosity": "low" }));
     }
 
     #[test]

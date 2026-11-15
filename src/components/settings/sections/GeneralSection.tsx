@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { ChevronRight, Monitor, Moon, Sun } from "lucide-react";
 import type { SettingsFormState } from "@/hooks/useSettings";
+import { LANGUAGES, type Language } from "@/i18n/languages";
 import { useTheme } from "@/components/theme-provider";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
@@ -11,7 +12,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { isLinux } from "@/lib/platform";
+import { isLinux, isMac } from "@/lib/platform";
+import {
+  setDensity,
+  setZoom,
+  useInterfacePrefs,
+  ZOOM_LEVELS,
+  type Density,
+  type ZoomLevel,
+} from "@/lib/interfacePrefs";
 import { TerminalSelect } from "@/components/settings/TerminalSettings";
 import {
   SettingsBlock,
@@ -19,15 +28,6 @@ import {
   SettingsRow,
   SettingsSwitchRow,
 } from "@/components/settings/SettingsLayout";
-
-type Language = SettingsFormState["language"];
-
-const LANGUAGES: { value: Language; labelKey: string }[] = [
-  { value: "zh", labelKey: "settings.languageOptionChinese" },
-  { value: "zh-TW", labelKey: "settings.languageOptionTraditionalChinese" },
-  { value: "en", labelKey: "settings.languageOptionEnglish" },
-  { value: "ja", labelKey: "settings.languageOptionJapanese" },
-];
 
 interface GeneralSectionProps {
   settings: SettingsFormState;
@@ -42,6 +42,7 @@ export function GeneralSection({
 }: GeneralSectionProps) {
   const { t } = useTranslation();
   const { theme, setTheme } = useTheme();
+  const { density, zoom } = useInterfacePrefs();
 
   return (
     <>
@@ -57,14 +58,14 @@ export function GeneralSection({
                 }
               >
                 <SelectTrigger
-                  className="h-8 w-[160px]"
+                  className="w-[160px]"
                   aria-label={t("settings.language")}
                 >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   {LANGUAGES.map((language) => (
-                    <SelectItem key={language.value} value={language.value}>
+                    <SelectItem key={language.id} value={language.id}>
                       {t(language.labelKey)}
                     </SelectItem>
                   ))}
@@ -100,6 +101,79 @@ export function GeneralSection({
               />
             }
           />
+          <SettingsRow
+            label={t("settings.general.quotaDisplay")}
+            help={{
+              title: t("settings.general.quotaDisplay"),
+              body: t("settings.general.quotaDisplayHelp"),
+            }}
+            control={
+              <SegmentedControl
+                size="sm"
+                aria-label={t("settings.general.quotaDisplay")}
+                value={settings.quotaDisplay ?? "left"}
+                onValueChange={(value) =>
+                  void onAutoSave({ quotaDisplay: value })
+                }
+                items={[
+                  {
+                    value: "left",
+                    label: t("settings.general.quotaDisplayLeft"),
+                  },
+                  {
+                    value: "used",
+                    label: t("settings.general.quotaDisplayUsed"),
+                  },
+                ]}
+              />
+            }
+          />
+          <SettingsRow
+            label={t("settings.general.density")}
+            help={{
+              title: t("settings.general.density"),
+              body: t("settings.general.densityHelp"),
+            }}
+            control={
+              <SegmentedControl<Density>
+                size="sm"
+                aria-label={t("settings.general.density")}
+                value={density}
+                onValueChange={setDensity}
+                items={[
+                  {
+                    value: "compact",
+                    label: t("settings.general.densityCompact"),
+                  },
+                  {
+                    value: "comfortable",
+                    label: t("settings.general.densityComfortable"),
+                  },
+                ]}
+              />
+            }
+          />
+          <SettingsRow
+            label={t("settings.general.zoom")}
+            help={{
+              title: t("settings.general.zoom"),
+              body: t("settings.general.zoomHelp", {
+                shortcut: isMac() ? "⌘" : "Ctrl",
+              }),
+            }}
+            control={
+              <SegmentedControl<`${ZoomLevel}`>
+                size="sm"
+                aria-label={t("settings.general.zoom")}
+                value={`${zoom}`}
+                onValueChange={(value) => setZoom(Number(value) as ZoomLevel)}
+                items={ZOOM_LEVELS.map((level) => ({
+                  value: `${level}` as const,
+                  label: `${Math.round(level * 100)}%`,
+                }))}
+              />
+            }
+          />
         </SettingsCard>
       </SettingsBlock>
 
@@ -123,6 +197,17 @@ export function GeneralSection({
             checked={settings.showProfileSwitcher ?? false}
             onCheckedChange={(value) =>
               void onAutoSave({ showProfileSwitcher: value })
+            }
+          />
+          <SettingsSwitchRow
+            label={t("settings.appVisibility.showProviderSearch")}
+            help={{
+              title: t("settings.appVisibility.showProviderSearch"),
+              body: t("settings.appVisibility.showProviderSearchDescription"),
+            }}
+            checked={settings.showProviderSearch ?? true}
+            onCheckedChange={(value) =>
+              void onAutoSave({ showProviderSearch: value })
             }
           />
         </SettingsCard>
@@ -177,6 +262,36 @@ export function GeneralSection({
               void onAutoSave({ minimizeToTrayOnClose: value })
             }
           />
+          {/* Linux（AppIndicator）只能出原生菜单，没得选 */}
+          {!isLinux() && (
+            <SettingsRow
+              label={t("settings.general.trayStyle")}
+              help={{
+                title: t("settings.general.trayStyle"),
+                body: t("settings.general.trayStyleHelp"),
+              }}
+              control={
+                <SegmentedControl
+                  size="sm"
+                  aria-label={t("settings.general.trayStyle")}
+                  value={settings.nativeTrayMenu ? "menu" : "panel"}
+                  onValueChange={(value) =>
+                    void onAutoSave({ nativeTrayMenu: value === "menu" })
+                  }
+                  items={[
+                    {
+                      value: "panel",
+                      label: t("settings.general.trayStylePanel"),
+                    },
+                    {
+                      value: "menu",
+                      label: t("settings.general.trayStyleMenu"),
+                    },
+                  ]}
+                />
+              }
+            />
+          )}
           {isLinux() && (
             <SettingsSwitchRow
               label={t("settings.useAppWindowControls")}

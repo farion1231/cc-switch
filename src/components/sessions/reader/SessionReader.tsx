@@ -17,6 +17,7 @@ import type { SessionTranscriptResult } from "@/lib/query/sessions";
 import { toast } from "@/lib/toast";
 
 import { sessionsApi } from "@/lib/api";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import { cn } from "@/lib/utils";
 import type { SessionMessage, SessionMeta, TurnIndex } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -45,6 +46,7 @@ import {
   buildTurnIndex,
   buildTurns,
   estimateRowHeight,
+  findMatchPositionForMessage,
   findMatchRowIndex,
   findSearchHits,
   findTurnRowIndex,
@@ -133,6 +135,11 @@ export interface SessionReaderProps {
   transcript: SessionTranscriptResult;
   /** 列表的搜索词：阅读页里照样高亮 */
   listQuery: string;
+  /**
+   * 从正文搜索结果进入：打开时展开查找栏并填入查询词；会话读完后跳到
+   * `messageIndex` 那条消息上的命中（列表摘录所在处），而不是第一个匹配
+   */
+  initialFind?: { query: string; messageIndex?: number };
   /** 一键恢复用的终端名；不是 macOS 时为 null（只能复制命令） */
   launchTerminal: string | null;
   hasPrev: boolean;
@@ -156,6 +163,7 @@ export function SessionReader({
   appName,
   transcript,
   listQuery,
+  initialFind,
   launchTerminal,
   hasPrev,
   hasNext,
@@ -170,6 +178,7 @@ export function SessionReader({
 }: SessionReaderProps) {
   const { t } = useTranslation();
   const rt = useReaderT();
+  const { moneyCompact } = useMoneyFormat();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const findInputRef = useRef<HTMLInputElement>(null);
   const findButtonRef = useRef<HTMLButtonElement>(null);
@@ -180,8 +189,8 @@ export function SessionReader({
   const [includeThinking, setIncludeThinking] = useState(false);
   const [turnOverrides, setTurnOverrides] = useState(EMPTY_OVERRIDES);
   const [stepOverrides, setStepOverrides] = useState(EMPTY_OVERRIDES);
-  const [findOpen, setFindOpen] = useState(false);
-  const [findQuery, setFindQuery] = useState("");
+  const [findOpen, setFindOpen] = useState(Boolean(initialFind));
+  const [findQuery, setFindQuery] = useState(initialFind?.query ?? "");
   const [findIndex, setFindIndex] = useState(1);
   const [flashKey, setFlashKey] = useState<string | null>(null);
   const [atBottom, setAtBottom] = useState<boolean | null>(null);
@@ -282,6 +291,19 @@ export function SessionReader({
     paddingStart: 16,
     paddingEnd: 64,
   });
+
+  // 从正文搜索进入：等整段读完、命中算好后，把查找位置定到摘录所在的那条消息（只做一次）
+  const pendingMessageRef = useRef(initialFind?.messageIndex);
+  const transcriptReady =
+    !transcript.isLoading &&
+    !transcript.isStreaming &&
+    messages.length === transcript.messages.length;
+  useEffect(() => {
+    const target = pendingMessageRef.current;
+    if (target === undefined || !transcriptReady || !search) return;
+    pendingMessageRef.current = undefined;
+    setFindIndex(findMatchPositionForMessage(turns, search, target));
+  }, [search, transcriptReady, turns]);
 
   // 查找：跳到当前命中所在行
   useEffect(() => {
@@ -396,9 +418,10 @@ export function SessionReader({
       youLabel: t("sessionManager.you", { defaultValue: "你" }),
       projectDir: session.projectDir ?? undefined,
       t: rt,
+      formatCost: moneyCompact,
       includeThinking,
     }),
-    [appName, includeThinking, rt, session.projectDir, style, t],
+    [appName, includeThinking, moneyCompact, rt, session.projectDir, style, t],
   );
 
   const copyTurn = useCallback(

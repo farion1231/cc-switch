@@ -1,6 +1,7 @@
 import { ProviderIcon } from "@/components/ProviderIcon";
-import { isTileIcon } from "@/icons/extracted";
+import { isTileIcon, needsLightBacking } from "@/icons/extracted";
 import { cn } from "@/lib/utils";
+import { isCustomIcon } from "@/utils/customIcon";
 
 // 透明 logo 在 32px 框里的尺寸：和铺满整框的 tile 图标放在一起时视觉分量相当，
 // 再大实心 logo 就顶到边框了
@@ -18,7 +19,7 @@ interface ProviderIconBoxProps {
 
 /**
  * 供应商图标的 32px 圆角框。透明 logo 缩小居中、框带边框；自带实心底的图标
- * （metadata 里 shape: "tile"）铺满整框并裁成框的圆角，否则会变成「框里套一块小方块」。
+ * （metadata 里 shape: "tile"）和用户上传的图标铺满整框并裁成框的圆角，否则会变成「框里套一块小方块」。
  */
 export function ProviderIconBox({
   icon,
@@ -28,7 +29,10 @@ export function ProviderIconBox({
   iconClassName,
   fallbackClassName,
 }: ProviderIconBoxProps) {
-  const tile = isTileIcon(icon);
+  // 用户上传的图标在编码时已经按 tile / 透明 logo 留好了白，统一铺满整框
+  const tile = isCustomIcon(icon) || isTileIcon(icon);
+  // 透明底的位图 / 上传图标、适配后仍带近黑笔画的图标：深色下垫浅色衬底，否则看不见
+  const lightBacking = isCustomIcon(icon) || needsLightBacking(icon);
   return (
     <span
       aria-hidden="true"
@@ -39,6 +43,7 @@ export function ProviderIconBox({
             "after:pointer-events-none after:absolute after:inset-0 after:rounded-[inherit] after:ring-1 after:ring-inset after:ring-black/10 dark:after:ring-white/10"
           : "border border-border",
         className,
+        lightBacking && "dark:bg-white dark:text-neutral-900",
       )}
     >
       <ProviderIcon

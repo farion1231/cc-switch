@@ -55,6 +55,62 @@ function renderNativeForm(
 }
 
 describe("native OpenCode provider form", () => {
+  it.each([true, false])(
+    "saves a legacy Unicode V1 ID unchanged (live: %s)",
+    async (live) => {
+      const providerId = "中文供应商-123";
+      const config = {
+        npm: "@ai-sdk/openai-compatible",
+        options: {
+          baseURL: "https://example.com/v1",
+          apiKey: "public-test-key",
+        },
+        models: { model: { name: "Model" } },
+      };
+      const { client, onSubmit } = renderNativeForm(
+        config,
+        false,
+        providerId,
+        live ? [providerId] : [],
+      );
+      await waitFor(() => expect(client.isFetching()).toBe(0));
+      expect(
+        screen.queryByText("opencode.providerKeyInvalid"),
+      ).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+      expect(onSubmit.mock.calls[0][0].providerKey).toBe(providerId);
+      expect(JSON.parse(onSubmit.mock.calls[0][0].settingsConfig)).toEqual(
+        config,
+      );
+    },
+  );
+
+  it("still rejects an invalid replacement for a legacy V1 ID", async () => {
+    const { client, onSubmit } = renderNativeForm(
+      {
+        npm: "@ai-sdk/openai-compatible",
+        options: {
+          baseURL: "https://example.com/v1",
+          apiKey: "public-test-key",
+        },
+        models: { model: { name: "Model" } },
+      },
+      false,
+      "中文供应商-123",
+      [],
+    );
+    await waitFor(() => expect(client.isFetching()).toBe(0));
+    fireEvent.change(document.getElementById("opencode-key")!, {
+      target: { value: "another--invalid-id" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith("opencode.providerKeyInvalid"),
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
     toastError.mockReset();
     setSettings({ commonConfigConfirmed: true });

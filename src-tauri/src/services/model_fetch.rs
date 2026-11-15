@@ -50,6 +50,12 @@ fn catalog_model_ids(models: Option<serde_json::Value>) -> Vec<String> {
             ["slug", "id"]
                 .iter()
                 .find_map(|k| m.get(k)?.as_str().filter(|s| !s.is_empty()))
+                .or_else(|| {
+                    m.get("name")?
+                        .as_str()?
+                        .strip_prefix("models/")
+                        .filter(|s| !s.is_empty())
+                })
         })
         .map(str::to_string)
         .collect()
@@ -89,10 +95,23 @@ pub async fn fetch_models(
     api_format: Option<&str>,
     request_headers: Option<&BTreeMap<String, String>>,
 ) -> Result<Vec<FetchedModel>, String> {
-    let candidates = build_models_url_candidates(base_url, is_full_url, models_url_override)?;
+    let candidates = if api_format == Some("google-generative-ai")
+        && models_url_override.is_none()
+        && !is_full_url
+    {
+        let base = base_url.trim_end_matches('/');
+        let base = base
+            .strip_suffix("/v1beta")
+            .or_else(|| base.strip_suffix("/v1"))
+            .unwrap_or(base);
+        // 默认每页只回 50 个（Gemini / Gemma / Imagen / Veo 加起来早已超出），
+        // 这里不翻页，直接要最大页。
+        vec![format!("{base}/v1beta/models?pageSize=1000")]
+    } else {
+        build_models_url_candidates(base_url, is_full_url, models_url_override)?
+    };
     let headers =
         build_model_fetch_headers(api_key, api_format, user_agent.as_ref(), request_headers)?;
-    let client = crate::proxy::http_client::get();
     let mut last_err: Option<String> = None;
     let mut known_secrets = vec![api_key.to_string()];
     if let Some(request_headers) = request_headers {
@@ -104,7 +123,7 @@ pub async fn fetch_models(
             "[ModelFetch] Trying endpoint: {}",
             crate::url_for_log_with_secrets(url, &known_secrets)
         );
-        let request = client
+        let request = crate::proxy::http_client::get_for_url(url)
             .get(url)
             .headers(headers.clone())
             .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS));
@@ -226,6 +245,13 @@ fn build_model_fetch_headers(
         }
     }
 
+    // 兜底 User-Agent：reqwest 默认不发 UA，而前置 Cloudflare/WAF 的端点对
+    // 无 UA 请求一律 403，且会被前端误读成「API Key 无效」（#7427）。
+    // 供应商自定义 UA 与请求头里的 UA 都在上面 insert 过，优先级高于兜底。
+    headers
+        .entry(USER_AGENT)
+        .or_insert_with(|| HeaderValue::from_static("cc-switch"));
+
     Ok(headers)
 }
 
@@ -291,10 +317,15 @@ pub fn build_models_url_candidates(
         if !root.is_empty() && root.contains("://") {
             candidates.push(format!("{root}/v1/models"));
             candidates.push(format!("{root}/models"));
+            // 阿里云百炼 / 千问 Token Plan：`/apps/anthropic` 入口不提供 /v1/models，
+            // 模型列表只在 OpenAI 兼容路径 `/compatible-mode/v1/models` 下。
+            if trimmed.ends_with("/apps/anthropic") {
+                candidates.push(format!("{root}/compatible-mode/v1/models"));
+            }
         }
     }
 
-    // 候选最多 3 条，线性去重即可，不值得上 HashSet。
+    // 候选最多 4 条，线性去重即可，不值得上 HashSet。
     let mut unique: Vec<String> = Vec::with_capacity(candidates.len());
     for url in candidates {
         if !unique.iter().any(|u| u == &url) {
@@ -359,6 +390,33 @@ mod tests {
         let openai =
             build_model_fetch_headers("openai-key", Some("openai-responses"), None, None).unwrap();
         assert_eq!(openai[AUTHORIZATION], "Bearer openai-key");
+    }
+
+    #[test]
+    fn model_fetch_headers_default_user_agent_when_unset() {
+        // #7427：无 User-Agent 的请求会被前置 Cloudflare/WAF 的端点一律 403，
+        // 且被前端误读成「API Key 无效」。未配置任何 UA 时补默认值。
+        let headers = build_model_fetch_headers("key", None, None, None).unwrap();
+        assert_eq!(headers[USER_AGENT], "cc-switch");
+
+        // 纯请求头鉴权（无 api_key）同样要带默认 UA。
+        let header_only = BTreeMap::from([("Authorization".to_string(), "Token x".to_string())]);
+        let headers = build_model_fetch_headers("", None, None, Some(&header_only)).unwrap();
+        assert_eq!(headers[USER_AGENT], "cc-switch");
+    }
+
+    #[test]
+    fn model_fetch_headers_keep_explicit_user_agent_priority() {
+        // 供应商自定义 UA 优先于默认值；请求头里的 UA 优先于两者。
+        let custom = HeaderValue::from_str("my-agent/1.0").unwrap();
+        let headers = build_model_fetch_headers("key", None, Some(&custom), None).unwrap();
+        assert_eq!(headers[USER_AGENT], "my-agent/1.0");
+
+        let request_headers =
+            BTreeMap::from([("User-Agent".to_string(), "header-agent/2.0".to_string())]);
+        let headers =
+            build_model_fetch_headers("key", None, Some(&custom), Some(&request_headers)).unwrap();
+        assert_eq!(headers[USER_AGENT], "header-agent/2.0");
     }
 
     #[test]
@@ -540,8 +598,30 @@ mod tests {
                 "https://dashscope.aliyuncs.com/apps/anthropic/v1/models",
                 "https://dashscope.aliyuncs.com/v1/models",
                 "https://dashscope.aliyuncs.com/models",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1/models",
             ]
         );
+    }
+
+    #[test]
+    fn test_candidates_qianwen_token_plan_compatible_mode() {
+        let c = build_models_url_candidates(
+            "https://token-plan.maas.qianwenaiapi.com/apps/anthropic/",
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            c.last().map(String::as_str),
+            Some("https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1/models")
+        );
+    }
+
+    #[test]
+    fn test_candidates_plain_anthropic_suffix_skips_compatible_mode() {
+        let c =
+            build_models_url_candidates("https://api.example.com/anthropic", false, None).unwrap();
+        assert!(!c.iter().any(|u| u.contains("compatible-mode")));
     }
 
     #[test]
@@ -665,6 +745,15 @@ mod tests {
         assert_eq!(data.len(), 2);
         assert_eq!(data[0].id, "model-a");
         assert_eq!(data[1].id, "model-b");
+    }
+
+    #[test]
+    fn agy_google_model_catalog_keeps_other_protocol_ids() {
+        let models = catalog_model_ids(Some(serde_json::json!([
+            {"name":"models/gemini-test"}, {"id":"models/custom-id"},
+            {"slug":"slug","name":"models/ignored"}, {"name":"Display name"}
+        ])));
+        assert_eq!(models, ["gemini-test", "models/custom-id", "slug"]);
     }
 
     #[test]

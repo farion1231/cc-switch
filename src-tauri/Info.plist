@@ -14,6 +14,9 @@
       </array>
     </dict>
   </array>
+
+  <!-- macOS local-network privacy prompt for LAN API endpoints -->
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>CC Switch needs access to your local network to connect to local API endpoints.</string>
 </dict>
 </plist>
-

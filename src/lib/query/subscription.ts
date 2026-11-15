@@ -1,9 +1,19 @@
 import { useRef } from "react";
-import { useQuery, type UseQueryResult } from "@tanstack/react-query";
+import {
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+  type UseQueryResult,
+} from "@tanstack/react-query";
 import { subscriptionApi } from "@/lib/api/subscription";
+import { kimiOAuthApi } from "@/lib/api/kimiOAuth";
 import type { AppId } from "@/lib/api/types";
 import type { ProviderMeta } from "@/types";
-import type { SubscriptionQuota } from "@/types/subscription";
+import type {
+  ClaudeAccountPlan,
+  SubscriptionQuota,
+} from "@/types/subscription";
+import type { ManagedAuthStatus } from "@/lib/api/auth";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { PROVIDER_TYPES } from "@/config/constants";
 import { resolveDisplayUsage, type LastGoodSnapshot } from "./queries";
@@ -91,7 +101,8 @@ export function useSubscriptionQuota(
     queryKey: subscriptionKeys.quota(appId),
     queryFn: () => subscriptionApi.getQuota(appId),
     enabled:
-      enabled && ["claude", "codex", "gemini", "grokbuild"].includes(appId),
+      enabled &&
+      ["claude", "codex", "gemini", "grokbuild", "agy"].includes(appId),
     refetchInterval,
     refetchIntervalInBackground: Boolean(refetchInterval),
     refetchOnWindowFocus: Boolean(refetchInterval),
@@ -201,4 +212,140 @@ export function useXaiOauthQuotaByAccountId(
   });
 
   return useQuotaKeepLastGood(query, accountId ?? "default");
+}
+
+/**
+ * Antigravity 账号的剩余额度（按账号 ID，用该账号自己的令牌直接查，不用先切号）。
+ * 授权中心逐个账号、以及绑了这个账号的官方卡共用同一份缓存。
+ */
+export function useAgyAccountQuota(
+  accountId: string,
+  options: UseCodexOauthQuotaOptions = {},
+) {
+  const {
+    enabled = true,
+    autoQuery = false,
+    autoQueryIntervalMinutes = 5,
+  } = options;
+  const refetchInterval =
+    autoQuery && autoQueryIntervalMinutes > 0
+      ? Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000
+      : false;
+  const query = useQuery({
+    queryKey: ["agy_oauth", "quota", accountId],
+    queryFn: () => subscriptionApi.getAgyAccountQuota(accountId),
+    enabled,
+    refetchInterval,
+    refetchIntervalInBackground: Boolean(refetchInterval),
+    refetchOnWindowFocus: Boolean(refetchInterval),
+    staleTime: REFETCH_INTERVAL,
+    retry: 1,
+  });
+
+  return useQuotaKeepLastGood(query, accountId);
+}
+
+/**
+ * Kimi 官方账号的剩余额度（按授权中心账号 ID，也就是它的供应商 ID）。
+ * 令牌快过期时后端会拿 Kimi 同款文件锁续期；授权中心那一行和官方卡共用同一份缓存。
+ */
+export function useKimiAccountQuota(
+  accountId: string,
+  options: UseCodexOauthQuotaOptions = {},
+) {
+  const {
+    enabled = true,
+    autoQuery = false,
+    autoQueryIntervalMinutes = 5,
+  } = options;
+  const refetchInterval =
+    autoQuery && autoQueryIntervalMinutes > 0
+      ? Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000
+      : false;
+  const query = useQuery({
+    queryKey: ["kimi_oauth", "quota", accountId],
+    queryFn: () => kimiOAuthApi.quota(accountId),
+    enabled,
+    refetchInterval,
+    refetchIntervalInBackground: Boolean(refetchInterval),
+    refetchOnWindowFocus: Boolean(refetchInterval),
+    staleTime: REFETCH_INTERVAL,
+    retry: 1,
+  });
+
+  return useQuotaKeepLastGood(query, accountId);
+}
+
+/**
+ * 绑了账号的 Claude 官方卡额度（按账号查）：在用的号读默认登录，没在用的读它自己的账号目录。
+ * 令牌过期时后端会在那个目录里跑一次 `claude -p /usage`（Claude Code 自己刷新），可能要几秒。
+ */
+export function useClaudeAccountQuota(
+  accountId: string,
+  options: UseCodexOauthQuotaOptions = {},
+) {
+  const {
+    enabled = true,
+    autoQuery = false,
+    autoQueryIntervalMinutes = 5,
+  } = options;
+  const refetchInterval =
+    autoQuery && autoQueryIntervalMinutes > 0
+      ? Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000
+      : false;
+  const queryClient = useQueryClient();
+  const query = useQuery({
+    queryKey: ["claude_official", "quota", accountId],
+    queryFn: async () => {
+      const quota = await subscriptionApi.getClaudeAccountQuota(accountId);
+      refreshAccountsOnPlanChange(queryClient, accountId, quota.plan);
+      return quota;
+    },
+    enabled,
+    refetchInterval,
+    refetchIntervalInBackground: Boolean(refetchInterval),
+    refetchOnWindowFocus: Boolean(refetchInterval),
+    staleTime: REFETCH_INTERVAL,
+    retry: 1,
+  });
+
+  return useQuotaKeepLastGood(query, accountId);
+}
+
+/**
+ * 查额度时后端顺手把凭据里的套餐记进了账号；和账号列表里的不一样（升级 / 降级过）时重新拉
+ * 列表，卡片副标题和授权中心显示的套餐就跟着变。
+ */
+function refreshAccountsOnPlanChange(
+  queryClient: QueryClient,
+  accountId: string,
+  plan: ClaudeAccountPlan | null | undefined,
+) {
+  if (!plan?.subscriptionType) return;
+  const statusKey = ["managed-auth-status", "claude_official"];
+  const account = queryClient
+    .getQueryData<ManagedAuthStatus>(statusKey)
+    ?.accounts.find((item) => item.id === accountId);
+  if (!account) return;
+  if (
+    (account.plan ?? null) !== plan.subscriptionType ||
+    (account.rate_limit_tier ?? null) !== (plan.rateLimitTier ?? null)
+  ) {
+    void queryClient.invalidateQueries({ queryKey: statusKey });
+  }
+}
+
+/**
+ * Claude Code 默认登录的套餐（没绑账号的官方卡显示）。默认登录会随切卡、在 Claude Code 里
+ * 重新登录而变，所以不久存，回到窗口时重读。
+ */
+export function useClaudeDefaultPlan(enabled: boolean) {
+  return useQuery({
+    queryKey: ["claude_official", "default_plan"],
+    queryFn: () => subscriptionApi.getClaudeDefaultPlan(),
+    enabled,
+    staleTime: 60 * 1000,
+    refetchOnWindowFocus: true,
+    retry: false,
+  });
 }

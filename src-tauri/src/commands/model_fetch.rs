@@ -13,6 +13,93 @@ pub struct OpenCodeModelRef {
     pub model_id: String,
 }
 
+/// Read the current runtime's model list. No shell and no credential values in errors.
+///
+/// Without a key this asks the signed-in agy. With a key it runs agy in API-key mode from a
+/// throwaway `--gemini_dir`: that mode only accepts agy's built-in Gemini models (by display
+/// name), which the Gemini API's own model list does not match.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn get_agy_models(
+    apiKey: Option<String>,
+    baseUrl: Option<String>,
+) -> Result<Vec<FetchedModel>, String> {
+    let api_key = apiKey.filter(|key| !key.trim().is_empty());
+    let base_url = baseUrl.filter(|url| !url.trim().is_empty());
+    // 登录态不在 settings.json 里：首次使用、只用官方登录时它可能还不存在，列模型只依赖
+    // CLI 自己。文件在但坏了照样报错，免得静默略过。
+    if api_key.is_none() && crate::agy_config::settings_path().exists() {
+        crate::agy_config::read_live_settings().map_err(|e| e.to_string())?;
+    }
+    let path = tokio::task::spawn_blocking(crate::agy_config::real_agy_bin)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Antigravity CLI not found; install agy first".to_string())?;
+    let mut command = crate::agy_config::background_command(&path);
+    command
+        .kill_on_drop(true)
+        .env_remove("GEMINI_API_KEY")
+        .env_remove("GOOGLE_GEMINI_BASE_URL");
+    // Dropped (and removed) after the command finishes.
+    let _scratch = match &api_key {
+        Some(key) => {
+            let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
+            let settings = dir.path().join("antigravity-cli").join("settings.json");
+            std::fs::create_dir_all(dir.path().join("antigravity-cli"))
+                .map_err(|e| e.to_string())?;
+            std::fs::write(&settings, br#"{"modelProvider":"gemini"}"#)
+                .map_err(|e| e.to_string())?;
+            command
+                .arg(format!("--gemini_dir={}", dir.path().display()))
+                .current_dir(dir.path())
+                .env("GEMINI_API_KEY", key);
+            if let Some(url) = &base_url {
+                command.env("GOOGLE_GEMINI_BASE_URL", url);
+            }
+            Some(dir)
+        }
+        None => None,
+    };
+    command.arg("models");
+    let output = tokio::time::timeout(std::time::Duration::from_secs(20), command.output())
+        .await
+        .map_err(|_| "Antigravity model discovery timed out".to_string())?
+        .map_err(|_| "Antigravity CLI not found; install agy first".to_string())?;
+    if !output.status.success() {
+        return Err("Antigravity could not list models. Check the API key and endpoint, or sign in with agy for official models.".into());
+    }
+    Ok(parse_agy_models(&String::from_utf8_lossy(&output.stdout)))
+}
+
+fn parse_agy_models(output: &str) -> Vec<FetchedModel> {
+    let mut names = BTreeMap::new();
+    for line in output.lines() {
+        let Some((id, name)) = line.trim().split_once('\t') else {
+            continue;
+        };
+        let name = name.trim();
+        if id.is_empty()
+            || !id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/' | ':'))
+            || name.is_empty()
+            || name.chars().any(char::is_control)
+        {
+            continue;
+        }
+        names
+            .entry(id.to_string())
+            .or_insert_with(|| name.to_string());
+    }
+    // Native settings.json stores the display name, unlike the --model flag
+    // which accepts the first-column CLI alias. Persisting that alias silently
+    // falls back to the runtime's default model in account-login mode.
+    names
+        .into_values()
+        .map(|id| FetchedModel { id, owned_by: None })
+        .collect()
+}
+
 const OPENCODE_MODELS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// 获取 OpenCode 当前运行时可用的模型。
@@ -146,5 +233,26 @@ mod tests {
             "notice: loading models\n/model\nprovider/\nbad provider/model\nprovider/bad model\nprovider/bad\u{1b}[0m\n"
         )
         .is_empty());
+    }
+}
+
+#[cfg(test)]
+mod agy_tests {
+    #[test]
+    fn agy_model_list_returns_native_setting_names_and_deduplicates_aliases() {
+        let models = super::parse_agy_models("Fetching available models...\ngemini-test\tGemini Test\nclaude-test\tClaude Test\ngemini-test\tDuplicate\n");
+        assert_eq!(
+            models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            ["Claude Test", "Gemini Test"]
+        );
+    }
+
+    #[test]
+    fn agy_model_list_skips_malformed_rows_and_empty_or_control_character_names() {
+        let models = super::parse_agy_models(
+            "notice\n\tNo alias\nbad alias\tName\nempty\t\nspaces\t   \ncontrol\tBad\u{1b}Name\nextra\tName\tColumn\nvalid\t Gemini Test \n",
+        );
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "Gemini Test");
     }
 }

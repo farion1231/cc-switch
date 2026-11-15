@@ -11,7 +11,7 @@ use tauri::Emitter;
 fn require_failover_app(app_type: &str) -> Result<(), String> {
     let app = crate::app_config::AppType::from_str(app_type)
         .map_err(|error| format!("无效的应用类型: {error}"))?;
-    if !app.supports_local_proxy() {
+    if !app.spec().local_proxy {
         return Err(format!("{} 不支持故障转移", app.as_str()));
     }
     Ok(())
@@ -69,7 +69,6 @@ mod tests {
     }
 }
 
-/// 获取故障转移队列
 #[tauri::command]
 pub async fn get_failover_queue(
     state: tauri::State<'_, AppState>,
@@ -301,12 +300,8 @@ pub async fn set_auto_failover_enabled(
         let _ = app.emit("provider-switched", event_data);
     }
 
-    // 刷新托盘菜单，确保状态同步
-    if let Ok(new_menu) = crate::tray::create_tray_menu(&app, &state) {
-        if let Some(tray) = app.tray_by_id(crate::tray::TRAY_ID) {
-            let _ = tray.set_menu(Some(new_menu));
-        }
-    }
+    // 刷新托盘，确保状态同步（Linux 重建原生菜单，其它平台通知托盘面板，不挂原生菜单）
+    crate::tray::refresh_tray_menu(&app);
 
     Ok(())
 }

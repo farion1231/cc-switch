@@ -20,7 +20,8 @@ const FILLED_TOAST_ID = "model-metadata-filled";
  * 了字段。它会被调用最多两次：当场一次（同地址预设 + 已缓存的 models.dev），
  * models.dev 数据晚到时再一次，所以调用方先提交「改模型 ID」，`apply` 读最新的
  * 行、确认模型没被用户改掉、只补空字段。有改动时由这里提示用户核对；同一轮里
- * 补了几个模型（批量添加、两次先后到达）只合并成一条提示。
+ * 补了几个模型（批量添加、两次先后到达）只合并成一条提示。从选择弹窗加入的模型
+ * 传 `silent`：弹窗里已经显示过这些参数，不再提示。
  *
  * `prefetch` 为真（已经拉过模型列表）时提前下载 models.dev，和价格导入共用同
  * 一份查询缓存；离线或下载失败时只用预设里的值，不打扰用户。
@@ -98,17 +99,22 @@ export function useModelMetadataFill({
     (
       modelId: string,
       apply: (metadata: ResolvedModelMetadata) => boolean,
-      /** 这一行实际请求的地址（模型级覆盖时传入），默认用表单的地址。 */
-      baseUrl?: string,
+      options?: {
+        /** 这一行实际请求的地址（模型级覆盖时传入），默认用表单的地址。 */
+        baseUrl?: string;
+        silent?: boolean;
+      },
     ): void => {
       const resolve = (modelsDev?: ModelsDevResponse) =>
         resolveModelMetadata(modelId, {
-          baseUrl: baseUrl || baseUrlRef.current,
+          baseUrl: options?.baseUrl || baseUrlRef.current,
           presets: presetsRef.current(),
           modelsDev,
         });
       const run = (metadata: ResolvedModelMetadata | null) => {
-        if (metadata && apply(metadata)) notify(modelId, metadata.sources);
+        if (metadata && apply(metadata) && !options?.silent) {
+          notify(modelId, metadata.sources);
+        }
       };
 
       const cached = queryClient.getQueryData(modelsDevQueryOptions.queryKey);

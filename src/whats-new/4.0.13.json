@@ -1,0 +1,33 @@
+{
+  "version": "4.0.13",
+  "items": [
+    {
+      "type": "new",
+      "zh": "Claude Desktop 可选直连、路由、聚合三种模式",
+      "zh-TW": "Claude Desktop 可選直連、路由、聚合三種模式",
+      "en": "Claude Desktop can now use direct, routing or aggregation mode",
+      "ja": "Claude Desktop で直接接続・ルーティング・集約の3モードを選択可能に"
+    },
+    {
+      "type": "new",
+      "zh": "Codex 可选自动审批模型，聚合模式可单独指定子代理模型",
+      "zh-TW": "Codex 可選自動審批模型，聚合模式可單獨指定子代理模型",
+      "en": "Codex can pick an Auto Review model, and aggregation can set its own sub-agent model",
+      "ja": "Codex で自動承認モデルを選択可能に、集約モードではサブエージェントのモデルも指定可能に"
+    },
+    {
+      "type": "improve",
+      "zh": "1M 模型的预设默认声明 1M，Haiku 档也能勾；GPT 窗口封顶 272K",
+      "zh-TW": "1M 模型的預設改為宣告 1M，Haiku 檔也能勾；GPT 視窗上限 272K",
+      "en": "Presets for 1M models now declare 1M (Haiku tier too), and GPT windows are capped at 272K",
+      "ja": "1M モデルのプリセットは 1M を宣言（Haiku 枠も可）、GPT は 272K が上限に"
+    },
+    {
+      "type": "improve",
+      "zh": "Windows 便携版点更新直接下载对应的压缩包",
+      "zh-TW": "Windows 可攜版點更新直接下載對應的壓縮檔",
+      "en": "Windows portable builds download the matching zip straight from the update button",
+      "ja": "Windows ポータブル版は更新ボタンから対応する zip を直接ダウンロード"
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 //! Token Plan / 编程套餐额度查询服务
 //!
-//! 支持 Kimi For Coding、智谱 GLM、MiniMax、ZenMux、火山方舟、OpenCode Go、Command Code
-//! 的套餐额度查询。复用 subscription 模块的 SubscriptionQuota / QuotaTier 类型。
+//! 支持 Kimi For Coding、智谱 GLM、MiniMax、ZenMux、火山方舟、OpenCode Go、Command Code、
+//! Ollama Cloud 的套餐额度查询。复用 subscription 模块的 SubscriptionQuota / QuotaTier 类型。
 
 use super::subscription::{
     CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
@@ -21,12 +21,15 @@ enum CodingPlanProvider {
     /// `https://ark.cn-beijing.volces.com/api/plan[/v3]`（Agent Plan）
     /// 或 `/api/coding[/v3]`（Coding Plan））。
     Volcengine,
-    /// OpenCode Go（$10/月订阅，美元额度三时间窗口）。base_url 分两档：
-    /// `https://opencode.ai/zen/go`（claude/claude-desktop 直连 /messages）
-    /// 与 `https://opencode.ai/zen/go/v1`（codex/opencode/pi 走 Chat）。
+    /// OpenCode Go（$10/月订阅，美元额度三时间窗口）。base_url 分两个入口：
+    /// `https://opencode.ai/inference/go/anthropic`（Anthropic 端，现行文档地址）
+    /// 与 `https://opencode.ai/zen/go`（旧入口），OpenAI Chat 端在各自后面加 `/v1`。
     OpencodeGo,
     /// Command Code（Claude 使用 `/provider`，Codex 使用 `/provider/v1`）。
     CommandCode,
+    /// Ollama Cloud（Claude 端 `https://ollama.com`，OpenAI 端 `https://ollama.com/v1`）。
+    /// 本地 Ollama（localhost:11434）没有额度，不命中。
+    OllamaCloud,
 }
 
 fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
@@ -46,11 +49,12 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
         Some(CodingPlanProvider::MiniMaxEn)
     } else if url.contains("zenmux") {
         Some(CodingPlanProvider::ZenMux)
-    } else if url.contains("opencode.ai/zen/go") {
-        // 同时覆盖 /zen/go 与 /zen/go/v1 两档 base；Zen 按量版（/zen/v1）
+    } else if url.contains("opencode.ai/zen/go") || url.contains("opencode.ai/inference/go") {
+        // 覆盖 /zen/go、/zen/go/v1 与 /inference/go、/inference/go/v1、
+        // /inference/go/anthropic；Zen 按量版（/zen/v1 或 /inference/v1）
         // 没有任何用量/余额 API（实测 404），刻意不命中。
         Some(CodingPlanProvider::OpencodeGo)
-    } else if url.contains("api.commandcode.ai/provider") {
+    } else if is_command_code_provider_url(&url) {
         Some(CodingPlanProvider::CommandCode)
     } else if url.contains("volces.com/api/plan") || url.contains("volces.com/api/coding") {
         // 仅匹配 Agent Plan（/api/plan[/v3]）与 Coding Plan（/api/coding[/v3]）
@@ -58,9 +62,40 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
         // 额度，不在此命中。用量探测本身是双 plan 自动探测（GetAFPUsage →
         // GetCodingPlanUsage），无需在此区分两种订阅。
         Some(CodingPlanProvider::Volcengine)
+    } else if crate::codex_config::codex_url_host_matches_any(base_url, &["ollama.com"]) {
+        Some(CodingPlanProvider::OllamaCloud)
     } else {
         None
     }
+}
+
+/// Command Code 只有 /provider（Claude）与 /provider/v1（Codex）两个入口；
+/// 按路径段边界匹配，同前端 `codingPlanProviders.ts` 的
+/// `/api\.commandcode\.ai\/provider(?:[/?#]|$)/i`，不认 /providers 之类。
+fn is_command_code_provider_url(url: &str) -> bool {
+    const BASE: &str = "api.commandcode.ai/provider";
+    url.match_indices(BASE).any(|(i, _)| {
+        matches!(
+            url[i + BASE.len()..].chars().next(),
+            None | Some('/' | '?' | '#')
+        )
+    })
+}
+
+/// 按地址认出的套餐 id，取值与前端 `CodingPlanProviderEntry.id` 一致
+/// （写进 `usage_script.coding_plan_provider`，用量弹窗下拉按它回显）。
+/// 智谱团队版与个人版地址相同、无法自动区分，这里永远返回个人版。
+pub(crate) fn detect_provider_id(base_url: &str) -> Option<&'static str> {
+    Some(match detect_provider(base_url)? {
+        CodingPlanProvider::Kimi => "kimi",
+        CodingPlanProvider::ZhipuCn | CodingPlanProvider::ZhipuEn => "zhipu",
+        CodingPlanProvider::MiniMaxCn | CodingPlanProvider::MiniMaxEn => "minimax",
+        CodingPlanProvider::ZenMux => "zenmux",
+        CodingPlanProvider::Volcengine => "volcengine",
+        CodingPlanProvider::OpencodeGo => "opencode_go",
+        CodingPlanProvider::CommandCode => "command_code",
+        CodingPlanProvider::OllamaCloud => "ollama_cloud",
+    })
 }
 
 fn now_millis() -> i64 {
@@ -112,18 +147,45 @@ fn make_error(msg: String) -> SubscriptionQuota {
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
+        plan_name: None,
         error: Some(msg),
         queried_at: Some(now_millis()),
+    }
+}
+
+/// 套餐查询的结果。智谱个人版账户没有 Coding Plan（按量付费）时单独返回
+/// `ZhipuNoPlan`（内含原来的失败结果），用量查询入口据此改查账户余额
+/// （`commands::provider` 的 token_plan 分支）；不回落的调用方用 [`Self::into_quota`]。
+pub(crate) enum CodingPlanOutcome {
+    Quota(SubscriptionQuota),
+    ZhipuNoPlan(SubscriptionQuota),
+}
+
+impl CodingPlanOutcome {
+    pub(crate) fn into_quota(self) -> SubscriptionQuota {
+        match self {
+            Self::Quota(quota) | Self::ZhipuNoPlan(quota) => quota,
+        }
     }
 }
 
 // ── Kimi For Coding ─────────────────────────────────────────
 
 async fn query_kimi(api_key: &str) -> Result<SubscriptionQuota, String> {
+    query_kimi_at("https://api.kimi.com/coding/v1", api_key).await
+}
+
+/// `base_url` is the Kimi Code API root (`https://api.kimi.ai/coding/v1` for
+/// global accounts); `token` is an API key or an official OAuth access token.
+pub(crate) async fn query_kimi_at(
+    base_url: &str,
+    token: &str,
+) -> Result<SubscriptionQuota, String> {
     let client = crate::proxy::http_client::get();
+    let api_key = token;
 
     let resp = client
-        .get("https://api.kimi.com/coding/v1/usages")
+        .get(format!("{}/usages", base_url.trim_end_matches('/')))
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
         .timeout(std::time::Duration::from_secs(15))
@@ -146,6 +208,7 @@ async fn query_kimi(api_key: &str) -> Result<SubscriptionQuota, String> {
             extra_usage: None,
             reset_credits: None,
             credits_balance: None,
+            plan_name: None,
             error: Some(format!("Authentication failed (HTTP {status})")),
             queried_at: Some(now_millis()),
         });
@@ -224,6 +287,7 @@ async fn query_kimi(api_key: &str) -> Result<SubscriptionQuota, String> {
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
+        plan_name: None,
         error: None,
         queried_at: Some(now_millis()),
     })
@@ -339,15 +403,19 @@ fn zhipu_quota_base(base_url: &str) -> &'static str {
     }
 }
 
-async fn query_zhipu(base_url: &str, api_key: &str) -> Result<SubscriptionQuota, String> {
-    let client = crate::proxy::http_client::get();
+async fn query_zhipu(base_url: &str, api_key: &str) -> Result<CodingPlanOutcome, String> {
     let url = format!(
         "{}/api/monitor/usage/quota/limit",
         zhipu_quota_base(base_url)
     );
+    query_zhipu_at(&url, api_key).await
+}
 
+/// 拆出 url 参数便于用本地 server 测试鉴权失败 / 没有套餐两条路径。
+async fn query_zhipu_at(url: &str, api_key: &str) -> Result<CodingPlanOutcome, String> {
+    let client = crate::proxy::http_client::get();
     let resp = client
-        .get(&url)
+        .get(url)
         .header("Authorization", api_key) // 注意：智谱不加 Bearer 前缀
         .header("Content-Type", "application/json")
         .header("Accept-Language", "en-US,en")
@@ -362,23 +430,14 @@ async fn query_zhipu(base_url: &str, api_key: &str) -> Result<SubscriptionQuota,
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Ok(SubscriptionQuota {
-            tool: "coding_plan".to_string(),
-            credential_status: CredentialStatus::Expired,
-            credential_message: Some("Invalid API key".to_string()),
-            success: false,
-            tiers: vec![],
-            extra_usage: None,
-            reset_credits: None,
-            credits_balance: None,
-            error: Some(format!("Authentication failed (HTTP {status})")),
-            queried_at: Some(now_millis()),
-        });
+        return Ok(CodingPlanOutcome::Quota(zhipu_auth_error(status)));
     }
 
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
+        return Ok(CodingPlanOutcome::Quota(make_error(format!(
+            "API error (HTTP {status}): {body}"
+        ))));
     }
 
     // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
@@ -389,10 +448,73 @@ async fn query_zhipu(base_url: &str, api_key: &str) -> Result<SubscriptionQuota,
     };
     let body: serde_json::Value = match serde_json::from_slice(&raw) {
         Ok(v) => v,
-        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
+        Err(e) => {
+            return Ok(CodingPlanOutcome::Quota(make_error(format!(
+                "Failed to parse response: {e}"
+            ))))
+        }
     };
 
-    Ok(zhipu_quota_from_body(&body))
+    Ok(zhipu_outcome_from_body(&body))
+}
+
+fn zhipu_auth_error(status: reqwest::StatusCode) -> SubscriptionQuota {
+    SubscriptionQuota {
+        tool: "coding_plan".to_string(),
+        credential_status: CredentialStatus::Expired,
+        credential_message: Some("Invalid API key".to_string()),
+        success: false,
+        tiers: vec![],
+        extra_usage: None,
+        reset_credits: None,
+        credits_balance: None,
+        plan_name: None,
+        error: Some(format!("Authentication failed (HTTP {status})")),
+        queried_at: Some(now_millis()),
+    }
+}
+
+/// 智谱个人版：账户没有 Coding Plan（按量付费）单独认出来，交给调用方改查余额。
+fn zhipu_outcome_from_body(body: &serde_json::Value) -> CodingPlanOutcome {
+    let quota = zhipu_quota_from_body(body);
+    if zhipu_body_has_no_plan(body) {
+        CodingPlanOutcome::ZhipuNoPlan(quota)
+    } else {
+        CodingPlanOutcome::Quota(quota)
+    }
+}
+
+/// 按量账户查套餐时，接口回 HTTP 200 + 业务错误（2026-10-18 国内站实测）：
+/// `{"code":500,"msg":"当前用户不存在coding plan","success":false}`。
+/// 只认「msg 提到 coding plan 且说没有」，Key 无效（HTTP 401/403）、网络错误、
+/// 其他业务错误都不算，免得把真故障显示成余额。英文站文案未实测，关键词放宽了几个说法。
+fn zhipu_body_has_no_plan(body: &serde_json::Value) -> bool {
+    if body.get("success").and_then(|v| v.as_bool()) != Some(false) {
+        return false;
+    }
+    let msg = body
+        .get("msg")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let compact: String = msg
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '_' && *c != '-')
+        .collect();
+    compact.contains("codingplan")
+        && [
+            "不存在",
+            "没有",
+            "未开通",
+            "not exist",
+            "not found",
+            "not have",
+            "doesn't have",
+            "no coding plan",
+            "not subscribed",
+        ]
+        .iter()
+        .any(|kw| msg.contains(kw))
 }
 
 /// 解析智谱额度响应体（个人版与团队版共用同一 shape）。
@@ -430,6 +552,7 @@ fn zhipu_quota_from_body(body: &serde_json::Value) -> SubscriptionQuota {
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
+        plan_name: None,
         error: None,
         queried_at: Some(now_millis()),
     }
@@ -473,6 +596,7 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> Result<SubscriptionQuota, 
             extra_usage: None,
             reset_credits: None,
             credits_balance: None,
+            plan_name: None,
             error: Some(format!("Authentication failed (HTTP {status})")),
             queried_at: Some(now_millis()),
         });
@@ -521,6 +645,7 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> Result<SubscriptionQuota, 
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
+        plan_name: None,
         error: None,
         queried_at: Some(now_millis()),
     })
@@ -555,6 +680,7 @@ async fn query_zenmux(base_url: &str, api_key: &str) -> Result<SubscriptionQuota
             extra_usage: None,
             reset_credits: None,
             credits_balance: None,
+            plan_name: None,
             error: Some(format!("Authentication failed (HTTP {status})")),
             queried_at: Some(now_millis()),
         });
@@ -663,6 +789,7 @@ async fn query_zenmux(base_url: &str, api_key: &str) -> Result<SubscriptionQuota
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
+        plan_name: None,
         error: None,
         queried_at: Some(now_millis()),
     })
@@ -674,8 +801,9 @@ async fn query_zenmux(base_url: &str, api_key: &str) -> Result<SubscriptionQuota
 /// `model_remains` 数组里有 `general`(编程套餐)和 `video` 等其他模型,
 /// 这里只取 `general`,跳过 video。
 ///
-/// 5h 桶始终存在;周桶并非所有套餐都有,靠 `current_weekly_status == 1`
-/// 判定激活(无周限额套餐该字段为 3,`remaining_percent` 恒为 100,不应展示)。
+/// 5h 桶始终存在;周桶并非所有套餐都有,靠 `current_weekly_status` 区分:
+/// 1 = 正常计时,2 = 周额度已耗尽(照常展示),3 = 无周限额
+/// (该字段为 3 时 `remaining_percent` 恒为 100,不应展示)。
 fn parse_minimax_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
     let mut tiers = Vec::new();
 
@@ -711,8 +839,11 @@ fn parse_minimax_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
         });
     }
 
-    // 周桶:仅当 status=1 时激活;status=3 等表示该套餐无周限额,跳过
-    if item.get("current_weekly_status").and_then(|v| v.as_i64()) == Some(1) {
+    // 周桶:status=1 正常计时;status=2 表示周额度已耗尽(剩余 0%,官方控制台仍
+    // 显示该桶并按周限额限流),照常展示成「已用完」;status=3 表示该套餐无周
+    // 限额(remaining_percent 恒为 100),跳过
+    let weekly_status = item.get("current_weekly_status").and_then(|v| v.as_i64());
+    if weekly_status == Some(1) || weekly_status == Some(2) {
         if let Some(remain_pct) = item
             .get("current_weekly_remaining_percent")
             .and_then(|v| v.as_f64())
@@ -819,6 +950,7 @@ async fn query_opencode_go(api_key: &str) -> Result<SubscriptionQuota, String> {
             extra_usage: None,
             reset_credits: None,
             credits_balance: None,
+            plan_name: None,
             error: Some(format!("Authentication failed (HTTP {status})")),
             queried_at: Some(now_millis()),
         });
@@ -853,6 +985,136 @@ async fn query_opencode_go(api_key: &str) -> Result<SubscriptionQuota, String> {
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
+        plan_name: None,
+        error: None,
+        queried_at: Some(now_millis()),
+    })
+}
+
+// ── Ollama Cloud ─────────────────────────────────────────────
+
+/// 解析 `GET https://ollama.com/api/balance`（docs.ollama.com/api/balance）。
+///
+/// 现行套餐：`included.balance_usd`（本期剩余）/ `included.allowance_usd`（本期总额），
+/// 本期截止 `included.period.until`，折成一档月度百分比。旧套餐 `included` 下是
+/// `session` / `weekly` 两档，各带 `remaining_percent`（0–100）与 `resets_at`。
+/// `purchased.balance_usd`（另购余额）不进额度档：卡片的余额行只认 Codex Credits。
+fn parse_ollama_cloud_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
+    let Some(included) = body.get("included") else {
+        return Vec::new();
+    };
+    let balance = included.get("balance_usd").and_then(parse_f64);
+    let allowance = included.get("allowance_usd").and_then(parse_f64);
+    if let (Some(balance), Some(allowance)) = (balance, allowance) {
+        if allowance > 0.0 {
+            let used = (allowance - balance).clamp(0.0, allowance);
+            return vec![QuotaTier {
+                name: TIER_MONTHLY.to_string(),
+                utilization: used / allowance * 100.0,
+                resets_at: included
+                    .get("period")
+                    .and_then(|period| period.get("until"))
+                    .and_then(extract_reset_time),
+                used_value_usd: None,
+                max_value_usd: None,
+            }];
+        }
+    }
+
+    let mut tiers = Vec::new();
+    for (key, tier_name) in [("session", TIER_FIVE_HOUR), ("weekly", TIER_WEEKLY_LIMIT)] {
+        let Some(window) = included.get(key) else {
+            continue;
+        };
+        let Some(remaining) = window.get("remaining_percent").and_then(parse_f64) else {
+            continue;
+        };
+        tiers.push(QuotaTier {
+            name: tier_name.to_string(),
+            utilization: (100.0 - remaining).clamp(0.0, 100.0),
+            resets_at: window.get("resets_at").and_then(extract_reset_time),
+            used_value_usd: None,
+            max_value_usd: None,
+        });
+    }
+    tiers
+}
+
+async fn query_ollama_cloud(api_key: &str) -> Result<SubscriptionQuota, String> {
+    let client = crate::proxy::http_client::get();
+    let resp = client
+        .get("https://ollama.com/api/balance")
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Accept", "application/json")
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await;
+
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => return Err(format!("Network error: {e}")),
+    };
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return Ok(SubscriptionQuota {
+            tool: "coding_plan".to_string(),
+            credential_status: CredentialStatus::Expired,
+            credential_message: Some("Invalid API key".to_string()),
+            success: false,
+            tiers: vec![],
+            extra_usage: None,
+            reset_credits: None,
+            credits_balance: None,
+            plan_name: None,
+            error: Some(format!("Authentication failed (HTTP {status})")),
+            queried_at: Some(now_millis()),
+        });
+    }
+    if status == reqwest::StatusCode::FORBIDDEN {
+        return Ok(make_error(
+            "Ollama account is suspended (HTTP 403)".to_string(),
+        ));
+    }
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
+    }
+
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return Err(format!("Failed to read response: {e}")),
+    };
+    let body: serde_json::Value = match serde_json::from_slice(&raw) {
+        Ok(v) => v,
+        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
+    };
+
+    let tiers = parse_ollama_cloud_tiers(&body);
+    if tiers.is_empty() {
+        // 按量付费账户 allowance_usd 为 0，没有套餐额度可显示
+        let no_plan = body
+            .get("included")
+            .and_then(|included| included.get("allowance_usd"))
+            .and_then(parse_f64)
+            .is_some_and(|allowance| allowance <= 0.0);
+        return Ok(make_error(if no_plan {
+            "No included Ollama Cloud credits on this account (pay-as-you-go)".to_string()
+        } else {
+            "Unexpected balance response shape".to_string()
+        }));
+    }
+
+    Ok(SubscriptionQuota {
+        tool: "coding_plan".to_string(),
+        credential_status: CredentialStatus::Valid,
+        credential_message: None,
+        success: true,
+        tiers,
+        extra_usage: None,
+        reset_credits: None,
+        credits_balance: None,
+        plan_name: None,
         error: None,
         queried_at: Some(now_millis()),
     })
@@ -934,6 +1196,7 @@ fn command_code_auth_error() -> SubscriptionQuota {
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
+        plan_name: None,
         error: Some("Authentication failed (HTTP 401 Unauthorized)".to_string()),
         queried_at: Some(now_millis()),
     }
@@ -1046,6 +1309,7 @@ fn parse_command_code_quota(
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
+        plan_name: None,
         error: None,
         queried_at: Some(now_millis()),
     }
@@ -1528,6 +1792,7 @@ fn volcengine_success(tiers: Vec<QuotaTier>, plan: Option<String>) -> Subscripti
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
+        plan_name: None,
         error: None,
         queried_at: Some(now_millis()),
     }
@@ -1543,6 +1808,7 @@ fn volcengine_auth_error(detail: String) -> SubscriptionQuota {
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
+        plan_name: None,
         error: Some(detail),
         queried_at: Some(now_millis()),
     }
@@ -1636,6 +1902,7 @@ fn coding_plan_not_found(error: &str) -> SubscriptionQuota {
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
+        plan_name: None,
         error: Some(error.to_string()),
         queried_at: None,
     }
@@ -1687,18 +1954,7 @@ async fn query_zhipu_team_at(
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Ok(SubscriptionQuota {
-            tool: "coding_plan".to_string(),
-            credential_status: CredentialStatus::Expired,
-            credential_message: Some("Invalid API key".to_string()),
-            success: false,
-            tiers: vec![],
-            extra_usage: None,
-            reset_credits: None,
-            credits_balance: None,
-            error: Some(format!("Authentication failed (HTTP {status})")),
-            queried_at: Some(now_millis()),
-        });
+        return Ok(zhipu_auth_error(status));
     }
 
     if !status.is_success() {
@@ -1717,6 +1973,8 @@ async fn query_zhipu_team_at(
         Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
     };
 
+    // 团队版没有套餐不回落余额：用户是显式选的团队版，余额接口也不认组织 / 项目头，
+    // 查到的未必是这个团队的钱。
     Ok(zhipu_quota_from_body(&body))
 }
 
@@ -1735,6 +1993,32 @@ pub async fn get_coding_plan_quota(
     team_organization_id: Option<&str>,
     team_project_id: Option<&str>,
 ) -> Result<SubscriptionQuota, String> {
+    query_coding_plan(
+        base_url,
+        api_key,
+        access_key_id,
+        secret_access_key,
+        coding_plan_provider,
+        team_organization_id,
+        team_project_id,
+    )
+    .await
+    .map(CodingPlanOutcome::into_quota)
+}
+
+/// 同 [`get_coding_plan_quota`]，但把「智谱账户没有 Coding Plan」单独返回，
+/// 供用量查询入口改查余额。
+pub(crate) async fn query_coding_plan(
+    base_url: &str,
+    api_key: &str,
+    access_key_id: Option<&str>,
+    secret_access_key: Option<&str>,
+    coding_plan_provider: Option<&str>,
+    team_organization_id: Option<&str>,
+    team_project_id: Option<&str>,
+) -> Result<CodingPlanOutcome, String> {
+    use CodingPlanOutcome::Quota;
+
     // 智谱团队版：base_url 与个人版智谱（open.bigmodel.cn）相同，detect_provider 无法
     // 区分，必须靠显式 coding_plan_provider == "zhipu_team" 路由。需 api_key + 组织 ID
     // + 项目 ID 三者齐全，缺任一返回 NotFound 引导补全。
@@ -1745,17 +2029,19 @@ pub async fn get_coding_plan_quota(
         let organization_id = team_organization_id.unwrap_or("").trim();
         let project_id = team_project_id.unwrap_or("").trim();
         if api_key.trim().is_empty() || organization_id.is_empty() || project_id.is_empty() {
-            return Ok(coding_plan_not_found(
+            return Ok(Quota(coding_plan_not_found(
                 "Zhipu team plan needs the API key + organization ID + project ID",
-            ));
+            )));
         }
-        return query_zhipu_team(api_key, organization_id, project_id).await;
+        return query_zhipu_team(api_key, organization_id, project_id)
+            .await
+            .map(Quota);
     }
 
     let provider = match detect_provider(base_url) {
         Some(p) => p,
         // 域名未命中已知套餐供应商（如第三方中转站）：给出明确错误而非静默失败
-        None => return Ok(coding_plan_not_found("Unknown coding plan provider")),
+        None => return Ok(Quota(coding_plan_not_found("Unknown coding plan provider"))),
     };
 
     // 火山方舟走控制面 AK/SK 签名（区别于其他供应商的数据面 Bearer api_key），凭据
@@ -1764,45 +2050,48 @@ pub async fn get_coding_plan_quota(
         let ak = access_key_id.unwrap_or("").trim();
         let sk = secret_access_key.unwrap_or("").trim();
         if ak.is_empty() || sk.is_empty() {
-            return Ok(coding_plan_not_found(
+            return Ok(Quota(coding_plan_not_found(
                 "Volcengine usage query needs the account AccessKey ID + Secret (not the inference API key)",
-            ));
+            )));
         }
-        return query_volcengine(base_url, ak, sk).await;
+        return query_volcengine(base_url, ak, sk).await.map(Quota);
     }
 
     // 其余供应商：数据面 Bearer api_key。
     // 与 balance::get_balance 一致：给出明确错误，避免 footer 显示无信息的失败
     if api_key.trim().is_empty() {
-        return Ok(coding_plan_not_found("API key is empty"));
+        return Ok(Quota(coding_plan_not_found("API key is empty")));
     }
 
-    match provider {
-        CodingPlanProvider::Kimi => query_kimi(api_key).await,
+    let quota = match provider {
         CodingPlanProvider::ZhipuCn | CodingPlanProvider::ZhipuEn => {
-            query_zhipu(base_url, api_key).await
+            return query_zhipu(base_url, api_key).await
         }
+        CodingPlanProvider::Kimi => query_kimi(api_key).await,
         CodingPlanProvider::MiniMaxCn => query_minimax(api_key, true).await,
         CodingPlanProvider::MiniMaxEn => query_minimax(api_key, false).await,
         CodingPlanProvider::ZenMux => query_zenmux(base_url, api_key).await,
         CodingPlanProvider::OpencodeGo => query_opencode_go(api_key).await,
         CodingPlanProvider::CommandCode => query_command_code(api_key).await,
+        CodingPlanProvider::OllamaCloud => query_ollama_cloud(api_key).await,
         // 火山已在上面的 AK/SK 分支提前返回，此处不可达。
         CodingPlanProvider::Volcengine => {
             unreachable!("volcengine handled via AK/SK branch above")
         }
-    }
+    };
+    quota.map(Quota)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         detect_provider, parse_afp_tiers, parse_coding_plan_tiers, parse_command_code_quota,
-        parse_minimax_tiers, parse_opencode_go_tiers, parse_zhipu_token_tiers,
-        query_command_code_at, query_zhipu_team_at, volcengine_canonical_query,
-        volcengine_is_auth_error_code, volcengine_region, volcengine_response_error,
-        volcengine_sign, zhipu_quota_base, CodingPlanProvider, CredentialStatus, TIER_FIVE_HOUR,
-        TIER_MONTHLY, TIER_WEEKLY_LIMIT,
+        parse_minimax_tiers, parse_ollama_cloud_tiers, parse_opencode_go_tiers,
+        parse_zhipu_token_tiers, query_command_code_at, query_zhipu_at, query_zhipu_team_at,
+        volcengine_canonical_query, volcengine_is_auth_error_code, volcengine_region,
+        volcengine_response_error, volcengine_sign, zhipu_outcome_from_body, zhipu_quota_base,
+        CodingPlanOutcome, CodingPlanProvider, CredentialStatus, TIER_FIVE_HOUR, TIER_MONTHLY,
+        TIER_WEEKLY_LIMIT,
     };
     use serde_json::json;
 
@@ -1836,7 +2125,13 @@ mod tests {
             detect_provider("https://api.commandcode.ai/provider/v1"),
             Some(CodingPlanProvider::CommandCode)
         ));
+        assert!(matches!(
+            detect_provider("https://API.CommandCode.ai/provider?x=1"),
+            Some(CodingPlanProvider::CommandCode)
+        ));
         assert!(detect_provider("https://commandcode.ai/provider").is_none());
+        assert!(detect_provider("https://api.commandcode.ai/providers").is_none());
+        assert!(detect_provider("https://api.commandcode.ai/provider-v2").is_none());
     }
 
     #[test]
@@ -2227,9 +2522,18 @@ mod tests {
     }
 
     #[test]
-    fn opencode_go_detects_both_base_variants_but_not_zen() {
-        // claude/claude-desktop 预设 base 是 /zen/go，codex/opencode/pi 是
-        // /zen/go/v1，两档都要命中；Zen 按量版（/zen/v1）无用量 API，不得命中。
+    fn opencode_go_detects_current_and_legacy_bases_but_not_zen() {
+        // Claude Desktop 预设 base 是 /inference/go/anthropic，Codex/OpenCode/Pi
+        // 是 /inference/go/v1；旧入口 /zen/go[/v1] 仍可用，也要命中；Zen 按量版
+        // （/zen/v1）无用量 API，不得命中。
+        assert!(matches!(
+            detect_provider("https://opencode.ai/inference/go/anthropic"),
+            Some(CodingPlanProvider::OpencodeGo)
+        ));
+        assert!(matches!(
+            detect_provider("https://opencode.ai/inference/go/v1"),
+            Some(CodingPlanProvider::OpencodeGo)
+        ));
         assert!(matches!(
             detect_provider("https://opencode.ai/zen/go"),
             Some(CodingPlanProvider::OpencodeGo)
@@ -2239,6 +2543,62 @@ mod tests {
             Some(CodingPlanProvider::OpencodeGo)
         ));
         assert!(detect_provider("https://opencode.ai/zen/v1").is_none());
+        assert!(detect_provider("https://opencode.ai/inference/v1").is_none());
+    }
+
+    #[test]
+    fn ollama_cloud_detects_cloud_host_only() {
+        for base_url in [
+            "https://ollama.com",
+            "https://ollama.com/v1",
+            "https://OLLAMA.com/",
+        ] {
+            assert!(matches!(
+                detect_provider(base_url),
+                Some(CodingPlanProvider::OllamaCloud)
+            ));
+        }
+        assert!(detect_provider("http://localhost:11434").is_none());
+        assert!(detect_provider("http://127.0.0.1:11434/v1").is_none());
+        assert!(detect_provider("https://ollama.com.example.com/v1").is_none());
+    }
+
+    #[test]
+    fn ollama_cloud_current_plan_maps_included_credit_to_monthly() {
+        let body = json!({
+            "included": {
+                "balance_usd": 72.5,
+                "allowance_usd": 100,
+                "period": {
+                    "from": "2026-11-01T00:00:00Z",
+                    "until": "2026-12-01T00:00:00Z"
+                }
+            },
+            "purchased": { "balance_usd": 25 }
+        });
+        let tiers = parse_ollama_cloud_tiers(&body);
+        assert_eq!(tiers.len(), 1);
+        assert_eq!(tiers[0].name, TIER_MONTHLY);
+        assert!((tiers[0].utilization - 27.5).abs() < 1e-9);
+        assert_eq!(tiers[0].resets_at.as_deref(), Some("2026-12-01T00:00:00Z"));
+    }
+
+    #[test]
+    fn ollama_cloud_legacy_plan_maps_session_and_weekly() {
+        let body = json!({
+            "included": {
+                "session": { "remaining_percent": 80, "resets_at": "2026-11-10T13:00:00Z" },
+                "weekly": { "remaining_percent": 35.5, "resets_at": "2026-11-14T00:00:00Z" }
+            }
+        });
+        let tiers = parse_ollama_cloud_tiers(&body);
+        assert_eq!(tiers.len(), 2);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert!((tiers[0].utilization - 20.0).abs() < 1e-9);
+        assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert!((tiers[1].utilization - 64.5).abs() < 1e-9);
+        assert_eq!(tiers[1].resets_at.as_deref(), Some("2026-11-14T00:00:00Z"));
+        assert!(parse_ollama_cloud_tiers(&json!({})).is_empty());
     }
 
     #[test]
@@ -2679,20 +3039,23 @@ mod tests {
     }
 
     #[test]
-    fn minimax_weekly_status_2_also_skips_weekly_tier() {
-        // 防御性:除 1 之外的 status 都视为周桶未激活,跳过
+    fn minimax_weekly_status_2_keeps_exhausted_weekly_tier() {
+        // status=2:周额度已耗尽(实测 remaining_percent=0,官方控制台显示
+        // 红条并按周限额限流),周桶照常展示成已用完,不能跳过
         let body = json!({
             "model_remains": [{
                 "model_name": "general",
                 "current_interval_remaining_percent": 80.0,
-                "current_weekly_remaining_percent": 50.0,
+                "current_weekly_remaining_percent": 0.0,
                 "current_weekly_status": 2
             }]
         });
         let tiers = parse_minimax_tiers(&body);
-        assert_eq!(tiers.len(), 1);
+        assert_eq!(tiers.len(), 2);
         assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
         assert_eq!(tiers[0].utilization, 20.0);
+        assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(tiers[1].utilization, 100.0);
     }
 
     #[test]
@@ -3230,5 +3593,94 @@ mod tests {
         assert_eq!(quota.tiers[0].utilization, 26.0);
         assert_eq!(quota.tiers[1].name, TIER_WEEKLY_LIMIT);
         assert_eq!(quota.tiers[1].utilization, 5.0);
+    }
+
+    // ── 智谱个人版：没有套餐单独返回，交给用量入口改查余额（#8465）──
+
+    /// 2026-10-18 国内站无套餐按量 Key 实测原文。
+    const ZHIPU_NO_PLAN_BODY: &str =
+        r#"{"code":500,"msg":"当前用户不存在coding plan","success":false}"#;
+
+    #[test]
+    fn zhipu_no_plan_body_is_told_apart_from_other_errors() {
+        let no_plan: serde_json::Value = serde_json::from_str(ZHIPU_NO_PLAN_BODY).unwrap();
+        match zhipu_outcome_from_body(&no_plan) {
+            CodingPlanOutcome::ZhipuNoPlan(quota) => {
+                // 不回落的调用方（弹窗测试）拿到的仍是原来的失败文案
+                assert!(!quota.success);
+                assert!(quota.error.unwrap().contains("coding plan"));
+            }
+            CodingPlanOutcome::Quota(_) => panic!("无套餐应单独返回"),
+        }
+
+        for body in [
+            json!({ "code": 500, "msg": "The current user does not have a coding plan", "success": false }),
+            json!({ "code": 500, "msg": "Coding Plan not exist", "success": false }),
+        ] {
+            assert!(
+                matches!(
+                    zhipu_outcome_from_body(&body),
+                    CodingPlanOutcome::ZhipuNoPlan(_)
+                ),
+                "{body}"
+            );
+        }
+
+        // 其他业务错误、提到套餐但不是「没有」、success 不是 false 都不算没套餐
+        for body in [
+            json!({ "code": 1001, "msg": "令牌已过期或验证不正确", "success": false }),
+            json!({ "code": 500, "msg": "coding plan 查询超时", "success": false }),
+            json!({ "code": 500, "msg": "当前用户不存在coding plan" }),
+            json!({ "success": true, "data": { "limits": [] } }),
+        ] {
+            assert!(
+                matches!(zhipu_outcome_from_body(&body), CodingPlanOutcome::Quota(_)),
+                "{body}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn zhipu_personal_query_routes_plan_no_plan_and_auth_failure() {
+        ensure_no_proxy_for_loopback();
+
+        // 有套餐 → 套餐档位
+        let plan_body = json!({
+            "success": true,
+            "data": {
+                "level": "pro",
+                "limits": [{ "type": "TOKENS_LIMIT", "unit": 3, "number": 5, "percentage": 12.0 }]
+            }
+        })
+        .to_string();
+        let (base, handle) = spawn_once_server(Some(http_response("200 OK", &plan_body)));
+        let outcome = query_zhipu_at(&base, "key").await.expect("ok");
+        handle.join().unwrap();
+        let CodingPlanOutcome::Quota(quota) = outcome else {
+            panic!("有套餐不应回落余额");
+        };
+        assert!(quota.success);
+        assert_eq!(quota.tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(quota.tiers[0].utilization, 12.0);
+
+        // 没有套餐（HTTP 200 + 业务错误）→ ZhipuNoPlan
+        let (base, handle) = spawn_once_server(Some(http_response("200 OK", ZHIPU_NO_PLAN_BODY)));
+        let outcome = query_zhipu_at(&base, "key").await.expect("ok");
+        handle.join().unwrap();
+        assert!(matches!(outcome, CodingPlanOutcome::ZhipuNoPlan(_)));
+
+        // Key 无效 → 仍报鉴权失败，不回落余额
+        let (base, handle) = spawn_once_server(Some(http_response(
+            "401 Unauthorized",
+            r#"{"error":{"code":"1000","message":"身份验证失败。"}}"#,
+        )));
+        let outcome = query_zhipu_at(&base, "bad").await.expect("ok");
+        handle.join().unwrap();
+        let CodingPlanOutcome::Quota(quota) = outcome else {
+            panic!("鉴权失败不应回落余额");
+        };
+        assert!(!quota.success);
+        assert!(matches!(quota.credential_status, CredentialStatus::Expired));
+        assert!(quota.error.unwrap().contains("Authentication failed"));
     }
 }

@@ -53,17 +53,6 @@ jobs:
           corepack install
           pnpm --version
 
-      - name: Get pnpm store directory
-        id: pnpm-store
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Setup pnpm cache
-        uses: actions/cache@v5
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
-
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
@@ -154,20 +143,6 @@ jobs:
           node --version
           pnpm --version
 
-      - name: Get pnpm store directory
-        if: runner.os != 'Windows' || matrix.arch != 'arm64'
-        id: pnpm-store
-        shell: bash
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Setup pnpm cache
-        if: runner.os != 'Windows' || matrix.arch != 'arm64'
-        uses: actions/cache@v5
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
-
       - name: Setup LLVM for Windows ARM64
         if: runner.os == 'Windows' && matrix.arch == 'arm64'
         shell: pwsh
@@ -207,6 +182,8 @@ jobs:
 
       - name: Build Tauri App (Linux)
         if: runner.os == 'Linux'
+        env:
+          LINUXDEPLOY_EXCLUDED_LIBRARIES: "libwayland-client.so*"
         run: pnpm tauri build --bundles appimage,deb,rpm
 
       - name: Prepare Windows Assets
@@ -230,6 +207,20 @@ jobs:
             $msi = Get-ChildItem -Path (Join-Path $targetRoot 'bundle') -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
           }
           if ($null -ne $msi) {
+            # #8534：旧版本的应用内更新器以 `msiexec /passive /promptrestart` 安装、不带任何 REBOOT
+            # 选项，文件被占用时会不经提示直接重启系统，所以 MSI 自身必须带 REBOOT=ReallySuppress。
+            $installer = New-Object -ComObject WindowsInstaller.Installer
+            $db = $installer.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $installer, @($msi.FullName, 0))
+            $view = $db.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $db, @('SELECT `Value` FROM `Property` WHERE `Property`=''REBOOT'''))
+            $view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null) | Out-Null
+            $record = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
+            $reboot = if ($null -ne $record) { $record.GetType().InvokeMember('StringData', 'GetProperty', $null, $record, 1) } else { $null }
+            $view.GetType().InvokeMember('Close', 'InvokeMethod', $null, $view, $null) | Out-Null
+            if ($reboot -ne 'ReallySuppress') {
+              throw "MSI Property table must set REBOOT=ReallySuppress (found: '$reboot') - see #8534"
+            }
+            Write-Host "MSI REBOOT property: $reboot"
+
             $dest = "CC-Switch-$VERSION-Windows$assetSuffix.msi"
             Copy-Item $msi.FullName (Join-Path release-assets $dest)
             Write-Host "Installer copied: $dest"
@@ -305,22 +296,34 @@ jobs:
           cp "$APPIMAGE" "release-assets/$NEW_APPIMAGE"
           cp "$APPIMAGE.sig" "release-assets/$NEW_APPIMAGE.sig"
           echo "AppImage copied: $NEW_APPIMAGE"
-          # 额外上传 .deb（用于手动安装，不参与 Updater）
+          # 额外上传 .deb（用于 Debian/Ubuntu 自动更新）
           DEB=$(find src-tauri/target/release/bundle -name "*.deb" | head -1 || true)
-          if [ -n "$DEB" ]; then
-            cp "$DEB" "release-assets/CC-Switch-${VERSION}-Linux-${ARCH}.deb"
-            echo "Deb package copied: CC-Switch-${VERSION}-Linux-${ARCH}.deb"
-          else
-            echo "No .deb found (optional)"
+          if [ -z "$DEB" ]; then
+            echo "❌ No .deb found under target/release/bundle" >&2
+            exit 1
           fi
-          # 额外上传 .rpm（用于 Fedora/RHEL/openSUSE 等，不参与 Updater）
+          if [ ! -f "$DEB.sig" ]; then
+            echo "❌ Updater signature not found: $DEB.sig" >&2
+            exit 1
+          fi
+          NEW_DEB="CC-Switch-${VERSION}-Linux-${ARCH}.deb"
+          cp "$DEB" "release-assets/$NEW_DEB"
+          cp "$DEB.sig" "release-assets/$NEW_DEB.sig"
+          echo "Deb package copied: $NEW_DEB"
+          # 额外上传 .rpm（用于 Fedora/RHEL/openSUSE 等自动更新）
           RPM=$(find src-tauri/target/release/bundle -name "*.rpm" | head -1 || true)
-          if [ -n "$RPM" ]; then
-            cp "$RPM" "release-assets/CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
-            echo "RPM package copied: CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
-          else
-            echo "No .rpm found (optional)"
+          if [ -z "$RPM" ]; then
+            echo "❌ No .rpm found under target/release/bundle" >&2
+            exit 1
           fi
+          if [ ! -f "$RPM.sig" ]; then
+            echo "❌ Updater signature not found: $RPM.sig" >&2
+            exit 1
+          fi
+          NEW_RPM="CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
+          cp "$RPM" "release-assets/$NEW_RPM"
+          cp "$RPM.sig" "release-assets/$NEW_RPM.sig"
+          echo "RPM package copied: $NEW_RPM"
 
       - name: List prepared assets
         shell: bash
@@ -353,7 +356,7 @@ jobs:
   macos-binary:
     name: Build macOS binary (${{ matrix.target }})
     needs: whats-new-check
-    runs-on: macos-14
+    runs-on: macos-15
     environment: release
     strategy:
       matrix:
@@ -392,18 +395,6 @@ jobs:
           node --version
           pnpm --version
 
-      - name: Get pnpm store directory
-        id: pnpm-store
-        shell: bash
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Setup pnpm cache
-        uses: actions/cache@v5
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
-
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
@@ -425,7 +416,7 @@ jobs:
   # 已经过了 release 的批准，这里再挂会在半路要求第二次批准。secret 都是仓库级的。
   macos-release:
     name: Bundle macOS release
-    runs-on: macos-14
+    runs-on: macos-15
     needs: macos-binary
 
     steps:
@@ -459,18 +450,6 @@ jobs:
           corepack install
           node --version
           pnpm --version
-
-      - name: Get pnpm store directory
-        id: pnpm-store
-        shell: bash
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Setup pnpm cache
-        uses: actions/cache@v5
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
 
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
@@ -611,8 +590,22 @@ jobs:
             exit 1
           fi
 
+          # stapler fetches the ticket from Apple's CloudKit, which sometimes drops
+          # the connection (NSURLError -1005, "Error 68"); retry instead of failing.
+          stapler_retry() {
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              if xcrun stapler "$@"; then
+                return 0
+              fi
+              echo "⚠️ xcrun stapler $1 failed (attempt ${attempt}/5)" >&2
+              [ "$attempt" -lt 5 ] && sleep $((attempt * 20))
+            done
+            return 1
+          }
+
           # Staple notarization ticket to .app (Tauri already notarized it)
-          xcrun stapler staple "$APP_PATH"
+          stapler_retry staple "$APP_PATH"
           echo "✅ .app stapled"
 
           # 1) Collect .tar.gz (updater artifact)
@@ -676,6 +669,20 @@ jobs:
             exit 1
           fi
 
+          # stapler fetches the ticket from Apple's CloudKit, which sometimes drops
+          # the connection (NSURLError -1005, "Error 68"); retry instead of failing.
+          stapler_retry() {
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              if xcrun stapler "$@"; then
+                return 0
+              fi
+              echo "⚠️ xcrun stapler $1 failed (attempt ${attempt}/5)" >&2
+              [ "$attempt" -lt 5 ] && sleep $((attempt * 20))
+            done
+            return 1
+          }
+
           echo "=== Notarizing DMG: $DMG_PATH ==="
           max_attempts=3
           for attempt in $(seq 1 "$max_attempts"); do
@@ -686,7 +693,7 @@ jobs:
               --team-id "$APPLE_TEAM_ID" \
               --wait; then
               echo "✅ DMG notarization succeeded"
-              xcrun stapler staple "$DMG_PATH"
+              stapler_retry staple "$DMG_PATH"
               echo "✅ DMG stapled"
               break
             fi
@@ -705,6 +712,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          # stapler fetches the ticket from Apple's CloudKit, which sometimes drops
+          # the connection (NSURLError -1005, "Error 68"); retry instead of failing.
+          stapler_retry() {
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              if xcrun stapler "$@"; then
+                return 0
+              fi
+              echo "⚠️ xcrun stapler $1 failed (attempt ${attempt}/5)" >&2
+              [ "$attempt" -lt 5 ] && sleep $((attempt * 20))
+            done
+            return 1
+          }
 
           # Verify .app (from Tauri bundle)
           APP_PATH=""
@@ -727,7 +748,7 @@ jobs:
           echo "✅ codesign verification passed"
           spctl -a -t exec -vv "$APP_PATH"
           echo "✅ spctl assessment passed"
-          xcrun stapler validate "$APP_PATH"
+          stapler_retry validate "$APP_PATH"
           echo "✅ .app stapler validation passed"
 
           # Verify .dmg (from release-assets/, created by create-dmg + notarized)
@@ -738,7 +759,7 @@ jobs:
             echo "✅ .dmg codesign verification passed"
             spctl -a -t open --context context:primary-signature -vv "$DMG_PATH"
             echo "✅ .dmg spctl assessment passed"
-            xcrun stapler validate "$DMG_PATH"
+            stapler_retry validate "$DMG_PATH"
             echo "✅ .dmg stapler validation passed"
           else
             echo "❌ No .dmg found for verification — release would ship without verified DMG" >&2
@@ -815,6 +836,10 @@ jobs:
           win_arm64_url=""; win_arm64_sig=""
           linux_x64_url=""; linux_x64_sig=""
           linux_arm64_url=""; linux_arm64_sig=""
+          linux_x64_deb_url=""; linux_x64_deb_sig=""
+          linux_arm64_deb_url=""; linux_arm64_deb_sig=""
+          linux_x64_rpm_url=""; linux_x64_rpm_sig=""
+          linux_arm64_rpm_url=""; linux_arm64_rpm_sig=""
           shopt -s nullglob
           for sig in release-assets/*.sig; do
             base=${sig%.sig}
@@ -833,6 +858,14 @@ jobs:
                 linux_arm64_url="$url"; linux_arm64_sig="$sig_content";;
               *-Linux-x86_64.AppImage|*-Linux-x86_64.appimage)
                 linux_x64_url="$url"; linux_x64_sig="$sig_content";;
+              *-Linux-arm64.deb)
+                linux_arm64_deb_url="$url"; linux_arm64_deb_sig="$sig_content";;
+              *-Linux-x86_64.deb)
+                linux_x64_deb_url="$url"; linux_x64_deb_sig="$sig_content";;
+              *-Linux-arm64.rpm)
+                linux_arm64_rpm_url="$url"; linux_arm64_rpm_sig="$sig_content";;
+              *-Linux-x86_64.rpm)
+                linux_x64_rpm_url="$url"; linux_x64_rpm_sig="$sig_content";;
             esac
           done
           # 缺任一平台都不能发：缺的那批用户会静默收不到更新
@@ -842,6 +875,10 @@ jobs:
           [ -n "$win_arm64_sig" ] || missing="$missing windows-aarch64"
           [ -n "$linux_x64_sig" ] || missing="$missing linux-x86_64"
           [ -n "$linux_arm64_sig" ] || missing="$missing linux-aarch64"
+          [ -n "$linux_x64_deb_sig" ] || missing="$missing linux-x86_64-deb"
+          [ -n "$linux_arm64_deb_sig" ] || missing="$missing linux-aarch64-deb"
+          [ -n "$linux_x64_rpm_sig" ] || missing="$missing linux-x86_64-rpm"
+          [ -n "$linux_arm64_rpm_sig" ] || missing="$missing linux-aarch64-rpm"
           if [ -n "$missing" ]; then
             echo "❌ Missing updater signatures for:$missing" >&2
             exit 1
@@ -881,6 +918,26 @@ jobs:
             if [ -n "$linux_arm64_url" ] && [ -n "$linux_arm64_sig" ]; then
               [ $first -eq 0 ] && echo ','
               echo "    \"linux-aarch64\": {\"signature\": \"$linux_arm64_sig\", \"url\": \"$linux_arm64_url\"}"
+              first=0
+            fi
+            if [ -n "$linux_x64_deb_url" ] && [ -n "$linux_x64_deb_sig" ]; then
+              [ $first -eq 0 ] && echo ','
+              echo "    \"linux-x86_64-deb\": {\"signature\": \"$linux_x64_deb_sig\", \"url\": \"$linux_x64_deb_url\"}"
+              first=0
+            fi
+            if [ -n "$linux_arm64_deb_url" ] && [ -n "$linux_arm64_deb_sig" ]; then
+              [ $first -eq 0 ] && echo ','
+              echo "    \"linux-aarch64-deb\": {\"signature\": \"$linux_arm64_deb_sig\", \"url\": \"$linux_arm64_deb_url\"}"
+              first=0
+            fi
+            if [ -n "$linux_x64_rpm_url" ] && [ -n "$linux_x64_rpm_sig" ]; then
+              [ $first -eq 0 ] && echo ','
+              echo "    \"linux-x86_64-rpm\": {\"signature\": \"$linux_x64_rpm_sig\", \"url\": \"$linux_x64_rpm_url\"}"
+              first=0
+            fi
+            if [ -n "$linux_arm64_rpm_url" ] && [ -n "$linux_arm64_rpm_sig" ]; then
+              [ $first -eq 0 ] && echo ','
+              echo "    \"linux-aarch64-rpm\": {\"signature\": \"$linux_arm64_rpm_sig\", \"url\": \"$linux_arm64_rpm_url\"}"
               first=0
             fi
             echo '  }'

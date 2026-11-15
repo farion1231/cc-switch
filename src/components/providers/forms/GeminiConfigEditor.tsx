@@ -5,6 +5,7 @@ import type { ProviderEditorInactiveField } from "@/lib/api/providers";
 import { InactiveFieldsPanel } from "./InactiveFieldsPanel";
 
 interface GeminiConfigEditorProps {
+  isAgy?: boolean;
   envValue: string;
   configValue: string;
   onEnvChange: (value: string) => void;
@@ -57,6 +58,7 @@ const parseConfig = (configText: string): Record<string, unknown> | null => {
 };
 
 const GeminiConfigEditor: React.FC<GeminiConfigEditorProps> = ({
+  isAgy = false,
   envValue,
   configValue,
   onEnvChange,
@@ -100,13 +102,16 @@ const GeminiConfigEditor: React.FC<GeminiConfigEditorProps> = ({
   return (
     <div className="space-y-6">
       <p className="text-xs text-fg-2">
-        {t("geminiConfig.keyFieldsHint", {
-          defaultValue:
-            "地址、Key、模型名和认证方式随供应商切换；其余环境变量和 settings.json 是 Gemini CLI 全局设置，保存后对所有供应商生效。",
-        })}
+        {isAgy
+          ? t("provider.form.agy.keyFieldsHint")
+          : t("geminiConfig.keyFieldsHint", {
+              defaultValue:
+                "地址、Key、模型名和认证方式随供应商切换；其余环境变量和 settings.json 是 Gemini CLI 全局设置，保存后对所有供应商生效。",
+            })}
       </p>
 
       <GeminiEnvSection
+        isAgy={isAgy}
         value={envValue}
         onChange={onEnvChange}
         onBlur={onEnvBlur}
@@ -114,6 +119,7 @@ const GeminiConfigEditor: React.FC<GeminiConfigEditorProps> = ({
       />
 
       <GeminiConfigSection
+        isAgy={isAgy}
         value={configValue}
         onChange={onConfigChange}
         configError={configError}
@@ -122,9 +128,8 @@ const GeminiConfigEditor: React.FC<GeminiConfigEditorProps> = ({
       <InactiveFieldsPanel
         fields={pendingInactiveFields}
         hint={t("geminiConfig.inactiveFieldsHint", {
-          count: pendingInactiveFields.length,
           defaultValue:
-            "这个供应商还保存着 {{count}} 个不随切换生效的设置。点击可加入上方的全局设置，保存后写入配置文件；供应商里保存的原值不会删除。",
+            "这些是旧版存进卡里的设置，现在切换不会写出去。点一下加入上方，保存后对所有供应商生效。",
         })}
         action={{
           kind: "add",

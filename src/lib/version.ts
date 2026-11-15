@@ -5,6 +5,12 @@
  * 当本地装的是抢先/预发布通道(如 Claude Code 的 npm `next` tag,版本号反而
  * 高于 `latest`)时,字符串 `!==` 会把"领先"误判成"需要更新",造成永久误报
  * (永远提示可更新,点了升级又触发"版本未变"警告,提示消不掉)。
+ *
+ * 带 `+local` 后缀的要分两种:PEP 440 local version / git describe 形态(如
+ * Hermes main/canary 通道自报的 `0.22.1+238.g<sha>`,或含 canary/nightly/dev
+ * 等标识)是开发构建 —— 版本号可能低于最新 release,内容反而更新,与 release
+ * 不可比,按"无法判定"处理,不提示更新;普通 semver build metadata(如
+ * `1.0.0+linux.1`)按 semver 规范忽略后照常比较。
  */
 
 interface ParsedVersion {
@@ -12,16 +18,36 @@ interface ParsedVersion {
   core: [number, number, number];
   /** 预发布标识符段,如 "2.1.156-beta.1" → ["beta", "1"];正式版为空数组 */
   pre: string[];
+  /** local version 段("0.22.1+238.g<sha>" → "238.g<sha>");正式版为 null。是否为开发构建由 isDevLocal 判定 */
+  local: string | null;
 }
 
-/** 解析 "2.1.156" / "2.1.156-beta.1";无法解析返回 null。 */
+/**
+ * 解析 "2.1.156" / "2.1.156-beta.1" / "0.22.1+238.g8211bb9"(开发构建);
+ * 无法解析返回 null。
+ */
 function parseVersion(v: string): ParsedVersion | null {
-  const m = v.trim().match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/);
+  const m = v
+    .trim()
+    .match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?/);
   if (!m) return null;
   return {
     core: [Number(m[1]), Number(m[2]), Number(m[3])],
     pre: m[4] ? m[4].split(".") : [],
+    local: m[5] ?? null,
   };
+}
+
+/**
+ * local version 段是否为开发构建形态:git describe(`238.g<sha>`)或常见开发
+ * 通道标识(canary / nightly / dev / dirty / snapshot)。普通 semver build
+ * metadata(如 `linux.1`)不算 —— 按 semver 规范忽略后照常比较。
+ */
+const DEV_LOCAL_RE =
+  /^\d+\.g[0-9a-f]{4,}|(?:^|\.)(?:canary|nightly|dev|dirty|snapshot)(?:\.|$)/i;
+
+function isDevLocal(local: string | null): boolean {
+  return local !== null && DEV_LOCAL_RE.test(local);
 }
 
 /**
@@ -58,13 +84,16 @@ function comparePre(a: string[], b: string[]): number {
 
 /**
  * 比较两个版本号。
- * @returns >0 表示 a 比 b 新;<0 表示 a 比 b 旧;0 表示相等或无法判定。
+ * @returns >0 表示 a 比 b 新;<0 表示 a 比 b 旧;0 表示相等、无法判定、或任一
+ *   一侧为开发构建(git describe / 开发通道 local version,与 release 不可比)。
  *   任一无法解析时返回 0(保守:视为"无法判定差异",不触发更新提示)。
  */
 export function compareVersions(a: string, b: string): number {
   const pa = parseVersion(a);
   const pb = parseVersion(b);
   if (!pa || !pb) return 0;
+  // 任一侧是开发构建(local version 命中开发形态),与正式版不可比,保守返回 0
+  if (isDevLocal(pa.local) || isDevLocal(pb.local)) return 0;
   for (let i = 0; i < 3; i++) {
     const d = pa.core[i] - pb.core[i];
     if (d !== 0) return d < 0 ? -1 : 1;
@@ -74,7 +103,9 @@ export function compareVersions(a: string, b: string): number {
 
 /**
  * 是否有可用更新:仅当 `latest` 严格高于 `current` 时为 true。
- * 本地版本 ≥ latest(含抢先/预发布版反超 latest 的情况)一律返回 false。
+ * 本地版本 ≥ latest(含抢先/预发布版反超 latest 的情况)一律返回 false;
+ * 本地为开发构建(git describe / 开发通道 local version,如 Hermes
+ * main/canary 通道自报的 `0.22.1+238.g<sha>`)时与 release 不可比,同样返回 false。
  */
 export function isUpdateAvailable(
   current: string | null | undefined,

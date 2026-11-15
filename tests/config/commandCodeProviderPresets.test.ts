@@ -37,6 +37,8 @@ describe("Command Code provider presets", () => {
       "deepseek/deepseek-v4.1-flash",
       "z-ai/glm-5.3-flash",
       "Qwen/Qwen3.8-Flash",
+      "moonshotai/Kimi-K3.1-Pro",
+      "zai-org/GLM-5.3",
     ]);
     expect(
       preset?.modelCatalog?.some((model) => model.model.includes("claude")),
@@ -69,10 +71,10 @@ describe("Command Code provider presets", () => {
     expect(env).toMatchObject({
       ANTHROPIC_BASE_URL: CLAUDE_BASE_URL,
       ANTHROPIC_AUTH_TOKEN: "",
-      ANTHROPIC_MODEL: "deepseek/deepseek-v4.1-flash",
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek/deepseek-v4.1-flash",
-      ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek/deepseek-v4.1-flash",
-      ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek/deepseek-v4.1-flash",
+      ANTHROPIC_MODEL: "deepseek/deepseek-v4.1-flash[1M]",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek/deepseek-v4.1-flash[1M]",
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek/deepseek-v4.1-flash[1M]",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek/deepseek-v4.1-flash[1M]",
     });
     expect(preset?.apiFormat).toBe("openai_chat");
     expect(preset?.modelsUrl).toBe(

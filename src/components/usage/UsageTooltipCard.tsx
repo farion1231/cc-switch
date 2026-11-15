@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
-import { fmtUsd, formatTokensShort } from "./format";
+import { formatHitRatePercent, formatTokensShort } from "./format";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 
 interface UsageTooltipCardProps {
   heading: string;
@@ -7,6 +8,8 @@ interface UsageTooltipCardProps {
   requests: number;
   /** 美元；null 表示没有可计价的数据 */
   cost: number | null;
+  /** 传了才多显示一行缓存命中率（0–1）；null 表示没有输入、无从算起 */
+  hitRate?: number | null;
 }
 
 /** 热力图格子、趋势柱的悬停卡片：同一时间段的 Token、请求数和费用一起看。 */
@@ -15,8 +18,10 @@ export function UsageTooltipCard({
   tokens,
   requests,
   cost,
+  hitRate,
 }: UsageTooltipCardProps) {
   const { t, i18n } = useTranslation();
+  const { money } = useMoneyFormat();
   const language = i18n.resolvedLanguage || i18n.language || "en";
   const rows = [
     {
@@ -29,8 +34,16 @@ export function UsageTooltipCard({
     },
     {
       label: t("usage.trend.cost"),
-      value: cost == null ? "--" : fmtUsd(cost, 2),
+      value: cost == null ? "—" : money(cost, 2),
     },
+    ...(hitRate === undefined
+      ? []
+      : [
+          {
+            label: t("usage.cacheHitRate"),
+            value: hitRate == null ? "—" : formatHitRatePercent(hitRate),
+          },
+        ]),
   ];
 
   return (
@@ -41,8 +54,10 @@ export function UsageTooltipCard({
       <div className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1 text-body">
         {rows.map((row) => (
           <div key={row.label} className="contents">
-            <span className="text-fg-2">{row.label}</span>
-            <span className="text-end tabular-nums text-fg-1">{row.value}</span>
+            <span className="whitespace-nowrap text-fg-2">{row.label}</span>
+            <span className="whitespace-nowrap text-end tabular-nums text-fg-1">
+              {row.value}
+            </span>
           </div>
         ))}
       </div>

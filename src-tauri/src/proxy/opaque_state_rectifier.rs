@@ -9,15 +9,23 @@
 //! 推理条目也可能不带密文、直接把思考原文放在 `content` 里（MiniMax），OpenAI 系上游同样不收，
 //! 按同一套规则去掉推理条目重发。
 //!
+//! Claude Code 转 Responses 也会回放上游的推理条目（藏在 thinking 签名里），同一套识别，
+//! 整流在 Anthropic Messages 上做（[`rectify_claude_responses_replay`]，#9424）。
+//!
 //! 主要认上游自证的错误（错误码或固定措辞，取自 opencodex 的实测）。唯一的例外是 Codex 的
 //! 原生 Responses 第三方：它们对不认识的压缩条目怎么报错没法枚举，请求里带着看不出来源的
 //! 压缩条目时，400 / 422 也重试一次，只换掉压缩条目。
+//!
+//! 子 agent 的任务是例外：Codex 新版协作工具把主 agent 派的任务交给主 agent 那家后端加密，
+//! 放在请求末尾的 `agent_message` 里。去掉它子 agent 就没了任务，所以这一条不动；上游解不开时
+//! 返回一个说明原因的错误（[`unreadable_agent_task_error`]），不让子 agent 拿空任务干活。
 
 use super::error::ProxyError;
 use super::providers::codex_compaction::{
     compaction_item_replay_text, is_compaction_item, is_unrecognized_compaction_item,
     strip_mismatched_item_id, user_message_item,
 };
+use super::providers::reasoning_bridge::openai_reasoning_item_from_anthropic_block;
 use super::types::RectifierConfig;
 use serde_json::{json, Value};
 
@@ -27,6 +35,12 @@ const ENCRYPTED_FUNCTION_OUTPUT_REJECTION: &str =
 
 /// 函数输出、agent_message 里去掉的加密片段换成这句。
 const ENCRYPTED_PART_PLACEHOLDER: &str = "[encrypted content omitted]";
+
+/// 子 agent 读不到任务时返回给 Codex 的错误码（与 opencodex 的同名错误一致）。
+const UNREADABLE_AGENT_TASK_CODE: &str = "unreadable_encrypted_agent_task";
+
+/// 子 agent 读不到任务时返回给 Codex 的说明。
+const UNREADABLE_AGENT_TASK_MESSAGE: &str = "子 agent 的任务由主 agent 那家供应商加密，当前供应商解不开（主、子 agent 不在同一家）。可以在 CC Switch 设置 → 应用配置 → Codex 里打开「聚合模式下子 agent 用经典工具」后重启 Codex，或让子 agent 用和主 agent 同一家的模型。 (The sub-agent task was encrypted by the main agent's provider and this provider cannot read it. Turn on \"Classic sub-agent tools in aggregation\" under CC Switch Settings > App config > Codex and restart Codex, or give the sub-agent a model from the main agent's provider.)";
 
 /// 上游拒绝了请求里的密文，重试前要去掉哪些状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,6 +53,9 @@ pub struct OpaqueStateRejection {
     ///   转成文字，到得了官方的压缩密文都是官方自己签发的。
     /// - 第三方：一被拒就换。它收到的压缩密文多半是官方签发的（Stack 模式下切换过来）。
     pub compaction: bool,
+    /// 条目 id 一律去掉，不只是格式不对的。Azure 的条目归属到签发它的资源，中转把后续请求
+    /// 转到另一个资源时，格式合法的 `msg_…`、`fc_…` 也会被拒（只在上游点名这一点时才开）。
+    pub item_ids: bool,
 }
 
 /// 整流结果
@@ -76,15 +93,7 @@ pub fn detect_opaque_state_rejection(
         let payload = serde_json::from_str::<Value>(body).ok();
         let messages = payload.as_ref().map(error_messages).unwrap_or_default();
         let rejected = match *status {
-            400..=499 => {
-                is_encrypted_function_output_rejection(body, &messages)
-                    || payload.as_ref().is_some_and(is_coded_rejection)
-                    || messages.iter().any(|message| is_rejection_message(message))
-                    || (messages
-                        .iter()
-                        .any(|message| is_content_array_rejection(message))
-                        && carries_plaintext_reasoning(request))
-            }
+            400..=499 => is_self_identified_rejection(body, payload.as_ref(), &messages, request),
             // 函数输出里的加密片段解不开时 ChatGPT 后端回 502，只认这一种。
             502 => is_encrypted_function_output_rejection(body, &messages),
             _ => false,
@@ -96,6 +105,9 @@ pub fn detect_opaque_state_rejection(
                     || messages
                         .iter()
                         .any(|message| message.contains("compaction")),
+                item_ids: messages
+                    .iter()
+                    .any(|message| is_foreign_resource_rejection(message)),
             });
         }
     }
@@ -111,8 +123,110 @@ pub fn detect_opaque_state_rejection(
         OpaqueStateRejection {
             reasoning: false,
             compaction: true,
+            item_ids: false,
         },
     )
+}
+
+/// 上游的错误体是不是自证验不了请求里的密文（错误码或固定措辞）。
+fn is_self_identified_rejection(
+    body: &str,
+    payload: Option<&Value>,
+    messages: &[&str],
+    request: &Value,
+) -> bool {
+    is_encrypted_function_output_rejection(body, messages)
+        || payload.is_some_and(is_coded_rejection)
+        || messages.iter().any(|message| is_rejection_message(message))
+        || (messages
+            .iter()
+            .any(|message| is_content_array_rejection(message))
+            && carries_plaintext_reasoning(request))
+}
+
+/// 流里还没有输出就到了的失败事件，它的 `error` 对象是不是自证验不了请求里的密文。是的话返回
+/// 当作 HTTP 400 的上游错误，交给 [`detect_opaque_state_rejection`] 走和 HTTP 报错一样的整流；
+/// 不是返回 `None`，流照常交给客户端。
+pub fn in_stream_rejection(error: &Value, request: &Value) -> Option<ProxyError> {
+    let payload = json!({ "error": error });
+    let body = payload.to_string();
+    let messages = error_messages(&payload);
+    is_self_identified_rejection(&body, Some(&payload), &messages, request).then(|| {
+        ProxyError::UpstreamError {
+            status: 400,
+            body: Some(body.clone()),
+        }
+    })
+}
+
+/// 请求末尾的条目：Codex 把这一轮的新输入放在最后，后面只可能跟着压缩触发、工具清单这类
+/// 附加条目（与 opencodex `findEnvelope` 同一规则）。
+fn current_input_index(items: &[Value]) -> Option<usize> {
+    items.iter().rposition(|item| {
+        !matches!(
+            item.get("type").and_then(Value::as_str),
+            Some("compaction_trigger" | "additional_tools")
+        )
+    })
+}
+
+/// 这一轮的新输入是不是一条带密文的 `agent_message`：Codex 新版协作工具派给子 agent 的
+/// 任务，只有主 agent 那家后端解得开。
+pub fn carries_encrypted_agent_task(request: &Value) -> bool {
+    let Some(items) = request.get("input").and_then(Value::as_array) else {
+        return false;
+    };
+    current_input_index(items).is_some_and(|index| {
+        let item = &items[index];
+        item.get("type").and_then(Value::as_str) == Some("agent_message")
+            && item
+                .get("content")
+                .and_then(Value::as_array)
+                .is_some_and(|parts| parts.iter().any(is_encrypted_part))
+    })
+}
+
+/// 请求里有没有上游可能验不了的状态：推理条目（密文、思考原文或要回查的 id）、函数输出与
+/// agent_message 里的加密片段、压缩条目，也就是 [`rectify_opaque_state`] 能处理的那些。
+///
+/// 有这些状态时，原样转发的流要先压到第一个输出事件再交出去：上游可能先回 HTTP 200、
+/// 再在输出之前用 `response.failed` 说解不开（#9476），流交出去之后就回不到重试循环了。
+pub fn carries_opaque_state(request: &Value) -> bool {
+    let Some(items) = request.get("input").and_then(Value::as_array) else {
+        return false;
+    };
+    let has_encrypted_part = |parts: Option<&Value>| {
+        parts
+            .and_then(Value::as_array)
+            .is_some_and(|parts| parts.iter().any(is_encrypted_part))
+    };
+    items
+        .iter()
+        .any(|item| match item.get("type").and_then(Value::as_str) {
+            Some("reasoning") => true,
+            Some("function_call_output" | "custom_tool_call_output") => {
+                has_encrypted_part(item.get("output"))
+            }
+            Some("agent_message") => has_encrypted_part(item.get("content")),
+            _ => is_compaction_item(item),
+        })
+}
+
+/// 子 agent 读不到任务：上游解不开请求末尾那条任务的密文。HTTP 400，Codex 不会重试。
+pub fn unreadable_agent_task_error() -> ProxyError {
+    ProxyError::UpstreamError {
+        status: 400,
+        body: Some(
+            json!({
+                "error": {
+                    "type": "invalid_request_error",
+                    "code": UNREADABLE_AGENT_TASK_CODE,
+                    "message": UNREADABLE_AGENT_TASK_MESSAGE,
+                }
+            })
+            .to_string(),
+        ),
+    }
 }
 
 /// 错误体里可能放错误原文的几个位置：`error.message`、平铺的 `message`、
@@ -130,9 +244,12 @@ fn error_messages(payload: &Value) -> Vec<&str> {
     .collect()
 }
 
+/// 中转转述时常在原话前加自己的前缀（如 "OpenAI Responses bad request: "），按整句包含认。
 fn is_encrypted_function_output_rejection(body: &str, messages: &[&str]) -> bool {
     body.trim() == ENCRYPTED_FUNCTION_OUTPUT_REJECTION
-        || messages.contains(&ENCRYPTED_FUNCTION_OUTPUT_REJECTION)
+        || messages
+            .iter()
+            .any(|message| message.contains(ENCRYPTED_FUNCTION_OUTPUT_REJECTION))
 }
 
 fn is_coded_rejection(payload: &Value) -> bool {
@@ -162,6 +279,14 @@ fn is_rejection_message(message: &str) -> bool {
         // store:false 下按 id 回查推理条目：
         // "Item with id 'rs_…' not found. Items are not persisted when `store` is set to false. ..."
         || (message.contains("not found") && message.contains("Items are not persisted when"))
+        || is_foreign_resource_rejection(message)
+}
+
+/// Azure 的条目（含推理密文）属于签发它的资源，换了资源就不认：
+/// "The requested item was created under a different Azure OpenAI resource. Use the same
+/// resource that created the item to access it."（#8877：中转在多个 Azure 资源间分流）
+fn is_foreign_resource_rejection(message: &str) -> bool {
+    message.contains("created under a different") && message.contains("resource")
 }
 
 /// OpenAI 不收带内容的推理条目："Invalid 'input[N].content': array too long. Expected an array
@@ -191,7 +316,8 @@ fn carries_plaintext_reasoning(request: &Value) -> bool {
 /// 去掉请求里上游可能验不了的状态（按 `rejection` 的两个开关）：
 /// - 推理条目整条去掉。它们只携带密文（或一个要回查的 id），被拒时分不清哪条是别家的；
 ///   去掉后同一段历史每次整流结果相同，重试之间的缓存前缀也稳定。
-/// - 函数输出、agent_message 里的加密片段换成占位文字。
+/// - 函数输出、agent_message 里的加密片段换成占位文字；请求末尾那条 agent_message（这一轮
+///   派给子 agent 的任务）不动。
 /// - 消息、函数调用的 id 不是 OpenAI 格式的（别家签发的）去掉，和推理条目同一个开关：两者都
 ///   来自别家回合，被拒时一次处理掉，一次重试就够。
 /// - 压缩条目换成文字（CC Switch 的摘要解回正文，别家的换成一句说明），没有载荷的
@@ -207,14 +333,17 @@ pub fn rectify_opaque_state(
         return result;
     };
 
+    let current = current_input_index(items);
     let mut rectified = Vec::with_capacity(items.len());
-    for mut item in std::mem::take(items) {
+    for (index, mut item) in std::mem::take(items).into_iter().enumerate() {
         let item_type = item
             .get("type")
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
         match item_type.as_str() {
+            // 这一轮派给子 agent 的任务：换掉密文它就没了任务，原样保留（见模块说明）。
+            "agent_message" if Some(index) == current => {}
             "reasoning" if rejection.reasoning => {
                 result.removed_reasoning_items += 1;
                 continue;
@@ -234,8 +363,16 @@ pub fn rectify_opaque_state(
             }
             _ => {}
         }
-        // 别家签发的 id（MiniMax 的 `<hex>_msg_N`、`<hex>_fc_N`）不合 OpenAI 的前缀校验
-        if rejection.reasoning && strip_mismatched_item_id(&mut item, &item_type) {
+        // 别家签发的 id（MiniMax 的 `<hex>_msg_N`、`<hex>_fc_N`）不合 OpenAI 的前缀校验；
+        // 上游说条目属于别的资源时，格式合法的 id 也去掉。`item_reference` 只靠 id 指向
+        // 条目，去掉就成了空引用，不动。`call_id` 等其他字段一律保留。
+        let stripped = if rejection.item_ids && item_type != "item_reference" {
+            item.as_object_mut()
+                .is_some_and(|obj| obj.remove("id").is_some())
+        } else {
+            rejection.reasoning && strip_mismatched_item_id(&mut item, &item_type)
+        };
+        if stripped {
             result.removed_foreign_ids += 1;
         }
         rectified.push(item);
@@ -250,18 +387,75 @@ pub fn rectify_opaque_state(
     result
 }
 
+/// Claude Code 走「API 格式 = Responses」时，请求体还是 Anthropic Messages：上游签发的
+/// 推理条目（`rs_…` id + 密文）藏在 thinking 签名里，转发时才还原进 `input`
+/// （`providers::reasoning_bridge`）；托管网页搜索的 `ws_…` id 留在 `server_tool_use` 上。
+/// 只有这两样带着上游签发的状态，消息和工具调用都是转换时新造的条目，不带 id。
+///
+/// [`rectify_opaque_state`] 的 Anthropic Messages 版本，供 Claude 转 Responses 的路径用：
+/// - 推理条目被拒（`reasoning`）：去掉所有能还原成推理条目的 thinking 块。和 Codex 一样
+///   整段去掉，同一段历史每次整流结果相同，重试之间的缓存前缀也稳定。普通 thinking 块
+///   （没有推理信封）转换时本来就不发，留着不动。
+/// - 条目属于别的 Azure 资源（`item_ids`）：托管网页搜索的调用和结果一起去掉，转换后的
+///   `web_search_call` 只能带着上游签发的 id 发出去，没法单独去 id。
+///
+/// 去掉后变空的消息整条去掉。
+pub fn rectify_claude_responses_replay(
+    body: &mut Value,
+    rejection: OpaqueStateRejection,
+) -> OpaqueStateRectifyResult {
+    let mut result = OpaqueStateRectifyResult::default();
+    let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
+        return result;
+    };
+
+    messages.retain_mut(|message| {
+        let Some(content) = message.get_mut("content").and_then(Value::as_array_mut) else {
+            return true;
+        };
+        let before = content.len();
+        content.retain(|block| {
+            if rejection.reasoning && is_responses_reasoning_block(block) {
+                result.removed_reasoning_items += 1;
+                return false;
+            }
+            if rejection.item_ids
+                && matches!(
+                    block.get("type").and_then(Value::as_str),
+                    Some("server_tool_use" | "web_search_tool_result")
+                )
+            {
+                result.removed_foreign_ids += 1;
+                return false;
+            }
+            true
+        });
+        !(before > 0 && content.is_empty())
+    });
+
+    result.applied = result.removed_reasoning_items + result.removed_foreign_ids > 0;
+    result
+}
+
+fn is_responses_reasoning_block(block: &Value) -> bool {
+    openai_reasoning_item_from_anthropic_block(block).is_some()
+}
+
+fn is_encrypted_part(part: &Value) -> bool {
+    part.get("type").and_then(Value::as_str) == Some("encrypted_content")
+        && part
+            .get("encrypted_content")
+            .and_then(Value::as_str)
+            .is_some_and(|content| !content.is_empty())
+}
+
 fn replace_encrypted_parts(parts: Option<&mut Value>) -> usize {
     let Some(parts) = parts.and_then(Value::as_array_mut) else {
         return 0;
     };
     let mut replaced = 0;
     for part in parts {
-        let encrypted = part.get("type").and_then(Value::as_str) == Some("encrypted_content")
-            && part
-                .get("encrypted_content")
-                .and_then(Value::as_str)
-                .is_some_and(|content| !content.is_empty());
-        if encrypted {
+        if is_encrypted_part(part) {
             *part = json!({ "type": "input_text", "text": ENCRYPTED_PART_PLACEHOLDER });
             replaced += 1;
         }
@@ -282,14 +476,17 @@ mod tests {
     const ALL_STATE: OpaqueStateRejection = OpaqueStateRejection {
         reasoning: true,
         compaction: true,
+        item_ids: false,
     };
     const REASONING_ONLY: OpaqueStateRejection = OpaqueStateRejection {
         reasoning: true,
         compaction: false,
+        item_ids: false,
     };
     const COMPACTION_ONLY: OpaqueStateRejection = OpaqueStateRejection {
         reasoning: false,
         compaction: true,
+        item_ids: false,
     };
 
     fn upstream(status: u16, body: Value) -> ProxyError {
@@ -601,6 +798,246 @@ mod tests {
             2
         );
         assert_eq!(input[5]["output"][1]["type"], "encrypted_content");
+    }
+
+    fn agent_message(ciphertext: &str) -> Value {
+        json!({ "type": "agent_message", "author": "/root", "recipient": "/root/worker", "content": [
+            { "type": "input_text", "text": "Message Type: NEW_TASK\nPayload:\n" },
+            { "type": "encrypted_content", "encrypted_content": ciphertext }
+        ] })
+    }
+
+    /// 末尾那条 agent_message 是这一轮派给子 agent 的任务，原样保留；更早的照旧换成占位文字。
+    /// 末尾之后的压缩触发、工具清单不算这一轮的输入。
+    #[test]
+    fn rectify_keeps_the_current_sub_agent_task() {
+        for trailer in [None, Some("compaction_trigger"), Some("additional_tools")] {
+            let mut input = vec![
+                agent_message("gAAAA-older-task"),
+                json!({ "type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "gAAAA" }),
+                agent_message("gAAAA-current-task"),
+            ];
+            if let Some(trailer) = trailer {
+                input.push(json!({ "type": trailer }));
+            }
+            let mut body = json!({ "input": input });
+            assert!(carries_encrypted_agent_task(&body), "{trailer:?}");
+
+            let result = rectify_opaque_state(&mut body, REASONING_ONLY);
+            assert_eq!(result.removed_reasoning_items, 1);
+            assert_eq!(result.replaced_encrypted_parts, 1);
+            let input = body["input"].as_array().unwrap();
+            assert_eq!(
+                input[0]["content"][1],
+                json!({ "type": "input_text", "text": ENCRYPTED_PART_PLACEHOLDER })
+            );
+            assert_eq!(
+                input[1]["content"][1]["encrypted_content"],
+                "gAAAA-current-task"
+            );
+        }
+    }
+
+    #[test]
+    fn only_a_trailing_encrypted_agent_message_is_a_sub_agent_task() {
+        let user = json!({ "role": "user", "content": [{ "type": "input_text", "text": "next" }] });
+        let plaintext = json!({ "type": "agent_message", "content": [
+            { "type": "input_text", "text": "do it" }
+        ] });
+        for input in [
+            json!([agent_message("gAAAA"), user]),
+            json!([plaintext]),
+            json!([agent_message("")]),
+            json!([]),
+        ] {
+            assert!(
+                !carries_encrypted_agent_task(&json!({ "input": input })),
+                "{input}"
+            );
+        }
+        assert!(!carries_encrypted_agent_task(&json!({})));
+    }
+
+    #[test]
+    fn in_stream_failures_follow_the_same_rejection_rules() {
+        let request = json!({ "input": [agent_message("gAAAA")] });
+        let rejection = in_stream_rejection(
+            &json!({ "code": "server_error", "message": ENCRYPTED_FUNCTION_OUTPUT_REJECTION }),
+            &request,
+        )
+        .expect("rejection");
+        assert_eq!(
+            detect_with(&rejection, &request, THIRD_PARTY),
+            Some(ALL_STATE)
+        );
+        assert!(in_stream_rejection(
+            &json!({ "code": "invalid_encrypted_content", "message": "x" }),
+            &request
+        )
+        .is_some());
+        assert!(in_stream_rejection(
+            &json!({ "code": "server_error", "message": "backend exploded" }),
+            &request
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn the_unreadable_task_error_is_a_non_retryable_explanation() {
+        let ProxyError::UpstreamError {
+            status,
+            body: Some(body),
+        } = unreadable_agent_task_error()
+        else {
+            panic!("upstream error");
+        };
+        assert_eq!(status, 400);
+        let body: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(body["error"]["code"], UNREADABLE_AGENT_TASK_CODE);
+        assert_eq!(body["error"]["message"], UNREADABLE_AGENT_TASK_MESSAGE);
+        // 自己的说明不能又被当成别家密文的拒绝，引出一轮整流重试。
+        let error = unreadable_agent_task_error();
+        let request = json!({ "input": [agent_message("gAAAA")] });
+        assert_eq!(detect_with(&error, &request, THIRD_PARTY), None);
+    }
+
+    /// 中转把同一会话分到不同的 Azure 资源（#8877）：格式合法的 id 也属于旧资源，重试时
+    /// 推理条目和所有条目 id 都去掉，正文、工具名、参数、结果和 `call_id` 关联原样保留。
+    #[test]
+    fn azure_foreign_resource_rejection_strips_every_item_id() {
+        let rejection = upstream(
+            400,
+            json!({ "error": { "type": "invalid_request_error", "param": "input", "code": null,
+                               "message": "The requested item was created under a different Azure OpenAI resource. Use the same resource that created the item to access it. (request id: 2026102515)" } }),
+        );
+        let request = json!({ "input": [] });
+        let azure = detect_with(&rejection, &request, THIRD_PARTY).unwrap();
+        assert!(azure.reasoning && azure.compaction && azure.item_ids);
+        assert!(
+            detect_with(&rejection, &request, OFFICIAL)
+                .unwrap()
+                .item_ids
+        );
+        // 别的拒绝照旧只去掉格式不对的 id。
+        let coded = upstream(
+            400,
+            json!({ "error": { "code": "invalid_encrypted_content", "message": "bad" } }),
+        );
+        assert!(!detect_with(&coded, &request, THIRD_PARTY).unwrap().item_ids);
+
+        let mut body = json!({ "input": [
+            { "type": "message", "id": "msg_01a1", "role": "user", "content": [{ "type": "input_text", "text": "hi" }] },
+            { "type": "reasoning", "id": "rs_01a1", "summary": [], "encrypted_content": "gAAAA-resource-a" },
+            { "type": "function_call", "id": "fc_01a1", "call_id": "call_9", "name": "exec_command",
+              "arguments": "{\"id\":\"keep-me\"}" },
+            { "type": "function_call_output", "call_id": "call_9", "output": "{\"id\":1}" },
+            { "type": "message", "id": "msg_01a2", "role": "assistant", "content": [{ "type": "output_text", "text": "done" }] },
+            { "type": "item_reference", "id": "msg_01a3" },
+            { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "next" }] }
+        ] });
+        let result = rectify_opaque_state(&mut body, azure);
+        assert!(result.applied);
+        assert_eq!(result.removed_reasoning_items, 1);
+        assert_eq!(result.removed_foreign_ids, 3);
+
+        let input = body["input"].as_array().unwrap();
+        assert_eq!(input.len(), 6);
+        assert!(input[..4].iter().all(|item| item.get("id").is_none()));
+        assert_eq!(input[0]["content"][0]["text"], "hi");
+        assert_eq!(input[1]["call_id"], "call_9");
+        assert_eq!(input[1]["name"], "exec_command");
+        assert_eq!(input[1]["arguments"], "{\"id\":\"keep-me\"}");
+        assert_eq!(input[2]["call_id"], "call_9");
+        assert_eq!(input[2]["output"], "{\"id\":1}");
+        assert_eq!(input[4]["id"], "msg_01a3");
+    }
+
+    /// Claude 转 Responses（#9424）：只去掉带推理信封的 thinking 块；普通 thinking 转换时
+    /// 本来就不发，留着。托管网页搜索只在条目属于别的资源时才去掉。
+    #[test]
+    fn claude_replay_drops_reasoning_envelopes_and_foreign_search_items() {
+        use crate::proxy::providers::reasoning_bridge::encode_openai_reasoning_item;
+        let envelope = encode_openai_reasoning_item(&json!({
+            "type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "gAAAA"
+        }))
+        .unwrap();
+        let body = json!({ "messages": [
+            { "role": "user", "content": "hi" },
+            { "role": "assistant", "content": [
+                { "type": "thinking", "thinking": "plain", "signature": "anthropic-sig" },
+                { "type": "thinking", "thinking": "", "signature": envelope },
+                { "type": "server_tool_use", "id": "ws_1", "name": "web_search", "input": {} },
+                { "type": "web_search_tool_result", "tool_use_id": "ws_1", "content": [] },
+                { "type": "tool_use", "id": "call_1", "name": "Read", "input": {} }
+            ] },
+            { "role": "assistant", "content": [{ "type": "redacted_thinking", "data": envelope }] },
+            { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "call_1", "content": "ok" }] }
+        ] });
+
+        let mut reasoning_only = body.clone();
+        let result = rectify_claude_responses_replay(&mut reasoning_only, REASONING_ONLY);
+        assert!(result.applied);
+        assert_eq!(result.removed_reasoning_items, 2);
+        assert_eq!(result.removed_foreign_ids, 0);
+        let messages = reasoning_only["messages"].as_array().unwrap();
+        // 只剩推理信封的那条 assistant 消息整条去掉。
+        assert_eq!(messages.len(), 3);
+        let blocks = messages[1]["content"].as_array().unwrap();
+        assert_eq!(blocks.len(), 4);
+        assert_eq!(blocks[0]["signature"], "anthropic-sig");
+        assert_eq!(blocks[1]["type"], "server_tool_use");
+
+        let mut azure = body.clone();
+        let result = rectify_claude_responses_replay(
+            &mut azure,
+            OpaqueStateRejection {
+                reasoning: true,
+                compaction: false,
+                item_ids: true,
+            },
+        );
+        assert_eq!(result.removed_reasoning_items, 2);
+        assert_eq!(result.removed_foreign_ids, 2);
+        let blocks = azure["messages"][1]["content"].as_array().unwrap();
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[1]["id"], "call_1");
+        assert_eq!(azure["messages"][0]["content"], "hi");
+
+        // 没有上游签发的状态：原样不动，不重试。
+        let mut plain = json!({ "messages": [
+            { "role": "assistant", "content": [
+                { "type": "thinking", "thinking": "plain", "signature": "anthropic-sig" },
+                { "type": "text", "text": "a" }
+            ] }
+        ] });
+        let before = plain.clone();
+        assert!(!rectify_claude_responses_replay(&mut plain, ALL_STATE).applied);
+        assert_eq!(plain, before);
+    }
+
+    #[test]
+    fn carries_opaque_state_covers_what_rectify_can_strip() {
+        let with = |item: Value| json!({ "input": [item] });
+        assert!(carries_opaque_state(&mixed_history()));
+        assert!(carries_opaque_state(&with(
+            json!({ "type": "reasoning", "id": "rs_1", "summary": [] })
+        )));
+        assert!(carries_opaque_state(&with(json!({
+            "type": "function_call_output", "call_id": "c",
+            "output": [{ "type": "encrypted_content", "encrypted_content": "enc" }]
+        }))));
+        assert!(carries_opaque_state(&with(
+            json!({ "type": "compaction", "encrypted_content": "gAAAA" })
+        )));
+
+        assert!(!carries_opaque_state(&json!({ "input": "hi" })));
+        assert!(!carries_opaque_state(&with(json!({
+            "type": "message", "role": "user",
+            "content": [{ "type": "input_text", "text": "hi" }]
+        }))));
+        assert!(!carries_opaque_state(&with(json!({
+            "type": "function_call_output", "call_id": "c", "output": "plain"
+        }))));
     }
 
     #[test]

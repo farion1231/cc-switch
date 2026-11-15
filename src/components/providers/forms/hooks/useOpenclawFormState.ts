@@ -31,6 +31,7 @@ export interface OpenclawFormState {
   handleOpenclawApiChange: (api: string) => void;
   handleOpenclawModelsChange: (models: OpenClawModel[]) => void;
   handleOpenclawUserAgentChange: (enabled: boolean) => void;
+  syncOpenclawUserAgentFromConfig: (config: string) => void;
   resetOpenclawState: (config?: OpenClawProviderConfig) => void;
 }
 
@@ -49,6 +50,12 @@ function parseOpenclawField<T>(
   } catch {
     return fallback;
   }
+}
+
+function hasUserAgentHeader(headers?: Record<string, string>): boolean {
+  return Object.keys(headers ?? {}).some(
+    (key) => key.toLowerCase() === "user-agent",
+  );
 }
 
 export function useOpenclawFormState({
@@ -99,7 +106,7 @@ export function useOpenclawFormState({
       "headers",
       {},
     );
-    return "User-Agent" in headers;
+    return hasUserAgentHeader(headers);
   });
 
   const updateOpenclawConfig = useCallback(
@@ -161,8 +168,15 @@ export function useOpenclawFormState({
     (enabled: boolean) => {
       setOpenclawUserAgent(enabled);
       updateOpenclawConfig((config) => {
+        const headers = { ...config.headers };
+        for (const key of Object.keys(headers)) {
+          if (key.toLowerCase() === "user-agent") delete headers[key];
+        }
         if (enabled) {
-          config.headers = { "User-Agent": OPENCLAW_DEFAULT_USER_AGENT };
+          headers["User-Agent"] = OPENCLAW_DEFAULT_USER_AGENT;
+        }
+        if (Object.keys(headers).length > 0) {
+          config.headers = headers;
         } else {
           delete config.headers;
         }
@@ -171,13 +185,27 @@ export function useOpenclawFormState({
     [updateOpenclawConfig],
   );
 
+  // The JSON editor writes settingsConfig directly; keep the switch in step
+  // with header edits made there. Invalid drafts keep the last known state.
+  const syncOpenclawUserAgentFromConfig = useCallback((config: string) => {
+    try {
+      const parsed = JSON.parse(config);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return;
+      }
+      setOpenclawUserAgent(hasUserAgentHeader(parsed.headers));
+    } catch {
+      // ignore incomplete JSON while typing
+    }
+  }, []);
+
   const resetOpenclawState = useCallback((config?: OpenClawProviderConfig) => {
     setOpenclawProviderKey("");
     setOpenclawBaseUrl(config?.baseUrl || "");
     setOpenclawApiKey(config?.apiKey || "");
     setOpenclawApi(config?.api || "openai-completions");
     setOpenclawModels(config?.models || []);
-    const ua = config?.headers ? "User-Agent" in config.headers : false;
+    const ua = hasUserAgentHeader(config?.headers);
     setOpenclawUserAgent(ua);
   }, []);
 
@@ -195,6 +223,7 @@ export function useOpenclawFormState({
     handleOpenclawApiChange,
     handleOpenclawModelsChange,
     handleOpenclawUserAgentChange,
+    syncOpenclawUserAgentFromConfig,
     resetOpenclawState,
   };
 }

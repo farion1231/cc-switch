@@ -8,7 +8,7 @@ notes: imported from link
 icon: anthropic
 icon_color: NULL
 meta: {"commonConfigEnabled":true}
-is_current: true
+is_current: false
 in_failover_queue: false
 
 id: relayb-<ts>

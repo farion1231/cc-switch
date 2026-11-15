@@ -13,7 +13,7 @@ use super::pi_blocks::PiTranscript;
 use super::utils::for_each_jsonl_value;
 use super::utils::{
     extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
-    TITLE_MAX_CHARS,
+    ScanStatus, TITLE_MAX_CHARS,
 };
 
 const PROVIDER_ID: &str = "openclaw";
@@ -28,44 +28,37 @@ fn strip_message_id_suffix(text: &str) -> &str {
 }
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
+    scan_sessions_with_status(&mut ScanStatus::default())
+}
+
+pub(crate) fn scan_sessions_with_status(status: &mut ScanStatus) -> Vec<SessionMeta> {
     let agents_dir = get_openclaw_dir().join("agents");
-    if !agents_dir.exists() {
-        return Vec::new();
-    }
 
     let mut sessions = Vec::new();
 
     // Traverse each agent directory
-    let agent_entries = match std::fs::read_dir(&agents_dir) {
-        Ok(entries) => entries,
-        Err(_) => return sessions,
-    };
-
-    for agent_entry in agent_entries.flatten() {
+    for agent_entry in status.entries(&agents_dir) {
         let agent_path = agent_entry.path();
-        if !agent_path.is_dir() {
+        if !status.is_dir(&agent_path) {
             continue;
         }
 
         let sessions_dir = agent_path.join("sessions");
-        if !sessions_dir.is_dir() {
+        if !status.is_dir(&sessions_dir) {
             continue;
         }
 
-        let session_entries = match std::fs::read_dir(&sessions_dir) {
-            Ok(entries) => entries,
-            Err(_) => continue,
-        };
+        let session_entries = status.entries(&sessions_dir);
 
         let display_names = load_display_names(&sessions_dir);
 
-        for entry in session_entries.flatten() {
+        for entry in session_entries {
             let path = entry.path();
             if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
                 continue;
             }
 
-            if let Some(meta) = parse_session(&path, Some(&display_names)) {
+            if let Some(meta) = parse_session_with_status(&path, Some(&display_names), status) {
                 sessions.push(meta);
             }
         }
@@ -147,7 +140,15 @@ fn parse_session(
     path: &Path,
     display_names: Option<&HashMap<String, String>>,
 ) -> Option<SessionMeta> {
-    let (head, tail) = read_head_tail_lines(path, 10, 30).ok()?;
+    parse_session_with_status(path, display_names, &mut ScanStatus::default())
+}
+
+fn parse_session_with_status(
+    path: &Path,
+    display_names: Option<&HashMap<String, String>>,
+    status: &mut ScanStatus,
+) -> Option<SessionMeta> {
+    let (head, tail) = status.record(read_head_tail_lines(path, 10, 30))?;
 
     let mut session_id: Option<String> = None;
     let mut cwd: Option<String> = None;
