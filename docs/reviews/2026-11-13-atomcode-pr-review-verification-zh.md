@@ -4,17 +4,17 @@
   - **主体核验快照**：HEAD `7b5b5771`（§2–§10 的判定与证据以此为准）
   - **源码变更（上一版报告状态）**：`5e6d6156`（2026-11-14 08:59，`fix(atomcode): sync kimi-specific hardcodes and harden i18n consistency`；触及 App.tsx / mutations.ts / errorUtils.ts / AtomCodeProviderForm.tsx 源码 + 5 核心语言 i18n + PR 模板 + 新增 i18n 回归测试）
   - **增量修订复核**：`5843fe16`（QA 对 `8941b0ae` 独立回归核验；判定统计按该代码状态更新）
-  - **最后一次源码变更**：`214ba557`（2026-11-15 11:25，`fix(atomcode): restore env guard value and tighten uninstall path matching`；5 文件 +150/-17）；其前 `c16ca796`（官方安装路径 + 测试隔离）、`5395992b`（CLI 生命周期 / 目录覆盖 / 预设搜索）、`de4296a6`（文档重写 + 本报告 §0/§12 入库）
-  - **当前报告版本**：同步至 **`214ba557`**（2026-11-15 13:58 增补 §15）；工作区干净，`git status --short` 首尾均为空
+  - **最后一次源码变更**：`5bb48c85`（2026-11-15 15:08，`fix(atomcode): drop installer-suffix arms without a script source`；2 文件 +84/-16，报告 §15 随之入库）；其前 `214ba557`（guard 原值恢复 + 后缀收紧）、`c16ca796`（官方安装路径 + 测试隔离）、`5395992b`（CLI 生命周期 / 目录覆盖 / 预设搜索）、`de4296a6`（文档重写 + 本报告 §0/§12 入库）
+  - **当前报告版本**：同步至 **`5bb48c85`**（2026-11-15 15:17 增补 §16）；工作区干净，`git status --short` 首尾均为空
 - **对照基线**：`upstream/main` = `bd487e83`（含 GitHub Copilot CLI 支持 `#8753`）
-- **核验日期**：初版 2026-11-13 20:24；增量修订 21:05；计数勘误 21:41；版本同步 2026-11-14 00:34；`5e6d6156` 同步 2026-11-14 22:06；**独立复核（§12）2026-11-15 00:15**；**§0 评审意见原文收录 00:29**；**新提交增量复核（§13）01:35**；**软件团队两路复核（§14）09:56**；**放行门槛闭环复核（§15）13:48**
-- **独立复核方式**：§12 以当时工作区（HEAD `5e6d6156` + 3 个未提交文件）为准只读复核，对 #12 另建临时探针测试实跑、随即删除；§13 对 `de4296a6` / `5395992b` 全量 diff 逐行核对 + 关键调用链复核 + 联网验证官方脚本 URL / npm registry；§14 由架构师（代码事实 / 判定 / 设计评审）与 QA（11 条命令实测 / 质量结论）两路并行产出、主理人交叉复验后汇编；§15 为主理人**单点独立复核 + 3 组命令实测**（§14 放行门槛的闭环验证）。四轮**均未修改任何源码**，仅增补本报告（详见 §12–§15）
+- **核验日期**：初版 2026-11-13 20:24；增量修订 21:05；计数勘误 21:41；版本同步 2026-11-14 00:34；`5e6d6156` 同步 2026-11-14 22:06；**独立复核（§12）2026-11-15 00:15**；**§0 评审意见原文收录 00:29**；**新提交增量复核（§13）01:35**；**软件团队两路复核（§14）09:56**；**放行门槛闭环复核（§15）13:48**；**后缀收敛复核（§16）15:17**
+- **独立复核方式**：§12 以当时工作区（HEAD `5e6d6156` + 3 个未提交文件）为准只读复核，对 #12 另建临时探针测试实跑、随即删除；§13 对 `de4296a6` / `5395992b` 全量 diff 逐行核对 + 关键调用链复核 + 联网验证官方脚本 URL / npm registry；§14 由架构师（代码事实 / 判定 / 设计评审）与 QA（11 条命令实测 / 质量结论）两路并行产出、主理人交叉复验后汇编；§15 为主理人**单点独立复核 + 3 组命令实测**（§14 放行门槛的闭环验证）；§16 为主理人单点复核 + **联网重取官方 `install.sh` 逐段取证** + cargo 实测 + 路径归一化模拟。五轮**均未修改任何源码**，仅增补本报告（详见 §12–§16）
 - **核验方式**：主体核验为只读。源码逐行核对 + `git diff upstream/main...HEAD` + 前端/后端实测 + 联网核实 AtomCode 官方文档；核验阶段未修改任何源码（`git status --short` 首尾均为空）。报告由 `5843fe16` 入库、`52108a48` 收录 §11 与勘误、`5e6d6156` 附带微调，修订提交均**只编辑本报告文件**；当前工作区另有本报告未提交改动（见 §11.8）
 - **协作方式**：主体为三路并行核验后交叉复核 —— 代码事实（9 条）、架构一致性 / Skills·MCP / 出处 / SSOT、i18n / 截图 / 检查清单 / 测试，主理人汇总并对关键结论独立复验；增量修订由 QA 对 `8941b0ae` 独立回归核验后汇编。**§14 启用软件团队正式协作流程**：团队 `software-cc-switch-review`，成员 `software-architect`（高见远）与 `software-qa-engineer`（严过关）并行独立产出、经主理人（`software-team-lead`）中转汇编，两路均为只读。**§15 为单点复核，未再启用团队流程**（§14 的两路产出已入库，本轮只需对新增 diff 与实测结果做闭环验证）
 - **关联文档**：[2026-11-11 代码审查](./2026-11-11-code-review-211aff9a.md)、`../atomcode-fixes-summary.md`、`../atomcode-integration.md`、`../atomcode-provider-integration-zh.md`
 - **核验输入**：评审意见原文由用户于 2026-11-15 提供，逐字收录于 **§0**；此前报告所述「仓库三份文档中无该评审原文」指仓库内文档，该空白现已消除
 
-> **修订说明（重要）**：本报告主体是对 `7b5b5771` 的快照核验。其后分支依次为 `8941b0ae`（源码修复：补 i18n、移除未接线类型声称）、`5843fe16`（报告入库）、`52108a48`（§11 增量修订与计数勘误入库）、`5e6d6156`（源码修复：同步 kimi 专属硬编码、加固 i18n 一致性、PR 模板诚实化）。**`5e6d6156` 是 `8941b0ae` 之后又一次源码变更**，使 §1 判定统计与 §2 中 #7 的判定相对 `52108a48` 发生变化（见 §11.8）；工作区另有未提交改动（`docs/atomcode-integration.md` 重写、`atomcode_config.rs` 文档注释、本报告自身），均未入库。需区分三个时点：**判定结论原始快照 `7b5b5771`、源码状态 `5e6d6156`、报告版本同步至 `5e6d6156` + 工作区**。§1 判定统计与 §2 中 #2 / #4 / #7 的判定见 §11.3 与 §11.8 的更新口径；§3–§10 保留原始快照证据并在受影响结论处标注「已修订，见 §11」。完整增量差异见 **§11**；2026-11-15 的只读独立复核与 #12 失焦实测见 **§12**；评审意见原文见 **§0**；对 `de4296a6` / `5395992b` 两个新提交的增量复核、判定升降与新发现见 **§13**；对 `c16ca796` 的软件团队两路复核、待办闭环与实测证据见 **§14**；对 `214ba557` 的放行门槛闭环复核与实测验证见 **§15**，**该节为当前代码状态的权威口径**。
+> **修订说明（重要）**：本报告主体是对 `7b5b5771` 的快照核验。其后分支依次为 `8941b0ae`（源码修复：补 i18n、移除未接线类型声称）、`5843fe16`（报告入库）、`52108a48`（§11 增量修订与计数勘误入库）、`5e6d6156`（源码修复：同步 kimi 专属硬编码、加固 i18n 一致性、PR 模板诚实化）。**`5e6d6156` 是 `8941b0ae` 之后又一次源码变更**，使 §1 判定统计与 §2 中 #7 的判定相对 `52108a48` 发生变化（见 §11.8）；工作区另有未提交改动（`docs/atomcode-integration.md` 重写、`atomcode_config.rs` 文档注释、本报告自身），均未入库。需区分三个时点：**判定结论原始快照 `7b5b5771`、源码状态 `5e6d6156`、报告版本同步至 `5e6d6156` + 工作区**。§1 判定统计与 §2 中 #2 / #4 / #7 的判定见 §11.3 与 §11.8 的更新口径；§3–§10 保留原始快照证据并在受影响结论处标注「已修订，见 §11」。完整增量差异见 **§11**；2026-11-15 的只读独立复核与 #12 失焦实测见 **§12**；评审意见原文见 **§0**；对 `de4296a6` / `5395992b` 两个新提交的增量复核、判定升降与新发现见 **§13**；对 `c16ca796` 的软件团队两路复核、待办闭环与实测证据见 **§14**；对 `214ba557` 的放行门槛闭环复核与实测验证见 **§15**；对 `5bb48c85` 的后缀收敛复核、官方脚本取证与 P2 回归发现见 **§16**，**该节为当前代码状态的权威口径**。
 
 ---
 
@@ -45,7 +45,7 @@
 
 > **评审意见仍未全部满足。** 代码状态 `5e6d6156` + 当前工作区下，13 个判定项中闭环 **6 项**、部分满足 **3 项**、未满足 **4 项**。演进：初版（`7b5b5771`）为 ✅4 / ⚠️5 / ❌4；`8941b0ae` 使「多语言」由 ⚠️ 升 ✅（→ ✅5 / ⚠️4 / ❌4）；`5e6d6156` 使「白名单 kimi 硬编码同步」由 ⚠️ 升 ✅（→ ✅6 / ⚠️3 / ❌4）。**2026-11-15 独立复核（§12）以只读实测坐实 #12「模型键输入框失焦」仍可复现；评审意见全文已由用户提供并收录于 §0（#12 句尾仍为省略号），原句截断不再构成判定空白；判定等级与统计均不变。**
 
-> **⚠️ 统计口径更新（§13，2026-11-15 01:35）**：上表与上述演进是 `5e6d6156` 快照口径，**保留不改**。对 `de4296a6` / `5395992b` 复核后，**当前代码状态 `5395992b` 的统计为 ✅7 / ⚠️2 / ❌4**（#8 由 ⚠️ 升 ✅，详见 §13.2）；#1 / #10 判定不变但依据有实质推进，#3a / #3b / #4 / #12 未获处理。**§14 复核（`c16ca796`，09:56）确认该统计仍成立、13 项判定全部不变**；但 #3b 证据加重（全量检查实测失败、提交说明「14 passed」在默认并行下 3/3 不可复现），详见 §14.3 / §14.4。**§15 复核（`214ba557`，13:48）确认该统计仍成立、13 项判定全部不变**；§14 报的两项构建 / 竞态 P2 已闭环并经实测确认，但 #3b 核心判据仍未变。**以 §15 为当前状态的权威口径。**
+> **⚠️ 统计口径更新（§13，2026-11-15 01:35）**：上表与上述演进是 `5e6d6156` 快照口径，**保留不改**。对 `de4296a6` / `5395992b` 复核后，**当前代码状态 `5395992b` 的统计为 ✅7 / ⚠️2 / ❌4**（#8 由 ⚠️ 升 ✅，详见 §13.2）；#1 / #10 判定不变但依据有实质推进，#3a / #3b / #4 / #12 未获处理。**§14 复核（`c16ca796`，09:56）确认该统计仍成立、13 项判定全部不变**；但 #3b 证据加重（全量检查实测失败、提交说明「14 passed」在默认并行下 3/3 不可复现），详见 §14.3 / §14.4。**§15 复核（`214ba557`，13:48）确认该统计仍成立、13 项判定全部不变**；§14 报的两项构建 / 竞态 P2 已闭环并经实测确认，但 #3b 核心判据仍未变。**§16 复核（`5bb48c85`，15:17）确认该统计仍成立、13 项判定全部不变**；但联网取证发现「删除无来源后缀」误删了官方 `install.sh` 在 MSYS / Git-Bash 下写入的 `~/.local/bin/atomcode.exe`，构成**新的 P2 回归**（§16.4）。**以 §16 为当前状态的权威口径。**
 
 | 判定 | 数量（代码状态 `5e6d6156`） | 条目 |
 |---|---|---|
@@ -67,7 +67,7 @@
 
 | # | 评审意见 | 判定 | 一句话依据 |
 |---|---|:--:|---|
-| 1 | 新增 CLI 类型应参考项目内既有实现，而非只指定几个供应商；前端不要自做一套，确保一致性 | ⚠️ **（§13 大幅改善，判定不变）** | **快照（5e6d6156）**：枚举 / 表单 / 呈现层 / 图标 / IPC 注册复用了既有扩展点；但工具安装卸载、目录设置、MCP/Skills、deeplink 缺口明显，预设清单为自建 517 行，`AppsPage` 用 `Partial<Record>` 容忍缺失代替接入。**§13 复核（5395992b）**：工具安装/卸载/升级、`npm` 包与版本探测、POSIX+Windows installer、目录设置全链路、`AppsPage` 恢复 `Record<AppId, Row>` 均已补齐（且断言成立，非类型撒谎）；**仍缺** `presetGroups.ts` 无 atomcode、预设仍为自建清单（本次只加 9 条搜索别名）、MCP/Skills/deeplink 仍未接线 → 维持 ⚠️ |
+| 1 | 新增 CLI 类型应参考项目内既有实现，而非只指定几个供应商；前端不要自做一套，确保一致性 | ⚠️ **（§13 大幅改善，判定不变）** | **快照（5e6d6156）**：枚举 / 表单 / 呈现层 / 图标 / IPC 注册复用了既有扩展点；但工具安装卸载、目录设置、MCP/Skills、deeplink 缺口明显，预设清单为自建 517 行，`AppsPage` 用 `Partial<Record>` 容忍缺失代替接入。**§13 复核（5395992b）**：工具安装/卸载/升级、`npm` 包与版本探测、POSIX+Windows installer、目录设置全链路、`AppsPage` 恢复 `Record<AppId, Row>` 均已补齐（且断言成立，非类型撒谎）；**仍缺** `presetGroups.ts` 无 atomcode、预设仍为自建清单（本次只加 9 条搜索别名）、MCP/Skills/deeplink 仍未接线 → 维持 ⚠️。**§16 复核（`5bb48c85`）**：`known_native_install` 的后缀由 7 条收敛到 4 条，但删掉了官方 `install.sh` 在 MSYS / Git-Bash 下写入的 `~/.local/bin/atomcode.exe`，工具卸载能力在该场景退化（新 P2 回归，§16.4）→ 仍维持 ⚠️ |
 | 2 | 多语言支持缺失，请补全 | ✅ **（增量修订，原 ⚠️）** | 5 个核心语言 `atomcode.*` key 齐全（`atomcode.*` 22 + `apps.atomcode` = 23，`8941b0ae` 起；`5e6d6156` 后 5 核心语言达 24 个、ko/ru 23 个靠 `fallbackLng: "en"`，见 §7.1 口径说明），ko/ru 靠 `fallbackLng: "en"`（AGENTS.md 明确豁免）；`8941b0ae` 补齐 7 语言 `apps.atomcode`、把 `sharedProviders` 接入 `presentation.ts` 的 atomcode 分支、`empty.*` 接入 `ProviderEmptyState` 的 `emptyCopyNs`，裸 key 与 3 个死 key 全部消除并经 QA 实测（见 §11.2）；`5e6d6156` 另新增 `tests/i18n/appIdsI18n.test.ts` 防回归。剩余仅硬编码英文 preset label，属专有名词 / 既有惯例，低优先级 |
 | 3a | 缺少截图示例 | ❌ | 分支 0 张图片、`docs/images` 无 atomcode 目录、PR 模板截图表为空，中文集成文档自承"留待合并前补齐" |
 | 3b | 检查清单默认全勾选仍保留"如修改了 rust 代码"的提示，不可信 | ❌ | 核心判据指向 PR 描述正文（仓库内不可验证）。**修订**：`5e6d6156` 改了 `.github/pull_request_template.md`——新增「逐项真实勾选、不适用写 N/A + 理由」提示、列出 clippy 全 workspace 口径（`-D warnings`，勿只跑 `--lib`）、补 `pnpm test:unit` / `cargo fmt --check` / `cargo test`；但 `(if Rust code changed)` 条件提示**仍保留**（见 §6.3、§11.8）。`5843fe16`/`52108a48` 时期模板与基线一致、4 项 `- [ ]` 的结论对那时成立。**§14 复核（`c16ca796`）**：本次未改模板，条件句原样保留；QA 实测全量 `pnpm test:unit` 两次失败、全量 `cargo test` 未跑、扩展口径 clippy EXIT=101、提交说明「14 passed」默认并行 3/3 不可复现 → 维持 ❌ 且证据加重（§14.4）。**§15 复核（`214ba557`）**：提交说明改为如实写明 `cargo clippy --all-targets` 仅剩 4 个既有 error、`cargo test --lib atomcode_` 默认并行 14 passed twice（主理人实测可复现），**验证说明的如实性有实质进步**；但全量 `pnpm test:unit` / `cargo test` 仍未跑，模板条件句与 PR 描述正文全勾选未动 → 维持 ❌（§15.5） |
@@ -869,4 +869,79 @@ Ok(account_id.to_string())
 
 ---
 
-*报告由软件团队三路并行核验（代码事实 / 架构一致性 / QA）后汇总，主理人对关键结论另行交叉复验；§11 增量修订由 QA 对 `8941b0ae` 独立回归核验后汇编；§11.6 为截至 `52108a48` 的版本同步记录；§11.7 为基于 AtomCode v5.2.7 本地源码的语义修正；§11.8 为同步至 `5e6d6156` + 未提交工作区的版本记录；§12 为 2026-11-15 的只读独立复核与 #12 失焦实测；§0 为用户提供的评审意见原文，作为全部判定的核验输入；§13 为对 `de4296a6` / `5395992b` 的增量复核；§14 为团队 `software-cc-switch-review` 两路并行（架构师高见远 / QA 严过关）产出、主理人齐活林汇编的对 `c16ca796` 复核；§15 为主理人对 `214ba557` 的放行门槛闭环复核与实测，是**当前代码状态的权威判定口径**。*
+## 16. 后缀收敛复核：新提交 `5bb48c85`（2026-11-15 15:17，主理人独立复核 + 联网取证）
+
+**触发**：用户「查一下最新提交」，随后「更新一下复核报告」。本节复核 §15.5 残留第 3 条（后缀回归 4/7、无官方来源）的处置方式，并**联网重取官方 `install.sh` 逐段核对每条后缀的脚本来源**。由主理人单点独立执行，只读，未改任何源码；本报告 §15 随该提交一并入库，工作区干净。本节为 `5bb48c85` 代码状态下的权威口径。
+
+### 16.1 复核对象与方式
+
+| 项 | 内容 |
+|---|---|
+| 分支 / HEAD | `feat/atomcode-provider` / `5bb48c85`（2026-11-15 15:08，2 文件 +84/-16，工作区干净） |
+| 上一版状态 | `214ba557`（§15 的源码状态，报告 §15 随本次提交一并入库） |
+| 提交理由 | 「The install.sh never writes an .exe on Linux/macOS」，故删除 3 条 `.exe` 后缀、保留 4 个 script-verified 目标，并以强负例守住删除 |
+| 提交说明验证范围 | `cargo fmt --check`；`CC_SWITCH_TEST_HOME cargo test --lib atomcode_` 默认并行 14 passed |
+| 方式 | `git show 5bb48c85` 全量 diff 逐行核对 + 联网重取官方 `install.sh` 逐段取证 + cargo 实测 + 路径归一化模拟；**只读** |
+| 边界 | 未裸跑 `cargo test`（AGENTS.md 要求 `CC_SWITCH_TEST_HOME`）、未做真机安装 / 卸载、未对 `upstream/main` 做基线对照；联网取证仅覆盖官方 `install.sh`，未重新核验 `install.ps1` 与 FAQ 文档 |
+
+### 16.2 改动与 §15.5 残留闭环
+
+`tool_uninstall.rs:428-438` 的 `known_native_install("atomcode")` 由 7 条后缀收敛为 4 条：
+
+| 保留 | 删除 |
+|---|---|
+| `/.local/bin/atomcode` | `/.local/bin/atomcode.exe` |
+| `/usr/local/bin/atomcode` | `/usr/local/bin/atomcode.exe` |
+| `/appdata/local/atomcode/atomcode.exe` | `/.atomcode/bin/atomcode.exe` |
+| `/.atomcode/bin/atomcode` | — |
+
+同时补强负例：MZ 头二进制置于 `usr/local/bin/atomcode.exe` 必须被拒；原有 3 类强负例（错放 `AtomCode` 目录、非 `system` source、`node_modules` 内容）保留。
+
+**§15.5 第 3 条以「删除」路线闭环**：`c16ca796` 引入的 3 个 `.exe` 后缀中，`/usr/local/bin/atomcode.exe` 确无官方来源（§16.4），删之有理；4 条保留项均对应脚本默认目标，匹配面确实收窄。**但该处置漏看了 `install.sh` 的 Windows Unix-shell 分支，误删 `/.local/bin/atomcode.exe`，构成新的 P2 回归**（§16.4）。
+
+### 16.3 实测结果
+
+| 命令 / 检查 | 结果 |
+|---|---|
+| `CC_SWITCH_TEST_HOME="$(mktemp -d)" cargo test --lib atomcode_`（默认并行） | `14 passed; 0 failed`（0.27s），提交说明可复现 |
+| `cargo test --lib --no-run -q` | EXIT=0；仅剩 1 条既有告警 `agy_account/keychain.rs:74 named never used`（blame `fdbac61c3`） |
+| 路径归一化模拟 | Windows 官方 ps1 路径 `c:/users/lad/appdata/local/atomcode/atomcode.exe` 命中；`/usr/local/bin/atomcode`、`~/.local/bin/atomcode`、`~/.atomcode/bin/atomcode` 命中；`/opt/atomcode/atomcode.exe`、`/usr/local/bin/atomcode.exe` 均 NO MATCH；**`c:/users/lad/.local/bin/atomcode.exe` NO MATCH** |
+| `git status --short` | 首尾均为空，源码零改动 |
+
+### 16.4 新发现（P2 回归）：MSYS / Git-Bash 官方安装目标被误删
+
+**（1）联网取证 —— 官方 `install.sh` 原文摘录**（`https://raw.atomgit.com/atomgit_atomcode/atomcode/raw/main/scripts/install.sh`，2026-11-15 15:17 重取）：
+
+```sh
+ext=""  # binary filename suffix; ".exe" on Windows shells (set below)
+case "$uname_s" in
+    MSYS*|MINGW*|CYGWIN*) os="windows"; ext=".exe" ;;
+esac
+elif [ "$os" = "ohos" ] || [ "$os" = "windows" ]; then
+    PREFIX="$HOME/.local/bin"
+TARGET="$PREFIX/atomcode${ext}"
+```
+
+脚本注释亦自述：「MSYS2 / MinGW / Git-Bash / Cygwin: a Unix shell running ON Windows … Install the native Windows `.exe` into this shell's environment」、「A running atomcode.exe locks the file on NTFS」、「installed for this Unix shell (MSYS/MinGW/Git-Bash/Cygwin)」。→ **在 Windows 的 Git Bash / MSYS / MinGW / Cygwin 下，官方脚本产出 `~/.local/bin/atomcode.exe`**。
+
+**（2）提交理由的适用边界**：「The install.sh never writes an .exe on Linux/macOS」对 `os="linux"` / `"darwin"` 成立（此时 `ext=""`），但脚本自带 `os="windows"` 分支（`uname -s` 为 `MSYS*` / `MINGW*` / `CYGWIN*`）明确设 `ext=".exe"` 并把 `PREFIX` 强制为 `$HOME/.local/bin`。本项目是 Windows 桌面应用，Git Bash 属常见开发环境，该分支并非边缘场景。
+
+**（3）后果链**：`build_tool_search_paths` 的通用路径已覆盖 `~/.local/bin`，这类安装能被探测到；但 `known_native_install` 现在对该路径返回 `false` → `build_uninstall_plan:89-118` 中 `package_uninstall_command` 对独立 exe 返回 `None`，落到 `:113-117` 的 `Err("Cannot automatically uninstall AtomCode CLI at ...")` → **§13.3 报过的「官方脚本安装无法在应用内卸载」在 MSYS / Git-Bash 场景重现**。路径模拟已实测 `c:/users/lad/.local/bin/atomcode.exe` 为 NO MATCH。
+
+**（4）哪些删对了**：
+
+- `/usr/local/bin/atomcode.exe`：`os="windows"` 时强制 `PREFIX="$HOME/.local/bin"`，不会取 `/usr/local/bin`；`os="linux"` / `"darwin"` / `"ohos"` 时 `ext=""` → 该组合无脚本来源，**删除正确**，新增强负例应保留。
+- `/.atomcode/bin/atomcode.exe`：脚本默认不写该目录（FAQ 提及 `~/.atomcode/bin`），仅用户自定义 `ATOMCODE_PREFIX` 时可能出现，属弱来源；删除可接受，但建议文档注明「自定义 PREFIX 不在自动卸载识别范围内」。
+
+**（5）修复建议（约 3 行 + 1 条单测）**：加回 `normalized.ends_with("/.local/bin/atomcode.exe")`，注释标明来源是 `install.sh` 的 `MSYS*|MINGW*|CYGWIN*` 分支；在 `atomcode_official_installer_targets_are_known_native_installs` 的 layout 参数表补 `(".local/bin", "atomcode.exe")` 正例。新增强负例用的是 `usr/local/bin/atomcode.exe`，后缀不同，两者不冲突。若担心 `/opt` 类误报，保留现有 `/appdata/local/...` 锚定即可（`/opt/atomcode/atomcode.exe` 不匹配 `/.local/bin/...`）。
+
+### 16.5 判定、门槛与边界
+
+- **判定不变**：**`✅7 / ⚠️2 / ❌4`**，13 项全部不变（✅ = {2,5,6,7,8,9,11}；⚠️ = {1,12}；❌ = {3a,3b,4,10}）。本次 2 个文件全是既有文件的收敛式修改，未新增能力；#1 本就 ⚠️，卸载能力在 MSYS 场景退化不改变判定级别（§2 #1 已同步）。**但新增一个 P2 回归**，建议先修再合并。
+- **§14.7 门槛更新**：① ✅、② ✅ 保持；③ **仍未完成**（本次提交说明只写 `cargo fmt --check` 与 14 passed，全量 `pnpm test:unit` / `cargo test` / `pnpm build:renderer` 未跑，扩展口径 clippy 的 4 个既有 error 未再提及）；④ 由「后缀仍 4/7」变为「收敛到 4 条且各有来源 + 强负例」，形式闭环但因 §16.4 的误删应降级为 ⚠️。**#3b 维持 ❌**（模板条件句与 PR 描述正文全勾选未动）。
+- **边界**：本轮只读，未改任何源码 / 文档（仅编辑本报告）；未裸跑 `cargo test`、未做真机安装 / 卸载、未验证 `LOCALAPPDATA` 重定向与异平台编译、未对 `upstream/main` 做基线对照；联网取证仅覆盖官方 `install.sh`，未重新核验 `install.ps1` 与 FAQ 文档。cargo 产物在 `target/`，git 无变化。
+- **仍未闭环（承 §15.6）**：#3a 截图、#3b PR 描述正文全勾选、#4 Skills / MCP 接线（需 `enabled_atomcode` 列 + 迁移，AGENTS.md 要求改 schema 时 @ 维护者）、#10 官方 `[providers.*]` 导入的产品决策与贡献者正式说明、#12 的 A / C 两类失焦丢值、#1 的预设共享目录接入；另新增 §16.4 的 MSYS 卸载回归。
+
+---
+
+*报告由软件团队三路并行核验（代码事实 / 架构一致性 / QA）后汇总，主理人对关键结论另行交叉复验；§11 增量修订由 QA 对 `8941b0ae` 独立回归核验后汇编；§11.6 为截至 `52108a48` 的版本同步记录；§11.7 为基于 AtomCode v5.2.7 本地源码的语义修正；§11.8 为同步至 `5e6d6156` + 未提交工作区的版本记录；§12 为 2026-11-15 的只读独立复核与 #12 失焦实测；§0 为用户提供的评审意见原文，作为全部判定的核验输入；§13 为对 `de4296a6` / `5395992b` 的增量复核；§14 为团队 `software-cc-switch-review` 两路并行（架构师高见远 / QA 严过关）产出、主理人齐活林汇编的对 `c16ca796` 复核；§15 为主理人对 `214ba557` 的放行门槛闭环复核与实测；§16 为对 `5bb48c85` 的后缀收敛复核、官方脚本取证与 MSYS P2 回归发现，是**当前代码状态的权威判定口径**。*
