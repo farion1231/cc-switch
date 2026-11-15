@@ -9,8 +9,8 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { McpServer } from "@/types";
 import McpFormModal from "@/components/mcp/McpFormModal";
-import { MCP_APP_IDS } from "@/config/appConfig";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
+import { APP_IDS_WITH } from "@/config/appSpecs";
 
 const mocks = vi.hoisted(() => ({
   upsert: vi.fn(),
@@ -42,7 +42,7 @@ vi.mock("@/hooks/useMcp", () => ({
   useUpsertMcpServer: () => ({ mutateAsync: mocks.upsert }),
 }));
 
-const ALL_ON = Object.fromEntries(MCP_APP_IDS.map((app) => [app, true]));
+const ALL_ON = Object.fromEntries(APP_IDS_WITH.mcp.map((app) => [app, true]));
 
 function renderForm(
   props: Partial<React.ComponentProps<typeof McpFormModal>> = {},
@@ -131,19 +131,27 @@ describe("McpFormModal (drawer)", () => {
         id: "remote",
         name: "remote",
         server: { command: "shared-tool" },
-        appOverrides: { dsh: { type: "sse", url: "https://example.invalid/sse" } },
+        appOverrides: {
+          dsh: { type: "sse", url: "https://example.invalid/sse" },
+        },
         apps: { claude: true, dsh: true } as McpServer["apps"],
       },
     });
-    expect(screen.getByText("mcpPage.drawer.sseRejectedTitle")).toBeInTheDocument();
+    expect(
+      screen.getByText("mcpPage.drawer.sseRejectedTitle"),
+    ).toBeInTheDocument();
     await userEvent.click(scopeButton("DeepSeek Harness"));
     await userEvent.click(screen.getByRole("button", { name: "HTTP" }));
-    expect(screen.queryByText("mcpPage.drawer.sseRejectedTitle")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("mcpPage.drawer.sseRejectedTitle"),
+    ).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "common.save" }));
     await waitFor(() => expect(mocks.upsert).toHaveBeenCalled());
     expect(mocks.upsert.mock.calls[0][0]).toMatchObject({
       server: { command: "shared-tool" },
-      appOverrides: { dsh: { type: "http", url: "https://example.invalid/sse" } },
+      appOverrides: {
+        dsh: { type: "http", url: "https://example.invalid/sse" },
+      },
     });
   });
 
@@ -181,7 +189,9 @@ describe("McpFormModal (drawer)", () => {
     ).toBeInTheDocument();
   });
 
-  it.each(MCP_APP_IDS.filter((app) => app !== "claude" && app !== "codex"))(
+  it.each(
+    APP_IDS_WITH.mcp.filter((app) => app !== "claude" && app !== "codex"),
+  )(
     "supports an independent %s connection without replacing the default",
     async (app) => {
       renderForm({

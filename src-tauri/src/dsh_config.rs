@@ -413,37 +413,47 @@ fn edit_files_and_commit<T>(
         )));
     }
     let mut written = vec![];
-    let result = paths
-        .iter()
-        .zip(&current)
-        .zip(&next)
-        .enumerate()
-        .filter(|(_, ((_, current), next))| current != next)
-        .try_for_each(|(index, ((path, _), next))| {
-            atomic_write_private(path, next.as_bytes())?;
-            written.push(index);
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        paths
+            .iter()
+            .zip(&current)
+            .zip(&next)
+            .enumerate()
+            .filter(|(_, ((_, current), next))| current != next)
+            .try_for_each(|(index, ((path, _), next))| {
+                atomic_write_private(path, next.as_bytes())?;
+                written.push(index);
+                Ok(())
+            })
+            .and_then(|()| commit())
+    }));
+    let mut rollback = || {
+        let failures: Vec<_> = written
+            .iter()
+            .rev()
+            .filter_map(|&index| {
+                restore(&paths[index], previous[index].take())
+                    .err()
+                    .map(|rollback| rollback.to_string())
+            })
+            .collect();
+        if failures.is_empty() {
             Ok(())
-        })
-        .and_then(|()| commit());
+        } else {
+            Err(AppError::Message(format!(
+                "restoring DeepSeek Harness configuration failed: {}",
+                failures.join("; ")
+            )))
+        }
+    };
+    let result = crate::sync_utils::resume_after_rollback(outcome, &mut rollback);
     match result {
         Ok(result) => Ok(result),
         Err(error) => {
-            let failures: Vec<_> = written
-                .into_iter()
-                .rev()
-                .filter_map(|index| {
-                    restore(&paths[index], previous[index].take())
-                        .err()
-                        .map(|rollback| rollback.to_string())
-                })
-                .collect();
-            if failures.is_empty() {
-                Err(error)
+            if let Err(rollback_error) = rollback() {
+                Err(AppError::Message(format!("{error}; {rollback_error}")))
             } else {
-                Err(AppError::Message(format!(
-                    "{error}; restoring DeepSeek Harness configuration failed: {}",
-                    failures.join("; ")
-                )))
+                Err(error)
             }
         }
     }
@@ -2084,6 +2094,31 @@ mod tests {
         assert!(edit_path_and_commit(&path, |_| Ok(String::new()), || Ok(())).is_err());
         drop(guard);
         assert!(!path.with_extension("yml.lock").exists());
+    }
+
+    #[test]
+    fn panicking_commit_restores_all_profiles_before_releasing_native_locks() {
+        let temp = tempfile::tempdir().unwrap();
+        let existing = temp.path().join("existing.yml");
+        let fresh = temp.path().join("new.yml");
+        fs::write(&existing, "# original\n[]\n").unwrap();
+        assert!(std::panic::catch_unwind(|| {
+            let _: Result<(), AppError> = edit_files_and_commit(
+                &[existing.clone(), fresh.clone()],
+                |_| Ok(vec!["- id: changed\n".into(), "- id: new\n".into()]),
+                || {
+                    assert!(existing.with_extension("yml.lock").exists());
+                    assert!(fresh.with_extension("yml.lock").exists());
+                    panic!("commit interrupted");
+                },
+            );
+        })
+        .is_err());
+        assert_eq!(fs::read_to_string(&existing).unwrap(), "# original\n[]\n");
+        assert!(!fresh.exists());
+        assert!(!existing.with_extension("yml.lock").exists());
+        assert!(!fresh.with_extension("yml.lock").exists());
+        edit_path_and_commit(&existing, |_| Ok("[]\n".into()), || Ok(())).unwrap();
     }
 
     /// Points `DSH_HOME` at a temporary directory for one test and restores it afterwards.

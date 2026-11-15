@@ -540,6 +540,20 @@ pub fn apply_codex_upstream_model(provider: &Provider, body: &mut JsonValue) -> 
     Some(upstream_model)
 }
 
+/// 上游 Chat 端点是否拒收 assistant 历史里的 `reasoning_content`。
+///
+/// Mistral 托管了 DeepSeek / GLM 等第三方模型，但它的 Chat 端点对未知字段是
+/// `extra_forbidden`：assistant 历史里带 `reasoning_content` 会整条 422。该字段
+/// 只是 DeepSeek / Kimi 经第三方网关时的兼容约定，所以按端点契约优先于模型名，
+/// 与 Claude → Chat 路径的 `should_preserve_reasoning_content_for_openai_chat`
+/// 同口径，只认官方域名。
+pub fn codex_chat_upstream_rejects_reasoning_content(base_url: &str) -> bool {
+    url::Url::parse(base_url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_string))
+        .is_some_and(|host| host == "api.mistral.ai")
+}
+
 /// Stack 请求的上游拒收 Codex 的托管 `web_search`：按这家的地址和模型品牌判断，和它做
 /// 路由时写 `web_search = "disabled"` 的依据相同（归一化后的配置，旧形态的行也认得出
 /// 地址）；另看这次请求的模型：行里配了多个模型时，选中的不一定是行的 `model`。
@@ -1010,6 +1024,24 @@ fn infer_aggregator_platform_config(
             effort_param: Some("reasoning_effort".to_string()),
             effort_value_mode: Some("zen".to_string()),
             output_format: Some("reasoning_content".to_string()),
+            effort_levels: None,
+        });
+    }
+
+    // Mistral 官方 API（#9507）：Chat 请求体不收额外字段，它托管的 deepseek / glm 名模型
+    // 会被下方模型规则注入 `thinking:{type}`，整条 422。与 Codex 的 Mistral 预设、Claude
+    // 侧（`claude_reasoning::is_mistral`）同口径，不下发推理参数；精确 host 与 #9388 一致。
+    // 要发档位的用户在卡上显式配置 codexChatReasoning。
+    let is_mistral_api =
+        url::Url::parse(base_url.trim()).is_ok_and(|url| url.host_str() == Some("api.mistral.ai"));
+    if is_mistral_api {
+        return Some(CodexChatReasoningConfig {
+            supports_thinking: Some(false),
+            supports_effort: Some(false),
+            thinking_param: Some("none".to_string()),
+            effort_param: Some("none".to_string()),
+            effort_value_mode: None,
+            output_format: Some("auto".to_string()),
             effort_levels: None,
         });
     }
@@ -2389,6 +2421,7 @@ wire_api = "chat"
         let transformed = crate::proxy::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
             request,
             Some(&config),
+            true,
         )
         .unwrap();
         assert_eq!(transformed["reasoning_effort"], "max");
@@ -2498,6 +2531,71 @@ wire_api = "chat"
         assert_eq!(config.effort_param.as_deref(), Some("reasoning_effort"));
         assert_eq!(config.effort_value_mode.as_deref(), Some("zen"));
         assert_eq!(config.output_format.as_deref(), Some("reasoning_content"));
+    }
+
+    #[test]
+    fn test_resolve_codex_chat_reasoning_mistral_api_sends_no_reasoning_fields() {
+        let provider = create_provider(json!({
+            "config": r#"
+model_provider = "mistral"
+model = "deepseek-v4-1-flash-1017"
+
+[model_providers.mistral]
+name = "Mistral AI"
+base_url = "https://api.mistral.ai/v1"
+wire_api = "chat"
+"#
+        }));
+
+        // Mistral 托管的 deepseek 名模型不得套 DeepSeek 规则注入 thinking（#9507）。
+        let request = json!({
+            "model": "deepseek-v4-1-flash-1017",
+            "input": "hi",
+            "reasoning": {"effort": "high"}
+        });
+        let config = resolve_codex_chat_reasoning_config(&provider, &request).unwrap();
+        let chat = crate::proxy::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+            request,
+            Some(&config),
+            // 与 forwarder 对 api.mistral.ai 的取值一致。
+            false,
+        )
+        .unwrap();
+
+        assert!(chat.get("thinking").is_none());
+        assert!(chat.get("reasoning_effort").is_none());
+        assert!(chat.get("reasoning").is_none());
+    }
+
+    #[test]
+    fn test_resolve_codex_chat_reasoning_mistral_rule_needs_exact_host() {
+        for base_url in [
+            "https://api.mistral.ai.example/v1",
+            "https://relay.example/api.mistral.ai/v1",
+        ] {
+            let provider = create_provider(json!({
+                "config": format!(
+                    "model_provider = \"relay\"\nmodel = \"deepseek-v4-pro\"\n\n[model_providers.relay]\nname = \"Relay\"\nbase_url = \"{base_url}\"\nwire_api = \"chat\"\n"
+                )
+            }));
+
+            let config = resolve_codex_chat_reasoning_config(
+                &provider,
+                &json!({ "model": "deepseek-v4-pro" }),
+            )
+            .unwrap();
+
+            assert_eq!(
+                config.thinking_param.as_deref(),
+                Some("thinking"),
+                "{base_url}"
+            );
+            assert_eq!(
+                config.effort_value_mode.as_deref(),
+                Some("deepseek"),
+                "{base_url}"
+            );
+        }
     }
 
     #[test]
@@ -2904,5 +3002,32 @@ wire_api = "responses"
         assert!(!strip_codex_openai_only_request_fields(&mut body));
         assert_eq!(body, once);
         assert_eq!(body, json!({ "input": [] }));
+    }
+
+    #[test]
+    fn chat_upstream_rejects_reasoning_content_only_for_mistral_host() {
+        // 官方域名（含带路径 / 大小写差异的写法）判为拒收。
+        assert!(codex_chat_upstream_rejects_reasoning_content(
+            "https://api.mistral.ai/v1"
+        ));
+        assert!(codex_chat_upstream_rejects_reasoning_content(
+            "https://api.mistral.ai"
+        ));
+        assert!(codex_chat_upstream_rejects_reasoning_content(
+            "https://API.MISTRAL.AI/v1/chat/completions"
+        ));
+
+        // 其他网关、相似域名、非法 URL 一律保持原行为。
+        assert!(!codex_chat_upstream_rejects_reasoning_content(
+            "https://api.deepseek.com"
+        ));
+        assert!(!codex_chat_upstream_rejects_reasoning_content(
+            "https://api.mistral.ai.example/v1"
+        ));
+        assert!(!codex_chat_upstream_rejects_reasoning_content(
+            "https://relay.example/api.mistral.ai"
+        ));
+        assert!(!codex_chat_upstream_rejects_reasoning_content("not a url"));
+        assert!(!codex_chat_upstream_rejects_reasoning_content(""));
     }
 }

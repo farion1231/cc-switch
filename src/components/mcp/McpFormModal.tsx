@@ -15,8 +15,6 @@ import { HoverTip } from "@/components/ui/hover-tip";
 import { Notice } from "@/components/ui/notice";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import type { McpServer, McpServerSpec } from "@/types";
-import type { McpAppId } from "@/config/appConfig";
-import { MCP_APP_IDS } from "@/config/appConfig";
 import { mcpPresets, getMcpPresetWithDescription } from "@/config/mcpPresets";
 import {
   extractErrorMessage,
@@ -53,11 +51,12 @@ import {
   type PasteFormat,
   type PastedServer,
 } from "./mcpDraft";
+import { APP_IDS_WITH, type AppIdWith } from "@/config/appSpecs";
 
-type AppsState = Record<McpAppId, boolean>;
-type ConnectionScope = "default" | McpAppId;
+type AppsState = Record<AppIdWith<"mcp">, boolean>;
+type ConnectionScope = "default" | AppIdWith<"mcp">;
 type ConnectionDrafts = { default: McpDraftConnection } & Partial<
-  Record<McpAppId, McpDraftConnection>
+  Record<AppIdWith<"mcp">, McpDraftConnection>
 >;
 
 /**
@@ -65,8 +64,8 @@ type ConnectionDrafts = { default: McpDraftConnection } & Partial<
  * 写进去的 SSE 地址会被当成 Streamable HTTP 连接（#8882）；Pi、Antigravity 的
  * 写入直接拒绝 SSE（`mcp/pi.rs`、`mcp/agy.rs`）。
  */
-const SSE_AS_HTTP_APPS: readonly McpAppId[] = ["codex"];
-const SSE_REJECTED_APPS: readonly McpAppId[] = ["pi", "agy", "dsh"];
+const SSE_AS_HTTP_APPS: readonly AppIdWith<"mcp">[] = ["codex"];
+const SSE_REJECTED_APPS: readonly AppIdWith<"mcp">[] = ["pi", "agy", "dsh"];
 
 interface MetaDraft {
   name: string;
@@ -88,7 +87,7 @@ interface McpFormModalProps {
   /** 现有全部服务器（查重、批量覆盖用） */
   existingServers?: Record<string, McpServer>;
   /** 「写入到」里列出的应用（应用页里设为显示的） */
-  visibleAppIds?: McpAppId[];
+  visibleAppIds?: AppIdWith<"mcp">[];
   onSave: () => void | Promise<void>;
   onClose: () => void;
 }
@@ -115,10 +114,10 @@ function metaOf(server?: McpServer): MetaDraft {
 
 function appsOf(
   server: McpServer | undefined,
-  defaults: readonly McpAppId[],
+  defaults: readonly AppIdWith<"mcp">[],
 ): AppsState {
   const out = {} as AppsState;
-  for (const app of MCP_APP_IDS) {
+  for (const app of APP_IDS_WITH.mcp) {
     out[app] = server ? Boolean(server.apps?.[app]) : defaults.includes(app);
   }
   return out;
@@ -132,7 +131,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
   editingId,
   initialData,
   existingServers = {},
-  visibleAppIds = MCP_APP_IDS,
+  visibleAppIds = APP_IDS_WITH.mcp,
   onSave,
   onClose,
 }) => {
@@ -228,7 +227,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     return conn.transport === "sse";
   }, [conn, jsonText, tab]);
   // 隐藏的应用编辑时原样保留、照样写入，所以按全部启用状态判断
-  const sseAppsIn = (list: readonly McpAppId[]) =>
+  const sseAppsIn = (list: readonly AppIdWith<"mcp">[]) =>
     batch
       ? []
       : list.filter((app) => {
@@ -240,7 +239,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
         });
   const sseAsHttpApps = sseAppsIn(SSE_AS_HTTP_APPS);
   const sseRejectedApps = sseAppsIn(SSE_REJECTED_APPS);
-  const appNames = (list: McpAppId[]) =>
+  const appNames = (list: AppIdWith<"mcp">[]) =>
     list.map((app) => APP_DISPLAY_NAME[app]).join(t("mcpPage.listSeparator"));
 
   const fieldErrorText = (code?: string) => {
@@ -548,7 +547,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     const nextConfigurations = { ...configurations };
     if (!inheritsDefault) nextConfigurations[scope] = current;
     setAttempted(true);
-    for (const candidate of ["default", ...MCP_APP_IDS] as const) {
+    for (const candidate of ["default", ...APP_IDS_WITH.mcp] as const) {
       const connection = nextConfigurations[candidate];
       if (!connection) continue;
       const errs = validateDraft(name, connection, {
@@ -578,7 +577,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
         meta,
       );
       const overrides: NonNullable<McpServer["appOverrides"]> = {};
-      for (const app of MCP_APP_IDS) {
+      for (const app of APP_IDS_WITH.mcp) {
         const connection = nextConfigurations[app];
         if (connection) {
           const original = initialData?.appOverrides?.[app];
@@ -1028,16 +1027,18 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                           label: t("mcpPage.drawer.sharedConfig"),
                           className: "h-8",
                         },
-                        ...MCP_APP_IDS.filter(
-                          (app) =>
-                            visibleAppIds.includes(app) ||
-                            configurations[app] ||
-                            scope === app,
-                        ).map((app) => ({
-                          value: app,
-                          label: APP_DISPLAY_NAME[app],
-                          className: "h-8",
-                        })),
+                        ...APP_IDS_WITH.mcp
+                          .filter(
+                            (app) =>
+                              visibleAppIds.includes(app) ||
+                              configurations[app] ||
+                              scope === app,
+                          )
+                          .map((app) => ({
+                            value: app,
+                            label: APP_DISPLAY_NAME[app],
+                            className: "h-8",
+                          })),
                       ]}
                     />
                   </div>

@@ -41,7 +41,7 @@ async fn resolve_copilot_base_url_override(
     provider: &crate::provider::Provider,
     copilot_state: &State<'_, CopilotAuthState>,
 ) -> Result<Option<String>, AppError> {
-    let is_copilot = is_copilot_provider(provider);
+    let is_copilot = provider.is_github_copilot();
     let is_full_url = provider
         .meta
         .as_ref()
@@ -64,95 +64,4 @@ async fn resolve_copilot_base_url_override(
     };
 
     Ok(Some(endpoint))
-}
-
-fn is_copilot_provider(provider: &crate::provider::Provider) -> bool {
-    provider
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.provider_type.as_deref())
-        == Some("github_copilot")
-        || provider
-            .settings_config
-            .pointer("/env/ANTHROPIC_BASE_URL")
-            .and_then(|value| value.as_str())
-            .map(|url| url.contains("githubcopilot.com"))
-            .unwrap_or(false)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::is_copilot_provider;
-    use crate::provider::{Provider, ProviderMeta};
-    use serde_json::json;
-
-    #[test]
-    fn copilot_provider_detection_accepts_provider_type_or_base_url() {
-        let typed_provider = Provider {
-            id: "p1".to_string(),
-            name: "typed".to_string(),
-            settings_config: json!({}),
-            website_url: None,
-            category: None,
-            created_at: None,
-            sort_index: None,
-            notes: None,
-            meta: Some(ProviderMeta {
-                provider_type: Some("github_copilot".to_string()),
-                ..Default::default()
-            }),
-            icon: None,
-            icon_color: None,
-            in_failover_queue: false,
-        };
-        assert!(is_copilot_provider(&typed_provider));
-
-        let url_provider = Provider {
-            id: "p2".to_string(),
-            name: "url".to_string(),
-            settings_config: json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com"
-                }
-            }),
-            website_url: None,
-            category: None,
-            created_at: None,
-            sort_index: None,
-            notes: None,
-            meta: None,
-            icon: None,
-            icon_color: None,
-            in_failover_queue: false,
-        };
-        assert!(is_copilot_provider(&url_provider));
-    }
-
-    #[test]
-    fn copilot_full_url_metadata_is_available_for_override_guard() {
-        let provider = Provider {
-            id: "p3".to_string(),
-            name: "relay".to_string(),
-            settings_config: json!({}),
-            website_url: None,
-            category: None,
-            created_at: None,
-            sort_index: None,
-            notes: None,
-            meta: Some(ProviderMeta {
-                provider_type: Some("github_copilot".to_string()),
-                is_full_url: Some(true),
-                ..Default::default()
-            }),
-            icon: None,
-            icon_color: None,
-            in_failover_queue: false,
-        };
-
-        assert!(is_copilot_provider(&provider));
-        assert_eq!(
-            provider.meta.as_ref().and_then(|meta| meta.is_full_url),
-            Some(true)
-        );
-    }
 }
