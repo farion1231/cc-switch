@@ -52,20 +52,26 @@ fn write(
     pointer: Option<&str>,
 ) -> Result<OperationReport, AppError> {
     let prev = prev.map(|provider| ClaudeProjection::of(&provider.settings_config));
-    let patch = direct_patch(
+    let mut patch = direct_patch(
         prev.as_ref(),
         &ClaudeProjection::of(&target.settings_config),
     );
-    run(
-        db,
-        if pointer.is_some() {
-            op::SWITCH
-        } else {
-            op::APPLY
-        },
-        Some(&patch),
-        PendingTarget::pointer(pointer.map(str::to_string)),
-    )
+    // 删掉以前开发版写进去的账号目录（见 claude_official）
+    super::claude_official::strip_from_patch(&mut patch);
+    // 先换登录（卡绑了本机账号、没设配置目录覆盖时）：失败就整个不切，指针和
+    // settings.json 都不动；登录换了、后面写失败时再换回去
+    super::claude_official::with_login_switch(Some(target), || {
+        run(
+            db,
+            if pointer.is_some() {
+                op::SWITCH
+            } else {
+                op::APPLY
+            },
+            Some(&patch),
+            PendingTarget::pointer(pointer.map(str::to_string)),
+        )
+    })
 }
 
 /// 用 `patch` 改写 `settings.json`，和 `target` 在同一个操作里提交；`patch` 为空时只

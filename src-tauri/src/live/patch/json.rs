@@ -16,6 +16,9 @@ use serde_json::{Map, Value};
 
 use super::{decode_utf8, KeyPath, LivePatch, LiveWriteError};
 
+/// 按当前值判断要不要删的谓词（[`JsonPatch::remove_when`]）。
+pub type ValuePredicate = fn(&Value) -> bool;
+
 /// 按谓词清空的作用域：父对象里所有命中谓词的键（关键字段）。
 #[derive(Clone)]
 pub struct ClearScope {
@@ -35,6 +38,9 @@ pub struct JsonPatch {
     pub seed: Vec<(KeyPath, Value)>,
     /// 当前值等于其中之一才删除（独有字段切走、残留清理）。`set` 里有同一路径时跳过。
     pub remove_if: Vec<(KeyPath, Vec<Value>)>,
+    /// 当前值满足谓词才删除（值的取值无法事先列举时用，比如「CC Switch 写的账号目录」）。
+    /// `set` 里有同一路径时跳过。
+    pub remove_when: Vec<(KeyPath, ValuePredicate)>,
 }
 
 impl JsonPatch {
@@ -93,6 +99,19 @@ impl JsonPatch {
                 continue;
             };
             if map.get(key).is_some_and(|current| values.contains(current)) {
+                map.shift_remove(key);
+            }
+        }
+
+        for (key_path, owned) in &self.remove_when {
+            if targets.contains(key_path) {
+                continue;
+            }
+            let (parent, key) = split(key_path);
+            let Some(map) = object_at_mut(path, doc, parent)? else {
+                continue;
+            };
+            if map.get(key).is_some_and(*owned) {
                 map.shift_remove(key);
             }
         }

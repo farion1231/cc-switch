@@ -17,6 +17,7 @@
 use super::codex_oauth_auth::{CODEX_OAUTH_CLIENT_VERSION, CODEX_OAUTH_ORIGINATOR};
 use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
 use crate::provider::Provider;
+use crate::provider_kind::is_copilot_url;
 use crate::proxy::error::ProxyError;
 use serde_json::{json, Value};
 
@@ -311,6 +312,18 @@ fn normalize_anthropic_tool_thinking_history(body: &mut Value) -> bool {
 }
 
 fn should_preserve_reasoning_content_for_openai_chat(provider: &Provider, body: &Value) -> bool {
+    // Mistral hosts DeepSeek models but rejects the non-standard field on
+    // assistant history (HTTP 422). The endpoint contract takes precedence
+    // over model-name hints; retain the existing behavior for other gateways.
+    if ClaudeAdapter::new()
+        .extract_base_url(provider)
+        .ok()
+        .and_then(|base_url| url::Url::parse(&base_url).ok())
+        .is_some_and(|url| url.host_str() == Some("api.mistral.ai"))
+    {
+        return false;
+    }
+
     if body
         .get("model")
         .and_then(|m| m.as_str())
@@ -336,6 +349,23 @@ fn should_preserve_reasoning_content_for_openai_chat(provider: &Provider, body: 
         .any(is_reasoning_vendor_identifier)
 }
 
+/// 发往 xAI Responses 的请求。OAuth 卡的地址可被改写，不能只看 base URL。
+fn claude_responses_targets_xai(provider: &Provider) -> bool {
+    if provider.is_xai_oauth() {
+        return true;
+    }
+    [
+        provider.settings_config.pointer("/env/ANTHROPIC_BASE_URL"),
+        provider.settings_config.get("base_url"),
+        provider.settings_config.get("baseURL"),
+        provider.settings_config.get("apiEndpoint"),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(Value::as_str)
+    .any(|url| url.to_ascii_lowercase().contains("api.x.ai"))
+}
+
 pub fn transform_claude_request_for_api_format(
     body: serde_json::Value,
     provider: &Provider,
@@ -353,7 +383,7 @@ pub fn transform_claude_request_for_api_format(
             .settings_config
             .get("baseUrl")
             .and_then(|v| v.as_str())
-            .is_some_and(|u| u.contains("githubcopilot.com"));
+            .is_some_and(is_copilot_url);
     let session_cache_key: Option<String> = if is_copilot {
         let metadata = body.get("metadata");
         // Session 提取优先级（与 forwarder 和 session.rs 统一）：
@@ -388,6 +418,15 @@ pub fn transform_claude_request_for_api_format(
     } else {
         (None, "none")
     };
+    // 转换层只给认得的模型写思考档位，其余模型由 claude_reasoning 补判（#9062）。
+    let effort_plan = if matches!(api_format, "openai_chat" | "openai_responses") {
+        let base_url = ClaudeAdapter::new()
+            .extract_base_url(provider)
+            .unwrap_or_default();
+        super::claude_reasoning::plan(&body, provider, &base_url)
+    } else {
+        super::claude_reasoning::EffortPlan::Unchanged
+    };
     match api_format {
         "openai_responses" => {
             log::debug!(
@@ -404,6 +443,11 @@ pub fn transform_claude_request_for_api_format(
                 is_codex_oauth,
                 codex_fast_mode,
             )?;
+            // xAI 不认 Responses 的托管搜索选择器。只改发往 xAI 的请求，
+            // OpenAI 自己的 `{"type":"web_search"}` 保持不动。
+            if claude_responses_targets_xai(provider) {
+                super::transform_responses::rewrite_xai_hosted_web_search_tool_choice(&mut result);
+            }
             if provider.is_xai_oauth() {
                 const REASONING_MARKER: &str = "reasoning.encrypted_content";
                 let mut include = result
@@ -419,6 +463,7 @@ pub fn transform_claude_request_for_api_format(
                 }
                 result["include"] = json!(include);
             }
+            super::claude_reasoning::apply(&mut result, api_format, effort_plan);
             Ok(result)
         }
         "openai_chat" => {
@@ -450,6 +495,7 @@ pub fn transform_claude_request_for_api_format(
                     obj.remove("stop");
                 }
             }
+            super::claude_reasoning::apply(&mut result, api_format, effort_plan);
             Ok(result)
         }
         "gemini_native" => super::transform_gemini::anthropic_to_gemini_with_shadow(
@@ -491,15 +537,14 @@ impl ClaudeAdapter {
         }
 
         // 检测 Codex OAuth (ChatGPT Plus/Pro)
-        if self.is_codex_oauth(provider) {
+        if provider.is_codex_oauth() {
             return ProviderType::CodexOAuth;
         }
 
-        if self.is_xai_oauth(provider) {
+        if provider.is_xai_oauth() {
             return ProviderType::XaiOAuth;
         }
 
-        // 检测 GitHub Copilot
         if self.is_github_copilot(provider) {
             return ProviderType::GitHubCopilot;
         }
@@ -517,37 +562,13 @@ impl ClaudeAdapter {
         ProviderType::Claude
     }
 
-    /// 检测是否为 Codex OAuth 供应商（ChatGPT Plus/Pro 反代）
-    fn is_codex_oauth(&self, provider: &Provider) -> bool {
-        if let Some(meta) = provider.meta.as_ref() {
-            if meta.provider_type.as_deref() == Some("codex_oauth") {
-                return true;
-            }
-        }
-        false
-    }
-
-    fn is_xai_oauth(&self, provider: &Provider) -> bool {
-        provider.is_xai_oauth()
-    }
-
-    /// 检测是否为 GitHub Copilot 供应商
+    /// `Provider::is_github_copilot`, plus old data whose Copilot URL sits in
+    /// `base_url` / `baseURL` / `apiEndpoint` instead of `env.ANTHROPIC_BASE_URL`.
     fn is_github_copilot(&self, provider: &Provider) -> bool {
-        // 方式1: 检查 meta.provider_type
-        if let Some(meta) = provider.meta.as_ref() {
-            if meta.provider_type.as_deref() == Some("github_copilot") {
-                return true;
-            }
-        }
-
-        // 方式2: 检查 base_url（兼容旧数据的 fallback，后续应优先依赖 providerType）
-        if let Ok(base_url) = self.extract_base_url(provider) {
-            if base_url.contains("githubcopilot.com") {
-                return true;
-            }
-        }
-
-        false
+        provider.is_github_copilot()
+            || self
+                .extract_base_url(provider)
+                .is_ok_and(|base_url| is_copilot_url(&base_url))
     }
 
     /// 检测是否使用 OpenRouter
@@ -716,13 +737,13 @@ impl ProviderAdapter for ClaudeAdapter {
 
     fn extract_base_url(&self, provider: &Provider) -> Result<String, ProxyError> {
         // Codex OAuth: 强制使用 ChatGPT 后端 API 端点（忽略用户配置的 base_url）
-        if self.is_codex_oauth(provider) {
+        if provider.is_codex_oauth() {
             return Ok(super::CHATGPT_CODEX_BASE_URL.to_string());
         }
 
         // xAI OAuth: ignore editable provider base URLs and always use the xAI
         // API origin associated with the managed token.
-        if self.is_xai_oauth(provider) {
+        if provider.is_xai_oauth() {
             return Ok(super::XAI_API_BASE_URL.to_string());
         }
 
@@ -950,11 +971,11 @@ impl ProviderAdapter for ClaudeAdapter {
         }
 
         // Codex OAuth 总是需要格式转换 (Anthropic → OpenAI Responses API)
-        if self.is_codex_oauth(provider) {
+        if provider.is_codex_oauth() {
             return true;
         }
 
-        if self.is_xai_oauth(provider) {
+        if provider.is_xai_oauth() {
             return true;
         }
 
@@ -1570,6 +1591,81 @@ mod tests {
     }
 
     #[test]
+    fn xai_oauth_forced_web_search_uses_string_tool_choice() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.x.ai/v1",
+                    "ANTHROPIC_API_KEY": "placeholder"
+                }
+            }),
+            ProviderMeta {
+                provider_type: Some("xai_oauth".to_string()),
+                api_format: Some("openai_responses".to_string()),
+                ..Default::default()
+            },
+        );
+        let transformed = transform_claude_request_for_api_format(
+            json!({
+                "model": "grok-4.5",
+                "max_tokens": 256,
+                "messages": [{"role": "user", "content": "search"}],
+                "tools": [
+                    {"name": "Bash", "input_schema": {"type": "object"}},
+                    {"type": "web_search_20250305", "name": "web_search"}
+                ],
+                "tool_choice": {"type": "tool", "name": "web_search"}
+            }),
+            &provider,
+            "openai_responses",
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(transformed["tool_choice"], json!("required"));
+        assert_eq!(transformed["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(transformed["tools"][0]["type"], json!("web_search"));
+        assert!(transformed["include"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item.as_str() == Some("reasoning.encrypted_content")));
+    }
+
+    #[test]
+    fn openai_responses_keeps_hosted_web_search_selector() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.openai.com/v1",
+                    "ANTHROPIC_API_KEY": "sk-test"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                ..Default::default()
+            },
+        );
+        let transformed = transform_claude_request_for_api_format(
+            json!({
+                "model": "gpt-5",
+                "max_tokens": 256,
+                "messages": [{"role": "user", "content": "search"}],
+                "tools": [{"type": "web_search_20250305", "name": "web_search"}],
+                "tool_choice": {"type": "tool", "name": "web_search"}
+            }),
+            &provider,
+            "openai_responses",
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(transformed["tool_choice"], json!({"type": "web_search"}));
+    }
+
+    #[test]
     fn test_build_url_openrouter() {
         let adapter = ClaudeAdapter::new();
         let url = adapter.build_url("https://openrouter.ai/api", "/v1/messages");
@@ -1777,6 +1873,36 @@ mod tests {
     }
 
     #[test]
+    fn copilot_legacy_url_in_any_base_url_field() {
+        let adapter = ClaudeAdapter::new();
+        for field in ["base_url", "baseURL", "apiEndpoint"] {
+            let legacy = create_provider(json!({ field: "https://api.githubcopilot.com" }));
+            assert!(!legacy.is_github_copilot(), "{field}");
+            assert_eq!(
+                adapter.provider_type(&legacy),
+                ProviderType::GitHubCopilot,
+                "{field}"
+            );
+        }
+    }
+
+    /// A declared OAuth kind beats a Copilot URL here, while
+    /// `Provider::is_github_copilot` lets the URL win. Kept as is.
+    #[test]
+    fn declared_oauth_kind_beats_copilot_url() {
+        let adapter = ClaudeAdapter::new();
+        let codex = create_provider_with_meta(
+            json!({ "env": { "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com" } }),
+            ProviderMeta {
+                provider_type: Some("codex_oauth".to_string()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(adapter.provider_type(&codex), ProviderType::CodexOAuth);
+        assert!(codex.is_github_copilot());
+    }
+
+    #[test]
     fn test_github_copilot_auth() {
         let adapter = ClaudeAdapter::new();
 
@@ -1829,6 +1955,52 @@ mod tests {
         assert_eq!(transformed["model"], "gpt-5.4");
         assert!(transformed.get("input").is_some());
         assert!(transformed.get("max_output_tokens").is_some());
+    }
+
+    #[test]
+    fn test_responses_sends_effort_for_unlisted_deepseek_model() {
+        // #9062：Desktop 把 claude-fable-5 映射到 deepseek-flash，经自建 Responses 网关转发。
+        let provider = create_provider(json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://gateway.example.com/v1" }
+        }));
+        let body = json!({
+            "model": "deepseek-flash",
+            "thinking": { "type": "adaptive" },
+            "output_config": { "effort": "high" },
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_responses",
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(transformed["reasoning"], json!({ "effort": "high" }));
+    }
+
+    #[test]
+    fn test_chat_folds_effort_to_standard_tiers_for_unlisted_model() {
+        let provider = create_provider(json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://api.groq.com/openai/v1" }
+        }));
+        let body = json!({
+            "model": "openai/gpt-oss-120b",
+            "thinking": { "type": "adaptive" },
+            "output_config": { "effort": "max" },
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                .unwrap();
+
+        assert_eq!(transformed["reasoning_effort"], "high");
     }
 
     #[test]
@@ -2347,6 +2519,86 @@ mod tests {
         let msg = &transformed["messages"][0];
         assert!(msg.get("tool_calls").is_some());
         assert!(msg.get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn test_transform_openai_chat_mistral_deepseek_tool_history() {
+        for settings in [
+            json!({"env": {"ANTHROPIC_BASE_URL": "https://api.mistral.ai"}}),
+            json!({"base_url": "https://api.mistral.ai/v1/"}),
+            json!({"baseURL": "https://API.MISTRAL.AI/v1"}),
+            json!({"apiEndpoint": "https://api.mistral.ai/v1/chat/completions"}),
+        ] {
+            let provider = create_provider_with_meta(
+                settings,
+                ProviderMeta {
+                    api_format: Some("openai_chat".to_string()),
+                    ..Default::default()
+                },
+            );
+            // Cover real thinking and the missing-thinking placeholder that
+            // previously broke the follow-up after a tool ran.
+            for with_thinking in [false, true] {
+                let mut content = vec![json!({
+                    "type": "tool_use", "id": "call_123",
+                    "name": "get_weather", "input": {"location": "Tokyo"}
+                })];
+                if with_thinking {
+                    content.insert(
+                        0,
+                        json!({"type": "thinking", "thinking": "I should call the tool."}),
+                    );
+                }
+                let body = json!({
+                    "model": "deepseek-v4-1-flash-1017",
+                    "max_tokens": 64,
+                    "messages": [
+                        {"role": "user", "content": "What is the weather in Tokyo?"},
+                        {"role": "assistant", "content": content},
+                        {"role": "user", "content": [{
+                            "type": "tool_result", "tool_use_id": "call_123",
+                            "content": "Sunny"
+                        }]}
+                    ]
+                });
+                let transformed = transform_claude_request_for_api_format(
+                    body,
+                    &provider,
+                    "openai_chat",
+                    None,
+                    None,
+                )
+                .unwrap();
+
+                let messages = transformed["messages"].as_array().unwrap();
+                assert_eq!(messages.len(), 3);
+                assert!(messages
+                    .iter()
+                    .all(|msg| msg.get("reasoning_content").is_none()));
+                let call = &messages[1]["tool_calls"][0];
+                assert_eq!(call["id"], "call_123");
+                assert_eq!(call["function"]["name"], "get_weather");
+                assert_eq!(call["function"]["arguments"], r#"{"location":"Tokyo"}"#);
+                assert_eq!(messages[2]["role"], "tool");
+                assert_eq!(messages[2]["tool_call_id"], "call_123");
+                assert_eq!(messages[2]["content"], "Sunny");
+            }
+        }
+    }
+
+    #[test]
+    fn test_reasoning_content_mistral_exception_does_not_match_other_gateways() {
+        for base_url in [
+            "https://relay.example/v1",
+            "https://api.mistral.ai.example/v1",
+            "https://relay.example/api.mistral.ai",
+        ] {
+            let provider = create_provider(json!({"env": {"ANTHROPIC_BASE_URL": base_url}}));
+            assert!(should_preserve_reasoning_content_for_openai_chat(
+                &provider,
+                &json!({"model": "deepseek-v4-1-flash-1017"}),
+            ));
+        }
     }
 
     #[test]

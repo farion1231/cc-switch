@@ -4,7 +4,12 @@ import { useTranslation } from "react-i18next";
 
 import { HoverTip } from "@/components/ui/hover-tip";
 import { cn } from "@/lib/utils";
-import { highlightText } from "../utils";
+import type { SessionTextRange } from "@/types";
+import {
+  createHighlightedSnippet,
+  findTextMatches,
+  highlightTextRanges,
+} from "../utils";
 import { useReaderContext } from "./context";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import { useReaderT } from "./i18n";
@@ -27,17 +32,24 @@ const SNIPPET_RADIUS = 60;
 
 /** 原文中命中处前后各 60 字（命中藏在链接地址等不可见位置时兜底展示） */
 const rawSnippets = (text: string, query: string, limit = 3) => {
-  const haystack = text.toLowerCase();
-  const needle = query.trim().toLowerCase();
-  const snippets: string[] = [];
-  let at = haystack.indexOf(needle);
-  while (at >= 0 && snippets.length < limit) {
-    const start = Math.max(0, at - SNIPPET_RADIUS);
-    const end = Math.min(text.length, at + needle.length + SNIPPET_RADIUS);
-    snippets.push(
-      `${start > 0 ? "…" : ""}${text.slice(start, end).replace(/\s+/g, " ")}${end < text.length ? "…" : ""}`,
-    );
-    at = haystack.indexOf(needle, end);
+  const snippets: ReturnType<typeof createHighlightedSnippet>[] = [];
+  const matches = findTextMatches(text, query);
+  let next = matches.next();
+  let highlights: SessionTextRange[] = [];
+  while (!next.done && snippets.length < limit) {
+    const match = next.value;
+    let start = Math.max(0, match.start - SNIPPET_RADIUS);
+    let end = Math.min(text.length, match.end + SNIPPET_RADIUS);
+    // 上下文边界也要保留完整码点，避免把 emoji 等代理对从中间切开。
+    if (start > 0 && text.codePointAt(start - 1)! > 0xffff) start -= 1;
+    if (end < text.length && text.codePointAt(end - 1)! > 0xffff) end += 1;
+    // 相邻摘录的上下文可能重叠，保留上个窗口中仍可见的命中。
+    highlights = highlights.filter((range) => range.end > start);
+    while (!next.done && next.value.start < end) {
+      highlights.push(next.value);
+      next = matches.next();
+    }
+    snippets.push(createHighlightedSnippet(text, highlights, start, end));
   }
   return snippets;
 };
@@ -158,7 +170,7 @@ export const SessionFinalReply = memo(function SessionFinalReply({
                 key={index}
                 className="m-0 break-words font-mono [overflow-wrap:anywhere]"
               >
-                {highlightText(snippet, searchQuery.trim())}
+                {highlightTextRanges(snippet.text, snippet.highlights)}
               </p>
             ))}
           </div>

@@ -1,0 +1,114 @@
+[
+  {
+    "id": "claude",
+    "additive": false,
+    "localProxy": true,
+    "routeMode": true,
+    "stack": true
+  },
+  {
+    "id": "claude-desktop",
+    "additive": false,
+    "localProxy": false,
+    "routeMode": true,
+    "stack": true
+  },
+  {
+    "id": "codex",
+    "additive": false,
+    "localProxy": true,
+    "routeMode": true,
+    "stack": true
+  },
+  {
+    "id": "gemini",
+    "additive": false,
+    "localProxy": true,
+    "routeMode": true,
+    "stack": false
+  },
+  {
+    "id": "grokbuild",
+    "additive": false,
+    "localProxy": true,
+    "routeMode": true,
+    "stack": false
+  },
+  {
+    "id": "opencode",
+    "additive": true,
+    "localProxy": false,
+    "routeMode": false,
+    "stack": false
+  },
+  {
+    "id": "openclaw",
+    "additive": true,
+    "localProxy": false,
+    "routeMode": false,
+    "stack": false
+  },
+  {
+    "id": "hermes",
+    "additive": true,
+    "localProxy": false,
+    "routeMode": false,
+    "stack": false
+  },
+  {
+    "id": "pi",
+    "additive": true,
+    "localProxy": false,
+    "routeMode": false,
+    "stack": false
+  },
+  {
+    "id": "mcode",
+    "additive": true,
+    "localProxy": false,
+    "routeMode": false,
+    "stack": false
+  },
+  {
+    "id": "kimi",
+    "additive": true,
+    "localProxy": false,
+    "routeMode": false,
+    "stack": false
+  },
+  {
+    "id": "dsh",
+    "additive": true,
+    "localProxy": false,
+    "routeMode": false,
+    "stack": false
+  },
+  {
+    "id": "agy",
+    "additive": false,
+    "localProxy": false,
+    "routeMode": false,
+    "stack": false
+  },
+  {
+    "id": "omp",
+    "additive": true,
+    "localProxy": false,
+    "routeMode": false,
+    "stack": false
+  },
+  {
+    "id": "copilot",
+    "additive": true,
+    "localProxy": false,
+    "routeMode": false,
+    "stack": false
+  },
+  {
+    "id": "workbuddy",
+    "additive": true,
+    "localProxy": false,
+    "routeMode": false,
+    "stack": false
+  }
+]
