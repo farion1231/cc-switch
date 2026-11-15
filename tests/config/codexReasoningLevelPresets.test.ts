@@ -338,6 +338,11 @@ describe("Codex preset pre-filled reasoning levels", () => {
       "accounts/fireworks/models/glm-5p3-flash",
       ["low", "high", "max"],
     ],
+    // Google Gemini（Chat 路由）：Carbon 支持 low/medium/high，Hydrogen/Neon 额外支持 xhigh，
+    // 均含 high，无需显式默认
+    ["Gemini", "gemini-4-carbon", ["low", "medium", "high"]],
+    ["Gemini", "gemini-4-hydrogen", ["low", "medium", "high", "xhigh"]],
+    ["Gemini", "gemini-4-neon", ["low", "medium", "high", "xhigh"]],
   ];
 
   it.each(EXPECTED)(
