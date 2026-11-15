@@ -38,6 +38,7 @@
     "https://opencode.ai/zen/v1": null,
     "https://api.commandcode.ai/provider": "command_code",
     "https://api.commandcode.ai/provider/v1": "command_code",
+    "https://api.commandcode.ai/providers": null,
     "https://api.openai.com/v1": null
   }
 }

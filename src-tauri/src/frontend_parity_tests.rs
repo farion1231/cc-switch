@@ -25,6 +25,9 @@ const CODING_PLAN_URLS: &[&str] = &[
     "https://opencode.ai/zen/v1",
     "https://api.commandcode.ai/provider",
     "https://api.commandcode.ai/provider/v1",
+    // /providers continues past the /provider path boundary, so detection
+    // must return null (same rule as the frontend regex).
+    "https://api.commandcode.ai/providers",
     "https://api.openai.com/v1",
 ];
 
