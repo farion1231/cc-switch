@@ -338,6 +338,10 @@ describe("Codex preset pre-filled reasoning levels", () => {
       "accounts/fireworks/models/glm-5p3-flash",
       ["low", "high", "max"],
     ],
+    // Google Gemini（Chat 路由）：OpenAI 兼容文档声明 reasoning_effort 支持
+    // low/medium/high（ai.google.dev/gemini-api/docs/openai），含 high，无需显式默认
+    ["Gemini", "gemini-3.8-flash", ["low", "medium", "high"]],
+    ["Gemini", "gemini-4-argon", ["low", "medium", "high"]],
   ];
 
   it.each(EXPECTED)(
