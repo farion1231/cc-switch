@@ -127,12 +127,11 @@ fn sanitize_chat_tool_prefix(raw: &str, max_len: usize) -> String {
     out
 }
 
-fn disambiguated_chat_tool_name(
-    namespace: Option<&str>,
-    name: &str,
-    base_candidate: &str,
-    attempt: usize,
-) -> String {
+fn disambiguated_chat_tool_name(namespace: Option<&str>, name: &str, attempt: usize) -> String {
+    let raw_candidate = match namespace {
+        Some(ns) => format!("{ns}__{name}"),
+        None => name.to_string(),
+    };
     let hash = short_sha256_hex(&canonical_tool_identity_bytes(namespace, name));
     let suffix = if attempt == 0 {
         format!("__{hash}")
@@ -140,7 +139,7 @@ fn disambiguated_chat_tool_name(
         format!("__{hash}_{attempt}")
     };
     let prefix_len = CHAT_TOOL_NAME_MAX_LEN.saturating_sub(suffix.len());
-    let prefix = sanitize_chat_tool_prefix(base_candidate, prefix_len);
+    let prefix = sanitize_chat_tool_prefix(&raw_candidate, prefix_len);
     format!("{prefix}{suffix}")
 }
 
@@ -274,7 +273,7 @@ fn collect_response_tool(
                     if !seen_identities.insert((ns.clone(), name.clone())) {
                         continue;
                     }
-                    let preferred_chat_name = format!("{namespace}__{name}");
+                    let preferred_chat_name = flatten_namespace_tool_name(&namespace, &name);
                     out.push(PendingCodexTool {
                         namespace: ns,
                         name,
@@ -331,7 +330,7 @@ impl CodexToolContext {
         }
 
         if trimmed_name.len() > CHAT_TOOL_NAME_MAX_LEN {
-            return disambiguated_chat_tool_name(None, trimmed_name, trimmed_name, 0);
+            return disambiguated_chat_tool_name(None, trimmed_name, 0);
         }
 
         name.to_string()
@@ -347,9 +346,9 @@ impl CodexToolContext {
 
         let mut assigned_names: Vec<Option<String>> = vec![None; pending.len()];
 
-        // First reserve readable names that are within the 64-char limit and
-        // unambiguous (or top-level exact tool names when a flattened namespace
-        // tool would otherwise collide with a literal top-level tool name).
+        // First reserve preferred names that fit within the 64-char limit and
+        // are unambiguous (including legacy flattened long namespace names when
+        // non-colliding, and literal top-level names on top-vs-namespace clashes).
         for (idx, item) in pending.iter().enumerate() {
             let count = preferred_counts
                 .get(&item.preferred_chat_name)
@@ -374,12 +373,8 @@ impl CodexToolContext {
             }
             let mut attempt = 0usize;
             let chat_name = loop {
-                let candidate = disambiguated_chat_tool_name(
-                    item.namespace.as_deref(),
-                    &item.name,
-                    &item.preferred_chat_name,
-                    attempt,
-                );
+                let candidate =
+                    disambiguated_chat_tool_name(item.namespace.as_deref(), &item.name, attempt);
                 if self.seen_chat_names.insert(candidate.clone()) {
                     break candidate;
                 }
@@ -1973,7 +1968,17 @@ pub(crate) fn flatten_namespace_tool_name(namespace: &str, name: &str) -> String
         return full_name;
     }
 
-    disambiguated_chat_tool_name(Some(namespace), name, &full_name, 0)
+    let hash = short_sha256_hex(full_name.as_bytes());
+    let suffix = format!("__{hash}");
+    let prefix_len = CHAT_TOOL_NAME_MAX_LEN.saturating_sub(suffix.len());
+    let mut prefix = String::new();
+    for ch in full_name.chars() {
+        if prefix.len() + ch.len_utf8() > prefix_len {
+            break;
+        }
+        prefix.push(ch);
+    }
+    format!("{prefix}{suffix}")
 }
 
 fn responses_tool_name(tool: &Value) -> Option<String> {
@@ -7574,16 +7579,97 @@ mod tests {
     }
 
     #[test]
+    fn non_colliding_long_namespace_tool_preserves_legacy_flattened_name() {
+        let ns = "mcp__codex_apps__github";
+        let name = "_list_pull_request_review_comments_for_repo";
+        let expected = "mcp__codex_apps__github___list_pull_request_re__b9df71aaf1654d40";
+
+        assert_eq!(flatten_namespace_tool_name(ns, name), expected);
+
+        let request = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "namespace",
+                "name": ns,
+                "tools": [{
+                    "type": "function",
+                    "name": name,
+                    "parameters": { "type": "object", "properties": {} }
+                }]
+            }],
+            "tool_choice": {
+                "type": "function",
+                "namespace": ns,
+                "name": name
+            },
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_mcp_1",
+                    "namespace": ns,
+                    "name": name,
+                    "arguments": "{}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_mcp_1",
+                    "output": "[]"
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": "List review comments."
+                }
+            ]
+        });
+
+        let tool_context = build_codex_tool_context_from_request(&request);
+        let chat_req = responses_to_chat_completions(request.clone()).unwrap();
+        assert_eq!(chat_req["tools"][0]["function"]["name"], expected);
+        assert_eq!(chat_req["tool_choice"]["function"]["name"], expected);
+        assert_eq!(
+            chat_req["messages"][0]["tool_calls"][0]["function"]["name"],
+            expected
+        );
+
+        let anth_req =
+            super::super::transform_codex_anthropic::responses_request_to_anthropic(request, 4096)
+                .unwrap();
+        assert_eq!(anth_req["tools"][0]["name"], expected);
+
+        let chat_resp = json!({
+            "id": "chatcmpl_mcp_long",
+            "created": 1700000003,
+            "model": "gpt-5.4",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_mcp_out",
+                        "type": "function",
+                        "function": { "name": expected, "arguments": "{}" }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+        let restored = chat_completion_to_response_with_context(chat_resp, &tool_context).unwrap();
+        assert_eq!(restored["output"][0]["namespace"], ns);
+        assert_eq!(restored["output"][0]["name"], name);
+    }
+
+    #[test]
     fn long_colliding_tool_names_produce_distinct_valid_hashes_and_round_trip() {
         let tail = "c".repeat(70);
         let name_for_a = format!("b__{tail}");
         let long_top_name = format!("top__{}", "z".repeat(75));
 
-        let hash_ab = flatten_namespace_tool_name("a__b", &tail);
-        let hash_a = flatten_namespace_tool_name("a", &name_for_a);
-        assert_ne!(hash_ab, hash_a);
-        assert!(hash_ab.len() <= CHAT_TOOL_NAME_MAX_LEN);
-        assert!(hash_a.len() <= CHAT_TOOL_NAME_MAX_LEN);
+        let preferred_ab = flatten_namespace_tool_name("a__b", &tail);
+        let preferred_a = flatten_namespace_tool_name("a", &name_for_a);
+        assert_eq!(preferred_ab, preferred_a);
+        assert!(preferred_ab.len() <= CHAT_TOOL_NAME_MAX_LEN);
 
         let request = json!({
             "model": "gpt-5.4",
