@@ -1032,23 +1032,30 @@ fn build_unix_launcher_script(
             shell_single_quote(&detail.to_string_lossy())
         ));
     }
-    script.push_str(&build_provider_command_line(
-        shell,
-        &unix_launch_command_in(launch, shell),
-        cwd,
-    ));
-    script.push('\n');
-    // exec 不会触发 EXIT trap，所以在换成交互 shell 之前自己删。
-    script.push_str(&remove_temp_files);
-    script.push('\n');
     let launch_vars: Vec<String> = (0..launch.env.len())
         .map(|index| format!("{LAUNCH_ENV_PREFIX}{index}"))
         .collect();
+    let mut handoff = format!("{remove_temp_files}\n");
     if !launch_vars.is_empty() {
-        script.push_str(&format!("unset {}\n", launch_vars.join(" ")));
+        handoff.push_str(&format!("unset {}\n", launch_vars.join(" ")));
     }
-    script.push_str(&build_final_shell_cd_command(shell, cwd));
-    script.push_str(&build_exec_line(shell, cwd));
+    handoff.push_str(&build_final_shell_cd_command(shell, cwd));
+    handoff.push_str(&build_exec_line(shell, cwd));
+
+    let mut command = unix_launch_command_in(launch, shell);
+    if shell.rsplit('/').next() == Some("bash") {
+        // Keep the interactive Bash that ran the provider in charge of the
+        // terminal until it has reaped the foreground job. Returning first to
+        // the non-interactive sh can leave the dead job's process group in the
+        // foreground, making the next shell unable to read from the tty.
+        command.push('\n');
+        command.push_str(&handoff);
+    }
+    script.push_str(&build_provider_command_line(shell, &command, cwd));
+    script.push('\n');
+    if shell.rsplit('/').next() != Some("bash") {
+        script.push_str(&handoff);
+    }
     script.push('\n');
     script
 }
@@ -2589,6 +2596,21 @@ mod tests {
             "env file is removed right after reading"
         );
         assert!(!script.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bash_launcher_hands_off_before_interactive_shell_exits() {
+        let launch = agy_key_launch();
+        let script_path = Path::new("/tmp/launcher.sh");
+        let env_path = Path::new("/tmp/env.sh");
+        let script =
+            build_unix_launcher_script(&launch, "/bin/bash", None, script_path, Some(env_path));
+        let command = format!(
+            "{}\nrm -f -- '/tmp/env.sh' '/tmp/launcher.sh'\nunset CC_SWITCH_LAUNCH_ENV_0 CC_SWITCH_LAUNCH_ENV_1\nexec '/bin/bash'",
+            unix_launch_command_in(&launch, "/bin/bash")
+        );
+        assert!(script.contains(&build_provider_command_line("/bin/bash", &command, None)));
     }
 
     #[test]
