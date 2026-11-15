@@ -12,7 +12,7 @@ import { toast } from "@/lib/toast";
 import { useTranslation } from "react-i18next";
 import type { Provider } from "@/types";
 import { providersApi, type AppId } from "@/lib/api";
-import { isProxyAppId } from "@/config/appConfig";
+import { appHas } from "@/config/appSpecs";
 
 export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
   const queryClient = useQueryClient();
@@ -93,7 +93,7 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
         });
 
         // Routing apps derive failover order from sort_index.
-        if (isProxyAppId(appId)) {
+        if (appHas(appId, "localProxy")) {
           await queryClient.invalidateQueries({
             queryKey: ["failoverQueue", appId],
           });

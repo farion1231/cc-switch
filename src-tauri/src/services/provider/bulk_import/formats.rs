@@ -38,7 +38,7 @@ pub(super) fn format(app: &AppType) -> Result<Format, AppError> {
     Ok(Format {
         default,
         allowed,
-        model_required: app.is_additive_mode(),
+        model_required: app.spec().additive,
     })
 }
 
@@ -52,7 +52,7 @@ fn api(format: &str) -> &'static str {
 }
 
 pub(super) fn dynamic_value(app: &AppType, value: &str, key: bool) -> bool {
-    if !app.is_additive_mode() {
+    if !app.spec().additive {
         return false;
     }
     if value.contains("${") || value.contains("{env:") || value.contains("{file:") {
@@ -146,7 +146,7 @@ pub(super) fn build(
     };
     provider.id = id;
     provider.category = Some("custom".into());
-    if app.is_additive_mode() {
+    if app.spec().additive {
         provider
             .meta
             .get_or_insert_with(Default::default)

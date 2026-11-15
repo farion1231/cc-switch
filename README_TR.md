@@ -150,8 +150,8 @@ TeamoRouter ayrıca merkezi faturalandırma, ekip yönetimi, BYOK, akıllı yön
 </tr>
 
 <tr>
-<td width="180"><a href="https://9527.codes/register?aff=e5zI"><img src="assets/partners/logos/9527-banner.png" alt="9527CODE" width="150"></a></td>
-<td>Bu projeye sponsor olduğu için 9527CODE'a teşekkürler! 9527 CODE, kararlılığa ve hizmet kalitesine odaklanan, kurumsal düzeyde, tam kapasiteli bir yapay zeka aktarma platformudur; Claude Code, Codex ve diğer ana akım yapay zeka modelleri için hızlı, kararlı ve yüksek kaliteli aktarma hizmetleri sunar. Uzun vadeli kararlılığa, rota kalitesine ve sürekli kullanılabilirliğe daha fazla önem vererek işletmelere ve yoğun yapay zeka kullanıcılarına kararlı ve verimli, tek durak bir model erişim çözümü sunar. Bir yıllık kesintisiz işletim, %99,9 hizmet kararlılığı ve 7×24 insan teknik desteğiyle. Bu projeye özel <a href="https://9527.codes/register?aff=e5zI">bağlantıdan</a> kayıt olun; yeni kullanıcılar deneme kredisi almak için müşteri hizmetleriyle iletişime geçebilir ve tavsiye geri ödemesi sınırsızdır!</td>
+<td width="180"><a href="https://9527.codes/register?channel=ccs"><img src="assets/partners/logos/9527-banner.png" alt="9527CODE" width="150"></a></td>
+<td>Bu projeye sponsor olduğu için 9527CODE'a teşekkürler! 9527 CODE, kararlılığa ve hizmet kalitesine odaklanan, kurumsal düzeyde, tam kapasiteli bir yapay zeka aktarma platformudur; Claude Code, Codex ve diğer ana akım yapay zeka modelleri için hızlı, kararlı ve yüksek kaliteli aktarma hizmetleri sunar. Uzun vadeli kararlılığa, rota kalitesine ve sürekli kullanılabilirliğe daha fazla önem vererek işletmelere ve yoğun yapay zeka kullanıcılarına kararlı ve verimli, tek durak bir model erişim çözümü sunar. Bir yıllık kesintisiz işletim, %99,9 hizmet kararlılığı ve 7×24 insan teknik desteğiyle. Bu projeye özel <a href="https://9527.codes/register?channel=ccs">bağlantıdan</a> kayıt olun; yeni kullanıcılar deneme kredisi almak için müşteri hizmetleriyle iletişime geçebilir ve tavsiye geri ödemesi sınırsızdır!</td>
 </tr>
 
 <tr>

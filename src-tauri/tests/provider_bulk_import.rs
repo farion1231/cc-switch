@@ -725,7 +725,7 @@ fn all_agents_append_atomically_without_activation_and_roundtrip_sql_backups() {
             "{} list",
             app.as_str()
         );
-        if app.is_additive_mode() {
+        if app.spec().additive {
             assert!(all
                 .values()
                 .all(|p| p.meta.as_ref().unwrap().live_config_managed == Some(false)));
@@ -781,7 +781,7 @@ fn coexist_agents_enable_distinct_keys_then_reimport_without_duplicates() {
     let _env = AgentEnvironment::isolated();
     let state = create_test_state().unwrap();
     let scenarios = bulk_apps()
-        .filter(AppType::is_additive_mode)
+        .filter(|app| app.spec().additive)
         .map(|app| (app, false))
         .chain(std::iter::once((AppType::Hermes, true)));
     for (app, custom_hermes_home) in scenarios {
@@ -885,7 +885,7 @@ fn every_agent_rejects_invalid_batch_and_rolls_back_on_second_insert_failure() {
         let preview = ProviderService::preview_bulk_import(&state, app.clone(), &invalid).unwrap();
         assert!(!preview.errors.is_empty());
         assert!(preview.token.is_none());
-        if app.is_additive_mode() {
+        if app.spec().additive {
             for key in ["${TOKEN}", "{env:TOKEN}", "{file:/tmp/secret}"] {
                 let source = json!([agent_row(&app, "Bad", key)]).to_string();
                 let preview =
@@ -1026,7 +1026,7 @@ fn supported_protocols_models_and_context_windows_match_each_agent() {
                 app.as_str()
             );
         }
-        if app.is_additive_mode() {
+        if app.spec().additive {
             let mut value = agent_row(&app, "No model", "synthetic-model-key");
             value.as_object_mut().unwrap().remove("model");
             let preview = ProviderService::preview_bulk_import(

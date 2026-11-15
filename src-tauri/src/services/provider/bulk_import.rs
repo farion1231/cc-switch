@@ -329,7 +329,7 @@ fn prepare(app: &AppType, source: &str) -> Result<Prepared, AppError> {
             requires_routing: if *app == AppType::ClaudeDesktop {
                 crate::claude_desktop_config::needs_routing(&provider)
             } else {
-                app.has_route_mode() && api_format != default_format
+                app.spec().route_mode && api_format != default_format
             },
             api_format,
             duplicate: false,
