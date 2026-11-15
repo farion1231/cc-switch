@@ -156,6 +156,21 @@ fn restore_skills_zip_with_ssot(
             fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
         }
         {
+            #[cfg(unix)]
+            let mut out = {
+                use std::os::unix::fs::OpenOptionsExt;
+                if out_path.is_file() {
+                    fs::remove_file(&out_path).map_err(|e| AppError::io(&out_path, e))?;
+                }
+                fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .mode(restored_mode)
+                    .open(&out_path)
+                    .map_err(|e| AppError::io(&out_path, e))?
+            };
+            #[cfg(not(unix))]
             let mut out = fs::File::create(&out_path).map_err(|e| AppError::io(&out_path, e))?;
             let _written = copy_entry_with_total_limit(
                 &mut entry,
@@ -164,12 +179,6 @@ fn restore_skills_zip_with_ssot(
                 MAX_SYNC_ARTIFACT_BYTES,
                 &out_path,
             )?;
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&out_path, fs::Permissions::from_mode(restored_mode))
-                .map_err(|e| AppError::io(&out_path, e))?;
         }
     }
 
@@ -1100,14 +1109,30 @@ mod tests {
     mod zip_unix_permissions {
         use super::super::{restore_skills_zip_with_ssot, zip_skills_dir};
         use std::fs;
-        use std::io::Write;
-        use std::os::unix::fs::PermissionsExt;
+        use std::io::{Cursor, Write};
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        use std::path::Path;
         use tempfile::tempdir;
         use zip::write::SimpleFileOptions;
+        use zip::ZipArchive;
+
+        fn effective_umask(dir: &Path) -> u32 {
+            let probe = dir.join(".umask-probe");
+            let _file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o777)
+                .open(&probe)
+                .unwrap();
+            let probe_mode = fs::metadata(&probe).unwrap().permissions().mode() & 0o777;
+            fs::remove_file(&probe).unwrap();
+            0o777 & !probe_mode
+        }
 
         #[test]
         fn skills_zip_roundtrip_preserves_executable_script_and_non_executable_doc() {
             let temp = tempdir().unwrap();
+            let umask = effective_umask(temp.path());
             let src_ssot = temp.path().join("src-skills");
             let scripts_dir = src_ssot.join("my-skill/scripts");
             fs::create_dir_all(&scripts_dir).unwrap();
@@ -1138,13 +1163,14 @@ mod tests {
                 .mode()
                 & 0o7777;
 
-            assert_eq!(restored_script_mode, 0o755);
-            assert_eq!(restored_doc_mode, 0o644);
+            assert_eq!(restored_script_mode, 0o755 & !umask);
+            assert_eq!(restored_doc_mode, 0o644 & !umask);
         }
 
         #[test]
         fn skills_zip_strips_setuid_and_setgid_bits_on_zip_and_restore() {
             let temp = tempdir().unwrap();
+            let umask = effective_umask(temp.path());
             let zip_path = temp.path().join("crafted.zip");
             {
                 let file = fs::File::create(&zip_path).unwrap();
@@ -1191,16 +1217,162 @@ mod tests {
                 .mode()
                 & 0o7777;
 
-            assert_eq!(priv_mode, 0o755, "setuid/setgid bits must be stripped");
+            assert_eq!(
+                priv_mode,
+                0o755 & !umask,
+                "setuid/setgid bits must be stripped and constrained by umask"
+            );
             assert_eq!(
                 doc_mode & 0o111,
                 0,
                 "entries without exec bit stay non-exec"
             );
             assert_eq!(
-                symlink_entry_mode, 0o644,
+                symlink_entry_mode,
+                0o644 & !umask,
                 "symlink entries extracted as regular files must not inherit 0777 exec bits"
             );
+        }
+
+        #[test]
+        fn skills_zip_restore_respects_process_umask_and_duplicate_entries() {
+            let temp = tempdir().unwrap();
+            let umask = effective_umask(temp.path());
+            if let Ok(expected_octal) = std::env::var("CC_SWITCH_TEST_EXPECTED_UMASK") {
+                let expected = u32::from_str_radix(&expected_octal, 8).unwrap();
+                assert_eq!(umask, expected, "child process umask mismatch");
+            }
+            let src_ssot = temp.path().join("src-skills");
+            let skill_dir = src_ssot.join("umask-skill");
+            fs::create_dir_all(skill_dir.join("scripts")).unwrap();
+
+            let cases = [
+                ("scripts/exec_world_writable.sh", 0o777, "#!/bin/sh\n"),
+                ("scripts/exec_group_writable.sh", 0o775, "#!/bin/sh\n"),
+                ("doc_world_writable.md", 0o666, "# Doc\n"),
+                ("doc_group_writable.md", 0o664, "# Doc\n"),
+            ];
+            for (rel_path, src_mode, content) in cases {
+                let full_path = skill_dir.join(rel_path);
+                fs::write(&full_path, content).unwrap();
+                fs::set_permissions(&full_path, fs::Permissions::from_mode(src_mode)).unwrap();
+            }
+
+            let zip_path = temp.path().join("skills.zip");
+            zip_skills_dir(&src_ssot, &zip_path).unwrap();
+
+            let raw = fs::read(&zip_path).unwrap();
+            {
+                let mut archive = ZipArchive::new(Cursor::new(raw.as_slice())).unwrap();
+                for (rel_path, expected_archive_mode, _) in cases {
+                    let entry_name = format!("umask-skill/{rel_path}");
+                    let entry = archive.by_name(&entry_name).unwrap();
+                    assert_eq!(entry.unix_mode().unwrap() & 0o7777, expected_archive_mode);
+                }
+            }
+
+            let dst_ssot = temp.path().join("dst-skills");
+            restore_skills_zip_with_ssot(&raw, || Ok(dst_ssot.clone())).unwrap();
+
+            for (rel_path, src_mode, _) in cases {
+                let restored_mode = fs::metadata(dst_ssot.join("umask-skill").join(rel_path))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o7777;
+                assert_eq!(
+                    restored_mode,
+                    src_mode & !umask,
+                    "{rel_path} (source {src_mode:#o}) must honor process umask {umask:#o}"
+                );
+                assert_eq!(
+                    restored_mode & umask,
+                    0,
+                    "{rel_path} must not retain bits masked by process umask {umask:#o}"
+                );
+            }
+
+            // Entries resolving to the same enclosed_name must apply the later entry's mode (masked by umask).
+            let dup_zip = temp.path().join("duplicate-entries.zip");
+            {
+                let file = fs::File::create(&dup_zip).unwrap();
+                let mut writer = zip::ZipWriter::new(file);
+                writer
+                    .start_file(
+                        "dup-skill/./scripts/promoted.sh",
+                        SimpleFileOptions::default().unix_permissions(0o644),
+                    )
+                    .unwrap();
+                writer.write_all(b"old\n").unwrap();
+                writer
+                    .start_file(
+                        "dup-skill/scripts/promoted.sh",
+                        SimpleFileOptions::default().unix_permissions(0o777),
+                    )
+                    .unwrap();
+                writer.write_all(b"#!/bin/sh\necho new\n").unwrap();
+
+                writer
+                    .start_file(
+                        "dup-skill/./demoted.txt",
+                        SimpleFileOptions::default().unix_permissions(0o755),
+                    )
+                    .unwrap();
+                writer.write_all(b"#!/bin/sh\n").unwrap();
+                writer
+                    .start_file(
+                        "dup-skill/demoted.txt",
+                        SimpleFileOptions::default().unix_permissions(0o666),
+                    )
+                    .unwrap();
+                writer.write_all(b"plain text\n").unwrap();
+                writer.finish().unwrap();
+            }
+
+            let dup_dst = temp.path().join("dst-dup-skills");
+            let dup_raw = fs::read(&dup_zip).unwrap();
+            restore_skills_zip_with_ssot(&dup_raw, || Ok(dup_dst.clone())).unwrap();
+
+            let promoted_path = dup_dst.join("dup-skill/scripts/promoted.sh");
+            assert_eq!(
+                fs::read_to_string(&promoted_path).unwrap(),
+                "#!/bin/sh\necho new\n"
+            );
+            assert_eq!(
+                fs::metadata(&promoted_path).unwrap().permissions().mode() & 0o7777,
+                0o777 & !umask
+            );
+
+            let demoted_path = dup_dst.join("dup-skill/demoted.txt");
+            assert_eq!(fs::read_to_string(&demoted_path).unwrap(), "plain text\n");
+            assert_eq!(
+                fs::metadata(&demoted_path).unwrap().permissions().mode() & 0o7777,
+                0o666 & !umask
+            );
+        }
+
+        #[test]
+        fn skills_zip_restore_honors_explicit_umasks_022_002_077() {
+            let test_exe = std::env::current_exe().unwrap();
+            let target_test = "services::webdav_sync::archive::tests::zip_unix_permissions::skills_zip_restore_respects_process_umask_and_duplicate_entries";
+            for mask in ["022", "002", "077"] {
+                let output = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg("umask \"$1\" && exec \"$2\" --exact \"$3\" --nocapture")
+                    .arg("sh")
+                    .arg(mask)
+                    .arg(&test_exe)
+                    .arg(target_test)
+                    .env("CC_SWITCH_TEST_EXPECTED_UMASK", mask)
+                    .output()
+                    .unwrap();
+                assert!(
+                    output.status.success(),
+                    "umask {mask} subtest failed:\nstdout: {}\nstderr: {}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
         }
     }
 }
