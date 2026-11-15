@@ -427,16 +427,14 @@ fn known_native_install(tool: &str, inst: &ToolInstallation) -> bool {
         // Official installer targets, per the scripts themselves:
         // install.sh → `~/.local/bin` (non-root) or `/usr/local/bin` (root),
         // install.ps1 → `%LOCALAPPDATA%\AtomCode`; FAQ also mentions `~/.atomcode/bin`.
-        // The ps1 suffix is anchored to `AppData/Local` so unrelated directories
-        // that merely contain an `AtomCode` folder are never claimed.
+        // The POSIX suffixes carry no `.exe` — the scripts never write one on
+        // Linux/macOS — so each arm has a script-verified source and the
+        // matching surface stays as narrow as the installers make it.
         "atomcode" => {
             normalized.ends_with("/.local/bin/atomcode")
-                || normalized.ends_with("/.local/bin/atomcode.exe")
                 || normalized.ends_with("/usr/local/bin/atomcode")
-                || normalized.ends_with("/usr/local/bin/atomcode.exe")
                 || normalized.ends_with("/appdata/local/atomcode/atomcode.exe")
                 || normalized.ends_with("/.atomcode/bin/atomcode")
-                || normalized.ends_with("/.atomcode/bin/atomcode.exe")
         }
         _ => false,
     }
@@ -1084,13 +1082,19 @@ mod tests {
         }
         // Strong negatives: a native-header binary that merely lives in a
         // directory called `AtomCode` outside `%LOCALAPPDATA%` (the §14.5 P2-4
-        // over-broad-suffix case), and a valid target owned by a non-`system`
-        // source, are never claimed.
+        // over-broad-suffix case), an `.exe` under a POSIX script directory
+        // the install.sh never writes, a valid target owned by a non-`system`
+        // source, and node_modules content are never claimed.
         let temp = tempfile::tempdir().unwrap();
         let unmanaged = temp.path().join("opt/atomcode/atomcode.exe");
         std::fs::create_dir_all(unmanaged.parent().unwrap()).unwrap();
         std::fs::write(&unmanaged, [0x4d, 0x5a, 0x00, 0x00]).unwrap();
         assert!(!known_native_install("atomcode", &installation(&unmanaged)));
+        let temp = tempfile::tempdir().unwrap();
+        let posix_exe = temp.path().join("usr/local/bin/atomcode.exe");
+        std::fs::create_dir_all(posix_exe.parent().unwrap()).unwrap();
+        std::fs::write(&posix_exe, [0x4d, 0x5a, 0x00, 0x00]).unwrap();
+        assert!(!known_native_install("atomcode", &installation(&posix_exe)));
         let temp = tempfile::tempdir().unwrap();
         let non_system = temp.path().join(".local/bin/atomcode");
         std::fs::create_dir_all(non_system.parent().unwrap()).unwrap();
