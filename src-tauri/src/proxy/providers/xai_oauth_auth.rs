@@ -480,6 +480,28 @@ impl XaiOAuthManager {
         Ok(())
     }
 
+    #[cfg(test)]
+    pub(crate) async fn seed_test_account_with_token_endpoint(
+        &self,
+        account_id: &str,
+        refresh_token: &str,
+        token_endpoint: String,
+    ) {
+        self.add_account_internal(
+            account_id.to_string(),
+            Some(format!("{account_id}@example.com")),
+            refresh_token.to_string(),
+            None,
+            None,
+        )
+        .await
+        .expect("seed test xAI account");
+        *self.discovered_endpoints.write().await = Some(OAuthEndpoints {
+            token_endpoint: token_endpoint.clone(),
+            device_authorization_endpoint: token_endpoint,
+        });
+    }
+
     async fn discover_endpoints(&self) -> Result<OAuthEndpoints, XaiOAuthError> {
         if let Some(endpoints) = self.discovered_endpoints.read().await.clone() {
             return Ok(endpoints);
@@ -517,7 +539,7 @@ impl XaiOAuthManager {
         refresh_token: &str,
     ) -> Result<OAuthTokenResponse, XaiOAuthError> {
         let endpoints = self.discover_endpoints().await?;
-        let response = crate::proxy::http_client::get()
+        let response = crate::proxy::http_client::get_for_url(&endpoints.token_endpoint)
             .post(&endpoints.token_endpoint)
             .header("User-Agent", XAI_USER_AGENT)
             .form(&[
