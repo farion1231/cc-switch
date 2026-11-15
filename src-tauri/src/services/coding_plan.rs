@@ -51,7 +51,7 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
         // /inference/go/anthropic；Zen 按量版（/zen/v1 或 /inference/v1）
         // 没有任何用量/余额 API（实测 404），刻意不命中。
         Some(CodingPlanProvider::OpencodeGo)
-    } else if url.contains("api.commandcode.ai/provider") {
+    } else if is_command_code_provider_url(&url) {
         Some(CodingPlanProvider::CommandCode)
     } else if url.contains("volces.com/api/plan") || url.contains("volces.com/api/coding") {
         // 仅匹配 Agent Plan（/api/plan[/v3]）与 Coding Plan（/api/coding[/v3]）
@@ -62,6 +62,19 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
     } else {
         None
     }
+}
+
+/// Command Code 只有 /provider（Claude）与 /provider/v1（Codex）两个入口；
+/// 按路径段边界匹配，同前端 `codingPlanProviders.ts` 的
+/// `/api\.commandcode\.ai\/provider(?:[/?#]|$)/i`，不认 /providers 之类。
+fn is_command_code_provider_url(url: &str) -> bool {
+    const BASE: &str = "api.commandcode.ai/provider";
+    url.match_indices(BASE).any(|(i, _)| {
+        matches!(
+            url[i + BASE.len()..].chars().next(),
+            None | Some('/' | '?' | '#')
+        )
+    })
 }
 
 /// 按地址认出的套餐 id，取值与前端 `CodingPlanProviderEntry.id` 一致
@@ -1975,7 +1988,13 @@ mod tests {
             detect_provider("https://api.commandcode.ai/provider/v1"),
             Some(CodingPlanProvider::CommandCode)
         ));
+        assert!(matches!(
+            detect_provider("https://API.CommandCode.ai/provider?x=1"),
+            Some(CodingPlanProvider::CommandCode)
+        ));
         assert!(detect_provider("https://commandcode.ai/provider").is_none());
+        assert!(detect_provider("https://api.commandcode.ai/providers").is_none());
+        assert!(detect_provider("https://api.commandcode.ai/provider-v2").is_none());
     }
 
     #[test]

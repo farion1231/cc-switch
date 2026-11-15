@@ -41,6 +41,7 @@ import {
   useImportSkillsFromApps,
   useInstallSkillsFromZip,
   useInstalledSkills,
+  useRefreshLocalSkillMetadata,
   useRestoreSkillBackup,
   useScanUnmanagedSkills,
   useSkillBackups,
@@ -50,7 +51,6 @@ import {
   useUpdateSkill,
 } from "@/hooks/useSkills";
 import type { AppId } from "@/lib/api/types";
-import { SKILLS_APP_IDS } from "@/config/appConfig";
 import { settingsApi, skillsApi } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -72,9 +72,11 @@ import { RepoManagerPanel } from "./RepoManagerPanel";
 import { SkillImportDialog } from "./SkillImportDialog";
 import { SkillRestoreDialog } from "./SkillRestoreDialog";
 import { SkillsStorageSheet } from "./SkillsStorageSheet";
+import { useSkillsResync } from "./useSkillsResync";
 import { useSkillInstallTargets } from "./useSkillInstallTargets";
 import { describeRepoFailures } from "./repoFailures";
 import type { ZipSkippedSkill } from "@/lib/api/skills";
+import { APP_IDS_WITH } from "@/config/appSpecs";
 
 const BACKUP_DIR = "~/.cc-switch/skill-backups";
 
@@ -130,7 +132,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   onNavigationBlockedChange,
 }) => {
   const { t, i18n } = useTranslation();
-  const appIds = useVisibleAppIds(SKILLS_APP_IDS);
+  const appIds = useVisibleAppIds(APP_IDS_WITH.skills);
   const { targets, setTargets, installTo } = useSkillInstallTargets(appIds);
 
   const [view, setView] = useState<SkillsView>(initialView);
@@ -177,6 +179,9 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     error: loadError,
     refetch,
   } = useInstalledSkills();
+  // 列表先用数据库快照渲染；本地元数据在后台线程刷新，有新结果时才刷新列表。
+  // 独立 query 让开关/安装引起的列表失效不再重复扫描 SSOT 目录（issue #7848）。
+  useRefreshLocalSkillMetadata();
   const {
     data: skillBackups = [],
     refetch: refetchSkillBackups,
@@ -201,6 +206,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const skillUpdates = updateCheck?.updates;
   const updateRepoFailures = updateCheck?.failures ?? [];
   const updateSkillMutation = useUpdateSkill();
+  const { resync: resyncToApps, isPending: resyncPending } = useSkillsResync();
 
   const mutationPending =
     deleteBackupMutation.isPending ||
@@ -313,7 +319,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   }, [installedSkills]);
 
   const enabledCount = (skill: InstalledSkill) =>
-    SKILLS_APP_IDS.filter((app) => skill.apps[app]).length;
+    APP_IDS_WITH.skills.filter((app) => skill.apps[app]).length;
 
   const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
   const filteredSkills = useMemo(() => {
@@ -661,6 +667,16 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     }
   };
 
+  // 「立即重新同步」也放在 ⋯ 菜单（#9417）：不用每次打开「存储与同步」对话框
+  const handleResyncToApps = async () => {
+    if (resyncPending || !beginWrite()) return;
+    try {
+      await resyncToApps();
+    } finally {
+      endWrite();
+    }
+  };
+
   // ─── 导入 / ZIP / 备份 ───────────────────────────────────────────────
   const handleOpenImport = async () => {
     if (!beginWrite()) return;
@@ -980,6 +996,12 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                 onSelect={() => setRepoManagerOpen(true)}
               >
                 {t("skillsPage.moreMenu.repos")}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={controlsDisabled || resyncPending || nInstalled === 0}
+                onSelect={() => void handleResyncToApps()}
+              >
+                {t("skills.storageSheet.resync")}
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setStorageOpen(true)}>
                 {t("skills.storageSheet.open")}
@@ -1803,7 +1825,7 @@ function InstalledRow({
   onUninstall,
 }: InstalledRowProps) {
   const { t } = useTranslation();
-  const enabled = SKILLS_APP_IDS.some((app) => skill.apps[app]);
+  const enabled = APP_IDS_WITH.skills.some((app) => skill.apps[app]);
   const failedApp = appIds.find((app) => fails[failKey(skill.id, app)]);
   const failure = failedApp ? fails[failKey(skill.id, failedApp)] : undefined;
   const failId = `sk-fail-${skill.id}`;

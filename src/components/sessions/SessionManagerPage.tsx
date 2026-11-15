@@ -337,12 +337,15 @@ export function SessionManagerPage({
   const unknownLabel = t("sessionManager.unknownDirectory", {
     defaultValue: "未知目录",
   });
+  const codexChatsLabel = t("sessionManager.codexChats", {
+    defaultValue: "Codex 聊天",
+  });
   const projectGroups = useMemo(
     () =>
       groupMode === "project"
-        ? groupSessionsByProject(matches, unknownLabel)
+        ? groupSessionsByProject(matches, unknownLabel, codexChatsLabel)
         : [],
-    [groupMode, matches, unknownLabel],
+    [groupMode, matches, unknownLabel, codexChatsLabel],
   );
   const timeGroups = useMemo(
     () => (groupMode === "time" ? groupSessionsByTime(matches) : []),

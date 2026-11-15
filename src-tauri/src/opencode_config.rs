@@ -104,11 +104,6 @@ fn get_opencode_data_dir() -> PathBuf {
         .join("opencode")
 }
 
-#[allow(dead_code)]
-pub fn get_opencode_env_path() -> PathBuf {
-    get_opencode_dir().join(".env")
-}
-
 struct OpenCodeDocument {
     path: PathBuf,
     previous_contents: Option<Vec<u8>>,
@@ -176,7 +171,7 @@ fn try_edit_config(
     resolve_path: impl FnOnce() -> Result<PathBuf, AppError>,
     edit: impl FnOnce(&mut Value) -> Result<(), AppError>,
 ) -> Result<bool, AppError> {
-    let _guard = opencode_config_lock().lock()?;
+    let _guard = crate::sync_utils::lock_file_operation(opencode_config_lock());
     let path = resolve_path()?;
     let mut document = OpenCodeDocument::load(&path)?;
     let mut desired = document.document.value().clone();
@@ -703,6 +698,44 @@ fn remove_plugins(config: &mut Value, prefixes: &[&str]) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[serial_test::serial]
+    fn config_edits_recover_after_poison() {
+        if !crate::sync_utils::in_isolated_process(
+            "opencode_config::tests::config_edits_recover_after_poison",
+        ) {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("opencode.json");
+        std::fs::write(&path, r#"{"model":"original"}"#).unwrap();
+        assert!(std::panic::catch_unwind(|| {
+            let _ = super::edit_config(
+                || Ok(path.clone()),
+                |value| {
+                    value["model"] = serde_json::json!("unfinished");
+                    panic!("config edit interrupted");
+                },
+            );
+        })
+        .is_err());
+        assert_eq!(
+            super::read_opencode_config_from_path(&path).unwrap()["model"],
+            "original"
+        );
+        super::edit_config(
+            || Ok(path.clone()),
+            |value| {
+                value["model"] = serde_json::json!("recovered");
+            },
+        )
+        .expect("write after panic");
+        assert_eq!(
+            super::read_opencode_config_from_path(&path).unwrap()["model"],
+            "recovered"
+        );
+        assert!(!super::opencode_config_lock().is_poisoned());
+    }
     use super::*;
 
     struct TestHomeGuard(Option<std::ffi::OsString>, crate::settings::AppSettings);
