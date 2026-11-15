@@ -431,7 +431,8 @@ async fn read_bounded_response_text(
         buf.extend_from_slice(&chunk);
     }
 
-    Ok(String::from_utf8_lossy(&buf).into_owned())
+    let body = buf.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&buf);
+    Ok(String::from_utf8_lossy(body).into_owned())
 }
 
 async fn read_bounded_error_preview(
@@ -474,12 +475,13 @@ async fn read_bounded_error_preview(
     }
     drop(resp);
 
-    let text = match std::str::from_utf8(&buf) {
+    let body = buf.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&buf);
+    let text = match std::str::from_utf8(body) {
         Ok(valid) => valid.to_string(),
         Err(err) if err.error_len().is_none() => {
-            String::from_utf8_lossy(&buf[..err.valid_up_to()]).into_owned()
+            String::from_utf8_lossy(&body[..err.valid_up_to()]).into_owned()
         }
-        Err(_) => String::from_utf8_lossy(&buf).into_owned(),
+        Err(_) => String::from_utf8_lossy(body).into_owned(),
     };
 
     if text.len() > ERROR_PREVIEW_CHAR_LIMIT {
@@ -1206,6 +1208,88 @@ mod tests {
         assert_eq!(value["total"].as_f64(), Some(50.0));
         assert_eq!(value["used"].as_f64(), Some(30.75));
         assert_eq!(value["unit"].as_str(), Some("USD"));
+
+        server_task.abort();
+    }
+
+    #[tokio::test]
+    async fn utf8_bom_prefixed_json_response_parses_successfully() {
+        use tokio::io::AsyncWriteExt;
+
+        const SMALL_BUDGET: usize = 512;
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("addr");
+
+        let server_task = tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let _ = read_raw_http_head(&mut stream).await;
+                let body = b"\xEF\xBB\xBF{\"remaining\":7}";
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(head.as_bytes()).await;
+                let _ = stream.write_all(body).await;
+            }
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let _ = read_raw_http_head(&mut stream).await;
+                let _ = stream
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+                    )
+                    .await;
+                let part1 = b"\xEF";
+                let part2 = b"\xBB\xBF{\"remaining\":9.5}";
+                let chunk1 = format!("{:x}\r\n", part1.len());
+                let chunk2 = format!("{:x}\r\n", part2.len());
+                let _ = stream.write_all(chunk1.as_bytes()).await;
+                let _ = stream.write_all(part1).await;
+                let _ = stream.write_all(b"\r\n").await;
+                let _ = stream.flush().await;
+                let _ = stream.write_all(chunk2.as_bytes()).await;
+                let _ = stream.write_all(part2).await;
+                let _ = stream.write_all(b"\r\n0\r\n\r\n").await;
+            }
+        });
+
+        let script = r#"({
+            request: { url: "{{baseUrl}}/v1/usage", method: "GET" },
+            extractor: function(data) {
+                return { remaining: data.remaining };
+            }
+        })"#;
+        let base_url = format!("http://{addr}");
+
+        let first = execute_usage_script_with_max_bytes(
+            script,
+            "sk-test",
+            &base_url,
+            5,
+            None,
+            None,
+            None,
+            SMALL_BUDGET,
+        )
+        .await
+        .expect("UTF-8 BOM JSON response should parse");
+        assert_eq!(first["remaining"].as_f64(), Some(7.0));
+
+        let second = execute_usage_script_with_max_bytes(
+            script,
+            "sk-test",
+            &base_url,
+            5,
+            None,
+            None,
+            None,
+            SMALL_BUDGET,
+        )
+        .await
+        .expect("chunk-split UTF-8 BOM JSON response should parse");
+        assert_eq!(second["remaining"].as_f64(), Some(9.5));
 
         server_task.abort();
     }
