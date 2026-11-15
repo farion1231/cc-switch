@@ -790,18 +790,27 @@ model = "gpt-5"
         // 三种协议都投影出来
         let ds = &providers["deepseek"];
         assert_eq!(ds["account"]["provider"], json!("openai-compatible"));
-        assert_eq!(ds["account"]["base_url"], json!("https://api.deepseek.com/v1"));
+        assert_eq!(
+            ds["account"]["base_url"],
+            json!("https://api.deepseek.com/v1")
+        );
         assert_eq!(ds["account"]["api_key"], json!("sk-xxx"));
         assert_eq!(ds["models"]["deepseek"]["model"], json!("deepseek-chat"));
         assert_eq!(ds["models"]["deepseek"]["account"], json!("deepseek"));
         assert_eq!(ds["models"]["deepseek"]["context_window"], json!(64000));
-        assert_eq!(providers["claude"]["account"]["provider"], json!("anthropic"));
+        assert_eq!(
+            providers["claude"]["account"]["provider"],
+            json!("anthropic")
+        );
         assert_eq!(providers["local"]["account"]["provider"], json!("ollama"));
         // 无 base_url 的 openai 用 openai 厂商预设
         assert_eq!(providers["claude"]["account"].get("base_url"), None);
         // 新 schema 已存在的账号 id 优先，legacy 同名条目不投影、原账号不被覆盖
         assert_eq!(providers["acct"]["account"]["api_key"], json!("sk-new"));
-        assert_eq!(providers["acct"]["models"]["acct/new"]["model"], json!("gpt-5"));
+        assert_eq!(
+            providers["acct"]["models"]["acct/new"]["model"],
+            json!("gpt-5")
+        );
         // legacy 选择也能解析到账号（投影 id = provider 名）
         assert_eq!(current_provider().unwrap(), "deepseek");
 
