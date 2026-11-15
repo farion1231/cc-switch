@@ -124,21 +124,6 @@ impl Database {
 
         Ok(in_queue)
     }
-
-    /// 获取可添加到故障转移队列的供应商（不在队列中的）
-    pub fn get_available_providers_for_failover(
-        &self,
-        app_type: &str,
-    ) -> Result<Vec<Provider>, AppError> {
-        let all_providers = self.get_all_providers(app_type)?;
-
-        let available: Vec<Provider> = all_providers
-            .into_values()
-            .filter(|p| !p.in_failover_queue)
-            .collect();
-
-        Ok(available)
-    }
 }
 
 #[cfg(test)]
