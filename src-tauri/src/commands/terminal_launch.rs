@@ -8,11 +8,12 @@ use tauri::State;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
+#[cfg(target_os = "macos")]
+use super::misc::decode_command_output;
 #[cfg(target_os = "windows")]
 use super::misc::{
-    decode_command_output, effective_path_string, is_valid_wsl_distro_name,
-    windows_cmd_double_quote_arg, windows_shell_compatible_path, wsl_auto_shell_command,
-    wsl_distro_for_tool, CREATE_NO_WINDOW,
+    effective_path_string, is_valid_wsl_distro_name, windows_cmd_double_quote_arg,
+    windows_shell_compatible_path, wsl_auto_shell_command, wsl_distro_for_tool, CREATE_NO_WINDOW,
 };
 
 // 以下 shell 解析辅助函数仅被 macOS/Linux 的终端启动逻辑使用；Windows 非 test 编译下为死代码。
@@ -2035,7 +2036,7 @@ read -r _
 mod tests {
     use super::*;
     #[cfg(target_os = "windows")]
-    use crate::commands::misc::merge_path_segments_win;
+    use crate::commands::misc::{decode_command_output, merge_path_segments_win};
 
     #[cfg(target_os = "windows")]
     #[test]
