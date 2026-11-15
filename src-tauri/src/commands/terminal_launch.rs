@@ -2490,9 +2490,15 @@ mod tests {
         let script = tmp.path().join("launcher.sh");
         let env_file = tmp.path().join("env.sh");
         std::fs::write(&env_file, unix_launch_env_file(&launch)).unwrap();
-        let content =
-            build_unix_launcher_script(&launch, "/bin/bash", None, &script, Some(&env_file))
-                .replace("exec '/bin/bash'", "exit 0 #");
+        // Replace the final interactive shell with a no-op so the test returns.
+        let generated =
+            build_unix_launcher_script(&launch, "/bin/bash", None, &script, Some(&env_file));
+        let final_shell = "exec '\"'\"'/bin/bash'\"'\"'";
+        assert!(
+            generated.contains(final_shell),
+            "final shell must be replaced"
+        );
+        let content = generated.replace(final_shell, "exit 0 #");
         std::fs::write(&script, content).unwrap();
         let status = std::process::Command::new("sh")
             .arg(&script)
