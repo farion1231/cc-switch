@@ -92,38 +92,6 @@ impl Database {
 
         Ok(())
     }
-
-    /// 清空故障转移队列
-    pub fn clear_failover_queue(&self, app_type: &str) -> Result<(), AppError> {
-        let conn = lock_conn!(self.conn);
-
-        conn.execute(
-            "UPDATE providers SET in_failover_queue = 0 WHERE app_type = ?1",
-            [app_type],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-
-        Ok(())
-    }
-
-    /// 检查供应商是否在故障转移队列中
-    pub fn is_in_failover_queue(
-        &self,
-        app_type: &str,
-        provider_id: &str,
-    ) -> Result<bool, AppError> {
-        let conn = lock_conn!(self.conn);
-
-        let in_queue: bool = conn
-            .query_row(
-                "SELECT in_failover_queue FROM providers WHERE id = ?1 AND app_type = ?2",
-                rusqlite::params![provider_id, app_type],
-                |row| row.get(0),
-            )
-            .unwrap_or(false);
-
-        Ok(in_queue)
-    }
 }
 
 #[cfg(test)]
