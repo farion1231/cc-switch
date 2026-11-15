@@ -8859,7 +8859,7 @@ mod tests {
 
         let sanitized_sample = SkillService::sanitize_sync_error(&anyhow!(
             "failed writing {}\n\tpermission denied",
-            home.path().join(".codex/skills").display()
+            home.path().join(".codex").join("skills").display()
         ));
         let home_str = home.path().to_string_lossy();
         assert!(
