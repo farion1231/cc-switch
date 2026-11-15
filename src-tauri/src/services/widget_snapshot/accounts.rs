@@ -426,6 +426,7 @@ async fn list_accounts(app: &AppHandle) -> Vec<ListedAccount> {
             app.state(),
             app.state(),
             app.state(),
+            app.state(),
         )
         .await;
         let accounts = match accounts {

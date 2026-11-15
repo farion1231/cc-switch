@@ -444,6 +444,7 @@ mod tests {
         let model = PanelModel {
             problems: Vec::new(),
             feedback: None,
+            update: None,
             apps: vec![
                 panel_app(
                     "claude",
