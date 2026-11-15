@@ -405,13 +405,6 @@ impl Database {
         Ok(())
     }
 
-    /// 设置 Live 接管状态（兼容旧版本，更新 enabled 字段）
-    pub async fn set_live_takeover_active(&self, _active: bool) -> Result<(), AppError> {
-        // 不再使用此字段，由 enabled 字段替代
-        // 保留空实现以兼容旧代码
-        Ok(())
-    }
-
     /// 检查是否处于 Live 接管模式
     ///
     /// 检查是否有任一 app 的 enabled = true
@@ -576,25 +569,6 @@ impl Database {
         Ok(())
     }
 
-    /// 重置Provider健康状态
-    pub async fn reset_provider_health(
-        &self,
-        provider_id: &str,
-        app_type: &str,
-    ) -> Result<(), AppError> {
-        let conn = lock_conn!(self.conn);
-
-        conn.execute(
-            "DELETE FROM provider_health WHERE provider_id = ?1 AND app_type = ?2",
-            rusqlite::params![provider_id, app_type],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-
-        log::debug!("Reset health status for provider {provider_id} (app: {app_type})");
-
-        Ok(())
-    }
-
     /// 清空指定应用的健康状态（关闭单个代理时使用）
     pub async fn clear_provider_health_for_app(&self, app_type: &str) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
@@ -715,17 +689,6 @@ impl Database {
         Ok(())
     }
 
-    /// 检查是否存在任意 Live 配置备份
-    pub async fn has_any_live_backup(&self) -> Result<bool, AppError> {
-        let conn = lock_conn!(self.conn);
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM proxy_live_backup", [], |row| {
-                row.get(0)
-            })
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        Ok(count > 0)
-    }
-
     /// 获取 Live 配置备份
     pub async fn get_live_backup(&self, app_type: &str) -> Result<Option<LiveBackup>, AppError> {
         let conn = lock_conn!(self.conn);
@@ -760,17 +723,6 @@ impl Database {
         .map_err(|e| AppError::Database(e.to_string()))?;
 
         log::info!("已删除 {app_type} Live 配置备份");
-        Ok(())
-    }
-
-    /// 删除所有 Live 配置备份
-    pub async fn delete_all_live_backups(&self) -> Result<(), AppError> {
-        let conn = lock_conn!(self.conn);
-
-        conn.execute("DELETE FROM proxy_live_backup", [])
-            .map_err(|e| AppError::Database(e.to_string()))?;
-
-        log::info!("已删除所有 Live 配置备份");
         Ok(())
     }
 
