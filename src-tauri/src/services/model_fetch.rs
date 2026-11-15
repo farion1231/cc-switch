@@ -104,7 +104,9 @@ pub async fn fetch_models(
             .strip_suffix("/v1beta")
             .or_else(|| base.strip_suffix("/v1"))
             .unwrap_or(base);
-        vec![format!("{base}/v1beta/models")]
+        // 默认每页只回 50 个（Gemini / Gemma / Imagen / Veo 加起来早已超出），
+        // 这里不翻页，直接要最大页。
+        vec![format!("{base}/v1beta/models?pageSize=1000")]
     } else {
         build_models_url_candidates(base_url, is_full_url, models_url_override)?
     };
