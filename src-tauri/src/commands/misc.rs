@@ -3680,7 +3680,10 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
             // is_path_default 仍可在循环内直接比（上游把标记挪到循环后，是因为它在
             // 循环内边解析边探测）。
             let real = std::fs::canonicalize(&tool_path).unwrap_or_else(|_| tool_path.clone());
-            let (tool_path, real) = resolve_mise_shim_install(
+            // `resolve_mise_shim_install` 返回的 canonical 真身在本循环用不到：候选
+            // 去重在下面的 dedup 循环里重新 canonicalize；加 `_` 前缀避免 clippy
+            // `-D warnings` 把未用变量当错（#8493 曾因此在三平台全挂）。
+            let (tool_path, _real) = resolve_mise_shim_install(
                 tool,
                 tool_path,
                 real,
