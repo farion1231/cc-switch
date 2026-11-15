@@ -1,0 +1,43 @@
+{
+  "copilotReasoningEfforts": [
+    "none",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max"
+  ],
+  "codexReservedModelProviderIds": [
+    "amazon-bedrock",
+    "amazon-bedrock-runtime",
+    "openai",
+    "ollama",
+    "lmstudio"
+  ],
+  "hermesProviderSource": {
+    "field": "_cc_source",
+    "customList": "custom_providers",
+    "dict": "providers_dict"
+  },
+  "codingPlanProviderByUrl": {
+    "https://api.kimi.com/coding/": "kimi",
+    "HTTPS://API.KIMI.COM/CODING/v1": "kimi",
+    "https://open.bigmodel.cn/api/anthropic": "zhipu",
+    "https://api.z.ai/api/anthropic": "zhipu",
+    "https://api.minimaxi.com/anthropic": "minimax",
+    "https://api.minimax.io/anthropic": "minimax",
+    "https://api.minimax.cn/v1": "minimax",
+    "https://api.minimax.cn.example.com/v1": null,
+    "https://zenmux.ai/api/anthropic": "zenmux",
+    "https://ark.cn-beijing.volces.com/api/plan/v3": "volcengine",
+    "https://ark.cn-beijing.volces.com/api/coding": "volcengine",
+    "https://ark.cn-beijing.volces.com/api/v3": null,
+    "https://opencode.ai/zen/go/v1": "opencode_go",
+    "https://opencode.ai/inference/go/anthropic": "opencode_go",
+    "https://opencode.ai/zen/v1": null,
+    "https://api.commandcode.ai/provider": "command_code",
+    "https://api.commandcode.ai/provider/v1": "command_code",
+    "https://api.openai.com/v1": null
+  }
+}
