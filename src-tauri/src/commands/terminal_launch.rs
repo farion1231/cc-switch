@@ -1558,7 +1558,33 @@ fn launch_linux_terminal(script_file: &std::path::Path) -> Result<(), String> {
         }
     }
 
+    // WSLg installations often have no Linux terminal emulator. Launch the same
+    // private script in this distribution, not the user's default distribution.
+    if let Some(distro) = std::env::var_os("WSL_DISTRO_NAME").filter(|s| !s.is_empty()) {
+        match wsl_terminal_command(&distro, script_file).spawn() {
+            Ok(_) => return Ok(()),
+            Err(e) => last_error = format!("{last_error}; 启动 Windows Terminal 失败: {e}"),
+        }
+    }
+
     Err(last_error)
+}
+
+#[cfg(target_os = "linux")]
+fn wsl_terminal_command(distro: &std::ffi::OsStr, script_file: &Path) -> std::process::Command {
+    let mut command = std::process::Command::new("wt.exe");
+    command
+        .arg("new-tab")
+        .arg("wsl.exe")
+        .arg("--distribution")
+        .arg(distro)
+        .arg("--exec")
+        .arg("sh")
+        // wsl.exe starts with a Windows-derived PATH; load the distribution's
+        // login profile before the launcher invokes the user's interactive shell.
+        .arg("-l")
+        .arg(script_file);
+    command
 }
 
 /// Check if a command exists using `which`
@@ -2036,6 +2062,34 @@ mod tests {
     use super::*;
     #[cfg(target_os = "windows")]
     use crate::commands::misc::{decode_command_output, merge_path_segments_win};
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn wsl_terminal_uses_current_distribution_and_literal_script_path() {
+        use std::ffi::OsStr;
+
+        let command = super::wsl_terminal_command(
+            OsStr::new("Ubuntu test"),
+            Path::new("/tmp/launcher with spaces.sh"),
+        );
+        assert_eq!(command.get_program(), OsStr::new("wt.exe"));
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [
+                "new-tab",
+                "wsl.exe",
+                "--distribution",
+                "Ubuntu test",
+                "--exec",
+                "sh",
+                "-l",
+                "/tmp/launcher with spaces.sh"
+            ]
+            .iter()
+            .map(OsStr::new)
+            .collect::<Vec<_>>()
+        );
+    }
 
     #[cfg(target_os = "windows")]
     #[test]
