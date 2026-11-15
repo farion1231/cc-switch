@@ -11,7 +11,7 @@ import os
 ROOT = os.path.dirname(os.path.abspath(__file__))
 LOCALES = os.path.join(ROOT, "..", "src", "i18n", "locales")
 # app 的语言 → lproj 名
-LANGS = {"en": "en", "zh": "zh-Hans", "zh-TW": "zh-Hant", "ja": "ja", "ko": "ko", "ru": "ru", "tr": "tr"}
+LANGS = {"en": "en", "zh": "zh-Hans", "zh-TW": "zh-Hant", "ja": "ja", "ko": "ko", "ru": "ru", "tr": "tr", "de": "de"}
 
 KEYS = [
     # 档名（TIER_I18N_KEYS）
@@ -30,11 +30,11 @@ KEYS = [
     # 账号行
     "authCenter.default", "authCenter.needsReauth", "authCenter.signedInOn",
     "authCenter.enterpriseServer", "authCenter.codexReauthNote", "authCenter.xaiReauthNote",
-    "authCenter.agy.reauthNote", "authCenter.agy.addedOn", "authCenter.agy.current",
+    "authCenter.agy.reauthNote", "authCenter.agy.addedOn", "authCenter.inUseBy",
     "authCenter.claude.reauthNote", "authCenter.claude.addedOn",
     "authCenter.claude.loginExpiresOn", "authCenter.claude.loginMaybeExpired",
     "kimi.oauth.mainland-cn", "kimi.oauth.global", "kimi.oauth.primaryShort",
-    "kimi.oauth.signedOut", "kimi.oauth.noSubscription", "kimi.oauth.current",
+    "kimi.oauth.signedOut", "kimi.oauth.noSubscription",
     *[f"provider.form.claudeAccount.plan.{k}" for k in (
         "pro", "max", "max5x", "max20x", "team", "teamPremium", "enterprise",
     )],

@@ -217,11 +217,11 @@ func quotaFailureText(kind: String, message: String?) -> String {
 
 // MARK: - 账号行
 
-/// 「默认」标签的文案：agy、Kimi 写它们自己现在登着的号
+/// 「默认」标签的文案：agy、Kimi 写「正被它们使用」（和 app 的 authCenter.inUseBy 同一句）
 func defaultLabel(_ account: WidgetAccount) -> String {
     switch account.service {
-    case "agy": return T("authCenter.agy.current")
-    case "kimi": return T("kimi.oauth.current")
+    case "agy": return T("authCenter.inUseBy", ["app": "agy"])
+    case "kimi": return T("authCenter.inUseBy", ["app": "Kimi"])
     default: return T("authCenter.default")
     }
 }
