@@ -2757,7 +2757,10 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
             push_unique_path(&mut search_paths, home.join(".atomcode").join("bin"));
         }
         // 官方 install.ps1 的目标目录（`%LOCALAPPDATA%\AtomCode`），ps1 只写用户 PATH，
-        // GUI 进程不重启时探测不到。
+        // GUI 进程不重启时探测不到。仅 Windows：`data_local_dir()` 在 Linux/macOS
+        // 指向 `~/.local/share` / `~/Library/Application Support`，均非官方目标，
+        // 加进来只会扩大卸载扫描面。
+        #[cfg(target_os = "windows")]
         if let Some(local_data) = dirs::data_local_dir() {
             push_unique_path(&mut search_paths, local_data.join("AtomCode"));
         }

@@ -550,6 +550,7 @@ fn add_at_and_commit<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     fn toml_text() -> String {
         r#"
@@ -655,22 +656,30 @@ context_window = 262144
         assert!(document["provider_accounts"].get("x").is_none());
     }
 
-    /// 测试用的 `ATOMCODE_HOME` 守卫：构造时设值，Drop 时清除（断言 panic 也会清理），
-    /// 避免污染同 crate 的后续测试（与 §9 P2#11 的 crash_at 缺少 guard 同类问题）。
-    struct AtomcodeHomeGuard(std::path::PathBuf);
+    /// 测试用的 `ATOMCODE_HOME` 守卫：构造时保存原值再设新值，Drop 时按原值恢复
+    /// （有则 set、无则 remove；断言 panic 也会恢复），避免污染同 crate 的后续测试。
+    /// 保存的原值在 Drop 中读取，天然满足 clippy 的 dead_code 检查。
+    struct AtomcodeHomeGuard(Option<std::ffi::OsString>);
     impl AtomcodeHomeGuard {
         fn set(dir: &std::path::Path) -> Self {
+            let previous = std::env::var_os("ATOMCODE_HOME");
             std::env::set_var("ATOMCODE_HOME", dir);
-            Self(dir.to_path_buf())
+            Self(previous)
         }
     }
     impl Drop for AtomcodeHomeGuard {
         fn drop(&mut self) {
-            std::env::remove_var("ATOMCODE_HOME");
+            // take() 保证 panic 回溯期间重复 Drop 不会二次恢复。
+            if let Some(previous) = self.0.take() {
+                std::env::set_var("ATOMCODE_HOME", previous);
+            } else {
+                std::env::remove_var("ATOMCODE_HOME");
+            }
         }
     }
 
     #[test]
+    #[serial]
     fn current_provider_returns_account_id_from_default_provider() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
@@ -689,6 +698,7 @@ context_window = 262144
     }
 
     #[test]
+    #[serial]
     fn current_provider_prefers_default_model_and_degrades_to_empty() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");

@@ -735,6 +735,7 @@
     "browsePlaceholderCodex": "например, /home/<your-username>/.codex",
     "browsePlaceholderGemini": "например, /home/<your-username>/.gemini",
     "browsePlaceholderAtomcode": "например, /home/<your-username>/.atomcode",
+    "browsePlaceholderDsh": "например, /home/<your-username>/.dsh",
     "browsePlaceholderGrok": "например, /home/<your-username>/.grok",
     "browsePlaceholderOpencode": "например, /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "например, /home/<your-username>/.openclaw",
