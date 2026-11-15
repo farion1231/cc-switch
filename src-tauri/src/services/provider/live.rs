@@ -762,8 +762,20 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
 /// Writes all providers from the database to the live configuration file.
 /// Used for OpenCode and other additive mode applications.
 fn sync_all_providers_to_live(state: &AppState, app_type: &AppType) -> Result<(), AppError> {
+    sync_all_providers_to_live_with(state, app_type, write_live_for_state)
+}
+
+fn sync_all_providers_to_live_with<F>(
+    state: &AppState,
+    app_type: &AppType,
+    mut write_provider: F,
+) -> Result<(), AppError>
+where
+    F: FnMut(&AppState, &AppType, &Provider) -> Result<(), AppError>,
+{
     let providers = state.db.get_all_providers(app_type.as_str())?;
     let mut synced_count = 0usize;
+    let mut failures = Vec::new();
 
     for provider in providers.values() {
         if provider
@@ -775,19 +787,28 @@ fn sync_all_providers_to_live(state: &AppState, app_type: &AppType) -> Result<()
             continue;
         }
 
-        if let Err(e) = write_live_for_state(state, app_type, provider) {
+        if let Err(e) = write_provider(state, app_type, provider) {
             log::warn!(
                 "Failed to sync {:?} provider '{}' to live: {e}",
                 app_type,
                 provider.id
             );
+            failures.push(format!("{}: {e}", provider.id));
             continue;
         }
         synced_count += 1;
     }
 
     log::info!("Synced {synced_count} {app_type:?} providers to live config");
-    Ok(())
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::Message(format!(
+            "部分 {} 供应商同步失败: {}",
+            app_type.as_str(),
+            failures.join("; ")
+        )))
+    }
 }
 
 /// 把累加式应用的全部供应商同步到 live，再重投影它的 MCP。
@@ -795,14 +816,40 @@ pub(crate) fn sync_additive_app_to_live(
     state: &AppState,
     app_type: &AppType,
 ) -> Result<(), AppError> {
-    sync_all_providers_to_live(state, app_type)?;
+    sync_additive_app_to_live_with(
+        state,
+        app_type,
+        sync_all_providers_to_live,
+        McpService::sync_enabled_for_app,
+    )
+}
+
+fn sync_additive_app_to_live_with<P, M>(
+    state: &AppState,
+    app_type: &AppType,
+    sync_providers: P,
+    sync_mcp: M,
+) -> Result<(), AppError>
+where
+    P: FnOnce(&AppState, &AppType) -> Result<(), AppError>,
+    M: FnOnce(&AppState, &AppType) -> Result<(), AppError>,
+{
+    let provider_result = sync_providers(state, app_type);
 
     // 本函数语义是"把这个应用同步到 live"，MCP 重投影也只针对该应用；
-    // 全量 sync_all_enabled 会把无关应用的 live 损坏牵连进来。投影失败
-    // 上抛（不降级）：这里没有已变更的 DB 状态需要保护，调用方重试即可。
-    McpService::sync_enabled_for_app(state, app_type)?;
+    // 全量 sync_all_enabled 会把无关应用的 live 损坏牵连进来。即使部分供应商
+    // 同步失败，仍尽力重投影 MCP，再把错误一并上抛：这里没有已变更的 DB
+    // 状态需要保护，调用方重试即可。
+    let mcp_result = sync_mcp(state, app_type);
 
-    Ok(())
+    match (provider_result, mcp_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(provider_err), Ok(())) => Err(provider_err),
+        (Ok(()), Err(mcp_err)) => Err(mcp_err),
+        (Err(provider_err), Err(mcp_err)) => {
+            Err(AppError::Message(format!("{provider_err}; mcp: {mcp_err}")))
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1810,5 +1857,129 @@ mod tests {
             .map(|value| value.as_str().expect("tool id should be string"))
             .collect();
         assert_eq!(values, vec!["tool2"]);
+    }
+
+    #[test]
+    fn sync_all_providers_to_live_writes_valid_providers_and_aggregates_failures() {
+        use crate::database::Database;
+        use std::sync::Arc;
+
+        let db = Arc::new(Database::memory().expect("in-memory db"));
+        let state = AppState::new(db);
+
+        let good_one = Provider::with_id(
+            "good-1".to_string(),
+            "Good One".to_string(),
+            json!({ "npm": "@ai-sdk/openai-compatible" }),
+            None,
+        );
+        let bad_one =
+            Provider::with_id("bad-1".to_string(), "Bad One".to_string(), json!({}), None);
+        let good_two = Provider::with_id(
+            "good-2".to_string(),
+            "Good Two".to_string(),
+            json!({ "npm": "@ai-sdk/openai-compatible" }),
+            None,
+        );
+        let mut db_only = Provider::with_id(
+            "db-only".to_string(),
+            "DB Only".to_string(),
+            json!({}),
+            None,
+        );
+        db_only.meta = Some(crate::provider::ProviderMeta {
+            live_config_managed: Some(false),
+            ..Default::default()
+        });
+
+        for provider in [&good_one, &bad_one, &good_two, &db_only] {
+            state
+                .db
+                .save_provider(AppType::OpenCode.as_str(), provider)
+                .expect("save provider");
+        }
+
+        let mut synced_ids = Vec::new();
+        let err = sync_all_providers_to_live_with(&state, &AppType::OpenCode, |_, _, provider| {
+            if provider.id == "bad-1" {
+                return Err(AppError::Message("permission denied".to_string()));
+            }
+            synced_ids.push(provider.id.clone());
+            Ok(())
+        })
+        .expect_err("per-provider failure must be returned after best-effort sync");
+
+        assert_eq!(synced_ids, vec!["good-1", "good-2"]);
+        let msg = err.to_string();
+        assert!(msg.contains("opencode"), "unexpected error: {msg}");
+        assert!(
+            msg.contains("bad-1: permission denied"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
+    fn sync_additive_app_to_live_surfaces_invalid_openclaw_provider_error() {
+        use crate::database::Database;
+        use std::sync::Arc;
+
+        let db = Arc::new(Database::memory().expect("in-memory db"));
+        let state = AppState::new(db);
+
+        let invalid = Provider::with_id(
+            "broken-openclaw".to_string(),
+            "Broken OpenClaw".to_string(),
+            json!("invalid-openclaw-config"),
+            None,
+        );
+        state
+            .db
+            .save_provider(AppType::OpenClaw.as_str(), &invalid)
+            .expect("save invalid openclaw provider");
+
+        let err = sync_additive_app_to_live(&state, &AppType::OpenClaw)
+            .expect_err("invalid OpenClaw provider should surface as Err");
+        let msg = err.to_string();
+        assert!(msg.contains("openclaw"), "unexpected error: {msg}");
+        assert!(msg.contains("broken-openclaw"), "unexpected error: {msg}");
+    }
+
+    #[test]
+    fn sync_additive_app_to_live_still_runs_mcp_projection_when_provider_sync_fails() {
+        use crate::database::Database;
+        use std::sync::Arc;
+
+        let db = Arc::new(Database::memory().expect("in-memory db"));
+        let state = AppState::new(db);
+        let mut mcp_called = false;
+
+        let err = sync_additive_app_to_live_with(
+            &state,
+            &AppType::OpenCode,
+            |_, _| Err(AppError::Message("provider write failed".to_string())),
+            |_, _| {
+                mcp_called = true;
+                Ok(())
+            },
+        )
+        .expect_err("provider error should still propagate");
+
+        assert!(
+            mcp_called,
+            "MCP projection should still run on partial provider failure"
+        );
+        assert_eq!(err.to_string(), "provider write failed");
+
+        let combined_err = sync_additive_app_to_live_with(
+            &state,
+            &AppType::OpenCode,
+            |_, _| Err(AppError::Message("provider write failed".to_string())),
+            |_, _| Err(AppError::Message("mcp write failed".to_string())),
+        )
+        .expect_err("combined error should propagate");
+        assert_eq!(
+            combined_err.to_string(),
+            "provider write failed; mcp: mcp write failed"
+        );
     }
 }
