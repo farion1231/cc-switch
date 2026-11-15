@@ -17,6 +17,7 @@
 use super::codex_oauth_auth::{CODEX_OAUTH_CLIENT_VERSION, CODEX_OAUTH_ORIGINATOR};
 use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
 use crate::provider::Provider;
+use crate::provider_kind::is_copilot_url;
 use crate::proxy::error::ProxyError;
 use serde_json::{json, Value};
 
@@ -382,7 +383,7 @@ pub fn transform_claude_request_for_api_format(
             .settings_config
             .get("baseUrl")
             .and_then(|v| v.as_str())
-            .is_some_and(|u| u.contains("githubcopilot.com"));
+            .is_some_and(is_copilot_url);
     let session_cache_key: Option<String> = if is_copilot {
         let metadata = body.get("metadata");
         // Session 提取优先级（与 forwarder 和 session.rs 统一）：
@@ -536,15 +537,14 @@ impl ClaudeAdapter {
         }
 
         // 检测 Codex OAuth (ChatGPT Plus/Pro)
-        if self.is_codex_oauth(provider) {
+        if provider.is_codex_oauth() {
             return ProviderType::CodexOAuth;
         }
 
-        if self.is_xai_oauth(provider) {
+        if provider.is_xai_oauth() {
             return ProviderType::XaiOAuth;
         }
 
-        // 检测 GitHub Copilot
         if self.is_github_copilot(provider) {
             return ProviderType::GitHubCopilot;
         }
@@ -562,36 +562,13 @@ impl ClaudeAdapter {
         ProviderType::Claude
     }
 
-    /// 检测是否为 Codex OAuth 供应商（ChatGPT Plus/Pro 反代）
-    fn is_codex_oauth(&self, provider: &Provider) -> bool {
-        if let Some(meta) = provider.meta.as_ref() {
-            if meta.provider_type.as_deref() == Some("codex_oauth") {
-                return true;
-            }
-        }
-        false
-    }
-
-    fn is_xai_oauth(&self, provider: &Provider) -> bool {
-        provider.is_xai_oauth()
-    }
-
-    /// 检测是否为 GitHub Copilot 供应商
+    /// `Provider::is_github_copilot`, plus old data whose Copilot URL sits in
+    /// `base_url` / `baseURL` / `apiEndpoint` instead of `env.ANTHROPIC_BASE_URL`.
     fn is_github_copilot(&self, provider: &Provider) -> bool {
-        if let Some(meta) = provider.meta.as_ref() {
-            if meta.provider_type.as_deref() == Some("github_copilot") {
-                return true;
-            }
-        }
-
-        // 兼容旧数据的 fallback，后续应优先依赖 providerType
-        if let Ok(base_url) = self.extract_base_url(provider) {
-            if base_url.contains("githubcopilot.com") {
-                return true;
-            }
-        }
-
-        false
+        provider.is_github_copilot()
+            || self
+                .extract_base_url(provider)
+                .is_ok_and(|base_url| is_copilot_url(&base_url))
     }
 
     /// 检测是否使用 OpenRouter
@@ -760,13 +737,13 @@ impl ProviderAdapter for ClaudeAdapter {
 
     fn extract_base_url(&self, provider: &Provider) -> Result<String, ProxyError> {
         // Codex OAuth: 强制使用 ChatGPT 后端 API 端点（忽略用户配置的 base_url）
-        if self.is_codex_oauth(provider) {
+        if provider.is_codex_oauth() {
             return Ok(super::CHATGPT_CODEX_BASE_URL.to_string());
         }
 
         // xAI OAuth: ignore editable provider base URLs and always use the xAI
         // API origin associated with the managed token.
-        if self.is_xai_oauth(provider) {
+        if provider.is_xai_oauth() {
             return Ok(super::XAI_API_BASE_URL.to_string());
         }
 
@@ -994,11 +971,11 @@ impl ProviderAdapter for ClaudeAdapter {
         }
 
         // Codex OAuth 总是需要格式转换 (Anthropic → OpenAI Responses API)
-        if self.is_codex_oauth(provider) {
+        if provider.is_codex_oauth() {
             return true;
         }
 
-        if self.is_xai_oauth(provider) {
+        if provider.is_xai_oauth() {
             return true;
         }
 
@@ -1893,6 +1870,36 @@ mod tests {
             adapter.provider_type(&copilot_meta),
             ProviderType::GitHubCopilot
         );
+    }
+
+    #[test]
+    fn copilot_legacy_url_in_any_base_url_field() {
+        let adapter = ClaudeAdapter::new();
+        for field in ["base_url", "baseURL", "apiEndpoint"] {
+            let legacy = create_provider(json!({ field: "https://api.githubcopilot.com" }));
+            assert!(!legacy.is_github_copilot(), "{field}");
+            assert_eq!(
+                adapter.provider_type(&legacy),
+                ProviderType::GitHubCopilot,
+                "{field}"
+            );
+        }
+    }
+
+    /// A declared OAuth kind beats a Copilot URL here, while
+    /// `Provider::is_github_copilot` lets the URL win. Kept as is.
+    #[test]
+    fn declared_oauth_kind_beats_copilot_url() {
+        let adapter = ClaudeAdapter::new();
+        let codex = create_provider_with_meta(
+            json!({ "env": { "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com" } }),
+            ProviderMeta {
+                provider_type: Some("codex_oauth".to_string()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(adapter.provider_type(&codex), ProviderType::CodexOAuth);
+        assert!(codex.is_github_copilot());
     }
 
     #[test]

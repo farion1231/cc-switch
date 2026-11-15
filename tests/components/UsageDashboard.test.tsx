@@ -390,6 +390,7 @@ describe("UsageDashboard", () => {
         mcode: false,
         kimi: false,
         qwen: false,
+        dsh: false,
         agy: false,
         omp: false,
         copilot: false,
