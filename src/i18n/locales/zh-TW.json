@@ -1171,6 +1171,46 @@
     },
     "data": {
       "location": "儲存位置"
+    },
+    "ipDiagnostics": {
+      "title": "IP 檢測",
+      "scope": "檢查所選網路路徑的出口資訊。取樣無法驗證 DNS 或瀏覽器隔離，也無法預測帳號限制。",
+      "exitScope": "這裡測的是 CC Switch 經所選路徑存取檢測服務時的出口，不一定等於其他應用程式的出口：直連模式下，Claude Code、Codex 等用戶端使用各自的代理設定；代理工具依網域分流時，存取 AI 服務和存取檢測服務也可能走不同節點。",
+      "route": "檢測網路",
+      "saved": "已儲存的全域代理",
+      "custom": "臨時代理",
+      "proxyUrl": "臨時代理位址",
+      "explicitRoute": "檢測透過此代理傳送，不修改已儲存的設定。代理失敗時不會退回直連。",
+      "systemRoute": "未指定代理：遵循 CC Switch 的系統代理行為，可能透過系統代理或直連。",
+      "settingsError": "無法讀取已儲存的代理，請重試或選擇臨時代理。",
+      "privacy": "僅在點擊檢測後執行。請求 icanhazip.com 和 ipify.org，再將測得的 IP 提交給 ipwho.is 查詢位置及網路資訊。",
+      "run": "檢測 IP",
+      "running": "檢測中…",
+      "invalidProxy": "代理位址無效，請使用 HTTP、HTTPS、SOCKS5 或 SOCKS5H。",
+      "failed": "無法執行檢測，請重試。",
+      "unknown": "未知",
+      "checkedAt": "檢測時間",
+      "incomplete": "出口取樣不完整。檢測失敗無法證明網路路徑安全。",
+      "consistent": "兩個服務測得相同的出口 IP，此結果僅代表本次請求。",
+      "different": "兩個服務測得不同的 IP，可能由分流規則或動態代理造成，請檢查代理設定。",
+      "locationError": "位置查詢失敗",
+      "locationIp": "查詢的 IP",
+      "country": "國家或地區",
+      "region": "州或省",
+      "city": "城市",
+      "asn": "ASN",
+      "isp": "網路業者",
+      "organization": "組織",
+      "exitTimezone": "IP 所在時區",
+      "utcOffset": "UTC 偏移",
+      "localTimezone": "本機時區",
+      "locationSource": "位置與網路資料來自 ipwho.is，資料庫估算可能存在誤差。",
+      "errors": {
+        "network": "連線失敗或逾時",
+        "http": "服務回傳 HTTP 錯誤",
+        "invalidResponse": "服務回傳無效資料",
+        "unavailable": "服務無法提供資料"
+      }
     }
   },
   "apps": {
