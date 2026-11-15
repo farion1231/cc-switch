@@ -2786,6 +2786,11 @@ fn model_pricing_candidates(model_id: &str) -> Vec<String> {
         if let Some(stripped) = strip_reasoning_effort_suffix(&candidate) {
             queue.push(stripped);
         }
+        // AGY's "Gemini 4 Hydrogen (Orchestrator)" is the same Hydrogen worker.
+        // Keep the raw ID and any exact custom price; otherwise use the base API estimate.
+        if candidate == "gemini-4-hydrogen-orchestrator" {
+            queue.push("gemini-4-hydrogen".to_string());
+        }
         if candidate.starts_with("claude-") && candidate.contains('.') {
             queue.push(candidate.replace('.', "-"));
         }
@@ -6100,6 +6105,126 @@ mod tests {
             "缺少 gpt-5 基础定价时，不应前缀误匹配到 gpt-5-mini/gpt-5-pro"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_hydrogen_orchestrator_pricing_preserves_exact_overrides() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        let base = find_model_pricing_row(&conn, "gemini-4-hydrogen")?;
+        assert!(base.is_some());
+        for model in [
+            "gemini-4-hydrogen-orchestrator",
+            "google/GEMINI-4-HYDROGEN-ORCHESTRATOR",
+            "google.gemini-4-hydrogen-orchestrator:free",
+            "gemini-4-hydrogen-orchestrator-high",
+        ] {
+            assert_eq!(find_model_pricing_row(&conn, model)?, base, "{model}");
+        }
+        // Orchestrator is a known Hydrogen variant, not a suffix to strip from any model.
+        for model in [
+            "gemini-4-carbon-orchestrator",
+            "gemini-4-hydrogen-orchestrator-preview",
+            "orchestrator-carbon",
+        ] {
+            assert!(find_model_pricing_row(&conn, model)?.is_none(), "{model}");
+        }
+
+        conn.execute(
+            "INSERT INTO model_pricing VALUES ('gemini-4-hydrogen-orchestrator',
+             'Custom Hydrogen Orchestrator', '3', '12', '0.2', '0')",
+            [],
+        )?;
+        assert_eq!(
+            find_model_pricing_row(&conn, "gemini-4-hydrogen-orchestrator")?,
+            Some(("3".into(), "12".into(), "0.2".into(), "0".into()))
+        );
+        // A custom per-effort entry must also win over both fallback prices.
+        conn.execute(
+            "INSERT INTO model_pricing VALUES ('gemini-4-hydrogen-orchestrator-high',
+             'Custom Hydrogen Orchestrator High', '4', '16', '0.3', '0')",
+            [],
+        )?;
+        assert_eq!(
+            find_model_pricing_row(&conn, "gemini-4-hydrogen-orchestrator-high")?,
+            Some(("4".into(), "16".into(), "0.3".into(), "0".into()))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_hydrogen_orchestrator_backfills_without_transcripts() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            for (id, model, cost) in [
+                ("hydrogen-history", "gemini-4-hydrogen-orchestrator", "0"),
+                ("unresolved-mode", "orchestrator-carbon", "0"),
+                ("already-priced", "gemini-4-hydrogen-orchestrator", "9"),
+            ] {
+                insert_usage_log(
+                    &conn,
+                    id,
+                    "agy",
+                    "_agy_session",
+                    model,
+                    "agy_session",
+                    1000,
+                    1_000_000,
+                    100_000,
+                    1_000_000,
+                    0,
+                    200,
+                    cost,
+                )?;
+            }
+            conn.execute(
+                "UPDATE proxy_request_logs SET request_model='Orchestrator (Carbon)',
+                 input_token_semantics=?1",
+                [INPUT_TOKEN_SEMANTICS_FRESH],
+            )?;
+        }
+        // Updating the base price must find retained variant rows without reading JSONL/SQLite.
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("gemini-4-hydrogen")?,
+            1
+        );
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
+        let conn = lock_conn!(db.conn);
+        let row: (String, String, String, String, String) = conn.query_row(
+            "SELECT model,request_model,input_cost_usd,output_cost_usd,cache_read_cost_usd
+             FROM proxy_request_logs WHERE request_id='hydrogen-history'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )?;
+        assert_eq!(
+            row,
+            (
+                "gemini-4-hydrogen-orchestrator".into(),
+                "Orchestrator (Carbon)".into(),
+                "1.500000".into(),
+                "0.750000".into(),
+                "0.075000".into()
+            )
+        );
+        for (id, expected) in [
+            ("hydrogen-history", "2.325000"),
+            ("unresolved-mode", "0"),
+            ("already-priced", "9"),
+        ] {
+            let cost: String = conn.query_row(
+                "SELECT total_cost_usd FROM proxy_request_logs WHERE request_id=?1",
+                [id],
+                |r| r.get(0),
+            )?;
+            assert_eq!(cost, expected);
+        }
+        let totals: (i64, i64, i64, i64) = conn.query_row(
+            "SELECT COUNT(*),SUM(input_tokens),SUM(output_tokens),SUM(cache_read_tokens) FROM proxy_request_logs",
+            [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)),
+        )?;
+        assert_eq!(totals, (3, 3_000_000, 300_000, 3_000_000));
         Ok(())
     }
 

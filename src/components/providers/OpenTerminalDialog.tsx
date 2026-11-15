@@ -15,8 +15,10 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
 import { authApi, providersApi, settingsApi } from "@/lib/api";
-import { resolveManagedAccountId } from "@/lib/authBinding";
-import { isMac } from "@/lib/platform";
+import {
+  canSwitchAgyAccount,
+  resolveManagedAccountId,
+} from "@/lib/authBinding";
 import type { AppId } from "@/lib/api/types";
 import type { Provider } from "@/types";
 import { toast } from "@/lib/toast";
@@ -240,7 +242,10 @@ export function OpenTerminalDialog({
 
   // Antigravity 官方卡绑了账号：打开前会把 agy 的全局登录切过去，先说清楚
   const boundAgyAccount =
-    appId === "agy" && provider && provider.category === "official" && isMac()
+    appId === "agy" &&
+    provider &&
+    provider.category === "official" &&
+    canSwitchAgyAccount()
       ? resolveManagedAccountId(provider.meta, "agy_oauth")
       : null;
   const { data: agyStatus } = useQuery({
