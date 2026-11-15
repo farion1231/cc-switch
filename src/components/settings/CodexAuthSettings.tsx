@@ -6,6 +6,7 @@ import { SettingsSwitchRow } from "@/components/settings/SettingsLayout";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi } from "@/lib/api";
 import { formatBytes } from "@/components/settings/BackupStorageSection";
+import { CodexQuotaProtectionSettings } from "./CodexQuotaProtectionSettings";
 
 interface CodexAuthSettingsProps {
   settings: SettingsFormState;
@@ -90,11 +91,9 @@ export function CodexAuthSettings({
     });
   };
 
-  // 备份探测可能落后于正在后台进行的迁移（刚勾选迁入就立刻关闭时，
-  // 备份尚未产出）。只要本轮勾选过"迁入既有会话"，就必须提供恢复入口；
-  // 真正有没有账本交给后端 restore 的 skippedReason 判定。
-  const showRestoreOption =
-    hasUnifyBackup || (settings.unifyCodexMigrateExisting ?? false);
+  // v2 history is never reversed automatically. Only an existing legacy v1
+  // ledger authorizes the separate official-history restore operation.
+  const showRestoreOption = hasUnifyBackup;
 
   const handleDisableConfirm = async (restoreBackup: boolean) => {
     setShowDisableConfirm(false);
@@ -131,9 +130,11 @@ export function CodexAuthSettings({
     }
   };
 
-  // 设置 → 应用配置 → Codex 卡片里的三行（经典子 agent 开关在 Codex 聚合页签的「聚合设置」里）
+  // 设置 → 应用配置 → Codex 卡片里的认证、额度与会话设置
+  // 经典子 agent 开关在 Codex 聚合页签的「聚合设置」里。
   return (
     <>
+      <CodexQuotaProtectionSettings settings={settings} onChange={onChange} />
       <SettingsSwitchRow
         label={t("settings.preserveCodexOfficialAuthOnSwitch")}
         help={{
@@ -152,6 +153,11 @@ export function CodexAuthSettings({
           title: t("settings.unifyCodexSessionHistory"),
           body: t("settings.unifyCodexSessionHistoryDescription"),
         }}
+        description={t("settings.codexPauseOfficialLogin.unifiedPriority")}
+        disabled={
+          (settings.codexProxyWithoutOfficialLogin ?? false) &&
+          !(settings.unifyCodexSessionHistory ?? false)
+        }
         checked={settings.unifyCodexSessionHistory ?? false}
         onCheckedChange={handleUnifyHistoryChange}
       />
@@ -179,6 +185,8 @@ export function CodexAuthSettings({
         title={t("confirm.unifyCodexHistory.title")}
         message={t("confirm.unifyCodexHistory.message")}
         checkboxLabel={t("confirm.unifyCodexHistory.migrateExisting")}
+        // Bulk history rewriting requires an explicit, separate opt-in.
+        checkboxDefaultChecked={false}
         confirmText={t("confirm.unifyCodexHistory.confirm")}
         variant="info"
         onConfirm={handleEnableConfirm}

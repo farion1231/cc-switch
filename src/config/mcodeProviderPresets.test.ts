@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { mcodeProviderPresets } from "./mcodeProviderPresets";
+import {
+  mcodeOnlyPiPresets,
+  mcodeProviderPresets,
+} from "./mcodeProviderPresets";
 import { piProviderPresets } from "./piProviderPresets";
 
 const mcodePreset = (name: string) =>
   mcodeProviderPresets.find((preset) => preset.name === name);
 const piPreset = (name: string) =>
-  piProviderPresets.find((preset) => preset.name === name)!;
+  [...piProviderPresets, ...mcodeOnlyPiPresets].find(
+    (preset) => preset.name === name,
+  )!;
 
 describe("mcodeProviderPresets", () => {
   it("passes Pi's model compat through verbatim but never its thinkingLevelMap", () => {

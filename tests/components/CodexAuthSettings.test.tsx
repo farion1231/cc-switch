@@ -20,11 +20,12 @@ const forcesMultiAgentV2Mock = vi.fn();
 const getCompressionMock = vi.fn();
 const setCompressionMock = vi.fn();
 const diskUsageMock = vi.fn();
+const hasUnifyBackupMock = vi.fn().mockResolvedValue(false);
 
 vi.mock("@/lib/api", () => ({
   settingsApi: {
     codexForcesMultiAgentV2: () => forcesMultiAgentV2Mock(),
-    hasCodexUnifyHistoryBackup: vi.fn().mockResolvedValue(false),
+    hasCodexUnifyHistoryBackup: () => hasUnifyBackupMock(),
     restoreCodexUnifiedHistory: vi.fn(),
     getCodexSessionCompression: () => getCompressionMock(),
     setCodexSessionCompression: (enabled: boolean) =>
@@ -131,5 +132,123 @@ describe("CodexAuthSettings session compression toggle", () => {
     await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
     expect(setCompressionMock).toHaveBeenCalledWith(true);
     expect(onChange).not.toHaveBeenCalled();
+  });
+});
+
+describe("CodexAuthSettings unified session history toggle", () => {
+  const UNIFY = "settings.unifyCodexSessionHistory";
+
+  beforeEach(() => {
+    hasUnifyBackupMock.mockResolvedValue(false);
+    getCompressionMock.mockResolvedValue(false);
+    diskUsageMock.mockResolvedValue(0);
+  });
+
+  async function renderUnify(
+    enabled: boolean,
+    migrateExisting?: boolean,
+    paused = false,
+  ) {
+    const onChange = vi.fn().mockResolvedValue(true);
+    await act(async () => {
+      render(
+        <CodexAuthSettings
+          settings={
+            {
+              unifyCodexSessionHistory: enabled,
+              unifyCodexMigrateExisting: migrateExisting,
+              codexProxyWithoutOfficialLogin: paused,
+            } as SettingsFormState
+          }
+          onChange={onChange}
+        />,
+      );
+    });
+    return onChange;
+  }
+
+  // Identity preference alone must not implicitly rewrite existing history.
+  it("enables identity preference without implicitly migrating existing sessions", async () => {
+    const onChange = await renderUnify(false);
+
+    fireEvent.click(screen.getByRole("switch", { name: UNIFY }));
+    const checkbox = await screen.findByRole("checkbox");
+    expect(
+      screen.getByText("confirm.unifyCodexHistory.migrateExisting"),
+    ).toBeInTheDocument();
+    expect(checkbox).not.toBeChecked();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "confirm.unifyCodexHistory.confirm" }),
+    );
+    expect(onChange).toHaveBeenCalledWith({
+      unifyCodexSessionHistory: true,
+      unifyCodexMigrateExisting: false,
+    });
+  });
+
+  it("migrates only after a separate explicit opt-in", async () => {
+    const onChange = await renderUnify(false);
+
+    fireEvent.click(screen.getByRole("switch", { name: UNIFY }));
+    fireEvent.click(await screen.findByRole("checkbox"));
+    fireEvent.click(
+      screen.getByRole("button", { name: "confirm.unifyCodexHistory.confirm" }),
+    );
+    expect(onChange).toHaveBeenCalledWith({
+      unifyCodexSessionHistory: true,
+      unifyCodexMigrateExisting: true,
+    });
+  });
+
+  it("blocks enabling unified identity while login pause is active", async () => {
+    await renderUnify(false, false, true);
+    expect(screen.getByRole("switch", { name: UNIFY })).toBeDisabled();
+    expect(
+      screen.getByText("settings.codexPauseOfficialLogin.unifiedPriority"),
+    ).toBeInTheDocument();
+  });
+
+  it("allows resolving an older conflicting preference by disabling unified identity", async () => {
+    await renderUnify(true, false, true);
+    const toggle = screen.getByRole("switch", { name: UNIFY });
+    expect(toggle).toBeEnabled();
+    fireEvent.click(toggle);
+    expect(
+      await screen.findByText("confirm.unifyCodexHistoryOff.message"),
+    ).toBeInTheDocument();
+  });
+
+  it("offers restore only when a legacy v1 backup exists", async () => {
+    hasUnifyBackupMock.mockResolvedValue(true);
+    await renderUnify(true, true);
+
+    fireEvent.click(screen.getByRole("switch", { name: UNIFY }));
+    expect(
+      await screen.findByText("confirm.unifyCodexHistoryOff.restoreBackup"),
+    ).toBeInTheDocument();
+  });
+
+  it("does not offer a reverse migration for a v2-only opt-in", async () => {
+    await renderUnify(true, true);
+    fireEvent.click(screen.getByRole("switch", { name: UNIFY }));
+    expect(
+      await screen.findByText("confirm.unifyCodexHistoryOff.message"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("confirm.unifyCodexHistoryOff.restoreBackup"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("has nothing to restore when migration was never opted into", async () => {
+    await renderUnify(true, false);
+
+    fireEvent.click(screen.getByRole("switch", { name: UNIFY }));
+    expect(
+      await screen.findByText("confirm.unifyCodexHistoryOff.message"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("confirm.unifyCodexHistoryOff.restoreBackup"),
+    ).not.toBeInTheDocument();
   });
 });

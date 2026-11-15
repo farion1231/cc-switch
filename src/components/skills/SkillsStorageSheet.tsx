@@ -3,11 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Loader2, RefreshCw } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { useSettings } from "@/hooks/useSettings";
-import {
-  useCcSwitchSkillsDir,
-  useInstalledSkills,
-  useResyncSkillsToApps,
-} from "@/hooks/useSkills";
+import { useCcSwitchSkillsDir, useInstalledSkills } from "@/hooks/useSkills";
 import { DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,19 +11,16 @@ import {
   V7ConfirmDialog,
   V7Dialog,
 } from "@/components/mcp/formBits";
-import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { shortenHomePath } from "@/components/sessions/utils";
-import { skillsApi, type SkillAppSyncOutcome } from "@/lib/api/skills";
-import type { AppId } from "@/lib/api/types";
+import { skillsApi } from "@/lib/api/skills";
 import type { SkillStorageLocation, SkillSyncMethod } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { useSkillsResync } from "./useSkillsResync";
 
 interface SkillsStorageSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
-
-const appName = (app: string) => APP_DISPLAY_NAME[app as AppId] ?? app;
 
 const DEFAULT_CC_SWITCH_DIR = "~/.cc-switch/skills";
 const UNIFIED_DIR = "~/.agents/skills";
@@ -64,7 +57,7 @@ export function SkillsStorageSheet({
   const { settings, updateSettings, autoSaveSettings } = useSettings();
   const { data: installedSkills } = useInstalledSkills();
   const { data: ccSwitchDirRaw } = useCcSwitchSkillsDir(open);
-  const resyncMutation = useResyncSkillsToApps();
+  const { resync, isPending: resyncPending } = useSkillsResync();
 
   const location: SkillStorageLocation =
     settings?.skillStorageLocation ?? "cc_switch";
@@ -145,45 +138,6 @@ export function SkillsStorageSheet({
     if (method === syncMethod) return;
     updateSettings({ skillSyncMethod: method });
     void autoSaveSettings({ skillSyncMethod: method }).catch(() => undefined);
-  };
-
-  const reportResync = (outcomes: SkillAppSyncOutcome[]) => {
-    const failed = outcomes.filter((outcome) => !outcome.ok);
-    if (failed.length === 0) {
-      toast.success(t("skills.storageSheet.resyncDone"), { closeButton: true });
-      return;
-    }
-    const details = failed.flatMap((outcome) =>
-      outcome.error
-        ? [`${appName(outcome.app)}: ${outcome.error}`]
-        : outcome.failedSkills.map(
-            (skill) =>
-              `${appName(outcome.app)} · ${t(
-                "skills.storageSheet.resyncSkillItem",
-                { directory: skill.directory, error: skill.error },
-              )}`,
-          ),
-    );
-    toast.warning(
-      t("skills.storageSheet.resyncPartial", {
-        count: failed.length,
-        apps: failed
-          .map((outcome) => appName(outcome.app))
-          .join(t("mcpPage.listSeparator")),
-      }),
-      { description: details.join("\n"), closeButton: true },
-    );
-  };
-
-  const handleResync = async () => {
-    if (resyncMutation.isPending) return;
-    try {
-      reportResync(await resyncMutation.mutateAsync());
-    } catch (error) {
-      toast.error(t("common.error"), {
-        description: extractErrorMessage(error) || String(error),
-      });
-    }
   };
 
   return (
@@ -321,15 +275,15 @@ export function SkillsStorageSheet({
                   variant="neutral"
                   size="compact"
                   className="shrink-0"
-                  disabled={resyncMutation.isPending}
-                  onClick={() => void handleResync()}
+                  disabled={resyncPending}
+                  onClick={() => void resync()}
                 >
-                  {resyncMutation.isPending ? (
+                  {resyncPending ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   ) : (
                     <RefreshCw className="h-3.5 w-3.5" strokeWidth={2} />
                   )}
-                  {resyncMutation.isPending
+                  {resyncPending
                     ? t("skills.storageSheet.resyncing")
                     : t("skills.storageSheet.resync")}
                 </Button>

@@ -104,7 +104,9 @@ pub async fn fetch_models(
             .strip_suffix("/v1beta")
             .or_else(|| base.strip_suffix("/v1"))
             .unwrap_or(base);
-        vec![format!("{base}/v1beta/models")]
+        // 默认每页只回 50 个（Gemini / Gemma / Imagen / Veo 加起来早已超出），
+        // 这里不翻页，直接要最大页。
+        vec![format!("{base}/v1beta/models?pageSize=1000")]
     } else {
         build_models_url_candidates(base_url, is_full_url, models_url_override)?
     };
@@ -308,10 +310,15 @@ pub fn build_models_url_candidates(
         if !root.is_empty() && root.contains("://") {
             candidates.push(format!("{root}/v1/models"));
             candidates.push(format!("{root}/models"));
+            // 阿里云百炼 / 千问 Token Plan：`/apps/anthropic` 入口不提供 /v1/models，
+            // 模型列表只在 OpenAI 兼容路径 `/compatible-mode/v1/models` 下。
+            if trimmed.ends_with("/apps/anthropic") {
+                candidates.push(format!("{root}/compatible-mode/v1/models"));
+            }
         }
     }
 
-    // 候选最多 3 条，线性去重即可，不值得上 HashSet。
+    // 候选最多 4 条，线性去重即可，不值得上 HashSet。
     let mut unique: Vec<String> = Vec::with_capacity(candidates.len());
     for url in candidates {
         if !unique.iter().any(|u| u == &url) {
@@ -557,8 +564,30 @@ mod tests {
                 "https://dashscope.aliyuncs.com/apps/anthropic/v1/models",
                 "https://dashscope.aliyuncs.com/v1/models",
                 "https://dashscope.aliyuncs.com/models",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1/models",
             ]
         );
+    }
+
+    #[test]
+    fn test_candidates_qianwen_token_plan_compatible_mode() {
+        let c = build_models_url_candidates(
+            "https://token-plan.maas.qianwenaiapi.com/apps/anthropic/",
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            c.last().map(String::as_str),
+            Some("https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1/models")
+        );
+    }
+
+    #[test]
+    fn test_candidates_plain_anthropic_suffix_skips_compatible_mode() {
+        let c =
+            build_models_url_candidates("https://api.example.com/anthropic", false, None).unwrap();
+        assert!(!c.iter().any(|u| u.contains("compatible-mode")));
     }
 
     #[test]

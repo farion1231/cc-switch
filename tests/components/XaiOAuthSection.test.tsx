@@ -4,6 +4,10 @@ import { XaiOAuthSection } from "@/components/providers/forms/XaiOAuthSection";
 
 const mockUseXaiOauth = vi.hoisted(() => vi.fn());
 
+vi.mock("@/lib/query/accountPlans", () => ({
+  useAccountQuotaPlans: () => ({}),
+}));
+
 vi.mock("@/components/providers/forms/hooks/useXaiOauth", () => ({
   useXaiOauth: mockUseXaiOauth,
 }));

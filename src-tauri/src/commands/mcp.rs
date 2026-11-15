@@ -6,12 +6,40 @@ use std::collections::HashMap;
 use serde::Serialize;
 use tauri::State;
 
+use super::run_db_task;
 use crate::app_config::AppType;
 use crate::claude_mcp;
 use crate::services::McpService;
 use crate::store::AppState;
 
-/// 获取 Claude MCP 状态
+/// Start a bounded, one-shot batch only while the MCP page is mounted.
+#[tauri::command]
+pub async fn start_mcp_connectivity_checks(
+    state: State<'_, AppState>,
+    server_ids: Vec<String>,
+    on_result: tauri::ipc::Channel<crate::services::mcp_connectivity::ConnectivityResult>,
+) -> Result<String, String> {
+    let servers = run_db_task(&state, |state| {
+        McpService::get_all_servers(state).map_err(|e| e.to_string())
+    })
+    .await?;
+    Ok(crate::services::mcp_connectivity::start_checks(
+        // Use the page's enabled selection: app toggles update it optimistically,
+        // so the database's enablement flags can still lag behind the UI.
+        servers
+            .into_iter()
+            .filter(|(id, _)| server_ids.contains(id))
+            .map(|(_, server)| server)
+            .collect(),
+        move |result| on_result.send(result).is_ok(),
+    ))
+}
+
+#[tauri::command]
+pub fn cancel_mcp_connectivity_checks(batch_id: String) {
+    crate::services::mcp_connectivity::cancel_checks(&batch_id);
+}
+
 #[tauri::command]
 pub async fn get_claude_mcp_status() -> Result<claude_mcp::McpStatus, String> {
     claude_mcp::get_mcp_status().map_err(|e| e.to_string())
@@ -29,7 +57,6 @@ pub async fn upsert_claude_mcp_server(id: String, spec: serde_json::Value) -> Re
     claude_mcp::upsert_mcp_server(&id, spec).map_err(|e| e.to_string())
 }
 
-/// 删除一个 MCP 服务器条目
 #[tauri::command]
 pub async fn delete_claude_mcp_server(id: String) -> Result<bool, String> {
     claude_mcp::delete_mcp_server(&id).map_err(|e| e.to_string())
@@ -169,7 +196,6 @@ pub async fn get_mcp_servers(
     McpService::get_all_servers(&state).map_err(|e| e.to_string())
 }
 
-/// 添加或更新 MCP 服务器
 #[tauri::command]
 pub async fn upsert_mcp_server(
     state: State<'_, AppState>,
@@ -178,7 +204,6 @@ pub async fn upsert_mcp_server(
     McpService::upsert_server(&state, server).map_err(|e| e.to_string())
 }
 
-/// 删除 MCP 服务器
 #[tauri::command]
 pub async fn delete_mcp_server(state: State<'_, AppState>, id: String) -> Result<bool, String> {
     McpService::delete_server(&state, &id).map_err(|e| e.to_string())

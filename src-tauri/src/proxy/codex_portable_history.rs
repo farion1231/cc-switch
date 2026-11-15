@@ -9,13 +9,17 @@ pub(crate) fn project_item(item: &Value) -> Option<Value> {
     if item.get("type").and_then(Value::as_str) != Some("web_search_call") {
         return None;
     }
-    let completed = item.get("status").and_then(Value::as_str) == Some("completed");
+    let status = item
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let completed = !matches!(status, "in_progress" | "searching");
     let mut message = json!({
         "type": "message", "role": "assistant", "phase": "commentary",
         "status": if completed { "completed" } else { "in_progress" },
         "content": if completed { json!([{
             "type": "output_text", "annotations": [],
-            "text": format!("Historical web activity completed: {}. This records prior activity, not a new search result.",
+            "text": format!("Historical web activity ({status}): {}. This records prior activity, not a new search result.",
                 item.get("action").unwrap_or(&Value::Null))
         }]) } else { json!([]) }
     });
@@ -109,14 +113,13 @@ where
 {
     async_stream::stream! {
         futures::pin_mut!(stream);
-        let mut buffer = String::new();
-        let mut remainder = Vec::new();
+        let mut buffer = super::sse::SseBuffer::new();
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    super::sse::append_utf8_safe(&mut buffer, &mut remainder, &bytes);
-                    while let Some(block) = super::sse::take_sse_block(&mut buffer) {
-                        yield Ok(project_block(&block));
+                    buffer.push_bytes(&bytes);
+                    while let Some(block) = buffer.next_block() {
+                        yield Ok(project_block(block));
                     }
                 }
                 Err(error) => {
@@ -125,10 +128,8 @@ where
                 }
             }
         }
-        if !remainder.is_empty() {
-            buffer.push_str(&String::from_utf8_lossy(&remainder));
-        }
-        if !buffer.trim().is_empty() { yield Ok(project_block(&buffer)); }
+        let tail = buffer.take_tail();
+        if !tail.trim().is_empty() { yield Ok(project_block(&tail)); }
     }
 }
 
@@ -155,10 +156,31 @@ mod tests {
         assert_eq!(project_request(&mut body), 0);
     }
 
+    #[test]
+    fn failed_and_unknown_search_activity_preserve_the_visible_action() {
+        for status in [Some("failed"), Some("incomplete"), Some("cancelled"), None] {
+            let mut item =
+                json!({"type":"web_search_call", "action":{"type":"search", "query":"保持查询"}});
+            if let Some(status) = status {
+                item["status"] = json!(status);
+            }
+            let projected = project_item(&item).unwrap();
+            assert_eq!(projected["status"], "completed");
+            let text = projected["content"][0]["text"].as_str().unwrap();
+            assert!(text.contains(status.unwrap_or("unknown")));
+            assert!(text.contains("保持查询"));
+            assert!(text.contains("not a new search result"));
+        }
+        let call = json!({"type":"function_call", "name":"web_search_call", "call_id":"call_1", "arguments":"{}"});
+        let output = json!({"type":"function_call_output", "call_id":"call_1", "output":"{\"type\":\"web_search_call\"}"});
+        assert!(project_item(&call).is_none());
+        assert!(project_item(&output).is_none());
+    }
+
     #[tokio::test]
     async fn fragmented_sse_preserves_completion_usage_and_other_items() {
         let search = json!({"type":"web_search_call","id":"ws_1","status":"completed",
-                            "action":{"type":"search","query":"evidence"}});
+                            "action":{"type":"search","query":"历史活动 🔎"}});
         let wire = format!(
             "id: event-1\nevent: response.output_item.done\ndata: {}\n\n\
                             event: response.completed\ndata: {}\n\n",
@@ -167,7 +189,7 @@ mod tests {
         );
         let chunks: Vec<_> = wire
             .as_bytes()
-            .chunks(7)
+            .chunks(1)
             .map(|chunk| Ok::<_, std::io::Error>(Bytes::copy_from_slice(chunk)))
             .collect();
         let out = project_stream(futures::stream::iter(chunks));
@@ -177,6 +199,7 @@ mod tests {
             bytes.extend_from_slice(&chunk.unwrap());
         }
         let text = String::from_utf8(bytes).unwrap();
+        assert!(text.contains("历史活动 🔎"));
         assert!(text.contains("id: event-1"));
         assert!(text.contains("response.completed"));
         assert!(text.contains("\"total_tokens\":42"));
