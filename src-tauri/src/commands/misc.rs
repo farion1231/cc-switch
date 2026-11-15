@@ -164,10 +164,144 @@ pub struct ToolVersion {
     update_blocked_by_node: Option<tool_node_requirement::NodeRequirementGap>,
 }
 
-const VALID_TOOLS: [&str; 14] = [
-    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "kimi",
-    "dsh", "agy", "omp", "copilot",
+/// 「应用」页管理的一个 CLI 工具。新增工具只在 `TOOLS` 里加一项。
+struct ToolSpec {
+    id: &'static str,
+    display_name: &'static str,
+    /// npm 上的包名：版本检查、Node 要求检查、锚定升级与卸载都读它。
+    /// hermes 走自己的 CLI/installer，agy 不在 npm。
+    npm_package: Option<&'static str>,
+    /// `npm i -g` 能否装上它。omp 的入口是 bun 脚本，npm 装上也跑不起来。
+    npm_installable: bool,
+    /// `npm i -g` 时须追加的参数（前导空格已含），静态安装命令和锚定到某处 npm 的
+    /// 升级命令共用。
+    ///
+    /// Claude Code / OpenCode 的 postinstall 把平台 optional dependency 中的原生程序放到
+    /// bin/claude.exe / bin/opencode.exe。npm 12 拦截该脚本时会留下文本占位文件，
+    /// Windows 执行后报“与 Windows 版本不兼容”。
+    /// Grok Build 的 bin/grok 是 node launcher，postinstall 才把 optional dependency 里的
+    /// 平台二进制解到 `~/.grok/bin/grok-<version>` 并 relink `grok`；被拦后 launcher 只要见到
+    /// `~/.grok/bin/grok` 就直接运行它、不比对版本，于是 npm 升级 exit 0 却仍跑旧版。
+    /// MiniMax Code 依赖 better-sqlite3 的安装脚本：npm 12 默认拦截依赖的 install 脚本，
+    /// 只放行 `--allow-scripts` 列出的包（按注册表包名匹配），被拦后 SQLite 不可用；
+    /// `--ignore-scripts=false` / `--include=optional` 抵消用户 npmrc 里的相反设置。
+    /// npm 10/11 上这串参数无副作用（实测 exit 0、脚本照常执行）。整段 `--allow-scripts=…`
+    /// 加双引号：逗号在 PowerShell 里会被当成数组分隔符，bash/cmd 都会剥掉这层引号。
+    npm_install_args: &'static str,
+    /// 工具自带的升级子命令。
+    ///
+    /// `omp update` 自己识别 brew / mise / nix / bun / npm / 预编译二进制并照原渠道升级，
+    /// 非 TTY 下不询问，失败退出码非 0；Nix 安装它只打印提示就 exit 0，见
+    /// `anchored_command_from_paths` 的 Nix 门控。
+    /// MiniMax Code 虽有 `mcode update`，却刻意不填：它在 stdin/stdout 非 TTY 时只打印
+    /// "No interactive confirmation is available" 就 exit 0、并不安装。静默 lifecycle 的
+    /// `cmd.output()` 正是非 TTY，填上会让 `mcode update || <fallback>` 的兜底永不触发。
+    official_update_args: Option<&'static str>,
+    /// 该工具在 npm 上的预发布通道 tag(靠前者优先)。仅当本地版本已**严格领先**
+    /// `latest` 时才会被补查 —— 让主动在抢先通道的用户(如走 Claude Code 的 `next`)
+    /// 看到与所在通道对齐的"最新版本",同时绝不把稳定通道用户暴露给预发布版。
+    /// 空切片表示该工具只看 `latest`、不补查。
+    ///
+    /// 为何不通用覆盖所有工具:各家预发布 tag 命名互不统一(codex=alpha/beta/native、
+    /// gemini=nightly/preview、openclaw=alpha/beta),且 codex 的 beta/native 是
+    /// `0.1.x` 时间戳式版本、gemini 有误发的 `false` tag —— 这些脏值虽会被
+    /// `pick_latest_version` 的版本比较挡掉,但维护成本与误报风险不值当,故暂只为
+    /// Claude Code 启用。
+    npm_prerelease_tags: &'static [&'static str],
+}
+
+impl ToolSpec {
+    const fn npm(id: &'static str, display_name: &'static str, package: &'static str) -> Self {
+        Self {
+            npm_package: Some(package),
+            ..Self::not_on_npm(id, display_name)
+        }
+    }
+
+    const fn not_on_npm(id: &'static str, display_name: &'static str) -> Self {
+        Self {
+            id,
+            display_name,
+            npm_package: None,
+            npm_installable: true,
+            npm_install_args: "",
+            official_update_args: None,
+            npm_prerelease_tags: &[],
+        }
+    }
+
+    const fn npm_install_args(mut self, args: &'static str) -> Self {
+        self.npm_install_args = args;
+        self
+    }
+
+    const fn not_npm_installable(mut self) -> Self {
+        self.npm_installable = false;
+        self
+    }
+
+    const fn official_update(mut self, args: &'static str) -> Self {
+        self.official_update_args = Some(args);
+        self
+    }
+
+    const fn npm_prerelease(mut self, tags: &'static [&'static str]) -> Self {
+        self.npm_prerelease_tags = tags;
+        self
+    }
+
+    fn npm_install_command(&self) -> Option<String> {
+        let package = self.npm_package.filter(|_| self.npm_installable)?;
+        Some(format!(
+            "npm i -g {package}@latest{}",
+            self.npm_install_args
+        ))
+    }
+}
+
+/// 不认识的工具名：没有 npm 包、没有自升级命令。
+static UNKNOWN_TOOL: ToolSpec = ToolSpec::not_on_npm("", "Unknown");
+
+/// 顺序即「应用」页与批量安装 / 升级的顺序。
+static TOOLS: [ToolSpec; 14] = [
+    ToolSpec::npm("claude", "Claude Code", "@anthropic-ai/claude-code")
+        .npm_install_args(
+            " --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code",
+        )
+        .official_update("update")
+        .npm_prerelease(&["next"]),
+    ToolSpec::npm("codex", "Codex", "@openai/codex").official_update("update"),
+    ToolSpec::npm("gemini", "Gemini CLI", "@google/gemini-cli"),
+    ToolSpec::npm("grok", "Grok Build", "@xai-official/grok")
+        .npm_install_args(
+            " --ignore-scripts=false --include=optional --allow-scripts=@xai-official/grok",
+        )
+        .official_update("update"),
+    ToolSpec::npm("opencode", "OpenCode", "opencode-ai")
+        .npm_install_args(" --ignore-scripts=false --include=optional --allow-scripts=opencode-ai")
+        .official_update("upgrade"),
+    ToolSpec::npm("openclaw", "OpenClaw", "openclaw").official_update("update --yes"),
+    ToolSpec::not_on_npm("hermes", "Hermes").official_update("update"),
+    ToolSpec::npm("pi", "Pi", "@earendil-works/pi-coding-agent"),
+    ToolSpec::npm("mcode", "MiniMax Code", "@minimax-ai/code").npm_install_args(
+        " --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
+    ),
+    ToolSpec::npm("kimi", "Kimi Code", "@moonshot-ai/kimi-code").official_update("upgrade --yes"),
+    ToolSpec::npm("dsh", "DeepSeek Harness", "@deepseek-ai/dsh").npm_install_args(" --engine-strict"),
+    ToolSpec::not_on_npm("agy", "Antigravity CLI").official_update("update"),
+    ToolSpec::npm("omp", "Oh My Pi", "@oh-my-pi/pi-coding-agent")
+        .not_npm_installable()
+        .official_update("update"),
+    ToolSpec::npm("copilot", "GitHub Copilot CLI", "@github/copilot"),
 ];
+
+fn known_tool(id: &str) -> Option<&'static ToolSpec> {
+    TOOLS.iter().find(|tool| tool.id == id)
+}
+
+fn tool_spec(id: &str) -> &'static ToolSpec {
+    known_tool(id).unwrap_or(&UNKNOWN_TOOL)
+}
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -208,15 +342,9 @@ pub async fn get_tool_versions(
     tools: Option<Vec<String>>,
     wsl_shell_by_tool: Option<HashMap<String, WslShellPreferenceInput>>,
 ) -> Result<Vec<ToolVersion>, String> {
-    let requested: Vec<&str> = if let Some(tools) = tools.as_ref() {
-        let set: std::collections::HashSet<&str> = tools.iter().map(|s| s.as_str()).collect();
-        VALID_TOOLS
-            .iter()
-            .copied()
-            .filter(|t| set.contains(t))
-            .collect()
-    } else {
-        VALID_TOOLS.to_vec()
+    let requested: Vec<&str> = match tools.as_deref() {
+        Some(tools) => normalize_requested_tools(tools),
+        None => TOOLS.iter().map(|tool| tool.id).collect(),
     };
     let mut results = Vec::new();
 
@@ -241,9 +369,9 @@ struct ToolLifecycleCoordinator {
 impl Default for ToolLifecycleCoordinator {
     fn default() -> Self {
         Self {
-            tools: VALID_TOOLS
+            tools: TOOLS
                 .iter()
-                .map(|&tool| (tool, Arc::new(tokio::sync::Mutex::new(()))))
+                .map(|tool| (tool.id, Arc::new(tokio::sync::Mutex::new(()))))
                 .collect(),
             execution: Arc::new(tokio::sync::Mutex::new(())),
         }
@@ -333,7 +461,7 @@ pub async fn prepare_tool_uninstall(
     tool: String,
     wsl_shell_by_tool: Option<HashMap<String, WslShellPreferenceInput>>,
 ) -> Result<Vec<ToolUninstallCandidate>, String> {
-    if !VALID_TOOLS.contains(&tool.as_str()) {
+    if known_tool(&tool).is_none() {
         return Err(format!("Unsupported tool action target: {tool}"));
     }
     tokio::task::spawn_blocking(move || {
@@ -622,9 +750,9 @@ fn decode_windows_command_output(bytes: &[u8]) -> String {
 
 fn normalize_requested_tools(tools: &[String]) -> Vec<&'static str> {
     let set: std::collections::HashSet<&str> = tools.iter().map(|s| s.as_str()).collect();
-    VALID_TOOLS
+    TOOLS
         .iter()
-        .copied()
+        .map(|tool| tool.id)
         .filter(|tool| set.contains(tool))
         .collect()
 }
@@ -674,7 +802,7 @@ fn build_tool_lifecycle_command(
     }
 
     for tool in tools {
-        let label = tool_display_name(tool);
+        let label = tool_spec(tool).display_name;
         lines.push(format!("echo ========== {label} =========="));
 
         let pref = wsl_shell_by_tool.and_then(|m| m.get(*tool));
@@ -698,26 +826,6 @@ fn build_tool_lifecycle_command(
     } else {
         "\n"
     }))
-}
-
-fn tool_display_name(tool: &str) -> &'static str {
-    match tool {
-        "claude" => "Claude Code",
-        "codex" => "Codex",
-        "gemini" => "Gemini CLI",
-        "grok" => "Grok Build",
-        "opencode" => "OpenCode",
-        "openclaw" => "OpenClaw",
-        "hermes" => "Hermes",
-        "pi" => "Pi",
-        "omp" => "Oh My Pi",
-        "mcode" => "MiniMax Code",
-        "kimi" => "Kimi Code",
-        "dsh" => "DeepSeek Harness",
-        "agy" => "Antigravity CLI",
-        "copilot" => "GitHub Copilot CLI",
-        _ => "Unknown",
-    }
 }
 
 /// 官方 shell installer 都不用 `curl | bash` 这种 pipe 形式（仍然用 curl 下载，
@@ -988,78 +1096,10 @@ enum LifecycleCommandShell {
     WindowsBatch,
 }
 
-fn npm_install_command_for(tool: &str) -> Option<&'static str> {
-    match tool {
-        "claude" => Some(
-            "npm i -g @anthropic-ai/claude-code@latest --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code",
-        ),
-        "codex" => Some("npm i -g @openai/codex@latest"),
-        "gemini" => Some("npm i -g @google/gemini-cli@latest"),
-        "grok" => Some(
-            "npm i -g @xai-official/grok@latest --ignore-scripts=false --include=optional --allow-scripts=@xai-official/grok",
-        ),
-        "opencode" => Some(
-            "npm i -g opencode-ai@latest --ignore-scripts=false --include=optional --allow-scripts=opencode-ai",
-        ),
-        "openclaw" => Some("npm i -g openclaw@latest"),
-        "pi" => Some("npm i -g @earendil-works/pi-coding-agent@latest"),
-        "kimi" => Some("npm i -g @moonshot-ai/kimi-code@latest"),
-        "copilot" => Some("npm i -g @github/copilot@latest"),
-        "dsh" => Some("npm i -g @deepseek-ai/dsh@latest --engine-strict"),
-        "mcode" => Some(
-            "npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
-        ),
-        _ => None,
-    }
-}
-
-/// `npm i -g` 时须追加的参数（前导空格已含），与 `npm_install_command_for` 的静态命令
-/// 保持一致，供锚定到某处 npm 的升级命令复用。
-///
-/// Claude Code / OpenCode 的 postinstall 把平台 optional dependency 中的原生程序放到
-/// bin/claude.exe / bin/opencode.exe。npm 12 拦截该脚本时会留下文本占位文件，
-/// Windows 执行后报“与 Windows 版本不兼容”。
-/// Grok Build 的 bin/grok 是 node launcher，postinstall 才把 optional dependency 里的
-/// 平台二进制解到 `~/.grok/bin/grok-<version>` 并 relink `grok`；被拦后 launcher 只要见到
-/// `~/.grok/bin/grok` 就直接运行它、不比对版本，于是 npm 升级 exit 0 却仍跑旧版。
-/// MiniMax Code 依赖 better-sqlite3 的安装脚本：npm 12 默认拦截依赖的 install 脚本，
-/// 只放行 `--allow-scripts` 列出的包（按注册表包名匹配），被拦后 SQLite 不可用；
-/// `--ignore-scripts=false` / `--include=optional` 抵消用户 npmrc 里的相反设置。
-/// npm 10/11 上这串参数无副作用（实测 exit 0、脚本照常执行）。整段 `--allow-scripts=…`
-/// 加双引号：逗号在 PowerShell 里会被当成数组分隔符，bash/cmd 都会剥掉这层引号。
-fn npm_install_extra_args(tool: &str) -> &'static str {
-    match tool {
-        "dsh" => " --engine-strict",
-        "claude" => {
-            " --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code"
-        }
-        "grok" => " --ignore-scripts=false --include=optional --allow-scripts=@xai-official/grok",
-        "opencode" => " --ignore-scripts=false --include=optional --allow-scripts=opencode-ai",
-        "mcode" => {
-            " --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\""
-        }
-        _ => "",
-    }
-}
-
-// `omp update` 自己识别 brew / mise / nix / bun / npm / 预编译二进制并照原渠道升级，
-// 非 TTY 下不询问，失败退出码非 0；Nix 安装它只打印提示就 exit 0，见
-// `anchored_command_from_paths` 的 Nix 门控。
-// MiniMax Code 虽有 `mcode update`，却刻意不列在这里：它在 stdin/stdout 非 TTY 时只打印
-// "No interactive confirmation is available" 就 exit 0、并不安装。静默 lifecycle 的
-// `cmd.output()` 正是非 TTY，放进来会让 `mcode update || <fallback>` 的兜底永不触发。
-fn official_update_args(tool: &str) -> Option<&'static str> {
-    match tool {
-        "claude" | "codex" | "grok" | "hermes" | "agy" | "omp" => Some("update"),
-        "openclaw" => Some("update --yes"),
-        "opencode" => Some("upgrade"),
-        "kimi" => Some("upgrade --yes"),
-        _ => None,
-    }
-}
-
 fn bare_official_update_command(tool: &str) -> Option<String> {
-    official_update_args(tool).map(|args| format!("{tool} {args}"))
+    tool_spec(tool)
+        .official_update_args
+        .map(|args| format!("{tool} {args}"))
 }
 
 fn chain_update_commands(
@@ -1115,7 +1155,7 @@ fn tool_action_shell_command_for_shell(
         if let Some(installer) = installer {
             return Some(chain_update_commands(
                 installer,
-                npm_install_command_for(tool)?.to_string(),
+                tool_spec(tool).npm_install_command()?,
                 shell,
             ));
         }
@@ -1157,15 +1197,15 @@ fn tool_action_shell_command_for_shell(
         );
     }
 
-    let install = npm_install_command_for(tool)?;
+    let install = tool_spec(tool).npm_install_command()?;
     match action {
-        ToolLifecycleAction::Install => Some(install.to_string()),
+        ToolLifecycleAction::Install => Some(install),
         ToolLifecycleAction::Update => match prefers_official_update(tool, shell)
             .then(|| bare_official_update_command(tool))
             .flatten()
         {
-            Some(update) => Some(chain_update_commands(update, install.to_string(), shell)),
-            None => Some(install.to_string()),
+            Some(update) => Some(chain_update_commands(update, install, shell)),
+            None => Some(install),
         },
     }
 }
@@ -1380,7 +1420,7 @@ async fn get_single_tool_version_impl(
     wsl_shell_flag: Option<&str>,
 ) -> ToolVersion {
     debug_assert!(
-        VALID_TOOLS.contains(&tool),
+        known_tool(tool).is_some(),
         "unexpected tool name in get_single_tool_version_impl: {tool}"
     );
 
@@ -1404,34 +1444,17 @@ async fn get_single_tool_version_impl(
     // 2. 获取远程最新版本（npm 工具在本地领先 latest 时会按预发布通道补查，见
     //    fetch_npm_latest_for_tool / npm_prerelease_tags）
     let local = local_version.as_deref();
-    let latest_version = match tool {
-        "claude" => {
-            fetch_npm_latest_for_tool(&client, "@anthropic-ai/claude-code", tool, local).await
-        }
-        "codex" => fetch_npm_latest_for_tool(&client, "@openai/codex", tool, local).await,
-        "gemini" => fetch_npm_latest_for_tool(&client, "@google/gemini-cli", tool, local).await,
-        "grok" => fetch_npm_latest_for_tool(&client, "@xai-official/grok", tool, local).await,
-        "opencode" => {
-            if let Some(version) =
-                fetch_npm_latest_for_tool(&client, "opencode-ai", tool, local).await
-            {
-                Some(version)
-            } else {
-                fetch_github_latest_version(&client, "anomalyco/opencode").await
+    let latest_version = match (tool, tool_spec(tool).npm_package) {
+        ("hermes", _) => fetch_hermes_latest_version(&client, local).await,
+        ("agy", _) => fetch_agy_latest_version(&client).await,
+        ("opencode", Some(package)) => {
+            match fetch_npm_latest_for_tool(&client, package, tool, local).await {
+                Some(version) => Some(version),
+                None => fetch_github_latest_version(&client, "anomalyco/opencode").await,
             }
         }
-        "openclaw" => fetch_npm_latest_for_tool(&client, "openclaw", tool, local).await,
-        "hermes" => fetch_hermes_latest_version(&client, local).await,
-        "pi" => {
-            fetch_npm_latest_for_tool(&client, "@earendil-works/pi-coding-agent", tool, local).await
-        }
-        "mcode" => fetch_npm_latest_for_tool(&client, "@minimax-ai/code", tool, local).await,
-        "kimi" => fetch_npm_latest_for_tool(&client, "@moonshot-ai/kimi-code", tool, local).await,
-        "dsh" => fetch_npm_latest_for_tool(&client, "@deepseek-ai/dsh", tool, local).await,
-        "agy" => fetch_agy_latest_version(&client).await,
-        "omp" => fetch_npm_latest_for_tool(&client, "@oh-my-pi/pi-coding-agent", tool, local).await,
-        "copilot" => fetch_npm_latest_for_tool(&client, "@github/copilot", tool, local).await,
-        _ => None,
+        (_, Some(package)) => fetch_npm_latest_for_tool(&client, package, tool, local).await,
+        (_, None) => None,
     };
 
     // 3. 有新版本时，看新版本要求的 Node 与这处安装用的对不对得上
@@ -1453,23 +1476,6 @@ async fn get_single_tool_version_impl(
         env_type,
         wsl_distro,
         update_blocked_by_node,
-    }
-}
-
-/// 该工具在 npm 上的预发布通道 tag(靠前者优先)。仅当本地版本已**严格领先**
-/// `latest` 时才会被补查 —— 让主动在抢先通道的用户(如走 Claude Code 的 `next`)
-/// 看到与所在通道对齐的"最新版本",同时绝不把稳定通道用户暴露给预发布版。
-/// 返回空切片表示该工具只看 `latest`、不补查。
-///
-/// 为何不通用覆盖所有工具:各家预发布 tag 命名互不统一(codex=alpha/beta/native、
-/// gemini=nightly/preview、openclaw=alpha/beta),且 codex 的 beta/native 是
-/// `0.1.x` 时间戳式版本、gemini 有误发的 `false` tag —— 这些脏值虽会被
-/// `pick_latest_version` 的版本比较挡掉,但维护成本与误报风险不值当,故暂只为
-/// Claude Code 启用。
-fn npm_prerelease_tags(tool: &str) -> &'static [&'static str] {
-    match tool {
-        "claude" => &["next"],
-        _ => &[],
     }
 }
 
@@ -1626,7 +1632,11 @@ async fn fetch_npm_latest_for_tool(
     local_version: Option<&str>,
 ) -> Option<String> {
     let dist_tags = fetch_npm_dist_tags(client, package).await?;
-    pick_latest_version(&dist_tags, npm_prerelease_tags(tool), local_version)
+    pick_latest_version(
+        &dist_tags,
+        tool_spec(tool).npm_prerelease_tags,
+        local_version,
+    )
 }
 
 /// 版本探测请求的请求级超时。全局客户端是给代理转发用的（总超时 600s / 连接 30s），
@@ -1965,7 +1975,7 @@ fn try_get_version_wsl(
     use std::process::Command;
 
     // 防御性断言：tool 只能是预定义的值
-    debug_assert!(VALID_TOOLS.contains(&tool), "unexpected tool name: {tool}");
+    debug_assert!(known_tool(tool).is_some(), "unexpected tool name: {tool}");
 
     // 校验 distro 名称，防止命令注入
     if !is_valid_wsl_distro_name(distro) {
@@ -3536,26 +3546,6 @@ fn resolve_mise_shim_install(
     (tool_path, real)
 }
 
-/// 工具对应的 npm 包名（hermes 走自己的 CLI/installer，不在此表）。锚定升级据此拼 `npm i -g`。
-/// 全平台共用一张表——Windows 锚定层(`anchored_command_from_paths` 的 windows 版)也读这里。
-fn npm_package_for(tool: &str) -> Option<&'static str> {
-    match tool {
-        "claude" => Some("@anthropic-ai/claude-code"),
-        "codex" => Some("@openai/codex"),
-        "gemini" => Some("@google/gemini-cli"),
-        "grok" => Some("@xai-official/grok"),
-        "opencode" => Some("opencode-ai"),
-        "openclaw" => Some("openclaw"),
-        "pi" => Some("@earendil-works/pi-coding-agent"),
-        "mcode" => Some("@minimax-ai/code"),
-        "kimi" => Some("@moonshot-ai/kimi-code"),
-        "omp" => Some("@oh-my-pi/pi-coding-agent"),
-        "copilot" => Some("@github/copilot"),
-        "dsh" => Some("@deepseek-ai/dsh"),
-        _ => None,
-    }
-}
-
 /// 取路径的父目录(纯字符串截断,不碰 fs):`/a/b/npm` → `/a/b`、`C:\a\b\npm.cmd`
 /// → `C:\a\b`、混合分隔符 `C:\a/b\npm` → `C:\a/b`。无父目录返回空串。
 ///
@@ -3917,12 +3907,16 @@ fn npm_scripts_env_prefix(pkg: &str) -> String {
 
 #[cfg(not(target_os = "windows"))]
 fn anchored_official_update_command(tool: &str, bin_path: &str) -> Option<String> {
-    official_update_args(tool).map(|args| format!("{} {args}", quote_path_if_spaced(bin_path)))
+    tool_spec(tool)
+        .official_update_args
+        .map(|args| format!("{} {args}", quote_path_if_spaced(bin_path)))
 }
 
 #[cfg(target_os = "windows")]
 fn anchored_official_update_command(tool: &str, bin_path: &str) -> Option<String> {
-    official_update_args(tool).map(|args| format!("{} {args}", win_quote_path_for_batch(bin_path)))
+    tool_spec(tool)
+        .official_update_args
+        .map(|args| format!("{} {args}", win_quote_path_for_batch(bin_path)))
 }
 
 /// Grok Build 原生安装的升级命令 = `<bin 绝对> update || <官方 installer>`。
@@ -4084,7 +4078,7 @@ fn package_manager_anchored_command_from_paths(
         let brew = sibling_bin(bin_path, "brew")?;
         return Some(format!("{} upgrade {formula}", quote_path_if_spaced(&brew)));
     }
-    let pkg = npm_package_for(tool)?;
+    let pkg = tool_spec(tool).npm_package?;
     let source = infer_install_source(Path::new(bin_path));
     // omp 的 npm 包只能由 bun 运行：除 bun 外的 node 管理器装不出能跑的 omp。
     if tool == "omp" && source != "bun" {
@@ -4110,7 +4104,7 @@ fn package_manager_anchored_command_from_paths(
     }
     anchored_npm_command(
         bin_path,
-        &format!("i -g {pkg}@latest{}", npm_install_extra_args(tool)),
+        &format!("i -g {pkg}@latest{}", tool_spec(tool).npm_install_args),
     )
 }
 
@@ -4224,7 +4218,7 @@ fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Op
     if tool == "omp" {
         return None;
     }
-    let pkg = npm_package_for(tool)?;
+    let pkg = tool_spec(tool).npm_package?;
 
     match infer_install_source(Path::new(bin_path)) {
         "volta" => {
@@ -4248,7 +4242,7 @@ fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Op
             Some(format!(
                 "{} i -g {pkg}@latest{}",
                 win_quote_path_for_batch(&npm),
-                npm_install_extra_args(tool)
+                tool_spec(tool).npm_install_args
             ))
         }
     }
@@ -4597,7 +4591,7 @@ pub(crate) fn run_detected_tool_command_with_timeout(
     extra_env: &[(&str, String)],
     working_dir: &Path,
 ) -> Result<std::process::Output, String> {
-    if !VALID_TOOLS.contains(&tool) {
+    if known_tool(tool).is_none() {
         return Err(format!("Unsupported tool: {tool}"));
     }
     if args.iter().any(|arg| {
@@ -4678,7 +4672,7 @@ pub(crate) fn detected_tool_command(
     args: &[&str],
     timeout: std::time::Duration,
 ) -> Result<std::process::Command, String> {
-    if !VALID_TOOLS.contains(&tool) {
+    if known_tool(tool).is_none() {
         return Err(format!("Unsupported tool: {tool}"));
     }
     let deadline = CommandDeadline::from_timeout(Some(timeout));
@@ -5009,7 +5003,7 @@ fn unmanaged_update_error(tool: &str, installs: &[ToolInstallation]) -> String {
         .unwrap_or_default();
     format!(
         "{} at {path} was not installed by npm or a recognized installer; update it the way it was installed",
-        tool_display_name(tool)
+        tool_spec(tool).display_name
     )
 }
 
@@ -5032,12 +5026,10 @@ fn unmanaged_update_error(tool: &str, installs: &[ToolInstallation]) -> String {
 ///   与 MiniMax Code 使用官方 PowerShell installer，并同样保留 npm fallback。WSL 作为 Linux 环境
 ///   复用这套 POSIX 安装优先级。
 fn installer_with_npm_fallback(installer: &str, tool: &str) -> String {
-    match npm_install_command_for(tool) {
-        Some(npm) => chain_update_commands(
-            installer.to_string(),
-            npm.to_string(),
-            LifecycleCommandShell::Posix,
-        ),
+    match tool_spec(tool).npm_install_command() {
+        Some(npm) => {
+            chain_update_commands(installer.to_string(), npm, LifecycleCommandShell::Posix)
+        }
         None => installer.to_string(),
     }
 }
@@ -5906,21 +5898,19 @@ mod tests {
     fn grok_lifecycle_metadata_is_consistent() {
         let requested = vec!["unsupported".to_string(), "grok".to_string()];
         assert_eq!(normalize_requested_tools(&requested), vec!["grok"]);
-        assert_eq!(tool_display_name("grok"), "Grok Build");
-        assert_eq!(npm_package_for("grok"), Some("@xai-official/grok"));
+        assert_eq!(tool_spec("grok").npm_package, Some("@xai-official/grok"));
         assert_eq!(
-            npm_install_command_for("grok"),
+            tool_spec("grok").npm_install_command().as_deref(),
             Some(
                 "npm i -g @xai-official/grok@latest --ignore-scripts=false --include=optional --allow-scripts=@xai-official/grok"
             )
         );
-        assert_eq!(official_update_args("grok"), Some("update"));
+        assert_eq!(tool_spec("grok").official_update_args, Some("update"));
 
         for action in [ToolLifecycleAction::Install, ToolLifecycleAction::Update] {
             assert_eq!(
-                tool_action_shell_command_for_shell("grok", action, LifecycleCommandShell::Posix)
-                    .as_deref(),
-                npm_install_command_for("grok")
+                tool_action_shell_command_for_shell("grok", action, LifecycleCommandShell::Posix),
+                tool_spec("grok").npm_install_command()
             );
         }
 
@@ -5931,9 +5921,8 @@ mod tests {
                 "grok",
                 ToolLifecycleAction::Update,
                 LifecycleCommandShell::WindowsBatch,
-            )
-            .as_deref(),
-            npm_install_command_for("grok")
+            ),
+            tool_spec("grok").npm_install_command()
         );
     }
 
@@ -5941,7 +5930,7 @@ mod tests {
     fn dsh_lifecycle_uses_npm_and_keeps_engine_checks_for_anchored_updates() {
         let expected = "npm i -g @deepseek-ai/dsh@latest --engine-strict";
         assert_eq!(posix_install_command_for("dsh"), expected);
-        assert_eq!(npm_package_for("dsh"), Some("@deepseek-ai/dsh"));
+        assert_eq!(tool_spec("dsh").npm_package, Some("@deepseek-ai/dsh"));
         for action in [ToolLifecycleAction::Install, ToolLifecycleAction::Update] {
             assert_eq!(
                 tool_action_shell_command_for_shell("dsh", action, LifecycleCommandShell::Posix)
@@ -5958,8 +5947,8 @@ mod tests {
                 Some(expected)
             );
         }
-        assert_eq!(official_update_args("dsh"), None);
-        assert_eq!(npm_install_extra_args("dsh"), " --engine-strict");
+        assert_eq!(tool_spec("dsh").official_update_args, None);
+        assert_eq!(tool_spec("dsh").npm_install_args, " --engine-strict");
     }
 
     #[test]
@@ -6112,34 +6101,32 @@ mod tests {
     fn pi_lifecycle_metadata_matches_pinned_distribution() {
         let requested = vec!["unsupported".to_string(), "pi".to_string()];
         assert_eq!(normalize_requested_tools(&requested), vec!["pi"]);
-        assert_eq!(tool_display_name("pi"), "Pi");
         assert_eq!(
-            npm_package_for("pi"),
+            tool_spec("pi").npm_package,
             Some("@earendil-works/pi-coding-agent")
         );
         assert_eq!(
-            npm_install_command_for("pi"),
+            tool_spec("pi").npm_install_command().as_deref(),
             Some("npm i -g @earendil-works/pi-coding-agent@latest")
         );
         // The verified distribution exposes `pi --version`, but no updater
         // contract is assumed; upgrades stay on the package-manager path.
-        assert_eq!(official_update_args("pi"), None);
+        assert_eq!(tool_spec("pi").official_update_args, None);
     }
 
     #[test]
-    fn omp_lifecycle_metadata_names_the_tool_and_keeps_one_package() {
+    fn omp_lifecycle_metadata_keeps_one_package() {
         let requested = vec!["unsupported".to_string(), "omp".to_string()];
         assert_eq!(normalize_requested_tools(&requested), vec!["omp"]);
-        // Without this arm the user-facing strings read "Unknown at
-        // <path> was not installed by npm..." and the batch header prints
-        // `========== Unknown ==========`.
-        assert_eq!(tool_display_name("omp"), "Oh My Pi");
         // The version check reads this package; npm cannot run it (the entry is
         // a bun script), so there is no npm install command at all.
-        assert_eq!(npm_package_for("omp"), Some("@oh-my-pi/pi-coding-agent"));
-        assert_eq!(npm_install_command_for("omp"), None);
+        assert_eq!(
+            tool_spec("omp").npm_package,
+            Some("@oh-my-pi/pi-coding-agent")
+        );
+        assert_eq!(tool_spec("omp").npm_install_command(), None);
         // `omp update` routes every install source itself and never prompts.
-        assert_eq!(official_update_args("omp"), Some("update"));
+        assert_eq!(tool_spec("omp").official_update_args, Some("update"));
         #[cfg(not(target_os = "windows"))]
         {
             assert_eq!(install_command_for("omp"), OMP_INSTALL_UNIX);
@@ -6159,34 +6146,24 @@ mod tests {
     fn mcode_lifecycle_metadata_skips_non_tty_self_update() {
         let requested = vec!["unsupported".to_string(), "mcode".to_string()];
         assert_eq!(normalize_requested_tools(&requested), vec!["mcode"]);
-        assert_eq!(tool_display_name("mcode"), "MiniMax Code");
         // npm 上同名的 `mcode` 是无关项目，官方包是 scoped 的 @minimax-ai/code。
-        assert_eq!(npm_package_for("mcode"), Some("@minimax-ai/code"));
-        let npm = npm_install_command_for("mcode").unwrap();
-        assert_eq!(
-            npm,
-            format!(
-                "npm i -g @minimax-ai/code@latest{}",
-                npm_install_extra_args("mcode")
-            )
-        );
+        assert_eq!(tool_spec("mcode").npm_package, Some("@minimax-ai/code"));
+        let npm = tool_spec("mcode").npm_install_command().unwrap();
         assert!(
             npm.contains("\"--allow-scripts=@minimax-ai/code,better-sqlite3\""),
             "npm 12 blocks better-sqlite3's install script without it: {npm}"
         );
-        assert_eq!(npm_install_extra_args("codex"), "");
 
         // `mcode update` exits 0 without installing when stdin/stdout are not a
         // TTY, which is exactly how silent lifecycle actions run it.
-        assert_eq!(official_update_args("mcode"), None);
+        assert_eq!(tool_spec("mcode").official_update_args, None);
         for shell in [
             LifecycleCommandShell::Posix,
             LifecycleCommandShell::WindowsBatch,
         ] {
             assert_eq!(
-                tool_action_shell_command_for_shell("mcode", ToolLifecycleAction::Update, shell)
-                    .as_deref(),
-                Some(npm)
+                tool_action_shell_command_for_shell("mcode", ToolLifecycleAction::Update, shell),
+                Some(npm.clone())
             );
         }
     }
@@ -6797,7 +6774,7 @@ mod tests {
         #[test]
         fn opencode_windows_static_fallback_skips_official_upgrade() {
             let cmd = static_fallback_command("opencode");
-            assert_eq!(cmd, npm_install_command_for("opencode").unwrap());
+            assert_eq!(cmd, tool_spec("opencode").npm_install_command().unwrap());
             assert!(!cmd.contains("opencode upgrade"));
         }
 
@@ -6824,7 +6801,7 @@ mod tests {
             let expected = format!(
                 "{} i -g @xai-official/grok@latest{}",
                 expect_quoted_path(&npm_full),
-                npm_install_extra_args("grok")
+                tool_spec("grok").npm_install_args
             );
             assert_eq!(cmd.as_deref(), Some(expected.as_str()));
         }
@@ -6899,7 +6876,7 @@ mod tests {
             let expected = format!(
                 "{} i -g @minimax-ai/code@latest{}",
                 expect_quoted_path(&npm_full),
-                npm_install_extra_args("mcode")
+                tool_spec("mcode").npm_install_args
             );
             assert_eq!(cmd.as_deref(), Some(expected.as_str()));
         }
@@ -6912,7 +6889,7 @@ mod tests {
                 install,
                 format!(
                     "{native} || call {}",
-                    npm_install_command_for("mcode").unwrap()
+                    tool_spec("mcode").npm_install_command().unwrap()
                 )
             );
             let expected_encoded = powershell_encoded_command(MCODE_INSTALL_WINDOWS_SCRIPT);
@@ -6935,7 +6912,7 @@ mod tests {
             assert!(
                 install.ends_with(&format!(
                     "|| call {}",
-                    npm_install_command_for("grok").unwrap()
+                    tool_spec("grok").npm_install_command().unwrap()
                 )),
                 "npm fallback should remain available: {install}"
             );
@@ -7273,7 +7250,10 @@ mod tests {
             assert!(
                 grok.starts_with(
                     "bash -c 'tmp=$(mktemp) && curl -fsSL https://x.ai/cli/install.sh "
-                ) && grok.ends_with(&format!(" || {}", npm_install_command_for("grok").unwrap())),
+                ) && grok.ends_with(&format!(
+                    " || {}",
+                    tool_spec("grok").npm_install_command().unwrap()
+                )),
                 "WSL grok install should prefer native POSIX installer with npm fallback: {grok}"
             );
             assert!(!grok.contains("| bash"));
@@ -8629,7 +8609,7 @@ mod tests {
             // npm 12 拦截 postinstall 时升级 exit 0 却留在旧版（#8863）。
             assert_eq!(
                 parts[1].trim(),
-                npm_install_command_for("grok").unwrap(),
+                tool_spec("grok").npm_install_command().unwrap(),
                 "npm second: {cmd}"
             );
         }
@@ -8648,7 +8628,10 @@ mod tests {
                 !installer.contains('|'),
                 "native installer should avoid pipe: {cmd}"
             );
-            assert_eq!(Some(fallback), npm_install_command_for("mcode"));
+            assert_eq!(
+                Some(fallback),
+                tool_spec("mcode").npm_install_command().as_deref()
+            );
         }
 
         #[test]
@@ -8699,8 +8682,8 @@ mod tests {
             );
             assert!(!static_fallback_command("pi").contains("pi update"));
             assert_eq!(
-                Some(static_fallback_command("mcode").as_str()),
-                npm_install_command_for("mcode")
+                Some(static_fallback_command("mcode")),
+                tool_spec("mcode").npm_install_command()
             );
             assert!(!static_fallback_command("mcode").contains("mcode update"));
         }
