@@ -4804,6 +4804,28 @@ mod tests {
     }
     use super::*;
 
+    /// 前端「应用」页的工具表（`TOOL_NAMES` / `TOOL_DISPLAY_NAMES`）对照
+    /// `tests/config/tools.json`，这份文件由这里从 [`TOOLS`] 生成。改了 `TOOLS` 后用
+    /// `CC_SWITCH_UPDATE_GOLDEN=1 cargo test tools_match_shared_fixture` 重新生成。
+    #[test]
+    fn tools_match_shared_fixture() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/config/tools.json");
+        let tools: serde_json::Map<String, serde_json::Value> = TOOLS
+            .iter()
+            .map(|tool| (tool.id.to_string(), tool.display_name.into()))
+            .collect();
+        let expected = serde_json::to_string_pretty(&tools).unwrap() + "\n";
+        if std::env::var_os("CC_SWITCH_UPDATE_GOLDEN").is_some() {
+            std::fs::write(&path, &expected).unwrap();
+        }
+        let actual = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            actual, expected,
+            "tests/config/tools.json 和 TOOLS 不一致；确认改动后用 CC_SWITCH_UPDATE_GOLDEN=1 重新生成，再同步前端 TOOL_DISPLAY_NAMES"
+        );
+    }
+
     #[test]
     fn portable_zip_url_matches_release_asset_names() {
         assert_eq!(
