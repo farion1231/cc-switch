@@ -8,7 +8,10 @@
 # - 构建时用 TAURI_SIGNING_PRIVATE_KEY 签出 .sig，发布时生成 latest.json，
 #   供应用内自动更新（endpoints 指向本仓库 releases/latest）使用。
 #   不构建 macOS（无 Apple 签名/公证 secrets）。
-# - 发布和推送分支都用 GITHUB_TOKEN，这些事件不会再触发 release.yml 之类的其它 workflow。
+# - 发布用 GITHUB_TOKEN，这些事件不会再触发 release.yml 之类的其它 workflow。
+# - 推送分支用 SYNC_PUSH_TOKEN：上游合并经常改动 .github/workflows/*，而 GITHUB_TOKEN
+#   没有 workflows 权限，push 会被 GitHub 拒绝（refusing to allow a GitHub App to
+#   create or update workflow）。该 secret 需要 Contents 与 Workflows 写权限。
 name: Sync upstream & release
 
 on:
@@ -57,6 +60,7 @@ jobs:
         env:
           UPSTREAM_URL: https://github.com/farion1231/cc-switch.git
           FORCE_BUILD: ${{ inputs.force_build || false }}
+          SYNC_PUSH_TOKEN: ${{ secrets.SYNC_PUSH_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -136,7 +140,12 @@ jobs:
             git commit -m "chore(release): $release_tag"
           fi
 
-          git push origin HEAD:feat/s3-addressing-style
+          if [ -z "${SYNC_PUSH_TOKEN:-}" ]; then
+            echo "::error title=Missing secret::缺少 SYNC_PUSH_TOKEN（fine-grained PAT，需 Contents 与 Workflows 写权限）"
+            exit 1
+          fi
+          git push "https://x-access-token:${SYNC_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            HEAD:feat/s3-addressing-style
 
           {
             echo "has_update=true"
