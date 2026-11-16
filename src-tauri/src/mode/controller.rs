@@ -18,6 +18,7 @@
 //! 调用方持有这个应用的代理切换锁（`ProxyService::lock_switch_for_app`）；写引擎的应用
 //! 写锁在更里面拿，两把锁不反向嵌套。
 
+use crate::sync_utils::MutexExt;
 use serde_json::{json, Value};
 use tokio::sync::OwnedMutexGuard;
 
@@ -1809,8 +1810,7 @@ async fn startup_app(state: &AppState, app: &AppType) -> Result<(), String> {
                         .map(|stack| stack.enabled)
                         .unwrap_or(false);
                 startup_attach_failures()
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
+                    .lock_recover()
                     .push(StartupAttachFailure {
                         app_type: app.as_str().to_string(),
                         stack,
@@ -1988,19 +1988,12 @@ fn startup_attach_failures() -> &'static std::sync::Mutex<Vec<StartupAttachFailu
 
 /// 看一眼启动时记下的接上失败（不清空）：托盘的问题区自己留一份，界面照样取走。
 pub fn startup_attach_failures_snapshot() -> Vec<StartupAttachFailure> {
-    startup_attach_failures()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
+    startup_attach_failures().lock_recover().clone()
 }
 
 /// 取走启动时记下的接上失败（取一次就清空）。
 pub fn take_startup_attach_failures() -> Vec<StartupAttachFailure> {
-    std::mem::take(
-        &mut *startup_attach_failures()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()),
-    )
+    std::mem::take(&mut *startup_attach_failures().lock_recover())
 }
 
 #[cfg(test)]

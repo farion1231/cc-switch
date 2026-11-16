@@ -62,6 +62,7 @@ mod usage_script;
 mod window_fit;
 mod workbuddy_config;
 
+use crate::sync_utils::MutexExt;
 pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps};
 pub use codex_config::{
     extract_codex_experimental_bearer_token, get_codex_auth_path, get_codex_config_path,
@@ -442,7 +443,7 @@ fn raise_open_file_limit() {
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn handle_second_instance(app: &tauri::AppHandle, args: Vec<String>) {
     static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let _serial = SERIAL.lock_recover();
     log::debug!("Args count: {}", args.len());
     for (i, arg) in args.iter().enumerate() {
         log::debug!("  arg[{i}]: {}", url_for_log(arg));

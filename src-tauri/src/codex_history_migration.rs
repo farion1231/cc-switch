@@ -16,6 +16,7 @@ use crate::settings::{
     CodexLegacyOfficialHistoryBucketMigration, CodexOfficialHistoryUnifyMigration,
     CodexProviderTemplateMigration, CodexThirdPartyHistoryProviderBucketMigration,
 };
+use crate::sync_utils::MutexExt;
 use chrono::{Local, Utc};
 use rusqlite::{backup::Backup, params_from_iter, Connection};
 use serde_json::Value;
@@ -40,9 +41,7 @@ const STATE_DB_ID_CHUNK: usize = 500;
 static CODEX_OFFICIAL_HISTORY_OP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn lock_codex_official_history_op() -> std::sync::MutexGuard<'static, ()> {
-    CODEX_OFFICIAL_HISTORY_OP_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+    CODEX_OFFICIAL_HISTORY_OP_LOCK.lock_recover()
 }
 
 /// 用户在「备份与恢复」里删除迁移备份目录时拿同一把锁，避免抽掉正在写的备份。

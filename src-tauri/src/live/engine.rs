@@ -9,6 +9,7 @@
 //! Claude Code 这类外部进程不参与这把锁，「重读比对」和 rename 之间仍有一个极小的
 //! 窗口，外部写入恰好落在里面时仍会被覆盖。
 
+use crate::sync_utils::MutexExt;
 use std::collections::HashSet;
 use std::fs;
 use std::io::ErrorKind;
@@ -203,7 +204,7 @@ fn lock_table() -> &'static (Mutex<HashSet<String>>, Condvar) {
 
 pub fn lock_app(app: &str) -> AppWriteGuard {
     let (held, released) = lock_table();
-    let mut held = held.lock().unwrap_or_else(|e| e.into_inner());
+    let mut held = held.lock_recover();
     while held.contains(app) {
         held = released.wait(held).unwrap_or_else(|e| e.into_inner());
     }
@@ -216,9 +217,7 @@ pub fn lock_app(app: &str) -> AppWriteGuard {
 impl Drop for AppWriteGuard {
     fn drop(&mut self) {
         let (held, released) = lock_table();
-        held.lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&self.app);
+        held.lock_recover().remove(&self.app);
         released.notify_all();
     }
 }

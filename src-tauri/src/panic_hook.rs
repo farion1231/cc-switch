@@ -3,6 +3,7 @@
 //! 在应用崩溃时捕获 panic 信息并记录到 `<app_config_dir>/crash.log` 文件中（默认 `~/.cc-switch/crash.log`）。
 //! 便于用户和开发者诊断闪退问题。
 
+use crate::sync_utils::MutexExt;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::panic;
@@ -216,9 +217,7 @@ Stack Trace (Backtrace)
 
         // 将 size check、轮转和追加合成同一个临界区，避免多线程同时 panic
         // 时两个 hook 竞争 rename 而丢失归档。
-        let crash_log_guard = CRASH_LOG_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let crash_log_guard = CRASH_LOG_LOCK.lock_recover();
         let _ = rotate_crash_log_if_needed(&log_path);
         let saved =
             if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {

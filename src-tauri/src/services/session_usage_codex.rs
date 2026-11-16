@@ -29,6 +29,7 @@ use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_TOTAL;
 use crate::services::usage_stats::{
     find_model_pricing, has_suspected_codex_session_duplicate, should_skip_session_insert, DedupKey,
 };
+use crate::sync_utils::MutexExt;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::Deserialize;
@@ -40,7 +41,7 @@ use std::os::unix::fs::MetadataExt;
 #[cfg(windows)]
 use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 #[cfg(windows)]
 use windows_sys::Win32::Foundation::{ERROR_INVALID_PARAMETER, ERROR_NOT_SUPPORTED};
@@ -536,9 +537,7 @@ fn replay_caches() -> &'static Mutex<CodexReplayCaches> {
 
 pub(crate) fn clear_codex_replay_caches() {
     // 清空即丢弃持锁 panic 时可能写了一半的内容，所以顺带解除中毒。
-    let mut caches = replay_caches()
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
+    let mut caches = replay_caches().lock_recover();
     *caches = CodexReplayCaches::default();
     replay_caches().clear_poison();
 }

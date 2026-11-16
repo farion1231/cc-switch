@@ -1180,7 +1180,8 @@ mod tests {
         // 进程级环境变量的读写必须与同样改它们的测试互斥。锁是模块级共享的
         // （写成测试函数体内的 static 只能锁住自己，等于没锁），见
         // `proxy::http_client` 里同一套 env_lock() 用法。
-        let _guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        use crate::sync_utils::MutexExt;
+        let _guard = env_lock().lock_recover();
 
         // 假装 HOME 指向另一处，并且那里有一份 db——正是会触发回退的形状
         let legacy_home = tempfile::tempdir().expect("tempdir");
