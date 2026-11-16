@@ -866,6 +866,15 @@
       "incompatibleVersion": "원격 데이터가 호환되지 않습니다(버전 {{version}}). 이 클라이언트는 프로토콜 v2 / db-v6을 지원합니다.",
       "unsaved": "저장되지 않음",
       "saved": "저장됨",
+      "clear": "설정 지우기",
+      "clearing": "지우는 중...",
+      "clearSuccess": "이 기기의 S3 설정을 지웠습니다",
+      "clearFailed": "설정을 지우지 못했습니다: {{error}}",
+      "clearConfirm": {
+        "title": "S3 설정 지우기",
+        "message": "이 기기에 저장된 S3 리전, 버킷, 액세스 키, 시크릿 키, 엔드포인트 및 원격 폴더 설정을 삭제하고 자동 동기화를 중지합니다. 버킷에 이미 업로드된 데이터는 삭제되지 않습니다.",
+        "confirm": "지우기"
+      },
       "unsavedChanges": "먼저 설정을 저장하세요.",
       "saveBeforeSync": "업로드/다운로드를 활성화하려면 먼저 설정을 저장하세요.",
       "fetchingRemote": "원격 정보를 가져오는 중...",

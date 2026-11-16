@@ -866,6 +866,15 @@
       "incompatibleVersion": "Uzak veriler uyumlu değil (sürüm {{version}}). Bu istemci v2 / db-v6 protokolünü destekler.",
       "unsaved": "Kaydedilmemiş",
       "saved": "Kaydedildi",
+      "clear": "Yapılandırmayı temizle",
+      "clearing": "Temizleniyor...",
+      "clearSuccess": "Bu cihazdaki S3 yapılandırması temizlendi",
+      "clearFailed": "Yapılandırma temizlenemedi: {{error}}",
+      "clearConfirm": {
+        "title": "S3 yapılandırmasını temizle",
+        "message": "Kayıtlı S3 bölgesi, bucket, erişim anahtarı, gizli anahtar, uç nokta ve uzak klasör bu cihazdan silinir ve otomatik eşitleme durdurulur. Bucket'a önceden yüklenmiş veriler silinmez.",
+        "confirm": "Temizle"
+      },
       "unsavedChanges": "Lütfen önce yapılandırmayı kaydedin",
       "saveBeforeSync": "Yüklemeyi/indirmeyi etkinleştirmek için önce yapılandırmayı kaydedin.",
       "fetchingRemote": "Uzak bilgiler getiriliyor...",

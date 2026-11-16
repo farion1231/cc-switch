@@ -866,6 +866,15 @@
       "incompatibleVersion": "Remote-Daten sind inkompatibel (Version {{version}}). Dieser Client unterstützt Protokoll v2 / db-v6.",
       "unsaved": "Nicht gespeichert",
       "saved": "Gespeichert",
+      "clear": "Konfiguration löschen",
+      "clearing": "Wird gelöscht …",
+      "clearSuccess": "S3-Konfiguration auf diesem Gerät gelöscht",
+      "clearFailed": "Konfiguration konnte nicht gelöscht werden: {{error}}",
+      "clearConfirm": {
+        "title": "S3-Konfiguration löschen",
+        "message": "Dadurch werden die gespeicherte S3-Region, der Bucket, der Access Key, der Secret Key, der Endpunkt und der Remote-Ordner von diesem Gerät entfernt und die automatische Synchronisierung wird beendet. Bereits in den Bucket hochgeladene Daten werden nicht gelöscht.",
+        "confirm": "Löschen"
+      },
       "unsavedChanges": "Bitte speichern Sie zuerst die Konfiguration",
       "saveBeforeSync": "Speichern Sie zuerst die Konfiguration, um Upload/Download zu aktivieren.",
       "fetchingRemote": "Remote-Informationen werden abgerufen …",

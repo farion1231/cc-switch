@@ -866,6 +866,15 @@
       "incompatibleVersion": "リモートデータに互換性がありません（バージョン {{version}}）。このクライアントは protocol v2 / db-v6 をサポートしています。",
       "unsaved": "未保存",
       "saved": "保存済み",
+      "clear": "設定をクリア",
+      "clearing": "クリア中...",
+      "clearSuccess": "この端末の S3 設定をクリアしました",
+      "clearFailed": "設定のクリアに失敗しました：{{error}}",
+      "clearConfirm": {
+        "title": "S3 設定をクリア",
+        "message": "この端末に保存されている S3 のリージョン、バケット、アクセスキー、シークレットキー、エンドポイント、リモートフォルダを削除し、自動同期を停止します。バケットにアップロード済みのデータは削除されません。",
+        "confirm": "クリア"
+      },
       "unsavedChanges": "先に設定を保存してください",
       "saveBeforeSync": "アップロード/ダウンロードを有効にするには、先に設定を保存してください。",
       "fetchingRemote": "リモート情報を取得中...",
