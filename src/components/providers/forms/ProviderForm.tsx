@@ -58,6 +58,7 @@ import {
 import {
   openclawProviderPresets,
   rebaseOpenClawSuggestedDefaults,
+  savedOpenClawModelIds,
   type OpenClawProviderPreset,
   type OpenClawSuggestedDefaults,
 } from "@/config/openclawProviderPresets";
@@ -113,7 +114,6 @@ import { KimiProviderForm } from "./KimiProviderForm";
 import { CopilotProviderForm } from "./CopilotProviderForm";
 import { AgyAccountSelect } from "./AgyOAuthSection";
 import { ClaudeAccountSelect } from "./ClaudeOfficialSection";
-import { isMac } from "@/lib/platform";
 import { McodeProviderForm } from "./McodeProviderForm";
 import { WorkBuddyProviderForm } from "./WorkBuddyProviderForm";
 import { PiProviderForm } from "./PiProviderForm";
@@ -153,11 +153,15 @@ import {
   isNativeOpencodeConfig,
 } from "./helpers/opencodeFormUtils";
 import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
-import { resolveManagedAccountId } from "@/lib/authBinding";
+import {
+  canSwitchAgyAccount,
+  resolveManagedAccountId,
+} from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
 import { useHermesLiveProviderIds } from "@/hooks/useHermes";
 import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
 import { normalizeEnabledCodexChatEffortParam } from "./helpers/codexChatReasoning";
+import { appHas } from "@/config/appSpecs";
 
 type PresetEntry = {
   id: string;
@@ -363,7 +367,7 @@ export function ProviderForm(props: ProviderFormProps) {
   if (props.appId === "mcode" || props.appId === "dsh")
     return <McodeProviderForm {...props} />;
   if (props.appId === "workbuddy") return <WorkBuddyProviderForm {...props} />;
-  if (props.appId === "pi" || props.appId === "omp") {
+  if (appHas(props.appId, "piFamily")) {
     return <PiProviderForm {...props} />;
   }
   if (props.appId === "claude-desktop") {
@@ -1941,6 +1945,7 @@ function ProviderFormFull({
             ? rebaseOpenClawSuggestedDefaults(
                 activePreset.suggestedDefaults,
                 payload.providerKey,
+                savedOpenClawModelIds(payload.settingsConfig),
               )
             : activePreset.suggestedDefaults;
       }
@@ -2968,13 +2973,15 @@ function ProviderFormFull({
             />
           )}
 
-          {/* 切号只实现了 macOS；别的平台上不显示，卡上已有的绑定原样保留 */}
-          {appId === "agy" && category === "official" && isMac() && (
-            <AgyAccountSelect
-              value={selectedAgyAccountId}
-              onChange={setSelectedAgyAccountId}
-            />
-          )}
+          {/* 切号只实现了 macOS、Windows；别的平台上不显示，卡上已有的绑定原样保留 */}
+          {appId === "agy" &&
+            category === "official" &&
+            canSwitchAgyAccount() && (
+              <AgyAccountSelect
+                value={selectedAgyAccountId}
+                onChange={setSelectedAgyAccountId}
+              />
+            )}
 
           {appId === "opencode" && !isAnyOmoCategory && !isNativeOpencode && (
             <OpenCodeFormFields

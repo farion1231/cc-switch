@@ -2,7 +2,6 @@ import type { TFunction } from "i18next";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import type { AppMode } from "@/types/proxy";
-import { isPiFamilyApp } from "@/config/appConfig";
 import {
   boundWorkBuddyAccountId,
   isWorkBuddyOfficial,
@@ -14,6 +13,7 @@ import {
   supportsFailover,
   supportsOfficialProxyTakeover,
 } from "@/utils/providerCapabilities";
+import { appHas } from "@/config/appSpecs";
 
 /**
  * 供应商卡片怎么画（v7）：当前那张的模式色、状态文字或按钮、徽标。由列表按应用和正在查看的
@@ -804,7 +804,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
   // Copilot CLI 的官方卡：仍是启动式（只有「打开终端」），并进「已添加」排在最前
   const official: ProviderSection["items"] = [];
   const piBlocked =
-    isPiFamilyApp(app) && input.piStateUnavailable
+    appHas(app, "piFamily") && input.piStateUnavailable
       ? t(`${app}.current.stateUnavailableHint`)
       : undefined;
 
@@ -1004,7 +1004,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
           buttons: [
             {
               key: "add",
-              label: isPiFamilyApp(app)
+              label: appHas(app, "piFamily")
                 ? t("providerCard.action.enable")
                 : t("providerCard.action.add"),
               onClick: () => actions.add(p),

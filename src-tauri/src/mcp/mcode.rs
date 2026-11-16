@@ -23,9 +23,7 @@ fn read(path: &Path) -> Result<Value, AppError> {
 }
 
 pub fn sync(id: &str, spec: Option<&Value>) -> Result<(), AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     sync_file(&crate::mcode_config::data_dir().join("mcp.json"), id, spec)
 }
 
@@ -34,9 +32,7 @@ pub(crate) fn sync_and_commit<T>(
     spec: Option<&Value>,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let path = crate::mcode_config::data_dir().join("mcp.json");
     crate::mcode_config::write_and_commit(&path, || sync_file(&path, id, spec), commit)
 }
