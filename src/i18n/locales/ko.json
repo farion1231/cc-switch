@@ -54,9 +54,51 @@
   },
   "firstRunNotice": {
     "title": "CC Switch에 오신 것을 환영합니다",
-    "bodyDefault": "CC Switch를 사용하면 Claude Code / Codex / Gemini CLI의 여러 공급자 간에 클릭 한 번으로 전환할 수 있습니다. 이러한 도구가 이미 설정되어 있다면 CC Switch가 기존 설정을 \"default\"라는 공급자로 자동 저장하므로 기존 설정이 손실되지 않습니다.",
-    "bodyOfficial": "목록에는 ‘공식(Official)’ 공급자도 미리 등록되어 있습니다. 언제든지 선택하여 공식 기본 설정으로 돌아갈 수 있습니다. CC Switch는 전환 전에 현재 설정을 ‘default’에 자동으로 백업하므로 안심하고 전환할 수 있습니다. CC Switch는 이렇게 작동합니다 😊",
-    "confirm": "알겠습니다"
+    "bodyDefault": "CC Switch를 사용하면 Claude Code, Codex, Gemini CLI 등 AI 코딩 도구의 공급자를 클릭 한 번으로 전환하고 MCP, Skills, 세션을 한곳에서 관리할 수 있습니다.",
+    "bodyBackup": "이러한 도구를 이미 설정해 두셨다면 CC Switch가 기존 구성을 ‘default’라는 공급자로 자동 저장해 두었으므로 기존 설정을 잃을 걱정 없이 안심하고 사용해 보세요.",
+    "bodyOfficial": "‘공식(Official)’ 프리셋도 함께 제공되므로 언제든지 공식 기본 설정으로 돌아갈 수 있습니다. 전환할 때마다 현재 설정을 ‘default’에 자동 백업하므로 자유롭게 오갈 수 있습니다."
+  },
+  "tutorial": {
+    "open": "사용 튜토리얼",
+    "progress": "{{total}}단계 중 {{current}}단계",
+    "stepCounter": "{{current}} / {{total}}",
+    "skip": "건너뛰기",
+    "back": "이전",
+    "next": "다음",
+    "done": "시작하기",
+    "apps": {
+      "title": "앱 선택",
+      "body": "사이드바의 이 목록은 CC Switch가 관리하는 앱(Claude Code, Codex, Gemini CLI 등)입니다. 앱을 선택하면 오른쪽에 해당 앱의 공급자가 표시됩니다. 도구를 설치하거나 사이드바에 표시할 앱을 고르려면 하단의 ‘앱’을 눌러 주세요."
+    },
+    "providers": {
+      "title": "공급자 전환 및 관리",
+      "body": "각 카드가 하나의 공급자입니다. 카드 오른쪽의 작업 아이콘(‘전환 ▶’ 또는 ‘활성화’ 등)을 누르면 해당 앱의 설정 파일에 반영됩니다. 트레이 메뉴에서도 빠르게 전환할 수 있습니다.",
+      "empty": "이 앱에는 아직 공급자가 없습니다. 아래의 ‘현재 설정 가져오기’ 또는 ‘공급자 추가’를 눌러 첫 카드를 만든 뒤, 카드 오른쪽 작업 아이콘으로 전환하거나 활성화할 수 있습니다."
+    },
+    "add": {
+      "title": "공급자 추가",
+      "body": "여기를 눌러 새 공급자를 추가하세요. 주요 서비스는 프리셋이 준비되어 있어 선택 후 API 키만 입력하면 되며, 사용자 지정 엔드포인트와 모델도 설정할 수 있습니다."
+    },
+    "modes": {
+      "title": "연결 모드: 직접 연결·라우팅·통합",
+      "body": "지원되는 앱에서는 상단 탭에서 요청 처리 방식을 선택할 수 있습니다:",
+      "directTitle": "직접 연결",
+      "directDesc": "기본 모드입니다. 로컬 프록시를 거치지 않고 앱이 현재 공급자에 직접 연결합니다.",
+      "routeTitle": "라우팅",
+      "routeDesc": "이 기기의 로컬 라우팅 서비스를 거쳐 요청을 전달하며, 즉시 전환, 대기열 기반 장애 조치 및 사용량 기록을 지원합니다.",
+      "stackTitle": "통합",
+      "stackDesc": "Claude Code, Codex 및 Claude Desktop에서는 상단 탭에서 바로 ‘통합’으로 전환하여 여러 공급자의 모델을 모델 목록에 함께 표시할 수 있습니다.",
+      "unavailable": "현재 앱은 연결 모드 전환을 지원하지 않습니다. Claude Code, Codex, Gemini CLI, Grok Build 또는 Claude Desktop을 선택하면 페이지 상단에 모드 탭이 나타납니다."
+    },
+    "shared": {
+      "title": "MCP·Skills·프롬프트·세션",
+      "body": "MCP, Skills, 프롬프트 페이지에서 공용 설정을 한곳에서 관리하고 항목별로 동기화할 앱을 고를 수 있습니다. ‘세션’ 페이지에서는 각 앱의 이전 대화를 둘러보고 이어서 진행할 수 있습니다."
+    },
+    "more": {
+      "title": "인증 센터·사용량·설정",
+      "body": "‘인증 센터’에서는 GitHub Copilot, ChatGPT 등의 구독 로그인을 관리하고, ‘사용량’에서는 요청 수·토큰·비용을 확인합니다. ‘설정’에서는 일반 환경설정, 설정 폴더, 로컬 라우팅 및 백업을 조정할 수 있습니다.",
+      "replay": "다시 보고 싶다면 ‘설정 → 정보’에서 언제든 튜토리얼을 다시 열 수 있습니다."
+    }
   },
   "apiKeyInput": {
     "placeholder": "API 키를 입력하세요",
