@@ -2,7 +2,10 @@ import type { PropsWithChildren } from "react";
 import { act, renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { replaceRepoDiscovery } from "@/hooks/useSkills.helpers";
+import {
+  deduplicateDiscoverableSkills,
+  replaceRepoDiscovery,
+} from "@/hooks/useSkills.helpers";
 import {
   useAddSkillRepo,
   useDiscoverableSkills,
@@ -87,6 +90,40 @@ describe("replaceRepoDiscovery", () => {
     expect(
       replaceRepoDiscovery(undefined, repoA, { skills: [], failures: [] }),
     ).toBeUndefined();
+  });
+
+  it("deduplicates same-repo skills across nested paths while keeping different repos", () => {
+    const hiddenCopy: DiscoverableSkill = {
+      key: "DietrichGebert/ponytail:.openclaw/skills/ponytail",
+      name: "ponytail",
+      description: "OpenClaw copy",
+      directory: ".openclaw/skills/ponytail",
+      repoOwner: "DietrichGebert",
+      repoName: "ponytail",
+      repoBranch: "main",
+    };
+    const primaryCopy: DiscoverableSkill = {
+      key: "DietrichGebert/ponytail:skills/ponytail",
+      name: "ponytail",
+      description: "Primary copy",
+      directory: "skills/ponytail",
+      repoOwner: "DietrichGebert",
+      repoName: "ponytail",
+      repoBranch: "main",
+    };
+    const otherRepoCopy: DiscoverableSkill = {
+      key: "other/repo:skills/ponytail",
+      name: "ponytail",
+      description: "Other repo copy",
+      directory: "skills/ponytail",
+      repoOwner: "other",
+      repoName: "repo",
+      repoBranch: "main",
+    };
+
+    expect(
+      deduplicateDiscoverableSkills([hiddenCopy, primaryCopy, otherRepoCopy]),
+    ).toEqual([primaryCopy, otherRepoCopy]);
   });
 });
 

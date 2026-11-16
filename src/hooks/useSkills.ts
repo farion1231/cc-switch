@@ -21,6 +21,7 @@ import {
 } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
 import {
+  deduplicateDiscoverableSkills,
   mergeImportedSkills,
   replaceRepoDiscovery,
 } from "@/hooks/useSkills.helpers";
@@ -120,7 +121,14 @@ const discoverableQuery = {
     return result;
   },
   staleTime: Infinity,
-  initialData: () => readLocalCache<SkillDiscoveryResult>(DISCOVER_CACHE_KEY),
+  initialData: () => {
+    const cached = readLocalCache<SkillDiscoveryResult>(DISCOVER_CACHE_KEY);
+    if (!cached) return undefined;
+    return {
+      ...cached,
+      skills: deduplicateDiscoverableSkills(cached.skills ?? []),
+    };
+  },
   // 本地缓存是旧数据：时间记成 0，配合 refetchOnMount 在后台刷新
   initialDataUpdatedAt: 0,
   refetchOnMount: () => (discoverRevalidated ? false : ("always" as const)),

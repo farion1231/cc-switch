@@ -1,4 +1,72 @@
-import type { InstalledSkill, SkillDiscoveryResult } from "@/lib/api/skills";
+import type {
+  DiscoverableSkill,
+  InstalledSkill,
+  SkillDiscoveryResult,
+} from "@/lib/api/skills";
+
+function discoverableInstallName(directory: string): string {
+  const trimmed = directory.replace(/[/\\]+$/, "");
+  const parts = trimmed.split(/[/\\]/);
+  return parts[parts.length - 1] ?? "";
+}
+
+function discoverableDedupKey(skill: DiscoverableSkill): string {
+  const installName = discoverableInstallName(skill.directory).toLowerCase();
+  const uniqueName = installName || skill.key.toLowerCase();
+  return `${skill.repoOwner.toLowerCase()}\u0000${skill.repoName.toLowerCase()}\u0000${uniqueName}`;
+}
+
+function discoverablePathPriority(
+  directory: string,
+): [number, number, number, string] {
+  const normalized = directory.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  const segments = normalized.split("/").filter(Boolean);
+  const hasHiddenSegment = segments.some((segment) => segment.startsWith("."))
+    ? 1
+    : 0;
+  const depth = segments.length;
+  const notUnderSkillsDir = segments[0]?.toLowerCase() === "skills" ? 0 : 1;
+  return [hasHiddenSegment, depth, notUnderSkillsDir, normalized.toLowerCase()];
+}
+
+function isHigherPriorityPath(candidate: string, existing: string): boolean {
+  const a = discoverablePathPriority(candidate);
+  const b = discoverablePathPriority(existing);
+  for (let i = 0; i < 3; i += 1) {
+    if (a[i] !== b[i]) return a[i] < b[i];
+  }
+  return a[3] < b[3];
+}
+
+/**
+ * 与后端 `deduplicate_discoverable_skills` 保持一致：
+ * 同一仓库内按最终安装目录名去重并优先保留非隐藏、较浅、`skills/` 下的路径；
+ * 不同仓库的同名技能分开保留。
+ */
+export function deduplicateDiscoverableSkills(
+  skills: DiscoverableSkill[],
+): DiscoverableSkill[] {
+  const bestIndexByKey = new Map<string, number>();
+  const keep = new Array<boolean>(skills.length).fill(false);
+
+  for (let index = 0; index < skills.length; index += 1) {
+    const skill = skills[index];
+    const key = discoverableDedupKey(skill);
+    const prevIndex = bestIndexByKey.get(key);
+    if (prevIndex === undefined) {
+      bestIndexByKey.set(key, index);
+      keep[index] = true;
+    } else if (
+      isHigherPriorityPath(skill.directory, skills[prevIndex].directory)
+    ) {
+      keep[prevIndex] = false;
+      keep[index] = true;
+      bestIndexByKey.set(key, index);
+    }
+  }
+
+  return skills.filter((_, index) => keep[index]);
+}
 
 /**
  * 合并本次导入结果到已安装缓存，按 id 去重。
@@ -36,22 +104,14 @@ export function replaceRepoDiscovery(
 
   const otherRepo = (owner?: string, name?: string) =>
     owner !== repo.owner || name !== repo.name;
-  const seen = new Set<string>();
-  const skills = [
+  const skills = deduplicateDiscoverableSkills([
     ...existing.skills.filter((s) => otherRepo(s.repoOwner, s.repoName)),
     ...(next?.skills ?? []),
-  ]
-    .filter((skill) => {
-      const key = skill.key.toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .sort((a, b) => {
-      const x = a.name.toLowerCase();
-      const y = b.name.toLowerCase();
-      return x < y ? -1 : x > y ? 1 : 0;
-    });
+  ]).sort((a, b) => {
+    const x = a.name.toLowerCase();
+    const y = b.name.toLowerCase();
+    return x < y ? -1 : x > y ? 1 : 0;
+  });
   const failures = [
     ...existing.failures.filter((f) => otherRepo(f.owner, f.name)),
     ...(next?.failures ?? []),
