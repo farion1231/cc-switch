@@ -995,28 +995,18 @@
         }
       }
     },
-    "configDirectoryOverride": "Überschreiben des Konfigurationsverzeichnisses (erweitert)",
     "configDirectoryDescription": "Wenn Sie Claude Code oder Codex in Umgebungen wie WSL verwenden, können Sie das Konfigurationsverzeichnis manuell auf das in WSL festlegen, damit die Anbieterdaten mit der Hauptumgebung übereinstimmen.",
     "appConfigDir": "CC-Switch-Konfigurationsverzeichnis",
     "appConfigDirDescription": "Speicherort der CC-Switch-Konfiguration anpassen (auf einen Cloud-Sync-Ordner verweisen, um die Konfiguration zu synchronisieren)",
     "browsePlaceholderApp": "z. B. C:\\Users\\Administrator\\.cc-switch",
-    "claudeConfigDir": "Claude-Code-Konfigurationsverzeichnis",
     "claudeConfigDirDescription": "Überschreibt das Claude-Konfigurationsverzeichnis (settings.json). Benutzerdefinierte Verzeichnisse speichern .claude.json (MCP) innerhalb des Verzeichnisses; das Standardverzeichnis ~/.claude behält den getrennten Pfad ~/.claude.json von Claude Code bei.",
-    "codexConfigDir": "Codex-Konfigurationsverzeichnis",
     "codexConfigDirDescription": "Überschreibt das Codex-Konfigurationsverzeichnis.",
-    "geminiConfigDir": "Gemini-Konfigurationsverzeichnis",
     "geminiConfigDirDescription": "Überschreibt das Gemini-Konfigurationsverzeichnis (.env).",
-    "grokConfigDir": "Grok-Build-Konfigurationsverzeichnis",
     "grokConfigDirDescription": "Überschreibt das Grok-Build-Konfigurationsverzeichnis (config.toml).",
-    "opencodeConfigDir": "OpenCode-Konfigurationsverzeichnis",
     "opencodeConfigDirDescription": "Überschreibt das OpenCode-Konfigurationsverzeichnis (opencode.json / opencode.jsonc).",
-    "openclawConfigDir": "OpenClaw-Konfigurationsverzeichnis",
     "openclawConfigDirDescription": "Überschreibt das OpenClaw-Konfigurationsverzeichnis (openclaw.json).",
-    "hermesConfigDir": "Hermes-Konfigurationsverzeichnis",
     "hermesConfigDirDescription": "Überschreibt das Hermes-Konfigurationsverzeichnis (config.yaml).",
-    "piConfigDir": "Pi-Konfigurationsverzeichnis",
     "piConfigDirDescription": "Überschreibt das Pi-Konfigurationsverzeichnis (models.json, Anweisungsdateien, Prompts, Skills und Sitzungen).",
-    "ompConfigDir": "Oh-My-Pi-Konfigurationsverzeichnis",
     "browsePlaceholderClaude": "z. B. /home/<your-username>/.claude",
     "browsePlaceholderCodex": "z. B. /home/<your-username>/.codex",
     "browsePlaceholderGemini": "z. B. /home/<your-username>/.gemini",
@@ -5432,6 +5422,8 @@
     "readyBodyRouting": "Jetzt installieren? CC Switch wird neu gestartet, laufende Anfragen über das lokale Routing werden abgebrochen.",
     "later": "Später",
     "installNow": "Installieren und neu starten",
-    "installFailed": "Update-Installation fehlgeschlagen"
+    "installFailed": "Update-Installation fehlgeschlagen",
+    "downloadingInline": "Neue Version wird im Hintergrund heruntergeladen…",
+    "downloadedInline": "Heruntergeladen"
   }
 }

@@ -995,28 +995,18 @@
         }
       }
     },
-    "configDirectoryOverride": "設定目錄覆寫（進階）",
     "configDirectoryDescription": "在 WSL 等環境使用 Claude Code 或 Codex 的時候，可手動指定為 WSL 裡的設定目錄，供應商資料與主環境保持一致。",
     "appConfigDir": "CC Switch 設定目錄",
     "appConfigDirDescription": "自訂 CC Switch 的設定儲存位置（指定至雲端同步資料夾即可雲端同步設定）",
     "browsePlaceholderApp": "例如：C:\\Users\\Administrator\\.cc-switch",
-    "claudeConfigDir": "Claude Code 設定目錄",
     "claudeConfigDirDescription": "覆寫 Claude 設定目錄 (settings.json)。真正自訂目錄會在目錄內存放 Claude MCP 的 .claude.json；預設 ~/.claude 目錄仍使用 Claude 預設的 ~/.claude.json。",
-    "codexConfigDir": "Codex 設定目錄",
     "codexConfigDirDescription": "覆寫 Codex 設定目錄。",
-    "geminiConfigDir": "Gemini 設定目錄",
     "geminiConfigDirDescription": "覆寫 Gemini 設定目錄 (.env)。",
-    "grokConfigDir": "Grok Build 設定目錄",
     "grokConfigDirDescription": "覆寫 Grok Build 設定目錄 (config.toml)。",
-    "opencodeConfigDir": "OpenCode 設定目錄",
     "opencodeConfigDirDescription": "覆寫 OpenCode 設定目錄 (opencode.json / opencode.jsonc)。",
-    "openclawConfigDir": "OpenClaw 設定目錄",
     "openclawConfigDirDescription": "覆寫 OpenClaw 設定目錄 (openclaw.json)。",
-    "hermesConfigDir": "Hermes 設定目錄",
     "hermesConfigDirDescription": "覆寫 Hermes 設定目錄 (config.yaml)。",
-    "piConfigDir": "Pi 設定目錄",
     "piConfigDirDescription": "覆寫 Pi 設定目錄（models.json、指示檔案、提示、Skills 與工作階段）。",
-    "ompConfigDir": "Oh My Pi 設定目錄",
     "browsePlaceholderClaude": "例如：/home/<您的帳號>/.claude",
     "browsePlaceholderCodex": "例如：/home/<您的帳號>/.codex",
     "browsePlaceholderGemini": "例如：/home/<您的帳號>/.gemini",
@@ -5432,6 +5422,8 @@
     "readyBodyRouting": "現在安裝嗎？CC Switch 會重新啟動，正在經本地路由的請求會中斷。",
     "later": "稍後",
     "installNow": "安裝並重新啟動",
-    "installFailed": "安裝更新失敗"
+    "installFailed": "安裝更新失敗",
+    "downloadingInline": "正在背景下載新版本…",
+    "downloadedInline": "已下載完畢"
   }
 }

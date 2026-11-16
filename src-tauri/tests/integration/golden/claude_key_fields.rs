@@ -13,8 +13,8 @@ use serde_json::{json, Value};
 use cc_switch_lib::live::floor::{claude_floor_env, claude_floor_top};
 use cc_switch_lib::{AppState, AppType, Provider, ProviderService};
 
+use crate::golden::util::{official, provider, read_home_json, seed_providers, write_home_file};
 use crate::support::{create_test_state, reset_test_fs, test_mutex};
-use crate::util::{official, provider, read_home_json, seed_providers, write_home_file};
 
 /// 取出关键字段：`env.<KEY>` 与顶层键，按名字排序。
 fn floor_view(settings: &Value) -> BTreeMap<String, Value> {

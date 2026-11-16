@@ -995,28 +995,18 @@
         }
       }
     },
-    "configDirectoryOverride": "Переопределение каталога конфигурации (дополнительно)",
     "configDirectoryDescription": "При использовании Claude Code или Codex в средах вроде WSL можно вручную указать каталог конфигурации из WSL, чтобы данные провайдеров совпадали с основной средой.",
     "appConfigDir": "Каталог конфигурации CC Switch",
     "appConfigDirDescription": "Настройте расположение конфигурации CC Switch (можно указать папку облачной синхронизации, чтобы включить синхронизацию конфигурации)",
     "browsePlaceholderApp": "например, C:\\Users\\Administrator\\.cc-switch",
-    "claudeConfigDir": "Каталог конфигурации Claude Code",
     "claudeConfigDirDescription": "Переопределяет каталог конфигурации Claude (settings.json). В пользовательских каталогах .claude.json (MCP) хранится внутри каталога; стандартный каталог ~/.claude сохраняет раздельный путь Claude Code ~/.claude.json.",
-    "codexConfigDir": "Каталог конфигурации Codex",
     "codexConfigDirDescription": "Переопределение каталога конфигурации Codex.",
-    "geminiConfigDir": "Каталог конфигурации Gemini",
     "geminiConfigDirDescription": "Переопределение каталога конфигурации Gemini (.env).",
-    "grokConfigDir": "Каталог конфигурации Grok Build",
     "grokConfigDirDescription": "Переопределить каталог конфигурации Grok Build (config.toml).",
-    "opencodeConfigDir": "Каталог конфигурации OpenCode",
     "opencodeConfigDirDescription": "Переопределение каталога конфигурации OpenCode (opencode.json).",
-    "openclawConfigDir": "Каталог конфигурации OpenClaw",
     "openclawConfigDirDescription": "Переопределение каталога конфигурации OpenClaw (openclaw.json).",
-    "hermesConfigDir": "Каталог конфигурации Hermes",
     "hermesConfigDirDescription": "Переопределение каталога конфигурации Hermes (config.yaml).",
-    "piConfigDir": "Каталог конфигурации Pi",
     "piConfigDirDescription": "Переопределить каталог конфигурации Pi (models.json, файлы инструкций, промпты, skills и сессии).",
-    "ompConfigDir": "Каталог конфигурации Oh My Pi",
     "browsePlaceholderClaude": "например, /home/<your-username>/.claude",
     "browsePlaceholderCodex": "например, /home/<your-username>/.codex",
     "browsePlaceholderGemini": "например, /home/<your-username>/.gemini",
@@ -5430,6 +5420,8 @@
     "readyBodyRouting": "Установить сейчас? CC Switch перезапустится, текущие запросы через локальную маршрутизацию будут прерваны.",
     "later": "Позже",
     "installNow": "Установить и перезапустить",
-    "installFailed": "Не удалось установить обновление"
+    "installFailed": "Не удалось установить обновление",
+    "downloadingInline": "Новая версия загружается в фоне…",
+    "downloadedInline": "Загружено"
   }
 }

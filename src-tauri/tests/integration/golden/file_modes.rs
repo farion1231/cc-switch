@@ -13,8 +13,10 @@ use serde_json::json;
 
 use cc_switch_lib::{AppType, ProviderService};
 
+use crate::golden::util::{
+    assert_golden, home, official, provider, seed_providers, write_home_file,
+};
 use crate::support::{create_test_state, reset_test_fs, test_mutex};
-use crate::util::{assert_golden, home, official, provider, seed_providers, write_home_file};
 
 const CLIENT_ROOTS: &[&str] = &[".claude", ".claude.json", ".codex", ".gemini", ".grok"];
 

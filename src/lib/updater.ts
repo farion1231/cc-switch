@@ -19,6 +19,8 @@ export interface ReadyUpdate {
 export interface AutoUpdateStatus {
   /** 这台机器能不能自动安装（便携版、Linux 非 AppImage 不行） */
   supported: boolean;
+  /** 自动下载开关是否打开 */
+  enabled: boolean;
   downloading: boolean;
   ready: ReadyUpdate | null;
   /** 有应用在用路由服务：重启会切断进行中的请求 */

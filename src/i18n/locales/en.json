@@ -995,28 +995,18 @@
         }
       }
     },
-    "configDirectoryOverride": "Configuration Directory Override (Advanced)",
     "configDirectoryDescription": "When using Claude Code or Codex in environments like WSL, you can manually specify the configuration directory to the one in WSL to keep provider data consistent with the main environment.",
     "appConfigDir": "CC Switch Configuration Directory",
     "appConfigDirDescription": "Customize the storage location for CC Switch configuration (point to cloud sync folder to enable config sync)",
     "browsePlaceholderApp": "e.g., C:\\Users\\Administrator\\.cc-switch",
-    "claudeConfigDir": "Claude Code Configuration Directory",
     "claudeConfigDirDescription": "Override Claude configuration directory (settings.json). Custom directories store .claude.json (MCP) inside the directory; the default ~/.claude directory keeps Claude Code's split ~/.claude.json path.",
-    "codexConfigDir": "Codex Configuration Directory",
     "codexConfigDirDescription": "Override Codex configuration directory.",
-    "geminiConfigDir": "Gemini Configuration Directory",
     "geminiConfigDirDescription": "Override Gemini configuration directory (.env).",
-    "grokConfigDir": "Grok Build Configuration Directory",
     "grokConfigDirDescription": "Override Grok Build configuration directory (config.toml).",
-    "opencodeConfigDir": "OpenCode Configuration Directory",
     "opencodeConfigDirDescription": "Override OpenCode configuration directory (opencode.json / opencode.jsonc).",
-    "openclawConfigDir": "OpenClaw Configuration Directory",
     "openclawConfigDirDescription": "Override OpenClaw configuration directory (openclaw.json).",
-    "hermesConfigDir": "Hermes Configuration Directory",
     "hermesConfigDirDescription": "Override Hermes configuration directory (config.yaml).",
-    "piConfigDir": "Pi Configuration Directory",
     "piConfigDirDescription": "Override the Pi configuration directory (models.json, instruction files, prompts, skills, and sessions).",
-    "ompConfigDir": "Oh My Pi Configuration Directory",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
@@ -5432,6 +5422,8 @@
     "readyBodyRouting": "Install it now? CC Switch will restart, and requests in progress through local routing will be cut off.",
     "later": "Later",
     "installNow": "Install and restart",
-    "installFailed": "Update installation failed"
+    "installFailed": "Update installation failed",
+    "downloadingInline": "Downloading the new version in the background…",
+    "downloadedInline": "Downloaded"
   }
 }

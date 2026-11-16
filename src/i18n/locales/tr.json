@@ -995,28 +995,18 @@
         }
       }
     },
-    "configDirectoryOverride": "Yapılandırma Dizinini Geçersiz Kılma (Gelişmiş)",
     "configDirectoryDescription": "WSL gibi ortamlarda Claude Code veya Codex kullanırken, sağlayıcı verilerini ana ortamla tutarlı tutmak için yapılandırma dizinini WSL'deki dizine manuel olarak belirtebilirsiniz.",
     "appConfigDir": "CC Switch Yapılandırma Dizini",
     "appConfigDirDescription": "CC Switch yapılandırması için depolama konumunu özelleştirin (yapılandırma eşitlemeunu etkinleştirmek için bulut eşitleme klasörünü işaretleyin)",
     "browsePlaceholderApp": "örneğin, C:\\Users\\Administrator\\.cc-switch",
-    "claudeConfigDir": "Claude Code Yapılandırma Dizini",
     "claudeConfigDirDescription": "Claude yapılandırma dizinini (settings.json) geçersiz kılın. Özel dizinler .claude.json'u (MCP) dizinin içinde saklar; varsayılan ~/.claude dizini Claude Code'nin bölünmüş ~/.claude.json yolunu korur.",
-    "codexConfigDir": "Codex Yapılandırma Dizini",
     "codexConfigDirDescription": "Codex yapılandırma dizinini geçersiz kılın.",
-    "geminiConfigDir": "Gemini Yapılandırma Dizini",
     "geminiConfigDirDescription": "Gemini yapılandırma dizinini (.env) geçersiz kılın.",
-    "grokConfigDir": "Grok Build Yapılandırma Dizini",
     "grokConfigDirDescription": "Grok Build yapılandırma dizinini (config.toml) geçersiz kılın.",
-    "opencodeConfigDir": "OpenCode Yapılandırma Dizini",
     "opencodeConfigDirDescription": "OpenCode yapılandırma dizinini (opencode.json / opencode.jsonc) geçersiz kılın.",
-    "openclawConfigDir": "OpenClaw Yapılandırma Dizini",
     "openclawConfigDirDescription": "OpenClaw yapılandırma dizinini (openclaw.json) geçersiz kılın.",
-    "hermesConfigDir": "Hermes Yapılandırma Dizini",
     "hermesConfigDirDescription": "Hermes yapılandırma dizinini (config.yaml) geçersiz kılın.",
-    "piConfigDir": "Pi Yapılandırma Dizini",
     "piConfigDirDescription": "Pi yapılandırma dizinini (models.json, talimat dosyaları, istemler, beceriler ve oturumlar) geçersiz kılın.",
-    "ompConfigDir": "Oh My Pi Yapılandırma Dizini",
     "browsePlaceholderClaude": "ör. /home/<your-username>/.claude",
     "browsePlaceholderCodex": "ör. /home/<your-username>/.codex",
     "browsePlaceholderGemini": "ör., /home/<your-username>/.gemini",
@@ -5432,6 +5422,8 @@
     "readyBodyRouting": "Şimdi kurulsun mu? CC Switch yeniden başlatılacak ve yerel yönlendirme üzerinden devam eden istekler kesilecek.",
     "later": "Daha sonra",
     "installNow": "Kur ve yeniden başlat",
-    "installFailed": "Güncelleme kurulamadı"
+    "installFailed": "Güncelleme kurulamadı",
+    "downloadingInline": "Yeni sürüm arka planda indiriliyor…",
+    "downloadedInline": "İndirildi"
   }
 }

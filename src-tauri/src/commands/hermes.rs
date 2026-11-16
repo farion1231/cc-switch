@@ -38,14 +38,6 @@ pub fn get_hermes_live_provider_ids() -> Result<Vec<String>, String> {
         .map_err(|e| e.to_string())
 }
 
-/// Get a single Hermes provider fragment from live config.
-#[tauri::command]
-pub fn get_hermes_live_provider(
-    #[allow(non_snake_case)] providerId: String,
-) -> Result<Option<serde_json::Value>, String> {
-    hermes_config::get_provider(&providerId).map_err(|e| e.to_string())
-}
-
 // ============================================================================
 // Model Configuration Commands
 // ============================================================================
@@ -142,8 +134,8 @@ pub async fn open_hermes_web_ui(app: AppHandle, path: Option<String>) -> Result<
 #[tauri::command]
 pub async fn launch_hermes_dashboard() -> Result<(), String> {
     tokio::task::spawn_blocking(|| {
-        let command_line = crate::commands::misc::hermes_dashboard_command_line()?;
-        crate::commands::misc::launch_terminal_running(&command_line, "hermes_dashboard")
+        let command_line = crate::commands::terminal_launch::hermes_dashboard_command_line()?;
+        crate::commands::terminal_launch::launch_terminal_running(&command_line, "hermes_dashboard")
     })
     .await
     .map_err(|e| format!("launch task join error: {e}"))?
