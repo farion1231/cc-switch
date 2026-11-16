@@ -199,8 +199,14 @@
       "agySwitchTitle": "Bu işlem agy'nin oturum açma hesabını değiştirir",
       "agySwitchBody": "Terminal açılmadan önce agy'nin oturumu {{account}} hesabına geçirilir; bundan sonra başlatılan agy oturumları bu hesabı kullanır.",
       "agySwitchRunning": "agy çalışıyor: açık agy oturumları önceki hesabı kullanmaya devam eder ve hesabı yeniden kaydedebilir. Mümkünse önce agy oturumlarını kapatın.",
-      "isolationBodyCopilot": "\"{{name}}\" kartının uç noktası, anahtarı ve modeli yalnızca bu terminaldeki copilot'a iletilir ve hiçbir dosyaya yazılmaz; başka bir terminalde doğrudan copilot çalıştırmak yine GitHub oturumunuzu kullanır."
+      "isolationBodyCopilot": "\"{{name}}\" kartının uç noktası, anahtarı ve modeli yalnızca bu terminaldeki copilot'a iletilir ve hiçbir dosyaya yazılmaz; başka bir terminalde doğrudan copilot çalıştırmak yine GitHub oturumunuzu kullanır.",
+      "skipPermissions": "İzin istemlerini atla",
+      "extraArgs": "Ek argümanlar (isteğe bağlı)",
+      "extraArgsPlaceholder": "örn. --debug --append-system-prompt \"Kısa ol\"",
+      "extraArgsHint": "Yalnızca bu terminal için başlatma komutundan sonra eklenir. Boşluklarla ayırın; boşluk içeren değerleri tırnak içine alın."
     },
+    "liveConfigReadFailed": "{{app}} yapılandırma dosyası okunamadı",
+    "liveConfigReadFailedHint": "Yapılandırma dosyası düzeltilene kadar sağlayıcı eklemek veya kaldırmak başarısız olur.",
     "name": "İsim",
     "namePlaceholder": "ör. Claude Resmi",
     "websiteUrl": "Web sitesi URL'si",
@@ -385,7 +391,15 @@
     "codexAuthCleanupFailed": "Başarılı bir şekilde geçiş yapıldı ancak auth.json kaldırılamadı; resmi oturum açma kimlik bilgileri hâlâ diskte; bunları kaldırmak için auth.json'u Codex yapılandırma dizininden silin",
     "windowControlFailed": "Pencere kontrolü başarısız oldu: {{error}}",
     "officialBlockedByProxy": "Yerel yönlendirme etkinken resmi sağlayıcıya geçilemez. Yönlendirmenin resmi API'lerle kullanılması hesabın yasaklanmasına neden olabilir.",
-    "proxyOfficialWarning": "Mevcut sağlayıcı {{name}} resmidir. Yerel yönlendirmeyi kullanmadan önce üçüncü taraf bir sağlayıcıya geçmeyi düşünün."
+    "proxyOfficialWarning": "Mevcut sağlayıcı {{name}} resmidir. Yerel yönlendirmeyi kullanmadan önce üçüncü taraf bir sağlayıcıya geçmeyi düşünün.",
+    "proxyLoopbackHijacked": "{{app}} uygulamasından yerel {{origin}} rotasına giden istekler sistem vekili tarafından ele geçirilecek, bu yüzden {{app}} 502 hatası verir. Vekil aracınızda geri döngü adreslerinin doğrudan bağlanmasını sağlayın (örneğin Clash kurallarının başına IP-CIDR,127.0.0.0/8,DIRECT,no-resolve ekleyin), sonra {{app}} uygulamasını tamamen kapatıp yeniden açın.",
+    "codexHistorySplit": {
+      "hint": "{{previous}} kaynağındaki {{count}} oturum artık salt okunur",
+      "officialBucket": "resmi abonelik",
+      "thirdPartyBucket": "üçüncü taraf sağlayıcılar",
+      "migrationFinished": "{{count}} eski oturum taşındı. Devam etmek için Codex'i yeniden başlatın.",
+      "migrationFailed": "Eski oturumlar taşınamadı: {{error}}. CC Switch bir sonraki açılışta yeniden deneyecek."
+    }
   },
   "confirm": {
     "deleteProvider": "Sağlayıcıyı Sil",
@@ -761,6 +775,15 @@
         "warning": "Bu, uzak sunucudaki mevcut eşitleme verilerinin üzerine yazılacaktır",
         "legacyNotice": "Eski uzak veriler algılandı. Bu yükleme, yeni v2/db-v6 yoluna yazacak ve eski yolun üzerine yazılmayacaktır.",
         "confirm": "Yüklemeyi Onayla"
+      },
+      "clear": "Yapılandırmayı temizle",
+      "clearing": "Temizleniyor...",
+      "clearSuccess": "Bu cihazda WebDAV yapılandırması temizlendi",
+      "clearFailed": "Yapılandırma temizlenemedi: {{error}}",
+      "clearConfirm": {
+        "title": "WebDAV yapılandırmasını temizle",
+        "message": "Bu işlem, bu cihazdan kayıtlı WebDAV URL'sini, kullanıcı adını, parolayı ve uzak klasörü kaldırır ve otomatik eşitlemeyi durdurur. Sunucuya yüklenmiş veriler silinmez.",
+        "confirm": "Temizle"
       }
     },
     "syncType": {
@@ -978,6 +1001,14 @@
     "piConfigDirDescription": "Pi yapılandırma dizinini (models.json, talimat dosyaları, istemler, beceriler ve oturumlar) geçersiz kılın.",
     "ompConfigDir": "Oh My Pi Yapılandırma Dizini",
     "atomcodeConfigDir": "AtomCode Ana Dizini",
+    "codexPauseOfficialLogin": {
+      "title": "Resmi girişi duraklat",
+      "description": "Resmi kota dolduğunda ve Codex gönder düğmesini kilitlediğinde açın; Toplama ve Yönlendirme modundaki üçüncü taraf modeller çalışmaya devam eder. Açtıktan veya kapattıktan sonra Codex'i tamamen kapatıp yeniden açın.",
+      "help": "Resmi kota dolduğunda ve Codex gönder düğmesini kilitlediğinde (üçüncü taraf modeller bile gönderilemiyor) açın. Codex bu durumda resmi girişi kullanmayı bırakır, böylece resmi kota üzerinden gönder düğmesini kilitlemez ve Toplama ile Yönlendirme modundaki üçüncü taraf modeller çalışmaya devam eder. Giriş bu bilgisayarda kayıtlı kalır; oturumunuz kapatılmaz. Yalnızca Yönlendirme veya Toplama modunda geçerlidir; Doğrudan modu etkilenmez. Açıkken: resmi modeller kullanılamaz ve bir üçüncü taraf model seçmeniz istenir; Codex hesap ve kullanım bilgilerini gizler ve ilk açılışta başlangıç sorularını gösterebilir; kenar çubuğundaki Projeler altındaki mevcut görüşmeleriniz şimdilik gizlenir (kaybolmaz; kapattığınızda geri gelir); yeni oturumlar özel gruba kaydedilir ve resmi modele geri döndüğünüzde salt okunur olur. Resmi kota geri geldiğinde kapatın. Açtıktan veya kapattıktan sonra Codex'i tamamen kapatıp yeniden açın.",
+      "pausedToast": "Resmi giriş duraklatıldı. Geçerli olması için Codex'i tamamen kapatıp yeniden açın",
+      "resumedToast": "Resmi giriş devam ettirildi. Geçerli olması için Codex'i tamamen kapatıp yeniden açın",
+      "saveFailed": "Kaydedilemedi: {{error}}"
+    },
     "browsePlaceholderClaude": "ör. /home/<your-username>/.claude",
     "browsePlaceholderCodex": "ör. /home/<your-username>/.codex",
     "browsePlaceholderGemini": "ör., /home/<your-username>/.gemini",
@@ -1065,6 +1096,7 @@
     "toolDiagnoseNoConflict": "Çakışan kurulum bulunamadı",
     "toolDiagnoseConflicts": "{{count}} araçlarının birden fazla kurulumu vardır; listeler satırlarında genişletilir",
     "toolDiagnoseFailed": "Teşhis başarısız oldu",
+    "toolActionBinCollision": "{{path}} yolunda zaten bir dosya var; muhtemelen başka bir kurulum yönteminden kalmış ve npm üzerine yazmayacak. Dosyanın ne olduğunu kontrol edin, yedek olarak yeniden adlandırın ve tekrar deneyin. npm'in --force seçeneğini kullanmayın: dosyanın üzerine doğrudan yazar.",
     "toolUpgradeConfirmTitle": "Yükseltme hedefini onaylayın",
     "toolUpgradeConfirmHint": "Birden fazla kurulum algılandı. Bu yükseltme hepsini güncellemeyecektir; Gerçekte neyi hedeflediğini öğrenmek için aşağıdaki her araca bakın.",
     "toolUpgradeWillRun": "Çalıştırılacak:",
@@ -1329,6 +1361,7 @@
   },
   "sessionManager": {
     "searchPlaceholder": "Başlıkları, klasörleri, ilk/son mesajları veya oturum kimliklerini arayın",
+    "searchPlaceholderContent": "Başlıkları, klasörleri, mesaj metnini veya oturum kimliklerini arayın",
     "searchSessions": "Oturumları ara",
     "sessionList": "Oturumlar",
     "unknownDirectory": "Bilinmeyen dizin",
@@ -1414,8 +1447,15 @@
     "emptyAll": "Henüz oturum yok",
     "emptyAppHint": "CC Switch, {{path}}'den oturum verilerini okur",
     "emptySearch": "“{{query}}” ile eşleşen oturum başlığı, klasör veya ilk/son mesaj yok",
+    "emptySearchContent": "Hiçbir oturum başlığı, klasörü veya mesaj metni “{{query}}” içermiyor",
     "clearSearchAction": "Aramayı temizle",
     "emptySearchEnableContent": "Mesaj metninde ara",
+    "contentSearchToggle": "Mesaj metninde ara",
+    "contentSearchToggleFailed": "Mesaj metni arama ayarı değiştirilemedi: {{error}}",
+    "contentIndexing": "Mesaj metni dizinleniyor ({{processed}}/{{total}}). Metin eşleşmeleri eksik olabilir",
+    "contentHitPrefix": "Metin: ",
+    "contentHitMore": " ({{count}} mesaj eşleşiyor)",
+    "moreContentHits": "Daha fazla metin eşleşmesi",
     "emptySearchEnableContentHint": "Açıldığında mesaj metni için yerel bir dizin oluşturulur",
     "backToList": "Oturumlara geri dön",
     "back": "Geri",
@@ -1694,7 +1734,8 @@
       "openmodel": "OpenModel, desteklenen modellerde Codex için %90'a, Claude Code için %60'a varan uygulamaya özel indirimler sunar. Bu bağlantıyla kaydolup \"cc-switch\" promosyon kodunu kullanan CC Switch kullanıcıları ilk yüklemelerinde %10 indirim kazanır!",
       "grooroute": "GrooRoute Pro; kullandıkça öde ve abonelik planlarıyla OpenAI, Claude, DeepSeek ve diğer yaygın modellere erişim sağlayan güvenilir bir yapay zekâ API aktarım hizmetidir. Bu bağlantı üzerinden kaydolan CC Switch kullanıcıları ¥5 deneme bakiyesi kazanır!",
       "buytoken": "BuyToken; Claude Code, Codex, DeepSeek ve daha fazlası için kurumsal düzeyde eşzamanlılık ve hızlı faturalandırma sunan, uzun süreli ve istikrarlı kullanım için tasarlanmış bir yönlendirme hizmetidir. CC Switch kullanıcıları bu bağlantı üzerinden kaydolduklarında 3 ¥ deneme kredisi ve ilk yüklemelerinde %10 indirim kazanır.",
-      "vapi": "V-API, bireyler, geliştiriciler ve işletmeler için kararlı, hızlı ve güvenli, yüksek kaliteli LLM API hizmetleri sunan üç yıllık bir markadır. Resmî sözleşmelerin yanı sıra genel ve özel KDV faturaları sağlar. Bu bağlantıdan kaydolan CC Switch kullanıcıları 2 ¥ indirim ve ilk siparişlerinde %10 indirim kazanır!"
+      "vapi": "V-API, bireyler, geliştiriciler ve işletmeler için kararlı, hızlı ve güvenli, yüksek kaliteli LLM API hizmetleri sunan üç yıllık bir markadır. Resmî sözleşmelerin yanı sıra genel ve özel KDV faturaları sağlar. Bu bağlantıdan kaydolan CC Switch kullanıcıları 2 ¥ indirim ve ilk siparişlerinde %10 indirim kazanır!",
+      "ospreyai": "ACS OspreyAI, geliştiriciler ve işletmeler için hepsi bir arada çok modelli bir API platformudur. Tek bir API anahtarıyla Claude, Gemini, GPT, GLM, Kimi, Qwen, DeepSeek ve Tencent Hunyuan dahil önde gelen Çinli ve uluslararası modellere erişebilirsiniz. Platform, OpenAI, Anthropic ve diğer ana akım API protokolleriyle uyumludur; Claude Code, Codex, OpenCode, Pi ve Hermes gibi popüler AI araçlarıyla çalışır. Uluslararası modeller resmi fiyatların %20–40 altında, Çin modelleri ise %30–50 altındadır. Birleşik yükleme, birleşik faturalama, kullanım takibi ve esnek model değiştirme; AI uygulama geliştirme, içerik üretimi ve otomatik iş akışları için uygundur. İndirim almak ve Çin ile dünyadan önde gelen modellere hızlıca bağlanmak için bu bağlantı üzerinden hesap oluşturun."
     },
     "presets": {
       "ucloud": "Compshare",
@@ -1805,6 +1846,18 @@
     "categoryCnOfficial": "Açık Kaynak Resmi",
     "categoryAggregation": "Birleştirme",
     "categoryThirdParty": "Üçüncü Taraf",
+    "nativeConfig": {
+      "title": "Yapılandırma dosyası {{path}} (yalnızca bu sağlayıcı)",
+      "hint": "Bu sağlayıcının dosyadaki bölümünü uygulamanın kendi biçiminde gösterir ve kaydederken oraya yazar. Varsayılan model gibi genel ayarlar burada değildir. Buraya yazdığınız yorumlar kaydedilmez.",
+      "invalid": "Geçersiz {{format}}: {{error}}",
+      "scope": "Burada yalnızca {{section}} düğümü yer alır. Yukarıdaki Sağlayıcı Anahtarı alanından değiştirin.",
+      "schema": "Bazı alanlar yanlış türe sahip. Onları yukarıdaki forma göre kontrol edin."
+    },
+    "reasoningEffort": "Akıl yürütme çabası",
+    "reasoningEffortHelp": "Yönlendirme istekleri OpenAI biçimine dönüştürürken istemcide seçilen düşünme düzeyinin yukarı akışa nasıl gönderileceği. Otomatik: yukarı akışın desteklediği bir düzeyde gönderilir; bilinmeyen yukarı akışlar en fazla yüksek alır ve düşünme kapalıyken hiçbir şey gönderilmez. Doğrudan gönder: istemcinin seçtiği düzey aynen gönderilir, bu yüzden xhigh veya max desteklemeyen yukarı akışlar hata döndürür. Gönderme: yukarı akış parametreyi reddediyorsa bunu kullanın.",
+    "reasoningEffortAuto": "Otomatik (önerilir)",
+    "reasoningEffortOff": "Gönderme",
+    "reasoningEffortPassthrough": "Doğrudan gönder",
     "fetchModels": "Modelleri Getir",
     "fetchingModels": "Getiriliyor...",
     "searchModelPlaceholder": "Modelleri ara...",
@@ -2108,7 +2161,9 @@
     "inactiveFieldCopied": "Kopyalandı",
     "upstreamFormatCopilotRouteHint": "Her mod, Copilot hesap kimlik bilgilerini içeren yönlendirmeyi gerektirir. Seçtiğiniz bir protokol, onu desteklemeyen modeller için açıkça başarısız olur.",
     "maxOutputTokensWarning": "Modelin veya ağ geçidinin gerçek çıkış sınırını aşmayın, aksi halde istekler 400 değerini döndürür.",
-    "routeOnlySettingsHint": "Aşağıdaki iki ayar yalnızca yönlendirme ve Birleştirme modlarında geçerlidir."
+    "routeOnlySettingsHint": "Aşağıdaki iki ayar yalnızca yönlendirme ve Birleştirme modlarında geçerlidir.",
+    "officialSpeedTiersLabel": "Resmi Hızlı katmanı koru",
+    "officialSpeedTiersHint": "Model listesindeki GPT modellerinde resmi Hızlı hız katmanını tutar; böylece Codex'te Hızlı seçildiğinde service_tier=priority gönderilir. Yalnızca resmi ChatGPT hesaplarına yönlendiren aktarıcılar (örn. CPA) bunu kabul eder ve kotayı daha hızlı tüketir; diğer yukarı akışlar reddedebilir veya daha yüksek fiyatlandırabilir. Açıldıktan sonra, resmi kart altında yaptığınız bir Hızlı seçim bu sağlayıcı üzerinde hemen etki eder. Toplama modunda kullanılmaz. Değiştirdikten sonra Codex'i yeniden başlatın."
   },
   "geminiConfig": {
     "envFile": "Ortam Değişkenleri (.env)",
@@ -2492,6 +2547,17 @@
       "rate": "Döviz kuru",
       "rateHint": "Elle girilir ve yalnızca görüntüleme amacıyla kullanılır; maliyetler USD olarak kaydedilmeye devam eder.",
       "rateInvalid": "0'dan büyük bir sayı girin",
+      "rateSource": "Kur kaynağı",
+      "rateSources": {
+        "auto": "Otomatik (günlük)",
+        "manual": "Manuel"
+      },
+      "rateAutoHint": "Yalnızca görüntüleme için günde bir kez otomatik olarak getirilir; maliyetler yine USD olarak kaydedilir.",
+      "rateAutoUpdated": "Son güncelleme: {{time}}",
+      "rateAutoNever": "Henüz kur getirilmedi",
+      "rateAutoFailed": "Yeni kur getirilemedi; önceki kur korunuyor.",
+      "rateAttribution": "Kurlar: {{provider}}.",
+      "rateRefresh": "Şimdi güncelle",
       "approxNote": "Dönüştürülmüş tutarın üzerine gelerek USD karşılığını görün.",
       "sidebarToday": "Kenar çubuğu \"Bugün\"",
       "sidebarTodayItems": {
@@ -2897,7 +2963,10 @@
       "commandRequired": "Lütfen komutu girin",
       "singleServerObjectRequired": "Lütfen tek bir MCP sunucu nesnesi yapıştırın (üst düzey mcpServers alanını dahil etmeyin)",
       "saveFailed": "Kaydetme başarısız oldu",
-      "deleteFailed": "Silinemedi"
+      "deleteFailed": "Silinemedi",
+      "piSseUnsupported": "Pi SSE MCP sunucularını desteklemiyor. Bunun yerine HTTP (akışlı HTTP) kullanın",
+      "piInvalidName": "Pi MCP sunucu adları yalnızca harf, rakam, _ ve - içerebilir: {{id}}",
+      "piNameConflict": "Pi, yalnızca - ve _ ile farklılaşan sunucu adlarını aynı sunucu olarak değerlendirir: {{id}}, mevcut {{other}} ile çakışıyor"
     },
     "validation": {
       "ok": "Komut mevcut",
@@ -4235,8 +4304,13 @@
     "extraUsage": "Ekstra Kullanım",
     "expired": "Oturumun süresi doldu",
     "expiredHint": "Giriş bilgilerinizi yenilemek için {{tool}} komutunu çalıştırın",
+    "expiredHintAccounts": "Bu hesapta Hesaplar bölümünden tekrar oturum açın",
     "queryFailed": "Sorgu başarısız oldu",
-    "refresh": "Yenile"
+    "refresh": "Yenile",
+    "copilotCompletions": "Tamamlamalar",
+    "copilotChat": "Sohbet",
+    "copilotCount": "{{remaining}} / {{total}} kaldı",
+    "copilotNotIncluded": "Planınıza dahil değil"
   },
   "nav": {
     "mainLabel": "Ana gezinme",
@@ -4304,7 +4378,9 @@
     },
     "sectionInstalled": "Yüklü · {{count}}",
     "sectionNotInstalled": "Yüklü değil · {{count}}",
-    "dragHandle": "{{name}} öğesini yeniden sıralamak için sürükleyin"
+    "dragHandle": "{{name}} öğesini yeniden sıralamak için sürükleyin",
+    "toolQueued": "Sıraya alındı, başka bir uygulamanın bitmesi bekleniyor",
+    "toolElapsed": "{{time}} geçti"
   },
   "appPage": {
     "moreActions": "{{name}} için diğer işlemler",
@@ -4370,7 +4446,10 @@
       "serviceDown": "{{app}}, {{mode}} modundadır ancak yönlendirme hizmeti çalışmadığından istekler başarısız olur.",
       "startService": "Hizmeti başlat",
       "backToDirect": "Doğrudan bağlantıya dön",
-      "attachFailed": "{{mode}} önceki başlangıçta yeniden bağlanamadığı için {{app}} doğrudan bağlantıya döndü."
+      "attachFailed": "{{mode}} önceki başlangıçta yeniden bağlanamadığı için {{app}} doğrudan bağlantıya döndü.",
+      "officialLoginPaused": "Codex resmi girişi duraklatıldı",
+      "officialLoginPausedBody": "Resmi modeller kullanılamaz ve Codex kenar çubuğundaki Projeler altındaki mevcut görüşmeleriniz şimdilik gizlenir. Resmi kota geri geldiğinde \"Resmi girişi devam ettir\" düğmesine tıklayın, ardından Codex'i tamamen kapatıp yeniden açın.",
+      "resumeOfficialLogin": "Resmi girişi devam ettir"
     },
     "toast": {
       "enteredRoute": "{{app}} artık yönlendirme yapıyor → {{provider}}.",
@@ -4616,7 +4695,8 @@
       "connected": "Bağlantı başarılı",
       "disconnected": "Bağlantı başarısız",
       "checking": "Bağlantı kontrol ediliyor",
-      "disabled": "Etkin değil"
+      "disabled": "Etkin değil",
+      "authRequired": "Sunucuya ulaşıldı ancak oturum açma gerekiyor (örn. OAuth). CC Switch istemcinizin kendi girişi olmadan kontrol eder: istemciden oturum açtıysanız orada çalışır; başlıklara bir jeton ayarladıysanız hâlâ geçerli olduğundan emin olun"
     },
     "noun": "MCP sunucuları",
     "listSeparator": ", ",
@@ -5011,7 +5091,15 @@
       "open": "Yetkilendirme sayfasını açın",
       "note": "Tarayıcınızda yetkilendirme sayfası açık; bitirdiğinizde bu kendi kendine güncellenir. {{service}}'nin kullanım koşullarına dikkat edin.",
       "browserNote": "{{service}} oturum açma sayfası tarayıcınızda açık. Oturum açıp erişim izni verin; bu bilgi otomatik olarak güncellenir.",
-      "reopen": "Oturum açma sayfasını yeniden aç"
+      "reopen": "Oturum açma sayfasını yeniden aç",
+      "copyLink": "Oturum açma bağlantısını kopyala",
+      "linkCopied": "Oturum açma bağlantısı kopyalandı.",
+      "linkNote": "Oturum açma bağlantısı kopyalandı. Kullanmak istediğiniz tarayıcıda açın, oturum açın ve erişim verin; bu otomatik olarak güncellenecek.",
+      "linkCodeNote": "Oturum açma bağlantısı kopyalandı. Kullanmak istediğiniz tarayıcıda açın ve kodu girin; bitirdiğinizde kendi kendine güncellenir. {{service}}'nin kullanım koşullarına dikkat edin."
+    },
+    "openBrowser": {
+      "title": "Oturum açarken tarayıcıyı aç",
+      "description": "Oturum açma bağlantısını yalnızca kopyalamak ve istediğiniz tarayıcıda açmak için bunu kapatın — farklı tarayıcı profillerinde hesap tutuyorsanız kullanışlıdır."
     },
     "toast": {
       "added": "{{service}} hesabı eklendi.",
@@ -5101,7 +5189,9 @@
     "error": {
       "defaultModelInUse": "Kimi Code bu sağlayıcıdaki bir modeli kullanıyor. Önce Kimi Code'da /model komutuyla başka bir modele geçin.",
       "secondaryModelInUse": "Kimi Code'un alt ajan modeli bu sağlayıcıdaki bir modeli kullanıyor. Önce Kimi Code'da /secondary-model komutuyla değiştirin."
-    }
+    },
+    "configTomlScope": "Burada yalnızca [providers.{{key}}] ve kendine ait [models.*] tabloları yer alır. Yukarıdaki Sağlayıcı Anahtarı alanından değiştirin.",
+    "configTomlSchema": "Eksik yapılandırma: sağlayıcının türünü ve her modelin model ile max_context_size (pozitif tam sayı) alanlarını kontrol edin."
   },
   "omp": {
     "empty": {

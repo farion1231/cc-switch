@@ -105,7 +105,10 @@ export const translateAtomcodeProviderMutationError = (
   ) {
     return t("atomcode.error.legacyRemoveUnsupported");
   }
-  if (message.includes("already exists") && message.includes("AtomCode account key")) {
+  if (
+    message.includes("already exists") &&
+    message.includes("AtomCode account key")
+  ) {
     return t("atomcode.error.accountKeyExists");
   }
   if (message.includes("Enter an AtomCode account key")) {
@@ -130,7 +133,9 @@ export const translateAtomcodeProviderMutationError = (
     return t("atomcode.error.noModels");
   }
   if (
-    message.includes("AtomCode models need a key, model ID and matching account")
+    message.includes(
+      "AtomCode models need a key, model ID and matching account",
+    )
   ) {
     return t("atomcode.error.modelInvalid");
   }

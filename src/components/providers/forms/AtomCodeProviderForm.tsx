@@ -577,7 +577,9 @@ export function AtomCodeProviderForm({
                       keepDraftOnBlur
                       placeholder={t("atomcode.form.modelKeyPlaceholder")}
                       autoComplete="off"
-                      className={conflictKey === key ? "border-destructive" : ""}
+                      className={
+                        conflictKey === key ? "border-destructive" : ""
+                      }
                     />
                   </div>
                   <div className="w-36 shrink-0">

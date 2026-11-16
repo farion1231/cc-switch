@@ -1,4 +1,6 @@
 import type { ProviderCategory } from "@/types";
+import type { PresetFamilyFields } from "@/config/presetFamilies";
+import type { PresetTheme } from "@/config/claudeProviderPresets";
 
 /**
  * AtomCode（共存型）供应商预设：settingsConfig 直接对应后端
@@ -52,7 +54,7 @@ export interface AtomCodeModelEntry {
   context_window?: number;
 }
 
-export interface AtomCodeProviderPreset {
+export interface AtomCodeProviderPreset extends PresetFamilyFields {
   name: string;
   /** config.toml 里的账号键：字母、数字、`-`、`_`、`.`（后端 validate_provider 同款） */
   providerKey: string;
@@ -61,6 +63,9 @@ export interface AtomCodeProviderPreset {
   category: ProviderCategory;
   icon?: string;
   iconColor?: string;
+  /** i18n key for localized display name */
+  nameKey?: string;
+  theme?: PresetTheme;
   settingsConfig: {
     account: {
       provider: AtomCodeProviderType;

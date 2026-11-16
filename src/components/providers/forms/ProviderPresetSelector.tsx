@@ -19,6 +19,7 @@ import type { KimiProviderPreset } from "@/config/kimiProviderPresets";
 import type { CopilotProviderPreset } from "@/config/copilotProviderPresets";
 import type { PiProviderPreset } from "@/config/piProviderPresets";
 import type { OmpProviderPreset } from "@/config/ompProviderPresets";
+import type { AtomCodeProviderPreset } from "@/config/atomcodeProviderPresets";
 import type { ProviderCategory } from "@/types";
 import type { AppId } from "@/lib/api";
 import {
@@ -77,7 +78,8 @@ export type AnyPreset =
   | McodeProviderPreset
   | KimiProviderPreset
   | OmpProviderPreset
-  | CopilotProviderPreset;
+  | CopilotProviderPreset
+  | AtomCodeProviderPreset;
 
 export type PresetEntry = {
   id: string;
