@@ -9,52 +9,25 @@ use crate::database::Database;
 use crate::provider::{Provider, UniversalProvider};
 use crate::services::model_pricing::ModelPricingInfo;
 use crate::store::AppState;
+use crate::test_support::{self, EnvVars};
 
+/// A test home with the Kimi, MiniMax and DSH data directories under it too.
 pub(super) struct TestHome {
-    previous: Option<std::ffi::OsString>,
-    native_overrides: Vec<(&'static str, Option<std::ffi::OsString>)>,
-    _directory: tempfile::TempDir,
+    _native_dirs: EnvVars,
+    _home: test_support::TestHome,
 }
 
 impl TestHome {
     pub(super) fn new() -> Self {
-        let directory = tempfile::tempdir().unwrap();
-        let previous = std::env::var_os("CC_SWITCH_TEST_HOME");
-        std::env::set_var("CC_SWITCH_TEST_HOME", directory.path());
-        let native_overrides = [
-            ("KIMI_CODE_HOME", ".kimi-code"),
-            ("MINIMAX_DATA_DIR", ".minimax"),
-            ("DSH_HOME", ".dsh"),
-        ]
-        .into_iter()
-        .map(|(key, dir)| {
-            let previous = std::env::var_os(key);
-            std::env::set_var(key, directory.path().join(dir));
-            (key, previous)
-        })
-        .collect();
-        crate::settings::reload_settings().unwrap();
+        let home = test_support::TestHome::new();
+        let native_dirs = EnvVars::new()
+            .set("KIMI_CODE_HOME", home.path().join(".kimi-code"))
+            .set("MINIMAX_DATA_DIR", home.path().join(".minimax"))
+            .set("DSH_HOME", home.path().join(".dsh"));
         Self {
-            previous,
-            native_overrides,
-            _directory: directory,
+            _native_dirs: native_dirs,
+            _home: home,
         }
-    }
-}
-
-impl Drop for TestHome {
-    fn drop(&mut self) {
-        for (key, previous) in &self.native_overrides {
-            match previous {
-                Some(value) => std::env::set_var(key, value),
-                None => std::env::remove_var(key),
-            }
-        }
-        match &self.previous {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-        }
-        let _ = crate::settings::reload_settings();
     }
 }
 

@@ -1190,22 +1190,13 @@ mod tests {
         std::fs::write(legacy_dir.join("cc-switch.db"), b"legacy").expect("seed legacy db");
 
         let test_home = tempfile::tempdir().expect("tempdir");
-        let saved_home = std::env::var_os("HOME");
-        let saved_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-
-        std::env::set_var("HOME", legacy_home.path());
-        std::env::set_var("CC_SWITCH_TEST_HOME", test_home.path());
+        let env = crate::test_support::EnvVars::new()
+            .set("HOME", legacy_home.path())
+            .set("CC_SWITCH_TEST_HOME", test_home.path());
 
         let dir = get_app_config_dir();
 
-        match saved_test_home {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-        }
-        match saved_home {
-            Some(value) => std::env::set_var("HOME", value),
-            None => std::env::remove_var("HOME"),
-        }
+        drop(env);
 
         let expected = test_home.path().join(".cc-switch");
         assert_eq!(

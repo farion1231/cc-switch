@@ -737,24 +737,27 @@ mod tests {
         assert!(!super::opencode_config_lock().is_poisoned());
     }
     use super::*;
+    use crate::test_support::EnvVars;
 
-    struct TestHomeGuard(Option<std::ffi::OsString>, crate::settings::AppSettings);
+    /// Restores the previous settings before the previous home comes back.
+    struct TestHomeGuard {
+        settings: crate::settings::AppSettings,
+        _env: EnvVars,
+    }
     impl TestHomeGuard {
         fn set(home: &std::path::Path) -> Self {
-            let previous_env = std::env::var_os("CC_SWITCH_TEST_HOME");
-            std::env::set_var("CC_SWITCH_TEST_HOME", home);
-            let guard = Self(previous_env, crate::settings::get_settings());
+            let env = EnvVars::new().set("CC_SWITCH_TEST_HOME", home);
+            let guard = Self {
+                settings: crate::settings::get_settings(),
+                _env: env,
+            };
             crate::settings::update_settings(Default::default()).unwrap();
             guard
         }
     }
     impl Drop for TestHomeGuard {
         fn drop(&mut self) {
-            crate::settings::update_settings(self.1.clone()).unwrap();
-            match self.0.take() {
-                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-            }
+            crate::settings::update_settings(self.settings.clone()).unwrap();
         }
     }
 

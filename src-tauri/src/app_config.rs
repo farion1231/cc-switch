@@ -1269,10 +1269,10 @@ impl MultiAppConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TempUserHome;
     use serial_test::serial;
     use std::env;
     use std::fs;
-    use tempfile::TempDir;
 
     #[test]
     fn app_type_parses_claude_desktop_aliases() {
@@ -1323,53 +1323,6 @@ mod tests {
         assert_eq!(AppType::Omp.as_str(), "omp");
     }
 
-    struct TempHome {
-        #[allow(dead_code)] // 字段通过 Drop trait 管理临时目录生命周期
-        dir: TempDir,
-        original_home: Option<String>,
-        original_userprofile: Option<String>,
-        original_test_home: Option<String>,
-    }
-
-    impl TempHome {
-        fn new() -> Self {
-            let dir = TempDir::new().expect("failed to create temp home");
-            let original_home = env::var("HOME").ok();
-            let original_userprofile = env::var("USERPROFILE").ok();
-            let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
-
-            env::set_var("HOME", dir.path());
-            env::set_var("USERPROFILE", dir.path());
-            env::set_var("CC_SWITCH_TEST_HOME", dir.path());
-
-            Self {
-                dir,
-                original_home,
-                original_userprofile,
-                original_test_home,
-            }
-        }
-    }
-
-    impl Drop for TempHome {
-        fn drop(&mut self) {
-            match &self.original_home {
-                Some(value) => env::set_var("HOME", value),
-                None => env::remove_var("HOME"),
-            }
-
-            match &self.original_userprofile {
-                Some(value) => env::set_var("USERPROFILE", value),
-                None => env::remove_var("USERPROFILE"),
-            }
-
-            match &self.original_test_home {
-                Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => env::remove_var("CC_SWITCH_TEST_HOME"),
-            }
-        }
-    }
-
     fn write_prompt_file(app: AppType, content: &str) {
         let path = crate::prompt_files::prompt_file_path(&app).expect("prompt path");
         if let Some(parent) = path.parent() {
@@ -1381,7 +1334,7 @@ mod tests {
     #[test]
     #[serial]
     fn auto_imports_existing_prompt_when_config_missing() {
-        let _home = TempHome::new();
+        let _home = TempUserHome::new();
         write_prompt_file(AppType::Claude, "# hello");
 
         let config = MultiAppConfig::load().expect("load config");
@@ -1407,7 +1360,7 @@ mod tests {
     #[test]
     #[serial]
     fn skips_empty_prompt_files_during_import() {
-        let _home = TempHome::new();
+        let _home = TempUserHome::new();
         write_prompt_file(AppType::Claude, "   \n  ");
 
         let config = MultiAppConfig::load().expect("load config");
@@ -1420,7 +1373,7 @@ mod tests {
     #[test]
     #[serial]
     fn auto_import_happens_only_once() {
-        let _home = TempHome::new();
+        let _home = TempUserHome::new();
         write_prompt_file(AppType::Claude, "first version");
 
         let first = MultiAppConfig::load().expect("load config");
@@ -1457,7 +1410,7 @@ mod tests {
     #[test]
     #[serial]
     fn auto_imports_gemini_prompt_on_first_launch() {
-        let _home = TempHome::new();
+        let _home = TempUserHome::new();
         write_prompt_file(AppType::Gemini, "# Gemini Prompt\n\nTest content");
 
         let config = MultiAppConfig::load().expect("load config");
@@ -1481,7 +1434,7 @@ mod tests {
     #[test]
     #[serial]
     fn auto_imports_grokbuild_prompt_on_first_launch() {
-        let _home = TempHome::new();
+        let _home = TempUserHome::new();
         write_prompt_file(AppType::GrokBuild, "# Grok Build Prompt\n\nTest content");
 
         let config = MultiAppConfig::load().expect("load config");
@@ -1505,7 +1458,7 @@ mod tests {
     #[test]
     #[serial]
     fn auto_imports_all_three_apps_prompts() {
-        let _home = TempHome::new();
+        let _home = TempUserHome::new();
         write_prompt_file(AppType::Claude, "# Claude prompt");
         write_prompt_file(AppType::Codex, "# Codex prompt");
         write_prompt_file(AppType::Gemini, "# Gemini prompt");

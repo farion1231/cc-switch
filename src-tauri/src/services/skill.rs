@@ -5270,6 +5270,7 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::EnvVars;
     use tempfile::tempdir;
 
     #[test]
@@ -7395,37 +7396,17 @@ mod tests {
     /// 守卫只负责在测试结束后恢复原值）。
     struct TestHomeGuard {
         home: PathBuf,
-        previous: Option<std::ffi::OsString>,
-        previous_kimi_home: Option<std::ffi::OsString>,
-        previous_dsh_home: Option<std::ffi::OsString>,
+        _env: EnvVars,
     }
     impl TestHomeGuard {
         fn set(home: &Path) -> Self {
-            let guard = Self {
+            let env = EnvVars::new()
+                .set("DSH_HOME", home.join(".dsh"))
+                .set("CC_SWITCH_TEST_HOME", home)
+                .set("KIMI_CODE_HOME", home.join(".kimi-code"));
+            Self {
                 home: home.to_path_buf(),
-                previous: std::env::var_os("CC_SWITCH_TEST_HOME"),
-                previous_kimi_home: std::env::var_os("KIMI_CODE_HOME"),
-                previous_dsh_home: std::env::var_os("DSH_HOME"),
-            };
-            std::env::set_var("DSH_HOME", home.join(".dsh"));
-            std::env::set_var("CC_SWITCH_TEST_HOME", home);
-            std::env::set_var("KIMI_CODE_HOME", home.join(".kimi-code"));
-            guard
-        }
-    }
-    impl Drop for TestHomeGuard {
-        fn drop(&mut self) {
-            match self.previous_dsh_home.take() {
-                Some(value) => std::env::set_var("DSH_HOME", value),
-                None => std::env::remove_var("DSH_HOME"),
-            }
-            match self.previous_kimi_home.take() {
-                Some(value) => std::env::set_var("KIMI_CODE_HOME", value),
-                None => std::env::remove_var("KIMI_CODE_HOME"),
-            }
-            match self.previous.take() {
-                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+                _env: env,
             }
         }
     }
@@ -8072,24 +8053,14 @@ mod tests {
 
     #[test]
     // serial：与 backup/s3_sync/deeplink 等同样读写进程级 CC_SWITCH_TEST_HOME 的测试互斥，
-    // EnvGuard 只负责恢复不提供互斥。
+    // EnvVars 只负责恢复不提供互斥。
     #[serial_test::serial]
     fn get_app_skills_dir_honors_test_home_override() {
         // 回归：曾直呼 dirs::home_dir() 绕过 CC_SWITCH_TEST_HOME——Unix 上碰巧跟 $HOME
         // 一致所以测试能过，Windows 上 dirs 走 Known Folder API，测试隔离整体失效
         // （tests/skill_sync.rs 扫到 runner 真实用户目录）。
-        struct EnvGuard(Option<std::ffi::OsString>);
-        impl Drop for EnvGuard {
-            fn drop(&mut self) {
-                match self.0.take() {
-                    Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-                    None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-                }
-            }
-        }
         let temp = tempdir().expect("tempdir");
-        let _guard = EnvGuard(std::env::var_os("CC_SWITCH_TEST_HOME"));
-        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+        let _guard = EnvVars::new().set("CC_SWITCH_TEST_HOME", temp.path());
 
         let dir =
             SkillService::get_app_skills_dir(&AppType::Claude).expect("resolve claude skills dir");
