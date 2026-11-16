@@ -1000,21 +1000,6 @@ impl ProviderAdapter for ClaudeAdapter {
             None,
         )
     }
-
-    fn transform_response(&self, body: serde_json::Value) -> Result<serde_json::Value, ProxyError> {
-        // Heuristic: detect response format by presence of top-level fields.
-        // The ProviderAdapter trait's transform_response doesn't receive the Provider
-        // config, so we can't check api_format here. Instead we rely on the fact that
-        // Responses API always returns "output" while Chat Completions returns "choices".
-        // This is safe because the two formats are structurally disjoint.
-        if body.get("candidates").is_some() || body.get("promptFeedback").is_some() {
-            super::transform_gemini::gemini_to_anthropic(body)
-        } else if body.get("output").is_some() {
-            super::transform_responses::responses_to_anthropic(body)
-        } else {
-            super::transform::openai_to_anthropic(body)
-        }
-    }
 }
 
 #[cfg(test)]
