@@ -1727,12 +1727,11 @@ async fn proxy_dao_calls_survive_a_poisoned_lock() {
     let db = std::sync::Arc::new(Database::memory().expect("memory db"));
     db.set_proxy_flags_sync("claude", true, true)
         .expect("set flags");
-    db.update_proxy_config(crate::proxy::types::ProxyConfig {
-        listen_port: 25721,
-        ..Default::default()
-    })
-    .await
-    .expect("set port");
+    let mut proxy = db.get_global_proxy_config().await.expect("set port");
+    proxy.listen_port = 25721;
+    db.update_global_proxy_config(proxy)
+        .await
+        .expect("set port");
 
     // 每次调用前都重新毒化，确保每个调用点自己完成恢复
     let poison = || {
@@ -1754,11 +1753,6 @@ async fn proxy_dao_calls_survive_a_poisoned_lock() {
         db.get_proxy_flags_sync("claude"),
         (true, false),
         "get_proxy_flags_sync after poison"
-    );
-    poison();
-    assert!(
-        db.is_live_takeover_active_sync(),
-        "is_live_takeover_active_sync after poison"
     );
     poison();
     assert_eq!(

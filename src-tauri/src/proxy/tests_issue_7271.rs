@@ -141,7 +141,6 @@ mod tests {
             ProxyConfig {
                 listen_port: 0,
                 enable_logging: false,
-                non_streaming_timeout: 10,
                 ..ProxyConfig::default()
             },
             db.clone(),
