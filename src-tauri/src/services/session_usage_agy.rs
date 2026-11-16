@@ -467,7 +467,10 @@ mod tests {
                 "SELECT model,total_cost_usd FROM proxy_request_logs WHERE request_id='agy:subagent:3'", [],
                 |r| Ok((r.get(0)?,r.get(1)?)),
             ).unwrap();
-            assert_eq!(flash, ("gemini-3.8-flash-tiered".into(), "0".into()));
+            assert_eq!(
+                flash,
+                ("gemini-3.8-flash-tiered".into(), "0.00009375".into())
+            );
         }
         // A missing native table must not erase recovered names or block newer counters.
         native.execute_batch("DROP TABLE gen_metadata").unwrap();
@@ -593,6 +596,60 @@ mod tests {
                 .unwrap();
             assert_eq!((&*got.0, &*got.1), ("gemini-4-argon-medium", request_model));
             assert!(got.2.parse::<f64>().unwrap() > 0.0);
+        }
+    }
+
+    #[test]
+    fn native_flash_tiered_subagent_generations_are_priced_without_losing_provenance() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("conversations")).unwrap();
+        let source = dir
+            .path()
+            .join("brain/browser-subagent/.system_generated/logs/transcript_full.jsonl");
+        let _native = native_models::write_test_database(
+            &dir.path().join("conversations/browser-subagent.db"),
+            &[
+                (1, 0, "gemini-3.8-flash-tiered"),
+                (3, 1, "gemini-3.7-flash-tiered"),
+                (5, 2, "gemini-3.1-flash-tiered"),
+            ],
+        );
+        let db = Database::memory().unwrap();
+        let rows = vec![
+            json!({"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","input_tokens":1_000_000,"output_tokens":100_000,"cache_read_tokens":1_000_000}),
+            json!({"step_index":3,"type":"PLANNER_RESPONSE","status":"DONE","input_tokens":1_000_000,"output_tokens":100_000,"cache_read_tokens":1_000_000}),
+            json!({"step_index":5,"type":"PLANNER_RESPONSE","status":"DONE","input_tokens":1_000_000,"output_tokens":100_000,"cache_read_tokens":1_000_000}),
+        ];
+        assert_eq!(
+            import_records(&db, "browser-subagent", &rows, Some(&source)).unwrap(),
+            (3, 0)
+        );
+        assert_eq!(
+            import_records(&db, "browser-subagent", &rows, Some(&source)).unwrap(),
+            (0, 3)
+        );
+        let conn = db.conn.lock().unwrap();
+        for (id, expected_model, expected_cost) in [
+            ("agy:browser-subagent:1", "gemini-3.8-flash-tiered", "1.2"),
+            ("agy:browser-subagent:3", "gemini-3.7-flash-tiered", "1.2"),
+            ("agy:browser-subagent:5", "gemini-3.1-flash-tiered", "0"),
+        ] {
+            let (model, request_model, cost): (String, String, String) = conn
+                .query_row(
+                    "SELECT model,request_model,total_cost_usd FROM proxy_request_logs WHERE request_id=?1",
+                    [id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .unwrap();
+            assert_eq!(model, expected_model);
+            assert_eq!(request_model, expected_model);
+            assert_eq!(
+                cost.parse::<rust_decimal::Decimal>().unwrap(),
+                expected_cost.parse::<rust_decimal::Decimal>().unwrap()
+            );
         }
     }
 
