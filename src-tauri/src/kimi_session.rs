@@ -32,6 +32,10 @@ pub(crate) struct RequestIndex {
     agent: Option<String>,
     step: Option<Step>,
     messages: HashMap<String, RequestInfo>,
+    /// Model reported by the latest `usage.record`. Newer Kimi Code wires no longer
+    /// persist `llm.request`, so this is the remaining native model evidence; it is
+    /// consumed by the matching `step.end` (the two are emitted 1:1 per LLM call).
+    usage_model: Option<String>,
 }
 
 pub(crate) fn timestamp_ms(value: &Value) -> Option<i64> {
@@ -70,6 +74,11 @@ impl RequestIndex {
         }
         match record["type"].as_str() {
             Some("agent.switched" | "agent.turn.started") => self.step = None,
+            Some("usage.record") => {
+                if let Some(model) = model_name(&record["model"]) {
+                    self.usage_model = Some(model.to_owned());
+                }
+            }
             Some("llm.request") => {
                 if record["kind"].as_str().is_some_and(|kind| kind != "loop") {
                     return;
@@ -145,7 +154,10 @@ impl RequestIndex {
                             .unwrap_or(0);
                         // A fork can repeat a step without the original request events.
                         let info = self.messages.entry(id.into()).or_default();
-                        info.model = step.model.or_else(|| info.model.take());
+                        info.model = step
+                            .model
+                            .or_else(|| info.model.take())
+                            .or_else(|| self.usage_model.take());
                         info.request_ms = step.request_ms.or(info.request_ms);
                         if latency_ms > 0 {
                             info.latency_ms = latency_ms;
@@ -217,6 +229,30 @@ mod tests {
     }
 
     #[test]
+    fn kimi_request_metadata_falls_back_to_usage_record_model() {
+        // Newer Kimi Code wires omit llm.request; usage.record still names the model.
+        let mut index = RequestIndex::default();
+        index.observe(&loop_event(
+            1_700_000_000_000,
+            json!({"type":"step.begin","uuid":"step","turnId":"1","step":2}),
+        ));
+        index.observe(&json!({"type":"usage.record","time":1_700_000_009_000i64,"agentId":"main","model":"vendor/model","usage":{"inputOther":1,"output":2,"inputCacheRead":3,"inputCacheCreation":0},"usageScope":"turn"}));
+        index.observe(&loop_event(1_700_000_010_000, json!({"type":"step.end","uuid":"step","messageId":"message","llmFirstTokenLatencyMs":300,"llmStreamDurationMs":1_700})));
+        let meta = json!({"messageId":"message","model":{"model":"agent-loop"}});
+        assert_eq!(index.model(&meta), Some("vendor/model"));
+        // The fallback is consumed by its step and must not leak into the next one.
+        index.observe(&loop_event(
+            1_700_000_020_000,
+            json!({"type":"step.begin","uuid":"step2","turnId":"1","step":3}),
+        ));
+        index.observe(&loop_event(1_700_000_030_000, json!({"type":"step.end","uuid":"step2","messageId":"message2"})));
+        assert_eq!(
+            index.model(&json!({"messageId":"message2","model":{"model":"agent-loop"}})),
+            None
+        );
+    }
+
+    #[test]
     fn kimi_request_timing_uses_completed_parts_only_for_end_and_excludes_tools() {
         let mut index = RequestIndex::default();
         start(&mut index);
@@ -270,7 +306,7 @@ mod tests {
         for (end, first) in [
             (1_699_999_999_000, json!(5_000)),
             (1_700_000_000_050, json!(-1)),
-            (1_700_003_700_000, json!(null)),
+            (1_700_003_000_000, json!(null)),
         ] {
             let mut index = RequestIndex::default();
             start(&mut index);

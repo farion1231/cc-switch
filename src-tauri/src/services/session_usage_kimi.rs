@@ -96,6 +96,7 @@ fn sync_file(
         RequestIndex::for_agent(agent)
     };
     let mut pending = Vec::new();
+    let mut committed_ids = std::collections::HashSet::new();
     let mut result = SessionSyncResult {
         files_scanned: 1,
         ..Default::default()
@@ -117,22 +118,38 @@ fn sync_file(
             continue;
         };
         requests.observe(&record);
-        let (meta, usage) = if main {
-            if !matches!(
+        let (meta, usage, via_step) = if main {
+            if matches!(
                 record["type"].as_str(),
                 Some("agent.message.appended" | "human.agent.message.appended")
-            ) || record
+            ) && record
                 .pointer("/message/message/role")
                 .and_then(Value::as_str)
-                != Some("assistant")
+                == Some("assistant")
             {
-                continue;
+                let meta = record["message"]["meta"].clone();
+                let Some(usage) = meta.get("usage").cloned() else {
+                    continue;
+                };
+                (meta, usage, false)
+            } else {
+                // Newer Kimi Code wires no longer commit assistant messages to the human
+                // projection; fall back to the loop's step.end receipts (one per LLM call).
+                let event = &record["event"];
+                if record["type"].as_str() != Some("context.append_loop_event")
+                    || event["type"].as_str() != Some("step.end")
+                {
+                    continue;
+                }
+                let Some(usage) = event.get("usage").cloned() else {
+                    continue;
+                };
+                let meta = serde_json::json!({
+                    "messageId": event["messageId"],
+                    "model": {"provider": "loop"},
+                });
+                (meta, usage, true)
             }
-            let meta = record["message"]["meta"].clone();
-            let Some(usage) = meta.get("usage").cloned() else {
-                continue;
-            };
-            (meta, usage)
         } else {
             // Subagent replies never reach the human projection; each completed step
             // carries its own usage, and the parent's subagent.completed summary is not
@@ -150,7 +167,7 @@ fn sync_file(
                 "messageId": event["messageId"],
                 "model": {"provider": "subagent"},
             });
-            (meta, usage)
+            (meta, usage, true)
         };
         let Some(created) = timestamp_ms(&record["time"]) else {
             continue;
@@ -185,11 +202,39 @@ fn sync_file(
         let request = format!("kimi:{provider}:{identity}");
         // Retain only metadata and usage. step.end may appear after the human projection
         // (and after tools); resolve its messageId before taking the database lock.
-        pending.push((request, meta, usage, created));
+        if main && !via_step {
+            if let Some(id) = meta.get("messageId").and_then(Value::as_str) {
+                committed_ids.insert(id.to_owned());
+            }
+        }
+        pending.push((request, meta, usage, created, via_step));
     }
     let mut conn = lock_conn!(db.conn);
     let tx = conn.transaction()?;
-    for (request, meta, mut usage, created) in pending {
+    for (request, meta, mut usage, created, via_step) in pending {
+        // Old-protocol wires carry both receipts for the same call; the human projection
+        // row wins so a rescan never counts the request twice. Receipts left by pruned
+        // human-projection rows must block the fallback too, while the fallback's own
+        // receipt still allows enrichment refreshes.
+        if main && via_step {
+            if let Some(id) = meta.get("messageId").and_then(Value::as_str) {
+                if committed_ids.contains(id) {
+                    continue;
+                }
+                let imported_elsewhere: Option<i64> = tx
+                    .query_row(
+                        "SELECT 1 FROM session_usage_dedup
+                         WHERE data_source = 'kimi_session' AND request_id != ?1
+                           AND request_id LIKE 'kimi:%:' || ?2",
+                        rusqlite::params![request, id],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                if imported_elsewhere.is_some() {
+                    continue;
+                }
+            }
+        }
         let model = requests.model(&meta).unwrap_or("unknown");
         usage.model = Some(model.into());
         let info = requests.get(&meta);
@@ -677,6 +722,38 @@ mod tests {
             .imported,
             0
         );
+    }
+
+    #[test]
+    fn kimi_usage_imports_main_wires_without_human_projection() {
+        // Newer Kimi Code wires persist neither llm.request nor assistant commits;
+        // step.end plus usage.record must still yield model, tokens, and timing.
+        let db = Database::memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wire.jsonl");
+        let usage =
+            json!({"inputOther":10,"output":20,"inputCacheRead":30,"inputCacheCreation":0});
+        let records = vec![
+            json!({"type":"context.append_loop_event","time":1_699_999_999_000i64,"event":{"type":"step.begin","uuid":"s1","turnId":"0","step":1}}),
+            json!({"type":"usage.record","time":1_700_000_000_900i64,"agentId":"main","model":"vendor/model","usage":usage,"usageScope":"turn"}),
+            json!({"type":"context.append_loop_event","time":1_700_000_001_000i64,"event":{"type":"step.end","uuid":"s1","turnId":"0","step":1,"usage":usage,"messageId":"m1","llmFirstTokenLatencyMs":200,"llmStreamDurationMs":800}}),
+        ];
+        write_records(&path, &records);
+        assert_eq!(
+            sync_file(&db, &path, "main", "s", "k", 1)
+                .unwrap()
+                .imported,
+            1
+        );
+        let conn = db.conn.lock().unwrap();
+        let row: (String, i64, Option<i64>) = conn
+            .query_row(
+                "SELECT model, latency_ms, first_token_ms FROM proxy_request_logs",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(row, ("vendor/model".into(), 1_000, Some(200)));
     }
 
     #[test]
