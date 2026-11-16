@@ -63,8 +63,8 @@ async fn add(manager: &AgyAccountManager, sub: &str) {
     manager.persist(&store).unwrap();
 }
 
-// 以下测试只在能切号的平台（macOS）上有意义：其他平台 status 不读钥匙串、切换直接报不支持。
-#[cfg(target_os = "macos")]
+// 以下测试只在能切号的平台（macOS、Windows）上有意义：其他平台 status 不读钥匙串、切换直接报不支持。
+#[cfg(any(target_os = "macos", windows))]
 mod switching {
     use super::*;
 
@@ -361,8 +361,8 @@ mod switching {
         );
     }
 
-    /// 真机钥匙串冒烟：读写一条测试专用的条目（不是 agy 那条），确认 `security -i` 写入、
-    /// 原地更新、读回都正常。默认不跑：`cargo test agy_account -- --ignored`。
+    /// 真机钥匙串冒烟：读写一条测试专用的条目（不是 agy 那条），确认写入（macOS 经 `security -i`，
+    /// Windows 经凭据管理器）、原地更新、读回都正常。默认不跑：`cargo test agy_account -- --ignored`。
     #[test]
     #[ignore]
     fn real_keychain_round_trip_on_a_test_item() {
@@ -373,6 +373,7 @@ mod switching {
         let second = keychain::encode(&credential("probe", "two")).unwrap();
         store.write(&second).unwrap();
         assert_eq!(store.read().unwrap().as_deref(), Some(second.as_str()));
+        #[cfg(target_os = "macos")]
         let _ = std::process::Command::new("/usr/bin/security")
             .args([
                 "delete-generic-password",
@@ -381,6 +382,10 @@ mod switching {
                 "-a",
                 "probe",
             ])
+            .output();
+        #[cfg(windows)]
+        let _ = std::process::Command::new("cmdkey")
+            .arg("/delete:cc-switch-agy-selftest:probe")
             .output();
     }
 }
