@@ -209,7 +209,9 @@ export function AtomCodeProviderForm({
     update(next);
     setProviderKey(selected?.providerKey ?? "");
     form.reset({
-      name: selected?.name ?? "",
+      name: selected?.nameKey
+        ? String(t(selected.nameKey))
+        : (selected?.name ?? ""),
       notes: "",
       websiteUrl: selected?.websiteUrl ?? "",
       icon: selected?.icon ?? "",

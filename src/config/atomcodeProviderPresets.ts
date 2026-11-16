@@ -213,6 +213,9 @@ export const atomcodeProviderPresets: AtomCodeProviderPreset[] = [
   },
   {
     name: "智谱 GLM",
+    nameKey: "providerForm.presets.zhipu",
+    family: "zhipu",
+    planKey: "payg",
     providerKey: "glm",
     websiteUrl: "https://open.bigmodel.cn",
     apiKeyUrl: "https://open.bigmodel.cn/usercenter/apikeys",
@@ -234,6 +237,9 @@ export const atomcodeProviderPresets: AtomCodeProviderPreset[] = [
     // coding-plan/tool/others）：Anthropic /api/anthropic、OpenAI Chat
     // /api/coding/paas/v4、OpenAI Responses /api/v1，配错端点不消耗套餐额度。
     name: "智谱 GLM Coding Plan",
+    nameKey: "providerForm.presets.zhipuCoding",
+    family: "zhipu",
+    planKey: "coding",
     providerKey: "glm_coding_plan",
     websiteUrl: "https://open.bigmodel.cn",
     apiKeyUrl: "https://www.bigmodel.cn/claude-code",
@@ -252,6 +258,7 @@ export const atomcodeProviderPresets: AtomCodeProviderPreset[] = [
   },
   {
     name: "通义千问 Qwen",
+    nameKey: "providerForm.presets.qwen",
     providerKey: "qwen",
     websiteUrl: "https://dashscope.aliyun.com",
     apiKeyUrl: "https://bailian.console.aliyun.com/?apiKey=1",
@@ -293,6 +300,8 @@ export const atomcodeProviderPresets: AtomCodeProviderPreset[] = [
     // MiniMax 域名拆分：国内按量走 api.minimaxi.com（platform.minimaxi.com 已 301
     // 回 platform.minimax.cn），Token Plan 订阅仍走 api.minimax.cn，密钥不通用。
     name: "MiniMax",
+    family: "minimax",
+    planKey: "payg",
     providerKey: "minimax",
     websiteUrl: "https://platform.minimax.cn",
     apiKeyUrl: "https://platform.minimax.cn/console/api-keys",
@@ -315,6 +324,8 @@ export const atomcodeProviderPresets: AtomCodeProviderPreset[] = [
   },
   {
     name: "MiniMax Token Plan",
+    family: "minimax",
+    planKey: "tokenPlan",
     providerKey: "minimax_token_plan",
     websiteUrl: "https://platform.minimax.cn",
     apiKeyUrl: "https://platform.minimax.cn/subscribe/token-plan",
@@ -376,6 +387,8 @@ export const atomcodeProviderPresets: AtomCodeProviderPreset[] = [
   },
   {
     name: "Volcengine Ark",
+    family: "volcengine",
+    planKey: "payg",
     providerKey: "volcengine_ark",
     websiteUrl:
       "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
@@ -402,6 +415,8 @@ export const atomcodeProviderPresets: AtomCodeProviderPreset[] = [
     // ⚠️ 计费红线（官方 warning）：Coding Plan 必须走 /api/coding/v3；按量端点
     // /api/v3 不消耗套餐额度、按量另计费——两者绝不能混用。
     name: "Volcengine Ark Coding Plan",
+    family: "volcengine",
+    planKey: "coding",
     providerKey: "volcengine_ark_coding_plan",
     websiteUrl:
       "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
@@ -505,6 +520,7 @@ export const atomcodeProviderPresets: AtomCodeProviderPreset[] = [
     // function calling 兼容性参差不齐，弱一些的本地模型可能不稳定触发工具调用；
     // 优先尝试 Qwen2.5 / Llama3.2 的 Instruct 版本。
     name: "Ollama (本地)",
+    nameKey: "providerForm.presets.ollamaLocal",
     providerKey: "ollama",
     websiteUrl: "https://ollama.com",
     category: "local",
