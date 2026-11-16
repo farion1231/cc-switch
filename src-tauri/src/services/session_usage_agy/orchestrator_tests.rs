@@ -51,6 +51,42 @@ fn assert_price(db: &Database, step: u64, model: &str, request: &str, cost: &str
 }
 
 #[test]
+fn hydrogen_orchestrator_native_display_is_priced_without_losing_provenance() {
+    if crate::config::sqlite_unsupported_in_temp_dir() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("conversations")).unwrap();
+    let source = dir
+        .path()
+        .join("brain/session/.system_generated/logs/transcript_full.jsonl");
+    let mode = "Orchestrator (Carbon)";
+    let native = native(
+        &dir.path().join("conversations/session.db"),
+        "gemini-pro-orchestrator",
+        mode,
+    );
+    native_models::set_test_generation(
+        &native,
+        7,
+        "gemini-flash-worker-agy",
+        &native_models::test_model_id("Gemini 4 Hydrogen (Orchestrator)"),
+    );
+    let db = Database::memory().unwrap();
+    let rows = rows(mode);
+    assert_eq!(
+        import_records(&db, "session", &rows, Some(&source)).unwrap(),
+        (2, 0)
+    );
+    assert_price(&db, 1, "gemini-4-carbon", mode, "3.1");
+    assert_price(&db, 3, "gemini-4-hydrogen-orchestrator", mode, "2.325");
+    assert_eq!(
+        import_records(&db, "session", &rows, Some(&source)).unwrap(),
+        (0, 2)
+    );
+}
+
+#[test]
 fn orchestrator_splits_native_generations_and_preserves_request_mode() {
     if crate::config::sqlite_unsupported_in_temp_dir() {
         return;
