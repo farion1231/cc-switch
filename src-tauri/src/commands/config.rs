@@ -154,7 +154,12 @@ pub async fn get_config_status(
 
 #[tauri::command]
 pub async fn get_config_dir(app: String) -> Result<String, String> {
-    let dir = match AppType::from_str(&app).map_err(|e| e.to_string())? {
+    Ok(app_config_dir(&app)?.to_string_lossy().to_string())
+}
+
+/// 每个应用的配置目录：设置页显示的路径和「打开文件夹」打开的是同一个。
+fn app_config_dir(app: &str) -> Result<std::path::PathBuf, String> {
+    let dir = match AppType::from_str(app).map_err(|e| e.to_string())? {
         AppType::Claude => config::get_claude_config_dir(),
         AppType::ClaudeDesktop => {
             crate::claude_desktop_config::get_config_library_path().map_err(|e| e.to_string())?
@@ -178,34 +183,12 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
         AppType::WorkBuddy => crate::workbuddy_config::data_dir(),
     };
 
-    Ok(dir.to_string_lossy().to_string())
+    Ok(dir)
 }
 
 #[tauri::command]
 pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, String> {
-    let config_dir = match AppType::from_str(&app).map_err(|e| e.to_string())? {
-        AppType::Claude => config::get_claude_config_dir(),
-        AppType::ClaudeDesktop => {
-            crate::claude_desktop_config::get_config_library_path().map_err(|e| e.to_string())?
-        }
-        AppType::Codex => codex_config::get_codex_config_dir(),
-        AppType::Gemini => crate::gemini_config::get_gemini_dir(),
-        AppType::GrokBuild => crate::grok_config::get_grok_config_dir(),
-        AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
-        AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
-        AppType::Hermes => crate::hermes_config::get_hermes_dir(),
-        AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
-        AppType::Dsh => crate::dsh_config::data_dir(),
-        AppType::Kimi => crate::kimi_config::data_dir(),
-        AppType::Omp => crate::omp_config::get_omp_agent_dir().map_err(|e| e.to_string())?,
-        AppType::Mcode => crate::mcode_config::config_path()
-            .parent()
-            .unwrap()
-            .to_path_buf(),
-        AppType::Agy => crate::agy_config::agy_dir(),
-        AppType::Copilot => crate::copilot_config::copilot_dir(),
-        AppType::WorkBuddy => crate::workbuddy_config::data_dir(),
-    };
+    let config_dir = app_config_dir(&app)?;
 
     if !config_dir.exists() {
         std::fs::create_dir_all(&config_dir).map_err(|e| format!("创建目录失败: {e}"))?;
