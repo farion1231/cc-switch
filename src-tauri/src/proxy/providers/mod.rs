@@ -8,7 +8,6 @@
 //! - `claude`: Claude (Anthropic) 适配器
 //! - `codex`: Codex (OpenAI) 适配器
 //! - `gemini`: Gemini (Google) 适配器
-//! - `models`: API 数据模型
 //! - `transform`: 格式转换
 
 mod adapter;
@@ -30,7 +29,6 @@ mod gemini;
 pub(crate) mod gemini_schema;
 pub mod gemini_shadow;
 pub(crate) mod inline_think;
-pub mod models;
 pub(crate) mod reasoning_bridge;
 pub(crate) mod responses_late_arguments;
 pub mod streaming;
