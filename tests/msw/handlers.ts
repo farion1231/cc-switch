@@ -579,4 +579,74 @@ export const handlers = [
     deleteCustomIcon(id);
     return success(null);
   }),
+
+  // Read on mount by settings, provider and account components. Values are what
+  // a fresh install with nothing signed in or configured returns.
+  http.post(`${TAURI_ENDPOINT}/get_privacy_filter_config`, () =>
+    success({ enabled: false, filterToolResults: false }),
+  ),
+  http.post(`${TAURI_ENDPOINT}/get_codex_session_compression`, () =>
+    success(false),
+  ),
+  http.post(`${TAURI_ENDPOINT}/get_codex_sessions_disk_usage`, () =>
+    success(0),
+  ),
+  http.post(`${TAURI_ENDPOINT}/get_global_proxy_url`, () => success(null)),
+  http.post(
+    `${TAURI_ENDPOINT}/get_proxy_config_for_app`,
+    async ({ request }) => {
+      const { appType } = await withJson<{ appType: string }>(request);
+      // proxy_config column defaults (database/schema.rs)
+      return success({
+        appType,
+        enabled: false,
+        autoFailoverEnabled: false,
+        maxRetries: 3,
+        streamingFirstByteTimeout: 60,
+        streamingIdleTimeout: 120,
+        nonStreamingTimeout: 600,
+        circuitFailureThreshold: 4,
+        circuitSuccessThreshold: 2,
+        circuitTimeoutSeconds: 60,
+        circuitErrorRateThreshold: 0.6,
+        circuitMinRequests: 10,
+      });
+    },
+  ),
+  http.post(`${TAURI_ENDPOINT}/get_hermes_model_config`, () => success(null)),
+  http.post(`${TAURI_ENDPOINT}/get_openclaw_env`, () => success({})),
+  http.post(`${TAURI_ENDPOINT}/get_current_omo_provider_id`, () => success("")),
+  http.post(`${TAURI_ENDPOINT}/get_current_omo_slim_provider_id`, () =>
+    success(""),
+  ),
+  http.post(`${TAURI_ENDPOINT}/get_claude_default_plan`, () => success(null)),
+  http.post(`${TAURI_ENDPOINT}/dsh_account_status`, () =>
+    success({
+      signedIn: false,
+      expired: false,
+      issuer: null,
+      profile: null,
+      wallets: [],
+      bonusWallets: [],
+      usageUrl: null,
+      topUpUrl: null,
+      error: null,
+    }),
+  ),
+  http.post(`${TAURI_ENDPOINT}/workbuddy_account_live_state`, () =>
+    success({
+      running: false,
+      signedIn: false,
+      recognized: false,
+      imported: false,
+    }),
+  ),
+  http.post(`${TAURI_ENDPOINT}/workbuddy_account_quota`, () =>
+    success({
+      snapshot: null,
+      current: false,
+      unavailable: "not_running",
+      error: null,
+    }),
+  ),
 ];
