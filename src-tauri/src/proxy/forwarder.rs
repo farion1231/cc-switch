@@ -2049,10 +2049,10 @@ impl RequestForwarder {
             }
             let reasoning_config =
                 super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
-            // 严格校验的上游（Mistral）拒收 assistant 历史里的 reasoning_content，
-            // 与 Claude → Chat 路径的 should_preserve_reasoning_content_for_openai_chat 同口径。
-            let preserve_reasoning_content =
-                !super::providers::codex_chat_upstream_rejects_reasoning_content(&base_url);
+            // Mistral 的 Chat 端点对未知字段是 `extra_forbidden`：assistant 历史里带
+            // reasoning_content 会整条 422。该字段只是 DeepSeek / Kimi 经第三方网关时的兼容
+            // 约定，按端点契约优先于模型名；Claude → Chat 路径用的是同一个判断。
+            let preserve_reasoning_content = !super::providers::is_mistral_api(&base_url);
             let mut chat_body = super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
                 mapped_body,
                 reasoning_config.as_ref(),
