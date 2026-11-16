@@ -1440,7 +1440,7 @@ fn is_windows_npm_claude_install(bin_path: &str, real_target: &str) -> bool {
 
     [real_target, bin_path].iter().any(|entry| {
         let entry = windows_shell_compatible_path(Path::new(entry));
-        if !is_windows_command_script(&entry) {
+        if !super::tool_discovery::is_windows_command_script(&entry) {
             return false;
         }
         let Some(prefix) = entry.parent() else {
