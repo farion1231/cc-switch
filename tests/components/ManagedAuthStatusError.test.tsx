@@ -30,6 +30,10 @@ const failedStatus = (refetchStatus: () => void) => ({
   refetchStatus,
 });
 
+vi.mock("@/lib/query/accountPlans", () => ({
+  useAccountQuotaPlans: () => ({}),
+}));
+
 vi.mock("@/components/providers/forms/hooks/useCodexOauth", () => ({
   useCodexOauth: () => failedStatus(authMocks.refetchCodex),
 }));

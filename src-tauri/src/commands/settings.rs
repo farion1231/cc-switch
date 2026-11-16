@@ -10,6 +10,17 @@ struct UpdateDownloadProgress {
     total: Option<u64>,
 }
 
+/// 开启统一会话历史后，后台把官方会话迁进共享组的那一轮跑完了（或失败）。
+const CODEX_UNIFY_MIGRATION_FINISHED_EVENT: &str = "codex-unify-migration-finished";
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexUnifyMigrationFinished {
+    migrated_state_rows: usize,
+    migrated_jsonl_files: usize,
+    error: Option<String>,
+}
+
 fn merge_settings_for_save(
     mut incoming: crate::settings::AppSettings,
     existing: &crate::settings::AppSettings,
@@ -56,13 +67,11 @@ fn merge_settings_for_save(
     incoming
 }
 
-/// 获取设置
 #[tauri::command]
 pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
     Ok(crate::settings::get_settings_for_frontend())
 }
 
-/// 保存设置
 #[tauri::command]
 pub async fn save_settings(
     app: tauri::AppHandle,
@@ -83,6 +92,10 @@ pub async fn save_settings(
             != existing.codex_stack_subagent_reasoning_effort
         || merged.codex_stack_auto_review_model != existing.codex_stack_auto_review_model;
     let tray_style_changed = merged.native_tray_menu != existing.native_tray_menu;
+    let without_login_changed =
+        merged.codex_proxy_without_official_login != existing.codex_proxy_without_official_login;
+    let preserve_login_changed = merged.preserve_codex_official_auth_on_switch
+        != existing.preserve_codex_official_auth_on_switch;
     crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
 
     // 原生托盘菜单 / 托盘面板当场切换，不用重启。
@@ -109,6 +122,41 @@ pub async fn save_settings(
         }
     }
 
+    // 「暂停使用官方登录」只影响路由 / 聚合模式下写给 Codex 的内容：立即重写，失败回滚。
+    if without_login_changed {
+        if let Err(err) = crate::mode::controller::resync_codex_proxy(state.inner()).await {
+            log::warn!("「暂停使用官方登录」变更后重写 Codex 配置失败，回滚设置: {err}");
+            let mut rollback = crate::settings::get_settings();
+            rollback.codex_proxy_without_official_login =
+                existing.codex_proxy_without_official_login;
+            if let Err(rollback_err) = crate::settings::update_settings(rollback) {
+                log::error!("回滚「暂停使用官方登录」设置失败: {rollback_err}");
+            }
+            return Err(format!(
+                "「暂停使用官方登录」未生效（Codex 配置重写失败） (\"Pause the official login\" did not take effect: rewriting the Codex config failed): {err}"
+            ));
+        }
+    }
+
+    // 「非接管切换时保留官方登录」只影响直连切到第三方：当前就是直连第三方时立即重写，
+    // 不必先切回官方卡再切回来；失败回滚。
+    if preserve_login_changed {
+        if let Err(err) =
+            crate::services::provider::reapply_current_codex_third_party_live(state.inner())
+        {
+            log::warn!("「非接管切换时保留官方登录」变更后重写 Codex 配置失败，回滚设置: {err}");
+            let mut rollback = crate::settings::get_settings();
+            rollback.preserve_codex_official_auth_on_switch =
+                existing.preserve_codex_official_auth_on_switch;
+            if let Err(rollback_err) = crate::settings::update_settings(rollback) {
+                log::error!("回滚「非接管切换时保留官方登录」设置失败: {rollback_err}");
+            }
+            return Err(format!(
+                "「非接管切换时保留官方登录」未生效（Codex 配置重写失败） (\"Keep official login for direct switches\" did not take effect: rewriting the Codex config failed): {err}"
+            ));
+        }
+    }
+
     // 统一会话开关变更时立即重写当前官方 Codex 供应商的 live 配置，
     // 不必等下一次切换才生效。
     if unify_codex_changed {
@@ -130,24 +178,43 @@ pub async fn save_settings(
         }
 
         if unify_codex_enabled {
-            // 后台执行存量迁移（openai 桶 → custom 桶；仅当用户勾选了迁入既有
+            // 后台把留在 openai 桶的会话迁进 custom 桶（仅当用户勾选了迁入既有
             // 会话，函数内部自门控）。大会话目录可能要读数秒，不能阻塞设置保存；
-            // 失败时不写完成标记，下次启动自动重试。
-            tauri::async_runtime::spawn_blocking(|| {
-                match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {
+            // 失败时下次启动自动重试。
+            // 迁完（或失败）发事件给前端提示：「开启统一」时前端只说了“后台迁入中”，
+            // 用户要等到这一刻再重启 Codex，旧会话才会解锁。
+            let app = app.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let finished = match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {
                     Ok(outcome) => {
                         if let Some(reason) = outcome.skipped_reason {
                             log::debug!("○ Codex official history unify migration skipped: {reason}");
+                            None
                         } else {
                             log::info!(
                                 "✓ Codex official history unify migration completed: jsonl_files={}, state_rows={}",
                                 outcome.migrated_jsonl_files,
                                 outcome.migrated_state_rows
                             );
+                            Some(CodexUnifyMigrationFinished {
+                                migrated_state_rows: outcome.migrated_state_rows,
+                                migrated_jsonl_files: outcome.migrated_jsonl_files,
+                                error: None,
+                            })
                         }
                     }
                     Err(e) => {
                         log::warn!("✗ Codex official history unify migration failed: {e}");
+                        Some(CodexUnifyMigrationFinished {
+                            migrated_state_rows: 0,
+                            migrated_jsonl_files: 0,
+                            error: Some(e.to_string()),
+                        })
+                    }
+                };
+                if let Some(payload) = finished {
+                    if let Err(e) = app.emit(CODEX_UNIFY_MIGRATION_FINISHED_EVENT, payload) {
+                        log::warn!("发送 Codex 统一迁移完成事件失败: {e}");
                     }
                 }
             });
@@ -272,51 +339,69 @@ pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
 
 /// 下载并安装应用更新，然后由后端直接重启应用。
 ///
-/// macOS 更新会原地替换 `.app` bundle。如果先返回前端、再让旧 WebView 调
-/// `process.relaunch()`，旧进程可能已经处在 bundle 被替换后的不稳定窗口期。
-/// 这里把退出清理、安装和重启串在同一个后端流程中，避免依赖旧前端继续执行。
+/// 自动更新已经在后台下好同一版本时直接用缓存的包（见 `app_update`）；检查更新失败
+/// （离线）但手里有下好的包，也装那个包。
 #[tauri::command]
 pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> {
-    let builder = app.updater_builder();
-    // Windows 上 updater 以 `msiexec /passive /promptrestart` 安装 MSI。passive 没有模态框、
-    // 未指定重启选项时，安装目录里有文件被占用，Windows Installer 会不经确认直接重启系统
-    // （#8534）。`/promptrestart` 只对应 REBOOTPROMPT，挡不住这一点，因此显式追加
-    // REBOOT=ReallySuppress（即 `/norestart`）。旧版本的 updater 不带这个参数，
-    // 由 MSI 模板自身的 REBOOT 属性兜底。
-    #[cfg(target_os = "windows")]
-    let builder = builder.installer_arg("REBOOT=ReallySuppress");
-    let updater = builder
-        .build()
-        .map_err(|e| format!("初始化更新器失败: {e}"))?;
-
-    let Some(update) = updater
-        .check()
-        .await
-        .map_err(|e| format!("检查更新失败: {e}"))?
-    else {
+    // 弹窗、关于页、托盘可能先后点了安装：第二次直接拒绝，避免两次安装同时替换应用、做退出清理
+    let Some(_installing) = crate::app_update::begin_install() else {
+        return Err("正在安装更新，请稍候".to_string());
+    };
+    let checked = match crate::app_update::build_updater(&app)?.check().await {
+        Ok(update) => update,
+        Err(e) => {
+            if let Some((update, bytes)) = crate::app_update::any_pending() {
+                log::warn!("检查更新失败（{e}），改装已下载的 {}", update.version);
+                return install_and_restart(app, update, bytes).await;
+            }
+            return Err(format!("检查更新失败: {e}"));
+        }
+    };
+    let Some(update) = checked else {
+        // 已是最新（下好的版本被撤回了）：缓存的包不能再装，提示和托盘入口一起收起
+        crate::app_update::discard_pending(&app);
         return Ok(false);
     };
 
-    log::info!("开始下载应用更新: {}", update.version);
-    let progress_handle = app.clone();
-    let mut downloaded: u64 = 0;
-    let bytes = update
-        .download(
-            move |chunk_len, content_len| {
-                downloaded = downloaded.saturating_add(chunk_len as u64);
-                let _ = progress_handle.emit(
-                    "update-download-progress",
-                    UpdateDownloadProgress {
-                        downloaded,
-                        total: content_len,
+    let bytes = match crate::app_update::pending_bytes_for(&update.version) {
+        Some(bytes) => {
+            log::info!("使用已下载的应用更新: {}", update.version);
+            bytes
+        }
+        None => {
+            log::info!("开始下载应用更新: {}", update.version);
+            let progress_handle = app.clone();
+            let mut downloaded: u64 = 0;
+            update
+                .download(
+                    move |chunk_len, content_len| {
+                        downloaded = downloaded.saturating_add(chunk_len as u64);
+                        let _ = progress_handle.emit(
+                            "update-download-progress",
+                            UpdateDownloadProgress {
+                                downloaded,
+                                total: content_len,
+                            },
+                        );
                     },
-                );
-            },
-            || {},
-        )
-        .await
-        .map_err(|e| format!("下载更新失败: {e}"))?;
+                    || {},
+                )
+                .await
+                .map_err(|e| format!("下载更新失败: {e}"))?
+        }
+    };
 
+    install_and_restart(app, update, bytes).await
+}
+
+/// macOS 更新会原地替换 `.app` bundle。如果先返回前端、再让旧 WebView 调
+/// `process.relaunch()`，旧进程可能已经处在 bundle 被替换后的不稳定窗口期。
+/// 这里把退出清理、安装和重启串在同一个后端流程中，避免依赖旧前端继续执行。
+async fn install_and_restart(
+    app: AppHandle,
+    update: tauri_plugin_updater::Update,
+    bytes: Vec<u8>,
+) -> Result<bool, String> {
     log::info!("开始安装应用更新: {}", update.version);
 
     #[cfg(target_os = "windows")]
@@ -354,6 +439,27 @@ pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> 
     }
 }
 
+/// 自动更新的状态：能不能自动安装、是否在下载、已下好待装的版本。
+#[tauri::command]
+pub async fn get_auto_update_status(
+    state: tauri::State<'_, crate::store::AppState>,
+) -> Result<crate::app_update::AutoUpdateStatus, String> {
+    Ok(crate::app_update::status(crate::tray::routing_in_use(
+        state.inner(),
+    )))
+}
+
+/// 立刻在后台检查并下载最新版本（打开自动更新开关时调用）。不支持自动安装的机器直接返回空。
+#[tauri::command]
+pub async fn download_app_update(
+    app: AppHandle,
+) -> Result<Option<crate::app_update::ReadyUpdate>, String> {
+    if !crate::app_update::auto_install_supported() {
+        return Ok(None);
+    }
+    crate::app_update::download_latest(&app).await
+}
+
 /// 检查是否有可用的应用更新，返回可用的新版本号（无更新时返回 None）。
 ///
 /// 数据库版本过新的恢复界面用它判断：升级应用能否解决问题。若返回 None，说明
@@ -389,7 +495,6 @@ pub async fn set_app_config_dir_override(
     Ok(true)
 }
 
-/// 设置开机自启
 #[tauri::command]
 pub async fn set_auto_launch(enabled: bool) -> Result<bool, String> {
     if enabled {
@@ -734,13 +839,11 @@ mod tests {
     }
 }
 
-/// 获取开机自启状态
 #[tauri::command]
 pub async fn get_auto_launch_status() -> Result<bool, String> {
     crate::auto_launch::is_auto_launch_enabled().map_err(|e| format!("获取开机自启状态失败: {e}"))
 }
 
-/// 获取整流器配置
 #[tauri::command]
 pub async fn get_rectifier_config(
     state: tauri::State<'_, crate::AppState>,
@@ -748,7 +851,6 @@ pub async fn get_rectifier_config(
     state.db.get_rectifier_config().map_err(|e| e.to_string())
 }
 
-/// 设置整流器配置
 #[tauri::command]
 pub async fn set_rectifier_config(
     state: tauri::State<'_, crate::AppState>,
@@ -761,7 +863,6 @@ pub async fn set_rectifier_config(
     Ok(true)
 }
 
-/// 获取优化器配置
 #[tauri::command]
 pub async fn get_optimizer_config(
     state: tauri::State<'_, crate::AppState>,
@@ -769,7 +870,6 @@ pub async fn get_optimizer_config(
     state.db.get_optimizer_config().map_err(|e| e.to_string())
 }
 
-/// 设置优化器配置
 #[tauri::command]
 pub async fn set_optimizer_config(
     state: tauri::State<'_, crate::AppState>,
@@ -782,7 +882,32 @@ pub async fn set_optimizer_config(
     Ok(true)
 }
 
-/// 获取 Copilot 优化器配置
+#[tauri::command]
+pub async fn get_privacy_filter_config(
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<crate::proxy::types::PrivacyFilterConfig, String> {
+    state
+        .db
+        .get_privacy_filter_config()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn set_privacy_filter_config(
+    state: tauri::State<'_, crate::AppState>,
+    config: crate::proxy::types::PrivacyFilterConfig,
+) -> Result<bool, String> {
+    state
+        .db
+        .set_privacy_filter_config(&config)
+        .map_err(|e| e.to_string())?;
+    if config.enabled {
+        // 规则编译有一次性耗时，开关打开时在后台预热，不压到第一个请求上
+        std::thread::spawn(crate::proxy::privacy_filter::warm_up);
+    }
+    Ok(true)
+}
+
 #[tauri::command]
 pub async fn get_copilot_optimizer_config(
     state: tauri::State<'_, crate::AppState>,
@@ -793,7 +918,6 @@ pub async fn get_copilot_optimizer_config(
         .map_err(|e| e.to_string())
 }
 
-/// 设置 Copilot 优化器配置
 #[tauri::command]
 pub async fn set_copilot_optimizer_config(
     state: tauri::State<'_, crate::AppState>,
@@ -806,7 +930,6 @@ pub async fn set_copilot_optimizer_config(
     Ok(true)
 }
 
-/// 获取日志配置
 #[tauri::command]
 pub async fn get_log_config(
     state: tauri::State<'_, crate::AppState>,
@@ -814,7 +937,6 @@ pub async fn get_log_config(
     state.db.get_log_config().map_err(|e| e.to_string())
 }
 
-/// 设置日志配置
 #[tauri::command]
 pub async fn set_log_config(
     state: tauri::State<'_, crate::AppState>,

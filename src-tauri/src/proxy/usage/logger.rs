@@ -307,7 +307,8 @@ impl<'a> UsageLogger<'a> {
 
     /// 记录失败的请求（带更多上下文信息）
     ///
-    /// 相比 log_error，这个方法接受更多参数以提供完整的请求上下文
+    /// 相比 log_error，这个方法接受更多参数以提供完整的请求上下文。
+    /// `model` 是发往上游的模型名，`request_model` 是客户端请求里的原名（没映射时两者相同）。
     #[allow(clippy::too_many_arguments)]
     pub fn log_error_with_context(
         &self,
@@ -315,6 +316,7 @@ impl<'a> UsageLogger<'a> {
         provider_id: String,
         app_type: String,
         model: String,
+        request_model: String,
         status_code: u16,
         error_message: String,
         latency_ms: u64,
@@ -322,7 +324,6 @@ impl<'a> UsageLogger<'a> {
         session_id: Option<String>,
         provider_type: Option<String>,
     ) -> Result<(), AppError> {
-        let request_model = model.clone();
         let log = RequestLog {
             request_id,
             provider_id,

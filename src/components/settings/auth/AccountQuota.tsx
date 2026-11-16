@@ -21,7 +21,6 @@ import {
   countdownStr,
   formatRelativeTime,
   lineHint,
-  tierLine,
   type QuotaDisplay,
   type QuotaLine,
 } from "@/components/quota/quotaRules";
@@ -31,6 +30,7 @@ import {
 } from "@/components/SubscriptionQuotaFooter";
 import type { SubscriptionQuota } from "@/types/subscription";
 import { useCopilotQuota } from "@/lib/query/copilot";
+import { copilotQuotaRows } from "@/components/CopilotQuotaFooter";
 import {
   useAgyAccountQuota,
   useClaudeAccountQuota,
@@ -38,6 +38,12 @@ import {
   useXaiOauthQuotaByAccountId,
 } from "@/lib/query/subscription";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import type { WorkBuddyQuota } from "@/lib/api/auth";
+import {
+  useWorkBuddyAccountQuota,
+  workbuddyCreditsLine,
+  workbuddyExpiryLine,
+} from "@/components/providers/workbuddyQuota";
 
 export interface AccountQuotaRow {
   label: string;
@@ -297,7 +303,7 @@ export function subscriptionQuotaState(
   return rows.length > 0 ? { kind: "rows", rows } : null;
 }
 
-/** GitHub Copilot 账号的高级请求额度（copilot_get_usage_for_account） */
+/** GitHub Copilot 账号的额度：高级请求，Free 另有代码补全（copilot_get_usage_for_account） */
 export function CopilotAccountQuota({
   accountId,
   login,
@@ -305,22 +311,21 @@ export function CopilotAccountQuota({
   accountId: string;
   login: string;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const display = useQuotaDisplay();
   const query = useCopilotQuota(accountId, { enabled: true, autoQuery: false });
   const { data: quota, isFetching: loading } = query;
 
   let state: AccountQuotaState;
   if (quota?.success) {
-    const label = t("subscription.copilotPremium");
     state =
       quota.tiers.length > 0
         ? {
             kind: "rows",
-            rows: quota.tiers.map((tier) => ({
-              label,
-              line: tierLine(t, tier, label, { display }),
-            })),
+            rows: copilotQuotaRows(t, quota.tiers, {
+              display,
+              locale: i18n.language,
+            }),
           }
         : null;
   } else if (quota) {
@@ -463,6 +468,113 @@ export function ClaudeAccountQuota({
       queriedAt={quota?.queriedAt ?? null}
       loading={loading}
       onRefresh={() => void refetch()}
+    />
+  );
+}
+
+/**
+ * WorkBuddyQuota → 额度列状态：一行「套餐名  额度条  剩余积分」，悬停写全剩余 / 总量 / 已用；
+ * 显示的是上次结果时悬停说明原因。还没有结果时：当前号且 WorkBuddy 没运行给一句提示，
+ * 查询失败写「额度没查到」，其余不显示。
+ */
+export function workbuddyQuotaState(
+  t: TFunction,
+  quota: WorkBuddyQuota | undefined,
+  loading: boolean,
+  locale: string,
+  display: QuotaDisplay = "left",
+  planInLabel = true,
+): AccountQuotaState {
+  if (!quota) return loading ? { kind: "loading" } : null;
+  const credits = workbuddyCreditsLine(t, quota, locale, display);
+  if (credits) {
+    const expiry = workbuddyExpiryLine(t, quota, locale);
+    return {
+      kind: "rows",
+      rows: [
+        {
+          label:
+            (planInLabel ? credits.planName : undefined) ??
+            t("workbuddy.quota.credits"),
+          line: credits.line,
+        },
+        ...(expiry
+          ? [{ label: t("workbuddy.quota.expiry"), line: expiry }]
+          : []),
+      ],
+    };
+  }
+  if (quota.unavailable === "not_running" && quota.current) {
+    const caption = t("workbuddy.quota.openToQuery");
+    return {
+      kind: "rows",
+      rows: [
+        {
+          label: t("workbuddy.quota.credits"),
+          line: {
+            key: "workbuddy_not_running",
+            left: Infinity,
+            tone: "muted",
+            text: caption,
+            caption,
+            value: "",
+            detail: t("workbuddy.quota.onlyWhileRunning"),
+          },
+        },
+      ],
+    };
+  }
+  if (quota.unavailable === "failed") {
+    return {
+      kind: "failed",
+      reason: quota.error || t("workbuddy.quota.unavailable"),
+    };
+  }
+  return null;
+}
+
+/** WorkBuddy 账号的套餐与积分（workbuddy_account_quota(accountId)）：只有当前号能经运行中的 WorkBuddy 刷新 */
+export function WorkBuddyAccountQuota({
+  accountId,
+  login,
+  planInLabel = true,
+}: {
+  accountId: string;
+  login: string;
+  /** 额度行标签用套餐名；授权中心把套餐放在账号第二行，这里就只写「积分」 */
+  planInLabel?: boolean;
+}) {
+  const { t, i18n } = useTranslation();
+  const display = useQuotaDisplay();
+  const {
+    data: quota,
+    isFetching: loading,
+    isError,
+    error,
+    refresh,
+  } = useWorkBuddyAccountQuota(accountId);
+  const state: AccountQuotaState =
+    !quota && isError
+      ? {
+          kind: "failed",
+          reason:
+            extractErrorMessage(error) || t("workbuddy.quota.unavailable"),
+        }
+      : workbuddyQuotaState(
+          t,
+          quota,
+          loading,
+          i18n.language,
+          display,
+          planInLabel,
+        );
+  return (
+    <AccountQuotaColumn
+      login={login}
+      state={state}
+      queriedAt={quota?.snapshot?.queriedAt ?? null}
+      loading={loading}
+      onRefresh={() => void refresh()}
     />
   );
 }

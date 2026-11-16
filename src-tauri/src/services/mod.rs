@@ -1,4 +1,5 @@
 pub mod agy_account;
+pub mod auto_sync;
 pub mod backup_storage;
 pub mod balance;
 pub mod claude_account;
@@ -10,6 +11,7 @@ pub mod dsh_account;
 pub mod env_checker;
 pub mod env_manager;
 pub mod exchange_rates;
+pub mod ip_diagnostics;
 pub mod kimi_oauth;
 pub mod mcp;
 pub mod mcp_connectivity;
@@ -62,8 +64,11 @@ pub use usage_stats::{
     RequestLogDetail, UsageSummary, UsageSummaryByApp,
 };
 
+pub mod session_usage_copilot;
 pub mod session_usage_kimi;
 pub mod session_usage_mcode;
 
 pub mod session_usage_agy;
 pub mod session_usage_dsh;
+pub mod session_usage_workbuddy;
+pub mod workbuddy_account;

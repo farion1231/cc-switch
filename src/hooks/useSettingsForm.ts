@@ -1,51 +1,30 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSettingsQuery } from "@/lib/query";
+import {
+  DEFAULT_LANGUAGE,
+  isLanguage,
+  isTraditionalChineseTag,
+  normalizeLanguageTag,
+  type Language,
+} from "@/i18n/languages";
 import type { Settings } from "@/types";
-
-type Language = "zh" | "zh-TW" | "en" | "ja" | "tr";
 
 export type SettingsFormState = Omit<Settings, "language"> & {
   language: Language;
 };
 
 const normalizeLanguage = (lang?: string | null): Language => {
-  if (!lang) return "zh";
-  const normalized = lang.toLowerCase().replace(/_/g, "-");
-
-  if (normalized === "zh") {
-    return "zh";
-  }
-
-  if (
-    normalized === "zh-tw" ||
-    normalized.startsWith("zh-hant") ||
-    normalized.startsWith("zh-hk") ||
-    normalized.startsWith("zh-mo")
-  ) {
-    return "zh-TW";
-  }
-
-  if (normalized === "en" || normalized === "ja" || normalized === "tr") {
-    return normalized;
-  }
-
-  if (normalized.startsWith("zh")) {
-    return "zh";
-  }
-
-  return "zh";
+  if (!lang) return DEFAULT_LANGUAGE;
+  const normalized = normalizeLanguageTag(lang);
+  if (isTraditionalChineseTag(normalized)) return "zh-TW";
+  return isLanguage(normalized) ? normalized : DEFAULT_LANGUAGE;
 };
 
 const isSupportedLanguage = (lang?: string | null): boolean => {
   if (!lang) return false;
-  const normalized = lang.toLowerCase().replace(/_/g, "-");
-  return (
-    normalized === "en" ||
-    normalized === "ja" ||
-    normalized === "tr" ||
-    normalized.startsWith("zh")
-  );
+  const normalized = normalizeLanguageTag(lang);
+  return isLanguage(normalized) || normalized.startsWith("zh-");
 };
 
 const sanitizeDir = (value?: string | null): string | undefined => {

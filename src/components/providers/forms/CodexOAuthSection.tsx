@@ -21,6 +21,7 @@ import {
 import { useManagedAccountUsers } from "./hooks/useManagedAccountUsers";
 import CodexOauthAccountQuota from "@/components/CodexOauthAccountQuota";
 import { cn } from "@/lib/utils";
+import { useAccountQuotaPlans } from "@/lib/query/accountPlans";
 import {
   ManagedAccountsGroup,
   type GroupAccountRow,
@@ -347,6 +348,12 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
     </div>
   );
 
+  // 授权中心第二行的套餐（额度查到才有）
+  const plans = useAccountQuotaPlans(
+    "codex_oauth",
+    accounts.map((account) => account.id),
+  );
+
   if (mode === "select") {
     return (
       <div className={`space-y-4 ${className || ""}`}>
@@ -426,9 +433,15 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
               "id_token",
             ),
           ]
-        : date
-          ? [t("authCenter.signedInOn", { defaultValue: "{{date}}登录", date })]
-          : [],
+        : [
+            plans[account.id],
+            date
+              ? t("authCenter.signedInOn", {
+                  defaultValue: "{{date}}登录",
+                  date,
+                })
+              : null,
+          ].filter(Boolean),
       isDefault: defaultAccountId === account.id,
       needsReauth,
       users: accountUsers([account.id]),

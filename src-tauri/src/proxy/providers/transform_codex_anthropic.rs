@@ -29,6 +29,19 @@ use std::collections::{BTreeMap, HashSet};
 pub(crate) const ANTHROPIC_THINKING_ENCRYPTED_PREFIX: &str = "ccswitch-anthropic-thinking-v1:";
 const TOOL_SEARCH_PROXY_NAME: &str = "tool_search";
 
+/// Anthropic `max_tokens` used when neither the request nor the provider sets an
+/// output ceiling. Codex never sends `max_output_tokens`, so in practice this is
+/// the ceiling for every Codex → Anthropic request without a provider override.
+///
+/// Thinking tokens count against `max_tokens` (adaptive thinking included), so the
+/// old 8192 left too little room: one long file write in a tool call would stop at
+/// `max_tokens` and Codex would drop the turn as an incomplete response. 32000 is
+/// at or below the output ceiling of every Claude 4+ model (Opus 4 / 4.1 are the
+/// lowest at 32K) and of the current Anthropic-compatible endpoints (Kimi, GLM,
+/// MiniMax, DeepSeek). A gateway with a lower ceiling needs the provider's
+/// "max output tokens" setting.
+pub(crate) const DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS: u64 = 32000;
+
 /// Maps Codex's reasoning.effort to the token budget for Anthropic thinking.
 ///
 /// Returning `None` indicates an unrecognized effort value—in that case extended
@@ -2381,6 +2394,23 @@ mod tests {
         assert_eq!(result["thinking"]["type"], "enabled");
         assert_eq!(result["thinking"]["budget_tokens"], 2500);
         assert_eq!(result["max_tokens"], 5000);
+    }
+
+    #[test]
+    fn test_request_shipped_default_leaves_room_for_long_tool_calls() {
+        // Codex never sends max_output_tokens, so the shipped default is the real
+        // ceiling. Even with the deepest effort, a large tool call (e.g. writing a
+        // whole file) must keep at least 16000 tokens after the thinking budget.
+        let input = json!({
+            "model": "claude-sonnet-4-5",
+            "reasoning": { "effort": "xhigh" },
+            "input": [{ "role": "user", "content": "write the file" }]
+        });
+        let result =
+            responses_request_to_anthropic(input, DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS).unwrap();
+        assert_eq!(result["max_tokens"], DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS);
+        let budget = result["thinking"]["budget_tokens"].as_u64().unwrap();
+        assert!(DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS - budget >= 16000);
     }
 
     #[test]

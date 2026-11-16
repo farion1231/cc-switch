@@ -39,6 +39,8 @@ export interface SubscriptionQuota {
   resetCredits?: ResetCredits | null;
   /** ChatGPT 订阅买的 Codex Credits 余额（额度用完后才扣）；没有时缺省 */
   creditsBalance?: number | null;
+  /** 套餐名（「Pro 200」「Google AI Pro」「SuperGrok」…），授权中心的账号额度会带；没有时缺省 */
+  planName?: string | null;
   error: string | null;
   queriedAt: number | null;
 }

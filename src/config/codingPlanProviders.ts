@@ -3,7 +3,8 @@
  *
  * 与后端 `src-tauri/src/services/coding_plan.rs::detect_provider` 保持一致：
  * 后端靠 `url.contains(...)` 做子串判断（MiniMax 例外，按 host 标签匹配），
- * 前端这里用 RegExp 做同效匹配。
+ * 前端这里用 RegExp 做同效匹配。两边对同一组地址的识别结果由
+ * tests/config/backendConstants.test.ts 校验。
  * 新增供应商时改这一处即可（UsageScriptModal 下拉 + useProviderActions
  * 新建自动注入 + 托盘识别全部复用）。
  */
@@ -22,7 +23,8 @@ export interface CodingPlanProviderEntry {
     | "zenmux"
     | "volcengine"
     | "opencode_go"
-    | "command_code";
+    | "command_code"
+    | "ollama_cloud";
   /** UsageScriptModal 下拉显示用 */
   label: string;
   /** base_url 匹配规则 */
@@ -86,6 +88,14 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     id: "command_code",
     label: "Command Code",
     pattern: /api\.commandcode\.ai\/provider(?:[/?#]|$)/i,
+  },
+  {
+    // Ollama Cloud（GET https://ollama.com/api/balance，Bearer Key）。按 host
+    // 标签匹配（同后端 codex_url_host_matches_any），本地 localhost:11434 不命中。
+    id: "ollama_cloud",
+    label: "Ollama Cloud",
+    pattern:
+      /^(?:https?:\/\/)?(?:[^/?#@]*@)?(?:[\w-]+\.)*ollama\.com(?=[:/?#]|$)/i,
   },
 ] as const;
 

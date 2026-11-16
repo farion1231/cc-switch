@@ -9,6 +9,12 @@ use serde::Serialize;
 use std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
 use std::time::{Duration, Instant};
 
+/// Inspect the selected outbound route without persisting or changing it.
+#[tauri::command]
+pub async fn diagnose_ip(url: String) -> Result<crate::services::ip_diagnostics::IpReport, String> {
+    crate::services::ip_diagnostics::diagnose(&url).await
+}
+
 /// 获取全局代理 URL
 ///
 /// 返回当前配置的代理 URL，null 表示直连。

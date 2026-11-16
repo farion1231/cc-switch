@@ -12,7 +12,7 @@ There are many ways to contribute:
 - **Suggest features** — Have an idea? [Submit a feature request](https://github.com/farion1231/cc-switch/issues/new?template=feature_request.yml).
 - **Improve docs** — Spot a typo or missing info? [Report a doc issue](https://github.com/farion1231/cc-switch/issues/new?template=doc_issue.yml).
 - **Contribute code** — Fix bugs or implement features via pull requests.
-- **Translate** — Help us improve translations for Simplified Chinese, Traditional Chinese, English, and Japanese.
+- **Translate** — Help us improve translations for Simplified Chinese, Traditional Chinese, English, Japanese, Korean, Turkish, and Russian.
 
 > **Security vulnerabilities**: Please do NOT use public issues. See our [Security Policy](./SECURITY.md) instead.
 
@@ -113,7 +113,7 @@ Backend (Tauri 2 + Rust)
 
 - **SSOT** (single source of truth): providers, MCP, prompts, Skills, projects, usage, and other data are all stored in `~/.cc-switch/cc-switch.db` (SQLite)
 - **Device-level settings**: settings that belong to this machine only, such as directory overrides and backup policy, are stored in `~/.cc-switch/settings.json` and are not cloud-synced
-- **Two write modes**: for switch-mode tools (Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build), switching first backfills the current live config into the current provider (except for Claude Desktop), then writes the new provider; for coexist-mode tools (OpenCode, OpenClaw, Hermes, Pi, MiniMax Code), all providers coexist in a single live file and nothing is backfilled
+- **Two write modes**: for switch-mode tools (Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build), direct switching updates provider-owned fields in the live config while preserving unrelated settings, without backfilling the previous live config into the previous provider; for coexist-mode tools (OpenCode, OpenClaw, Hermes, Pi, MiniMax Code), all providers coexist in a single live file and nothing is backfilled
 - **Atomic writes**: all live configs are written via "temp file + rename" to avoid corruption
 - **Concurrency safety**: the database connection is protected by a Mutex to avoid race conditions
 - **Layered architecture**: Commands (parameter validation and forwarding) → Services (business logic) → DAO → Database; the Commands layer stays thin
@@ -121,7 +121,7 @@ Backend (Tauri 2 + Rust)
 
 ### Core Components
 
-- **ProviderService**: provider CRUD, switching, backfill, and sorting
+- **ProviderService**: provider CRUD, switching, live config writes, and sorting
 - **McpService**: MCP server management, importing from each tool, and syncing to live files
 - **SkillService / PromptService**: installing and syncing Skills, and each tool's prompt files
 - **ProfileService**: saving and switching project snapshots
@@ -147,7 +147,7 @@ Backend (Tauri 2 + Rust)
 │   ├── config/               # Provider presets per tool (*ProviderPresets.ts), MCP presets
 │   ├── hooks/                # Custom hooks (business logic)
 │   ├── lib/api/              # Tauri invoke wrappers (lib/query/ holds the TanStack Query config)
-│   ├── i18n/locales/         # UI strings (zh / zh-TW / en / ja; community: tr)
+│   ├── i18n/locales/         # UI strings (zh / zh-TW / en / ja / ko / tr / ru)
 │   ├── icons/                # Provider icons (index is maintained by hand)
 │   └── types/ utils/ contexts/
 ├── src-tauri/                # Backend (Rust)
@@ -236,17 +236,14 @@ PRs that add a relay or aggregator preset outside the sponsorship program will b
 
 ## Internationalization (i18n)
 
-The CC Switch UI supports four languages: Simplified Chinese, Traditional Chinese, English, and Japanese. When modifying user-facing text:
+The CC Switch UI supports Simplified Chinese, Traditional Chinese, English, Japanese, Korean, Turkish, and Russian. When modifying user-facing text:
 
-1. Update **all four** locale files:
-   - `src/i18n/locales/zh.json`
-   - `src/i18n/locales/zh-TW.json`
-   - `src/i18n/locales/en.json`
-   - `src/i18n/locales/ja.json`
-2. Use the `t()` function from i18next for all UI text.
-3. Never hardcode user-facing strings.
+1. Update **all seven** locale files in `src/i18n/locales/`: `zh.json`, `zh-TW.json`, `en.json`, `ja.json`, `ko.json`, `tr.json`, `ru.json`. CI fails when a key is missing from any of them (`tests/config/localeParity.test.ts`). If you cannot write one of the languages, a careful machine translation is fine; say so in the PR description.
+2. Keep `{{variables}}`, `<1>` tags, file names, commands, and other technical literals unchanged in every language.
+3. Use the `t()` function from i18next for all UI text.
+4. Never hardcode user-facing strings.
 
-Turkish (`tr.json`) is a community translation and is optional: you do not need to add Turkish strings, and missing ones fall back to English. If you do edit `tr.json`, keep `{{variables}}`, file names, commands, and other technical literals unchanged. The tray's Turkish texts in `src-tauri/src/tray.rs` start from English in the same way.
+Tray texts are not in the JSON files: the native tray menu (`src-tauri/src/tray.rs`) and the tray panel (`src-tauri/src/tray_panel.rs`) have one block per language, and every block must set every field.
 
 > Forgetting to update a locale file does not fail the build: the missing strings fall back to English, and if the English file lacks them too, the UI shows the raw key.
 
@@ -271,7 +268,7 @@ Turkish (`tr.json`) is a community translation and is optional: you do not need 
 - **建议功能** — 有想法？[提交功能请求](https://github.com/farion1231/cc-switch/issues/new?template=feature_request.yml)。
 - **改进文档** — 发现错误或缺失？[报告文档问题](https://github.com/farion1231/cc-switch/issues/new?template=doc_issue.yml)。
 - **贡献代码** — 通过 Pull Request 修复 Bug 或实现新功能。
-- **翻译** — 帮助改进简体中文、繁体中文、英文和日文的翻译。
+- **翻译** — 帮助改进简体中文、繁体中文、英文、日文、韩语、土耳其语和俄语的翻译。
 
 > **安全漏洞**：请不要使用公开 Issue 报告。请参阅我们的[安全策略](./SECURITY.md)。
 
@@ -372,7 +369,7 @@ Backend (Tauri 2 + Rust)
 
 - **SSOT**（单一事实源）：供应商、MCP、提示词、Skills、项目和用量等数据都存储在 `~/.cc-switch/cc-switch.db`（SQLite）
 - **设备级设置**：目录覆盖、备份策略等只属于本机的设置存放在 `~/.cc-switch/settings.json`，不参与云同步
-- **两种写入模式**：切换式工具（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build）切换时，先把当前 live 配置回填到当前供应商（Claude Desktop 除外），再写入新供应商；共存式工具（OpenCode、OpenClaw、Hermes、Pi、MiniMax Code）的所有供应商共存于同一个 live 文件，不做回填
+- **两种写入模式**：切换式工具（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build）在直连模式下切换时，只更新 live 配置中归供应商所有的字段，保留其他设置，不再把原 live 配置回填到原供应商；共存式工具（OpenCode、OpenClaw、Hermes、Pi、MiniMax Code）的所有供应商共存于同一个 live 文件，不做回填
 - **原子写入**：所有 live 配置都通过“临时文件 + 重命名”写入，避免配置损坏
 - **并发安全**：数据库连接由 Mutex 保护，避免竞态条件
 - **分层架构**：Commands（参数校验与转发）→ Services（业务逻辑）→ DAO → Database，Commands 层保持精简
@@ -380,7 +377,7 @@ Backend (Tauri 2 + Rust)
 
 ### 核心组件
 
-- **ProviderService**：供应商增删改查、切换、回填、排序
+- **ProviderService**：供应商增删改查、切换、写入 live 配置、排序
 - **McpService**：MCP 服务器管理、从各工具导入、同步到 live 文件
 - **SkillService / PromptService**：Skills 的安装与同步、各工具的提示词文件
 - **ProfileService**：项目快照的保存与切换
@@ -406,7 +403,7 @@ Backend (Tauri 2 + Rust)
 │   ├── config/               # 各工具的供应商预设（*ProviderPresets.ts）、MCP 预设
 │   ├── hooks/                # 自定义 hooks（业务逻辑）
 │   ├── lib/api/              # Tauri invoke 封装（lib/query/ 为 TanStack Query 配置）
-│   ├── i18n/locales/         # 界面文案（zh / zh-TW / en / ja；社区翻译：tr）
+│   ├── i18n/locales/         # 界面文案（zh / zh-TW / en / ja / ko / tr / ru）
 │   ├── icons/                # 供应商图标（索引需手工维护）
 │   └── types/ utils/ contexts/
 ├── src-tauri/                # 后端（Rust）
@@ -495,17 +492,14 @@ chore(deps): update dependencies
 
 ## 国际化（i18n）
 
-CC Switch 的界面支持简体中文、繁体中文、英文和日文四种语言。修改用户可见文本时：
+CC Switch 的界面支持简体中文、繁体中文、英文、日文、韩语、土耳其语和俄语。修改用户可见文本时：
 
-1. **同时更新四个**语言文件：
-   - `src/i18n/locales/zh.json`
-   - `src/i18n/locales/zh-TW.json`
-   - `src/i18n/locales/en.json`
-   - `src/i18n/locales/ja.json`
-2. 所有 UI 文本使用 i18next 的 `t()` 函数。
-3. 不要硬编码用户可见的字符串。
+1. **七个**语言文件都要改，都在 `src/i18n/locales/`：`zh.json`、`zh-TW.json`、`en.json`、`ja.json`、`ko.json`、`tr.json`、`ru.json`。任何一个缺 key，CI 都会失败（`tests/config/localeParity.test.ts`）。不会写的语言可以用认真校对过的机器翻译，在 PR 说明里注明即可。
+2. 每种语言都要原样保留 `{{变量}}`、`<1>` 标签、文件名、命令等技术字面量。
+3. 所有界面文本使用 i18next 的 `t()` 函数。
+4. 不要硬编码用户可见文本。
 
-土耳其语（`tr.json`）是社区翻译，可以不改：新增文案不必补土耳其语，缺少的会回退显示英文。如果改了 `tr.json`，请保留 `{{变量}}`、文件名、命令等技术字面量不翻译。`src-tauri/src/tray.rs` 里托盘的土耳其语文案同样从英文起步。
+托盘文案不在 JSON 里：原生托盘菜单（`src-tauri/src/tray.rs`）和托盘快捷面板（`src-tauri/src/tray_panel.rs`）每种语言一整块，每块都要写全所有字段。
 
 > 漏掉某个语言文件不会导致构建失败：缺少的文案会回退显示英文，英文文件也缺时，界面上会直接显示 key 的字面量。
 

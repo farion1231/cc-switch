@@ -297,9 +297,7 @@ fn apply_file_to_database(
 /// the file contains only explicit overrides and deletion tombstones.
 pub fn sync_local_model_pricing(db: &Database) -> Result<usize, AppError> {
     let (upserted, deleted) = {
-        let _file_guard = file_lock()
-            .lock()
-            .map_err(|error| AppError::Config(format!("模型定价文件锁失败: {error}")))?;
+        let _file_guard = crate::sync_utils::lock_file_operation(file_lock());
         let file = load_or_create_file_unlocked()?;
         apply_file_to_database(db, &file)?
     };
@@ -317,9 +315,7 @@ pub fn sync_local_model_pricing(db: &Database) -> Result<usize, AppError> {
 
 pub fn get_models_dev_sync_state(db: &Database) -> Result<ModelsDevSyncState, AppError> {
     sync_local_model_pricing(db)?;
-    let _file_guard = file_lock()
-        .lock()
-        .map_err(|error| AppError::Config(format!("模型定价文件锁失败: {error}")))?;
+    let _file_guard = crate::sync_utils::lock_file_operation(file_lock());
     let file = load_or_create_file_unlocked()?;
     Ok(ModelsDevSyncState {
         config: file.models_dev_sync,
@@ -332,9 +328,7 @@ pub fn save_models_dev_sync_config(
     config: ModelsDevSyncConfig,
 ) -> Result<(), AppError> {
     sync_local_model_pricing(db)?;
-    let _file_guard = file_lock()
-        .lock()
-        .map_err(|error| AppError::Config(format!("模型定价文件锁失败: {error}")))?;
+    let _file_guard = crate::sync_utils::lock_file_operation(file_lock());
     let mut file = load_or_create_file_unlocked()?;
     file.models_dev_sync = normalize_sync_config(config);
     write_file_unlocked(&file)
@@ -349,9 +343,7 @@ pub fn record_models_dev_sync_result(
     error: Option<String>,
 ) -> Result<(), AppError> {
     sync_local_model_pricing(db)?;
-    let _file_guard = file_lock()
-        .lock()
-        .map_err(|lock_error| AppError::Config(format!("模型定价文件锁失败: {lock_error}")))?;
+    let _file_guard = crate::sync_utils::lock_file_operation(file_lock());
     let mut file = load_or_create_file_unlocked()?;
     if let Some(synced_at) = synced_at {
         file.models_dev_sync.last_sync_at = Some(synced_at);
@@ -362,7 +354,9 @@ pub fn record_models_dev_sync_result(
 }
 
 const MODELS_DEV_API_URL: &str = "https://models.dev/api.json";
-const MODELS_DEV_FETCH_TIMEOUT_SECS: u64 = 15;
+/// 整次请求（含读完响应体）的上限。gzip 后约 600KB，但跨境链路或代理慢时 15s 读不完，
+/// 读到一半超时 reqwest 只报「error decoding response body」（#9262），所以放宽到 60s。
+const MODELS_DEV_FETCH_TIMEOUT_SECS: u64 = 60;
 /// 响应大小上限：models.dev api.json 实际几 MB，超限视为异常响应
 const MODELS_DEV_MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 
@@ -375,7 +369,7 @@ fn is_models_dev_response_too_large(len: usize) -> bool {
 ///
 /// 必须走全局代理客户端：WebView 直连只跟随系统代理，代理环境下会超时。
 /// 全局客户端为透传禁用了自动解压，须显式声明 gzip——否则 5.9MB 的 api.json
-/// 原样传输，代理环境下 15s 超时不够用。
+/// 原样传输，代理环境下很容易在读响应体时超时。
 /// 返回解压后的 JSON 字符串，由前端解析为 ModelsDevResponse。
 pub async fn fetch_models_dev() -> Result<String, String> {
     let client = crate::proxy::http_client::get();
@@ -385,7 +379,12 @@ pub async fn fetch_models_dev() -> Result<String, String> {
         .timeout(Duration::from_secs(MODELS_DEV_FETCH_TIMEOUT_SECS))
         .send()
         .await
-        .map_err(|error| format!("Request to models.dev failed: {error}"))?;
+        .map_err(|error| {
+            format!(
+                "Request to models.dev failed: {}",
+                crate::proxy::error::describe_reqwest_error(error)
+            )
+        })?;
 
     let status = response.status();
     if !status.is_success() {
@@ -403,11 +402,12 @@ pub async fn fetch_models_dev() -> Result<String, String> {
     }
 
     let mut buf: Vec<u8> = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|error| format!("Failed to read models.dev response: {error}"))?
-    {
+    while let Some(chunk) = response.chunk().await.map_err(|error| {
+        format!(
+            "Failed to read models.dev response: {}",
+            crate::proxy::error::describe_reqwest_error(error)
+        )
+    })? {
         if append_models_dev_chunk(&mut buf, &chunk).is_err() {
             return Err(format!(
                 "models.dev response too large: {} bytes (max {MODELS_DEV_MAX_RESPONSE_BYTES})",
@@ -472,9 +472,7 @@ fn update_model_pricing_batch_inner(
 
     sync_local_model_pricing(db)?;
     let changed = {
-        let _file_guard = file_lock()
-            .lock()
-            .map_err(|error| AppError::Config(format!("模型定价文件锁失败: {error}")))?;
+        let _file_guard = crate::sync_utils::lock_file_operation(file_lock());
         let mut file = load_or_create_file_unlocked()?;
         let mut file_models = file
             .models
@@ -498,8 +496,11 @@ fn update_model_pricing_batch_inner(
         for entry in &entries {
             changed += upsert_pricing(&transaction, entry)?;
         }
-        write_file_unlocked(&file)?;
-        transaction.commit()?;
+        crate::mcode_config::write_and_commit(
+            &model_pricing_file_path(),
+            || write_file_unlocked(&file),
+            || transaction.commit().map_err(AppError::from),
+        )?;
         changed
     };
 
@@ -541,9 +542,7 @@ pub fn delete_model_pricing(db: &Database, model_id: &str) -> Result<(), AppErro
     }
 
     sync_local_model_pricing(db)?;
-    let _file_guard = file_lock()
-        .lock()
-        .map_err(|error| AppError::Config(format!("模型定价文件锁失败: {error}")))?;
+    let _file_guard = crate::sync_utils::lock_file_operation(file_lock());
     let mut file = load_or_create_file_unlocked()?;
     file.models.retain(|entry| entry.model_id != model_id);
     if !file.deleted_model_ids.iter().any(|entry| entry == model_id) {
@@ -557,9 +556,11 @@ pub fn delete_model_pricing(db: &Database, model_id: &str) -> Result<(), AppErro
         "DELETE FROM model_pricing WHERE model_id = ?1",
         params![model_id],
     )?;
-    write_file_unlocked(&file)?;
-    transaction.commit()?;
-    Ok(())
+    crate::mcode_config::write_and_commit(
+        &model_pricing_file_path(),
+        || write_file_unlocked(&file),
+        || transaction.commit().map_err(AppError::from),
+    )
 }
 
 #[cfg(test)]
@@ -591,6 +592,44 @@ mod tests {
             cache_read_cost_per_million: "0.1".to_string(),
             cache_creation_cost_per_million: "1.5".to_string(),
         }
+    }
+
+    #[test]
+    #[serial]
+    fn failed_sql_commit_restores_pricing_file_for_update_and_delete() {
+        with_test_home(|db, path| {
+            update_model_pricing(db, sample_pricing()).unwrap();
+            let original = fs::read(path).unwrap();
+            #[cfg(unix)]
+            let original_mode = {
+                use std::os::unix::fs::PermissionsExt;
+                fs::metadata(path).unwrap().permissions().mode()
+            };
+            let expected = original.clone();
+            let checked_path = path.clone();
+            // Let the initial file-to-DB sync commit, but reject the later
+            // mutation once its new file is visible to SQLite's commit hook.
+            db.conn
+                .lock()
+                .unwrap()
+                .commit_hook(Some(move || fs::read(&checked_path).unwrap() != expected));
+            let mut changed = sample_pricing();
+            changed.input_cost_per_million = "9".into();
+            assert!(update_model_pricing(db, changed).is_err());
+            assert_eq!(fs::read(path).unwrap(), original);
+            assert!(delete_model_pricing(db, "custom-model").is_err());
+            assert_eq!(fs::read(path).unwrap(), original);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                assert_eq!(
+                    fs::metadata(path).unwrap().permissions().mode(),
+                    original_mode
+                );
+            }
+            let conn = db.conn.lock().unwrap();
+            assert_eq!(conn.query_row("SELECT input_cost_per_million FROM model_pricing WHERE model_id = 'custom-model'", [], |row| row.get::<_, String>(0)).unwrap(), "1.25");
+        });
     }
 
     #[test]

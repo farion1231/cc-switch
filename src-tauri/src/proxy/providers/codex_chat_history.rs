@@ -11,15 +11,20 @@ const MAX_CACHED_RESPONSES: usize = 512;
 
 #[derive(Debug, Clone, Default)]
 struct CachedResponse {
+    /// Session the response was recorded under; see [`CodexChatHistoryStore`].
+    scope: String,
     calls_by_id: HashMap<String, Value>,
     call_order: Vec<String>,
 }
+
+/// `(scope, call_id)`: fallback lookups never cross sessions.
+type ScopedCallId = (String, String);
 
 #[derive(Debug, Default)]
 struct CodexChatHistoryInner {
     responses: HashMap<String, CachedResponse>,
     response_order: VecDeque<String>,
-    call_index: HashMap<String, VecDeque<String>>,
+    call_index: HashMap<ScopedCallId, VecDeque<String>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -39,13 +44,21 @@ struct CachedLookup {
 /// Some Codex flows such as subagents may omit or rewrite
 /// `previous_response_id`, so the store can also fall back to a uniquely
 /// cached `call_id`.
+///
+/// That fallback is scoped to the client session (Codex sends `session-id`).
+/// Upstreams such as Kimi TaaS number tool calls per conversation
+/// (`exec_command:0`, ...), so an unscoped index lets one session's history
+/// pick up another session's call and reasoning once its own entry is evicted
+/// or the proxy restarts. Rewriting old history that way breaks the upstream
+/// prefix cache and leaks reasoning across sessions. Requests without a client
+/// session share the empty scope.
 #[derive(Debug, Default)]
 pub struct CodexChatHistoryStore {
     inner: RwLock<CodexChatHistoryInner>,
 }
 
 impl CodexChatHistoryStore {
-    pub async fn record_response(&self, response: &Value) -> usize {
+    pub async fn record_response(&self, response: &Value, scope: Option<&str>) -> usize {
         let Some(response_id) = response
             .get("id")
             .and_then(|value| value.as_str())
@@ -70,23 +83,28 @@ impl CodexChatHistoryStore {
         }
 
         let mut inner = self.inner.write().await;
-        inner.insert_calls(response_id, calls)
+        inner.insert_calls(scope.unwrap_or_default(), response_id, calls)
     }
 
-    async fn record_call_item(&self, response_id: Option<&str>, item: &Value) -> bool {
+    async fn record_call_item(
+        &self,
+        response_id: Option<&str>,
+        item: &Value,
+        scope: Option<&str>,
+    ) -> bool {
         let Some(call) = cached_call_item(item) else {
             return false;
         };
 
         let mut inner = self.inner.write().await;
         if let Some(response_id) = response_id.filter(|value| !value.is_empty()) {
-            inner.insert_calls(response_id, vec![call]) > 0
+            inner.insert_calls(scope.unwrap_or_default(), response_id, vec![call]) > 0
         } else {
             false
         }
     }
 
-    pub async fn enrich_request(&self, body: &mut Value) -> usize {
+    pub async fn enrich_request(&self, body: &mut Value, scope: Option<&str>) -> usize {
         let previous_response_id = body
             .get("previous_response_id")
             .and_then(|value| value.as_str())
@@ -130,7 +148,11 @@ impl CodexChatHistoryStore {
             .cloned()
             .collect::<HashSet<_>>();
         let lookup = self
-            .lookup(previous_response_id.as_deref(), &requested_call_ids)
+            .lookup(
+                previous_response_id.as_deref(),
+                scope.unwrap_or_default(),
+                &requested_call_ids,
+            )
             .await;
 
         let restore_group = lookup.restore_group(&output_call_ids, &existing_call_ids);
@@ -201,22 +223,54 @@ impl CodexChatHistoryStore {
     async fn lookup(
         &self,
         previous_response_id: Option<&str>,
+        scope: &str,
         requested_call_ids: &HashSet<String>,
     ) -> CachedLookup {
         let inner = self.inner.read().await;
-        let previous = previous_response_id.and_then(|id| inner.responses.get(id).cloned());
-        let fallback = inner.unique_fallback_calls(requested_call_ids, previous.as_ref());
+        let previous = previous_response_id.and_then(|id| inner.response(id, scope).cloned());
+        let fallback = inner.unique_fallback_calls(scope, requested_call_ids, previous.as_ref());
         CachedLookup { previous, fallback }
     }
 }
 
 impl CodexChatHistoryInner {
-    fn insert_calls(&mut self, response_id: &str, calls: Vec<(String, Value)>) -> usize {
+    /// Cached response `response_id` as seen from `scope`.
+    fn response(&self, response_id: &str, scope: &str) -> Option<&CachedResponse> {
+        self.responses
+            .get(response_id)
+            .filter(|response| response.scope == scope)
+            .or_else(|| self.responses.get(&scoped_response_key(response_id, scope)))
+    }
+
+    fn insert_calls(
+        &mut self,
+        scope: &str,
+        response_id: &str,
+        calls: Vec<(String, Value)>,
+    ) -> usize {
+        // Upstreams that omit the chat id all map to the same response id
+        // (`resp_ccswitch`); keep each session's calls under its own key.
+        let response_key = if self
+            .responses
+            .get(response_id)
+            .is_some_and(|response| response.scope != scope)
+        {
+            scoped_response_key(response_id, scope)
+        } else {
+            response_id.to_string()
+        };
+        let response_id = response_key.as_str();
         if !self.responses.contains_key(response_id) {
             self.response_order.push_back(response_id.to_string());
         }
 
-        let cached_response = self.responses.entry(response_id.to_string()).or_default();
+        let cached_response = self
+            .responses
+            .entry(response_id.to_string())
+            .or_insert_with(|| CachedResponse {
+                scope: scope.to_string(),
+                ..CachedResponse::default()
+            });
         let mut inserted_or_updated = 0usize;
         let mut indexed_call_ids = Vec::new();
         for (call_id, item) in calls {
@@ -228,7 +282,7 @@ impl CodexChatHistoryInner {
             inserted_or_updated += 1;
         }
         for call_id in indexed_call_ids {
-            self.index_call(&call_id, response_id);
+            self.index_call(scope, &call_id, response_id);
         }
 
         self.prune();
@@ -245,8 +299,11 @@ impl CodexChatHistoryInner {
         }
     }
 
-    fn index_call(&mut self, call_id: &str, response_id: &str) {
-        let response_ids = self.call_index.entry(call_id.to_string()).or_default();
+    fn index_call(&mut self, scope: &str, call_id: &str, response_id: &str) {
+        let response_ids = self
+            .call_index
+            .entry((scope.to_string(), call_id.to_string()))
+            .or_default();
         if !response_ids
             .iter()
             .any(|cached_id| cached_id == response_id)
@@ -265,6 +322,7 @@ impl CodexChatHistoryInner {
 
     fn unique_fallback_calls(
         &self,
+        scope: &str,
         requested_call_ids: &HashSet<String>,
         previous: Option<&CachedResponse>,
     ) -> CachedResponse {
@@ -273,14 +331,18 @@ impl CodexChatHistoryInner {
             if previous.is_some_and(|response| response.calls_by_id.contains_key(call_id)) {
                 continue;
             }
-            if let Some(item) = self.unique_call(call_id) {
+            if let Some(item) = self.unique_call(scope, call_id) {
                 selected.insert(call_id.clone(), item.clone());
             }
         }
 
         let mut fallback = CachedResponse::default();
         for response_id in &self.response_order {
-            let Some(response) = self.responses.get(response_id) else {
+            let Some(response) = self
+                .responses
+                .get(response_id)
+                .filter(|response| response.scope == scope)
+            else {
                 continue;
             };
             for call_id in &response.call_order {
@@ -293,8 +355,10 @@ impl CodexChatHistoryInner {
         fallback
     }
 
-    fn unique_call(&self, call_id: &str) -> Option<&Value> {
-        let response_ids = self.call_index.get(call_id)?;
+    fn unique_call(&self, scope: &str, call_id: &str) -> Option<&Value> {
+        let response_ids = self
+            .call_index
+            .get(&(scope.to_string(), call_id.to_string()))?;
         let mut found = None;
         for response_id in response_ids {
             let Some(item) = self
@@ -372,6 +436,7 @@ fn append_restore_group(
 pub fn record_responses_sse_stream(
     stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
     history: Arc<CodexChatHistoryStore>,
+    scope: Option<String>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut sse = SseBuffer::new();
@@ -384,7 +449,13 @@ pub fn record_responses_sse_stream(
                 Ok(bytes) => {
                     sse.push_bytes(&bytes);
                     while let Some(block) = sse.next_block() {
-                        inspect_sse_block(block, &mut current_response_id, history.as_ref()).await;
+                        inspect_sse_block(
+                            block,
+                            &mut current_response_id,
+                            history.as_ref(),
+                            scope.as_deref(),
+                        )
+                        .await;
                     }
                     yield Ok(bytes);
                 }
@@ -398,6 +469,7 @@ async fn inspect_sse_block(
     block: &str,
     current_response_id: &mut Option<String>,
     history: &CodexChatHistoryStore,
+    scope: Option<&str>,
 ) {
     if block.trim().is_empty() {
         return;
@@ -431,17 +503,21 @@ async fn inspect_sse_block(
         Some("response.output_item.done") => {
             if let Some(item) = value.get("item") {
                 history
-                    .record_call_item(current_response_id.as_deref(), item)
+                    .record_call_item(current_response_id.as_deref(), item, scope)
                     .await;
             }
         }
         Some("response.completed") => {
             if let Some(response) = value.get("response") {
-                history.record_response(response).await;
+                history.record_response(response, scope).await;
             }
         }
         _ => {}
     }
+}
+
+fn scoped_response_key(response_id: &str, scope: &str) -> String {
+    format!("{response_id}\u{0}{scope}")
 }
 
 fn cached_call_item(item: &Value) -> Option<(String, Value)> {
@@ -507,18 +583,21 @@ mod tests {
     async fn enriches_tool_output_with_cached_function_call_from_previous_response() {
         let history = CodexChatHistoryStore::default();
         history
-            .record_response(&json!({
-                "id": "resp_1",
-                "output": [
-                    {
-                        "type": "function_call",
-                        "call_id": "call_1",
-                        "name": "read_file",
-                        "arguments": "{\"path\":\"README.md\"}",
-                        "reasoning_content": "Need to inspect the file."
-                    }
-                ]
-            }))
+            .record_response(
+                &json!({
+                    "id": "resp_1",
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_1",
+                            "name": "read_file",
+                            "arguments": "{\"path\":\"README.md\"}",
+                            "reasoning_content": "Need to inspect the file."
+                        }
+                    ]
+                }),
+                None,
+            )
             .await;
 
         let mut request = json!({
@@ -532,7 +611,7 @@ mod tests {
             ]
         });
 
-        assert_eq!(history.enrich_request(&mut request).await, 1);
+        assert_eq!(history.enrich_request(&mut request, None).await, 1);
         let input = request["input"].as_array().unwrap();
         assert_eq!(input[0]["type"], "function_call");
         assert_eq!(input[0]["reasoning_content"], "Need to inspect the file.");
@@ -543,18 +622,21 @@ mod tests {
     async fn restores_unique_call_id_without_matching_previous_response() {
         let history = CodexChatHistoryStore::default();
         history
-            .record_response(&json!({
-                "id": "resp_1",
-                "output": [
-                    {
-                        "type": "function_call",
-                        "call_id": "call_1",
-                        "name": "read_file",
-                        "arguments": "{}",
-                        "reasoning_content": "This is the only cached call."
-                    }
-                ]
-            }))
+            .record_response(
+                &json!({
+                    "id": "resp_1",
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_1",
+                            "name": "read_file",
+                            "arguments": "{}",
+                            "reasoning_content": "This is the only cached call."
+                        }
+                    ]
+                }),
+                None,
+            )
             .await;
 
         let mut missing_previous = json!({
@@ -566,7 +648,7 @@ mod tests {
                 }
             ]
         });
-        assert_eq!(history.enrich_request(&mut missing_previous).await, 1);
+        assert_eq!(history.enrich_request(&mut missing_previous, None).await, 1);
         assert_eq!(missing_previous["input"][0]["type"], "function_call");
         assert_eq!(
             missing_previous["input"][0]["reasoning_content"],
@@ -584,7 +666,10 @@ mod tests {
                 }
             ]
         });
-        assert_eq!(history.enrich_request(&mut different_previous).await, 1);
+        assert_eq!(
+            history.enrich_request(&mut different_previous, None).await,
+            1
+        );
         assert_eq!(different_previous["input"][0]["type"], "function_call");
         assert_eq!(
             different_previous["input"][0]["reasoning_content"],
@@ -604,18 +689,21 @@ mod tests {
             ("resp_2", "This belongs to the second response."),
         ] {
             history
-                .record_response(&json!({
-                    "id": response_id,
-                    "output": [
-                        {
-                            "type": "function_call",
-                            "call_id": "call_1",
-                            "name": "read_file",
-                            "arguments": "{}",
-                            "reasoning_content": reasoning
-                        }
-                    ]
-                }))
+                .record_response(
+                    &json!({
+                        "id": response_id,
+                        "output": [
+                            {
+                                "type": "function_call",
+                                "call_id": "call_1",
+                                "name": "read_file",
+                                "arguments": "{}",
+                                "reasoning_content": reasoning
+                            }
+                        ]
+                    }),
+                    None,
+                )
                 .await;
         }
 
@@ -628,7 +716,7 @@ mod tests {
                 }
             ]
         });
-        assert_eq!(history.enrich_request(&mut missing_previous).await, 0);
+        assert_eq!(history.enrich_request(&mut missing_previous, None).await, 0);
         assert_eq!(missing_previous["input"][0]["type"], "function_call_output");
 
         let mut different_previous = json!({
@@ -641,7 +729,10 @@ mod tests {
                 }
             ]
         });
-        assert_eq!(history.enrich_request(&mut different_previous).await, 0);
+        assert_eq!(
+            history.enrich_request(&mut different_previous, None).await,
+            0
+        );
         assert_eq!(
             different_previous["input"][0]["type"],
             "function_call_output"
@@ -652,18 +743,21 @@ mod tests {
     async fn enriches_existing_function_call_missing_reasoning() {
         let history = CodexChatHistoryStore::default();
         history
-            .record_response(&json!({
-                "id": "resp_1",
-                "output": [
-                    {
-                        "type": "function_call",
-                        "call_id": "call_1",
-                        "name": "read_file",
-                        "arguments": "{}",
-                        "reasoning_content": "Need to inspect the file."
-                    }
-                ]
-            }))
+            .record_response(
+                &json!({
+                    "id": "resp_1",
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_1",
+                            "name": "read_file",
+                            "arguments": "{}",
+                            "reasoning_content": "Need to inspect the file."
+                        }
+                    ]
+                }),
+                None,
+            )
             .await;
 
         let mut request = json!({
@@ -683,7 +777,7 @@ mod tests {
             ]
         });
 
-        assert_eq!(history.enrich_request(&mut request).await, 1);
+        assert_eq!(history.enrich_request(&mut request, None).await, 1);
         let input = request["input"].as_array().unwrap();
         assert_eq!(input[0]["reasoning_content"], "Need to inspect the file.");
         assert_eq!(input.len(), 2);
@@ -718,7 +812,7 @@ mod tests {
         assert_eq!(call["extra_content"], signature);
 
         let history = CodexChatHistoryStore::default();
-        history.record_response(&response).await;
+        history.record_response(&response, None).await;
 
         // Codex 回传历史时不保留未知字段。
         let mut request = json!({
@@ -734,7 +828,7 @@ mod tests {
                 {"type": "function_call_output", "call_id": "call_1", "output": "a.txt"}
             ]
         });
-        assert_eq!(history.enrich_request(&mut request).await, 1);
+        assert_eq!(history.enrich_request(&mut request, None).await, 1);
 
         let chat =
             super::super::transform_codex_chat::responses_to_chat_completions(request).unwrap();
@@ -751,18 +845,21 @@ mod tests {
     async fn enriches_existing_function_call_missing_name_and_arguments() {
         let history = CodexChatHistoryStore::default();
         history
-            .record_response(&json!({
-                "id": "resp_1",
-                "output": [
-                    {
-                        "type": "function_call",
-                        "call_id": "call_1",
-                        "name": "read_file",
-                        "arguments": "{\"path\":\"README.md\"}",
-                        "reasoning_content": "Need to inspect the file."
-                    }
-                ]
-            }))
+            .record_response(
+                &json!({
+                    "id": "resp_1",
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_1",
+                            "name": "read_file",
+                            "arguments": "{\"path\":\"README.md\"}",
+                            "reasoning_content": "Need to inspect the file."
+                        }
+                    ]
+                }),
+                None,
+            )
             .await;
 
         let mut request = json!({
@@ -780,7 +877,7 @@ mod tests {
             ]
         });
 
-        assert_eq!(history.enrich_request(&mut request).await, 1);
+        assert_eq!(history.enrich_request(&mut request, None).await, 1);
         let input = request["input"].as_array().unwrap();
         assert_eq!(input[0]["type"], "function_call");
         assert_eq!(input[0]["name"], "read_file");
@@ -793,25 +890,28 @@ mod tests {
     async fn restores_parallel_tool_calls_as_one_assistant_group() {
         let history = CodexChatHistoryStore::default();
         history
-            .record_response(&json!({
-                "id": "resp_1",
-                "output": [
-                    {
-                        "type": "function_call",
-                        "call_id": "call_1",
-                        "name": "first",
-                        "arguments": "{}",
-                        "reasoning_content": "Need both tools."
-                    },
-                    {
-                        "type": "function_call",
-                        "call_id": "call_2",
-                        "name": "second",
-                        "arguments": "{}",
-                        "reasoning_content": "Need both tools."
-                    }
-                ]
-            }))
+            .record_response(
+                &json!({
+                    "id": "resp_1",
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_1",
+                            "name": "first",
+                            "arguments": "{}",
+                            "reasoning_content": "Need both tools."
+                        },
+                        {
+                            "type": "function_call",
+                            "call_id": "call_2",
+                            "name": "second",
+                            "arguments": "{}",
+                            "reasoning_content": "Need both tools."
+                        }
+                    ]
+                }),
+                None,
+            )
             .await;
 
         let mut request = json!({
@@ -830,7 +930,7 @@ mod tests {
             ]
         });
 
-        assert_eq!(history.enrich_request(&mut request).await, 2);
+        assert_eq!(history.enrich_request(&mut request, None).await, 2);
         let input = request["input"].as_array().unwrap();
         assert_eq!(input[0]["type"], "function_call");
         assert_eq!(input[0]["call_id"], "call_1");
@@ -844,39 +944,45 @@ mod tests {
     async fn restores_missing_parallel_group_after_existing_older_call_results() {
         let history = CodexChatHistoryStore::default();
         history
-            .record_response(&json!({
-                "id": "resp_old",
-                "output": [
-                    {
-                        "type": "function_call",
-                        "call_id": "call_old",
-                        "name": "exec_command",
-                        "arguments": "{}",
-                        "reasoning_content": "First step."
-                    }
-                ]
-            }))
+            .record_response(
+                &json!({
+                    "id": "resp_old",
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_old",
+                            "name": "exec_command",
+                            "arguments": "{}",
+                            "reasoning_content": "First step."
+                        }
+                    ]
+                }),
+                None,
+            )
             .await;
         history
-            .record_response(&json!({
-                "id": "resp_new",
-                "output": [
-                    {
-                        "type": "function_call",
-                        "call_id": "call_new_1",
-                        "name": "exec_command",
-                        "arguments": "{}",
-                        "reasoning_content": "Second step."
-                    },
-                    {
-                        "type": "function_call",
-                        "call_id": "call_new_2",
-                        "name": "exec_command",
-                        "arguments": "{}",
-                        "reasoning_content": "Second step."
-                    }
-                ]
-            }))
+            .record_response(
+                &json!({
+                    "id": "resp_new",
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call_new_1",
+                            "name": "exec_command",
+                            "arguments": "{}",
+                            "reasoning_content": "Second step."
+                        },
+                        {
+                            "type": "function_call",
+                            "call_id": "call_new_2",
+                            "name": "exec_command",
+                            "arguments": "{}",
+                            "reasoning_content": "Second step."
+                        }
+                    ]
+                }),
+                None,
+            )
             .await;
 
         let mut request = json!({
@@ -890,7 +996,7 @@ mod tests {
             ]
         });
 
-        history.enrich_request(&mut request).await;
+        history.enrich_request(&mut request, None).await;
         let chat =
             super::super::transform_codex_chat::responses_to_chat_completions(request).unwrap();
         let assistants: Vec<_> = chat["messages"]
@@ -908,26 +1014,29 @@ mod tests {
     async fn restores_custom_and_tool_search_calls_from_previous_response() {
         let history = CodexChatHistoryStore::default();
         history
-            .record_response(&json!({
-                "id": "resp_1",
-                "output": [
-                    {
-                        "type": "custom_tool_call",
-                        "call_id": "call_patch",
-                        "name": "apply_patch",
-                        "input": "*** Begin Patch\n*** End Patch",
-                        "reasoning_content": "Need to patch the file."
-                    },
-                    {
-                        "type": "tool_search_call",
-                        "call_id": "call_search",
-                        "status": "completed",
-                        "execution": "client",
-                        "arguments": {"query": "Gmail tools"},
-                        "reasoning_content": "Need to discover tools."
-                    }
-                ]
-            }))
+            .record_response(
+                &json!({
+                    "id": "resp_1",
+                    "output": [
+                        {
+                            "type": "custom_tool_call",
+                            "call_id": "call_patch",
+                            "name": "apply_patch",
+                            "input": "*** Begin Patch\n*** End Patch",
+                            "reasoning_content": "Need to patch the file."
+                        },
+                        {
+                            "type": "tool_search_call",
+                            "call_id": "call_search",
+                            "status": "completed",
+                            "execution": "client",
+                            "arguments": {"query": "Gmail tools"},
+                            "reasoning_content": "Need to discover tools."
+                        }
+                    ]
+                }),
+                None,
+            )
             .await;
 
         let mut request = json!({
@@ -946,7 +1055,7 @@ mod tests {
             ]
         });
 
-        assert_eq!(history.enrich_request(&mut request).await, 2);
+        assert_eq!(history.enrich_request(&mut request, None).await, 2);
         let input = request["input"].as_array().unwrap();
         assert_eq!(input[0]["type"], "custom_tool_call");
         assert_eq!(input[0]["call_id"], "call_patch");
@@ -968,7 +1077,7 @@ mod tests {
             )),
         ]);
 
-        let output = record_responses_sse_stream(stream, history.clone())
+        let output = record_responses_sse_stream(stream, history.clone(), None)
             .collect::<Vec<_>>()
             .await;
         assert_eq!(output.len(), 2);
@@ -984,7 +1093,154 @@ mod tests {
             ]
         });
 
-        assert_eq!(history.enrich_request(&mut request).await, 1);
+        assert_eq!(history.enrich_request(&mut request, None).await, 1);
         assert_eq!(request["input"][0]["reasoning_content"], "Need a file.");
+    }
+
+    fn numbered_call(call_id: &str, reasoning: &str) -> Value {
+        json!({
+            "type": "function_call",
+            "call_id": call_id,
+            "name": "exec_command",
+            "arguments": "{}",
+            "reasoning_content": reasoning
+        })
+    }
+
+    fn replayed_history(call_id: &str) -> Value {
+        json!({
+            "input": [
+                {"type": "function_call", "call_id": call_id, "name": "exec_command", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": call_id, "output": "ok"}
+            ]
+        })
+    }
+
+    #[tokio::test]
+    async fn fallback_never_borrows_a_call_from_another_session() {
+        // Kimi TaaS numbers tool calls per conversation, so two sessions share
+        // `exec_command:0`. With session A's own entry gone (eviction or proxy
+        // restart), session B's entry must not be copied into A's history.
+        let history = CodexChatHistoryStore::default();
+        history
+            .record_response(
+                &json!({"id": "resp_b", "output": [numbered_call("exec_command:0", "B reasoning")]}),
+                Some("session_b"),
+            )
+            .await;
+
+        let mut request = replayed_history("exec_command:0");
+        assert_eq!(
+            history
+                .enrich_request(&mut request, Some("session_a"))
+                .await,
+            0
+        );
+        assert!(request["input"][0].get("reasoning_content").is_none());
+
+        let mut request = replayed_history("exec_command:0");
+        assert_eq!(
+            history
+                .enrich_request(&mut request, Some("session_b"))
+                .await,
+            1
+        );
+        assert_eq!(request["input"][0]["reasoning_content"], "B reasoning");
+    }
+
+    #[tokio::test]
+    async fn same_call_id_in_another_session_does_not_make_own_call_ambiguous() {
+        let history = CodexChatHistoryStore::default();
+        history
+            .record_response(
+                &json!({"id": "resp_a", "output": [numbered_call("exec_command:0", "A reasoning")]}),
+                Some("session_a"),
+            )
+            .await;
+        history
+            .record_response(
+                &json!({"id": "resp_b", "output": [numbered_call("exec_command:0", "B reasoning")]}),
+                Some("session_b"),
+            )
+            .await;
+
+        let mut request = replayed_history("exec_command:0");
+        assert_eq!(
+            history
+                .enrich_request(&mut request, Some("session_a"))
+                .await,
+            1
+        );
+        assert_eq!(request["input"][0]["reasoning_content"], "A reasoning");
+    }
+
+    #[tokio::test]
+    async fn requests_without_a_session_keep_sharing_the_unscoped_index() {
+        let history = CodexChatHistoryStore::default();
+        history
+            .record_response(
+                &json!({"id": "resp_1", "output": [numbered_call("call_1", "Unscoped reasoning")]}),
+                None,
+            )
+            .await;
+
+        let mut request = replayed_history("call_1");
+        assert_eq!(history.enrich_request(&mut request, None).await, 1);
+        assert_eq!(
+            request["input"][0]["reasoning_content"],
+            "Unscoped reasoning"
+        );
+
+        let mut request = replayed_history("call_1");
+        assert_eq!(
+            history
+                .enrich_request(&mut request, Some("session_a"))
+                .await,
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn shared_fallback_response_id_stays_per_session() {
+        // Non-streaming chat responses without an id all become `resp_ccswitch`.
+        let history = CodexChatHistoryStore::default();
+        for (scope, call_id, reasoning) in [
+            ("session_a", "call_a", "A reasoning"),
+            ("session_b", "call_b", "B reasoning"),
+        ] {
+            history
+                .record_response(
+                    &json!({"id": "resp_ccswitch", "output": [numbered_call(call_id, reasoning)]}),
+                    Some(scope),
+                )
+                .await;
+        }
+
+        let mut request = replayed_history("call_b");
+        assert_eq!(
+            history
+                .enrich_request(&mut request, Some("session_b"))
+                .await,
+            1
+        );
+        assert_eq!(request["input"][0]["reasoning_content"], "B reasoning");
+
+        // previous_response_id must not reach the other session's calls either.
+        let mut request = replayed_history("call_a");
+        request["previous_response_id"] = json!("resp_ccswitch");
+        assert_eq!(
+            history
+                .enrich_request(&mut request, Some("session_b"))
+                .await,
+            0
+        );
+        let mut request = replayed_history("call_a");
+        request["previous_response_id"] = json!("resp_ccswitch");
+        assert_eq!(
+            history
+                .enrich_request(&mut request, Some("session_a"))
+                .await,
+            1
+        );
     }
 }

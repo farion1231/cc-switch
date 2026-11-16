@@ -46,6 +46,7 @@ import type { CopilotModel } from "@/lib/api/copilot";
 import {
   fetchCodexOauthModels,
   fetchXaiOauthModels,
+  claudeModelFetchApiFormat,
   fetchModelsForConfig,
   modelFetchRequestHeaders,
   showFetchModelsError,
@@ -186,6 +187,11 @@ interface ClaudeFormFieldsProps {
   /** Stack 布局的模型列表（第一行是这家的默认模型）。 */
   stackModelRows?: ClaudeStackModelRow[];
   onStackModelRowsChange?: (rows: ClaudeStackModelRow[]) => void;
+}
+
+/** 清空列表的 state 更新：已经是空的就原样返回，React 不会因此重渲染 */
+function keepEmpty<T>(prev: T[]): T[] {
+  return prev.length === 0 ? prev : [];
 }
 
 export function ClaudeFormFields({
@@ -351,6 +357,7 @@ export function ClaudeFormFields({
       modelsUrl,
       customUserAgent,
       {
+        apiFormat: claudeModelFetchApiFormat(apiFormat),
         requestHeaders: modelFetchRequestHeaders(localProxyHeadersOverride),
       },
     )
@@ -368,6 +375,7 @@ export function ClaudeFormFields({
     apiKey,
     isFullUrl,
     customUserAgent,
+    apiFormat,
     localProxyHeadersOverride,
     showModelFetchResult,
     t,
@@ -394,7 +402,12 @@ export function ClaudeFormFields({
       .then((models) => {
         if (copilotModelsRequestRef.current !== requestId) return;
         setCopilotModels(models);
-        showModelFetchResult(models.length);
+        if (models.length === 0) {
+          // Copilot Free 账号的模型都不允许在模型选择器中使用，会被后端过滤成空
+          toast.info(t("copilot.noPickerModelsClaude"));
+        } else {
+          showModelFetchResult(models.length);
+        }
       })
       .catch((err) => {
         if (copilotModelsRequestRef.current !== requestId) return;
@@ -484,21 +497,22 @@ export function ClaudeFormFields({
       });
   }, [isXaiOauthAuthenticated, selectedXaiAccountId, showModelFetchResult, t]);
 
+  // 已经是空列表时保留原数组：挂载时新建的 [] 会让表单白白多渲染一轮
   useEffect(() => {
     copilotModelsRequestRef.current += 1;
-    setCopilotModels([]);
+    setCopilotModels(keepEmpty);
     setModelsLoading(false);
   }, [isCopilotPreset, isCopilotAuthenticated, selectedGitHubAccountId]);
 
   useEffect(() => {
     codexOauthModelsRequestRef.current += 1;
-    setCodexOauthModels([]);
+    setCodexOauthModels(keepEmpty);
     setCodexOauthModelsLoading(false);
   }, [isCodexOauthPreset, isCodexOauthAuthenticated, selectedCodexAccountId]);
 
   useEffect(() => {
     xaiOauthModelsRequestRef.current += 1;
-    setXaiOauthModels([]);
+    setXaiOauthModels(keepEmpty);
     setXaiOauthModelsLoading(false);
   }, [isXaiOauthPreset, isXaiOauthAuthenticated, selectedXaiAccountId]);
 

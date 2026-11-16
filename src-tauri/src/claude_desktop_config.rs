@@ -17,6 +17,7 @@ use crate::mode::operation::{self, FileChange};
 use crate::mode::stack::DesktopStackModel;
 use crate::mode::state::{self, PendingTarget};
 use crate::provider::{ClaudeDesktopMode, Provider};
+use crate::provider_kind::ProviderKind;
 
 pub const PROFILE_ID: &str = "00000000-0000-4000-8000-000000157210";
 pub const PROFILE_NAME: &str = "CC Switch";
@@ -287,7 +288,7 @@ pub fn get_status(db: &Database, proxy_running: bool) -> Result<ClaudeDesktopSta
 
     Ok(ClaudeDesktopStatus {
         supported: true,
-        installed: configured || detect_installed(&paths, &macos_app_bundle_candidates()),
+        installed: configured || detect_installed(&paths, macos_app_bundle_candidates().as_deref()),
         configured,
         applied_id,
         profile_path: Some(paths.profile_path.display().to_string()),
@@ -325,7 +326,7 @@ pub fn is_official_provider(provider: &Provider) -> bool {
 pub fn needs_routing(provider: &Provider) -> bool {
     !is_official_provider(provider)
         && (matches!(provider_mode(provider), ClaudeDesktopMode::Proxy)
-            || is_managed_oauth_proxy_provider(provider))
+            || ProviderKind::declared(provider).is_some())
 }
 
 /// 升级前旧版的状态：直连指针是模型映射卡（旧版按卡片决定模式，这张卡生效时 Desktop 指着
@@ -490,10 +491,7 @@ pub fn validate_direct_provider(provider: &Provider) -> Result<(), AppError> {
             ));
         }
 
-        if matches!(
-            meta.provider_type.as_deref(),
-            Some("github_copilot") | Some("codex_oauth") | Some("xai_oauth")
-        ) {
+        if ProviderKind::declared(provider).is_some() {
             return Err(AppError::localized(
                 "claude_desktop.provider.type_unsupported",
                 "Claude Desktop 直连模式不支持需要本地代理转换的供应商",
@@ -567,7 +565,7 @@ fn has_proxy_base_url_and_key(provider: &Provider) -> bool {
         .map(str::trim)
         .is_some_and(|value| !value.is_empty());
 
-    if is_managed_oauth_proxy_provider(provider) {
+    if ProviderKind::declared(provider).is_some() {
         return has_base_url;
     }
 
@@ -590,19 +588,6 @@ fn has_proxy_base_url_and_key(provider: &Provider) -> bool {
         .is_some_and(|value| !value.is_empty());
 
     has_base_url && has_key
-}
-
-fn is_managed_oauth_proxy_provider(provider: &Provider) -> bool {
-    provider
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.provider_type.as_deref())
-        .is_some_and(|provider_type| {
-            matches!(
-                provider_type,
-                "github_copilot" | "codex_oauth" | "xai_oauth"
-            )
-        })
 }
 
 pub fn validate_provider(provider: &Provider) -> Result<(), AppError> {
@@ -1533,23 +1518,26 @@ fn meta_has_profile_entry(path: &Path) -> bool {
         })
 }
 
-/// Claude Desktop 没有可调的命令，只能推断装没装：它第一次启动就会建自己的数据目录
-/// （`claude_desktop_config.json` 所在的 `Claude`，不看 CC Switch 也会写的 `Claude-3p`），
-/// macOS 上另认应用包。
-fn detect_installed(paths: &ClaudeDesktopPaths, app_bundles: &[PathBuf]) -> bool {
-    paths.normal_config_path.parent().is_some_and(Path::is_dir)
-        || app_bundles.iter().any(|bundle| bundle.is_dir())
+/// Claude Desktop 没有可调的命令，只能推断装没装。
+///
+/// - macOS（`app_bundles` 为 `Some`）只认应用包：卸载就是把 Claude.app 拖进废纸篓，
+///   `~/Library/Application Support/Claude` 会留下，数据目录说明不了还装着（#9383）。
+/// - Windows / Linux 没有固定的安装位置可查，认它第一次启动就建的数据目录
+///   （`claude_desktop_config.json` 所在的 `Claude`，不看 CC Switch 也会写的 `Claude-3p`）。
+fn detect_installed(paths: &ClaudeDesktopPaths, app_bundles: Option<&[PathBuf]>) -> bool {
+    match app_bundles {
+        Some(bundles) => bundles.iter().any(|bundle| bundle.is_dir()),
+        None => paths.normal_config_path.parent().is_some_and(Path::is_dir),
+    }
 }
 
-fn macos_app_bundle_candidates() -> Vec<PathBuf> {
-    if cfg!(target_os = "macos") {
+fn macos_app_bundle_candidates() -> Option<Vec<PathBuf>> {
+    cfg!(target_os = "macos").then(|| {
         vec![
             PathBuf::from("/Applications/Claude.app"),
             get_home_dir().join("Applications").join("Claude.app"),
         ]
-    } else {
-        Vec::new()
-    }
+    })
 }
 
 fn is_supported_platform() -> bool {
@@ -1845,7 +1833,7 @@ mod tests {
             CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID.to_string(),
             "Claude Desktop Official".to_string(),
             json!({"env": {}}),
-            Some("https://claude.ai/download".to_string()),
+            Some("https://claude.com/download".to_string()),
         );
         provider.category = Some("official".to_string());
         provider
@@ -1942,21 +1930,38 @@ mod tests {
     }
 
     #[test]
-    fn detect_installed_reads_data_dir_or_app_bundle() {
+    fn detect_installed_reads_data_dir_without_app_bundles() {
         let temp = TempDir::new().expect("tempdir");
         let paths = test_paths(temp.path());
-        let bundle = temp.path().join("Claude.app");
-        assert!(!detect_installed(&paths, std::slice::from_ref(&bundle)));
+        assert!(!detect_installed(&paths, None));
 
         // 只有 CC Switch 写的 Claude-3p 不算
         fs::create_dir_all(paths.threep_config_path.parent().unwrap()).unwrap();
-        assert!(!detect_installed(&paths, std::slice::from_ref(&bundle)));
-
-        fs::create_dir_all(&bundle).unwrap();
-        assert!(detect_installed(&paths, std::slice::from_ref(&bundle)));
+        assert!(!detect_installed(&paths, None));
 
         fs::create_dir_all(paths.normal_config_path.parent().unwrap()).unwrap();
-        assert!(detect_installed(&paths, &[]));
+        assert!(detect_installed(&paths, None));
+    }
+
+    #[test]
+    fn detect_installed_with_app_bundles_ignores_leftover_data_dir() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let bundles = [
+            temp.path().join("Applications").join("Claude.app"),
+            temp.path()
+                .join("home")
+                .join("Applications")
+                .join("Claude.app"),
+        ];
+
+        // 卸载后数据目录还在、应用包没了：不算装着（#9383）
+        fs::create_dir_all(paths.normal_config_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(paths.threep_config_path.parent().unwrap()).unwrap();
+        assert!(!detect_installed(&paths, Some(&bundles)));
+
+        fs::create_dir_all(&bundles[1]).unwrap();
+        assert!(detect_installed(&paths, Some(&bundles)));
     }
 
     #[test]

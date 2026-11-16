@@ -1180,6 +1180,9 @@ mod tests {
 
     #[test]
     fn dsh_usage_preserves_timing_across_syncs_and_database_reopen() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         use std::io::Write;
         let open_db = |path: &Path| {
             let db = Database {
