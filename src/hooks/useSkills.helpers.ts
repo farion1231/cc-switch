@@ -19,13 +19,16 @@ function discoverableDedupKey(skill: DiscoverableSkill): string {
 function discoverablePathPriority(
   directory: string,
 ): [number, number, number, string] {
-  const normalized = directory.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  const normalized = directory
+    .replace(/\\/g, "/")
+    .replace(/^\/+|\/+$/g, "");
   const segments = normalized.split("/").filter(Boolean);
   const hasHiddenSegment = segments.some((segment) => segment.startsWith("."))
     ? 1
     : 0;
   const depth = segments.length;
-  const notUnderSkillsDir = segments[0]?.toLowerCase() === "skills" ? 0 : 1;
+  const notUnderSkillsDir =
+    segments[0]?.toLowerCase() === "skills" ? 0 : 1;
   return [hasHiddenSegment, depth, notUnderSkillsDir, normalized.toLowerCase()];
 }
 
