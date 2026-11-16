@@ -995,28 +995,18 @@
         }
       }
     },
-    "configDirectoryOverride": "설정 디렉터리 재정의(고급)",
     "configDirectoryDescription": "WSL과 같은 환경에서 Claude Code 또는 Codex를 사용하는 경우 설정 디렉터리를 WSL의 설정 디렉터리로 수동으로 지정하여 공급자 데이터를 기본 환경과 일관되게 유지할 수 있습니다.",
     "appConfigDir": "CC Switch 설정 디렉터리",
     "appConfigDirDescription": "CC Switch 설정 저장 위치 (클라우드 동기화 폴더를 선택하면 설정을 클라우드로 동기화할 수 있습니다)",
     "browsePlaceholderApp": "예: C:\\Users\\Administrator\\.cc-switch",
-    "claudeConfigDir": "Claude Code 설정 디렉터리",
     "claudeConfigDirDescription": "Claude 설정 디렉터리(settings.json)를 변경합니다. 사용자 지정 디렉터리에서는 그 안에 .claude.json(MCP)을 저장합니다. 기본 ~/.claude 디렉터리에서는 Claude Code의 기본 동작대로 별도 경로인 ~/.claude.json을 사용합니다.",
-    "codexConfigDir": "Codex 설정 디렉터리",
     "codexConfigDirDescription": "Codex 설정 디렉터리를 재정의합니다.",
-    "geminiConfigDir": "Gemini 설정 디렉터리",
     "geminiConfigDirDescription": "Gemini 설정 디렉터리(.env)를 재정의합니다.",
-    "grokConfigDir": "Grok Build 설정 디렉터리",
     "grokConfigDirDescription": "Grok Build 설정 디렉터리(config.toml)를 재정의합니다.",
-    "opencodeConfigDir": "OpenCode 설정 디렉터리",
     "opencodeConfigDirDescription": "OpenCode 설정 디렉터리(opencode.json / opencode.jsonc)를 재정의합니다.",
-    "openclawConfigDir": "OpenClaw 설정 디렉터리",
     "openclawConfigDirDescription": "OpenClaw 설정 디렉터리(openclaw.json)를 재정의합니다.",
-    "hermesConfigDir": "Hermes 설정 디렉터리",
     "hermesConfigDirDescription": "Hermes 설정 디렉터리(config.yaml)를 재정의합니다.",
-    "piConfigDir": "Pi 설정 디렉터리",
     "piConfigDirDescription": "Pi 설정 디렉터리(models.json, 지침 파일, 프롬프트, 스킬 및 세션)를 변경합니다.",
-    "ompConfigDir": "Oh My Pi 설정 디렉터리",
     "browsePlaceholderClaude": "예: /home/<사용자 이름>/.claude",
     "browsePlaceholderCodex": "예: /home/<사용자 이름>/.codex",
     "browsePlaceholderGemini": "예: /home/<사용자 이름>/.gemini",
@@ -5432,6 +5422,8 @@
     "readyBodyRouting": "지금 설치할까요? CC Switch가 다시 시작되며, 로컬 라우팅을 거쳐 진행 중인 요청이 중단됩니다.",
     "later": "나중에",
     "installNow": "설치 후 다시 시작",
-    "installFailed": "업데이트 설치에 실패했습니다"
+    "installFailed": "업데이트 설치에 실패했습니다",
+    "downloadingInline": "새 버전을 백그라운드에서 다운로드하는 중…",
+    "downloadedInline": "다운로드 완료"
   }
 }

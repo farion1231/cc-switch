@@ -1224,20 +1224,7 @@ fn blocked_from_routing(app: &AppType, provider: &Provider) -> bool {
 /// Codex / Grok Build 配置里当前供应商的 `wire_api`；TOML 读不懂时退回唯一的一条赋值。
 fn codex_wire_api(config_text: &str) -> Option<String> {
     if let Ok(doc) = config_text.parse::<toml::Value>() {
-        if let Some(active) = doc.get("model_provider").and_then(|v| v.as_str()) {
-            if let Some(wire_api) = doc
-                .get("model_providers")
-                .and_then(|providers| providers.get(active))
-                .and_then(|provider| provider.get("wire_api"))
-                .and_then(|v| v.as_str())
-            {
-                return Some(wire_api.to_string());
-            }
-        }
-        return doc
-            .get("wire_api")
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
+        return crate::codex_config::active_provider_str(&doc, "wire_api").map(str::to_string);
     }
     let mut found = config_text.lines().filter_map(|line| {
         let (key, value) = line.split_once('=')?;
@@ -1250,23 +1237,6 @@ fn codex_wire_api(config_text: &str) -> Option<String> {
     });
     let first = found.next()?;
     found.next().is_none().then_some(first)
-}
-
-fn is_chat_or_anthropic_wire_api(value: &str) -> bool {
-    matches!(
-        value.trim().to_ascii_lowercase().as_str(),
-        "chat"
-            | "chat_completions"
-            | "chat-completions"
-            | "openai_chat"
-            | "openai-chat"
-            | "openai_chat_completions"
-            | "anthropic"
-            | "anthropic_messages"
-            | "anthropic-messages"
-            | "messages"
-            | "claude"
-    )
 }
 
 /// 这家在这个应用下必须经过路由服务才能用（直连写进去也用不了）。和前端
@@ -1300,7 +1270,10 @@ pub(crate) fn provider_needs_routing(app: &AppType, provider: &Provider) -> bool
                     .get("config")
                     .and_then(|config| config.as_str())
                     .and_then(codex_wire_api)
-                    .is_some_and(|wire_api| is_chat_or_anthropic_wire_api(&wire_api))
+                    .is_some_and(|wire_api| {
+                        crate::codex_config::is_chat_wire_api(&wire_api)
+                            || crate::codex_config::is_anthropic_wire_api(&wire_api)
+                    })
         }
         _ => false,
     }

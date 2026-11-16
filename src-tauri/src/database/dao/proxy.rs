@@ -405,13 +405,6 @@ impl Database {
         Ok(())
     }
 
-    /// 设置 Live 接管状态（兼容旧版本，更新 enabled 字段）
-    pub async fn set_live_takeover_active(&self, _active: bool) -> Result<(), AppError> {
-        // 不再使用此字段，由 enabled 字段替代
-        // 保留空实现以兼容旧代码
-        Ok(())
-    }
-
     /// 检查是否处于 Live 接管模式
     ///
     /// 检查是否有任一 app 的 enabled = true
@@ -493,21 +486,6 @@ impl Database {
         }
     }
 
-    /// 更新Provider健康状态
-    ///
-    /// 使用默认阈值（5）判断是否健康，建议使用 `update_provider_health_with_threshold` 传入配置的阈值
-    pub async fn update_provider_health(
-        &self,
-        provider_id: &str,
-        app_type: &str,
-        success: bool,
-        error_msg: Option<String>,
-    ) -> Result<(), AppError> {
-        // 默认阈值与 CircuitBreakerConfig::default() 保持一致
-        self.update_provider_health_with_threshold(provider_id, app_type, success, error_msg, 5)
-            .await
-    }
-
     /// 更新Provider健康状态（带阈值参数）
     ///
     /// # Arguments
@@ -576,25 +554,6 @@ impl Database {
         Ok(())
     }
 
-    /// 重置Provider健康状态
-    pub async fn reset_provider_health(
-        &self,
-        provider_id: &str,
-        app_type: &str,
-    ) -> Result<(), AppError> {
-        let conn = lock_conn!(self.conn);
-
-        conn.execute(
-            "DELETE FROM provider_health WHERE provider_id = ?1 AND app_type = ?2",
-            rusqlite::params![provider_id, app_type],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-
-        log::debug!("Reset health status for provider {provider_id} (app: {app_type})");
-
-        Ok(())
-    }
-
     /// 清空指定应用的健康状态（关闭单个代理时使用）
     pub async fn clear_provider_health_for_app(&self, app_type: &str) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
@@ -621,45 +580,6 @@ impl Database {
     }
 
     // ==================== Circuit Breaker Config (Legacy Compatibility) ====================
-
-    /// 获取熔断器配置（兼容旧接口，从 claude 行读取）
-    ///
-    /// 熔断器配置已合并到 proxy_config 表，每 app 独立
-    /// 此方法保留用于兼容旧代码，建议使用 get_proxy_config_for_app
-    pub async fn get_circuit_breaker_config(
-        &self,
-    ) -> Result<crate::proxy::circuit_breaker::CircuitBreakerConfig, AppError> {
-        // 使用 block 限制 conn 的作用域，避免跨 await 持有锁
-        let result = {
-            let conn = lock_conn!(self.conn);
-            conn.query_row(
-                "SELECT circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
-                        circuit_error_rate_threshold, circuit_min_requests
-                 FROM proxy_config WHERE app_type = 'claude'",
-                [],
-                |row| {
-                    Ok(crate::proxy::circuit_breaker::CircuitBreakerConfig {
-                        failure_threshold: row.get::<_, i32>(0)? as u32,
-                        success_threshold: row.get::<_, i32>(1)? as u32,
-                        timeout_seconds: row.get::<_, i64>(2)? as u64,
-                        error_rate_threshold: row.get(3)?,
-                        min_requests: row.get::<_, i32>(4)? as u32,
-                    })
-                },
-            )
-        };
-        // conn 已在 block 结束时释放
-
-        match result {
-            Ok(config) => Ok(config),
-            Err(rusqlite::Error::QueryReturnedNoRows) => {
-                // 如果不存在，初始化默认配置
-                self.init_proxy_config_rows().await?;
-                Ok(crate::proxy::circuit_breaker::CircuitBreakerConfig::default())
-            }
-            Err(e) => Err(AppError::Database(e.to_string())),
-        }
-    }
 
     /// 更新熔断器配置（兼容旧接口，更新所有三行）
     ///
@@ -715,17 +635,6 @@ impl Database {
         Ok(())
     }
 
-    /// 检查是否存在任意 Live 配置备份
-    pub async fn has_any_live_backup(&self) -> Result<bool, AppError> {
-        let conn = lock_conn!(self.conn);
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM proxy_live_backup", [], |row| {
-                row.get(0)
-            })
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        Ok(count > 0)
-    }
-
     /// 获取 Live 配置备份
     pub async fn get_live_backup(&self, app_type: &str) -> Result<Option<LiveBackup>, AppError> {
         let conn = lock_conn!(self.conn);
@@ -760,17 +669,6 @@ impl Database {
         .map_err(|e| AppError::Database(e.to_string()))?;
 
         log::info!("已删除 {app_type} Live 配置备份");
-        Ok(())
-    }
-
-    /// 删除所有 Live 配置备份
-    pub async fn delete_all_live_backups(&self) -> Result<(), AppError> {
-        let conn = lock_conn!(self.conn);
-
-        conn.execute("DELETE FROM proxy_live_backup", [])
-            .map_err(|e| AppError::Database(e.to_string()))?;
-
-        log::info!("已删除所有 Live 配置备份");
         Ok(())
     }
 

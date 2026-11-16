@@ -4,9 +4,7 @@ use cc_switch_lib::{
 use serde_json::{json, Value};
 use std::fs;
 
-#[path = "support/mod.rs"]
-mod support;
-use support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
+use crate::support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
 
 fn provider(id: &str, model: &str) -> Provider {
     Provider::with_id(

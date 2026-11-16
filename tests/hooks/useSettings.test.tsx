@@ -363,6 +363,25 @@ describe("useSettings hook", () => {
     expect(syncCurrentProvidersLiveMock).not.toHaveBeenCalled();
   });
 
+  it("projects providers into a new Hermes directory on save", async () => {
+    settingsFormMock = createSettingsFormMock({
+      settings: {
+        ...serverSettings,
+        hermesConfigDir: "  /custom/hermes  ",
+      },
+    });
+
+    const { result } = renderHook(() => useSettings());
+
+    await act(async () => {
+      await result.current.saveSettings(undefined, { silent: true });
+    });
+
+    const payload = mutateAsyncMock.mock.calls[0][0] as Settings;
+    expect(payload.hermesConfigDir).toBe("/custom/hermes");
+    expect(syncCurrentProvidersLiveMock).toHaveBeenCalledTimes(1);
+  });
+
   it("sanitizes the Pi directory without projecting providers", async () => {
     settingsFormMock = createSettingsFormMock({
       settings: {

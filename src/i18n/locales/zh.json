@@ -995,28 +995,18 @@
         }
       }
     },
-    "configDirectoryOverride": "配置目录覆盖（高级）",
     "configDirectoryDescription": "在 WSL 等环境使用 Claude Code 或 Codex 的时候，可手动指定为 WSL 里的配置目录，供应商数据与主环境保持一致。",
     "appConfigDir": "CC Switch 配置目录",
     "appConfigDirDescription": "自定义 CC Switch 的配置存储位置（指定到云同步文件夹即可云同步配置）",
     "browsePlaceholderApp": "例如：C:\\Users\\Administrator\\.cc-switch",
-    "claudeConfigDir": "Claude Code 配置目录",
     "claudeConfigDirDescription": "覆盖 Claude 配置目录 (settings.json)。真正自定义目录会在目录内存放 Claude MCP 的 .claude.json；默认 ~/.claude 目录仍使用 Claude 默认的 ~/.claude.json。",
-    "codexConfigDir": "Codex 配置目录",
     "codexConfigDirDescription": "覆盖 Codex 配置目录。",
-    "geminiConfigDir": "Gemini 配置目录",
     "geminiConfigDirDescription": "覆盖 Gemini 配置目录 (.env)。",
-    "grokConfigDir": "Grok Build 配置目录",
     "grokConfigDirDescription": "覆盖 Grok Build 配置目录 (config.toml)。",
-    "opencodeConfigDir": "OpenCode 配置目录",
     "opencodeConfigDirDescription": "覆盖 OpenCode 配置目录 (opencode.json / opencode.jsonc)。",
-    "openclawConfigDir": "OpenClaw 配置目录",
     "openclawConfigDirDescription": "覆盖 OpenClaw 配置目录 (openclaw.json)。",
-    "hermesConfigDir": "Hermes 配置目录",
     "hermesConfigDirDescription": "覆盖 Hermes 配置目录 (config.yaml)。",
-    "piConfigDir": "Pi 配置目录",
     "piConfigDirDescription": "覆盖 Pi 配置目录（models.json、指令文件、提示词、Skills 与会话）。",
-    "ompConfigDir": "Oh My Pi 配置目录",
     "browsePlaceholderClaude": "例如：/home/<你的用户名>/.claude",
     "browsePlaceholderCodex": "例如：/home/<你的用户名>/.codex",
     "browsePlaceholderGemini": "例如：/home/<你的用户名>/.gemini",
@@ -5432,6 +5422,8 @@
     "readyBodyRouting": "现在安装吗？CC Switch 会重启，正在经本地路由的请求会中断。",
     "later": "稍后",
     "installNow": "安装并重启",
-    "installFailed": "安装更新失败"
+    "installFailed": "安装更新失败",
+    "downloadingInline": "正在后台下载新版本…",
+    "downloadedInline": "已下载完毕"
   }
 }

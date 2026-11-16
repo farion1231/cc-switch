@@ -38,7 +38,6 @@ const piKeysOutsideNamespace = new Set([
   "sessionManager.piDiscoveryUnavailable",
   "sessionManager.piRelativeSessionDir",
   "settings.browsePlaceholderPi",
-  "settings.piConfigDir",
   "settings.piConfigDirDescription",
 ]);
 const piReference = new Map(

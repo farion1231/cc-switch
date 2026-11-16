@@ -5,7 +5,7 @@ use cc_switch_lib::{update_settings, AppSettings, AppState, Database, MultiAppCo
 
 /// 为测试设置隔离的 HOME 目录，避免污染真实用户数据。
 ///
-/// cargo test 下每个测试二进制一个进程、二进制之间顺序执行，共用一个固定目录即可。
+/// cargo test 下全部集成测试在同一个进程里，共用一个固定目录，靠 `test_mutex` 串行。
 /// nextest 每个测试一个进程、多个进程并发，各自启动时都会清空目录，所以按槽位分开：
 /// 槽位号在同时运行的测试之间唯一、测试结束后复用，目录数不超过并发数。
 pub fn ensure_test_home() -> &'static Path {
@@ -69,7 +69,6 @@ pub fn reset_test_fs() {
     let _ = update_settings(AppSettings::default());
 }
 
-#[allow(dead_code)]
 pub fn enable_codex_official_auth_preservation() {
     update_settings(AppSettings {
         preserve_codex_official_auth_on_switch: true,
@@ -85,14 +84,12 @@ pub fn test_mutex() -> &'static Mutex<()> {
 }
 
 /// 创建测试用的 AppState，包含一个空的数据库
-#[allow(dead_code)]
 pub fn create_test_state() -> Result<AppState, Box<dyn std::error::Error>> {
     let db = Arc::new(Database::init()?);
     Ok(AppState::new(db))
 }
 
 /// 创建测试用的 AppState，并从 MultiAppConfig 迁移数据
-#[allow(dead_code)]
 pub fn create_test_state_with_config(
     config: &MultiAppConfig,
 ) -> Result<AppState, Box<dyn std::error::Error>> {

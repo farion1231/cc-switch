@@ -123,10 +123,6 @@ fn startup_database_commands_yield_during_session_sync_contention() {
     let providers = query!(get_providers, "opencode".into());
     assert_eq!(providers[&provider.id].name, provider.name);
     assert_eq!(query!(get_current_provider, "claude".into()), provider.id);
-    assert_eq!(
-        query!(get_direct_provider, "claude".into()),
-        Some(provider.id.clone())
-    );
     let mode = query!(get_app_mode, "claude".into());
     assert_eq!(mode.mode, "direct");
     assert_eq!(mode.direct_provider_id, Some(provider.id));
@@ -156,7 +152,6 @@ fn startup_database_commands_yield_during_session_sync_contention() {
     assert_eq!(sync.config.last_sync_at, Some(1234));
     assert_eq!(sync.config.last_sync_error.as_deref(), Some("offline"));
     query!(delete_model_pricing, pricing.model_id);
-    assert!(query!(get_usage_data_sources).is_empty());
 
     // Validation errors must still reach the caller after moving work off-thread.
     assert!(
