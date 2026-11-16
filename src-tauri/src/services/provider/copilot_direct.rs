@@ -11,8 +11,7 @@ pub(crate) const ACCOUNT_AUTH_PROVIDER: &str = "github_copilot";
 
 /// 官方登录卡：分类标为官方，或者没有自带模型的 `provider` 节点。供应商名称可编辑，不参与判断。
 pub(crate) fn is_official(provider: &Provider) -> bool {
-    provider.category.as_deref() == Some("official")
-        || !copilot_config::is_byok_settings(&provider.settings_config)
+    provider.has_official_category() || !copilot_config::is_byok_settings(&provider.settings_config)
 }
 
 /// 在终端里启动这张卡要用的参数。自带模型卡必须已经添加进 `providers.json`：Copilot 只从

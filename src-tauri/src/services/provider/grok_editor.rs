@@ -71,7 +71,7 @@ pub fn view(
     settings_config: &Value,
     category: Option<&str>,
 ) -> Result<EditorView, AppError> {
-    let official = category == Some("official");
+    let official = crate::provider::is_official_category(category);
     let Ok(projection) = GrokProjection::of(settings_config, official) else {
         return Ok(EditorView {
             settings: settings_config.clone(),

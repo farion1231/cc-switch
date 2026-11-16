@@ -18,6 +18,7 @@
 //! 调用方持有这个应用的代理切换锁（`ProxyService::lock_switch_for_app`）；写引擎的应用
 //! 写锁在更里面拿，两把锁不反向嵌套。
 
+use crate::sync_utils::MutexExt;
 use serde_json::{json, Value};
 use tokio::sync::OwnedMutexGuard;
 
@@ -900,7 +901,7 @@ fn spawn_loopback_check(state: &AppState, app: &AppType, notify: bool) {
 }
 
 async fn warn_if_official_route(state: &AppState, app: &AppType, route: &Provider) {
-    if route.category.as_deref() == Some("official")
+    if route.has_official_category()
         && !crate::services::provider::official_provider_supports_proxy_takeover(app, route)
     {
         state
@@ -1241,7 +1242,7 @@ pub async fn set_route(
 
 /// 代理模式下不能切到不支持代理的官方供应商（Codex 官方账号走客户端自己的登录，除外）。
 pub fn reject_unsupported_official(app: &AppType, provider: &Provider) -> Result<(), String> {
-    if provider.category.as_deref() == Some("official")
+    if provider.has_official_category()
         && !crate::services::provider::official_provider_supports_proxy_takeover(app, provider)
     {
         return Err(
@@ -1277,7 +1278,7 @@ impl StackWriteError {
 fn check_stack_member(app: &AppType, provider: &Provider) -> Result<(), String> {
     let official = match app {
         AppType::Codex => codex_direct::is_official(provider),
-        _ => provider.category.as_deref() == Some("official"),
+        _ => provider.has_official_category(),
     };
     if official {
         return Err(
@@ -1817,8 +1818,7 @@ async fn startup_app(state: &AppState, app: &AppType) -> Result<(), String> {
                         .map(|stack| stack.enabled)
                         .unwrap_or(false);
                 startup_attach_failures()
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
+                    .lock_recover()
                     .push(StartupAttachFailure {
                         app_type: app.as_str().to_string(),
                         stack,
@@ -1996,19 +1996,12 @@ fn startup_attach_failures() -> &'static std::sync::Mutex<Vec<StartupAttachFailu
 
 /// 看一眼启动时记下的接上失败（不清空）：托盘的问题区自己留一份，界面照样取走。
 pub fn startup_attach_failures_snapshot() -> Vec<StartupAttachFailure> {
-    startup_attach_failures()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
+    startup_attach_failures().lock_recover().clone()
 }
 
 /// 取走启动时记下的接上失败（取一次就清空）。
 pub fn take_startup_attach_failures() -> Vec<StartupAttachFailure> {
-    std::mem::take(
-        &mut *startup_attach_failures()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()),
-    )
+    std::mem::take(&mut *startup_attach_failures().lock_recover())
 }
 
 #[cfg(test)]

@@ -35,7 +35,7 @@ pub(crate) fn config_file() -> LiveFile {
 
 /// 官方卡：不写模型表，Grok 回落到内置模型和自带的 xAI 登录。
 pub(crate) fn is_official(provider: &Provider) -> bool {
-    provider.category.as_deref() == Some("official")
+    provider.has_official_category()
 }
 
 /// 官方卡绑定的授权中心 xAI 账号：切到这张卡时 Grok CLI 的登录换成这个号。

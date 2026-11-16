@@ -19,7 +19,7 @@ export const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
 const MAX_SOURCE_DIMENSION = 4096;
 
 /** 输出尺寸：32px 图标框在 3 倍屏上的像素数 */
-const OUTPUT_SIZE = 96;
+export const OUTPUT_SIZE = 96;
 
 /**
  * 透明 logo 占输出画布的比例，和 ProviderIconBox 里透明 logo（22px）在 32px 框里的比例一致。
