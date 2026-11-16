@@ -115,6 +115,13 @@ function useDetailSections(request: RequestLog) {
       value: getUsageProviderLabel(request.providerName, t).shortLabel,
     },
     { key: "model", label: t("usage.model"), value: request.model, mono: true },
+    {
+      key: "reasoningEffort",
+      label: t("usage.reasoningEffort"),
+      value: request.reasoningEffort || "—",
+      mono: true,
+      muted: !request.reasoningEffort,
+    },
   ];
   // 会话日志的供应商就叫「会话日志」，ID 是内部的 _session：不再重复列「供应商 ID」和「来源」
   if (isProxy) {
