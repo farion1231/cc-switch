@@ -3651,7 +3651,7 @@ mod tests {
     }
 
     #[test]
-    fn test_backfill_new_anthropic_openai_pricing_after_upgrade() -> Result<(), AppError> {
+    fn test_backfill_new_model_pricing_after_upgrade() -> Result<(), AppError> {
         let db = Database::memory()?;
         let cases = [
             (
@@ -3710,6 +3710,12 @@ mod tests {
                 3_000_000,
                 ["0.150000", "0.600000", "0.075000", "0.000000", "0.825000"],
             ),
+            (
+                "qwen/qwen4-max",
+                "claude",
+                1_000_000,
+                ["1.500000", "4.500000", "0.075000", "1.875000", "7.950000"],
+            ),
         ];
         {
             let conn = lock_conn!(db.conn);
@@ -3717,7 +3723,7 @@ mod tests {
             conn.execute(
                 "DELETE FROM model_pricing WHERE model_id IN
                  ('claude-opus-5-5', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-luna', 'gpt-5.6-cyber',
-                  'gpt-5.5-pro', 'gpt-4o-mini')",
+                  'gpt-5.5-pro', 'gpt-4o-mini', 'qwen4-max')",
                 [],
             )?;
             for (model, app, input, _) in &cases {
