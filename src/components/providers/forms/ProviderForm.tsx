@@ -115,7 +115,6 @@ import { QwenProviderForm } from "./QwenProviderForm";
 import { CopilotProviderForm } from "./CopilotProviderForm";
 import { AgyAccountSelect } from "./AgyOAuthSection";
 import { ClaudeAccountSelect } from "./ClaudeOfficialSection";
-import { isMac } from "@/lib/platform";
 import { McodeProviderForm } from "./McodeProviderForm";
 import { WorkBuddyProviderForm } from "./WorkBuddyProviderForm";
 import { PiProviderForm } from "./PiProviderForm";
@@ -155,7 +154,10 @@ import {
   isNativeOpencodeConfig,
 } from "./helpers/opencodeFormUtils";
 import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
-import { resolveManagedAccountId } from "@/lib/authBinding";
+import {
+  canSwitchAgyAccount,
+  resolveManagedAccountId,
+} from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
 import { useHermesLiveProviderIds } from "@/hooks/useHermes";
 import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
@@ -2973,13 +2975,15 @@ function ProviderFormFull({
             />
           )}
 
-          {/* 切号只实现了 macOS；别的平台上不显示，卡上已有的绑定原样保留 */}
-          {appId === "agy" && category === "official" && isMac() && (
-            <AgyAccountSelect
-              value={selectedAgyAccountId}
-              onChange={setSelectedAgyAccountId}
-            />
-          )}
+          {/* 切号只实现了 macOS、Windows；别的平台上不显示，卡上已有的绑定原样保留 */}
+          {appId === "agy" &&
+            category === "official" &&
+            canSwitchAgyAccount() && (
+              <AgyAccountSelect
+                value={selectedAgyAccountId}
+                onChange={setSelectedAgyAccountId}
+              />
+            )}
 
           {appId === "opencode" && !isAnyOmoCategory && !isNativeOpencode && (
             <OpenCodeFormFields

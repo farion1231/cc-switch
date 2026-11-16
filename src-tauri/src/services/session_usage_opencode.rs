@@ -17,10 +17,9 @@
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::opencode_config::get_opencode_db_path;
-use crate::proxy::usage::calculator::CostCalculator;
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
-    metadata_modified_nanos, update_sync_state, SessionSyncResult,
+    cost_columns, metadata_modified_nanos, update_sync_state, SessionSyncResult,
 };
 use crate::services::usage_stats::{find_model_pricing, should_skip_session_insert, DedupKey};
 use rust_decimal::Decimal;
@@ -463,17 +462,17 @@ fn insert_opencode_message(
     }
 
     // 如果 opencode 已经提供了费用，直接使用；否则从模型定价计算
-    let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) =
+    let [input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost] =
         if msg.cost > 0.0 {
             // opencode 已计算费用，直接使用
             // 简化处理：全部放入 total_cost（opencode 的 cost 是聚合值，无法精确拆分）
-            (
+            [
                 "0".to_string(),
                 "0".to_string(),
                 "0".to_string(),
                 "0".to_string(),
                 msg.cost.to_string(),
-            )
+            ]
         } else {
             // opencode 费用为 0（如免费模型），尝试用 cc-switch 自带的模型定价计算
             let usage = TokenUsage {
@@ -486,30 +485,12 @@ fn insert_opencode_message(
                 message_id: None,
             };
 
-            match find_model_pricing(&conn, &msg.model_id) {
-                Some(pricing) => {
-                    let cost = CostCalculator::calculate_for_app(
-                        "opencode",
-                        &usage,
-                        &pricing,
-                        Decimal::from(1),
-                    );
-                    (
-                        cost.input_cost.to_string(),
-                        cost.output_cost.to_string(),
-                        cost.cache_read_cost.to_string(),
-                        cost.cache_creation_cost.to_string(),
-                        cost.total_cost.to_string(),
-                    )
-                }
-                None => (
-                    "0".to_string(),
-                    "0".to_string(),
-                    "0".to_string(),
-                    "0".to_string(),
-                    "0".to_string(),
-                ),
-            }
+            cost_columns(
+                "opencode",
+                &usage,
+                find_model_pricing(&conn, &msg.model_id).as_ref(),
+                Decimal::ONE,
+            )
         };
 
     let inserted_rows = conn.execute(

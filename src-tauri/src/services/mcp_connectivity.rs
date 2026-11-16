@@ -9,6 +9,7 @@ use std::{
     time::Duration,
 };
 
+use crate::sync_utils::MutexExt;
 use futures::{future::AbortHandle, future::Abortable, stream, StreamExt};
 use once_cell::sync::Lazy;
 use process_wrap::tokio::{KillOnDrop, TokioChildWrapper, TokioCommandWrap};
@@ -88,7 +89,7 @@ pub fn start_checks(
 ) -> String {
     let id = uuid::Uuid::new_v4().to_string();
     let (abort, registration) = AbortHandle::new_pair();
-    BATCHES.lock().unwrap().insert(id.clone(), abort);
+    BATCHES.lock_recover().insert(id.clone(), abort);
     let batch_id = id.clone();
     tauri::async_runtime::spawn(async move {
         let checks = async move {
@@ -108,13 +109,13 @@ pub fn start_checks(
             }
         };
         let _ = Abortable::new(checks, registration).await;
-        BATCHES.lock().unwrap().remove(&batch_id);
+        BATCHES.lock_recover().remove(&batch_id);
     });
     id
 }
 
 pub fn cancel_checks(batch_id: &str) {
-    if let Some(abort) = BATCHES.lock().unwrap().remove(batch_id) {
+    if let Some(abort) = BATCHES.lock_recover().remove(batch_id) {
         abort.abort();
     }
 }

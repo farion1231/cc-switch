@@ -64,9 +64,6 @@ const omoSlimHooks = createOmoQueryHooks("omo-slim", omoSlimApi);
 
 // ── Backward-compatible exports ────────────────────────────────
 
-export const omoKeys = omoHooks.keys;
-export const omoSlimKeys = omoSlimHooks.keys;
-
 export const useCurrentOmoProviderId = omoHooks.useCurrentProviderId;
 export const useReadOmoLocalFile = omoHooks.useReadLocalFile;
 export const useDisableCurrentOmo = omoHooks.useDisableCurrent;

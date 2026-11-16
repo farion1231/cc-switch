@@ -1,6 +1,6 @@
 [package]
 name = "cc-switch"
-version = "4.0.32"
+version = "4.0.33"
 description = "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
 authors = ["Jason Young"]
 license = "MIT"
@@ -108,6 +108,7 @@ windows = "0.61"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Globalization",
+    "Win32_Security_Credentials",
     "Win32_Storage_FileSystem",
     "Win32_Graphics_Gdi",
     "Win32_System_Threading",
@@ -126,6 +127,12 @@ objc2-app-kit = { version = "0.2", features = ["NSColor"] }
 objc2-06 = { package = "objc2", version = "0.6" }
 objc2-foundation-03 = { package = "objc2-foundation", version = "0.3", default-features = false, features = ["std", "NSArray", "NSGeometry", "NSString"] }
 objc2-app-kit-03 = { package = "objc2-app-kit", version = "0.3", default-features = false, features = ["std", "NSAppearance", "NSGlassEffectView", "NSGraphics", "NSResponder", "NSScreen", "NSView", "NSVisualEffectView", "NSWindow"] }
+
+# 本地 `cargo test` / `tauri dev` 和 CI 用同一份调试信息级别：只留行号表。
+# panic 和回溯照样有文件名与行号；完整调试信息（变量、类型）占测试二进制体积的九成，
+# 还拖慢编译和链接。要用调试器看变量时临时设 `CARGO_PROFILE_DEV_DEBUG=full`。
+[profile.dev]
+debug = "line-tables-only"
 
 # Optimize release binary size to help reduce AppImage footprint
 [profile.release]
